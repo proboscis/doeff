@@ -471,6 +471,23 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     crossings.extend(judged.crossings);
                 }
                 if let (Some(translation), Some(world)) = (&settings.translation, &effect_world) {
+                    if let Some(decl) = lower_layer_decl(settings).filter(|_| enabled.contains(&ProjectRule::LowerLayerInDomain)) {
+                        let judged: Vec<Result<Vec<Draft>, String>> = layer_files
+                            .par_iter()
+                            .filter(|file| is_domain_file(file, translation))
+                            .map(|file| {
+                                std::fs::read_to_string(&file.file.path)
+                                    .map(|source| judge_lower_layer_uses(file, &source, layers, translation, decl, world))
+                                    .map_err(|error| format!("{}: 読めない: {}", file.file.rel, error))
+                            })
+                            .collect();
+                        for result in judged {
+                            match result {
+                                Ok(found) => drafts.extend(found),
+                                Err(error) => report.errors.push(error),
+                            }
+                        }
+                    }
                     if enabled.contains(&ProjectRule::TranslationEmitsIntent) {
                         let judged: Vec<Result<Vec<Draft>, String>> = layer_files
                             .par_iter()
@@ -726,6 +743,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if let (Some(translation), Some(world)) = (&settings.translation, &effect_world) {
                         if enabled.contains(&ProjectRule::TranslationEmitsIntent) && is_translation_file(&file, translation) {
                             drafts.extend(judge_translation_intents(&file, source, layers, translation, &index, world));
+                        }
+                        if let Some(decl) = lower_layer_decl(settings).filter(|_| enabled.contains(&ProjectRule::LowerLayerInDomain) && is_domain_file(&file, translation)) {
+                            drafts.extend(judge_lower_layer_uses(&file, source, layers, translation, decl, world));
                         }
                     }
                     report.modules.extend(judged.summary);
@@ -4680,12 +4700,13 @@ fn program_fields_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_call
     all
 }
 
-/// DOEFF127・130 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
+/// DOEFF127・130・174 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
 /// stdin の中身で読む。推論の読み方は defk の見出し(editor-json の signatures)と同じ `signatures::World` の 1 か所。
 fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, overlay: Option<(&str, &str)>) -> Option<signatures::World> {
     let definitions = settings.definitions.is_some() && enabled.contains(&ProjectRule::EffectsDisagreeWithInference);
     let translation = settings.translation.is_some() && settings.layers.is_some() && enabled.contains(&ProjectRule::TranslationEmitsIntent);
-    (definitions || translation).then(|| signatures::World::build(root, overlay))
+    let lower_layer = settings.translation.is_some() && settings.layers.is_some() && lower_layer_decl(settings).is_some() && enabled.contains(&ProjectRule::LowerLayerInDomain);
+    (definitions || translation || lower_layer).then(|| signatures::World::build(root, overlay))
 }
 
 /// DOEFF142: 1 file の defhandler の引数の当たり → 下書き(critical — 責務の境界)。
@@ -4765,6 +4786,78 @@ fn judge_translation_intents(
                 detail: Some(format!("{}::{}", hy_mangle(&intent.handler), intent.qualified)),
                 base: Severity::Error,
                 explain: Explain::TranslationIntent { intent, handler_layer: handler_layer.clone(), intent_layer },
+            }
+        })
+        .collect()
+}
+
+/// DOEFF174 の母集団 — 業務の層(設定の domain_layers)の Hy の module。
+fn is_domain_file(file: &LayerFile, translation: &settings::TranslationSettings) -> bool {
+    file.file.language == Language::Hy && translation.domain_layers.contains(&file.site.layer)
+}
+
+/// DOEFF174 の下の層の宣言 — architecture.hy の :business-fakes の :lower-layer-modules(空なら判じない)。
+fn lower_layer_decl(settings: &ProjectSettings) -> Option<&architecture::BusinessFakes> {
+    settings.architecture.as_ref()?.business_fakes.as_ref().filter(|decl| !decl.lower_layer_modules.is_empty())
+}
+
+/// DOEFF174 の handler の package — :lower-layer-modules の綴り 1 つの、最後の区切りを外した module(`doeff_records.effects` →
+/// `doeff_records`)。区切りが無ければ綴りそのもの。同じ package の別の module(合図の源・記録の client)の handler も数えるため。
+fn lower_layer_package(pattern: &str) -> &str {
+    let module = pattern.trim_end_matches('*').trim_end_matches('.');
+    module.rsplit_once('.').map(|(package, _)| package).unwrap_or(module)
+}
+
+/// DOEFF174: 業務の層の定義が、下の層の効果を出す所(defk を辿って届く形も)と、下の層の package の handler を被せる所を判じる
+/// (error — 責務の境界の違反・agora-redesign #3885)。
+fn judge_lower_layer_uses(
+    file: &LayerFile,
+    source: &str,
+    layers: &LayerSettings,
+    translation: &settings::TranslationSettings,
+    decl: &architecture::BusinessFakes,
+    world: &signatures::World,
+) -> Vec<Draft> {
+    let packages: Vec<&str> = decl.lower_layer_modules.iter().map(|p| lower_layer_package(p)).collect();
+    let is_handler = |qualified: &str| {
+        let module = business_fakes::module_of_effect(qualified);
+        packages.iter().any(|package| module == *package || module.starts_with(&format!("{}.", package)))
+    };
+    // 効果 = :lower-layer-modules の module の物。同じ package の別の module の、repo の外の定義(doeff_records.typed の read-typed など
+    // 効果を包む defk)を実行する所も数える — repo の外の定義は推論の表に無く、その先の効果まで辿れないので、実行した時点で生の操作とみなす。
+    let is_effect = |qualified: &str| {
+        business_fakes::lower_layer_module(business_fakes::module_of_effect(qualified), decl)
+            || (is_handler(qualified) && !world.definitions.contains_key(qualified))
+    };
+    let lines = LineIndex::new(source);
+    let layer = layers.layers[file.site.layer.0].name.clone();
+    signatures::lower_layer_uses(world, &file.file.rel, source, &is_effect, &is_handler, translation.max_depth)
+        .into_iter()
+        .map(|found| {
+            let message = match (&found.kind, found.via()) {
+                (signatures::LowerLayerKind::Handler, _) => format!(
+                    "{} の定義 {}(層 {})が下の層の handler {} を被せる — 記録の service の生の操作に答える handler を被せるのは組み立ての層の仕事で、業務の層はドメインの効果だけを出す",
+                    file.file.rel, found.definition, layer, found.name()
+                ),
+                (_, Some(via)) => format!(
+                    "{} の定義 {}(層 {})が {} を経由して、下の層の効果 {} を出す — 記録の service の生の操作は handler の仕事で、業務の層はドメインの効果だけを出す",
+                    file.file.rel, found.definition, layer, via, found.name()
+                ),
+                (_, None) => format!(
+                    "{} の定義 {}(層 {})が下の層の効果 {} を出す — 記録の service の生の操作は handler の仕事で、業務の層はドメインの効果だけを出す",
+                    file.file.rel, found.definition, layer, found.name()
+                ),
+            };
+            Draft {
+                rule: ProjectRule::LowerLayerInDomain,
+                layer: Some(file.site.layer),
+                rel: file.file.rel.clone(),
+                path: file.file.path.clone(),
+                range: lines.range(found.start, found.end),
+                message,
+                detail: Some(format!("{}::{}", hy_mangle(&found.definition), found.qualified)),
+                base: Severity::Error,
+                explain: Explain::LowerLayerUse { found, layer: layer.clone() },
             }
         })
         .collect()

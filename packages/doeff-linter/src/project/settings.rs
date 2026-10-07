@@ -116,6 +116,11 @@ pub struct TranslationEffectsSection {
     /// handler の撃った呼びから辿る defk の段の上限(0 なら handler の本体で直に撃つ intent だけ)。
     #[serde(default = "default_translation_max_depth")]
     pub max_depth: usize,
+    /// 業務の層(翻訳の handler の外 — ドメインの API だけを使う層)。DOEFF174 が、この層の定義が architecture.hy の
+    /// `:business-fakes` の `:lower-layer-modules` の効果を出す所と、その package の handler を被せる所を赤にする。書かなければ
+    /// 既定の名(core・intent)のうち宣言に在る層だけ — 書いたなら名の誤りは設定の誤り。辿る深さの上限は max_depth を使う。
+    #[serde(default)]
+    pub domain_layers: Option<Vec<String>>,
 }
 
 impl Default for TranslationEffectsSection {
@@ -124,6 +129,7 @@ impl Default for TranslationEffectsSection {
             handler_layers: default_translation_handler_layers(),
             intent_layers: default_translation_intent_layers(),
             max_depth: default_translation_max_depth(),
+            domain_layers: None,
         }
     }
 }
@@ -140,12 +146,17 @@ fn default_translation_max_depth() -> usize {
     8
 }
 
+/// DOEFF174 の業務の層の既定の名(`domain_layers` を書かない時 — 宣言に在る層だけを数える)。
+pub const DEFAULT_DOMAIN_LAYERS: &[&str] = &["core", "intent"];
+
 /// DOEFF130 の設定(検めた後)。
 #[derive(Debug, Clone)]
 pub struct TranslationSettings {
     pub handler_layers: BTreeSet<LayerId>,
     pub intent_layers: BTreeSet<LayerId>,
     pub max_depth: usize,
+    /// DOEFF174 の業務の層(既定の名の層が無ければ、その名は数えない — 空なら DOEFF174 は判じない)。
+    pub domain_layers: BTreeSet<LayerId>,
 }
 
 /// `[tool.doeff-linter.environment_names]` — 業務の名に付けてはいけない環境の語。
