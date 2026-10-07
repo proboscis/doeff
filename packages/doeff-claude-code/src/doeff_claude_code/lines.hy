@@ -83,7 +83,9 @@
   (setv #^ (get tuple #(ToolCall ...)) tool-calls #())
   (setv #^ (| Usage None) usage None)
   (setv #^ (| str None) model None)
-  (setv #^ (| str None) parent-tool-use-id None))
+  (setv #^ (| str None) parent-tool-use-id None)
+  ;; error = 行の最上位の error(CLI が API の誤りを答えの代わりに出した時の語 — 例 rate_limit: 口座の限度に当たった・#3983。無ければ None)。
+  (setv #^ (| str None) error None))
 
 (defclass [(dataclass :frozen True)] ToolAnswer []
   "user の行の tool_result の block 1 つ(道具の結果 1 つ): id = 答えた呼びの id(tool_use_id — 前の ToolCall.id と同じ・空でない文字列)/
@@ -182,9 +184,26 @@
   (#^ str status))
 
 (defclass [(dataclass :frozen True)] RateLimit []
+  "rate_limit_event の行: window = rateLimitType / utilization = その窓の使った割合 / resets-at = resetsAt(epoch 秒)/ status = 限度の
+   答えの語(allowed・allowed_warning・rejected — 名乗らなければ空。rejected = 口座の限度に当たって要求が拒まれた・#3983)。"
   (#^ str window)
   (setv #^ (| float None) utilization None)
-  (setv #^ (| int None) resets-at None))
+  (setv #^ (| int None) resets-at None)
+  (setv #^ str status ""))
+
+;; 限度の答えの語のうち、口座の限度に当たって要求が拒まれた事を名乗る語(#3983)。
+(setv RATE-LIMIT-REJECTED "rejected")
+;; assistant の行の error のうち、口座の限度に当たった事を名乗る語(#3983)。
+(setv ASSISTANT-ERROR-RATE-LIMIT "rate_limit")
+
+(defclass [(dataclass :frozen True)] AccountLimitHit []
+  "手番が口座の限度に当たった事実(#3983 — 上の層が「この口座の枠が尽きた」と知って、枠の残る口座へ付け替えるため)。
+   window = 尽きた限度の種類(rateLimitType — 例 five_hour。名乗らなければ None)/ resets-at = 枠が戻る刻(epoch 秒・名乗らなければ None)/
+   text = CLI が答えの代わりに出した限度の文(例「You've hit your session limit · resets 7am (UTC)」— 読めなければ空)。
+   どの口座かは CLI の行に無い — 手番を起こした上の層が知っている。"
+  (setv #^ (| str None) window None)
+  (setv #^ (| int None) resets-at None)
+  (setv #^ str text ""))
 
 (defclass [(dataclass :frozen True)] ModelWindow []
   "result の行の modelUsage の model 1 つの窓(会話の context の大きさを上限と比べるため — #3744): model = model の名(modelUsage の鍵)/
@@ -247,20 +266,22 @@
 (defclass [(dataclass :frozen True)] Completed []
   "CLI が誤りなく終えた手番。usage = この手番に読んだ result の行の消費の token の和(Usage)/
    cost-usd = この手番の額(USD)= CLI が名乗った累積の額(total_cost_usd)の、手番の始まりから終わりまでの差(状態機械 dialogue.hy が
-   数える)。始まりか終わりの額が分からなければ None(0 を発明しない)/ last-call-usage・last-call-model・model-windows は節の頭の註。"
+   数える)。始まりか終わりの額が分からなければ None(0 を発明しない)/ last-call-usage・last-call-model・model-windows は節の頭の註 /
+   account-limit = この手番が口座の限度に当たった事実(AccountLimitHit — 当たっていなければ None・#3983)。"
   (setv #^ str result-text "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
   (setv #^ (get tuple #(str ...)) input-refs #())
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
-  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
+  (setv #^ (| AccountLimitHit None) account-limit None))
 
 (defclass [(dataclass :frozen True)] Failed []
   "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
    usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)・
    cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)/
-   last-call-usage・last-call-model・model-windows は節の頭の註。"
+   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit は Completed と同じ(#3983)。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
@@ -269,7 +290,8 @@
   (setv #^ (get tuple #(str ...)) input-refs #())
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
-  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
+  (setv #^ (| AccountLimitHit None) account-limit None))
 
 (defclass [(dataclass :frozen True)] Interrupted []
   "止めた手番の終わり。process-kept = 同じ CLI の process が会話に残り次の手番も使うか(control の止め — 真)、止めと一緒に
@@ -365,7 +387,8 @@
                                                          :input (frozen-json-object (get block "input") "tool_use の block の input"))))
            :usage (if (isinstance usage dict) (usage-of usage) None)
            :model (or (text-at message "model") None)
-           :parent-tool-use-id (or (text-at record "parent_tool_use_id") None))))
+           :parent-tool-use-id (or (text-at record "parent_tool_use_id") None)
+           :error (or (text-at record "error") None))))
 
 (defk tool-answer-of [#^ dict block]
   {:pre [(: block dict)] :post [(: % ToolAnswer)] :tags {:context "claude-code" :role "foundation"}}
@@ -425,7 +448,8 @@
   (RateLimit :window window
              :utilization (if (and (isinstance utilization #(int float)) (not (isinstance utilization bool)))
                               (float utilization) None)
-             :resets-at (int-at info "resetsAt")))
+             :resets-at (int-at info "resetsAt")
+             :status (or (text-at info "status") "")))
 
 (defn classify-control-request [#^ dict record]
   (setv request (object-at record "request"))

@@ -164,11 +164,25 @@ class AgentTurnUsage:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentAccountLimit:
+    """The turn ran into the account's usage limit (agora-redesign #3983): the runtime refused the request and
+    answered with its limit message instead of the model.  ``window`` = which limit ran out (e.g. ``five_hour``;
+    ``None`` when not stated), ``resets_at`` = when it comes back (epoch seconds; ``None`` when not stated),
+    ``text`` = the runtime's limit message.  Which account it was is not in the runtime's lines — the layer that
+    started the turn knows it, and switches to an account with room left."""
+
+    window: str | None = None
+    resets_at: int | None = None
+    text: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
     """The turn finished.  ``resume_from`` continues this agent's context.
 
     ``usage`` = the tokens the turn used and what it cost (``None`` when the
-    runtime reports none of them).
+    runtime reports none of them).  ``account_limit`` = the turn ran into the
+    account's usage limit (``None`` when it did not — agora-redesign #3983).
     """
 
     result_text: str
@@ -178,6 +192,7 @@ class AgentTurnCompleted:
     last_call_usage: AgentTurnUsage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
+    account_limit: AgentAccountLimit | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -185,7 +200,8 @@ class AgentTurnFailed:
     """The agent runtime ended the turn with an error.
 
     ``usage`` = the tokens the turn used before the error and what they cost
-    (``None`` when the runtime reports none of them).
+    (``None`` when the runtime reports none of them).  ``account_limit`` = the
+    turn ran into the account's usage limit (``None`` when it did not — #3983).
     """
 
     detail: str
@@ -195,6 +211,7 @@ class AgentTurnFailed:
     last_call_usage: AgentTurnUsage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
+    account_limit: AgentAccountLimit | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

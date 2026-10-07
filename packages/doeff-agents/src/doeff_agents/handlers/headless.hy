@@ -21,6 +21,8 @@
 ;;;   EventsEffect / AwaitResultEffect / MonitorEffect → ClaudeReadTurnEvents(行を層 3 の出来事と手番の終わりに写す)
 ;;;   手番の終わりの last-call-usage・last-call-model・model-windows → AgentTurn*.last_call_usage(AgentTurnUsage — 額は None)・
 ;;;                                      last_call_model・model_windows(会話の今の context の大きさの材料 — agora-redesign #3744)
+;;;   Completed / Failed の account-limit(AccountLimitHit)→ AgentTurnCompleted / AgentTurnFailed.account_limit(AgentAccountLimit — 口座の限度に
+;;;                                      当たった事実・agora-redesign #3983)
 ;;;   AssistantMessage.tool-calls / ToolResult.answers → AgentToolUseEvent.tool_calls / AgentToolResultEvent.answers(道具の呼びの命令
 ;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
@@ -49,7 +51,7 @@
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
-  AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
+  AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError
@@ -184,6 +186,10 @@
    CLI が名乗らないので None。usage が無い・4 欄とも名乗られなければ None。"
   (if (is usage None) None (usage-of usage None)))
 
+(defn #^ (| AgentAccountLimit None) account-limit-of [hit]
+  "層 2 の口座の限度に当たった事実(AccountLimitHit か None)→ 層 3 の AgentAccountLimit(#3983 — 欄はそのまま写す)。"
+  (if (is hit None) None (AgentAccountLimit :window hit.window :resets-at hit.resets-at :text hit.text)))
+
 (defn end-of [end #^ str context-id]
   "層 2 の手番の終わり → 層 3 の手番の終わり(続きの身元 resume-from を載せる)。どの終わりも本体の最後の呼びの usage と model・
    model ごとの窓を運ぶ(#3744)。"
@@ -196,11 +202,13 @@
     (isinstance end Completed)
       (AgentTurnCompleted :result-text end.result-text :input-refs end.input-refs :resume-from context-id
                           :usage (usage-of end.usage end.cost-usd)
-                          :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
+                          :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
+                          :account-limit (account-limit-of end.account-limit))
     (isinstance end Failed)
       (AgentTurnFailed :detail end.detail :input-refs end.input-refs :resume-from context-id
                        :usage (usage-of end.usage end.cost-usd)
-                       :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
+                       :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
+                       :account-limit (account-limit-of end.account-limit))
     (isinstance end Interrupted)
       (AgentTurnInterrupted :cli-kept end.process-kept :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs
                             :resume-from context-id
