@@ -36,7 +36,8 @@
 (import doeff_claude_code.values [TurnInput Allow Deny])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
-                                 INPUT-FATE-TERMINAL merged-windows])
+                                 INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
+                                 ASSISTANT-ERROR-RATE-LIMIT])
 (import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
@@ -77,7 +78,8 @@
    last-call-usage・last-call-model = この host の手番に読んだ本体の会話(parent_tool_use_id が null)の最後の assistant の行の usage と
    model(まだ無ければ None)/ turn-windows = この host のターンに読んだ result の行の model ごとの窓(ターンの終わりの 3 欄 — #3744)/
    awaiting-first-input = 入力を書かずに事前起動した process が最初の入力を待っている(その間だけ SessionStart の hook の行をターンの
-   外の出力と数えない — quiet-before-first-input。最初のターンを始めると消える)。"
+   外の出力と数えない — quiet-before-first-input。最初のターンを始めると消える)/ limit-hit = この host の手番に読んだ、口座の限度に
+   当たった事実(拒まれた限度の行と、限度の答え — AccountLimitHit・まだ無ければ None・#3983)。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
@@ -94,7 +96,8 @@
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) turn-windows #())
-  (setv #^ bool awaiting-first-input False))
+  (setv #^ bool awaiting-first-input False)
+  (setv #^ (| AccountLimitHit None) limit-hit None))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・retire(この行で process を降ろす訳 — 無ければ
@@ -179,11 +182,16 @@
   "host の手番を閉じた状態(会話の id・CLI の能力・額の起点は保つ。最後の呼びと窓は次の手番へ持ち越さない)。"
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
            :deferred-result None :permissions #() :turn-usage (Usage)
-           :last-call-usage None :last-call-model None :turn-windows #()))
+           :last-call-usage None :last-call-model None :turn-windows #() :limit-hit None))
 
 (defn with-last-call [end #^ DialogueState state]
-  "手番の終わりに、その手番で読んだ本体の最後の呼びの usage と model・model ごとの窓を載せるため(どの終わり方でも同じ 3 欄 — #3744)。"
-  (replace end :last-call-usage state.last-call-usage :last-call-model state.last-call-model :model-windows state.turn-windows))
+  "手番の終わりに、その手番で読んだ本体の最後の呼びの usage と model・model ごとの窓を載せるため(どの終わり方でも同じ 3 欄 — #3744)。
+   CLI が終えた手番(Completed・Failed)には、口座の限度に当たった事実も載せる(#3983 — 止めた・消えた手番は限度で終わったのではない)。"
+  (setv called (replace end :last-call-usage state.last-call-usage :last-call-model state.last-call-model
+                        :model-windows state.turn-windows))
+  (match called
+    (| (Completed) (Failed)) (replace called :account-limit state.limit-hit)
+    _ called))
 
 (defn ended [#^ DialogueState state end #^ (| TurnResult None) [priced-by None] #^ (| StopReason None) [retire None]]
   "host の手番を end で閉じる遷移(process は降ろさない — 次の手番まで生きて待つ。retire が在れば、その訳で降ろす)。priced-by = 手番を
@@ -331,9 +339,21 @@
 (defn on-assistant [#^ DialogueState state #^ AssistantMessage message]
   "assistant の行: 本体の会話(parent_tool_use_id が null)の行なら、その usage と model を手番の最後の呼びとして覚える(1 つの呼びの
    block ごとの行は同じ usage を名乗るので、最後の行で置き換えてよい)。subagent の行は覚えない — 会話の context の大きさは本体の呼びの
-   入力の側で数えるため(#3744)。"
-  (if (is message.parent-tool-use-id None)
-      (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model))
+   入力の側で数えるため(#3744)。本体の行が error rate_limit(CLI が答えの代わりに出した限度の文)なら、口座の限度に当たった事実に
+   その文を足す(#3983 — 限度の種類と戻る刻は拒まれた限度の行から)。"
+  (cond
+    (is-not message.parent-tool-use-id None) (Transition :state state)
+    (= message.error ASSISTANT-ERROR-RATE-LIMIT)
+      (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model
+                                  :limit-hit (replace (or state.limit-hit (AccountLimitHit)) :text message.text)))
+    True (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model))))
+
+(defn on-rate-limit [#^ DialogueState state #^ RateLimit limit]
+  "rate_limit_event の行: 拒まれた(status rejected)なら、口座の限度に当たった事実に限度の種類と戻る刻を置く(#3983 — 限度の文は
+   限度の答えの行から)。許された行は何も変えない。"
+  (if (= limit.status RATE-LIMIT-REJECTED)
+      (Transition :state (replace state :limit-hit (replace (or state.limit-hit (AccountLimitHit)) :window limit.window
+                                                                  :resets-at limit.resets-at)))
       (Transition :state state)))
 
 (defk quiet-before-first-input [kind]
@@ -361,4 +381,5 @@
     (isinstance kind PermissionRequested) (on-permission-request state kind)
     (isinstance kind TurnResult) (on-result state kind)
     (isinstance kind AssistantMessage) (on-assistant state kind)
+    (isinstance kind RateLimit) (on-rate-limit state kind)
     True (Transition :state state)))

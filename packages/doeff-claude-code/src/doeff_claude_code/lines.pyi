@@ -52,6 +52,7 @@ class AssistantMessage:
     usage: Usage | None = None
     model: str | None = None
     parent_tool_use_id: str | None = None
+    error: str | None = None
 
 @dataclass(frozen=True)
 class ToolAnswer:
@@ -130,6 +131,16 @@ class RateLimit:
     window: str
     utilization: float | None = None
     resets_at: int | None = None
+    status: str = ''
+
+RATE_LIMIT_REJECTED: str
+ASSISTANT_ERROR_RATE_LIMIT: str
+
+@dataclass(frozen=True)
+class AccountLimitHit:
+    window: str | None = None
+    resets_at: int | None = None
+    text: str = ''
 
 @dataclass(frozen=True)
 class ModelWindow:
@@ -175,6 +186,7 @@ class Completed:
     last_call_usage: Usage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ...
+    account_limit: AccountLimitHit | None = None
 
 @dataclass(frozen=True)
 class Failed:
@@ -187,6 +199,7 @@ class Failed:
     last_call_usage: Usage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ...
+    account_limit: AccountLimitHit | None = None
 
 @dataclass(frozen=True)
 class Interrupted:

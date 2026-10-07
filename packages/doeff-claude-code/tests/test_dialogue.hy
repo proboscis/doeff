@@ -414,3 +414,43 @@
                   "message" "content")
              [{"type" "text" "text" "look"}
               {"type" "image" "source" {"type" "base64" "media_type" "image/png" "data" "AAAA"}}])))
+
+
+;; --- 口座の限度に当たった手番(#3983)--------------------------------------------------------------------------
+;; 形の出所: Claude Code 2.1.291 の会話の記録(zeus の subagent の記録 2026-10-07 02:59Z)の答えの行 — model "<synthetic>"・本文
+;; "You've hit your session limit · resets 12pm (Asia/Tokyo)"・error "rate_limit"・quotaLimits {status rejected・resetsAt・rateLimitType
+;; five_hour・overageStatus rejected}。stream-json の rate_limit_event の rate_limit_info は同じ欄(status・resetsAt・rateLimitType)を
+;; 運ぶ形として読む(生の stream-json の見本は手元に無い — 推定)。
+(val LIMIT-TEXT "You've hit your session limit · resets 12pm (Asia/Tokyo)")
+(val LIMIT-REJECTED {"type" "rate_limit_event"
+                     "rate_limit_info" {"status" "rejected" "resetsAt" 1791342000 "rateLimitType" "five_hour" "overageStatus" "rejected"}})
+(val LIMIT-ALLOWED {"type" "rate_limit_event"
+                    "rate_limit_info" {"status" "allowed" "resetsAt" 1791342000 "rateLimitType" "five_hour"
+                                       "unifiedWindows" {"five_hour" {"utilization" 0.4}}}})
+(val LIMIT-ANSWER {"type" "assistant" "parent_tool_use_id" None "error" "rate_limit"
+                   "message" {"id" "msg_l" "model" "<synthetic>" "content" [{"type" "text" "text" LIMIT-TEXT}]
+                              "usage" {"input_tokens" 0 "output_tokens" 0}}})
+(val LIMIT-RESULT {"type" "result" "subtype" "success" "is_error" True "result" LIMIT-TEXT "api_error_status" 429})
+
+
+(deftest test-a-turn-that-hits-the-account-limit-says-so-in-its-end
+  ;; 限度の拒みの行と限度の答え(error rate_limit)を読んだ手番の終わりは、閉じた型の欄 account-limit(どの限度・戻る刻・限度の文)を持つ。
+  ;; 失敗ケース(前の形): 終わりに欄が無く、上の層が「口座が尽きた」と知れない(本番 2026-10-07 14:55 の aj-FH8KCFN6… が終わったまま)。
+  (var state (started))
+  (for [record [LIMIT-REJECTED LIMIT-ANSWER]]
+    (:= state (. (read-record state record) state)))
+  (val read (read-record state LIMIT-RESULT))
+  (assert (isinstance read.end Failed) (repr read.end))
+  (assert (= read.end.account-limit (lines.AccountLimitHit :window "five_hour" :resets-at 1791342000 :text LIMIT-TEXT)) (repr read.end)))
+
+
+(deftest test-an-allowed-limit-line-is-not-a-limit-hit-and-the-hit-is-not-carried-to-the-next-turn
+  ;; 許された限度の行(status allowed)だけの手番は account-limit を持たない。限度に当たった手番の次の手番は空から数え直す。
+  (val allowed (. (read-record (started) LIMIT-ALLOWED) state))
+  (val calm (read-record allowed SUCCESS-RESULT))
+  (assert (and (isinstance calm.end Completed) (is calm.end.account-limit None)) (repr calm.end))
+  (val hit (. (read-record (. (read-record (started) LIMIT-REJECTED) state) LIMIT-ANSWER) state))
+  (val failed (read-record hit LIMIT-RESULT))
+  (val again (dialogue.begin-turn failed.state (TurnInput "again" "msg-2")))
+  (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
+  (assert (and (isinstance second.end Completed) (is second.end.account-limit None)) (repr second.end)))

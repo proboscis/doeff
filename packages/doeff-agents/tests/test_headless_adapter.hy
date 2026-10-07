@@ -1395,3 +1395,22 @@
     (fake-claude-process-layer-handler))
   (with [(pytest.raises ValueError :match "ちょうど 1 つ")]
     (fake-claude-process-layer-handler :responder fake-responder :world (FakeClaudeWorld fake-responder))))
+
+
+(deftest test-the-account-limit-of-a-turn-end-reaches-the-agent-turn-end
+  ;; agora-redesign #3983: 層 2(doeff-claude-code)の手番の終わりが運ぶ「口座の限度に当たった」事実(AccountLimitHit)を、層 3 の
+  ;; AgentTurnCompleted・AgentTurnFailed の欄 account_limit(AgentAccountLimit — 限度の種類・戻る刻・限度の文)へ写す。当たっていない
+  ;; 終わりは None。失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(配る担当)が「口座が尽きた」と知れない。
+  (import doeff_claude_code.lines [AccountLimitHit Completed Failed])
+  (import doeff_agents.handlers.headless [end-of])
+  (import doeff_agents.effects.agent [AgentAccountLimit AgentTurnCompleted AgentTurnFailed])
+  (val hit (AccountLimitHit :window "five_hour" :resets-at 1791342000 :text "You've hit your session limit · resets 7am (UTC)"))
+  (val failed (end-of (Failed :detail "You've hit your session limit · resets 7am (UTC)" :account-limit hit) "ctx-1"))
+  (assert (isinstance failed AgentTurnFailed) failed)
+  (assert (= failed.account-limit (AgentAccountLimit :window "five_hour" :resets-at 1791342000
+                                                     :text "You've hit your session limit · resets 7am (UTC)"))
+          failed)
+  (val completed (end-of (Completed :result-text "ok" :account-limit hit) "ctx-1"))
+  (assert (= completed.account-limit failed.account-limit) completed)
+  (val calm (end-of (Completed :result-text "ok") "ctx-1"))
+  (assert (and (isinstance calm AgentTurnCompleted) (is calm.account-limit None)) calm))
