@@ -197,3 +197,141 @@ def test_a_function_named_like_an_unrequired_macro_keeps_the_record_current(tree
     # あっても入らないので、記録は作った直後に今のまま。
     record = tree.record("chooser")
     assert tree.is_current(record), "選んで require していない macro と同じ名の関数の呼び出しで古いと判じた"
+
+
+# ---- 実物の doeff_hy の macro(doeff_hy を一時の dir に写し、別の process で記録を作って照らす)------------------------------
+
+#: defk・val・<-・defrecord・defhandler だけを使う module(agora の controllers の module の形)。
+REAL_USER = """\
+(require doeff-hy.macros [defk <- val])
+(require doeff-hy.record [defrecord])
+(require doeff-hy.handle [defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Fetch [EffectBase]
+  #^ str source)
+
+(defrecord Row
+  "行"
+  {:tags {:context "macro-use-probe" :role "type"}}
+  (#^ int value))
+
+(val base 1)
+
+(defk step [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "judgment"}}
+  "1 を足す。"
+  (+ n base))
+
+(defk job [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "entry"}}
+  "束ね。"
+  (<- a (step n))
+  a)
+
+(defhandler fetch-handler
+  (Fetch [source]
+    (resume source)))
+"""
+
+#: 子の process: 写した doeff_hy で使い手を import と同じ口で compile して記録を JSON で書く(record)か、書いた記録を照らす
+#: (check)。読んだ doeff_hy の在りかと、記録の file 単位で覆う module の名も出す。
+REAL_CHILD = """\
+import importlib.machinery, json, sys
+from pathlib import Path
+root, mode, stored = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+sys.path.insert(0, root)
+import hy
+import doeff_hy
+from doeff_hy_bytecode_guard import record_from_json, record_is_current_here, record_to_json
+from doeff_hy_bytecode_guard import records, source_to_code_as_import
+if mode == "record":
+    path = root + "/macro_use_probe/user.hy"
+    loader = importlib.machinery.SourceFileLoader("macro_use_probe.user", path)
+    record = records.record_of(source_to_code_as_import(loader, open(path, "rb").read(), path))
+    stored.write_text(json.dumps(record_to_json(record)))
+    print(json.dumps({"files": [row.module for row in record.files], "doeff_hy": doeff_hy.__file__}))
+else:
+    record = record_from_json(json.loads(stored.read_text()))
+    print(json.dumps({"current": record_is_current_here(record), "doeff_hy": doeff_hy.__file__}))
+"""
+
+
+@dataclass(frozen=True)
+class RealTree:
+    """一時の dir に写した doeff_hy(lib/doeff_hy)と、それを使う module の根・記録の file。"""
+
+    lib: Path
+    root: Path
+    stored: Path
+
+    @property
+    def macros(self) -> Path:
+        return self.lib / "doeff_hy" / "macros.hy"
+
+    def run(self, mode: str) -> dict[str, object]:
+        """子の process で 1 度走らせた答え(写した doeff_hy を読んだことも確かめる)。"""
+        import json
+        import subprocess
+
+        done = subprocess.run(
+            [sys.executable, "-c", REAL_CHILD, str(self.root), mode, str(self.stored)],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            check=False,
+        )
+        assert done.returncode == 0, done.stderr
+        answer = json.loads(done.stdout.strip().splitlines()[-1])
+        assert Path(str(answer["doeff_hy"])).is_relative_to(self.lib), answer
+        return answer
+
+
+@pytest.fixture
+def real_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RealTree:
+    import shutil
+
+    import doeff_hy
+
+    lib = tmp_path / "lib"
+    shutil.copytree(
+        Path(doeff_hy.__file__).parent, lib / "doeff_hy", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    root = tmp_path / "proj"
+    (root / "macro_use_probe").mkdir(parents=True)
+    (root / "macro_use_probe" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "macro_use_probe" / "user.hy").write_text(REAL_USER, encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(lib))
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    return RealTree(lib, root, tmp_path / "record.json")
+
+
+def test_the_record_of_a_defk_user_does_not_cover_doeff_hy_macros_by_its_file(real_tree: RealTree) -> None:
+    # 直す前は赤(agora の records_turns.hy の記録): defk などの閉包の途中で、関数の中の import の先(outcome_forms・
+    # declarations・defhandler が読む doeff_hy.macros)を module ごと file 単位で覆い、macros.hy が入っていた。
+    files = real_tree.run("record")["files"]
+    assert "doeff_hy.macros" not in files, files
+
+
+def test_a_changed_deftest_keeps_the_record_of_a_defk_user_current(real_tree: RealTree) -> None:
+    # 直す前は赤: macros.hy の deftest(使い手が使わない macro)の本体を 1 行替えても古くない。
+    real_tree.run("record")
+    _replace(
+        real_tree.macros,
+        "Define an effectful test that expands to a pytest-compatible function.",
+        "Define an effectful test (changed).",
+    )
+    assert real_tree.run("check")["current"] is True, "使わない deftest を替えただけで古いと判じた"
+
+
+def test_a_changed_defk_makes_the_record_of_a_defk_user_stale(real_tree: RealTree) -> None:
+    # 冷えるべき時: 使った defk の本体(docstring の定数)を替えたら古い。
+    real_tree.run("record")
+    _replace(
+        real_tree.macros,
+        '"Define a kleisli function (@do decorator)',
+        '"Define a kleisli function (@do decorator, changed)',
+    )
+    assert real_tree.run("check")["current"] is False, "使った defk を替えたのに古いと判じない"
