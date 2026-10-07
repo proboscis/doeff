@@ -264,18 +264,28 @@ class JobStatus:
 
 # --- 宣言の読み取り -------------------------------------------------------------
 
+@dataclass(frozen=True, kw_only=True)
+class HeartbeatSent:
+    """宣言の読みが coordinator へ送った heartbeat(送った刻・名乗った worker の名・その時の生存の窓)。"""
+
+    at: int
+    worker: str
+    lease_ms: int
+
 @dataclass(frozen=True)
 class DesiredJobs:
     jobs: tuple[JobSpec, ...]
     warm: tuple[WarmEnv, ...] = ()
     cut_off: CutOff | None = None
     changed: Future[bool] | None = field(default=None, compare=False)
+    sent: HeartbeatSent | None = field(default=None, compare=False)
 
 @dataclass(frozen=True)
 class DesiredUnreadable:
     """宣言が読めない。"""
 
     reason: str
+    sent: HeartbeatSent | None = field(default=None, compare=False)
 
 # --- effect ----------------------------------------------------------------------
 
