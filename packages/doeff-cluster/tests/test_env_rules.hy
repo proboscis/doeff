@@ -65,3 +65,31 @@
   ;; worker の uv の cache の dir(main の --uv-cache)は準備の process へそのまま渡る(state の下に固定しない)。
   (assert (in #("--uv-cache" "/uc") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
   (assert (= (cut argv -2 None) #("--progress" "/p")) argv))
+
+
+(import json)
+(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster.worker.intent.env_prepare_model [BytecodeTree PrepareRequest])
+(import doeff_cluster.worker.core.env_rules [prepare-request])
+(import doeff_cluster.worker.protocol.env_translation [compile-argv request-of-json])
+
+(deftest test-the-compile-jobs-ride-the-request-into-the-compile-command-only-when-given
+  ;; 失敗ケース(2026-10-08): 準備の頼みの並べる数(recreate の job の旧い process が動いている間の新しい版の準備 — 旧と同じ memory の上限を
+  ;; 分け合う)は、env-host が書く頼みの JSON(compileJobs)→ 準備の process が読む PrepareRequest → 焼く道具の命令の `--jobs N` と運ぶ。
+  ;; 持たない頼み(null)は命令に `--jobs` を足さず、道具の既定(cgroup の CPU の上限)のまま。直す前は頼みにも命令にも並べる数が無かった。
+  (val env (RuntimeEnv :repos #((RepoCheckout :name "app" :url "file:///remotes/app.git" :commit (* "1" 40)))
+                       :project (PythonProject :repo "app" :path "." :lock-sha256 (* "0" 64) :python "3.14")
+                       :import-roots #("app/.")))
+  (<- declared dict (runtime-env->json env))
+  (val trees #((BytecodeTree :tree "/s/roots/k/app" :roots #(".") :declared True)))
+  (for [jobs [2 None]]
+    (<- body dict (prepare-request declared "k" "linux-x86_64" "/s/roots/k" #() 0 jobs))
+    (assert (= (get body "compileJobs") jobs) body)
+    (<- request PrepareRequest (request-of-json (json.loads (json.dumps body))))
+    (assert (= request.compile-jobs jobs) request)
+    (<- argv tuple (compile-argv "uv" "/w/code_prepare.hy" "/s/roots/k/app" trees #() request.compile-jobs))
+    (val pairs (tuple (zip (cut argv 0 -1) (cut argv 1 None))))
+    (if (is jobs None)
+        (assert (not-in "--jobs" argv) argv)
+        (assert (in #("--jobs" (str jobs)) pairs) argv))))
