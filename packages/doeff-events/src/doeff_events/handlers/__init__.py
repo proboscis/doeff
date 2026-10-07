@@ -1,5 +1,6 @@
 """Event handler implementations."""
 
+from doeff_events.handlers.memory_files import MemoryFiles, announce_file_change, memory_file_watch_handler
 from doeff_events.handlers.memory_notices import (
     MemoryBroker,
     cut_broker,
@@ -22,12 +23,17 @@ from doeff_events.handlers.notice_events import (
     WhenUnsent,
     notice_events_handler,
 )
+from doeff_events.handlers.os_files import os_file_watch_handler
 from doeff_events.handlers.redis_notices import broker_back_by_retry, redis_notice_handler
 from doeff_events.handlers.timer import timer_handler
 
 from .memory import EventBus, SubscriberQueue, event_handler, subscribed_event_handler
 
 __all__ = [
+    "MemoryFiles",
+    "announce_file_change",
+    "memory_file_watch_handler",
+    "os_file_watch_handler",
     "GAP_NOTICE",
     "Drop",
     "EventBus",

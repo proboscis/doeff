@@ -20,6 +20,9 @@ dependencies = [
 # The Redis handler (doeff_events.handlers.redis_streams) is the only user of the client; a process that uses the
 # in-memory broker does not need it (agora-redesign #3850).
 redis = ["redis>=5.0"]
+# The operating-system file watch (doeff_events.handlers.os_files) is the only user of watchfiles; a process that uses
+# the in-memory file watch does not need it (#3977).
+files = ["watchfiles>=1.0"]
 
 [build-system]
 requires = ["hatchling"]
