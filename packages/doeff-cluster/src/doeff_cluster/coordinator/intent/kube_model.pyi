@@ -2,11 +2,6 @@
 
 from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
-from doeff_hy.table import TableWrite as TableWrite
-from doeff_cluster.coordinator.intent.cluster_model import DeploymentSeen as DeploymentSeen
-from doeff_cluster.coordinator.intent.cluster_model import DeploymentUnreadable as DeploymentUnreadable
-from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
-from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 
 class KubeUnavailable(Exception):
     ...
@@ -30,24 +25,6 @@ class FollowDeployments(EffectBase):
     now_ms: int
 
 @dataclass(frozen=True)
-class StartKubeReads(EffectBase):
-    nodes: tuple[str, ...]
-    started_ms: int
-
-@dataclass(frozen=True)
-class CollectKubeReads(EffectBase):
+class FollowNodes(EffectBase):
+    names: tuple[str, ...]
     now_ms: int
-    name_after_ms: int
-
-@dataclass(frozen=True, kw_only=True)
-class KubeReadsIdle:
-    ...
-
-@dataclass(frozen=True, kw_only=True)
-class KubeReadsRunning:
-    started_ms: int
-    overdue: bool
-
-@dataclass(frozen=True, kw_only=True)
-class KubeReadsDone:
-    nodes: tuple[TableWrite[NodeLabelsSeen | NodeLabelsUnreadable], ...]

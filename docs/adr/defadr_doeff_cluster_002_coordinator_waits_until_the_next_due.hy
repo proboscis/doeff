@@ -70,7 +70,7 @@
      (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない — #3865 の見直しの追記)。")
      (rule R3 "期限の関数の答えは閉じた型 DueAt(刻)・DueNow(今すぐ — 今の刻で判断すれば状態が変わる)・DueNever(状態がこのままなら時刻では変わらない)。数の now + 1 を返さない。落ち着いた状態(要求の無い歩をもう 1 歩進めても変わらない)では DueNow を返さない。")
      (rule R4 "要求を受けずに状態を変えた歩の後は、待たずにもう 1 歩進める(after-step)。要求を受けた歩の後は、次に起きる刻まで待つ — 要求で変わった状態が落ち着いていなければ期限の関数が DueNow を返す(R3)ので、要求ごとに空の歩を回さない(2026-10-07 の直し A・cisco-c8 の可。前は要求を受けた歩の後も必ずもう 1 歩回していた)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
-     (rule R5 "Rollout の相手の Kubernetes の Deployment は時間で読みに行かない(agora-redesign #3868 — 以前の Rollout の歩の間隔の下限 ROLLOUT-TICK-MS の 1 秒ごとの読みと、台数を持つ相手の 10 秒ごとの読み直しは消した)。coordinator は Rollout が観測を要る Deployment を list の後の watch で見張り(FollowDeployments・foundation/kube_client の follow)、見張りが変化を受け渡した時に受付の箱を起こす(外の出来事 — R1)。node の label の読みは調停ループの外で走り、読み終えた時に受付の箱を起こす(読み直しの期限は node-reread-due に残る — Node の watch は agora-redesign #4070)。Rollout の歩は毎歩回るので、rollout-due は now より後の期限だけを返す。成功した Deployment への書きは、その書きの後の観測が届くまで出し直さない(rollout_policy.action-due — 見張りが伝える前の古い観測で同じ書きを重ねない。1 秒の間隔がこれを隠していた)。失敗した action(印の annotation を含む)は最後の失敗から倍々の間を空けて出し直し、その刻は終わった Rollout でも期限にする。見張りの stream は TCP の keepalive を付けた接続で受け、繋がったまま黙った相手を約 30 秒で読めなかった観測にする。")
+     (rule R5 "Rollout の相手の Kubernetes の Deployment は時間で読みに行かない(agora-redesign #3868 — 以前の Rollout の歩の間隔の下限 ROLLOUT-TICK-MS の 1 秒ごとの読みと、台数を持つ相手の 10 秒ごとの読み直しは消した)。coordinator は Rollout が観測を要る Deployment を list の後の watch で見張り(FollowDeployments・foundation/kube_client の follow)、見張りが変化を受け渡した時に受付の箱を起こす(外の出来事 — R1)。worker の置かれた node の label も時間で読みに行かない(agora-redesign #4070 — 以前の 60 秒ごとの読み直し NODE-LABELS-TTL-MS と、その期限 node-reread-due は消した)。coordinator は heartbeat で申告された node を同じ形で見張り(FollowNodes・foundation/kube_client の follow-node)、label の変化を受け渡した時に受付の箱を起こす。Rollout の歩は毎歩回るので、rollout-due は now より後の期限だけを返す。成功した Deployment への書きは、その書きの後の観測が届くまで出し直さない(rollout_policy.action-due — 見張りが伝える前の古い観測で同じ書きを重ねない。1 秒の間隔がこれを隠していた)。失敗した action(印の annotation を含む)は最後の失敗から倍々の間を空けて出し直し、その刻は終わった Rollout でも期限にする。見張りの stream は TCP の keepalive を付けた接続で受け、繋がったまま黙った相手を約 30 秒で読めなかった観測にする。")
      (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")
      (rule R7 "模擬だけの物(worker の代役が静かな拍を眠る事と、眠る前に預ける heartbeat)は受け手の層(模擬の受付の列 coordinator/protocol/request_queue.hy)に置く。列は預けた heartbeat をその刻に普通の heartbeat の要求として調停ループへ渡し、調停ループは本番と同じ要求だけを受ける(調停ループに模擬の材料を渡す effect を持たない — 前の IdleNextRequests・IdleTaken は消した)。")]
   :laws
@@ -123,8 +123,16 @@
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-written-deployment-action-waits-for-an-observation-after-the-write"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-repeated-action-is-dated-at-its-last-attempt"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-failing-annotation-waits-for-the-retry-gap"
-                     "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-read-answers"]
+                     "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers"]
        :wiring "配線済み(2026-10-08・#3868 の単位 2)")
+     (law a-node-label-is-followed-by-events
+       :statement "for_all worker の置かれた node の label が変わらない区間 I: I の中で coordinator が Kubernetes の Node を読みに行く数 = 0(見張りの始めの list と変化の出来事だけ)∧ label が変わった刻 t に受付の箱が起き、その歩で worker の導いた能力が新しい label から導き直される(次の周期の刻まで古い能力を持ち続けない)"
+       :counterexamples
+         [(counterexample "node の label を 60 秒ごとに読み直す(NODE-LABELS-TTL-MS)— 静かな 150 秒に 2 回読み、会社の機体の label を外した刻の 1 秒後も worker が company-machine を持ち続ける(#4070 の失敗ケース b2f856817)")]
+       :enforced-by ["packages/doeff-cluster/tests/test_node_label_events.hy"
+                     "packages/doeff-cluster/tests/test_kube_client_watch.hy::test-a-node-is-listed-by-name-and-a-label-change-reaches-on-body"
+                     "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers"]
+       :wiring "配線済み(2026-10-08・#4070)")
      (law a-sleeping-stand-in-changes-no-decision
        :statement "for_all 筋書き: 期限だけで起きる走りと、余計に起こす走り(coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい(worker の代役は本番と同じ待ちで周の間を待つ — agora-redesign #3871 の単位 5。前の形は代役が静かな拍を眠り、預けた heartbeat を列がその刻に渡した)"
        :counterexamples

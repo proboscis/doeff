@@ -2,10 +2,10 @@
 ;;; coordinator の kube_model の effect に答える handler は coordinator/protocol/kube.hy — この module は intent の型を読まない
 ;;; (層 foundation が読めるのは foundation だけ)ので、届かない・断られた時に投げる例外の型は組み立てる側(entry)が :fail で渡す。
 ;;; Deployment と Node は API の JSON の本文を中を読まずに運ぶ値(OpaqueJson)で渡すだけ — 観測の欄の読みは答え手の側
-;;; (coordinator/protocol/kube.hy の deployment-view・#2764・#2807)。
-;;; Deployment は時間で読みに行かず、follow で 1 つずつ list の後の watch で見張る(#3868): daemon の thread が list で今を伝え、その一覧の
-;;; 版から watch の stream で変化の出来事を受けて伝える。stream が普通に終われば覚えた版から受け直し、版が古すぎれば(410)list し直し、
-;;; 届かない・断られた時は理由を伝えて retry-seconds の後に list し直す。
+;;; (coordinator/protocol/kube.hy の deployment-view・node-labels-view・#2764・#2807)。
+;;; Deployment も Node も時間で読みに行かず、1 つずつ list の後の watch で見張る(follow — #3868・follow-node — #4070): daemon の thread が
+;;; list で今を伝え、その一覧の版から watch の stream で変化の出来事を受けて伝える。stream が普通に終われば覚えた版から受け直し、版が
+;;; 古すぎれば(410)list し直し、届かない・断られた時は理由を伝えて retry-seconds の後に list し直す(ObjectWatch — 2 つの種類で同じ)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
@@ -63,6 +63,10 @@
     "名前空間の Deployment の一覧の URL(見張りの list と watch が使う)。"
     (.format "{}/apis/apps/v1/namespaces/{}/deployments" self.base namespace))
 
+  (defn #^ str nodes-url [self]
+    "Node の一覧の URL(見張りの list と watch が使う — Node は名前空間を持たない)。"
+    (.format "{}/api/v1/nodes" self.base))
+
   (defn #^ str path [self #^ str namespace #^ str name #^ str [sub ""]]
     "Deployment 1 つ(と scale などの subresource)の URL(台数と annotation の書きが使う)。"
     (.format "{}/{}{}" (.deployments-url self namespace) name sub))
@@ -80,16 +84,22 @@
       (raise (self.fail (.format "k8s の API が {} を返した: {}" response.status-code (cut response.text 0 300)))))
     (.json response))
 
-  (defn #^ OpaqueJson node-labels [self #^ str node]
-    "Node の metadata.labels(能力の導出の材料)を、中を読まずに運ぶ JSON の値で返す(解くのは coordinator/protocol/kube — #2807)。"
-    (OpaqueJson.of (or (get (get (.call self "GET" (.format "{}/api/v1/nodes/{}" self.base node)) "metadata") "labels") {})))
-
   (defn #^ (get Callable #([] None)) follow [self #^ str namespace #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
                                              #^ (get Callable #([str] None)) on-error]
     "Deployment 1 つを list の後の watch で見張る daemon の thread(名 kube-watch)を始め、止める関数を返すため(時間で読みに行かず、
      変化の出来事で伝える — #3868)。on-body = Deployment の object(list の今と、ADDED・MODIFIED の出来事)・on-error = 無い・消された・
      届かない・断られた・読めない理由。どちらも thread の中から呼ぶ。止めた後はどちらも呼ばない。"
-    (setv watching (DeploymentWatch self namespace name on-body on-error))
+    (.watch-object self (ObjectWatch self (.deployments-url self namespace) name "Deployment" (+ namespace "/" name) on-body on-error)))
+
+  (defn #^ (get Callable #([] None)) follow-node [self #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
+                                                  #^ (get Callable #([str] None)) on-error]
+    "Node 1 つを list の後の watch で見張る daemon の thread(名 kube-watch)を始め、止める関数を返すため(worker の置かれた node の label を
+     時間で読みに行かず、変化の出来事で伝える — #4070)。on-body = Node の object・on-error = 無い・消された・届かない・断られた・読めない
+     理由(follow と同じ)。"
+    (.watch-object self (ObjectWatch self (.nodes-url self) name "Node" name on-body on-error)))
+
+  (defn #^ (get Callable #([] None)) watch-object [self #^ "ObjectWatch" watching]
+    "見張り 1 つの run を daemon の thread で回し始め、止める関数を返すため(follow と follow-node の共通の始め)。"
     (.start (threading.Thread :target watching.run :name "kube-watch" :daemon True))
     watching.stop)
 
@@ -104,15 +114,7 @@
     (.call self "PATCH" (.path self namespace name)
            :content-type "application/merge-patch+json"
            :content (.encode (json.dumps {"metadata" {"annotations" annotations}}) "utf-8"))
-    None)
-
-  (defn #^ (get Callable #([] bool)) in-background [self #^ (get Callable #([] None)) work #^ (get Callable #([] None)) then]
-    "node の label の読み(coordinator/protocol/kube の KubeReadBatch)を調停ループの外の daemon の thread で読み、終わったかを答える
-     関数を返すため(同期の client が scheduler の thread を塞がない — #2807)。work が返った後に終わった印を立て、その後に then を呼ぶ
-     (呼び手は then で受付の箱を起こす — 印より前に起こすと、起きたループが「まだ」と読んで眠り直す・#3868)。"
-    (setv done (threading.Event))
-    (.start (threading.Thread :target (fn [] (work) (.set done) (then)) :name "kube-reads" :daemon True))
-    done.is-set))
+    None))
 
 
 (defrecord WatchNext
@@ -121,13 +123,15 @@
   (#^ float pause))
 
 
-(defclass DeploymentWatch []
-  "Deployment 1 つの見張り(KubeClient.follow が作り、daemon の thread で run を回す — #3868)。stopped = 止める合図・response = 今
+(defclass ObjectWatch []
+  "k8s の object 1 つ(Deployment か Node)の見張り(KubeClient.follow・follow-node が作り、daemon の thread で run を回す — #3868・#4070)。
+   list-url = その種類の一覧の URL・name = 見張る object の名(list と watch を名の fieldSelector で絞る)・kind = 理由の文で種類を名指す
+   語(Deployment・Node)・key = 理由の文で相手を名指す綴り(Deployment は「ns/名」・Node は名)・stopped = 止める合図・response = 今
    受けている watch の stream(止める時に閉じて、読みの途中の thread を抜けさせる)。"
-  (defn #^ None __init__ [self #^ KubeClient client #^ str namespace #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
-                          #^ (get Callable #([str] None)) on-error]
-    (setv self.client client self.namespace namespace self.name name self.on-body on-body self.on-error on-error
-          self.stopped (threading.Event) self.response None)
+  (defn #^ None __init__ [self #^ KubeClient client #^ str list-url #^ str name #^ str kind #^ str key
+                          #^ (get Callable #([OpaqueJson] None)) on-body #^ (get Callable #([str] None)) on-error]
+    (setv self.client client self.list-url list-url self.name name self.kind kind self.key key self.on-body on-body
+          self.on-error on-error self.stopped (threading.Event) self.response None)
     None)
 
   (defn #^ None stop [self]
@@ -138,12 +142,8 @@
       (.close response))
     None)
 
-  (defn #^ str key [self]
-    "理由の文で見張りの相手を名指すため(「ns/名」)。"
-    (+ self.namespace "/" self.name))
-
   (defn #^ None tell-body [self #^ dict body]
-    "止められていなければ、Deployment の object を伝えるため。"
+    "止められていなければ、見張る object(Deployment か Node)を伝えるため。"
     (when (not (.is-set self.stopped))
       (self.on-body (OpaqueJson.of body)))
     None)
@@ -161,14 +161,14 @@
     (if (isinstance version str) version None))
 
   (defn #^ dict params [self]
-    "list と watch を見張りの相手の Deployment 1 つに絞る query(名の fieldSelector)。"
+    "list と watch を見張りの相手の object 1 つに絞る query(名の fieldSelector)。"
     (dict :fieldSelector (+ "metadata.name=" self.name)))
 
   (defn #^ (| str None) list-once [self]
-    "list で Deployment の今(在れば object・無ければ「無い」理由)を伝え、watch を始める一覧の版を返すため。届かない・断られた・読めない
+    "list で object の今(在れば object・無ければ「無い」理由)を伝え、watch を始める一覧の版を返すため。届かない・断られた・読めない
      時は理由を伝えて None(呼び手が retry-seconds の後に list し直す)。"
     (try
-      (setv response (.get self.client.client (.deployments-url self.client self.namespace) :headers (.headers self.client)
+      (setv response (.get self.client.client self.list-url :headers (.headers self.client)
                            :params (.params self)))
       (except [error httpx.HTTPError]
         (.tell-error self (.format "k8s の API に届かない: {}: {}" (. (type error) __name__) error))
@@ -179,16 +179,16 @@
     (try
       (setv listed (.json response))
       (except [error ValueError]
-        (.tell-error self (.format "k8s の Deployment の一覧が JSON でない: {}" error))
+        (.tell-error self (.format "k8s の {} の一覧が JSON でない: {}" self.kind error))
         (return None)))
-    (setv version (DeploymentWatch.version-of listed)
+    (setv version (ObjectWatch.version-of listed)
           items (if (isinstance listed dict) (.get listed "items") None))
     (when (or (is version None) (not (isinstance items list)))
-      (.tell-error self "k8s の Deployment の一覧の形が違う(metadata.resourceVersion・items)")
+      (.tell-error self (.format "k8s の {} の一覧の形が違う(metadata.resourceVersion・items)" self.kind))
       (return None))
     (if (and items (isinstance (get items 0) dict))
         (.tell-body self (get items 0))
-        (.tell-error self (+ "無い Deployment: " (.key self))))
+        (.tell-error self (.format "無い {}: {}" self.kind self.key)))
     version)
 
   (defn #^ WatchNext watch-once [self #^ str version]
@@ -199,7 +199,7 @@
                                     "timeoutSeconds" (str self.client.watch-seconds)})
           retry (WatchNext :version None :pause self.client.retry-seconds))
     (try
-      (with [response (.stream self.client.client "GET" (.deployments-url self.client self.namespace) :headers (.headers self.client)
+      (with [response (.stream self.client.client "GET" self.list-url :headers (.headers self.client)
                                :params params
                                :timeout (httpx.Timeout self.client.timeout
                                                        :read (+ self.client.watch-seconds WATCH-READ-MARGIN-SECONDS)))]
@@ -218,13 +218,13 @@
             (setv event (json.loads line))
             (match event
               {"type" (| "ADDED" "MODIFIED") "object" body} :if (isinstance body dict)
-                (do (setv current (or (DeploymentWatch.version-of body) current))
+                (do (setv current (or (ObjectWatch.version-of body) current))
                     (.tell-body self body))
               {"type" "DELETED" "object" body}
-                (do (setv current (or (DeploymentWatch.version-of body) current))
-                    (.tell-error self (+ "Deployment が消された: " (.key self))))
+                (do (setv current (or (ObjectWatch.version-of body) current))
+                    (.tell-error self (.format "{} が消された: {}" self.kind self.key)))
               {"type" "BOOKMARK" "object" body}
-                (setv current (or (DeploymentWatch.version-of body) current))
+                (setv current (or (ObjectWatch.version-of body) current))
               {"type" "ERROR" "object" {"code" 410}}
                 (return (WatchNext :version None :pause 0.0))
               {"type" "ERROR" "object" {"message" message}}
