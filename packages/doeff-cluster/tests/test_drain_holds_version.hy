@@ -111,7 +111,8 @@
 (deftest test-an-unmovable-job-keeps-its-old-version-until-the-drain-expires-then-is-replaced
   ;; 失敗ケース B(#3684): 他に能力の合う worker が無い入れ替えでない(recreate)job・drain の期限 20 秒。drain を頼み 0.5 秒後に版 2 を
   ;; 宣言し直す。直す前は drain 中の worker が版 1 を止めて版 2 を起こし直した(10 秒後の読みで版 1 は終わり版 2 が動いていた)。
-  ;; 直した後は期限まで版 1 が動き続け、期限が過ぎて返事の draining が偽に戻った後の拍で、普通の入れ替え(止めてから起こす)で版 2 へ移る。
+  ;; 直した後は期限まで版 1 が動き続け、期限が過ぎて返事の draining が偽に戻った後の周期で、普通の入れ替え(版 1 を動かしたまま版 2 を
+  ;; 準備し入口を検めてから版 1 を止め、止め終えてから版 2 を起動する)で版 2 へ移る。
   (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
   (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation)
                                   (drain-then-redeclare 10.0 20.0 (beacons-v2 sim-foundation) 10.0 30.0)

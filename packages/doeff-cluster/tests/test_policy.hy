@@ -53,10 +53,11 @@
   (assert (= (! (plan 31000 #(A1) failed {} policy)) #((PrepareCode "rev1")))))
 
 (deftest test-jobs-are-independent
-  ;; b だけ版を変えても a の process には何もしない。
-  (setv w (! (world (! (running A1 10)) (! (running B1 11)))))
-  (setv b2 (replace B1 :revision "rev2"))
-  (assert (= (! (plan 0 #(A1 b2) w {} POLICY)) #((SignalJob "b" 11 StopStage.TERM (SpecChanged))))))
+  ;; b だけ版を変えても a の process には何もしない。b は旧を動かしたまま新しい版を準備し、揃ってから b だけを止める。
+  (val b2 (replace B1 :revision "rev2"))
+  (assert (= (! (plan 0 #(A1 b2) (! (world (! (running A1 10)) (! (running B1 11)))) {} POLICY)) #((PrepareCode "rev2"))))
+  (val ready (! (world (! (running A1 10)) (! (running B1 11)) :codes #(READY1 READY2))))
+  (assert (= (! (plan 0 #(A1 b2) ready {} POLICY)) #((SignalJob "b" 11 StopStage.TERM (SpecChanged))))))
 
 (deftest test-update-stops-old-before-starting-new
   (setv w (! (world (! (running A1)) :codes #(READY1 READY2))))
@@ -296,9 +297,12 @@
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
   (assert (= (! (plan 0 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))
 
-(deftest test-recreate-jobs-keep-stopping-before-starting
-  ;; handoff でない job は今までどおり(旧を止めてから新)。
-  (assert (= (! (plan 0 #(A2) (! (world (! (proc A1 10 "1-old")) :codes #(READY1 READY2))) {} POLICY))
+(deftest test-a-recreate-job-without-an-entry-probe-stops-the-old-process-once-the-new-tree-is-ready
+  ;; handoff でない job(入口の検めの対象でない素の entry)は、新しい版の木が揃うまで旧を動かしたまま準備だけを出し、揃ったら旧を名から
+  ;; 外さずに止める(RetireJob でなく SignalJob — 新を並べず、止め終えてから起動する)。
+  (val old (! (proc A1 10 "1-old")))
+  (assert (= (! (plan 0 #(A2) (! (world old)) {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 0 #(A2) (! (world old :codes #(READY1 READY2))) {} POLICY))
              #((SignalJob "a" 10 StopStage.TERM (SpecChanged))))))
 
 
@@ -399,13 +403,18 @@
   (val held-recreate (replace A2 :hold-version True))
   (val old-recreate (! (world (! (proc A1 10 "1-old")) :codes #(READY1 READY2))))
   (assert (= (! (plan 0 #(held-recreate) old-recreate {} POLICY)) #()))
+  ;; 新しい版の木が無くても、drain 中は入れ替えでない job の新しい版も準備しない(旧を動かしたまま準備する順より据え置きが先)。
+  (val cold-recreate (! (world (! (proc A1 10 "1-old")) :codes #(READY1))))
+  (assert (= (! (plan 0 #(held-recreate) cold-recreate {} POLICY)) #()))
   (val status (get (! (statuses 0 #(held-recreate) old-recreate {} POLICY)) 0))
   (assert (= status.phase JobPhase.RUNNING) status)
   (assert (= status.detail "drain 中 — 新しい版は drain の後") status)
   ;; 印は比べない欄: 印だけが違う宣言は同じ spec(据え置きの印で process を起こし直さない・指紋も同じ)。
   (assert (= (replace A1 :hold-version True) A1))
-  ;; drain が解けた(印が偽に戻った)拍から、普通の入れ替えへ進む(溜めた物は無い)。
+  ;; drain が解けた(印が偽に戻った)周期から、普通の入れ替えへ進む(溜めた物は無い)。handoff も recreate も、まず旧を動かしたまま
+  ;; 新しい版を準備し、recreate は新しい版が揃ってから旧を止める。
   (assert (= (! (plan 1 #(H2) (! (world old-handoff :codes #(READY1))) {} POLICY)) #((PrepareCode "rev2"))))
+  (assert (= (! (plan 1 #(A2) cold-recreate {} POLICY)) #((PrepareCode "rev2"))))
   (assert (= (! (plan 1 #(A2) old-recreate {} POLICY)) #((SignalJob "a" 10 StopStage.TERM (SpecChanged)))))
   ;; 印の前に止め始めた process は止め終える(据え置くのは止めていない process だけ)。
   (val stopping {"a" (JobRecord "a" :attempts 1 :stopping (JobStop :requested-ms 0 :stage StopStage.TERM :signalled-ms 0 :reason (SpecChanged)))})
