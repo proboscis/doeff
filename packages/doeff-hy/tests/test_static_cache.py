@@ -379,6 +379,13 @@ def test_a_changed_doeff_hy_macro_expands_again(copied_doeff_hy: CopiedDoeffHy) 
     assert copied_doeff_hy.expanded() == 1
 
 
+def test_a_comment_in_doeff_hy_macros_keeps_the_stored_expansion(copied_doeff_hy: CopiedDoeffHy) -> None:
+    # 冷えなくてよい時(直す前は赤): macros.hy に注釈を足しても(使った macro の code は変わらない)保存から引く。
+    assert copied_doeff_hy.expanded() == 1
+    _append_comment(copied_doeff_hy.package / "macros.hy")
+    assert copied_doeff_hy.expanded() == 0
+
+
 # ---- 保存先(agora-redesign #3863)--------------------------------------------------------------------------
 
 

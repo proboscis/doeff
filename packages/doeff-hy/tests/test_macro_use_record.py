@@ -20,7 +20,8 @@ import pytest
 from doeff_hy_bytecode_guard import record_is_current_here, records, source_to_code_as_import
 
 #: macro の module。used = 補助の関数(同じ module)と別の module の定数を読む macro・unused = 誰も使わない macro・
-#: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro。
+#: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro・
+#: hands = 別の module を引数で渡し、受けた補助が getattr で読む macro。
 MACROS = """\
 (import {pkg}.consts :as consts)
 (setv FACTOR 3)
@@ -28,9 +29,11 @@ MACROS = """\
 (defn helper [x] (* x FACTOR))
 (defn by-key [] (get (globals) "LIMIT"))
 (defn by-getattr [] (getattr consts "HIDDEN"))
+(defn by-argument [module] (getattr module "HIDDEN"))
 (defmacro used [] (+ (helper 1) consts.OFFSET))
 (defmacro reads [] (by-key))
 (defmacro peeks [] (by-getattr))
+(defmacro hands [] (by-argument consts))
 (defmacro unused [] 100)
 """
 
@@ -42,6 +45,7 @@ USERS = {
     "user": "(require {pkg}.macros [used])\n(setv value (used))\n",
     "reader": "(require {pkg}.macros [reads])\n(setv value (reads))\n",
     "peeker": "(require {pkg}.macros [peeks])\n(setv value (peeks))\n",
+    "hander": "(require {pkg}.macros [hands])\n(setv value (hands))\n",
     "shadowed": "(require {pkg}.macros *)\n(defn shadow [x] x)\n(setv value (shadow (used)))\n",
 }
 
@@ -152,6 +156,13 @@ def test_a_changed_value_a_helper_reads_by_getattr_is_stale(tree: Tree) -> None:
     record = tree.record("peeker")
     _replace(tree.consts, "(setv HIDDEN 5)", "(setv HIDDEN 50)")
     assert not tree.is_current(record), "補助が getattr で読む別の module の値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_read_by_getattr_on_a_module_passed_as_an_argument_is_stale(tree: Tree) -> None:
+    # 読む補助と module の参照が別の関数にある形(module を引数で渡す)。
+    record = tree.record("hander")
+    _replace(tree.consts, "(setv HIDDEN 5)", "(setv HIDDEN 50)")
+    assert not tree.is_current(record), "引数で渡した module を getattr で読む値を替えたのに古いと判じない"
 
 
 def test_a_new_macro_named_like_a_called_function_is_stale(tree: Tree) -> None:
