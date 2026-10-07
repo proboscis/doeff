@@ -159,3 +159,20 @@ def test_a_new_macro_named_like_a_called_function_is_stale(tree: Tree) -> None:
     record = tree.record("shadowed")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 100)\n(defmacro shadow [x] 0)")
     assert not tree.is_current(record), "使い手の呼ぶ名の macro が足されたのに古いと判じない"
+
+
+# ---- 冷えなくてよい時 --------------------------------------------------------------------------------------------
+
+
+def test_a_changed_unused_macro_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: 記録は macro の module の file の sha256 なので、使っていない macro を 1 行替えるだけで古いと判じた。
+    record = tree.record("user")
+    _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
+    assert tree.is_current(record), "使っていない macro を替えただけで古いと判じた"
+
+
+def test_a_line_shift_of_the_macro_module_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: 先頭に空行を足す(行番号だけがずれる)だけで古いと判じた。
+    record = tree.record("user")
+    tree.macros.write_text("\n" + tree.macros.read_text(encoding="utf-8"), encoding="utf-8")
+    assert tree.is_current(record), "行番号がずれただけで古いと判じた"

@@ -268,6 +268,22 @@ def test_a_changed_body_of_the_used_macro_is_expanded_again(
     assert seen == [f"{package}.m", f"{package}.m"]
 
 
+def test_a_changed_unused_macro_is_read_from_the_cache(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A change of a macro the expansion did not use keeps the entry (red before the record named
+    the macros used: it named the file of ``a``, so any line of it missed)."""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    seen = expansions(monkeypatch)
+    package = f"tree_unused_{uuid.uuid4().hex[:8]}"
+    root = used_and_unused(tmp_path / "checkout", package)
+    assert expanded_value(root, package, monkeypatch) == 42
+    edited(root / package / "a.hy", "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
+    assert expanded_value(root, package, monkeypatch) == 42
+    assert seen == [f"{package}.m"], "a change of an unused macro expanded the module again"
+
+
 def test_an_expansion_records_every_macro_file_it_went_through_by_its_digest() -> None:
     """The source requires ``doeff-hy.macros``, which requires ``doeff-hy.handle`` in turn: both files
     are in the record an entry is named by and read under (the record the import side keeps)."""

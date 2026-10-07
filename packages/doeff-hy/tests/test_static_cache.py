@@ -263,6 +263,17 @@ def test_a_changed_body_of_a_used_macro_expands_again(tree: Tree, expansions: li
     assert len(expansions) == 2
 
 
+def test_a_changed_unused_macro_keeps_the_stored_expansion(tree: Tree, expansions: list[Path]) -> None:
+    # 冷えなくてよい時(直す前は赤): user.hy が使わない macro の本体を替えても、保存から引く。
+    _project(tree)
+    _rewrite(
+        tree.package / "macros.hy",
+        MACROS.replace('(defmacro unused [] "unused")', '(defmacro unused [] "unused-now")'),
+    )
+    _project(tree)
+    assert expansions == [tree.user], "使わない macro を替えただけで展開し直した"
+
+
 # ---- doeff_hy 自身の file を変える検(doeff_hy を写して別の process で走らせる)---------------------------------
 
 #: 写した doeff_hy で project_cached を 1 度走らせ、展開した数と読んだ doeff_hy の在りかを JSON で出す。
