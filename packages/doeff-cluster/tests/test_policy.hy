@@ -287,12 +287,29 @@
   (assert (= actions #((ReapJob name 10 Outcome.STOPPED -15) (ReleaseLeases "a" "1-old"))))
   (assert (not-in name (! (records-after 5 records actions))) "退いた process の記憶は回収で捨てる"))
 
-(deftest test-handoff-never-runs-more-than-one-extra-process
-  ;; 退いた旧が居る間に次の版が来たら、まだ Ready でない新は並べずに止める(並べるのは 1 つまで)。旧は動かし続ける。
-  (setv H3 (replace A1 :revision "rev3" :handoff True))
-  (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
-  (setv w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))))
-  (assert (= (! (plan 0 #(H3) w {} POLICY)) #((SignalJob "a" 11 StopStage.TERM (SpecChanged))))))
+(deftest test-handoff-retires-the-current-process-beside-a-retired-one
+  ;; 失敗ケース(#4072 の D-3): 退いた旧が居る間に次の版が来ると、今の process を止めて(SpecChanged)から新を起こしていた — 今の process が
+  ;; 回している仕事が切れる。退いた process が上限 R(WorkerPolicy.retired-limit)未満なら、今の process も退かせて新を並べる。旧は動かし続ける。
+  (val H3 (replace A1 :revision "rev3" :handoff True))
+  (val old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
+  (val w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))))
+  (assert (= (! (plan 0 #(H3) w {} POLICY)) #((RetireJob "a" 11 (retired-name "a" "2-new"))))))
+
+(deftest test-handoff-stops-the-oldest-retired-process-at-the-retired-limit
+  ;; 退いた process が上限 R に達している間に次の版が来たら、いちばん古く退いた process を止め、今の process はまだ退かせない(退かせると
+  ;; 新と合わせて R + 2 が並ぶ)。古い process が終わって回収されたら、今の process を退かせる(同時に動くのは R + 1 まで)。
+  (val H3 (replace A1 :revision "rev3" :handoff True))
+  (val limited (replace POLICY :retired-limit 2))
+  (val oldest (replace (! (proc H1 10 "1-a" :retired-from "a" :name (retired-name "a" "1-a"))) :retired-at-ms 100))
+  (val younger (replace (! (proc H1 12 "1-b" :retired-from "a" :name (retired-name "a" "1-b"))) :retired-at-ms 200))
+  (val current (! (proc H2 11 "2-new")))
+  (val codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))
+  (assert (= (! (plan 1000 #(H3) (! (world younger oldest current :codes codes)) {} limited))
+             #((SignalJob (retired-name "a" "1-a") 10 StopStage.TERM (Retired))))
+          "上限に達していれば、いちばん古く退いた process だけを止める")
+  (assert (= (! (plan 2000 #(H3) (! (world younger current :codes codes)) {} limited))
+             #((RetireJob "a" 11 (retired-name "a" "2-new"))))
+          "退いた process が上限を下回ったら、今の process を退かせる"))
 
 (deftest test-handoff-stops-the-retired-process-when-the-service-goes-away
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))

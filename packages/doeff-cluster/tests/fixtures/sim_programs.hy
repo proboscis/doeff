@@ -338,6 +338,25 @@
           :update "handoff" :environ {"STEP" "1"}))
 
 
+(defsystem lingering-handoff-beacons [#^ Callable foundation]
+  "handoff-beacons と同じ beacon で、退いた旧の寿命の上限 retiredSeconds を 600 秒と宣言した物(#4072 の D-2・D-3 — 新の Ready で旧を
+   止めないので、宣言し直しが重なると退いた process が並ぶ)"
+  (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
+          :update "handoff" :environ {"STEP" "1"}))
+
+
+(defsystem lingering-handoff-beacons-v2 [#^ Callable foundation]
+  "lingering-handoff-beacons の版 2(本体の引数 every を変えた — 入れ替わる)"
+  (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
+          :update "handoff" :environ {"STEP" "1"}))
+
+
+(defsystem lingering-handoff-beacons-v3 [#^ Callable foundation]
+  "lingering-handoff-beacons の版 3(本体の引数 every を版 2 からも変えた — 退いた旧が居る間に 2 度目の入れ替えを通す)"
+  (beacon (beacon-program foundation "beacon/h" 3.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
+          :update "handoff" :environ {"STEP" "1"}))
+
+
 (defsystem relay [#^ Callable foundation]
   "見本の系: 盤に書く beacon と、それを読んで写す copier"
   (beacon (beacon-program foundation "relay/source" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "9"})
