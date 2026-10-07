@@ -2,8 +2,8 @@
 ;;; 期限(wakes.due — 計画の期限・heartbeat と柵の期限・準備と掃除の期限)・宣言の変化の呼び鈴(changed)と wakes の呼び鈴(掃除の終わり
 ;;; など)・待つ子の終わり(wakes.exits — AwaitProcessExit・AwaitWarmChildExit)・核の止めの合図(AwaitStop — 本番の答え手は
 ;;; os-signal-stop-handler)。呼び鈴で起きた時は、周の終わりから wake-gap-seconds が経つまで待ち足す(起こしが途切れなく続いても周は
-;;; 1 秒に 1 / wake-gap-seconds 回まで — #2692)。本番の組(entry/main.production-handlers)が置く。模擬の時計の下の宿(sim/local.hy)は
-;;; 自分で答える(#2781)。
+;;; 1 秒に 1 / wake-gap-seconds 回まで — #2692)。本番の組(entry/main.production-handlers)が置き、模擬の世界の宿(sim/local.hy の
+;;; run-sim-worker)も宿の内側に置く(#3871 の単位 5)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_time [Delay GetMonotonic])
@@ -89,7 +89,7 @@
 
 
 (defhandler tick-pauses
-  ;; 引数なし: 待つ物は effect の欄(policy・changed・wakes)が運ぶ。state は読まない(模擬の宿の材料)。
-  (AwaitNextTick [policy changed wakes state stopping]
+  ;; 引数なし: 待つ物は effect の欄(policy・changed・wakes・stopping)が運ぶ。
+  (AwaitNextTick [policy changed wakes stopping]
     (<- (await-wakes policy changed wakes stopping))
     (resume None)))

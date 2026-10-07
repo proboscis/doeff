@@ -3,7 +3,8 @@
 ;; - desired の変化(宣言し直し)は名指しの待ちで受け、worker は拍 1 つの内に起きる(反例: 待ちが届かない worker は間隔まで気づかない)。
 ;; - 生存の窓(lease-ms 10 秒)の中で heartbeat が届き、worker は生きていると数えられ続ける(反例: 間隔を窓より長くすると死んだと数える)。
 ;; - 切り離した task の短い lease は切れない(間隔は task の lease の 1/3 以下 — 反例: 間隔を lease より長くすると lost)。
-;; - 待つ口の無い coordinator(/watch が 404)には今までどおり拍ごとに送る。
+;; - 待つ口の無い coordinator(/watch が 404)にも、heartbeat の間隔ごとに送る(worker は周期で起きない — 周は heartbeat の期限で回り、
+;;   待ちの口を使えない周は毎回送る・#3871 の単位 4・5)。
 ;; - fence の判断は今までどおり最後に届いた heartbeat から数える(網が切れて fence を越えた拍で job を止める)。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_events [MemoryBroker])
@@ -161,7 +162,7 @@
   (assert (isinstance broken DetachedLost) broken))
 
 
-;; --- 待つ口の無い coordinator では拍ごと ---------------------------------------------------------------------
+;; --- 待つ口の無い coordinator にも間隔ごと ------------------------------------------------------------------------
 
 (defk quiet-for [seconds without-watch]
   {:pre [(: seconds float) (: without-watch bool)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
@@ -172,27 +173,23 @@
   0)
 
 
-(deftest test-a-coordinator-without-the-watch-gets-a-heartbeat-every-tick [monkeypatch]
-  ;; /watch が 404 の coordinator には拍(0.5 秒)ごとに送る(30 秒・2 台で 100 回を越える)。待てる coordinator には間隔ごと(同じ
-  ;; 30 秒で 40 回ほど)。
+(deftest test-a-coordinator-without-the-watch-gets-a-heartbeat-at-each-interval [monkeypatch]
+  ;; /watch が 404 の coordinator にも、待てる coordinator と同じく heartbeat の間隔(2.5 秒)ごとに送る(30 秒・2 台で 24 回ほど)。
+  ;; worker は周期で起きないので、待ちの口を使えない周(毎回送る)も heartbeat の期限でだけ回る(前の形は 0.5 秒の刻みごとに送り、
+  ;; 100 回を越えた)。
   (val beats (Counter))
   (val original local.heartbeat)
   ;; 差し替えは本物の heartbeat と同じ引数(止まり始め stopping・宿が運ぶ筋 plan と部品 parts を含む — #2819・#3054 の C-6)を受けて
   ;; そのまま渡す。
   (.setattr monkeypatch local "heartbeat" (fn [worker boot stopping plan parts] (.update beats [worker.name])
                                             (original worker boot stopping plan parts)))
-  ;; 模擬の時計の下で静かな拍を眠る宿は、静かな拍の heartbeat を仮の拍として列に預ける(#2850)— 列が受けて宿の真実へ写した仮の拍も、
-  ;; coordinator に届いた heartbeat として数える。
-  (val original-settle local.settle-beats)
-  (.setattr monkeypatch local "settle_beats"
-            (fn [worker boot sent] (.update beats (* [worker.name] (len sent))) (original-settle worker boot sent)))
   (<- (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (quiet-for 30.0 True) :workers (get PAIRS None)))
   (val without (.total beats))
   (.clear beats)
   (<- (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (quiet-for 30.0 False) :workers (get PAIRS None)))
   (val with-watch (.total beats))
-  (assert (> without 100) #(without with-watch))
-  (assert (< with-watch 50) #(without with-watch)))
+  (assert (< without 50) #(without with-watch))
+  (assert (<= (abs (- without with-watch)) 4) #(without with-watch)))
 
 
 ;; --- fence は最後に届いた heartbeat から数える ---------------------------------------------------------------
@@ -200,8 +197,7 @@
 (defk cut-holder []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: pulse を持つ worker の網を 40 秒切り、切った時の最後に届いた heartbeat の刻と、その worker の pulse の process の
-   終わりの刻を返す。最後に届いた刻は、切って 30 秒後(網が切れている間 — 切った後の heartbeat は届かない)に宿の真実から読む:
-   静かな拍を眠っている宿は、通った拍を起きた時にまとめて写すので、切る前の眠りの途中に読むと、届いた拍がまだ写されていない(#3066)。"
+   終わりの刻を返す。最後に届いた刻は、切って 30 秒後(網が切れている間 — 切った後の heartbeat は届かない)に宿の真実から読む。"
   (<- (Delay SETTLE-SECONDS))
   (<- view dict (ReadCoordinator "/state"))
   (val holder (get (get (get view "placements") "pulse") "worker"))

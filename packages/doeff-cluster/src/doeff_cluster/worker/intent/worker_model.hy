@@ -516,13 +516,11 @@
   "状態を変える周が上限を越えて続いた(今すぐもう 1 周が止まらない)。args = 続いた action の名を書いた文。")
 
 (defclass [(dataclass :frozen True)] AwaitNextTick [EffectBase]
-  "結果は None。調整ループが周の後に次の周まで待つため。答え手が待ち方を決める: 本番の組は worker/protocol/tick_pauses の tick-pauses
-   (wakes の期限・changed と wakes の呼び鈴・待つ子の終わり・止めの合図の早い 1 つまで 1 本で待つ — #3871 の単位 4)。changed = 宣言の
-   変化の呼び鈴・wakes = 周の後に集めた起きる物の組・state = この周の後の記憶(模擬の時計の下の宿が、先の周を本番の判断で試す材料 —
-   本番の答え手は読まない)・stopping = 周の頭で止めを知っていたか(偽の周の後に止めが来ていれば、答え手は待たずに戻る — 周の頭の問いと
-   待ちの間に来た合図を取りこぼさない)。"
+  "結果は None。調整ループが周の後に次の周まで待つため。答え手は worker/protocol/tick_pauses の tick-pauses(wakes の期限・changed と
+   wakes の呼び鈴・待つ子の終わり・止めの合図の早い 1 つまで 1 本で待つ — #3871 の単位 4。本番の組も模擬の世界の宿も置く — 単位 5)。
+   changed = 宣言の変化の呼び鈴・wakes = 周の後に集めた起きる物の組・stopping = 周の頭で止めを知っていたか(偽の周の後に止めが来て
+   いれば、答え手は待たずに戻る — 周の頭の問いと待ちの間に来た合図を取りこぼさない)。"
   (#^ WorkerPolicy policy)
   (#^ (| Future None) changed)
   (#^ WakeSet wakes)
-  (#^ WorkerState state)
   (setv #^ bool stopping False))
