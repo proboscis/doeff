@@ -130,3 +130,16 @@ program = subscribed_event_handler(EventBus(), "screen", (TurnState, SourceStart
 配達の法は `doeff_events.notice_laws` の筋書き(Program)の 1 か所に在り、memory と本物の redis-server の両方が同じ筋書きを通ります
 (宣言 = `docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy`)。本物を相手にするテストは `PATH` の `redis-server` を一時の dir で
 起動します。実行 file が無ければ、そのテストだけを訳つきで skip します(memory を相手にするテストは必ず走ります)。
+
+## ファイルの変更を待つ(`WatchFiles` / `NextFileChanges` / `CloseFileWatch`)
+
+file が伸びたかを決まった間隔で読みに行かず、OS の変更の知らせで起きます(#3977)。
+
+| 口 | 振る舞い |
+|---|---|
+| `WatchFiles(directory)` | 絶対 path の dir(と下)の監視を始める。答えの後の変更は次の `NextFileChanges` が受ける(待っていない間の変更も失わない)。dir が無ければ `WatchRefused` |
+| `NextFileChanges(watch)` | 次の変更まで待ち、変わった path(作る・書く・消す)を `FilesChanged(paths)` で答える。時間の上限は無い |
+| `CloseFileWatch(watch)` | 監視を止め、handler が持つ物を捨てる |
+| `os_file_watch_handler()` | OS の知らせ(Linux の inotify・macOS の FSEvents)を `watchfiles` で受ける。extra `doeff-events[files]` が要る。`await_handler` の内側(`scheduled` の内)に置く |
+| `memory_file_watch_handler(files)` | 模擬と検の handler。書き手の役が `announce_file_change(files, path)` を撃つと、その path を持つ監視が起きる |
+

@@ -1,5 +1,6 @@
 """Event effects for generic publish/subscribe workflows."""
 
+from doeff_events.effects.files import CloseFileWatch, FilesChanged, FileWatch, NextFileChanges, WatchFiles, WatchRefused
 from doeff_events.effects.notices import (
     Announce,
     Announcement,
@@ -41,6 +42,12 @@ from .events import (
 )
 
 __all__ = [
+    "CloseFileWatch",
+    "FileWatch",
+    "FilesChanged",
+    "NextFileChanges",
+    "WatchFiles",
+    "WatchRefused",
     "Announce",
     "Announcement",
     "ArmTimer",
