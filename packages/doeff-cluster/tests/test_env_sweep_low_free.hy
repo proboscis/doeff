@@ -52,6 +52,6 @@
   (assert (! (sweep-due short ready CAP False False 1000 0)) "空きが戻れば数え直して結びを持ち替える")
   (assert (not (! (sweep-due roomy ready CAP False True 1000 0))) "空きが最低の上・合計が上限の内なら、固定が変わっても数えない")
   ;; heartbeat の観測(sweep-wanted — 引数 running tally ready cap low)。
-  (assert (! (sweep-wanted False roomy ready CAP True)) "空きが最低を割れば掃除の係が拍を求める")
-  (assert (not (! (sweep-wanted False short ready CAP True))) "割ったままで数え済みなら求めない(固定が変われば判断の側が撃つ)")
+  (assert (! (sweep-wanted False roomy ready CAP True)) "空きが最低を割れば掃除の係が SweepEnvs を求める")
+  (assert (not (! (sweep-wanted False short ready CAP True))) "割ったままで数え済みなら求めない(固定が変われば判断の側が SweepEnvs を出す)")
   (assert (not (! (sweep-wanted False roomy ready CAP False))) "空きが最低の上・上限の内で集合も同じなら求めない"))
