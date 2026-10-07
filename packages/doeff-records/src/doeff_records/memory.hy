@@ -636,7 +636,7 @@
         verdict (judge-append decl ask.body (if (is earlier None) (.get store.retired-keys slot) earlier)))
   (cond
     (isinstance verdict Refused) verdict
-    (isinstance verdict AppendReplay) (Appended verdict.sequence)
+    (isinstance verdict AppendReplay) (Appended verdict.sequence True)
     True (do (+= store.event-head 1)
              (setv event (Event ask.stream store.event-head ask.idempotency-key ask.body writer now-ms))
              (.append store.events event)
@@ -645,7 +645,7 @@
                (note-event-due store decl event))
              ;; 新しく積んだ時だけ、この列を待つ待ち手を鳴らす(再送は列の頭を動かさない)。
              (ring-bells store (_bell-names #() #(ask.stream)))
-             (Appended event.sequence))))
+             (Appended event.sequence False))))
 
 
 (defn #^ Events memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み

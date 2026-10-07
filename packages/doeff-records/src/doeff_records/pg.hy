@@ -773,12 +773,12 @@
     (<- refused (committed store use.cleanup verdict))
     (return refused))
   (when (isinstance verdict AppendReplay)
-    (<- replayed (committed store use.cleanup (Appended verdict.sequence)))
+    (<- replayed (committed store use.cleanup (Appended verdict.sequence True)))
     (return replayed))
   (val payload (canonical-json {"idempotencyKey" ask.idempotency-key "writer" writer "body" ask.body}))
   (<- insert (insert-event-statement store.prefix ask.stream now-ms payload origin-host head.epoch))
   (<- rows (batch-rows store.database (+ use.cleanup #(insert)) True))
-  (Appended (int (get (get rows -1) 0 0))))
+  (Appended (int (get (get rows -1) 0 0)) False))
 
 
 (defk pg-read-events [store ask now-ms]

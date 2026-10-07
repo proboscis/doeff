@@ -141,6 +141,9 @@ def string_of(value: JsonValue, what: str) -> _Program[str, object]:
 def integer_of(value: JsonValue, what: str) -> _Program[int, object]:
     ...
 
+def boolean_of(value: JsonValue, what: str) -> _Program[bool, object]:
+    ...
+
 def seconds_of(value: JsonValue, what: str) -> _Program[float, object]:
     ...
 

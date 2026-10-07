@@ -383,8 +383,9 @@
   (#^ (get tuple #((| StreamTail StreamTailEmpty) ...)) tails))
 
 (defclass [(dataclass :frozen True)] Appended []
-  "AppendEvent が確定した(同じ冪等キーの再送は前の sequence)。"
-  (#^ int sequence))
+  "AppendEvent が確定した。sequence = 出来事の番号(同じ冪等キーの再送は前の sequence)/ replayed = 同じ冪等キーの再送で、今は積んでいない(真)か、今積んだ(偽)か(#3850 — 書き手は今積んだ時だけ知らせを出す)。"
+  (#^ int sequence)
+  (#^ bool replayed))
 
 (defclass [(dataclass :frozen True)] Event []
   "追記の列の出来事 1 つ。body = JSON の値(深く凍らせる)/ at = 積んだ時刻(epoch ミリ秒)/ writer = 積んだ書き手の名。"

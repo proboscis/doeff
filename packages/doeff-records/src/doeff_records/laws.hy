@@ -20,7 +20,7 @@
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused
-                              StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired])
+                              StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
                                ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
@@ -76,6 +76,13 @@
   "法 law が成り立たなければ(holds が偽)、何が破れたか(detail)を名指して LawBroken を上げるため。"
   (when (not holds) (raise (LawBroken (.format "{}: {}" law detail))))
   None)
+
+
+(defk replay-of [again first]
+  {:pre [(: again (| Appended Refused Unreachable)) (: first (| Appended Refused Unreachable))] :post [(: % bool)]}
+  "同じ冪等キーの再送の答え again が、1 回目の答え first と同じ番号で、再送と名乗っている(1 回目は今積んだと名乗る)かを判じるため。"
+  (and (isinstance again Appended) (isinstance first Appended) (= again.sequence first.sequence)
+       (is again.replayed True) (is first.replayed False)))
 
 
 (defk as-writer [harness writer program]
@@ -528,7 +535,7 @@
   (<- (require-law (and (isinstance read Events) (= (lfor e read.items e.idempotency-key) ["ask:a" "done:a"])) law
                (.format "組の後の出来事が残る間に前の出来事が消えた・組の無い出来事が残る: {!r}" read)))
   (<- again-a (as-writer harness MAKER (AppendEvent "pairs" "ask:a" {"n" 1})))
-  (<- (require-law (= again-a ask-a) law (.format "組が残る間の再送が前の番号でない: {!r} {!r}" again-a ask-a)))
+  (<- (require-law (! (replay-of again-a ask-a)) law (.format "組が残る間の再送が前の番号でない: {!r} {!r}" again-a ask-a)))
   (<- fresh-c (as-writer harness MAKER (AppendEvent "pairs" "ask:c" {"n" 5})))
   (<- (require-law (and (isinstance fresh-c Appended) (> fresh-c.sequence done-a.sequence)) law
                (.format "新しい組の出来事が新しい出来事でない: {!r}" fresh-c)))
@@ -559,7 +566,7 @@
                (.format "積んだ列の末尾(別の列の後の出来事 {} を数えない): {!r}" other.sequence tail)))
   (<- replay (as-writer harness MAKER (AppendEvent "journal" "end-1" {"n" 1})))
   (<- replayed (as-writer harness MAKER (ReadStreamEnd "journal")))
-  (<- (require-law (and (= replay first) (= replayed tail)) law (.format "再送が末尾を動かした: {!r} {!r}" replay replayed)))
+  (<- (require-law (and (! (replay-of replay first)) (= replayed tail)) law (.format "再送が末尾を動かした: {!r} {!r}" replay replayed)))
   (<- other-end (as-writer harness MAKER (ReadStreamEnd "pairs")))
   (<- (require-law (= other-end (StreamEnd other.sequence)) law (.format "別の列の末尾: {!r}" other-end)))
   ;; 保持(pairs は積んでから PAIR-KEEP-SECONDS 秒で消える — 区切りを含まないキーは出来事ごと)。
@@ -599,7 +606,7 @@
   ;; 同じ本文の再送は前の番号(新しい出来事にならない)。
   (<- again-solo (as-writer harness MAKER (AppendEvent "pairs" "keep-solo" {"n" 1})))
   (<- again-ask (as-writer harness MAKER (AppendEvent "pairs" "ask:keep" {"n" 2})))
-  (<- (require-law (and (= again-solo solo) (= again-ask ask)) law
+  (<- (require-law (and (! (replay-of again-solo solo)) (! (replay-of again-ask ask))) law
                (.format "消した鍵の同じ本文の再送が前の番号でない: {!r} {!r} / {!r} {!r}" again-solo solo again-ask ask)))
   (<- after (as-writer harness MAKER (ReadEvents "pairs")))
   (<- end (as-writer harness MAKER (ReadStreamEnd "pairs")))
@@ -738,7 +745,7 @@
   (<- (Delay (+ (max PULSE-KEEP-SECONDS PAIR-KEEP-SECONDS) 1)))
   ;; 回収の前(期限を過ぎた出来事が置き場に残る)の答え。
   (<- before (expired-key-answers harness))
-  (<- (require-law (and (= (get before 0) beat) (= (get before 2) ask)) law
+  (<- (require-law (and (! (replay-of (get before 0) beat)) (! (replay-of (get before 2) ask))) law
                (.format "期限を過ぎた鍵の同じ本文の再送が前の番号でない: {!r} {!r} {!r}" before beat ask)))
   (<- (require-law (all (gfor answer #((get before 1) (get before 3)) (and (isinstance answer Refused) (in "冪等キー" answer.reason))))
                law (.format "期限を過ぎた鍵の別の本文が断られない: {!r}" before)))
@@ -753,7 +760,7 @@
   (<- after (expired-key-answers harness))
   (<- (require-law (= after before) law (.format "回収の前と後で期限を過ぎた鍵の答えが違う: 前 {!r} / 後 {!r}" before after)))
   (<- side-again (as-writer harness MAKER (AppendEvent "pairs" "ask:u17" {"n" 3})))
-  (<- (require-law (= side-again side) law (.format "新しい鍵の追記の前に消えた鍵の再送が前の番号でない: {!r} {!r}" side-again side)))
+  (<- (require-law (! (replay-of side-again side)) law (.format "新しい鍵の追記の前に消えた鍵の再送が前の番号でない: {!r} {!r}" side-again side)))
   (<- end (as-writer harness MAKER (ReadStreamEnd "pairs")))
   (<- (require-law (= end (StreamEnd done.sequence)) law (.format "列の末尾が新しい鍵の出来事でない: {!r}" end)))
   (+ [beat ask side] (list before) [done read swept] (list after) [side-again end]))
@@ -846,7 +853,7 @@
                    (.format "積んでいない鍵・別の列の鍵が EventAbsent でない: {!r} {!r}" absent crossed)))
   (<- replay (as-writer harness MAKER (AppendEvent "journal" "by-key-1" {"n" 1})))
   (<- again (as-writer harness MAKER (ReadEventByKey "journal" "by-key-1")))
-  (<- (require-law (and (= replay first) (= again one)) law (.format "再送が鍵の読みを変えた: {!r} {!r}" replay again)))
+  (<- (require-law (and (! (replay-of replay first)) (= again one)) law (.format "再送が鍵の読みを変えた: {!r} {!r}" replay again)))
   ;; 保持: pulses は出来事ごとに PULSE-KEEP-SECONDS 秒・pairs は組(区切り「:」の後ろ)の最後の出来事から PAIR-KEEP-SECONDS 秒。
   (<- old-ask (as-writer harness MAKER (AppendEvent "pairs" "ask:by-key" {"n" 4})))
   (<- (Delay 30))

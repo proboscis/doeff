@@ -48,6 +48,7 @@ from doeff_records.values import StreamTailEmpty as StreamTailEmpty
 from doeff_records.values import Event as Event
 from doeff_records.values import EventAbsent as EventAbsent
 from doeff_records.values import EventRetired as EventRetired
+from doeff_records.values import Unreachable as Unreachable
 from doeff_records.effects import ReadRow as ReadRow
 from doeff_records.effects import ListRows as ListRows
 from doeff_records.effects import PutRow as PutRow
@@ -84,6 +85,9 @@ class LawHarness:
     as_writer: Callable
 
 def require_law(holds: bool, law: str, detail: str) -> _Program[None, object]:
+    ...
+
+def replay_of(again: Appended | Refused | Unreachable, first: Appended | Refused | Unreachable) -> _Program[bool, object]:
     ...
 
 def as_writer[T](harness: LawHarness, writer: str, program: Program[T, object] | EffectBase[T]) -> _Program[T, object]:

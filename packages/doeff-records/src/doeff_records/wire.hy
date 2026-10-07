@@ -219,6 +219,14 @@
   value)
 
 
+(defk boolean-of [value what]
+  {:pre [(: value JsonValue) (: what str)] :post [(: % bool)]}
+  "真偽値であるべき JSON の値を検める(数を真偽値として通さない)。"
+  (when (not (isinstance value bool))
+    (raise (WireMalformed (.format "{} は真偽値: {!r}" what value))))
+  value)
+
+
 (defk seconds-of [value what]
   {:pre [(: value JsonValue) (: what str)] :post [(: % float)]}
   "秒の数であるべき JSON の値を検める(整数も秒として受ける)。"
@@ -540,7 +548,7 @@
           ;; 知らない鍵を WireMalformed にするので、名指さない client を壊さない・#3718)。
           (| {"kind" "changes" "items" encoded "cursor" (! (watch-cursor-json cursor))}
              (if tail-items {"tails" tail-items} {})))
-    (Appended :sequence sequence) {"kind" "appended" "sequence" sequence}
+    (Appended :sequence sequence :replayed replayed) {"kind" "appended" "sequence" sequence "replayed" replayed}
     (Events :items items :last_sequence last-sequence)
       (do (setv encoded [])
           (for [event items] (.append encoded (! (event-json event))))
@@ -695,8 +703,8 @@
             (<- tails tuple (tails-from value))
             (Changes (tuple items) (! (watch-cursor-from (get value "cursor") "changes.cursor")) tails))
       {"kind" "appended"}
-        (do (<- (object-of value "appended" #("kind" "sequence") #()))
-            (Appended (! (integer-of (get value "sequence") "appended.sequence"))))
+        (do (<- (object-of value "appended" #("kind" "sequence" "replayed") #()))
+            (Appended (! (integer-of (get value "sequence") "appended.sequence")) (! (boolean-of (get value "replayed") "appended.replayed"))))
       {"kind" "events"}
         (do (<- (object-of value "events" #("kind" "items" "lastSequence") #()))
             (setv items [])

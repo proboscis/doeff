@@ -186,6 +186,7 @@ class Changes:
 @dataclass(frozen=True)
 class Appended:
     sequence: int
+    replayed: bool
 
 @dataclass(frozen=True)
 class Event:
