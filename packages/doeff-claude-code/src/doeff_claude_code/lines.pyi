@@ -28,6 +28,12 @@ class Usage:
     def __add__(self, other: Usage) -> Incomplete:
         ...
 
+@dataclass(frozen=True, kw_only=True)
+class TimedPhase:
+    name: str
+    ms: int
+    start_ms: int | None = None
+
 @dataclass(frozen=True)
 class Init:
     session_id: str
@@ -35,6 +41,8 @@ class Init:
     model: str = ''
     permission_mode: str = ''
     mcp_servers: tuple[str, ...] = ...
+    startup_phases: tuple[TimedPhase, ...] = ...
+    startup_origin_ms: int | None = None
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -82,6 +90,7 @@ class PartialMessage:
     thinking_delta: str = ''
     tool_input_delta: str = ''
     tool_start: ToolCall | None = None
+    ttft_ms: int | None = None
 
     def __post_init__(self) -> None:
         ...
@@ -152,6 +161,16 @@ class ModelWindow:
 def merged_windows(earlier: tuple, later: tuple) -> _Program[tuple[ModelWindow, ...], object]:
     ...
 
+@dataclass(frozen=True, kw_only=True)
+class RequestTiming:
+    time_to_request_ms: int | None = None
+    ttft_stream_ms: int | None = None
+    first_content_frame_ms: int | None = None
+    ttft_ms: int | None = None
+    duration_ms: int | None = None
+    duration_api_ms: int | None = None
+    request_phases: tuple[TimedPhase, ...] = ...
+
 @dataclass(frozen=True)
 class TurnResult:
     subtype: str
@@ -164,6 +183,7 @@ class TurnResult:
     api_error_status: int | None = None
     input_refs: tuple[str, ...] = ...
     model_windows: tuple[ModelWindow, ...] = ...
+    timing: RequestTiming = ...
 
 @dataclass(frozen=True)
 class Other:
@@ -254,6 +274,15 @@ def classify_user(record: dict) -> Incomplete:
     ...
 
 def hook_notice_of(record: dict, phase: HookPhase) -> _Program[HookNotice, object]:
+    ...
+
+def whole_ms_of(number: float | None) -> _Program[int | None, object]:
+    ...
+
+def timed_phases_of(phases: dict, starts: dict) -> _Program[tuple[TimedPhase, ...], object]:
+    ...
+
+def request_timing_of(record: dict) -> _Program[RequestTiming, object]:
     ...
 
 def classify_system(record: dict) -> Incomplete:

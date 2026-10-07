@@ -428,6 +428,42 @@
   (assert (<= (.get thought "after_stream_start_ms") (.get thought "since_launch_ms")) (repr thought)))
 
 
+;; 替え玉の CLI が名乗る計時の値(tests/stub_cli/claude.hy の STUB-TTFT-MS・STUB-STARTUP と同じ — 替え玉は script なので import しない)。
+(val STUB-TTFT-MS 7)
+(val STUB-STARTUP-PHASES {"node_boot_ms" 30 "hooks_init_ms" 20 "input_ready_ms" 60})
+(val STUB-STARTUP-STARTS {"node_boot_ms" 0 "hooks_init_ms" 30 "input_ready_ms" 0})
+
+(deftest test-the-timing-lines-carry-the-cli-own-timing [tmp-path]
+  ;; #3855: 送ってから最初の字までを割るため、計時の行は CLI が名乗った計時の欄も運ぶ。init の行 = 起動の区間(handler が起こす process の
+  ;; env に CLAUDE_CODE_EMIT_STARTUP_TIMING を置くので、替え玉も実物と同じく最初の init に startup_timing を出す)・first-text の行 =
+  ;; message_start の ttft_ms(要求を送ってから message_start まで)・turn-end の行 = result の time_to_request_ms などと、要求までの
+  ;; 区間(入力ごとの hook が input_hooks — 和が time_to_request_ms)。失敗ケース = 欄を捨てていた形と、env を足さない形は欄が無くて赤。
+  (val host (host-of STUB-COMMAND))
+  (<- heard (with_handlers [(sync-time-handler) slog-discard-handler listen-handler (claude-code-handler host)]
+              (Listen (thinking-then-plain-then-silent (spec-in tmp-path) (str (uuid.uuid4))) :types #(SlogEffect))))
+  (val timings (lfor effect (get heard 1) :if (= effect.msg CLI-TIMING-LOG) effect.kwargs))
+  (val inits (lfor timing timings :if (= (.get timing "event") "init") timing))
+  (assert (= (len inits) 1) (repr inits))
+  (val init (get inits 0))
+  (assert (= (json.loads (.get init "cli_startup_phases" "null")) STUB-STARTUP-PHASES) (repr init))
+  (assert (= (json.loads (.get init "cli_startup_phase_starts" "null")) STUB-STARTUP-STARTS) (repr init))
+  (assert (= (.get init "cli_startup_origin_ms") 1791385479741) (repr init))
+  ;; 考えた手番だけが message_start を出す(替え玉の形)— 考えない手番の init の後の最初の stream の行は block の始まりで ttft_ms を名乗らない。
+  (val firsts (lfor timing timings :if (= (.get timing "event") "first-text") timing))
+  (assert (= (lfor first firsts (.get first "request_to_stream_start_ms")) [STUB-TTFT-MS None]) (repr firsts))
+  (val ends (lfor timing timings :if (= (.get timing "event") "turn-end") timing))
+  (assert (= (len ends) 3) (repr ends))
+  (val thought (get ends 0))
+  (val phases (json.loads (.get thought "cli_request_phases" "{}")))
+  (assert (>= (.get phases "input_hooks" 0) (* 0.8 HOOK-SECONDS 1000)) (repr thought))
+  (assert (= (sum (.values phases)) (.get thought "cli_time_to_request_ms")) (repr thought))
+  (assert (<= (.get thought "cli_time_to_request_ms") (.get thought "cli_ttft_stream_ms") (.get thought "cli_duration_ms"))
+          (repr thought))
+  (assert (all (gfor end ends (isinstance (.get end "cli_time_to_request_ms") int))) (repr ends))
+  ;; message_start を出さない手番は ttft_stream_ms を名乗らない — 欄は None(0 を発明しない)。
+  (assert (is (.get (get ends 1) "cli_ttft_stream_ms" "absent") None) (repr ends)))
+
+
 ;; 同じ秒の中の 2 つの刻(#3855 の日次の赤の形): CLI へ書き始めた刻と、その後に答えが返った刻。
 (val WRITTEN-AT (datetime 2026 10 7 3 0 0 329600 :tzinfo timezone.utc))
 (val ANSWERED-AT (datetime 2026 10 7 3 0 0 329900 :tzinfo timezone.utc))

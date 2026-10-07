@@ -43,8 +43,8 @@
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind parse-record
-                                 classify-record recorded-cost])
+(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
+                                 TimedPhase TurnResult parse-record classify-record recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
@@ -449,23 +449,45 @@
             :session-id runtime.session-id :turn-seq turn-seq))
   None)
 
+(defk phases-text [phases measure]
+  {:pre [(: phases (get tuple #(TimedPhase ...))) (: measure str)] :post [(: % str)] :tags {:context "claude-code" :role "foundation"}}
+  "CLI が名乗った区間の列を、計時の行の 1 欄に空白の無い JSON(名 → ミリ秒・CLI の順)で綴るため — 行は「名=値」を空白で区切るので、
+   値に空白を入れない。measure = 綴る値(\"ms\" = 長さ・\"start-ms\" = 始まり — 始まりを名乗らない区間は飛ばす)。"
+  (val values (match measure
+                "ms" (gfor phase phases #(phase.name phase.ms))
+                "start-ms" (gfor phase phases :if (is-not phase.start-ms None) #(phase.name phase.start-ms))))
+  (json.dumps (dict values) :separators #("," ":") :ensure-ascii False))
+
+(defk startup-fields [init]
+  {:pre [(: init (| Init None))] :post [(: % dict)] :tags {:context "claude-code" :role "foundation"}}
+  "init の計時の行に、CLI が名乗った起動の区間の欄を足すため(#3855 — process を起こしてから init までを区間ごとに割る)。
+   cli-startup-origin-ms = CLI の process の時刻の起点(epoch ミリ秒 — spawned の行の wall_ms との差が exec と node の起き上がり)・
+   cli-startup-phases = 区間の長さ・cli-startup-phase-starts = 区間の始まり(起点からのミリ秒)。区間を名乗らない init は欄を出さない。"
+  (when (or (is init None) (not init.startup-phases))
+    (return {}))
+  (<- lengths (phases-text init.startup-phases "ms"))
+  (<- starts (phases-text init.startup-phases "start-ms"))
+  {"cli_startup_origin_ms" init.startup-origin-ms "cli_startup_phases" lengths "cli_startup_phase_starts" starts})
+
 (defk note-init [runtime turn-seq outcome]
   {:pre [(: runtime SessionRuntime) (: turn-seq int) (: outcome (| TurnStarted LaunchFailed))] :post [(: % None)]
    :tags {:context "claude-code" :role "foundation"}}
   "init の行を受けた(か受けずに起動を諦めた)所の計時の行を出すため。since-launch-ms = process を起こし始めてから待ちが init を見るまで
-   (待ちは読み手の thread が init の行で鳴らす呼び鈴で起きるので、刻みの遅れは無い)・line-at-ms = 読み手の thread が init の行を読んだ壁の時刻(無ければ None)。"
+   (待ちは読み手の thread が init の行で鳴らす呼び鈴で起きるので、刻みの遅れは無い)・line-at-ms = 読み手の thread が init の行を読んだ壁の時刻(無ければ None)。
+   CLI が起動の区間を名乗った init なら、その欄も載せる(startup-fields)。"
   (<- now (GetMonotonic))
   (<- at (GetTime))
   (val log (with [runtime.lock] (.get runtime.turns turn-seq)))
   (val launched (if (is log None) None log.launched-at))
-  (val init-at (if (is log None)
-                   None
-                   (with [runtime.lock] (next (gfor line log.lines :if (isinstance line.kind Init) line.at) None))))
+  (val init-line (if (is log None)
+                     None
+                     (with [runtime.lock] (next (gfor line log.lines :if (isinstance line.kind Init) line) None))))
   (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms launched now))
-  (<- line-at-ms (wall-ms-of init-at))
+  (<- line-at-ms (wall-ms-of (if (is init-line None) None init-line.at)))
+  (<- startup (startup-fields (if (is init-line None) None init-line.kind)))
   (<- (slog CLI-TIMING-LOG :level "info" :event (if (isinstance outcome TurnStarted) "init" "launch-failed") :wall-ms wall-ms
-            :since-launch-ms since-launch-ms :line-at-ms line-at-ms :session-id runtime.session-id :turn-seq turn-seq))
+            :since-launch-ms since-launch-ms :line-at-ms line-at-ms :session-id runtime.session-id :turn-seq turn-seq #** startup))
   None)
 
 (defk claimed-first-reply [runtime log next-seq]
@@ -542,7 +564,8 @@
    since-launch-ms = 手番の起点(process を起こし始めた刻か、使い回しなら入力を書いた刻)から渡すまで・line-at-ms = 読み手の thread が
    その差分の行を読んだ壁の時刻・stream-start-at-ms = init の後の最初の stream の行(実物では message_start)を読んだ壁の時刻(first-reply
    の line-at-ms との差 = 入力ごとの hook と API へ出して最初の 1 バイトまで)・after-stream-start-ms = その行からその差分の行を読むまで
-   (モデルが考えた秒)。stream の行が無ければ後の 2 つは None。差分の本文は載せない。"
+   (モデルが考えた秒)・request-to-stream-start-ms = その stream の行が名乗る ttft_ms(CLI が API へ要求を送ってから message_start を
+   受けるまで — stream-start-at-ms までのうち API の側の分・#3855)。stream の行が無ければ後の 3 つは None。差分の本文は載せない。"
   (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
   (when (is log None)
     (return None))
@@ -559,6 +582,7 @@
   (<- after-stream-start-ms (wall-elapsed-ms (if (is stream-start None) None stream-start.at) claimed.text.at))
   (<- (slog CLI-TIMING-LOG :level "info" :event "first-text" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :line-at-ms line-at-ms :stream-start-at-ms stream-start-at-ms :after-stream-start-ms after-stream-start-ms
+            :request-to-stream-start-ms (if (is stream-start None) None stream-start.kind.ttft-ms)
             :session-id turn.session-id :turn-seq turn.turn-seq))
   None)
 
@@ -570,17 +594,41 @@
    (wall-ms-of)の差と同じになり、順が逆に見えない(#3855)。epoch の物差しで引くので、時差の付き方が違う 2 つの読みでも例外にしない。"
   (if (or (is since None) (is until None)) None (- (epoch-ms-of until) (epoch-ms-of since))))
 
+(defrecord TurnEndLines
+  "手番の終わりの計時の行の材料: deltas = その手番で CLI から受けた差分の行(PartialMessage — 受けた順)/ timing = その手番の最初の
+   result の行の計時の欄(RequestTiming — 入力を読んでから要求を送り、答え始めるまでを CLI が数えた分。result の行が無ければ None)。
+   最初の行を取るのは、送った入力で動き始めた CLI の手番の分だから(生き残った注入の手番の result は後に続く — #3855)。"
+  (#^ (get tuple #(ClaudeStreamLine ...)) deltas)
+  (#^ (| RequestTiming None) timing))
+
 (defk claimed-turn-end [runtime log]
-  {:pre [(: runtime SessionRuntime) (: log TurnLog)] :post [(: % (| (get tuple #(ClaudeStreamLine ...)) None))]
+  {:pre [(: runtime SessionRuntime) (: log TurnLog)] :post [(: % (| TurnEndLines None))]
    :tags {:context "claude-code" :role "foundation"}}
-  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた差分の行(PartialMessage — 種類は DeltaKind)を受けた順に 1 度だけ
-   取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。手番の記録は手番ごとなので、生きた process を使い回す手番でも
-   前の手番の行は入らない。"
+  "手番の終わりを上の層へ初めて渡す時に、その手番で CLI から受けた差分の行(PartialMessage — 種類は DeltaKind)と最初の result の行の
+   計時の欄を 1 度だけ取り出すため(取り出したら手番の記録に印を付け、2 度目からは None)。手番の記録は手番ごとなので、生きた process を
+   使い回す手番でも前の手番の行は入らない。"
   (with [runtime.lock]
     (when log.end-noted
       (return None))
     (setv log.end-noted True)
-    (tuple (gfor line log.lines :if (isinstance line.kind PartialMessage) line))))
+    (TurnEndLines :deltas (tuple (gfor line log.lines :if (isinstance line.kind PartialMessage) line))
+                  :timing (next (gfor line log.lines :if (isinstance line.kind TurnResult) line.kind.timing) None))))
+
+(defk request-timing-fields [timing]
+  {:pre [(: timing (| RequestTiming None))] :post [(: % dict)] :tags {:context "claude-code" :role "foundation"}}
+  "手番の終わりの計時の行に、CLI が result の行で名乗った計時の欄を足すため(#3855 — 送ってから最初の字までのうち、入力を読んでから
+   要求を送るまでと、要求から答え始めるまでを、CLI の数で割る)。欄は CLI の名に cli_ を付けた物で、名乗らなければ None。要求までの区間
+   (cli_request_phases — 和が cli_time_to_request_ms)は名乗った時だけ出す。"
+  (val known (if (is timing None) (RequestTiming) timing))
+  (<- lengths (phases-text known.request-phases "ms"))
+  (val phases (if known.request-phases {"cli_request_phases" lengths} {}))
+  (| {"cli_time_to_request_ms" known.time-to-request-ms
+      "cli_ttft_stream_ms" known.ttft-stream-ms
+      "cli_first_content_frame_ms" known.first-content-frame-ms
+      "cli_ttft_ms" known.ttft-ms
+      "cli_duration_ms" known.duration-ms
+      "cli_duration_api_ms" known.duration-api-ms}
+     phases))
 
 (defk note-turn-end [runtime turn page]
   {:pre [(: runtime SessionRuntime) (: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)]
@@ -592,15 +640,16 @@
    thinking-deltas・tool-input-deltas = その手番で受けた考えている間の差分(thinking_delta)と道具の命令の差分(input_json_delta)の行の
    数・first-thinking-since-launch-ms・first-tool-input-since-launch-ms = それぞれの最初の行を読むまで(差分の無い手番は欄を出さない)—
    答えの前に考えていた間と、道具の命令を書いていた間を、本文の差分の無い間から分けるため(#3746 (a))。使い回した process の手番の
-   起点は入力を書いた刻。"
+   起点は入力を書いた刻。CLI が result の行で名乗った計時の欄も載せる(request-timing-fields — #3855)。"
   (when (is page.end None)
     (return None))
   (val log (with [runtime.lock] (.get runtime.turns turn.turn-seq)))
   (when (is log None)
     (return None))
-  (<- deltas (claimed-turn-end runtime log))
-  (when (is deltas None)
+  (<- claimed (claimed-turn-end runtime log))
+  (when (is claimed None)
     (return None))
+  (val deltas claimed.deltas)
   (val partials (tuple (gfor line deltas :if (and (= line.kind.delta DeltaKind.TEXT) line.kind.text-delta) line)))
   (val thinking (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.THINKING) line)))
   (val tool-input (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.TOOL-INPUT) line)))
@@ -616,10 +665,11 @@
                                 #("first_tool_input_since_launch_ms" first-tool-input-since-launch-ms)]
                     :if (is-not ms None)
                     name ms))
+  (<- cli-timing (request-timing-fields claimed.timing))
   (<- (slog CLI-TIMING-LOG :level "info" :event "turn-end" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :partial-lines (len partials) :first-partial-since-launch-ms first-partial-since-launch-ms
             :thinking-deltas (len thinking) :tool-input-deltas (len tool-input)
-            :session-id turn.session-id :turn-seq turn.turn-seq #** firsts))
+            :session-id turn.session-id :turn-seq turn.turn-seq #** firsts #** cli-timing))
   None)
 
 

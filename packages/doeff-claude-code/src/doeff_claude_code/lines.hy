@@ -5,12 +5,13 @@
 ;;;
 ;;; JSON の境界はこの file の 1 か所(parse-record と classify-*、transcript の額の行を読む recorded-cost)。状態機械(dialogue.hy)も
 ;;; 上の層も、分類した型だけを読む — 生の dict を読み直す 2 か所目を作らない。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk val <-])
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass field fields])
 (import datetime [datetime])
 (import enum [StrEnum])
 (import json)
+(import math)
 (import doeff [run])
 (import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn])
@@ -51,13 +52,27 @@
 
 ;; --- 行の種類 ---------------------------------------------------------------------------------
 
+(defrecord TimedPhase
+  "CLI が名乗った計時の区間 1 つ(環境変数 CLAUDE_CODE_EMIT_STARTUP_TIMING を付けて起こした process だけが出す — argv.hy の
+   process-env)。name = 区間の名(CLI の鍵のまま — 例 node_boot_ms・input_hooks)/ ms = 区間の長さのミリ秒 / start-ms = 区間の
+   始まり(起動の区間だけが名乗る — CLI の process の時刻の起点 startup-origin-ms からのミリ秒。要求までの区間は始まりを名乗らないので
+   None)。送ってから最初の字までのうち、CLI の起動と要求を送るまでの秒を区間ごとに割るため(#3855)。"
+  (#^ str name)
+  (#^ int ms)
+  (setv #^ (| int None) start-ms None))
+
 (defclass [(dataclass :frozen True)] Init []
-  "system/init: 会話の id・CLI の能力の宣言・model・許可のモード・MCP の server の名。"
+  "system/init: 会話の id・CLI の能力の宣言・model・許可のモード・MCP の server の名 /
+   startup-phases = startup_timing.phases の起動の区間(始まりは startup_timing.phase_start_ms — 区間は入れ子になる)/
+   startup-origin-ms = startup_timing.time_origin_ms(区間の始まりの起点の壁の時刻・epoch ミリ秒を床へ)。startup_timing は
+   CLAUDE_CODE_EMIT_STARTUP_TIMING を付けた process の最初の init の行だけが持つ — 無ければ空と None(実測 2.1.292・#3855)。"
   (#^ str session-id)
   (setv #^ (get tuple #(str ...)) capabilities #())
   (setv #^ str model "")
   (setv #^ str permission-mode "")
-  (setv #^ (get tuple #(str ...)) mcp-servers #()))
+  (setv #^ (get tuple #(str ...)) mcp-servers #())
+  (setv #^ (get tuple #(TimedPhase ...)) startup-phases #())
+  (setv #^ (| int None) startup-origin-ms None))
 
 (defclass [(dataclass :frozen True)] ToolCall []
   "assistant の message の tool_use の block 1 つ: id = block の id(続く user の行の tool_result の tool_use_id が同じ id で
@@ -121,12 +136,15 @@
    命令の切れ端(partial_json — JSON の途中で単独では読めない文字列・ほかは空)/ tool-start = content_block_start の tool_use なら呼びの
    id と道具の名(ToolCall — 命令はまだ無い・ほかは None)。後の 2 つは上の層が「担当は <道具> の命令を書いている」と出すため
    (#3974 の 3)。本文の差分は種類 TEXT の行だけ、考えの差分は種類 THINKING の行だけ、命令の切れ端は種類 TOOL-INPUT の
-   行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。"
+   行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。ttft-ms = 行の最上位の ttft_ms(message_start の行だけが名乗る —
+   CLI が API へ要求を送ってから message_start を受けるまでのミリ秒。実測 2.1.292 で result の ttft_stream_ms − time_to_request_ms と
+   1 ms 以内で同じ・名乗らなければ None — #3855)。"
   (setv #^ str text-delta "")
   (setv #^ DeltaKind delta DeltaKind.NO-DELTA)
   (setv #^ str thinking-delta "")
   (setv #^ str tool-input-delta "")
   (setv #^ (| ToolCall None) tool-start None)
+  (setv #^ (| int None) ttft-ms None)
   (defn __post_init__ [self]
     (when (and self.tool-input-delta (!= self.delta DeltaKind.TOOL-INPUT))
       (raise (ValueError (.format "PartialMessage の命令の切れ端は種類 TOOL-INPUT の行だけ: delta {!r}" self.delta))))
@@ -219,6 +237,21 @@
   (val by-model (dict (gfor window (+ earlier later) #(window.model window))))
   (tuple (.values by-model)))
 
+(defrecord RequestTiming
+  "result の行の計時の欄。どれも CLI の手番の時計が動き始めた刻(入力を読んだ刻)からのミリ秒で、名乗らない欄は None(0 を発明しない)。
+   time-to-request-ms = time_to_request_ms(model へ要求を送るまで — 入力ごとの hook を含む)/ ttft-stream-ms = ttft_stream_ms
+   (message_start を受けるまで)/ first-content-frame-ms = first_content_frame_ms / ttft-ms = ttft_ms / duration-ms = duration_ms /
+   duration-api-ms = duration_api_ms(API の呼びの合計)/ request-phases = time_to_request_phases_ms の区間(和が time-to-request-ms
+   ちょうど — 例 input_hooks・system_prompt。CLAUDE_CODE_EMIT_STARTUP_TIMING を付けた process だけが出す)。欄の名は CLI のまま
+   (実測 2.1.292・#3855)。"
+  (setv #^ (| int None) time-to-request-ms None)
+  (setv #^ (| int None) ttft-stream-ms None)
+  (setv #^ (| int None) first-content-frame-ms None)
+  (setv #^ (| int None) ttft-ms None)
+  (setv #^ (| int None) duration-ms None)
+  (setv #^ (| int None) duration-api-ms None)
+  (setv #^ (get tuple #(TimedPhase ...)) request-phases #()))
+
 (defclass [(dataclass :frozen True)] TurnResult []
   "result の行(CLI の手番の終わり)。host の手番の終わりかどうかは状態機械(dialogue.hy)が決める。
    origin-kind = origin.kind(CLI が自分で起こした手番の印)/ result-text = result の本文 /
@@ -227,7 +260,8 @@
    2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は、前の process が降りる時に transcript へ記した額から
    数え続ける — --fork-session の枝も親の transcript の額から数える)。手番の額へ直すのは状態機械(dialogue.hy)/
    api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)/
-   model-windows = modelUsage の model ごとの窓(ModelWindow の列・object の鍵の順 — 無ければ空)。"
+   model-windows = modelUsage の model ごとの窓(ModelWindow の列・object の鍵の順 — 無ければ空)/
+   timing = 計時の欄(RequestTiming)。"
   (#^ str subtype)
   (#^ bool is-error)
   (setv #^ str terminal-reason "")
@@ -237,7 +271,8 @@
   (setv #^ (| float None) cost-usd None)
   (setv #^ (| int None) api-error-status None)
   (setv #^ (get tuple #(str ...)) input-refs #())
-  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
+  (setv #^ RequestTiming timing (field :default-factory RequestTiming)))
 
 (defclass [(dataclass :frozen True)] Other []
   "語彙の外の行(名前だけ持つ)。"
@@ -421,8 +456,34 @@
   (val name (text-at record "hook_name"))
   (HookNotice :event (or (text-at record "hook_event") (get (.partition name ":") 0)) :phase phase :name name))
 
+(defk whole-ms-of [number]
+  {:pre [(: number (| float None))] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
+  "CLI が小数で名乗る刻(epoch ミリ秒)を、計時の行の他の刻と同じく床へ丸めた整数にするため(無ければ None)。"
+  (if (is number None) None (math.floor number)))
+
+(defk timed-phases-of [#^ dict phases #^ dict starts]
+  {:pre [(: phases dict) (: starts dict)] :post [(: % (get tuple #(TimedPhase ...)))] :tags {:context "claude-code" :role "foundation"}}
+  "CLI の区間の写像(名 → ミリ秒の整数)を TimedPhase の列(object の鍵の順)にするため。starts = 名 → 始まりのミリ秒(名乗らない名は
+   None)。空の名・長さが整数でない名は飛ばす(0 を発明しない)。"
+  (tuple (gfor #(name _) (.items phases)
+               :if (and (isinstance name str) name (is-not (int-at phases name) None))
+               (TimedPhase :name name :ms (int-at phases name) :start-ms (int-at starts name)))))
+
+(defk request-timing-of [#^ dict record]
+  {:pre [(: record dict)] :post [(: % RequestTiming)] :tags {:context "claude-code" :role "foundation"}}
+  "result の行の計時の欄を RequestTiming にするため(名乗らない欄は None・区間は空)。"
+  (<- phases (timed-phases-of (object-at record "time_to_request_phases_ms") {}))
+  (RequestTiming :time-to-request-ms (int-at record "time_to_request_ms")
+                 :ttft-stream-ms (int-at record "ttft_stream_ms")
+                 :first-content-frame-ms (int-at record "first_content_frame_ms")
+                 :ttft-ms (int-at record "ttft_ms")
+                 :duration-ms (int-at record "duration_ms")
+                 :duration-api-ms (int-at record "duration_api_ms")
+                 :request-phases phases))
+
 (defn classify-system [#^ dict record]
   (setv subtype (text-at record "subtype"))
+  (setv startup (object-at record "startup_timing"))
   (cond
     (= subtype "init")
       (Init :session-id (text-at record "session_id")
@@ -430,7 +491,9 @@
             :model (text-at record "model")
             :permission-mode (text-at record "permissionMode")
             :mcp-servers (tuple (gfor server (or (.get record "mcp_servers") [])
-                                      :if (isinstance server dict) (text-at server "name"))))
+                                      :if (isinstance server dict) (text-at server "name")))
+            :startup-phases (run (timed-phases-of (object-at startup "phases") (object-at startup "phase_start_ms")))
+            :startup-origin-ms (run (whole-ms-of (number-at startup "time_origin_ms"))))
     (= subtype "thinking_tokens")
       (ThinkingTokens :estimated (or (int-at record "estimated_tokens") 0))
     (= subtype "task_started")
@@ -485,7 +548,8 @@
               :usage (usage-of (object-at record "usage"))
               :cost-usd (number-at record "total_cost_usd")
               :api-error-status (int-at record "api_error_status")
-              :input-refs (strings-at record "user_message_uuids")))
+              :input-refs (strings-at record "user_message_uuids")
+              :timing (run (request-timing-of record))))
 
 (defn classify-lifecycle [#^ dict record]
   (setv state (text-at record "state"))
@@ -520,7 +584,8 @@
   (PartialMessage :text-delta (if (= kind DeltaKind.TEXT) (text-at delta "text") "") :delta kind
                   :thinking-delta (if (= kind DeltaKind.THINKING) (text-at delta "thinking") "")
                   :tool-input-delta (if (= kind DeltaKind.TOOL-INPUT) (text-at delta "partial_json") "")
-                  :tool-start (tool-start-of event)))
+                  :tool-start (tool-start-of event)
+                  :ttft-ms (int-at record "ttft_ms")))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 
