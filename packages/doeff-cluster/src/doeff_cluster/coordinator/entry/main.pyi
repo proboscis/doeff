@@ -40,6 +40,7 @@ from doeff_cluster.coordinator.protocol.store import durable_checkpoint as durab
 from doeff_cluster.coordinator.core.api_policy import resume_after_downtime as resume_after_downtime
 from doeff_cluster.coordinator.core.resource_policy import adopt_legacy as adopt_legacy
 from doeff_cluster.coordinator.protocol.kube import KubeReadBatches as KubeReadBatches
+from doeff_cluster.coordinator.protocol.kube import DeploymentWatches as DeploymentWatches
 from doeff_cluster.coordinator.protocol.kube import kube_api as kube_api
 from doeff_cluster.coordinator.protocol.kube import kube_unavailable as kube_unavailable
 from doeff_cluster.foundation.kube_client import KubeClient as KubeClient

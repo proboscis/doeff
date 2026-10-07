@@ -61,8 +61,9 @@
 ;;;   Redeclare 系              宣言し直す(本番の declare と同じ順で Program を置いてから Service の行を書く — update に従い recreate / handoff)。
 ;;;   DeclareRollout 名 spec     POST /resources/Rollout で作る(本番と同じ検証・所有者・重複検査)。
 ;;;   KubeCalls                 偽の k8s が受けた書きの履歴の写し(tuple)。
-;;;   KubeReads                 偽の k8s が答えた Deployment の読みの「ns/名」の列(読んだ順の tuple — 時間で読みに行く数の検・#3868)。
-;;;   SettleDeployment ns 名     Deployment の Pod を宣言の台数へ進める(ready で準備済み台数を指定できる)。
+;;;   KubeReads                 偽の k8s の見張りが coordinator へ伝えた Deployment の「ns/名」の列(伝えた順の tuple — 時間で読みに行く数の検・#3868)。
+;;;   SettleDeployment ns 名     Deployment の Pod を宣言の台数へ進める(ready で準備済み台数を指定できる)。見張りが変化を伝えるので
+;;;                             待っている coordinator を起こす。
 ;;;   ReportsOf 名              coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(ServiceReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
@@ -448,8 +449,8 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect KubeReads
-  "検の effect: 偽の k8s が答えた Deployment の読みの「ns/名」の列(KubeMemory.reads — 読んだ順の tuple)。時間で k8s を読みに行く数を
-   数える検が使う(#3868)。"
+  "検の effect: 偽の k8s の見張りが coordinator へ伝えた Deployment の「ns/名」の列(KubeMemory.reads — 伝えた順の tuple)。時間で k8s を
+   読みに行く数を数える検が使う(#3868)。"
   {:answer tuple
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -3169,6 +3170,9 @@
     (resume parts.kube.reads))
   (SettleDeployment [namespace name ready]
     (.settle parts.kube (+ namespace "/" name) ready)
+    ;; 本番の見張りは Deployment の変化の刻に受付の箱を起こす(#3868)。待っている coordinator を起こし、変化を伝えさせる(歩の途中なら、
+    ;; 次の取りで kube-memory が伝えていない変化を見て待たずに返る)。
+    (<- (nudge-takers parts.queue))
     (resume None))
   (ReportsOf [name]
     (resume (tuple (gfor r intake.reports :if (= r.job name) r))))

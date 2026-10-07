@@ -3,16 +3,15 @@
 ;; - 返す刻が、本番の判断が比べに使う期限の値と一致する: 入れ替えの諦め(handoff_policy.handoff-deadline・watch-handoffs)と、
 ;;   Rollout の段の時間切れ(rollout_policy.ready-timeout-from・plan-rollouts)。判断はその刻の 1 ms 前は答えを変えず、その刻に変える。
 ;;   期限の関数を判断と別に持つ(片方だけ直す)と、刻か判断の切り替わりのどちらかが食い違って赤。
-;; - Rollout の歩は前の Rollout の歩から ROLLOUT-TICK-MS 経った歩でだけ回るので、期限の刻の歩が Rollout の歩を回せない時も、期限を
-;;   落とさず、回せる最初の刻を返す(#3865)。
+;; - Rollout の歩は毎歩回る(前の Rollout の歩からの間隔の下限は無い — #3868)ので、期限の前の歩の後は期限ちょうどを返し、期限の刻の
+;;   歩の後はその期限を判じ済みとして返さない。
 (require doeff-hy.macros [deftest defk <- val])
-(import dataclasses [replace])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState HandoffPhase])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.api_policy [placement-due plan-rollouts tick ROLLOUT-ACTOR ROLLOUT-TICK-MS])
+(import doeff_cluster.coordinator.core.api_policy [placement-due plan-rollouts tick ROLLOUT-ACTOR])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
@@ -71,7 +70,7 @@
   (<- ticked ClusterState (tick (get made 0) ROLLOUT-START (ClusterTiming)))
   (<- planned tuple (plan-rollouts ticked ROLLOUT-START (ClusterTiming) (ClusterNaming)))
   (assert (= (get planned 1) []) planned)
-  (val state (replace (stamp ticked (get planned 0) ROLLOUT-ACTOR ROLLOUT-START (ClusterTiming)) :rollout-tick-ms ROLLOUT-START))
+  (val state (stamp ticked (get planned 0) ROLLOUT-ACTOR ROLLOUT-START (ClusterTiming)))
   (assert (= (. (get state.rollouts "to-b") status phase) "WaitingNewReady") (get state.rollouts "to-b"))
   state)
 
@@ -90,17 +89,14 @@
   (assert (= (. (get (. (get at 0) rollouts) "to-b") status phase) "RollingBack") (get at 0)))
 
 
-(deftest test-a-stage-deadline-after-the-last-rollout-step-waits-for-the-rollout-interval
-  ;; 期限の刻の歩が Rollout の歩を回さない(前の Rollout の歩から ROLLOUT-TICK-MS が経っていない — 要求の歩が 500 ms 前に回した)時、
-  ;; rollout-due はその期限を落とさず、Rollout の歩を回せる最初の刻(前の Rollout の歩 + ROLLOUT-TICK-MS)を返す。期限が Rollout の歩の
-  ;; 刻の後なら、まだ判じていない。直す前は今より後の期限だけを見るので、時間切れを判じないまま DueNever(二度と起きない)。
+(deftest test-the-rollout-due-is-the-deadline-itself-without-a-rollout-interval
+  ;; Rollout の歩は毎歩回る(#3868)ので、期限の 500 ms 前の歩の後の rollout-due は期限ちょうどを返す(1 秒の格子へ遅らせない)。
+  ;; 期限の刻の歩はその期限を判じたので、その歩の後は期限の刻より後だけを返す(期限の刻の答えに戻らない)。
   (<- state ClusterState (waiting-rollout))
   (val row (get state.rollouts "to-b"))
   (val due (ready-timeout-from row.spec row.status.phase-since-ms))
-  (val stepped (replace state :rollout-tick-ms (- due 500)))
-  (<- answer (| DueAt DueNow DueNever) (rollout-due stepped due (ClusterTiming) (ClusterNaming)))
-  (assert (= answer (DueAt :at (+ (- due 500) ROLLOUT-TICK-MS))) #(answer due))
-  ;; 守り: Rollout の歩が期限の後に回っていれば、その期限は判じ済み(次の期限は先 — 期限の刻の答えに戻らない)。
-  (<- judged (| DueAt DueNow DueNever) (rollout-due (replace state :rollout-tick-ms due) due (ClusterTiming) (ClusterNaming)))
+  (<- early (| DueAt DueNow DueNever) (rollout-due state (- due 500) (ClusterTiming) (ClusterNaming)))
+  (assert (= early (DueAt :at due)) #(early due))
+  (<- judged (| DueAt DueNow DueNever) (rollout-due state due (ClusterTiming) (ClusterNaming)))
   (assert (not (and (isinstance judged DueAt) (<= judged.at due))) judged))
 

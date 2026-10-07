@@ -1,12 +1,12 @@
 ;;; k8s の API の読みが答えない間も、coordinator の調停ループが要求に答え続けるかを、本物の coordinator と worker の上で検める
 ;;; (#2807 — 2026-10-02 13:53:37〜57 に coordinator が 20.2 秒止まった形・#2803)。
 ;;;
-;;; 筋書き: worker の job が動き出した後に Rollout を宣言する(ここから Rollout の相手の Deployment の読みが毎拍始まる)。模擬の k8s は
-;;; 仮想の時刻 STALLED-UNTIL-SECONDS まで読みに答えない(KubeMemory.stalled-until-ms)。その間 2 秒ごとに coordinator の口に問い、答えまでの
+;;; 筋書き: worker の job が動き出した後に Rollout を宣言する(ここから Rollout の相手の Deployment の見張りが始まる — #3868)。模擬の k8s は
+;;; 仮想の時刻 STALLED-UNTIL-SECONDS まで答えない(KubeMemory.stalled-until-ms)。その間 2 秒ごとに coordinator の API に問い、答えまでの
 ;;; 仮想の時間を測る。
-;;;   直した形: 読みは調停ループの外で走り、ループは待たない — 答えは ANSWER-WITHIN-MS の内・job の process は止まらない・読みが
-;;;            名指す秒を超えたら名指しの 1 行が出る
-;;;   失敗ケース: 読みを始めた所で k8s が答えるまで調停ループの中で待つ壊した答え手(以前の同期の読みの形)を差すと、答えが遅れ、
+;;;   直した形: 見張りは調停ループの外で走り、ループは待たない — 答えは ANSWER-WITHIN-MS の内・job の process は止まらない・見張れない
+;;;            Deployment を名指す 1 行が出る
+;;;   失敗ケース: 見張りを揃える所で k8s が答えるまで調停ループの中で待つ壊した答え手(以前の同期の読みの形)を差すと、答えが遅れ、
 ;;;            worker が途絶で job を止める(本番の 13:53 の自己停止の形)
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.sim.local :as sim-local)
 (import doeff_cluster.sim.local [sim-cluster SimWorker DeclareRollout ReadCoordinator ProcessesOf SIM-START-MS])
-(import doeff_cluster.coordinator.intent.kube_model [StartKubeReads])
+(import doeff_cluster.coordinator.intent.kube_model [FollowDeployments])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 (import tests.fixtures.envs [sim-foundation])
@@ -50,24 +50,31 @@
 
 
 (defhandler loop-blocking-kube [#^ KubeMemory kube]
-  "壊した k8s の答え手(失敗ケース): 読みを始めた所で、k8s が答えるまで(stalled-until-ms)調停ループの中で待ってから外側の模擬の k8s へ
-   出し直す — 以前の同期の読み(ReadDeployment をループの中で撃つ形)と同じく、読みの詰まりがループごと止める。"
+  "壊した k8s の答え手(失敗ケース): 見張りを揃える所で、k8s が答えるまで(stalled-until-ms)調停ループの中で待ってから外側の模擬の k8s へ
+   出し直す — 以前の同期の読み(Deployment の読みをループの中で実行する形)と同じく、k8s の詰まりがループごと止める。"
   ;; 引数に残す理由: 答えない区間の終わりは、外側の模擬の k8s と同じ 1 つの KubeMemory が持つ(検が組を作る時に置く)。
-  (StartKubeReads [deployments nodes started-ms]
-    (when (and (is-not kube.stalled-until-ms None) (< started-ms kube.stalled-until-ms))
-      (<- (Delay (/ (- kube.stalled-until-ms started-ms) 1000.0))))
+  (FollowDeployments [keys now-ms]
+    (when (and keys (is-not kube.stalled-until-ms None) (< now-ms kube.stalled-until-ms))
+      (<- (Delay (/ (- kube.stalled-until-ms now-ms) 1000.0))))
     (<- answer effect)
     (resume answer)))
 
 
 (defk stalled-reads-scenario []
   {:pre [] :post [(: % StalledReads)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "job が動き出した後に Rollout を宣言し、k8s の読みが答えない区間の中で coordinator の口に 2 秒ごとに問い、答えまでの仮想の時間と
+  "job が動き出した後に Rollout を宣言し、k8s が答えない区間の中で coordinator の API に 2 秒ごとに問い、答えまでの仮想の時間と
    区間の前後の beacon の process を返すため。"
   (<- (Delay DECLARE-AT-SECONDS))
   (<- before tuple (ProcessesOf "beacon"))
-  (<- _declared dict (DeclareRollout "forward" FORWARD))
-  (var slowest 0)
+  (<- declared int (now-epoch-ms))
+  ;; 宣言を受けた歩が Rollout を回すので、壊した答え手では宣言の返事も区間の分だけ遅れ、返事の上限(15 秒)で打ち切られる(宣言その物は
+  ;; coordinator に届いている)。打ち切られるまでも答えまでの時間に数える。
+  (try
+    (<- _declared dict (DeclareRollout "forward" FORWARD))
+    (except [RemoteJobFailed]
+      None))
+  (<- declare-answered int (now-epoch-ms))
+  (var slowest (- declare-answered declared))
   (for [_ (range ASKS)]
     (<- (Delay ASK-EVERY-SECONDS))
     (<- asked int (now-epoch-ms))
@@ -108,12 +115,12 @@
   (assert (<= got.slowest-ms ANSWER-WITHIN-MS) got)
   ;; 区間の間に job が止まって起き直していない(同じ 1 つの process が動き続ける)。
   (assert (! (kept-running got.before got.after)) got)
-  ;; 読みが名指す秒を超えた時の名指しの 1 行。
-  (assert (in "k8s の読みが" (. (.readouterr capfd) err))))
+  ;; 見張れない Deployment を名指す 1 行。
+  (assert (in "を見張れない" (. (.readouterr capfd) err))))
 
 
 (deftest test-a-k8s-read-inside-the-loop-stops-the-answers-and-the-worker-stops-its-job [monkeypatch]
-  ;; 失敗ケース: 読みを調停ループの中で待つと、答えが区間の分だけ遅れ、worker が fence を越えて job を止める。
+  ;; 失敗ケース: k8s の答えを調停ループの中で待つと、答えが区間の分だけ遅れ、worker が fence を越えて job を止める。
   (<- (stalled-k8s monkeypatch True))
   (<- got StalledReads (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (stalled-reads-scenario) :workers WORKERS :deployments DEPLOYMENTS))
   (assert (> got.slowest-ms ANSWER-WITHIN-MS) got)
