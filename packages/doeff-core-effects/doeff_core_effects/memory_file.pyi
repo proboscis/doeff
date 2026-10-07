@@ -1,8 +1,10 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = memory_file.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from typing import TypeAlias
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
+from collections.abc import Callable as Callable
 from dataclasses import replace as with_fields
 from doeff_core_effects.scheduler import CreatePromise as CreatePromise
 from doeff_core_effects.scheduler import CompletePromise as CompletePromise
@@ -13,9 +15,11 @@ from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects.file_effects import DirEntry as DirEntry
 from doeff_core_effects.file_effects import LockHeld as LockHeld
 from doeff_core_effects.file_effects import MemoryFile as MemoryFile
+from doeff_core_effects.file_effects import MemoryLink as MemoryLink
 from doeff_core_effects.file_effects import MemoryFiles as MemoryFiles
 from doeff_core_effects.file_effects import ReadMemoryFiles as ReadMemoryFiles
 from doeff_core_effects.file_effects import StatPath as StatPath
+from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import WriteText as WriteText
@@ -52,6 +56,9 @@ EXISTS: str
 NOT_EMPTY: str
 INVALID: str
 NOT_PERMITTED: str
+LOOP: str
+MAX_HOPS: int
+ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | MemoryFiles | str | bytes | tuple | int | None
 
 def refused(reason: str, path: str) -> _Program[FileFailed, object]:
     ...
@@ -65,6 +72,15 @@ def normal(path: str) -> _Program[str, object]:
 def kind_in(store: MemoryFiles, path: str) -> _Program[PathKind, object]:
     ...
 
+def link_at(store: MemoryFiles, path: str) -> _Program[MemoryLink | None, object]:
+    ...
+
+def resolved(store: MemoryFiles, path: str, follow_last: bool) -> _Program[str | FileFailed, object]:
+    ...
+
+def as_asked(answer: ANSWER, asked: str, at: str) -> _Program[ANSWER, object]:
+    ...
+
 def hyx_underXquestion_markX(path: str, root: str) -> Incomplete:
     ...
 
@@ -75,6 +91,9 @@ def with_dirs(store: MemoryFiles, path: str) -> _Program[MemoryFiles | FileFaile
     ...
 
 def with_file(store: MemoryFiles, path: str, content: bytes, mode: int | None) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def symlink_in(store: MemoryFiles, path: str, target: str) -> _Program[MemoryFiles | FileFailed, object]:
     ...
 
 def link_in(store: MemoryFiles, source: str, target: str) -> _Program[MemoryFiles | FileFailed, object]:
@@ -117,6 +136,21 @@ def stat_in(store: MemoryFiles, path: str) -> _Program[PathStat, object]:
     ...
 
 def memory_file_handler(initial: MemoryFiles) -> _Handler:
+    ...
+
+def on_path(store: MemoryFiles, path: str, follow_last: bool, op: Callable) -> _Program[ANSWER, object]:
+    ...
+
+def on_pair(store: MemoryFiles, source: str, target: str, follow_last: bool, op: Callable) -> _Program[ANSWER, object]:
+    ...
+
+def appended_in(store: MemoryFiles, path: str, text: str) -> _Program[MemoryFiles | FileFailed, object]:
+    ...
+
+def walk_in(store: MemoryFiles, path: str) -> _Program[tuple[DirEntry, ...] | FileFailed, object]:
+    ...
+
+def measured_in(store: MemoryFiles, path: str) -> _Program[int | FileFailed, object]:
     ...
 
 def return_store(store: MemoryFiles) -> _Program[MemoryFiles, object]:

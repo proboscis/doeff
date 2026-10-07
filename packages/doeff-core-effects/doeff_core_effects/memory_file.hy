@@ -2,7 +2,10 @@
 ;;; session の値に持ち、本物の file system と同じ所で断る(FileFailed の detail も OSError の文の形):
 ;;;   親の dir が無い(No such file or directory)・途中や先が file(Not a directory)・dir へ書く / 読む(Is a directory)・中身の在る dir への
 ;;;   rename(Directory not empty)・dir を自分の下へ rename(Invalid argument)・無い path を消す。
-;;; symlink は持たない(PathKind.SYMLINK は出ない — StatPath の follow-symlinks = False も True と同じ答え)。錠は本物と同じく取れるまで待つ
+;;; symlink を持つ(MakeSymlink — agora-redesign #4036): 本物と同じく、読み・書き・一覧・走査・錠は path の symlink を辿り、RenamePath・
+;;; RemoveTree・LinkFile・MakeSymlink と書きの置き換え(replace = True)は最後の 1 つを辿らずに link 自身を扱い、StatPath の
+;;; follow-symlinks = False は SYMLINK と答える。dir の中の link は一覧と走査に SYMLINK で出て、走査は link の先へ入らない。断りの path は
+;;; 呼び手が渡した path(辿った先ではない)。辿る数が 40 を越えたら本物と同じく ELOOP で断る。錠は本物と同じく取れるまで待つ
 ;;; (取られている時だけ scheduler の CreatePromise / Wait で待つので、並行の筋書きは外側に scheduler が要る — scheduler の無い 1 本の
 ;;; 筋書きで同じ錠を 2 度取るのは、本物の自分待ちと同じく止まる誤り)。
 ;;; path は絶対 path だけを受ける(相対 path は呼び手の誤り — ValueError)。業務を知らない: 初めの中身は呼び手が渡す。
@@ -10,9 +13,11 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import posixpath)
+(import collections.abc [Callable])
 (import dataclasses [replace :as with-fields])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath
+(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles StatPath
+                                         MakeSymlink
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
                                          MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
@@ -27,6 +32,11 @@
 (val NOT-EMPTY "[Errno 39] Directory not empty")
 (val INVALID "[Errno 22] Invalid argument")
 (val NOT-PERMITTED "[Errno 1] Operation not permitted")
+(val LOOP "[Errno 40] Too many levels of symbolic links")
+;; 1 つの path を辿る symlink の数の上限(Linux の MAXSYMLINKS と同じ)。
+(val MAX-HOPS 40)
+;; file の effect の答えの型の和(断りを渡された path へ戻す as-asked が受ける — 断り以外はそのまま通す)。
+(val ANSWER (| FileFailed PathStat LockHeld MemoryFiles str bytes tuple int None))
 
 
 (defk refused [reason path]
@@ -51,11 +61,49 @@
 
 (defk kind-in [store path]
   {:pre [(: store MemoryFiles) (: path str)] :post [(: % PathKind)]}
-  "置き場の path の種類を読むため。"
+  "置き場の path の種類を読むため(symlink は辿らずに SYMLINK — os.lstat と同じ)。"
   (cond
     (any (gfor f store.files (= f.path path))) PathKind.FILE
     (or (= path ROOT) (in path store.dirs)) PathKind.DIRECTORY
+    (any (gfor l store.links (= l.path path))) PathKind.SYMLINK
     True PathKind.MISSING))
+
+
+(defk link-at [store path]
+  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (| MemoryLink None))]}
+  "置き場の path に在る symlink を読むため(無ければ None)。"
+  (next (gfor l store.links :if (= l.path path) l) None))
+
+
+(defk resolved [store path follow-last]
+  {:pre [(: store MemoryFiles) (: path str) (: follow-last bool)] :post [(: % (| str FileFailed))]}
+  "path の途中の symlink を辿った path を作るため(follow-last = True なら最後の 1 つも辿る — 読み・書き。False は link 自身を扱う操作)。
+   相対の先は link の在る dir から読む。辿る数が MAX-HOPS を越えたら本物と同じく ELOOP で断る(断りの path は渡された path)。"
+  (var rest (tuple (gfor part (.split path "/") :if part part)))
+  (var done ROOT)
+  (var hops 0)
+  (while rest
+    (val here (posixpath.join done (get rest 0)))
+    (:= rest (cut rest 1 None))
+    (<- link (| MemoryLink None) (link-at store here))
+    (if (and (is-not link None) (or rest follow-last))
+        (do (:= hops (+ hops 1))
+            (when (> hops MAX-HOPS)
+              (<- loop FileFailed (refused LOOP path))
+              (return loop))
+            (val pointed (posixpath.normpath (posixpath.join done link.target)))
+            (:= rest (+ (tuple (gfor part (.split pointed "/") :if part part)) rest))
+            (:= done ROOT))
+        (:= done here)))
+  done)
+
+
+(defk as-asked [answer asked at]
+  {:pre [(: answer ANSWER) (: asked str) (: at str)] :post [(: % ANSWER)]}
+  "辿った先 at の path で作った断りを、呼び手が渡した path asked の断りに戻すため(本物の OSError は渡された path を名指す)。"
+  (if (and (isinstance answer FileFailed) (!= asked at) (= answer.path at))
+      (FileFailed :path asked :detail (.replace answer.detail (repr at) (repr asked)))
+      answer))
 
 
 (defn under? [#^ str path #^ str root]  ; defk にできない: 内包表記と条件の中で呼ぶ述語(Program を返すと真偽にならない)
@@ -104,7 +152,23 @@
   (when (= kind PathKind.DIRECTORY)
     (<- answer FileFailed (refused IS-DIRECTORY path))
     (return answer))
-  (with-fields store :files (+ (tuple (gfor f store.files :if (!= f.path path) f)) #((MemoryFile :path path :content content :mode mode)))))
+  ;; 同じ名の link は置き換わる(書きの置き換え replace = True は link を辿らずに呼ばれる — 本物の os.replace と同じ)。
+  (with-fields store :files (+ (tuple (gfor f store.files :if (!= f.path path) f)) #((MemoryFile :path path :content content :mode mode)))
+                     :links (tuple (gfor l store.links :if (!= l.path path) l))))
+
+
+(defk symlink-in [store path target]
+  {:pre [(: store MemoryFiles) (: path str) (: target str)] :post [(: % (| MemoryFiles FileFailed))]}
+  "path に target を指す symlink を足した置き場を作るため(os.symlink と同じ所で断る — 文は先と link の 2 つの path の形・path が在れば
+   File exists・親が無ければ No such file。先は在らなくてよい)。"
+  (<- parent (parent-refusal store path))
+  (<- kind PathKind (kind-in store path))
+  (val reason (cond (is-not parent None) (if (in NOT-DIRECTORY parent.detail) NOT-DIRECTORY NO-ENTRY)
+                    (!= kind PathKind.MISSING) EXISTS
+                    True None))
+  (if (is-not reason None)
+      (FileFailed :path path :detail (.format "{}: {!r} -> {!r}" reason target path))
+      (with-fields store :links (+ store.links #((MemoryLink :path path :target target))))))
 
 
 (defk link-in [store source target]
@@ -184,9 +248,11 @@
 
 (defk entries-below [store path]
   {:pre [(: store MemoryFiles) (: path str)] :post [(: % (get tuple #(DirEntry ...)))]}
-  "dir の下の全部を相対 path の順に並べるため(呼び手が dir であることを確かめる)。"
+  "dir の下の全部を相対 path の順に並べるため(呼び手が dir であることを確かめる)。link は SYMLINK で出し、先へは入らない(link の先の
+   中身は先の path に在るので、ここには出ない)。"
   (val found (+ (lfor d store.dirs :if (and (!= d ROOT) (under? d path)) #(d PathKind.DIRECTORY))
-                (lfor f store.files :if (under? f.path path) #(f.path PathKind.FILE))))
+                (lfor f store.files :if (under? f.path path) #(f.path PathKind.FILE))
+                (lfor l store.links :if (under? l.path path) #(l.path PathKind.SYMLINK))))
   (tuple (sorted (gfor #(full kind) found (DirEntry :name (posixpath.relpath full path) :kind kind)) :key (fn [e] e.name))))
 
 
@@ -204,7 +270,8 @@
   {:pre [(: store MemoryFiles) (: path str)] :post [(: % MemoryFiles)]}
   "path とその下の全部を除いた置き場を作るため。"
   (with-fields store :files (tuple (gfor f store.files :if (not (or (= f.path path) (under? f.path path))) f))
-                 :dirs (tuple (gfor d store.dirs :if (not (or (= d path) (under? d path))) d))))
+                 :dirs (tuple (gfor d store.dirs :if (not (or (= d path) (under? d path))) d))
+                 :links (tuple (gfor l store.links :if (not (or (= l.path path) (under? l.path path))) l))))
 
 
 (defk remove-in [store path]
@@ -232,10 +299,14 @@
   (for [entry below]
     (val dest (posixpath.join target entry.name))
     (var step None)
-    (if (= entry.kind PathKind.DIRECTORY)
-        (do (<- grown-dir (with-dirs current dest))
-            (:= step grown-dir))
-        (do (<- content (content-of store (posixpath.join source entry.name)))
+    ;; link は link のまま写す(本物の shutil.copytree の symlinks = True と同じ)。
+    (match entry.kind
+      PathKind.DIRECTORY (do (<- grown-dir (with-dirs current dest))
+                             (:= step grown-dir))
+      PathKind.SYMLINK (do (<- link (| MemoryLink None) (link-at store (posixpath.join source entry.name)))
+                           (<- copied (symlink-in current dest link.target))
+                           (:= step copied))
+      _ (do (<- content (content-of store (posixpath.join source entry.name)))
             (<- written (with-file current dest content None))
             (:= step written)))
     (when (isinstance step FileFailed)
@@ -252,16 +323,18 @@
 
 (defk rename-in [store source target]
   {:pre [(: store MemoryFiles) (: source str) (: target str)] :post [(: % (| MemoryFiles FileFailed))]}
-  "path の名を変えた置き場を作るため(os.replace と同じ所で断る)。"
+  "path の名を変えた置き場を作るため(os.replace と同じ所で断る — link は辿らずに link 自身を動かし、置き換える)。"
   (<- from-kind PathKind (kind-in store source))
   (<- to-kind PathKind (kind-in store target))
   (<- parent (parent-refusal store target))
+  ;; link は file と同じ扱い(dir を指していても、名の変更では中身を持たない 1 つの名)。
+  (val single #{PathKind.FILE PathKind.SYMLINK})
   (cond
     (= from-kind PathKind.MISSING) (do (<- answer FileFailed (refused-move NO-ENTRY source target)) (return answer))
     (is-not parent None) (do (<- answer FileFailed (refused-move NO-ENTRY source target)) (return answer))
     (= source target) (return store)
-    (and (= from-kind PathKind.FILE) (= to-kind PathKind.DIRECTORY)) (do (<- answer FileFailed (refused-move IS-DIRECTORY source target)) (return answer))
-    (and (= from-kind PathKind.DIRECTORY) (= to-kind PathKind.FILE)) (do (<- answer FileFailed (refused-move NOT-DIRECTORY source target)) (return answer))
+    (and (in from-kind single) (= to-kind PathKind.DIRECTORY)) (do (<- answer FileFailed (refused-move IS-DIRECTORY source target)) (return answer))
+    (and (= from-kind PathKind.DIRECTORY) (in to-kind single)) (do (<- answer FileFailed (refused-move NOT-DIRECTORY source target)) (return answer))
     (and (= from-kind PathKind.DIRECTORY) (under? target source)) (do (<- answer FileFailed (refused-move INVALID source target)) (return answer)))
   (when (= to-kind PathKind.DIRECTORY)
     (<- occupied tuple (entries-below store target))
@@ -278,7 +351,10 @@
   (for [d cleared.dirs]
     (<- new-dir str (if (inside d) (moved d source target) (return-path d)))
     (.append dirs new-dir))
-  (with-fields cleared :files (tuple files) :dirs (tuple dirs)))
+  ;; link は名だけを付け替える(先の綴りは書いたまま — 本物の rename と同じ)。
+  (val links (tuple (gfor l cleared.links
+                          (MemoryLink :path (if (inside l.path) (+ target (cut l.path (len source) None)) l.path) :target l.target))))
+  (with-fields cleared :files (tuple files) :dirs (tuple dirs) :links links))
 
 
 (defk return-path [path]
@@ -289,9 +365,12 @@
 
 (defk stat-in [store path]
   {:pre [(: store MemoryFiles) (: path str)] :post [(: % PathStat)]}
-  "path の様子を読むため(mtime は持たないので 0)。"
+  "path の様子を読むため(mtime は持たないので 0・link の大きさは本物の lstat と同じく先の綴りの byte 数)。"
   (<- kind PathKind (kind-in store path))
-  (val size (if (= kind PathKind.FILE) (len (next (gfor f store.files :if (= f.path path) f.content))) 0))
+  (val size (match kind
+              PathKind.FILE (len (next (gfor f store.files :if (= f.path path) f.content)))
+              PathKind.SYMLINK (len (.encode (next (gfor l store.links :if (= l.path path) l.target)) "utf-8"))
+              _ 0))
   (PathStat :kind kind :real-path path :size size :modified 0.0))
 
 
@@ -300,95 +379,83 @@
   (session var store initial)
   ;; 錠を待つ手(#(path Promise) の列・待った順)。置き場の中身ではないので MemoryFiles には入れない。
   (session var waiters #())
+  ;; path の symlink を辿るかは effect ごと(頭の註): 読み・書き・一覧・走査・錠は最後まで辿り(on-path の True)、link 自身を扱う操作は
+  ;; 途中だけを辿る(False)。断りは渡された path で答える。
   (StatPath [path follow-symlinks]
-    (<- at str (normal path))
     ;; 名を answer にしない: 節は全部 1 つの関数に展開されるので、型を付けた answer は他の節の answer まで PathStat と宣言する。
-    (<- stat PathStat (stat-in store at))
+    (<- stat (| PathStat FileFailed) (on-path store path follow-symlinks stat-in))
     (resume stat))
   (ReadText [path]
-    (<- at str (normal path))
-    (<- answer (content-of store at))
+    (<- answer (on-path store path True content-of))
     (resume (if (isinstance answer bytes) (.decode answer "utf-8" "replace") answer)))
   (ReadBytes [path limit offset]
-    (<- at str (normal path))
-    (<- answer (content-of store at))
+    (<- answer (on-path store path True content-of))
     (resume (if (isinstance answer bytes) (cut answer offset (if (is limit None) None (+ offset limit))) answer)))
-  ;; 書きの sync は落とす先が無いので読まない(答えは本物と同じ — file_effects.hy の頭の註)。
+  ;; 書きの sync は落とす先が無いので読まない(答えは本物と同じ — file_effects.hy の頭の註)。置き換えの書き(replace = True)は本物と同じく
+  ;; 別名に書いて os.replace するので、最後の link を辿らずに link を file で置き換える。
   (WriteText [path text mode replace]
-    (<- at str (normal path))
-    (<- answer (with-file store at (.encode text "utf-8") mode))
+    (<- answer (on-path store path (not replace) (fn [s at] (with-file s at (.encode text "utf-8") mode))))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (WriteBytes [path content mode replace]
-    (<- at str (normal path))
-    (<- answer (with-file store at content mode))
+    (<- answer (on-path store path (not replace) (fn [s at] (with-file s at content mode))))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (AppendText [path text]
-    (<- at str (normal path))
-    (<- before (content-of store at))
-    (<- answer (with-file store at (+ (if (isinstance before bytes) before b"") (.encode text "utf-8")) None))
+    (<- answer (on-path store path True (fn [s at] (appended-in s at text))))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (MakeDirectory [path mode]
-    (<- at str (normal path))
-    (<- answer (with-dirs store at))
+    (<- answer (on-path store path True with-dirs))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (ListDirectory [path]
-    (<- at str (normal path))
-    (<- answer (list-in store at))
+    (<- answer (on-path store path True list-in))
     (resume answer))
   (WalkTree [path]
-    (<- at str (normal path))
-    (<- refusal (dir-refusal store at))
-    (if (is-not refusal None)
-        (resume refusal)
-        (do (<- below tuple (entries-below store at))
-            (resume below))))
+    (<- answer (on-path store path True walk-in))
+    (resume answer))
   (CopyFile [source target]
-    (<- from str (normal source))
-    (<- to str (normal target))
-    (<- content (content-of store from))
+    (<- content (on-path store source True content-of))
     (if (isinstance content FileFailed)
         (resume content)
-        (do (<- answer (with-file store to content None))
+        (do (<- answer (on-path store target True (fn [s at] (with-file s at content None))))
             (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))))
   (CompilePythonSources [tree items jobs roots]
     (<- at str (normal tree))
     (<- compiled tuple (compile-in-store store at items))
     (:= store (get compiled 0))
     (resume (get compiled 1)))
+  (MakeSymlink [path target]
+    (<- answer (on-path store path False (fn [s at] (symlink-in s at target))))
+    (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (LinkFile [source target]
-    (<- from str (normal source))
-    (<- to str (normal target))
-    (<- answer (link-in store from to))
+    (<- answer (on-pair store source target False link-in))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (CopyTree [source target]
-    (<- from str (normal source))
-    (<- to str (normal target))
-    (<- answer (copy-tree-in store from to))
+    (<- answer (on-pair store source target True copy-tree-in))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (RenamePath [source target]
-    (<- from str (normal source))
-    (<- to str (normal target))
-    (<- answer (rename-in store from to))
+    (<- answer (on-pair store source target False rename-in))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (RemoveTree [path]
-    (<- at str (normal path))
-    (<- answer (remove-in store at))
+    (<- answer (on-path store path False remove-in))
     (if (isinstance answer FileFailed) (resume answer) (do (:= store answer) (resume None))))
   (AcquireLock [path]
-    (<- at str (normal path))
-    (if (in at store.locks)
-        ;; 取られている錠は、本物の flock と同じく放されるまで待つ(scheduler の Promise で — 空いている錠は scheduler に触れずに即答)。
-        ;; 放した側(ReleaseLock)が錠を locks に残したまま次の待ち手へ手渡すので、起きた待ち手はそのまま持ち主になる。
-        (do (<- promise (CreatePromise))
-            (:= waiters (+ waiters #(#(at promise))))
-            (<- (Wait promise.future))
-            (resume (LockHeld :path at :token (len store.locks))))
-        (do (<- kind PathKind (kind-in store at))
-            (<- made (if (= kind PathKind.MISSING) (with-file store at b"" None) (return-store store)))
-            (if (isinstance made FileFailed)
-                (resume made)
-                (do (:= store (with-fields made :locks (+ made.locks #(at))))
-                    (resume (LockHeld :path at :token (len store.locks))))))))
+    (<- asked str (normal path))
+    (<- at (| str FileFailed) (resolved store asked True))
+    (cond
+      (isinstance at FileFailed) (resume at)
+      (in at store.locks)
+      ;; 取られている錠は、本物の flock と同じく放されるまで待つ(scheduler の Promise で — 空いている錠は scheduler に触れずに即答)。
+      ;; 放した側(ReleaseLock)が錠を locks に残したまま次の待ち手へ手渡すので、起きた待ち手はそのまま持ち主になる。
+      (do (<- promise (CreatePromise))
+          (:= waiters (+ waiters #(#(at promise))))
+          (<- (Wait promise.future))
+          (resume (LockHeld :path at :token (len store.locks))))
+      True
+      (do (<- kind PathKind (kind-in store at))
+          (<- made (if (= kind PathKind.MISSING) (with-file store at b"" None) (return-store store)))
+          (if (isinstance made FileFailed)
+              (resume made)
+              (do (:= store (with-fields made :locks (+ made.locks #(at))))
+                  (resume (LockHeld :path at :token (len store.locks))))))))
   (ReleaseLock [held]
     (val waiting (lfor #(p promise) waiters :if (= p held.path) promise))
     (if waiting
@@ -404,13 +471,67 @@
   (ReadDiskUsage [path]
     (resume (DiskUsage :total store.total :free store.free)))
   (MeasureTree [path]
-    (<- at str (normal path))
-    (<- refusal (dir-refusal store at))
-    (if (is-not refusal None)
-        (resume refusal)
-        (resume (sum (gfor f store.files :if (under? f.path at) (len f.content))))))
+    (<- answer (on-path store path True measured-in))
+    (resume answer))
   (ReadMemoryFiles []
     (resume store)))
+
+
+(defk on-path [store path follow-last op]
+  {:pre [(: store MemoryFiles) (: path str) (: follow-last bool) (: op Callable)] :post [(: % ANSWER)]}
+  "path の symlink を辿った先で置き場の操作 op(置き場と辿った先の path を受ける)を 1 つ行い、断りを渡された path へ戻すため(頭の註 —
+   本物の OSError は渡された path を名指す)。辿れなければ(ELOOP)その断り。"
+  (<- asked str (normal path))
+  (<- at (| str FileFailed) (resolved store asked follow-last))
+  (when (isinstance at FileFailed)
+    (return at))
+  (<- answer (op store at))
+  (<- told (as-asked answer asked at))
+  told)
+
+
+(defk on-pair [store source target follow-last op]
+  {:pre [(: store MemoryFiles) (: source str) (: target str) (: follow-last bool) (: op Callable)] :post [(: % ANSWER)]}
+  "2 つの path(元と先)の symlink を辿った先で置き場の操作 op を 1 つ行うため(断りは元の側の path へ戻す — os.replace の文と同じ)。"
+  (<- from-asked str (normal source))
+  (<- to-asked str (normal target))
+  (<- from (| str FileFailed) (resolved store from-asked follow-last))
+  (when (isinstance from FileFailed)
+    (return from))
+  (<- to (| str FileFailed) (resolved store to-asked follow-last))
+  (when (isinstance to FileFailed)
+    (return to))
+  (<- answer (op store from to))
+  (<- told (as-asked answer from-asked from))
+  told)
+
+
+(defk appended-in [store path text]
+  {:pre [(: store MemoryFiles) (: path str) (: text str)] :post [(: % (| MemoryFiles FileFailed))]}
+  "file の末尾に text を足した置き場を作るため(無ければ作る)。"
+  (<- before (content-of store path))
+  (<- answer (with-file store path (+ (if (isinstance before bytes) before b"") (.encode text "utf-8")) None))
+  answer)
+
+
+(defk walk-in [store path]
+  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (| (get tuple #(DirEntry ...)) FileFailed))]}
+  "dir の下の全部を相対 path の順に並べるため(dir でなければ断る)。"
+  (<- refusal (dir-refusal store path))
+  (when (is-not refusal None)
+    (return refusal))
+  (<- below tuple (entries-below store path))
+  below)
+
+
+(defk measured-in [store path]
+  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (| int FileFailed))]}
+  "dir の下の file の大きさの合計を測るため(link は辿らず先の綴りの byte 数 — 本物の lstat と同じ)。"
+  (<- refusal (dir-refusal store path))
+  (when (is-not refusal None)
+    (return refusal))
+  (+ (sum (gfor f store.files :if (under? f.path path) (len f.content)))
+     (sum (gfor l store.links :if (under? l.path path) (len (.encode l.target "utf-8"))))))
 
 
 (defk return-store [store]

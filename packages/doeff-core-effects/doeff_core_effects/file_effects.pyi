@@ -120,6 +120,11 @@ class CopyTree(EffectBase[FileFailed | None]):
     target: str
 
 @dataclass(frozen=True)
+class MakeSymlink(EffectBase[FileFailed | None]):
+    path: str
+    target: str
+
+@dataclass(frozen=True)
 class RenamePath(EffectBase[FileFailed | None]):
     source: str
     target: str
@@ -155,9 +160,15 @@ class MemoryFile:
     mode: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class MemoryLink:
+    path: str
+    target: str
+
+@dataclass(frozen=True, kw_only=True)
 class MemoryFiles:
     files: tuple[MemoryFile, ...] = ...
     dirs: tuple[str, ...] = ...
+    links: tuple[MemoryLink, ...] = ...
     locks: tuple[str, ...] = ...
     free: int = ...
     total: int = ...

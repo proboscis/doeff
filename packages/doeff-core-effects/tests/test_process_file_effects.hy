@@ -25,7 +25,7 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
-                                         CompilePythonSources])
+                                         CompilePythonSources MakeSymlink])
 (import doeff_core_effects.python_bytecode [pyc-path])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
@@ -374,6 +374,60 @@
   (assert (in "File exists" (get real 2 1)) real)
   (assert (in "No such file" (get real 3 1)) real)
   (assert (in "No such file" (get real 5 1)) real))
+
+
+(defk symlink-journey [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "dir を指す symlink を作って辿り、別の木を指す symlink を rename の 1 手で付け替え(agora-redesign #4036 — 設定 dir の entry の付け替え)、
+   辿らない様子・一覧・木の走査・断りの 3 つ(在る名・無い親・先の無い link の読み)と、link だけを消す形を返す筋。"
+  (<- (MakeDirectory (+ root "/t/a")))
+  (<- (WriteText (+ root "/t/a/x") "A"))
+  (<- (MakeDirectory (+ root "/t/b")))
+  (<- (WriteText (+ root "/t/b/x") "B"))
+  (<- (MakeDirectory (+ root "/h")))
+  (<- made (MakeSymlink (+ root "/h/e") "../t/a"))
+  (<- first (ReadText (+ root "/h/e/x")))
+  (<- unfollowed (StatPath (+ root "/h/e") :follow-symlinks False))
+  (<- followed (StatPath (+ root "/h/e")))
+  (<- (MakeSymlink (+ root "/h/.e.next") "../t/b"))
+  (<- switched (RenamePath (+ root "/h/.e.next") (+ root "/h/e")))
+  (<- second (ReadText (+ root "/h/e/x")))
+  (<- listed (ListDirectory (+ root "/h")))
+  (<- walked (WalkTree (+ root "/h")))
+  (<- through (WalkTree (+ root "/h/e")))
+  (<- exists (MakeSymlink (+ root "/h/e") "../t/a"))
+  (<- no-parent (MakeSymlink (+ root "/none/z") "x"))
+  (<- (MakeSymlink (+ root "/h/d") "../t/none"))
+  (<- dangling (ReadText (+ root "/h/d/x")))
+  (<- removed (RemoveTree (+ root "/h/e")))
+  (<- kept (ReadText (+ root "/t/b/x")))
+  (<- gone (StatPath (+ root "/h/e") :follow-symlinks False))
+  ;; 断りは root を外した path と errno の文(番号の後の 1 句)の組(errno の番号の綴りは OS で違う物が在るので文だけ比べる)。
+  (val shown (lfor answer [exists no-parent dangling]
+                   (if (isinstance answer FileFailed)
+                       #((.replace answer.path root "") (get (.split (get (.split answer.detail "] " 1) -1) ":") 0))
+                       answer)))
+  #(made first unfollowed.kind followed.kind switched second listed walked through #* shown removed kept gone.kind))
+
+
+(defn #^ None test-symlinks-answer-the-same-on-the-real-and-memory-file-systems []
+  ;; agora-redesign #4036: 設定 dir の entry を木への symlink にし、別名の symlink を rename の 1 手で付け替える形の土台。本物と memory が
+  ;; 同じ答えを返す — memory も link を持ち、読み・様子・一覧・走査が辿り、rename が link を替え、RemoveTree は link だけを消す。
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv root (os.path.realpath tmp))
+    (setv real (on [os-file-handler] (symlink-journey root)))
+    (assert (= (os.readlink (+ root "/h/d")) "../t/none")))
+  (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/m")))] (symlink-journey "/m")))
+  (assert (= real
+             #(None "A" PathKind.SYMLINK PathKind.DIRECTORY None "B"
+               ;; 付け替えた後の dir の直下と走査: 別名の link は rename で消え、link の先(dir)へは入らない。
+               #((DirEntry :name "e" :kind PathKind.SYMLINK))
+               #((DirEntry :name "e" :kind PathKind.SYMLINK))
+               #((DirEntry :name "x" :kind PathKind.FILE))
+               #("/h/e" "File exists") #("/none/z" "No such file or directory") #("/h/d/x" "No such file or directory")
+               None "B" PathKind.MISSING))
+          real)
+  (assert (= real memory) #(real memory)))
 
 
 (defk compile-journey [root]

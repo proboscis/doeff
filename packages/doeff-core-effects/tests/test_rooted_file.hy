@@ -9,7 +9,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.file_effects [FileFailed PathKind PathStat LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText
-                                         WriteText MakeDirectory RenamePath AcquireLock ReleaseLock])
+                                         WriteText MakeDirectory RenamePath AcquireLock ReleaseLock MakeSymlink])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.rooted_file [rooted-file-handler])
 
@@ -52,6 +52,25 @@
   (assert (= stat.kind PathKind.FILE))
   (assert (= stat.real-path "/var/run/token2") stat)
   (assert (= paths #("/nodes/a/etc/x" "/nodes/a/var/run/token2" "/nodes/b/etc/x")) paths))
+
+
+(defk link-then-read []
+  {:pre [] :post [(: % tuple)]}
+  (<- absolute (MakeSymlink "/etc/abs" "/etc"))
+  (<- relative (MakeSymlink "/etc/rel" "."))
+  (<- through-absolute str (ReadText "/etc/abs/x"))
+  (<- through-relative str (ReadText "/etc/rel/x"))
+  (<- store MemoryFiles (ReadMemoryFiles))
+  #(absolute relative through-absolute through-relative (tuple (sorted (gfor l store.links #(l.path l.target))))))
+
+
+(defn #^ None test-a-symlink-points-inside-the-root []
+  ;; agora-redesign #4036: link の絶対の先は内側の / から読む先なので root の下へ移す(移さないと置き場の / の下の別の file を指す)・
+  ;; 相対の先は link の在る dir から読むのでそのまま。
+  (setv #(absolute relative through-absolute through-relative links) (rooted "/nodes/a" (link-then-read)))
+  (assert (= #(absolute relative) #(None None)))
+  (assert (= #(through-absolute through-relative) #("a" "a")) #(through-absolute through-relative))
+  (assert (= links #(#("/nodes/a/etc/abs" "/nodes/a/etc") #("/nodes/a/etc/rel" "."))) links))
 
 
 (defk escape []
