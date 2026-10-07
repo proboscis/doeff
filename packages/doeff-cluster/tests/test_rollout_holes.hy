@@ -7,7 +7,7 @@
 (import doeff [run])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView DeploymentUnreadable])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.core.api_policy [plan-rollouts resume-after-downtime mark-alive ALIVE-MARK-MS])
@@ -106,6 +106,14 @@
                                    "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30
                                    "rollbackTimeoutSeconds" 600 "markDeployment" False "abort" False}))
 (setv STOPPED (TargetView :ready "NotReady" :stopped True :spec-replicas 0 :reason "止まっている"))
+;; action-due が書きの後の観測かを読む相手の Deployment の観測 — まだ観測していない(None)。
+(setv NO-OBSERVATION None)
+
+
+(defk observed-at [at]
+  {:pre [(: at int)] :post [(: % DeploymentUnreadable)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "Deployment ns/old を刻 at に観測した(見張りが伝えた)観測を作るため。"
+  (DeploymentUnreadable :error "検の観測" :at at))
 (setv READY (TargetView :ready "Ready" :stopped False :spec-replicas 1 :reason ""))
 (setv UNKNOWN (TargetView :ready "Unknown" :stopped None :spec-replicas None :reason "担い手の報告が古い"))
 (setv NOT-READY (TargetView :ready "NotReady" :stopped False :spec-replicas 1 :reason "拍が落ちた"))
@@ -153,12 +161,25 @@
   (setv action {"op" "scale" "target" SPEC.from-target "replicas" 0})
   (setv failed (RolloutStatus :last-action {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" False "error" "403" "at" 1000 "count" 3}))
   (assert (= (retry-delay-ms 3) 4000))
-  (assert (not (action-due failed action 4999)))
-  (assert (action-due failed action 5000))
+  (assert (not (action-due failed action 4999 NO-OBSERVATION)))
+  (assert (action-due failed action 5000 NO-OBSERVATION))
   (assert (= (retry-delay-ms 30) RETRY-MAX-MS))
-  ;; 違う action・成功した直後はすぐ出す
-  (assert (action-due failed (| action {"replicas" 1}) 1001))
-  (assert (action-due (RolloutStatus :last-action (| failed.last-action {"ok" True})) action 1001)))
+  ;; 違う action はすぐ出す
+  (assert (action-due failed (| action {"replicas" 1}) 1001 NO-OBSERVATION)))
+
+
+(deftest test-a-written-deployment-action-waits-for-an-observation-after-the-write
+  ;; 成功した同じ書き(相手が Deployment)は、その書きの後の観測が届くまで出し直さない(見張りが書きの結果を伝える前に同じ書きを
+  ;; 重ねない — #3868)。書いた刻 1000 の観測(書きより前に届いた物)と観測が無い間は出さず、1001 の観測が届けば出す。
+  ;; 相手が Service の書きは coordinator の状態の中の書き(次の判断がすぐ読む)なので、成功の直後もすぐ出す。
+  (setv action {"op" "scale" "target" SPEC.from-target "replicas" 0})
+  (setv written (RolloutStatus :last-action {"op" "scale" "target" "Deployment:ns/old" "replicas" 0 "ok" True "at" 1000 "count" 1}))
+  (assert (not (action-due written action 1000 (! (observed-at 1000)))))
+  (assert (not (action-due written action 9000 NO-OBSERVATION)))
+  (assert (action-due written action 1001 (! (observed-at 1001))))
+  (setv service-action {"op" "scale" "target" SPEC.to-target "replicas" 1})
+  (setv service-written (RolloutStatus :last-action {"op" "scale" "target" "Service:new" "replicas" 1 "ok" True "at" 1000 "count" 1}))
+  (assert (action-due service-written service-action 1000 NO-OBSERVATION)))
 
 
 (deftest test-a-rollback-that-does-not-finish-is-marked-stuck-and-keeps-the-new

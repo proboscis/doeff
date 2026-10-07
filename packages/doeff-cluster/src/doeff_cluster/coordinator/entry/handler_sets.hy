@@ -21,7 +21,7 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
 (import doeff_events [MemoryBroker broker-back-by-retry memory-notice-handler notice-events-handler redis-notice-handler])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES])
@@ -96,6 +96,8 @@
   "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
    (coordinator_inbox.StopState)。watchers = 置き場への書き(Persist)と要求の受け渡しを見張る handler の列(sim の落ちの注入と呼び鈴 —
    本番の組と同じく保存の綴り durable-states をいちばん内側に置くので、見張りはその外で KV の差分を見る)。slog-handler = 本番と同じ
-   1 行の報告の答え手。broker = 知らせの broker(worker の生死の出来事を出す — 模擬の受け手が同じ broker を読む)。"
-  [slog-handler (stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube) request-bodies #* watchers durable-states reply-bodies
+   1 行の報告の答え手。broker = 知らせの broker(worker の生死の出来事を出す — 模擬の受け手が同じ broker を読む)。Deployment の見張り
+   (MemoryFollows)は coordinator の process の物なので、組を作るたび(coordinator の起き直しごと)に作り直す(#3868)。"
+  [slog-handler (stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube (MemoryFollows)) request-bodies #* watchers
+   durable-states reply-bodies
    #* (memory-notices broker)])

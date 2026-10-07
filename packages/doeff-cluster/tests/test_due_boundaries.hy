@@ -3,8 +3,8 @@
 ;; ここでは期限の関数ごとに、返す刻 D の 1 ms 前では判断が答えを変えず、D で変える事を縛る(D は now より後)。
 ;; - resource_policy.readiness-due と readiness の判定 service-readiness(running-process を含む)— 枝ごと。
 ;; - resource_policy.service-stopped-due と止まりの判定 service-stopped。
-;; - api_policy.deployment-reread-due と読み直す Deployment の選び deployments-to-observe。
 ;; - cluster_policy.node-reread-due と読み直す node の選び nodes-to-read。
+;; Rollout の相手の Deployment には期限が無い(見張る相手の選び api_policy.deployments-to-follow は時刻を読まない — #3868)。
 ;; readiness-due は「答えを変え得る刻の下限」を返す(早めに試すのは安全)。D で答えが変わらない枝は、その事と判定が実際に変わる刻を
 ;; そのテストの註に書く(D − 1 で変わらない事だけを縛る)。
 (require doeff-hy.macros [deftest defk <- val])
@@ -17,7 +17,7 @@
                                                         unreported-until warm-until service-stopped service-stopped-due current-report
                                                         running-process])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-deadline nodes-to-read node-reread-due])
-(import doeff_cluster.coordinator.core.api_policy [deployments-to-observe deployment-reread-due])
+(import doeff_cluster.coordinator.core.api_policy [deployments-to-follow])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 
 ;; 担い手の報告が古くならない時計(効く期限を準備の報告の window の 1 つにする)。
@@ -206,7 +206,7 @@
   (assert (service-stopped state NAME due T) due))
 
 
-;; --- deployment-reread-due ----------------------------------------------------------------------------------------------
+;; --- deployments-to-follow ----------------------------------------------------------------------------------------------
 
 (val ROLLOUT-STOPPED-OLD 900000)
 
@@ -219,22 +219,15 @@
               :status (RolloutStatus :phase "Complete" :stopped-old-ms ROLLOUT-STOPPED-OLD :completed-ms ROLLOUT-STOPPED-OLD)))
 
 
-(deftest test-deployment-reread-due-is-the-judgments-boundary
-  ;; Complete の Rollout 2 つが台数を持つ Deployment ns/app-a(1000000 に読んだ)と ns/app-b(1005000 に読んだ)。D = 早い方の読み直しの
-  ;; 刻 1010001 の 1 ms 前は何も読まず、D で ns/app-a を読み始める。
+(deftest test-the-owned-deployments-are-followed-whatever-their-observations
+  ;; Complete の Rollout 2 つが台数を持つ Deployment ns/app-a と ns/app-b は、観測の有無と古さに関わらず見張る相手(時刻で読み直さない —
+  ;; 変化は見張りが伝える・#3868)。
   (<- row-a RolloutRow (complete-rollout "to-a" (RolloutTarget :kind "Deployment" :name "app-a" :namespace "ns" :replicas 1)))
   (<- row-b RolloutRow (complete-rollout "to-b" (RolloutTarget :kind "Deployment" :name "app-b" :namespace "ns" :replicas 1)))
   (val observations (ClusterObservations
-                      :deployments (table-of #((TableWrite "ns/app-a" (DeploymentUnreadable :error "読めなかった" :at 1000000))
-                                               (TableWrite "ns/app-b" (DeploymentUnreadable :error "読めなかった" :at 1005000))))))
-  (val state (ClusterState :rollouts {"to-a" row-a "to-b" row-b} :observations observations))
-  (val now 1003000)
-  (assert (= (deployments-to-observe state now) []))
-  (<- due (| int None) (deployment-reread-due state now))
-  (assert (= due 1010001) due)
-  (assert (> due now) #(due now))
-  (assert (= (deployments-to-observe state (- due 1)) []) due)
-  (assert (= (deployments-to-observe state due) ["ns/app-a"]) due))
+                      :deployments (table-of #((TableWrite "ns/app-a" (DeploymentUnreadable :error "読めなかった" :at 1000000))))))
+  (<- followed tuple (deployments-to-follow (ClusterState :rollouts {"to-a" row-a "to-b" row-b} :observations observations)))
+  (assert (= (sorted followed) ["ns/app-a" "ns/app-b"]) followed))
 
 
 ;; --- node-reread-due ----------------------------------------------------------------------------------------------------

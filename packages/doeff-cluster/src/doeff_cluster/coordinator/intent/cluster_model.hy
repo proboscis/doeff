@@ -991,7 +991,6 @@
   ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。
   (setv #^ (get dict #(str ProgramRow)) programs (field :default-factory dict))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)
-  (setv #^ int rollout-tick-ms 0)                       ; Rollout を最後に調停した時刻
   ;; coordinator が生きていた最後の時刻(ALIVE-MARK-MS ごとに耐久の鍵 counter へ書く)。起動の時に「止まっていた長さ」を測り、
   ;; 進行中の Rollout の段の起点と task の lease を、その長さだけずらす(api_policy.resume-after-downtime・2026-09-25)。
   ;; 同じ拍(mark-alive)で、各 worker の最後の連絡の時刻を WorkerInfo の欄 seen-mark に写す(耐久の鍵 worker/<名> の lastSeenMs)。

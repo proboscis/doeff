@@ -24,6 +24,7 @@ from doeff_cluster.coordinator.intent.cluster_model import Watcher as Watcher
 from doeff_cluster.coordinator.intent.cluster_model import WatchRefusal as WatchRefusal
 from doeff_cluster.coordinator.intent.cluster_model import WatchAnswer as WatchAnswer
 from doeff_cluster.coordinator.intent.cluster_model import WatchStep as WatchStep
+from doeff_cluster.coordinator.intent.cluster_model import DeploymentUnreadable as DeploymentUnreadable
 from doeff_cluster.coordinator.core.watch_policy import watch_of as watch_of
 from doeff_cluster.coordinator.core.watch_policy import settle_watch as settle_watch
 from doeff_cluster.coordinator.core.cluster_policy import nodes_to_read as nodes_to_read
@@ -31,13 +32,12 @@ from doeff_cluster.coordinator.core.cluster_policy import with_derived_capabilit
 from doeff_cluster.coordinator.core.api_policy import respond as respond
 from doeff_cluster.coordinator.core.api_policy import tick as tick
 from doeff_cluster.coordinator.core.api_policy import plan_rollouts as plan_rollouts
-from doeff_cluster.coordinator.core.api_policy import deployments_to_observe as deployments_to_observe
+from doeff_cluster.coordinator.core.api_policy import deployments_to_follow as deployments_to_follow
 from doeff_cluster.coordinator.core.api_policy import scale_service as scale_service
 from doeff_cluster.coordinator.core.api_policy import record_action as record_action
 from doeff_cluster.coordinator.core.api_policy import mark_alive as mark_alive
 from doeff_cluster.coordinator.core.api_policy import stamp_alive as stamp_alive
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_ACTOR as ROLLOUT_ACTOR
-from doeff_cluster.coordinator.core.api_policy import ROLLOUT_TICK_MS as ROLLOUT_TICK_MS
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
 from doeff_cluster.coordinator.intent.request_bodies import ReadBody as ReadBody
 from doeff_cluster.coordinator.intent.request_bodies import BodyUnreadable as BodyUnreadable
@@ -45,6 +45,7 @@ from doeff_cluster.coordinator.intent.request_bodies import HeartbeatBody as Hea
 from doeff_cluster.coordinator.intent.kube_model import ScaleDeployment as ScaleDeployment
 from doeff_cluster.coordinator.intent.kube_model import AnnotateDeployment as AnnotateDeployment
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
+from doeff_cluster.coordinator.intent.kube_model import FollowDeployments as FollowDeployments
 from doeff_cluster.coordinator.intent.kube_model import StartKubeReads as StartKubeReads
 from doeff_cluster.coordinator.intent.kube_model import CollectKubeReads as CollectKubeReads
 from doeff_cluster.coordinator.intent.kube_model import KubeReadsIdle as KubeReadsIdle
@@ -103,7 +104,10 @@ def lap_ms(measuring: bool) -> _Program[int, object]:
 def note_heartbeat_lags(heard: tuple, marks: StepMarks) -> _Program[int, object]:
     ...
 
-def kube_observations(state: ClusterState, now: int) -> _Program[KubeReadsDone, object]:
+def deployment_observations(state: ClusterState, now: int) -> _Program[tuple, object]:
+    ...
+
+def node_observations(state: ClusterState, now: int) -> _Program[tuple, object]:
     ...
 
 def rollout_tick(state: ClusterState, timing: ClusterTiming, naming: ClusterNaming, now: int) -> _Program[ClusterState, object]:
