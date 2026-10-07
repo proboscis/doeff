@@ -235,6 +235,45 @@
     (job-from-json (| {"name" "w"} RECREATE {"readiness" {"windowSeconds" 10 "handoffTimeoutSeconds" 45}}))))
 
 
+;; 退いた process の寿命の上限(#4072 の D-2)の宣言の読みと、coordinator → worker の運び。
+(import doeff_cluster.shared.core.readiness_rules [retired-lifetime-ms])
+(import doeff_cluster.coordinator.core.cluster_policy [spec-of-declaration])
+(import doeff_cluster.coordinator.protocol.replies [spec-json])
+(import doeff_cluster.worker.protocol.declared [declared-job-spec])
+(import doeff_cluster.shared.intent.job_model [JobSpec])
+
+
+(deftest test-the-retired-lifetime-is-declared-in-readiness-and-reaches-the-worker
+  ;; 退いた process の寿命の上限 = readiness の retiredSeconds(正の数・handoff の Service だけ。無ければ None = 今どおり新の Ready で
+  ;; 退いた旧を止める)。service の宣言と coordinator の宣言の読みが同じ規則で断り、coordinator の JobSpec → 返事の JSON → worker の
+  ;; JobSpec を通って retired-ms(ミリ秒)で届く。
+  (assert (is (retired-lifetime-ms None) None))
+  (assert (is (retired-lifetime-ms {"windowSeconds" 10}) None))
+  (assert (= (retired-lifetime-ms {"windowSeconds" 10 "retiredSeconds" 60}) 60000))
+  (<- declared Job (declared-job {"windowSeconds" 10 "retiredSeconds" 60} "handoff"))
+  (assert (= declared.readiness {"windowSeconds" 10 "retiredSeconds" 60}))
+  (for [bad [{"windowSeconds" 10 "retiredSeconds" 0} {"windowSeconds" 10 "retiredSeconds" -1}
+             {"windowSeconds" 10 "retiredSeconds" True} {"windowSeconds" 10 "retiredSeconds" "60"}]]
+    (with [(pytest.raises ValueError)]
+      (<- (declared-job bad "handoff")))
+    (with [(pytest.raises ValueError)]
+      (job-from-json (| {"name" "w"} HANDOFF {"readiness" bad}))))
+  ;; recreate の Service は退いた process を持たない(効かない欄を黙って受けない)。
+  (with [(pytest.raises ValueError)]
+    (<- (declared-job {"windowSeconds" 10 "retiredSeconds" 60} "recreate")))
+  (val spec (spec-of-declaration (| {"name" "w"} HANDOFF {"readiness" {"windowSeconds" 10 "retiredSeconds" 60}})))
+  (assert (= spec.retired-ms 60000) spec)
+  (<- wire dict (spec-json spec))
+  (assert (= (get wire "retiredMs") 60000) wire)
+  (<- received JobSpec (declared-job-spec wire False))
+  (assert (= received.retired-ms 60000) received)
+  ;; 宣言しない handoff の job は欄を綴らず、worker の JobSpec も None。
+  (<- plain dict (spec-json (spec-of-declaration (| {"name" "w"} HANDOFF))))
+  (assert (not-in "retiredMs" plain) plain)
+  (<- plain-received JobSpec (declared-job-spec plain False))
+  (assert (is plain-received.retired-ms None) plain-received))
+
+
 ;; --- 筋書き ---------------------------------------------------------------------------------
 
 (deftest test-a-new-generation-ready-within-the-deadline-stops-the-old-as-before
