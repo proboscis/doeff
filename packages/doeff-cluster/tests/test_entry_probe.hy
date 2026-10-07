@@ -60,7 +60,7 @@
 
 (deftest test-a-service-starts-only-after-the-probe-passes
   ;; 木が揃う → 検めを撃つ → 走っている間は待つ → PASSED で起こす。
-  (assert (= (! (plan 0 #(S1) (! (world :codes #())) {} POLICY)) #((PrepareCode "rev1"))))
+  (assert (= (! (plan 0 #(S1) (! (world :codes #())) {} POLICY)) #((PrepareCode "rev1" None))))
   (assert (= (! (plan 0 #(S1) (! (world)) {} POLICY)) #((ProbeEntry S1 "/c/rev1"))))
   (assert (= (! (plan 0 #(S1) (! (world :probes #((ProbeView (spec-hash S1) ProbeState.RUNNING)))) {} POLICY)) #()))
   (assert (= (. (get (! (statuses 0 #(S1) (! (world)) {} POLICY)) 0) phase) JobPhase.STARTING))

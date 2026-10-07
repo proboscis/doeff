@@ -378,7 +378,7 @@
   (if (not trees)
       with-hy
       (do (<- (StageStarted BYTECODE-STAGE))
-          (<- report (| BytecodeReport EnvFailure) (CompileTrees pdir trees request.env.bytecode-entries))
+          (<- report (| BytecodeReport EnvFailure) (CompileTrees pdir trees request.env.bytecode-entries request.compile-jobs))
           (<- (StageStarted BYTECODE-STAGE))
           (<- outcome (| PrepareState EnvFailure) (bytecode-outcome trees report with-hy))
           outcome)))

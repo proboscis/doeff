@@ -156,19 +156,20 @@
     ;; KILL 後は待つだけ。確認できないまま置き換えを起動しない。
     True #()))
 
-(defn #^ (| PrepareCode PrepareEnv) prepare-action [#^ JobSpec spec]
-  "spec の置き場を用意する action: 実行環境の job は env の root(PrepareEnv)、それ以外は commit の木(PrepareCode)。"
+(defn #^ (| PrepareCode PrepareEnv) prepare-action [#^ JobSpec spec #^ (| int None) compile-jobs]
+  "spec の置き場を用意する action: 実行環境の job は env の root(PrepareEnv)、それ以外は commit の木(PrepareCode)。compile-jobs = bytecode を
+   焼く道具の並べる数(None = 道具の既定 — 旧い process が動いている間の準備だけ replace-step が方策の値を渡す・2026-10-08)。"
   (if spec.runtime-env
-      (PrepareEnv (code-key spec) spec.runtime-env)
-      (PrepareCode (code-key spec))))
+      (PrepareEnv (code-key spec) spec.runtime-env compile-jobs)
+      (PrepareCode (code-key spec) compile-jobs)))
 
-(defn #^ tuple prepare-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy]
-  "spec のコードの木を用意する action(用意できていれば空)。準備に失敗した版は、間を置いてから作り直す。"
+(defn #^ tuple prepare-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy #^ (| int None) compile-jobs]
+  "spec のコードの木を用意する action(用意できていれば空)。準備に失敗した版は、間を置いてから作り直す。compile-jobs は prepare-action と同じ。"
   (setv code (code-of world (code-key spec)))
   (cond
-    (is code None) #((prepare-action spec))
+    (is code None) #((prepare-action spec compile-jobs))
     (and (= code.state CodeState.FAILED)
-         (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec))
+         (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec compile-jobs))
     True #()))
 
 (defrecord StartStep
@@ -233,7 +234,8 @@
   (cond
     ;; task は 1 度だけ走らせる。終わった後は宣言から外れるまで待つ(結果は状態の報告で運ぶ)。
     (and spec.once (is-not record.last-outcome None)) (StartStep :actions #() :hold None)
-    (is tree None) (StartStep :actions (prepare-actions now spec world policy) :hold (! (prepare-hold code record)))
+    ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限)で焼く。
+    (is tree None) (StartStep :actions (prepare-actions now spec world policy None) :hold (! (prepare-hold code record)))
     True (! (ready-tree-step now spec tree world record policy))))
 
 
@@ -256,12 +258,14 @@
    周期の終わりの見送りの行 start-holds が同じ判断を読む — 2026-10-08): 新しい版の木が READY でなければ準備だけ(準備中・失敗の後の
    作り直しの間を含む — 訳は prepare-hold)、木が揃っても入口の検めが通っていなければ検めだけ(走っている・落ちた間は待つ — 訳は
    probe-hold)。どちらの間も旧は動かしたまま。揃って通ったら旧を止める(SpecChanged)— 止め終えた次の周期で start-step が待たずに
-   起動する。"
+   起動する。準備の action は方策の並べる数(compile-jobs-while-replacing)を載せる — 旧い service と焼きが同じ Pod の memory の上限を
+   分け合うので、道具の既定の並べる数で焼かない。"
   (val code (code-of world (code-key want)))
   (val tree (ready-path code))
   (val gate (if (is tree None) None (probe-actions now want tree world policy)))
   (cond
-    (is tree None) (StartStep :actions (prepare-actions now want world policy) :hold (! (prepare-hold code record)))
+    (is tree None) (StartStep :actions (prepare-actions now want world policy policy.compile-jobs-while-replacing)
+                              :hold (! (prepare-hold code record)))
     (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world want))))
     True (StartStep :actions (stop-actions now process record policy (SpecChanged)) :hold None)))
 
@@ -274,7 +278,8 @@
           (if (is-not gate None)
               gate
               #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
-      (prepare-actions now want world policy)))
+      ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
+      (prepare-actions now want world policy None)))
 
 (defn #^ tuple retired-actions [#^ int now #^ ProcessView process #^ str origin #^ tuple desired #^ WorldView world
                                 #^ JobRecord record #^ WorkerPolicy policy]
@@ -341,7 +346,8 @@
                         (or (is code None)
                             (and (= code.state CodeState.FAILED)
                                  (>= (- now (or code.failed-ms 0)) policy.code-retry-ms))))
-               (PrepareEnv w.key w.runtime-env :warm True))))
+               ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
+               (PrepareEnv w.key w.runtime-env None :warm True))))
 
 (defk warm-stop-step [now view policy]
   {:pre [(: now int) (: view WarmChildView) (: policy WorkerPolicy)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}

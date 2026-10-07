@@ -222,7 +222,7 @@
   {:pre [(: key str) (: text str) (: times int)] :post [(: % CodeView)]}
   "worker と同じ口(PrepareEnv)で root の準備を times 回頼み、READY か FAILED の観測まで待つため。"
   (for [_ (range times)]
-    (<- (PrepareEnv key text)))
+    (<- (PrepareEnv key text None)))
   (<- view CodeView (settled-env key))
   view)
 

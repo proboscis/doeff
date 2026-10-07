@@ -273,9 +273,20 @@
   (setv #^ int stable-run-ms 60000)
   ;; コードの準備に失敗した版を作り直すまでの間(失敗が続く版で git と焼きを毎拍撃たない)。
   (setv #^ int code-retry-ms 30000)
+  ;; recreate の job の旧い process が動いている間の新しい版の準備で、bytecode を焼く道具に渡す並べる数(--jobs・正の整数 — 2026-10-08)。
+  ;; 旧い service と焼きが同じ Pod の memory の上限を分け合うので、道具の既定(cgroup の CPU の上限)より絞る。zeus の測り(MemoryMax 1650M =
+  ;; Pod の 2Gi から旧い記録の service の anon 364MB を引いた値・CPU 400%・空の保存先から全部を焼く・1 回ずつ)で、回収できない anon の
+  ;; 最高は並べる数 4 で 1.59GB(上限に当たった数 9・焼く時間 359 秒)、並べる数 2 で 358MB(上限に当たった数 0・414 秒)。2 なら旧と足して
+  ;; 約 0.72GB で、Pod の上限に約 1.4GB の余りがある。旧が動いていない準備はこの値を使わない(道具の既定のまま — policy.replace-step だけが載せる)。
+  (setv #^ int compile-jobs-while-replacing 2)
 ;; 周の間の待ちに周期の上限は無い — 次の期限・宣言の変化・子の終わり・止め・掃除の終わりの早い 1 つまで待つ(#3871 の単位 4)。
   ;; 呼び鈴で起きる時も、周の終わりからこの秒は空ける(変化が途切れなく続いても周は 1 秒に 1 / wake-gap-seconds 回まで — #2692)。
-  (setv #^ float wake-gap-seconds 0.1))
+  (setv #^ float wake-gap-seconds 0.1)
+
+  (defn #^ None __post-init__ [self]
+    ;; 焼く道具の並べる数が正の整数である事を、方策を作る時に確かめるため(0 以下は道具が受けない — 準備が使い方の誤りで落ち続ける)。
+    (when (< self.compile-jobs-while-replacing 1)
+      (raise (ValueError (.format "compile-jobs-while-replacing は 1 以上: {}" self.compile-jobs-while-replacing))))))
 
 
 (defclass [(dataclass :frozen True)] JobStatus []
@@ -383,15 +394,18 @@
 ;; --- action(判断の結果。そのまま effect として実行する) -------------------------
 
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]
-  "revision のコードを展開し始める。完了は ObserveWorld の CodeView で観測する。"
-  (#^ str revision))
+  "revision のコードを展開し始める。完了は ObserveWorld の CodeView で観測する。compile-jobs = bytecode を焼く道具の並べる数(--jobs —
+   recreate の job の旧い process が動いている間の準備だけ WorkerPolicy.compile-jobs-while-replacing・None = 道具の既定 = cgroup の CPU の上限)。"
+  (#^ str revision)
+  (#^ (| int None) compile-jobs))
 
 
 (defclass [(dataclass :frozen True)] PrepareEnv [EffectBase]
-  "実行環境(runtime env)の root を準備し始める(key = \"env-<キー>\"・runtime-env = 宣言の JSON の文字列)。完了は ObserveWorld の
-   CodeView(鍵 = key・READY の path = root)で観測する。worker のループは待たない。"
+  "実行環境(runtime env)の root を準備し始める(key = \"env-<キー>\"・runtime-env = 宣言の JSON の文字列・compile-jobs = bytecode を焼く
+   道具の並べる数 — PrepareCode と同じ)。完了は ObserveWorld の CodeView(鍵 = key・READY の path = root)で観測する。worker のループは待たない。"
   (#^ str key)
   (#^ str runtime-env)
+  (#^ (| int None) compile-jobs)
   ;; 先読み(温める表から)の準備か。先読みは job の準備より後に起こし、同時の準備の枠の 1 つを job に残し、期限は停滞だけ。
   (setv #^ bool warm False))
 

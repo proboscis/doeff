@@ -8,7 +8,7 @@
 
 
 (deftest test-the-script-checks-the-marker-before-the-rename-that-comes-last
-  (<- script str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout)))
+  (<- script str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout) :compile-jobs None))
   (val lines (.splitlines script))
   (assert (= (get lines 0) "set -eu") lines)
   (assert (= (get lines -1) "mv \"$T\" \"$F\"") lines)
@@ -20,12 +20,12 @@
 (deftest test-the-script-does-not-carry-from-a-previous-tree
   ;; 失敗ケース(#3858): 版の木の準備は前の版の木から .pyc を引き継がない(引き継ぎ元の差の一覧も渡さない)— 引き継ぐ形に戻すと、引き継ぎ元の
   ;; 無い worker で全部を焼き直す道が残る。
-  (<- script str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout)))
+  (<- script str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout) :compile-jobs None))
   (assert (not-in "--from" script) script)
   (assert (not-in "--changed" script) script)
   (assert (not-in "diff --name-only" script) script)
   ;; 焼きの hy が無ければ bytecode を省き、印だけを置く(道具を起こさない)。
-  (<- plain str (prepare-script "/repo" "rev9" :hy-command None :tool "/w/code_prepare.hy" :layout (CodeLayout)))
+  (<- plain str (prepare-script "/repo" "rev9" :hy-command None :tool "/w/code_prepare.hy" :layout (CodeLayout) :compile-jobs None))
   (assert (not-in "code_prepare.hy" plain) plain)
   (assert (in "\"bytecode\": false" plain) plain))
 

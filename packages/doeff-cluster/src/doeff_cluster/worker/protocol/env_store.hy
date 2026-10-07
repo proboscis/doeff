@@ -106,6 +106,14 @@
   (#^ bool warm))
 
 
+(defrecord WaitingEnv
+  "起こすのを待っている準備 1 本の頼み(待ちの記録の値 — キー → この record): runtime-env = 宣言の JSON の文字列・compile-jobs = bytecode を
+   焼く道具の並べる数(None = 道具の既定 — PrepareEnv と同じ・2026-10-08)・warm = 先読みの準備か。"
+  (#^ str runtime-env)
+  (#^ (| int None) compile-jobs)
+  (#^ bool warm))
+
+
 (defk env-root [settings key]
   {:pre [(: settings EnvSettings) (: key str)] :post [(: % str)]}
   "env のキー(env-<キー>)の root の path を返すため。"
@@ -158,10 +166,10 @@
   known)
 
 
-(defk launch-prepare [settings key runtime-env warm]
-  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: warm bool)] :post [(: % PendingEnv)]}
+(defk launch-prepare [settings key runtime-env compile-jobs warm]
+  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool)] :post [(: % PendingEnv)]}
   "root の準備の process を 1 本起こして記録を返すため。マーカーの無い root(途中で止まった準備)は脇へ退ける(名は . で始まるので
-   完成品としては読まれない)。"
+   完成品としては読まれない)。compile-jobs = 焼く道具の並べる数(頼みの JSON の compileJobs に書く)。"
   (<- root str (env-root settings key))
   (<- now-ms int (now-epoch-ms))
   (<- seen (StatPath root))
@@ -178,7 +186,8 @@
   (<- (RemoveTree result))     ; 無い file の断りは捨てる
   (<- (RemoveTree progress))
   (<- known tuple (known-roots settings))
-  (<- body dict (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) settings.platform root known settings.min-free-bytes))
+  (<- body dict (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) settings.platform root known settings.min-free-bytes
+                                 compile-jobs))
   (<- (file-done (WriteText request (json.dumps body :ensure-ascii False))))
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state settings.uv-cache settings.repo-keys
                                settings.code-prepare settings.uv progress))
@@ -497,14 +506,14 @@
 (defk launch-waiting [settings waiting pending]
   {:pre [(: settings EnvSettings) (: waiting dict) (: pending dict)] :post [(: % tuple)]}
   "待っている準備のうち起こせる物を起こし、#(残りの待ち 準備中) を返すため(起こす順と数は env_rules.launch-order)。"
-  (<- order tuple (launch-order (tuple (gfor #(k #(_ w)) (.items waiting) #(k w))) (len pending)
+  (<- order tuple (launch-order (tuple (gfor #(k w) (.items waiting) #(k w.warm))) (len pending)
                                 (len (lfor p (.values pending) :if p.warm p)) settings.max-parallel))
   (var left waiting)
   (var running pending)
   (for [key order]
     (val entry (get left key))
     (:= left (dfor #(k v) (.items left) :if (!= k key) k v))
-    (<- started PendingEnv (launch-prepare settings key (get entry 0) (get entry 1)))
+    (<- started PendingEnv (launch-prepare settings key entry.runtime-env entry.compile-jobs entry.warm))
     (:= running (| running {key started})))
   #(left running))
 
@@ -551,7 +560,7 @@
 
 (defhandler env-host [#^ EnvSettings settings]
   ;; 引数に残す理由: root の置き場と準備の道具は worker の process ごとの設定(main が引数から作る)。
-  ;; 記録: 待ち(キー → #(宣言の JSON 先読みか) — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
+  ;; 記録: 待ち(キー → WaitingEnv — 頼まれた順)・準備中(キー → PendingEnv)・失敗(キー → #(EnvFailure 時刻))・
   ;; 固定の集合 pinned-roots(最後に受けた SweepEnvs の固定 — 判断の側の statuses の held と別の物)・最後の掃除の終わりの時刻・
   ;; 走っている掃除(数えか消し — 同時に 1 つ)・最後の数えの結び tally(RootsTally — まだ数えていなければ None・#3732)・prune の記録・
   ;; 最後の観測(heartbeat の名乗りが読む)。
@@ -568,17 +577,19 @@
   ;; キーの集合(heartbeat の memoryUnmeasured — 測って始め直した root は外す)。
   (session var measured-infos #())
   (session var unmeasured (frozenset))
-  (PrepareEnv [key runtime-env warm]
+  (PrepareEnv [key runtime-env compile-jobs warm]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
-    ;; 先読みと同じ停滞の長さ)、待っていれば先読みの印を下ろす。先の組み(warm)は始める前に空き・roots の上限・memory で断るかを
-    ;; 判じ(warm-admission — #3748)、断れば失敗の記録に種類つきで置く(heartbeat の env-failed → 温める表の WarmFailure)。job の準備は断らない。
+    ;; 先読みと同じ停滞の長さ・走っている焼きの並べる数は変えない)、待っていれば job の頼み(焼きの並べる数も)に置き換える。先の組み(warm)は
+    ;; 始める前に空き・roots の上限・memory で断るかを判じ(warm-admission — #3748)、断れば失敗の記録に種類つきで置く(heartbeat の env-failed
+    ;; → 温める表の WarmFailure)。job の準備は断らない。
+    (val wanted (WaitingEnv :runtime-env runtime-env :compile-jobs compile-jobs :warm warm))
     (cond
       (in key pending)
         (when (and (. (get pending key) warm) (not warm))
           (:= pending (| pending {key (replace (get pending key) :warm False)})))
       (in key waiting)
         (when (not warm)
-          (:= waiting (| waiting {key #(runtime-env False)})))
+          (:= waiting (| waiting {key wanted})))
       True
         (do (<- root str (env-root settings key))
             (<- marker (read-marker root))
@@ -595,7 +606,7 @@
                   (do (<- now-ms int (now-epoch-ms))
                       (:= failed (| failed {key #(admission.refused now-ms)})))
                 None
-                  (do (<- launched tuple (launch-waiting settings (| waiting {key #(runtime-env warm)}) pending))
+                  (do (<- launched tuple (launch-waiting settings (| waiting {key wanted}) pending))
                       (:= waiting (get launched 0))
                       (:= pending (get launched 1)))))))
     (resume None))
