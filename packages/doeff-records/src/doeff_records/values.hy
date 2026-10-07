@@ -408,7 +408,9 @@
   #^ str body-digest)
 
 (defclass [(dataclass :frozen True)] Events []
-  "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。"
+  "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。
+   items が上限 limit より少なければ、この答えを作った時に after より後の出来事は items の他に無い(上限より短い頁は列の終わり —
+   法 law-short-page-ends-the-stream・#3986)。上限ちょうどの頁の後には出来事が残っていてよい。"
   (#^ tuple items)
   (#^ int last-sequence))
 

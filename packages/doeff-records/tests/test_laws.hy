@@ -9,7 +9,7 @@
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-expired-keys-are-remembered
                             law-expired-records-are-unseen-before-a-sweep law-a-write-clears-the-expired-row-it-touches
-                            law-an-expired-key-answers-the-same-before-and-after-a-sweep])
+                            law-an-expired-key-answers-the-same-before-and-after-a-sweep law-short-page-ends-the-stream])
 (import tests.interpreters [LawSetup])
 
 
@@ -118,4 +118,10 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-put-rows-is-all-or-nothing harness))
+  (assert transcript))
+
+(deftest test-short-page-ends-the-stream
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-short-page-ends-the-stream harness))
   (assert transcript))

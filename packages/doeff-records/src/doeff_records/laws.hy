@@ -878,6 +878,60 @@
    swept-done kept])
 
 
+;; --- 法 20: 上限より短い頁は列の終わり ----------------------------------------------------------------------------
+
+(val SHORT-PAGE-LIMIT 3)
+
+(defk short-page-is-the-end [harness stream page limit law]
+  {:pre [(: harness LawHarness) (: stream str) (: page Events) (: limit int) (: law str)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "ReadEvents の答え page の items が上限 limit より少なければ、続けて読んだ答えが空で、出来事を運ぶ頁なら列の末尾(ReadStreamEnd)が
+   page の最後の番号である事を確かめ、確かめに使った答えを返すため(上限ちょうどの頁は何も約束しないので、確かめずに空の list を返す)。"
+  (when (>= (len page.items) limit)
+    (return []))
+  (<- rest (as-writer harness MAKER (ReadEvents stream :after page.last-sequence :limit limit)))
+  (<- (require-law (and (isinstance rest Events) (= rest.items #())) law
+                   (.format "上限 {} より短い頁 {!r} の後に出来事が残る: {!r}" limit page rest)))
+  (when (= page.items #())
+    (return [rest]))
+  (<- end (as-writer harness MAKER (ReadStreamEnd stream)))
+  (<- (require-law (= end (StreamEnd page.last-sequence)) law
+                   (.format "上限 {} より短い頁 {!r} の最後の番号が列の末尾と違う: {!r}" limit page end)))
+  [rest end])
+
+(defk law-short-page-ends-the-stream [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "短い頁の法(#3986): ReadEvents の答えの items が limit より少なければ、その答えを作った時に after より後の出来事は items の他に無い
+   (= 上限より短い頁は列の終わり)。使い手が「空の頁が返るまで読む」でなく「短い頁で止める」で列を読み切り、空の頁の確かめの読みを
+   1 回減らせるため。上限ちょうどの頁の後には出来事が残っていてよい(何も約束しない)。どの置き場の handler も同じ答えを返すことを確かめる。"
+  (val law "ReadEvents の答えが上限より短ければ、after より後の出来事は答えの他に無い")
+  ;; 上限の 2 倍より 1 つ少ない数(上限ちょうどの頁 1 つと、短い頁 1 つに分かれる)。
+  (val keys ["short-page-0" "short-page-1" "short-page-2" "short-page-3" "short-page-4"])
+  (<- first (as-writer harness MAKER (AppendEvent "journal" "short-page-0" {"n" 0})))
+  ;; 別の列の出来事を間に積む(番号は全部の列で 1 つなので journal の番号に飛びができる — 飛びを列の終わりと取り違えない事も見る)。
+  (<- elsewhere (as-writer harness MAKER (AppendEvent "pulses" "short-page-elsewhere" {"n" 0})))
+  (<- second (as-writer harness MAKER (AppendEvent "journal" "short-page-1" {"n" 1})))
+  (<- third (as-writer harness MAKER (AppendEvent "journal" "short-page-2" {"n" 2})))
+  (<- fourth (as-writer harness MAKER (AppendEvent "journal" "short-page-3" {"n" 3})))
+  (<- fifth (as-writer harness MAKER (AppendEvent "journal" "short-page-4" {"n" 4})))
+  (val appended [first elsewhere second third fourth fifth])
+  (val start (- first.sequence 1))
+  (<- full (as-writer harness MAKER (ReadEvents "journal" :after start :limit SHORT-PAGE-LIMIT)))
+  (<- full-checked (short-page-is-the-end harness "journal" full SHORT-PAGE-LIMIT law))
+  (<- short (as-writer harness MAKER (ReadEvents "journal" :after full.last-sequence :limit SHORT-PAGE-LIMIT)))
+  (<- short-checked (short-page-is-the-end harness "journal" short SHORT-PAGE-LIMIT law))
+  (<- (require-law (and (= (len full.items) SHORT-PAGE-LIMIT) (< (len short.items) SHORT-PAGE-LIMIT)
+                        (= (lfor e (+ full.items short.items) e.idempotency-key) keys))
+                   law (.format "上限ちょうどの頁と短い頁で積んだ出来事を読み切れない: {!r} {!r}" full short)))
+  ;; 上限が残りの数より大きい読み(1 頁で列の終わりまで)も短い頁。
+  (val wide-limit (* 4 SHORT-PAGE-LIMIT))
+  (<- whole (as-writer harness MAKER (ReadEvents "journal" :after start :limit wide-limit)))
+  (<- whole-checked (short-page-is-the-end harness "journal" whole wide-limit law))
+  (<- (require-law (= (lfor e whole.items e.idempotency-key) keys) law (.format "1 頁で読んだ列: {!r}" whole)))
+  (+ appended [full short whole] full-checked short-checked whole-checked))
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing は SHARED-LAWS に入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、
 ;; PutRows を答えない handler の組(呼び手の系の写しの handler など)もこの名簿で答えを比べている。
@@ -900,6 +954,7 @@
             "a-write-clears-the-expired-row-it-touches" law-a-write-clears-the-expired-row-it-touches
             "an-expired-key-answers-the-same-before-and-after-a-sweep" law-an-expired-key-answers-the-same-before-and-after-a-sweep
             "watch-tails-match-last-events" law-watch-tails-match-last-events
-            "event-by-key-reads-the-same-event" law-event-by-key-reads-the-same-event})
+            "event-by-key-reads-the-same-event" law-event-by-key-reads-the-same-event
+            "short-page-ends-the-stream" law-short-page-ends-the-stream})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))
