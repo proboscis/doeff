@@ -9,7 +9,7 @@
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty Event EventAbsent EventRetired])
-(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadStreamEnd ReadEventByKey])
+(import doeff_records.effects [PutRow PutRows WatchChanges ListRows AppendEvent ReadEvents ReadStreamEnd ReadEventByKey])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
@@ -19,7 +19,8 @@
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
-                            law-watch-tails-match-last-events law-event-by-key-reads-the-same-event])
+                            law-watch-tails-match-last-events law-event-by-key-reads-the-same-event
+                            law-short-page-ends-the-stream])
 (import doeff_records.maintenance [PruneChanges Pruned])
 
 
@@ -142,6 +143,13 @@
     (resume (if (isinstance answer EventRetired) (EventAbsent) answer))))
 
 
+(defhandler cap-below-limit []
+  ;; 1 頁を内部で上限より 1 つ少なく切る handler の顔(#3986): 残りの出来事を隠したまま、上限より短い頁を返す。
+  (ReadEvents [stream after limit]
+    (<- answer (ReadEvents stream :after after :limit (max 1 (- limit 1))))
+    (resume answer)))
+
+
 (defclass Forgetful [dict]
   "書いても覚えない dict — 保持の期限で消した冪等キーの覚え(MemoryStore.retired-keys)をこれにした置き場は、#3022 の前の置き場の形
    (出来事を消すと鍵も忘れ、消した後の同じ鍵が新しい出来事になる)の代役になる。"
@@ -177,7 +185,8 @@
                       #(law-event-by-key-reads-the-same-event (event-of-any-stream))
                       #(law-event-by-key-reads-the-same-event (retired-as-absent))
                       #(law-watch-tails-match-last-events drop-tails)
-                      #(law-watch-tails-match-last-events tails-in-name-order)]]
+                      #(law-watch-tails-match-last-events tails-in-name-order)
+                      #(law-short-page-ends-the-stream (cap-below-limit))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手の名で断る置き場(欄の書き手でない stranger の書きを断る)— #2994 の前の置き場の形。
   (setv strict-store (MemoryStore LAW-SCHEMA))
