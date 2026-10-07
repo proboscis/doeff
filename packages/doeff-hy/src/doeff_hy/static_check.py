@@ -246,6 +246,35 @@ def _bookkeeping_statement(statement: ast.stmt) -> bool:
             return False
 
 
+def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
+    """定義の記帳 `setattr(名, '__doeff_effects__', doeff_hy.declarations.effect_types(場所, tuple([A, B])))` を、
+    doeff_hy.declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めた文にするため(それ以外は None)。
+    宣言 :effects にだけ出る効果の名(handler の節が下請けの関数を通して出す効果)を、型検査の中で読まれた名に残す —
+    記帳ごと外すと、その名の import が strict の reportUnusedImport の赤になり、書き手は直せない(import を消すと実行の時に
+    :effects の宣言が名を解けない — agora-redesign #3871 の後)。"""
+    match statement:
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Name(id="setattr"),
+                args=[
+                    target,
+                    ast.Constant(value="__doeff_effects__"),
+                    ast.Call(args=[_, ast.Call(func=ast.Name(id="tuple"), args=[ast.List(elts=names)])]),
+                ],
+            )
+        ) if names:
+            reads = ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id="setattr", ctx=ast.Load()),
+                    args=[target, ast.Constant(value="__doeff_effects__"), ast.Tuple(elts=names, ctx=ast.Load())],
+                    keywords=[],
+                )
+            )
+            return ast.copy_location(reads, statement)
+        case _:
+            return None
+
+
 def _referenced_roots(statements: list[ast.stmt]) -> frozenset[str]:
     """文の中で読まれている名(属性の連なりは根の名)— 外してよい import を決めるため。"""
     return frozenset(
@@ -363,12 +392,17 @@ def _field_texts(value: object) -> tuple[str, ...]:
 def without_bookkeeping(tree: ast.Module) -> ast.Module:
     """型検査のための展開から、型の意味を持たない記帳を外す(pyright strict の誤検出の元を展開の側で絶つ)。
 
-    - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。
+    - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。ただし宣言 :effects の記帳は、名を読む形に
+      縮めて残す(_effects_reads — 宣言にだけ出る効果の名の import を、読まれない import にしない)。
     - module の直下で同じ doeff-hy の import の文が繰り返されたら最初の 1 つだけを残す(macro が定義ごとに出す import)。
     - 記帳だけが使う module(BOOKKEEPING_MODULES)の import の名(1 つの文に並んだ名も 1 つずつ)と Hy の `import hy` で、
       もう読まれない物を外す。
     消費 repo の利用者が書いた式は外さない(外すのは macro が合成した文の形だけ)。"""
-    kept = [statement for statement in tree.body if not _bookkeeping_statement(statement)]
+    kept = [
+        reads if (reads := _effects_reads(statement)) is not None else statement
+        for statement in tree.body
+        if _effects_reads(statement) is not None or not _bookkeeping_statement(statement)
+    ]
     imports = (ast.Import, ast.ImportFrom)
     seen_keys = [ast.dump(s) if _doeff_hy_import(s) else None for s in kept]
     first = [
