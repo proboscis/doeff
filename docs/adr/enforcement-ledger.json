@@ -39,6 +39,7 @@
     "defadr_doeff_hy_007_def_macros_over_classes.hy",
     "defadr_doeff_hy_008_hy_is_not_forked.hy",
     "defadr_doeff_preset_001_retirement.hy",
+    "defadr_doeff_records_001_domain_api_only.hy",
     "defadr_doeff_runner_001_reading_plane.hy"
   ],
   "semgrep_rules": [
@@ -488,6 +489,8 @@
     "ADR-DOE-HY-008 imports-exist-in-pypi-hy",
     "ADR-DOE-PRESET-001 display-default-owned-by-slog-handler",
     "ADR-DOE-PRESET-001 preset-stays-retired",
+    "ADR-DOE-RECORDS-001 no-raw-operation-is-offered-outside",
+    "ADR-DOE-RECORDS-001 the-raw-operation-list-does-not-grow",
     "ADR-DOE-RUNNER-001 reading-plane-is-read-only",
     "ADR-DOE-RUNNER-001 reading-plane-labels-come-from-one-table",
     "ADR-DOE-RUNNER-001 reading-plane-reads-only-the-index"
@@ -594,7 +597,8 @@
     "ADR-DOE-HY-008 test-adr-doe-hy-008-dependency-declarations-name-no-hy-fork",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-exceptions-do-not-outlive-their-cause",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-imports-exist-in-pypi-hy",
-    "ADR-DOE-HY-008 test-adr-doe-hy-008-judgments-reject-the-counterexamples"
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-judgments-reject-the-counterexamples",
+    "ADR-DOE-RECORDS-001 test-adr-doe-records-001-raw-operations-do-not-grow"
   ],
   "adr_defsemgrep_enforcements": [
     "ADR-DOE-ADR-001 no-silent-off-wiring-default",
