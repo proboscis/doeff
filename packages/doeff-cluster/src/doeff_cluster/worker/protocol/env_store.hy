@@ -10,8 +10,9 @@
 ;;;   * 先読み(warm): 温める表の root は job の準備より後に起こし、同時の枠の 1 つを job に残す(起こす順と数は env_rules.launch-order)。
 ;;;     期限は env_upkeep.prepare-overdue(先読みも job の準備も、進みの印が動かない長さだけ)。期限を判じる前に答えの file を読み、
 ;;;     完成を書いた準備(終わりの処理の途中)は止めない — 次の観測で終わりを読む。
-;;;   * 掃除(sweep): roots の合計が上限(settings.roots-cap-bytes)を越えたら、固定されていない root を消す(選びは env_upkeep.sweep-choice・
-;;;     #3732 — 共有の disk の空きでは消さない。空きが最低 settings.min-free-bytes を割った時は準備を disk-full で断る)・uv の cache を prune(待たない)・
+;;;   * 掃除(sweep): roots の合計が上限(settings.roots-cap-bytes)を越えた時か、共有の disk の空きが最低 settings.min-free-bytes を
+;;;     割った時に、固定されていない root を古い順に消す(選びは env_upkeep.sweep-choice — project ごとの新しい 2 つは残す・#3732・#4051。
+;;;     候補を全部消しても空きが戻らない時は準備を disk-full で断る)・uv の cache を prune(待たない)・
 ;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
@@ -74,8 +75,8 @@
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
    repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・uv-cache = 準備の uv の子の
    cache の dir(UV_CACHE_DIR・prune もこの dir — 値は main の --uv-cache・起動の script が DOEFF_UV_CACHE_DIR を渡す・#3858)・
-   roots-cap-bytes = roots の合計の上限(越えた時だけ固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
-   (割った時は root を消さずに準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
+   roots-cap-bytes = roots の合計の上限(越えた時は固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
+   (割った時は固定されていない root を古い順に消し — #4051、戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
    上限・tool = 準備の process の入口・cgroup-dir = worker の container の cgroup(v2)の dir(先の組みの前に memory.current と memory.max を
    読む — #3748)・code-store = source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・None = 保存先を使わない
    設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)。2 つの量の値は worker の起動の引数(main.hy の
@@ -405,23 +406,23 @@
   (not (isinstance moved FileFailed)))
 
 
-(defk start-removing [settings measured busy started-ms]
-  {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: started-ms int)] :post [(: % SweepRemoving)]}
-  "数えの答えが届いた拍で、その拍の固定(busy — 数えの間に固定になった root も入る)と roots の合計の上限で消す root を選び、脇へ退け、
-   消しをループの外の task として起こすため。答え = 走っている消しの記録。"
-  (<- free int (disk-free settings))
+(defk start-removing [settings measured busy free started-ms]
+  {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int) (: started-ms int)] :post [(: % SweepRemoving)]}
+  "数えの答えが届いた拍で、その拍の固定(busy — 数えの間に固定になった root も入る)と、roots の合計の上限・共有の disk の空き free と
+   その最低で消す root を選び(#4051)、脇へ退け、消しをループの外の task として起こすため。答え = 走っている消しの記録。"
   (<- total int (roots-bytes measured.infos))
   (val cap settings.roots-cap-bytes)
+  (val min-free settings.min-free-bytes)
   (<- candidates tuple (sweep-candidates measured.infos busy))
-  (<- chosen tuple (sweep-choice measured.infos busy cap))
-  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・roots の合計・上限・固定の数・候補の数・選んだ数。
-  (<- (slog SWEEP-LOG :level "info" :free-bytes free :roots-bytes total :cap-bytes cap :pinned (len busy) :candidates (len candidates)
-            :chosen (len chosen)))
+  (<- chosen tuple (sweep-choice measured.infos busy cap free min-free))
+  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・空きの最低・roots の合計・上限・固定の数・候補の数・選んだ数。
+  (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len busy)
+            :candidates (len candidates) :chosen (len chosen)))
   (<- now-ms int (now-epoch-ms))
   (var aside #())
   (for [key chosen]
-    (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(roots の合計 {} byte > 上限 {} byte)" (cut key (len ENV-KEY-PREFIX) None)
-                       total cap)))
+    (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(roots の合計 {} byte・上限 {} byte・空き {} byte・最低 {} byte)"
+                       (cut key (len ENV-KEY-PREFIX) None) total cap free min-free)))
     (<- moved bool (set-aside settings key now-ms))
     (when moved
       (:= aside (+ aside #(key)))))
@@ -621,7 +622,7 @@
     ;; 掃除の係が拍を求めているか(sweep-wanted)は最後の観測の完成した root の集合と最後の数えの結びで判じる(#3732)。
     (<- free int (disk-free settings))
     (<- ready frozenset (ready-keys views))
-    (<- wanted bool (sweep-wanted (is-not sweeping None) tally ready settings.roots-cap-bytes))
+    (<- wanted bool (sweep-wanted (is-not sweeping None) tally ready settings.roots-cap-bytes (< free settings.min-free-bytes)))
     (resume (EnvDisk :free free :sweep-wanted wanted :pinned pinned-roots)))
   (EnvReport []
     ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件
@@ -637,8 +638,9 @@
     (resume (env-report (or views #()) capacity unmeasured)))
   (SweepEnvs [pinned]
     ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
-    ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・上限を越えたまま)なら数えを起こす
-    ;;   数えている   → 答えが届いていれば、数えの結び(tally)を持ち替え、この拍の固定と上限で選び、選んだ root を脇へ退けて消しを起こす
+    ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・空きの状態が変わったか割ったまま固定が
+    ;;                  変わった・上限を越えたまま)なら数えを起こす
+    ;;   数えている   → 答えが届いていれば、数えの結び(tally)を持ち替え、この拍の固定と上限と空きで選び、選んだ root を脇へ退けて消しを起こす
     ;;   消している   → 終わっていれば終わりの 1 行を出し、共有の disk の空きが最低を割っていれば uv の cache の prune を起こす
     ;; 初期値の空との比べで「変わった」と判じる最初の SweepEnvs は、worker が最初の宣言を読んだ拍の物(読む前は判断の側
     ;; policy.sweep-actions が撃たない — #3731)。ここで二重に止めない。
@@ -648,7 +650,8 @@
     (match sweeping
       None
         (do (<- ready frozenset (ready-keys views))
-            (<- due bool (sweep-due tally ready settings.roots-cap-bytes changed now-ms swept-ms))
+            (<- free int (disk-free settings))
+            (<- due bool (sweep-due tally ready settings.roots-cap-bytes (< free settings.min-free-bytes) changed now-ms swept-ms))
             (when due
               (<- measuring SweepMeasuring (start-measuring settings ready now-ms))
               (:= sweeping measuring)))
@@ -656,10 +659,13 @@
         (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
             (when (is-not measured None)
               (<- total int (roots-bytes measured.infos))
-              (:= tally (RootsTally :ready sweeping.ready :bytes total))
+              ;; 空きは答えを受けたこの拍で 1 度読み、結び(空きの状態 — 次の起こしの判断が比べる)と選びに同じ値を使う(#4051)。
+              (<- free int (disk-free settings))
+              (:= tally (RootsTally :ready sweeping.ready :bytes total :below-min-free (< free settings.min-free-bytes)))
               (:= measured-infos measured.infos)
               ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
-              (<- removing SweepRemoving (start-removing settings measured (| pinned-roots (frozenset pending) (frozenset waiting)) sweeping.started-ms))
+              (<- removing SweepRemoving (start-removing settings measured (| pinned-roots (frozenset pending) (frozenset waiting)) free
+                                                        sweeping.started-ms))
               (:= sweeping removing)))
       (SweepRemoving)
         (do (<- removed (| RemovedRoots None) (sweep-answer sweeping))

@@ -2,10 +2,12 @@
 ;;;
 ;;; worker の root の言い換え(worker/protocol/env_store の env-host)が観測を集めて、ここで決め、I/O(dir の削除・準備の process の停止)を汎用の効果で出す。
 ;;;   sweep-candidates 掃除で消してよい root の列(古い順 — 選びと掃除の頭の行が読む)
-;;;   sweep-choice     roots の合計が上限を越えた時に消す root の列(固定・project ごとの新しい 2 つ・worker が作っていない dir は消さない)
+;;;   sweep-choice     roots の合計が上限を越えた時か、共有の disk の空きが最低を割った時に消す root の列(固定・project ごとの新しい 2 つ・
+;;;                    worker が作っていない dir は消さない)
 ;;;   sweep-wanted     掃除の係が拍を求めているか(heartbeat の観測 EnvDisk に載せる — worker の判断はこれで SweepEnvs を撃つ)
-;;;   sweep-due        新しい掃除(数え)を始める時か(まだ数えていない・完成した root の集合が変わった・上限を越えたままで固定が変わったか
-;;;                    前の掃除の終わりから SWEEP-EVERY-MS — #3715・#3732)
+;;;   sweep-due        新しい掃除(数え)を始める時か(まだ数えていない・完成した root の集合が変わった・空きが最低を割っているかが数えた時と
+;;;                    違う・空きが割ったままで固定が変わった・上限を越えたままで固定が変わったか前の掃除の終わりから SWEEP-EVERY-MS —
+;;;                    #3715・#3732・#4051)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
 ;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted)
 ;;;   warm-refusal     先の組み(温める表の行)を始める前に断るか(no-disk-room・over-roots-cap・no-memory-room — #3748)。見積もりは
@@ -13,8 +15,14 @@
 ;;;
 ;;; 掃除の下限は 2 つの絶対の量(#3732 — 以前の「volume の 15% と準備を始める空きの大きい方」の割合は外した。root の置き場は他の物と
 ;;; 共有の disk に在り、root の外の物で空きが割合の下限を常に割ると、組むたびに固定されていない root を消し続けた — 戻し先の版の root も):
-;;;   roots の合計の上限(EnvSettings.roots-cap-bytes) — これを越えた時だけ固定されていない root を消す
-;;;   共有の disk の空きの最低(EnvSettings.min-free-bytes) — 割った時は root を消さずに準備を disk-full で断る(env_prepare の stage-disk)
+;;;   roots の合計の上限(EnvSettings.roots-cap-bytes) — 越えた時は固定されていない root を古い順に、合計が上限の内へ戻るまで消す
+;;;   共有の disk の空きの最低(EnvSettings.min-free-bytes) — 割った時も同じ候補を古い順に、空きが最低へ戻るまで消す(#4051)。候補を
+;;;                    全部消しても戻らない時は、今までどおり準備を disk-full で断る(env_prepare の stage-disk)
+;;; 空きで消しても戻し先は消えない: 候補は project ごとの新しい 2 つ(今の版と戻し先 — #3732 の KEEP-PER-PROJECT)の外だけ。#3732 で
+;;; 空きの割合で消すのを外した訳(戻し先の版の root まで消し続けた)は、新しい 2 つを守る作りが入った今は当たらない。空きで起こす掃除は時刻で
+;;; 繰り返さない: 数えの結びに空きの状態を持ち、状態が変わった時・割ったまま固定が変わった時・完成した root の集合が変わった時だけ数え直す
+;;; (#4051 — 本番の実例: 空き 24.96 GiB < 最低 25 GiB・roots の合計 0.86 GB ≤ 上限 20 GiB・候補 2 で、毎回 chosen=0 のまま準備を
+;;; 断り続けた)。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defrecord])
@@ -53,9 +61,11 @@
 
 (defrecord RootsTally
   "掃除の数えの結び(#3732): ready = 数えを始めた拍の完成した root のキーの集合(heartbeat の観測の READY — 次の拍の集合と比べて、新しく
-   完成した root か消えた root が在れば数え直す)・bytes = roots の合計(roots-bytes — hardlink を重ねて数える)。"
+   完成した root か消えた root が在れば数え直す)・bytes = roots の合計(roots-bytes — hardlink を重ねて数える)・below-min-free = 数えの
+   答えを受けた時に共有の disk の空きが最低を割っていたか(今の空きの状態と違えば数え直す — #4051)。"
   (#^ (get frozenset str) ready)
-  (#^ int bytes))
+  (#^ int bytes)
+  (#^ bool below-min-free))
 
 
 (defk recent-per-project [roots]
@@ -91,46 +101,56 @@
                  :key (fn [r] #(r.last-used-ms r.key)))))
 
 
-(defk sweep-choice [roots pinned cap]
-  {:pre [(: roots tuple) (: pinned frozenset) (: cap int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "roots の合計(roots-bytes)が上限 cap を越えた時に消す root のキーの列(消す順)を返すため。root の置き場を上限の内に保つ。
+(defk sweep-choice [roots pinned cap free min-free]
+  {:pre [(: roots tuple) (: pinned frozenset) (: cap int) (: free int) (: min-free int)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "roots の合計(roots-bytes)が上限 cap を越えた時か、共有の disk の空き free が最低 min-free を割った時に消す root のキーの列(消す順)を
+   返すため。root の置き場を上限の内に、共有の disk の空きを最低の上に保つ(#4051)。
    消さない物: 固定(pinned — 走っている job・宣言の job・準備中・温める表)・project ごとの新しい 2 つ・worker が作っていない dir。
-   残りを最後に使った時刻の古い順に、合計が上限の内へ戻るまで選ぶ。戻れなくても選べる物は全部選ぶ。共有の disk の空きは見ない
-   (空きが最低を割った時は root を消さずに準備を断る — env_prepare の stage-disk・env-capacity)。"
+   残りを最後に使った時刻の古い順に、合計が上限の内へ戻り、かつ空きが最低へ戻るまで選ぶ(空きの見積もりは消す root の数えた大きさを
+   足す — hardlink を重ねて数えるので実際に空く量より大きく、足りなければ消した後の数え直しで残りを選ぶ)。戻れなくても選べる物は
+   全部選ぶ(候補を全部消しても空きが戻らない時は、準備が disk-full で断る — env_prepare の stage-disk・env-capacity)。"
   (<- total int (roots-bytes roots))
-  (if (<= total cap)
+  (if (and (<= total cap) (>= free min-free))
       #()
       (do (<- candidates tuple (sweep-candidates roots pinned))
           (var chosen #())
           (var left total)
+          (var room free)
           (for [r candidates]
-            (when (> left cap)
+            (when (or (> left cap) (< room min-free))
               (:= chosen (+ chosen #(r.key)))
-              (:= left (- left r.bytes))))
+              (:= left (- left r.bytes))
+              (:= room (+ room r.bytes))))
           chosen)))
 
 
-(defk sweep-wanted [running tally ready cap]
-  {:pre [(: running bool) (: tally (| RootsTally None)) (: ready frozenset) (: cap int)] :post [(: % bool)]
+(defk sweep-wanted [running tally ready cap low]
+  {:pre [(: running bool) (: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: low bool)] :post [(: % bool)]
    :tags {:context "worker" :role "judgment"}}
   "掃除の係が拍(SweepEnvs)を求めているかを判じるため(heartbeat の観測 EnvDisk の sweep-wanted — worker の判断は固定の集合が変わった時と
    これが真の時に撃つ): 掃除が走っている(running — 数えと消しは拍ごとに答えを読んで進む)・まだ数えていない(tally = None)・完成した
-   root の集合 ready が数えた時と違う・数えた合計が上限 cap を越えている。"
+   root の集合 ready が数えた時と違う・数えた合計が上限 cap を越えている・今の空きが最低を割っているか(low)が数えた時と違う(#4051 —
+   割ったままで数え済みなら求めない。割ったまま固定が変われば判断の側が固定の変わりで撃つ)。"
   (match tally
     None True
-    (RootsTally) (or running (!= tally.ready ready) (> tally.bytes cap))))
+    (RootsTally) (or running (!= tally.ready ready) (> tally.bytes cap) (!= low tally.below-min-free))))
 
 
-(defk sweep-due [tally ready cap changed now-ms swept-ms]
-  {:pre [(: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: changed bool) (: now-ms int) (: swept-ms int)] :post [(: % bool)]
-   :tags {:context "worker" :role "judgment"}}
+(defk sweep-due [tally ready cap low changed now-ms swept-ms]
+  {:pre [(: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: low bool) (: changed bool) (: now-ms int) (: swept-ms int)]
+   :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
   "新しい掃除(数え)を始める時かを判じるため: まだ数えていない(tally = None)・完成した root の集合 ready が数えた時と違う(新しく完成した
-   root か消えた root — すぐ数え直す)・数えた合計が上限 cap を越えたままで、固定の集合が変わったか前の掃除の終わり swept-ms から
-   SWEEP-EVERY-MS が経った時。合計が上限の内で完成した root の集合が変わらない間は数えない(数えは root ごとに木を歩く重い仕事)。
+   root か消えた root — すぐ数え直す)・今の空きが最低を割っているか(low)が数えた時と違う・空きが最低を割ったままで固定の集合が
+   変わった(止まった job の root が候補になる — #4051)・数えた合計が上限 cap を越えたままで、固定の集合が変わったか前の掃除の終わり
+   swept-ms から SWEEP-EVERY-MS が経った時。空きが割ったままの間は時刻では数え直さない(候補が増えない限り、数え直しても選べる物は
+   同じ — #4051)。合計が上限の内・空きが最低の上で完成した root の集合が変わらない間は数えない(数えは root ごとに木を歩く重い仕事)。
    走っている掃除が在る間は呼び手が判じない(同時に 1 つ)。"
   (match tally
     None True
     (RootsTally) (or (!= tally.ready ready)
+                     (!= low tally.below-min-free)
+                     (and low changed)
                      (and (> tally.bytes cap) (or changed (>= (- now-ms swept-ms) SWEEP-EVERY-MS))))))
 
 
