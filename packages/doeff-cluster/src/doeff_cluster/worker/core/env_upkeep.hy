@@ -105,7 +105,7 @@
   {:pre [(: roots tuple) (: pinned frozenset) (: cap int) (: free int) (: min-free int)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
   "roots の合計(roots-bytes)が上限 cap を越えた時か、共有の disk の空き free が最低 min-free を割った時に消す root のキーの列(消す順)を
-   返すため。root の置き場を上限の内に、共有の disk の空きを最低の上に保つ(#4051)。
+   返すため。root の dir の合計を上限の内に、共有の disk の空きを最低の上に保つ(#4051)。
    消さない物: 固定(pinned — 走っている job・宣言の job・準備中・温める表)・project ごとの新しい 2 つ・worker が作っていない dir。
    残りを最後に使った時刻の古い順に、合計が上限の内へ戻り、かつ空きが最低へ戻るまで選ぶ(空きの見積もりは消す root の数えた大きさを
    足す — hardlink を重ねて数えるので実際に空く量より大きく、足りなければ消した後の数え直しで残りを選ぶ)。戻れなくても選べる物は
@@ -131,7 +131,7 @@
   "掃除の係が拍(SweepEnvs)を求めているかを判じるため(heartbeat の観測 EnvDisk の sweep-wanted — worker の判断は固定の集合が変わった時と
    これが真の時に撃つ): 掃除が走っている(running — 数えと消しは拍ごとに答えを読んで進む)・まだ数えていない(tally = None)・完成した
    root の集合 ready が数えた時と違う・数えた合計が上限 cap を越えている・今の空きが最低を割っているか(low)が数えた時と違う(#4051 —
-   割ったままで数え済みなら求めない。割ったまま固定が変われば判断の側が固定の変わりで撃つ)。"
+   割ったままで数え済みなら求めない。割ったまま固定が変われば判断の側が固定の変わりで SweepEnvs を出す)。"
   (match tally
     None True
     (RootsTally) (or running (!= tally.ready ready) (> tally.bytes cap) (!= low tally.below-min-free))))

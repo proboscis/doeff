@@ -227,10 +227,10 @@
   (assert (not (! (sweep-due over same 200 False False 1000 0))) "上限を越えたままでも、固定が変わらず間隔の内なら数えない")
   (assert (! (sweep-due over same 200 False True 1000 0)) "上限を越えたまま固定が変われば数え直す")
   (assert (! (sweep-due over same 200 False False SWEEP-EVERY-MS 0)) "上限を越えたまま間隔が経てば数え直す")
-  ;; 掃除の係が拍を求めるか(heartbeat の観測の sweep-wanted — 引数 running tally ready cap low)。
+  ;; 掃除の係が SweepEnvs を求めるか(heartbeat の観測の sweep-wanted — 引数 running tally ready cap low)。
   (assert (! (sweep-wanted False None same 200 False)) "まだ数えていなければ求める")
   (assert (not (! (sweep-wanted False under same 200 False))) "上限の内・空きが最低の上で集合が変わらず、走っていなければ求めない")
-  (assert (! (sweep-wanted True under same 200 False)) "走っている掃除は拍ごとに答えを読んで進むので求める")
+  (assert (! (sweep-wanted True under same 200 False)) "走っている掃除は周期ごとに答えを読んで進むので求める")
   (assert (! (sweep-wanted False over same 200 False)) "上限を越えていれば求める")
   (assert (! (sweep-wanted False under (frozenset #("env-b")) 200 False)) "完成した root の集合が変われば求める"))
 
@@ -511,7 +511,7 @@
   (assert (= (! (sweep-actions declaration world)) #((SweepEnvs pinned))) "掃除の係が拍を求めていれば固定の集合を渡して掃除する")
   (val roomy (replace world :env-disk (EnvDisk :free 10 :sweep-wanted False :pinned pinned)))
   (assert (= (! (sweep-actions declaration roomy)) #())
-          "掃除の係が拍を求めず、固定の集合が変わらなければ、掃除の係を呼ばない(空きが最低を割ったかの判断は掃除の係の sweep-wanted が持つ — #4051)")
+          "掃除の係が SweepEnvs を求めず、固定の集合が変わらなければ、掃除の係を呼ばない(空きが最低を割ったかの判断は掃除の係の sweep-wanted が持つ — #4051)")
   ;; 宣言をまだ一度も読めていない間(起き直した直後 — #3731)は、掃除の係が拍を求めていても掃除の係を呼ばない。
   (assert (= (! (sweep-actions (NotYetRead) world)) #()) "宣言を読む前は掃除しない")
   (<- planned tuple (plan 0 #(spec) world {} (WorkerPolicy) :warm #(warm)))

@@ -471,7 +471,7 @@
 ;; 反例 = 直す前の形(空きでは消さない)は 4 つとも残す — 下の断言が赤。
 
 (deftest test-a-shared-disk-below-the-minimum-sweeps-the-candidates-and-keeps-the-newest-two
-  ;; disk の空き 1 GB < 最低 2 GB・roots の合計は上限の内。memory の置き場の空きは消しても増えないので、候補 c・d を両方消し、
+  ;; disk の空き 1 GB < 最低 2 GB・roots の合計は上限の内。memory の file system の空きは消しても増えないので、候補 c・d を両方消し、
   ;; project の新しい 2 つ a・b は残す。
   (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world RUN-MS None) stop-signal-never-comes tick-pauses (wakes-every 1000)]
                                  :cap (** 2 62) :free (** 10 9) :min-free (* 2 (** 10 9))))
