@@ -31,6 +31,7 @@ from doeff_core_effects.file_effects import ReadDiskUsage as ReadDiskUsage
 from doeff_core_effects.file_effects import MeasureTree as MeasureTree
 from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
+from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
 from doeff_core_effects.python_bytecode import compile_python_sources as compile_python_sources
 from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded

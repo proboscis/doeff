@@ -29,6 +29,7 @@ from doeff_core_effects.file_effects import ReadDiskUsage as ReadDiskUsage
 from doeff_core_effects.file_effects import MeasureTree as MeasureTree
 from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
+from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 PATH_EFFECTS: tuple[type, ...]
@@ -48,6 +49,9 @@ def inner_answer(root: str, answer: ANSWER) -> _Program[ANSWER, object]:
     ...
 
 def rooted_file_handler(root: str) -> _Handler:
+    ...
+
+def unchanged(target: str) -> _Program[str, object]:
     ...
 
 def moved(root: str, request: MOVE_EFFECTS) -> _Program[ANSWER, object]:
