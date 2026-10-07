@@ -506,9 +506,24 @@
   (#^ tuple warm))
 
 
+(defrecord TickMarks
+  "拍 1 つで読んだ時刻(epoch ms — #3715): began = 拍の頭・env-reported = EnvReport の後・desired-read = ReadDesired の後・observed = 最初の
+   ObserveWorld の後・ended = PublishStatus の後(拍の終わり)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int began)
+  (#^ int env-reported)
+  (#^ int desired-read)
+  (#^ int observed)
+  (#^ int ended))
+
+
 (defclass [(dataclass :frozen True)] WorkerState []
   (setv #^ (| NotYetRead DeclarationRead) declaration (field :default-factory NotYetRead))
-  (setv #^ dict records (field :default-factory dict)))
+  (setv #^ dict records (field :default-factory dict))
+  ;; heartbeat の間の計り(#3850): last-marks = 前の拍で読んだ時刻(None = まだ拍が無い)・last-sent-ms = 最後に heartbeat を送った刻
+  ;; (HeartbeatSent.at — None = まだ送っていない)。値の比べには入れない(同じ宣言と記憶は時刻が違っても同じ)。
+  (setv #^ (| TickMarks None) last-marks (field :default None :compare False))
+  (setv #^ (| int None) last-sent-ms (field :default None :compare False)))
 
 
 ;; --- 拍と拍の間の待ち(#2781)-----------------------------------------------------

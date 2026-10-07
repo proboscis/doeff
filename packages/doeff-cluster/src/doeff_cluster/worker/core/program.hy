@@ -11,11 +11,11 @@
 (import doeff_time [GetTime epoch-ms-of])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes
-  WorkerUnsettled SweepEnvs] doeff_cluster.shared.intent.job_model [JobPhase])
+  WorkerUnsettled SweepEnvs TickMarks] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.worker_due [plan-due wakes-with])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
   declared-warm sweep-actions])
@@ -49,16 +49,6 @@
 (val WAKE-DRIVEN-ACTIONS #(SweepEnvs))
 
 
-(defrecord TickMarks
-  "拍 1 つで読んだ時刻(epoch ms): began = 拍の頭・env-reported = EnvReport の後・desired-read = ReadDesired の後・observed = 最初の
-   ObserveWorld の後・ended = PublishStatus の後(拍の終わり)。"
-  (#^ int began)
-  (#^ int env-reported)
-  (#^ int desired-read)
-  (#^ int observed)
-  (#^ int ended))
-
-
 (defrecord TickSpan
   "拍の区間 1 つ: name = 区間の名(待った effect の名か ACTIONS-TO-PUBLISH)・ms = 長さ。"
   (#^ str name)
@@ -83,6 +73,43 @@
   (TickLag :elapsed-ms (- marks.ended marks.began) :slowest longest.name :slowest-ms longest.ms))
 
 
+(defrecord GapMark
+  "heartbeat の間の区間の終わり 1 つ: name = 区間の名・at = 区間が終わった刻(epoch ms)。"
+  (#^ str name)
+  (#^ int at))
+
+
+(defrecord HeartbeatGap
+  "heartbeat の間の遅れの行の欄: gap-ms = 前の heartbeat を送ってから今の heartbeat を送るまで・slowest = いちばん長い区間の名・
+   slowest-ms = その長さ。"
+  (#^ int gap-ms)
+  (#^ str slowest)
+  (#^ int slowest-ms))
+
+
+(defk heartbeat-gap [since previous began env-reported sent-at]
+  {:pre [(: since int) (: previous (| TickMarks None)) (: began int) (: env-reported int) (: sent-at int)] :post [(: % HeartbeatGap)]
+   :tags {:context "worker" :role "judgment"}}
+  "前の heartbeat を送った刻 since から今の heartbeat を送った刻 sent-at までを、前の拍の時刻 previous と今の拍の頭・EnvReport の後の
+   時刻で区間に切り、遅れの行の欄(間と、いちばん長い区間の名と長さ)を導くため。区間 = 前の拍より前(EarlierTicks — 間に送らない拍を
+   挟んだ時)・前の拍の EnvReport・ReadDesired(前の拍で送っていれば送った後の返事の待ち)・ObserveWorld・残り・拍の間の待ち
+   (AwaitNextTick)・今の拍の EnvReport・ReadDesired(送るまで)。since より前の部分は数えない。長さが並んだら先の区間を名指す。"
+  (val earlier (match previous
+    None #()
+    _ #((GapMark :name "EarlierTicks" :at previous.began)
+        (GapMark :name "Previous.EnvReport" :at previous.env-reported)
+        (GapMark :name "Previous.ReadDesired" :at previous.desired-read)
+        (GapMark :name "Previous.ObserveWorld" :at previous.observed)
+        (GapMark :name (+ "Previous." ACTIONS-TO-PUBLISH) :at previous.ended))))
+  (val ends (+ earlier #((GapMark :name "AwaitNextTick" :at began)
+                         (GapMark :name "EnvReport" :at env-reported)
+                         (GapMark :name "ReadDesired" :at sent-at))))
+  (val starts (+ #(since) (tuple (gfor mark (cut ends -1) mark.at))))
+  (val spans (tuple (gfor #(mark start) (zip ends starts) (TickSpan :name mark.name :ms (max 0 (- mark.at (max start since)))))))
+  (val longest (max spans :key (fn [span] span.ms)))
+  (HeartbeatGap :gap-ms (- sent-at since) :slowest longest.name :slowest-ms longest.ms))
+
+
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None) 計画の期限 撃った action の名の列)
@@ -95,6 +122,16 @@
   (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report :stopping stopping))
   ;; この読みが拍の判断の now を兼ねる(#3715 より前から在る読み)。
   (<- now int (now-epoch-ms))
+  (val began (epoch-ms-of began-at))
+  (val env-reported (epoch-ms-of env-reported-at))
+  ;; heartbeat の間の計り(#3850): この読みが heartbeat を送り、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を
+  ;; 越えたら、間のいちばん長い区間を名指す。時刻は拍で既に読んだ物と送りの刻だけを使う(時刻の読みを足さない)。
+  (val sent read.sent)
+  (when (and (is-not sent None) (is-not state.last-sent-ms None)
+             (> (- sent.at state.last-sent-ms) (* sent.lease-ms HEARTBEAT-GAP-LEASE-RATIO)))
+    (<- gap HeartbeatGap (heartbeat-gap state.last-sent-ms state.last-marks began env-reported sent.at))
+    (<- (slog HEARTBEAT-GAP-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms sent.at)) :worker sent.worker
+              :gap-ms gap.gap-ms :slowest gap.slowest :slowest-ms gap.slowest-ms)))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける(#3731 — 読めた拍だけ持ち替え、途絶で絞った宣言も読んだ側。まだ一度も
   ;; 読めていなければ NotYetRead のまま)。
   (val declaration (match read
@@ -148,14 +185,15 @@
   (<- report tuple (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
   (<- ended-at datetime (GetTime))
-  (val began (epoch-ms-of began-at))
-  (when (> (- (epoch-ms-of ended-at) began) TICK-LAG-MS)
-    (<- lag TickLag (tick-lag (TickMarks :began began :env-reported (epoch-ms-of env-reported-at) :desired-read now
-                                         :observed (epoch-ms-of observed-at) :ended (epoch-ms-of ended-at))))
+  (val marks (TickMarks :began began :env-reported env-reported :desired-read now :observed (epoch-ms-of observed-at)
+                        :ended (epoch-ms-of ended-at)))
+  (when (> (- marks.ended marks.began) TICK-LAG-MS)
+    (<- lag TickLag (tick-lag marks))
     (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms)))
   ;; 時刻だけで計画の答えが変わる最初の刻(周の後の観測と記憶・周の判断の now — worker_due の頭の註)。
   (<- planned-due (| DueAt DueNever) (plan-due now after records policy))
-  #((WorkerState :declaration declaration :records records)
+  #((WorkerState :declaration declaration :records records :last-marks marks
+                 :last-sent-ms (match sent None state.last-sent-ms _ sent.at))
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
     ;; 宣言の変化の呼び鈴(読めた宣言の物だけ — 周の間の待ちを起こす・#2692)。
