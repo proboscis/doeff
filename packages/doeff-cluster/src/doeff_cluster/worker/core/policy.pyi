@@ -97,7 +97,10 @@ def desired_of(desired: tuple, name: str) -> JobSpec | None:
 def job_names(desired: tuple, world: WorldView) -> _Program[tuple, object]:
     ...
 
-def retired_exists(world: WorldView, name: str) -> bool:
+def retired_of(world: WorldView, name: str) -> tuple:
+    ...
+
+def retired_at_of(process: ProcessView) -> int:
     ...
 
 def backoff_ms(record: JobRecord, policy: WorkerPolicy) -> int:

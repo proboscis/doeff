@@ -306,7 +306,8 @@
   (tuple (gfor p seen (JobProcess :job "beacon" :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
 
 
-;; 条 C14 の上限: 入れ替えを宣言した beacon は旧と新の 2 つまで。
+;; 条 C14 の上限: 入れ替えを宣言し、退いた旧の寿命の上限(retiredSeconds)を宣言しない beacon は旧と新の 2 つまで(新の Ready で旧を
+;; 止めるので、退いた process の上限 R + 1 より狭い)。
 (val HANDOFF-LIMIT #((RunLimit :job "beacon" :limit 2)))
 
 

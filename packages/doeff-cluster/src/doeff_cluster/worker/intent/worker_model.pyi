@@ -244,6 +244,7 @@ class WorkerPolicy:
     code_retry_ms: int = 30000
     compile_jobs_while_replacing: int = 2
     wake_gap_seconds: float = 0.1
+    retired_limit: int = 3
 
 @dataclass(frozen=True)
 class JobStatus:

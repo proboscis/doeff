@@ -133,8 +133,15 @@
    (止めるまで忘れない)。退いた process も同じ(名 = <元の名>#retired-<世代>)。"
   (tuple (dict.fromkeys (+ (lfor spec desired spec.name) (lfor p world.processes p.name)))))
 
-(defn #^ bool retired-exists [#^ WorldView world #^ str name]
-  (any (gfor p world.processes (= p.retired-from name))))
+(defn #^ tuple retired-of [#^ WorldView world #^ str name]
+  "job name の、入れ替えで退いてまだ動いている process の列(退いた process の上限 R と、いちばん古く退いた process を決めるため —
+   #4072 の D-3)。終わった process は回収を待つだけなので数えない。"
+  (tuple (gfor p world.processes :if (and (= p.retired-from name) (is p.exit-code None)) p)))
+
+(defn #^ int retired-at-of [#^ ProcessView process]
+  "退いた process の退いた刻(寿命の上限を数える起点と、いちばん古く退いた process を選ぶ順の 1 か所)。退いた刻の無い観測(この欄を書く
+   前の worker が退かせた process)は起こした刻から数える(実際に退いた刻より前 — 早めに止まる側)。"
+  (if (is-not process.retired-at-ms None) process.retired-at-ms process.started-ms))
 
 (defn #^ int backoff-ms [#^ JobRecord record #^ WorkerPolicy policy]
   "続けて予期せず終わった回数(exit code を問わない)に応じた、起こし直すまでの間(1 回目 = restart-backoff-ms・以後は倍・上限 restart-backoff-max-ms)。"
@@ -271,13 +278,16 @@
 
 (defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
   "入れ替え: 新のコードが揃い、新の入口の検めが通るまでは旧を動かしたまま準備と検めだけ進め、通ったら旧を名から外す
-   (次の拍で新を同じ名で起こす)。検めが FAILED の間は旧を外さない(書き手の空白を作らない)。"
+   (次の拍で新を同じ名で起こす)。検めが FAILED の間は旧を外さない(書き手の空白を作らない)。退いた process が既に上限 R
+   (policy.retired-limit)だけ居れば、外さずに待つ — いちばん古く退いた process を retired-actions が止め、それが終わった拍で外す
+   (同時に動くのは R + 1 まで・#4072 の D-3)。"
   (setv tree (ready-path (code-of world (code-key want))))
   (if (is-not tree None)
       (do (setv gate (probe-actions now want tree world policy))
-          (if (is-not gate None)
-              gate
-              #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
+          (cond
+            (is-not gate None) gate
+            (>= (len (retired-of world process.name)) policy.retired-limit) #()
+            True #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
       ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
       (prepare-actions now want world policy None)))
 
@@ -286,19 +296,26 @@
   "退いた process(origin = 退く前の job の名): 元の job の新しい process が Ready と数えられたら止める。それまでは動かし続ける
    (書き手の空白を作らない)。宣言に寿命の上限(want.retired-ms — #4072 の D-2)が在れば新の Ready では止めず、旧が自分で終わる
    (plan-job の終わりの枝が回収する)か、退いてから上限を越えた時に止める(旧が持つ仕事を終わりまで回す)。元の job が宣言から消えた・
-   handoff でなくなった時も止める。"
+   handoff でなくなった時も止める。退いた process が上限 R(policy.retired-limit)だけ居る間に宣言が変わり、今の process を退かせる
+   番を待っていれば、いちばん古く退いた process を止める(#4072 の D-3 — 退かせる前に 1 つ空ける)。"
   (setv want (desired-of desired origin)
         current (process-of world origin)
         lifetime (if (is want None) None want.retired-ms)
-        ;; 退いた刻の無い観測(この欄を書く前の worker が退かせた process)は起こした刻から数える(実際に退いた刻より前 — 早めに止まる側)。
-        retired-at (if (is-not process.retired-at-ms None) process.retired-at-ms process.started-ms)
         successor-ready (and (is-not want None) (is-not current None) (is current.exit-code None) (= current.spec want)
                              (is-not want.ready-instance None) (= want.ready-instance current.instance))
-        due (if (is lifetime None) successor-ready (>= (- now retired-at) lifetime)))
+        due (if (is lifetime None) successor-ready (>= (- now (retired-at-of process)) lifetime))
+        siblings (retired-of world origin)
+        ;; 今の process が退く番を待っている(宣言の spec と違い、版を据え置かず、入れ替えを諦めていない)間に、退いた process が上限に
+        ;; 達していて、この process がいちばん古く退いた物(退いた刻が同じなら観測の順で先の物)。
+        crowded (and (is-not want None) (is-not current None) (is current.exit-code None) (!= current.spec want)
+                     (not want.hold-version) (not want.handoff-abandoned)
+                     (>= (len siblings) policy.retired-limit)
+                     (= process.pid (. (min siblings :key retired-at-of) pid))))
   (if (or (is-not record.stopping None)
           (is want None)
           (not want.handoff)
-          due)
+          due
+          crowded)
       (stop-actions now process record policy (Retired))
       #()))
 
@@ -330,15 +347,15 @@
     ;; 退かせ・止めをしない)。移し先で新しい版が Ready になれば宣言から消え(want が None)、下の止めへ進む。drain が解けて印が偽に戻った
     ;; 拍から、下の入れ替えへ進む。宣言から消えた job(want が None)は今までどおり止める。
     (and (is-not want None) want.hold-version (is record.stopping None)) #()
-    ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在る間は、並べずに止めてから起こす)。
-    (and (is-not want None) want.handoff (is record.stopping None) (not (retired-exists world name)))
+    ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在っても、今の process を退かせて並べる — 退いた
+    ;; process の上限 R は handoff-actions と retired-actions が守る・#4072 の D-3)。
+    (and (is-not want None) want.handoff (is record.stopping None))
       (handoff-actions now want process world policy)
     ;; spec が変わった recreate の job: 旧を動かしたまま新しい版の準備と入口の検めを進め、両方が済んでから旧を止める(2026-10-08 —
     ;; 新旧の本体を同時に動かさない・判断は replace-step)。
     (and (is-not want None) (run (recreating? want process record)))
       (. (run (replace-step now want process world record policy)) actions)
-    ;; 宣言から消えた job・止め始めた process・宣言の変わった task・退いた process が既に在る handoff の job → すぐ止める
-    ;; (止め始めた process は止め終える)。
+    ;; 宣言から消えた job・止め始めた process・宣言の変わった task → すぐ止める(止め始めた process は止め終える)。
     True (stop-actions now process record policy (if (is want None) absent (SpecChanged)))))
 
 (defk warm-actions [now warm world job-actions policy]
