@@ -42,6 +42,9 @@ MACROS = """\
 (setv HY-TABLE {{"a" 1}})
 (setv (get HY-TABLE "b") 2)
 (setv HY-OTHER {{"z" 0}})
+(setv HY-ALIAS HY-TABLE)
+(defn _hy-register [] (setv (get HY-ALIAS "c") 3))
+(_hy-register)
 (defn hy-look [k] (get HY-TABLE k))
 (defmacro looks [] (tables.lookup "a"))
 (defmacro hy-looks [] (hy-look "a"))
@@ -64,6 +67,26 @@ def _register():
 
 
 _register()
+TABLE["n"] = {"x": 1}
+TABLE["l"] = []
+ALIAS = TABLE
+
+
+def _register_nested():
+    TABLE["n"]["x"] = 5
+    TABLE["l"].append(7)
+    TABLE.get("n")["y"] = 6
+    for row in TABLE.values():
+        if isinstance(row, dict):
+            row["z"] = 8
+
+
+def _register_alias():
+    ALIAS["d"] = 4
+
+
+_register_nested()
+_register_alias()
 
 
 def lookup(k):
@@ -334,6 +357,48 @@ def test_a_changed_default_of_a_context_variable_is_stale(tree: Tree) -> None:
     record = tree.record("moder")
     _replace(tree.contexts, 'default="plain"', 'default="fancy!"')
     assert not tree.is_current(record), "ContextVar の既定値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_set_into_a_nested_row_is_stale(tree: Tree) -> None:
+    # 直す前は赤(確かめで見つかった後退): 添字の結果の中の値の書き換え(添字の添字への代入)を、読むだけと数えていた。
+    record = tree.record("looker")
+    _replace(tree.tables, 'TABLE["n"]["x"] = 5', 'TABLE["n"]["x"] = 50')
+    assert not tree.is_current(record), "import の時に呼ぶ関数が表の中の行を書き換える値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_appended_to_a_nested_row_is_stale(tree: Tree) -> None:
+    # 直す前は赤: 添字の結果への .append を読むだけと数えていた。
+    record = tree.record("looker")
+    _replace(tree.tables, 'TABLE["l"].append(7)', 'TABLE["l"].append(70)')
+    assert not tree.is_current(record), "import の時に呼ぶ関数が表の中の list に足す値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_set_through_get_is_stale(tree: Tree) -> None:
+    # 直す前は赤: 読むだけの method(.get)の結果への添字の代入を読むだけと数えていた。
+    record = tree.record("looker")
+    _replace(tree.tables, 'TABLE.get("n")["y"] = 6', 'TABLE.get("n")["y"] = 60')
+    assert not tree.is_current(record), ".get の結果を書き換える値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_set_into_iterated_rows_is_stale(tree: Tree) -> None:
+    # 直す前は赤: for の繰り返しの元(.values())の要素は束縛されて書き換えられうる。
+    record = tree.record("looker")
+    _replace(tree.tables, 'row["z"] = 8', 'row["z"] = 80')
+    assert not tree.is_current(record), "表の行を回して書き換える値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_set_through_an_alias_is_stale(tree: Tree) -> None:
+    # 直す前は赤: top-level の別名(ALIAS = TABLE)を通した書き換えを、表の名の書き換えと数えていなかった。
+    record = tree.record("looker")
+    _replace(tree.tables, 'ALIAS["d"] = 4', 'ALIAS["d"] = 40')
+    assert not tree.is_current(record), "別名を通して表を書き換える値を替えたのに古いと判じない"
+
+
+def test_a_changed_value_set_through_a_hy_alias_is_stale(tree: Tree) -> None:
+    # Hy の別名((setv HY-ALIAS HY-TABLE) の後の defn が HY-ALIAS を書き換える)。
+    record = tree.record("hylooker")
+    _replace(tree.macros, '(setv (get HY-ALIAS "c") 3)', '(setv (get HY-ALIAS "c") 30)')
+    assert not tree.is_current(record), "Hy の別名を通して表を書き換える値を替えたのに古いと判じない"
 
 
 # 冷えなくてよい時(直す前は赤)。
