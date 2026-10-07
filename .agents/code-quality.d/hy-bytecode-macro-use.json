@@ -1,0 +1,9 @@
+{
+  "dynamic_imports": [
+    {
+      "function": "_import_for_digest",
+      "path": "packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py",
+      "reason": "Hy の module の macro の記録を照らすには、記録の行が名指す macro の関数(macro を定義した module の表の値)と、macro が本体の中で import する module の中身が要る。名は記録の中の文字列なので、静的な import では書けない。名指す module は使い手の require と macro の展開がどのみち import する module で、import できない時は値で返して古いと判じる(循環する import の途中の module を require して落ちる枝を含む)。"
+    }
+  ]
+}

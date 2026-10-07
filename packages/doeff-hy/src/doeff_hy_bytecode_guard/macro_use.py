@@ -13,10 +13,12 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   (``module.名`` の読み)を入れる。code の文字列の定数は名の候補として、辿った module のその名の属性も入れる
   (``getattr(module, "名")`` の読み — 読む関数と module の参照が別の関数にあっても覆う)。
 - Hy 自身(``hy.*``)と Python の標準 library と組み込みは名だけ入れる(Hy の版・Python の版で覆う)。
-- file 単位で覆う module: 関数の中の import の先・hy.R の呼び出しの先・package の下の module。digest には名だけを入れ、記録を
-  作る時にその module から辿れる module の file の sha256 を記録の ``files`` に置く。照らす時に import しない — 照らしは
-  .pyc を読む途中(import の途中)に走るので、ここで別の module を import すると import の順が変わり、循環する import の途中の
-  module の macro の表が空のまま require された。
+- 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
+  file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
+  .pyc を読む途中(import の途中)に走るので、関数の中の import の先は、展開の時には通らない枝で、循環する import の途中の
+  module を require して落ちうる — 落ちた時は名だけを入れ、記録の ``files`` にその file の sha256 を置く(照らす時は
+  import せずに比べる)。
+- enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
 - 安全側に倒す: 辿れない値(上のどれでもない object・list・dict)がある時は、その値を辿り始めた関数の module の file の sha256 を
   足す。名で辿れない読み(``globals()``・``vars``・``__dict__``・``sys.modules``・``import_module``・``eval``)を code に持つ
   関数は、その関数の module の file と、関数が参照する module の file の sha256 を足す。
@@ -46,6 +48,7 @@ from doeff_hy_bytecode_guard.records import (
     UsedMacro,
     UsedValue,
     ValueReference,
+    WholeRequire,
 )
 
 Sha256Of = Callable[[str], "str | None"]
@@ -127,12 +130,13 @@ class MacroRecording:
             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
                 found[_macro_key(READER_TABLE, macro)] = macro
         text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
-        # 表を通らない hy.R の呼び出しの先は file 単位で覆う(照らす時に import しない — 自分の module の macro は source が覆う)。
-        called = tuple(
-            reference.module
-            for reference in _source_references(text)
-            if reference.module != name and not _named_only(reference.module)
-        )
+        # 表を通らない hy.R の呼び出しの先も使った macro(自分の module の macro は source が覆う)。
+        for reference in _source_references(text):
+            if reference.module == name or _named_only(reference.module):
+                continue
+            called = _macro_now(MACRO_TABLE, reference.module, reference.name)
+            if called is not None:
+                found[UsedMacroKey(MACRO_TABLE, reference.module, reference.name)] = called
         macros = tuple(
             (key, macro_digest(key, macro, self._sha256_of))
             for key, macro in sorted(found.items(), key=lambda item: item[0].sort_key)
@@ -141,14 +145,13 @@ class MacroRecording:
             (reference, value_digest(reference, self._sha256_of))
             for reference in sorted(also, key=lambda reference: (reference.module, reference.name))
         )
-        deferred = {
-            *called,
-            *(module for _, closure in macros for module in closure.deferred),
+        unimportable = {
+            *(module for _, closure in macros for module in closure.unimportable),
             *(
                 module
                 for _, closure in others
                 if closure is not None
-                for module in closure.deferred
+                for module in closure.unimportable
             ),
         }
         return MacroRecord(
@@ -158,21 +161,13 @@ class MacroRecording:
                 for key, closure in macros
             ),
             tuple(sorted(self.table.absent - table.keys())),
-            tuple(
-                sorted(
-                    {
-                        macro.__module__
-                        for macro in table.values()
-                        if isinstance(macro, FunctionType) and _from_elsewhere(macro, name)
-                    }
-                )
-            ),
+            _whole_requires(table, name),
             tuple(
                 UsedValue(reference.module, reference.name, closure.digest)
                 for reference, closure in others
                 if closure is not None
             ),
-            _deferred_files(frozenset(deferred), self._sha256_of),
+            _unimportable_files(frozenset(unimportable), self._sha256_of),
         )
 
 
@@ -182,8 +177,8 @@ def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of)
     今も提供元に無いこと、macro の外の module の digest。"""
     return (
         record.hy_version == hy_version
-        and all(_file_is_current(used, sha256_of) for used in record.files)
         and all(_macro_is_current(used, sha256_of) for used in record.macros)
+        and all(_file_is_current(used, sha256_of) for used in record.files)
         and all(_still_absent(provider, record.absent) for provider in record.providers)
         and all(_value_is_current(used, sha256_of) for used in record.values)
     )
@@ -202,13 +197,56 @@ def _macro_is_current(used: UsedMacro, sha256_of: Sha256Of) -> bool:
     return macro is not None and macro_digest(key, macro, sha256_of).digest == used.digest
 
 
-def _still_absent(provider: str, absent: tuple[str, ...]) -> bool:
-    """引いて無かった名が、今も提供元の macro の表に無いか(別名の前置き ``p.名`` は最後の名でも見る)。"""
-    module = _imported(provider)
+def _still_absent(provider: WholeRequire, absent: tuple[str, ...]) -> bool:
+    """全部 require した提供元に、引いて無かった名(前置きを外した名)が今も無いか — 足されていれば、使い手の次の展開では
+    その名の呼び出しが macro の展開に変わる。"""
+    module = _imported(provider.module)
     table = None if module is None else vars(module).get(MACRO_TABLE)
     if not isinstance(table, dict):
         return False
-    return not any(name in table or name.rpartition(".")[2] in table for name in absent)
+    lead = f"{provider.prefix}." if provider.prefix else ""
+    return not any(name.startswith(lead) and name[len(lead) :] in table for name in absent)
+
+
+def _whole_requires(table: dict[str, object], module_name: str) -> tuple[WholeRequire, ...]:
+    """展開の後の使い手の表から、提供元の macro を全部 require した形を読む — 提供元(macro を定義した module)ごと・前置き
+    ごとに、使い手の表に入った名が提供元の公開の名(``_hy_export_macros`` か、``_`` で始まらない名)を全部含むなら全部の
+    require。名を選んで全部を書き並べた require も全部と数える(照らしが古いと判じる側に倒れるだけ)。"""
+    entered: dict[WholeRequire, set[str]] = {}
+    for key, macro in table.items():
+        if not (isinstance(macro, FunctionType) and _from_elsewhere(macro, module_name)):
+            continue
+        owner = str(macro.__module__)
+        provider = sys.modules.get(owner)
+        entries = None if provider is None else vars(provider).get(MACRO_TABLE)
+        if not isinstance(entries, dict):
+            continue
+        for defined in sorted(entries):
+            if dict.__getitem__(entries, defined) is not macro:
+                continue
+            if key == defined:
+                entered.setdefault(WholeRequire(owner, ""), set()).add(defined)
+            elif key.endswith(f".{defined}"):
+                prefix = key[: -len(defined) - 1]
+                entered.setdefault(WholeRequire(owner, prefix), set()).add(defined)
+    return tuple(
+        sorted(
+            (require for require, names in entered.items() if _exported(require.module) <= names),
+            key=lambda require: (require.module, require.prefix),
+        )
+    )
+
+
+def _exported(module_name: str) -> frozenset[str]:
+    """提供元の公開の macro の名(Hy の require の ``*`` が入れる名)。"""
+    module = sys.modules.get(module_name)
+    namespace = {} if module is None else vars(module)
+    entries = namespace.get(MACRO_TABLE)
+    names = tuple(entries) if isinstance(entries, dict) else ()
+    exports = namespace.get("_hy_export_macros")
+    if isinstance(exports, (list, tuple)):
+        return frozenset(str(name) for name in exports)
+    return frozenset(name for name in names if not name.startswith("_"))
 
 
 def _value_is_current(used: UsedValue, sha256_of: Sha256Of) -> bool:
@@ -236,7 +274,7 @@ class ClosureDigest:
     """閉包 1 つの digest と、その中で file 単位で覆う module の名(digest には名だけが入る)。"""
 
     digest: str
-    deferred: tuple[str, ...]
+    unimportable: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -293,7 +331,7 @@ def _remembered(
         return remembered.closure
     walker = _Walker(sha256_of)
     walk(walker)
-    closure = ClosureDigest(walker.digest(), tuple(sorted(walker.deferred)))
+    closure = ClosureDigest(walker.digest(), tuple(sorted(walker.unimportable)))
     states = tuple(
         state for path in sorted(walker.files.values()) if (state := _file_state(path)) is not None
     )
@@ -311,32 +349,14 @@ def _file_state(path: str) -> FileState | None:
     return FileState(path, status.st_mtime_ns, status.st_size)
 
 
-def _deferred_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile, ...]:
-    """file 単位で覆う module と、そこから辿れる module の file の sha256(記録を作る時 — 展開が import した module はもう
-    読み込まれているので、その中身を辿る。読み込まれていない module は自分の file だけ)。"""
-    files: dict[str, str] = {}
-    visited: set[str] = set()
-    pending = sorted(names)
-    while pending:
-        name = pending.pop()
-        if name in visited or _named_only(name):
-            continue
-        visited.add(name)
-        module = sys.modules.get(name)
-        if module is None:
-            path = _module_file(name)
-            if path is not None:
-                files[name] = path
-            continue
-        walker = _Walker(sha256_of)
-        walker.module_content(module)
-        walker.digest()
-        files.update(walker.files)
-        pending.extend(sorted(walker.deferred - visited))
+def _unimportable_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile, ...]:
+    """記録を作る時に import できなかった module(循環する import の途中の module を require する物など)の file の sha256 —
+    digest には名だけが入るので、file 単位で覆う(照らす時は import せずに比べる)。"""
     return tuple(
-        UsedFile(module, sha256_of(path) or os.urandom(16).hex())
-        for module, path in sorted(files.items())
-        if not _named_only(module)
+        UsedFile(name, (sha256_of(path) if path is not None else None) or os.urandom(16).hex())
+        for name in sorted(names)
+        if not _named_only(name)
+        for path in (_module_file(name),)
     )
 
 
@@ -405,15 +425,35 @@ def _macro_now(table: str, module_name: str, name: str) -> FunctionType | None:
     return macro if isinstance(macro, FunctionType) else None
 
 
-def _imported(module_name: str) -> ModuleType | None:
-    """module 名の module(読み込み済みでなければ import する — 見つからなければ None)。"""
-    module = sys.modules.get(module_name)
-    if module is not None:
-        return module
+@dataclass(frozen=True)
+class NotImportable:
+    """digest のために import できなかった module(名と、Hy か import の失敗の文)。"""
+
+    module: str
+    reason: str
+
+
+def _import_for_digest(module_name: str) -> ModuleType | NotImportable:
+    """digest のために module を import する。照らしは .pyc を読む途中(import の途中)に走るので、関数の中の import の先が
+    循環する import の途中の module を require して落ちうる(展開の時はその枝を通らないので落ちない)— 落ちたら値で返す。"""
+    loaded = sys.modules.get(module_name)
+    if loaded is not None:
+        return loaded
+    from hy.errors import HyError  # 照らしは Hy の module に当たった時だけ走る
+
     try:
         return importlib.import_module(module_name)
-    except ImportError:
-        return None
+    except (ImportError, HyError) as error:
+        return NotImportable(module_name, f"{type(error).__name__}: {error}")
+
+
+def _imported(module_name: str) -> ModuleType | None:
+    """module 名の module(読み込み済みでなければ import する — import できなければ None。照らす側は古いと判じる)。"""
+    match _import_for_digest(module_name):
+        case ModuleType() as module:
+            return module
+        case NotImportable():
+            return None
 
 
 @dataclass(frozen=True)
@@ -513,6 +553,19 @@ _CLASS_SKIP = frozenset(
         "__dataclass_fields__",
         "__dataclass_params__",
         "_abc_impl",
+        # enum と namedtuple が class の定義から作る表(member と欄の既定値は member・__new__ の既定値として辿る)。
+        "_member_map_",
+        "_value2member_map_",
+        "_member_names_",
+        "_hashable_values_",
+        "_unhashable_values_",
+        "_unhashable_values_map_",
+        "_member_type_",
+        "_new_member_",
+        "_use_args_",
+        "_value_repr_",
+        "__classdictcell__",
+        "_field_defaults",
     }
 )
 
@@ -719,8 +772,8 @@ class _Walker:
         self._texts: set[str] = set()
         #: 辿った物の持ち主の module の名 → file(digest の覚えが有効かを決める・file 単位で覆う module の記録の行)。
         self.files: dict[str, str] = {}
-        #: file 単位で覆う module の名(digest には名だけが入る)。
-        self.deferred: set[str] = set()
+        #: import できなかった module の名(digest には名だけが入り、記録の file 単位の行で覆う)。
+        self.unimportable: set[str] = set()
         #: import の途中の module に出会ったか(その digest は import の進み具合に依るので覚えない)。
         self._mut_partial = False
 
@@ -778,14 +831,26 @@ class _Walker:
         digest = self._sha256_of(file)
         self._feed("file", module.__name__, digest if digest is not None else os.urandom(16).hex())
 
-    def _defer(self, module_name: str, home: ModuleType | None) -> None:
-        """file 単位で覆う module — digest には名だけを入れる(読めない名は関数の module の file で覆う)。"""
+    def _lazy_module(
+        self, module_name: str, home: ModuleType | None, names: tuple[str, ...]
+    ) -> ModuleType | None:
+        """関数の中の import の先・package の下の module・hy.R の先 — import して、名の表の名の属性を入れる。import できない
+        時(循環する import の途中の module を require する物など)は名だけを入れ、記録の file 単位の行で覆う。読めない名は
+        関数の module の file で覆う。"""
         if not module_name:
             self._fold(home)
-            return
-        self._feed("deferred", module_name)
-        if not _named_only(module_name):
-            self.deferred.add(module_name)
+            return None
+        if _named_only(module_name):
+            self._feed("module", module_name)
+            return None
+        match _import_for_digest(module_name):
+            case ModuleType() as module:
+                self._module(module, names)
+                return module
+            case NotImportable():
+                self._feed("unimportable", module_name)
+                self.unimportable.add(module_name)
+                return None
 
     def function(self, function: FunctionType) -> None:
         """関数の code と、名で引く大域・既定値・閉包の cell を辿る。"""
@@ -816,11 +881,13 @@ class _Walker:
                 self._value(namespace[name], home, facts.names)
         package = namespace.get("__package__")
         for reference in facts.imports:
-            self._defer(
-                _import_target(reference, package if isinstance(package, str) else None), home
+            self._lazy_module(
+                _import_target(reference, package if isinstance(package, str) else None),
+                home,
+                facts.names,
             )
         for called in facts.called_modules:
-            self._defer(called, home)
+            self._called_macros(called, facts.texts, home)
         if facts.untraceable:
             self._fold(home)
             for name in facts.names:
@@ -833,6 +900,21 @@ class _Walker:
         self._feed("outside", module.__name__)
         self._note(module)
         self._value(value, module, ())
+
+    def _called_macros(
+        self, module_name: str, texts: tuple[str, ...], home: ModuleType | None
+    ) -> None:
+        """macro が組む hy.R の呼び出しの先 — module の macro のうち、code の文字列の定数に名が現れる物を全部辿る(定数の並びから
+        名を 1 つに決められない — 前に使った定数と重なると並びに現れない)。"""
+        module = self._lazy_module(module_name, home, ())
+        table = None if module is None else vars(module).get(MACRO_TABLE)
+        if not isinstance(table, dict):
+            return
+        for text in texts:
+            macro = dict.get(table, _mangle(text)) if text else None
+            if isinstance(macro, FunctionType):
+                self._feed("hy.R", module_name, text)
+                self.function(macro)
 
     def module_content(self, module: ModuleType) -> None:
         """module で定義された関数と class と素の値(名の順)。"""
@@ -899,7 +981,14 @@ class _Walker:
                 self._value(value.__self__, home, names)
             case enum.Enum():
                 self._feed("enum", value.name)
+                self._value(value.value, home, names)
                 self._class(type(value))
+            case _ if type(value).__qualname__ == "_tuplegetter" and type(value).__module__ in (
+                "collections",
+                "_collections",
+            ):
+                # namedtuple の欄の読み(``Alias for field number N`` — 欄の番号だけが振る舞い)。
+                self._feed("tuplegetter", str(value.__doc__))
             case _ if isinstance(value, _COMPILED_CALLABLES):
                 self._compiled(value, home)
             case _ if type(value).__module__.partition(".")[0] == "hy":
@@ -959,7 +1048,7 @@ class _Walker:
             if submodule is not None:
                 self._attributes[module.__name__].add(name)
                 self._feed("attribute", module.__name__, name)
-                self._defer(submodule, module)
+                self._lazy_module(submodule, module, names)
             elif name in vars(module):
                 self._attribute(module, name, names)
 

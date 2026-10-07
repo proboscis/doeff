@@ -102,6 +102,16 @@ class UsedFile:
 
 
 @dataclass(frozen=True)
+class WholeRequire:
+    """使い手が提供元の macro を全部 require した形(``(require m *)`` か ``(require m :as p)``)1 つ — 提供元(macro を定義した
+    module)の名と、使い手の表の名の前置き(前置きの無い全部は空)。名を選んだ require は記録しない: 使い手の表には選んだ名しか
+    入らないので、提供元に後から何が足されても展開は変わらない。"""
+
+    module: str
+    prefix: str
+
+
+@dataclass(frozen=True)
 class MacroRecord:
     """Hy の module 1 つの展開が依った物。
 
@@ -109,7 +119,7 @@ class MacroRecord:
     - ``macros``: 展開が使った macro。
     - ``absent``: 展開する module の表を引いて無かった名(関数の呼び出し・Hy の core の macro)。``providers`` の誰かが後から同じ
       名の macro を持つと、その呼び出しは macro の展開に変わる。
-    - ``providers``: 展開する module の表に macro を入れた module の名(``require`` の先)。
+    - ``providers``: 使い手が macro を全部 require した提供元(名を選んだ require は入らない)。
     - ``values``: macro の外で展開の結果を変える値。
     - ``files``: 閉包の中で file 単位で覆う module(照らす時に import しない — 照らしが import の順を変えないため)。
     """
@@ -117,7 +127,7 @@ class MacroRecord:
     hy_version: str
     macros: tuple[UsedMacro, ...]
     absent: tuple[str, ...]
-    providers: tuple[str, ...]
+    providers: tuple[WholeRequire, ...]
     values: tuple[UsedValue, ...]
     files: tuple[UsedFile, ...]
 
@@ -156,7 +166,7 @@ def record_parts(record: MacroRecord) -> RecordParts:
         record.hy_version,
         tuple((row.table, row.module, row.name, row.digest) for row in record.macros),
         record.absent,
-        record.providers,
+        tuple((row.module, row.prefix) for row in record.providers),
         tuple((row.module, row.name, row.digest) for row in record.values),
         tuple((row.module, row.sha256) for row in record.files),
     )
@@ -166,7 +176,7 @@ def record_from_parts(parts: RecordParts) -> MacroRecord | None:
     """境界から読んだ欄を記録に組む(欄の形が違えば None — 呼び手は記録なしと同じに扱う)。"""
     macros = _each(parts.macros, _used_macro)
     absent = _each(parts.absent, _name)
-    providers = _each(parts.providers, _name)
+    providers = _each(parts.providers, _whole_require)
     values = _each(parts.values, _used_value)
     files = _each(parts.files, _used_file)
     if macros is None or absent is None or providers is None or values is None or files is None:
@@ -215,6 +225,15 @@ def _each(rows: object, read: Callable[[object], "_Row | None"]) -> tuple[_Row, 
 def _name(value: object) -> str | None:
     """記録の名の欄 1 つ(文字列でなければ None)。"""
     return value if isinstance(value, str) else None
+
+
+def _whole_require(row: object) -> WholeRequire | None:
+    """記録の全部の require の行 1 つ(形が違えば None)。"""
+    match row:
+        case [str(module), str(prefix)]:
+            return WholeRequire(module, prefix)
+        case _:
+            return None
 
 
 def _used_macro(row: object) -> UsedMacro | None:

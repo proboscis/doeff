@@ -196,7 +196,8 @@ def test_the_record_lives_inside_a_standard_pyc(tmp_path: Path) -> None:
     assert [(used.table, used.module, used.name) for used in record.macros] == [
         ("_hy_macros", "pkg.macros", "answer")
     ]
-    assert record.providers == ("pkg.macros",)
+    # 提供元の macro は answer だけなので、名を選んだ require でも全部の require と数える(古いと判じる側に倒れるだけ)。
+    assert record.providers == (records.WholeRequire("pkg.macros", ""),)
 
 
 def _rewrite_as_hash_based(pyc: Path, source: Path, *, checked: bool) -> None:
