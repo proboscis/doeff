@@ -117,7 +117,7 @@ def test_the_stub_matches_host_contract_hy() -> None:
         for node in stub.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     } | {node.name for node in stub.body if isinstance(node, ast.FunctionDef | ast.ClassDef) and not node.name.startswith("_")}
-    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "this_program_path", "environ_table_reader", "os_environ_reader", "environ_reader"}
+    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "this_program_path", "environ_table_reader", "os_environ_reader"}
 
 
 def test_a_dropped_record_field_is_found() -> None:
