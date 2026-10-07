@@ -27,12 +27,14 @@ PACKAGE = "probe_cache"
 
 #: macro の module。said = 補助の module の関数の答え・said-late = macro の本体の中でだけ import する補助の答え・
 #: said-deep = この module が require する別の macro の module の macro を、この module の compile の時に展開した答え。
+#: unused = user.hy が使わない macro。
 MACROS = f"""\
 (import {PACKAGE}.words [word])
 (require {PACKAGE}.deeper [deep])
 (defmacro said [] (word))
 (defmacro said-late [] (import {PACKAGE}.late) ({PACKAGE}.late.word))
 (defmacro said-deep [] (deep))
+(defmacro unused [] "unused")
 """
 
 USER = f"""\
@@ -244,6 +246,20 @@ def test_a_changed_macro_of_another_package_outside_the_roots_expands_again(
     second = project_cached(project, [project], project / "probe.hy", cache)
     assert isinstance(second, Projection), second
     assert "'newer'" in second.text
+    assert len(expansions) == 2
+
+
+# ---- 展開が使った macro 単位の記録 -----------------------------------------------------------------------------
+
+
+def test_a_changed_body_of_a_used_macro_expands_again(tree: Tree, expansions: list[Path]) -> None:
+    # 冷えるべき時: user.hy が使う macro(said-deep)の本体を替えたら作り直す。
+    _project(tree)
+    _rewrite(
+        tree.package / "macros.hy",
+        MACROS.replace("(defmacro said-deep [] (deep))", '(defmacro said-deep [] "used-now")'),
+    )
+    assert "'used-now'" in _project(tree).text
     assert len(expansions) == 2
 
 
