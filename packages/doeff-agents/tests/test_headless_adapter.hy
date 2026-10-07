@@ -30,7 +30,7 @@
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
-  AgentToolCallStartedEvent AgentToolInputDeltaEvent
+  AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
@@ -85,6 +85,10 @@
 ;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
 (val CALL-MODEL "claude-stub")
 (val SUBAGENT-MODEL "claude-stub-sub")
+;; Stop hook が最初の答えを 1 度差し戻す手番(agora-redesign #4020)。替え玉の CLI の規則(scenario_rules.hy の HOOK-FEEDBACK-PHRASE と
+;; REJECTED-ANSWER)と同じ言葉と、差し戻される答えの本文。
+(val HOOK-REASON "add-one-more-line")
+(val REJECTED-ANSWER "DRAFT-1")
 
 (defn fake-responder [#^ str text #^ tuple memory]
   "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。
@@ -95,6 +99,7 @@
   (setv sleep (re.search r"sleep (\d+)" text)
         thinking (re.search r"Stream (\d+) thinking pieces\." text)
         tool-pieces (re.search r"Stream the tool input in (\d+) pieces\." text)
+        sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text)
         command (re.search r"run exactly this command: (.+?) \." text)
         exact (re.search r"[Rr]eply with exactly: (\S+)" text)
         extra (re.search r"include the word (\S+)" text))
@@ -111,6 +116,7 @@
   (FakeReply word :tool-seconds (cond sleep (float (.group sleep 1)) echoed ECHO-SECONDS True 0.0)
              :thinking-deltas (if thinking (int (.group thinking 1)) 0)
              :tool-input-deltas (if tool-pieces (int (.group tool-pieces 1)) 0)
+             :stop-hook-rejections (if sent-back #((compose.StopHookRejection :answer REJECTED-ANSWER :reason (.group sent-back 1))) #())
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
              :last-call-usage (if echoed
@@ -265,6 +271,17 @@
    agora-redesign #3974 の 3)。"
   (<- prompt str (echo-prompt ECHO-OUTPUT "ECHOED"))
   (<- handle (launch s "adapter-tool-input" (+ prompt (.format " Stream the tool input in {} pieces." TOOL-INPUT-PIECES)) None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk hook-feedback-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "Stop hook が最初の答え(REJECTED-ANSWER)を理由 HOOK-REASON で 1 度差し戻し、答え直させる手番を最後まで読む(差し戻しが出来事に
+   載るかを見るため・agora-redesign #4020)。"
+  (<- handle (launch s "adapter-hook-feedback"
+                     (.format "Reply with exactly: FINAL Have the Stop hook send back a first answer with the reason: {}." HOOK-REASON)
+                     None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -678,6 +695,26 @@
   (assert (< (get (get started 0) 0) (get (get pieces 0) 0) (get (get pieces -1) 0) (get first-use 0)) (repr done.events))
   (assert (= (get (get started 0) 2) (. (get (. (get first-use 1) tool-calls) 0) id)) (repr #(started first-use)))
   None)
+
+(defk check-a-sent-back-answer-is-followed-by-the-feedback [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "Stop hook が差し戻した手番で、差し戻された答えの本文の出来事の後に、差し戻しの出来事(AgentStopHookFeedbackEvent — 理由つき)が
+   出て、その後に答え直しの本文の出来事が出る。手番の終わりの本文は答え直しだけ。差し戻しの行を捨てる adapter では差し戻しの
+   出来事が 0 で赤 — 上の層が 2 つの本文を見分けられず、画面に答えが 2 つ並ぶ(agora-redesign #4020)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val texts (lfor #(index event) (enumerate done.events) :if (isinstance event AgentTextEvent) #(index event.text)))
+  (val feedback (lfor #(index event) (enumerate done.events) :if (isinstance event AgentStopHookFeedbackEvent) #(index event.reason)))
+  (assert (= (lfor #(_ text) texts text) [REJECTED-ANSWER "FINAL"]) (repr done.events))
+  (assert (= (lfor #(_ reason) feedback reason) [HOOK-REASON]) (repr done.events))
+  (assert (< (get (get texts 0) 0) (get (get feedback 0) 0) (get (get texts 1) 0)) (repr done.events))
+  (assert (= done.end.result-text "FINAL") (repr done.end))
+  None)
+
+(deftest test-headless-carries-the-stop-hook-feedback-fake [tmp-path]
+  (<- (check-a-sent-back-answer-is-followed-by-the-feedback (run-on FAKE tmp-path hook-feedback-turn))))
+
+(deftest test-headless-carries-the-stop-hook-feedback-stub [tmp-path]
+  (<- (check-a-sent-back-answer-is-followed-by-the-feedback (run-on STUB tmp-path hook-feedback-turn))))
 
 (deftest test-headless-carries-the-tool-input-before-the-call-fake [tmp-path]
   (<- (check-tool-input-comes-before-the-call (run-on FAKE tmp-path tool-input-turn))))

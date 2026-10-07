@@ -12,6 +12,7 @@
 ;;; FreshSession の id の重複と ResumeSession の不在の断り・手番の外の足す / 止めるの断り・止めた後は Interrupted・閉じるは冪等・
 ;;; process の死の注入で BackendLost・次の ResumeSession は通る)を同じ筋書きの検で確かめる。
 (require doeff-hy.macros [defhandler defk <- val])
+(require doeff-hy.record [defrecord])
 (import dataclasses [dataclass field replace])
 (import uuid)
 (import doeff_time [GetMonotonic GetTime WaitWithin])
@@ -22,7 +23,7 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT])
+                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback])
 (import doeff_claude_code.dialogue [limit-hit-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -55,6 +56,13 @@
 (val FAKE-TOOL-NAME "Bash")
 
 
+(defrecord StopHookRejection
+  "Stop hook が 1 度差し戻す答え(#4020 — FakeReply の stop-hook-rejections の 1 つ): answer = 差し戻される答えの本文(空でない)・
+   reason = 差し戻しの理由(CLI が手番へ注入する Stop hook feedback の本文の頭の後)。"
+  (#^ str answer)
+  (#^ str reason))
+
+
 (defclass [(dataclass :frozen True)] FakeReply []
   "筋書きの 1 手番の返事: text = 最後の本文・tool-seconds = 道具が走る秒数(0 = 道具なし)・
    needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・lose = 期限で process が消えて
@@ -81,7 +89,11 @@
    resets-at が在る時)と、本体の assistant の行の error rate_limit と限度の文(text が在る時)— を終わりの前に出し、終わり(Completed /
    Failed)の account-limit は出した行から本物の状態機械と同じ規則(dialogue.hy の limit-hit-after)で数える。上の層(doeff-agents の
    adapter とその上の手番を起こす層)が模擬で「この口座の枠が尽きた」を受け取るため。行に出せない値(窓も文も無い・窓の無い戻る刻)と、process の
-   消える手番(lose — 終わりに欄が無い)は断る。"
+   消える手番(lose — 終わりに欄が無い)は断る・
+   stop-hook-rejections = Stop hook が答えを差し戻す筋書き(StopHookRejection の列・#4020)。偽の CLI は本物と同じ順 — 差し戻される
+   答えの本文の行(AssistantMessage)→ 差し戻しの行(StopHookFeedback)を 1 つずつ — を最後の本文を書き始める前に出し、手番の終わりの
+   本文は最後の本文だけ(本物の result の行と同じ)。上の層が差し戻された答えを見分けて画面から落とす事を模擬で確かめるため。本文で
+   終わる手番だけ(fail・lose の手番は本文を出さない)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -109,6 +121,8 @@
   (setv #^ int tool-input-deltas 0)
   ;; 口座の限度に当たる筋書き(当たらない = None)。
   (setv #^ (| AccountLimitHit None) account-limit None)
+  ;; Stop hook が答えを差し戻す筋書き(差し戻さない = 空)。
+  (setv #^ (get tuple #(StopHookRejection ...)) stop-hook-rejections #())
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
@@ -131,7 +145,11 @@
       (when (and (is self.account-limit.window None) (is-not self.account-limit.resets-at None))
         (raise (ValueError "FakeReply の account-limit の resets-at は window と一緒に(拒まれた限度の行が運ぶ)")))
       (when (is-not self.lose None)
-        (raise (ValueError "FakeReply の account-limit は Completed / Failed で終わる手番だけ(lose の終わりに欄が無い)"))))))
+        (raise (ValueError "FakeReply の account-limit は Completed / Failed で終わる手番だけ(lose の終わりに欄が無い)"))))
+    (when (and self.stop-hook-rejections (or (is-not self.fail None) (is-not self.lose None)))
+      (raise (ValueError "FakeReply の stop-hook-rejections は本文で終わる手番だけ(fail・lose の手番は本文を出さない)")))
+    (when (any (gfor rejection self.stop-hook-rejections (not rejection.answer)))
+      (raise (ValueError "FakeReply の stop-hook-rejections の answer は空でない(差し戻される答えの本文の行を出す)")))))
 
 
 (defclass [(dataclass :frozen True)] FakeInjection []
@@ -304,7 +322,10 @@
    :tags {:context "claude-code" :role "foundation"}}
   "道具の境界(か手番の終わり)で最後の本文を決め、本文を書く相(text)に入る — 本物の CLI が最後の本文を差分で流してから確定するのを
    模すため。本文 = 返事の本文 + 読まれていない注入の返事。確定の本文は deltas 片の差分を DELTA-SECONDS ごとに出し終えた刻
-   (deltas = 0 なら今)に出す。"
+   (deltas = 0 なら今)に出す。Stop hook が差し戻す筋書き(返事の stop-hook-rejections)は、本物と同じく差し戻される答えの本文の行と
+   差し戻しの行を 1 つずつ、最後の本文より前(最後の道具の結果より後)に出す(#4020)。"
+  (for [rejection turn.reply.stop-hook-rejections]
+    (<- (emit-all session turn [(AssistantMessage :text rejection.answer) (StopHookFeedback :reason rejection.reason)])))
   (<- extra (read-injections world session turn))
   (setv turn.text (.join " " (+ #(turn.reply.text) extra))
         turn.phase "text"

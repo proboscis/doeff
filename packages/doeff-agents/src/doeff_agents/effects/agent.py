@@ -306,6 +306,17 @@ class AgentToolInputDeltaEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentStopHookFeedbackEvent:
+    """A Stop hook sent the turn's answer back: the CLI fed ``reason`` into the turn and the agent answers again
+    (agora-redesign #4020). The text events after the turn's last tool result and before this event belong to the
+    answer that was sent back (a Stop hook runs only after a response that called no tool)."""
+
+    seq: int
+    at: datetime
+    reason: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
     ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
@@ -352,6 +363,7 @@ AgentEvent = (
     | AgentThinkingDeltaEvent
     | AgentToolCallStartedEvent
     | AgentToolInputDeltaEvent
+    | AgentStopHookFeedbackEvent
     | AgentToolUseEvent
     | AgentToolResultEvent
     | AgentInputFateEvent

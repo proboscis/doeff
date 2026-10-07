@@ -25,6 +25,8 @@
 ;;;                                      当たった事実・agora-redesign #3983)
 ;;;   AssistantMessage.tool-calls / ToolResult.answers → AgentToolUseEvent.tool_calls / AgentToolResultEvent.answers(道具の呼びの命令
 ;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
+;;;   StopHookFeedback.reason          → AgentStopHookFeedbackEvent.reason(Stop hook が答えを差し戻した事実 — 上の層が差し戻された
+;;;                                      答えの本文を見分けるため・agora-redesign #4020)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
@@ -50,7 +52,7 @@
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
-  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
+  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
@@ -58,7 +60,7 @@
   HandlerMadeContextId NamedContextId])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind
+(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback
                                  Completed Failed Interrupted BackendLost Usage])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
@@ -107,7 +109,7 @@
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
     (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
-                          AgentInputFateEvent AgentTurnEndEvent))
+                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
@@ -162,6 +164,9 @@
       [(fn [seq] (AgentToolInputDeltaEvent :seq seq :at at :text kind.tool-input-delta))]
     (isinstance kind ToolResult)
       [(fn [seq] (AgentToolResultEvent :seq seq :at at :answers kind.answers))]
+    ;; Stop hook が答えを差し戻した(理由つき)— 上の層が差し戻された答えの本文を見分けて画面から落とすため(agora-redesign #4020)。
+    (isinstance kind StopHookFeedback)
+      [(fn [seq] (AgentStopHookFeedbackEvent :seq seq :at at :reason kind.reason))]
     (isinstance kind InputFate)
       [(fn [seq] (AgentInputFateEvent :seq seq :at at :input-ref kind.ref :state (InputFateState kind.state)))]
     True []))

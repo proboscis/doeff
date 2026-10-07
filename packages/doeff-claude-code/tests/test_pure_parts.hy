@@ -8,7 +8,7 @@
 (import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 (import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
-                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage recorded-cost])
+                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage StopHookFeedback recorded-cost])
 (import doeff_claude_code.values [Allow])
 (import doeff_claude_code [lines])
 
@@ -423,3 +423,20 @@
   (with [(pytest.raises TypeError)] (setv (get asked.input "command" "nested") "b"))
   (assert (= (. (Allow {"command" "x"}) updated-input) {"command" "x"}))
   (with [(pytest.raises TypeError)] (setv (get (. (Allow {"command" "x"}) updated-input) "command") "y")))
+
+
+(deftest test-a-stop-hook-feedback-line-is-classified-with-its-reason
+  ;; #4020: Stop hook が答えを差し戻すと、CLI は手番に差し戻しの行を注入して答え直させる(実測 CLI 2.1.292・旗なしの既定の
+  ;; 出力 — isSynthetic の user の行で、本文の text の block が「Stop hook feedback:」で始まる)。名前だけの Other に捨てると、上の層は
+  ;; 差し戻された答えと答え直しを見分けられず、画面に答えが 2 つ並ぶ。理由(接頭の後)を持つ型で受ける。
+  (val measured {"type" "user"
+                 "message" {"role" "user" "content" [{"type" "text" "text" "Stop hook feedback:\n確かめ用: もう 1 文だけ「追記です」と書いてください"}]}
+                 "parent_tool_use_id" None "session_id" "96d008f1-9055-400c-8ac3-f5b71ccb5e93"
+                 "uuid" "e9a31461-e363-4d8e-8270-e4a80fcc9ea0" "timestamp" "2026-10-07T15:14:09.691Z" "isSynthetic" True})
+  (assert (= (classify-record (parse-record (json.dumps measured :ensure-ascii False)))
+             (StopHookFeedback :reason "確かめ用: もう 1 文だけ「追記です」と書いてください")))
+  ;; 印の片方だけの行は今までどおり Other(type = user): 接頭はあるが isSynthetic でない user の行(人が同じ文を打った)と、
+  ;; isSynthetic だが接頭の無い行(CLI のほかの注入)。
+  (assert (= (classify-record {"type" "user" "message" {"content" [{"type" "text" "text" "Stop hook feedback:\nx"}]}}) (Other :type "user")))
+  (assert (= (classify-record {"type" "user" "isSynthetic" True "message" {"content" [{"type" "text" "text" "other"}]}})
+             (Other :type "user"))))
