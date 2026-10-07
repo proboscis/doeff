@@ -46,6 +46,9 @@ STUBBED_MODULES = (
     "memory_stack_dump",
     "faulthandler_stack_dump",
     "os_file",
+    "ws_client_effects",
+    "scripted_ws_client",
+    "aiohttp_ws_client",
 )
 
 #: module の直下で名を定義する Hy の form の頭。
@@ -75,15 +78,30 @@ class StubField:
     has_default: bool
 
 
+def _named(form: hy.models.Expression) -> hy.models.Symbol | None:
+    """定義の form の名の Symbol: 先頭の次の要素。`(defn :async …)` の keyword は飛ばし、戻り値の注記 `(defn #^ T 名 …)`(reader が
+    `(annotate 名 T)` に読む)は中の名を取る(#4007 — async の defn を持つ答え手の module を照らすため)。名が無ければ None。"""
+    rest = [item for item in form[1:] if not isinstance(item, hy.models.Keyword)]
+    match rest:
+        case [hy.models.Symbol() as name, *_]:
+            return name
+        case [hy.models.Expression() as annotated, *_] if (
+            len(annotated) == 3 and str(annotated[0]) == "annotate" and isinstance(annotated[1], hy.models.Symbol)
+        ):
+            return annotated[1]
+        case _:
+            return None
+
+
 def _defined_name(form: object) -> str | None:
     """.hy の直下の form 1 つが定義する名(Python の名へ mangle した物)。定義の form でなければ None。"""
     match form:
         case hy.models.Expression() if (
             len(form) >= 2
             and str(form[0]) in DEFINING_HEADS
-            and isinstance(form[1], hy.models.Symbol)
+            and _named(form) is not None
         ):
-            return hy.mangle(str(form[1]))
+            return hy.mangle(str(_named(form)))
         # 飾りの付いた class(`(defclass [(dataclass :frozen True)] 名 [EffectBase] …)`)は名が 3 つ目に来る。
         case hy.models.Expression() if (
             len(form) >= 3

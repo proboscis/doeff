@@ -67,6 +67,11 @@
                                                 AppendHttpScript ReadHttpServed])
 (import doeff_core_effects.aiohttp-http-server [aiohttp-http-server])
 (import doeff_core_effects.scripted-http-server [scripted-http-server])
+(import doeff_core_effects.ws-client-effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent])
+;; 公開の installer(aiohttp-ws-client・scripted-ws-client)は program を後始末で包む素の関数で構造情報を持たないため、
+;; 導出には __doeff_body__ を持つ defhandler 製の実物を挙げる(_http-production-handler と同じ)。
+(import doeff_core_effects.aiohttp-ws-client [aiohttp-ws-link-handler])
+(import doeff_core_effects.scripted-ws-client [scripted-ws-link-handler])
 (import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlTransaction SqlBatch SetSqlOutage])
 (import doeff_core_effects.postgres-sql [postgres-sql-handler])
@@ -284,6 +289,14 @@
   :handlers [aiohttp-http-server scripted-http-server]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "aiohttp-http-server(本物・extra http-server)と scripted-http-server(I/O なし)が答える。AppendHttpScript / ReadHttpServed は台本を足す・受けた命令を読む effect で、答えるのは scripted-http-server だけ。")
+
+
+(defdomain doeff-ws-client
+  :title "WebSocket client 語彙 — 繋ぐ側の WebSocket の接続・frame の受け渡し・閉じ"
+  :effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent]
+  :handlers [aiohttp-ws-link-handler scripted-ws-link-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "aiohttp-ws-link-handler(本物・extra http-server — 公開の installer は aiohttp-ws-client)と scripted-ws-link-handler(I/O なし・台本 — 公開の installer は scripted-ws-client)が答える。installer は program を closing-links で包み、範囲の終わりに WsDisconnectAll を出す。ReadWsSent は台本の答え手が送った文と閉じの記録を読む effect で、答えるのは scripted-ws-link-handler だけ。待ち受け側(doeff-http-server)の WsOpened / WsClose とは別の語彙(agora-redesign #4007 U0)。")
 
 
 (defdomain doeff-sql
