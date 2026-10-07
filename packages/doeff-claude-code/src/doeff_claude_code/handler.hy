@@ -31,6 +31,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import datetime [datetime])
+(import math)
 (import os)
 (import os.path)
 (import pathlib [Path])
@@ -39,7 +40,7 @@
 (import uuid)
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
-(import doeff_time [GetMonotonic GetTime WaitWithin])
+(import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind parse-record
@@ -402,15 +403,18 @@
 
 ;; --- 計時の行(頭の註 — #3605) --------------------------------------------------------------
 
-(defk epoch-ms-of [at]
+(defk wall-ms-of [at]
   {:pre [(: at (| datetime None))] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
-  "計時の行の壁の時刻の欄を、他の process の行と並べられる epoch ミリ秒の整数で綴るため(時刻が無ければ None)。"
-  (if (is at None) None (round (* (.timestamp at) 1000))))
+  "計時の行の壁の時刻の欄を、他の process の行と並べられる epoch ミリ秒の整数で綴るため(時刻が無ければ None)。丸めは doeff-time の
+   epoch-ms-of の 1 つ(床へ)— 行を並べる上の層と同じ丸めなので、329.6 ms に書いた刻が 329.9 ms の刻より後に見えない
+   (#3855 — 以前は四捨五入で 330 と綴り、床で 329 と綴る側と順が逆に見えた)。"
+  (if (is at None) None (epoch-ms-of at)))
 
 (defk elapsed-ms [since until]
   {:pre [(: since (| float None)) (: until float)] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
-  "GetMonotonic の 2 つの読みの差を、計時の行の経過の欄のミリ秒の整数で綴るため(起点が無ければ None)。"
-  (if (is since None) None (round (* (- until since) 1000))))
+  "GetMonotonic の 2 つの読みの差を、計時の行の経過の欄のミリ秒の整数で綴るため(起点が無ければ None)。2 つの読みをそれぞれミリ秒へ
+   床へ丸めてから引く — 続く 2 つの区間の和が通しの区間と同じになる(差を四捨五入すると 0.4 + 0.4 が 0 + 0 で通しの 0.8 は 1 になる・#3855)。"
+  (if (is since None) None (- (math.floor (* until 1000)) (math.floor (* since 1000)))))
 
 (defk note-spawned [runtime turn-seq origin requested launching launching-wall]
   {:pre [(: runtime SessionRuntime) (: turn-seq int) (: origin (| FreshSession ResumeSession ForkSession)) (: requested float)
@@ -427,7 +431,7 @@
     (when (is-not log None)
       (setv log.launched-at launching)
       (setv log.launched-wall launching-wall)))
-  (<- wall-ms (epoch-ms-of at))
+  (<- wall-ms (wall-ms-of at))
   (<- before-spawn-ms (elapsed-ms requested launching))
   (<- spawn-ms (elapsed-ms launching launched))
   (<- (slog CLI-TIMING-LOG :level "info" :event "spawned" :wall-ms wall-ms :before-spawn-ms before-spawn-ms :spawn-ms spawn-ms
@@ -439,7 +443,7 @@
    :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
   "生きた process を使い回した手番の、入力を書いた所の計時の行を出すため(起こした所の行 spawned の代わり — #3672。その手番の
    最初の行・終わりの経過の起点は入力を書いた刻)。before-write-ms = 頼まれてから書き始めるまで。"
-  (<- wall-ms (epoch-ms-of writing-wall))
+  (<- wall-ms (wall-ms-of writing-wall))
   (<- before-write-ms (elapsed-ms requested writing))
   (<- (slog CLI-TIMING-LOG :level "info" :event "reused" :wall-ms wall-ms :before-write-ms before-write-ms
             :session-id runtime.session-id :turn-seq turn-seq))
@@ -457,9 +461,9 @@
   (val init-at (if (is log None)
                    None
                    (with [runtime.lock] (next (gfor line log.lines :if (isinstance line.kind Init) line.at) None))))
-  (<- wall-ms (epoch-ms-of at))
+  (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms launched now))
-  (<- line-at-ms (epoch-ms-of init-at))
+  (<- line-at-ms (wall-ms-of init-at))
   (<- (slog CLI-TIMING-LOG :level "info" :event (if (isinstance outcome TurnStarted) "init" "launch-failed") :wall-ms wall-ms
             :since-launch-ms since-launch-ms :line-at-ms line-at-ms :session-id runtime.session-id :turn-seq turn-seq))
   None)
@@ -495,9 +499,9 @@
     (return None))
   (<- now (GetMonotonic))
   (<- at (GetTime))
-  (<- wall-ms (epoch-ms-of at))
+  (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms log.launched-at now))
-  (<- line-at-ms (epoch-ms-of reply.at))
+  (<- line-at-ms (wall-ms-of reply.at))
   (<- (slog CLI-TIMING-LOG :level "info" :event "first-reply" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :line-at-ms line-at-ms :kind (. (type reply.kind) __name__) :session-id turn.session-id :turn-seq turn.turn-seq))
   None)
@@ -547,11 +551,11 @@
     (return None))
   (<- now (GetMonotonic))
   (<- at (GetTime))
-  (<- wall-ms (epoch-ms-of at))
+  (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms log.launched-at now))
-  (<- line-at-ms (epoch-ms-of claimed.text.at))
+  (<- line-at-ms (wall-ms-of claimed.text.at))
   (val stream-start claimed.stream-start)
-  (<- stream-start-at-ms (if (is stream-start None) None (epoch-ms-of stream-start.at)))
+  (<- stream-start-at-ms (if (is stream-start None) None (wall-ms-of stream-start.at)))
   (<- after-stream-start-ms (wall-elapsed-ms (if (is stream-start None) None stream-start.at) claimed.text.at))
   (<- (slog CLI-TIMING-LOG :level "info" :event "first-text" :wall-ms wall-ms :since-launch-ms since-launch-ms
             :line-at-ms line-at-ms :stream-start-at-ms stream-start-at-ms :after-stream-start-ms after-stream-start-ms
@@ -562,8 +566,9 @@
   {:pre [(: since (| datetime None)) (: until (| datetime None))] :post [(: % (| int None))]
    :tags {:context "claude-code" :role "foundation"}}
   "GetTime の読み(手番の記録の起こし始めの壁の時刻)と、読み手の thread が行に刻んだ壁の時刻の差を、計時の行の経過の欄のミリ秒の
-   整数で綴るため(どちらかが無ければ None)。epoch の秒で引くので、時差の付き方が違う 2 つの読みでも例外にしない。"
-  (if (or (is since None) (is until None)) None (round (* (- (.timestamp until) (.timestamp since)) 1000))))
+   整数で綴るため(どちらかが無ければ None)。2 つの読みをそれぞれ doeff-time の epoch-ms-of で床へ丸めた値の差 — 行の刻の欄
+   (wall-ms-of)の差と同じになり、順が逆に見えない(#3855)。epoch の物差しで引くので、時差の付き方が違う 2 つの読みでも例外にしない。"
+  (if (or (is since None) (is until None)) None (- (epoch-ms-of until) (epoch-ms-of since))))
 
 (defk claimed-turn-end [runtime log]
   {:pre [(: runtime SessionRuntime) (: log TurnLog)] :post [(: % (| (get tuple #(ClaudeStreamLine ...)) None))]
@@ -601,7 +606,7 @@
   (val tool-input (tuple (gfor line deltas :if (= line.kind.delta DeltaKind.TOOL-INPUT) line)))
   (<- now (GetMonotonic))
   (<- at (GetTime))
-  (<- wall-ms (epoch-ms-of at))
+  (<- wall-ms (wall-ms-of at))
   (<- since-launch-ms (elapsed-ms log.launched-at now))
   (<- first-partial-since-launch-ms (wall-elapsed-ms log.launched-wall (if partials (. (get partials 0) at) None)))
   (<- first-thinking-since-launch-ms (wall-elapsed-ms log.launched-wall (if thinking (. (get thinking 0) at) None)))

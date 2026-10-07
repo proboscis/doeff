@@ -5,11 +5,9 @@ from datetime import datetime as datetime
 from datetime import timedelta as timedelta
 from datetime import timezone as timezone
 from doeff_time import GetTime as GetTime
+from doeff_time import epoch_ms_of as epoch_ms_of
 EPOCH: datetime
 ONE_MS: timedelta
-
-def epoch_ms_of(at: datetime) -> int:
-    ...
 
 def datetime_of_epoch_ms(ms: int) -> datetime:
     ...

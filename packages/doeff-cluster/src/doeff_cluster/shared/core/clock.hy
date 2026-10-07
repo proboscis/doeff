@@ -2,20 +2,15 @@
 ;;; Delay。答えるのは composition root が被せる doeff-time の handler(本番 = async-time-handler / sync-time-handler・検と模擬環境 =
 ;;; sim-time-handler と SimClock)。
 ;;;
-;;; この module は effect も handler も持たない — クラスタの状態が刻む物差し(epoch ミリ秒)との換算の純関数と、GetTime を 1 回
-;;; 出してその物差しで答える小さな Program だけ。
+;;; この module は effect も handler も持たない — クラスタの状態が刻む物差し(epoch ミリ秒)から時刻へ戻す純関数と、GetTime を 1 回
+;;; 出してその物差しで答える小さな Program だけ。時刻 → epoch ミリ秒の丸めは doeff-time の epoch-ms-of の 1 つ(#3855)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import datetime [datetime timedelta timezone])
-(import doeff_time [GetTime])
+(import doeff_time [GetTime epoch-ms-of])
 
 (setv #^ datetime EPOCH (datetime 1970 1 1 :tzinfo timezone.utc))
 (setv #^ timedelta ONE-MS (timedelta :milliseconds 1))
-
-
-(defn #^ int epoch-ms-of [#^ datetime at]
-  "timezone つきの時刻 → epoch ミリ秒(整数の割り算 — float の timestamp を 1000 倍して切ると 1 ms ずれることがある)。"
-  (// (- at EPOCH) ONE-MS))
 
 
 (defn #^ datetime datetime-of-epoch-ms [#^ int ms]
