@@ -116,7 +116,8 @@
 (deftest test-the-transcript-place-and-the-process-env
   (assert (= (transcript-path "/h/.claude" "/tmp/work.dir" SID)
              (.format "/h/.claude/projects/-tmp-work-dir/{}.jsonl" SID)))
-  (assert (= (process-env HOME) {"PATH" "/bin" "CLAUDE_CONFIG_DIR" "/h/.claude"})))
+  ;; 計時の env(#3855)は家の env の後に足す — 起動と要求までの区間を CLI に名乗らせる handler の物理。
+  (assert (= (process-env HOME) {"PATH" "/bin" "CLAUDE_CODE_EMIT_STARTUP_TIMING" "1" "CLAUDE_CONFIG_DIR" "/h/.claude"})))
 
 
 (deftest test-values-refuse-what-the-cli-refuses
@@ -328,6 +329,38 @@
                                        :cache-read-input-tokens 13 :cache-creation-5m-input-tokens 2
                                        :cache-creation-1h-input-tokens 9 :web-search-requests 1
                                        :service-tier "standard")))))
+
+
+(deftest test-the-cli-timing-fields-are-read-not-dropped
+  ;; #3855: 送ってから最初の字までを、CLI の起動・要求を送るまで(入力ごとの hook を含む)・要求から message_start まで・モデルが
+  ;; 考えた間に割るため、CLI(実測 2.1.292)が名乗る計時の欄を捨てずに型へ読む。行の形は実物の 1 通の写し(値は丸めた)。
+  ;; 前は init の startup_timing・message_start の ttft_ms・result の time_to_request_ms などを捨てていて、ここで赤。
+  (val init (classify-record {"type" "system" "subtype" "init" "session_id" SID
+                              "startup_timing" {"phases" {"node_boot_ms" 790 "hooks_init_ms" 1103 "input_ready_ms" 2883}
+                                                "phase_start_ms" {"node_boot_ms" 0 "hooks_init_ms" 1763}
+                                                "time_origin_ms" 1791385479741.7954}}))
+  (assert (= init.startup-phases #((lines.TimedPhase :name "node_boot_ms" :ms 790 :start-ms 0)
+                                   (lines.TimedPhase :name "hooks_init_ms" :ms 1103 :start-ms 1763)
+                                   (lines.TimedPhase :name "input_ready_ms" :ms 2883 :start-ms None)))
+          (repr init))
+  (assert (= init.startup-origin-ms 1791385479741) (repr init))
+  (val start (classify-record {"type" "stream_event" "ttft_ms" 836 "event" {"type" "message_start" "message" {}}}))
+  (assert (= start.ttft-ms 836) (repr start))
+  (val result (classify-record {"type" "result" "subtype" "success" "is_error" False "duration_ms" 2025 "duration_api_ms" 1288
+                                "ttft_ms" 1657 "ttft_stream_ms" 1117 "time_to_request_ms" 441 "first_content_frame_ms" 1119
+                                "time_to_request_phases_ms" {"input_hooks" 252 "system_prompt" 36 "other" 153}}))
+  (assert (= result.timing
+             (lines.RequestTiming :time-to-request-ms 441 :ttft-stream-ms 1117 :first-content-frame-ms 1119 :ttft-ms 1657
+                                  :duration-ms 2025 :duration-api-ms 1288
+                                  :request-phases #((lines.TimedPhase :name "input_hooks" :ms 252)
+                                                    (lines.TimedPhase :name "system_prompt" :ms 36)
+                                                    (lines.TimedPhase :name "other" :ms 153))))
+          (repr result))
+  ;; 名乗らない欄は None・区間は空(0 を発明しない)— env の無い process の init と、計時の欄の無い result。
+  (val bare-init (classify-record {"type" "system" "subtype" "init" "session_id" SID}))
+  (assert (= #(bare-init.startup-phases bare-init.startup-origin-ms) #(#() None)) (repr bare-init))
+  (val bare (classify-record {"type" "result" "subtype" "success" "is_error" False}))
+  (assert (= bare.timing (lines.RequestTiming)) (repr bare)))
 
 
 (deftest test-usage-adds-field-by-field-without-inventing-zero

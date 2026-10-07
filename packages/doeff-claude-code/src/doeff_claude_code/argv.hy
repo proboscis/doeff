@@ -38,9 +38,14 @@
 (defn #^ str transcript-path [#^ str config-dir #^ str canonical-cwd #^ str session-id]
   (.format "{}/{}.jsonl" (transcript-dir config-dir canonical-cwd) session-id))
 
+;; 計時の handler の物理: CLI に起動の区間(init の行の startup_timing)と、要求を送るまでの区間(result の行の
+;; time_to_request_phases_ms)を出させる env(実測 2.1.292 — 無いと CLI は区間を出さない)。送ってから最初の字までのうち、CLI の
+;; 起動と入力ごとの hook を区間ごとに割るため(#3855・lines.hy の TimedPhase)。process の env に置く — 区間は設定を読む前から数える。
+(setv STARTUP-TIMING-ENV (FrozenMap {"CLAUDE_CODE_EMIT_STARTUP_TIMING" "1"}))
+
 (defn #^ (get dict #(str str)) process-env [#^ ClaudeHome home]
-  "起こす process の env: 家の env ちょうど + CLAUDE_CONFIG_DIR(os.environ は足さない)。"
-  (| (dict home.env) {"CLAUDE_CONFIG_DIR" home.config-dir}))
+  "起こす process の env: 家の env ちょうど + 計時の env(STARTUP-TIMING-ENV)+ CLAUDE_CONFIG_DIR(os.environ は足さない)。"
+  (| (dict home.env) (dict STARTUP-TIMING-ENV) {"CLAUDE_CONFIG_DIR" home.config-dir}))
 
 
 (defn #^ list permission-flags [policy]

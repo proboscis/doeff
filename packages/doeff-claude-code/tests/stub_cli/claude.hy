@@ -44,6 +44,15 @@
 (setv SUBAGENT-USAGE {"input_tokens" 1 "cache_read_input_tokens" 50000 "output_tokens" 900})
 (setv MAIN-WINDOW {"inputTokens" 7 "outputTokens" 6 "contextWindow" 200000 "maxOutputTokens" 32000})
 (setv SUBAGENT-WINDOW {"inputTokens" 1 "contextWindow" 100000})
+;; 計時の欄(実測 2.1.292・#3855 — 実物と同じ欄の名): message_start の行は ttft_ms(要求を送ってから message_start まで — 替え玉は
+;; API を呼ばないので決まった値)を名乗り、result の行は手番の時計(入力を読んだ刻)からの time_to_request_ms などを名乗る。env
+;; CLAUDE_CODE_EMIT_STARTUP_TIMING が在る process だけ、最初の init の行に起動の区間(startup_timing)を、result の行に要求までの区間
+;; (time_to_request_phases_ms — 入力ごとの hook の秒が input_hooks)を足す。
+(setv STARTUP-TIMING-ENV "CLAUDE_CODE_EMIT_STARTUP_TIMING")
+(setv STUB-TTFT-MS 7)
+(setv STUB-STARTUP {"phases" {"node_boot_ms" 30 "hooks_init_ms" 20 "input_ready_ms" 60}
+                    "phase_start_ms" {"node_boot_ms" 0 "hooks_init_ms" 30 "input_ready_ms" 0}
+                    "time_origin_ms" 1791385479741.7954})
 
 
 (defclass Stop [Exception] "stdin の EOF(降りる)。")
@@ -103,7 +112,9 @@
 (defclass Session []
   (defn __init__ [self #^ str session-id #^ str path #^ bool ask]
     (setv self.session-id session-id self.path path self.ask ask
-          self.pending b"")
+          self.pending b""
+          ;; 計時の欄の材料(手番の時計の起点・要求を送るまで・そのうち入力ごとの hook)と、起動の区間を名乗ったか。
+          self.turn-started 0.0 self.request-ms 0 self.hook-ms 0 self.startup-told False)
     ;; 会話の累積の額は transcript に最後に記した額から数え続ける(無ければ 0)。
     (setv records (if (os.path.exists path)
                       (lfor line (.splitlines (.read-text (Path path) :encoding "utf-8")) :if (.strip line) (json.loads line))
@@ -171,9 +182,11 @@
     ;; 片は字数でほぼ等分(片の連結 = 本文 — fake の FakeReply.deltas と同じ分け方)。実物と同じく差分の列を content_block_start と
     ;; content_block_stop(text_delta でない stream_event)で挟む。think-seconds > 0 なら、実物が考える時と同じく、先に message_start
     ;; (text_delta でない stream_event)を出し、その秒だけ待ってから本文を出す(#3696)。
+    (import time)
+    (setv stream-ms None)
     (when (> think-seconds 0)
-      (import time)
-      (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None
+      (setv stream-ms (.elapsed-ms self))
+      (emit {"type" "stream_event" "session_id" self.session-id "parent_tool_use_id" None "ttft_ms" STUB-TTFT-MS
              "event" {"type" "message_start" "message" {"role" "assistant" "content" []}}})
       (time.sleep think-seconds))
     (when (> deltas 0)
@@ -188,23 +201,44 @@
              "event" {"type" "content_block_stop" "index" 0}}))
     (emit (assistant-line self.session-id [{"type" "text" "text" text}] FINAL-CALL-USAGE))
     (+= self.cost TURN-COST)
-    (emit {"type" "result" "subtype" "success" "is_error" False "result" text "terminal_reason" "completed"
-           "session_id" self.session-id "total_cost_usd" self.cost "usage" {"input_tokens" 1 "output_tokens" 1}
-           "user_message_uuids" refs "modelUsage" (model-usage subagent)}))
+    (emit (| {"type" "result" "subtype" "success" "is_error" False "result" text "terminal_reason" "completed"
+              "session_id" self.session-id "total_cost_usd" self.cost "usage" {"input_tokens" 1 "output_tokens" 1}
+              "user_message_uuids" refs "modelUsage" (model-usage subagent)}
+             (.timing-fields self stream-ms))))
+
+  (defn elapsed-ms [self]
+    "手番の時計(入力を読んだ刻)から今までのミリ秒 — 計時の欄を実物と同じ起点で名乗るため。"
+    (import time)
+    (int (* 1000 (- (time.monotonic) self.turn-started))))
+
+  (defn timing-fields [self stream-ms]
+    "result の行の計時の欄(実物と同じ名)。stream-ms = message_start を出した刻(出していなければ None — 実物の欄の無い形と同じく欄を出さない)。"
+    (setv done (.elapsed-ms self))
+    (| {"time_to_request_ms" self.request-ms "duration_ms" done "duration_api_ms" (- done self.request-ms) "ttft_ms" done}
+       (if (is stream-ms None) {} {"ttft_stream_ms" stream-ms "first_content_frame_ms" stream-ms})
+       (if (in STARTUP-TIMING-ENV os.environ)
+           {"time_to_request_phases_ms" {"input_hooks" self.hook-ms "other" (- self.request-ms self.hook-ms)}}
+           {})))
 
   (defn run-turn [self #^ list records]
     "1 手番(records = この手番の入力の行 — 普通は 1 つ・生き残った注入の手番は複数)。"
+    (import time)
+    (setv self.turn-started (time.monotonic))
     (setv refs (lfor record records :if (.get record "uuid") (.get record "uuid")))
     (for [ref refs] (.lifecycle self ref "started"))
-    (emit {"type" "system" "subtype" "init" "session_id" self.session-id "capabilities" CAPABILITIES
-           "model" "stub" "permissionMode" (if self.ask "default" "bypassPermissions") "mcp_servers" []})
+    (emit (| {"type" "system" "subtype" "init" "session_id" self.session-id "capabilities" CAPABILITIES
+              "model" "stub" "permissionMode" (if self.ask "default" "bypassPermissions") "mcp_servers" []}
+             (if (and (in STARTUP-TIMING-ENV os.environ) (not self.startup-told)) {"startup_timing" STUB-STARTUP} {})))
+    (setv self.startup-told True)
     (setv text (.join "\n" (gfor record records (user-text record))))
     (setv rule (reply-for text (memory-of self.path)))
+    (setv hook-started (.elapsed-ms self))
     (when (> (get rule "hook_seconds") 0)
       ;; 実物と同じく、init の直後に入力ごとの hook の知らせ(stream でない system の行)を出し、hook の秒だけ待ってから答え始める(#3696 の直し)。
-      (import time)
       (emit {"type" "system" "subtype" "hook_response" "session_id" self.session-id "hook_event" "UserPromptSubmit"})
       (time.sleep (get rule "hook_seconds")))
+    ;; 要求を送るまで(実物の time_to_request_ms)= 入力ごとの hook の後。
+    (setv self.request-ms (.elapsed-ms self) self.hook-ms (- self.request-ms hook-started))
     (when (> (get rule "thinking_deltas") 0)
       ;; 答えの前に考えている間の差分(thinking の block の thinking_delta — #3746 (a))。
       (stream-block self.session-id {"type" "thinking" "thinking" ""} {"type" "thinking_delta" "thinking" "..."}
