@@ -366,16 +366,25 @@ def test_a_doeff_hy_file_the_expansion_does_not_go_through_keeps_the_stored_expa
 
 def test_a_changed_type_check_post_processing_expands_again(copied_doeff_hy: CopiedDoeffHy) -> None:
     # 失敗ケース 6: 型検査の展開の後処理(static_check の記帳の外し・補助の import の足し)は macro から辿れない。
-    # それを変えたら作り直す。
+    # それを変えたら作り直す(記録は static_check で定義された関数と class の閉包の digest — 関数を 1 つ足す)。
     assert copied_doeff_hy.expanded() == 1
-    _append_comment(copied_doeff_hy.package / "static_check.py")
+    static_check_file = copied_doeff_hy.package / "static_check.py"
+    static_check_file.write_text(
+        static_check_file.read_text(encoding="utf-8") + "\n\ndef _changed() -> int:\n    return 1\n",
+        encoding="utf-8",
+    )
     assert copied_doeff_hy.expanded() == 1
 
 
 def test_a_changed_doeff_hy_macro_expands_again(copied_doeff_hy: CopiedDoeffHy) -> None:
-    # 失敗ケース 2 の doeff_hy の形: doeff_hy の macro(macros.hy)を変えたら作り直す。
+    # 失敗ケース 2 の doeff_hy の形: 展開が使った doeff_hy の macro(macros.hy の defk)を変えたら作り直す。記録は使った macro
+    # 単位なので、macros.hy に注釈を足すだけでは作り直さない(下の検)— defk の code の定数(docstring)を替える。
     assert copied_doeff_hy.expanded() == 1
-    _append_comment(copied_doeff_hy.package / "macros.hy")
+    macros = copied_doeff_hy.package / "macros.hy"
+    old = '"Define a kleisli function (@do decorator)'
+    text = macros.read_text(encoding="utf-8")
+    assert old in text
+    macros.write_text(text.replace(old, '"Define a kleisli function (@do decorator, changed)', 1), encoding="utf-8")
     assert copied_doeff_hy.expanded() == 1
 
 
@@ -410,9 +419,9 @@ WRITER = """\
 import sys
 from pathlib import Path
 from doeff_hy.static_cache import CachedProjection, store
-from doeff_hy_bytecode_guard import record_from_rows
+from doeff_hy_bytecode_guard.records import MacroRecord
 cache, mark, rounds = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
-used = record_from_rows("probe", ())
+used = MacroRecord("probe", (), (), (), (), ())
 for _ in range(rounds):
     store(cache, "a" * 64, CachedProjection(mark * 400_000, (), (), used))
 """
@@ -437,13 +446,13 @@ def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
     text = json.loads(entries[0].read_text(encoding="utf-8"))["text"]
     assert text in {"x" * 400_000, "y" * 400_000}, "2 つの書き手の中身が混ざった"
     assert not [p for p in cache.rglob("*") if p.is_file() and p.suffix != ".json"], "一時の file が残った"
-    assert static_cache.CACHE_VERSION == 2
+    assert static_cache.CACHE_VERSION == 3
 
 
 def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 失敗ケース(#3863 の (b)): 2 度の書きが同じ一時の file を使わない(直す前は <entry>.tmp で同じ — 赤)。
     from doeff_hy import static_cache
-    from doeff_hy_bytecode_guard import record_from_rows
+    from doeff_hy_bytecode_guard.records import MacroRecord
 
     written: list[str] = []
     real = Path.write_text
@@ -453,7 +462,7 @@ def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: py
         return real(path, data, *args, **kwargs)
 
     monkeypatch.setattr(Path, "write_text", recording)
-    used = record_from_rows("probe", ())
+    used = MacroRecord("probe", (), (), (), (), ())
     for _ in range(2):
         static_cache.store(tmp_path, "b" * 64, static_cache.CachedProjection("t", (), (), used))
     assert len(written) == 2

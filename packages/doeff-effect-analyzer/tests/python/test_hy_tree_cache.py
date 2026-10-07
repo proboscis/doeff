@@ -284,18 +284,17 @@ def test_a_changed_unused_macro_is_read_from_the_cache(
     assert seen == [f"{package}.m"], "a change of an unused macro expanded the module again"
 
 
-def test_an_expansion_records_every_macro_file_it_went_through_by_its_digest() -> None:
-    """The source requires ``doeff-hy.macros``, which requires ``doeff-hy.handle`` in turn: both files
-    are in the record an entry is named by and read under (the record the import side keeps)."""
-    import doeff_hy.handle
-    import doeff_hy.macros
-    from doeff_hy_bytecode_guard import file_sha256
-    from doeff_hy_bytecode_guard.records import MacroDependency
-
+def test_an_expansion_records_the_macros_it_used_by_their_digest() -> None:
+    """The source requires ``defk`` and ``<-`` of ``doeff-hy.macros`` and uses neither: the record an
+    entry is named by and read under (the record the import side keeps) names no macro, and names
+    ``doeff_hy.macros`` as the module that put macros in the table. A source that calls ``defk``
+    names it with the digest of its code's closure."""
     record = pe._expand_hy(SOURCE, "/src/m.hy", "m").macros
-    for module in (doeff_hy.macros, doeff_hy.handle):
-        file = str(module.__file__)
-        assert MacroDependency(module.__name__, file, str(file_sha256(file))) in record.dependencies
+    assert record.macros == ()
+    assert record.providers == ("doeff_hy.macros",)
+    used = pe._expand_hy(DEFS, "/src/m.hy", "m").macros
+    assert [(row.module, row.name) for row in used.macros] == [("doeff_hy.macros", "defk")]
+    assert len(used.macros[0].digest) == 64
 
 
 def test_off_turns_the_cache_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

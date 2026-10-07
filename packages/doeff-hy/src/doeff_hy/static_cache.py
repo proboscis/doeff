@@ -6,18 +6,19 @@
 
 展開が依った物(agora-redesign #3862 — テストの実行の側の bytecode の記録と同じ 1 つの作り方):
 - 展開する source の中身・その module 名・根からの相対 path(診断の path と import の解決に効く)。
-- 展開が通った file の記録(``doeff_hy_bytecode_guard.current_record``)— Hy の版、require した macro の module、macro が
-  呼ぶ同じ package の補助の module(名前空間の値と、macro の本体の中の import)、推移的な require、根の外の別の package の
-  macro。macro から辿れない型検査の展開の後処理(doeff_hy.static_check とそれが参照する doeff_hy の module)も同じ辿り方で
-  入れる(``also``)。
+- 展開が使った macro の記録(``doeff_hy_bytecode_guard.macro_recording``)— Hy の版、展開が実際に使った macro(提供元の
+  module 名・macro 名・macro の関数の code の閉包の digest — macro が呼ぶ補助・読む定数・本体の中の import を含む)、表を
+  引いて無かった名と表に macro を入れた提供元、file 単位で覆う module(macro の本体の中の import の先など)の file の sha256。
+  macro から辿れない型検査の展開の後処理は、doeff_hy.static_check の ``POST_PROCESSING``(``project``)の閉包の digest で入れる
+  (``also``)。使っていない macro・注釈・行番号だけの変更では作り直さない。
 以前は doeff_hy の package 全体の指紋と、source を Hy の reader で読んで集めた require の先の .hy だけをキーに入れていた。
 展開に関係ない doeff_hy の commit 1 つで全部の展開が作り直しになり(1 file の測りが 8 秒から 72 秒)、一方で macro が呼ぶ
 補助の .py を変えても古い展開が当たっていた。
 
-展開が通った file は展開した後にしか分からないので、保存は 2 段にする(doeff-effect-analyzer の展開の保存 — agora-redesign
+使った macro は展開した後にしか分からないので、保存は 2 段にする(doeff-effect-analyzer の展開の保存 — agora-redesign
 #3598 — と同じ形): source の中身・module 名・相対 path・この file の版で決まる場所(<cache dir>/<頭 2 字>/<場所>/)の中に、
-展開が通った file の記録ごとの entry(<記録の指紋>.json)を置き、記録が今の環境に合う entry だけを読む
-(``record_is_current_here`` — 記録の path は作った作業木の物なので、module 名から今の環境の file を引き直して照らす)。
+記録ごとの entry(<記録の指紋>.json)を置き、記録が今の環境に合う entry だけを読む(``record_is_current_here`` — 使った
+macro を module 名から今の環境で引き直して digest を比べる)。
 doeff の版が違う作業木どうしは、互いの entry を上書きせずに並べて持つ。
 
 保存の形は 1 entry 1 file の JSON。壊れた file は読めない物として飛ばし、展開し直す。
@@ -31,14 +32,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from doeff_hy_bytecode_guard import record_from_rows, record_is_current_here
+from doeff_hy_bytecode_guard import (
+    record_fingerprint,
+    record_from_json,
+    record_is_current_here,
+    record_to_json,
+)
 
 if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
 
 # 保存の形の版(形を変えたら上げる — 場所の名に入るので、古い版の entry は読まれない)。
 # 2 = 展開が通った file の記録で照らす形(agora-redesign #3862)。
-CACHE_VERSION = 2
+# 3 = 展開が使った macro 単位の記録で照らす形(記録の行 = 表の名・提供元の module 名・macro 名・digest)。
+CACHE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -64,17 +71,8 @@ class CachedFinding:
 
 
 @dataclass(frozen=True)
-class CachedDependency:
-    """保存した記録の 1 行(展開が通った file 1 つ — doeff_hy_bytecode_guard の MacroDependency と同じ欄)。"""
-
-    module: str
-    file: str
-    sha256: str
-
-
-@dataclass(frozen=True)
 class CachedProjection:
-    """1 つの .hy の展開の結果のうち、保存して読み戻す部分と、展開が通った file の記録。"""
+    """1 つの .hy の展開の結果のうち、保存して読み戻す部分と、展開が使った macro の記録。"""
 
     text: str
     spans: tuple[CachedSpan, ...]
@@ -98,22 +96,12 @@ def place(text: str, module: str, relative: str) -> str:
     return digest.hexdigest()
 
 
-def _record_name(record: "MacroRecord") -> str:
-    """場所の中の entry の名(展開が通った file の module 名と中身の指紋 — file の path は書いた作業木の物なので入れない。
-    同じ中身の別の作業木は同じ entry に当たる。doeff-effect-analyzer の entry の名と同じ)。"""
-    digest = hashlib.sha256()
-    for part in (record.hy_version, *(f"{d.module}\0{d.sha256}" for d in record.dependencies)):
-        digest.update(part.encode())
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
 def _place_dir(cache_dir: Path, name: str) -> Path:
     return cache_dir / name[:2] / name
 
 
 def load(cache_dir: Path, name: str) -> CachedProjection | CacheMiss:
-    """場所の中で、展開が通った file の記録が今の環境に合う entry を読む。無ければ理由つきの CacheMiss(呼び手が展開し直す)。"""
+    """場所の中で、展開が使った macro の記録が今の環境に合う entry を読む。無ければ理由つきの CacheMiss(呼び手が展開し直す)。"""
     directory = _place_dir(cache_dir, name)
     if not directory.is_dir():
         return CacheMiss("無い")
@@ -134,23 +122,21 @@ def _read_entry(path: Path) -> CachedProjection | CacheMiss:
         return CacheMiss(f"読めない: {error}")
     match loaded:
         case {
-            "version": 2,
-            "hy": str(hy_version),
-            "dependencies": list(dependencies),
+            "version": 3,
+            "used": used,
             "text": str(text),
             "spans": list(spans),
             "findings": list(findings),
         }:
-            rows = tuple(_row(d) for d in dependencies)
-            read = tuple(row for row in rows if not isinstance(row, CacheMiss))
-            if len(read) != len(rows):
-                return CacheMiss("記録の行の形が違う")
+            record = record_from_json(used)
+            if record is None:
+                return CacheMiss("記録の形が違う")
             try:
                 return CachedProjection(
                     text,
                     tuple(CachedSpan((s[0], s[1]), (s[2], s[3]), s[4], s[5]) for s in spans),
                     tuple(CachedFinding(**f) for f in findings),
-                    record_from_rows(hy_version, tuple((d.module, d.file, d.sha256) for d in read)),
+                    record,
                 )
             except (TypeError, IndexError) as error:
                 return CacheMiss(f"欄の形が違う: {error}")
@@ -158,22 +144,12 @@ def _read_entry(path: Path) -> CachedProjection | CacheMiss:
             return CacheMiss("版か形が違う")
 
 
-def _row(value: object) -> "CachedDependency | CacheMiss":
-    """記録の 1 行(module 名・file・sha256 の 3 つの文字列)。形が違えば CacheMiss。"""
-    match value:
-        case [str(module), str(file), str(sha256)]:
-            return CachedDependency(module, file, sha256)
-        case _:
-            return CacheMiss(f"記録の行の形が違う: {value!r}")
-
-
 def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
     """展開を、場所の中の記録の entry に保存する。書けなくても検めは続ける(cache は速さのためだけ)。"""
-    path = _place_dir(cache_dir, name) / f"{_record_name(projection.used)}.json"
+    path = _place_dir(cache_dir, name) / f"{record_fingerprint(projection.used)}.json"
     payload = {
         "version": CACHE_VERSION,
-        "hy": projection.used.hy_version,
-        "dependencies": [[d.module, d.file, d.sha256] for d in projection.used.dependencies],
+        "used": record_to_json(projection.used),
         "text": projection.text,
         "spans": [[*s.start, *s.end, s.hy_line, s.hy_column] for s in projection.spans],
         "findings": [vars(f) for f in projection.findings],

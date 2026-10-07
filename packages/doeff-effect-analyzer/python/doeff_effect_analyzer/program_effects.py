@@ -511,9 +511,9 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
 @dataclass(frozen=True)
 class _Expanded:
     """A Hy module expanded in this process, and the record of what the expansion used: the Hy
-    version and every macro file it went through — the macro modules the source requires, the ones
-    they require in turn, and the helpers their macros call (``current_record``, the record the
-    import side puts on the module's bytecode)."""
+    version and every macro the expansion called, each with the digest of its code's closure (the
+    helpers it calls, the values it reads, the modules it imports) — ``macro_recording``, the record
+    the import side puts on the module's bytecode."""
 
     tree: ast.Module
     macros: "MacroRecord"
@@ -523,37 +523,38 @@ def _expand_hy(source: str, filename: str, module_name: str) -> _Expanded:
     """Expand a Hy module with Hy's own compiler so user macros become the Python AST the reader walks."""
     import hy
     import hy.compiler
-    from doeff_hy_bytecode_guard import current_record
+    from doeff_hy_bytecode_guard import macro_recording
 
     # A fresh module object: expansion registers macros on it and must not
     # disturb the imported module whose globals resolve names.
     scratch = types.ModuleType(module_name)
     scratch.__file__ = filename
-    compiled = hy.compiler.hy_compile(
-        hy.read_many(source, filename=filename), scratch, filename=filename, source=source
-    )
+    with macro_recording(scratch) as recording:
+        compiled = hy.compiler.hy_compile(
+            hy.read_many(source, filename=filename), scratch, filename=filename, source=source
+        )
     if not isinstance(compiled, ast.Module):
         raise TypeError(f"{filename}: Hy compiled to {type(compiled)!r}, expected a module")
-    return _Expanded(tree=compiled, macros=current_record(scratch, filename))
+    return _Expanded(tree=compiled, macros=recording.record(source))
 
 
 # Macro expansion is most of the analysis time: every process re-expands each Hy
 # module it reads (0.5–1 s per module). The expanded tree depends only on the
-# source's content, the module name, the macro files the expansion goes through, and
+# source's content, the module name, the macros the expansion uses, and
 # the Hy / Python versions, and what is stored with it on the reader's code, so it is
 # cached on disk under a key made of exactly those — not of the file's path, so the
 # same source in another worktree reads the same entry (agora-redesign #3598).
 # DOEFF_EFFECT_ANALYZER_CACHE names the directory; "off" disables the cache.
 #
-# Which macro files an expansion goes through is known only after it (a macro module
-# requires others; its macros call helpers of its package), so the key has two levels,
-# as the import side's shared code store keys the code by the source and checks the
-# record it stores with it (doeff_hy_bytecode_guard): ``_TreeKey`` names the place of
-# a source, and in it each entry is named by the digests of the macro files it was
-# expanded with and starts with their record. An entry is read only when its record is
-# this environment's (``record_is_current_here`` — the files found again by module name,
-# since the paths in a record are the writing worktree's). Worktrees of different doeff
-# versions keep their own entries side by side instead of overwriting one.
+# Which macros an expansion uses is known only after it (a macro expands to calls of
+# others; its body calls helpers), so the key has two levels, as the import side's shared
+# code store keys the code by the source and checks the record it stores with it
+# (doeff_hy_bytecode_guard): ``_TreeKey`` names the place of a source, and in it each entry
+# is named by the fingerprint of the record of the macros it was expanded with and starts
+# with that record. An entry is read only when its record is this environment's
+# (``record_is_current_here`` — each macro found again by its module's name and its digest
+# compared; a record holds no path). Worktrees of different doeff versions keep their own
+# entries side by side instead of overwriting one.
 
 # The shape of the key; a new shape names other entries, and the old ones are never read.
 # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
@@ -565,7 +566,10 @@ def _expand_hy(source: str, filename: str, module_name: str) -> _Expanded:
 # v6: the key names the source by its content and not by its path (_TreeKey — #3598).
 # v7: the macro files are every one the expansion went through, not only the modules the
 # source requires itself (_Expanded.macros — #3598).
-_TREE_KEY_FORMAT = "v7"
+# v8: the record names the macros the expansion used, each with the digest of its code's
+# closure, not the files they lie in — a change of an unused macro of a file keeps the entry
+# (_entry_name is the record's fingerprint).
+_TREE_KEY_FORMAT = "v8"
 
 
 @dataclass(frozen=True)
@@ -576,7 +580,7 @@ class _TreeKey:
     and the reader takes the path it reports from the module it reads
     (``_ModuleSource.filename``) — so a worktree whose file has the same content reads the entry
     another worktree wrote (agora-redesign #3598: a closure test of the screen job took 120.7 s
-    in a new worktree and 5.9 s after). The macro files name the entry within the place
+    in a new worktree and 5.9 s after). The macros used name the entry within the place
     (``_entry_name``)."""
 
     python: str
@@ -603,12 +607,11 @@ class _TreeKey:
 
 
 def _entry_name(macros: "MacroRecord") -> str:
-    """The entry of one set of macro files: the digest of their module names and contents (not of
-    their paths — those are the writing worktree's)."""
-    text = "\n".join(
-        [macros.hy_version, *(f"{used.module}={used.sha256}" for used in macros.dependencies)]
-    )
-    return f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}.pickle"
+    """The entry of one set of macros used: the fingerprint of their record (module names, macro
+    names and digests — no path, so the same macros in another worktree name the same entry)."""
+    from doeff_hy_bytecode_guard import record_fingerprint
+
+    return f"{record_fingerprint(macros)}.pickle"
 
 
 def _hy_cache_dir() -> Path | None:
@@ -638,7 +641,7 @@ def _tree_key(source: str, module_name: str) -> _TreeKey:
 
 def _hy_cache_place(source: str, module_name: str) -> Path | None:
     """The directory of the entries for these exact inputs (None = caching turned off); an entry in
-    it is read only while the macro files it was expanded with are unchanged."""
+    it is read only while the macros it was expanded with are unchanged."""
     directory = _hy_cache_dir()
     if directory is None:
         return None
@@ -746,7 +749,7 @@ class _ChunkedTree:
 
 
 def _find_cached_tree(place: Path) -> _ChunkedTree | None:
-    """The tree of the entry in ``place`` whose macro files are this environment's (None when no
+    """The tree of the entry in ``place`` whose macros are this environment's (None when no
     entry is — the caller expands again)."""
     return next(
         (tree for entry in sorted(place.glob("*.pickle")) if (tree := _read_cached_tree(entry)) is not None),
@@ -755,9 +758,9 @@ def _find_cached_tree(place: Path) -> _ChunkedTree | None:
 
 
 def _read_cached_tree(path: Path) -> _ChunkedTree | None:
-    """The entry's tree when the macro files it was expanded with are this environment's; None when
+    """The entry's tree when the macros it was expanded with are this environment's; None when
     they are not, or the entry is absent or unreadable. The entry starts with the record of those
-    files, so an entry of other files is not read past it."""
+    macros, so an entry of other macros is not read past it."""
     from doeff_hy_bytecode_guard import record_is_current_here
     from doeff_hy_bytecode_guard.records import MacroRecord
 
@@ -825,7 +828,7 @@ def _derived(tree: ast.Module) -> _CachedTree:
 
 
 def _write_cached_tree(place: Path, expanded: _Expanded) -> None:
-    """Write the entry of the expansion's macro files in ``place`` — their record, then the tree —
+    """Write the entry of the macros the expansion used in ``place`` — their record, then the tree —
     atomically; a cache that cannot be written only costs the next expansion."""
     try:
         cached = _derived(expanded.tree)

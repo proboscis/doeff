@@ -2,7 +2,15 @@
 
 記録は Hy の module の code object の定数の末尾に 1 つ置く組:
 
-    ("doeff-hy/macro-dependencies/2", <Hy の版>, ((<module 名>, <file の path>, <sha256>), ...))
+    ("doeff-hy/macro-dependencies/3", <Hy の版>,
+     ((<表の名>, <提供元の module 名>, <macro 名>, <digest>), ...),   # 展開が使った macro
+     (<引いて無かった名>, ...),                                          # 表に無かった名(後から同じ名の macro が足されたら古い)
+     (<表に macro を入れた提供元の module 名>, ...),
+     ((<module 名>, <属性の名>, <digest>), ...),                         # macro の外で展開の結果を変える値
+     ((<module 名>, <file の sha256>), ...))                             # 閉包の中で file 単位で覆う module
+
+digest は macro の関数の code の閉包の digest(作り方と照らし方は :mod:`doeff_hy_bytecode_guard.macro_use`)。file の path は
+持たない — 照らす時に module 名から今の環境で引き直す。
 
 code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
 image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
@@ -10,6 +18,7 @@ image の組み立ての bytecode の道具(agora-controllers の deploy/bytecod
 compile した code の Hy の gensym の名は :func:`canonical_gensyms` で module の中の順の通し番号へ振り直す(agora-redesign #3667)。
 """
 
+import hashlib
 import importlib.util
 import inspect
 import marshal
@@ -17,13 +26,20 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from types import CodeType, FunctionType, ModuleType
+from typing import TypeVar
 
 #: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
 #: 2 = gensym の名を正準化した code の記録(agora-redesign #3667)。1 の記録の code は gensym の番号が compile の順で決まって
 #: いるので、1 度 compile し直させる。保存先の code の鍵の印(code_store.CODE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
 #: 判じられて使われず(loader_hooks._from_shared_store)、compile し直した code が同じ鍵の entry を上書きするので、古い世代の
 #: file が保存先に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
-RECORD_TAG = "doeff-hy/macro-dependencies/2"
+#: 3 = 展開が依った file 単位から、展開で実際に使った macro 単位の記録へ(macro の関数の code の閉包の digest)。2 の記録は
+#: 形が違うので記録なしと同じに扱われ、1 度 compile し直される(鍵の印を上げない理由は 2 と同じ)。
+RECORD_TAG = "doeff-hy/macro-dependencies/3"
+
+#: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。
+MACRO_TABLE = "_hy_macros"
+READER_TABLE = "_hy_reader_macros"
 
 #: PEP 552 の .pyc の頭(magic 4 byte・flags 4 byte・mtime と size か source の hash の 8 byte)。
 PYC_HEADER_BYTES = 16
@@ -34,12 +50,13 @@ FLAG_CHECK_SOURCE = 0b10
 UNREADABLE = "unreadable"
 
 #: Hy の module が require した macro の表(Hy が module の名前空間に置く 2 つの辞書)。
-MACRO_TABLES: tuple[str, ...] = ("_hy_macros", "_hy_reader_macros")
+MACRO_TABLES: tuple[str, ...] = (MACRO_TABLE, READER_TABLE)
 
 
 @dataclass(frozen=True)
 class MacroDependency:
-    """展開に使った macro の提供元の file 1 つ(module 名・file の path・中身の sha256)。"""
+    """macro の提供元の file 1 つ(module 名・file の path・中身の sha256)— file 単位の辿り方(:func:`macro_provider_files`)の
+    結果の形。Hy の module の記録はこれを使わない(展開が使った macro 単位 — :class:`UsedMacro`)。"""
 
     module: str
     file: str
@@ -47,29 +64,184 @@ class MacroDependency:
 
 
 @dataclass(frozen=True)
+class UsedMacro:
+    """展開が使った macro 1 つ — 引いた表の名(``_hy_macros`` / ``_hy_reader_macros``)・macro を定義した module の名・その
+    module の表の中の名・macro の関数の code の閉包の digest。"""
+
+    table: str
+    module: str
+    name: str
+    digest: str
+
+
+@dataclass(frozen=True)
+class ValueReference:
+    """macro の外で展開の結果を変える値の在処(module の名と属性の名)— 型検査の展開の後処理(doeff_hy.static_check の
+    ``POST_PROCESSING``)。module の属性で引くので、検が module の別の関数を差し替えても、この値の digest は変わらない。"""
+
+    module: str
+    name: str
+
+
+@dataclass(frozen=True)
+class UsedValue:
+    """macro の外で展開の結果を変える値 1 つ — 在処(module の名・属性の名)と、値の閉包の digest。"""
+
+    module: str
+    name: str
+    digest: str
+
+
+@dataclass(frozen=True)
+class UsedFile:
+    """閉包の中で file 単位で覆う module 1 つ(macro の本体の中の import・hy.R の呼び出し・package の下の module の先)— module の
+    名と、記録を作った時の file の sha256。照らす時は module を import せず、module 名から今の環境の file を引いて比べる。"""
+
+    module: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class MacroRecord:
-    """Hy の module 1 つの展開が依った物 — Hy の版と macro の提供元の file の一覧。"""
+    """Hy の module 1 つの展開が依った物。
+
+    - ``hy_version``: Hy の版(Hy 自身の macro と関数は版で覆う)。
+    - ``macros``: 展開が使った macro。
+    - ``absent``: 展開する module の表を引いて無かった名(関数の呼び出し・Hy の core の macro)。``providers`` の誰かが後から同じ
+      名の macro を持つと、その呼び出しは macro の展開に変わる。
+    - ``providers``: 展開する module の表に macro を入れた module の名(``require`` の先)。
+    - ``values``: macro の外で展開の結果を変える値。
+    - ``files``: 閉包の中で file 単位で覆う module(照らす時に import しない — 照らしが import の順を変えないため)。
+    """
 
     hy_version: str
-    dependencies: tuple[MacroDependency, ...]
+    macros: tuple[UsedMacro, ...]
+    absent: tuple[str, ...]
+    providers: tuple[str, ...]
+    values: tuple[UsedValue, ...]
+    files: tuple[UsedFile, ...]
 
 
 def record_of(code: CodeType) -> MacroRecord | None:
     """code に載った記録を読む(無い・形が違う時は None — 呼び手は compile し直す)。"""
     if not code.co_consts:
         return None
-    last = code.co_consts[-1]
-    if not (isinstance(last, tuple) and len(last) == 3 and last[0] == RECORD_TAG):
+    match code.co_consts[-1]:
+        case (str() as tag, str() as hy_version, macros, absent, providers, values, files) if (
+            tag == RECORD_TAG
+        ):
+            return record_from_parts(
+                RecordParts(hy_version, macros, absent, providers, values, files)
+            )
+        case _:
+            return None
+
+
+@dataclass(frozen=True)
+class RecordParts:
+    """記録を境界(code の定数・保存の file の JSON)に書く時の欄 — 欄の中は文字列と、文字列の並びの並びだけ。読み戻す時は
+    欄の中の形をまだ確かめていないので ``object``(:func:`record_from_parts` が確かめる)。"""
+
+    hy_version: str
+    macros: object
+    absent: object
+    providers: object
+    values: object
+    files: object
+
+
+def record_parts(record: MacroRecord) -> RecordParts:
+    """記録を、code の定数と保存の file に書ける欄にする — :func:`record_from_parts` の逆。"""
+    return RecordParts(
+        record.hy_version,
+        tuple((row.table, row.module, row.name, row.digest) for row in record.macros),
+        record.absent,
+        record.providers,
+        tuple((row.module, row.name, row.digest) for row in record.values),
+        tuple((row.module, row.sha256) for row in record.files),
+    )
+
+
+def record_from_parts(parts: RecordParts) -> MacroRecord | None:
+    """境界から読んだ欄を記録に組む(欄の形が違えば None — 呼び手は記録なしと同じに扱う)。"""
+    macros = _each(parts.macros, _used_macro)
+    absent = _each(parts.absent, _name)
+    providers = _each(parts.providers, _name)
+    values = _each(parts.values, _used_value)
+    files = _each(parts.files, _used_file)
+    if macros is None or absent is None or providers is None or values is None or files is None:
         return None
-    _, hy_version, rows = last
-    if not isinstance(hy_version, str) or not isinstance(rows, tuple):
+    return MacroRecord(parts.hy_version, macros, absent, providers, values, files)
+
+
+def record_to_json(record: MacroRecord) -> list[object]:
+    """記録を JSON に書ける値にする(保存の file の境界 — 型検査の展開の保存)。:func:`record_from_json` の逆。"""
+    parts = record_parts(record)
+    return [parts.hy_version, parts.macros, parts.absent, parts.providers, parts.values, parts.files]
+
+
+def record_from_json(value: object) -> MacroRecord | None:
+    """JSON から読んだ値を記録に組む(形が違えば None — 呼び手は保存を使わない)。"""
+    match value:
+        case [str(hy_version), macros, absent, providers, values, files]:
+            return record_from_parts(
+                RecordParts(hy_version, macros, absent, providers, values, files)
+            )
+        case _:
+            return None
+
+
+def record_fingerprint(record: MacroRecord) -> str:
+    """記録の中身の指紋(保存の entry の名 — 解析器の展開した木と型検査の展開の保存が同じ 1 つを使う)。file の path を持たない
+    記録なので、同じ macro を使った別の作業木の展開は同じ指紋になる。"""
+    import json  # 保存の entry の名を作る時だけ読む
+
+    text = json.dumps(record_to_json(record), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+_Row = TypeVar("_Row")
+
+
+def _each(rows: object, read: Callable[[object], "_Row | None"]) -> tuple[_Row, ...] | None:
+    """並び(組か list)の各行を read で読む(並びでない・読めない行が 1 つでもあれば None)。"""
+    if not isinstance(rows, (tuple, list)):
         return None
-    if not all(
-        isinstance(row, tuple) and len(row) == 3 and all(isinstance(part, str) for part in row)
-        for row in rows
-    ):
-        return None
-    return MacroRecord(hy_version, tuple(MacroDependency(*row) for row in rows))
+    read_rows = tuple(read(row) for row in rows)
+    kept = tuple(item for item in read_rows if item is not None)
+    return kept if len(kept) == len(read_rows) else None
+
+
+def _name(value: object) -> str | None:
+    """記録の名の欄 1 つ(文字列でなければ None)。"""
+    return value if isinstance(value, str) else None
+
+
+def _used_macro(row: object) -> UsedMacro | None:
+    """記録の使った macro の行 1 つ(形が違えば None)。"""
+    match row:
+        case [str(table), str(module), str(name), str(digest)]:
+            return UsedMacro(table, module, name, digest)
+        case _:
+            return None
+
+
+def _used_value(row: object) -> UsedValue | None:
+    """記録の macro の外の値の行 1 つ(形が違えば None)。"""
+    match row:
+        case [str(module), str(name), str(digest)]:
+            return UsedValue(module, name, digest)
+        case _:
+            return None
+
+
+def _used_file(row: object) -> UsedFile | None:
+    """記録の file 単位で覆う module の行 1 つ(形が違えば None)。"""
+    match row:
+        case [str(module), str(sha256)]:
+            return UsedFile(module, sha256)
+        case _:
+            return None
 
 
 def with_record(code: CodeType, record: MacroRecord) -> CodeType:
@@ -78,21 +250,20 @@ def with_record(code: CodeType, record: MacroRecord) -> CodeType:
     末尾に足すだけなので、既存の定数の番号(``LOAD_CONST`` の引数)は動かず、実行の意味は変わらない。
     """
     constants = code.co_consts[:-1] if record_of(code) is not None else code.co_consts
-    rows = tuple(
-        (dependency.module, dependency.file, dependency.sha256)
-        for dependency in record.dependencies
-    )
-    return code.replace(co_consts=(*constants, (RECORD_TAG, record.hy_version, rows)))
-
-
-def record_is_current(
-    record: MacroRecord, hy_version: str, sha256_of: Callable[[str], str | None]
-) -> bool:
-    """記録が今の Hy の版と今の macro の file に合っているか(file が読めなければ合っていない)。"""
-    if record.hy_version != hy_version:
-        return False
-    return all(
-        sha256_of(dependency.file) == dependency.sha256 for dependency in record.dependencies
+    parts = record_parts(record)
+    return code.replace(
+        co_consts=(
+            *constants,
+            (
+                RECORD_TAG,
+                parts.hy_version,
+                parts.macros,
+                parts.absent,
+                parts.providers,
+                parts.values,
+                parts.files,
+            ),
+        )
     )
 
 
@@ -215,21 +386,6 @@ def _rewritten_constant(value: object, names: Mapping[str, str]) -> object:
             return frozenset(_rewritten_constant(item, names) for item in value)
         case _:
             return value
-
-
-def rebased_record(
-    record: MacroRecord, current_file_of: Callable[[str], str | None]
-) -> MacroRecord | None:
-    """別の作業木で作った記録の提供元の file を、module 名から今の環境で引き直した path に付け替える(引けない名が
-    1 つでもあれば None)。記録の path は作った作業木の絶対 path なので、そのまま照らすと、別の作業木の macro が同じ
-    中身でも今の作業木の macro が違う時に古い展開を使ってしまう。sha256 は記録の値のまま(照らすのは呼び手)。"""
-    dependencies = []
-    for dependency in record.dependencies:
-        file = current_file_of(dependency.module)
-        if file is None:
-            return None
-        dependencies.append(MacroDependency(dependency.module, file, dependency.sha256))
-    return MacroRecord(record.hy_version, tuple(dependencies))
 
 
 def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:

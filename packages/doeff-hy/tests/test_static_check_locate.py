@@ -22,10 +22,10 @@ from doeff_hy.static_check import (
     locate,
     span_index,
 )
-from doeff_hy_bytecode_guard import record_from_rows
+from doeff_hy_bytecode_guard.records import MacroRecord
 
-#: 位置の検は展開が通った file を読まないので、空の記録を持たせる。
-NOTHING_USED = record_from_rows("probe", ())
+#: 位置の検は展開が使った macro を読まないので、空の記録を持たせる。
+NOTHING_USED = MacroRecord("probe", (), (), (), (), ())
 
 
 def naive(projection: Projection, line: int, character: int) -> HyPosition:

@@ -21,7 +21,8 @@ from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION
 TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
-    from doeff_hy_bytecode_guard.records import MacroDependency, MacroRecord
+    from doeff_hy_bytecode_guard.macro_use import MacroRecording
+    from doeff_hy_bytecode_guard.records import MacroDependency, MacroRecord, ValueReference
 
 #: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる — doeff_hy/__init__.py)。定義点は保存先の module(code の鍵が
 #: Hy の source かで欄を分ける)— 標準 library だけを読む軽い module なので起動時に読んでよい。
@@ -74,8 +75,10 @@ def is_hy_source(path: object) -> bool:
 def macro_dependencies(
     module: ModuleType, path: str, also: "tuple[ModuleType, ...]" = ()
 ) -> "list[MacroDependency]":
-    """読み込み済みの Hy の module の展開が依った macro の file と今の sha256 — 記録を作る口と、索引のキャッシュの鍵
-    (agora-redesign #1291)が同じ 1 つの辿り方を使うための公開の口。``also`` は ``records.macro_provider_files`` の同名の引数。"""
+    """読み込み済みの Hy の module が require した macro の提供元の file と今の sha256(file 単位の辿り方)— Hy の test file の
+    item の記録の cache(doeff-adr の item_cache — agora-redesign #1291)の鍵の公開の口。Hy の module の記録(.pyc・解析器・
+    型検査の展開の保存)は展開が使った macro 単位の :func:`macro_recording` を使い、これを使わない。``also`` は
+    ``records.macro_provider_files`` の同名の引数。"""
     from doeff_hy_bytecode_guard import records  # 起動時に読まない
 
     return [
@@ -85,16 +88,14 @@ def macro_dependencies(
     ]
 
 
-def current_record(
-    module: ModuleType, path: str, also: "tuple[ModuleType, ...]" = ()
-) -> "MacroRecord":
-    """Hy の module(path の file を展開した物)の展開が依った物の記録 — 今の Hy の版と、macro の提供元の file と今の sha256。
-    compile の口が code に足す記録と、展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の
-    保存(doeff_hy.static_cache — agora-redesign #3862)が同じ 1 つの作り方を使うための公開の口。``also`` は
-    ``records.macro_provider_files`` の同名の引数(macro の外で展開の結果を変える module)。"""
-    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+def macro_recording(module: ModuleType) -> "MacroRecording":
+    """Hy の module の展開(compile)を囲む口 — ``with macro_recording(module) as recording:`` の中の展開が使った macro を拾い、
+    ``recording.record(source)`` が記録を作る。compile の口が code に足す記録(.pyc)と、展開した木の cache(doeff-effect-analyzer
+    — agora-redesign #3598)と、型検査の展開の保存(doeff_hy.static_cache — agora-redesign #3862)が同じ 1 つの拾い方と作り方を
+    使うための公開の口。``record`` の ``also`` は macro の外で展開の結果を変える値の在処(型検査の展開の後処理)。"""
+    from doeff_hy_bytecode_guard import macro_use  # 起動時に読まない
 
-    return records.MacroRecord(_hy_version(), tuple(macro_dependencies(module, path, also)))
+    return macro_use.MacroRecording(module, _hy_version(), file_sha256)
 
 
 def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
@@ -107,25 +108,47 @@ def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
     return lambda name: records.renamed(name, renames)
 
 
-def record_from_rows(hy_version: str, rows: "tuple[tuple[str, str, str], ...]") -> "MacroRecord":
-    """保存した記録の行(module 名・file・sha256)から記録を組み直す — 記録を file に書いて読み戻す保存(型検査の展開の
-    保存 doeff_hy.static_cache — agora-redesign #3862)が、記録の形の持ち主(records)を直に import しないための公開の口。"""
-    from doeff_hy_bytecode_guard import records  # 起動時に読まない
-
-    return records.MacroRecord(hy_version, tuple(records.MacroDependency(*row) for row in rows))
-
-
 def record_is_current_here(record: "MacroRecord") -> bool:
-    """記録が、今の Hy の版と今の環境の macro の file に合うか。
+    """記録が、今の Hy の版と今の環境の macro に合うか — 使った macro を module 名から今の環境で引き直し(定義した module を
+    import する — 引けなければ古い)、その code の閉包の digest を比べる。file 単位で覆う module は import せずに file の sha256 を
+    比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
+    準備が前の root から hardlink で引き継ぐ物 — agora-redesign #2598)や保存先の code も今の木の macro で照らす。.pyc の記録と、
+    展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の保存(doeff_hy.static_cache)が同じ 1 つの
+    照らし方を使うための公開の口。"""
+    from doeff_hy_bytecode_guard import macro_use  # 起動時に読まない
 
-    記録の path は作った木の絶対 path。別の木で作った .pyc(実行環境の準備が前の root から hardlink で引き継ぐ物)の記録を
-    そのまま照らすと、作った木の macro が残っている限り、今の木の macro が変わっても古い展開を使う(agora-redesign #2598)。
-    保存先の code と同じく、提供元の file を module 名から今の環境で引き直して照らす。.pyc の記録と、展開した木の
-    cache(doeff-effect-analyzer — agora-redesign #3598)の記録が同じ 1 つの照らし方を使うための公開の口。"""
+    return macro_use.record_is_current(record, _hy_version(), file_sha256)
+
+
+def value_reference(module: str, name: str) -> "ValueReference":
+    """macro の外で展開の結果を変える値の在処(module の名と属性の名)— ``recording.record`` の ``also`` に渡す。記録の形の
+    持ち主(records)を直に import しないための公開の口。"""
     from doeff_hy_bytecode_guard import records  # 起動時に読まない
 
-    current = records.rebased_record(record, _current_file_of)
-    return current is not None and records.record_is_current(current, _hy_version(), file_sha256)
+    return records.ValueReference(module, name)
+
+
+def record_fingerprint(record: "MacroRecord") -> str:
+    """記録の中身の指紋 — 展開した木の cache(doeff-effect-analyzer)と型検査の展開の保存(doeff_hy.static_cache)の entry の名が
+    同じ 1 つの作り方を使うための公開の口。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    return records.record_fingerprint(record)
+
+
+def record_to_json(record: "MacroRecord") -> list[object]:
+    """記録を JSON に書ける値にする — 記録を file に書いて読み戻す保存(型検査の展開の保存 doeff_hy.static_cache)が、記録の形の
+    持ち主(records)を直に import しないための公開の口。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    return records.record_to_json(record)
+
+
+def record_from_json(value: object) -> "MacroRecord | None":
+    """JSON から読んだ値を記録に組む(形が違えば None)— :func:`record_to_json` の逆。"""
+    from doeff_hy_bytecode_guard import records  # 起動時に読まない
+
+    return records.record_from_json(value)
 
 
 def source_to_code_as_import(
@@ -144,13 +167,16 @@ def source_to_code_as_import(
     name = loader.name
     present = sys.modules.get(name)
     if present is not None and vars(present).get("__file__") == path:
-        return loader.source_to_code(data, path)  # 読み込み済みの module の中で compile する(import の途中と同じ)
+        with macro_recording(present):  # 読み込み済みの module の中で compile する(import の途中と同じ)
+            return loader.source_to_code(data, path)
     spec = importlib.util.spec_from_file_location(name, path, loader=loader)
     if spec is None:
         raise ImportError(f"{path} の module の spec を作れない", name=name, path=path)
-    sys.modules[name] = importlib.util.module_from_spec(spec)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     try:
-        return loader.source_to_code(data, path)
+        with macro_recording(module):  # compile の口の包みが、この展開が使った macro の記録を足す
+            return loader.source_to_code(data, path)
     finally:
         if present is None:
             sys.modules.pop(name, None)
@@ -213,7 +239,19 @@ def _recording_source_to_code(previous: SourceToCode):
             # 記録を付けない。記録の無い code は保存先に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
             # compile し直す(_record_is_current_here)。付けると普通の展開と同じ鍵で残り、普通の import が読んで落ちた(I-3)。
             return code
-        return records.with_record(code, current_record(module, path))
+        from doeff_hy_bytecode_guard import macro_use  # Hy の source に当たった時だけ読む
+
+        table = vars(module).get(records.MACRO_TABLE)
+        if not isinstance(table, macro_use.RecordingTable):
+            # 使った macro を拾う囲み(get_code・source_to_code_as_import の macro_recording)の外の compile — 何の macro を使ったかが
+            # 見えないので記録を足さない(記録の無い code は次の読みで compile し直される)。
+            return code
+        # 渡された source の文(Hy の口の下では展開した後の木が来る — その時は読みの口が覚えた bytes か file から読む)。
+        source = macro_use.source_text(_last_sources().get(path, data), path)
+        if source is None:
+            return code
+        recording = table.recording
+        return code if recording is None else records.with_record(code, recording.record(source))
 
     return source_to_code
 
@@ -241,8 +279,13 @@ def _checking_get_code(previous: GetCode):
         path = self.get_filename(fullname)
         if not is_hy_source(path):
             return previous(self, fullname)
+        module = _module_being_loaded(self, path)
         try:
-            return _hy_code(self, fullname, path)
+            if module is None:
+                return _hy_code(self, fullname, path)
+            # compile し直す時(.pyc が無い・古い)に、展開が使った macro を拾う(compile の口の包みが記録を作る)。
+            with macro_recording(module):
+                return _hy_code(self, fullname, path)
         finally:
             _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
 
@@ -327,8 +370,8 @@ def _from_shared_store(
     引く(当たらなければ None)— 新しい作業木の .pyc は source の絶対 path に結びつくので必ず冷え、同じ中身の file の変換(macro の
     展開)をやり直していた(agora-redesign #1753)。
 
-    当たった entry の記録は、提供元の file を module 名から今の環境で引き直して照らし、記録もその path に付け替える
-    (付け替えないと、次からの .pyc の照合が別の作業木の macro を見続ける)。作業木の .pyc も標準の timestamp の形で書く。"""
+    当たった entry の記録は、使った macro を module 名から今の環境で引き直して照らす(記録は file の path を持たないので、
+    そのまま作業木の .pyc に書ける)。作業木の .pyc も標準の timestamp の形で書く。"""
     from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
 
     store = code_store.store_dir()
@@ -355,12 +398,8 @@ def _from_shared_store(
     if code is None:
         return None
     record = records.record_of(code)
-    if record is None:
+    if record is None or not record_is_current_here(record):
         return None
-    rebased = records.rebased_record(record, _current_file_of)
-    if rebased is None or not records.record_is_current(rebased, _hy_version(), file_sha256):
-        return None
-    code = records.with_record(code, rebased)
     import _imp  # 標準の _compile_bytecode と同じ口で、code の file 名を今の source の path に直す
 
     _imp._fix_co_filename(code, path)
@@ -398,20 +437,6 @@ def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeT
     import marshal
 
     code_store.write_entry(_store_entry(store, fullname, path, source), marshal.dumps(code))
-
-
-def _current_file_of(module_name: str) -> str | None:
-    """module 名の今の環境の file(読み込み済みなら sys.modules・未だなら import の探索 — 見つからなければ None)。"""
-    module = sys.modules.get(module_name)
-    if module is not None:
-        file = vars(module).get("__file__")
-        return file if isinstance(file, str) else None
-    try:
-        spec = importlib.util.find_spec(module_name)
-    except (ImportError, ValueError):
-        return None
-    origin = None if spec is None else spec.origin
-    return origin if isinstance(origin, str) else None
 
 
 def _recompile(

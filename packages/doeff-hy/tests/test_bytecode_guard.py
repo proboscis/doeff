@@ -50,6 +50,7 @@ def load_guard():
     sys.path.insert(0, {guard_root!r})
     import doeff_hy_bytecode_guard
     import doeff_hy_bytecode_guard.records
+    import doeff_hy_bytecode_guard.macro_use
     doeff_hy_bytecode_guard.install()
     sys.dont_write_bytecode = False
 
@@ -191,12 +192,11 @@ def test_the_record_lives_inside_a_standard_pyc(tmp_path: Path) -> None:
     record = records.record_of(marshal.loads(data[records.PYC_HEADER_BYTES :]))
     assert record is not None
     assert record.hy_version == PYPI_HY.split("==")[1]
-    assert [
-        (dependency.module, Path(dependency.file).name) for dependency in record.dependencies
-    ] == [
-        ("pkg.helpers", "helpers.hy"),
-        ("pkg.macros", "macros.hy"),
+    # 記録は展開が使った macro(提供元の module 名・macro 名・digest)で、file の path を持たない。
+    assert [(used.table, used.module, used.name) for used in record.macros] == [
+        ("_hy_macros", "pkg.macros", "answer")
     ]
+    assert record.providers == ("pkg.macros",)
 
 
 def _rewrite_as_hash_based(pyc: Path, source: Path, *, checked: bool) -> None:
@@ -254,7 +254,7 @@ def _expansions(root: Path) -> int:
 
 def test_a_new_tree_with_the_same_sources_reuses_the_code_without_expanding(tmp_path: Path) -> None:
     """新しい作業木(同じ中身・別の絶対 path・.pyc なし)は、共有の置き場の code を使い、macro を展開し直さない
-    (agora-redesign #1753)。記録は新しい木の提供元の file に付け替わり、木の .pyc も書かれる。"""
+    (agora-redesign #1753)。記録は file の path を持たないので、2 つの木の .pyc の記録は同じ。木の .pyc も書かれる。"""
     store = tmp_path / "store"
     first, second = tmp_path / "first", tmp_path / "second"
     for root in (first, second):
@@ -268,7 +268,9 @@ def test_a_new_tree_with_the_same_sources_reuses_the_code_without_expanding(tmp_
         marshal.loads(_user_pyc(second).read_bytes()[records.PYC_HEADER_BYTES :])
     )
     assert record is not None
-    assert {Path(dependency.file).parent.parent for dependency in record.dependencies} == {second}
+    assert record == records.record_of(
+        marshal.loads(_user_pyc(first).read_bytes()[records.PYC_HEADER_BYTES :])
+    )
 
 
 def test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expansion(

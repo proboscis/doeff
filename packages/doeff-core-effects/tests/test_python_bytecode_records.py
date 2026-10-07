@@ -99,6 +99,6 @@ def test_a_hy_pyc_compiled_ahead_is_used_at_import_without_expanding_again(tmp_p
     [pyc] = (tmp_path / "pkg" / "__pycache__").glob("user.*.pyc")
     record = records.record_of(marshal.loads(pyc.read_bytes()[records.PYC_HEADER_BYTES :]))
     assert record is not None
-    assert [dependency.module for dependency in record.dependencies] == ["pkg.helpers", "pkg.macros"]
+    assert [(used.module, used.name) for used in record.macros] == [("pkg.macros", "answer")]
     assert _python(_IMPORT, tmp_path).split() == ["11"]
     assert _expansions(log) == 1

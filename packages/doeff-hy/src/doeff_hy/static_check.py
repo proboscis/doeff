@@ -53,7 +53,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING
 
 import hy
-from doeff_hy_bytecode_guard import current_record, gensym_renaming
+from doeff_hy_bytecode_guard import gensym_renaming, macro_recording, value_reference
 from hy.compiler import hy_compile
 from hy.errors import HyLanguageError
 from hy.models import Object
@@ -499,7 +499,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     lazy = hy.models.Lazy(_shown_to(scope, forms))
     lazy.source, lazy.filename, lazy.reader = forms.source, forms.filename, forms.reader
     try:
-        with static_view(), collect_findings() as found:
+        with static_view(), collect_findings() as found, macro_recording(module) as recording:
             compiled = hy_compile(lazy, module, filename=str(source), source=text)
         # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
         if not isinstance(compiled, ast.Module):
@@ -523,8 +523,14 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         rendered,
         tuple(spans),
         tuple(_finding_diagnostic(relative, f) for f in (*found, *top_level)),
-        used=current_record(module, str(source), also=(sys.modules[__name__],)),
+        used=recording.record(text, also=(value_reference(__name__, "POST_PROCESSING"),)),
     )
+
+
+#: 展開の結果を変える macro の外の処理(記帳の外し・補助の import の足し・gensym の名の振り直し・位置の対応・所見)の入口 —
+#: 型検査の展開の保存(static_cache)の記録は、この値の閉包の digest で後処理の変更を見る(``project`` が呼ぶ関数を名で辿る)。
+#: module の属性の ``project`` ではなく、定義した時の関数を持つ(検が ``project`` を差し替えても、記録は変わらない)。
+POST_PROCESSING = (project,)
 
 
 def _shown_to(scope: ModuleScope, forms: Iterable[Object]) -> Iterator[Object]:
