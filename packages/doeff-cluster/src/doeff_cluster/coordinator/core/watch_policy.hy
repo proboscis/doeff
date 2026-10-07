@@ -2,8 +2,8 @@
 ;;;
 ;;; 送り手は最後に知った coordinator 全体の版(ClusterState.revision)を after で渡す。調停ループ(coordinator.coordinator-step)は
 ;;; 要求を待ち(Watcher)として持ち、書きの後と拍ごとにここで判じ、版が after と違えば {"revision" 今の版 "changed" 真} を、期限を
-;;; 過ぎれば {"revision" 今の版 "changed" 偽} を返す。worker を名指した待ちは、版が進んでも、その worker の heartbeat の返事(温める表と
-;;; 版の欄を除く — 同じ関数 cluster_policy.heartbeat-reply で作る)が変わらない間は起きない(他の worker の仕事の変化で起こさない)。
+;;; 過ぎれば {"revision" 今の版 "changed" 偽} を返す。worker を名指した待ちは、版が進んでも、その worker の heartbeat の返事(版の欄を
+;;; 除く — 同じ関数 cluster_policy.heartbeat-reply で作る)が変わらない間は起きない(他の worker の仕事の変化で起こさない)。
 ;;; 版を比べるのは等しいか(大小ではない — 置き場を失って起き直した coordinator の版が送り手の知る版より小さくても、変わったと答える)。
 ;;; lease=<名> の待ち(GET /watch?lease=<名>[&timeoutSeconds=<秒>])は版を見ず、その名前付きの lease に空きがある時に起きる(今空いていれば
 ;;; すぐ — claim を断られてから待ちに入るまでに返された空きも取りこぼさない)。担い手の期限切れで空く刻は lease_rules.lease-full-until が
@@ -16,8 +16,11 @@
 (import doeff_cluster.coordinator.core.api_policy [ready-instances])
 (import doeff_cluster.shared.core.lease_rules [lease-full-until semaphore-key])
 
-;; worker の見え方に入れない返事の欄: 温める表(期限で変わる先読み — 次の heartbeat で届けば足りる)と版(版が進むたびに変わる)。
-;; 見え方に数えない返事の欄 = 温める表(warm)と版(revision)— worker-mark が空にして比べる。
+;; 見え方に数えない返事の欄は版(revision — 版が進むたびに変わる)だけ。worker-mark が 0 にして比べる。
+;; 温める表(warm)は見え方に入る: その worker に当たる行(cluster_policy.warms-for — 返事と同じ選び方)の鍵と宣言だけで、期限は
+;; 載せない(行の鍵が宣言と needs の組から決まる)。当たる行の出入りは Worker の資源の行の status の warm に写り版を進める
+;; (resource_policy.worker-row — 同じ warms-for)ので、送り手が POST /warm で頼んだ刻に、当たる worker を名指した待ちが起き、worker は
+;; 次の heartbeat を待たずに準備を始める。期限の延長だけの書きでは版も見え方も変わらず、待ちは起きない。
 
 
 (defk query-revision [value]
@@ -77,10 +80,10 @@
 (defk worker-mark [state worker boot now timing]
   {:pre [(: state ClusterState) (: worker str) (: boot (| str None)) (: now int) (: timing ClusterTiming)] :post [(: % HeartbeatReply)]
    :tags {:context "coordinator" :role "judgment"}}
-  "名指した worker の見え方(その世代の heartbeat の返事から温める表と版の欄を空にした物)を、返事と同じ関数で作るため — 待ちが起きる
-   条件と worker が受け取る物の定義を 2 つにしない。"
+  "名指した worker の見え方(その世代の heartbeat の返事から版の欄を 0 にした物 — 当たる温める行を含む)を、返事と同じ関数で作るため
+   — 待ちが起きる条件と worker が受け取る物の定義を 2 つにしない。"
   (<- reply HeartbeatReply (heartbeat-reply state worker timing (ready-instances state worker now timing) :now now :boot boot))
-  (replace reply :warm #() :revision 0))
+  (replace reply :revision 0))
 
 
 (defk watch-deadline [watcher state now]

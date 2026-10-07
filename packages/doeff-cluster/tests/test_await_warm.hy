@@ -126,10 +126,11 @@
 (deftest test-a-warm-moves-the-revision-but-not-the-roster-facts
   ;; #3668 (b) の費用の見張り(cisco-c8 の 1 点): env を Worker の行に載せると、名指さない版の待ち手(名簿を写す係 — 差だけを直す reconciler)
   ;; は組みの始まりと終わりで起きる。起きても名簿の事実(RunnerFact = 名・能力・生死・drain・task の空き)は変わらないので、係が直す差は 0
-  ;; (読み直し 1 回だけ)。版が進むのは組み 1 回で worker ごとに 2 回(準備中・準備済み)まで。
+  ;; (読み直し 1 回だけ)。版が進むのは組み 1 回で、当たる worker ごとに 3 回まで — 行が当たった刻(Worker の行の status の warm に行の
+  ;; 鍵が載り、その worker を名指した待ちを起こす — tests/test_watch.hy)・準備中・準備済み。同じ行の頼み直し(期限の延長)は版を進めない。
   (<- seen AroundWarm (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) NO-JOBS (runners-around-a-warm) :workers (! (worker-with PREPARE-SECONDS None))))
   (assert (= seen.before seen.after) seen)
-  (assert (<= 1 seen.moves 2) seen))
+  (assert (<= 1 seen.moves 3) seen))
 
 
 (deftest test-a-warm-row-that-does-not-finish-in-time-answers-expired-with-the-last-read

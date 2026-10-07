@@ -22,6 +22,9 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons quitters])
+(import tests.env_fixtures [LOCK env-of])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 
 (val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
@@ -149,6 +152,87 @@
   ;; 名指した worker の drain では、その刻に起きる。
   (assert (get (get second 1) "changed") second)
   (assert (= second-at holder-at) #(second-at holder-at)))
+
+
+;; --- 温める表の行の書きで名指しの待ちが起きる(実行環境の先読み) ---------------------------------------------------------------
+;; 温める行を受け取る口が heartbeat の返事だけだと、送り手が POST /warm で頼んでも worker の GET /watch は起きず、次の heartbeat
+;; (lease ÷ 4)まで先読みが始まらない。worker の見え方には、その worker に当たる温める行(鍵と宣言 — 期限は載せない)が入り、
+;; 当たる行の出入りは Worker の資源の行に写って coordinator の版を進める。
+
+(val WARM-NEED "warm-only")
+;; w1 だけが温める行の needs(WARM-NEED)を提供する — w2 には当たらない。
+(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net" WARM-NEED]) :task-reserve 0)
+                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+
+
+(defk warm-request [ttl]
+  {:pre [(: ttl int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書きの送り手の口で POST /warm(needs = WARM-NEED・期限 ttl 秒)を 1 回送り、書いた刻を返すため。同じ宣言と needs の組は
+   同じ行(2 回目は期限だけが延びる)。"
+  (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- declared dict (runtime-env->json env))
+  (<- link SimLink (ClientLink))
+  (<- at int (now-epoch-ms))
+  (<- answer tuple (send-request link "POST" "/warm" {} {"runtimeEnv" declared "needs" [WARM-NEED] "ttlSeconds" ttl "holder" "keeper"}))
+  #(answer at))
+
+
+(defk warm-wakes-scoped-watches []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: w1 と w2 を名指した待ち(8 秒)の間に温める行を書く(w1 にだけ当たる)。次に w1 を名指した待ち(8 秒)の間に同じ行の
+   期限だけを延ばす。答え = #(書きの #(返事 刻) w1 の待ち w2 の待ち 延ばしの #(返事 刻) w1 の 2 つ目の待ち 待ち始めの刻)。"
+  (<- view dict (settled-view))
+  (val revision (get view "revision"))
+  (<- started int (now-epoch-ms))
+  (<- named Task (Spawn (watch-once {"after" (str revision) "timeoutSeconds" "8" "worker" "w1"})))
+  (<- other Task (Spawn (watch-once {"after" (str revision) "timeoutSeconds" "8" "worker" "w2"})))
+  (<- (Delay 1.0))
+  (<- written tuple (warm-request 600))
+  (<- named-seen tuple (Wait named))
+  (<- other-seen tuple (Wait other))
+  (<- now-view dict (ReadCoordinator "/state"))
+  (<- again Task (Spawn (watch-once {"after" (str (get now-view "revision")) "timeoutSeconds" "8" "worker" "w1"})))
+  (<- (Delay 1.0))
+  (<- extended tuple (warm-request 900))
+  (<- again-seen tuple (Wait again))
+  #(written named-seen other-seen extended again-seen started))
+
+
+(defk assert-warm-wakes [seen]
+  {:pre [(: seen tuple)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "warm-wakes-scoped-watches の答えを判じるため(test-a-warm-row-wakes-only-the-scoped-watch-of-the-worker-it-matches の断言)。"
+  (val written (get seen 0))
+  (val named (get seen 1))
+  (val other (get seen 2))
+  (val extended (get seen 3))
+  (val again (get seen 4))
+  (val started (get seen 5))
+  (val write-answer (get written 0))
+  (val written-at (get written 1))
+  (val extend-answer (get extended 0))
+  (val extended-at (get extended 1))
+  (assert (= (get write-answer 0) 200) write-answer)
+  (assert (= (get extend-answer 0) 200) extend-answer)
+  ;; 当たる worker の待ちは書きの刻ちょうどに起きる(次の heartbeat を待たない)。
+  (assert (get (get named 0) 1 "changed") named)
+  (assert (= (get named 1) written-at) #(named written-at))
+  ;; 当たらない worker の待ちは期限まで起きない。
+  (assert (not (get (get other 0) 1 "changed")) other)
+  (assert (= (- (get other 1) started) 8000) #(other started))
+  ;; 期限だけの延長では起きない(延長の刻から期限まで待つ)。
+  (assert (not (get (get again 0) 1 "changed")) #(again extended-at)))
+
+
+(deftest test-a-warm-row-wakes-only-the-scoped-watch-of-the-worker-it-matches
+  ;; 失敗ケース: 温める行を書くと、当たる worker(w1)を名指した待ちが書きの刻に起き、当たらない worker(w2)の待ちは期限まで
+  ;; 起きない。同じ行の期限だけを延ばす書きでは w1 の待ちも起きない(見え方に期限を載せない)。直す前は w1 の待ちも期限まで
+  ;; 起きなかった(見え方から温める表を外し、行の書きは版を進めなかった)。
+  ;; 時間の設定は 2 つ: 模擬の既定(本番の窓を SIM-TIMING-RATIO 倍 — heartbeat の間が待ちより長い)と本番の既定(ClusterTiming —
+  ;; heartbeat の間 2.5 秒は待ちの 8 秒より短い。それでも起きるのは次の heartbeat ではなく書きの刻)。
+  (for [timing [None (ClusterTiming)]]
+    (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (warm-wakes-scoped-watches) :workers WARM-WORKERS
+                                :timing timing))
+    (<- (assert-warm-wakes seen))))
 
 
 (defk watch-across-stop []
