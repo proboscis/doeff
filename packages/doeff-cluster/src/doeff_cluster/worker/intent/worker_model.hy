@@ -285,11 +285,18 @@
 ;; 周の間の待ちに周期の上限は無い — 次の期限・宣言の変化・子の終わり・止め・掃除の終わりの早い 1 つまで待つ(#3871 の単位 4)。
   ;; 呼び鈴で起きる時も、周の終わりからこの秒は空ける(変化が途切れなく続いても周は 1 秒に 1 / wake-gap-seconds 回まで — #2692)。
   (setv #^ float wake-gap-seconds 0.1)
+  ;; 入れ替えで退いた process を job 1 つにつき同時に置く上限 R(#4072 の D-3・正の整数)。退いた process が居る間に宣言が変われば、
+  ;; R 未満なら今の process も退かせて新を並べ、R に達していればいちばん古く退いた process を止めてから退かせる(同時に動くのは
+  ;; R + 1 まで — 条 C14)。退いた process が寿命の上限(JobSpec.retired-ms)まで残る job で、宣言し直しが重なると並ぶ数を抑える。
+  (setv #^ int retired-limit 3)
 
   (defn #^ None __post-init__ [self]
     ;; 焼く道具の並べる数が正の整数である事を、方策を作る時に確かめるため(0 以下は道具が受けない — 準備が使い方の誤りで落ち続ける)。
     (when (< self.compile-jobs-while-replacing 1)
-      (raise (ValueError (.format "compile-jobs-while-replacing は 1 以上: {}" self.compile-jobs-while-replacing))))))
+      (raise (ValueError (.format "compile-jobs-while-replacing は 1 以上: {}" self.compile-jobs-while-replacing))))
+    ;; 退いた process の上限が正の整数である事(0 以下では今の process を退かせられず、入れ替えが進まない)。
+    (when (< self.retired-limit 1)
+      (raise (ValueError (.format "retired-limit は 1 以上: {}" self.retired-limit))))))
 
 
 (defclass [(dataclass :frozen True)] JobStatus []
