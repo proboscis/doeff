@@ -133,7 +133,7 @@
 (defk prepared [revision]
   {:pre [(: revision str)] :post [(: % CodeView)] :tags {:context "doeff-cluster-test" :role "program"}}
   "版の準備を求め、終わるまで待つため。"
-  (<- (PrepareCode revision))
+  (<- (PrepareCode revision None))
   (<- view CodeView (settled revision))
   view)
 

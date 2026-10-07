@@ -175,8 +175,8 @@
 (defk twice-then-release [runs key text]
   {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "同じキーの準備を 2 回頼んで観測し、終わらせてからもう 1 回観測するため。答え = #(走っている間の観測 終わった後の観測)。"
-  (<- (PrepareEnv key text))
-  (<- (PrepareEnv key text))
+  (<- (PrepareEnv key text None))
+  (<- (PrepareEnv key text None))
   (<- during tuple (ObserveEnvs))
   (setv runs.released True)
   (<- after tuple (ObserveEnvs))
@@ -187,8 +187,8 @@
   {:pre [(: key str) (: text str) (: other-key str) (: other-text str)] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "反例の筋書き: 別のキーの準備を 1 回ずつ頼んで観測するため(準備は 2 本起きる)。"
-  (<- (PrepareEnv key text))
-  (<- (PrepareEnv other-key other-text))
+  (<- (PrepareEnv key text None))
+  (<- (PrepareEnv other-key other-text None))
   (<- views tuple (ObserveEnvs))
   views)
 
@@ -233,7 +233,7 @@
   (val policy (WorkerPolicy))
   (<- before tuple (ObserveEnvs))
   (val warming (! (plan 0 #() (WorldView before #()) {} policy :warm #(warm))))
-  (<- (PrepareEnv warm.key warm.runtime-env :warm True))
+  (<- (PrepareEnv warm.key warm.runtime-env None :warm True))
   (setv runs.released True)
   (<- after tuple (ObserveEnvs))
   (val warmed (WorldView after #() :warm-children #((WarmChildView :key warm.key :pid 1 :started-ms 0
@@ -263,13 +263,13 @@
   (<- seen tuple (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
                                  (env-host settings)]
                    (warm-then-first-tick runs warm spec cold-spec)))
-  (assert (= (get seen 0) #((PrepareEnv warm.key warm.runtime-env :warm True))) (get seen 0))
+  (assert (= (get seen 0) #((PrepareEnv warm.key warm.runtime-env None :warm True))) (get seen 0))
   (<- view (| CodeView None) (view-of (get seen 1) key))
   (<- root str (env-root settings key))
   (assert (and (is-not view None) (= view.state CodeState.READY) (= view.path root)) (get seen 1))
   (assert (= (get seen 2) #((StartJob spec 1 root :warm-key key))) (get seen 2))
   (assert (is-not cold-spec.runtime-env None) cold-spec)
-  (assert (= (get seen 3) #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env))) (get seen 3))
+  (assert (= (get seen 3) #((PrepareEnv (code-key cold-spec) cold-spec.runtime-env None))) (get seen 3))
   (assert (= (len runs.launches) 1) runs.launches))
 
 
@@ -382,7 +382,7 @@
   {:pre [(: key str) (: text str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "掃除の係を回してから新しい env の準備を頼み、heartbeat で名乗る root の姿を返すため。"
   (<- (swept-rounds (frozenset)))
-  (<- (PrepareEnv key text))
+  (<- (PrepareEnv key text None))
   (<- report dict (EnvReport))
   report)
 
@@ -502,7 +502,7 @@
   {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % DeadlineSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "job の準備を起こし、子を走らせたまま完成の答えを書き、進みの印を触らずに起点から 2000 秒後(停滞の 600 秒も、前の冷たい期限の
    1800 秒も越える)に観測し、子を終わらせてもう 1 回観測するため。"
-  (<- (PrepareEnv key text))
+  (<- (PrepareEnv key text None))
   (<- (answer-while-running runs))
   (<- during tuple (observe-at 2000))
   (setv runs.released True)
@@ -531,7 +531,7 @@
   {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % DeadlineSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "温い job の準備を起こし、進みの印を触りながら(290 秒・690 秒・1790 秒)、前の温い期限 300 秒・停滞の 600 秒・前の冷たい期限
    1800 秒を越えた拍(301 秒・700 秒・1801 秒)で観測するため。"
-  (<- (PrepareEnv key text))
+  (<- (PrepareEnv key text None))
   (<- (touch-progress runs 290))
   (<- past-warm tuple (observe-at 301))
   (<- (touch-progress runs 690))
@@ -560,7 +560,7 @@
 (defk stalled-scenario [runs key text]
   {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % DeadlineSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "温い job の準備を起こし、100 秒後に進みの印を 1 回だけ触り、それから 601 秒後(起点から 701 秒)に観測するため。"
-  (<- (PrepareEnv key text))
+  (<- (PrepareEnv key text None))
   (<- (touch-progress runs 100))
   (<- stalled tuple (observe-at 701))
   (DeadlineSeen :views #(stalled) :after #()))
@@ -618,7 +618,7 @@
   {:pre [(: key str) (: text str) (: warm bool)] :post [(: % WarmSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
   "掃除の係を回して roots を数えさせてから(見積もりと roots の合計の元)、準備を頼み(warm = 先の組みか)、観測と heartbeat の名乗りを返すため。"
   (<- (swept-rounds (frozenset)))
-  (<- (PrepareEnv key text :warm warm))
+  (<- (PrepareEnv key text None :warm warm))
   (<- views tuple (ObserveEnvs))
   (<- report dict (EnvReport))
   (<- view (| CodeView None) (view-of views key))

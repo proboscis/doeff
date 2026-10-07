@@ -36,11 +36,13 @@
   launched)
 
 
-(defk prepare-request [declared name platform root known min-free-bytes]
-  {:pre [(: declared dict) (: name str) (: platform str) (: root str) (: known tuple) (: min-free-bytes int)]
+(defk prepare-request [declared name platform root known min-free-bytes compile-jobs]
+  {:pre [(: declared dict) (: name str) (: platform str) (: root str) (: known tuple) (: min-free-bytes int) (: compile-jobs (| int None))]
    :post [(: % dict)]}
-  "準備の process(env_handlers)へ渡す頼みの JSON の中身を組むため(name = env- を外したキー・root = 作る root の path)。"
-  {"env" declared "key" name "platform" platform "root" root "known" (list known) "minFreeBytes" min-free-bytes})
+  "準備の process(env_handlers)へ渡す頼みの JSON の中身を組むため(name = env- を外したキー・root = 作る root の path・compile-jobs =
+   bytecode を焼く道具の並べる数 — null = 道具の既定・2026-10-08)。"
+  {"env" declared "key" name "platform" platform "root" root "known" (list known) "minFreeBytes" min-free-bytes
+   "compileJobs" compile-jobs})
 
 
 (defk prepare-argv [hy-command tool request result state uv-cache repo-keys code-prepare uv progress]

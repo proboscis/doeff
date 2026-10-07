@@ -109,10 +109,10 @@ def in_backoff(now: int, record: JobRecord, policy: WorkerPolicy) -> bool:
 def stop_actions(now: int, process: ProcessView, record: JobRecord, policy: WorkerPolicy, reason: StopReason) -> tuple:
     ...
 
-def prepare_action(spec: JobSpec) -> PrepareCode | PrepareEnv:
+def prepare_action(spec: JobSpec, compile_jobs: int | None) -> PrepareCode | PrepareEnv:
     ...
 
-def prepare_actions(now: int, spec: JobSpec, world: WorldView, policy: WorkerPolicy) -> tuple:
+def prepare_actions(now: int, spec: JobSpec, world: WorldView, policy: WorkerPolicy, compile_jobs: int | None) -> tuple:
     ...
 
 @dataclass(frozen=True, kw_only=True)

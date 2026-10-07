@@ -28,11 +28,13 @@
 (defrecord PrepareRequest
   "root 1 つの準備の要求。root = 最終の path(tmp から rename しない — venv が絶対 path を持つので)・known = 完成済みの root・
    min-free-bytes = 準備を始めてよい空きの下限・launched-ms = 準備の process を起こした刻(epoch ミリ秒 — 入口が要求の JSON の
-   mtime から読む・None = 読めない。起こしてから最初の処理ステージまでの秒を印に載せるため・#3676)。"
+   mtime から読む・None = 読めない。起こしてから最初の処理ステージまでの秒を印に載せるため・#3676)・compile-jobs = bytecode を焼く
+   道具の並べる数(CompileTrees の jobs — recreate の job の旧い process が動いている間の準備だけ値を持つ・None = 道具の既定・2026-10-08)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
   (#^ str root)
+  (#^ (| int None) compile-jobs)
   (setv #^ tuple known #())
   (setv #^ int min-free-bytes 0)
   (setv #^ (| int None) launched-ms None))
@@ -280,11 +282,12 @@
 (defclass [(dataclass :frozen True)] CompileTrees [EffectBase]
   "焼く根を持つ repo の木の全部の bytecode を、root の venv の interpreter で 1 回の焼きで作る(project-dir = その venv の project・
    trees = BytecodeTree の列・entries = 焼く範囲の入口の module — 全部の木に共通で、import を木をまたいで辿った閉包だけを焼く・空 = 全部の
-   木の根の下を全部 — 宣言の bytecode-entries)。答え = BytecodeReport(木ごとの問題は problems)か EnvFailure(焼く道具そのものが
-   答えを返さなかった)。"
+   木の根の下を全部 — 宣言の bytecode-entries・jobs = 焼く道具の並べる数 — None = 道具の既定 = cgroup の CPU の上限・2026-10-08)。
+   答え = BytecodeReport(木ごとの問題は problems)か EnvFailure(焼く道具そのものが答えを返さなかった)。"
   (#^ str project-dir)
   (#^ tuple trees)
-  (#^ tuple entries))
+  (#^ tuple entries)
+  (#^ (| int None) jobs))
 
 
 (defclass [(dataclass :frozen True)] ProbeImports [EffectBase]

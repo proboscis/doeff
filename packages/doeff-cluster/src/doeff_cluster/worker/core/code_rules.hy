@@ -6,8 +6,8 @@
 (import doeff_cluster.worker.core.code_plan [MARKER MARKER-FORMAT])
 
 
-(defk prepare-script [repo revision * hy-command tool layout]
-  {:pre [(: repo str) (: revision str) (: hy-command (| str None)) (: tool str) (: layout CodeLayout)]
+(defk prepare-script [repo revision * hy-command tool layout compile-jobs]
+  {:pre [(: repo str) (: revision str) (: hy-command (| str None)) (: tool str) (: layout CodeLayout) (: compile-jobs (| int None))]
    :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "版 1 つの木を準備する sh の script を組むため: 展開 → bytecode の準備(木の中だけ・実行時に検める方式・source の中身で引く保存先から
    書き、無い物だけを焼く — 保存先の dir は道具が環境変数 DOEFF_HY_CODE_STORE から読む・検めて完成の印を置く)→ rename。hy-command = 焼きの
@@ -16,10 +16,12 @@
    どの命令も単独の文にして set -e を効かせる(`a && b` の a の失敗は set -e が拾わない — 以前はそれで焼きの失敗が完成品になった)。
    git archive は pipe にせず file へ書く(pipe の失敗は最後の tar しか見えない)。rename が最後で、その前に印が在ることを確かめるので、
    final の在る dir は常に完成品。焼く道具そのもの(Hy)の import が timestamp 方式の .pyc を木へ書かないよう、PYTHONDONTWRITEBYTECODE を
-   立てる。revision = worker_model.code-key = 1 つの commit。"
+   立てる。revision = worker_model.code-key = 1 つの commit。compile-jobs = 焼く道具の並べる数(在る時だけ --jobs N — recreate の job の
+   旧い process が動いている間の準備・None = 道具の既定 = cgroup の CPU の上限・2026-10-08)。"
   ;; 焼く木は 1 つ(--tree・--roots を 1 つずつ — 道具の引数の揃え方)。
   (val prepare-tool (+ f"PYTHONDONTWRITEBYTECODE=1 \"{hy-command}\" \"{tool}\" --revision \"{revision}\""
-                       f" --tree \"$T\" --roots \"{(.roots-arg layout)}\""))
+                       f" --tree \"$T\" --roots \"{(.roots-arg layout)}\""
+                       (if (is compile-jobs None) "" f" --jobs {compile-jobs}")))
   (val prepare (if (not hy-command)
                    (+ f"printf '{{\"format\": {MARKER-FORMAT}, \"revision\": \"%s\", \"bytecode\": false}}\\n' "
                       f"\"{revision}\" > \"$T/{MARKER}\"\n")

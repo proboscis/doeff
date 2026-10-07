@@ -50,7 +50,7 @@
   "worker と同じ置き場に root を準備する(起こした刻 launched-ms を添えた要求で)。"
   (<- key str (env-key env PLATFORM))
   (<- result (| EnvReady EnvFailure) (prepare-env (PrepareRequest :env env :key key :platform PLATFORM :root (.format "/state/roots/{}" key)
-                                          :known known :min-free-bytes 1024 :launched-ms launched-ms)))
+                                          :compile-jobs None :known known :min-free-bytes 1024 :launched-ms launched-ms)))
   result)
 
 
