@@ -298,6 +298,24 @@
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
   (assert (= (! (plan 0 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))
 
+;; --- 退いた process の寿命の上限(#4072 の D-2): 宣言の readiness の retiredSeconds を持つ handoff の job は、新の Ready で退いた旧を
+;;     止めず、旧が自分で終わるか、退いてから上限を越えた時に止める(旧が持つ仕事を終わりまで回す)。宣言しない job は今どおり。--------
+
+(deftest test-a-retired-process-with-a-declared-lifetime-outlives-the-new-ready
+  ;; 失敗ケース: 新の世代が Ready と数えられた時に退いた旧を止めると、旧が回している仕事が切れる。
+  (val lived (replace H2 :ready-instance "2-new" :retired-ms 60000))
+  (val old (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
+  (val w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2))))
+  (assert (= (! (plan 60999 #(lived) w {} POLICY)) #()) "上限の手前では、新が Ready でも退いた旧を止めない")
+  (assert (= (! (plan 61000 #(lived) w {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))
+          "退いてから上限を越えたら止める"))
+
+(deftest test-a-retired-process-with-a-declared-lifetime-still-stops-when-the-service-goes-away
+  ;; 寿命の上限は「新の Ready で止めない」だけを変える — 元の job が宣言から消えた時は今どおりすぐ止める。
+  (val old (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
+  (assert (= (! (plan 2000 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))
+
+
 (deftest test-a-recreate-job-without-an-entry-probe-stops-the-old-process-once-the-new-tree-is-ready
   ;; handoff でない job(入口の検めの対象でない素の entry)は、新しい版の木が揃うまで旧を動かしたまま準備だけを出し、揃ったら旧を名から
   ;; 外さずに止める(RetireJob でなく SignalJob — 新を並べず、止め終えてから起動する)。
