@@ -1920,24 +1920,25 @@
 ;; (ticked-truth — 周の観測の後に来た出来事も鳴らす)、子 process の終わり・node ごとの死で世界が鳴らして手放す(本番の待つ子の終わりの代わり)。
 ;; 止めの合図の待ち(AwaitStop)は止めの呼び鈴で待ち、止めの頼みで世界が鳴らす。
 
+(defk rehung-bell [bell]
+  {:pre [(: bell (| Promise None))] :post [(: % Promise)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "周の頭の呼び鈴 bell を掛け直すため: まだ鳴っていない呼び鈴(None でない)はそのまま渡し、鳴って手放された(None)なら新しく掛ける。"
+  (var held bell)
+  (when (is held None)
+    (<- made Promise (CreatePromise))
+    (:= held made))
+  held)
+
+
 (defk ticked-truth [truth]
   {:pre [(: truth HostTruth)] :post [(: % HostTruth)] :tags {:context "doeff-cluster" :role "protocol"}}
   "周の頭の宿の真実 truth に、周の数を 1 足し、鳴って手放された呼び鈴(宿の呼び鈴・止めの呼び鈴・宣言の変化の呼び鈴)を掛け直した
    真実を作るため(宣言の読みが ChangeHostTruth の change に渡し、世界の節の中で走らせる — 読みと掛けを世界への問い 1 つにする)。鳴って
    いない呼び鈴は周をまたいで同じ物を渡す。宣言の変化の呼び鈴は heartbeat の前に、待ちの口を確かめる前から掛ける(本番の
    coordinator への口の armed-bell と同じ — 起動の直後の最初の「変わった」でも起きる・#3871 の単位 4 の直し)。"
-  (var tick truth.tick-bell)
-  (when (is tick None)
-    (<- made Promise (CreatePromise))
-    (:= tick made))
-  (var wake truth.wake-bell)
-  (when (is wake None)
-    (<- made Promise (CreatePromise))
-    (:= wake made))
-  (var stop truth.stop-bell)
-  (when (is stop None)
-    (<- made Promise (CreatePromise))
-    (:= stop made))
+  (<- tick Promise (rehung-bell truth.tick-bell))
+  (<- wake Promise (rehung-bell truth.wake-bell))
+  (<- stop Promise (rehung-bell truth.stop-bell))
   (replace truth :ticks (+ truth.ticks 1) :tick-bell tick :wake-bell wake :stop-bell stop))
 
 

@@ -813,7 +813,9 @@
         "doeff-cluster-run-context-rules",
         "doeff-cluster-native-wheel",
         "doeff-cluster-retirement-model",
-        "doeff-cluster-due-model"
+        "doeff-cluster-due-model",
+        "doeff-cluster-worker-due",
+        "doeff-cluster-due-policy"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",
