@@ -3,6 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
+from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff_core_effects.scheduler import CreateSemaphore as CreateSemaphore
 from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
@@ -79,6 +80,9 @@ def cluster_semaphore(session: SemaphoreSession) -> _Handler:
     ...
 
 def lease_fence(name: str, write_types: tuple, margin_ms: int) -> _Handler:
+    ...
+
+def leases_fence(leases_of: Callable, write_types: tuple, margin_ms: int) -> _Handler:
     ...
 
 def standby_divert(name: str, write_types: tuple) -> _Handler:
