@@ -34,6 +34,13 @@
 ;; PublishStatus の後までは 1 つの区間(action・揃いの追いの観測・PublishStatus をまとめた区間)で、その名が ACTIONS-TO-PUBLISH。
 ;; 計りだけの読みは GetTime を直に出す(now-epoch-ms の Program の呼びを挟まない — 拍ごとの費用を時刻の effect 1 つに留める)。
 (val ACTIONS-TO-PUBLISH "ActionsToPublishStatus")
+;; heartbeat の間の遅れの行の名と閾の比(#3850 — 名 + 欄 at = 今の heartbeat を送った刻(UTC ISO)・worker = 名乗った
+;; worker の名・gap-ms = 前の heartbeat を送ってから今の heartbeat を送るまでの ms・slowest = その間でいちばん長かった区間の名・
+;; slowest-ms = その長さ)。閾 = 送った時の生存の窓(HeartbeatSent.lease-ms)× 比。拍の遅れの行(TICK-LAG-MS)は拍 1 つの中しか測らず、
+;; heartbeat を挟む隣り合う 2 つの拍の前後がどちらも 5 秒未満でも heartbeat の間は窓を越えうる(2026-10-07 13:18 JST の agent-worker-2 —
+;; coordinator で生きている印が false に瞬いたのに、worker の log に遅れの行が無かった)。窓の 7 割で名指し、窓を越える前に見えるようにする。
+(val HEARTBEAT-GAP-LOG "worker: heartbeat の間の遅れ")
+(val HEARTBEAT-GAP-LEASE-RATIO 0.7)
 ;; 状態を変えた周(action を撃った周)の後の今すぐが続いてよい周の数(coordinator の UNSETTLED-STEP-LIMIT と同じ — #3871 の単位 4)。
 (val UNSETTLED-TICK-LIMIT 100)
 ;; 撃っても「今すぐもう 1 周」に数えない action(#3871 の単位 4): 結果を次の周の観測でなく、起きる物の組で受ける物。掃除の係への固定の集合の
