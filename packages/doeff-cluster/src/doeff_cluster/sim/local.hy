@@ -165,7 +165,8 @@
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 ;; 宣言の本文を組む body-of は別名で受ける — coordinator の要求の本文の解き(request_bodies.body-of)と取り違えないため。
-(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of :as service-body-of])
+(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs
+                                                             body-of :as service-body-of])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-view services-unreachable])
@@ -2458,14 +2459,14 @@
    :tags {:context "doeff-cluster" :role "protocol"}}
   "宣言を本番の declare(declare.apply-declaration)と同じ順と本文で coordinator へ書くため: Service を全部読み、書く Service(無い・spec が
    変わった)が名指す Program だけを PUT /programs/<sha> で置いてから、無ければ POST(create-body)・spec が変わった Service だけ読んだ版を
-   付けて PUT(差分の宣言の判断は本番と同じ declaration_requests の service-read・needed-programs)。台数は本番と同じく行の値(job の
-   :replicas)。答え = 宣言した Service の名(書かなかった Service も含む)。"
+   付けて PUT(差分の宣言の判断は本番と同じ declaration_requests の service-read・needed-programs。PUT が 409 を受けたら本番と同じく
+   読み直し、spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。台数は本番と同じく行の値(job の :replicas)。答え = 宣言した
+   Service の名(書かなかった Service も含む)。"
   (var reads #())
   (for [row declaration.rows]
     (val path (+ "/resources/Service/" (url-quote (get row "name") :safe "")))
-    (<- current tuple (send-request link "GET" path {} None))
-    (<- read ServiceRead (service-read (get row "name") row path
-                                       (if (= (get current 0) 404) None (answered-object current (+ "Service " (get row "name"))))))
+    (<- current (| dict None) (sim-service-current link (get row "name") path))
+    (<- read ServiceRead (service-read (get row "name") row path current))
     (:= reads (+ reads #(read))))
   (<- needed (get tuple #(str ...)) (needed-programs declaration reads))
   (for [sha needed]
@@ -2473,12 +2474,49 @@
                                 {"blob" (get declaration.programs sha) "versions" (get (get (get declaration.rows 0) "run") "versions")}))
     (answered-body put (+ "program " sha)))
   (for [read reads :if (is-not read.body None)]
-    (<- body dict (service-body-of read))
-    (<- written tuple (if (is read.version None)
-                          (send-request link "POST" "/resources/Service" {} body)
-                          (send-request link "PUT" read.target {} body)))
+    (<- written tuple (sim-service-written-rereading link read))
     (answered-body written (+ "Service " read.name)))
   (tuple (gfor row declaration.rows (get row "name"))))
+
+
+(defk sim-service-current [link name path]
+  {:pre [(: link SimLink) (: name str) (: path str)] :post [(: % (| dict None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "資源の口 path の Service name の今の資源(GET の本文 — 無ければ None)を読むため(本番の declare.service-current と同じ読み — 宣言の前の
+   読みと、409 の後の読み直しが通る)。"
+  (<- current tuple (send-request link "GET" path {} None))
+  (if (= (get current 0) 404) None (answered-object current (+ "Service " name))))
+
+
+(defk sim-service-written [link read]
+  {:pre [(: link SimLink) (: read ServiceRead)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "読んだ Service 1 つへ書きを送るため(本番の declare.service-written と同じ — 無ければ POST・在れば読んだ版つきの PUT)。答え = 返事
+   #(status 本文)。"
+  (<- body dict (service-body-of read))
+  (<- written tuple (if (is read.version None)
+                        (send-request link "POST" "/resources/Service" {} body)
+                        (send-request link "PUT" read.target {} body)))
+  written)
+
+
+(defk sim-service-written-rereading [link read]
+  {:pre [(: link SimLink) (: read ServiceRead)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "読んだ Service 1 つへ書きを送り、版つきの書き直しが 409 を受けたら読み直して書き直すため(本番の declare.service-written-rereading と
+   同じ判断 — declaration_requests.reread-after-conflict・CONFLICT-REREADS 回まで。spec が変わっていれば最後の 409 を返す)。"
+  (var sent read)
+  (var rereads 0)
+  (<- first tuple (sim-service-written link sent))
+  (var written first)
+  (while (and (= (get written 0) 409) (is-not sent.version None) (< rereads CONFLICT-REREADS))
+    (:= rereads (+ rereads 1))
+    (<- current (| dict None) (sim-service-current link sent.name sent.target))
+    (<- again (| ServiceRead None) (reread-after-conflict sent current))
+    (when (is again None)
+      (break))
+    (:= sent again)
+    (<- retried tuple (sim-service-written link sent))
+    (:= written retried))
+  written)
 
 
 ;; --- 準備の状態と job の次の process の待ち(AwaitReadiness・AwaitJobProcess — 書きで起こす・#3053)----------------

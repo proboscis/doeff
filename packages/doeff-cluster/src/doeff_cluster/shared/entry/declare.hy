@@ -10,7 +10,8 @@
 ;;;   - 宣言の行と詰めた Program を doeff_cluster.shared.entry.service_build の system-declaration で組む。
 ;;;   - ここの apply-declaration で書く: 先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で
 ;;;     書く — 無ければ POST /resources/Service で作る(所有者 = 送り手)。在れば GET で読んだ resourceVersion を付けて PUT する
-;;;     (読んでから書くまでに誰かが書いていれば 409 で止まる — 他の作業係の変更を消さない)。所有者はいまの値を保ち、台数は行の値
+;;;     (読んでから書くまでに誰かが spec を書いていれば 409 で止まる — 他の作業係の変更を消さない。版は状態の欄の変化でも進むので、
+;;;     409 の後に読み直して spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。所有者はいまの値を保ち、台数は行の値
 ;;;     (job の :replicas)を書く — 手で台数だけを替えた Service も、宣言し直すと job の値へ戻る(#3487)。一覧に無い Service には触らない。
 ;;;
 ;;; 置き場(#2346): apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
@@ -22,7 +23,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead service-read needed-programs body-of])
+(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs body-of])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 
 
@@ -40,17 +41,24 @@
   response)
 
 
-(defk service-read-at [base actor name row]
-  {:pre [(: base str) (: actor str) (: name str) (: row (get Mapping #(str object)))] :post [(: % ServiceRead)]
+(defk service-current [url actor]
+  {:pre [(: url str) (: actor str)] :post [(: % (| dict None))]
    :tags {:context "doeff-cluster" :role "main" :reads "json"}}
-  "Service の行 1 つの今の資源を資源の口で読み、送る書きを決めるため(差分の宣言の判断は declaration_requests.service-read)。"
-  (val url (+ base "/resources/Service/" (url-quote name :safe "")))
+  "資源の口 url の Service 1 つの今の資源(GET の本文 — 無ければ None)を読むため(宣言の前の読みと、409 の後の読み直しが同じ読みを通る)。"
   (<- current HttpResponse (declare-request "GET" url actor None))
   (when (= current.status 404)
-    (<- absent ServiceRead (service-read name row url None))
-    (return absent))
+    (return None))
   (.raise-for-status current)
-  (<- read ServiceRead (service-read name row url (json.loads current.text)))
+  (json.loads current.text))
+
+
+(defk service-read-at [base actor name row]
+  {:pre [(: base str) (: actor str) (: name str) (: row (get Mapping #(str object)))] :post [(: % ServiceRead)]
+   :tags {:context "doeff-cluster" :role "main"}}
+  "Service の行 1 つの今の資源を資源の口で読み、送る書きを決めるため(差分の宣言の判断は declaration_requests.service-read)。"
+  (val url (+ base "/resources/Service/" (url-quote name :safe "")))
+  (<- current (| dict None) (service-current url actor))
+  (<- read ServiceRead (service-read name row url current))
   read)
 
 
@@ -65,6 +73,29 @@
     (return created))
   (<- updated HttpResponse (declare-request "PUT" read.target actor body))
   updated)
+
+
+(defk service-written-rereading [base actor read]
+  {:pre [(: base str) (: actor str) (: read ServiceRead)] :post [(: % HttpResponse)]
+   :tags {:context "doeff-cluster" :role "main"}}
+  "読んだ Service 1 つへ書きを送り、版つきの書き直しが 409 を受けたら読み直して書き直すため(coordinator は状態の欄が変わっても版を
+   進めるので、落ち続ける job は読んでから書くまでに版が進む): 読み直した spec が読んだ時と同じなら今の版で同じ本文を送り直す
+   (declaration_requests.reread-after-conflict・CONFLICT-REREADS 回まで)。spec が変わっていれば最後の 409 を返す(止まる)。"
+  (var sent read)
+  (var rereads 0)
+  (<- first HttpResponse (service-written base actor sent))
+  (var written first)
+  (while (and (= written.status 409) (is-not sent.version None) (< rereads CONFLICT-REREADS))
+    (:= rereads (+ rereads 1))
+    (<- current (| dict None) (service-current sent.target actor))
+    (<- again (| ServiceRead None) (reread-after-conflict sent current))
+    (when (is again None)
+      (break))
+    (<- (slog (.format "{}: 409 の後に読み直した — 変わったのは状態の欄だけなので版 {} で書き直す" sent.name again.version)))
+    (:= sent again)
+    (<- retried HttpResponse (service-written base actor sent))
+    (:= written retried))
+  written)
 
 
 (defk apply-declaration [url declaration actor]
@@ -92,7 +123,7 @@
   (for [read reads]
     (if (is read.body None)
         (<- (slog (.format "{}: unchanged" read.name)))
-        (do (<- written HttpResponse (service-written base actor read))
+        (do (<- written HttpResponse (service-written-rereading base actor read))
             (<- (slog (.format "{}: {} {}" read.name written.status (cut written.text 0 300))))
             (when (>= written.status 300)
               (:= rows-written False)))))

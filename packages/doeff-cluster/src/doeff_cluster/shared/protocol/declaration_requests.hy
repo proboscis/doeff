@@ -26,13 +26,20 @@
 
 (defrecord ServiceRead
   "宣言し直しの前に Service 1 つを読んだ結果と、送る書き(declare の CLI と手元の sim-cluster で同じ形): name = Service の名・target = 書く
-   資源の口(CLI は url・sim は path)・version = 読んだ resourceVersion(無い Service は None — 作る)・body = 送る本文(作る時は POST の
-   本文・書き直す時は版つきの PUT の本文・今の spec と同じで書かない時は None — 中は送る所が body-of で読む)。"
+   資源の口(CLI は url・sim は path)・version = 読んだ resourceVersion(無い Service は None — 作る)・spec = 読んだ時の spec(無い
+   Service は None — 409 の後の読み直しで、他の書き手が spec を書いたかを比べる)・body = 送る本文(作る時は POST の本文・書き直す時は
+   版つきの PUT の本文・今の spec と同じで書かない時は None — 中は送る所が body-of で読む)。"
   {:tags {:context "doeff-cluster" :role "protocol"}}
   (#^ str name)
   (#^ str target)
   (#^ (| int str None) version)
+  (#^ (| OpaqueJson None) spec)
   (#^ (| OpaqueJson None) body))
+
+
+;; 書き直しの PUT が 409 を受けた後に読み直して書き直す回数の上限。読み直すのは「読んでから書くまでに状態の欄だけが変わった」時だけ
+;; (coordinator は状態の欄の変化でも版を進める — 落ち続ける job は落ちるたびに版が進む)。上限を越えたら 409 のまま止まる。
+(val CONFLICT-REREADS 3)
 
 
 (defk update-body [version spec]
@@ -55,14 +62,29 @@
   "読んだ今の資源 current(GET の本文・無い Service は None)から、その Service に送る書きを決めるため: 無ければ作る・書き直す spec が
    今の spec と同じなら書かない・違えば読んだ版を付けて書き直す(台数が行の値と違う時も書き直す — 宣言し直しは台数を job の値へ戻す)。"
   (when (is current None)
-    (return (ServiceRead :name name :target target :version None :body (OpaqueJson.of (create-body row)))))
+    (return (ServiceRead :name name :target target :version None :spec None :body (OpaqueJson.of (create-body row)))))
   (val now (get current "spec"))
   (val version (get current "resourceVersion"))
   (<- spec dict (spec-for-update row now))
   (when (= spec now)
-    (return (ServiceRead :name name :target target :version version :body None)))
+    (return (ServiceRead :name name :target target :version version :spec (OpaqueJson.of now) :body None)))
   (<- body dict (update-body version spec))
-  (ServiceRead :name name :target target :version version :body (OpaqueJson.of body)))
+  (ServiceRead :name name :target target :version version :spec (OpaqueJson.of now) :body (OpaqueJson.of body)))
+
+
+(defk reread-after-conflict [sent current]
+  {:pre [(: sent ServiceRead) (: current (| dict None))] :post [(: % (| ServiceRead None))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "版つきの書き直し sent が 409 を受けた後に読み直した今の資源 current(GET の本文・消えていれば None)から、もう 1 度送る書きを決めるため
+   (coordinator の 409 の文「読み直してから書く」): spec が sent を作った時に読んだ spec と同じなら、読んでから書くまでに変わったのは
+   状態の欄だけ — 同じ spec を今の版で書き直す。spec が違う(他の書き手が書いた)か Service が消えていれば None(書き直さずに止まる —
+   他の作業係の変更を消さない)。"
+  (when (or (is current None) (!= (OpaqueJson.of (get current "spec")) sent.spec))
+    (return None))
+  (val version (get current "resourceVersion"))
+  (<- written dict (body-of sent))
+  (<- body dict (update-body version (get written "spec")))
+  (ServiceRead :name sent.name :target sent.target :version version :spec sent.spec :body (OpaqueJson.of body)))
 
 
 (defk needed-programs [declaration reads]
