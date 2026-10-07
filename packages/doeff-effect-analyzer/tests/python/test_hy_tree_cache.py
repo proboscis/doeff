@@ -232,6 +232,42 @@ def test_a_changed_macro_module_that_a_required_macro_module_requires_is_expande
     assert values == [42, 63]
 
 
+USED_AND_UNUSED = "(defmacro used [] 42)\n(defmacro unused [] 100)\n"
+USES_USED = "(require {pkg}.a [used])\n(setv value (used))\n"
+
+
+def used_and_unused(root: Path, package: str) -> Path:
+    """A package in ``root``: ``a`` has two macros, ``used`` and ``unused``; ``m`` requires only ``used``."""
+    directory = root / package
+    directory.mkdir(parents=True)
+    (directory / "__init__.py").write_text("", encoding="utf-8")
+    (directory / "a.hy").write_text(USED_AND_UNUSED, encoding="utf-8")
+    (directory / "m.hy").write_text(USES_USED.replace("{pkg}", package), encoding="utf-8")
+    return root
+
+
+def edited(path: Path, old: str, new: str) -> None:
+    """Replace ``old`` by ``new`` in ``path`` (a change of size, so a remembered digest is not reused)."""
+    text = path.read_text(encoding="utf-8")
+    assert old in text and len(old) != len(new)
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def test_a_changed_body_of_the_used_macro_is_expanded_again(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record names the macros an expansion used: a change of the body of one of them misses."""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    seen = expansions(monkeypatch)
+    package = f"tree_used_{uuid.uuid4().hex[:8]}"
+    root = used_and_unused(tmp_path / "checkout", package)
+    assert expanded_value(root, package, monkeypatch) == 42
+    edited(root / package / "a.hy", "(defmacro used [] 42)", "(defmacro used [] 4242)")
+    assert expanded_value(root, package, monkeypatch) == 4242
+    assert seen == [f"{package}.m", f"{package}.m"]
+
+
 def test_an_expansion_records_every_macro_file_it_went_through_by_its_digest() -> None:
     """The source requires ``doeff-hy.macros``, which requires ``doeff-hy.handle`` in turn: both files
     are in the record an entry is named by and read under (the record the import side keeps)."""
