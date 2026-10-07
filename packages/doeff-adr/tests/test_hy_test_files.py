@@ -139,3 +139,27 @@ def test_a_skip_row_without_a_reason_stops_the_run(
     result = _run(pytester, tmp_path, "--collect-only", "-q")
     assert result.ret != 0, result.out
     assert "doeff_hy_test_skips" in result.out, result.out
+
+
+def test_a_listed_adr_file_is_skipped_with_its_reason_and_an_unlisted_one_is_collected(
+    pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """外す一覧は ADR の集め手(doeff_adr_hy_files に当たる file)にも効く — 1 つの一覧が全部の集めに効く(agora-redesign 2026-10-07:
+    agora-controllers の ADR の冊 2 つを一覧に載せても、ADR の集め手が一覧を読まず赤のまま日次に出ていた)。載らない冊は今までどおり集まる。"""
+    _project(
+        pytester,
+        tmp_path,
+        monkeypatch,
+        "doeff_adr_hy_files = adr/defadr_*.hy\n"
+        f"doeff_hy_test_skips =\n    adr/defadr_paused.hy | {SKIP_REASON}\n",
+    )
+    adr = pytester.path / "adr"
+    adr.mkdir()
+    (adr / "defadr_paused.hy").write_text('(raise (RuntimeError "外したので実行されないはず"))\n', encoding="utf-8")
+    (adr / "defadr_live.hy").write_text("(defn test-live [] (assert True))\n", encoding="utf-8")
+
+    run = _run(pytester, tmp_path, "-v")
+    assert SKIP_REASON in run.out, run.out
+    assert "外したので実行されないはず" not in run.out, run.out
+    assert "adr/defadr_live.hy::test_live PASSED" in run.out, run.out
+    assert run.ret == 0, run.out
