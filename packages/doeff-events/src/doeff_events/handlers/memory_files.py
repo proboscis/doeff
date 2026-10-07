@@ -92,9 +92,14 @@ class MemoryFiles:
                 watched.pending = (*watched.pending, path)
         return wakes
 
-    def close(self, watch: FileWatch) -> None:
-        """Forget ``watch``; nothing is kept for it any more."""
+    def close(self, watch: FileWatch) -> tuple[_Wake, ...]:
+        """Forget ``watch``; nothing is kept for it any more. A task waiting on it is woken with no changes (the same as the
+        operating-system answerer, whose close ends a wait in progress)."""
+        closing = self.watched(watch)
         self._mut_watched = tuple(known for known in self._mut_watched if known.watch is not watch)
+        if closing is None or closing.waiter is None:
+            return ()
+        return (_Wake(closing.waiter, FilesChanged(())),)
 
 
 @do
@@ -118,7 +123,8 @@ def memory_file_watch_handler(files: MemoryFiles) -> "ProgramHandler":
             case WatchFiles(directory=directory):
                 answer = files.watch(directory)
             case CloseFileWatch(watch=closing):
-                files.close(closing)
+                for wake in files.close(closing):
+                    yield CompletePromise(wake.promise, wake.changes)
             case NextFileChanges(watch=watch):
                 watched = files.watched(watch)
                 if watched is None:

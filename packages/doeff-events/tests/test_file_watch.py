@@ -70,6 +70,35 @@ def test_memory_watch_wakes_a_waiting_program() -> None:
     assert run_scheduled(memory_file_watch_handler(files)(program())) == FilesChanged(("/work/out/a.log",))
 
 
+def test_memory_watch_close_wakes_a_waiting_program_with_no_changes() -> None:
+    """A wait in progress ends when another task closes the watch (the same as the operating-system answerer, whose
+    close sets the notifier's stop flag): the waiter gets ``FilesChanged(())`` instead of waiting forever."""
+    import asyncio
+
+    from doeff_core_effects.effects import Await
+    from doeff_core_effects.scheduler import Spawn, Wait
+
+    files = MemoryFiles()
+
+    @do
+    def closer(watch: FileWatch) -> "EffectGenerator[None]":
+        # Let the program reach its wait first (a close before the wait answers the empty change at once — not the case here).
+        yield Await(asyncio.sleep(0.01))
+        assert files.watched(watch) is not None and files.watched(watch).waiter is not None, "the program is not waiting yet"
+        yield CloseFileWatch(watch)
+
+    @do
+    def program() -> "EffectGenerator[object]":
+        watch = yield WatchFiles("/work/out")
+        assert isinstance(watch, FileWatch), watch
+        task = yield Spawn(closer(watch))
+        changed = yield NextFileChanges(watch)
+        yield Wait(task)
+        return changed, files.watching()
+
+    assert run_scheduled(memory_file_watch_handler(files)(program())) == (FilesChanged(()), ())
+
+
 def test_memory_watch_refuses_a_directory_the_test_did_not_create() -> None:
     files = MemoryFiles(missing=("/gone",))
 
