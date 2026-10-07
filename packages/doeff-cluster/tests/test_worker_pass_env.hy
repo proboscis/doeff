@@ -25,3 +25,14 @@
   (with [e (pytest.raises ValueError)]
     (<- (passed-environment "AGENT_HOME,AGENT_MISSING" {"AGENT_HOME" "/h"})))
   (assert (in "AGENT_MISSING" (str e.value))))
+
+
+(deftest test-the-worker-build-stores-reach-the-child
+  ;; 反例: worker の Rust の wheel・Hy の bytecode の保存先と cargo / rustup の場所が許可表に無ければ、job の子の uv sync
+  ;; は doeff-vm を最初から組み直す(#3972 — 5 分半)。DOEFF_ で始まる名は宣言の env-vars に書けないので worker が継ぐ。
+  (val environ {"DOEFF_WHEEL_CACHE" "/work/state/wheels" "DOEFF_HY_CODE_STORE" "/work/state/doeff-hy-code-store"
+                "CARGO_HOME" "/work/state/cargo" "RUSTUP_HOME" "/usr/local/rustup" "DOEFF_OTHER" "x"})
+  (val child (! (child-environment environ {} {} {})))
+  (assert (= child {"DOEFF_WHEEL_CACHE" "/work/state/wheels" "DOEFF_HY_CODE_STORE" "/work/state/doeff-hy-code-store"
+                    "CARGO_HOME" "/work/state/cargo" "RUSTUP_HOME" "/usr/local/rustup"})
+          child))

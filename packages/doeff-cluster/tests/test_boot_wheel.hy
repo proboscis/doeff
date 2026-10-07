@@ -35,6 +35,9 @@
 ;;  11 uv の cache の dir は呼び手が渡せる: worker の準備の uv の子は設定 runtime-env.uv-cache(worker の --uv-cache)を、起動の script の
 ;;     uv の子は呼び手の DOEFF_UV_CACHE_DIR を UV_CACHE_DIR として継ぐ(既定は $WORK_DIR/state/uv-cache — 件ごとに worker を起こす
 ;;     テストは件をまたいで同じ cache を渡し、依存を件ごとに取り直さない・#3858)。
+;;  12 起動の script は wheel の保存先 DOEFF_WHEEL_CACHE を、worker が --state-dir から導く保存先(native_wheel の wheels-root)と同じ
+;;     path で export し、起こす役の process が継ぐ(worker はそれを job の子へ継ぐ — 子の uv sync が doeff-vm を組み直さない・
+;;     #3972)。呼び手が別の値を置いても、worker の導く path と食い違わないように上書きする。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import importlib.util)
@@ -86,7 +89,8 @@
 (val PYTHON "3.14.3t")
 (val WHEEL-NAME "doeff_vm-0.1.0-cp314-cp314t-linux_x86_64.whl")
 ;; 偽の uv: 呼ばれた引数と、子が継いだ VIRTUAL_ENV・UV_CACHE_DIR・DOEFF_BOOT_FROM_ROOT(引き継いだ先の script か)を log へ 1 行。sync は root の venv の python(検の python へ渡すだけ)・
-;; hy(引数を FAKE_HY_LOG へ 1 行書き、file を起こす時 = 焼く道具は検の python の hy へ渡す・-m で役を起こす時は終わり 3 で止まる — 検の役の起動は
+;; hy(引数を FAKE_HY_LOG へ 1 行書き、file を起こす時 = 焼く道具は検の python の hy へ渡す・-m で役を起こす時は継いだ DOEFF_WHEEL_CACHE・
+;; DOEFF_HY_CODE_STORE を「start wheels=… code=…」の 1 行で書いて終わり 3 で止まる — 検の役の起動は
 ;; root の準備の後で落ちる)・Hy の dist-info と、uv と同じく末尾に改行の無い .pth(root そのもの・root の中の dir・root の外の dir・import の行だけの
 ;; 物)を置く。build は本物の build の口と同じ形(source の中身の鍵で DOEFF_WHEEL_CACHE の doeff-vm-<鍵>/ を引き、無ければ置き、--out-dir に
 ;; 写しを置き、DOEFF_WHEEL_REPORT へ 1 行)。pip は何もしない。
@@ -96,7 +100,7 @@
                 "  sync) site=.venv/lib/python3.14t/site-packages\n"
                 "        mkdir -p .venv/bin \"$site/hy-1.0.0.dist-info\"\n"
                 "        printf '#!/bin/sh\\nexec %s \"$@\"\\n' \"$FAKE_UV_PYTHON\" >.venv/bin/python\n"
-                "        printf '#!/bin/sh\\necho \"$*\" >>\"$FAKE_HY_LOG\"\\n[ \"$1\" != -m ] || exit 3\\nexec %s -m hy \"$@\"\\n' \"$FAKE_UV_PYTHON\" >.venv/bin/hy\n"
+                "        printf '#!/bin/sh\\necho \"$*\" >>\"$FAKE_HY_LOG\"\\n[ \"$1\" != -m ] || { echo \"start wheels=${DOEFF_WHEEL_CACHE:-} code=${DOEFF_HY_CODE_STORE:-}\" >>\"$FAKE_HY_LOG\"; exit 3; }\\nexec %s -m hy \"$@\"\\n' \"$FAKE_UV_PYTHON\" >.venv/bin/hy\n"
                 "        chmod 755 .venv/bin/python .venv/bin/hy\n"
                 "        printf '%s' \"$PWD\" >\"$site/_editable_impl_doeff.pth\"\n"
                 "        printf '%s/packages/doeff-cluster/src' \"$PWD\" >\"$site/_editable_impl_doeff_cluster.pth\"\n"
@@ -532,3 +536,20 @@
   (assert (<= wanted entries) #("BOOT_ENTRIES に無い入口" (sorted (- wanted entries))))
   (val marker (re.search r"(?m)^CODE_MARKER=(\S+)$" text))
   (assert (and (is-not marker None) (= (.group marker 1) MARKER)) #("boot.sh の焼く道具の印の名が code_plan の MARKER と違う" MARKER)))
+
+
+;; --- 12 wheel の保存先は役の process へ export する --------------------------------------------------------
+
+(deftest test-boot-sh-exports-the-wheel-store-the-worker-derives [tmp-path]
+  ;; 反例: boot.sh が DOEFF_WHEEL_CACHE を export しなければ、起こす役の process(偽の hy の -m)に保存先が届かず赤。呼び手が別の値を
+  ;; 置いても、worker が state dir から導く保存先と同じ path になる。
+  (<- made tuple (doeff-source tmp-path))
+  (<- (fake-uv tmp-path))
+  (<- done subprocess.CompletedProcess (boot-once tmp-path (get made 2) :given #(#("DOEFF_WHEEL_CACHE" (str (/ tmp-path "elsewhere"))))))
+  (assert (in "root を準備した" done.stderr) done.stderr)
+  (<- calls tuple (hy-log tmp-path))
+  (val starts (lfor c calls :if (.startswith c "start ") c))
+  (assert (= (len starts) 1) calls)
+  (val state-dir (str (/ tmp-path "work" "state")))
+  (assert (in (.format " wheels={} " (native-wheel.wheels-root state-dir)) (get starts 0)) starts)
+  (assert (in (.format " code={}/doeff-hy-code-store" state-dir) (get starts 0)) starts))
