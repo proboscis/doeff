@@ -26,7 +26,8 @@
 ;;; GET /state の答えの欄 coordinatorCommit で申告する版(本番の読みと同じ shared/protocol/coordinator_reads の coordinator-commit-of-state)。
 ;;; 模擬の Flux は coordinator を作り直す時、Deployment の env を模擬の Pod の環境として渡す(ReplaceCoordinatorEnviron — 次の一生から
 ;;; 効く)ので、作り直した coordinator は本番と同じ入口の読み(WORKER_DOEFF_COMMIT)で新しい版を申告する。
-;;; 静かな時間帯の待ち(AwaitQuietWindow)には、模擬の世界ではすぐ「静か」と答える。
+;;; 静かな時間帯の待ち(AwaitQuietWindow)には、模擬の世界ではすぐ「静か」と答える。worker の当てる直前の drain(AwaitWorkerDrained)には、
+;;; 模擬の世界ではすぐ「中の仕事は 0」と答える(模擬の worker は長く生きる task の中で子の仕事を回さない — 数える物は配備する側の答え手が持つ)。
 (require doeff-hy.macros [val var defk defhandler defeffect <-])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
@@ -46,7 +47,7 @@
                                                    UpgradeState UpgradeStateUnreachable ReadUpgradeState PublishDeclarations
                                                    ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused BootRootsAtStart
                                                    PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
-                                                   AwaitQuietWindow QuietWindowOpened])
+                                                   AwaitQuietWindow QuietWindowOpened AwaitWorkerDrained WorkerDrained])
 (import doeff_cluster.shared.protocol.coordinator_reads [coordinator-commit-of-state])
 (import doeff_cluster.sim.local [SimWorker HostTruth DrainWorker StopWorker ReplaceWorker StartWorker WorkerOf HostTruthOf
                                  StopCoordinator ReadCoordinator ReplaceCoordinatorEnviron])
@@ -366,13 +367,15 @@
   ;; refused-boot-roots を内側に置く)。保存先に在る root = 指定された対象が今 動いている版の物と、session に覚えた物(roots — 先に準備した
   ;; 物と、準備の時に動いていた版の物。足すだけで消さない)。当てた瞬間の保存先のスナップショットは session に積み、BootRootsAtStartsSeen で返す。
   ;; 名簿の問い合わせに答える coordinator の版は、答えた coordinator が GET /state で申告する版(coordinator-view — #3772)。静かな時間帯の
-  ;; 待ちには、すぐ「静か」と答える。
+  ;; 待ちには、すぐ「静か」と答える。worker の当てる直前の drain には、すぐ「中の仕事は 0」と答える(頭の註)。
   (session var applied initial)
   (session var starts #())
   (session var roots #())
   (session var places #())
   (AwaitQuietWindow [target timeout-seconds]
     (resume (QuietWindowOpened :target target)))
+  (AwaitWorkerDrained [launch timeout-seconds]
+    (resume (WorkerDrained :target launch.name)))
   (ConfirmCleanBoot [launch]
     (<- target str (launch-target launch))
     (resume (CleanBootPassed :target target)))
