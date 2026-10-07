@@ -97,6 +97,10 @@ pub enum ProjectRule {
     EffectsDisagreeWithInference,
     /// DOEFF130: 翻訳の層の handler が業務の intent(層 intent の型の effect)を出す — import した defk の先まで辿る。
     TranslationEmitsIntent,
+    /// DOEFF174: 業務の層(設定の translation_effects.domain_layers — 既定 core・intent)の定義が、architecture.hy の :business-fakes の
+    /// :lower-layer-modules の効果を出す(defk の呼びを辿って届く形も)か、その module の package の handler を with_handlers で被せる —
+    /// 記録の service の生の操作は handler(protocol・foundation)の仕事(利用者 2026-10-07 11:0x・agora-redesign #3885)。既知の一覧で下げない。
+    LowerLayerInDomain,
     /// DOEFF168: 業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義が、環境の名の値と比べるか dry-run の印で分岐する
     /// (agora-redesign #1906 — 業務の層は環境を知らない・環境の違いは handler の組の差し替えだけで表す)。
     EnvironmentBranch,
@@ -267,6 +271,7 @@ impl ProjectRule {
         ProjectRule::DefkCalledBare,
         ProjectRule::EffectsDisagreeWithInference,
         ProjectRule::TranslationEmitsIntent,
+        ProjectRule::LowerLayerInDomain,
         ProjectRule::EnvironmentBranch,
         ProjectRule::MatchFieldHyphen,
         ProjectRule::WireInWireFreeLayer,
@@ -348,6 +353,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "DOEFF126",
             ProjectRule::EffectsDisagreeWithInference => "DOEFF127",
             ProjectRule::TranslationEmitsIntent => "DOEFF130",
+            ProjectRule::LowerLayerInDomain => "DOEFF174",
             ProjectRule::EnvironmentBranch => "DOEFF168",
             ProjectRule::MatchFieldHyphen => "DOEFF169",
             ProjectRule::WireInWireFreeLayer => "DOEFF170",
@@ -459,6 +465,7 @@ impl ProjectRule {
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::LowerLayerInDomain
             // 業務の層が環境の名や dry-run の印で分岐する(#1906 — 責務の境界の違反)。
             | ProjectRule::EnvironmentBranch
             // 決して当たらない match の節(#2036 — 黙って既定の枝に倒れる誤り)。
@@ -516,6 +523,7 @@ impl ProjectRule {
             | ProjectRule::ServiceBoundary
             | ProjectRule::ServiceDependency
             | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::LowerLayerInDomain
             | ProjectRule::PlacedDependency
             // 呼びを他の file の定義まで辿る・repo 全体の名や型や推論を引く: 生の副作用の経由・class の外の基底・失敗の型・
             // defk の名・effect の推論・handler の引数の class の索引・.pyi の隣の .hy。
@@ -637,6 +645,7 @@ impl ProjectRule {
             | ProjectRule::RawSideEffectVia
             | ProjectRule::WorldHandlerNamedOutsideList
             | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::LowerLayerInDomain
             // 置き場(DOEFF115 は 1 file ではその file に出す — PlaceScope::Single)。
             | ProjectRule::UndeclaredPlace
             | ProjectRule::UndeclaredDirectory
@@ -707,7 +716,7 @@ impl ProjectRule {
     /// 別の表で通せては穴が残る(agora-redesign #3405・利用者 2026-10-04「おなじ穴が二度とあかないように」)。DOEFF207・208・209 も下げない —
     /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209 = agora-redesign #3834)。
     pub fn lowered_by_registry(self) -> bool {
-        !matches!(self, ProjectRule::IntentFakedInVerification | ProjectRule::SystemAccessUnwritten | ProjectRule::RecordChangeWakesJob | ProjectRule::PollingOnTimer)
+        !matches!(self, ProjectRule::IntentFakedInVerification | ProjectRule::SystemAccessUnwritten | ProjectRule::RecordChangeWakesJob | ProjectRule::PollingOnTimer | ProjectRule::LowerLayerInDomain)
     }
 
     /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
@@ -770,6 +779,7 @@ impl ProjectRule {
             | ProjectRule::ServiceDependency
             | ProjectRule::PlacedDependency
             | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::LowerLayerInDomain
             | ProjectRule::EnvironmentBranch
             | ProjectRule::MatchFieldHyphen
             | ProjectRule::WireInWireFreeLayer
@@ -874,6 +884,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "defk を素で呼んで答えに使う",
             ProjectRule::EffectsDisagreeWithInference => ":effects の宣言が推論と合わない",
             ProjectRule::TranslationEmitsIntent => "翻訳の handler が業務の intent を出す",
+            ProjectRule::LowerLayerInDomain => "業務の層が下の層の効果か handler を直に使う",
             ProjectRule::EnvironmentBranch => "業務の層が環境の名や dry-run の印で分岐する",
             ProjectRule::MatchFieldHyphen => "match の class pattern の欄の名に - が在る(決して当たらない)",
             ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層に defwire が在る",
@@ -925,6 +936,7 @@ impl ProjectRule {
             | ProjectRule::LayerForbiddenModule
             | ProjectRule::LayerTypesOnly
             | ProjectRule::TranslationEmitsIntent
+            | ProjectRule::LowerLayerInDomain
             | ProjectRule::EnvironmentBranch
             | ProjectRule::MatchFieldHyphen
             | ProjectRule::WireInWireFreeLayer
@@ -1035,6 +1047,7 @@ impl ProjectRule {
             ProjectRule::DefkCalledBare => "defk Called Bare",
             ProjectRule::EffectsDisagreeWithInference => "Effects Disagree With Inference",
             ProjectRule::TranslationEmitsIntent => "Translation Emits Intent",
+            ProjectRule::LowerLayerInDomain => "Lower Layer In Domain",
             ProjectRule::EnvironmentBranch => "Environment Branch In Business Code",
             ProjectRule::MatchFieldHyphen => "Hyphenated Field In Match Class Pattern",
             ProjectRule::WireInWireFreeLayer => "Wire Type In Wire-Free Layer",
@@ -1150,6 +1163,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
+            ProjectRule::LowerLayerInDomain => "記録の service の生の操作(下の層の効果 — architecture.hy の :business-fakes の :lower-layer-modules)を読み書きするのは handler(翻訳の層・土台の層)の仕事 — 業務の層(設定の translation_effects.domain_layers・既定 core・intent)の定義は、その効果を出さず(defk の呼びを辿って届く形も)、その module の package の handler を with_handlers で被せず、ドメインの効果だけを出す(利用者 2026-10-07 11:0x・agora-redesign #3885)",
             ProjectRule::EnvironmentBranch => "業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義は、環境の名の値(:values — production・emulated …)と比べず(=・!=・is・is-not・in・not-in の引数の文字列の literal と、match の節の型)、dry-run の印(:flags)で分岐しない(if・when・unless・cond の条件と match の主語の中の記号)— 環境の違いは handler の組の差し替えだけで表す(業務の層は環境を知らない)",
             ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層(architecture.hy の層の :wire-free True)に defwire を置かない — wire の型(欄名の対応 :names を持つ宣言)と parse / dump は翻訳の層(protocol)に置き、この層は欄名を持たない型(defrecord)だけを持つ",
             ProjectRule::BareMapInWireFreeLayer => "値を型だけで渡す層(:wire-free True)の defk・defn・deff の :pre / :post と defclass・defrecord の欄の型と Python の class の欄の注記に、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonBody・JsonObject・OpaqueJson・FrozenMap — 中身の型の在る写像も)と中身の型の無い組・列(tuple・list)を書かない — データは型(defrecord)か、キー → 値の関数・効果で受け渡す",
@@ -1232,6 +1246,7 @@ impl ProjectRule {
             ProjectRule::WorldHandlerMisplaced => "定義を foundation の層(architecture.hy の :foundation の dir)へ移すか、名簿の綴り(module:名)を実物に合わせる — 要らなくなった定義なら名簿から外す",
             ProjectRule::WorldHandlerNamedOutsideList => "名簿の定義(例 with-agora-process)の下で本体を走らせ、自分では実 I/O の handler を被せない — 新しく外の世界に触れる所が要るなら、その定義を foundation の層に置いて名簿に載せる",
             ProjectRule::TranslationEmitsIntent => "intent を出す業務の流れは層 core の program に置き、翻訳の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計 …)へ出し直すだけにする — 経由した defk が intent を出すなら、その defk を呼ばずに汎用の effect を直に使う",
+            ProjectRule::LowerLayerInDomain => "業務の層にはドメインの効果(層 intent の型)を置いて出し、その効果を記録の service の生の操作へ言い換えるのは翻訳の層の handler にする — 生の効果の handler を被せる所(合図の源・記録の client)は組み立ての層(entry)の handler の列へ移す",
             ProjectRule::EnvironmentBranch => "環境で変わる振る舞いは effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない",
             ProjectRule::WireInWireFreeLayer => "defwire の宣言を翻訳の層(protocol)へ移し、この層には欄名を持たない defrecord を置いて、protocol が wire の型から読んで渡す",
             ProjectRule::BareMapInWireFreeLayer => "写像は欄の名前と型を持つ defrecord にするか、データを引くための写像(索引・表)はキー → 値の関数か効果(例 (ReadRow table key))にする — 写像を組むのが目的の綴りは翻訳の層(protocol)の 1 点に置く",
@@ -1315,6 +1330,7 @@ mod tests {
         ("DOEFF126", RuleFamily::Definition),
         ("DOEFF127", RuleFamily::Definition),
         ("DOEFF130", RuleFamily::Layer),
+        ("DOEFF174", RuleFamily::Layer),
         ("DOEFF168", RuleFamily::Layer),
         ("DOEFF169", RuleFamily::Layer),
         ("DOEFF170", RuleFamily::Layer),

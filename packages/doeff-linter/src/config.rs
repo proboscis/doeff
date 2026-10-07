@@ -232,11 +232,20 @@ impl Config {
             };
             let handler_layers = resolve(&section.handler_layers, "handler_layers");
             let intent_layers = resolve(&section.intent_layers, "intent_layers");
+            // DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り。書かなければ既定の名のうち宣言に在る層だけ(DOEFF130 を止めない)。
+            let domain_layers = match &section.domain_layers {
+                Some(list) => resolve(list, "domain_layers"),
+                None => crate::project::settings::DEFAULT_DOMAIN_LAYERS
+                    .iter()
+                    .filter_map(|name| names.iter().position(|n| n == name).map(crate::project::layers::LayerId))
+                    .collect(),
+            };
             if explicit && !unknown.is_empty() {
                 return Err(unknown);
             }
             if unknown.is_empty() && !handler_layers.is_empty() && !intent_layers.is_empty() {
-                settings.translation = Some(crate::project::settings::TranslationSettings { handler_layers, intent_layers, max_depth: section.max_depth });
+                settings.translation =
+                    Some(crate::project::settings::TranslationSettings { handler_layers, intent_layers, max_depth: section.max_depth, domain_layers });
             }
         }
         if let Some(section) = &self.semantic {

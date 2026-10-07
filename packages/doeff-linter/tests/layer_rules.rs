@@ -6007,3 +6007,146 @@ fn without_a_declaration_or_a_reason_the_definition_rule_still_hits() {
         report
     );
 }
+
+/// DOEFF174 の見本の repo — 層 core・intent・protocol・foundation の service billing と shared。`lower_layer` = architecture.hy の
+/// :business-fakes に :lower-layer-modules を書くか(書かない repo では判じない)。
+fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let declared = if lower_layer { " :lower-layer-modules [\"doeff_records.effects\"]" } else { "" };
+    std::fs::write(
+        dir.path().join("architecture.hy"),
+        format!(
+            r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment program type])
+           (layer intent :roles [intent type])
+           (layer protocol :roles [protocol])
+           (layer foundation :roles [foundation])]
+  :foundation foundation
+  :business-fakes {{:simulation ["app/sim/**"] :tests ["**/tests/**"] :production ["app/**"] :business-modules ["app.billing"]{}}})
+(defservice billing "請求" {{:depends-on [shared] :layers [core intent protocol]}})
+(defservice shared "共有" {{:layers [core]}})
+"#,
+            declared
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF174\"]\n").unwrap();
+    let files = [
+        (
+            // 当たらない: intent の層が値の型(ChangedRow・Row・RowType)を import して使う。
+            "app/billing/intent/orders.hy",
+            "(import doeff_records.event_source [ChangedRow])\n(import doeff_records.values [Row])\n(import doeff_records.typed [RowType])\n\
+             (defclass ReadOrder [])\n(defclass OrderMoved [] (setv #^ ChangedRow changed None) (setv #^ RowType kind None))\n",
+        ),
+        (
+            // shared の core の defk が生の効果を出す(これ自身も業務の層 core の定義なので当たる)。
+            "app/shared/core/rows.hy",
+            "(import doeff_records.effects [ReadRow])\n(defk read-order-row [key] (<- row (ReadRow \"orders\" key)) row)\n",
+        ),
+        (
+            "app/billing/core/flow.hy",
+            r#"(import doeff [with_handlers])
+(import doeff_events [timer-handler])
+(import doeff_records.effects [ReadRow PutRow])
+(import doeff_records.event_source [ChangedRow read-signal-handler])
+(import doeff_records.values [Row])
+(import doeff_records.typed [RowType typed-row read-typed])
+(import app.billing.intent.orders [ReadOrder])
+(import app.shared.core.rows [read-order-row])
+
+;; 当たる: 生の効果を直に出す。
+(defk direct-read [key] (<- row (ReadRow "orders" key)) row)
+
+;; 当たる: shared の defk を呼び、その先が生の効果を出す。
+(defk via-shared [key] (<- row (read-order-row key)) row)
+
+;; 当たる: 合図の源の handler(doeff_records.event_source)を with_handlers で被せる。
+(defk watch [tables body] (with_handlers [(timer-handler) (read-signal-handler tables "billing")] body))
+
+;; 当たる: 同じ package の repo の外の defk(効果を包む read-typed)を実行する。
+(defk typed-read [kind key] (<- row (read-typed kind key)) row)
+
+;; 当たらない: 値の型の使用(ChangedRow・Row・RowType・typed-row は実行しない)。
+(defk changed-key [changed] {:pre [(: changed ChangedRow)]} (. changed key))
+(defk as-typed [#^ RowType kind #^ Row row] (typed-row kind row))
+
+;; 当たらない: ドメインの効果だけを出す。
+(defk domain-read [key] (<- order (ReadOrder)) order)
+
+;; 当たらない(静的に名が決まらない): 答えで受けた handler を値のまま被せる。
+(defk given-handlers [opened body] (with_handlers (list opened.handlers) body))
+"#,
+        ),
+        (
+            // 当たらない: 翻訳の層の handler が生の効果を出し、合図の源を被せる。
+            "app/billing/protocol/reads.hy",
+            r#"(import doeff [with_handlers])
+(import doeff_records.effects [ReadRow])
+(import doeff_records.event_source [read-signal-handler])
+(import app.billing.intent.orders [ReadOrder])
+(defhandler order-reads
+  (ReadOrder []
+    (<- row (ReadRow "orders" "k"))
+    (resume row)))
+(defk with-signals [tables body] (with_handlers [(read-signal-handler tables "billing")] body))
+"#,
+        ),
+        (
+            // 当たらない: 土台の層が記録の client の handler を被せ、生の効果を出す。
+            "app/foundation/records.hy",
+            "(import doeff [with_handlers])\n(import doeff_records.http_client [http-records-handler])\n(import doeff_records.effects [PutRow])\n\
+             (defk with-records [body] (with_handlers [(http-records-handler \"http://r\")] body))\n(defk put-one [row] (<- (PutRow \"t\" row)))\n",
+        ),
+    ];
+    for (rel, text) in files {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    dir
+}
+
+/// 利用者 2026-10-07 11:0x(agora-redesign #3885): 記録の service の生の操作を使うのは handler(protocol・foundation の層)だけ。業務の層
+/// (core・intent)の定義が :lower-layer-modules の効果を出す(直に・defk を辿って・同じ package の repo の外の defk を実行して)所と、
+/// その package の handler を被せる所は critical。値の型の使用・ドメインの効果・翻訳と土台の層は当たらない。
+#[test]
+fn domain_layers_do_not_use_lower_layer_effects_or_handlers() {
+    let dir = lower_layer_repo(true);
+    let (code, report) = editor(dir.path());
+    assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+    assert!(report["rules"].as_array().unwrap().iter().any(|r| r["rule"] == "DOEFF174" && r["wired"] == true), "{}", report["rules"]);
+    assert_eq!(
+        keys(&report, "DOEFF174"),
+        vec![
+            "app/billing/core/flow.hy::DOEFF174::direct_read::doeff_records.effects.ReadRow",
+            "app/billing/core/flow.hy::DOEFF174::typed_read::doeff_records.typed.read_typed",
+            "app/billing/core/flow.hy::DOEFF174::via_shared::doeff_records.effects.ReadRow",
+            "app/billing/core/flow.hy::DOEFF174::watch::doeff_records.event_source.read_signal_handler",
+            "app/shared/core/rows.hy::DOEFF174::read_order_row::doeff_records.effects.ReadRow",
+        ]
+    );
+    assert_eq!(code, 1);
+    let via = violation(&report, "app/billing/core/flow.hy::DOEFF174::via_shared::doeff_records.effects.ReadRow");
+    assert_eq!(via["level"], "critical", "{}", via);
+    assert!(via["message"].as_str().unwrap().contains("read_order_row を経由して、下の層の効果 ReadRow を出す"), "{}", via["message"]);
+    let handler = violation(&report, "app/billing/core/flow.hy::DOEFF174::watch::doeff_records.event_source.read_signal_handler");
+    assert!(handler["message"].as_str().unwrap().contains("下の層の handler"), "{}", handler["message"]);
+    assert!(!handler["explanation"]["reason"].as_str().unwrap_or("").is_empty(), "{}", handler);
+
+    // 保存前の 1 file の実行(エディタ)でも同じ当たり。
+    let source = std::fs::read_to_string(dir.path().join("app/billing/core/flow.hy")).unwrap();
+    let (_, stdout, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--stdin", "--path", "app/billing/core/flow.hy"], Some(&source));
+    let single: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
+    let whole: Vec<String> = keys(&report, "DOEFF174").into_iter().filter(|k| k.starts_with("app/billing/core/flow.hy")).collect();
+    assert_eq!(keys(&single, "DOEFF174"), whole);
+}
+
+/// :lower-layer-modules を書いていない repo では DOEFF174 を判じない(母集団が空 — 規則の一覧で wired 偽と出す)。
+#[test]
+fn lower_layer_uses_are_not_judged_without_the_declaration() {
+    let dir = lower_layer_repo(false);
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF174").is_empty(), "{:?}", keys(&report, "DOEFF174"));
+    assert!(report["rules"].as_array().unwrap().iter().any(|r| r["rule"] == "DOEFF174" && r["wired"] == false), "{}", report["rules"]);
+}
