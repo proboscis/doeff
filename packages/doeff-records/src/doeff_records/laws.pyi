@@ -173,5 +173,12 @@ def law_watch_tails_match_last_events(harness: LawHarness) -> _Program[list[obje
 
 def law_event_by_key_reads_the_same_event(harness: LawHarness) -> _Program[list[object], object]:
     ...
+SHORT_PAGE_LIMIT: int
+
+def short_page_is_the_end(harness: LawHarness, stream: str, page: Events, limit: int, law: str) -> _Program[list[object], object]:
+    ...
+
+def law_short_page_ends_the_stream(harness: LawHarness) -> _Program[list[object], object]:
+    ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]
