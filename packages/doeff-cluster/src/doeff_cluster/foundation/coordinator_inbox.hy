@@ -26,10 +26,12 @@
 
 (defclass RawRequest []
   "受付が受けた HTTP 要求 1 件のまだ解かない形(method・path・query・JSON を読んだ本文・返事の札・名乗り・相手)。
-   調停ループ(と記録の置き場の Program)へは shared/protocol/inbox.hy の http-requests が Request に解いて渡す。"
+   調停ループ(と記録の置き場の Program)へは shared/protocol/inbox.hy の http-requests が Request に解いて渡す。
+   queued-ms = 列に並んでから取られるまでの ms(RequestInbox.take が取りの刻に札の created から測って書く — 取られる前は 0)。"
   (defn #^ None __init__ [self #^ str method #^ str path #^ dict query #^ object body #^ ReplySlot slot
                           #^ (| str None) actor #^ str peer]
-    (setv self.method method self.path path self.query query self.body body self.slot slot self.actor actor self.peer peer)))
+    (setv self.method method self.path path self.query query self.body body self.slot slot self.actor actor self.peer peer)
+    (setv #^ int self.queued-ms 0)))
 
 
 (defn #^ tuple json-reply [#^ object body]
@@ -164,7 +166,8 @@
 
   (defn #^ list take [self #^ (| float None) timeout #^ int limit]
     "最初の 1 件を timeout 秒まで(None = 期限なし)待ち、その時点で並んでいる生の要求を limit 件まで一緒に取る。起こし(wake)を受けたら、
-     そこまでに取った要求だけを返す(起こしの後ろの要求は次の取りで受ける)。"
+     そこまでに取った要求だけを返す(起こしの後ろの要求は次の取りで受ける)。取った要求には、札を作ってから取りの刻までの ms
+     (queued-ms — 調停ループが前の歩で止まっていた待ち)を書く。札と同じ単調な時計で測る(遅い返事の 1 行と同じ物差し)。"
     (setv self.phase (InboxWaiting (if (is timeout None) None (+ (self.clock) timeout))))
     (try (setv first (.get self.queue :timeout timeout))
          (except [queue.Empty] (setv first WAKE)))
@@ -173,6 +176,10 @@
       (.append batch first)
       (try (setv first (.get-nowait self.queue))
            (except [queue.Empty] (setv first WAKE))))
+    (setv taken (time.monotonic))
+    (for [raw batch]
+      (when (isinstance raw.slot ReplySlot)
+        (setv raw.queued-ms (max 0 (round (* 1000 (- taken raw.slot.created)))))))
     (setv self.phase (InboxBusy (self.clock)))
     batch))
 

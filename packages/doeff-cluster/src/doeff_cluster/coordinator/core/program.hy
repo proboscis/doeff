@@ -33,16 +33,20 @@
 ;;; k8s の Deployment と node の読み(StartKubeReads / CollectKubeReads — 読みは調停ループの外で走り、ループは待たない・#2807)と台数の変更
 ;;; (ScaleDeployment)も effect。I/O は handler の中だけ。
 (require doeff-hy.macros [defk <- val var])
+(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "program"})
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import dataclasses [replace])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import datetime [datetime])
+(import doeff_time [GetTime epoch-ms-of])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-observe scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR ROLLOUT-TICK-MS])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable])
+(import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable HeartbeatBody])
 (import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable StartKubeReads CollectKubeReads
                                                      KubeReadsIdle KubeReadsRunning KubeReadsDone])
 (import doeff_core_effects.effects [slog])
@@ -66,6 +70,78 @@
 ;; coordinator の log には遅れの行が無く、遅れが coordinator の側か網かを分けられなかった。
 (val HEARTBEAT-LAG-LOG "coordinator: heartbeat の返事の遅れ")
 (val HEARTBEAT-LAG-MS 5000)
+;; 区間の名: Inbox = 受付の箱に並んでから取られるまで(前の歩でループが止まっていた待ち — 受付の箱が測る)・Respond = 歩の頭の調停と、
+;; まとまりの要求全部の判断・Rollout = Rollout の歩(k8s の台数の書きを含む — 走らなかった歩は 0)・SaveState = 生存の印と保存(fsync)・
+;; Reply = 返事を置くまで。時刻は heartbeat の在る歩でだけ、要求の判断の後・Rollout の後(走った時)・保存の後・返事の後に読む
+;; (歩の頭の読みは判断の now を兼ねる)。計りだけの読みは GetTime を直に出す(worker の拍の遅れの計りと同じ)。
+
+
+(defrecord StepMarks
+  "heartbeat の在る歩 1 つで読んだ時刻(epoch ms): taken = 要求を取った刻(歩の判断の now)・judged = 要求の判断の後・rolled = Rollout の
+   歩の後(走らなければ judged)・saved = 保存の後・replied = 返事を置き終えた後。"
+  (#^ int taken)
+  (#^ int judged)
+  (#^ int rolled)
+  (#^ int saved)
+  (#^ int replied))
+
+
+(defrecord LagSpan
+  "返事までの区間 1 つ: name = 区間の名・ms = 長さ。"
+  (#^ str name)
+  (#^ int ms))
+
+
+(defrecord HeardBeat
+  "歩で返事を置く heartbeat 1 つ: worker = 送り手の worker の名・queued-ms = 受付の箱に並んでから取られるまでの ms。"
+  (#^ str worker)
+  (#^ int queued-ms))
+
+
+(defrecord HeartbeatLag
+  "heartbeat の返事の遅れの行の欄: elapsed-ms = 受付の箱に並んでから返事を置き終えるまで・slowest = いちばん長い区間の名・
+   slowest-ms = その長さ。"
+  (#^ int elapsed-ms)
+  (#^ str slowest)
+  (#^ int slowest-ms))
+
+
+(defk heartbeat-lag [marks queued-ms]
+  {:pre [(: marks StepMarks) (: queued-ms int)] :post [(: % HeartbeatLag)] :tags {:context "coordinator" :role "judgment"}}
+  "歩で読んだ時刻と、その heartbeat が受付の箱に並んだ ms から、遅れの行の欄(経過と、いちばん長い区間の名と長さ)を導くため。
+   長さが並んだら先の区間を名指す。"
+  (val spans #((LagSpan :name "Inbox" :ms queued-ms)
+               (LagSpan :name "Respond" :ms (- marks.judged marks.taken))
+               (LagSpan :name "Rollout" :ms (- marks.rolled marks.judged))
+               (LagSpan :name "SaveState" :ms (- marks.saved marks.rolled))
+               (LagSpan :name "Reply" :ms (- marks.replied marks.saved))))
+  (val longest (max spans :key (fn [span] span.ms)))
+  (HeartbeatLag :elapsed-ms (+ queued-ms (- marks.replied marks.taken)) :slowest longest.name :slowest-ms longest.ms))
+
+
+(defk lap-ms [measuring]
+  {:pre [(: measuring bool)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
+  "heartbeat の在る歩でだけ、区間の切れ目の時刻(epoch ms)を読むため。measuring が偽なら時刻を読まずに 0(heartbeat の無い歩に
+   時刻の effect を足さない)。"
+  (if measuring
+      (do (<- at datetime (GetTime))
+          (epoch-ms-of at))
+      0))
+
+
+(defk note-heartbeat-lags [heard marks]
+  {:pre [(: heard tuple) (: marks StepMarks)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
+  "歩で返事を置いた heartbeat のうち、受付の箱に並んでから返事を置き終えるまでが HEARTBEAT-LAG-MS を越えた物ごとに、時刻(ISO)・
+   worker の名・かかった ms・いちばん長い区間の名を 1 行で log に出すため(遅れが coordinator の側か網かを分ける材料)。
+   heard = HeardBeat の tuple。答え = 出した行の数。"
+  (var noted 0)
+  (for [beat heard]
+    (when (> (+ beat.queued-ms (- marks.replied marks.taken)) HEARTBEAT-LAG-MS)
+      (<- lag HeartbeatLag (heartbeat-lag marks beat.queued-ms))
+      (<- (slog HEARTBEAT-LAG-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms marks.replied)) :worker beat.worker
+                :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms))
+      (:= noted (+ noted 1))))
+  noted)
 
 
 (defk kube-observations [state now]
@@ -152,16 +228,18 @@
   {:pre [(: state ClusterState) (: request Request) (: now int) (: timing ClusterTiming) (: settled bool)] :post [(: % tuple)]
    :tags {:context "coordinator" :role "program"}}
   ;; 版の変化を待つ読み(GET /watch)でない要求 1 件に答えるため: 判断(api_policy.respond)で次の状態と返事を導き、中の欠陥は log に
-  ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文)。
+  ;; 1 行出して送り手に見せる本文にする。答え = #(次の状態 status 本文 heartbeat の送り手の名か None)— 名は返事の遅れの計り
+  ;; (note-heartbeat-lags)が名指す worker(本文を heartbeat の型に読めた要求だけ)。
   ;; 本文は道の型に解いてから判断に渡す(答え手 = coordinator/protocol/request_bodies — #2445)。
   (<- read-body (readable-body request))
+  (val sender (if (isinstance read-body HeartbeatBody) read-body.name None))
   ;; settled = state が同じ now で調停済み(coordinator-step が拍の頭の tick の答えのままの時に渡す)— 静かな heartbeat の早道の前提(#2655)。
   (<- result tuple (respond state request now timing read-body :settled settled))
   (val body (get result 2))
   (if (isinstance body Fault)
       (do (<- fault-body ErrorReply (fault-reply body))
-          #((get result 0) (get result 1) fault-body))
-      result))
+          #((get result 0) (get result 1) fault-body sender))
+      #(#* result sender)))
 
 
 (defk watch-answer-json [answer]
@@ -212,6 +290,8 @@
   (var next tick-answer)
   (var replies #())
   (var waiting watchers)
+  ;; 返事を置く heartbeat(HeardBeat の tuple)— 返事の遅れの計り(note-heartbeat-lags)の相手。
+  (var heard #())
   (for [request batch]
     (<- watch (| Watcher WatchRefusal None) (watch-of request now timing))
     (match watch
@@ -220,17 +300,30 @@
       ;; 状態が歩の頭の tick の答えのままなら、同じ now で調停済み(前の要求が調停を通らずに状態を変えていない)。
       _ (do (<- answered tuple (request-reply next request now timing (is next tick-answer)))
             (:= next (get answered 0))
-            (:= replies (+ replies #(#(request (get answered 1) (get answered 2))))))))
+            (:= replies (+ replies #(#(request (get answered 1) (get answered 2)))))
+            (val sender (get answered 3))
+            (when (is-not sender None)
+              (:= heard (+ heard #((HeardBeat :worker sender :queued-ms request.queued-ms))))))))
+  ;; 返事の遅れの計り: heartbeat の在る歩でだけ区間の切れ目の時刻を読む(区間の名は HEARTBEAT-LAG-MS の註)。
+  (val measuring (bool heard))
+  (<- judged-ms int (lap-ms measuring))
+  (var rolled-ms judged-ms)
   (when (>= (- now next.rollout-tick-ms) ROLLOUT-TICK-MS)
     (<- ticked ClusterState (rollout-tick next timing naming now))
-    (:= next ticked))
+    (:= next ticked)
+    (<- rolled-at int (lap-ms measuring))
+    (:= rolled-ms rolled-at))
   (<- marked ClusterState (mark-alive next now))
   (:= next marked)
   (<- (SaveState state next))
+  (<- saved-ms int (lap-ms measuring))
   ;; worker の生死の出来事は保存の後に出す(#3864)。
   (<- (announced-aside (! (liveness-moves state next timing))))
   (for [#(request status body) replies]
     (<- (Reply request status body)))
+  (when measuring
+    (<- replied-ms int (lap-ms measuring))
+    (<- (note-heartbeat-lags heard (StepMarks :taken now :judged judged-ms :rolled rolled-ms :saved saved-ms :replied replied-ms))))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。
   (var kept #())
   (for [watcher waiting]
