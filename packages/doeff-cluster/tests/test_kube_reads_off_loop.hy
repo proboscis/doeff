@@ -127,11 +127,12 @@
   (assert (not (! (kept-running got.before got.after))) got))
 
 
-(deftest test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-read-answers
-  ;; 模擬の k8s は、答えない区間の中で始めた node の label の読みを区間の終わりの刻に渡すので、受付の待ちはその刻までに縮む(本番は
-  ;; 読み終えた刻に受付の箱を起こす — #3868 のレビュー)。見張る Deployment が無くても縮む。
+(deftest test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers
+  ;; 模擬の k8s は、答えない区間の中で見張りが伝えた node の物が区間の終わりの刻に変わる(答えない理由 → Node の object)ので、受付の
+  ;; 待ちはその刻までに縮む(本番は見張りが届いた刻に受付の箱を起こす — #3868 のレビュー・#4070)。見張る Deployment が無くても縮む。
   (val kube (KubeMemory {} {"n1" {"zone" "a"}}))
   (setv kube.stalled-until-ms 5000)
-  (.begin kube.batches #("n1") 1000)
-  (<- wait (| float None) (follow-wait kube (MemoryFollows) None 1000))
+  (val follows (MemoryFollows))
+  (.follow-nodes follows kube #("n1") 1000)
+  (<- wait (| float None) (follow-wait kube follows None 1000))
   (assert (= wait 4.0) wait))

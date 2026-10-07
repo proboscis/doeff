@@ -30,8 +30,8 @@
 ;;; (api_policy.respond / tick / plan-rollouts)で 1 件ずつ次の状態と返事を導き、まとまりの変化を 1 回で永続化してから
 ;;; (SaveState — 答え手の protocol が KV の差分に綴り、追記の log に 1 行・fsync 1 回)全員に返事をする(Reply)— group commit。返事を済ませた書き(版の番号を含む)は
 ;;; coordinator が落ちても消えない。永続化に失敗したら返事をせずに落ちる(送り手には失敗として見える)。
-;;; k8s の Deployment の見張り(FollowDeployments — 時間で読みに行かず、変化の出来事で受付の箱が起きる・#3868)と node の label の読み
-;;; (StartKubeReads / CollectKubeReads — 読みは調停ループの外で走り、ループは待たない・#2807)と台数の変更(ScaleDeployment)も effect。
+;;; k8s の Deployment と Node の見張り(FollowDeployments・FollowNodes — 時間で読みに行かず、変化の出来事で受付の箱が起きる・#3868・
+;;; #4070)と台数の変更(ScaleDeployment)も effect。
 ;;; I/O は handler の中だけ。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -43,14 +43,13 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
-                                                       DeploymentUnreadable])
+                                                       DeploymentUnreadable NodeLabelsUnreadable])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
-(import doeff_cluster.coordinator.core.cluster_policy [nodes-to-read with-derived-capabilities])
+(import doeff_cluster.coordinator.core.cluster_policy [nodes-to-follow with-derived-capabilities])
 (import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-follow scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable HeartbeatBody])
-(import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments StartKubeReads
-                                                     CollectKubeReads KubeReadsIdle KubeReadsRunning KubeReadsDone])
+(import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.scheduler [Spawn])
 (import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
@@ -62,8 +61,6 @@
 
 ;; --- 調停ループ(Program) -------------------------------------------------------------
 
-;; node の label の読みが始めてからこの ms 終わらなければ、名指しの 1 行を出す(1 つの読みにつき 1 度 — #2807)。
-(val KUBE-READS-NAMED-MS 10000)
 ;; heartbeat の返事の遅れの行の名と閾(2026-10-07 — 名 + 欄 at = 返事を置き終えた時刻(ISO)・worker = 送り手の worker の名・
 ;; elapsed-ms = 受付の箱に並んでから返事を置き終えるまでの ms・slowest = いちばん長かった区間の名・slowest-ms = その区間の ms)。
 ;; 閾は worker の拍の遅れの線(worker/core/program の TICK-LAG-MS)と同じ 5 秒で、生死の lease(10 秒)の手前で名指す。
@@ -162,23 +159,17 @@
 
 (defk node-observations [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "program"}}
-  "worker の置かれた node の label の読みを、調停ループを止めずに進めるため(#2807): 走っていなければ古い観測の node の読みを始め、
-   待たずに受け取る。答え = 観測の表への書き(終わった読みの分・まだなら空 — 最後に読めた観測のまま。読み終えた時に受付の箱が起きる・
-   #3868)。読みが KUBE-READS-NAMED-MS を超えた初回は名指しの 1 行を出す。届かない・読めない観測は読めなかった観測になる(その node の
-   worker は前に導いた能力を保つ)。読む node が無い歩は k8s に触らない(k8s の答え手を持たない組でも調停ループは回る)。読みの途中の
-   node は観測が古いままなので次の歩も読む物に残り、受け取りは途切れない。"
-  (val nodes (tuple (nodes-to-read state now)))
-  (if nodes
-      (do (<- _started bool (StartKubeReads :nodes nodes :started-ms now))
-          (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone)
-              (CollectKubeReads :now-ms now :name-after-ms KUBE-READS-NAMED-MS))
-          (when (and (isinstance collected KubeReadsRunning) collected.overdue)
-            (<- (slog (.format "coordinator: k8s の node の label の読みが {} 秒答えない — 最後に読めた観測で判断する"
-                               (// (- now collected.started-ms) 1000)))))
-          (if (isinstance collected KubeReadsDone)
-              collected.nodes
-              #()))
-      #()))
+  "worker の置かれた node(cluster_policy.nodes-to-follow)を見張り、前の歩の後に見張りが伝えた label の変化を待たずに受け取るため
+   (#4070 — 時間で読みに行かない。変化の刻に見張りが受付の箱を起こす)。答え = 観測の表への書き(変わった node だけ)。見張りが
+   届かない・断られた・消された node は読めなかった観測になり(その node の worker は前に導いた能力を保つ)、その理由を 1 行出す(同じ
+   理由は続けて伝わらないので、変わった時に 1 度)。見張る node が無い歩でも見張りを揃える(worker の居なくなった node の見張りを止める)。"
+  (<- nodes tuple (nodes-to-follow state))
+  (<- writes tuple (FollowNodes :names nodes :now-ms now))
+  (for [write writes]
+    (when (isinstance write.value NodeLabelsUnreadable)
+      (<- (slog (.format "coordinator: k8s の Node {} を見張れない — {}(その node の worker は前に導いた能力を保つ)"
+                         write.key write.value.error)))))
+  writes)
 
 
 (defk rollout-tick [state timing naming now]
