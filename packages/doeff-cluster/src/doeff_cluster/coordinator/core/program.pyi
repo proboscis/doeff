@@ -61,6 +61,8 @@ from doeff_cluster.coordinator.core.wake_policy import after_step as after_step
 from doeff_cluster.coordinator.core.wake_policy import wait_seconds as wait_seconds
 from doeff_cluster.coordinator.core.wake_policy import count_unsettled as count_unsettled
 KUBE_READS_NAMED_MS: int
+HEARTBEAT_LAG_LOG: str
+HEARTBEAT_LAG_MS: int
 
 def kube_observations(state: ClusterState, now: int) -> _Program[KubeReadsDone, object]:
     ...

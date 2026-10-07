@@ -39,6 +39,7 @@ class Request:
     slot: object = None
     actor: str | None = None
     peer: str = ""
+    queued_ms: int = 0
 
 class BodyInvalid(ValueError): ...
 
