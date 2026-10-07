@@ -29,7 +29,7 @@ class InboxQueue(Protocol):
 class StopSignal(Protocol):
     requested: bool = False
 
-def http_request(method: str, path: str, query: dict, body: dict | list | str | int | float | bool | None, slot: ReplyTarget | Promise | None=None, actor: str | None=None, peer: str='') -> _Program[Request, object]:
+def http_request(method: str, path: str, query: dict, body: dict | list | str | int | float | bool | None, slot: ReplyTarget | Promise | None=None, actor: str | None=None, peer: str='', queued_ms: int=0) -> _Program[Request, object]:
     ...
 
 def requests_of(raws: list) -> _Program[tuple[Request, ...], object]:
