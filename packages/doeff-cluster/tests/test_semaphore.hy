@@ -235,7 +235,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict])
-(import doeff_cluster.shared.core.semaphore_handlers [lease-fence])
+(import doeff_cluster.shared.core.semaphore_handlers [lease-fence leases-fence])
 
 (defclass [(dataclass :frozen True)] FakeWrite [EffectBase]
   "柵の向こうの書き(本番では業務の書き先への書き)。"
@@ -335,6 +335,68 @@
         (fenced-worker sa (lease-writer "a" attempts 1 3000 :acquire False))))
   (assert (= (! (times-of attempts "a" "fenced")) [0 1000 2000]))
   (assert (= written [])))
+
+
+;; --- 書きの柵が守る lease の名を書きの effect から決める(#4072 の D-1 — 区画ごとの lease)-----------------------------------
+
+(defclass [(dataclass :frozen True)] KeyedWrite [EffectBase]
+  "区画 key の lease だけで守る書き。"
+  (#^ str key))
+
+(defclass [(dataclass :frozen True)] GatedWrite [EffectBase]
+  "入口の lease と区画 key の lease の両方で守る書き。"
+  (#^ str key))
+
+(defhandler keyed-store
+  ;; 柵を通った書きが届く「書き先」(書けたと答えるだけ)。
+  (KeyedWrite [key]
+    (resume True))
+  (GatedWrite [key]
+    (resume True)))
+
+(defk leases-of-write [write]
+  {:pre [(: write (| KeyedWrite GatedWrite))] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "書きの effect が名指す lease の名の組を答えるため(柵に渡す関数): 区画の書き = その区画の lease・入口つきの書き = 入口の lease と
+   その区画の lease の両方。"
+  (match write
+    (KeyedWrite) #((+ "key-" write.key))
+    (GatedWrite) #("gate" (+ "key-" write.key))))
+
+(defk outcome-of [write]
+  {:pre [(: write (| KeyedWrite GatedWrite))] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "書きを 1 つ試し、柵が通したか(ok)断ったか(fenced)を答えるため。"
+  (try
+    (<- written bool write)
+    "ok"
+    (except [WriteFenced]
+      "fenced")))
+
+(defk writes-under-held-leases []
+  {:pre [] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "区画 a の lease だけを持つ間に 3 つの書きを試し、入口の lease も取った後に入口つきの書きをもう 1 度試すため。"
+  (<- key-a Semaphore (CreateNamedSemaphore "key-a"))
+  (<- (AcquireSemaphore key-a))
+  (<- a-written str (outcome-of (KeyedWrite "a")))
+  (<- b-written str (outcome-of (KeyedWrite "b")))
+  (<- gated-without-gate str (outcome-of (GatedWrite "a")))
+  (<- gate Semaphore (CreateNamedSemaphore "gate"))
+  (<- (AcquireSemaphore gate))
+  (<- gated-with-both str (outcome-of (GatedWrite "a")))
+  #(a-written b-written gated-without-gate gated-with-both))
+
+
+(deftest test-fence-names-the-leases-from-the-write-effect
+  ;; 柵は書きの effect が名指す lease の組の全部を持つ間だけ書きを通す(#4072 の D-1)。process は初め区画 a の lease だけを持つ:
+  ;; 区画 a の書きは通り、区画 b の書きは断られ(b の lease を持たない)、区画 a の入口つきの書きも断られる(入口の lease を持たない)。
+  ;; 入口の lease も取った後は、入口つきの書きが通る。失敗ケース: 柵が固定の名 1 つしか見ないと、区画ごとの書きを分けて守れない。
+  (val clock (SimClock))
+  (val store {})
+  (val session (SemaphoreSession "w" :ttl-seconds 15.0))
+  (<- outcomes (get tuple #(str ...))
+      (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) keyed-store]
+        (with_handlers [(cluster-semaphore session) (leases-fence leases-of-write #(KeyedWrite GatedWrite) 2000)]
+          (writes-under-held-leases))))
+  (assert (= outcomes #("ok" "fenced" "fenced" "ok")) outcomes))
 
 
 (defhandler cut-between [#^ SimClock clock #^ int start #^ int end]
