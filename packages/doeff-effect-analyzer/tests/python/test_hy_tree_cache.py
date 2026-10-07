@@ -286,12 +286,13 @@ def test_a_changed_unused_macro_is_read_from_the_cache(
 
 def test_an_expansion_records_the_macros_it_used_by_their_digest() -> None:
     """The source requires ``defk`` and ``<-`` of ``doeff-hy.macros`` and uses neither: the record an
-    entry is named by and read under (the record the import side keeps) names no macro, and names
-    ``doeff_hy.macros`` as the module that put macros in the table. A source that calls ``defk``
+    entry is named by and read under (the record the import side keeps) names no macro, and no whole
+    require (the names are chosen, so a macro added to the provider never enters the table). A
+    source that calls ``defk``
     names it with the digest of its code's closure."""
     record = pe._expand_hy(SOURCE, "/src/m.hy", "m").macros
     assert record.macros == ()
-    assert record.providers == ("doeff_hy.macros",)
+    assert record.providers == ()  # names chosen in the require: only a whole require is kept
     used = pe._expand_hy(DEFS, "/src/m.hy", "m").macros
     assert [(row.module, row.name) for row in used.macros] == [("doeff_hy.macros", "defk")]
     assert len(used.macros[0].digest) == 64
