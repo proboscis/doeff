@@ -324,42 +324,29 @@ def subscribed_event_handler(
         )
 
     @do
-    def next_one(wanted: tuple[type, ...]) -> "EffectGenerator[object]":
-        """列から ``wanted`` に当たる最初の合図を取り出す。無ければ待ち手として約束で 1 つ待つ。"""
-        found = queue.take(wanted)
-        if not isinstance(found, Empty):
-            return found
-        promise: Promise[object] = yield CreatePromise()
-        queue.add_waiter(wanted, promise)
-        try:
-            came = yield Wait(promise.future)
-        finally:
-            queue.remove_waiter(promise)
-        return came
-
-    @do
     def handler(
         effect: WaitForEventEffect | WaitForEventsEffect | PublishEffect, k: K
     ) -> "EffectGenerator[object]":
         """この購読者の Program の Publish・WaitForEvent・WaitForEvents に、bus と自分の列で答える。effect の型の注記により、ほかの
         effect では VM がこの handler を飛ばす(doeff-vm の _effect_types.py — 本体の全部の effect がここを Pass で通る歩を出さない)。"""
         match effect:
-            case WaitForEventEffect(event_types=wanted):
+            case WaitForEventEffect(event_types=wanted) | WaitForEventsEffect(event_types=wanted):
+                # 2 つの待ちは同じ道を通る(列から 1 つ取る・無ければ約束で 1 つ待つ)。道を下請けの Program に切り出さない — 下請けは待ちの
+                # たびに 1 段多く回り、起こされる待ち 1 回が 3 歩増える(tests/test_wait_steps.py)。違いは答えの形だけ。
                 error = outside_error(wanted)
                 if error is not None:
                     return (yield ResumeThrow(k, error))
-                found = yield next_one(wanted)
-                return (yield Resume(k, found))
-            case WaitForEventsEffect(event_types=wanted):
-                error = outside_error(wanted)
-                if error is not None:
-                    return (yield ResumeThrow(k, error))
-                queued = queue.take_all(wanted)
-                if queued:
-                    return (yield Resume(k, queued))
-                # 列が空なら 1 つ待ち、起きるまでに列に積まれた残りも同じ答えに足す(来た順 — 起こした合図が最初)。
-                first = yield next_one(wanted)
-                return (yield Resume(k, (first, *queue.take_all(wanted))))
+                found = queue.take(wanted)
+                if isinstance(found, Empty):
+                    promise: Promise[object] = yield CreatePromise()
+                    queue.add_waiter(wanted, promise)
+                    try:
+                        found = yield Wait(promise.future)
+                    finally:
+                        queue.remove_waiter(promise)
+                # WaitForEvents は取った 1 つに、その時に列に在る残りを来た順に足して答える(取った 1 つが最初)。
+                many = isinstance(effect, WaitForEventsEffect)
+                return (yield Resume(k, (found, *queue.take_all(wanted)) if many else found))
             case PublishEffect(event=event):
                 for promise in bus.offer(event):
                     yield CompletePromise(promise, event)
