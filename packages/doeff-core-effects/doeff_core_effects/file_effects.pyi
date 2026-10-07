@@ -57,6 +57,7 @@ class ReadText(EffectBase[str | FileFailed]):
 class ReadBytes(EffectBase[bytes | FileFailed]):
     path: str
     limit: int | None = None
+    offset: int = 0
 
 @dataclass(frozen=True)
 class WriteText(EffectBase[FileFailed | None]):

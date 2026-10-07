@@ -173,14 +173,16 @@
       answer)))
 
 
-(defk read-file [path binary limit]
-  {:pre [(: path str) (: binary bool) (: limit (| int None))] :post [(: % (| str bytes FileFailed))]}
-  "file の中身を読むため(text は UTF-8・読めない byte は置き換え・limit = bytes の先頭の limit byte だけ)。"
+(defk read-file [path binary limit offset]
+  {:pre [(: path str) (: binary bool) (: limit (| int None)) (: offset int)] :post [(: % (| str bytes FileFailed))]}
+  "file の中身を読むため(text は UTF-8・読めない byte は置き換え・bytes は位置 offset から先の limit byte だけ — None = 終わりまで)。"
   (try
     (cond
       (not binary) (.read-text (Path path) :encoding "utf-8" :errors "replace")
-      (is limit None) (.read-bytes (Path path))
-      True (with [handle (open path "rb")] (.read handle limit)))
+      (and (is limit None) (= offset 0)) (.read-bytes (Path path))
+      True (with [handle (open path "rb")]
+             (.seek handle offset)
+             (.read handle (if (is limit None) -1 limit))))
     (except [error OSError]
       (<- answer FileFailed (failed path error))
       answer)))
@@ -241,10 +243,10 @@
     (<- answer (stat-path path follow-symlinks))
     (resume answer))
   (ReadText [path]
-    (<- answer (read-file path False None))
+    (<- answer (read-file path False None 0))
     (resume answer))
-  (ReadBytes [path limit]
-    (<- answer (read-file path True limit))
+  (ReadBytes [path limit offset]
+    (<- answer (read-file path True limit offset))
     (resume answer))
   (WriteText [path text mode replace sync]
     (<- answer (write-content path text mode replace sync))

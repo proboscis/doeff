@@ -7,8 +7,9 @@
 ;;; 失敗は値(FileFailed — path と理由)で答える(例外にしない — 呼び手が型で読む)。成功の答えは effect ごと:
 ;;;   StatPath       path の種類・実の path・大きさ・mtime。答え = PathStat(無い path は kind MISSING — 失敗ではない)。follow-symlinks = False は
 ;;;                  symlink を辿らずに kind SYMLINK で答える(os.lstat — 先が壊れていても)
-;;;   ReadText / ReadBytes    file の中身(text は UTF-8・読めない byte は置き換え)。答え = str / bytes。ReadBytes の limit は先頭の limit byte
-;;;                  だけを読む(None = 全部 — 大きな file の頭の 1 行だけが要る読み手のため)
+;;;   ReadText / ReadBytes    file の中身(text は UTF-8・読めない byte は置き換え)。答え = str / bytes。ReadBytes の offset は読み始める
+;;;                  byte の位置(既定 0 — 追記される file を前に読んだ所から先だけ読む読み手のため・agora-redesign #3977。file の終わりより先は
+;;;                  空の bytes)・limit は offset から先の limit byte だけを読む(None = 終わりまで — 大きな file の頭の 1 行だけが要る読み手のため)
 ;;;   WriteText / WriteBytes  file を書く。replace = True は別名に書いてから置き換える(書きかけを読ませない)。mode は書いた後に与える。答え = None
 ;;;   AppendText     file の末尾に足す(無ければ作る)。答え = None
 ;;;   (書きの 3 つの sync = True は、答える前に中身を disk へ落とす(fsync — replace では置き換える前)。返事を済ませた中身が機体の停止で
@@ -92,9 +93,13 @@
 
 
 (defclass [(dataclass :frozen True)] ReadBytes [(get EffectBase (| bytes FileFailed))]
-  "bytes を読む(頭の註)。limit = 先頭の limit byte だけ(None = 全部)。"
+  "bytes を読む(頭の註)。offset = 読み始める byte の位置(0 以上)・limit = offset から先の limit byte だけ(None = 終わりまで)。"
   (#^ str path)
-  (setv #^ (| int None) limit None))
+  (setv #^ (| int None) limit None)
+  (setv #^ int offset 0)
+  (defn #^ None __post-init__ [self]  ; defk にできない: dataclass が作る時に呼ぶ検め(Program を返すと実行されない)
+    (when (or (not (isinstance self.offset int)) (isinstance self.offset bool) (< self.offset 0))
+      (raise (ValueError f"ReadBytes.offset must be an int >= 0, got {self.offset !r}")))))
 
 
 (defclass [(dataclass :frozen True)] WriteText [(get EffectBase (| FileFailed None))]

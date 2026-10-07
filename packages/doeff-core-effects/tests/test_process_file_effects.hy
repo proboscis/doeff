@@ -189,6 +189,35 @@
   (assert (all (gfor a (cut answers 29 None) (isinstance a FileFailed))) (cut answers 29 None)))
 
 
+(defk appended-reads [root]
+  {:pre [(: root str)] :post [(: % Journey)]}
+  "追記される file を、前に読んだ所から先だけ読む筋書き(ReadBytes の offset — 追記を待って末尾を写す読み手のため・agora-redesign #3977)。"
+  (val log (+ root "/s/out.log"))
+  (<- made (MakeDirectory (+ root "/s")))
+  (<- written (WriteBytes log b"abcdef"))
+  (<- after-two (ReadBytes log :offset 2))
+  (<- three-after-two (ReadBytes log :offset 2 :limit 3))
+  (<- at-the-end (ReadBytes log :offset 6))
+  (<- past-the-end (ReadBytes log :offset 99))
+  (<- appended (AppendText log "gh"))
+  (<- the-appended (ReadBytes log :offset 6))
+  (<- missing (ReadBytes (+ root "/s/none.log") :offset 2))
+  (Journey :answers #(made written after-two three-after-two at-the-end past-the-end appended the-appended missing)))
+
+
+(defn #^ None test-a-read-from-an-offset-takes-only-the-bytes-after-it []
+  ;; 位置 offset から先だけを読む(limit はその先の byte 数)。file の終わりより先の位置は空の bytes(失敗ではない)・無い file は FileFailed。
+  ;; 本物と memory の答え手が同じ答えを返す。失敗ケース(前の形): ReadBytes に offset の欄が無く、筋書きを組む所で TypeError。
+  (with [tmp (tempfile.TemporaryDirectory)]
+    (setv root (os.path.realpath tmp))
+    (setv real (on [os-file-handler] (appended-reads root))))
+  (setv memory (on [(state) (memory-file-handler (MemoryFiles :dirs #("/memory-root")))] (appended-reads "/memory-root")))
+  (assert (= (cut real.answers 0 8) #(None None b"cdef" b"cde" b"" b"" None b"gh")) real.answers)
+  (assert (isinstance (get real.answers 8) FileFailed) real.answers)
+  (assert (= (cut memory.answers 0 8) (cut real.answers 0 8)) #(memory.answers real.answers))
+  (assert (isinstance (get memory.answers 8) FileFailed) memory.answers))
+
+
 (defn #^ None test-copy-tree-keeps-symlinks-on-the-real-file-system []
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))
