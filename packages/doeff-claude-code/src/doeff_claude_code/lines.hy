@@ -274,13 +274,23 @@
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
   (setv #^ RequestTiming timing (field :default-factory RequestTiming)))
 
+;; Stop hook が答えを差し戻した時に CLI が手番へ注入する行の本文の頭(実測 CLI 2.1.292・#4020)。
+(val STOP-HOOK-FEEDBACK-HEAD "Stop hook feedback:")
+
+(defrecord StopHookFeedback
+  "Stop hook が手番の答えを差し戻した事実(#4020): CLI は差し戻しの理由を手番へ注入して答え直させる — isSynthetic の user の行で、本文の
+   text の block が STOP-HOOK-FEEDBACK-HEAD で始まる(実測 CLI 2.1.292・旗なしの既定の出力。同じ時に出る system/notification の行
+   key stop-hook-error は印に使わない — 差し戻し以外の hook の誤りでも出るかが分からない)。reason = 頭の後の理由(前後の空白を外す)。
+   この行より前で、手番の最後の道具の結果より後の本文は差し戻された答え(Stop hook は道具を呼ばずに終えた応答の後にだけ走る)。"
+  (#^ str reason))
+
 (defclass [(dataclass :frozen True)] Other []
   "語彙の外の行(名前だけ持つ)。"
   (#^ str type)
   (setv #^ str subtype ""))
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
-                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit TurnResult Other))
+                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback TurnResult Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
   "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語。"
@@ -441,10 +451,14 @@
               :non-text-kinds (tuple (gfor part parts :if (!= (text-at part "type") "text") (text-at part "type")))))
 
 (defn classify-user [#^ dict record]
-  "user の行 → ToolResult(tool_result の block ごとに ToolAnswer)。tool_result の無い行は Other(type = user)。tool_use_id が無い・空の
-   tool_result を 1 つでも持つ行は、名指しの Other(subtype = tool_result_without_id)で断る — どの呼びへの答えか分からない結果を通さない。"
-  (setv results (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result") block)))
+  "user の行 → ToolResult(tool_result の block ごとに ToolAnswer)。isSynthetic の行で本文が STOP-HOOK-FEEDBACK-HEAD で始まる行は
+   StopHookFeedback(#4020)。どちらでもない行は Other(type = user)。tool_use_id が無い・空の tool_result を 1 つでも持つ行は、
+   名指しの Other(subtype = tool_result_without_id)で断る — どの呼びへの答えか分からない結果を通さない。"
+  (setv results (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result") block))
+        said (.join "\n" (gfor block (content-blocks record) :if (= (.get block "type") "text") (text-at block "text"))))
   (cond
+    (and (not results) (is (.get record "isSynthetic") True) (.startswith said STOP-HOOK-FEEDBACK-HEAD))
+    (StopHookFeedback :reason (.strip (cut said (len STOP-HOOK-FEEDBACK-HEAD) None)))
     (not results) (Other :type "user")
     (any (gfor block results (not (text-at block "tool_use_id")))) (Other :type "user" :subtype "tool_result_without_id")
     True (ToolResult :answers (tuple (gfor block results (run (tool-answer-of block)))))))

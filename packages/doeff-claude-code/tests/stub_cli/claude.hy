@@ -30,7 +30,7 @@
 (import uuid)
 
 (.insert sys.path 0 (str (. (Path __file__) (resolve) parent parent)))
-(import scenario_rules [reply-for])
+(import scenario_rules [reply-for REJECTED-ANSWER])
 
 (setv CAPABILITIES ["msg_lifecycle_v1" "interrupt_receipt_v1"])
 ;; CLI の手番 1 回の額(USD — 2 進で割り切れる値にして、累積の差が検の比べで端数を出さないようにする)。
@@ -290,6 +290,14 @@
     (for [record injections]
       (.lifecycle self (.get record "uuid") "started")
       (.append words (get (reply-for (user-text record) (memory-of self.path)) "text")))
+    (when (get rule "hook_feedback")
+      ;; Stop hook が最初の答えを差し戻す(#4020)— 実物(CLI 2.1.292・旗なし)と同じ 3 行: 差し戻される答えの assistant の行 →
+      ;; isSynthetic の user の行(本文「Stop hook feedback:\n<理由>」)→ system/notification(key stop-hook-error)。その後に答え直す。
+      (emit (assistant-line self.session-id [{"type" "text" "text" REJECTED-ANSWER}] FINAL-CALL-USAGE))
+      (emit {"type" "user" "session_id" self.session-id "parent_tool_use_id" None "isSynthetic" True "uuid" (str (uuid.uuid4))
+             "message" {"role" "user" "content" [{"type" "text" "text" (+ "Stop hook feedback:\n" (get rule "hook_feedback"))}]}})
+      (emit {"type" "system" "subtype" "notification" "key" "stop-hook-error" "text" "Stop hook error occurred · ctrl+o to see"
+             "priority" "immediate" "session_id" self.session-id}))
     (.result self (.join " " words) (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))
              (get rule "deltas") (get rule "think_seconds") (> (get rule "tool_seconds") 0))
     (for [ref (+ refs (lfor record injections :if (.get record "uuid") (.get record "uuid")))]

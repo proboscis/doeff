@@ -20,6 +20,10 @@
 ;; 書かせるかの言い方(#3746 (a))。本物の claude は片の数を選べないので、片の数を当てにする検は替え玉の CLI と fake だけに置く。
 (setv THINKING-PIECES-PHRASE "Stream {} thinking pieces.")
 (setv TOOL-INPUT-PIECES-PHRASE "Stream the tool input in {} pieces.")
+;; Stop hook が最初の答えを理由つきで 1 度差し戻す言い方と、差し戻される答えの本文(#4020)。本物の claude で差し戻しを起こすには
+;; Stop hook を置く必要があるので、差し戻しを当てにする検は替え玉の CLI と fake だけに置く。
+(setv HOOK-FEEDBACK-PHRASE "Have the Stop hook send back a first answer with the reason: {}.")
+(setv REJECTED-ANSWER "DRAFT-1")
 
 (defn #^ str remember-prompt [#^ str word]
   (.format "Remember the codeword {}. Reply with exactly: {}" CODEWORD word))
@@ -48,7 +52,8 @@
    \"tool_command\" 道具に走らせる命令の文(「run exactly this command: <命令> .」の命令・無ければ None — 道具の呼びの input の command)
    \"tool_output\" 道具の出力(echo <語> の語・ほかの命令は空 — 道具の結果の content。#3744)
    \"thinking_deltas\" 手番の始めに出す考えている間の差分の片の数(THINKING-PIECES-PHRASE・無ければ 0)
-   \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))}。
+   \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))
+   \"hook_feedback\" Stop hook が最初の答え(REJECTED-ANSWER)を差し戻す理由(HOOK-FEEDBACK-PHRASE・無ければ None — #4020)}。
    memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
@@ -61,6 +66,7 @@
   (setv hooks (re.search r"Run the hooks for (\d+(?:\.\d+)?) seconds first" text))
   (setv thinking-pieces (re.search r"Stream (\d+) thinking pieces" text))
   (setv tool-input-pieces (re.search r"Stream the tool input in (\d+) pieces" text))
+  (setv sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text))
   (setv word
         (cond
           (in "What was the codeword" text)
@@ -79,6 +85,7 @@
    "tool_output" (if echoed (.group echoed 1) "")
    "thinking_deltas" (if thinking-pieces (int (.group thinking-pieces 1)) 0)
    "tool_input_deltas" (if tool-input-pieces (int (.group tool-input-pieces 1)) 0)
+   "hook_feedback" (if sent-back (.group sent-back 1) None)
    "deltas" (if streamed (int (.group streamed 1)) 0)
    "think_seconds" (if think (float (.group think 1)) 0.0)
    "hook_seconds" (if hooks (float (.group hooks 1)) 0.0)})

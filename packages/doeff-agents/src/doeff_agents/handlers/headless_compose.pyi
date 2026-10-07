@@ -14,6 +14,7 @@ from doeff_claude_code.handler import ClaudeCodeHost as ClaudeCodeHost
 from doeff_claude_code.handler import claude_code_handler as claude_code_handler
 from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
 from doeff_claude_code.fake import FakeReply as FakeReply
+from doeff_claude_code.fake import StopHookRejection as StopHookRejection
 from doeff_claude_code.fake import fake_claude_code_handler as fake_claude_code_handler
 from doeff_claude_code.lines import Usage as Usage
 from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
