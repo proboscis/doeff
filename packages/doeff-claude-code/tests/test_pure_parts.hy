@@ -266,6 +266,27 @@
   (with [(pytest.raises ValueError)]
     (PartialMessage :delta lines.DeltaKind.TEXT :thinking-delta "hmm")))
 
+(deftest test-a-tool-call-start-and-its-input-pieces-are-read
+  ;; #3974 の 3(利用者 2026-10-07 14:2x「呼んでいると分からないといけない」): 担当が道具の命令を書いている間を画面に出す
+  ;; ため、content_block_start の tool_use は呼びの id と道具の名(tool-start)を、input_json_delta は命令の切れ端(partial_json — JSON の
+  ;; 途中で単独では読めない文字列)を運ぶ。前は種類 TOOL-INPUT だけで中身を落とし、道具の名も読まなかったので赤。
+  (val start (classify-record {"type" "stream_event"
+                               "event" {"type" "content_block_start" "index" 1
+                                        "content_block" {"type" "tool_use" "id" "toolu_a" "name" "Bash" "input" {}}}}))
+  (assert (= #(start.delta start.tool-start start.tool-input-delta) #(lines.DeltaKind.NO-DELTA (ToolCall "toolu_a" "Bash") ""))
+          (repr start))
+  (val piece (classify-record {"type" "stream_event"
+                               "event" {"type" "content_block_delta" "index" 1
+                                        "delta" {"type" "input_json_delta" "partial_json" "{\"comm"}}}))
+  (assert (= #(piece.delta piece.tool-input-delta piece.tool-start) #(lines.DeltaKind.TOOL-INPUT "{\"comm" None)) (repr piece))
+  ;; 本文の block の始まりは道具の始まりではない
+  (val text-start (classify-record {"type" "stream_event"
+                                    "event" {"type" "content_block_start" "index" 0 "content_block" {"type" "text" "text" ""}}}))
+  (assert (is text-start.tool-start None) (repr text-start))
+  ;; 命令の切れ端は種類 TOOL-INPUT の行だけが持つ
+  (with [(pytest.raises ValueError)]
+    (PartialMessage :delta lines.DeltaKind.TEXT :tool-input-delta "{")))
+
 (deftest test-line-classification
   (assert (= (classify-record {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]
                                "model" "m" "permissionMode" "default" "mcp_servers" [{"name" "s"}]})

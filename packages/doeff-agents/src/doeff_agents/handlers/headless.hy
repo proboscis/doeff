@@ -47,7 +47,8 @@
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
-  AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
+  AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
+  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
@@ -151,6 +152,12 @@
     ;; 考えている間の差分は、中身が空でも片ごとに 1 つ出す — 本文の前に「考えている」と分かる合図(agora-redesign #3789)。
     (and (isinstance kind PartialMessage) (= kind.delta DeltaKind.THINKING))
       [(fn [seq] (AgentThinkingDeltaEvent :seq seq :at at :text kind.thinking-delta))]
+    ;; 道具の呼びの始まりと、命令を書いている間の差分(片ごと — 中身が空でも出す)。上の層が「担当は <道具> の命令を書いている」と
+    ;; 出すため(agora-redesign #3974 の 3)。
+    (and (isinstance kind PartialMessage) (is-not kind.tool-start None))
+      [(fn [seq] (AgentToolCallStartedEvent :seq seq :at at :id kind.tool-start.id :name kind.tool-start.name))]
+    (and (isinstance kind PartialMessage) (= kind.delta DeltaKind.TOOL-INPUT))
+      [(fn [seq] (AgentToolInputDeltaEvent :seq seq :at at :text kind.tool-input-delta))]
     (isinstance kind ToolResult)
       [(fn [seq] (AgentToolResultEvent :seq seq :at at :answers kind.answers))]
     (isinstance kind InputFate)

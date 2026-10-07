@@ -230,7 +230,7 @@
       ;; #3746 (a))。
       (when (> (get rule "tool_input_deltas") 0)
         (stream-block self.session-id {"type" "tool_use" "id" "toolu_stub" "name" "Bash" "input" {}}
-                      {"type" "input_json_delta" "partial_json" ""} (get rule "tool_input_deltas")))
+                      {"type" "input_json_delta" "partial_json" "{\"c"} (get rule "tool_input_deltas")))
       (emit (assistant-line self.session-id [{"type" "tool_use" "id" "toolu_stub" "name" "Bash"
                                                "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]
                             TOOL-CALL-USAGE))
