@@ -85,6 +85,9 @@
 (import doeff_core_effects.warm-effects [ForkFromWarm PollWarmChild SignalWarmChild])
 (import doeff_core_effects.os-warm-process [os-warm-process-handler])
 (import doeff_core_effects.scripted-warm-process [scripted-warm-process-handler])
+(import doeff_core_effects.process-effects [AwaitProcessExit])
+(import doeff_core_effects.warm-effects [AwaitWarmChildExit])
+(import doeff_core_effects.pidfd-exit [pidfd-exit-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
 (import doeff_core_effects.scheduler-channel [scheduler-channel-handler])
 (import doeff_core_effects.compute-effects [Compute])
@@ -307,6 +310,15 @@
   :handlers [os-warm-process-handler scripted-warm-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "os-warm-process-handler(本物 — 待ちの子の unix socket に頼み、/proc の start-ticks で照らして読む・送る)と scripted-warm-process-handler(I/O なし・台本)が 3 effect 全てに答える。頼んだ子は頼み手の子ではないので、子 process の語彙(doeff-process)の PollProcess では終わりを読めない — この語彙で読む。")
+
+
+(defdomain doeff-process-exit
+  :title "子の終わりの待ちの語彙 — 立てた子・頼んだ子が終わるまで待つ"
+  :effects [AwaitProcessExit AwaitWarmChildExit]
+  :handlers [pidfd-exit-handler]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "pidfd-exit-handler(本物 — 子の pidfd の読みを event loop で待つ)が 2 effect 全てに答える。周期で問い直さずに終わりで起きる待ち
+         (agora-redesign #3871 の単位 1)。終わりを 1 度だけ読む PollProcess・PollWarmChild は、それぞれ doeff-process・doeff-warm-process の語彙。")
 
 
 (defdomain doeff-channel
