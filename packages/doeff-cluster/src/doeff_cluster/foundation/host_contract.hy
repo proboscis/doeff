@@ -101,13 +101,3 @@
   (Ask [key]
     :when (and (isinstance key str) (in key os.environ))
     (resume (get os.environ key))))
-
-
-(defhandler environ-reader [#^ (get Mapping #(str str)) [environ os.environ]]
-  {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 移し替えの間だけ残る旧い名(#1536): 引数なしなら os.environ・値の表を渡すとその表だけから答える。doeff の main を先端で読む
-  ;; 使い手(上に載る系の main を doeff の main の venv で走らせる入口)が新しい 2 つの名へ移るまで消さない — 使い手を先に替え、
-  ;; 最後に古い形を消す順。使い手の付け替えが main に入った後の doeff の変更で、この定義と目録の _not_listed の行を消す。
-  (Ask [key]
-    :when (and (isinstance key str) (in key environ))
-    (resume (get environ key))))

@@ -1,7 +1,6 @@
 {
  "_about": "doeff の実 I/O の handler の目録(agora-redesign #1209)— 被せると外の世界(HTTP・file・子 process・実時計・socket・DB・環境変数・thread・cluster の coordinator)に触れる handler と組み立て。linter の DOEFF131・DOEFF133 の相手で、:world-handlers の :wraps はここに在る物だけ。載せない物: 値から答えるだけ(memory・fake・sim・再生)・effect を出し直すだけの翻訳・例外の型。",
  "_not_listed": {
-  "doeff_cluster.foundation.host_contract:environ-reader": "引数に値の表を渡すと純粋(模擬の宿がそう使う)— 既定の引数だけが os.environ。載せると模擬の宿の名指しが DOEFF131 の誤検出になる",
   "doeff_core_effects.handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
   "doeff_cluster.worker.protocol.status_file:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler(#2466)",
   "doeff_cluster.record_store.protocol.record_files:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store.entry.main)",

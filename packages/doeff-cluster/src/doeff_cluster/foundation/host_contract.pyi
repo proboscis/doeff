@@ -44,6 +44,3 @@ def environ_table_reader(environ: Mapping[str, str]) -> _Handler:
 
 def os_environ_reader() -> _Handler:
     ...
-
-def environ_reader(environ: Mapping[str, str]=...) -> _Handler:
-    ...
