@@ -21,7 +21,8 @@
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [ExpectAbsent Unreachable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
+                               ReadEventByKey])
 (import doeff_records.faults [SetStoreOutage])
 (import doeff_records.laws [LAW-SCHEMA LawHarness MAKER as-writer])
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -37,7 +38,7 @@
 (val PATIENCE (RequestPatience :seconds 60.0))
 (val SHORT-PATIENCE (RequestPatience :seconds 10.0))
 ;; 要求と答えの公開 effect の和(止まりの間に撃つ要求の型)。
-(val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd))
+(val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent ReadEvents ReadStreamEnd ReadEventByKey))
 
 
 (defk part [id]
@@ -57,7 +58,8 @@
     (PutRows #((RowWrite "parts" #("p8") p8 (ExpectAbsent))))
     (AppendEvent "journal" "stall-k1" {"n" 1})
     (ReadEvents "journal")
-    (ReadStreamEnd "journal")))
+    (ReadStreamEnd "journal")
+    (ReadEventByKey "journal" "stall-k1")))
 
 
 (defk lifted-after [harness seconds]
