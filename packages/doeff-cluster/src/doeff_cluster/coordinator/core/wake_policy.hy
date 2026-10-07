@@ -12,7 +12,6 @@
 (import doeff_cluster.coordinator.intent.due_model [CoordinatorUnsettled])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
 (import doeff_cluster.coordinator.core.api_policy [tick-due])
-(import doeff_cluster.coordinator.core.cluster_policy [node-reread-due])
 (import doeff_cluster.coordinator.core.resource_policy [readiness-due service-stopped-due])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-targets rollout-phase-due TERMINAL-PHASES])
 (import doeff_cluster.coordinator.core.watch_policy [all-waiting-unchanged lease-full-at])
@@ -25,14 +24,12 @@
 (defk rollout-due [state now timing naming]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming) (: naming ClusterNaming)] :post [(: % (| DueAt DueNow DueNever))]
    :tags {:context "coordinator" :role "judgment"}}
-  "Rollout の歩(coordinator-step の rollout-tick — 毎歩回る)が、状態がこのままで node の label を読む・処理ステージを進める・action を
-   出し得る最初の刻を知るため(#3064)。期限は、node の label の読み直しの刻(node-reread-due)と、終わっていない Rollout ごとの処理
-   ステージの期限(rollout-phase-due)と、その Service の相手の観測が変わる刻(readiness の判定 readiness-due・止まりの判定
-   service-stopped-due)の、now より後の最小。どれも判断が比べに使う期限の値から求める(#1383 の決定の条件 (1))。DueNever = 時刻では
-   変わらない。Deployment の相手の変化は見張りが受付の箱を起こし(#3868)、読みの途中の node の label は読み終えた時に受付の箱が起きる
-   ので、どちらも時刻の期限には入れない(時間で見に行かない)。"
-  (<- nodes (| int None) (node-reread-due state now))
-  (var dues (if (is-not nodes None) #(nodes) #()))
+  "Rollout の歩(coordinator-step の rollout-tick — 毎歩回る)が、状態がこのままで処理ステージを進める・action を出し得る最初の刻を
+   知るため(#3064)。期限は、終わっていない Rollout ごとの処理ステージの期限(rollout-phase-due)と、その Service の相手の観測が変わる刻
+   (readiness の判定 readiness-due・止まりの判定 service-stopped-due)の、now より後の最小。どれも判断が比べに使う期限の値から求める
+   (#1383 の決定の条件 (1))。DueNever = 時刻では変わらない。Deployment の相手の変化(#3868)も node の label の変化(#4070)も見張りが
+   受付の箱を起こすので、時刻の期限には入れない(時間で見に行かない)。"
+  (var dues #())
   (for [#(_ r) (sorted (.items state.rollouts))]
     ;; 処理ステージの期限と失敗した action の出し直しの刻。終わった Rollout も、台数の持ち主の印の annotation の出し直しの刻を持つ。
     (<- phase (| int None) (rollout-phase-due r.spec r.status now))

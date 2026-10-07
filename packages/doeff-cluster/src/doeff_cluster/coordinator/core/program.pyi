@@ -25,9 +25,10 @@ from doeff_cluster.coordinator.intent.cluster_model import WatchRefusal as Watch
 from doeff_cluster.coordinator.intent.cluster_model import WatchAnswer as WatchAnswer
 from doeff_cluster.coordinator.intent.cluster_model import WatchStep as WatchStep
 from doeff_cluster.coordinator.intent.cluster_model import DeploymentUnreadable as DeploymentUnreadable
+from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 from doeff_cluster.coordinator.core.watch_policy import watch_of as watch_of
 from doeff_cluster.coordinator.core.watch_policy import settle_watch as settle_watch
-from doeff_cluster.coordinator.core.cluster_policy import nodes_to_read as nodes_to_read
+from doeff_cluster.coordinator.core.cluster_policy import nodes_to_follow as nodes_to_follow
 from doeff_cluster.coordinator.core.cluster_policy import with_derived_capabilities as with_derived_capabilities
 from doeff_cluster.coordinator.core.api_policy import respond as respond
 from doeff_cluster.coordinator.core.api_policy import tick as tick
@@ -46,11 +47,7 @@ from doeff_cluster.coordinator.intent.kube_model import ScaleDeployment as Scale
 from doeff_cluster.coordinator.intent.kube_model import AnnotateDeployment as AnnotateDeployment
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
 from doeff_cluster.coordinator.intent.kube_model import FollowDeployments as FollowDeployments
-from doeff_cluster.coordinator.intent.kube_model import StartKubeReads as StartKubeReads
-from doeff_cluster.coordinator.intent.kube_model import CollectKubeReads as CollectKubeReads
-from doeff_cluster.coordinator.intent.kube_model import KubeReadsIdle as KubeReadsIdle
-from doeff_cluster.coordinator.intent.kube_model import KubeReadsRunning as KubeReadsRunning
-from doeff_cluster.coordinator.intent.kube_model import KubeReadsDone as KubeReadsDone
+from doeff_cluster.coordinator.intent.kube_model import FollowNodes as FollowNodes
 from doeff_core_effects.effects import slog as slog
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_events import Publish as Publish
@@ -67,7 +64,6 @@ from doeff_cluster.coordinator.core.wake_policy import next_wake as next_wake
 from doeff_cluster.coordinator.core.wake_policy import after_step as after_step
 from doeff_cluster.coordinator.core.wake_policy import wait_seconds as wait_seconds
 from doeff_cluster.coordinator.core.wake_policy import count_unsettled as count_unsettled
-KUBE_READS_NAMED_MS: int
 HEARTBEAT_LAG_LOG: str
 HEARTBEAT_LAG_MS: int
 

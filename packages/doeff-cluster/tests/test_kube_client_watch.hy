@@ -1,4 +1,5 @@
-;;; foundation/kube_client の KubeClient.follow(Deployment 1 つを list の後の watch で見張る — #3868)と in-background の検。
+;;; foundation/kube_client の KubeClient.follow(Deployment 1 つを list の後の watch で見張る — #3868)と follow-node(Node 1 つを同じ形で
+;;; 見張る — #4070)の検。
 ;;;
 ;;; 本物の HTTP は使わない: httpx.MockTransport の後ろに模擬の k8s の API(FakeKube)を置く。FakeKube は受けた要求を順に記録し、用意した
 ;;; 答えを要求ごとに 1 つずつ順に返す(使い切った後は、閉じられるまで何も渡さない開いたままの watch の答え)。watch の答えの本文(Lines)は
@@ -7,7 +8,7 @@
 ;;; follow の答えは別の thread から来るので、受けた物(Received)は錠の下に記録し、数が揃うのを上限つきで待つ。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import collections.abc [Callable Iterator])
+(import collections.abc [Iterator])
 (import json)
 (import pathlib [Path])
 (import threading)
@@ -21,6 +22,8 @@
 (val NAMESPACE "prod")
 (val NAME "old-beacon")
 (val LIST-PATH "/apis/apps/v1/namespaces/prod/deployments")
+(val NODE "n1")
+(val NODES-PATH "/api/v1/nodes")
 ;; watch の要求の timeoutSeconds(既定と違う値 — 要求に載るかを見る)。
 (val WATCH-SECONDS 120)
 ;; 1 つの検の中で thread の答えを待つ上限の秒(検 1 つは 30 秒以内)。
@@ -34,6 +37,8 @@
 (val DEP-A {"metadata" {"name" NAME "namespace" NAMESPACE "resourceVersion" "11" "generation" 1} "spec" {"replicas" 1}})
 (val DEP-B {"metadata" {"name" NAME "namespace" NAMESPACE "resourceVersion" "12" "generation" 2} "spec" {"replicas" 2}})
 (val DEP-C {"metadata" {"name" NAME "namespace" NAMESPACE "resourceVersion" "13" "generation" 3} "spec" {"replicas" 3}})
+(val NODE-A {"metadata" {"name" NODE "resourceVersion" "31" "labels" {"doeff.dev/company-machine" "true"}}})
+(val NODE-B {"metadata" {"name" NODE "resourceVersion" "32" "labels" {}}})
 
 
 (defclass Lines [httpx.SyncByteStream]
@@ -101,22 +106,6 @@
     "on-body が bodies 回以上・on-error が errors 回以上来るまで待つ(上限 WAIT-SECONDS)。揃ったら真。"
     (with [self.changed]
       (.wait-for self.changed (fn [] (and (>= (len self.bodies) bodies) (>= (len self.errors) errors))) WAIT-SECONDS))))
-
-
-(defclass ThenProbe []
-  "in-background の then の検め: then が呼ばれた時に、in-background の答え(終わったかを答える関数)が何を答えたかを記録する。答えの関数は
-   in-background が返った後に置かれるので、then はそれが置かれるのを待ってから呼ぶ。"
-  (defn #^ None __init__ [self]
-    (setv self.finished None self.placed (threading.Event) self.called (threading.Event) self.seen None))
-
-  (defn #^ None place [self #^ (get Callable #([] bool)) finished]
-    (setv self.finished finished)
-    (.set self.placed))
-
-  (defn #^ None then [self]
-    (.wait self.placed WAIT-SECONDS)
-    (setv self.seen (self.finished))
-    (.set self.called)))
 
 
 (defk kube-client [sa-dir kube retry-seconds]
@@ -302,16 +291,56 @@
   (assert (= received.errors #()) received.errors))
 
 
-(deftest test-in-background-calls-then-after-the-finished-mark [tmp-path]
-  (val kube (FakeKube #()))
+(deftest test-a-node-is-listed-by-name-and-a-label-change-reaches-on-body [tmp-path]
+  ;; Node は名前空間を持たない一覧(/api/v1/nodes)を名で絞って list し、その一覧の版から watch する。label の変化(MODIFIED)は on-body に
+  ;; 来る(#4070)。
+  (<- first-list httpx.Response (listed "30" #(NODE-A)))
+  (<- first-watch httpx.Response (watched #({"type" "MODIFIED" "object" NODE-B}) True))
+  (val kube (FakeKube #(first-list first-watch)))
   (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
-  (val worked (threading.Event))
-  (val probe (ThenProbe))
-  (.place probe (.in-background client (fn [] (.set worked)) probe.then))
-  (assert (.wait probe.called WAIT-SECONDS) "then が呼ばれない")
-  (assert (.is-set worked) "work より前に then が呼ばれた")
-  ;; then の中で、終わったかを答える関数がもう真を答える。
-  (assert (is probe.seen True) probe.seen))
+  (val received (Received))
+  (val stop (.follow-node client NODE received.on-body received.on-error))
+  (try
+    (assert (.wait-for received 2 0) #(received.bodies received.errors))
+    (assert (= received.bodies #((OpaqueJson.of NODE-A) (OpaqueJson.of NODE-B))) received.bodies)
+    (assert (= received.errors #()) received.errors)
+    (val requests (.requests kube))
+    (assert (= (get requests 0) #(NODES-PATH {"fieldSelector" "metadata.name=n1"})) requests)
+    (assert (= (get requests 1) #(NODES-PATH {"fieldSelector" "metadata.name=n1" "watch" "true" "resourceVersion" "30"
+                                              "allowWatchBookmarks" "true" "timeoutSeconds" (str WATCH-SECONDS)}))
+            requests)
+    (finally
+      (stop))))
+
+
+(deftest test-a-missing-node-reaches-on-error-by-name [tmp-path]
+  ;; 一覧に無い Node は on-error に「無い Node」の理由で来る。watch はその一覧の版から続き、後で加わった(ADDED)Node は on-body に来る。
+  (<- first-list httpx.Response (listed "30" #()))
+  (<- first-watch httpx.Response (watched #({"type" "ADDED" "object" NODE-A}) True))
+  (val kube (FakeKube #(first-list first-watch)))
+  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (val received (Received))
+  (val stop (.follow-node client NODE received.on-body received.on-error))
+  (try
+    (assert (.wait-for received 1 1) #(received.bodies received.errors))
+    (assert (= received.errors #("無い Node: n1")) received.errors)
+    (assert (= received.bodies #((OpaqueJson.of NODE-A))) received.bodies)
+    (finally
+      (stop))))
+
+
+(deftest test-a-deleted-node-reaches-on-error-by-name [tmp-path]
+  (<- first-list httpx.Response (listed "30" #(NODE-A)))
+  (<- first-watch httpx.Response (watched #({"type" "DELETED" "object" NODE-B}) True))
+  (val kube (FakeKube #(first-list first-watch)))
+  (<- client KubeClient (kube-client tmp-path kube RETRY-SECONDS))
+  (val received (Received))
+  (val stop (.follow-node client NODE received.on-body received.on-error))
+  (try
+    (assert (.wait-for received 1 1) #(received.bodies received.errors))
+    (assert (= received.errors #("Node が消された: n1")) received.errors)
+    (finally
+      (stop))))
 
 
 (deftest test-the-live-transport-finds-a-silent-peer-by-tcp-keepalive [tmp-path]

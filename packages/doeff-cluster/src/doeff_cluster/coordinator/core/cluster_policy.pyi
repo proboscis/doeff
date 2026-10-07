@@ -44,7 +44,6 @@ from doeff_cluster.coordinator.intent.cluster_model import WorkerLoad as WorkerL
 from doeff_cluster.coordinator.intent.cluster_model import ACCEPTED_FORMATS as ACCEPTED_FORMATS
 from doeff_cluster.coordinator.intent.cluster_model import PLACED_PHASES as PLACED_PHASES
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
-from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsUnreadable as NodeLabelsUnreadable
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
@@ -449,15 +448,8 @@ def written_value(write: BoardWrite) -> object:
 
 def board_write(state: ClusterState, key: str, write: BoardWrite, now: int=0) -> _Program[tuple, object]:
     ...
-NODE_LABELS_TTL_MS: int
 
-def node_reread_from(seen: NodeLabelsSeen | NodeLabelsUnreadable) -> int:
-    ...
-
-def nodes_to_read(state: ClusterState, now: int) -> list:
-    ...
-
-def node_reread_due(state: ClusterState, now: int) -> _Program[int | None, object]:
+def nodes_to_follow(state: ClusterState) -> _Program[tuple, object]:
     ...
 
 def derived_capabilities(labels: Table[str], table: tuple) -> tuple:

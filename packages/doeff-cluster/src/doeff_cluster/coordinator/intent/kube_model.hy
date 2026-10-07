@@ -1,15 +1,15 @@
-;;; k8s の Deployment を見張る・台数を変える effect(Rollout の reconciler が旧 / 新の片方として本番の Deployment を扱う入口)。
+;;; k8s の Deployment と Node を見張る・Deployment の台数を変える effect(Rollout の reconciler が旧 / 新の片方として本番の Deployment を
+;;; 扱う入口と、worker の置かれた node の label から能力を導く材料)。
 ;;;
 ;;; 触るのは台数(scale の subresource)だけ。kubectl ではなく k8s の API を handler(coordinator/protocol/kube.hy・client は foundation/kube_client.hy)経由で叩く。
-;;; Deployment は時間で読みに行かず、list の後の watch で見張り、変化の出来事で調停ループを起こす(FollowDeployments — #3868)。
-;;; 権限は coordinator の ServiceAccount に、対象の Deployment の get・list・watch と scale を許す Role で与える(deploy/cluster.yaml)。
+;;; Deployment も Node も時間で読みに行かず、list の後の watch で見張り、変化の出来事で調停ループを起こす(FollowDeployments — #3868・
+;;; FollowNodes — #4070)。
+;;; 権限は coordinator の ServiceAccount に、対象の Deployment の get・list・watch と scale を許す Role と、nodes の list・watch を許す
+;;; ClusterRole で与える(配備する側の manifest)。
 (require doeff-hy.macros [val])
-(require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_hy.table [TableWrite])
-(import doeff_cluster.coordinator.intent.cluster_model [DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
 
 
 (defclass KubeUnavailable [Exception]
@@ -45,35 +45,12 @@
   (#^ int now-ms))
 
 
-(defclass [(dataclass :frozen True)] StartKubeReads [EffectBase]
-  "worker の置かれた node(名の tuple)の label の読みを、調停ループの外で始める(#2807 — 読みが詰まっても調停ループが heartbeat に
-   答え続けるため)。読みが既に走っていれば何もしない。started-ms = 始めた時刻(ループの now — 読んだ観測の時刻にもなる)。結果は
-   始めたか(bool)。読みの答えは CollectKubeReads で受け取る。読み終えた時に調停ループの受付を起こす(#3868)。
-   node の label は worker の置かれた node から能力を導くため(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)— 権限は coordinator の
-   ServiceAccount に nodes の get を与える ClusterRole(配備する側の manifest)。"
-  (#^ (get tuple #(str ...)) nodes)
-  (#^ int started-ms))
-
-
-(defclass [(dataclass :frozen True)] CollectKubeReads [EffectBase]
-  "始めた読みの答えを、待たずに受け取る(#2807)。結果は KubeReadsIdle(走っている読みが無い)・KubeReadsRunning(まだ)・
-   KubeReadsDone(終わった — 観測の表への書き)のどれか。読みが now-ms - started-ms >= name-after-ms まで終わらなければ、その初回の
-   KubeReadsRunning だけ overdue が真(調停ループが名指しの 1 行を出す — 1 つの読みにつき 1 度)。"
-  (#^ int now-ms)
-  (#^ int name-after-ms))
-
-
-(defrecord KubeReadsIdle
-  "CollectKubeReads の答え: 走っている読みが無い。")
-
-
-(defrecord KubeReadsRunning
-  "CollectKubeReads の答え: 読みがまだ終わっていない。started-ms = 始めた時刻・overdue = 名指す秒を超えた初回か。"
-  (#^ int started-ms)
-  (#^ bool overdue))
-
-
-(defrecord KubeReadsDone
-  "CollectKubeReads の答え: 読みが終わった。nodes = node の名 → NodeLabelsSeen / NodeLabelsUnreadable の書き(doeff_hy.table の
-   TableWrite の tuple)。観測の時刻 at は読みを始めた時刻。"
-  (#^ (get tuple #((get TableWrite (| NodeLabelsSeen NodeLabelsUnreadable)) ...)) nodes))
+(defclass [(dataclass :frozen True)] FollowNodes [EffectBase]
+  "worker の置かれた node(名の tuple)を見張り(list の後の watch — 時間で読みに行かない・#4070)、前の答えの後に見張りが伝えた label の
+   変化を待たずに受け取る。names に無くなった node の見張りは止める。見張りは変化を伝える時に調停ループの受付を起こす(FollowDeployments
+   と同じ)。結果は node の名 → NodeLabelsSeen / NodeLabelsUnreadable の書き(doeff_hy.table の TableWrite の tuple — 変わった node だけ)。
+   観測の時刻 at は受け取った時刻 now-ms。見張りが届かない・断られた・node が消された間は読めなかった観測(その node の worker は前に
+   導いた能力を保つ)。node の label は worker の置かれた node から能力を導くため(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。k8s の
+   Node の object から label の表へ解くのは答え手 coordinator/protocol/kube の 1 点(#2728)。"
+  (#^ (get tuple #(str ...)) names)
+  (#^ int now-ms))

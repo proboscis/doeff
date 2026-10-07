@@ -3,8 +3,8 @@
 ;; ここでは期限の関数ごとに、返す刻 D の 1 ms 前では判断が答えを変えず、D で変える事を縛る(D は now より後)。
 ;; - resource_policy.readiness-due と readiness の判定 service-readiness(running-process を含む)— 枝ごと。
 ;; - resource_policy.service-stopped-due と止まりの判定 service-stopped。
-;; - cluster_policy.node-reread-due と読み直す node の選び nodes-to-read。
-;; Rollout の相手の Deployment には期限が無い(見張る相手の選び api_policy.deployments-to-follow は時刻を読まない — #3868)。
+;; Rollout の相手の Deployment と worker の置かれた node には期限が無い(見張る相手の選び api_policy.deployments-to-follow・
+;; cluster_policy.nodes-to-follow は時刻を読まない — #3868・#4070)。
 ;; readiness-due は「答えを変え得る刻の下限」を返す(早めに試すのは安全)。D で答えが変わらない枝は、その事と判定が実際に変わる刻を
 ;; そのテストの註に書く(D − 1 で変わらない事だけを縛る)。
 (require doeff-hy.macros [deftest defk <- val])
@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.core.resource_policy [readiness-due service-readiness carrier-stale-from report-expired-from
                                                         unreported-until warm-until service-stopped service-stopped-due current-report
                                                         running-process])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-deadline nodes-to-read node-reread-due])
+(import doeff_cluster.coordinator.core.cluster_policy [liveness-deadline nodes-to-follow])
 (import doeff_cluster.coordinator.core.api_policy [deployments-to-follow])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 
@@ -230,24 +230,15 @@
   (assert (= (sorted followed) ["ns/app-a" "ns/app-b"]) followed))
 
 
-;; --- node-reread-due ----------------------------------------------------------------------------------------------------
+;; --- node の見張る相手(期限が無い — #4070)--------------------------------------------------------------------------
 
-(deftest test-node-reread-due-is-the-judgments-boundary
-  ;; node n1(1000000 に読んだ)と n2(1020000 に読んだ)の上の worker。D = 早い方の読み直しの刻 1060001 の 1 ms 前は何も読まず、
-  ;; D で n1 を読み始める。
-  (val workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n1")
-                "w2" (WorkerInfo :name "w2" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n2")})
+(deftest test-nodes-to-follow-reads-no-time
+  ;; node n1・n2 の上の worker と、node を申告しない worker。見張るのは n1 と n2 で、観測の在る無しと観測の時刻に依らない(時刻を
+  ;; 読まない — label の変化は見張りが受付の箱を起こして伝える)。
+  (val workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n2")
+                "w2" (WorkerInfo :name "w2" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n1")
+                "w3" (WorkerInfo :name "w3" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "")})
   (val observations (ClusterObservations
-                      :nodes (table-of #((TableWrite "n1" (NodeLabelsSeen :labels (table-of #()) :at 1000000))
-                                         (TableWrite "n2" (NodeLabelsSeen :labels (table-of #()) :at 1020000))))))
-  (val state (ClusterState :workers workers :observations observations))
-  (val now 1030000)
-  (val now-read (nodes-to-read state now))
-  (assert (= now-read []) now-read)
-  (<- due (| int None) (node-reread-due state now))
-  (assert (= due 1060001) due)
-  (assert (> due now) #(due now))
-  (val before (nodes-to-read state (- due 1)))
-  (val at (nodes-to-read state due))
-  (assert (= before []) before)
-  (assert (= at ["n1"]) at))
+                      :nodes (table-of #((TableWrite "n1" (NodeLabelsSeen :labels (table-of #()) :at 1000000))))))
+  (<- followed tuple (nodes-to-follow (ClusterState :workers workers :observations observations)))
+  (assert (= followed #("n1" "n2")) followed))

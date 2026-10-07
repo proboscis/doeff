@@ -26,11 +26,7 @@ from doeff_cluster.coordinator.intent.kube_model import ScaleDeployment as Scale
 from doeff_cluster.coordinator.intent.kube_model import AnnotateDeployment as AnnotateDeployment
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
 from doeff_cluster.coordinator.intent.kube_model import FollowDeployments as FollowDeployments
-from doeff_cluster.coordinator.intent.kube_model import StartKubeReads as StartKubeReads
-from doeff_cluster.coordinator.intent.kube_model import CollectKubeReads as CollectKubeReads
-from doeff_cluster.coordinator.intent.kube_model import KubeReadsIdle as KubeReadsIdle
-from doeff_cluster.coordinator.intent.kube_model import KubeReadsRunning as KubeReadsRunning
-from doeff_cluster.coordinator.intent.kube_model import KubeReadsDone as KubeReadsDone
+from doeff_cluster.coordinator.intent.kube_model import FollowNodes as FollowNodes
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
 
@@ -40,15 +36,18 @@ def deployment_view(body: Mapping[str, object]) -> _Program[dict[str, object], o
 def deployment_reading(view: Mapping[str, object]) -> _Program[DeploymentReading, object]:
     ...
 
+def node_labels_view(body: Mapping[str, object]) -> _Program[Mapping[str, object] | None, object]:
+    ...
+
 def node_labels_table(labels: Mapping[str, object]) -> _Program[Table[str], object]:
     ...
 
 class KubeCalls(Protocol):
 
-    def node_labels(self, node: str) -> OpaqueJson:
+    def follow(self, namespace: str, name: str, on_body: Callable[[OpaqueJson], None], on_error: Callable[[str], None]) -> Callable[[], None]:
         ...
 
-    def follow(self, namespace: str, name: str, on_body: Callable[[OpaqueJson], None], on_error: Callable[[str], None]) -> Callable[[], None]:
+    def follow_node(self, name: str, on_body: Callable[[OpaqueJson], None], on_error: Callable[[str], None]) -> Callable[[], None]:
         ...
 
     def scale(self, namespace: str, name: str, replicas: int, dry_run: bool) -> int:
@@ -57,10 +56,7 @@ class KubeCalls(Protocol):
     def annotate(self, namespace: str, name: str, annotations: dict) -> None:
         ...
 
-    def in_background(self, work: Callable[[], None], then: Callable[[], None]) -> Callable[[], bool]:
-        ...
-
-class DeploymentWatches:
+class ObjectWatches:
     stops: Incomplete
     noted: Incomplete
     passed: Incomplete
@@ -91,33 +87,8 @@ class KubeReadFailed:
     name: str
     error: str
 
-class KubeReadBatch:
-    nodes: tuple[str, ...]
-    started_ms: int
-    named: Incomplete
-    finished: Callable[[], bool]
-    node_results: tuple[KubeBodyRead | KubeReadFailed, ...]
-
-    def __init__(self, nodes: tuple[str, ...], started_ms: int) -> None:
-        ...
-
-    def read_one(self, read: Callable[[], OpaqueJson], name: str) -> KubeBodyRead | KubeReadFailed:
-        ...
-
-    def read_with(self, read_node: Callable[[str], OpaqueJson]) -> None:
-        ...
-
-    def read_now(self, read_node: Callable[[str], OpaqueJson]) -> None:
-        ...
-
-class KubeReadBatches:
-    current: KubeReadBatch | None
-
-    def __init__(self) -> None:
-        ...
-
-    def begin(self, nodes: tuple[str, ...], started_ms: int) -> KubeReadBatch | None:
-        ...
+def read_of(key: str, seen: OpaqueJson | str) -> _Program[KubeBodyRead | KubeReadFailed, object]:
+    ...
 
 def deployment_observation_of(result: KubeBodyRead | KubeReadFailed, at: int) -> _Program[DeploymentSeen | DeploymentUnreadable, object]:
     ...
@@ -128,16 +99,13 @@ def deployment_writes(changes: tuple, at: int) -> _Program[tuple, object]:
 def node_labels_observation_of(result: KubeBodyRead | KubeReadFailed, at: int) -> _Program[NodeLabelsSeen | NodeLabelsUnreadable, object]:
     ...
 
-def kube_reads_done(batch: KubeReadBatch) -> _Program[KubeReadsDone, object]:
+def node_writes(changes: tuple, at: int) -> _Program[tuple, object]:
     ...
 
-def collected_reads(batches: KubeReadBatches, now_ms: int, name_after_ms: int, held: bool) -> _Program[KubeReadsIdle | KubeReadsRunning | KubeReadsDone, object]:
+def kube_api(client: KubeCalls, deployments: ObjectWatches, nodes: ObjectWatches, wake: Callable[[], None]) -> _Handler:
     ...
 
-def kube_api(client: KubeCalls, batches: KubeReadBatches, watches: DeploymentWatches, wake: Callable[[], None]) -> _Handler:
-    ...
-
-def kube_unavailable(reason: str, batches: KubeReadBatches, watches: DeploymentWatches) -> _Handler:
+def kube_unavailable(reason: str, deployments: ObjectWatches, nodes: ObjectWatches) -> _Handler:
     ...
 
 class KubeMemory:
@@ -147,7 +115,6 @@ class KubeMemory:
     node_reads: Incomplete
     down: Incomplete
     nodes: Incomplete
-    batches: Incomplete
     stalled_until_ms: Incomplete
 
     def __init__(self, deployments: dict, nodes: dict | None=None) -> None:
@@ -159,10 +126,13 @@ class KubeMemory:
     def deployment_object(self, row: dict) -> OpaqueJson:
         ...
 
+    def refusal_at(self, now_ms: int) -> str | None:
+        ...
+
     def seen_at(self, key: str, now_ms: int) -> OpaqueJson | str:
         ...
 
-    def node_labels_of(self, node: str) -> OpaqueJson:
+    def node_seen_at(self, node: str, now_ms: int) -> OpaqueJson | str:
         ...
 
     def relabel(self, node: str, labels: dict) -> None:
@@ -171,17 +141,33 @@ class KubeMemory:
     def settle(self, key: str, ready: int | None=None) -> None:
         ...
 
-class MemoryFollows:
+class MemoryWatch:
     following: Incomplete
     delivered: Incomplete
 
     def __init__(self) -> None:
         ...
 
-    def changes(self, kube: KubeMemory, now_ms: int) -> tuple:
+    def changes(self, seen: Callable[[str], OpaqueJson | str]) -> tuple:
         ...
 
-    def follow(self, kube: KubeMemory, keys: tuple[str, ...], now_ms: int) -> tuple:
+    def follow(self, seen: Callable[[str], OpaqueJson | str], keys: tuple[str, ...]) -> tuple:
+        ...
+
+class MemoryFollows:
+    deployments: Incomplete
+    nodes: Incomplete
+
+    def __init__(self) -> None:
+        ...
+
+    def follow_deployments(self, kube: KubeMemory, keys: tuple[str, ...], now_ms: int) -> tuple:
+        ...
+
+    def follow_nodes(self, kube: KubeMemory, names: tuple[str, ...], now_ms: int) -> tuple:
+        ...
+
+    def changed(self, kube: KubeMemory, now_ms: int) -> bool:
         ...
 
     def change_at(self, kube: KubeMemory, now_ms: int) -> int | None:

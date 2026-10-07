@@ -245,9 +245,10 @@
 (import doeff [with_handlers])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import tests.program_rows [heartbeat-of])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
+(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
+(import doeff_core_effects.handlers [slog-discard-handler])
 
 (import doeff_hy.table [Table TableWrite table-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations NodeLabelsSeen NodeLabelsUnreadable])
@@ -285,8 +286,11 @@
 
 (defk tick-with [state kube now]
   {:pre [(: state ClusterState) (: kube KubeMemory) (: now int)] :post [(: % ClusterState)]}
-  "coordinator の調停の 1 拍(rollout-tick — node の label の読みと能力の導出を含む)をテストの k8s の上で回す。"
-  (<- after ClusterState (with_handlers [(kube-memory kube (MemoryFollows))] (rollout-tick state T (ClusterNaming) now)))
+  "coordinator の調停の 1 歩(rollout-tick — node の見張りが伝えた label の受け取りと能力の導出を含む)をテストの k8s の上で回す
+   (見張りは歩ごとに作り直す — coordinator の起き直しと同じく、始めの list で今の label を伝える)。見張れない node を名指す 1 行
+   (slog)は捨てる。"
+  (<- after ClusterState (with_handlers [slog-discard-handler (kube-memory kube (MemoryFollows))]
+                           (rollout-tick state T (ClusterNaming) now)))
   after)
 
 (deftest test-a-self-declared-company-machine-is-not-a-provided-capability
@@ -323,9 +327,9 @@
   (setv kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {}}))
   (<- start ClusterState (company-state 1000))
   (<- ticked ClusterState (tick-with start kube 1000))
-  ;; k8s の API が途絶えた間(label を読み直す間隔を過ぎても)、前の derived を保つ — 届かない間に足しも外しもしない。
+  ;; k8s の API が途絶えた間(見張りが届かない理由を伝える)、前の derived を保つ — 届かない間に足しも外しもしない。
   (setv kube.down True)
-  (setv later (+ 1000 NODE-LABELS-TTL-MS 1))
+  (setv later 2000)
   (<- work-beaten ClusterState (beat-as ticked "at-work" "node-company" later))
   (<- beaten ClusterState (beat-as work-beaten "at-home" "node-home" later))
   (<- cut-off ClusterState (tick-with beaten kube later))
@@ -334,10 +338,10 @@
   (assert (= (. (get cut-off.workers "at-home") derived) #()))
   (setv secret (replace cut-off :jobs #((! (job "secret" :needs #(COMPANY "net"))))))
   (assert (= (. (get (! (place-jobs later secret T)) "secret") worker) "at-work"))
-  ;; 読めるようになり label が外れていれば、次の読みで外す。
+  ;; 届くようになり label が外れていれば、見張りがそれを伝えた歩で外す。
   (setv kube.down False)
-  (setv (get kube.nodes "node-company") {})
-  (<- back ClusterState (tick-with cut-off kube (+ later NODE-LABELS-TTL-MS 1)))
+  (.relabel kube "node-company" {})
+  (<- back ClusterState (tick-with cut-off kube (+ later 1000)))
   (assert (= (. (get back.workers "at-work") derived) #())))
 
 (deftest test-with-derived-capabilities-reads-the-naming-table
@@ -501,8 +505,9 @@
   (val kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {}}))
   (<- start ClusterState (company-state 1000))
   (<- first ClusterState (tick-with start kube 1000))
-  ;; 2 拍目は label を読み直す間隔の後: rollout-tick が node の観測を書き直すが、導く能力は同じ。
-  (val later (+ 1000 NODE-LABELS-TTL-MS 1))
+  ;; 2 歩目は見張りが同じ label をもう 1 度伝えた時(作り直した見張りの始めの list): rollout-tick が node の観測を書き直すが、導く能力は
+  ;; 同じ。
+  (val later 2000)
   (<- second ClusterState (tick-with first kube later))
   (val reread (.row second.observations.nodes "node-company"))
   (val first-read (.row first.observations.nodes "node-company"))
