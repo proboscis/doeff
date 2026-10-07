@@ -59,6 +59,9 @@ class ReadBytes(EffectBase[bytes | FileFailed]):
     limit: int | None = None
     offset: int = 0
 
+    def __post_init__(self) -> None:
+        ...
+
 @dataclass(frozen=True)
 class WriteText(EffectBase[FileFailed | None]):
     path: str

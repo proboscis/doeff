@@ -47,6 +47,8 @@ from doeff_cluster.shared.intent.upgrade_model import BootRootRefused as BootRoo
 from doeff_cluster.shared.intent.upgrade_model import BootRootRefusal as BootRootRefusal
 from doeff_cluster.shared.intent.upgrade_model import AwaitQuietWindow as AwaitQuietWindow
 from doeff_cluster.shared.intent.upgrade_model import QuietWindowOpened as QuietWindowOpened
+from doeff_cluster.shared.intent.upgrade_model import AwaitWorkerDrained as AwaitWorkerDrained
+from doeff_cluster.shared.intent.upgrade_model import WorkerDrained as WorkerDrained
 from doeff_cluster.shared.protocol.coordinator_reads import coordinator_commit_of_state as coordinator_commit_of_state
 from doeff_cluster.sim.local import SimWorker as SimWorker
 from doeff_cluster.sim.local import HostTruth as HostTruth
