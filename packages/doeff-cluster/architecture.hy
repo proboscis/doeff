@@ -108,9 +108,13 @@
 ;;;   同じ file の test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c13(持たない能力を名乗る壊れた worker — SimWorker の
 ;;;   claims-provides — の上で beacon が動き、C13 が名指す)。
 ;;;   C14 runs-within-their-limit(doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit — #1976 の写しの C5 の残り)—
-;;;   入れ替え(handoff)を宣言した job は同時に 2 つ(旧と新)まで、task は同時に 1 つまでしか動かない(C2 は入れ替えを宣言しない job
-;;;   だけを見る)。確かめるのは tests/test_local.hy の test-a-handoff-job-runs-at-most-two-processes-across-two-handoffs(入れ替えを 2 度
-;;;   通す)と tests/test_task_result_window.hy の task の検(上限 1)。失敗ケースは test_local.hy の
+;;;   入れ替え(handoff)を宣言した job は同時に R + 1 まで(退いた process の上限 R = worker の WorkerPolicy.retired-limit・既定 3 — と
+;;;   今の process 1 つ。退いた process が居る間に宣言が変われば今の process も退かせ、R に達していればいちばん古く退いた process を止めて
+;;;   から退かせる・#4072 の D-3)、task は同時に 1 つまでしか動かない(C2 は入れ替えを宣言しない job だけを見る)。確かめるのは
+;;;   tests/test_local.hy の test-a-handoff-job-runs-at-most-two-processes-across-two-handoffs(寿命の上限を宣言しない beacon — 新の Ready で
+;;;   旧を止めるので 2 つまで)・test-a-handoff-job-keeps-the-current-process-when-redeclared-beside-a-retired-one(寿命の上限を宣言した
+;;;   beacon を 2 度入れ替え、3 つとも動く — 上限 4)・test-a-handoff-job-stops-the-oldest-retired-process-beyond-the-retired-limit(R = 1 の
+;;;   worker — 上限 2)と tests/test_task_result_window.hy の task の検(上限 1)。失敗ケースは test_local.hy の
 ;;;   test-a-counterexample-worker-that-hides-retired-processes-breaks-c14(入れ替えで名から外した旧を観測に載せない壊れた worker —
 ;;;   SimWorker の hides-retired — では、worker の判断が退いた process が無いと読んで次の新を並べ、beacon が 3 つ動いて C14 が名指す)。
 ;;;   C15 acknowledged-values-survive・C16 declared-services-survive(doeff_cluster.coordinator.core.coordinator_invariants — #1976 の写しの
