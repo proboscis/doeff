@@ -1052,3 +1052,64 @@ fn old_sha_named_trees_are_removed_on_the_first_run() {
     }
     assert!(home.join("notes").is_dir(), "ほかの名の物を消した");
 }
+
+/// 設定と architecture.hy を git の根の下の dir `pkg/` に置いた repo の宣言(dotfiles の agentcli/ の形 — agora-redesign #3934)。
+const SUBDIR_ARCHITECTURE: &str = r#"
+(defarchitecture sub
+  :root "src/app"
+  :layers [(layer core :roles [judgment] :imports [core] :forbid-modules ["urllib.request"])
+           (layer foundation :roles [foundation] :imports [foundation])]
+  :shared "shared"
+  :foundation foundation
+  :extensions ["hy" "py"])
+"#;
+
+/// 設定 — DOEFF102(層ごとに禁じた module)は stage した path に当てる規則、DOEFF114(宣言の外の置き場所)は既存の当たりを持つ。
+const SUBDIR_PYPROJECT: &str = r#"[tool.doeff-linter]
+enable = ["DOEFF102", "DOEFF114"]
+
+[tool.doeff-linter.commit_hook]
+timeout_s = 120
+"#;
+
+/// 基点: `pkg/` に設定と宣言、宣言の外の置き場所の file `pkg/src/app/flat.py`(DOEFF114 の既存の当たり)を commit し、
+/// 新しく core の file `pkg/src/app/shared/core/fetch.py`(urllib.request を import — 新しい DOEFF102)を stage した repo。
+fn subdir_repo_with_a_new_hit() -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+    write(root, "pkg/pyproject.toml", SUBDIR_PYPROJECT);
+    write(root, "pkg/architecture.hy", SUBDIR_ARCHITECTURE);
+    write(root, "pkg/src/app/flat.py", "X = 1\n");
+    write(root, "README.md", "根の file\n");
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "基点"]);
+    write(root, "pkg/src/app/shared/core/fetch.py", "import urllib.request\n");
+    git(root, &["add", "pkg/src/app/shared/core/fetch.py"]);
+    dir
+}
+
+/// 失敗ケース(agora-redesign #3934・cisco-c8 の可 2026-10-07): `--root` が git の根の下の dir の時、stage した path(git の根からの
+/// 相対)をその dir からの相対に直し、HEAD の木もその dir を根に測る。直す前は 2 つとも外れた — stage した file の新しい DOEFF102 を
+/// 見ず、HEAD の当たりを 0 と読んで既存の DOEFF114 を「HEAD に無い」と止めた。git の根から設定と根を名指す形(dotfiles の hook の
+/// 呼び方)で、新しい DOEFF102 の 1 件だけで止まり、既存の当たりでは止まらない。
+#[test]
+fn a_root_below_the_git_root_blocks_only_the_new_hit() {
+    let dir = subdir_repo_with_a_new_hit();
+    let (code, stderr) = hook(dir.path(), &["--config", "pkg/pyproject.toml", "--root", "pkg"]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("src/app/shared/core/fetch.py::DOEFF102"), "{}", stderr);
+    assert!(!stderr.contains("flat.py::DOEFF114"), "{}", stderr);
+}
+
+/// 同じ repo で、既存の当たりを持つ file に註を足しただけの変更は通る(既存の DOEFF114 は日次で見え、commit は止めない)。
+#[test]
+fn a_root_below_the_git_root_passes_a_change_to_a_file_with_an_old_hit() {
+    let dir = subdir_repo_with_a_new_hit();
+    let root = dir.path();
+    git(root, &["reset", "-q", "pkg/src/app/shared/core/fetch.py"]);
+    write(root, "pkg/src/app/flat.py", "# 註を足す\nX = 1\n");
+    git(root, &["add", "pkg/src/app/flat.py"]);
+    let (code, stderr) = hook(root, &["--config", "pkg/pyproject.toml", "--root", "pkg"]);
+    assert_eq!(code, 0, "{}", stderr);
+}

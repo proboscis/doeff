@@ -542,6 +542,8 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
 //   場所 = 事実の cache の根(facts_cache::cache_base — 既定 `$XDG_CACHE_HOME/doeff-linter`、無ければ `~/.cache/doeff-linter`)の
 //   `commit-hook-tree/<repo を表す名>/` の下に、木 `tree/`・木の今の sha と重ねた宣言の file の記録 `tree.sha`・lock の file `lock`・
 //   repo の git の共有 dir の絶対 path の記録 `repo.path`。
+//   木は根(--root)の dir の中身で、根が作業木の根の下の dir なら、名は共有 dir にその位置(`git rev-parse --show-prefix`)を繋いだ path の
+//   sha256 の 16 桁(agora-redesign #3934 — 位置の違う根が 1 つの木を取り合わない)。
 //   repo を表す名 = repo の git の共有 dir(`git rev-parse --git-common-dir`・正規化した絶対 path)の sha256 の 16 桁。同じ repo の別の
 //   作業木は同じ名で、1 つの木を分け合う — 作業木は数百ある(zeus の agora-controllers で 561)ので作業木ごとでは disk が足りず(木 1 つ
 //   約 35MB)、新しい作業木の最初の commit も、ほかの作業木が進めた木(本線の近く)から差分だけで進められる。
@@ -695,7 +697,9 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
     std::fs::create_dir_all(home).map_err(|e| format!("{} を作れない: {}", home.display(), e))?;
     let home = home.canonicalize().map_err(|e| format!("{} を読めない: {}", home.display(), e))?;
     retire_sha_trees(&home);
-    let key = repo_key(&common);
+    // 木は根の dir の中身なので、同じ repo でも根の位置が違えば別の木(位置を名に入れる — 作業木の根なら今までと同じ名)。
+    let prefix = root_prefix(root)?;
+    let key = if prefix.is_empty() { repo_key(&common) } else { repo_key(&common.join(prefix.trim_end_matches('/'))) };
     retire_vanished_repos(&home, &key);
     let repo_dir = home.join(&key);
     std::fs::create_dir_all(&repo_dir).map_err(|e| format!("{} を作れない: {}", repo_dir.display(), e))?;
@@ -744,7 +748,8 @@ fn write_whole_tree(root: &Path, head: &str, overlay: &[String], tree: &Path) ->
 /// 記録の sha から HEAD まで変わった path と、前に重ねた・今重ねる宣言の file だけを、HEAD の中身へ書き換える(消えた path は消す)。
 /// 書き換えの間は記録を消しておく。変わった path が多すぎれば Err(呼び手が全部を書き出し直す)。
 fn advance_tree(root: &Path, record: &TreeRecord, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
-    let changed = git(root, &["diff-tree", "-r", "-z", "--no-renames", "--name-only", &record.sha, head])?;
+    // 根からの相対で読む(木は根の dir の中身 — git archive は根の dir から撃つと、その dir の中身を根からの相対で書き出す)。
+    let changed = git(root, &["diff-tree", "-r", "-z", "--no-renames", "--name-only", "--relative", &record.sha, head])?;
     let refresh: BTreeSet<String> = split_z(&changed).into_iter().chain(record.overlay.iter().cloned()).chain(overlay.iter().cloned()).collect();
     if refresh.is_empty() {
         return Ok(TreeUpdate::Unchanged);
@@ -872,16 +877,24 @@ pub fn git_toplevel(cwd: &Path) -> Result<PathBuf, String> {
     Ok(PathBuf::from(String::from_utf8_lossy(&out).trim()))
 }
 
-/// stage した path(`git diff --cached --name-only --diff-filter=ACMRD -z`)。
+/// 根 root の、git の作業木の根からの位置(`git rev-parse --show-prefix` — 根が作業木の根なら空・下の dir なら `pkg/` の形)。
+/// 根が作業木の根の下の dir の時(dotfiles の agentcli/ に設定を置いた形 — agora-redesign #3934)、git が答える path の根と木の置き場を
+/// 根に合わせるために読む 1 か所。
+fn root_prefix(root: &Path) -> Result<String, String> {
+    let out = git(root, &["rev-parse", "--show-prefix"])?;
+    Ok(String::from_utf8_lossy(&out).trim().to_string())
+}
+
+/// stage した path(`git diff --cached --name-only --relative --diff-filter=ACMRD -z` — 根からの相対・根の外の path は入らない)。
 fn staged_paths(root: &Path) -> Result<Vec<String>, String> {
-    let out = git(root, &["diff", "--cached", "--name-only", "--diff-filter=ACMRD", "-z"])?;
+    let out = git(root, &["diff", "--cached", "--name-only", "--relative", "--diff-filter=ACMRD", "-z"])?;
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
 }
 
 /// stage で消えた path(名前替えの旧い側を含む — `--no-renames` の D)。major の warning の数の HEAD の側に、移した・消した file の
 /// HEAD の版も数えるため(数えないと、warning を増やさない移しが増えに見える)。
 fn removed_paths(root: &Path) -> Result<Vec<String>, String> {
-    let out = git(root, &["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=D", "-z"])?;
+    let out = git(root, &["diff", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=D", "-z"])?;
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
 }
 
@@ -1132,7 +1145,9 @@ fn head_key(options: &CommitHookOptions, tree: &Path, rules: &[String]) -> Optio
     if !options.overlay.is_empty() {
         return None;
     }
-    let config = config_in_tree(options, tree)?;
+    // 設定の path は作業木の根からの相対で鍵に入れる(根の位置が違う 2 つの実行の結果を取り違えない — agora-redesign #3934)。
+    let prefix = root_prefix(&options.root).ok()?;
+    let config = config_in_tree(options, tree)?.map(|rel| format!("{}{}", prefix, rel));
     let head = git(&options.root, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
     let head = String::from_utf8_lossy(&head).trim().to_string();
     let linter = crate::head_report_cache::linter_identity(&options.linter)?;
