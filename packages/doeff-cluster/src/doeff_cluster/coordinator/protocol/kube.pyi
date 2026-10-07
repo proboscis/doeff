@@ -144,6 +144,7 @@ class KubeMemory:
     deployments: dict
     calls: Incomplete
     reads: Incomplete
+    node_reads: Incomplete
     down: Incomplete
     nodes: Incomplete
     batches: Incomplete
@@ -162,6 +163,9 @@ class KubeMemory:
         ...
 
     def node_labels_of(self, node: str) -> OpaqueJson:
+        ...
+
+    def relabel(self, node: str, labels: dict) -> None:
         ...
 
     def settle(self, key: str, ready: int | None=None) -> None:
