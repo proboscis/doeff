@@ -258,10 +258,11 @@
                                 (lfor n names (MemoryFile :path (+ STATE "/roots/" n "/lib.py") :content b"x = 1\n"))))))
 
 
-(defk sweep-settings [cap]
-  {:pre [(: cap int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "掃除させる env-host の設定を返すため(cap = roots の合計の上限・prune の命令は台本に無い名 — 起きない)。"
-  (EnvSettings :state STATE :uv-cache (+ STATE "/uv-cache") :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "no-uv" :roots-cap-bytes cap))
+(defk sweep-settings [cap min-free]
+  {:pre [(: cap int) (: min-free int)] :post [(: % EnvSettings)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "掃除させる env-host の設定を返すため(cap = roots の合計の上限・min-free = 共有の disk の空きの最低・prune の命令は台本に無い名 — 起きない)。"
+  (EnvSettings :state STATE :uv-cache (+ STATE "/uv-cache") :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL :uv "no-uv" :roots-cap-bytes cap
+               :min-free-bytes min-free))
 
 
 (defk left-roots []
@@ -293,17 +294,17 @@
   seen)
 
 
-(defk on-slow-disk [program measure-seconds remove-seconds [inner []] [cap CAP] [free ROOMY-FREE]]
-  {:pre [(: program Program) (: measure-seconds float) (: remove-seconds float) (: inner list) (: cap int) (: free int)]
+(defk on-slow-disk [program measure-seconds remove-seconds [inner []] [cap CAP] [free ROOMY-FREE] [min-free 0]]
+  {:pre [(: program Program) (: measure-seconds float) (: remove-seconds float) (: inner list) (: cap int) (: free int) (: min-free int)]
    :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を env-host・process-host と台本の子 process・遅い木の memory の file system・仮想の時計の下で回すため(行は外側の
    run-lines-noted が受ける)。inner = env-host の内側に置く handler(調整ループを回す筋書きは宿の代役と拍の間の眠り)・cap = roots の
-   合計の上限・free = disk の空き。"
+   合計の上限・free = disk の空き・min-free = 空きの最低(既定 0 = 割らない)。"
   (<- host HostSettings (host-settings (Path STATE) :policy POLICY))
   ;; root の準備(env-host の PrepareEnv が nice で起こす)も止めるまで走る — 消えた root の作り直しは終わらず、観測の準備中に残る。
   (val script (ProcessScript :commands #((ScriptedCommand :name (. (Path host.python) name) :run runs-until-stopped)
                                          (ScriptedCommand :name "nice" :run runs-until-stopped))))
-  (<- settings EnvSettings (sweep-settings cap))
+  (<- settings EnvSettings (sweep-settings cap min-free))
   (<- files MemoryFiles (roots-on-disk free))
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) tree-load run-lines-noted (memory-file-handler files)
                                   (slow-trees measure-seconds remove-seconds) (scripted-process-handler script) (process-host host)
@@ -461,3 +462,18 @@
   (<- (kept-running got))
   (assert (= got.load.removed 0) got.load)
   (assert (= got.left ALL-ROOTS) got.left))
+
+
+;; --- 共有の disk の空きが最低を割ったら、候補の root を古い順に消す(#4051)------------------------------------------------------------
+;; 実例(2026-10-08 00:33〜04:01・node k3s-0 の worker): 空き 24.96 GiB < 最低 25 GiB・roots の合計 0.86 GB ≤ 上限 20 GiB・
+;; 候補 2 で、掃除の選びは毎回 chosen=0 — 準備は disk-full で断られ続け、宣言の job が起きなかった。空きの最低を割った時は、
+;; 断る前に候補(固定でない・project の新しい 2 つの外)を古い順に消す。project の新しい 2 つ(今の版と戻し先 — #3732)は残す。
+;; 反例 = 直す前の形(空きでは消さない)は 4 つとも残す — 下の断言が赤。
+
+(deftest test-a-shared-disk-below-the-minimum-sweeps-the-candidates-and-keeps-the-newest-two
+  ;; disk の空き 1 GB < 最低 2 GB・roots の合計は上限の内。memory の置き場の空きは消しても増えないので、候補 c・d を両方消し、
+  ;; project の新しい 2 つ a・b は残す。
+  (<- got SweepRun (on-slow-disk (worker-run) 0.0 0.0 [(sweep-world RUN-MS None) stop-signal-never-comes tick-pauses (wakes-every 1000)]
+                                 :cap (** 2 62) :free (** 10 9) :min-free (* 2 (** 10 9))))
+  (<- (kept-running got))
+  (assert (= got.left #(ROOT-A ROOT-B)) got.left))
