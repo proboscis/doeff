@@ -169,3 +169,24 @@
   (assert (isinstance seen DesiredUnreadable) seen)
   (assert (in "DeclaredReplyMalformed" seen.reason) seen.reason)
   (assert (= link.state.last-jobs #()) link.state.last-jobs))
+
+
+;; 新しい版が Ready と数えられてから、同じ worker の上の旧い版が止めの答えを受けるまでの遅れの上限(ms)。要求の往復と、止めを送ってから
+;; process が終わるまでの分。heartbeat の間隔(本番の時間 2.5 秒)より十分短い。
+(val READY-TO-STOP-SLACK-MS 1000)
+
+
+(deftest test-the-old-version-on-the-same-worker-stops-as-soon-as-the-new-version-is-ready
+  ;; 失敗ケース(#3871 の単位 5・cc3-w52 が書いた): drain で移った先の worker の上で、入れ替えの job の版 1 と版 2 が並ぶ。版 2 が Ready と
+  ;; 数えられたら、その worker の名指しの待ちが同じ時に「変わった」と答え、worker は次の周で heartbeat を送って版 1 を止める。時間は本番の値
+  ;; (ClusterTiming)で回す。
+  (<- workers tuple (handoff-workers 0.0))
+  (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (handoff-beacons sim-foundation)
+                                  (drain-then-redeclare 10.0 120.0 (handoff-beacons-v2 sim-foundation) 0.0 25.0)
+                                  :workers workers))
+  (val new (get (lfor p seen.after :if (and (!= p.worker seen.host) (is p.exit-code None)) p) 0))
+  (val replaced (lfor p seen.after :if (and (= p.worker new.worker) (!= p.instance new.instance)) p))
+  (assert (= (len replaced) 1) seen.after)
+  (val old (get replaced 0))
+  (assert (= old.exit-code -15) old)
+  (assert (<= (- old.ended-ms new.started-ms) READY-TO-STOP-SLACK-MS) #(new.started-ms old.ended-ms)))
