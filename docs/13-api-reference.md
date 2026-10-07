@@ -543,7 +543,14 @@ Complete a promise with a success value.
 yield CompletePromise(promise, result_value)
 ```
 
-**Signature:** `CompletePromise(promise, value)`
+**Signature:** `CompletePromise(promise, value, *, yield_to_woken=True)`
+
+- `yield_to_woken=True` (default): the completer goes on only after every task the completion woke has run (#493) —
+  a waiter that must register a fresh promise before the next completion cannot miss it.
+- `yield_to_woken=False`: the completer goes on at once; the woken tasks run when it next waits (like asyncio's
+  `Future.set_result` or a Redis `PUBLISH`). Use it only when the waiters cannot miss what the completer does next —
+  the in-memory notice broker of doeff-events queues a notice for a subscriber not waiting (agora-redesign #4013).
+  Deadlock detection is the same for both.
 
 ---
 

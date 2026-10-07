@@ -2549,6 +2549,15 @@ impl Locked<'_> {
         } else {
             effect.getattr(pyo3::intern!(py, "error"))?.unbind()
         };
+        // `CompletePromise(..., yield_to_woken=False)`: the completer keeps
+        // its turn (agora-redesign #4013); FailPromise always yields.
+        let yield_to_woken: bool = if complete {
+            effect
+                .getattr(pyo3::intern!(py, "yield_to_woken"))?
+                .extract()?
+        } else {
+            true
+        };
         let promise = self.promises.get_mut(&pid).expect("checked above");
         promise.status = if complete {
             Status::Completed
@@ -2563,6 +2572,11 @@ impl Locked<'_> {
                 id: pid,
             },
         )?;
+        if !yield_to_woken {
+            // The woken tasks are already queued and run when the completer
+            // next waits.
+            return self.resume_now(py, k, py.None());
+        }
         let own = self.task_priority(current);
         let completer_priority = match woken_min {
             None => own,

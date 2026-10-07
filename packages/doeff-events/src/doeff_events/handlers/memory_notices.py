@@ -6,7 +6,9 @@ stand for separate processes (agora-redesign #3850).
 
 ``memory_notice_handler(broker)`` answers the lower-layer effects from that broker. A blocked wait is a scheduler
 promise (``CreatePromise`` / ``Wait``), like ``subscribed_event_handler``, so a virtual clock and the scheduler's
-dead-end detection keep working.
+dead-end detection keep working. ``Announce`` returns to the sender at once, as a Redis ``PUBLISH`` does: the
+subscribers it woke run when the sender next waits (``CompletePromise(..., yield_to_woken=False)`` —
+agora-redesign #4013).
 
 A test can take the broker away and bring it back with ``cut_broker`` / ``restore_broker``. A cut ends every
 subscription, as a lost connection does: waiting subscribers are answered ``BrokerUnreachable``, notices not yet
@@ -251,7 +253,11 @@ def memory_notice_handler(broker: MemoryBroker) -> "ProgramHandler":
                 yield Pass(effect, k)
                 return None
         for wake in wakes:
-            yield CompletePromise(wake.promise, wake.value)
+            # The sender keeps its turn, as a Redis PUBLISH returns without waiting for the subscribers: the ones
+            # woken run when the sender next waits, so the notices it sends in one stretch reach them together
+            # (agora-redesign #4013). Nothing is lost meanwhile — ``announce`` already took the woken subscribers'
+            # waits away, so a notice sent before they ask again goes to their queue.
+            yield CompletePromise(wake.promise, wake.value, yield_to_woken=False)
         return (yield Resume(k, answer))
 
     return _program_handler(handler)
