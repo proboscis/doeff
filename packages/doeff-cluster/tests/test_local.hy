@@ -32,6 +32,7 @@
 (import tests.fixtures.replicas [with-replicas])
 (import tests.fixtures.event_programs [stop-minders stop-ignorers])
 (import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 late-handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
+                                    lingering-handoff-beacons lingering-handoff-beacons-v2 lingering-handoff-beacons-v3
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
@@ -50,6 +51,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
+(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.env_fixtures [LOCK env-of])
 
 
@@ -326,6 +328,31 @@
                                    :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :hides-retired True :task-reserve 0))))
   (<- over tuple (runs-within-their-limit processes HANDOFF-LIMIT))
   (assert over processes))
+
+
+(deftest test-a-handoff-job-keeps-the-current-process-when-redeclared-beside-a-retired-one
+  ;; 失敗ケース(#4072 の D-3): 退いた旧が寿命の上限(retiredSeconds 600)まで残る beacon を、退いた旧が居る間に宣言し直すと、今の process を
+  ;; 止めて(SpecChanged)から新を起こしていた — 今の process が回している仕事が切れる。今の process も退かせて新を並べ、3 つとも動き続ける。
+  ;; 条 C14 の上限は、退いた process の上限 R(WorkerPolicy.retired-limit の既定 3)に新の 1 つを足した 4。
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) (lingering-handoff-beacons sim-foundation)
+                                   (handed-off-twice (lingering-handoff-beacons-v2 sim-foundation) (lingering-handoff-beacons-v3 sim-foundation))))
+  (assert (= (len processes) 3) processes)
+  (assert (all (gfor p processes (is p.ended-ms None))) processes)
+  (<- over tuple (runs-within-their-limit processes #((RunLimit :job "beacon" :limit 4))))
+  (assert (= over #()) #(over processes)))
+
+
+(deftest test-a-handoff-job-stops-the-oldest-retired-process-beyond-the-retired-limit
+  ;; 退いた process が上限 R に達している間の宣言し直しでは、いちばん古い退いた process を止め、それが終わってから今の process を退かせて
+  ;; 新を起こす(同時に動くのは R + 1 まで)。R = 1 の worker で、版 1(退いた)と版 2(今)が居る所へ版 3 を宣言する。
+  (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) :policy (WorkerPolicy :retired-limit 1) (lingering-handoff-beacons sim-foundation)
+                                   (handed-off-twice (lingering-handoff-beacons-v2 sim-foundation) (lingering-handoff-beacons-v3 sim-foundation))))
+  (val ordered (sorted processes :key (fn [p] p.started-ms)))
+  (assert (= (len ordered) 3) ordered)
+  (assert (is-not (. (get ordered 0) ended-ms) None) "いちばん古い退いた process(版 1)を止める")
+  (assert (all (gfor p (cut ordered 1 None) (is p.ended-ms None))) "版 2 は止めずに退かせ、版 3 と並ぶ")
+  (<- over tuple (runs-within-their-limit processes #((RunLimit :job "beacon" :limit 2))))
+  (assert (= over #()) #(over processes)))
 
 
 (defk watch-rows [seconds prefix]
