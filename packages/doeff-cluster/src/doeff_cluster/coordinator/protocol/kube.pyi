@@ -118,6 +118,7 @@ def kube_unavailable(reason: str, batches: KubeReadBatches) -> _Handler:
 class KubeMemory:
     deployments: dict
     calls: Incomplete
+    reads: Incomplete
     down: Incomplete
     nodes: Incomplete
     batches: Incomplete

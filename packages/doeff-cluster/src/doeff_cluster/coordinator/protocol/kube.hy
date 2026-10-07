@@ -233,9 +233,9 @@
    scale は宣言の台数だけを変える(Pod が立つ・消えるのはテストが .settle で進める)。calls = 受けた書きの記録。
    down = 真の間は全部 KubeUnavailable(API の途絶)。nodes = node の名 → label の dict(能力の導出の検)。
    読みは本番と同じ束で受け(batches)、始めた時に読む。stalled-until-ms = この時刻(調停ループの now)までは読みが「まだ」と答える
-   (k8s の読みが答えない時間の模擬 — #2807)。"
+   (k8s の読みが答えない時間の模擬 — #2807)。reads = Deployment を読んだ「ns/名」の列(読んだ順 — 時間で読みに行く数の検・#3868)。"
   (defn #^ None __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
-    (setv self.deployments deployments self.calls [] self.down False self.nodes (or nodes {})
+    (setv self.deployments deployments self.calls [] self.reads #() self.down False self.nodes (or nodes {})
           self.batches (KubeReadBatches) self.stalled-until-ms None))
 
   (defn #^ dict row [self #^ str namespace #^ str name]
@@ -246,7 +246,8 @@
 
   (defn #^ OpaqueJson deployment-object [self #^ str key]
     "「ns/名」の行を、本番の k8s の API の答えと同じ Deployment の object の形で返す(本番と同じ解き deployment-view を通すため)。
-     行に欄が無い時の値は以前の模擬の読みの既定と同じ(台数 0・世代 1・annotations は空)。"
+     行に欄が無い時の値は以前の模擬の読みの既定と同じ(台数 0・世代 1・annotations は空)。読んだ鍵を reads に積む。"
+    (setv self.reads (+ self.reads #(key)))
     (setv row (.row self #* (.split key "/" 1)))
     (OpaqueJson.of
       {"spec" {"replicas" (get row "specReplicas")}
