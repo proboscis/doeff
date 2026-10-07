@@ -13,6 +13,7 @@ import base64
 import hashlib
 import importlib.util
 import os
+import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -81,7 +82,7 @@ class FakeCompile:
 def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
     """道具の版を固定し、保存先と一時の dir を tmp に向けた口。"""
     module = _backend()
-    monkeypatch.setattr(module, "_tool_versions", lambda: "rustc=fixed maturin=fixed")
+    monkeypatch.setattr(module, "_tool_versions", lambda: "maturin=fixed")
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
     monkeypatch.setattr(module.tempfile, "tempdir", str(tmp_path))
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
@@ -246,3 +247,29 @@ def test_the_entry_reports_the_stored_wheel_to_the_caller(backend: ModuleType, t
     assert rows[0]["wheel"] == rows[1]["wheel"], rows
     assert Path(rows[0]["wheel"]).is_file() and Path(rows[0]["wheel"]).is_relative_to(tmp_path / "store"), rows
     assert {row["project"] for row in rows} == {"probe"}, rows
+
+
+def test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補・agora-redesign #3850 の 2026-10-07 — zeus の追随の腕の slot の同期が rc=1 で止まった): 入口は
+    # 保存先を引く前に鍵を作る。鍵の材料に `rustc -V` の出力を入れていると、PATH に rustc の無い環境(zeus の常駐の PATH)では保存先に
+    # 同じ source の wheel が在っても鍵を作る所で落ちる。鍵は子 process を起こさずに作り、保存先の wheel をそのまま返す。道具の版を
+    # 固定の文字に差し替えない(鍵を作る本物の道筋を通す)。
+    module = _backend()
+    monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
+    monkeypatch.setattr(module.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    no_tools = tmp_path / "no-tools"
+    no_tools.mkdir()
+    monkeypatch.setenv("PATH", str(no_tools))
+
+    def no_child(*args: object, **kwargs: object) -> object:
+        raise AssertionError(f"入口が子 process を起こした: {args!r}")
+
+    monkeypatch.setattr(subprocess, "run", no_child)
+    package = _checkout(tmp_path / "wt")
+    built = module.stored_wheel(package, None, FakeCompile(package))
+    again_compile = FakeCompile(package)
+    again = module.stored_wheel(package, None, again_compile)
+    assert built.built and not again.built, (built, again)
+    assert again.path == built.path and again.path.is_file(), (built, again)
+    assert again_compile.calls == 0, again_compile.targets
