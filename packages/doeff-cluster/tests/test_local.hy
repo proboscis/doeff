@@ -146,7 +146,8 @@
 
 
 (deftest test-redeclaring-a-recreate-service-stops-the-old-process-before-the-new-one-starts
-  ;; 版(environ の STEP)を変えて宣言し直すと入れ替わる — recreate は旧を止めて(止めの合図 -15)から新を起こす。
+  ;; 版(environ の STEP)を変えて宣言し直すと入れ替わる — recreate は新しい版の準備と入口の検めの後に旧を止めて(止めの合図 -15)から
+  ;; 新を起動する(新旧を並べない)。
   (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (redeclare-and-watch (beacons-v2 sim-foundation) "beacon" "beacon/" 12.0)))
   (assert (= changed.answer #("beacon")) changed.answer)
   (assert (= (get changed.before.rows "beacon/a" "step") "1") changed.before.rows)

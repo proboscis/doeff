@@ -43,7 +43,8 @@
   (setv #^ (| (get dict #(str object)) None) readiness None) ; {"windowSeconds": n} = ReportReady の「準備できた」が直近 n 秒以内にある時だけ Ready
   (setv #^ (| str None) owner None)   ; 宣言の所有者(依頼の主体の id・作業係の名)。誰が宣言したかの記録で、書き・消しの可否には使わない
   ;; --- 入れ替え(2026-09-24) ---
-  ;; 入れ替えの形: "recreate"(旧を止めてから新 — 既定)か "handoff"(新が Ready と数えられてから旧を止める — worker_model.JobSpec)。
+  ;; 入れ替えの形: "recreate"(新しい版の準備と入口の検めが済んでから旧を止め、止め終えてから新 — 既定)か "handoff"(新が Ready と
+  ;; 数えられてから旧を止める — worker_model.JobSpec)。
   ;; 版は宣言の revision ただ 1 つ(Program を詰めた commit — 以前の image の版を追う baseFrom と、定義だけを別の commit で重ねる
   ;; overlay は消した。持つ行は宣言の口と読み直しで断る — cluster_policy.program-row-refusal)。
   (setv #^ str update "recreate"))

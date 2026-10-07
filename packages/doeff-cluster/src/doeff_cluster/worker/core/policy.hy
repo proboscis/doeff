@@ -7,6 +7,13 @@
 ;; 入れ替えが諦められたら(旧は動き続ける)同じ旧へ「退きを取り消した」(HandoffAbandoned)、諦めが解けたらもう一度「退く」を NoticeJob で
 ;; 送る(notice-actions — 観測の notice と今の知らせの食い違いだけ)。
 ;;
+;; recreate の入れ替えの順(2026-10-08): handoff でない job(task を除く)も、宣言の版が変わったら旧を動かしたまま新しい版の木を準備し、
+;; 入口の検めが通ってから旧を止める(SpecChanged)。止め終えた次の周期で新しい版をすぐ起動する(準備と検めは済んでいる)。準備に失敗した・
+;; 検めが落ちた間は旧を止めない(書き手の空白を作らない — handoff と同じ)。新旧の本体を同時に動かす事は無い(検めは入口の module の
+;; import だけで本体を走らせない — worker_rules.probe-args)。以前は先に旧を止めてから準備と検めをしたので、本番の Pod 1 つの記録の service が
+;; 新しい版の環境の準備の約 107 秒を含む約 130 秒書けなかった(02:45:30 に止め → 02:47:24 に起動)。判断は replace-step の 1 か所
+;; (plan-job の止めの枝と、見送りの行の start-holds が読む)。宣言から消えた job・drain 中の版の据え置き・task は今までどおり。
+;;
 ;; 入口の検め(probe・2026-09-25): service の job は、木が揃った後に「worker の実行環境でその木の入口(factory と env)を読み込めるか」を
 ;; 先に試し(ProbeEntry)、PASSED になるまで起こさない(StartJob)・旧を名から外さない(RetireJob)。業務コード・定義・実行環境の組が崩れた
 ;; 木(例: 定義だけ進んで実行環境の doeff に無い名を import する)は、起こしては import で落ちる backoff を繰り返す代わりに、
@@ -165,8 +172,9 @@
     True #()))
 
 (defrecord StartStep
-  "宣言の job 1 つ(動いている process の無い物)を起こす判断の答え(#3713): actions = この拍に撃つ action(準備・検め・StartJob)・
-   hold = 起こさない訳(StartJob を出す拍と、終わった task は None)。"
+  "宣言の job 1 つを新しい版の起動へ進める判断の答え(#3713): 動いている process の無い job を起動する start-step と、recreate の job の
+   旧い版を新しい版へ移す replace-step(2026-10-08)が返す。actions = この周期に実行する action(準備・検め・StartJob・旧の止め)・
+   hold = 新しい版を起動しない訳(StartJob を出す周期・旧を止める周期・終わった task は None)。"
   (#^ tuple actions)
   (#^ (| StartHold None) hold))
 
@@ -228,6 +236,35 @@
     (is tree None) (StartStep :actions (prepare-actions now spec world policy) :hold (! (prepare-hold code record)))
     True (! (ready-tree-step now spec tree world record policy))))
 
+
+(defk recreating? [want process record]
+  {:pre [(: want (| JobSpec None)) (: process (| ProcessView None)) (: record JobRecord)] :post [(: % bool)]
+   :tags {:context "worker" :role "judgment"}}
+  "recreate の job の動いている旧い版を、宣言の新しい版へ移している途中かを 1 か所で決めるため(plan-job の止めの枝・start-holds・
+   statuses が同じ述語を読む — 2026-10-08): 宣言に在り、handoff でも task でもなく、版を据え置いておらず(drain 中でない — #3684)、
+   動いている process(終わっていない・退いていない)の spec が宣言と違い、まだ止め始めていない。"
+  (and (is-not want None) (is-not process None)
+       (not want.handoff) (not want.once) (not want.hold-version)
+       (is process.exit-code None) (is process.retired-from None)
+       (!= want process.spec) (is record.stopping None)))
+
+
+(defk replace-step [now want process world record policy]
+  {:pre [(: now int) (: want JobSpec) (: process ProcessView) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy)]
+   :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
+  "recreate の job の旧い版を宣言の新しい版へ移す action と、新しい版をまだ起動しない訳を 1 か所で決めるため(plan-job の止めの枝と、
+   周期の終わりの見送りの行 start-holds が同じ判断を読む — 2026-10-08): 新しい版の木が READY でなければ準備だけ(準備中・失敗の後の
+   作り直しの間を含む — 訳は prepare-hold)、木が揃っても入口の検めが通っていなければ検めだけ(走っている・落ちた間は待つ — 訳は
+   probe-hold)。どちらの間も旧は動かしたまま。揃って通ったら旧を止める(SpecChanged)— 止め終えた次の周期で start-step が待たずに
+   起動する。"
+  (val code (code-of world (code-key want)))
+  (val tree (ready-path code))
+  (val gate (if (is tree None) None (probe-actions now want tree world policy)))
+  (cond
+    (is tree None) (StartStep :actions (prepare-actions now want world policy) :hold (! (prepare-hold code record)))
+    (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world want))))
+    True (StartStep :actions (stop-actions now process record policy (SpecChanged)) :hold None)))
+
 (defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
   "入れ替え: 新のコードが揃い、新の入口の検めが通るまでは旧を動かしたまま準備と検めだけ進め、通ったら旧を名から外す
    (次の拍で新を同じ名で起こす)。検めが FAILED の間は旧を外さない(書き手の空白を作らない)。"
@@ -284,7 +321,12 @@
     ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在る間は、並べずに止めてから起こす)。
     (and (is-not want None) want.handoff (is record.stopping None) (not (retired-exists world name)))
       (handoff-actions now want process world policy)
-    ;; 宣言から消えた・版や引数が変わった → 先に止める(旧新の同時稼働をしない)。
+    ;; spec が変わった recreate の job: 旧を動かしたまま新しい版の準備と入口の検めを進め、両方が済んでから旧を止める(2026-10-08 —
+    ;; 新旧の本体を同時に動かさない・判断は replace-step)。
+    (and (is-not want None) (run (recreating? want process record)))
+      (. (run (replace-step now want process world record policy)) actions)
+    ;; 宣言から消えた job・止め始めた process・宣言の変わった task・退いた process が既に在る handoff の job → すぐ止める
+    ;; (止め始めた process は止め終える)。
     True (stop-actions now process record policy (if (is want None) absent (SpecChanged)))))
 
 (defk warm-actions [now warm world job-actions policy]
@@ -499,16 +541,20 @@
 (defk start-holds [now desired world records policy]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
-  "拍の終わりの観測(world)と記憶で、宣言の job ごとの起こしの見送りの訳(JobHold)を求めるため(#3713 — 起きを見送った行)。動いている
-   process の在る job と終わった task は見送っていない(None)。諦めた入れ替えは HANDOFF-ABANDONED、それ以外の訳は plan-job の起こしの枝と
-   同じ判断 start-step が決める。"
+  "周期の終わりの観測(world)と記憶で、宣言の job ごとの新しい版の起動の見送りの訳(JobHold)を求めるため(#3713 — 起動を見送った行)。
+   動いている process の無い job は、諦めた入れ替えなら HANDOFF-ABANDONED、それ以外は plan-job の起動の枝と同じ判断 start-step が訳を
+   決める。recreate の job の旧い版を動かしたまま新しい版を準備・検めしている間(2026-10-08)は、plan-job の止めの枝と同じ判断
+   replace-step が訳を決める。それ以外の動いている process の在る job と終わった task は見送っていない(None)。"
   (var holds #())
   (for [spec desired]
     (val record (.get records spec.name (JobRecord spec.name)))
+    (val process (process-of world spec.name))
+    (<- replacing bool (recreating? spec process record))
     (val hold (cond
-                (is-not (process-of world spec.name) None) None
-                (and spec.handoff spec.handoff-abandoned) StartHold.HANDOFF-ABANDONED
-                True (. (! (start-step now spec world record policy)) hold)))
+                (and (is process None) spec.handoff spec.handoff-abandoned) StartHold.HANDOFF-ABANDONED
+                (is process None) (. (! (start-step now spec world record policy)) hold)
+                replacing (. (! (replace-step now spec process world record policy)) hold)
+                True None))
     (:= holds (+ holds #((JobHold :name spec.name :hold hold)))))
   holds)
 
@@ -587,6 +633,8 @@
     :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
     ;; 版を据え置いている(#3684 — drain 中で、新しい版を受けずに旧い版を動かしている — plan-job の据え置きと同じ形)。
     :setv held (and (is-not process None) (is-not want None) want.hold-version (!= process.spec want) (is record.stopping None))
+    ;; recreate の job の旧い版を動かしたまま、新しい版を準備・検めしている(2026-10-08 — plan-job の止めの枝と同じ述語)。
+    :setv replacing (run (recreating? want process record))
     :setv warm-wait (warm-wait-detail world want process record)
     ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
     ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
@@ -602,6 +650,12 @@
         abandoned "入れ替えを諦めた(新の process は止めて起こし直さない・旧は動かしたまま — 宣言が変わるまで)"
         ;; drain 中で新しい版を受けていない(#3684)。新しい版の準備・検めの姿はこの worker では進めないので、ここで止める。
         held "drain 中 — 新しい版は drain の後"
+        ;; recreate の job の新しい版の準備の失敗・入口を読み込めない・検めの間・準備の間は、旧い版が動いている事を頭に示す(2026-10-08)。
+        (and replacing (is-not code None) (= code.state CodeState.FAILED))
+          (.format "旧い版を動かしたまま — 新しい版を準備できない: {}" code.detail)
+        (and replacing (is-not probe None)) (.format "旧い版を動かしたまま — 新の入口を読み込めない: {}" probe.detail)
+        (and replacing (is-not probing None)) (.format "旧い版を動かしたまま — {}" (probing-detail probing))
+        replacing (.format "旧い版を動かしたまま — 新しい版の準備中(新のコード {})" (if (is code None) "未準備" code.state.value))
         (and (is-not code None) (= code.state CodeState.FAILED)) code.detail
         ;; 新の入口を読み込めない(入口の検めの理由)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probe None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— 新の入口を読み込めない: {}" probe.detail)
