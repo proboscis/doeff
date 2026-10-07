@@ -10,7 +10,7 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.foundation.host_contract [environ-reader])
+(import doeff_cluster.foundation.host_contract [os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.entry.cluster_foundation [with-cluster-handlers])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
@@ -20,7 +20,7 @@
   {:pre [(: body DoExpr)] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本番の形の土台: scheduler・構造化ログ・HTTP・session の置き場・環境変数の読み・宿の読み・実時計の外側に、coordinator に話す組を並べる
    (準備の報告を本物の coordinator へ送るため)。"
-  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (state) (environ-reader) host-reader (async-time-handler)]
+  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (state) (os-environ-reader) host-reader (async-time-handler)]
                           (with-cluster-handlers body))))
   answer)
 

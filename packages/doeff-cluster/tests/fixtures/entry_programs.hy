@@ -10,7 +10,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader state env-var-ask])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import tests.fixtures.envs [scheduler-foundation])
 ;; 子の中で入口 doeff_cluster.worker.entry.job_entry は __main__ として読まれる(送る名 JOB-ENTRY — #2112)ので、ここで同じ file を
@@ -35,10 +35,10 @@
 
 (defk environ-read [name]
   {:pre [(: name str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "task の :environ を本番の土台と同じ形で読む見本: 名の Ask に、子の環境変数を字面どおり読む (environ-reader)(環境に無い名は外へ通す)を
-   並べて答える。本番の worker の子では環境変数が答え、sim の子では (environ-reader) が外へ通した Ask に、sim の宿が同じ読みの定義
-   (host_contract.environ-reader)で spec.environ から答える。"
-  (<- value str (scheduler-foundation (with-handlers [(environ-reader)] (Ask name))))
+  "task の :environ を本番の土台と同じ形で読む見本: 名の Ask に、子の環境変数を字面どおり読む os-environ-reader(環境に無い名は外へ通す)を
+   並べて答える。本番の worker の子では環境変数が答え、sim の子では os-environ-reader が外へ通した Ask に、sim の宿が同じ答え方
+   (host_contract.environ-table-reader)で spec.environ から答える。"
+  (<- value str (scheduler-foundation (with-handlers [(os-environ-reader)] (Ask name))))
   value)
 
 

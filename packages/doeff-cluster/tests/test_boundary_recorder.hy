@@ -30,7 +30,7 @@
 (import doeff_vm [UnhandledEffect])
 (import doeff_core_effects.handlers [reader await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
@@ -229,14 +229,14 @@
 
 
 (deftest test-without-an-answer-the-recorder-choice-is-an-unanswered-effect [monkeypatch]
-  ;; 本番の土台が environ を読む handler((environ-reader) — 環境に無い鍵は外へ通す)で答える形。宣言の :environ に RECORD-MODE-KEY が
+  ;; 本番の土台が environ を読む handler(os-environ-reader — 環境に無い鍵は外へ通す)で答える形。宣言の :environ に RECORD-MODE-KEY が
   ;; 無ければ、黙って off にせず答えの無い effect で落ちる。
   (.delenv monkeypatch RECORD-MODE-KEY :raising False)
-  (<- no-mode str (unanswered (with-handlers [(environ-reader)] (boundary-recorder HOST-CONTRACT))))
+  (<- no-mode str (unanswered (with-handlers [(os-environ-reader)] (boundary-recorder HOST-CONTRACT))))
   (assert (in RECORD-MODE-KEY no-mode) no-mode)
   ;; replay を選んでも、状態(REPLAY-STATE-KEY)に答えるのは再生の道具だけ — 本番の宿で replay を選ぶと落ちる。
   (.setenv monkeypatch RECORD-MODE-KEY "replay")
-  (<- no-state str (unanswered (with-handlers [(environ-reader)] (boundary-recorder HOST-CONTRACT))))
+  (<- no-state str (unanswered (with-handlers [(os-environ-reader)] (boundary-recorder HOST-CONTRACT))))
   (assert (in REPLAY-STATE-KEY no-state) no-state))
 
 

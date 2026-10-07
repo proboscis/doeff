@@ -23,7 +23,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [spec-program-file])
-(import doeff_cluster.foundation.host_contract [environ-reader])
+(import doeff_cluster.foundation.host_contract [environ-table-reader])
 (import doeff_cluster.worker.entry.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
@@ -80,14 +80,14 @@
   {:pre [(: worker RigWorker) (: spec JobSpec)] :post [(: % bool)]}
   "担い手の子 process の入口 job_entry task と同じ手順を同じ VM で: coordinator への口が /programs/<sha> から取った cache の file を
    job_entry と同じ read-program で読み(版 → 復元)、走らせ、結果の file を書く。task の :environ は、本番の worker が子の環境変数に
-   置いて子の土台の (environ-reader) が読む物を、同じ読みの定義 environ-reader に spec.environ を渡して答える(他の名は外側へ)。"
+   置いて子の土台の os-environ-reader が読む物を、同じ答え方の environ-table-reader に spec.environ を渡して答える(他の名は外側へ)。"
   (assert (is-not spec.program None) f"task の job は Program の置き場のキーを持つ: {spec}")
   (val read (read-program (str (! (spec-program-file (.program-dir worker.link) spec))) ""))
   (var outcome None)
   (if (is-not (get read 1) None)
       (:= outcome (failed-from (get read 1)))
       (try
-        (<- value (with-handlers [(environ-reader (dict spec.environ))] (get read 0)))
+        (<- value (with-handlers [(environ-table-reader (dict spec.environ))] (get read 0)))
         (:= outcome (TaskSucceeded value))
         (except [error TaskCancelledError]
           (raise))

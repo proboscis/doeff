@@ -1,5 +1,5 @@
-;;; 宿の読み(Ask)の契約テスト — 宿の契約(host_contract.hy)の Ask に答える本物(本番の子の土台の (environ-reader) と host-reader)と
-;;; fake(sim の宿の子の host-answers と値の表の environ-reader)が、同じ deftest を通る。解釈器の組み立ては host_reads_contract_handlers.hy。
+;;; 宿の読み(Ask)の契約テスト — 宿の契約(host_contract.hy)の Ask に答える本物(本番の子の土台の os-environ-reader と host-reader)と
+;;; fake(sim の宿の子の host-answers と値の表の environ-table-reader)が、同じ deftest を通る。解釈器の組み立ては host_reads_contract_handlers.hy。
 ;;;
 ;;;   * 宣言の :environ の名の値は字面どおりの文字列(JSON を parse しない・{…} を解かない・空白を削らない)・空の値は空の文字列
 ;;;   * 置き場に無い名・文字列でない鍵の Ask は外側へ渡す(外側が答えればその答え・外側も答えなければ外側の断り KeyError — None ではない)

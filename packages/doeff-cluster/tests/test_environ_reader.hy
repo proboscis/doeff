@@ -1,8 +1,8 @@
-;; 宣言の :environ の読み(宿の契約の 2 — host_contract.environ-reader)の契約: 値は字面どおりの文字列で、本番の子と sim の子で同じ。
+;; 宣言の :environ の読み(宿の契約の 2 — host_contract の os-environ-reader と environ-table-reader)の契約: 値は字面どおりの文字列で、本番の子と sim の子で同じ。
 ;;
 ;; 責務:
-;;   読みの定義   … environ-reader の 1 つ(名 → 値の置き場を引数に取る)。宣言の名の Ask に値を字面どおり答え、置き場に無い名と文字列で
-;;                 ない鍵は外側へ通す。本番の土台は引数なしの (environ-reader)(子の os.environ の上)・sim の宿は子の spec.environ の上に同じ定義を並べる。
+;;   読みの定義   … 答え方の同じ 2 つ — os-environ-reader(この process の os.environ)と environ-table-reader(渡した値の表だけ)。宣言の名の Ask に値を字面どおり答え、置き場に無い名と文字列で
+;;                 ない鍵は外側へ通す。本番の土台は os-environ-reader(子の os.environ の上)・sim の宿は子の spec.environ の上に environ-table-reader を並べる。
 ;;                 読みの性質(字面どおり・外側へ渡す)を本物と sim の宿で比べる契約は test_host_reads_contract.hy。
 ;;   本番の子     … job_entry の task 入口の子 process(ProcessHost が組んだ環境)で、JSON の object の値が字面どおり返る。
 ;;   sim の子     … sim-cluster の task で、同じ Program・同じ :environ が同じ字面を返す。
@@ -19,9 +19,9 @@
 (import pytest)
 (import doeff [with-handlers Program])
 (import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [env-var-ask])
+(import doeff_core_effects.handlers [env-var-ask reader])
 (import doeff_time [SimClock])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-table-reader os-environ-reader])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [spec-program-file])
 (import tests.host_rig [host-settings launched])
@@ -49,12 +49,30 @@
 ;; --- 読みの定義 ---------------------------------------------------------------------------------------------------
 
 (deftest test-env-var-ask-resolves-a-json-object-value-as-an-import [monkeypatch]
-  ;; 反例: 本番の土台の (environ-reader) が字面どおり返す値(宿の読みの契約 test_host_reads_contract.hy)を、env_var_ask(接頭辞なし)は
+  ;; 反例: 本番の土台の os-environ-reader が字面どおり返す値(宿の読みの契約 test_host_reads_contract.hy)を、env_var_ask(接頭辞なし)は
   ;; {module.path} の import として解き、ModuleNotFoundError で落ちる。
   (.setenv monkeypatch NAME POLICY)
   (with [raised (pytest.raises ModuleNotFoundError)]
     (<- (with-handlers [(env-var-ask :prefix "")] (Ask NAME))))
   (assert (in "\"a\"" (str raised.value)) (str raised.value)))
+
+(deftest test-the-table-reader-answers-from-its-table-and-never-reads-os-environ [monkeypatch]
+  ;; 値の表の答え手 environ-table-reader は渡された表だけから答え、この process の os.environ を読まない(#1536 —
+  ;; 名で実 I/O の有無が決まる)。反例: 表に無い名が os.environ に在っても、答えは外側の handler の物。
+  (.setenv monkeypatch NAME "from-os")
+  (<- from-table (with-handlers [(environ-table-reader {NAME POLICY})] (Ask NAME)))
+  (<- passed (with-handlers [(reader {NAME "from-outer"}) (environ-table-reader {})] (Ask NAME)))
+  (assert (= from-table POLICY) from-table)
+  (assert (= passed "from-outer") passed))
+
+(deftest test-the-os-environ-reader-answers-from-this-process-environ [monkeypatch]
+  ;; 実環境の答え手 os-environ-reader はこの process の os.environ から字面どおり答え、無い名は外側へ通す。
+  (.setenv monkeypatch NAME POLICY)
+  (<- from-os (with-handlers [(os-environ-reader)] (Ask NAME)))
+  (.delenv monkeypatch NAME)
+  (<- passed (with-handlers [(reader {NAME "from-outer"}) (os-environ-reader)] (Ask NAME)))
+  (assert (= from-os POLICY) from-os)
+  (assert (= passed "from-outer") passed))
 
 
 ;; --- 本番の子: job_entry の task 入口の子 process -----------------------------------------------------------------
@@ -91,7 +109,7 @@
 
 
 (deftest test-a-production-child-reads-a-json-object-environ-literally-and-env-var-ask-fails-there [tmp-path]
-  ;; 本番の子で、JSON の object を置いた :environ を (environ-reader)(本番の土台の読み)で読むと字面どおり返る。反例: 同じ子で env_var_ask
+  ;; 本番の子で、JSON の object を置いた :environ を os-environ-reader(本番の土台の読み)で読むと字面どおり返る。反例: 同じ子で env_var_ask
   ;; で読むと {module.path} の import として解かれ、task は ModuleNotFoundError で失敗する(本番の宿で起動のたびに落ちた形)。
   (<- literal (production-child-outcome tmp-path (environ-read NAME) "job-literal"))
   (assert (= literal (TaskSucceeded POLICY)) literal)
@@ -102,7 +120,7 @@
 
 ;; --- sim の子: 同じ Program・同じ :environ を sim-cluster の task で ------------------------------------------------
 
-(val NO-JOBS (system-of "environ-reader-scenarios" #()))
+(val NO-JOBS (system-of "environ-answerer-scenarios" #()))
 
 
 (defk sim-reads []
@@ -114,15 +132,15 @@
 
 
 (deftest test-a-sim-child-reads-the-same-json-object-literally-through-the-same-reader
-  ;; sim の宿は本番の土台と同じ読みの定義(environ-reader)を子の spec.environ の上に並べるので、(environ-reader) で読む Program は本番の子と
+  ;; sim の宿は本番の土台の os-environ-reader と同じ答え方の environ-table-reader を子の spec.environ の上に並べるので、os-environ-reader で読む Program は本番の子と
   ;; 同じ字面を返す。反例の見本(env_var_ask)も sim では字面どおり返る — 環境に無い名を外へ通し sim の宿が答えるため。本番の子でだけ
-  ;; 落ちる食い違いは sim の検では見えない(だから本番の土台は env_var_ask ではなく (environ-reader) を並べる)。
+  ;; 落ちる食い違いは sim の検では見えない(だから本番の土台は env_var_ask ではなく os-environ-reader を並べる)。
   (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (assert (= answer #(POLICY POLICY)) answer))
 
 
 (deftest test-the-host-contract-keys-are-not-environ-names
-  ;; 宿の契約の Ask の鍵(run-context と Program の path)は environ の名の形([A-Z][A-Z0-9_]*)に当たらない — environ-reader と
+  ;; 宿の契約の Ask の鍵(run-context と Program の path)は environ の名の形([A-Z][A-Z0-9_]*)に当たらない — environ の答え手と
   ;; 宿の答え(host-reader・sim の host-answers)が同じ Ask を取り合わない。
   (for [key #(HOST-CONTRACT.run-context-key HOST-CONTRACT.program-key HOST-CONTRACT.versions-key)]
     (assert (not (.isupper key)) key)

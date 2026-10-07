@@ -1,9 +1,9 @@
 ;;; 宿の読み(Ask)の契約テストの解釈器(composition root)— 同じ契約の Program を、宿の答え手だけ替えて走らせる。
 ;;;
-;;;   host-process  本物: 本番の子の土台と同じ並び (environ-reader)(既定 = この process の os.environ)+ host-reader(os.environ の
+;;;   host-process  本物: 本番の子の土台と同じ並び os-environ-reader(既定 = この process の os.environ)+ host-reader(os.environ の
 ;;;                 worker の文脈と Program の path)。host-reader は session の値を使うので外側に state を置く
 ;;;   sim-host      fake: sim の宿の子と同じ並び(local.hy の run-fenced)host-answers(SimChild の文脈と Program の path)+
-;;;                 (environ-reader 値の表)(子の spec.environ)
+;;;                 (environ-table-reader 値の表)(子の spec.environ)
 ;;;
 ;;; 契約の世界は解釈器ごとに同じ形で用意する:
 ;;;   * 宿の文脈 CONTEXT と Program の path PROGRAM-PATH: 本物 = worker が子へ渡す環境変数の名(shared/entry/run_context_env の context-from-env が読む名)に
@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [reader state])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-table-reader os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.run_context [RunContext])
@@ -92,7 +92,7 @@
   (.pop os.environ MISSING None)
   (.pop os.environ OUTER-NAME None)
   (try
-    (<- ran (with_handlers [(reader OUTER) outer-answers (state) (environ-reader) host-reader] program))
+    (<- ran (with_handlers [(reader OUTER) outer-answers (state) (os-environ-reader) host-reader] program))
     (:= answer ran)
     (finally
       (<- (restore-environment saved))))
@@ -102,11 +102,11 @@
 (defk under-sim-host [program]
   {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "sim の宿の子の答え手(run-fenced と同じ並び: host-answers の内側に値の表の environ-reader)の下で program を走らせる。"
+  "sim の宿の子の答え手(run-fenced と同じ並び: host-answers の内側に値の表の environ-table-reader)の下で program を走らせる。"
   (val link (SimLink :queue (RequestQueue) :actor CONTEXT.job :revision CONTEXT.revision :peer CONTEXT.worker
                      :versions (! (process-versions os.environ)) :timing (ClusterTiming)))
   (val child (SimChild :ctx CONTEXT :program-path PROGRAM-PATH :environ (dict DECLARED) :link link :pid 1 :passable #()))
-  (<- answer (with_handlers [(reader OUTER) outer-answers (host-answers child) (environ-reader child.environ)] program))
+  (<- answer (with_handlers [(reader OUTER) outer-answers (host-answers child) (environ-table-reader child.environ)] program))
   answer)
 
 

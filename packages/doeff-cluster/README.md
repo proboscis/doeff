@@ -72,7 +72,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.foundation.host_contract [environ-reader])
+(import doeff_cluster.foundation.host_contract [os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
 
@@ -81,7 +81,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   {:pre [(: body DoExpr)] :post [(: % "body の答え")] :needs #{"cluster-net"}
    :tags {:context "myapp" :role "foundation"}}
   "本体を本番の handler の下で走らせる。"
-  (<- answer (scheduled (with-handlers [(state) (environ-reader) host-reader (sync-time-handler) …] body)))
+  (<- answer (scheduled (with-handlers [(state) (os-environ-reader) host-reader (sync-time-handler) …] body)))
   answer)
 
 ;; job の本体: 翻訳の handler → 記録係 → 土台 の順に自分で並べる(実行先は何も足さない)。
@@ -113,9 +113,9 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。
 - `:readiness` は `{"windowSeconds" n}`(handoff の期限 `handoffTimeoutSeconds` も書ける)、`:update` は `"recreate"`(既定)か
   `"handoff"`、`:environ` は子 process の環境変数(名は `[A-Z][A-Z0-9_]*`・`DOEFF_`・`PYTHON`・`UV_` などの予約は不可・秘密は置かない)。
-  設定は Program の中の `Ask` と、宣言の `:environ` を字面どおり読む handler(`host_contract.environ-reader`)で読みます。
+  設定は Program の中の `Ask` と、宣言の `:environ` を字面どおり読む handler(本番の子は `host_contract.os-environ-reader`・sim の宿は値の表の `host_contract.environ-table-reader`)で読みます。
   `doeff_core_effects` の `env-var-ask` は `{` で始まり `}` で終わる値を `{module.path}` の import として解くので、JSON の object を
-  置いた設定が本番の子でだけ落ちます(sim の実行先は字面どおり返す)— 土台には引数なしの `(environ-reader)`(子の `os.environ` を読む)を並べます。
+  置いた設定が本番の子でだけ落ちます(sim の実行先は字面どおり返す)— 土台には `(os-environ-reader)`(子の `os.environ` を読む — 送る Program の中で呼んで作る)を並べます。
   handler の値は Program に詰められないので、土台の `with-handlers` の中でその場で呼んで作ります。
 - 旧い宣言の形(`service`・`:env`・`:config`・`:env-config`・`:requires`・image の版を追う `baseFrom`・定義だけを別の commit で重ねる
   `overlay`)は受け付けません。どの入口でも理由つきで断り、保存に残った旧い行は `status.refused` に理由を出して起動しません。
@@ -154,14 +154,14 @@ worker の子 process の入口は `hy -m doeff_cluster.worker.entry.job_entry s
 | 提供する物 | Program での読み方 |
 |---|---|
 | run-context(coordinator の URL・worker・job・process の世代) | `Ask HOST-CONTRACT.run-context-key`(`"doeff.cluster.run-context"`)→ `shared.intent.run_context.RunContext` |
-| environ(宣言の `:environ`) | 子の環境変数。名の `Ask` に、値を字面どおりの文字列で答える(読みの定義 = `environ-reader` の 1 つ) |
+| environ(宣言の `:environ`) | 子の環境変数。名の `Ask` に、値を字面どおりの文字列で答える(答え手 = 本番の `os-environ-reader` と sim の `environ-table-reader` — 答え方は同じ) |
 | Program の path(記録の header に載せる) | `Ask HOST-CONTRACT.program-key`(`"doeff.cluster.program"`) |
 | 退きの知らせ(入れ替えで退く・その取り消し) | effect `AwaitRetirement`(`worker.intent.retirement_model`)→ `worker.intent.worker_model` の `Retired` か `HandoffAbandoned` |
 
-本番では土台に並べる `host-reader`(`shared.entry.host_reader`)が 1 と 3 に、`(environ-reader)`(子の `os.environ` の上の読み)が 2 に、
+本番では土台に並べる `host-reader`(`shared.entry.host_reader`)が 1 と 3 に、`os-environ-reader`(子の `os.environ` の上の読み)が 2 に、
 `pipe-retirement-notices`(`worker.entry.retirement_notices`)が 4 に答えます(`host-reader` と `pipe-retirement-notices` は session の値を使うので、
 その外側に `(state)` を、`pipe-retirement-notices` の待ちは外部の Promise なので scheduler を置きます)。`sim-cluster` の偽の実行先は同じキーに
-同じ型で答え、environ は同じ `environ-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
+同じ型で答え、environ は同じ答え方の値の表の答え手 `environ-table-reader` を子の宣言の `:environ` の上に並べて答えます(本番と sim で同じ値 — JSON の object もそのまま)。
 
 退きの知らせ(#3672): `:update "handoff"` の service の spec が変わると、worker は新のコードが揃い新の入口の検めが通った拍で旧を名から外し
 (`RetireJob`)、次の拍で新を起こし、coordinator が新を Ready と数えた後に旧へ SIGTERM を送り、停止の猶予(10 秒)の後に止めます。旧の
@@ -406,7 +406,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 ## effect の記録と再生(backtest)
 
 記録係は job の Program の中に置きます(実行先は差し込みません)。`shared.entry.boundary_recorder` の `boundary-recorder` を翻訳の handler と土台の間に
-並べると、`Ask "EFFECT_RECORD_MODE"` の答え(本番は宣言の `:environ` を `(environ-reader)` が読む)で選びます:
+並べると、`Ask "EFFECT_RECORD_MODE"` の答え(本番は宣言の `:environ` を `os-environ-reader` が読む)で選びます:
 
 | mode | 置く物 |
 |---|---|

@@ -33,7 +33,7 @@
 (defclass [(dataclass :frozen True)] RemoteJob [EffectBase]
   "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides)。
    environ = 子の環境変数(名 → 文字列 — service の :environ と同じ規則・既定は空)。本番は worker が子 process の環境変数に置き、
-   sim は sim の宿が同じ名の Ask に答える(Program は名の Ask で読む — 本番の土台は host_contract.environ-reader・sim の宿も同じ読みの定義で字面どおり返す)。
+   sim は sim の宿が同じ名の Ask に答える(Program は名の Ask で読む — 本番の土台は host_contract.os-environ-reader・sim の宿は同じ答え方の environ-table-reader で字面どおり返す)。
    結果 = Program の戻り値。Program が投げた例外はそのまま呼び手へ届く。"
   (#^ (| Program EffectBase) program)
   (setv #^ frozenset needs (frozenset))

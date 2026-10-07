@@ -14,7 +14,7 @@
 (import doeff_core_effects.handlers [state await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-reader])
+(import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
@@ -76,12 +76,12 @@
 (defk world-foundation [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "見本の土台(外の世界の fake): scheduler と、宿の契約の Ask(host-reader — session の値を使うので外側に state)・environ を読む Ask
-   (本番の土台と同じ (environ-reader) — 宣言の :environ の EFFECT_RECORD_MODE・EFFECT_RECORD_OTLP・業務の設定に字面どおり答え、環境に
+   (本番の土台と同じ os-environ-reader — 宣言の :environ の EFFECT_RECORD_MODE・EFFECT_RECORD_OTLP・業務の設定に字面どおり答え、環境に
    無い鍵は外へ通す)・共有の盤(tests/board_fake.hy の fake の盤 — process ごとに空から始まる・宛先の部品が時刻を読むので仮想の時計)の
    下で本体を走らせる。記録の置き場への送り(記録係が出す HttpRequest)には本番の土台と同じ HTTP の答え手(http-production-handler)が
    答える(検は OTLP の受け口の fake を thread で立てる — test_boundary_recorder.hy)。"
   (<- answer (scheduled (with-handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock)) (state) host-reader
-                                        (environ-reader) #* (board-handlers {})]
+                                        (os-environ-reader) #* (board-handlers {})]
                           body)))
   answer)
 

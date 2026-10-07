@@ -1,6 +1,6 @@
 """宿の契約の型の宣言(doeff_cluster/foundation/host_contract.pyi)の失敗ケース(#2197)。
 
-host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に environ-reader を並べる使い手の strict に Unknown の赤が出ていた
+host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に environ の答え手を並べる使い手の strict に Unknown の赤が出ていた
 (host-reader は shared/entry/host_reader に在る — ここに 1 版残した古い host-reader は 2026-10-03 に消した・#2167)。
 → host_contract.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目・3 本目が赤になる。
 host_contract.pyi は手書きだったが、#3014 で足した this-program-path が載らず、道具で作り直した host_reader.pyi の import が宣言の無い名を
@@ -26,13 +26,13 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_cluster.foundation.host_contract [environ-reader HOST-CONTRACT])
+(import doeff_cluster.foundation.host_contract [environ-table-reader HOST-CONTRACT])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 
 (defk probe-host [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % int)] :tags {:context "probe" :role "foundation"}}
   "宿の答え手 2 つを並べた下で本文を走らせる(handler の型が読める)。"
-  (<- answer int (with-handlers [host-reader (environ-reader {"NAME" "value"})] body))
+  (<- answer int (with-handlers [host-reader (environ-table-reader {"NAME" "value"})] body))
   answer)
 
 (defk probe-key []
@@ -117,7 +117,7 @@ def test_the_stub_matches_host_contract_hy() -> None:
         for node in stub.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     } | {node.name for node in stub.body if isinstance(node, ast.FunctionDef | ast.ClassDef) and not node.name.startswith("_")}
-    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "this_program_path", "environ_reader"}
+    assert declared == {"HostContract", "HOST_CONTRACT", "SIM_PASSABLE", "this_program_path", "environ_table_reader", "os_environ_reader", "environ_reader"}
 
 
 def test_a_dropped_record_field_is_found() -> None:

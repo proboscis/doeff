@@ -205,6 +205,13 @@
    "why": "os.environ の DOEFF_WORKER_PROGRAM と子の文脈(foundation の読みを通す — 古い置き場 foundation/host_contract の host-reader は 2026-10-03 に消した)"
   },
   {
+   "handler": "doeff_cluster.foundation.host_contract:os-environ-reader",
+   "touches": [
+    "env"
+   ],
+   "why": "この process の os.environ を読む(host_contract.hy:93)— 値の表だけに答える environ-table-reader は名を分けて載せない(#1536)"
+  },
+  {
    "handler": "doeff_cluster.foundation.record_handlers:recording-handler",
    "touches": [
     "clock"
