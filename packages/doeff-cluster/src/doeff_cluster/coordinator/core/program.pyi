@@ -2,8 +2,13 @@
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
+from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
+from datetime import datetime as datetime
+from doeff_time import GetTime as GetTime
+from doeff_time import epoch_ms_of as epoch_ms_of
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
+from doeff_cluster.shared.core.clock import datetime_of_epoch_ms as datetime_of_epoch_ms
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster.shared.intent.protocol import Reply as Reply
@@ -36,6 +41,7 @@ from doeff_cluster.coordinator.core.api_policy import ROLLOUT_TICK_MS as ROLLOUT
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
 from doeff_cluster.coordinator.intent.request_bodies import ReadBody as ReadBody
 from doeff_cluster.coordinator.intent.request_bodies import BodyUnreadable as BodyUnreadable
+from doeff_cluster.coordinator.intent.request_bodies import HeartbeatBody as HeartbeatBody
 from doeff_cluster.coordinator.intent.kube_model import ScaleDeployment as ScaleDeployment
 from doeff_cluster.coordinator.intent.kube_model import AnnotateDeployment as AnnotateDeployment
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
@@ -63,6 +69,39 @@ from doeff_cluster.coordinator.core.wake_policy import count_unsettled as count_
 KUBE_READS_NAMED_MS: int
 HEARTBEAT_LAG_LOG: str
 HEARTBEAT_LAG_MS: int
+
+@dataclass(frozen=True, kw_only=True)
+class StepMarks:
+    taken: int
+    judged: int
+    rolled: int
+    saved: int
+    replied: int
+
+@dataclass(frozen=True, kw_only=True)
+class LagSpan:
+    name: str
+    ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class HeardBeat:
+    worker: str
+    queued_ms: int
+
+@dataclass(frozen=True, kw_only=True)
+class HeartbeatLag:
+    elapsed_ms: int
+    slowest: str
+    slowest_ms: int
+
+def heartbeat_lag(marks: StepMarks, queued_ms: int) -> _Program[HeartbeatLag, object]:
+    ...
+
+def lap_ms(measuring: bool) -> _Program[int, object]:
+    ...
+
+def note_heartbeat_lags(heard: tuple, marks: StepMarks) -> _Program[int, object]:
+    ...
 
 def kube_observations(state: ClusterState, now: int) -> _Program[KubeReadsDone, object]:
     ...
