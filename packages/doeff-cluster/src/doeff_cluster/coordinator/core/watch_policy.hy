@@ -9,7 +9,7 @@
 ;;; すぐ — claim を断られてから待ちに入るまでに返された空きも取りこぼさない)。担い手の期限切れで空く刻は lease_rules.lease-full-until が
 ;;; 求め、調停ループはその刻に起きる(wake_policy.watchers-due — #3865 の後の単位)。
 (require doeff-hy.macros [defk deff <- val var])
-(import dataclasses [replace])
+(import dataclasses [astuple replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
@@ -86,6 +86,14 @@
   (replace reply :revision 0))
 
 
+(defk same-view [kept seen]
+  {:pre [(: kept HeartbeatReply) (: seen HeartbeatReply)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
+  "覚えた見え方 kept と今の見え方 seen が、worker が受け取る返事の全部の欄で同じかを知るため。JobSpec の = は ready-instance・
+   handoff-abandoned・hold-version・keep-when-cut-off などを比べない(worker が process を起こし直すかの判断のため)ので、= で比べると
+   入れ替えの新の世代が Ready になった(旧を止める合図)だけの変化で名指しの待ちが起きない(#3871 の単位 5 — 次の heartbeat まで遅れた)。"
+  (= (astuple kept) (astuple seen)))
+
+
 (defk watch-deadline [watcher state now]
   {:pre [(: watcher Watcher) (: state ClusterState) (: now int)] :post [(: % WatchStep)] :tags {:context "coordinator" :role "judgment"}}
   "変わっていない待ちを、期限を過ぎていれば「変わっていない」の答えで返し、それ以外は待ち続けさせるため。"
@@ -128,9 +136,10 @@
           (:= kept (replace watcher :mark first)))
     moved
       (do (<- seen HeartbeatReply (worker-mark state watcher.worker watcher.boot now timing))
-          (if (!= seen watcher.mark)
-              (:= woke True)
-              (:= kept (replace watcher :after state.revision)))))
+          (<- same bool (same-view watcher.mark seen))
+          (if same
+              (:= kept (replace watcher :after state.revision))
+              (:= woke True))))
   (if woke
       (WatchStep :answer (WatchAnswer state.revision True) :watcher watcher)
       (do (<- step WatchStep (watch-deadline kept state now))
