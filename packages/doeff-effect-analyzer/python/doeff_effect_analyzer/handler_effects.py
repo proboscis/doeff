@@ -539,10 +539,23 @@ def _branches(
         return [(found.classes, list(ast.walk(branch)))]
     if isinstance(child, ast.Match) and _is_name(child.subject, param):
         return [
-            (case.pattern.cls, _region(case.body))
+            (cls, _region(case.body))
             for case in child.cases
-            if isinstance(case.pattern, ast.MatchClass)
+            for cls in _pattern_classes(case.pattern)
         ]
+    return []
+
+
+def _pattern_classes(pattern: ast.pattern) -> list[ast.expr]:
+    """The class expressions a ``case`` pattern matches the effect by: a class pattern ``A(...)``, each
+    alternative of an or pattern ``A(...) | B(...)`` (every one runs the same body), and the pattern
+    under ``... as name``. Other patterns (``_``, values) name no class."""
+    if isinstance(pattern, ast.MatchClass):
+        return [pattern.cls]
+    if isinstance(pattern, ast.MatchOr):
+        return [cls for alternative in pattern.patterns for cls in _pattern_classes(alternative)]
+    if isinstance(pattern, ast.MatchAs) and pattern.pattern is not None:
+        return _pattern_classes(pattern.pattern)
     return []
 
 
