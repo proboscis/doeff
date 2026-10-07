@@ -316,11 +316,11 @@
    scale は宣言の台数だけを変える(Pod が立つ・消えるのはテストが .settle で進める)。calls = 受けた書きの記録。
    down = 真の間は全部 KubeUnavailable(API の途絶)。nodes = node の名 → label の dict(能力の導出の検)。
    reads = Deployment の見張り(MemoryFollows)に伝えた「ns/名」の列(伝えた順 — 見張りの始めの list と変化の出来事。時間で読みに行く
-   数の検・#3868)。
+   数の検・#3868)。node-reads = coordinator へ伝えた node の名の列(伝えた順 — 時間で node の label を読みに行く数の検・#4070)。
    node の label の読みは本番と同じ受け渡しで受け(batches)、始めた時に読む。stalled-until-ms = この時刻(調停ループの now)までは
    k8s の API が答えない(node の label の読みは「まだ」・Deployment の見張りは答えない理由を伝える — #2807)。"
   (defn #^ None __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
-    (setv self.deployments deployments self.calls [] self.reads #() self.down False
+    (setv self.deployments deployments self.calls [] self.reads #() self.node-reads #() self.down False
           self.nodes (or nodes {}) self.batches (KubeReadBatches) self.stalled-until-ms None))
 
   (defn #^ dict row [self #^ str namespace #^ str name]
@@ -352,6 +352,11 @@
     (when self.down (raise (KubeUnavailable "テストの k8s が止まっている")))
     (when (not-in node self.nodes) (raise (KubeUnavailable (+ "無い Node: " node))))
     (OpaqueJson.of (get self.nodes node)))
+
+  (defn #^ None relabel [self #^ str node #^ dict labels]
+    "node の label を labels(k8s の Node の metadata.labels と同じ形)に替える(本番の Node の label の変化に当たる・#4070)。"
+    (setv (get self.nodes node) (dict labels))
+    None)
 
   (defn #^ None settle [self #^ str key #^ (| int None) [ready None]]
     "Pod が宣言の台数に揃った(ready を渡せばその数だけ準備できた)とする。"
@@ -421,6 +426,7 @@
   (StartKubeReads [nodes started-ms]
     (val batch (.begin kube.batches nodes started-ms))
     (when (is-not batch None)
+      (setv kube.node-reads (+ kube.node-reads nodes))
       (.read-now batch kube.node-labels-of))
     (resume (is-not batch None)))
   (CollectKubeReads [now-ms name-after-ms]

@@ -64,7 +64,9 @@
 ;;;   KubeReads                 偽の k8s の見張りが coordinator へ伝えた Deployment の「ns/名」の列(伝えた順の tuple — 時間で読みに行く数の検・#3868)。
 ;;;   SettleDeployment ns 名     Deployment の Pod を宣言の台数へ進める(ready で準備済み台数を指定できる)。見張りが変化を伝えるので
 ;;;                             待っている coordinator を起こす。
-;;;   ReportsOf 名              coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
+;;;   NodeReads                 偽の k8s が coordinator へ伝えた node の名の列(伝えた順の tuple — 時間で node の label を読みに行く数の検・#4070)。
+;;;   RelabelNode 名 labels      node の label を替える(本番の Node の変化の出来事に当たる — 待っている coordinator を起こす)。
+;;;   ReportsOf 名             coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(ServiceReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
 ;;;   AwaitProcessStarted 名    その job の最初の process が起きるまで待ち、その記録を返す(世界が process を記録した時に起きる)。
@@ -460,6 +462,18 @@
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect NodeReads
+  "検の effect: 偽の k8s が coordinator へ伝えた node の名の列(KubeMemory.node-reads — 伝えた順の tuple)。時間で node の label を
+   読みに行く数を数える検が使う(#4070)。"
+  {:answer tuple
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect RelabelNode
+  "検の effect: 偽の k8s の node の label を labels(キー → 値)に替える(本番の Node の label の変化の出来事に当たる・#4070)。"
+  {:fields [(: name str) (: labels dict)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect ReportsOf
   "検の effect: job name の process から coordinator に届いた ReportReady / ReportMetrics の列(SimReport の tuple・届いた順)。"
   {:fields [(: name str)]
@@ -597,7 +611,8 @@
    上書きの環境変数(Redeclare にも重ねる)・passable = 柵が外へ通す effect の型(SIM-PASSABLE と外の世界の effects)・
    per-process = process ごとの外の handler の組を作る関数(SimOutside.per-process — None = 無し)・store = coordinator の置き場を作る
    関数(引数なし → MemoryWalStore の値 — 派生の class をそのまま渡せる。None = MemoryWalStore)。deployments = 偽の k8s の
-   初期観測(「namespace/名」→ dict)。parts-of が深い写しを作り、1 回の走りの間だけ変更する。runtime-env = 宣言の実行環境の宣言
+   初期観測(「namespace/名」→ dict)。nodes = 偽の k8s の node の名 → label(k8s の Node の metadata.labels と同じ形 — 能力の導出の検・
+   #4070)。どちらも parts-of が deepcopy を作り、1 回の走りの間だけ変更する。runtime-env = 宣言の実行環境の宣言
    (本番の declare の --runtime-env と同じ — Redeclare にも載せる。None = 送り手の版のコードだけ)。versions = sim の送り手・
    worker・子が名乗る版の識別(sim-plan が 1 度だけ綴る — env の root の外の process として・foundation/process_versions。宣言と blob の JSON にそのまま載る値なので dict)。"
   (#^ System system)
@@ -617,6 +632,7 @@
   (setv #^ (| Callable None) per-process None)
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
+  (setv #^ (| dict None) nodes None)
   (setv #^ (| RuntimeEnv None) runtime-env None)
   ;; 比で延ばした世界(sim-cluster に :timing を渡さない筋書き — SIM-TIMING-RATIO)か。真なら worker の死の判断(WorkerGone)を見張り、
   ;; 出たら筋書きを待たずに SimLivenessError で終わる(延ばした窓は生死の判断が起きない前提 — #3865)。
@@ -998,10 +1014,10 @@
   (system-declaration system revision :versions versions :runtime-env runtime-env :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] * notice-broker]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [nodes None] * notice-broker]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: notice-broker MemoryBroker)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
   (<- fallback tuple (default-workers system))
@@ -1015,7 +1031,7 @@
   (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env versions))
   (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
-           :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env
+           :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env :nodes nodes
            :watches-gone (is timing None)
            :start-ms start-ms :timing (or timing scaled) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects)) :notice-broker notice-broker))
@@ -1029,7 +1045,7 @@
   (val store (if (is plan.store None) (MemoryWalStore) (plan.store)))
   (when (not (isinstance store MemoryWalStore))
     (raise (TypeError (.format "store は MemoryWalStore の値を作る関数: {!r} が {!r} を返した" plan.store store))))
-  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})))
+  (SimParts :queue (RequestQueue) :store store :stop (StopState) :kube (KubeMemory (deepcopy (or plan.deployments {})) (deepcopy (or plan.nodes {})))
             :broker plan.notice-broker))
 
 
@@ -3177,6 +3193,13 @@
     ;; 次の取りで kube-memory が伝えていない変化を見て待たずに返る)。
     (<- (nudge-takers parts.queue))
     (resume None))
+  (NodeReads []
+    (resume parts.kube.node-reads))
+  (RelabelNode [name labels]
+    (.relabel parts.kube name labels)
+    ;; 本番の Node の見張りは label の変化の刻に受付の箱を起こす(#4070)。待っている coordinator を起こす(SettleDeployment と同じ)。
+    (<- (nudge-takers parts.queue))
+    (resume None))
   (ReportsOf [name]
     (resume (tuple (gfor r intake.reports :if (= r.job name) r))))
   (ProcessesOf [name]
@@ -3482,16 +3505,16 @@
 
 
 (defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]
-                       * notice-broker]
+                       [nodes None] * notice-broker]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: notice-broker MemoryBroker)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "program"}}
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
-  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env
+  (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env nodes
                              :notice-broker notice-broker))
   ;; no-business-timers は外の世界の外側: 外の世界に timer-handler を置いた走りでは、それが先に ArmedTimers に答える(#3093)。
   (<- answer (with-handlers [(session-store) no-business-timers #* (if (is outside None) [] outside.handlers) (sim-world plan)]
@@ -3500,10 +3523,10 @@
 
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
-                  [outside None] [store None] [deployments None] [runtime-env None] notice-broker]
+                  [outside None] [store None] [deployments None] [runtime-env None] [nodes None] notice-broker]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: notice-broker MemoryBroker)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
@@ -3514,23 +3537,24 @@
    関数(引数なし → MemoryWalStore の値 — 既定 = MemoryWalStore。反例の壊れた置き場 — 書いたふり・読み直せない・欄を落とす — を
    派生の class で渡す。1 回の走りに 1 回だけ呼び、作り直した coordinator も同じ置き場から読み直す)。自分で scheduler を持つ(外に
    scheduler が在っても無くても走る)。deployments = 「namespace/名」→ KubeMemory の観測の dict(specReplicas・replicas・readyReplicas 等)。
-   走りごとに深い写しを作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。runtime-env = 宣言の実行環境の宣言(本番の
+   走りごとに deepcopy を作り、初期値を変えない。既定は空。Pod の進行は SettleDeployment。nodes = node の名 → label の dict(k8s の Node の
+   metadata.labels と同じ形 — worker の node の label から能力を導く検・#4070。deepcopy を作る・既定は空)。label の変化は RelabelNode。runtime-env = 宣言の実行環境の宣言(本番の
    declare の --runtime-env と同じ — 本物の worker が準備し、子の run-context の runtime-env になる。既定 None)。壁の時計で回すなら
    wall-sim-cluster。worker の代役(宿)は本番と同じ待ち(tick_pauses の await-wakes — 期限・呼び鈴・止めの合図の早い 1 つ)で周の間を
    待つ(#3871 の単位 5)。notice-broker = 知らせの broker
    (doeff-events の MemoryBroker — coordinator が worker の生死の出来事を出す先。呼び手が作って渡し、筋書きと呼び手の世界の job は同じ
    broker の受け手に成れる。既定は無い — sim は作らない・#3850)。"
   (<- answer (scheduled (with-handlers [(sim-time-handler :start-time (datetime-of-epoch-ms start-ms))]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
                                            :notice-broker notice-broker))))
   answer)
 
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
-                       [store None] [deployments None] [runtime-env None] notice-broker]
+                       [store None] [deployments None] [runtime-env None] [nodes None] notice-broker]
   {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: notice-broker MemoryBroker)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
@@ -3540,6 +3564,6 @@
    await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
   (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
-                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env
+                          (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
                                            :notice-broker notice-broker))))
   answer)
