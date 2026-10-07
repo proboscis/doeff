@@ -66,6 +66,7 @@ class ProcessView:
     exit_code: int | None = None
     instance: str = ""
     retired_from: str | None = None
+    retired_at_ms: int | None = None
     notice: Retired | HandoffAbandoned | None = None
 
 class ProbeState(Enum):

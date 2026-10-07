@@ -24,8 +24,11 @@
 ;; handoffTimeoutSeconds = 入れ替え(update = handoff)の新の世代が動き出してから Ready になるまで待つ上限(既定 300 — Rollout の
 ;; readyTimeoutSeconds の既定と同じ)。越えたら coordinator が入れ替えを諦め(新を止めて旧を残す — handoff_policy)、Service の status に
 ;; 理由を出す。期限は handoff の Service だけが持つ(recreate の宣言に書けば断る — 効かない欄を黙って受けない)。
+;; retiredSeconds = 入れ替えで退いた process の寿命の上限(#4072 の D-2・handoff の Service だけ・既定なし)。書いた Service は、新の世代が
+;; Ready と数えられても退いた旧を止めず、旧が自分で終わるか、退いてからこの秒を越えた時に止める(旧が持つ仕事を終わりまで回す)。
+;; 書かない Service は今どおり新の Ready で旧を止める(lease を持つ書き手は、旧が止まって lease を返すまで新が書けないため)。
 (val HANDOFF-TIMEOUT-SECONDS 300)
-(val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds"))
+(val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds"))
 
 
 ;; 報告の reason を coordinator が残す長さ(字)。

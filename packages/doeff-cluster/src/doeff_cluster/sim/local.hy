@@ -2097,11 +2097,14 @@
     (resume None))
   (RetireJob [name pid new-name]
     ;; 名から外すと同時に、観測の notice に「退く」を残し、process の知らせの口へ「退く」を立てる(本番の process-host が shim の標準入力へ
-    ;; 書く行の代役・#3672)。壊れた worker silent-notices(条 W2 の反例)は観測だけ書いて知らせない。
+    ;; 書く行の代役・#3672)。壊れた worker silent-notices(条 W2 の反例)は観測だけ書いて知らせない。退いた刻(寿命の上限 retired-ms を
+    ;; 数える起点 — #4072 の D-2)も観測に残す(本番の process-host と同じ)。
+    (<- retired-at int (now-epoch-ms))
     (<- (change-live-truth worker.name boot
                            (fn [truth] (replace truth :processes (tuple (gfor p truth.processes
                                                                               (if (= p.pid pid)
-                                                                                  (replace p :name new-name :retired-from name :notice (Retired))
+                                                                                  (replace p :name new-name :retired-from name :notice (Retired)
+                                                                                           :retired-at-ms retired-at)
                                                                                   p)))))))
     (when (not worker.silent-notices)
       (<- (ProcessNoticeRaised pid (Retired))))

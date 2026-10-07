@@ -29,9 +29,21 @@
       (.format "readiness の handoffTimeoutSeconds は正の数: {!r}" (get readiness "handoffTimeoutSeconds"))
     (and (in "handoffTimeoutSeconds" readiness) (!= update "handoff"))
       (.format "handoffTimeoutSeconds は update = handoff の Service だけが持つ(いまの update = {!r})" update)
+    (and (in "retiredSeconds" readiness) (not (positive-number (get readiness "retiredSeconds"))))
+      (.format "readiness の retiredSeconds は正の数: {!r}" (get readiness "retiredSeconds"))
+    (and (in "retiredSeconds" readiness) (!= update "handoff"))
+      (.format "retiredSeconds は update = handoff の Service だけが持つ(いまの update = {!r})" update)
     True None))
 
 
 (defn #^ int handoff-timeout-ms [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
   "宣言の readiness(None か検めを通った dict)→ 入れ替えの新の世代が Ready になるまで待つ上限(ms)。書かなければ既定。"
   (int (* 1000 (.get (or readiness {}) "handoffTimeoutSeconds" HANDOFF-TIMEOUT-SECONDS))))
+
+
+(defn #^ (| int None) retired-lifetime-ms [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+  "宣言の readiness(None か検めを通った dict)→ 入れ替えで退いた process の寿命の上限(ms — #4072 の D-2)。書かなければ None(既定は
+   置かない — None の job は今どおり新の世代が Ready と数えられた時に退いた旧を止める。書いた job は新の Ready で止めず、旧が自分で
+   終わるか、退いてからこの長さを越えた時に止める)。"
+  (setv seconds (if (is readiness None) None (.get readiness "retiredSeconds")))
+  (if (is seconds None) None (int (* 1000 seconds))))

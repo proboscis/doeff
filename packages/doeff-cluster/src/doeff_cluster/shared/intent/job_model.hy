@@ -30,6 +30,10 @@
   ;; handoffAbandoned)。worker は新の process を止めて起こし直さず、退いた旧を動かし続ける(worker_policy.plan-job)。宣言が変われば
   ;; coordinator が記録を捨てて偽に戻る。比べない欄。
   (setv #^ bool handoff-abandoned (field :default False :compare False))
+  ;; 入れ替えで退いた process の寿命の上限(ms — #4072 の D-2・宣言の readiness の retiredSeconds・handoff の job だけ)。None = 今どおり
+  ;; 新の世代が Ready と数えられた時に退いた旧を止める。値が在れば新の Ready で止めず、旧が自分で終わるか、退いてからこの長さを越えた時に
+  ;; 止める(worker_policy.retired-actions)。比べない欄(値が変わっても process を起こし直さない)。
+  (setv #^ (| int None) retired-ms (field :default None :compare False))
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))

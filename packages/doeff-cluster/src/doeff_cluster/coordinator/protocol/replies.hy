@@ -58,6 +58,9 @@
      (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})
      ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
      (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})
+     ;; 退いた process の寿命の上限を宣言した handoff の job だけ(#4072 の D-2): worker は新の Ready で退いた旧を止めず、旧が自分で
+     ;; 終わるか、退いてからこの ms を越えた時に止める。欄を読まない古い worker は今どおり新の Ready で止める。
+     (if (and spec.handoff (is-not spec.retired-ms None)) {"retiredMs" spec.retired-ms} {})
      ;; 途絶しても動かし続けてよい印の在る job だけ(#2804 — cluster_policy.keep-marked): worker は coordinator に届かない間もこの job を
      ;; 止めない(長い方の柵 keep-fence-ms まで)。欄を読まない古い worker は今までどおり fence で止める — 旧い worker(e06b01411 の
      ;; handlers.declared-job-spec)は知っている鍵だけを .get で読むので、この欄は捨てられる。

@@ -284,14 +284,21 @@
 (defn #^ tuple retired-actions [#^ int now #^ ProcessView process #^ str origin #^ tuple desired #^ WorldView world
                                 #^ JobRecord record #^ WorkerPolicy policy]
   "退いた process(origin = 退く前の job の名): 元の job の新しい process が Ready と数えられたら止める。それまでは動かし続ける
-   (書き手の空白を作らない)。元の job が宣言から消えた・handoff でなくなった時も止める。"
+   (書き手の空白を作らない)。宣言に寿命の上限(want.retired-ms — #4072 の D-2)が在れば新の Ready では止めず、旧が自分で終わる
+   (plan-job の終わりの枝が回収する)か、退いてから上限を越えた時に止める(旧が持つ仕事を終わりまで回す)。元の job が宣言から消えた・
+   handoff でなくなった時も止める。"
   (setv want (desired-of desired origin)
-        current (process-of world origin))
+        current (process-of world origin)
+        lifetime (if (is want None) None want.retired-ms)
+        ;; 退いた刻の無い観測(この欄を書く前の worker が退かせた process)は起こした刻から数える(実際に退いた刻より前 — 早めに止まる側)。
+        retired-at (if (is-not process.retired-at-ms None) process.retired-at-ms process.started-ms)
+        successor-ready (and (is-not want None) (is-not current None) (is current.exit-code None) (= current.spec want)
+                             (is-not want.ready-instance None) (= want.ready-instance current.instance))
+        due (if (is lifetime None) successor-ready (>= (- now retired-at) lifetime)))
   (if (or (is-not record.stopping None)
           (is want None)
           (not want.handoff)
-          (and (is-not current None) (is current.exit-code None) (= current.spec want)
-               (is-not want.ready-instance None) (= want.ready-instance current.instance)))
+          due)
       (stop-actions now process record policy (Retired))
       #()))
 

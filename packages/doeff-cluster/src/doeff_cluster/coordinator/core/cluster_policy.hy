@@ -30,7 +30,7 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
-(import doeff_cluster.shared.core.readiness_rules [readiness-refusal])
+(import doeff_cluster.shared.core.readiness_rules [readiness-refusal retired-lifetime-ms])
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 
 (setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
@@ -71,9 +71,12 @@
     (= (.get run "kind") "service")
       (do (setv refusal (program-row-refusal item))
           (when refusal (raise (BodyInvalid refusal)))
+          (setv handoff (= (.get item "update") "handoff"))
           (JobSpec name JOB-ENTRY #("service" "--identity" (identity-hash run))
                    revision
-                   :handoff (= (.get item "update") "handoff") :runtime-env runtime
+                   :handoff handoff :runtime-env runtime
+                   ;; 退いた process の寿命の上限(#4072 の D-2 — 宣言の readiness の retiredSeconds・handoff の job だけ)。
+                   :retired-ms (if handoff (retired-lifetime-ms (.get item "readiness")) None)
                    :program (get run "program")
                    :environ (environ-pairs (.get item "environ" {}))))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))

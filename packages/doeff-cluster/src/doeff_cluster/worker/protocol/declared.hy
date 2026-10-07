@@ -51,6 +51,8 @@
            :ready-instance (.get job "readyInstance") :runtime-env placed.runtime-env :env-key placed.env-key
            ;; 入れ替えの諦め(coordinator の期限 — 返事の handoff の job だけが持つ・無ければ偽)。
            :handoff-abandoned (bool (.get job "handoffAbandoned" False))
+           ;; 退いた process の寿命の上限(#4072 の D-2 — 返事の handoff の job で宣言した物だけが持つ・無ければ None = 新の Ready で止める)。
+           :retired-ms (.get job "retiredMs")
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
            :environ (environ-pairs (.get job "environ" {}))

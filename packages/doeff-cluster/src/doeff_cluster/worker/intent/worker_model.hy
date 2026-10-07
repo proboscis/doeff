@@ -81,8 +81,11 @@
   ;; 計器の報告に載る。coordinator は「担い手が running と報告している process の名」と一致する報告だけを数える。
   (setv #^ str instance "")
   ;; 入れ替え(handoff)で退いた process: 元の job の名。退いた process は名を「<元の名>#retired-<世代の名>」へ移して動かし続け、
-  ;; 新しい process が Ready と数えられた後に止める。None = 退いていない。
+  ;; 新しい process が Ready と数えられた後に止める(宣言に寿命の上限 retired-ms が在れば、新の Ready で止めず、自分で終わるか上限を
+  ;; 越えた時に止める — #4072 の D-2)。None = 退いていない。
   (setv #^ (| str None) retired-from None)
+  ;; 退いた刻(epoch ミリ秒 — RetireJob を実行した process-host が書く)。寿命の上限 retired-ms を数える起点。None = 退いていない。
+  (setv #^ (| int None) retired-at-ms None)
   ;; この process へ最後に知らせた退きの知らせ(#3672 — retirement_model の AwaitRetirement の答え): Retired = 退く(RetireJob が名から
   ;; 外す時に送る)・HandoffAbandoned = 退きを取り消した(入れ替えの諦め — NoticeJob)。None = 何も知らせていない。型は下の止めの訳の
   ;; 値なので文字列の注記(この class を作る時に名がまだ無い)。

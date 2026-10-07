@@ -292,7 +292,11 @@
     ;; 外すと同時に子へ「退く」を知らせる(#3672 — 新の起動・新の Ready・旧の止めの合図のどれよりも前)。
     (val started (.get table name))
     (when (and started (= started.view.pid pid))
-      (<- told Started (tell-retirement (replace started :view (replace started.view :name new-name :retired-from name)) (Retired)))
+      ;; 退いた刻(寿命の上限 retired-ms を数える起点 — #4072 の D-2)。
+      (<- retired-at int (now-epoch-ms))
+      (<- told Started (tell-retirement (replace started :view (replace started.view :name new-name :retired-from name
+                                                                         :retired-at-ms retired-at))
+                                        (Retired)))
       (:= table (| (dfor #(k v) (.items table) :if (!= k name) k v) {new-name told})))
     (resume None))
   (NoticeJob [name pid notice]
