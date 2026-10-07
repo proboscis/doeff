@@ -301,12 +301,15 @@
 
 (defk law-append-is-idempotent [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
-  (setv law "同じ冪等キーの再送は前の番号を返し、別の本文は Refused")
+  (setv law "同じ冪等キーの再送は前の番号を返して再送と名乗り(replayed)、別の本文は Refused")
   (<- a1 (as-writer harness MAKER (AppendEvent "journal" "k1" {"n" 1})))
   (<- a2 (as-writer harness MAKER (AppendEvent "journal" "k2" {"n" 2})))
   (<- again (as-writer harness MAKER (AppendEvent "journal" "k1" {"n" 1})))
-  (<- (require-law (and (isinstance a1 Appended) (isinstance a2 Appended) (= again a1) (> a2.sequence a1.sequence)) law
-               (.format "番号: {!r} {!r} {!r}" a1 a2 again)))
+  ;; 積んだ答えと再送の答えは replayed で分かれる — 書き手は「今積んだ」時だけ知らせを出せる(#3850)。
+  (<- (require-law (and (isinstance a1 Appended) (isinstance a2 Appended) (isinstance again Appended)
+                        (= again.sequence a1.sequence) (> a2.sequence a1.sequence)
+                        (is a1.replayed False) (is a2.replayed False) (is again.replayed True))
+                   law (.format "番号と再送の名乗り: {!r} {!r} {!r}" a1 a2 again)))
   (<- other (as-writer harness MAKER (AppendEvent "journal" "k1" {"n" 9})))
   (<- big (as-writer harness MAKER (AppendEvent "journal" "k4" {"n" (* "x" 300)})))
   (<- (require-law (all (gfor answer [other big] (isinstance answer Refused))) law
