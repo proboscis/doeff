@@ -21,7 +21,7 @@
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text resource-version-of keep-mark-of warms-for])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
@@ -483,8 +483,8 @@
    "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}})
 
 
-(defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w]
-  "worker 1 つの {spec status}。"
+(defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w #^ int now]
+  "worker 1 つの {spec status}。now = 温める表の行のうち、この worker に当たる行(期限の内)を選ぶ刻。"
   {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "taskReserve" w.task-reserve
            "versions" (dict w.versions)}
    ;; 生きているか(#1934 — heartbeat が lease の内)。生死の切り替わりの拍で版が進み、出来事の記録に 1 行残る — 名簿を写す呼び手が
@@ -502,6 +502,13 @@
                    {"env" {"ready" (sorted w.env-ready) "preparing" (sorted w.env-preparing)
                            "failed" (sorted (lfor f w.env-failed {"key" f.key "kind" f.kind "retryable" f.retryable})
                                             :key (fn [row] #((get row "key") (get row "kind"))))}}
+                   {})
+               ;; この worker に当たる温める表の行の鍵(#3871 の後 — heartbeat の返事の warm と同じ選び方 cluster_policy.warms-for)。行の
+               ;; 書きと消しで版が進み、この worker を名指した GET /watch が起き、worker は次の heartbeat を待たずに準備を始める
+               ;; (watch_policy.worker-mark)。期限は頼み直すたびに延びるので入れない — 期限の延長だけでは版も見え方も変わらない。
+               ;; 当たる行が在る間だけ載せる(無い worker の status の形・版は以前と同じ)。
+               (if (setx offers (warms-for state w.name now))
+                   {"warm" (sorted (gfor o offers o.key))}
                    {}))})
 
 
@@ -522,7 +529,7 @@
    行が両方在れば受け付けない行(後に書く)が勝つ — row-of と同じ順。"
   (| (dfor job state.jobs (key-of "Service" job.spec.name) (service-row state job now timing))
      (dfor r (.values state.refused) (key-of "Service" r.name) (refused-row state r now timing))
-     (dfor w (.values state.workers) (key-of "Worker" w.name) (worker-row state w))
+     (dfor w (.values state.workers) (key-of "Worker" w.name) (worker-row state w now))
      (dfor t (.values state.tasks) (key-of "Task" t.id) (task-row t))
      (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))))
 
@@ -534,7 +541,7 @@
     "Service" (cond (in name state.refused) (refused-row state (get state.refused name) now timing)
                     (in name jobs) (service-row state (get jobs name) now timing)
                     True None)
-    "Worker" (if (in name state.workers) (worker-row state (get state.workers name)) None)
+    "Worker" (if (in name state.workers) (worker-row state (get state.workers name) now) None)
     "Task" (if (in name state.tasks) (task-row (get state.tasks name)) None)
     "Rollout" (if (in name state.rollouts) (rollout-row (get state.rollouts name)) None)
     _ (raise (ValueError (+ "snapshot の鍵の種類を知らない: " key)))))
@@ -570,7 +577,8 @@
      印の約束(名ごと)/ 置き先か並べた置き先の
      worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 置き先の無い Service は全 worker の生存と
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
-   - Worker: 記録・沈黙の集合の出入り・drain。Task・Rollout: 自分の行。"
+   - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)。
+     Task・Rollout: 自分の行。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
                        (moved-names before.observations.readiness after.observations.readiness)
@@ -593,7 +601,8 @@
                      (frozenset))
         services (if global-moved all-services (| names-moved carried reported unplaced))
         silent-moved (^ (frozenset before.silent) (frozenset after.silent))
-        workers (| (moved-names before.workers after.workers) (moved-names before.drains after.drains) silent-moved)
+        workers (| (moved-names before.workers after.workers) (moved-names before.drains after.drains) silent-moved
+                   (if (moved-names before.warms after.warms) (| (frozenset before.workers) (frozenset after.workers)) (frozenset)))
         moved (| (frozenset (gfor n services (key-of "Service" n)))
                  (frozenset (gfor n workers (key-of "Worker" n)))
                  (frozenset (gfor n (moved-names before.tasks after.tasks) (key-of "Task" n)))
