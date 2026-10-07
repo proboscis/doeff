@@ -196,7 +196,7 @@
   (.add-argument parser "--env-roots-cap" :type int :required True
                  :help "実行環境の roots の合計の上限(byte・hardlink を重ねて数える)— 越えた時は固定されていない root を古い順に消す")
   (.add-argument parser "--env-min-free" :type int :required True
-                 :help "root の置き場の在る共有の disk の空きの最低(byte)— 割った時は固定されていない root を古い順に消し、戻らなければ準備を disk-full で断る")
+                 :help "root の dir の在る共有の disk の空きの最低(byte)— 割った時は固定されていない root を古い順に消し、戻らなければ準備を disk-full で断る")
   ;; bytecode の保存先の dir(#3858 — 値は deploy/boot.sh の DOEFF_HY_CODE_STORE の 1 か所・焼く道具は同じ値を環境変数で読む)。
   (.add-argument parser "--code-store" :required True
                  :help "source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・`off` = 保存先を使わない)")

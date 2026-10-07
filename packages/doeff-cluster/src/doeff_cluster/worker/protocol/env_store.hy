@@ -408,7 +408,7 @@
 
 (defk start-removing [settings measured busy free started-ms]
   {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int) (: started-ms int)] :post [(: % SweepRemoving)]}
-  "数えの答えが届いた拍で、その拍の固定(busy — 数えの間に固定になった root も入る)と、roots の合計の上限・共有の disk の空き free と
+  "数えの答えが届いた時に、その時の固定(busy — 数えの間に固定になった root も入る)と、roots の合計の上限・共有の disk の空き free と
    その最低で消す root を選び(#4051)、脇へ退け、消しをループの外の task として起こすため。答え = 走っている消しの記録。"
   (<- total int (roots-bytes measured.infos))
   (val cap settings.roots-cap-bytes)
@@ -640,7 +640,7 @@
     ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
     ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・空きの状態が変わったか割ったまま固定が
     ;;                  変わった・上限を越えたまま)なら数えを起こす
-    ;;   数えている   → 答えが届いていれば、数えの結び(tally)を持ち替え、この拍の固定と上限と空きで選び、選んだ root を脇へ退けて消しを起こす
+    ;;   数えている   → 答えが届いていれば、数えの結び(tally)を持ち替え、この時の固定と上限と空きで選び、選んだ root を脇へ退けて消しを起こす
     ;;   消している   → 終わっていれば終わりの 1 行を出し、共有の disk の空きが最低を割っていれば uv の cache の prune を起こす
     ;; 初期値の空との比べで「変わった」と判じる最初の SweepEnvs は、worker が最初の宣言を読んだ拍の物(読む前は判断の側
     ;; policy.sweep-actions が撃たない — #3731)。ここで二重に止めない。
@@ -659,7 +659,7 @@
         (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
             (when (is-not measured None)
               (<- total int (roots-bytes measured.infos))
-              ;; 空きは答えを受けたこの拍で 1 度読み、結び(空きの状態 — 次の起こしの判断が比べる)と選びに同じ値を使う(#4051)。
+              ;; 空きは答えを受けた時に 1 度読み、結び(空きの状態 — 次の起こしの判断が比べる)と選びに同じ値を使う(#4051)。
               (<- free int (disk-free settings))
               (:= tally (RootsTally :ready sweeping.ready :bytes total :below-min-free (< free settings.min-free-bytes)))
               (:= measured-infos measured.infos)
