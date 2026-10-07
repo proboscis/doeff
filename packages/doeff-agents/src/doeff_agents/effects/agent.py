@@ -267,6 +267,28 @@ class AgentThinkingDeltaEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentToolCallStartedEvent:
+    """The agent began writing a tool call (before its command is complete): ``id`` (the tool_use block id — the
+    same id the later AgentToolUseEvent's ToolCall names) and ``name`` (the tool). An upper layer shows that the
+    agent is calling that tool while the command is still being written (agora-redesign #3974)."""
+
+    seq: int
+    at: datetime
+    id: str
+    name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentToolInputDeltaEvent:
+    """A partial piece of the command of the tool call being written (``text`` is a fragment of JSON that cannot be
+    read on its own; it may be empty). It belongs to the latest AgentToolCallStartedEvent (agora-redesign #3974)."""
+
+    seq: int
+    at: datetime
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
     ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
@@ -311,6 +333,8 @@ AgentEvent = (
     AgentTextEvent
     | AgentTextDeltaEvent
     | AgentThinkingDeltaEvent
+    | AgentToolCallStartedEvent
+    | AgentToolInputDeltaEvent
     | AgentToolUseEvent
     | AgentToolResultEvent
     | AgentInputFateEvent

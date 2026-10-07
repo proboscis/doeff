@@ -30,6 +30,7 @@
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
+  AgentToolCallStartedEvent AgentToolInputDeltaEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
@@ -75,6 +76,10 @@
   (.format "Stream {} thinking pieces. Reply with exactly: {}" pieces word))
 (val THINKING-PIECES 3)
 (val THINKING-PIECE "...")
+;; 道具の命令を書いている間の差分の片の数と、片の中身(替え玉の CLI も fake も同じ綴り — agora-redesign #3974 の 3)。替え玉の CLI の規則
+;; (scenario_rules.hy の TOOL-INPUT-PIECES-PHRASE)と同じ言葉。
+(val TOOL-INPUT-PIECES 2)
+(val TOOL-INPUT-PIECE "{\"c")
 (val ECHO-OUTPUT "TOOL-OUT-5")
 (val ECHO-SECONDS 0.2)
 ;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
@@ -89,6 +94,7 @@
     (return (FakeReply "" :tool-seconds 2.0 :fail "spent then failed" :cost-usd (float (.group spent 1)))))
   (setv sleep (re.search r"sleep (\d+)" text)
         thinking (re.search r"Stream (\d+) thinking pieces\." text)
+        tool-pieces (re.search r"Stream the tool input in (\d+) pieces\." text)
         command (re.search r"run exactly this command: (.+?) \." text)
         exact (re.search r"[Rr]eply with exactly: (\S+)" text)
         extra (re.search r"include the word (\S+)" text))
@@ -104,6 +110,7 @@
   ;; 本体の最後の呼びの usage と model・model ごとの窓も替え玉の CLI と同じ値を名乗る(#3744)。
   (FakeReply word :tool-seconds (cond sleep (float (.group sleep 1)) echoed ECHO-SECONDS True 0.0)
              :thinking-deltas (if thinking (int (.group thinking 1)) 0)
+             :tool-input-deltas (if tool-pieces (int (.group tool-pieces 1)) 0)
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
              :last-call-usage (if echoed
@@ -248,6 +255,16 @@
   "出力のある道具を 1 度呼ぶ手番を最後まで読む(道具の命令と出力が出来事に載るかを見るため・agora-redesign #3744)。"
   (<- prompt (echo-prompt ECHO-OUTPUT "ECHOED"))
   (<- handle (launch s "adapter-tool-content" prompt None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk tool-input-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "道具の命令を TOOL-INPUT-PIECES 片の差分で書いてから呼ぶ手番を最後まで読む(命令を書いている間が出来事に載るかを見るため・
+   agora-redesign #3974 の 3)。"
+  (<- prompt str (echo-prompt ECHO-OUTPUT "ECHOED"))
+  (<- handle (launch s "adapter-tool-input" (+ prompt (.format " Stream the tool input in {} pieces." TOOL-INPUT-PIECES)) None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -645,6 +662,28 @@
   (assert (= (lfor #(_ text) thought text) (* [THINKING-PIECE] THINKING-PIECES)) (repr done.events))
   (assert (and texts (< (max (lfor #(index _) thought index)) (get texts 0))) (repr done.events))
   None)
+
+(defk check-tool-input-comes-before-the-call [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "道具の呼びの始まり(層 2 の PartialMessage の tool-start)が AgentToolCallStartedEvent(呼びの id と道具の名)として、命令の差分(種類
+   TOOL-INPUT)が片ごとに AgentToolInputDeltaEvent(切れ端の文字列つき)として、その呼びの AgentToolUseEvent より前に出る。命令を
+   書いている間を落とす adapter では 0 で赤(agora-redesign #3974 の 3 — 利用者 2026-10-07 14:2x「呼んでいると分からないといけない」)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val started (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolCallStartedEvent) #(index event.name event.id)))
+  (val pieces (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolInputDeltaEvent) #(index event.text)))
+  (val uses (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolUseEvent) #(index event)))
+  (assert (= (lfor #(_ name _) started name) ["Bash"]) (repr done.events))
+  (assert (= (lfor #(_ text) pieces text) (* [TOOL-INPUT-PIECE] TOOL-INPUT-PIECES)) (repr done.events))
+  (val first-use (get uses 0))
+  (assert (< (get (get started 0) 0) (get (get pieces 0) 0) (get (get pieces -1) 0) (get first-use 0)) (repr done.events))
+  (assert (= (get (get started 0) 2) (. (get (. (get first-use 1) tool-calls) 0) id)) (repr #(started first-use)))
+  None)
+
+(deftest test-headless-carries-the-tool-input-before-the-call-fake [tmp-path]
+  (<- (check-tool-input-comes-before-the-call (run-on FAKE tmp-path tool-input-turn))))
+
+(deftest test-headless-carries-the-tool-input-before-the-call-stub [tmp-path]
+  (<- (check-tool-input-comes-before-the-call (run-on STUB tmp-path tool-input-turn))))
 
 (deftest test-headless-carries-the-thinking-deltas-before-the-text-fake [tmp-path]
   (<- (check-thinking-deltas-come-before-the-text (run-on FAKE tmp-path thinking-turn))))

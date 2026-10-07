@@ -42,6 +42,8 @@
 (val DELTA-SECONDS 0.05)
 ;; 偽の手番の考えている間の差分の片 1 つの考えの文字列(替え玉の CLI tests/stub_cli/claude.hy の thinking_delta と同じ — #3789)。
 (val FAKE-THINKING-PIECE "...")
+;; 道具の命令を書いている間の差分の片の中身(本物の CLI の input_json_delta の partial_json — 替え玉の CLI と同じ綴り・#3974 の 3)。
+(val FAKE-TOOL-INPUT-PIECE "{\"c")
 (setv FAKE-CAPABILITIES #("msg_lifecycle_v1" "interrupt_receipt_v1"))
 ;; 止めるの受理(interrupt_receipt_v1)を名乗らない CLI の process の能力(FakeReply の interrupt-receipt が偽の手番)。
 (val NO-RECEIPT-CAPABILITIES #("msg_lifecycle_v1"))
@@ -400,7 +402,12 @@
   ;; 道具の呼び: 命令は返事の tool-input(許可の問いも同じ命令を問う — 本物の CLI の can_use_tool の input は tool_use の input)。
   ;; 呼びの行の直前に、命令を書いている間の差分(input_json_delta の行)を出す。
   (val call (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME reply.tool-input))
-  (val call-lines (+ (lfor _ (range reply.tool-input-deltas) (PartialMessage :delta DeltaKind.TOOL-INPUT))
+  ;; 差分の前に、本物の CLI と同じく道具の block の始まり(content_block_start の tool_use — 呼びの id と道具の名)を 1 行(#3974 の 3)。
+  (val call-lines (+ (if (> reply.tool-input-deltas 0)
+                         [(PartialMessage :tool-start (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME))]
+                         [])
+                     (lfor _ (range reply.tool-input-deltas)
+                           (PartialMessage :delta DeltaKind.TOOL-INPUT :tool-input-delta FAKE-TOOL-INPUT-PIECE))
                      [(AssistantMessage :tool-calls #(call))]))
   (cond
     reply.needs-permission
