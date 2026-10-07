@@ -247,7 +247,7 @@
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities NODE-LABELS-TTL-MS])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
 
 (import doeff_hy.table [Table TableWrite table-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations NodeLabelsSeen NodeLabelsUnreadable])
@@ -286,7 +286,7 @@
 (defk tick-with [state kube now]
   {:pre [(: state ClusterState) (: kube KubeMemory) (: now int)] :post [(: % ClusterState)]}
   "coordinator の調停の 1 拍(rollout-tick — node の label の読みと能力の導出を含む)をテストの k8s の上で回す。"
-  (<- after ClusterState (with_handlers [(kube-memory kube)] (rollout-tick state T (ClusterNaming) now)))
+  (<- after ClusterState (with_handlers [(kube-memory kube (MemoryFollows))] (rollout-tick state T (ClusterNaming) now)))
   after)
 
 (deftest test-a-self-declared-company-machine-is-not-a-provided-capability

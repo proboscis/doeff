@@ -93,9 +93,7 @@ from doeff_cluster.coordinator.core.warm_policy import warm_read as warm_read
 from doeff_cluster.coordinator.core.program_policy import program_write as program_write
 from doeff_cluster.coordinator.core.program_policy import program_read as program_read
 from doeff_cluster.coordinator.core.program_policy import sweep_programs as sweep_programs
-OBSERVATION_STALE_MS: int
 ROLLOUT_ACTOR: str
-ROLLOUT_TICK_MS: int
 
 def settle(before: ClusterState, after: ClusterState, actor: str, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
@@ -128,13 +126,7 @@ def ready_instances(state: ClusterState, worker: str, now: int, timing: ClusterT
 def ready_instance(state: ClusterState, name: str, now: int, timing: ClusterTiming) -> str | None:
     ...
 
-def deployment_reread_from(seen: DeploymentSeen | DeploymentUnreadable | None) -> int:
-    ...
-
-def deployments_to_observe(state: ClusterState, now: int) -> list:
-    ...
-
-def deployment_reread_due(state: ClusterState, now: int) -> _Program[int | None, object]:
+def deployments_to_follow(state: ClusterState) -> _Program[tuple, object]:
     ...
 
 def plan_rollouts(state: ClusterState, now: int, timing: ClusterTiming, naming: ClusterNaming=...) -> _Program[tuple, object]:

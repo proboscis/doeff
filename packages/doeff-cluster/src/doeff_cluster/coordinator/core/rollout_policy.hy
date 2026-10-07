@@ -25,7 +25,8 @@
 ;;;     (止まり始め = 耐久の鍵 alive の最後の生存の時刻 — api_policy.mark-alive / resume-rollouts)。
 ;;;   - RollingBack は rollbackTimeoutSeconds を過ぎると status.stuck = {step reason sinceMs} を出す(新は止めない: 旧が Ready でない
 ;;;     まま新を止めると書き手が 0 になる)。計器 doeff_worker_rollout_stuck と alert DoeffWorkerRolloutStuck で人を呼ぶ。
-;;;   - 失敗した action は同じ action の失敗が続く間、間を倍々に空ける(1 秒 → 60 秒・action-due)。
+;;;   - 失敗した action は同じ action の失敗が続く間、間を倍々に空ける(1 秒 → 60 秒・action-due)。成功した Deployment への書きは、
+;;;     その書きの後の観測が届くまで出し直さない(action-due・#3868)。
 ;;; status は遷移の時だけ変える(拍ごとには変えない — 版と出来事の記録が拍ごとに進まないように)。
 ;;;
 ;;; status には変わり続ける文(観測の理由・残り時間)を入れない(拍ごとに版と記録が進むため)。いまの観測は資源の表示で見せる。
@@ -333,13 +334,22 @@
   (+ (.get last "at" 0) (retry-delay-ms (.get last "count" 1))))
 
 
-(defn #^ bool action-due [#^ RolloutStatus status #^ dict action #^ int now]
-  "純粋: この拍に action を出してよいか。直前の同じ action が失敗していれば、失敗の数に応じた間を空ける(k8s の API が
-   断り続ける間、毎秒同じ書きを出して記録と版を進めない)。成功した・違う action は、すぐ出す。"
+(defn #^ bool action-due [#^ RolloutStatus status #^ dict action #^ int now #^ (| DeploymentSeen DeploymentUnreadable None) observed]
+  "純粋: この歩に action を出してよいか。直前の同じ action が失敗していれば、失敗の数に応じた間を空ける(k8s の API が
+   断り続ける間、同じ書きを出して記録と版を進めない)。直前の同じ action が成功していて相手が Deployment なら、その書きの後の観測
+   (observed = 相手の Deployment の今の観測。その at が書いた刻より後 — 見張りが伝えた書きの結果)が届くまで出し直さない(見張りが
+   伝える前の古い観測で同じ書きを重ねない・#3868 — 以前は Rollout の歩の 1 秒の間隔がこれを隠していた)。違う action と、相手が
+   Service の成功した action は、すぐ出す。"
   (setv last status.last-action)
-  (when (or (not last) (.get last "ok")) (return True))
+  (when (not last) (return True))
   (when (!= (action-identity last) (action-identity action)) (return True))
-  (>= now (action-retry-from last)))
+  (when (not (.get last "ok")) (return (>= now (action-retry-from last))))
+  (setv target (.get action "target"))
+  (when (not (and (isinstance target RolloutTarget) (= target.kind "Deployment"))) (return True))
+  (match observed
+    (DeploymentSeen :at at) (> at (.get last "at" 0))
+    (DeploymentUnreadable :at at) (> at (.get last "at" 0))
+    None False))
 
 
 (defk rollout-phase-due [spec status now]

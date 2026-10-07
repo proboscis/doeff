@@ -12,6 +12,7 @@ from doeff_cluster.coordinator.protocol.store import durable_states as durable_s
 from doeff_cluster.coordinator.protocol.store import wal_store as wal_store
 from doeff_cluster.coordinator.protocol.replies import reply_bodies as reply_bodies
 from doeff_cluster.coordinator.protocol.kube import KubeMemory as KubeMemory
+from doeff_cluster.coordinator.protocol.kube import MemoryFollows as MemoryFollows
 from doeff_cluster.coordinator.protocol.kube import kube_memory as kube_memory
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox as RequestInbox
 from doeff_cluster.foundation.coordinator_inbox import StopState as StopState

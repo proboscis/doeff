@@ -25,8 +25,12 @@ class AnnotateDeployment(EffectBase):
     annotations: dict
 
 @dataclass(frozen=True)
+class FollowDeployments(EffectBase):
+    keys: tuple[str, ...]
+    now_ms: int
+
+@dataclass(frozen=True)
 class StartKubeReads(EffectBase):
-    deployments: tuple[str, ...]
     nodes: tuple[str, ...]
     started_ms: int
 
@@ -46,5 +50,4 @@ class KubeReadsRunning:
 
 @dataclass(frozen=True, kw_only=True)
 class KubeReadsDone:
-    deployments: tuple[TableWrite[DeploymentSeen | DeploymentUnreadable], ...]
     nodes: tuple[TableWrite[NodeLabelsSeen | NodeLabelsUnreadable], ...]

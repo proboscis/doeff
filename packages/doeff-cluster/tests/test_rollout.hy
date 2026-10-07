@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory kube-memory])
+(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
 (import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
 (import tests.program_rows [SAMPLE-RUN program-run])
 
@@ -129,7 +129,7 @@
     (+= self.now 1000)
     (self.advance-pods)
     (self.worker-beat)
-    (setv self.state (run (scheduled (with_handlers [(kube-memory self.kube)] (rollout-tick self.state T self.naming self.now)))))
+    (setv self.state (run (scheduled (with_handlers [(kube-memory self.kube (MemoryFollows))] (rollout-tick self.state T self.naming self.now)))))
     (when (and (is self.old-stopped-at None) (= (get self.kube.deployments DEP "specReplicas") 0))
       (setv self.old-stopped-at self.now))
     (setv old-up (> (len self.pods) 0) new-up (is-not self.proc None))
