@@ -496,10 +496,29 @@ class CreatePromise(EffectBase["Promise[_T]"], Generic[_T]):
 
 
 class CompletePromise(EffectBase[None], Generic[_T]):
-    def __init__(self, promise: "Promise[_T]", value: _T) -> None:
+    """Complete ``promise`` with ``value`` and wake every task waiting on it.
+
+    ``yield_to_woken`` says when the completer goes on:
+
+    - ``True`` (default): after every task the completion woke has run (#493).
+      A completer whose waiters must ask again before its next completion — a
+      listener that re-registers a fresh promise per event — relies on it: a
+      completer going on first would complete the next event into an empty
+      registry and lose it.
+    - ``False``: at once, keeping its turn; the woken tasks run when the
+      completer next waits (asyncio's ``Future.set_result``, a Redis
+      ``PUBLISH``). Only for a completer whose waiters cannot miss what it does
+      next — the in-memory notice broker keeps a notice for a subscriber not
+      waiting in that subscriber's queue (agora-redesign #4013). The woken
+      tasks are queued exactly as with ``True``, so a run whose tasks all wait
+      on promises nobody completes is still a deadlock the scheduler names.
+    """
+
+    def __init__(self, promise: "Promise[_T]", value: _T, *, yield_to_woken: bool = True) -> None:
         super().__init__()
         self.promise = promise
         self.value = value
+        self.yield_to_woken = yield_to_woken
 
 
 class FailPromise(EffectBase[None]):
@@ -2382,15 +2401,25 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             promise["status"] = "completed"
             promise["result"] = effect.value
             woken_min = wake_waiters(("promise", pid))
+            if not effect.yield_to_woken:
+                # The completer keeps its turn (agora-redesign #4013): the woken
+                # tasks are already queued and run when it next waits. Deadlock
+                # detection is unchanged — it reads the ready heap and the
+                # parked waiters, not who is running.
+                r = yield Resume(k, None)
+                return r
             # Re-queue the completer at min(its OWN task priority, the
             # lowest wake priority it just caused): the tasks a resolution
             # woke ALWAYS run before the completer resumes — waiters are
             # enqueued first, so FIFO within equal priority finishes the
-            # guarantee. Pub/sub loops depend on it: a HIGH publisher
-            # resuming ahead of the woken NORMAL listener publishes the
-            # next event before the listener re-registers, silently losing
-            # it (doeff_events memory handler; adversarial finding on the
-            # first #493 fix). #493 itself stays fixed because there is no
+            # guarantee. Pub/sub loops whose listener re-registers a fresh
+            # promise per event depend on it: a HIGH publisher resuming
+            # ahead of the woken NORMAL listener publishes the next event
+            # before the listener re-registers, silently losing it
+            # (adversarial finding on the first #493 fix). A broker that
+            # keeps the event for a listener not waiting does not — the
+            # doeff_events in-memory broker queues it and completes with
+            # yield_to_woken=False (#4013). #493 itself stays fixed because there is no
             # hard-coded IDLE demotion: with no woken waiter the completer
             # keeps its own priority, and it is never demoted below the
             # tasks it woke — so it cannot freeze behind an external-wait

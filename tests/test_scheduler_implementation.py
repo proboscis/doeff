@@ -22,7 +22,9 @@ from doeff_core_effects.scheduler import (
     CompletePromise,
     CreatePromise,
     CreateSemaphore,
+    Future,
     ReleaseSemaphore,
+    SchedulerDeadlockError,
     SchedulerImplementation,
     Semaphore,
     Spawn,
@@ -320,3 +322,79 @@ def test_spawned_task_sees_handlers_and_observers_as_in_place(
     )
     assert answer == expected == ("answer", "answer")
     assert spawned == in_place
+
+
+class _Order:
+    """The steps the tasks of one run took, in order."""
+
+    __slots__ = ("_mut_steps",)
+
+    def __init__(self) -> None:
+        self._mut_steps: tuple[str, ...] = ()
+
+    def note(self, step: str) -> None:
+        self._mut_steps = (*self._mut_steps, step)
+
+    @property
+    def steps(self) -> tuple[str, ...]:
+        return self._mut_steps
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+@pytest.mark.parametrize(
+    ("yield_to_woken", "expected"),
+    [
+        (True, ("waiter woke", "completer went on")),
+        (False, ("completer went on", "waiter woke")),
+    ],
+    ids=["yields-to-the-woken", "keeps-its-turn"],
+)
+def test_completer_goes_on_after_the_woken_task_unless_it_keeps_its_turn(
+    implementation: SchedulerImplementation, yield_to_woken: bool, expected: tuple[str, ...]
+) -> None:
+    # agora-redesign #4013: CompletePromise(..., yield_to_woken=False) wakes the waiter but the completer goes on
+    # first; the default keeps the #493 order (the woken task runs before the completer goes on).
+    order = _Order()
+
+    @do
+    def waiter(future: Future[None]):
+        yield Wait(future)
+        order.note("waiter woke")
+
+    @do
+    def body():
+        promise = yield CreatePromise()
+        task = yield Spawn(waiter(promise.future))
+        yield CompletePromise(promise, None, yield_to_woken=yield_to_woken)
+        order.note("completer went on")
+        yield Wait(task)
+        return order.steps
+
+    assert run(scheduled(body(), implementation=implementation)) == expected
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_a_run_left_waiting_after_a_completion_that_keeps_its_turn_is_named_a_deadlock(
+    implementation: SchedulerImplementation,
+) -> None:
+    # The woken task is queued as with the default, so deadlock detection still sees a run whose tasks all wait on
+    # promises nobody completes (agora-redesign #4013).
+    @do
+    def waiter(first: Future[None], second: Future[None]):
+        yield Wait(first)
+        yield Wait(second)
+
+    @do
+    def body():
+        first = yield CreatePromise()
+        second = yield CreatePromise()
+        task = yield Spawn(waiter(first.future, second.future))
+        yield CompletePromise(first, None, yield_to_woken=False)
+        yield Wait(task)
+
+    with pytest.raises(SchedulerDeadlockError) as raised:
+        run(scheduled(body(), implementation=implementation))
+    assert raised.value.semaphore_waiters == {}
+    # Listed in the order the waiters parked: the completer went on and parked on the task before the woken task
+    # parked on the second promise.
+    assert raised.value.parked_waiters == ["root (wait) on task 2", "task 2 (wait) on promise 1"]
