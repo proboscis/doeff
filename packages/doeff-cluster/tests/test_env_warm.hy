@@ -195,11 +195,11 @@
                (RootInfo :key "x" :project "" :made-ms 1 :last-used-ms 1 :bytes 100 :owned False)))
   (<- recent frozenset (recent-per-project roots))
   (assert (= recent (frozenset #("c" "d" "q"))) "project ごとに最後に使った新しい 2 つ(別の project は 1 つしか無ければその 1 つ)")
-  (<- nothing tuple (sweep-choice roots (frozenset #("a")) 500))
+  (<- nothing tuple (sweep-choice roots (frozenset #("a")) 500 1 0))  ; 空き 1 は最低 0 の上(空きの選びは test_env_sweep_low_free)
   (assert (= nothing #()) "roots の合計が上限の内なら消さない")
-  (<- one tuple (sweep-choice roots (frozenset #("a")) 450))
+  (<- one tuple (sweep-choice roots (frozenset #("a")) 450 1 0))
   (assert (= one #("b")) "固定されていない最も古い root から、合計が上限の内へ戻るまで")
-  (<- all tuple (sweep-choice roots (frozenset #("a")) 0))
+  (<- all tuple (sweep-choice roots (frozenset #("a")) 0 1 0))
   (assert (= all #("b")) "固定(a)・project ごとの新しい 2 つ(d と戻し先の c)・別の project の root(q)・worker の作っていない dir(x)は消さない"))
 
 
@@ -209,29 +209,30 @@
   (val roots #((RootInfo :key "older" :project "p" :made-ms 10 :last-used-ms 100 :bytes 100 :owned True)
                (RootInfo :key "old" :project "p" :made-ms 20 :last-used-ms 200 :bytes 100 :owned True)
                (RootInfo :key "now" :project "p" :made-ms 30 :last-used-ms 300 :bytes 100 :owned True)))
-  (<- chosen tuple (sweep-choice roots (frozenset #("now")) 0))
+  (<- chosen tuple (sweep-choice roots (frozenset #("now")) 0 1 0))
   (assert (= chosen #("older")) "戻し先の old は残り、それより古い older だけを消す"))
 
 
 (deftest test-sweep-due-measures-only-when-the-roots-changed-or-stay-over-the-cap
   ;; 数え(root ごとに木を歩く)は、まだ数えていない時・完成した root の集合が変わった時・上限を越えたままで固定が変わったか間隔が経った
-  ;; 時だけ。上限の内で集合が変わらなければ、固定が変わっても数えない(共有の disk の空きでは数えない — #3732)。
-  (val under (RootsTally :ready (frozenset #("env-a")) :bytes 100))
-  (val over (RootsTally :ready (frozenset #("env-a")) :bytes 300))
+  ;; 時だけ(空きが最低の上の間 — 空きが最低を割った時の起こしは test_env_sweep_low_free・#4051)。上限の内・空きが最低の上で集合が
+  ;; 変わらなければ、固定が変わっても数えない。引数は (tally ready cap low changed now-ms swept-ms)・low = 今の空きが最低を割っているか。
+  (val under (RootsTally :ready (frozenset #("env-a")) :bytes 100 :below-min-free False))
+  (val over (RootsTally :ready (frozenset #("env-a")) :bytes 300 :below-min-free False))
   (val same (frozenset #("env-a")))
-  (assert (! (sweep-due None same 200 False 0 0)) "まだ数えていなければ数える")
-  (assert (not (! (sweep-due under same 200 True 1000 0))) "上限の内で集合が変わらなければ、固定が変わっても数えない")
-  (assert (! (sweep-due under (frozenset #("env-a" "env-b")) 200 False 1000 0)) "新しく完成した root が在れば数え直す")
-  (assert (! (sweep-due under (frozenset) 200 False 1000 0)) "root が消えれば数え直す")
-  (assert (not (! (sweep-due over same 200 False 1000 0))) "上限を越えたままでも、固定が変わらず間隔の内なら数えない")
-  (assert (! (sweep-due over same 200 True 1000 0)) "上限を越えたまま固定が変われば数え直す")
-  (assert (! (sweep-due over same 200 False SWEEP-EVERY-MS 0)) "上限を越えたまま間隔が経てば数え直す")
-  ;; 掃除の係が拍を求めるか(heartbeat の観測の sweep-wanted)。
-  (assert (! (sweep-wanted False None same 200)) "まだ数えていなければ求める")
-  (assert (not (! (sweep-wanted False under same 200))) "上限の内で集合が変わらず、走っていなければ求めない")
-  (assert (! (sweep-wanted True under same 200)) "走っている掃除は拍ごとに答えを読んで進むので求める")
-  (assert (! (sweep-wanted False over same 200)) "上限を越えていれば求める")
-  (assert (! (sweep-wanted False under (frozenset #("env-b")) 200)) "完成した root の集合が変われば求める"))
+  (assert (! (sweep-due None same 200 False False 0 0)) "まだ数えていなければ数える")
+  (assert (not (! (sweep-due under same 200 False True 1000 0))) "上限の内・空きが最低の上で集合が変わらなければ、固定が変わっても数えない")
+  (assert (! (sweep-due under (frozenset #("env-a" "env-b")) 200 False False 1000 0)) "新しく完成した root が在れば数え直す")
+  (assert (! (sweep-due under (frozenset) 200 False False 1000 0)) "root が消えれば数え直す")
+  (assert (not (! (sweep-due over same 200 False False 1000 0))) "上限を越えたままでも、固定が変わらず間隔の内なら数えない")
+  (assert (! (sweep-due over same 200 False True 1000 0)) "上限を越えたまま固定が変われば数え直す")
+  (assert (! (sweep-due over same 200 False False SWEEP-EVERY-MS 0)) "上限を越えたまま間隔が経てば数え直す")
+  ;; 掃除の係が拍を求めるか(heartbeat の観測の sweep-wanted — 引数 running tally ready cap low)。
+  (assert (! (sweep-wanted False None same 200 False)) "まだ数えていなければ求める")
+  (assert (not (! (sweep-wanted False under same 200 False))) "上限の内・空きが最低の上で集合が変わらず、走っていなければ求めない")
+  (assert (! (sweep-wanted True under same 200 False)) "走っている掃除は拍ごとに答えを読んで進むので求める")
+  (assert (! (sweep-wanted False over same 200 False)) "上限を越えていれば求める")
+  (assert (! (sweep-wanted False under (frozenset #("env-b")) 200 False)) "完成した root の集合が変われば求める"))
 
 
 ;; --- 準備の期限と disk の状態(純粋) ------------------------------------------------------------
@@ -510,7 +511,7 @@
   (assert (= (! (sweep-actions declaration world)) #((SweepEnvs pinned))) "掃除の係が拍を求めていれば固定の集合を渡して掃除する")
   (val roomy (replace world :env-disk (EnvDisk :free 10 :sweep-wanted False :pinned pinned)))
   (assert (= (! (sweep-actions declaration roomy)) #())
-          "掃除の係が拍を求めず、固定の集合が変わらなければ、共有の disk の空きが少なくても掃除の係を呼ばない(#3732)")
+          "掃除の係が拍を求めず、固定の集合が変わらなければ、掃除の係を呼ばない(空きが最低を割ったかの判断は掃除の係の sweep-wanted が持つ — #4051)")
   ;; 宣言をまだ一度も読めていない間(起き直した直後 — #3731)は、掃除の係が拍を求めていても掃除の係を呼ばない。
   (assert (= (! (sweep-actions (NotYetRead) world)) #()) "宣言を読む前は掃除しない")
   (<- planned tuple (plan 0 #(spec) world {} (WorkerPolicy) :warm #(warm)))

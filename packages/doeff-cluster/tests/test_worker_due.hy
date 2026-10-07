@@ -161,9 +161,9 @@
 
 (deftest test-sweep-interval-due-is-the-sweep-boundary
   ;; 上限を越えたままの roots を数え直す刻(前の掃除の終わり + SWEEP-EVERY-MS — sweep-due)。
-  (val tally (RootsTally :ready (frozenset #("env-a")) :bytes 200))
+  (val tally (RootsTally :ready (frozenset #("env-a")) :bytes 200 :below-min-free False))
   (<- due (sweep-interval-due NOW tally 100 1000))
-  (<- at int (boundary due (fn [at] (run (sweep-due tally (frozenset #("env-a")) 100 False at 1000))) NOW))
+  (<- at int (boundary due (fn [at] (run (sweep-due tally (frozenset #("env-a")) 100 False False at 1000))) NOW))
   (assert (= at (+ 1000 SWEEP-EVERY-MS)) at))
 
 
@@ -182,7 +182,7 @@
   (assert (= beat (DueAt :at (+ (- now 100) 2500))) beat)
   (<- fenced (fence-due now (- now 100) 20000 240000))
   (assert (isinstance fenced DueAt) fenced)
-  (<- swept (sweep-interval-due now (RootsTally :ready (frozenset) :bytes 50) 100 1000))
+  (<- swept (sweep-interval-due now (RootsTally :ready (frozenset) :bytes 50 :below-min-free False) 100 1000))
   (assert (= swept (DueNever)) swept)
   (<- stalled (prepare-stop-due now (- now 700000) (PrepareLimits :stall-seconds 600.0)))
   (assert (= stalled (DueNever)) stalled))

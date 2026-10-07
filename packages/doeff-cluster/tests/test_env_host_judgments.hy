@@ -387,10 +387,12 @@
   report)
 
 
-(deftest test-a-shared-disk-below-the-free-minimum-refuses-preparation-and-keeps-roots [tmp-path]
-  ;; 共有の disk の空きが最低を割る(最低を disk の大きさより上に置く)が、roots の合計は上限の内。root は消さない(以前は空きの下限で
-  ;; 消し続けた)・heartbeat は exhausted を名乗る・準備の頼みは空きの最低を載せる(準備の process の stage-disk がこの値で disk-full と
-  ;; 断る — test_env_prepare の disk-full の検)。反例 = 直す前の形(空きが下限を切れば固定されていない root を消す)は a と b を消す — 赤。
+(deftest test-a-shared-disk-below-the-free-minimum-sweeps-the-candidates-and-still-refuses-preparation [tmp-path]
+  ;; 共有の disk の空きが最低を割る(最低を disk の大きさより上に置く)が、roots の合計は上限の内。同じ project の 3 つの版のうち、新しい
+  ;; 2 つ(今の版 c と戻し先 b — #3732)の外の a を消す(#4051)。候補を全部消しても空きは最低に戻らないので、heartbeat は exhausted を
+  ;; 名乗り、準備の頼みは空きの最低を載せる(準備の process の stage-disk がこの値で disk-full と断る — test_env_prepare の disk-full の検)。
+  ;; 反例 = #4051 の前の形(空きでは消さない)は a を残す — 赤。#3732 の前の形(空きの割合で固定されていない root を全部消す)は戻し先 b も
+  ;; 消す — 赤。
   (val runs (ToolRuns))
   (val floor (** 2 62))
   (<- settings EnvSettings (settings-at tmp-path :min-free-bytes floor))
@@ -406,7 +408,8 @@
   (<- report dict (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler
                                              (inline-env-tool runs) (env-host settings)]
                                (report-after-sweeps key text))))
-  (assert (and (.exists a) (.exists b) (.exists c)) "共有の disk の空きが最低を割っても root は消さない")
+  (assert (not (.exists a)) "共有の disk の空きが最低を割ると、project の新しい 2 つの外の a を消す")
+  (assert (and (.exists b) (.exists c)) "今の版 c と戻し先 b は残す")
   (assert (= (get report "capacity") "exhausted") report)
   (assert (= (len runs.launches) 1) runs.launches)
   (val request (json.loads (.read-text (Path (get runs.launches 0)))))
