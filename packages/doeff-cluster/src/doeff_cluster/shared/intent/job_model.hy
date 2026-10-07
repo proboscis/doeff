@@ -20,7 +20,8 @@
   ;; 割り当ての世代(coordinator の Placement.generation)。process を起こした時の値を子 process へ渡し、readiness と計器の報告に
   ;; 載せる。比べない(compare=False): 世代だけが変わっても process を起こし直さない(起こし直すのは spec の中身が変わった時だけ)。
   (setv #^ (| int None) placement (field :default None :compare False))
-  ;; 入れ替えの形(2026-09-24)。偽 = 旧を止めてから新を起こす(Recreate)。真 = 新を旧と並べて起こし、coordinator が新の process を
+  ;; 入れ替えの形(2026-09-24)。偽 = 旧を動かしたまま新しい版の準備と入口の検めを済ませ、旧を止めてから新を起動する(Recreate —
+  ;; 2026-10-08・worker_policy.replace-step)。真 = 新を旧と並べて起こし、coordinator が新の process を
   ;; Ready と数えた(ready-instance がその世代の名になった)後に旧を止める(k8s の RollingUpdate の maxSurge 1・maxUnavailable 0)。
   ;; 名前付きの lease で書きを 1 つに絞る service だけが使う。どちらも比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ bool handoff (field :default False :compare False))
