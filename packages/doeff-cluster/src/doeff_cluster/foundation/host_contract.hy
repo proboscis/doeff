@@ -4,7 +4,7 @@
 ;;; それ以外(scheduler・時計・記録係・業務の handler)は Program が自分の with-handlers で並べる(runner は handler を足さない — R2)。
 ;;;
 ;;;   1. run-context  = Ask HOST-CONTRACT.run-context-key の答え(shared/intent/run_context の RunContext — coordinator の URL・worker・job・世代)
-;;;   2. environ      = 宣言の :environ(子の環境変数)。Program は名の Ask で読み、値は字面どおりの文字列(下の environ-reader)
+;;;   2. environ      = 宣言の :environ(子の環境変数)。Program は名の Ask で読み、値は字面どおりの文字列(下の os-environ-reader・environ-table-reader)
 ;;;   3. program-path = Ask HOST-CONTRACT.program-key の答え(この job の詰めた Program の file の path — 記録係が header に載せる)
 ;;;   4. 退きの知らせ = AwaitRetirement(worker/intent/retirement_model — #3672)の答え。本番の宿は worker の shim が job へ知らせの pipe の
 ;;;      読み口を継がせ、その fd の番号を環境変数 HOST-CONTRACT.notice-env で渡す(worker が shim の標準入力へ書いた行を shim が中継する)。
@@ -12,12 +12,13 @@
 ;;;      世界の受け手で答える(local.hy の process-notices)。
 ;;;
 ;;; 本番では、入口の側の土台の handler host-reader(shared/entry/host_reader — #2981 でここから移した)が os.environ から 1 と 3 に答え、
-;;; (environ-reader) が 2 に答える(業務の側が土台の組に並べる)。host-reader は session val を使うので、その外側に状態の handler
+;;; os-environ-reader が 2 に答える(業務の側が土台の組に並べる)。host-reader は session val を使うので、その外側に状態の handler
 ;;; (doeff_core_effects.handlers の state)が要る — 土台の組の中で host-reader より外に置く。
 ;;; sim の偽の宿は同じ鍵に同じ型で答える。job_entry の文書・host-reader・sim の宿は、この値を参照する(写しを作らない)。
 ;;;
-;;; environ の読みの定義は environ-reader の 1 つ(名 → 値の置き場を引数に取る): 本番の土台 = 引数なし(子の process の os.environ)・
-;;; sim の偽の宿(local.hy の run-fenced)= 子の spec.environ。値は字面どおり返す — doeff_core_effects.handlers.env_var_ask は { で始まり
+;;; environ の読みは答え方の同じ 2 つの答え手で、名で実 I/O の有無が決まる(#1536): 本番の土台 = os-environ-reader(子の process の
+;;; os.environ — 実 I/O)・sim の偽の宿(local.hy の run-fenced)= environ-table-reader(子の spec.environ の値の表だけ)。2 つが同じ値を
+;;; 返す事は宿の読みの契約テスト(tests/test_host_reads_contract.hy)が保つ。値は字面どおり返す —doeff_core_effects.handlers.env_var_ask は { で始まり
 ;;; } で終わる値を {module.path} の import として解くので、宣言の :environ に JSON の object を置いた設定が本番の子でだけ落ちていた
 ;;; (sim の宿は字面どおり返していた — job API の計画の決定 4 の戻し方「専用の handler を足して置き換える」)。env_var_ask の
 ;;; {module.path} の機能はそのまま(宿の契約の読みとしては使わない)。
@@ -78,13 +79,35 @@
   (.get os.environ HOST-CONTRACT.program-env ""))
 
 
+(defhandler environ-table-reader [#^ (get Mapping #(str str)) environ]
+  {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 渡された値の表(sim の宿 = 子の spec.environ・検の表)だけから答える — この process の os.environ を読まない(実 I/O を持たない)。
+  ;; 宣言の :environ の名の Ask に、値を字面どおり(文字列のまま — {module.path} を解かない・JSON を parse しない)答える。表に無い名と
+  ;; 文字列でない鍵(型を鍵にする Ask など)は外側の handler へ通す。答え方は os-environ-reader と同じで、同じに保つのは宿の読みの契約
+  ;; テスト(tests/test_host_reads_contract.hy — 本物と sim の宿が同じ deftest を通る)。
+  (Ask [key]
+    :when (and (isinstance key str) (in key environ))
+    (resume (get environ key))))
+
+
+(defhandler os-environ-reader []
+  {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
+  ;; この process の os.environ から答える実 I/O の答え手(本番の子の土台が並べる — doeff-linter の目録 world_handlers.json の env)。
+  ;; 名で実 I/O の有無が決まるように、値の表の答え手 environ-table-reader と名を分けた(#1536 — 以前は 1 つの名が既定の引数の時だけ
+  ;; os.environ を読んでいた)。答え方は environ-table-reader と同じ(os.environ は文字列でない鍵の問いで TypeError を投げるので、鍵の型を
+  ;; 先に見る)。
+  ;; [] を書く理由: 送る Program(remote・detached の task)が handler の値を捕まえると送れない(ADR-DOE-CLUSTER-001 R3b・
+  ;; remote_model.StrictPickler)ので、Program の本文の with-handlers の中で (os-environ-reader) と呼んでその場で作る。
+  (Ask [key]
+    :when (and (isinstance key str) (in key os.environ))
+    (resume (get os.environ key))))
+
+
 (defhandler environ-reader [#^ (get Mapping #(str str)) [environ os.environ]]
   {:needs #{} :tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 引数に残す理由: 名 → 値の置き場が宿ごとに違う(本番 = 子の process の os.environ — 既定・sim = 子の spec.environ)。読みの定義を
-  ;; この 1 つにして、本番の子と sim の子が同じ :environ に同じ値を返す(頭の註)。本番の土台は引数なしの (environ-reader) を土台の
-  ;; with-handlers の中でその場で呼ぶ(handler の値は Program に詰められない — ADR-DOE-CLUSTER-001 R3b・remote_model.StrictPickler)。
-  ;; 宣言の :environ の名の Ask に、値を字面どおり(文字列のまま — {module.path} を解かない・JSON を parse しない)答える。置き場に無い名と
-  ;; 文字列でない鍵(型を鍵にする Ask など — os.environ は文字列でない鍵の問いで TypeError を投げる)は外側の handler へ通す。
+  ;; 移し替えの間だけ残る旧い名(#1536): 引数なしなら os.environ・値の表を渡すとその表だけから答える。doeff の main を先端で読む
+  ;; 使い手(上に載る系の main を doeff の main の venv で走らせる入口)が新しい 2 つの名へ移るまで消さない — 使い手を先に替え、
+  ;; 最後に古い形を消す順。使い手の付け替えが main に入った後の doeff の変更で、この定義と目録の _not_listed の行を消す。
   (Ask [key]
     :when (and (isinstance key str) (in key environ))
     (resume (get environ key))))
