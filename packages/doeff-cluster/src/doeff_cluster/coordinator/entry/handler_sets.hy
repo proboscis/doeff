@@ -96,8 +96,8 @@
   "まねた環境の組(外側が先)。時計は持たない — 外側の sim の時計(sim-time-handler か async-time-handler)が答える。stop = 停止の合図
    (coordinator_inbox.StopState)。watchers = 置き場への書き(Persist)と要求の受け渡しを見張る handler の列(sim の落ちの注入と呼び鈴 —
    本番の組と同じく保存の綴り durable-states をいちばん内側に置くので、見張りはその外で KV の差分を見る)。slog-handler = 本番と同じ
-   1 行の報告の答え手。broker = 知らせの broker(worker の生死の出来事を出す — 模擬の受け手が同じ broker を読む)。Deployment の見張り
-   (MemoryFollows)は coordinator の process の物なので、組を作るたび(coordinator の起き直しごと)に作り直す(#3868)。"
+   1 行の報告の答え手。broker = 知らせの broker(worker の生死の出来事を出す — 模擬の受け手が同じ broker を読む)。Deployment と Node の
+   見張り(MemoryFollows)は coordinator の process の物なので、組を作るたび(coordinator の起き直しごと)に作り直す(#3868・#4070)。"
   [slog-handler (stop-flag stop) (wal-store store) (queued-requests queue) (kube-memory kube (MemoryFollows)) request-bodies #* watchers
    durable-states reply-bodies
    #* (memory-notices broker)])

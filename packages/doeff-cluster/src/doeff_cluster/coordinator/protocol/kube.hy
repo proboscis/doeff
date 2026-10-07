@@ -1,19 +1,14 @@
 ;;; coordinator の kube_model の effect に答える handler。kube-api = Pod の中から k8s の API へ(foundation/kube_client の
 ;;; KubeClient — 層 protocol は foundation を読めないので、client は下の KubeCalls の形で受け、組み立ては entry が持つ)・
 ;;; kube-memory = テストの dict・kube-unavailable = 資格の無い所(手元の coordinator)で全部 KubeUnavailable を返す。
-;;; 読みの答え(Deployment の観測・node の label)を k8s の JSON から型の値へ解くのはこの module の 1 点(deployment-reading・
+;;; 見張りが伝えた物(Deployment の観測・Node の label)を k8s の JSON から型の値へ解くのはこの module の 1 点(deployment-reading・
 ;;; node-labels-table — #2728)。本物と検の答え手が同じ解きを通り、core は型の値だけを受ける。
 ;;;
-;;; Deployment は時間で読みに行かず見張る(#3868): FollowDeployments で見張る Deployment を揃え、本番の kube-api は Deployment ごとに
-;;; list の後の watch を調停ループの外の daemon の thread で受ける(KubeClient.follow)。見張りの thread は変化を受け渡しの箱
-;;; (DeploymentWatches)に置いて受付の箱を起こし、調停ループは待たずに取る。模擬の kube-memory は、見張り(MemoryFollows — coordinator
-;;; の process ごと)が見張っている Deployment の今が最後に伝えた物と違えば伝え、伝えていない変化が在る間は受付を待たずに返す(本番の
-;;; 見張りが受付を起こすのと同じ刻)。
-;;; node の label の読みは調停ループの外へ(#2807): StartKubeReads で読み(KubeReadBatch)を 1 つ置き、本番の kube-api は調停ループの外の
-;;; daemon の thread で k8s の API へ順に要求する(同期の client が scheduler の thread を塞がない — 本番の要求待ちは scheduler に番を回さない
-;;; ので、task では外せない)。読み終えたら受付の箱を起こす(#3868)。CollectKubeReads は読みを待たずに見て、終わっていれば観測の表への
-;;; 書きへ解く(collected-reads — 3 つの答え手が同じ 1 点を通る)。模擬の kube-memory は読みを始めた時に読み、stalled-until-ms までは
-;;; 「まだ」と答える(k8s の読みが答えない時間の模擬)。
+;;; Deployment も Node も時間で読みに行かず見張る(Deployment — #3868・Node — #4070): FollowDeployments・FollowNodes で見張る相手を
+;;; 揃え、本番の kube-api は相手ごとに list の後の watch を調停ループの外の daemon の thread で受ける(KubeClient.follow・follow-node)。
+;;; 見張りの thread は変化を受け渡しの箱(ObjectWatches — 種類ごとに 1 つ)に置いて受付の箱を起こし、調停ループは待たずに取る。
+;;; 模擬の kube-memory は、見張り(MemoryFollows — coordinator の process ごと)が見張っている相手の今が最後に伝えた物と違えば伝え、
+;;; 伝えていない変化が在る間は受付を待たずに返す(本番の見張りが受付を起こすのと同じ刻)。
 (require doeff-hy.macros [val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (require doeff-hy.macros [defhandler defk <-])
@@ -29,8 +24,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
-(import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments
-                                                     StartKubeReads CollectKubeReads KubeReadsIdle KubeReadsRunning KubeReadsDone])
+(import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes])
 
 
 (defk deployment-view [body]
@@ -62,6 +56,19 @@
     _ parsed))
 
 
+(defk node-labels-view [body]
+  {:pre [(: body (get Mapping #(str object)))] :post [(: % (| (get Mapping #(str object)) None))]
+   :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "k8s の Node の object(API の JSON の本文)から metadata.labels を読むため(node-labels-table が表へ写す)。label を持たない Node は空の
+   写像・metadata か labels が object でなければ None(読めなかった観測)。"
+  (val meta (.get body "metadata" {}))
+  (val labels (if (isinstance meta dict) (.get meta "labels" {}) None))
+  (cond
+    (is labels None) {}
+    (isinstance labels dict) labels
+    True None))
+
+
 (defk node-labels-table [labels]
   {:pre [(: labels (get Mapping #(str object)))] :post [(: % (get Table str))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "k8s の Node の metadata.labels(キー → 値の JSON)を node の label の観測の表へ写すため(core は写像を受けない)。k8s の label の値は
@@ -71,39 +78,38 @@
 
 (defclass KubeCalls [Protocol]
   "kube-api が呼ぶ k8s の client の形(foundation/kube_client の KubeClient がこの形を持つ)。届かない時は KubeUnavailable を投げる。"
-  ;; 読みの答えは API の JSON の本文を中を読まずに運ぶ値(解くのは受け取りの defk の 1 点 — #2807)。
-  (defn #^ OpaqueJson node-labels [self #^ str node] (raise NotImplementedError))  ; 答え = Node の metadata.labels
   ;; Deployment 1 つを list の後の watch で見張る daemon の thread を始める(#3868)。on-body = Deployment の object・on-error = 届かない・
   ;; 断られた・消された理由(どちらも見張りの thread から呼ぶ)。答え = 見張りを止める関数。
   (defn #^ (get Callable #([] None)) follow [self #^ str namespace #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
                                              #^ (get Callable #([str] None)) on-error]
     (raise NotImplementedError))
+  ;; Node 1 つを同じ形で見張る(#4070)。on-body = Node の object(中を読まずに運ぶ — label の読みは node-labels-view の 1 点)。
+  (defn #^ (get Callable #([] None)) follow-node [self #^ str name #^ (get Callable #([OpaqueJson] None)) on-body
+                                                  #^ (get Callable #([str] None)) on-error]
+    (raise NotImplementedError))
   (defn #^ int scale [self #^ str namespace #^ str name #^ int replicas #^ bool dry-run] (raise NotImplementedError))
-  (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations] (raise NotImplementedError))
-  ;; 読みを調停ループの外の thread で読ませる(同期の client が scheduler の thread を塞がない)。then = 終わった印を立てた後に呼ぶ関数
-  ;; (受付の箱を起こす — #3868)。答え = 終わったかを答える関数。
-  (defn #^ (get Callable #([] bool)) in-background [self #^ (get Callable #([] None)) work #^ (get Callable #([] None)) then]
-    (raise NotImplementedError)))
+  (defn #^ None annotate [self #^ str namespace #^ str name #^ dict annotations] (raise NotImplementedError)))
 
 
-;; --- Deployment の見張り(時間で読みに行かない — 頭の註・#3868)---------------------------------------------------
+;; --- 見張り(時間で読みに行かない — 頭の註・#3868・#4070)---------------------------------------------------------
 
-(defclass DeploymentWatches []
-  "見張っている Deployment と、見張りの thread から調停ループへの受け渡し。stops = 見張っている「ns/名」→ 見張りを止める関数・
-   noted = 「ns/名」→ 最後に受け渡した物の印(mark — 同じ物を続けて受け渡さない: 断られた見張りが試し直すたびに調停ループを起こさない)・
-   passed = 見張りの thread が置き、調停ループが取る #(「ns/名」 本文か理由) の列(queue.SimpleQueue — thread の間の受け渡し)。"
+(defclass ObjectWatches []
+  "見張っている k8s の object(1 つの種類 — Deployment か Node)と、見張りの thread から調停ループへの受け渡し。stops = 見張っているキー
+   (Deployment は「ns/名」・Node は名)→ 見張りを止める関数・noted = キー → 最後に受け渡した物の印(mark — 同じ物を続けて受け渡さない:
+   断られた見張りが試し直すたびに調停ループを起こさない)・passed = 見張りの thread が置き、調停ループが取る #(キー 本文か理由) の列
+   (queue.SimpleQueue — thread の間の受け渡し)。"
   (defn #^ None __init__ [self]
     (setv self.stops {} self.noted {} self.passed (queue.SimpleQueue))
     None)
 
   (defn [staticmethod] #^ tuple mark [#^ (| OpaqueJson str) seen]
-    "見張りが伝える物の比べの印: Deployment の object は JSON の文・読めない理由はその文。"
+    "見張りが伝える物の比べの印: object は JSON の文・読めない理由はその文。"
     (if (isinstance seen str) #("error" seen) #("body" seen.text)))
 
   (defn #^ bool note [self #^ str key #^ (| OpaqueJson str) seen]
-    "見張りの thread が呼ぶ: key の今(Deployment の object か、読めない理由)が前に受け渡した物と違えば受け渡す。答え = 受け渡したか
+    "見張りの thread が呼ぶ: key の今(object か、読めない理由)が前に受け渡した物と違えば受け渡す。答え = 受け渡したか
      (真なら呼び手が受付の箱を起こす)。"
-    (setv mark (DeploymentWatches.mark seen))
+    (setv mark (ObjectWatches.mark seen))
     (when (= (.get self.noted key) mark)
       (return False))
     (setv (get self.noted key) mark)
@@ -111,8 +117,8 @@
     True)
 
   (defn #^ None follow [self #^ (get tuple #(str ...)) keys #^ (get Callable #([str] (get Callable #([] None)))) start]
-    "見張る Deployment を keys に揃える: keys に無い見張りを止めて最後に受け渡した印を忘れ、新しい「ns/名」の見張りを start(「ns/名」→
-     止める関数)で始める。"
+    "見張る相手を keys に揃える: keys に無い見張りを止めて最後に受け渡した印を忘れ、新しいキーの見張りを start(キー → 止める関数)で
+     始める。"
     (for [key (tuple self.stops)]
       (when (not-in key keys)
         ((.pop self.stops key))
@@ -123,7 +129,7 @@
     None)
 
   (defn #^ tuple take [self]
-    "受け渡された物を待たずに全部取り、見張っている「ns/名」ごとに最後の 1 つを #(「ns/名」 本文か理由) の tuple で返す。"
+    "受け渡された物を待たずに全部取り、見張っているキーごとに最後の 1 つを #(キー 本文か理由) の tuple で返す。"
     (setv latest {} draining True)
     (while draining
       (try
@@ -134,64 +140,25 @@
     (tuple (gfor #(key seen) (.items latest) :if (in key self.stops) #(key seen)))))
 
 
-;; --- node の label の読み(調停ループの外の読み — 頭の註・#2807)------------------------------------------------------
+;; --- 見張りが伝えた物を観測の表への書きへ解く(3 つの答え手が同じ 1 点を通る)----------------------------------------
 
 (defrecord KubeBodyRead
-  "読みの 1 件の答え: name = 「ns/名」か node の名・body = k8s の API の JSON の本文(Deployment の object か node の metadata.labels)を
-   中を読まずに運ぶ値(読みの thread は解かない — 解くのは受け取りの defk deployment-observation-of・node-labels-observation-of)。"
+  "見張りが伝えた 1 件: name = キー(「ns/名」か node の名)・body = k8s の API の JSON の本文(Deployment か Node の object)を中を読まずに
+   運ぶ値(見張りの thread は解かない — 解くのは受け取りの defk deployment-observation-of・node-labels-observation-of)。"
   (#^ str name)
   (#^ OpaqueJson body))
 
 
 (defrecord KubeReadFailed
-  "読みの 1 件の答え: 届かない・断られた・答えの中で上がった例外の理由。"
+  "見張りが伝えた 1 件: 届かない・断られた・消された・答えの中で上がった例外の理由。"
   (#^ str name)
   (#^ str error))
 
 
-(defclass KubeReadBatch []
-  "走っている node の label の読み 1 つ: 読む node の名・始めた時刻・名指したか・終わったら答えの列(調停ループの外の thread が書き、
-   答え手が受け取る — finished が真を返すまで答えの列は読まない)。finished = 終わったかを答える関数(本番は k8s の client の
-   in-background が返す物・同じ thread で読む答え手は読み終えた時に真へ替える)。"
-  (defn #^ None __init__ [self #^ (get tuple #(str ...)) nodes #^ int started-ms]
-    (setv self.nodes nodes self.started-ms started-ms self.named False)
-    (setv #^ (get Callable #([] bool)) self.finished (fn [] False))
-    (setv #^ (get tuple #((| KubeBodyRead KubeReadFailed) ...)) self.node-results #())
-    None)
-
-  (defn #^ (| KubeBodyRead KubeReadFailed) read-one [self #^ (get Callable #([] OpaqueJson)) read #^ str name]
-    "1 件を読み、届かない・断られた・中で上がった例外を理由の値にする(1 件の失敗で読みが終わらないままにならないように)。"
-    (try
-      (KubeBodyRead :name name :body (read))
-      (except [error Exception]
-        (KubeReadFailed :name name :error (str error)))))
-
-  (defn #^ None read-with [self #^ (get Callable #([str] OpaqueJson)) read-node]
-    "node を順に読み(read-node は node の名を受ける)、答えの列を置く(終わった印は読ませた側が立てる)。"
-    (setv self.node-results (tuple (gfor node self.nodes (.read-one self (fn [] (read-node node)) node))))
-    None)
-
-  (defn #^ None read-now [self #^ (get Callable #([str] OpaqueJson)) read-node]
-    "同じ thread で読み終え、終わった印を立てる(資格の無い所と模擬の k8s の答え手が使う)。"
-    (.read-with self read-node)
-    (setv self.finished (fn [] True))
-    None))
-
-
-(defclass KubeReadBatches []
-  "node の label の読みの受け渡し(答え手が歩をまたいで同じ 1 つを読み書きする)。current = 走っているか、終わって受け取られていない
-   読み(1 度に 1 つ)。"
-  (defn #^ None __init__ [self]
-    (setv #^ (| KubeReadBatch None) self.current None)
-    None)
-
-  (defn #^ (| KubeReadBatch None) begin [self #^ (get tuple #(str ...)) nodes #^ int started-ms]
-    "読みが無ければ新しい読みを置いて返す。在れば None(読みは 1 度に 1 つ)。"
-    (when (is-not self.current None)
-      (return None))
-    (setv batch (KubeReadBatch nodes started-ms))
-    (setv self.current batch)
-    batch))
+(defk read-of [key seen]
+  {:pre [(: key str) (: seen (| OpaqueJson str))] :post [(: % (| KubeBodyRead KubeReadFailed))] :tags {:context "coordinator" :role "protocol"}}
+  "見張りが伝えた #(キー 本文か理由) の 1 件を、解く前の型の値にするため(理由の文は読めなかった 1 件)。"
+  (if (isinstance seen str) (KubeReadFailed :name key :error seen) (KubeBodyRead :name key :body seen)))
 
 
 (defk deployment-observation-of [result at]
@@ -217,7 +184,7 @@
   "見張りが伝えた #(「ns/名」 本文か理由) の tuple を、観測の表への書き(時刻は受け取った時刻 at)にするため。"
   (var writes #())
   (for [#(key seen) changes]
-    (val result (if (isinstance seen str) (KubeReadFailed :name key :error seen) (KubeBodyRead :name key :body seen)))
+    (<- result (| KubeBodyRead KubeReadFailed) (read-of key seen))
     (<- observed (| DeploymentSeen DeploymentUnreadable) (deployment-observation-of result at))
     (:= writes (+ writes #((TableWrite key observed)))))
   writes)
@@ -226,87 +193,66 @@
 (defk node-labels-observation-of [result at]
   {:pre [(: result (| KubeBodyRead KubeReadFailed)) (: at int)] :post [(: % (| NodeLabelsSeen NodeLabelsUnreadable))]
    :tags {:context "coordinator" :role "protocol" :reads "json"}}
-  "読みの node 1 件の答え(metadata.labels)を、観測の表に置く観測にするため。"
+  "見張りが伝えた Node 1 件を、観測の表に置く観測にするため(本文は node-labels-view と node-labels-table で表へ写す・形が違えば
+   読めなかった観測)。"
   (if (isinstance result KubeReadFailed)
       (NodeLabelsUnreadable :error result.error :at at)
       (do (val opened (thaw-json (freeze-json-text result.body.text)))
-          (if (isinstance opened dict)
-              (do (<- labels (get Table str) (node-labels-table opened))
-                  (NodeLabelsSeen :labels labels :at at))
-              (NodeLabelsUnreadable :error "k8s の Node の label が object でない" :at at)))))
+          (<- labels (| (get Mapping #(str object)) None) (if (isinstance opened dict) (node-labels-view opened) None))
+          (if (is labels None)
+              (NodeLabelsUnreadable :error "k8s の Node の答えが object でないか、label が object でない" :at at)
+              (do (<- table (get Table str) (node-labels-table labels))
+                  (NodeLabelsSeen :labels table :at at))))))
 
 
-(defk kube-reads-done [batch]
-  {:pre [(: batch KubeReadBatch)] :post [(: % KubeReadsDone)] :tags {:context "coordinator" :role "protocol"}}
-  "終わった読みの答えの列を、観測の表への書き(時刻は読みを始めた時刻)にするため。"
-  (var nodes #())
-  (for [result batch.node-results]
-    (<- node-seen (| NodeLabelsSeen NodeLabelsUnreadable) (node-labels-observation-of result batch.started-ms))
-    (:= nodes (+ nodes #((TableWrite result.name node-seen)))))
-  (KubeReadsDone :nodes nodes))
+(defk node-writes [changes at]
+  {:pre [(: changes tuple) (: at int)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
+  "見張りが伝えた #(node の名 本文か理由) の tuple を、観測の表への書き(時刻は受け取った時刻 at)にするため。"
+  (var writes #())
+  (for [#(key seen) changes]
+    (<- result (| KubeBodyRead KubeReadFailed) (read-of key seen))
+    (<- observed (| NodeLabelsSeen NodeLabelsUnreadable) (node-labels-observation-of result at))
+    (:= writes (+ writes #((TableWrite key observed)))))
+  writes)
 
 
-(defk collected-reads [batches now-ms name-after-ms held]
-  {:pre [(: batches KubeReadBatches) (: now-ms int) (: name-after-ms int) (: held bool)]
-   :post [(: % (| KubeReadsIdle KubeReadsRunning KubeReadsDone))] :tags {:context "coordinator" :role "protocol"}}
-  "CollectKubeReads の答えを、読みの受け渡しから待たずに出すため(3 つの答え手が同じ 1 点を通る)。held = 終わっていても「まだ」と
-   答える(模擬の k8s が答えない時間)。名指す秒を超えた初回だけ overdue を立てる。"
-  (val batch batches.current)
-  (cond
-    (is batch None)
-      (KubeReadsIdle)
-    (or held (not (batch.finished)))
-      (do (val overdue (and (not batch.named) (>= (- now-ms batch.started-ms) name-after-ms)))
-          (when overdue
-            (setv batch.named True))
-          (KubeReadsRunning :started-ms batch.started-ms :overdue overdue))
-    True
-      (do (setv batches.current None)
-          (<- done KubeReadsDone (kube-reads-done batch))
-          done)))
-
-
-(defhandler kube-api [#^ KubeCalls client #^ KubeReadBatches batches #^ DeploymentWatches watches #^ (get Callable #([] None)) wake]
-  ;; 引数に残す理由: k8s の client(HTTP の接続と token)・node の label の読みの受け渡し・Deployment の見張りの受け渡しと、受付の箱を
-  ;; 起こす関数は composition root が 1 つずつ作って渡す
+(defhandler kube-api [#^ KubeCalls client #^ ObjectWatches deployments #^ ObjectWatches nodes #^ (get Callable #([] None)) wake]
+  ;; 引数に残す理由: k8s の client(HTTP の接続と token)・Deployment と Node の見張りの受け渡しと、受付の箱を起こす関数は
+  ;; composition root が 1 つずつ作って渡す
   (FollowDeployments [keys now-ms]
     ;; 見張りは調停ループの外の thread(k8s の client が持つ)。変化を受け渡したら受付の箱を起こす(頭の註)。
-    (.follow watches keys
+    (.follow deployments keys
              (fn [key]
                (.follow client #* (.split key "/" 1)
-                        (fn [body] (when (.note watches key body) (wake)))
-                        (fn [error] (when (.note watches key error) (wake))))))
-    (<- writes tuple (deployment-writes (.take watches) now-ms))
+                        (fn [body] (when (.note deployments key body) (wake)))
+                        (fn [error] (when (.note deployments key error) (wake))))))
+    (<- writes tuple (deployment-writes (.take deployments) now-ms))
     (resume writes))
-  (StartKubeReads [nodes started-ms]
-    (val batch (.begin batches nodes started-ms))
-    (when (is-not batch None)
-      ;; 調停ループの外の thread で読み、読み終えたら受付の箱を起こす(頭の註)。thread は k8s の client(foundation)が持つ。
-      (setv batch.finished (.in-background client (fn [] (.read-with batch (fn [node] (.node-labels client node)))) wake)))
-    (resume (is-not batch None)))
-  (CollectKubeReads [now-ms name-after-ms]
-    (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone) (collected-reads batches now-ms name-after-ms False))
-    (resume collected))
+  (FollowNodes [names now-ms]
+    ;; Deployment と同じ形(頭の註)。
+    (.follow nodes names
+             (fn [name]
+               (.follow-node client name
+                             (fn [body] (when (.note nodes name body) (wake)))
+                             (fn [error] (when (.note nodes name error) (wake))))))
+    (<- writes tuple (node-writes (.take nodes) now-ms))
+    (resume writes))
   (ScaleDeployment [namespace name replicas dry-run] (resume (.scale client namespace name replicas dry-run)))
   (AnnotateDeployment [namespace name annotations] (resume (.annotate client namespace name annotations))))
 
 
-(defhandler kube-unavailable [#^ str reason #^ KubeReadBatches batches #^ DeploymentWatches watches]
-  ;; 引数に残す理由: 資格が無い理由の文と読みと見張りの受け渡しは composition root が起動の時に 1 度だけ決める
+(defhandler kube-unavailable [#^ str reason #^ ObjectWatches deployments #^ ObjectWatches nodes]
+  ;; 引数に残す理由: 資格が無い理由の文と見張りの受け渡しは composition root が起動の時に 1 度だけ決める
   (FollowDeployments [keys now-ms]
     ;; 見張りは始めた時にその理由を 1 度だけ伝える(観測は読めなかった観測になり、Rollout はその理由を名指して Unknown と扱う)。
-    (.follow watches keys (fn [key] (.note watches key reason) (fn [] None)))
-    (<- writes tuple (deployment-writes (.take watches) now-ms))
+    (.follow deployments keys (fn [key] (.note deployments key reason) (fn [] None)))
+    (<- writes tuple (deployment-writes (.take deployments) now-ms))
     (resume writes))
-  (StartKubeReads [nodes started-ms]
-    ;; 読みは始めた時に全部その理由で終わる。
-    (val batch (.begin batches nodes started-ms))
-    (when (is-not batch None)
-      (.read-now batch (fn [node] (raise (KubeUnavailable reason)))))
-    (resume (is-not batch None)))
-  (CollectKubeReads [now-ms name-after-ms]
-    (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone) (collected-reads batches now-ms name-after-ms False))
-    (resume collected))
+  (FollowNodes [names now-ms]
+    ;; Deployment と同じ(node の worker は前に導いた能力を保つ)。
+    (.follow nodes names (fn [name] (.note nodes name reason) (fn [] None)))
+    (<- writes tuple (node-writes (.take nodes) now-ms))
+    (resume writes))
   (ScaleDeployment [namespace name replicas dry-run] (raise (KubeUnavailable reason)))
   (AnnotateDeployment [namespace name annotations] (raise (KubeUnavailable reason))))
 
@@ -314,14 +260,13 @@
 (defclass KubeMemory []
   "テストの k8s。deployments = 「ns/名」→ 観測の dict(specReplicas・readyReplicas・annotations …)。
    scale は宣言の台数だけを変える(Pod が立つ・消えるのはテストが .settle で進める)。calls = 受けた書きの記録。
-   down = 真の間は全部 KubeUnavailable(API の途絶)。nodes = node の名 → label の dict(能力の導出の検)。
+   down = 真の間は全部 KubeUnavailable(API の途絶)。nodes = node の名 → label の dict(能力の導出の検 — label の変化は .relabel)。
    reads = Deployment の見張り(MemoryFollows)に伝えた「ns/名」の列(伝えた順 — 見張りの始めの list と変化の出来事。時間で読みに行く
-   数の検・#3868)。node-reads = coordinator へ伝えた node の名の列(伝えた順 — 時間で node の label を読みに行く数の検・#4070)。
-   node の label の読みは本番と同じ受け渡しで受け(batches)、始めた時に読む。stalled-until-ms = この時刻(調停ループの now)までは
-   k8s の API が答えない(node の label の読みは「まだ」・Deployment の見張りは答えない理由を伝える — #2807)。"
+   数の検・#3868)。node-reads = Node の見張りが coordinator へ伝えた node の名の列(伝えた順 — 時間で node の label を読みに行く数の検・
+   #4070)。stalled-until-ms = この時刻(調停ループの now)までは k8s の API が答えない(見張りは答えない理由を伝える — #2807)。"
   (defn #^ None __init__ [self #^ dict deployments #^ (| dict None) [nodes None]]
     (setv self.deployments deployments self.calls [] self.reads #() self.node-reads #() self.down False
-          self.nodes (or nodes {}) self.batches (KubeReadBatches) self.stalled-until-ms None))
+          self.nodes (or nodes {}) self.stalled-until-ms None))
 
   (defn #^ dict row [self #^ str namespace #^ str name]
     (when self.down (raise (KubeUnavailable "テストの k8s が止まっている")))
@@ -339,19 +284,29 @@
                  "observedGeneration" (.get row "observedGeneration" 1)}
        "metadata" {"generation" (.get row "generation" 1) "annotations" (.get row "annotations" {})}}))
 
-  (defn #^ (| OpaqueJson str) seen-at [self #^ str key #^ int now-ms]
-    "見張りが now-ms に「ns/名」について伝える物: Deployment の object か、読めない理由(止まっている・答えない・無い)。"
+  (defn #^ (| str None) refusal-at [self #^ int now-ms]
+    "見張りが now-ms に、相手を問わず伝える読めない理由(止まっている・答えない)。無ければ None。"
     (cond
       self.down "テストの k8s が止まっている"
       (and (is-not self.stalled-until-ms None) (< now-ms self.stalled-until-ms)) "テストの k8s が答えない"
+      True None))
+
+  (defn #^ (| OpaqueJson str) seen-at [self #^ str key #^ int now-ms]
+    "Deployment の見張りが now-ms に「ns/名」について伝える物: Deployment の object か、読めない理由(止まっている・答えない・無い)。"
+    (setv refusal (.refusal-at self now-ms))
+    (cond
+      (is-not refusal None) refusal
       (not-in key self.deployments) (+ "無い Deployment: " key)
       True (.deployment-object self (get self.deployments key))))
 
-  (defn #^ OpaqueJson node-labels-of [self #^ str node]
-    "node の label(本番の k8s の API の Node の metadata.labels と同じ形)を返す。"
-    (when self.down (raise (KubeUnavailable "テストの k8s が止まっている")))
-    (when (not-in node self.nodes) (raise (KubeUnavailable (+ "無い Node: " node))))
-    (OpaqueJson.of (get self.nodes node)))
+  (defn #^ (| OpaqueJson str) node-seen-at [self #^ str node #^ int now-ms]
+    "Node の見張りが now-ms に node について伝える物: 本番の k8s の API と同じ Node の object(metadata.name と labels)か、読めない理由
+     (止まっている・答えない・無い)。"
+    (setv refusal (.refusal-at self now-ms))
+    (cond
+      (is-not refusal None) refusal
+      (not-in node self.nodes) (+ "無い Node: " node)
+      True (OpaqueJson.of {"metadata" {"name" node "labels" (get self.nodes node)}})))
 
   (defn #^ None relabel [self #^ str node #^ dict labels]
     "node の label を labels(k8s の Node の metadata.labels と同じ形)に替える(本番の Node の label の変化に当たる・#4070)。"
@@ -364,34 +319,59 @@
     (.update row {"replicas" n "readyReplicas" (if (is ready None) n ready) "availableReplicas" n "updatedReplicas" n})))
 
 
-(defclass MemoryFollows []
-  "模擬の coordinator の process 1 つの Deployment の見張り(本番の DeploymentWatches に当たる — process が起き直せば作り直し、始めの
-   list からやり直す)。テストの k8s(KubeMemory)の今を読み、最後に伝えた物から変わった物を伝える。following = 見張っている「ns/名」・
-   delivered = 「ns/名」→ 最後に伝えた物の印(DeploymentWatches.mark)。"
+(defclass MemoryWatch []
+  "模擬の coordinator の process 1 つの、1 つの種類(Deployment か Node)の見張り(本番の ObjectWatches に当たる — process が起き直せば
+   作り直し、始めの list からやり直す)。テストの k8s の今を読み、最後に伝えた物から変わった物を伝える。following = 見張っているキー・
+   delivered = キー → 最後に伝えた物の印(ObjectWatches.mark)。"
   (defn #^ None __init__ [self]
     (setv self.following #() self.delivered {})
     None)
 
-  (defn #^ tuple changes [self #^ KubeMemory kube #^ int now-ms]
-    "見張っている「ns/名」のうち、テストの k8s の今が最後に伝えた物と違う物の #(「ns/名」 本文か理由) の tuple。"
+  (defn #^ tuple changes [self #^ (get Callable #([str] (| OpaqueJson str))) seen]
+    "見張っているキーのうち、テストの k8s の今(seen = キー → 伝える物)が最後に伝えた物と違う物の #(キー 本文か理由) の tuple。"
     (tuple (gfor key self.following
-                 :setv seen (.seen-at kube key now-ms)
-                 :if (!= (DeploymentWatches.mark seen) (.get self.delivered key))
-                 #(key seen))))
+                 :setv now (seen key)
+                 :if (!= (ObjectWatches.mark now) (.get self.delivered key))
+                 #(key now))))
 
-  (defn #^ tuple follow [self #^ KubeMemory kube #^ (get tuple #(str ...)) keys #^ int now-ms]
-    "見張る Deployment を keys に揃え(外した「ns/名」の伝えた印は忘れる)、最後に伝えた物から変わった物を伝える(テストの k8s の reads に
-     積む)。答え = 伝えた #(「ns/名」 本文か理由) の tuple。"
+  (defn #^ tuple follow [self #^ (get Callable #([str] (| OpaqueJson str))) seen #^ (get tuple #(str ...)) keys]
+    "見張る相手を keys に揃え(外したキーの伝えた印は忘れる)、最後に伝えた物から変わった物を伝える。答え = 伝えた #(キー 本文か理由) の
+     tuple(呼び手がテストの k8s の記録に積む)。"
     (setv self.following keys
           self.delivered (dfor key keys :if (in key self.delivered) key (get self.delivered key)))
-    (setv changed (.changes self kube now-ms))
-    (setv self.delivered (| self.delivered (dfor #(key seen) changed key (DeploymentWatches.mark seen))))
+    (setv changed (.changes self seen))
+    (setv self.delivered (| self.delivered (dfor #(key now) changed key (ObjectWatches.mark now))))
+    changed))
+
+
+(defclass MemoryFollows []
+  "模擬の coordinator の process 1 つの見張り(Deployment と Node の 2 つ — MemoryWatch)。テストの k8s(KubeMemory)を読み、伝えたキーを
+   テストの k8s の記録(reads・node-reads)に積む。"
+  (defn #^ None __init__ [self]
+    (setv self.deployments (MemoryWatch) self.nodes (MemoryWatch))
+    None)
+
+  (defn #^ tuple follow-deployments [self #^ KubeMemory kube #^ (get tuple #(str ...)) keys #^ int now-ms]
+    "見張る Deployment を keys に揃え、変わった物を伝える(テストの k8s の reads に積む)。答え = 伝えた #(「ns/名」 本文か理由) の tuple。"
+    (setv changed (.follow self.deployments (fn [key] (.seen-at kube key now-ms)) keys))
     (setv kube.reads (+ kube.reads (tuple (gfor #(key _) changed key))))
     changed)
 
+  (defn #^ tuple follow-nodes [self #^ KubeMemory kube #^ (get tuple #(str ...)) names #^ int now-ms]
+    "見張る Node を names に揃え、変わった物を伝える(テストの k8s の node-reads に積む)。答え = 伝えた #(node の名 本文か理由) の tuple。"
+    (setv changed (.follow self.nodes (fn [name] (.node-seen-at kube name now-ms)) names))
+    (setv kube.node-reads (+ kube.node-reads (tuple (gfor #(name _) changed name))))
+    changed)
+
+  (defn #^ bool changed [self #^ KubeMemory kube #^ int now-ms]
+    "見張っている相手のどれかの、テストの k8s の今が最後に伝えた物と違うか(伝えていない変化が在るか)。"
+    (bool (or (.changes self.deployments (fn [key] (.seen-at kube key now-ms)))
+              (.changes self.nodes (fn [name] (.node-seen-at kube name now-ms))))))
+
   (defn #^ (| int None) change-at [self #^ KubeMemory kube #^ int now-ms]
-    "見張っている Deployment の伝える物が、now-ms の後に時刻で変わる刻(テストの k8s が答えない区間の終わり)。無ければ None。"
-    (if (and self.following (is-not kube.stalled-until-ms None) (< now-ms kube.stalled-until-ms))
+    "見張っている相手の伝える物が、now-ms の後に時刻で変わる刻(テストの k8s が答えない区間の終わり)。無ければ None。"
+    (if (and (or self.deployments.following self.nodes.following)
+             (is-not kube.stalled-until-ms None) (< now-ms kube.stalled-until-ms))
         kube.stalled-until-ms
         None)))
 
@@ -400,22 +380,24 @@
   {:pre [(: kube KubeMemory) (: follows MemoryFollows) (: timeout-seconds (| float None)) (: now int)] :post [(: % (| float None))]
    :tags {:context "coordinator" :role "protocol"}}
   "模擬の k8s が受付の待ちを縮めた秒を知るため: 見張りが伝えていない変化が在れば 0(本番の見張りは変化の刻に受付を起こす)、答えない
-   区間の終わりに見張りの伝える物が変わるか、区間の中で始めた node の label の読みが答えるなら(本番は読み終えた刻に受付の箱を起こす)、
-   その刻までの秒と timeout-seconds(None = 期限なし)の短い方、それ以外は timeout-seconds のまま。"
-  (val held (and (is-not kube.batches.current None) (is-not kube.stalled-until-ms None) (< now kube.stalled-until-ms)))
-  (val ats (tuple (gfor at #((.change-at follows kube now) (if held kube.stalled-until-ms None)) :if (is-not at None) at)))
+   区間の終わりに見張りの伝える物が変わるなら、その刻までの秒と timeout-seconds(None = 期限なし)の短い方、それ以外は timeout-seconds
+   のまま。"
+  (val at (.change-at follows kube now))
   (cond
-    (.changes follows kube now) 0.0
-    (not ats) timeout-seconds
-    (is timeout-seconds None) (/ (- (min ats) now) 1000.0)
-    True (min timeout-seconds (/ (- (min ats) now) 1000.0))))
+    (.changed follows kube now) 0.0
+    (is at None) timeout-seconds
+    (is timeout-seconds None) (/ (- at now) 1000.0)
+    True (min timeout-seconds (/ (- at now) 1000.0))))
 
 
 (defhandler kube-memory [#^ KubeMemory kube #^ MemoryFollows follows]
   ;; 引数に残す理由: テストの k8s の状態は検が持ち、歩をまたいで同じ 1 つを読み書きする。見張りの状態は coordinator の process の物で、
   ;; 組を作る側(emulated-handlers — coordinator の起き直しごと)が作って渡す
   (FollowDeployments [keys now-ms]
-    (<- writes tuple (deployment-writes (.follow follows kube keys now-ms) now-ms))
+    (<- writes tuple (deployment-writes (.follow-deployments follows kube keys now-ms) now-ms))
+    (resume writes))
+  (FollowNodes [names now-ms]
+    (<- writes tuple (node-writes (.follow-nodes follows kube names now-ms) now-ms))
     (resume writes))
   (NextRequests [timeout-seconds limit]
     ;; 見張りが伝えていない変化が在る間は受付を待たずに取る(本番の見張りが受付の箱を起こすのと同じ刻 — 頭の註)。
@@ -423,16 +405,6 @@
     (<- wait (| float None) (follow-wait kube follows timeout-seconds now))
     (<- batch list (NextRequests wait limit))
     (resume batch))
-  (StartKubeReads [nodes started-ms]
-    (val batch (.begin kube.batches nodes started-ms))
-    (when (is-not batch None)
-      (setv kube.node-reads (+ kube.node-reads nodes))
-      (.read-now batch kube.node-labels-of))
-    (resume (is-not batch None)))
-  (CollectKubeReads [now-ms name-after-ms]
-    (val held (and (is-not kube.stalled-until-ms None) (< now-ms kube.stalled-until-ms)))
-    (<- collected (| KubeReadsIdle KubeReadsRunning KubeReadsDone) (collected-reads kube.batches now-ms name-after-ms held))
-    (resume collected))
   (ScaleDeployment [namespace name replicas dry-run]
     (setv row (.row kube namespace name))
     (.append kube.calls {"op" "scale" "key" (+ namespace "/" name) "replicas" replicas "dryRun" dry-run})
