@@ -604,9 +604,12 @@
    時に 1 回呼び、柵の外側・sim の世界の内側に並べる — 本番で job ごと・機体ごとに違う外の口(記録の service の身元の token・預かり所の
    借り手・機体の session の置き場)を、共有の外の世界(handlers)の手前で答えるため(#833 の条件「sim-cluster は担い手ごとに
    handler の組を持つ」・#834)。作る handler も effects に載った型にだけ答える(柵がそれ以外を通さない)。"
-  (#^ list handlers)
-  (#^ tuple effects)
-  (setv #^ (| Callable None) per-process None))
+  ;; 欄の型は型の引数まで書く(素の list / tuple / Callable だと、欄を読む使い手の strict で中身が Unknown になり、型逃げ無しには
+  ;; 消せない赤が出た — #4254)。per-process の答えの型 ProcessOutside は下で定める値(この class を作る時に名がまだ
+  ;; 無い)なので文字列の注記。
+  (#^ (get list (get Callable #(... object))) handlers)
+  (#^ (get tuple #(type ...)) effects)
+  (setv #^ "Callable[[str, str], ProcessOutside] | None" per-process None))
 
 
 (defrecord SimPlan
@@ -632,7 +635,8 @@
   ;; 知らせの broker(coordinator が worker の生死の出来事を出す先 — 呼び手が作って sim-cluster の :notice-broker で渡す。呼び手の世界の
   ;; job と筋書きが同じ broker の受け手に成れる・#3850。sim は作らない)。
   (#^ MemoryBroker notice-broker)
-  (setv #^ (| Callable None) per-process None)
+  ;; SimOutside.per-process と同じ型(文字列の注記の訳も同じ)。
+  (setv #^ "Callable[[str, str], ProcessOutside] | None" per-process None)
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
   (setv #^ (| dict None) nodes None)
@@ -1675,8 +1679,9 @@
    その process の柵だけが外へ通す effect の型(isinstance — 基底の型でよい)。共有の外の世界の型(SimOutside.effects)は全 process の
    柵が通すので、本番で job ごとに持つ口(その job の土台だけが答える effect)はここに置く — 系で 1 つの許しの和にすると、本番の土台が
    答えない effect を別の job の外の口が sim で黙って答える(構成のレビュー 2026-09-28 の A)。"
-  (#^ tuple handlers)
-  (setv #^ tuple effects #()))
+  ;; 欄の型は型の引数まで書く(SimOutside の欄と同じ訳 — #4254)。
+  (#^ (get tuple #((get Callable #(... object)) ...)) handlers)
+  (setv #^ (get tuple #(type ...)) effects #()))
 
 
 (defk process-outside [per-process job worker]

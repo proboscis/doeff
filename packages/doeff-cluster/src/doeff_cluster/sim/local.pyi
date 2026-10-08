@@ -530,9 +530,9 @@ class ClientLink(_doeff_effect_base[SimLink]):
 
 @dataclass(frozen=True, kw_only=True)
 class SimOutside:
-    handlers: list
-    effects: tuple
-    per_process: Callable | None = None
+    handlers: list[Callable[..., object]]
+    effects: tuple[type, ...]
+    per_process: Callable[[str, str], ProcessOutside] | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimPlan:
@@ -548,7 +548,7 @@ class SimPlan:
     policy: WorkerPolicy
     passable: tuple
     notice_broker: MemoryBroker
-    per_process: Callable | None = None
+    per_process: Callable[[str, str], ProcessOutside] | None = None
     store: Callable | None = None
     deployments: dict | None = None
     nodes: dict | None = None
@@ -1007,8 +1007,8 @@ def coordinator_answers(link: SimLink) -> _Handler:
 
 @dataclass(frozen=True, kw_only=True)
 class ProcessOutside:
-    handlers: tuple
-    effects: tuple = ...
+    handlers: tuple[Callable[..., object], ...]
+    effects: tuple[type, ...] = ...
 
 def process_outside(per_process: Callable | None, job: str, worker: str) -> _Program[ProcessOutside, object]:
     ...
