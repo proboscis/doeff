@@ -32,7 +32,7 @@ USED = (
     UsedModule("worker.intent.env_prepare_model", ("EnvMarker",)),
     UsedModule("foundation.foundation_check", ("FoundationClosure", "closed?", "foundation-closure")),
     UsedModule("shared.core.declaring", ("declaring-refusal",)),
-    UsedModule("shared.core.semaphore_handlers", ("SemaphoreSession", "cluster-semaphore", "lease-fence")),
+    UsedModule("shared.core.semaphore_handlers", ("SemaphoreSession", "cluster-semaphore", "leases-fence")),
     UsedModule(
         "shared.intent.checkout_model",
         ("CheckoutRoot", "CheckoutState", "LocalCheckout", "ProjectOfCheckout", "ReadCheckout", "SenderSourceRoot"),
