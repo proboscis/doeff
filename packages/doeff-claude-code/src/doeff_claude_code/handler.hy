@@ -64,6 +64,8 @@
 (setv COLD-RESUME-TIMEOUT-SECONDS 600.0)
 ;; 計時の行の名(頭の註 — #3605)。行を拾う時はこの名と欄 event で引く。
 (val CLI-TIMING-LOG "claude CLI の起動の計時")
+;; 生かす本数の上限を越えて起動した時の log の行の名(#4072 の E1b — 同じ事を知らせ ClaudeLiveLimitExceeded でホストへも届ける)。
+(val LIVE-LIMIT-LOG "claude CLI の生かす本数の上限を越えた起動")
 
 
 ;; --- 状態 ---------------------------------------------------------------------------------------

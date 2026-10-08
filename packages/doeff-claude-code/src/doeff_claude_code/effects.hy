@@ -188,3 +188,18 @@
    :pre [(: origin (| FreshSession ResumeSession)) (: spec ClaudeSessionSpec)]
    :answer WarmSessionOutcome
    :tags {:context "claude-code" :role "intent"}})
+
+
+;; --- 生かす本数の上限を越える起動の知らせ(handler が出し、上の層のホストが答える)-------------------------------------------
+
+(defeffect ClaudeLiveLimitExceeded
+  "handler が会話の process を起動する時に、生きた process の本数がホストの上限(ClaudeCodeHost の live-limit・fake の
+   FakeClaudeWorld の live-limit)を越えるので、ホストへ知らせる(#4072 の E1b)。handler は上限のために process を
+   止めず、起動を待たせず、失敗にもしない — 本数を数えて止める CLI を選ぶのは上の層のホストの 1 か所で、この知らせはホストの数えと
+   handler の数えが食い違った事を見せる。前は handler が手番を走らせていない一番古い process を黙って止めた(本番 2026-10-08 09:45 —
+   ホストの知らない CLI が止まった)。session-id = 起動する会話・live = 起動の後の生きた process の本数(降りる途中の process は
+   数えない)・limit = 上限・warm = 入力の前の事前起動(ClaudeWarmSession)か。答え = None。"
+  {:fields [(: session-id str) (: live int) (: limit int) (: warm bool)]
+   :pre [(: session-id str) (: live int) (: limit int) (: warm bool)]
+   :answer None
+   :tags {:context "claude-code" :role "intent"}})
