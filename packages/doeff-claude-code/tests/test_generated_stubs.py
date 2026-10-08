@@ -16,13 +16,38 @@ from doeff_hy.static_stub import UsedModule, stale_in, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
-# 使い手の repo の main が import する名(module ごと・2026-10-02 の数え)。
+# 使い手の repo の main が import する名(module ごと・2026-10-09 の数え — 使い手が型の宣言の写しを消すと、これらの名をこの package の
+# .pyi から読む・#4257)。
 USED = (
-    UsedModule("values", ("FreshSession", "ResumeSession", "ForkSession", "ClaudeHome", "ClaudeSessionSpec")),
-    UsedModule("effects", ("ClaudeStartTurn", "TurnStarted")),
-    UsedModule("fake", ("FakeReply", "FakeClaudeWorld")),
-    UsedModule("faults", ("ClaudeDropProcess", "ClaudeForgetSession")),
-    UsedModule("lines", ("Usage",)),
+    UsedModule("values", ("FreshSession", "ResumeSession", "ForkSession", "ClaudeHome", "ClaudeSessionSpec", "TurnInput")),
+    UsedModule(
+        "effects",
+        (
+            "ClaudeStartTurn",
+            "ClaudeInjectInput",
+            "ClaudeInterruptTurn",
+            "ClaudeReadTurnEvents",
+            "ClaudeAnswerPermission",
+            "ClaudeCloseSession",
+            "ClaudeSessionStatus",
+            "ClaudeExportSession",
+            "TurnStarted",
+            "ClaudeWarmSession",
+            "SessionWarmed",
+            "ClaudeLiveLimitExceeded",
+            "SessionExported",
+            "SessionNotFound",
+        ),
+    ),
+    UsedModule("fake", ("FakeReply", "FakeClaudeWorld", "StopHookRejection")),
+    UsedModule(
+        "faults",
+        ("ClaudeDropProcess", "ClaudeForgetSession", "ClaudeLiveProcess", "LiveProcess", "NoLiveProcess", "StopReason"),
+    ),
+    UsedModule(
+        "lines",
+        ("Usage", "ModelWindow", "AccountRefusalHit", "AccountLimitHit", "CompactBoundary", "CompactTrigger"),
+    ),
 )
 
 
