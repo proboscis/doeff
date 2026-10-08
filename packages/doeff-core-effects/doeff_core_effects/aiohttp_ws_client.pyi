@@ -49,7 +49,7 @@ def new_client_session() -> aiohttp.ClientSession:
 def failure_detail(error: BaseException) -> str:
     ...
 
-def open_link(client_factory: Callable, link: str, url: str, headers: tuple[HttpHeader, ...]) -> OpenLink | WsConnectFailed:
+def open_link(client_factory: Callable[[], aiohttp.ClientSession], link: str, url: str, headers: tuple[HttpHeader, ...]) -> OpenLink | WsConnectFailed:
     ...
 
 def receive_frame(open: OpenLink) -> WsFrame:
@@ -67,8 +67,8 @@ def close_link(open: OpenLink, code: int, reason: str) -> WsLinkClosed:
 def drop_link(open: OpenLink) -> None:
     ...
 
-def aiohttp_ws_link_handler(client_factory: Callable) -> _Handler:
+def aiohttp_ws_link_handler(client_factory: Callable[[], aiohttp.ClientSession]) -> _Handler:
     ...
 
-def aiohttp_ws_client(*, client_factory: Callable=...) -> Callable[[Program | EffectBase], Program]:
+def aiohttp_ws_client(*, client_factory: Callable[[], aiohttp.ClientSession]=...) -> Callable[[Program | EffectBase], Program]:
     ...
