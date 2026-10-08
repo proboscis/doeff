@@ -440,3 +440,19 @@
   (assert (= (classify-record {"type" "user" "message" {"content" [{"type" "text" "text" "Stop hook feedback:\nx"}]}}) (Other :type "user")))
   (assert (= (classify-record {"type" "user" "isSynthetic" True "message" {"content" [{"type" "text" "text" "other"}]}})
              (Other :type "user"))))
+
+(deftest test-the-start-of-a-thinking-block-is-read
+  ;; #4186: 考えの block の始まり(content_block_start の thinking)は、考えの最初の差分より約 0.3 秒早く届く(本番の中央
+  ;; 289 ms・message_start の 1〜2 ms 後)。上の層が「考えている」の表示をその時に出せるよう、行の型が始まりを名乗る(thinking-start)。
+  ;; 前は block の type を tool_use しか読まず、考えの始まりは何も名乗らない行になっていたので赤。
+  (val start (classify-record {"type" "stream_event"
+                               "event" {"type" "content_block_start" "index" 0
+                                        "content_block" {"type" "thinking" "thinking" "" "signature" ""}}}))
+  (assert (= #(start.thinking-start start.delta start.thinking-delta start.tool-start) #(True lines.DeltaKind.NO-DELTA "" None)) (repr start))
+  ;; 本文の block・道具の block の始まり、考えの差分、message_start は考えの始まりではない。
+  (for [event [{"type" "content_block_start" "index" 0 "content_block" {"type" "text" "text" ""}}
+               {"type" "content_block_start" "index" 1 "content_block" {"type" "tool_use" "id" "toolu_a" "name" "Bash" "input" {}}}
+               {"type" "content_block_delta" "index" 0 "delta" {"type" "thinking_delta" "thinking" "hmm"}}
+               {"type" "message_start" "message" {"id" "msg_a"}}]]
+    (val other (classify-record {"type" "stream_event" "event" event}))
+    (assert (is other.thinking-start False) (repr other))))
