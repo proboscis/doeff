@@ -200,11 +200,23 @@ STOP_HOOK_FEEDBACK_HEAD: str
 class StopHookFeedback:
     reason: str
 
+class CompactTrigger(StrEnum):
+    AUTO = 'auto'
+    MANUAL = 'manual'
+
+@dataclass(frozen=True, kw_only=True)
+class CompactBoundary:
+    trigger: CompactTrigger
+    pre_tokens: int
+    post_tokens: int | None = None
+    cumulative_dropped_tokens: int | None = None
+    duration_ms: int | None = None
+
 @dataclass(frozen=True)
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | TurnResult | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactBoundary | TurnResult | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:
@@ -300,6 +312,9 @@ def timed_phases_of(phases: dict, starts: dict) -> _Program[tuple[TimedPhase, ..
     ...
 
 def request_timing_of(record: dict) -> _Program[RequestTiming, object]:
+    ...
+
+def compact_boundary_of(record: dict) -> _Program[CompactBoundary | Other, object]:
     ...
 
 def classify_system(record: dict) -> Incomplete:

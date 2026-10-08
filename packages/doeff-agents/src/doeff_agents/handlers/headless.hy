@@ -29,6 +29,9 @@
 ;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
 ;;;   StopHookFeedback.reason          → AgentStopHookFeedbackEvent.reason(Stop hook が答えを差し戻した事実 — 上の層が差し戻された
 ;;;                                      答えの本文を見分けるため・agora-redesign #4020)
+;;;   CompactBoundary                  → AgentCompactionEvent(CLI が会話を圧縮した事実 — 行の欄 trigger・pre-tokens・post-tokens・
+;;;                                      cumulative-dropped-tokens・duration-ms をそのまま写す。上の層がターンの出来事として記録するため・
+;;;                                      agora-redesign #4189)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
@@ -55,7 +58,7 @@
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
-  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent
+  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentAccountRefusal
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
@@ -64,7 +67,7 @@
   HandlerMadeContextId NamedContextId])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback
+(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactBoundary
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
@@ -113,7 +116,7 @@
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
     (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
-                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentTurnEndEvent))
+                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
@@ -174,6 +177,12 @@
     ;; Stop hook が答えを差し戻した(理由つき)— 上の層が差し戻された答えの本文を見分けて画面から落とすため(agora-redesign #4020)。
     (isinstance kind StopHookFeedback)
       [(fn [seq] (AgentStopHookFeedbackEvent :seq seq :at at :reason kind.reason))]
+    ;; CLI が会話を圧縮した(行の欄そのまま — 起き方は同じ綴りの層 3 の語へ写し、語彙の外は ValueError で止める)— 上の層が無人の
+    ;; ターンの圧縮をターンの出来事として記録するため(agora-redesign #4189)。
+    (isinstance kind CompactBoundary)
+      [(fn [seq] (AgentCompactionEvent :seq seq :at at :trigger (CompactionTrigger kind.trigger.value) :pre-tokens kind.pre-tokens
+                                       :post-tokens kind.post-tokens :cumulative-dropped-tokens kind.cumulative-dropped-tokens
+                                       :duration-ms kind.duration-ms))]
     (isinstance kind InputFate)
       [(fn [seq] (AgentInputFateEvent :seq seq :at at :input-ref kind.ref :state (InputFateState kind.state)))]
     True []))

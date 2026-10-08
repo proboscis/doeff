@@ -11,6 +11,8 @@
 ;;; - SIGINT = result(error_during_execution・terminal_reason aborted_streaming)を出して rc 0 で降りる(2.1.282 の形)。
 ;;; - --permission-prompt-tool stdio の時は道具の前に control_request can_use_tool を出し、control_response を待つ(allow なら
 ;;;   touch を本当に撃つ)。
+;;; - 規則の compact(scenario_rules.hy の COMPACT-PHRASE)の手番は、init の後・要求の前に会話の自動の圧縮の 2 行(status compacting →
+;;;   system/compact_boundary)を出す(#4189)。
 ;;; - stdin の EOF で降りる。stdin を開いたまま result の後も生きる(温かい — 降ろすのは host の仕事)。
 ;;; - 入力の前は transcript を作らない(実物と同じ — 最初の入力で作る)。入力を 1 つも受けずに終了した新しい会話は記録を残さない。
 ;;; - テスト用の env STUB_CLI_AT_START が在れば、起動の直後(入力の前)にその行を出す(main のコメント)。
@@ -30,7 +32,7 @@
 (import uuid)
 
 (.insert sys.path 0 (str (. (Path __file__) (resolve) parent parent)))
-(import scenario_rules [reply-for REJECTED-ANSWER])
+(import scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA])
 
 (setv CAPABILITIES ["msg_lifecycle_v1" "interrupt_receipt_v1"])
 ;; CLI の手番 1 回の額(USD — 2 進で割り切れる値にして、累積の差が検の比べで端数を出さないようにする)。
@@ -237,6 +239,14 @@
       ;; 実物と同じく、init の直後に入力ごとの hook の知らせ(stream でない system の行)を出し、hook の秒だけ待ってから答え始める(#3696 の直し)。
       (emit {"type" "system" "subtype" "hook_response" "session_id" self.session-id "hook_event" "UserPromptSubmit"})
       (time.sleep (get rule "hook_seconds")))
+    (when (get rule "compact")
+      ;; 要求の前に会話を自動で圧縮する(#4189)— 実物(CLI 2.1.294 の stream-json の書き手)と同じ形の 2 行: 圧縮中の
+      ;; status の行 → system/compact_boundary(compact_metadata は会話の記録の compactMetadata を snake の名へ写した物・
+      ;; preserved_segment は残した区間の uuid の組)。
+      (emit {"type" "system" "subtype" "status" "status" "compacting" "session_id" self.session-id})
+      (emit {"type" "system" "subtype" "compact_boundary" "session_id" self.session-id "uuid" (str (uuid.uuid4))
+             "compact_metadata" (| COMPACT-METADATA {"preserved_segment" {"head_uuid" (str (uuid.uuid4)) "anchor_uuid" (str (uuid.uuid4))
+                                                                          "tail_uuid" (str (uuid.uuid4))}})}))
     ;; 要求を送るまで(実物の time_to_request_ms)= 入力ごとの hook の後。
     (setv self.request-ms (.elapsed-ms self) self.hook-ms (- self.request-ms hook-started))
     (when (> (get rule "thinking_deltas") 0)

@@ -25,6 +25,8 @@ from doeff_agents.effects.agent import AgentThinkingDeltaEvent as AgentThinkingD
 from doeff_agents.effects.agent import AgentToolCallStartedEvent as AgentToolCallStartedEvent
 from doeff_agents.effects.agent import AgentToolInputDeltaEvent as AgentToolInputDeltaEvent
 from doeff_agents.effects.agent import AgentStopHookFeedbackEvent as AgentStopHookFeedbackEvent
+from doeff_agents.effects.agent import AgentCompactionEvent as AgentCompactionEvent
+from doeff_agents.effects.agent import CompactionTrigger as CompactionTrigger
 from doeff_agents.effects.agent import AgentToolResultEvent as AgentToolResultEvent
 from doeff_agents.effects.agent import AgentToolUseEvent as AgentToolUseEvent
 from doeff_agents.effects.agent import ModelWindow as ModelWindow
