@@ -23,6 +23,7 @@
                                                      CrashCoordinator])
 (import doeff_cluster.shared.entry.deployed_cluster [DeployedCluster DeployedCannotAnswer deployed-cluster-answers])
 (import doeff_cluster.shared.protocol.coordinator_reads [job-pids-of])
+(import doeff_cluster.shared.protocol.detached [service-facts-of-view])
 (import tests.transport_http [transport-http COORDINATOR-URL])
 (import tests.detached_rig [MemoryCoordinator])
 (import tests.fixtures.machine_app [pings machine-foundation])
@@ -107,6 +108,29 @@
   (assert (= ready-wait.last.state after.state) ready-wait)
   (<- process-wait (asked coordinator clock (AwaitJobProcess "ping" #() 3.0)))
   (assert (isinstance process-wait JobProcessWaitExpired) process-wait))
+
+
+(defk listed-revisions [coordinator]
+  {:pre [(: coordinator MemoryCoordinator)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "検の coordinator の Service の一覧(本番と同じ口 GET /resources/Service)を、ReadServices と同じ読み(service-facts-of-view)で
+   (名, 宣言の版) の列にするため。"
+  (val response (coordinator.handle (httpx.Request "GET" (+ COORDINATOR-URL "/resources/Service"))))
+  (lfor fact (service-facts-of-view (get (.json response) "items")) #(fact.name fact.revision)))
+
+
+(deftest test-the-real-coordinator-list-carries-each-services-declared-revision
+  ;; #2718 の子 S2a: 宣言の道具が、別の Service を宣言し直す前に「どの Service がどの版で動くか」を Service の一覧の読み(ReadServices)で
+  ;; 照らす。本物の coordinator の一覧の行の spec に宣言の版が在り、別の版で宣言し直すと新しい版になる(一覧の頭の revision は
+  ;; coordinator の状態の版で、宣言の版ではない)。
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  (<- _first tuple (asked coordinator clock (Redeclare (pings machine-foundation))))
+  (<- first list (listed-revisions coordinator))
+  (assert (= first [#("ping" TARGET.revision)]) first)
+  (val later (DeployedCluster :url COORDINATOR-URL :actor "deployed-test" :revision (* "b" 40) :runtime-env None :versions-read None))
+  (<- _second tuple (asked-with later coordinator clock (Redeclare (pings machine-foundation))))
+  (<- second list (listed-revisions coordinator))
+  (assert (= second [#("ping" (* "b" 40))]) second))
 
 
 (defhandler crash-answered
