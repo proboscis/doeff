@@ -30,8 +30,8 @@
 (import tests.link_rig [LinkRig])
 (import tests.transport_http [released-through])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
-(import tests.test_semaphore [lease-writer run-all written-log FakeWrite cut-off-at])
-(import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore lease-fence])
+(import tests.test_semaphore [lease-writer run-all written-log FakeWrite cut-off-at writer-a-lease])
+(import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore leases-fence])
 
 (setv T (ClusterTiming))
 
@@ -80,7 +80,7 @@
    :tags {:context "doeff-cluster-test" :role "program"}}
   "1 つの worker の書き手: outer(途絶・時計のずれ)→ cluster-semaphore → 書きの柵の下で、lease を取って 1 秒ごとに書く(90 秒まで)。"
   ;; 本番の書き手と同じ柵の余裕(FENCE-MARGIN-MS)。
-  (<- (with_handlers (+ outer [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) FENCE-MARGIN-MS)])
+  (<- (with_handlers (+ outer [(cluster-semaphore session) (leases-fence writer-a-lease #(FakeWrite) FENCE-MARGIN-MS)])
         (lease-writer who attempts 1 90000)))
   None)
 

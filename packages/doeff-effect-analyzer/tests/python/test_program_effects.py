@@ -182,7 +182,7 @@ HANDLERS_HY = """\
   (WriteFamily [] (resume None)))
 
 ;; Receives every effect narrowed by :when and passes the one it received on (the shape of
-;; doeff-cluster's lease-fence / standby-divert).
+;; doeff-cluster's leases-fence / standby-divert).
 (defhandler write-fence [write-types]
   (EffectBase []
     :when (isinstance effect write-types)
@@ -349,7 +349,7 @@ def test_a_parent_class_clause_passes_on_the_effect_it_received_as_its_own_class
     pkg: str,
 ) -> None:
     # Regression (agora-redesign #1163): a clause keyed on EffectBase narrowed by :when
-    # (lease-fence) that performs the effect it received was read as emitting an
+    # (leases-fence) that performs the effect it received was read as emitting an
     # EffectBase, a gap no handler answers.  What leaves is the effect that arrived.
     program = analyze_program(f"{pkg}.programs:helper")
 

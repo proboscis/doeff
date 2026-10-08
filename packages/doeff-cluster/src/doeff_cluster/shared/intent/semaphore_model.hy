@@ -66,7 +66,7 @@
 
 
 (defclass WriteFenced [RuntimeError]
-  "lease を持っていない(失った・期限が近い)ので、書きの effect を外へ出さずに断った(lease-fence)。")
+  "lease を持っていない(失った・期限が近い)ので、書きの effect を外へ出さずに断った(leases-fence)。")
 
 ;; いま持っている名前付きの lease を問う(cluster-semaphore が答える)。
 ;; 答え = {"token": 持っている token, "expiresMs": 最後に保存へ書けた期限(epoch ミリ秒)}。持っていない・失った = None。
@@ -116,7 +116,7 @@
 
 ;; この process の名前付きの lease の立場を問う(cluster-semaphore が答える)。
 ;; 答え = "standby"(一度も持っていない — 取りに行っている間の待機)・"held"(いま持っている)・"lost"(持っていたが失った)。
-;; 待機の process の書きは外へ出さない(semaphore_handlers.standby-divert)。失った process の書きは柵が断る(lease-fence)。
+;; 待機の process の書きは外へ出さない(semaphore_handlers.standby-divert)。失った process の書きは柵が断る(leases-fence)。
 (defclass [(dataclass :frozen True)] LeaseStanding [EffectBase]
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
   (#^ str name))

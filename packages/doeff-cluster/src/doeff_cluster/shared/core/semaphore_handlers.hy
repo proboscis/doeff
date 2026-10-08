@@ -11,7 +11,6 @@
 ;;;                          全部を持っていて期限まで余裕がある間だけ外へ通す。どれかを持っていない・失った・期限が近い時は外へ出さずに
 ;;;                          WriteFenced を投げる。問い合わせ(HeldLease)は cluster-semaphore が手元の記憶から答える(書きごとに保存を
 ;;;                          読まない)。cluster-semaphore より内側・書きの handler より内側に置く。
-;;;   lease-fence            同じ柵で、守る lease が固定の名 1 つの形。使い手が leases-fence へ移った後に消す(#4072 の A1 の後)。
 ;;;
 ;;; 置き場 = shared/core・役 program(#2332): scheduler の Semaphore を lease の約束(LeaseOp・HeldLease・LeaseStanding)で
 ;;; 果たす業務の流れで、業務の intent を出す。protocol(受けた intent を汎用の効果へ出し直すだけ — doeff-linter DOEFF130)ではない。
@@ -49,7 +48,7 @@
    空きの無い claim は coordinator の待ち AwaitLeaseFree で空きを待つ(時間で問い直す間は持たない — 2026-10-07 の決定 B)。
    retry-seconds = coordinator に届かない時に延長を試し直す間(落ちた相手の戻りを知る試し)。"
   (defn #^ None __init__ [self #^ str holder #^ float [ttl-seconds 15.0] #^ float [retry-seconds 0.5]]
-    ;; expires = token → 保存に書けたと確かめた期限(epoch ミリ秒)。lease-fence はこれと時計だけで判じる。
+    ;; expires = token → 保存に書けたと確かめた期限(epoch ミリ秒)。leases-fence はこれと時計だけで判じる。
     (setv self.holder holder self.ttl-seconds ttl-seconds self.retry-seconds retry-seconds
           self.seq 0 self.held {} self.lost (set) self.renewers {} self.expires {}
           ;; 一度でも持った名前(LeaseStanding の standby と lost を分ける)。
@@ -170,20 +169,6 @@
 
 ;; --- 書きの柵 ---------------------------------------------------------------------------------
 
-(defhandler lease-fence [#^ str name #^ tuple write-types #^ int margin-ms]
-  ;; write-types の effect だけを見る。それ以外は素通し。問い合わせと時計は外側(cluster-semaphore・時計の handler)へ。
-  ;; 消す予定: 使い手が下の leases-fence へ移った後(#4072 の A1 — 使い手の repo を先に替え、最後にこの形を消す)。
-  (EffectBase []
-    :when (isinstance effect write-types)
-    (<- hold (| dict None) (HeldLease name))
-    (<- now int (now-epoch-ms))
-    (setv refusal (fence-verdict hold now margin-ms))
-    (when (is-not refusal None)
-      (raise (WriteFenced (.format "{} を断った — lease {}: {}" (. (type effect) __name__) name refusal))))
-    (<- answer effect)
-    (resume answer)))
-
-
 (defhandler leases-fence [#^ Callable leases-of #^ tuple write-types #^ int margin-ms]
   ;; 引数に残す理由: どの書きをどの lease で守るかは組み立ての側の業務の判断で、同じ組に別の名の決め方で並べ得る(Ask で読む設定ではない)。
   ;; write-types の effect だけを見る。それ以外は素通し。守る lease の名の組は書きの effect から leases-of(書きの effect → lease の名の組を
@@ -211,7 +196,7 @@
   ;; lease を一度も持っていない(取りに行って待っている)process の業務の書きは、外へ出さずに「書けた」(True)と答える。
   ;; 入れ替え(handoff)の新しい process は、旧が lease を持っている間も本物の拍を回して「準備できた」を示し(書きは捨てる)、
   ;; 旧が止まって lease を取ってから、拍の状態を作り直して本当に書く(業務の書き手の側)。
-  ;; 一度持った後に失った process の書きは素通しにし、外側の lease-fence が断る(柵の意味は変えない)。
+  ;; 一度持った後に失った process の書きは素通しにし、外側の leases-fence が断る(柵の意味は変えない)。
   ;; env の一番内側に置く(書きを数える handler も待機の書きを数えない)。write-types は答えが真偽の業務の書きだけにする。
   (EffectBase []
     :when (isinstance effect write-types)

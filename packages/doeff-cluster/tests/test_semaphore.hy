@@ -227,7 +227,7 @@
   (assert (isinstance (ClusterSemaphore "x" 1) Semaphore)))
 
 
-;; --- 書きの柵(lease-fence)— 旧版が lease を失った後は書けない ---------------------------------------
+;; --- 書きの柵(leases-fence)— 旧版が lease を失った後は書けない ---------------------------------------
 
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
@@ -235,11 +235,16 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict])
-(import doeff_cluster.shared.core.semaphore_handlers [lease-fence leases-fence])
+(import doeff_cluster.shared.core.semaphore_handlers [leases-fence])
 
 (defclass [(dataclass :frozen True)] FakeWrite [EffectBase]
   "柵の向こうの書き(本番では業務の書き先への書き)。"
   (#^ str who))
+
+(defk writer-a-lease [write]
+  {:pre [(: write FakeWrite)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "書き手が 1 人の筋書きで、どの書きも lease writer-a だけで守るため(柵に渡す関数)。"
+  #("writer-a"))
 
 (defhandler written-log [#^ list log]
   ;; 柵を通った書きだけが届く「書き先」。届いた時刻と書き手を記録する。
@@ -274,7 +279,7 @@
   {:pre [(: session SemaphoreSession) (: program Program) (: cut (| int None)) (: clock (| SimClock None))]
    :post [(: % "program の答え(型は program ごと)")] :tags {:context "doeff-cluster-test" :role "program"}}
   "1 つの worker: (途絶) → cluster-semaphore → 書きの柵(一番内側)の下で program を走らせる。"
-  (val inner [(cluster-semaphore session) (lease-fence "writer-a" #(FakeWrite) 2000)])
+  (val inner [(cluster-semaphore session) (leases-fence writer-a-lease #(FakeWrite) 2000)])
   (val handlers (cond
                   (is cut None) inner
                   (is clock None) (raise (ValueError "途絶(cut)には仮想の時計(clock)が要る"))
@@ -412,7 +417,7 @@
   (setv clock (SimClock) store {} attempts [] written [])
   (setv sa (SemaphoreSession "w" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
-        (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (lease-fence "writer-a" #(FakeWrite) 2000)]
+        (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (leases-fence writer-a-lease #(FakeWrite) 2000)]
           (lease-writer "a" attempts 1 40000))))
   (assert (= (! (times-of attempts "a" "fenced")) []) attempts)
   (assert (= (len (! (times-of attempts "a" "ok"))) 40)))

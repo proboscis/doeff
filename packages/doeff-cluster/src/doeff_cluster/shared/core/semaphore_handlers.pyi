@@ -79,9 +79,6 @@ def release_lease(session: SemaphoreSession, semaphore: ClusterSemaphore) -> _Pr
 def cluster_semaphore(session: SemaphoreSession) -> _Handler:
     ...
 
-def lease_fence(name: str, write_types: tuple, margin_ms: int) -> _Handler:
-    ...
-
 def leases_fence(leases_of: Callable, write_types: tuple, margin_ms: int) -> _Handler:
     ...
 

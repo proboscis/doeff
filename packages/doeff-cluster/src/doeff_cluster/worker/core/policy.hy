@@ -37,7 +37,7 @@
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
-;; 並んで動く前提で作られていて、外への書きは名前付きの lease の柵(semaphore_handlers.lease-fence)だけが守る。その柵は coordinator の
+;; 並んで動く前提で作られていて、外への書きは名前付きの lease の柵(semaphore_handlers.leases-fence)だけが守る。その柵は coordinator の
 ;; 時計の期限で締まるので、途絶で止める必要が無い — 止めると coordinator の作り直し(版の更新)のたびに書き手が止まった。
 ;; 書き手の停止は lease に一本化し、自己停止は lease を持たない job と task にだけ当てる。切り離した task(2026-09-25)も止めない
 ;; (lease は担い手の worker の heartbeat が延ばし、途絶が lease より長ければ coordinator がその task を lost にする)。
