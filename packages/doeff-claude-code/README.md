@@ -29,6 +29,9 @@
 型は `doeff_claude_code.values`(欄の値)・`doeff_claude_code.lines`(行の種類と手番の終わり)・`doeff_claude_code.effects`
 (effect と答え)にある。手番の終わり(`ClaudeTurnEnd`)は手番ごとにちょうど 1 つ:
 `Completed` / `Failed` / `Interrupted` / `BackendLost`(終わりの行を読む前に process が消えた — 次の手番は同じ `ResumeSession` で頼めばよい)。
+手番の途中で process が降りた終わり(`BackendLost` と、注入を待って飲んだ result の `Failed`)は、process の終了 code と stderr の末尾を
+欄 `exit_code`・`stderr_tail` で持つ(stderr の末尾は `lines.STDERR_TAIL_CHARS` 字まで — 越えた分は頭を捨てる・#4207)。fake の
+`FakeReply(lose=…)` は `lose_exit_code`・`lose_stderr` で同じ欄に載せる値を名乗る(名乗らなければ欄は None)。
 
 ## handler
 

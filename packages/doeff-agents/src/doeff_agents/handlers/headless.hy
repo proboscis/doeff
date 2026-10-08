@@ -25,6 +25,10 @@
 ;;;                                      当たった事実・agora-redesign #3983)
 ;;;   Completed / Failed の account-refusal(AccountRefusalHit)→ AgentTurnCompleted / AgentTurnFailed.account_refusal(AgentAccountRefusal —
 ;;;                                      口座の側が要求を断った事実・本番 2026-10-08 22:32 の口座 cryptic-2 の oauth_org_not_allowed)
+;;;   Failed / BackendLost の exit-code・stderr-tail → AgentTurnFailed / AgentTurnLost.exit_code・stderr_tail(手番の途中で降りた CLI の
+;;;                                      process の終了 code と stderr の末尾・agora-redesign #4207)
+;;;   LaunchFailed の exit-code・stderr-tail → AgentLaunchError.exit_code・stderr_tail(stderr の末尾は層 2 と同じ上限 stderr-tail-within)。
+;;;                                      待たせた入力の手番を起こせなかった時は AgentTurnFailed の同じ欄へ(start-failure)
 ;;;   AssistantMessage.tool-calls / ToolResult.answers → AgentToolUseEvent.tool_calls / AgentToolResultEvent.answers(道具の呼びの命令
 ;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
 ;;;   StopHookFeedback.reason          → AgentStopHookFeedbackEvent.reason(Stop hook が答えを差し戻した事実 — 上の層が差し戻された
@@ -42,7 +46,7 @@
 ;;;                                      しただけの runtime も停止する)
 ;;;   CaptureEffect / AttachAgentSessionEffect → 画面が無いので AgentCapabilityUnsupportedError
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
-(require doeff-hy.macros [defhandler defk <- val])
+(require doeff-hy.macros [defhandler defk <- val var])
 (import collections.abc [Callable])
 (import dataclasses [dataclass field])
 (import datetime [datetime])
@@ -68,7 +72,7 @@
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactBoundary
-                                 Completed Failed Interrupted BackendLost Usage AccountRefusalHit])
+                                 Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
                                    TurnStarted InterruptRequested TurnEventPage SessionExported SessionWarmed
@@ -238,14 +242,16 @@
                        :usage (usage-of end.usage end.cost-usd)
                        :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
                        :account-limit (account-limit-of end.account-limit)
-                       :account-refusal (run (account-refusal-of end.account-refusal)))
+                       :account-refusal (run (account-refusal-of end.account-refusal))
+                       :exit-code end.exit-code :stderr-tail end.stderr-tail)
     (isinstance end Interrupted)
       (AgentTurnInterrupted :cli-kept end.process-kept :surviving-refs end.surviving-refs :dropped-refs end.dropped-refs
                             :resume-from context-id
                             :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)
     (isinstance end BackendLost)
       (AgentTurnLost :detail end.detail :resume-from context-id
-                     :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows)))
+                     :last-call-usage last-call-usage :last-call-model last-call-model :model-windows model-windows
+                     :exit-code end.exit-code :stderr-tail end.stderr-tail)))
 
 (defn #^ str detail-of [end]
   (cond
@@ -282,13 +288,15 @@
                   :end (if idle session.last-end None)))
 
 (defn start-refusal [outcome #^ HeadlessSession session]
-  "ClaudeStartTurn の断り → 層 3 の例外(型で名乗る)。"
+  "ClaudeStartTurn の断り → 層 3 の例外(型で名乗る)。process が init の行の前に降りた断り(LaunchFailed)は、終了 code と stderr の
+   末尾(層 2 の手番の終わりと同じ上限の内 — stderr-tail-within)を AgentLaunchError の欄で運ぶ(#4207 — 文の中だけでなく)。"
   (cond
     (isinstance outcome SessionNotFound) (ResumeTargetNotFoundError :resume-from outcome.session-id)
     (isinstance outcome SessionIdInUse)
       (SessionAlreadyExistsError (.format "agent runtime の文脈 {} は既に在る(session {})" outcome.session-id session.name))
     (isinstance outcome LaunchFailed)
-      (AgentLaunchError (.format "session {} の手番を起こせない(exit {}): {}" session.name outcome.exit-code outcome.stderr-tail))
+      (AgentLaunchError (.format "session {} の手番を起こせない(exit {}): {}" session.name outcome.exit-code outcome.stderr-tail)
+                        :exit-code outcome.exit-code :stderr-tail (run (stderr-tail-within outcome.stderr-tail)))
     (isinstance outcome CarryRefused) (AgentLaunchError (.format "session {}: {}" session.name outcome.detail))
     (isinstance outcome AttachmentRefused) (AgentLaunchError (.format "session {}: 受けない添付 {}" session.name outcome.mime))
     ;; 文脈で別の手番が走っている(この handler の知らない手番 — 別の session が同じ文脈を続けている)。起動の失敗と分けて型で名乗る
@@ -332,15 +340,27 @@
   (.append session.events (build (len session.events) at))
   None)
 
+(defk start-failure [#^ AgentError error #^ str input-ref #^ str context-id]
+  {:pre [(: error AgentError) (: input-ref str) (: context-id str)] :post [(: % AgentTurnFailed)]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "待たせた入力の手番を始められなかった事を、上の層が読む失敗の終わり(AgentTurnFailed)にするため。起動の失敗(AgentLaunchError)は、
+   手番を始める前に降りた process の終了 code と stderr の末尾も欄で運ぶ(#4207 — 文 detail の中だけでなく)。"
+  (match error
+    (AgentLaunchError)
+      (AgentTurnFailed :detail (str error) :input-refs #(input-ref) :resume-from context-id
+                       :exit-code error.exit-code :stderr-tail error.stderr-tail)
+    _ (AgentTurnFailed :detail (str error) :input-refs #(input-ref) :resume-from context-id)))
+
 (defk start-waiting [#^ HeadlessSession session]
   {:pre [(: session HeadlessSession)] :post [(: % (type None))]}
-  "待たせた入力の手番を順に始める。始められなかった入力は失敗の終わり(AgentTurnFailed)として出来事に置き、次へ進む。"
+  "待たせた入力の手番を順に始める。始められなかった入力は失敗の終わり(AgentTurnFailed — start-failure)として出来事に置き、次へ進む。"
   (while (and session.waiting (is session.turn None) (not session.stopped))
-    (setv input (.pop session.waiting 0) failure None)
+    (val input (.pop session.waiting 0))
+    (var failure None)
     (try
       (<- (start-turn session input))
       (except [error AgentError]
-        (setv failure (AgentTurnFailed :detail (str error) :input-refs #(input.ref) :resume-from session.context-id))))
+        (:= failure (! (start-failure error input.ref session.context-id)))))
     (when (is-not failure None)
       (<- (append-event session (turn-end-builder failure)))
       (setv session.last-end failure)))

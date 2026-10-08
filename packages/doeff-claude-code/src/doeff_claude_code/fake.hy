@@ -23,7 +23,7 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactBoundary])
+                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactBoundary stderr-tail-within])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -110,12 +110,18 @@
    終わる手番だけ(fail・lose の手番は本文を出さない)・
    compactions = CLI が会話を自動で圧縮する筋書き(CompactBoundary の列 — 圧縮 1 回に 1 つ・#4189)。偽の CLI は本物と
    同じく、要求の前(init の後・考えている間の差分の前)に圧縮の行を 1 つずつ出し、手番はそのまま続く。上の層が無人のターンの圧縮を
-   記録する事を模擬で確かめるため。"
+   記録する事を模擬で確かめるため・
+   lose-exit-code・lose-stderr = lose の手番で消える process の終了 code と stderr(#4207)。BackendLost の欄 exit-code・stderr-tail に
+   載せる — stderr は本物の状態機械と同じ上限で切る(lines.hy の stderr-tail-within)。上の層が模擬で「CLI がなぜ降りたか」を受け取る
+   ため。None = 名乗らない(欄も None — 今の形)。lose の無い手番は断る。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
   (setv #^ (| str None) fail None)
   (setv #^ (| str None) lose None)
+  ;; lose の手番で消える process の終了 code と stderr(名乗らない = None)。
+  (setv #^ (| int None) lose-exit-code None)
+  (setv #^ (| str None) lose-stderr None)
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
   (setv #^ int lines 0)
@@ -151,6 +157,8 @@
                                   self.thinking-deltas self.tool-input-deltas))))
     (when (> (len (lfor end #(self.fail self.lose self.account-refusal) :if (is-not end None) end)) 1)
       (raise (ValueError "FakeReply の fail・lose・account-refusal は多くとも 1 つ")))
+    (when (and (is self.lose None) (or (is-not self.lose-exit-code None) (is-not self.lose-stderr None)))
+      (raise (ValueError "FakeReply の lose-exit-code・lose-stderr は lose の手番だけ(消える process の終わりの欄)")))
     (when (< self.lines 0)
       (raise (ValueError (+ "FakeReply の lines は 0 以上: " (str self.lines)))))
     (when (< self.deltas 0)
@@ -453,7 +461,8 @@
 
 (defk end-scripted [#^ FakeSession session #^ FakeTurn turn]
   {:pre [(: session FakeSession) (: turn FakeTurn)] :post [(: % (type None))]}
-  "筋書きが失敗・口座の側の断り・process の消失で終わる手番の終わり(注入は読まない)。"
+  "筋書きが失敗・口座の側の断り・process の消失で終わる手番の終わり(注入は読まない)。process の消失の終わりには、台本が名乗った
+   終了 code と stderr の末尾(本物の状態機械と同じ上限 — stderr-tail-within)を欄で載せる(#4207)。"
   (setv reply turn.reply)
   (cond
     (is-not reply.account-refusal None)
@@ -465,7 +474,10 @@
         (<- (finish session turn (Failed reply.fail :terminal-reason "failed" :usage reply.usage :cost-usd reply.cost-usd
                                          :input-refs (tuple turn.refs)))))
     True
-      (<- (finish session turn (BackendLost reply.lose))))
+      (<- (finish session turn (BackendLost reply.lose :exit-code reply.lose-exit-code
+                                            :stderr-tail (if (is reply.lose-stderr None)
+                                                             None
+                                                             (! (stderr-tail-within reply.lose-stderr)))))))
   None)
 
 (defk advance [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn]

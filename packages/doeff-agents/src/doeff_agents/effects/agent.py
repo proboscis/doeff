@@ -220,6 +220,10 @@ class AgentTurnFailed:
     turn ran into the account's usage limit (``None`` when it did not — #3983).
     ``account_refusal`` = the account refused the turn's request (``None`` when
     it did not).
+
+    ``exit_code`` / ``stderr_tail`` = 手番の終わりの前に agent の CLI の process が降りた時(手番を起こす前に降りて手番を
+    始められなかった時も)の、process の終了 code と stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。
+    process が降りずに終わった手番は None(agora-redesign #4207)。``detail`` の文にも今までどおり含まれる。
     """
 
     detail: str
@@ -231,6 +235,8 @@ class AgentTurnFailed:
     model_windows: tuple[ModelWindow, ...] = ()
     account_limit: AgentAccountLimit | None = None
     account_refusal: AgentAccountRefusal | None = None
+    exit_code: int | None = None
+    stderr_tail: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -261,6 +267,10 @@ class AgentTurnLost:
     """The runtime went away before the turn's end was read.
 
     The context is kept: the next turn continues from ``resume_from``.
+
+    ``exit_code`` / ``stderr_tail`` = 降りた agent の CLI の process の終了 code(信号で降りたなら負の数)と stderr の末尾
+    (runtime の上限の字数まで — 越えた分は頭を捨てる。stderr が空なら空の文字列)。runtime が process の降り方を知らない
+    終わりは None(agora-redesign #4207)。``detail`` の文にも今までどおり含まれる。
     """
 
     detail: str
@@ -268,6 +278,8 @@ class AgentTurnLost:
     last_call_usage: AgentTurnUsage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
+    exit_code: int | None = None
+    stderr_tail: str | None = None
 
 
 AgentTurnEnd = AgentTurnCompleted | AgentTurnFailed | AgentTurnInterrupted | AgentTurnLost
@@ -1444,7 +1456,20 @@ class AgentError(Exception):
 
 
 class AgentLaunchError(AgentError):
-    """Error during agent launch."""
+    """Error during agent launch.
+
+    ``exit_code`` / ``stderr_tail`` = 手番を始める前に agent の CLI の process が降りた時の、process の終了 code と
+    stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。そうした process の無い起動の失敗は None
+    (agora-redesign #4207)。この例外を失敗の終わり(``AgentTurnFailed``)へ写す呼び手は、2 つの欄をそのまま運ぶ。
+    """
+
+    exit_code: int | None = None
+    stderr_tail: str | None = None
+
+    def __init__(self, *args: object, exit_code: int | None = None, stderr_tail: str | None = None) -> None:
+        super().__init__(*args)
+        self.exit_code = exit_code
+        self.stderr_tail = stderr_tail
 
 
 class AgentNotAvailableError(AgentLaunchError):

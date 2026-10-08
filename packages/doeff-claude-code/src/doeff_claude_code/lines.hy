@@ -343,6 +343,22 @@
 ;; 今の context の大きさは入力の側 input・cache_read・cache_creation の和。出力の token は呼びの途中の値)/ last-call-model = その行の
 ;; model / model-windows = この手番に読んだ result の行の modelUsage の窓(model ごとに 1 つ)。手番の途中で終わった時は、それまでに
 ;; 読んだ値(本体の assistant の行が無ければ None・result の行が無ければ空 — 0 を発明しない)。
+;;
+;; 手番の途中で CLI の process が降りた終わり(BackendLost と、注入を待って飲んだ result の Failed)は、process の終了 code と stderr の
+;; 末尾を欄で持つ(#4207 — 文 detail の中だけでなく、上の層が型の欄で「なぜ降りたか」を読めるように)。欄の値は状態機械 dialogue.hy の
+;; on-exit が 1 か所で載せる。stderr の末尾は STDERR-TAIL-CHARS 字まで(越えた分は頭を捨てる — stderr-tail-within)。
+
+;; 手番の終わりの欄 stderr-tail に載せる stderr の末尾の字数の上限(#4207 — ここ 1 か所。状態機械・fake・doeff-agents の adapter が同じ
+;; 上限で切る)。
+(val STDERR-TAIL-CHARS 2000)
+
+(defk stderr-tail-within [#^ str text]
+  {:pre [(: text str)] :post [(: % str) (<= (len %) STDERR-TAIL-CHARS)] :tags {:context "claude-code" :role "foundation"}}
+  "手番の終わりの欄に載せる stderr の末尾を、字数の上限 STDERR-TAIL-CHARS の内に収めるため(上の層の記録へ運ぶ値の大きさを決める):
+   上限を越えた文は頭を捨てて末尾の STDERR-TAIL-CHARS 字を残し、上限の内の文はそのまま返す。"
+  (if (> (len text) STDERR-TAIL-CHARS)
+      (cut text (- (len text) STDERR-TAIL-CHARS) None)
+      text))
 
 (defclass [(dataclass :frozen True)] Completed []
   "CLI が誤りなく終えた手番。usage = この手番に読んだ result の行の消費の token の和(Usage)/
@@ -364,7 +380,9 @@
   "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
    usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)・
    cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)/
-   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit(#3983)・account-refusal は Completed と同じ。"
+   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit(#3983)・account-refusal は Completed と同じ /
+   exit-code・stderr-tail = 注入を待って飲んだ result で終わる前に CLI の process が降りた時の、process の終了 code と stderr の末尾
+   (STDERR-TAIL-CHARS 字まで — #4207)。result の行で閉じた失敗(process は降りていない)・注入の断りの終わりは None。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
@@ -375,7 +393,9 @@
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
   (setv #^ (| AccountLimitHit None) account-limit None)
-  (setv #^ (| AccountRefusalHit None) account-refusal None))
+  (setv #^ (| AccountRefusalHit None) account-refusal None)
+  (setv #^ (| int None) exit-code None)
+  (setv #^ (| str None) stderr-tail None))
 
 (defclass [(dataclass :frozen True)] Interrupted []
   "止めた手番の終わり。process-kept = 同じ CLI の process が会話に残り次の手番も使うか(control の止め — 真)、止めと一緒に
@@ -392,11 +412,15 @@
 
 (defclass [(dataclass :frozen True)] BackendLost []
   "終わりの行を読む前に process が消えた(OOM・kill・host の再起動)。次の手番は同じ ResumeSession で頼めばよい /
-   last-call-usage・last-call-model・model-windows は節の頭の註(消える前に読んだ値)。"
+   last-call-usage・last-call-model・model-windows は節の頭の註(消える前に読んだ値)/
+   exit-code = 降りた process の終了 code(信号で降りたなら負の数)/ stderr-tail = その process の stderr の末尾(STDERR-TAIL-CHARS 字
+   まで・空の stderr は空の文字列 — #4207)。process の降り方を知らない終わり(handler が手番を知らない・fake が消した process)は None。"
   (#^ str detail)
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
-  (setv #^ (get tuple #(ModelWindow ...)) model-windows #()))
+  (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
+  (setv #^ (| int None) exit-code None)
+  (setv #^ (| str None) stderr-tail None))
 
 (setv ClaudeTurnEnd (| Completed Failed Interrupted BackendLost))
 
