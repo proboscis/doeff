@@ -6,14 +6,20 @@
 ;;; #517 の事故の形の守り)。起動するか使い回すかの判断は decision.start-decision の 1 か所だけで、上の層は会話の id とターンの参照
 ;;; しか持たない。ClaudeWarmSession は同じ判断で、入力の前に process を起動して待たせる(ターンは開かない — 最初のターンがその process
 ;;; を使い回す。起動してから入力を受けられるまでの秒を入力の前に済ませる)。起動前の準備(待っている process の停止・停止の完了待ち・
-;;; 冷えた続きの前の命令・本数の空き)はターンと事前起動で同じ prepare-launch を通る。
+;;; 冷えた続きの前の命令・生かす本数の数え)はターンと事前起動で同じ prepare-launch を通る。
+;;;
+;;; 生かす本数の上限(ClaudeCodeHost の live-limit — #4072 の E1b): handler は上限のために process を止めず、起動を待たせず、失敗にも
+;;; しない。止める CLI を選ぶのは上の層のホストの 1 か所で、handler は起動の後の本数が上限を越える時に、log の 1 行(LIVE-LIMIT-LOG)と
+;;; 知らせ ClaudeLiveLimitExceeded(ホストが答える)を出すだけ — ホストの数えと handler の数えが食い違った事を見せる。前は handler が
+;;; 上限で手番を走らせていない一番古い process を黙って止め、全部が手番を走らせていれば空くまで起動を待った(ホストの知らない CLI が
+;;; 止まり、ターンが止めの終わりを待った)。
 ;;;
 ;;; 不変条件(fake と共通 — tests/test_scenarios.hy が両方に当てる):
 ;;;   1 つの会話に走っている手番は多くとも 1 つ・生きた process は多くとも 1 つ(降りる途中の process は待ってから起こす)。
 ;;;   ClaudeStartTurn 1 回に終わりはちょうど 1 つ。行の seq は会話の中で単調増加。
 ;;;
 ;;; 状態は ClaudeCodeHost(composition root が 1 つ作って handler に渡す)が持つ。読み手の thread と handler の節は
-;;; 会話ごとの lock で状態機械(dialogue.hy)の値を差し替える。待つ所(init・出来事・降りるの待ち・本数の空き)は呼び鈴
+;;; 会話ごとの lock で状態機械(dialogue.hy)の値を差し替える。待つ所(init・出来事・降りるの待ち)は呼び鈴
 ;;; (Doorbell — CreateExternalPromise の約束)を掛けてから条件を読み直し、WaitWithin で上限の秒まで待つ。状態を変えた側(読み手の
 ;;; thread・process の終わり・handler の節)が呼び鈴を鳴らす(時間で起きて確かめない — 行が来てから待ちが抜けるまでに刻みの遅れが無い)。
 ;;;
@@ -50,7 +56,7 @@
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
-                                   ProcessStillAlive ClaudeWarmSession SessionWarmed])
+                                   ProcessStillAlive ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded])
 (import json)
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.dialogue :as dialogue)
@@ -146,9 +152,7 @@
     (setv #^ int self.launches 0)
     (setv #^ (| StopReason None) self.stopped-because None)
     (setv #^ (| str None) self.launch-key None)
-    ;; last-used = 最後に手番を始めた刻(GetMonotonic の読み — 上限の本数で一番長く使われていない物を選ぶ・D2)・retire-after = 今の
-    ;; process を止める刻(資格の期限 − 床・epoch 秒 — 期限を知らなければ None・D2)。
-    (setv #^ (| float None) self.last-used None)
+    ;; retire-after = 今の process を止める刻(資格の期限 − 床・epoch 秒 — 期限を知らなければ None・D2)。
     (setv #^ (| float None) self.retire-after None)
     ;; warmed-fresh = 新しい会話として入力なしで事前起動し(ClaudeWarmSession)、まだターンを始めていない(decision.SessionView の同じ
     ;; 名前の欄 — 最初のターンは同じ id の FreshSession。ターンを始めると消える)。
@@ -195,8 +199,8 @@
 (defclass ClaudeCodeHost []
   "handler の状態: 会話の id → SessionRuntime。command = 実行ファイルと前置きの引数(例: #(\"claude\"))・clock = 行の時刻を
    刻む関数(clock.clock-of)・live-limit = 同時に生かす process の本数の上限(走っている手番の process も数える — 機体の memory の
-   予算 ÷ 1 本の memory。#3672 の D2)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential-expires-at)の手前で
-   process を止める床の秒・launch-timeout = init の行を待つ上限と、上限の本数に空きを待つ上限(秒)。上限と床は呼び手の宣言から
+   予算 ÷ 1 本の memory。#3672 の D2。越える起動は止めずに知らせる — 頭の註)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential-expires-at)の手前で
+   process を止める床の秒・launch-timeout = init の行を待つ上限(秒)。上限と床は呼び手の宣言から
    受ける(既定を持たない)。"
   (defn __init__ [self #^ tuple command clock #^ int live-limit #^ float credential-floor-seconds [launch-timeout 120.0]]
     ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る。
@@ -209,33 +213,19 @@
           self.live-limit live-limit
           self.credential-floor-seconds (float credential-floor-seconds)
           self.launch-timeout (float launch-timeout)
-          self.lock (threading.Lock)
-          ;; doorbell = 会話の組が変わる(足す・忘れる)のを待つ手の呼び鈴(本数の空きの待ち — hang-on-all)。
-          self.doorbell (Doorbell))
+          self.lock (threading.Lock))
     (setv #^ (get dict #(str SessionRuntime)) self.runtimes {}))
 
   (defn runtime [self #^ str session-id]
     (with [self.lock] (.get self.runtimes session-id)))
 
   (defn register [self #^ SessionRuntime runtime]
-    (with [self.lock] (setv (get self.runtimes runtime.session-id) runtime))
-    (.ring self.doorbell))
+    (with [self.lock] (setv (get self.runtimes runtime.session-id) runtime)))
 
   (defn forget [self #^ str session-id #^ SessionRuntime runtime]
     (with [self.lock]
       (when (is (.get self.runtimes session-id) runtime)
-        (del (get self.runtimes session-id))))
-    (.ring self.doorbell))
-
-  (defn #^ tuple hang-on-all [self bell]
-    "本数の空きを待つ手の呼び鈴を、host と今の全部の会話に掛けるため(どの会話の手番の終わり・process の終わりでも、会話の組が
-     変わっても鳴る)。host に先に掛けてから会話の組を読む — 読んだ後に足された会話は host の呼び鈴が知らせる。答え = 掛けた先の組。"
-    (.hang self.doorbell bell)
-    (with [self.lock]
-      (setv runtimes (tuple (.values self.runtimes))))
-    (for [runtime runtimes]
-      (.hang runtime.doorbell bell))
-    (+ #(self.doorbell) (tuple (gfor runtime runtimes runtime.doorbell)))))
+        (del (get self.runtimes session-id))))))
 
 
 ;; --- 読み手の thread からの呼び(lock の中で状態機械を進める) ------------------------------------------
@@ -824,7 +814,6 @@
     (setv binding.turn-seq turn-seq)
     (setv log (.open-log runtime))
     (setv log.launched-at writing log.launched-wall writing-wall)
-    (setv runtime.last-used requested)
     ;; ターンを始めたので、入力なしで事前起動した新しい会話のマークは消す(事前起動した process を最初のターンが使い回した時もここ)。
     (setv runtime.warmed-fresh False)
     (setv runtime.retire-after (retire-time spec.credential-expires-at floor-seconds))
@@ -843,52 +832,30 @@
   None)
 
 
-;; --- 生かす本数の上限と資格の床(#3672 の D2 — 止める判断は host のここ 1 か所)------------------------------------------------
+;; --- 生かす本数の上限と資格の床(#3672 の D2・#4072 の E1b)------------------------------------------------------------
 
-(defrecord LiveView
-  "上限の本数を数える時の 1 つの会話の観測: runtime = その会話・idle = 生きて手番を走らせていない(降ろしてよい)・
-   last-used = 最後に手番を始めた刻。"
-  (#^ SessionRuntime runtime)
-  (#^ bool idle)
-  (#^ (| float None) last-used))
-
-(defn #^ (| LiveView None) live-view [#^ SessionRuntime runtime]
-  "生かす本数に数える process(生きて降りる途中でない物)を持つ会話の観測を取るため(数えない会話は None)。"
+(defn #^ bool counted-live [#^ SessionRuntime runtime]
+  "生かす本数に数える process(生きて降りる途中でない物)を会話が持つかを読むため。"
   (with [runtime.lock]
     (setv process runtime.process)
-    (if (or (is process None) (not (.alive process)) (is-not process.retiring None))
-        None
-        (LiveView :runtime runtime :idle (is (.running-turn runtime) None) :last-used runtime.last-used))))
+    (and (is-not process None) (.alive process) (is process.retiring None))))
 
-(defn #^ bool retire-for-limit [#^ SessionRuntime runtime]
-  "上限の本数のために、手番を走らせていない process を降ろし始めるため(訳 LIVE-LIMIT)。観測の後に手番を始めた・降りた物は降ろさ
-   ない(答え = 降ろし始めたか)。"
-  (with [runtime.lock]
-    (setv process runtime.process)
-    (if (and (is-not process None) (.alive process) (is process.retiring None) (is (.running-turn runtime) None))
-        (do (setv runtime.stopped-because StopReason.LIVE-LIMIT)
-            (.retire process)
-            True)
-        False)))
-
-(defn #^ bool room-or-evict [#^ ClaudeCodeHost host]
-  "起こす前に、生かす本数に空きを作るため: 上限に来ていれば、手番を走らせていない物のうち一番長く使われていない物(最後に手番を
-   始めた刻が一番古い物)を降ろす。走っている手番の process は降ろさない。答え = 空きが在るか(全部が手番を走らせていれば偽 —
-   呼び手は空くまで待つ)。"
-  (with [host.lock]
-    (setv runtimes (tuple (.values host.runtimes))))
-  (setv views (tuple (gfor view (gfor runtime runtimes (live-view runtime)) :if (is-not view None) view)))
-  (when (< (len views) host.live-limit)
-    (return True))
-  (setv idle (sorted (gfor view views :if view.idle view) :key (fn [view] (if (is view.last-used None) 0.0 view.last-used))))
-  (and (bool idle) (retire-for-limit (. (get idle 0) runtime)) (< (- (len views) 1) host.live-limit)))
-
-(defk make-room [#^ ClaudeCodeHost host]
-  {:pre [(: host ClaudeCodeHost)] :post [(: % bool)] :tags {:context "claude-code" :role "foundation"}}
-  "新しい process を起こす前に、生かす本数(host.live-limit)に空きができるまで待つため(空きを作るのは room-or-evict・待つ上限は
-   launch-timeout)。答え = 空きができたか。"
-  (<- room (wait-until (fn [bell] (.hang-on-all host bell)) (fn [] (room-or-evict host)) host.launch-timeout))
-  room)
+(defk note-over-limit [#^ ClaudeCodeHost host #^ str session-id #^ bool warm]
+  {:pre [(: host ClaudeCodeHost) (: session-id str) (: warm bool)] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "新しい process を起こす直前に、起こした後の生きた process の本数(降りる途中の物は数えない)が上限 host.live-limit を越えるなら、
+   log の 1 行(LIVE-LIMIT-LOG)を出し、知らせ ClaudeLiveLimitExceeded をホストへ出すため(頭の註 — 止めない・待たない・失敗に
+   しない)。session-id = 起こす会話(枝分かれは元の会話の id — 枝の id は init まで決まらない)・warm = 入力の前の事前起動か。"
+  (val runtimes (with [host.lock] (tuple (.values host.runtimes))))
+  (val live (+ 1 (len (lfor runtime runtimes :if (counted-live runtime) runtime))))
+  (when (<= live host.live-limit)
+    (return None))
+  (<- at (GetTime))
+  (<- wall-ms (wall-ms-of at))
+  (<- (slog LIVE-LIMIT-LOG :level "warning" :event "live-limit-exceeded" :wall-ms wall-ms :session-id session-id :live live
+            :limit host.live-limit :warm warm))
+  (<- (ClaudeLiveLimitExceeded :session-id session-id :live live :limit host.live-limit :warm warm))
+  None)
 
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]
   "手番を走らせていない生きた process の資格が床を切っていれば止めるため(訳 CREDENTIAL-FLOOR)。"
@@ -915,13 +882,15 @@
    無ければ None)。"
   (#^ (| float None) recorded))
 
-(defk prepare-launch [#^ ClaudeCodeHost host runtime #^ ClaudeSessionSpec spec #^ str canonical #^ str target-id #^ Launch decision]
+(defk prepare-launch [#^ ClaudeCodeHost host runtime #^ ClaudeSessionSpec spec #^ str canonical #^ str target-id #^ Launch decision
+                      #^ bool warm]
   {:pre [(: host ClaudeCodeHost) (: runtime (| SessionRuntime None)) (: spec ClaudeSessionSpec) (: canonical str) (: target-id str)
-         (: decision Launch)]
+         (: decision Launch) (: warm bool)]
    :post [(: % (| LaunchReady LaunchFailed))] :tags {:context "claude-code" :role "foundation"}}
   "新しい process を起動する前の準備を、ターン(start-turn)と入力の前の事前起動(warm-session)で同じ順に行うため: 生きて待っている
    process を停止する(理由 LAUNCH-CHANGED)→ 停止中の process の終了を待つ → transcript の最後の額を読む → 冷えた続きの前の命令 →
-   生かす本数に空きを作る。結果 = LaunchReady か、終了しない・空かない時の LaunchFailed。"
+   生かす本数を数える(越えるなら知らせる — note-over-limit。warm = 入力の前の事前起動か)。結果 = LaunchReady か、前の process が
+   終了しない時の LaunchFailed。"
   (when decision.retire-idle
     (when (is runtime None)
       (raise (RuntimeError (.format "生きた process を停止する会話 {} の状態が無い(start-decision の誤り)" target-id))))
@@ -938,11 +907,7 @@
   (<- recorded (recorded-cost-mark spec.home canonical target-id))
   (when decision.cold-resume
     (<- (run-cold-resume host spec target-id)))
-  ;; 生かす本数に空きを作る(D2 — 上限なら一番長く使われていない、ターン待ちの process を停止する・全部が動いていれば空くまで待つ)。
-  (<- room (make-room host))
-  (when (not room)
-    (return (LaunchFailed :stderr-tail (.format "live-limit {} reached: every live process is running a turn (waited {} seconds)"
-                                                host.live-limit host.launch-timeout))))
+  (<- (note-over-limit host target-id warm))
   (LaunchReady :recorded recorded))
 
 (defk start-turn [#^ ClaudeCodeHost host #^ ClaudeStartTurn request]
@@ -971,7 +936,7 @@
     (when (is-not reused None) (return reused))
     ;; 判断の後に process が降りた・降り始めた(手番の外で出力した)— 降りるのを待ってから起こす。
     (:= decision (Launch :wait-retire True)))
-  (<- ready (prepare-launch host runtime spec canonical target-id decision))
+  (<- ready (prepare-launch host runtime spec canonical target-id decision False))
   (when (isinstance ready LaunchFailed) (return ready))
   ;; ターンを 1 度も始めていない会話(新しく作る・入力なしで事前起動しただけ)は、起動できなかった時に忘れる — 新しい会話の id は
   ;; 未使用の扱いに戻る。
@@ -985,7 +950,6 @@
     (when (not (isinstance origin ForkSession)) (.register host runtime)))
   (<- launching (GetMonotonic))
   (<- launching-wall (GetTime))
-  (setv runtime.last-used requested)
   (<- spawned (spawn-turn host runtime spec origin input ready.recorded key))
   (when (isinstance spawned LaunchFailed)
     (when unused (.forget host target-id runtime))
@@ -1001,7 +965,6 @@
   "会話の process を最初の入力の前に起動して待たせるため(ClaudeWarmSession)。起動するか・同じ起動条件の process が既に待っているので
    足りるかはターンと同じ start-decision の 1 か所で決め(Reuse = 起動しない)、拒否もターンと同じ型。起動前の準備はターンと同じ
    prepare-launch。起動できなかった新しい会話の状態は忘れる(id は未使用の扱い)。"
-  (<- requested (GetMonotonic))
   (<- (retire-under-floor host))
   (val origin request.origin)
   (val spec request.spec)
@@ -1019,7 +982,7 @@
     (Refuse :outcome outcome) (return outcome)
     (Reuse) (return (SessionWarmed :session-id target-id))
     _ None)
-  (<- ready (prepare-launch host known spec canonical target-id decision))
+  (<- ready (prepare-launch host known spec canonical target-id decision True))
   (when (isinstance ready LaunchFailed) (return ready))
   (val runtime (if (is known None)
                    (SessionRuntime target-id spec.home canonical :cost-mark (if (isinstance origin FreshSession) 0.0 None))
@@ -1027,7 +990,6 @@
   (when (is known None) (.register host runtime))
   ;; ターンを 1 度も始めていない会話(新しく作る・事前起動しただけ)は、起動できなかった時に忘れる(start-turn と同じ)。
   (val unused (or (is known None) known.warmed-fresh))
-  (setv runtime.last-used requested)
   (<- spawned (spawn-idle host runtime spec origin ready.recorded key))
   (when (isinstance spawned LaunchFailed)
     (when unused (.forget host target-id runtime))

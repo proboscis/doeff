@@ -713,7 +713,7 @@
   (assert (= (get argv (+ (.index argv "--model") 1)) "another-model") (repr argv)))
 
 
-;; --- 生かす本数の上限と資格の床で降ろす(#3672 の D2 — 止める判断は host の 1 か所)------------------------------------------
+;; --- 資格の床で降ろす(#3672 の D2 — 生かす本数の上限は tests/test_live_limit.hy・#4072 の E1b)------------------------------
 
 (defk one-turn [#^ ClaudeSessionSpec spec origin #^ str word]
   {:pre [(: spec ClaudeSessionSpec) (: origin (| FreshSession ResumeSession)) (: word str)]
@@ -723,71 +723,6 @@
   (assert (isinstance started TurnStarted) (repr started))
   (<- done (read-to-end started.turn 30.0))
   done.end)
-
-(defk three-sessions-over-a-limit-of-two [#^ ClaudeSessionSpec spec #^ tuple ids]
-  {:pre [(: spec ClaudeSessionSpec) (: ids tuple)] :post [(: % tuple)]}
-  "上限 2 の host で会話 3 つの手番を 1 つずつ順に走らせるため。答え = 3 つの会話の process の見え方。"
-  (for [sid ids]
-    (<- end (one-turn spec (FreshSession sid) "X"))
-    (assert (isinstance end Completed) (repr end)))
-  (<- first-view (ClaudeLiveProcess (get ids 0)))
-  (<- second-view (ClaudeLiveProcess (get ids 1)))
-  (<- third-view (ClaudeLiveProcess (get ids 2)))
-  #(first-view second-view third-view))
-
-
-(deftest test-the-least-recently-used-idle-process-goes-down-at-the-live-limit [tmp-path]
-  ;; 生かす本数が上限(2)に来たら、新しく起こす前に、手番を走らせていない物のうち一番長く使われていない物(一番前に手番を始めた
-  ;; 会話)を降ろす(訳 LIVE-LIMIT)。ほかの生きた process は残る。
-  (val ids (tuple (gfor _ (range 3) (str (uuid.uuid4)))))
-  (val host (host-of STUB-COMMAND :live-limit 2))
-  (<- views (with-real-handler host (three-sessions-over-a-limit-of-two (spec-in tmp-path) ids)))
-  (assert (= (get views 0) (NoLiveProcess :launches 1 :stopped-because StopReason.LIVE-LIMIT)) (repr views))
-  (assert (= (get views 1) (LiveProcess :launches 1)) (repr views))
-  (assert (= (get views 2) (LiveProcess :launches 1)) (repr views)))
-
-
-(defk second-session-while-the-first-runs [#^ ClaudeSessionSpec spec #^ str first-id #^ str second-id]
-  {:pre [(: spec ClaudeSessionSpec) (: first-id str) (: second-id str)] :post [(: % tuple)]}
-  "上限 1 の host で、1 つ目の会話の長い手番の途中に 2 つ目の会話の手番を頼むため。答え = 2 つ目の始まりの答え・1 つ目の手番の
-   終わり・2 つ目を頼んだ時に 1 つ目の手番が終わっていたか・1 つ目の process の見え方。"
-  (<- started (ClaudeStartTurn (FreshSession first-id) spec (TurnInput (sleep-prompt 3 "SLOW") "slow-1")))
-  (<- (read-to-tool-start started.turn 30.0))
-  (<- second (ClaudeStartTurn (FreshSession second-id) spec (TurnInput (reply-prompt "NEXT") "next-1")))
-  (<- first-end (read-to-end started.turn 30.0))
-  (<- first-view (ClaudeLiveProcess first-id))
-  #(second first-end.end first-view))
-
-
-(deftest test-a-launch-at-the-live-limit-waits-for-a-turn-to-end-and-never-stops-a-running-turn [tmp-path]
-  ;; 上限に来た時に全部の process が手番を走らせていれば、空く(手番が終わる)まで起こすのを待つ。走っている手番は止めない —
-  ;; 1 つ目の手番は Completed で終わり、終わった後に一番長く使われていない物として降りる(訳 LIVE-LIMIT)。
-  (val host (host-of STUB-COMMAND :live-limit 1))
-  (<- seen (with-real-handler host (second-session-while-the-first-runs (spec-in tmp-path) (str (uuid.uuid4)) (str (uuid.uuid4)))))
-  (assert (isinstance (get seen 0) TurnStarted) (repr seen))
-  (assert (isinstance (get seen 1) Completed) (repr seen))
-  (assert (= (get seen 2) (NoLiveProcess :launches 1 :stopped-because StopReason.LIVE-LIMIT)) (repr seen)))
-
-
-(deftest test-a-launch-that-waits-past-the-limit-is-a-named-launch-failure [tmp-path]
-  ;; 空きを待つのは launch-timeout まで。越えたら起こさず、上限で待ったことを名指した LaunchFailed。
-  (val host (host-of STUB-COMMAND :live-limit 1 :launch-timeout 2.0))
-  (val first-id (str (uuid.uuid4)))
-  (<- outcome (with-real-handler host
-                (launch-over-a-busy-limit (spec-in tmp-path) first-id (str (uuid.uuid4)))))
-  (assert (isinstance outcome LaunchFailed) (repr outcome))
-  (assert (in "live-limit" outcome.stderr-tail) (repr outcome)))
-
-
-(defk launch-over-a-busy-limit [#^ ClaudeSessionSpec spec #^ str first-id #^ str second-id]
-  {:pre [(: spec ClaudeSessionSpec) (: first-id str) (: second-id str)] :post [(: % (| TurnStarted LaunchFailed))]}
-  "上限 1 の host で 1 つ目の会話に長い手番を走らせたまま 2 つ目を頼み、その答えを返すため(終わりに 1 つ目の会話を閉じる)。"
-  (<- started (ClaudeStartTurn (FreshSession first-id) spec (TurnInput (sleep-prompt 20 "LONG") "long-1")))
-  (<- (read-to-tool-start started.turn 30.0))
-  (<- outcome (ClaudeStartTurn (FreshSession second-id) spec (TurnInput (reply-prompt "WAIT") "wait-1")))
-  (<- (ClaudeCloseSession first-id "test"))
-  outcome)
-
 
 (defk expiring-in [#^ ClaudeSessionSpec base #^ float seconds]
   {:pre [(: base ClaudeSessionSpec) (: seconds float)] :post [(: % ClaudeSessionSpec)]}
