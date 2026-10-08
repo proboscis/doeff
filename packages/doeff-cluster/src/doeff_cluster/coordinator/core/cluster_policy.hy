@@ -473,13 +473,13 @@
 
 
 (defn #^ ClusterState absorb-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
-  "heartbeat の worker の process の世代を drain へ写す: 頼まれた時の世代と違う世代(Pod を作り直した後の worker)が来たら drain を解く。
-   世代を知らずに頼まれた drain(読み直しの直後など)は、最初に来た世代を持つ。退いた世代の heartbeat はここへ来ない
+  "世代に付いた drain(世代つきの頼み — Pod の preStop・止まり始めを告げる heartbeat)を、頼まれた時の世代と違う世代(Pod を作り直した後の
+   worker)の heartbeat で解く。世代を持たない drain(世代を付けない頼み — 版上げの Program・手の頼み)は worker の名前に付き、どの世代の
+   heartbeat でも解かない(頼み手の DELETE か期限まで保つ・#4177)。退いた世代の heartbeat はここへ来ない
    (register-heartbeat が先に分ける — 旧い世代の heartbeat が新しい世代の drain を解かず、旧い世代の drain を付け直さない)。"
   (setv d (.get state.drains name))
   (cond
-    (or (is d None) (is boot None)) state
-    (is d.boot None) (replace state :drains (| state.drains {name (replace d :boot boot)}))
+    (or (is d None) (is boot None) (is d.boot None)) state
     (!= d.boot boot) (replace state :drains (dfor #(k v) (.items state.drains) :if (!= k name) k v))
     True state))
 

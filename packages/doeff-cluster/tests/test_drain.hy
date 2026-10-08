@@ -244,7 +244,7 @@
   (<- c (running-writer))
   (c.advance 12)
   (c.beat "atlas" ["w"])
-  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (c.call "POST" "/workers/atlas/drain" {"boot" "b1"} :actor "drain@atlas")
   (assert (= (get (c.call "GET" "/workers/atlas") "drain" "phase") "Blocked"))
   (<- env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (<- declared dict (runtime-env->json env))
@@ -327,14 +327,15 @@
 
 
 (deftest test-a-new-boot-or-the-deadline-ends-the-drain
+  ;; 世代つきの頼み(Pod の preStop が自分の世代 b1 を本文で送る)の drain。
   (<- c (running-writer))
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30} :actor "drain@zeus")
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30 "boot" "b1"} :actor "drain@zeus")
   (assert (= (. (get c.state.drains "zeus") boot) "b1"))
   ;; 同じ世代の heartbeat では解けない。頼み直しは始めた時刻を変えず、期限だけ延ばす。
   (setv since (. (get c.state.drains "zeus") since-ms))
   (c.advance 10)
   (c.beat "zeus")
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30} :actor "drain@zeus")
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 30 "boot" "b1"} :actor "drain@zeus")
   (assert (= (. (get c.state.drains "zeus") since-ms) since))
   (assert (= (. (get c.state.drains "zeus") until-ms) (+ c.now 30000)))
   (assert (not (get (c.call "GET" "/workers/zeus") "ready")))
@@ -348,6 +349,38 @@
   (assert (not-in "zeus" c.state.drains))
   ;; 出来事の記録に誰が drain を頼んだかが残る(Worker の資源の status.drain)。
   (assert (any (gfor e c.state.audit (and (= e.kind "Worker") (= e.actor "drain@zeus"))))))
+
+
+(deftest test-a-drain-asked-without-a-generation-stays-on-the-name-across-recreated-pods
+  ;; 失敗ケース(#4177): 世代(boot)を付けない頼み(版上げの Program・手の頼み)の drain は worker の名前に付き、Pod を
+  ;; 何度作り直しても(世代が b1 → b2 → b3 と替わっても)DELETE か期限まで保つ — その間、新しい世代にも task を置かない。直す前は
+  ;; 最初の作り直し(b2)の heartbeat で drain が解け、2 度目の作り直しの前に置かれた仕事が止められた(2026-10-09 00:36:50 に解け、
+  ;; 00:37:33 の 2 度目の入れ替えで走っていたターン 3 本が止まった)。
+  (val c (Coord))
+  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 600} :actor "upgrade")
+  (assert (is (. (get c.state.drains "zeus") boot) None) (get c.state.drains "zeus"))
+  (for [boot ["b2" "b3"]]
+    (c.advance 2)
+    (val reply (c.beat "zeus" :boot boot))
+    (assert (in "zeus" c.state.drains) #(boot c.state.drains))
+    (assert (get reply "draining") #(boot reply)))
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
+  (assert (= (. (get c.state.tasks "t1") phase) "queued") (get c.state.tasks "t1"))
+  ;; 頼み手が外す(DELETE)と、今の世代に task が置かれる。
+  (c.call "DELETE" "/workers/zeus/drain" :actor "upgrade")
+  (c.beat "zeus")
+  (val t (get c.state.tasks "t1"))
+  (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
+
+
+(deftest test-a-drain-asked-with-a-generation-ends-at-the-next-generation
+  ;; 世代つきの頼み(Pod の preStop — 自分の世代を本文で送る)の drain は、その世代に付く: 作り直した Pod(別の世代)の heartbeat で解ける。
+  (val c (Coord))
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 600 "boot" "b1"} :actor "drain@zeus")
+  (assert (= (. (get c.state.drains "zeus") boot) "b1") (get c.state.drains "zeus"))
+  (c.beat "zeus" :boot "b2")
+  (assert (not-in "zeus" c.state.drains) c.state.drains))
 
 
 (deftest test-the-old-pod-drain-does-not-drain-the-new-generation-of-the-same-name
@@ -414,7 +447,7 @@
 
 (deftest test-a-prestop-of-a-never-seen-generation-does-not-drain-the-live-generation
   ;; 新しい Pod が最初の heartbeat の前に消された: その preStop の世代を coordinator は一度も見ていない。生きている今の世代を
-  ;; drain させず、その世代の task は無い = drained で終わる。boot の無い頼み(旧い版の preStop)だけ今の世代に付く。
+  ;; drain させず、その世代の task は無い = drained で終わる。boot の無い頼み(版上げの Program・手の頼み)は名前に付く(世代を持たない)。
   (setv c (Coord #("zeus")))
   (c.beat "zeus" :boot "live")
   (setv view (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150 "boot" "never-seen"} :actor "drain@zeus"))
@@ -423,7 +456,7 @@
   (assert (get view "drain" "drained") view)
   (assert (get (c.call "GET" "/workers/zeus") "ready"))
   (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 150} :actor "drain@zeus")
-  (assert (= (. (get c.state.drains "zeus") boot) "live")))
+  (assert (is (. (get c.state.drains "zeus") boot) None) (get c.state.drains "zeus")))
 
 
 (deftest test-the-old-pod-drain-waits-for-the-detached-tasks-of-its-own-generation
