@@ -27,7 +27,7 @@
 ;;;
 ;;; 台本の語彙(本物の答え手には無い): WsScript・ScriptedWsEndpoint・ScriptedWsReply・ScriptedWsText / ScriptedWsBinary / ScriptedWsClosed =
 ;;; 台本・WsSentText / WsSentClose = 送った文と閉じの記録・ReadWsSent = 記録を読む effect(検と筋書きが覗くため)。
-(require doeff-hy.macros [defeffect defk val])
+(require doeff-hy.macros [defeffect defk <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff [EffectBase Program])

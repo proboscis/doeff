@@ -19,14 +19,20 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import functools [partial])
-(import queue)
+(import queue [Queue])
 (import socket)
 (import threading)
-(import doeff [Program with_handlers])
+(import typing [TYPE_CHECKING])
+(import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects.handlers [state await-handler])
 (import doeff_core_effects.ws_client_effects [ReadWsSent ScriptedWsBinary ScriptedWsClosed ScriptedWsEndpoint ScriptedWsReply ScriptedWsText
-                                              WsScript WsSentClose])
+                                              WsScript WsSentClose WsSentRecord])
 (import doeff_core_effects.scripted_ws_client [scripted-ws-client])
+;; aiohttp は extra `http-server` の依存で、無い環境でも conftest.py がこの module を import する(その解釈器のテストを skip する)。
+;; 型の注記にだけ使い、実行時は import しない(本物の相手の関数は自分の中で import する)。
+(when TYPE_CHECKING
+  (import aiohttp)
+  (import aiohttp [web]))
 
 (val AIOHTTP "aiohttp-ws-client")
 (val SCRIPTED "scripted-ws-client")
@@ -53,7 +59,7 @@
   (#^ str url)
   (#^ str slow)
   (#^ str dead)
-  (#^ Callable install))
+  (#^ (get Callable #([] (get Callable #([(| Program EffectBase)] Program)))) install))
 
 
 (defrecord PeerClose
@@ -87,7 +93,7 @@
 (defrecord Listening
   "立てた待ち受け: runner = aiohttp の AppRunner・port = 結んだ port。"
   {:tags {:context "ws-client-test" :role "type"}}
-  (#^ object runner)
+  (#^ "web.AppRunner" runner)
   (#^ int port))
 
 
@@ -96,10 +102,10 @@
   {:tags {:context "ws-client-test" :role "type"}}
   (#^ asyncio.AbstractEventLoop loop)
   (#^ Listening listening)
-  (#^ queue.Queue closures))
+  (#^ (get Queue PeerClose) closures))
 
 
-(defn :async #^ object echo-peer [#^ queue.Queue closures #^ object request]  ; defk にできない: aiohttp が要求ごとに呼ぶ callback(待ち受けの loop の coroutine)
+(defn :async #^ "web.WebSocketResponse" echo-peer [#^ (get Queue PeerClose) closures #^ "web.Request" request]  ; defk にできない: aiohttp が要求ごとに呼ぶ callback(待ち受けの loop の coroutine)
   "本物の相手の 1 接続(先頭の説明の振る舞い): 繋ぐと greeting を送り、\"bin\" に byte・\"bye\" に閉じ・他は echo。相手(client)の close frame を
    closures へ置く。"
   (import aiohttp [web WSMsgType])
@@ -126,13 +132,13 @@
   ws)
 
 
-(defn :async #^ object slow-peer [#^ queue.Queue closures #^ object request]  ; defk にできない: aiohttp が要求ごとに呼ぶ callback(待ち受けの loop の coroutine)
+(defn :async #^ "web.WebSocketResponse" slow-peer [#^ (get Queue PeerClose) closures #^ "web.Request" request]  ; defk にできない: aiohttp が要求ごとに呼ぶ callback(待ち受けの loop の coroutine)
   "遅い繋ぎ先: handshake の答えを SLOW-SECONDS 遅らせてから echo-peer と同じに振る舞う(その間に別の繋ぎが終わる — 同時に進む繋ぎの検)。"
   (await (asyncio.sleep SLOW-SECONDS))
   (await (echo-peer closures request)))
 
 
-(defn :async #^ Listening listen [#^ queue.Queue closures]  ; defk にできない: aiohttp の実 I/O(待ち受けの loop の coroutine)
+(defn :async #^ Listening listen [#^ (get Queue PeerClose) closures]  ; defk にできない: aiohttp の実 I/O(待ち受けの loop の coroutine)
   "待ち受けを 127.0.0.1 の空いた port に立てるため。"
   (import aiohttp [web])
   (setv app (web.Application))
@@ -149,7 +155,7 @@
   "本物の相手を立てるため: 自分の daemon thread で回る loop の上に待ち受けを立て、結んだ port を読む。"
   (val loop (asyncio.new-event-loop))
   (.start (threading.Thread :target loop.run-forever :name "ws-contract-peer" :daemon True))
-  (val closures (queue.Queue))
+  (val closures ((get Queue PeerClose)))
   (val listening (.result (asyncio.run-coroutine-threadsafe (listen closures) loop) PEER-SECONDS))
   (EchoPeer :loop loop :listening listening :closures closures))
 
@@ -172,7 +178,7 @@
 
 
 (deff client-into [box]  ; defk にできない: aiohttp-ws-client の client-factory として繋ぐ coroutine の中(Program の外)で呼ばれる callback
-  {:pre [(: box queue.Queue)] :post [(: % "aiohttp.ClientSession")] :tags {:context "ws-client-test" :role "foundation"}}
+  {:pre [(: box (get Queue aiohttp.ClientSession))] :post [(: % "aiohttp.ClientSession")] :tags {:context "ws-client-test" :role "foundation"}}
   "本物の答え手が作る client を数えるため: 既定の作り手(new-client-session)と同じ client を作り、箱へ置いてから渡す(検は後で閉じているかを読む)。"
   (import doeff_core_effects.aiohttp_ws_client [new-client-session])
   (setv session (new-client-session))
@@ -180,7 +186,7 @@
   session)
 
 
-(defhandler live-closures [#^ queue.Queue closures]
+(defhandler live-closures [#^ (get Queue PeerClose) closures]
   ;; 本物の相手が見た閉じ(先頭の説明)。引数に残す理由: 箱は解釈器が待ち受けを立てた時に作る値。
   (PeerClosures [count]
     (var seen #())
@@ -220,12 +226,12 @@
 (defhandler scripted-closures
   ;; fake の相手が見た閉じ(先頭の説明)= 台本の答え手の記録のうち閉じ。
   (PeerClosures [count]
-    (<- sent tuple (ReadWsSent))
+    (<- sent (get tuple #(WsSentRecord ...)) (ReadWsSent))
     (resume (tuple (gfor record sent :if (isinstance record WsSentClose) (PeerClose :code record.code :reason record.reason))))))
 
 
 (defk scripted-install []
-  {:pre [] :post [(: % Callable)] :tags {:context "ws-client-test" :role "foundation"}}
+  {:pre [] :post [(: % (get Callable #([(| Program EffectBase)] Program)))] :tags {:context "ws-client-test" :role "foundation"}}
   "契約の世界の install(引数なし)— 台本つきの scripted-ws-client の installer。"
   (scripted-ws-client SCRIPT))
 

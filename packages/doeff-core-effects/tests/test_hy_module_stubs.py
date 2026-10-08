@@ -85,10 +85,12 @@ def _named(form: hy.models.Expression) -> hy.models.Symbol | None:
     match rest:
         case [hy.models.Symbol() as name, *_]:
             return name
-        case [hy.models.Expression() as annotated, *_] if (
-            len(annotated) == 3 and str(annotated[0]) == "annotate" and isinstance(annotated[1], hy.models.Symbol)
-        ):
-            return annotated[1]
+        case [hy.models.Expression() as annotated, *_]:
+            match tuple(annotated):
+                case (hy.models.Symbol() as head, hy.models.Symbol() as name, _) if str(head) == "annotate":
+                    return name
+                case _:
+                    return None
         case _:
             return None
 
