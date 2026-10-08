@@ -477,7 +477,8 @@
 (defclass [(dataclass :frozen True)] Drain []
   "worker の drain(2026-09-25)= その worker を空けてよいかを問う印。drain 中の worker には新しい置き先を割り当てず、上の入れ替え
    (handoff)の Service は別の worker へ並べて(surge)Ready を待ってから移し、それ以外の Service は止めて移す。
-   boot = 頼まれた時の worker の process の世代(別の世代の heartbeat が来たら解ける — Pod を作り直した後の worker は空けない)。
+   boot = 頼みの本文が運んだ worker の process の世代(別の世代の heartbeat が来たら解ける — Pod を作り直した後の worker は空けない)。
+   None = 世代を付けない頼み: worker の名前に付き、世代が替わっても頼み手の DELETE か期限まで保つ(#4177)。
    until-ms = 期限(頼み直すたびに延びる・忘れられた drain が worker を空けたままにしない)。"
   (#^ str worker)
   (#^ int since-ms)
