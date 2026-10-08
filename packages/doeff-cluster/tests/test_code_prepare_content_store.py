@@ -10,9 +10,13 @@ source は保存先から書き、焼くのは中身の変わった file と、m
 展開は macro に依らない)・無関係(other)。1 回目の木を焼いた後、2 回目は別の dir の木(別の版の展開に当たる)を、引き継ぎの引数なしで
 同じ保存先を使って焼く(本番の準備と同じ引数の形 — 道具は --from を持たない)。
 
-焼いた物の観測: 道具の process と焼きの子 process の起動の時に読まれる sitecustomize が、root の側の compile の口
-(python_bytecode の source_to_code_as_import — 直す前の compile-one も直した後の compiled-pyc もここを通る)を、受けた path を log へ
-1 行書いてから元を呼ぶ物に包む(道具の外から数える — 道具の答えを信じない)。
+焼いた物の観測: 道具の process と焼きの子 process の起動の時に読まれる sitecustomize が、Hy の source の compile の合流点
+(``importlib.machinery.SourceFileLoader.source_to_code`` — 起動時の .pth の doeff-hy の包みの外側。道具が明示に焼く口
+source_to_code_as_import も、焼いている file の Hy の require が macro の定義元を import する時の compile もここを通る)を、受けた
+Hy の path を log へ 1 行書いてから元を呼ぶ物に包む(道具の外から数える — 道具の答えを信じない)。数えるのは木の中の path だけ(道具
+自身の import の compile は木の外)。明示に焼く口だけを数えると、名指しの保存先が .pyc を書かない設定でも埋まるようになった後
+(doeff 9f6d6886c・#3737)、use の require の途中で compile された mac の code が保存先に入り、道具が mac を焼く番には保存先から
+書くので、mac が 1 回も数えられなかった(#4172)。
 
 速さ(1 件 30 秒の上限): 道具とその焼きの子 process は起動のたびに doeff の module を import する。.pyc を書かない設定のままだと毎回
 source から compile して 1 回 15 秒かかるので、この file の最初の 1 回(module の fixture)だけ .pyc を書かせて、その .pyc を
@@ -37,16 +41,17 @@ import os
 
 _LOG = os.environ.get("BAKE_COMPILED_LOG")
 if _LOG:
-    import doeff_core_effects.python_bytecode as _bytecode
+    import importlib.machinery as _machinery
 
-    _original = _bytecode.source_to_code_as_import
+    _original = _machinery.SourceFileLoader.source_to_code
 
-    def source_to_code_as_import(loader, data, path):
-        with open(_LOG, "a") as log:
-            log.write(path + "\\n")
-        return _original(loader, data, path)
+    def source_to_code(self, data, path, *args, **kwargs):
+        if isinstance(path, str) and path.endswith(".hy"):
+            with open(_LOG, "a") as log:
+                log.write(path + "\\n")
+        return _original(self, data, path, *args, **kwargs)
 
-    _bytecode.source_to_code_as_import = source_to_code_as_import
+    _machinery.SourceFileLoader.source_to_code = source_to_code
 """
 
 _HY_SOURCES = ("mac/macros.hy", "use/user.hy", "imp/importer.hy", "other/plain.hy")
@@ -105,12 +110,12 @@ def _tool(tree: Path, store: Path, hook: Path, prefix: Path, compiled: Path, *, 
 
 
 def _bake(tree: Path, store: Path, rig: "_Rig") -> _Bake:
-    """道具を起こし、compile した Hy の source と報告の行の数を返す。"""
+    """道具を起こし、compile した木の中の Hy の source と報告の行の数を返す(木の外 = 道具自身の import の compile は数えない)。"""
     compiled = tree.parent / f"{tree.name}.compiled.log"
     completed = _tool(tree, store, rig.hook, rig.prefix, compiled, write=False)
     assert completed.returncode == 0, completed.stderr
     lines = compiled.read_text().split() if compiled.exists() else []
-    names = sorted(str(Path(line).relative_to(tree)) for line in lines if line.endswith(".hy"))
+    names = sorted(str(Path(line).relative_to(tree)) for line in lines if Path(line).is_relative_to(tree))
     return _Bake(names, _counts(completed.stderr, tree), completed.stderr)
 
 
@@ -198,12 +203,15 @@ def test_a_a_changed_file_is_recompiled_and_the_others_come_from_the_store(fille
 
 def test_c_a_changed_macro_definition_recompiles_its_users_too(filled: _Store, tmp_path: Path) -> None:
     """失敗ケース(c): macro の出所(require の先)の中身が変わったら、その macro を使う側も焼き直す(使う側の source は同じでも、保存先の
-    code の記録が今の macro の file と合わない)。import だけする側と無関係は保存先から書く。import した値は新しい macro の展開。"""
+    code の記録が今の macro の file と合わない)。import だけする側と無関係は保存先から書く。import した値は新しい macro の展開。
+    焼き直した物は外からの compile の観測で断言する。道具の報告の rebuilt は道具が自分で焼いた数で、使う側を先に焼くと、その require が
+    macro の定義元を compile して保存先へ足し(名指しの保存先は .pyc を書かない設定でも埋まる — doeff 9f6d6886c・#3737)、道具は定義元の
+    .pyc を保存先から書く(stored に数える)— どちらを先に焼くかで 1 にも 2 にもなる(#4172)。"""
     second = tmp_path / "second"
     _write_four(second, filled.salt, macro_add=5)
     baked = _bake(second, filled.store, filled.rig)
     assert baked.compiled == ["mac/macros.hy", "use/user.hy"], baked.compiled
-    assert baked.counts.get("rebuilt") == 2, baked.counts
+    assert 1 <= baked.counts.get("rebuilt", 0) <= 2 and baked.counts.get("failed") == 0, baked.counts
     assert _import_value(second, filled) == 6
 
 
