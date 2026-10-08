@@ -1,5 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = lease_rules.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from collections.abc import Mapping as Mapping
 from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
 from doeff_cluster.shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMAPHORE_PREFIX
 from doeff_cluster.shared.intent.semaphore_model import FENCE_MARGIN_MS as FENCE_MARGIN_MS
@@ -28,7 +29,7 @@ def semaphore_write_refusal(before: object, after: object, now_ms: int) -> str |
 def semaphore_key(name: str) -> str:
     ...
 
-def live_holders(row: dict | None, now_ms: int) -> dict:
+def live_holders(row: Mapping[str, object] | None, now_ms: int) -> dict[str, int]:
     ...
 
 def lease_full_until(row: dict | None, now_ms: int) -> int | None:
