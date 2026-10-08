@@ -86,11 +86,13 @@ def set_scheduler_trace(sink: TraceSink | None) -> None:
 
     出来事を出すのは Python の scheduler だけ。sink を据えたまま Rust の scheduler を組むと
     ``scheduled`` が RuntimeError で断る(黙って 0 件の測りにしない)。出来事の ``event`` は
-    start・enqueued・resumed・task-enter・task-leave・external-complete・external-drained・
+    start・enqueued・resumed・spawned・task-enter・task-leave・external-complete・external-drained・
     external-ignored で、どれも ``run``・``thread``・``ns``(perf_counter_ns)・``cpu_ns``
     (thread_time_ns)を持つ。task ごとの CPU は、task-leave の直前の区間(同じ task の
     task-enter か task-leave から)を足して数える — task-leave はその区間を ``step_ns``・
-    ``step_cpu_ns`` として添える(区間の始まりがこの sink の下に無ければ None)。
+    ``step_cpu_ns``・``step_vm_steps``・``step_handler_calls``(doeff-vm の数 — process 全体の累計の差)
+    として添える(区間の始まりがこの sink の下に無ければ None)。spawned は ``tid``(子)・``parent``
+    (Spawn を出した task・根は None)・``site`` を持つ(#4188 — task の木を出来事から組み直すため)。
     """
     global _trace_sink, _trace_generation
     _trace_sink = sink
@@ -399,10 +401,23 @@ class StepBudgetExceeded(BaseException):
 
 def _read_vm_steps() -> int:
     """The doeff-vm steps taken so far by the whole process (a running total)."""
+    return _read_vm_work().steps
+
+
+@dataclass(frozen=True)
+class VmWork:
+    """The doeff-vm work the whole process has done so far (running totals): steps and handler calls."""
+
+    steps: int
+    handler_calls: int
+
+
+def _read_vm_work() -> VmWork:
+    """Read the process's doeff-vm running totals, so a measured span can be told in steps that a busy machine does not shift."""
     from doeff_vm.doeff_vm import vm_work_counts
 
-    steps, _handler_calls = vm_work_counts()
-    return steps
+    steps, handler_calls = vm_work_counts()
+    return VmWork(steps=steps, handler_calls=handler_calls)
 
 
 @dataclass(frozen=True)
@@ -1001,8 +1016,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     run_id = next(_trace_runs)
     wake_context: list[tuple[str, int | None]] = [("internal", None)]
     wake_of_seq: dict[int, tuple[str, int | None]] = {}
-    # 今の歩の始まりの境目(sink の番号・壁の ns・CPU の ns)。sink がある時だけ書く。
-    step_start: list[tuple[int, int, int] | None] = [None]
+    # 今の歩の始まりの境目(sink の番号・壁の ns・CPU の ns・doeff-vm の歩数・handler の呼び)。sink がある時だけ書く。
+    step_start: list[tuple[int, int, int, int, int] | None] = [None]
     # sys._is_gil_enabled は Python 3.13 から。それより前は GIL が常に有る。
     if _trace_sink is not None:
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
@@ -1677,21 +1692,26 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         trace_step_boundary("task-enter", tid, site=site, ready=len(ready))
 
     def trace_step_boundary(event: str, tid: int | None, **fields: object) -> None:
-        """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出すため。時計は 1 度だけ読み、次の歩の始まりにも使う。
-        task-leave には、直前の境目からこの歩の壁と CPU の ns(step_ns・step_cpu_ns)を添える — 直前の境目が今の sink の下に
+        """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出すため。時計と doeff-vm の数は 1 度だけ読み、次の歩の
+        始まりにも使う。task-leave には、直前の境目からこの歩の壁と CPU の ns(step_ns・step_cpu_ns)と doeff-vm の歩数と
+        handler の呼び(step_vm_steps・step_handler_calls — #4188。機体の混みで揺れない)を添える — 直前の境目が今の sink の下に
         無ければ(据えた直後・据え直した後)None。"""
         sink = _trace_sink
         if sink is None:
             return
         ns, cpu_ns = time.perf_counter_ns(), time.thread_time_ns()
+        work = _read_vm_work()
+        vm_steps, handler_calls = work.steps, work.handler_calls
         previous = step_start[0]
-        step_start[0] = (_trace_generation, ns, cpu_ns)
+        step_start[0] = (_trace_generation, ns, cpu_ns, vm_steps, handler_calls)
         if event == "task-leave":
             fresh = previous is not None and previous[0] == _trace_generation
             fields = {
                 **fields,
                 "step_ns": ns - previous[1] if fresh else None,
                 "step_cpu_ns": cpu_ns - previous[2] if fresh else None,
+                "step_vm_steps": vm_steps - previous[3] if fresh else None,
+                "step_handler_calls": handler_calls - previous[4] if fresh else None,
             }
         _trace_at(sink, event, run_id, ns, cpu_ns, {"tid": tid, **fields})
 
@@ -2110,6 +2130,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                              inner_boundaries=inner_boundaries,
                              daemon=effect.daemon)
             tasks[tid]["spawn_site"] = spawn_site
+            if _trace_sink is not None:
+                # 測りの口(#4188): task の木を出来事から組み直せるように、親(Spawn を出した task — 根は None)と子を名指す
+                _trace("spawned", run_id, tid=tid, parent=current_tid, site=spawn_site)
             enqueue(("new", tid), effect.priority, wake=("new", None))
             # Spawner resumes at its OWN task priority (#504): a hard-coded
             # NORMAL here would promote an IDLE spawner above the
