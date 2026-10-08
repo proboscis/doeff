@@ -25,8 +25,12 @@
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
+(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
 
 (setv T (ClusterTiming))
+;; 検の coordinator は k8s を持たない — 本番の手元の coordinator と同じく、Deployment と Node の見張りは k8s の無い理由を伝える
+;; (調停ループは毎歩見張りを揃える・#3868・#4070)。
+(val NO-KUBE "検の coordinator は k8s を持たない")
 (setv V {"python" "3.14.0" "doeff" "1"})
 
 (defk req [method path [body None] [query None] [actor "test"]]
@@ -188,9 +192,11 @@
 
 (defk scripted [script]
   {:pre [(: script Script)] :post [(: % Callable)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "台本の外側に仮想の時計(script の SimClock)を被せる。worker の生死の出来事(#3864)は誰も読まない memory の broker へ出す。"
+  "台本の外側に仮想の時計(script の SimClock)を被せる。worker の生死の出来事(#3864)は誰も読まない memory の broker へ出す。k8s は
+   無い(NO-KUBE)。"
   (fn [program] ((sim-time-handler :clock script.clock)
-                 ((scripted-requests script) (request-bodies (durable-states (reply-bodies (with-handlers (memory-notices (MemoryBroker)) program))))))))
+                 ((scripted-requests script) (request-bodies (durable-states (reply-bodies (with-handlers (memory-notices (MemoryBroker))
+                                                                                                           ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches)) program)))))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V}))
@@ -366,7 +372,7 @@
   (<- (durable-load store))
   (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}}))
                         (! (req "PUT" "/board/k" {"value" 1}))]))
-  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (with-handlers (memory-notices (MemoryBroker)) (run-coordinator (ClusterState) T (ClusterNaming)))))))))
+  (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) ((wal-store store) (request-bodies (durable-states (with-handlers (memory-notices (MemoryBroker)) ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches)) (run-coordinator (ClusterState) T (ClusterNaming))))))))))
   (setv back (! (state-from-kv (! (durable-load (WalStore d))) 99999)))
   (assert (= (! (durable-kv back)) (! (durable-kv final))))
   (assert (= (. back revision) (. final revision)))

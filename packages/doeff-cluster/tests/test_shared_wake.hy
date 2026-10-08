@@ -23,8 +23,13 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
+(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
 (import doeff_time [SimClock sim-time-handler])
 (import datetime [timedelta])
+
+;; 検の coordinator は k8s を持たない(本番の手元の coordinator と同じ答え手 — 調停ループは毎歩 Deployment と Node の見張りを揃える・
+;; #3868・#4070)。
+(val NO-KUBE "検の coordinator は k8s を持たない")
 
 
 (defclass EnteredQueue [queue.SimpleQueue]
@@ -192,7 +197,8 @@ run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_
   ;; 直す前は、印の間隔に届かないので 1 度も保存されず、起き直しが止まっていた長さを多く数える。
   (val script (QuietScript 3000))
   (<- _ ClusterState ((sim-time-handler :clock script.clock)
-                       ((quiet-script script) (request-bodies (durable-states (reply-bodies (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming))))))))
+                       ((quiet-script script) (request-bodies (durable-states (reply-bodies ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                                                                                              (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming)))))))))
   (val marks (lfor d script.saved :if (in "counter" d) (get (get d "counter") "aliveMs")))
   (assert marks script.saved)
   (assert (= (get marks -1) (clock-now-ms script)) #(marks (clock-now-ms script))))
