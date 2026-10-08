@@ -243,7 +243,9 @@
                (ServiceFact :name (get item "name") :replicas (if (isinstance spec dict) (.get spec "replicas") None)
                             :failures (if reported (.get row "failures") None)
                             :last-exit-code (if reported (.get row "lastExitCode") None)
-                            :last-exit-at-ms (if reported (.get row "lastExitAtMs") None)))))
+                            :last-exit-at-ms (if reported (.get row "lastExitAtMs") None)
+                            ;; 宣言の版(#2718 の子 S2a)— 行の spec の revision。一覧の頭の revision(coordinator の状態の版)ではない。
+                            :revision (if (isinstance spec dict) (.get spec "revision") None)))))
 
 
 (deff services-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断

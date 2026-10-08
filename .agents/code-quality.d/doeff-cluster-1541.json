@@ -1383,6 +1383,7 @@
         "doeff-cluster-coordinator-http",
         "doeff-cluster-coordinator-inbox",
         "doeff-cluster-declare",
+        "doeff-cluster-deployed-cluster",
         "doeff-cluster-detached",
         "doeff-cluster-detached-model",
         "doeff-cluster-detached-policy",
