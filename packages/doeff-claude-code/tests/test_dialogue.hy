@@ -329,11 +329,58 @@
 
 (deftest test-a-process-that-exits-mid-turn-is-backend-lost-unless-stopped
   (setv lost (dialogue.on-exit (started) -9 "killed"))
-  (assert (= lost.end (BackendLost "process exited with code -9 before the turn ended: killed")))
+  (assert (= lost.end (BackendLost "process exited with code -9 before the turn ended: killed" :exit-code -9 :stderr-tail "killed"))
+          (repr lost.end))
   (setv stopped (dialogue.on-exit (. (dialogue.interrupt (started) "rid") state) 0 ""))
   (assert (= stopped.end (Interrupted :process-kept False)))
   (setv idle (dialogue.on-exit (DialogueState) 0 ""))
   (assert (is idle.end)))
+
+
+;; --- 手番の途中で降りた process の終了 code と stderr の末尾(#4207)------------------------------------------------
+;; 失敗ケース(前の形): 終了 code と stderr の末尾は BackendLost の文 detail の中にだけ在り、上の層は文を読み解かないと
+;; 「なぜ降りたか」を知れない。
+
+(deftest test-a-lost-turn-carries-the-exit-code-and-the-stderr-tail-as-fields
+  ;; 手番の途中で process が降りた(終わりの行の前): BackendLost の欄に終了 code と stderr の末尾が載る。文 detail は今のまま。
+  (val lost (dialogue.on-exit (started) 1 "boom"))
+  (assert (isinstance lost.end BackendLost) (repr lost.end))
+  (assert (= #(lost.end.exit-code lost.end.stderr-tail) #(1 "boom")) (repr lost.end))
+  (assert (= lost.end.detail "process exited with code 1 before the turn ended: boom") (repr lost.end))
+  ;; stderr が空でも、降りた事実の値(空の文字列)をそのまま載せる。
+  (val quiet (dialogue.on-exit (started) 137 ""))
+  (assert (= #(quiet.end.exit-code quiet.end.stderr-tail) #(137 "")) (repr quiet.end)))
+
+
+(deftest test-a-swallowed-failed-result-ends-with-the-exit-code-and-the-stderr-tail
+  ;; 注入を待って飲んだ result が誤りの result で、注入を読む前に process が降りた: 終わりは飲んだ result の Failed で、終了 code と
+  ;; stderr の末尾を欄に載せる。飲んだ result が誤りでなければ Completed のまま(Completed に欄は無い)。
+  (val injected (dialogue.inject (started) (TurnInput "late" "inj-1")))
+  (val swallowed (read-record injected.state {"type" "result" "subtype" "error_max_turns" "is_error" True "result" "capped"}))
+  (assert (is swallowed.end None) (repr swallowed.end))
+  (val exited (dialogue.on-exit swallowed.state 1 "boom"))
+  (assert (isinstance exited.end Failed) (repr exited.end))
+  (assert (= #(exited.end.detail exited.end.exit-code exited.end.stderr-tail) #("capped" 1 "boom")) (repr exited.end))
+  (val calm (dialogue.on-exit (. (read-record injected.state SUCCESS-RESULT) state) 1 "boom"))
+  (assert (= calm.end (Completed :result-text "OKAPI-77" :usage (Usage :output-tokens 7) :cost-usd 0.04 :input-refs #("msg-1")))
+          (repr calm.end))
+  ;; result の行で閉じた失敗(process は降りていない)は欄を持たない(None)。
+  (val failed (read-record (started) {"type" "result" "subtype" "error_max_turns" "is_error" True "result" "capped"}))
+  (assert (= #(failed.end.exit-code failed.end.stderr-tail) #(None None)) (repr failed.end)))
+
+
+(deftest test-the-stderr-tail-on-the-end-keeps-only-the-last-chars-within-the-limit
+  ;; stderr の末尾の欄は上限(lines.STDERR-TAIL-CHARS 字)の内: 越えた stderr は頭を捨てて末尾を残す。上限ちょうどは切らない。
+  (val limit lines.STDERR-TAIL-CHARS)
+  (val tail (* "t" limit))
+  (val lost (dialogue.on-exit (started) 1 (+ (* "h" 500) tail)))
+  (assert (= lost.end.stderr-tail tail) (len lost.end.stderr-tail))
+  (val exact (dialogue.on-exit (started) 1 tail))
+  (assert (= exact.end.stderr-tail tail) (len exact.end.stderr-tail))
+  (val swallowed (read-record (. (dialogue.inject (started) (TurnInput "late" "inj-1")) state)
+                              {"type" "result" "subtype" "error_max_turns" "is_error" True "result" "capped"}))
+  (val exited (dialogue.on-exit swallowed.state 1 (+ (* "h" 500) tail)))
+  (assert (= exited.end.stderr-tail tail) (len exited.end.stderr-tail)))
 
 
 (deftest test-a-permission-question-is-answered-once

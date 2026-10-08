@@ -24,6 +24,10 @@
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess])
 ;; fake の組に渡した env と settings が層 2 へ届く起動の宣言に載るかを見る口も、層 2 の effect を写す(#3327 — 公開面に宣言が出ないため)。
 (import doeff_claude_code.effects [ClaudeStartTurn])
+;; 待たせた入力の手番を起こせない形(層 2 の LaunchFailed)を層 2 の代わりに答える口も、層 2 の答えの型を写す(#4207)。
+(import doeff_claude_code.effects [LaunchFailed])
+(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec TurnInput])
+(import doeff_agents.handlers.headless [HeadlessSession start-waiting])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.effects [
@@ -1562,3 +1566,58 @@
   (assert (= done.end.account-refusal (AgentAccountRefusal :error "oauth_org_not_allowed" :text REFUSAL-TEXT)) (repr done.end))
   (assert (= done.end.detail REFUSAL-TEXT) (repr done.end))
   (assert (is done.end.account-limit None) (repr done.end)))
+
+
+;; --- CLI の process の終了 code と stderr の末尾(#4207)--------------------------------------------------------------
+;; 失敗ケース(前の形): 終了 code と stderr の末尾は層 3 の終わりの文 detail の中にだけ在り、上の層(agora の手番の宿)は文を読み解かないと
+;; 「CLI がなぜ降りたか」を知れない。
+
+(deftest test-the-exit-code-and-the-stderr-tail-of-a-turn-end-reach-the-agent-turn-end
+  ;; 層 2 の Failed・BackendLost の欄 exit-code・stderr-tail を、層 3 の AgentTurnFailed・AgentTurnLost の欄 exit_code・stderr_tail へ
+  ;; そのまま写す。欄の無い終わり(既定)は None のまま。
+  (import doeff_claude_code.lines [BackendLost Failed])
+  (import doeff_agents.handlers.headless [end-of])
+  (val failed (end-of (Failed :detail "capped" :exit-code 1 :stderr-tail "boom") "ctx-1"))
+  (assert (isinstance failed AgentTurnFailed) failed)
+  (assert (= #(failed.exit-code failed.stderr-tail) #(1 "boom")) failed)
+  (val lost (end-of (BackendLost "process exited with code 137 before the turn ended: killed" :exit-code 137 :stderr-tail "killed")
+                    "ctx-1"))
+  (assert (isinstance lost AgentTurnLost) lost)
+  (assert (= #(lost.exit-code lost.stderr-tail lost.detail)
+             #(137 "killed" "process exited with code 137 before the turn ended: killed"))
+          lost)
+  (for [plain [(end-of (Failed :detail "capped") "ctx-1") (end-of (BackendLost "gone") "ctx-1")]]
+    (assert (= #(plain.exit-code plain.stderr-tail) #(None None)) plain)))
+
+
+(defhandler launch-fails [#^ (| int None) exit-code #^ str stderr-tail]
+  ;; 層 2 の代わりに、手番を起こす頼み(ClaudeStartTurn)へ「process が init の行の前に降りた」(LaunchFailed)で答える。
+  ;; 引数に残す理由: 答える終了 code と stderr の末尾は検ごとに違う。
+  (ClaudeStartTurn [origin spec input]
+    (resume (LaunchFailed :exit-code exit-code :stderr-tail stderr-tail))))
+
+(defk start-the-waiting-input [#^ (| int None) exit-code #^ str stderr-tail]
+  {:pre [(: exit-code (| int None)) (: stderr-tail str)] :post [(: % tuple)] :tags {:context "headless-adapter-test" :role "program"}}
+  "入力を 1 つ待たせた session で、待たせた入力の手番を始めさせ(層 2 は LaunchFailed で答える)、置かれた失敗の終わりと出来事を返すため。"
+  (val session (HeadlessSession "waiting" (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work")
+                                "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11" False AgentSessionLifecycle.MULTI-TURN))
+  (.append session.waiting (TurnInput "later" "ref-waiting"))
+  (<- (with_handlers [(launch-fails exit-code stderr-tail)] (start-waiting session)))
+  #(session.last-end (tuple session.events)))
+
+(deftest test-a-waiting-input-that-cannot-start-carries-the-exit-code-and-the-stderr-tail
+  ;; 待たせた入力の手番を起こせなかった(層 2 の LaunchFailed — init の行の前に process が降りた)時の失敗の終わり AgentTurnFailed にも、
+  ;; 終了 code と stderr の末尾が欄で載る。stderr の末尾は層 2 の終わりと同じ上限(doeff_claude_code.lines.STDERR-TAIL-CHARS 字)の内 —
+  ;; 越えた分は頭を捨てて末尾を残す。文 detail は今のまま。
+  (import doeff_claude_code [lines :as claude-lines])
+  (val limit claude-lines.STDERR-TAIL-CHARS)
+  (val tail (* "t" limit))
+  (for [#(exit-code stderr expected) [#(1 "boom" "boom") #(137 (+ (* "h" 500) tail) tail) #(None "" "")]]
+    (val outcome (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock))] (start-the-waiting-input exit-code stderr)))))
+    (val end (get outcome 0))
+    (val events (get outcome 1))
+    (assert (isinstance end AgentTurnFailed) (repr end))
+    (assert (= end.input-refs #("ref-waiting")) (repr end))
+    (assert (= #(end.exit-code end.stderr-tail) #(exit-code expected)) #(end.exit-code (len (or end.stderr-tail ""))))
+    (assert (in "手番を起こせない" end.detail) end.detail)
+    (assert (= (lfor event events :if (isinstance event AgentTurnEndEvent) event.end) [end]) (repr events))))
