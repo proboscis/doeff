@@ -211,11 +211,12 @@
    responder = (本文 記憶) → FakeReply の同期の関数(効果を出さない筋書き)・
    respond = (本文 記憶) → FakeReply の Program の kleisli(defk — 返事を作る時に効果を出してよい。効果は fake の handler の外側が
    答える。上の層の相手役が、いま始めている手番を自分の handler の状態から効果で読むため)。"
-  (defn __init__ [self [responder None] * [respond None]]
+  (defn __init__ [self [responder None] * [respond None] [live-limit None]]
     (when (= (is responder None) (is respond None))
       (raise (ValueError "FakeClaudeWorld は responder(同期)と respond(kleisli)のちょうど 1 つを受ける")))
     (setv self.responder responder
           self.respond respond
+          self.live-limit live-limit
           self.transcripts {}
           self.activity {})
     (setv #^ (get dict #(str FakeSession)) self.sessions {}))
