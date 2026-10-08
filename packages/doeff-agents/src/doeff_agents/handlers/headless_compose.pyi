@@ -17,6 +17,7 @@ from doeff_claude_code.fake import FakeReply as FakeReply
 from doeff_claude_code.fake import StopHookRejection as StopHookRejection
 from doeff_claude_code.fake import fake_claude_code_handler as fake_claude_code_handler
 from doeff_claude_code.lines import Usage as Usage
+from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
 from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
 from doeff_agents.handlers.headless import HeadlessState as HeadlessState
 from doeff_agents.handlers.headless import headless_claude_handler as headless_claude_handler

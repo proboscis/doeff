@@ -25,7 +25,6 @@ class StopReason(StrEnum):
     LAUNCH_CHANGED = 'launch-changed'
     OUTSIDE_TURN_OUTPUT = 'outside-turn-output'
     INTERRUPT_SIGNAL = 'interrupt-signal'
-    LIVE_LIMIT = 'live-limit'
     CREDENTIAL_FLOOR = 'credential-floor'
 
 @dataclass(frozen=True, kw_only=True)

@@ -190,3 +190,13 @@ class ClaudeWarmSession(_doeff_effect_base[WarmSessionOutcome]):
 
     def __post_init__(self) -> None:
         ...
+
+@_doeff_dataclass(frozen=True)
+class ClaudeLiveLimitExceeded(_doeff_effect_base[None]):
+    session_id: str
+    live: int
+    limit: int
+    warm: bool
+
+    def __post_init__(self) -> None:
+        ...

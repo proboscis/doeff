@@ -78,6 +78,7 @@ from doeff_claude_code.effects import UnknownTurn as UnknownTurn
 from doeff_claude_code.effects import NoSuchRequest as NoSuchRequest
 from doeff_claude_code.effects import ClaudeWarmSession as ClaudeWarmSession
 from doeff_claude_code.effects import SessionWarmed as SessionWarmed
+from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
 from doeff_claude_code.faults import ClaudeDropProcess as ClaudeDropProcess
 from doeff_claude_code.faults import ClaudeForgetSession as ClaudeForgetSession
 from doeff_claude_code.faults import ClaudeLiveProcess as ClaudeLiveProcess
@@ -181,13 +182,14 @@ class FakeSession:
         ...
 
 class FakeClaudeWorld:
+    live_limit: int | None
     responder: Incomplete
     respond: Incomplete
     transcripts: Incomplete
     activity: Incomplete
     sessions: dict[str, FakeSession]
 
-    def __init__(self, responder: Incomplete=None, *, respond: Incomplete=None) -> None:
+    def __init__(self, responder: Incomplete=None, *, respond: Incomplete=None, live_limit: int | None=None) -> None:
         ...
 
     def restarted(self) -> Incomplete:
@@ -248,6 +250,9 @@ def advance(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Pr
     ...
 
 def begin_fake_turn(world: FakeClaudeWorld, session: FakeSession, reply: FakeReply, refs: tuple, announce: bool, launched: bool) -> _Program[FakeTurn, object]:
+    ...
+
+def note_over_limit(world: FakeClaudeWorld, session: FakeSession, session_id: str, warm: bool) -> _Program[None, object]:
     ...
 
 def transcript_of(world: FakeClaudeWorld, home: Incomplete, cwd: str, session_id: str) -> Incomplete:

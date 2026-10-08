@@ -28,7 +28,7 @@
 
 
 (defhandler host-hears []
-  ;; ホストの役: 知らせに None で答える(何が届いたかは外側の Listen が覚える)。
+  ;; ホストの役: 知らせに None で答える(何が届いたかは内側の listen-handler が通り道で覚える)。
   (ClaudeLiveLimitExceeded [session-id live limit warm]
     (resume None)))
 
@@ -39,11 +39,11 @@
                      :cwd (str work) :settings {"disableAllHooks" True}))
 
 (defn fake-stack [#^ int limit]
-  [(sim-time-handler :clock (SimClock)) listen-handler (host-hears)
+  [(sim-time-handler :clock (SimClock)) (host-hears) listen-handler
    (fake-claude-code-handler (FakeClaudeWorld fake-responder :live-limit limit))])
 
 (defn stub-stack [#^ int limit]
-  [(sync-time-handler) slog-discard-handler listen-handler (host-hears)
+  [(sync-time-handler) slog-discard-handler (host-hears) listen-handler
    (claude-code-handler (ClaudeCodeHost STUB-COMMAND (clock-of (sync-time-handler)) limit 7200.0 :launch-timeout 30.0))])
 
 (defn notices-in [heard]
