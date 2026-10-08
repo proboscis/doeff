@@ -492,6 +492,26 @@ def test_checkout_premise_on_a_machine_without_git_names_the_tool(
     _assert_declared(result, check_layer, "tool-absent", CHECKOUT_NODEID, "git is not on PATH")
 
 
+def test_a_tool_not_on_path_names_the_path_it_searched(
+    tmp_path: Path, check_layer: ModuleType | None
+) -> None:
+    """The reason names the PATH that was searched: the daily run reads which machine lacked the tool (agora-redesign #3870)."""
+    result = _sample_machine(tmp_path, codex=None, with_check_layer=True)
+
+    result.assert_outcomes(skipped=2)
+    _assert_declared_many(result, check_layer, f"codex is not on PATH (searched: {tmp_path / 'bin'})")
+
+
+def _assert_declared_many(result: pytest.RunResult, check_layer: ModuleType | None, said: str) -> None:
+    """Every skipped test named tool-absent with ``said`` in its reason (or in the summary on a bare clone)."""
+    if check_layer is None:
+        assert said in result.stdout.str(), result.stdout.str()
+        return
+    declarations = _declarations(check_layer, result)
+    assert {declaration.kind for declaration in declarations} == {"tool-absent"}
+    assert all(said in declaration.reason for declaration in declarations), declarations
+
+
 def test_each_unmet_premise_is_named_under_its_own_word(
     tmp_path: Path, check_layer: ModuleType | None, machine_tool
 ) -> None:

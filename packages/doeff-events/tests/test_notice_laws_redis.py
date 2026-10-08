@@ -2,9 +2,12 @@
 the in-memory broker passes in ``test_notice_laws_memory.py`` — and what a real server does to a subscriber that
 does not read.
 
-The server: the fixture looks for ``redis-server`` on ``PATH``, starts it in a temporary directory on a free port
-with ``--save "" --appendonly no`` and stops it at the end of the module. Without an executable every test here
-is skipped with the reason; the in-memory tests run regardless.
+The server: the fixture asks the root conftest for ``redis-server`` (``machine_tool`` — on ``PATH`` and answering
+``--version``), starts it in a temporary directory on a free port with ``--save "" --appendonly no`` and stops it
+at the end of the module. Without one every test here is skipped as an unmet machine premise and named
+``tool-absent`` (not executed) with the PATH that was searched, so the daily run does not read the skip as
+measured; the in-memory tests run regardless. The daily run's ``packages`` stage puts the declared redis-server
+on ``PATH`` first (``scripts/gate_tools.sh`` — agora-redesign #3870).
 
 An outage is made by killing every client connection on the server (``CLIENT KILL``): a subscriber's wait ends
 with a lost connection. ``AwaitBrokerBack`` is answered by the test (the composition's part) when the law
@@ -16,14 +19,13 @@ first parameter.
 
 import contextlib
 import os
-import shutil
 import signal
 import socket
 import subprocess
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, final
 
@@ -90,13 +92,15 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def redis_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """A redis-server of this module's own, without persistence; skipped with the reason when there is none."""
-    executable = shutil.which("redis-server")
-    if executable is None:
-        pytest.skip(
-            "no redis-server executable on PATH — the laws on a real Redis server are not run"
-        )
+def redis_server(machine_tool: Callable[..., str]) -> str:
+    """The redis-server this machine starts, or skip named tool-absent with the searched PATH (root conftest)."""
+    return machine_tool("redis-server")
+
+
+@pytest.fixture(scope="module")
+def redis_url(tmp_path_factory: pytest.TempPathFactory, redis_server: str) -> Iterator[str]:
+    """A redis-server of this module's own, without persistence."""
+    executable = redis_server
     port = _free_port()
     arguments = [
         executable,
@@ -413,13 +417,8 @@ def test_a_sender_cut_off_alone_tells_its_gap_to_a_connected_reader_when_it_reac
     assert later == told, f"nothing is tried once the gap was told: {told} → {later}"
 
 
-def _started_server(port: int, directory: str) -> "subprocess.Popen[str]":
-    """Start a redis-server of a test's own on ``port`` and wait for it to say it listens."""
-    executable = shutil.which("redis-server")
-    if executable is None:
-        pytest.skip(
-            "no redis-server executable on PATH — the restart of a real Redis server is not run"
-        )
+def _started_server(executable: str, port: int, directory: str) -> "subprocess.Popen[str]":
+    """Start ``executable`` (a redis-server) of a test's own on ``port`` and wait for it to say it listens."""
     arguments = [
         executable,
         "--port",
@@ -469,7 +468,7 @@ def _counting(tries: _Tries) -> "ProgramHandler":
 
 
 def test_a_restarted_server_is_tried_only_while_a_gap_is_held_and_told_one_gap_on_redis(
-    tmp_path: Path,
+    tmp_path: Path, redis_server: str
 ) -> None:
     """The server itself stops and starts again on the same port. Nothing is tried before the outage; while the gap
     is held a connection is tried every interval; once the server answers, exactly one gap notice goes out and
@@ -477,7 +476,7 @@ def test_a_restarted_server_is_tried_only_while_a_gap_is_held_and_told_one_gap_o
     port = _free_port()
     url = f"redis://127.0.0.1:{port}/0"
     tries = _Tries()
-    server = _started_server(port, str(tmp_path))
+    server = _started_server(redis_server, port, str(tmp_path))
     try:
 
         @do
@@ -491,7 +490,7 @@ def test_a_restarted_server_is_tried_only_while_a_gap_is_held_and_told_one_gap_o
             missed = yield Publish(LawNote("lost"))
             yield Delay(1.0)
             during = tries._mut_probes
-            server = _started_server(port, str(tmp_path))
+            server = _started_server(redis_server, port, str(tmp_path))
             yield Delay(1.0)
             told = (tries._mut_probes, tries._mut_gaps)
             yield Delay(1.0)
@@ -545,14 +544,14 @@ def test_gap_law_holds_on_redis(law, redis_url: str) -> None:
 
 
 def test_a_server_that_stops_answering_cannot_hold_a_publish_past_the_timeout_on_redis(
-    tmp_path: Path,
+    tmp_path: Path, redis_server: str
 ) -> None:
     """Fix A of the review: the server keeps its connections but answers nothing (SIGSTOP). The Publish is answered
     NoticeGapMarked within the timeout (one call and its one repeat on a fresh connection), instead of waiting
     for an answer that does not come."""
     port = _free_port()
     url = f"redis://127.0.0.1:{port}/0"
-    server = _started_server(port, str(tmp_path))
+    server = _started_server(redis_server, port, str(tmp_path))
     try:
 
         @do
