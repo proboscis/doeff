@@ -48,6 +48,7 @@ from doeff_claude_code.lines import RATE_LIMIT_REJECTED as RATE_LIMIT_REJECTED
 from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERROR_RATE_LIMIT
 from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
+from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
@@ -134,6 +135,7 @@ class FakeReply:
     account_limit: AccountLimitHit | None = None
     account_refusal: AccountRefusalHit | None = None
     stop_hook_rejections: tuple[StopHookRejection, ...] = ...
+    compactions: tuple[CompactBoundary, ...] = ...
 
     def __post_init__(self) -> None:
         ...
