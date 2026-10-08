@@ -544,15 +544,17 @@
 (deftest test-the-service-view-carries-reported-failures-and-leaves-unreported-ones-as-none
   ;; 担い手の行(status.process)の failures・lastExitCode・lastExitAtMs を写す。行が無い(置き先が無い)・欄を載せない担い手の行・宣言の行に
   ;; 台数が無い(受け付けない宣言)時は None — 0 と黙って倒さない(倒すと、読み手が「落ちていない」と読む)。名の順に並べる。
-  (val items [{"name" "w" "spec" {"replicas" 1} "status" {"failures" 5 "process" {"name" "w" "failures" 5 "lastExitCode" 1 "lastExitAtMs" 990}}}
+  ;; 宣言の版(spec の revision — #2718 の子 S2a: 別の Service を宣言し直す前に、どの Service がどの版で動くかを照らす)も写し、行に版が
+  ;; 無ければ None。
+  (val items [{"name" "w" "spec" {"replicas" 1 "revision" "rw"} "status" {"failures" 5 "process" {"name" "w" "failures" 5 "lastExitCode" 1 "lastExitAtMs" 990}}}
               {"name" "u" "spec" {"replicas" 0} "status" {"process" None}}
               {"name" "v" "spec" {"replicas" 1} "status" {"process" {"name" "v" "attempts" 1}}}
               {"name" "x" "spec" {"revision" "r9"} "status" {"refused" "旧い形の行"}}])
   (assert (= (service-facts-of-view items)
-             #((ServiceFact :name "u" :replicas 0 :failures None :last-exit-code None :last-exit-at-ms None)
-               (ServiceFact :name "v" :replicas 1 :failures None :last-exit-code None :last-exit-at-ms None)
-               (ServiceFact :name "w" :replicas 1 :failures 5 :last-exit-code 1 :last-exit-at-ms 990)
-               (ServiceFact :name "x" :replicas None :failures None :last-exit-code None :last-exit-at-ms None)))))
+             #((ServiceFact :name "u" :replicas 0 :failures None :last-exit-code None :last-exit-at-ms None :revision None)
+               (ServiceFact :name "v" :replicas 1 :failures None :last-exit-code None :last-exit-at-ms None :revision None)
+               (ServiceFact :name "w" :replicas 1 :failures 5 :last-exit-code 1 :last-exit-at-ms 990 :revision "rw")
+               (ServiceFact :name "x" :replicas None :failures None :last-exit-code None :last-exit-at-ms None :revision "r9")))))
 
 
 (defk services-listed []
