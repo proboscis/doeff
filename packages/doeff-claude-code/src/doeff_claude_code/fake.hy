@@ -23,7 +23,7 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit])
+                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactBoundary])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -107,7 +107,10 @@
    stop-hook-rejections = Stop hook が答えを差し戻す筋書き(StopHookRejection の列・#4020)。偽の CLI は本物と同じ順 — 差し戻される
    答えの本文の行(AssistantMessage)→ 差し戻しの行(StopHookFeedback)を 1 つずつ — を最後の本文を書き始める前に出し、手番の終わりの
    本文は最後の本文だけ(本物の result の行と同じ)。上の層が差し戻された答えを見分けて画面から落とす事を模擬で確かめるため。本文で
-   終わる手番だけ(fail・lose の手番は本文を出さない)。"
+   終わる手番だけ(fail・lose の手番は本文を出さない)・
+   compactions = CLI が会話を自動で圧縮する筋書き(CompactBoundary の列 — 圧縮 1 回に 1 つ・#4189)。偽の CLI は本物と
+   同じく、要求の前(init の後・考えている間の差分の前)に圧縮の行を 1 つずつ出し、手番はそのまま続く。上の層が無人のターンの圧縮を
+   記録する事を模擬で確かめるため。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
   (setv #^ bool needs-permission False)
@@ -139,6 +142,8 @@
   (setv #^ (| AccountRefusalHit None) account-refusal None)
   ;; Stop hook が答えを差し戻す筋書き(差し戻さない = 空)。
   (setv #^ (get tuple #(StopHookRejection ...)) stop-hook-rejections #())
+  ;; 要求の前に CLI が会話を自動で圧縮する筋書き(圧縮しない = 空)。
+  (setv #^ (get tuple #(CompactBoundary ...)) compactions #())
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
@@ -500,6 +505,8 @@
   (<- (emit session turn (Init :session-id session.session-id
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
+  ;; 要求の前の会話の自動の圧縮(本物の CLI の system/compact_boundary の行 — 圧縮 1 回に 1 行・#4189)。
+  (<- (emit-all session turn (list reply.compactions)))
   ;; 答えの前に考えている間の差分(本物の CLI の thinking_delta の行 — 片ごとの考えの文字列は FAKE-THINKING-PIECE・替え玉の CLI と同じ)。
   ;; 差分の前に、考えの block の始まりの行を 1 つ(本物の CLI の content_block_start の thinking — #4186)。考えの無い返事では出さない。
   (<- (emit-all session turn (+ (if (> reply.thinking-deltas 0) [(PartialMessage :thinking-start True)] [])

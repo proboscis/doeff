@@ -30,7 +30,7 @@
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
-  AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent
+  AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
@@ -89,6 +89,13 @@
 ;; REJECTED-ANSWER)と同じ言葉と、差し戻される答えの本文。
 (val HOOK-REASON "add-one-more-line")
 (val REJECTED-ANSWER "DRAFT-1")
+;; 答えの前に CLI が会話を 1 度自動で圧縮する手番(agora-redesign #4189)。替え玉の CLI の規則(scenario_rules.hy の COMPACT-PHRASE と
+;; COMPACT-METADATA)と同じ言葉と、圧縮の行の欄の値(本物の CLI 2.1.289 の auto の圧縮の compactMetadata)。
+(val COMPACT-PHRASE "Compact the context before replying.")
+(val COMPACT-PRE-TOKENS 969482)
+(val COMPACT-POST-TOKENS 252050)
+(val COMPACT-DROPPED-TOKENS 11155244)
+(val COMPACT-DURATION-MS 2730)
 ;; 口座の側の断りで答えない手番の CLI の文(本番 2026-10-08 22:32 の口座 cryptic-2)。
 (val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
                      "or ask your admin to enable access"))
@@ -124,6 +131,12 @@
              :thinking-deltas (if thinking (int (.group thinking 1)) 0)
              :tool-input-deltas (if tool-pieces (int (.group tool-pieces 1)) 0)
              :stop-hook-rejections (if sent-back #((compose.StopHookRejection :answer REJECTED-ANSWER :reason (.group sent-back 1))) #())
+             :compactions (if (in COMPACT-PHRASE text)
+                              #((compose.CompactBoundary :trigger compose.CompactTrigger.AUTO :pre-tokens COMPACT-PRE-TOKENS
+                                                         :post-tokens COMPACT-POST-TOKENS
+                                                         :cumulative-dropped-tokens COMPACT-DROPPED-TOKENS
+                                                         :duration-ms COMPACT-DURATION-MS))
+                              #())
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
              :last-call-usage (if echoed
@@ -298,6 +311,22 @@
   (<- handle (launch s "adapter-hook-feedback"
                      (.format "Reply with exactly: FINAL Have the Stop hook send back a first answer with the reason: {}." HOOK-REASON)
                      None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk compacting-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "答えの前に CLI が会話を 1 度自動で圧縮する手番を最後まで読む(圧縮の行が出来事に載るかを見るため・agora-redesign #4189)。"
+  (<- handle (launch s "adapter-compaction" (+ COMPACT-PHRASE " " (reply-prompt "COMPACTED")) None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk uncompacted-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "CLI が会話を圧縮しない手番を最後まで読む(圧縮の行を流さなければ圧縮の出来事が無いかを見るため・agora-redesign #4189)。"
+  (<- handle (launch s "adapter-no-compaction" (reply-prompt "PLAIN") None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -731,6 +760,42 @@
 
 (deftest test-headless-carries-the-stop-hook-feedback-stub [tmp-path]
   (<- (check-a-sent-back-answer-is-followed-by-the-feedback (run-on STUB tmp-path hook-feedback-turn))))
+
+(defk check-a-compaction-line-is-one-event [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "CLI が会話を 1 度圧縮した手番は、圧縮の出来事(AgentCompactionEvent — 行の compact_metadata の欄そのまま)をちょうど 1 つ運び、
+   その後に答えの本文の出来事が出て、手番は完了で終わる(圧縮は手番の途中の出来事で、手番は続く)。圧縮の行を捨てる adapter では
+   圧縮の出来事が 0 で赤 — 上の層(turn-host)が cluster のターンの圧縮を turn-log に記録できない(agora-redesign #4189)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val compactions (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionEvent) #(index event)))
+  (assert (= (len compactions) 1) (repr done.events))
+  (val compacted (get (get compactions 0) 1))
+  (assert (= #(compacted.trigger compacted.pre-tokens compacted.post-tokens compacted.cumulative-dropped-tokens compacted.duration-ms)
+             #(CompactionTrigger.AUTO COMPACT-PRE-TOKENS COMPACT-POST-TOKENS COMPACT-DROPPED-TOKENS COMPACT-DURATION-MS))
+          (repr compacted))
+  (val texts (lfor #(index event) (enumerate done.events) :if (isinstance event AgentTextEvent) index))
+  (assert (and texts (< (get (get compactions 0) 0) (get texts 0))) (repr done.events))
+  (assert (= done.end.result-text "COMPACTED") (repr done.end))
+  None)
+
+(defk check-a-turn-without-compaction-has-no-compaction-event [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "圧縮の行を出さない手番は、圧縮の出来事を 1 つも運ばない(出来事を発明しない — agora-redesign #4189)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (= (lfor event done.events :if (isinstance event AgentCompactionEvent) event) []) (repr done.events))
+  None)
+
+(deftest test-headless-carries-the-compaction-fake [tmp-path]
+  (<- (check-a-compaction-line-is-one-event (run-on FAKE tmp-path compacting-turn))))
+
+(deftest test-headless-carries-the-compaction-stub [tmp-path]
+  (<- (check-a-compaction-line-is-one-event (run-on STUB tmp-path compacting-turn))))
+
+(deftest test-headless-carries-no-compaction-without-the-line-fake [tmp-path]
+  (<- (check-a-turn-without-compaction-has-no-compaction-event (run-on FAKE tmp-path uncompacted-turn))))
+
+(deftest test-headless-carries-no-compaction-without-the-line-stub [tmp-path]
+  (<- (check-a-turn-without-compaction-has-no-compaction-event (run-on STUB tmp-path uncompacted-turn))))
 
 (deftest test-headless-carries-the-tool-input-before-the-call-fake [tmp-path]
   (<- (check-tool-input-comes-before-the-call (run-on FAKE tmp-path tool-input-turn))))

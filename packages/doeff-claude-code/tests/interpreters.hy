@@ -19,7 +19,8 @@
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
-(import tests.scenario_rules [reply-for REJECTED-ANSWER])
+(import doeff_claude_code.lines [classify-record])
+(import tests.scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA])
 
 (setv FAKE "fake" STUB "stub" REAL "real")
 (setv REAL-CONFIG-ENV "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR")
@@ -85,7 +86,11 @@
              ;; Stop hook が最初の答えを差し戻す筋書き(替え玉の CLI と同じ規則 — #4020)。
              :stop-hook-rejections (if (get rule "hook_feedback")
                                        #((StopHookRejection :answer REJECTED-ANSWER :reason (get rule "hook_feedback")))
-                                       #())))
+                                       #())
+             ;; 答えの前に会話を 1 度自動で圧縮する筋書き(替え玉の CLI と同じ行 — 行の型は本物の分類で組む・#4189)。
+             :compactions (if (get rule "compact")
+                              #((classify-record {"type" "system" "subtype" "compact_boundary" "compact_metadata" COMPACT-METADATA}))
+                              #())))
 
 ;; 共通の筋書きの本番の host の上限の本数と資格の床(筋書きは 1 つの host で会話を数個しか持たず、資格の期限を spec に載せない
 ;; — 上限と床で降ろす形は test_handler の検だけが撃つ)。
