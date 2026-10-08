@@ -30,7 +30,7 @@
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
-                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed])
+                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
 (import doeff_claude_code.argv [launch-key])
@@ -210,13 +210,19 @@
   "fake の世界: 家ごとの transcript(入力の列)と会話の状態。返事の作り方はちょうど 1 つ:
    responder = (本文 記憶) → FakeReply の同期の関数(効果を出さない筋書き)・
    respond = (本文 記憶) → FakeReply の Program の kleisli(defk — 返事を作る時に効果を出してよい。効果は fake の handler の外側が
-   答える。上の層の相手役が、いま始めている手番を自分の handler の状態から効果で読むため)。"
-  (defn __init__ [self [responder None] * [respond None] [live-limit None]]
+   答える。上の層の相手役が、いま始めている手番を自分の handler の状態から効果で読むため)。
+   live-limit = 同時に生かす process の本数の上限(本番の ClaudeCodeHost の live-limit と同じ意味 — 上の層の模擬は本番と同じ値を
+   渡す。None = 上限を宣言しない世界)。本番の handler と同じに、上限を越える起動でも process を止めず、知らせ
+   ClaudeLiveLimitExceeded をホストへ出す(#4072 の E1b。fake は log の行は出さない — slog の答え手を要しない)。"
+  (defn __init__ [self [responder None] * [respond None] #^ (| int None) [live-limit None]]
     (when (= (is responder None) (is respond None))
       (raise (ValueError "FakeClaudeWorld は responder(同期)と respond(kleisli)のちょうど 1 つを受ける")))
+    ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る(本番の ClaudeCodeHost と同じ)。
+    (when (and (is-not live-limit None) (or (isinstance live-limit bool) (< live-limit 1)))
+      (raise (ValueError (.format "FakeClaudeWorld.live_limit は 1 以上の整数か None: {!r}" live-limit))))
+    (setv #^ (| int None) self.live-limit live-limit)
     (setv self.responder responder
           self.respond respond
-          self.live-limit live-limit
           self.transcripts {}
           self.activity {})
     (setv #^ (get dict #(str FakeSession)) self.sessions {}))
@@ -224,7 +230,7 @@
   (defn restarted [self]
     "同じ家の上で process を作り直した世界: transcript と activity(家の中身)は同じ物を共有し、会話(process の中の状態)は空。
      前の世界の走っている手番は前の世界で走り続ける(子 process は上の層の process の作り直しで止まらない)。"
-    (setv world (FakeClaudeWorld self.responder :respond self.respond))
+    (setv world (FakeClaudeWorld self.responder :respond self.respond :live-limit self.live-limit))
     (setv world.transcripts self.transcripts world.activity self.activity)
     world)
 
@@ -481,6 +487,21 @@
 
 ;; --- 節の中身 -----------------------------------------------------------------------------------
 
+(defk note-over-limit [#^ FakeClaudeWorld world #^ FakeSession session #^ str session-id #^ bool warm]
+  {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: session-id str) (: warm bool)] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話 session の process を起こす直前に、起こした後の生きた process の本数が世界の上限(world.live-limit)を越えるなら、知らせ
+   ClaudeLiveLimitExceeded をホストへ出すため(本番の handler の note-over-limit と同じ数え — 止めない・待たない・失敗にしない)。
+   起こす会話の前の process は数えない(使い回さない時は起こす前に降ろしている)。session-id = 知らせに載せる会話の id(本番と同じに、
+   枝分かれは元の会話の id)・warm = 入力の前の事前起動か。"
+  (when (is world.live-limit None)
+    (return None))
+  (val live (+ 1 (len (lfor other (.values world.sessions) :if (and other.alive (is-not other session)) other))))
+  (when (<= live world.live-limit)
+    (return None))
+  (<- (ClaudeLiveLimitExceeded :session-id session-id :live live :limit world.live-limit :warm warm))
+  None)
+
 (defn transcript-of [#^ FakeClaudeWorld world home #^ str cwd #^ str session-id]
   (.get world.transcripts (.transcript-key world home cwd session-id)))
 
@@ -535,6 +556,8 @@
   (<- now-time (GetTime))
   (setv (get world.activity key) (.timestamp now-time))
   (<- reply FakeReply (reply-of world input.text memory))
+  (when (not reuse)
+    (<- (note-over-limit world session target False)))
   (<- turn (begin-fake-turn world session reply #(input.ref) True (not reuse)))
   (TurnStarted (ClaudeTurn session-id turn.seq) session-id))
 
@@ -576,7 +599,8 @@
   (when (and session.alive (= session.launch-key wanted))
     (return (SessionWarmed :session-id target)))
   (when session.alive
-    (setv session.stopped-because StopReason.LAUNCH-CHANGED))
+    (setv session.alive False session.stopped-because StopReason.LAUNCH-CHANGED))
+  (<- (note-over-limit world session target True))
   (setv session.alive True
         session.launches (+ session.launches 1)
         session.launch-key wanted

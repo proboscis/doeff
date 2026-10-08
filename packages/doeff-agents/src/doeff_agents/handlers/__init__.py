@@ -194,8 +194,12 @@ def headless_claude_agent_handlers(
     host stops the process using it (both from the caller's declaration — no
     defaults; agora-redesign #3672 D2).
     Install a doeff-time handler, a slog handler (the production handler
-    emits CLI launch timing lines — agora-redesign #3605) and the scheduler
-    outside them. No session-host socket is opened (agora-redesign #604).
+    emits CLI launch timing lines — agora-redesign #3605), a handler that
+    answers ``ClaudeLiveLimitExceeded`` (the host: layer 2 never stops a CLI
+    for the live limit — a launch past it is reported to the host instead,
+    agora-redesign #4072 E1b; the type is re-exported from
+    ``doeff_agents.handlers.headless_compose``) and the scheduler outside
+    them. No session-host socket is opened (agora-redesign #604).
     """
     return _hy_headless_compose_module().headless_claude_handlers(
         config_dir,
@@ -257,7 +261,7 @@ def claude_agent_runtime_handlers(
     ``config_dir`` / ``env`` are the Claude home (credentials are placed by the
     composition root); ``live_limit`` / ``credential_floor_seconds`` as for
     ``headless_claude_agent_handlers``. Install a doeff-time handler, a slog
-    handler and the scheduler outside.
+    handler, a ``ClaudeLiveLimitExceeded`` handler and the scheduler outside.
     """
     return headless_claude_agent_handlers(
         config_dir=config_dir,
@@ -314,7 +318,8 @@ def claude_process_layer_handler(
     processes (an emulation answers layer 2 outside instead), the adapter sits
     next to the program. ``live_limit`` / ``credential_floor_seconds`` as for
     ``headless_claude_agent_handlers`` (agora-redesign #3672 D2). Install a
-    doeff-time handler, the scheduler and a slog handler outside it.
+    doeff-time handler, the scheduler, a slog handler and a
+    ``ClaudeLiveLimitExceeded`` handler outside it.
     """
     from doeff import run
 

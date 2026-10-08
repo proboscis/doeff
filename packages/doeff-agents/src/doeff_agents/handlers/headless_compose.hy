@@ -5,6 +5,8 @@
 ;;; 知らない — 知るのはこの組み立ての module だけ。
 ;;; どちらの組も外側に doeff-time の時間の handler(本番 = sync-time-handler・模擬 = sim-time-handler)と scheduler を要る。
 ;;; 本番の組は加えて slog の答え手を要る(層 2 の本番の handler が CLI の起動の計時の行を slog で出す — agora-redesign #3605)。
+;;; 本番の組と、上限(live-limit)を持つ fake の世界の組は、加えて知らせ ClaudeLiveLimitExceeded の答え手(ホスト)を要る — 層 2 は生かす
+;;; CLI の本数の上限を越える起動でも CLI を止めず、越えた事をこの知らせでホストへ伝える(止める CLI はホストが選ぶ・agora-redesign #4072 の E1b)。
 ;;; 並びは with_handlers の順(先頭が外側): 層 2 の handler → adapter(Program に近い側)。
 (require doeff-hy.macros [defk])
 (import collections.abc [Callable Mapping])
@@ -17,6 +19,9 @@
 ;; 模擬の返事(FakeReply)の usage と last-call-usage の型。呼び手が doeff_claude_code を import せずに返事を組めるように、FakeReply と
 ;; 並べてここから読ませる(agora-redesign #3744)。
 (import doeff_claude_code.lines [Usage])
+;; 層 2 が生かす CLI の本数の上限を越える起動をホストへ伝える知らせ(ホストが答える — 呼び手が doeff_claude_code を import せずに答え手を
+;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
+(import doeff_claude_code.effects [ClaudeLiveLimitExceeded])
 (import doeff_agents.handlers.headless [HeadlessClaudeConfig HeadlessState headless-claude-handler])
 
 

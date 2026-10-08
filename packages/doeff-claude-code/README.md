@@ -38,6 +38,11 @@
 - `doeff_claude_code.fake.fake-claude-code-handler(world)` — fake。`FakeClaudeWorld(responder)` の筋書き(入力の本文 → `FakeReply`)
   で同じ effect に memory の上で答える。doeff-time の時計で進むので、仮想の時計の下では一瞬で終わる。返事を作る時に効果を出したい
   筋書きは `FakeClaudeWorld(respond=<kleisli>)`(入力の本文 → `FakeReply` の Program — 効果は fake の handler の外側が答える)。
+- 生かす本数の上限(#4072 の E1b): 本番の handler は上限(`live_limit`)を越える起動でも process を止めず、待たせず、失敗にもしない。
+  越える起動の時だけ log の 1 行(名 `LIVE-LIMIT-LOG`・event `live-limit-exceeded`)と知らせ `ClaudeLiveLimitExceeded`
+  (`session_id`・起動の後の本数 `live`・`limit`・事前起動か `warm` — 答え None)を出す。止める CLI を選ぶのは上の層のホストで、
+  ホストは外側にこの知らせの答え手を置く。fake は `FakeClaudeWorld(..., live_limit=n)` で同じ上限を持ち、同じ知らせを出す
+  (log の行は出さない。`live_limit` を渡さない世界は上限を宣言しない)。
   `responder` と `respond` はちょうど 1 つ。
 
 どちらの handler も外側に doeff-time の時間の handler(本番 = `sync-time-handler`・模擬 = `sim-time-handler`)と doeff の scheduler を要る。
