@@ -19,8 +19,8 @@
 #                      出して終わる — 版上げの前に、今の worker の Pod の中で上げ先の版の root を先に組むため(同じ $WORK_DIR)。
 #                      準備済みなら秒で終わる。上げ先の commit の script がこの役を知らないと断られるので、撃つ前に上げ先を読む
 #   ROLE=access      … 読み取りの鍵の表(WORKER_REPOS)の git / ssh の設定と鍵の表の JSON だけを書き、JSON の path を出す
-#   ROLE=ready       … worker の Pod の readinessProbe: coordinator の見る worker がこの Pod の worker(世代が一致)で、生きていて
-#                      drain 中でなければ 0
+#   ROLE=ready       … worker の Pod の readinessProbe: この Pod の worker が coordinator へ heartbeat を届けていれば 0(drain 中かどうかは
+#                      見ない — drain は coordinator の配りの状態で Pod の健康ではなく、Pod の作り直しをまたいで残る・#4177)
 # 環境: WORK_DIR(既定 /work)。
 #
 # 自己起動(WORKER_DOEFF_COMMIT が在る時 — 土台だけの image・deploy/base/Dockerfile。設計 D13・E13):
@@ -309,7 +309,7 @@ case "$role" in
     exit 0 ;;
   ready)
     # hy を起こさず、この Pod の worker が heartbeat の返事ごとに書く file を読むだけ。Ready = file が在り、中身が ready
-    # (coordinator の返事で drain 中でない)で、READY_MAX_AGE 秒(既定 30)以内に書かれた。file は container の /tmp なので
+    # (worker は drain 中の返事でも ready を書く・#4177)で、READY_MAX_AGE 秒(既定 30)以内に書かれた。file は container の /tmp なので
     # 同じ node の前の Pod の物とは混ざらない。
     f=${DOEFF_WORKER_READY_FILE:-/tmp/doeff-worker-ready}
     [ -f "$f" ] || exit 1

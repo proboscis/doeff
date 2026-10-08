@@ -657,11 +657,11 @@
                      :capture-output True) returncode))
 
 
-(defk write-ready-file [draining]
-  {:pre [(: draining bool)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk write-ready-file []
+  {:pre [] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
   "書く口(coordinator への口の ready-file-written)を本物の file の答え手(os-file-handler)と環境変数の答え手(subprocess-handler —
    書く口は ready の file の名を ReadEnvironment で読む・#3014)の下で 1 回走らせるため。"
-  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written draining)))
+  (<- (with-handlers [subprocess-handler os-file-handler] (ready-file-written)))
   None)
 
 
@@ -671,10 +671,9 @@
   (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
   (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" path)
   (assert (= (! (ready-probe-exit boot-sh path)) 1) "worker がまだ書いていない(lock 待ち)は NotReady")
-  (<- (write-ready-file False))
+  (<- (write-ready-file))
   (assert (= (! (ready-probe-exit boot-sh path)) 0))
-  (<- (write-ready-file True))
-  (assert (= (! (ready-probe-exit boot-sh path)) 1) "drain 中は NotReady")
-  (<- (write-ready-file False))
+  ;; drain 中の返事でも書く口は ready を書く(drain は Ready に入れない・#4177 — 返事の drain の印から書く所までは
+  ;; test_heartbeat_link.hy の test-a-draining-reply-keeps-the-pod-ready)。
   (os.utime path #(1 1))
   (assert (= (! (ready-probe-exit boot-sh path {"READY_MAX_AGE" "30"})) 1) "heartbeat が途絶えた(file が古い)は NotReady"))

@@ -10,6 +10,8 @@
 (require doeff-hy.macros [defhandler defk deftest <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import collections.abc [Callable])
+(import os)
+(import subprocess)
 (import threading)
 (import time)
 (import urllib.parse [parse-qsl])
@@ -35,15 +37,15 @@
   "heartbeat に版つき(revision が None なら版の欄の無い旧い形)の返事をし、/watch に mode で答える偽の coordinator。
    mode = unchanged(少し待って「変わっていない」)・changed(最初の確かめの後に 1 度だけ「変わった」)・missing(404)・
    broken(待ちの答え手が思わぬ例外で落ちる)・gated(gate-open が立った後に 1 度だけ「変わった」— 変化の刻を検が決める)。
-   beats = 受けた heartbeat の数・watches = 受けた待ちの数。"
-  (defn #^ None __init__ [self #^ str mode #^ (| int None) [revision 3]]
+   beats = 受けた heartbeat の数・watches = 受けた待ちの数・draining = heartbeat の返事の drain の印(既定 False)。"
+  (defn #^ None __init__ [self #^ str mode #^ (| int None) [revision 3] #^ bool [draining False]]
     (setv self.mode mode self.revision revision self.beats 0 self.watches 0 self.changed-sent False self.gate-open False
-          self.lock (threading.Lock)))
+          self.draining draining self.lock (threading.Lock)))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (if (= request.url.path "/heartbeat")
         (do (with [self.lock] (+= self.beats 1))
-            (httpx.Response 200 :json (| {"jobs" [] "tasks" [] "warm" [] "timing" TIMING "draining" False}
+            (httpx.Response 200 :json (| {"jobs" [] "tasks" [] "warm" [] "timing" TIMING "draining" self.draining}
                                          (if (is self.revision None) {} {"revision" self.revision}))))
         (do (with [self.lock] (+= self.watches 1))
             (setv query (dict (parse-qsl (.decode request.url.query "ascii"))))
@@ -298,3 +300,20 @@
   (assert (not (get got 0)) got)
   (assert (is-not (get got 1) None) got)
   (assert (get got 2) got))
+
+
+(deftest test-a-draining-reply-keeps-the-pod-ready [#^ Path tmp-path monkeypatch]
+  ;; 失敗ケース(#4177 — 2026-10-09 08:15〜08:27 の本番): drain は coordinator の配りの状態で、Pod の健康ではない。drain 中の返事を
+  ;; 受けた worker も readiness の file に ready を書き、Pod の readinessProbe(deploy/boot.sh の ROLE=ready — image に焼いた script が file の
+  ;; 中身だけを読む)は Ready と答える。直す前: drain 中は draining を書いて NotReady — drain が Pod の作り直しをまたいで残る形(#4177)で、
+  ;; 「Pod の Ready を待ってから drain を外す」手順と 12 分待ち合った。
+  (val path (/ tmp-path "doeff-worker-ready"))
+  (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" (str path))
+  (val coordinator (FakeCoordinator "unchanged" :draining True))
+  (val link (! (watching-link coordinator tmp-path :watch False)))
+  (<- (on-link link (polls 1)))
+  (assert (= (.read-text path :encoding "utf-8") "ready\n") (.read-text path :encoding "utf-8"))
+  (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
+  (val probe (subprocess.run ["sh" boot-sh] :env {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" (str path)}
+                             :capture-output True))
+  (assert (= probe.returncode 0) probe))

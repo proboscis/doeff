@@ -236,14 +236,16 @@
           (tuple out))))
 
 
-(defk ready-file-written [draining]
-  {:pre [(: draining bool)] :post [(: % None)]}
-  "readinessProbe が sh で読む file(DOEFF_WORKER_READY_FILE — 無ければ書かない)へ、heartbeat が届いた拍ごとに「ready」か「draining」を
-   書くため(mtime = 最後に届いた時刻 — probe は中身が ready で新しい時だけ Ready)。環境変数は ReadEnvironment で読む(在る名の分だけ
-   答えが返る — 本物 = 入口の subprocess-handler が os.environ から・sim = 台本の process の handler。protocol の層は os.environ に触らない・#3014)。"
+(defk ready-file-written []
+  {:pre [] :post [(: % None)]}
+  "readinessProbe が sh で読む file(DOEFF_WORKER_READY_FILE — 無ければ書かない)へ、heartbeat の返事が届いた拍ごとに「ready」を書くため
+   (mtime = 最後に届いた時刻 — probe は中身が ready で新しい時だけ Ready)。drain 中の返事でも ready を書く: drain は coordinator の配りの状態で
+   Pod の健康ではなく、drain は Pod の作り直しをまたいで残るので(#4177)、Ready に混ぜると「Ready を待つ」手順が drain の間ずっと待ち合う。
+   環境変数は ReadEnvironment で読む(在る名の分だけ答えが返る — 本物 = 入口の subprocess-handler が os.environ から・sim = 台本の process の
+   handler。protocol の層は os.environ に触らない・#3014)。"
   (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment #("DOEFF_WORKER_READY_FILE")))
   (when found
-    (<- (file-done (WriteText (. (get found 0) value) (if draining "draining\n" "ready\n") :replace True))))
+    (<- (file-done (WriteText (. (get found 0) value) "ready\n" :replace True))))
   None)
 
 
@@ -377,11 +379,12 @@
   (try
     (<- answered (answer-json reply.answer))
     (setv state.last-ok-ms now-ms)
-    ;; 返事の宣言の部分(job の行と draining)を JSON の境界で 1 度だけ解く(#3684)— ready の file と、返事の job の版を据え置く印
-    ;; (declared-job-specs)が同じ draining を読む。形の違う返事(draining の無い返事など)は DeclaredReplyMalformed で落ち、下の except が
-    ;; 「名乗れない」の 1 行にして「読めない」を返す(拍は前の宣言のまま動かし、ready の file は書かない — 読めない返事で版を入れ替えない)。
+    ;; 返事の宣言の部分(job の行と draining)を JSON の境界で 1 度だけ解く(#3684)— 返事の job の版を据え置く印(declared-job-specs)が
+    ;; draining を読む。ready の file は解けた返事ごとに ready を書く(drain を見ない・#4177)。形の違う返事(draining の無い返事など)は
+    ;; DeclaredReplyMalformed で落ち、下の except が「名乗れない」の 1 行にして「読めない」を返す(拍は前の宣言のまま動かし、ready の file は
+    ;; 書かない — 読めない返事で版を入れ替えない)。
     (<- declared DeclaredReply (declared-reply-of-json answered))
-    (<- (ready-file-written declared.draining))
+    (<- (ready-file-written))
     ;; 自己停止の時間は coordinator の ClusterTiming が持つ(移し替えの時間と組で決まる)。受け取った値に合わせる。
     (val timing (.get answered "timing"))
     (when (and timing (in "fence_ms" timing))
