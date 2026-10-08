@@ -204,6 +204,9 @@
 ;;   候補に入れる。coordinator を作り直しても戻らない(worker の保存の行から運ぶ)。注記: Service が別の worker へ置き直されると
 ;;   status.process は新しい担い手の行で、前の担い手の刻は出ない・沈黙が 7 日続いた worker を coordinator が忘れるとその刻も消える・
 ;;   刻はその worker の node の時計。
+;;   revision = その Service の宣言の版(行の spec の revision — #2718 の子 S2a: 別の Service を宣言し直す前に、どの Service がどの版で
+;;   動くかを照らす。一覧の答えの頭の revision は coordinator の状態の版で、これではない)。行に版が無ければ None。手で組む値(検の答え手)
+;;   で版を問わない物は書かなくてよい(既定 None = 版を知らない — 照らす側は None を「照らせない」と名指す)。
 ;; ServicesUnreachable = coordinator に届かず一覧を読めなかった(落ちているかは分からない — 直ったとみなさない)。
 
 (defrecord ServiceFact
@@ -211,7 +214,8 @@
   #^ (| int None) replicas
   #^ (| int None) failures
   #^ (| int None) last-exit-code
-  #^ (| int None) last-exit-at-ms)
+  #^ (| int None) last-exit-at-ms
+  (setv #^ (| str None) revision None))
 
 (defrecord ServicesUnreachable
   #^ str detail)

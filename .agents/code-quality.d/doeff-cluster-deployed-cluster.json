@@ -1,0 +1,24 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-cluster-control",
+        "doeff-cluster-coordinator-reads",
+        "doeff-cluster-declare",
+        "doeff-cluster-process-versions",
+        "doeff-cluster-runtime-env-model",
+        "doeff-cluster-service-build"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-deployed-cluster",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/deployed_cluster.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/entry/deployed_cluster.hy"
+      ],
+      "responsibility": "配備の cluster(既に動いている coordinator と worker)に契約の effect(shared/intent/cluster_control.hy)で話す handler と入口 — 宣言し直しは宣言の部品で coordinator へ書き、準備と process の読みは coordinator_reads と共有し、壊す effect には答えず名指して止める(#3294)。",
+      "typed": true
+    }
+  ]
+}
