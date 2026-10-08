@@ -21,8 +21,12 @@
 ;;;
 ;;; drain の頼みは 2 つの道で来る: POST /workers/<名>/drain(本番の preStop・手の頼み)と、止まり始めを名乗る heartbeat
 ;;; (absorb-stopping — sigterm などで preStop を通らずに止まる worker・#2819)。
-;;; drain は期限(ttlSeconds・頼み直すたびに延びる)で消え、別の process の世代の heartbeat が来ても解ける
-;;; (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。取り消しは DELETE /workers/<名>/drain。
+;;; drain は期限(ttlSeconds・頼み直すたびに延びる)で消える。取り消しは DELETE /workers/<名>/drain。
+;;; drain が付く先は頼みの形で決まる(#4177):
+;;;   世代(boot)つきの頼み(Pod の preStop・止まり始めを告げる heartbeat)= その世代に付く。別の世代の heartbeat が来たら解ける
+;;;     (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。
+;;;   世代を付けない頼み(版上げの Program・手の頼み)= worker の名前に付く。Pod を何度作り直しても、頼み手が DELETE するか期限が
+;;;     来るまで保つ(2026-10-09: 1 つの drain の間に Pod が 2 度入れ替わり、1 度目で解けた後に置かれた仕事が 2 度目で止められた)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
@@ -39,7 +43,9 @@
 ;; --- 頼む・取り消す -------------------------------------------------------------------------
 
 (defn #^ ClusterState request-drain [#^ ClusterState state #^ str name #^ DrainBody body #^ str actor #^ int now]
-  "POST /workers/<名>/drain {\"ttlSeconds\"?}。何度頼んでも同じ意味(始めた時刻と世代は最初の頼みのまま・期限だけ延びる)。"
+  "POST /workers/<名>/drain {\"ttlSeconds\"? \"boot\"?}。何度頼んでも同じ意味(始めた時刻は最初の頼みのまま・期限だけ延びる)。
+   世代つきの頼みの drain はその世代に、世代を付けない頼みの drain は worker の名前に付く(頭の註 — 世代に付いた drain の最中に
+   世代を付けない頼みが来たら、名前に付け替える。名前に付いた drain は世代つきの頼みでは世代へ戻らない)。"
   (setv worker (.get state.workers name)
         ttl (if (is body.ttl-seconds None) DRAIN-DEFAULT-TTL-SECONDS body.ttl-seconds)
         boot body.boot)
@@ -48,14 +54,14 @@
     (refuse 400 (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" DRAIN-MAX-TTL-SECONDS ttl)))
   ;; 今の世代でない頼み(退いた世代 = 旧い Pod の preStop・一度も見ていない世代 = 最初の heartbeat の前に消された新しい Pod の
   ;; preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。答えは superseded-worker-view(その世代に置いた task が
-  ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(旧い版の preStop・手の頼み)だけ今の世代に付ける。
+  ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(版上げの Program・手の頼み)は名前に付ける。
   (when (other-generation-boot state name boot) (return state))
   (setv until (+ now (int (* 1000 ttl)))
         current (.get state.drains name))
   (replace state :drains (| state.drains
                             {name (if (and current (> current.until-ms now))
-                                      (replace current :until-ms until)
-                                      (Drain name now until worker.boot actor))})))
+                                      (replace current :until-ms until :boot (if (is boot None) None current.boot))
+                                      (Drain name now until boot actor))})))
 
 
 (val STOPPING-DRAIN-ACTOR "worker-stopping")   ; 止まり始めの名乗りから立てた drain の頼み手(GET /state の drains に出る)
