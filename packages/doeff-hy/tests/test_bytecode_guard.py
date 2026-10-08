@@ -361,6 +361,55 @@ def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_co
     )
 
 
+def _compile_in_fresh_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package_name: str) -> Path:
+    """tmp_path の下に Hy の module `<package_name>.mod` を 1 つ作り、書かない設定(この suite の固定)のまま読みの口で compile して、
+    その source の path を返す。"""
+    package = tmp_path / package_name
+    package.mkdir()
+    source = package / "mod.hy"
+    source.write_bytes(b"(setv value 3)\n")
+    name = f"{package_name}.mod"
+    loader = importlib.machinery.SourceFileLoader(name, str(source))
+    spec = importlib.util.spec_from_file_location(name, str(source), loader=loader)
+    assert spec is not None
+    monkeypatch.setitem(sys.modules, name, importlib.util.module_from_spec(spec))
+    assert loader.get_code(name) is not None
+    return source
+
+
+def test_a_named_store_is_filled_even_when_bytecode_is_not_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """置き場の dir を DOEFF_HY_CODE_STORE で名指した時は、木へ .pyc を書かない設定でも置き場へは足す(agora-redesign #3737)。
+    worker の bytecode を焼く道具は PYTHONDONTWRITEBYTECODE=1 で起きるので、足さないと自分の依存の Hy を起動のたびに source から
+    変換し直した(空の置き場で 2 回起こして 2 回とも CPU 約 14〜17 秒・置き場の file 0 — 2026-10-08)。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import code_store, loader_hooks
+
+    store = tmp_path / "store"
+    monkeypatch.setenv(code_store.STORE_ENV, str(store))
+    assert sys.dont_write_bytecode, "この検は書かない設定(suite の固定)の下で見る"
+    name = "namedstorepkg.mod"
+    source = _compile_in_fresh_package(tmp_path, monkeypatch, "namedstorepkg")
+    assert Path(loader_hooks._store_entry(str(store), name, str(source), source.read_bytes())).exists(), (
+        "名指しの置き場に、書かない設定で compile した code が入らない"
+    )
+    assert not (source.parent / "__pycache__").exists(), "書かない設定なのに木へ .pyc を書いた"
+
+
+def test_the_default_store_is_not_filled_when_bytecode_is_not_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """置き場を名指していない時(既定の利用者の cache の dir)は、書かない設定では今までどおり置き場へ足さない — 書かない設定で
+    起こした process が、名指しの無いまま利用者の cache を太らせない。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import code_store, loader_hooks
+
+    monkeypatch.delenv(code_store.STORE_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    store = code_store.store_dir()
+    assert store is not None
+    name = "defaultstorepkg.mod"
+    source = _compile_in_fresh_package(tmp_path, monkeypatch, "defaultstorepkg")
+    assert not Path(loader_hooks._store_entry(store, name, str(source), source.read_bytes())).exists()
+
+
 def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:
     """doeff-hy を入れた venv では、どの Python も起動の時点(Hy の import より前)で包みが入っている(.pth)。"""
     completed = subprocess.run(
