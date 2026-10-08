@@ -182,9 +182,11 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     assert "yield" not in static
     # 静的な展開は補助の import を出さない — doeff-hy-check が module の頭に 1 度だけ置く(#1686)
     assert "static_types" not in static
-    # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)
+    # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)。結果の変数は関数の頭で値なしで宣言し、出口の代入は注記なしの
+    # 要素 1 つのタプルの代入(途中の return の出口も同じ宣言で型を読む — agora-redesign #4254・macros.hy の _exit-binding)。
     assert "def f(x: 'int')" in runtime
-    assert "_contract_result: 'int' = y" in runtime
+    assert re.search(r"^\s*_contract_result: 'int'$", runtime, re.MULTILINE), runtime
+    assert "_contract_result, = (y,)" in runtime
 
 
 def _many_definitions(count: int, mistake: bool) -> str:

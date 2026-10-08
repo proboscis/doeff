@@ -619,11 +619,32 @@ defk {name}: :post type annotation cannot be an empty string.
   (.replace (hy.models.Symbol "_contract_result") origin))
 
 (defn _result-binding [last-form return-source]
-  "`(setv _contract_result 最後の式)`。契約に戻り値の型が在れば変数に注記する。"
+  "`(setv _contract_result 最後の式)`。契約に戻り値の型が在れば変数に注記する(出口が最後の式 1 つの do! と defp)。"
   (if (is return-source None)
       `(setv ~(_result-symbol last-form) ~last-form)
       `(setv (annotate ~(_result-symbol last-form) ~(hy.models.String return-source))
              ~last-form)))
+
+(defn _result-declaration [last-form return-source]
+  "`_contract_result: T` を値なしで宣言する文の列(T が無ければ空)。:post を持つ defk / deff の関数の頭(:pre の確かめの直後・本体の前)に
+   置き、途中の出口(`_route-returns`)と最後の式の代入は注記なしにする(`_exit-binding`)— どの出口の値も宣言の T と突き合わされ、
+   型の穴を持つ値(`tuple[Unknown, ...]` など)を代入しても、穴の赤は代入の 1 つ(書き手の return の行)だけで、以後の guard・`%`・
+   return へ伝わらない。注記を最後の式の代入にだけ付けると、本体の最後が `while True` の形では注記が到達しない所に置かれ、途中の
+   出口の値の型の穴が guard の引数・`_hy_let_%`・return へのコピーへ伝わって return ごとに赤が 3 つ増えた(agora-redesign #4254・
+   親 #3167)。値の型がまるごと Unknown の時は、pyright が宣言の在る変数をその Unknown に絞るので伝わる(最後の式の出口と同じ)。
+   位置は最後の式から取る(T の誤りの赤は前と同じ行を指す)。局所変数の注記は実行時に評価されない。"
+  (if (is return-source None)
+      []
+      [`(annotate ~(_result-symbol last-form) ~(hy.models.String return-source))]))
+
+(defn _exit-binding [value origin]
+  "出口(途中の `(return x)` と最後の式)の値を `_contract_result` に入れる文 `(setv #(_contract_result) #(値))`。注記は付けない
+   (型は関数の頭の宣言 `_result-declaration`)。要素 1 つのタプルの代入で書くのは、Hy の `(setv 名 値)` が値の一時の名(match・if・
+   cond を値に使った時の `_hy_anon_N`)を代入先の名へ移し替えるため — match は case の前に `一時の名 = None` を置くので、移し替えると
+   `_contract_result = None` が宣言の T と突き合わされ、網羅した match でも書き手に直せない赤になる(agora-redesign #4254 の使い手の
+   測定)。タプルの代入先には移し替えが起きず、一時の名は match の網羅で絞られた型のまま入る。CPython は要素 1 つのタプルを作って
+   すぐ展開する代入を素の代入と同じ bytecode にするので、実行時の手間は増えない。位置は origin から取る。"
+  `(setv #(~(_result-symbol origin)) #(~value)))
 
 (defn _writes-yield? [form]
   "form の中のどこかに yield / yield-from の式が在るか(入れ子の fn の中も数える — 注記を外す側に倒す判定)。"
@@ -663,7 +684,7 @@ defk {name}: :post type annotation cannot be an empty string.
   (cond
     (and (isinstance form hy.models.Expression) (> (len form) 0)
          (isinstance (get form 0) hy.models.Symbol) (= (str (get form 0)) "return"))
-      (.replace `(do (setv _contract_result ~(if (> (len form) 1) (_route-returns (get form 1) exit-forms) 'None))
+      (.replace `(do ~(_exit-binding (if (> (len form) 1) (_route-returns (get form 1) exit-forms) 'None) form)
                      ~@exit-forms
                      (return _contract_result))
                 form)
@@ -696,8 +717,8 @@ defk {name}: :post type annotation cannot be an empty string.
                             [(hy.models.Keyword "tp") (hy.models.List type-params)]
                             []))
   ;; 契約の型を注記へ(引数・deff の戻り値)。defk は生成器なので戻り値そのものには
-  ;; 注記せず、結果を入れる局所変数 `_contract_result` に T を注記する(`_result-binding`)
-  ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、最後の式の型を T と
+  ;; 注記せず、結果を入れる局所変数 `_contract_result` を関数の頭で T と宣言する(`_result-declaration`)
+  ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、途中の出口と最後の式の型を T と
   ;; 突き合わせられる。局所変数の注記は実行時に評価されない。
   ;; 型検査のための展開の defk は生成器でないので、戻り値にも T を注記する(`_annotates-return?` — agora-redesign #2308)。
   (setv params (_annotate-params params (_contract-types pre-checks))
@@ -722,8 +743,9 @@ defk {name}: :post type annotation cannot be an empty string.
         `(defn ~decorators ~@type-param-head ~head ~params
            ~@docstring-forms
            ~@pre-code
+           ~@(_result-declaration last-form return-source)
            ~@init-forms
-           ~(_result-binding last-form return-source)
+           ~(_exit-binding last-form last-form)
            ~guard-stmt
            (let [% _contract_result]
              ~@post-asserts)

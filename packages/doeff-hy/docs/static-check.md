@@ -41,7 +41,8 @@ macro の展開が型のために持つ形:
 | `deff` の戻り値 | `-> 'T'` | 同じ |
 | `defk` の戻り値 | 注記なし(生成器) | `-> 'T'`(`:post` の `(: % T)` を写す — この展開の defk は yield の無い普通の関数。自分を呼び直す defk でも pyright が答えの型を推論に頼らず読める。本体に yield を直に書いた defk・型が説明の文字列だけの `:post` には付けない・agora-redesign #2308) |
 | `defk` / `deff` の契約の `:tp [T]`(型の引数) | 型の引数を出さない(PEP 695 の綴りを実行時の code に出さない)。契約の isinstance では T を `object` に消す — `(of Program T object)` は `Program`・素の `(: % T)` は常に真(外側の型だけを確かめる決め #1790 と同じ向き・失敗の文は書いた型のまま) | `def f[T](body: 'Program[T, object]') -> 'T'`(答えが引数の型で決まる関数 — 本体の答えを返す包みなど — の総称。道具 `doeff_hy.static_stub` の .pyi にも載り、答えが Incomplete にならない・agora-redesign #2893)。`defp` は `:tp` を断る |
-| 本体の結果 | `_contract_result: 'T' = 最後の式`(局所変数の注記は実行時に評価されない) | 同じ |
+| 本体の結果(`defk` / `deff`) | 関数の頭(`:pre` の確かめの直後)で `_contract_result: 'T'` を値なしで宣言し、出口(途中の `(return x)` と最後の式)では `(_contract_result,) = (値,)` と注記なしの要素 1 つのタプルで代入する(局所変数の注記は実行時に評価されない。どの出口の値も宣言の T と突き合わされ、本体の最後が `while True` で最後の代入に届かない形でも途中の出口が T で読まれる。タプルで代入するのは、Hy が match・if の値の一時の名を代入先へ移し替え、match が case の前に置く `= None` が T と突き合わされるのを避けるため — CPython はこの代入を素の代入と同じ bytecode にする・agora-redesign #4254) | 同じ |
+| 本体の結果(`do!` / `defp`) | `_contract_result: 'T' = 最後の式`(出口は最後の式 1 つ) | 同じ |
 | `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_perform(e)`(Python の `@effectful` の `x = perform(e)` と同じ形・yield を出さない — docs/24-effectful-perform.md) |
 | `(! e)` | `yield e`(open-bind を通す) | `_doeff_perform(e)`(`<-` と同じ — 注記の無い generator の yield の値は Unknown・agora-redesign #2279) |
 | defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/static_types.pyi` の `do` |
