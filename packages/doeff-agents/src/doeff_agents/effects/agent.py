@@ -292,6 +292,16 @@ class AgentTextDeltaEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentThinkingStartedEvent:
+    """The agent began thinking (the runtime opened a thinking block, before any piece of it). It arrives ahead of
+    the first AgentThinkingDeltaEvent, so an upper layer can show that the agent is thinking as soon as the
+    model starts answering (agora-redesign #4186)."""
+
+    seq: int
+    at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentThinkingDeltaEvent:
     """A partial piece of the agent's thinking before it writes its text (``text`` may be empty when the
     runtime streams the thinking without its words). An upper layer shows that the agent is thinking
@@ -379,6 +389,7 @@ class AgentTurnEndEvent:
 AgentEvent = (
     AgentTextEvent
     | AgentTextDeltaEvent
+    | AgentThinkingStartedEvent
     | AgentThinkingDeltaEvent
     | AgentToolCallStartedEvent
     | AgentToolInputDeltaEvent

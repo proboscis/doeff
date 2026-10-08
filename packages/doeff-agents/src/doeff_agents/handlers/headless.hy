@@ -54,7 +54,7 @@
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
-  AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
+  AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentAccountRefusal
@@ -112,7 +112,7 @@
     (setv #^ (| ClaudeTurn None) self.turn None)
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
-    (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
+    (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
                           AgentInputFateEvent AgentStopHookFeedbackEvent AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
@@ -157,6 +157,9 @@
          (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] []))
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
+    ;; 考えの block の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(agora-redesign #4186)。
+    (and (isinstance kind PartialMessage) kind.thinking-start)
+      [(fn [seq] (AgentThinkingStartedEvent :seq seq :at at))]
     ;; 考えている間の差分は、中身が空でも片ごとに 1 つ出す — 本文の前に「考えている」と分かる合図(agora-redesign #3789)。
     (and (isinstance kind PartialMessage) (= kind.delta DeltaKind.THINKING))
       [(fn [seq] (AgentThinkingDeltaEvent :seq seq :at at :text kind.thinking-delta))]
