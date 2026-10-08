@@ -8,7 +8,8 @@
 (import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 (import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
-                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage StopHookFeedback recorded-cost])
+                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage StopHookFeedback CompactBoundary CompactTrigger
+                                 recorded-cost])
 (import doeff_claude_code.values [Allow])
 (import doeff_claude_code [lines])
 
@@ -456,3 +457,29 @@
                {"type" "message_start" "message" {"id" "msg_a"}}]]
     (val other (classify-record {"type" "stream_event" "event" event}))
     (assert (is other.thinking-start False) (repr other))))
+
+(deftest test-a-compact-boundary-line-is-classified-with-its-metadata
+  ;; #4189: CLI が会話を圧縮すると、stream-json に system/compact_boundary の行が 1 回ずつ出る。名前だけの Other に捨てると、上の層は
+  ;; 無人のターンで CLI が会話を圧縮した事を記録できない。行の形 = CLI 2.1.294 の stream-json の書き手(会話の記録の
+  ;; compactMetadata を snake の名へ写す — trigger と pre_tokens は必ず・post_tokens・cumulative_dropped_tokens・duration_ms は在る時だけ・
+  ;; ほかに preserved_segment など)。値 = 本物の CLI 2.1.289 の auto の圧縮が会話の記録に残した compactMetadata(2026-10-05 13:20)。
+  (val measured {"type" "system" "subtype" "compact_boundary" "session_id" "96d008f1-9055-400c-8ac3-f5b71ccb5e93"
+                 "uuid" "6bb57398-9685-4184-b0ae-979bec2982a1"
+                 "compact_metadata" {"trigger" "auto" "pre_tokens" 969482 "post_tokens" 252050
+                                     "cumulative_dropped_tokens" 11155244 "duration_ms" 2730
+                                     "preserved_segment" {"head_uuid" "h" "anchor_uuid" "a" "tail_uuid" "t"}}})
+  (assert (= (classify-record (parse-record (json.dumps measured)))
+             (CompactBoundary :trigger CompactTrigger.AUTO :pre-tokens 969482 :post-tokens 252050
+                              :cumulative-dropped-tokens 11155244 :duration-ms 2730)))
+  ;; 手で打った /compact(trigger manual)と、名乗らない欄は None(0 を発明しない — CLI は post_tokens などを在る時だけ書く)。
+  (assert (= (classify-record {"type" "system" "subtype" "compact_boundary"
+                               "compact_metadata" {"trigger" "manual" "pre_tokens" 668079}})
+             (CompactBoundary :trigger CompactTrigger.MANUAL :pre-tokens 668079)))
+  ;; 起き方が語彙の外か、圧縮の前の token 数の無い行は、名指しの Other で断る(既定の起き方や 0 の token 数を発明しない)。
+  (assert (= (classify-record {"type" "system" "subtype" "compact_boundary"
+                               "compact_metadata" {"trigger" "scheduled" "pre_tokens" 1}})
+             (Other :type "system" :subtype "compact_boundary_unknown_trigger")))
+  (assert (= (classify-record {"type" "system" "subtype" "compact_boundary" "compact_metadata" {"trigger" "auto"}})
+             (Other :type "system" :subtype "compact_boundary_without_pre_tokens")))
+  (assert (= (classify-record {"type" "system" "subtype" "compact_boundary"})
+             (Other :type "system" :subtype "compact_boundary_unknown_trigger"))))

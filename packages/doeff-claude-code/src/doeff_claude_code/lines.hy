@@ -301,13 +301,32 @@
    この行より前で、手番の最後の道具の結果より後の本文は差し戻された答え(Stop hook は道具を呼ばずに終えた応答の後にだけ走る)。"
   (#^ str reason))
 
+;; 会話の圧縮の起き方(compact_metadata.trigger の閉じた語彙 — CLI 2.1.294 の書き手は auto と manual だけを書く): AUTO = CLI が自分の
+;; 閾値で圧縮した / MANUAL = /compact の命令で圧縮した。
+(defenum CompactTrigger AUTO MANUAL)
+
+(defrecord CompactBoundary
+  "CLI が会話の context を圧縮した境目の行(system/compact_boundary — #4189)。上の層が、無人のターンで CLI が会話を
+   圧縮した事をターンの出来事として記録するため。欄は CLI 2.1.294 の stream-json の compact_metadata(会話の記録の compactMetadata を
+   snake の名へ写した物)のうち: trigger = 起き方(CompactTrigger)/ pre-tokens = 圧縮の前の context の token 数(pre_tokens — CLI が
+   必ず書く)/ post-tokens = 圧縮の後の token 数(post_tokens)/ cumulative-dropped-tokens = その会話で圧縮が落とした token 数の累計
+   (cumulative_dropped_tokens — 実測 2.1.287 の同じ会話の 2 回目の値 = 1 回目と 2 回目の落とした数の和)/ duration-ms = 圧縮にかかった
+   ミリ秒(duration_ms)。後の 3 つは CLI が書いた時だけ(書かなければ None — 0 を発明しない)。preserved_segment(残した区間の uuid の
+   組)・user_context などは持たない。圧縮は手番の途中の出来事で、手番は続く(状態機械 dialogue.hy はこの行で何もしない)。"
+  (#^ CompactTrigger trigger)
+  (#^ int pre-tokens)
+  (setv #^ (| int None) post-tokens None)
+  (setv #^ (| int None) cumulative-dropped-tokens None)
+  (setv #^ (| int None) duration-ms None))
+
 (defclass [(dataclass :frozen True)] Other []
   "語彙の外の行(名前だけ持つ)。"
   (#^ str type)
   (setv #^ str subtype ""))
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
-                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback TurnResult Other))
+                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactBoundary
+                        TurnResult Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
   "stdout の 1 行。seq は会話の中で単調増加・at は読んだ時刻(doeff-time の時計)・raw は 1 行の逐語。"
@@ -515,6 +534,23 @@
                  :duration-api-ms (int-at record "duration_api_ms")
                  :request-phases phases))
 
+(defk compact-boundary-of [#^ dict record]
+  {:pre [(: record dict)] :post [(: % (| CompactBoundary Other))] :tags {:context "claude-code" :role "foundation"}}
+  "上の層が会話の圧縮をターンの出来事として記録できるように、system/compact_boundary の行の compact_metadata を CompactBoundary に
+   するため。起き方が語彙(CompactTrigger)の外の行と、圧縮の前の token 数(整数)の無い行は、名指しの Other(subtype =
+   compact_boundary_unknown_trigger / compact_boundary_without_pre_tokens)で断る — 既定の起き方や 0 の token 数を発明しない。"
+  (val metadata (object-at record "compact_metadata"))
+  (val trigger (text-at metadata "trigger"))
+  (val pre-tokens (int-at metadata "pre_tokens"))
+  (cond
+    (not-in trigger (frozenset (gfor known CompactTrigger known.value))) (Other :type "system" :subtype "compact_boundary_unknown_trigger")
+    (is pre-tokens None) (Other :type "system" :subtype "compact_boundary_without_pre_tokens")
+    True (CompactBoundary :trigger (CompactTrigger trigger)
+                          :pre-tokens pre-tokens
+                          :post-tokens (int-at metadata "post_tokens")
+                          :cumulative-dropped-tokens (int-at metadata "cumulative_dropped_tokens")
+                          :duration-ms (int-at metadata "duration_ms"))))
+
 (defn classify-system [#^ dict record]
   (setv subtype (text-at record "subtype"))
   (setv startup (object-at record "startup_timing"))
@@ -536,6 +572,7 @@
       (TaskEvent :task-id (text-at record "task_id") :status (or (text-at record "status") "notified"))
     (= subtype "hook_started") (run (hook-notice-of record HookPhase.STARTED))
     (= subtype "hook_response") (run (hook-notice-of record HookPhase.RESPONSE))
+    (= subtype "compact_boundary") (run (compact-boundary-of record))
     True (Other :type "system" :subtype subtype)))
 
 (defn classify-rate-limit [#^ dict record]

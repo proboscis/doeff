@@ -345,6 +345,35 @@ class AgentStopHookFeedbackEvent:
     reason: str
 
 
+class CompactionTrigger(Enum):
+    """How the runtime came to compact the conversation's context (agora-redesign #4189).
+
+    ``AUTO``: the runtime compacted on its own when the context passed its threshold.
+    ``MANUAL``: a ``/compact`` command compacted it.
+    """
+
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCompactionEvent:
+    """The runtime compacted the conversation's context in the middle of the turn; the turn goes on
+    (agora-redesign #4189 — an upper layer records it as an event of the turn).  The fields are the runtime's
+    compact boundary as stated: ``trigger`` (how it started), ``pre_tokens`` (the context size before),
+    ``post_tokens`` (the size after), ``cumulative_dropped_tokens`` (the tokens compaction dropped in this
+    conversation so far) and ``duration_ms`` (how long it took) — the last three are ``None`` when the runtime
+    does not state them (never an invented 0)."""
+
+    seq: int
+    at: datetime
+    trigger: CompactionTrigger
+    pre_tokens: int
+    post_tokens: int | None = None
+    cumulative_dropped_tokens: int | None = None
+    duration_ms: int | None = None
+
+
 @dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
@@ -394,6 +423,7 @@ AgentEvent = (
     | AgentToolCallStartedEvent
     | AgentToolInputDeltaEvent
     | AgentStopHookFeedbackEvent
+    | AgentCompactionEvent
     | AgentToolUseEvent
     | AgentToolResultEvent
     | AgentInputFateEvent
