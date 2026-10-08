@@ -224,6 +224,10 @@ class ClaudeStreamLine:
     at: datetime
     kind: ClaudeLineKind
     raw: str
+STDERR_TAIL_CHARS: int
+
+def stderr_tail_within(text: str) -> _Program[str, object]:
+    ...
 
 @dataclass(frozen=True)
 class Completed:
@@ -250,6 +254,8 @@ class Failed:
     model_windows: tuple[ModelWindow, ...] = ...
     account_limit: AccountLimitHit | None = None
     account_refusal: AccountRefusalHit | None = None
+    exit_code: int | None = None
+    stderr_tail: str | None = None
 
 @dataclass(frozen=True)
 class Interrupted:
@@ -267,6 +273,8 @@ class BackendLost:
     last_call_usage: Usage | None = None
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ...
+    exit_code: int | None = None
+    stderr_tail: str | None = None
 ClaudeTurnEnd: TypeAlias = Completed | Failed | Interrupted | BackendLost
 
 def object_at(value: Incomplete, key: str) -> dict:
