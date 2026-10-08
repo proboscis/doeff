@@ -77,6 +77,8 @@ USED = (
     # 退きの知らせ(#3672 — 使い手の常駐の job が入れ替えで退く事を出来事で知り、本番の答え手を土台に並べる)。
     UsedModule("worker.intent.retirement_model", ("AwaitRetirement", "Retirement")),
     UsedModule("worker.entry.retirement_notices", ("pipe-retirement-notices",)),
+    # 盤に届かない・断られた例外(使い手の lease の読みが except で受け、検の盤の代役が投げる — tests/test_lease_read_static_types.py)。
+    UsedModule("shared.protocol.coordinator_route", ("RouteRefused", "RouteUnreachable")),
 )
 
 
