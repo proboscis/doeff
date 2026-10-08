@@ -20,6 +20,7 @@ from doeff_agents.effects.agent import AgentSpec as AgentSpec
 from doeff_agents.effects.agent import AgentTask as AgentTask
 from doeff_agents.effects.agent import AgentTextDeltaEvent as AgentTextDeltaEvent
 from doeff_agents.effects.agent import AgentTextEvent as AgentTextEvent
+from doeff_agents.effects.agent import AgentThinkingStartedEvent as AgentThinkingStartedEvent
 from doeff_agents.effects.agent import AgentThinkingDeltaEvent as AgentThinkingDeltaEvent
 from doeff_agents.effects.agent import AgentToolCallStartedEvent as AgentToolCallStartedEvent
 from doeff_agents.effects.agent import AgentToolInputDeltaEvent as AgentToolInputDeltaEvent
