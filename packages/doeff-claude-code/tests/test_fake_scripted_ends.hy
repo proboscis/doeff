@@ -433,3 +433,34 @@
     (var refused False)
     (try (bad) (except [ValueError] (:= refused True)))
     (assert refused)))
+
+
+;; --- 手番を失わせる台本の終了 code と stderr(#4207)----------------------------------------------------------------
+
+(deftest test-a-scripted-loss-carries-the-injected-exit-code-and-stderr
+  ;; lose の台本に終了 code と stderr を付けると、BackendLost の欄(exit-code・stderr-tail)に載る。stderr は本物の状態機械と同じ
+  ;; 上限(lines.STDERR-TAIL-CHARS 字)の内 — 越えた分は頭を捨てて末尾を残す。付けない台本の欄は None のまま(今の形)。
+  (val limit lines.STDERR-TAIL-CHARS)
+  (val tail (* "t" limit))
+  (<- loud TurnRecord (on-fake (FakeClaudeWorld (fn [text memory] (FakeReply "" :tool-seconds 2.0 :lose "消えた" :lose-exit-code 1
+                                                                            :lose-stderr "boom")))
+                               (run-one "lose")))
+  (assert (isinstance loud.end BackendLost) (repr loud.end))
+  (assert (= #(loud.end.detail loud.end.exit-code loud.end.stderr-tail) #("消えた" 1 "boom")) (repr loud.end))
+  (<- long TurnRecord (on-fake (FakeClaudeWorld (fn [text memory] (FakeReply "" :lose "消えた" :lose-exit-code 137
+                                                                            :lose-stderr (+ (* "h" 500) tail))))
+                               (run-one "lose")))
+  (assert (= #(long.end.exit-code long.end.stderr-tail) #(137 tail)) (len long.end.stderr-tail))
+  (<- plain TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "lose")))
+  (assert (= #(plain.end.exit-code plain.end.stderr-tail) #(None None)) (repr plain.end)))
+
+
+(deftest test-an-exit-code-or-stderr-belongs-only-to-a-scripted-loss
+  ;; 終了 code と stderr は process の消える手番(lose)の終わりの欄 — lose の無い台本に付けた物は断る。
+  (for [bad [(fn [] (FakeReply "x" :lose-exit-code 1))
+             (fn [] (FakeReply "x" :lose-stderr "boom"))
+             (fn [] (FakeReply "" :fail "x" :lose-exit-code 1 :lose-stderr "boom"))]]
+    (var refused False)
+    (try (bad) (except [ValueError] (:= refused True)))
+    (assert refused))
+  (assert (= (. (FakeReply "" :lose "x" :lose-exit-code 1) lose-exit-code) 1)))
