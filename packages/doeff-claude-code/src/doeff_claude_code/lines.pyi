@@ -151,6 +151,15 @@ class AccountLimitHit:
     window: str | None = None
     resets_at: int | None = None
     text: str = ''
+ACCOUNT_REFUSAL_ERRORS: tuple[str, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class AccountRefusalHit:
+    error: str
+    text: str
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True)
 class ModelWindow:
@@ -213,6 +222,7 @@ class Completed:
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ...
     account_limit: AccountLimitHit | None = None
+    account_refusal: AccountRefusalHit | None = None
 
 @dataclass(frozen=True)
 class Failed:
@@ -226,6 +236,7 @@ class Failed:
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ...
     account_limit: AccountLimitHit | None = None
+    account_refusal: AccountRefusalHit | None = None
 
 @dataclass(frozen=True)
 class Interrupted:

@@ -177,12 +177,27 @@ class AgentAccountLimit:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentAccountRefusal:
+    """The account refused the turn's request: the runtime answered with the refusal instead of the model
+    (e.g. the account's organization has disabled subscription access — the production refusal of
+    2026-10-08 22:32).  This is not a usage limit (``AgentAccountLimit``): the account cannot be used until
+    someone changes it.  ``error`` = the runtime's refusal word as stated (e.g. ``oauth_org_not_allowed``),
+    ``text`` = the runtime's refusal message.  Which account it was is not in the runtime's lines — the
+    layer that started the turn knows it, and switches to another account."""
+
+    error: str
+    text: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentTurnCompleted:
     """The turn finished.  ``resume_from`` continues this agent's context.
 
     ``usage`` = the tokens the turn used and what it cost (``None`` when the
     runtime reports none of them).  ``account_limit`` = the turn ran into the
     account's usage limit (``None`` when it did not — agora-redesign #3983).
+    ``account_refusal`` = the account refused the turn's request (``None`` when
+    it did not).
     """
 
     result_text: str
@@ -193,6 +208,7 @@ class AgentTurnCompleted:
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
     account_limit: AgentAccountLimit | None = None
+    account_refusal: AgentAccountRefusal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -202,6 +218,8 @@ class AgentTurnFailed:
     ``usage`` = the tokens the turn used before the error and what they cost
     (``None`` when the runtime reports none of them).  ``account_limit`` = the
     turn ran into the account's usage limit (``None`` when it did not — #3983).
+    ``account_refusal`` = the account refused the turn's request (``None`` when
+    it did not).
     """
 
     detail: str
@@ -212,6 +230,7 @@ class AgentTurnFailed:
     last_call_model: str | None = None
     model_windows: tuple[ModelWindow, ...] = ()
     account_limit: AgentAccountLimit | None = None
+    account_refusal: AgentAccountRefusal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

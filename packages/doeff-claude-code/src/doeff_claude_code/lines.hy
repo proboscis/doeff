@@ -223,6 +223,21 @@
   (setv #^ (| int None) resets-at None)
   (setv #^ str text ""))
 
+;; assistant の行の error のうち、口座の側が要求を断った事を名乗る語(閉じた集まり — ここ 1 か所)。oauth_org_not_allowed = 口座の組織が
+;; Claude Code での subscription の利用を止めている(本番 2026-10-08 22:32 の口座 cryptic-2・apiErrorStatus 403)/ authentication_failed =
+;; 口座の資格が通らない / billing_error = 口座の支払いの側の断り。語は CLI の型 SDKAssistantMessageError の語のまま。rate_limit(口座の
+;; 限度)はこの集まりに入れない — 限度は AccountLimitHit の道。
+(val ACCOUNT-REFUSAL-ERRORS #("oauth_org_not_allowed" "authentication_failed" "billing_error"))
+
+(defrecord AccountRefusalHit
+  "手番の要求を口座の側が断った事実(上の層が「この口座は使えない」と知って、ほかの口座へ付け替えるため — 限度で尽きた
+   AccountLimitHit とは別の事実)。error = CLI が本体の assistant の行の最上位の error で名乗った語そのまま(ACCOUNT-REFUSAL-ERRORS の
+   語だけ — 外の語は作る時に断る)/ text = CLI が答えの代わりに出した断りの文(例「Your organization has disabled Claude subscription
+   access for Claude Code · …」— 読めなければ空)。どの口座かは CLI の行に無い — 手番を起こした上の層が知っている。"
+  {:check [(in error ACCOUNT-REFUSAL-ERRORS)]}
+  (#^ str error)
+  (#^ str text))
+
 (defclass [(dataclass :frozen True)] ModelWindow []
   "result の行の modelUsage の model 1 つの窓(会話の context の大きさを上限と比べるため — #3744): model = model の名(modelUsage の鍵)/
    context-window = contextWindow / max-output-tokens = maxOutputTokens(名乗らない欄は None — 0 を発明しない)。"
@@ -312,7 +327,8 @@
   "CLI が誤りなく終えた手番。usage = この手番に読んだ result の行の消費の token の和(Usage)/
    cost-usd = この手番の額(USD)= CLI が名乗った累積の額(total_cost_usd)の、手番の始まりから終わりまでの差(状態機械 dialogue.hy が
    数える)。始まりか終わりの額が分からなければ None(0 を発明しない)/ last-call-usage・last-call-model・model-windows は節の頭の註 /
-   account-limit = この手番が口座の限度に当たった事実(AccountLimitHit — 当たっていなければ None・#3983)。"
+   account-limit = この手番が口座の限度に当たった事実(AccountLimitHit — 当たっていなければ None・#3983)/
+   account-refusal = この手番の要求を口座の側が断った事実(AccountRefusalHit — 断られていなければ None)。"
   (setv #^ str result-text "")
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
@@ -320,13 +336,14 @@
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
-  (setv #^ (| AccountLimitHit None) account-limit None))
+  (setv #^ (| AccountLimitHit None) account-limit None)
+  (setv #^ (| AccountRefusalHit None) account-refusal None))
 
 (defclass [(dataclass :frozen True)] Failed []
   "CLI が誤りで終えた手番。detail = CLI が名乗った文(無ければ subtype)・api-error-status = API の誤りの HTTP status・
    usage = 誤りの前に消費した token(result の行が名乗った物 — 注入の断りのように result の行が無い終わりは空の Usage)・
    cost-usd = 誤りの前に使った額(USD — 数え方は Completed と同じ。result の行が無い終わり・額が分からない時は None)/
-   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit は Completed と同じ(#3983)。"
+   last-call-usage・last-call-model・model-windows は節の頭の註 / account-limit(#3983)・account-refusal は Completed と同じ。"
   (#^ str detail)
   (setv #^ (| int None) api-error-status None)
   (setv #^ str terminal-reason "")
@@ -336,7 +353,8 @@
   (setv #^ (| Usage None) last-call-usage None)
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) model-windows #())
-  (setv #^ (| AccountLimitHit None) account-limit None))
+  (setv #^ (| AccountLimitHit None) account-limit None)
+  (setv #^ (| AccountRefusalHit None) account-refusal None))
 
 (defclass [(dataclass :frozen True)] Interrupted []
   "止めた手番の終わり。process-kept = 同じ CLI の process が会話に残り次の手番も使うか(control の止め — 真)、止めと一緒に

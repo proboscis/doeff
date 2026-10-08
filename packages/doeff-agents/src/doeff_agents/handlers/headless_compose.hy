@@ -16,9 +16,9 @@
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
-;; 模擬の返事(FakeReply)の usage と last-call-usage の型。呼び手が doeff_claude_code を import せずに返事を組めるように、FakeReply と
-;; 並べてここから読ませる(agora-redesign #3744)。
-(import doeff_claude_code.lines [Usage])
+;; 模擬の返事(FakeReply)の usage と last-call-usage の型(agora-redesign #3744)と、口座の側が要求を断る筋書き(account-refusal)の型。
+;; 呼び手が doeff_claude_code を import せずに返事を組めるように、FakeReply と並べてここから読ませる。
+(import doeff_claude_code.lines [Usage AccountRefusalHit])
 ;; 層 2 が生かす CLI の本数の上限を越える起動をホストへ伝える知らせ(ホストが答える — 呼び手が doeff_claude_code を import せずに答え手を
 ;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
 (import doeff_claude_code.effects [ClaudeLiveLimitExceeded])

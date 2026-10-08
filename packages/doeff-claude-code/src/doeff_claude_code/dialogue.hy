@@ -37,7 +37,7 @@
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT])
+                                 ASSISTANT-ERROR-RATE-LIMIT AccountRefusalHit ACCOUNT-REFUSAL-ERRORS])
 (import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
@@ -79,7 +79,8 @@
    model(まだ無ければ None)/ turn-windows = この host のターンに読んだ result の行の model ごとの窓(ターンの終わりの 3 欄 — #3744)/
    awaiting-first-input = 入力を書かずに事前起動した process が最初の入力を待っている(その間だけ SessionStart の hook の行をターンの
    外の出力と数えない — quiet-before-first-input。最初のターンを始めると消える)/ limit-hit = この host の手番に読んだ、口座の限度に
-   当たった事実(拒まれた限度の行と、限度の答え — AccountLimitHit・まだ無ければ None・#3983)。"
+   当たった事実(拒まれた限度の行と、限度の答え — AccountLimitHit・まだ無ければ None・#3983)/ refusal-hit = この host の手番に読んだ、
+   口座の側が要求を断った事実(本体の assistant の行の error が ACCOUNT-REFUSAL-ERRORS の語 — AccountRefusalHit・まだ無ければ None)。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
@@ -97,7 +98,8 @@
   (setv #^ (| str None) last-call-model None)
   (setv #^ (get tuple #(ModelWindow ...)) turn-windows #())
   (setv #^ bool awaiting-first-input False)
-  (setv #^ (| AccountLimitHit None) limit-hit None))
+  (setv #^ (| AccountLimitHit None) limit-hit None)
+  (setv #^ (| AccountRefusalHit None) refusal-hit None))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・retire(この行で process を降ろす訳 — 無ければ
@@ -182,15 +184,16 @@
   "host の手番を閉じた状態(会話の id・CLI の能力・額の起点は保つ。最後の呼びと窓は次の手番へ持ち越さない)。"
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
            :deferred-result None :permissions #() :turn-usage (Usage)
-           :last-call-usage None :last-call-model None :turn-windows #() :limit-hit None))
+           :last-call-usage None :last-call-model None :turn-windows #() :limit-hit None :refusal-hit None))
 
 (defn with-last-call [end #^ DialogueState state]
   "手番の終わりに、その手番で読んだ本体の最後の呼びの usage と model・model ごとの窓を載せるため(どの終わり方でも同じ 3 欄 — #3744)。
-   CLI が終えた手番(Completed・Failed)には、口座の限度に当たった事実も載せる(#3983 — 止めた・消えた手番は限度で終わったのではない)。"
+   CLI が終えた手番(Completed・Failed)には、口座の限度に当たった事実(#3983)と口座の側が断った事実も載せる(止めた・消えた手番は
+   限度や断りで終わったのではない)。"
   (setv called (replace end :last-call-usage state.last-call-usage :last-call-model state.last-call-model
                         :model-windows state.turn-windows))
   (match called
-    (| (Completed) (Failed)) (replace called :account-limit state.limit-hit)
+    (| (Completed) (Failed)) (replace called :account-limit state.limit-hit :account-refusal state.refusal-hit)
     _ called))
 
 (defn ended [#^ DialogueState state end #^ (| TurnResult None) [priced-by None] #^ (| StopReason None) [retire None]]
@@ -340,11 +343,13 @@
   "assistant の行: 本体の会話(parent_tool_use_id が null)の行なら、その usage と model を手番の最後の呼びとして覚える(1 つの呼びの
    block ごとの行は同じ usage を名乗るので、最後の行で置き換えてよい)。subagent の行は覚えない — 会話の context の大きさは本体の呼びの
    入力の側で数えるため(#3744)。本体の行が error rate_limit(CLI が答えの代わりに出した限度の文)なら、口座の限度に当たった事実に
-   その文を足す(#3983 — 限度の種類と戻る刻は拒まれた限度の行から)。"
+   その文を足す(#3983 — 限度の種類と戻る刻は拒まれた限度の行から)。本体の行の error が口座の側の断りの語なら、口座の側が断った
+   事実を置く(refusal-hit-after)。"
   (if (is-not message.parent-tool-use-id None)
       (Transition :state state)
       (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model
-                                  :limit-hit (limit-hit-after state.limit-hit message)))))
+                                  :limit-hit (limit-hit-after state.limit-hit message)
+                                  :refusal-hit (refusal-hit-after state.refusal-hit message)))))
 
 (defn on-rate-limit [#^ DialogueState state #^ RateLimit limit]
   "rate_limit_event の行: 拒まれた(status rejected)なら、口座の限度に当たった事実に限度の種類と戻る刻を置く(#3983 — 限度の文は
@@ -360,6 +365,16 @@
       (replace (or hit (AccountLimitHit)) :window window :resets-at resets-at)
     (AssistantMessage :parent_tool_use_id None :error error :text text) :if (= error ASSISTANT-ERROR-RATE-LIMIT)
       (replace (or hit (AccountLimitHit)) :text text)
+    _ hit))
+
+(defn refusal-hit-after [#^ (| AccountRefusalHit None) hit kind]  ; defk にできない: 状態機械の defn(on-assistant)が値として呼ぶ
+  "行 1 つを読んだ後の、口座の側が要求を断った事実(規則の 1 点: 本物の状態機械の on-assistant と、偽の CLI fake.hy の emit が同じ
+   規則で数える): 本体の会話(parent_tool_use_id が null)の assistant の行の error が ACCOUNT-REFUSAL-ERRORS の語なら、その語と文を置く
+   (上の層が「この口座は使えない」と知って口座を替えるため)。subagent の行の error と、ほかの行は何も変えない(まだ断られていなければ
+   None のまま)。error rate_limit は限度の道(limit-hit-after)で、ここでは数えない。"
+  (match kind
+    (AssistantMessage :parent_tool_use_id None :error error :text text) :if (in error ACCOUNT-REFUSAL-ERRORS)
+      (AccountRefusalHit :error error :text text)
     _ hit))
 
 (defk quiet-before-first-input [kind]
