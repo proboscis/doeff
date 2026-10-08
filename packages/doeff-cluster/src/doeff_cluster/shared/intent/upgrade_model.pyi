@@ -158,6 +158,10 @@ class AwaitWorkerDrained(_doeff_effect_base[WorkerDrained | WorkerDrainMissed]):
     launch: WorkerLaunch
     timeout_seconds: float
 
+@_doeff_dataclass(frozen=True)
+class ReleaseWorkerDrain(_doeff_effect_base[None]):
+    launch: WorkerLaunch
+
 @dataclass(frozen=True, kw_only=True)
 class UnverifiedWorkers:
     target: str

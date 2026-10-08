@@ -10,6 +10,8 @@
 ;;;   (<- answer (AwaitQuietWindow target seconds)) ; 静かな時間帯を待つ(coordinator の宣言を公開した後・当てる直前に・#3772)
 ;;;   (<- answer (AwaitWorkerDrained launch seconds)) ; worker を drain し、中の仕事が 0 になるのを待つ(worker の宣言を公開した後・
 ;;;                                       ; 当てる直前に・#3968)
+;;;   (<- (ReleaseWorkerDrain launch))    ; AwaitWorkerDrained で worker に置いた drain を外す(当てた worker が新しい版で live に戻った後と、
+;;;                                       ; drain の後に止まる時に・#4177)
 ;;;
 ;;; 答え手は本番と sim で分かれる(本番の答え手は配備する側の repo — 単位 5 の前に形を決める)。待ちは時間で読み直さず、coordinator の
 ;;; 版の変化(AwaitRunnersChange)で起きる。どの待ちも上限(UpgradeLimits — 宣言の値)を持ち、越えたら UpgradeStalled で名指しで落ちる。
@@ -270,6 +272,16 @@
    止めて 0 にしない。sim = すぐ WorkerDrained。答え = WorkerDrained か WorkerDrainMissed。"
   {:fields [(: launch WorkerLaunch) (: timeout-seconds float)]
    :answer (| WorkerDrained WorkerDrainMissed)
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defeffect ReleaseWorkerDrain
+  "AwaitWorkerDrained で worker に置いた drain を外す(worker が新しい仕事を受ける状態に戻す)— 汎用の効果で、外し方は答え手(配備する
+   側の業務)が決める(#4177 — drain は worker を作り直しても、頼んだ側が外すまで残る)。版上げの Program は AwaitWorkerDrained を出した
+   後に必ず 1 回出す: 当てた worker が新しい版で live に戻った後と、drain の後に止まる時(中の仕事が 0 にならない・当てが落ちた・live に
+   戻らない)。もう無い drain を外すのは成功。sim = 何もしない。答え = None。"
+  {:fields [(: launch WorkerLaunch)]
+   :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
 

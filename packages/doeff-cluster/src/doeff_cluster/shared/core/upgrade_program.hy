@@ -7,7 +7,8 @@
 ;;;                  V5・断られたら UpgradeRefused で止まる・#3725)→ DesireWorker → PublishDeclarations → その worker を drain し、
 ;;;                  worker の中で走っている仕事が 0 になるのを確かめる(AwaitWorkerDrained — 上限の内に 0 にならなければ当てずに
 ;;;                  UpgradeRefused で止まる・#3968)→ ApplyDeclarations → 新しい版で live に戻るのを待つ(V3 — 戻りが来なければ
-;;;                  次へ進まない)
+;;;                  次へ進まない)→ その worker に置いた drain を外す(ReleaseWorkerDrain — drain は worker を作り直しても、頼んだ側が
+;;;                  外すまで残る。drain を頼んだ後に止まる時も、外してから同じ例外で止まる・#4177)
 ;;;   coordinator:   待ち行列が空(V4)を待つ → 宣言の内の worker が全部 live で版を読めるのを待ち、その版を確かめた版の組み合わせで照らす
 ;;;                  (V1 — 組み合わせに無い版が 1 つでも在れば断る)→ 空の起動を確かめる → root を準備し(V5)、上げる前の版の root
 ;;;                  (戻し先)が在るかを確かめる → DesireCoordinator → 公開 → 当てる直前の確かめ(状態を読み直す → V1 の照らし →
@@ -42,7 +43,7 @@
                                                    CleanBootPassed CleanBootRefused UpgradeRefused PrepareBootRoot
                                                    BootRootAlreadyPrepared BootRootBuilt BootRootRefused VerifiedVersions
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
-                                                   AwaitWorkerDrained WorkerDrained WorkerDrainMissed
+                                                   AwaitWorkerDrained WorkerDrained WorkerDrainMissed ReleaseWorkerDrain
                                                    RollbackRootMissing QueuedTasksRemain RefusalPoint WaitReached WaitExpired
                                                    CoordinatorUpgraded ClusterUpgraded])
 
@@ -301,11 +302,31 @@
    (AwaitWorkerDrained — drain の印の置き方と、何を「worker の中で走っている仕事」と数えるかは答え手が決める・#3968。
    coordinator の task の待ち(条 V2)は長く生きる task の中で回る子の仕事を数えない — 2026-10-07 13:44 に agent-worker-2 を入れ替えた時、
    task は 0 だったが CLI ホストの中で走っていた利用者のターン 2 つを止めた)。上限の内に 0 にならなければ当てずに
-   UpgradeRefused(WorkerDrainMissed — 残った仕事)で止まる(宣言は書いて公開した・当てていない・走っている仕事は止めない)。"
+   UpgradeRefused(WorkerDrainMissed — 残った仕事)で止まる(宣言は書いて公開した・当てていない・走っている仕事は止めない)。
+   置いた drain はここでは外さない — 通った時も止まる時も、呼び手(swap-drained)が外す(#4177)。"
   (<- answer (| WorkerDrained WorkerDrainMissed) (AwaitWorkerDrained :launch launch :timeout-seconds limit-seconds))
   (match answer
     (WorkerDrained) None
     (WorkerDrainMissed) (raise (UpgradeRefused launch.name answer RefusalPoint.BEFORE-APPLY))))
+
+
+(defk swap-drained [launch limits]
+  {:pre [(: launch WorkerLaunch) (: limits UpgradeLimits)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "公開した worker の宣言を、その worker を drain してから当て(drain-worker)、新しい版で live に戻るのを待ち(条 V3)、置いた drain を
+   外すため(ReleaseWorkerDrain — drain は worker を作り直しても、頼んだ側が外すまで残る・#4177)。drain を頼んだ後は、どの終わり方でも
+   ちょうど 1 回外す: 戻った後と、途中で止まる時(中の仕事が 0 にならない UpgradeRefused・当ての例外・戻りの待ちの UpgradeStalled —
+   外してから同じ例外を上げ直す)。外しは finally に置かない — process が殺された時に CPython が送る GeneratorExit の中では効果を
+   出せないため、Exception と通常の終わりでだけ出す(shared/core/service_back.hy の service-back-within と同じ形)。"
+  (try
+    (<- (drain-worker launch limits.drain-seconds))
+    (<- (ApplyDeclarations))
+    (<- (await-until (.format "worker {} が版 {} で live に戻る" launch.name launch.doeff-commit)
+                     (partial back-on launch.name launch.doeff-commit) (partial worker-line launch.name) limits.return-seconds))
+    (except [error Exception]
+      (<- (ReleaseWorkerDrain :launch launch))
+      (raise error)))
+  (<- (ReleaseWorkerDrain :launch launch))
+  None)
 
 
 (defk upgrade-workers [workers limits]
@@ -315,7 +336,8 @@
   "worker を 1 つずつ新しい値へ入れ替えるため(条 V2・V3 の待ち — 頭の註)。coordinator は入れ替えない — worker だけを上げる時
    (今の coordinator がその worker の版と組めると確かめた変更)と、upgrade-cluster の前半の両方がこれを通る(#3366)。どの入れ替えも、
    宣言を書く前に空の機体の起動を確かめ(confirm-clean-boot)、入れ替え先の版の root を保存先に準備する(prepare-boot-root)。当てる直前に
-   その worker を drain し、中で走っている仕事が 0 になったのを確かめる(drain-worker — 上限は drain-seconds)。
+   その worker を drain し、中で走っている仕事が 0 になったのを確かめ(drain-worker — 上限は drain-seconds)、当てて新しい版で live に
+   戻った後に、置いた drain を外す(swap-drained — drain を頼んだ後に止まる時も、外してから止まる・#4177)。
    答え = worker ごとの root の準備の答えを、入れ替えた順に並べた列(実行した側が、worker ごとの秒と戻し先の有無を終わりに出すため)。"
   (var prepared #())
   (for [w workers]
@@ -326,10 +348,7 @@
     (:= prepared (+ prepared #(root)))
     (<- (DesireWorker w))
     (<- (PublishDeclarations))
-    (<- (drain-worker w limits.drain-seconds))
-    (<- (ApplyDeclarations))
-    (<- (await-until (.format "worker {} が版 {} で live に戻る" w.name w.doeff-commit) (partial back-on w.name w.doeff-commit)
-                     (partial worker-line w.name) limits.return-seconds)))
+    (<- (swap-drained w limits)))
   prepared)
 
 
