@@ -461,7 +461,9 @@ worker の入れ替えは 1 台ずつで、その worker に置かれた task �
 drain の印の置き方と、何を「worker の中で走っている仕事」と数えるかは配備する側の handler が決める・上限 `drain-seconds`・
 #3968)。coordinator の task の待ちは、長く生きる task の中で回る子の仕事を数えないためです。上限の内に 0 に
 ならなければ当てずに `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-APPLY`・理由は `WorkerDrainMissed`)で止まり、走っている仕事は
-止めません。coordinator の入れ替えの手順の並びは次のとおりです。
+止めません。置いた drain は、当てた worker が新しい版で live に戻った後に外します(`ReleaseWorkerDrain` — 外し方は配備する側の
+handler が決める・#4177)。drain を頼んだ後に止まる時(中の仕事が 0 にならない・当てが落ちた・live に戻らない)も、外してから同じ
+例外で止まります。coordinator の入れ替えの手順の並びは次のとおりです。
 
 1. 宣言を書く前: 待ち行列が空(条 V4)→ 条 V1 の照らし → 空の機体の起動の確かめ → 事前ビルドと、上げる前の版の自己起動の root
    (戻し先)が在る事の確かめ。どれかが断れば `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-DESIRE`)で止まり、宣言を書きません。

@@ -28,7 +28,7 @@
                                                    PrepareBootRoot BootRootAlreadyPrepared BootRootBuilt BootRootRefused BootRootRefusal
                                                    AwaitQuietWindow QuietWindowOpened QuietWindowMissed UnverifiedWorkers
                                                    RollbackRootMissing QueuedTasksRemain RefusalPoint CoordinatorUpgraded ClusterUpgraded
-                                                   AwaitWorkerDrained WorkerDrained WorkerDrainMissed])
+                                                   AwaitWorkerDrained WorkerDrained WorkerDrainMissed ReleaseWorkerDrain])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
 (import doeff_cluster.shared.core.upgrade_program [upgrade-cluster upgrade-coordinator upgrade-workers])
 (import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside WorkerOf DrainWorker ReadCoordinator CoordinatorRuns StopCoordinator
@@ -380,9 +380,11 @@
 ;; (ReadUpgradeState — 外の世界の境界)だけを台本の handler で答え、Program が待ち行列の空を読むまで DesireCoordinator を出さない事などを見る。
 
 (defrecord ScriptLog
-  "台本の handler が覚えた事: reads = 名簿を読んだ回数・coordinator-at = DesireCoordinator を出した時に名簿を読んでいた回数(None = 出していない)。"
+  "台本の handler が覚えた事: reads = 名簿を読んだ回数・coordinator-at = DesireCoordinator を出した時に名簿を読んでいた回数(None = 出していない)・
+   released-at = drain を外す頼み(ReleaseWorkerDrain)ごとの #(worker の名 その時に名簿を読んでいた回数)(受けた順)。"
   (#^ int reads)
-  (#^ (| int None) coordinator-at))
+  (#^ (| int None) coordinator-at)
+  (#^ (get tuple #((get tuple #(str int)) ...)) released-at))
 
 (defeffect ScriptLogSeen
   "テスト用の effect: 台本の handler が覚えた事(ScriptLog)。"
@@ -409,9 +411,10 @@
 (defhandler scripted-upgrade [#^ tuple script]
   ;; 引数に残す理由: 台本はテストごとに違う値(設定ではなく外の世界そのもの)。
   ;; 名簿と task を読む effect に台本の順で答え(台本の最後は繰り返す)、版の変化の待ちは仮想の 1 秒の後に返し、宣言の effect は覚える
-  ;; だけにするため(空の機体の確認は通し、root の準備は組んだと答え、静かな時間帯はすぐ来たと答える)。
+  ;; だけにするため(空の機体の確認は通し、root の準備は組んだと答え、静かな時間帯はすぐ来たと答え、drain を外す頼みは覚えて答える)。
   (session var reads 0)
   (session var coordinator-at None)
+  (session var released-at #())
   (ReadUpgradeState []
     (val at (min reads (- (len script) 1)))
     (:= reads (+ reads 1))
@@ -434,12 +437,15 @@
     (resume (QuietWindowOpened :target target)))
   (AwaitWorkerDrained [launch timeout-seconds]
     (resume (WorkerDrained :target launch.name)))
+  (ReleaseWorkerDrain [launch]
+    (:= released-at (+ released-at #(#(launch.name reads))))
+    (resume None))
   (PublishDeclarations []
     (resume None))
   (ApplyDeclarations []
     (resume None))
   (ScriptLogSeen []
-    (resume (ScriptLog :reads reads :coordinator-at coordinator-at))))
+    (resume (ScriptLog :reads reads :coordinator-at coordinator-at :released-at released-at))))
 
 
 (defk scripted-run []
@@ -516,7 +522,7 @@
 
 
 (defhandler step-recorder
-  ;; テストの道具: 版上げの Program が出した書き込みの effect(空の機体の確認・root の準備・静かな時間帯の待ち・Desire・公開・当て)を出した
+  ;; テストの道具: 版上げの Program が出した書き込みの effect(空の機体の確認・root の準備・静かな時間帯の待ち・drain とその外し・Desire・公開・当て)を出した
   ;; 順に覚え、同じ effect を外側の handler へ出し直して、その答えをそのまま返すため(答えは変えない — effect の順と、拒否の後に出なかった
   ;; effect を見る)。
   (session var steps #())
@@ -540,6 +546,10 @@
     (:= steps (+ steps #((SwapStep :name "AwaitWorkerDrained" :target launch.name))))
     (<- answer (AwaitWorkerDrained :launch launch :timeout-seconds timeout-seconds))
     (resume answer))
+  (ReleaseWorkerDrain [launch]
+    (:= steps (+ steps #((SwapStep :name "ReleaseWorkerDrain" :target launch.name))))
+    (<- (ReleaseWorkerDrain :launch launch))
+    (resume None))
   (DesireWorker [launch]
     (:= steps (+ steps #((SwapStep :name "DesireWorker" :target launch.name))))
     (<- changes (DesireWorker launch))
@@ -562,11 +572,18 @@
 
 (defk swap-steps [desire target]
   {:pre [(: desire str) (: target str)] :post [(: % (get tuple #(SwapStep ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
-  "worker の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → drain して中の仕事 0 → 当て)を、
-   テストが比べる形で作るため(drain は当てる直前 — #3968)。"
+  "worker の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → drain して中の仕事 0 → 当て →
+   drain を外す)を、テストが比べる形で作るため(drain は当てる直前 — #3968・外すのは新しい版で live に戻った後 — #4177)。"
   #((SwapStep :name "ConfirmCleanBoot" :target target) (SwapStep :name "PrepareBootRoot" :target target)
     (SwapStep :name desire :target target) (SwapStep :name "PublishDeclarations" :target None)
-    (SwapStep :name "AwaitWorkerDrained" :target target) (SwapStep :name "ApplyDeclarations" :target None)))
+    (SwapStep :name "AwaitWorkerDrained" :target target) (SwapStep :name "ApplyDeclarations" :target None)
+    (SwapStep :name "ReleaseWorkerDrain" :target target)))
+
+
+(defk releases-in [steps]
+  {:pre [(: steps (get tuple #(SwapStep ...)))] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "Program が drain を外す頼み(ReleaseWorkerDrain)を出した worker の名を、出した順に並べるため(worker ごとの回数を比べる)。"
+  (tuple (gfor s steps :if (= s.name "ReleaseWorkerDrain") s.target)))
 
 
 ;; coordinator の入れ替え 1 つの書き込みの effect の順(空の機体の確認 → root の準備 → Desire → 公開 → 静かな時間帯の待ち → 当て — #3772。
@@ -643,7 +660,10 @@
   (assert (in "turn-1" (str refused)) (str refused))
   (val log (get seen 1))
   (<- a tuple (swap-steps "DesireWorker" "a"))
-  (assert (= log.steps (cut a 0 -1)) log.steps))
+  ;; 当て(ApplyDeclarations)だけが出ず、a に置いた drain は止まる前に 1 回外す(#4177 — 外さないと a は新しい仕事を受けないまま残る)。
+  (assert (= log.steps (+ (cut a 0 -2) (cut a -1 None))) log.steps)
+  (<- released tuple (releases-in log.steps))
+  (assert (= released #("a")) log.steps))
 
 
 (deftest test-a-refused-clean-boot-never-asks-for-the-boot-root
@@ -656,7 +676,85 @@
   (assert (isinstance refused.refusal CleanBootRefused) refused.refusal)
   (val log (get seen 1))
   (assert (= log.steps #((SwapStep :name "ConfirmCleanBoot" :target "a"))) log.steps)
-  (assert (= log.answers #()) log.answers))
+  (assert (= log.answers #()) log.answers)
+  ;; drain を頼む前に止まったので、drain を外す頼みは 1 回も出ない(#4177)。
+  (<- released tuple (releases-in log.steps))
+  (assert (= released #()) log.steps))
+
+
+;; --- drain を頼んだ後は、必ず 1 回外す(ReleaseWorkerDrain — #4177)--------------------------------------------------------------------
+;; drain は worker を作り直しても、頼んだ側が外すまで残る。Program は当てた worker が新しい版で live に戻った後に外し、drain の後に止まる時
+;; (中の仕事が 0 にならない・当てが落ちた・live に戻らない)も、外してから同じ例外で止まる。
+
+(defrecord ReleaseRun
+  "drain の外しを見る 1 回の実行で覚えた事: stopped = Program を止めた例外(None = 最後まで通った)・script = 台本の handler が覚えた事・
+   log = step-recorder が覚えた事。"
+  (#^ (| Exception None) stopped)
+  (#^ ScriptLog script)
+  (#^ StepLog log))
+
+
+(defclass ApplyBroken [RuntimeError]
+  "テスト用の例外: 当て(ApplyDeclarations)が落ちた。")
+
+
+(defhandler apply-breaks
+  ;; 壊した handler(失敗ケース): 公開した宣言を当てる所で落ちる。
+  (ApplyDeclarations []
+    (raise (ApplyBroken "当てが落ちた"))))
+
+
+(defk release-run [program]
+  {:pre [(: program Program)] :post [(: % ReleaseRun)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "版上げの Program を走らせ(待ちの上限と当ての失敗による停止は受けて返す)、台本の handler と step-recorder が覚えた事を読むため。"
+  (var stopped None)
+  (try
+    (<- program)
+    (except [e [UpgradeStalled ApplyBroken]]
+      (:= stopped e)))
+  (<- script ScriptLog (ScriptLogSeen))
+  (<- log StepLog (StepLogSeen))
+  (ReleaseRun :stopped stopped :script script :log log))
+
+
+(deftest test-each-worker-drain-is-released-once-after-the-worker-is-back
+  ;; 正常の道(#4177): worker ごとに drain → 当て → 新しい版で live に戻る → drain を外す、の順で、外しは worker ごとにちょうど 1 回、
+  ;; 次の worker の drain より前。外しを出さない Program では列に ReleaseWorkerDrain が無く、当ての直後(戻りを読む前)に外す Program では
+  ;; 外した時に名簿を読んでいた回数が 1 つずつ少なくて赤(台本: a の task の待ち = 1 回目・a の戻り = 2 回目・b は 3・4 回目)。
+  (<- run ReleaseRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT) step-recorder]
+                       (release-run (upgrade-workers #(TARGET-A TARGET-B) LIMITS))))
+  (assert (is run.stopped None) run)
+  (<- a tuple (swap-steps "DesireWorker" "a"))
+  (<- b tuple (swap-steps "DesireWorker" "b"))
+  (assert (= run.log.steps (+ a b)) run.log.steps)
+  (<- released tuple (releases-in run.log.steps))
+  (assert (= released #("a" "b")) run.log.steps)
+  (assert (= run.script.released-at #(#("a" 2) #("b" 4))) run.script))
+
+
+(deftest test-a-worker-that-never-comes-back-is-released-before-the-stall
+  ;; 失敗ケース(#4177): a を当てた後、a が新しい版で live に戻らない — Program は a に置いた drain を 1 回外してから UpgradeStalled で
+  ;; 止まる(外さずに止まると、a は戻っても新しい仕事を受けない)。b の入れ替えは始まらない。
+  (<- run ReleaseRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade #(ALL-OLD A-STUCK)) step-recorder]
+                       (release-run (upgrade-workers #(TARGET-A TARGET-B) LIMITS))))
+  (assert (isinstance run.stopped UpgradeStalled) run)
+  (assert (= run.stopped.step (.format "worker a が版 {} で live に戻る" NEW)) run.stopped.step)
+  (<- a tuple (swap-steps "DesireWorker" "a"))
+  (assert (= run.log.steps a) run.log.steps)
+  (<- released tuple (releases-in run.log.steps))
+  (assert (= released #("a")) run.log.steps))
+
+
+(deftest test-a-broken-apply-is-released-before-the-same-error
+  ;; 失敗ケース(#4177): a の当てが例外で落ちる — Program は a に置いた drain を 1 回外してから、同じ例外で止まる。
+  (<- run ReleaseRun (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT) apply-breaks
+                                     step-recorder]
+                       (release-run (upgrade-workers #(TARGET-A TARGET-B) LIMITS))))
+  (assert (isinstance run.stopped ApplyBroken) run)
+  (<- a tuple (swap-steps "DesireWorker" "a"))
+  (assert (= run.log.steps a) run.log.steps)
+  (<- released tuple (releases-in run.log.steps))
+  (assert (= released #("a")) run.log.steps))
 
 
 (deftest test-a-refused-coordinator-boot-root-stops-before-the-coordinator-desire

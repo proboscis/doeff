@@ -36,6 +36,7 @@ from doeff_cluster.shared.intent.upgrade_model import UnverifiedWorkers as Unver
 from doeff_cluster.shared.intent.upgrade_model import AwaitWorkerDrained as AwaitWorkerDrained
 from doeff_cluster.shared.intent.upgrade_model import WorkerDrained as WorkerDrained
 from doeff_cluster.shared.intent.upgrade_model import WorkerDrainMissed as WorkerDrainMissed
+from doeff_cluster.shared.intent.upgrade_model import ReleaseWorkerDrain as ReleaseWorkerDrain
 from doeff_cluster.shared.intent.upgrade_model import RollbackRootMissing as RollbackRootMissing
 from doeff_cluster.shared.intent.upgrade_model import QueuedTasksRemain as QueuedTasksRemain
 from doeff_cluster.shared.intent.upgrade_model import RefusalPoint as RefusalPoint
@@ -125,6 +126,9 @@ def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> 
     ...
 
 def drain_worker(launch: WorkerLaunch, limit_seconds: float) -> _Program[None, object]:
+    ...
+
+def swap_drained(launch: WorkerLaunch, limits: UpgradeLimits) -> _Program[None, object]:
     ...
 
 def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
