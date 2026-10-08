@@ -20,6 +20,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
+(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
 (import doeff_cluster.sim.local [wall-sim-cluster ClientLink SimLink SimWorker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.clock_fixtures [clock-ms])
@@ -28,6 +29,9 @@
 
 (val VERSIONS {"python" "3.14.0" "doeff" "1"})
 (val TAKE-LIMIT 400)    ; 取りの回数の上限(格子で起き続ける作りを、筋書きの終わりで止めるため)
+;; 検の coordinator は k8s を持たない(本番の手元の coordinator と同じ答え手 — 調停ループは毎歩 Deployment と Node の見張りを揃える・
+;; #3868・#4070)。
+(val NO-KUBE "検の coordinator は k8s を持たない")
 
 
 (defk heartbeat-of [name]
@@ -77,7 +81,8 @@
   (<- final ClusterState ((sim-time-handler :clock inbox.clock)
                            ((timed-requests inbox)
                              (request-bodies (durable-states (reply-bodies (with-handlers (memory-notices (MemoryBroker))
-                                                                              (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming)))))))))
+                                                                              ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                                                                                (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming))))))))))
   final)
 
 

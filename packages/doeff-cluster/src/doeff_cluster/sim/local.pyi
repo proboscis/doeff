@@ -453,7 +453,7 @@ class ReportsOf(_doeff_effect_base[tuple]):
     name: str
 
 @_doeff_dataclass(frozen=True)
-class ProcessesOf(_doeff_effect_base[tuple]):
+class ProcessesOf(_doeff_effect_base[tuple[SimProcess, ...]]):
     name: str
 
 @_doeff_dataclass(frozen=True)
@@ -1227,8 +1227,8 @@ def sim_main(scenario: Program | EffectBase) -> _Program[Incomplete, object]:
 def sim_under_clock(system: System, scenario: Program | EffectBase, workers: tuple | None, environ: dict | None, revision: str, timing: ClusterTiming | None, policy: WorkerPolicy | None, outside: SimOutside | None, store: Callable | None, deployments: dict | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict | None=None, *, notice_broker: MemoryBroker) -> _Program[Incomplete, object]:
     ...
 
-def sim_cluster(system: System, scenario: Program | EffectBase, *, workers: tuple | None=None, environ: dict | None=None, revision: str='sim', start_ms: int=..., timing: ClusterTiming | None=None, policy: WorkerPolicy | None=None, outside: SimOutside | None=None, store: Callable | None=None, deployments: dict | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict | None=None, notice_broker: MemoryBroker) -> _Program[Incomplete, object]:
+def sim_cluster[A](system: System, scenario: Program[A, object] | EffectBase[A], *, workers: tuple[SimWorker, ...] | None=None, environ: dict[str, dict[str, str]] | None=None, revision: str='sim', start_ms: int=..., timing: ClusterTiming | None=None, policy: WorkerPolicy | None=None, outside: SimOutside | None=None, store: Callable[[], MemoryWalStore] | None=None, deployments: dict[str, dict[str, object]] | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict[str, dict[str, str]] | None=None, notice_broker: MemoryBroker) -> _Program[A, object]:
     ...
 
-def wall_sim_cluster(system: System, scenario: Program | EffectBase, *, workers: tuple | None=None, environ: dict | None=None, revision: str='sim', timing: ClusterTiming | None=None, policy: WorkerPolicy | None=None, outside: SimOutside | None=None, store: Callable | None=None, deployments: dict | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict | None=None, notice_broker: MemoryBroker) -> _Program[Incomplete, object]:
+def wall_sim_cluster[A](system: System, scenario: Program[A, object] | EffectBase[A], *, workers: tuple[SimWorker, ...] | None=None, environ: dict[str, dict[str, str]] | None=None, revision: str='sim', timing: ClusterTiming | None=None, policy: WorkerPolicy | None=None, outside: SimOutside | None=None, store: Callable[[], MemoryWalStore] | None=None, deployments: dict[str, dict[str, object]] | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict[str, dict[str, str]] | None=None, notice_broker: MemoryBroker) -> _Program[A, object]:
     ...
