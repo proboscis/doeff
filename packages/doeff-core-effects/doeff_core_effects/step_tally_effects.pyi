@@ -26,3 +26,29 @@ class OpenStepTally(_doeff_effect_base[None]):
 @_doeff_dataclass(frozen=True)
 class CloseStepTally(_doeff_effect_base[StepTally | None]):
     key: str
+
+@dataclass(frozen=True, kw_only=True)
+class TaskTally:
+    run: int
+    tid: int | None
+    parent: int | None
+    steps: int
+    wall_ns: int
+    cpu_ns: int
+    vm_steps: int
+    handler_calls: int
+
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class OpenTaskTally(_doeff_effect_base[None]):
+    key: str
+
+@_doeff_dataclass(frozen=True)
+class ReadTaskTally(_doeff_effect_base[tuple[TaskTally, ...] | None]):
+    key: str
+
+@_doeff_dataclass(frozen=True)
+class CloseTaskTally(_doeff_effect_base[tuple[TaskTally, ...] | None]):
+    key: str
