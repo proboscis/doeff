@@ -49,6 +49,7 @@ from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERRO
 from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
+from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
@@ -118,6 +119,8 @@ class FakeReply:
     needs_permission: bool = False
     fail: str | None = None
     lose: str | None = None
+    lose_exit_code: int | None = None
+    lose_stderr: str | None = None
     usage: Usage = ...
     cost_usd: float | None = None
     lines: int = 0

@@ -37,7 +37,7 @@
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT AccountRefusalHit ACCOUNT-REFUSAL-ERRORS])
+                                 ASSISTANT-ERROR-RATE-LIMIT AccountRefusalHit ACCOUNT-REFUSAL-ERRORS stderr-tail-within])
 (import doeff_claude_code.faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
@@ -253,18 +253,31 @@
       (ended state (Interrupted :process-kept False :dropped-refs (queued-refs state)))
       (Transition :state (closed-turn state))))
 
+(defk exited-end [end #^ (| int None) exit-code #^ str stderr-tail]
+  {:pre [(: end (| Completed Failed)) (: exit-code (| int None)) (: stderr-tail str)] :post [(: % (| Completed Failed))]
+   :tags {:context "claude-code" :role "judgment"}}
+  "注入を待って飲んだ result で手番を閉じる前に process が降りた時、その終わりが失敗(Failed)なら、上の層が文 detail を読み解かずに
+   「なぜ降りたか」を読めるように、process の終了 code と stderr の末尾を欄に載せるため(#4207)。Completed は欄を持たないのでそのまま。"
+  (match end
+    (Failed) (replace end :exit-code exit-code :stderr-tail stderr-tail)
+    _ end))
+
 (defn on-exit [#^ DialogueState state #^ (| int None) exit-code #^ str stderr-tail]
   "process が降りた(stdout の EOF の後)。手番の途中なら: 止めるを求めていれば Interrupted、注入を待って飲んだ result が
-   在ればその result の終わり、どちらでもなければ BackendLost(終わりの行を読む前に process が消えた)。"
+   在ればその result の終わり、どちらでもなければ BackendLost(終わりの行を読む前に process が消えた)。BackendLost と、飲んだ
+   result の終わりが Failed の時は、process の終了 code と stderr の末尾(上限 STDERR-TAIL-CHARS 字の内 — stderr-tail-within)を
+   欄に載せる(#4207)。BackendLost の文 detail は stderr を切らずに含む(前と同じ)。"
+  (setv tail (run (stderr-tail-within stderr-tail)))
   (cond
     (not state.in-flight) (Transition :state state)
     (not (isinstance state.stop NoStop))
       (ended state (Interrupted :process-kept False :dropped-refs (queued-refs state)))
     (is-not state.deferred-result None)
-      (ended state (end-of-result state.deferred-result state) :priced-by state.deferred-result)
+      (ended state (run (exited-end (end-of-result state.deferred-result state) exit-code tail)) :priced-by state.deferred-result)
     True
       (ended state (BackendLost :detail (.format "process exited with code {} before the turn ended{}" exit-code
-                                                 (if stderr-tail (+ ": " stderr-tail) ""))))))
+                                                 (if stderr-tail (+ ": " stderr-tail) ""))
+                                :exit-code exit-code :stderr-tail tail))))
 
 
 ;; --- 遷移(stdout の 1 行) ------------------------------------------------------------------------
