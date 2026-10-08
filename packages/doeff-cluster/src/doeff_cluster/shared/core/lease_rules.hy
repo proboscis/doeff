@@ -4,6 +4,7 @@
 ;;; 期限の時計と担い手の名の綴りの経緯は semaphore_model の頭の註。
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(import collections.abc [Mapping])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS LeaseAnswer])
 
@@ -87,7 +88,8 @@
   (+ SEMAPHORE-PREFIX name))
 
 
-(defn #^ dict live-holders [#^ (| dict None) row #^ int now-ms]
+;; 行は盤の読みの答えの値のまま受ける(写像の読みの口 Mapping — 値の型を細かく持つ行も渡せる)。答えの要素 = token → 期限の epoch ms。
+(defn #^ (get dict #(str int)) live-holders [#^ (| (get Mapping #(str object)) None) row #^ int now-ms]
   "純粋: 行の担い手のうち期限が now より後の物。"
   (if (is row None)
       {}
