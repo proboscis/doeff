@@ -17,6 +17,8 @@
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
 (import tests.scenario_steps [TurnRecord read-until read-to-end read-to-tool-start new-id typed kinds-of])
 (import doeff_claude_code [lines])
+(import doeff_claude_code.dialogue :as dialogue)
+(import doeff_claude_code.dialogue [DialogueState])
 
 (val SPEC (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work"))
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))
@@ -24,6 +26,9 @@
 (val TIMEOUT 120.0)
 ;; 口座の限度に当たった手番の筋書きの値(#3983 — 本物の CLI の拒まれた限度の行と限度の文)。
 (val LIMIT (AccountLimitHit :window "five_hour" :resets-at 1791400000 :text "You've hit your session limit · resets 7am (UTC)"))
+;; 口座の側の断りで答えない手番の筋書きの文(本番 2026-10-08 22:32 の口座 cryptic-2 の CLI の文)。
+(val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
+                     "or ask your admin to enable access"))
 
 (defn scripted-reply [#^ str text #^ tuple memory]  ; defk にできない: fake の世界が呼ぶ callback
   "筋書きの返事(本文の語で終わり方を選ぶ): fail / lose / lines / usage / それ以外は 30 秒の道具のあと本文をそのまま返す。"
@@ -37,6 +42,7 @@
     (= text "deltas") (FakeReply "deltas" :tool-seconds 2.0 :thinking-deltas 3 :tool-input-deltas 2)
     (= text "limited") (FakeReply "" :fail "limit" :account-limit LIMIT)
     (= text "limited-done") (FakeReply "partial" :account-limit (AccountLimitHit :text LIMIT.text))
+    (= text "refused") (FakeReply "" :account-refusal (lines.AccountRefusalHit :error "oauth_org_not_allowed" :text REFUSAL-TEXT))
     True (FakeReply text :tool-seconds 30.0)))
 
 (defk on-fake [world program]
@@ -383,6 +389,47 @@
   (for [bad [(fn [] (FakeReply "" :fail "x" :account-limit (AccountLimitHit)))
              (fn [] (FakeReply "" :fail "x" :account-limit (AccountLimitHit :resets-at 1 :text "t")))
              (fn [] (FakeReply "" :lose "x" :account-limit LIMIT))]]
+    (var refused False)
+    (try (bad) (except [ValueError] (:= refused True)))
+    (assert refused)))
+
+
+(deftest test-a-turn-the-account-refuses-emits-the-refusal-lines-and-carries-the-refusal-on-its-end
+  ;; 口座の側の断りで答えない手番(本番 2026-10-08 22:32 の口座 cryptic-2)は、本物の CLI と同じ行 — 本体の assistant の行(model
+  ;; "<synthetic>"・error の語・断りの文)と result の行(subtype success・is_error true・本文 = 断りの文)— を出し、終わり(Failed)の
+  ;; account-refusal は出した行から本物の状態機械と同じ規則で数える。上の層(doeff-agents の adapter とその上の手番を起こす層)が模擬で
+  ;; 「この口座は使えない」を受け取れるため。
+  (<- refused TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "refused")))
+  (val refusal (lines.AccountRefusalHit :error "oauth_org_not_allowed" :text REFUSAL-TEXT))
+  (assert (isinstance refused.end Failed) (repr refused.end))
+  (assert (= refused.end.account-refusal refusal) (repr refused.end))
+  (assert (is refused.end.account-limit None) (repr refused.end))
+  (assert (= (lfor kind (kinds-of refused.lines AssistantMessage) :if kind.error
+                   #(kind.error kind.text kind.model kind.parent-tool-use-id))
+             [#("oauth_org_not_allowed" REFUSAL-TEXT "<synthetic>" None)])
+          refused.lines)
+  (assert (= (lfor kind (kinds-of refused.lines TurnResult) #(kind.subtype kind.is-error kind.result-text))
+             [#("success" True REFUSAL-TEXT)])
+          refused.lines)
+  ;; 本物の状態機械に同じ行を読ませると、同じ終わり(断りの欄・文)になる。
+  (var moved (dialogue.begin-turn (DialogueState :cost-mark 0.0) (typed "refused")))
+  (var real-end None)
+  (for [line refused.lines]
+    (:= moved (dialogue.on-record moved.state line.kind))
+    (when (is-not moved.end None) (:= real-end moved.end)))
+  (assert (= #(real-end.account-refusal real-end.detail) #(refusal REFUSAL-TEXT)) (repr real-end))
+  ;; 断られない手番の終わりは None のまま。
+  (<- plain TurnRecord (on-fake (FakeClaudeWorld scripted-reply) (run-one "fail")))
+  (assert (is plain.end.account-refusal None) (repr plain.end)))
+
+
+(deftest test-an-account-refusal-names-a-refusal-word-and-is-the-only-scripted-end
+  ;; 口座の断りは閉じた集まりの語だけ(rate_limit は限度の道 — account-limit)。断りの手番は CLI が断りの行と result の行で終えるので、
+  ;; ほかの終わり方(fail・lose)と組まず、本文の差分も出さない。
+  (for [bad [(fn [] (lines.AccountRefusalHit :error "rate_limit" :text "t"))
+             (fn [] (FakeReply "" :fail "x" :account-refusal (lines.AccountRefusalHit :error "billing_error" :text "t")))
+             (fn [] (FakeReply "" :lose "x" :account-refusal (lines.AccountRefusalHit :error "billing_error" :text "t")))
+             (fn [] (FakeReply "abc" :deltas 2 :account-refusal (lines.AccountRefusalHit :error "billing_error" :text "t")))]]
     (var refused False)
     (try (bad) (except [ValueError] (:= refused True)))
     (assert refused)))

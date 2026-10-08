@@ -454,3 +454,56 @@
   (val again (dialogue.begin-turn failed.state (TurnInput "again" "msg-2")))
   (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
   (assert (and (isinstance second.end Completed) (is second.end.account-limit None)) (repr second.end)))
+
+
+;; --- 口座の側の断りで答えなかった手番 ---------------------------------------------------------------------------
+;; 形の出所: 2026-10-08 22:32 の本番(口座 cryptic-2)の CLI の stream の本体の assistant の行 — parent_tool_use_id null・model
+;; "<synthetic>"・最上位の error "oauth_org_not_allowed"・isApiErrorMessage true・apiErrorStatus 403・apiErrorCode
+;; "oauth_not_allowed_for_organization"・本文の文は下の REFUSAL-TEXT。続く result の行の見本は手元に無い — 限度の答えの result の行
+;; (LIMIT-RESULT — subtype success・is_error true・本文・api_error_status)と同じ形と推定。authentication_failed・billing_error の行は
+;; 同じ形で error の語だけが違うと推定(CLI の型 SDKAssistantMessageError の語)。
+(val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
+                     "or ask your admin to enable access"))
+(val REFUSAL-ANSWER {"type" "assistant" "parent_tool_use_id" None "error" "oauth_org_not_allowed" "isApiErrorMessage" True
+                     "apiErrorStatus" 403 "apiErrorCode" "oauth_not_allowed_for_organization"
+                     "message" {"id" "msg_r" "model" "<synthetic>" "content" [{"type" "text" "text" REFUSAL-TEXT}]
+                                "usage" {"input_tokens" 0 "output_tokens" 0}}})
+(val REFUSAL-RESULT {"type" "result" "subtype" "success" "is_error" True "result" REFUSAL-TEXT "api_error_status" 403})
+
+
+(deftest test-a-turn-the-account-refuses-carries-the-refusal-on-its-end
+  ;; 本体の assistant の行の error が口座の側の断りの語(oauth_org_not_allowed・authentication_failed・billing_error)なら、手番の終わりは
+  ;; 閉じた型の欄 account-refusal(断りの語と CLI の文)を持つ。口座の限度(account-limit)とは別の欄で、限度の欄は None のまま。
+  ;; 失敗ケース(前の形): 終わりに口座の断りの欄が無く、上の層(turn-host)が「この口座は使えない」と知れずに cli-failed で落とし、
+  ;; 口座を替えなかった(本番 2026-10-08 22:32 の口座 cryptic-2)。
+  (val errors ["oauth_org_not_allowed" "authentication_failed" "billing_error"])
+  (val ends (lfor error errors
+                  (. (read-record (. (read-record (started) (| REFUSAL-ANSWER {"error" error})) state) REFUSAL-RESULT) end)))
+  (for [#(error end) (zip errors ends)]
+    (assert (isinstance end Failed) (repr end))
+    (assert (= end.account-refusal (lines.AccountRefusalHit :error error :text REFUSAL-TEXT)) (repr end))
+    (assert (is end.account-limit None) (repr end))
+    (assert (= #(end.detail end.api-error-status) #(REFUSAL-TEXT 403)) (repr end))))
+
+
+(deftest test-a-limit-answer-is-not-an-account-refusal
+  ;; 口座の限度の答え(error rate_limit)は今までどおり account-limit だけに数え、口座の断りには数えない。
+  (var state (started))
+  (for [record [LIMIT-REJECTED LIMIT-ANSWER]]
+    (:= state (. (read-record state record) state)))
+  (val read (read-record state LIMIT-RESULT))
+  (assert (= read.end.account-limit (lines.AccountLimitHit :window "five_hour" :resets-at 1791342000 :text LIMIT-TEXT)) (repr read.end))
+  (assert (is read.end.account-refusal None) (repr read.end)))
+
+
+(deftest test-a-subagent-refusal-is-not-counted-and-a-refusal-is-not-carried-to-the-next-turn
+  ;; subagent の行(parent_tool_use_id が null でない)の error は本体の会話の断りではないので数えない。口座に断られた手番の次の手番は
+  ;; 空から数え直す。
+  (val sub (. (read-record (started) (| REFUSAL-ANSWER {"parent_tool_use_id" "toolu_sub"})) state))
+  (val calm (read-record sub SUCCESS-RESULT))
+  (assert (and (isinstance calm.end Completed) (is calm.end.account-refusal None)) (repr calm.end))
+  (val refused (read-record (. (read-record (started) REFUSAL-ANSWER) state) REFUSAL-RESULT))
+  (assert (is-not refused.end.account-refusal None) (repr refused.end))
+  (val again (dialogue.begin-turn refused.state (TurnInput "again" "msg-2")))
+  (val second (read-record (. (read-record again.state INIT) state) SUCCESS-RESULT))
+  (assert (and (isinstance second.end Completed) (is second.end.account-refusal None)) (repr second.end)))

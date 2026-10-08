@@ -89,13 +89,20 @@
 ;; REJECTED-ANSWER)と同じ言葉と、差し戻される答えの本文。
 (val HOOK-REASON "add-one-more-line")
 (val REJECTED-ANSWER "DRAFT-1")
+;; 口座の側の断りで答えない手番の CLI の文(本番 2026-10-08 22:32 の口座 cryptic-2)。
+(val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
+                     "or ask your admin to enable access"))
 
 (defn fake-responder [#^ str text #^ tuple memory]
   "fake の返事(scenario_rules.hy の reply-for と同じ規則の写し — 型の違う 2 つ目の規則を作らない範囲で最小)。
-   fake にだけ在る規則: 「Fail after spending <額>」= 額を使った後に誤りで終える手番(失敗の手番の額の写しを見る検のため)。"
-  (setv spent (re.search r"Fail after spending (\S+)" text))
+   fake にだけ在る規則: 「Fail after spending <額>」= 額を使った後に誤りで終える手番(失敗の手番の額の写しを見る検のため)/
+   「Refuse as the account with <語>」= CLI が口座の側の断り(error = <語>)で答えずに終える手番(断りの写しを見る検のため)。"
+  (setv spent (re.search r"Fail after spending (\S+)" text)
+        refused (re.search r"Refuse as the account with (\S+)" text))
   (when spent
     (return (FakeReply "" :tool-seconds 2.0 :fail "spent then failed" :cost-usd (float (.group spent 1)))))
+  (when refused
+    (return (FakeReply "" :account-refusal (compose.AccountRefusalHit :error (.group refused 1) :text REFUSAL-TEXT))))
   (setv sleep (re.search r"sleep (\d+)" text)
         thinking (re.search r"Stream (\d+) thinking pieces\." text)
         tool-pieces (re.search r"Stream the tool input in (\d+) pieces\." text)
@@ -235,6 +242,15 @@
   {:pre [(: s Setting)] :post [(: % Read)]}
   "額を使った後に誤りで終える手番を 1 つ最後まで読む(失敗の手番も額を運ぶかを見るため — fake の規則)。"
   (<- handle (launch s "adapter-failed" "Fail after spending 0.5" None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk turn-the-account-refuses [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "foundation"}}
+  "CLI が口座の側の断り(oauth_org_not_allowed)で答えずに終える手番を 1 つ最後まで読む(断りが層 3 の終わりまで届くかを見るため —
+   fake の規則)。"
+  (<- handle (launch s "adapter-refused" "Refuse as the account with oauth_org_not_allowed" None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -1451,3 +1467,33 @@
   (assert (= completed.account-limit failed.account-limit) completed)
   (val calm (end-of (Completed :result-text "ok") "ctx-1"))
   (assert (and (isinstance calm AgentTurnCompleted) (is calm.account-limit None)) calm))
+
+
+(deftest test-the-account-refusal-of-a-turn-end-reaches-the-agent-turn-end
+  ;; 層 2(doeff-claude-code)の手番の終わりが運ぶ「口座の側の断り」の事実(AccountRefusalHit — 断りの語と CLI の文)を、層 3 の
+  ;; AgentTurnCompleted・AgentTurnFailed の欄 account_refusal(AgentAccountRefusal)へ写す。断られていない終わりは None。
+  ;; 失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(turn-host)が「この口座は使えない」と知れずに cli-failed で落とし、口座を
+  ;; 替えなかった(本番 2026-10-08 22:32 の口座 cryptic-2)。
+  (import doeff_claude_code.lines [AccountRefusalHit Completed Failed])
+  (import doeff_agents.handlers.headless [end-of])
+  (import doeff_agents.effects.agent [AgentAccountRefusal AgentTurnCompleted AgentTurnFailed])
+  (val hit (AccountRefusalHit :error "oauth_org_not_allowed" :text REFUSAL-TEXT))
+  (val failed (end-of (Failed :detail REFUSAL-TEXT :account-refusal hit) "ctx-1"))
+  (assert (isinstance failed AgentTurnFailed) failed)
+  (assert (= failed.account-refusal (AgentAccountRefusal :error "oauth_org_not_allowed" :text REFUSAL-TEXT)) failed)
+  (assert (is failed.account-limit None) failed)
+  (val completed (end-of (Completed :result-text "" :account-refusal hit) "ctx-1"))
+  (assert (= completed.account-refusal failed.account-refusal) completed)
+  (val calm (end-of (Completed :result-text "ok") "ctx-1"))
+  (assert (and (isinstance calm AgentTurnCompleted) (is calm.account-refusal None)) calm))
+
+
+(deftest test-headless-refused-turn-carries-the-account-refusal-fake [tmp-path]
+  ;; 偽の CLI が口座の側の断りで答えずに終えた手番は、headless の handler を通って層 3 の AgentTurnFailed.account_refusal に届く
+  ;; (偽の CLI の行 → 層 2 の終わり → 層 3 の終わりの全部の道)。
+  (import doeff_agents.effects.agent [AgentAccountRefusal])
+  (val done (run-on FAKE tmp-path turn-the-account-refuses))
+  (assert (isinstance done.end AgentTurnFailed) (repr done.end))
+  (assert (= done.end.account-refusal (AgentAccountRefusal :error "oauth_org_not_allowed" :text REFUSAL-TEXT)) (repr done.end))
+  (assert (= done.end.detail REFUSAL-TEXT) (repr done.end))
+  (assert (is done.end.account-limit None) (repr done.end)))
