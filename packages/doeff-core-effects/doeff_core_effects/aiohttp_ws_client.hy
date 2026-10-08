@@ -73,7 +73,7 @@
       (. (type error) __name__)))
 
 
-(defn :async #^ (| OpenLink WsConnectFailed) open-link [#^ Callable client-factory #^ str link #^ str url
+(defn :async #^ (| OpenLink WsConnectFailed) open-link [#^ (get Callable #([] aiohttp.ClientSession)) client-factory #^ str link #^ str url
                                                          #^ (get tuple #(HttpHeader ...)) headers]  ; defk にできない: aiohttp の実 I/O(共有の event loop の coroutine)
   "url へ繋ぐため(先頭の説明の WsConnect): この接続だけの client を作って ws_connect。断られた・届かなかった時は WsConnectFailed。
    答えが OpenLink に決まらずに抜ける時(断り・届かない・CancelledError)は finally で ws と client を閉じ、開いたままにしない。"
@@ -141,14 +141,14 @@
   None)
 
 
-(defhandler aiohttp-ws-link-handler [#^ Callable client-factory]
+(defhandler aiohttp-ws-link-handler [#^ (get Callable #([] aiohttp.ClientSession)) client-factory]
   ;; 本物の接続(先頭の説明)。open = 開いている接続の表(id → OpenLink)・ended = 終わった接続の答えの表(id → WsLinkClosed — 閉じた後の
   ;; WsReceive / WsSend が同じ答えを返す)。どちらも session の値の 1 つの dict: 節は Await の後も同じ表を参照し、参照してから書くまでに await を
   ;; 挟まない(session var の tuple にすると節の初めに取った値を await の後に書き戻し、並行の節の書きを消す)。counter = 振った id の数(session var
   ;; — await の前に増やすので、並行の 2 つの WsConnect が同じ番号を読まない)。
   ;; 引数に残す理由: client の作り手は組み立ての側で決まる(検は作った client を数える作り手を渡す)。
-  (session val open {})
-  (session val ended {})
+  (session val open ((get dict #(str OpenLink))))
+  (session val ended ((get dict #(str WsLinkClosed))))
   (session var counter 0)
   (WsConnect [url headers]
     ;; 番号は繋ぎを始める前に確保し、断られても戻さない(await の後に増やすと、同時に進む 2 つの繋ぎが同じ番号を取る — 台本の答え手も同じ並び)。
@@ -200,7 +200,7 @@
 
 
 (deff aiohttp-ws-client [* [client-factory new-client-session]]  ; defk にできない: Program の外で呼ぶ、答え手を被せる installer の作り手
-  {:pre [(: client-factory Callable)] :post [(: % (of Callable [(| Program EffectBase)] Program))] :tags {:context "ws-client" :role "foundation"}}
+  {:pre [(: client-factory (get Callable #([] aiohttp.ClientSession)))] :post [(: % (of Callable [(| Program EffectBase)] Program))] :tags {:context "ws-client" :role "foundation"}}
   "本物の答え手の installer を作るため(先頭の説明): 被せた program を closing-links で包み、範囲の終わりに開いたままの接続を閉じる。
    client-factory = 接続ごとの client の作り手(既定 new-client-session)。"
   (setv install (aiohttp-ws-link-handler client-factory))
