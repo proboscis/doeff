@@ -17,11 +17,11 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulse-program])
 
-(val BUSY-CPU-MS 4)
+(val BUSY-CPU-MS 20)  ; 報告するだけの job にも自分の handler の仕事(1 秒ごとに約 0.4 ms・実測)があるので、計算する job の 1 秒ごとの計算はその 10 倍より十分大きく取る
 (val BEATS 5)
 
 
-(deff burn-cpu [ms]  ; defk にできない: thread の CPU を使う計算そのもの(効果を出さない素の関数 — 計算する job の本体が拍ごとに呼ぶ)
+(deff burn-cpu [ms]  ; defk にできない: thread の CPU を使う計算そのもの(効果を出さない素の関数 — 計算する job の本体が 1 秒ごとに呼ぶ)
   {:pre [(: ms int)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "thread の CPU 秒を ms だけ使うため(壁の時計ではない — 混んだ機体で縮まない)。"
   (setv end (+ (time.thread-time-ns) (* ms 1000000)))
@@ -32,7 +32,7 @@
 
 (defk burn-body []
   {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "計算する job の見本: 拍ごとに CPU を使ってから、準備できたと報告し続ける。"
+  "計算する job の見本: 1 秒ごとに CPU を使ってから、準備できたと報告し続ける。"
   (var n 0)
   (while True
     (burn-cpu BUSY-CPU-MS)
@@ -50,13 +50,13 @@
 
 
 (defsystem burn-and-idle [#^ Callable foundation]
-  "見本の系: 拍ごとに計算する service と、報告するだけの service"
+  "見本の系: 1 秒ごとに計算する service と、報告するだけの service"
   (burner (burn-program foundation) :replicas 1 :needs #{"cluster-net"})
   (idler (pulse-program foundation) :replicas 1 :needs #{"cluster-net"}))
 
 
 (defrecord RootReading
-  "検の読み: burner / idler = 各 job の最初の process の記録・table = 窓の間の task ごとの表(OpenTaskTally の答え)。"
+  "検の読み: burner / idler = 各 job の最初の process の記録・table = 積算を始めてからの task ごとの表(CloseTaskTally の答え)。"
   (#^ SimProcess burner)
   (#^ SimProcess idler)
   (#^ tuple table))
@@ -64,7 +64,7 @@
 
 (defk read-roots []
   {:pre [] :post [(: % RootReading)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: task の積算の窓を開け、両方の job の process が起きてから BEATS 拍待ち、process の記録と表を読む。"
+  "筋書き: task ごとの積算を始め、両方の job の process が起きてから BEATS 秒待ち、process の記録と表を読む。"
   (<- (OpenTaskTally "jobs"))
   (<- (AwaitProcessStarted "burner"))
   (<- (AwaitProcessStarted "idler"))
@@ -99,8 +99,8 @@
                                     (with-handlers [step-tally-handler] (read-roots))))
   (assert (is-not seen.burner.root-task None) seen.burner)
   (assert (is-not seen.idler.root-task None) seen.idler)
-  (assert (!= seen.burner.root-task seen.idler.root-task) (, seen.burner seen.idler))
+  (assert (!= seen.burner.root-task seen.idler.root-task) #(seen.burner seen.idler))
   (<- busy int (tree-cpu seen.table seen.burner.root-task))
   (<- idle int (tree-cpu seen.table seen.idler.root-task))
-  (assert (>= busy (* (- BEATS 1) BUSY-CPU-MS 1000000)) (, busy idle))
-  (assert (< idle (/ busy 10)) (, busy idle)))
+  (assert (>= busy (* (- BEATS 1) BUSY-CPU-MS 1000000)) #(busy idle))
+  (assert (< idle (/ busy 10)) #(busy idle)))

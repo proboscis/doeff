@@ -346,6 +346,7 @@ class SimProcess:
     exit_code: int | None = None
     detail: str = ''
     value: object = None
+    root_task: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimReport:
