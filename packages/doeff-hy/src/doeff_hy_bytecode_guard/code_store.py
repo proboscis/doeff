@@ -54,6 +54,14 @@ def store_dir() -> str | None:
     return os.path.join(base, "doeff-hy", "code-store")
 
 
+def store_is_named() -> bool:
+    """保存先の dir を環境変数 STORE_ENV で名指しているか(``off`` と空は名指しでない)— 名指しの保存先は、木へ .pyc を書かない
+    設定でも足す(書かない設定は木への書きの決めで、木の外の保存先の決めではない・agora-redesign #3737)。名指しの無い既定の dir
+    (利用者の cache)には、書かない設定では足さない。"""
+    configured = os.environ.get(STORE_ENV, "").strip()
+    return configured not in ("", "off")
+
+
 def content_key(parts: tuple[str, ...], source: bytes) -> str:
     """entry の鍵 — 中身の読みを変える物の列 parts(先頭は種類と形の版の印)と source の中身の sha256(16 進)。parts は 1 つずつ
     NUL で区切る(隣り合う欄の境目が動いても同じ鍵にならない)。"""
