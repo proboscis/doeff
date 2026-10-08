@@ -121,6 +121,18 @@ def test_task_cpu_bills_only_the_task_that_computed(events: list[dict[str, Any]]
     assert _cpu_by_span(events, idle_tid) >= busy_ns / 10, (busy_ns, _cpu_by_span(events, idle_tid))
 
 
+def test_spawn_names_parent_and_child_and_a_step_carries_its_vm_steps(events: list[dict[str, Any]]) -> None:
+    """agora-redesign #4188: a task tree can be rebuilt from the events (``spawned`` names the parent and the
+    child), and each ``task-leave`` carries the doeff-vm steps and handler calls of the step it closes."""
+    busy_tid, idle_tid = run(scheduled(_busy_and_idle_ping_pong(), implementation="python"))
+    spawned = {e["tid"]: e["parent"] for e in events if e["event"] == "spawned"}
+    root_tid = spawned[busy_tid]
+    assert spawned[idle_tid] == root_tid and root_tid not in (busy_tid, idle_tid), spawned
+    leaves = [e for e in events if e["event"] == "task-leave" and e["step_ns"] is not None]
+    assert leaves and all(e["step_vm_steps"] >= 0 and e["step_handler_calls"] >= 0 for e in leaves), leaves[:3]
+    assert any(e["step_vm_steps"] > 0 for e in leaves if e["tid"] == busy_tid)
+
+
 def test_no_sink_emits_no_events(events: list[dict[str, Any]]) -> None:
     set_scheduler_trace(None)
     run(scheduled(_busy_and_idle_ping_pong(), implementation="python"))
