@@ -433,7 +433,10 @@ def _probe_tool(name: str, probe: Sequence[str]) -> _PremiseHolds | _PremiseUnme
     """Start ``name`` once with ``probe`` and read whether it answered with exit 0."""
     path = shutil.which(name)
     if path is None:
-        return _PremiseUnmet(f"{name} is not on PATH")
+        # The searched PATH tells which machine's environment lacked the tool (agora-redesign #3870: the daily run
+        # went to zeus, not to the pod whose image held the tool).
+        searched = os.pathsep.join(os.get_exec_path())
+        return _PremiseUnmet(f"{name} is not on PATH (searched: {searched})")
     asked = " ".join(probe)
     try:
         answer = subprocess.run(
