@@ -420,15 +420,16 @@ def _compiled_source(path: str) -> bytes | None:
 
 
 def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeType) -> None:
-    """今 compile した Hy の code を、compile した source の bytes を鍵にして保存先(code_store)へ足す(記録の無い code・bytecode を
-    書かない設定では足さない)— 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
+    """今 compile した Hy の code を、compile した source の bytes を鍵にして保存先(code_store)へ足す(記録の無い code は足さない。
+    bytecode を書かない設定では、保存先を名指した時だけ足す — 書かない設定は木への書きの決めで、名指しの保存先は木の外・
+    agora-redesign #3737)— 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
     からだけ作り、file を読み直さない(読み直すと、間に書き換わった file の中身の鍵に古い code が入る — agora-redesign #2799)。
     書けない保存先では足さない — import の口は venv のすべての Python の起動で走るので、書けない理由を import のたびに出さない
     (保存先は速さのためだけ・worker の道具は同じ書きの理由を名指して出す)。"""
     from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
 
     store = code_store.store_dir()
-    if store is None or source is None or sys.dont_write_bytecode:
+    if store is None or source is None or (sys.dont_write_bytecode and not code_store.store_is_named()):
         return
     from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
 
