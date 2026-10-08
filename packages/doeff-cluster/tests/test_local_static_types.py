@@ -3,6 +3,11 @@
 local.hy は Hy の module で型の宣言が無かったので、担い手 SimWorker・process ごとの外の世界 ProcessOutside・入口 sim-cluster を
 名指す使い手の strict に、書き手に直せない Unknown の赤(Type of "SimWorker" is unknown・Return type is unknown ほか)が出ていた。
 → local.pyi で宣言する。宣言を外すと 1 本目が赤になり、宣言が実装から離れると 2 本目が赤になる。
+
+外の世界の欄(SimOutside の handlers・effects・per-process、ProcessOutside の handlers・effects、SimPlan の per-process)が型の引数の
+無い list / tuple / Callable だと、使い手が欄を読んだ値が list[Unknown] などになり、使い手の strict に型逃げ無しには消せない赤が出た
+(使い手の repo の速さを測る module で 5 行・8 件 — #4254・親 #3167)。→ 欄に型の引数を書く。外すと 1 本目(欄を読むテスト用の定義
+probe-outside-fields)と 3 本目(.pyi の欄の注記)が赤になる。
 """
 
 import ast
@@ -53,6 +58,16 @@ MODULE = """\
   (val outside (SimOutside :handlers [] :effects #() :per-process per-process))
   (<- answer int (sim-cluster system (probe-scenario) :workers (tuple workers) :outside outside :notice-broker (MemoryBroker)))
   answer)
+
+(defk probe-outside-fields [outside]
+  {:pre [(: outside SimOutside)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
+  "外の世界の欄を読む(handler の列・effect の型のタプル・process ごとの外の世界を作る関数の答えの欄の型が読める)。"
+  (val made (if (is outside.per-process None)
+                (ProcessOutside :handlers #())
+                (outside.per-process "svc" "w1")))
+  (val handlers (+ (list made.handlers) outside.handlers))
+  (val effects (+ made.effects outside.effects))
+  (+ (len handlers) (sum (gfor e effects (len e.__name__)))))
 """
 
 
@@ -128,6 +143,46 @@ def test_the_stub_matches_local_hy() -> None:
         ]
         if hasattr(actual, "__dataclass_fields__"):
             assert stub_fields == [f.name for f in fields(actual)], name
+
+
+# 型の引数を書かないと使い手の strict で中身が Unknown になる総称の名。
+GENERIC_NAMES = frozenset({"list", "tuple", "dict", "set", "frozenset", "Callable"})
+
+
+def _bare_generics(annotation: ast.expr) -> list[str]:
+    """注記の中で、型の引数を付けずに書かれた総称の名(`list`・`Callable | None` の Callable など)。"""
+    subscripted = [node.value for node in ast.walk(annotation) if isinstance(node, ast.Subscript)]
+    return [
+        node.id
+        for node in ast.walk(annotation)
+        if isinstance(node, ast.Name)
+        and node.id in GENERIC_NAMES
+        and not any(node is value for value in subscripted)
+    ]
+
+
+def test_the_outside_fields_carry_type_arguments() -> None:
+    # 失敗ケース(#4254): 外の世界の欄が型の引数の無い list / tuple / Callable だと、使い手が欄を読んだ値が Unknown を含む。
+    stub = _stub()
+    classes = {node.name: node for node in stub.body if isinstance(node, ast.ClassDef)}
+    annotations = {
+        f"{name}.{item.target.id}": item.annotation
+        for name in ("SimOutside", "ProcessOutside", "SimPlan")
+        for item in classes[name].body
+        if isinstance(item, ast.AnnAssign)
+        and isinstance(item.target, ast.Name)
+        and (name != "SimPlan" or item.target.id == "per_process")
+    }
+    assert sorted(annotations) == [
+        "ProcessOutside.effects",
+        "ProcessOutside.handlers",
+        "SimOutside.effects",
+        "SimOutside.handlers",
+        "SimOutside.per_process",
+        "SimPlan.per_process",
+    ]
+    bare = {where: _bare_generics(annotation) for where, annotation in annotations.items()}
+    assert {where: names for where, names in bare.items() if names} == {}
 
 
 def test_the_stub_declares_every_name_other_modules_use() -> None:
