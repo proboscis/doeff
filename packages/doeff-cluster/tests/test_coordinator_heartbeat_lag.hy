@@ -25,8 +25,12 @@
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
+(import doeff_cluster.coordinator.protocol.kube [ObjectWatches kube-unavailable])
 
 (val VERSIONS {"python" "3.14.0" "doeff" "1"})
+;; 検の coordinator は k8s を持たない(本番の手元の coordinator と同じ答え手 — 調停ループは毎歩 Deployment と Node の見張りを揃える・
+;; #3868・#4070)。
+(val NO-KUBE "検の coordinator は k8s を持たない")
 ;; 遅い区間の秒(閾 5 秒を越え、生死の lease 10 秒より短い)。
 (val SLOW-SECONDS 6.0)
 
@@ -86,7 +90,8 @@
   (run (scheduled ((sim-time-handler :clock (SimClock))
                     ((one-heartbeat inbox)
                       (request-bodies (reply-bodies (with-handlers (memory-notices (MemoryBroker))
-                                                      (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming)))))))))
+                                                      ((kube-unavailable NO-KUBE (ObjectWatches) (ObjectWatches))
+                                                        (run-coordinator (ClusterState) (ClusterTiming) (ClusterNaming))))))))))
   inbox.lags)
 
 

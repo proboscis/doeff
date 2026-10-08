@@ -483,7 +483,7 @@
 (defeffect ProcessesOf
   "検の effect: job name の process の列(SimProcess の tuple・起こした順)。"
   {:fields [(: name str)]
-   :answer tuple
+   :answer (get tuple #(SimProcess ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect AwaitProcessStarted
@@ -3524,10 +3524,13 @@
 
 (defk sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [start-ms SIM-START-MS] [timing None] [policy None]
                   [outside None] [store None] [deployments None] [runtime-env None] [nodes None] notice-broker]
-  {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
-   :post [(: % "scenario の答え(型は筋書きごと)")]
+  {:tp [A]
+   :pre [(: system System) (: scenario (| (of Program A object) (of EffectBase A))) (: workers (| (get tuple #(SimWorker ...)) None))
+         (: environ (| (get dict #(str (get dict #(str str)))) None)) (: revision str) (: start-ms int)
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))
+         (: store (| (get Callable #([] MemoryWalStore)) None)) (: deployments (| (get dict #(str (get dict #(str object)))) None))
+         (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None)) (: notice-broker MemoryBroker)]
+   :post [(: % A)]
    :tags {:context "doeff-cluster" :role "entry"}}
   "系 system(sim の土台で作った System の値)を本物の coordinator と worker の上で走らせ、scenario(検の筋書きの Program — 同じ
    scheduler・同じ仮想の時計で並んで走る)の答えを返す。workers = SimWorker の tuple(既定 = 全 job の needs の和を提供する 1 台)・
@@ -3552,10 +3555,13 @@
 
 (defk wall-sim-cluster [system scenario * [workers None] [environ None] [revision "sim"] [timing None] [policy None] [outside None]
                        [store None] [deployments None] [runtime-env None] [nodes None] notice-broker]
-  {:pre [(: system System) (: scenario (| Program EffectBase)) (: workers (| tuple None)) (: environ (| dict None)) (: revision str)
-         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
-   :post [(: % "scenario の答え(型は筋書きごと)")]
+  {:tp [A]
+   :pre [(: system System) (: scenario (| (of Program A object) (of EffectBase A))) (: workers (| (get tuple #(SimWorker ...)) None))
+         (: environ (| (get dict #(str (get dict #(str str)))) None)) (: revision str)
+         (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None))
+         (: store (| (get Callable #([] MemoryWalStore)) None)) (: deployments (| (get dict #(str (get dict #(str object)))) None))
+         (: runtime-env (| RuntimeEnv None)) (: nodes (| (get dict #(str (get dict #(str str)))) None)) (: notice-broker MemoryBroker)]
+   :post [(: % A)]
    :tags {:context "doeff-cluster" :role "entry"}}
   "sim-cluster と同じ系・同じ本物の coordinator と worker・同じ偽の宿と柵を、壁の時計で走らせ、scenario の答えを返す(引数の意味は
    sim-cluster と同じ — 起点は無く、今の時刻から始まる)。時計 = doeff-time の async-time-handler(Delay は実時間で待つ・GetTime は今の
