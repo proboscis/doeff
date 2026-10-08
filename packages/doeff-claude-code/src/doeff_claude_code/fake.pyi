@@ -47,7 +47,9 @@ from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
 from doeff_claude_code.lines import RATE_LIMIT_REJECTED as RATE_LIMIT_REJECTED
 from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERROR_RATE_LIMIT
 from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
+from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
+from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
 from doeff_claude_code.effects import ClaudeStartTurn as ClaudeStartTurn
 from doeff_claude_code.effects import ClaudeInjectInput as ClaudeInjectInput
 from doeff_claude_code.effects import ClaudeInterruptTurn as ClaudeInterruptTurn
@@ -99,6 +101,9 @@ FAKE_CAPABILITIES: tuple[str, ...]
 NO_RECEIPT_CAPABILITIES: tuple[str, ...]
 FAKE_TOOL_USE_ID: str
 FAKE_TOOL_NAME: str
+SYNTHETIC_MODEL: str
+SYNTHETIC_USAGE: Usage
+REFUSAL_RESULT_SUBTYPE: str
 
 @dataclass(frozen=True, kw_only=True)
 class StopHookRejection:
@@ -127,6 +132,7 @@ class FakeReply:
     thinking_deltas: int = 0
     tool_input_deltas: int = 0
     account_limit: AccountLimitHit | None = None
+    account_refusal: AccountRefusalHit | None = None
     stop_hook_rejections: tuple[StopHookRejection, ...] = ...
 
     def __post_init__(self) -> None:
@@ -157,6 +163,7 @@ class FakeTurn:
     last_call_model: str | None
     model_windows: tuple[ModelWindow, ...]
     limit_hit: AccountLimitHit | None
+    refusal_hit: AccountRefusalHit | None
 
     def __init__(self, seq: int, started_at: float, reply: FakeReply, refs: tuple[str, ...]) -> None:
         ...
@@ -241,6 +248,9 @@ def next_line_at(turn: FakeTurn) -> float | None:
     ...
 
 def emit_due_lines(session: FakeSession, turn: FakeTurn, now: float) -> _Program[None, object]:
+    ...
+
+def refuse_turn(session: FakeSession, turn: FakeTurn, refusal: AccountRefusalHit) -> _Program[None, object]:
     ...
 
 def end_scripted(session: FakeSession, turn: FakeTurn) -> _Program[None, object]:

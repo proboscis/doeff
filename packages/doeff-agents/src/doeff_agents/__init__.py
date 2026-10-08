@@ -110,6 +110,7 @@ _LAZY_EXPORTS = {
     "AgentTurnLost": ".effects",
     "AgentTurnUsage": ".effects",
     "AgentAccountLimit": ".effects",
+    "AgentAccountRefusal": ".effects",
     "Events": ".effects",
     "EventsEffect": ".effects",
     "ExportContextEffect": ".effects",
