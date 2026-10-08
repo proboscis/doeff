@@ -79,7 +79,7 @@
   (<- late-send WsSendOutcome (WsSend :link link.link :text "x"))
   (assert (= late-send closed) late-send)
   ;; 相手の受けた close にも同じ状態符と理由。
-  (<- seen tuple (PeerClosures :count 1))
+  (<- seen (get tuple #(PeerClose ...)) (PeerClosures :count 1))
   (assert (= seen #((PeerClose :code 4002 :reason "済んだ"))) seen))
 
 
@@ -96,7 +96,7 @@
 
 
 (defk connect-both-at-once [slow url]
-  {:pre [(: slow str) (: url str)] :post [(: % tuple)] :tags {:context "ws-client-test" :role "program"}}
+  {:pre [(: slow str) (: url str)] :post [(: % (get tuple #(WsLink WsLink)))] :tags {:context "ws-client-test" :role "program"}}
   "遅い繋ぎ先と速い繋ぎ先へ同時に繋ぐ(遅い方を先に始め、速い方が先に繋がる)。答え = #(遅い方の WsLink 速い方の WsLink)。"
   (<- slow-task (Spawn (connect slow)))
   (<- fast-task (Spawn (connect url)))
@@ -109,7 +109,7 @@
   {:interpreters ["aiohttp-ws-client" "scripted-ws-client"]}
   ;; 同じ handler の下で 2 つの繋ぎが同時に進んでも id は重ならない(番号は繋ぎを始める前に確保する — 遅い方が ws-1・速い方が ws-2)。
   (<- world WsWorld (ContractWsWorld))
-  (<- both tuple (connect-both-at-once world.slow world.url))
+  (<- both (get tuple #(WsLink WsLink)) (connect-both-at-once world.slow world.url))
   (val slow-link (get both 0))
   (val fast-link (get both 1))
   (assert (= [slow-link.link fast-link.link] ["ws-1" "ws-2"]) both)
@@ -140,13 +140,13 @@
   (<- world WsWorld (ContractWsWorld))
   (<- first WsLink (greeted world.url))
   (<- second WsLink (greeted world.url))
-  (<- closed tuple (WsDisconnectAll :code 4003 :reason "全部"))
+  (<- closed (get tuple #(WsLinkClosed ...)) (WsDisconnectAll :code 4003 :reason "全部"))
   (assert (= closed #((WsLinkClosed :link first.link :code 4003 :reason "全部") (WsLinkClosed :link second.link :code 4003 :reason "全部")))
           closed)
-  (<- seen tuple (PeerClosures :count 2))
+  (<- seen (get tuple #(PeerClose ...)) (PeerClosures :count 2))
   (assert (= seen #((PeerClose :code 4003 :reason "全部") (PeerClose :code 4003 :reason "全部"))) seen)
   ;; 何も開いていなければ空。
-  (<- nothing tuple (WsDisconnectAll))
+  (<- nothing (get tuple #(WsLinkClosed ...)) (WsDisconnectAll))
   (assert (= nothing #()) nothing))
 
 
@@ -155,7 +155,7 @@
   (<- world WsWorld (ContractWsWorld))
   ;; 内側の範囲で繋いだまま出る — 範囲の終わりの後始末が閉じる(相手に届き、外側の WsReceive も閉じた idとして答える)。
   (<- kept WsLink (with-handler [(world.install)] (greeted world.url)))
-  (<- seen tuple (PeerClosures :count 1))
+  (<- seen (get tuple #(PeerClose ...)) (PeerClosures :count 1))
   (assert (= seen #((PeerClose :code WS-LINK-CLOSE-GOING-AWAY :reason SCOPE-ENDED-REASON))) seen)
   (<- after WsFrame (WsReceive :link kept.link))
   (assert (= after (WsLinkClosed :link kept.link :code WS-LINK-CLOSE-GOING-AWAY :reason SCOPE-ENDED-REASON)) after))
