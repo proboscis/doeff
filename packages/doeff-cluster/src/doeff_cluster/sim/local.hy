@@ -320,7 +320,9 @@
    (exit-code: 0 = 値で終わった / task は結果を書いて終わった・1 = 例外か Crash・3 = Program を解けない・-15 = 止めの合図・
    -9 = worker が node ごと死んだ)・detail = 終わった理由の 1 行(例外の型と文 — 本番の子の log の最後の行に当たる。値で終わった時は空)・
    value = service の Program が値で終わった時のその値(本番では捨てる — 検が有限の周回の答えを読むための sim だけの観測。task と値で終わらなかった
-   process は None)。"
+   process は None)・root-task = process の根の task の id(StartJob の Spawn が返した把手の task id — 世界が把手を覚えた時に書く。
+   把手を覚える前と、覚える前に殺された process は None。呼び手は task ごとの積算の表〔OpenTaskTally・#4188〕を、この id から親の結びで
+   引いて job ごとの task の木を足す・#4194。sim だけの観測)。"
   (#^ str job)
   (#^ str worker)
   (#^ str instance)
@@ -331,7 +333,8 @@
   (setv #^ (| int None) ended-ms None)
   (setv #^ (| int None) exit-code None)
   (setv #^ str detail "")
-  (setv #^ object value None))
+  (setv #^ object value None)
+  (setv #^ (| int None) root-task None))
 
 
 (defrecord SimReport
@@ -2808,10 +2811,12 @@
     (resume next-pid))
   (KeepHandle [pid task]
     ;; 把手を覚える前に殺された process(StartJob の Spawn と KeepHandle の間)は、殺した側が終わりを書き済み — 把手は覚えず、その場で
-    ;; 捨てる(Discard — 殺された後に走らせない)。
+    ;; 捨てる(Discard — 殺された後に走らせない)。覚えた時は、その process の記録に根の task の id を書く(呼び手が job ごとの task の
+    ;; 木を task ごとの積算の表から引くため・#4194)。
     (if (in pid kills)
         (<- (Discard task))
-        (:= handles (| handles {pid task})))
+        (do (:= handles (| handles {pid task}))
+            (:= log (tuple (gfor r log (if (= r.pid pid) (replace r :root-task task.task-id) r))))))
     (resume None))
   (HandleOf [pid]
     (resume (.get handles pid)))
