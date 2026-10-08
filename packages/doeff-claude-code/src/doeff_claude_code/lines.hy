@@ -135,7 +135,8 @@
    文字列(ほかは空 — 上の層が本文の前に「考えている」と分かる表示を出すため・#3789)/ tool-input-delta = input_json_delta なら道具の
    命令の切れ端(partial_json — JSON の途中で単独では読めない文字列・ほかは空)/ tool-start = content_block_start の tool_use なら呼びの
    id と道具の名(ToolCall — 命令はまだ無い・ほかは None)。後の 2 つは上の層が「担当は <道具> の命令を書いている」と出すため
-   (#3974 の 3)。本文の差分は種類 TEXT の行だけ、考えの差分は種類 THINKING の行だけ、命令の切れ端は種類 TOOL-INPUT の
+   (#3974 の 3)。thinking-start = content_block_start の thinking(考えの block の始まり)なら真 — 考えの最初の差分より先に届くので、
+   上の層が「考えている」の表示をその時に出せる(#4186・ほかは偽)。本文の差分は種類 TEXT の行だけ、考えの差分は種類 THINKING の行だけ、命令の切れ端は種類 TOOL-INPUT の
    行だけが持つ — 作り手が種類を名乗り忘れた行を作る時に断る。ttft-ms = 行の最上位の ttft_ms(message_start の行だけが名乗る —
    CLI が API へ要求を送ってから message_start を受けるまでのミリ秒。実測 2.1.292 で result の ttft_stream_ms − time_to_request_ms と
    1 ms 以内で同じ・名乗らなければ None — #3855)。"
@@ -145,6 +146,7 @@
   (setv #^ str tool-input-delta "")
   (setv #^ (| ToolCall None) tool-start None)
   (setv #^ (| int None) ttft-ms None)
+  (setv #^ bool thinking-start False)
   (defn __post_init__ [self]
     (when (and self.tool-input-delta (!= self.delta DeltaKind.TOOL-INPUT))
       (raise (ValueError (.format "PartialMessage の命令の切れ端は種類 TOOL-INPUT の行だけ: delta {!r}" self.delta))))
@@ -609,6 +611,11 @@
       (ToolCall (text-at block "id") (text-at block "name"))
       None))
 
+(defn thinking-start-of [#^ dict event]
+  "stream_event の event が考えの block の始まり(content_block_start の thinking)かを読むため(#4186 — 考えの最初の差分より先に届く)。
+   ほかの event・ほかの種類の block は偽。"
+  (and (= (text-at event "type") "content_block_start") (= (text-at (object-at event "content_block") "type") "thinking")))
+
 (defn classify-stream-event [#^ dict record]
   (setv event (object-at record "event"))
   (setv delta (object-at event "delta"))
@@ -617,7 +624,8 @@
                   :thinking-delta (if (= kind DeltaKind.THINKING) (text-at delta "thinking") "")
                   :tool-input-delta (if (= kind DeltaKind.TOOL-INPUT) (text-at delta "partial_json") "")
                   :tool-start (tool-start-of event)
-                  :ttft-ms (int-at record "ttft_ms")))
+                  :ttft-ms (int-at record "ttft_ms")
+                  :thinking-start (thinking-start-of event)))
 
 ;; --- transcript の額の行(純関数) ---------------------------------------------------------------------
 

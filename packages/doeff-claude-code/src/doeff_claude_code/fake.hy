@@ -501,8 +501,10 @@
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
   ;; 答えの前に考えている間の差分(本物の CLI の thinking_delta の行 — 片ごとの考えの文字列は FAKE-THINKING-PIECE・替え玉の CLI と同じ)。
-  (<- (emit-all session turn (lfor _ (range reply.thinking-deltas)
-                                   (PartialMessage :delta DeltaKind.THINKING :thinking-delta FAKE-THINKING-PIECE))))
+  ;; 差分の前に、考えの block の始まりの行を 1 つ(本物の CLI の content_block_start の thinking — #4186)。考えの無い返事では出さない。
+  (<- (emit-all session turn (+ (if (> reply.thinking-deltas 0) [(PartialMessage :thinking-start True)] [])
+                                (lfor _ (range reply.thinking-deltas)
+                                      (PartialMessage :delta DeltaKind.THINKING :thinking-delta FAKE-THINKING-PIECE)))))
   ;; 道具の呼び: 命令は返事の tool-input(許可の問いも同じ命令を問う — 本物の CLI の can_use_tool の input は tool_use の input)。
   ;; 呼びの行の直前に、命令を書いている間の差分(input_json_delta の行)を出す。
   (val call (ToolCall FAKE-TOOL-USE-ID FAKE-TOOL-NAME reply.tool-input))

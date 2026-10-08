@@ -91,6 +91,7 @@ class PartialMessage:
     tool_input_delta: str = ''
     tool_start: ToolCall | None = None
     ttft_ms: int | None = None
+    thinking_start: bool = False
 
     def __post_init__(self) -> None:
         ...
