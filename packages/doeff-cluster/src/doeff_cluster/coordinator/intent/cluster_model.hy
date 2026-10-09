@@ -336,7 +336,8 @@
   "途絶しても動かし続けてよい印の約束 1 つ(#2804)= coordinator が worker へ「この job は途絶しても止めなくてよい」と返事で渡した事実。
    印を渡した担い手は coordinator に届かない間も job を動かし続けうるので、coordinator はこの約束が在る間、job を他の worker へ置かない
    (担い手の上の置き先を、沈黙・能力の変化・drain を問わず保つ — cluster_policy.place-jobs)。約束が外れるのは、担い手の今の世代の heartbeat が
-   その job の印を持たないと知らせた時(keptWhenCutOff — 印の無い返事が届いた後)か、Worker が消された時だけ。
+   その job の印を持たないと知らせた時(keptWhenCutOff — 印の無い返事が届いた後)・Worker が消された時・担い手の沈黙が約束の期限
+   (ClusterTiming.kept-reassign-after-ms)を越えた時の 3 つ(後の 2 つは cluster_policy.sweep-keep-marks)。
    job = job の名・worker = 印を渡した担い手の名・boot = 渡した時の担い手の process の世代(表示 — 世代が替わった担い手は新しい世代の
    知らせで約束を外す)・since-ms = 初めて渡した時刻。保存する(durable_kv の keep/<名> — coordinator を作り直しても約束を忘れない)。
    読みの口: GET /state の keepMarks(#2883 — StateView.keep-marks)。"
