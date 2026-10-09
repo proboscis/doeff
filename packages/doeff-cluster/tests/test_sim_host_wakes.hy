@@ -74,11 +74,11 @@
 (val BEAT-MS 2500)
 
 
-(defk wakes-at [truth now]
-  {:pre [(: truth HostTruth) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "代役の真実 truth の、刻 now の起きる物の組と、渡した呼び鈴を返すため。"
+(defk wakes-at [truth began now]
+  {:pre [(: truth HostTruth) (: began int) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "代役の真実 truth の、時刻 began に始まり時刻 now に終わった tick の後の起きる物の組と、渡した呼び鈴を返すため。"
   (<- bell Promise (CreatePromise))
-  (<- wakes WakeSet (host-wakes WORKER truth now bell.future))
+  (<- wakes WakeSet (host-wakes WORKER truth began now bell.future))
   #(wakes bell.future))
 
 
@@ -86,19 +86,23 @@
   (<- base HostTruth (fresh-truth "w1" 1 0 TIMING))
   (val heard (replace base :fresh True :beat-interval-ms BEAT-MS))
   ;; heartbeat の期限(最後に届いた返事 0 + 間隔)。呼び鈴は代役の 1 つ。
-  (<- quiet tuple (wakes-at heard 1000))
+  (<- quiet tuple (wakes-at heard 1000 1000))
   (assert (= (. (get quiet 0) due) (DueAt :at BEAT-MS)) quiet)
   (assert (= (len (. (get quiet 0) bells)) 1) quiet)
+  ;; tick の頭の時刻(1000)より後で、tick の終わり(4000)には過ぎた heartbeat の期限も捨てず、過ぎた期限のまま返す(待ち 0 で起きた
+  ;; 次の tick が送る — 本番の coordinator-link と同じ基準・#4332)。
+  (<- long-tick tuple (wakes-at heard 1000 4000))
+  (assert (= (. (get long-tick 0) due) (DueAt :at BEAT-MS)) long-tick)
   ;; 前の heartbeat が届いていなければ、送り直しの刻(今 + RESEND-AFTER-MS)。
-  (<- unheard tuple (wakes-at base 1000))
+  (<- unheard tuple (wakes-at base 1000 1000))
   (assert (= (. (get unheard 0) due) (DueAt :at (+ 1000 RESEND-AFTER-MS))) unheard)
   ;; 処理の止まりの明けと、準備の揃う刻。
-  (<- stalled tuple (wakes-at (replace heard :stalled-until-ms 2000) 1000))
+  (<- stalled tuple (wakes-at (replace heard :stalled-until-ms 2000) 1000 1000))
   (assert (= (. (get stalled 0) due) (DueAt :at 2000)) stalled)
   (val preparing (SimPreparation :worker "w1" :key "k" :env False :warm False :started-ms 0 :ready-ms 1800 :failure None))
-  (<- prepared tuple (wakes-at (replace heard :codes {"k" preparing}) 1000))
+  (<- prepared tuple (wakes-at (replace heard :codes {"k" preparing}) 1000 1000))
   (assert (= (. (get prepared 0) due) (DueAt :at 1800)) prepared)
   ;; 期限が全部過ぎた代役(柵も越えた)にも呼び鈴が在る — 起きる物の無い待ちを作らない。
-  (<- late tuple (wakes-at heard (* 10 TIMING.keep-fence-ms)))
+  (<- late tuple (wakes-at heard (* 10 TIMING.keep-fence-ms) (* 10 TIMING.keep-fence-ms)))
   (assert (= (. (get late 0) due) (DueNever)) late)
   (assert (= (len (. (get late 0) bells)) 1) late))

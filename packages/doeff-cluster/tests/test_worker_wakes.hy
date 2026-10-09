@@ -141,9 +141,10 @@
   (<- watch-cell (cell-of "http://127.0.0.1:9"))
   (val clock (SimClock))
   (<- ((sim-time-handler :clock clock) (Delay 1.5)))
+  ;; tick の頭の時刻も 1500(tick に時間がかからない)。
   (<- wakes WakeSet (with-handlers (+ [(sim-time-handler :clock clock) no-wakes]
                                       (if with-link [(coordinator-link state cell LINK-ROUTE watch-cell)] []))
-                      (WorkerWakes)))
+                      (WorkerWakes :began 1500)))
   wakes)
 
 

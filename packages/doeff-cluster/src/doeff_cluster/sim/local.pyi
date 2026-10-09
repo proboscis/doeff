@@ -1062,7 +1062,7 @@ def rehung_bell(bell: Promise | None) -> _Program[Promise, object]:
 def ticked_truth(truth: HostTruth) -> _Program[HostTruth, object]:
     ...
 
-def host_wakes(worker: SimWorker, truth: HostTruth, now: int, bell: Future | None) -> _Program[WakeSet, object]:
+def host_wakes(worker: SimWorker, truth: HostTruth, began: int, now: int, bell: Future | None) -> _Program[WakeSet, object]:
     ...
 
 def sim_host(worker: SimWorker, boot: str, plan: SimPlan, parts: SimParts) -> _Handler:
