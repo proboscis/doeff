@@ -5,7 +5,12 @@ from doeff_hy.static_types import Handler as _Handler
 from typing import Protocol as Protocol
 from typing import runtime_checkable as runtime_checkable
 from urllib.parse import unquote as url_unquote
+from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
 from doeff_core_effects.scheduler import Promise as Promise
+from doeff_core_effects.scheduler import Wait as Wait
+from doeff_time import WaitWithin as WaitWithin
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import Reply as Reply
 from doeff_cluster.shared.intent.protocol import CoordinatorStopRequested as CoordinatorStopRequested
@@ -21,9 +26,13 @@ class ReplyTarget(Protocol):
     data: bytes = b''
     content_type: str = ''
 
+@runtime_checkable
 class InboxQueue(Protocol):
 
-    def take(self, timeout: float | None, limit: int) -> list:
+    def arm(self, timeout: float | None, bell: ExternalPromise) -> bool:
+        ...
+
+    def taken(self, limit: int) -> list:
         ...
 
 class StopSignal(Protocol):
@@ -36,6 +45,9 @@ def requests_of(raws: list) -> _Program[tuple[Request, ...], object]:
     ...
 
 def encoded_reply(body: object) -> tuple:
+    ...
+
+def raw_requests(inbox: InboxQueue, timeout_seconds: float | None, limit: int) -> _Program[list, object]:
     ...
 
 def http_requests(inbox: InboxQueue) -> _Handler:

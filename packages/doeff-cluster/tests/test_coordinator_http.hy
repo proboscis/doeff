@@ -1,25 +1,36 @@
 ;; coordinator との HTTP: coordinator が接続を使い回させること・heartbeat の途絶の数えが宛先の切り替えをまたぐこと(2026-09-23 の newmac の件)。
 ;; 宛先の切り替えと読みの送り直しの性質は宛先の部品の検(test_coordinator_route — #2427 で httpx の client を持つ口を退役させた)。
-(require doeff-hy.macros [deftest deff val])
+(require doeff-hy.macros [deftest defk deff <- val])
 (import os)
 (import signal)
 (import threading)
 (import httpx)
 (import pytest)
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox json-reply StopState stop-on-signals])
+(import doeff [run with-handlers])
+(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_time [async-time-handler])
+(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
+(import doeff_cluster.shared.intent.protocol [NextRequests Reply])
+(import doeff_cluster.shared.protocol.inbox [http-requests])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
 
+(defk path-echoes [stop]
+  {:pre [(: stop threading.Event)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "受付に並んだ要求に、path を本文で返す返事を置き続けるため(stop が立つまで — 検の HTTP server の答え手)。"
+  (while (not (.is-set stop))
+    (<- batch list (NextRequests 0.1 16))
+    (for [request batch]
+      (<- (Reply request 200 {"path" request.path}))))
+  None)
+
+
 (deff serve [inbox stop]  ; defk にできない: threading.Thread が別の thread で呼ぶ target
   {:pre [(: inbox RequestInbox) (: stop threading.Event)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "箱に並んだ生の要求に、path を本文で返す返事を置き続けるため(stop が立つまで — 検の HTTP server の答え手)。"
-  (while (not (.is-set stop))
-    (for [request (.take inbox 0.1 16)]
-      ;; 箱が並べるのは生の要求(RawRequest)— 返事は送る byte と content-type にして札に置く(#2563)。
-      (setv #(data content-type) (json-reply {"path" request.path}))
-      (setv request.slot.status 200 request.slot.data data request.slot.content-type content-type)
-      (.set request.slot.done)))
+  "検の HTTP server の答え手(path-echoes)を、本番の受付の答え手(http-requests)と scheduler の上で、別の thread で回すため。"
+  (run (scheduled (with-handlers [(await-handler) (async-time-handler) (http-requests inbox)] (path-echoes stop))))
   None)
 
 

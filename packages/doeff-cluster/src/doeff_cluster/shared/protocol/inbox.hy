@@ -2,13 +2,19 @@
 ;;; 生の要求を Request に解き(NextRequests)、返事の本文を送る byte にして札に置く(Reply)。停止の合図(CoordinatorStopRequested)も
 ;;; ここ。層 protocol は foundation を読めないので、箱・札・停止の印は下の構造の型(InboxQueue・ReplyTarget・StopSignal)で受ける。
 ;;; coordinator だけの CoordinatorFault は coordinator/protocol/faults.hy の coordinator-faults(coordinator の entry で重ねる — #2563)。
+;;;
+;;; 要求の待ちは scheduler の上で待つ(raw-requests — #4270): 箱が要求を並べた時と起こしの時に鳴らす呼び鈴(外から満たす Promise)を、
+;;; 期限まで待つ。待つ間、同じ scheduler の他の task(coordinator が Spawn した worker の生死の知らせの送り)が外からの完了(Redis の
+;;; 送りの答え)を受けて進む。以前は箱の take が scheduler の外で thread を塞いだので、送りの task は次の Spawn まで回らず、知らせは
+;;; 生死の動きのたびに 1 つずつしか出なかった。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.macros [defhandler defk <- var])
 (import json)
 (import typing [Protocol runtime-checkable])
 (import urllib.parse [unquote :as url-unquote])
-(import doeff_core_effects.scheduler [Promise])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise PRIORITY-IDLE Promise Wait])
+(import doeff_time [WaitWithin])
 (import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText NextRequests])
 
 
@@ -17,9 +23,12 @@
   (setv #^ object done None #^ int status 0 #^ bytes data b"" #^ str content-type ""))
 
 
-(defclass InboxQueue [Protocol]
-  "受付の箱の形(foundation/coordinator_inbox の RequestInbox)— 生の要求を limit 件まで取る(timeout None = 期限なしで待つ)。"
-  (defn #^ list take [self #^ (| float None) timeout #^ int limit] (raise NotImplementedError)))
+(defclass [runtime-checkable] InboxQueue [Protocol]
+  "受付の箱の形(foundation/coordinator_inbox の RequestInbox)。arm = 取り手の呼び鈴 bell を掛け、待ちの秒 timeout(None = 期限なし)を
+   記し、既に何か(要求か起こし)が並んでいれば真を返す — 箱は以後、要求を並べた時と起こしの時に bell を満たす。taken = 並んでいる
+   生の要求を limit 件まで待たずに取り、掛けていた呼び鈴を外す(起こしを受けたら、そこまでに取った要求だけ)。"
+  (defn #^ bool arm [self #^ (| float None) timeout #^ ExternalPromise bell] (raise NotImplementedError))
+  (defn #^ list taken [self #^ int limit] (raise NotImplementedError)))
 
 
 (defclass StopSignal [Protocol]
@@ -59,10 +68,28 @@
       #((.encode (json.dumps body :ensure-ascii False) "utf-8") "application/json; charset=utf-8")))
 
 
+(defk raw-requests [inbox timeout-seconds limit]
+  {:pre [(: inbox InboxQueue) (: timeout-seconds (| float None)) (: limit int)] :post [(: % list)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "受付の箱から、最初の 1 件を timeout-seconds 秒(None = 期限なし)まで待ち、その時点で並んでいる生の要求を limit 件まで取るため。
+   待ちは scheduler の上(頭の註): 呼び鈴を掛け、何も並んでいなければ、箱が鳴らすか期限が来るまで待つ。呼び鈴は外の thread(HTTP の
+   server・停止の合図の受け手)が満たす Promise なので、仮想の時計を止めずに待つ(park — 期限の刻へ時計が進める)。取った後は呼び鈴を
+   満たして終わらせる(鳴らなかった呼び鈴を、待ち手の居ない外の Promise として scheduler に残さない — 遅れて鳴っても捨てられる)。"
+  (<- bell ExternalPromise (CreateExternalPromise))
+  (when (not (.arm inbox timeout-seconds bell))
+    (match timeout-seconds
+      None (<- (Wait bell.future :priority PRIORITY-IDLE))
+      _ (<- (WaitWithin bell.future timeout-seconds :park True))))
+  (val raws (.taken inbox limit))
+  (.complete bell True)
+  raws)
+
+
 (defhandler http-requests [#^ InboxQueue inbox]
   ;; 引数に残す理由: 受付の箱(HTTP の server の thread と列)は composition root が起動の時に 1 つ作って渡す
   (NextRequests [timeout-seconds limit]
-    (<- requests (get tuple #(Request ...)) (requests-of (.take inbox timeout-seconds limit)))
+    (<- raws list (raw-requests inbox timeout-seconds limit))
+    (<- requests (get tuple #(Request ...)) (requests-of raws))
     (resume (list requests)))
   (Reply [request status body]
     (setv slot request.slot)
