@@ -1,7 +1,8 @@
 ;;; 記録の service の入口を割った口の検(#1280 — main.hy の records-settings・records-serving・records-connected)。
 ;;;
 ;;; 確かめること:
-;;;   - 設定の読み records-settings は env と Secret の file を effect(ReadEnvironment・ReadText)で読み、既定を埋めた設定の値を作る。
+;;;   - 設定の読み records-settings は env を effect(ReadEnvironment)で読み、既定を埋めた設定の値を作る。DSN は呼び手が渡す Program から得る
+;;;     (接続 URL の file を読むのは単独の入口の pg-url-file-dsn だけ — env の path の file を ReadText で読む)。
 ;;;     必須の env が欠ければ起動を止める(黙って既定へ倒さない)
 ;;;   - 本体の設定 records-serving は設定の値と表の宣言と置き場の選びだけから作る(宛先・名簿・手入れ・本文の上限)。表の用意と /readyz の
 ;;;     問いは置き場の選び(PostgreSQL = PG-STORE・memory = memory-store-choice)が決める
@@ -22,7 +23,7 @@
 (import doeff_records.memory [MemoryStore memory-store-choice])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing REQUEST-MAX-BYTES])
-(import doeff_records.main [RecordsSettings records-settings records-serving records-connected records-process PG-STORE store-reachable
+(import doeff_records.main [RecordsSettings records-settings pg-url-file-dsn records-serving records-connected records-process PG-STORE store-reachable
                             ENV-PG-URL-FILE ENV-HOSTNAME ENV-HOST ENV-PORT ENV-POOL-SIZE DEFAULT-PORT
                             DEFAULT-POOL-SIZE DEFAULT-MAINTENANCE-SECONDS DEFAULT-KEEP-CHANGES-SECONDS])
 
@@ -56,9 +57,15 @@
 
 (defk settings-under [environ]
   {:pre [(: environ dict)] :post [(: % RecordsSettings)] :tags {:context "records" :role "foundation"}}
-  "検の env と file の表の下で設定を読むため。"
-  (<- settings RecordsSettings (with-handlers [(scripted-environment environ FILES)] (records-settings stripped)))
+  "検の env と file の表の下で、単独の入口と同じ DSN の得方(env の path の file を読む)で設定を読むため。"
+  (<- settings RecordsSettings (with-handlers [(scripted-environment environ FILES)] (records-settings (pg-url-file-dsn stripped))))
   settings)
+
+
+(defk given-dsn []
+  {:pre [] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "呼び手が別の所(例 cluster の Secret)から得た DSN を渡す Program の見本。"
+  DSN)
 
 
 (val REQUIRED-ENV {ENV-PG-URL-FILE PG-URL-PATH ENV-HOSTNAME "records-0"})
@@ -92,6 +99,14 @@
       (:= refused e)))
   (assert (is-not refused None) "必須の env が欠けても設定が読めた")
   (assert (in ENV-PG-URL-FILE (str refused)) refused))
+
+
+(deftest test-the-dsn-comes-from-the-callers-program-and-no-url-file-is-read
+  ;; 失敗ケース: 接続 URL の file の env が無く、file の表も空の世界で、呼び手が DSN の Program を渡せば設定が読める — records-settings は
+  ;; env の path の file を読まない(読めば file の表に無い path で落ちる)。
+  (<- settings RecordsSettings (with-handlers [(scripted-environment {ENV-HOSTNAME "records-0"} {})] (records-settings (given-dsn))))
+  (assert (= settings.dsn DSN) settings)
+  (assert (= settings.origin-host "records-0") settings))
 
 
 (deftest test-a-principals-env-is-not-read
