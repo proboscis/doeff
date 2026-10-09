@@ -104,7 +104,7 @@
 (import doeff_core_effects.heap-effects [CollectAndFreeze])
 (import doeff_core_effects.gc-freeze [gc-freeze-handler])
 (import doeff_core_effects.scripted-freeze [scripted-freeze-handler])
-(import doeff_core_effects.latest-effects [PublishLatest ReadLatest])
+(import doeff_core_effects.latest-effects [PublishLatest ReadLatest AwaitLatest])
 (import doeff_core_effects.process-latest [process-latest-handler])
 (import doeff_core_effects.memory-latest [memory-latest-handler])
 (import doeff_core_effects.stack-dump-effects [ArmStackDump DisarmStackDump ReadStackDumps])
@@ -367,8 +367,8 @@
 
 
 (defdomain doeff-latest
-  :title "Latest 語彙 — 最新の値を置いて読む"
-  :effects [PublishLatest ReadLatest]
+  :title "Latest 語彙 — 最新の値を置いて読む・変わるまで待つ"
+  :effects [PublishLatest ReadLatest AwaitLatest]
   :handlers [process-latest-handler memory-latest-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "process-latest-handler(本物・process の中の置き場)と memory-latest-handler(I/O なし)が答える。")
