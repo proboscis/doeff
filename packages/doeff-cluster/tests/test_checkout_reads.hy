@@ -6,6 +6,7 @@
 ;;   - 組み立て(runtime-env-of-checkouts)が模擬の土台の上で本物と同じ所で断る(汚れ・push していない)
 ;;   - 系の宣言の前の検め(checked-declaring-checkout)が版の違い・checkout の外・汚れ・push していない commit を断る
 ;;   - remote の url が手元の path か file:// なら、組み立ても系の宣言の前の検めも断る(scp の形・https・ssh:// は通す)
+;;   - 送り手の機体の git が remote の url を書き換えても(url.<base>.insteadOf)、宣言の url は書き換える前の remote の url
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
@@ -22,7 +23,7 @@
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.shared.intent.env_marker_model [FileSha256])
-(import doeff_cluster.sim.checkout_git_script [GitCheckout GitRemote GitRev git-command])
+(import doeff_cluster.sim.checkout_git_script [GitCheckout GitRemote GitRev GitUrlRewrite git-command])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 
 (val LOCK "httpx==0.28.1\n")
@@ -243,3 +244,28 @@
     (assert (= (tuple (gfor r built.repos #(r.name r.url))) #(#("app" url) #("lib" LIB-URL))) built)
     (<- declaring (| RepoCheckout InvalidKind) (declaring-kind world "/src/app/pkg" APP-HEAD))
     (assert (= declaring (RepoCheckout :name "system-source" :url url :commit APP-HEAD)) #(url declaring))))
+
+
+(val ALIAS-BASE "ssh://git@gh-app/owner/app.git")
+(val GITHUB-SCP "git@github.com:owner/app.git")
+
+
+(deftest test-the-declared-url-is-the-remote-url-before-the-sender-rewrites-it
+  ;; 失敗ケース(card acp:kanban-issue:ki-1ada4f0c8344): 送り手の機体の git が remote の url を機体だけの ssh の別名へ書き換える
+  ;; (url.<別名>.insteadOf <GitHub の url> — 会話の Pod の ~/.gitconfig)時も、宣言の url は書き換える前の remote の url。宣言の url は
+  ;; 別の機体の worker が clone する元で、送り手の機体の別名は worker で解けない(2026-10-10 01:56 JST、zeus の worker が
+  ;; 「Could not resolve hostname gh-agora-controllers」で新しい版を準備できなかった)。
+  (val world #((GitCheckout :path "/src/app" :head APP-HEAD :remotes #((GitRemote :name "origin" :url GITHUB-SCP))
+                            :pushed #("origin/main") :rewrites #((GitUrlRewrite :base ALIAS-BASE :instead-of GITHUB-SCP)))
+               (GitCheckout :path "/src/lib" :head LIB-HEAD :remotes #((GitRemote :name "origin" :url LIB-URL)) :pushed #("origin/main")
+                            :members #(SENDER-SOURCE-DIR))))
+  ;; 世界の確かめ: 台本の git の remote get-url は、本物と同じく書き換えた後の別名を答える。
+  (<- told ProcessOutcome (with_handlers (! (grounds world)) (RunProcess :argv #("git" "-C" "/src/app" "remote" "get-url" "origin"))))
+  (assert (= (.strip told.stdout) ALIAS-BASE) told)
+  (<- seen CheckoutState (with_handlers (+ (! (grounds world)) [checkout-reads]) (ReadCheckout "/src/app" "origin")))
+  (assert (= seen.url GITHUB-SCP) seen)
+  (<- built (| RuntimeEnv InvalidKind) (build world))
+  (assert (isinstance built RuntimeEnv) built)
+  (assert (= (tuple (gfor r built.repos #(r.name r.url))) #(#("app" GITHUB-SCP) #("lib" LIB-URL))) built)
+  (<- declaring (| RepoCheckout InvalidKind) (declaring-kind world "/src/app/pkg" APP-HEAD))
+  (assert (= declaring (RepoCheckout :name "system-source" :url GITHUB-SCP :commit APP-HEAD)) declaring))
