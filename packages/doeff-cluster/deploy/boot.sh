@@ -17,7 +17,8 @@
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
 #   ROLE=prepare     … WORKER_DOEFF_COMMIT の自己起動の root を展開して準備する(.pyc の焼きまで)だけで、何も起こさずに root の path を
 #                      出して終わる — 版上げの前に、今の worker の Pod の中で上げ先の版の root を先に組むため(同じ $WORK_DIR)。
-#                      準備済みなら秒で終わる。上げ先の commit の script がこの役を知らないと断られるので、撃つ前に上げ先を読む
+#                      準備済みなら秒で終わる。上げ先の commit の script がこの役を知らないと断られるので、実行する前に上げ先を読む。
+#                      bytecode の焼きが失敗した時は完成の印を置かず、path を出さずに非 0 で終わる(下の「完成の印」)
 #   ROLE=access      … 読み取りの鍵の表(WORKER_REPOS)の git / ssh の設定と鍵の表の JSON だけを書き、JSON の path を出す
 #   ROLE=ready       … worker の Pod の readinessProbe: この Pod の worker が coordinator へ heartbeat を届けていれば 0(drain 中かどうかは
 #                      見ない — drain は coordinator の配りの状態で Pod の健康ではなく、Pod の作り直しをまたいで残る・#4177)
@@ -35,8 +36,20 @@
 #   使い、無ければ口が組んで置く(python -m doeff_cluster.worker.entry.boot_wheel — 呼びの約束の定義点は doeff_cluster/shared/core/native_wheel.py
 #   の 1 つ)。doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。続けて root の中の source(venv に editable で入る
 #   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ用意する(doeff_bake —
-#   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。焼けなくても起動は続ける(import の時に作られる)。
+#   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。
 #   同じ commit の root は完成の印で使い回す(2 回目の起動は秒)。
+#   完成の印 .doeff-boot-ready(#4277 — 役ごとの扱いは戻せる決定): 印は焼きが通った時だけ置く。印の無い root は準備が途中で止まった
+#   残りとして、次の準備(役 prepare か、起動する役の起動)が .venv を消して組み直す(root の dir は消さない・道具の印
+#   .doeff-code-ready.json は道具の受け持ち)。
+#     - 焼きの失敗(焼く道具が非 0 で終わる・報告に stored/rebuilt の数の行が無い)は準備の失敗: 印を置かず、stderr に理由を 1 行出す。
+#       前は焼けなくても印を置いたので、焼けなかった版の root が準備済みのまま残り、次の準備は印を見て飛ばし続けた(版上げの Program は
+#       その版を READY-MARK-INCOMPLETE で断り続け、直すには root の dir を手で消すしかなかった)。
+#     - 役 prepare は焼きの失敗で非 0 で終わり、root の path を出さない(版上げの Program は PREPARE-FAILED を受け、次の実行で組み直す)。
+#     - 起動を続ける役(worker・coordinator・records)は焼きの失敗でも同じ venv のまま起動する — 焼かれなかった module は import の時に
+#       作られる(遅くなるだけ)。止めると Pod が起動しない状態になる。印が無いので次の起動が .venv を組み直す。
+#     - 焼く物が無い時(焼く道具か venv の hy が root に無い・venv の .pth に root の中の dir が無い)は失敗ではないので印を置く — 焼く道具を
+#       持たない古い版の root と、焼く根の無い venv は、何度組み直しても焼く物が無い。
+#     - drain は組まない: 印が無くても venv の hy が在れば(焼きの失敗のまま起動した worker の preStop)それを使い、無ければ断る。
 #   uv の cache は DOEFF_UV_CACHE_DIR(既定 $WORK_DIR/state/uv-cache — 実行環境の root と同じ dir)、Python は $WORK_DIR/state/python。crate の取得先は $WORK_DIR/state/cargo。
 #   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
@@ -135,8 +148,8 @@ doeff_extract() {
   exec 8>&-
 }
 
-# 展開した root を準備して PATH の頭に置く(引き継いだ先 — 宣言した commit の script — の受け持ち)。drain は準備せず、完成した root を
-# 使うだけ(preStop で build しない)。
+# 展開した root を準備して PATH の頭に置く(引き継いだ先 — 宣言した commit の script — の受け持ち)。drain は準備せず、準備した root を
+# 使うだけ(preStop で build しない)。完成の印の置き方と役ごとの扱いは頭の註の「完成の印」。
 doeff_prepare() {
   export UV_CACHE_DIR="$DOEFF_UV_CACHE_DIR" UV_PYTHON_INSTALL_DIR="$WORK_DIR/state/python" CARGO_HOME="$WORK_DIR/state/cargo"
   export UV_NO_PROGRESS=1
@@ -145,8 +158,12 @@ doeff_prepare() {
   if [ -f "$root/.doeff-boot-ready" ]; then
     echo "boot: doeff $sha の root を使う(準備済み)" >&2
   elif [ "$role" = drain ]; then
-    echo "boot: doeff $sha の root が準備されていない(drain は準備しない)" >&2
-    exit 1
+    # 印の無い root で起動している worker(焼きの失敗のまま起動を続けた)の preStop は、その venv の hy を使う — drain は組まない。
+    if [ ! -x "$root/.venv/bin/hy" ]; then
+      echo "boot: doeff $sha の root が準備されていない(drain は準備しない)" >&2
+      exit 1
+    fi
+    echo "boot: doeff $sha の root に完成の印が無い — venv の hy をそのまま使う(drain は組み直さない)" >&2
   else
     started=$(date +%s)
     # 完成の印の無い venv は準備が途中で止まった残り — 作り直す。
@@ -170,8 +187,22 @@ doeff_prepare() {
     PYTHONDONTWRITEBYTECODE=1 uv pip install --no-deps --python "$root/.venv/bin/python" "$wheel" >&2
     installed=$(date +%s)
     doeff_bake
-    touch "$root/.doeff-boot-ready"
-    echo "boot: doeff $sha の root を準備した(uv sync $((synced - started)) 秒・doeff-vm の wheel を${how} $((wheeled - synced)) 秒・wheel の install $((installed - wheeled)) 秒・${baked})" >&2
+    spent="uv sync $((synced - started)) 秒・doeff-vm の wheel を${how} $((wheeled - synced)) 秒・wheel の install $((installed - wheeled)) 秒"
+    case "$bake_result" in
+      baked|nothing)
+        touch "$root/.doeff-boot-ready"
+        echo "boot: doeff $sha の root を準備した(${spent}・${baked})" >&2 ;;
+      failed)
+        # 焼きの失敗は準備の失敗 — 印を置かない(次の準備が上の分岐で .venv を組み直す)。役 prepare は非 0 で終わり、root の path を
+        # 出さない。起動を続ける役はこの venv のまま起動する(焼かれなかった module は import の時に作られる)。
+        echo "boot: doeff $sha の root の bytecode を焼けない — 完成の印 .doeff-boot-ready を置かない(次の準備が .venv を組み直す・${spent}・${baked})" >&2
+        if [ "$role" = prepare ]; then
+          exit 1
+        fi ;;
+      *)
+        echo "boot: 焼きの結果 '$bake_result' は baked・nothing・failed のどれでもない" >&2
+        exit 1 ;;
+    esac
   fi
   exec 8>&-
   export PATH="$root/.venv/bin:$PATH"
@@ -181,12 +212,15 @@ doeff_prepare() {
 # boot.lock を持ったまま呼ぶ・#3725)。道具は実行環境の準備(worker/protocol/env_translation の CompileTrees)と同じ — root の
 # 版の worker/entry/code_prepare.hy を root の venv の hy で 1 回起こし、BOOT_ENTRIES の閉包だけを、import の時に source の hash を検める
 # 方式で用意する(引数の意味と揃え方は道具の頭の註)。.pyc は source の中身で引く保存先(DOEFF_HY_CODE_STORE)から書き、中身の変わった
-# file だけを焼く(#3858 — 前の root からの引き継ぎは持たない)。焼けなくても起動は続ける — 焼かれなかった module は import の時に
-# 作られる(遅くなるだけ)。結果は準備の行に載せる 1 句(baked)。
+# file だけを焼く(#3858 — 前の root からの引き継ぎは持たない)。結果は 2 つ: 準備の行に載せる 1 句(baked)と、完成の印を置くかを
+# 決める 3 値(bake_result)— baked = 焼けた・nothing = 焼く物が無い(失敗ではない — 印を置く)・failed = 焼く道具が非 0 で終わったか、
+# 報告に stored/rebuilt の数の行が無い(印を置かない — 頭の註の「完成の印」)。どれでも 0 で返す(set -e の下で呼ぶ)。
 doeff_bake() {
   tool=$root/packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy
   if [ ! -f "$tool" ] || [ ! -x "$root/.venv/bin/hy" ]; then
+    # 焼く道具を持たない版の root か、hy の無い venv — 組み直しても焼く物は無い(import の時に作られる)。
     baked="bytecode を焼かない(焼く道具か venv の hy が root に無い — import の時に作られる)"
+    bake_result=nothing
     return 0
   fi
   real=$(cd "$root" && pwd -P)
@@ -216,7 +250,9 @@ doeff_bake() {
     done <"$pth"
   done
   if [ -z "$roots" ]; then
+    # 焼く根の無い venv — 組み直しても焼く物は無い(import の時に作られる)。
     baked="bytecode を焼かない(venv の .pth に root の中の dir が無い)"
+    bake_result=nothing
     return 0
   fi
   set -- --revision "$sha" --entries "$BOOT_ENTRIES" --tree "$root" --roots "$roots"
@@ -231,8 +267,10 @@ doeff_bake() {
   fi
   if [ -n "$counts" ]; then
     baked="bytecode $(( $(date +%s) - bake_started )) 秒(${counts})"
+    bake_result=baked
   else
-    baked="bytecode を焼けない(import の時に作られる): $(printf '%s\n' "$report" | tail -n 3 | tr '\n' ' ')"
+    baked="焼く道具の報告の末尾: $(printf '%s\n' "$report" | tail -n 3 | tr '\n' ' ')"
+    bake_result=failed
   fi
 }
 
