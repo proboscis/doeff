@@ -16,7 +16,7 @@
 (import time)
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.pidfd_exit [pidfd-exit-handler])
+(import doeff_core_effects.process_exit [process-exit-handler])
 (import doeff_core_effects.process_effects [StartProcess ProcessStarted AwaitProcessExit])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -204,11 +204,11 @@
   started-at)
 
 
-(deff on-real-clock [#^ Program program]  ; defk にできない: 検が自分の scheduler と本物の event loop(pidfd の読み待ち)で回す入口
+(deff on-real-clock [#^ Program program]  ; defk にできない: 検が自分の scheduler と本物の event loop(機体の終わると読める fd の読み待ち)で回す入口
   {:pre [(: program Program)] :post [(: % float)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を本物の答え手の組(外側が先 — event loop・実時間・子 process・子の終わりの待ち)の上で回すため(core の
    test_process_exit_wait の handled と同じ組)。"
-  (run (scheduled (with-handlers [(await-handler) (async-time-handler) subprocess-handler pidfd-exit-handler] program))))
+  (run (scheduled (with-handlers [(await-handler) (async-time-handler) subprocess-handler process-exit-handler] program))))
 
 
 (deftest test-a-child-that-ends-wakes-the-wait-at-once

@@ -2,8 +2,10 @@
 
 worker の代わりに検が待ちの子を起こし(stdin を pipe で持つ = worker と同じ持ち方)、unix socket へ頼みを送る。頼みと答えの 1 行は
 doeff_core_effects.os_warm_process の約束の形(WarmRequestWire・WarmForkedWire・WarmRefusedWire)。分かれた子が走らせる入口は
-tests/fixtures/warm_job(前もって読む module として名指す)。範囲は Linux(/proc と fork と pidfd と子孫の引き取り)。
-検は眠らずに出来事で待つ: 待ちの子の準備完了は stderr の 1 行・分かれた子 A の終わりは pidfd・job の進みは検が開いた関所の socket。
+tests/fixtures/warm_job(前もって読む module として名指す)。範囲は Linux と macOS の worker(fork・子孫の引き取りは Linux だけで、macOS は
+引き取らない形 — shim.py の註)。macOS の機体で直接 動く worker も warm child で job を走らせるため。
+検は眠らずに出来事で待つ: 待ちの子の準備完了は stderr の 1 行・分かれた子 A の終わりはその機体の終わると読める fd(Linux = pidfd・
+macOS = kqueue — doeff_core_effects.process_exit の exit-fd-of)・job の進みは検が開いた関所の socket。
 
 守る事と、その失敗ケース:
 - 分かれる前に thread が 1 本・VM が 0 個(準備完了の印)
@@ -18,8 +20,6 @@ tests/fixtures/warm_job(前もって読む module として名指す)。範囲�
 - 待ちの子は読み込んだ heap を受け付けの前に GC で掃いて凍らせ、分かれた子はその凍った heap を受け継ぐ(#3765)
 """
 
-import ctypes
-import errno
 import json
 import os
 import re
@@ -36,11 +36,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from doeff import run
+from doeff_core_effects.process_exit import exit_fd_of
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "program"}
 
 LINUX = sys.platform.startswith("linux")
-pytestmark = pytest.mark.skipif(not LINUX, reason="待ちの子は /proc と fork と子孫の引き取りを使う — 範囲は Linux の worker")
+DARWIN = sys.platform == "darwin"
+pytestmark = pytest.mark.skipif(not (LINUX or DARWIN), reason="待ちの子は fork と終わると読める fd を使う — 範囲は Linux と macOS の worker")
 
 # 待ちの子の木 = この package の dir(tests.fixtures.warm_job として読める)。
 PACKAGE = Path(__file__).resolve().parent.parent
@@ -49,8 +52,6 @@ WARM = "doeff_cluster.worker.entry.warm_child"
 # 待ちの子の準備(module の読み込み)を待つ上限・job の進みと終わりを待つ上限(秒)。
 READY_LIMIT_SECONDS = 60.0
 END_LIMIT_SECONDS = 20.0
-# Linux の syscall の番号 pidfd_open(x86_64 と aarch64 で同じ 434)。
-PIDFD_OPEN = 434
 SECRET_NAME = "WARM_CHILD_TEST_SECRET"
 SECRET_VALUE = "s3cr3t-value-that-must-not-leak"
 # 刻の頭の形(ISO 8601 の日時・ms・時差・空白 1 つ — tests/test_line_stamp.py と同じ形を検が自分で綴る)。
@@ -186,22 +187,10 @@ def forked_job(warm: Warm, name: str, args: list[str], env: dict[str, str] | Non
     return answer
 
 
-def pidfd_of(pid: int) -> int | None:
-    """pid の終わりを select で待てる fd(pidfd)を開くため。libc の syscall pidfd_open で開く(この検の Python には os.pidfd_open が
-    無い build が在る)。もう居なければ None。"""
-    libc = ctypes.CDLL(None, use_errno=True)
-    descriptor = int(libc.syscall(PIDFD_OPEN, pid, 0))
-    if descriptor >= 0:
-        return descriptor
-    failure = ctypes.get_errno()
-    if failure == errno.ESRCH:
-        return None
-    raise OSError(failure, f"pidfd_open({pid}) が断った")
-
-
 def ended(child: Forked) -> None:
-    """分かれた子 A の終わりを pidfd で待つため(待ちの子の子なので waitpid は使えない — 終わっていれば、すぐ戻る)。"""
-    descriptor = pidfd_of(child.pid)
+    """分かれた子 A の終わりを、その機体の終わると読める fd で待つため(待ちの子の子なので waitpid は使えない — 終わっていれば、
+    すぐ戻る)。"""
+    descriptor = run(exit_fd_of(child.pid))
     if descriptor is None:
         return
     try:
@@ -210,6 +199,14 @@ def ended(child: Forked) -> None:
             raise AssertionError(f"分かれた子 {child.pid} が {END_LIMIT_SECONDS} 秒の内に終わらない")
     finally:
         os.close(descriptor)
+
+
+def environ_of(pid: int) -> bytes:
+    """pid の process の環境変数の並び(Linux = /proc/<pid>/environ・macOS = ps -E が命令の後ろに出す環境 — 同じ利用者の process)。"""
+    if LINUX:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            return handle.read()
+    return subprocess.run(["ps", "-E", "-ww", "-p", str(pid), "-o", "command="], check=True, capture_output=True).stdout
 
 
 def gate_opened(place: Path, name: str) -> socket.socket:
@@ -355,8 +352,7 @@ def test_the_warm_child_keeps_no_request_env(place: Path) -> None:
         answer = asked(warm, broken)
         assert isinstance(answer, Refused), answer
         assert SECRET_VALUE not in answer.detail
-        with open(f"/proc/{warm.process.pid}/environ", "rb") as handle:
-            assert SECRET_VALUE.encode() not in handle.read()
+        assert SECRET_VALUE.encode() not in environ_of(warm.process.pid)
         assert warm.process.stdin is not None
         warm.process.stdin.close()
         assert warm.process.wait(timeout=10) == 0
@@ -402,3 +398,11 @@ def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path) -> No
         assert [STAMP.sub(b"", line) for line in lines] == [b"warm_job: exit 5"], lines
     finally:
         stopped(warm)
+
+
+def test_the_warm_child_reads_the_process_through_the_machine_readers() -> None:
+    """失敗ケース: 待ちの子は process の様子(起動の刻・thread の本数)を /proc から自分で読まず、
+    機体ごとの読み(doeff_core_effects.os_warm_process の proc-stat-of・own-thread-count)を使う — /proc の無い macOS で起動の前に落ちない。"""
+    source = (PACKAGE / "src" / "doeff_cluster" / "worker" / "entry" / "warm_child.py").read_text()
+    assert "/proc" not in source
+    assert "proc_stat_of" in source and "own_thread_count" in source
