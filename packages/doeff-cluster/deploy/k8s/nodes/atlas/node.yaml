@@ -1,0 +1,15 @@
+# atlas の差: 置く Node と資源の上限・取り分。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      nodeSelector: { kubernetes.io/hostname: atlas }
+      containers:
+        - name: worker
+          # atlas は CPU 16・memory 28Gi(Node の allocatable・2026-10-10 の実測)。coordinator と同じ機体。
+          # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は最初の起動で doeff-vm の wheel を組む山を通す大きさ。
+          resources: { requests: { cpu: "500m", memory: 1Gi }, limits: { cpu: "8", memory: 8Gi } }

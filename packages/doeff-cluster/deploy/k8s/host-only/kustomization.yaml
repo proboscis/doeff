@@ -1,0 +1,15 @@
+# 機体の仕事だけを受ける worker の差(zeus でない機体の dir が components で読む)。この dir だけでは当てない。
+# zeus の worker は上に載る系の仕事も受ける(能力の残り・受ける数・準備の script は名の固定した ConfigMap から)。ほかの機体の worker は、
+# 機体の能力 2 つ(host-<Node の名>・host-systemd-readable)を要る job だけを受ける — 上に載る系の能力の残りを名乗ると、その能力だけを要る
+# job が memory 4GiB の機体へも置かれ得るため。上に載る系の仕事も受けさせる時は、その機体の dir からこの component を外す。
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  # 能力は機体の 2 つだけ(雛形の $(WORKER_PROVIDES_EXTRA) を足さない)。値は行の場所を変えずに置き換える — k8s は $(NODE_NAME) を前の
+  # 行で定義した env だけから展開するので、戦略的マージ(patch の行を env の先頭へ移す)では置き換えない。雛形の行の並びが変わったら、
+  # test の操作が組み立てを止める(黙って別の行を書き換えない)。
+  - target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+    patch: |-
+      - { op: test, path: /spec/template/spec/containers/0/env/6/name, value: WORKER_PROVIDES }
+      - { op: replace, path: /spec/template/spec/containers/0/env/6/value, value: "host-$(NODE_NAME),host-systemd-readable" }
+  - path: host-only.yaml

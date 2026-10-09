@@ -1,0 +1,23 @@
+# 機体の仕事だけを受ける worker の差(能力の置き換えは kustomization.yaml の JSON patch):
+# - 受ける数は env で決める(k8s は env を envFrom より優先するので、worker-env の WORKER_CAPACITY・WORKER_TASK_RESERVE は効かない)。
+#   機体の仕事は機体ごとに数本なので 2。task に空けておく数は 0(task は機体の能力を要らず、ここへは来ない)。
+# - 上に載る系の準備の script(ConfigMap worker-prepare)は置かない — 上に載る系の仕事を受ける worker の道具の準備で、機体の仕事には
+#   要らず、clone の無い空の機体では通らずに起動を止める。雛形の起動の args は script が無ければ飛ばす。
+# worker-env(読み取りの鍵の表など)と worker-shell・Secret worker-repos は雛形のまま受ける。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - { name: WORKER_CAPACITY, value: "2" }
+            - { name: WORKER_TASK_RESERVE, value: "0" }
+          volumeMounts:
+            - { mountPath: /opt/worker-prepare, $patch: delete }
+      volumes:
+        - { name: prepare, $patch: delete }

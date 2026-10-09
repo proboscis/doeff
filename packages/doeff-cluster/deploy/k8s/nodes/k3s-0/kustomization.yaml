@@ -1,0 +1,14 @@
+# k3s-0 の worker(doeff-worker-k3s-0)= worker の雛形 + 機体の仕事だけを受ける差(../../host-only)+ k3s-0 の差(置く Node・資源の上限)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../worker
+components:
+  - ../../host-only
+nameSuffix: -k3s-0
+# 機体ごとの Deployment が互いの Pod を選ばないよう、selector と Pod の label に Node の名を足す。
+labels:
+  - pairs: { doeff.dev/node: k3s-0 }
+    includeSelectors: true
+patches:
+  - path: node.yaml

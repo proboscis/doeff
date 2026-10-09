@@ -1,0 +1,15 @@
+# k3s-3 の差: 置く Node と資源の上限・取り分。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      nodeSelector: { kubernetes.io/hostname: k3s-3 }
+      containers:
+        - name: worker
+          # k3s-3 は CPU 6・memory 11.7Gi(allocatable)。
+          # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は最初の起動で doeff-vm の wheel を組む山を通す大きさ。
+          resources: { requests: { cpu: "250m", memory: 512Mi }, limits: { cpu: "3", memory: 4Gi } }
