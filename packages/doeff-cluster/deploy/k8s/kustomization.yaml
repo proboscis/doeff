@@ -1,0 +1,9 @@
+# doeff-cluster の k8s の宣言 — coordinator 1 つと、機体ごとの worker 1 つ(雛形 worker/ + 機体の差 nodes/<Node の名>/)。
+# Flux はこの dir を当てる(kubectl kustomize で組み立てた物と同じ)。Namespace・Secret の中身・上に載る系の値の ConfigMap・job が要る
+# 権限は、上に載る系の repo が持つ(名と形は各 file の頭の註)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - coordinator.yaml
+  - worker-account.yaml
+  - nodes/zeus

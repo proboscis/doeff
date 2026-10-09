@@ -4,8 +4,8 @@ doeff の Program を、k8s の Deployment のように「定義がある限り�
 指定し、worker がその版の木(か実行環境の root)を用意して子 process で動かすので、業務のコードを入れ替えるのに image の build も
 worker の再起動も要りません。
 
-この package は業務を知りません。業務の側(アプリの repo)は job を Program の値として書き、系(`defsystem`)にまとめて宣言し、
-この package の coordinator と worker を自分の manifest で動かします。job が受け取るのは Program の値 1 つだけで、handler は
+この package は業務を知りません。業務の側(アプリの repo)は job を Program の値として書き、系(`defsystem`)にまとめて宣言します。
+coordinator と worker の k8s の宣言はこの package が持ちます(`deploy/k8s` — 下の「配備の材料」)。job が受け取るのは Program の値 1 つだけで、handler は
 Program の中の `with-handlers` で並べます(実行先は handler を 1 つも足しません — ADR-DOE-CLUSTER-001)。
 
 ## 全体の形
@@ -443,8 +443,33 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   この表は url に鍵を結ぶだけで、url を断りません。表に無い url は worker が鍵なしで clone します(公開の repo は通り、読めない非公開の
   repo は clone の失敗 `repo-unreachable` で返ります)。
 
-manifest(namespace・node・Secret・Role)は配備する側の repo が持ちます。coordinator の ServiceAccount には、Rollout が扱う
-Deployment の get・scale と、能力を導くための nodes の get が要ります。
+- `deploy/k8s` — k8s の宣言(Flux がこの dir を当てます)。coordinator 1 つ(atlas)と、機体(Node)ごとの worker 1 つ: 雛形
+  `deploy/k8s/worker` に、機体ごとの差(置く Node と資源の上限)を `deploy/k8s/nodes/<Node の名>` が足します(名は
+  `doeff-worker-<Node の名>`)。worker の名と `NODE_NAME` は Node の名で、能力 `host-<Node の名>` と `host-systemd-readable` を
+  申告し、機体の `/etc/systemd/system` を読み取り専用で `/host/etc/systemd/system`(env `WORKER_HOST_SYSTEMD_ROOT`)に置きます。
+  ServiceAccount `doeff-worker` の token・cluster の CA・namespace は標準の path(`/var/run/secrets/kubernetes.io/serviceaccount`)に
+  置きます。確かめは `tests/test_k8s_declarations.py`(`kubectl kustomize` で組み立てた物を読む)。
+
+worker は静的に保ちます(利用者の決定 2026-10-09 原文 "we are not supposed to frequently restart doeff worker! it must be very static.")。
+Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doeff の版を含む)か機体の資源の上限が変わった時だけです。
+
+宣言は上に載る系の名と値を書かず(規則 `doeff-packages-have-no-application-vocabulary`)、次の物を名で参照するだけです。中身は
+上に載る系の repo が持ちます。ConfigMap の名に中身の hash を付けないので、中身を変えても Pod は作り直されず、次の起動で効きます。
+
+| 物 | 受け方 | 置く物 | 無い時 |
+|---|---|---|---|
+| ConfigMap `worker-env` | worker の envFrom | `WORKER_TASK_RESERVE`・`WORKER_CAPACITY`・`WORKER_REPOS` など boot.sh と job の子が読む値。`WORKER_PROVIDES_EXTRA`(能力の残り)と `WORKER_PASS_ENV_EXTRA`(job の子へ渡す残りの env の名)は空の値でも必ず置く | container が起動しない(CreateContainerConfigError) |
+| ConfigMap `coordinator-env` | coordinator の envFrom | `NOTICE_BROKER` | container が起動しない(CreateContainerConfigError) |
+| ConfigMap `worker-prepare` | `/opt/worker-prepare` | 起動の前に 1 度実行する script(キー `prepare.sh`・非 0 なら起動しない) | 実行せずに起動する |
+| ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
+| ConfigMap `coord-wal-backup` | coordinator の init container | 記録(WAL)の控えを取る script(キー `backup.sh`) | 控えを飛ばして起動する |
+| Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
+| Role・RoleBinding | — | job が要る権限(subject = ServiceAccount `doeff-worker`) | job の API の呼び出しが断られる |
+| Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
+
+env の値は宣言の `env` が `envFrom` より優先されるので、宣言に在る名を ConfigMap に置いても効きません。coordinator の ServiceAccount
+には能力を導くための nodes の list・watch を与えます(`deploy/k8s/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その
+Deployment の在る namespace の権限として配備する側が与えます。
 
 ### 配備の順
 

@@ -1,0 +1,133 @@
+# doeff-cluster の worker の雛形 — k8s の機体(Node)ごとに 1 つ。機体ごとの差(置く Node・資源の上限)は ../nodes/<Node の名>/ が足す
+# (名は doeff-worker-<Node の名>)。
+#
+# 静的に保つ(利用者の決定 2026-10-09 原文 "we are not supposed to frequently restart doeff worker! it must be very static."):
+# Pod を作り直すのは、この dir の宣言(doeff の版 WORKER_DOEFF_COMMIT を含む)か機体の資源の上限が変わった時だけ。上に載る系の値は
+# 名の固定した ConfigMap から受ける。ConfigMap の名に中身の hash を付けないので、中身を変えても Pod は作り直されず、次の起動で効く。
+#
+# 上に載る系の repo が用意する物(名は固定 — この宣言は名で参照するだけで、上に載る系の名と値は書かない):
+#   ConfigMap worker-env      envFrom で受ける env。boot.sh が必ず要る WORKER_TASK_RESERVE と、WORKER_CAPACITY・WORKER_REPOS・
+#                             CODE_REPO_URL など boot.sh と job の子が読む値。加えて次の 2 つを必ず置く(空の値でよい):
+#                               WORKER_PROVIDES_EXTRA  能力の残り(`,` で並べる)— 下の WORKER_PROVIDES の後ろに付く
+#                               WORKER_PASS_ENV_EXTRA  job の子へ渡す残りの env の名(`,` で並べる)— 下の WORKER_PASS_ENV の後ろに付く
+#                             無いと $(名) が展開されずに残り、worker は能力の名か env の名の誤りを stderr に出して起動しない。
+#                             下の env と同じ名を置いても効かない(k8s は env を envFrom より優先する)。
+#   ConfigMap worker-prepare  起動の前に 1 度実行する script(キー prepare.sh・非 0 なら起動しない)。ConfigMap が無ければ実行しない。
+#   ConfigMap worker-shell    job の子が使う shell の script(/opt/worker-shell に置く)。無くても起動する。
+#   Secret worker-repos       WORKER_REPOS の deploy key と known_hosts(boot.sh が /etc/worker-repos から読む)。無くても起動する
+#                             (WORKER_REPOS が要る key を欠けば boot.sh が理由を出して止まる)。
+#   ServiceAccount doeff-worker(../worker-account.yaml)の権限(Role・RoleBinding)— ここには書かない。
+#   Namespace agent-worker    ここでは宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため)。
+#
+# 機体の事実: worker の名と NODE_NAME は Node の名(fieldRef spec.nodeName)。機体の /etc/systemd/system を読み取り専用で
+# /host/etc/systemd/system に置き、その path を WORKER_HOST_SYSTEMD_ROOT で渡す。2 つは job の子へも渡る(WORKER_PASS_ENV)。
+# ServiceAccount の token・cluster の CA・namespace は標準の path(/var/run/secrets/kubernetes.io/serviceaccount)に置き、
+# API server の場所の env(KUBERNETES_SERVICE_HOST・KUBERNETES_SERVICE_PORT — kubelet が必ず置く)も job の子へ渡す。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+  labels: { app: doeff-worker }
+spec:
+  replicas: 1
+  # 同じ worker の名で 2 つが同時に申告しないよう、旧を止めてから新を起こす。
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: doeff-worker } }
+  template:
+    metadata:
+      labels: { app: doeff-worker }
+    spec:
+      serviceAccountName: doeff-worker
+      # token は下の投影の volume で worker の container にだけ置く(init container には置かない)。
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # preStop の drain(上限 DRAIN_DEADLINE 秒)+ 子 process を止める猶予(stop-grace 10 秒 + KILL)。
+      terminationGracePeriodSeconds: 120
+      # 置く Node は機体の dir の nodeSelector で指定する。その Node の taint はどれも受ける。
+      tolerations:
+        - { operator: Exists }
+      securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true, fsGroup: 1000 }
+      initContainers:
+        # hostPath は root の持ち物で作られるので、worker の uid へ渡す。
+        - name: own-work
+          image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
+          command: ["chown", "1000:1000", "/work"]
+          securityContext: { runAsUser: 0, runAsNonRoot: false }
+          volumeMounts:
+            - { mountPath: /work, name: work }
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
+      containers:
+        - name: worker
+          image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
+          # pid 1 は image の ENTRYPOINT の tini。command は ENTRYPOINT を上書きするので args で渡す。準備の script が在れば実行し
+          # (非 0 なら起動しない)、PATH の先頭に ~/.local/bin を置いて起動の script(/opt/worker-boot.sh・ROLE=worker)へ。
+          # job の子は worker の PATH を継ぐ。
+          args:
+            - /bin/sh
+            - -c
+            - >-
+              if [ -f /opt/worker-prepare/prepare.sh ]; then sh /opt/worker-prepare/prepare.sh; fi
+              && export PATH="$HOME/.local/bin:$PATH" && exec /opt/worker-boot.sh
+          envFrom:
+            - configMapRef: { name: worker-env }
+          env:
+            - { name: ROLE, value: worker }
+            - { name: WORK_DIR, value: /work }
+            # worker 自身の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。
+            - { name: WORKER_DOEFF_COMMIT, value: 418d4eab681c045608445a9ff5319d8649790f97 }
+            - { name: COORDINATOR_URL, value: "http://coordinator.agent-worker.svc.cluster.local:8080" }
+            # 置かれた Node の名(coordinator が Node の label から能力を導く)。下の $(NODE_NAME) より前に置く — k8s は前の行で
+            # 定義した env だけを展開する。
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # worker の名 = Node の名(機体ごとに 1 つなので、名は機体で決まる)。
+            - name: WORKER_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # 提供する能力: 機体の名の能力と、機体の systemd の unit を読めること。残りは worker-env の WORKER_PROVIDES_EXTRA。
+            - { name: WORKER_PROVIDES, value: "host-$(NODE_NAME),host-systemd-readable,$(WORKER_PROVIDES_EXTRA)" }
+            # job の子へ渡す worker の env の名(実行環境の job の子は worker の env を許可表でしか継がない)。機体の事実と API server の
+            # 場所はここで渡し、残りは worker-env の WORKER_PASS_ENV_EXTRA。
+            - name: WORKER_PASS_ENV
+              value: "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
+            - { name: WORKER_HOST_SYSTEMD_ROOT, value: /host/etc/systemd/system }
+            # 機体の dir(/work)を使う worker を 1 つに限る(Deployment の名が変わる入れ替えで、旧と新の Pod が同じ dir に重ならない)。
+            - { name: WORKER_DIR_LOCK, value: "1" }
+            - { name: DRAIN_DEADLINE, value: "90" }
+          lifecycle:
+            preStop: { exec: { command: ["/bin/sh", "-c", "ROLE=drain exec /opt/worker-boot.sh"] } }
+          readinessProbe:
+            exec: { command: ["/bin/sh", "-c", "ROLE=ready exec /opt/worker-boot.sh"] }
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - { mountPath: /work, name: work }
+            - { mountPath: /scratch, name: scratch }
+            - { mountPath: /memory-scratch, name: memory-scratch }
+            - { mountPath: /host/etc/systemd/system, name: host-systemd, readOnly: true }
+            - { mountPath: /var/run/secrets/kubernetes.io/serviceaccount, name: account-token, readOnly: true }
+            - { mountPath: /etc/worker-repos, name: repos, readOnly: true }
+            - { mountPath: /opt/worker-prepare, name: prepare, readOnly: true }
+            - { mountPath: /opt/worker-shell, name: shell, readOnly: true }
+          # 資源の上限と取り分は機体ごとの値 — 機体の dir が足す。
+      volumes:
+        # 自己起動の root・実行環境の root・uv の cache と Python・crate・log。Pod の寿命の外(機体の dir)— 作り直しても残る。
+        - { name: work, hostPath: { path: /var/lib/agent-worker, type: DirectoryOrCreate } }
+        # 作業場所(disk)。Pod を作り直すと消える。
+        - { name: scratch, emptyDir: {} }
+        # 作業場所(memory — tmpfs)。小さく速い file の場所。中身は Pod の memory に数えられ、sizeLimit を越えると kubelet が Pod を
+        # 追い出す。Pod を作り直すと消える。
+        - { name: memory-scratch, emptyDir: { medium: Memory, sizeLimit: 1536Mi } }
+        - { name: host-systemd, hostPath: { path: /etc/systemd/system, type: Directory } }
+        # ServiceAccount doeff-worker の token と cluster の CA と namespace — 自動 mount と同じ中身を worker の container にだけ置く。
+        - name: account-token
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken: { path: token, expirationSeconds: 3600 }
+              - configMap: { name: kube-root-ca.crt, items: [{ key: ca.crt, path: ca.crt }] }
+              - downwardAPI: { items: [{ path: namespace, fieldRef: { fieldPath: metadata.namespace } }] }
+        - { name: repos, secret: { secretName: worker-repos, defaultMode: 0400, optional: true } }
+        - { name: prepare, configMap: { name: worker-prepare, defaultMode: 0555, optional: true } }
+        - { name: shell, configMap: { name: worker-shell, defaultMode: 0555, optional: true } }

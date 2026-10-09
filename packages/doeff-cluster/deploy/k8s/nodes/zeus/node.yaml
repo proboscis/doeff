@@ -1,0 +1,19 @@
+# zeus の差: 置く Node と資源の上限・取り分。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      nodeSelector: { kubernetes.io/hostname: zeus }
+      containers:
+        - name: worker
+          # CPU の requests = 重み(cgroup の cpu.weight)。4 コアで重み 157 にし、同じ機体の他の Pod より先に CPU を受ける。
+          # memory の requests(取り分)8Gi は、落ち着いた時の使用量と起動の山の実測(2026-10-05)から。
+          # 2026-10-09 15:4x: memory の上限を 100Gi・CPU の上限を 16 へ(利用者の決定 2026-10-09 原文 "let the doeff worker on zeus to use 100GB
+          # or something" → "ah okay as you recommend, just keep 100GB" → "what, still 20g limit for a pod???? just fix that immediately")。
+          # 同時に受ける処理の数は機体の memory の余白で決まるので、20Gi では同時に走る数が 5 本前後に留まった(15:5x の本番: 使用 18.4GiB /
+          # 20GiB・CLI 15 本)。Node の allocatable は 118Gi。requests は変えない。戻す時は CPU 8 / memory 20Gi へ。
+          resources: { requests: { cpu: "4", memory: 8Gi }, limits: { cpu: "16", memory: 100Gi } }

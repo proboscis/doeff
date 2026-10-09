@@ -1,0 +1,124 @@
+# doeff-cluster の coordinator(cluster に 1 つ・atlas)と、その Service・ServiceAccount・Node を読む権限。
+#
+# 上に載る系の repo が用意する物(名は固定 — この宣言は名で参照するだけ):
+#   ConfigMap coordinator-env   envFrom で受ける env。boot.sh が必ず要る NOTICE_BROKER(worker の生死の知らせの broker — redis://… か
+#                               memory)。無いと boot.sh が理由を出して止まる。下の env と同じ名を置いても効かない(env が優先)。
+#   ConfigMap coord-wal-backup  起動の前に記録(WAL)の控えを取る script(キー backup.sh)。無ければ控えを飛ばして起動する。
+#   Namespace agent-worker      ここでは宣言しない。
+#
+# 名と selector は以前の宣言と同じ(Deployment の selector は変えられない — 持ち主が替わっても同じ物を引き継ぎ、coordinator が
+# 2 つ同時に同じ状態の file を書く時間を作らない)。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coordinator
+  namespace: agent-worker
+  labels: { app.kubernetes.io/part-of: agent-worker }
+---
+# coordinator は Node の label から能力(company-machine など)を導く。Node を名で 1 つずつ GET せず、名の fieldSelector で list した後に
+# watch で見張るので、nodes の list と watch が要る。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-worker-coordinator-nodes
+  labels: { app.kubernetes.io/part-of: agent-worker }
+rules:
+  - { apiGroups: [""], resources: [nodes], verbs: [list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-worker-coordinator-nodes
+  labels: { app.kubernetes.io/part-of: agent-worker }
+subjects:
+  - { kind: ServiceAccount, name: coordinator, namespace: agent-worker }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: agent-worker-coordinator-nodes }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator
+  namespace: agent-worker
+  labels: { app: agent-worker-coordinator }
+spec:
+  selector: { app: agent-worker-coordinator }
+  ports: [ { name: http, port: 8080, targetPort: 8080 } ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: agent-worker
+  labels: { app: agent-worker-coordinator }
+spec:
+  replicas: 1
+  # 状態の file を 2 つが同時に書かないよう、旧を止めてから新を起こす。
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: agent-worker-coordinator } }
+  template:
+    metadata:
+      labels: { app: agent-worker-coordinator }
+    spec:
+      # 既定の ServiceAccount に ClusterRole を足すだけでは token が Pod に載らない — 専用の ServiceAccount を指定し automount を true にする。
+      serviceAccountName: coordinator
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      nodeSelector: { kubernetes.io/hostname: atlas }
+      securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true, fsGroup: 1000 }
+      initContainers:
+        # hostPath は root の持ち物で作られるので、uid 1000 へ渡す。
+        - name: own-state
+          image: zeus:5000/doeff-cluster-base:in-52341c8f2d15
+          command: ["chown", "1000:1000", "/work", "/work/coord"]
+          securityContext: { runAsUser: 0, runAsNonRoot: false }
+          volumeMounts:
+            - { mountPath: /work, name: work }
+            - { mountPath: /work/coord, name: coord-wal }
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
+        # 記録(WAL)の控え(直近 5 つ)。古い Pod が消えた後、coordinator の起動の前に 1 度。失敗しても起動は通す(script も外側の sh も
+        # 0 で終わる・ConfigMap は optional)。控えた名か飛ばした理由は、この container の log の 1 行。
+        - name: wal-backup
+          image: zeus:5000/doeff-cluster-base:in-52341c8f2d15
+          command: ["sh", "-c", "sh /opt/coord-wal-backup/backup.sh || echo 'coord-wal-backup: 控えを飛ばす — script が失敗した(coordinator の起動は通す)'"]
+          env:
+            - { name: WAL_DIR, value: /work/coord/wal }
+            - { name: BACKUP_DIR, value: /work/coord/backups }
+            - { name: BACKUP_KEEP, value: "5" }
+            # 控えを取った後に残す空きの下限 = 16GiB。出どころ = atlas の kubelet の設定の evictionSoft nodefs.available 15Gi(猶予 5 分・
+            # 2026-10-05 に Node の configz で確かめた値)に 1Gi を足した線。控えは coord-wal の volume(atlas の ZFS の dataset
+            # hot_ssd_nvme/agent-worker-coord・Node の disk とは別)に置くので、この線は ZFS の pool の空きに掛かる。
+            - { name: BACKUP_MIN_FREE_BYTES, value: "17179869184" }
+          volumeMounts:
+            - { mountPath: /work, name: work }
+            - { mountPath: /work/coord, name: coord-wal }
+            - { mountPath: /opt/coord-wal-backup, name: coord-wal-backup, readOnly: true }
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+      containers:
+        - name: coordinator
+          image: zeus:5000/doeff-cluster-base:in-52341c8f2d15
+          envFrom:
+            - configMapRef: { name: coordinator-env }
+          env:
+            - { name: ROLE, value: coordinator }
+            - { name: WORK_DIR, value: /work }
+            # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。coordinator と worker の
+            # どちらを先に上げるかは変更ごとに決まる(../../README.md「配備の順」)。
+            - { name: WORKER_DOEFF_COMMIT, value: 7f7eab4a81b0846db1b624337b58904b14dc1423 }
+            # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
+            - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
+            - { name: NOTICE_RETRY_SECONDS, value: "2" }
+          ports: [ { containerPort: 8080, name: http } ]
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 10
+          volumeMounts:
+            - { mountPath: /work, name: work }
+            - { mountPath: /work/coord, name: coord-wal }
+          resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { cpu: "2", memory: 4Gi } }
+      volumes:
+        - { name: work, hostPath: { path: /var/lib/agent-worker-coord, type: DirectoryOrCreate } }
+        # 記録(WAL)と控えの dir だけを atlas の ZFS の dataset hot_ssd_nvme/agent-worker-coord(sync=standard・logbias=latency)へ置く
+        # (root の ext4 の drive は FLUSH が 0.1〜1 秒かかり、WAL の fsync が詰まった)。boot/(root)と state/ は work のまま。
+        # type は Directory(作らない)— dataset が mount されていない時は coord が無いので Pod は起きず、空の記録で起動しない。
+        - { name: coord-wal, hostPath: { path: /mnt/hot_ssd_nvme/agent-worker-coord/coord, type: Directory } }
+        - { name: coord-wal-backup, configMap: { name: coord-wal-backup, optional: true } }

@@ -1,0 +1,5 @@
+# worker の雛形(機体ごとの dir が resources で読む)。この dir だけでは当てない — 置く Node と資源の上限が無い。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - worker.yaml
