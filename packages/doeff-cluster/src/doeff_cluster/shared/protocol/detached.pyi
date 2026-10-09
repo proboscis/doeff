@@ -4,7 +4,7 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from urllib.parse import quote as url_quote
-from operator import itemgetter as itemgetter
+from collections.abc import Mapping as Mapping
 from doeff_time import Delay as Delay
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
@@ -68,6 +68,7 @@ from doeff_cluster.shared.intent.detached_model import ServiceViewWire as Servic
 from doeff_cluster.shared.intent.detached_model import ReadServices as ReadServices
 from doeff_cluster.shared.intent.detached_model import ServiceFact as ServiceFact
 from doeff_cluster.shared.intent.detached_model import ServicesUnreachable as ServicesUnreachable
+from doeff_cluster.shared.intent.detached_model import ServiceListWire as ServiceListWire
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
@@ -123,7 +124,10 @@ def service_ready_awaited(cell: RouteCell, options: RouteOptions, sender: Detach
 def runners_unreachable(reason: str) -> RunnersUnreachable:
     ...
 
-def service_facts_of_view(items: list) -> tuple:
+def service_facts_of_view(view: ServiceListWire) -> _Program[tuple[ServiceFact, ...], object]:
+    ...
+
+def service_facts_of_json(body: Mapping[str, object]) -> _Program[tuple[ServiceFact, ...], object]:
     ...
 
 def services_unreachable(reason: str) -> ServicesUnreachable:
@@ -170,7 +174,7 @@ def detached_flag(cell: RouteCell, options: RouteOptions, sender: DetachedSender
 def runners_read(cell: RouteCell, options: RouteOptions, sender: DetachedSender) -> _Program[tuple | RunnersUnreachable, object]:
     ...
 
-def services_read(cell: RouteCell, options: RouteOptions, sender: DetachedSender) -> _Program[tuple | ServicesUnreachable, object]:
+def services_read(cell: RouteCell, options: RouteOptions, sender: DetachedSender) -> _Program[tuple[ServiceFact, ...] | ServicesUnreachable, object]:
     ...
 
 def runners_changed(cell: RouteCell, options: RouteOptions, after: int, timeout_seconds: float) -> _Program[RunnersChangeAnswer, object]:

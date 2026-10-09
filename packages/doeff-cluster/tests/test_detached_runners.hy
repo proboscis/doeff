@@ -28,7 +28,7 @@
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-view])
+(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
@@ -545,16 +545,29 @@
   ;; 担い手の行(status.process)の failures・lastExitCode・lastExitAtMs を写す。行が無い(置き先が無い)・欄を載せない担い手の行・宣言の行に
   ;; 台数が無い(受け付けない宣言)時は None — 0 と黙って倒さない(倒すと、読み手が「落ちていない」と読む)。名の順に並べる。
   ;; 宣言の版(spec の revision — #2718 の子 S2a: 別の Service を宣言し直す前に、どの Service がどの版で動くかを照らす)も写し、行に版が
-  ;; 無ければ None。
+  ;; 無ければ None。本文の頭の revision(coordinator の状態の版)は行の版にしない。spec も status も無い行は欄が全部 None。
   (val items [{"name" "w" "spec" {"replicas" 1 "revision" "rw"} "status" {"failures" 5 "process" {"name" "w" "failures" 5 "lastExitCode" 1 "lastExitAtMs" 990}}}
               {"name" "u" "spec" {"replicas" 0} "status" {"process" None}}
               {"name" "v" "spec" {"replicas" 1} "status" {"process" {"name" "v" "attempts" 1}}}
-              {"name" "x" "spec" {"revision" "r9"} "status" {"refused" "旧い形の行"}}])
-  (assert (= (service-facts-of-view items)
+              {"name" "x" "spec" {"revision" "r9"} "status" {"refused" "旧い形の行"}}
+              {"name" "y"}])
+  (<- facts (service-facts-of-json {"kind" "Service" "revision" 42 "items" items}))
+  (assert (= facts
              #((ServiceFact :name "u" :replicas 0 :failures None :last-exit-code None :last-exit-at-ms None :revision None)
                (ServiceFact :name "v" :replicas 1 :failures None :last-exit-code None :last-exit-at-ms None :revision None)
                (ServiceFact :name "w" :replicas 1 :failures 5 :last-exit-code 1 :last-exit-at-ms 990 :revision "rw")
-               (ServiceFact :name "x" :replicas None :failures None :last-exit-code None :last-exit-at-ms None :revision "r9")))))
+               (ServiceFact :name "x" :replicas None :failures None :last-exit-code None :last-exit-at-ms None :revision "r9")
+               (ServiceFact :name "y" :replicas None :failures None :last-exit-code None :last-exit-at-ms None :revision None)))
+          facts))
+
+
+(deftest test-a-service-list-of-another-shape-fails-with-the-mismatched-fields
+  ;; 本文が ServiceListWire の形でない(行に name が無い・replicas が数でない)時は、合わない欄を挙げて ValueError で落ちる。空の一覧や
+  ;; None の欄として読まない(読むと、呼び手が「Service が無い」「落ちていない」と受け取る)。
+  (with [raised (pytest.raises ValueError :match "ServiceListWire")]
+    (<- _never (service-facts-of-json {"items" [{"spec" {"replicas" "1"}}]})))
+  (assert (in "items.0.name" (str raised.value)) raised.value)
+  (assert (in "items.0.spec.replicas" (str raised.value)) raised.value))
 
 
 (defk services-listed []

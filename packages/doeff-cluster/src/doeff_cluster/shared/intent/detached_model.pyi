@@ -1,6 +1,8 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = detached_model.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import EffectBase as EffectBase
@@ -37,10 +39,6 @@ class ReleaseDetached(EffectBase):
 
 @dataclass(frozen=True)
 class ReadRunners(EffectBase):
-    ...
-
-@dataclass(frozen=True)
-class ReadServices(EffectBase):
     ...
 
 @dataclass(frozen=True)
@@ -133,6 +131,35 @@ class ServiceFact:
 class ServicesUnreachable:
     detail: str
 ServicesAnswer: TypeAlias = tuple[ServiceFact, ...] | ServicesUnreachable
+
+@_doeff_dataclass(frozen=True)
+class ReadServices(_doeff_effect_base[ServicesAnswer]):
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceProcessWire:
+    failures: int | None = None
+    last_exit_code: int | None = None
+    last_exit_at_ms: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceRowStatusWire:
+    process: ServiceProcessWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceRowSpecWire:
+    replicas: int | None = None
+    revision: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceRowWire:
+    name: str
+    spec: ServiceRowSpecWire | None = None
+    status: ServiceRowStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class ServiceListWire:
+    items: tuple[ServiceRowWire, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class RunnersChange:

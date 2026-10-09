@@ -23,7 +23,7 @@
                                                      CrashCoordinator])
 (import doeff_cluster.shared.entry.deployed_cluster [DeployedCluster DeployedCannotAnswer deployed-cluster-answers])
 (import doeff_cluster.shared.protocol.coordinator_reads [job-pids-of])
-(import doeff_cluster.shared.protocol.detached [service-facts-of-view])
+(import doeff_cluster.shared.protocol.detached [service-facts-of-json])
 (import tests.transport_http [transport-http COORDINATOR-URL])
 (import tests.detached_rig [MemoryCoordinator])
 (import tests.fixtures.machine_app [pings machine-foundation])
@@ -112,10 +112,11 @@
 
 (defk listed-revisions [coordinator]
   {:pre [(: coordinator MemoryCoordinator)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "検の coordinator の Service の一覧(本番と同じ口 GET /resources/Service)を、ReadServices と同じ読み(service-facts-of-view)で
-   (名, 宣言の版) の列にするため。"
+  "検査用の coordinator の Service の一覧(本番と同じ GET /resources/Service)を、ReadServices の本番の handler と同じ関数
+   (service-facts-of-json)で (名, 宣言の版) の列にするため。"
   (val response (coordinator.handle (httpx.Request "GET" (+ COORDINATOR-URL "/resources/Service"))))
-  (lfor fact (service-facts-of-view (get (.json response) "items")) #(fact.name fact.revision)))
+  (<- facts (service-facts-of-json (.json response)))
+  (lfor fact facts #(fact.name fact.revision)))
 
 
 (deftest test-the-real-coordinator-list-carries-each-services-declared-revision
