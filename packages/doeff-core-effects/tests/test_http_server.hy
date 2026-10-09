@@ -34,7 +34,7 @@
                                                 ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText
                                                 HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed
                                                 WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyFailed HttpBodyOutcome ScriptedBody
-                                                WS-CUT-REASON HttpProbe HttpProbeAnswer])
+                                                WS-CUT-REASON HttpProbe HttpProbeAnswer HttpStopListening WsTextSent])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
 
 
@@ -115,6 +115,46 @@
       (WsTextArrived :ticket t :text "stop") (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 2.0))
       (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ "echo:" text)))
       _ None)))
+
+
+(defk named-echo [name address publish]
+  {:pre [(: name str) (: address HttpAddress) (: publish Callable)] :post [(: % int)]}
+  "検の Program(port の共有と待ち受けだけの閉じ — 入れ替えで新旧の待ち受けを重ねる形): port を共有して待ち受け、ws に上げて 1 通ごとに
+   名 name を付けて答える。text \"leave\" = 待ち受けだけを閉じて(開いた接続は残す)\"left\" と答える・\"stop\" = 待ち受けを閉じる・他は
+   名つきの echo。publish = 結んだ宛先を検へ渡す口。答え = ws に上げた接続の数。"
+  (<- bound HttpAddress (HttpListen :address address :share-port True))
+  (publish bound)
+  (var accepted 0)
+  (while True
+    (<- event HttpEvent (HttpNextRequest))
+    (match event
+      (HttpServerClosed) (return accepted)
+      (HttpRequestArrived :ticket t) (do (:= accepted (+ accepted 1))
+                                         (<- (WsAccept :ticket t)))
+      (WsTextArrived :ticket t :text "leave") (do (<- (HttpStopListening))
+                                                  (<- (WsSendText :ticket t :text "left")))
+      (WsTextArrived :text "stop") (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
+      (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ name ":" text)))
+      _ None)))
+
+
+(defk echo-served [name]
+  {:pre [(: name str)] :post [(: % tuple)]}
+  "named-echo を台本の待ち受けで閉じるまで回し、答え(上げた接続の数)と台本の記録を組にするため。"
+  (<- accepted int (named-echo name (HttpAddress :host "127.0.0.1" :port 0) (fn [bound] None)))
+  (<- served tuple (ReadHttpServed))
+  #(accepted served))
+
+
+(deftest test-the-scripted-server-hands-no-new-request-after-it-stops-listening
+  ;; 失敗ケース(待ち受けだけの閉じ — agora-redesign #4317): 待ち受けだけを閉じた後に届く新しい要求は本体へ渡らず、開いた接続の 1 通は渡る。
+  (val script (HttpScript :arrivals #((arrival 1 "/" :upgrade True) (WsTextArrived :ticket "1" :text "leave")
+                                      (arrival 2 "/" :upgrade True) (WsTextArrived :ticket "1" :text "still"))))
+  (<- answer tuple (with-handler [(state) (scripted-http-server script)] (echo-served "A")))
+  (val accepted (get answer 0))
+  (val served (get answer 1))
+  (assert (= accepted 1) served)
+  (assert (= (lfor e served :if (isinstance e WsTextSent) e.text) ["left" "A:still"]) served))
 
 
 (defk do-served [program]
@@ -293,6 +333,51 @@
   (assert (= (lfor e events :if (isinstance e HttpRequestArrived) e.remote) ["127.0.0.1"]) events)
   (assert (= (. (get events -1) reason) "検が閉じた"))
   (assert (>= report.flushed-bytes (len "echo:hi"))))
+
+
+(defn #^ None test-a-shared-port-hands-new-connections-to-the-listener-that-stays []
+  ;; 失敗ケース(入れ替えで新旧の待ち受けを重ねる — agora-redesign #4317): 待ち受け A に繋いだ後、同じ port を共有して待ち受け B を開き、
+  ;; A が待ち受けだけを閉じる。A に開いた接続は往復を続け、新しい接続は全部 B に当たる(A が待ち受けを閉じる前は kernel が振り分ける)。
+  ;; 直す前は HttpListen に port の共有の欄が無く、A が開けない(赤)。
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (setv port (free-port) address (HttpAddress :host "127.0.0.1" :port port)
+        bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
+  (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
+    "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
+    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+                                                                                         (named-echo name address bound.put))))))
+                              :daemon True)))
+  (open-listener "A" bound-a result-a)
+  (.get bound-a :timeout 10)
+  (setv base (.format "http://127.0.0.1:{}/" port))
+  (defn :async #^ str round-trip [#^ aiohttp.ClientWebSocketResponse ws #^ str text]
+    "1 通送って答えを 1 通読むため。"
+    (await (.send-str ws text))
+    (. (await (.receive ws :timeout 5)) data))
+  (defn :async #^ str ask-new [#^ aiohttp.ClientSession session #^ str text]
+    "新しい接続を開いて 1 往復し、答えを返して閉じるため。"
+    (with [:async ws (.ws-connect session base)]
+      (await (round-trip ws text))))
+  (defn :async #^ None scenario []
+    "A に繋ぎ、B を重ねて開き、A が待ち受けだけを閉じた後の新しい接続の行き先を数えるため。"
+    (with [:async session (aiohttp.ClientSession)]
+      (with [:async first (.ws-connect session base)]
+        (assert (= (await (round-trip first "hi")) "A:hi"))
+        (open-listener "B" bound-b result-b)
+        (await (asyncio.to-thread bound-b.get :timeout 10))
+        (assert (= (await (round-trip first "leave")) "left"))
+        ;; 待ち受けだけを閉じた A に開いた接続は往復を続ける。
+        (assert (= (await (round-trip first "still")) "A:still"))
+        ;; 新しい接続は全部 B に当たる。
+        (setv names (lfor _ (range 6) (await (ask-new session "who"))))
+        (assert (= names (* ["B:who"] 6)) names)
+        (await (.send-str first "stop")))
+      (with [:async last (.ws-connect session base)]
+        (await (.send-str last "stop")))))
+  (asyncio.run (scenario))
+  (assert (= (.get result-a :timeout 10) 1))
+  (assert (= (.get result-b :timeout 10) 7)))
 
 
 (defn #^ None test-the-aiohttp-server-names-an-answer-the-peer-left-in-one-line-and-counts-it [#^ (get pytest.CaptureFixture str) capfd
