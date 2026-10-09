@@ -20,7 +20,7 @@
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
 (import doeff_claude_code.lines [classify-record])
-(import tests.scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA])
+(import tests.scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA advice-stdout])
 
 (setv FAKE "fake" STUB "stub" REAL "real")
 (setv REAL-CONFIG-ENV "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR")
@@ -90,7 +90,19 @@
              ;; 答えの前に会話を 1 度自動で圧縮する筋書き(替え玉の CLI と同じ行 — 行の型は本物の分類で組む・#4189)。
              :compactions (if (get rule "compact")
                               #((classify-record {"type" "system" "subtype" "compact_boundary" "compact_metadata" COMPACT-METADATA}))
-                              #())))
+                              #())
+             ;; 答えの前に UserPromptSubmit の hook が助言を返す筋書き(替え玉の CLI と同じ 2 行 — 行の型は本物の分類で組む・
+             ;; card acp:kanban-issue:ki-d8b473480303)。
+             :hooks (if (get rule "advice")
+                        (tuple (gfor subtype ["hook_started" "hook_response"]
+                                     (classify-record (| {"type" "system" "subtype" subtype "hook_id" "fake-advice-hook"
+                                                          "hook_name" "UserPromptSubmit" "hook_event" "UserPromptSubmit"}
+                                                         (if (= subtype "hook_response")
+                                                             {"output" (advice-stdout (get rule "advice"))
+                                                              "stdout" (advice-stdout (get rule "advice")) "stderr" ""
+                                                              "exit_code" 0 "outcome" "success"}
+                                                             {})))))
+                        #())))
 
 ;; 共通の筋書きの本番の host の上限の本数と資格の床(筋書きは 1 つの host で会話を数個しか持たず、資格の期限を spec に載せない
 ;; — 上限と床で降ろす形は test_handler の検だけが撃つ)。

@@ -13,6 +13,7 @@
 (import dataclasses [dataclass])
 (import os)
 (import pathlib [Path])
+(import json)
 (import re)
 (import sys)
 (import pytest)
@@ -34,7 +35,7 @@
   Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
-  AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger
+  AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger AgentHookEvent
   AgentCallUsageEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
@@ -101,6 +102,11 @@
 (val COMPACT-POST-TOKENS 252050)
 (val COMPACT-DROPPED-TOKENS 11155244)
 (val COMPACT-DURATION-MS 2730)
+;; 答えの前に UserPromptSubmit の hook が条件つきルールの助言を返す手番(card acp:kanban-issue:ki-d8b473480303)。替え玉の CLI の規則
+;; (scenario_rules.hy の ADVICE-PHRASE と advice-stdout)と同じ言葉と、hook の stdout(hook が書く JSON)。
+(val ADVICE "[rulebook]-advice-1")
+(val ADVICE-STDOUT (json.dumps {"hookSpecificOutput" {"hookEventName" "UserPromptSubmit" "additionalContext" ADVICE}}
+                               :ensure-ascii False))
 ;; 口座の側の断りで答えない手番の CLI の文(本番 2026-10-08 22:32 の口座 cryptic-2)。
 (val REFUSAL-TEXT (+ "Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, "
                      "or ask your admin to enable access"))
@@ -119,6 +125,7 @@
         thinking (re.search r"Stream (\d+) thinking pieces\." text)
         tool-pieces (re.search r"Stream the tool input in (\d+) pieces\." text)
         sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text)
+        advised (re.search r"Have the hook advise: (\S+?)\." text)
         command (re.search r"run exactly this command: (.+?) \." text)
         exact (re.search r"[Rr]eply with exactly: (\S+)" text)
         extra (re.search r"include the word (\S+)" text))
@@ -136,6 +143,13 @@
              :thinking-deltas (if thinking (int (.group thinking 1)) 0)
              :tool-input-deltas (if tool-pieces (int (.group tool-pieces 1)) 0)
              :stop-hook-rejections (if sent-back #((compose.StopHookRejection :answer REJECTED-ANSWER :reason (.group sent-back 1))) #())
+             :hooks (if advised
+                        #((compose.HookNotice :event "UserPromptSubmit" :phase compose.HookPhase.STARTED :name "UserPromptSubmit"
+                                              :hook-id "fake-advice-hook")
+                          (compose.HookNotice :event "UserPromptSubmit" :phase compose.HookPhase.RESPONSE :name "UserPromptSubmit"
+                                              :hook-id "fake-advice-hook" :stdout ADVICE-STDOUT :output ADVICE-STDOUT :exit-code 0
+                                              :outcome "success"))
+                        #())
              :compactions (if (in COMPACT-PHRASE text)
                               #((compose.CompactBoundary :trigger compose.CompactTrigger.AUTO :pre-tokens COMPACT-PRE-TOKENS
                                                          :post-tokens COMPACT-POST-TOKENS
@@ -324,6 +338,15 @@
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
   "答えの前に CLI が会話を 1 度自動で圧縮する手番を最後まで読む(圧縮の行が出来事に載るかを見るため・agora-redesign #4189)。"
   (<- handle (launch s "adapter-compaction" (+ COMPACT-PHRASE " " (reply-prompt "COMPACTED")) None))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk advised-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "答えの前に UserPromptSubmit の hook が助言 ADVICE を返す手番を最後まで読む(hook の応答が出来事に載るかを見るため・
+   card acp:kanban-issue:ki-d8b473480303)。"
+  (<- handle (launch s "adapter-advised" (+ (.format "Have the hook advise: {}. " ADVICE) (reply-prompt "ADVISED")) None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
@@ -789,6 +812,60 @@
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (assert (= (lfor event done.events :if (isinstance event AgentCompactionEvent) event) []) (repr done.events))
   None)
+
+(defk check-a-hook-response-is-one-event [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "助言を返す hook が 1 度走った手番は、hook の出来事(AgentHookEvent — 応答の行の欄そのまま・開始の行は出来事にしない)をちょうど 1 つ
+   運び、その後に答えの本文の出来事が出て、手番は完了で終わる。hook の行を捨てる adapter では hook の出来事が 0 で赤 — 上の層が
+   条件つきルールの助言を会話の画面に出せない(card acp:kanban-issue:ki-d8b473480303)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val hooks (lfor #(index event) (enumerate done.events) :if (isinstance event AgentHookEvent) #(index event)))
+  (assert (= (len hooks) 1) (repr done.events))
+  (val hook (get (get hooks 0) 1))
+  (assert (= #(hook.hook-event hook.name hook.stdout hook.stderr hook.exit-code hook.outcome)
+             #("UserPromptSubmit" "UserPromptSubmit" ADVICE-STDOUT "" 0 "success"))
+          (repr hook))
+  (assert hook.hook-id (repr hook))
+  (val texts (lfor #(index event) (enumerate done.events) :if (isinstance event AgentTextEvent) index))
+  (assert (and texts (< (get (get hooks 0) 0) (get texts 0))) (repr done.events))
+  (assert (= done.end.result-text "ADVISED") (repr done.end))
+  None)
+
+(defk check-a-sent-back-answer-carries-the-stop-hook-response [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "Stop hook が差し戻した手番は、差し戻された答えの本文と差し戻しの出来事の間に、Stop の hook の出来事(理由は stderr・exit code 2・
+   終わり方 error)をちょうど 1 つ運ぶ(上の層が差し戻しを会話の画面に出すため・card acp:kanban-issue:ki-d8b473480303)。"
+  (val hooks (lfor #(index event) (enumerate done.events) :if (isinstance event AgentHookEvent) #(index event)))
+  (assert (= (lfor #(_ hook) hooks #(hook.hook-event hook.stderr hook.exit-code hook.outcome)) [#("Stop" HOOK-REASON 2 "error")])
+          (repr done.events))
+  (val feedback (lfor #(index event) (enumerate done.events) :if (isinstance event AgentStopHookFeedbackEvent) index))
+  (assert (< (get (get hooks 0) 0) (get feedback 0)) (repr done.events))
+  None)
+
+(defk check-a-turn-without-hooks-has-no-hook-event [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "hook の行を出さない手番は、hook の出来事を 1 つも運ばない(出来事を発明しない — card acp:kanban-issue:ki-d8b473480303)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (= (lfor event done.events :if (isinstance event AgentHookEvent) event) []) (repr done.events))
+  None)
+
+(deftest test-headless-carries-the-hook-response-fake [tmp-path]
+  (<- (check-a-hook-response-is-one-event (run-on FAKE tmp-path advised-turn))))
+
+(deftest test-headless-carries-the-hook-response-stub [tmp-path]
+  (<- (check-a-hook-response-is-one-event (run-on STUB tmp-path advised-turn))))
+
+(deftest test-headless-carries-the-stop-hook-response-fake [tmp-path]
+  (<- (check-a-sent-back-answer-carries-the-stop-hook-response (run-on FAKE tmp-path hook-feedback-turn))))
+
+(deftest test-headless-carries-the-stop-hook-response-stub [tmp-path]
+  (<- (check-a-sent-back-answer-carries-the-stop-hook-response (run-on STUB tmp-path hook-feedback-turn))))
+
+(deftest test-headless-carries-no-hook-without-the-line-fake [tmp-path]
+  (<- (check-a-turn-without-hooks-has-no-hook-event (run-on FAKE tmp-path uncompacted-turn))))
+
+(deftest test-headless-carries-no-hook-without-the-line-stub [tmp-path]
+  (<- (check-a-turn-without-hooks-has-no-hook-event (run-on STUB tmp-path uncompacted-turn))))
 
 (deftest test-headless-carries-the-compaction-fake [tmp-path]
   (<- (check-a-compaction-line-is-one-event (run-on FAKE tmp-path compacting-turn))))

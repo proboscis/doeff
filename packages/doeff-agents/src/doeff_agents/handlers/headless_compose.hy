@@ -22,7 +22,8 @@
 ;; 模擬の返事(FakeReply)の usage と last-call-usage の型(agora-redesign #3744)と、口座の側が要求を断る筋書き(account-refusal)の型と、
 ;; CLI が会話を自動で圧縮する筋書き(compactions)の行の型と起き方の語(agora-redesign #4189)。呼び手が doeff_claude_code を import せずに
 ;; 返事を組めるように、FakeReply と並べてここから読ませる。
-(import doeff_claude_code.lines [Usage AccountRefusalHit CompactBoundary CompactTrigger])
+;; CLI が回す hook の行の筋書き(hooks)の行の型と段階の語も同じ(card acp:kanban-issue:ki-d8b473480303)。
+(import doeff_claude_code.lines [Usage AccountRefusalHit CompactBoundary CompactTrigger HookNotice HookPhase])
 ;; 層 2 が生かす CLI の本数の上限を越える起動をホストへ伝える知らせ(ホストが答える — 呼び手が doeff_claude_code を import せずに答え手を
 ;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
 (import doeff_claude_code.effects [ClaudeLiveLimitExceeded])

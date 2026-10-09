@@ -14,8 +14,11 @@
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
 
+;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
+;; CLI 2.1.292 は旗が無いと SessionStart・Setup の hook の行だけを出す(CLI の中の判定の実測)。上の層が会話の画面に hook の結果
+;; (条件つきルールの助言・Stop の差し戻しほか)を出すため(card acp:kanban-issue:ki-d8b473480303)。
 (setv STREAM-FLAGS ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
-                    "--include-partial-messages"])
+                    "--include-partial-messages" "--include-hook-events"])
 
 ;; 手番の外で CLI に仕事をさせない handler の物理: 手番の間に置いた仕事(background の subagent・Bash の run_in_background・
 ;; Monitor)の完了の合図で、CLI は host の頼みなしに次の手番を起こし model を動かす(#517 の事故の形)。会話の process を手番を

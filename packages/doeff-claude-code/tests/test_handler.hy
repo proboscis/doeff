@@ -598,14 +598,15 @@
   (#^ str name)
   (#^ dict line))
 
-;; 最初の入力の前に出たら停止する行: assistant の行(ターンの外で model が応答した形)と、SessionStart 以外の hook の行。
+;; 最初の入力の前に出たら停止する行: assistant の行(ターンの外で model が応答した形)と、model の手番の中で走る hook の行
+;; (UserPromptSubmit ほか — Notification・SessionEnd の hook の行はターンの外でも止めない・card acp:kanban-issue:ki-d8b473480303)。
 (val FORBIDDEN-BEFORE-INPUT
   [(ForbiddenLine :name "assistant"
                   :line {"type" "assistant" "parent_tool_use_id" None
                          "message" {"role" "assistant" "model" "claude-stub" "content" [{"type" "text" "text" "unasked"}]}})
    (ForbiddenLine :name "other-hook"
-                  :line {"type" "system" "subtype" "hook_response" "hook_id" "hook-2" "hook_name" "Notification"
-                         "hook_event" "Notification" "output" "" "stdout" "" "stderr" "" "exit_code" 0 "outcome" "success"})])
+                  :line {"type" "system" "subtype" "hook_response" "hook_id" "hook-2" "hook_name" "UserPromptSubmit"
+                         "hook_event" "UserPromptSubmit" "output" "" "stdout" "" "stderr" "" "exit_code" 0 "outcome" "success"})])
 
 (defrecord WarmStopped
   "事前起動した process を host が停止したシナリオの観測: gone = 停止した後の状態・down = 事前起動した process が終了したか。"

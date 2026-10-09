@@ -133,6 +133,12 @@ class HookNotice:
     event: str
     phase: HookPhase
     name: str
+    hook_id: str = ''
+    stdout: str = ''
+    stderr: str = ''
+    output: str = ''
+    exit_code: int | None = None
+    outcome: str = ''
 
 @dataclass(frozen=True)
 class TaskEvent:

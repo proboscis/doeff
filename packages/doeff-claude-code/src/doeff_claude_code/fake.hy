@@ -24,7 +24,7 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
-                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactBoundary stderr-tail-within])
+                                 ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactBoundary HookNotice HookPhase stderr-tail-within])
 (import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
@@ -112,6 +112,10 @@
    compactions = CLI が会話を自動で圧縮する筋書き(CompactBoundary の列 — 圧縮 1 回に 1 つ・#4189)。偽の CLI は本物と
    同じく、要求の前(init の後・考えている間の差分の前)に圧縮の行を 1 つずつ出し、手番はそのまま続く。上の層が無人のターンの圧縮を
    記録する事を模擬で確かめるため・
+   hooks = 要求の前に CLI が回す hook の行の筋書き(HookNotice の列 — 条件つきルールの助言を返す UserPromptSubmit の hook の応答ほか・
+   card acp:kanban-issue:ki-d8b473480303)。偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
+   続く。Stop hook の差し戻し(stop-hook-rejections)の Stop の hook の応答の行は、差し戻しの筋書きが出す(stop-hook-notice-of)。上の層が
+   hook の結果を記録して画面に出す事を模擬で確かめるため・
    lose-exit-code・lose-stderr = lose の手番で消える process の終了 code と stderr(#4207)。BackendLost の欄 exit-code・stderr-tail に
    載せる — stderr は本物の状態機械と同じ上限で切る(lines.hy の stderr-tail-within)。上の層が模擬で「CLI がなぜ降りたか」を受け取る
    ため。None = 名乗らない(欄も None — 今の形)。lose の無い手番は断る。"
@@ -151,6 +155,8 @@
   (setv #^ (get tuple #(StopHookRejection ...)) stop-hook-rejections #())
   ;; 要求の前に CLI が会話を自動で圧縮する筋書き(圧縮しない = 空)。
   (setv #^ (get tuple #(CompactBoundary ...)) compactions #())
+  ;; 要求の前に CLI が回す hook の行の筋書き(回さない = 空)。
+  (setv #^ (get tuple #(HookNotice ...)) hooks #())
   (defn #^ None __post-init__ [self]
     (object.__setattr__ self "tool_input" (frozen-json-object self.tool-input "FakeReply.tool_input"))
     (when (or (< self.thinking-deltas 0) (< self.tool-input-deltas 0))
@@ -361,6 +367,15 @@
       (:= extra (+ extra #(extra-reply.text)))))
   extra)
 
+(defk stop-hook-notice-of [rejection]
+  {:pre [(: rejection StopHookRejection)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}
+  "Stop hook が答えを差し戻した時に、本物の CLI(--include-hook-events)が差し戻しの行の前に出す Stop の hook の応答の行を、偽の CLI でも
+   出すため(card acp:kanban-issue:ki-d8b473480303)。形は exit code 2 で差し戻す hook の応答 — 理由は stderr・終わり方 error(本物の
+   差し戻しは同じ時に system/notification の stop-hook-error「Stop hook error occurred」を出す — 替え玉の CLI と同じ。応答の行そのものは
+   計っていない — 欄は CLI の書き手 hook_response の形)。"
+  (HookNotice :event "Stop" :phase HookPhase.RESPONSE :name "Stop" :hook-id (.format "fake-stop-hook-{}" rejection.answer)
+              :stderr rejection.reason :output rejection.reason :exit-code 2 :outcome "error"))
+
 (defk begin-text [#^ FakeClaudeWorld world #^ FakeSession session #^ FakeTurn turn #^ float now]
   {:pre [(: world FakeClaudeWorld) (: session FakeSession) (: turn FakeTurn) (: now float)] :post [(: % (type None))]
    :tags {:context "claude-code" :role "foundation"}}
@@ -369,7 +384,8 @@
    (deltas = 0 なら今)に出す。Stop hook が差し戻す筋書き(返事の stop-hook-rejections)は、本物と同じく差し戻される答えの本文の行と
    差し戻しの行を 1 つずつ、最後の本文より前(最後の道具の結果より後)に出す(#4020)。"
   (for [rejection turn.reply.stop-hook-rejections]
-    (<- (emit-all session turn [(AssistantMessage :text rejection.answer) (StopHookFeedback :reason rejection.reason)])))
+    (<- notice HookNotice (stop-hook-notice-of rejection))
+    (<- (emit-all session turn [(AssistantMessage :text rejection.answer) notice (StopHookFeedback :reason rejection.reason)])))
   (<- extra (read-injections world session turn))
   (setv turn.text (.join " " (+ #(turn.reply.text) extra))
         turn.phase "text"
@@ -519,6 +535,8 @@
   (<- (emit session turn (Init :session-id session.session-id
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
+  ;; 要求の前に CLI が回す hook の行(本物の CLI の --include-hook-events の system/hook_response ほか・card acp:kanban-issue:ki-d8b473480303)。
+  (<- (emit-all session turn (list reply.hooks)))
   ;; 要求の前の会話の自動の圧縮(本物の CLI の system/compact_boundary の行 — 圧縮 1 回に 1 行・#4189)。
   (<- (emit-all session turn (list reply.compactions)))
   ;; 答えの前に考えている間の差分(本物の CLI の thinking_delta の行 — 片ごとの考えの文字列は FAKE-THINKING-PIECE・替え玉の CLI と同じ)。

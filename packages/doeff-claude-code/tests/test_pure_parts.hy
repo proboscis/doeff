@@ -23,9 +23,11 @@
                                 :mcp-servers {"s" (McpSse "http://x")}
                                 :autocompact (AutocompactTokens 400000)))
   (setv argv (launch-argv #("claude") spec (FreshSession SID)))
-  (assert (= (cut argv 0 8) ["claude" "-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
-                             "--include-partial-messages"]))
-  (assert (= (cut argv 8 9) ["--dangerously-skip-permissions"]))
+  ;; --include-hook-events = CLI に全 hook の開始と応答の行を出させる(上の層が hook の結果を会話の画面に出すため — CLI 2.1.292 は旗が
+  ;; 無いと SessionStart・Setup の hook の行だけを出す・card acp:kanban-issue:ki-d8b473480303)。
+  (assert (= (cut argv 0 9) ["claude" "-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
+                             "--include-partial-messages" "--include-hook-events"]))
+  (assert (= (cut argv 9 10) ["--dangerously-skip-permissions"]))
   (setv settings (json.loads (get argv (+ (.index argv "--settings") 1))))
   ;; 手番の外で CLI に仕事をさせない handler の物理: background の仕事を持たせない(宣言の env と合流する)。
   (assert (= settings {"disableAllHooks" True "env" {"A" "1" "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" "1"}}))

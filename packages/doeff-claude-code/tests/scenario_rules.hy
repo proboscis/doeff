@@ -4,6 +4,7 @@
 ;;; import する)・fake(interpreters.hy がこの規則を FakeReply に写す)。規則は「本物ならこう振る舞う」の写しで、本物の
 ;;; 筋書きが緑になる形と同じ言葉を読む。
 (require doeff-hy.macros [val])
+(import json)
 (import re)
 
 (setv CODEWORD "OKAPI-77")
@@ -32,6 +33,15 @@
 (val COMPACT-PHRASE "Compact the context before replying.")
 (val COMPACT-METADATA {"trigger" "auto" "pre_tokens" 969482 "post_tokens" 252050 "cumulative_dropped_tokens" 11155244
                        "duration_ms" 2730})
+
+;; 答えの前に UserPromptSubmit の hook が条件つきルールの助言を返す言い方と、その hook の stdout(hook が書く JSON — 助言は
+;; hookSpecificOutput.additionalContext・card acp:kanban-issue:ki-d8b473480303)。本物の claude で助言を出すには hook を置く必要があるので、
+;; 助言を当てにする検は替え玉の CLI と fake だけに置く。
+(setv ADVICE-PHRASE "Have the hook advise: {}.")
+
+(defn #^ str advice-stdout [#^ str advice]
+  "助言 advice を返す UserPromptSubmit の hook の stdout(替え玉の CLI と fake の同じ 1 か所)。"
+  (json.dumps {"hookSpecificOutput" {"hookEventName" "UserPromptSubmit" "additionalContext" advice}} :ensure-ascii False))
 
 (defn #^ str remember-prompt [#^ str word]
   (.format "Remember the codeword {}. Reply with exactly: {}" CODEWORD word))
@@ -62,7 +72,8 @@
    \"thinking_deltas\" 手番の始めに出す考えている間の差分の片の数(THINKING-PIECES-PHRASE・無ければ 0)
    \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))
    \"hook_feedback\" Stop hook が最初の答え(REJECTED-ANSWER)を差し戻す理由(HOOK-FEEDBACK-PHRASE・無ければ None — #4020)
-   \"compact\" 答えの前に CLI が会話を 1 度自動で圧縮するか(COMPACT-PHRASE — 圧縮の行の compact_metadata は COMPACT-METADATA・#4189)}。
+   \"compact\" 答えの前に CLI が会話を 1 度自動で圧縮するか(COMPACT-PHRASE — 圧縮の行の compact_metadata は COMPACT-METADATA・#4189)
+   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None — card acp:kanban-issue:ki-d8b473480303)}。
    memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))
@@ -76,6 +87,7 @@
   (setv thinking-pieces (re.search r"Stream (\d+) thinking pieces" text))
   (setv tool-input-pieces (re.search r"Stream the tool input in (\d+) pieces" text))
   (setv sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text))
+  (setv advised (re.search r"Have the hook advise: (\S+?)\." text))
   (setv word
         (cond
           (in "What was the codeword" text)
@@ -96,6 +108,7 @@
    "tool_input_deltas" (if tool-input-pieces (int (.group tool-input-pieces 1)) 0)
    "hook_feedback" (if sent-back (.group sent-back 1) None)
    "compact" (in COMPACT-PHRASE text)
+   "advice" (if advised (.group advised 1) None)
    "deltas" (if streamed (int (.group streamed 1)) 0)
    "think_seconds" (if think (float (.group think 1)) 0.0)
    "hook_seconds" (if hooks (float (.group hooks 1)) 0.0)})

@@ -33,6 +33,9 @@
 ;;;                                      ToolCall.input と結果の中身 ToolAnswer を層 2 の型のまま運ぶ — agora-redesign #3744)
 ;;;   StopHookFeedback.reason          → AgentStopHookFeedbackEvent.reason(Stop hook が答えを差し戻した事実 — 上の層が差し戻された
 ;;;                                      答えの本文を見分けるため・agora-redesign #4020)
+;;;   HookNotice(段階 RESPONSE)       → AgentHookEvent(CLI が回した hook の応答 — 行の欄 event・name・hook-id・stdout・stderr・output・
+;;;                                      exit-code・outcome をそのまま写す。出力の無い応答も全部運び、どれを残すかは上の層が選ぶ。上の層が
+;;;                                      会話の画面に hook の結果を出すため・card acp:kanban-issue:ki-d8b473480303)
 ;;;   CompactBoundary                  → AgentCompactionEvent(CLI が会話を圧縮した事実 — 行の欄 trigger・pre-tokens・post-tokens・
 ;;;                                      cumulative-dropped-tokens・duration-ms をそのまま写す。上の層がターンの出来事として記録するため・
 ;;;                                      agora-redesign #4189)
@@ -66,7 +69,7 @@
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
-  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger
+  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger AgentHookEvent
   AgentCallUsageEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentAccountRefusal
@@ -77,6 +80,7 @@
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactBoundary
+                                 HookNotice HookPhase
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
@@ -126,7 +130,7 @@
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
     (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
-                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent AgentCallUsageEvent
+                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent AgentHookEvent AgentCallUsageEvent
                           AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
@@ -217,6 +221,11 @@
       [(fn [seq] (AgentCompactionEvent :seq seq :at at :trigger (CompactionTrigger kind.trigger.value) :pre-tokens kind.pre-tokens
                                        :post-tokens kind.post-tokens :cumulative-dropped-tokens kind.cumulative-dropped-tokens
                                        :duration-ms kind.duration-ms))]
+    ;; CLI が回した hook が応答した(行の欄そのまま — 開始の行は出来事にしない)— 上の層が hook の結果(条件つきルールの助言・Stop の
+    ;; 差し戻しほか)を会話の画面に出すため(card acp:kanban-issue:ki-d8b473480303)。
+    (and (isinstance kind HookNotice) (= kind.phase HookPhase.RESPONSE))
+      [(fn [seq] (AgentHookEvent :seq seq :at at :hook-event kind.event :name kind.name :hook-id kind.hook-id :stdout kind.stdout
+                                 :stderr kind.stderr :output kind.output :exit-code kind.exit-code :outcome kind.outcome))]
     (isinstance kind InputFate)
       [(fn [seq] (AgentInputFateEvent :seq seq :at at :input-ref kind.ref :state (InputFateState kind.state)))]
     True []))

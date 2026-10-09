@@ -18,6 +18,9 @@
 ;;;   外とみなさない行は、host が書いた入力の運命と control の答え(OUTSIDE-TURN-QUIET-KINDS — model を動かさない作法の行)だけ。
 ;;;   例外は入力を書かずに事前起動した process(ClaudeWarmSession)の最初の入力の前だけで、SessionStart の hook の開始と応答の行も
 ;;;   外とみなさない(quiet-before-first-input — この 2 種の行のほかは広げない。最初の入力の後の待ちは前と同じ)。
+;;;   もう 1 つの例外は、model の手番の外で CLI が回す hook(Notification・SessionEnd — OUTSIDE-TURN-QUIET-HOOK-EVENTS)の開始と応答の
+;;;   行で、いつでも外とみなさない(quiet-outside-turn — CLI に全 hook の行を出させる --include-hook-events の後・card
+;;;   acp:kanban-issue:ki-d8b473480303)。model の手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は外の出力のまま。
 ;;;   control_request で止めて注入が生き残った時は、生き残った入力の手番が同じ process で続く(continues)。
 ;;; - 手番の額(#883): result の行の total_cost_usd は会話の累積で、usage はその CLI の手番 1 回分(実測 2.1.283 —
 ;;;   同じ process の 2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は前の process が降りる時に
@@ -47,6 +50,10 @@
 (setv CLI-OWN-TURN-ORIGINS (frozenset #{"task-notification"}))
 ;; host の手番の外で読んでも、手番の外の出力とみなさない行の型: host が書いた入力の運命と control の答え(model を動かさない作法の行)。
 (setv OUTSIDE-TURN-QUIET-KINDS #(InputFate ControlResponse))
+;; host の手番の外で読んでも手番の外の出力とみなさない hook のイベント名(閉じた集まり — ここ 1 か所): model の手番の外で CLI が回す hook
+;; (Notification = 知らせ・SessionEnd = 会話の終わり)。担当の設定(agora-controllers の agent_env の HOOK-EVENTS の 12 の出来事)のうち、
+;; model の手番の外で走り得るのはこの 2 つ。
+(setv OUTSIDE-TURN-QUIET-HOOK-EVENTS (frozenset #{"Notification" "SessionEnd"}))
 
 
 ;; --- 状態 ---------------------------------------------------------------------------------------
@@ -401,12 +408,20 @@
     (HookNotice :event "SessionStart") True
     _ False))
 
+(defk quiet-outside-turn [kind]
+  {:pre [(: kind ClaudeLineKind)] :post [(: % bool)] :tags {:context "claude-code" :role "judgment"}}
+  "host の手番の外で CLI が出した行を、手番の外の出力と数えずに通してよいかを判定するため(作法の行のほかに — 冒頭のコメント)。通すのは
+   model の手番の外で CLI が回す hook(OUTSIDE-TURN-QUIET-HOOK-EVENTS)の開始と応答の行だけ。hook は CLI が回す命令で model の動きでは
+   なく、model が動けば別の行(init・assistant)が出て今までどおり止まる。"
+  (and (isinstance kind HookNotice) (in kind.event OUTSIDE-TURN-QUIET-HOOK-EVENTS)))
+
 (defn on-record [#^ DialogueState state kind]
   "stdout の 1 行を読んだ遷移。kind = lines.hy が分類した行の型(ClaudeLineKind)— 状態機械が読む型の外は何もしない。
-   host のターンの外で読んだ行は、作法の行(OUTSIDE-TURN-QUIET-KINDS)と、最初の入力を待つ間の SessionStart の hook の行
-   (quiet-before-first-input)を除いて、process を停止する理由 OUTSIDE-TURN-OUTPUT(冒頭のコメント)。"
+   host のターンの外で読んだ行は、作法の行(OUTSIDE-TURN-QUIET-KINDS)と、model の手番の外で CLI が回す hook の行(quiet-outside-turn)と、
+   最初の入力を待つ間の SessionStart の hook の行(quiet-before-first-input)を除いて、process を停止する理由 OUTSIDE-TURN-OUTPUT
+   (冒頭のコメント)。"
   (cond
-    (and (not state.in-flight) (not (isinstance kind OUTSIDE-TURN-QUIET-KINDS))
+    (and (not state.in-flight) (not (isinstance kind OUTSIDE-TURN-QUIET-KINDS)) (not (run (quiet-outside-turn kind)))
          (not (and state.awaiting-first-input (run (quiet-before-first-input kind)))))
       (Transition :state state :retire StopReason.OUTSIDE-TURN-OUTPUT)
     (isinstance kind Init) (on-init state kind)

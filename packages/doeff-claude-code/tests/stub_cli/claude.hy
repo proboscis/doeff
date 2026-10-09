@@ -32,7 +32,7 @@
 (import uuid)
 
 (.insert sys.path 0 (str (. (Path __file__) (resolve) parent parent)))
-(import scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA])
+(import scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA advice-stdout])
 
 (setv CAPABILITIES ["msg_lifecycle_v1" "interrupt_receipt_v1"])
 ;; CLI の手番 1 回の額(USD — 2 進で割り切れる値にして、累積の差が検の比べで端数を出さないようにする)。
@@ -222,6 +222,14 @@
            {"time_to_request_phases_ms" {"input_hooks" self.hook-ms "other" (- self.request-ms self.hook-ms)}}
            {})))
 
+  (defn hook-lines [self #^ str event #^ str name #^ str stdout #^ str stderr #^ int exit-code #^ str outcome]
+    "hook 1 回の開始と応答の 2 行を、実物(CLI 2.1.292 の --include-hook-events)と同じ形で出す(card acp:kanban-issue:ki-d8b473480303)。"
+    (setv hook-id (str (uuid.uuid4)))
+    (emit {"type" "system" "subtype" "hook_started" "hook_id" hook-id "hook_name" name "hook_event" event
+           "uuid" (str (uuid.uuid4)) "session_id" self.session-id})
+    (emit {"type" "system" "subtype" "hook_response" "hook_id" hook-id "hook_name" name "hook_event" event
+           "output" (+ stdout stderr) "stdout" stdout "stderr" stderr "exit_code" exit-code "outcome" outcome
+           "uuid" (str (uuid.uuid4)) "session_id" self.session-id}))
   (defn run-turn [self #^ list records]
     "1 手番(records = この手番の入力の行 — 普通は 1 つ・生き残った注入の手番は複数)。"
     (import time)
@@ -239,6 +247,10 @@
       ;; 実物と同じく、init の直後に入力ごとの hook の知らせ(stream でない system の行)を出し、hook の秒だけ待ってから答え始める(#3696 の直し)。
       (emit {"type" "system" "subtype" "hook_response" "session_id" self.session-id "hook_event" "UserPromptSubmit"})
       (time.sleep (get rule "hook_seconds")))
+    (when (get rule "advice")
+      ;; 条件つきルールの助言を返す UserPromptSubmit の hook(--include-hook-events の CLI の開始と応答の 2 行 — stdout は hook の書いた
+      ;; JSON の文字列・card acp:kanban-issue:ki-d8b473480303)。
+      (.hook-lines self "UserPromptSubmit" "UserPromptSubmit" (advice-stdout (get rule "advice")) "" 0 "success"))
     (when (get rule "compact")
       ;; 要求の前に会話を自動で圧縮する(#4189)— 実物(CLI 2.1.294 の stream-json の書き手)と同じ形の 2 行: 圧縮中の
       ;; status の行 → system/compact_boundary(compact_metadata は会話の記録の compactMetadata を snake の名へ写した物・
@@ -304,6 +316,9 @@
       ;; Stop hook が最初の答えを差し戻す(#4020)— 実物(CLI 2.1.292・旗なし)と同じ 3 行: 差し戻される答えの assistant の行 →
       ;; isSynthetic の user の行(本文「Stop hook feedback:\n<理由>」)→ system/notification(key stop-hook-error)。その後に答え直す。
       (emit (assistant-line self.session-id [{"type" "text" "text" REJECTED-ANSWER}] FINAL-CALL-USAGE))
+      ;; --include-hook-events の CLI は差し戻しの前に Stop の hook の開始と応答の行を出す(exit code 2 で差し戻す hook — 理由は stderr・
+      ;; card acp:kanban-issue:ki-d8b473480303)。
+      (.hook-lines self "Stop" "Stop" "" (get rule "hook_feedback") 2 "error")
       (emit {"type" "user" "session_id" self.session-id "parent_tool_use_id" None "isSynthetic" True "uuid" (str (uuid.uuid4))
              "message" {"role" "user" "content" [{"type" "text" "text" (+ "Stop hook feedback:\n" (get rule "hook_feedback"))}]}})
       (emit {"type" "system" "subtype" "notification" "key" "stop-hook-error" "text" "Stop hook error occurred · ctrl+o to see"

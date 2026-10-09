@@ -101,6 +101,32 @@
                                   "hook_event" "SessionStart" "output" "" "stdout" "" "stderr" "" "exit_code" 0
                                   "outcome" "success" "uuid" "u-2" "session_id" SID})
 
+;; 条件つきルールの助言を返した PreToolUse の hook の応答の行(CLI 2.1.292 の --include-hook-events の形 — stdout は hook が書いた JSON)。
+(val ADVICE-STDOUT "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"[rulebook] advice\"}}")
+(val ADVISING-HOOK-RESPONSE {"type" "system" "subtype" "hook_response" "hook_id" "hook-7" "hook_name" "PreToolUse:Bash"
+                             "hook_event" "PreToolUse" "output" ADVICE-STDOUT "stdout" ADVICE-STDOUT "stderr" "" "exit_code" 0
+                             "outcome" "success" "uuid" "u-7" "session_id" SID})
+
+(deftest test-outside-a-turn-only-the-hooks-that-are-not-model-work-are-quiet
+  ;; CLI に全 hook の行を出させる(--include-hook-events)と、ターンの外でも Notification・SessionEnd の hook の行が出る — どちらも CLI が
+  ;; 回す物で model の動きではないので、ターンの外の出力として process を止めない(card acp:kanban-issue:ki-d8b473480303)。model の
+  ;; 手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は、ターンの外なら今までどおり止める(model が動いた兆候)。
+  (val idle (. (read-record (. (read-record (. (dialogue.begin-turn (DialogueState :session-id SID) (TurnInput "hello" "msg-1")) state)
+                                            INIT) state)
+                            SUCCESS-RESULT) state))
+  (assert (not idle.in-flight) (repr idle))
+  (for [event ["Notification" "SessionEnd"]]
+    (for [record [(| SESSION-START-HOOK-STARTED {"hook_event" event "hook_name" event})
+                  (| SESSION-START-HOOK-RESPONSE {"hook_event" event "hook_name" event})]]
+      (val read (read-record idle record))
+      (assert (is read.retire None) (repr #(record read.retire)))
+      (assert (= read.state idle) (repr read.state))))
+  (for [event ["UserPromptSubmit" "PreToolUse" "Stop"]]
+    (assert (= (. (read-record idle (| ADVISING-HOOK-RESPONSE {"hook_event" event "hook_name" event})) retire)
+               StopReason.OUTSIDE-TURN-OUTPUT)
+            event)))
+
+
 (deftest test-before-the-first-input-only-the-session-start-hook-lines-are-quiet
   ;; 入力なしで事前起動した process(ClaudeWarmSession)が最初の入力の前に出してよいのは、SessionStart の hook の開始と応答の行だけ。
   ;; それ以外の行(SessionStart 以外の hook の行・SessionStart の hook の途中経過の行・system/init・assistant・rate_limit_event・
@@ -111,7 +137,7 @@
     (val read (read-record waiting record))
     (assert (is read.retire None) (repr #(record read.retire)))
     (assert (= read.state waiting) (repr read.state)))
-  (for [record [(| SESSION-START-HOOK-RESPONSE {"hook_event" "Notification" "hook_name" "Notification"})
+  (for [record [(| SESSION-START-HOOK-RESPONSE {"hook_event" "PreToolUse" "hook_name" "PreToolUse:Bash"})
                 (| SESSION-START-HOOK-STARTED {"hook_event" "UserPromptSubmit" "hook_name" "UserPromptSubmit"})
                 {"type" "system" "subtype" "hook_progress" "hook_event" "SessionStart" "hook_name" "SessionStart:startup"}
                 INIT
@@ -128,11 +154,20 @@
 
 (deftest test-hook-lines-are-classified-by-their-event
   ;; hook の開始と応答の行は、イベント名(hook_event — この欄の無い版では hook_name の「:」の前)と段階を持つ型 HookNotice に分ける。
-  ;; 途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
+  ;; 応答の行は hook の id・出力(stdout・stderr・output)・exit code・終わり方(outcome)も運ぶ(会話の画面に hook の結果を出すため・
+  ;; card acp:kanban-issue:ki-d8b473480303)。途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
   (assert (= (classify-record SESSION-START-HOOK-STARTED)
-             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:startup")))
+             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:startup" :hook-id "hook-1")))
   (assert (= (classify-record SESSION-START-HOOK-RESPONSE)
-             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.RESPONSE :name "SessionStart:startup")))
+             (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.RESPONSE :name "SessionStart:startup" :hook-id "hook-1"
+                               :exit-code 0 :outcome "success")))
+  (assert (= (classify-record ADVISING-HOOK-RESPONSE)
+             (lines.HookNotice :event "PreToolUse" :phase lines.HookPhase.RESPONSE :name "PreToolUse:Bash" :hook-id "hook-7"
+                               :stdout ADVICE-STDOUT :output ADVICE-STDOUT :exit-code 0 :outcome "success")))
+  (assert (= (classify-record {"type" "system" "subtype" "hook_response" "hook_id" "hook-8" "hook_name" "Stop" "hook_event" "Stop"
+                               "output" "blocked" "stdout" "" "stderr" "blocked" "exit_code" 2 "outcome" "error"})
+             (lines.HookNotice :event "Stop" :phase lines.HookPhase.RESPONSE :name "Stop" :hook-id "hook-8" :stderr "blocked"
+                               :output "blocked" :exit-code 2 :outcome "error")))
   (assert (= (classify-record {"type" "system" "subtype" "hook_started" "hook_name" "SessionStart:resume"})
              (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:resume")))
   (assert (= (classify-record {"type" "system" "subtype" "hook_progress" "hook_event" "SessionStart"})

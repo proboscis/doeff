@@ -387,6 +387,29 @@ class AgentCompactionEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentHookEvent:
+    """A hook the runtime ran in the turn answered (card acp:kanban-issue:ki-d8b473480303 — an upper layer shows the
+    hook's result, e.g. advice a conditional rule added or a Stop hook sending the answer back, in the conversation).
+    The fields are the runtime's hook response as stated: ``hook_event`` (the hook's event, e.g. ``PreToolUse``),
+    ``name`` (the hook's name, ``<event>:<matcher>``), ``hook_id`` (the id of this run of the hook), ``stdout`` and
+    ``stderr`` (the hook command's output — a hook answering in JSON leaves the JSON text as is), ``output`` (the
+    runtime's combined output), ``exit_code`` (``None`` when the runtime does not state it) and ``outcome`` (the
+    runtime's word for how the hook ended, e.g. ``success`` / ``error`` — empty when not stated).  Every response
+    is carried, with or without output; choosing which to keep is the upper layer's."""
+
+    seq: int
+    at: datetime
+    hook_event: str
+    name: str
+    hook_id: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    output: str = ""
+    exit_code: int | None = None
+    outcome: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentCallUsageEvent:
     """An API call of the main conversation stated its usage while the turn is still running — an upper layer
     reads the conversation's current context size without waiting for the turn's end (its input side: input +
@@ -454,6 +477,7 @@ AgentEvent = (
     | AgentToolInputDeltaEvent
     | AgentStopHookFeedbackEvent
     | AgentCompactionEvent
+    | AgentHookEvent
     | AgentCallUsageEvent
     | AgentToolUseEvent
     | AgentToolResultEvent

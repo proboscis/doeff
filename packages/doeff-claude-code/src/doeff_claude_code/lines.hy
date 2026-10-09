@@ -193,10 +193,21 @@
 (defrecord HookNotice
   "CLI が hook を実行した通知の行(system/hook_started・system/hook_response): event = hook のイベント名(hook_event — この欄の無い版は
    hook_name の「:」の前)/ phase = 段階(HookPhase)/ name = hook の名前(hook_name — 「イベント名:matcher」・無ければ空)。入力を
-   書かずに事前起動した process が最初の入力の前に出してよい行を、イベント名で絞るため(dialogue.hy の quiet-before-first-input)。"
+   書かずに事前起動した process が最初の入力の前に出してよい行と、ターンの外で出てよい行を、イベント名で絞るため(dialogue.hy の
+   quiet-before-first-input・quiet-outside-turn)。hook-id = hook の 1 回の実行の id(hook_id — 開始と応答で同じ)。応答の行だけが
+   運ぶ欄(上の層が hook の結果を会話の画面に出すため・card acp:kanban-issue:ki-d8b473480303 — CLI 2.1.292 は SessionStart・Setup の
+   ほかの hook の行を --include-hook-events の時だけ出す): stdout・stderr = hook の命令の出力(JSON で答える hook の stdout は JSON の
+   文字列のまま)/ output = CLI がまとめた出力 / exit-code = 命令の終了の code(名乗らなければ None)/ outcome = CLI の終わり方の語
+   (success・error ほか — 語は CLI のまま・名乗らなければ空)。"
   (#^ str event)
   (#^ HookPhase phase)
-  (#^ str name))
+  (#^ str name)
+  (setv #^ str hook-id "")
+  (setv #^ str stdout "")
+  (setv #^ str stderr "")
+  (setv #^ str output "")
+  (setv #^ (| int None) exit-code None)
+  (setv #^ str outcome ""))
 
 (defclass [(dataclass :frozen True)] TaskEvent []
   "CLI の道具の task の開始と報せ(system/task_started・task_notification)。"
@@ -528,10 +539,13 @@
 
 (defk hook-notice-of [#^ dict record #^ HookPhase phase]
   {:pre [(: record dict) (: phase HookPhase)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}
-  "hook の開始と応答の行を、hook のイベント名で読めるようにするため(最初の入力の前に許す行を名前で絞る — dialogue.hy)。イベント名は
-   hook_event、この欄の無い版は hook_name(「イベント名:matcher」)の「:」の前。"
+  "hook の開始と応答の行を、hook のイベント名で読めるようにするため(ターンの外と最初の入力の前に許す行を名前で絞る — dialogue.hy)と、
+   応答の行の hook の結果(出力・exit code・終わり方)を上の層へ運ぶため。イベント名は hook_event、この欄の無い版は
+   hook_name(「イベント名:matcher」)の「:」の前。"
   (val name (text-at record "hook_name"))
-  (HookNotice :event (or (text-at record "hook_event") (get (.partition name ":") 0)) :phase phase :name name))
+  (HookNotice :event (or (text-at record "hook_event") (get (.partition name ":") 0)) :phase phase :name name
+              :hook-id (text-at record "hook_id") :stdout (text-at record "stdout") :stderr (text-at record "stderr")
+              :output (text-at record "output") :exit-code (int-at record "exit_code") :outcome (text-at record "outcome")))
 
 (defk whole-ms-of [number]
   {:pre [(: number (| float None))] :post [(: % (| int None))] :tags {:context "claude-code" :role "foundation"}}
