@@ -178,7 +178,7 @@ def headless_claude_agent_handlers(
     *,
     config_dir: str,
     env: dict[str, str],
-    live_limit: int,
+    live_limit: int | None,
     credential_floor_seconds: float,
     settings: dict[str, Any] | None = None,
     cold_resume_prompt: str | None = None,
@@ -192,7 +192,12 @@ def headless_claude_agent_handlers(
     ``live_limit`` is how many CLI processes the host keeps alive at once and
     ``credential_floor_seconds`` how long before a lent credential expires the
     host stops the process using it (both from the caller's declaration — no
-    defaults; agora-redesign #3672 D2).
+    defaults; agora-redesign #3672 D2). ``live_limit=None`` declares no limit:
+    for a caller that decides how many to keep alive by another measure (the
+    machine's free memory), layer 2 then compares nothing and emits neither
+    the over-limit log line nor ``ClaudeLiveLimitExceeded`` (agora-redesign
+    #4282; ``None`` is passed through as is, and it is not a default — such a
+    caller passes it explicitly).
     Install a doeff-time handler, a slog handler (the production handler
     emits CLI launch timing lines — agora-redesign #3605), a handler that
     answers ``ClaudeLiveLimitExceeded`` (the host: layer 2 never stops a CLI
@@ -246,7 +251,7 @@ def claude_agent_runtime_handlers(
     *,
     config_dir: str,
     env: dict[str, str],
-    live_limit: int,
+    live_limit: int | None,
     credential_floor_seconds: float,
     settings: dict[str, Any] | None = None,
     cold_resume_prompt: str | None = None,
@@ -306,7 +311,7 @@ def fake_claude_agent_runtime_handlers(
 
 def claude_process_layer_handler(
     *,
-    live_limit: int,
+    live_limit: int | None,
     credential_floor_seconds: float,
     command: tuple[str, ...] = ("claude",),
 ) -> Callable[..., object]:
