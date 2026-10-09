@@ -443,9 +443,11 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   この表は url に鍵を結ぶだけで、url を断りません。表に無い url は worker が鍵なしで clone します(公開の repo は通り、読めない非公開の
   repo は clone の失敗 `repo-unreachable` で返ります)。
 
-- `deploy/k8s` — k8s の宣言(Flux がこの dir を当てます)。coordinator 1 つ(atlas)と、機体(Node)ごとの worker 1 つ: 雛形
-  `deploy/k8s/worker` に、機体ごとの差(置く Node と資源の上限)を `deploy/k8s/nodes/<Node の名>` が足します(名は
-  `doeff-worker-<Node の名>`)。worker の名と `NODE_NAME` は Node の名で、能力 `host-<Node の名>` と `host-systemd-readable` を
+- `deploy/k8s` — k8s の宣言。coordinator 1 つ(atlas・`deploy/k8s/coordinator`)と、機体(Node)ごとの worker 1 つ
+  (`deploy/k8s/workers` = worker の ServiceAccount と機体の dir の並び): 雛形 `deploy/k8s/worker` に、機体ごとの差(置く Node と
+  資源の上限)を `deploy/k8s/nodes/<Node の名>` が足します(名は `doeff-worker-<Node の名>`)。Flux は `deploy/k8s/coordinator` と
+  `deploy/k8s/workers` を別々の Kustomization で当てます(上に載る系が今の宣言から引き継ぐ時期を組ごとに決められます)。
+  `deploy/k8s` は全部を組み立てる入口です。worker の名と `NODE_NAME` は Node の名で、能力 `host-<Node の名>` と `host-systemd-readable` を
   申告し、機体の `/etc/systemd/system` を読み取り専用で `/host/etc/systemd/system`(env `WORKER_HOST_SYSTEMD_ROOT`)に置きます。
   ServiceAccount `doeff-worker` の token・cluster の CA・namespace は標準の path(`/var/run/secrets/kubernetes.io/serviceaccount`)に
   置きます。確かめは `tests/test_k8s_declarations.py`(`kubectl kustomize` で組み立てた物を読む)。
@@ -468,7 +470,7 @@ Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doe
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
 env の値は宣言の `env` が `envFrom` より優先されるので、宣言に在る名を ConfigMap に置いても効きません。coordinator の ServiceAccount
-には能力を導くための nodes の list・watch を与えます(`deploy/k8s/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その
+には能力を導くための nodes の list・watch を与えます(`deploy/k8s/coordinator/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その
 Deployment の在る namespace の権限として配備する側が与えます。
 
 ### 配備の順

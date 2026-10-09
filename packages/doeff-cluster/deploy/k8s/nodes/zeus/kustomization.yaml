@@ -1,6 +1,6 @@
 # zeus の worker(doeff-worker-zeus)= worker の雛形 + zeus の差(置く Node・資源の上限)。
 # 機体を足す時は nodes/<Node の名>/ をこの dir と同じ形で作り(nameSuffix・label・node.yaml の Node の名と資源)、
-# ../../kustomization.yaml の resources に足す。
+# ../../workers/kustomization.yaml の resources に足す。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

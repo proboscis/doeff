@@ -1,0 +1,5 @@
+# coordinator の組(coordinator.yaml — ServiceAccount・Node を読む権限・Service・Deployment)。Flux はこの dir を 1 つの Kustomization で当てる。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - coordinator.yaml
