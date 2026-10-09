@@ -286,6 +286,15 @@ the production pair and ride on the launch declaration the fake layer 2
 receives, so an emulation can observe what its production path decided. A
 caller with nothing to declare passes empty mappings explicitly.
 
+The production entries (`headless_claude_agent_handlers`,
+`claude_agent_runtime_handlers`, `claude_process_layer_handler`) take
+`live_limit` as an integer of 1 or more, or `None`. `None` declares no limit —
+for a caller that decides how many CLI processes to keep alive by another
+measure, such as the machine's free memory. It is passed to layer 2 as is:
+layer 2 then compares nothing and emits neither the over-limit log line nor
+`ClaudeLiveLimitExceeded`. There is no default; such a caller passes `None`
+explicitly.
+
 Callers that must not name a substrate (agora keeps the substrate the
 library's concern) use `claude_agent_runtime_handlers(config_dir=..., env=..., live_limit=..., credential_floor_seconds=...)`
 and `fake_claude_agent_runtime_handlers(responder=..., env=..., settings=...)`:
