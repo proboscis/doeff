@@ -8,6 +8,7 @@
 (import sys)
 (import uuid)
 (import pathlib [Path])
+(import pytest)
 (import doeff [with_handlers])
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [listen-handler slog-discard-handler])
@@ -38,11 +39,17 @@
   (ClaudeSessionSpec :home (ClaudeHome (str (/ tmp-path "home")) (child-env ""))
                      :cwd (str work) :settings {"disableAllHooks" True}))
 
-(defn fake-stack [#^ int limit]
+(defk fake-stack [limit]
+  {:pre [(: limit (| int None))] :post [(: % list)] :tags {:context "claude-code" :role "program"}}
+  "fake の世界(生かす本数の上限 limit — None は上限を宣言しない)の handler の並びを作るため。外側にホストの役(host-hears)と、
+   通り道で log の行・知らせを覚える listen-handler を置く。"
   [(sim-time-handler :clock (SimClock)) (host-hears) listen-handler
    (fake-claude-code-handler (FakeClaudeWorld fake-responder :live-limit limit))])
 
-(defn stub-stack [#^ int limit]
+(defk stub-stack [limit]
+  {:pre [(: limit (| int None))] :post [(: % list)] :tags {:context "claude-code" :role "program"}}
+  "本番の handler(替え玉の CLI・生かす本数の上限 limit — None は上限を宣言しない)の handler の並びを作るため。外側の並びは
+   fake-stack と同じで、加えて log の行の答え手を置く。"
   [(sync-time-handler) slog-discard-handler (host-hears) listen-handler
    (claude-code-handler (ClaudeCodeHost STUB-COMMAND (clock-of (sync-time-handler)) limit 7200.0 :launch-timeout 30.0))])
 
@@ -93,13 +100,15 @@
 
 (deftest test-the-fake-over-its-live-limit-stops-no-process-and-tells-the-host [tmp-path]
   (val ids (tuple (gfor _ (range 4) (str (uuid.uuid4)))))
-  (<- heard (with_handlers (fake-stack 2) (Listen (four-sessions-over-a-limit-of-two (spec-in tmp-path) ids) :types HEARD)))
+  (<- stack (fake-stack 2))
+  (<- heard (with_handlers stack (Listen (four-sessions-over-a-limit-of-two (spec-in tmp-path) ids) :types HEARD)))
   (assert-idle-over-the-limit (get heard 0) (get heard 1) ids))
 
 
 (deftest test-the-handler-over-its-live-limit-stops-no-process-and-tells-the-host-and-the-log [tmp-path]
   (val ids (tuple (gfor _ (range 4) (str (uuid.uuid4)))))
-  (<- heard (with_handlers (stub-stack 2) (Listen (four-sessions-over-a-limit-of-two (spec-in tmp-path) ids) :types HEARD)))
+  (<- stack (stub-stack 2))
+  (<- heard (with_handlers stack (Listen (four-sessions-over-a-limit-of-two (spec-in tmp-path) ids) :types HEARD)))
   (assert-idle-over-the-limit (get heard 0) (get heard 1) ids)
   (assert (= (limit-logs (get heard 1)) [#((get ids 2) 3 2 True) #((get ids 3) 4 2 False)]) (repr (limit-logs (get heard 1)))))
 
@@ -136,7 +145,8 @@
 (deftest test-the-fake-over-its-live-limit-starts-beside-a-running-turn-and-tells-the-host [tmp-path]
   (val first-id (str (uuid.uuid4)))
   (val second-id (str (uuid.uuid4)))
-  (<- heard (with_handlers (fake-stack 1)
+  (<- stack (fake-stack 1))
+  (<- heard (with_handlers stack
               (Listen (second-turn-beside-a-running-turn (spec-in tmp-path) first-id second-id) :types HEARD)))
   (assert-beside-a-running-turn (get heard 0) (get heard 1) second-id))
 
@@ -144,7 +154,54 @@
 (deftest test-the-handler-over-its-live-limit-starts-beside-a-running-turn-and-tells-the-host-and-the-log [tmp-path]
   (val first-id (str (uuid.uuid4)))
   (val second-id (str (uuid.uuid4)))
-  (<- heard (with_handlers (stub-stack 1)
+  (<- stack (stub-stack 1))
+  (<- heard (with_handlers stack
               (Listen (second-turn-beside-a-running-turn (spec-in tmp-path) first-id second-id) :types HEARD)))
   (assert-beside-a-running-turn (get heard 0) (get heard 1) second-id)
   (assert (= (limit-logs (get heard 1)) [#(second-id 2 1 False)]) (repr (limit-logs (get heard 1)))))
+
+
+;; --- 上限を宣言しないホスト(live-limit が None — #4282)--------------------------------------------------------------
+;; 使い手が同時に生かす本数を別の物差し(機体の memory の余白)で決める時は、この層に本数を渡さない(None)。比べる数が無いので、
+;; process を何本起こしても log の行も知らせ ClaudeLiveLimitExceeded も出ない。整数を渡すホストの検査(1 以上・bool を断る)と、
+;; 上の 2 つの筋書き(整数の上限を越えたら知らせる)は変わらない。
+;; 失敗ケース = 変更前の ClaudeCodeHost は None を 1 と比べて TypeError で落ち、上限を宣言しないホストを作れなかった。fake の世界は
+;; 前から None を受ける(同じ筋書きを両方に当てて、本番の handler を fake に揃える)。
+
+(defk four-processes-live-and-nothing-told [#^ tuple seen]
+  {:pre [(: seen tuple)] :post [(: % None)] :tags {:context "claude-code" :role "program"}}
+  "Listen の答え(4 つの会話の process の見え方 と 通り道で覚えた log の行・知らせ)から、4 つの process がどれも止まらずに生きていて、
+   上限越えの知らせも log の行も 1 つも出ていない事を確かめるため。"
+  (assert (= (get seen 0) (tuple (gfor _ (range 4) (LiveProcess :launches 1)))) (repr (get seen 0)))
+  (assert (= (notices-in (get seen 1)) []) (repr (notices-in (get seen 1))))
+  (assert (= (limit-logs (get seen 1)) []) (repr (limit-logs (get seen 1))))
+  None)
+
+
+;; 上限を宣言しないホストを作れる(欄 live-limit は None のまま持つ — 0 や大きい数に言い換えない)。
+(deftest test-the-host-is-built-without-a-live-limit
+  (val host (ClaudeCodeHost STUB-COMMAND (clock-of (sync-time-handler)) None 7200.0))
+  (assert (is host.live-limit None) (repr host.live-limit)))
+
+
+;; 整数を渡すホストの検査は、None を受けるようになっても同じ(0・負の数・bool は作る時に断る)。
+(deftest test-the-host-refuses-a-live-limit-below-one-and-a-bool
+  (for [bad #(0 -1 True False)]
+    (with [(pytest.raises ValueError :match "live_limit")]
+      (ClaudeCodeHost STUB-COMMAND (clock-of (sync-time-handler)) bad 7200.0))))
+
+
+;; fake: 上限を宣言しない世界は、上限 2 の筋書きと同じ 4 つの会話を起こしても何も知らせない。
+(deftest test-the-fake-without-a-live-limit-keeps-four-processes-and-tells-nothing [tmp-path]
+  (val ids (tuple (gfor _ (range 4) (str (uuid.uuid4)))))
+  (<- stack (fake-stack None))
+  (<- seen (with_handlers stack (Listen (four-sessions-over-a-limit-of-two (spec-in tmp-path) ids) :types HEARD)))
+  (<- (four-processes-live-and-nothing-told seen)))
+
+
+;; 本番の handler: 上限を宣言しないホストは、同じ 4 つの会話の process を起こしても log の行も知らせも出さない。
+(deftest test-the-handler-without-a-live-limit-keeps-four-processes-and-tells-nothing [tmp-path]
+  (val ids (tuple (gfor _ (range 4) (str (uuid.uuid4)))))
+  (<- stack (stub-stack None))
+  (<- seen (with_handlers stack (Listen (four-sessions-over-a-limit-of-two (spec-in tmp-path) ids) :types HEARD)))
+  (<- (four-processes-live-and-nothing-told seen)))
