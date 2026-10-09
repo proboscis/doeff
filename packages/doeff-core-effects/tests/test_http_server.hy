@@ -134,6 +134,7 @@
       (WsTextArrived :ticket t :text "leave") (do (<- (HttpStopListening))
                                                   (<- (WsSendText :ticket t :text "left")))
       (WsTextArrived :text "stop") (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
+      (WsTextArrived :text "go-away") (<- (HttpShutdown :reason "退く" :drain-seconds 1.0 :close-code 1001))
       (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ name ":" text)))
       _ None)))
 
@@ -144,6 +145,15 @@
   (<- accepted int (named-echo name (HttpAddress :host "127.0.0.1" :port 0) (fn [bound] None)))
   (<- served tuple (ReadHttpServed))
   #(accepted served))
+
+
+(deftest test-the-scripted-server-closes-open-sockets-with-the-code-the-shutdown-names
+  ;; 失敗ケース(入れ替えで退く側の閉じ — agora-redesign #4317): HttpShutdown が名指した状態符(1001 going away)で開いた札を閉じる。直す前は
+  ;; 状態符の欄が無く 1000 で閉じる(赤)。
+  (val script (HttpScript :arrivals #((arrival 1 "/" :upgrade True) (WsTextArrived :ticket "1" :text "go-away"))))
+  (<- answer tuple (with-handler [(state) (scripted-http-server script)] (echo-served "A")))
+  (val served (get answer 1))
+  (assert (= (lfor e served :if (isinstance e WsCloseSent) #(e.ticket e.code)) [#("1" 1001)]) served))
 
 
 (deftest test-the-scripted-server-hands-no-new-request-after-it-stops-listening
@@ -373,6 +383,50 @@
         (setv names (lfor _ (range 6) (await (ask-new session "who"))))
         (assert (= names (* ["B:who"] 6)) names)
         (await (.send-str first "stop")))
+      (with [:async last (.ws-connect session base)]
+        (await (.send-str last "stop")))))
+  (asyncio.run (scenario))
+  (assert (= (.get result-a :timeout 10) 1))
+  (assert (= (.get result-b :timeout 10) 7)))
+
+
+(defn #^ None test-a-shutdown-stops-listening-before-it-closes-with-the-code-it-names []
+  ;; 失敗ケース(入れ替えで退く側の閉じ — agora-redesign #4317): 待ち受け A と B が port を共有する時、A が閉じの状態符 1001(going away)を
+  ;; 名指して閉じる。A の客は 1001 を受け、受けた直後に張り直した新しい接続は全部 B に当たる(A は客を閉じる前に待ち受けを閉じる)。
+  ;; 直す前は HttpShutdown に状態符の欄が無く(客は 1000 を受ける)、待ち受けを閉じるのは送りの箱を流し切った後なので、直後の張り直しが
+  ;; A に当たりうる(赤)。
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  (import aiohttp [WSMsgType])
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (setv port (free-port) address (HttpAddress :host "127.0.0.1" :port port)
+        bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
+  (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
+    "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
+    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+                                                                                         (named-echo name address bound.put))))))
+                              :daemon True)))
+  (open-listener "A" bound-a result-a)
+  (.get bound-a :timeout 10)
+  (setv base (.format "http://127.0.0.1:{}/" port))
+  (defn :async #^ str ask-new [#^ aiohttp.ClientSession session #^ str text]
+    "新しい接続を開いて 1 往復し、答えを返して閉じるため。"
+    (with [:async ws (.ws-connect session base)]
+      (await (.send-str ws text))
+      (. (await (.receive ws :timeout 5)) data)))
+  (defn :async #^ None scenario []
+    "A に繋ぎ、B を重ねて開き、A を 1001 で閉じさせた直後の張り直しの行き先を数えるため。"
+    (with [:async session (aiohttp.ClientSession)]
+      (with [:async first (.ws-connect session base)]
+        (await (.send-str first "hi"))
+        (assert (= (. (await (.receive first :timeout 5)) data) "A:hi"))
+        (open-listener "B" bound-b result-b)
+        (await (asyncio.to-thread bound-b.get :timeout 10))
+        (await (.send-str first "go-away"))
+        (setv closing (await (.receive first :timeout 5)))
+        (assert (= [closing.type closing.data] [WSMsgType.CLOSE 1001]) closing))
+      ;; 閉じを受けた直後の張り直しは全部 B に当たる。
+      (setv names (lfor _ (range 6) (await (ask-new session "who"))))
+      (assert (= names (* ["B:who"] 6)) names)
       (with [:async last (.ws-connect session base)]
         (await (.send-str last "stop")))))
   (asyncio.run (scenario))
