@@ -15,9 +15,10 @@
 ;;; build_claude_argv / build_codex_argv / trust_*_workspace /
 ;;; output_has_* / dismiss_*。
 
-(require doeff-hy.macros [deftest defk deff <- defhandler])
+(require doeff-hy.macros [deftest defk deff <- defhandler val])
 
 (import json)
+(import zoneinfo)
 (import pytest)
 (import doeff [EffectBase run])
 
@@ -1118,6 +1119,21 @@
               "resets 6pm (Mars/Olympus)"
               "resets 13pm (Asia/Tokyo)"]]
     (assert (is (run (api-limit-resets-at said jst-15)) None) said)))
+
+
+(deftest test-api-limit-resets-at-reads-its-zone-without-the-machines-tz-data
+  ;; 時間帯の表は doeff-agents が依存に宣言した tzdata から引く。機体の tz データ
+  ;; (/usr/share/zoneinfo)の無い Pod でも戻りの時刻を失わない(card ki-db3650ee22fb:
+  ;; daily-verify の Pod に zoneinfo が無く、Asia/Tokyo が引けず None になった)。
+  (val jst-15 1790143200000) ;; 2026-09-23 15:00 JST
+  (zoneinfo.reset-tzpath :to [])
+  (.clear-cache zoneinfo.ZoneInfo)
+  (try
+    (assert (= (run (api-limit-resets-at "You've hit your session limit · resets 6:20pm (Asia/Tokyo)" jst-15))
+               (+ jst-15 (* 200 60 1000))))
+    (finally
+      (zoneinfo.reset-tzpath)
+      (.clear-cache zoneinfo.ZoneInfo))))
 
 
 (deftest test-api-limit-marker-possessive-family-bounded-match
