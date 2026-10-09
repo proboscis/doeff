@@ -51,6 +51,8 @@ from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERRO
 from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
+from doeff_claude_code.lines import HookNotice as HookNotice
+from doeff_claude_code.lines import HookPhase as HookPhase
 from doeff_claude_code.lines import stderr_tail_within as stderr_tail_within
 from doeff_claude_code.dialogue import limit_hit_after as limit_hit_after
 from doeff_claude_code.dialogue import refusal_hit_after as refusal_hit_after
@@ -141,6 +143,7 @@ class FakeReply:
     account_refusal: AccountRefusalHit | None = None
     stop_hook_rejections: tuple[StopHookRejection, ...] = ...
     compactions: tuple[CompactBoundary, ...] = ...
+    hooks: tuple[HookNotice, ...] = ...
 
     def __post_init__(self) -> None:
         ...
@@ -231,6 +234,9 @@ def finish(session: FakeSession, turn: FakeTurn, end: ClaudeTurnEnd) -> _Program
     ...
 
 def read_injections(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn) -> _Program[tuple, object]:
+    ...
+
+def stop_hook_notice_of(rejection: StopHookRejection) -> _Program[HookNotice, object]:
     ...
 
 def begin_text(world: FakeClaudeWorld, session: FakeSession, turn: FakeTurn, now: float) -> _Program[None, object]:

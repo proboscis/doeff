@@ -20,6 +20,8 @@ from doeff_claude_code.lines import Usage as Usage
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import CompactTrigger as CompactTrigger
+from doeff_claude_code.lines import HookNotice as HookNotice
+from doeff_claude_code.lines import HookPhase as HookPhase
 from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
 from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
 from doeff_agents.handlers.headless import HeadlessState as HeadlessState
