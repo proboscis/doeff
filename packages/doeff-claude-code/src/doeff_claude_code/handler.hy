@@ -13,6 +13,9 @@
 ;;; 知らせ ClaudeLiveLimitExceeded(ホストが答える)を出すだけ — ホストの数えと handler の数えが食い違った事を見せる。前は handler が
 ;;; 上限で手番を走らせていない一番古い process を黙って止め、全部が手番を走らせていれば空くまで起動を待った(ホストの知らない CLI が
 ;;; 止まり、ターンが止めの終わりを待った)。
+;;; 上限を宣言しないホスト(live-limit が None — #4282): 使い手が同時に生かす本数を別の物差し(機体の memory の余白)で決める時は、
+;;; この層に本数を渡さない。None のホストは起動の後の本数を上限と比べる所を通らず、log の行も知らせも出さない(None を 0 や大きい数に
+;;; 言い換えない)。整数を渡すホストの検査と振る舞いは同じ。
 ;;;
 ;;; 不変条件(fake と共通 — tests/test_scenarios.hy が両方に当てる):
 ;;;   1 つの会話に走っている手番は多くとも 1 つ・生きた process は多くとも 1 つ(降りる途中の process は待ってから起こす)。
@@ -199,13 +202,15 @@
 (defclass ClaudeCodeHost []
   "handler の状態: 会話の id → SessionRuntime。command = 実行ファイルと前置きの引数(例: #(\"claude\"))・clock = 行の時刻を
    刻む関数(clock.clock-of)・live-limit = 同時に生かす process の本数の上限(走っている手番の process も数える — 機体の memory の
-   予算 ÷ 1 本の memory。#3672 の D2。越える起動は止めずに知らせる — 頭の註)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential-expires-at)の手前で
+   予算 ÷ 1 本の memory。#3672 の D2。越える起動は止めずに知らせる — 頭の註。None = 上限を宣言しない: 使い手が別の物差し — 機体の
+   memory の余白 — で決める時で、本数を上限と比べず、log の行も知らせも出さない・#4282)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential-expires-at)の手前で
    process を止める床の秒・launch-timeout = init の行を待つ上限(秒)。上限と床は呼び手の宣言から
-   受ける(既定を持たない)。"
-  (defn __init__ [self #^ tuple command clock #^ int live-limit #^ float credential-floor-seconds [launch-timeout 120.0]]
+   受ける(既定を持たない — 上限を宣言しない呼び手も None を明示で渡す)。"
+  (defn __init__ [self #^ tuple command clock #^ (| int None) live-limit #^ float credential-floor-seconds [launch-timeout 120.0]]
     ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る。
-    (when (or (isinstance live-limit bool) (< live-limit 1))
-      (raise (ValueError (.format "ClaudeCodeHost.live_limit は 1 以上の整数: {!r}" live-limit))))
+    ;; None(上限を宣言しない)は比べる数が無いので、検査を通さずそのまま持つ(fake の FakeClaudeWorld と同じ)。
+    (when (and (is-not live-limit None) (or (isinstance live-limit bool) (< live-limit 1)))
+      (raise (ValueError (.format "ClaudeCodeHost.live_limit は 1 以上の整数か None: {!r}" live-limit))))
     (when (or (isinstance credential-floor-seconds bool) (< credential-floor-seconds 0))
       (raise (ValueError (.format "ClaudeCodeHost.credential_floor_seconds は 0 以上の秒: {!r}" credential-floor-seconds))))
     (setv self.command command
@@ -840,21 +845,32 @@
     (setv process runtime.process)
     (and (is-not process None) (.alive process) (is process.retiring None))))
 
-(defk note-over-limit [#^ ClaudeCodeHost host #^ str session-id #^ bool warm]
-  {:pre [(: host ClaudeCodeHost) (: session-id str) (: warm bool)] :post [(: % None)]
+(defk note-over-declared-limit [#^ ClaudeCodeHost host #^ int limit #^ str session-id #^ bool warm]
+  {:pre [(: host ClaudeCodeHost) (: limit int) (: session-id str) (: warm bool)] :post [(: % None)]
    :tags {:context "claude-code" :role "foundation"}}
-  "新しい process を起こす直前に、起こした後の生きた process の本数(降りる途中の物は数えない)が上限 host.live-limit を越えるなら、
+  "新しい process を起こす直前に、起こした後の生きた process の本数(降りる途中の物は数えない)がホストの宣言した上限 limit を越えるなら、
    log の 1 行(LIVE-LIMIT-LOG)を出し、知らせ ClaudeLiveLimitExceeded をホストへ出すため(頭の註 — 止めない・待たない・失敗に
    しない)。session-id = 起こす会話(枝分かれは元の会話の id — 枝の id は init まで決まらない)・warm = 入力の前の事前起動か。"
   (val runtimes (with [host.lock] (tuple (.values host.runtimes))))
   (val live (+ 1 (len (lfor runtime runtimes :if (counted-live runtime) runtime))))
-  (when (<= live host.live-limit)
+  (when (<= live limit)
     (return None))
   (<- at (GetTime))
   (<- wall-ms (wall-ms-of at))
   (<- (slog LIVE-LIMIT-LOG :level "warning" :event "live-limit-exceeded" :wall-ms wall-ms :session-id session-id :live live
-            :limit host.live-limit :warm warm))
-  (<- (ClaudeLiveLimitExceeded :session-id session-id :live live :limit host.live-limit :warm warm))
+            :limit limit :warm warm))
+  (<- (ClaudeLiveLimitExceeded :session-id session-id :live live :limit limit :warm warm))
+  None)
+
+(defk note-over-limit [#^ ClaudeCodeHost host #^ str session-id #^ bool warm]
+  {:pre [(: host ClaudeCodeHost) (: session-id str) (: warm bool)] :post [(: % None)]
+   :tags {:context "claude-code" :role "foundation"}}
+  "新しい process を起こす直前に、ホストが生かす本数の上限を宣言しているかで分けるため(#4282)。宣言していない(host.live-limit が None)
+   なら、比べる数が無いので本数を数えず、log の行も知らせも出さない。宣言していれば、その数で note-over-declared-limit を通す
+   (None でない値は全部こちら — 黙って「宣言なし」に寄せない)。session-id・warm は note-over-declared-limit と同じ。"
+  (match host.live-limit
+    None None
+    limit (<- (note-over-declared-limit host limit session-id warm)))
   None)
 
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]

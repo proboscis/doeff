@@ -47,6 +47,10 @@
   ホストは外側にこの知らせの答え手を置く。fake は `FakeClaudeWorld(..., live_limit=n)` で同じ上限を持ち、同じ知らせを出す
   (log の行は出さない。`live_limit` を渡さない世界は上限を宣言しない)。
   `responder` と `respond` はちょうど 1 つ。
+- 上限を宣言しないホスト(#4282): `ClaudeCodeHost` の `live_limit` は 1 以上の整数か `None`。`None` は「上限を宣言しない」
+  (使い手が同時に生かす本数を別の物差し — 機体の memory の余白 — で決める時)で、本番の handler は起動の後の本数を上限と比べず、
+  log の行も知らせ `ClaudeLiveLimitExceeded` も出さない(`None` を 0 や大きい数に言い換えない)。既定は無い — 上限を宣言しない
+  呼び手も `None` を明示で渡す。整数を渡すホストの検査(1 以上・bool を断る)と振る舞いは同じ。
 
 どちらの handler も外側に doeff-time の時間の handler(本番 = `sync-time-handler`・模擬 = `sim-time-handler`)と doeff の scheduler を要る。
 
