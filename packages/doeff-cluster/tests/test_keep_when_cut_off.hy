@@ -417,8 +417,8 @@
 
 (deftest test-a-same-name-generation-after-a-partition-does-not-overlap-the-old-process
   ;; 長い方の柵(査読の決め): 分断の最中に k8s が同じ名の worker の新しい世代を作っても(早くても約 350 秒後)、印の在る job の古い
-  ;; process は keep-fence-ms(240 秒)で既に止まっていて、新しい世代の process と重ならない(条 C2)。新しい世代は印を持たないと知らせる
-  ;; ので約束が外れ、置き先を引き継いで起こす。
+  ;; process は keep-fence-ms(240 秒)で既に止まっていて、新しい世代の process と重ならない(条 C2)。約束は担い手の沈黙が約束の期限
+  ;; (kept-reassign-after-ms・280 秒)を越えた所で外れるが、他に置ける worker が無いので置き先は同じ名に残り、新しい世代が引き継いで起こす。
   (<- seen PartitionSeen (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (pulses sim-foundation) (partition-then-recreate)))
   (<- spans tuple (partitioned-spans seen.after))
   (<- broken tuple (one-place-per-job spans))

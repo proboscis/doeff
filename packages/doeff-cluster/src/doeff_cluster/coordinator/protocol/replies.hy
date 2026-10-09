@@ -115,7 +115,8 @@
    "events" (list view.events)
    "revision" view.revision
    ;; 途絶しても動かし続けてよい印の約束(#2883): job の名の順の列 [{job worker boot sinceMs}] — 担い手 worker の世代 boot へ時刻 sinceMs から
-   ;; 渡してある。約束の在る job は担い手が印を手放すか Worker が消されるまで他へ移らない。読みだけ(書きの口は無い)。
+   ;; 渡してある。約束の在る job は、担い手が印を手放すか、Worker が消されるか、担い手の沈黙が約束の期限(kept-reassign-after-ms)を
+   ;; 越えるまで他へ移らない。GET で返すだけ(約束を書き換える要求は無い)。
    "keepMarks" (lfor m view.keep-marks {"job" m.job "worker" m.worker "boot" m.boot "sinceMs" m.since-ms})})
 
 

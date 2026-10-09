@@ -129,7 +129,8 @@
   ;; 期限を過ぎた担い手からは job を他へ移すので NotReady(2026-09-25: 以前は heartbeat が 10 秒途絶えただけで NotReady と言い、
   ;; 書き手が書き先へ書けているのに Rollout が戻しに入りえた)。
   ;; 途絶しても動かし続けてよい印をこの担い手に渡してある job(#2804 — ClusterState.keep-marks)は、期限を過ぎても Unknown: 担い手は
-  ;; fence でも止めず、coordinator も他へ移さないので、process は動き続けている見込み(監視が止まりと読まない)。印の無い job は担い手が
+  ;; fence でも止めず、coordinator も約束の期限(kept-reassign-after-ms — 長い方の柵より後)までは他へ移さないので、process は動き続けて
+  ;; いると考えられる(監視が止まりと判じない)。印の無い job は担い手が
   ;; fence で止めているので、期限の後は NotReady のまま(他に置ける worker が無ければ置き先は保ち、担い手が戻ると起こし直す)。
   ;; 印の在る job も、担い手は途絶が長い方の柵(ClusterTiming.keep-fence-ms)を越えたら止めるので、その後は NotReady。
   (when (or (is st None) (>= now (carrier-stale-from st timing)))
@@ -140,7 +141,7 @@
                     (alive now carrier timing.keep-fence-ms)))
     (return (no (if (or warming silent kept) "Unknown" "NotReady") NotReadyKind.CARRIER-SILENT
                 (if kept
-                    (.format "担い手 {} の報告が無い・古い — 途絶しても動かし続けてよい印を渡してあるので、process は動き続けている見込み(担い手が戻るか Worker が消されるまで他へ移さない)"
+                    (.format "担い手 {} の報告が無い・古い — 途絶しても動かし続けてよい印を渡してあるので、process は動き続けていると考えられる(担い手が戻るか、Worker が消されるか、担い手の沈黙が約束の期限を越えるまで他へ移さない)"
                              a.worker)
                     (.format "担い手 {} の報告が無い・古い" a.worker)))))
   (setv row (job-status-row state a.worker name))

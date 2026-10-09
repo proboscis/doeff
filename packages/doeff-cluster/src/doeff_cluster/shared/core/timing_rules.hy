@@ -9,6 +9,8 @@
 ;;;   移し替え ≥ fence + 返事の上限 + 接続の上限 + 子の停止の猶予
 ;;; C4 は C4b(止め切りの後、job の子孫は 1 つも生きていない — worker の条 stopped-job-leaves-no-descendant・#2940 の 2 段目)が成り立つ
 ;;; 前提の上で意味を持つ。
+;;; 同じ判断を、途絶しても動かし続けてよい印の約束の在る job にも当てる: 移し替え = 約束を外す期限(ClusterTiming.kept-reassign-after-ms)・
+;;; fence = 長い方の柵(keep-fence-ms)。
 ;;; 値の定義の置き場は 1 か所にまとまっていない(fence・移し替え・返事の上限 = shared/intent/protocol の ClusterTiming・接続の上限 =
 ;;; foundation/coordinator_http の CONNECT-SECONDS・停止の猶予 = worker/intent/worker_model の WorkerPolicy)ので、判断は
 ;;; 値を受け取る純関数にし、値を集めるのは呼び手(worker の入口の組み立てと、条の検 tests/test_cluster_timing.hy)。

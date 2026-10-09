@@ -1021,7 +1021,8 @@
   ;; Service の status.ready の材料の readiness の表だけ。位置の引数の呼び手のため最後に置く。
   (setv #^ ClusterObservations observations (field :default-factory ClusterObservations))
   ;; 途絶しても動かし続けてよい印の約束(#2804): KeepMark の列(job の名の順・job ごとに 1 つ — 引くのは cluster_policy.keep-mark-of)。
-  ;; 印を渡した担い手から job を他へ移さない約束で、担い手が印を持たないと知らせるか Worker が消されるまで残る(宣言から job が消えても
+  ;; 印を渡した担い手から job を他へ移さない約束で、担い手が印を持たないと知らせるか、Worker が消されるか、担い手の沈黙が約束の期限
+  ;; (ClusterTiming.kept-reassign-after-ms)を越えるまで残る(宣言から job が消えても
   ;; 残す — 途絶した担い手が古い宣言のまま動かしているかもしれない)。保存する(durable_kv の keep/<名>)。位置の引数の呼び手のため最後に置く。
   (setv #^ (get tuple #(KeepMark ...)) keep-marks #()))
 

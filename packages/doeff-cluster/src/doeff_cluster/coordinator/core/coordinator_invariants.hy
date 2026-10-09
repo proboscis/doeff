@@ -14,8 +14,9 @@
 ;;; 同じ名の worker の新しい世代の上でも)— 担い手が途絶(処理の止まり・網の途絶)しても、途絶の間に能力の合う worker が加わっても、
 ;;; 宣言の needs が変わっても、置ける worker が退いても、分断の最中に k8s が同じ名の新しい世代を作っても。
 ;;; 守り手は 3 つ: 他へ移せる job は時間の柵(worker の fence が coordinator の移し替えより先)・他へ移せない job は「移さない」(途絶しても
-;;; 動かし続けてよい印を渡した担い手から、印を持たないと知らせるか Worker が消されるまで移さない — cluster_policy の keep-marks)・同じ名の
-;;; 新しい世代とは長い方の柵(印の在る job も keep-fence-ms で止める — 数の前提は ClusterTiming.keep-fence-ms の註)。
+;;; 動かし続けてよい印を渡した担い手から、印を持たないと知らせるか Worker が消されるまで移さない — cluster_policy の keep-marks。担い手の
+;;; 沈黙が約束の期限 ClusterTiming.kept-reassign-after-ms を越えた後は時間の柵に戻る — 担い手が長い方の柵で止め切るより後に移す・条 C4 と
+;;; 同じ形)・同じ名の新しい世代とは長い方の柵(印の在る job も keep-fence-ms で止める — 数の前提は ClusterTiming.keep-fence-ms の註)。
 ;;; 判断は記録(job の process ごとの生きていた区間)を受けて重なりの列を返す純関数 1 つ。記録を集めるのは検(tests/test_keep_when_cut_off.hy
 ;;; の途絶の筋書き — 模擬の世界の ProcessesOf の process の始まりと終わり)。
 ;;;
