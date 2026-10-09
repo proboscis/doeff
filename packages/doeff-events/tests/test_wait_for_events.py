@@ -7,7 +7,8 @@
 - 待っている間に発した 1 つを、1 つの組で受ける。
 - 購読の型の外を待つと ``ValueError``(``WaitForEvent`` と同じ文)。
 - 列を持たない ``event_handler`` は、届いた 1 つを 1 つの組で答える。
-- ``notice_events_handler`` の包みの中: 自分の源の ``SourceFailed`` で例外になり、別の源の ``SourceFailed`` は組から除く。
+- ``notice_events_handler`` の包みの中: 自分の源の ``SourceFailed`` で例外になり、別の源の ``SourceFailed`` は組から除く。待ちに源の失敗を
+  足すのは channel を読む(源の task を持つ)包みだけで、送るだけの包みは待ちを受けない(作業ボードの card ki-3724ab2e9a0f)。
 """
 
 import asyncio
@@ -17,11 +18,15 @@ import pytest
 from doeff_core_effects import Await
 from doeff_core_effects.scheduler import Spawn, Wait
 from doeff_events import (
+    Drop,
     EventBus,
+    MemoryBroker,
+    NoticeRoute,
     Publish,
     SourceFailed,
     WaitForEvents,
     event_handler,
+    memory_notice_handler,
     notice_events_handler,
     subscribed_event_handler,
 )
@@ -42,6 +47,35 @@ class Unrelated:
     """受け手の購読の型の外の合図。"""
 
     note: str
+
+
+@dataclass(frozen=True)
+class Heard:
+    """包みが channel から受ける合図(この検では誰も送らない — 包みに源の task を持たせるためだけの経路の型)。"""
+
+    note: str
+
+
+HEARD_CHANNEL = "heard"
+
+
+def _heard_encoded(event: object) -> str:
+    """``Heard`` の綴り(経路の表は ``NoticeRoute[object]`` の組で渡すので、受けるのは object)。"""
+    assert isinstance(event, Heard), event
+    return event.note
+
+
+READS_HEARD: "tuple[NoticeRoute[object], ...]" = (
+    NoticeRoute(
+        event_type=Heard,
+        wire_name="heard",
+        channel=lambda _event: HEARD_CHANNEL,
+        encode=_heard_encoded,
+        decode=Heard,
+        when_unsent=Drop(),
+        reads=(HEARD_CHANNEL,),
+    ),
+)
 
 
 class SourceBrokeError(RuntimeError):
@@ -134,8 +168,9 @@ def test_the_handler_without_queues_answers_the_one_signal_as_a_tuple() -> None:
 
 
 def _received_in_notice_wrapper(published: tuple[object, ...]) -> tuple[object, ...]:
-    """``notice_events_handler``(源の名 mine・送る経路なし)の包みの中で ``WaitForEvents(Rang)`` を 1 回した答え。"""
-    return _received_after(published, notice_events_handler("mine", (), 30.0)(_wait_rang()))
+    """``notice_events_handler``(源の名 mine・channel を 1 つ読む)の包みの中で ``WaitForEvents(Rang)`` を 1 回した答え。"""
+    reader = notice_events_handler("mine", READS_HEARD, 30.0)
+    return _received_after(published, memory_notice_handler(MemoryBroker())(reader(_wait_rang())))
 
 
 def test_wait_for_events_in_the_notice_wrapper_drops_another_sources_failure() -> None:
