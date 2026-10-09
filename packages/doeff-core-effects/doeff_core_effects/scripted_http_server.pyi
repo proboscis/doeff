@@ -30,7 +30,6 @@ from doeff_core_effects.http_server_effects import HttpBodyFileRange as HttpBody
 from doeff_core_effects.http_server_effects import HttpNoBody as HttpNoBody
 from doeff_core_effects.http_server_effects import DEFAULT_WS_SEND_MAX_BYTES as DEFAULT_WS_SEND_MAX_BYTES
 from doeff_core_effects.http_server_effects import FLUSH_SAMPLES_LIMIT as FLUSH_SAMPLES_LIMIT
-from doeff_core_effects.http_server_effects import WS_CLOSE_NORMAL as WS_CLOSE_NORMAL
 from doeff_core_effects.http_server_effects import HttpReadBody as HttpReadBody
 from doeff_core_effects.http_server_effects import HttpBodyRead as HttpBodyRead
 from doeff_core_effects.http_server_effects import HttpBodyTooLarge as HttpBodyTooLarge

@@ -66,7 +66,7 @@
 (import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpEvent HttpHeader HttpRequestArrived HttpListen
                                                 HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown HttpStopListening
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
-                                                HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS WS-CLOSE-NORMAL
+                                                HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
                                                 send-overflows closing-of HttpProbe probe-for probe-answer])
@@ -558,13 +558,15 @@
       (await (.stop site)))
     None)
 
-  (defn :async #^ None shutdown [self #^ str reason #^ float drain-seconds]
-    "待ち受けを閉じるため: 開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、残りは落として畳む。"
+  (defn :async #^ None shutdown [self #^ str reason #^ float drain-seconds #^ int close-code]
+    "待ち受けを閉じるため: 先に待ち受けの口を閉じ(新しい接続を受けない)、開いている ws の全部へ close close-code を積み、書き手が流し切るのを
+     drain-seconds まで待ち、残りは落として畳む。"
     (setv self.shut reason
           self.ws-send-drain drain-seconds)
+    (await (self.stop-listening))
     (setv peers (list (.values self.peers)))
     (for [peer peers]
-      (await (self.close-ws peer.ticket WS-CLOSE-NORMAL reason)))
+      (await (self.close-ws peer.ticket close-code reason)))
     (setv writers (lfor peer peers :if (is-not peer.writer None) peer.writer))
     (when writers
       (await (asyncio.wait writers :timeout drain-seconds)))
@@ -785,8 +787,8 @@
   (HttpStopListening []
     (<- (Await (.across edge (.stop-listening edge))))
     (resume None))
-  (HttpShutdown [reason drain-seconds]
-    (<- (Await (.across edge (.shutdown edge reason drain-seconds))))
+  (HttpShutdown [reason drain-seconds close-code]
+    (<- (Await (.across edge (.shutdown edge reason drain-seconds close-code))))
     (resume None))
   (TakeWsSendReport []
     (<- report WsSendReport (Await (.across edge (.take-report edge))))

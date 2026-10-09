@@ -26,8 +26,10 @@
 ;;;   HttpStopListening 待ち受けだけを閉じる — 新しい接続を受けない(port を共有する別の待ち受けが在れば、新しい接続はそちらへ行く)。
 ;;;                    開いている接続(ws と命令を待つ要求)と出来事の流れはそのまま続く。入れ替えで退く側が、客を閉じる前に撃つ
 ;;;                    (閉じられた客の張り直しが退く側に当たらない — agora-redesign #4317)。答え = None
-;;;   HttpShutdown     待ち受けを閉じる — 新しい接続を受けず、開いている ws の全部へ close 1000 を送り、送りの箱を drain-seconds まで流し切って
-;;;                    から閉じる。以後の HttpNextRequest は HttpServerClosed(reason)。答え = None
+;;;   HttpShutdown     待ち受けを閉じる — 先に待ち受けの口を閉じて新しい接続を受けず(HttpStopListening と同じ — 閉じを受けた客の直後の
+;;;                    張り直しが、port を共有する別の待ち受けに当たる)、開いている ws の全部へ close close-code(既定 1000 — 入れ替えで退く
+;;;                    側は 1001 going away・agora-redesign #4317)を送り、送りの箱を drain-seconds まで流し切ってから閉じる。以後の
+;;;                    HttpNextRequest は HttpServerClosed(reason)。答え = None
 ;;;   TakeWsSendReport 送りの箱の勘定(前に読んでから積んだ・流した・捨てた byte と流すまでの所要 — WsSendReport)を読んで 0 に戻す。
 ;;;                    消費者が自分の計器へ積むための材料で、答え手は消費者の計器を知らない
 ;;; 出来事の received-at = 答え手がその出来事を受けた拍の単調時計の秒(time.monotonic と同じ物差し — 消費者の待ちの計器の起点)。時計を
@@ -282,9 +284,11 @@
 
 
 (defclass [(dataclass :frozen True)] HttpShutdown [(get EffectBase None)]
-  "待ち受けを閉じる(頭の註)。reason = 以後の HttpServerClosed の理由・drain-seconds = 送りの箱を流し切るのを待つ上限の秒。"
+  "待ち受けを閉じる(頭の註)。reason = 以後の HttpServerClosed の理由・drain-seconds = 送りの箱を流し切るのを待つ上限の秒・close-code =
+   開いている ws へ送る閉じの状態符。"
   (#^ str reason)
-  (setv #^ float drain-seconds DEFAULT-DRAIN-SECONDS))
+  (setv #^ float drain-seconds DEFAULT-DRAIN-SECONDS
+        #^ int close-code WS-CLOSE-NORMAL))
 
 
 (defclass [(dataclass :frozen True)] TakeWsSendReport [(get EffectBase WsSendReport)]
