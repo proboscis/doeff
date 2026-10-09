@@ -17,7 +17,10 @@ What the wrapper does:
 
 - Sending. ``Publish(event)`` of a routed type becomes ``Announce`` and answers ``NoticeSent(receivers)`` — the
   broker's count of subscribers that received it (``0`` = nobody was listening; the sender decides what that
-  means). An unrouted type goes on to the outer handler (the bus inside the process) as before.
+  means). An unrouted type goes on to the outer handler (the bus inside the process) as before, without calling
+  the wrapper: its handler around the body declares the Publish classes of its routed types only
+  (``publish_effect_type``), and the waits only when it reads channels, so the VM skips it for every other effect
+  (a wrapper costs no step for what it does not route — card ki-3724ab2e9a0f).
 - What the broker could not take (the one place a sender's failed notice is handled — agora-redesign #3864,
   ADR-DOE-EVENTS-002 R5). ``Publish`` never raises for it; it answers one of a closed set: ``NoticeSent``, or,
   by the route's ``when_unsent``, ``NoticeGapMarked`` (``MarkGap`` — the channel is marked as having a gap) or
@@ -56,7 +59,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Final, Generic, TypeVar, final
+from typing import TYPE_CHECKING, Final, Generic, TypeVar, Union, final
 
 from doeff_core_effects.scheduler import (
     Cancel,
@@ -83,6 +86,7 @@ from doeff_events.effects.events import (
     SourceStarted,
     WaitForEventEffect,
     WaitForEventsEffect,
+    publish_effect_type,
 )
 from doeff_events.effects.notices import (
     Announce,
@@ -213,12 +217,14 @@ class UnroutedNotice(LookupError):
 @dataclass(frozen=True)
 class _Plan:
     """A checked set of arguments of one wrapper: the source's name, the routes, the channels it reads
-    (first-seen order, no repeats) and its patience."""
+    (first-seen order, no repeats), its patience, and the effect classes its handler around the body answers (the
+    Publish class of each routed type, and the waits when it reads channels — ``()`` = it answers nothing)."""
 
     source: str
     routes: tuple[NoticeRoute[object], ...]
     channels: tuple[str, ...]
     patience_seconds: float
+    answered: tuple[type[object], ...]
 
     def route_of(self, event: object) -> NoticeRoute[object] | None:
         """The route an event is sent by (by its exact type), or ``None`` for an event that stays in the process."""
@@ -261,7 +267,13 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...], patience
     if len(set(types)) != len(types) or len(set(names)) != len(names):
         raise ValueError(f"notice_events_handler({source!r}): an event type or a wire name is routed twice")
     channels = tuple(dict.fromkeys(name for route in routes for name in route.reads))
-    return _Plan(source=source, routes=routes, channels=channels, patience_seconds=float(patience_seconds))
+    # A wrapper that reads nothing has no source whose failure could end the body's wait: the waits go outward as
+    # they are, without it.
+    waits = (WaitForEventEffect, WaitForEventsEffect) if channels else ()
+    answered = (*(publish_effect_type(route.event_type) for route in routes), *waits)
+    return _Plan(
+        source=source, routes=routes, channels=channels, patience_seconds=float(patience_seconds), answered=answered
+    )
 
 
 @do
@@ -493,12 +505,13 @@ def _own_failure(plan: _Plan, came: object) -> SourceFailed | None:
 def _body_handler(plan: _Plan, gaps: _Gaps) -> "ProgramHandler":
     """The handler around the body: sends routed ``Publish`` (marking what the broker cannot take) and passes
     ``WaitForEvent`` / ``WaitForEvents`` outward with ``SourceFailed`` added, so that a failure of this wrapper's
-    source ends the body's wait with its error."""
+    source ends the body's wait with its error. Its effect annotation is ``plan.answered`` (read per closure by the
+    VM), so it is not called for an unrouted ``Publish``, nor for a wait when the wrapper reads nothing; the clauses
+    below still pass such an effect on if it comes."""
+    answered = Union[plan.answered]  # noqa: UP007 — the VM's filter needs a union of the runtime classes
 
     @do
-    def handler(
-        effect: PublishEffect | WaitForEventEffect | WaitForEventsEffect, k: K
-    ) -> "EffectGenerator[object]":
+    def handler(effect: answered, k: K) -> "EffectGenerator[object]":  # pyright: ignore[reportInvalidTypeForm] — a union of the per-type Publish classes chosen when the wrapper is built (doeff_vm._effect_types reads it per closure)
         """Translate one effect of the body (see ``_body_handler``)."""
         match effect:
             case PublishEffect(event=event):
@@ -569,8 +582,10 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
         source = (reader,)
     yield _started_gaps_told(plan, gaps)
     # The stop runs on an exception and on the normal end, not in ``finally`` (see ``_came_back_within``).
+    # A wrapper with no route answers nothing around the body (the source alone is enough).
+    wrapped = _body_handler(plan, gaps)(body) if plan.answered else body
     try:
-        answer = yield _body_handler(plan, gaps)(body)
+        answer = yield wrapped
     except Exception:
         yield _stopped_tasks((*source, *gaps.running()))
         raise

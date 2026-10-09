@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, SupportsIndex
 
 from doeff import EffectBase
 
@@ -103,14 +103,50 @@ def _normalize_event_types(
 
 
 class PublishEffect(EffectBase):
-    """Publish an event to all listeners waiting on compatible event types."""
+    """Publish an event to all listeners waiting on compatible event types.
+
+    Every value is of the class ``publish_effect_type(type(event))`` — one subclass per exact event type — whether it
+    is made by ``Publish(event)`` or by ``PublishEffect(event)``. A handler that answers the Publish of some event types
+    only names their classes in its effect annotation, and the VM skips it for every other Publish without calling into
+    Python (SPEC-WITHHANDLER-TYPE-FILTER — ``notice_events_handler`` is called only for the types it routes). A handler
+    annotated ``PublishEffect`` still sees every Publish.
+    """
+
+    def __new__(cls, event: Any) -> "PublishEffect":
+        made: type[PublishEffect] = (
+            publish_effect_type(type(event)) if cls is PublishEffect else cls
+        )
+        return EffectBase.__new__(made)
 
     def __init__(self, event: Any):
         super().__init__()
         self.event = event
 
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
+        # EffectBase's own reduce rebuilds the class by its name with no argument; the per-type class has no name to
+        # be found by, and ``__new__`` needs the event — a copy is made again from the event.
+        return (PublishEffect, (self.event,))
+
     def __repr__(self):
         return f"Publish({self.event!r})"
+
+
+# event type → the class of its Publish. One entry per event type ever published, kept for the process.
+_PUBLISH_EFFECT_TYPES: dict[type[Any], type[PublishEffect]] = {}
+
+
+def publish_effect_type(event_type: type[Any]) -> type[PublishEffect]:
+    """The class of every Publish whose event is exactly of ``event_type`` (a subclass of ``PublishEffect``, made on
+    first use). Two threads that ask for a new type at once get the same class (``setdefault`` keeps the first)."""
+    known = _PUBLISH_EFFECT_TYPES.get(event_type)
+    if known is not None:
+        return known
+    made = type(
+        "PublishEffect",
+        (PublishEffect,),
+        {"__module__": __name__, "__qualname__": f"PublishEffect[{event_type.__qualname__}]"},
+    )
+    return _PUBLISH_EFFECT_TYPES.setdefault(event_type, made)
 
 
 class WaitForEventEffect(EffectBase):
@@ -174,6 +210,7 @@ __all__ = [
     "WaitForEvents",
     "WaitForEventsEffect",
     "publish",
+    "publish_effect_type",
     "wait_for_event",
     "wait_for_events",
 ]
