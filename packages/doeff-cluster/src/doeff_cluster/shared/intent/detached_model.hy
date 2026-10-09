@@ -17,7 +17,7 @@
 ;;;   detached-cluster … coordinator の /detached の口へ出し、worker がその commit のコードを準備した子 process で走らせる
 ;;; 手元で確かめる時は handler を被せず、手元の runner sim-cluster(local.hy)の宿が同じ要求の形で本物の coordinator の口へ送る
 ;;; (2026-09-28 — 同じ VM で走らせる模擬 detached-local は、呼び手の外側の handler を継いで足りない handler を黙って補うので消した)。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [val defeffect])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (require doeff-hy.record [defrecord defwire])
 (import dataclasses [dataclass field])
@@ -80,11 +80,6 @@
 (defclass [(dataclass :frozen True)] ReadRunners [EffectBase]
   "task を受ける担い手(worker)の名簿を読む — 生存と drain の正本は coordinator の名簿(heartbeat)1 つ。呼び手が置き先を選ぶ・
    機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
-
-
-(defclass [(dataclass :frozen True)] ReadServices [EffectBase]
-  "coordinator が預かる Service(常駐の job)の一覧と、置き先の担い手が報告した落ちた事実を読む(GET /resources/Service — #3479)。
-   呼び手が落ち続ける job を見つけるための読み。答え = ServiceFact の tuple(名の順)か ServicesUnreachable。")
 
 
 (defclass [(dataclass :frozen True)] AwaitRunnersChange [EffectBase]
@@ -221,6 +216,55 @@
   #^ str detail)
 
 (val ServicesAnswer (| (get tuple #(ServiceFact ...)) ServicesUnreachable))
+
+;; effect は答えの型 ServicesAnswer を宣言する(利用側の `(<- services (ReadServices))` が答えの型を得る — 素の EffectBase では Any)ので、
+;; 答えの型の後に置く。
+(defeffect ReadServices
+  "coordinator が預かる Service(常駐の job)の一覧と、置き先の担い手が報告した落ちた事実を読む(GET /resources/Service — #3479)。
+   呼び手が落ち続ける job を見つけるために読む。答え = ServiceFact の tuple(名の順)か ServicesUnreachable。"
+  {:answer ServicesAnswer
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+;; GET /resources/Service の返事の本文のうち、Service の一覧(ServiceFact の tuple)が読む欄の型。本番の client(detached.services-read)・
+;; sim(local.read-services)・自分で GET を送る利用側の handler が同じ型で読み込み、同じ関数(detached.service-facts-of-view)で
+;; ServiceFact の tuple にする。読まない欄は捨てる(:unknown :ignore)。行・欄が無い時は None で、0 などの値で埋めない(#3479)。
+
+(defwire ServiceProcessWire
+  "一覧の行の status.process(置き先の担い手が報告した process の行)のうち一覧が読む欄: failures = 続けて落ちた回数・
+   last-exit-code / last-exit-at-ms = 最後の終わりの code と時刻(epoch ミリ秒)。担い手が載せない欄は None。ほかの欄(phase・pid など)は
+   読まない。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| int None) failures None)
+  (setv #^ (| int None) last-exit-code None)
+  (setv #^ (| int None) last-exit-at-ms None))
+
+
+(defwire ServiceRowStatusWire
+  "一覧の行の status のうち一覧が読む欄: process = 置き先の担い手の報告の行(置き先が無い・報告の行が無ければ None)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| ServiceProcessWire None) process None))
+
+
+(defwire ServiceRowSpecWire
+  "一覧の行の spec のうち一覧が読む欄: replicas = 宣言した replicas の数・revision = その Service の宣言の版(#2718 の子 S2a — 一覧の
+   本文の頭の revision は coordinator の状態の版で、これではない)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| int None) replicas None)
+  (setv #^ (| str None) revision None))
+
+
+(defwire ServiceRowWire
+  "一覧の行 1 つのうち一覧が読む欄: name・spec・status(行に無ければ None)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str name)
+  (setv #^ (| ServiceRowSpecWire None) spec None)
+  (setv #^ (| ServiceRowStatusWire None) status None))
+
+
+(defwire ServiceListWire
+  "GET /resources/Service の返事の本文のうち一覧が読む欄: items = Service の行の列。本文の頭の revision(coordinator の状態の版)は読まない。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(ServiceRowWire ...)) items))
 
 ;; AwaitRunnersChange の答え(#1934): RunnersChange = 待ちが返った(revision = 今の版 — 次の after・changed = after から変わったか。偽は
 ;;   上限で返った)・RunnersWatchMissing = 待つ口の無い旧い coordinator(404 — detail = 理由)。

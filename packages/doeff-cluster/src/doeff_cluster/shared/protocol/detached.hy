@@ -21,7 +21,7 @@
 (import dataclasses [dataclass])
 (import urllib.parse [quote :as url-quote])
 (import json)
-(import operator [itemgetter])
+(import collections.abc [Mapping])
 (import doeff_time [Delay])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
@@ -41,7 +41,7 @@
                          RunnerFact RunnersUnreachable OPEN-PHASES DetachedOutcome DetachedSucceeded DetachedFailed DetachedLost
                          DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
-                         ServiceViewWire ReadServices ServiceFact ServicesUnreachable])
+                         ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire])
 (import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
@@ -231,21 +231,33 @@
   (RunnersUnreachable :detail (.format "coordinator に届かない: {}" reason)))
 
 
-(deff service-facts-of-view [#^ list items]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
-  {:pre [(: items list)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "coordinator の GET /resources/Service の items([{name spec status}])を Service の断面(ServiceFact の tuple・名の順)にするため。
-   落ちた事実は置き先の担い手の報告の行(status.process)の欄 — 行が無い・欄が無い時は None(0 と黙って倒さない・#3479)。"
-  (tuple (gfor item (sorted items :key (itemgetter "name"))
-               :setv spec (.get item "spec")
-               :setv status (.get item "status")
-               :setv row (if (isinstance status dict) (.get status "process") None)
-               :setv reported (isinstance row dict)
-               (ServiceFact :name (get item "name") :replicas (if (isinstance spec dict) (.get spec "replicas") None)
-                            :failures (if reported (.get row "failures") None)
-                            :last-exit-code (if reported (.get row "lastExitCode") None)
-                            :last-exit-at-ms (if reported (.get row "lastExitAtMs") None)
-                            ;; 宣言の版(#2718 の子 S2a)— 行の spec の revision。一覧の頭の revision(coordinator の状態の版)ではない。
-                            :revision (if (isinstance spec dict) (.get spec "revision") None)))))
+(defk service-facts-of-view [view]
+  {:pre [(: view ServiceListWire)] :post [(: % (get tuple #(ServiceFact ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /resources/Service の本文を型で読み込んだ値(ServiceListWire)を、Service の一覧(ServiceFact の tuple・名の順)に
+   するため。本番の client・sim・自分で GET を送る利用側の handler が同じこの関数を通る。落ちた事実は置き先の担い手の報告の行
+   (status.process)の欄 — 行が無い・欄が無い時は None(0 と黙って倒さない・#3479)。"
+  (tuple (gfor row (sorted view.items :key (fn [row] row.name))
+               :setv spec row.spec
+               :setv process (if (is row.status None) None row.status.process)
+               (ServiceFact :name row.name :replicas (if (is spec None) None spec.replicas)
+                            :failures (if (is process None) None process.failures)
+                            :last-exit-code (if (is process None) None process.last-exit-code)
+                            :last-exit-at-ms (if (is process None) None process.last-exit-at-ms)
+                            ;; 宣言の版(#2718 の子 S2a)— 行の spec の revision。一覧の本文の頭の revision(coordinator の状態の版)ではない。
+                            :revision (if (is spec None) None spec.revision)))))
+
+
+(defk service-facts-of-json [body]
+  {:pre [(: body (get Mapping #(str object)))] :post [(: % (get tuple #(ServiceFact ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "coordinator の GET /resources/Service の返事の本文(JSON の object)を ServiceListWire に読み込み、Service の一覧にするため(本番の
+   client と sim が同じこの関数を通る)。本文が型の形でなければ、合わない欄を挙げて ValueError で落ちる(Service が無いとは読まない)。"
+  (<- view (| ServiceListWire Malformed) (parse ServiceListWire body))
+  (match view
+    (Malformed :fields fields)
+      (raise (ValueError (.format "coordinator の Service の一覧の返事が ServiceListWire の形でない: {}"
+                                  (.join "・" (gfor f fields (+ f.field " " f.reason))))))
+    _ (do (<- facts (get tuple #(ServiceFact ...)) (service-facts-of-view view))
+          facts)))
 
 
 (deff services-unreachable [#^ str reason]  ; defk にできない: 本番の client と sim の宿が同じ答えを作る純粋な判断
@@ -388,14 +400,15 @@
 
 
 (defk services-read [cell options sender]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender)] :post [(: % (| tuple ServicesUnreachable))]
-   :tags {:context "doeff-cluster" :role "protocol"}}
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender)]
+   :post [(: % (| (get tuple #(ServiceFact ...)) ServicesUnreachable))] :tags {:context "doeff-cluster" :role "protocol"}}
   "Service の一覧を読むため(coordinator の GET /resources/Service — #3479)。届かなければ ServicesUnreachable。"
   (<- read (resent-answer cell options "GET" "/resources/Service" None None sender.deadline-seconds))
   (when (isinstance read HttpFailed)
     (return (services-unreachable read.detail)))
   (<- body dict (answer-json read))
-  (service-facts-of-view (get body "items")))
+  (<- facts (get tuple #(ServiceFact ...)) (service-facts-of-json body))
+  facts)
 
 
 (defk runners-changed [cell options after timeout-seconds]
