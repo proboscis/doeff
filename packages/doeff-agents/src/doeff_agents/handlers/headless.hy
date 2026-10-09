@@ -14,6 +14,7 @@
 ;;;   LaunchEffect.new_context_id      → 新しい文脈の id(HandlerMadeContextId = この adapter が作る・NamedContextId = 呼び手の名指した id)。
 ;;;                                      同じ id を名指した 2 つの起動は同じ FreshSession になり、片方の事前起動をもう片方の最初のターンが使う
 ;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
+;;;   LaunchEffect.autocompact         → 層 2 の会話の宣言の autocompact(CLI の argv の --autocompact — None = 載せない・CLI の既定)
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
@@ -172,6 +173,7 @@
                      :cwd (str effect.work-dir)
                      :model effect.model
                      :effort effect.effort
+                     :autocompact effect.autocompact
                      :settings config.settings
                      :permission config.permission
                      :cold-resume-prompt config.cold-resume-prompt

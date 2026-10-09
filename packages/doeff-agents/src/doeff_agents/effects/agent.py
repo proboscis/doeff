@@ -21,6 +21,8 @@ from doeff import EffectBase
 from doeff_claude_code.lines import ModelWindow as ModelWindow
 from doeff_claude_code.lines import ToolAnswer as ToolAnswer
 from doeff_claude_code.lines import ToolCall as ToolCall
+from doeff_claude_code.values import AutocompactAuto as AutocompactAuto
+from doeff_claude_code.values import AutocompactTokens as AutocompactTokens
 
 if TYPE_CHECKING:
     from doeff.mcp import McpToolDef
@@ -992,8 +994,20 @@ class LaunchEffect(AgentEffectBase):
     resume_snapshot: str | None = None
     # Who makes the id of the new context of a launch without ``resume_from``.
     new_context_id: HandlerMadeContextId | NamedContextId = HandlerMadeContextId()
+    # The context size at which the runtime compacts the conversation, stated
+    # by the caller (None = the runtime's own default, not stated). The values
+    # are the claude CLI's ``--autocompact <auto|tokens>`` (``AutocompactTokens``
+    # can only hold a token count the CLI accepts). Handlers that cannot place
+    # it refuse it with ``AgentCapabilityUnsupportedError``.
+    autocompact: AutocompactAuto | AutocompactTokens | None = None
 
     def __post_init__(self) -> None:
+        if self.autocompact is not None and not isinstance(
+            self.autocompact, AutocompactAuto | AutocompactTokens
+        ):
+            raise TypeError(
+                "LaunchEffect.autocompact must be AutocompactAuto, AutocompactTokens or None"
+            )
         if self.turn_credential_ref is not None and (
             not isinstance(self.turn_credential_ref, str) or not self.turn_credential_ref
         ):
@@ -1598,7 +1612,8 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     context, a ``turn_credential_ref`` is never silently dropped (the
     launch would run on whatever home credentials the handler has), and ``TurnInputMode.INJECT`` never silently becomes a keystroke.
     A named ``new_context_id`` is never silently replaced by an id the caller
-    does not know.
+    does not know. A stated ``autocompact`` never silently falls back to the
+    runtime's own default.
     """
     if isinstance(effect, LaunchEffect) and isinstance(effect.new_context_id, NamedContextId):
         raise AgentCapabilityUnsupportedError(
@@ -1615,6 +1630,10 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     if isinstance(effect, LaunchEffect) and effect.turn_credential_ref is not None:
         raise AgentCapabilityUnsupportedError(
             capability="LaunchEffect.turn_credential_ref", handler=handler
+        )
+    if isinstance(effect, LaunchEffect) and effect.autocompact is not None:
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.autocompact", handler=handler
         )
     if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
         raise AgentCapabilityUnsupportedError(

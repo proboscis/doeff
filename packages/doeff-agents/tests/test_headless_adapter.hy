@@ -1451,6 +1451,31 @@
   (with [(pytest.raises ValueError)]
     (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "")))
 
+(deftest test-the-stated-compaction-threshold-rides-on-the-launch-argv [tmp-path]
+  ;; 呼び手が LaunchEffect.autocompact で言った圧縮の閾値は、層 2 の会話の宣言(ClaudeSessionSpec.autocompact)へそのまま写り、CLI の
+  ;; argv に `--autocompact <auto|tokens>` として載る(agora-controllers の cluster のターンが閾値を明示する口 — dotfiles ADR-DOTFILES-012
+  ;; R-4484fd43 (1)・card acp:kanban-issue:ki-0679d4fcb37e)。言わない起動(None)は旗を載せない = CLI の既定。閉じた型の外は作れず、
+  ;; 閾値を置けない handler(手番を持たない端末の handler)は黙って既定へ戻さずに断る。
+  ;; 失敗ケース: headless.hy の spec-of が :autocompact を写さない形では、閾値を言った 2 つの起動の宣言と argv が赤。
+  (import doeff_agents.effects [LaunchEffect refuse-turn-capabilities])
+  (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
+  (import doeff_claude_code.argv [launch-argv])
+  (import doeff_claude_code.values [AutocompactAuto AutocompactTokens FreshSession])
+  (val config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
+  (for [#(stated flag) [#((AutocompactTokens 600000) ["--autocompact" "600000"]) #((AutocompactAuto) ["--autocompact" "auto"]) #(None [])]]
+    (let [spec (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :autocompact stated))
+          argv (launch-argv #("claude") spec (FreshSession "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11"))]
+      (assert (= spec.autocompact stated) spec)
+      (assert (= (lfor #(i word) (enumerate argv) :if (= word "--autocompact") part (cut argv i (+ i 2)) part) flag) argv)))
+  (for [bad [600000 "auto"]]
+    (with [(pytest.raises TypeError)]
+      (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :autocompact bad)))
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CODEX :work-dir tmp-path
+                                            :autocompact (AutocompactAuto))
+                              :handler "t"))
+  (assert (= info.value.capability "LaunchEffect.autocompact") info.value.capability))
+
 (deftest test-the-redeemed-github-token-rides-on-the-child-env-as-gh-token [tmp-path]
   ;; agora-redesign #3753: 引き換えた TurnCredential が github_token を持てば、adapter は子の claude の env の GH_TOKEN(名の定義元 = agent_env.hy)
   ;; にその値を 1 つ置く。持たない答え・設定 dir の資格の答えの起動には GH_TOKEN が無い。token は TurnCredential・起動の宣言・設定 dir の repr に写らず、
