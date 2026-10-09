@@ -3,7 +3,9 @@
 ;;; 台本の中身は呼び手が渡す。
 ;;;
 ;;;   HttpListen       何もしない(開いた扱い)。答え = 渡された宛先のまま(port 0 は 0 のまま — 台本は port を結ばない)。送りの上限と
-;;;                    probe の口を控える
+;;;                    probe の口を控える。port の共有(share-port)は台本に port が無いので何もしない
+;;;   HttpStopListening 以後、台本の新しい要求(HttpRequestArrived — probe の口に当たる物も)を本体へ渡さず捨てる(本物の待ち受けが口を閉じた後に
+;;;                    新しい接続を受けないのと同じ)。開いた札の出来事は渡し続ける
 ;;;   HttpNextRequest  台本の出来事を順に渡し、尽きたら HttpServerClosed。WsAccept で上げた札の WsOpened と、WsClose・送りの上限の切りで
 ;;;                    終わった札の WsClosed は、その拍に列の頭へ差す(本物の待ち受けが直ぐに出す出来事と同じ並び)。HttpShutdown の後は
 ;;;                    列に何が残っていても HttpServerClosed(その理由)。probe の口に当たる要求(probe-for)は渡さず、ここで本物と同じ
@@ -35,7 +37,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose
-                                                HttpShutdown TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
+                                                HttpShutdown HttpStopListening TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
                                                 WS-CLOSE-NORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
@@ -193,11 +195,19 @@
   (session var tally EMPTY-REPORT)
   (session var closed None)
   (session var mouths #())
-  (HttpListen [address ws-max-bytes ws-send-max-bytes probes]
+  ;; 新しい要求を受けるか(HttpStopListening で偽)。
+  (session var listening True)
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port]
     (:= limit ws-send-max-bytes)
     (:= mouths probes)
     (resume address))
+  (HttpStopListening []
+    (:= listening False)
+    (resume None))
   (HttpNextRequest []
+    ;; 待ち受けだけを閉じた後は、台本の新しい要求を捨てる(頭の註)。
+    (when (not listening)
+      (:= pending (tuple (gfor e pending :if (not (isinstance e HttpRequestArrived)) e))))
     ;; probe の口に当たる要求は本体へ渡さず、ここで答えて記録する(頭の註)— 列の頭が probe でなくなるまで。
     (var answering True)
     (while (and answering (is closed None) pending)

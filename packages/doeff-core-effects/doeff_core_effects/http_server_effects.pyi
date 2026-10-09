@@ -120,6 +120,7 @@ class HttpListen(EffectBase[HttpAddress]):
     ws_max_bytes: int = ...
     ws_send_max_bytes: int = ...
     probes: tuple[HttpProbe, ...] = ...
+    share_port: bool = False
 
 @dataclass(frozen=True)
 class HttpNextRequest(EffectBase[HttpEvent]):
@@ -161,6 +162,10 @@ class WsClose(EffectBase[None]):
     ticket: str
     code: int
     reason: str
+
+@dataclass(frozen=True)
+class HttpStopListening(EffectBase[None]):
+    ...
 
 @dataclass(frozen=True)
 class HttpShutdown(EffectBase[None]):

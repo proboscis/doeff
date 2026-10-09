@@ -12,6 +12,7 @@ from doeff_core_effects.http_server_effects import WsAccept as WsAccept
 from doeff_core_effects.http_server_effects import WsSendText as WsSendText
 from doeff_core_effects.http_server_effects import WsClose as WsClose
 from doeff_core_effects.http_server_effects import HttpShutdown as HttpShutdown
+from doeff_core_effects.http_server_effects import HttpStopListening as HttpStopListening
 from doeff_core_effects.http_server_effects import TakeWsSendReport as TakeWsSendReport
 from doeff_core_effects.http_server_effects import WsSendReport as WsSendReport
 from doeff_core_effects.http_server_effects import ReadHttpServed as ReadHttpServed

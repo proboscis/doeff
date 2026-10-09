@@ -64,7 +64,7 @@
 (import aiohttp [web WSMsgType])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpEvent HttpHeader HttpRequestArrived HttpListen
-                                                HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown
+                                                HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown HttpStopListening
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS WS-CLOSE-NORMAL
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
@@ -262,6 +262,8 @@
           self.client None
           self.ws-client None
           self.runner None
+          ;; 開いた待ち受けの口(HttpStopListening で口だけを閉じる — 開いた接続は runner が持ち続ける)。
+          self.site None
           self.waiting {}
           self.unread {}
           ;; 札 → 待ち受けの loop が先に読んだ本文の答え(頭の註の本文の読み)。待ち受けの loop が出来事を並べる前に置き、答え手の節の
@@ -305,8 +307,10 @@
      loop の task も取り消す。"
     (await (asyncio.wrap-future (asyncio.run-coroutine-threadsafe coroutine (self.edge-loop)))))
 
-  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes #^ tuple probes]
-    "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求は、probe の口に当たる物を除いてすべて列へ並ぶ)。"
+  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes #^ tuple probes
+                                     #^ bool share-port]
+    "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求は、probe の口に当たる物を除いてすべて列へ並ぶ)。share-port = 同じ port を
+     別の待ち受けと共有して開く(SO_REUSEPORT)。"
     (setv self.address address
           self.ws-max-bytes ws-max-bytes
           self.ws-send-max-bytes ws-send-max-bytes
@@ -325,7 +329,8 @@
     (.add-route app.router "*" "/{tail:.*}" self.dispatch)
     (setv self.runner (web.AppRunner app :access-log None :keepalive-timeout IDLE-CONNECTION-SECONDS))
     (await (.setup self.runner))
-    (await (.start (web.TCPSite self.runner self.address.host self.address.port)))
+    (setv self.site (web.TCPSite self.runner self.address.host self.address.port :reuse-port share-port))
+    (await (.start self.site))
     (setv bound (get self.runner.addresses 0))
     (HttpAddress :host self.address.host :port (get bound 1)))
 
@@ -545,6 +550,14 @@
     (.set peer.wake)
     None)
 
+  (defn :async #^ None stop-listening [self]
+    "待ち受けの口だけを閉じるため(新しい接続を受けない — 開いている接続と出来事の流れは runner が持ち続ける)。2 度目は何もしない。"
+    (when (is-not self.site None)
+      (setv site self.site
+            self.site None)
+      (await (.stop site)))
+    None)
+
   (defn :async #^ None shutdown [self #^ str reason #^ float drain-seconds]
     "待ち受けを閉じるため: 開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、残りは落として畳む。"
     (setv self.shut reason
@@ -741,8 +754,8 @@
   ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
   ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
   (session val edge (WebEdge))
-  (HttpListen [address ws-max-bytes ws-send-max-bytes probes]
-    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes))))
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port]
+    (<- bound HttpAddress (Await (.across edge (.start edge address ws-max-bytes ws-send-max-bytes probes share-port))))
     (resume bound))
   (HttpNextRequest []
     (<- arrival HttpEvent (next-on-edge edge))
@@ -768,6 +781,9 @@
     (resume None))
   (WsClose [ticket code reason]
     (<- (Await (.across edge (.close-ws edge ticket code reason))))
+    (resume None))
+  (HttpStopListening []
+    (<- (Await (.across edge (.stop-listening edge))))
     (resume None))
   (HttpShutdown [reason drain-seconds]
     (<- (Await (.across edge (.shutdown edge reason drain-seconds))))
