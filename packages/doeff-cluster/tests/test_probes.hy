@@ -53,7 +53,7 @@
   (val server inbox.server)
   (assert (is-not server None) "start の後は HTTP server が在る")
   (assert (= (get (! (get-status port "/readyz")) 0) 503))    ; まだループが来ていない
-  (.take inbox 0.01 10)                                   ; ループが 1 度取りに来た
+  (.taken inbox 10)                                       ; ループが 1 度取りに来た
   (setv (get now 0) 1020.0)                               ; 20 秒 取りに来ない(fsync が遅い)
   (assert (= (get (! (get-status port "/readyz")) 0) 200))
   (setv (get now 0) 1040.0)                               ; 40 秒 = 止まった

@@ -3,10 +3,13 @@
 ;;; 要求を Request に解く・返事の本文を byte にする・NextRequests / Reply / CoordinatorStopRequested に答える handler は
 ;;; shared/protocol/inbox.hy(層 foundation は intent の型を読まない — #2563・#2445 の「protocol の 1 点で解く」と同じ形)。
 ;;; 2026-09-25 に coordinator.hy から分けた(handler の組 coordinator/entry/handler_sets.hy がこの受付を本番の組に入れる)。
+;;; 取り手は列を塞いで待たない(#4270): 取り手が掛けた呼び鈴(scheduler の外から満たす Promise)を、要求を並べた時と起こしの時に
+;;; 鳴らす。待つのは shared/protocol/inbox.hy の raw-requests で、scheduler の上で待つ。
 (require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import json)
 (import dataclasses [dataclass])
+(import itertools [islice])
 (import queue)
 (import signal)
 (import sys)
@@ -15,6 +18,7 @@
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import urllib.parse [urlsplit parse-qsl])
+(import doeff_core_effects.scheduler [ExternalPromise])
 
 
 (defclass ReplySlot []
@@ -91,9 +95,11 @@
   (defn #^ None __init__ [self #^ int port #^ float reply-seconds #^ Callable [clock time.monotonic] #^ tuple [formats #()]]
     ;; phase = 取り手の今(None = まだ 1 度も取りに来ていない・InboxWaiting = 待っている・InboxBusy = 歩の中)。probe はこれだけで答える
     ;; (ループを通さない)。列は SimpleQueue — put は reentrant で、停止の合図の受け手(主 thread の bytecode の区切りに割り込む)から
-    ;; 起こしを入れても止まらない(queue.Queue は入れ子で取れない lock を持つ — #3584 と同じ)。
+    ;; 起こしを入れても止まらない(queue.Queue は入れ子で取れない lock を持つ — #3584 と同じ)。bell = 取り手が掛けた呼び鈴(None = 掛けて
+    ;; いない)。錠を持たない: 並べる側は列へ入れてから呼び鈴を見て、取り手は呼び鈴を掛けてから列を見るので、どちらの順でも取り手は
+    ;; 要求を見逃さない(呼び鈴を満たすのは reentrant な列への put — signal の受け手からも呼べる)。
     (setv self.queue (queue.SimpleQueue) self.port port self.server None self.clock clock self.phase None self.formats formats
-          self.reply-seconds reply-seconds))
+          self.reply-seconds reply-seconds self.bell None))
 
   (defn #^ (| float None) stalled-seconds [self]
     "ループの止まりの秒を知るため(probe が読む): 歩の中なら歩に入ってからの秒・待っているなら待つと定めた刻を越えた秒(越えていなければ 0・
@@ -105,10 +111,50 @@
       (InboxWaiting :until until) (if (is until None) 0.0 (max 0.0 (- now until)))))
 
   (defn #^ None wake [self]
-    "取り手の待ちを、要求が無くても抜けさせるため(停止の合図の受け手が呼ぶ — 合図を次の取りまで待たせない)。どの thread からも・signal の
-     受け手からも呼んでよい。"
+    "取り手の待ちを、要求が無くても抜けさせるため(停止の合図の受け手と k8s の見張りが呼ぶ — 合図と変化を次の取りまで待たせない)。
+     どの thread からも・signal の受け手からも呼んでよい。"
     (.put self.queue WAKE)
+    (.ring self)
     None)
+
+  (defn #^ None offer [self #^ RawRequest raw]
+    "HTTP の thread が受けた生の要求を列に並べ、取り手の待ちを起こすため。"
+    (.put self.queue raw)
+    (.ring self)
+    None)
+
+  (defn #^ None ring [self]
+    "取り手が掛けた呼び鈴を満たして待ちを起こすため(掛けていなければ何もしない — 取り手は掛けた後に列を見る)。同じ呼び鈴を何度
+     満たしても、scheduler は最初の 1 度だけを受ける。"
+    (setv bell self.bell)
+    (when (is-not bell None)
+      (.complete bell True))
+    None)
+
+  (defn #^ bool arm [self #^ (| float None) timeout #^ ExternalPromise bell]
+    "取り手が待ちに入る前に呼び鈴 bell を掛けるため。timeout = 待つ秒(None = 期限なし — probe が待つと定めた刻を読む)。答え = 既に何か
+     (要求か起こし)が並んでいるか(真なら取り手は待たずに取る)。"
+    (setv self.phase (InboxWaiting (if (is timeout None) None (+ (self.clock) timeout))))
+    (setv self.bell bell)
+    (not (.empty self.queue)))
+
+  (defn #^ object queued-or-wake [self]
+    "列の先頭を待たずに 1 つ取るため(空なら起こしの印 WAKE — taken の取りの終わりの印を兼ねる)。"
+    (try (.get-nowait self.queue)
+         (except [queue.Empty] WAKE)))
+
+  (defn #^ list taken [self #^ int limit]
+    "並んでいる生の要求を limit 件まで、待たずに取るため。起こし(wake)を受けたら、そこまでに取った要求だけを返す(起こしの後ろの要求は
+     次の取りで受ける)。掛けていた呼び鈴は外す。取った要求には、札を作ってから取りの刻までの ms(queued-ms — 調停ループが前の周回で
+     止まっていた待ち)を書く。札と同じ単調な時計で測る(遅い返事の 1 行と同じ物差し)。"
+    (setv self.bell None)
+    (setv batch (list (islice (iter self.queued-or-wake WAKE) limit)))
+    (setv taken (time.monotonic))
+    (for [raw batch]
+      (when (isinstance raw.slot ReplySlot)
+        (setv raw.queued-ms (max 0 (round (* 1000 (- taken raw.slot.created)))))))
+    (setv self.phase (InboxBusy (self.clock)))
+    batch)
 
   (defn #^ tuple probe [self #^ str path]
     "k8s の probe(/livez・/readyz)の答え。HTTP の thread が直に答える — 調停ループの遅れ(fsync・k8s の API)に巻き込まれない。"
@@ -138,8 +184,8 @@
           (setv body (if raw (json.loads raw) None))
           (except [error ValueError]
             (return (.send self 400 #* (json-reply {"error" (.format "JSON を読めない: {}" error)})))))
-        (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
-                                      (.get self.headers "X-Actor") (str (get self.client-address 0))))
+        (.offer inbox (RawRequest method split.path (dict (parse-qsl split.query)) body slot
+                                  (.get self.headers "X-Actor") (str (get self.client-address 0))))
         (if (.wait slot.done inbox.reply-seconds)
             (do
               ;; 返事まで 1 秒を超えた要求を 1 行出す(調停ループが何かを待って止まった時の手がかり)。版の変化を待つ読み(GET /watch)は
@@ -162,26 +208,7 @@
       (defn #^ None do-DELETE [self] (._handle self "DELETE")))
     (setv self.server (ThreadingHTTPServer #("0.0.0.0" self.port) Handler))
     (setv self.server.daemon-threads True)
-    (.start (threading.Thread :target self.server.serve-forever :daemon True)))
-
-  (defn #^ list take [self #^ (| float None) timeout #^ int limit]
-    "最初の 1 件を timeout 秒まで(None = 期限なし)待ち、その時点で並んでいる生の要求を limit 件まで一緒に取る。起こし(wake)を受けたら、
-     そこまでに取った要求だけを返す(起こしの後ろの要求は次の取りで受ける)。取った要求には、札を作ってから取りの刻までの ms
-     (queued-ms — 調停ループが前の歩で止まっていた待ち)を書く。札と同じ単調な時計で測る(遅い返事の 1 行と同じ物差し)。"
-    (setv self.phase (InboxWaiting (if (is timeout None) None (+ (self.clock) timeout))))
-    (try (setv first (.get self.queue :timeout timeout))
-         (except [queue.Empty] (setv first WAKE)))
-    (setv batch [])
-    (while (and (is-not first WAKE) (< (len batch) limit))
-      (.append batch first)
-      (try (setv first (.get-nowait self.queue))
-           (except [queue.Empty] (setv first WAKE))))
-    (setv taken (time.monotonic))
-    (for [raw batch]
-      (when (isinstance raw.slot ReplySlot)
-        (setv raw.queued-ms (max 0 (round (* 1000 (- taken raw.slot.created)))))))
-    (setv self.phase (InboxBusy (self.clock)))
-    batch))
+    (.start (threading.Thread :target self.server.serve-forever :daemon True))))
 
 
 ;; --- 停止 --------------------------------------------------------------------------------------

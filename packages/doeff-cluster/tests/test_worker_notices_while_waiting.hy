@@ -65,7 +65,7 @@
 
 (defk startup-then-move [sent]
   {:pre [(: sent SentNotices)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "coordinator の起動と次の歩の形: 起動の時の今の状態を出して受付を待ち、その後の生死の動きを出してまた待つ。答え = #(待ちの頭の刻
+  "coordinator の起動とその後の 1 ステップの形: 起動の時の今の状態を出して受付を待ち、その後の生死の動きを出してまた待つ。答え = #(待ちの頭の刻
    1 回目の待ちの後に出ていた送り 2 回目の待ちの後に出ていた送り)。"
   (<- started int (now-epoch-ms))
   (<- (announced-aside STARTUP))

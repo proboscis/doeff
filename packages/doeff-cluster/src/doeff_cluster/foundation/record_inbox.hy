@@ -44,8 +44,8 @@
           (except [error ValueError]
             (return (.send self 400 #* (json-reply {"error" (.format "JSON を読めない: {}" error)})))))
         (setv raw None)
-        (.put inbox.queue (RawRequest method split.path (dict (parse-qsl split.query)) body slot
-                                      (.get self.headers "X-Actor") (str (get self.client-address 0))))
+        (.offer inbox (RawRequest method split.path (dict (parse-qsl split.query)) body slot
+                                  (.get self.headers "X-Actor") (str (get self.client-address 0))))
         ;; 置き場の答えの本文の形(表か PlainText だけ)は、返事を出す record_store/core/program.hy の store-loop が検める。
         (if (.wait slot.done inbox.reply-seconds)
             (.send self slot.status slot.data slot.content-type)
