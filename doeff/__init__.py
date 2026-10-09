@@ -143,25 +143,9 @@ if TYPE_CHECKING:
         | GetOuterHandlers
     )
 
-    from typing import Protocol, runtime_checkable
-
-    from typing_extensions import TypeVar as _DefaultedTypeVar
-
-    _ProgramResult = _DefaultedTypeVar("_ProgramResult", covariant=True, default=Any)
-    _ProgramEffects = _DefaultedTypeVar("_ProgramEffects", covariant=True, default=Any)
-
-    @runtime_checkable
-    class Program(Protocol[_ProgramResult, _ProgramEffects]):
-        """A program returning ``T`` whose body may yield effects ``E``: ``Program[T, E]``.
-
-        Every program node (``Expand`` from ``@do``, ``Pure``, ``WithHandler``, ...)
-        and every effect satisfies it: ``x = yield from p`` runs ``p`` and gives
-        ``x: T``, and ``E`` joins the effects the calling generator declares.
-        ``Program[T]`` leaves the effects open (``Any``); bare ``Program`` is
-        "some program". At runtime ``Program`` is ``DoExpr`` (isinstance only).
-        """
-
-        def __iter__(self) -> Generator[_ProgramEffects, Any, _ProgramResult]: ...
+    # The protocol is defined in the doeff_vm stub so that Expand can name it as its base
+    # (doeff_vm/__init__.pyi, agora-redesign #4346).
+    from doeff_vm import Program as Program
 
     ProgramBase = DoExpr
 else:
@@ -175,7 +159,7 @@ else:
 
         def __class_getitem__(cls, item):
             # ``Program[int]`` / ``Program[int, ReadClock]`` in an evaluated
-            # annotation; the static meaning is the Protocol above.
+            # annotation; the static meaning is the Protocol in doeff_vm/__init__.pyi.
             return _types.GenericAlias(cls, item)
 
     Program = DoExpr

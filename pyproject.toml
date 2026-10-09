@@ -230,6 +230,9 @@ tests = [
 prefix = "packages/doeff-vm/"
 tests = [
     "packages/doeff-vm/tests/test_package_exports.py",  # 1.0 秒 — doeff-vm の公開の名
+    # 2.3 秒 — 型の宣言の Expand が Program を基底に持ち、pyright が file を並べた順で答えを変えない(agora-redesign #4346)。
+    # pyright が .pyi を読むだけで import しないので、import の逆依存では選ばれない
+    "tests/test_expand_program_static_types.py",
 ]
 
 # ── 2026-10-02 に足した組(agora-redesign #2658 — 表に組の無かった 31 package の中身を読み、package の公開の形・木を歩く母集団を
