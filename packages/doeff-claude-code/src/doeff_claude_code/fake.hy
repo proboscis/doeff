@@ -13,11 +13,12 @@
 ;;; process の死の注入で BackendLost・次の ResumeSession は通る)を同じ筋書きの検で確かめる。
 (require doeff-hy.macros [defhandler defk <- val])
 (require doeff-hy.record [defrecord])
+(import collections.abc [Callable])
 (import dataclasses [dataclass field replace])
 (import uuid)
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
-(import doeff_hy.frozen [FrozenMap frozen-json-object])
+(import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
                                   IMAGE-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
@@ -132,7 +133,7 @@
   ;; 最後の本文を分ける差分の片の数(0 = 差分を出さない)。
   (setv #^ int deltas 0)
   ;; 道具の呼びの命令(tool_use の input と同じ JSON の object)と、結果の中身の本文・誤りの印。
-  (setv #^ FrozenMap tool-input (field :default-factory (fn [] (FrozenMap {"command" "fake"}))))
+  (setv #^ (get FrozenMap FrozenJson) tool-input (field :default-factory (fn [] (FrozenMap {"command" "fake"}))))
   (setv #^ str tool-output "")
   (setv #^ bool tool-error False)
   ;; 本体の会話の呼びの usage と model、model ごとの窓(名乗らない = None・空)。
@@ -245,7 +246,8 @@
    live-limit = 同時に生かす process の本数の上限(本番の ClaudeCodeHost の live-limit と同じ意味 — 上の層の模擬は本番と同じ値を
    渡す。None = 上限を宣言しない世界)。本番の handler と同じに、上限を越える起動でも process を止めず、知らせ
    ClaudeLiveLimitExceeded をホストへ出す(#4072 の E1b。fake は log の行は出さない — slog の答え手を要しない)。"
-  (defn __init__ [self [responder None] * [respond None] #^ (| int None) [live-limit None]]
+  (defn __init__ [self #^ (| (get Callable #(... object)) None) [responder None]
+                  * #^ (| (get Callable #(... object)) None) [respond None] #^ (| int None) [live-limit None]]
     (when (= (is responder None) (is respond None))
       (raise (ValueError "FakeClaudeWorld は responder(同期)と respond(kleisli)のちょうど 1 つを受ける")))
     ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る(本番の ClaudeCodeHost と同じ)。
@@ -258,7 +260,7 @@
           self.activity {})
     (setv #^ (get dict #(str FakeSession)) self.sessions {}))
 
-  (defn restarted [self]
+  (defn #^ "FakeClaudeWorld" restarted [self]
     "同じ家の上で process を作り直した世界: transcript と activity(家の中身)は同じ物を共有し、会話(process の中の状態)は空。
      前の世界の走っている手番は前の世界で走り続ける(子 process は上の層の process の作り直しで止まらない)。"
     (setv world (FakeClaudeWorld self.responder :respond self.respond :live-limit self.live-limit))

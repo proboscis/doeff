@@ -3,6 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
+from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from dataclasses import replace as replace
@@ -12,6 +13,7 @@ from doeff_time import WaitWithin as WaitWithin
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy.frozen import FrozenJson as FrozenJson
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
 from doeff_claude_code.values import ClaudeSessionSpec as ClaudeSessionSpec
@@ -127,7 +129,7 @@ class FakeReply:
     think_seconds: float = 0.0
     interrupt_receipt: bool = True
     deltas: int = 0
-    tool_input: FrozenMap = ...
+    tool_input: FrozenMap[FrozenJson] = ...
     tool_output: str = ''
     tool_error: bool = False
     last_call_usage: Usage | None = None
@@ -195,16 +197,16 @@ class FakeSession:
 
 class FakeClaudeWorld:
     live_limit: int | None
-    responder: Incomplete
-    respond: Incomplete
+    responder: Callable[..., object] | None
+    respond: Callable[..., object] | None
     transcripts: Incomplete
     activity: Incomplete
     sessions: dict[str, FakeSession]
 
-    def __init__(self, responder: Incomplete=None, *, respond: Incomplete=None, live_limit: int | None=None) -> None:
+    def __init__(self, responder: Callable[..., object] | None=None, *, respond: Callable[..., object] | None=None, live_limit: int | None=None) -> None:
         ...
 
-    def restarted(self) -> Incomplete:
+    def restarted(self) -> FakeClaudeWorld:
         ...
 
     def transcript_key(self, home: Incomplete, cwd: str, session_id: str) -> Incomplete:

@@ -121,7 +121,7 @@
   (#^ str cwd)
   (setv #^ (| str None) model None)
   (setv #^ (| str None) effort None)
-  (setv #^ FrozenMap settings (field :default-factory FrozenMap))
+  (setv #^ (get FrozenMap object) settings (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap (| McpSse McpStdio)) mcp-servers (field :default-factory FrozenMap))
   (setv #^ (| BypassAll AskHost DenyUnlisted HomeSettings) permission (BypassAll))
   (setv #^ (| AutocompactAuto AutocompactTokens None) autocompact None)

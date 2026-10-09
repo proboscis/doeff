@@ -16,66 +16,6 @@
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost])
 
 
-;; --- effect ----------------------------------------------------------------------------------
-
-(defclass [(dataclass :frozen True)] ClaudeStartTurn [EffectBase]
-  "手番を始める。死んだ(降りた)process の起こし直しの判断はこの effect の handler の中の 1 か所だけ(設計 7 節)。
-   答え = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused。"
-  (#^ (| FreshSession ResumeSession ForkSession) origin)
-  (#^ ClaudeSessionSpec spec)
-  (#^ TurnInput input)
-  (defn __post_init__ [self]
-    (when (not (isinstance self.origin #(FreshSession ResumeSession ForkSession)))
-      (raise (TypeError (.format "ClaudeStartTurn.origin は FreshSession / ResumeSession / ForkSession: {!r}" self.origin))))))
-
-(defclass [(dataclass :frozen True)] ClaudeInjectInput [EffectBase]
-  "走っている手番に入力を足す。答え = InputQueued | NoTurnInFlight(運命は InputFate の行で届く)。"
-  (#^ ClaudeTurn turn)
-  (#^ TurnInput input))
-
-(defclass [(dataclass :frozen True)] ClaudeInterruptTurn [EffectBase]
-  "手番を止める。答え = InterruptRequested | NoTurnInFlight(終わりは ClaudeReadTurnEvents の Interrupted で届く)。"
-  (#^ ClaudeTurn turn))
-
-(defclass [(dataclass :frozen True)] ClaudeReadTurnEvents [EffectBase]
-  "手番の出来事を読む: after-seq より後の行を、新しい行か終わりが来るか wait-up-to 秒が過ぎるまで待って返す。
-   答え = TurnEventPage | UnknownTurn。"
-  (#^ ClaudeTurn turn)
-  (#^ int after-seq)
-  (#^ float wait-up-to))
-
-(defclass [(dataclass :frozen True)] ClaudeAnswerPermission [EffectBase]
-  "許可の問いに答える。答え = Answered | NoSuchRequest。"
-  (#^ ClaudeTurn turn)
-  (#^ str request-id)
-  (#^ (| Allow Deny) answer)
-  (defn __post_init__ [self]
-    (when (not (isinstance self.answer #(Allow Deny)))
-      (raise (TypeError "ClaudeAnswerPermission.answer は Allow / Deny")))))
-
-(defclass [(dataclass :frozen True)] ClaudeCloseSession [EffectBase]
-  "会話を閉じる(冪等)。走っている手番は Interrupted で終わる。答え = SessionClosed | ProcessStillAlive。"
-  (#^ str session-id)
-  (#^ str reason))
-
-(defclass [(dataclass :frozen True)] ClaudeSessionStatus [EffectBase]
-  "会話の状態を読む(pid は返さない)。答え = SessionStatus。"
-  (#^ ClaudeHome home)
-  (#^ str cwd)
-  (#^ str session-id))
-
-(defclass [(dataclass :frozen True)] ClaudeExportSession [EffectBase]
-  "会話の transcript の写しを家から取り出す(家の外に預けて、別の家へ ResumeSession の carry = Rebuilt で持ち込むため)。
-   cwd は ClaudeSessionStatus と同じく実体の path(realpath)へ正規化して置き場を決める。写すのは transcript の jsonl 1 つだけ
-   (subagent の記録・memory の dir は写さない)。session-id は会話の id の綴り(UUID — 置き場の外の path を名指せない)。
-   答え = SessionExported | SessionNotFound(transcript が無い・空)。"
-  (#^ ClaudeHome home)
-  (#^ str cwd)
-  (#^ str session-id)
-  (defn __post_init__ [self]
-    (checked-session-id self.session-id "ClaudeExportSession.session_id")))
-
-
 ;; --- 成功の戻り値 ---------------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] TurnStarted []
@@ -163,6 +103,68 @@
 (setv StartTurnOutcome (| TurnStarted SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed
                           AttachmentRefused))
 (val ExportSessionOutcome (| SessionExported SessionNotFound))
+
+
+;; --- effect ----------------------------------------------------------------------------------
+;; 基底の EffectBase の型引数が答えの型(使い手の `<-` が答えを型つきで読む・#4257)。答えの型を実行時に引くので、effect は戻り値の型の後に置く。
+
+(defclass [(dataclass :frozen True)] ClaudeStartTurn [(get EffectBase StartTurnOutcome)]
+  "手番を始める。死んだ(降りた)process の起こし直しの判断はこの effect の handler の中の 1 か所だけ(設計 7 節)。
+   答え = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused。"
+  (#^ (| FreshSession ResumeSession ForkSession) origin)
+  (#^ ClaudeSessionSpec spec)
+  (#^ TurnInput input)
+  (defn __post_init__ [self]
+    (when (not (isinstance self.origin #(FreshSession ResumeSession ForkSession)))
+      (raise (TypeError (.format "ClaudeStartTurn.origin は FreshSession / ResumeSession / ForkSession: {!r}" self.origin))))))
+
+(defclass [(dataclass :frozen True)] ClaudeInjectInput [(get EffectBase (| InputQueued NoTurnInFlight AttachmentRefused))]
+  "走っている手番に入力を足す。答え = InputQueued | NoTurnInFlight | AttachmentRefused(添付の種類の断り — 手番の始まりと同じ検め)。
+   運命は InputFate の行で届く。"
+  (#^ ClaudeTurn turn)
+  (#^ TurnInput input))
+
+(defclass [(dataclass :frozen True)] ClaudeInterruptTurn [(get EffectBase (| InterruptRequested NoTurnInFlight))]
+  "手番を止める。答え = InterruptRequested | NoTurnInFlight(終わりは ClaudeReadTurnEvents の Interrupted で届く)。"
+  (#^ ClaudeTurn turn))
+
+(defclass [(dataclass :frozen True)] ClaudeReadTurnEvents [(get EffectBase (| TurnEventPage UnknownTurn))]
+  "手番の出来事を読む: after-seq より後の行を、新しい行か終わりが来るか wait-up-to 秒が過ぎるまで待って返す。
+   答え = TurnEventPage | UnknownTurn。"
+  (#^ ClaudeTurn turn)
+  (#^ int after-seq)
+  (#^ float wait-up-to))
+
+(defclass [(dataclass :frozen True)] ClaudeAnswerPermission [(get EffectBase (| Answered NoSuchRequest))]
+  "許可の問いに答える。答え = Answered | NoSuchRequest。"
+  (#^ ClaudeTurn turn)
+  (#^ str request-id)
+  (#^ (| Allow Deny) answer)
+  (defn __post_init__ [self]
+    (when (not (isinstance self.answer #(Allow Deny)))
+      (raise (TypeError "ClaudeAnswerPermission.answer は Allow / Deny")))))
+
+(defclass [(dataclass :frozen True)] ClaudeCloseSession [(get EffectBase (| SessionClosed ProcessStillAlive))]
+  "会話を閉じる(冪等)。走っている手番は Interrupted で終わる。答え = SessionClosed | ProcessStillAlive。"
+  (#^ str session-id)
+  (#^ str reason))
+
+(defclass [(dataclass :frozen True)] ClaudeSessionStatus [(get EffectBase SessionStatus)]
+  "会話の状態を読む(pid は返さない)。答え = SessionStatus。"
+  (#^ ClaudeHome home)
+  (#^ str cwd)
+  (#^ str session-id))
+
+(defclass [(dataclass :frozen True)] ClaudeExportSession [(get EffectBase ExportSessionOutcome)]
+  "会話の transcript の写しを家から取り出す(家の外に預けて、別の家へ ResumeSession の carry = Rebuilt で持ち込むため)。
+   cwd は ClaudeSessionStatus と同じく実体の path(realpath)へ正規化して置き場を決める。写すのは transcript の jsonl 1 つだけ
+   (subagent の記録・memory の dir は写さない)。session-id は会話の id の綴り(UUID — 置き場の外の path を名指せない)。
+   答え = SessionExported | SessionNotFound(transcript が無い・空)。"
+  (#^ ClaudeHome home)
+  (#^ str cwd)
+  (#^ str session-id)
+  (defn __post_init__ [self]
+    (checked-session-id self.session-id "ClaudeExportSession.session_id")))
 
 
 ;; --- 入力の前に会話の process を事前起動して待たせる ------------------------------------------------------------

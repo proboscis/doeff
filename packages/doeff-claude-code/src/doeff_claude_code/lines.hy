@@ -13,7 +13,7 @@
 (import json)
 (import math)
 (import doeff [run])
-(import doeff_hy.frozen [FrozenMap freeze-json frozen-json-object])
+(import doeff_hy.frozen [FrozenMap FrozenJson freeze-json frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn])
 
 
@@ -81,7 +81,7 @@
    同じく深く凍らせた写像。input の無い・写像でない block は分類の段で Other として断る)。#3744。"
   (#^ str id)
   (#^ str name)
-  (setv #^ FrozenMap input (field :default-factory FrozenMap))
+  (setv #^ (get FrozenMap FrozenJson) input (field :default-factory FrozenMap))
   (defn __post_init__ [self]
     (when (not (and (isinstance self.id str) self.id))
       (raise (ValueError (.format "ToolCall.id は空でない文字列: {!r}" self.id))))
