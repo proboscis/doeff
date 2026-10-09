@@ -273,6 +273,23 @@ def test_namespace_stays_with_the_deploying_side(rendered: list[Manifest]) -> No
     assert [doc for doc in rendered if doc["kind"] == "Namespace"] == []
 
 
+def test_worker_account_is_bound_to_cluster_admin() -> None:
+    """worker の組は、worker の ServiceAccount を ClusterRole cluster-admin に結ぶ ClusterRoleBinding をちょうど 1 つ持つ — job の子が
+    kubectl で cluster を扱える(利用者 1 人の cluster なので絞らない)。"""
+    built = _build(K8S / "workers")
+    bindings = [doc for doc in built if doc["kind"] == "ClusterRoleBinding"]
+    assert len(bindings) == 1, bindings
+    (binding,) = bindings
+    assert _mapping(binding["roleRef"], "roleRef") == {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "ClusterRole",
+        "name": "cluster-admin",
+    }
+    assert _sequence(binding["subjects"], "subjects") == [
+        {"kind": "ServiceAccount", "name": WORKER_ACCOUNT, "namespace": NAMESPACE}
+    ]
+
+
 @dataclass(frozen=True)
 class Vocabulary:
     """規則 doeff-packages-have-no-application-vocabulary から読んだ 2 つ: 上に載る系の語と、許す綴り。"""
