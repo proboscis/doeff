@@ -269,7 +269,7 @@ class JobStatus:
 
 @dataclass(frozen=True, kw_only=True)
 class HeartbeatSent:
-    """宣言の読みが coordinator へ送った heartbeat(送った刻・名乗った worker の名・その時の生存の窓)。"""
+    """coordinator への口が送った heartbeat(送った刻・名乗った worker の名・その時の生存の窓)。"""
 
     at: int
     worker: str
@@ -281,14 +281,14 @@ class DesiredJobs:
     warm: tuple[WarmEnv, ...] = ()
     cut_off: CutOff | None = None
     changed: Future[bool] | None = field(default=None, compare=False)
-    sent: HeartbeatSent | None = field(default=None, compare=False)
+    sends: tuple[HeartbeatSent, ...] = field(default=(), compare=False)
 
 @dataclass(frozen=True)
 class DesiredUnreadable:
     """宣言が読めない。"""
 
     reason: str
-    sent: HeartbeatSent | None = field(default=None, compare=False)
+    sends: tuple[HeartbeatSent, ...] = field(default=(), compare=False)
 
 # --- effect ----------------------------------------------------------------------
 
