@@ -37,6 +37,7 @@ from .events import (
     WaitForEvents,
     WaitForEventsEffect,
     publish,
+    publish_effect_type,
     wait_for_event,
     wait_for_events,
 )
@@ -78,6 +79,7 @@ __all__ = [
     "WaitForEvents",
     "WaitForEventsEffect",
     "publish",
+    "publish_effect_type",
     "wait_for_event",
     "wait_for_events",
 ]
