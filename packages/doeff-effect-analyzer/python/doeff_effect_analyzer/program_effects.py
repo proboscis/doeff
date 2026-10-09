@@ -1491,13 +1491,14 @@ def _assigned_in_init(instance: _Instance, attr: str) -> Imported:
         located.node, located.scope.module, bound=_Bound((Binding(self_name, instance),))
     )
     for child in _body_nodes(located.node):
-        match _single_assignment(child):
-            case _Assignment(
-                target=ast.Attribute(value=ast.Name(id=owner), attr=name), value=value
-            ) if owner == self_name and name == attr:
-                return scope.resolve(value)
-            case _:
-                continue
+        for assignment in _assignments(child):
+            match assignment:
+                case _Assignment(
+                    target=ast.Attribute(value=ast.Name(id=owner), attr=name), value=value
+                ) if owner == self_name and name == attr:
+                    return scope.resolve(value)
+                case _:
+                    continue
     return UNBOUND
 
 
@@ -1507,18 +1508,43 @@ class _Assignment:
     value: ast.expr
 
 
-def _single_assignment(node: ast.AST) -> _Assignment | None:
-    """``x = v`` / ``x: T = v`` / ``(x := v)`` with one target (what a name or attribute is
-    bound to)."""
+def _element_wise(node: ast.AST) -> tuple[_Assignment, ...]:
+    """``(a, b) = (va, vb)`` read element by element: a tuple or list target from a tuple or
+    list literal of the same length, with no starred part on either side, binds each target
+    to its value exactly as plain assignments do.  doeff-hy binds every exit of a ``defk`` /
+    ``deff`` with a typed ``:post`` as ``(_contract_result,) = (value,)`` (a53309e37 — the
+    tuple target keeps Hy from moving the value's temporary name onto the declared name), so
+    an env builder's handler list reaches ``return`` through this shape.  () for any other
+    node."""
     match node:
-        case ast.Assign(targets=[target], value=value):
-            return _Assignment(target, value)
-        case ast.NamedExpr(target=target, value=value):
-            return _Assignment(target, value)
-        case ast.AnnAssign(target=target, value=ast.expr() as value):
-            return _Assignment(target, value)
+        case ast.Assign(
+            targets=[ast.Tuple(elts=targets) | ast.List(elts=targets)],
+            value=ast.Tuple(elts=values) | ast.List(elts=values),
+        ) if len(targets) == len(values) and not any(
+            isinstance(part, ast.Starred) for part in (*targets, *values)
+        ):
+            return tuple(
+                _Assignment(target, value) for target, value in zip(targets, values, strict=True)
+            )
         case _:
-            return None
+            return ()
+
+
+def _assignments(node: ast.AST) -> tuple[_Assignment, ...]:
+    """What ``node`` binds, one target per value (what a name or attribute is bound to):
+    ``x = v`` / ``x: T = v`` / ``(x := v)`` with one target, and ``(a, b) = (va, vb)`` element
+    by element (``_element_wise``).  () for any other node."""
+    match node:
+        case ast.Assign() if element_wise := _element_wise(node):
+            return element_wise
+        case ast.Assign(targets=[target], value=value):
+            return (_Assignment(target, value),)
+        case ast.NamedExpr(target=target, value=value):
+            return (_Assignment(target, value),)
+        case ast.AnnAssign(target=target, value=ast.expr() as value):
+            return (_Assignment(target, value),)
+        case _:
+            return ()
 
 
 @dataclass(frozen=True)
@@ -1698,11 +1724,12 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
     for node in _body_nodes(function):
         names |= _bound_names(node)
         imports.update(_import_bindings(node))
-        match _single_assignment(node):
-            case _Assignment(target=ast.Name(id=name), value=value):
-                assigned.setdefault(name, []).append(value)
-            case _:
-                pass
+        for assignment in _assignments(node):
+            match assignment:
+                case _Assignment(target=ast.Name(id=name), value=value):
+                    assigned.setdefault(name, []).append(value)
+                case _:
+                    pass
         match node:
             case ast.For(target=ast.Name(id=name), iter=walked) | ast.AsyncFor(
                 target=ast.Name(id=name), iter=walked
@@ -1762,11 +1789,12 @@ def _read_body_facts(function: FunctionNode) -> _BodyFacts:
 
 def _unpacked_places(node: ast.AST) -> tuple[_Unpacked, ...]:
     """The names ``[a, b] = v`` / ``a, b = v`` binds, each with its place (only when every
-    target is a plain name — a starred or nested target is not followed)."""
+    target is a plain name — a starred or nested target is not followed).  A same-length
+    literal on the right is read element by element instead (``_element_wise``)."""
     match node:
         case ast.Assign(
             targets=[ast.List(elts=targets) | ast.Tuple(elts=targets)], value=value
-        ) if all(isinstance(target, ast.Name) for target in targets):
+        ) if all(isinstance(target, ast.Name) for target in targets) and not _element_wise(node):
             return tuple(
                 _Unpacked(target.id, value, index, len(targets))
                 for index, target in enumerate(targets)
