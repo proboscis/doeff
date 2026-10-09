@@ -100,6 +100,7 @@ _LAZY_EXPORTS = {
     "AgentStopHookFeedbackEvent": ".effects",
     "AgentCompactionEvent": ".effects",
     "CompactionTrigger": ".effects",
+    "AgentCallUsageEvent": ".effects",
     "AgentToolResultEvent": ".effects",
     "AgentToolUseEvent": ".effects",
     "ModelWindow": ".effects",

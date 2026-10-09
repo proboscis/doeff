@@ -35,6 +35,7 @@
   SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState
   AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent
   AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger
+  AgentCallUsageEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
@@ -840,6 +841,86 @@
 
 (deftest test-headless-turn-end-carries-the-last-call-and-the-model-windows-stub [tmp-path]
   (<- (check-turn-end-carries-the-last-call (run-on STUB tmp-path tool-turn-with-output))))
+
+;; --- 走っている手番の途中の、本体の会話の呼びの usage(card ki-a2e985c009ae) ---------------------------------------
+;;
+;; 上の層(agora の turn-host)が、手番の終わりを待たずに会話の今の context の大きさを記録へ書けるように、本体の会話の assistant の行が
+;; usage を名乗るたびに、その呼びの usage と model を出来事 AgentCallUsageEvent で運ぶ。線引きは手番の終わりの last_call_usage と同じ
+;; (subagent の行は数えない・名乗らない値を作らない)。
+
+(defk call-usages-of [#^ tuple events]
+  {:pre [(: events tuple)] :post [(: % list)] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "出来事の列から、呼びの usage の出来事を (列の中の位置, 出来事) の組で抜き出すため。"
+  (lfor #(index event) (enumerate events) :if (isinstance event AgentCallUsageEvent) #(index event)))
+
+(defk check-a-running-turn-carries-each-main-call-usage [#^ Read done #^ AgentTurnUsage first-call]
+  {:pre [(: done Read) (: first-call AgentTurnUsage)] :post [(: % (type None))]
+   :tags {:context "headless-adapter-test" :role "judgment"}}
+  "道具を 1 度呼ぶ手番は、本体の会話の呼び 2 回(道具の呼びの行・最後の本文の行)の usage と model を、行の順に出来事で運ぶ。1 つ目は
+   道具の結果の出来事より前に在る(手番の終わりを待たずに読める)。subagent の行(替え玉の CLI は道具の途中に 1 行出す — 別の model と
+   usage)は出来事にならない。最後の出来事の値は、手番の終わりの last_call_usage・last_call_model と同じ。first-call = 道具の呼びの行が
+   名乗る usage(替え玉の CLI は最後の本文の行と別の値・fake はどの行も同じ値)。呼びの usage を終わりでしか運ばない adapter では
+   出来事が 0 で赤 — 上の層は、最初の手番が走っている会話の context の大きさを知れない。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (<- usages list (call-usages-of done.events))
+  (val final-call (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010))
+  (assert (= (lfor #(_ event) usages #(event.usage event.model)) [#(first-call CALL-MODEL) #(final-call CALL-MODEL)])
+          (repr done.events))
+  (val results (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolResultEvent) index))
+  (assert (and results (< (get (get usages 0) 0) (get results 0))) (repr done.events))
+  (val last (get (get usages -1) 1))
+  (assert (= #(last.usage last.model) #(done.end.last-call-usage done.end.last-call-model)) (repr done.end))
+  None)
+
+(deftest test-headless-carries-each-main-call-usage-while-the-turn-runs-fake [tmp-path]
+  (<- (check-a-running-turn-carries-each-main-call-usage
+        (run-on FAKE tmp-path tool-turn-with-output)
+        (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20 :cache-read-tokens 1010))))
+
+(deftest test-headless-carries-each-main-call-usage-while-the-turn-runs-stub [tmp-path]
+  (<- (check-a-running-turn-carries-each-main-call-usage
+        (run-on STUB tmp-path tool-turn-with-output)
+        (AgentTurnUsage :input-tokens 3 :output-tokens 5 :cache-write-tokens 0 :cache-read-tokens 1000))))
+
+(defk call-usage-read-before-the-turn-ends [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "道具を 1 度呼ぶ手番を、呼びの usage の出来事が 1 つ出た所まで読み(mid)、そこから最後まで読む(done)。手番が走っている間に
+   呼びの usage が読めるかを見るため。"
+  (<- prompt str (echo-prompt ECHO-OUTPUT "ECHOED"))
+  (<- handle (launch s "adapter-call-usage-mid-turn" prompt None))
+  (<- mid (read-until handle
+                      (fn [events end] (or (any (gfor event events (isinstance event AgentCallUsageEvent))) (is-not end None)))
+                      s.timeout -1))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout mid.after))
+  (<- (Stop handle))
+  {"mid" mid "done" done})
+
+(defk check-the-call-usage-is-read-before-the-turn-ends [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "呼びの usage の出来事を読んだ時、手番はまだ終わっていない(頁の end が無く、終わりの出来事もまだ無い)。その後に手番は完了で終わる。"
+  (val mid (get seen "mid"))
+  (val done (get seen "done"))
+  (<- usages list (call-usages-of mid.events))
+  (assert usages (repr mid.events))
+  (assert (is mid.end None) (repr mid.end))
+  (assert (= (ends-of mid.events) []) (repr mid.events))
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  None)
+
+(deftest test-headless-call-usage-is-read-before-the-turn-ends-fake [tmp-path]
+  (<- (check-the-call-usage-is-read-before-the-turn-ends (run-on FAKE tmp-path call-usage-read-before-the-turn-ends))))
+
+(defk check-a-turn-that-states-no-usage-has-no-call-usage-event [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "assistant の行が usage を名乗らない手番は、呼びの usage の出来事を 1 つも運ばず、手番の終わりの last_call_usage も None(0 を作らない)。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (<- usages list (call-usages-of done.events))
+  (assert (= usages []) (repr done.events))
+  (assert (is done.end.last-call-usage None) (repr done.end))
+  None)
+
+(deftest test-headless-carries-no-call-usage-when-the-line-states-none-fake [tmp-path]
+  (<- (check-a-turn-that-states-no-usage-has-no-call-usage-event (run-on FAKE tmp-path uncompacted-turn))))
 
 (deftest test-headless-next-turn-input-waits-fake [tmp-path]
   (check-next-turn (run-on FAKE tmp-path next-turn-input-waits-for-the-running-turn)))

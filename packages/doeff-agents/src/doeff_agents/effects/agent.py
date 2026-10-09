@@ -387,6 +387,24 @@ class AgentCompactionEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentCallUsageEvent:
+    """An API call of the main conversation stated its usage while the turn is still running — an upper layer
+    reads the conversation's current context size without waiting for the turn's end (its input side: input +
+    cache_read + cache_write).  ``usage`` = that call's usage as the runtime stated it (``cost_usd`` is None — the
+    runtime prices whole turns, not calls), ``model`` = that call's model (``None`` when not stated).  The line is
+    drawn where a turn end's ``last_call_usage`` draws it: subagent calls are not carried, and a line that states
+    no usage carries no event (never an invented 0).  The runtime states one call's usage on each line of that
+    call, so consecutive events may repeat the same value; the last event of a turn equals the turn end's
+    ``last_call_usage`` / ``last_call_model``.  The model's context window is not in the event — the runtime
+    states windows only at the turn's end (``model_windows``)."""
+
+    seq: int
+    at: datetime
+    usage: AgentTurnUsage
+    model: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
     ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
@@ -436,6 +454,7 @@ AgentEvent = (
     | AgentToolInputDeltaEvent
     | AgentStopHookFeedbackEvent
     | AgentCompactionEvent
+    | AgentCallUsageEvent
     | AgentToolUseEvent
     | AgentToolResultEvent
     | AgentInputFateEvent
