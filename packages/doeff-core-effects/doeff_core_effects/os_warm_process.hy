@@ -3,10 +3,13 @@
 ;;;   ForkFromWarm     待ちの子の unix socket(AF_UNIX・SOCK_STREAM)に頼みの JSON 1 行を送り、答えの JSON 1 行を受ける。接続・送り・受けの
 ;;;                    全部で WARM-ANSWER-SECONDS の期限。socket の在否と mode は確かめない(作る側 = 待ちの子が mode で絞る — 相手の身元を
 ;;;                    確かめる分岐・名簿・合言葉は持たない)。断りの文は warm_effects.hy の関数で作り、env の値は含めない。
-;;;   PollWarmChild    /proc/<pid>/stat の state(3 番目の欄)と starttime(22 番目の欄 = start-ticks)を読む。同じ start-ticks で終わって
+;;;   PollWarmChild    pid の process の state と start-ticks を機体ごとの読み proc-stat-of で読む(Linux = /proc/<pid>/stat の state〔3 番目の
+;;;                    欄〕と starttime〔22 番目の欄〕・macOS = darwin_proc.hy の libproc の proc_bsdinfo)。同じ start-ticks で終わって
 ;;;                    いない(zombie でない)process が居れば WarmRunning、そうでなければ exit の file を読む(在れば WarmExited・無ければ WarmLost)。
 ;;;   SignalWarmChild  同じ start-ticks で終わっていない process が居る時だけ、その group(子 A は setsid した group の先頭)へ os.killpg で送る。
-;;;   /proc が無い機体(Linux でない)では PollWarmChild と SignalWarmChild は WarmProcUnavailable を上げる — 黙って Lost / Gone にしない。
+;;;   読みを知らない機体(Linux と macOS の外)・/proc の無い Linux では WarmProcUnavailable を上げる — 黙って Lost / Gone にしない。
+;;;   待ちの子(doeff-cluster の warm_child.py)も、分けた子の start-ticks と自分の thread の本数を同じ読み(proc-stat-of・own-thread-count)
+;;;   で読む — 頼み手と待ちの子が同じ start-ticks を照らす。
 ;;;
 ;;; 頼みと答えの形(待ちの子との約束 — 型は下の defwire・待ちの子の側も同じ関数で読み書きする):
 ;;;   頼み = WarmRequestWire {"entry", "args": [str], "cwd", "env": [{"name", "value"}], "logPath", "exitPath", "graceSeconds"}
@@ -15,26 +18,30 @@
 ;;;   (待ちの子が答える)・warm-answer-of(頼み手が読む)。
 ;;; 本物との契約は tests/test_warm_process_contract.hy。
 (require doeff-hy.macros [defhandler defk <- val var])
-(require doeff-hy.record [defrecord defwire])
+(require doeff-hy.record [defwire])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import json)
 (import os)
+(import platform)
 (import socket)
 (import dataclasses [dataclass])
 (import doeff_hy.wire [Malformed dump parse-json])
 (import doeff_core_effects.process_effects [ProcessSignal])
+(import doeff_core_effects.process_stat [ProcStat])
+(import doeff_core_effects.darwin_proc [darwin-proc-stat darwin-thread-count])
 (import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited
                                          WarmLost WarmSignaled WarmGone WARM-ANSWER-SECONDS warm-socket-missing warm-socket-refused
                                          warm-answer-late warm-answer-unreadable warm-lost warm-gone warm-exit-answer signal-number-of])
 
-;; 自分の process の様子を読む置き場の根(Linux の procfs)。
+;; process の様子を読む置き場の根(Linux の procfs)。
 (val PROC-ROOT "/proc")
 ;; 答えの 1 行の長さの上限(byte)— 約束の形を外れた相手が改行を送らずに流し続けても、受けを止めるため。
 (val ANSWER-LIMIT 65536)
 
 
 (defclass WarmProcUnavailable [RuntimeError]
-  "この機体に /proc が無い(Linux でない)ので、待ちの子の終わりを読めない・signal を送る相手を確かめられない。")
+  "この機体の process の様子の読みを知らない(Linux と macOS の外・/proc の無い Linux)ので、待ちの子の終わりを読めない・signal を送る相手を
+   確かめられない。")
 
 
 (defwire WarmEnvWire
@@ -67,12 +74,6 @@
   "待ちの子の答え: 仕事を断った(detail = 理由 — env の値は含めない)。"
   {:tags {:context "process" :role "type" :reads "json"} :names :camel :unknown :reject}
   (#^ str detail))
-
-
-(defrecord ProcStat
-  "/proc/<pid>/stat から読んだ 2 つの欄(state = 3 番目の 1 文字・start-ticks = 22 番目の starttime)。"
-  (#^ str state)
-  (#^ int start-ticks))
 
 
 (defk wire-line [wire]
@@ -163,7 +164,27 @@
 
 (defk proc-stat-of [pid]
   {:pre [(: pid int)] :post [(: % (| ProcStat None))] :tags {:context "process" :role "foundation"}}
-  "pid の process の state と start-ticks を /proc から読むため。居ない = None。/proc が無い機体は WarmProcUnavailable(頭の註)。
+  "pid の process の state と start-ticks を、この機体の読みで読むため(頭の註)。居ない = None。読みを知らない機体は WarmProcUnavailable。"
+  (val system (platform.system))
+  (cond
+    (= system "Linux") (do (<- seen (| ProcStat None) (linux-proc-stat pid)) seen)
+    (= system "Darwin") (do (<- seen (| ProcStat None) (darwin-proc-stat pid)) seen)
+    True (raise (WarmProcUnavailable (.format "process の様子の読みを知らない機体: {}" system)))))
+
+
+(defk own-thread-count []
+  {:pre [] :post [(: % int)] :tags {:context "process" :role "foundation"}}
+  "この process の OS の thread の本数を、この機体の読みで読むため(待ちの子が fork の前に 1 本である事を確かめる — 頭の註)。"
+  (val system (platform.system))
+  (cond
+    (= system "Linux") (len (os.listdir (os.path.join PROC-ROOT "self" "task")))
+    (= system "Darwin") (do (<- threads int (darwin-thread-count)) threads)
+    True (raise (WarmProcUnavailable (.format "thread の本数の読みを知らない機体: {}" system)))))
+
+
+(defk linux-proc-stat [pid]
+  {:pre [(: pid int)] :post [(: % (| ProcStat None))] :tags {:context "process" :role "foundation"}}
+  "Linux で pid の process の state と start-ticks を /proc から読むため。居ない = None。/proc が無ければ WarmProcUnavailable。
    comm(2 番目の欄)は空白や括弧を含みうるので、最後の ')' の後ろを空白で割る(3 番目の欄が先頭・22 番目の欄はその 20 番目)。"
   (when (not (os.path.isdir PROC-ROOT))
     (raise (WarmProcUnavailable (.format "{} が無い機体では待ちの子の終わりを読めない" PROC-ROOT))))
@@ -215,7 +236,7 @@
 
 
 (defhandler os-warm-process-handler
-  ;; 本物の待ちの子と /proc(頭の註)。
+  ;; 本物の待ちの子と、機体ごとの process の様子の読み(頭の註)。
   (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds]
     (<- answer (os-fork-from-warm (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env
                                                 :log-path log-path :exit-path exit-path :grace-seconds grace-seconds)))

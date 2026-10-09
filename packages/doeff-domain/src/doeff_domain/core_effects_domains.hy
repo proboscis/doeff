@@ -92,7 +92,7 @@
 (import doeff_core_effects.scripted-warm-process [scripted-warm-process-handler])
 (import doeff_core_effects.process-effects [AwaitProcessExit])
 (import doeff_core_effects.warm-effects [AwaitWarmChildExit])
-(import doeff_core_effects.pidfd-exit [pidfd-exit-handler])
+(import doeff_core_effects.process-exit [process-exit-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
 (import doeff_core_effects.scheduler-channel [scheduler-channel-handler])
 (import doeff_core_effects.compute-effects [Compute])
@@ -328,9 +328,9 @@
 (defdomain doeff-process-exit
   :title "子の終わりの待ちの語彙 — 立てた子・頼んだ子が終わるまで待つ"
   :effects [AwaitProcessExit AwaitWarmChildExit]
-  :handlers [pidfd-exit-handler]
+  :handlers [process-exit-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "pidfd-exit-handler(本物 — 子の pidfd の読みを event loop で待つ)が 2 effect 全てに答える。周期で問い直さずに終わりで起きる待ち
+  :docs "process-exit-handler(本物 — 子の終わると読める fd〔Linux = pidfd・macOS = kqueue の EVFILT_PROC〕の読みを event loop で待つ)が 2 effect 全てに答える。周期で問い直さずに終わりで起きる待ち
          (agora-redesign #3871 の単位 1)。終わりを 1 度だけ読む PollProcess・PollWarmChild は、それぞれ doeff-process・doeff-warm-process の語彙。")
 
 

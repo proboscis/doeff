@@ -10,7 +10,8 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   B は書き手の fd を閉じてから入口を走らせる。待ちの子自身の log(warm-<root のキー>.log)には付けない — 待ちの子は fork のために
   thread を 1 本に保つので、書き手の thread を置けない。
   A は setsid を済ませたら待ちの子へ 1 byte で知らせ、job の終了コードを exit の file へ置き換えで書いてから、shim と同じ値で終わる。
-  待ちの子は、その知らせを受けてから A の pid と起動の刻(/proc の starttime — pid の使い回しを見分ける)を答える(答えの直後の
+  待ちの子は、その知らせを受けてから A の pid と起動の刻(機体ごとの読み proc-stat-of の start-ticks — pid の使い回しを見分ける)を
+  答える(答えの直後の
   合図が、まだ group の先頭でない A に届いて ESRCH にならないように)。
 頼みと答えの 1 行は doeff_core_effects.os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは
 同じ module の warm-request-of・warm-answer-line を使う(綴りを 2 つ持たない)。
@@ -51,7 +52,8 @@ from typing import NoReturn
 
 import hy  # noqa: F401 — Hy の importer を据える(入口と、前もって読む module の多くは Hy)
 from doeff import run
-from doeff_core_effects.os_warm_process import WarmRequestWire, warm_answer_line, warm_request_of
+from doeff_core_effects.os_warm_process import WarmRequestWire, own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
+from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused
 from doeff_hy.wire import Malformed
 
@@ -70,8 +72,6 @@ REQUEST_LIMIT_BYTES = 1 << 20
 REQUEST_TIMEOUT_SECONDS = 5.0
 # 読み込みの失敗・thread の残りで起動を断った時の終了コード。
 START_REFUSED_CODE = 3
-# /proc/<pid>/stat の「)」の後の欄の並びで、起動の刻 starttime(全体の 22 番目)の位置(「)」の後は 3 番目の欄から始まる)。
-STARTTIME_INDEX = 22 - 3
 # A が setsid を済ませた時に待ちの子へ送る 1 byte。
 SESSION_LED = b"1"
 
@@ -104,8 +104,9 @@ def request_of(line: bytes) -> WarmRequestWire | WarmRefused:
 
 
 def thread_count() -> int:
-    """この process の OS の thread の本数(/proc/self/task の数)— fork の前に 1 本である事を確かめるため。"""
-    return len(os.listdir("/proc/self/task"))
+    """この process の OS の thread の本数(機体ごとの読み own-thread-count)— fork の前に 1 本である事を確かめるため。"""
+    counted: int = run(own_thread_count())
+    return counted
 
 
 def vm_live_counts() -> tuple[int, ...]:
@@ -117,11 +118,12 @@ def vm_live_counts() -> tuple[int, ...]:
 
 
 def start_ticks(pid: int) -> int:
-    """pid の起動の刻(/proc/<pid>/stat の starttime)— worker が pid の使い回しを見分けるため。comm に空白と括弧が入りうるので、
-    最後の「)」の後を読む。"""
-    with open(f"/proc/{pid}/stat", "rb") as handle:
-        stat = handle.read()
-    return int(stat.rsplit(b")", 1)[1].split()[STARTTIME_INDEX])
+    """pid の起動の刻(機体ごとの読み proc-stat-of の start-ticks — worker が同じ読みで照らす)— worker が pid の使い回しを
+    見分けるため。分けたばかりの A が居ない(読めない)なら名を挙げて落ちる。"""
+    seen: ProcStat | None = run(proc_stat_of(pid))
+    if seen is None:
+        raise ProcessLookupError(f"分けた子 {pid} の様子を読めない")
+    return seen.start_ticks
 
 
 def write_replacing(path: str, text: str) -> None:
