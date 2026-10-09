@@ -1,12 +1,13 @@
-;;; 子 process の終わりを待つ効果(AwaitProcessExit・AwaitWarmChildExit)と、Linux の答え手 pidfd-exit-handler(pidfd_exit.hy・
-;;; agora-redesign #3871 の単位 1)。本物の process(sleep・true・sh)を使う。
+;;; 子 process の終わりを待つ効果(AwaitProcessExit・AwaitWarmChildExit)と、答え手 process-exit-handler(process_exit.hy・
+;;; agora-redesign #3871 の単位 1)。本物の process(sleep・true・sh)を使う。終わると読める fd の開き方は機体ごと(Linux = pidfd・
+;;; macOS = kqueue の EVFILT_PROC)で、同じ検がどちらの機体でもその機体の開き方を測る。
 ;;;
 ;;;   - 立てた子の終わりで答え、終わる前には答えない。待ちは子を回収しない(終了 code は後の PollProcess が答える)。
 ;;;   - 立てていない pid は ProcessNotChild。既に終わった(回収していない)子は、その場で答える。
 ;;;   - 子でない process(待ちの子から分けた子と同じ立場 — sh が背景に起こして自分は終わる)は、pid と start-ticks の組で待つ。
 ;;;     start-ticks が違う(pid が使い回された)なら、その場で答える(居る別の process の終わりを待たない)。
 ;;;   - 取り消した待ちは fd を残さず、待たれない coroutine の警告も出さない。
-;;;   - pidfd を取る関数は、居ない pid に None を返す。
+;;;   - 終わると読める fd を取る関数(機体の開き方)は、居ない pid に None を返す。
 (require doeff-hy.macros [defk deftest <- val])
 (import gc)
 (import os)
@@ -23,7 +24,7 @@
 (import doeff_core_effects.process_effects [StartProcess PollProcess AwaitProcessExit ProcessStarted ProcessExited ProcessEnded
                                             ProcessNotChild])
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
-(import doeff_core_effects.pidfd_exit [pidfd-exit-handler pidfd-of])
+(import doeff_core_effects.process_exit [process-exit-handler exit-fd-of])
 
 ;; 終わりから答えまでの遅れの上限(秒)と、終わる前に答えない事を見る下限の余裕(秒)。
 (val PROMPT 0.3)
@@ -31,7 +32,7 @@
 
 (defn #^ object handled [#^ object program]
   "本物の答え手の組(外側が先)の上で program を回すため。"
-  (run (scheduled (with-handlers [(await-handler) subprocess-handler os-warm-process-handler pidfd-exit-handler] program))))
+  (run (scheduled (with-handlers [(await-handler) subprocess-handler os-warm-process-handler process-exit-handler] program))))
 
 
 (defk started-then-awaited [argv]
@@ -64,7 +65,7 @@
 
 
 (defn #^ int start-ticks-of [#^ int pid]
-  "pid の process の start-ticks(/proc/<pid>/stat の 22 番目の欄)を読むため。"
+  "pid の process の start-ticks(Linux = /proc/<pid>/stat の 22 番目の欄・macOS = libproc の起動の時刻)を読むため。"
   (. (run (proc-stat-of pid)) start-ticks))
 
 
@@ -126,12 +127,12 @@
 
 
 (defn #^ int open-descriptors []
-  "この process の開いている fd の数を数えるため。"
-  (len (os.listdir "/proc/self/fd")))
+  "この process の開いている fd の数を数えるため(/dev/fd は Linux と macOS の両方に在る)。"
+  (len (os.listdir "/dev/fd")))
 
 
 (deftest test-a-cancelled-wait-leaves-no-descriptor-and-no-warning
-  ;; 競り負けて取り消された待ちは、pidfd を閉じ、待たれない coroutine を残さない。
+  ;; 競り負けて取り消された待ちは、終わりの fd を閉じ、待たれない coroutine を残さない。
   (setv started (handled (StartProcess :argv #("sleep" "5"))))
   (setv before (open-descriptors))
   (with [_ (warnings.catch-warnings)]
@@ -145,8 +146,8 @@
   (assert (= after before) #(before after)))
 
 
-(deftest test-the-pidfd-of-a-pid-that-is-gone-is-none
+(deftest test-the-exit-fd-of-a-pid-that-is-gone-is-none
   ;; 居ない pid(回収し終えた子)には None。
   (setv child (subprocess.Popen ["true"]))
   (.wait child)
-  (assert (is (run (pidfd-of child.pid)) None)))
+  (assert (is (run (exit-fd-of child.pid)) None)))
