@@ -10,3 +10,8 @@ class PublishLatest(_doeff_effect_base[None]):
 @_doeff_dataclass(frozen=True)
 class ReadLatest(_doeff_effect_base[object | None]):
     kind: type
+
+@_doeff_dataclass(frozen=True)
+class AwaitLatest(_doeff_effect_base[object | None]):
+    kind: type
+    seen: object
