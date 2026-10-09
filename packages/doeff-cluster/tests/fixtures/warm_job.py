@@ -6,13 +6,20 @@
         へ繋いで「書いた」を送り、検が切るまで待ってから印を書く(眠らずに、検の合図で進む)。
 """
 
+import fcntl
 import gc
 import json
 import os
 import socket
+import stat
+import subprocess
 import sys
 
+from doeff import run
+from doeff_core_effects.os_warm_process import own_thread_count
+
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "main"}
+LINUX = sys.platform.startswith("linux")
 
 
 def environ_seen() -> dict[str, str]:
@@ -21,22 +28,57 @@ def environ_seen() -> dict[str, str]:
     return dict(os.environ)  # noqa: DOEFF004 — 検の入口が、分かれた子の入口の読む環境をそのまま写す 1 か所(上の docstring)
 
 
+def fd_targets() -> tuple[str, ...]:
+    """開いている fd の行き先を並べるため — 分かれた子が待ちの子の socket ともう 1 本の log を継いでいない事を検が見る。Linux は
+    /proc/self/fd の link(socket は socket:[…])、macOS は /dev/fd を数えて、socket と pipe は種類の名(socket:・pipe:)、file は
+    fcntl の F_GETPATH の path にする(macOS の /dev/fd は link でない)。"""
+    if LINUX:
+        names = sorted(os.listdir("/proc/self/fd"))
+        return tuple(os.readlink(f"/proc/self/fd/{name}") for name in names if os.path.exists(f"/proc/self/fd/{name}"))
+    seen = tuple(darwin_target(descriptor) for descriptor in sorted(int(name) for name in os.listdir("/dev/fd")))
+    return tuple(target for target in seen if target is not None)
+
+
+def darwin_target(descriptor: int) -> str | None:
+    """macOS で fd 1 つの行き先を名乗るため(fd_targets の註)。閉じている fd(並べるために開いた /dev/fd の dir 自身 — listdir の後に
+    閉じている)は None。"""
+    try:
+        seen = os.fstat(descriptor)
+    except OSError:
+        return None
+    if stat.S_ISSOCK(seen.st_mode):
+        return f"socket:[{seen.st_ino}]"
+    if stat.S_ISFIFO(seen.st_mode):
+        return f"pipe:[{seen.st_ino}]"
+    if sys.platform != "darwin":
+        raise OSError(f"fd {descriptor} の path の読みを知らない機体: {sys.platform}")
+    path: bytes = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+    return path.split(b"\0", 1)[0].decode("utf-8", "replace")
+
+
+def command_line() -> str:
+    """この process の命令行を読むため — 分かれた子が exec せずに待ちの子の命令行のまま走る事を検が見る(Linux = /proc/self/cmdline・
+    macOS = ps の command の欄)。"""
+    if LINUX:
+        with open("/proc/self/cmdline", "rb") as handle:
+            return handle.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    shown = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(os.getpid())], check=True, capture_output=True, text=True)
+    return shown.stdout.strip()
+
+
 def facts() -> dict[str, object]:
     """この process の見え方(fd の行き先・env・命令行・thread の本数・VM の数・GC が凍らせた object の数 — 待ちの子から受け継いだ分)を
     集めるため。"""
     import doeff_vm  # noqa: PLC0415 — 走った後の数を読むだけ
 
-    names = sorted(os.listdir("/proc/self/fd"))
-    targets = tuple(os.readlink(f"/proc/self/fd/{name}") for name in names if os.path.exists(f"/proc/self/fd/{name}"))
-    with open("/proc/self/cmdline", "rb") as handle:
-        command = handle.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    threads: int = run(own_thread_count())
     return {
         "pid": os.getpid(),
-        "fds": list(targets),
+        "fds": list(fd_targets()),
         "env": environ_seen(),
-        "cmdline": command,
+        "cmdline": command_line(),
         "argv": list(sys.argv),
-        "threads": len(os.listdir("/proc/self/task")),
+        "threads": threads,
         "vmLive": list(doeff_vm.vm_live_counts()),
         "gcFrozen": gc.get_freeze_count(),
     }
