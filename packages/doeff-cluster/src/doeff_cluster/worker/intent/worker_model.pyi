@@ -461,6 +461,7 @@ class WakeSet:
     exits: tuple[AwaitProcessExit | AwaitWarmChildExit, ...]
 
 @dataclass(frozen=True)
-class WorkerWakes(EffectBase[WakeSet]): ...
+class WorkerWakes(EffectBase[WakeSet]):
+    began: int
 
 class WorkerUnsettled(Exception): ...

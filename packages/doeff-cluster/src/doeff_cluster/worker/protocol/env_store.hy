@@ -677,17 +677,17 @@
               (:= swept-ms now-ms)
               (:= sweeping None))))
     (resume None))
-  (WorkerWakes []
+  (WorkerWakes [began]
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 準備の子と走っている prune の子の終わり(exits)・走っている掃除の task の終わりの Future
-    ;; (bells)・準備の停滞の止めの期限と roots の数え直しの間隔(due)を、外側の答えに足す。
+    ;; (bells)・準備の停滞の止めの期限と roots の数え直しの間隔(due)を、外側の答えに足す。期限は tick の頭の時刻 began を基準に組み立てる
+    ;; (準備の停滞と掃除の判断は tick の中で読んだ時刻で判定したので、began より後の期限はまだ判定していない — #4332)。
     (<- outer WakeSet effect)
-    (<- now int (now-epoch-ms))
     (var dues #())
     (for [p (.values pending)]
       (<- progressed int (progressed-ms p))
-      (<- stop-due (| DueAt DueNever) (prepare-stop-due now progressed settings.limits))
+      (<- stop-due (| DueAt DueNever) (prepare-stop-due began progressed settings.limits))
       (:= dues (+ dues #(stop-due))))
-    (<- interval-due (| DueAt DueNever) (sweep-interval-due now tally settings.roots-cap-bytes swept-ms))
+    (<- interval-due (| DueAt DueNever) (sweep-interval-due began tally settings.roots-cap-bytes swept-ms))
     (<- due (| DueAt DueNow DueNever) (earliest-due (+ dues #(interval-due))))
     (val bells (if (is sweeping None) #() #(sweeping.done.future)))
     (val exits (+ (tuple (gfor p (.values pending) (AwaitProcessExit p.pid)))

@@ -1977,20 +1977,21 @@
   (replace truth :ticks (+ truth.ticks 1) :tick-bell tick :wake-bell wake :stop-bell stop))
 
 
-(defk host-wakes [worker truth now bell]
-  {:pre [(: worker SimWorker) (: truth HostTruth) (: now int) (: bell (| Future None))] :post [(: % WakeSet)]
+(defk host-wakes [worker truth began now bell]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: began int) (: now int) (: bell (| Future None))] :post [(: % WakeSet)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "宿 worker の真実 truth の、刻 now の起きる物の組を作るため。期限 = 本番の送り手の口(coordinator_link の WorkerWakes)と同じ関数で
-   組む heartbeat の期限(beat-due — 間隔は反例の worker の beat-every-ms か返事の間隔)・途絶の柵(fence-due)・前の heartbeat が届いて
-   いなければ送り直しの刻(now + RESEND-AFTER-MS)と、宿が持つ刻(処理の止まりの明け stalled-until-ms・準備の揃う刻 ready-ms — 本番では
-   準備の task の終わり)の早い方。呼び鈴 = 宿の呼び鈴 bell(期限が全部過ぎても起きる物の無い待ちにしない)。bell が None なら、周の頭に
-   掛けた鈴がこの周の間に鳴った(周の観測の後の出来事かもしれない)ので今すぐ(本番の、もう終わった子の待ちと同じ)。"
+  "宿 worker の真実 truth の、tick の頭の時刻 began に始まり時刻 now に終わった tick の後の起きる物の組を作るため。期限 = 本番の
+   coordinator-link(coordinator_link の WorkerWakes)と同じ関数・同じ基準(began — #4332)で組み立てる heartbeat の期限(beat-due — 間隔は
+   反例の worker の beat-every-ms か返事の間隔)・途絶の柵(fence-due)・前の heartbeat が届いていなければ再送の時刻(now +
+   RESEND-AFTER-MS)と、宿が持つ時刻(処理の止まりの明け stalled-until-ms・準備の揃う時刻 ready-ms — 本番では準備の task の終わり)の
+   早い方。呼び鈴 = 宿の呼び鈴 bell(期限が全部過ぎても起きる物の無い待ちにしない)。bell が None なら、周の頭に掛けた鈴がこの周の間に
+   鳴った(周の観測の後の出来事かもしれない)ので今すぐ(本番の、もう終わった子の待ちと同じ)。"
   (val interval (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))
-  (<- beat (| DueAt DueNever) (beat-due now truth.last-ok-ms interval))
-  (<- fence (| DueAt DueNever) (fence-due now truth.last-ok-ms truth.fence-ms truth.keep-fence-ms))
+  (<- beat (| DueAt DueNever) (beat-due began truth.last-ok-ms interval))
+  (<- fence (| DueAt DueNever) (fence-due began truth.last-ok-ms truth.fence-ms truth.keep-fence-ms))
   ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ — 本番の送り手の口と同じ)。
   (val resend (if truth.fresh (DueNever) (DueAt :at (+ now RESEND-AFTER-MS))))
-  (<- held (| DueAt DueNever) (due-after now (+ #(truth.stalled-until-ms) (tuple (gfor p (.values truth.codes) p.ready-ms)))))
+  (<- held (| DueAt DueNever) (due-after began (+ #(truth.stalled-until-ms) (tuple (gfor p (.values truth.codes) p.ready-ms)))))
   (<- due (| DueAt DueNow DueNever) (earliest-wake #(beat fence resend held)))
   (if (is bell None)
       (WakeSet :due (DueNow) :bells #() :exits #())
@@ -2175,12 +2176,12 @@
   (EnvReport []
     ;; sim の宿は heartbeat の root の名乗りを世界の root から自分で作る(env-heartbeat-part)ので、拍の Program の問いには None で答える。
     (resume None))
-  (WorkerWakes []
+  (WorkerWakes [began]
     ;; 周の間の待ちを起こす物(#3871 の単位 5)の一番外: 宿の期限(本番の送り手の口と同じ関数)と宿の呼び鈴(host-wakes)。宿の内側に
     ;; 状態を持つ handler は無いので、外へ出し直さずに答える。
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
-    (<- wakes WakeSet (host-wakes worker truth now (if (is truth.wake-bell None) None truth.wake-bell.future)))
+    (<- wakes WakeSet (host-wakes worker truth began now (if (is truth.wake-bell None) None truth.wake-bell.future)))
     (resume wakes))
   (AwaitStop []
     ;; 止めの合図の待ち(周の間の待ちが競わせる — 本番の答え手は os-signal-stop-handler)。止めが頼まれていれば今すぐ、そうでなければ

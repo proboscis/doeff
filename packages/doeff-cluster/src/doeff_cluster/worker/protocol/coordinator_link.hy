@@ -489,14 +489,18 @@
     (<- desired (polled state cell options watch-cell))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell desired bell))
     (resume belled))
-  (WorkerWakes []
+  (WorkerWakes [began]
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 外側の答えに、heartbeat を送る期限・途絶の柵の期限と、前の heartbeat が届いていなければ
     ;; 送り直しの刻を足す。宣言の変化の呼び鈴は ReadDesired の答え(DesiredJobs.changed)が運ぶので足さない。
     (<- outer WakeSet effect)
+    ;; heartbeat と fence の期限は tick の頭の時刻 began を基準に組み立てる: 送るか・止めるかの判断(polled)は tick の中の ReadDesired で
+    ;; 読んだ時刻で判定したので、began より後の期限はまだ判定していない。tick の後半が送信間隔より長くて既に過ぎていても捨てずに
+    ;; 返し、待ち 0 で起きた次の tick が送る(#4332)。
+    (<- beat (| DueAt DueNever) (beat-due began state.last-ok-ms state.beat-interval-ms))
+    (<- fence (| DueAt DueNever) (fence-due began state.last-ok-ms state.fence-ms state.keep-fence-ms))
+    ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。再送は期限でなく再送の間の待ちなので、
+    ;; tick の終わりの時刻から数える。
     (<- now int (now-epoch-ms))
-    (<- beat (| DueAt DueNever) (beat-due now state.last-ok-ms state.beat-interval-ms))
-    (<- fence (| DueAt DueNever) (fence-due now state.last-ok-ms state.fence-ms state.keep-fence-ms))
-    ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。
     (val resend (if (is state.last-desired None) (DueAt :at (+ now RESEND-AFTER-MS)) (DueNever)))
     (<- due (| DueAt DueNow DueNever) (earliest-due #(beat fence resend)))
     (<- merged WakeSet (wakes-with outer due #() #()))
