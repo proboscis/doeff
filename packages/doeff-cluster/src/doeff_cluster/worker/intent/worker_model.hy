@@ -564,7 +564,13 @@
 (defclass [(dataclass :frozen True)] WorkerWakes [EffectBase]
   "結果は WakeSet。周の後に、周の間の待ちを起こす物を集めるため。状態を持つ handler(送り手の口・実行環境・process の host)が、外側の
    答え(この effect を外へ出し直した物)に自分の期限・呼び鈴・待つ子を足して返す。一番外の答え手(worker/protocol/worker_wakes の
-   no-wakes)は空の組を返す — handler を並べ忘れると、その層の起きる物が組から消える。")
+   no-wakes)は空の組を返す — handler を並べ忘れると、その層の起きる物が組から消える。
+   began = 終わった tick の頭の時刻(epoch ms)。tick の中の判断(heartbeat を送るか・fence・準備の停止など)は、どれもこの時刻以後に
+   読んだ時刻で判定する。だから handler は期限をこの時刻を基準に組み立てる(worker/core/worker_due の now に渡す)— この時刻以前の
+   期限はどの判断も見た後なので捨ててよく、この時刻より後の期限は、tick の終わりに既に過ぎていても残す(過ぎた期限で起きる次の tick が
+   判定する)。tick の終わりに読み直した時刻を基準にすると、tick の後半が長い時に、まだどの判断も見ていない期限を捨てる(#4332 —
+   heartbeat を送った tick の後半が送信間隔 2.5 秒を越えると、次の heartbeat の期限を捨てて fence の期限まで眠った)。"
+  (#^ int began))
 
 
 (defclass WorkerUnsettled [Exception]  ; class にする理由: worker の調整ループを止める例外の型(検が pytest.raises で名指す — 欄も状態も足さない)
