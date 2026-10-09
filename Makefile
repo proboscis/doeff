@@ -185,7 +185,11 @@ test-changed:
 # - 1 package の赤で止めず全 package を走らせ、最後に失敗の package を名指して 0 以外で終わる(test-rust と
 #   同じ形)。赤で止めると後ろの package が 1 本も走らないまま日次に見えない(ADR-DOE-ENFORCE-001 R8・
 #   tests/test_daily_test_population.py・card acp:kanban-issue:ki-08ec2d7c901f)。
+# - PACKAGE_PYTEST_DURATIONS: package ごとの session の終わりに、10 秒以上かかった検を長い順に 20 本まで出す(日次の log に
+#   1 本ごとの秒を残す)。2026-10-09 20:00 の日次で doeff-cluster が 814 → 1,740 秒に伸び、処理ステージ packages が時間切れに
+#   なったが、log にも台帳にも 1 本ごとの秒が無く、どの検が伸びたかを割れなかった(card acp:kanban-issue:ki-107a03190129)。
 PACKAGE_UV_RUN ?= uv run
+PACKAGE_PYTEST_DURATIONS ?= --durations=20 --durations-min=10
 # package の tests/ の外に在る検の根(package ごとの tests/ と同じく、根ごとに別の session で走らせる)。
 # - packages/doeff-cluster/src/doeff_cluster/sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
 #   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・fixture は package の根の conftest.py(source は pytest を
@@ -208,14 +212,14 @@ test-packages:
 			fi; \
 			echo ""; \
 			echo "=== Testing $$(basename $$dir) ==="; \
-			$(PACKAGE_UV_RUN) pytest "$${dir}tests" -m "not e2e" || failed="$$failed $$(basename $$dir)"; \
+			$(PACKAGE_UV_RUN) pytest "$${dir}tests" -m "not e2e" $(PACKAGE_PYTEST_DURATIONS) || failed="$$failed $$(basename $$dir)"; \
 		fi; \
 	done; \
 	for root in $(PACKAGE_EXTRA_TEST_ROOTS); do \
 		if [ ! -d "$$root" ]; then echo ""; echo "=== Skipping $$root (no such directory) ==="; continue; fi; \
 		echo ""; \
 		echo "=== Testing $$root ==="; \
-		$(PACKAGE_UV_RUN) pytest "$$root" -m "not e2e" || failed="$$failed $$root"; \
+		$(PACKAGE_UV_RUN) pytest "$$root" -m "not e2e" $(PACKAGE_PYTEST_DURATIONS) || failed="$$failed $$root"; \
 	done; \
 	if [ -n "$$failed" ]; then echo ""; echo "test-packages failed:$$failed"; exit 1; fi
 
