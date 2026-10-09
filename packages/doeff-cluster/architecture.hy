@@ -43,6 +43,9 @@
 ;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の既定の ClusterTiming と定数から内訳を作って判断に渡す — 数を検に
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
+;;;   同じ判断を途絶しても動かし続けてよい印の約束の在る job にも当てる: coordinator が沈黙した担い手への約束を外して他へ移す期限
+;;;   (ClusterTiming.kept-reassign-after-ms)は、長い方の柵(keep-fence-ms)を柵にした止め切りより後。確かめるのは同じ file の
+;;;   test-the-production-kept-reassign-outlasts-the-kept-self-stop・失敗ケースは test-moving-one-constant-past-the-kept-self-stop-is-named。
 ;;;   C4b stopped-job-leaves-no-descendant(doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant — #2940 の 2 段目)— job を
 ;;;   止め切った後(止めの合図から停止の猶予 + KILL の猶予の後・worker が消えてから shim の期限の後・job が自分で終わったのを worker が観測
 ;;;   した時)、job の子孫は 1 つも生きていない — job が別の session・process group で起こした孫も(C4 の止め切りはこの条の上で意味を持つ)。
