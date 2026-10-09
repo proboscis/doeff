@@ -10,6 +10,7 @@ from datetime import datetime as datetime
 from enum import StrEnum as StrEnum
 from doeff import run as run
 from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy.frozen import FrozenJson as FrozenJson
 from doeff_hy.frozen import freeze_json as freeze_json
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
@@ -48,7 +49,7 @@ class Init:
 class ToolCall:
     id: str
     name: str
-    input: FrozenMap = ...
+    input: FrozenMap[FrozenJson] = ...
 
     def __post_init__(self) -> None:
         ...

@@ -12,7 +12,7 @@
 - 使い手が読む名ごとに、生成の .pyi が期待の型を持つ事を .pyi の構文の木で照らす(pyright を要しない)。期待の型は写しの宣言の型。
   写しより実装の方が細かい所は実装の型(答えの型 object → 答えの和など)、写しが実装と食い違う所も実装の型(StopReason に
   LIVE_LIMIT は無い — 生かす本数の上限では降ろさない・#4072 の E1b)。照らすのは期待に書いた欄だけ(実装が欄を足しても赤にしない)。
-- package そのものを import して置き場(__path__)を読む使い手の形に、strict の赤が出ない。
+- package そのものを import して package の dir の一覧(__path__)を読む使い手の形に、strict の赤が出ない。
 宣言と .hy の一致は tests/test_generated_stubs.py の一致の検が見る。
 """
 
@@ -324,7 +324,7 @@ def test_the_generated_stub_declares_the_answer_aliases(module: str, name: str) 
     assert aliases.get(name) == _type(EXPECTED_ALIASES[module][name])
 
 
-# 使い手の形: package そのものを import し、置き場(__path__)から隣の file を引く(替え玉の CLI の script の置き場を引く使い手)。
+# 使い手の形: package そのものを import し、package の dir の一覧(__path__)から隣の file の path を作る(替え玉の CLI の script の path を作る使い手)。
 PACKAGE_ITSELF = """\
 (import doeff_claude_code)
 
