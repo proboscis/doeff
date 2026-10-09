@@ -1,0 +1,7 @@
+# worker の組 — 全部の機体の worker が使う ServiceAccount(worker-account.yaml)と、機体ごとの worker(../nodes/<Node の名>/)。
+# Flux はこの dir を 1 つの Kustomization で当てる。機体を足す時は ../nodes/<Node の名>/ を作り、ここの resources に足す。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - worker-account.yaml
+  - ../nodes/zeus

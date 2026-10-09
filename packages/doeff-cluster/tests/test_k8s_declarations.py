@@ -46,20 +46,25 @@ def _sequence(value: object, where: str) -> list[object]:
     return value
 
 
-@pytest.fixture(scope="module")
-def rendered() -> list[Manifest]:
-    """deploy/k8s を kubectl kustomize で組み立てた物の全部(1 回だけ組む)。"""
+def _build(directory: Path) -> list[Manifest]:
+    """directory を kubectl kustomize で組み立てた物の全部(Flux がその dir を当てる時と同じ物)。"""
     kubectl = shutil.which("kubectl")
     assert kubectl is not None, (
         "kubectl が無い — 宣言を組み立てて確かめられない(このテストは飛ばさない)"
     )
     done = subprocess.run(
-        [kubectl, "kustomize", str(K8S)], capture_output=True, text=True, timeout=25, check=False
+        [kubectl, "kustomize", str(directory)], capture_output=True, text=True, timeout=25, check=False
     )
-    assert done.returncode == 0, f"kubectl kustomize {K8S} が失敗した: {done.stderr.strip()}"
+    assert done.returncode == 0, f"kubectl kustomize {directory} が失敗した: {done.stderr.strip()}"
     return [
         _mapping(doc, "宣言の 1 つ") for doc in yaml.safe_load_all(done.stdout) if doc is not None
     ]
+
+
+@pytest.fixture(scope="module")
+def rendered() -> list[Manifest]:
+    """deploy/k8s を kubectl kustomize で組み立てた物の全部(1 回だけ組む)。"""
+    return _build(K8S)
 
 
 def _pod_spec(deployment: Manifest) -> dict[str, object]:
@@ -234,6 +239,33 @@ def test_coordinator_is_one_deployment_on_atlas(rendered: list[Manifest]) -> Non
     spec = _mapping(coordinators[0]["spec"], "spec")
     assert spec["replicas"] == 1
     assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
+
+
+@dataclass(frozen=True)
+class Part:
+    """上に載る系が別々の時に引き継げるよう、別の dir で組み立てる宣言の組 1 つ(dir の名と、その中の Deployment の役と ServiceAccount)。"""
+
+    directory: str
+    role: str
+    account: str
+
+
+PARTS = (
+    Part(directory="workers", role="worker", account=WORKER_ACCOUNT),
+    Part(directory="coordinator", role="coordinator", account="coordinator"),
+)
+
+
+@pytest.mark.parametrize("part", PARTS, ids=[part.directory for part in PARTS])
+def test_each_part_builds_alone_with_only_its_own_role(part: Part) -> None:
+    """worker の組と coordinator の組は、それぞれの dir だけで組み立てられ、相手の物を含まない — Flux は片方だけを当てられる。"""
+    built = _build(K8S / part.directory)
+    roles = {_role(doc) for doc in built if doc["kind"] == "Deployment"}
+    accounts = {
+        str(_mapping(doc["metadata"], "metadata")["name"]) for doc in built if doc["kind"] == "ServiceAccount"
+    }
+    assert roles == {part.role}
+    assert accounts == {part.account}
 
 
 def test_namespace_stays_with_the_deploying_side(rendered: list[Manifest]) -> None:
