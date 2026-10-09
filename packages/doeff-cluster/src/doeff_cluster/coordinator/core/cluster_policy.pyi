@@ -242,7 +242,7 @@ def released_keep_marks(marks: tuple, worker: str, held: tuple | None) -> _Progr
 def remember_keep_marks(state: ClusterState, worker: str, boot: str | None, held: tuple | None, reply: HeartbeatReply, now: int) -> _Program[ClusterState, object]:
     ...
 
-def sweep_keep_marks(state: ClusterState) -> _Program[ClusterState, object]:
+def sweep_keep_marks(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[ClusterState, object]:
     ...
 
 def place_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> _Program[dict, object]:

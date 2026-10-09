@@ -51,8 +51,8 @@
   ;; 子の環境変数(宣言の :environ・名の順の #(名 値) の tuple — 改訂 1 の G)。比べる欄(変われば入れ替える・spec-hash に入る)。
   (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #())
   ;; 途絶しても動かし続けてよい印(#2804 — heartbeat の返事の job の行の keepWhenCutOff)。coordinator が「他に置ける worker が
-  ;; 無い」と判じた入れ替えでない service の job に付け、印を渡した担い手からは、担い手が印を持たないと知らせるか Worker が消されるまで
-  ;; 他へ移さない(cluster_policy の keep-marks)。worker は印の在る job を coordinator との途絶(fence)でも止めない — 長い方の柵
+  ;; 無い」と判じた入れ替えでない service の job に付け、印を渡した担い手からは、担い手が印を持たないと知らせるか、Worker が消されるか、
+  ;; 担い手の沈黙が約束の期限(ClusterTiming.kept-reassign-after-ms)を越えるまで他へ移さない(cluster_policy の keep-marks)。worker は印の在る job を coordinator との途絶(fence)でも止めない — 長い方の柵
   ;; ClusterTiming.keep-fence-ms(240 秒)を越えるまで(worker_policy.kept-when-cut-off?)。欄の無い返事(古い coordinator)は偽 = 今までどおり fence で止める。比べない欄(印だけが変わっても
   ;; process を起こし直さない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ bool keep-when-cut-off (field :default False :compare False))

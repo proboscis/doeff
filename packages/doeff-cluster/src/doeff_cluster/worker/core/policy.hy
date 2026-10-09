@@ -44,6 +44,8 @@
 ;; 途絶しても動かし続けてよい印(#2804): coordinator が「他に置ける worker が無い」と判じて返事の job に付けた印(JobSpec.keep-when-cut-off)
 ;; の在る job も止めない。coordinator は印を渡した担い手から、担い手が印を持たないと知らせる(heartbeat の keptWhenCutOff — keep-marks-held)
 ;; か Worker が消されるまで job を他へ移さないので、2 か所で走らない保証は時間の競争(fence < 移し替え)ではなく「移さない」で持つ。
+;; ただし担い手の沈黙が約束の期限(ClusterTiming.kept-reassign-after-ms)を越えると coordinator は約束を外して他へ移す — その期限は、下の
+;; 長い方の柵での止め切りの最悪より後(条 C4 と同じ形 — tests/test_cluster_timing.hy)。
 ;; 印の在る job も長い方の柵(ClusterTiming.keep-fence-ms・既定 240 秒)を越えた途絶では止める — 同じ名の worker の新しい世代(k8s が届かない
 ;; node の Pod を追い出して作り直した物・早くても約 350 秒後)と重ならないため(数の前提は ClusterTiming.keep-fence-ms の註)。
 ;; 止めるかどうかの判断はこの述語 1 つ(fence の判断 desired-when-unreachable と、時間で周期ごとに判ずる側が同じ述語を呼ぶ)。

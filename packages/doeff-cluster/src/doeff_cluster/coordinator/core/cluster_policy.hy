@@ -575,9 +575,12 @@
 ;;   - 他に置ける worker が無い job は、担い手が移し替えの期限(reassign-after-ms)を過ぎて沈黙しても置き先を外さない(place-jobs の 1)。
 ;;   - その job には返事で「途絶しても動かし続けてよい」印を付け(keep-marked・heartbeat-reply)、印を渡した事実を約束(ClusterState.keep-marks)
 ;;     として持つ(remember-keep-marks)。worker は印の在る job を fence でも止めない(worker_policy.kept-when-cut-off?)。
-;;   - 約束の在る job は担い手から動かさない(place-jobs の 1・2)— 2 か所で走らない保証を時間の競争(fence < 移し替え)ではなく「移さない」で
-;;     持つ。約束が外れるのは、担い手の今の世代の heartbeat が印を持たないと知らせた時(released-keep-marks — 印の無い返事が届いた後なので、
-;;     その後は fence が効く)か、Worker が消された時(sweep-keep-marks)だけ。返事が届かない担い手からは移さない。
+;;   - 約束の在る job は担い手から動かさない(place-jobs の 1・2)— 約束の在る間は、2 か所で走らない保証を時間の競争(fence < 移し替え)
+;;     ではなく「移さない」で持つ。約束が外れるのは 3 つの時: 担い手の今の世代の heartbeat が印を持たないと知らせた時(released-keep-marks
+;;     — 印の無い返事が届いた後なので、その後は fence が効く)・Worker が消された時・担い手の沈黙が約束の期限(ClusterTiming.kept-reassign-after-ms・
+;;     280 秒)を越えた時(この 2 つは sweep-keep-marks)。3 つ目は担い手の名が替わる切り替え(旧い名の worker は二度と知らせて来ない —
+;;     2026-10-09 22:03 の本番の止まり)のため。期限の後の保証は時間の柵に戻る: 担い手は印の在る job も途絶が長い方の柵(keep-fence-ms)を
+;;     越えると自分で止め、約束の期限はその止め切りの最悪より後(条 C4 と同じ形・shared/core/timing_rules)。
 ;;   - 他に置ける worker が在る job は今までどおり: 印を付けず、担い手が期限を過ぎて沈黙したら外して移す(worker は fence で先に止まる)。
 ;; 同じ名の worker の新しい世代(Pod の作り直し)の知らせ(印を持たない)では約束を外す(同じ名の置き先を新しい世代へ引き継ぐ今までの
 ;; 前提と同じ)。届かない node の上の旧い世代は、印の在る job も長い方の柵(ClusterTiming.keep-fence-ms・240 秒)で止めるので、k8s が
@@ -631,8 +634,9 @@
   {:pre [(: now int) (: state ClusterState) (: timing ClusterTiming)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
   "置き先の判断(place-jobs)の 1 段目 — 続けてよい割り当て(job の名 → Placement)を決めるため: 宣言に在り・replicas 1・担い手が知られて
    いて、次のどれか。
-   - 途絶しても動かし続けてよい印の約束(keep-marks)をこの担い手と持つ(条件・生存・drain を問わない — 担い手が印を持たないと知らせる
-     までは、担い手の上で process が動いているかもしれない)。
+   - 途絶しても動かし続けてよい印の約束(keep-marks)をこの担い手と持つ(条件・生存・drain を問わない — 約束の在る間は、担い手の上で
+     process が動いているかもしれない。約束は、担い手が印を持たないと知らせた時に heartbeat の受け口が外し、Worker が消された時と
+     担い手の沈黙が約束の期限 kept-reassign-after-ms を越えた時に調停の前の sweep-keep-marks が外す)。
    - 担い手が条件を満たし、drain 中の担い手の上の入れ替えでない job で他へ移せる物でなく(移せるなら止めて移す — 置ける先が無ければ
      残して空白を作らない・入れ替えの job は drain_policy が並べてから付け替える)、担い手が移し替えの期限の内か、他へ移せない
      (外しても移らず、止めて起こし直す損だけが残る — #2804)。
@@ -691,13 +695,20 @@
                                                 :key (fn [m] m.job))))))
 
 
-(defk sweep-keep-marks [state]
-  {:pre [(: state ClusterState)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
-  "消された・忘れた Worker への約束を外すため(Worker の削除は「その worker はもう動いていない」という明示の宣言 — 置き先を他へ移せる)。
+(defk sweep-keep-marks [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "外してよい約束を外すため(外した約束の job は、置き先の判断が他へ移せる): 消された・忘れた Worker への約束(Worker の削除は
+   「その worker はもう動いていない」という明示の宣言)と、担い手の沈黙が約束の期限(ClusterTiming.kept-reassign-after-ms)を越えた約束
+   (担い手は印の在る job も途絶が長い方の柵 keep-fence-ms を越えると自分で止め、期限はその止め切りの最悪より後 — 担い手の名が替わる
+   切り替えで、旧い名の worker が二度と知らせて来ない時も外れる)。生死の比べは alive で、期限の刻は liveness-due が同じ値で求める。
    外す物が無ければ同じ状態を返す。"
-  (if (all (gfor mark state.keep-marks (in mark.worker state.workers)))
+  (val held (tuple (gfor mark state.keep-marks
+                         :setv holder (.get state.workers mark.worker)
+                         :if (and (is-not holder None) (alive now holder timing.kept-reassign-after-ms))
+                         mark)))
+  (if (= (len held) (len state.keep-marks))
       state
-      (replace state :keep-marks (tuple (gfor mark state.keep-marks :if (in mark.worker state.workers) mark)))))
+      (replace state :keep-marks held)))
 
 
 (defk place-jobs [now state timing]
@@ -1214,12 +1225,13 @@
 
 (defk liveness-due [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
-  "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定)が、状態がこのままで答えを変え得る最初の刻を知るため。
-   どの判断も、最後の連絡 + 窓(liveness-deadline)を今の刻が越えた時に答えを変える — 窓は lease-ms(note-liveness・place-jobs・drain・
-   見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・worker-forget-ms
-   (forget-silent-workers)。答え = worker ごと・窓ごとの「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば DueNever)。
-   生きていないと数える名(silent)が今の刻の求め直しと違えば、note-liveness が今の刻で答えを変えるので DueNow。"
-  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms timing.worker-forget-ms))
+  "worker の生死の判断(forget-silent-workers・note-liveness・置き先の生死の判定・約束の外し)が、状態がこのままで答えを変え得る最初の刻を
+   知るため。どの判断も、最後の連絡 + 窓(liveness-deadline)を今の刻が越えた時に答えを変える — 窓は lease-ms(note-liveness・place-jobs・
+   drain・見え方)・reassign-after-ms(held-placements・資源の status)・keep-fence-ms(資源の status の印の柵)・kept-reassign-after-ms
+   (sweep-keep-marks — 要求の無い間も、その刻に起きて約束を外す)・worker-forget-ms(forget-silent-workers)。答え = worker ごと・窓ごとの
+   「期限 + 1 ms」のうち now より後の最小(どれも過ぎていれば DueNever)。生きていないと数える名(silent)が今の刻の求め直しと違えば、
+   note-liveness が今の刻で答えを変えるので DueNow。"
+  (val windows #(timing.lease-ms timing.reassign-after-ms timing.keep-fence-ms timing.kept-reassign-after-ms timing.worker-forget-ms))
   (val ats (tuple (gfor w (.values state.workers) window windows
                         :setv due (+ (liveness-deadline w window) 1)
                         :if (> due now)
@@ -1268,8 +1280,9 @@
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "coordinator" :role "judgment"}}
   "掃除の判断(盤の行・drain・温める表・詰めた Program)が、状態がこのままで答えを変え得る最初の刻を知るため(#3063)。値は各判断が
    比べに使う期限と同じ: sweep-board = 行の expires-ms・sweep-drains(と advance-drains の drain 中の判定)= until-ms・sweep-warms = until-ms・
-   program_policy.sweep-programs = 参照の無い Program の put-ms + PROGRAM-GRACE-MS を過ぎた刻。途絶しても動かす印(sweep-keep-marks)は
-   worker の有無だけを見て時刻を見ない・冷えた起動の数は数えるだけなので、刻を持たない。"
+   program_policy.sweep-programs = 参照の無い Program の put-ms + PROGRAM-GRACE-MS を過ぎた刻。途絶しても動かし続けてよい印の約束を
+   外す sweep-keep-marks の刻は担い手の沈黙の期限(kept-reassign-after-ms)なので liveness-due が求める・冷えた起動の数は数えるだけなので、
+   刻を持たない。"
   (val used (if state.programs (program-refs state) (frozenset)))
   (val deadlines (+ (lfor row (.values state.board) :if (is-not row.expires-ms None) row.expires-ms)
                     (lfor d (.values state.drains) d.until-ms)
@@ -1282,11 +1295,14 @@
 
 (defk reconcile [now given timing]
   {:pre [(: now int) (: given ClusterState) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
-  "1 拍の調停: 期限を過ぎた物(盤の行・drain・温める表の行・沈黙した worker・消えた Worker への約束)を掃いてから、job と task の
-   置き先を決め直し、置き先の変化を出来事の列に足した状態を求めるため。何も変わらなければ掃いた後の状態そのものを返す。"
-  ;; 消された・忘れた Worker への途絶しても動かし続けてよい印の約束は、置き先の判断の前に外す(#2804 — その job を他へ置ける)。
+  "1 拍の調停: 期限を過ぎた物(盤の行・drain・温める表の行・沈黙した worker・消えた Worker と沈黙が約束の期限を越えた担い手への約束)を
+   掃いてから、job と task の置き先を決め直し、置き先の変化を出来事の列に足した状態を求めるため。何も変わらなければ掃いた後の状態
+   そのものを返す。"
+  ;; 消された・忘れた Worker と、沈黙が約束の期限(kept-reassign-after-ms)を越えた担い手への途絶しても動かし続けてよい印の約束は、
+  ;; 置き先の判断の前に外す(#2804 — その job を他へ置ける)。
   (<- state ClusterState
-      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains (! (sweep-board given now)) now)) now)) now timing))))
+      (sweep-keep-marks (! (forget-silent-workers (! (sweep-warms (! (sweep-drains (! (sweep-board given now)) now)) now)) now timing))
+                        now timing))
   ;; 変わらない割り当てと task は元の object のまま引き継ぎ、何も変わらなければ状態そのものを返す(2026-09-29・#1356):
   ;; 版を付ける stamp は同じ object なら資源の写し(snapshot)を作らずに返す。以前は毎拍作り直した dict を返したので、変化の無い
   ;; 1 秒ごとの拍でも写しを 2 つ作って比べていた(模擬の仮想 1700 秒で約 2,000 回)。
