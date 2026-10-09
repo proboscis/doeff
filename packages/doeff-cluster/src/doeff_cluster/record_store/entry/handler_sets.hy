@@ -17,6 +17,7 @@
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.file_effects [MemoryFiles])
 (import doeff_time [async-time-handler])
+(import doeff_core_effects.scheduler [ExternalPromise])
 (import doeff_cluster.shared.protocol.inbox [http-requests stop-flag])
 (import doeff_cluster.foundation.coordinator_inbox [StopState])
 (import doeff_cluster.foundation.record_inbox [RecordInbox])
@@ -32,14 +33,19 @@
 ;; --- まねた環境 -------------------------------------------------------------------------------
 
 (defclass ScriptedRecordInbox []
-  "まねた受付の箱(RecordInbox と同じ take の口 — 本番の http-requests がそのまま読む)。pending = 先に並べた生の要求(RawRequest の
-   list — 返事は各要求の ReplySlot に置かれる)。並べた物を渡し終えた後の take で停止の合図 stop を立てる(置き場の Program は次の拍の
-   頭で止まる)。待たない(要求が無ければすぐ空を返す — 時計は組の外側の sim の時計)。"
+  "まねた受付の箱(RecordInbox と同じ arm・taken の口 — 本番の http-requests がそのまま読む)。pending = 先に並べた生の要求(RawRequest の
+   list — 返事は各要求の ReplySlot に置かれる)。並べた物を渡し終えた後の取りで停止の合図 stop を立てる(記録の service の Program は
+   次の周回の頭で止まる)。待たない(arm は常に「並んでいる」と答え、要求が無ければすぐ空を返す — 時計は組の外側の sim の時計)。"
   (defn #^ None __init__ [self #^ list pending #^ StopState stop]
     (setv self.pending pending self.stop stop)
     None)
 
-  (defn #^ list take [self #^ float timeout #^ int limit]
+  (defn #^ bool arm [self #^ (| float None) timeout #^ ExternalPromise bell]
+    "取り手を待たせないため(呼び鈴は鳴らさない — 取り手は待たずに taken へ進む)。"
+    True)
+
+  (defn #^ list taken [self #^ int limit]
+    "先に並べた要求を limit 件まで渡し、渡す物が尽きたら停止の合図を立てるため。"
     (setv batch (cut self.pending 0 limit)
           self.pending (cut self.pending limit None))
     (when (not batch)

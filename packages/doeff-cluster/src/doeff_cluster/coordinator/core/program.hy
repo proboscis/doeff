@@ -272,7 +272,9 @@
 (defk announced-aside [events]
   {:pre [(: events tuple)] :post [(: % None)] :tags {:context "coordinator" :role "program"}}
   "worker の生死の出来事を、調停の歩の外の task で出すため(#3864 — 知らせの broker が答えない間も、coordinator の歩と要求への返事を
-   止めない)。出る順は doeff-events の包みの 1 本の出口が守る(後から出した task は前の task の後に並ぶ)。出来事が無い歩は task を作らない。"
+   止めない)。出る順は doeff-events の包みの 1 本の出口が守る(後から出した task は前の task の後に並ぶ)。出来事が無い歩は task を作らない。
+   task は、調停ループが受付で要求を待つ間(NextRequests の答え手は scheduler の上で待つ — shared/protocol/inbox の raw-requests)に
+   broker の答えを受けて進む(#4270)。"
   (when events
     (<- (Spawn (announce-liveness events))))
   None)
