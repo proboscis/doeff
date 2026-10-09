@@ -38,6 +38,11 @@
 ;;  12 起動の script は wheel の保存先 DOEFF_WHEEL_CACHE を、worker が --state-dir から導く保存先(native_wheel の wheels-root)と同じ
 ;;     path で export し、起こす役の process が継ぐ(worker はそれを job の子へ継ぐ — 子の uv sync が doeff-vm を組み直さない・
 ;;     #3972)。呼び手が別の値を置いても、worker の導く path と食い違わないように上書きする。
+;;  13 root の完成の印 .doeff-boot-ready は bytecode の焼きが通った時だけ置く(#4277): 焼く道具が非 0 で終わるか、報告に
+;;     stored/rebuilt の数の行が無い時は印を置かず、stderr に理由を 1 行出す。役 prepare は非 0 で終わり、root の path を出さない。
+;;     起動を続ける役(records)はそのまま起動し、印の無い root の次の起動は .venv を組み直す。drain は印が無くても venv の hy が在れば
+;;     それを使う(組み直さない)。焼きが通る木と、焼く物が無い木(焼く道具が root に無い)では今までどおり印を置く。前は焼きの失敗でも
+;;     印を置いたので、焼けなかった版の root が準備済みのまま残り、版上げの Program が READY-MARK-INCOMPLETE で断り続けた。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import importlib.util)
@@ -84,6 +89,8 @@
                     "worker/core/unused.hy" "(setv U 2)\n"})
 (val OUTSIDE-CLOSURE "worker/core/unused.hy")
 (val BAKED (tuple (gfor rel ENTRY-MODULES :if (!= rel OUTSIDE-CLOSURE) rel)))
+;; root の完成の印(boot.sh が準備の済んだ root に置く file)。
+(val READY ".doeff-boot-ready")
 ;; PEP 552 の hash 方式の .pyc の頭の flags(bit 0 = hash 方式・bit 1 = import の時に source の hash を検める)。
 (val CHECKED-HASH 0b11)
 (val PYTHON "3.14.3t")
@@ -133,17 +140,18 @@
   (.strip done.stdout))
 
 
-(defk doeff-source [tmp [root-script None] * [bake False]]
-  {:pre [(: tmp Path) (: root-script (| str None)) (: bake bool)] :post [(: % tuple)]}
+(defk doeff-source [tmp [root-script None] * [bake False] [tool None]]
+  {:pre [(: tmp Path) (: root-script (| str None)) (: bake bool) (: tool (| str None))] :post [(: % tuple)]}
   "doeff の形の repo(.python-version・doeff-vm の 2 つの dir・起動の script)を commit し、bare の mirror を作る。起動の script は
    root-script(None = この検の木の deploy/boot.sh そのもの — image の script と同じ中身)。bake = 焼く道具の本物の file と起動の入口と
    同じ名の小さな module も commit する(偽なら root の準備は焼く道具が無いので焼かずに注記だけ — 焼きの検の外の検の秒を
-   増やさない)。答え = #(repo mirror sha)。"
+   増やさない)。tool = 焼く道具の場所(worker/entry/code_prepare.hy)に置く代役の Hy の source(None = 置かない — 13 の検が焼きの
+   成否だけを変えるため)。答え = #(repo mirror sha)。"
   (val src (/ tmp "doeff"))
   (val tools (if bake
                  (| (dfor rel TOOL-FILES (.format "{}/{}" ROOT-CLUSTER rel) (.read-text (/ CLUSTER-SRC rel) :encoding "utf-8"))
                     {STORE-FILE (.read-text (/ (. PACKAGES parent) STORE-FILE) :encoding "utf-8")})
-                 {}))
+                 (if (is tool None) {} {(.format "{}/worker/entry/code_prepare.hy" ROOT-CLUSTER) tool})))
   (val modules (if bake (dfor #(rel text) (.items ENTRY-MODULES) (.format "{}/{}" ROOT-CLUSTER rel) text) {}))
   (for [#(rel text) (.items (| {".python-version" (+ PYTHON "\n")
                                 "packages/doeff-vm/Cargo.toml" "[package]\nname = \"doeff-vm\"\n"
@@ -467,6 +475,7 @@
   (<- outside Path (pyc-of root OUTSIDE-CLOSURE))
   (assert (not (.exists outside)) "閉包の外の module まで焼いた")
   (assert (.is-file (/ root MARKER)) #("焼く道具の完成の印が無い" done.stderr))
+  (assert (.is-file (/ root READY)) #("焼きが通った root に完成の印が無い" done.stderr))
   (<- line str (prepared-line done.stderr))
   (assert (in "rebuilt=" line) #("準備の行に焼いた数が無い" done.stderr))
   ;; 焼く道具は 1 回だけ起こし、根は venv の .pth が書く root の中の dir だけ(root そのものは `.`)— import の行と root の外の dir を
@@ -553,3 +562,81 @@
   (val state-dir (str (/ tmp-path "work" "state")))
   (assert (in (.format " wheels={} " (native-wheel.wheels-root state-dir)) (get starts 0)) starts)
   (assert (in (.format " code={}/doeff-hy-code-store" state-dir) (get starts 0)) starts))
+
+
+;; --- 13 完成の印は焼きが通った時だけ --------------------------------------------------------------------
+
+;; 焼く道具の代役(root の venv の偽の hy が検の python の hy で走らせる): 非 0 で終わる物・0 で終わるが数の行を書かない物・本物の道具の
+;; 全体の行と同じ形の数の行を書いて 0 で終わる物。
+(val TOOL-EXITS "(import sys)\n(print \"焼きの代役: 終わり 3\" :file sys.stderr)\n(sys.exit 3)\n")
+(val TOOL-SILENT "(import sys)\n(print \"焼きの代役: 数の行を書かない\" :file sys.stderr)\n")
+(val TOOL-PASSES "(import sys)\n(print \"stored=0 rebuilt=1 reused=0 failed=0 compile_s=0.1 closure_s=0.1 scan_s=0.1\" :file sys.stderr)\n")
+(val NOT-MARKED "完成の印 .doeff-boot-ready を置かない")
+
+
+(defk not-marked-lines [stderr]
+  {:pre [(: stderr str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "boot.sh の stderr から「完成の印を置かない」の行を拾うため。"
+  (tuple (gfor line (.splitlines stderr) :if (in NOT-MARKED line) line)))
+
+
+(deftest test-a-failed-bake-leaves-no-ready-mark-and-fails-the-prepare-role [tmp-path]
+  ;; 失敗ケース: 焼く道具が非 0 で終わる木と、0 で終わるが数の行を書かない木。前の boot.sh は焼けなくても印を置き、役 prepare は 0 で
+  ;; root の path を出した(版上げの Program が READY-MARK-INCOMPLETE で断り続ける root が残った)。
+  (for [#(name tool) #(#("exits" TOOL-EXITS) #("silent" TOOL-SILENT))]
+    (val tmp (/ tmp-path name))
+    (.mkdir tmp)
+    (<- made tuple (doeff-source tmp :tool tool))
+    (val sha (get made 2))
+    (<- (fake-uv tmp))
+    (<- done subprocess.CompletedProcess (boot-once tmp sha "prepare"))
+    (assert (not (.exists (/ tmp "work" "boot" "roots" sha READY))) #(name "焼けなかった root に完成の印を置いた" done.stderr))
+    (<- lines tuple (not-marked-lines done.stderr))
+    (assert (= (len lines) 1) #(name "印を置かない理由の 1 行が無い" done.stderr))
+    (assert (in "焼きの代役" (get lines 0)) #(name "理由の行に道具の報告の末尾が無い" lines))
+    (assert (!= done.returncode 0) #(name "役 prepare が焼けなかった準備を 0 で終えた" done.stderr))
+    (assert (= (.strip done.stdout) "") #(name "準備の済まない root の path を出した" done.stdout))))
+
+
+(deftest test-a-passing-bake-or-nothing-to-bake-leaves-the-ready-mark [tmp-path]
+  ;; 焼きが通る木(数の行を書いて 0)と、焼く物が無い木(焼く道具が root に無い — 失敗ではない)は今までどおり印を置き、役 prepare は
+  ;; 0 で root の path を出す。
+  (for [#(name tool) #(#("passes" TOOL-PASSES) #("nothing" None))]
+    (val tmp (/ tmp-path name))
+    (.mkdir tmp)
+    (<- made tuple (doeff-source tmp :tool tool))
+    (val sha (get made 2))
+    (<- (fake-uv tmp))
+    (<- done subprocess.CompletedProcess (boot-once tmp sha "prepare"))
+    (val root (/ tmp "work" "boot" "roots" sha))
+    (assert (= done.returncode 0) #(name done.stderr))
+    (assert (.is-file (/ root READY)) #(name "焼きが通った root に完成の印が無い" done.stderr))
+    (assert (= (.strip done.stdout) (str root)) #(name done.stdout))
+    (<- lines tuple (not-marked-lines done.stderr))
+    (assert (= lines #()) #(name lines))
+    (assert (in "root を準備した" done.stderr) #(name done.stderr))))
+
+
+(deftest test-a-role-that-keeps-starting-starts-on-an-unmarked-root-and-the-next-boot-rebuilds-its-venv [tmp-path]
+  ;; 起動を続ける役(records)は焼けなかった root のまま起動する(偽の hy の -m の行)。drain は印の無い root でも venv の hy を使い、
+  ;; 組み直さない。印の無い root の次の起動は .venv を組み直す(前の venv に置いた file が消え、uv sync がもう 1 回)。
+  (<- made tuple (doeff-source tmp-path :tool TOOL-EXITS))
+  (val sha (get made 2))
+  (<- (fake-uv tmp-path))
+  (val root (/ tmp-path "work" "boot" "roots" sha))
+  (<- first subprocess.CompletedProcess (boot-once tmp-path sha))
+  (assert (not (.exists (/ root READY))) #("焼けなかった root に完成の印を置いた" first.stderr))
+  (<- lines tuple (not-marked-lines first.stderr))
+  (assert (= (len lines) 1) first.stderr)
+  (<- calls tuple (hy-log tmp-path))
+  (assert (= (len (lfor c calls :if (.startswith c "start ") c)) 1) #("起動を続ける役が起動していない" calls first.stderr))
+  (val left (/ root ".venv" "left-by-the-first-boot"))
+  (.touch left)
+  (<- drained subprocess.CompletedProcess (boot-once tmp-path sha "drain"))
+  (assert (in "venv の hy をそのまま使う" drained.stderr) #("drain が印の無い root の venv を使わない" drained.stderr))
+  (assert (.exists left) "drain が venv を組み直した")
+  (<- second subprocess.CompletedProcess (boot-once tmp-path sha))
+  (assert (not (.exists left)) #("印の無い root の次の起動が .venv を組み直していない" second.stderr))
+  (assert (not-in "準備済み" second.stderr) second.stderr)
+  (<- log tuple (uv-log tmp-path))
+  (assert (= (len (lfor line log :if (.startswith line "sync") line)) 2) log))
