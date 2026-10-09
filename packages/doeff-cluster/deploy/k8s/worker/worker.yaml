@@ -16,7 +16,6 @@
 #   ConfigMap worker-shell    job の子が使う shell の script(/opt/worker-shell に置く)。無くても起動する。
 #   Secret worker-repos       WORKER_REPOS の deploy key と known_hosts(boot.sh が /etc/worker-repos から読む)。無くても起動する
 #                             (WORKER_REPOS が要る key を欠けば boot.sh が理由を出して止まる)。
-#   ServiceAccount doeff-worker(../workers/worker-account.yaml)の権限(Role・RoleBinding)— ここには書かない。
 #   Namespace agent-worker    ここでは宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため)。
 #
 # 機体の事実: worker の名と NODE_NAME は Node の名(fieldRef spec.nodeName)。機体の /etc/systemd/system を読み取り専用で

@@ -1,0 +1,16 @@
+# worker の ServiceAccount doeff-worker を ClusterRole cluster-admin に結ぶ — job の子(worker の env の WORKER_PASS_ENV で API server の
+# 場所を受け、標準の path の token を読む)が kubectl で cluster を扱える。利用者 1 人の cluster なので権限を絞らない(利用者の頼み・
+# 2026-10-09)。ClusterRoleBinding は Pod を作り直さない(token の権限は API server が要求ごとに引く)。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: doeff-worker-cluster-admin
+  labels: { app: doeff-worker }
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: doeff-worker
+    namespace: agent-worker

@@ -466,8 +466,10 @@ Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doe
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
 | ConfigMap `coord-wal-backup` | coordinator の init container | 記録(WAL)の控えを取る script(キー `backup.sh`) | 控えを飛ばして起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
-| Role・RoleBinding | — | job が要る権限(subject = ServiceAccount `doeff-worker`) | job の API の呼び出しが断られる |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
+
+worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`deploy/k8s/workers/worker-cluster-admin.yaml`・
+利用者 1 人の cluster なので絞らない)— job の子は kubectl で cluster を扱え、上に載る系は job のための権限を与えなくてよい。
 
 env の値は宣言の `env` が `envFrom` より優先されるので、宣言に在る名を ConfigMap に置いても効きません。coordinator の ServiceAccount
 には能力を導くための nodes の list・watch を与えます(`deploy/k8s/coordinator/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その

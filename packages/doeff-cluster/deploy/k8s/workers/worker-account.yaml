@@ -1,5 +1,5 @@
 # 機体ごとの worker が共に使う ServiceAccount(名は固定)。token は worker の雛形が投影の volume で標準の path に置く。
-# 権限(Role・RoleBinding)はここに書かない — job が要る権限は、上に載る系の repo がこの ServiceAccount を subject にして与える。
+# 権限は worker-cluster-admin.yaml(ClusterRole cluster-admin に結ぶ — 利用者 1 人の cluster なので絞らない)。
 apiVersion: v1
 kind: ServiceAccount
 metadata:
