@@ -8,6 +8,9 @@ PROVIDER_AUTH_ENV_KEYS: set[str]
 PROVIDER_ROUTING_ENV_KEYS: set[str]
 TURN_AUTH_ENV_KEYS: set[str]
 CLAUDE_TURN_CREDENTIAL_ENV: str
+#: ターンの資格に付いた契約の種類と階級を置く子の env の名(card acp:kanban-issue:ki-d81bb8c7eaaa・TURN_AUTH_ENV_KEYS の要素)。
+CLAUDE_SUBSCRIPTION_TYPE_ENV: str
+CLAUDE_RATE_LIMIT_TIER_ENV: str
 #: ターンの資格の答えの GitHub の token を置く子の env の名(agora-redesign #3753・禁じる集合には入らない)。
 GITHUB_TOKEN_ENV: str
 BINDING_OWNED_ENV_KEYS: set[str]

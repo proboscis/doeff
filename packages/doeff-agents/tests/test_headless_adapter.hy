@@ -1342,7 +1342,7 @@
   (.mkdir work :parents True :exist-ok True)
   (assert (in TURN-CREDENTIAL-ENV TURN-AUTH-ENV-KEYS))
   (setv world (FakeClaudeWorld fake-responder) asked [])
-  (setv answers {"lease-borrowed" (TurnCredential token None) "lease-home" (HomeTurnCredential)})
+  (setv answers {"lease-borrowed" (TurnCredential token None :subscription-type None :rate-limit-tier None) "lease-home" (HomeTurnCredential)})
   (for [#(name ref) [#("borrowed" "lease-borrowed") #("home" "lease-home") #("plain" None)]]
     (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
   ;; 引き換えは参照のある起動だけ・1 回ずつ。
@@ -1353,13 +1353,13 @@
   ;; 資格の入口は引き換えの答え 1 つ: session_env から資格を入れる路は断られ、宣言の repr に token は写らない。
   (setv config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"}))
         launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-borrowed")
-        spec (spec-of config launch (TurnCredential token 1234.5)))
+        spec (spec-of config launch (TurnCredential token 1234.5 :subscription-type None :rate-limit-tier None)))
   (assert (= (get spec.home.env TURN-CREDENTIAL-ENV) token))
   (assert (= (get spec.home.env "PATH") "/usr/bin"))
   ;; 借りた資格の期限は層 2 の宣言へ写る(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
   (assert (= spec.credential-expires-at 1234.5) spec.credential-expires-at)
   (assert (is (. (spec-of config launch) credential-expires-at) None))
-  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr (TurnCredential token None))
+  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr (TurnCredential token None :subscription-type None :rate-limit-tier None))
                (repr (RedeemTurnCredentialEffect :credential-ref "lease-borrowed"))]]
     (assert (not-in token shown)))
   (with [(pytest.raises ValueError)]
@@ -1367,10 +1367,10 @@
                                   :session-env {TURN-CREDENTIAL-ENV token})))
   (for [bad ["" "a\nb"]]
     (with [(pytest.raises ValueError)]
-      (TurnCredential bad None)))
+      (TurnCredential bad None :subscription-type None :rate-limit-tier None)))
   (for [bad-expiry [True "1234"]]
     (with [(pytest.raises TypeError)]
-      (TurnCredential token bad-expiry)))
+      (TurnCredential token bad-expiry :subscription-type None :rate-limit-tier None)))
   (with [(pytest.raises ValueError)]
     (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "")))
 
@@ -1390,8 +1390,8 @@
   (assert (= GITHUB-TOKEN-ENV "GH_TOKEN"))
   (val world (FakeClaudeWorld fake-responder))
   (val asked [])
-  (val credential (TurnCredential oauth None :github-token github))
-  (val answers {"lease-gh" credential "lease-plain" (TurnCredential oauth None) "lease-home" (HomeTurnCredential)})
+  (val credential (TurnCredential oauth None :github-token github :subscription-type None :rate-limit-tier None))
+  (val answers {"lease-gh" credential "lease-plain" (TurnCredential oauth None :subscription-type None :rate-limit-tier None) "lease-home" (HomeTurnCredential)})
   (for [#(name ref) [#("gh" "lease-gh") #("plain" "lease-plain") #("home" "lease-home")]]
     (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
   (val envs (lfor session (.values world.sessions) (dict session.home.env)))
@@ -1404,7 +1404,64 @@
     (assert (not-in github shown) "github_token の値が repr に写った"))
   (for [bad ["" "a\nb" "a\rb" "a\x00b" 7]]
     (with [(pytest.raises ValueError)]
-      (TurnCredential oauth None :github-token bad))))
+      (TurnCredential oauth None :github-token bad :subscription-type None :rate-limit-tier None))))
+
+(deftest test-the-credential-facts-ride-on-the-child-env-only-when-the-lender-knows-them [tmp-path]
+  ;; card acp:kanban-issue:ki-d81bb8c7eaaa: claude の CLI は env の CLAUDE_CODE_OAUTH_TOKEN で資格を受けると、契約の種類と階級を env の
+  ;; CLAUDE_CODE_SUBSCRIPTION_TYPE・CLAUDE_CODE_RATE_LIMIT_TIER から読み、種類が無ければ team / enterprise かもしれないとして起動のたびに方針を
+  ;; 確かめに行く(本番で 1 回 319〜801 ms)。貸し手が資格から読んだ種類と階級を TurnCredential で運び、adapter は値の在る時だけ子の env に置く。
+  ;; 貸し手が知らない(None)時は置かない。2 つの名の入口は引き換えの答え 1 つ — 設定 dir の env と session_env からは入れられない
+  ;; (ターンの資格の名 TURN-AUTH-ENV-KEYS の仲間)。2 つは秘密ではないので repr に出てよいが、token は出ない。貸し手は知る事を必ず名乗る
+  ;; (欄に既定値は無い)。
+  (import doeff_agents.agent_env [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV TURN-AUTH-ENV-KEYS])
+  (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential])
+  (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code.values [ClaudeHome])
+  (val oauth "sk-ant-oat01-never-printed-policy")
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (assert (= #(CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV) #("CLAUDE_CODE_SUBSCRIPTION_TYPE" "CLAUDE_CODE_RATE_LIMIT_TIER")))
+  (val world (FakeClaudeWorld fake-responder))
+  (val asked [])
+  (val known (TurnCredential oauth None :subscription-type "max" :rate-limit-tier "default_claude_max_20x"))
+  (val answers {"lease-max" known
+                "lease-unknown" (TurnCredential oauth None :subscription-type None :rate-limit-tier None)
+                "lease-home" (HomeTurnCredential)})
+  (for [#(name ref) [#("max" "lease-max") #("unknown" "lease-unknown") #("home" "lease-home")]]
+    (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
+  (val envs (lfor session (.values world.sessions) (dict session.home.env)))
+  (assert (= (len envs) 3) (len envs))
+  (assert (= (lfor env envs #((.get env CLAUDE-SUBSCRIPTION-TYPE-ENV) (.get env CLAUDE-RATE-LIMIT-TIER-ENV)))
+             [#("max" "default_claude_max_20x") #(None None) #(None None)])
+          "種類と階級を置くのは、貸し手が知る資格の起動だけ")
+  (assert (not-in CLAUDE-SUBSCRIPTION-TYPE-ENV (get envs 1)) "知らない(None)時に欄を空で置いた")
+  ;; 片方だけ知る資格は、知る方だけを置く。
+  (val config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
+  (val launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-max"))
+  (val half (. (spec-of config launch (TurnCredential oauth None :subscription-type "pro" :rate-limit-tier None)) home env))
+  (assert (= (get half CLAUDE-SUBSCRIPTION-TYPE-ENV) "pro"))
+  (assert (not-in CLAUDE-RATE-LIMIT-TIER-ENV half))
+  ;; 入口は引き換えの答え 1 つ: 設定 dir の env・session_env が 2 つの名を持てば断る(別の口座の事実が混ざらない)。
+  (for [name [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV]]
+    (assert (in name TURN-AUTH-ENV-KEYS) name)
+    (with [(pytest.raises ValueError)]
+      (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :session-env {name "max"}) known))
+    (with [(pytest.raises ValueError)]
+      (spec-of (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {name "max"})) launch known)))
+  ;; 種類と階級は repr に出てよい(秘密でない)・token は出ない。
+  (val shown (repr known))
+  (assert (in "default_claude_max_20x" shown) shown)
+  (assert (not-in oauth shown))
+  ;; 値の確かめは github_token と同じ(空でない 1 行の文字列か None)。欄を渡さない貸し手は None(観測していない)— 2 欄を読む前の
+  ;; 貸し手もそのまま動く。
+  (for [bad ["" "a\nb" "a\rb" "a\x00b" 7]]
+    (with [(pytest.raises ValueError)]
+      (TurnCredential oauth None :subscription-type bad :rate-limit-tier None))
+    (with [(pytest.raises ValueError)]
+      (TurnCredential oauth None :subscription-type None :rate-limit-tier bad)))
+  (val unread (TurnCredential oauth None))
+  (assert (= #(unread.subscription-type unread.rate-limit-tier) #(None None)) unread))
 
 (deftest test-an-unredeemable-credential-ref-does-not-start-the-session [tmp-path]
   ;; #979 の反例: 引き換えられない参照(知らない・もう返した lease)の起動は TurnCredentialUnavailableError(AgentLaunchError の 1 つ)で
@@ -1439,7 +1496,7 @@
   (import doeff_agents.effects [TurnCredential])
   (setv token "sk-ant-oat01-must-not-leak-665" work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
-  (setv handlers (+ [(sync-time-handler) (redeem-answers {"lease-1" (TurnCredential token None)} [])]
+  (setv handlers (+ [(sync-time-handler) (redeem-answers {"lease-1" (TurnCredential token None :subscription-type None :rate-limit-tier None)} [])]
                     (headless-claude-handlers (str (/ tmp-path "home")) (child-env) :live-limit 8 :credential-floor-seconds 7200.0
                                               :command #((str (/ tmp-path "no-such-claude"))))))
   (with [info (pytest.raises Exception)]

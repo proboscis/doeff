@@ -19,6 +19,8 @@
 ;;;   spawn PROVIDER-AUTH
 ;;;   shell PROVIDER-AUTH ∪ PROVIDER-ROUTING ∪ TURN-AUTH
 
+(require doeff-hy.macros [val])
+
 ;; 関数は素の defn(ADR-DOE-HY-004 R1 の「Python との境界の素の defn は対象外」)— shell.py(Python)が
 ;; 同期で呼ぶ判定で、sessionhost の deff の呼び手からも直に呼ばれる。deff は台帳の外の file に移せない(R2)。
 
@@ -30,7 +32,14 @@
 ;; 誕生の札で再開した手番が 401 を食った)。預かり所の貸与の札はこの名で運ぶ。判定点はここ 1 つ。
 ;; claude の手番の資格の env の名(headless の adapter が借りた access token を置く・agentd の貸与の札も同じ名)。
 (setv CLAUDE-TURN-CREDENTIAL-ENV "CLAUDE_CODE_OAUTH_TOKEN")
-(setv TURN-AUTH-ENV-KEYS #{CLAUDE-TURN-CREDENTIAL-ENV})
+;; ターンの資格に付いた事実の env の名(card acp:kanban-issue:ki-d81bb8c7eaaa)— claude の CLI は資格を env の CLAUDE_CODE_OAUTH_TOKEN で
+;; 受けると、契約の種類と階級をこの 2 つから読む(無ければ null — 種類の無い資格を team / enterprise かもしれないとして、起動のたびに
+;; 組織の方針を確かめに行く)。headless の adapter は引き換えの答え(TurnCredential.subscription_type・rate_limit_tier)が値を持つ時だけ置く。
+;; 2 つは token と組でしか意味を持たず、別の口座の事実が混ざらないよう入口を token と同じ 1 つにする — だからターンの資格の名の集合に入れる
+;; (shell の層は禁じ、受理と spawn は token と一緒に運び、session host の行には残さない)。秘密ではない。
+(val CLAUDE-SUBSCRIPTION-TYPE-ENV "CLAUDE_CODE_SUBSCRIPTION_TYPE")
+(val CLAUDE-RATE-LIMIT-TIER-ENV "CLAUDE_CODE_RATE_LIMIT_TIER")
+(val TURN-AUTH-ENV-KEYS #{CLAUDE-TURN-CREDENTIAL-ENV CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV})
 
 ;; ターンの資格の答え(TurnCredential.github_token)が GitHub の token を持つ時に、headless の adapter がその値を置く子の env の名
 ;; (agora-redesign #3753 — 子の CLI の gh・git が GitHub へ書くため)。設定 dir の env・session_env の受理と禁止の集合には入れない(どの集合を
