@@ -76,7 +76,9 @@ spec:
             - { name: ROLE, value: worker }
             - { name: WORK_DIR, value: /work }
             # worker 自身の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。
-            - { name: WORKER_DOEFF_COMMIT, value: 418d4eab681c045608445a9ff5319d8649790f97 }
+            # d84d1e893 = heartbeat を 1 周の処理から切り離す a13e16ca1 を含む版(1 周が coordinator の遅れで延びても heartbeat の間が lease を
+            # 越えない)。coordinator 7f7eab4a8 へ送る要求の形は 418d4eab6 と同じ。
+            - { name: WORKER_DOEFF_COMMIT, value: d84d1e8936b056a408f2c66e27996d0a3e335542 }
             - { name: COORDINATOR_URL, value: "http://coordinator.agent-worker.svc.cluster.local:8080" }
             # 置かれた Node の名(coordinator が Node の label から能力を導く)。下の $(NODE_NAME) より前に置く — k8s は前の行で
             # 定義した env だけを展開する。
