@@ -5,7 +5,8 @@
 ;;;       本体の切り離した task の effect(SubmitDetached・AwaitDetached・CancelDetached・ReleaseDetached・ReadRunners・ReadServices・
 ;;;       AwaitRunnersChange・AwaitProcessEnded)に、本番と同じ detached-cluster で答える。宛先 = coordinator(URL — `,` で並べれば
 ;;;       前ほど優先)・名乗り = revision(受け側はこの版のコードを準備してから task を復元する)と runtime-env(実行環境の宣言 — 在れば
-;;;       worker は env の root の中の子 process で走らせる・None なら revision の木)。版の識別はこの process の版(process-versions)。
+;;;       worker は env の root の中の子 process で走らせる・None なら revision の木)。版の識別はこの process の入っている版
+;;;       (process-versions)— env の鍵 envKey は名乗らない(受け側の env は名乗りの runtime-env が決める)。
 ;;;       送り方(返事の上限・送り直しの期限・書きの送り手の名)は cluster の job と同じ coordinator-route-options。
 ;;;
 ;;; cluster の job は宿の run-context から送り手を作る(cluster_foundation.hy の cluster-handlers)。手元の道具は宿を持たないので、呼び手が
@@ -14,7 +15,7 @@
 (require doeff-hy.macros [defk <- val])
 (import doeff [Program EffectBase with-handlers])
 (import doeff_cluster.shared.entry.cluster_foundation [coordinator-route-options])
-(import doeff_cluster.foundation.process_versions [this-process-versions])
+(import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -30,9 +31,11 @@
   (<- options RouteOptions (coordinator-route-options))
   (<- now int (now-epoch-ms))
   (<- route CoordinatorRoute (route-of coordinator now))
-  ;; 版の識別: 宿の契約の versions-key を読む cluster の job と違い、手元の道具は宿を持たないので、この process の環境から作る
-  ;; (この process の環境変数の読みは foundation の this-process-versions — #3014)。
-  (<- versions (get dict #(str str)) (this-process-versions))
+  ;; 版の識別: 宿の契約の versions-key を読む cluster の job と違い、手元の道具は宿を持たないので、この process の入っている版から作る。
+  ;; 手元の道具は env の root の外の呼び手として名乗る(空の environ — process-versions の註)。送り手が env の root の中に居ても
+  ;; (環境変数 DOEFF_RUNTIME_ENV_KEY を持つ)その鍵を名乗ると、受け側は名乗りの runtime-env の鍵と比べて「版が違うので Program を
+  ;; 解かない」で断る(2026-10-10 — 使い手の宣言の道具が別の commit の runtime-env を名乗って送った task が断られた)。
+  (<- versions (get dict #(str str)) (process-versions {}))
   (val sender (DetachedSender :revision revision :versions versions :runtime-env runtime-env
                               :deadline-seconds IDEMPOTENT-DEADLINE-SECONDS))
   (<- answer (with-handlers [(detached-cluster (RouteCell route) options sender)] body))
