@@ -173,11 +173,11 @@
                                                              body-of :as service-body-of])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
-                   warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-view services-unreachable])
+                   warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
-                         AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServicesUnreachable])
+                         AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
@@ -1372,13 +1372,15 @@
 
 
 (defk read-services [link]
-  {:pre [(: link SimLink)] :post [(: % (| tuple ServicesUnreachable))] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadServices を本番の detached.services-read と同じく GET /resources/Service の items から読むため(届かなければ ServicesUnreachable・
-   #3479)。"
+  {:pre [(: link SimLink)] :post [(: % (| (get tuple #(ServiceFact ...)) ServicesUnreachable))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadServices に本番の detached.services-read と同じく答えるため: GET /resources/Service の本文を同じ関数(detached.service-facts-of-json)で
+   ServiceFact の tuple にする(届かなければ ServicesUnreachable・#3479)。"
   (<- read tuple (send-resent link "GET" "/resources/Service" {} None))
   (if (is (get read 0) None)
       (services-unreachable (unreached-reason read))
-      (service-facts-of-view (get (answered-object read "Service の一覧を読めない") "items"))))
+      (do (<- facts (get tuple #(ServiceFact ...)) (service-facts-of-json (answered-object read "Service の一覧を読めない")))
+          facts)))
 
 
 (defk await-runners-change [link after timeout-seconds]

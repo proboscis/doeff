@@ -114,7 +114,7 @@ from doeff_cluster.shared.protocol.detached import warm_server_failure as warm_s
 from doeff_cluster.shared.protocol.detached import runners_change_of as runners_change_of
 from doeff_cluster.shared.protocol.detached import watch_query as watch_query
 from doeff_cluster.shared.protocol.detached import service_ready_of as service_ready_of
-from doeff_cluster.shared.protocol.detached import service_facts_of_view as service_facts_of_view
+from doeff_cluster.shared.protocol.detached import service_facts_of_json as service_facts_of_json
 from doeff_cluster.shared.protocol.detached import services_unreachable as services_unreachable
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
@@ -134,6 +134,7 @@ from doeff_cluster.shared.intent.detached_model import ServiceReady as ServiceRe
 from doeff_cluster.shared.intent.detached_model import RunnersChange as RunnersChange
 from doeff_cluster.shared.intent.detached_model import RunnersWatchMissing as RunnersWatchMissing
 from doeff_cluster.shared.intent.detached_model import ReadServices as ReadServices
+from doeff_cluster.shared.intent.detached_model import ServiceFact as ServiceFact
 from doeff_cluster.shared.intent.detached_model import ServicesUnreachable as ServicesUnreachable
 from doeff_cluster.worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
 from doeff_cluster.worker.core.drain_client import DRAIN_TTL_MARGIN_SECONDS as DRAIN_TTL_MARGIN_SECONDS
@@ -947,7 +948,7 @@ def ring_ended_tasks(queue: RequestQueue, writes: tuple) -> _Program[int, object
 def read_runners(link: SimLink) -> _Program[tuple | RunnersUnreachable, object]:
     ...
 
-def read_services(link: SimLink) -> _Program[tuple | ServicesUnreachable, object]:
+def read_services(link: SimLink) -> _Program[tuple[ServiceFact, ...] | ServicesUnreachable, object]:
     ...
 
 def await_runners_change(link: SimLink, after: int, timeout_seconds: float) -> _Program[RunnersChangeAnswer, object]:
