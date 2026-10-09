@@ -11,6 +11,8 @@
 ;;;   * 届かなければ desired-when-unreachable(途絶が fence を越えたら lease を持たない job と task を止める)。
 ;;;   * 周期の頭で、最後の成功から fence を越えていれば heartbeat を待たずに止める(desired-after-silence — 処理が止まって戻った最初の周期・#2806)。
 ;;;   * 名指しの待ち(#1933)は背景の task(Spawn の daemon)で送り続け、「変わった」と答えたら次の拍で heartbeat を送らせる。
+;;;   * 拍の外の送り(card ki-e38dbfca7671)も背景の task(Spawn の daemon)で、前の送りから送信間隔が過ぎたら拍を待たずに送る — 拍が
+;;;     lease より長くかかっても、送りの間が拍の長さに依らない。拍の送りと背景の送りは 1 つの送り口(sent-beat)を通り、1 本ずつ送る。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
@@ -21,7 +23,7 @@
 (import doeff_core_effects.file_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
-(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise])
+(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
@@ -59,19 +61,30 @@
           self.closing False self.failure "" self.told None self.bell None)))
 
 
+(defclass BeatCell []
+  "heartbeat の送り口(sent-beat)と拍の外の背景の task が分ける値(card ki-e38dbfca7671)。in-flight = 今 答えを待っている送りの終わりの
+   約束(None = 送っていない — 送りは 1 本ずつ。送っている間に来た求めは、この約束が満ちるのを待つ)・started-at = 最後に送りを始めた刻
+   (epoch ms・None = まだ送っていない — 背景の task はここから送信間隔を数える)・unread = 拍の宣言の読みがまだ受け取っていない送りの
+   事実(HeartbeatSent の列 — 送った順)・running = 背景の task が走っている・closing = 止めの合図・failure = 背景の task が止まった理由。
+   scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+  (defn #^ None __init__ [self]
+    (setv self.in-flight None self.started-at None self.unread #() self.running False self.closing False self.failure "")))
+
+
 (defclass LinkState []
   "coordinator への口が拍から拍へ持ち越す値の入れ物(頭の註)。組み立て(main・検)が作り、handler coordinator-link と背景の待ちが書き換える。
    name = worker の名・provides / exclusive = 提供する能力・専用の能力の名・capacity = 同時の job の上限・task-reserve = capacity のうち
    task のために空けておく数(heartbeat で必ず名乗る — 常駐の job はこの分に置かれない)・fence-ms = 途絶で止める長さ
    (返事の timing が上書きする)・task-dir = task の印と結果の file の置き場・versions = 名乗る版・tools = 名乗る道具(名 → 版)・
    handles-envs = 実行環境の job を扱うか(真なら root の名乗りを heartbeat に載せ、温める表を受ける)・node = k8s の node の名・
-   watch = 名指しの待ちを使うか(本番の入口が真にする)・boot = この process の世代・boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡と
-   みなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に
-   1 行で出す — None = 出さない・#3676)。"
+   watch = 名指しの待ちを使うか(本番の入口が真にする)・beat-beside = 拍の外の背景の task でも heartbeat を送るか(既定 真 — card
+   ki-e38dbfca7671。偽は操作ごとに run を分ける検の道具だけ: 背景の task は run をまたいで生きない)・boot = この process の世代・
+   boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡とみなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・
+   boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms * #^ (| dict None) [versions None] #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
-                          #^ (| BootMarks None) [boot-marks None]]
+                          #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
           self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -100,6 +113,8 @@
           ;; sent-statuses = 前に届けた状態の報告・beat-interval-ms = 送る間隔。
           self.watch-enabled watch self.watch (WatchCell)
           self.last-desired None self.sent-statuses None self.beat-interval-ms (beat-interval-ms None {})
+          ;; 拍の外の送り(card ki-e38dbfca7671): beat-beside-enabled = 背景の task で送るか・beating = 送り口と背景の task が分ける値。
+          self.beat-beside-enabled beat-beside self.beating (BeatCell)
           ;; 止まり始め(#2819): stopping = 拍の Program が渡した止まり・sent-stopping = 前に届けた heartbeat に載せた止まり(違えば
           ;; 送る間隔を待たずに送る — 状態の報告の違いと同じ扱い)。
           self.stopping False self.sent-stopping False
@@ -356,7 +371,8 @@
 (defk beat [state cell options]
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions)] :post [(: % (| DesiredJobs DesiredUnreadable))]
    :tags {:context "worker" :role "protocol" :spells "json" :reads "json"}}
-  "heartbeat を 1 回送り、返事の job・task・温める表を desired にするため。届かなければ desired-when-unreachable(fence の判断)。"
+  "heartbeat を 1 回送り、返事の job・task・温める表を desired にするため。届かなければ desired-when-unreachable(fence の判断)。
+   呼ぶのは送り口 sent-beat だけ(送りを 1 本ずつにし、送りの事実を溜める — card ki-e38dbfca7671)。"
   (val sending state.statuses)
   (val stopping state.stopping)
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
@@ -429,11 +445,71 @@
   desired)
 
 
+(defk send-settled [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "答えを待っている heartbeat の送りが在れば、その答えまで待つため(送りは 1 本ずつ — card ki-e38dbfca7671)。"
+  (while (is-not state.beating.in-flight None)
+    (<- (Wait (. state.beating.in-flight future))))
+  None)
+
+
+(defk sent-beat [state cell options]
+  {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions)] :post [(: % (| DesiredJobs DesiredUnreadable))]}
+  "heartbeat を 1 本送るため — 拍の宣言の読み(polled)と拍の外の背景の task(beat-beside-loop)が通る 1 つの送り口(card ki-e38dbfca7671)。
+   送りは 1 本ずつ: 答えを待っている送りが在れば、その答えを待ってから送る。送りの事実(HeartbeatSent — 送りを始めた刻・名乗る名・この時に
+   知っている生存の窓 = 返事が上書きする前の値)は、拍の宣言の読みが次に受け取るまで溜める(#3850 — 届かず返事が読めない送りも数える)。"
+  (<- (send-settled state))
+  (val beating state.beating)
+  (<- now-ms int (now-epoch-ms))
+  (<- done Promise (CreatePromise))
+  (setv beating.in-flight done
+        beating.started-at now-ms
+        beating.unread (+ beating.unread #((HeartbeatSent :at now-ms :worker state.name :lease-ms state.lease-ms))))
+  (var beaten None)
+  (try
+    (<- answered (| DesiredJobs DesiredUnreadable) (beat state cell options))
+    (:= beaten answered)
+    (except [error Exception]
+      ;; 思わぬ例外でも送りの印を下ろし、待っている求めを置き去りにしない(例外はそのまま呼び手へ)。
+      (setv beating.in-flight None)
+      (<- (CompletePromise done False))
+      (raise)))
+  ;; 印を下ろしてから約束を満たす(起きた求めが、まだ送っていると読まない)。
+  (setv beating.in-flight None)
+  (<- (CompletePromise done True))
+  beaten)
+
+
+(defk beat-beside-loop [state cell options]
+  {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions)] :post [(: % None)]}
+  "拍の外の背景の task の本体(card ki-e38dbfca7671): 前の送りを始めてから送信間隔が過ぎたら、拍を待たずに heartbeat を送るため。拍が
+   送れば、その送りから数え直す(送りは送り口 sent-beat の 1 本ずつ — 拍の送りと重ねない)。拍が HTTP や待ちで譲っている間は、拍が
+   どれだけ長くかかっても送りの間は送信間隔と 1 往復の内に収まる(同期の処理で scheduler を塞ぐ間は回らない)。返事は拍と同じ入れ物に
+   書く(次の拍の宣言の読みが使う)。思わぬ例外は理由を記して抜ける(拍の中の送りは続く — 黙って止まらない)。"
+  (val beating state.beating)
+  (try
+    (while (not beating.closing)
+      (<- (send-settled state))
+      (<- now-ms int (now-epoch-ms))
+      (val due-ms (if (is beating.started-at None) now-ms (+ beating.started-at state.beat-interval-ms)))
+      (if (< now-ms due-ms)
+          (<- (Delay (/ (- due-ms now-ms) 1000.0)))
+          (<- _beaten (| DesiredJobs DesiredUnreadable) (sent-beat state cell options))))
+    (except [error Exception]
+      (setv beating.failure (repr error))
+      (<- (slog (+ "worker: 拍の外の heartbeat の task が止まりました — 拍の中の送りだけになります: " (repr error))))))
+  (setv beating.running False)
+  None)
+
+
 (defk polled [state cell options watch-cell]
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions) (: watch-cell RouteCell)]
    :post [(: % (| DesiredJobs DesiredUnreadable))]}
   "拍ごとの ReadDesired に答えるため: heartbeat を送る拍(beat_policy.heartbeat-due)なら送り、それ以外は前の返事の desired を返す。
-   返事に版を持つ coordinator へは、名指しの待ちの背景の task を 1 度だけ起こす(待ちを使う口だけ)。"
+   返事に版を持つ coordinator へは、名指しの待ちの背景の task を 1 度だけ起こす(待ちを使う口だけ)。拍の外の送りの背景の task も
+   1 度だけ起こす(beat-beside-enabled の口だけ — card ki-e38dbfca7671)。"
+  ;; 拍の外の送りが答えを待っている間に来た読みは、その答えを待ってから判じる(同じ間隔の送りを重ねない — card ki-e38dbfca7671)。
+  (<- (send-settled state))
   (<- now-ms int (now-epoch-ms))
   ;; 自己停止を周期ごとに時間で判じる(#2806): 処理が止まって heartbeat を送れなかった worker は、戻った最初の周期で最後の成功から fence を
   ;; 越えていれば、この周期は heartbeat を送らず印の無い job と task を止めた宣言を返す(返事を待つ間に動かし続けない)。最後の宣言を捨てる
@@ -449,16 +525,18 @@
   (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken
                        (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping))
                        (- now-ms state.last-ok-ms) state.beat-interval-ms)
-    ;; 送りの事実(#3850): 送る判断の刻・名乗る名・この時に知っている生存の窓(返事が上書きする前の値)。届かず返事が読めない拍も
-    ;; 送りに数える(拍の Program が前の送りとの間を測る)。
-    (val sent (HeartbeatSent :at now-ms :worker state.name :lease-ms state.lease-ms))
-    (<- beaten (beat state cell options))
-    (:= desired (replace beaten :sent sent)))
+    ;; 送りの事実(#3850)は送り口が溜め、宣言の読みが渡す(拍の外の送りと同じ数え方)。
+    (<- beaten (| DesiredJobs DesiredUnreadable) (sent-beat state cell options))
+    (:= desired beaten))
   (val watch state.watch)
   (when (and state.watch-enabled (not watch.running) (not watch.unsupported) (not watch.closing) (not watch.failure)
              (is-not watch.after None))
     (setv watch.running True)
     (<- (Spawn (watch-loop state watch-cell options) :daemon True)))
+  (val beating state.beating)
+  (when (and state.beat-beside-enabled (not beating.running) (not beating.closing) (not beating.failure))
+    (setv beating.running True)
+    (<- (Spawn (beat-beside-loop state cell options) :daemon True)))
   desired)
 
 
@@ -488,7 +566,10 @@
     (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))
     (<- belled (| DesiredJobs DesiredUnreadable) (with-bell desired bell))
-    (resume belled))
+    ;; 前の読みの後からの送りの事実を渡して空にする(拍の外の送りも — 拍の Program が送りの間を測る・#3850・card ki-e38dbfca7671)。
+    (val sends state.beating.unread)
+    (setv state.beating.unread #())
+    (resume (replace belled :sends sends)))
   (WorkerWakes [began]
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 外側の答えに、heartbeat を送る期限・途絶の柵の期限と、前の heartbeat が届いていなければ
     ;; 送り直しの刻を足す。宣言の変化の呼び鈴は ReadDesired の答え(DesiredJobs.changed)が運ぶので足さない。

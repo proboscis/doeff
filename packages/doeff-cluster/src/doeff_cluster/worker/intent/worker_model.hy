@@ -331,10 +331,10 @@
 ;; --- 宣言の読み取り -------------------------------------------------------------
 
 (defrecord HeartbeatSent
-  "宣言の読み(ReadDesired)が coordinator へ heartbeat を送った事実: at = 送った刻(epoch ms — 送る判断の時刻)・worker = 名乗った
-   worker の名・lease-ms = 送った時に知っていた生存の窓(heartbeat の返事の timing の lease_ms — まだ返事が無ければ ClusterTiming の既定)。
-   拍の Program が前の送りとの間を測り、窓に迫った間を名指す(#3850 — 隣り合う拍がどれも短いのに heartbeat の間が
-   lease を越えた 2026-10-07 13:18 JST の agent-worker-2)。"
+  "coordinator への口が heartbeat を送った事実(宣言の読み ReadDesired の送りも、拍の外の背景の task の送りも — card ki-e38dbfca7671):
+   at = 送った刻(epoch ms — 送りを始めた時刻)・worker = 名乗った worker の名・lease-ms = 送った時に知っていた生存の窓(heartbeat の
+   返事の timing の lease_ms — まだ返事が無ければ ClusterTiming の既定)。拍の Program が前の送りとの間を測り、窓に迫った間を名指す
+   (#3850 — 隣り合う拍がどれも短いのに heartbeat の間が lease を越えた 2026-10-07 13:18 JST の agent-worker-2)。"
   {:tags {:context "worker" :role "type"}}
   (#^ int at)
   (#^ str worker)
@@ -351,16 +351,17 @@
   ;; これで起きる(#3871 の単位 4)。None = 変化を知らせる口が無い(待ちの口の無い coordinator — 周の間の待ちは heartbeat の期限で起きる)。
   ;; 値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
   (setv #^ (| Future None) changed (field :default None :compare False))
-  ;; この読みが heartbeat を送ったなら、その事実(HeartbeatSent)。None = 送らなかった(前の返事の desired を使い続けた・途絶で送らずに
-  ;; 絞った)。値の比べには入れない(同じ宣言は送りの刻が違っても同じ)。
-  (setv #^ (| HeartbeatSent None) sent (field :default None :compare False)))
+  ;; 前の読みの後からこの読みまでに送った heartbeat の事実(HeartbeatSent)の列 — 送った順。この読みの送りと、拍の外の背景の task の
+  ;; 送り(card ki-e38dbfca7671)。空 = 送らなかった(前の返事の desired を使い続けた・途絶で送らずに絞った)。値の比べには入れない
+  ;; (同じ宣言は送りの刻が違っても同じ)。
+  (setv #^ tuple sends (field :default #() :compare False)))
 
 
 (defclass [(dataclass :frozen True)] DesiredUnreadable []
-  "宣言が読めない。空の宣言と取り違えて全 job を止めてはいけない。sent = この読みが送った heartbeat(DesiredJobs.sent と同じ — 送ったが
-   返事が読めなかった拍も送りに数える)。"
+  "宣言が読めない。空の宣言と取り違えて全 job を止めてはいけない。sends = 前の読みの後からこの読みまでに送った heartbeat(DesiredJobs.sends
+   と同じ — 送ったが返事が読めなかった送りも数える)。"
   (#^ str reason)
-  (setv #^ (| HeartbeatSent None) sent (field :default None :compare False)))
+  (setv #^ tuple sends (field :default #() :compare False)))
 
 
 ;; --- effect ----------------------------------------------------------------------

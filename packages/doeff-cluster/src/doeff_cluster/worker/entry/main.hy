@@ -287,8 +287,8 @@
   (try
     (run (scheduled (worker-on handlers policy)))
     (finally
-      ;; 名指しの待ちの背景の task を止める(worker の終わり — 次の待ちを送らない)。
-      (setv link.watch.closing True)))
+      ;; 名指しの待ちと拍の外の送りの背景の task を止める(worker の終わり — 次の待ちも heartbeat も送らない)。
+      (setv link.watch.closing True link.beating.closing True)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 
 

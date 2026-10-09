@@ -93,7 +93,8 @@
   "前の heartbeat を送った刻 since から今の heartbeat を送った刻 sent-at までを、前の拍の時刻 previous と今の拍の頭・EnvReport の後の
    時刻で区間に切り、遅れの行の欄(間と、いちばん長い区間の名と長さ)を導くため。区間 = 前の拍より前(EarlierTicks — 間に送らない拍を
    挟んだ時)・前の拍の EnvReport・ReadDesired(前の拍で送っていれば送った後の返事の待ち)・ObserveWorld・残り・拍の間の待ち
-   (AwaitNextTick)・今の拍の EnvReport・ReadDesired(送るまで)。since より前の部分は数えない。長さが並んだら先の区間を名指す。"
+   (AwaitNextTick)・今の拍の EnvReport・ReadDesired(送るまで)。since より前の部分と sent-at より後の部分は数えない(拍の外の背景の
+   task の送りは、前の拍の途中や拍の間の待ちの途中でも起きる — card ki-e38dbfca7671)。長さが並んだら先の区間を名指す。"
   (val earlier (match previous
     None #()
     _ #((GapMark :name "EarlierTicks" :at previous.began)
@@ -105,7 +106,8 @@
                          (GapMark :name "EnvReport" :at env-reported)
                          (GapMark :name "ReadDesired" :at sent-at))))
   (val starts (+ #(since) (tuple (gfor mark (cut ends -1) mark.at))))
-  (val spans (tuple (gfor #(mark start) (zip ends starts) (TickSpan :name mark.name :ms (max 0 (- mark.at (max start since)))))))
+  (val spans (tuple (gfor #(mark start) (zip ends starts)
+                          (TickSpan :name mark.name :ms (max 0 (- (min mark.at sent-at) (max start since)))))))
   (val longest (max spans :key (fn [span] span.ms)))
   (HeartbeatGap :gap-ms (- sent-at since) :slowest longest.name :slowest-ms longest.ms))
 
@@ -125,14 +127,16 @@
   (<- now int (now-epoch-ms))
   (val began (epoch-ms-of began-at))
   (val env-reported (epoch-ms-of env-reported-at))
-  ;; heartbeat の間の計り(#3850): この読みが heartbeat を送り、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を
-  ;; 越えたら、間のいちばん長い区間を名指す。時刻は拍で既に読んだ物と送りの刻だけを使う(時刻の読みを足さない)。
-  (val sent read.sent)
-  (when (and (is-not sent None) (is-not state.last-sent-ms None)
-             (> (- sent.at state.last-sent-ms) (* sent.lease-ms HEARTBEAT-GAP-LEASE-RATIO)))
-    (<- gap HeartbeatGap (heartbeat-gap state.last-sent-ms state.last-marks began env-reported sent.at))
-    (<- (slog HEARTBEAT-GAP-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms sent.at)) :worker sent.worker
-              :gap-ms gap.gap-ms :slowest gap.slowest :slowest-ms gap.slowest-ms)))
+  ;; heartbeat の間の計り(#3850): 前の読みの後からこの読みまでの送り(この読みの送りと、拍の外の背景の task の送り — card
+  ;; ki-e38dbfca7671)ごとに、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を越えたら、間のいちばん長い区間を
+  ;; 名指す。時刻は拍で既に読んだ物と送りの刻だけを使う(時刻の読みを足さない)。
+  (var last-sent-ms state.last-sent-ms)
+  (for [sent read.sends]
+    (when (and (is-not last-sent-ms None) (> (- sent.at last-sent-ms) (* sent.lease-ms HEARTBEAT-GAP-LEASE-RATIO)))
+      (<- gap HeartbeatGap (heartbeat-gap last-sent-ms state.last-marks began env-reported sent.at))
+      (<- (slog HEARTBEAT-GAP-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms sent.at)) :worker sent.worker
+                :gap-ms gap.gap-ms :slowest gap.slowest :slowest-ms gap.slowest-ms)))
+    (:= last-sent-ms sent.at))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける(#3731 — 読めた拍だけ持ち替え、途絶で絞った宣言も読んだ側。まだ一度も
   ;; 読めていなければ NotYetRead のまま)。
   (val declaration (match read
@@ -193,8 +197,7 @@
     (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms)))
   ;; 時刻だけで計画の答えが変わる最初の刻(周の後の観測と記憶・周の判断の now — worker_due の頭の註)。
   (<- planned-due (| DueAt DueNever) (plan-due now after records policy))
-  #((WorkerState :declaration declaration :records records :last-marks marks
-                 :last-sent-ms (match sent None state.last-sent-ms _ sent.at))
+  #((WorkerState :declaration declaration :records records :last-marks marks :last-sent-ms last-sent-ms)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
     ;; 宣言の変化の呼び鈴(読めた宣言の物だけ — 周の間の待ちを起こす・#2692)。

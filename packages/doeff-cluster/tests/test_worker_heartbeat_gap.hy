@@ -101,8 +101,7 @@
     (resume None))
   (ReadDesired [env-report stopping]
     (<- answer (| DesiredJobs DesiredUnreadable) effect)
-    (when (is-not answer.sent None)
-      (:= sent (+ sent #(answer.sent.at))))
+    (:= sent (+ sent (tuple (gfor s answer.sends s.at))))
     (resume answer))
   (NotedBeats []
     (resume (BeatSeen :gaps gaps :tick-lags tick-lags :sent sent))))
@@ -121,7 +120,7 @@
     (if tick.beats
         (do (<- at int (now-epoch-ms))
             (<- (Delay tick.reply-seconds))
-            (resume (DesiredJobs #() :sent (HeartbeatSent :at at :worker WORKER :lease-ms LEASE-MS))))
+            (resume (DesiredJobs #() :sends #((HeartbeatSent :at at :worker WORKER :lease-ms LEASE-MS)))))
         (resume (DesiredJobs #()))))
   (ObserveWorld []
     (resume (WorldView #() #())))
@@ -207,9 +206,11 @@
   (val earlier (.poll link))
   (val later (.poll link))
   (assert (isinstance earlier DesiredJobs) earlier)
-  (assert (is-not earlier.sent None) earlier)
-  (assert (= earlier.sent.worker "w-gap") earlier.sent)
-  (assert (= earlier.sent.lease-ms LEASE-MS) earlier.sent)
-  (assert (is-not later.sent None) later)
-  (assert (= later.sent.lease-ms REPLY-LEASE-MS) later.sent)
-  (assert (>= later.sent.at earlier.sent.at) #(earlier.sent later.sent)))
+  (assert (= (len earlier.sends) 1) earlier.sends)
+  (val first (get earlier.sends 0))
+  (assert (= first.worker "w-gap") first)
+  (assert (= first.lease-ms LEASE-MS) first)
+  (assert (= (len later.sends) 1) later.sends)
+  (val second (get later.sends 0))
+  (assert (= second.lease-ms REPLY-LEASE-MS) second)
+  (assert (>= second.at first.at) #(first second)))

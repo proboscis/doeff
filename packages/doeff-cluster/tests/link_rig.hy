@@ -1,7 +1,9 @@
 ;;; 検の coordinator への口の道具(#2427 — 前は検が handlers.CoordinatorLink を直に作って poll / accept-tasks / report を呼んでいた)。
 ;;; 本番と同じ入れ物 LinkState と宛先の入れ物を持ち、操作ごとに本番の Program(worker/protocol/coordinator_link)を 1 回の run で回す。
 ;;; 送りは検の HTTP の答え手 transport-http(transport を渡さなければ本物の網の transport)、file は本物の os-file-handler、時計は実時間。
-;;; 名指しの待ちの背景の task は run をまたいで生きない — 待ちの性質は 1 回の run の筋書きで確かめる(test_heartbeat_link)。
+;;; 名指しの待ちの背景の task は run をまたいで生きない — 待ちの性質は 1 回の run の筋書きで確かめる(test_heartbeat_link)。拍の外の
+;;; heartbeat の送りの背景の task(card ki-e38dbfca7671)も同じ理由で起こさない(beat-beside 偽 — その性質は仮想時計の下で調整ループごと
+;;; 動かす検 test_beat_beside_a_stalled_tick で確かめる)。
 (require doeff-hy.macros [deff defk <- val])
 (import os)
 (import typing)
@@ -43,7 +45,8 @@
                           #^ bool [watch False]]
     (setv now-ms (int (* 1000 (time.time))))
     (setv self.state (LinkState name provides capacity task-reserve fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
-                                :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch)
+                                :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch
+                                :beat-beside False)
           self.cell (run (cell-of url)) self.watch-cell (run (cell-of url))
           self.transport (or transport (httpx.HTTPTransport))))
 
