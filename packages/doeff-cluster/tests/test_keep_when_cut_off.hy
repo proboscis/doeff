@@ -1,7 +1,8 @@
 ;; 移せる先の無い job を担い手の途絶でも外さず、返事の印で worker が止めない(#2804)。本番の Service はどれも置ける worker が 1 台しか
 ;; なく、担い手の途絶(処理の止まり 47 秒・網の途絶 2 分 — 2026-10-02 13:26・13:53)で置き先を外しても他へ移らず、止めて起こし直す
 ;; 損だけが残った。印の在る job も、途絶が長い方の柵(ClusterTiming.keep-fence-ms・240 秒)を越えたら止める — 分断の最中に k8s が作る
-;; 同じ名の worker の新しい世代(早くても約 350 秒後)と重ならないため。
+;; 同じ名の worker の新しい世代(早くても約 350 秒後)と重ならないため。約束は、担い手の沈黙が約束の期限(ClusterTiming.kept-reassign-after-ms・
+;; 280 秒 — 長い方の柵での止め切りより後)を越えても外れる — 担い手の名が替わる切り替えで、旧い名の worker が二度と知らせて来ない時のため。
 ;;
 ;; 前半 = 本体の判断を直に呼ぶ検(置き先・返事の印・約束の外し方・readiness・保存・worker の fence の判断・返事の読み)。
 ;; 後半 = 模擬の世界(本物の coordinator と本物の worker を仮想の時計で回す sim-cluster)の途絶の筋書きと、条 C2 one-place-per-job
@@ -94,6 +95,26 @@
   (val unplaced (replace promised :placements {}))
   (assert (not-in "a" (! (place-jobs PAST-DEADLINE unplaced T))))
   (assert (in "前の担い手" (get (unplaced-jobs PAST-DEADLINE unplaced T) "a"))))
+
+
+(deftest test-a-promise-to-a-silent-holder-lapses-after-the-kept-reassign-deadline
+  ;; 約束の期限(ClusterTiming.kept-reassign-after-ms): 印の約束の在る job の担い手 w1 が沈黙し、能力の合う w2 が生きている。沈黙が期限の
+  ;; 内なら調停の後も約束と置き先を保ち、期限を越えたら調停が約束を外し、job は w2 へ置かれる — 担い手の名が替わる切り替えで旧い名の
+  ;; worker が二度と知らせて来なくても外れる(2026-10-09 22:03 の本番の止まり)。担い手は印の在る job も途絶が keep-fence-ms を越えると
+  ;; 自分で止めるので、期限の後に他へ置いても 2 か所では走らない(条 C4 と同じ形の検 = tests/test_cluster_timing.hy)。
+  (<- job ClusterJob (job-of "a" #("net")))
+  (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
+  (val lapsed (+ T.kept-reassign-after-ms 1))
+  (<- w2 WorkerInfo (worker-of "w2" lapsed #("net")))
+  (<- mark KeepMark (promise-to "a" "w1"))
+  (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :keep-marks #(mark)))
+  (<- held ClusterState (reconcile T.kept-reassign-after-ms promised T))
+  (assert (= held.keep-marks #(mark)) held.keep-marks)
+  (assert (= (. (get held.placements "a") worker) "w1") held.placements)
+  (<- moved ClusterState (reconcile lapsed promised T))
+  (assert (= moved.keep-marks #()) moved.keep-marks)
+  (val placed (get moved.placements "a"))
+  (assert (= #(placed.worker placed.generation) #("w2" 2)) placed))
 
 
 (deftest test-a-promised-job-stays-with-its-holder-when-its-needs-change
@@ -529,6 +550,97 @@
   (assert (= (lfor m seen.alone #((get m "job") (get m "worker") (get m "boot"))) [#("pulse" "w1" "w1-boot1")]) seen.alone)
   (assert (isinstance (get seen.alone 0 "sinceMs") int) seen.alone)
   (assert (= seen.joined []) seen.joined))
+
+
+(defrecord SwitchSeen
+  "名の替わる切り替えの筋書きの結果: killed = 担い手を落とした時に止まった process の数・mid と mid-marks = 約束の期限の前の process の列と
+   GET /state の keepMarks・after と after-marks = 期限の後の同じ 2 つ。"
+  (#^ int killed)
+  (#^ tuple mid)
+  (#^ list mid-marks)
+  (#^ tuple after)
+  (#^ list after-marks))
+
+
+(defk switch-to-another-name []
+  {:pre [] :post [(: % SwitchSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(2026-10-09 22:03 型 — 担い手の名が替わる切り替え): w1 の上の pulse(移せる先が無い — 約束あり)の担い手 w1 を node ごと落とし
+   (旧い名の worker は二度と戻らない)、2 秒後に別の名の w2 を起こす。落としてから約束の期限(kept-reassign-after-ms)の 30 秒前と、
+   期限の 30 秒後に process の列と約束を見る。"
+  (<- (Delay 8.0))
+  (<- killed int (KillWorker "w1"))
+  (<- (Delay 2.0))
+  (<- (StartWorker "w2"))
+  (<- (Delay (- (/ T.kept-reassign-after-ms 1000.0) 32.0)))
+  (<- mid tuple (ProcessesOf "pulse"))
+  (<- mid-state dict (ReadCoordinator "/state"))
+  (<- (Delay 60.0))
+  (<- after tuple (ProcessesOf "pulse"))
+  (<- after-state dict (ReadCoordinator "/state"))
+  (SwitchSeen :killed killed :mid mid :mid-marks (get mid-state "keepMarks") :after after :after-marks (get after-state "keepMarks")))
+
+
+(defk job-and-worker [marks]
+  {:pre [(: marks list)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "GET /state の keepMarks の行を #(job worker) の列にするため(比べる欄だけ)。"
+  (lfor m marks #((get m "job") (get m "worker"))))
+
+
+(deftest test-a-promised-job-moves-to-a-worker-under-another-name-after-the-kept-reassign-deadline
+  ;; 2026-10-09 22:03〜22:05 の本番の止まりの再現: worker の名が替わる切り替え(旧い worker の Pod が消え、別の名の worker が live に
+  ;; なった)で、旧い名の worker は二度と知らせて来ないので約束が外れず、job が旧い worker に結ばれたまま止まった(手で Worker を消して
+  ;; 解いた)。約束の期限(kept-reassign-after-ms)の前は約束を保って他へ置かず、期限の後は約束を外して w2 で起こす(w2 は今度は
+  ;; 移せる先の無い担い手なので、約束は w2 へ移る)。2 か所では走らない(条 C2)。
+  (<- seen SwitchSeen (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (pulses sim-foundation) (switch-to-another-name)
+                                   :workers JOINING))
+  (assert (= seen.killed 1) seen)
+  (assert (= (lfor p seen.mid #(p.worker p.exit-code)) [#("w1" -9)]) seen.mid)
+  (<- promised list (job-and-worker seen.mid-marks))
+  (assert (= promised [#("pulse" "w1")]) seen.mid-marks)
+  (assert (= (lfor p seen.after #(p.worker p.exit-code)) [#("w1" -9) #("w2" None)]) seen.after)
+  (val old (get seen.after 0))
+  (val new (get seen.after -1))
+  ;; w2 で起きたのは、w1 が落ちてから長い方の柵より後(約束の期限は w1 の最後の連絡 + 280 秒)。
+  (assert (< (+ old.ended-ms T.keep-fence-ms) new.started-ms) seen.after)
+  (<- moved list (job-and-worker seen.after-marks))
+  (assert (= moved [#("pulse" "w2")]) seen.after-marks)
+  (<- spans tuple (spans-of seen.after))
+  (<- broken tuple (one-place-per-job spans))
+  (assert (= broken #()) broken))
+
+
+(defk cut-past-the-kept-reassign-then-join []
+  {:pre [] :post [(: % CutSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(約束の期限と長い方の柵の時間の柵): w1 の上の pulse(移せる先が無い — 約束あり)の網を約束の期限より 120 秒長く切り(w1 の
+   process は動き続け、途絶が長い方の柵を越えると w1 が自分で止める)、2 秒後に別の名の w2 を起こす。切ってから期限の 30 秒後と、網が
+   戻って 30 秒後に process の列を見る。"
+  (val seconds (+ (/ T.kept-reassign-after-ms 1000.0) 120.0))
+  (<- (Delay 8.0))
+  (<- (CutWorker "w1" seconds))
+  (<- (Delay 2.0))
+  (<- (StartWorker "w2"))
+  (<- (Delay (+ (/ T.kept-reassign-after-ms 1000.0) 28.0)))
+  (<- mid tuple (ProcessesOf "pulse"))
+  (<- readiness ServiceReadiness (ReadinessOf "pulse"))
+  (<- (Delay 120.0))
+  (<- after tuple (ProcessesOf "pulse"))
+  (CutSeen :host "w1" :mid mid :readiness readiness :after after))
+
+
+(deftest test-a-promised-job-moved-after-the-kept-reassign-deadline-does-not-overlap-the-cut-holder
+  ;; 約束の期限の後に他へ移す保証は時間の柵(条 C4 と同じ形 — tests/test_cluster_timing.hy): 網の切れた担い手 w1 の process は、途絶が
+  ;; 長い方の柵(keep-fence-ms)を越えた所で w1 が自分で止め(止めの合図 -15)、coordinator はその止め切りの最悪より後の約束の期限に
+  ;; 約束を外して w2 で起こす。網が戻った w1 は job を起こし直さない。どの時点でも 2 か所で走らない(条 C2)。
+  (<- seen CutSeen (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (pulses sim-foundation) (cut-past-the-kept-reassign-then-join)
+                                :workers JOINING))
+  (assert (= (lfor p seen.mid #(p.worker p.exit-code)) [#("w1" -15) #("w2" None)]) seen.mid)
+  (assert (= (lfor p seen.after #(p.worker p.exit-code)) [#("w1" -15) #("w2" None)]) seen.after)
+  (val old (get seen.after 0))
+  (val new (get seen.after -1))
+  (assert (< old.ended-ms new.started-ms) seen.after)
+  (<- spans tuple (spans-of seen.after))
+  (<- broken tuple (one-place-per-job spans))
+  (assert (= broken #()) broken))
 
 
 (deftest test-an-old-worker-without-marks-still-stops-at-the-fence-and-is-restarted-in-place
