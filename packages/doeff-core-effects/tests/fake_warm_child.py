@@ -3,10 +3,10 @@
 本物の待ちの子(この package の外)が守る約束だけを、検の中で再現するための script:
   * socket-path で頼みを受け、約束の 1 行を読む・答える(読み書きは本物の答え手と同じ関数 warm-request-of・warm-answer-line)
   * mode = accept: 子 A を fork し、A は setsid して group の先頭になり、log へ dup2 し、子 B で入口(module)を走らせ、B の終わり
-    (signal なら負の値)を exit の file へ置き換えで書いて終わる。待ちの子は A の pid と /proc の start-ticks を答える
+    (signal なら負の値)を exit の file へ置き換えで書いて終わる。待ちの子は A の pid と start-ticks(機体ごとの読み proc-stat-of)を答える
     (env の置き換えは本物の待ちの子の役目で、この偽物はしない — run_entry の註)
   * mode = refuse:<文> は断りを答え、mode = silent は答えずに接続を持ったまま待つ(頼み手の期限切れを見るため)
-A の終わりは待ちの子が待たない(SIGCHLD を捨てて自動で回収する)ので、終わった A は /proc から消え、頼み手は exit の file で読む。
+A の終わりは待ちの子が待たない(SIGCHLD を捨てて自動で回収する)ので、終わった A は居なくなり、頼み手は exit の file で読む。
 """
 
 from __future__ import annotations
@@ -19,17 +19,20 @@ import sys
 
 import hy  # noqa: F401  - doeff_core_effects の Hy の module を読むため
 from doeff import run
-from doeff_core_effects.os_warm_process import WarmRequestWire, warm_answer_line, warm_request_of
+from doeff_core_effects.os_warm_process import WarmRequestWire, proc_stat_of, warm_answer_line, warm_request_of
+from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.scheduler import scheduled
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused
 from doeff_hy.wire import Malformed
 
 
 def start_ticks(pid: int) -> int:
-    """pid の process の始まりの刻(/proc/<pid>/stat の 22 番目の欄)を読むため — 頼み手が pid の使い回しを見分ける印。"""
-    with open(f"/proc/{pid}/stat", encoding="utf-8", errors="surrogateescape") as f:
-        text = f.read()
-    return int(text.rsplit(")", 1)[1].split()[19])
+    """pid の process の始まりの刻を読むため — 頼み手が pid の使い回しを見分ける印。頼み手(os-warm-process-handler)と同じ機体ごとの読み
+    proc-stat-of で読む(Linux = /proc・macOS = libproc — 自分で /proc を読むと macOS で答えられない)。"""
+    seen: ProcStat | None = run(proc_stat_of(pid))
+    if seen is None:
+        raise ProcessLookupError(f"分けた子 {pid} の様子を読めない")
+    return seen.start_ticks
 
 
 def run_entry(entry: str, args: tuple[str, ...], cwd: str) -> int:

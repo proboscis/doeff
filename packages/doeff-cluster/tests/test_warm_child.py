@@ -56,6 +56,11 @@ SECRET_NAME = "WARM_CHILD_TEST_SECRET"
 SECRET_VALUE = "s3cr3t-value-that-must-not-leak"
 # 刻の頭の形(ISO 8601 の日時・ms・時差・空白 1 つ — tests/test_line_stamp.py と同じ形を検が自分で綴る)。
 STAMP = re.compile(rb"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} ")
+# 分かれた子 A(shim と同じ見張り)が task の log の頭に書く 1 行 — 子孫の引き取り(Linux の prctl と /proc)の無い macOS では、止めが
+# process group への合図だけになる事を名乗る(worker/entry/shim.py の main の NotAdopting の行・become_subreaper の理由)。Linux は書かない。
+ADOPTION_NOTICE: tuple[bytes, ...] = (
+    () if LINUX else ("shim: 子孫の引き取りを使えないので、process group への合図だけで止めます(/proc を読めない)".encode(),)
+)
 
 
 @dataclass(frozen=True)
@@ -395,7 +400,7 @@ def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path) -> No
         assert (place / "stamped.exit").read_text() == "5"
         lines = (place / "stamped.log").read_bytes().splitlines()
         assert lines and all(STAMP.match(line) for line in lines), lines
-        assert [STAMP.sub(b"", line) for line in lines] == [b"warm_job: exit 5"], lines
+        assert [STAMP.sub(b"", line) for line in lines] == [*ADOPTION_NOTICE, b"warm_job: exit 5"], lines
     finally:
         stopped(warm)
 
