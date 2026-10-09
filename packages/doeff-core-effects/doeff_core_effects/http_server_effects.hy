@@ -3,8 +3,10 @@
 ;;;   aiohttp-http-server   本物の待ち受け(aiohttp_http_server.hy — aiohttp は extra `http-server` の依存)
 ;;;   scripted-http-server  I/O なし — 台本の要求の列を出来事にし、受けた命令を記録する(scripted_http_server.hy)
 ;;;
-;;;   HttpListen       待ち受けを開く(address・ws の 1 通の上限・ws の接続ごとの送りの上限)。答え = 実際に結んだ宛先 HttpAddress
-;;;                    (port 0 を渡せば空いている port を結ぶ — 結んだ port はこの答えで知る)
+;;;   HttpListen       待ち受けを開く(address・ws の 1 通の上限・ws の接続ごとの送りの上限・port の共有)。答え = 実際に結んだ宛先 HttpAddress
+;;;                    (port 0 を渡せば空いている port を結ぶ — 結んだ port はこの答えで知る)。share-port = 同じ port を別の待ち受けと
+;;;                    共有して開く(SO_REUSEPORT — 入れ替えで新旧の待ち受けを重ねる形・agora-redesign #4317。両方が真で開いた時だけ重なり、
+;;;                    新しい接続は開いている待ち受けへ kernel が振り分ける)。既定の偽は今どおり — 使われている port は開けない
 ;;;   HttpNextRequest  次の出来事。答え = HttpEvent: HttpRequestArrived(札・method・path・target・頭・ws への Upgrade を求めたか・送り元の address)・
 ;;;                    ws の出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed — WsAccept で ws に上げた札だけ)・HttpServerClosed
 ;;;   HttpRespond      札の要求へ status・頭・本文(HttpBodyBytes / HttpBodyFileRange / HttpNoBody)を送る。答え = None
@@ -21,6 +23,9 @@
 ;;;                    接続(読まない相手)はその場で切る(箱の中身を捨て、出来事 WsClosed の理由に名乗る)。答え = None
 ;;;   WsClose          状態符と理由で閉じる(箱に積んだ 1 通を流し切ってから close を送る)。答え = None
 ;;; 待ち受けの全体へは:
+;;;   HttpStopListening 待ち受けだけを閉じる — 新しい接続を受けない(port を共有する別の待ち受けが在れば、新しい接続はそちらへ行く)。
+;;;                    開いている接続(ws と命令を待つ要求)と出来事の流れはそのまま続く。入れ替えで退く側が、客を閉じる前に撃つ
+;;;                    (閉じられた客の張り直しが退く側に当たらない — agora-redesign #4317)。答え = None
 ;;;   HttpShutdown     待ち受けを閉じる — 新しい接続を受けず、開いている ws の全部へ close 1000 を送り、送りの箱を drain-seconds まで流し切って
 ;;;                    から閉じる。以後の HttpNextRequest は HttpServerClosed(reason)。答え = None
 ;;;   TakeWsSendReport 送りの箱の勘定(前に読んでから積んだ・流した・捨てた byte と流すまでの所要 — WsSendReport)を読んで 0 に戻す。
@@ -220,7 +225,8 @@
   (#^ HttpAddress address)
   (setv #^ int ws-max-bytes DEFAULT-WS-MAX-BYTES
         #^ int ws-send-max-bytes DEFAULT-WS-SEND-MAX-BYTES
-        #^ (get tuple #(HttpProbe ...)) probes #()))
+        #^ (get tuple #(HttpProbe ...)) probes #()
+        #^ bool share-port False))
 
 
 (defclass [(dataclass :frozen True)] HttpNextRequest [(get EffectBase HttpEvent)]
@@ -269,6 +275,10 @@
   (#^ str ticket)
   (#^ int code)
   (#^ str reason))
+
+
+(defclass [(dataclass :frozen True)] HttpStopListening [(get EffectBase None)]
+  "待ち受けだけを閉じる — 新しい接続を受けず、開いている接続と出来事の流れは続く(頭の註)。")
 
 
 (defclass [(dataclass :frozen True)] HttpShutdown [(get EffectBase None)]
