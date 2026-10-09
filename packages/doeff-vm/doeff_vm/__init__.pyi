@@ -1,12 +1,14 @@
 from collections.abc import Callable as _CallableT
 from collections.abc import Generator, Sequence
-from typing import Any, Generic, Literal, Protocol, SupportsIndex, overload
+from typing import Any, Generic, Literal, Protocol, SupportsIndex, overload, runtime_checkable
 
 from typing_extensions import Never, Self, TypeVar
 
 _T = TypeVar("_T")
 _T_co = TypeVar("_T_co", covariant=True)
 _E_co = TypeVar("_E_co", covariant=True, default=Any)
+_ProgramResult = TypeVar("_ProgramResult", covariant=True, default=Any)
+_ProgramEffects = TypeVar("_ProgramEffects", covariant=True, default=Any)
 # The answer type of an effect. Bare ``EffectBase`` (a handler's ``effect: EffectBase``,
 # "any effect") means ``EffectBase[Any]``, so code written before effects carried an
 # answer type stays fully known under strict checking.
@@ -19,6 +21,23 @@ _Answer = TypeVar("_Answer", default=Any)
 #   ``doeff.typed_resume(effect, k, value)`` rejects an answer of the wrong type.
 # - Program nodes are ``yield from``-able the same way: ``Expand[T, E]`` is the program a
 #   ``@do`` function returns — T its result, E the union of effects its body yields.
+# - ``Program[T, E]`` is defined here, not in ``doeff``, so that ``Expand`` can name it as its
+#   base (``doeff`` imports ``doeff_vm``; ``doeff`` re-exports this ``Program`` for type checkers).
+#   This name exists for type checkers only: at runtime ``doeff.Program`` is ``doeff.DoExpr``
+#   and ``doeff_vm`` has no ``Program``.
+
+@runtime_checkable
+class Program(Protocol[_ProgramResult, _ProgramEffects]):
+    """A program returning ``T`` whose body may yield effects ``E``: ``Program[T, E]``.
+
+    Every program node (``Expand`` from ``@do``, ``Pure``, ``WithHandler``, ...)
+    and every effect satisfies it: ``x = yield from p`` runs ``p`` and gives
+    ``x: T``, and ``E`` joins the effects the calling generator declares.
+    ``Program[T]`` leaves the effects open (``Any``); bare ``Program`` is
+    "some program". At runtime ``Program`` is ``DoExpr`` (isinstance only).
+    """
+
+    def __iter__(self) -> Generator[_ProgramEffects, Any, _ProgramResult]: ...
 
 class _ProgramLike(Protocol[_T_co]):
     def __iter__(self) -> Generator[Any, Any, _T_co]: ...
@@ -129,8 +148,16 @@ class Apply:
     def __repr__(self) -> str: ...
     def __iter__(self) -> Generator[Self, Any, Any]: ...
 
-class Expand(Generic[_T_co, _E_co]):
-    """A program: T = its result, E = the effects its body yields (``@do`` fills both)."""
+class Expand(Program[_T_co, _E_co]):
+    """A program: T = its result, E = the effects its body yields (``@do`` fills both).
+
+    ``Program`` is named as the base, not only satisfied as a protocol: pyright (1.1.411 and
+    1.1.414 measured) caches a failed protocol match of ``Expand`` against ``Program`` per class,
+    and a later ``Callable[..., Program]`` check in the same process then rejects every ``@do``
+    function — which files fail depended on the order pyright checked them
+    (tests/test_expand_program_static_types.py, agora-redesign #4346). With the base, pyright
+    accepts ``Expand`` through the class hierarchy and never consults that cache.
+    """
 
     expr: Any
     def __init__(self, expr: Any) -> None: ...
