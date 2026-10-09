@@ -6,6 +6,11 @@
 ;;; Deployment も Node も時間で読みに行かず、1 つずつ list の後の watch で見張る(follow — #3868・follow-node — #4070): daemon の thread が
 ;;; list で今を伝え、その一覧の版から watch の stream で変化の出来事を受けて伝える。stream が普通に終われば覚えた版から受け直し、版が
 ;;; 古すぎれば(410)list し直し、届かない・断られた時は理由を伝えて retry-seconds の後に list し直す(ObjectWatch — 2 つの種類で同じ)。
+;;; 思わぬ例外でも見張りの thread は抜けない: 理由を伝え、traceback を stderr に出し、retry-seconds の後に list し直す。
+;;; 接続の pool は thread の間で分けない: 見張り 1 つごとに自分の httpx.Client を持ち、台数と annotation の書き(本体の thread)は KubeClient の
+;;; client を使う(card ki-3ba062c02beb — 1 つの pool を 2 つ以上の thread が使うと、free-threaded の Python では httpcore の
+;;; has_expired が pool の錠の外で書き換わる接続の期限を読み、float と None を比べる TypeError で見張りの thread が止まった・
+;;; 本番 2026-10-09 12:40:48 JST)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
@@ -14,7 +19,9 @@
 (import pathlib [Path])
 (import socket)
 (import ssl)
+(import sys)
 (import threading)
+(import traceback)
 (import typing [Callable])
 (import httpx)
 (import doeff_hy.json_value [OpaqueJson])
@@ -31,18 +38,24 @@
    fail = 届かない・2xx でない時に、理由の文を渡して投げる例外の型(coordinator の entry が kube_model の KubeUnavailable を渡す)。
    transport = 検が渡す偽の API(None = Pod の中の本物の API へ、TCP の keepalive を付けて繋ぐ — keepalive-options)。
    retry-seconds = 見張りが届かない・断られた後に list し直すまでの秒・watch-seconds = watch の要求の timeoutSeconds(server がこの秒で
-   stream を閉じ、見張りは覚えた版から受け直す)。"
+   stream を閉じ、見張りは覚えた版から受け直す)。client = 本体の thread の要求(台数と annotation の書き)の client — 見張りは
+   connection で自分の client を作る(頭の註)。"
   (defn #^ None __init__ [self #^ (get Callable #(#(str) Exception)) fail #^ str [base API-URL] #^ str [sa-dir SA-DIR]
                           #^ float [timeout 5.0] #^ (| httpx.BaseTransport None) [transport None]
                           #^ float [retry-seconds 10.0] #^ int [watch-seconds 60]]
     (setv self.fail fail self.base base self.sa-dir (Path sa-dir) self.timeout timeout
-          self.retry-seconds retry-seconds self.watch-seconds watch-seconds
-          self.client (httpx.Client :timeout timeout :trust-env False
-                                    :transport (if (is transport None)
-                                                   (httpx.HTTPTransport
-                                                     :verify (ssl.create-default-context :cafile (str (/ self.sa-dir "ca.crt")))
-                                                     :socket-options (list (KubeClient.keepalive-options)))
-                                                   transport))))
+          self.retry-seconds retry-seconds self.watch-seconds watch-seconds self.transport transport)
+    (setv self.client (.connection self)))
+
+  (defn #^ httpx.Client connection [self]
+    "自分の接続の pool を持つ新しい client を作るため(本体の thread と見張り 1 つごとに 1 つ — 頭の註)。検が偽の API を渡していれば
+     その transport を通す(偽の API は接続の pool を持たない)。"
+    (httpx.Client :timeout self.timeout :trust-env False
+                  :transport (if (is self.transport None)
+                                 (httpx.HTTPTransport
+                                   :verify (ssl.create-default-context :cafile (str (/ self.sa-dir "ca.crt")))
+                                   :socket-options (list (KubeClient.keepalive-options)))
+                                 self.transport)))
 
   (defn [staticmethod] #^ tuple keepalive-options []
     "本物の API への接続の TCP の keepalive の設定(15 秒黙れば 5 秒ごとに 3 回確かめる — 約 30 秒)。繋がったまま黙った相手(FIN も RST
@@ -127,11 +140,12 @@
   "k8s の object 1 つ(Deployment か Node)の見張り(KubeClient.follow・follow-node が作り、daemon の thread で run を回す — #3868・#4070)。
    list-url = その種類の一覧の URL・name = 見張る object の名(list と watch を名の fieldSelector で絞る)・kind = 理由の文で種類を名指す
    語(Deployment・Node)・key = 理由の文で相手を名指す綴り(Deployment は「ns/名」・Node は名)・stopped = 止める合図・response = 今
-   受けている watch の stream(止める時に閉じて、読みの途中の thread を抜けさせる)。"
+   受けている watch の stream(止める時に閉じて、読みの途中の thread を抜けさせる)・http = この見張りだけが使う client(自分の接続の
+   pool — 頭の註。thread の終わりに閉じる)。"
   (defn #^ None __init__ [self #^ KubeClient client #^ str list-url #^ str name #^ str kind #^ str key
                           #^ (get Callable #([OpaqueJson] None)) on-body #^ (get Callable #([str] None)) on-error]
     (setv self.client client self.list-url list-url self.name name self.kind kind self.key key self.on-body on-body
-          self.on-error on-error self.stopped (threading.Event) self.response None)
+          self.on-error on-error self.stopped (threading.Event) self.response None self.http (.connection client))
     None)
 
   (defn #^ None stop [self]
@@ -168,7 +182,7 @@
     "list で object の今(在れば object・無ければ「無い」理由)を伝え、watch を始める一覧の版を返すため。届かない・断られた・読めない
      時は理由を伝えて None(呼び手が retry-seconds の後に list し直す)。"
     (try
-      (setv response (.get self.client.client self.list-url :headers (.headers self.client)
+      (setv response (.get self.http self.list-url :headers (.headers self.client)
                            :params (.params self)))
       (except [error httpx.HTTPError]
         (.tell-error self (.format "k8s の API に届かない: {}: {}" (. (type error) __name__) error))
@@ -199,7 +213,7 @@
                                     "timeoutSeconds" (str self.client.watch-seconds)})
           retry (WatchNext :version None :pause self.client.retry-seconds))
     (try
-      (with [response (.stream self.client.client "GET" self.list-url :headers (.headers self.client)
+      (with [response (.stream self.http "GET" self.list-url :headers (.headers self.client)
                                :params params
                                :timeout (httpx.Timeout self.client.timeout
                                                        :read (+ self.client.watch-seconds WATCH-READ-MARGIN-SECONDS)))]
@@ -243,16 +257,36 @@
       (finally
         (setv self.response None))))
 
+  (defn #^ None tell-unexpected [self #^ Exception error]
+    "見張りの thread の中で上がった思わぬ例外を、止められていなければ理由として伝え、traceback を stderr に 1 つ出すため(黙って
+     止まらない — 頭の註。理由は観測の表で「読めない」になり、Rollout はその理由を名指して Unknown と扱う)。"
+    (when (not (.is-set self.stopped))
+      (print (.format "coordinator: k8s の {} {} の見張りで思わぬ例外 — 理由を伝え、{} 秒の後に list し直します"
+                      self.kind self.key self.client.retry-seconds)
+             :file sys.stderr :flush True)
+      (traceback.print-exception error :file sys.stderr)
+      (.tell-error self (.format "k8s の {} の見張りで思わぬ例外: {}: {}" self.kind (. (type error) __name__) error)))
+    None)
+
   (defn #^ None run [self]
-    "止められるまで list と watch を繰り返す(daemon の thread の本体)。"
+    "止められるまで list と watch を繰り返す(daemon の thread の本体)。思わぬ例外でも抜けず、理由を伝えて retry-seconds の後に list し
+     直す(tell-unexpected)。抜けるのは止められた時だけで、その時に自分の client を閉じる。"
     (setv version None)
-    (while (not (.is-set self.stopped))
-      (if (is version None)
-          (do (setv version (.list-once self))
-              (when (is version None)
-                (.wait self.stopped self.client.retry-seconds)))
-          (do (setv next (.watch-once self version)
-                    version next.version)
-              (when (> next.pause 0)
-                (.wait self.stopped next.pause)))))
+    (try
+      (while (not (.is-set self.stopped))
+        (try
+          (if (is version None)
+              (do (setv version (.list-once self))
+                  (when (is version None)
+                    (.wait self.stopped self.client.retry-seconds)))
+              (do (setv next (.watch-once self version)
+                        version next.version)
+                  (when (> next.pause 0)
+                    (.wait self.stopped next.pause))))
+          (except [error Exception]
+            (.tell-unexpected self error)
+            (setv version None)
+            (.wait self.stopped self.client.retry-seconds))))
+      (finally
+        (.close self.http)))
     None))
