@@ -5,7 +5,12 @@
 ;; 確かめる事:
 ;;   (a) 口の下で SubmitDetached → AwaitDetached が task の答えを返す。
 ;;   (b) 呼び手が値で渡した名乗り(revision・実行環境の宣言)が、coordinator が受けた task の行に載る。
-;; 失敗ケース: 口が名乗り(revision か runtime-env)を DetachedSender へ渡し落とすと、(b) の行の比べが赤になる。
+;;   (c) 送り手の process が env の root の中に居る(環境変数 DOEFF_RUNTIME_ENV_KEY を持つ — agora の会話の Pod)時も、置いた Program の
+;;       版の識別は env の鍵 envKey を名乗らない。受け側の env は名乗りの runtime-env が決める(None なら revision の木で鍵は無い)ので、
+;;       送り手の鍵を名乗ると、受け側が自分の鍵と比べて「版が違うので Program を解かない」で断る(2026-10-10 05:34 JST の webapp の宣言の
+;;       組む task・card acp:kanban-issue:ki-8f406fc4a48e)。
+;; 失敗ケース: 口が名乗り(revision か runtime-env)を DetachedSender へ渡し落とすと、(b) の行の比べが赤になる。口が版を
+;; this-process-versions(この process の環境変数)から作ると、(c) の置き場の版に envKey が載って赤になる。
 (require doeff-hy.macros [deftest defk <- val])
 (import pathlib [Path])
 (import httpx)
@@ -15,7 +20,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster.shared.entry.client_foundation [with-detached-client])
 (import os)
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.foundation.process_versions [process-versions RUNTIME-ENV-KEY-VAR])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
@@ -92,3 +97,19 @@
   (<- row TaskRecord (task-row coordinator "k-identity"))
   (<- declared dict (runtime-env->json env))
   (assert (= #(row.revision row.runtime-env) #(REVISION declared)) #(row.revision row.runtime-env)))
+
+
+(deftest test-the-client-does-not-name-the-sender-env-key [monkeypatch]
+  ;; (c): 送り手の環境変数に env の鍵が在っても、置き場に置いた Program の版は envKey を名乗らない(入っている版はそのまま名乗る)。
+  (.setenv monkeypatch RUNTIME-ENV-KEY-VAR "568db824ac0aaf7e9c656772")
+  (val clock (SimClock))
+  (val coordinator (MemoryCoordinator clock))
+  (val transport (httpx.MockTransport coordinator.handle))
+  (<- env RuntimeEnv (declared-env))
+  (<- submitted DetachedSubmitted
+      (with-handlers [(sim-time-handler :clock clock) (transport-http transport)]
+        (with-detached-client COORDINATOR-URL REVISION env
+          (submit-detached-task (slow-add 1.0 7) "k-env-key" :needs LOCAL :lease-seconds 5.0))))
+  (assert (= submitted (DetachedSubmitted "k-env-key" True)) submitted)
+  (val placed (lfor row (.values coordinator.state.programs) row.versions))
+  (assert (= placed [(! (process-versions {}))]) placed))
