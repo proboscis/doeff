@@ -88,7 +88,8 @@
 
 ;; 引き換えた access token(LaunchEffect.turn_credential_ref の RedeemTurnCredentialEffect の答え — #665・#979)を置く env の名。綴りの家は境界の env の語彙
 ;; doeff_agents/agent_env.hy の 1 点(TURN-AUTH-ENV-KEYS の要素・#708 — 家は session host を import しない)。
-(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV GITHUB-TOKEN-ENV])
+(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV GITHUB-TOKEN-ENV
+                                CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV])
 
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------
@@ -144,7 +145,10 @@
   "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 引き換えた access token
    (credential — LaunchEffect.turn_credential_ref を RedeemTurnCredentialEffect で引き換えた答え・None = 家の資格。手番の資格の env の名
    1 つにだけ置く。設定 dir の env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ)。答えが GitHub の token
-   (credential.github-token)も持てば GITHUB-TOKEN-ENV(GH_TOKEN)に置く(#3753)。許可の方策は config の permission。"
+   (credential.github-token)も持てば GITHUB-TOKEN-ENV(GH_TOKEN)に置く(#3753)。資格に付いた契約の種類と階級
+   (credential.subscription-type・rate-limit-tier)は、値の在る物だけを CLAUDE-SUBSCRIPTION-TYPE-ENV・CLAUDE-RATE-LIMIT-TIER-ENV に置く
+   (card acp:kanban-issue:ki-d81bb8c7eaaa — 2 つの名もターンの資格の名なので、設定 dir の env と session_env からは入らない)。
+   許可の方策は config の permission。"
   (assert-session-env-is-non-auth-overlay effect.session-env :context "LaunchEffect.session_env (headless-claude-handler)")
   (setv env (| (dict config.home.env) (dict (or effect.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
@@ -152,6 +156,13 @@
     (setv (get env TURN-CREDENTIAL-ENV) credential.oauth-token))
   (when (and (is-not credential None) (is-not credential.github-token None))
     (setv (get env GITHUB-TOKEN-ENV) credential.github-token))
+  ;; 貸し手が観測していない事実(None)は置かない — CLI は種類の無い資格を team / enterprise かもしれないとして、起動のたびに組織の方針を
+  ;; 確かめに行く(本番で 1 回 319〜801 ms)。
+  (when (is-not credential None)
+    (.update env (dfor [name fact] [#(CLAUDE-SUBSCRIPTION-TYPE-ENV credential.subscription-type)
+                                    #(CLAUDE-RATE-LIMIT-TIER-ENV credential.rate-limit-tier)]
+                       :if (is-not fact None)
+                       name fact)))
   ;; 借りた資格の期限は層 2 の宣言へ写す(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)

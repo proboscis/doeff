@@ -805,11 +805,26 @@ class TurnCredential:
     it into the agent process's ``GH_TOKEN`` env (the name lives in
     ``doeff_agents.agent_env``) so the agent's ``gh`` / ``git`` can write to
     GitHub; it is checked like ``oauth_token`` and kept out of ``repr`` too.
+
+    ``subscription_type`` and ``rate_limit_tier`` are the plan kind (``pro``,
+    ``max`` ...) and the rate limit tier the lender read from the stored
+    credential, or ``None`` when the lender has not observed them (card
+    acp:kanban-issue:ki-d81bb8c7eaaa). A Claude CLI given its credential
+    through ``CLAUDE_CODE_OAUTH_TOKEN`` reads these two facts from
+    ``CLAUDE_CODE_SUBSCRIPTION_TYPE`` / ``CLAUDE_CODE_RATE_LIMIT_TIER``
+    (names in ``doeff_agents.agent_env``); without a plan kind it treats the
+    account as possibly team / enterprise and checks the organization policy
+    on every start. A handler that can place them puts each one only when it
+    is not ``None``. Both default to ``None`` (not observed), so a lender
+    that does not read them yet keeps working. They are not secrets, so they
+    stay in ``repr``.
     """
 
     oauth_token: str = field(repr=False)
     expires_at: float | None
     github_token: str | None = field(default=None, repr=False)
+    subscription_type: str | None = field(default=None, kw_only=True)
+    rate_limit_tier: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.oauth_token, str) or not self.oauth_token:
@@ -821,6 +836,13 @@ class TurnCredential:
                 raise ValueError("TurnCredential.github_token must be a non-empty string or None")
             if any(ch in self.github_token for ch in "\r\n\x00"):
                 raise ValueError("TurnCredential.github_token must be a single line")
+        for name, fact in (("subscription_type", self.subscription_type), ("rate_limit_tier", self.rate_limit_tier)):
+            if fact is None:
+                continue
+            if not isinstance(fact, str) or not fact:
+                raise ValueError(f"TurnCredential.{name} must be a non-empty string or None")
+            if any(ch in fact for ch in "\r\n\x00"):
+                raise ValueError(f"TurnCredential.{name} must be a single line")
         if self.expires_at is not None and (
             isinstance(self.expires_at, bool) or not isinstance(self.expires_at, int | float)
         ):
