@@ -33,6 +33,10 @@ dependencies = [
     # (doeff#482: never hand-roll a subset validator for an enforcement
     # boundary). NOT used by the stdlib-only report-result-mcp relay.
     "jsonschema>=4.21",
+    # the api-limit marker reads its reset instant in the IANA zone the refusal
+    # names (ZoneInfo); zoneinfo falls back to this package when the machine has
+    # no /usr/share/zoneinfo (the daily-verify Pod, card ki-db3650ee22fb).
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
