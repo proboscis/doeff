@@ -171,6 +171,7 @@ class HttpStopListening(EffectBase[None]):
 class HttpShutdown(EffectBase[None]):
     reason: str
     drain_seconds: float = ...
+    close_code: int = ...
 
 @dataclass(frozen=True)
 class TakeWsSendReport(EffectBase[WsSendReport]):

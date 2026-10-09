@@ -25,7 +25,7 @@
 ;;;                    (台本の stalled)は箱に溜め続ける。箱の溜まりに足すと送りの上限を超える 1 通(send-overflows)は積まずに接続を切る
 ;;;                    (溜まりを捨てた勘定・WsClosed 1006 と切りの理由)。閉じた・知らない札は捨てる
 ;;;   WsClose          上げた札なら閉じを記録し(WsCloseSent)、箱の溜まりを捨て、WsClosed(同じ状態符と理由 — closing-of)を列の頭へ差す
-;;;   HttpShutdown     開いている札の全部へ close 1000 を記録し、以後は HttpServerClosed
+;;;   HttpShutdown     開いている札の全部へ close close-code(既定 1000)を記録し、以後は HttpServerClosed
 ;;;   TakeWsSendReport 送りの勘定(WsSendReport)を読んで 0 に戻す
 ;;;   ReadHttpServed   受けた命令と送った ws の記録(HttpServed・WsTextSent・WsCloseSent の tuple)
 ;;;   AppendHttpScript 台本の出来事の列の後ろへ足す(筋書きの相手役が時刻の来た拍に届ける)。足す要求の本文の台本も足す
@@ -40,7 +40,7 @@
                                                 HttpShutdown HttpStopListening TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
-                                                WS-CLOSE-NORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
+                                                HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
                                                 HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
                                                 probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader])
@@ -309,9 +309,10 @@
       (<- frame WsCloseFrame (closing-of None (WsCloseFrame :code code :reason reason) None None))
       (:= pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending)))
     (resume None))
-  (HttpShutdown [reason drain-seconds]
+  (HttpShutdown [reason drain-seconds close-code]
+    (:= listening False)
     (for [ticket (sorted opened)]
-      (:= served (+ served #((WsCloseSent :ticket ticket :code WS-CLOSE-NORMAL :reason reason))))
+      (:= served (+ served #((WsCloseSent :ticket ticket :code close-code :reason reason))))
       (<- dropped WsSendReport (tally-dropped tally (.get backlog ticket 0) False))
       (:= tally dropped))
     (:= backlog {})
