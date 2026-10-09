@@ -5,19 +5,15 @@ from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
 
 @dataclass(frozen=True)
-class ClaudeDropProcess(EffectBase):
+class ClaudeDropProcess(EffectBase[bool]):
     session_id: str
 
 @dataclass(frozen=True)
-class ClaudeForgetSession(EffectBase):
+class ClaudeForgetSession(EffectBase[bool]):
     session_id: str
 
 @dataclass(frozen=True)
-class ClaudeEmitOutsideTurn(EffectBase):
-    session_id: str
-
-@dataclass(frozen=True)
-class ClaudeLiveProcess(EffectBase):
+class ClaudeEmitOutsideTurn(EffectBase[bool]):
     session_id: str
 
 class StopReason(StrEnum):
@@ -35,3 +31,7 @@ class LiveProcess:
 class NoLiveProcess:
     launches: int
     stopped_because: StopReason | None
+
+@dataclass(frozen=True)
+class ClaudeLiveProcess(EffectBase[LiveProcess | NoLiveProcess]):
+    session_id: str

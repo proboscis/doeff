@@ -22,59 +22,6 @@ from doeff_claude_code.lines import Interrupted as Interrupted
 from doeff_claude_code.lines import BackendLost as BackendLost
 
 @dataclass(frozen=True)
-class ClaudeStartTurn(EffectBase):
-    origin: FreshSession | ResumeSession | ForkSession
-    spec: ClaudeSessionSpec
-    input: TurnInput
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True)
-class ClaudeInjectInput(EffectBase):
-    turn: ClaudeTurn
-    input: TurnInput
-
-@dataclass(frozen=True)
-class ClaudeInterruptTurn(EffectBase):
-    turn: ClaudeTurn
-
-@dataclass(frozen=True)
-class ClaudeReadTurnEvents(EffectBase):
-    turn: ClaudeTurn
-    after_seq: int
-    wait_up_to: float
-
-@dataclass(frozen=True)
-class ClaudeAnswerPermission(EffectBase):
-    turn: ClaudeTurn
-    request_id: str
-    answer: Allow | Deny
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True)
-class ClaudeCloseSession(EffectBase):
-    session_id: str
-    reason: str
-
-@dataclass(frozen=True)
-class ClaudeSessionStatus(EffectBase):
-    home: ClaudeHome
-    cwd: str
-    session_id: str
-
-@dataclass(frozen=True)
-class ClaudeExportSession(EffectBase):
-    home: ClaudeHome
-    cwd: str
-    session_id: str
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True)
 class TurnStarted:
     turn: ClaudeTurn
     session_id: str
@@ -177,6 +124,59 @@ class ProcessStillAlive:
     detail: str
 StartTurnOutcome: TypeAlias = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused
 ExportSessionOutcome: TypeAlias = SessionExported | SessionNotFound
+
+@dataclass(frozen=True)
+class ClaudeStartTurn(EffectBase[StartTurnOutcome]):
+    origin: FreshSession | ResumeSession | ForkSession
+    spec: ClaudeSessionSpec
+    input: TurnInput
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ClaudeInjectInput(EffectBase[InputQueued | NoTurnInFlight | AttachmentRefused]):
+    turn: ClaudeTurn
+    input: TurnInput
+
+@dataclass(frozen=True)
+class ClaudeInterruptTurn(EffectBase[InterruptRequested | NoTurnInFlight]):
+    turn: ClaudeTurn
+
+@dataclass(frozen=True)
+class ClaudeReadTurnEvents(EffectBase[TurnEventPage | UnknownTurn]):
+    turn: ClaudeTurn
+    after_seq: int
+    wait_up_to: float
+
+@dataclass(frozen=True)
+class ClaudeAnswerPermission(EffectBase[Answered | NoSuchRequest]):
+    turn: ClaudeTurn
+    request_id: str
+    answer: Allow | Deny
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ClaudeCloseSession(EffectBase[SessionClosed | ProcessStillAlive]):
+    session_id: str
+    reason: str
+
+@dataclass(frozen=True)
+class ClaudeSessionStatus(EffectBase[SessionStatus]):
+    home: ClaudeHome
+    cwd: str
+    session_id: str
+
+@dataclass(frozen=True)
+class ClaudeExportSession(EffectBase[ExportSessionOutcome]):
+    home: ClaudeHome
+    cwd: str
+    session_id: str
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True, kw_only=True)
 class SessionWarmed:
