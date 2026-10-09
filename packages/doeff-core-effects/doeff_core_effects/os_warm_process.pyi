@@ -8,6 +8,9 @@ from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import dump as dump
 from doeff_hy.wire import parse_json as parse_json
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
+from doeff_core_effects.process_stat import ProcStat as ProcStat
+from doeff_core_effects.darwin_proc import darwin_proc_stat as darwin_proc_stat
+from doeff_core_effects.darwin_proc import darwin_thread_count as darwin_thread_count
 from doeff_core_effects.warm_effects import ForkFromWarm as ForkFromWarm
 from doeff_core_effects.warm_effects import PollWarmChild as PollWarmChild
 from doeff_core_effects.warm_effects import SignalWarmChild as SignalWarmChild
@@ -59,11 +62,6 @@ class WarmForkedWire:
 class WarmRefusedWire:
     detail: str
 
-@dataclass(frozen=True, kw_only=True)
-class ProcStat:
-    state: str
-    start_ticks: int
-
 def wire_line(wire: WarmRequestWire | WarmForkedWire | WarmRefusedWire) -> _Program[bytes, object]:
     ...
 
@@ -86,6 +84,12 @@ def os_fork_from_warm(request: ForkFromWarm) -> _Program[WarmForked | WarmRefuse
     ...
 
 def proc_stat_of(pid: int) -> _Program[ProcStat | None, object]:
+    ...
+
+def own_thread_count() -> _Program[int, object]:
+    ...
+
+def linux_proc_stat(pid: int) -> _Program[ProcStat | None, object]:
     ...
 
 def same_child_running(pid: int, start_ticks: int) -> _Program[bool, object]:

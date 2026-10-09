@@ -14,7 +14,7 @@
 (import doeff_core_effects.pidfd_exit [pidfd-of])
 (import doeff_core_effects.kqueue_exit [kqueue-fd-of])
 (import doeff_core_effects.darwin_proc [bsd-info-stat task-info-threads BSD-INFO-SIZE TASK-INFO-SIZE])
-(import doeff_core_effects.os_warm_process [ProcStat])
+(import doeff_core_effects.process_stat [ProcStat])
 
 ;; <sys/proc_info.h> の struct proc_bsdinfo の並び(136 byte): uint32 × 5(flags status xstatus pid ppid)・uid / gid × 6・rfu_1・
 ;; comm[16]・name[32]・uint32 × 5(nfiles pgid pjobc e_tdev e_tpgid)・int32 nice・uint64 start_tvsec・uint64 start_tvusec。
@@ -30,14 +30,14 @@
 
 (deftest test-the-exit-fd-opener-follows-the-machine
   ;; Linux は pidfd・macOS は kqueue。どちらの開き方も、居ない pid に None を返す同じ形(pid → fd | None)。
-  (assert (is (exit-fd-opener-for "Linux") pidfd-of))
-  (assert (is (exit-fd-opener-for "Darwin") kqueue-fd-of)))
+  (assert (is (run (exit-fd-opener-for "Linux")) pidfd-of))
+  (assert (is (run (exit-fd-opener-for "Darwin")) kqueue-fd-of)))
 
 
 (deftest test-a-machine-without-an-exit-wait-is-named
   ;; 失敗ケース: 開き方を知らない機体は、機体の名を持った ExitWaitUnavailable — 周期の問い直しへ黙って落ちない。
   (with [caught (pytest.raises ExitWaitUnavailable)]
-    (exit-fd-opener-for "Windows"))
+    (run (exit-fd-opener-for "Windows")))
   (assert (in "Windows" (str caught.value)) caught.value))
 
 
@@ -49,19 +49,26 @@
 
 (deftest test-the-bsd-info-reads-the-state-and-the-start
   ;; 起動の時刻(秒と μ秒)を 1 つの整数(μ秒)にして start-ticks にし、status を /proc の state の 1 文字に写す(5 = SZOMB = Z)。
-  (assert (= (bsd-info-stat (bsd-info 3 1760000000 123456)) (ProcStat :state "S" :start-ticks 1760000000123456)))
-  (assert (= (bsd-info-stat (bsd-info 2 1 0)) (ProcStat :state "R" :start-ticks 1000000)))
-  (assert (= (. (bsd-info-stat (bsd-info 5 7 8)) state) "Z")))
+  (assert (= (run (bsd-info-stat (bsd-info 3 1760000000 123456))) (ProcStat :state "S" :start-ticks 1760000000123456)))
+  (assert (= (run (bsd-info-stat (bsd-info 2 1 0))) (ProcStat :state "R" :start-ticks 1000000)))
+  (assert (= (. (run (bsd-info-stat (bsd-info 5 7 8))) state) "Z")))
 
 
 (deftest test-a-bsd-info-of-the-wrong-size-is-refused
   ;; 失敗ケース: 大きさの違う答え(proc_pidinfo が途中まで書いた・並びの違う版)は読まずに断る — ずれた位置の数を start-ticks にしない。
   (with [caught (pytest.raises ValueError)]
-    (bsd-info-stat (cut (bsd-info 3 1 2) 0 120)))
+    (run (bsd-info-stat (cut (bsd-info 3 1 2) 0 120))))
   (assert (in "136" (str caught.value)) caught.value))
+
+
+(deftest test-an-unknown-bsd-status-is-refused
+  ;; 失敗ケース: 知らない status(SIDL 1〜SZOMB 5 の外)は、走っている process として黙って読まずに断る。
+  (with [caught (pytest.raises ValueError)]
+    (run (bsd-info-stat (bsd-info 9 1 2))))
+  (assert (in "9" (str caught.value)) caught.value))
 
 
 (deftest test-the-task-info-reads-the-thread-count
   ;; pti_threadnum(int32 の 10 番目)を thread の本数として読む。
   (val raw (struct.pack TASK-INFO-LAYOUT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 1 31))
-  (assert (= (task-info-threads raw) 3)))
+  (assert (= (run (task-info-threads raw)) 3)))
