@@ -20,7 +20,8 @@
 #   Namespace agent-worker    ここでは宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため)。
 #
 # 機体の事実: worker の名と NODE_NAME は Node の名(fieldRef spec.nodeName)。機体の /etc/systemd/system を読み取り専用で
-# /host/etc/systemd/system に置き、その path を WORKER_HOST_SYSTEMD_ROOT で渡す。2 つは job の子へも渡る(WORKER_PASS_ENV)。
+# /host/etc/systemd/system に置き、その path を WORKER_HOST_SYSTEMD_ROOT で渡す。作業の root は WORK_DIR。この 3 つは job の子へも
+# 渡る(WORKER_PASS_ENV)。
 # ServiceAccount の token・cluster の CA・namespace は標準の path(/var/run/secrets/kubernetes.io/serviceaccount)に置き、
 # API server の場所の env(KUBERNETES_SERVICE_HOST・KUBERNETES_SERVICE_PORT — kubelet が必ず置く)も job の子へ渡す。
 apiVersion: apps/v1
@@ -89,7 +90,7 @@ spec:
             # job の子へ渡す worker の env の名(実行環境の job の子は worker の env を許可表でしか継がない)。機体の事実と API server の
             # 場所はここで渡し、残りは worker-env の WORKER_PASS_ENV_EXTRA。
             - name: WORKER_PASS_ENV
-              value: "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
+              value: "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
             - { name: WORKER_HOST_SYSTEMD_ROOT, value: /host/etc/systemd/system }
             # 機体の dir(/work)を使う worker を 1 つに限る(Deployment の名が変わる入れ替えで、旧と新の Pod が同じ dir に重ならない)。
             - { name: WORKER_DIR_LOCK, value: "1" }

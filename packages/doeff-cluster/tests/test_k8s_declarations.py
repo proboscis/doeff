@@ -165,6 +165,13 @@ def test_worker_reads_host_systemd_units_read_only(zeus_worker: Manifest) -> Non
     assert _env_value(zeus_worker, "WORK_DIR")["value"] == "/work"
 
 
+def test_worker_passes_machine_facts_to_job_children(zeus_worker: Manifest) -> None:
+    """機体の事実の 3 つ(Node の名・systemd の root・作業の root)は job の子の環境へ渡る(子は worker の env を許可表でしか継がない)。"""
+    passed = str(_env_value(zeus_worker, "WORKER_PASS_ENV")["value"]).split(",")
+    for name in ("NODE_NAME", "WORKER_HOST_SYSTEMD_ROOT", "WORK_DIR"):
+        assert name in passed
+
+
 def test_worker_runs_as_fixed_account_with_projected_token(
     rendered: list[Manifest], zeus_worker: Manifest
 ) -> None:
