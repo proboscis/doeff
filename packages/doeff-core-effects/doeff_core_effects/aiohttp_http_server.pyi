@@ -27,6 +27,7 @@ from doeff_core_effects.http_server_effects import WsAccept as WsAccept
 from doeff_core_effects.http_server_effects import WsSendText as WsSendText
 from doeff_core_effects.http_server_effects import WsClose as WsClose
 from doeff_core_effects.http_server_effects import HttpShutdown as HttpShutdown
+from doeff_core_effects.http_server_effects import HttpStopListening as HttpStopListening
 from doeff_core_effects.http_server_effects import TakeWsSendReport as TakeWsSendReport
 from doeff_core_effects.http_server_effects import WsSendReport as WsSendReport
 from doeff_core_effects.http_server_effects import WsOpened as WsOpened
@@ -144,6 +145,7 @@ class WebEdge:
     client: Incomplete
     ws_client: Incomplete
     runner: Incomplete
+    site: Incomplete
     waiting: Incomplete
     unread: Incomplete
     prefetched: Incomplete
@@ -167,7 +169,7 @@ class WebEdge:
     def across(self, coroutine: Coroutine[object, object, Carried]) -> Carried:
         ...
 
-    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple) -> HttpAddress:
+    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple, share_port: bool) -> HttpAddress:
         ...
 
     def next_arrival(self) -> HttpEvent:
@@ -216,6 +218,9 @@ class WebEdge:
         ...
 
     def close_ws(self, ticket: str, code: int, reason: str) -> None:
+        ...
+
+    def stop_listening(self) -> None:
         ...
 
     def shutdown(self, reason: str, drain_seconds: float) -> None:
