@@ -30,6 +30,13 @@
   ;; 停止の猶予 15 秒 = 255 秒 < 350 秒なので、分断の最中に新しい世代が来ても古い process とは重ならない。tolerations を短くする manifest の
   ;; 変更はこの前提を崩す。worker は heartbeat の返事の timing から受け取る(欄の無い返事 = 古い coordinator は印も付けない)。
   (setv #^ int keep-fence-ms 240000)
+  ;; 途絶しても動かし続けてよい印の約束(ClusterState.keep-marks)の在る job の担い手が沈黙してから、coordinator がその約束を外して job を
+  ;; 他へ移せるようになるまで(cluster_policy.sweep-keep-marks)。担い手の名が替わる切り替え(旧い名の worker は二度と知らせて来ない)でも
+  ;; 約束が外れるようにするため。条 C4 timing-outlasts-the-self-stop と同じ形(shared/core/timing_rules): worker は印の在る job も途絶が
+  ;; keep-fence-ms を越えると自分で止める(worker の kept-when-cut-off・#2804)ので、止め切りの最悪 = keep-fence 240 + heartbeat の返事の
+  ;; 上限 15 + 接続の上限 2 + 子の停止の猶予 15 = 272 秒。余白 8 秒を足して 280 秒(reassign-after-ms の 60 秒 = fence 20 + 32 + 余白 8 と
+  ;; 同じ形)。
+  (setv #^ int kept-reassign-after-ms 280000)
   ;; 連絡の途絶えた worker を、置き先も task も持たなければ名簿から忘れるまで(cluster_policy.forget-silent-workers)。Mac は眠り・持ち出しで
   ;; 数日沈黙するので 7 日。
   (setv #^ int worker-forget-ms (* 7 24 3600 1000))
@@ -56,6 +63,12 @@
       (raise (ValueError "移し替え(reassign-after-ms)は生死の窓(lease-ms)より長くなければならない")))
     (when (<= self.worker-forget-ms self.reassign-after-ms)
       (raise (ValueError "worker を忘れる期限(worker-forget-ms)は移し替えより長くなければならない")))
+    (when (<= self.kept-reassign-after-ms self.keep-fence-ms)
+      (raise (ValueError "約束の在る job の移し替え(kept-reassign-after-ms)は長い方の柵(keep-fence-ms)より長くなければならない")))
+    (when (<= self.kept-reassign-after-ms self.reassign-after-ms)
+      (raise (ValueError "約束の在る job の移し替え(kept-reassign-after-ms)は移し替え(reassign-after-ms)より長くなければならない")))
+    (when (<= self.worker-forget-ms self.kept-reassign-after-ms)
+      (raise (ValueError "worker を忘れる期限(worker-forget-ms)は約束の在る job の移し替え(kept-reassign-after-ms)より長くなければならない")))
     (when (<= self.client-reply-ms self.watch-max-ms)
       (raise (ValueError "待ちの上限(watch-max-ms)は client の返事の打ち切り(client-reply-ms)より短くなければならない")))
     (when (<= self.inbox-reply-ms self.client-reply-ms)

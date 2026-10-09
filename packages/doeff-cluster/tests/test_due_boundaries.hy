@@ -3,6 +3,7 @@
 ;; ここでは期限の関数ごとに、返す刻 D の 1 ms 前では判断が答えを変えず、D で変える事を縛る(D は now より後)。
 ;; - resource_policy.readiness-due と readiness の判定 service-readiness(running-process を含む)— 枝ごと。
 ;; - resource_policy.service-stopped-due と止まりの判定 service-stopped。
+;; - cluster_policy.liveness-due の約束の期限(kept-reassign-after-ms)と、約束を外す調停 reconcile。
 ;; Rollout の相手の Deployment と worker の置かれた node には期限が無い(見張る相手の選び api_policy.deployments-to-follow・
 ;; cluster_policy.nodes-to-follow は時刻を読まない — #3868・#4070)。
 ;; readiness-due は「答えを変え得る刻の下限」を返す(早めに試すのは安全)。D で答えが変わらない枝は、その事と判定が実際に変わる刻を
@@ -16,13 +17,15 @@
 (import doeff_cluster.coordinator.core.resource_policy [readiness-due service-readiness carrier-stale-from report-expired-from
                                                         unreported-until warm-until service-stopped service-stopped-due current-report
                                                         running-process])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-deadline nodes-to-follow])
+(import doeff_cluster.coordinator.core.cluster_policy [liveness-deadline liveness-due note-liveness reconcile nodes-to-follow])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.core.api_policy [deployments-to-follow])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 
 ;; 担い手の報告が古くならない時計(効く期限を準備の報告の window の 1 つにする)。
-;; 移し替えと忘れる期限は生死の窓より長い(ClusterTiming の順の検め — #3865)ので、生死の窓と一緒に延ばす。
-(val LONG-LEASE (ClusterTiming :lease-ms 1000000000 :reassign-after-ms 2000000000 :worker-forget-ms 3000000000))
+;; 移し替え・約束の在る job の移し替え・忘れる期限は生死の窓より長い(ClusterTiming の順の検め — #3865)ので、生死の窓と一緒に延ばす。
+(val LONG-LEASE (ClusterTiming :lease-ms 1000000000 :reassign-after-ms 2000000000 :kept-reassign-after-ms 2500000000
+                                :worker-forget-ms 3000000000))
 ;; 担い手の報告が準備の報告の window(10 秒)より早く古くなる時計。
 (val SHORT-LEASE (ClusterTiming :lease-ms 5000))
 (val T (ClusterTiming))
@@ -189,6 +192,24 @@
   (assert (= due (+ (liveness-deadline (get state.workers "zeus") T.keep-fence-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "NotReady") seen))
+
+
+;; --- liveness-due: 約束の期限 ----------------------------------------------------------------------------------------------
+
+(deftest test-liveness-due-kept-reassign-is-the-promise-sweeps-boundary
+  ;; 約束の期限(ClusterTiming.kept-reassign-after-ms): 印の約束の担い手 w1 が長い方の柵を越えて黙っている(ほかの期限は過ぎている)。
+  ;; liveness-due が返す刻 D は w1 の最後の連絡 + kept-reassign-after-ms + 1。調停(reconcile)は D − 1 では約束を保ち、D で外す —
+  ;; 要求の無い間も、coordinator は D に起きて約束を外す。
+  (val holder (WorkerInfo :name "w1" :provides #("net") :capacity 10 :last-seen-ms 0 :task-reserve 0))
+  (val mark (KeepMark :job "a" :worker "w1" :boot None :since-ms 0))
+  (val now (+ T.keep-fence-ms 1000))
+  (val state (note-liveness (ClusterState :workers {"w1" holder} :keep-marks #(mark)) now T))
+  (<- due (| DueAt DueNow DueNever) (liveness-due state now T))
+  (assert (= due (DueAt :at (+ (liveness-deadline holder T.kept-reassign-after-ms) 1))) due)
+  (<- before ClusterState (reconcile (- due.at 1) state T))
+  (<- at ClusterState (reconcile due.at state T))
+  (assert (= before.keep-marks #(mark)) before.keep-marks)
+  (assert (= at.keep-marks #()) at.keep-marks))
 
 
 ;; --- service-stopped-due ------------------------------------------------------------------------------------------------

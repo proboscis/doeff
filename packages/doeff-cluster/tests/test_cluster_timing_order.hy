@@ -3,6 +3,7 @@
 ;; - 移し替え(reassign-after-ms)は生死の窓(lease-ms)より長い。lease だけを延ばして移し替えより長くした設定は、作る時に断る
 ;;   (生きていると数える worker の job を、移し替えの判断が先に他へ移す形を作らせない)。
 ;; - worker を忘れる期限(worker-forget-ms)は移し替えより長い。短い設定は断る。
+;; - 約束の在る job の移し替え(kept-reassign-after-ms)は長い方の柵(keep-fence-ms)と移し替えより長く、忘れる期限より短い。
 ;; - 待ちの上限 < worker の client の打ち切り < 受付の打ち切り。延ばすのは scaled-timing(比 1 つ)だけ。
 ;; - 模擬の世界(sim-plan)の時間の既定は比で延ばした値(scaled-timing SIM-TIMING-RATIO)。本番の値で走らせる筋書きは :timing に
 ;;   ClusterTiming の既定を明示して渡し、その値がそのまま使われる(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
@@ -32,11 +33,24 @@
     (ClusterTiming :worker-forget-ms 30000)))
 
 
+(deftest test-a-kept-reassign-out-of-order-is-refused
+  ;; 約束の在る job の移し替え(kept-reassign-after-ms・既定 280 秒)は、長い方の柵(keep-fence-ms)と移し替え(reassign-after-ms)より長く、
+  ;; worker を忘れる期限(worker-forget-ms)より短い。崩れた組は作る時に断る(どの順を断ったかを文で名指す)。
+  (assert (= (. (ClusterTiming) kept-reassign-after-ms) 280000))
+  (with [(pytest.raises ValueError :match "は長い方の柵")]
+    (ClusterTiming :kept-reassign-after-ms 240000))
+  (with [(pytest.raises ValueError :match "kept-reassign-after-ms\\)は移し替え")]
+    (ClusterTiming :keep-fence-ms 30000 :kept-reassign-after-ms 50000))
+  (with [(pytest.raises ValueError :match "は約束の在る job の移し替え")]
+    (ClusterTiming :worker-forget-ms 270000)))
+
+
 (deftest test-the-default-timing-and-a-proportionally-stretched-one-are-accepted
   ;; 本番の既定と、全部を同じ比で延ばした設定(模擬の世界の長い筋書きが渡す形)は通る。
   (val base (ClusterTiming))
   (val stretched (ClusterTiming :lease-ms (* 60 base.lease-ms) :fence-ms (* 60 base.fence-ms) :reassign-after-ms (* 60 base.reassign-after-ms)
-                                :keep-fence-ms (* 60 base.keep-fence-ms) :worker-forget-ms (* 60 base.worker-forget-ms)))
+                                :keep-fence-ms (* 60 base.keep-fence-ms) :kept-reassign-after-ms (* 60 base.kept-reassign-after-ms)
+                                :worker-forget-ms (* 60 base.worker-forget-ms)))
   (assert (= base.worker-forget-ms (* 7 24 3600 1000)) base)
   (assert (= stretched.lease-ms 600000) stretched))
 
@@ -70,10 +84,11 @@
   ;; 延ばす入口は 1 つ(scaled-timing): 本番の既定の全部の窓を同じ比で延ばす。順の検めは延ばした値にも当たる。
   (val base (ClusterTiming))
   (<- stretched ClusterTiming (scaled-timing 60))
-  (assert (= #(stretched.lease-ms stretched.fence-ms stretched.reassign-after-ms stretched.keep-fence-ms stretched.worker-forget-ms
-               stretched.silent-worker-wait-ms stretched.watch-max-ms stretched.client-reply-ms stretched.inbox-reply-ms)
-             (tuple (gfor v #(base.lease-ms base.fence-ms base.reassign-after-ms base.keep-fence-ms base.worker-forget-ms
-                              base.silent-worker-wait-ms base.watch-max-ms base.client-reply-ms base.inbox-reply-ms)
+  (assert (= #(stretched.lease-ms stretched.fence-ms stretched.reassign-after-ms stretched.keep-fence-ms stretched.kept-reassign-after-ms
+               stretched.worker-forget-ms stretched.silent-worker-wait-ms stretched.watch-max-ms stretched.client-reply-ms
+               stretched.inbox-reply-ms)
+             (tuple (gfor v #(base.lease-ms base.fence-ms base.reassign-after-ms base.keep-fence-ms base.kept-reassign-after-ms
+                              base.worker-forget-ms base.silent-worker-wait-ms base.watch-max-ms base.client-reply-ms base.inbox-reply-ms)
                           (* 60 v))))
           stretched))
 
