@@ -22,6 +22,7 @@ class ClusterTiming:
     reassign_after_ms: int = 60000
     silent_worker_wait_ms: int = ...
     keep_fence_ms: int = 240000
+    kept_reassign_after_ms: int = 280000
     worker_forget_ms: int = ...
     watch_max_ms: int = 10000
     client_reply_ms: int = 15000

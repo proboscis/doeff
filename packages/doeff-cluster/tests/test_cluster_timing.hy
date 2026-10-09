@@ -2,6 +2,7 @@
 ;; 無い job を他へ移す時刻(ClusterTiming.reassign-after-ms)は、その worker が自分で job を止め切る最悪の時刻(fence + heartbeat の返事の
 ;; 上限 + 接続の上限 + 子の停止の猶予)より後。値は本番の定数から集め、数を検に写さない(定数を動かした時に、この検が追随して判じる)。
 ;; 失敗ケース = 定数を 1 つずつ動かすと破りを名指す検と、破る起動を worker の入口の組み立て(timing-checked)が job を走らせる前に断る検。
+;; 後半は同じ形の検を、約束の在る job の期限(ClusterTiming.kept-reassign-after-ms)と長い方の柵(keep-fence-ms)に当てる。
 (require doeff-hy.macros [deftest defk <- val])
 (import dataclasses [replace])
 (import pytest)
@@ -58,3 +59,39 @@
   (with [raised (pytest.raises ValueError)]
     (<- (timing-checked T.fence-ms (replace P :stop-grace-ms (+ P.stop-grace-ms slack 1)) T)))
   (assert (in "C4" (str raised.value)) raised.value))
+
+
+;; --- 約束の在る job(長い方の柵)------------------------------------------------------------------------------------------------
+;; coordinator が、途絶しても動かし続けてよい印の約束の在る job を、沈黙した担い手から外して他へ移す期限(ClusterTiming.kept-reassign-after-ms)
+;; も同じ形: worker は印の在る job も途絶が長い方の柵(keep-fence-ms)を越えると自分で止める(worker の kept-when-cut-off・#2804)ので、
+;; 期限はその止め切りの最悪(長い方の柵 + 返事の上限 + 接続の上限 + 子の停止の猶予)より後。
+
+(defk production-kept-spans []
+  {:pre [] :post [(: % SelfStopSpans)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "本番の既定から、印の在る job の止め切りの内訳を作るため — 柵は長い方の柵(ClusterTiming.keep-fence-ms)で、ほかは production-spans と同じ。"
+  (<- spans SelfStopSpans (production-spans))
+  (replace spans :fence-ms T.keep-fence-ms))
+
+
+(deftest test-the-production-kept-reassign-outlasts-the-kept-self-stop
+  ;; 条 C4 と同じ形の確かめ: 本番の約束の期限は、本番の定数で作った印の在る job の止め切りより後(破りの列が空)。
+  (<- spans SelfStopSpans (production-kept-spans))
+  (<- broken (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop T.kept-reassign-after-ms spans))
+  (assert (= broken #()) #(T.kept-reassign-after-ms broken)))
+
+
+(deftest test-moving-one-constant-past-the-kept-self-stop-is-named
+  ;; 失敗ケース: 定数を 1 つずつ動かすと破りを 1 つ名指す — 約束の期限を止め切りの 1 ms 前に縮める・長い方の柵を余白より延ばす・
+  ;; 停止の猶予を余白より延ばす。
+  (<- spans SelfStopSpans (production-kept-spans))
+  (<- needed int (self-stop-ms spans))
+  (<- early (get tuple #(ReassignTooEarly ...)) (timing-outlasts-the-self-stop (- needed 1) spans))
+  (assert (= (len early) 1) early)
+  (assert (= #((. (get early 0) reassign-ms) (. (get early 0) needed-ms)) #((- needed 1) needed)) early)
+  (val slack (- T.kept-reassign-after-ms needed))
+  (<- long-fence (get tuple #(ReassignTooEarly ...))
+      (timing-outlasts-the-self-stop T.kept-reassign-after-ms (replace spans :fence-ms (+ spans.fence-ms slack 1))))
+  (assert (= (len long-fence) 1) long-fence)
+  (<- long-grace (get tuple #(ReassignTooEarly ...))
+      (timing-outlasts-the-self-stop T.kept-reassign-after-ms (replace spans :stop-grace-ms (+ spans.stop-grace-ms slack 1))))
+  (assert (= (len long-grace) 1) long-grace))
