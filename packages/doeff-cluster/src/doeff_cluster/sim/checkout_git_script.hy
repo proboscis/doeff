@@ -1,6 +1,6 @@
 ;;; 送り手の手元の checkout の読み(runtime_env の翻訳の handler checkout-reads が出す git の問い)に答える、git の台本(2026-09-27)。
 ;;; doeff の scripted-process-handler に渡す ScriptedCommand 1 つで、子 process を起こさずに checkout の世界(GitCheckout の列)から答える。
-;;; 業務を知らない: 答えるのは checkout の読みの 7 つの問いの形だけ(checkout-reads の 5 形・remote の URL の書き換える前の読み 1 形と、名指しの rev を commit へ解く 1 形)
+;;; 業務を知らない: 答えるのは checkout の読みの 7 つの問いの形だけ(checkout-reads の 5 形と、本物の git が書き換えた URL を答える remote get-url の 1 形と、名指しの rev を commit へ解く 1 形)
 ;;; で、他の形は git と同じく exit 129(使い方の誤り)で断る。
 ;;;
 ;;;   git -C <path> rev-parse HEAD                                   head
@@ -43,7 +43,7 @@
 
 (defrecord GitUrlRewrite
   "送り手の機体の git の設定 url.<base>.insteadOf <instead-of> 1 つ(remote の URL が instead-of で始まれば、その頭を base に替えて使う —
-   会話の Pod の ~/.gitconfig が GitHub の URL を機体だけの ssh の別名へ書き換える形・card acp:kanban-issue:ki-1ada4f0c8344)。"
+   送り手の Pod の ~/.gitconfig が GitHub の URL を機体だけの ssh の別名へ書き換える形・ki-1ada4f0c8344)。"
   (#^ str base)
   (#^ str instead-of))
 
@@ -142,6 +142,28 @@
       None))
 
 
+(defk told-url [checkout remote-urls name]
+  {:pre [(: checkout GitCheckout) (: remote-urls dict) (: name str)] :post [(: % ProcessOutcome)]}
+  "remote get-url <名> に答えるため(remote の URL に機体の書き換えを当てた値 — 本物の get-url と同じ・無い名は exit 2)。"
+  (if (in name remote-urls)
+      (do (<- url str (rewritten-url checkout (get remote-urls name)))
+          (<- told ProcessOutcome (answered url))
+          told)
+      (do (<- missing ProcessOutcome (refused NO-SUCH-REMOTE (.format "error: No such remote '{}'" name)))
+          missing)))
+
+
+(defk configured-url [remote-urls key]
+  {:pre [(: remote-urls dict) (: key str)] :post [(: % ProcessOutcome)]}
+  "config --get remote.<名>.url に答えるため(remote の URL そのまま — 書き換えない・無い名と他の鍵は exit 1 で出力なし)。"
+  (<- name (| str None) (remote-url-key key))
+  (if (and (is-not name None) (in name remote-urls))
+      (do (<- found ProcessOutcome (answered (get remote-urls name)))
+          found)
+      (do (<- missing ProcessOutcome (refused NO-SUCH-KEY ""))
+          missing)))
+
+
 (defk git-answer [checkouts commands request]
   {:pre [(: checkouts tuple) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
   "checkout の読みの git の問い 1 つに checkout の世界から答えるため(頭の註の 6 形)。"
@@ -159,15 +181,8 @@
         #("rev-parse" "HEAD") (answered found.head)
         #("rev-parse" "--show-toplevel") (answered found.path)
         #("rev-parse" "--verify" "--quiet" peeled) (verified found peeled)
-        #("remote" "get-url" name) (if (in name remote-urls)
-                                       (do (<- url str (rewritten-url found (get remote-urls name)))
-                                           (answered url))
-                                       (refused NO-SUCH-REMOTE (.format "error: No such remote '{}'" name)))
-        #("config" "--get" key) (match (remote-url-key key)
-                                  (| None "") (refused NO-SUCH-KEY "")
-                                  name (if (in name remote-urls)
-                                           (answered (get remote-urls name))
-                                           (refused NO-SUCH-KEY "")))
+        #("remote" "get-url" name) (told-url found remote-urls name)
+        #("config" "--get" key) (configured-url remote-urls key)
         #("status" "--porcelain" "--untracked-files=no") (answered (if found.dirty " M changed" ""))
         #("branch" "-r" "--contains" sha "--list" pattern)
         (containing found sha pattern)

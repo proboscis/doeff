@@ -10,12 +10,18 @@ NOT_A_REPOSITORY: int
 BAD_USAGE: int
 NO_SUCH_REMOTE: int
 UNKNOWN_REV: int
+NO_SUCH_KEY: int
 COMMIT_PEEL: str
 
 @dataclass(frozen=True, kw_only=True)
 class GitRemote:
     name: str
     url: str
+
+@dataclass(frozen=True, kw_only=True)
+class GitUrlRewrite:
+    base: str
+    instead_of: str
 
 @dataclass(frozen=True, kw_only=True)
 class GitRev:
@@ -32,6 +38,7 @@ class GitCheckout:
     pushed: tuple[str, ...] = ...
     members: tuple[str, ...] = ...
     revs: tuple[GitRev, ...] = ...
+    rewrites: tuple[GitUrlRewrite, ...] = ...
 
 def answered(stdout: str) -> _Program[ProcessOutcome, object]:
     ...
@@ -51,7 +58,19 @@ def pushed_of(checkout: GitCheckout, sha: str) -> _Program[tuple, object]:
 def verified(checkout: GitCheckout, peeled: str) -> _Program[ProcessOutcome, object]:
     ...
 
+def rewritten_url(checkout: GitCheckout, url: str) -> _Program[str, object]:
+    ...
+
 def containing(checkout: GitCheckout, sha: str, pattern: str) -> _Program[ProcessOutcome, object]:
+    ...
+
+def remote_url_key(key: str) -> _Program[str | None, object]:
+    ...
+
+def told_url(checkout: GitCheckout, remote_urls: dict, name: str) -> _Program[ProcessOutcome, object]:
+    ...
+
+def configured_url(remote_urls: dict, key: str) -> _Program[ProcessOutcome, object]:
     ...
 
 def git_answer(checkouts: tuple, commands: tuple, request: RunProcess) -> _Program[ProcessOutcome, object]:

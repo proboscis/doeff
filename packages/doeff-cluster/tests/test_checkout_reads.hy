@@ -251,10 +251,10 @@
 
 
 (deftest test-the-declared-url-is-the-remote-url-before-the-sender-rewrites-it
-  ;; 失敗ケース(card acp:kanban-issue:ki-1ada4f0c8344): 送り手の機体の git が remote の url を機体だけの ssh の別名へ書き換える
-  ;; (url.<別名>.insteadOf <GitHub の url> — 会話の Pod の ~/.gitconfig)時も、宣言の url は書き換える前の remote の url。宣言の url は
+  ;; 失敗ケース(ki-1ada4f0c8344): 送り手の機体の git が remote の url を機体だけの ssh の別名へ書き換える
+  ;; (url.<別名>.insteadOf <GitHub の url> — 送り手の Pod の ~/.gitconfig)時も、宣言の url は書き換える前の remote の url。宣言の url は
   ;; 別の機体の worker が clone する元で、送り手の機体の別名は worker で解けない(2026-10-10 01:56 JST、zeus の worker が
-  ;; 「Could not resolve hostname gh-agora-controllers」で新しい版を準備できなかった)。
+  ;; 「Could not resolve hostname gh-<repo>」で新しい版を準備できなかった)。
   (val world #((GitCheckout :path "/src/app" :head APP-HEAD :remotes #((GitRemote :name "origin" :url GITHUB-SCP))
                             :pushed #("origin/main") :rewrites #((GitUrlRewrite :base ALIAS-BASE :instead-of GITHUB-SCP)))
                (GitCheckout :path "/src/lib" :head LIB-HEAD :remotes #((GitRemote :name "origin" :url LIB-URL)) :pushed #("origin/main")

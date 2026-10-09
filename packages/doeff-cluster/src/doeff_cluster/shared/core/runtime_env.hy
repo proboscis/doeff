@@ -27,7 +27,7 @@
 ;;;          — git の台本は checkout_git_script.hy の git-command(checkout の読みに要る git の問いだけに答える)
 ;;;
 ;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
-;;;   ReadCheckout      rev-parse HEAD → remote get-url <remote> → status --porcelain --untracked-files=no(空でなければ dirty)→
+;;;   ReadCheckout      rev-parse HEAD → config --get remote.<remote>.url(insteadOf で書き換える前の URL)→ status --porcelain --untracked-files=no(空でなければ dirty)→
 ;;;                     branch -r --contains <head> --list <remote>/*(空でなければ on-remote — 知識は手元の追跡の ref・最後の fetch による)
 ;;;   CheckoutRoot      <path> で rev-parse --show-toplevel。0 でなければ None(checkout の外)
 ;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で

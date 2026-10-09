@@ -2,7 +2,7 @@
 ;;; (RunProcess — git を起こす)と file の effect(StatPath・ReadBytes)へ訳す handler(runtime_env から分けた・#2110)。
 ;;; I/O を持たない(sha256 は計算だけ)。訳し方・本物と模擬の組は doeff_cluster.shared.core.runtime_env の頭の註。
 ;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
-;;;   ReadCheckout      rev-parse HEAD → remote get-url <remote> → status --porcelain --untracked-files=no(空でなければ dirty)→
+;;;   ReadCheckout      rev-parse HEAD → config --get remote.<remote>.url(insteadOf で書き換える前の URL)→ status --porcelain --untracked-files=no(空でなければ dirty)→
 ;;;                     branch -r --contains <head> --list <remote>/*(空でなければ on-remote — 知識は手元の追跡の ref・最後の fetch による)
 ;;;   CheckoutRoot      <path> で rev-parse --show-toplevel。0 でなければ None(checkout の外)
 ;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で
@@ -37,7 +37,9 @@
   {:pre [(: path str) (: remote str)] :post [(: % CheckoutState)]}
   "checkout 1 つの読み(HEAD・remote の URL・汚れ・remote の branch に在るか)を git の 4 問から作るため(頭の註の訳し方)。"
   (<- head str (git-output path #("rev-parse" "HEAD")))
-  (<- url str (git-output path #("remote" "get-url" remote)))
+  ;; URL は remote get-url でなく設定の値で読む: get-url は送り手の機体の url.<base>.insteadOf で書き換えた値を答え、機体だけの ssh の
+  ;; 別名が宣言に載ると別の機体の worker が clone できない(ki-1ada4f0c8344)。
+  (<- url str (git-output path #("config" "--get" (.format "remote.{}.url" remote))))
   (<- status str (git-output path #("status" "--porcelain" "--untracked-files=no")))
   (<- containing str (git-output path #("branch" "-r" "--contains" head "--list" (.format "{}/*" remote))))
   (CheckoutState :head head :url url :dirty (bool status) :on-remote (bool containing)))
