@@ -25,7 +25,7 @@
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_handlers :as http-handlers)
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects.http_server_effects [HttpAddress WS-CLOSE-NORMAL])
 
 ;; 旧い既定の期限(httpx の keepalive_expiry 5 秒)を越える実時間の間(秒)。
 (val OLD-EXPIRY-GAP-SECONDS 6.0)
@@ -232,7 +232,7 @@
   (import doeff_core_effects.aiohttp_http_server :as edge-module)
   (val edge (edge-module.WebEdge))
   (val loop (.edge-loop edge))
-  (val bound (.result (asyncio.run-coroutine-threadsafe (.start edge (HttpAddress :host "127.0.0.1" :port 0) 1024 1024 #()) loop)
+  (val bound (.result (asyncio.run-coroutine-threadsafe (.start edge (HttpAddress :host "127.0.0.1" :port 0) 1024 1024 #() False) loop)
                       EDGE-SECONDS))
   (val peer (socket.create-connection #("127.0.0.1" bound.port) :timeout EDGE-SECONDS))
   (val deadline (+ (time.monotonic) EDGE-SECONDS))
@@ -243,7 +243,7 @@
                 :declared edge-module.IDLE-CONNECTION-SECONDS)
     (finally
       (.close peer)
-      (.result (asyncio.run-coroutine-threadsafe (.shutdown edge "検が閉じた" 0.2) loop) EDGE-SECONDS))))
+      (.result (asyncio.run-coroutine-threadsafe (.shutdown edge "検が閉じた" 0.2 WS-CLOSE-NORMAL) loop) EDGE-SECONDS))))
 
 
 (deftest test-the-doeff-server-keeps-an-idle-connection-longer-than-the-client
