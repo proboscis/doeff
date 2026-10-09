@@ -1558,6 +1558,35 @@
   (assert (= (dict (. (get given 0) home env)) env))
   (assert (= (thaw-json (. (get given 0) settings)) settings)))
 
+
+;; --- 生かす CLI の本数の上限を宣言しない呼び手(agora-redesign #4282)-------------------------------------------------
+;; 同時に生かす CLI の本数を別の物差し(機体の memory の余白)で決める呼び手は、live-limit に None を渡す(層 2 の ClaudeCodeHost は
+;; None を「上限を宣言しない」と受け、本数を比べず、上限越えの log の行も知らせも出さない)。本番の層 2 を作る 4 つの関数(Hy の対・
+;; headless の名・agent runtime の名・層 2 だけ)は None をそのまま層 2 へ渡す。整数を渡す呼び手は今までどおり。
+;; 失敗ケース = 変更前は、層 2 だけを作る関数(claude-process-layer)の契約が整数だけを受け、4 つとも注記が int だった(None を渡す
+;; 呼び手は、実行時の契約か、呼び手の側の型の検査で止まる)。
+
+(deftest test-the-production-layer-is-built-without-a-live-limit [tmp-path]
+  ;; 4 つの関数はどれも live-limit None を受け、整数の時と同じ種類の handler を同じ順で作る。
+  (import doeff_agents [claude-agent-runtime-handlers claude-process-layer-handler headless-claude-agent-handlers])
+  (val home (str (/ tmp-path "home")))
+  (val kinds (lfor h (headless-claude-handlers home {} :live-limit 8 :credential-floor-seconds 7200.0) (. (type h) __name__)))
+  (assert (= (lfor h (headless-claude-handlers home {} :live-limit None :credential-floor-seconds 7200.0) (. (type h) __name__)) kinds))
+  (assert (= (lfor h (headless-claude-agent-handlers :config-dir home :env {} :live-limit None :credential-floor-seconds 7200.0)
+                   (. (type h) __name__))
+             kinds))
+  (assert (= (lfor h (claude-agent-runtime-handlers :config-dir home :env {} :live-limit None :credential-floor-seconds 7200.0)
+                   (. (type h) __name__))
+             kinds))
+  (assert (= (. (type (claude-process-layer-handler :live-limit None :credential-floor-seconds 7200.0)) __name__) (get kinds 0))))
+
+(deftest test-the-production-layer-declares-a-live-limit-of-int-or-none []
+  ;; 呼び手の側の型の検査が読む注記も「整数か None」(注記が int のままだと、None を渡す呼び手は型の検査で止まる)。
+  (import typing)
+  (import doeff_agents [claude-agent-runtime-handlers claude-process-layer-handler headless-claude-agent-handlers])
+  (for [make [headless-claude-handlers headless-claude-agent-handlers claude-agent-runtime-handlers claude-process-layer-handler]]
+    (assert (= (get (typing.get-type-hints make) "live_limit") (| int None)) (repr make))))
+
 (deftest test-the-adapter-and-the-fake-runtimes-carry-the-given-permission-on-the-launch [tmp-path]
   ;; agora-redesign #3753: adapter だけの入口と fake の handler の並びの入口(土台を指定しない名・headless の名・組み立ての部品)に permission を渡すと、
   ;; 層 2 へ渡る起動の宣言(ClaudeSessionSpec)の permission がその値になる — 許可を設定 dir の settings.json に任せる形(HomeSettings)を
