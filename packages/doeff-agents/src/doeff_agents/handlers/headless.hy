@@ -36,6 +36,10 @@
 ;;;   CompactBoundary                  → AgentCompactionEvent(CLI が会話を圧縮した事実 — 行の欄 trigger・pre-tokens・post-tokens・
 ;;;                                      cumulative-dropped-tokens・duration-ms をそのまま写す。上の層がターンの出来事として記録するため・
 ;;;                                      agora-redesign #4189)
+;;;   AssistantMessage.usage / .model  → AgentCallUsageEvent(本体の会話の行〔parent-tool-use-id が None〕が usage を名乗るたびに、その呼びの
+;;;                                      usage と model を運ぶ — 上の層が手番の終わりを待たずに会話の今の context の大きさを読むため。
+;;;                                      線引きは手番の終わりの last_call_usage と同じ: subagent の行は運ばず、usage を名乗らない行は
+;;;                                      出来事にしない・card ki-a2e985c009ae)
 ;;;   Completed.usage / Failed.usage   → AgentTurnCompleted.usage / AgentTurnFailed.usage(AgentTurnUsage — cache_creation → cache_write・cache_read → cache_read。
 ;;;                                      CLI が名乗らない欄は None のまま・4 欄とも無ければ usage = None)
 ;;;   Completed.cost-usd / Failed.cost-usd → AgentTurnUsage.cost_usd(手番の額 USD — 層 2 が CLI の累積の額から手番の分に直した値。
@@ -63,6 +67,7 @@
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger
+  AgentCallUsageEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentAccountRefusal
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
@@ -120,7 +125,8 @@
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
     (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
-                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent AgentTurnEndEvent))
+                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent AgentCallUsageEvent
+                          AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
@@ -156,12 +162,25 @@
                      :cold-resume-prompt config.cold-resume-prompt
                      :credential-expires-at (if (is credential None) None credential.expires-at)))
 
+(defk call-usage-builders-of [message at]
+  {:pre [(: message AssistantMessage) (: at datetime)] :post [(: % list)]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "上の層が手番の終わりを待たずに会話の今の context の大きさを読めるように、assistant の行から、その呼びの usage の出来事を作る関数の列
+   (0 か 1 つ)を作るため。本体の会話の行(parent-tool-use-id が None)が usage を名乗る時だけ 1 つ作る。線引きは手番の終わりの
+   last_call_usage(層 2 の状態機械 dialogue.hy の on-assistant)と同じ — subagent の行は数えず、usage を名乗らない行・4 欄とも
+   名乗らない行は出来事にしない(0 を発明しない)。"
+  (val usage (if (is message.parent-tool-use-id None) (last-call-of message.usage) None))
+  (if (is usage None)
+      []
+      [(fn [seq] (AgentCallUsageEvent :seq seq :at at :usage usage :model message.model))]))
+
 (defn #^ list event-builders-of [kind #^ datetime at]
   "層 2 の行の型 → 層 3 の出来事を作る関数(seq → 出来事)の列。出来事はその型の欄で直接作る(語彙の外の行は空)。"
   (cond
     (isinstance kind AssistantMessage)
       (+ (if kind.text [(fn [seq] (AgentTextEvent :seq seq :at at :text kind.text))] [])
-         (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] []))
+         (if kind.tool-calls [(fn [seq] (AgentToolUseEvent :seq seq :at at :tool-calls kind.tool-calls))] [])
+         (run (call-usage-builders-of kind at)))
     (and (isinstance kind PartialMessage) kind.text-delta)
       [(fn [seq] (AgentTextDeltaEvent :seq seq :at at :text kind.text-delta))]
     ;; 考えの block の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(agora-redesign #4186)。
