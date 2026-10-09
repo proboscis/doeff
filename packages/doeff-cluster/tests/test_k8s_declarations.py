@@ -129,13 +129,65 @@ def _mount_at(deployment: Manifest, path: str) -> dict[str, object]:
     return found[0]
 
 
+# 機体ごとの worker を置く Node の全部(会社の機体には置かない)。zeus の worker は上に載る系の仕事も受け、ほかの機体の worker は
+# 機体の仕事(能力 host-<Node の名> と host-systemd-readable を要る job)だけを受ける。
+NODES = ("atlas", "eos", "k3s-0", "k3s-1", "k3s-2", "k3s-3", "zeus")
+HOST_ONLY_NODES = tuple(node for node in NODES if node != "zeus")
+HOST_ONLY_PROVIDES = "host-$(NODE_NAME),host-systemd-readable"
+PREPARE_DIR = "/opt/worker-prepare"
+
+
+@dataclass(frozen=True)
+class Resources:
+    """機体の worker の資源の取り分(requests)と上限(limits)— 機体の大きさ(Node の allocatable)に合わせた値。"""
+
+    requests: dict[str, str]
+    limits: dict[str, str]
+
+
+# 機体の仕事だけを受ける worker の資源。取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は機体の memory の半分ほど
+# (最初の起動の Rust の組み立ての山を通す — 越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す)。
+HOST_ONLY_RESOURCES = {
+    "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "8Gi"}),
+    "eos": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "4Gi"}),
+    "k3s-0": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
+    "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
+    "k3s-2": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
+    "k3s-3": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "3", "memory": "4Gi"}),
+}
+
+
+def _worker_on(rendered: list[Manifest], node: str) -> Manifest:
+    on_node = [doc for doc in _deployments(rendered, "worker") if _node(doc) == node]
+    assert len(on_node) == 1, (
+        f"{node} の worker の Deployment はちょうど 1 つ: {[d['metadata'] for d in on_node]!r}"
+    )
+    return on_node[0]
+
+
 @pytest.fixture(scope="module")
 def zeus_worker(rendered: list[Manifest]) -> Manifest:
-    on_zeus = [doc for doc in _deployments(rendered, "worker") if _node(doc) == "zeus"]
-    assert len(on_zeus) == 1, (
-        f"zeus の worker の Deployment はちょうど 1 つ: {[d['metadata'] for d in on_zeus]!r}"
-    )
-    return on_zeus[0]
+    return _worker_on(rendered, "zeus")
+
+
+@pytest.fixture(scope="module", params=NODES)
+def worker(rendered: list[Manifest], request: pytest.FixtureRequest) -> Manifest:
+    """機体ごとの worker(全部の機体で同じに保つ約束を、機体ごとに確かめる)。"""
+    return _worker_on(rendered, str(request.param))
+
+
+def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest]) -> None:
+    """worker は会社でない 7 つの機体にちょうど 1 つずつ。名は doeff-worker-<Node の名> で、selector は Node の名で互いの Pod を選ばない。"""
+    workers = _deployments(rendered, "worker")
+    assert sorted(_node(doc) or "" for doc in workers) == sorted(NODES)
+    for doc in workers:
+        node = _node(doc)
+        assert _mapping(doc["metadata"], "metadata")["name"] == f"doeff-worker-{node}"
+        spec = _mapping(doc["spec"], "spec")
+        assert spec["replicas"] == 1
+        assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
+        selector = _mapping(_mapping(spec["selector"], "selector")["matchLabels"], "matchLabels")
+        assert selector.get("doeff.dev/node") == node
 
 
 def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Manifest) -> None:
@@ -148,37 +200,37 @@ def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Mani
     assert resources["requests"] == {"cpu": "4", "memory": "8Gi"}
 
 
-def test_worker_names_itself_after_its_node(zeus_worker: Manifest) -> None:
+def test_worker_names_itself_after_its_node(worker: Manifest) -> None:
     """worker の名と NODE_NAME は k8s の Node の名(fieldRef spec.nodeName)。能力は host-<Node の名> と host-systemd-readable を含む。"""
-    assert _env_value(zeus_worker, "WORKER_NAME")["valueFrom"] == NODE_NAME_FIELD
-    assert _env_value(zeus_worker, "NODE_NAME")["valueFrom"] == NODE_NAME_FIELD
-    names = [entry["name"] for entry in _env(zeus_worker)]
+    assert _env_value(worker, "WORKER_NAME")["valueFrom"] == NODE_NAME_FIELD
+    assert _env_value(worker, "NODE_NAME")["valueFrom"] == NODE_NAME_FIELD
+    names = [entry["name"] for entry in _env(worker)]
     # k8s は $(名) を、前の行で定義した env だけから展開する — NODE_NAME は WORKER_PROVIDES より前に要る。
     assert names.index("NODE_NAME") < names.index("WORKER_PROVIDES")
-    provides = str(_env_value(zeus_worker, "WORKER_PROVIDES")["value"]).split(",")
+    provides = str(_env_value(worker, "WORKER_PROVIDES")["value"]).split(",")
     assert "host-$(NODE_NAME)" in provides
     assert "host-systemd-readable" in provides
 
 
-def test_worker_reads_host_systemd_units_read_only(zeus_worker: Manifest) -> None:
+def test_worker_reads_host_systemd_units_read_only(worker: Manifest) -> None:
     """機体の /etc/systemd/system を読み取り専用で /host/etc/systemd/system に置き、その path を env で渡す。作業の root は /work。"""
-    mount = _mount_at(zeus_worker, HOST_SYSTEMD_ROOT)
+    mount = _mount_at(worker, HOST_SYSTEMD_ROOT)
     assert mount.get("readOnly") is True
-    volume = _volume(zeus_worker, str(mount["name"]))
+    volume = _volume(worker, str(mount["name"]))
     assert _mapping(volume["hostPath"], "hostPath")["path"] == "/etc/systemd/system"
-    assert _env_value(zeus_worker, "WORKER_HOST_SYSTEMD_ROOT")["value"] == HOST_SYSTEMD_ROOT
-    assert _env_value(zeus_worker, "WORK_DIR")["value"] == "/work"
+    assert _env_value(worker, "WORKER_HOST_SYSTEMD_ROOT")["value"] == HOST_SYSTEMD_ROOT
+    assert _env_value(worker, "WORK_DIR")["value"] == "/work"
 
 
-def test_worker_passes_machine_facts_to_job_children(zeus_worker: Manifest) -> None:
+def test_worker_passes_machine_facts_to_job_children(worker: Manifest) -> None:
     """機体の事実の 3 つ(Node の名・systemd の root・作業の root)は job の子の環境へ渡る(子は worker の env を許可表でしか継がない)。"""
-    passed = str(_env_value(zeus_worker, "WORKER_PASS_ENV")["value"]).split(",")
+    passed = str(_env_value(worker, "WORKER_PASS_ENV")["value"]).split(",")
     for name in ("NODE_NAME", "WORKER_HOST_SYSTEMD_ROOT", "WORK_DIR"):
         assert name in passed
 
 
 def test_worker_runs_as_fixed_account_with_projected_token(
-    rendered: list[Manifest], zeus_worker: Manifest
+    rendered: list[Manifest], worker: Manifest
 ) -> None:
     """ServiceAccount は名を固定(doeff-worker)し、投影の token・cluster の CA・namespace を標準の path に置く。"""
     accounts = [
@@ -189,13 +241,13 @@ def test_worker_runs_as_fixed_account_with_projected_token(
     ]
     assert len(accounts) == 1, f"ServiceAccount {WORKER_ACCOUNT} がちょうど 1 つ無い"
     assert _mapping(accounts[0]["metadata"], "metadata")["namespace"] == NAMESPACE
-    pod = _pod_spec(zeus_worker)
+    pod = _pod_spec(worker)
     assert pod["serviceAccountName"] == WORKER_ACCOUNT
     assert pod["automountServiceAccountToken"] is False
-    mount = _mount_at(zeus_worker, TOKEN_DIR)
+    mount = _mount_at(worker, TOKEN_DIR)
     assert mount.get("readOnly") is True
     sources = _sequence(
-        _mapping(_volume(zeus_worker, str(mount["name"]))["projected"], "projected")["sources"],
+        _mapping(_volume(worker, str(mount["name"]))["projected"], "projected")["sources"],
         "sources",
     )
     kinds = {
@@ -230,6 +282,51 @@ def test_upper_system_values_come_from_fixed_named_configmaps(
     assert [
         _mapping(_mapping(s, "envFrom")["configMapRef"], "configMapRef")["name"] for s in env_from
     ] == ["coordinator-env"]
+
+
+@pytest.mark.parametrize("node", HOST_ONLY_NODES)
+def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manifest], node: str) -> None:
+    """zeus でない機体の worker は、機体の能力 2 つだけを名乗り(上に載る系の能力の残り WORKER_PROVIDES_EXTRA を足さない)、受ける数
+    (WORKER_CAPACITY 2・task に空けておく数 WORKER_TASK_RESERVE 0)を env で決める(env は envFrom の worker-env の同じ名より優先する)。
+    上に載る系の準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける worker の準備で、空の機体では通らない。
+    反例: worker-env の能力の残りを名乗ると、その能力だけを要る上に載る系の job が memory 4GiB の機体へ置かれ得る。"""
+    host_only = _worker_on(rendered, node)
+    assert _env_value(host_only, "WORKER_PROVIDES")["value"] == HOST_ONLY_PROVIDES
+    assert _env_value(host_only, "WORKER_CAPACITY")["value"] == "2"
+    assert _env_value(host_only, "WORKER_TASK_RESERVE")["value"] == "0"
+    mounts = [
+        _mapping(mount, "volumeMount")["mountPath"]
+        for mount in _sequence(_container(host_only).get("volumeMounts", []), "volumeMounts")
+    ]
+    assert PREPARE_DIR not in mounts
+    referenced = {
+        str(_mapping(_mapping(volume, "volume")["configMap"], "configMap")["name"])
+        for volume in _sequence(_pod_spec(host_only)["volumes"], "volumes")
+        if "configMap" in _mapping(volume, "volume")
+    }
+    assert "worker-prepare" not in referenced
+    env_from = _sequence(_container(host_only)["envFrom"], "envFrom")
+    assert [
+        _mapping(_mapping(s, "envFrom")["configMapRef"], "configMapRef")["name"] for s in env_from
+    ] == ["worker-env"]
+
+
+@pytest.mark.parametrize("node", HOST_ONLY_NODES)
+def test_host_only_worker_resources_fit_its_node(rendered: list[Manifest], node: str) -> None:
+    """zeus でない機体の worker の資源は、機体の大きさに合わせた値(HOST_ONLY_RESOURCES)。"""
+    resources = _mapping(_container(_worker_on(rendered, node))["resources"], "resources")
+    assert resources["requests"] == HOST_ONLY_RESOURCES[node].requests
+    assert resources["limits"] == HOST_ONLY_RESOURCES[node].limits
+
+
+def test_zeus_worker_keeps_upper_system_capabilities(zeus_worker: Manifest) -> None:
+    """zeus の worker は今のまま: 能力の残り(WORKER_PROVIDES_EXTRA)を足し、受ける数は worker-env から受ける(env で決めない)。"""
+    provides = str(_env_value(zeus_worker, "WORKER_PROVIDES")["value"]).split(",")
+    assert provides[-1] == "$(WORKER_PROVIDES_EXTRA)"
+    names = [entry["name"] for entry in _env(zeus_worker)]
+    assert "WORKER_CAPACITY" not in names
+    assert "WORKER_TASK_RESERVE" not in names
+    assert _mount_at(zeus_worker, PREPARE_DIR).get("readOnly") is True
 
 
 def test_coordinator_is_one_deployment_on_atlas(rendered: list[Manifest]) -> None:
