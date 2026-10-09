@@ -3,7 +3,8 @@
 ;;; 判断 = admission.hy・綴り = wire.hy・待ち受けの形 = http_server.hy)。
 ;;;
 ;;; 割り方(#1280 — 呼び手の系が自分の process の外側〔scheduler・時計・止めの合図〕の下へ、土台の口だけを差せるように):
-;;;   records-settings       設定の読み: env と Secret の file を effect(ReadEnvironment・ReadText)で読み、設定の値 RecordsSettings にする
+;;;   records-settings       設定の読み: 呼び手が渡す DSN の Program と env(ReadEnvironment)から、設定の値 RecordsSettings にする
+;;;   pg-url-file-dsn        単独の入口の DSN の得方: env RECORDS_PG_URL_FILE の path の file を ReadText で読み、呼び手の dsn-of で DSN にする
 ;;;   records-serving        本体の設定: 表の宣言 schema と設定の値と置き場の選び(StoreChoice — PostgreSQL = PG-STORE・memory =
 ;;;                          doeff_records.memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
 ;;;   records-process        本体の組み立て — 土台 foundation を引数で受け、serve-records を土台の下で走らせる(#834 の形・会話の記録の
@@ -14,10 +15,10 @@
 ;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
 ;;;   records-foundation     単独で起こす時の本番の土台の全部 = 外側(scheduler・Await の橋・session の値の置き場・async-time-handler
 ;;;                          〔scheduler を塞がない時計・#880 A1〕・止めの合図 os-signal-stop-handler)+ records-connected
-;;;   serve-records-service  単独で起こす入口: records-settings → records-serving → records-foundation の下で records-process。
+;;;   serve-records-service  単独で起こす入口: records-settings(DSN は pg-url-file-dsn)→ records-serving → records-foundation の下で records-process。
 ;;;                          答え = process の終わりの code
 ;;;
-;;; 置き場の宣言(RecordsSchema)と接続 URL の file の読み方は呼び手の系が持つので、呼び手の系の入口がこの部品を呼ぶ:
+;;; 置き場の宣言(RecordsSchema)と接続 URL の file の綴りの読み方は呼び手の系が持つので、呼び手の系の入口がこの部品を呼ぶ:
 ;;;
 ;;;   (import myapp.tables [SCHEMA])
 ;;;   (defk dsn-of [text] {:pre [(: text str)] :post [(: % str)]} (.strip text))
@@ -27,13 +28,15 @@
 ;;; 自分の process の外側を持つ系は、records-settings と records-serving(置き場の選びを渡す)で値を作り、(records-process (fn [body] (<自分の外側>
 ;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・StopRequested の答え手が要る)。
 ;;;
+;;; DSN の得方は呼び手が決める: records-settings は DSN を返す Program(dsn-source)を受け、接続 URL がどこに在るか(file・cluster の Secret
+;;; など)を知らない。file から読む呼び手は (records-settings (pg-url-file-dsn dsn-of)) と書く(単独の入口 serve-records-service はこの形)。
 ;;; dsn-of = 接続 URL の file の中身 → PostgreSQL の DSN の Program(file の綴りは呼び手の系ごとに違う — 例: env の 1 行 KEY=URL)。
 ;;; env の読み(ReadEnvironment)と file の読み(ReadText)は呼び手が外側に置く答え手(doeff_core_effects の subprocess-handler・os-file-handler)が答える。
 ;;;
 ;;; 受け取る env(宣言はここ 1 点・既定の宿の literal を持たない)。名は RECORDS_ で始める — DOEFF_ で始まる名は doeff-cluster が worker の
 ;;; 組む環境変数として予約し、job の宣言の :environ に置けない(doeff_cluster/runtime_env_model.hy の RESERVED-ENV-PREFIXES)ので、この service を
 ;;; doeff-cluster の job として動かせるよう、以前の DOEFF_RECORDS_* から改めた(2026-10-01)。
-;;;   RECORDS_PG_URL_FILE            PostgreSQL の接続 URL の file(必須・Secret の mount)
+;;;   RECORDS_PG_URL_FILE            PostgreSQL の接続 URL の file(pg-url-file-dsn が読む — DSN を file から得る呼び手だけ必須・Secret の mount)
 ;;;   RECORDS_PREFIX                 表の名の接頭辞(既定 records_ — 同じ database の別の置き場の表と混ざらない)
 ;;;   RECORDS_HOST / _PORT           HTTP の口(既定 0.0.0.0 / 8875)
 ;;;   RECORDS_POOL_SIZE              要求に同時に貸す接続の上限(既定 8 — 手入れの係の 1 本を足した数を開く)
@@ -204,12 +207,21 @@
   answer)
 
 
-(defk records-settings [dsn-of]
-  {:pre [(: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % RecordsSettings)] :tags {:context "records" :role "entry"}}
-  "env と Secret の file を読み、設定の値を作るため(頭の註の env の一覧 — 必須が欠ければ起動を止める)。dsn-of = 接続 URL の file の中身 →
-   DSN の Program。読みは ReadEnvironment・ReadText(呼び手の外側の答え手が答える)。"
+(defk pg-url-file-dsn [dsn-of]
+  {:pre [(: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % str)] :tags {:context "records" :role "entry"}}
+  "DSN を接続 URL の file から得るため(頭の註の「DSN の得方」— 単独の入口と、file を mount する呼び手の形): env RECORDS_PG_URL_FILE の path の
+   file を ReadText で読み(env が無い・file が読めなければ起動を止める)、dsn-of(file の中身 → DSN の Program)で DSN にする。"
   (<- url-text str (read-secret (! (required-env ENV-PG-URL-FILE))))
   (<- dsn str (dsn-of url-text))
+  dsn)
+
+
+(defk records-settings [dsn-source]
+  {:pre [(: dsn-source (| Program EffectBase))] :post [(: % RecordsSettings)] :tags {:context "records" :role "entry"}}
+  "呼び手の DSN の Program と env を読み、設定の値を作るため(頭の註の env の一覧 — 必須が欠ければ起動を止める)。dsn-source = DSN を返す
+   Program(接続 URL がどこに在るかは呼び手が決める — file から読む呼び手は pg-url-file-dsn)。env の読みは ReadEnvironment(呼び手の外側の
+   答え手が答える)。"
+  (<- dsn str dsn-source)
   (<- prefix str (env-text ENV-PREFIX DEFAULT-PREFIX))
   (<- host str (origin-host))
   (<- size float (env-number ENV-POOL-SIZE (float DEFAULT-POOL-SIZE)))
@@ -292,7 +304,7 @@
   "記録の service を単独で起こすため: env を読んで設定の値を作り(records-settings)、本体の設定(records-serving)を単独の本番の土台
    (records-foundation — 接続と pool は土台の口が開いて閉じる)の下で records-process に撃つ。dsn-of = 接続 URL の file の中身 → DSN の
    Program。答え = process の終わりの code(用意の失敗は例外のまま上げる)。"
-  (<- settings RecordsSettings (records-settings dsn-of))
+  (<- settings RecordsSettings (records-settings (pg-url-file-dsn dsn-of)))
   (<- serving RecordsServing (records-serving schema settings PG-STORE))
   (<- code int (records-process (fn [body] (records-foundation settings body)) serving))
   (print "記録の service: 止まった" :file sys.stderr :flush True)

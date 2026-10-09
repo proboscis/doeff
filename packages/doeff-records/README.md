@@ -215,7 +215,10 @@ Program で、答え = process の終わりの code。本番の土台(`records-f
 自分の process の外側(scheduler・`await-handler`・`state`・時計・止めの合図 `StopRequested` の答え手)を持つ系は、単独の入口を使わずに
 割った口を組む(#1280):
 
-- `records-settings dsn-of` — env と file を読んで設定の値 `RecordsSettings`(DSN・接頭辞・機体の名・接続の数・宛先・手入れ)を作る
+- `records-settings dsn-source` — DSN を返す Program `dsn-source` と env から設定の値 `RecordsSettings`(DSN・接頭辞・機体の名・接続の数・
+  宛先・手入れ)を作る。接続 URL がどこに在るか(file・cluster の Secret など)は呼び手が決め、`records-settings` は知らない
+- `pg-url-file-dsn dsn-of` — DSN を接続 URL の file から得る `dsn-source`(env `RECORDS_PG_URL_FILE` の path の file を `ReadText` で読み、
+  `dsn-of` で DSN にする)。単独の入口 `serve-records-service` は `(records-settings (pg-url-file-dsn dsn-of))` を使う
 - `records-serving schema settings choice` — 本体の設定 `RecordsServing` を作る。`choice` は置き場の選び `StoreChoice`(`doeff_records.store_choice` — 表の用意の作り手と /readyz の問い)で、PostgreSQL は `doeff_records.main` の `PG-STORE`、memory は `doeff_records.memory` の `memory-store-choice`
 - `records-connected settings body` — 土台の口(待ち受け・名乗りと用意の告知の印字・PostgreSQL の答え手。接続と pool を開き、終われば閉じる)。
   外側は持たない。用意の告知(`RecordsPrepared`)に別の答えを持つ使い手は、`body` を自分の答え手で包んで渡す(印字より内側が先に答える)

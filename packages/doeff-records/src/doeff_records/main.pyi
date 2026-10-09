@@ -97,7 +97,10 @@ def records_connected[T](settings: RecordsSettings, body: Program[T, object] | E
 def records_foundation(settings: RecordsSettings, body: Program | EffectBase) -> _Program[int, object]:
     ...
 
-def records_settings(dsn_of: Callable[[str], Program[str, object]]) -> _Program[RecordsSettings, object]:
+def pg_url_file_dsn(dsn_of: Callable[[str], Program[str, object]]) -> _Program[str, object]:
+    ...
+
+def records_settings(dsn_source: Program | EffectBase) -> _Program[RecordsSettings, object]:
     ...
 
 def store_reachable() -> _Program[bool, object]:
