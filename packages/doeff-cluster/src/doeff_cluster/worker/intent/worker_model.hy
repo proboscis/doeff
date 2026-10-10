@@ -227,7 +227,8 @@
 (defrecord WarmChildView
   "root ごとの待ちの子 1 つの観測。key = root のキー(env-<キー>)・pid = 待ちの子の process・started-ms = 起こした刻・mark = 準備完了の印
    (まだ書いていなければ None)・exit-code = 終わりを観測した code(走っていれば None)・ended-ms = 終わりを観測した刻・detail = 終わりの理由
-   (log の最後の 1 行か、worker が止めた訳)・stop = worker が止め始めた後の進み(止めていなければ None)。"
+   (log の最後の 1 行か、worker が止めた訳)・stop = worker が止め始めた後の進み(止めていなければ None)・refusals = この子を起こす前に、
+   同じ root の待ちの子が準備完了の印を書く前に続けて終わった(起動を断った)回数(warm_rules の refusals-after が数える)。"
   (#^ str key)
   (#^ int pid)
   (#^ int started-ms)
@@ -235,7 +236,8 @@
   (setv #^ (| int None) exit-code None)
   (setv #^ (| int None) ended-ms None)
   (setv #^ str detail "")
-  (setv #^ (| StopProgress None) stop None))
+  (setv #^ (| StopProgress None) stop None)
+  (setv #^ int refusals 0))
 
 
 (defclass Outcome [Enum]
@@ -289,6 +291,10 @@
   ;; R 未満なら今の process も退かせて新を並べ、R に達していればいちばん古く退いた process を止めてから退かせる(同時に動くのは
   ;; R + 1 まで — 条 C14)。退いた process が寿命の上限(JobSpec.retired-ms)まで残る job で、宣言し直しが重なると並ぶ数を抑える。
   (setv #^ int retired-limit 3)
+  ;; 待ちの子が準備完了の印を書く前に終わる(起動を断る)事が同じ root で続いた時に、起こし直しを止めて、その root から分かれる task を
+  ;; env-failed で終える回数(正の整数)。断りが決定的(import の失敗など)なら起こし直しても同じで、上限が無いと task は PREPARING のまま
+  ;; worker の枠を取り続けた(2026-10-10 に 1,092 回・10 時間)。
+  (setv #^ int warm-refusal-limit 3)
 
   (defn #^ None __post-init__ [self]
     ;; 焼く道具の並べる数が正の整数である事を、方策を作る時に確かめるため(0 以下は道具が受けない — 準備が使い方の誤りで落ち続ける)。
@@ -296,7 +302,10 @@
       (raise (ValueError (.format "compile-jobs-while-replacing は 1 以上: {}" self.compile-jobs-while-replacing))))
     ;; 退いた process の上限が正の整数である事(0 以下では今の process を退かせられず、入れ替えが進まない)。
     (when (< self.retired-limit 1)
-      (raise (ValueError (.format "retired-limit は 1 以上: {}" self.retired-limit))))))
+      (raise (ValueError (.format "retired-limit は 1 以上: {}" self.retired-limit))))
+    ;; 起動の断りの上限が正の整数である事(0 以下では待ちの子を 1 度も起こさずに task を終えてしまう)。
+    (when (< self.warm-refusal-limit 1)
+      (raise (ValueError (.format "warm-refusal-limit は 1 以上: {}" self.warm-refusal-limit))))))
 
 
 (defclass [(dataclass :frozen True)] JobStatus []

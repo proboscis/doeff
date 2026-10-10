@@ -33,7 +33,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
-  warm-launch])
+  warm-launch warm-child-refused warm-refusal-failure])
 
 ;; 自己停止(2026-09-25): coordinator との連絡が fence(ClusterTiming.fence-ms)を越えて途絶えた worker は、自分の job を止めてきた
 ;; (coordinator は 45 秒で他へ移すので、同じ job が 2 つ動かないように)。ただし書き手(入れ替え handoff を宣言した job)は、旧と新が
@@ -397,6 +397,9 @@
         (is view.stop None) #((StopWarmChild key StopStage.TERM "root の待ちの子が要らなくなった"))
         True (! (warm-stop-step now view policy)))
     (is view None) #((StartWarmChild key launch))
+    ;; 起動の断りが上限に達した待ちの子は起こし直さない(分かれる task は phase-of が env-failed で終える)。
+    ;; 観測は残し、task が終わって root が要らなくなった時に上の枝が外す(外すと数えも 0 に戻る)。
+    (warm-child-refused view policy) #()
     ;; 終わった待ちの子は、準備の失敗と同じ間(code-retry-ms)を置いてから起こし直す(落ちる入口を毎拍起こさない)。
     (is-not view.exit-code None)
       (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key launch)) #())
@@ -628,9 +631,21 @@
           (is-not (probe-failure world want) None) JobPhase.PROBE-FAILED
           (is-not (probe-in-flight world want) None) JobPhase.PROBING
           (in-backoff now record policy) JobPhase.BACKOFF
+          ;; 待ちの子が起動の断りの上限に達した task は、準備の失敗として終える。
+          (and (forks-from-warm-child want) (warm-child-refused (warm-child-of world (warm-key-of want)) policy)) JobPhase.ENV-FAILED
           ;; 待ちの子から分かれる task は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は状態の行の文 — #3646)。
           (and (forks-from-warm-child want) (not (warm-child-ready (warm-child-of world (warm-key-of want))))) JobPhase.PREPARING
           True JobPhase.STARTING))))
+
+(defn #^ (| WarmChildView None) refused-warm-child [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
+                                                   #^ JobRecord record #^ WorkerPolicy policy]
+  "起動の断りの上限に達した待ちの子に結ばれた、まだ起きていない task の、その待ちの子の観測(状態の行の理由と準備の失敗の材料)。
+   当たらなければ None。"
+  (if (or (is want None) (is-not process None) (not (forks-from-warm-child want)) (is-not record.last-outcome None))
+      None
+      (do
+        (setv view (warm-child-of world (warm-key-of want)))
+        (if (warm-child-refused view policy) view None))))
 
 (defn #^ (| str None) warm-wait-detail [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
                                         #^ JobRecord record]
@@ -668,6 +683,7 @@
     ;; recreate の job の旧い版を動かしたまま、新しい版を準備・検めしている(2026-10-08 — plan-job の止めの枝と同じ述語)。
     :setv replacing (run (recreating? want process record))
     :setv warm-wait (warm-wait-detail world want process record)
+    :setv refused (refused-warm-child world want process record policy)
     ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
     ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
     :setv stable (and (is-not process None) (is-not record.last-start-ms None)
@@ -695,6 +711,8 @@
         ;; 入口の検めの間(撃ち直しの間も直前の失敗の理由を出す — 2026-09-27)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probing None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— {}" (probing-detail probing))
         (is-not probing None) (probing-detail probing)
+        ;; 待ちの子が起動の断りの上限に達した task。
+        (is-not refused None) (.format "待ちの子が {} 回続けて起動を断った: {}" (+ refused.refusals 1) refused.detail)
         ;; 待ちの子の準備を待っている task(#3646)。
         (is-not warm-wait None) warm-wait
         ;; 入れ替えの途中(新のコードの準備・新の Ready 待ち)は、旧が動いていることを示す。
@@ -715,6 +733,9 @@
       :placement (if (is process None) None process.spec.placement)
       :retired-from (if (is process None) None process.retired-from)
       ;; 実行環境の root の準備の失敗(動いている process が無い時だけ — 動いていれば準備は済んでいる)。
-      :failure (if (and (is process None) (is-not code None) (= code.state CodeState.FAILED)) code.failure None)
+      ;; 待ちの子が起動の断りの上限に達した task は、その断りを準備の失敗として運ぶ(coordinator がやり直さずに終える)。
+      :failure (cond (and (is process None) (is-not code None) (= code.state CodeState.FAILED)) code.failure
+                     (is-not refused None) (warm-refusal-failure refused)
+                     True None)
       ;; 宣言の spec の入口の検めの姿(走っている・待っている・失敗した間 — 入れ替えで旧が動いている行も)。
       :probe probing))))

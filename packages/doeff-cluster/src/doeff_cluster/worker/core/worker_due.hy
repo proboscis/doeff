@@ -31,6 +31,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState ProbeState StopStage Outcome WorldView WorkerPolicy WakeSet])
 (import doeff_cluster.worker.core.policy [backoff-ms])
 (import doeff_cluster.worker.core.env_upkeep [RootsTally PrepareLimits SWEEP-EVERY-MS])
+(import doeff_cluster.worker.core.warm_rules [warm-child-refused])
 
 
 (defk due-after [now instants]
@@ -58,7 +59,9 @@
   (val warm-stops (tuple (gfor view world.warm-children
                                :if (and (is-not view.stop None) (= view.stop.stage StopStage.TERM))
                                (+ view.stop.signalled-ms policy.stop-grace-ms))))
-  (val warm-restarts (tuple (gfor view world.warm-children :if (is-not view.exit-code None) (+ (or view.ended-ms 0) policy.code-retry-ms))))
+  ;; 起動の断りの上限に達した待ちの子は起こし直さないので、起こし直しの刻で起きない。
+  (val warm-restarts (tuple (gfor view world.warm-children :if (and (is-not view.exit-code None) (not (warm-child-refused view policy)))
+                                  (+ (or view.ended-ms 0) policy.code-retry-ms))))
   (<- due (| DueAt DueNever) (due-after now (+ codes probes backoffs stops stables warm-stops warm-restarts)))
   due)
 

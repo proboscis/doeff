@@ -10,9 +10,9 @@
 (import json)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
-(import doeff_cluster.worker.intent.worker_model [WorldView WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch])
+(import doeff_cluster.worker.intent.worker_model [WorldView WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch WorkerPolicy])
 (import doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
 
@@ -41,6 +41,31 @@
   "分けてよい待ちの子か: 走っていて(終わりを観測していない・止め始めていない)、準備完了の印が分かれる前の形。"
   (and (is-not view None) (is view.exit-code None) (is view.stop None)
        (is-not view.mark None) (warm-mark-clean view.mark)))
+
+
+(defn #^ bool ended-before-ready [#^ WarmChildView view]  ; defk にできない: 純粋な判断の refusals-after・warm-child-refused(Program の外の関数)が呼ぶ
+  "待ちの子が起動を断ったか: worker が止めていないのに、分かれる前の形の準備完了の印を書く前に終わった(import の失敗など)。"
+  (and (is-not view.exit-code None) (is view.stop None)
+       (not (and (is-not view.mark None) (warm-mark-clean view.mark)))))
+
+
+(defn #^ int refusals-after [#^ (| WarmChildView None) previous]  ; defk にできない: 待ちの子の宿(warm_host・sim の宿)の StartWarmChild の答え手が呼ぶ
+  "root の待ちの子を起こし直す時に、新しい観測が持つ「続けて起動を断った回数」を数えるため(数えの定義点はここ 1 つ — 本番の宿も
+   sim の宿も呼ぶ): 前の子が起動を断っていれば 1 つ増やし、準備済みになった子・worker が止めた子・初めての子の後は 0。"
+  (if (and (is-not previous None) (ended-before-ready previous)) (+ previous.refusals 1) 0))
+
+
+(defn #^ bool warm-child-refused [#^ (| WarmChildView None) view #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の warm-child-step・phase-of が呼ぶ
+  "待ちの子が起動の断りの上限に達したか: 今の子も起動を断り、続けた回数が WorkerPolicy.warm-refusal-limit に届いた。届いたら起こし直さず、
+   その root から分かれる task を env-failed で終える(断りが決定的なら起こし直しても同じで、上限が無いと task は PREPARING のまま
+   worker の枠を取り続けた — 2026-10-10)。"
+  (and (is-not view None) (ended-before-ready view) (>= (+ view.refusals 1) policy.warm-refusal-limit)))
+
+
+(defn #^ EnvFailure warm-refusal-failure [#^ WarmChildView view]  ; defk にできない: 純粋な判断の statuses(Program の外の関数)が呼ぶ
+  "上限に達した待ちの子の root から分かれる task の準備の失敗(coordinator がやり直さずに env-failed で終える形 — 種類は「子の約束の版の外」
+   env-incompatible・訳は断りの 1 行)。"
+  (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :detail view.detail :retryable False))
 
 
 (defk mark-refusal [mark]

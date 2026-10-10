@@ -20,6 +20,7 @@
 (import doeff_cluster.worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild
                                                   ForgetWarmChild StopProgress StopStage WakeSet WorkerWakes])
 (import doeff_cluster.worker.core.worker_due [wakes-with])
+(import doeff_cluster.worker.core.warm_rules [refusals-after])
 (import doeff_cluster.shared.intent.due_model [DueNever])
 (import doeff_core_effects.process_effects [AwaitProcessExit])
 (import doeff_cluster.worker.protocol.observations [ObserveWarmChildren])
@@ -122,7 +123,8 @@
   (session var table {})
   (StartWarmChild [key launch]
     (<- started WarmChildView (start-warm-child settings key launch))
-    (:= table (| table {key started}))
+    ;; 同じ root の前の子が起動を断っていれば、続けた回数を引き継ぐ(数えの定義点は warm_rules の refusals-after)。
+    (:= table (| table {key (replace started :refusals (refusals-after (.get table key)))}))
     (resume None))
   (StopWarmChild [key stage reason]
     ;; 待ちの子の group へだけ送る(分けた子 A は別の session — 走っている task に届かない・条 WC2)。止めた訳は観測の detail に残す。

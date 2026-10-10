@@ -221,6 +221,7 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
+(import doeff_cluster.worker.core.warm_rules [refusals-after])
 ;; worker の世代は入口の組み立て(doeff_cluster.worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster.worker.entry.main [worker-on])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
@@ -2074,7 +2075,11 @@
     (<- pid int (NextPid))
     (val started (WarmChildView :key key :pid pid :started-ms now :mark (WarmChildMark :threads 1 :vm-live #(0 0 0))))
     (<- (change-live-truth worker.name boot
-                           (fn [truth] (replace truth :warm-children (+ (tuple (gfor v truth.warm-children :if (!= v.key key) v)) #(started))))))
+                           ;; 前の子の続けた起動の断りを引き継ぐ(本番の宿と同じ数え — warm_rules の refusals-after)。
+                           (fn [truth] (replace truth :warm-children
+                                                (+ (tuple (gfor v truth.warm-children :if (!= v.key key) v))
+                                                   #((replace started :refusals
+                                                              (refusals-after (next (gfor v truth.warm-children :if (= v.key key) v) None)))))))))
     (resume None))
   (StopWarmChild [key stage reason]
     (<- now int (now-epoch-ms))

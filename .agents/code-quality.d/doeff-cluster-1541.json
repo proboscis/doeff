@@ -817,7 +817,8 @@
         "doeff-cluster-retirement-model",
         "doeff-cluster-due-model",
         "doeff-cluster-worker-due",
-        "doeff-cluster-due-policy"
+        "doeff-cluster-due-policy",
+        "doeff-cluster-worker-warm-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-local",

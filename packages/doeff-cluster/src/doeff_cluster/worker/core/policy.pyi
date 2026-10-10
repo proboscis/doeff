@@ -216,6 +216,9 @@ def held_records(records: dict, holds: tuple) -> _Program[dict, object]:
 def phase_of(now: int, want: JobSpec | None, process: ProcessView | None, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> JobPhase:
     ...
 
+def refused_warm_child(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord, policy: WorkerPolicy) -> WarmChildView | None:
+    ...
+
 def warm_wait_detail(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord) -> str | None:
     ...
 

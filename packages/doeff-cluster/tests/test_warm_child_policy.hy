@@ -214,7 +214,7 @@
   (assert (= (tuple (gfor action broken action.spec.name)) #("ta")) broken))
 
 
-;; --- 起動を断り続ける待ちの子(card acp:kanban-issue:ki-b35b1e11bc02)-------------------------------------------------
+;; --- 起動を断り続ける待ちの子-------------------------------------------------
 ;; 待ちの子が準備完了の印を書く前に終わる(起動の断り — 例 import の失敗)事が、同じ root で WorkerPolicy.warm-refusal-limit 回続いたら、
 ;; worker は待ちの子を起こし直さず、その root から分かれる task を env-failed(種類 env-incompatible・やり直さない・訳 = 断りの 1 行)で
 ;; 終える(coordinator の absorb-env-failure が task を終わりの phase にし、枠を返す)。失敗ケース: 上限が無いと、待ちの子は code-retry-ms
@@ -225,12 +225,12 @@
 
 (deftest test-refusals-count-up-across-restarts-and-reset-after-a-ready-child
   ;; 起こし直す時の観測の数え: 印を書く前に終わった子の後は 1 つ増え、準備済みになった子・worker が止めた子の後は 0 に戻る。
-  (<- first int (refusals-after None))
-  (<- once int (refusals-after (! (child KEY-A :mark None :exit-code 1 :ended-ms NOW :detail REFUSAL))))
-  (<- twice int (refusals-after (replace (! (child KEY-A :mark None :exit-code 1 :ended-ms NOW :detail REFUSAL)) :refusals 1)))
-  (<- after-ready int (refusals-after (replace (! (child KEY-A :exit-code 0 :ended-ms NOW)) :refusals 2)))
+  (val first (refusals-after None))
+  (val once (refusals-after (! (child KEY-A :mark None :exit-code 1 :ended-ms NOW :detail REFUSAL))))
+  (val twice (refusals-after (replace (! (child KEY-A :mark None :exit-code 1 :ended-ms NOW :detail REFUSAL)) :refusals 1)))
+  (val after-ready (refusals-after (replace (! (child KEY-A :exit-code 0 :ended-ms NOW)) :refusals 2)))
   (val stopped (StopProgress :requested-ms NOW :stage StopStage.TERM :signalled-ms NOW))
-  (<- after-stop int (refusals-after (replace (! (child KEY-A :mark None :exit-code -15 :ended-ms NOW :stop stopped)) :refusals 2)))
+  (val after-stop (refusals-after (replace (! (child KEY-A :mark None :exit-code -15 :ended-ms NOW :stop stopped)) :refusals 2)))
   (assert (= #(first once twice after-ready after-stop) #(0 1 2 0 0)) #(first once twice after-ready after-stop)))
 
 
