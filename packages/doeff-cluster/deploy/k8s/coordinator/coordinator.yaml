@@ -105,9 +105,10 @@ spec:
             - { name: WORK_DIR, value: /work }
             # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。coordinator と worker の
             # どちらを先に上げるかは変更ごとに決まる(../../../README.md「配備の順」)。
-            # e247ea66d = 走っている coordinator の版(2026-10-10 09:46 に上がった)と同じ。この宣言を当て始める時(持ち主の替え)に版を
-            # 下げない — worker の宣言(機体ごとの ../nodes/<Node の名>/version.yaml)と同じ版。
-            - { name: WORKER_DOEFF_COMMIT, value: e247ea66dc3dc807423460fa9bf7e52f79669090 }
+            # 44778ca69 = 退いた process の上限 R を宣言の readiness の retiredLimit で受け、返事の job に retiredLimit を載せる版(L1954・
+            # card ki-7b8636213610 — 退いた process を止めずに入れ替えを待つ)。worker の宣言(機体ごとの ../nodes/<Node の名>/version.yaml)
+            # の zeus と同じ版。前の版 e247ea66d は 44778ca69 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 44778ca69e9d101f757721c4b5d283c57f856d80 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
