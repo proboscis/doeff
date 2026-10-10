@@ -12,6 +12,8 @@
 #                               WORKER_PASS_ENV_EXTRA  job の子へ渡す残りの env の名(`,` で並べる)— 下の WORKER_PASS_ENV の後ろに付く
 #                             無いと $(名) が展開されずに残り、worker は能力の名か env の名の誤りを stderr に出して起動しない。
 #                             下の env と同じ名を置いても効かない(k8s は env を envFrom より優先する)。
+#                             WORKER_REPOS は /etc/worker-env の file でも受け(env WORKER_REPOS_FILE)、worker が準備の前ごとに読み直す
+#                             — この値だけは中身を変えると Pod を作り直さずに次の準備から効く。
 #   ConfigMap worker-prepare  起動の前に 1 度実行する script(キー prepare.sh・非 0 なら起動しない)。ConfigMap が無ければ実行しない。
 #   ConfigMap worker-shell    job の子が使う shell の script(/opt/worker-shell に置く)。無くても起動する。
 #   Secret worker-repos       WORKER_REPOS の deploy key と known_hosts(boot.sh が /etc/worker-repos から読む)。無くても起動する
@@ -92,6 +94,9 @@ spec:
             - name: WORKER_PASS_ENV
               value: "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
             - { name: WORKER_HOST_SYSTEMD_ROOT, value: /host/etc/systemd/system }
+            # 鍵の表(worker-env の WORKER_REPOS)を下の dir の mount の file でも受ける。kubelet が ConfigMap の更新を届けるので、worker は
+            # 準備の前ごとに表を組み直し、表に足した行を起動し直さずに次の準備から読む(boot.sh の ROLE=access・card ki-2de748a0eac5)。
+            - { name: WORKER_REPOS_FILE, value: /etc/worker-env/WORKER_REPOS }
             # 機体の dir(/work)を使う worker を 1 つに限る(Deployment の名が変わる入れ替えで、旧と新の Pod が同じ dir に重ならない)。
             - { name: WORKER_DIR_LOCK, value: "1" }
             - { name: DRAIN_DEADLINE, value: "90" }
@@ -109,6 +114,8 @@ spec:
             - { mountPath: /host/etc/systemd/system, name: host-systemd, readOnly: true }
             - { mountPath: /var/run/secrets/kubernetes.io/serviceaccount, name: account-token, readOnly: true }
             - { mountPath: /etc/worker-repos, name: repos, readOnly: true }
+            # subPath を使わない(subPath の mount には kubelet が更新を届けない)。
+            - { mountPath: /etc/worker-env, name: repo-table, readOnly: true }
             - { mountPath: /opt/worker-prepare, name: prepare, readOnly: true }
             - { mountPath: /opt/worker-shell, name: shell, readOnly: true }
           # 資源の上限と取り分は機体ごとの値 — 機体の dir が足す。
@@ -130,5 +137,7 @@ spec:
               - configMap: { name: kube-root-ca.crt, items: [{ key: ca.crt, path: ca.crt }] }
               - downwardAPI: { items: [{ path: namespace, fieldRef: { fieldPath: metadata.namespace } }] }
         - { name: repos, secret: { secretName: worker-repos, defaultMode: 0400, optional: true } }
+        - name: repo-table
+          configMap: { name: worker-env, optional: true, items: [{ key: WORKER_REPOS, path: WORKER_REPOS }] }
         - { name: prepare, configMap: { name: worker-prepare, defaultMode: 0555, optional: true } }
         - { name: shell, configMap: { name: worker-shell, defaultMode: 0555, optional: true } }
