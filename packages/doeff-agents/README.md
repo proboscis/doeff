@@ -343,13 +343,23 @@ Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
 the completed end lists the same refs in `input_refs`. `resume_from`, `model`,
 `effort`, `autocompact` (as `model_auto_compact_token_limit`), image
 attachments and `FollowUp(mode=INJECT)` (as `turn/steer`) are honoured. A named
-`new_context_id` (Codex makes thread ids itself), `turn_credential_ref`,
-`resume_snapshot`, `ExportContextEffect`, `mcp_tools` and `bare` are refused
-with `AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
+`new_context_id` (Codex makes thread ids itself), `resume_snapshot`,
+`ExportContextEffect`, `mcp_tools` and `bare` are refused with
+`AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
 cannot open a thread before the first input). Tool items are not mapped to
 events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
 over the fake and over the production handler with the stand-in app server
 (`packages/doeff-codex/tests/stub_cli/codex_app_server.py`).
+
+`turn_credential_ref` is redeemed with `RedeemTurnCredentialEffect` right
+before the process starts, as for Claude. A `CodexTurnCredential` (the lent
+account's `auth.json` document) goes into the session declaration, and
+`doeff-codex` runs that process with a `CODEX_HOME` of its own (the document as
+`auth.json`, mode 0600; `config.toml` and `sessions` linked to the configured
+`CODEX_HOME`), deleted when the process goes down. `HomeTurnCredential` keeps
+the configured home's account. `TurnCredentialUnavailable` — and a Claude-shaped
+`TurnCredential`, which Codex cannot use — refuse the launch with
+`TurnCredentialUnavailableError`.
 
 Related contracts —
 what the host owns and does not own, how exclusivity is decided, and why the

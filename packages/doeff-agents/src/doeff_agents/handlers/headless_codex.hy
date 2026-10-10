@@ -12,6 +12,11 @@
 ;;;   LaunchEffect.model・effort・autocompact → 会話の宣言 CodexSessionSpec の model・effort・auto-compact-token-limit
 ;;;                                    (AutocompactTokens = その token 数・AutocompactAuto = codex の既定)
 ;;;   LaunchEffect.session_env      → 家の env に重ねる(資格の env は持てない — claude の adapter と同じ検め)
+;;;   LaunchEffect.turn_credential_ref → 起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの CodexTurnCredential(借りた
+;;;                                    口座の auth.json の中身)を会話の宣言の家 CodexHome.auth-json に置く — 層 2 がその process だけの
+;;;                                    CODEX_HOME に auth.json を置き、process が降りたら消す(card acp:kanban-issue:ki-0b244c011ca3)。
+;;;                                    HomeTurnCredential = 家の資格のまま・TurnCredentialUnavailable と codex の形でない資格(claude の
+;;;                                    TurnCredential)= TurnCredentialUnavailableError で起こさない
 ;;;   attachments(起動・追送)       → 入力 CodexInput の images(codex は data URL の image の入力で受ける)
 ;;;   SendEffect / FollowUpEffect(NEXT_TURN)→ ターンが走っていなければ CodexStartTurn(ResumeThread)、走っていれば待たせて終わりの後に始める
 ;;;   FollowUpEffect(INJECT)        → CodexSteerTurn(走っているターンに足す — codex は次の区切りで読む)
@@ -31,8 +36,8 @@
 ;;;     model(codex の usage の行は model を名乗らない)、窓は codex が名乗った modelContextWindow。
 ;;;
 ;;; 断る物(AgentCapabilityUnsupportedError — 黙って捨てない): new_context_id の名指し(codex 0.162.1 の thread/start に id の欄が無く、
-;;; 呼び手の id で thread を始められない)・turn_credential_ref(ターンの資格は card acp:kanban-issue:ki-0b244c011ca3)・resume_snapshot と
-;;; ExportContextEffect(codex の会話の写しの口が無い)・mcp_tools・bare・CaptureEffect・AttachAgentSessionEffect(画面が無い)。
+;;; 呼び手の id で thread を始められない)・resume_snapshot と ExportContextEffect(codex の会話の写しの口が無い)・mcp_tools・bare・
+;;; CaptureEffect・AttachAgentSessionEffect(画面が無い)。
 ;;; この handler が起こしていない session の effect と、CODEX 以外の LaunchEffect は外側の handler へ回す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "headless-codex-adapter" :role "foundation"})
@@ -49,7 +54,8 @@
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState ModelWindow AutocompactAuto AutocompactTokens
-  NamedContextId
+  NamedContextId RedeemTurnCredentialEffect TurnCredential CodexTurnCredential HomeTurnCredential TurnCredentialUnavailable
+  TurnCredentialUnavailableError
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentCallUsageEvent
   AgentInputFateEvent AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
@@ -137,16 +143,16 @@
   "効果に添えた画像(InputImage の列)を、codex のターンの入力の画像へ写すため(利用者が貼った画像を prompt の一部として渡す)。"
   (tuple (gfor image attachments (CodexImage :mime image.mime :data-base64 image.data-base64))))
 
-(defk spec-of [#^ HeadlessCodexConfig config #^ LaunchEffect request]
-  {:pre [(: config HeadlessCodexConfig) (: request LaunchEffect)] :post [(: % CodexSessionSpec)]
+(defk spec-of [#^ HeadlessCodexConfig config #^ LaunchEffect request auth-json]
+  {:pre [(: config HeadlessCodexConfig) (: request LaunchEffect) (: auth-json (| str None))] :post [(: % CodexSessionSpec)]
    :tags {:context "headless-adapter" :role "judgment"}}
-  "LaunchEffect を層 2 の会話の宣言にするため。process の env = 家の env + session_env(資格を持てない上書き)。許可の方針と sandbox は
-   config から。"
+  "LaunchEffect を層 2 の会話の宣言にするため。process の env = 家の env + session_env(資格を持てない上書き)。auth-json = 引き換えた
+   借りた口座の auth.json の中身(None = 家の資格のまま — 層 2 がその process だけの家に置く)。許可の方針と sandbox は config から。"
   (assert-session-env-is-non-auth-overlay request.session-env :context "LaunchEffect.session_env (headless-codex-handler)")
   (val env (| (dict config.home.env) (dict (or request.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-codex-handler の process の env")
   (<- limit (compact-limit-of request.autocompact))
-  (CodexSessionSpec :home (CodexHome :env env)
+  (CodexSessionSpec :home (CodexHome :env env :auth-json auth-json)
                     :cwd (str request.work-dir)
                     :model request.model
                     :approval-policy config.approval-policy
@@ -160,12 +166,29 @@
   (val asked #(#("LaunchEffect.mcp_tools" (bool request.mcp-tools))
                #("LaunchEffect.bare" request.bare)
                #("LaunchEffect.new_context_id" (isinstance request.new-context-id NamedContextId))
-               #("LaunchEffect.turn_credential_ref" (is-not request.turn-credential-ref None))
                #("LaunchEffect.resume_snapshot" (is-not request.resume-snapshot None))))
   (val refused (next (gfor #(capability present) asked :if present capability) None))
   (when (is-not refused None)
     (raise (AgentCapabilityUnsupportedError :capability refused :handler HANDLER-NAME)))
   None)
+
+(defk redeemed-auth-json [#^ LaunchEffect request]
+  {:pre [(: request LaunchEffect)] :post [(: % (| str None))] :tags {:context "headless-adapter" :role "judgment"}}
+  "LaunchEffect.turn_credential_ref を、codex の process に置く借りた口座(auth.json の中身)へ引き換えるため。参照が無い・答えが家の
+   資格なら None(家の資格で起こす)。引き換えられない・codex の形でない資格(claude の TurnCredential)は TurnCredentialUnavailableError
+   で断る(session を起こさない)。答えは外側(参照を出した環境)が返す — 資格は LaunchEffect に載らない。断りの文には答えの型の名だけを
+   書く(値は資格を運び得る)。"
+  (val ref request.turn-credential-ref)
+  (when (is ref None)
+    (return None))
+  (<- answer (RedeemTurnCredentialEffect :credential-ref ref))
+  (match answer
+    (CodexTurnCredential) answer.auth-json
+    (HomeTurnCredential) None
+    (TurnCredentialUnavailable :reason reason) (raise (TurnCredentialUnavailableError :credential-ref ref :reason reason))
+    (TurnCredential) (raise (TurnCredentialUnavailableError :credential-ref ref
+                                                            :reason "codex のターンに codex の形でない資格(TurnCredential)が答えられた"))
+    _ (raise (AgentError (.format "ターンの資格 {} の引き換えの答えが閉語彙の外: {}" ref (. (type answer) __name__))))))
 
 (defk added [left right]
   {:pre [(: left (| int None)) (: right (| int None))] :post [(: % (| int None))] :tags {:context "headless-adapter" :role "foundation"}}
@@ -446,7 +469,9 @@
   (when (in name state.sessions)
     (raise (SessionAlreadyExistsError (.format "Session {} already exists" name))))
   (<- (refuse-launch request))
-  (<- spec (spec-of config request))
+  ;; ターンの資格は起こす直前に引き換える(断りの検めを通った起動だけが資格を受ける)。
+  (<- auth-json (redeemed-auth-json request))
+  (<- spec (spec-of config request auth-json))
   (val session (CodexHeadlessSession name spec request.resume-from request.lifecycle))
   (when (is-not request.prompt None)
     (<- images (images-of request.attachments))

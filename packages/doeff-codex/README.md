@@ -41,6 +41,21 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `auto-compact-token-limit` | `thread/start`・`thread/resume` の `config` の `model_auto_compact_token_limit` | config を送らない |
 | `effort` | `turn/start` の `effort` | 送らない |
 
+借りた口座(`CodexHome.auth-json` — 貸し手が封じた auth.json の中身)を持つ宣言の process は、元の CODEX_HOME の auth.json を
+書き換えず、その process だけの家(資格の家 — `doeff_codex.credential_home`)で走る。codex は口座を `$CODEX_HOME/auth.json` から
+だけ読み、同じ機体で別の口座のターンが並んで走るため。
+
+| 家の中身 | 形 | 訳 |
+|---|---|---|
+| 家の dir | `<元の CODEX_HOME>/.credential-homes/<乱数>`・権限 0700 | 他の利用者から読めない |
+| `auth.json` | 借りた口座の中身・作る時から権限 0600 | codex が口座を読む唯一の file |
+| `config.toml` | 元の `config.toml` への link(元に在る時だけ) | 元の設定のまま走る |
+| `sessions` | 元の `sessions` への link | 会話の記録を元に書く — 家を消しても次の process が同じ thread を `thread/resume` で続けられる |
+
+家は process が降りた時(降ろす手順の最後と、process の終わりの callback の両方)に中身ごと消える。codex が家の中に作る状態の
+sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確かめた(家を消した後に別の家から同じ thread を続け、続きの呼びが前の
+ターンの発言と答えを運んだ)。`CodexHome` の env と auth-json は repr に出さない。
+
 ## 行の記録(`classify-line` の答え)
 
 | 記録 | 元の行 | 欄 |

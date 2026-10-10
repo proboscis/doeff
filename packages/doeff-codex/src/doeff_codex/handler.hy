@@ -25,6 +25,7 @@
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_codex.process [CodexProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
+(import doeff_codex.credential_home [open-credential-home close-credential-home])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
                              Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn
@@ -75,7 +76,8 @@
 
 (defclass SessionRuntime []
   "1 つの会話(thread)の状態(handler の中だけ)。thread-id は新しい会話の thread/start の答えまで None。generation = 今の process を
-   起こした回の番号(古い process の行と終わりを、今の process の物と取り違えないため)。answers = 要求の id → 答えの記録(要求ごとに
+   起こした回の番号(古い process の行と終わりを、今の process の物と取り違えないため)。credential-home = 今の process の資格の家
+   (借りた資格で起こした時だけ — 降ろしたら消す)。answers = 要求の id → 答えの記録(要求ごとに
    handler が待って読む — 読んだら消す)。outside = 走っているターンの外で読んだ記録(数えて見せるため・ターンの頁には載せない)。"
   (defn __init__ [self #^ CodexSessionSpec spec]
     (setv self.spec spec
@@ -90,7 +92,8 @@
           self.current-turn None
           self.closed False
           self.exit-code None
-          self.stderr-tail None)
+          self.stderr-tail None
+          self.credential-home None)
     (setv #^ (get dict #((| int str) object)) self.answers {})
     (setv #^ (get dict #(str TurnLog)) self.turns {})
     (setv #^ tuple self.outside #()))
@@ -180,9 +183,12 @@
   (.ring runtime.doorbell))
 
 
-(deff on-exit [#^ SessionRuntime runtime #^ int generation exit-code #^ str stderr-tail]  ; defk にできない: 読み手の thread が呼ぶ callback
-  {:pre [(: runtime SessionRuntime) (: generation int) (: exit-code (| int None)) (: stderr-tail str)] :post [(: % None)]}
-  "process の終わりを記し、終わりの行の無い走っているターンを BackendLost で閉じるため(今の process の終わりだけ)。"
+(deff on-exit [#^ SessionRuntime runtime #^ int generation home exit-code #^ str stderr-tail]  ; defk にできない: 読み手の thread が呼ぶ callback
+  {:pre [(: runtime SessionRuntime) (: generation int) (: home (| str None)) (: exit-code (| int None)) (: stderr-tail str)]
+   :post [(: % None)]}
+  "process の終わりを記し、終わりの行の無い走っているターンを BackendLost で閉じるため(今の process の終わりだけ)。その process の
+   資格の家(home — 借りた資格で起こした時だけ)は、世代によらず消す(家はその process だけの物)。"
+  (run (close-credential-home home))
   (with [runtime.lock]
     (when (= runtime.generation generation)
       (setv runtime.exit-code exit-code
@@ -277,12 +283,18 @@
 
 (defk retire [#^ SessionRuntime runtime]
   {:pre [(: runtime SessionRuntime)] :post [(: % bool)] :tags {:context "codex" :role "process"}}
-  "今の process を降ろし、降りるまで(上限まで)待つため。答え = 降りたか(process が無ければ真)。"
+  "今の process を降ろし、降りるまで(上限まで)待つため。降りたらその process の資格の家を消す(終わりの callback より先に消して、
+   降ろした後に家が残らない)。答え = 降りたか(process が無ければ真)。"
   (val process runtime.process)
-  (when (or (is process None) (not (.alive process))) (return True))
+  (when (or (is process None) (not (.alive process)))
+    (<- (close-credential-home runtime.credential-home))
+    (return True))
   (.retire process)
   (<- (wait-until runtime.doorbell (fn [] (process-down process)) RETIRE-WAIT-SECONDS))
-  (not (.alive process)))
+  (val down (not (.alive process)))
+  (when down
+    (<- (close-credential-home runtime.credential-home)))
+  down)
 
 
 (defk launch [#^ CodexHost host #^ SessionRuntime runtime #^ CodexSessionSpec spec origin]
@@ -290,7 +302,11 @@
    :post [(: % (| str ThreadUnknown LaunchFailed RequestRefused))]
    :tags {:context "codex" :role "process"}}
   "新しい process を起こし、初期化して thread を開くため(新しい会話は thread/start・続きは thread/resume)。答え = thread の id か失敗
-   (失敗した process は降ろす)。"
+   (失敗した process は降ろす)。宣言の家が借りた資格(auth-json)を持てば、その process だけの資格の家を env の CODEX_HOME の下に作って
+   CODEX_HOME をそこへ向け、process が降りたら消す(credential_home.hy)。"
+  (val base (.get spec.home.env "CODEX_HOME"))
+  (when (and (is-not spec.home.auth-json None) (not base))
+    (return (LaunchFailed :detail "借りた資格を置く元の CODEX_HOME が宣言の env に無い")))
   (<- argv (app-server-argv host.command))
   (with [runtime.lock]
     (setv runtime.generation (+ runtime.generation 1)
@@ -299,10 +315,23 @@
           runtime.exit-code None
           runtime.stderr-tail None)
     (val generation runtime.generation))
-  (val process (CodexProcess argv spec.cwd (dict spec.home.env)
-                             (fn [raw] (on-line runtime generation raw))
-                             (fn [code tail] (on-exit runtime generation code tail))
-                             (fn [] (.ring runtime.doorbell))))
+  (var home None)
+  (when (is-not spec.home.auth-json None)
+    (<- opened (open-credential-home base spec.home.auth-json))
+    (:= home opened))
+  (with [runtime.lock]
+    (setv runtime.credential-home home))
+  (val env (if (is home None) (dict spec.home.env) (| (dict spec.home.env) {"CODEX_HOME" home})))
+  (var process None)
+  (try
+    (:= process (CodexProcess argv spec.cwd env
+                              (fn [raw] (on-line runtime generation raw))
+                              (fn [code tail] (on-exit runtime generation home code tail))
+                              (fn [] (.ring runtime.doorbell))))
+    (except [OSError]
+      ;; 起こせなかった(実行ファイルが無いなど)— on-exit は呼ばれないので、作った家をここで消してから上げる。
+      (<- (close-credential-home home))
+      (raise)))
   (with [runtime.lock]
     (setv runtime.process process))
   (<- greeted (request runtime "initialize" (fn [request-id] (initialize-request request-id CLIENT-NAME CLIENT-VERSION))

@@ -6,17 +6,23 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex" :role "type"})
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass field])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.lines [CodexLine])
 
 
 (defrecord CodexHome
-  "codex の process の環境: env = 子の process の環境変数の全部(PATH・HOME・CODEX_HOME — handler は os.environ を読まない)。
+  "codex の process の環境: env = 子の process の環境変数の全部(PATH・HOME・CODEX_HOME — handler は os.environ を読まない)/
+   auth-json = 借りた codex の口座の auth.json の中身(貸し手が封じた文書の JSON の文字列 — refresh token は貸し手の印で本物ではない。
+   None = env の CODEX_HOME の家の資格のまま)。auth-json が在れば、handler はその資格で起こす process だけの家(資格の家 —
+   credential_home.hy)を env の CODEX_HOME の下に作り、process が降りたら家ごと消す。
    env が写像なのは、子の process に渡す環境変数の名 → 値そのものだから(欄の集合が決まった構造ではない — doeff-claude-code の
-   ClaudeHome.env と同じ)。"
-  {:tags {:context "codex" :role "type"}}
-  (#^ (get dict #(str str)) env))
+   ClaudeHome.env と同じ)。auth-json が文字列なのは、codex が読む file の中身を中を読まずに運ぶから。どちらも資格を持ちうるので
+   repr に出さない(例外・log に写らない)。"
+  {:tags {:context "codex" :role "type"}
+   :check [(or (is auth-json None) (bool (.strip auth-json)))]}
+  (setv #^ (get dict #(str str)) env (field :repr False))
+  (setv #^ (| str None) auth-json (field :default None :repr False)))
 
 (defrecord CodexSessionSpec
   "会話の宣言: home = 環境 / cwd = 作業の dir / model = model の名(None なら codex の既定)/ approval-policy・sandbox = 許可の方針と

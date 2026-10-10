@@ -10,6 +10,7 @@ Key design:
 - SessionHandle: immutable value-type identifier
 """
 
+import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -876,6 +877,42 @@ class TurnCredential:
 
 
 @dataclass(frozen=True)
+class CodexTurnCredential:
+    """A Codex account lent for this session's turns (card ki-0b244c011ca3): the
+    ``auth.json`` document the lender sealed for the borrower, as JSON text.
+
+    Like ``TurnCredential`` it is one answer of ``RedeemTurnCredentialEffect``
+    and never a field of a caller-visible effect. Codex reads its account only
+    from ``$CODEX_HOME/auth.json`` (it has no turn-auth env, and the provider
+    API key env stays forbidden), so a handler that can place it writes the
+    document as the ``auth.json`` of a home of the agent process's own and
+    deletes that home when the process goes down. The lender keeps the refresh
+    key: the document's refresh token is the lender's marker, never a real one.
+    The document is kept out of ``repr`` and out of every error message.
+
+    ``expires_at`` is when the lent access token may no longer be used (epoch
+    seconds), or ``None`` when the redeemer does not know.
+    """
+
+    auth_json: str = field(repr=False)
+    expires_at: float | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.auth_json, str) or not self.auth_json.strip():
+            raise ValueError("CodexTurnCredential.auth_json must be a non-empty string")
+        try:
+            document = json.loads(self.auth_json)
+        except ValueError:
+            raise ValueError("CodexTurnCredential.auth_json must be a JSON object") from None
+        if not isinstance(document, dict):
+            raise ValueError("CodexTurnCredential.auth_json must be a JSON object")
+        if self.expires_at is not None and (
+            isinstance(self.expires_at, bool) or not isinstance(self.expires_at, int | float)
+        ):
+            raise TypeError("CodexTurnCredential.expires_at must be epoch seconds or None")
+
+
+@dataclass(frozen=True)
 class HomeTurnCredential:
     """Answer of ``RedeemTurnCredentialEffect``: the reference is valid, and the
     credential lives in the agent's home — launch on the handler's own home
@@ -902,7 +939,7 @@ class RedeemTurnCredentialEffect(AgentEffectBase):
     caller's program never sees the token, and the token never appears in
     ``LaunchEffect``.
 
-    Yields: TurnCredential | HomeTurnCredential | TurnCredentialUnavailable
+    Yields: TurnCredential | CodexTurnCredential | HomeTurnCredential | TurnCredentialUnavailable
     """
 
     credential_ref: str

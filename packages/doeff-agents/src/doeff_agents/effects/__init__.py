@@ -104,6 +104,7 @@ from doeff_agents.effects.agent import StopSession as StopSession
 from doeff_agents.effects.agent import StopSessionEffect as StopSessionEffect
 from doeff_agents.effects.agent import TranscriptRef as TranscriptRef
 from doeff_agents.effects.agent import TurnCredential as TurnCredential
+from doeff_agents.effects.agent import CodexTurnCredential as CodexTurnCredential
 from doeff_agents.effects.agent import TurnCredentialUnavailable as TurnCredentialUnavailable
 from doeff_agents.effects.agent import (
     TurnCredentialUnavailableError as TurnCredentialUnavailableError,
