@@ -33,7 +33,23 @@
       (.format "readiness の retiredSeconds は正の数: {!r}" (get readiness "retiredSeconds"))
     (and (in "retiredSeconds" readiness) (!= update "handoff"))
       (.format "retiredSeconds は update = handoff の Service だけが持つ(いまの update = {!r})" update)
+    (and (in "retiredLimit" readiness) (not (positive-integer (get readiness "retiredLimit"))))
+      (.format "readiness の retiredLimit は正の整数: {!r}" (get readiness "retiredLimit"))
+    (and (in "retiredLimit" readiness) (!= update "handoff"))
+      (.format "retiredLimit は update = handoff の Service だけが持つ(いまの update = {!r})" update)
     True None))
+
+
+;; value は宣言の欄の値そのもの(整数かどうかを確かめる)。
+(defn #^ bool positive-integer [#^ object value]  ; defk にできない: 宣言の検め(module の読み込みの時と coordinator の純粋な判断)が呼ぶ
+  "JSON の正の整数か(bool は数に数えない)。"
+  (and (isinstance value int) (not (isinstance value bool)) (> value 0)))
+
+
+(defn #^ (| int None) retired-limit-of [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ
+  "宣言の readiness(None か検めを通った dict)→ 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め)。書かなければ None(worker の
+   既定 WorkerPolicy.retired-limit を使う)。"
+  (if (is readiness None) None (.get readiness "retiredLimit")))
 
 
 (defn #^ int handoff-timeout-ms [#^ (| dict None) readiness]  ; defk にできない: coordinator の純粋な判断(Program の外)が呼ぶ

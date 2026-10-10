@@ -62,6 +62,9 @@
      ;; 退いた process の寿命の上限を宣言した handoff の job だけ(#4072 の D-2): worker は新の Ready で退いた旧を止めず、旧が自分で
      ;; 終わるか、退いてからこの ms を越えた時に止める。欄を読まない古い worker は今どおり新の Ready で止める。
      (if (and spec.handoff (is-not spec.retired-ms None)) {"retiredMs" spec.retired-ms} {})
+     ;; 退いた process を同時に残す数の上限 R を宣言した handoff の job だけ(#4072 の D-3 の改め): worker は退いた process が R に達して
+     ;; いる間、今の process を退かせずに待つ。欄を読まない古い worker は既定の WorkerPolicy.retired-limit を使う。
+     (if (and spec.handoff (is-not spec.retired-limit None)) {"retiredLimit" spec.retired-limit} {})
      ;; 途絶しても動かし続けてよい印の在る job だけ(#2804 — cluster_policy.keep-marked): worker は coordinator に届かない間もこの job を
      ;; 止めない(長い方の柵 keep-fence-ms まで)。欄を読まない古い worker は今までどおり fence で止める — 旧い worker(e06b01411 の
      ;; handlers.declared-job-spec)は知っている鍵だけを .get で読むので、この欄は捨てられる。

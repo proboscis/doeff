@@ -343,15 +343,16 @@
   (assert (= over #()) #(over processes)))
 
 
-(deftest test-a-handoff-job-stops-the-oldest-retired-process-beyond-the-retired-limit
-  ;; 退いた process が上限 R に達している間の宣言し直しでは、いちばん古い退いた process を止め、それが終わってから今の process を退かせて
-  ;; 新を起こす(同時に動くのは R + 1 まで)。R = 1 の worker で、版 1(退いた)と版 2(今)が居る所へ版 3 を宣言する。
+(deftest test-a-handoff-job-waits-without-stopping-a-retired-process-at-the-retired-limit
+  ;; 失敗ケース(#4072 の D-3 の改め): 退いた process が上限 R に達している間の宣言し直しで、いちばん古い退いた process を止めて
+  ;; いた — その process が回している仕事が切れる(2026-10-10 15:01 UTC の本番で 2 本)。退いた process は
+  ;; 自分で終わるか寿命の上限まで止めず、今の process も退かせずに待つ(同時に動くのは R + 1 まで)。R = 1 の worker で、版 1(退いた・
+  ;; 寿命 600 秒)と版 2(今)が居る所へ版 3 を宣言する。
   (<- processes tuple (sim-cluster :notice-broker (MemoryBroker) :policy (WorkerPolicy :retired-limit 1) (lingering-handoff-beacons sim-foundation)
                                    (handed-off-twice (lingering-handoff-beacons-v2 sim-foundation) (lingering-handoff-beacons-v3 sim-foundation))))
   (val ordered (sorted processes :key (fn [p] p.started-ms)))
-  (assert (= (len ordered) 3) ordered)
-  (assert (is-not (. (get ordered 0) ended-ms) None) "いちばん古い退いた process(版 1)を止める")
-  (assert (all (gfor p (cut ordered 1 None) (is p.ended-ms None))) "版 2 は止めずに退かせ、版 3 と並ぶ")
+  (assert (= (len ordered) 2) #("版 3 は退いた process の空きを待ち、まだ起きない" ordered))
+  (assert (all (gfor p ordered (is p.ended-ms None))) #("退いた版 1 も今の版 2 も止めない" ordered))
   (<- over tuple (runs-within-their-limit processes #((RunLimit :job "beacon" :limit 2))))
   (assert (= over #()) #(over processes)))
 

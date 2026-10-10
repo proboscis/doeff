@@ -34,6 +34,10 @@
   ;; 新の世代が Ready と数えられた時に退いた旧を止める。値が在れば新の Ready で止めず、旧が自分で終わるか、退いてからこの長さを越えた時に
   ;; 止める(worker_policy.retired-actions)。比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ (| int None) retired-ms (field :default None :compare False))
+  ;; 退いた process を同時に残す数の上限 R(宣言の readiness の retiredLimit・handoff の job だけ)。None = worker の既定
+  ;; (WorkerPolicy.retired-limit)。R に達している間の宣言し直しは、退いた process を止めず今の process も退かせずに待つ
+  ;; (worker_policy.handoff-actions・#4072 の D-3 の改め)。比べない欄(値が変わっても process を起こし直さない)。
+  (setv #^ (| int None) retired-limit (field :default None :compare False))
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))
