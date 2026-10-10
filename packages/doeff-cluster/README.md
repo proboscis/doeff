@@ -464,12 +464,17 @@ Pod を作り直すのは、`deploy/k8s` の宣言(`WORKER_DOEFF_COMMIT` の doe
 | ConfigMap `coordinator-env` | coordinator の envFrom | `NOTICE_BROKER` | container が起動しない(CreateContainerConfigError) |
 | ConfigMap `worker-prepare` | `/opt/worker-prepare` | 起動の前に 1 度実行する script(キー `prepare.sh`・非 0 なら起動しない) | 実行せずに起動する |
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
-| ConfigMap `coord-wal-backup` | coordinator の init container | 記録(WAL)の控えを取る script(キー `backup.sh`) | 控えを飛ばして起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
 worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`deploy/k8s/workers/worker-cluster-admin.yaml`・
 利用者 1 人の cluster なので絞らない)— job の子は kubectl で cluster を扱え、上に載る系は job のための権限を与えなくてよい。
+
+coordinator の記録(WAL と snapshot)の控えは、上に載る系でなくこの package が持ちます(控えは記録を戻す元なので、上に載る系の
+有無で消えないように)。script は `deploy/k8s/coordinator/coord-wal-backup.sh` で、同じ dir の `kustomization.yaml` が ConfigMap
+`coord-wal-backup`(キー `backup.sh`・名に hash を付けない)に組み、coordinator の init container `wal-backup` が起動の前に 1 度
+実行します(直近 5 つを残す・取れない時は訳の 1 行を出して起動を通す)。確かめは `tests/test_coord_wal_backup.py`(script を sh で
+実際に走らせる)。
 
 env の値は宣言の `env` が `envFrom` より優先されるので、宣言に在る名を ConfigMap に置いても効きません。coordinator の ServiceAccount
 には能力を導くための nodes の list・watch を与えます(`deploy/k8s/coordinator/coordinator.yaml`)。Rollout が扱う Deployment の get・scale は、その
