@@ -1,0 +1,28 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-supplied-values"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-supplied-model",
+        "doeff-hy-frozen",
+        "doeff-hy-wire"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-supplied-values",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/supplied_values.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/supplied_values.hy"
+      ],
+      "responsibility": "job が宣言の :environ に書いた参照の綴りから、worker の身元で自区画の API server の ConfigMap・Secret を読み、値 1 つ(supplied-setting)か、作業の根の下に 0600 の file で書き出した dir(supplied-directory)を返す。機体の事実(worker-fact)を環境変数の名へ言い換える。doeff の汎用の effect(Ask・HttpRequest・ReadText・file・ReadEnvironment)だけを出し、実 I/O は外側の答え手。",
+      "typed": true
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-in-cluster-api"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-cluster-in-cluster-api",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/in_cluster_api.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/foundation/in_cluster_api.hy"
+      ],
+      "responsibility": "宛先が自区画の API server の HttpRequest だけを、k8s が Pod に置く区画の CA で検める client で答える答え手(ほかの宛先は外側へ流す・CA の file が無い worker では要求を出さずに断る)。",
+      "typed": true
+    }
+  ]
+}
