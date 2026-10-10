@@ -586,6 +586,22 @@ fn slow_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     path
 }
 
+/// CPU を使う遅い代役の linter — HEAD の木で repo 全体を実行された時だけ、secs 秒(wall)の間 CPU を回し続けてから(bash の組み込みだけの
+/// 空回り — 同じ process の CPU 秒が積もる)本物を実行する。上限は子の CPU 秒で測るので(card ki-79532edd43dd)、上限を越える形は眠る
+/// 代役でなくこの代役で作る。
+fn burning_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("burning-doeff-linter");
+    let script = format!(
+        "#!/bin/bash\nfor last in \"$@\"; do :; done\ncase \"$(pwd -P)\" in\n  */commit-hook-tree/*) if [ \"$last\" = . ]; then SECONDS=0; while [ $SECONDS -lt {} ]; do :; done; fi ;;\nesac\nexec '{}' \"$@\"\n",
+        secs,
+        env!("CARGO_BIN_EXE_doeff-linter")
+    );
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
 /// hook の前提を、子の linter と置き場の根と上限を差し替えて組む(本番の入口 main.rs と同じ組み方 — 根と設定の path は正規化)。
 fn options_with(root: &Path, linter: &Path, cache: &Path, timeout_s: u64) -> doeff_linter::commit_hook::CommitHookOptions {
     let root = root.canonicalize().unwrap();
@@ -639,16 +655,16 @@ fn a_declaration_change_names_an_unmeasured_head_tree_and_blocks_doeff167_from_t
     let dir = clause_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
-    let linter = slow_head_linter(side.path(), 5);
+    let linter = burning_head_linter(side.path(), 6);
     let cache = side.path().join("cache");
     write(root, "architecture.hy", &clause_architecture(&["Q1", "Q2"]));
     git(root, &["add", "architecture.hy"]);
     let new_hit = "repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF167::queue::Q2";
 
-    let cold = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 4));
+    let cold = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 2));
     assert_eq!(cold.code, 1, "{:?}", cold);
     assert_eq!(cold.lines.len(), 3, "{:?}", cold);
-    for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 3 個", "DOEFF167", "上限 4 秒で打ち切った", "commit を止める"] {
+    for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 3 個", "DOEFF167", "上限 2 秒で打ち切った", "commit を止める"] {
         assert!(cold.lines[0].contains(part), "{:?} が無い: {:?}", part, cold);
     }
     assert!(cold.lines[1].starts_with(RERUN_COMMAND) && cold.lines[2] == RERUN_GUIDE, "{:?}", cold);
@@ -677,10 +693,10 @@ fn a_cut_whole_repo_comparison_keeps_the_staged_hits_blocking() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
-    let linter = slow_head_linter(side.path(), 5);
+    let linter = burning_head_linter(side.path(), 6);
     write(root, "app/queue/tool.py", "from . import main\n");
     git(root, &["add", "app/queue/tool.py"]);
-    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 4));
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 2));
     assert_eq!(got.code, 1, "{:?}", got);
     assert!(got.lines.iter().any(|line| line.starts_with("stage した file の破れ: app/queue/tool.py:1: DOEFF016")), "{:?}", got);
     assert!(got.lines.iter().any(|line| line.contains("HEAD の木の repo 全体の比べを測れなかった") && line.contains("(DOEFF163)")), "{:?}", got);
@@ -696,10 +712,10 @@ fn a_cut_comparison_blocks_and_names_the_command_to_rerun_without_a_limit() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
-    let linter = slow_head_linter(side.path(), 5);
+    let linter = burning_head_linter(side.path(), 6);
     write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
     git(root, &["add", "architecture.hy"]);
-    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &root.join(".git").join("doeff-linter-cache"), 4));
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &root.join(".git").join("doeff-linter-cache"), 2));
     assert_ne!(got.code, 0, "{:?}", got);
     assert_eq!(got.code, 1, "{:?}", got);
     assert!(got.lines.iter().any(|line| line.contains("HEAD の木の repo 全体の比べを測れなかった") && line.contains("commit を止める")), "{:?}", got);

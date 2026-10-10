@@ -23,6 +23,9 @@
 //! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
 //!
 //! 子の linter は 1 回ごとに上限(既定 20 秒・0 は上限なし)を持ち、越えたら commit を止める(終了コード 1・agora-redesign #3834・
+//! 上限は子の CPU 秒で測る — card ki-79532edd43dd: 混んだ機体では wall の秒だけが伸び、上限なしなら 0 件の commit が毎回切れていた。
+//! CPU を使わずに終わらない子には wall の予備の上限〔上限 × WALL_BACKSTOP_FACTOR〕を残し、子の CPU 秒を読めない機体〔/proc の無い
+//! Mac〕では wall の秒で測る — 判断は cut_measure の 1 か所・
 //! 元の issue #2723)。以前は越えたら通していて、何を確かめずに通したかを 1 行で書くだけだった — 作業役は通った commit を
 //! 確かめ直さず、宣言の file を変えた commit の DOEFF167 の当たりが main に入った。止める時は、どの比べの、どの木で、どの規則を、
 //! 何秒の上限で打ち切ったかを 1 行で書き、上限なしで同じ比べをやり直す命令(unbounded_command — そのまま貼って実行できる形)と、
@@ -369,12 +372,61 @@ pub struct LintRun {
     pub args: Vec<String>,
 }
 
-/// 上限で打ち切った子の linter 1 回 — どの木で、どの規則を、何秒の上限で。
+/// 打ち切りを判じた物差し(card ki-79532edd43dd — 上限は子の CPU 秒で測る)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measure {
+    /// 子の CPU 秒(子とその待ち終えた子孫の utime・stime)が上限を越えた。
+    Cpu,
+    /// 子の CPU 秒を読めない機体(/proc の無い Mac)で、wall の秒が上限を越えた。
+    Wall,
+    /// CPU 秒は上限の内だが、wall の秒が予備の上限(上限 × WALL_BACKSTOP_FACTOR)を越えた — CPU を使わずに終わらない子。
+    WallBackstop,
+}
+
+/// CPU を使わずに終わらない子を打ち切る wall の予備の上限の倍率(CPU 秒の上限の何倍か)。混んだ機体で 1 core の取り分が 1/4 を
+/// 割るまで、CPU 秒の上限の内の子を wall で切らない(zeus は 36 core・load 73 で取り分 約 1/2 — card ki-79532edd43dd)。
+pub const WALL_BACKSTOP_FACTOR: u32 = 4;
+
+/// 純粋: 子の linter 1 回を打ち切るかの判断(card ki-79532edd43dd)— wall = 起こしてからの wall の秒・cpu = 子の CPU 秒(読めない機体は
+/// None)・limit = 上限。CPU 秒が読めれば CPU 秒で測り、wall は予備の上限(limit × WALL_BACKSTOP_FACTOR)だけを見る。読めなければ wall で測る。
+pub fn cut_measure(wall: Duration, cpu: Option<Duration>, limit: Duration) -> Option<Measure> {
+    match cpu {
+        Some(cpu) if cpu >= limit => Some(Measure::Cpu),
+        Some(_) if wall >= limit * WALL_BACKSTOP_FACTOR => Some(Measure::WallBackstop),
+        Some(_) => None,
+        None if wall >= limit => Some(Measure::Wall),
+        None => None,
+    }
+}
+
+/// 純粋: /proc/<pid>/stat の本文から CPU 秒を読む — utime・stime・cutime・cstime(全体の 14〜17 番目の欄・単位は USER_HZ = 100 分の
+/// 1 秒 — kernel の ABI で機体に依らない)の和。名の欄(2 番目)は ')' を含みうるので、最後の ')' の後ろから数える。
+pub fn cpu_of_stat(text: &str) -> Option<Duration> {
+    let rest = &text[text.rfind(')')? + 1..];
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    // ')' の後ろの 1 つ目が state(全体の 3 番目)— 全体の 14〜17 番目はここの 11〜14 番目(0 から数えて)。
+    let ticks = fields.get(11..15)?.iter().map(|field| field.parse::<u64>().ok()).sum::<Option<u64>>()?;
+    Some(Duration::from_millis(ticks * 10))
+}
+
+/// 子の process の CPU 秒(/proc の在る Linux だけ — 他の機体と読めない時は None で、打ち切りは wall で測る)。
+#[cfg(target_os = "linux")]
+fn child_cpu(pid: u32) -> Option<Duration> {
+    std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok().as_deref().and_then(cpu_of_stat)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn child_cpu(_pid: u32) -> Option<Duration> {
+    None
+}
+
+/// 上限で打ち切った子の linter 1 回 — どの木で、どの規則を、何秒の上限で、どの物差しで。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cut {
     pub side: Side,
     pub rules: Vec<String>,
     pub limit: Duration,
+    pub measure: Measure,
 }
 
 /// 測れなかった比べ — 比べの名(「HEAD の木の repo 全体の比べ」など)と、打ち切った 1 回。
@@ -386,14 +438,25 @@ pub struct Unmeasured {
 
 /// 純粋: 測れなかった比べを 1 行で書く(何を確かめずに commit を止めたか — agora-redesign #2723・#3834)。
 pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
-    let Cut { side, rules, limit } = &unmeasured.cut;
+    let Cut { side, rules, limit, measure } = &unmeasured.cut;
+    let secs = limit.as_secs();
+    let how = match measure {
+        Measure::Cpu => format!("CPU 秒の上限 {} 秒で打ち切った", secs),
+        Measure::Wall => format!("wall の上限 {} 秒で打ち切った(この機体では子の CPU 秒を読めない)", secs),
+        Measure::WallBackstop => format!(
+            "wall の予備の上限 {} 秒で打ち切った(CPU 秒の上限 {} 秒の {} 倍 — CPU を使わずに終わらない子)",
+            secs * u64::from(WALL_BACKSTOP_FACTOR),
+            secs,
+            WALL_BACKSTOP_FACTOR
+        ),
+    };
     format!(
-        "{}を測れなかった — {}で当てた規則 {} 個({})の子の linter を上限 {} 秒で打ち切った。この規則の当たりを確かめていないので commit を止める(上限 = 設定の [tool.doeff-linter.commit_hook] timeout_s・0 は上限なし)",
+        "{}を測れなかった — {}で当てた規則 {} 個({})の子の linter を{}。この規則の当たりを確かめていないので commit を止める(上限 = 設定の [tool.doeff-linter.commit_hook] timeout_s — 子の CPU 秒・0 は上限なし)",
         unmeasured.what,
         side.name(),
         rules.len(),
         rules.join(","),
-        limit.as_secs()
+        how
     )
 }
 
@@ -444,10 +507,10 @@ pub enum Measured {
     Failed(String),
 }
 
-/// 子の linter を editor-json で実行し、上限の中で終われば出力を読む(timeout が None なら終わるまで待つ)。終了コード 0・1・3・4 は
-/// 測れた(中身で判じる)とし、他は理由つきの失敗。
+/// 子の linter を editor-json で実行し、上限の中で終われば出力を読む(timeout が None なら終わるまで待つ・上限は子の CPU 秒で測る —
+/// cut_measure)。終了コード 0・1・3・4 は測れた(中身で判じる)とし、他は理由つきの失敗。
 pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Duration>) -> Measured {
-    let bound = timeout.map(|limit| (Instant::now() + limit, limit));
+    let started = Instant::now();
     let spawned = Command::new(linter)
         .args(["--output-format", "editor-json", "--no-log"])
         .args(&run.args)
@@ -476,10 +539,12 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Dura
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
-                if let Some((_, limit)) = bound.filter(|(deadline, _)| Instant::now() >= *deadline) {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Measured::TimedOut(Cut { side: run.side, rules: run.rules.clone(), limit });
+                if let Some(limit) = timeout {
+                    if let Some(measure) = cut_measure(started.elapsed(), child_cpu(child.id()), limit) {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Measured::TimedOut(Cut { side: run.side, rules: run.rules.clone(), limit, measure });
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
@@ -1338,13 +1403,39 @@ mod tests {
 
     #[test]
     fn commit_hook_unmeasured_line_names_the_comparison_tree_rules_and_limit() {
-        let cut = Cut { side: Side::Head, rules: ids(&["DOEFF163", "DOEFF167"]), limit: Duration::from_secs(20) };
+        let cut = Cut { side: Side::Head, rules: ids(&["DOEFF163", "DOEFF167"]), limit: Duration::from_secs(20), measure: Measure::Cpu };
         let line = unmeasured_line(&Unmeasured { what: "HEAD の木の repo 全体の比べ".to_string(), cut });
-        for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "上限 20 秒で打ち切った", "確かめていないので commit を止める"] {
+        for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "CPU 秒の上限 20 秒で打ち切った", "確かめていないので commit を止める"] {
             assert!(line.contains(part), "{:?} が無い: {}", part, line);
         }
-        let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(1) };
-        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: tip }).contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter を上限 1 秒"));
+        let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(1), measure: Measure::Wall };
+        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: tip })
+            .contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter をwall の上限 1 秒で打ち切った(この機体では子の CPU 秒を読めない)"));
+        let idle = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(2), measure: Measure::WallBackstop };
+        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: idle })
+            .contains("wall の予備の上限 8 秒で打ち切った(CPU 秒の上限 2 秒の 4 倍"));
+    }
+
+    /// card ki-79532edd43dd: CPU 秒が読めれば CPU 秒で測る — 混んで wall だけ伸びた子(wall 9 秒・CPU 3 秒・上限 4 秒)は切らず、CPU 秒が
+    /// 上限に届けば切る。wall は予備の上限(上限の 4 倍)だけを見る。読めない機体は今までどおり wall で測る。
+    #[test]
+    fn commit_hook_cut_measure_reads_cpu_seconds_and_keeps_a_wall_backstop() {
+        let s = Duration::from_secs;
+        assert_eq!(cut_measure(s(9), Some(s(3)), s(4)), None);
+        assert_eq!(cut_measure(s(5), Some(s(4)), s(4)), Some(Measure::Cpu));
+        assert_eq!(cut_measure(s(15), Some(s(1)), s(4)), None);
+        assert_eq!(cut_measure(s(16), Some(s(1)), s(4)), Some(Measure::WallBackstop));
+        assert_eq!(cut_measure(s(3), None, s(4)), None);
+        assert_eq!(cut_measure(s(4), None, s(4)), Some(Measure::Wall));
+    }
+
+    /// /proc/<pid>/stat の utime・stime・cutime・cstime(14〜17 番目・100 分の 1 秒)の和を読む。名の欄の ')' と空白に惑わされない。
+    #[test]
+    fn commit_hook_cpu_of_stat_sums_own_and_waited_children_ticks() {
+        let stat = "4242 (doeff (lin) ter) R 1 4242 4242 0 -1 4194304 100 0 0 0 250 30 15 5 20 0 8 0 12345 1000 200";
+        assert_eq!(cpu_of_stat(stat), Some(Duration::from_millis(3000)));
+        assert_eq!(cpu_of_stat("4242 (x) R 1"), None);
+        assert_eq!(cpu_of_stat("no paren"), None);
     }
 
     #[test]

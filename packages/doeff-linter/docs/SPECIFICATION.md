@@ -230,10 +230,16 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 `--commit-hook` は子の linter を 1 回ごとに上限の秒(`--commit-hook-timeout-s` が設定の `commit_hook.timeout_s` より勝つ・既定 20)で
 打ち切る。0 は上限なし(打ち切らずに終わりまで測る)。
 
+- 上限は子の CPU 秒で測る(`/proc/<pid>/stat` の utime・stime と待ち終えた子孫の cutime・cstime — card ki-79532edd43dd)。混んだ機体では
+  wall の秒だけが伸び、wall で測っていた時は、上限なしなら 0 件の commit が毎回切れて止まった(zeus の load 42〜73)。CPU を使わずに
+  終わらない子は、wall の予備の上限(上限 × 4)で切る。子の CPU 秒を読めない機体(/proc の無い Mac)は今までどおり wall の秒で測る。
+  判断は `cut_measure` の 1 か所で、止める行は物差しを名乗る(`CPU 秒の上限 N 秒で打ち切った`・`wall の上限 N 秒で打ち切った(この機体では
+  子の CPU 秒を読めない)`・`wall の予備の上限 M 秒で打ち切った(…CPU を使わずに終わらない子)`)。
+
 - 打ち切った時は終了コード 1 で commit を止める(以前は 0 で通していて、作業役は通った commit を確かめ直さず、宣言の file を変えた
   commit の DOEFF167 の当たりが main に入った)。stage した file の当たりが測れていれば、それも並べて出す。
 - 止める時の stderr は 3 行(頭は `doeff-linter commit-hook: `):
-  1. どの比べを・どの木で・どの規則を・何秒の上限で打ち切ったか(`…を測れなかった — …の子の linter を上限 N 秒で打ち切った。
+  1. どの比べを・どの木で・どの規則を・どの物差しの何秒の上限で打ち切ったか(`…を測れなかった — …の子の linter をCPU 秒の上限 N 秒で打ち切った。
      この規則の当たりを確かめていないので commit を止める…`)。
   2. `上限なしで同じ比べをやり直す命令: <命令>` — 同じ linter の絶対 path・`--commit-hook`・`--root <根>`・`--config <設定 file>`
      (無ければ `--no-config`)・引数の `--enable` / `--disable`・`--commit-message <本文の file>`(渡されていれば)に
