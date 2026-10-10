@@ -79,6 +79,13 @@ USED = (
     UsedModule("worker.entry.retirement_notices", ("pipe-retirement-notices",)),
     # 盤に届かない・断られた例外(使い手の lease の読みが except で受け、検の盤の代役が投げる — tests/test_lease_read_static_types.py)。
     UsedModule("shared.protocol.coordinator_route", ("RouteRefused", "RouteUnreachable")),
+    # job が要る値を ConfigMap・Secret の参照で受ける部品(使い手の job の入口が設定と鍵の dir を得る・使い手の process の外側が区画の CA の
+    # 答え手を並べる・使い手の模擬が API server の相手役を置く)。
+    UsedModule("shared.intent.supplied_model", ("SuppliedValueUnavailable", "WorkerFactMissing", "WorkerFactName")),
+    UsedModule("shared.protocol.supplied_values", ("supplied-setting", "supplied-directory", "worker-fact", "SERVICE-ACCOUNT-TOKEN-FILE")),
+    UsedModule("foundation.in_cluster_api", ("CLUSTER-API", "SERVICE-ACCOUNT-CA-PATH", "in-cluster-api-routed")),
+    UsedModule("sim.k8s_supplied", ("HeldEntry", "HeldObject", "ReadGrant", "SuppliedCluster", "held-value-of", "held-whole-of",
+                                    "read-grant-of", "service-account-token-file", "k8s-supplied-peer")),
 )
 
 
