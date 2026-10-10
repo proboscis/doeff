@@ -450,11 +450,11 @@ def test_the_key_entry_prints_the_key_of_a_commit(tmp_path: Path) -> None:
 
 def test_the_daily_gate_runs_the_baseline_check_strictly() -> None:
     # 日次の全体検証の段の列に、hook と同じ基点の比べを repo 全体へ --strict で当てる段が在る(消すと、hook を「測れない」で
-    # 通った commit を測る所が無くなる)。木は build の生成物が混ざらない別の label。
+    # 通った commit を測る所が無くなる)。2026-10-10 から段は日次の task の git の作業木で直に走り(ADR-DOE-ENFORCE-001 R10)、
+    # 名簿は git の追跡する file — build の生成物(.venv など)は混ざらない。基点の鍵の linter の用意は tests/test_gate_tools.py。
     stages = tomllib.loads((ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
     lint = [stage for stage in stages if stage["name"] == "lint"]
     assert len(lint) == 1
-    assert "--label doeff-gate-lint" in lint[0]["run"]
     assert "hook_finding_baseline.py --strict check doeff-linter" in lint[0]["run"]
     assert "hook_finding_baseline.py --strict check semgrep" in lint[0]["run"]
 

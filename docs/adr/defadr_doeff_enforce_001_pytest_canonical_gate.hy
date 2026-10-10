@@ -3,7 +3,7 @@
 ;;; 自分の機構(defadr / deftest / defsemgrep)で、既定実行の中で守る。
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 (import doeff-adr.macros [fact interpretation counterexample])
 
 
@@ -20,6 +20,7 @@
           "scripts/check_enforcement_ledger.py"
           "scripts/git-hooks/pre-commit"
           ".agents/land-queue.toml"
+          "scripts/gate_tools.sh"
           "tests/test_daily_test_population.py"
           "docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy"]
   :problem
@@ -54,6 +55,7 @@
      [removed]
      [removed]
      (rule R8 "日次の全体検証の母集団は root の pytest(testpaths)・package ごとの pytest(make test-packages)・Rust crate ごとの cargo test(make test-rust)の 3 つで、.agents/land-queue.toml の gate.full の別々の処理ステージに置く(2026-09-25 追加 — card acp:kanban-issue:[id])。後ろを止めてよいのは先頭の build の段(make sync)だけで、テストの段はどれも自分で make sync からやり直す(遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る)。1 つの母集団の赤は他の母集団を未実行にしない。package の母集団は packages/<p>/tests に fixtures 以外の検の file を持つ全 package と、package の tests/ の外の根(Makefile の PACKAGE_EXTRA_TEST_ROOTS の 1 点で宣言)を訪ね、1 package の赤で止まらず、最後に失敗の package を名指して 0 以外で終わる。失敗名は repo の根からの相対で出す(日次の道具は失敗名を要約の行から逐語で取り、repo の根から pytest へそのまま渡す)。repo の検の file(pytest の python_files の test_*.py / *_test.py・root の ini の doeff_hy_test_files で doeff-adr の plugin が集める Hy の test_*.hy(deftest の file も上から順に実行する script も・集め手を conftest.py に写さない・どの集め手にも当たらない test_*.py / test_*.hy は赤 — [issue])・doeff-adr の plugin が集める defadr_*.hy の pattern — fixtures の下を除く・定義は tests/test_daily_test_population.py の 1 点)は母集団の根の下か、tests/test_daily_test_population.py の理由つきの除外の表に在る。package は自分の pytest の設定を持たない(持つと root の ini と conftest が package の母集団に効かなくなる)。宣言の形はこの ADR の deftest、挙動の本体は tests/test_daily_test_population.py が固定し、どちらも root の段 = 日次で毎回走る。")
+     [removed]
      [removed]
   :laws
     [(law default-pytest-sees-all-enforcement
@@ -111,7 +113,14 @@
           (counterexample
              "2026-09-17 ed98775a: 並行する 2 便が台帳の deftest の数をどちらも 104 → 105 と刻み、rebase は同じ行の同じ変更として黙って 105 に合わせた(実数 106)— 数は git の merge で足し算にならない")
           (counterexample
-             "字面の数え text.count(\"(law \"): ADR-DOE-AGENTS-006 と ADR-DOE-CLUSTER-001 の註の中の綴りが law に数えられ、2026-09-28 の本線で law 134(形は 132)・deftest 82(形は 80)。註を 1 行足すだけで台帳が赤になる")])]
+             "字面の数え text.count(\"(law \"): ADR-DOE-AGENTS-006 と ADR-DOE-CLUSTER-001 の註の中の綴りが law に数えられ、2026-09-28 の本線で law 134(形は 132)・deftest 82(形は 80)。註を 1 行足すだけで台帳が赤になる")])
+     (law daily-stages-run-where-the-task-runs
+       :statement "for_all stage s in gate.full: not ships_tree_to_another_machine(s) (no remote_check, no --node) AND for_all assignment UV_CACHE_DIR=v in run(s): v defers to the caller's UV_CACHE_DIR"
+       :counterexamples
+         [(counterexample
+             [removed]
+          (counterexample
+             "UV_CACHE_DIR を `${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff` で上書きしたまま task の中で走らせる — task の HOME は走行ごとに空なので、日次の 4 段がどれも冷えた cache から依存を取り直す(worker の共有の cache は呼び手の UV_CACHE_DIR に在るのに使わない)")])]
   :enforcement
     [(deftest test-adr-doe-enforce-001-docs-adr-in-default-testpaths
        ;; RED(2026-07-14): pyproject testpaths は docs/adr を含まない。R2 実装で green。
@@ -290,5 +299,30 @@
                    f"処理ステージ {name} が母集団の命令の前に make sync を持たない — 遠隔の同期は段ごとに target/ を消し、段は 1 つずつ手元へ倒れ得る — R8")))
        ;; 挙動本体の現存 pin(削除退行を loud にする)。
        (assert (.exists (/ root "tests/test_daily_test_population.py"))
-               "R8 の挙動本体 tests/test_daily_test_population.py が消えている"))]
+               "R8 の挙動本体 tests/test_daily_test_population.py が消えている"))
+     (deftest test-adr-doe-enforce-001-daily-stages-run-where-the-task-runs
+       ;; R10 + law daily-stages-run-where-the-task-runs: 宣言の形の pin。処理ステージの run は木を別の機体へ送る前置き
+       ;; (remote_check・--node)を持たず、UV_CACHE_DIR の代入はどれも呼び手の UV_CACHE_DIR を先に使う。
+       ;; 走る所の道具の用意(redis-server・基点の鍵の doeff-linter)の挙動は tests/test_gate_tools.py が持つ。
+       (import re shlex tomllib)
+       (import pathlib [Path])
+       (val root (get (. (Path __file__) parents) 2))
+       (val land-cfg (tomllib.loads (.read-text (/ root ".agents/land-queue.toml")
+                                                 :encoding "utf-8")))
+       (val full (get land-cfg "gate" "full"))
+       (val shipped (lfor stage full
+                           :if (or (in "remote_check" (get stage "run"))
+                                   (in "--node" (shlex.split (get stage "run"))))
+                           (get stage "name")))
+       (assert (not shipped)
+               [removed]
+                        shipped))
+       (val deferring "${UV_CACHE_DIR:-")
+       (val cold (lfor stage full
+                        value (re.findall r"UV_CACHE_DIR=(\S+)" (get stage "run"))
+                        :if (not (.startswith value deferring))
+                        #((get stage "name") value)))
+       (assert (not cold)
+               (.format "処理ステージの UV_CACHE_DIR が呼び手の UV_CACHE_DIR を使わない: {} — task の HOME は走行ごとに空なので HOME の下の lane は毎回冷える。`UV_CACHE_DIR={}…}}` の形にする — ADR-DOE-ENFORCE-001 R10"
+                        cold deferring)))]
   :plans ["docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md"])
