@@ -6,7 +6,8 @@
 (import json)
 (import pathlib [Path])
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
-                         turn-start-request turn-interrupt-request ApprovalPolicy SandboxMode])
+                         turn-start-request turn-interrupt-request server-response-line ApprovalPolicy SandboxMode])
+(import doeff_hy.json_value [OpaqueJson])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
 
@@ -68,3 +69,10 @@
   (<- named (thread-start-request 6 "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.WORKSPACE-WRITE :model "gpt-6-astra"))
   (assert (= (get (json.loads named) "params") {"cwd" "/w" "approvalPolicy" "never" "sandbox" "workspace-write" "model" "gpt-6-astra"})
           named))
+
+
+(deftest test-a-server-request-is-answered-with-its-id
+  ;; codex からの要求(道具の許可の問いなど)への答えは、同じ id と、上の層が渡した result の中身をそのまま持つ 1 行。
+  (<- line (server-response-line 7 (OpaqueJson.of {"decision" "accept"})))
+  (assert (= (json.loads line) {"jsonrpc" "2.0" "id" 7 "result" {"decision" "accept"}}) line)
+  (assert (not-in "\n" line)))
