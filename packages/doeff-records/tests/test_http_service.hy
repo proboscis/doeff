@@ -309,3 +309,21 @@
     (assert (!= (run-as parts-server clock maker (ReadRow "parts" #("p2"))) (Missing)))
     (assert (!= (both (ReadRow "tickets" #("g" "t1"))) (Missing)))
     (finally (.close parts-server) (.close tickets-server))))
+
+
+(deftest test-list-rows-refuses-continuation-keys-it-does-not-know
+  ;; 一覧の続きの引数は cursor(前の頁の答えの nextCursor の object)だけ。別名(next・nextCursor)や形の違う cursor は黙って最初の頁を
+  ;; 答えず 400 malformed で断る(手で書いた読みの script が続きを見落として最初の 500 行で止まった実例 2026-10-10・card
+  ;; acp:kanban-issue:ki-634cdd5c8586)。
+  (setv #(server clock) (open-service (memory-lease (MemoryStore LAW-SCHEMA)))
+        maker "maker")
+  (try
+    (for [body [{"table" "parts" "next" "x"} {"table" "parts" "nextCursor" {"afterKey" ["p1"] "epoch" 0}} {"table" "parts" "cursor" "p1"}
+                {"table" "parts" "cursor" {"after" ["p1"]}}]]
+      (setv #(status answer) (raw server "POST" "/v1/records/list-rows" :body body :writer maker))
+      (assert (and (= status 400) (= (get answer "error") "malformed")) (repr #(body answer))))
+    ;; 引数の無い読みと、cursor が null(最初の頁)の読みは答える。
+    (for [body [{"table" "parts"} {"table" "parts" "cursor" None}]]
+      (setv #(status answer) (raw server "POST" "/v1/records/list-rows" :body body :writer maker))
+      (assert (and (= status 200) (= (get answer "kind") "page") (in "nextCursor" answer)) (repr #(body answer))))
+    (finally (.close server))))
