@@ -62,7 +62,8 @@
 
 (defwire ErrorInfoWire
   "codexErrorInfo の object の形(codex 0.162.1 の CodexErrorInfo — 鍵ちょうど 1 つが誤りの種類を名乗る)。知らない鍵(版で増えた
-   種類)と、鍵の無い object は形の合わない行にする — 知らない種類を「種類なし」に読み替えない。"
+   種類)と鍵の無い object はこの型に解けず、TurnErrorWire の欄の OpaqueJson の側へ落ちて UnknownValue として運ばれる — 知らない
+   種類を「種類なし」に読み替えず、行も落とさない(ターンの終わりを失わない)。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :reject
    :check [(= 1 (sum (gfor kind [http-connection-failed response-stream-connection-failed response-stream-disconnected
                                  response-too-many-failed-attempts active-turn-not-steerable]
@@ -74,16 +75,24 @@
   (setv #^ (| OpaqueJson None) active-turn-not-steerable None))
 
 (defwire TurnErrorWire
-  "ターンの誤り(error の通知の error と、turn/completed の turn.error)。codexErrorInfo は種類の名の文字列か ErrorInfoWire の object。"
+  "ターンの誤り(error の通知の error と、turn/completed の turn.error)。codexErrorInfo は種類の名の文字列か ErrorInfoWire の object で、
+   版で増えた種類も在るので、ここでは中を読まずに OpaqueJson で受け、error-facts-of が順に解く(union に OpaqueJson を混ぜると、何でも
+   受ける OpaqueJson の側が既知の値まで取る — pydantic の union の選び方・2026-10-10 の検で実測)。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str message)
-  (setv #^ (| str ErrorInfoWire None) codex-error-info None))
+  (setv #^ (| OpaqueJson None) codex-error-info None))
+
+(defwire ErrorKindNameWire
+  "codexErrorInfo が種類の名の文字列で来た時に、その文字列を解くための包み(error-facts-of が {\"kind\": 値} に包んで解く)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :reject}
+  (#^ str kind))
 
 (defwire TurnWire
-  "turn/started・turn/completed の turn。"
+  "turn/started・turn/completed の turn。status は綴りのまま読み、TurnStatus に無い綴り(版で増えた状態)は記録の側で UnknownValue に
+   する — 知らない状態でターンの終わりの行を落とさない。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str id)
-  (#^ TurnStatus status)
+  (#^ str status)
   (setv #^ (| TurnErrorWire None) error None))
 
 (defwire TurnParamsWire
@@ -101,14 +110,14 @@
   (#^ str delta))
 
 (defwire ItemWire
-  "item/completed の item のうち使う欄(種類と id と、答えの全文 — agentMessage だけが text を持つ)。"
+  "item/started・item/completed の item のうち使う欄(種類と id と、答えの全文 — agentMessage だけが text を持つ)。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str type)
   (#^ str id)
   (setv #^ (| str None) text None))
 
 (defwire ItemParamsWire
-  "item/completed の params。"
+  "item/started・item/completed の params。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str thread-id)
   (#^ str turn-id)
@@ -148,6 +157,12 @@
 
 ;; --- 記録の型(上の層が読む) ---------------------------------------------------------------------
 
+(defrecord UnknownValue
+  "この版の語彙に無い値(版で増えた状態・誤りの種類)を、中を読まずに運ぶ: value = codex が出した値そのまま。知らない値を既知の値や
+   None に読み替えず、行も落とさない — 上の層が名指して数えられるように。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ OpaqueJson value))
+
 (defrecord Response
   "要求への答え: id = 要求の id / thread-id = 答えが名乗る thread の id(thread/start・thread/resume)/ turn-id = 答えが名乗るターンの
    id(turn/start)。名乗らない答え(initialize・turn/interrupt)は None。"
@@ -164,10 +179,12 @@
   (#^ str message))
 
 (defrecord ServerRequest
-  "codex からの要求(道具の許可の問いなど): id = 答えに使う id / method = 要求の名。"
+  "codex からの要求(道具の許可の問いなど): id = 答えに使う id / method = 要求の名 / params = 要求の中身(method ごとに形が違うので
+   中を読まずに運ぶ — 答える側が method で選んだ型で解く。無ければ None)。"
   {:tags {:context "codex" :role "type"}}
   (#^ (| int str) id)
-  (#^ str method))
+  (#^ str method)
+  (setv #^ (| OpaqueJson None) params None))
 
 (defrecord ThreadStarted
   "thread が開いた(thread/started)。"
@@ -206,6 +223,23 @@
   (#^ str item-id)
   (#^ str text))
 
+(defrecord ItemStarted
+  "ターンの中の item が始まった(item/started): item-type = codex の item の種類の名(userMessage・agentMessage・reasoning・
+   commandExecution など — 版で増えるので名のまま)。上の層が「考えている」「道具を呼んでいる」を出す材料。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str thread-id)
+  (#^ str turn-id)
+  (#^ str item-id)
+  (#^ str item-type))
+
+(defrecord ItemDone
+  "答えの全文でない item が終わった(item/completed の agentMessage 以外): item-type は ItemStarted と同じ。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str thread-id)
+  (#^ str turn-id)
+  (#^ str item-id)
+  (#^ str item-type))
+
 (defrecord TokenCount
   "token の数の組(名乗らない欄は None)。"
   {:tags {:context "codex" :role "type"}}
@@ -227,24 +261,25 @@
 
 (defrecord TurnError
   "ターンの誤り(error の通知): message = 誤りの文 / error-kind = codex の誤りの種類の名(codexErrorInfo — 文字列の値か object の鍵・
-   名乗らなければ None)/ http-status = 上流の HTTP の status(名乗らなければ None)/ will-retry = codex がこのターンを繰り返すか。"
+   この版に無い形は UnknownValue・名乗らなければ None)/ http-status = 上流の HTTP の status(名乗らなければ None)/ will-retry =
+   codex がこのターンを繰り返すか。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
   (#^ str turn-id)
   (#^ str message)
-  (#^ (| str None) error-kind)
+  (#^ (| str UnknownValue None) error-kind)
   (#^ (| int None) http-status)
   (#^ bool will-retry))
 
 (defrecord TurnEnded
-  "ターンの終わり(turn/completed — ターンごとにちょうど 1 つ): status = 終わりの状態 / error-message・error-kind・http-status = 失敗の
-   終わりの誤り(turn.error — 無ければ None)。"
+  "ターンの終わり(turn/completed — ターンごとにちょうど 1 つ): status = 終わりの状態(この版に無い綴りは UnknownValue — 知らない状態でも
+   終わりは届く)/ error-message・error-kind・http-status = 失敗の終わりの誤り(turn.error — 無ければ None・種類は TurnError と同じ)。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
   (#^ str turn-id)
-  (#^ TurnStatus status)
+  (#^ (| TurnStatus UnknownValue) status)
   (setv #^ (| str None) error-message None)
-  (setv #^ (| str None) error-kind None)
+  (setv #^ (| str UnknownValue None) error-kind None)
   (setv #^ (| int None) http-status None))
 
 (defrecord Other
@@ -259,12 +294,12 @@
   (#^ str reason))
 
 (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
-                   TokenUsage TurnError TurnEnded Other Unparsed))
+                   ItemStarted ItemDone TokenUsage TurnError TurnEnded Other Unparsed))
 
 (defrecord ErrorFacts
-  "codexErrorInfo から読んだ誤りの種類の名と HTTP の status(どちらも名乗らなければ None)。"
+  "codexErrorInfo から読んだ誤りの種類の名(この版に無い形は UnknownValue)と HTTP の status(どちらも名乗らなければ None)。"
   {:tags {:context "codex" :role "type"}}
-  (#^ (| str None) kind)
+  (#^ (| str UnknownValue None) kind)
   (#^ (| int None) http-status))
 
 
@@ -278,11 +313,26 @@
 
 
 (defk error-facts-of [info]
-  {:pre [(: info (| str ErrorInfoWire None))] :post [(: % ErrorFacts)] :tags {:context "codex" :role "foundation"}}
-  "codexErrorInfo(種類の名の文字列か、鍵ちょうど 1 つの object)から、誤りの種類の名と HTTP の status を読むため。"
+  {:pre [(: info (| OpaqueJson None))] :post [(: % ErrorFacts)] :tags {:context "codex" :role "foundation"}}
+  "codexErrorInfo(種類の名の文字列か、鍵ちょうど 1 つの object)から、誤りの種類の名と HTTP の status を読むため。順に解く: この版の
+   object の形 → 種類の名の文字列 → どちらでもない形(版で増えた object)は UnknownValue。"
+  (when (is info None)
+    (return (ErrorFacts :kind None :http-status None)))
+  (<- known (parse ErrorInfoWire info))
+  (when (isinstance known ErrorInfoWire)
+    (<- facts (known-error-facts-of known))
+    (return facts))
+  ;; 文字列かどうかは、{"kind": 値} に包んで解いて確かめる(OpaqueJson の text は最小の直列化の JSON の値そのもの)。
+  (<- named (parse ErrorKindNameWire (OpaqueJson.from-text (.format "{{\"kind\":{}}}" info.text))))
+  (if (isinstance named ErrorKindNameWire)
+      (ErrorFacts :kind named.kind :http-status None)
+      (ErrorFacts :kind (UnknownValue :value info) :http-status None)))
+
+
+(defk known-error-facts-of [#^ ErrorInfoWire info]
+  {:pre [(: info ErrorInfoWire)] :post [(: % ErrorFacts)] :tags {:context "codex" :role "foundation"}}
+  "この版の codexErrorInfo の object(鍵ちょうど 1 つ)から、鍵の名を種類に、中の httpStatusCode を HTTP の status にするため。"
   (cond
-    (is info None) (ErrorFacts :kind None :http-status None)
-    (isinstance info str) (ErrorFacts :kind info :http-status None)
     (is-not info.response-too-many-failed-attempts None)
     (ErrorFacts :kind "responseTooManyFailedAttempts" :http-status info.response-too-many-failed-attempts.http-status-code)
     (is-not info.http-connection-failed None)
@@ -302,12 +352,21 @@
               :output-tokens wire.output-tokens :reasoning-output-tokens wire.reasoning-output-tokens))
 
 
+(defk turn-status-of [#^ str spelled]
+  {:pre [(: spelled str)] :post [(: % (| TurnStatus UnknownValue))] :tags {:context "codex" :role "foundation"}}
+  "turn.status の綴りを TurnStatus にするため。この版に無い綴りは UnknownValue(既知の状態に読み替えない)。"
+  (if (in spelled (frozenset (gfor known TurnStatus known.value)))
+      (TurnStatus spelled)
+      (UnknownValue :value (OpaqueJson.of spelled))))
+
+
 (defk turn-ended-of [#^ TurnParamsWire params]
   {:pre [(: params TurnParamsWire)] :post [(: % TurnEnded)] :tags {:context "codex" :role "foundation"}}
-  "turn/completed を、状態と失敗の誤りを持つターンの終わりにするため。"
+  "turn/completed を、状態と失敗の誤りを持つターンの終わりにするため(知らない状態・誤りの種類でも終わりは作る)。"
   (val failure params.turn.error)
   (<- facts (error-facts-of (if (is failure None) None failure.codex-error-info)))
-  (TurnEnded :thread-id params.thread-id :turn-id params.turn.id :status params.turn.status
+  (<- status (turn-status-of params.turn.status))
+  (TurnEnded :thread-id params.thread-id :turn-id params.turn.id :status status
              :error-message (if (is failure None) None failure.message) :error-kind facts.kind :http-status facts.http-status))
 
 
@@ -328,12 +387,22 @@
               :model-context-window params.token-usage.model-context-window))
 
 
+(defk item-started-of [#^ ItemParamsWire params]
+  {:pre [(: params ItemParamsWire)] :post [(: % ItemStarted)] :tags {:context "codex" :role "foundation"}}
+  "item/started を、上の層が「考えている」「道具を呼んでいる」を出す材料(item の種類と id)にするため。"
+  (ItemStarted :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :item-type params.item.type))
+
+
 (defk item-done-of [#^ ItemParamsWire params]
-  {:pre [(: params ItemParamsWire)] :post [(: % (| AgentMessageDone Other))] :tags {:context "codex" :role "foundation"}}
-  "item/completed のうち答えの全文(agentMessage)を AgentMessageDone にするため。ほかの種類の item(入力・道具の呼び)は Other。"
-  (if (and (= params.item.type "agentMessage") (is-not params.item.text None))
-      (AgentMessageDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :text params.item.text)
-      (Other :method "item/completed")))
+  {:pre [(: params ItemParamsWire)] :post [(: % (| AgentMessageDone ItemDone Unparsed))] :tags {:context "codex" :role "foundation"}}
+  "item/completed のうち答えの全文(agentMessage)を AgentMessageDone に、ほかの種類の item を ItemDone にするため。全文の無い
+   agentMessage は読めない行(答えの全文を空と読み替えない)。"
+  (match params.item.type
+    "agentMessage" (if (is params.item.text None)
+                       (Unparsed :method "item/completed" :reason (.format "agentMessage の item {} に text が無い" params.item.id))
+                       (AgentMessageDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id
+                                         :text params.item.text))
+    _ (ItemDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :item-type params.item.type)))
 
 
 (defk text-delta-of [#^ DeltaParamsWire params]
@@ -391,6 +460,7 @@
     "item/agentMessage/delta" (do (<- record (parsed-into method DeltaParamsWire text-delta-of params)) record)
     "item/reasoning/textDelta" (do (<- record (parsed-into method DeltaParamsWire reasoning-text-of params)) record)
     "item/reasoning/summaryTextDelta" (do (<- record (parsed-into method DeltaParamsWire reasoning-summary-of params)) record)
+    "item/started" (do (<- record (parsed-into method ItemParamsWire item-started-of params)) record)
     "item/completed" (do (<- record (parsed-into method ItemParamsWire item-done-of params)) record)
     "error" (do (<- record (parsed-into method ErrorParamsWire turn-error-of params)) record)
     "thread/tokenUsage/updated" (do (<- record (parsed-into method TokenUsageParamsWire token-usage-of params)) record)
@@ -420,7 +490,7 @@
     (return (Unparsed :method "" :reason reason)))
   (cond
     (and (is-not envelope.id None) (is-not envelope.method None))
-    (ServerRequest :id envelope.id :method envelope.method)
+    (ServerRequest :id envelope.id :method envelope.method :params envelope.params)
     (and (is-not envelope.id None) (is-not envelope.error None))
     (ErrorResponse :id envelope.id :code envelope.error.code :message envelope.error.message)
     (is-not envelope.id None)

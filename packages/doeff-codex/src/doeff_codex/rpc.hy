@@ -61,10 +61,14 @@
   (setv #^ (| str None) model None))
 
 (defwire ThreadResumeParamsWire
-  "thread/resume の params: 続ける thread の id と作業の dir(None なら送らない)。"
+  "thread/resume の params: 続ける thread の id と、作業の dir・許可の方針・sandbox・model(新しい process で続ける時に thread/start と
+   同じ方針を名乗り直す — 名乗らないと codex の既定へ戻り、答え手の無い許可の問いで止まりうる。None の欄は送らない)。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :reject}
   (#^ str thread-id)
-  (setv #^ (| str None) cwd None))
+  (setv #^ (| str None) cwd None)
+  (setv #^ (| ApprovalPolicy None) approval-policy None)
+  (setv #^ (| SandboxMode None) sandbox None)
+  (setv #^ (| str None) model None))
 
 (defwire TextInputWire
   "turn/start の入力 1 つ(文字の入力)。"
@@ -132,10 +136,16 @@
   line)
 
 
-(defk thread-resume-request [#^ int request-id #^ str thread-id [cwd None]]
-  {:pre [(: request-id int) (: thread-id str) (: cwd (| str None))] :post [(: % str)] :tags {:context "codex" :role "foundation"}}
-  "前の thread を続ける thread/resume の要求の行を作るため(新しい process で同じ thread のターンを続ける時)。"
-  (<- line (request-line request-id "thread/resume" (ThreadResumeParamsWire :thread-id thread-id :cwd cwd)))
+(defk thread-resume-request [#^ int request-id #^ str thread-id [cwd None] [approval-policy None] [sandbox None] [model None]]
+  {:pre [(: request-id int) (: thread-id str) (: cwd (| str None)) (: approval-policy (| ApprovalPolicy None))
+         (: sandbox (| SandboxMode None)) (: model (| str None))]
+   :post [(: % str)]
+   :tags {:context "codex" :role "foundation"}}
+  "前の thread を続ける thread/resume の要求の行を作るため(新しい process で同じ thread のターンを続ける時 — 方針は thread/start と同じ
+   値を名乗り直す)。"
+  (<- line (request-line request-id "thread/resume"
+                         (ThreadResumeParamsWire :thread-id thread-id :cwd cwd :approval-policy approval-policy :sandbox sandbox
+                                                 :model model)))
   line)
 
 

@@ -58,6 +58,12 @@
   (assert (= (json.loads resume-line)
              {"jsonrpc" "2.0" "id" 5 "method" "thread/resume" "params" {"threadId" "t-1" "cwd" "/w"}})
           resume-line)
+  ;; 新しい process で続ける時は、thread/start と同じ方針を名乗り直す。
+  (<- resumed (thread-resume-request 7 "t-1" "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY
+                                     :model "gpt-6-astra"))
+  (assert (= (get (json.loads resumed) "params")
+             {"threadId" "t-1" "cwd" "/w" "approvalPolicy" "never" "sandbox" "read-only" "model" "gpt-6-astra"})
+          resumed)
   ;; model を名指した thread の始め。
   (<- named (thread-start-request 6 "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.WORKSPACE-WRITE :model "gpt-6-astra"))
   (assert (= (get (json.loads named) "params") {"cwd" "/w" "approvalPolicy" "never" "sandbox" "workspace-write" "model" "gpt-6-astra"})
