@@ -1,58 +1,49 @@
-"""job_model.hy の公開面の型(型検査のための宣言 — 実行時は job_model.hy を読む・#2435)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = job_model.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-job_model.hy は Hy の module なので、pyright は中を読めず、`doeff_cluster.shared.intent.job_model` の名が全部 Unknown になる。
-worker の観測と記録の型(worker_model.pyi の ProcessView.spec・JobStatus.phase ほか)と手元の runner(sim/local.pyi)が JobSpec・
-JobPhase を欄の型に使うので、ここで宣言する(runtime_env_model.pyi・service_model.pyi と同じ形)。
-
-- JobSpec は凍った dataclass(キーワード引数に限らない — 実装は位置でも作る)。args は子の入口へ渡す引数の文字列・environ は
-  名の順の (名 値) の組・versions は子の入口が比べる送り手の版(task の行の版の名の順の (名 版) の組 — None = coordinator の
-  Program の行の版を使う service・#3762)。
-- JobPhase は Enum。値は名の小文字・`-` 区切り。
-"""
-
-from dataclasses import dataclass
-from enum import Enum
-from functools import cached_property
+from dataclasses import dataclass as dataclass
+from dataclasses import field as field
+from enum import Enum as Enum
+from functools import cached_property as cached_property
 
 @dataclass(frozen=True)
 class JobSpec:
-    """job 1 本の宣言。"""
-
     name: str
     entry: str
     args: tuple[str, ...]
     revision: str
     once: bool = False
-    placement: int | None = None
-    handoff: bool = False
-    ready_instance: str | None = None
-    handoff_abandoned: bool = False
-    retired_ms: int | None = None
-    detached: bool = False
+    placement: int | None = ...
+    handoff: bool = ...
+    ready_instance: str | None = ...
+    handoff_abandoned: bool = ...
+    retired_ms: int | None = ...
+    retired_limit: int | None = ...
+    detached: bool = ...
     runtime_env: str | None = None
-    env_key: str | None = None
-    program: str | None = None
-    environ: tuple[tuple[str, str], ...] = ()
-    keep_when_cut_off: bool = False
-    hold_version: bool = False
-    versions: tuple[tuple[str, str], ...] | None = None
+    env_key: str | None = ...
+    program: str | None = ...
+    environ: tuple[tuple[str, str], ...] = ...
+    keep_when_cut_off: bool = ...
+    hold_version: bool = ...
+    versions: tuple[tuple[str, str], ...] | None = ...
 
-    @cached_property
+    def __post_init__(self) -> None:
+        ...
+
     def fingerprint(self) -> str:
-        """指紋 spec-hash の計算の本体(値ごとに 1 度だけ計り、値の中に覚える — 公開の入口は job_rules.spec_hash)。"""
         ...
 
 class JobPhase(Enum):
-    PREPARING = "preparing"
-    CODE_FAILED = "code-failed"
-    STARTING = "starting"
-    PROBING = "probing"
-    BACKOFF = "backoff"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    STOP_UNCONFIRMED = "stop-unconfirmed"
-    PROBE_FAILED = "probe-failed"
-    ENV_FAILED = "env-failed"
-    HANDOFF_ABANDONED = "handoff-abandoned"
-    FINISHED = "finished"
-    STOPPED = "stopped"
+    PREPARING = 'preparing'
+    CODE_FAILED = 'code-failed'
+    STARTING = 'starting'
+    PROBING = 'probing'
+    BACKOFF = 'backoff'
+    RUNNING = 'running'
+    STOPPING = 'stopping'
+    STOP_UNCONFIRMED = 'stop-unconfirmed'
+    PROBE_FAILED = 'probe-failed'
+    ENV_FAILED = 'env-failed'
+    HANDOFF_ABANDONED = 'handoff-abandoned'
+    FINISHED = 'finished'
+    STOPPED = 'stopped'

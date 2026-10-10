@@ -295,21 +295,35 @@
   (val w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))))
   (assert (= (! (plan 0 #(H3) w {} POLICY)) #((RetireJob "a" 11 (retired-name "a" "2-new"))))))
 
-(deftest test-handoff-stops-the-oldest-retired-process-at-the-retired-limit
-  ;; 退いた process が上限 R に達している間に次の版が来たら、いちばん古く退いた process を止め、今の process はまだ退かせない(退かせると
-  ;; 新と合わせて R + 2 が並ぶ)。古い process が終わって回収されたら、今の process を退かせる(同時に動くのは R + 1 まで)。
-  (val H3 (replace A1 :revision "rev3" :handoff True))
+(deftest test-handoff-waits-without-stopping-a-retired-process-at-the-retired-limit
+  ;; 失敗ケース(#4072 の D-3 の改め): 退いた process が上限 R に達している間に次の版が来ると、いちばん古く退いた process を止めて
+  ;; いた — その process が終わりまで回すはずの仕事が SIGTERM で切れる(2026-10-10 15:01 UTC の本番の worker の log
+  ;; `job の止めの計時 stage=term job=<名>#retired-3-… reason=retired`)。退いた process は止めず、今の process も退かせずに待つ(同時に
+  ;; 動くのは R + 1 まで)。退いた process が自分で終わって回収されたら、今の process を退かせる。
+  (val H3 (replace A1 :revision "rev3" :handoff True :retired-ms 600000))
+  (val limited (replace POLICY :retired-limit 2))
+  (val oldest (replace (! (proc H1 10 "1-a" :retired-from "a" :name (retired-name "a" "1-a"))) :retired-at-ms 100))
+  (val younger (replace (! (proc H1 12 "1-b" :retired-from "a" :name (retired-name "a" "1-b"))) :retired-at-ms 200))
+  (val current (! (proc H2 11 "2-new")))
+  (val codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))
+  (assert (= (! (plan 1000 #(H3) (! (world younger oldest current :codes codes)) {} limited)) #())
+          "上限に達していても、退いた process を止めず、今の process も退かせずに待つ")
+  (assert (= (! (plan 2000 #(H3) (! (world younger current :codes codes)) {} limited))
+             #((RetireJob "a" 11 (retired-name "a" "2-new"))))
+          "退いた process が自分で終わって上限を下回ったら、今の process を退かせる"))
+
+(deftest test-handoff-reads-the-retired-limit-from-the-declaration
+  ;; 退いた process の上限 R は宣言の readiness の retiredLimit(JobSpec.retired-limit)が在ればそれ、無ければ worker の既定
+  ;; (WorkerPolicy.retired-limit)。長い仕事を持つ退いた process が並ぶ job は、既定より大きい R を宣言して入れ替えの待ちを減らす。
+  (val H3 (replace A1 :revision "rev3" :handoff True :retired-ms 600000 :retired-limit 3))
   (val limited (replace POLICY :retired-limit 2))
   (val oldest (replace (! (proc H1 10 "1-a" :retired-from "a" :name (retired-name "a" "1-a"))) :retired-at-ms 100))
   (val younger (replace (! (proc H1 12 "1-b" :retired-from "a" :name (retired-name "a" "1-b"))) :retired-at-ms 200))
   (val current (! (proc H2 11 "2-new")))
   (val codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))
   (assert (= (! (plan 1000 #(H3) (! (world younger oldest current :codes codes)) {} limited))
-             #((SignalJob (retired-name "a" "1-a") 10 StopStage.TERM (Retired))))
-          "上限に達していれば、いちばん古く退いた process だけを止める")
-  (assert (= (! (plan 2000 #(H3) (! (world younger current :codes codes)) {} limited))
              #((RetireJob "a" 11 (retired-name "a" "2-new"))))
-          "退いた process が上限を下回ったら、今の process を退かせる"))
+          "宣言の R = 3 では退いた process 2 つは上限の内 — 今の process を退かせる"))
 
 (deftest test-handoff-stops-the-retired-process-when-the-service-goes-away
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
