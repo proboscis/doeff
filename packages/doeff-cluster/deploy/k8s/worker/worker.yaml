@@ -75,9 +75,8 @@ spec:
             - { name: ROLE, value: worker }
             - { name: WORK_DIR, value: /work }
             # worker 自身の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。
-# e247ea66d = coordinator の約束の外し(32b41a04d・kept-reassign-after-ms)と同じ版へ worker もそろえる(card ki-9bccbbe738a7・
-            # e247ea66d = coordinator の約束の外し(32b41a04d・kept-reassign-after-ms)と同じ版へ worker もそろえる(card ki-9bccbbe738a7・
-            # 2026-10-10 — 10-05 の順どおり worker が先・coordinator が最後。zeus の枠 28〔agora の ConfigMap worker-env〕もこの作り直しで効く)。
+            # e247ea66d = coordinator の約束の外し(32b41a04d・kept-reassign-after-ms)と同じ版へ worker もそろえる(2026-10-10 —
+            # 10-05 の順どおり worker が先・coordinator が最後。zeus の枠 28〔使い手の ConfigMap worker-env〕もこの作り直しで効く)。
             - { name: WORKER_DOEFF_COMMIT, value: e247ea66dc3dc807423460fa9bf7e52f79669090 }
             - { name: COORDINATOR_URL, value: "http://coordinator.agent-worker.svc.cluster.local:8080" }
             # 置かれた Node の名(coordinator が Node の label から能力を導く)。下の $(NODE_NAME) より前に置く — k8s は前の行で
