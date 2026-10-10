@@ -28,6 +28,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -567,3 +568,54 @@ def test_every_daily_stage_declares_whether_it_runs_pytest() -> None:
     assert isinstance(full, list) and full, f"[gate] full が処理ステージの列でない(1 本の文字列には欄 pytest を書けない): {full!r}"
     missing = [stage.get("name") for stage in full if not isinstance(stage.get("pytest"), bool)]
     assert not missing, f"[gate] full の処理ステージ {missing} に欄 pytest(true か false)が無い"
+
+
+# 日次の pytest の session が終わりに出す秒の一覧の口 — 10 秒以上の検を本数の上限なしで出す(card acp:kanban-issue:ki-b8a436264866)。
+# 上限を付けると(旧 --durations=20)、package に 30 秒を越える検が 20 本を越えた時に残りが log に出ない。
+_DAILY_DURATIONS_FLAGS = ("--durations=0", "--durations-min=10")
+
+
+def _stage_run(name: str) -> str:
+    full = tomllib.loads((REPO_ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
+    return next(stage["run"] for stage in full if stage.get("name") == name)
+
+
+def test_root_stage_lists_every_slow_test() -> None:
+    """処理ステージ root の pytest の命令は、10 秒以上の検を上限なしで出す(日次の log に 1 本ごとの秒を残す)。"""
+    segments = [shlex.split(part) for part in _stage_run("root").split("&&")]
+    pytest_args = [words[words.index("pytest") + 1 :] for words in segments if "pytest" in words]
+    assert len(pytest_args) == 1, f"処理ステージ root に pytest の命令がちょうど 1 本ない: {_stage_run('root')}"
+    missing = [flag for flag in _DAILY_DURATIONS_FLAGS if flag not in pytest_args[0]]
+    assert not missing, f"処理ステージ root の pytest に {missing} が無い — 30 秒を越える検が日次の log に出ない: {pytest_args[0]}"
+
+
+def test_make_test_packages_lists_every_slow_test(tmp_path: Path) -> None:
+    """処理ステージ packages の形(`make test-packages` に PACKAGE_UV_RUN だけを渡す)で、package ごとの session が全部
+    10 秒以上の検を上限なしで出す。偽の runner が受けた引数を見る(赤の package は無い)。"""
+    assert "make test-packages PACKAGE_UV_RUN=" in _stage_run("packages"), _stage_run("packages")
+    runner = tmp_path / "fake_runner.py"
+    runner.write_text(_FAKE_RUNNER, encoding="utf-8")
+    record = tmp_path / "calls.jsonl"
+    proc = run(
+        with_handlers(
+            [subprocess_handler],
+            RunProcess(
+                argv=("make", "-s", "-C", str(REPO_ROOT), "test-packages", f"PACKAGE_UV_RUN={sys.executable} {runner}"),
+                env=(
+                    EnvEntry(name="DOEFF_FAKE_RUNNER_RECORD", value=str(record)),
+                    EnvEntry(name="DOEFF_FAKE_RUNNER_FAIL", value=str(tmp_path / "no-such-tests")),
+                ),
+                env_mode=EnvMode.EXTEND,
+                timeout=120.0,
+            ),
+        )
+    )
+    output = proc.stdout + proc.stderr
+    assert not proc.timed_out and proc.exit_code == 0, f"make test-packages が緑で終わらなかった\n{output[-2000:]}"
+    calls = [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
+    assert calls, f"make test-packages が runner を 1 度も呼ばなかった\n{output[-2000:]}"
+    short = [call["argv"] for call in calls if not all(flag in call["argv"] for flag in _DAILY_DURATIONS_FLAGS)]
+    assert not short, (
+        f"package の session {len(short)} / {len(calls)} 本の pytest に {list(_DAILY_DURATIONS_FLAGS)} が揃っていない"
+        f"(Makefile の PACKAGE_PYTEST_DURATIONS)— 30 秒を越える検が日次の log に出ない: {short[:3]}"
+    )
