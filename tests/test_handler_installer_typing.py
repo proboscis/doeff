@@ -14,6 +14,7 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_vm import K
 
 from doeff import EffectBase, Pass, Program, Pure, do, handler, run
+from tests.test_static_typing import _pyright_python
 
 
 @do
@@ -68,7 +69,7 @@ handler(42)  # non-callable
 """)
     result = subprocess.run(
         [sys.executable, "-m", "pyright", "--project", str(config),
-         "--pythonpath", sys.executable, "--outputjson", str(sample)],
+         "--pythonpath", str(_pyright_python(tmp_path)), "--outputjson", str(sample)],
         cwd=root, capture_output=True, text=True, timeout=60, check=False,
     )
     assert result.returncode == 1, result.stdout + result.stderr

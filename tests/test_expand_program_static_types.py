@@ -22,6 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.test_static_typing import _pyright_python
+
 _TRIGGER = """\
 from doeff import do, run
 
@@ -79,7 +81,7 @@ def _pyright_in_order(tmp_path: Path, files: tuple[tuple[str, str], ...]) -> dic
         (tmp_path / name).write_text(source)
     result = subprocess.run(
         [sys.executable, "-m", "pyright", "--project", str(config),
-         "--pythonpath", sys.executable, "--outputjson", *(str(tmp_path / name) for name, _ in files)],
+         "--pythonpath", str(_pyright_python(tmp_path)), "--outputjson", *(str(tmp_path / name) for name, _ in files)],
         cwd=root, capture_output=True, text=True, timeout=120, check=False,
     )
     return json.loads(result.stdout)
