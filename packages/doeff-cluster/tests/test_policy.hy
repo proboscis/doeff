@@ -325,6 +325,23 @@
              #((RetireJob "a" 11 (retired-name "a" "2-new"))))
           "宣言の R = 3 では退いた process 2 つは上限の内 — 今の process を退かせる"))
 
+(deftest test-a-superseded-generation-retires-its-handoff-process-without-stopping-or-restarting-it
+  ;; 失敗ケース(worker の Pod の世代をまたぐ入れ替え): 同じ名の新しい世代の worker が同じ job の process を Ready にした後、退いた世代の
+  ;; worker の返事は、その job に別の世代の Ready の印(superseded-by = その process の世代の名)を載せる。退いた世代は今の process を
+  ;; 止めずに退かせ(RetireJob — process は退く知らせを受け、走っている仕事を終えて自分で終わる)、名が空いても起こし直さない。退いた
+  ;; process は寿命の上限(retired-ms)までは止めない。印が無ければ今どおり動かし続ける。
+  (val HS (replace H1 :retired-ms 600000 :ready-instance "w1-boot2-p1" :superseded-by "w1-boot2-p1"))
+  (val current (! (proc H1 10 "1-old")))
+  (assert (= (! (plan 0 #((replace H1 :retired-ms 600000)) (! (world current)) {} POLICY)) #()) "印が無ければ動かし続ける")
+  (assert (= (! (plan 0 #(HS) (! (world current)) {} POLICY)) #((RetireJob "a" 10 (retired-name "a" "1-old"))))
+          "別の世代が Ready なら、今の process を止めずに退かせる")
+  (val retired (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
+  (assert (= (! (plan 2000 #(HS) (! (world retired)) {} POLICY)) #()) "名が空いても起こし直さず、退いた process は止めない")
+  (assert (= (! (plan 602000 #(HS) (! (world retired)) {} POLICY))
+             #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))
+          "退いてから寿命の上限を越えたら止める"))
+
+
 (deftest test-handoff-stops-the-retired-process-when-the-service-goes-away
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
   (assert (= (! (plan 0 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))

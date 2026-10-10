@@ -445,6 +445,65 @@
   (assert (= (lfor t (get new-reply "tasks") (get t "id")) [remote.id])))
 
 
+(deftest test-the-old-generation-is-told-to-retire-a-handoff-job-once-the-new-generation-runs-it-ready
+  ;; 世代をまたぐ入れ替え(AL-D2): 同じ名 atlas の新しい世代が、旧い世代の動かしている入れ替えの job w の process を起こし、その process が
+  ;; Ready を報告した後、旧い世代への返事は w に印 supersededBy(新しい世代の process の世代の名)を載せる — 旧い世代の worker は w を
+  ;; 止めずに退かせる。新しい世代の process が Ready になる前は印を載せない(旧い世代が書き手のまま動き続ける)。
+  (setv c (Coord #("atlas")))
+  (c.beat "atlas" :boot "old")
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
+  (c.beat "atlas" ["w"] :boot "old")
+  (c.ready "atlas" "w" :role "active")
+  (c.advance 1)
+  ;; 新しい世代の名乗り: w の process(世代の名 atlas-w-new)を起こして running と報告する(lease を待つ standby)。
+  (setv new-row (| (c.row "atlas" "w") {"instance" "atlas-w-new"}))
+  (setv (get c.boots "atlas") "new")
+  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+                               "statuses" [new-row] "stopping" False}
+          :actor None)
+  (setv before (c.beat "atlas" ["w"] :boot "old"))
+  (assert (get before "superseded") before)
+  (assert (= (lfor j (get before "jobs") (.get j "supersededBy")) [None]) (get before "jobs"))
+  ;; 新しい世代の process が Ready を報告した。
+  (c.call "POST" "/resources/Service/w/readiness"
+          {"worker" "atlas" "pid" 2 "revision" (get new-row "runningRevision") "instance" "atlas-w-new" "attempt" "1"
+           "specHash" (get new-row "specHash") "placement" (get new-row "placement") "ready" True "role" "standby"}
+          :actor None)
+  (setv after (c.beat "atlas" ["w"] :boot "old"))
+  (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "atlas-w-new")]) (get after "jobs"))
+  ;; 今の世代への返事には印が無い(今の世代は書き手を受け継ぐ側)。
+  (setv current (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+                                             "statuses" [new-row] "stopping" False}
+                        :actor None))
+  (assert (= (lfor j (get current "jobs") (.get j "supersededBy")) [None]) (get current "jobs")))
+
+
+(deftest test-the-old-pod-drain-waits-for-the-handoff-processes-of-its-own-generation
+  ;; 世代をまたぐ入れ替え(AL-D2): 旧い Pod の preStop は、その世代がまだ走らせている入れ替えの job の process(退かせた process — 走って
+  ;; いる仕事を終えて自分で終わる)が終わるまで drained を返さない(返すと SIGTERM で仕事が切れる)。その世代の報告から job が消えたら
+  ;; drained。旧い世代が lease の間 沈黙したら(Pod が消えた)待たない。直す前は、切り離した task だけを待って即座に drained を返した。
+  (setv c (Coord #("atlas")))
+  (c.beat "atlas" :boot "old")
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
+  (c.beat "atlas" ["w"] :boot "old")
+  (c.advance 1)
+  (c.beat "atlas" :boot "new")
+  (c.beat "atlas" ["w"] :boot "old")
+  (setv waiting (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (assert (not (get waiting "drain" "drained")) waiting)
+  (assert (in "job/w" (get waiting "drain" "remaining")) waiting)
+  ;; 退いた process が終わった(旧い世代の報告に w が無い)。
+  (c.beat "atlas" [] :boot "old")
+  (setv done (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (assert (get done "drain" "drained") done)
+  ;; 走らせたまま沈黙した旧い世代(Pod が消えた)は待たない。
+  (c.beat "atlas" ["w"] :boot "old")
+  (c.advance 120)
+  (c.beat "atlas" :boot "new")
+  (setv gone (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (assert (get gone "drain" "drained") gone))
+
+
 (deftest test-a-prestop-of-a-never-seen-generation-does-not-drain-the-live-generation
   ;; 新しい Pod が最初の heartbeat の前に消された: その preStop の世代を coordinator は一度も見ていない。生きている今の世代を
   ;; drain させず、その世代の task は無い = drained で終わる。boot の無い頼み(版上げの Program・手の頼み)は名前に付く(世代を持たない)。
