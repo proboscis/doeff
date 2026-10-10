@@ -15,9 +15,11 @@ spec:
           # 全体検証の task(:needs host-atlas・1 本の山は 12〜16Gi)を通す大きさ(2026-10-10 調整役 cisco-c8 の値 — 8Gi から 18Gi)。
           resources: { requests: { cpu: "500m", memory: 1Gi }, limits: { cpu: "8", memory: 18Gi } }
           env:
-            # 受ける数: 機体の仕事 1 + 日次の全体検証の task に空けておく 2(host-only の既定 2・0 を置き換える — 同時に 2 本まで)。
-            - { name: WORKER_CAPACITY, value: "3" }
-            - { name: WORKER_TASK_RESERVE, value: "2" }
+            # 受ける数: 機体の仕事 1 + 上に載る系の常駐の job で atlas の能力(host-atlas)を要る物 4 + 日次の全体検証の task に空けておく 3
+            # (host-only の既定 2・0 を置き換える — task は同時に 3 本まで)。式の定義点は tests/test_k8s_declarations.py の 3 つの数
+            # (2026-10-10 調整役 cisco-c8 の可・利用者 21:31 の決め)。
+            - { name: WORKER_CAPACITY, value: "8" }
+            - { name: WORKER_TASK_RESERVE, value: "3" }
             # job の子へ渡す名に Rust の toolchain の置き場(image の env)を足す — task が Rust の部品を組む時に rustup が toolchain を選ぶ。
             # 雛形の値の後ろに足すだけ(道具の cache の置き場は task が WORK_DIR から自分で作る)。
             - name: WORKER_PASS_ENV
