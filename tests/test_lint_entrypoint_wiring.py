@@ -35,6 +35,8 @@ def _linter_locked() -> ModuleType:
 LINTER_LOCKED: ModuleType = _linter_locked()
 
 
+# hook の python の宣言(.pre-commit-config.yaml の `uv run --python` の版 — card acp:kanban-issue:ki-a28a482132ab)。
+HOOK_PYTHON: str = "3.12"
 FAKE_VERSIONS: dict[str, str] = {"semgrep": "0.0.0-fake", "doeff-linter": "doeff-linter 0.0.0 (fake)"}
 # 基点と比べる道(scripts/hook_finding_baseline.py)が読む JSON の答え — 所見の無い報告。
 FAKE_REPORTS: dict[str, str] = {"semgrep": '{"results": [], "errors": []}', "doeff-linter": "[]"}
@@ -60,16 +62,16 @@ def _tool(directory: Path, name: str, exit_code: int, *, report: str | None = No
     path.chmod(0o755)
 
 
-# hook の semgrep の 3 項は uv.lock の版を `uv tool run --from semgrep==<版> semgrep` で呼ぶ(#2906)。偽の uv はその呼びを記録して
-# 同じ dir の偽の semgrep へ回し、ほかの呼び(`uv run --no-project python …`)は本物の uv へ渡す。
+# hook の semgrep の 3 項は uv.lock の版を `uv tool run --python <版> --from semgrep==<版> semgrep` で呼ぶ(#2906)。偽の uv はその
+# 呼びを記録して同じ dir の偽の semgrep へ回し、ほかの呼び(`uv run --no-project --python … python …`)は本物の uv へ渡す。
 FAKE_UV: str = (
     "import json, os, sys\n"
     "args = sys.argv[1:]\n"
-    "if args[:3] == ['tool', 'run', '--from'] and args[4] == 'semgrep':\n"
+    "if args[:3] == ['tool', 'run', '--python'] and args[4] == '--from' and args[6] == 'semgrep':\n"
     "    with open(os.environ['LINT_CALLS'], 'a') as output:\n"
-    "        output.write(json.dumps(['uv', *args[:5]]) + '\\n')\n"
+    "        output.write(json.dumps(['uv', *args[:7]]) + '\\n')\n"
     "    semgrep = os.path.join(os.path.dirname(sys.argv[0]), 'semgrep')\n"
-    "    os.execv(semgrep, [semgrep, *args[5:]])\n"
+    "    os.execv(semgrep, [semgrep, *args[7:]])\n"
     "os.execv(os.environ['REAL_UV'], [os.environ['REAL_UV'], *args])\n"
 )
 
@@ -171,6 +173,8 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
     shutil.copyfile(ROOT / ".pre-commit-config.yaml", repository / ".pre-commit-config.yaml")
+    # 木の python の宣言(3.14t)も写す — hook の python は設定の宣言で決まり、木の既定に依らない(card acp:kanban-issue:ki-a28a482132ab)。
+    shutil.copyfile(ROOT / ".python-version", repository / ".python-version")
     # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
     for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py"):
@@ -236,9 +240,10 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
     assert hook.result.exit_code == 0, hook.result.stdout + hook.result.stderr
     semgrep_calls: list[list[str]] = [call for call in hook.calls if call[0] == "semgrep" and "--version" not in call]
     assert len(semgrep_calls) == 1, hook.result.stdout + hook.result.stderr
-    # どの項も uv.lock の版を uv の道具の置き場から呼ぶ(探し道の semgrep を直に呼ばない — #2906)。
+    # どの項も uv.lock の版を uv の道具の置き場から、設定が宣言した python で呼ぶ(探し道の semgrep を直に呼ばない — #2906・木の
+    # .python-version の 3.14t では ruamel-yaml-clib が組めない — card acp:kanban-issue:ki-a28a482132ab)。
     assert [call for call in hook.calls if call[0] == "uv"] == [
-        ["uv", "tool", "run", "--from", "semgrep==0.0.0-fake", "semgrep"],
+        ["uv", "tool", "run", "--python", HOOK_PYTHON, "--from", "semgrep==0.0.0-fake", "semgrep"],
     ]
     assert semgrep_calls[0][-1] == changed
     # Python は基点と比べる script が JSON で数える(#2848)・Hy は semgrep が所見 1 つで止める(--error)。
@@ -297,3 +302,15 @@ def test_hy_only_hook_runs_real_semgrep_handler_boundary_rule(
     assert result.exit_code == int(nested), result.stdout + result.stderr
     if nested:
         assert rule_id in result.stdout + result.stderr
+
+
+def test_every_uv_hook_declares_the_hook_python() -> None:
+    # uv で走る項は、どれも hook の python を宣言する — 宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の
+    # ruamel-yaml-clib が組めずに落ちる(Pod 2026-10-10・card acp:kanban-issue:ki-a28a482132ab)。
+    hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
+    uv_entries: list[str] = [hook["entry"] for hook in hooks if hook["entry"].startswith("uv ")]
+    assert uv_entries
+    assert [entry for entry in uv_entries if f"--python {HOOK_PYTHON}" not in entry] == []
+    script: str = (ROOT / "scripts" / "lint-doeff-cluster.sh").read_text()
+    assert script.count("uv run --no-project python") == 0
+    assert script.count(f"uv run --no-project --python {HOOK_PYTHON} python") == 3

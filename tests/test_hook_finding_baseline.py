@@ -293,7 +293,7 @@ def test_init_never_overwrites_a_baseline(tmp_path: Path) -> None:
     assert "書き直さない" in again.stderr
 
 
-# --- semgrep は uv.lock の版を呼ぶ(#2906)— 偽の uv が `tool run --from semgrep==<版> semgrep` を答え、探し道の semgrep は別の版 ---
+# --- semgrep は uv.lock の版を呼ぶ(#2906)— 偽の uv が `tool run --python <版> --from semgrep==<版> semgrep` を答え、探し道の semgrep は別の版 ---
 
 LOCK_TEMPLATE = 'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{version}"\n\n[[package]]\nname = "other"\nversion = "0.1.0"\n'
 
@@ -304,9 +304,9 @@ here = Path(__file__).parent
 args = sys.argv[1:]
 with open(here / "uv-calls.jsonl", "a") as out:
     out.write(json.dumps(args) + "\\n")
-if args[:3] != ["tool", "run", "--from"] or args[4] != "semgrep":
+if args[:3] != ["tool", "run", "--python"] or args[4] != "--from" or args[6] != "semgrep":
     raise SystemExit(f"偽の uv が知らない呼び: {args}")
-version, rest = args[3].split("==")[1], args[5:]
+version, rest = args[5].split("==")[1], args[7:]
 if "--version" in rest:
     print(version)
     raise SystemExit(0)
@@ -337,7 +337,12 @@ def _semgrep_rig(tmp_path: Path) -> Rig:
 
 def test_the_locked_command_names_the_lock_version(tmp_path: Path) -> None:
     (tmp_path / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.169.0"))
-    assert SEMGREP_LOCKED.locked_command(tmp_path) == ["uv", "tool", "run", "--from", "semgrep==1.169.0", "semgrep"]
+    # 道具の python は、script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 木の .python-version
+    # (3.14t)を uv tool run に選ばせない(card acp:kanban-issue:ki-a28a482132ab)。
+    running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
+    assert SEMGREP_LOCKED.locked_command(tmp_path) == [
+        "uv", "tool", "run", "--python", running, "--from", "semgrep==1.169.0", "semgrep",
+    ]
 
 
 def test_semgrep_is_called_at_the_lock_version_whatever_the_path_has(tmp_path: Path) -> None:
@@ -351,7 +356,7 @@ def test_semgrep_is_called_at_the_lock_version_whatever_the_path_has(tmp_path: P
     assert "R1 pkg/b.py: 基点 0 → 今 1" in added.stderr
     calls = [json.loads(line) for line in (tmp_path / "bin" / "uv-calls.jsonl").read_text().splitlines()]
     assert calls
-    assert all(call[:5] == ["tool", "run", "--from", "semgrep==1.2.3", "semgrep"] for call in calls)
+    assert all(call[:3] == ["tool", "run", "--python"] and call[4:7] == ["--from", "semgrep==1.2.3", "semgrep"] for call in calls)
 
 
 def test_a_lock_version_other_than_the_baseline_is_named_and_red(tmp_path: Path) -> None:
