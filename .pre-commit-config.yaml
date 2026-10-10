@@ -48,10 +48,10 @@ repos:
       # 宣言にも当たる。Python と Hy は上の 2 項が渡すので、ここは残り(.pyi・.md・.toml・.json・.sh・Dockerfile など)を渡す。
       # 入れた時点(2026-10-02)でこの範囲の既存の規則の所見は 0 件。
       - id: semgrep-application-vocabulary
-        name: semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code の Python と Hy の外の file)
+        name: semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file)
         entry: *semgrep-entry
         language: system
-        files: '^packages/doeff-(cluster|records|claude-code)/'
+        files: '^packages/doeff-(cluster|records|claude-code|codex)/'
         exclude: '\.(py|hy|hyp|hyk)$'
         pass_filenames: true
 
