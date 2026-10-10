@@ -31,6 +31,9 @@ NAMESPACE = "agent-worker"
 
 STAMP = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 SKIP = "coord-wal-backup: 控えを飛ばす"
+# script を走らせる子の PATH。script が呼ぶのは sh と基本の命令(cp・mkdir・mv・rm・sort・tail・tr)だけなので、検の環境変数を継がず
+# OS の既定の検索 path(Linux は /bin:/usr/bin)に固定する — coordinator の image の中と同じく、名で引ける道具だけで通ることも確かめる。
+SCRIPT_PATH = os.defpath
 OLD_STAMPS = (
     "20200101T000000Z",
     "20200102T000000Z",
@@ -61,7 +64,7 @@ def _sequence(value: object, where: str) -> list[object]:
 def run_backup(root: Path, min_free: int = 0) -> subprocess.CompletedProcess[str]:
     """script を、root の下の wal/ と backups/ を置き場として走らせる。"""
     env = {
-        "PATH": os.environ["PATH"],
+        "PATH": SCRIPT_PATH,
         "WAL_DIR": str(root / "wal"),
         "BACKUP_DIR": str(root / "backups"),
         "BACKUP_KEEP": "5",
@@ -282,7 +285,7 @@ def test_a_missing_script_still_lets_the_coordinator_start_and_says_so(
         text=True,
         check=False,
         timeout=60,
-        env={"PATH": os.environ["PATH"]},
+        env={"PATH": SCRIPT_PATH},
     )
     assert done.returncode == 0, done
     assert f"{SKIP} — script が失敗した" in done.stdout, done.stdout
