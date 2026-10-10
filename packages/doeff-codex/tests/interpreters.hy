@@ -15,7 +15,7 @@
 (import doeff [EffectBase run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
-(import doeff_codex.values [CodexHome CodexSessionSpec])
+(import doeff_codex.values [CodexHome CodexSessionSpec CodexInput])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.handler [CodexHost codex-handler])
 (import doeff_codex.fake [FakeCodexWorld FakeReply fake-codex-handler])
@@ -24,8 +24,10 @@
 (val FAKE "fake")
 (val STUB "stub")
 (val STUB-PATH (str (/ (. (Path __file__) (resolve) parent) "stub_cli" "codex_app_server.py")))
-;; 筋書きの答えの規則(fake と stub で同じ): 入力に SLOW が在れば止めまで途中の文字を出し続け、無ければ録った 1 ターンの 4 つの欠片。
+;; 筋書きの答えの規則(fake と stub で同じ): 入力に SLOW が在れば止めまで途中の文字を出し続け、画像を数える言い方なら画像の数を答え、
+;; どちらでもなければ録った 1 ターンの 4 つの欠片。
 (val SLOW-WORD "SLOW")
+(val IMAGES-PHRASE "Count the attached images.")
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
 
 
@@ -45,12 +47,13 @@
     (resume settings)))
 
 
-(defk respond [#^ str text]
-  {:pre [(: text str)] :post [(: % FakeReply)] :tags {:context "codex-test" :role "entry"}}
-  "fake の筋書きの答えを入力の文字から決めるため(stub の替え玉と同じ規則)。"
-  (if (in SLOW-WORD text)
-      (FakeReply :pieces #("slow-0 " "slow-1 ") :hold True)
-      (FakeReply :pieces ANSWER-PIECES)))
+(defk respond [#^ CodexInput input]
+  {:pre [(: input CodexInput)] :post [(: % FakeReply)] :tags {:context "codex-test" :role "entry"}}
+  "fake の筋書きの答えを入力から決めるため(stub の替え玉と同じ規則)。"
+  (cond
+    (in SLOW-WORD input.text) (FakeReply :pieces #("slow-0 " "slow-1 ") :hold True)
+    (in IMAGES-PHRASE input.text) (FakeReply :pieces #((.format "IMAGES {}" (len input.images))))
+    True (FakeReply :pieces ANSWER-PIECES)))
 
 
 (defk handlers-for [#^ str name]
@@ -58,7 +61,7 @@
   "解釈器の名から、筋書きの下に敷く handler の組(時計と codex の handler)を選ぶため。"
   (match name
     "fake" [(sim-time-handler :clock (SimClock))
-            (fake-codex-handler (FakeCodexWorld (fn [text] (run (respond text)))))]
+            (fake-codex-handler (FakeCodexWorld (fn [input] (run (respond input)))))]
     "stub" [(sync-time-handler)
             (codex-handler (CodexHost #(sys.executable STUB-PATH) :launch-timeout 30.0))]
     _ (raise (ValueError (.format "知らない解釈器: {}" name)))))

@@ -6,7 +6,7 @@
 (import json)
 (import pathlib [Path])
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
-                         turn-start-request turn-interrupt-request server-response-line ApprovalPolicy SandboxMode])
+                         turn-start-request turn-steer-request turn-interrupt-request server-response-line ApprovalPolicy SandboxMode])
 (import doeff_hy.json_value [OpaqueJson])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
@@ -39,8 +39,8 @@
   (<- thread-line (thread-start-request 2 cwd :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY))
   ;; 録りの行の threadId は録った時の thread の id(thread/start の答えから読んだ値)— 組み立ての側にも同じ id を渡す。
   (val thread-id (get (get sent 3) "params" "threadId"))
-  (<- first-line (turn-start-request 3 thread-id "say hello"))
-  (<- second-line (turn-start-request 4 thread-id "say hello again"))
+  (<- first-line (turn-start-request 3 thread-id "say hello" #()))
+  (<- second-line (turn-start-request 4 thread-id "say hello again" #()))
   (val built (tuple (gfor line #(init-line ready-line thread-line first-line second-line) (json.loads line))))
   (assert (= built sent) #(built sent))
   (assert (= (tuple (gfor message built (.get message "method")))
@@ -76,3 +76,30 @@
   (<- line (server-response-line 7 (OpaqueJson.of {"decision" "accept"})))
   (assert (= (json.loads line) {"jsonrpc" "2.0" "id" 7 "result" {"decision" "accept"}}) line)
   (assert (not-in "\n" line)))
+
+
+(deftest test-the-declared-compaction-and-effort-ride-on-their-requests
+  ;; 圧縮の閾値は thread を開く 2 つの要求の config(snake_case の鍵)に、考えの深さは turn/start の effort に載る。名乗らなければ送らない。
+  (<- opened (thread-start-request 2 "/w" :auto-compact-token-limit 600000))
+  (assert (= (get (json.loads opened) "params") {"cwd" "/w" "config" {"model_auto_compact_token_limit" 600000}}) opened)
+  (<- resumed (thread-resume-request 3 "t-1" "/w" :auto-compact-token-limit 250000))
+  (assert (= (get (json.loads resumed) "params") {"threadId" "t-1" "cwd" "/w" "config" {"model_auto_compact_token_limit" 250000}})
+          resumed)
+  (<- deep (turn-start-request 4 "t-1" "think" #() :effort "xhigh"))
+  (assert (= (get (json.loads deep) "params") {"threadId" "t-1" "input" [{"type" "text" "text" "think"}] "effort" "xhigh"}) deep))
+
+
+(deftest test-images-and-steering-build-their-input-lists
+  ;; 画像は文字の後ろに image の入力(data URL)で並ぶ。画像だけの入力(空の文字)は文字の入力を送らない。
+  (<- with-image (turn-start-request 5 "t-1" "look" #("data:image/png;base64,AAAA")))
+  (assert (= (get (json.loads with-image) "params" "input")
+             [{"type" "text" "text" "look"} {"type" "image" "url" "data:image/png;base64,AAAA"}])
+          with-image)
+  (<- only-image (turn-start-request 6 "t-1" "" #("data:image/png;base64,AAAA")))
+  (assert (= (get (json.loads only-image) "params" "input") [{"type" "image" "url" "data:image/png;base64,AAAA"}]) only-image)
+  ;; 走っているターンへの追送は、そのターンの id を expectedTurnId で名乗る。
+  (<- steer (turn-steer-request 7 "t-1" "turn-9" "also this" #()))
+  (assert (= (json.loads steer)
+             {"jsonrpc" "2.0" "id" 7 "method" "turn/steer"
+              "params" {"threadId" "t-1" "expectedTurnId" "turn-9" "input" [{"type" "text" "text" "also this"}]}})
+          steer))

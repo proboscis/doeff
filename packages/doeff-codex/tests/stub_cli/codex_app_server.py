@@ -5,9 +5,15 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
 
 - initialize → 録った答え / initialized → 何も返さない。
 - thread/start → 新しい thread の id で録った答えと thread/started / thread/resume → 名指された id で同じ形の答え。
-- turn/start → 新しいターンの id で答え、入力に SLOW が無ければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)を
-  そのまま流す。SLOW が在れば、答えの文字の途中(item/agentMessage/delta)を 0.05 秒ごとに出し続け、turn/interrupt を受けたら
-  録った止めの終わり(状態 interrupted の turn/completed)を出す。
+- turn/start → 新しいターンの id で答え、入力の文字で決めた筋書きを流す:
+  - SLOW が在れば、答えの文字の途中(item/agentMessage/delta)を 0.05 秒ごとに出し続け、turn/interrupt を受けたら録った止めの終わり
+    (状態 interrupted の turn/completed)を出す。
+  - IMAGES_PHRASE が在れば、入力の画像の数を ``IMAGES <数>`` と答える(画像が turn/start の入力に載ったかを見る)。
+  - SETTINGS_PHRASE が在れば、thread を開いた要求の model と config の圧縮の閾値と、turn/start の effort を
+    ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
+  - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
+- turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
+  途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
 - 引数(app-server --listen stdio://)は読まない。
 """
 
@@ -19,6 +25,21 @@ from pathlib import Path
 RECORDED = Path(__file__).resolve().parent.parent / "recorded" / "codex-0.162.1"
 DELTA_PAUSE_SECONDS = 0.05
 MAX_SLOW_PIECES = 400
+IMAGES_PHRASE = "Count the attached images."
+SETTINGS_PHRASE = "Tell the settings."
+STEERED_PREFIX = "steered:"
+# 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
+NOT_STEERABLE_CODE = -32600
+
+
+def said_text(inputs: list[dict[str, object]]) -> str:
+    """ターンの入力の列から文字の入力をつないだ文を取るため。"""
+    return " ".join(str(item.get("text", "")) for item in inputs if item.get("type") == "text")
+
+
+def image_count(inputs: list[dict[str, object]]) -> int:
+    """ターンの入力の列の画像の数を数えるため。"""
+    return sum(1 for item in inputs if item.get("type") == "image")
 
 
 def recorded_messages(name: str) -> list[dict[str, object]]:
@@ -47,6 +68,7 @@ class Stub:
         self.stop_slow = threading.Event()
         self.slow_turn = ""
         self.slow_thread: threading.Thread | None = None
+        self.opened_with: dict[str, object] = {}
 
     def write(self, message: dict[str, object]) -> None:
         """1 行の message を stdout へ書くため(止めの thread と主の loop の両方から書くので lock の中で)。"""
@@ -80,22 +102,49 @@ class Stub:
             self.write({"id": request_id, "result": answer_of(self.two_turns, 1)["result"]})
         elif method == "thread/start":
             self.thread_id = self.fresh_id("thread")
+            self.opened_with = dict(params)  # type: ignore[arg-type]  # 要求の形は handler の rpc.hy が作る
             self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]})
             started = next(m for m in self.two_turns if m.get("method") == "thread/started")
             self.write(self.renamed(started, ""))
         elif method == "thread/resume":
-            self.thread_id = str(params["threadId"])  # type: ignore[index]  # 要求の形は handler の rpc.hy が作る
+            self.thread_id = str(params["threadId"])  # type: ignore[index]  # 同上
+            self.opened_with = dict(params)  # type: ignore[arg-type]  # 同上
             self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 2), "")["result"]})
         elif method == "turn/start":
             self.start_turn(request_id, params)  # type: ignore[arg-type]  # 同上
+        elif method == "turn/steer":
+            self.steer_turn(request_id, params)  # type: ignore[arg-type]  # 同上
         elif method == "turn/interrupt":
             self.interrupt_turn(request_id)
 
+    def answer_turn(self, turn_id: str, text: str) -> None:
+        """答えの全文 text を 1 つの途中の文字と全文で出して終えるターンの通知を流すため(録った形の最小 — 筋書きの答え)。"""
+        where = {"threadId": self.thread_id, "turnId": turn_id}
+        self.write({"method": "turn/started", "params": {"threadId": self.thread_id, "turn": {"id": turn_id, "status": "inProgress"}}})
+        self.write({"method": "item/started", "params": {**where, "item": {"type": "agentMessage", "id": "msg_1", "text": ""}}})
+        self.write({"method": "item/agentMessage/delta", "params": {**where, "itemId": "msg_1", "delta": text}})
+        self.write({"method": "item/completed", "params": {**where, "item": {"type": "agentMessage", "id": "msg_1", "text": text}}})
+        self.write({"method": "turn/completed",
+                    "params": {"threadId": self.thread_id, "turn": {"id": turn_id, "status": "completed", "error": None}}})
+
+    def settings_text(self, params: dict[str, object]) -> str:
+        """thread を開いた要求と turn/start が名乗った宣言(effort・圧縮の閾値・model)を答えの文にするため。"""
+        config = self.opened_with.get("config") or {}
+        compact = config.get("model_auto_compact_token_limit") if isinstance(config, dict) else None
+        return f"SETTINGS effort={params.get('effort')} compact={compact} model={self.opened_with.get('model')}"
+
     def start_turn(self, request_id: object, params: dict[str, object]) -> None:
-        """ターンを始め、入力に SLOW が無ければ録った 1 ターンを流し、在れば止めまで途中の文字を出し続けるため。"""
+        """ターンを始め、入力の文字で決めた筋書き(頭の註)を流すため。"""
         turn_id = self.fresh_id("turn")
         self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 3), turn_id)["result"]})
-        said = json.dumps(params.get("input", []))
+        inputs = list(params.get("input", []))  # type: ignore[call-overload]  # 要求の形は handler の rpc.hy が作る
+        said = said_text(inputs)
+        if IMAGES_PHRASE in said:
+            self.answer_turn(turn_id, f"IMAGES {image_count(inputs)}")
+            return
+        if SETTINGS_PHRASE in said:
+            self.answer_turn(turn_id, self.settings_text(params))
+            return
         if "SLOW" not in said:
             for notification in self.first_turn_notifications():
                 self.write(self.renamed(notification, turn_id))
@@ -115,6 +164,18 @@ class Stub:
                 return
             self.write({"method": "item/agentMessage/delta",
                         "params": {"threadId": self.thread_id, "turnId": turn_id, "itemId": "msg_1", "delta": f"slow-{index} "}})
+
+    def steer_turn(self, request_id: object, params: dict[str, object]) -> None:
+        """走っている SLOW のターンに足した文字を、頭に steered: を付けた答えの文字の途中として出すため(違うターンなら断る)。"""
+        running = self.slow_thread is not None and self.slow_thread.is_alive()
+        if not running or params.get("expectedTurnId") != self.slow_turn:
+            self.write({"id": request_id, "error": {"code": NOT_STEERABLE_CODE, "message": "no active turn to steer"}})
+            return
+        self.write({"id": request_id, "result": {"turnId": self.slow_turn}})
+        said = said_text(list(params.get("input", [])))  # type: ignore[call-overload]  # 要求の形は handler の rpc.hy が作る
+        self.write({"method": "item/agentMessage/delta",
+                    "params": {"threadId": self.thread_id, "turnId": self.slow_turn, "itemId": "msg_1",
+                               "delta": f"{STEERED_PREFIX}{said} "}})
 
     def interrupt_turn(self, request_id: object) -> None:
         """遅いターンを止め、録った止めの終わり(状態 interrupted)を出すため。"""

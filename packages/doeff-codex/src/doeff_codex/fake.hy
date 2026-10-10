@@ -9,11 +9,15 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
-(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent FreshThread ResumeThread])
+(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnEnded TurnStatus])
-(import doeff_codex.effects [CodexStartTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest CodexCloseSession
-                             CodexLaunchCount BackendLost TurnStarted InterruptRequested TurnEventPage SessionClosed
-                             ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
+(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
+                             CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
+                             SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
+
+;; 走っているターンに足した入力を、そのターンの答えの文字の途中として見せる頭(替え玉の app-server と同じ規則 — 足した入力が
+;; ターンに届いたことを筋書きが読めるように)。
+(val STEERED-PREFIX "steered:")
 
 
 (defrecord FakeReply
@@ -55,7 +59,8 @@
 
 
 (defclass FakeCodexWorld []
-  "fake の世界: respond = 入力の文字 → FakeReply(筋書き)。thread とターンの id は世界の数えで振る(fake-thread-N・fake-turn-N)。"
+  "fake の世界: respond = 入力(CodexInput)→ FakeReply(筋書き)。thread とターンの id は世界の数えで振る(fake-thread-N・
+   fake-turn-N)。"
   (defn __init__ [self #^ Callable respond]
     (setv self.respond respond
           self.made 0)
@@ -92,7 +97,7 @@
   (val turn (FakeTurn))
   (setv (get thread.turns turn-id) turn
         thread.current turn-id)
-  (val reply (world.respond asked.text))
+  (val reply (world.respond asked.input))
   (.add thread turn (TurnStartedLine :thread-id thread-id :turn-id turn-id))
   (.add thread turn (ItemStarted :thread-id thread-id :turn-id turn-id :item-id item-id :item-type "agentMessage"))
   (for [piece reply.pieces]
@@ -114,6 +119,21 @@
   (when (and (not events) (is turn.end None))
     (<- (Delay asked.wait-up-to)))
   (TurnEventPage :events events :next-seq (if events (. (get events -1) seq) asked.after-seq) :end turn.end))
+
+
+(defk fake-steer [#^ FakeCodexWorld world #^ CodexSteerTurn asked]
+  {:pre [(: world FakeCodexWorld) (: asked CodexSteerTurn)] :post [(: % (| Steered NoTurnInFlight))]
+   :tags {:context "codex" :role "process"}}
+  "走っているターンに入力を足すため: 足した文字を、STEERED-PREFIX を頭に付けた答えの文字の途中としてそのターンに積む(替え玉と同じ規則)。"
+  (val turn asked.turn)
+  (val thread (.get world.threads turn.thread-id))
+  (val running (if (is thread None) None (.running thread)))
+  (when (or (is running None) (!= thread.current turn.turn-id))
+    (return (NoTurnInFlight :turn turn)))
+  (val item-id (.fresh-id world "item"))
+  (.add thread running (TextDelta :thread-id turn.thread-id :turn-id turn.turn-id :item-id item-id
+                                  :text (.format "{}{} " STEERED-PREFIX asked.input.text)))
+  (Steered))
 
 
 (defk fake-interrupt [#^ FakeCodexWorld world #^ CodexTurn turn]
@@ -149,8 +169,11 @@
 
 ;; 引数に残す理由: world は筋書きと fake の状態の持ち主で、検の composition root が 1 つ作って渡す(本番の codex-handler の host と同じ)。
 (defhandler fake-codex-handler [world]
-  (CodexStartTurn [origin spec text]
+  (CodexStartTurn [origin spec input]
     (<- outcome (fake-start world effect))
+    (resume outcome))
+  (CodexSteerTurn [turn input]
+    (<- outcome (fake-steer world effect))
     (resume outcome))
   (CodexInterruptTurn [turn]
     (<- outcome (fake-interrupt world turn))

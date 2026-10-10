@@ -1,6 +1,7 @@
 ;;; doeff-codex の公開 effect と、その答えの型。
 ;;;
-;;; CodexStartTurn / CodexInterruptTurn / CodexReadTurnEvents / CodexAnswerRequest / CodexCloseSession と、検の口 CodexLaunchCount。
+;;; CodexStartTurn / CodexSteerTurn / CodexInterruptTurn / CodexReadTurnEvents / CodexAnswerRequest / CodexCloseSession と、検の口
+;;; CodexLaunchCount。
 ;;; 単位は「codex の会話(thread)と、その上のターン」。process の単位の操作(起こす・stdin に書く・降ろす・pid)は公開しない —
 ;;; handler の内側の語彙。失敗は例外ではなく答えの型で返す(成功の型と失敗の型の判別可能な union)。handler の実装の誤り(I/O の
 ;;; 予期しない例外)だけが例外として上がる。手本 = doeff-claude-code の effects.hy(同じ単位・同じ答えの形)。
@@ -9,7 +10,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent FreshThread ResumeThread])
+(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex.lines [TurnEnded])
 
 
@@ -32,6 +33,10 @@
   "ターンが始まった: turn = ターンの参照(thread-id は新しい会話なら codex が決めた id)。"
   {:tags {:context "codex" :role "type"}}
   (#^ CodexTurn turn))
+
+(defrecord Steered
+  "走っているターンに入力を足した(codex が受けた — ターンの次の区切りで読む)。"
+  {:tags {:context "codex" :role "type"}})
 
 (defrecord InterruptRequested
   "止めを頼んだ(終わりは CodexReadTurnEvents の TurnEnded — 状態 INTERRUPTED — で届く)。"
@@ -108,11 +113,20 @@
 
 (defeffect CodexStartTurn
   "ターンを始める。process を起こすか使い回すかの判断はこの effect の handler の中の 1 か所だけ(同じ会話・同じ宣言で生きた process が
-   在れば使い回し、無ければ起こして thread/start か thread/resume する)。text = 利用者の入力の文字。
+   在れば使い回し、無ければ起こして thread/start か thread/resume する)。input = 利用者の入力(文字と画像)。
    答え = TurnStarted | ThreadUnknown | TurnInFlight | LaunchFailed | RequestRefused。"
-  {:fields [(: origin (| FreshThread ResumeThread)) (: spec CodexSessionSpec) (: text str)]
-   :pre [(: origin (| FreshThread ResumeThread)) (: spec CodexSessionSpec) (: text str)]
+  {:fields [(: origin (| FreshThread ResumeThread)) (: spec CodexSessionSpec) (: input CodexInput)]
+   :pre [(: origin (| FreshThread ResumeThread)) (: spec CodexSessionSpec) (: input CodexInput)]
    :answer StartTurnOutcome
+   :tags {:context "codex" :role "intent"}})
+
+(defeffect CodexSteerTurn
+  "走っているターンに入力を足す(turn/steer — codex はターンの次の区切りで読み、同じターンが続く)。名指したターンが走っていなければ
+   NoTurnInFlight、codex が断れば RequestRefused(ターンが終わりかけていた・足せない種類のターン)、答えの前に process が降りれば
+   LaunchFailed。答え = Steered | NoTurnInFlight | RequestRefused | LaunchFailed。"
+  {:fields [(: turn CodexTurn) (: input CodexInput)]
+   :pre [(: turn CodexTurn) (: input CodexInput)]
+   :answer (| Steered NoTurnInFlight RequestRefused LaunchFailed)
    :tags {:context "codex" :role "intent"}})
 
 (defeffect CodexInterruptTurn
