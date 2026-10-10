@@ -17,3 +17,11 @@ spec:
           # 同時に受ける処理の数は機体の memory の余白で決まるので、20Gi では同時に走る数が 5 本前後に留まった(15:5x の本番: 使用 18.4GiB /
           # 20GiB・CLI 15 本)。Node の allocatable は 118Gi。requests は変えない。戻す時は CPU 8 / memory 20Gi へ。
           resources: { requests: { cpu: "4", memory: 8Gi }, limits: { cpu: "16", memory: 100Gi } }
+      # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(2026-10-10 15:0x の利用者の決定 原文 "the strategy is to replace the volume
+      # consuming part with usb ssd on zeus" — 同じ日の 13:39 JST に root の disk の空きが準備の最低 25 GiB を切り、新しい版の準備が全部
+      # 止まった)。type は Directory: SSD が外れて mount の点が無ければ、root の disk へ黙って dir を作らず起動で止まる。中身は切り替えの前に
+      # 機体の上で /var/lib/agent-worker から写す(この行が当たると Pod が作り直される)。戻す時は path を /var/lib/agent-worker・type を
+      # DirectoryOrCreate へ。
+      volumes:
+        - name: work
+          hostPath: { path: /mnt/fast_ssd_usb/agent-worker, type: Directory }
