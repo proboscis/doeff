@@ -313,8 +313,7 @@
 
 (deftest test-list-rows-refuses-continuation-keys-it-does-not-know
   ;; 一覧の続きの引数は cursor(前の頁の答えの nextCursor の object)だけ。別名(next・nextCursor)や形の違う cursor は黙って最初の頁を
-  ;; 答えず 400 malformed で断る(手で書いた読みの script が続きを見落として最初の 500 行で止まった実例 2026-10-10・card
-  ;; acp:kanban-issue:ki-634cdd5c8586)。
+  ;; 答えず 400 malformed で断る(手で書いた読みの script が続きを見落として最初の 500 行で止まった実例 2026-10-10)。
   (setv #(server clock) (open-service (memory-lease (MemoryStore LAW-SCHEMA)))
         maker "maker")
   (try
