@@ -9,8 +9,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# 時刻の粒度の上限(ns)— file の最後の変更(mtime・ctime)が、記録を取った時刻からこの幅の内なら、同じ時刻の区切りの中で
+# 書き換えられても stat が変わらない(git の racy-git と同じ形・card ki-5b70c4b62814)。粗い kernel の ctime の区切りは jiffy
+# (atlas の 6.8 で 4 ms)、粗い file system は 1〜2 秒(ext3・HFS+ は 1 秒・FAT は 2 秒)なので 2 秒にする。
+RACY_WINDOW_NS: int = 2_000_000_000
+
+
 @dataclass(frozen=True)
 class SourceDependency:
+    """読んだ source 1 つの記録。recorded_ns = 記録を取った壁の時刻(この欄の無い古い記録は 0 — stat を信じず 1 度 hash で確かめ、
+    確かめた時刻で書き直される)。"""
+
     path: str
     digest: str
     size: int
@@ -18,9 +27,11 @@ class SourceDependency:
     ctime_ns: int
     device: int
     inode: int
+    recorded_ns: int = 0
 
 
-def snapshot(path: Path, relative: str, digest: str) -> SourceDependency:
+def snapshot(path: Path, relative: str, digest: str, recorded_ns: int | None = None) -> SourceDependency:
+    """path の今の stat の記録。recorded_ns を渡さなければ、stat を読んだ後の壁の時刻を記録の時刻にする。"""
     status: os.stat_result = path.stat()
     return SourceDependency(
         relative,
@@ -30,7 +41,14 @@ def snapshot(path: Path, relative: str, digest: str) -> SourceDependency:
         status.st_ctime_ns,
         status.st_dev,
         status.st_ino,
+        time.time_ns() if recorded_ns is None else recorded_ns,
     )
+
+
+def stat_is_trusted(dependency: SourceDependency) -> bool:
+    """純粋: 記録の stat が一致した時に hash を読まずに信じてよいか — file の最後の変更が、記録を取った時刻より RACY_WINDOW_NS 以上
+    前の時だけ(同じ時刻の区切りの中の書き換えは stat に出ないので、その幅の内の記録は hash で確かめる — git の racy-git)。"""
+    return max(dependency.mtime_ns, dependency.ctime_ns) + RACY_WINDOW_NS < dependency.recorded_ns
 
 
 @dataclass(frozen=True)
@@ -85,6 +103,7 @@ class DependencyChecks:
     _mut_checks: int = 0
     _mut_rebuilds: int = 0
     _mut_seconds: float = 0.0
+    clock: Callable[[], int] = time.time_ns
 
     def macro_provider(self, module: str, find: Callable[[str], ProviderState]) -> ProviderState:
         """macro の提供元 ``module`` の今の状態。調べ方(``find``)は記録のキャッシュの側が持つ 1 つだけを使う。"""
@@ -130,7 +149,7 @@ class DependencyChecks:
                 dependency.ctime_ns,
                 dependency.device,
                 dependency.inode,
-            ):
+            ) and stat_is_trusted(dependency):
                 self._mut_stat_hits += 1
                 refreshed.append(dependency)
                 continue
@@ -149,6 +168,7 @@ class DependencyChecks:
                     current.ctime_ns,
                     current.device,
                     current.inode,
+                    self.clock(),
                 )
             )
         return SourceSnapshot(tuple(refreshed))
