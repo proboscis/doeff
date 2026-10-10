@@ -9,7 +9,9 @@
 ;;;   file system     StatPath・ReadText・ReadBytes・WriteText・AppendText・MakeDirectory・ListDirectory・WalkTree・RenamePath・
 ;;;                   RemoveTree・AcquireLock・ReleaseLock・ReadDiskFree — 本番 = os-file-handler・模擬 = memory-file-handler
 ;;; 設定は Ask で読む:
-;;;   runtime-env.state         worker の state dir(mirrors/・wheels/・python/・locks/・probe/ を置く)
+;;;   runtime-env.state         worker の世代ごとの state dir(probe/ を置く)
+;;;   runtime-env.shared        世代をまたいで分け合う dir(mirrors/・wheels/・python/・locks/ を置く — 同じ機体に同じ名の worker の 2 つの
+;;;                             世代が並ぶ時も重い cache を作り直さない・AL-D2。1 つの dir の形では state と同じ値)
 ;;;   runtime-env.uv-cache      uv の子の cache の dir(UV_CACHE_DIR — worker の --uv-cache・起動の script の DOEFF_UV_CACHE_DIR・既定は state の下の uv-cache)
 ;;;   runtime-env.repo-keys     鍵の表 = URL → deploy key の file(空文字 = 鍵なし)。URL を断る表ではない — 表に無い URL は宣言の綴りのまま
 ;;;                             鍵なしで clone する。宣言の url は同じ repo の別の綴り(ssh と https)でも表の項目に引き当て、clone と deploy key は
@@ -574,6 +576,7 @@
 (defhandler env-translation
   ;; 設定は Ask(runtime-env.*)で読む。state dir・uv の cache の dir・許可表・道具の path はセッションで 1 回読む。
   (session val state-dir (! (asked-text "runtime-env.state")))
+  (session val shared-dir (! (asked-text "runtime-env.shared")))
   (session val uv-cache (! (asked-text "runtime-env.uv-cache")))
   (session val repo-keys (! (asked-repo-keys)))
   (session val code-prepare (! (asked-text "runtime-env.code-prepare")))
@@ -622,8 +625,8 @@
     (<- name str (digest16 chosen))
     (<- env tuple (git-environment (.get repo-keys chosen "")))
     (<- answer (| MirrorReady EnvFailure)
-        (locked (posixpath.join state-dir "locks" (+ "mirror-" name))
-                (mirror-of chosen (posixpath.join state-dir "mirrors" (+ name ".git")) env)))
+        (locked (posixpath.join shared-dir "locks" (+ "mirror-" name))
+                (mirror-of chosen (posixpath.join shared-dir "mirrors" (+ name ".git")) env)))
     (resume answer))
 
   (FetchCommit [mirror commit]
@@ -640,12 +643,12 @@
 
   (EnsureNativeWheel [package source-dir out-dir]
     (<- wheel (| WheelReady EnvFailure)
-        (locked (wheel-lock state-dir package)
-                (wheel-of package source-dir out-dir state-dir uv-cache uv)))
+        (locked (wheel-lock shared-dir package)
+                (wheel-of package source-dir out-dir shared-dir uv-cache uv)))
     (resume wheel))
 
   (SyncProject [project-dir python groups no-install]
-    (<- env tuple (uv-environment state-dir uv-cache))
+    (<- env tuple (uv-environment shared-dir uv-cache))
     ;; lock はそのまま使う(--frozen)。lock の中身は宣言の lock-sha256 で縛ってあり、確かめは宣言の側に在る。--locked は lock が
     ;; pyproject と合うかを解き直すので、入れない組(dev など)の git の依存まで取りに行き、worker が読めない private の repo が
     ;; 在ると準備が全部止まる(#2730 — 2026-10-02 の本番)。
@@ -662,7 +665,7 @@
             (resume failure))))
 
   (InstallWheels [project-dir wheels]
-    (<- env tuple (uv-environment state-dir uv-cache))
+    (<- env tuple (uv-environment shared-dir uv-cache))
     (<- result CommandResult (uv-command (+ #(uv "pip" "install" "--no-deps" "--python" (posixpath.join project-dir ".venv" "bin" "python"))
                                             (tuple wheels))
                                          project-dir env))
@@ -704,14 +707,14 @@
   (CompileTrees [project-dir trees entries jobs]
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
     ;; 無い物だけを焼く(#3858 — 前の root からの引き継ぎと、その差の一覧は持たない)。
-    (<- env tuple (uv-environment state-dir uv-cache))
+    (<- env tuple (uv-environment shared-dir uv-cache))
     (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
     (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees project-dir))
     (resume compiled))
 
   (ProbeImports [project-dir roots]
-    (<- env tuple (uv-environment state-dir uv-cache))
+    (<- env tuple (uv-environment shared-dir uv-cache))
     (<- name str (digest16 project-dir))
     (val empty (posixpath.join state-dir "probe" name))
     (<- (remove-if-present empty))

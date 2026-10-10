@@ -405,7 +405,35 @@ esac
 # WORKER_DIR_LOCK=1(k8s の DaemonSet)では、node の dir(mirror・状態)を使う worker を 1 つに限る。DaemonSet は消した Pod の終了を
 # 待たずに同じ node へ次の Pod を作るので、旧 worker が job を止め終えて終わるまで、新しい Pod は git にも状態にも触らずに待つ。
 # lock は fd 9 に持ち、exec した worker が終わるまで離さない(job の子 process へは渡らない — subprocess の close_fds)。
-if [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
+# WORKER_GENERATION_DIRS=1(同じ機体に同じ名の worker の 2 つの世代を並べる Deployment の RollingUpdate — AL-D2): 新しい Pod は旧い Pod の
+# 終わりを待たずに起き、worker の状態(版の木・job の cwd・task の結果・温める子・実行環境の root と準備の要求・入口の検め)を世代ごとの
+# dir $WORK_DIR/gen/<Pod の uid>/state に置く。log・Python・Rust の wheel・mirror とその錠は $WORK_DIR/state を分け合う(worker の
+# --shared-dir — 重い cache を世代ごとに作り直さない)。世代の dir の錠(fd 9)は exec した worker が終わるまで持ち、起きる時に、錠を誰も
+# 持たない(worker が終わった)前の世代の dir を消す。まだ走る前の世代(入れ替えの重なり)の dir は、脇の子がその錠を待って、前の世代の
+# worker が終わった時に消す(前の世代の root を次の入れ替えまで残さない)。POD_UID は downward API の metadata.uid。
+state_dir=$WORK_DIR/state
+if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
+  if [ -z "${POD_UID:-}" ]; then
+    echo "boot: WORKER_GENERATION_DIRS=1 には POD_UID(downward API の metadata.uid)が要る" >&2
+    exit 2
+  fi
+  gen_root=$WORK_DIR/gen
+  mkdir -p "$gen_root/$POD_UID"
+  exec 9>"$gen_root/$POD_UID/worker.lock"
+  flock 9
+  for gen_dir in "$gen_root"/*; do
+    [ -d "$gen_dir" ] && [ "$gen_dir" != "$gen_root/$POD_UID" ] || continue
+    if flock -n "$gen_dir/worker.lock" true 2>/dev/null; then
+      rm -rf "$gen_dir"
+      echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2
+    else
+      echo "boot: 前の世代の dir $gen_dir はその worker が終わった後に消す" >&2
+      (flock "$gen_dir/worker.lock" rm -rf "$gen_dir" 9>&- && echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2) 9>&- &
+    fi
+  done
+  state_dir=$gen_root/$POD_UID/state
+  echo "boot: 世代の dir $state_dir(分け合う dir $WORK_DIR/state)" >&2
+elif [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
   exec 9>"$WORK_DIR/worker.lock"
   echo "boot: $WORK_DIR/worker.lock を待つ $(date +%T)" >&2
   flock 9
@@ -478,7 +506,7 @@ export DOEFF_BOOT_EXEC_MS
 exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --task-reserve "${WORKER_TASK_RESERVE}" \
-  --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
+  --repo "$repo" --state-dir "$state_dir" --shared-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --repo-access "$repo_access_script" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
   --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \

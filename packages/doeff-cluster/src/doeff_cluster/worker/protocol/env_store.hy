@@ -81,8 +81,10 @@
    (割った時は固定されていない root を古い順に消し — #4051、戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
    上限・tool = 準備の process の入口・cgroup-dir = worker の container の cgroup(v2)の dir(先の組みの前に memory.current と memory.max を
    読む — #3748)・code-store = source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・None = 保存先を使わない
-   設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)。2 つの量の値は worker の起動の引数(main.hy の
-   --env-roots-cap・--env-min-free — 既定は boot.sh)。"
+   設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)・shared = 世代をまたいで分け合う dir(Python の
+   置き場・Rust の wheel の保存先・mirror とその錠・wheel の錠 — 値は main の --shared-dir・None = state と同じ dir。同じ機体に同じ名の
+   worker の 2 つの世代が並ぶ時、root と準備の要求は世代ごとの state に置き、重い cache だけを分け合う・AL-D2)。2 つの量の値は worker の
+   起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
@@ -97,7 +99,8 @@
   (setv #^ int max-parallel 2)
   (setv #^ str tool ENV-TOOL)
   (setv #^ str cgroup-dir "/sys/fs/cgroup")
-  (setv #^ (| str None) code-store None))
+  (setv #^ (| str None) code-store None)
+  (setv #^ (| str None) shared None))
 
 
 (defrecord PendingEnv
@@ -214,7 +217,8 @@
                                  compile-jobs))
   (<- (file-done (WriteText request (json.dumps body :ensure-ascii False))))
   (<- (refreshed-repo-access settings))
-  (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state settings.uv-cache settings.repo-keys
+  (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
+                               settings.uv-cache settings.repo-keys
                                settings.code-prepare settings.uv progress))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
   (<- started (StartProcess :argv argv :stdout-path log :stderr-path log))
@@ -346,12 +350,12 @@
                  #()
                  (tuple (gfor entry roots :if (and (.startswith entry.name ".") (or (in ".broken." entry.name) (in SWEPT-MARK entry.name)))
                               (+ settings.state "/roots/" entry.name)))))
-  (<- wheels (ListDirectory (wheels-root settings.state)))
+  (<- wheels (ListDirectory (wheels-root (or settings.shared settings.state))))
   (var stale #())
   (when (not (isinstance wheels FileFailed))
     (for [entry wheels]
       (when (= entry.kind PathKind.DIRECTORY)
-        (val path (+ (wheels-root settings.state) "/" entry.name))
+        (val path (+ (wheels-root (or settings.shared settings.state)) "/" entry.name))
         (<- at (modified-ms path))
         (when (and (is-not at None) (> (- now-ms at) (* 1000 WHEEL-UNUSED-SECONDS)))
           (:= stale (+ stale #(path)))))))

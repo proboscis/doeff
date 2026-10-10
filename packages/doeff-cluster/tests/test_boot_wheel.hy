@@ -228,19 +228,41 @@
   ready)
 
 
-(defk worker-wheel [state-dir uv-cache uv source-dir]
-  {:pre [(: state-dir Path) (: uv-cache Path) (: uv Path) (: source-dir str)] :post [(: % (| WheelReady EnvFailure))]
+(defk worker-wheel [state-dir uv-cache uv source-dir [shared-dir None]]
+  {:pre [(: state-dir Path) (: uv-cache Path) (: uv Path) (: source-dir str) (: shared-dir (| Path None))] :post [(: % (| WheelReady EnvFailure))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation — worker/entry/env_tool)で wheel を用意する(--out-dir は
    state の隣の worker-root の下 — 準備の stage-native と同じ wheel-out-dir・uv-cache = worker の uv の cache の dir — 起動の script の
-   DOEFF_UV_CACHE_DIR)。"
+   DOEFF_UV_CACHE_DIR・shared-dir = 世代をまたいで分け合う dir — None は state と同じ)。"
   (val out-dir (native-wheel.wheel-out-dir (str (/ state-dir.parent "worker-root")) native-wheel.DOEFF-VM-PACKAGE))
-  (val settings {"runtime-env.state" (str state-dir) "runtime-env.uv-cache" (str uv-cache) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
+  (val settings {"runtime-env.state" (str state-dir) "runtime-env.shared" (str (or shared-dir state-dir)) "runtime-env.uv-cache" (str uv-cache) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
                  "runtime-env.uv" (str uv) "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
   (<- ready (| WheelReady EnvFailure)
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                      (ensure-wheel source-dir out-dir)))
   ready)
+
+
+(deftest test-a-new-generation-uses-the-wheel-in-the-shared-dir-without-building
+  ;; 同じ機体に同じ名の worker の 2 つの世代が並ぶ時(AL-D2): 世代ごとの state(gen/<世代>/state)を持つ新しい世代の準備も、分け合う dir
+  ;; (shared — 起動の script が組んだ wheel の保存先)の wheel を組まずに使う。直す前は wheel の保存先を state の下に固定していたので、
+  ;; 世代ごとの state では保存先が空で、新しい世代が Rust の wheel を組み直した(組んだ = BUILT)。
+  [tmp-path monkeypatch]
+  (<- made tuple (doeff-source tmp-path))
+  (val src (get made 0))
+  (<- uv Path (fake-uv tmp-path))
+  (val shared (/ tmp-path "shared"))
+  (monkeypatch.setenv "FAKE_UV_LOG" (str (/ tmp-path "uv.log")))
+  (monkeypatch.setenv "PYTHONDONTWRITEBYTECODE" "1")
+  (val booted (subprocess.run [sys.executable "-m" "doeff_cluster.worker.entry.boot_wheel" "--root" (str src)
+                               "--state" (str shared) "--uv-cache" (str (/ shared "uv-cache")) "--uv" (str uv)]
+                              :capture-output True :text True :timeout 60))
+  (assert (= booted.returncode 0) booted.stderr)
+  (val generation-state (/ tmp-path "gen" "pod-2" "state"))
+  (<- ready (| WheelReady EnvFailure) (worker-wheel generation-state (/ shared "uv-cache") uv (str (/ src native-wheel.DOEFF-VM-SOURCE))
+                                                    :shared-dir shared))
+  (assert (and (isinstance ready WheelReady) (= ready.origin WheelOrigin.STORED)) ready)
+  (assert (not (.exists (/ generation-state "wheels"))) "世代ごとの state に wheel の保存先を作らない"))
 
 
 (defk out-path [root stdout]
