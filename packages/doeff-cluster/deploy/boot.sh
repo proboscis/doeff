@@ -431,6 +431,19 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
       (flock "$gen_dir/worker.lock" rm -rf "$gen_dir" 9>&- && echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2) 9>&- &
     fi
   done
+  # 世代の dir を使う前の worker(WORKER_DIR_LOCK — $WORK_DIR/worker.lock を持ち、$WORK_DIR/state を状態の dir にした)が置いた世代ごとの物
+  # (worker の入口が --state-dir から作る物)は、分け合う dir に残る。その worker が終わって錠が空いた後に消す(初めて世代の dir で起きた
+  # 時の入れ替えでは、前の Pod がまだ走っている)。
+  if [ -e "$WORK_DIR/state/roots" ] || [ -e "$WORK_DIR/state/jobs" ]; then
+    echo "boot: 前の worker の状態($WORK_DIR/state の roots・jobs ほか)はその worker が終わった後に消す" >&2
+    (
+      flock "$WORK_DIR/worker.lock" true
+      for name in code jobs programs warm roots env-requests probe tasks status.json; do
+        rm -rf "${WORK_DIR:?}/state/$name"
+      done
+      echo "boot: 前の worker の状態($WORK_DIR/state の roots・jobs ほか)を消した" >&2
+    ) 9>&- &
+  fi
   state_dir=$gen_root/$POD_UID/state
   echo "boot: 世代の dir $state_dir(分け合う dir $WORK_DIR/state)" >&2
 elif [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
