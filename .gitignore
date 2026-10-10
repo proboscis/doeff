@@ -74,6 +74,8 @@ dmypy.json
 *.jsonl
 # 旧い版の coordinator の置き場の log(版上げの下見の検 test_deployed_state_upgrade.hy が読む fixture — 生成された log ではない)
 !packages/doeff-cluster/tests/fixtures/coordinator_state_*/wal/wal.jsonl
+# codex の app-server の実物の行を録った物(行の分類の検 packages/doeff-codex/tests/test_lines.hy が読む fixture — 生成された log ではない)
+!packages/doeff-codex/tests/recorded/codex-*/*.jsonl
 *.db
 *.db-journal
 *.db-shm

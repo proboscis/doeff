@@ -93,6 +93,7 @@ doeff-jev = { workspace = true }
 doeff-cluster = { workspace = true }
 doeff-validation = { workspace = true }
 doeff-claude-code = { workspace = true }
+doeff-codex = { workspace = true }
 doeff-records = { workspace = true }
 # Hy は PyPI の版(uv.lock が 1.3.1 に固定)を使い、フォークしない(ADR-DOE-HY-008・agora-redesign #1290)。フォークが持っていた
 # 3 つの機能は doeff の側に置いた: テストの索引(doeff-adr item_cache)・macro の変更で古い bytecode を使わない判定
@@ -305,6 +306,10 @@ tests = [
 #    「無い」の根拠 = stub(.pyi)が無いか突き合わせる相手が無い・公開の名の全体を確かめる検が無い・木を歩く検が無い。
 #    残る検は単体の振る舞い(変えた module を import するので、変えた所の検の逆依存が選ぶ)か、印 e2e の実 API の検。
 [[tool.doeff.contract-tests]]
+prefix = "packages/doeff-codex/"
+reason = "stub(.pyi)も公開の名の一覧も無い(層 2 の部品 — argv と要求の組み立て・行の分類・子 process の器だけで、公開 effect は無い)— 検は録った実物の行で分類と組み立てを確かめる単体と、替え玉の CLI で器を確かめる単体だけ(2026-10-10)"
+
+[[tool.doeff.contract-tests]]
 prefix = "packages/doeff-agentic/"
 reason = "stub が無く、__all__ の全体を確かめる検も木を歩く検も無い — 検は types・effects・handlers を import して作って確かめる単体だけ"
 
@@ -436,6 +441,7 @@ dev = [
     "doeff-cluster",
     "doeff-validation",
     "doeff-claude-code",
+    "doeff-codex",
     "doeff-records",
     "doeff-docker",
     "doeff-ml-nexus",

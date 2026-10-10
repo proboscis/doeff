@@ -292,7 +292,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      汎用の package(doeff-cluster・doeff-records・doeff-claude-code)は、上に載る業務の系の語を書かない — agora・kanban・
+      汎用の package(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex)は、上に載る業務の系の語を書かない — agora・kanban・
       conversation・budget・artifact・herdr・hypha・mediagen・sporocarp・acp・controllers/・controllers.・clients/hy(大文字小文字を
       区別しない・前が英字でない時)。汎用の部品が業務の系を名指すと、境界が file の文字から崩れる。註・docstring・README の
       repo の名や issue の参照も同じ(「agora-redesign #2830」は「#2830」と書く)。語の一覧の定義元はこの規則 1 つ(元は 3 package の
@@ -308,6 +308,7 @@ rules:
         - "/packages/doeff-cluster/**"
         - "/packages/doeff-records/**"
         - "/packages/doeff-claude-code/**"
+        - "/packages/doeff-codex/**"
         - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
         - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
 
