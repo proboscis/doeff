@@ -5,6 +5,16 @@ from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 
 @dataclass(frozen=True, kw_only=True)
+class SiteTally:
+    site: str | None
+    steps: int
+    wall_ns: int
+    cpu_ns: int
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
 class StepTally:
     steps: int
     wall_ns: int
@@ -14,6 +24,7 @@ class StepTally:
     longest_site: str | None
     longest_effect: str | None
     ready: int
+    sites: tuple[SiteTally, ...] = ...
 
     def __post_init__(self) -> None:
         ...

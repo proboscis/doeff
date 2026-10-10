@@ -9,6 +9,7 @@ from doeff_core_effects.scheduler import set_scheduler_trace as set_scheduler_tr
 from doeff_core_effects.step_tally_effects import CloseStepTally as CloseStepTally
 from doeff_core_effects.step_tally_effects import EMPTY_STEP_TALLY as EMPTY_STEP_TALLY
 from doeff_core_effects.step_tally_effects import OpenStepTally as OpenStepTally
+from doeff_core_effects.step_tally_effects import SiteTally as SiteTally
 from doeff_core_effects.step_tally_effects import StepTally as StepTally
 from doeff_core_effects.step_tally_effects import CloseTaskTally as CloseTaskTally
 from doeff_core_effects.step_tally_effects import OpenTaskTally as OpenTaskTally
@@ -22,6 +23,7 @@ class StepWindow:
     thread: str
     opened_ns: int
     tally: StepTally
+    sites: dict[str | None, SiteTally]
 
 @dataclass(frozen=True, kw_only=True)
 class TaskWindow:
@@ -50,6 +52,9 @@ def sink_released() -> None:
     ...
 
 def step_sink(event: dict) -> None:
+    ...
+
+def tally_with_sites(window: StepWindow) -> _Program[StepTally, object]:
     ...
 
 def opened(key: str, thread: str, opened_ns: int) -> _Program[None, object]:
