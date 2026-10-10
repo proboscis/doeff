@@ -46,6 +46,7 @@ from doeff_cluster.coordinator.intent.cluster_model import PLACED_PHASES as PLAC
 from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as NodeLabelsSeen
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
+from doeff_cluster.coordinator.intent.cluster_model import SupersededRun as SupersededRun
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
 from doeff_cluster.shared.intent.due_model import DueNow as DueNow
 from doeff_cluster.shared.intent.due_model import DueNever as DueNever
@@ -384,6 +385,9 @@ def register_heartbeat(given: ClusterState, body: HeartbeatBody, now: int) -> _P
     ...
 
 def absorb_superseded_heartbeat(state: ClusterState, name: str, boot: str, statuses: tuple, now: int) -> ClusterState:
+    ...
+
+def superseded_runs_after(state: ClusterState, name: str, boot: str, statuses: tuple, now: int) -> tuple:
     ...
 ADOPTABLE_PHASES: set[str]
 

@@ -226,12 +226,17 @@
 
 (defn #^ WorkerDrainView superseded-worker-view [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
   "退いた世代の process(旧い Pod の preStop)が drain を頼んだ時の答え(2026-09-27)。名の置き先と drain は今の
-   世代の物なので、退いた世代が待つのは、その世代に置いてまだ終わっていない切り離した task だけ(0 で drained — preStop が終わる)。
-   形は worker-view と同じ(drain_client.drain-outcome が drain.drained を読む)。"
+   世代の物なので、退いた世代が待つのは、その世代に置いてまだ終わっていない切り離した task と、その世代がまだ走らせている入れ替えの
+   job(SupersededRun — 退かせた process が走っている仕事を終えて自分で終わるまで・AL-D2。その世代が lease の間 沈黙したら待たない)
+   だけ(0 で drained — preStop が終わる)。形は worker-view と同じ(drain_client.drain-outcome が drain.drained を読む)。"
   (setv w (get state.workers name)
-        remaining (sorted (gfor t (.values state.tasks)
-                                :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
-                                (+ "task/" t.id))))
+        remaining (sorted (+ (lfor t (.values state.tasks)
+                                   :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
+                                   (+ "task/" t.id))
+                             (lfor r state.superseded-runs
+                                   :if (and (= r.worker name) (= r.boot boot) (< (- now r.seen-ms) timing.lease-ms))
+                                   job r.jobs
+                                   (+ "job/" job)))))
   (WorkerDrainView :info w :alive (alive now w timing.lease-ms) :silent-ms (- now w.last-seen-ms) :superseded True
                    :drain (DrainProgress :worker name :boot boot :superseded True :since-ms None :until-ms None :actor None
                                          :phase (if remaining DrainPhase.DRAINING DrainPhase.DRAINED) :remaining (tuple remaining)

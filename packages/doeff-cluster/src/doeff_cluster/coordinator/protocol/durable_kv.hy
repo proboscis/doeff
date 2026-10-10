@@ -10,6 +10,8 @@
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 印を約束しない今までの振る舞い)
+;;;   superseded/<名>/<世代>(AL-D2 — 退いた世代が走らせている入れ替えの job の組 SupersededRun {worker boot jobs seen_ms}。無い置き場は
+;;;   空として読む。旧い版の coordinator はこの鍵を読まずに無視する — 旧い Pod の preStop が入れ替えの job を待たない今までの振る舞い)
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。
@@ -27,7 +29,7 @@
 (import dataclasses [asdict dataclass replace])
 (import collections.abc [Callable])
 (import functools [partial])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark SupersededRun])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes value-size
@@ -38,6 +40,7 @@
 (setv DRAIN "drain/" SURGE "surge/" WARM "warm/" PROGRAM "program/")
 (val HANDOFF "handoff/")
 (val KEEP "keep/")
+(val SUPERSEDED "superseded/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -134,6 +137,9 @@
     (SourceGroup :fields #("keep_marks")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor m state.keep-marks (+ KEEP m.job) #(#(m) (partial asdict m)))))
+    (SourceGroup :fields #("superseded_runs")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor r state.superseded-runs (+ SUPERSEDED r.worker "/" r.boot) #(#(r) (partial asdict r)))))
     (SourceGroup :fields #("audit")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor e state.audit (.format "audit/{:010d}" e.seq) #(#(e) (partial audit-event-to-json e)))))))
@@ -245,6 +251,7 @@
     :programs (dict programs)
     :handoffs (dfor #(k v) (part HANDOFF) k (handoff-watch-from-json v))
     :keep-marks (tuple (gfor #(_ v) (part KEEP) (KeepMark #** v)))
+    :superseded-runs (tuple (gfor #(_ v) (part SUPERSEDED) (SupersededRun #** (| v {"jobs" (tuple (get v "jobs"))}))))
     :audit (tuple (gfor #(_ event) audit event))
     :board (dfor #(k v) (part BOARD) k (BoardRow :value (get v "value") :version (get v "resourceVersion")
                                                  :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))

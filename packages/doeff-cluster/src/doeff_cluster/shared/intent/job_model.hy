@@ -38,6 +38,11 @@
   ;; (WorkerPolicy.retired-limit)。R に達している間の宣言し直しは、退いた process を止めず今の process も退かせずに待つ
   ;; (worker_policy.handoff-actions・#4072 の D-3 の改め)。比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ (| int None) retired-limit (field :default None :compare False))
+  ;; 世代をまたぐ入れ替えの印(handoff の job だけ・AL-D2)。同じ名の worker の新しい世代が同じ job の process を Ready にした後、
+  ;; coordinator が退いた世代の worker への返事(superseded-reply)に、その Ready の process の世代の名を載せる。退いた世代の worker は
+  ;; 今の process を止めずに退かせ(RetireJob — 走っている仕事を終えて自分で終わる・寿命の上限は retired-ms)、名が空いても起こし直さない
+  ;; (worker_policy.plan-job)。None = 今どおり。比べない欄(値が変わっても process を起こし直さない)。
+  (setv #^ (| str None) superseded-by (field :default None :compare False))
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))

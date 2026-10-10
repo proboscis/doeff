@@ -326,10 +326,12 @@
   (setv want (desired-of desired name)
         process (process-of world name)
         ;; 入れ替えの諦め(2026-09-26 — coordinator の handoff_policy が期限で決め、heartbeat の返事で運ぶ)。
-        abandoned (and (is-not want None) want.handoff want.handoff-abandoned))
+        abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
+        ;; 世代をまたぐ入れ替え(AL-D2): 同じ名の worker の新しい世代の process が Ready — この(退いた)世代は退かせるだけで起こさない。
+        superseded (and (is-not want None) want.handoff (is-not want.superseded-by None)))
   (cond
-    ;; 諦めた入れ替えの新は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
-    (is process None) (if (or (is want None) abandoned) #() (. (run (start-step now want world record policy)) actions))
+    ;; 諦めた入れ替えの新・新しい世代へ移った job は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
+    (is process None) (if (or (is want None) abandoned superseded) #() (. (run (start-step now want world record policy)) actions))
     (is-not process.exit-code None)
       (+ #((ReapJob name process.pid
              (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code))
@@ -337,6 +339,10 @@
          ;; 担い手の名は子が名乗った job の名(起こした spec の名 — 退いた process も元の名)と世代の名。
          (if process.instance #((ReleaseLeases process.spec.name process.instance)) #()))
     (is-not process.retired-from None) (retired-actions now process process.retired-from desired world record policy)
+    ;; 新しい世代の process が Ready になった job の今の process: 止めずに退かせる(退く知らせ → 走っている仕事を終えて自分で終わる・
+    ;; 寿命の上限は retired-actions)。止め始めた process は止め終える(下の枝)。
+    (and superseded (is record.stopping None))
+      #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))
     ;; 諦めた入れ替え: 今の宣言の spec の新の process を止める(止め始めた process は止め終える)。前の宣言の process(まだ退いて
     ;; いない旧)は名から外さず、そのまま動かす — 新を起こさないので並べる理由が無い。
     abandoned

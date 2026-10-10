@@ -224,6 +224,13 @@ class KeepMark:
     since_ms: int
 
 @dataclass(frozen=True, kw_only=True)
+class SupersededRun:
+    worker: str
+    boot: str
+    jobs: tuple[str, ...]
+    seen_ms: int
+
+@dataclass(frozen=True, kw_only=True)
 class StateView:
     now: int
     services: tuple[ServiceView, ...]
@@ -676,6 +683,7 @@ class ClusterState:
     silent: frozenset[str] = ...
     observations: ClusterObservations = ...
     keep_marks: tuple[KeepMark, ...] = ...
+    superseded_runs: tuple[SupersededRun, ...] = ...
 
 @dataclass(frozen=True)
 class Fault:

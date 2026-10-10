@@ -59,6 +59,9 @@
      (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})
      ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
      (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})
+     ;; 世代をまたぐ入れ替えの印を持つ handoff の job だけ(AL-D2 — 退いた世代への返事): worker は今の process を止めずに退かせ、起こし直さ
+     ;; ない。欄を読まない古い worker は今どおり動かし続ける(Pod の停止で止める)。
+     (if (and spec.handoff (is-not spec.superseded-by None)) {"supersededBy" spec.superseded-by} {})
      ;; 退いた process の寿命の上限を宣言した handoff の job だけ(#4072 の D-2): worker は新の Ready で退いた旧を止めず、旧が自分で
      ;; 終わるか、退いてからこの ms を越えた時に止める。欄を読まない古い worker は今どおり新の Ready で止める。
      (if (and spec.handoff (is-not spec.retired-ms None)) {"retiredMs" spec.retired-ms} {})

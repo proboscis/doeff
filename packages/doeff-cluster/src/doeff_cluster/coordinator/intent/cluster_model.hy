@@ -348,6 +348,18 @@
   (#^ int since-ms))
 
 
+(defrecord SupersededRun
+  "退いた世代(同じ名の新しい世代が名乗った後の旧い Pod)が、まだ走らせていると報告した入れ替え(handoff)の job の組(AL-D2)。旧い Pod の
+   preStop の drain(drain_policy.superseded-worker-view)は、この組が空になるまで(退かせた process が走っている仕事を終えて自分で終わる
+   まで)drained を返さない。worker = 名・boot = 退いた世代・jobs = 走っている handoff の job の名(名の順)・seen-ms = その世代の最後の
+   報告の刻(lease の間 沈黙した世代 = Pod が消えた — 待たない)。保存する(durable_kv の superseded/<名>/<世代>)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ str boot)
+  (#^ (get tuple #(str ...)) jobs)
+  (#^ int seen-ms))
+
+
 (defrecord StateView
   "GET /state の状態の画面(cluster_policy.state-view — #2595): now・services・workers・placements(job の名 → Placement)・unplaced(job の名 →
    置き先が無い理由)・statuses(worker の名 → StatusView)・tasks・board-keys = 盤の行の数・surges(job の名 → Placement)・events = 直近
@@ -1029,7 +1041,11 @@
   ;; 印を渡した担い手から job を他へ移さない約束で、担い手が印を持たないと知らせるか、Worker が消されるか、担い手の沈黙が約束の期限
   ;; (ClusterTiming.kept-reassign-after-ms)を越えるまで残る(宣言から job が消えても
   ;; 残す — 途絶した担い手が古い宣言のまま動かしているかもしれない)。保存する(durable_kv の keep/<名>)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get tuple #(KeepMark ...)) keep-marks #()))
+  (setv #^ (get tuple #(KeepMark ...)) keep-marks #())
+  ;; 退いた世代が走らせている入れ替えの job(AL-D2): SupersededRun の列(名と世代の順)。退いた世代の heartbeat ごとに
+  ;; cluster_policy.absorb-superseded-heartbeat が書き直し、空になれば外す。保存する(durable_kv の superseded/<名>/<世代>)。
+  ;; 位置の引数の呼び手のため最後に置く。
+  (setv #^ (get tuple #(SupersededRun ...)) superseded-runs #()))
 
 
 (defclass [(dataclass :frozen True)] Fault []

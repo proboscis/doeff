@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit])
+(import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
@@ -1531,8 +1531,26 @@
 
 (defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
-   lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。"
-  (replace state :tasks (renew-detached (absorb-task-reports state name statuses now boot) name boot now)))
+   lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。
+   その世代が走らせている入れ替えの job の組(SupersededRun — 旧い Pod の preStop が待つ・AL-D2)も書き直す。"
+  (replace state :tasks (renew-detached (absorb-task-reports state name statuses now boot) name boot now)
+                 :superseded-runs (superseded-runs-after state name boot statuses now)))
+
+
+(defn #^ tuple superseded-runs-after [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
+  ;; defk にできない: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
+  "純粋: 退いた世代 boot の報告 statuses の後の、退いた世代の走らせている入れ替えの job の組の列(AL-D2)。この世代の行を、報告の
+   running の handoff の job の名で置き直す(空なら外す)。名 name の行のうち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も
+   外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。"
+  (setv info (.get state.workers name)
+        kept (if (is info None) #() info.retired)
+        handoff (frozenset (gfor j state.jobs :if j.spec.handoff j.spec.name))
+        jobs (tuple (sorted (& (running-names statuses) handoff)))
+        others (tuple (gfor r state.superseded-runs
+                            :if (not (and (= r.worker name) (or (= r.boot boot) (not-in r.boot kept))))
+                            r)))
+  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now)) #()))
+                 :key (fn [r] #(r.worker r.boot)))))
 
 
 ;; --- 状態を失った coordinator が、走っている切り離した task を止めさせない(2026-09-27) --------------------------
@@ -1665,9 +1683,16 @@
    jobs = 名の置き先の入れ替え(handoff)の job のうち、その世代が running と報告している物だけ(lease を持ったまま Pod の停止まで
    動かし、新しい世代の process が lease を取る。recreate の job は載せない = 止めて lease を返す。退いた後に置かれた job は、その
    世代が動かしていないので載らない)。tasks = task.boot がその世代と等しい切り離した task だけ(最後まで走らせる。RemoteJob の
-   task は世代を記録しないので載せない)。温める表は載せない。draining = 真(ready の file を draining にする)・superseded = 真。"
-  (setv running (running-names statuses))
-  (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances) :if (and s.handoff (in s.name running)) s))
+   task は世代を記録しないので載せない)。温める表は載せない。draining = 真(ready の file を draining にする)・superseded = 真。
+   世代をまたぐ入れ替え(AL-D2): 載せる handoff の job のうち、Ready と数えている process の世代(ready-instance)がこの世代の報告の
+   行に無い物 = 新しい世代の process が Ready の物には印 superseded-by を載せる(worker は今の process を止めずに退かせ、起こし直さない —
+   走っている仕事を終えて自分で終わる)。"
+  (setv running (running-names statuses)
+        own (frozenset (gfor row statuses :if row.instance row.instance)))
+  (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances) :if (and s.handoff (in s.name running))
+                                     (if (and (is-not s.ready-instance None) (not-in s.ready-instance own))
+                                         (replace s :superseded-by s.ready-instance)
+                                         s)))
                   :tasks (tuple (gfor offer (tasks-for state name boot)
                                       :setv task (get state.tasks offer.id)
                                       :if (and task.detached (= task.boot boot))
