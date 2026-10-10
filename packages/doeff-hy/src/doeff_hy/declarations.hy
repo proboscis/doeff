@@ -273,7 +273,7 @@
   "defeffect の展開: EffectBase を継ぐ frozen の dataclass(本体に ClassVar の __doeff_answer__ = handler が resume で返す
    値の型)と、属性 __doeff_tags__・__doeff_defeffect__(defeffect で作った印 — defk の :effects の検めが読む)を置く form を作るため。
    pre-code = :pre を defk と同じ規則で文にした列(macros.hy の _contract-code が作る)。空でなければ __post_init__ に置き、
-   欄の名前をその場の名前として読めるようにする(閉じた語彙・要素の型の検めを、作る時に断る)。"
+   :pre が参照する欄の名前をその場の名前として読めるようにする(閉じた語彙・要素の型の検めを、作る時に断る)。"
   (refuse-unknown-keys contract EFFECT-KEYS where)
   (setv answer (declared-value contract ":answer")
         tags (declared-value contract ":tags"))
@@ -297,10 +297,21 @@
                      #(~@(get outcome-types ":value"))))]
         []))
   (setv runs-carried (runs-carried-names (declared-value contract ":runs-carried") names where))
+  ;; :pre が参照する欄だけを束縛する(defrecord の :check と同じ形)。全部の欄を束縛すると、:pre が使わない欄が型検査の展開で
+  ;; 未使用の変数(reportUnusedVariable)の赤になり、書き手は直せない(agora-redesign #4196)。`value.x` のような dotted の記号は
+  ;; 頭の名で読む。
+  (setv seen (set)
+        pending (list pre-code))
+  (while pending
+    (setv form (.pop pending)
+          head (when (isinstance form Symbol) (get (.split (str form) ".") 0)))
+    (cond
+      head (.add seen (hy.mangle head))
+      (and (isinstance form hy.models.Sequence) (not (isinstance form hy.models.String))) (.extend pending form)))
   (setv post-init
     (if pre-code
         [`(defn __post-init__ [self]
-            ~@(lfor n names `(setv ~(Symbol n) (. self ~(Symbol n))))
+            ~@(lfor n names :if (in (hy.mangle n) seen) `(setv ~(Symbol n) (. self ~(Symbol n))))
             ~@pre-code
             None)]
         []))

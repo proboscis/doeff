@@ -218,6 +218,8 @@
     (raise (SyntaxError (.format "{}: :check は検めの式の list([(pred 欄) …] の形): {}" where (hy.repr checks)))))
   ;; 欄の読み方の正本は declarations の field-targets(defwire・hy-index・doeff-linter と揃える)。
   (setv names (lfor target (field-targets fields) (hy.mangle target)))
+  (import doeff_hy.static_view [static-view-enabled])
+  (setv static-view (static-view-enabled))
   (setv statements []
         bound [])
   (for [check (or checks [])]
@@ -245,8 +247,10 @@
     ;; (DoExpr の isinstance は Python の metaclass を通る)と require-check の呼び(:pre の isinstance 5 つと値の辞書)を
     ;; 毎回払っていた(agora-redesign #2421)。True でない答え(正規表現の Match など)は今までどおり Program を判定し、
     ;; 偽の時だけ require-check を呼ぶ — require-check は偽の時にしか何もしない(真なら None を返すだけ)ので、断る物と文言は同じ。
+    ;; 型検査の展開では答えを object に広げる — `Match | None` を返す検め式は `is not True` と比べると「常に真」
+    ;; (reportUnnecessaryComparison)の赤になり、書き手は直せない(agora-redesign #4196)。実行時の展開は答えをそのまま置く。
     (.extend statements
-      [`(setv ~verdict ~check)
+      [`(setv ~verdict ~(if static-view `(_doeff-cast object ~check) check))
        `(when (is-not ~verdict True)
           (when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
             (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))
@@ -262,6 +266,7 @@
                       []))
   `(do
      (import doeff_hy.declarations doeff_hy.record)
+     ~@(if (and static-view statements) ['(import typing [cast :as _doeff-cast])] [])
      (defclass [(dataclass :frozen True :kw-only True)] ~name []
        ~@(if (is docstring None) [] [docstring])
        ~@(or class-vars [])
