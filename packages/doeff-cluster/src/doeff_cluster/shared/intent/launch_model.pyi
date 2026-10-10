@@ -17,6 +17,14 @@ class WorkerLaunch:
         ...
 
 @dataclass(frozen=True)
+class StaticWorkerLaunch:
+    name: str
+    doeff_commit: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
 class CoordinatorLaunch:
     doeff_commit: str
 
@@ -32,7 +40,7 @@ class LaunchLineChange:
 
 @_doeff_dataclass(frozen=True)
 class DesireWorker(_doeff_effect_base[tuple[LaunchLineChange, ...]]):
-    launch: WorkerLaunch
+    launch: WorkerLaunch | StaticWorkerLaunch
 
 @_doeff_dataclass(frozen=True)
 class DesireCoordinator(_doeff_effect_base[tuple[LaunchLineChange, ...]]):

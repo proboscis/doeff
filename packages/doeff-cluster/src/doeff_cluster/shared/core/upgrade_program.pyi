@@ -8,6 +8,7 @@ from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.intent.detached_model import AwaitRunnersChange as AwaitRunnersChange
 from doeff_cluster.shared.intent.detached_model import RunnersChange as RunnersChange
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
+from doeff_cluster.shared.intent.launch_model import StaticWorkerLaunch as StaticWorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 from doeff_cluster.shared.intent.launch_model import DesireWorker as DesireWorker
 from doeff_cluster.shared.intent.launch_model import DesireCoordinator as DesireCoordinator
@@ -119,19 +120,19 @@ def await_state(done: Callable, observe: Callable, limit_seconds: float) -> _Pro
 def await_until(step: str, done: Callable, observe: Callable, limit_seconds: float) -> _Program[UpgradeState, object]:
     ...
 
-def confirm_clean_boot(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
+def confirm_clean_boot(launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch, target: str) -> _Program[None, object]:
     ...
 
-def prepare_boot_root(launch: WorkerLaunch | CoordinatorLaunch, target: str) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
+def prepare_boot_root(launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch, target: str) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
     ...
 
-def drain_worker(launch: WorkerLaunch, limit_seconds: float) -> _Program[None, object]:
+def drain_worker(launch: WorkerLaunch | StaticWorkerLaunch, limit_seconds: float) -> _Program[None, object]:
     ...
 
-def swap_drained(launch: WorkerLaunch, limits: UpgradeLimits) -> _Program[None, object]:
+def swap_drained(launch: WorkerLaunch | StaticWorkerLaunch, limits: UpgradeLimits) -> _Program[None, object]:
     ...
 
-def upgrade_workers(workers: tuple[WorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
+def upgrade_workers(workers: tuple[WorkerLaunch | StaticWorkerLaunch, ...], limits: UpgradeLimits) -> _Program[tuple[BootRootAlreadyPrepared | BootRootBuilt, ...], object]:
     ...
 
 def refuse_unverified(coordinator: CoordinatorLaunch, verified: VerifiedVersions, state: UpgradeState, point: RefusalPoint) -> _Program[None, object]:
@@ -155,5 +156,5 @@ def check_before_apply(coordinator: CoordinatorLaunch, verified: VerifiedVersion
 def upgrade_coordinator(coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[CoordinatorUpgraded, object]:
     ...
 
-def upgrade_cluster(workers: tuple[WorkerLaunch, ...], coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[ClusterUpgraded, object]:
+def upgrade_cluster(workers: tuple[WorkerLaunch | StaticWorkerLaunch, ...], coordinator: CoordinatorLaunch, verified: VerifiedVersions, limits: UpgradeLimits) -> _Program[ClusterUpgraded, object]:
     ...

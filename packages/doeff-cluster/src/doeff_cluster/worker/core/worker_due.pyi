@@ -17,6 +17,7 @@ from doeff_cluster.worker.core.policy import backoff_ms as backoff_ms
 from doeff_cluster.worker.core.env_upkeep import RootsTally as RootsTally
 from doeff_cluster.worker.core.env_upkeep import PrepareLimits as PrepareLimits
 from doeff_cluster.worker.core.env_upkeep import SWEEP_EVERY_MS as SWEEP_EVERY_MS
+from doeff_cluster.worker.core.warm_rules import warm_child_refused as warm_child_refused
 
 def due_after(now: int, instants: tuple) -> _Program[DueAt | DueNever, object]:
     ...
