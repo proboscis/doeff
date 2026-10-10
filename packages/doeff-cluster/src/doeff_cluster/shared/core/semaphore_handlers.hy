@@ -132,6 +132,9 @@
 
 (defk release-lease [session semaphore]
   {:pre [(: session SemaphoreSession) (: semaphore ClusterSemaphore)] :post [(: % (type None))]}
+  ;; 返す前に手元の記憶(token・延ばす係・柵の期限)を片付ける。coordinator に届かない(通信の失敗・作り直しの途中)時は例外を投げずに
+  ;; 終える — 延ばす係は止まっているので、lease は最後に延ばせた期限で coordinator の側で解ける(待っている次の持ち手はその時に起きる)。
+  ;; 届かない例外を呼び手へ投げると、lease を返して進む常駐の process が返しの 1 回で落ちる。
   (setv token (.take session semaphore.name))
   (when (is token None)
     (raise (RuntimeError (.format "semaphore {} を持っていないのに返した" semaphore.name))))
@@ -141,8 +144,12 @@
   (when (in token session.lost)
     (.discard session.lost token)
     (raise (LeaseLost (.format "semaphore {} の lease {} は期限切れで他へ移っていた" semaphore.name token))))
-  (<- answer LeaseAnswer (LeaseOp semaphore.name "release" token semaphore.permits 0))
-  (when (not answer.ok)
+  (var answer None)
+  (try
+    (<- released LeaseAnswer (LeaseOp semaphore.name "release" token semaphore.permits 0))
+    (:= answer released)
+    (except [e Exception] (:= answer None)))
+  (when (and (is-not answer None) (not answer.ok))
     (raise (LeaseLost (.format "semaphore {} の lease {} は期限切れで他へ移っていた" semaphore.name token))))
   None)
 

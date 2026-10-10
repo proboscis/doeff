@@ -423,6 +423,46 @@
   (assert (= (len (! (times-of attempts "a" "ok"))) 40)))
 
 
+(defk release-in-a-cut [log]
+  {:pre [(: log list)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "lease writer-a を取り、5 秒後に返して、返し終えた時刻を log に残すため(返す時に保存へ届かない筋書きの旧い持ち手)。"
+  (<- sem Semaphore (CreateNamedSemaphore "writer-a"))
+  (<- (AcquireSemaphore sem))
+  (<- (Delay 5))
+  (<- (ReleaseSemaphore sem))
+  (<- at int (now-epoch-ms))
+  (.append log #("released" at))
+  None)
+
+
+(defk take-after-a-second [log]
+  {:pre [(: log list)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 秒後から lease writer-a を待って取り、取れた時刻を log に残して返すため(次の持ち手)。"
+  (<- (Delay 1))
+  (<- sem Semaphore (CreateNamedSemaphore "writer-a"))
+  (<- (AcquireSemaphore sem))
+  (<- at int (now-epoch-ms))
+  (.append log #("took" at))
+  (<- (ReleaseSemaphore sem))
+  None)
+
+
+(deftest test-a-release-cut-off-from-the-store-lets-the-lease-lapse-without-raising
+  ;; 返す時に保存へ届かない(coordinator の作り直しの最中 — 4〜9 秒の途絶の中の 5 秒目に返す)。返しは例外を投げずに終わり、延ばす係は
+  ;; 止まっているので lease は最後に延ばせた期限(15 秒)で解け、待っていた次の持ち手がその後に取る。直す前は返しが届かない例外を
+  ;; 投げ、呼び手(lease を返して進む常駐の process)ごと落ちた。
+  (setv clock (SimClock) store {} log [])
+  (setv sa (SemaphoreSession "old" :ttl-seconds 15.0)
+        sb (SemaphoreSession "new" :ttl-seconds 15.0))
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
+        (run-all [(with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa)] (release-in-a-cut log))
+                  (with_handlers [(cluster-semaphore sb)] (take-after-a-second log))])))
+  (setv released (lfor #(kind at) log :if (= kind "released") at)
+        took (lfor #(kind at) log :if (= kind "took") at))
+  (assert (= released [5000]) log)
+  (assert (and (= (len took) 1) (<= 15000 (get took 0) 15500)) log))
+
+
 (deftest test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock
   (assert (is (fence-verdict {"token" "t" "expiresMs" 15000} 12999 2000) None))
   (assert (is-not (fence-verdict {"token" "t" "expiresMs" 15000} 13000 2000) None))
