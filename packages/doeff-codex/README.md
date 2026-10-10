@@ -22,14 +22,18 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `TextDelta` | `item/agentMessage/delta` | 答えの文字の途中(thread・ターン・item の id と差分の文字) |
 | `AgentMessageDone` | `item/completed`(item の種類 agentMessage) | 答えの全文 |
 | `ReasoningDelta` | `item/reasoning/textDelta`・`item/reasoning/summaryTextDelta` | 考えている間の差分(要約か本文か) |
+| `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料) |
 | `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status) |
 | `TurnError` | `error` | ターンの誤り(文・誤りの種類・HTTP の status・codex が繰り返すか) |
 | `TokenUsage` | `thread/tokenUsage/updated` | この呼びの分(last)と thread の累積(total)の token の数 |
 | `ThreadStarted` | `thread/started` | thread の id |
 | `Response` / `ErrorResponse` | 要求への答え(id の在る行) | 要求の id と、答えが名乗る thread・ターンの id / 誤りの code と文 |
-| `ServerRequest` | codex からの要求(id と method の両方が在る行 — 道具の許可など) | 答えに使う id と method |
+| `ServerRequest` | codex からの要求(id と method の両方が在る行 — 道具の許可など) | 答えに使う id と method と、中を読まずに運ぶ params |
 | `Other` | 語彙の外の通知 | method の名だけ(発明しない) |
 | `Unparsed` | JSON として読めない行・形の合わない行 | method(読めた時)と訳 |
+
+この版の語彙に無い値(版で増えたターンの状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
+行も落とさない — 知らない状態でもターンの終わり(`TurnEnded`)は必ず届く(上の層がターンの終わりを待ち続けないため)。
 
 ## 起動の形を app-server にした訳
 

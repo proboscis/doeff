@@ -1,5 +1,5 @@
 {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
 {"jsonrpc": "2.0", "method": "initialized"}
-{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.codex-rec-bi9X/cwd", "approvalPolicy": "never", "sandbox": "read-only"}}
-{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a12617-589b-70a0-9cdc-759bb1685047", "input": [{"type": "text", "text": "say hello"}]}}
-{"jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": {"threadId": "01a12617-589b-70a0-9cdc-759bb1685047", "input": [{"type": "text", "text": "say hello again"}]}}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.codex-rec-fsAL/cwd", "approvalPolicy": "never", "sandbox": "read-only"}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a12627-2ed9-7411-8f13-1ad2859eb65b", "input": [{"type": "text", "text": "say hello"}]}}
+{"jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": {"threadId": "01a12627-2ed9-7411-8f13-1ad2859eb65b", "input": [{"type": "text", "text": "say hello again"}]}}
