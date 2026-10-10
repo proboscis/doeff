@@ -176,21 +176,38 @@
 
 ;; --- 書きの柵 ---------------------------------------------------------------------------------
 
-(defhandler leases-fence [#^ Callable leases-of #^ tuple write-types #^ int margin-ms]
+(val FENCE-PATIENCE-STEP-SECONDS 0.5)  ; 待つ柵が判断を読み直す間(延ばす係が届かない時に試し直す既定の間 retry-seconds と同じ)
+
+
+(defhandler leases-fence [#^ Callable leases-of #^ tuple write-types #^ int margin-ms #^ int patience-ms]
   ;; 引数に残す理由: どの書きをどの lease で守るかは組み立ての側の業務の判断で、同じ組に別の名の決め方で並べ得る(Ask で読む設定ではない)。
   ;; write-types の effect だけを見る。それ以外は素通し。守る lease の名の組は書きの effect から leases-of(書きの effect → lease の名の組を
   ;; 答える Program — 区画ごとの書きは区画の lease・入口と区画の両方を要る書きは 2 つ、を書き手の側が決める・#4072 の D-1)で決め、組の全部を
   ;; 持っていて期限まで余裕がある間だけ外へ通す。空の組は守りの無い書きを黙って通す事になるので断る。問い合わせと時計は外側
   ;; (cluster-semaphore・時計の handler)へ。
+  ;; patience-ms = 期限が近いだけ(手元の記憶はまだ持っている — 延ばす係が保存に届かず試し直している)の間、書きを外へ出さずに待つ上限。
+  ;; FENCE-PATIENCE-STEP-SECONDS ごとに判断を読み直し、延ばしが通れば通す。失ったと分かった時(HeldLease が None)と上限を越えた時は
+  ;; 断る。待つ間も書きは外へ出ないので、柵の意味は変わらない(0 = 待たずに断る)。保存の作り直し(数十秒)で書きが即座に断られ、
+  ;; 書き手が試し直しを使い切るのを避ける。
   (EffectBase []
     :when (isinstance effect write-types)
     (<- names tuple (leases-of effect))
     (when (not names)
       (raise (ValueError (.format "{} を守る lease の名の組が空(leases-of が名を 1 つも答えない)" (. (type effect) __name__)))))
-    (<- now int (now-epoch-ms))
+    (<- began int (now-epoch-ms))
     (for [name names]
       (<- hold (| dict None) (HeldLease name))
-      (val refusal (fence-verdict hold now margin-ms))
+      (<- now int (now-epoch-ms))
+      (var held hold)
+      (var refusal (fence-verdict hold now margin-ms))
+      (var waited-until now)
+      (while (and (is-not refusal None) (is-not held None) (< waited-until (+ began patience-ms)))
+        (<- (Delay FENCE-PATIENCE-STEP-SECONDS))
+        (<- again (| dict None) (HeldLease name))
+        (<- later int (now-epoch-ms))
+        (:= held again)
+        (:= refusal (fence-verdict again later margin-ms))
+        (:= waited-until later))
       (when (is-not refusal None)
         (raise (WriteFenced (.format "{} を断った — lease {}: {}" (. (type effect) __name__) name refusal)))))
     (<- answer effect)

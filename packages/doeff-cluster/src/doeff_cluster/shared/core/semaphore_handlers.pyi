@@ -78,8 +78,9 @@ def release_lease(session: SemaphoreSession, semaphore: ClusterSemaphore) -> _Pr
 
 def cluster_semaphore(session: SemaphoreSession) -> _Handler:
     ...
+FENCE_PATIENCE_STEP_SECONDS: float
 
-def leases_fence(leases_of: Callable, write_types: tuple, margin_ms: int) -> _Handler:
+def leases_fence(leases_of: Callable, write_types: tuple, margin_ms: int, patience_ms: int) -> _Handler:
     ...
 
 def standby_divert(name: str, write_types: tuple) -> _Handler:

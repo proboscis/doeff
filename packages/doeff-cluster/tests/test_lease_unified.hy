@@ -80,7 +80,7 @@
    :tags {:context "doeff-cluster-test" :role "program"}}
   "1 つの worker の書き手: outer(途絶・時計のずれ)→ cluster-semaphore → 書きの柵の下で、lease を取って 1 秒ごとに書く(90 秒まで)。"
   ;; 本番の書き手と同じ柵の余裕(FENCE-MARGIN-MS)。
-  (<- (with_handlers (+ outer [(cluster-semaphore session) (leases-fence writer-a-lease #(FakeWrite) FENCE-MARGIN-MS)])
+  (<- (with_handlers (+ outer [(cluster-semaphore session) (leases-fence writer-a-lease #(FakeWrite) FENCE-MARGIN-MS 0)])
         (lease-writer who attempts 1 90000)))
   None)
 
