@@ -182,7 +182,9 @@
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
   (.add-argument parser "--repo" :required True :help "コードを取り出す git repo")
-  (.add-argument parser "--state-dir" :required True :help "コードの cache・log・状態の置き場")
+  (.add-argument parser "--state-dir" :required True :help "コードの cache・状態の置き場(世代ごと)")
+  (.add-argument parser "--shared-dir" :default None
+                 :help "世代をまたいで分け合う置き場(log・Python・Rust の wheel・mirror と錠 — 同じ機体に同じ名の worker の 2 つの世代が並ぶ時・AL-D2。省けば --state-dir)")
   (.add-argument parser "--no-warm" :action "store_true" :help "bytecode の準備を省く")
   (.add-argument parser "--stop-grace" :type float :default 10.0)
   (.add-argument parser "--import-roots" :default "."
@@ -225,6 +227,7 @@
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
+        shared-dir (Path (or args.shared-dir args.state-dir))
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
@@ -245,19 +248,21 @@
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir (run (warm-dir-of (str state-dir)))
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
-        host (HostSettings :log-dir (str (/ state-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
+        host (HostSettings :log-dir (str (/ shared-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
                            :program-dir (str (/ state-dir "programs")) :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
-        warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ state-dir "logs")) :uv args.uv)
+        warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ shared-dir "logs")) :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :repo-access args.repo-access :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
                           :min-free-bytes args.env-min-free
                           ;; bytecode の保存先の dir(掃除が 7 日使われない entry を消す — `off` は保存先を使わない設定)。
-                          :code-store (if (= args.code-store "off") None args.code-store))
+                          :code-store (if (= args.code-store "off") None args.code-store)
+                          ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
+                          :shared (str shared-dir))
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
                               :probe-dir (str (/ state-dir "probe")) :shim shim))
