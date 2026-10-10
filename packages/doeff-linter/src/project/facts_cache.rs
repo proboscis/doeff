@@ -158,12 +158,15 @@ const SWEEP_INTERVAL_SECONDS: u64 = 3600;
 fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
     static TENDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     TENDED.get_or_init(|| {
+        // この実行が根の dir を新しく作るか(置き場の全体が増える時 — 作業木 1 つで約 176MB)。増える時は上限の片づけの番の間隔に
+        // 依らず、その場で上限を確かめる(sweep_over_cap_when_due)。
+        let grows = !root_dir.join(ROOT_RECORD).exists();
         record_root(root_dir, root);
         mark_used(root_dir);
         // 時計が 1970 年より前を指す機体では間隔を測れないので走査しない
         if let Ok(now) = std::time::SystemTime::now().duration_since(UNIX_EPOCH) {
             sweep_vanished_roots(base, now.as_secs());
-            sweep_over_cap_when_due(base, root_dir, cache_cap_bytes(), now.as_secs());
+            sweep_over_cap_when_due(base, root_dir, cache_cap_bytes(), now.as_secs(), grows);
         }
     });
 }
@@ -172,8 +175,14 @@ fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
 const USED_RECORD: &str = "used";
 /// 置き場の全体の上限を変える環境変数(byte)。
 const CAP_ENV: &str = "DOEFF_LINTER_CACHE_MAX_BYTES";
-/// 置き場の全体の上限の既定(10 GiB)— 作業木 1 つの根の dir は約 65MB なので、約 150 の根を持てる。
-const DEFAULT_CAP_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+/// 置き場の全体の上限の既定(4 GiB)— 作業木 1 つの根の dir は約 176MB(2026-10-10 の zeus の実測 — 大半は repo 全体の Hy の索引
+/// hy-index.bin.d の 156MB)なので、約 23 の根を持てる。前の既定 10 GiB(根 1 つ 65MB の見積もり)では zeus に 7.9G 溜まり、worker の
+/// disk が新しい版の準備の下限を割った(agora の card acp:kanban-issue:ki-f3bbb3ca4667)。消した根は次の実行で作り直す(答えは変わらない)。
+/// 戻し方 = この値を戻す(環境変数 CAP_ENV でも機体ごとに変えられる)。
+const DEFAULT_CAP_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// 上限を越えても消さない「使っている根」の長さ(秒)— この秒の内に使われた dir(並走する実行が使っている根)。前は番の間隔と同じ
+/// 1 時間で、作業の多い時はほぼ全部の根が守られて上限の内へ戻せなかった(ki-f3bbb3ca4667)。
+const IN_USE_SECONDS: u64 = 600;
 
 /// 置き場の全体の上限(環境変数が読めない値なら既定)。
 fn cache_cap_bytes() -> u64 {
@@ -219,12 +228,14 @@ const CAP_SWEEP_RECORD: &str = ".swept-cap";
 const CAP_SWEEP_LOCK: &str = ".swept-cap.lock";
 const CAP_SWEEP_LOCK_STALE_SECONDS: u64 = 600;
 
-/// 前に上限の片づけを終えてから間隔が過ぎていれば、上限の片づけをする。終えた時刻は片づけが終わってから書く — commit の hook の
-/// 秒の上限などで打ち切られた実行は記録を書かないので、次の実行がやり直す(番だけ取って終わる形を作らない)。
-fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64) {
+/// 前に上限の片づけを終えてから間隔が過ぎているか、この実行が根の dir を新しく作った(grows — 置き場の全体が増える時)なら、
+/// 上限の片づけをする。終えた時刻は片づけが終わってから書く — commit の hook の秒の上限などで打ち切られた実行は記録を書かないので、
+/// 次の実行がやり直す(番だけ取って終わる形を作らない)。増える時に確かめないと、番の間隔の内に作業木が増えた分だけ上限を越えたままに
+/// なる(zeus の 7.9G — ki-f3bbb3ca4667)。並走する実行の片づけの最中は、増える時も重ねない。
+fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64, grows: bool) {
     let stamp = base.join(CAP_SWEEP_RECORD);
     let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
-    if last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
+    if !grows && last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
         return;
     }
     let lock = base.join(CAP_SWEEP_LOCK);
@@ -242,9 +253,9 @@ fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64) {
 }
 
 /// 置き場の全体が上限 cap を超えていれば、最後に使われた時刻の古い dir から消して上限の内へ戻す(agora-redesign #2725)。根が在り続ける
-/// 作業木の dir は sweep_vanished_roots では消えず、根の数だけ増え続けた(zeus で 62G・1 時間に約 4G)。この実行の根の dir と、前の走査の
-/// 間隔の内に使われた dir(並走する実行が使っている根)は消さない — 上限を一時に超えても、使っている根を消して作り直させない。消しても
-/// 答えは変わらない(読めない塊は作り直す — 頭の註)。
+/// 作業木の dir は sweep_vanished_roots では消えず、根の数だけ増え続けた(zeus で 62G・1 時間に約 4G)。この実行の根の dir と、
+/// IN_USE_SECONDS の内に使われた dir(並走する実行が使っている根)は消さない — 上限を一時に超えても、使っている根を消して作り直させない。
+/// 消しても答えは変わらない(読めない塊は作り直す — 頭の註)。
 fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64) {
     let Ok(entries) = std::fs::read_dir(base) else { return };
     let mut dirs: Vec<(u64, u64, PathBuf)> = entries
@@ -264,7 +275,7 @@ fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64) {
         if total <= cap {
             break;
         }
-        if dir == root_dir || now.saturating_sub(used) < SWEEP_INTERVAL_SECONDS {
+        if dir == root_dir || now.saturating_sub(used) < IN_USE_SECONDS {
             continue;
         }
         // 消せなければ次の走査でもう一度試す(答えには関わらない)

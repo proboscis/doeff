@@ -7,8 +7,8 @@
 //! commit のやり直し・同じ origin/main から切った作業木の最初の commit)は先端の木だけを測る。上限の秒は上げない。
 //!
 //! 置き場 = facts_cache の根(`~/.cache/doeff-linter` ほか — `facts_cache::cache_base`)の直下の `commit-hook-head-<鍵の hash>/`。
-//! 読み書きのたびに dir に印 `used` を付け(`facts_cache::mark_used`)、根の全体の上限の片づけ(agora-redesign #2725 — 既定 10 GiB・
-//! 最後に使われた時刻の古い順・1 時間の内に使われた dir は残す)の対象に入れる。根の path の記録(root.path)は置かないので、根が
+//! 読み書きのたびに dir に印 `used` を付け(`facts_cache::mark_used`)、根の全体の上限の片づけ(agora-redesign #2725 — 既定 4 GiB・
+//! 最後に使われた時刻の古い順・10 分の内に使われた dir は残す)の対象に入れる。根の path の記録(root.path)は置かないので、根が
 //! 消えた dir の片づけ(#1903)には掛からない。`DOEFF_LINTER_NO_CACHE` が在れば置き場を使わない。
 //!
 //! 中身 = `report.json`(鍵の全文・測った木の path・子の linter の editor-json の出力)。鍵の全文が合わない(hash の衝突)・読めない・
