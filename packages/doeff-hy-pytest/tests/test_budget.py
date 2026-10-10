@@ -566,6 +566,50 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     result.stdout.fnmatch_lines(["*実行の上限は印ごとの秒(doeff_test_call_budget_by_marker)だけ*"])
 
 
+# 印 real_world の検の重さは子 process と待ちに在る(card ki-f35bb95eddda・agora-redesign #3858)— 子 process の 0.3 秒の
+# sleep を待つ検は、親の process の CPU 秒はほぼ 0 で、壁の時計の秒は 0.3 秒を越える。
+CHILD_WAIT_CALL = """\
+(require doeff-hy.macros [deftest])
+(import pytest subprocess sys)
+(setv pytestmark [pytest.mark.real_world])
+(deftest test-waits-on-a-child
+  (subprocess.run [sys.executable "-c" "import time; time.sleep(0.3)"] :check True)
+  (assert True))
+"""
+
+
+def test_marked_test_waiting_on_a_child_over_the_wall_clock_budget_is_red(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """印の上限は壁の時計の秒で判じる: 子 process の待ちで 0.3 秒かかる印 real_world の検は、process の CPU 秒が上限 0.05 秒より
+    小さくても、fail の形で赤(上限は壁の時計の秒と書く)。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(pytester, FAIL_MODE_INI, {"test_child": CHILD_WAIT_CALL})
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["*test_child.hy::test_waits_on_a_child の実行(call)が 壁の時計 *上限 壁の時計 0.050 秒*"])
+
+
+def test_marked_test_waiting_on_a_child_within_the_wall_clock_budget_is_green(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同じ子 process の待ちの検は、壁の時計の上限(5 秒)の内なら fail の形でも緑。"""
+    import doeff_vm
+
+    monkeypatch.setattr(doeff_vm, "invariant_checks_enabled", lambda: False)
+    _project(
+        pytester,
+        'markers = ["real_world: 本物の I/O"]\ndoeff_test_call_budget_by_marker = ["real_world=5"]\n'
+        'doeff_test_budget_mode = "fail"\n',
+        {"test_child": CHILD_WAIT_CALL},
+    )
+    result = pytester.runpytest("-q")
+    result.assert_outcomes(passed=1)
+    assert "test_waits_on_a_child の実行" not in result.stdout.str()
+
+
 def test_second_registry_dir_is_read_in_a_run(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
