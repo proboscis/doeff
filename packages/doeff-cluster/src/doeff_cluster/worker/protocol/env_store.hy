@@ -31,7 +31,7 @@
 (import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory WalkTree RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
-                                            ProcessExited AwaitProcessExit])
+                                            ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.native_wheel [wheels-root])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
@@ -73,7 +73,9 @@
 (defrecord EnvSettings
   "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(root は state/roots の下)・
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
-   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・uv = uv の命令・uv-cache = 準備の uv の子の
+   repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・repo-access = 鍵の表を組み直す起動の script
+   (準備の前ごとに ROLE=access で撃ち、表の file の今の値から JSON と git / ssh の設定を組み直す — 空 = 組み直さない・card ki-2de748a0eac5)・
+   uv = uv の命令・uv-cache = 準備の uv の子の
    cache の dir(UV_CACHE_DIR・prune もこの dir — 値は main の --uv-cache・起動の script が DOEFF_UV_CACHE_DIR を渡す・#3858)・
    roots-cap-bytes = roots の合計の上限(越えた時は固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
    (割った時は固定されていない root を古い順に消し — #4051、戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
@@ -88,6 +90,7 @@
   (#^ int roots-cap-bytes)
   (#^ str uv-cache)
   (setv #^ str repo-keys "")
+  (setv #^ str repo-access "")
   (setv #^ str uv "uv")
   (setv #^ int min-free-bytes 0)
   (setv #^ PrepareLimits limits (PrepareLimits))
@@ -167,6 +170,26 @@
   known)
 
 
+;; 鍵の表を組み直す子の上限の秒(表の行ごとに printf を数回撃つだけ — 届かなければ前の表のまま準備する)。
+(val REPO-ACCESS-TIMEOUT 30.0)
+
+
+(defk refreshed-repo-access [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % None)]}
+  "準備の process を起こす前に、鍵の表をその時の値で組み直すため(起動し直さずに表の変更を読む — card ki-2de748a0eac5)。表の file
+   (WORKER_REPOS_FILE)の今の値から、起動の script の ROLE=access が鍵の表の JSON と git / ssh の設定を別名に書いてから置き換える。
+   組み直せない(鍵の file が無い・形の違う url・時間切れ)時は、置き場の file は前の値のまま残るので、断りを log に 1 行書いて前の表で
+   準備する(準備は止めない)。repo-access が空の worker(表を env だけで受ける)は何もしない。"
+  (when (not settings.repo-access)
+    (return None))
+  (<- outcome ProcessOutcome (RunProcess :argv #("sh" settings.repo-access) :env #((EnvEntry :name "ROLE" :value "access"))
+                                         :env-mode EnvMode.EXTEND :timeout REPO-ACCESS-TIMEOUT))
+  (when (!= outcome.exit-code 0)
+    (<- (slog "worker: 鍵の表を組み直せない — 前の表のまま準備する" :exit-code outcome.exit-code
+              :detail (cut (.strip (or outcome.stderr outcome.start-error)) -300 None))))
+  None)
+
+
 (defk launch-prepare [settings key runtime-env compile-jobs warm]
   {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool)] :post [(: % PendingEnv)]}
   "root の準備の process を 1 本起こして記録を返すため。マーカーの無い root(途中で止まった準備)は脇へ退ける(名は . で始まるので
@@ -190,6 +213,7 @@
   (<- body dict (prepare-request declared (cut key (len ENV-KEY-PREFIX) None) settings.platform root known settings.min-free-bytes
                                  compile-jobs))
   (<- (file-done (WriteText request (json.dumps body :ensure-ascii False))))
+  (<- (refreshed-repo-access settings))
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state settings.uv-cache settings.repo-keys
                                settings.code-prepare settings.uv progress))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
