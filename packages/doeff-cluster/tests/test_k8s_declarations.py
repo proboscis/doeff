@@ -207,12 +207,13 @@ def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest
 
 
 def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Manifest) -> None:
-    """zeus の worker は 1 つで、資源の上限は今の値(memory 100Gi・CPU 16)と取り分(CPU 4・memory 8Gi)を引き継ぐ。"""
+    """zeus の worker は 1 つで、資源の上限は memory 100Gi だけ(CPU の上限は置かない — 2026-10-11 調整役 cisco-c8 の頼み)、取り分は
+    CPU 4・memory 8Gi。"""
     spec = _mapping(zeus_worker["spec"], "spec")
     assert spec["replicas"] == 1
     assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
     resources = _mapping(_container(zeus_worker)["resources"], "resources")
-    assert resources["limits"] == {"cpu": "16", "memory": "100Gi"}
+    assert resources["limits"] == {"memory": "100Gi"}
     assert resources["requests"] == {"cpu": "4", "memory": "8Gi"}
 
 

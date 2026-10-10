@@ -15,8 +15,11 @@ spec:
           # 2026-10-09 15:4x: memory の上限を 100Gi・CPU の上限を 16 へ(利用者の決定 2026-10-09 原文 "let the doeff worker on zeus to use 100GB
           # or something" → "ah okay as you recommend, just keep 100GB" → "what, still 20g limit for a pod???? just fix that immediately")。
           # 同時に受ける処理の数は機体の memory の余白で決まるので、20Gi では同時に走る数が 5 本前後に留まった(15:5x の本番: 使用 18.4GiB /
-          # 20GiB・CLI 15 本)。Node の allocatable は 118Gi。requests は変えない。戻す時は CPU 8 / memory 20Gi へ。
-          resources: { requests: { cpu: "4", memory: 8Gi }, limits: { cpu: "16", memory: 100Gi } }
+          # 20GiB・CLI 15 本)。Node の allocatable は 118Gi。requests は変えない。
+          # 2026-10-11: CPU の上限を外す(調整役 cisco-c8 01:19 の頼み lt-38MAG13SB4J8KV7TZDPX2KCP0D — この Pod が cpu.max 16 CPU に周期の
+          # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て・証拠 lt-TJC2AQWJXZMGCYX6K7MM3DKVNQ)。
+          # CPU の取り分(重み)は requests の 4 のまま。memory の上限 100Gi は変えない。戻す時は limits に cpu: "16" を足す。
+          resources: { requests: { cpu: "4", memory: 8Gi }, limits: { memory: 100Gi } }
       # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(2026-10-10 15:0x の利用者の決定 原文 "the strategy is to replace the volume
       # consuming part with usb ssd on zeus" — 同じ日の 13:39 JST に root の disk の空きが準備の最低 25 GiB を切り、新しい版の準備が全部
       # 止まった)。type は Directory: SSD が外れて mount の点が無ければ、root の disk へ黙って dir を作らず起動で止まる。中身は切り替えの前に
