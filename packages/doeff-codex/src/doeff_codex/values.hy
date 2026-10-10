@@ -20,14 +20,33 @@
 
 (defrecord CodexSessionSpec
   "会話の宣言: home = 環境 / cwd = 作業の dir / model = model の名(None なら codex の既定)/ approval-policy・sandbox = 許可の方針と
-   sandbox(None なら codex の既定 — 答え手の無い許可の問いで止めたくない時は ApprovalPolicy.NEVER を名乗る)。同じ宣言の続きは
-   生きた process を使い回し、違えば起こし直す。"
-  {:tags {:context "codex" :role "type"}}
+   sandbox(None なら codex の既定 — 答え手の無い許可の問いで止めたくない時は ApprovalPolicy.NEVER を名乗る)/ effort = 考えの深さ
+   (turn/start の effort — codex 0.162.1 では model が名乗る空でない文字列・None なら codex の既定)/ auto-compact-token-limit = 会話を
+   圧縮する context の大きさ(token — thread を開く要求の config の model_auto_compact_token_limit・None なら codex の既定)。同じ宣言の
+   続きは生きた process を使い回し、違えば起こし直す。"
+  {:tags {:context "codex" :role "type"}
+   :check [(or (is effort None) (bool effort))
+           (or (is auto-compact-token-limit None) (> auto-compact-token-limit 0))]}
   (#^ CodexHome home)
   (#^ str cwd)
   (setv #^ (| str None) model None)
   (setv #^ (| ApprovalPolicy None) approval-policy None)
-  (setv #^ (| SandboxMode None) sandbox None))
+  (setv #^ (| SandboxMode None) sandbox None)
+  (setv #^ (| str None) effort None)
+  (setv #^ (| int None) auto-compact-token-limit None))
+
+(defrecord CodexImage
+  "入力に添える画像 1 つ: mime = 画像の種類(image/png など)/ data-base64 = 中身の base64(turn/start の image の入力の data URL にする)。"
+  {:tags {:context "codex" :role "type"}
+   :check [(bool mime) (bool data-base64)]}
+  (#^ str mime)
+  (#^ str data-base64))
+
+(defrecord CodexInput
+  "利用者の入力 1 つ: text = 文字 / images = 添える画像(無ければ空 — 画像だけの入力は text を空の文字列にする)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str text)
+  (setv #^ (get tuple #(CodexImage ...)) images #()))
 
 (defrecord FreshThread
   "新しい会話で始める(thread の id は codex が決め、TurnStarted が名乗る)。"
