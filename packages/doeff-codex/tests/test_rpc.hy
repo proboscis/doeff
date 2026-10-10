@@ -1,0 +1,64 @@
+;; app-server を起こす argv と、stdin へ書く JSON-RPC の 1 行の組み立ての検 — 組み立てた行は、本物の codex(0.162.1)が答えた録りの
+;; 時に書いた行(tests/recorded/codex-0.162.1/*.stdin.jsonl)と同じ中身になる。
+(require doeff-hy.macros [val])
+(val MODULE-TAGS {:context "codex-test" :role "foundation"})
+(require doeff-hy.macros [deftest defk <- var])
+(import json)
+(import pathlib [Path])
+(import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
+                         turn-start-request turn-interrupt-request ApprovalPolicy SandboxMode])
+
+(val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
+
+
+(defk recorded-requests [#^ str name]
+  {:pre [(: name str)] :post [(: % tuple)] :tags {:context "codex-test" :role "foundation"}}
+  "録りの時に stdin へ書いた行を、書いた順に JSON の object の列で(組み立てた行と中身で比べるため)。"
+  (var sent #())
+  (for [line (.splitlines (.read-text (/ RECORDED f"{name}.stdin.jsonl") :encoding "utf-8"))]
+    (when (.strip line)
+      (:= sent (+ sent #((json.loads line))))))
+  sent)
+
+
+(deftest test-the-app-server-argv-speaks-json-rpc-on-stdio
+  ;; 起こす命令は前置き(実行ファイルと前の引数)の後に app-server と stdio の待ち受け。
+  (<- argv (app-server-argv #("codex")))
+  (assert (= argv ["codex" "app-server" "--listen" "stdio://"]) argv)
+  (<- wrapped (app-server-argv #("/opt/bin/codex" "-c" "model=\"gpt-6-astra\"")))
+  (assert (= wrapped ["/opt/bin/codex" "-c" "model=\"gpt-6-astra\"" "app-server" "--listen" "stdio://"]) wrapped))
+
+
+(deftest test-the-built-requests-match-the-recorded-exchange
+  ;; 録りの時に書いた 5 行(初期化・初期化の済み・thread の始め・ターン 2 つ)と、組み立てた 5 行の中身が同じ。
+  (<- sent (recorded-requests "two-turns"))
+  (val cwd (get (get sent 2) "params" "cwd"))
+  (<- init-line (initialize-request 1 "doeff-codex-recorder" "0"))
+  (<- ready-line (initialized-notification))
+  (<- thread-line (thread-start-request 2 cwd :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY))
+  ;; 録りの行の threadId は録った時の thread の id(thread/start の答えから読んだ値)— 組み立ての側にも同じ id を渡す。
+  (val thread-id (get (get sent 3) "params" "threadId"))
+  (<- first-line (turn-start-request 3 thread-id "say hello"))
+  (<- second-line (turn-start-request 4 thread-id "say hello again"))
+  (val built (tuple (gfor line #(init-line ready-line thread-line first-line second-line) (json.loads line))))
+  (assert (= built sent) #(built sent))
+  (assert (= (tuple (gfor message built (.get message "method")))
+             #("initialize" "initialized" "thread/start" "turn/start" "turn/start")))
+  ;; 1 行は改行を含まない(stdin の 1 行 = 1 つの message)。
+  (assert (not (any (gfor line #(init-line ready-line thread-line first-line second-line) (in "\n" line))))))
+
+
+(deftest test-interrupt-and-resume-name-their-thread-and-turn
+  ;; 止めの要求は thread とターンの id を、続きの要求は thread の id を持つ(録りの interrupt の 4 行目と同じ中身)。
+  (<- sent (recorded-requests "interrupt"))
+  (val recorded-interrupt (get sent 4))
+  (<- interrupt-line (turn-interrupt-request 4 (get recorded-interrupt "params" "threadId") (get recorded-interrupt "params" "turnId")))
+  (assert (= (json.loads interrupt-line) recorded-interrupt) interrupt-line)
+  (<- resume-line (thread-resume-request 5 "t-1" "/w"))
+  (assert (= (json.loads resume-line)
+             {"jsonrpc" "2.0" "id" 5 "method" "thread/resume" "params" {"threadId" "t-1" "cwd" "/w"}})
+          resume-line)
+  ;; model を名指した thread の始め。
+  (<- named (thread-start-request 6 "/w" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.WORKSPACE-WRITE :model "gpt-6-astra"))
+  (assert (= (get (json.loads named) "params") {"cwd" "/w" "approvalPolicy" "never" "sandbox" "workspace-write" "model" "gpt-6-astra"})
+          named))
