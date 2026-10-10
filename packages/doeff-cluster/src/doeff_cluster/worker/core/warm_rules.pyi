@@ -4,12 +4,15 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
+from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
+from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
 from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster.worker.intent.worker_model import WorldView as WorldView
 from doeff_cluster.worker.intent.worker_model import WarmChildMark as WarmChildMark
 from doeff_cluster.worker.intent.worker_model import WarmMarkUnreadable as WarmMarkUnreadable
 from doeff_cluster.worker.intent.worker_model import WarmChildView as WarmChildView
 from doeff_cluster.worker.intent.worker_model import WarmLaunch as WarmLaunch
+from doeff_cluster.worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster.worker.core.worker_rules import code_key as code_key
 from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
 
@@ -26,6 +29,18 @@ def warm_child_of(world: WorldView, key: str) -> WarmChildView | None:
     ...
 
 def warm_child_ready(view: WarmChildView | None) -> bool:
+    ...
+
+def ended_before_ready(view: WarmChildView) -> bool:
+    ...
+
+def refusals_after(previous: WarmChildView | None) -> int:
+    ...
+
+def warm_child_refused(view: WarmChildView | None, policy: WorkerPolicy) -> bool:
+    ...
+
+def warm_refusal_failure(view: WarmChildView) -> EnvFailure:
     ...
 
 def mark_refusal(mark: WarmChildMark | WarmMarkUnreadable) -> _Program[str, object]:

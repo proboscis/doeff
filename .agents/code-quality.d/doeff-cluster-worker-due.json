@@ -6,7 +6,8 @@
         "doeff-cluster-due-policy",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-policy",
-        "doeff-cluster-env-upkeep"
+        "doeff-cluster-env-upkeep",
+        "doeff-cluster-worker-warm-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker-due",

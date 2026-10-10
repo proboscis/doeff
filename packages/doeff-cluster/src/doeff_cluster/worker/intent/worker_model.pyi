@@ -213,6 +213,7 @@ class WarmChildView:
     ended_ms: int | None = None
     detail: str = ""
     stop: StopProgress | None = None
+    refusals: int = 0
 
 class Outcome(Enum):
     EXITED = "exited"
@@ -245,6 +246,7 @@ class WorkerPolicy:
     compile_jobs_while_replacing: int = 2
     wake_gap_seconds: float = 0.1
     retired_limit: int = 3
+    warm_refusal_limit: int = 3
 
 @dataclass(frozen=True)
 class JobStatus:
