@@ -209,6 +209,40 @@ def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Mani
     assert resources["requests"] == {"cpu": "4", "memory": "8Gi"}
 
 
+# worker の doeff の版(WORKER_DOEFF_COMMIT)の定義元は機体の dir の version.yaml 1 つ(JSON patch の add 1 行)— 雛形には版の行を置かない。
+# 機体ごとに 1 台ずつ版を上げられるように(7 台が 1 行を共有すると、1 回の main 入りで 7 台が同時に替わる)。版の行は env の WORK_DIR の
+# 直後に入る(行の場所が変わると Pod の template が変わり、版を変えなくても Pod が作り直される)。
+VERSION_PATCH = "version.yaml"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _version_adds(node: str) -> list[dict[str, object]]:
+    path = K8S / "nodes" / node / VERSION_PATCH
+    assert path.is_file(), f"{node} の機体の dir に版の file {VERSION_PATCH} が無い"
+    ops = [_mapping(op, f"{path} の操作") for op in _sequence(yaml.safe_load(path.read_text()), str(path))]
+    return [op for op in ops if op["op"] == "add"]
+
+
+def test_template_has_no_version_line() -> None:
+    """雛形(worker/worker.yaml)には版の行を置かない — 古い値や代わりの値を base に残さない。"""
+    template = _build(K8S / "worker")
+    assert [d for d in template if d["kind"] == "Deployment" and any(e["name"] == "WORKER_DOEFF_COMMIT" for e in _env(d))] == []
+
+
+@pytest.mark.parametrize("node", NODES)
+def test_worker_version_comes_from_its_node_dir(rendered: list[Manifest], node: str) -> None:
+    """機体の worker の版は、その機体の dir の version.yaml の add 1 行の値(40 桁)で、env の WORK_DIR の直後に入る。"""
+    adds = _version_adds(node)
+    assert len(adds) == 1, f"{node} の版の add はちょうど 1 つ: {adds!r}"
+    added = _mapping(adds[0]["value"], "add の値")
+    assert added["name"] == "WORKER_DOEFF_COMMIT"
+    assert SHA.match(str(added["value"])), f"{node} の版が 40 桁の 16 進でない: {added['value']!r}"
+    worker = _worker_on(rendered, node)
+    assert _env_value(worker, "WORKER_DOEFF_COMMIT")["value"] == added["value"]
+    names = [entry["name"] for entry in _env(worker)]
+    assert names[names.index("WORK_DIR") + 1] == "WORKER_DOEFF_COMMIT", f"{node} の版の行が WORK_DIR の直後に無い: {names!r}"
+
+
 def test_worker_names_itself_after_its_node(worker: Manifest) -> None:
     """worker の名と NODE_NAME は k8s の Node の名(fieldRef spec.nodeName)。能力は host-<Node の名> と host-systemd-readable を含む。"""
     assert _env_value(worker, "WORKER_NAME")["valueFrom"] == NODE_NAME_FIELD

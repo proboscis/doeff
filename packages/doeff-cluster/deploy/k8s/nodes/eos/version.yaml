@@ -1,0 +1,6 @@
+# eos の worker の doeff の版(env WORKER_DOEFF_COMMIT — worker 自身の code の版・image は同じ)。定義元はこの 1 行だけ(雛形には置かない)。
+# 変えると、この機体の worker だけが入れ替わる。行は雛形の env の WORK_DIR の直後へ足す — 場所が変わると Pod の template が変わり、版を
+# 変えなくても Pod が作り直される。番号は ../../host-only が env の頭に 2 行を足した後の並び。雛形の env の並びが変わったら、test の操作が
+# 組み立てを止める(黙って別の場所へ足さない)。
+- { op: test, path: /spec/template/spec/containers/0/env/3/name, value: WORK_DIR }
+- { op: add, path: /spec/template/spec/containers/0/env/4, value: { name: WORKER_DOEFF_COMMIT, value: "901c200c8ff693e58c49284395a980532bae760f" } }

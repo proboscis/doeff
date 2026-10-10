@@ -7,9 +7,10 @@ kind: Component
 patches:
   # 能力は機体の 2 つだけ(雛形の $(WORKER_PROVIDES_EXTRA) を足さない)。値は行の場所を変えずに置き換える — k8s は $(NODE_NAME) を前の
   # 行で定義した env だけから展開するので、戦略的マージ(patch の行を env の先頭へ移す)では置き換えない。雛形の行の並びが変わったら、
-  # test の操作が組み立てを止める(黙って別の行を書き換えない)。
+  # test の操作が組み立てを止める(黙って別の行を書き換えない)。行の番号は雛形の並び — 版の行(WORKER_DOEFF_COMMIT)は、この component の
+  # 後に機体の dir の version.yaml が足すので、ここでは数えない。
   - target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
     patch: |-
-      - { op: test, path: /spec/template/spec/containers/0/env/6/name, value: WORKER_PROVIDES }
-      - { op: replace, path: /spec/template/spec/containers/0/env/6/value, value: "host-$(NODE_NAME),host-systemd-readable" }
+      - { op: test, path: /spec/template/spec/containers/0/env/5/name, value: WORKER_PROVIDES }
+      - { op: replace, path: /spec/template/spec/containers/0/env/5/value, value: "host-$(NODE_NAME),host-systemd-readable" }
   - path: host-only.yaml

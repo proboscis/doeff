@@ -2,7 +2,7 @@
 # (名は doeff-worker-<Node の名>)。
 #
 # 静的に保つ(利用者の決定 2026-10-09 原文 "we are not supposed to frequently restart doeff worker! it must be very static."):
-# Pod を作り直すのは、この dir の宣言(doeff の版 WORKER_DOEFF_COMMIT を含む)か機体の資源の上限が変わった時だけ。上に載る系の値は
+# Pod を作り直すのは、この dir の宣言か機体の dir の宣言(doeff の版 WORKER_DOEFF_COMMIT・資源の上限)が変わった時だけ。上に載る系の値は
 # 名の固定した ConfigMap から受ける。ConfigMap の名に中身の hash を付けないので、中身を変えても Pod は作り直されず、次の起動で効く。
 #
 # 上に載る系の repo が用意する物(名は固定 — この宣言は名で参照するだけで、上に載る系の名と値は書かない):
@@ -74,10 +74,8 @@ spec:
           env:
             - { name: ROLE, value: worker }
             - { name: WORK_DIR, value: /work }
-            # worker 自身の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。
-            # 901c200c8 = 供給の値の部品(c7fea5bf0 — 使い手の日次の task が要る)と atlas の機体の値(L1922)を含む版(2026-10-10 —
-            # worker だけを上げ、coordinator は e247ea66d のまま。zeus の枠 36〔使い手の ConfigMap worker-env〕もこの作り直しで効く)。
-            - { name: WORKER_DOEFF_COMMIT, value: 901c200c8ff693e58c49284395a980532bae760f }
+            # worker 自身の code の版(doeff の commit — env WORKER_DOEFF_COMMIT)はここに置かない。機体の dir の version.yaml が、この行の
+            # 直後に足す — 機体ごとに 1 台ずつ版を上げられるように(1 行を共有すると 1 回の main 入りで全部の機体が同時に替わる)。
             - { name: COORDINATOR_URL, value: "http://coordinator.agent-worker.svc.cluster.local:8080" }
             # 置かれた Node の名(coordinator が Node の label から能力を導く)。下の $(NODE_NAME) より前に置く — k8s は前の行で
             # 定義した env だけを展開する。

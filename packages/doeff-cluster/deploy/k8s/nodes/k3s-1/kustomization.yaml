@@ -12,3 +12,6 @@ labels:
     includeSelectors: true
 patches:
   - path: node.yaml
+  # 版の行(JSON patch — 雛形の env の決まった場所へ足す)。
+  - path: version.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
