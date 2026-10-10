@@ -493,3 +493,34 @@ def test_declarations_name_no_upper_system(rendered: list[Manifest]) -> None:
         for where, text in texts.items()
     }
     assert {where: words for where, words in hits.items() if words} == {}
+
+
+# zeus の worker の作業の root(volume work — WORK_DIR=/work)は、機体の root の disk でなく USB の SSD の下に置く(2026-10-10 15:0x の利用者の
+# 決定 原文 "the strategy is to replace the volume consuming part with usb ssd on zeus" — 同じ日の 13:39 JST に root の disk の空きが準備の最低
+# 25 GiB を切り、zeus へ置く job の新しい版の準備が全部止まった)。hostPath の type は Directory: SSD が外れて mount の点が無い時に、root の
+# disk へ黙って dir を作らず Pod の起動で止まる。他の機体の worker は今の /var/lib/agent-worker のまま。
+ZEUS_WORK_ROOT = "/mnt/fast_ssd_usb/agent-worker"
+DEFAULT_WORK_ROOT = "/var/lib/agent-worker"
+
+
+def _work_volume(worker: Manifest) -> dict[str, object]:
+    template = _mapping(_mapping(worker["spec"], "spec")["template"], "template")
+    volumes = _sequence(_mapping(template["spec"], "template.spec")["volumes"], "volumes")
+    found = [_mapping(v, "volume") for v in volumes if _mapping(v, "volume").get("name") == "work"]
+    assert len(found) == 1, f"volume work が {len(found)} 個"
+    return _mapping(found[0]["hostPath"], "volume work の hostPath")
+
+
+def test_zeus_worker_work_root_is_on_the_usb_ssd(zeus_worker: Manifest) -> None:
+    """zeus の worker の作業の root は USB の SSD の下で、mount の点が無ければ起動で止まる。"""
+    work = _work_volume(zeus_worker)
+    assert work == {"path": ZEUS_WORK_ROOT, "type": "Directory"}
+
+
+def test_other_workers_keep_the_default_work_root(rendered: list[Manifest]) -> None:
+    """zeus 以外の機体の worker の作業の root は今のまま(機体ごとの差は機体の dir だけが持つ)。"""
+    others = [doc for doc in rendered if doc.get("kind") == "Deployment" and _mapping(doc["metadata"], "metadata").get("name") not in (
+        "doeff-worker-zeus", "coordinator")]
+    assert others
+    for doc in others:
+        assert _work_volume(doc)["path"] == DEFAULT_WORK_ROOT, _mapping(doc["metadata"], "metadata")["name"]
