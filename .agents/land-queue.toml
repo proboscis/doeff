@@ -116,9 +116,13 @@ name = "doeff"
 #   --run-timeout 1800・lint は --label doeff-gate-lint --run-timeout 900)で包み直して中の $ を \$ に戻し、UV_CACHE_DIR を lane の上書き
 #   〔UV_CACHE_DIR=\${XDG_CACHE_HOME:-\$HOME/.cache}/uv-lanes/land-doeff〕へ戻し、lint の段の「sh scripts/gate_tools.sh linter && 」を消し、
 #   R10 の law と deftest を外す。
+# 2026-10-11(card acp:kanban-issue:ki-b8a436264866・判定は足さない): root の pytest に --durations=0 --durations-min=10 を足し、
+# session の終わりに 10 秒以上の検を本数の上限なしで出す(packages の段は Makefile の PACKAGE_PYTEST_DURATIONS が同じ 2 つを持つ)。
+# 日次の道具は slowest durations の節を台帳の timing.slowest_tests に読む。形の検 = tests/test_daily_test_population.py の
+# test_root_stage_lists_every_slow_test。戻すには 2 つの引数を消す。
 full = [
   { name = "build", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync", blocks_rest = true, pytest = false },
-  { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'", pytest = true },
+  { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' --durations=0 --durations-min=10", pytest = true },
   { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
   { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false },
   { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },

@@ -185,11 +185,13 @@ test-changed:
 # - 1 package の赤で止めず全 package を走らせ、最後に失敗の package を名指して 0 以外で終わる(test-rust と
 #   同じ形)。赤で止めると後ろの package が 1 本も走らないまま日次に見えない(ADR-DOE-ENFORCE-001 R8・
 #   tests/test_daily_test_population.py・card acp:kanban-issue:ki-08ec2d7c901f)。
-# - PACKAGE_PYTEST_DURATIONS: package ごとの session の終わりに、10 秒以上かかった検を長い順に 20 本まで出す(日次の log に
+# - PACKAGE_PYTEST_DURATIONS: package ごとの session の終わりに、10 秒以上かかった検を長い順に本数の上限なしで出す(日次の log に
 #   1 本ごとの秒を残す)。2026-10-09 20:00 の日次で doeff-cluster が 814 → 1,740 秒に伸び、処理ステージ packages が時間切れに
 #   なったが、log にも台帳にも 1 本ごとの秒が無く、どの検が伸びたかを割れなかった(card acp:kanban-issue:ki-107a03190129)。
 PACKAGE_UV_RUN ?= uv run
-PACKAGE_PYTEST_DURATIONS ?= --durations=20 --durations-min=10
+#   2026-10-11: 上限 20 本を外した(--durations=0)— package に 30 秒を越える検が 20 本を越えると残りが log に出ないため。
+#   root の段の pytest の命令(.agents/land-queue.toml)も同じ 2 つを持つ(card acp:kanban-issue:ki-b8a436264866)。
+PACKAGE_PYTEST_DURATIONS ?= --durations=0 --durations-min=10
 # package の tests/ の外に在る検の根(package ごとの tests/ と同じく、根ごとに別の session で走らせる)。
 # - packages/doeff-cluster/src/doeff_cluster/sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
 #   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・fixture は package の根の conftest.py(source は pytest を
