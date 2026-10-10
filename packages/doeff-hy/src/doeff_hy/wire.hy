@@ -66,7 +66,7 @@
 
 (defrecord WireShape
   "defwire の型 1 つの wire の形: names = Python の欄の名 → wire の欄の名(欄を全部・名で引く索引)/ unknown = 知らない欄の扱い
-   (\"reject\" / \"ignore\")/ adapter = その型の解き手(pydantic の TypeAdapter — 型を定義した時に組む。後で定義する型を欄に持つ型だけは最初に使う時)。"
+   (\"reject\" / \"ignore\")/ adapter = その型の解き手(pydantic の TypeAdapter — 最初に使う時に 1 度組む)。"
   {:tags {:context "wire" :role "type"}
    :check [(in unknown UNKNOWN-FIELDS)]}
   (#^ (get dict #(str str)) names)
@@ -84,15 +84,19 @@
    :post [(: % dict)]
    :tags {:context "wire" :role "judgment"}}
   "defwire の型の pydantic の設定(型の __pydantic_config__ に置く): 欄の名は names の写しだけを受けて書き、知らない欄は unknown に
-   従い、型の検めは厳しい。解き手は型を定義した時(module の読み込み)に組む — 最初の parse / dump の呼び手(検の実行・本番の最初の
-   要求)が組み立ての費用を払わないため(agora-redesign #2420・前例 #2327)。欄にまだ定義していない型(後で定義する型)を書いた型だけは
-   その時に組めないので、pydantic の既定どおり最初に使う時に組む(defer-build を置かない = 組めれば組み、組めなければ後へ回す)。"
+   従い、型の検めは厳しい。解き手は最初に使う時(最初の parse / dump / json-schema)に 1 度組み、2 回目からは組み直さない(defer-build)
+   — module を読み込む process ごとに、使わない型まで組む費用を払わないため(card acp:kanban-issue:ki-8b518c8f8e9d・2026-10-11:
+   agora-controllers の test_emulated_screen.hy の 1 回で読み込みの時に 547 個・1.84 秒を組み、使ったのは 49 個)。前は型を定義した時に
+   組んでいた(agora-redesign #2420 — 検の本体の予算の区間と本番の最初の要求から費用を外すため)が、検の本体は 2026-10-03 から doeff の VM
+   の歩数で判じ(pydantic の組み立ては歩数に入らない)、本番の最初の要求が払うのは使う型ごとに 1 度 約 3 ms。戻し方 = :defer-build の
+   1 行を外す(#2420 の形)。"
   (ConfigDict :alias-generator (. names __getitem__)
               :validate-by-alias True
               :validate-by-name False
               :serialize-by-alias True
               :extra (get UNKNOWN-FIELDS unknown)
-              :strict True))
+              :strict True
+              :defer-build True))
 
 
 (deff wire-shape [wire-type names unknown]  ; defk にできない: defwire の展開が module を読む時に呼ぶ(Program を実行できない所)
