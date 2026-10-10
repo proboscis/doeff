@@ -16,8 +16,6 @@ binary が出した物。録る筋書きは 3 つと比べの 1 つ:
 作業の dir は /tmp の外に置く(codex は /tmp の下の CODEX_HOME に助けの binary を作らず、警告の行を stderr に出す)。
 """
 
-from __future__ import annotations
-
 import http.server
 import json
 import queue

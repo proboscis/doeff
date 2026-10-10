@@ -110,8 +110,13 @@ def scanned_names(root: Path, package: str) -> list[str]:
     )
 
 
-def test_the_rule_names_the_three_packages() -> None:
-    assert read_rule().packages == ("packages/doeff-cluster", "packages/doeff-records", "packages/doeff-claude-code")
+def test_the_rule_names_the_generic_packages() -> None:
+    assert read_rule().packages == (
+        "packages/doeff-cluster",
+        "packages/doeff-records",
+        "packages/doeff-claude-code",
+        "packages/doeff-codex",
+    )
 
 
 def test_a_name_with_an_application_word_is_found_and_a_generic_name_is_not() -> None:
