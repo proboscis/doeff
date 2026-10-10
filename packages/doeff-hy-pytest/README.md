@@ -40,5 +40,8 @@ doeff_test_budget_registry = ["scripts/test_budget/OVER-BUDGET", "scripts/doeff_
 - バイトコードのキャッシュが無い import の変換(`SourceFileLoader.source_to_code` — Hy の import もここを通る)に使った
   CPU 時間は引いて判定します。着地の門と日次の走行は `PYTHONDONTWRITEBYTECODE=1` で撃つので、キャッシュ無しの回を
   丸ごと除く形では一度も判定されないためです。
+- 測った区間の中で起きた GC(ごみ集め・`gc.callbacks`)の CPU 時間も引いて判定します。GC の費用は process に生きている
+  object の数で決まり(free-threaded の Python の GC は 1 回ごとに heap の全体を回る)、どの検に当たるかは割り当ての数の
+  巡りで回ごとに変わるためです。変換・依存の初回の import の区間の中で起きた GC は、その区間の秒に入っているので二重に引きません。
 - 鍵は、実行なら pytest の nodeid、収集なら rootdir からの file の path です。上限の内に戻った登録は終わりの一覧に
   「消せる」と出ます。
