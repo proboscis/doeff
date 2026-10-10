@@ -38,6 +38,20 @@
       (raise (ValueError (.format "WorkerLaunch {} の doeff-commit は 40 字の sha: {!r}" self.name self.doeff-commit))))))
 
 
+(defclass [(dataclass :frozen True)] StaticWorkerLaunch []
+  "機体ごとの静的な worker 1 台の自己起動の版(deploy/k8s/nodes/<Node の名> — 雛形 deploy/k8s/worker の機体ごとの差)。name = worker の名
+   (= Node の名 — 宣言は fieldRef で受け、行に書かない)・doeff-commit = WORKER_DOEFF_COMMIT(40 字の sha — 機体の dir の version.yaml の
+   1 行)。能力・枠・task に空けておく数は、上に載る系の ConfigMap と機体の dir が渡すので、この値に持たない(宣言の版の行が持つのは
+   版だけ — CoordinatorLaunch と同じ形)。"
+  (#^ str name)
+  (#^ str doeff-commit)
+  (defn #^ None __post_init__ [self]  ; defk にできない: dataclass の __post_init__ — 起動の時に断られる値を宣言の時に断る
+    (when (not self.name)
+      (raise (ValueError "StaticWorkerLaunch.name は空でない worker の名")))
+    (when (not (and (= (len self.doeff-commit) 40) (all (gfor ch self.doeff-commit (in ch "0123456789abcdef")))))
+      (raise (ValueError (.format "StaticWorkerLaunch {} の doeff-commit は 40 字の sha: {!r}" self.name self.doeff-commit))))))
+
+
 (defclass [(dataclass :frozen True)] CoordinatorLaunch []
   "coordinator の自己起動の版(WORKER_DOEFF_COMMIT — boot.sh は ROLE=coordinator でも同じ名で読む)。"
   (#^ str doeff-commit)
@@ -56,9 +70,9 @@
 
 
 (defeffect DesireWorker
-  "worker 1 台の名乗りと版を launch にする(望む状態を言う)。答え手は配備する側の repo の宣言の行を書く handler。答え = 変えた行の
-   tuple(空 = 既に望む状態)。"
-  {:fields [(: launch WorkerLaunch)]
+  "worker 1 台の名乗りと版を launch にする(望む状態を言う — 機体ごとの静的な worker は版だけ)。答え手は配備する側の repo の宣言の行を
+   書く handler。答え = 変えた行の tuple(空 = 既に望む状態)。"
+  {:fields [(: launch (| WorkerLaunch StaticWorkerLaunch))]
    :answer (get tuple #(LaunchLineChange ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
