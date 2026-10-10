@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,17 @@ SCRIPT: Path = ROOT / "scripts" / "doeff_cluster_warning_baseline.py"
 # 子は自前の環境で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 各々の環境に明示で渡し、checkout
 # (script の隣・.venv の site-packages)へ .pyc を書かない(書くと session の終わりの検 conftest.py が赤 — 新しい .venv で走る
 # 日次の実弾 2026-10-10)。
+# 子は script の中で doeff と Hy を import する。子は .pyc を書かず、名指しの無い Hy の展開の置き場(利用者の cache)にも足さないので、
+# 呼び手が置き場を DOEFF_HY_CODE_STORE で名指していれば(日次の task・worker)その名を子へ継ぐ — 継がないと子は毎回冷えた Hy の展開
+# (atlas で約 14 秒)を払い、5 回起こす検が pytest-timeout の 60 秒を越えた(日次の実弾 2026-10-11 00:05 JST)。
+HY_CODE_STORE_ENV: str = "DOEFF_HY_CODE_STORE"
+
+
+def _child_environment(**names: str) -> dict[str, str]:
+    """自前の環境で起こす子の process の環境: 与えた名の値・.pyc を書かない旗・呼び手の Hy の展開の置き場の名指し(在れば)。"""
+    store: str | None = os.environ.get(HY_CODE_STORE_ENV)
+    named_store: dict[str, str] = {HY_CODE_STORE_ENV: store} if store is not None else {}
+    return {**names, "PYTHONDONTWRITEBYTECODE": "1", **named_store}
 
 
 def _module() -> ModuleType:
@@ -89,7 +101,7 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
     linter: Path = tools / "doeff-linter"
     linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
     linter.chmod(0o755)
-    environment = {"PATH": f"{tools}:/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}
+    environment = _child_environment(PATH=f"{tools}:/usr/bin:/bin")
     result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check"], cwd=repo, env=environment,
                             capture_output=True, text=True, check=False)
     assert result.returncode == 1, result.stderr
@@ -114,7 +126,7 @@ def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, 
     linter: Path = tools / "doeff-linter"
     linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
     linter.chmod(0o755)
-    return {"PATH": f"{tools}:/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}
+    return _child_environment(PATH=f"{tools}:/usr/bin:/bin")
 
 
 def _absolute_report(root: Path, files: list[str]) -> list[dict[str, object]]:
@@ -220,10 +232,10 @@ def _cluster_repo(tmp_path: Path) -> ClusterRig:
     (tools / "doeff-linter").chmod(0o755)
     real_uv: str | None = shutil.which("uv")
     assert real_uv is not None, "uv が要る(script の Python を走らせる)"
-    environment: dict[str, str] = {
-        "PATH": f"{tools}:{Path(real_uv).parent}:/usr/bin:/bin", "HOME": str(tmp_path / "home"),
-        "UV_CACHE_DIR": _uv_dir(real_uv, "cache"), "UV_PYTHON_INSTALL_DIR": _uv_dir(real_uv, "python"), "PYTHONDONTWRITEBYTECODE": "1",
-    }
+    environment: dict[str, str] = _child_environment(
+        PATH=f"{tools}:{Path(real_uv).parent}:/usr/bin:/bin", HOME=str(tmp_path / "home"),
+        UV_CACHE_DIR=_uv_dir(real_uv, "cache"), UV_PYTHON_INSTALL_DIR=_uv_dir(real_uv, "python"),
+    )
     return ClusterRig(repo=repo, environment=environment, dev=tmp_path / "home" / ".local" / "share" / "doeff-linter-dev")
 
 
