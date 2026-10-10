@@ -104,8 +104,8 @@
     (assert refused text))
   ;; 失敗ケース: キーつき・path・名の欠けは、物の参照に成らない。
   (for [text #("secret:apps/deploy-keys/dotfiles" "/etc/deploy-keys" "secret:apps" "secret:apps/" "")]
-    (<- refused bool (spelling-refused? supplied-object-ref-of text))
-    (assert refused text)))
+    (<- object-refused bool (spelling-refused? supplied-object-ref-of text))
+    (assert object-refused text)))
 
 
 (deftest test-a-readable-key-is-answered-as-it-is-held

@@ -1,0 +1,26 @@
+{
+  "module_extensions": {
+    "doeff-cluster-tests": {
+      "allow": [
+        "doeff-cluster-k8s-supplied"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [
+        "doeff-cluster-supplied-values"
+      ],
+      "layer": "io",
+      "name": "doeff-cluster-k8s-supplied",
+      "paths": [
+        "packages/doeff-cluster/src/doeff_cluster/sim/k8s_supplied.hy"
+      ],
+      "public": [
+        "packages/doeff-cluster/src/doeff_cluster/sim/k8s_supplied.hy"
+      ],
+      "responsibility": "模擬の環境の、k8s の API server の ConfigMap・Secret の GET の相手役(身元 → 権限 → 物が在るかの順で 401・403・404・200・届かない)と、宣言の参照の綴りから世界を組む部品。",
+      "typed": true
+    }
+  ]
+}
