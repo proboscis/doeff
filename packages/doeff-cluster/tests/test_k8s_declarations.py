@@ -524,3 +524,24 @@ def test_other_workers_keep_the_default_work_root(rendered: list[Manifest]) -> N
     assert others
     for doc in others:
         assert _work_volume(doc)["path"] == DEFAULT_WORK_ROOT, _mapping(doc["metadata"], "metadata")["name"]
+
+
+# USB の SSD の印(2026-10-10 調整役の答え: fstab は nofail なので、USB が無い起動では mount の点が空の dir のまま進み、type Directory だけでは
+# 止まらない)。zeus の init own-work は、作業の root に印の file が無ければ名を挙げて止まり、在る時だけ worker の uid へ渡す。
+ZEUS_WORK_MARKER = "/work/.on-usb-ssd"
+
+
+def _init(worker: Manifest, name: str) -> dict[str, object]:
+    template = _mapping(_mapping(worker["spec"], "spec")["template"], "template")
+    inits = _sequence(_mapping(template["spec"], "template.spec")["initContainers"], "initContainers")
+    found = [_mapping(c, "initContainer") for c in inits if _mapping(c, "initContainer").get("name") == name]
+    assert len(found) == 1, f"init {name} が {len(found)} 個"
+    return found[0]
+
+
+def test_zeus_worker_stops_at_init_without_the_usb_ssd_marker(zeus_worker: Manifest) -> None:
+    """zeus の init own-work は印の file を確かめてから作業の root を worker の uid へ渡す(印が無ければ 0 でない code で止まる)。"""
+    command = " ".join(str(part) for part in _sequence(_init(zeus_worker, "own-work")["command"], "command"))
+    assert f"test -f {ZEUS_WORK_MARKER}" in command, command
+    assert command.index(f"test -f {ZEUS_WORK_MARKER}") < command.index("chown 1000:1000 /work"), command
+    assert "exit 1" in command, command
