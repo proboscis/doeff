@@ -191,6 +191,8 @@
                  :help "土台の import の路(機体の絶対 path を `,` で並べる・木の根の後ろ)— worker_model.CodeLayout(pod は空)")
   (.add-argument parser "--repo-keys" :default ""
                  :help "実行環境の task の鍵の表(JSON の file — URL → deploy key の file。表に無い URL は鍵なしで clone する・空 = 鍵を使わない)")
+  (.add-argument parser "--repo-access" :default ""
+                 :help "鍵の表を組み直す起動の script(準備の前ごとに ROLE=access で撃ち、表の file の今の値で組み直す・空 = 組み直さない)")
   (.add-argument parser "--uv" :default "uv" :help "実行環境の準備と子の起動に使う uv の命令")
   ;; 実行環境の root の置き場の 2 つの量(#3732 — 既定の値は deploy/boot.sh の 1 か所・ここは必ずの引数)。
   (.add-argument parser "--env-roots-cap" :type int :required True
@@ -252,7 +254,7 @@
         warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ state-dir "logs")) :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
-                          :repo-keys args.repo-keys :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
+                          :repo-keys args.repo-keys :repo-access args.repo-access :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
                           :min-free-bytes args.env-min-free
                           ;; bytecode の保存先の dir(掃除が 7 日使われない entry を消す — `off` は保存先を使わない設定)。
                           :code-store (if (= args.code-store "off") None args.code-store))

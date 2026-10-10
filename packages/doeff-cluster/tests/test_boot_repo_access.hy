@@ -82,6 +82,27 @@
   (assert (in "鍵" done.stderr) done.stderr))
 
 
+(deftest test-a-refused-rebuild-keeps-the-previous-table [tmp-path]
+  ;; worker は準備の前ごとに ROLE=access で表を組み直す(card ki-2de748a0eac5)。組み直しが断られても(鍵の file が無い)、置き場の
+  ;; 3 つの file は前の値のまま残り、書きかけの別名の file も残らない — 走っている worker の git・ssh・準備の process は前の表で読める。
+  (val home (/ tmp-path "home"))
+  (val keys (/ tmp-path "keys"))
+  (.mkdir home)
+  (.mkdir keys)
+  (for [name #("key-b" "known_hosts")] (.write-text (/ keys name) "x\n"))
+  (<- first subprocess.CompletedProcess (run-access home keys (.format "{}=key-b {}=" PRIVATE-B PUBLIC)))
+  (assert (= first.returncode 0) first.stderr)
+  (val access (. (Path (.strip first.stdout)) parent))
+  (val before (dfor name #("repo-keys.json" "gitconfig" "ssh_config") name (.read-text (/ access name) :encoding "utf-8")))
+  (assert (in "doeff-repo-1" (get before "gitconfig")) before)
+  (<- refused subprocess.CompletedProcess (run-access home keys (.format "{}=key-a {}=key-b {}=" PRIVATE-A PRIVATE-B PUBLIC)))
+  (assert (!= refused.returncode 0) refused.stdout)
+  (assert (in "鍵" refused.stderr) refused.stderr)
+  (val after (dfor name #("repo-keys.json" "gitconfig" "ssh_config") name (.read-text (/ access name) :encoding "utf-8")))
+  (assert (= after before) after)
+  (assert (= (sorted (gfor p (.iterdir access) p.name)) ["gitconfig" "repo-keys.json" "ssh_config"]) (list (.iterdir access))))
+
+
 (defk added-by [worker-env]
   {:pre [(: worker-env tuple)] :post [(: % dict)]}
   "worker の環境が worker-env の時に、git の子へ足す変数を名 → 値で読むため(土台 = 台本の子 process の答え手 — 親の環境は worker-env)。"

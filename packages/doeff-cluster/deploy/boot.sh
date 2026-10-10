@@ -284,15 +284,23 @@ worker_repos_table() {
   fi
 }
 
+# 鍵の表の組みを途中で断る(書きかけの別名の file を消し、置き場の 3 つの file は前の値のまま残す)。
+access_refused() {
+  rm -f "$dir/.ssh_config.$$" "$dir/.gitconfig.$$" "$dir/.repo-keys.json.$$"
+  echo "boot: $1" >&2
+  exit 1
+}
+
 # 読み取りの鍵の表から、worker の鍵の表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
-# (export するので subshell で呼ばない)。JSON の path は repo_keys に置く。
+# (export するので subshell で呼ばない)。JSON の path は repo_keys に置く。3 つの file は別名に書いてから置き換える — 走っている
+# worker の隣で組み直しても(worker が準備の前に ROLE=access で撃つ・card ki-2de748a0eac5)、git・ssh・準備の process は書きかけを読まない。
 repo_access() {
   keys=${WORKER_REPO_KEYS_DIR:-/etc/worker-repos}
   dir=${WORKER_ACCESS_DIR:-$HOME/.doeff-worker-repos}
   mkdir -p "$dir"
   chmod 700 "$dir"
-  : >"$dir/ssh_config"
-  : >"$dir/gitconfig"
+  : >"$dir/.ssh_config.$$"
+  : >"$dir/.gitconfig.$$"
   json="{"
   n=0
   table=$(worker_repos_table)
@@ -302,26 +310,29 @@ repo_access() {
     key=""
     if [ -n "$name" ]; then
       key=$keys/$name
-      [ -f "$key" ] || { echo "boot: 鍵の表の鍵 $key が無い" >&2; exit 1; }
+      [ -f "$key" ] || access_refused "鍵の表の鍵 $key が無い"
       n=$((n + 1))
       alias=doeff-repo-$n
       # url の形: ssh://git@<host>/<path> か git@<host>:<path>
       case "$url" in
         ssh://*) rest=${url#ssh://}; userhost=${rest%%/*}; path=${rest#*/} ;;
         *@*:*) userhost=${url%%:*}; path=${url#*:} ;;
-        *) echo "boot: 鍵つきの url は ssh の形にする: $url" >&2; exit 1 ;;
+        *) access_refused "鍵つきの url は ssh の形にする: $url" ;;
       esac
       user=${userhost%@*}
       host=${userhost#*@}
       printf 'Host %s\n  HostName %s\n  User %s\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s/known_hosts\n  StrictHostKeyChecking yes\n' \
-        "$alias" "$host" "$user" "$key" "$keys" >>"$dir/ssh_config"
-      printf '[url "ssh://%s@%s/%s"]\n  insteadOf = %s\n' "$user" "$alias" "$path" "$url" >>"$dir/gitconfig"
+        "$alias" "$host" "$user" "$key" "$keys" >>"$dir/.ssh_config.$$"
+      printf '[url "ssh://%s@%s/%s"]\n  insteadOf = %s\n' "$user" "$alias" "$path" "$url" >>"$dir/.gitconfig.$$"
     fi
     [ "$json" = "{" ] || json="$json,"
     json="$json\"$url\":\"$key\""
   done
-  chmod 600 "$dir/ssh_config"
-  printf '%s}\n' "$json" >"$dir/repo-keys.json"
+  chmod 600 "$dir/.ssh_config.$$"
+  printf '%s}\n' "$json" >"$dir/.repo-keys.json.$$"
+  mv -f "$dir/.ssh_config.$$" "$dir/ssh_config"
+  mv -f "$dir/.gitconfig.$$" "$dir/gitconfig"
+  mv -f "$dir/.repo-keys.json.$$" "$dir/repo-keys.json"
   export GIT_CONFIG_GLOBAL="$dir/gitconfig" GIT_SSH_COMMAND="ssh -F $dir/ssh_config"
   repo_keys=$dir/repo-keys.json
 }
@@ -401,6 +412,12 @@ if [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
   echo "boot: $WORK_DIR/worker.lock を取った $(date +%T)" >&2
 fi
 repo_keys=""
+# 鍵の表を file で受ける worker は、準備の前ごとにこの script を ROLE=access で撃ち、表を組み直す(起動し直さずに表の変更を読む・
+# card ki-2de748a0eac5)。env だけで受ける worker は起動の時の表のまま(空 = 組み直さない)。
+repo_access_script=""
+if [ -n "${WORKER_REPOS_FILE:-}" ]; then
+  repo_access_script=$0
+fi
 if [ -n "${WORKER_REPOS:-}" ] || [ -n "${WORKER_REPOS_FILE:-}" ]; then
   repo_access
 elif [ -f /etc/worker-git/id ]; then
@@ -463,6 +480,6 @@ exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --na
   --task-reserve "${WORKER_TASK_RESERVE}" \
   --repo "$repo" --state-dir "$WORK_DIR/state" --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
-  --repo-keys "$repo_keys" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
+  --repo-keys "$repo_keys" --repo-access "$repo_access_script" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
   --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \
   --code-store "$DOEFF_HY_CODE_STORE" --uv-cache "$DOEFF_UV_CACHE_DIR"
