@@ -12,6 +12,7 @@ Prog[E, T]・program・reply)を手で書いていた。その層の中身を do
 """
 
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -315,6 +316,16 @@ def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
     probe = subprocess.run([str(python), "-I", "-c", "import sys; print(sys.dont_write_bytecode)"],
                            capture_output=True, text=True, timeout=60, check=True)
     assert probe.stdout.strip() == "True", probe
+
+
+def test_no_root_test_hands_pyright_the_bare_python() -> None:
+    # 失敗ケース(日次の全体検証の doeff の root の段・card ki-04d762c59dac): 上の包みを使わず、pyright に --pythonpath で素の
+    # sys.executable を渡す検が 2 本残り(test_expand_program_static_types・test_handler_installer_typing)、同じ .pyc 6 個を checkout へ
+    # 書いた。根の conftest の見張りは .venv が新しい時(日次)にしか赤くならないので、書き手の形をここで名指す。
+    tests = Path(__file__).resolve().parent
+    bare = re.compile(r'"--pythonpath",\s*sys\.executable\b')
+    offenders = sorted(str(path.relative_to(tests)) for path in tests.rglob("*.py") if bare.search(path.read_text(encoding="utf-8")))
+    assert offenders == [], f"pyright に素の python を渡している — _pyright_python(tmp_path) を渡す: {offenders}"
 
 
 def _pyright(tmp_path: Path, source: str) -> dict:
