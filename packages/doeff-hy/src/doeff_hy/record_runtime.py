@@ -7,8 +7,6 @@ defrecord は関数(__init__・__repr__・__eq__・__hash__・凍結の __setatt
 doeff_hy.record を読み込む途中で読み込まれるので、展開が class を作る時に読む物を doeff_hy.record に置くと循環の import になる。
 """
 
-from __future__ import annotations
-
 import dataclasses
 import reprlib
 from dataclasses import FrozenInstanceError
