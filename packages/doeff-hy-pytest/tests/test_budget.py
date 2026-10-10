@@ -1,6 +1,7 @@
 """Hy の検の時間の上限(doeff_hy_pytest/budget.py)の検。
 
-時間は CPU 時間で測るので、検の file の中は sleep ではなく CPU を回して時間を使う。上限は小さく(0.05 秒)、
+収集は CPU 時間・印ごとの実行は壁の時計で測るので、検の file の中は sleep ではなく CPU を回して時間を使う(CPU を回せば
+両方の時計に時間が出る)。子 process の待ちで壁の時計だけに時間が出る検は CHILD_WAIT_CALL。上限は小さく(0.05 秒)、
 超える側は 0.3 秒回して、機体の揺れで合否が入れ替わらない幅を取る。
 """
 
@@ -129,7 +130,7 @@ def _measurement(cpu: float, compile_cpu: float = 0.0, key: str = "t.hy::test") 
         phase="call",
         cpu_seconds=cpu,
         wall_seconds=cpu,
-        compile=CompileTally(1 if compile_cpu else 0, compile_cpu),
+        compile=CompileTally(1 if compile_cpu else 0, compile_cpu, compile_cpu),
     )
 
 
@@ -179,7 +180,7 @@ def test_compile_counter_adds_only_the_outermost_window(tmp_path, monkeypatch) -
     assert cold.count == 2
     assert cold.cpu_seconds == 0.0
     assert cold_imports.cpu_seconds > 0
-    assert cached == CompileTally(0, 0.0)
+    assert cached == CompileTally(0, 0.0, 0.0)
 
 
 def test_judge_uses_budget_and_registry() -> None:
@@ -216,7 +217,7 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
     result.stdout.fnmatch_lines(
         [
             "*BudgetWarning: doeff の検の時間の上限を超えた: test_slow.hy::test_slow の実行(call)*",
-            "*上限を超えた(報告のみ*test_slow.hy::test_slow(call CPU *",
+            "*上限を超えた(報告のみ*test_slow.hy::test_slow(call 壁の時計 *",
         ]
     )
     assert "test_fast(call" not in result.stdout.str()
@@ -237,7 +238,7 @@ def test_fail_mode_fails_the_slow_test_with_time_and_budget(
     _project(pytester, FAIL_MODE_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が CPU *上限 CPU 0.050 秒*"])
+    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が 壁の時計 *上限 壁の時計 0.050 秒*"])
 
 
 def test_checked_vm_build_reports_but_does_not_fail(
@@ -253,7 +254,7 @@ def test_checked_vm_build_reports_but_does_not_fail(
     result.stdout.fnmatch_lines(
         [
             "*doeff-vm は検査つきの build(invariant-checks)— 上限は検査なしの build が基準のため、この走行の超過は判定しない*",
-            "*上限を超えた(報告のみ*test_slow.hy::test_slow(call CPU *",
+            "*上限を超えた(報告のみ*test_slow.hy::test_slow(call 壁の時計 *",
         ]
     )
 
@@ -355,7 +356,7 @@ def test_collect_budget_subtracts_compilation_but_fails_slow_import(
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(
         [
-            "*test_slow_collect.hy の読み込み(import)が CPU *キャッシュ無しの変換 * 回の CPU * 秒を引いた*"
+            "*test_slow_collect.hy の読み込み(import)が 壁の時計 *キャッシュ無しの変換 * 回の壁の時計 * 秒・CPU * 秒を引いた*"
         ]
     )
     assert "test_slow_compile.hy の読み込み(import)" not in result.stdout.str()
@@ -419,7 +420,7 @@ def test_compile_counter_sets_aside_a_first_import_once_and_not_a_loaded_module(
     assert first_imports.count == 1
     assert first_imports.cpu_seconds >= 0.3
     assert first_compile.count == 1 and first_compile.cpu_seconds == 0.0
-    assert again == ImportTally(0, 0.0)
+    assert again == ImportTally(0, 0.0, 0.0)
     assert bootstrap._find_and_load is original_find_and_load
 
 
@@ -442,7 +443,7 @@ def test_import_budget_is_judged_at_setup_when_collected_from_records(
     second = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider")
     second.stdout.fnmatch_lines(["*記録から収集 1 file*"])
     second.assert_outcomes(errors=1)
-    second.stdout.fnmatch_lines(["*ERROR at setup of test_fast*", "*test_slow_collect.hy の読み込み(import)が CPU *"])
+    second.stdout.fnmatch_lines(["*ERROR at setup of test_fast*", "*test_slow_collect.hy の読み込み(import)が 壁の時計 *"])
     collected = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", "--collect-only")
     collected.stdout.fnmatch_lines(["*1 test collected*"])
     assert "の読み込み(import)が" not in collected.stdout.str()
@@ -542,7 +543,7 @@ def test_marker_budget_is_chosen_from_the_item_markers(
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
-    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が CPU *上限 CPU 0.050 秒*"])
+    result.stdout.fnmatch_lines(["*test_slow.hy::test_slow の実行(call)が 壁の時計 *上限 壁の時計 0.050 秒*"])
     assert "test_edge.hy::test_slow_edge の実行" not in result.stdout.str()
 
 
@@ -561,7 +562,7 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     )
     result = pytester.runpytest("-q")
     result.assert_outcomes(passed=2, failed=1)
-    result.stdout.fnmatch_lines(["*test_edge.hy::test_slow_edge の実行(call)が CPU *上限 CPU 0.050 秒*"])
+    result.stdout.fnmatch_lines(["*test_edge.hy::test_slow_edge の実行(call)が 壁の時計 *上限 壁の時計 0.050 秒*"])
     # 歩数の上限が無い走行の終わりの一覧は、実行の上限が印ごとの秒だけである事を書く。
     result.stdout.fnmatch_lines(["*実行の上限は印ごとの秒(doeff_test_call_budget_by_marker)だけ*"])
 
@@ -768,7 +769,7 @@ def _steps_project(pytester: pytest.Pytester, ini: str, files: dict[str, str], *
 
 def _steps_measurement(steps: int, key: str = "t.hy::test") -> Measurement:
     return Measurement(
-        key=key, phase="call", cpu_seconds=9.0, wall_seconds=9.0, compile=CompileTally(0, 0.0), work=VmWork(steps, 0)
+        key=key, phase="call", cpu_seconds=9.0, wall_seconds=9.0, compile=CompileTally(0, 0.0, 0.0), work=VmWork(steps, 0)
     )
 
 
@@ -800,13 +801,13 @@ def test_judge_call_takes_the_marker_seconds_first_then_the_steps_and_else_measu
     宣言の値)・歩数の上限も印の上限も当たらなければ測らない(None)。"""
     measurement = _steps_measurement(500)
     both = _call_budgets(steps=1000)
-    assert judge_call(both, ["real_world"], measurement, None) == OverBudget(measurement, 5.0)
+    assert judge_call(both, ["real_world"], measurement, None) == OverBudget(measurement, 5.0, "wall-seconds")
     assert isinstance(judge_call(both, ["parametrize"], measurement, None), WithinBudget)
     assert isinstance(judge_call(both, [], _steps_measurement(1500), None), OverBudget)
     declaration = StepDeclaration(5000, "筋書きの規模に断言が依る")
     assert isinstance(judge_call(both, [], measurement, declaration), StaleDeclaration)
     marker_only = _call_budgets(steps=None)
-    assert judge_call(marker_only, ["real_world"], measurement, None) == OverBudget(measurement, 5.0)
+    assert judge_call(marker_only, ["real_world"], measurement, None) == OverBudget(measurement, 5.0, "wall-seconds")
     assert judge_call(marker_only, [], measurement, None) is None
     assert judge_call(marker_only, ["parametrize"], measurement, declaration) is None
 
