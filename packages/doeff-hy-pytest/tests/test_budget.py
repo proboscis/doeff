@@ -16,6 +16,7 @@ from doeff_hy_pytest.budget import (
     CompileCounter,
     CompileTally,
     DeclaredOverBudget,
+    GcTally,
     ImportTally,
     Measurement,
     OverBudget,
@@ -180,6 +181,28 @@ def test_compile_counter_adds_only_the_outermost_window(tmp_path, monkeypatch) -
     assert cold.cpu_seconds == 0.0
     assert cold_imports.cpu_seconds > 0
     assert cached == CompileTally(0, 0.0)
+
+
+def test_compile_counter_counts_a_collection_once() -> None:
+    """引く区間の外で起きた GC は GC の欄に数え、変換の区間の中で起きた GC は変換の秒に入っているので GC の欄に数えない
+    (二重に引かない・card ki-b2383fcc8b25)。"""
+    import gc
+
+    counter = CompileCounter()
+    counter.install()
+    try:
+        before = counter.gc_tally()
+        gc.collect()
+        outside = counter.gc_tally().since(before)
+        before = counter.gc_tally()
+        with counter.converting():
+            gc.collect()
+        inside = counter.gc_tally().since(before)
+    finally:
+        counter.uninstall()
+    assert outside.count == 1 and outside.cpu_seconds >= 0.0
+    assert inside == GcTally(0, 0.0)
+    assert counter._on_gc not in gc.callbacks
 
 
 def test_judge_uses_budget_and_registry() -> None:
@@ -359,6 +382,43 @@ def test_collect_budget_subtracts_compilation_but_fails_slow_import(
         ]
     )
     assert "test_slow_compile.hy の読み込み(import)" not in result.stdout.str()
+
+
+# 先に走った検が生かしている object が多い session の代わり — 300 万 object の heap(free-threaded の Python の GC は世代を分けず、
+# 1 回ごとに heap の全体を回る。300 万で 1 回 約 0.2 秒・agora-controllers の日次の session では 1 回 約 1 秒)。
+LARGE_HEAP = """
+HEAP = [[i] for i in range(3_000_000)]
+"""
+
+# 本体は軽く、読み込みの最中に GC が起きる検の file(GC がいつ起きるかは割り当ての数で決まり、session の中のどの file の
+# 読み込みに当たるかは回ごとに変わる — ここでは本体が gc.collect を 4 回呼んで、当たった回を決まった形で作る・4 回で 約 0.8 秒)。
+COLLECTED_WHILE_IMPORTED = """\
+(require doeff-hy.macros [deftest])
+(import gc)
+(for [_ (range 4)] (gc.collect))
+(deftest test-light
+  (assert True))
+"""
+
+
+def test_collect_budget_does_not_charge_a_garbage_collection_to_the_file(
+    pytester: pytest.Pytester,
+) -> None:
+    """読み込みの区間の中で起きた GC(ごみ集め)の CPU は、その file の重さに数えない — GC の費用は session に生きている object の
+    数で決まり、どの file の読み込みに当たるかは割り当ての数の巡りで回ごとに変わる。数えると、file も import 先も変わらないのに
+    落ちる file が回ごとに入れ替わる(agora-controllers の日次 10-10〜10-11・file 1 本だけなら 0.03 秒の file が session の中で
+    1.0〜1.4 秒 — card ki-b2383fcc8b25)。file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。
+    上限は 0.5 秒: この file は process で最初に読む .hy の file なので、doeff-hy の bytecode の確かめが process で 1 度だけ払う
+    macro の digest(約 0.2 秒・GC とは別の根)も乗る — その分では赤にならず、GC 4 回を数えれば赤になる幅。"""
+    _project(
+        pytester,
+        'doeff_test_collect_budget_seconds = 0.5\ndoeff_test_budget_mode = "fail"\n',
+        {"test_collects": COLLECTED_WHILE_IMPORTED},
+    )
+    pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD + LARGE_HEAP)
+    result = pytester.runpytest_subprocess("-q", "-p", "no:cacheprovider", "--continue-on-collection-errors")
+    result.assert_outcomes(passed=1)
+    assert "の読み込み(import)が" not in result.stdout.str()
 
 
 # 重い依存(本体の実行で CPU を回す Python の module)を import するだけの軽い検の file — 2 本が同じ依存を読む。

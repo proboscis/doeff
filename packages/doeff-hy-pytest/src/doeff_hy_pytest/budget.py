@@ -50,6 +50,9 @@
   走行が ``PYTHONDONTWRITEBYTECODE=1`` で撃ち、キャッシュが一度も作られないため — 除く形ではそこで一度も判定されない。
   キャッシュ有りなら引く物は 0 で値はそのまま。キャッシュ無しの値は下限(Hy が変換の中で読む ``require`` 先の module の
   実行も引かれる)なので、下限で超えた物は本当に超えている。
+- GC(ごみ集め)も引く: 測った区間の中で起きた GC の CPU 秒(``gc.callbacks``)は、その検の重さではなく process に生きている
+  object の数の費用で、いつ起きるかは割り当ての数の巡りで決まる(free-threaded の Python の GC は世代を分けず 1 回ごとに heap の
+  全体を回る)。引かないと、長い session の中で GC に当たった検だけが赤になり、落ちる検が回ごとに入れ替わる(card ki-b2383fcc8b25)。
 - 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
   pytest の nodeid、収集なら rootdir からの file の path。載った鍵は上限を超えても赤にしない。上限の内に戻った鍵は
   終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
@@ -65,6 +68,7 @@
 """
 
 import contextlib
+import gc
 import hashlib
 import importlib.machinery
 import sys
@@ -305,8 +309,23 @@ NO_IMPORTS = ImportTally(0, 0.0)
 
 
 @dataclass(frozen=True)
+class GcTally:
+    """ある時点までに数えた GC(ごみ集め)の回数と、それに使った CPU 秒(変換・依存の初回の import の区間の外で起きた分だけ)。"""
+
+    count: int
+    cpu_seconds: float
+
+    def since(self, before: "GcTally") -> "GcTally":
+        """before からこの時点までの差 — 1 つの測りの区間の中で起きた GC。"""
+        return GcTally(self.count - before.count, self.cpu_seconds - before.cpu_seconds)
+
+
+NO_GC = GcTally(0, 0.0)
+
+
+@dataclass(frozen=True)
 class Measurement:
-    """測った 1 区間 — CPU 秒と壁時計の秒(どちらも区間の全体)と、区間の中の変換と依存の初回の import。"""
+    """測った 1 区間 — CPU 秒と壁時計の秒(どちらも区間の全体)と、区間の中の変換と依存の初回の import と GC。"""
 
     key: str
     phase: Phase
@@ -316,12 +335,13 @@ class Measurement:
     imports: ImportTally = NO_IMPORTS
     # 区間の doeff-vm の仕事の量(数の口が無い時・収集の段階は None)。
     work: VmWork | None = None
+    gc: GcTally = NO_GC
 
     @property
     def judged_seconds(self) -> float:
-        """判定に使う秒 = 区間の CPU 秒から、変換の CPU 秒と依存の初回の import の CPU 秒を引いた値(どちらも無ければ区間の
-        CPU 秒そのもの)。"""
-        return self.cpu_seconds - self.compile.cpu_seconds - self.imports.cpu_seconds
+        """判定に使う秒 = 区間の CPU 秒から、変換の CPU 秒と依存の初回の import の CPU 秒と GC の CPU 秒を引いた値(どれも無ければ
+        区間の CPU 秒そのもの)。"""
+        return self.cpu_seconds - self.compile.cpu_seconds - self.imports.cpu_seconds - self.gc.cpu_seconds
 
 
 @dataclass(frozen=True)
@@ -566,6 +586,8 @@ def _seconds_text(measurement: Measurement) -> str:
         text += f"・キャッシュ無しの変換 {measurement.compile.count} 回の CPU {measurement.compile.cpu_seconds:.3f} 秒を引いた"
     if measurement.imports.count:
         text += f"・依存の module の初回の import {measurement.imports.count} 回の CPU {measurement.imports.cpu_seconds:.3f} 秒を引いた"
+    if measurement.gc.count:
+        text += f"・GC {measurement.gc.count} 回の CPU {measurement.gc.cpu_seconds:.3f} 秒を引いた"
     if measurement.work is not None:
         text += f"・doeff-vm の歩数 {measurement.work.steps}・handler の呼び出し {measurement.work.handler_calls} 回"
     return text + ")"
@@ -637,6 +659,12 @@ class CompileCounter:
 
     doeff-effect-analyzer が入っていれば、その Hy の展開(展開した構文木の cache に当たらない時だけ走る — 同じく
     キャッシュ無しの重さ)も変換の数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない・agora-redesign #1534)。
+
+    GC(``gc.callbacks`` の start から stop まで)も引く区間として数える。GC の費用は process に生きている object の数で決まり
+    (free-threaded の Python の GC は世代を分けず、1 回ごとに heap の全体を回る — 300 万 object で 1 回 約 0.2 秒)、いつ起きるかは
+    割り当ての数の巡りで決まるので、測りに入れると session の中のどの検に当たるかで合否が入れ替わる(agora-controllers の日次で、
+    file 1 本だけなら 0.03 秒の file が 1.0〜1.4 秒になり、落ちる file が回ごとに変わった — card ki-b2383fcc8b25)。変換・依存の初回の
+    import の区間の中で起きた GC はその区間の秒に入っているので、GC の欄には数えない(二重に引かない)。
     """
 
     def __init__(self) -> None:
@@ -644,6 +672,9 @@ class CompileCounter:
         self._mut_cpu_seconds = 0.0
         self._mut_import_count = 0
         self._mut_import_cpu_seconds = 0.0
+        self._mut_gc_count = 0
+        self._mut_gc_cpu_seconds = 0.0
+        self._mut_gc_started: float | None = None
         self._mut_depth = 0
         self._mut_outer: SetAside | None = None
         self._mut_original: Callable[..., object] | None = None
@@ -657,6 +688,24 @@ class CompileCounter:
     def import_tally(self) -> ImportTally:
         """今までの依存の初回の import の数え(区間の前後の差で使う)。"""
         return ImportTally(self._mut_import_count, self._mut_import_cpu_seconds)
+
+    def gc_tally(self) -> GcTally:
+        """今までの GC の数え(区間の前後の差で使う)。"""
+        return GcTally(self._mut_gc_count, self._mut_gc_cpu_seconds)
+
+    def _on_gc(self, phase: str, info: Mapping[str, object]) -> None:
+        """``gc.callbacks`` の口 — 変換・依存の初回の import の区間の外で起きた GC 1 回の CPU 秒を GC の欄に足すため。"""
+        if self._mut_depth:
+            return
+        match phase:
+            case "start":
+                self._mut_gc_started = time.process_time()
+            case "stop" if self._mut_gc_started is not None:
+                self._mut_gc_count += 1
+                self._mut_gc_cpu_seconds += time.process_time() - self._mut_gc_started
+                self._mut_gc_started = None
+            case _:
+                pass
 
     @contextlib.contextmanager
     def _set_aside(self, kind: SetAside) -> Generator[None]:
@@ -715,9 +764,12 @@ class CompileCounter:
         # 数えるための差し替え(uninstall で戻す)— import の機構は呼ぶたびにこの名を module から引くので、import 文にも効く。
         setattr(bootstrap, _FIND_AND_LOAD, counting_find_and_load)
         self._mut_stop_observing = observe_analyzer_expansions(self.converting)
+        gc.callbacks.append(self._on_gc)
 
     def uninstall(self) -> None:
         """install の前の口へ戻す。"""
+        if self._on_gc in gc.callbacks:
+            gc.callbacks.remove(self._on_gc)
         if self._mut_original is not None:
             importlib.machinery.SourceFileLoader.source_to_code = self._mut_original  # type: ignore[method-assign]  # install の前へ戻す
             self._mut_original = None
@@ -748,6 +800,7 @@ class CallMeasured:
     compile: CompileTally
     imports: ImportTally
     work: VmWork | None = None
+    gc: GcTally = NO_GC
 
 
 _BUDGETS_KEY = pytest.StashKey[Budgets]()
@@ -967,6 +1020,7 @@ def pytest_doeff_import_hy_module(
     counter = config.stash[_COUNTER_KEY]
     compile_before = counter.tally()
     imports_before = counter.import_tally()
+    gc_before = counter.gc_tally()
     cpu_started = time.process_time()
     wall_started = time.perf_counter()
     module = yield
@@ -977,6 +1031,7 @@ def pytest_doeff_import_hy_module(
         wall_seconds=time.perf_counter() - wall_started,
         compile=counter.tally().since(compile_before),
         imports=counter.import_tally().since(imports_before),
+        gc=counter.gc_tally().since(gc_before),
     )
     verdict = judge(measurement, budgets.collect_seconds, budgets.registry)
     if _record(config, verdict):
@@ -1006,6 +1061,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     work_before = source.tally() if isinstance(source, WorkReader) else None
     compile_before = counter.tally()
     imports_before = counter.import_tally()
+    gc_before = counter.gc_tally()
     cpu_started = time.process_time()
     if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
         guard.arm(runaway_steps)
@@ -1021,6 +1077,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
             compile=counter.tally().since(compile_before),
             imports=counter.import_tally().since(imports_before),
             work=work,
+            gc=counter.gc_tally().since(gc_before),
         )
 
 
@@ -1050,6 +1107,7 @@ def pytest_runtest_makereport(
         compile=measured.compile,
         imports=measured.imports,
         work=measured.work,
+        gc=measured.gc,
     )
     verdict = judge_call(budgets, markers, measurement, declared_steps_of(getattr(item, "obj", None)))
     if verdict is None:
