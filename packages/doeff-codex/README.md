@@ -8,12 +8,29 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 
 | module | 何のため | 中身 |
 |---|---|---|
-| `doeff_codex.rpc` | app-server を起こす argv と、stdin へ書く要求の 1 行を作るため | `app-server-argv`・`initialize-request`・`initialized-notification`・`thread-start-request`・`thread-resume-request`・`turn-start-request`・`turn-interrupt-request`・閉じた語彙 `ApprovalPolicy`・`SandboxMode` |
+| `doeff_codex.effects` | 上の層が codex のターンを effect で頼むため(公開の口) | 下の「公開 effect」の表 |
+| `doeff_codex.values` | effect の欄の値 | `CodexSessionSpec`(環境・作業の dir・model・許可の方針・sandbox)・`CodexHome`・`FreshThread`・`ResumeThread`・`CodexTurn`・`CodexEvent` |
+| `doeff_codex.handler` | 本番の handler — 公開 effect に app-server の子 process で答えるため | `codex-handler`・`CodexHost`(composition root が 1 つ作る状態の持ち主) |
+| `doeff_codex.fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply` |
+| `doeff_codex.rpc` | app-server を起こす argv と、stdin へ書く要求・答えの 1 行を作るため | `app-server-argv`・`initialize-request`・`initialized-notification`・`thread-start-request`・`thread-resume-request`・`turn-start-request`・`turn-interrupt-request`・`server-response-line`・閉じた語彙 `ApprovalPolicy`・`SandboxMode` |
 | `doeff_codex.lines` | stdout の 1 行を、上の層が読む型つきの記録へ分けるため | `classify-line`(1 行 → `CodexLine`)と記録の型 |
-| `doeff_codex.process` | app-server の子 process を、ターンをまたいで生かして行を運ぶため | `CodexProcess`(stdin の書き手・stdout と stderr の読み手の thread・降ろす梯子) |
+| `doeff_codex.process` | app-server の子 process を、ターンをまたいで生かして行を運ぶため(handler だけが持つ内部の器) | `CodexProcess`(stdin の書き手・stdout と stderr の読み手の thread・降ろす梯子) |
 
-公開の effect と handler(ターンを始める・止める・出来事を読む)はまだ無い — 次の単位で、doeff-claude-code の `ClaudeStartTurn` などと
-同じ形で足す。
+## 公開 effect
+
+| effect | すること | 成功の答え | 失敗の答え(型で返す) |
+|---|---|---|---|
+| `CodexStartTurn(origin, spec, text)` | ターンを始める(`FreshThread` = 新しい会話・`ResumeThread(thread-id)` = 続き) | `TurnStarted(turn)` | `ThreadUnknown` / `TurnInFlight` / `LaunchFailed` / `RequestRefused` |
+| `CodexInterruptTurn(turn)` | 走っているターンを止める(終わりは出来事の `TurnEnded` — 状態 INTERRUPTED) | `InterruptRequested` | `NoTurnInFlight` |
+| `CodexReadTurnEvents(turn, after-seq, wait-up-to)` | ターンの出来事(`CodexEvent` — seq と行の記録)と終わりを、新しい出来事か終わりが来るまで待って読む | `TurnEventPage(events, next-seq, end)` | `UnknownTurn` |
+| `CodexAnswerRequest(turn, request-id, result)` | codex からの要求(出来事の `ServerRequest`)に答える | `Answered` | `NoSuchRequest` |
+| `CodexCloseSession(thread-id, reason)` | 会話を閉じる(冪等 — 走っているターンは `BackendLost` で終わる) | `SessionClosed(was-running)` | `ProcessStillAlive` |
+| `CodexLaunchCount(thread-id)` | 検の口: 会話のために起こした process の数 | 数 | — |
+
+ターンの終わり(頁の `end`)はターンごとにちょうど 1 つ: codex が出した `TurnEnded`(状態 completed・interrupted・failed)か、
+終わりの行の前に process が消えた `BackendLost`。同じ会話・同じ宣言の続きは生きた process を使い回し、宣言が違うか process が無ければ
+新しい process で `thread/resume` する(判断は handler の start-turn の 1 か所)。どちらの handler も外側に doeff-time の時間の handler
+(本番 = `sync-time-handler`・模擬 = `sim-time-handler`)と doeff の scheduler が要る。
 
 ## 行の記録(`classify-line` の答え)
 
@@ -57,3 +74,7 @@ uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lin
 ```sh
 uv run --no-sync pytest packages/doeff-codex/tests
 ```
+
+`tests/test_scenarios.hy` の筋書きは 2 つの解釈器で走る: `fake`(fake の handler + 仮想の時計)・`stub`(本番の handler + 替え玉の
+app-server `tests/stub_cli/codex_app_server.py` — 録った実物の行を、id を差し替えて返す)。ほかの検(行の分類・要求の組み立て・
+子 process の器)は handler を被せない `plain` で走る。
