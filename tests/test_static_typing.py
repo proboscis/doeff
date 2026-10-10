@@ -12,6 +12,7 @@ Prog[E, T]・program・reply)を手で書いていた。その層の中身を do
 """
 
 import json
+import shlex
 import subprocess
 import sys
 from collections.abc import Generator
@@ -297,8 +298,12 @@ _MISTAKE_MARKER = "# ---- mistakes"
 
 
 def _pyright_python(tmp_path: Path) -> Path:
-    """pyright に --pythonpath で渡す python(pyright は検索 path を問うためにこれを起こす)。"""
-    return Path(sys.executable)
+    """pyright に --pythonpath で渡す python(pyright は検索 path を問うためにこれを起こす)。pyright はそれを `-I` で起こし、
+    PYTHONDONTWRITEBYTECODE を読ませないので、この process の python を `-B`(-I の下でも効く)で起こす包みを tmp_path に置いて渡す。"""
+    wrapper = tmp_path / "python-without-bytecode"
+    wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -B "$@"\n')
+    wrapper.chmod(0o755)
+    return wrapper
 
 
 def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
