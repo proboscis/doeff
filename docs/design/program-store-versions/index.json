@@ -1,0 +1,12 @@
+{
+  "heads": {
+    "snapshot": "snapshot-36d72b77b677",
+    "target": "design-a9fe9b98db5e"
+  },
+  "records": {
+    "design-a9fe9b98db5e": "14a474755d3cbede42459043a7a9dcf8f1601cab1db894dfb95e617fd6520858",
+    "snapshot-36d72b77b677": "32f020c6d2974db4c54560ec009baa13265157a29a8a5944507d802efe11ed38"
+  },
+  "schema_version": 1,
+  "scope": "doeff-cluster の詰めた Program の置き場(coordinator の /programs/<sha>)と、送り手の版 versions の持ち主の分担 — 置き場の行・task の行・service の宣言の行・worker の cache と子の入口の比べ"
+}

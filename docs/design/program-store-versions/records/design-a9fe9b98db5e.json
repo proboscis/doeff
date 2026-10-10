@@ -1,0 +1,309 @@
+{
+  "artifacts": [],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "契約を変えない — 送り手・coordinator・worker を同時に上げる配備が要らない。R1・R2 は a093009bb・7decfe5f7 で満たす",
+            "costs": "置き場の行の版は最後の送り手の物で、同じ sha を版 A で PUT した直後に版 B が PUT すると、A の直後の POST /tasks は版 B を写す(その task は版 B の worker に置かれて走る)",
+            "name": "a. 今の main の分担を保つ(置き場の版は task を作る時の写しの元としてだけ残す)"
+          },
+          {
+            "benefits": "版の持ち主が 1 か所ずつになり、PUT と POST の間の競りも無くなる",
+            "costs": "送り手(agora-controllers の pin)・coordinator・全 worker を 1 つの配備で上げる契約の変更。agora-controllers の round_world.hy の控えと戻し・検 2 file の付け替えも要る",
+            "name": "b. 置き場から版を外し、POST /tasks・PUT /detached に版を必須にする"
+          }
+        ],
+        "question": "置き場の行から版を外し、版を task の行と service の宣言の行だけに持たせるか(#3767 の全体の形・branch wt/c2w36-program-versions)",
+        "reason": "R1・R2 の落ちは a で既に直り、b の得は PUT と POST の間の競り(落ちずに別の版の worker で走るだけ)だけで、同時の配備の代償に見合わない",
+        "reconsider_when": "PUT と POST の間の競りで、写した版に合う worker が居ずに task が待ち続ける・落ちる実例が出た時、または送り手の client を別の理由で同時に上げる時",
+        "selected": "a. 今の main の分担を保つ(置き場の版は task を作る時の写しの元としてだけ残す)"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "同じ sha の Program を、版 B の送り手が置き場へ置き直す(版 A の task が待っている間)",
+        "expected_elements": [
+          "program-store"
+        ],
+        "id": "C1",
+        "preserve": [
+          "待っている task は版 A で比べられる",
+          "service は宣言の版で比べられる"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "task-row-versions",
+          "service-job-row-versions"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "10-06 t661・10-10 merge-queue"
+        },
+        "rationale": "宣言し直し・送り手の python の版の更新で日常に起きる",
+        "verification": "tests/test_task_programs.hy(task)・tests/test_service_program_versions.hy(service)"
+      },
+      {
+        "change": "worker を coordinator より先に新しい版へ上げる(配備の順の誤り)",
+        "expected_elements": [
+          "worker-link"
+        ],
+        "id": "C2",
+        "preserve": [
+          "worker は ready を書かない",
+          "理由に DeclaredReplyMalformed と versions と配備の順が出る"
+        ],
+        "priority": "required",
+        "protected_contracts": [
+          "service-job-row-versions"
+        ],
+        "provenance": {
+          "kind": "observed",
+          "source": "7decfe5f7 の配備の順の註"
+        },
+        "rationale": "service の版を返事の job の行に載せる形(7decfe5f7)は coordinator が先に要る",
+        "verification": "tests/test_reply_without_versions.hy"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy の task-body-refusal・program-versions",
+        "effects": [],
+        "failures": [
+          "本文の versions は 400(task-body-refusal)"
+        ],
+        "id": "task-row-versions",
+        "invariants": [
+          "task の版は作った後に変わらない"
+        ],
+        "operations": [
+          "POST /tasks・PUT /detached(本文に versions を載せない — 置き場の版を写す)",
+          "heartbeat の返事の task の行の versions"
+        ],
+        "owner": "task-row"
+      },
+      {
+        "canonical_source": "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/replies.hy の spec-json・worker/protocol/declared.hy の declared-job-spec",
+        "effects": [],
+        "failures": [
+          "版の欄の無い行は worker が DeclaredReplyMalformed で断る(ready を書かない)"
+        ],
+        "id": "service-job-row-versions",
+        "invariants": [
+          "Program の job の行は必ず versions を持つ(7decfe5f7 以後の coordinator)"
+        ],
+        "operations": [
+          "heartbeat の返事の Program の job の行の versions"
+        ],
+        "owner": "service-declaration"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "同じ sha の行の版を後の送り手で上書きする事"
+        ],
+        "id": "program-store",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "coordinator の置き場。sha → 詰めた Program と、最後に置いた送り手の版。版は task を作る時(POST /tasks・PUT /detached)に 1 度だけ task の行へ写す元としてだけ使う",
+        "state": [
+          "programs: sha → ProgramRow(blob・versions・putMs)"
+        ]
+      },
+      {
+        "depends_on": [
+          "program-store"
+        ],
+        "hidden_decisions": [],
+        "id": "task-row",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1"
+        ],
+        "responsibility": "task の行。作った時の版(program-versions の写し)を持ち、置き先の選び(can-run-task)と worker の比べが読む",
+        "state": [
+          "TaskRecord.versions"
+        ]
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "service-declaration",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2"
+        ],
+        "responsibility": "service の宣言の行の run.versions。coordinator が heartbeat の返事の job の行に載せる",
+        "state": [
+          "宣言の行の run.versions"
+        ]
+      },
+      {
+        "depends_on": [
+          "task-row",
+          "service-declaration",
+          "program-store"
+        ],
+        "hidden_decisions": [
+          "cache の file の置き方(launch.spec-program-name の 1 か所)"
+        ],
+        "id": "worker-link",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R5"
+        ],
+        "responsibility": "worker の拍。返事の job と task の行の版で cache の file(<版の指紋>/<sha>.json)を決め、置き場の答えの版は読まない。版の欄の無い Program の job の行は DeclaredReplyMalformed で断り、ready を書かない",
+        "state": [
+          "programs の cache(版ごと)"
+        ]
+      },
+      {
+        "depends_on": [
+          "program-store"
+        ],
+        "hidden_decisions": [],
+        "id": "senders",
+        "kind": "external",
+        "requirement_ids": [],
+        "responsibility": "送り手(宣言の道具・agora-controllers の pin の doeff の client)。PUT /programs に blob と版を載せる。agora-controllers の scripts/round_world.hy は置き場の答えを控えて戻す",
+        "state": []
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "a093009bb(task の版)・7decfe5f7(service の版)・cf53cd96(版の欄の無い返事を名乗る)が main に在る"
+      ],
+      "free": [
+        "旧い cache の片づけの形"
+      ],
+      "next": [
+        "次の本体の版上げで coordinator を worker より先に上げる(配備の担当へ lt-6X8HT2HHDY0J5YS92N2YPEA40T)",
+        "版上げの後に旧い cache が残るかを見る"
+      ]
+    },
+    "level": "doeff-cluster の coordinator の置き場(/programs/<sha>)・task の行・service の宣言の行・worker の cache と子の入口の比べ(1 つの系の中の部品の分担)",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "既存の部品の間の版の持ち主の判断で、領域のモデル化ではない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "変更 2 つ(C1・C2)を記録に挙げ、検で確かめた。手法の工程は踏んでいない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "部品の切り分けを変えない",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "同上",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "代替案 1 問の比べで足りる",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "図を持つ資料を作っていない(card の発言の表だけ)",
+        "status": "not_applicable",
+        "steps": []
+      }
+    ],
+    "open_questions": [
+      "利用者・調整役の合意は無い(この記録は担い手の判断 — card ki-01d1f8cb0391 の発言)",
+      "worker の上に残る旧い形の cache(programs/<sha>.json・programs/tasks/…)が版上げの後に残るか(/work が Pod の作り直しをまたぐか)"
+    ],
+    "perspective": "proposed",
+    "purpose": "詰めた Program の送り手の版 versions を誰が持つかを決める。同じ sha の Program を違う版の送り手が置き直しても、前から待っていた task と、宣言済みの service が「版が違う」で落ちない事。card ki-01d1f8cb0391(#3767)で、置き場から版を外す全体の形を採らず、今の main の分担を保つと判断した記録。",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "functional",
+        "provenance": {
+          "kind": "inherited",
+          "source": "agora-redesign #3762(10-06 12:04 の t661 の VersionMismatch)・card ki-96ed924e9c90"
+        },
+        "statement": "前から待っていた task は、置き場の行が後の送り手の版で上書きされても、task を作った時の版で比べられて走る"
+      },
+      {
+        "id": "R2",
+        "kind": "functional",
+        "provenance": {
+          "kind": "inherited",
+          "source": "doeff 7decfe5f7(10-10 14:00〜14:05 の zeus の merge-queue の落ち)・card ki-172e63fed4c7"
+        },
+        "statement": "同じ sha の Program を違う版で宣言し直した service は、宣言の版で cache の file を決めて取り直す"
+      },
+      {
+        "id": "R3",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "inherited",
+          "source": "agent-commons の AGENTS.md と配り役の共通の約束(後方互換の分岐なし)"
+        },
+        "statement": "両立の枝を書かない — 版の無い行を読み替えず、形の違う返事は名乗って断る"
+      },
+      {
+        "id": "R4",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "inherited",
+          "source": "配り役の依頼 lt-TTDAXJQNHEP6BQM87M6MEPZ347"
+        },
+        "statement": "doeff-cluster に差が出る変更は次の本体の版上げに乗せ、worker の Pod を作り直さない"
+      },
+      {
+        "id": "R5",
+        "kind": "quality",
+        "provenance": {
+          "kind": "observed",
+          "source": "doeff d5c2b5070 の coordinator_link.hy の拍(ready の後に declared-job-specs が KeyError)— cf53cd96 で直した"
+        },
+        "statement": "配備の順を誤った時(新しい worker × 古い coordinator)に黙って止まらず、ready を書かずに名乗る"
+      }
+    ]
+  },
+  "created_at": "2026-10-10T11:56:58.576130+00:00",
+  "id": "design-a9fe9b98db5e",
+  "inputs": [
+    {
+      "id": "snapshot-36d72b77b677",
+      "role": "evidence",
+      "sha256": "32f020c6d2974db4c54560ec009baa13265157a29a8a5944507d802efe11ed38"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "doeff-cluster の詰めた Program の置き場(coordinator の /programs/<sha>)と、送り手の版 versions の持ち主の分担 — 置き場の行・task の行・service の宣言の行・worker の cache と子の入口の比べ"
+}
