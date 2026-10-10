@@ -274,6 +274,16 @@ doeff_bake() {
   fi
 }
 
+# 読み取りの鍵の表の今の値を出す: WORKER_REPOS_FILE(ConfigMap の dir の mount の file — kubelet が更新を届ける)が読めればその中身、
+# 無ければ env の WORKER_REPOS(起動の時の値)。
+worker_repos_table() {
+  if [ -n "${WORKER_REPOS_FILE:-}" ] && [ -r "$WORKER_REPOS_FILE" ]; then
+    cat "$WORKER_REPOS_FILE"
+  else
+    printf '%s' "${WORKER_REPOS:-}"
+  fi
+}
+
 # 読み取りの鍵の表から、worker の鍵の表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
 # (export するので subshell で呼ばない)。JSON の path は repo_keys に置く。
 repo_access() {
@@ -285,7 +295,8 @@ repo_access() {
   : >"$dir/gitconfig"
   json="{"
   n=0
-  for entry in $WORKER_REPOS; do
+  table=$(worker_repos_table)
+  for entry in $table; do
     url=${entry%=*}
     name=${entry##*=}
     key=""
@@ -390,7 +401,7 @@ if [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
   echo "boot: $WORK_DIR/worker.lock を取った $(date +%T)" >&2
 fi
 repo_keys=""
-if [ -n "${WORKER_REPOS:-}" ]; then
+if [ -n "${WORKER_REPOS:-}" ] || [ -n "${WORKER_REPOS_FILE:-}" ]; then
   repo_access
 elif [ -f /etc/worker-git/id ]; then
   export GIT_SSH_COMMAND="ssh -i /etc/worker-git/id -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/worker-git/known_hosts -o StrictHostKeyChecking=yes"
