@@ -508,6 +508,9 @@
                ;; 書きと消しで版が進み、この worker を名指した GET /watch が起き、worker は次の heartbeat を待たずに準備を始める
                ;; (watch_policy.worker-mark)。期限は頼み直すたびに延びるので入れない — 期限の延長だけでは版も見え方も変わらない。
                ;; 当たる行が在る間だけ載せる(無い worker の status の形・版は以前と同じ)。
+               ;; disk の条件(heartbeat の envCapacity — near = 準備の最低に近い・exhausted = 最低を割った)。ok でない間だけ載せる(ok の worker の
+               ;; status の形・版は以前と同じ)。切り替わりの拍で版が進み、読み手が GET /resources/Worker で予告を読む。
+               (if (!= w.env-capacity "ok") {"envCapacity" w.env-capacity} {})
                (if (setx offers (warms-for state w.name now))
                    {"warm" (sorted (gfor o offers o.key))}
                    {}))})

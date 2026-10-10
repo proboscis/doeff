@@ -9,7 +9,7 @@
 ;;;                    違う・空きが割ったままで固定が変わった・上限を越えたままで固定が変わったか前の掃除の終わりから SWEEP-EVERY-MS —
 ;;;                    #3715・#3732・#4051)
 ;;;   prepare-overdue  準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)
-;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted)
+;;;   env-capacity     heartbeat で名乗る disk の条件(共有の disk の空きが最低を割っていれば exhausted・最低 + NEAR-MARGIN-BYTES を割っていれば near)
 ;;;   warm-refusal     先の組み(温める表の行)を始める前に断るか(no-disk-room・over-roots-cap・no-memory-room — #3748)。見積もりは
 ;;;                    root-estimate(disk)と build-memory-estimate(memory の山)・memory の読みは memory-use-of
 ;;;
@@ -162,11 +162,20 @@
   (> (- now progressed) limits.stall-seconds))
 
 
+;; 空きの予告の幅(byte)— 空きが最低 + この幅を割ったら near を名乗る。2026-10-10 に空きが 1 時間に約 5 GB 減って最低を切り、切ってから
+;; 分かった(準備が全部止まった後)。20 GB は約 4 時間の手前。
+(val NEAR-MARGIN-BYTES (* 20 (** 10 9)))
+
+
 (defk env-capacity [free min-free]
   {:pre [(: free int) (: min-free int)] :post [(: % str)]}
   "heartbeat で名乗る disk の条件。共有の disk の空きが最低 min-free を割っていれば exhausted(coordinator は準備済みでない env の task を
-   置かない — 準備の process も同じ値で disk-full と断る)。"
-  (if (< free min-free) "exhausted" "ok"))
+   置かない — 準備の process も同じ値で disk-full と断る)。最低 + NEAR-MARGIN-BYTES を割っていれば near(置き方は ok と同じ — 最低を
+   切る前に読み手が予告するための語)。最低 0(下限を置かない worker)は ok。"
+  (cond
+    (< free min-free) "exhausted"
+    (and (> min-free 0) (< free (+ min-free NEAR-MARGIN-BYTES))) "near"
+    True "ok"))
 
 
 ;; --- 先の組みを始める前の断り(#3748・#3671 の子)---------------------------------------------------------------------

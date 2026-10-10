@@ -87,7 +87,7 @@
   (setv #^ (get tuple #(ComponentVersion ...)) tools #())
   ;; 実行環境の root の名乗り(2026-09-26・heartbeat の platform・envs・envCapacity)。保存しない(次の heartbeat で埋まる)。
   ;; platform = root のキーの材料(shared/core/native_wheel の current_platform)・env-ready / env-preparing = 準備済み / 準備中の root のキー・
-  ;; env-failed = 準備に失敗した root(EnvFailed の tuple)・env-capacity = "ok" か "exhausted"(準備を始める空きが無い)。
+  ;; env-failed = 準備に失敗した root(EnvFailed の tuple)・env-capacity = "ok" か "near"(準備の最低に近い — 置き方は ok と同じ)か "exhausted"(準備を始める空きが無い)。
   (setv #^ str platform "")
   (setv #^ (get frozenset str) env-ready (frozenset))
   (setv #^ (get frozenset str) env-preparing (frozenset))
