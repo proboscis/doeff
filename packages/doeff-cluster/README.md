@@ -442,6 +442,10 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
   この表は url に鍵を結ぶだけで、url を断りません。表に無い url は worker が鍵なしで clone します(公開の repo は通り、読めない非公開の
   repo は clone の失敗 `repo-unreachable` で返ります)。
+  表を file(env `WORKER_REPOS_FILE` — 配備では ConfigMap `worker-env` の dir の mount・kubelet が更新を届ける)で受ける worker は、
+  準備の process を起こす前ごとに `ROLE=access` で表を組み直すので、表に行を足すと起動し直さずに次の準備から効きます。組み直しは
+  3 つの file を別名に書いてから置き換え、断られた時(鍵の file が無い・形の違う url)は前の表のまま準備します。file が無ければ
+  env の `WORKER_REPOS`(起動の時の値)を読み、組み直しません。
 
 - `deploy/k8s` — k8s の宣言。coordinator 1 つ(atlas・`deploy/k8s/coordinator`)と、機体(Node)ごとの worker 1 つ
   (`deploy/k8s/workers` = worker の ServiceAccount と機体の dir の並び): 雛形 `deploy/k8s/worker` に、機体ごとの差(置く Node と
