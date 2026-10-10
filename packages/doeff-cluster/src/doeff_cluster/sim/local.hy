@@ -95,6 +95,11 @@
 ;;;                             本番の worker の処理が I/O で止まった形・#2804)。
 ;;;   DrainWorker 名 [ttl]      本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で drain を頼む。
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
+;;;   RollWorker 名             動いている worker の新しい世代を、今の世代を止めずに先に起こす(本番の Deployment の RollingUpdate の
+;;;                             maxSurge 1 — 同じ機体に新しい Pod を並べる・AL-D2)。今の世代は退いた世代(elder)として動き続け、
+;;;                             StopElder で止めるまで抜けない。答え = 退いた世代の boot。
+;;;   DrainGeneration 名 boot [ttl]  世代 boot の preStop と同じ要求で drain を頼む(退いた世代の旧い Pod の preStop)。答えは DrainWorker と同じ形。
+;;;   StopElder 名 boot         退いた世代 boot を優雅に止める(旧い Pod の SIGTERM)。抜けるまで待つ。
 ;;;   PreparationsOf 名         worker が起こした準備の列(SimPreparation — コードの版か env-<キー>・先読みか・始まり・終わり・失敗)。
 ;;;   WatchFailuresOf 名        worker の名指しの待ちの task が思わぬ例外で止まった記録の列(SimWatchFailure — 本番の「待ちの thread が
 ;;;                             止まった」の 1 行に当たる。止まった世代は拍ごとの heartbeat に戻る — #1933)。
@@ -575,6 +580,26 @@
    :answer dict
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect RollWorker
+  "検の effect: 動いている worker name の新しい世代を、今の世代を止めずに先に起こす(本番の RollingUpdate の maxSurge 1・AL-D2)。今の世代は
+   退いた世代として動き続ける(止めるのは StopElder)。答え = 退いた世代の boot(止まっている・止まり始めた worker には None)。"
+  {:fields [(: name str)]
+   :answer (| str None)
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect DrainGeneration
+  "検の effect: worker name の世代 boot の drain を、その世代の preStop と同じ要求(drain_client.drain-request)で頼む(退いた世代の旧い Pod の
+   preStop・AL-D2)。答えは DrainWorker と同じ形。"
+  {:fields [(: name str) (: boot str) (: ttl-seconds float DRAIN-TTL-SECONDS)]
+   :answer dict
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect StopElder
+  "検の effect: worker name の退いた世代 boot を優雅に止める(旧い Pod への SIGTERM・AL-D2)。抜けるまで待つ。退いた世代でなければ何もしない。"
+  {:fields [(: name str) (: boot str)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect PreparationsOf
   "検の effect: worker name が起こした準備の列(SimPreparation の tuple・起こした順)。"
   {:fields [(: name str)]
@@ -780,8 +805,13 @@
   {:answer SimParts :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect HostTruthOf
-  "worker name の宿の真実(HostTruth)。"
-  {:fields [(: name str)] :answer HostTruth :tags {:context "doeff-cluster" :role "intent"}})
+  "worker name の宿の真実(HostTruth)。boot = 読む世代(退いた世代 — RollWorker の後も動く旧い世代 — ならその世代の真実・None か今の
+   世代なら今の世代の真実)。"
+  {:fields [(: name str) (: boot (| str None) None)] :answer HostTruth :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect RollBellOf
+  "worker name の今の世代 boot が退いた世代へ移った時(RollWorker)に ROLLED で鳴る約束(worker の一生の係が世代の終わりと競わせる)。"
+  {:fields [(: name str) (: boot str)] :answer Promise :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect PutHostTruth
   "worker name の宿の真実を置き直す。"
@@ -925,8 +955,8 @@
 
 (defeffect StopRequestOf
   "worker name の拍の止めの問い(核の StopRequested)に答える材料 — その worker の宿の真実と、全 worker が止まる時かを世界への問い
-   1 つで読む(#3054 の C-6)。答え = HostStop。"
-  {:fields [(: name str)] :answer HostStop :tags {:context "doeff-cluster" :role "intent"}})
+   1 つで読む(#3054 の C-6)。boot = 問う世代(退いた世代ならその真実)。答え = HostStop。"
+  {:fields [(: name str) (: boot (| str None) None)] :answer HostStop :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect CoordinatorStarted
   "coordinator の Pod が起きた(時刻 ms)。"
@@ -1767,7 +1797,7 @@
   {:pre [(: name str) (: boot str)] :post [(: % HostTruth)] :tags {:context "doeff-cluster" :role "judgment"}}
   "worker name の世代 boot の宿の真実を読むため。その世代がもう終わっていれば(死んだ・止めた後に次の世代が起きた)WorkerDied で
    その世代の run-worker を終わらせる。"
-  (<- truth HostTruth (HostTruthOf name))
+  (<- truth HostTruth (HostTruthOf name boot))
   (<- checked HostTruth (checked-truth name boot truth))
   checked)
 
@@ -2175,7 +2205,7 @@
   (StopRequested []
     ;; 世代の確かめと全 worker の止まれを世界への問い 1 つで読む(#3054 の C-6)。止めの頼み(StopWorker・StopWorkers)は本番の
     ;; worker の Pod への SIGTERM に当たるので、理由は本番の os-signal-stop-handler と同じ綴り(#3871 の単位 3)。
-    (<- asked HostStop (StopRequestOf worker.name))
+    (<- asked HostStop (StopRequestOf worker.name boot))
     (<- truth HostTruth (checked-truth worker.name boot asked.truth))
     (resume (if (or asked.all-stopping truth.stopping) TERM-REASON None)))
   (EnvReport []
@@ -2191,7 +2221,7 @@
   (AwaitStop []
     ;; 止めの合図の待ち(周の間の待ちが競わせる — 本番の答え手は os-signal-stop-handler)。止めが頼まれていれば今すぐ、そうでなければ
     ;; 周の頭に掛けた止めの呼び鈴が鳴るまで(鳴って手放されていれば、この周の間に頼まれた — 今すぐ)。
-    (<- asked HostStop (StopRequestOf worker.name))
+    (<- asked HostStop (StopRequestOf worker.name boot))
     (<- truth HostTruth (checked-truth worker.name boot asked.truth))
     (when (not (or asked.all-stopping truth.stopping (is truth.stop-bell None)))
       (<- (Wait truth.stop-bell.future)))
@@ -2203,7 +2233,7 @@
   "起こした後の待ち(または版をまだ知らない待ち)が、次の heartbeat が届くまで眠るため(上限 WAKE-HOLD-SECONDS — 同じ版で待ち直して
    空回りしない)。本番の WatchCell.beats を見る待ちに当たる。起きたら自分の鈴を払う — heartbeat が届かず時間切れで起きた鈴を残すと、
    届かない間ずっと鈴の列が伸び続ける(#2596)。"
-  (<- truth HostTruth (HostTruthOf name))
+  (<- truth HostTruth (HostTruthOf name boot))
   (when (= truth.boot boot)
     (<- bell Promise (CreatePromise))
     (<- (PutHostTruth name (replace truth :beat-bells (+ truth.beat-bells #(bell)))))
@@ -2221,7 +2251,7 @@
   (match reading.kind
     WatchKind.UNSUPPORTED (do (<- (ChangeHostTruth name boot False (fn [truth] (replace truth :watch-unsupported True))))
                               False)
-    WatchKind.FAILED (do (<- truth HostTruth (HostTruthOf name))
+    WatchKind.FAILED (do (<- truth HostTruth (HostTruthOf name boot))
                          (if (!= truth.boot boot)
                              False
                              (do (<- (Delay WATCH-RETRY-SECONDS))
@@ -2253,7 +2283,7 @@
   (val link (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions :timing plan.timing))
   (var going True)
   (while going
-    (<- truth HostTruth (HostTruthOf worker.name))
+    (<- truth HostTruth (HostTruthOf worker.name boot))
     (cond
       (or truth.down (!= truth.boot boot) truth.watch-unsupported) (:= going False)
       (or (is truth.watch-after None) truth.woken) (<- (await-beat worker.name boot))
@@ -2311,6 +2341,7 @@
    回す。抜ければ(死んだ・止めた)次の世代を待つ。全 worker の止まれの合図で抜ける。各世代は、その世代を起こす時の値(WorkerOf —
    止まっている間に ReplaceWorker で差し替えた値)で回す(#3366)。"
   (var going True)
+  (var elders #())
   (while going
     (<- revival (| Promise None) (RevivalOf worker.name))
     (when (is-not revival None)
@@ -2323,12 +2354,30 @@
             (<- loop Task (Spawn (run-sim-worker now-worker policy truth.boot)))
             ;; 世代ごとの名指しの待ち(本番の coordinator への口の背景の task に当たる — 世代の終わりで取り消す)。
             (<- watcher Task (Spawn (guarded-watch now-worker truth.boot)))
-            (<- (generation-end loop))
-            (<- (Cancel watcher))
-            (<- (WorkerEnded worker.name truth.boot))
+            ;; 世代の終わりと、新しい世代を先に起こす入れ替え(RollWorker — AL-D2)を競わせる。入れ替えなら、この世代は退いた世代として
+            ;; 動き続け(終わりは elder-end が見届ける)、すぐ次の世代を回す。
+            (<- bell Promise (RollBellOf worker.name truth.boot))
+            (<- ender Task (Spawn (generation-end loop)))
+            (<- ended str (Race ender bell.future))
+            (if (= ended ROLLED)
+                (do (<- elder Task (Spawn (elder-end ender watcher worker.name truth.boot)))
+                    (:= elders (+ elders #(elder))))
+                (do (<- (Cancel watcher))
+                    (<- (WorkerEnded worker.name truth.boot))))
             (<- again bool (WorkersStopping))
             (:= going (not again)))))
+  (when elders
+    (<- (Gather #* elders)))
   worker.name)
+
+
+(defk elder-end [ender watcher name boot]
+  {:pre [(: ender Task) (: watcher Task) (: name str) (: boot str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "退いた世代(RollWorker の後の旧い世代)の run-worker が抜けるのを見届け、名指しの待ちを取り消して抜けたと記録するため(AL-D2)。"
+  (<- _how str (Wait ender))
+  (<- (Cancel watcher))
+  (<- (WorkerEnded name boot))
+  None)
 
 
 ;; --- coordinator の Pod ---------------------------------------------------------------------------------
@@ -2651,10 +2700,11 @@
   "process pid の終わり ended を刻 now で世界に書いた形を求めるため(process が自分で終わった時も、殺された時も同じ記録): 宿の観測の
    exit-code と task の結果・記録の終わり・把手と子の把手を外し・終わった印・待ち手の分け方。中で Spawn した task は止める物に、宿の
    呼び鈴は鳴らす物に足して手放す(#3871 の単位 5 — process の終わりは周の間の待ちを起こす出来事。本番の待つ子の終わりの代わり)。"
-  (val truth (get ends.hosts worker))
+  (val key (pid-host-key ends.hosts worker pid))
+  (val truth (get ends.hosts key))
   (val view (next (gfor p truth.processes :if (= p.pid pid) p) None))
   (val task-id (if (and (is-not view None) view.spec.once) (cut view.spec.name 5 None) None))
-  (val hosts (| ends.hosts {worker (replace truth
+  (val hosts (| ends.hosts {key (replace truth
                                             :processes (tuple (gfor p truth.processes (if (= p.pid pid) (replace p :exit-code ended.code) p)))
                                             :results (if (and task-id (is-not ended.result None))
                                                          (| truth.results {task-id ended.result})
@@ -2727,6 +2777,30 @@
 
 ;; --- 世界 -----------------------------------------------------------------------------------------------
 
+;; 退いた世代(RollWorker の後も動く旧い世代 — AL-D2)の宿の真実の鍵: 世界の hosts に「名@世代」で置く(今の世代は名のまま)。
+(val ELDER-MARK "@")
+(val ROLLED "rolled")  ; RollBellOf の約束の値(worker の一生の係が世代の終わりと競わせて見分ける)
+
+
+(defn #^ str elder-key [#^ str name #^ str boot]  ; defk にできない: 世界の handler の節(Program の外の純粋な綴り)が呼ぶ
+  "退いた世代 boot の宿の真実を置く hosts の鍵。"
+  (+ name ELDER-MARK boot))
+
+
+(defn #^ str host-key [#^ dict hosts #^ str name #^ (| str None) boot]  ; defk にできない: 世界の handler の節が呼ぶ純粋な判断
+  "worker name の世代 boot の宿の真実の hosts の鍵: 退いた世代として置いてあればその鍵、そうでなければ(None・今の世代)名。"
+  (if (and (is-not boot None) (in (elder-key name boot) hosts)) (elder-key name boot) name))
+
+
+(defn #^ str pid-host-key [#^ dict hosts #^ str name #^ int pid]  ; defk にできない: end-process(純粋な綴り)が呼ぶ
+  "worker name の process pid を持つ宿の真実の hosts の鍵(今の世代か、退いた世代のどれか)。見つからなければ名。"
+  (next (gfor #(key truth) (.items hosts)
+              :if (and (or (= key name) (.startswith key (+ name ELDER-MARK)))
+                       (any (gfor v truth.processes (= v.pid pid))))
+              key)
+        name))
+
+
 (defhandler sim-world [#^ SimPlan plan]
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 筋(系・worker・environ の上書き)は検ごとに違う値で、世界の外側に Ask へ答える物を置くと検の筋書きからも読めて
@@ -2754,6 +2828,8 @@
   ;; process ごとの退きの知らせの受け手(pid → SimNoticeBox — 知らせを受けたか待ちを受けた process だけ・#3672)。
   (session var notice-boxes {})
   (session var revivals {})
+  ;; 新しい世代を先に起こす入れ替え(RollWorker)の約束: 名 → #(今の世代の boot 約束)(worker の一生の係が世代ごとに RollBellOf で置く)。
+  (session var roll-bells {})
   ;; 要求の受付まわり(網の切れ・口の故障・返事の前の覚え・報告・区間の歩の書きの数)は 1 つの値(1 歩の問いが 1 度だけ読む・#3054 の C-6)。
   (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
   (session var pausing (SimPauses :queued #()))
@@ -2798,15 +2874,22 @@
     (resume (WaitsSeen :live live :waits (tuple (gfor w event-waits :if (in w.pid handles) w)) :scenario-waiting scenario-waiting)))
   (PartsOf []
     (resume parts))
-  (HostTruthOf [name]
-    (resume (get hosts name)))
+  (HostTruthOf [name boot]
+    (resume (get hosts (host-key hosts name boot))))
+  (RollBellOf [name boot]
+    (<- bell Promise (CreatePromise))
+    (:= roll-bells (| roll-bells {name #(boot bell)}))
+    (resume bell))
   (PutHostTruth [name truth]
-    ;; 呼び鈴は書き手の写しではなく今の物を残す(書き手が読んだ後に世界が鳴らして手放した鈴を置き戻さない)。
-    (val before (get hosts name))
-    (:= hosts (| hosts {name (replace truth :tick-bell before.tick-bell :wake-bell before.wake-bell :stop-bell before.stop-bell)}))
+    ;; 呼び鈴は書き手の写しではなく今の物を残す(書き手が読んだ後に世界が鳴らして手放した鈴を置き戻さない)。退いた世代の真実は
+    ;; その世代の鍵へ(AL-D2)。
+    (val key (host-key hosts name truth.boot))
+    (val before (get hosts key))
+    (:= hosts (| hosts {key (replace truth :tick-bell before.tick-bell :wake-bell before.wake-bell :stop-bell before.stop-bell)}))
     (resume None))
   (ChangeHostTruth [name boot live change]
-    (val truth (get hosts name))
+    (val key (host-key hosts name boot))
+    (val truth (get hosts key))
     (if (or (!= truth.boot boot) (and live truth.down))
         (resume (HostTruthChange :before truth :after None))
         ;; change は宿の真実 → 宿の真実の純粋な関数か、宿の真実を組む defk(呼んだ結果は Program — 綴りの関数が defk の時)。Program は
@@ -2817,7 +2900,7 @@
             (when (isinstance produced Program)
               (<- ran HostTruth produced)
               (:= changed ran))
-            (:= hosts (| hosts {name changed}))
+            (:= hosts (| hosts {key changed}))
             (resume (HostTruthChange :before truth :after changed)))))
   (NextPid []
     (:= next-pid (+ next-pid 1))
@@ -2940,10 +3023,11 @@
     (resume None))
   (NoteWatchFailure [failure]
     (:= watch-failures (+ watch-failures #(failure)))
-    (val truth (get hosts failure.worker))
+    (val key (host-key hosts failure.worker failure.boot))
+    (val truth (get hosts key))
     ;; 待ちの task の止まりは、宿の heartbeat を周ごとへ戻す(待ちの口を使えない — 本番の待ちの thread の死と同じく宿を起こさない)。
     (when (= truth.boot failure.boot)
-      (:= hosts (| hosts {failure.worker (replace truth :watch-failure failure.reason)})))
+      (:= hosts (| hosts {key (replace truth :watch-failure failure.reason)})))
     (resume None))
   (WatchFailuresOf [name]
     (resume (tuple (gfor f watch-failures :if (= f.worker name) f))))
@@ -2952,9 +3036,9 @@
     (resume None))
   (WorkersStopping []
     (resume stopping))
-  (StopRequestOf [name]
+  (StopRequestOf [name boot]
     ;; 拍の止めの問いの材料(宿の真実と全 worker の止まれ)を 1 つの問いで(#3054 の C-6)。世代の確かめは宿の側(checked-truth)。
-    (resume (HostStop :truth (get hosts name) :all-stopping stopping)))
+    (resume (HostStop :truth (get hosts (host-key hosts name boot)) :all-stopping stopping)))
   (StopWorkers []
     (val waiting (list (.values revivals)))
     ;; 止めの合図を待つ宿を全部起こす(本番の worker の Pod への SIGTERM — 止めの呼び鈴を鳴らして手放す)。
@@ -2968,11 +3052,14 @@
       (<- (CompletePromise bell None)))
     (resume None))
   (WorkerEnded [name boot]
-    (val truth (get hosts name))
-    (val waiting (.get stop-waiters name #()))
-    (when (= truth.boot boot)
-      (:= hosts (| hosts {name (replace truth :down True :stopping False)})))
-    (:= stop-waiters (dfor #(k v) (.items stop-waiters) :if (!= k name) k v))
+    (val key (host-key hosts name boot))
+    (val truth (get hosts key))
+    (val waiting (.get stop-waiters key #()))
+    (cond
+      ;; 退いた世代が抜けた(AL-D2): その世代の真実を外す(今の世代はそのまま動く)。
+      (!= key name) (:= hosts (dfor #(k v) (.items hosts) :if (!= k key) k v))
+      (= truth.boot boot) (:= hosts (| hosts {name (replace truth :down True :stopping False)})))
+    (:= stop-waiters (dfor #(k v) (.items stop-waiters) :if (!= k key) k v))
     (for [promise waiting]
       (<- (CompletePromise promise None)))
     (resume None))
@@ -3134,6 +3221,42 @@
             (when (is-not revival None)
               (<- (CompletePromise revival None)))
             (resume True))))
+  (RollWorker [name]
+    ;; 新しい世代を先に起こす(AL-D2): 今の世代の真実を退いた世代の鍵へ移し、名には新しい世代の真実を置いて、worker の一生の係の約束を
+    ;; 鳴らす(係は今の世代を退いた世代として見届け、すぐ新しい世代を回す)。
+    (val truth (get hosts name))
+    (val rung (.get roll-bells name))
+    (if (or truth.down truth.stopping (is rung None) (!= (get rung 0) truth.boot))
+        (resume None)
+        (do (<- now int (now-epoch-ms))
+            (val generation (+ (get generations name) 1))
+            (<- fresh HostTruth (fresh-truth name generation now plan.timing))
+            (:= generations (| generations {name generation}))
+            (:= hosts (| hosts {(elder-key name truth.boot) truth name fresh}))
+            (:= roll-bells (dfor #(k v) (.items roll-bells) :if (!= k name) k v))
+            (<- (CompletePromise (get rung 1) ROLLED))
+            (resume truth.boot))))
+  (StopElder [name boot]
+    (val key (elder-key name boot))
+    (if (not-in key hosts)
+        (resume None)
+        (do (val truth (get hosts key))
+            (<- promise Promise (CreatePromise))
+            ;; 止めの合図を待つ退いた世代の宿を起こす(旧い Pod への SIGTERM)。
+            (val asked truth.stop-bell)
+            (:= hosts (| hosts {key (replace truth :stopping True :stop-bell None)}))
+            (:= stop-waiters (| stop-waiters {key (+ (.get stop-waiters key #()) #(promise))}))
+            (when (is-not asked None)
+              (<- (CompletePromise asked None)))
+            (<- (Wait promise.future))
+            (resume None))))
+  (DrainGeneration [name boot ttl-seconds]
+    (val request (drain-request name ttl-seconds boot))
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
+    (<- answer tuple (send-shaped link request))
+    (resume (if (is (get answer 0) None)
+                {"error" (unreached-reason answer)}
+                {"status" (get answer 0) "body" (get answer 1)})))
   (ReplaceWorker [name worker]
     ;; 止まっている間だけ値を差し替える(Recreate の作り直しの間)— 次の StartWorker の世代から keeper がこの値で起こす。
     (if (and (in name current) (= worker.name name) (. (get hosts name) down))
