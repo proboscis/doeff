@@ -3,8 +3,10 @@
 # 上に載る系の repo が用意する物(名は固定 — この宣言は名で参照するだけ):
 #   ConfigMap coordinator-env   envFrom で受ける env。boot.sh が必ず要る NOTICE_BROKER(worker の生死の知らせの broker — redis://… か
 #                               memory)。無いと boot.sh が理由を出して止まる。下の env と同じ名を置いても効かない(env が優先)。
-#   ConfigMap coord-wal-backup  起動の前に記録(WAL)の控えを取る script(キー backup.sh)。無ければ控えを飛ばして起動する。
 #   Namespace agent-worker      ここでは宣言しない。
+#
+# この dir が持つ物: ConfigMap coord-wal-backup — 起動の前に記録(WAL と snapshot)の控えを取る script(キー backup.sh)。
+# 中身は coord-wal-backup.sh で、kustomization.yaml の configMapGenerator が名を固定して組む。無ければ控えを飛ばして起動する。
 #
 # 名と selector は以前の宣言と同じ(Deployment の selector は変えられない — 持ち主が替わっても同じ物を引き継ぎ、coordinator が
 # 2 つ同時に同じ状態の file を書く時間を作らない)。

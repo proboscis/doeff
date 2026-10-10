@@ -1,5 +1,16 @@
-# coordinator の組(coordinator.yaml — ServiceAccount・Node を読む権限・Service・Deployment)。Flux はこの dir を 1 つの Kustomization で当てる。
+# coordinator の組(coordinator.yaml — ServiceAccount・Node を読む権限・Service・Deployment)と、記録(WAL と snapshot)の控えを取る
+# script の ConfigMap coord-wal-backup。Flux はこの dir を 1 つの Kustomization で当てる。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - coordinator.yaml
+configMapGenerator:
+  # coordinator の起動の前に init container wal-backup が 1 度実行する script(coord-wal-backup.sh — 振る舞いと値はその頭の註)。
+  # 控えの仕組みは宣言と同じこの dir が持つ(控えは記録を戻す元なので、上に載る系の有無で消えないように)。名に中身の hash を
+  # 付けない(disableNameSuffixHash)— 中身を変えても coordinator の Pod は作り直されず、次の起動で効く。
+  - name: coord-wal-backup
+    namespace: agent-worker
+    files:
+      - backup.sh=coord-wal-backup.sh
+    options:
+      disableNameSuffixHash: true
