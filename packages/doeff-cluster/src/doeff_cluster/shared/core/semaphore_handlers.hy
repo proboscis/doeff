@@ -94,15 +94,23 @@
   ;; 空きが出るまで待って取り直す(先着順の保証は無い)。判断は coordinator が自分の時計で 1 か所で行う(LeaseOp)。待ちは coordinator の
   ;; 知らせ(AwaitLeaseFree — 返した時・期限が切れた時に起きる)。
   ;; 柵の期限 = 送る前に読んだ自分の時計 + TTL(coordinator が書いた期限より必ず前 — semaphore_model の冒頭)。
+  ;; coordinator に届かない(通信の失敗・作り直しの途中)時は、延長と同じく retry-seconds ごとに同じ token で取り直す(claim は同じ token なら
+  ;; 何度送っても同じ意味)。届かない例外を呼び手へ投げると、取りに行った task ごと終わり、それを待つ常駐の process が落ちる
+  ;; (2026-10-11 02:45 JST の coordinator の作り直しの最中の実例)。
   (setv token (.next-token session))
   (while True
     (<- sent int (now-epoch-ms))
-    (<- answer LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
-    (when answer.ok
-      (setv (get session.expires token) (+ sent (.ttl-ms session)))
-      (.hold session semaphore.name token)
-      (return token))
-    (<- _seen bool (AwaitLeaseFree semaphore.name))))
+    (var answer None)
+    (try
+      (<- claimed LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
+      (:= answer claimed)
+      (except [e Exception] (:= answer None)))
+    (cond
+      (is answer None) (<- (Delay session.retry-seconds))
+      answer.ok (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
+                    (.hold session semaphore.name token)
+                    (return token))
+      True (<- _seen bool (AwaitLeaseFree semaphore.name)))))
 
 
 (defk renew-lease [session semaphore token]
