@@ -30,17 +30,14 @@ name = "doeff"
 # cache(~/.cache/uv)は艦隊の uvx 並走と同じ lock に並び、飽和帯で make sync
 # だけが 23 分(L29〜L32 の 4 連敗の実測)。窓の系統専用 lane に分けると初回だけ
 # cache が冷えるが、以後は warm のまま艦隊の行列に並ばない。
-# 実行面 = zeus(k3s クラスタ機)— operator 裁定伝言 2026-08-17『テストはk3sでやって』
-# (方向宣言 land-verify-tests-on-k3s・親方針 = fleet-compute-placement)。下の頭注の
-# 「恒久解 = zeus/k3s 移設」の執行 — 前提だった semgrep 機体依存根治は 61ca71b6 で
-# 着地済み。remote_check が tree を送り逐語実行する(遠隔に判断層なし・不達は
-# fail-closed・--fallback-local でこの機体へ可視に倒す — ran= の 1 行が log に残る)。
-# 実測 2026-08-17: zeus 全量 477 秒 緑 / Mac 実測 17 分 + 飽和帯 load 100 超。
-# run-timeout 1800 = 実測の約 4 倍(timeout_s 7200 は fallback の local 実走まで収まる)。
-# 内側の UV_CACHE_DIR lane(上の convoy 根治)はそのまま重ねる — \$HOME は Mac 側で
-# 展開させず、実行機(zeus / fallback 時はこの機体)の sh が解く。
-# lane の根は ${XDG_CACHE_HOME:-$HOME/.cache}(agora-redesign #3520・2026-10-05): zeus へは ssh の zsh が ~/.zshenv で
-# 置き場の変数(速い SSD)を持つので SSD へ、変数の無い所(pod の中の倒し込み)は今までどおり $HOME/.cache へ倒れる。
+# 実行面 = 日次の task が走っている所(2026-10-10 から atlas の静的な doeff-worker の Pod — agora-controllers の daily-verify・
+# card ki-73fbd134a244)。各段の run は task の作業木で直に sh が実行する(下の 2026-10-10 の追補・ADR-DOE-ENFORCE-001 R10)。
+# 2026-08-17〜2026-10-10 の実行面は zeus(operator 裁定伝言 2026-08-17『テストはk3sでやって』・方向宣言 land-verify-tests-on-k3s)で、
+# remote_check が tree を送り逐語実行した(実測 2026-08-17: zeus 全量 477 秒 緑 / Mac 実測 17 分 + 飽和帯 load 100 超)。
+# uv の cache は呼び手の UV_CACHE_DIR(日次の task が worker の共有の cache を渡す)を先に使い、無い時だけ上の convoy 根治の lane
+# ${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff へ倒す — task の HOME は走行ごとに空の dir なので、lane を上書きのまま
+# 置くと日次の段が毎回冷えた cache から依存を取り直す(worker の共有の cache は同じ worker の task と uv の lock を待ち合わせる —
+# 待つ上限は task の UV_LOCK_TIMEOUT)。lane の根 ${XDG_CACHE_HOME:-$HOME/.cache} は agora-redesign #3520(2026-10-05)の形のまま。
 # ⚠ pytest は --no-sync(2026-08-17 zeus 実測): 素の uv run は暗黙の再 sync で
 # make sync の maturin build(--features invariant-checks)を素の wheel(検査なし)で
 # 上書きし得る — 冷えた cache lane で顕在化し test_vm_built_with_invariant_checks が
@@ -66,6 +63,8 @@ name = "doeff"
 #   消す。段は 1 つずつ手元へ倒れ得る(--fallback-local)し、同じ label の作業 dir は段の合間に別の走行へ渡り得る。前の段の build を
 #   前提にすると別の木の build でテストする形になるので、テストの段はどれも自分で make sync から始める(費用 = 成功の日に Rust の
 #   build 3 回分)。timeout_s は全段の合計の上限(日次の道具が残りを各段へ渡す)。
+#   (2026-10-10 から段は同じ作業木で順に走るので、2 度目からの make sync は uv の同期の確かめだけ — 段を 1 つだけ走らせ直しても
+#   自己完結にしておくため残す。)
 # ⇒ 形の固定: docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy の deftest
 #   test-adr-doe-enforce-001-daily-populations-are-separate-stages(母集団ごとにちょうど 1 段・build だけが blocks_rest・
 #   テストの段は make sync から)と tests/test_daily_test_population.py(package の loop の網羅・失敗名の形・test file の置き場)。
@@ -75,15 +74,18 @@ name = "doeff"
 # eslint の段 vscode を足す。拡張を触る 2 つの変更(契約 LintBodyRole に comment を足した変更と、render.ts に role の網羅の switch を
 # 足した変更)が別々にマージされ、合わさると tsc が落ちて vsix の自動追随が 10:27 から組めなかった。マージ前の検査には足さない
 # (operator の裁定 land-gate-runs-no-tests — マージの列は衝突の印の走査だけ・型検査と lint は日次)。合流で壊れたのを早く知るのは
-# vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、zeus の login shell の
-# node 22 / npm 10 で走る(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。後ろを止めない。
+# vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、当時は zeus の login
+# shell の node 22 / npm 10 で走った(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。2026-10-10 からは
+# atlas の Pod の node v24.19.0 / npm 11.17.0(/usr/local/bin)で走る。後ろを止めない。
 # 戻すには vscode の段の 1 行を消す。
 # 2026-10-02(agora-redesign #2906 の 4 便目・cisco-c8 の割り・戻せる): commit の hook と同じ「規則 × file の基点より増えた所見」の比べ
 # (scripts/hook_finding_baseline.py)を repo の全部の Python の file に当てる段 lint を足す — doeff-linter(基点の鍵の binary を
-# zeus の land-arm の開発版 → 断面の置き場から探す)と semgrep(uv.lock の版)。hook は binary が見つからない時「測れない」で通すので、
-# 通った commit を測るのはこの段だけ — ここでは --strict で「測れない」そのものを赤(rc 3)にする。木は別の label(doeff-gate-lint)
-# に写す: build の段の make sync が作る .venv などが混ざらない(git の無い木では dir を歩いて名簿を作るため)。make sync は要らない。
-# 戻すには lint の段の 1 行を消す。
+# land-arm の開発版 → 断面の置き場から探す)と semgrep(uv.lock の版)。hook は binary が見つからない時「測れない」で通すので、
+# 通った commit を測るのはこの段だけ — ここでは --strict で「測れない」そのものを赤(rc 3)にする。make sync は要らない。
+# 戻すには lint の段の 1 行を消す。(2026-10-10 から: 木は日次の task の git の作業木で、名簿は git の追跡する file — 遠隔の別の
+# label〔doeff-gate-lint〕に写して .venv を避ける要は無くなった。task の HOME には zeus の land-arm の開発版も断面の置き場も無いので、
+# 比べの前に `sh scripts/gate_tools.sh linter` が基点の file を最後に書いた commit の linter を断面の置き場に用意する — 呼び手の
+# DOEFF_LINTER_SNAPSHOT_DIR〔worker の作業の根の daily-verify-cache/doeff-linter-snapshots〕へ結ぶので、組むのは鍵の変わった時の 1 度。)
 # 2026-10-07(agora-redesign #3879・cisco-c8 の決め・戻せる): 全部の処理ステージに欄 pytest(pytest の session を走らせるか)を書く。
 # 日次の全体検証は true の処理ステージで session が 1 本も答えなければ、カバレッジの欠けに数える。起点 = この repo の 04:00 の日次:
 # root と packages が conftest.py の import で落ちて session の行が 0 本なのに、カバレッジを「完全」と記帳した(行を書く受付の部品は
@@ -95,14 +97,32 @@ name = "doeff"
 # ⇒ なぜ: この回は remote_check で zeus の上で走り、Pod の image に入れた redis-server は効かない — 10-08 8:00 の回で
 #   packages/doeff-events/tests/test_notice_laws_redis.py が「PATH に redis-server が無い」で 14 本とも skip だった。zeus の
 #   /usr/local/bin への手置きは取らない(機体の設定で repo に残らない)。失敗ケース = tests/test_gate_tools.py。
-# ⇒ 戻し方: packages の行の「gate_path=… && PATH=\$gate_path\$PATH 」を消し、scripts/gate_tools.sh と tests/test_gate_tools.py を消す。
+# ⇒ 戻し方: packages の行の「gate_path=… && PATH=$gate_path$PATH 」を消し、scripts/gate_tools.sh と tests/test_gate_tools.py を消す。
+#   (2026-10-10 から: 段は atlas の Pod で走り、日次の task が宣言の版の redis-server を HOME の .local/bin — PATH の先頭 — に置くので、
+#   準備は何も足さずに通る。lint の段の linter の準備も同じ script の口 linter。)
+# 2026-10-10(card acp:kanban-issue:ki-9338eec1d15e・調整役 cisco-c8 の割り・依頼 lt-2BJSBE9W1MVDGPRC8JTW443KSJ・ADR-DOE-ENFORCE-001 R10・
+# 戻せる): 6 段の run から remote_check の運び(`python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label …
+# --fallback-local -- sh -c "…"`)を外し、中の命令を日次の task の中で直に走らせる。
+# ⇒ なぜ: 利用者の決定 2026-10-05 23:0x「zeus は会話の速さを一番にする」。日次の task は 2026-10-10 16:00 から atlas の Pod で走るが、
+#   運びが残っていたので 16:18 の回(log doeff-20261010-071839-31779)も 6 段とも `ran=remote node=zeus` で、root の pytest 1091 秒・
+#   18 package の検 2352 秒・cargo test 200 秒が zeus の CPU に載り、会話のターンと取り合った。代案の --node atlas(ssh で atlas の機体へ)
+#   は取らない — 機体への ssh の鍵と機体の環境の整えが要り、機体の操作になる。
+# ⇒ 走る所の形(2026-10-10 に kubectl で読んだ atlas の Pod): CPU 16・memory の上限 18Gi(task は同時に 2 つまで)・make・cc・cargo・
+#   node・npm・uv・git が在り、機体の python3・docker・rsync は無い(段は python3 を呼ばない — uv run で呼ぶ)。段ごとの上限
+#   (--run-timeout)は運びと一緒に消え、上限は全段の合計 full_timeout_s だけ。
+# ⇒ 形の固定: ADR-DOE-ENFORCE-001 の deftest test-adr-doe-enforce-001-daily-stages-run-where-the-task-runs(run に remote_check / --node が
+#   在れば赤・UV_CACHE_DIR の代入が呼び手の値を先に使わなければ赤)と tests/test_gate_tools.py(packages・lint の段の道具の準備)。
+# ⇒ 戻し方: 各段の run を上の運び(build・root・packages・rust は --label doeff-gate-full --sync-timeout 900 --run-timeout 3600・vscode は
+#   --run-timeout 1800・lint は --label doeff-gate-lint --run-timeout 900)で包み直して中の $ を \$ に戻し、UV_CACHE_DIR を lane の上書き
+#   〔UV_CACHE_DIR=\${XDG_CACHE_HOME:-\$HOME/.cache}/uv-lanes/land-doeff〕へ戻し、lint の段の「sh scripts/gate_tools.sh linter && 」を消し、
+#   R10 の law と deftest を外す。
 full = [
-  { name = "build", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync\"", blocks_rest = true, pytest = false },
-  { name = "root", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'\"", pytest = true },
-  { name = "packages", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync && gate_path=\\$(sh scripts/gate_tools.sh path) && PATH=\\$gate_path\\$PATH UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'\"", pytest = true },
-  { name = "rust", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 3600 --fallback-local -- sh -c \"UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make sync && UV_CACHE_DIR=\\${XDG_CACHE_HOME:-\\$HOME/.cache}/uv-lanes/land-doeff make test-rust\"", pytest = false },
-  { name = "vscode", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-full --sync-timeout 900 --run-timeout 1800 --fallback-local -- sh -c \"cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint\"", pytest = false },
-  { name = "lint", run = "python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label doeff-gate-lint --sync-timeout 900 --run-timeout 900 --fallback-local -- sh -c \"uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep\"", pytest = false }
+  { name = "build", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync", blocks_rest = true, pytest = false },
+  { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e'", pytest = true },
+  { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
+  { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false },
+  { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
+  { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false }
 ]
 # 日次の外の物(Mac の調整役の決め (b)・cisco-c8 の中継 2026-10-05 18:3x・agora-redesign #3167・#3571): 名と未実行の種類の両方が一致した
 # 申告だけを、検証の本体(merge-queue の verify_main — L274)が結論の計算の直前に分け、残りの処理ステージの結果で結論を出す。分けた物は
@@ -243,8 +263,7 @@ per_run_max = 400
 window_max = 800
 window_s = 1800
 # 日次の全体検証(ai land verify)が [gate] full で撃つ pytest の走行の数 = 1 本
-# (remote_check の中の `uv run --no-sync pytest -q -m 'not e2e'`。遠隔が使えない拍は
-#  同じ 1 本をこの機体で走らせる — どちらでも走行は 1 つ)。
+# (root の段の `uv run --no-sync pytest -q -m 'not e2e'`)。
 # ⚠ 2026-09-25 時点で古い値: gate.full は root の 1 本 + package ごとに 1 本(make test-packages)を撃つ(R8)。
 #   受付(broad_run_admission.py)は 2026-09-21 から POLICY_KEYS = ("per_run_max",) だけを読み、この鍵は読まない。
 full_sessions = 1
@@ -267,7 +286,7 @@ full_sessions = 1
 #     2026-10-06 に 67 度)。失敗ケース = tests/test_land_install_follows_rust_keys.py。
 #     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)だから。
 #   - venv-run の `--exclusive` = 同じ venv の読み手(門・常駐の controller)と排他して作り直す。
-# 上限 1800 秒 = 門の build の段の --sync-timeout 900 の 2 倍(Rust の release build と飽和帯の機体)。
+# 上限 1800 秒 = 2026-10-10 まで日次の段の運び(remote_check)が持った同期の上限 900 秒の 2 倍(Rust の release build と飽和帯の機体)。
 [follow]
 install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- uv sync --frozen"
 install_timeout_s = 1800
