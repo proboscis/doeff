@@ -20,7 +20,7 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
-                                  IMAGE-MIMES])
+                                  IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
@@ -31,7 +31,9 @@
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
-                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded])
+                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
+                                   ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
+                                   HomeCredentialSession])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
 (import doeff_claude_code.argv [launch-key])
@@ -228,7 +230,9 @@
   "launches = この会話で起こした process の数(本番の handler と同じ規則 — 同じ起こした時の条件の鍵の続きは生きた process を使い回し、
    生き残った入力の手番も同じ process)・alive = process が生きている(手番をまたいで生きて待つ — #3672)・launch-key = 今の process の
    起動条件のキー・stopped-because = 最後の process を停止した理由・warmed-fresh = 新しい会話として入力なしで事前起動し
-   (ClaudeWarmSession)、まだターンを始めていない(最初のターンは同じ id の FreshSession — 本番の handler と同じ)。"
+   (ClaudeWarmSession)、まだターンを始めていない(最初のターンは同じ id の FreshSession — 本番の handler と同じ)・credential = 今の
+   process の資格の家の資格(本番の .credentials.json の中身にあたる — 家の資格で起こした process は None。起こした時・使い回した
+   手番の宣言の資格・ClaudeReplaceSessionCredential で替わる)。"
   (defn __init__ [self #^ str session-id home #^ str cwd]
     (setv self.session-id session-id self.home home self.cwd cwd
           self.current-seq 0 self.next-line-seq 0 self.closed False)
@@ -237,6 +241,7 @@
     (setv #^ (| str None) self.launch-key None)
     (setv #^ (| StopReason None) self.stopped-because None)
     (setv #^ bool self.warmed-fresh False)
+    (setv #^ (| LentCredential None) self.credential None)
     (setv #^ (get dict #(int FakeTurn)) self.turns {}))
 
   (defn running [self]
@@ -633,6 +638,8 @@
   (when (and session.alive (not reuse))
     (setv session.alive False session.stopped-because StopReason.LAUNCH-CHANGED))
   (setv session.launch-key wanted session.warmed-fresh False)
+  ;; 本番の handler は起こした process の資格の家に宣言の資格を置き、使い回す手番では宣言の資格を家の file に書く — どちらも宣言の資格。
+  (setv session.credential spec.credential)
   (setv memory (tuple (get world.transcripts key)))
   (.append (get world.transcripts key) input.text)
   (<- now-time (GetTime))
@@ -686,7 +693,8 @@
   (setv session.alive True
         session.launches (+ session.launches 1)
         session.launch-key wanted
-        session.warmed-fresh (isinstance origin FreshSession))
+        session.warmed-fresh (isinstance origin FreshSession)
+        session.credential spec.credential)
   (SessionWarmed :session-id target))
 
 (defn running-turn-of [#^ FakeClaudeWorld world #^ ClaudeTurn turn]
@@ -848,6 +856,22 @@
   True)
 
 
+(defk fake-replace-credential [#^ FakeClaudeWorld world #^ ClaudeReplaceSessionCredential request]
+  {:pre [(: world FakeClaudeWorld) (: request ClaudeReplaceSessionCredential)]
+   :post [(: % (| CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の生きた process の資格を替えるため(本番の handler と同じ答え: 知らない会話 = NoSuchSession・生きた process が無い =
+   SessionProcessDown・家の資格で起こした process = HomeCredentialSession・ほか = 資格を替えて CredentialReplaced)。"
+  (val session-id request.session-id)
+  (val session (.get world.sessions session-id))
+  (cond
+    (is session None) (NoSuchSession :session-id session-id)
+    (not session.alive) (SessionProcessDown :session-id session-id)
+    (is session.credential None) (HomeCredentialSession :session-id session-id)
+    True (do (setv session.credential request.credential)
+             (CredentialReplaced :session-id session-id))))
+
+
 ;; --- handler -----------------------------------------------------------------------------------
 
 (defhandler fake-claude-code-handler [world]
@@ -877,6 +901,9 @@
   (ClaudeWarmSession [origin spec]
     (<- warmed (fake-warm-session world effect))
     (resume warmed))
+  (ClaudeReplaceSessionCredential [session-id credential]
+    (<- replaced (fake-replace-credential world effect))
+    (resume replaced))
   (ClaudeDropProcess [session-id]
     (<- dropped (fake-drop world session-id))
     (resume dropped))

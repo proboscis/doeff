@@ -18,6 +18,7 @@
 | `ClaudeSessionStatus(home, cwd, session-id)` | 会話の状態と transcript の在否を読む | `SessionStatus` | — |
 | `ClaudeExportSession(home, cwd, session-id)` | transcript の jsonl の写しを取り出す(`ResumeSession(carry=Rebuilt(写し))` で別の家へ持ち込める) | `SessionExported` | `SessionNotFound` |
 | `ClaudeWarmSession(origin, spec)` | 会話の process を最初の入力の前に起動し、入力を書かずに待たせる(`origin` は `FreshSession` / `ResumeSession`) | `SessionWarmed` | `SessionNotFound` / `SessionIdInUse` / `TurnInFlight` / `CarryRefused` / `LaunchFailed` |
+| `ClaudeReplaceSessionCredential(session-id, credential)` | 会話の生きた process の借りた資格を替える(手番の途中でも次の API の呼びから新しい token を使う) | `CredentialReplaced` | `NoSuchSession` / `SessionProcessDown` / `HomeCredentialSession` |
 
 `ClaudeExportSession` が写すのは transcript の jsonl 1 つだけ。`<session-id>/` の下の subagent の記録と `memory/` は写さない(残りの設計)。
 
@@ -25,6 +26,12 @@
 は、起動条件(argv・cwd・env)が同じならその process に入力を書き、違えば停止して再起動する。新しい会話を事前起動した時は、最初の
 ターンも同じ id の `FreshSession` で頼む(CLI は入力の前に会話の記録を作らない)。最初の入力の前に CLI が出してよい行は SessionStart
 の hook の開始と応答だけで、ほかの行を出した process は停止する。ターンなしで片づける時は `ClaudeCloseSession`。
+
+借りた資格(`ClaudeSessionSpec.credential` = `LentCredential` — access token・期限・契約の種類と階級)は子の env に置かない。handler は
+その process だけの設定 dir(`<家の設定 dir>/.credential-homes/<乱数>/`・0700 — 家の設定 dir の直下の名への symlink を張る)に
+`.credentials.json`(0600)で置き、子の `CLAUDE_CONFIG_DIR` をそこへ向け、process が降りたら dir を消す(`credential_home.hy`)。
+起動条件のキーに token と期限は入らないので、資格だけが替わった手番は生きた process を使い回し、その手番の資格を同じ file に書く。
+`credential` の無い宣言は今までどおり家の設定 dir の資格で起こす(ki-4ffdafa021e5)。
 
 型は `doeff_claude_code.values`(欄の値)・`doeff_claude_code.lines`(行の種類と手番の終わり)・`doeff_claude_code.effects`
 (effect と答え)にある。手番の終わり(`ClaudeTurnEnd`)は手番ごとにちょうど 1 つ:

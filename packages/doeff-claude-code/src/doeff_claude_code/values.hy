@@ -2,6 +2,7 @@
 ;;;
 ;;; 上の層が持つ身元は会話の id(claude の session_id = transcript)と手番の参照(ClaudeTurn)だけ。
 ;;; pid・argv・process の生死はこの package の handler の内側に閉じ、ここの型に載らない。
+(require doeff-hy.macros [val])
 (import dataclasses [dataclass field])
 (import uuid)
 (import doeff_hy.frozen [FrozenMap frozen-json-object frozen-map-of])
@@ -40,6 +41,36 @@
     (when (not (and (isinstance self.config-dir str) self.config-dir))
       (raise (ValueError (.format "ClaudeHome.config_dir は空でない文字列: {!r}" self.config-dir))))
     (object.__setattr__ self "env" (checked-env self.env "ClaudeHome.env"))))
+
+
+;; 資格の文字列に入れてはいけない字(file の 1 行の値・env の値として壊れる字 — doeff-agents の TurnCredential と同じ検め)。
+(val CREDENTIAL-FORBIDDEN-CHARS #("\r" "\n" "\x00"))
+
+(defclass [(dataclass :frozen True :kw-only True)] LentCredential []
+  "借りた claude の口座の資格(card ki-4ffdafa021e5): access-token = 上流へ送る access token(refresh token は運ばない —
+   更新は貸し手だけが行う)/ expires-at = その token を使ってよい期限の刻(epoch 秒・汎用 — 誰から借りたかは知らない。None = 期限を
+   知らない)/ subscription-type・rate-limit-tier = 貸し手が資格から読んだ契約の種類と階級(None = 観測していない)。
+   handler はこれを、その資格で起こす process だけの設定 dir の .credentials.json に置く(credential_home.hy — 子の env には置かない)。
+   走っている process の資格は ClaudeReplaceSessionCredential で替えられる。期限からは host の床(ClaudeCodeHost の
+   credential-floor-seconds)を引いた刻に生きた process を止める(#3672 の D2・訳 CREDENTIAL-FLOOR)。token は repr にも断りの文にも
+   出さない(例外・log に写らない — 2026-09-26 の #665。だから欄の値を断りの文に写す defrecord の :check を使わない)。"
+  (setv #^ str access-token (field :repr False))
+  (#^ (| float None) expires-at)
+  (setv #^ (| str None) subscription-type None)
+  (setv #^ (| str None) rate-limit-tier None)
+  (defn __post_init__ [self]
+    ;; 文字列の欄は空でない 1 行(断りの文は欄の名だけを名乗り、値を写さない)。access-token だけは None を受けない。
+    (for [#(name value optional) [#("access_token" self.access-token False)
+                                  #("subscription_type" self.subscription-type True)
+                                  #("rate_limit_tier" self.rate-limit-tier True)]]
+      (when (not (or (and optional (is value None))
+                     (and (isinstance value str) (bool value)
+                          (not (any (gfor char CREDENTIAL-FORBIDDEN-CHARS (in char value)))))))
+        (raise (ValueError (.format "LentCredential.{} は空でない 1 行の文字列{}" name (if optional "か None" ""))))))
+    ;; 数の型は注記が持つ。bool は int の子なので名指しで断る。
+    (when (not (or (is self.expires-at None)
+                   (and (isinstance self.expires-at #(int float)) (not (isinstance self.expires-at bool)))))
+      (raise (TypeError (.format "LentCredential.expires_at は epoch 秒の数か None: {}" (. (type self.expires-at) __name__)))))))
 
 
 ;; --- 許可の方策 --------------------------------------------------------------------------------
@@ -114,9 +145,10 @@
   "会話を起こす時の宣言。settings は 1 つの --settings へ合流する(handler が置く鍵と合流する — argv.hy)。
    settings = CLI の settings の JSON(鍵の集合は CLI が決めるので深く凍らせた写像)/ mcp-servers = 名 → McpSse / McpStdio。
    cold-resume-prompt = 降りた会話を --resume で起こす前に 1 回だけ走らせる print mode の prompt(例: 圧縮の plugin の命令)。
-   None なら走らせない。credential-expires-at = 家の env の資格(借りた access token)を使ってよい期限の刻(epoch 秒・汎用 — 誰から
-   借りたかは知らない)。その刻から host の床(ClaudeCodeHost の credential-floor-seconds)を引いた刻を過ぎた生きた process は、
-   手番を走らせていなければ止め、走らせていれば手番の境で止める(#3672 の D2・訳 CREDENTIAL-FLOOR)。None = 期限を知らない。"
+   None なら走らせない。credential = 借りた口座の資格(LentCredential — その資格で起こす process だけの設定 dir の .credentials.json に
+   置く・credential_home.hy)。None = 家の設定 dir(home.config-dir)の資格のまま起こす(手で開いた機体の会話の路)。資格の期限
+   (credential.expires-at)から host の床(ClaudeCodeHost の credential-floor-seconds)を引いた刻を過ぎた生きた process は、手番を
+   走らせていなければ止め、走らせていれば手番の境で止める(#3672 の D2・訳 CREDENTIAL-FLOOR)。"
   (#^ ClaudeHome home)
   (#^ str cwd)
   (setv #^ (| str None) model None)
@@ -127,11 +159,10 @@
   (setv #^ (| AutocompactAuto AutocompactTokens None) autocompact None)
   (setv #^ (| str None) system-prompt-append None)
   (setv #^ (| str None) cold-resume-prompt None)
-  (setv #^ (| float None) credential-expires-at None)
+  (setv #^ (| LentCredential None) credential None)
   (defn __post_init__ [self]
-    ;; 数の型は注記が持つ。bool は int の子なので名指しで断る。
-    (when (isinstance self.credential-expires-at bool)
-      (raise (TypeError (.format "ClaudeSessionSpec.credential_expires_at は epoch 秒の数か None: {!r}" self.credential-expires-at))))
+    (when (not (or (is self.credential None) (isinstance self.credential LentCredential)))
+      (raise (TypeError (.format "ClaudeSessionSpec.credential は LentCredential か None: {}" (. (type self.credential) __name__)))))
     (when (not (isinstance self.home ClaudeHome))
       (raise (TypeError "ClaudeSessionSpec.home は ClaudeHome")))
     (when (not (and (isinstance self.cwd str) self.cwd))

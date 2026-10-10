@@ -20,8 +20,28 @@
   - `LLMEmbedding`
 - Added cross-provider example `examples/llm_multi_provider_stacking.py`.
 - Added docs page `docs/llm_unified_effects.md` for model-routed handler composition.
+- `doeff-claude-code`: added `ClaudeReplaceSessionCredential(session_id, credential)` — replaces the lent credential of a
+  session's live Claude CLI process (answers `CredentialReplaced` | `NoSuchSession` | `SessionProcessDown` |
+  `HomeCredentialSession`). The CLI uses the new access token from its next API call, also in the middle of a turn
+  (card ki-4ffdafa021e5).
+- `doeff-agents`: added `ReplaceSessionCredentialEffect(handle, credential_ref)` (and `ReplaceSessionCredential`). The
+  headless Claude handler redeems the reference with `RedeemTurnCredentialEffect` and replaces the live process's
+  credential (answers `SessionCredentialReplaced` | `SessionProcessNotLive` | `SessionOnHomeCredential` |
+  `ReplacementCredentialUnavailable`); the headless Codex handler refuses it with `AgentCapabilityUnsupportedError`.
 
 ### Changed
+
+- `doeff-claude-code`: a lent credential now reaches the Claude CLI as the `.credentials.json` (mode 0600) of a config
+  dir of the process's own (`<CLAUDE_CONFIG_DIR>/.credential-homes/<random>/`, mode 0700, whose other entries are
+  symlinks to the shared config dir), not as `CLAUDE_CODE_OAUTH_TOKEN` in the child env; the dir is removed when the
+  process goes down. `ClaudeSessionSpec.credential_expires_at` is replaced by `ClaudeSessionSpec.credential`
+  (`LentCredential` — access token, expiry, plan kind and rate limit tier); the launch key no longer includes the token
+  or its expiry, so a turn whose credential alone changed reuses the live process and writes the new credential into
+  its file. A spec without a credential still launches on the shared config dir's own credentials.
+  `argv.process-env` takes the process's config dir as a second argument.
+- `doeff-agents`: the headless Claude handler passes the redeemed `TurnCredential` as the spec's `LentCredential`
+  (plan kind and rate limit tier go into the same file) instead of `CLAUDE_CODE_OAUTH_TOKEN` /
+  `CLAUDE_CODE_SUBSCRIPTION_TYPE` / `CLAUDE_CODE_RATE_LIMIT_TIER` in the child env. `GH_TOKEN` is unchanged.
 
 - `http_fixture_handler` now keys a fixture by every request field that can change the answer (headers, timeout,
   `max_retries`, `follow_redirects`, `failures_as_values` in addition to method / url / params / body), and records and

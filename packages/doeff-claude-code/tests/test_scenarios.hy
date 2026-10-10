@@ -4,14 +4,16 @@
 (import dataclasses [replace])
 (import os.path)
 (import doeff_claude_code.values [ClaudeTurn TurnInput FreshSession ResumeSession ForkSession AskHost Allow LinkFromHome Rebuilt
-                                  ImageAttachment])
+                                  ImageAttachment LentCredential])
 (import doeff_claude_code.lines [Init InputFate PermissionRequested TurnResult Completed Interrupted BackendLost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested Answered SessionClosed
                                    SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
-                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed])
+                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed
+                                   ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
+                                   HomeCredentialSession])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import tests.scenario_rules [CODEWORD EXTRA-WORD remember-prompt recall-prompt reply-prompt sleep-prompt
                               touch-prompt extra-prompt])
@@ -268,6 +270,44 @@
   (assert (in CODEWORD two.end.result-text) two.end.result-text)
   (<- after-two (ClaudeLiveProcess sid))
   (assert (= after-two (LiveProcess :launches 1)) after-two))
+
+
+(deftest test-a-lent-credential-is-replaced-in-the-live-process-and-a-refreshed-turn-reuses-it
+  ;; card ki-4ffdafa021e5: 借りた資格で起こした会話の生きた process の資格は ClaudeReplaceSessionCredential で替わる
+  ;; (CredentialReplaced)。資格だけが替わった次の手番は process を起こし直さない(起動条件のキーに token と期限が入らない — 起こした数は
+  ;; 1 のまま・会話の記憶も続く)。答えは閉じた和: 知らない会話 = NoSuchSession・家の資格で起こした process = HomeCredentialSession・
+  ;; 閉じた(process が降りた)会話 = SessionProcessDown。token は偽の文字列。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val sid (new-id))
+  (val lent (replace s.base :credential (LentCredential :access-token "fake-token-1" :expires-at None :subscription-type "max")))
+  (val fresh-token (LentCredential :access-token "fake-token-2" :expires-at None :subscription-type "max"))
+  (val unknown (new-id))
+  (<- nobody (ClaudeReplaceSessionCredential unknown fresh-token))
+  (assert (= nobody (NoSuchSession :session-id unknown)) nobody)
+  (<- first (start (FreshSession sid) lent (remember-prompt "ALPHA-1")))
+  (<- one (read-to-end first.turn s.turn-timeout))
+  (assert (isinstance one.end Completed) (repr one.end))
+  (<- replaced (ClaudeReplaceSessionCredential sid fresh-token))
+  (assert (= replaced (CredentialReplaced :session-id sid)) replaced)
+  (<- second (start (ResumeSession sid)
+                    (replace lent :credential (LentCredential :access-token "fake-token-3" :expires-at None :subscription-type "max"))
+                    (recall-prompt)))
+  (<- two (read-to-end second.turn s.turn-timeout))
+  (assert (isinstance two.end Completed) (repr two.end))
+  (assert (in CODEWORD two.end.result-text) two.end.result-text)
+  (<- reused (ClaudeLiveProcess sid))
+  (assert (= reused (LiveProcess :launches 1)) reused)
+  (val home-sid (new-id))
+  (<- home-turn (start (FreshSession home-sid) s.base (reply-prompt "HOME")))
+  (<- home-done (read-to-end home-turn.turn s.turn-timeout))
+  (assert (isinstance home-done.end Completed) (repr home-done.end))
+  (<- on-home (ClaudeReplaceSessionCredential home-sid fresh-token))
+  (assert (= on-home (HomeCredentialSession :session-id home-sid)) on-home)
+  (<- (ClaudeCloseSession sid "test"))
+  (<- (ClaudeCloseSession home-sid "test"))
+  (<- closed (ClaudeReplaceSessionCredential sid fresh-token))
+  (assert (= closed (SessionProcessDown :session-id sid)) closed))
 
 
 (deftest test-output-outside-a-turn-stops-the-process-and-names-why

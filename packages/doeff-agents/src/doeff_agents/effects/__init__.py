@@ -114,6 +114,19 @@ from doeff_agents.effects.agent import TurnInputMode as TurnInputMode
 from doeff_agents.effects.agent import TurnRef as TurnRef
 from doeff_agents.effects.agent import WarmSession as WarmSession
 from doeff_agents.effects.agent import WarmSessionEffect as WarmSessionEffect
+from doeff_agents.effects.agent import ReplaceSessionCredential as ReplaceSessionCredential
+from doeff_agents.effects.agent import (
+    ReplaceSessionCredentialEffect as ReplaceSessionCredentialEffect,
+)
+from doeff_agents.effects.agent import (
+    ReplaceSessionCredentialOutcome as ReplaceSessionCredentialOutcome,
+)
+from doeff_agents.effects.agent import SessionCredentialReplaced as SessionCredentialReplaced
+from doeff_agents.effects.agent import SessionProcessNotLive as SessionProcessNotLive
+from doeff_agents.effects.agent import SessionOnHomeCredential as SessionOnHomeCredential
+from doeff_agents.effects.agent import (
+    ReplacementCredentialUnavailable as ReplacementCredentialUnavailable,
+)
 from doeff_agents.effects.agent import agent as agent
 from doeff_agents.effects.agent import deterministic_session_id as deterministic_session_id
 from doeff_agents.effects.agent import refuse_turn_capabilities as refuse_turn_capabilities

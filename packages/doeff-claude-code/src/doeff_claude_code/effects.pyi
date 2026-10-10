@@ -15,6 +15,7 @@ from doeff_claude_code.values import checked_session_id as checked_session_id
 from doeff_claude_code.values import FreshSession as FreshSession
 from doeff_claude_code.values import ResumeSession as ResumeSession
 from doeff_claude_code.values import ForkSession as ForkSession
+from doeff_claude_code.values import LentCredential as LentCredential
 from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code.lines import Completed as Completed
 from doeff_claude_code.lines import Failed as Failed
@@ -197,6 +198,31 @@ class ClaudeLiveLimitExceeded(_doeff_effect_base[None]):
     live: int
     limit: int
     warm: bool
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class CredentialReplaced:
+    session_id: str
+
+@dataclass(frozen=True, kw_only=True)
+class NoSuchSession:
+    session_id: str
+
+@dataclass(frozen=True, kw_only=True)
+class SessionProcessDown:
+    session_id: str
+
+@dataclass(frozen=True, kw_only=True)
+class HomeCredentialSession:
+    session_id: str
+ReplaceCredentialOutcome: TypeAlias = CredentialReplaced | NoSuchSession | SessionProcessDown | HomeCredentialSession
+
+@_doeff_dataclass(frozen=True)
+class ClaudeReplaceSessionCredential(_doeff_effect_base[ReplaceCredentialOutcome]):
+    session_id: str
+    credential: LentCredential
 
     def __post_init__(self) -> None:
         ...

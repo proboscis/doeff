@@ -23,6 +23,7 @@ from doeff_claude_code.values import ForkSession as ForkSession
 from doeff_claude_code.values import Rebuilt as Rebuilt
 from doeff_claude_code.values import LinkFromHome as LinkFromHome
 from doeff_claude_code.values import IMAGE_MIMES as IMAGE_MIMES
+from doeff_claude_code.values import LentCredential as LentCredential
 from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code.lines import Init as Init
 from doeff_claude_code.lines import AssistantMessage as AssistantMessage
@@ -87,6 +88,11 @@ from doeff_claude_code.effects import NoSuchRequest as NoSuchRequest
 from doeff_claude_code.effects import ClaudeWarmSession as ClaudeWarmSession
 from doeff_claude_code.effects import SessionWarmed as SessionWarmed
 from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
+from doeff_claude_code.effects import ClaudeReplaceSessionCredential as ClaudeReplaceSessionCredential
+from doeff_claude_code.effects import CredentialReplaced as CredentialReplaced
+from doeff_claude_code.effects import NoSuchSession as NoSuchSession
+from doeff_claude_code.effects import SessionProcessDown as SessionProcessDown
+from doeff_claude_code.effects import HomeCredentialSession as HomeCredentialSession
 from doeff_claude_code.faults import ClaudeDropProcess as ClaudeDropProcess
 from doeff_claude_code.faults import ClaudeForgetSession as ClaudeForgetSession
 from doeff_claude_code.faults import ClaudeLiveProcess as ClaudeLiveProcess
@@ -190,6 +196,7 @@ class FakeSession:
     launch_key: str | None
     stopped_because: StopReason | None
     warmed_fresh: bool
+    credential: LentCredential | None
     turns: dict[int, FakeTurn]
 
     def __init__(self, session_id: str, home: Incomplete, cwd: str) -> None:
@@ -327,6 +334,9 @@ def fake_live_process(world: FakeClaudeWorld, session_id: str) -> _Program[LiveP
     ...
 
 def fake_emit_outside(world: FakeClaudeWorld, session_id: str) -> _Program[bool, object]:
+    ...
+
+def fake_replace_credential(world: FakeClaudeWorld, request: ClaudeReplaceSessionCredential) -> _Program[CredentialReplaced | NoSuchSession | SessionProcessDown | HomeCredentialSession, object]:
     ...
 
 def fake_claude_code_handler(world: Incomplete) -> _Handler:

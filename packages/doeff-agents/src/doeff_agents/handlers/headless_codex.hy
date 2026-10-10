@@ -37,7 +37,8 @@
 ;;;
 ;;; 断る物(AgentCapabilityUnsupportedError — 黙って捨てない): new_context_id の名指し(codex 0.162.1 の thread/start に id の欄が無く、
 ;;; 呼び手の id で thread を始められない)・resume_snapshot と ExportContextEffect(codex の会話の写しの口が無い)・mcp_tools・bare・
-;;; CaptureEffect・AttachAgentSessionEffect(画面が無い)。
+;;; CaptureEffect・AttachAgentSessionEffect(画面が無い)・ReplaceSessionCredentialEffect(走っている codex の process の資格を替える口を
+;;; まだ持たない — claude の headless の adapter だけが答える・card acp:kanban-issue:ki-4ffdafa021e5)。
 ;;; この handler が起こしていない session の effect と、CODEX 以外の LaunchEffect は外側の handler へ回す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "headless-codex-adapter" :role "foundation"})
@@ -53,6 +54,7 @@
 (import doeff_agents.effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
+  ReplaceSessionCredentialEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState ModelWindow AutocompactAuto AutocompactTokens
   NamedContextId RedeemTurnCredentialEffect TurnCredential CodexTurnCredential HomeTurnCredential TurnCredentialUnavailable
   TurnCredentialUnavailableError
@@ -580,6 +582,10 @@
     :when (in handle.session-id state.sessions)
     (<- warmed (warm (get state.sessions handle.session-id)))
     (resume warmed))
+
+  (ReplaceSessionCredentialEffect [handle]
+    :when (in handle.session-id state.sessions)
+    (raise (AgentCapabilityUnsupportedError :capability "ReplaceSessionCredentialEffect" :handler HANDLER-NAME)))
 
   (EventsEffect [handle after-seq wait-seconds]
     :when (in handle.session-id state.sessions)

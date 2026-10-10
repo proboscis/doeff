@@ -1,7 +1,7 @@
-;;; doeff-claude-code の公開 effect 9 つと、その戻り値の型(設計 4.3)。
+;;; doeff-claude-code の公開 effect 10 と、その戻り値の型(設計 4.3)。
 ;;;
 ;;; ClaudeStartTurn / ClaudeInjectInput / ClaudeInterruptTurn / ClaudeReadTurnEvents / ClaudeAnswerPermission /
-;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeWarmSession。
+;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeWarmSession / ClaudeReplaceSessionCredential。
 ;;;
 ;;; 単位は「claude の会話(session)と、その上の手番」。process の単位の操作(起こす・stdin に書く・信号・降ろす・pid の生存)は
 ;;; 公開しない — handler の内側の語彙(ClaudeWarmSession も「会話を入力の前に事前起動する」操作で、process を指定しない)。失敗は
@@ -12,7 +12,7 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
-                                  FreshSession ResumeSession ForkSession])
+                                  FreshSession ResumeSession ForkSession LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost])
 
 
@@ -204,4 +204,41 @@
   {:fields [(: session-id str) (: live int) (: limit int) (: warm bool)]
    :pre [(: session-id str) (: live int) (: limit int) (: warm bool)]
    :answer None
+   :tags {:context "claude-code" :role "intent"}})
+
+
+;; --- 走っている会話の process の資格を替える(card ki-4ffdafa021e5)-------------------------------------------
+
+(defrecord CredentialReplaced
+  "会話の生きた process の資格の家の .credentials.json を新しい資格へ替えた(次の API の呼びから新しい token を使う — 手番の途中でも)。
+   生きた process を止める刻も新しい資格の期限から決め直した。session-id = 名指した会話。"
+  (#^ str session-id))
+
+(defrecord NoSuchSession
+  "名指した会話をこの handler が知らない(起こしていない・起動に失敗して忘れた)。替える process が無い。"
+  (#^ str session-id))
+
+(defrecord SessionProcessDown
+  "名指した会話を知っているが、生きた process が無い(降りた・降りる途中・まだ起こしていない)。次の手番は宣言(ClaudeSessionSpec の
+   credential)の資格で起こすので、替える物は無い。"
+  (#^ str session-id))
+
+(defrecord HomeCredentialSession
+  "名指した会話の生きた process は家の設定 dir の資格で起こした(宣言に credential が無かった)。借りた資格の家が無いので替えない —
+   借りた資格で走らせたいなら、credential を持つ宣言の手番で起こし直す(起動条件のキーが違うので handler が起こし直す)。"
+  (#^ str session-id))
+
+(val ReplaceCredentialOutcome (| CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession))
+
+(defeffect ClaudeReplaceSessionCredential
+  "会話(session-id)の生きた process の資格を、別の借りた資格(credential — 新しい access token と期限)へ一息に替える。預かり所が口座の
+   資格を更新すると前の access token が上流で死ぬので、更新した token を走っている CLI へ配るため(card ki-4ffdafa021e5)。
+   handler は process だけの設定 dir の .credentials.json を、同じ dir の別名に書いて rename で替える(CLI は手番の間でも途中でも次の
+   API の呼びから新しい token を使い、401 を受けると file を読み直す — CLI 2.1.292 の実測)。生きた process を止める刻(期限 − 床)も
+   新しい期限から決め直す。手番を走らせているかは問わない。次の手番の宣言の資格は呼び手が持つ(この effect は宣言を書き換えない —
+   次の手番で使い回す process には、その手番の宣言の資格を同じ形で書く)。
+   答え = CredentialReplaced | NoSuchSession | SessionProcessDown | HomeCredentialSession(失敗も値で返す — 例外にしない)。"
+  {:fields [(: session-id str) (: credential LentCredential)]
+   :pre [(: session-id str) (: credential LentCredential)]
+   :answer ReplaceCredentialOutcome
    :tags {:context "claude-code" :role "intent"}})

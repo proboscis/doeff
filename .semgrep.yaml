@@ -53,6 +53,28 @@ rules:
         - /packages/doeff-agents/tests/**
         - /tests/semgrep/fixtures/python/packages/doeff-agents/**
 
+  - id: doeff-claude-code-lent-credential-not-in-child-env
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      The Claude CLI started by doeff-claude-code receives a lent credential
+      only as the .credentials.json of a config dir of the process's own
+      (doeff_claude_code/credential_home.hy), never as a child env var, so a
+      refreshed token can replace it while the CLI runs
+      (ClaudeReplaceSessionCredential / ReplaceSessionCredentialEffect — card
+      acp:kanban-issue:ki-4ffdafa021e5). Do not put the turn credential into
+      the child env (the CLAUDE_CODE_OAUTH_TOKEN name or doeff_agents.agent_env
+      CLAUDE-TURN-CREDENTIAL-ENV) in the CLI launch layers.
+    pattern-either:
+      - pattern-regex: '"CLAUDE_CODE_OAUTH_TOKEN"'
+      - pattern-regex: '\bCLAUDE-TURN-CREDENTIAL-ENV\b'
+    paths:
+      include:
+        - /packages/doeff-claude-code/src/**
+        - /packages/doeff-agents/src/doeff_agents/handlers/headless.hy
+        - /packages/doeff-agents/src/doeff_agents/handlers/headless_compose.hy
+
   - id: doeff-agents-built-in-adapters-must-not-read-launch-prompt
     languages:
       - python
