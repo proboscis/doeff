@@ -30,7 +30,7 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
-(import doeff_cluster.shared.core.readiness_rules [readiness-refusal retired-lifetime-ms])
+(import doeff_cluster.shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster.coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 
 (setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
@@ -77,6 +77,8 @@
                    :handoff handoff :runtime-env runtime
                    ;; 退いた process の寿命の上限(#4072 の D-2 — 宣言の readiness の retiredSeconds・handoff の job だけ)。
                    :retired-ms (if handoff (retired-lifetime-ms (.get item "readiness")) None)
+                   ;; 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め — 宣言の readiness の retiredLimit・handoff の job だけ)。
+                   :retired-limit (if handoff (retired-limit-of (.get item "readiness")) None)
                    :program (get run "program")
                    ;; 子の入口が比べる送り手の版 = 宣言の行の run.versions(宣言の道具が Program と一緒に置いた版)。worker は Program の
                    ;; cache の file をこの版ごとに分けるので、同じ sha の Program を別の版で宣言し直すと取り直す(card ki-172e63fed4c7)。

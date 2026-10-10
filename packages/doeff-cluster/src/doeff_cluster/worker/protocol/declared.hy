@@ -58,6 +58,8 @@
            :handoff-abandoned (bool (.get job "handoffAbandoned" False))
            ;; 退いた process の寿命の上限(#4072 の D-2 — 返事の handoff の job で宣言した物だけが持つ・無ければ None = 新の Ready で止める)。
            :retired-ms (.get job "retiredMs")
+           ;; 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め — 宣言した handoff の job だけが持つ・無ければ None = worker の既定)。
+           :retired-limit (.get job "retiredLimit")
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
            ;; 子の入口が比べる送り手の版 = 宣言の版(Program の job の行は必ず持つ — cache の file は版ごと・card ki-172e63fed4c7)。

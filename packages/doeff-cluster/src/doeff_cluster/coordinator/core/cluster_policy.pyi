@@ -80,6 +80,7 @@ from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
 from doeff_cluster.shared.core.runtime_env_rules import child_environ_refusal as child_environ_refusal
 from doeff_cluster.shared.core.readiness_rules import readiness_refusal as readiness_refusal
 from doeff_cluster.shared.core.readiness_rules import retired_lifetime_ms as retired_lifetime_ms
+from doeff_cluster.shared.core.readiness_rules import retired_limit_of as retired_limit_of
 from doeff_cluster.coordinator.core.program_policy import PROGRAM_GRACE_MS as PROGRAM_GRACE_MS
 from doeff_cluster.coordinator.core.program_policy import program_refs as program_refs
 JOB_ENTRY: str

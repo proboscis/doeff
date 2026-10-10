@@ -27,8 +27,11 @@
 ;; retiredSeconds = 入れ替えで退いた process の寿命の上限(#4072 の D-2・handoff の Service だけ・既定なし)。書いた Service は、新の世代が
 ;; Ready と数えられても退いた旧を止めず、旧が自分で終わるか、退いてからこの秒を越えた時に止める(旧が持つ仕事を終わりまで回す)。
 ;; 書かない Service は今どおり新の Ready で旧を止める(lease を持つ書き手は、旧が止まって lease を返すまで新が書けないため)。
+;; retiredLimit = 退いた process を同時に残す数の上限 R(正の整数・handoff の Service だけ・既定なし = worker の WorkerPolicy.retired-limit)。
+;; 退いた process が R に達している間の宣言し直しは、退いた process を止めず、今の process も退かせずに待つ(#4072 の D-3 の改め —
+;; 退いた process は自分で終わるか寿命の上限でだけ止まる)。長い仕事を持つ退いた process が並ぶ Service は大きい R を書いて待ちを減らす。
 (val HANDOFF-TIMEOUT-SECONDS 300)
-(val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds"))
+(val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds" "retiredLimit"))
 
 
 ;; 報告の reason を coordinator が残す長さ(字)。

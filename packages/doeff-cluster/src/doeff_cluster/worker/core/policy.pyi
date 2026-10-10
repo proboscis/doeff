@@ -155,6 +155,9 @@ def handoff_actions(now: int, want: JobSpec, process: ProcessView, world: WorldV
 def retired_actions(now: int, process: ProcessView, origin: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> tuple:
     ...
 
+def retired_limit_for(want: JobSpec, policy: WorkerPolicy) -> int:
+    ...
+
 def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy, absent: StopReason) -> tuple:
     ...
 

@@ -62,8 +62,8 @@
 ;;; 判断は記録(本当に動いた process の列・job ごとの needs・worker ごとの本当の能力と専用の能力)を受けて、資格の無い worker で動いた
 ;;; process の列を返す純関数 1 つ。
 ;;;
-;;; 条 C14 runs-within-their-limit: 入れ替え(handoff)を宣言した job は同時に R + 1 まで(退いた process が上限 R = worker の
-;;; WorkerPolicy.retired-limit・既定 3 — と今の process 1 つ・#4072 の D-3)、task は同時に 1 つまでしか動かない(C2 は入れ替えを宣言しない
+;;; 条 C14 runs-within-their-limit: 入れ替え(handoff)を宣言した job は同時に R + 1 まで(退いた process が上限 R = 宣言の readiness の
+;;; retiredLimit か worker の WorkerPolicy.retired-limit・既定 3 — と今の process 1 つ・#4072 の D-3)、task は同時に 1 つまでしか動かない(C2 は入れ替えを宣言しない
 ;;; job だけを見る — #1976 の写しの C5 の残り)。判断は記録(本当に動いた process の列と、名ごとの上限)を
 ;;; 受けて、起きた瞬間に上限を越えていた process の列を返す純関数 1 つ。
 ;;;
