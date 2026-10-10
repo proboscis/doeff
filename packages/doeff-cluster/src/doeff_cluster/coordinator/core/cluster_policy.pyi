@@ -149,7 +149,7 @@ def liveness_moves(before: ClusterState, after: ClusterState, timing: ClusterTim
 def liveness_now(state: ClusterState, timing: ClusterTiming) -> _Program[tuple, object]:
     ...
 
-def placeable(needs: tuple, worker: WorkerInfo) -> bool:
+def placeable(needs: tuple[str, ...], worker: WorkerInfo) -> bool:
     ...
 
 def named_capabilities(provides: tuple | list | None, exclusive: tuple | list | None, old_labels: bool, what: str) -> tuple:
@@ -217,7 +217,7 @@ def board_without_generation_holders(board: dict, report: WorkerReport | None) -
 def load_of(state: ClusterState, placements: dict) -> dict:
     ...
 
-def job_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
+def job_room_of(worker: WorkerInfo, load: dict[str, WorkerLoad]) -> _Program[int, object]:
     ...
 
 def task_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
