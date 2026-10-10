@@ -495,6 +495,30 @@
   (assert (and (= (len took) 1) (<= 15000 (get took 0) 15500)) log))
 
 
+(defk take-after [seconds]
+  {:pre [(: seconds float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "seconds 秒後に lease writer-a を取りに行き、取れた時刻(仮想の時計の ms)を答えて返すため(保存へ届かない間に取りに行く持ち手)。"
+  (<- (Delay seconds))
+  (<- sem Semaphore (CreateNamedSemaphore "writer-a"))
+  (<- (AcquireSemaphore sem))
+  (<- at int (now-epoch-ms))
+  (<- (ReleaseSemaphore sem))
+  at)
+
+
+(deftest test-a-claim-cut-off-from-the-store-takes-the-lease-once-the-store-is-back
+  ;; 取りに行く時に保存へ届かない(coordinator の作り直しの最中 — 4〜9 秒の途絶の中の 5 秒目に取りに行く。2026-10-11 02:45 JST に、
+  ;; lease を取りに行った常駐の process が届かない例外で落ちた実例)。
+  ;; 取りは例外を投げずに retry-seconds(0.5 秒)ごとに試し直し、保存が戻った後(9 秒より後・試し直しの間の内)に取る。直す前は取りが
+  ;; 届かない例外を投げ、呼び手の task ごと終わった。
+  (val clock (SimClock))
+  (val store {})
+  (val sa (SemaphoreSession "late" :ttl-seconds 15.0))
+  (<- took int (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
+                 (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa)] (take-after 5.0))))
+  (assert (< 9000 took 9600) took))
+
+
 (deftest test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock
   (assert (is (fence-verdict {"token" "t" "expiresMs" 15000} 12999 2000) None))
   (assert (is-not (fence-verdict {"token" "t" "expiresMs" 15000} 13000 2000) None))
