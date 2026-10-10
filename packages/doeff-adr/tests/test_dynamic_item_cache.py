@@ -3,6 +3,7 @@
 import hashlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from _pytest.mark.structures import ParameterSet
@@ -183,6 +184,31 @@ def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Pat
     edited: DependencyChecks = DependencyChecks()
     assert isinstance(edited.verify(tmp_path, refreshed.sources), str)
     assert edited._mut_rebuilds == 1
+
+
+def test_a_same_size_edit_within_one_coarse_timestamp_tick_is_not_missed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """失敗ケース(card ki-5b70c4b62814・atlas の 2026-10-10 20:05 の日次の赤): 時刻の粗い kernel(atlas の 6.8 — 細かい ctime は 6.13 から)
+    では、記録を取った時刻と同じ区切りの中の書き換えで mtime・ctime が進まない。大きさも同じなら stat が全部一致し、速い経路は hash を
+    読まずに古い記録を信じた(git の racy-git と同じ形)。粗い kernel の代わり = 最初に見た mtime・ctime を返し続ける stat(区切りが
+    終わらない間の kernel)。"""
+    real_stat = Path.stat
+    first_seen: dict[str, tuple[int, int]] = {}
+
+    def coarse_stat(self: Path, *, follow_symlinks: bool = True) -> SimpleNamespace:
+        status: os.stat_result = real_stat(self, follow_symlinks=follow_symlinks)
+        mtime_ns, ctime_ns = first_seen.setdefault(str(self), (status.st_mtime_ns, status.st_ctime_ns))
+        return SimpleNamespace(
+            st_size=status.st_size, st_mtime_ns=mtime_ns, st_ctime_ns=ctime_ns, st_dev=status.st_dev, st_ino=status.st_ino
+        )
+
+    monkeypatch.setattr(Path, "stat", coarse_stat)
+    source: Path = tmp_path / "values.py"
+    source.write_text("VALUE = 1\n")
+    saved: tuple[SourceDependency, ...] = (snapshot(source, "values.py", hashlib.sha256(source.read_bytes()).hexdigest()),)
+    source.write_text("VALUE = 2\n")
+    checks: DependencyChecks = DependencyChecks()
+    assert checks.verify(tmp_path, saved) == "実値の依存sourceが変わった: values.py"
+    assert checks._mut_rebuilds == 1
 
 
 def test_individual_parameter_marks_are_not_silently_dropped() -> None:
