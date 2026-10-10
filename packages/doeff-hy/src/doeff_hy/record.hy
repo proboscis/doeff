@@ -32,7 +32,13 @@
 ;;;
 ;;;   (TurnRecordRow :conversation-id c :turn-id t :phase "Running" :ended-at None)
 ;;;
-;;; 展開: (defclass [(dataclass :frozen True :kw-only True)] Name [] 欄 …)。
+;;; 展開: 型検査の投影(static-view)では (defclass [(dataclass :frozen True :kw-only True)] Name [] 欄 …)。
+;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
+;;; seal-record)— dataclass には欄の表だけを作らせ、__init__(kw-only)・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
+;;; 展開が書く(関数が module の code として .pyc に入り、読み込みの時に dataclass が関数の source を compile しない — 1 型 約 1 ms →
+;;; 約 0.1 ms・card ki-a0cca3bdb9a0)。振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
+;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
+;;; 本体が __init__ ほかを自分で書く)は投影と同じ展開(dataclass が関数を作る)にする。
 ;;; `dataclass` は使う側の scope の名前を指す(使う側が import する)。
 ;;;
 ;;; ---------------------------------------------------------------------------
@@ -191,8 +197,135 @@
   (when (and rest (isinstance (get rest 0) String))
     (setv docstring (get rest 0)
           rest (cut rest 1 None)))
+  (import doeff_hy.static_view [static-view-enabled])
+  (setv static-view (static-view-enabled))
+  ;; 実行の展開の class の form(頭注「関数は展開の時に書く」— card ki-a0cca3bdb9a0): dataclass には欄の表(__dataclass_fields__・
+  ;; 既定値・field の default-factory・可変の既定の断り)だけを作らせ、関数(__init__・__repr__・__eq__・__hash__・凍結の
+  ;; __setattr__ / __delattr__)は展開がここで書く — 関数は module の code として .pyc に入り、読み込みの時に dataclass が関数の
+  ;; source を exec(compile)しない(1 型 約 1 ms → 約 0.1 ms)。欄の形を展開で読み切れない時(下の断りの条件)は None を返し、
+  ;; 呼び手は今までの展開(dataclass が関数を作る)にする。型検査の投影(static-view)は dataclass のまま(pyright が dataclass として読む)。
+  (setv class-form
+    (fn [docstring class-vars fields post-init]
+      (setv generated #("__init__" "__repr__" "__eq__" "__hash__" "__setattr__" "__delattr__" "__post_init__")
+            literal {"True" True "False" False "None" None}
+            annotated (fn [form] (and (isinstance form Expression) (= (len form) 3) (= (str (get form 0)) "annotate")
+                                      (isinstance (get form 1) Symbol)))
+            field-call? (fn [form] (and (isinstance form Expression) form (isinstance (get form 0) Symbol)
+                                        (in (str (get form 0)) #("field" "dataclasses.field"))))
+            ;; 本体の form が、展開が書く関数を自分で書くか(defn・defn/a ほか — 名は飾りの list の後ろでも読む)。
+            own-method? (fn [form] (and (isinstance form Expression) (>= (len form) 2) (isinstance (get form 0) Symbol)
+                                        (.startswith (str (get form 0)) "def")
+                                        (do (setv named (if (and (isinstance (get form 1) List) (>= (len form) 3)) (get form 2) (get form 1)))
+                                            (and (isinstance named Symbol) (in (hy.mangle (str named)) generated)))))
+            ;; 欄の的と既定値の組(的・既定値の form・既定値の有無)を書いた順に(field-targets と同じ読み方)。
+            targets (sum (lfor form fields
+                               (cond
+                                 (annotated form) [#(form None False)]
+                                 (and (isinstance form Expression) (= (len form) 1) (annotated (get form 0))) [#((get form 0) None False)]
+                                 (and (isinstance form Expression) (>= (len form) 3) (= (str (get form 0)) "setv"))
+                                   (lfor #(t v) (zip (cut form 1 None 2) (cut form 2 None 2)) :if (annotated t) #(t v True))
+                                 True []))
+                         [])
+            ;; field の呼びの鍵と値(鍵は mangle した名)。鍵の数が合わない呼びは None。
+            call-args (fn [form] (setv args (list (cut form 1 None)))
+                        (if (% (len args) 2)
+                            None
+                            (lfor #(k v) (zip (cut args None None 2) (cut args 1 None 2))
+                                  #((if (isinstance k Keyword) (hy.mangle (str k.name)) None) v))))
+            ;; 欄 1 つの形 — (記号・python の名・注記・種類 required / plain / call・値を持つか・工場を持つか・init・repr・compare・hash)。
+            ;; 展開が読み切れない欄は None(field の呼びの鍵が分からない・旗が字面でない・欄の名が self / object)。
+            spec-of (fn [target default has-default]
+                      (setv sym (get target 1)
+                            py (hy.mangle (str sym))
+                            call (and has-default (field-call? default))
+                            pairs (if call (call-args default) []))
+                      (cond
+                        (in py #("self" "object")) None
+                        (is pairs None) None
+                        (any (gfor #(k v) pairs (not (in k #("init" "repr" "compare" "hash" "default" "default_factory" "metadata" "doc")))))
+                          None
+                        (any (gfor #(k v) pairs (and (in k #("init" "repr" "compare" "hash"))
+                                                     (not (and (isinstance v Symbol) (in (str v) literal))))))
+                          None
+                        True
+                          (do (setv flags (dfor #(k v) pairs :if (in k #("init" "repr" "compare" "hash")) k (get literal (str v)))
+                                    keys (frozenset (gfor #(k v) pairs k)))
+                              {"sym" sym "py" py "ann" (get target 2)
+                               "kind" (cond call "call" has-default "plain" True "required")
+                               "has-value" (if call (in "default" keys) has-default)
+                               "has-factory" (in "default_factory" keys)
+                               "init" (.get flags "init" True) "repr" (.get flags "repr" True)
+                               "compare" (.get flags "compare" True) "hash" (.get flags "hash" None)})))
+            specs (lfor #(t d h) targets (spec-of t d h)))
+      (when (or (any (gfor form fields (isinstance form Symbol))) (any (gfor form fields (own-method? form)))
+                (any (gfor s specs (is s None))))
+        (return None))
+      (setv self-sym (hy.gensym "self")
+            missing 'doeff_hy.record_runtime.FACTORY-DEFAULT
+            factory (fn [py] `((. (get (. ~name __dataclass_fields__) ~py) default-factory)))
+            ;; 欄 1 つの __init__ の引数(None = 引数にしない — init を切った欄)と、self に値を置く式(None = 置かない)。
+            init-of (fn [s]
+                      (setv sym (get s "sym") py (get s "py") ann (get s "ann")
+                            put (fn [value] `(object.__setattr__ ~self-sym ~py ~value)))
+                      (cond
+                        (not (get s "init"))
+                          #(None (cond (get s "has-factory") (put (factory py)) (get s "has-value") (put `(. ~name ~sym)) True None))
+                        (get s "has-factory")
+                          #(`(annotate [~sym ~missing] ~ann) (put `(if (is ~sym ~missing) ~(factory py) ~sym)))
+                        (and (= (get s "kind") "call") (get s "has-value"))
+                          #(`(annotate [~sym (. ~sym default)] ~ann) (put sym))
+                        (= (get s "kind") "plain")
+                          #(`(annotate [~sym ~sym] ~ann) (put sym))
+                        True
+                          #(`(annotate ~sym ~ann) (put sym))))
+            inits (lfor s specs (init-of s))
+            params (lfor #(p _) inits :if (is-not p None) p)
+            sets (lfor #(_ v) inits :if (is-not v None) v)
+            shown (lfor s specs :if (get s "repr") (get s "py"))
+            compared (lfor s specs :if (get s "compare") (get s "py"))
+            hashed (lfor s specs :if (if (is (get s "hash") None) (get s "compare") (get s "hash")) (get s "py"))
+            plain `#(~@(lfor s specs :if (= (get s "kind") "plain") (String (get s "py"))))
+            other (hy.gensym "other")
+            attr (hy.gensym "name")
+            value (hy.gensym "value")
+            guard (if specs
+                      `(or (is (type ~self-sym) ~name) (in ~attr #{~@(lfor s specs (String (get s "py")))}))
+                      `(is (type ~self-sym) ~name)))
+      `(do
+       (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
+         ~@(if (is docstring None) [] [docstring])
+         ~@(or class-vars [])
+         ~@fields
+         ~@post-init
+         (defn __init__ [~self-sym ~@(if params ['* #* params] [])]
+           ~@sets
+           ~@(if post-init [`(.__post-init__ ~self-sym)] [])
+           None)
+         (defn [(doeff_hy.record_runtime.recursive-repr)] __repr__ [~self-sym]
+           (.format ~(+ "{}(" (.join ", " (gfor n shown (+ n "={!r}"))) ")") (. ~self-sym __class__ __qualname__)
+                    ~@(lfor n shown `(. ~self-sym ~(Symbol n)))))
+         (defn __eq__ [~self-sym ~other]
+           (cond
+             (is ~self-sym ~other) True
+             (is (. ~other __class__) (. ~self-sym __class__))
+               (and ~@(or (lfor n compared `(= (. ~self-sym ~(Symbol n)) (. ~other ~(Symbol n)))) ['True]))
+             True NotImplemented))
+         (defn __hash__ [~self-sym]
+           (hash #(~@(lfor n hashed `(. ~self-sym ~(Symbol n))))))
+         (defn __setattr__ [~self-sym ~attr ~value]
+           (when ~guard
+             (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
+           (.__setattr__ (super ~name ~self-sym) ~attr ~value))
+         (defn __delattr__ [~self-sym ~attr]
+           (when ~guard
+             (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
+           (.__delattr__ (super ~name ~self-sym) ~attr)))
+       (doeff_hy.record_runtime.seal-record ~name ~plain))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
-    (return `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)))
+    (setv written (when (not static-view) (class-form docstring None rest [])))
+    (return (if (is written None)
+                `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)
+                `(do (import doeff_hy.record_runtime) ~written))))
   (setv header (get rest 0)
         fields (cut rest 1 None)
         where (+ "defrecord " (str name)))
@@ -218,8 +351,6 @@
     (raise (SyntaxError (.format "{}: :check は検めの式の list([(pred 欄) …] の形): {}" where (hy.repr checks)))))
   ;; 欄の読み方の正本は declarations の field-targets(defwire・hy-index・doeff-linter と揃える)。
   (setv names (lfor target (field-targets fields) (hy.mangle target)))
-  (import doeff_hy.static_view [static-view-enabled])
-  (setv static-view (static-view-enabled))
   (setv statements []
         bound [])
   (for [check (or checks [])]
@@ -264,14 +395,17 @@
                           ~@statements
                           None)]
                       []))
+  (setv written (when (not static-view) (class-form docstring class-vars fields post-init)))
   `(do
-     (import doeff_hy.declarations doeff_hy.record)
+     (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy.record_runtime]))
      ~@(if (and static-view statements) ['(import typing [cast :as _doeff-cast])] [])
-     (defclass [(dataclass :frozen True :kw-only True)] ~name []
-       ~@(if (is docstring None) [] [docstring])
-       ~@(or class-vars [])
-       ~@fields
-       ~@post-init)
+     ~@(if (is written None)
+           [`(defclass [(dataclass :frozen True :kw-only True)] ~name []
+               ~@(if (is docstring None) [] [docstring])
+               ~@(or class-vars [])
+               ~@fields
+               ~@post-init)]
+           [written])
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))
      (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False))))
