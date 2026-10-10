@@ -35,6 +35,7 @@
 (import doeff_core_effects.handlers [await-handler slog-handler])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects.file_effects [WriteText FileFailed])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [StopProcess ProcessExited])
@@ -453,6 +454,41 @@
           (.format "鍵の表が空の worker が取り込みの段で止まった({!r})— 表に無い url を断っている" seen))
   (<- mirrors tuple (mirrors-of tmp-path))
   (assert (= (len mirrors) 1) mirrors)
+  (<- left tuple (leftover tmp-path))
+  (assert (= left #()) left))
+
+
+(defk rewritten-table [path text]
+  {:pre [(: path Path) (: text str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起きている worker の鍵の表の file を書き換えるため(配備で ConfigMap worker-env の値を替え、kubelet が mount の file を更新した形)。"
+  (<- wrote (WriteText (str path) text))
+  (when (isinstance wrote FileFailed)
+    (raise (RuntimeError (+ "鍵の表の file を書き換えられない: " (repr wrote)))))
+  None)
+
+
+(defk table-rewritten-then-preparing [path text system]
+  {:pre [(: path Path) (: text str) (: system System)] :post [(: % PrepareSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: worker が起きた後に鍵の表の file を書き換え、実行環境を載せて系を宣言し、準備の結末を見るため。"
+  (<- (rewritten-table path text))
+  (<- seen PrepareSeen (declared-and-preparing system))
+  seen)
+
+
+(deftest test-a-key-table-line-added-after-the-worker-started-is-read-by-the-next-prepare [tmp-path monkeypatch]
+  ;; 失敗ケース(card ki-2de748a0eac5): worker は鍵の表を起動の時にしか組まず、表に行を足しても worker を作り直すまで効かなかった。
+  ;; 起動の時は空の表で起こし、起きた後に表の file へ実行環境の repo の行を書く — 次の準備の鍵の表の JSON にその url が在る。
+  (<- repo AppRepo (app-repo tmp-path))
+  (<- machine LocalMachine (runtime-machine-of tmp-path repo))
+  (.setattr monkeypatch machine-module "repo_key_table" no-key-table)
+  (val table (/ tmp-path "workers" WORKER "worker-env" "WORKER_REPOS"))
+  (<- seen PrepareSeen (local-machine-cluster (table-rewritten-then-preparing table (+ repo.url "=") (pings machine-foundation))
+                                              :machine machine))
+  (assert (= seen.declared #(JOB)) seen)
+  (assert (not-in seen.failure-kind MIRROR-FAILURES) seen)
+  (val keys (/ tmp-path "workers" WORKER "access" "repo-keys.json"))
+  (assert (in repo.url (.read-text keys :encoding "utf-8"))
+          (+ "起動の後に足した鍵の表の行を、次の準備が読まなかった: " (.read-text keys :encoding "utf-8")))
   (<- left tuple (leftover tmp-path))
   (assert (= left #()) left))
 

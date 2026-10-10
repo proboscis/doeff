@@ -47,7 +47,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.file_effects [MakeDirectory FileFailed])
+(import doeff_core_effects.file_effects [MakeDirectory WriteText FileFailed])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.process_effects [StartProcess StopProcess PollProcess SignalProcess ProcessSignal ProcessSignalled ProcessStarted
                                             ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild EnvMode EnvEntry
@@ -177,12 +177,32 @@
    :tags {:context "doeff-cluster" :role "judgment"}}
   "boot.sh の ROLE=worker に渡す環境変数を組むため(配備の worker と同じ名。世代と準備の file は worker ごとの dir に置く — 既定の
    /tmp の file は同じ機体の worker どうしで重なる)。鍵の表と git の設定の置き場 WORKER_ACCESS_DIR も worker ごとの dir に置く — 既定の
-   $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の鍵の表と重なり、上書きする(#3042)。"
+   $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の鍵の表と重なり、上書きする(#3042)。鍵の表は配備と同じく
+   file(WORKER_REPOS_FILE — 配備では ConfigMap worker-env の dir の mount)でも渡す — 起動の後に書き換えた表を worker が次の準備で
+   読み直す道を、配備と同じ形で通すため(card ki-2de748a0eac5)。"
   (val home (/ (Path machine.work-dir) "workers" worker.name))
   (<- repos str (repo-key-table machine))
   (<- sources (get tuple #(EnvEntry ...)) (git-source-env machine.git-sources))
   (<- boot (get tuple #(EnvEntry ...)) (worker-boot-env machine worker url home repos))
   (+ boot sources))
+
+
+;; worker の鍵の表の file の置き場(worker の dir からの相対 — 配備の ConfigMap worker-env の dir の mount の WORKER_REPOS の file に当たる)。
+(val WORKER-REPOS-FILE (Path "worker-env" "WORKER_REPOS"))
+
+
+(defk written-repo-table [machine home]
+  {:pre [(: machine LocalMachine) (: home Path)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "worker を起こす前に、鍵の表の今の値を表の file へ書くため(配備で ConfigMap が mount の file を置くのに当たる)。"
+  (<- repos str (repo-key-table machine))
+  (val path (/ home WORKER-REPOS-FILE))
+  (<- made (MakeDirectory (str (. path parent))))
+  (when (isinstance made FileFailed)
+    (raise (RuntimeError (+ "鍵の表の dir を作れない: " (repr made)))))
+  (<- wrote (WriteText (str path) repos))
+  (when (isinstance wrote FileFailed)
+    (raise (RuntimeError (+ "鍵の表の file を書けない: " (repr wrote)))))
+  None)
 
 
 (defk worker-boot-env [machine worker url home repos]
@@ -200,6 +220,7 @@
     (EnvEntry :name "WORK_DIR" :value (str home))
     (EnvEntry :name "CODE_REPO_URL" :value machine.code-repo)
     (EnvEntry :name "WORKER_REPOS" :value repos)
+    (EnvEntry :name "WORKER_REPOS_FILE" :value (str (/ home WORKER-REPOS-FILE)))
     (EnvEntry :name "WORKER_ACCESS_DIR" :value (str (/ home "access")))
     (EnvEntry :name "DOEFF_WORKER_BOOT_FILE" :value (str (/ home "boot")))
     (EnvEntry :name "DOEFF_WORKER_READY_FILE" :value (str (/ home "ready")))))
@@ -416,6 +437,7 @@
   (try
     (<- (await-up url coordinator (fn [_state] True) machine.boot-seconds))
     (for [worker machine.workers]
+      (<- (written-repo-table machine (/ (Path machine.work-dir) "workers" worker.name)))
       (<- worker-vars tuple (worker-env machine worker url))
       (<- role MachineProcess (started-role worker.name (str (/ (Path machine.work-dir) "workers" worker.name)) worker-vars))
       (setv cell.roles (+ cell.roles #(role))))
