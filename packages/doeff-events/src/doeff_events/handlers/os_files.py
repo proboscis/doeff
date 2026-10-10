@@ -11,20 +11,30 @@ it; the library is imported when a watch is started.
   reports a change under the directory; a quiet stretch of the notifier's own time limit only waits again (the
   program is never woken to look). Changes reported together within ``DEBOUNCE_MS`` come as one answer, sorted by
   path, each path once.
-- ``CloseFileWatch`` sets the notifier's stop flag (a wait in progress ends) and closes it.
+- ``CloseFileWatch`` sets the notifier's stop flag (a wait in progress ends) and closes it — at once when no wait is
+  inside the notifier, otherwise when the last wait leaves it. The library's notifier must never be closed while a
+  wait is inside it: its close takes the notifier mutably and its wait borrows it between steps, and on a Python
+  without the GIL (3.14t — the library declares ``gil_used = false``) the two meet and its Rust code panics with
+  ``PyBorrowError``, which ended a whole process (agora-redesign card ki-715d1af556eb, 2026-10-10 13:08Z).
 """
 
 import asyncio
 import os
 import threading
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol, final
 
 from doeff_core_effects.effects import Await
 
 from doeff import K, Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_events.effects.files import CloseFileWatch, FilesChanged, FileWatch, NextFileChanges, WatchFiles, WatchRefused
+from doeff_events.effects.files import (
+    CloseFileWatch,
+    FilesChanged,
+    FileWatch,
+    NextFileChanges,
+    WatchFiles,
+    WatchRefused,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -45,7 +55,9 @@ LIBRARY_POLL_DELAY_MS: Final = 300
 class _NotifierLike(Protocol):
     """The part of the library's notifier (``watchfiles._rust_notify.RustNotify``) this handler uses."""
 
-    def watch(self, debounce_ms: int, step_ms: int, timeout_ms: int, stop_event: threading.Event) -> object:
+    def watch(
+        self, debounce_ms: int, step_ms: int, timeout_ms: int, stop_event: threading.Event
+    ) -> object:
         """Block until changes, a timeout, or the stop flag; answer the changes or a word."""
         ...
 
@@ -55,12 +67,51 @@ class _NotifierLike(Protocol):
 
 
 @final
-@dataclass(frozen=True)
 class _Notifier:
-    """What the handler keeps for one watch: the library's notifier and the stop flag its wait checks."""
+    """What the handler keeps for one watch: the library's notifier, the stop flag its wait checks, and who closes it.
 
-    notifier: _NotifierLike
-    stop: threading.Event
+    The close is made by whoever is last (module docstring): ``close`` closes the notifier at once when no wait is inside
+    it, otherwise the last wait to leave closes it; once closing, no new wait enters. ``_lock`` guards the count and the
+    two flags only — it is never held while the notifier waits.
+    """
+
+    __slots__ = ("_closed", "_closing", "_lock", "_waits", "notifier", "stop")
+
+    def __init__(self, notifier: _NotifierLike) -> None:
+        """Keep a started notifier; no wait is inside it yet."""
+        self.notifier = notifier
+        self.stop = threading.Event()
+        self._lock = threading.Lock()
+        self._waits = 0
+        self._closing = False
+        self._closed = False
+
+    def wait_once(self) -> object:
+        """One blocking wait of the notifier (runs in a worker thread): its answer, or ``"stop"`` without waiting once
+        the watch is closing."""
+        with self._lock:
+            if self._closing:
+                return "stop"
+            self._waits += 1
+        try:
+            return self.notifier.watch(DEBOUNCE_MS, STEP_MS, NOTIFIER_TIMEOUT_MS, self.stop)
+        finally:
+            with self._lock:
+                self._waits -= 1
+                self._close_if_idle()
+
+    def close(self) -> None:
+        """End the waits (stop flag) and close the notifier now, or leave the close to the last wait inside it."""
+        self.stop.set()
+        with self._lock:
+            self._closing = True
+            self._close_if_idle()
+
+    def _close_if_idle(self) -> None:
+        """Close the notifier once, when closing and no wait is inside it (called with ``_lock`` held)."""
+        if self._closing and self._waits == 0 and not self._closed:
+            self._closed = True
+            self.notifier.close()
 
 
 def _changes_of(raw: object) -> FilesChanged | None:
@@ -89,13 +140,7 @@ class _NextChanges:
         """Wait until the notifier reports changes (a timeout of the notifier only waits again)."""
         kept = self._kept
         while True:
-            raw = await asyncio.to_thread(
-                kept.notifier.watch,
-                DEBOUNCE_MS,
-                STEP_MS,
-                NOTIFIER_TIMEOUT_MS,
-                kept.stop,
-            )
+            raw = await asyncio.to_thread(kept.wait_once)
             changes = _changes_of(raw)
             if changes is not None:
                 return changes
@@ -109,10 +154,11 @@ def _start(directory: str) -> _Notifier | WatchRefused:
     """Start the library's notifier on ``directory`` (recursive), or refuse when it is not a directory."""
     if not os.path.isdir(directory):
         return WatchRefused(f"{directory} is not a directory")
-    from watchfiles._rust_notify import RustNotify  # imported here: the optional dependency doeff-events[files]
+    from watchfiles._rust_notify import (
+        RustNotify,
+    )  # imported here: the optional dependency doeff-events[files]
 
-    notifier = RustNotify([directory], False, False, LIBRARY_POLL_DELAY_MS, True, False)
-    return _Notifier(notifier=notifier, stop=threading.Event())
+    return _Notifier(RustNotify([directory], False, False, LIBRARY_POLL_DELAY_MS, True, False))
 
 
 def os_file_watch_handler() -> "ProgramHandler":
@@ -120,7 +166,9 @@ def os_file_watch_handler() -> "ProgramHandler":
     watches: dict[FileWatch, _Notifier] = {}
 
     @do
-    def handler(effect: WatchFiles | NextFileChanges | CloseFileWatch, k: K) -> "EffectGenerator[object]":
+    def handler(
+        effect: WatchFiles | NextFileChanges | CloseFileWatch, k: K
+    ) -> "EffectGenerator[object]":
         """Answer one file-watch operation."""
         answer: object = None
         match effect:
@@ -138,8 +186,7 @@ def os_file_watch_handler() -> "ProgramHandler":
             case CloseFileWatch(watch=closing):
                 kept = watches.pop(closing, None)
                 if kept is not None:
-                    kept.stop.set()
-                    kept.notifier.close()
+                    kept.close()
             case _:
                 yield Pass(effect, k)
                 return None
