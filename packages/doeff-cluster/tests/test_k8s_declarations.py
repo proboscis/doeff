@@ -307,6 +307,30 @@ def test_worker_runs_as_fixed_account_with_projected_token(
     ]
 
 
+def test_the_key_table_reaches_the_worker_as_a_file_it_rereads(zeus_worker: Manifest) -> None:
+    """worker の鍵の表(WORKER_REPOS)は env に加えて ConfigMap worker-env の dir の mount の file でも受け、場所を WORKER_REPOS_FILE で
+    渡す(card ki-2de748a0eac5)。kubelet は subPath の無い mount に ConfigMap の更新を届けるので、表に行を足すと worker は起動し直さずに
+    次の準備から読む(boot.sh の ROLE=access を準備の前ごとに撃つ — doeff 9fb6014f)。反例: env だけで受けると、表の変更は worker を
+    作り直すまで効かない(2026-10-10 に表へ行を足した時、効く時刻が決まらなかった)。"""
+    env = {
+        str(_mapping(e, "env")["name"]): _mapping(e, "env").get("value")
+        for e in _sequence(_container(zeus_worker)["env"], "env")
+    }
+    assert env.get("WORKER_REPOS_FILE") == "/etc/worker-env/WORKER_REPOS", env
+    mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(zeus_worker)["volumeMounts"], "volumeMounts")]
+    table_mounts = [m for m in mounts if m["mountPath"] == "/etc/worker-env"]
+    assert len(table_mounts) == 1, mounts
+    assert "subPath" not in table_mounts[0], table_mounts
+    volumes = {
+        str(_mapping(v, "volume")["name"]): _mapping(v, "volume")
+        for v in _sequence(_pod_spec(zeus_worker)["volumes"], "volumes")
+    }
+    source = _mapping(volumes[str(table_mounts[0]["name"])]["configMap"], "configMap")
+    assert source["name"] == "worker-env", source
+    assert source.get("optional") is True, source
+    assert source.get("items") == [{"key": "WORKER_REPOS", "path": "WORKER_REPOS"}], source
+
+
 def test_upper_system_values_come_from_fixed_named_configmaps(
     rendered: list[Manifest], zeus_worker: Manifest
 ) -> None:
