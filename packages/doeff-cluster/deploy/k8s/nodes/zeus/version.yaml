@@ -2,4 +2,4 @@
 # 変えると、この機体の worker だけが入れ替わる。行は雛形の env の WORK_DIR の直後へ足す — 場所が変わると Pod の template が変わり、版を
 # 変えなくても Pod が作り直される。雛形の env の並びが変わったら、test の操作が組み立てを止める(黙って別の場所へ足さない)。
 - { op: test, path: /spec/template/spec/containers/0/env/1/name, value: WORK_DIR }
-- { op: add, path: /spec/template/spec/containers/0/env/2, value: { name: WORKER_DOEFF_COMMIT, value: "901c200c8ff693e58c49284395a980532bae760f" } }
+- { op: add, path: /spec/template/spec/containers/0/env/2, value: { name: WORKER_DOEFF_COMMIT, value: "44778ca69e9d101f757721c4b5d283c57f856d80" } }
