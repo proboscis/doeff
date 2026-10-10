@@ -519,6 +519,21 @@ class DrainWorker(_doeff_effect_base[dict]):
     ttl_seconds: float = ...
 
 @_doeff_dataclass(frozen=True)
+class RollWorker(_doeff_effect_base[str | None]):
+    name: str
+
+@_doeff_dataclass(frozen=True)
+class DrainGeneration(_doeff_effect_base[dict]):
+    name: str
+    boot: str
+    ttl_seconds: float = ...
+
+@_doeff_dataclass(frozen=True)
+class StopElder(_doeff_effect_base[None]):
+    name: str
+    boot: str
+
+@_doeff_dataclass(frozen=True)
 class PreparationsOf(_doeff_effect_base[tuple]):
     name: str
 
@@ -653,6 +668,12 @@ class PartsOf(_doeff_effect_base[SimParts]):
 @_doeff_dataclass(frozen=True)
 class HostTruthOf(_doeff_effect_base[HostTruth]):
     name: str
+    boot: str | None = None
+
+@_doeff_dataclass(frozen=True)
+class RollBellOf(_doeff_effect_base[Promise]):
+    name: str
+    boot: str
 
 @_doeff_dataclass(frozen=True)
 class PutHostTruth(_doeff_effect_base[None]):
@@ -787,6 +808,7 @@ class NextWorldDue(_doeff_effect_base[int | None]):
 @_doeff_dataclass(frozen=True)
 class StopRequestOf(_doeff_effect_base[HostStop]):
     name: str
+    boot: str | None = None
 
 @_doeff_dataclass(frozen=True)
 class CoordinatorStarted(_doeff_effect_base[None]):
@@ -1090,6 +1112,9 @@ def generation_end(loop: Task) -> _Program[str, object]:
 def worker_keeper(worker: SimWorker, policy: WorkerPolicy) -> _Program[str, object]:
     ...
 
+def elder_end(ender: Task, watcher: Task, name: str, boot: str) -> _Program[None, object]:
+    ...
+
 @dataclass
 class StepBook:
     released: tuple = ...
@@ -1183,6 +1208,17 @@ def pause_taken(pausing: SimPauses, kind: str) -> _Program[SimPauses | None, obj
     ...
 
 def next_world_due(intake: SimIntake, hosts: dict, pausing: SimPauses, now_ms: int) -> _Program[int | None, object]:
+    ...
+ELDER_MARK: str
+ROLLED: str
+
+def elder_key(name: str, boot: str) -> str:
+    ...
+
+def host_key(hosts: dict, name: str, boot: str | None) -> str:
+    ...
+
+def pid_host_key(hosts: dict, name: str, pid: int) -> str:
     ...
 
 def sim_world(plan: SimPlan) -> _Handler:
