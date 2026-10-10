@@ -7,7 +7,7 @@
 ;;; 上の層に見えるのは TurnStarted か失敗の型だけで、起こし直したか使い回したかは見えない。
 ;;; 入力の前の事前起動(ClaudeWarmSession)も同じ判断を使う — Reuse は「同じ起動条件の process が既に待っているので起動しない」と読む。
 (import dataclasses [dataclass])
-(import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession])
+(import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession LentCredential])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
 
 
@@ -40,10 +40,10 @@
 (setv StartDecision (| Refuse Reuse Launch))
 
 
-(defn #^ (| float None) retire-time [#^ (| float None) credential-expires-at #^ float floor-seconds]
-  "生きた process を止める刻(資格の期限 − 床・epoch 秒)を、起こした・使い回した手番の spec から決めるため(#3672 の D2)。期限を
-   知らなければ None(床で止めない)。"
-  (if (is credential-expires-at None) None (- credential-expires-at floor-seconds)))
+(defn #^ (| float None) retire-time [#^ (| LentCredential None) credential #^ float floor-seconds]
+  "生きた process を止める刻(資格の期限 − 床・epoch 秒)を、起こした・使い回した手番の spec の借りた資格(credential)か、走っている
+   process へ替えた資格から決めるため(#3672 の D2)。家の資格(None)・期限を知らない資格は None(床で止めない)。"
+  (if (or (is credential None) (is credential.expires-at None)) None (- credential.expires-at floor-seconds)))
 
 (defn #^ bool credential-due [#^ (| float None) retire-after #^ float now]
   "その process を資格の床で止める時か(止める刻を過ぎたか)を判じるため — 手番の境と、手番を走らせていない process の見回りの

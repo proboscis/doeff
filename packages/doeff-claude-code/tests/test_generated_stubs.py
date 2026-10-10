@@ -19,7 +19,10 @@ SOURCE = Path(__file__).resolve().parents[1] / "src"
 # 使い手の repo の main が import する名(module ごと・2026-10-09 の数え — 使い手が型の宣言の写しを消すと、これらの名をこの package の
 # .pyi から読む・#4257)。
 USED = (
-    UsedModule("values", ("FreshSession", "ResumeSession", "ForkSession", "ClaudeHome", "ClaudeSessionSpec", "TurnInput")),
+    UsedModule(
+        "values",
+        ("FreshSession", "ResumeSession", "ForkSession", "ClaudeHome", "ClaudeSessionSpec", "TurnInput", "LentCredential"),
+    ),
     UsedModule(
         "effects",
         (
@@ -37,6 +40,11 @@ USED = (
             "ClaudeLiveLimitExceeded",
             "SessionExported",
             "SessionNotFound",
+            "ClaudeReplaceSessionCredential",
+            "CredentialReplaced",
+            "NoSuchSession",
+            "SessionProcessDown",
+            "HomeCredentialSession",
         ),
     ),
     UsedModule("fake", ("FakeReply", "FakeClaudeWorld", "StopHookRejection")),

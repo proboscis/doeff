@@ -126,6 +126,7 @@
     "doeff-ban-finally-doctrl",
     "doeff-cancel-must-be-effectful",
     "doeff-classify-effect-must-lift-to-perform",
+    "doeff-claude-code-lent-credential-not-in-child-env",
     "doeff-cluster-program-arguments-are-built-in-one-place",
     "doeff-doexpr-root-boundary-python",
     "doeff-doexpr-root-check-to-generator-strict",
