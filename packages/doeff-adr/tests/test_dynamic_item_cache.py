@@ -1,8 +1,8 @@
 """動的な値と明示idの収集記録、および古い記録を実行しない反例(#1459)。"""
 
 import hashlib
+import json
 import os
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,12 +101,18 @@ def cache_path(project: pytest.Pytester) -> Path:
 
 def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project: pytest.Pytester) -> None:
     project: pytest.Pytester = dynamic_project
-    # 書いた直後の file は記録の時刻の区切りの内で、stat を信じず hash で確かめる(card ki-5b70c4b62814)。本物の作業木の file と同じく、
-    # 最後の変更から区切りの幅を越えてから記録を取ると、次の収集は hash を読まない。
-    time.sleep(RACY_WINDOW_NS / 1_000_000_000 + 0.1)
     cold: pytest.RunResult = collect(project)
     assert len(nodeids(cold)) == 4
     assert imports(project) == ["imported"]
+    # 書いた直後の file は記録の時刻の区切りの内で、stat を信じず hash で確かめる(card ki-5b70c4b62814)。本物の作業木の file と同じく
+    # 最後の変更から区切りの幅を越えた後に記録を取った形へ、記録の時刻を書き換える(壁の時計で待たない — 収集は別の process なので
+    # 時刻の供給は差し替えられない)。
+    entry: object = json.loads(cache_path(project).read_text())
+    assert isinstance(entry, dict) and isinstance(entry["sources"], list) and entry["sources"], entry
+    for source in entry["sources"]:
+        assert isinstance(source, dict) and isinstance(source["mtime_ns"], int) and isinstance(source["ctime_ns"], int), source
+        source["recorded_ns"] = max(source["mtime_ns"], source["ctime_ns"]) + 10 * RACY_WINDOW_NS
+    cache_path(project).write_text(json.dumps(entry))
     warm: pytest.RunResult = collect(project)
     assert nodeids(warm) == nodeids(cold)
     assert imports(project) == []
