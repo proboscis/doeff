@@ -41,6 +41,7 @@
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
@@ -51,6 +52,8 @@
 (val T (ClusterTiming))
 (val V {"python" "3.14.0" "doeff" "1"})
 (val OTHER {"python" "3.9.6" "doeff" "0"})
+;; service の宣言の行の版(task の版とも Program の行の版とも違う — service の cache が宣言の版で決まる事を見る)。
+(val DECLARED {"python" "3.8.0" "doeff" "0"})
 (val PACKAGE-ROOT (. (Path __file__) (resolve) parent parent))
 
 
@@ -233,7 +236,7 @@
   (val state-dir (/ tmp-path "state"))
   (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ state-dir "tasks")) :transport transport))
   (<- host (host-settings state-dir))
-  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program SERVICE-SHA))
+  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program SERVICE-SHA :versions (environ-pairs V)))
   (val tasks (.accept-tasks link [{"id" "t1" "name" "n" "revision" "r" "versions" V "program" TASK-SHA}]))
   (.accept-programs link (+ #(service) tasks))
   ;; service と同じく cache の file({"blob" "versions"})に取る(返事の行は Program を運ばない)。
@@ -254,14 +257,14 @@
   (.accept-tasks link [])
   (.accept-programs link #(service))
   (assert (not (.exists cached)) "返事から外れた task の Program の cache が残った")
-  (assert (.exists (program-file (.program-dir link) SERVICE-SHA)) "service の job の Program の cache が消えた")
+  (assert (.exists (! (spec-program-file (.program-dir link) service))) "service の job の Program の cache が消えた")
   (assert (= (list (.iterdir (/ state-dir "tasks"))) []))
   ;; service の job と同じ Program を指す task は、task が外れても今の job が参照するので残す。
   (val shared (.accept-tasks link [{"id" "t2" "name" "n" "revision" "r" "versions" V "program" SERVICE-SHA}]))
   (.accept-programs link (+ #(service) shared))
   (.accept-tasks link [])
   (.accept-programs link #(service))
-  (assert (.exists (program-file (.program-dir link) SERVICE-SHA))))
+  (assert (.exists (! (spec-program-file (.program-dir link) service)))))
 
 
 ;; --- 版は task の事実: 同じ Program を後から別の版の送り手が置いても、前に積んだ task はその task の版で比べる(#3762) ----
@@ -315,8 +318,9 @@
   ;; 1 つの worker の口が 2 本の task(同じ sha・違う版)を受け、coordinator から Program を取る。
   (<- transport httpx.MockTransport (coordinator-programs [(get reply-b 0)] 6))
   (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks")) :transport transport))
-  ;; 同じ Program を指す service の job(版を持たない)も並べる — service は今までどおり coordinator の Program の行の版で比べる。
-  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program sha))
+  ;; 同じ Program を指す service の job も並べる — service は宣言の行の版(DECLARED)で比べ、coordinator の Program の行の版(B)は
+  ;; 使わない(card ki-172e63fed4c7)。
+  (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program sha :versions (environ-pairs DECLARED)))
   (val specs (.accept-tasks link rows))
   (.accept-programs link (+ #(service) specs))
   (val by-revision (dfor s specs s.revision s))
@@ -332,7 +336,7 @@
   (val read-b (read-program (str cached-b) ""))
   (assert (isinstance (get read-b 1) VersionMismatch) read-b)
   (assert (in "3.9.6" (str (get read-b 1))) (str (get read-b 1)))
-  (assert (= (get (json.loads (.read-text cached-service :encoding "utf-8")) "versions") OTHER))
+  (assert (= (get (json.loads (.read-text cached-service :encoding "utf-8")) "versions") DECLARED))
   ;; task が返事から外れたら、その task の cache だけを消す(service の cache は残す)。
   (.accept-tasks link [])
   (.accept-programs link #(service))

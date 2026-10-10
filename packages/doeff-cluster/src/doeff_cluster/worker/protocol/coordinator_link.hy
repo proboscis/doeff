@@ -177,11 +177,12 @@
 
 
 (defk fetched-program [cell options path sha versions]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: path str) (: sha str) (: versions (| tuple None))] :post [(: % None)]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: path str) (: sha str) (: versions tuple)] :post [(: % None)]
    :tags {:context "worker" :role "protocol" :reads "json"}}
   "詰めた Program 1 つを coordinator の /programs/<sha> から取り、子の入口が読む形の cache の file path({\"blob\" \"versions\"})に置くため。
-   versions = 子の入口が比べる送り手の版: task は task の行の版(名の順の #(名 版) の組 — #3762)・None は答えの versions(service —
-   coordinator の Program の行の版)。中身の
+   versions = 子の入口が比べる送り手の版(名の順の #(名 版) の組 — service は宣言の行の版・task は task の行の版。path はこの版で
+   決まる — launch.spec-program-name)。答えの versions(coordinator の Program の行の版 — 同じ sha を後から置いた送り手の版に
+   上書きされる)は使わない(#3762・card ki-172e63fed4c7)。中身の
    sha256 がキーと合わない物・取れない物は書かずに 1 行出す(次の拍で試し直す — 子は file が無いので起動の時に理由つきで落ちる)。"
   (<- reply RoutedReply (routed-request cell.route "GET" (+ "/programs/" sha) options None None))
   (setv cell.route reply.route)
@@ -197,11 +198,7 @@
   (if (is-not problem None)
       (<- (slog (.format "worker: Program {} を取れない: {}" sha problem)))
       (do (<- (file-done (MakeDirectory (os.path.dirname path))))
-          (<- (file-done (WriteText path (program-file-text (get body "blob")
-                                                            (match versions
-                                                              None (.get body "versions" {})
-                                                              pairs (dict pairs)))
-                                    :replace True)))))
+          (<- (file-done (WriteText path (program-file-text (get body "blob") (dict versions)) :replace True)))))
   None)
 
 
@@ -209,8 +206,8 @@
   {:pre [(: state LinkState) (: cell RouteCell) (: options RouteOptions) (: specs tuple)] :post [(: % None)]}
   "宣言の job と task のうち、cache に無い詰めた Program を取り寄せ(改訂 1 の F — service と task で同じ仕組み)、返事から外れた task の
    Program の cache を、今の job と task のどれも参照していなければ消すため(task ごとの印 <id>.program から引く — service の job の
-   Program は消さない)。cache の file は service が Program のキーごと・task が (Program のキー・task の行の版) ごと(#3762 — 同じ sha
-   でも版の違う task は別の file を読む・launch.spec-program-name)。"
+   Program は消さない)。cache の file は (Program のキー・版) ごと — service は宣言の行の版・task は task の行の版(#3762・card
+   ki-172e63fed4c7 — 同じ sha でも版が違えば別の file を取る・launch.spec-program-name)。"
   (<- (file-done (MakeDirectory state.program-dir)))
   (var wanted #())
   (for [s specs :if s.program]

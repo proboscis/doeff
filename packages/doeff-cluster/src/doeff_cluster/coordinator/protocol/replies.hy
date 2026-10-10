@@ -48,8 +48,9 @@
   {:pre [(: spec JobSpec)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "worker へ渡す job の宣言 → heartbeat の返事の jobs の 1 つの JSON の形(Program・環境変数・置き場・実行環境・入れ替えの欄は在る時だけ)。"
   (| {"name" spec.name "entry" spec.entry "args" (list spec.args) "revision" spec.revision "once" spec.once}
-     ;; Program の job だけ(改訂 1 の F・G): 詰めた Program の置き場のキー(worker が /programs/<sha> から取る)と子の環境変数。
-     (if spec.program {"program" spec.program} {})
+     ;; Program の job だけ(改訂 1 の F・G): 詰めた Program の置き場のキー(worker が /programs/<sha> から取る)・宣言の版(子の入口が
+     ;; 比べる送り手の版 — worker は Program の cache の file をこの版ごとに分ける・card ki-172e63fed4c7)と子の環境変数。
+     (if spec.program {"program" spec.program "versions" (dict spec.versions)} {})
      (if spec.environ {"environ" (dict spec.environ)} {})
      (if (is spec.placement None) {} {"placement" spec.placement})
      ;; 実行環境の job だけ: 宣言の JSON(worker が env の root を準備し、版を env のキーへ置き換える)。

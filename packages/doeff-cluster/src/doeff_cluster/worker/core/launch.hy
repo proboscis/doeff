@@ -55,18 +55,18 @@
 
 
 (defk spec-program-name [spec]
-  {:pre [(: spec JobSpec) (isinstance spec.program str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  {:pre [(: spec JobSpec) (isinstance spec.program str) (isinstance spec.versions tuple)] :post [(: % str)]
+   :tags {:context "worker" :role "judgment"}}
   "Program の job 1 本の cache の file の置き方を 1 か所で決めるため(Program の cache の dir からの相対 path — coordinator への口が
    取って書き、task の印 <id>.program に残して掃除に使い、子 process の言い換えが spec-program-file で --program に渡す)。
-   service(spec.versions が None)は <sha>.json。task は tasks/<版の指紋>/<sha>.json — task の版は task の行の版で、同じ sha の
-   Program を版の違う 2 本の task が使っても file が上書きし合わないように版ごとに分ける(#3762)。file の名はどちらも <sha>.json の
-   まま(記録係の header が file の名から Program のキーを読む — shared/entry/boundary_recorder)。
+   service も task も <版の指紋>/<sha>.json — 版は service が宣言の行の版・task が task の行の版(spec.versions)。同じ sha の Program を
+   版の違う 2 本の task が使っても file が上書きし合わず(#3762)、同じ sha の Program を別の版で宣言し直した service は別の file を
+   取り直す(card ki-172e63fed4c7 — sha だけのキーでは前の版の file を持ち続け、子の入口が版の違いで断り続けた)。file の名は <sha>.json
+   のまま(記録係の header が file の名から Program のキーを読む — shared/entry/boundary_recorder)。
    版の指紋 = 名の順の #(名 版) の組の正規 JSON の sha256 の頭 16 桁。"
-  (match spec.versions
-    None (str (program-file (Path) spec.program))
-    versions (do (val canonical (json.dumps (lfor #(k v) versions [k v]) :ensure-ascii False :separators #("," ":")))
-                 (val digest (cut (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))) 0 16))
-                 (str (program-file (/ (Path "tasks") digest) spec.program)))))
+  (val canonical (json.dumps (lfor #(k v) spec.versions [k v]) :ensure-ascii False :separators #("," ":")))
+  (val digest (cut (.hexdigest (hashlib.sha256 (.encode canonical "utf-8"))) 0 16))
+  (str (program-file (Path digest) spec.program)))
 
 
 (defk spec-program-file [program-dir spec]

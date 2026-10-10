@@ -114,7 +114,7 @@
 
 ;; Program の job の service の spec の雛形。検めの対象は入口(spec.entry)だけなので、検めたい import path を (replace SERVICE :entry …)
 ;; で入口に置く(名を変える時は :name も)。
-(val SERVICE (JobSpec "w" "probe_ok:program" #("service" "--identity" (* "0" 16)) "rev1" :program SAMPLE-PROGRAM))
+(val SERVICE (JobSpec "w" "probe_ok:program" #("service" "--identity" (* "0" 16)) "rev1" :program SAMPLE-PROGRAM :versions #()))
 
 
 (defk entry-probe-scene [tree good broken missing]

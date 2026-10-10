@@ -193,7 +193,7 @@
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read))
   (<- work str (job-work-dir settings spec.name))
-  ;; 子へ渡す Program の cache の file(task は task の行の版ごとの file — launch.spec-program-file・#3762)。
+  ;; 子へ渡す Program の cache の file(版ごとの file — service は宣言の行の版・task は task の行の版・launch.spec-program-file)。
   (var program-path None)
   (when spec.program
     (<- cached Path (spec-program-file (Path settings.program-dir) spec))

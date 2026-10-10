@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.intent.service_model [Declaration])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.core.launch [spec-program-file])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec])
 (import tests.fixtures.services [lab])
@@ -74,7 +74,7 @@
       (assert (= spec.program sha) spec)
       (assert (= spec.environ #(#("TALLY_BASE" "1"))) spec.environ)
       (assert (= (get spec.args 0) "service") spec.args)
-      (val cached (program-file (.program-dir link) sha))
+      (val cached (! (spec-program-file (.program-dir link) spec)))
       (assert (.exists cached) (list (.iterdir (.program-dir link))))
       (assert (= (get (json.loads (.read-text cached :encoding "utf-8")) "blob") (get declaration.programs sha)))
       ;; 子 process: 宣言の引数(identity の指紋)と cache の file で job_entry の service 入口を起こす。

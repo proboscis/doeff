@@ -62,16 +62,20 @@
   ;; 印が偽に戻った拍から普通の入れ替えへ進む。coordinator は持たない(返事の JSON にも保存にも載らない — worker の中だけの欄)。比べない欄
   ;; (印だけが変わっても process を起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ bool hold-version (field :default False :compare False))
-  ;; 子の入口が比べる送り手の版(#3762)。task = task の行の versions(task を作った時の送り手の版 — 名の順の #(名 版) の tuple)・
-  ;; None = coordinator の Program の行の版(service — /programs/<sha> の答えの versions)。同じ sha の Program を後から別の版の送り手が
-  ;; 置くと Program の行の版は上書きされるので、待っている task の版は task の行から読む(2026-10-06 の t661)。worker は task の
-  ;; Program の cache の file を版ごとに分けて置く(worker/core/launch.spec-program-file)。coordinator は持たない(worker の中だけの欄)。
-  ;; 比べない欄(task は 1 度だけ走る・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  ;; 子の入口が比べる送り手の版(名の順の #(名 版) の tuple — #3762)。Program の job は必ず持つ: service = Service の宣言の行の
+  ;; run.versions(coordinator が spec-of-declaration で読み、heartbeat の返事の job の行に載せる)・task = task の行の versions(task を
+  ;; 作った時の送り手の版)。coordinator の Program の行の版は、同じ sha の Program を後から別の版の送り手が置くと上書きされるので使わない
+  ;; (2026-10-06 の t661・2026-10-10 の zeus の merge-queue — card ki-172e63fed4c7)。worker は Program の cache の file を版ごとに分けて
+  ;; 置く(worker/core/launch.spec-program-file)— 版が替われば別の file なので取り直す。None = Program を持たない job。
+  ;; 比べない欄(service の版の替わりは identity の指紋で args に載る・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| (get tuple #((get tuple #(str str)) ...)) None) versions (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
-      (raise (ValueError "job には name・entry・revision が必要です"))))
+      (raise (ValueError "job には name・entry・revision が必要です")))
+    ;; Program の cache の file は版ごと(launch.spec-program-name)— 版の無い Program の job は、どの版の file を取るかを決められない。
+    (when (and (is-not self.program None) (is self.versions None))
+      (raise (ValueError (.format "Program の job {} には送り手の版 versions が必要です" self.name)))))
 
   (defn [cached-property] #^ str fingerprint [self]  ; defk にできない: 値の属性(Program の外の純粋な判断 probe-of・statuses が読む)
     "指紋 spec-hash の計算の本体(公開の入口は doeff_cluster.shared.core.job_rules.spec-hash)。値ごとに最初に読まれた時に 1 度だけ

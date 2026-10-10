@@ -26,7 +26,7 @@
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json])
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
+(import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [spec-program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView WorkerPolicy])
 (import doeff_cluster.worker.core.shim_timing [shim-spans])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings])
@@ -149,7 +149,7 @@
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
   (val spec (JobSpec "quiet" "doeff_cluster.worker.entry.job_entry" #("service" "--identity" "0123456789abcdef")
-                     "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64)))
+                     "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64) :versions #()))
   ;; 検めの子の起こし方の判断(probe-command — #2465)を、子を起こさずに見る。
   (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec)) :hy-command "/worker/bin/hy" :uv "/bin/uv"
                                     :layout (CodeLayout) :allowed-env {} :probe-dir (str tmp-path)))
@@ -218,7 +218,7 @@
   (<- spec (declared-job-spec (! (spec-json (. (job-from-json row) spec))) False))
   ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。
   (assert (is-not spec.program None) spec)
-  (val cached (program-file (Path rig.host.program-dir) spec.program))
+  (val cached (! (spec-program-file (Path rig.host.program-dir) spec)))
   (.mkdir cached.parent :parents True :exist-ok True)
   (.write-text cached (json.dumps {"blob" (get declaration.programs spec.program) "versions" (get row "run" "versions")})
                :encoding "utf-8")

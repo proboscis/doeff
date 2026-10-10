@@ -55,6 +55,8 @@
            :retired-ms (.get job "retiredMs")
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
+           ;; 子の入口が比べる送り手の版 = 宣言の版(Program の job の行は必ず持つ — cache の file は版ごと・card ki-172e63fed4c7)。
+           :versions (if (in "program" job) (environ-pairs (get job "versions")) None)
            :environ (environ-pairs (.get job "environ" {}))
            ;; 途絶しても動かし続けてよい印(#2804 — 移せる先の無い job だけが持つ・無ければ偽 = 古い coordinator の返事も同じ)。
            :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)

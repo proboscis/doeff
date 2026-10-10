@@ -78,6 +78,9 @@
                    ;; 退いた process の寿命の上限(#4072 の D-2 — 宣言の readiness の retiredSeconds・handoff の job だけ)。
                    :retired-ms (if handoff (retired-lifetime-ms (.get item "readiness")) None)
                    :program (get run "program")
+                   ;; 子の入口が比べる送り手の版 = 宣言の行の run.versions(宣言の道具が Program と一緒に置いた版)。worker は Program の
+                   ;; cache の file をこの版ごとに分けるので、同じ sha の Program を別の版で宣言し直すと取り直す(card ki-172e63fed4c7)。
+                   :versions (environ-pairs (.get run "versions" {}))
                    :environ (environ-pairs (.get item "environ" {}))))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
@@ -113,7 +116,7 @@
   {:pre [(: item dict)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "Program の job の宣言の行が受けられない理由(受けられれば None)。旧い形(run.factory・run.env・run.config・requires)・
    image の版を追う欄(baseFrom・base・overlay — Program を詰めた commit と別の commit で解くことになる — 改訂 1 の E)・置き場のキーの形・identity の欠け・
-   environ の名(child-environ-refusal の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
+   versions の形・environ の名(child-environ-refusal の検め・実行環境の env-vars との重なり — 改訂 1 の G)を検める。"
   (setv run (get item "run")
         old (lfor k OLD-RUN-KEYS :if (in k run) k)
         environ (.get item "environ" {})
@@ -129,6 +132,7 @@
       (.format "run.program は詰めた Program の置き場のキー(64 桁の sha256): {!r}" (.get run "program"))
     (not (and (isinstance (.get run "identity") dict) (isinstance (.get (get run "identity") "function") str)))
       "run.identity(呼んだ関数の参照と引数)が無い"
+    (not (text-map? (.get run "versions" {}))) (.format "run.versions は部品の名 → 版の文字列の object: {!r}" (.get run "versions"))
     (not (isinstance environ dict)) (.format "environ は文字列の鍵と値の object: {!r}" environ)
     True (environ-refusal environ declared)))
 

@@ -18,7 +18,7 @@
 (val GOLDEN [#((JobSpec "a" "m" #("x" "y") "r1") "94f50811d9bce4fd")
              #((JobSpec "a" "m" #("x" "y") "r1" :once True :runtime-env "{\"k\":1}" :environ #(#("A" "1") #("B" "ü")))
                "dec1fef94656ce60")
-             #((JobSpec "t/1" "m" #() "r2" :placement 3 :handoff True :program "sha") "72d20e1c2eced251")])
+             #((JobSpec "t/1" "m" #() "r2" :placement 3 :handoff True :program "sha" :versions #()) "72d20e1c2eced251")])
 
 ;; 比べる欄を 1 つずつ替えた値(指紋が変わるべき物)。
 (val COMPARED-CHANGES [{"name" "svc2"} {"entry" "pkg.other"} {"args" #("service" "--identity" "abd")} {"revision" "rev2"}
@@ -26,7 +26,7 @@
 
 ;; 比べない欄だけを替えた値(指紋が変わらないべき物)。
 (val UNCOMPARED-CHANGES [{"placement" 7} {"handoff" True} {"ready_instance" "i-1"} {"handoff_abandoned" True} {"detached" True}
-                         {"env_key" "k"} {"program" "sha"} {"keep_when_cut_off" True} {"hold_version" True}
+                         {"env_key" "k"} {"program" "sha" "versions" #()} {"keep_when_cut_off" True} {"hold_version" True}
                          {"versions" #(#("doeff" "1"))}])
 
 
