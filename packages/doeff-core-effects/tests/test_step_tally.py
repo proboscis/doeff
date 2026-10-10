@@ -138,3 +138,25 @@ def test_close_of_a_key_never_opened_is_none() -> None:
 
     assert _tallied(body()) is None
     assert scheduler_trace_sink() is None
+
+
+def test_window_sums_steps_per_spawn_site() -> None:
+    """The window answers per-site sums (sites): one row per task spawn site, CPU-heaviest first, and the rows add up to the window."""
+
+    @do
+    def body():
+        yield OpenStepTally("sites")
+        yield _run_busy()
+        return (yield CloseStepTally("sites"))
+
+    tally = _tallied(body())
+    assert tally.sites, tally
+    assert sum(row.steps for row in tally.sites) == tally.steps, tally
+    assert sum(row.wall_ns for row in tally.sites) == tally.wall_ns, tally
+    assert sum(row.cpu_ns for row in tally.sites) == tally.cpu_ns, tally
+    cpus = [row.cpu_ns for row in tally.sites]
+    assert cpus == sorted(cpus, reverse=True), tally.sites
+    heaviest = tally.sites[0]
+    assert heaviest.cpu_ns >= STEPS * BUSY_CPU_MS * 1_000_000, tally.sites
+    assert heaviest.site is not None and "test_step_tally.py" in heaviest.site, heaviest
+    assert len({row.site for row in tally.sites}) == len(tally.sites), tally.sites
