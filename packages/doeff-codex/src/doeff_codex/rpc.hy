@@ -35,6 +35,13 @@
   (#^ str method)
   (#^ OpaqueJson params))
 
+(defwire ResponseWire
+  "codex からの要求(道具の許可の問いなど)への答え 1 つ(要求と同じ id と result)。result は method ごとの形を中を読まずに運ぶ。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :reject}
+  (#^ str jsonrpc)
+  (#^ (| int str) id)
+  (#^ OpaqueJson result))
+
 (defwire NotificationWire
   "JSON-RPC の通知 1 つ(答えを求めない — id が無い)。initialized は params を持たない。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :reject}
@@ -161,4 +168,11 @@
   {:pre [(: request-id int) (: thread-id str) (: turn-id str)] :post [(: % str)] :tags {:context "codex" :role "foundation"}}
   "走っているターンを途中で止める turn/interrupt の要求の行を作るため(ターンは状態 interrupted で終わる)。"
   (<- line (request-line request-id "turn/interrupt" (TurnInterruptParamsWire :thread-id thread-id :turn-id turn-id)))
+  line)
+
+
+(defk server-response-line [request-id #^ OpaqueJson result]
+  {:pre [(: request-id (| int str)) (: result OpaqueJson)] :post [(: % str)] :tags {:context "codex" :role "foundation"}}
+  "codex からの要求(ServerRequest)に、同じ id で答える行を作るため(result は上の層が method で選んだ形)。"
+  (<- line (dump-json (ResponseWire :jsonrpc JSONRPC-VERSION :id request-id :result result)))
   line)
