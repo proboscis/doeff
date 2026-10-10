@@ -154,6 +154,17 @@ def _absolute(path: Path) -> Path:
     return Path(os.path.normpath(path.absolute()))
 
 
+def in_root(root: Path, path: Path) -> Path | None:
+    """名指した path を根の綴り(_absolute — symlink を辿らない絶対 path)の下へ写す。綴りが根の下ならそのまま、symlink を辿ると
+    根の下なら根の綴りへ写し直し(相対 path を繋ぐ Path.cwd() は辿った先の綴りを返す — card ki-ed254bf53094)、どちらでもなければ
+    None(根の外)。"""
+    absolute = _absolute(path)
+    if absolute.is_relative_to(root):
+        return absolute
+    resolved, base = path.resolve(), root.resolve()
+    return root / resolved.relative_to(base) if resolved.is_relative_to(base) else None
+
+
 def hy_files(paths: list[Path]) -> list[Path]:
     found: list[Path] = []
     for path in paths:
@@ -1100,8 +1111,13 @@ def main(argv: list[str] | None = None) -> int:
     for entry in reversed(roots):
         if str(entry) not in sys.path:
             sys.path.insert(0, str(entry))
-    report = hy_files([p if p.is_absolute() else Path.cwd() / p for p in (args.paths or [root])])
-    report = [path for path in report if path.is_relative_to(root)]
+    # 名指した path は根の綴りへ写す。根の外の path は黙って捨てず断る — 捨てると赤の在る file で 0 件と答える(card ki-ed254bf53094)。
+    named = [(p, in_root(root, p if p.is_absolute() else Path.cwd() / p)) for p in (args.paths or [root])]
+    outside = [str(p) for p, placed in named if placed is None]
+    if outside:
+        print(f"doeff-hy-check: 走れなかった: 名指した path が根の外(根 = {root}): {'・'.join(outside)}", file=sys.stderr)
+        return 2
+    report = hy_files([placed for _, placed in named if placed is not None])
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
         closure = project_closure(root, roots, report, cache_dir)
