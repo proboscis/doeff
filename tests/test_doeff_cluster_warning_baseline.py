@@ -18,6 +18,9 @@ from types import ModuleType
 
 ROOT: Path = Path(__file__).resolve().parents[1]
 SCRIPT: Path = ROOT / "scripts" / "doeff_cluster_warning_baseline.py"
+# 子は自前の環境で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 各々の環境に明示で渡し、checkout
+# (script の隣・.venv の site-packages)へ .pyc を書かない(書くと session の終わりの検 conftest.py が赤 — 新しい .venv で走る
+# 日次の実弾 2026-10-10)。
 
 
 def _module() -> ModuleType:
@@ -86,7 +89,7 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
     linter: Path = tools / "doeff-linter"
     linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
     linter.chmod(0o755)
-    environment = {"PATH": f"{tools}:/usr/bin:/bin"}
+    environment = {"PATH": f"{tools}:/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}
     result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(repo), "check"], cwd=repo, env=environment,
                             capture_output=True, text=True, check=False)
     assert result.returncode == 1, result.stderr
@@ -111,7 +114,7 @@ def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, 
     linter: Path = tools / "doeff-linter"
     linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
     linter.chmod(0o755)
-    return {"PATH": f"{tools}:/usr/bin:/bin"}
+    return {"PATH": f"{tools}:/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"}
 
 
 def _absolute_report(root: Path, files: list[str]) -> list[dict[str, object]]:
@@ -219,7 +222,7 @@ def _cluster_repo(tmp_path: Path) -> ClusterRig:
     assert real_uv is not None, "uv が要る(script の Python を走らせる)"
     environment: dict[str, str] = {
         "PATH": f"{tools}:{Path(real_uv).parent}:/usr/bin:/bin", "HOME": str(tmp_path / "home"),
-        "UV_CACHE_DIR": _uv_dir(real_uv, "cache"), "UV_PYTHON_INSTALL_DIR": _uv_dir(real_uv, "python"),
+        "UV_CACHE_DIR": _uv_dir(real_uv, "cache"), "UV_PYTHON_INSTALL_DIR": _uv_dir(real_uv, "python"), "PYTHONDONTWRITEBYTECODE": "1",
     }
     return ClusterRig(repo=repo, environment=environment, dev=tmp_path / "home" / ".local" / "share" / "doeff-linter-dev")
 

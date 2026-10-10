@@ -178,7 +178,10 @@ def _rig(tmp_path: Path) -> Rig:
     path_linter.write_text(f"#!{sys.executable}\n{FAKE_PATH_LINTER}")
     path_linter.chmod(0o755)
     # 置き場は HOME の下の決まった場所(scripts/doeff_linter_locked.py)— HOME を一時の dir に向けて差し替える。
-    environment = {"PATH": f"{fake}{os.pathsep}{os.defpath}", "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(tmp_path)}
+    # 子は自前の環境で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 明示で渡し、checkout(script の隣・
+    # .venv の site-packages)へ .pyc を書かない(書くと session の終わりの検 conftest.py が赤 — 新しい .venv で走る日次の実弾 2026-10-10)。
+    environment = {"PATH": f"{fake}{os.pathsep}{os.defpath}", "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(tmp_path),
+                   "PYTHONDONTWRITEBYTECODE": "1"}
     subprocess.run(["git", "init", "-q"], cwd=repo, env=environment, check=True)
     rig = Rig(repo=repo, environment=environment, dev=tmp_path / ".local" / "share" / "doeff-linter-dev",
               snapshots=tmp_path / ".cache" / "doeff-linter-snapshots")
