@@ -1,4 +1,4 @@
-{"type":"thread.started","thread_id":"01a12617-5d90-7cd3-a52c-c884059f6303"}
+{"type":"thread.started","thread_id":"01a12627-3448-72a3-92f1-efd1faadfc7b"}
 {"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-mock` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
 {"type":"turn.started"}
 {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Hello, world."}}

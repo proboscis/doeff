@@ -9,8 +9,10 @@
 (require doeff-hy.macros [deftest defk <- var])
 (import json)
 (import pathlib [Path])
+(import doeff_hy.json_value [OpaqueJson])
 (import doeff_codex.lines [classify-line TextDelta AgentMessageDone ReasoningDelta TurnStarted TurnEnded TurnStatus TurnError
-                           ThreadStarted TokenUsage Response ErrorResponse ServerRequest Other Unparsed])
+                           ThreadStarted TokenUsage Response ErrorResponse ServerRequest Other Unparsed ItemStarted ItemDone
+                           UnknownValue])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
 
@@ -71,6 +73,54 @@
   (assert (= (. (get failed 0) http-status) 429) failed))
 
 
+(defk recorded-line [#^ str name #^ str method]
+  {:pre [(: name str) (: method str)] :post [(: % dict)] :tags {:context "codex-test" :role "foundation"}}
+  "録った 1 本の stdout から、method の最初の行を JSON の object で(版で増える値を足した行を作る元にするため)。"
+  (next (gfor line (.splitlines (.read-text (/ RECORDED f"{name}.stdout.jsonl") :encoding "utf-8"))
+              :if (.strip line)
+              :setv message (json.loads line)
+              :if (= (.get message "method") method)
+              message)))
+
+
+(deftest test-a-turn-ends-even-when-its-status-or-error-kind-is-unknown
+  ;; 版で増えた状態・誤りの種類が来ても、ターンの終わり(TurnEnded)は作る — 落とすと上の層はターンの終わりを待ち続ける。
+  ;; 知らない値は UnknownValue で中を読まずに運ぶ(既知の値や None に読み替えない)。元は録った 429 の turn/completed の行。
+  (<- ended-line (recorded-line "rate-limit" "turn/completed"))
+  (val turn (get ended-line "params" "turn"))
+  (val drifted {#** ended-line
+                "params" {#** (get ended-line "params")
+                          "turn" {#** turn
+                                  "status" "cancelled"
+                                  "error" {#** (get turn "error") "codexErrorInfo" {"someFutureKind" {"httpStatusCode" 503}}}}}})
+  (<- ended (classify-line (json.dumps drifted)))
+  (assert (isinstance ended TurnEnded) ended)
+  (assert (= ended.turn-id (get turn "id")) ended)
+  (assert (= ended.status (UnknownValue :value (OpaqueJson.of "cancelled"))) ended)
+  (assert (= ended.error-kind (UnknownValue :value (OpaqueJson.of {"someFutureKind" {"httpStatusCode" 503}}))) ended)
+  (assert (is ended.http-status None) ended)
+  ;; 文字列で名乗る種類はそのまま名で読む。
+  (<- error-line (recorded-line "rate-limit" "error"))
+  (val named {#** error-line
+              "params" {#** (get error-line "params")
+                        "error" {#** (get error-line "params" "error") "codexErrorInfo" "usageLimitExceeded"}}})
+  (<- refused (classify-line (json.dumps named)))
+  (assert (and (isinstance refused TurnError) (= refused.error-kind "usageLimitExceeded") (is refused.http-status None)) refused))
+
+
+(deftest test-items-start-and-end-with-their-kind
+  ;; item/started はどの item も種類と id を名乗る(上の層が「考えている」「道具を呼んでいる」を出す材料)。答えの全文でない item の
+  ;; 終わりは ItemDone。全文の無い agentMessage は読めない行。
+  (<- records (recorded-records "two-turns"))
+  (val started (tuple (gfor record records :if (isinstance record ItemStarted) record.item-type)))
+  (assert (= started #("userMessage" "agentMessage" "userMessage" "agentMessage")) started)
+  (val done (tuple (gfor record records :if (isinstance record ItemDone) record.item-type)))
+  (assert (= done #("userMessage" "userMessage")) done)
+  (<- textless (classify-line (json.dumps {"method" "item/completed"
+                                           "params" {"threadId" "t" "turnId" "u" "item" {"type" "agentMessage" "id" "i"}}})))
+  (assert (and (isinstance textless Unparsed) (= textless.method "item/completed")) textless))
+
+
 (deftest test-responses-name-the-thread-and-the-turn
   ;; 要求への答え(id の在る行)は要求の id を持ち、thread/start の答えは thread の id を、turn/start の答えはターンの id を名乗る —
   ;; 上の層が続き(thread/resume)と止め(turn/interrupt)に使う id を答えから読めるように。
@@ -113,8 +163,13 @@
   (<- drifted (classify-line (json.dumps {"method" "item/agentMessage/delta" "params" {"threadId" "t" "turnId" "u" "itemId" "i"}})))
   (assert (and (isinstance drifted Unparsed) (= drifted.method "item/agentMessage/delta") (in "delta" drifted.reason)) drifted)
   ;; codex が問いを返す要求(id と method の両方が在る行 — 道具の許可など)は ServerRequest で、答えに使う id を持つ。
+  ;; 中身は method ごとに形が違うので、中を読まずに運ぶ(答える側が解く)。
   (<- asked (classify-line (json.dumps {"id" 7 "method" "item/commandExecution/requestApproval" "params" {"threadId" "t"}})))
-  (assert (= asked (ServerRequest :id 7 :method "item/commandExecution/requestApproval")) asked)
+  (assert (= asked (ServerRequest :id 7 :method "item/commandExecution/requestApproval" :params (OpaqueJson.of {"threadId" "t"})))
+          asked)
+  ;; result も error も無い答えは読めない行(答えを発明しない)。
+  (<- empty-answer (classify-line (json.dumps {"id" 8 "result" None})))
+  (assert (and (isinstance empty-answer Unparsed) (in "result" empty-answer.reason)) empty-answer)
   ;; 要求への誤りの答え。
   (<- refused (classify-line (json.dumps {"id" 9 "error" {"code" -32600 "message" "bad"}})))
   (assert (= refused (ErrorResponse :id 9 :code -32600 :message "bad")) refused)
