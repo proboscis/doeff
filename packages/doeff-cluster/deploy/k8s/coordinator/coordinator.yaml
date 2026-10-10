@@ -105,7 +105,9 @@ spec:
             - { name: WORK_DIR, value: /work }
             # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。coordinator と worker の
             # どちらを先に上げるかは変更ごとに決まる(../../../README.md「配備の順」)。
-            - { name: WORKER_DOEFF_COMMIT, value: 7f7eab4a81b0846db1b624337b58904b14dc1423 }
+            # e247ea66d = 走っている coordinator の版(2026-10-10 09:46 に上がった)と同じ。この宣言を当て始める時(持ち主の替え)に版を
+            # 下げない — worker の宣言(../worker/worker.yaml)と同じ版。
+            - { name: WORKER_DOEFF_COMMIT, value: e247ea66dc3dc807423460fa9bf7e52f79669090 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
