@@ -813,10 +813,13 @@ class TurnCredential:
     It is never a field of a caller-visible effect: ``LaunchEffect`` carries
     only ``turn_credential_ref`` (a reference the caller holds), and the launch
     handler redeems that reference with ``RedeemTurnCredentialEffect`` — this
-    value is one answer of that effect (issue #979). A handler that can place
-    it puts it into the agent process's turn-auth env
-    (``CLAUDE_CODE_OAUTH_TOKEN`` for Claude), never through ``session_env``
-    (which stays a non-auth overlay). Only the access token travels — a
+    value is one answer of that effect (issue #979). The headless Claude
+    handler places it as the ``.credentials.json`` of a config dir of the
+    agent process's own (``CLAUDE_CONFIG_DIR`` — doeff-claude-code's
+    credential home), never in the process env and never through
+    ``session_env`` (which stays a non-auth overlay), so a refreshed token can
+    replace it while the process runs (``ReplaceSessionCredentialEffect`` —
+    card acp:kanban-issue:ki-4ffdafa021e5). Only the access token travels — a
     refresh token is never carried. The token is kept out of ``repr`` so
     effects, answers and errors never print it.
 
@@ -836,15 +839,13 @@ class TurnCredential:
     ``subscription_type`` and ``rate_limit_tier`` are the plan kind (``pro``,
     ``max`` ...) and the rate limit tier the lender read from the stored
     credential, or ``None`` when the lender has not observed them (card
-    acp:kanban-issue:ki-d81bb8c7eaaa). A Claude CLI given its credential
-    through ``CLAUDE_CODE_OAUTH_TOKEN`` reads these two facts from
-    ``CLAUDE_CODE_SUBSCRIPTION_TYPE`` / ``CLAUDE_CODE_RATE_LIMIT_TIER``
-    (names in ``doeff_agents.agent_env``); without a plan kind it treats the
-    account as possibly team / enterprise and checks the organization policy
-    on every start. A handler that can place them puts each one only when it
-    is not ``None``. Both default to ``None`` (not observed), so a lender
-    that does not read them yet keeps working. They are not secrets, so they
-    stay in ``repr``.
+    acp:kanban-issue:ki-d81bb8c7eaaa). Without a plan kind a Claude CLI
+    treats the account as possibly team / enterprise and checks the
+    organization policy on every start. The headless Claude handler writes
+    them next to the token in the ``.credentials.json`` it places
+    (``subscriptionType`` / ``rateLimitTier`` — ``null`` when not observed).
+    Both default to ``None`` (not observed), so a lender that does not read
+    them yet keeps working. They are not secrets, so they stay in ``repr``.
     """
 
     oauth_token: str = field(repr=False)
@@ -1321,6 +1322,76 @@ class WarmSessionEffect(AgentEffectBase):
     handle: SessionHandle
 
 
+@dataclass(frozen=True)
+class SessionCredentialReplaced:
+    """Answer of ``ReplaceSessionCredentialEffect``: the session's live agent
+    process now holds the redeemed credential; its next upstream call (even
+    in the middle of a turn) uses the new access token."""
+
+
+@dataclass(frozen=True)
+class SessionProcessNotLive:
+    """Answer of ``ReplaceSessionCredentialEffect``: the session has no live
+    agent process (never started, gone down, or going down), so there is
+    nothing to replace. The session's next turn starts with the redeemed
+    credential."""
+
+
+@dataclass(frozen=True)
+class SessionOnHomeCredential:
+    """Answer of ``ReplaceSessionCredentialEffect``: the session was launched
+    on the handler's own home credentials (no turn credential was lent), so
+    there is no lent credential to replace."""
+
+
+@dataclass(frozen=True)
+class ReplacementCredentialUnavailable:
+    """Answer of ``ReplaceSessionCredentialEffect``: the reference could not be
+    redeemed for a lent credential (``TurnCredentialUnavailable``, or the
+    reference names the home credential, which cannot replace a lent one).
+    ``reason`` is for people and never holds a credential value. Nothing was
+    replaced."""
+
+    reason: str
+
+
+ReplaceSessionCredentialOutcome = (
+    SessionCredentialReplaced
+    | SessionProcessNotLive
+    | SessionOnHomeCredential
+    | ReplacementCredentialUnavailable
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReplaceSessionCredentialEffect(AgentEffectBase):
+    """Replace the turn credential of a session's live agent process (card
+    acp:kanban-issue:ki-4ffdafa021e5).
+
+    A lender that refreshes an account kills the previous access token
+    upstream; this hands the refreshed token to the agent process that is
+    already running, so the lender no longer has to hold the refresh while
+    the account is in use. Like ``LaunchEffect`` it carries only a reference
+    (``credential_ref``): the handler redeems it with
+    ``RedeemTurnCredentialEffect`` and the token never appears in this
+    effect. The session's later turns also use the redeemed credential.
+
+    Handlers that cannot place a turn credential into a running process
+    refuse it with ``AgentCapabilityUnsupportedError``; a session this handler
+    does not hold goes to the outer handler.
+
+    Yields: SessionCredentialReplaced | SessionProcessNotLive |
+    SessionOnHomeCredential | ReplacementCredentialUnavailable
+    """
+
+    handle: SessionHandle
+    credential_ref: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.credential_ref, str) or not self.credential_ref:
+            raise ValueError("ReplaceSessionCredentialEffect.credential_ref must be a non-empty string")
+
+
 @dataclass(frozen=True, kw_only=True)
 class ExportContextEffect(AgentEffectBase):
     """Take an opaque copy of an agent runtime context out of this runtime.
@@ -1554,6 +1625,12 @@ def Interrupt(handle: SessionHandle) -> InterruptEffect:  # noqa: N802
 
 def WarmSession(handle: SessionHandle) -> WarmSessionEffect:  # noqa: N802
     return WarmSessionEffect(handle=handle)
+
+
+def ReplaceSessionCredential(  # noqa: N802
+    handle: SessionHandle, *, credential_ref: str
+) -> ReplaceSessionCredentialEffect:
+    return ReplaceSessionCredentialEffect(handle=handle, credential_ref=credential_ref)
 
 
 def Events(  # noqa: N802

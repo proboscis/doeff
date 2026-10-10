@@ -3,7 +3,8 @@
 (import json)
 (import pytest)
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
-                                  AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession TurnInput])
+                                  AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession TurnInput
+                                  LentCredential])
 (import doeff_claude_code.argv [launch-argv launch-key cold-resume-argv transcript-path process-env])
 (import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
 (import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
@@ -49,17 +50,30 @@
 
 
 (deftest test-the-launch-key-follows-the-launch-conditions
-  ;; 起こした時の条件の鍵(#3672): argv(会話の始まり方を除く)・cwd・env が同じなら同じ鍵、どれかが違えば違う鍵。資格の値は鍵に
-  ;; 文字として残らない(指紋だけ)。
-  (val base (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"CLAUDE_CODE_OAUTH_TOKEN" "secret-token-1"}) :cwd "/w" :model "opus"))
+  ;; 起こした時の条件の鍵(#3672): argv(会話の始まり方を除く)・cwd・env・資格の分が同じなら同じ鍵、どれかが違えば違う鍵。
+  ;; 資格の分(card ki-4ffdafa021e5)は借りたか家のかと口座の事実(契約の種類・階級)だけ — token と期限は鍵に入らない
+  ;; (資格だけが替わった次の手番は、走っている process の資格の家の file を替えて使い回す)。token は鍵に文字として残らない。
+  (val lent (LentCredential :access-token "fake-token-1" :expires-at 1000.0 :subscription-type "max" :rate-limit-tier "tier-a"))
+  (val base (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"PATH" "/bin"}) :cwd "/w" :model "opus" :credential lent))
   (<- same (launch-key #("claude") base))
-  (<- again (launch-key #("claude") (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus")))
+  (<- again (launch-key #("claude") (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus" :credential lent)))
   (assert (= same again))
-  (assert (not-in "secret-token-1" same))
-  (for [other [(ClaudeSessionSpec :home base.home :cwd "/w" :model "haiku")
-               (ClaudeSessionSpec :home base.home :cwd "/w2" :model "opus")
-               (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"CLAUDE_CODE_OAUTH_TOKEN" "secret-token-2"}) :cwd "/w" :model "opus")
-               (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus" :effort "high")]]
+  (assert (not-in "fake-token-1" same))
+  ;; token と期限だけが替わった資格は同じ鍵。
+  (<- refreshed (launch-key #("claude") (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus"
+                                                           :credential (LentCredential :access-token "fake-token-2" :expires-at 9999.0
+                                                                                       :subscription-type "max"
+                                                                                       :rate-limit-tier "tier-a"))))
+  (assert (= same refreshed) "token と期限だけが替わった手番で起こし直す鍵になった")
+  (for [other [(ClaudeSessionSpec :home base.home :cwd "/w" :model "haiku" :credential lent)
+               (ClaudeSessionSpec :home base.home :cwd "/w2" :model "opus" :credential lent)
+               (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"PATH" "/usr/bin"}) :cwd "/w" :model "opus" :credential lent)
+               (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus" :effort "high" :credential lent)
+               ;; 家の資格で起こす宣言(設定 dir が違う)・違う口座の事実の資格。
+               (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus")
+               (ClaudeSessionSpec :home base.home :cwd "/w" :model "opus"
+                                  :credential (LentCredential :access-token "fake-token-1" :expires-at 1000.0 :subscription-type "pro"
+                                                              :rate-limit-tier "tier-a"))]]
     (<- differs (launch-key #("claude") other))
     (assert (!= same differs) other))
   (<- other-command (launch-key #("claude-2") base))
@@ -119,8 +133,10 @@
 (deftest test-the-transcript-place-and-the-process-env
   (assert (= (transcript-path "/h/.claude" "/tmp/work.dir" SID)
              (.format "/h/.claude/projects/-tmp-work-dir/{}.jsonl" SID)))
-  ;; 計時の env(#3855)は家の env の後に足す — 起動と要求までの区間を CLI に名乗らせる handler の物理。
-  (assert (= (process-env HOME) {"PATH" "/bin" "CLAUDE_CODE_EMIT_STARTUP_TIMING" "1" "CLAUDE_CONFIG_DIR" "/h/.claude"})))
+  ;; 計時の env(#3855)は家の env の後に足す — 起動と要求までの区間を CLI に名乗らせる handler の物理。CLAUDE_CONFIG_DIR はその
+  ;; process の設定 dir(借りた資格で起こす process は資格の家 — card ki-4ffdafa021e5)。
+  (assert (= (process-env HOME "/h/.claude") {"PATH" "/bin" "CLAUDE_CODE_EMIT_STARTUP_TIMING" "1" "CLAUDE_CONFIG_DIR" "/h/.claude"}))
+  (assert (= (get (process-env HOME "/h/.claude/.credential-homes/x") "CLAUDE_CONFIG_DIR") "/h/.claude/.credential-homes/x")))
 
 
 (deftest test-values-refuse-what-the-cli-refuses

@@ -4,14 +4,14 @@
 ;;; impls/claude_code.hy(build-claude-argv の旗の並び・transcript の置き場の綴り)。doeff-agents の側は #604 で付け替えるまで残る。
 ;;;
 ;;; prompt は argv に載せない(stdin の user の行 — dialogue.hy)。例外は冷えた続きの前の 1 回きりの process だけ。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk <- val])
 (import collections.abc [Mapping])
 (import hashlib)
 (import json)
 (import os)
 (import re)
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
+(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome LentCredential BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
 
 ;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
@@ -46,9 +46,21 @@
 ;; 起動と入力ごとの hook を区間ごとに割るため(#3855・lines.hy の TimedPhase)。process の env に置く — 区間は設定を読む前から数える。
 (setv STARTUP-TIMING-ENV (FrozenMap {"CLAUDE_CODE_EMIT_STARTUP_TIMING" "1"}))
 
-(defn #^ (get dict #(str str)) process-env [#^ ClaudeHome home]
-  "起こす process の env: 家の env ちょうど + 計時の env(STARTUP-TIMING-ENV)+ CLAUDE_CONFIG_DIR(os.environ は足さない)。"
-  (| (dict home.env) (dict STARTUP-TIMING-ENV) {"CLAUDE_CONFIG_DIR" home.config-dir}))
+(defn #^ (get dict #(str str)) process-env [#^ ClaudeHome home #^ str config-dir]
+  "起こす process の env: 家の env ちょうど + 計時の env(STARTUP-TIMING-ENV)+ CLAUDE_CONFIG_DIR = config-dir(os.environ は足さない)。
+   config-dir = その process の設定 dir — 借りた資格で起こす process はその process だけの資格の家(credential_home.hy)、家の資格で
+   起こす process は家の設定 dir(home.config-dir)。資格の値は env に置かない(資格の家の .credentials.json だけが運ぶ)。"
+  (| (dict home.env) (dict STARTUP-TIMING-ENV) {"CLAUDE_CONFIG_DIR" config-dir}))
+
+(defk credential-key-of [credential]
+  {:pre [(: credential (| LentCredential None))] :post [(: % (| dict None))] :tags {:context "claude-code" :role "judgment"}}
+  "起動条件のキーの材料のうち資格の分(JSON の境界 — sha256 へ渡す綴り): 家の資格で起こすなら None、借りた資格で起こすなら契約の種類と
+   階級だけ。token と期限は入れない — 走っている process の資格の家の file を替えれば同じ process が新しい token を使うので、資格だけが
+   替わった手番は process を使い回す(card ki-4ffdafa021e5)。借りたか家のかは入れる(設定 dir が違う)。契約の種類と
+   階級は入れる(CLI が起動の時に読む口座の事実 — 違う口座の事実の手番は起こし直す。秘密ではない)。"
+  (if (is credential None)
+      None
+      {"subscription_type" credential.subscription-type "rate_limit_tier" credential.rate-limit-tier}))
 
 
 (defn #^ list permission-flags [policy]
@@ -127,12 +139,15 @@
 (defk launch-key [#^ (get tuple #(str ...)) command #^ ClaudeSessionSpec spec]
   {:pre [(: command tuple) (: spec ClaudeSessionSpec)] :post [(: % str)] :tags {:context "claude-code" :role "judgment"}}
   "起こした時の条件の鍵: 生きた process を次の手番に使い回してよいかを決める 1 点(#3672)。argv(会話の始まり方を除く — 実行ファイル・
-   model・effort・settings・MCP・許可・圧縮・system prompt の追記)・cwd の実体・起こす env(家の置き場と資格を含む)の sha256 の 16 進。
-   資格の値は指紋の中にだけ入る(鍵から値は戻らない)。会話の始まり方を除くのは、同じ会話の続き(ResumeSession)だけが使い回すので、
-   どの手番の続きかは会話の id が決めるため。指紋の材料の写像は JSON の境界(sha256 へ渡す綴り)。"
+   model・effort・settings・MCP・許可・圧縮・system prompt の追記)・cwd の実体・起こす env(家の設定 dir で綴る — 資格の家の乱数の
+   path は入れない)・資格の分(credential-key-of — 借りたか家のかと口座の事実だけで、token と期限は入れない)の sha256 の 16 進。
+   会話の始まり方を除くのは、同じ会話の続き(ResumeSession)だけが使い回すので、どの手番の続きかは会話の id が決めるため。指紋の
+   材料の写像は JSON の境界(sha256 へ渡す綴り)。"
+  (<- credential (credential-key-of spec.credential))
   (val material {"argv" (launch-flags command spec)
                  "cwd" (os.path.realpath spec.cwd)
-                 "env" (sorted (.items (process-env spec.home)))})
+                 "env" (sorted (.items (process-env spec.home spec.home.config-dir)))
+                 "credential" credential})
   (.hexdigest (hashlib.sha256 (.encode (json.dumps material :separators #("," ":") :sort-keys True :ensure-ascii False)
                                        "utf-8"))))
 

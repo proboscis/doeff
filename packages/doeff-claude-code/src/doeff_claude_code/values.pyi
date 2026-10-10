@@ -20,6 +20,17 @@ class ClaudeHome:
 
     def __post_init__(self) -> None:
         ...
+CREDENTIAL_FORBIDDEN_CHARS: tuple[str, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class LentCredential:
+    access_token: str = ...
+    expires_at: float | None
+    subscription_type: str | None = None
+    rate_limit_tier: str | None = None
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True)
 class BypassAll:
@@ -85,7 +96,7 @@ class ClaudeSessionSpec:
     autocompact: AutocompactAuto | AutocompactTokens | None = None
     system_prompt_append: str | None = None
     cold_resume_prompt: str | None = None
-    credential_expires_at: float | None = None
+    credential: LentCredential | None = None
 
     def __post_init__(self) -> None:
         ...

@@ -1,4 +1,4 @@
-;;; 本番の handler — 公開 effect 9 つ(とテスト用の effect ClaudeDropProcess)に、claude の print mode の子 process で答える。
+;;; 本番の handler — 公開 effect 10(とテスト用の effect ClaudeDropProcess)に、claude の print mode の子 process で答える。
 ;;;
 ;;; 方針 = 会話の process は手番をまたいで生かし、次の手番(同じ会話の続き)の入力をその process へ書く(#3672 — 起こし直しと記録の
 ;;; 読み直しの 1.6〜2.6 秒を消す)。使い回すのは、起こした時の条件の鍵(argv.hy の launch-key — argv・cwd・env の指紋)が同じ時だけ。
@@ -26,6 +26,13 @@
 ;;; (Doorbell — CreateExternalPromise の約束)を掛けてから条件を読み直し、WaitWithin で上限の秒まで待つ。状態を変えた側(読み手の
 ;;; thread・process の終わり・handler の節)が呼び鈴を鳴らす(時間で起きて確かめない — 行が来てから待ちが抜けるまでに刻みの遅れが無い)。
 ;;;
+;;; 借りた資格(card ki-4ffdafa021e5): 宣言(ClaudeSessionSpec)が借りた資格(credential)を持てば、その process だけの設定
+;;; dir(資格の家 — credential_home.hy)を家の設定 dir の下に作って .credentials.json に置き、子の CLAUDE_CONFIG_DIR をそこへ向ける
+;;; (子の env に token を置かない)。家は Binding が持ち、process が降りたら消す(on-down)。資格だけが替わった手番は起動条件のキー
+;;; (argv.hy の launch-key — token と期限を入れない)が同じなので生きた process を使い回し、その手番の資格を家の file に書く
+;;; (reuse-turn)。走っている process の資格は ClaudeReplaceSessionCredential で替える(replace-session-credential)。家の file を書くのと
+;;; 消すのは会話の lock の中だけ(書いている最中に消さない)。宣言に credential が無い起動は今までどおり家の設定 dir の資格で起こす。
+;;;
 ;;; 計時の行(#3605): 送ってから CLI が答え始めるまでの秒を分けて測るため、手番の process を起こした所・init の行を受けた
 ;;; 所・init の後の最初の行を上の層へ初めて渡した所で、slog を 1 行ずつ出す。欄は名と壁の時刻(GetTime の epoch ミリ秒)と経過のミリ秒
 ;;; (GetMonotonic の差)だけで、本文・資格・env・argv は載せない。外側に時間の handler に加えて slog の答え手(本番 = doeff_core_effects の
@@ -35,7 +42,7 @@
 ;;; (input_json_delta)の行の数と最初の刻も載せる(#3746 (a) — 差分の種類は lines.hy の DeltaKind)。本文の最初の差分を上の層へ初めて渡した所でも 1 行出し(#3696)、
 ;;; init の後の最初の stream の行(実物では message_start — init の次の行は hook の知らせなどで、それではない)の刻と、そこから最初の差分
 ;;; までの ms を載せる — 入力ごとの hook と API へ出すまで・モデルが考えた秒・最初の文字が画面に出るまでの起点を割るため。
-(require doeff-hy.macros [defhandler defk <- val var])
+(require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
@@ -47,11 +54,12 @@
 (import signal)
 (import threading)
 (import uuid)
+(import doeff [run])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
-                                  LinkFromHome Rebuilt IMAGE-MIMES])
+                                  LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
                                  TimedPhase TurnResult parse-record classify-record recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -59,7 +67,9 @@
                                    TurnStarted InputQueued InterruptRequested TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
-                                   ProcessStillAlive ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded])
+                                   ProcessStillAlive ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
+                                   ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
+                                   HomeCredentialSession])
 (import json)
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code.dialogue :as dialogue)
@@ -67,6 +77,7 @@
 (import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision retire-time credential-due])
 (import doeff_claude_code.argv [transcript-dir transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
+(import doeff_claude_code.credential_home [open-credential-home replace-credential close-credential-home])
 
 (setv KEPT-TURNS 16)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
@@ -122,10 +133,12 @@
 
 (defclass Binding []
   "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
-   process は起こすまで None。"
-  (defn __init__ [self #^ int turn-seq]
+   process は起こすまで None。credential-home = その process だけの資格の家の path(借りた資格で起こした時だけ — 家の資格なら None。
+   process が降りて消したら None に戻す)。書き換えるのは会話の lock の中だけ。"
+  (defn __init__ [self #^ int turn-seq #^ (| str None) [credential-home None]]
     (setv #^ (| ClaudeProcess None) self.process None)
-    (setv #^ int self.turn-seq turn-seq)))
+    (setv #^ int self.turn-seq turn-seq)
+    (setv #^ (| str None) self.credential-home credential-home)))
 
 (defn #^ ClaudeProcess process-of [#^ Binding binding]
   "binding の process。起こす前に読むのは handler の実装の誤り(RuntimeError)。"
@@ -203,7 +216,7 @@
   "handler の状態: 会話の id → SessionRuntime。command = 実行ファイルと前置きの引数(例: #(\"claude\"))・clock = 行の時刻を
    刻む関数(clock.clock-of)・live-limit = 同時に生かす process の本数の上限(走っている手番の process も数える — 機体の memory の
    予算 ÷ 1 本の memory。#3672 の D2。越える起動は止めずに知らせる — 頭の註。None = 上限を宣言しない: 使い手が別の物差し — 機体の
-   memory の余白 — で決める時で、本数を上限と比べず、log の行も知らせも出さない・#4282)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential-expires-at)の手前で
+   memory の余白 — で決める時で、本数を上限と比べず、log の行も知らせも出さない・#4282)・credential-floor-seconds = 資格の期限(ClaudeSessionSpec.credential の expires-at)の手前で
    process を止める床の秒・launch-timeout = init の行を待つ上限(秒)。上限と床は呼び手の宣言から
    受ける(既定を持たない — 上限を宣言しない呼び手も None を明示で渡す)。"
   (defn __init__ [self #^ tuple command clock #^ (| int None) live-limit #^ float credential-floor-seconds [launch-timeout 120.0]]
@@ -284,6 +297,21 @@
     (when (is runtime.binding binding)
       (apply-transition runtime binding (dialogue.on-exit runtime.state exit-code stderr-tail)))))
 
+(deff on-down [#^ SessionRuntime runtime #^ Binding binding]  ; defk にできない: process の見張りの thread が呼ぶ callback(ClaudeProcess の on-down)
+  {:pre [(: runtime SessionRuntime) (: binding Binding)] :post [(: % None)] :tags {:context "claude-code" :role "process"}}
+  "process が降りた(か降ろす梯子を踏み終えた)合図で、降りていればその process の資格の家を消し、会話の呼び鈴を鳴らすため(鳴らすのは
+   消した後 — 呼び鈴で起きた待ち手は家が消えた後を読む)。家は今の binding かを問わず消す(家はその process だけの物 — 前の process
+   の家も、その process が降りた時に消える)。消すのは会話の lock の中(資格を書いている最中に消さない)。梯子を踏んでも降りて
+   いなければ消さない(次の合図で消す)。"
+  (with [runtime.lock]
+    (setv process binding.process
+          home binding.credential-home)
+    (when (and (is-not home None) (is-not process None) (not (.alive process)))
+      (setv binding.credential-home None)
+      (run (close-credential-home home))))
+  (.ring runtime.doorbell)
+  None)
+
 
 ;; --- I/O の小さな道具(handler の中だけ) --------------------------------------------------------------
 
@@ -357,6 +385,15 @@
   (setv refused (lfor item input.attachments :if (not-in item.mime IMAGE-MIMES) item.mime))
   (if refused (AttachmentRefused (get refused 0)) None))
 
+(defk lent-credential-home [#^ ClaudeSessionSpec spec]
+  {:pre [(: spec ClaudeSessionSpec)] :post [(: % (| str None))] :tags {:context "claude-code" :role "process"}}
+  "起こす process の設定 dir を決めるため: 宣言が借りた資格を持てば、その process だけの資格の家を家の設定 dir の下に作って path を
+   返す(credential_home.hy)。持たなければ None(家の設定 dir の資格のまま起こす — 手で開いた機体の会話の路)。"
+  (when (is spec.credential None)
+    (return None))
+  (<- home (open-credential-home spec.home.config-dir spec.credential))
+  home)
+
 
 ;; --- 待ち(呼び鈴で起きる) --------------------------------------------------------------------
 
@@ -385,16 +422,22 @@
 
 (defk run-cold-resume [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str session-id]
   {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: session-id str)] :post [(: % bool)]}
-  "冷えた続きの前の 1 回きりの命令を走らせて終わりを待つ。答え = 走り終えたか(失敗しても手番は起こす — 最適化の命令)。"
+  "冷えた続きの前の 1 回きりの命令を走らせて終わりを待つ。答え = 走り終えたか(失敗しても手番は起こす — 最適化の命令)。宣言が借りた
+   資格を持てば、この命令の process だけの資格の家を作って向け、終わったら消す(手番の process と同じ資格の渡し方)。"
   (val done (threading.Event))
   (val doorbell (Doorbell))
+  (<- home (lent-credential-home spec))
   (try
-    (setv process (ClaudeProcess (cold-resume-argv host.command spec session-id) spec.cwd (process-env spec.home)
+    (setv process (ClaudeProcess (cold-resume-argv host.command spec session-id) spec.cwd
+                                 (process-env spec.home (or home spec.home.config-dir))
                                  (fn [raw] None) (fn [code tail] (.set done) (.ring doorbell)) (fn [] (.ring doorbell))))
-    (except [OSError] (return False)))
+    (except [OSError]
+      (<- (close-credential-home home))
+      (return False)))
   (.close-stdin process)
   (<- finished (wait-until (fn [bell] (.hang doorbell bell)) (fn [] (.is-set done)) COLD-RESUME-TIMEOUT-SECONDS))
   (when (not finished) (.drop process))
+  (<- (close-credential-home home))
   finished)
 
 
@@ -711,26 +754,29 @@
    結果 = ターンの番号か LaunchFailed(実行ファイルが無い等)。新しい process の状態機械へ引き継ぐのは会話の id と費用の起点
    (launch-mark-of)だけ。ターンを始めたので、入力なしで事前起動した新しい会話のマーク(warmed-fresh)は消す。"
   (<- mark (launch-mark-of runtime origin recorded))
+  (<- home (lent-credential-home spec))
   (with [runtime.lock]
     (setv runtime.closed False
           runtime.init-seen False
           runtime.warmed-fresh False
           runtime.state (DialogueState :session-id runtime.session-id :cost-mark mark :start-mark mark))
     (val turn-seq (.open-turn runtime))
-    (val binding (Binding turn-seq))
+    (val binding (Binding turn-seq home))
     (setv runtime.binding binding)
     (val transition (dialogue.begin-turn runtime.state input))
     (try
       (setv binding.process
-            (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
+            (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home (or home spec.home.config-dir))
                            (fn [raw] (on-line runtime binding host.clock raw))
                            (fn [code tail] (on-exit runtime binding code tail))
-                           (fn [] (.ring runtime.doorbell))))
+                           (fn [] (on-down runtime binding))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
-      (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
+      (setv runtime.retire-after (retire-time spec.credential host.credential-floor-seconds))
       (except [error OSError]
         (setv runtime.binding None)
+        (setv binding.credential-home None)
+        (run (close-credential-home home))
         (setv (. (.open-log runtime) end) (Interrupted :process-kept False))
         (.ring runtime.doorbell)
         (return (LaunchFailed :stderr-tail (str error)))))
@@ -748,25 +794,28 @@
    と同じ規則。新しい会話なら warmed-fresh のマークを付ける(最初のターンは同じ id の FreshSession)。結果 = None(起動した)か
    LaunchFailed(実行ファイルが無い等)。"
   (<- mark (launch-mark-of runtime origin recorded))
+  (<- home (lent-credential-home spec))
   (with [runtime.lock]
     (setv runtime.closed False
           runtime.init-seen False
           runtime.warmed-fresh (isinstance origin FreshSession)
           runtime.state (DialogueState :session-id runtime.session-id :cost-mark mark :start-mark mark
                                        :awaiting-first-input True))
-    (val binding (Binding runtime.current-seq))
+    (val binding (Binding runtime.current-seq home))
     (setv runtime.binding binding)
     (try
       (setv binding.process
-            (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home)
+            (ClaudeProcess (launch-argv host.command spec origin) spec.cwd (process-env spec.home (or home spec.home.config-dir))
                            (fn [raw] (on-line runtime binding host.clock raw))
                            (fn [code tail] (on-exit runtime binding code tail))
-                           (fn [] (.ring runtime.doorbell))))
+                           (fn [] (on-down runtime binding))))
       (setv runtime.launches (+ runtime.launches 1))
       (setv runtime.launch-key key)
-      (setv runtime.retire-after (retire-time spec.credential-expires-at host.credential-floor-seconds))
+      (setv runtime.retire-after (retire-time spec.credential host.credential-floor-seconds))
       (except [error OSError]
         (setv runtime.binding None)
+        (setv binding.credential-home None)
+        (run (close-credential-home home))
         (return (LaunchFailed :stderr-tail (str error))))))
   None)
 
@@ -805,8 +854,10 @@
    :tags {:context "claude-code" :role "foundation"}}
   "生きて手番を待つ process に、この手番の入力を書くため(#3672 — 起こさず init も待たない。CLI は入力ごとに init を出し直すが、
    書いた後なので手番の中の行として受ける)。経過の起点は入力を書いた刻。この手番の spec の資格の期限で止める刻を決め直す(同じ
-   token の貸与が延びれば期限も延びる — D2)。判断の後に process が降りた・降り始めた・手番を走らせているなら None(呼び手が降りるの
-   を待って起こす)。"
+   token の貸与が延びれば期限も延びる — D2)。spec が借りた資格を持てば、入力を書く前にその資格を process の資格の家の file へ書く
+   (資格だけが替わった手番も起こし直さない — card ki-4ffdafa021e5。起動条件のキーが同じなので借りたか家のかは
+   process と spec で揃っている)。判断の後に process が降りた・降り始めた・手番を走らせているなら None(呼び手が降りるのを待って
+   起こす)。"
   (<- writing (GetMonotonic))
   (<- writing-wall (GetTime))
   (with [runtime.lock]
@@ -815,13 +866,19 @@
     (when (or (is binding None) (is process None) (not (.alive process)) (is-not process.retiring None)
               (is-not (.running-turn runtime) None))
       (return None))
+    (val home binding.credential-home)
+    (when (!= (is spec.credential None) (is home None))
+      (raise (RuntimeError (.format "会話 {} の使い回す process と手番の宣言で、借りた資格か家の資格かが食い違う(launch-key の誤り)"
+                                    runtime.session-id))))
+    (when (and (is-not spec.credential None) (is-not home None))
+      (run (replace-credential home spec.credential)))
     (setv turn-seq (.open-turn runtime))
     (setv binding.turn-seq turn-seq)
     (setv log (.open-log runtime))
     (setv log.launched-at writing log.launched-wall writing-wall)
     ;; ターンを始めたので、入力なしで事前起動した新しい会話のマークは消す(事前起動した process を最初のターンが使い回した時もここ)。
     (setv runtime.warmed-fresh False)
-    (setv runtime.retire-after (retire-time spec.credential-expires-at floor-seconds))
+    (setv runtime.retire-after (retire-time spec.credential floor-seconds))
     (apply-transition runtime binding (dialogue.begin-turn runtime.state input)))
   (<- (note-reused runtime turn-seq requested writing writing-wall))
   (TurnStarted (ClaudeTurn runtime.session-id turn-seq) runtime.session-id))
@@ -1158,6 +1215,31 @@
   True)
 
 
+(defk replace-session-credential [#^ ClaudeCodeHost host #^ ClaudeReplaceSessionCredential request]
+  {:pre [(: host ClaudeCodeHost) (: request ClaudeReplaceSessionCredential)]
+   :post [(: % (| CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の生きた process の資格を替えるため(ClaudeReplaceSessionCredential): 会話の lock の中で、生きて降りる途中でない process の資格の
+   家の .credentials.json を別名に書いて rename で替え(credential_home.hy の replace-credential)、止める刻を新しい期限から決め直す。
+   知らない会話 = NoSuchSession・生きた process が無い(降りた・降りる途中)= SessionProcessDown・家の資格で起こした process =
+   HomeCredentialSession。手番を走らせているかは問わない(手番の途中でも、CLI は次の API の呼びから新しい token を使う)。"
+  (val session-id request.session-id)
+  (val runtime (.runtime host session-id))
+  (when (is runtime None)
+    (return (NoSuchSession :session-id session-id)))
+  (with [runtime.lock]
+    (val binding runtime.binding)
+    (when (or (is binding None) (is binding.process None) (not (.alive binding.process))
+              (is-not binding.process.retiring None))
+      (return (SessionProcessDown :session-id session-id)))
+    (val home binding.credential-home)
+    (when (is home None)
+      (return (HomeCredentialSession :session-id session-id)))
+    (run (replace-credential home request.credential))
+    (setv runtime.retire-after (retire-time request.credential host.credential-floor-seconds)))
+  (CredentialReplaced :session-id session-id))
+
+
 ;; --- handler -----------------------------------------------------------------------------------
 
 (defhandler claude-code-handler [host]
@@ -1185,6 +1267,9 @@
   (ClaudeWarmSession [origin spec]
     (<- warmed (warm-session host effect))
     (resume warmed))
+  (ClaudeReplaceSessionCredential [session-id credential]
+    (<- replaced (replace-session-credential host effect))
+    (resume replaced))
   (ClaudeDropProcess [session-id]
     (resume (drop-process host session-id)))
   (ClaudeLiveProcess [session-id]

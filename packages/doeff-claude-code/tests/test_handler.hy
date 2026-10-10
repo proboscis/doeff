@@ -5,6 +5,7 @@
 (import dataclasses [dataclass replace])
 (import datetime [datetime timezone])
 (import json)
+(import stat)
 (import os)
 (import os.path)
 (import pathlib [Path])
@@ -16,9 +17,10 @@
 (import doeff_core_effects.handlers [await-handler listen-handler slog-discard-handler])
 (import doeff_core_effects.scheduler [CreateExternalPromise])
 (import doeff_time [Delay DelayEffect GetMonotonic GetTime WaitWithin async-time-handler epoch-ms-of sync-time-handler])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput])
+(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt TurnInput LentCredential])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted PartialMessage Usage])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
+(import doeff_claude_code.effects [ClaudeReplaceSessionCredential CredentialReplaced
+                                   ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession
                                    ClaudeSessionStatus ClaudeWarmSession TurnStarted LaunchFailed SessionExported SessionNotFound
                                    SessionClosed SessionWarmed ProcessStillAlive])
 (import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
@@ -727,9 +729,9 @@
 
 (defk expiring-in [#^ ClaudeSessionSpec base #^ float seconds]
   {:pre [(: base ClaudeSessionSpec) (: seconds float)] :post [(: % ClaudeSessionSpec)]}
-  "検の spec に、今から seconds 秒後に切れる資格の期限を添えるため(時刻は時間の答え手の内側で読む)。"
+  "検の spec に、今から seconds 秒後に切れる借りた資格を添えるため(時刻は時間の答え手の内側で読む・token は偽の文字列)。"
   (<- now (GetTime))
-  (replace base :credential-expires-at (+ (.timestamp now) seconds)))
+  (replace base :credential (LentCredential :access-token "fake-token-floor" :expires-at (+ (.timestamp now) seconds))))
 
 (defk turn-then-resume-under-the-floor [#^ ClaudeSessionSpec base #^ str sid]
   {:pre [(: base ClaudeSessionSpec) (: sid str)] :post [(: % tuple)]}
@@ -887,3 +889,137 @@
   (val done (get heard 0))
   (assert (isinstance done.end Completed) (repr done.end))
   (assert (= (len (get heard 1)) 0) (.format "待ちの間に handler が Delay を {} 回撃った" (len (get heard 1)))))
+
+
+;; --- 借りた資格の家(card ki-4ffdafa021e5)--------------------------------------------------------------
+;; 借りた資格は子の env に置かず、その process だけの設定 dir(資格の家)の .credentials.json で渡す。走っている process の資格は
+;; ClaudeReplaceSessionCredential で替わり、資格だけが替わった次の手番は process を使い回してその手番の資格を家の file に書く。
+;; process が降りたら家は消える。token はどれも偽の文字列。
+
+(val LENT-TOKENS #("fake-lent-token-1" "fake-lent-token-2" "fake-lent-token-3"))
+;; 検の資格の期限(2100-01-01 の epoch 秒 — 床で止めない遠い先)。
+(val LENT-EXPIRES-AT 4102444800.0)
+
+(defk lent-of [#^ str token]
+  {:pre [(: token str)] :post [(: % LentCredential)] :tags {:context "claude-code" :role "program"}}
+  "検の借りた資格(偽の token・遠い先の期限・契約の種類と階級つき)を作るため。"
+  (LentCredential :access-token token :expires-at LENT-EXPIRES-AT :subscription-type "max" :rate-limit-tier "fake-tier"))
+
+(defk process-environ [#^ int pid]
+  {:pre [(: pid int)] :post [(: % dict)] :tags {:context "claude-code" :role "program"}}
+  "走っている子の process の env を /proc から読むため(Linux — 子の env に token が無い事を外から確かめる)。"
+  (val raw (.read-bytes (Path (.format "/proc/{}/environ" pid))))
+  (dfor item (.split raw b"\x00") :if (in b"=" item)
+        :setv pair (.split (.decode item "utf-8" "replace") "=" 1)
+        (get pair 0) (get pair 1)))
+
+(defk mode-of [#^ str path]
+  {:pre [(: path str)] :post [(: % int)] :tags {:context "claude-code" :role "program"}}
+  "file・dir の権限の bit(0o600 など)を読むため。"
+  (stat.S-IMODE (. (os.stat path) st-mode)))
+
+(defk credential-file-of [#^ str home]
+  {:pre [(: home str)] :post [(: % dict)] :tags {:context "claude-code" :role "program"}}
+  "資格の家の .credentials.json を JSON として読むため(検が中身を期待の形と比べる — JSON の境界)。権限が 0o600 でなければ落とす。"
+  (val path (os.path.join home ".credentials.json"))
+  (<- mode (mode-of path))
+  (assert (= mode 0o600) (oct mode))
+  (json.loads (.read-text (Path path) :encoding "utf-8")))
+
+(defk expected-document [#^ str token]
+  {:pre [(: token str)] :post [(: % dict)] :tags {:context "claude-code" :role "program"}}
+  "lent-of の資格を置いた .credentials.json の期待の中身(CLI 2.1.292 が読む形 — refreshToken は null・期限は epoch ミリ秒・scope は
+   user:inference)。"
+  {"claudeAiOauth" {"accessToken" token "refreshToken" None "expiresAt" (int (* LENT-EXPIRES-AT 1000)) "scopes" ["user:inference"]
+                    "subscriptionType" "max" "rateLimitTier" "fake-tier"}})
+
+(defk lent-credential-walk [#^ ClaudeCodeHost host #^ ClaudeSessionSpec base #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: base ClaudeSessionSpec) (: sid str)] :post [(: % str)]
+   :tags {:context "claude-code" :role "program"}}
+  "借りた資格の会話を、1 手番・資格の差し替え・資格だけが替わった続きの手番・閉じるの順に進め、各所で資格の家と子の env を確かめる
+   ため。答え = 資格の家の path(閉じた後に消えた事は呼び手が確かめる)。"
+  (<- first-lent (lent-of (get LENT-TOKENS 0)))
+  (val spec (replace base :credential first-lent))
+  (val shared spec.home.config-dir)
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "ONE") "r1")))
+  (<- done (read-to-end started.turn 30.0))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (val runtime (.runtime host sid))
+  (val binding runtime.binding)
+  (val process binding.process)
+  (val home binding.credential-home)
+  ;; 家は共有の設定 dir の .credential-homes の下・0700。子の CLAUDE_CONFIG_DIR は家を指し、env に token は無い。
+  (assert (= (os.path.dirname home) (os.path.join shared ".credential-homes")) home)
+  (<- home-mode (mode-of home))
+  (assert (= home-mode 0o700) (oct home-mode))
+  (<- environ (process-environ process.pid))
+  (assert (= (get environ "CLAUDE_CONFIG_DIR") home) (get environ "CLAUDE_CONFIG_DIR"))
+  (assert (not-in "CLAUDE_CODE_OAUTH_TOKEN" environ) "子の env に資格の env の名が在る")
+  (for [token LENT-TOKENS]
+    (assert (not (any (gfor value (.values environ) (in token value)))) "子の env に token の値が在る"))
+  (<- document (credential-file-of home))
+  (<- wanted (expected-document (get LENT-TOKENS 0)))
+  (assert (= document wanted) document)
+  ;; 会話の記録は共有の設定 dir に残る(家の projects は共有の projects への link)。
+  (assert (os.path.islink (os.path.join home "projects")))
+  (assert (os.path.exists (transcript-path shared (os.path.realpath spec.cwd) sid)) "会話の記録が共有の設定 dir に無い")
+  ;; 走っている process の資格を替える: 同じ家の file が新しい token になり、別名の書き掛けは残らない。
+  (<- second-lent (lent-of (get LENT-TOKENS 1)))
+  (<- replaced (ClaudeReplaceSessionCredential sid second-lent))
+  (assert (= replaced (CredentialReplaced :session-id sid)) replaced)
+  (<- document-2 (credential-file-of home))
+  (<- wanted-2 (expected-document (get LENT-TOKENS 1)))
+  (assert (= document-2 wanted-2) document-2)
+  (assert (= (lfor name (os.listdir home) :if (.startswith name ".credentials.json.") name) []) (os.listdir home))
+  ;; 資格だけが替わった次の手番は process を使い回し(起こした数は 1 のまま)、その手番の資格を家の file に書く。
+  (<- third-lent (lent-of (get LENT-TOKENS 2)))
+  (<- again (ClaudeStartTurn (ResumeSession sid) (replace spec :credential third-lent) (TurnInput (reply-prompt "TWO") "r2")))
+  (<- second (read-to-end again.turn 30.0))
+  (assert (isinstance second.end Completed) (repr second.end))
+  (<- view (ClaudeLiveProcess sid))
+  (assert (= view (LiveProcess :launches 1)) view)
+  (assert (is (. (.runtime host sid) process) process) "資格だけが替わった手番で process を起こし直した")
+  (<- document-3 (credential-file-of home))
+  (<- wanted-3 (expected-document (get LENT-TOKENS 2)))
+  (assert (= document-3 wanted-3) document-3)
+  ;; 閉じると process が降り、家が消える(消した後に呼び鈴が鳴る)。
+  (<- closed (ClaudeCloseSession sid "test"))
+  (assert (isinstance closed SessionClosed) (repr closed))
+  (<- gone (wait-until (fn [bell] (.hang runtime.doorbell bell)) (fn [] (not (os.path.exists home))) 10.0))
+  (assert gone (.format "process が降りても資格の家 {} が残った" home))
+  home)
+
+
+(deftest test-a-lent-credential-rides-on-a-per-process-config-dir-and-is-replaced-in-place [tmp-path]
+  ;; card ki-4ffdafa021e5: 起こした CLI の env に token は無く、process だけの設定 dir の .credentials.json(0600)が
+  ;; 期待どおりの中身を持つ。差し替えの effect の後と、資格だけが替わった次の手番の後に、同じ file が新しい token になる(process は
+  ;; 起こし直さない)。process が降りたら dir は消え、共有の設定 dir の .credential-homes は空に戻る。
+  (val host (host-of STUB-COMMAND))
+  (val base (spec-in tmp-path))
+  (<- home (with-real-handler host (lent-credential-walk host base (str (uuid.uuid4)))))
+  (assert (not (os.path.exists home)))
+  (assert (= (os.listdir (os.path.dirname home)) []) (os.listdir (os.path.dirname home))))
+
+
+(defk home-credential-turn [#^ ClaudeCodeHost host #^ ClaudeSessionSpec spec #^ str sid]
+  {:pre [(: host ClaudeCodeHost) (: spec ClaudeSessionSpec) (: sid str)] :post [(: % dict)]
+   :tags {:context "claude-code" :role "program"}}
+  "借りた資格の無い宣言で 1 手番を走らせ、閉じる前の子の env を返すため。"
+  (<- started (ClaudeStartTurn (FreshSession sid) spec (TurnInput (reply-prompt "HOME") "r1")))
+  (<- done (read-to-end started.turn 30.0))
+  (assert (isinstance done.end Completed) (repr done.end))
+  (val binding (. (.runtime host sid) binding))
+  (assert (is binding.credential-home None) binding.credential-home)
+  (<- environ (process-environ binding.process.pid))
+  (<- (ClaudeCloseSession sid "test"))
+  environ)
+
+
+(deftest test-a-session-without-a-lent-credential-runs-on-the-home-config-dir
+  [tmp-path]
+  ;; 手で開いた機体の会話の路(借りた資格の無い起動)は今までどおり: 子の CLAUDE_CONFIG_DIR は家の設定 dir で、資格の家を作らない。
+  (val host (host-of STUB-COMMAND))
+  (val spec (spec-in tmp-path))
+  (<- environ (with-real-handler host (home-credential-turn host spec (str (uuid.uuid4)))))
+  (assert (= (get environ "CLAUDE_CONFIG_DIR") spec.home.config-dir) (get environ "CLAUDE_CONFIG_DIR"))
+  (assert (not (os.path.exists (os.path.join spec.home.config-dir ".credential-homes")))))

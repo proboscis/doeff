@@ -39,7 +39,7 @@
 ;; 助言を当てにする検は替え玉の CLI と fake だけに置く。
 (setv ADVICE-PHRASE "Have the hook advise: {}.")
 ;; 入力に添付した画像(stream-json の user の content の image の block)を数えて答えさせる言い方と、替え玉の CLI が image の block 1 つを
-;; 本文へ写す印(card acp:kanban-issue:ki-0faa366b76c0 — 画像が CLI の入力に入ったかを見るため)。本物の claude も画像を数えて答えられるが、
+;; 本文へ写す印(card ki-0faa366b76c0 — 画像が CLI の入力に入ったかを見るため)。本物の claude も画像を数えて答えられるが、
 ;; 印の綴りは替え玉の CLI だけの物なので、数を当てにする検は替え玉の CLI に置く。言い方の無い入力でも、文字が空で画像だけの入力は数えて答える
 ;; (利用者が画像だけを貼って送る形)。
 (val IMAGES-PHRASE "Count the attached images.")

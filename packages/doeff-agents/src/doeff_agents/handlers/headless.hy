@@ -8,9 +8,15 @@
 ;;;
 ;;; 写し(layer2-effects-design.md 10 節):
 ;;;   LaunchEffect(CLAUDE)            → ClaudeStartTurn(FreshSession か、resume_from なら ResumeSession)— prompt が無ければ手番を始めない
-;;;   LaunchEffect.turn_credential_ref → 起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの TurnCredential を子の env の
-;;;                                      手番の資格の名 1 つにだけ置く(HomeTurnCredential = 家の資格のまま・TurnCredentialUnavailable =
-;;;                                      TurnCredentialUnavailableError で起こさない — issue #979)
+;;;   LaunchEffect.turn_credential_ref → 起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの TurnCredential を層 2 の宣言の
+;;;                                      借りた資格(ClaudeSessionSpec.credential = LentCredential)にする — 層 2 はその process だけの設定
+;;;                                      dir の .credentials.json に置き、子の env には置かない(card acp:kanban-issue:ki-4ffdafa021e5)。
+;;;                                      HomeTurnCredential = 家の資格のまま・TurnCredentialUnavailable = TurnCredentialUnavailableError で
+;;;                                      起こさない — issue #979
+;;;   ReplaceSessionCredentialEffect   → 参照を RedeemTurnCredentialEffect で引き換え、ClaudeReplaceSessionCredential(会話の id・借りた資格)
+;;;                                      で走っている process の資格を替える。session の宣言の資格も替える(後の手番もその資格で起こす・
+;;;                                      使い回す)。答え = SessionCredentialReplaced | SessionProcessNotLive | SessionOnHomeCredential |
+;;;                                      ReplacementCredentialUnavailable
 ;;;   LaunchEffect.new_context_id      → 新しい文脈の id(HandlerMadeContextId = この adapter が作る・NamedContextId = 呼び手の名指した id)。
 ;;;                                      同じ id を名指した 2 つの起動は同じ FreshSession になり、片方の事前起動をもう片方の最初のターンが使う
 ;;;   LaunchEffect.resume_snapshot     → その session の最初の ClaudeStartTurn の ResumeSession の carry = Rebuilt(写し)(2 手番目からは無し)
@@ -56,7 +62,7 @@
 ;;; この handler が起こしていない session の effect と、CLAUDE 以外の LaunchEffect は外側の handler へ回す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import collections.abc [Callable])
-(import dataclasses [dataclass field])
+(import dataclasses [dataclass field replace])
 (import datetime [datetime])
 (import uuid)
 (import doeff [run])
@@ -77,9 +83,11 @@
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError
-  HandlerMadeContextId NamedContextId])
+  HandlerMadeContextId NamedContextId
+  ReplaceSessionCredentialEffect SessionCredentialReplaced SessionProcessNotLive SessionOnHomeCredential
+  ReplacementCredentialUnavailable])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
-                                  BypassAll PermissionPolicy checked-session-id ImageAttachment])
+                                  BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactBoundary
                                  HookNotice HookPhase
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
@@ -87,14 +95,16 @@
                                    ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
                                    TurnStarted InterruptRequested TurnEventPage SessionExported SessionWarmed
                                    SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused
-                                   NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent])
+                                   NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent
+                                   ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
+                                   HomeCredentialSession])
 
 (setv HANDLER-NAME "headless-claude-handler")
 
-;; 引き換えた access token(LaunchEffect.turn_credential_ref の RedeemTurnCredentialEffect の答え — #665・#979)を置く env の名。綴りの家は境界の env の語彙
-;; doeff_agents/agent_env.hy の 1 点(TURN-AUTH-ENV-KEYS の要素・#708 — 家は session host を import しない)。
-(import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV GITHUB-TOKEN-ENV
-                                CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV])
+;; 引き換えた GitHub の token を置く env の名(#3753)。綴りの家は境界の env の語彙 doeff_agents/agent_env.hy の 1 点(#708 — 家は session host
+;; を import しない)。claude の access token は env に置かない — 層 2 の宣言の借りた資格(LentCredential)で渡す(card
+;; acp:kanban-issue:ki-4ffdafa021e5)。
+(import doeff_agents.agent_env [GITHUB-TOKEN-ENV])
 
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------
@@ -146,29 +156,25 @@
 
 (defn #^ str new-ref [] (str (uuid.uuid4)))
 
+(defk lent-of [#^ TurnCredential credential]
+  {:pre [(: credential TurnCredential)] :post [(: % LentCredential)] :tags {:context "headless-adapter" :role "judgment"}}
+  "引き換えた手番の資格 → 層 2 の借りた資格(access token・期限・契約の種類と階級をそのまま写す — GitHub の token は写さない)。"
+  (LentCredential :access-token credential.oauth-token :expires-at credential.expires-at
+                  :subscription-type credential.subscription-type :rate-limit-tier credential.rate-limit-tier))
+
 (defn #^ ClaudeSessionSpec spec-of [#^ HeadlessClaudeConfig config #^ LaunchEffect effect #^ (| TurnCredential None) [credential None]]
-  "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)+ 引き換えた access token
-   (credential — LaunchEffect.turn_credential_ref を RedeemTurnCredentialEffect で引き換えた答え・None = 家の資格。手番の資格の env の名
-   1 つにだけ置く。設定 dir の env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ)。答えが GitHub の token
-   (credential.github-token)も持てば GITHUB-TOKEN-ENV(GH_TOKEN)に置く(#3753)。資格に付いた契約の種類と階級
-   (credential.subscription-type・rate-limit-tier)は、値の在る物だけを CLAUDE-SUBSCRIPTION-TYPE-ENV・CLAUDE-RATE-LIMIT-TIER-ENV に置く
-   (card acp:kanban-issue:ki-d81bb8c7eaaa — 2 つの名もターンの資格の名なので、設定 dir の env と session_env からは入らない)。
+  "LaunchEffect → 層 2 の会話の宣言。process の env = 家の env + session_env(非 auth の上書き)。引き換えた資格(credential —
+   LaunchEffect.turn_credential_ref を RedeemTurnCredentialEffect で引き換えた答え・None = 家の資格)は宣言の借りた資格(lent-of)にし、
+   env には置かない — 層 2 がその process だけの設定 dir の .credentials.json に置き、走っている間も替えられる(card
+   acp:kanban-issue:ki-4ffdafa021e5)。資格に付いた契約の種類と階級(card acp:kanban-issue:ki-d81bb8c7eaaa)も同じ file に載る。設定 dir の
+   env と session_env は資格の env を持てない — 資格の入口は引き換えの答え 1 つ。答えが GitHub の token(credential.github-token)も
+   持てば GITHUB-TOKEN-ENV(GH_TOKEN)に置く(#3753)。借りた資格の期限は層 2 が床で生きた process を止める刻に使う(#3672 の D2)。
    許可の方策は config の permission。"
   (assert-session-env-is-non-auth-overlay effect.session-env :context "LaunchEffect.session_env (headless-claude-handler)")
   (setv env (| (dict config.home.env) (dict (or effect.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-claude-handler の process の env")
-  (when (is-not credential None)
-    (setv (get env TURN-CREDENTIAL-ENV) credential.oauth-token))
   (when (and (is-not credential None) (is-not credential.github-token None))
     (setv (get env GITHUB-TOKEN-ENV) credential.github-token))
-  ;; 貸し手が観測していない事実(None)は置かない — CLI は種類の無い資格を team / enterprise かもしれないとして、起動のたびに組織の方針を
-  ;; 確かめに行く(本番で 1 回 319〜801 ms)。
-  (when (is-not credential None)
-    (.update env (dfor [name fact] [#(CLAUDE-SUBSCRIPTION-TYPE-ENV credential.subscription-type)
-                                    #(CLAUDE-RATE-LIMIT-TIER-ENV credential.rate-limit-tier)]
-                       :if (is-not fact None)
-                       name fact)))
-  ;; 借りた資格の期限は層 2 の宣言へ写す(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
   (ClaudeSessionSpec :home (ClaudeHome config.home.config-dir env)
                      :cwd (str effect.work-dir)
                      :model effect.model
@@ -177,7 +183,7 @@
                      :settings config.settings
                      :permission config.permission
                      :cold-resume-prompt config.cold-resume-prompt
-                     :credential-expires-at (if (is credential None) None credential.expires-at)))
+                     :credential (if (is credential None) None (run (lent-of credential)))))
 
 (defk call-usage-builders-of [message at]
   {:pre [(: message AssistantMessage) (: at datetime)] :post [(: % list)]
@@ -632,6 +638,47 @@
     (isinstance outcome SessionNotFound) None
     True (raise (AgentError (.format "文脈 {} の写し: 層 2 の答えが閉語彙の外: {!r}" request.context-id outcome)))))
 
+(defk replacement-credential [#^ str ref]
+  {:pre [(: ref str)] :post [(: % (| LentCredential ReplacementCredentialUnavailable))]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "走っている process の資格を替えるための参照を、層 2 の借りた資格へ引き換えるため(引き換えは起こす時と同じ RedeemTurnCredentialEffect
+   — 答えは参照を出した外側が返す)。引き換えられない参照・家の資格を名指す参照(借りた資格を家の資格では替えられない)は
+   ReplacementCredentialUnavailable。閉語彙の外の答えは型の名だけを名乗って AgentError。"
+  (<- answer (RedeemTurnCredentialEffect :credential-ref ref))
+  (match answer
+    (TurnCredential) (do (<- lent (lent-of answer)) lent)
+    (HomeTurnCredential) (ReplacementCredentialUnavailable
+                           (.format "手番の資格 {} は家の資格を名指す — 借りた資格を家の資格では替えられない" ref))
+    (TurnCredentialUnavailable :reason reason) (ReplacementCredentialUnavailable reason)
+    ;; 答えの型だけを名乗る(値は資格を運び得るので文に写さない)。
+    _ (raise (AgentError (.format "手番の資格 {} の引き換えの答えが閉語彙の外: {}" ref (. (type answer) __name__))))))
+
+(defk replace-credential [#^ HeadlessSession session #^ str ref]
+  {:pre [(: session HeadlessSession) (: ref str)]
+   :post [(: % (| SessionCredentialReplaced SessionProcessNotLive SessionOnHomeCredential ReplacementCredentialUnavailable))]
+   :tags {:context "headless-adapter" :role "foundation"}}
+  "session の走っている process の資格を替えるため(ReplaceSessionCredentialEffect — card acp:kanban-issue:ki-4ffdafa021e5)。家の資格で
+   起こした session は引き換えずに SessionOnHomeCredential。止めた session は引き換えずに SessionProcessNotLive。ほかは参照を引き換え、
+   session の宣言の資格を替えて(後の手番もその資格で起こす・使い回す process にもその資格を書く)から、層 2 の
+   ClaudeReplaceSessionCredential で生きた process の資格を替える。層 2 の答え: CredentialReplaced → SessionCredentialReplaced /
+   SessionProcessDown・NoSuchSession(まだ手番を始めていない)→ SessionProcessNotLive / HomeCredentialSession → SessionOnHomeCredential。"
+  (when (is session.spec.credential None)
+    (return (SessionOnHomeCredential)))
+  (when session.stopped
+    (return (SessionProcessNotLive)))
+  (<- lent (replacement-credential ref))
+  (when (isinstance lent ReplacementCredentialUnavailable)
+    (return lent))
+  (setv session.spec (replace session.spec :credential lent))
+  (<- outcome (ClaudeReplaceSessionCredential session.context-id lent))
+  (match outcome
+    (CredentialReplaced) (SessionCredentialReplaced)
+    (SessionProcessDown) (SessionProcessNotLive)
+    (NoSuchSession) (SessionProcessNotLive)
+    (HomeCredentialSession) (SessionOnHomeCredential)
+    _ (raise (AgentError (.format "session {}: 資格の差し替えの層 2 の答えが閉語彙の外: {}" session.name
+                                  (. (type outcome) __name__))))))
+
 (defn refuse-keys [#^ bool literal #^ bool enter]
   (when (or (not literal) (not enter))
     (raise (AgentCapabilityUnsupportedError :capability "SendEffect keys (literal=False / enter=False)" :handler HANDLER-NAME))))
@@ -671,6 +718,11 @@
     :when (in handle.session-id state.sessions)
     (<- warmed (warm (get state.sessions handle.session-id)))
     (resume warmed))
+
+  (ReplaceSessionCredentialEffect [handle credential-ref]
+    :when (in handle.session-id state.sessions)
+    (<- replaced (replace-credential (get state.sessions handle.session-id) credential-ref))
+    (resume replaced))
 
   (EventsEffect [handle after-seq wait-seconds]
     :when (in handle.session-id state.sessions)

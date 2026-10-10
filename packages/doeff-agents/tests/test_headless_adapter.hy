@@ -1479,12 +1479,14 @@
                                     (fake-headless-claude-handlers None (str (/ tmp-path "home")) :world world :env {} :settings {}))
                                  program))))
 
-(deftest test-headless-redeems-the-credential-ref-into-the-turn-env [tmp-path]
+(deftest test-headless-redeems-the-credential-ref-into-the-lent-credential [tmp-path]
   ;; #665・#979: token は LaunchEffect に載らない。adapter が起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの token を
-  ;; 子の claude の env の手番の資格の名(本番の agentd が貸与の札を運ぶ名 = TURN-AUTH-ENV-KEYS の 1 つ)にだけ置く。家の資格の答え・
-  ;; 参照の無い起動は家の env のまま。token は effect・答え・家・宣言の repr に写らない。
+  ;; 層 2 の宣言の借りた資格(ClaudeSessionSpec.credential)にする — 層 2 がその process だけの設定 dir の .credentials.json に置き、子の
+  ;; env には置かない(card acp:kanban-issue:ki-4ffdafa021e5 — 走っている CLI の資格を替えるため)。家の資格の答え・参照の無い起動は
+  ;; 家の資格のまま(credential = None)。token は effect・答え・家・宣言の repr に写らない。
+  (import doeff_agents.agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
   (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential RedeemTurnCredentialEffect])
-  (import doeff_agents.handlers.headless [HeadlessClaudeConfig TURN-CREDENTIAL-ENV spec-of])
+  (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
   (import doeff_agents.sessionhost.policy [TURN-AUTH-ENV-KEYS])
   (import doeff_claude_code.fake [FakeClaudeWorld])
   (import doeff_claude_code.values [ClaudeHome])
@@ -1497,19 +1499,26 @@
     (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
   ;; 引き換えは参照のある起動だけ・1 回ずつ。
   (assert (= asked ["lease-borrowed" "lease-home"]) asked)
-  (setv envs (lfor session (.values world.sessions) (dict session.home.env)))
-  (assert (= (len envs) 3) envs)
-  (assert (= (lfor env envs :if (in TURN-CREDENTIAL-ENV env) (get env TURN-CREDENTIAL-ENV)) [token]) "token を置くのは借りた起動 1 つだけ")
+  (val sessions (list (.values world.sessions)))
+  (assert (= (len sessions) 3) sessions)
+  (assert (= (lfor session sessions :if (is-not session.credential None) session.credential.access-token) [token])
+          "借りた資格を持つのは借りた起動 1 つだけ")
+  (for [session sessions]
+    (assert (not-in TURN-CREDENTIAL-ENV session.home.env) "子の env に資格の env の名が在る")
+    (assert (not (any (gfor value (.values session.home.env) (in token value)))) "子の env に token の値が在る"))
   ;; 資格の入口は引き換えの答え 1 つ: session_env から資格を入れる路は断られ、宣言の repr に token は写らない。
   (setv config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"}))
         launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-borrowed")
         spec (spec-of config launch (TurnCredential token 1234.5 :subscription-type None :rate-limit-tier None)))
-  (assert (= (get spec.home.env TURN-CREDENTIAL-ENV) token))
+  (assert (is-not spec.credential None))
+  (assert (= spec.credential.access-token token))
+  (assert (not-in TURN-CREDENTIAL-ENV spec.home.env) spec.home.env)
   (assert (= (get spec.home.env "PATH") "/usr/bin"))
-  ;; 借りた資格の期限は層 2 の宣言へ写る(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は期限を知らない。
-  (assert (= spec.credential-expires-at 1234.5) spec.credential-expires-at)
-  (assert (is (. (spec-of config launch) credential-expires-at) None))
-  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr (TurnCredential token None :subscription-type None :rate-limit-tier None))
+  ;; 借りた資格の期限は層 2 の宣言の資格へ写る(層 2 が床で生きた process を止める — #3672 の D2)。家の資格は資格を持たない。
+  (assert (= spec.credential.expires-at 1234.5) spec.credential)
+  (assert (is (. (spec-of config launch) credential) None))
+  (for [shown [(repr launch) (repr spec) (repr spec.home) (repr spec.credential)
+               (repr (TurnCredential token None :subscription-type None :rate-limit-tier None))
                (repr (RedeemTurnCredentialEffect :credential-ref "lease-borrowed"))]]
     (assert (not-in token shown)))
   (with [(pytest.raises ValueError)]
@@ -1581,13 +1590,12 @@
     (with [(pytest.raises ValueError)]
       (TurnCredential oauth None :github-token bad :subscription-type None :rate-limit-tier None))))
 
-(deftest test-the-credential-facts-ride-on-the-child-env-only-when-the-lender-knows-them [tmp-path]
-  ;; card acp:kanban-issue:ki-d81bb8c7eaaa: claude の CLI は env の CLAUDE_CODE_OAUTH_TOKEN で資格を受けると、契約の種類と階級を env の
-  ;; CLAUDE_CODE_SUBSCRIPTION_TYPE・CLAUDE_CODE_RATE_LIMIT_TIER から読み、種類が無ければ team / enterprise かもしれないとして起動のたびに方針を
-  ;; 確かめに行く(本番で 1 回 319〜801 ms)。貸し手が資格から読んだ種類と階級を TurnCredential で運び、adapter は値の在る時だけ子の env に置く。
-  ;; 貸し手が知らない(None)時は置かない。2 つの名の入口は引き換えの答え 1 つ — 設定 dir の env と session_env からは入れられない
-  ;; (ターンの資格の名 TURN-AUTH-ENV-KEYS の仲間)。2 つは秘密ではないので repr に出てよいが、token は出ない。貸し手は知る事を必ず名乗る
-  ;; (欄に既定値は無い)。
+(deftest test-the-credential-facts-ride-on-the-lent-credential-only-when-the-lender-knows-them [tmp-path]
+  ;; card acp:kanban-issue:ki-d81bb8c7eaaa: claude の CLI は資格の契約の種類が無ければ team / enterprise かもしれないとして、起動のたびに
+  ;; 組織の方針を確かめに行く(本番で 1 回 319〜801 ms)。貸し手が資格から読んだ種類と階級を TurnCredential で運び、adapter は層 2 の宣言の
+  ;; 借りた資格へ写す(層 2 が .credentials.json の subscriptionType・rateLimitTier に置く — card acp:kanban-issue:ki-4ffdafa021e5)。貸し手が
+  ;; 知らない(None)時は None のまま。子の env には置かない。2 つの名の入口は引き換えの答え 1 つ — 設定 dir の env と session_env からは
+  ;; 入れられない(ターンの資格の名 TURN-AUTH-ENV-KEYS の仲間)。2 つは秘密ではないので repr に出てよいが、token は出ない。
   (import doeff_agents.agent_env [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV TURN-AUTH-ENV-KEYS])
   (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential])
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
@@ -1605,18 +1613,21 @@
                 "lease-home" (HomeTurnCredential)})
   (for [#(name ref) [#("max" "lease-max") #("unknown" "lease-unknown") #("home" "lease-home")]]
     (run-with-redeem tmp-path world answers asked (launch-with-ref work name ref)))
-  (val envs (lfor session (.values world.sessions) (dict session.home.env)))
-  (assert (= (len envs) 3) (len envs))
-  (assert (= (lfor env envs #((.get env CLAUDE-SUBSCRIPTION-TYPE-ENV) (.get env CLAUDE-RATE-LIMIT-TIER-ENV)))
-             [#("max" "default_claude_max_20x") #(None None) #(None None)])
-          "種類と階級を置くのは、貸し手が知る資格の起動だけ")
-  (assert (not-in CLAUDE-SUBSCRIPTION-TYPE-ENV (get envs 1)) "知らない(None)時に欄を空で置いた")
-  ;; 片方だけ知る資格は、知る方だけを置く。
+  (val sessions (list (.values world.sessions)))
+  (assert (= (len sessions) 3) (len sessions))
+  (assert (= (lfor session sessions (if (is session.credential None) None
+                                        #(session.credential.subscription-type session.credential.rate-limit-tier)))
+             [#("max" "default_claude_max_20x") #(None None) None])
+          "種類と階級を運ぶのは、貸し手が知る資格の起動だけ")
+  (for [session sessions]
+    (for [name [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV]]
+      (assert (not-in name session.home.env) name)))
+  ;; 片方だけ知る資格は、知る方だけを運ぶ。
   (val config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
   (val launch (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :turn-credential-ref "lease-max"))
-  (val half (. (spec-of config launch (TurnCredential oauth None :subscription-type "pro" :rate-limit-tier None)) home env))
-  (assert (= (get half CLAUDE-SUBSCRIPTION-TYPE-ENV) "pro"))
-  (assert (not-in CLAUDE-RATE-LIMIT-TIER-ENV half))
+  (val half (. (spec-of config launch (TurnCredential oauth None :subscription-type "pro" :rate-limit-tier None)) credential))
+  (assert (is-not half None))
+  (assert (= #(half.subscription-type half.rate-limit-tier) #("pro" None)) half)
   ;; 入口は引き換えの答え 1 つ: 設定 dir の env・session_env が 2 つの名を持てば断る(別の口座の事実が混ざらない)。
   (for [name [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV]]
     (assert (in name TURN-AUTH-ENV-KEYS) name)
@@ -1637,6 +1648,60 @@
       (TurnCredential oauth None :subscription-type None :rate-limit-tier bad)))
   (val unread (TurnCredential oauth None))
   (assert (= #(unread.subscription-type unread.rate-limit-tier) #(None None)) unread))
+
+
+(defk replace-then-send [#^ Path work #^ str name #^ (| str None) launch-ref #^ (get list str) replace-refs]
+  {:pre [(: work Path) (: name str) (: launch-ref (| str None)) (: replace-refs list)] :post [(: % list)]}
+  "手番の資格の参照で 1 手番を起こして終わりまで待ち、replace-refs の参照で順に資格を替え(答えを集める)、続けて 1 手番を送って待つ
+   ため。答え = 差し替えの答えの列。"
+  (import doeff_agents.effects [LaunchEffect ReplaceSessionCredentialEffect AwaitResultEffect SendEffect])
+  (<- handle SessionHandle (LaunchEffect :session-name name :agent-type AgentType.CLAUDE :work-dir work :prompt (reply-prompt "OK")
+                                         :lifecycle AgentSessionLifecycle.MULTI-TURN :turn-credential-ref launch-ref))
+  (<- (AwaitResultEffect :handle handle :timeout-seconds 60.0))
+  (var answers [])
+  (for [ref replace-refs]
+    (<- answer (ReplaceSessionCredentialEffect :handle handle :credential-ref ref))
+    (:= answers (+ answers [answer])))
+  (<- (SendEffect :handle handle :message (reply-prompt "AGAIN")))
+  (<- (AwaitResultEffect :handle handle :timeout-seconds 60.0))
+  answers)
+
+
+(deftest test-the-adapter-replaces-the-live-process-credential-by-reference [tmp-path]
+  ;; card acp:kanban-issue:ki-4ffdafa021e5: ReplaceSessionCredentialEffect は token を運ばず参照だけを運ぶ。adapter は参照を
+  ;; RedeemTurnCredentialEffect で引き換え、層 2 の ClaudeReplaceSessionCredential で走っている process の資格を替え
+  ;; (SessionCredentialReplaced)、session の宣言の資格も替える(続きの手番はその資格のまま — 前の資格に戻さない)。引き換えられない
+  ;; 参照・家の資格を名指す参照は ReplacementCredentialUnavailable(資格は替えない)。家の資格で起こした session は引き換えずに
+  ;; SessionOnHomeCredential。
+  (import doeff_agents.effects [TurnCredential HomeTurnCredential TurnCredentialUnavailable SessionCredentialReplaced
+                                SessionOnHomeCredential ReplacementCredentialUnavailable])
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val world (FakeClaudeWorld fake-responder))
+  (val asked [])
+  (val answers {"lease-1" (TurnCredential "fake-token-1" 100.0 :subscription-type "max" :rate-limit-tier None)
+                "lease-2" (TurnCredential "fake-token-2" 200.0 :subscription-type "max" :rate-limit-tier None)
+                "lease-gone" (TurnCredentialUnavailable "lease lease-gone はもう返した")
+                "lease-home" (HomeTurnCredential)})
+  (val lent-answers (run-with-redeem tmp-path world answers asked
+                                     (replace-then-send work "lent" "lease-1" ["lease-2" "lease-gone" "lease-home"])))
+  (assert (= (get lent-answers 0) (SessionCredentialReplaced)) lent-answers)
+  (assert (= (get lent-answers 1) (ReplacementCredentialUnavailable "lease lease-gone はもう返した")) lent-answers)
+  (assert (isinstance (get lent-answers 2) ReplacementCredentialUnavailable) lent-answers)
+  (assert (= asked ["lease-1" "lease-2" "lease-gone" "lease-home"]) asked)
+  (val lent-session (next (gfor session (.values world.sessions) :if (is-not session.credential None) session)))
+  (assert (is-not lent-session.credential None))
+  ;; 差し替えの後の手番(SendEffect)も替えた資格のまま — 断られた参照は資格を替えない。
+  (assert (= #(lent-session.credential.access-token lent-session.credential.expires-at) #("fake-token-2" 200.0))
+          lent-session.credential)
+  (assert (= lent-session.launches 1) lent-session.launches)
+  ;; 家の資格で起こした session は引き換えない。
+  (.clear asked)
+  (val home-answers (run-with-redeem tmp-path world answers asked (replace-then-send work "home" None ["lease-2"])))
+  (assert (= home-answers [(SessionOnHomeCredential)]) home-answers)
+  (assert (= asked []) asked))
+
 
 (deftest test-an-unredeemable-credential-ref-does-not-start-the-session [tmp-path]
   ;; #979 の反例: 引き換えられない参照(知らない・もう返した lease)の起動は TurnCredentialUnavailableError(AgentLaunchError の 1 つ)で
