@@ -235,3 +235,37 @@ fn a_cap_sweep_in_progress_or_done_within_the_interval_is_not_repeated() {
     run_with_cap(live.path(), cache.path(), 1000);
     assert!(old.exists(), "間隔の内(同じ 1 時間の中)は、上限の片づけを繰り返さない");
 }
+
+// ── 増える時に上限を確かめる(agora の card — zeus の doeff-linter の置き場が 7.9G・2026-10-10 14:34 から zeus の disk が新しい版の
+// 準備の下限を割った)───────────────────────────────────────────────────────────────────────────────────
+// 置き場の全体が増えるのは、根の dir を新しく作る時(作業木 1 つで約 176MB)。上限の片づけを 1 時間に 1 度の番だけで確かめると、その間に
+// 作業木が増えて上限を越えたままになる。根の dir を新しく作った実行は、番の間隔に依らずその場で上限を確かめる(巡回の片づけは足さない —
+// 書く時の 1 点)。使っている根として守るのは、10 分の内に使われた dir だけ(1 時間だと作業の多い時に、ほぼ全部が守られて消せない)。
+
+#[test]
+fn a_new_root_over_the_cap_clears_old_dirs_even_right_after_a_cap_sweep() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let kept_root = repo();
+    let live = repo();
+    let old = stale_root_dir(cache.path(), "0000000000000101", kept_root.path(), 8000, 30 * 86400);
+    interval_passes(cache.path());
+    // 上限の片づけを、たった今 終えた(番の間隔の内)— そこへ新しい根の dir が増える
+    std::fs::write(cache.path().join(".swept-cap"), unix_now().to_string()).unwrap();
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(!old.exists(), "新しい根の dir を作った実行は、番の間隔の内でも上限を確かめて古い dir を消す");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "この実行の根の dir は残る");
+}
+
+#[test]
+fn a_dir_last_used_more_than_ten_minutes_ago_goes_over_the_cap() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let kept_root = repo();
+    let live = repo();
+    // 20 分前に使われた根 — 使っている根として守るのは 10 分の内だけ
+    let idle = stale_root_dir(cache.path(), "0000000000000201", kept_root.path(), 8000, 20 * 60);
+    let busy = stale_root_dir(cache.path(), "0000000000000202", kept_root.path(), 8000, 60);
+    interval_passes(cache.path());
+    run_with_cap(live.path(), cache.path(), 9000);
+    assert!(!idle.exists(), "10 分より前に使われた dir は、上限を越えていれば消える");
+    assert!(busy.join("hy-index.bin.d").join("00").is_file(), "10 分の内に使われた dir は残る");
+}
