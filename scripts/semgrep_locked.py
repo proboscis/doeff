@@ -6,7 +6,7 @@ uv tool = 1.161.0・lock = 1.169.0。`.venv` の無い作業木では `uv run --
 版を読み、uv の道具の置き場から `uv tool run --from semgrep==<版> semgrep` で呼ぶ。版は木の中の uv.lock だけで決まり、置き場は
 機体で 1 つ(作業木が何本あっても 1 度だけ入る・作業木に `.venv` を作らない)。
 
-使い方: uv run --no-project python scripts/semgrep_locked.py <semgrep の引数…>(repo の根で。semgrep の答えと終了の値をそのまま返す)。
+使い方: uv run --no-project --python <版> python scripts/semgrep_locked.py <semgrep の引数…>(repo の根で。semgrep の答えと終了の値をそのまま返す)。
 uv.lock に semgrep が無ければ、理由を名指して 1 で止まる(探し道の物へ黙って戻らない)。
 """
 
@@ -39,8 +39,11 @@ def locked_version(top: Path) -> str:
 
 
 def locked_command(top: Path) -> list[str]:
-    """uv.lock の版の semgrep を、uv の道具の置き場から呼ぶ命令(作業木の `.venv` にも探し道にも依らない)。"""
-    return ["uv", "tool", "run", "--from", f"{PACKAGE}=={locked_version(top)}", PACKAGE]
+    """uv.lock の版の semgrep を、uv の道具の置き場から呼ぶ命令(作業木の `.venv` にも探し道にも依らない)。道具の python は、この
+    script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 渡さないと uv は木の .python-version(3.14t)を
+    選び、semgrep の依存の ruamel-yaml-clib が組めない(card acp:kanban-issue:ki-a28a482132ab)。"""
+    running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
+    return ["uv", "tool", "run", "--python", running, "--from", f"{PACKAGE}=={locked_version(top)}", PACKAGE]
 
 
 def main(argv: list[str]) -> int:

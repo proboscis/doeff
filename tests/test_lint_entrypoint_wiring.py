@@ -311,6 +311,3 @@ def test_every_uv_hook_declares_the_hook_python() -> None:
     uv_entries: list[str] = [hook["entry"] for hook in hooks if hook["entry"].startswith("uv ")]
     assert uv_entries
     assert [entry for entry in uv_entries if f"--python {HOOK_PYTHON}" not in entry] == []
-    script: str = (ROOT / "scripts" / "lint-doeff-cluster.sh").read_text()
-    assert script.count("uv run --no-project python") == 0
-    assert script.count(f"uv run --no-project --python {HOOK_PYTHON} python") == 3

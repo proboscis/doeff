@@ -8,9 +8,13 @@ repos:
       # 名指して通す — verbose で、通った時もその 1 行を見せる。
       # semgrep の 3 項は uv.lock の版を uv の道具の置き場から呼ぶ(scripts/semgrep_locked.py・#2906)— 探し道や作業木の .venv の
       # semgrep は機体と作業木の状態で版がずれ、.venv の無い作業木では uv が空の .venv を作っていた。
+      # uv で走る項は hook の python を `--python 3.12` で宣言する(標準の library だけの script — doeff を読む
+      # scripts/lint-doeff-cluster.sh の段は木の環境の python のまま)。semgrep_locked.py は走っている
+      # python の版を uv tool run へ渡す。宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の ruamel-yaml-clib が
+      # 組めずに落ちる(Pod 2026-10-10・card acp:kanban-issue:ki-a28a482132ab)。
       - id: semgrep
         name: semgrep architectural rules(Python・基点に無い所見だけ止める)
-        entry: uv run --no-project python scripts/hook_finding_baseline.py check semgrep
+        entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check semgrep
         language: system
         types: [python]
         # 変更fileだけを検査する。全体走査は既存の日次lint/pytest側が担う。
@@ -23,7 +27,7 @@ repos:
       # identifyにHyのtype tagは無い。Python専用linterへ渡さず、既存generic規則で検査する。
       - id: semgrep-hy
         name: semgrep Hy architectural rules
-        entry: &semgrep-entry uv run --no-project python scripts/semgrep_locked.py --metrics=off --disable-version-check
+        entry: &semgrep-entry uv run --no-project --python 3.12 python scripts/semgrep_locked.py --metrics=off --disable-version-check
           --config .semgrep.yaml --error
         language: system
         types: [file]
@@ -53,7 +57,7 @@ repos:
 
       - id: doeff-linter
         name: doeff-linter(Python・基点に無い error だけ止める)
-        entry: uv run --no-project python scripts/hook_finding_baseline.py check doeff-linter
+        entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check doeff-linter
         language: system
         types: [python]
         pass_filenames: true
@@ -77,7 +81,7 @@ repos:
       # pre-commit 未使用の機体は make hooks-install(scripts/git-hooks/pre-commit)。
       - id: enforcement-ledger
         name: enforcement ledger consistency (ADR-DOE-ENFORCE-001 R5/R7)
-        entry: uv run --script scripts/check_enforcement_ledger.py --staged
+        entry: uv run --python 3.12 --script scripts/check_enforcement_ledger.py --staged
         language: system
         files: ^(docs/adr/|\.semgrep\.yaml)
         pass_filenames: false
