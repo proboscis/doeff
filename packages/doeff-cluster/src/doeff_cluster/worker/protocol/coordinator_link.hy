@@ -397,6 +397,9 @@
     ;; DeclaredReplyMalformed で落ち、下の except が「名乗れない」の 1 行にして「読めない」を返す(拍は前の宣言のまま動かし、ready の file は
     ;; 書かない — 読めない返事で版を入れ替えない)。
     (<- declared DeclaredReply (declared-reply-of-json answered))
+    ;; job の行も ready の前に読む — 行の形の誤り(古い coordinator の返事の版の欄の無い Program の job など・card ki-01d1f8cb0391)も
+    ;; 読めない返事で、ready を書かない。
+    (<- jobs tuple (declared-job-specs declared))
     (<- (ready-file-written))
     ;; 自己停止の時間は coordinator の ClusterTiming が持つ(移し替えの時間と組で決まる)。受け取った値に合わせる。
     (val timing (.get answered "timing"))
@@ -411,7 +414,6 @@
     ;; 生存の窓も同じく受け取る(次に送る heartbeat の事実に載せる — #3850)。
     (when (and timing (in "lease_ms" timing))
       (setv state.lease-ms (int (get timing "lease_ms"))))
-    (<- jobs tuple (declared-job-specs declared))
     (setv state.last-jobs jobs)
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
     (setv state.last-tasks tasks)
