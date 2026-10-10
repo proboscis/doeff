@@ -18,6 +18,7 @@ from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects.file_effects import WriteText as WriteText
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.os_file import os_file_handler as os_file_handler
 from doeff_core_effects.process_effects import StartProcess as StartProcess
@@ -124,6 +125,10 @@ def git_source_env(sources: tuple[GitSource, ...]) -> _Program[tuple[EnvEntry, .
     ...
 
 def worker_env(machine: LocalMachine, worker: SimWorker, url: str) -> _Program[tuple[EnvEntry, ...], object]:
+    ...
+WORKER_REPOS_FILE: Path
+
+def written_repo_table(machine: LocalMachine, home: Path) -> _Program[None, object]:
     ...
 
 def worker_boot_env(machine: LocalMachine, worker: SimWorker, url: str, home: Path, repos: str) -> _Program[tuple[EnvEntry, ...], object]:
