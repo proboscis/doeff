@@ -18,6 +18,7 @@ from doeff_cluster.shared.core.launch_rules import worker_launch_of_env as worke
 from doeff_cluster.shared.core.launch_rules import coordinator_launch_of_env as coordinator_launch_of_env
 from doeff_cluster.shared.core.launch_rules import coordinator_launch_names as coordinator_launch_names
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
+from doeff_cluster.shared.intent.launch_model import StaticWorkerLaunch as StaticWorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 from doeff import with_handlers as with_handlers
 from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
@@ -143,7 +144,7 @@ def worker_running_roots(name: str) -> _Program[tuple[BootRoot, ...], object]:
 def coordinator_running_roots(applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
     ...
 
-def running_roots_of(launch: WorkerLaunch | CoordinatorLaunch, applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
+def running_roots_of(launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch, applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
     ...
 
 def running_roots_at(start: UpgradeStart, applied: tuple[DeployedEnv, ...]) -> _Program[tuple[BootRoot, ...], object]:
@@ -161,10 +162,10 @@ def places_at(starts: tuple[UpgradeStart, ...], roots: tuple[BootRoot, ...], app
 def flux_declarations(paths: tuple, drain: Callable, coordinator_seconds: float, initial: tuple[DeployedEnv, ...]) -> _Handler:
     ...
 
-def boot_root_answer(launch: WorkerLaunch | CoordinatorLaunch, target: str, held: tuple[BootRoot, ...], running: tuple[BootRoot, ...]) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
+def boot_root_answer(launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch, target: str, held: tuple[BootRoot, ...], running: tuple[BootRoot, ...]) -> _Program[BootRootAlreadyPrepared | BootRootBuilt, object]:
     ...
 
-def launch_target(launch: WorkerLaunch | CoordinatorLaunch) -> _Program[str, object]:
+def launch_target(launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch) -> _Program[str, object]:
     ...
 
 def refused_clean_boots(targets: frozenset) -> _Handler:

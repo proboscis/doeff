@@ -60,6 +60,8 @@ from doeff_cluster.worker.core.warm_rules import warm_child_of as warm_child_of
 from doeff_cluster.worker.core.warm_rules import warm_child_ready as warm_child_ready
 from doeff_cluster.worker.core.warm_rules import mark_refusal as mark_refusal
 from doeff_cluster.worker.core.warm_rules import warm_launch as warm_launch
+from doeff_cluster.worker.core.warm_rules import warm_child_refused as warm_child_refused
+from doeff_cluster.worker.core.warm_rules import warm_refusal_failure as warm_refusal_failure
 
 def hyx_kept_when_cut_offXquestion_markX(job: JobSpec, silent_ms: int, keep_fence_ms: int) -> _Program[bool, object]:
     ...

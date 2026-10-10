@@ -5,6 +5,7 @@ from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
+from doeff_cluster.shared.intent.launch_model import StaticWorkerLaunch as StaticWorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 
 class UpgradeKind(StrEnum):
@@ -101,7 +102,7 @@ class CleanBootRefused:
 
 @_doeff_dataclass(frozen=True)
 class ConfirmCleanBoot(_doeff_effect_base[CleanBootPassed | CleanBootRefused]):
-    launch: WorkerLaunch | CoordinatorLaunch
+    launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch
 
 class BootRootRefusal(StrEnum):
     PREPARE_ROLE_UNKNOWN = 'prepare-role-unknown'
@@ -128,7 +129,7 @@ class BootRootRefused:
 
 @_doeff_dataclass(frozen=True)
 class PrepareBootRoot(_doeff_effect_base[BootRootAlreadyPrepared | BootRootBuilt | BootRootRefused]):
-    launch: WorkerLaunch | CoordinatorLaunch
+    launch: WorkerLaunch | StaticWorkerLaunch | CoordinatorLaunch
 
 @dataclass(frozen=True, kw_only=True)
 class QuietWindowOpened:
@@ -155,12 +156,12 @@ class WorkerDrainMissed:
 
 @_doeff_dataclass(frozen=True)
 class AwaitWorkerDrained(_doeff_effect_base[WorkerDrained | WorkerDrainMissed]):
-    launch: WorkerLaunch
+    launch: WorkerLaunch | StaticWorkerLaunch
     timeout_seconds: float
 
 @_doeff_dataclass(frozen=True)
 class ReleaseWorkerDrain(_doeff_effect_base[None]):
-    launch: WorkerLaunch
+    launch: WorkerLaunch | StaticWorkerLaunch
 
 @dataclass(frozen=True, kw_only=True)
 class UnverifiedWorkers:
