@@ -8,10 +8,12 @@
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StopProgress
   StartJob SignalJob Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
         doeff_cluster.shared.intent.job_model [JobSpec JobPhase]
-        doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv]
+        doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind]
         doeff_cluster.shared.core.runtime_env_rules [runtime-env->json]
         doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan statuses warm-child-step warm-child-actions])
+(import doeff_cluster.worker.core.warm_rules [refusals-after])
+(import doeff_cluster.worker.protocol.heartbeat [status-row])
 (import doeff_cluster.worker.core.policy :as policy-module)
 (import doeff_cluster.worker.core.warm_rules :as warm-rules-module)
 (import doeff_cluster.worker.core.invariants [warm-fork-uses-its-own-root warm-child-state-leaves-running-tasks
@@ -210,3 +212,46 @@
   (<- got tuple (plan NOW #(ta) observed {} POLICY))
   (<- broken tuple (warm-fork-only-before-any-vm got observed))
   (assert (= (tuple (gfor action broken action.spec.name)) #("ta")) broken))
+
+
+;; --- 起動を断り続ける待ちの子(card acp:kanban-issue:ki-b35b1e11bc02)-------------------------------------------------
+;; 待ちの子が準備完了の印を書く前に終わる(起動の断り — 例 import の失敗)事が、同じ root で WorkerPolicy.warm-refusal-limit 回続いたら、
+;; worker は待ちの子を起こし直さず、その root から分かれる task を env-failed(種類 env-incompatible・やり直さない・訳 = 断りの 1 行)で
+;; 終える(coordinator の absorb-env-failure が task を終わりの phase にし、枠を返す)。失敗ケース: 上限が無いと、待ちの子は code-retry-ms
+;; ごとに起こし直され、task は PREPARING のまま枠を取り続ける(2026-10-10 に 1,092 回・10 時間)。
+
+(val REFUSAL "warm_child: 起動を断る: 前もって読む module app.jobs を読めない: ImportError: cannot import name 'X' from 'lib'")
+
+
+(deftest test-refusals-count-up-across-restarts-and-reset-after-a-ready-child
+  ;; 起こし直す時の観測の数え: 印を書く前に終わった子の後は 1 つ増え、準備済みになった子・worker が止めた子の後は 0 に戻る。
+  (<- first int (refusals-after None))
+  (<- once int (refusals-after (! (child KEY-A :mark None :exit-code 1 :ended-ms NOW :detail REFUSAL))))
+  (<- twice int (refusals-after (replace (! (child KEY-A :mark None :exit-code 1 :ended-ms NOW :detail REFUSAL)) :refusals 1)))
+  (<- after-ready int (refusals-after (replace (! (child KEY-A :exit-code 0 :ended-ms NOW)) :refusals 2)))
+  (val stopped (StopProgress :requested-ms NOW :stage StopStage.TERM :signalled-ms NOW))
+  (<- after-stop int (refusals-after (replace (! (child KEY-A :mark None :exit-code -15 :ended-ms NOW :stop stopped)) :refusals 2)))
+  (assert (= #(first once twice after-ready after-stop) #(0 1 2 0 0)) #(first once twice after-ready after-stop)))
+
+
+(deftest test-a-warm-child-refusing-up-to-the-limit-is-not-restarted-and-its-task-ends-env-failed
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (val limit POLICY.warm-refusal-limit)
+  ;; 上限の手前(この終わりで limit - 1 回目)は、今までどおり間を置いて起こし直し、task は準備中のまま。
+  (val below (replace (! (child KEY-A :mark None :exit-code 1 :ended-ms (- NOW 30000) :detail REFUSAL)) :refusals (- limit 2)))
+  (<- restart tuple (warm-child-step NOW KEY-A LAUNCH-A below POLICY))
+  (assert (= restart #((StartWarmChild KEY-A LAUNCH-A))) restart)
+  (<- waiting tuple (statuses NOW #(ta) (! (world :children #(below))) {} POLICY))
+  (assert (= (tuple (gfor s waiting s.phase)) #(JobPhase.PREPARING)) waiting)
+  ;; 上限に達した(この終わりで limit 回目): 起こし直さず、task は env-failed で終わる。
+  (val refused (replace below :refusals (- limit 1)))
+  (<- held tuple (warm-child-step NOW KEY-A LAUNCH-A refused POLICY))
+  (assert (= held #()) held)
+  (<- ended tuple (statuses NOW #(ta) (! (world :children #(refused))) {} POLICY))
+  (assert (= (tuple (gfor s ended #(s.phase s.failure s.detail)))
+             #(#(JobPhase.ENV-FAILED (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :detail REFUSAL :retryable False)
+                 (.format "待ちの子が {} 回続けて起動を断った: {}" limit REFUSAL))))
+          ended)
+  ;; coordinator へ運ぶ行は、やり直さない env-failed(absorb-env-failure が task を終える)。
+  (<- row dict (status-row (get ended 0)))
+  (assert (= #((get row "phase") (get row "failureKind") (get row "retryable")) #("env-failed" "env-incompatible" False)) row))
