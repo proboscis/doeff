@@ -79,7 +79,7 @@
   RedeemTurnCredentialEffect TurnCredential HomeTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError
   HandlerMadeContextId NamedContextId])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
-                                  BypassAll PermissionPolicy checked-session-id])
+                                  BypassAll PermissionPolicy checked-session-id ImageAttachment])
 (import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactBoundary
                                  HookNotice HookPhase
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
@@ -546,9 +546,16 @@
     (when (isinstance status.transcript TranscriptAbsent)
       (raise (ResumeTargetNotFoundError :resume-from request.resume-from))))
   (when (is-not request.prompt None)
-    (<- (start-turn session (TurnInput request.prompt (new-ref)))))
+    (<- images tuple (images-of request.attachments))
+    (<- (start-turn session (TurnInput request.prompt (new-ref) images))))
   (setv (get state.sessions name) session)
   (SessionHandle :session-id name))
+
+(defk images-of [attachments]
+  {:pre [(: attachments tuple)] :post [(: % tuple)] :tags {:context "headless-adapter" :role "judgment"}}
+  "効果に添えた画像(InputImage の列)を、層 2 の手番の入力の画像(ImageAttachment — 層 2 が CLI の入力の画像の block にする)へ写すため
+   (利用者が貼った画像を prompt の一部として CLI へ渡す・card ki-0faa366b76c0)。mime の受理は層 2 が検める(外れは AttachmentRefused)。"
+  (tuple (gfor image attachments (ImageAttachment image.mime image.data-base64))))
 
 (defk deliver [#^ HeadlessSession session #^ TurnInput input mode]
   {:pre [(: session HeadlessSession) (: input TurnInput) (: mode TurnInputMode)] :post [(: % (type None))]}
@@ -649,9 +656,10 @@
     (<- (deliver (get state.sessions handle.session-id) (TurnInput message (new-ref)) TurnInputMode.NEXT-TURN))
     (resume None))
 
-  (FollowUpEffect [handle message mode input-ref]
+  (FollowUpEffect [handle message mode input-ref attachments]
     :when (in handle.session-id state.sessions)
-    (<- (deliver (get state.sessions handle.session-id) (TurnInput message (or input-ref (new-ref))) mode))
+    (<- images tuple (images-of attachments))
+    (<- (deliver (get state.sessions handle.session-id) (TurnInput message (or input-ref (new-ref)) images) mode))
     (resume handle))
 
   (InterruptEffect [handle]

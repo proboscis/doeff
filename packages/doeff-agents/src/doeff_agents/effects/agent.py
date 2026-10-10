@@ -939,6 +939,38 @@ class NamedContextId:
 
 
 @dataclass(frozen=True, kw_only=True)
+class InputImage:
+    """An image that rides with an input's text (``LaunchEffect.prompt`` or
+    ``FollowUpEffect.message``) into the agent's turn.
+
+    ``mime`` is the image type (``image/png`` …) and ``data_base64`` the image
+    bytes in base64.  The runtime receives it as part of the prompt (the claude
+    CLI: an ``image`` content block of the stream-json user message), not as a
+    reference it has to fetch.  Which types a runtime accepts is the handler's
+    check (claude: ``image/png``, ``image/jpeg``, ``image/gif``, ``image/webp``).
+    """
+
+    mime: str
+    data_base64: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mime, str) or not self.mime:
+            raise ValueError("InputImage.mime must be a non-empty string")
+        if not isinstance(self.data_base64, str) or not self.data_base64:
+            raise ValueError("InputImage.data_base64 must be a non-empty string")
+
+
+def _check_attachments(owner: str, attachments: object) -> None:
+    """Refuse an ``attachments`` field that is not a tuple of ``InputImage``, so a
+    handler never has to guess what an image looks like (one check for both
+    effects that carry images)."""
+    if not isinstance(attachments, tuple) or not all(
+        isinstance(item, InputImage) for item in attachments
+    ):
+        raise TypeError(f"{owner}.attachments must be a tuple of InputImage")
+
+
+@dataclass(frozen=True, kw_only=True)
 class LaunchEffect(AgentEffectBase):
     """Launch a new agent session.
 
@@ -1000,8 +1032,16 @@ class LaunchEffect(AgentEffectBase):
     # can only hold a token count the CLI accepts). Handlers that cannot place
     # it refuse it with ``AgentCapabilityUnsupportedError``.
     autocompact: AutocompactAuto | AutocompactTokens | None = None
+    # Images that ride with ``prompt`` into the first turn (part of the prompt,
+    # not a reference). They need a prompt (an empty string is a prompt of
+    # images only). Handlers that cannot hand images to the runtime refuse
+    # them with ``AgentCapabilityUnsupportedError``.
+    attachments: tuple[InputImage, ...] = ()
 
     def __post_init__(self) -> None:
+        _check_attachments("LaunchEffect", self.attachments)
+        if self.attachments and self.prompt is None:
+            raise ValueError("LaunchEffect.attachments ride with a prompt; prompt is None")
         if self.autocompact is not None and not isinstance(
             self.autocompact, AutocompactAuto | AutocompactTokens
         ):
@@ -1097,6 +1137,13 @@ class FollowUpEffect(AgentEffectBase):
     message: str
     mode: TurnInputMode = TurnInputMode.NEXT_TURN
     input_ref: str | None = None
+    # Images that ride with ``message`` (an empty message is an input of images
+    # only). Handlers that cannot hand images to the runtime refuse them with
+    # ``AgentCapabilityUnsupportedError``.
+    attachments: tuple[InputImage, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_attachments("FollowUpEffect", self.attachments)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1377,6 +1424,7 @@ def Launch(  # noqa: N802
     resume_from: str | None = None,
     resume_snapshot: str | None = None,
     new_context_id: HandlerMadeContextId | NamedContextId = HandlerMadeContextId(),
+    attachments: tuple[InputImage, ...] = (),
 ) -> LaunchEffect:
     """Create a Launch effect with flat fields."""
     return LaunchEffect(
@@ -1395,6 +1443,7 @@ def Launch(  # noqa: N802
         resume_from=resume_from,
         resume_snapshot=resume_snapshot,
         new_context_id=new_context_id,
+        attachments=attachments,
     )
 
 
@@ -1416,8 +1465,11 @@ def FollowUp(  # noqa: N802
     *,
     mode: TurnInputMode = TurnInputMode.NEXT_TURN,
     input_ref: str | None = None,
+    attachments: tuple[InputImage, ...] = (),
 ) -> FollowUpEffect:
-    return FollowUpEffect(handle=handle, message=message, mode=mode, input_ref=input_ref)
+    return FollowUpEffect(
+        handle=handle, message=message, mode=mode, input_ref=input_ref, attachments=attachments
+    )
 
 
 def StopSession(  # noqa: N802
@@ -1638,6 +1690,16 @@ def refuse_turn_capabilities(effect: AgentEffectBase, *, handler: str) -> None:
     if isinstance(effect, FollowUpEffect) and effect.mode is not TurnInputMode.NEXT_TURN:
         raise AgentCapabilityUnsupportedError(
             capability=f"FollowUpEffect.mode={effect.mode.value}", handler=handler
+        )
+    # Images never silently fall off the prompt (a terminal handler has no way
+    # to hand them to the runtime).
+    if isinstance(effect, LaunchEffect) and effect.attachments:
+        raise AgentCapabilityUnsupportedError(
+            capability="LaunchEffect.attachments", handler=handler
+        )
+    if isinstance(effect, FollowUpEffect) and effect.attachments:
+        raise AgentCapabilityUnsupportedError(
+            capability="FollowUpEffect.attachments", handler=handler
         )
 
 
