@@ -44,10 +44,9 @@
   (assert spec.once)
   (assert (= spec.program sha) spec)
   (assert (= spec.args #("task" "--result" (str (/ tasks "t7.result")))) spec.args)
-  ;; 本文に Program は無い — その task の Program の cache の file(Program の cache の dir からの相対 path — Program のキーと task の行の
-  ;; 版で決まる・#3762)の印だけを残す(返事から外れた task の cache を消すため)。
+  ;; 本文に Program は無い — その task の Program の cache の file(Program の cache の dir からの相対 path <版の指紋>/<sha>.json —
+  ;; Program のキーと task の行の版で決まる・#3762)の印だけを残す(返事から外れた task の cache を消すため)。
   (assert (= (.read-text (/ tasks "t7.program")) (! (spec-program-name spec))))
-  (assert (.startswith (.read-text (/ tasks "t7.program")) "tasks/"))
   (assert (.endswith (.read-text (/ tasks "t7.program")) (+ "/" sha ".json")))
   (.write-text (/ tasks "t7.result") "RESULT")
   (val rows (.report link #((JobStatus "task/t7" JobPhase.FINISHED "r" None None 1))))

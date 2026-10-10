@@ -10,7 +10,8 @@
 (import pathlib [Path])
 (import httpx)
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.worker.core.launch [program-file])
+(import doeff_cluster.worker.core.launch [spec-program-file])
+(import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
@@ -39,7 +40,7 @@
 (defk service-spec [name program]
   {:pre [(: name str) (: program (| str None))] :post [(: % JobSpec)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "Program の job の service の spec(置き場のキー program・子の環境変数 environ)。"
-  (JobSpec name JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program program :environ #(#("POLL" "5.0"))))
+  (JobSpec name JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program program :versions (if program (environ-pairs VERSIONS) None) :environ #(#("POLL" "5.0"))))
 
 
 (deftest test-the-link-fetches-only-programs-whose-content-matches-the-key [tmp-path]
@@ -52,10 +53,10 @@
   (<- plain (service-spec "plain" None))
   (.accept-programs link #(good forged absent plain))
   (val dir (/ tmp-path "programs"))
-  (assert (= (json.loads (.read-text (program-file dir SHA) :encoding "utf-8")) {"blob" BLOB "versions" VERSIONS}))
+  (assert (= (json.loads (.read-text (! (spec-program-file dir good)) :encoding "utf-8")) {"blob" BLOB "versions" VERSIONS}))
   ;; 中身の合わない物・置かれていない物は書かない(子は file が無いので起動の時に理由つきで落ちる)。置き場のキーの無い job は取らない。
-  (assert (not (.exists (program-file dir FORGED))))
-  (assert (not (.exists (program-file dir ABSENT))))
+  (assert (not (.exists (! (spec-program-file dir forged)))))
+  (assert (not (.exists (! (spec-program-file dir absent)))))
   (assert (= (sorted seen) (sorted (lfor s [SHA FORGED ABSENT] (+ "/programs/" s)))) seen)
   ;; 在る物は取り直さない(取れなかった物は次の拍で取り直す)。
   (.clear seen)
@@ -74,7 +75,7 @@
   (val argv (get planned 0))
   (val cwd (get planned 1))
   (val env (get planned 2))
-  (val file (str (program-file (Path host.program-dir) SHA)))
+  (val file (str (! (spec-program-file (Path host.program-dir) spec))))
   (assert (= (list (cut argv -5 None)) ["service" "--identity" (* "0" 16) "--program" file]) argv)
   (assert (= (get env HOST-CONTRACT.program-env) file) env)
   (assert (= (get env "POLL") "5.0") env)
