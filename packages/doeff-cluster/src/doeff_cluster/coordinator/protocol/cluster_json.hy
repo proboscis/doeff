@@ -84,6 +84,7 @@
               :key (stored-optional-str data "key")
               :boot (stored-optional-str data "boot")
               :retain-ms (stored-int data "retain_ms" 0)
+              :reported (stored-bool data "reported" False)
               :runtime-env (stored-optional-dict data "runtime_env")
               :env-attempts (stored-int data "env_attempts" 0)
               :avoid (stored-items data "avoid")

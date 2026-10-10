@@ -937,6 +937,10 @@
   (setv #^ (| str None) key None)
   (setv #^ (| str None) boot None)
   (setv #^ int retain-ms 0)
+  ;; reported = 置いた世代が状態の報告にこの task の行を一度でも載せた(子 process を起こした)。止まり始めた世代の報告から行が消えた時、
+  ;; 報告済みの task は走らせ直さず lost で終え、未報告の task だけを置き直しの待ちへ戻す(cluster_policy の absorb-task-reports —
+  ;; 2026-10-10 に作り直しの後の次の世代で 2 度走った)。この欄の無い旧い行は False で読む。
+  (setv #^ bool reported False)
   ;; --- 実行環境(runtime env・2026-09-26)---
   ;; runtime-env = 宣言の JSON(runtime_env_model の runtime-env->json の形)。在れば worker の版と比べずに置き(版の突き合わせは
   ;; env の root の中の子 process が行う)、worker は env の root を準備してから走らせる。準備の失敗(phase env-failed)は

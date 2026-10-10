@@ -636,6 +636,7 @@ class TaskRecord:
     key: str | None = None
     boot: str | None = None
     retain_ms: int = 0
+    reported: bool = False
     runtime_env: dict[str, object] | None = None
     env_attempts: int = 0
     avoid: tuple[str, ...] = ...

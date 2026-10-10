@@ -1114,6 +1114,9 @@
       (setv id (cut name 5 None) task (.get tasks id))
       (when (and task (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
         (setv phase status.phase)
+        ;; 置いた世代が行を報告した = 子 process を起こした(止まりの報告で行が消えても走らせ直さない — 下の stopping の枝)。
+        (when (not task.reported)
+          (setv task (replace task :reported True) (get tasks id) task))
         (cond
           (= phase "env-failed") (setv (get tasks id) (absorb-env-failure task worker status now))
           task.detached (setv (get tasks id) (absorb-detached-report task status now))
@@ -1126,8 +1129,14 @@
     (setv running (frozenset (gfor status statuses :if (.startswith status.name "task/") (cut status.name 5 None))))
     (for [#(id task) (sorted (.items tasks))]
       (when (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot) (not-in id running))
-        (setv (get tasks id) (replace task :phase "queued" :worker None :boot None :started-ms None
-                                      :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))
+        (setv (get tasks id)
+              (if (and task.detached task.reported)
+                  ;; 行を報告した後に消えた = 止まり始めた worker が走っていた子 process を止めた。切り離した task は走らせ直さない
+                  ;; (置き直すと同じ名の次の世代でもう 1 度走った — 2026-10-10 17:56 の作り直しの後)。
+                  (end-detached task "lost" now
+                                (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた — 走らせ直さない" worker))
+                  (replace task :phase "queued" :worker None :boot None :started-ms None
+                           :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker)))))))
   tasks)
 
 
