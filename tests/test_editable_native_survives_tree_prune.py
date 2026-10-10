@@ -69,6 +69,15 @@ def _tool_path() -> str:
     return ":".join(dict.fromkeys([*(str(Path(path).parent) for path in found if path), "/usr/bin", "/bin"]))
 
 
+def _uv_cache_dir() -> str:
+    """呼び手の uv の cache の dir(`uv cache dir` — UV_CACHE_DIR・XDG_CACHE_HOME・HOME の順は uv 自身が解く)。子は UV_OFFLINE で
+    組みの依存(maturin)をこの cache から引くので、HOME の下の既定でなく呼び手と同じ dir を渡す — 日次の task は HOME が回ごとの空の dir で、
+    cache は UV_CACHE_DIR(worker の共有の cache)に在る(atlas の Pod での初回 2026-10-10 20:05 に 2 本が赤・card ki-9338eec1d15e)。"""
+    uv = shutil.which("uv")
+    assert uv is not None, "uv が探し道に無い"
+    return subprocess.run([uv, "cache", "dir"], capture_output=True, text=True, check=True).stdout.strip()
+
+
 def _make_sync() -> list[str]:
     """Makefile の sync の target の命令(日次の手順ごとの同期と同じ)。"""
     found = re.search(r"^sync:\n\t(.+)$", (REPO / "Makefile").read_text(encoding="utf-8"), re.MULTILINE)
@@ -81,8 +90,8 @@ class Tree:
 
     def __init__(self, root: Path, store: Path) -> None:
         self.root = root
-        self.env = {"HOME": str(Path.home()), "UV_OFFLINE": "1", "UV_PYTHON": sys.executable, "UV_NO_CONFIG": "1",
-                    "DOEFF_WHEEL_CACHE": str(store), "PYTHONDONTWRITEBYTECODE": "1", "PATH": _tool_path()}
+        self.env = {"HOME": str(Path.home()), "UV_OFFLINE": "1", "UV_CACHE_DIR": _uv_cache_dir(), "UV_PYTHON": sys.executable,
+                    "UV_NO_CONFIG": "1", "DOEFF_WHEEL_CACHE": str(store), "PYTHONDONTWRITEBYTECODE": "1", "PATH": _tool_path()}
         package = root / "packages" / "probe-native"
         (package / "probe_native").mkdir(parents=True)
         (package / "src").mkdir()
