@@ -296,6 +296,22 @@ elapsed("1")
 _MISTAKE_MARKER = "# ---- mistakes"
 
 
+def _pyright_python(tmp_path: Path) -> Path:
+    """pyright に --pythonpath で渡す python(pyright は検索 path を問うためにこれを起こす)。"""
+    return Path(sys.executable)
+
+
+def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
+    # 失敗ケース(日次の全体検証 2026-10-11 00:05 JST の doeff の root の段・card ki-9338eec1d15e の R4): pyright は --pythonpath の
+    # python を `-I`(= -E — PYTHON* の環境変数を読まない)で起こすので、呼び手の PYTHONDONTWRITEBYTECODE=1 が効かず、site の起動で
+    # .pth が読む module の .pyc 6 個(.venv の _virtualenv・__editable___doeff_vm_finder と packages/doeff-hy/src/doeff_hy_bytecode_guard の
+    # 4 つ)を checkout へ書いた — 根の conftest の session の終わりの検(_bytecode_settings_pinned)が ERROR。
+    python = _pyright_python(tmp_path)
+    probe = subprocess.run([str(python), "-I", "-c", "import sys; print(sys.dont_write_bytecode)"],
+                           capture_output=True, text=True, timeout=60, check=True)
+    assert probe.stdout.strip() == "True", probe
+
+
 def _pyright(tmp_path: Path, source: str) -> dict:
     root = Path(__file__).resolve().parents[1]
     original = json.loads((root / "pyrightconfig.json").read_text())
@@ -308,7 +324,7 @@ def _pyright(tmp_path: Path, source: str) -> dict:
     sample.write_text(source)
     result = subprocess.run(
         [sys.executable, "-m", "pyright", "--project", str(config),
-         "--pythonpath", sys.executable, "--outputjson", str(sample)],
+         "--pythonpath", str(_pyright_python(tmp_path)), "--outputjson", str(sample)],
         cwd=root, capture_output=True, text=True, timeout=120, check=False,
     )
     return json.loads(result.stdout)
