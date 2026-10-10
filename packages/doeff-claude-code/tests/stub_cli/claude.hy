@@ -32,7 +32,7 @@
 (import uuid)
 
 (.insert sys.path 0 (str (. (Path __file__) (resolve) parent parent)))
-(import scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA advice-stdout])
+(import scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA advice-stdout IMAGE-MARK])
 
 (setv CAPABILITIES ["msg_lifecycle_v1" "interrupt_receipt_v1"])
 ;; CLI の手番 1 回の額(USD — 2 進で割り切れる値にして、累積の差が検の比べで端数を出さないようにする)。
@@ -106,8 +106,10 @@
 
 (defn user-text [#^ dict record]
   (setv content (.get (.get record "message" {}) "content"))
+  ;; image の block は 1 つにつき印 IMAGE-MARK を 1 つ本文へ写す(添付の画像が CLI の入力に入ったかを規則が数える — ki-0faa366b76c0)。
   (if (isinstance content list)
-      (.join "" (gfor part content :if (isinstance part dict) (.get part "text" "")))
+      (.join "" (gfor part content :if (isinstance part dict)
+                      (if (= (.get part "type") "image") IMAGE-MARK (.get part "text" ""))))
       (str (or content ""))))
 
 

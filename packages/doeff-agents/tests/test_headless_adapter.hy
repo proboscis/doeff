@@ -40,7 +40,7 @@
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
   AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
-  NamedContextId HandlerMadeContextId])
+  NamedContextId HandlerMadeContextId InputImage])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
@@ -98,6 +98,8 @@
 ;; 答えの前に CLI が会話を 1 度自動で圧縮する手番(agora-redesign #4189)。替え玉の CLI の規則(scenario_rules.hy の COMPACT-PHRASE と
 ;; COMPACT-METADATA)と同じ言葉と、圧縮の行の欄の値(本物の CLI 2.1.289 の auto の圧縮の compactMetadata)。
 (val COMPACT-PHRASE "Compact the context before replying.")
+;; 添付の画像を数えて答えさせる言い方(替え玉の CLI の規則 scenario_rules.hy の IMAGES-PHRASE と同じ言葉 — ki-0faa366b76c0)。
+(val IMAGES-PHRASE "Count the attached images.")
 (val COMPACT-PRE-TOKENS 969482)
 (val COMPACT-POST-TOKENS 252050)
 (val COMPACT-DROPPED-TOKENS 11155244)
@@ -374,6 +376,42 @@
   (<- started (read-until handle tool-started s.timeout -1))
   (assert (is started.end None) (repr started.end))
   (<- _ (FollowUp handle (extra-prompt) :mode TurnInputMode.INJECT :input-ref "ref-inject"))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout started.after))
+  (<- (Stop handle))
+  done)
+
+;; --- 添付の画像(card acp:kanban-issue:ki-0faa366b76c0 — 利用者 2026-10-10 19:05:57 "actually the image i paste into this chat, must be part
+;; of the prompt...")。替え玉の CLI は stream-json の user の content の image の block を印 IMAGE-MARK として数え、IMAGES-PHRASE か画像だけの
+;; 入力に「IMAGES-<数>」と答える(tests/scenario_rules.hy)。中身は CLI が読まないので小さな PNG の頭だけ。
+(val PNG (InputImage :mime "image/png" :data-base64 "iVBORw0KGgo="))
+
+(defk launch-with-images [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "起動の prompt に画像を 2 つ添えた手番を最後まで読む。"
+  (<- handle (Launch "adapter-images-launch" :agent-type AgentType.CLAUDE :work-dir s.work-dir
+                     :prompt (+ IMAGES-PHRASE " " (reply-prompt "IGNORED")) :attachments #(PNG PNG) :model s.model
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk next-turn-with-only-an-image [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "1 手番の後、次の手番へ文字の無い画像だけの入力を届け、その手番を最後まで読む(利用者が画像だけを貼って送る形)。"
+  (<- handle (launch s "adapter-images-next" (reply-prompt "FIRST") None))
+  (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
+  (<- _ (FollowUp handle "" :attachments #(PNG) :input-ref "ref-image-only"))
+  (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout first.after))
+  (<- (Stop handle))
+  done)
+
+(defk injected-text-and-image [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "道具を走らせている手番へ、文字と画像の入力を割り込ませ(INJECT)、その手番を最後まで読む。"
+  (<- handle (launch s "adapter-images-inject" (sleep-prompt s.sleep "SLEPT") None))
+  (<- started (read-until handle tool-started s.timeout -1))
+  (assert (is started.end None) (repr started.end))
+  (<- _ (FollowUp handle IMAGES-PHRASE :attachments #(PNG) :mode TurnInputMode.INJECT :input-ref "ref-image-inject"))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout started.after))
   (<- (Stop handle))
   done)
@@ -1010,6 +1048,41 @@
 
 (deftest test-headless-inject-stub [tmp-path]
   (check-inject (run-on STUB tmp-path injected-input-joins-the-running-turn)))
+
+(defk check-images-reached-the-cli [#^ Read done #^ str expected]
+  {:pre [(: done Read) (: expected str)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "手番が終わり、その答えが替え玉の CLI の数えた画像の数(expected = IMAGES-<数>)を名乗るかを判じる。"
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (in expected done.end.result-text) done.end.result-text)
+  None)
+
+(deftest test-headless-launch-prompt-carries-its-images-to-the-cli-stub [tmp-path]
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path launch-with-images) "IMAGES-2")))
+
+(deftest test-headless-next-turn-image-only-input-reaches-the-cli-stub [tmp-path]
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path next-turn-with-only-an-image) "IMAGES-1")))
+
+(deftest test-headless-injected-text-and-image-reach-the-running-turn-stub [tmp-path]
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path injected-text-and-image) "IMAGES-1")))
+
+(deftest test-images-are-typed-and-turnless-handlers-refuse-them [tmp-path]
+  ;; 画像は mime と base64 の data の型の値。画像を CLI へ渡せない handler は黙って捨てずに断る(ki-0faa366b76c0)。
+  (import doeff_agents.effects [LaunchEffect FollowUpEffect refuse-turn-capabilities])
+  (with [(pytest.raises ValueError)] (InputImage :mime "" :data-base64 "AAAA"))
+  (with [(pytest.raises ValueError)] (InputImage :mime "image/png" :data-base64 ""))
+  (with [(pytest.raises TypeError)]
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :prompt "p" :attachments #("not-an-image")))
+  ;; 画像は文字の prompt に添える物 — prompt の無い起動に画像だけを載せない。
+  (with [(pytest.raises ValueError)]
+    (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :attachments #(PNG)))
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CODEX :work-dir tmp-path :prompt "p"
+                                            :attachments #(PNG))
+                              :handler "t"))
+  (assert (= info.value.capability "LaunchEffect.attachments") info.value.capability)
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (refuse-turn-capabilities (FollowUpEffect :handle (SessionHandle :session-id "x") :message "m" :attachments #(PNG)) :handler "t"))
+  (assert (= info.value.capability "FollowUpEffect.attachments") info.value.capability))
 
 (deftest test-headless-interrupt-fake [tmp-path]
   (check-interrupt (run-on FAKE tmp-path interrupt-keeps-the-session)))

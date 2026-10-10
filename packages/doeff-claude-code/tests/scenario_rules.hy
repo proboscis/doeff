@@ -38,6 +38,12 @@
 ;; hookSpecificOutput.additionalContext・ki-d8b473480303)。本物の claude で助言を出すには hook を置く必要があるので、
 ;; 助言を当てにする検は替え玉の CLI と fake だけに置く。
 (setv ADVICE-PHRASE "Have the hook advise: {}.")
+;; 入力に添付した画像(stream-json の user の content の image の block)を数えて答えさせる言い方と、替え玉の CLI が image の block 1 つを
+;; 本文へ写す印(card acp:kanban-issue:ki-0faa366b76c0 — 画像が CLI の入力に入ったかを見るため)。本物の claude も画像を数えて答えられるが、
+;; 印の綴りは替え玉の CLI だけの物なので、数を当てにする検は替え玉の CLI に置く。言い方の無い入力でも、文字が空で画像だけの入力は数えて答える
+;; (利用者が画像だけを貼って送る形)。
+(val IMAGES-PHRASE "Count the attached images.")
+(val IMAGE-MARK "[stub:image]")
 
 (defn #^ str advice-stdout [#^ str advice]
   "助言 advice を返す UserPromptSubmit の hook の stdout(替え玉の CLI と fake の同じ 1 か所)。"
@@ -88,8 +94,11 @@
   (setv tool-input-pieces (re.search r"Stream the tool input in (\d+) pieces" text))
   (setv sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text))
   (setv advised (re.search r"Have the hook advise: (\S+?)\." text))
+  (setv images (.count text IMAGE-MARK))
   (setv word
         (cond
+          (and (> images 0) (or (in IMAGES-PHRASE text) (= (.strip (.replace text IMAGE-MARK "")) "")))
+            (.format "IMAGES-{}" images)
           (in "What was the codeword" text)
             (next (gfor earlier memory
                         :setv found (re.search r"codeword (\S+?)\." earlier)
