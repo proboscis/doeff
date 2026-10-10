@@ -46,7 +46,7 @@
 (import doeff_cluster.worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
-(import doeff_cluster.worker.core.warm_rules [warm-dir-of])
+(import doeff_cluster.worker.core.places [worker-places])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
@@ -228,12 +228,14 @@
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
         shared-dir (Path (or args.shared-dir args.state-dir))
+        ;; 世代ごとの置き場と分け合う置き場(AL-D2c — worker/core/places の 1 か所で決める)。
+        places (run (worker-places (str state-dir) (str shared-dir)))
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
         shim (run (shim-spans policy))
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
-        codes (CodeSettings :repo args.repo :cache (str (/ state-dir "code")) :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
+        codes (CodeSettings :repo args.repo :cache places.code :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
         ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
@@ -246,15 +248,15 @@
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
-        warm-dir (run (warm-dir-of (str state-dir)))
+        warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
-        host (HostSettings :log-dir (str (/ shared-dir "logs")) :jobs-dir (str (/ state-dir "jobs"))
-                           :program-dir (str (/ state-dir "programs")) :python sys.executable :hy-command hy-command :uv args.uv
+        host (HostSettings :log-dir places.logs :jobs-dir places.jobs
+                           :program-dir places.programs :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
-        warm (WarmSettings :warm-dir warm-dir :log-dir (str (/ shared-dir "logs")) :uv args.uv)
+        warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :repo-access args.repo-access :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
@@ -265,7 +267,7 @@
                           :shared (str shared-dir))
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
-                              :probe-dir (str (/ state-dir "probe")) :shim shim))
+                              :probe-dir places.probe :shim shim))
   ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
@@ -273,7 +275,7 @@
   ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         boot (run (with-handlers [os-random-handler] (boot-name)))
-        link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) (str (/ state-dir "tasks")) boot
+        link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks
@@ -289,7 +291,7 @@
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
-                                           (str (/ state-dir "status.json")) codes envs warm)))
+                                           places.status codes envs warm)))
   (print "worker: 起動します" :file sys.stderr :flush True)
   (try
     (run (scheduled (worker-on handlers policy)))

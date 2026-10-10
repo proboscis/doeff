@@ -1,0 +1,47 @@
+;; 同じ機体に同じ名の worker の 2 つの世代が並ぶ時(Deployment の RollingUpdate — AL-D2c・card ki-457bdbcc0236)、2 つの worker は同じ /work を
+;; 使う。boot.sh は世代ごとの状態の dir($WORK_DIR/gen/<Pod の uid>/state)を --state-dir に、分け合う dir($WORK_DIR/state)を --shared-dir に
+;; 渡す。ここでは、その 2 つの dir から worker が作る置き場が衝突しない事を縛る:
+;;   * 版の木・job の cwd・Program・task の結果・温める子・入口の検め・拍の状態は、世代ごとに別の場所で、それぞれ自分の状態の dir の下。
+;;   * job の log の dir は分け合う(名は job の名と試みの番号 — 新しい世代が引き継ぐ job は試みが違う)。
+;;   * 実行環境の root は世代ごと(Rust の wheel の保存先を分け合う事は test_boot_wheel・準備の process へ --shared を渡す事は test_env_rules)。
+(require doeff-hy.macros [deftest <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_cluster.worker.core.places [worker-places])
+(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster.worker.protocol.env_store [EnvSettings env-root])
+
+(val SHARED "/work/state")
+(val OLD-STATE "/work/gen/0b6f-old/state")
+(val NEW-STATE "/work/gen/5c1d-new/state")
+(val GENERATION-FIELDS #("code" "jobs" "programs" "tasks" "warm" "probe" "status"))
+
+
+(deftest test-two-generations-keep-their-own-places-and-share-only-the-logs
+  (<- old (worker-places OLD-STATE SHARED))
+  (<- new (worker-places NEW-STATE SHARED))
+  (val old-paths (lfor field GENERATION-FIELDS (getattr old field)))
+  (val new-paths (lfor field GENERATION-FIELDS (getattr new field)))
+  (assert (all (gfor path old-paths (.startswith path (+ OLD-STATE "/")))) old-paths)
+  (assert (all (gfor path new-paths (.startswith path (+ NEW-STATE "/")))) new-paths)
+  (assert (not (& (set old-paths) (set new-paths))))
+  (assert (= old.logs new.logs (+ SHARED "/logs"))))
+
+
+(deftest test-an-unsplit-worker-keeps-every-place-in-its-one-state-dir
+  ;; --shared-dir を省いた worker(boot.sh の既定・WORKER_GENERATION_DIRS なし)は、今までどおり全部を 1 つの状態の dir に置く。
+  (<- places (worker-places SHARED SHARED))
+  (assert (= places.jobs (+ SHARED "/jobs")))
+  (assert (= places.warm (+ SHARED "/warm")))
+  (assert (= places.status (+ SHARED "/status.json")))
+  (assert (= places.logs (+ SHARED "/logs"))))
+
+
+(deftest test-two-generations-prepare-their-own-roots
+  (val old (EnvSettings :state OLD-STATE :shared SHARED :uv-cache (+ SHARED "/uv-cache") :hy-command "hy" :platform "test"
+                        :code-prepare PREPARE-TOOL :roots-cap-bytes (** 2 62)))
+  (val new (EnvSettings :state NEW-STATE :shared SHARED :uv-cache (+ SHARED "/uv-cache") :hy-command "hy" :platform "test"
+                        :code-prepare PREPARE-TOOL :roots-cap-bytes (** 2 62)))
+  (<- old-root (env-root old "env-abc"))
+  (<- new-root (env-root new "env-abc"))
+  (assert (.startswith old-root (+ OLD-STATE "/roots/")))
+  (assert (.startswith new-root (+ NEW-STATE "/roots/"))))
