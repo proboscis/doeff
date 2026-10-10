@@ -256,7 +256,8 @@
 
 (deftest test-env-capacity-is-exhausted-below-the-preparation-floor
   (<- low str (env-capacity 10 100))
-  (<- ok str (env-capacity 100 100))
+  ;; 最低ちょうどの空きは予告の幅の内(near — tests/test_env_capacity_near.hy)なので、ok は幅の外の空きで見る。
+  (<- ok str (env-capacity (+ 100 (* 21 (** 10 9))) 100))
   (<- unset str (env-capacity 0 0))
   (assert (= #(low ok unset) #("exhausted" "ok" "ok"))))
 
