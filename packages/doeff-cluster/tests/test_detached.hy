@@ -663,13 +663,14 @@
   "coordinator の口へ 1 回問うため(本物の判断 responded): 返り値 #(状態 status 本文)。"
   (responded state (! (http-request method path {} body :actor "test")) now T))
 
-(defk beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None]]
+(defk beat [state name now [boot "b1"] [statuses None] [boot-at None] [provides None] [stopping False]]
   {:pre [(: state ClusterState) (: name str) (: now int) (: boot str) (: statuses (| (get list (get dict #(str object))) None)) (: boot-at (| int None))
-         (: provides (| (get list str) None))]
+         (: provides (| (get list str) None)) (: stopping bool)]
    :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker name の heartbeat を 1 回送るため(版 V・能力 provides・世代 boot・起動時刻 boot-at・状態の報告 statuses): 返り値 #(状態 status 本文)。"
+  "worker name の heartbeat を 1 回送るため(版 V・能力 provides・世代 boot・起動時刻 boot-at・状態の報告 statuses・止まり始めの名乗り
+   stopping): 返り値 #(状態 status 本文)。"
   (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call state "POST" "/heartbeat" now (| {"name" name "provides" (or provides ["net"]) "capacity" 10 "taskReserve" 0 "versions" V "boot" boot
-                                                          "statuses" (or statuses [])}
+                                                          "statuses" (or statuses []) "stopping" stopping}
                                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
   reply)
 
@@ -728,6 +729,50 @@
   (:= s (! (tick s 19001 T)))                            ; 担い手が沈黙した = worker の死
   (assert (= (. (get s.tasks id) phase) "lost"))
   (assert (in "lease" (. (get s.tasks id) detail))))
+
+
+(deftest test-a-detached-task-the-stopping-worker-had-started-is-lost-not-rerun-on-the-next-generation
+  ;; 止まり始めた worker は走っている子 process を止め(-15)、止めた子は状態の報告から消える。報告に行が無い task を「その世代で
+  ;; 一度も走っていない」と読んで置き直しの待ちへ戻すと、走った task が同じ名の次の世代に置かれ、もう 1 度走る(2026-10-10 17:56 の
+  ;; worker の作り直しの後、t1126〜t1129 が 18:19 に次の世代へ置かれ、t1127・t1128 は 2 度目の実行で終わった — 置かれるまでの 23 分は
+  ;; 「worker がいま連絡していない」の行のまま、回の宣言の読みを止めた)。その世代が行を一度でも報告した task は、止まりの報告で
+  ;; 行が消えたら走らせ直さず lost で終える(走らせ直さない — 切り離した task の約束)。
+  (val reply-a (! (beat (ClusterState) "w" 0)))
+  (var s (get reply-a 0))
+  (val reply-b (! (put-detached s "job-started" 0 :lease 10.0)))
+  (:= s (get reply-b 0))
+  (setv id (get (get reply-b 2) "task"))
+  ;; 担い手の世代 b1 が子 process を起こし、行を報告する(走っている)。
+  (val reply-c (! (beat s "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])))
+  (:= s (get reply-c 0))
+  (assert (= (. (get s.tasks id) phase) "assigned"))
+  ;; b1 が止まり始め、子を止めた — 報告から行が消える。
+  (val reply-d (! (beat s "w" 2000 :stopping True)))
+  (:= s (get reply-d 0))
+  (setv task (get s.tasks id))
+  (assert (= task.phase "lost") #(task.phase task.detail))
+  (assert (in "止まり始め" task.detail) task.detail)
+  ;; 同じ名の次の世代 b2 には置かれない(返事の task にも載らない)。
+  (val reply-e (! (beat s "w" 3000 :boot "b2")))
+  (:= s (get reply-e 0))
+  (assert (= (get (get reply-e 2) "tasks") []) (get reply-e 2))
+  (assert (= #((. (get s.tasks id) phase) (. (get s.tasks id) boot)) #("lost" "b1")) (get s.tasks id)))
+
+
+(deftest test-a-detached-task-the-stopping-worker-never-started-waits-for-the-next-generation
+  ;; 対照(#2976 の I-3 の赤 R5 の形のまま): 置いた世代が一度も行を報告しないまま止まり始めた task は、置き直しの待ちへ戻り、
+  ;; 同じ名の次の世代に置かれる(まだ走っていないので 2 度走らない)。
+  (val reply-a (! (beat (ClusterState) "w" 0)))
+  (var s (get reply-a 0))
+  (val reply-b (! (put-detached s "job-unstarted" 0 :lease 10.0)))
+  (:= s (get reply-b 0))
+  (setv id (get (get reply-b 2) "task"))
+  (val reply-c (! (beat s "w" 1000 :stopping True)))
+  (:= s (get reply-c 0))
+  (assert (= (. (get s.tasks id) phase) "queued") (get s.tasks id))
+  (val reply-d (! (beat s "w" 2000 :boot "b2")))
+  (:= s (get reply-d 0))
+  (assert (= #((. (get s.tasks id) phase) (. (get s.tasks id) boot)) #("assigned" "b2")) (get s.tasks id)))
 
 
 (deftest test-a-restarted-worker-process-does-not-rerun-its-detached-tasks-and-they-are-lost-by-the-lease
