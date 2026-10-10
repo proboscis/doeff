@@ -43,7 +43,12 @@
   "heartbeat の返事の job 1 本 → worker が起動する形(runtimeEnv を持つ service は env の root で起こす)。worker が job を受けるのは
    coordinator からだけ(宣言の file を直に読む口は無い — ADR-DOE-CLUSTER-001 R1)。draining = 同じ返事の draining(この worker が drain
    中か)— 版を据え置く印 hold-version に写す(#3684)。既定の値は持たない: 既定があると、新しい読み手が渡し忘れた時に drain 中の
-   worker が新しい版を黙って起こす(既定が無ければ、渡し忘れは呼んだ所で引数の不足として止まる)。"
+   worker が新しい版を黙って起こす(既定が無ければ、渡し忘れは呼んだ所で引数の不足として止まる)。
+   Program の job の行に版 versions(名 → 版の object)が無ければ DeclaredReplyMalformed — 古い coordinator(7decfe5f7 の前)の返事で、
+   配備の順の誤り(coordinator を先に上げる)を名乗る(card ki-01d1f8cb0391)。"
+  (when (and (in "program" job) (not (isinstance (.get job "versions") dict)))
+    (raise (DeclaredReplyMalformed (.format "heartbeat の返事の Program の job {} の行に versions(名 → 版の object)が無い: {!r} — 古い coordinator の返事(coordinator を worker より先に上げる)"
+                                            (.get job "name") (.get job "versions")))))
   (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) placed.revision
            :once (.get job "once" False) :placement (.get job "placement")
