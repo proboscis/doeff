@@ -80,8 +80,9 @@ def _is_test_file(rel: str, patterns: tuple[str, ...]) -> bool:
 
 
 # 歩かない dir = pytest の既定の norecursedirs + build の出力(target・__pycache__)。
-# 日次の遠隔の検査の木には .git が無く(remote_check は git の名簿の file だけを送る)、
-# make sync の出力(.venv・target)が在るので、git ではなく file system を歩く。
+# 日次の検査の木には make sync の出力(.venv・target)が在り、2026-10-10 までの遠隔の木(remote_check の写し — git の名簿の
+# file だけを送る)には .git も無かったので、git ではなく file system を歩く(2026-10-10 から段は日次の task の git の作業木で直に走る
+# — ADR-DOE-ENFORCE-001 R10)。
 # 2026-09-25 実測: この規則で歩いた test 名の file の集合は、素の worktree(450 本)でも
 # build 済みの checkout(449 本)でも `git ls-files --cached --others --exclude-standard` と一致した。
 _NOT_WALKED = (
