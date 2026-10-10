@@ -109,7 +109,7 @@
 
 (deftest test-outside-a-turn-only-the-hooks-that-are-not-model-work-are-quiet
   ;; CLI に全 hook の行を出させる(--include-hook-events)と、ターンの外でも Notification・SessionEnd の hook の行が出る — どちらも CLI が
-  ;; 回す物で model の動きではないので、ターンの外の出力として process を止めない(card acp:kanban-issue:ki-d8b473480303)。model の
+  ;; 回す物で model の動きではないので、ターンの外の出力として process を止めない(ki-d8b473480303)。model の
   ;; 手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は、ターンの外なら今までどおり止める(model が動いた兆候)。
   (val idle (. (read-record (. (read-record (. (dialogue.begin-turn (DialogueState :session-id SID) (TurnInput "hello" "msg-1")) state)
                                             INIT) state)
@@ -155,7 +155,7 @@
 (deftest test-hook-lines-are-classified-by-their-event
   ;; hook の開始と応答の行は、イベント名(hook_event — この欄の無い版では hook_name の「:」の前)と段階を持つ型 HookNotice に分ける。
   ;; 応答の行は hook の id・出力(stdout・stderr・output)・exit code・終わり方(outcome)も運ぶ(会話の画面に hook の結果を出すため・
-  ;; card acp:kanban-issue:ki-d8b473480303)。途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
+  ;; ki-d8b473480303)。途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
   (assert (= (classify-record SESSION-START-HOOK-STARTED)
              (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:startup" :hook-id "hook-1")))
   (assert (= (classify-record SESSION-START-HOOK-RESPONSE)

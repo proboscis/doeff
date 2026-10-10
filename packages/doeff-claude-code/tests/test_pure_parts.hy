@@ -24,7 +24,7 @@
                                 :autocompact (AutocompactTokens 400000)))
   (setv argv (launch-argv #("claude") spec (FreshSession SID)))
   ;; --include-hook-events = CLI に全 hook の開始と応答の行を出させる(上の層が hook の結果を会話の画面に出すため — CLI 2.1.292 は旗が
-  ;; 無いと SessionStart・Setup の hook の行だけを出す・card acp:kanban-issue:ki-d8b473480303)。
+  ;; 無いと SessionStart・Setup の hook の行だけを出す・ki-d8b473480303)。
   (assert (= (cut argv 0 9) ["claude" "-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
                              "--include-partial-messages" "--include-hook-events"]))
   (assert (= (cut argv 9 10) ["--dangerously-skip-permissions"]))

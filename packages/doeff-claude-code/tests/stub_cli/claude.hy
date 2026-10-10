@@ -223,7 +223,7 @@
            {})))
 
   (defn hook-lines [self #^ str event #^ str name #^ str stdout #^ str stderr #^ int exit-code #^ str outcome]
-    "hook 1 回の開始と応答の 2 行を、実物(CLI 2.1.292 の --include-hook-events)と同じ形で出す(card acp:kanban-issue:ki-d8b473480303)。"
+    "hook 1 回の開始と応答の 2 行を、実物(CLI 2.1.292 の --include-hook-events)と同じ形で出す(ki-d8b473480303)。"
     (setv hook-id (str (uuid.uuid4)))
     (emit {"type" "system" "subtype" "hook_started" "hook_id" hook-id "hook_name" name "hook_event" event
            "uuid" (str (uuid.uuid4)) "session_id" self.session-id})
@@ -249,7 +249,7 @@
       (time.sleep (get rule "hook_seconds")))
     (when (get rule "advice")
       ;; 条件つきルールの助言を返す UserPromptSubmit の hook(--include-hook-events の CLI の開始と応答の 2 行 — stdout は hook の書いた
-      ;; JSON の文字列・card acp:kanban-issue:ki-d8b473480303)。
+      ;; JSON の文字列・ki-d8b473480303)。
       (.hook-lines self "UserPromptSubmit" "UserPromptSubmit" (advice-stdout (get rule "advice")) "" 0 "success"))
     (when (get rule "compact")
       ;; 要求の前に会話を自動で圧縮する(#4189)— 実物(CLI 2.1.294 の stream-json の書き手)と同じ形の 2 行: 圧縮中の
@@ -317,7 +317,7 @@
       ;; isSynthetic の user の行(本文「Stop hook feedback:\n<理由>」)→ system/notification(key stop-hook-error)。その後に答え直す。
       (emit (assistant-line self.session-id [{"type" "text" "text" REJECTED-ANSWER}] FINAL-CALL-USAGE))
       ;; --include-hook-events の CLI は差し戻しの前に Stop の hook の開始と応答の行を出す(exit code 2 で差し戻す hook — 理由は stderr・
-      ;; card acp:kanban-issue:ki-d8b473480303)。
+      ;; ki-d8b473480303)。
       (.hook-lines self "Stop" "Stop" "" (get rule "hook_feedback") 2 "error")
       (emit {"type" "user" "session_id" self.session-id "parent_tool_use_id" None "isSynthetic" True "uuid" (str (uuid.uuid4))
              "message" {"role" "user" "content" [{"type" "text" "text" (+ "Stop hook feedback:\n" (get rule "hook_feedback"))}]}})

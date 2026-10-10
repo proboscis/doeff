@@ -35,7 +35,7 @@
                        "duration_ms" 2730})
 
 ;; 答えの前に UserPromptSubmit の hook が条件つきルールの助言を返す言い方と、その hook の stdout(hook が書く JSON — 助言は
-;; hookSpecificOutput.additionalContext・card acp:kanban-issue:ki-d8b473480303)。本物の claude で助言を出すには hook を置く必要があるので、
+;; hookSpecificOutput.additionalContext・ki-d8b473480303)。本物の claude で助言を出すには hook を置く必要があるので、
 ;; 助言を当てにする検は替え玉の CLI と fake だけに置く。
 (setv ADVICE-PHRASE "Have the hook advise: {}.")
 
@@ -73,7 +73,7 @@
    \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))
    \"hook_feedback\" Stop hook が最初の答え(REJECTED-ANSWER)を差し戻す理由(HOOK-FEEDBACK-PHRASE・無ければ None — #4020)
    \"compact\" 答えの前に CLI が会話を 1 度自動で圧縮するか(COMPACT-PHRASE — 圧縮の行の compact_metadata は COMPACT-METADATA・#4189)
-   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None — card acp:kanban-issue:ki-d8b473480303)}。
+   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None — ki-d8b473480303)}。
    memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))

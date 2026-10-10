@@ -195,7 +195,7 @@
    hook_name の「:」の前)/ phase = 段階(HookPhase)/ name = hook の名前(hook_name — 「イベント名:matcher」・無ければ空)。入力を
    書かずに事前起動した process が最初の入力の前に出してよい行と、ターンの外で出てよい行を、イベント名で絞るため(dialogue.hy の
    quiet-before-first-input・quiet-outside-turn)。hook-id = hook の 1 回の実行の id(hook_id — 開始と応答で同じ)。応答の行だけが
-   運ぶ欄(上の層が hook の結果を会話の画面に出すため・card acp:kanban-issue:ki-d8b473480303 — CLI 2.1.292 は SessionStart・Setup の
+   運ぶ欄(上の層が hook の結果を会話の画面に出すため・ki-d8b473480303 — CLI 2.1.292 は SessionStart・Setup の
    ほかの hook の行を --include-hook-events の時だけ出す): stdout・stderr = hook の命令の出力(JSON で答える hook の stdout は JSON の
    文字列のまま)/ output = CLI がまとめた出力 / exit-code = 命令の終了の code(名乗らなければ None)/ outcome = CLI の終わり方の語
    (success・error ほか — 語は CLI のまま・名乗らなければ空)。"

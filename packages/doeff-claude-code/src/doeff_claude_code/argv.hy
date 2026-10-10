@@ -16,7 +16,7 @@
 
 ;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
 ;; CLI 2.1.292 は旗が無いと SessionStart・Setup の hook の行だけを出す(CLI の中の判定の実測)。上の層が会話の画面に hook の結果
-;; (条件つきルールの助言・Stop の差し戻しほか)を出すため(card acp:kanban-issue:ki-d8b473480303)。
+;; (条件つきルールの助言・Stop の差し戻しほか)を出すため(ki-d8b473480303)。
 (setv STREAM-FLAGS ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
                     "--include-partial-messages" "--include-hook-events"])
 

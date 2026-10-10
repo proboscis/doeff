@@ -113,7 +113,7 @@
    同じく、要求の前(init の後・考えている間の差分の前)に圧縮の行を 1 つずつ出し、手番はそのまま続く。上の層が無人のターンの圧縮を
    記録する事を模擬で確かめるため・
    hooks = 要求の前に CLI が回す hook の行の筋書き(HookNotice の列 — 条件つきルールの助言を返す UserPromptSubmit の hook の応答ほか・
-   card acp:kanban-issue:ki-d8b473480303)。偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
+   ki-d8b473480303)。偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
    続く。Stop hook の差し戻し(stop-hook-rejections)の Stop の hook の応答の行は、差し戻しの筋書きが出す(stop-hook-notice-of)。上の層が
    hook の結果を記録して画面に出す事を模擬で確かめるため・
    lose-exit-code・lose-stderr = lose の手番で消える process の終了 code と stderr(#4207)。BackendLost の欄 exit-code・stderr-tail に
@@ -370,7 +370,7 @@
 (defk stop-hook-notice-of [rejection]
   {:pre [(: rejection StopHookRejection)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}
   "Stop hook が答えを差し戻した時に、本物の CLI(--include-hook-events)が差し戻しの行の前に出す Stop の hook の応答の行を、偽の CLI でも
-   出すため(card acp:kanban-issue:ki-d8b473480303)。形は exit code 2 で差し戻す hook の応答 — 理由は stderr・終わり方 error(本物の
+   出すため(ki-d8b473480303)。形は exit code 2 で差し戻す hook の応答 — 理由は stderr・終わり方 error(本物の
    差し戻しは同じ時に system/notification の stop-hook-error「Stop hook error occurred」を出す — 替え玉の CLI と同じ。応答の行そのものは
    計っていない — 欄は CLI の書き手 hook_response の形)。"
   (HookNotice :event "Stop" :phase HookPhase.RESPONSE :name "Stop" :hook-id (.format "fake-stop-hook-{}" rejection.answer)
@@ -535,7 +535,7 @@
   (<- (emit session turn (Init :session-id session.session-id
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
-  ;; 要求の前に CLI が回す hook の行(本物の CLI の --include-hook-events の system/hook_response ほか・card acp:kanban-issue:ki-d8b473480303)。
+  ;; 要求の前に CLI が回す hook の行(本物の CLI の --include-hook-events の system/hook_response ほか・ki-d8b473480303)。
   (<- (emit-all session turn (list reply.hooks)))
   ;; 要求の前の会話の自動の圧縮(本物の CLI の system/compact_boundary の行 — 圧縮 1 回に 1 行・#4189)。
   (<- (emit-all session turn (list reply.compactions)))

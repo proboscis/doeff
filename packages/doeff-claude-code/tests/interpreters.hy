@@ -92,7 +92,7 @@
                               #((classify-record {"type" "system" "subtype" "compact_boundary" "compact_metadata" COMPACT-METADATA}))
                               #())
              ;; 答えの前に UserPromptSubmit の hook が助言を返す筋書き(替え玉の CLI と同じ 2 行 — 行の型は本物の分類で組む・
-             ;; card acp:kanban-issue:ki-d8b473480303)。
+             ;; ki-d8b473480303)。
              :hooks (if (get rule "advice")
                         (tuple (gfor subtype ["hook_started" "hook_response"]
                                      (classify-record (| {"type" "system" "subtype" subtype "hook_id" "fake-advice-hook"

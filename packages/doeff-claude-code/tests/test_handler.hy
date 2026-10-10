@@ -599,7 +599,7 @@
   (#^ dict line))
 
 ;; 最初の入力の前に出たら停止する行: assistant の行(ターンの外で model が応答した形)と、model の手番の中で走る hook の行
-;; (UserPromptSubmit ほか — Notification・SessionEnd の hook の行はターンの外でも止めない・card acp:kanban-issue:ki-d8b473480303)。
+;; (UserPromptSubmit ほか — Notification・SessionEnd の hook の行はターンの外でも止めない・ki-d8b473480303)。
 (val FORBIDDEN-BEFORE-INPUT
   [(ForbiddenLine :name "assistant"
                   :line {"type" "assistant" "parent_tool_use_id" None

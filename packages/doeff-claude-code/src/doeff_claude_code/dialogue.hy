@@ -19,8 +19,8 @@
 ;;;   例外は入力を書かずに事前起動した process(ClaudeWarmSession)の最初の入力の前だけで、SessionStart の hook の開始と応答の行も
 ;;;   外とみなさない(quiet-before-first-input — この 2 種の行のほかは広げない。最初の入力の後の待ちは前と同じ)。
 ;;;   もう 1 つの例外は、model の手番の外で CLI が回す hook(Notification・SessionEnd — OUTSIDE-TURN-QUIET-HOOK-EVENTS)の開始と応答の
-;;;   行で、いつでも外とみなさない(quiet-outside-turn — CLI に全 hook の行を出させる --include-hook-events の後・card
-;;;   acp:kanban-issue:ki-d8b473480303)。model の手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は外の出力のまま。
+;;;   行で、いつでも外とみなさない(quiet-outside-turn — CLI に全 hook の行を出させる --include-hook-events の後・
+;;;   ki-d8b473480303)。model の手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は外の出力のまま。
 ;;;   control_request で止めて注入が生き残った時は、生き残った入力の手番が同じ process で続く(continues)。
 ;;; - 手番の額(#883): result の行の total_cost_usd は会話の累積で、usage はその CLI の手番 1 回分(実測 2.1.283 —
 ;;;   同じ process の 2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は前の process が降りる時に
@@ -51,7 +51,7 @@
 ;; host の手番の外で読んでも、手番の外の出力とみなさない行の型: host が書いた入力の運命と control の答え(model を動かさない作法の行)。
 (setv OUTSIDE-TURN-QUIET-KINDS #(InputFate ControlResponse))
 ;; host の手番の外で読んでも手番の外の出力とみなさない hook のイベント名(閉じた集まり — ここ 1 か所): model の手番の外で CLI が回す hook
-;; (Notification = 知らせ・SessionEnd = 会話の終わり)。担当の設定(agora-controllers の agent_env の HOOK-EVENTS の 12 の出来事)のうち、
+;; (Notification = 知らせ・SessionEnd = 会話の終わり)。hook を置く設定が名指す 12 の出来事(PreToolUse・Stop・SessionStart ほか)のうち、
 ;; model の手番の外で走り得るのはこの 2 つ。
 (setv OUTSIDE-TURN-QUIET-HOOK-EVENTS (frozenset #{"Notification" "SessionEnd"}))
 
