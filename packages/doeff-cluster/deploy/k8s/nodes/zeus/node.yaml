@@ -1,13 +1,24 @@
-# zeus の差: 置く Node と資源の上限・取り分。
+# zeus の差: 置く Node と資源の上限・取り分・入れ替えの形。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: doeff-worker
   namespace: agent-worker
 spec:
+  # 入れ替えは新しい Pod を先に起こし、Ready になってから旧い Pod を止める(AL-D2・card ki-2f5186034976 — Recreate では旧い Pod が止まる
+  # 間に新しい Pod が無く、引き継ぐ job の process が入れ替えのたびに止まった)。同じ名の worker の 2 つの世代が同じ機体に並ぶので、
+  # 状態は世代ごとの dir に置く(WORKER_GENERATION_DIRS・POD_UID — boot.sh)。coordinator は世代で 2 つを見分け、新しい世代が引き継ぐ
+  # job を ready で走らせた後に、旧い世代の process へ退くよう告げる。旧い Pod の preStop の drain は、旧い世代の process が退き終わる
+  # まで待つ(上限 DRAIN_DEADLINE)。
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   template:
     spec:
       nodeSelector: { kubernetes.io/hostname: zeus }
+      # preStop の drain の上限(DRAIN_DEADLINE 21900 秒 — generation.yaml)+ 子 process を止める猶予(stop-grace 10 秒 + KILL)の余裕 120 秒。drain の上限は、
+      # 退いた process が走り切る上限(上に載る系の宣言の retiredSeconds 21600 秒)+ 5 分。
+      terminationGracePeriodSeconds: 22020
       containers:
         - name: worker
           # CPU の requests = 重み(cgroup の cpu.weight)。4 コアで重み 157 にし、同じ機体の他の Pod より先に CPU を受ける。
