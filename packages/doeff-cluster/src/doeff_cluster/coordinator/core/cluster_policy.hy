@@ -289,7 +289,7 @@
                    (WorkerBack :worker name :boot w.boot :seen-ms w.last-seen-ms)))))
 
 
-(deff placeable [#^ tuple needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
+(deff placeable [#^ (get tuple #(str ...)) needs #^ WorkerInfo worker]  ; defk にできない: coordinator と模擬の置き先の選び(Program の外の純粋な判断)が呼ぶ
   {:pre [(: needs tuple) (: worker WorkerInfo)] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
   "needs の job / task をこの worker に置けるか — 置き場所の規則の定義点はここ 1 つ(ADR-DOE-CLUSTER-001 R4b):
    needs ⊆ provides ∪ derived(node の label から coordinator が導いた能力)、かつ worker が専用の能力(exclusive)を持てば、そのどれかを needs に持つ(一般の仕事を専用の担い手に置かない)。"
@@ -552,7 +552,7 @@
 
 
 (defk job-room-of [worker load]
-  {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad)))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker に常駐の job と並べた置き先(surge)をあと幾つ置けるかを知るため: (capacity − task-reserve) − (job の置き先 + surge の数)。
    task のために空けておく分(task-reserve)は job の側から引く — 常駐の job が枠を埋めても task の置き場が残る。load = load-of の答え
    (worker の名 → WorkerLoad)。0 以下なら job の側に空きが無い(置き先の判断 place-jobs・movable?・drain の move-target はどれも can-take を
