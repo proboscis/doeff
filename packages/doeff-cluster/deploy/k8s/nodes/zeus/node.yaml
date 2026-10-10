@@ -22,6 +22,12 @@ spec:
       # 止まった)。type は Directory: SSD が外れて mount の点が無ければ、root の disk へ黙って dir を作らず起動で止まる。中身は切り替えの前に
       # 機体の上で /var/lib/agent-worker から写す(この行が当たると Pod が作り直される)。戻す時は path を /var/lib/agent-worker・type を
       # DirectoryOrCreate へ。
+      # 印の file(調整役 2026-10-10 15:19 の答え — fstab は nofail なので、USB が無い起動では mount の点が空の dir のまま進み、type Directory
+      # だけでは止まらない): init own-work は作業の root に /work/.on-usb-ssd が無ければ名を挙げて止まり、在る時だけ worker の uid へ渡す。
+      # 印は中身を SSD へ写した時に機体の上で置く。
+      initContainers:
+        - name: own-work
+          command: ["sh", "-c", "test -f /work/.on-usb-ssd || { echo 'own-work: /work/.on-usb-ssd が無い — USB の SSD が mount されていない' >&2; exit 1; }; chown 1000:1000 /work"]
       volumes:
         - name: work
           hostPath: { path: /mnt/fast_ssd_usb/agent-worker, type: Directory }
