@@ -943,11 +943,13 @@ class InputImage:
     """An image that rides with an input's text (``LaunchEffect.prompt`` or
     ``FollowUpEffect.message``) into the agent's turn.
 
-    ``mime`` is the image type (``image/png`` …) and ``data_base64`` the image
-    bytes in base64.  The runtime receives it as part of the prompt (the claude
-    CLI: an ``image`` content block of the stream-json user message), not as a
-    reference it has to fetch.  Which types a runtime accepts is the handler's
-    check (claude: ``image/png``, ``image/jpeg``, ``image/gif``, ``image/webp``).
+    ``mime`` is the attachment type (``image/png`` … or ``application/pdf``) and
+    ``data_base64`` the bytes in base64.  The runtime receives it as part of the
+    prompt (the claude CLI: an ``image`` content block, or a ``document`` block
+    for a PDF, of the stream-json user message), not as a reference it has to
+    fetch.  Which types a runtime accepts is the handler's check (claude:
+    ``image/png``, ``image/jpeg``, ``image/gif``, ``image/webp``,
+    ``application/pdf``).  The name is from when only images rode along.
     """
 
     mime: str

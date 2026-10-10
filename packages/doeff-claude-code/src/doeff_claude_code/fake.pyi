@@ -22,7 +22,7 @@ from doeff_claude_code.values import ResumeSession as ResumeSession
 from doeff_claude_code.values import ForkSession as ForkSession
 from doeff_claude_code.values import Rebuilt as Rebuilt
 from doeff_claude_code.values import LinkFromHome as LinkFromHome
-from doeff_claude_code.values import IMAGE_MIMES as IMAGE_MIMES
+from doeff_claude_code.values import ATTACHMENT_MIMES as ATTACHMENT_MIMES
 from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code.lines import Init as Init
 from doeff_claude_code.lines import AssistantMessage as AssistantMessage

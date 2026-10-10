@@ -51,7 +51,7 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
-                                  LinkFromHome Rebuilt IMAGE-MIMES])
+                                  LinkFromHome Rebuilt ATTACHMENT-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming
                                  TimedPhase TurnResult parse-record classify-record recorded-cost])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -354,7 +354,7 @@
                          :warmed-fresh runtime.warmed-fresh)))))
 
 (defn refused-attachment [#^ TurnInput input]
-  (setv refused (lfor item input.attachments :if (not-in item.mime IMAGE-MIMES) item.mime))
+  (setv refused (lfor item input.attachments :if (not-in item.mime ATTACHMENT-MIMES) item.mime))
   (if refused (AttachmentRefused (get refused 0)) None))
 
 

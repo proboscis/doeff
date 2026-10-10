@@ -495,6 +495,12 @@
   (assert (= (get (json.loads (dialogue.user-line (TurnInput "look" "r2" #((ImageAttachment "image/png" "AAAA")))))
                   "message" "content")
              [{"type" "text" "text" "look"}
+              {"type" "image" "source" {"type" "base64" "media_type" "image/png" "data" "AAAA"}}]))
+  ;; PDF は Messages API の document の block(ki-48d236f200ed)。文字の無い入力は添付の block だけ。
+  (assert (= (get (json.loads (dialogue.user-line (TurnInput "" "r3" #((ImageAttachment "application/pdf" "JVBERi0=")
+                                                                       (ImageAttachment "image/png" "AAAA")))))
+                  "message" "content")
+             [{"type" "document" "source" {"type" "base64" "media_type" "application/pdf" "data" "JVBERi0="}}
               {"type" "image" "source" {"type" "base64" "media_type" "image/png" "data" "AAAA"}}])))
 
 

@@ -192,9 +192,13 @@
 ;; --- 手番の入力と参照 ---------------------------------------------------------------------------
 
 (setv IMAGE-MIMES #("image/png" "image/jpeg" "image/gif" "image/webp"))
+;; 文書の添付(Messages API の document の block で受ける型 — PDF。card acp:kanban-issue:ki-48d236f200ed)。
+(setv DOCUMENT-MIMES #("application/pdf"))
+(setv ATTACHMENT-MIMES (+ IMAGE-MIMES DOCUMENT-MIMES))
 
 (defclass [(dataclass :frozen True)] ImageAttachment []
-  "添付の画像 1 つ(base64)。mime の受理は handler が閉語彙 IMAGE-MIMES で検める(外れは AttachmentRefused)。"
+  "添付 1 つ(base64)— 画像(IMAGE-MIMES)か文書(DOCUMENT-MIMES = PDF)。mime の受理は handler が閉語彙 ATTACHMENT-MIMES で検める
+   (外れは AttachmentRefused)。名は画像だけだった頃のまま(欄は mime と data で型に依らない)。"
   (#^ str mime)
   (#^ str data-base64))
 

@@ -42,8 +42,11 @@
 ;; 本文へ写す印(card acp:kanban-issue:ki-0faa366b76c0 — 画像が CLI の入力に入ったかを見るため)。本物の claude も画像を数えて答えられるが、
 ;; 印の綴りは替え玉の CLI だけの物なので、数を当てにする検は替え玉の CLI に置く。言い方の無い入力でも、文字が空で画像だけの入力は数えて答える
 ;; (利用者が画像だけを貼って送る形)。
+;; 文書(PDF — stream-json の document の block)も同じ言い方で数え、1 つでも在れば「IMAGES-<数>-DOCUMENTS-<数>」と答える
+;; (card acp:kanban-issue:ki-48d236f200ed)。
 (val IMAGES-PHRASE "Count the attached images.")
 (val IMAGE-MARK "[stub:image]")
+(val DOCUMENT-MARK "[stub:document]")
 
 (defn #^ str advice-stdout [#^ str advice]
   "助言 advice を返す UserPromptSubmit の hook の stdout(替え玉の CLI と fake の同じ 1 か所)。"
@@ -95,10 +98,12 @@
   (setv sent-back (re.search r"Have the Stop hook send back a first answer with the reason: (\S+?)\." text))
   (setv advised (re.search r"Have the hook advise: (\S+?)\." text))
   (setv images (.count text IMAGE-MARK))
+  (setv documents (.count text DOCUMENT-MARK))
   (setv word
         (cond
-          (and (> images 0) (or (in IMAGES-PHRASE text) (= (.strip (.replace text IMAGE-MARK "")) "")))
-            (.format "IMAGES-{}" images)
+          (and (> (+ images documents) 0)
+               (or (in IMAGES-PHRASE text) (= (.strip (.replace (.replace text IMAGE-MARK "") DOCUMENT-MARK "")) "")))
+            (if documents (.format "IMAGES-{}-DOCUMENTS-{}" images documents) (.format "IMAGES-{}" images))
           (in "What was the codeword" text)
             (next (gfor earlier memory
                         :setv found (re.search r"codeword (\S+?)\." earlier)

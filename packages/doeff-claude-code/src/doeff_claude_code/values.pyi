@@ -126,6 +126,8 @@ class ForkSession:
         ...
 SessionOrigin: TypeAlias = FreshSession | ResumeSession | ForkSession
 IMAGE_MIMES: tuple[str, ...]
+DOCUMENT_MIMES: tuple[str, ...]
+ATTACHMENT_MIMES: tuple[str, ...]
 
 @dataclass(frozen=True)
 class ImageAttachment:

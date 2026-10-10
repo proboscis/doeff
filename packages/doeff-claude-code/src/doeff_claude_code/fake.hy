@@ -20,7 +20,7 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
 (import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
-                                  IMAGE-MIMES])
+                                  ATTACHMENT-MIMES])
 (import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
@@ -602,7 +602,7 @@
 (defk fake-start-turn [#^ FakeClaudeWorld world #^ ClaudeStartTurn request]
   {:pre [(: world FakeClaudeWorld) (: request ClaudeStartTurn)] :post [(: % "StartTurnOutcome")]}
   (setv origin request.origin spec request.spec input request.input)
-  (setv refused (lfor item input.attachments :if (not-in item.mime IMAGE-MIMES) item.mime))
+  (setv refused (lfor item input.attachments :if (not-in item.mime ATTACHMENT-MIMES) item.mime))
   (when refused (return (AttachmentRefused (get refused 0))))
   (setv target (if (isinstance origin ForkSession) origin.parent-session-id origin.session-id))
   (when (not (isinstance origin FreshSession)) (carry-into world spec.home spec.cwd target origin.carry))

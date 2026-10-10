@@ -36,7 +36,7 @@
 (import doeff [run])
 (import typing [NamedTuple])
 (import doeff_hy.frozen [thaw-json])
-(import doeff_claude_code.values [TurnInput Allow Deny])
+(import doeff_claude_code.values [TurnInput Allow Deny DOCUMENT-MIMES])
 (import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
@@ -127,17 +127,19 @@
   "stdin の 1 行の綴り。凍らせた値(道具の入力など)はここで JSON の形へ戻す。"
   (json.dumps (thaw-json value) :ensure-ascii False :separators #("," ":")))
 
-(defn #^ dict image-block [attachment]
-  "添付 1 つ = Messages API と同じ image の block(実測 2026-09-14・doeff-agents conformance/attachment-physics.md)。"
-  {"type" "image" "source" {"type" "base64" "media_type" attachment.mime "data" attachment.data-base64}})
+(defn #^ dict attachment-block [attachment]
+  "添付 1 つ = Messages API と同じ block — 文書(DOCUMENT-MIMES = PDF)は document、ほかは image(実測 2026-09-14・doeff-agents
+   conformance/attachment-physics.md)。"
+  {"type" (if (in attachment.mime DOCUMENT-MIMES) "document" "image")
+   "source" {"type" "base64" "media_type" attachment.mime "data" attachment.data-base64}})
 
 (defn #^ str user-line [#^ TurnInput input]
   "stdin の 1 行 = user の message。ref は最上位の uuid(CLI が command_lifecycle でこの綴りを名乗る)。
-   添付が無ければ content は素の文字列、在れば text → image の block の列。"
+   添付が無ければ content は素の文字列、在れば text → 添付の block(image / document)の列。"
   (setv content
         (if input.attachments
             (+ (if input.text [{"type" "text" "text" input.text}] [])
-               (lfor attachment input.attachments (image-block attachment)))
+               (lfor attachment input.attachments (attachment-block attachment)))
             input.text))
   (dumps {"type" "user" "message" {"role" "user" "content" content} "uuid" input.ref}))
 

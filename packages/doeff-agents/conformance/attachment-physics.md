@@ -59,3 +59,11 @@ effort low / medium・sandbox read-only・approvalPolicy never)。
 
 - `/tmp/lane10o-probe/`(`claude_probe.log`・`claude_resume.log`・`codex_probe*.log`・`run-*.jsonl`)— 測定機の一時 file
   (残らない)。要点は上の数字。
+
+## 追補 2026-10-10 — PDF(document の block・card acp:kanban-issue:ki-48d236f200ed)
+
+- doeff-claude-code は `application/pdf` の添付を、画像と同じ user の行の content へ Messages API の document の block
+  `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":<base64>}}` として積む(画像は今の image の block のまま)。
+- **実 CLI ではまだ測っていない**: 書いた会話の環境の claude には API の資格が無かった。本番の確かめ用の会話で、合言葉を書いた PDF を添付し、
+  担当が Bash も検索もせずに答えるかを測る(card acp:kanban-issue:ki-f2f1eb9cf3af)。測ったらこの節に数字を足す。
+- codex は今日も添付を全部断る(`refuse_turn_capabilities`)。app-server の `UserInput` に文書の項は無い。

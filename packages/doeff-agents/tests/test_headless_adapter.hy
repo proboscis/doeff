@@ -384,34 +384,36 @@
 ;; of the prompt...")。替え玉の CLI は stream-json の user の content の image の block を印 IMAGE-MARK として数え、IMAGES-PHRASE か画像だけの
 ;; 入力に「IMAGES-<数>」と答える(tests/scenario_rules.hy)。中身は CLI が読まないので小さな PNG の頭だけ。
 (val PNG (InputImage :mime "image/png" :data-base64 "iVBORw0KGgo="))
+;; 文書の添付(PDF — 替え玉の CLI は document の block を印 DOCUMENT-MARK として数える・ki-48d236f200ed)。中身は PDF の頭だけ。
+(val PDF (InputImage :mime "application/pdf" :data-base64 "JVBERi0xLjQK"))
 
-(defk launch-with-images [#^ Setting s]
-  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "起動の prompt に画像を 2 つ添えた手番を最後まで読む。"
+(defk launch-with-images [#^ Setting s #^ tuple attachments]
+  {:pre [(: s Setting) (: attachments tuple)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "起動の prompt に添付(attachments)を添えた手番を最後まで読む。"
   (<- handle (Launch "adapter-images-launch" :agent-type AgentType.CLAUDE :work-dir s.work-dir
-                     :prompt (+ IMAGES-PHRASE " " (reply-prompt "IGNORED")) :attachments #(PNG PNG) :model s.model
+                     :prompt (+ IMAGES-PHRASE " " (reply-prompt "IGNORED")) :attachments attachments :model s.model
                      :lifecycle AgentSessionLifecycle.MULTI-TURN))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
   done)
 
-(defk next-turn-with-only-an-image [#^ Setting s]
-  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "1 手番の後、次の手番へ文字の無い画像だけの入力を届け、その手番を最後まで読む(利用者が画像だけを貼って送る形)。"
+(defk next-turn-with-only-an-image [#^ Setting s #^ InputImage attachment]
+  {:pre [(: s Setting) (: attachment InputImage)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "1 手番の後、次の手番へ文字の無い添付 1 つだけの入力を届け、その手番を最後まで読む(利用者が画像や PDF だけを貼って送る形)。"
   (<- handle (launch s "adapter-images-next" (reply-prompt "FIRST") None))
   (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
-  (<- _ (FollowUp handle "" :attachments #(PNG) :input-ref "ref-image-only"))
+  (<- _ (FollowUp handle "" :attachments #(attachment) :input-ref "ref-image-only"))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout first.after))
   (<- (Stop handle))
   done)
 
-(defk injected-text-and-image [#^ Setting s]
-  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "道具を走らせている手番へ、文字と画像の入力を割り込ませ(INJECT)、その手番を最後まで読む。"
+(defk injected-text-and-image [#^ Setting s #^ InputImage attachment]
+  {:pre [(: s Setting) (: attachment InputImage)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
+  "道具を走らせている手番へ、文字と添付 1 つの入力を割り込ませ(INJECT)、その手番を最後まで読む。"
   (<- handle (launch s "adapter-images-inject" (sleep-prompt s.sleep "SLEPT") None))
   (<- started (read-until handle tool-started s.timeout -1))
   (assert (is started.end None) (repr started.end))
-  (<- _ (FollowUp handle IMAGES-PHRASE :attachments #(PNG) :mode TurnInputMode.INJECT :input-ref "ref-image-inject"))
+  (<- _ (FollowUp handle IMAGES-PHRASE :attachments #(attachment) :mode TurnInputMode.INJECT :input-ref "ref-image-inject"))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout started.after))
   (<- (Stop handle))
   done)
@@ -1057,13 +1059,24 @@
   None)
 
 (deftest test-headless-launch-prompt-carries-its-images-to-the-cli-stub [tmp-path]
-  (<- (check-images-reached-the-cli (run-on STUB tmp-path launch-with-images) "IMAGES-2")))
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path (fn [s] (launch-with-images s #(PNG PNG)))) "IMAGES-2")))
 
 (deftest test-headless-next-turn-image-only-input-reaches-the-cli-stub [tmp-path]
-  (<- (check-images-reached-the-cli (run-on STUB tmp-path next-turn-with-only-an-image) "IMAGES-1")))
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path (fn [s] (next-turn-with-only-an-image s PNG))) "IMAGES-1")))
 
 (deftest test-headless-injected-text-and-image-reach-the-running-turn-stub [tmp-path]
-  (<- (check-images-reached-the-cli (run-on STUB tmp-path injected-text-and-image) "IMAGES-1")))
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path (fn [s] (injected-text-and-image s PNG))) "IMAGES-1")))
+
+;; PDF は document の block で CLI の入力に入る(card acp:kanban-issue:ki-48d236f200ed — 利用者 2026-10-10 22:18 "I want this agora to be able
+;; to upload pdf for agent to read")。起動・次の手番の PDF だけ・走っている手番への割り込みの 3 通り。
+(deftest test-headless-launch-prompt-carries-a-pdf-to-the-cli-stub [tmp-path]
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path (fn [s] (launch-with-images s #(PNG PDF)))) "IMAGES-1-DOCUMENTS-1")))
+
+(deftest test-headless-next-turn-pdf-only-input-reaches-the-cli-stub [tmp-path]
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path (fn [s] (next-turn-with-only-an-image s PDF))) "IMAGES-0-DOCUMENTS-1")))
+
+(deftest test-headless-injected-text-and-pdf-reach-the-running-turn-stub [tmp-path]
+  (<- (check-images-reached-the-cli (run-on STUB tmp-path (fn [s] (injected-text-and-image s PDF))) "IMAGES-0-DOCUMENTS-1")))
 
 (deftest test-images-are-typed-and-turnless-handlers-refuse-them [tmp-path]
   ;; 画像は mime と base64 の data の型の値。画像を CLI へ渡せない handler は黙って捨てずに断る(ki-0faa366b76c0)。
