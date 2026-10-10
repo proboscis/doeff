@@ -26,6 +26,18 @@ from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimit
 from doeff_agents.handlers.headless import HeadlessClaudeConfig as HeadlessClaudeConfig
 from doeff_agents.handlers.headless import HeadlessState as HeadlessState
 from doeff_agents.handlers.headless import headless_claude_handler as headless_claude_handler
+from doeff_codex.values import CodexHome as CodexHome
+from doeff_codex.values import CodexInput as CodexTurnInput
+from doeff_codex.rpc import ApprovalPolicy as CodexApprovalPolicy
+from doeff_codex.rpc import SandboxMode as CodexSandboxMode
+from doeff_codex.handler import CodexHost as CodexHost
+from doeff_codex.handler import codex_handler as codex_handler
+from doeff_codex.fake import FakeCodexWorld as FakeCodexWorld
+from doeff_codex.fake import FakeReply as FakeCodexReply
+from doeff_codex.fake import fake_codex_handler as fake_codex_handler
+from doeff_agents.handlers.headless_codex import HeadlessCodexConfig as HeadlessCodexConfig
+from doeff_agents.handlers.headless_codex import HeadlessCodexState as HeadlessCodexState
+from doeff_agents.handlers.headless_codex import headless_codex_handler as headless_codex_handler
 
 def headless_claude_handlers(config_dir: str, env: FrozenMap[str], settings: Incomplete=None, cold_resume_prompt: Incomplete=None, command: Incomplete=..., *, live_limit: int | None, credential_floor_seconds: float) -> list:
     ...
@@ -40,4 +52,13 @@ def fake_claude_process_layer(responder: Callable | None, world: FakeClaudeWorld
     ...
 
 def claude_adapter(config_dir: str, env: Mapping, settings: Mapping, cold_resume_prompt: str | None, permission: PermissionPolicy) -> _Program[Callable, object]:
+    ...
+
+def codex_process_layer(command: tuple, launch_timeout: float) -> _Program[Callable, object]:
+    ...
+
+def fake_codex_process_layer(world: FakeCodexWorld) -> _Program[Callable, object]:
+    ...
+
+def codex_adapter(env: Mapping, approval_policy: CodexApprovalPolicy, sandbox: CodexSandboxMode) -> _Program[Callable, object]:
     ...
