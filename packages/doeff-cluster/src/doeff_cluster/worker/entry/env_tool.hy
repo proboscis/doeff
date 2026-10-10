@@ -53,6 +53,7 @@
   (.add-argument parser "--request" :required True)
   (.add-argument parser "--result" :required True)
   (.add-argument parser "--state" :required True)
+  (.add-argument parser "--shared" :required True :help "世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)")
   (.add-argument parser "--uv-cache" :required True)
   (.add-argument parser "--repo-keys" :default "")
   (.add-argument parser "--code-prepare" :required True)
@@ -61,7 +62,7 @@
   (setv args (.parse-args parser))
   ;; 渡された file は本物の file の答え手(os-file-handler)の下で読む。
   (setv keys (if args.repo-keys (run (with-handlers [os-file-handler] (json-file args.repo-keys))) {}))
-  (setv settings {"runtime-env.state" args.state "runtime-env.uv-cache" args.uv-cache "runtime-env.repo-keys" keys
+  (setv settings {"runtime-env.state" args.state "runtime-env.shared" args.shared "runtime-env.uv-cache" args.uv-cache "runtime-env.repo-keys" keys
                   "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
                   "runtime-env.progress" args.progress "runtime-env.notes" "/dev/stderr"})
   ;; 要求の JSON を書いた刻を準備の起こしの刻として要求に添える(印の startupSeconds — #3676)。
