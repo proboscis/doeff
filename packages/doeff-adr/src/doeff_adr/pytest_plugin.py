@@ -22,7 +22,7 @@ from doeff_hy.pytest_items import FunctionItem
 from hy.importer import HyLoader
 
 from doeff_adr.indexed_pytest import IndexedFunctions, supports_indexed_collection
-from doeff_adr.item_cache import DEFAULT_CACHE_DIR, forget_cached, write_cached
+from doeff_adr.item_cache import forget_cached, items_cache_dir_for, write_cached
 from doeff_adr.lazy_collection import (
     Indexed,
     NeedsImport,
@@ -223,7 +223,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addini(
         "doeff_adr_items_cache",
-        "Directory of the doeff-adr cache of Hy test item records (empty = ~/.cache/doeff-adr/pytest-items).",
+        "Directory of the doeff-adr cache of Hy test item records "
+        "(empty = $DOEFF_ADR_ITEMS_CACHE, else ~/.cache/doeff-adr/pytest-items).",
         default="",
     )
     parser.addini(
@@ -656,12 +657,8 @@ class HyScriptItem(pytest.Item):
 
 
 def items_cache_dir(config: pytest.Config) -> Path:
-    """item の記録のキャッシュの置き場(ini の doeff_adr_items_cache — 相対なら rootdir から・空なら利用者のキャッシュの dir)。"""
-    configured = str(config.getini("doeff_adr_items_cache")).strip()
-    if not configured:
-        return DEFAULT_CACHE_DIR
-    path = Path(configured).expanduser()
-    return path if path.is_absolute() else Path(config.rootpath) / path
+    """item の記録のキャッシュの置き場 — 順と訳は item_cache.items_cache_dir_for(ini → 環境変数 → 利用者の cache の dir)。"""
+    return items_cache_dir_for(str(config.getini("doeff_adr_items_cache")), Path(config.rootpath))
 
 
 def _should_collect_hy_file(path: Path, config: pytest.Config) -> bool:

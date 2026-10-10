@@ -3,8 +3,8 @@
 item を作る macro は、展開の式で記録を module に積む(``doeff_hy.pytest_items``)。この module は、収集で 1 度 import した
 file の記録を保存し、次の収集からは import せずに引けるようにする。Hy の importer には手を入れない(#1290 の利用者の決定)。
 
-- 置き場: ``~/.cache/doeff-adr/pytest-items/<source の sha256>.json``(pytest の ini ``doeff_adr_items_cache`` で変えられる —
-  plugin が読んで引数で渡す)。内容の
+- 置き場: ``<dir>/<source の sha256>.json``。dir は :func:`items_cache_dir_for` の 1 か所で決める(ini → 環境変数
+  ``DOEFF_ADR_ITEMS_CACHE`` → ``~/.cache/doeff-adr/pytest-items`` の順 — plugin が ini を読んで渡す)。内容の
   hash が鍵なので、同じ内容の file は worktree をまたいで同じ記録を引く。
 - 有効判定: source の sha256 で引き(鍵)、保存した時の macro の提供元(module 名と、その file の sha256)が今も同じで、
   記録の形の版が同じ時だけ有効。提供元は module 名で覚えて読む時に今の file を引くので、絶対 path に縛られない。
@@ -36,12 +36,29 @@ from doeff_adr.source_dependencies import (
     loaded_sources,
 )
 
-DEFAULT_CACHE_DIR = Path.home() / ".cache" / "doeff-adr" / "pytest-items"
+#: 記録の置き場の dir を指す環境変数(値 = dir の path・相対なら rootdir から)。名は同じ repo の DOEFF_HY_CODE_STORE・
+#: DOEFF_WHEEL_CACHE と同じ「DOEFF_<package>_<置き場>」の形 — 日次の全体検証の task は回をまたぐ置き場をこの形の環境変数で子へ渡す。
+ITEMS_CACHE_ENV = "DOEFF_ADR_ITEMS_CACHE"
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
 # 3 = module の fixture の記録を足す(agora-redesign #1227 の案 B)。
 # 4 = import後の実値・明示idとproject内sourceの状態を保存する(#1459)。
 # fixture の別名も pytest の登録名で保存する (#1551)。古い記録の名前を使わない。
 CACHE_FORMAT = 5
+
+
+def items_cache_dir_for(configured: str, rootpath: Path) -> Path:
+    """記録の置き場の dir を決める唯一の所。``configured`` は pytest の ini ``doeff_adr_items_cache`` の値。
+
+    順: ini の値が在ればそれ(project の設定が最も狭い)→ 無ければ環境変数 ITEMS_CACHE_ENV(走らせる側が process ごとに渡す)→
+    どちらも無ければ利用者の cache の dir の下(``~/.cache/doeff-adr/pytest-items``)。環境変数の段は、日次の全体検証の task が
+    HOME を回ごとに空の dir に替えるため(既定の置き場では記録が毎回空になり、atlas の日次は収集のために 309 file を import
+    していた — card acp:kanban-issue:ki-9338eec1d15e の責務 R2)。ini と環境変数の相対の path は rootdir から解く。
+    """
+    named = configured.strip() or os.environ.get(ITEMS_CACHE_ENV, "").strip()
+    if not named:
+        return Path.home() / ".cache" / "doeff-adr" / "pytest-items"
+    path = Path(named).expanduser()
+    return path if path.is_absolute() else rootpath / path
 
 
 @dataclass(frozen=True)
