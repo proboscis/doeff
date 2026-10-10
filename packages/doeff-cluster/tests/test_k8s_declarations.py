@@ -148,13 +148,22 @@ class Resources:
 # 機体の仕事だけを受ける worker の資源。取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は機体の memory の半分ほど
 # (最初の起動の Rust の組み立ての山を通す — 越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す)。
 HOST_ONLY_RESOURCES = {
-    "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "8Gi"}),
+    # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
+    "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "18Gi"}),
     "eos": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "4Gi"}),
     "k3s-0": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
     "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
     "k3s-2": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
     "k3s-3": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "3", "memory": "4Gi"}),
 }
+
+
+# 受ける数が既定(WORKER_CAPACITY 2・WORKER_TASK_RESERVE 0)と違う機体 — (受ける数, task に空けておく数)。atlas は機体の仕事に加えて、
+# 上に載る系の日次の全体検証の task(:needs host-atlas・同時に 2 本まで)を受ける(2026-10-10 調整役 cisco-c8 の値)。
+HOST_ONLY_ROOM = {"atlas": ("3", "2")}
+# atlas の worker が job の子へ足して渡す env の名: Rust の toolchain の置き場(image の env)。task は Rust の部品を組むので、継がないと
+# rustup が toolchain を選べない。道具の cache の置き場は task が機体の事実 WORK_DIR から自分で作る(worker は上に載る系の置き場を知らない)。
+ATLAS_TASK_PASS_ENV = ("RUSTUP_HOME",)
 
 
 def _worker_on(rendered: list[Manifest], node: str) -> Manifest:
@@ -291,9 +300,10 @@ def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manife
     上に載る系の準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける worker の準備で、空の機体では通らない。
     反例: worker-env の能力の残りを名乗ると、その能力だけを要る上に載る系の job が memory 4GiB の機体へ置かれ得る。"""
     host_only = _worker_on(rendered, node)
+    capacity, reserve = HOST_ONLY_ROOM.get(node, ("2", "0"))
     assert _env_value(host_only, "WORKER_PROVIDES")["value"] == HOST_ONLY_PROVIDES
-    assert _env_value(host_only, "WORKER_CAPACITY")["value"] == "2"
-    assert _env_value(host_only, "WORKER_TASK_RESERVE")["value"] == "0"
+    assert _env_value(host_only, "WORKER_CAPACITY")["value"] == capacity
+    assert _env_value(host_only, "WORKER_TASK_RESERVE")["value"] == reserve
     mounts = [
         _mapping(mount, "volumeMount")["mountPath"]
         for mount in _sequence(_container(host_only).get("volumeMounts", []), "volumeMounts")
@@ -309,6 +319,17 @@ def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manife
     assert [
         _mapping(_mapping(s, "envFrom")["configMapRef"], "configMapRef")["name"] for s in env_from
     ] == ["worker-env"]
+
+
+def test_atlas_worker_passes_the_rust_toolchain_to_tasks(rendered: list[Manifest]) -> None:
+    """atlas の worker は、job の子へ渡す env の名(WORKER_PASS_ENV)に Rust の toolchain の置き場を足す — 雛形の名と使い手の残り
+    $(WORKER_PASS_ENV_EXTRA) はそのまま(位置も同じ — k8s は前の行で定義した env だけを展開する)。ほかの機体は雛形のまま。
+    反例: 足さないと、atlas で Rust の部品を組む task の rustup が toolchain を選べず落ちる。"""
+    base = "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
+    for node in NODES:
+        passed = str(_env_value(_worker_on(rendered, node), "WORKER_PASS_ENV")["value"])
+        expected = ",".join((base, *ATLAS_TASK_PASS_ENV)) if node == "atlas" else base
+        assert passed == expected, f"{node} の WORKER_PASS_ENV: {passed!r}"
 
 
 @pytest.mark.parametrize("node", HOST_ONLY_NODES)
