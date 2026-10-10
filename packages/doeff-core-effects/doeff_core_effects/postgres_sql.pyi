@@ -22,6 +22,7 @@ from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
 from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
 from doeff_core_effects.sql_effects import SqlBatch as SqlBatch
@@ -276,10 +277,28 @@ def abandon_lease(driver: TransactionDriver) -> Incomplete:
 def driven(driver: TransactionDriver, work: Callable, closing: bool) -> _Program[Incomplete, object]:
     ...
 
-def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None, batched: bool) -> _Program[Incomplete, object]:
+class TransactionAbandoned(Exception):
     ...
 
-def raised_flush(driver: TransactionDriver, lock_key: str | None, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable | None, object]:
+def leased_here(driver: TransactionDriver) -> _Program[PipelineConnection | SqlUnreachable, object]:
+    ...
+
+def flushed_here(driver: TransactionDriver, lock_key: str | None, origin: str, raised: RaisedNotices, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
+    ...
+
+def rolled_back_here(driver: TransactionDriver) -> _Program[SqlFailed | SqlUnreachable | None, object]:
+    ...
+
+def run_batched_here(driver: TransactionDriver, lock_key: str | None, origin: str, raised: RaisedNotices, program: Program) -> Incomplete:
+    ...
+
+def abandoned_now(driver: TransactionDriver) -> Incomplete:
+    ...
+
+def offloaded_batched_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None) -> _Program[Incomplete, object]:
+    ...
+
+def offloaded_transaction(connections: PostgresConnections, pool: Executor, database: str, program: Program, lock_key: str | None, batched: bool) -> _Program[Incomplete, object]:
     ...
 
 def raised_commit(driver: TransactionDriver, raised: RaisedNotices) -> _Program[SqlFailed | SqlUnreachable | None, object]:
