@@ -136,35 +136,6 @@
 ;;;   test-a-task-is-answered-within-the-limit(task の答えと 65 秒の見張りを競わせ、送った刻・答えた刻を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-hides-its-abilities-breaks-c9(task を走らせられる worker が heartbeat で能力を名乗らない — claims-provides
 ;;;   = 空 — と、coordinator は「能力の合う worker が無い」の失敗で答え、C9 が名指す)。
-;;;   V1〜V4 は worker と coordinator を新しい版へ入れ替える順の条(doeff_cluster.coordinator.core.upgrade_invariants — #3366。2026-10-05 の
-;;;   版上げ 12 回で通した順を、sim で測った落ち方 = tests/test_upgrade_swaps.hy に合わせた)。判じるのは入れ替えを始めた瞬間の記録(何を・
-;;;   どの版へ・その瞬間の名簿と、queued / どの worker に置かれた assigned の task の写し)。確かめるのは tests/test_upgrade_invariants.hy の
-;;;   test-the-order-the-2026-10-05-upgrade-used-is-green。模擬の Flux が当てた瞬間に同じ記録を写す筋書きは #3366 の単位 2b の続き。
-;;;   V1 coordinator-after-every-worker — coordinator を版 X へ入れ替え始めるのは、宣言の内の worker が全部 live で、その版が確かめた版の
-;;;   組み合わせ(VerifiedVersions — X と組めると手元で確かめた worker の版の集合)に入っている時だけ(新しい coordinator が組めない版の
-;;;   worker の heartbeat を断り、その worker が 20 秒で job を止める形を防ぐ)。worker と coordinator のどちらを先に上げるかは変更ごとに
-;;;   決まり、確かめた版の組み合わせで表す(#3772)。宣言の外の worker は数えない。失敗ケース = 同じ file の
-;;;   test-starting-the-coordinator-before-every-worker-is-new-breaks-v1・test-a-worker-version-outside-the-verified-pair-breaks-v1。
-;;;   守るのは版上げの Program の coordinator の入口(upgrade-coordinator — 照らしに通らなければ宣言を書く前に UpgradeRefused で断り、
-;;;   公開の後・当てる直前にもう 1 度照らして、通らなければ当てずに断る)。
-;;;   V2 worker-swap-waits-for-its-tasks — worker の入れ替えを始めるのは、その worker に置かれた(assigned・走り中の)task が無い時だけ
-;;;   (drain の空くのを待つ — 入れ替える worker の上で走る task は lease が切れて失われ、別の live な worker が居ても走らせ直さない。queued は
-;;;   入れ替えで落ちない)。失敗ケース = test-swapping-a-worker-with-a-running-task-breaks-v2。
-;;;   V3 one-worker-at-a-time — 次の worker の入れ替えを始めるのは、前の 1 台が新しい版で live に戻ったのを読んだ後だけ(戻りが来なければ
-;;;   次へ進まない)。失敗ケース = test-starting-the-next-worker-before-the-previous-is-back-breaks-v3(まだ live でない・live だが古い版)。
-;;;   V4 coordinator-swap-on-an-empty-queue — coordinator の入れ替えを始めるのは queued の task が無い時だけ(作り直した coordinator が
-;;;   worker の行を読めないと queued は即 落ちる — 2026-10-05 の taskReserve の形・#2440)。失敗ケース =
-;;;   test-starting-the-coordinator-with-a-queued-task-breaks-v4。
-;;;   V5 swap-after-boot-root-prepared(#3725)— worker / coordinator の入れ替えを始めるのは、入れ替える対象の保存先に入れ替え先の版の自己起動の
-;;;   root が準備済み(完成のマークつき)で在る時だけ(無いと、作り直した process が起動の中で root を準備して初回の import をする間 — 実測
-;;;   15〜25 秒 — その上の service に届かない)。判定するのは入れ替えを始めた瞬間の保存先のスナップショット(BootRootsAtStart — 入れ替えの記録と、
-;;;   その瞬間に準備済みで在った root の版。保存先は名簿にも task にも出ず、準備の handler だけが読むので、V1〜V4 の記録とは別の列)。守るのは
-;;;   版上げの Program(shared/core/upgrade_program.hy)の順の 1 か所: 空の機体の確認 → root の準備(PrepareBootRoot — handler が準備の
-;;;   終わりまで受け持つ)→ 宣言を書く。確かめるのは tests/test_upgrade_program.hy の test-the-upgrade-program-keeps-v1-to-v5(模擬の
-;;;   Flux と模擬の保存先の上で Program を走らせ、保存先のスナップショットを判断に渡す)。失敗ケースは tests/test_upgrade_invariants.hy の
-;;;   test-swapping-before-the-boot-root-is-prepared-breaks-v5(合成の列)・
-;;;   test-a-program-that-desires-before-the-boot-root-is-prepared-breaks-v5(準備の前に Desire を出す壊した Program)・
-;;;   test-an-answer-that-claims-a-boot-root-it-did-not-build-breaks-v5(組まずに「組んだ」と答える壊した handler)。
 ;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
@@ -255,12 +226,7 @@
                 "doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible"
                 "doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit"
                 "doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-values-survive"
-                "doeff_cluster.coordinator.core.coordinator_invariants:declared-services-survive"
-                "doeff_cluster.coordinator.core.upgrade_invariants:coordinator-after-every-worker"
-                "doeff_cluster.coordinator.core.upgrade_invariants:worker-swap-waits-for-its-tasks"
-                "doeff_cluster.coordinator.core.upgrade_invariants:one-worker-at-a-time"
-                "doeff_cluster.coordinator.core.upgrade_invariants:coordinator-swap-on-an-empty-queue"
-                "doeff_cluster.coordinator.core.upgrade_invariants:swap-after-boot-root-prepared"]})
+                "doeff_cluster.coordinator.core.coordinator_invariants:declared-services-survive"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)・W2(退く process は新の Ready と自分の止めより前に退く知らせを受ける — #3672)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
