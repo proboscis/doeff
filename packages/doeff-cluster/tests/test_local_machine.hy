@@ -154,7 +154,14 @@
   (.count (.read-text (/ tmp-path "coordinator" "coordinator.log") :encoding "utf-8") "で受けます"))
 
 
-(deftest test-a-local-machine-starts-a-coordinator-and-a-worker-and-stops-both-at-the-end [tmp-path]
+;; この file の検は全部、coordinator と worker を本物の子 process で起こすので subprocess-bytecode(根の conftest)を取る: 子は .pyc を
+;; この run の 1 つの dir(PYTHONPYCACHEPREFIX)に書いて読み、Hy の code を既定の置き場に足す — 最初の検の子が compile した物を、後の検の
+;; 子が使う。取らないと子は根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継いで何も残さず、.pyc の無い checkout(実行ごとに新しい
+;; .venv)では、検ごとに coordinator・worker・job の子が Hy を source から compile し直す — 日次の全体検証を atlas の Pod で走らせた初回
+;; (2026-10-10 20:05)に、job を落とす検が compile だけで pytest の打ち切り(60 秒)を越えた(card ki-9338eec1d15e)。
+
+
+(deftest test-a-local-machine-starts-a-coordinator-and-a-worker-and-stops-both-at-the-end [tmp-path subprocess-bytecode]
   (<- machine LocalMachine (machine-of tmp-path))
   (<- names (local-machine-cluster (registered-workers) :machine machine))
   (assert (= names #(WORKER)) names)
@@ -162,7 +169,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-local-machine-stops-everything-when-the-scenario-raises [tmp-path]
+(deftest test-a-local-machine-stops-everything-when-the-scenario-raises [tmp-path subprocess-bytecode]
   (<- machine LocalMachine (machine-of tmp-path))
   (with [_ (pytest.raises RuntimeError :match "筋書きの失敗")]
     (! (local-machine-cluster (failing-scenario) :machine machine)))
@@ -170,7 +177,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-counterexample-that-only-answers-stop-leaves-processes-behind [tmp-path]
+(deftest test-a-counterexample-that-only-answers-stop-leaves-processes-behind [tmp-path subprocess-bytecode]
   (<- machine LocalMachine (machine-of tmp-path))
   (<- names (run-with-broken (registered-workers) machine stop-ignored))
   (<- left tuple (leftover tmp-path))
@@ -179,7 +186,7 @@
   (assert (> (len left) 0) "止めを答えるだけの壊した答え手でも process が残らない — 検が止めを見ていない"))
 
 
-(deftest test-a-local-machine-answers-readiness-kills-a-worker-and-remakes-the-coordinator [tmp-path]
+(deftest test-a-local-machine-answers-readiness-kills-a-worker-and-remakes-the-coordinator [tmp-path subprocess-bytecode]
   (<- machine LocalMachine (machine-of tmp-path))
   (<- answers ContractAnswers (local-machine-cluster (contract-answers) :machine machine))
   (assert (= answers.missing "Missing") answers)
@@ -192,7 +199,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-local-machine-refuses-to-cut-stall-or-fail-routes [tmp-path]
+(deftest test-a-local-machine-refuses-to-cut-stall-or-fail-routes [tmp-path subprocess-bytecode]
   (<- machine LocalMachine (machine-of tmp-path))
   (with [_ (pytest.raises MachineCannotAnswer :match "CutWorker")]
     (! (local-machine-cluster (CutWorker WORKER 1.0) :machine machine)))
@@ -200,7 +207,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-counterexample-that-does-not-remake-the-coordinator-starts-it-only-once [tmp-path]
+(deftest test-a-counterexample-that-does-not-remake-the-coordinator-starts-it-only-once [tmp-path subprocess-bytecode]
   (<- machine LocalMachine (machine-of tmp-path))
   (<- answers ContractAnswers (run-with-broken (contract-answers) machine coordinator-stop-ignored))
   (<- starts int (coordinator-starts tmp-path))
@@ -336,7 +343,7 @@
   (DeclaredReadiness :declared declared :state seen.state))
 
 
-(deftest test-a-local-machine-declares-a-system-from-its-code-repo-and-the-worker-restarts-a-crashed-job [tmp-path]
+(deftest test-a-local-machine-declares-a-system-from-its-code-repo-and-the-worker-restarts-a-crashed-job [tmp-path subprocess-bytecode]
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (code-machine-of tmp-path repo))
   (val system (pings machine-foundation))
@@ -353,7 +360,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-counterexample-that-does-not-send-the-declaration-never-becomes-ready [tmp-path]
+(deftest test-a-counterexample-that-does-not-send-the-declaration-never-becomes-ready [tmp-path subprocess-bytecode]
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (code-machine-of tmp-path repo))
   (val system (pings machine-foundation))
@@ -425,7 +432,7 @@
   (tuple (sorted (gfor p (.rglob (/ tmp-path "workers" WORKER) "mirrors/*.git") (str p)))))
 
 
-(deftest test-a-local-machine-declares-the-runtime-env-and-its-worker-takes-in-the-repo [tmp-path]
+(deftest test-a-local-machine-declares-the-runtime-env-and-its-worker-takes-in-the-repo [tmp-path subprocess-bytecode]
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (runtime-machine-of tmp-path repo))
   (<- before (| int None) (home-access-mtime))
@@ -442,7 +449,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-worker-with-an-empty-key-table-still-takes-in-the-repo [tmp-path monkeypatch]
+(deftest test-a-worker-with-an-empty-key-table-still-takes-in-the-repo [tmp-path monkeypatch subprocess-bytecode]
   ;; 鍵の表は url を断らない(2026-10-05 に断る分岐と repo-denied を外した): 表が空の worker(--repo-keys が空)も、表に無い
   ;; 実行環境の repo を鍵なしで clone し、取り込みの段を越える。
   (<- repo AppRepo (app-repo tmp-path))
@@ -475,7 +482,7 @@
   seen)
 
 
-(deftest test-a-key-table-line-added-after-the-worker-started-is-read-by-the-next-prepare [tmp-path monkeypatch]
+(deftest test-a-key-table-line-added-after-the-worker-started-is-read-by-the-next-prepare [tmp-path monkeypatch subprocess-bytecode]
   ;; 失敗ケース(card ki-2de748a0eac5): worker は鍵の表を起動の時にしか組まず、表に行を足しても worker を作り直すまで効かなかった。
   ;; 起動の時は空の表で起こし、起きた後に表の file へ実行環境の repo の行を書く — 次の準備の鍵の表の JSON にその url が在る。
   (<- repo AppRepo (app-repo tmp-path))
@@ -507,7 +514,7 @@
   (replace machine :runtime-env env :git-sources sources))
 
 
-(deftest test-a-local-machine-reads-the-declared-remote-from-the-local-checkout [tmp-path]
+(deftest test-a-local-machine-reads-the-declared-remote-from-the-local-checkout [tmp-path subprocess-bytecode]
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (remote-runtime-machine-of tmp-path repo #((GitSource :remote REMOTE-URL :path repo.url))))
   (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
@@ -520,7 +527,7 @@
   (assert (= left #()) left))
 
 
-(deftest test-a-counterexample-without-git-sources-fetches-the-unreachable-remote-and-fails [tmp-path]
+(deftest test-a-counterexample-without-git-sources-fetches-the-unreachable-remote-and-fails [tmp-path subprocess-bytecode]
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (remote-runtime-machine-of tmp-path repo #()))
   (<- seen PrepareSeen (local-machine-cluster (declared-and-preparing (pings machine-foundation)) :machine machine))
