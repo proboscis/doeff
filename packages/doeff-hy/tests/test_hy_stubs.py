@@ -6,6 +6,8 @@ doeff-hy-check はそれを読む module に `import hy.models` を置くので�
 
 - hy の名と model を使う小さな .hy に、hy / hy.models の reportMissingTypeStubs も「型が分からない」の赤も出ない。
 - stub が宣言する名は実行時の hy に在る(宣言だけが先へ行かない)・stub は partial(宣言の無い下の module は hy の source)。
+- defmacro を書いた .hy に、展開の `hy.macros.macro('名')(…)` の「型が分からない」「hy の属性に無い」の赤が出ない(hy.macros の
+  stub macros.pyi — agora-controllers の card acp:kanban-issue:ki-5ecd80461f13・controllers/shared/intent/patrols.hy の 6 件)。
 """
 
 import ast
@@ -17,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import hy
+import hy.macros
 import hy.models
 import pytest
 
@@ -35,6 +38,13 @@ MODULE = """\
 (val HEAD (str (get FORM 0)))
 (val NAME (+ (. (Keyword "k") name) (hy.mangle "a-b")))
 (val SYMBOL (Symbol "s"))
+"""
+
+
+MACRO_MODULE = """\
+(defmacro defpoint [#^ hy.models.Symbol name #^ hy.models.Object #* fields]
+  "名と欄から値を 1 つ置く。"
+  `(setv ~name [~@fields]))
 """
 
 
@@ -70,6 +80,14 @@ def test_a_new_hy_file_has_no_missing_hy_stub(tmp_path: Path) -> None:
     assert not [e for e in errors if e[0].startswith("reportUnknown")], errors
 
 
+@needs_pyright
+def test_a_defmacro_file_has_no_unknown_hy_macro(tmp_path: Path) -> None:
+    (tmp_path / "probe.hy").write_text(MACRO_MODULE, encoding="utf-8")
+    errors = _check(tmp_path).errors()
+    assert not [e for e in errors if '"macro"' in e[2]], errors
+    assert not [e for e in errors if e[0].startswith("reportUnknown")], errors
+
+
 def _names_of(node: ast.stmt) -> tuple[str, ...]:
     """stub の直下の文 1 つが宣言する名(再公開は `as` の名)。"""
     match node:
@@ -92,5 +110,6 @@ def _declared(stub: Path) -> list[str]:
 def test_the_stub_names_exist_in_hy() -> None:
     assert [n for n in _declared(STUBS / "__init__.pyi") if not hasattr(hy, n)] == []
     assert [n for n in _declared(STUBS / "models.pyi") if not hasattr(hy.models, n)] == []
+    assert [n for n in _declared(STUBS / "macros.pyi") if not hasattr(hy.macros, n)] == []
     # 宣言の無い下の module(hy.compiler など)は hy の source から読ませる。
     assert (STUBS / "py.typed").read_text(encoding="utf-8").strip() == "partial"
