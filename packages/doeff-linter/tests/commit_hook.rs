@@ -726,6 +726,23 @@ fn a_comparison_within_the_limit_still_passes() {
     assert!(got.lines.is_empty(), "{:?}", got);
 }
 
+/// 失敗ケース(card ki-79532edd43dd・2026-10-10 — 負荷の時の形): 機体が混むと、子の linter の wall の秒は CPU 秒より長く伸びる(zeus の
+/// load 42〜73 で、上限なしなら rc 0 の commit が wall 40 秒の上限で毎回切れた)。wall では上限を越えて待つが CPU をほぼ使わない子
+/// (眠る代役 — 混んで順番を待つ子の代わり)は、CPU 秒が上限の内なので打ち切らずに測り、通す。CPU 秒を読めるのは /proc の在る Linux。
+#[cfg(target_os = "linux")]
+#[test]
+fn a_linter_slow_on_the_wall_clock_but_within_the_cpu_limit_is_measured() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let side = tempfile::TempDir::new().unwrap();
+    let linter = slow_head_linter(side.path(), 3);
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(root, &["add", "app/queue/main.hy"]);
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 2));
+    assert_eq!(got.code, 0, "{:?}", got);
+    assert!(got.lines.is_empty(), "{:?}", got);
+}
+
 /// agora-redesign #2683 の設定 — DOEFF172(写像の置き場の臭い・major の warning — 終了コードを変えない)だけ。
 const WARNING_PYPROJECT: &str = r#"[tool.doeff-linter]
 enable = ["DOEFF172"]
