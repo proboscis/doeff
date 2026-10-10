@@ -403,6 +403,61 @@ def test_coordinator_is_one_deployment_on_atlas(rendered: list[Manifest]) -> Non
     assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
 
 
+# 版の向き(card ki-76a269c31615): どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)でなければならない。
+# coordinator は古い worker を受けられるが、古い coordinator は新しい worker を受けられるとは限らない — 10-11 02:21〜02:37 に zeus の
+# worker を 44778ca69 へ上げた宣言(ad90f71c5)が coordinator の e247ea66d より先に main へ入り、新しい worker が登録できずに zeus が
+# 約 16 分止まった。worker を先に要る変更でも、coordinator の版を先に(同じ版か、より新しい版へ)上げてから worker を上げる。
+
+
+@dataclass(frozen=True)
+class NodeVersion:
+    """機体 1 つの worker の版(機体の名と、その worker が動かす doeff の commit)。"""
+
+    node: str
+    commit: str
+
+
+def _same_or_ancestor(commit: str, of: str) -> bool:
+    """commit が of と同じか of の祖先か — 版の前後を doeff の歴史で判じるため。歴史に無い commit(浅い clone・知らない版)は判じられないので
+    赤にする(黙って緑にしない)。"""
+    git = shutil.which("git")
+    assert git is not None, "git が無い — 版の前後を判じられない(このテストは飛ばさない)"
+    done = subprocess.run(
+        [git, "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", commit, of],
+        capture_output=True, text=True, timeout=25, check=False,
+    )
+    assert done.returncode in (0, 1), f"{commit} が {of} の祖先かを判じられない(歴史に無い commit か): {done.stderr.strip()}"
+    return done.returncode == 0
+
+
+def _workers_newer_than(coordinator: str, workers: tuple[NodeVersion, ...]) -> tuple[NodeVersion, ...]:
+    """coordinator の版より新しい worker の版(coordinator の版と同じでも祖先でもない物)— 宣言の検が断る物を名指すため。"""
+    return tuple(worker for worker in workers if not _same_or_ancestor(worker.commit, coordinator))
+
+
+def test_no_worker_is_newer_than_the_coordinator(rendered: list[Manifest]) -> None:
+    """宣言の全部の機体の worker の版は、coordinator の版と同じかその祖先(上の註の版の向き)。"""
+    coordinators = _deployments(rendered, "coordinator")
+    assert len(coordinators) == 1
+    coordinator = str(_env_value(coordinators[0], "WORKER_DOEFF_COMMIT")["value"])
+    workers = tuple(
+        NodeVersion(node=node, commit=str(_env_value(_worker_on(rendered, node), "WORKER_DOEFF_COMMIT")["value"]))
+        for node in NODES
+    )
+    newer = _workers_newer_than(coordinator, workers)
+    assert newer == (), f"coordinator の版 {coordinator} より新しい worker の版(coordinator を先に上げる): {newer!r}"
+
+
+# 10-11 02:21 の止まりの宣言(ad90f71c5 の時点の main): zeus の worker は 44778ca69・coordinator は e247ea66d(44778ca69 の祖先)。
+WORKER_FIRST_OF_10_11 = (NodeVersion(node="zeus", commit="44778ca69e9d101f757721c4b5d283c57f856d80"),)
+COORDINATOR_OF_10_11 = "e247ea66dc3dc807423460fa9bf7e52f79669090"
+
+
+def test_the_worker_first_declaration_of_10_11_is_refused() -> None:
+    """10-11 の止まりの形(worker を coordinator より先に上げた宣言)を、版の向きの判じが断る。"""
+    assert _workers_newer_than(COORDINATOR_OF_10_11, WORKER_FIRST_OF_10_11) == WORKER_FIRST_OF_10_11
+
+
 @dataclass(frozen=True)
 class Part:
     """上に載る系が別々の時に引き継げるよう、別の dir で組み立てる宣言の組 1 つ(dir の名と、その中の Deployment の役と ServiceAccount)。"""

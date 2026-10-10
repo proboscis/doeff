@@ -103,8 +103,9 @@ spec:
           env:
             - { name: ROLE, value: coordinator }
             - { name: WORK_DIR, value: /work }
-            # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。coordinator と worker の
-            # どちらを先に上げるかは変更ごとに決まる(../../../README.md「配備の順」)。
+            # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。どの機体の worker の版も
+            # この版と同じかその祖先に保つ — worker を上げる前にここを先に上げる(../../../README.md「配備の順」・宣言の検
+            # tests/test_k8s_declarations.py の test_no_worker_is_newer_than_the_coordinator が断る)。
             # 44778ca69 = 退いた process の上限 R を宣言の readiness の retiredLimit で受け、返事の job に retiredLimit を載せる版(L1954・
             # card ki-7b8636213610 — 退いた process を止めずに入れ替えを待つ)。worker の宣言(機体ごとの ../nodes/<Node の名>/version.yaml)
             # の zeus と同じ版。前の版 e247ea66d は 44778ca69 の祖先。

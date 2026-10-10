@@ -172,7 +172,7 @@ Program は `(<- told (AwaitRetirement))` で、名から外された時点(新�
 無い止め(宣言から外れた・recreate・worker の停止・途絶)では何も返りません(止めは `AwaitStop` で知ります)。本番の路 = worker の
 `process-host` が shim の標準入力へ 1 行を書き、shim(`--notice-env`)が job に継がせた知らせの pipe へ中継し、job の中の
 `pipe-retirement-notices` の読みの thread が待ちを起こします(間隔で読み直しません)。`sim-cluster` では偽の実行先が世界の受け手で答えます。
-この変更では worker を先に上げます(順は変更ごとに決まり、確かめた版の組み合わせで表す — 「配備の順」の節): この知らせを送らない古い
+この変更は worker を上げた時に効きます(worker の版は coordinator の版より新しくしない — 「配備の順」の節): この知らせを送らない古い
 worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WORKER_NOTICE_FD`)が
 無く、`AwaitRetirement` は何も返さずに待ち続けます(SIGTERM の止めは今までどおり届きます)。知らせを読まない job(答え手を組まない job・
 `AwaitRetirement` を一度も問わない job)の下で pipe が満ちても、shim は知らせを捨てて標準入力を読み続けます(worker の消失を見落としません)。
@@ -486,9 +486,14 @@ Deployment の在る namespace の権限として配備する側が与えます�
 
 ### 配備の順
 
-worker と coordinator のどちらを先に上げるかは変更ごとに決まります(#3772)。本番の worker と coordinator は Flux が `deploy/k8s` の宣言
-(機体ごとの `deploy/k8s/nodes`)から作り直すので、順は宣言を当てる順(main へ入れる順と、Flux の Kustomization の suspend / resume)で
-守ります。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
+どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)に保ちます(card ki-76a269c31615)。coordinator は古い worker を
+受けますが、古い coordinator が新しい worker を受けるとは限りません — 2026-10-11 02:21〜02:37、zeus の worker の版を coordinator より先に
+上げた宣言が main へ入り、新しい worker が coordinator に登録できずに zeus が約 16 分止まりました。宣言の検
+`tests/test_k8s_declarations.py` の `test_no_worker_is_newer_than_the_coordinator` が、coordinator の版より新しい worker の版を commit の
+時点で断ります。worker の働きが要る変更でも、coordinator の版を先に(同じ版か、より新しい版へ)上げてから worker を上げます。本番の
+worker と coordinator は Flux が `deploy/k8s` の宣言(機体ごとの `deploy/k8s/nodes`)から作り直すので、順は宣言を当てる順(main へ入れる順と、
+Flux の Kustomization の suspend / resume)で守ります。coordinator と worker の版の行を同じ commit で上げると、Flux がどちらを先に作り直すかは
+決まらないので、coordinator の版の行を先に main へ入れます。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
 入れ替えの順の不変条件 V1〜V5・模擬の Flux は、使い手が 0 になったので 2026-10-10 に退役しました。
 
 順が決まっている変更の例:
@@ -502,7 +507,8 @@ worker と coordinator のどちらを先に上げるかは変更ごとに決ま
   - 急ぐ時は、旧い Pod が終わった後に `DELETE /workers/<名>/drain` を実行して drain を解きます。
 - phase `probing` の変更(coordinator が先): worker は入口の検めの間の job を phase `probing` で報告します。coordinator はこの phase を
   「その worker で起動しかけている」と数えます(他へ置かない)。旧い版の coordinator はこの phase を知らないので、coordinator を先に上げます。
-- 退きの知らせの変更(worker が先): 上の「退きの知らせ」の段落。
+- 退きの知らせの変更(worker の働きで効く): 上の「退きの知らせ」の段落。coordinator はこの知らせに関わらないので、coordinator の版を
+  先に同じ版へ上げてから worker を上げます。
 
 ## テスト
 
