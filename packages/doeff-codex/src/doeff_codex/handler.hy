@@ -20,15 +20,15 @@
 (import doeff [run])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_time [GetMonotonic WaitWithin])
-(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent FreshThread ResumeThread])
+(import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex.lines :as lines)
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
-                         turn-start-request turn-interrupt-request server-response-line])
+                         turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_codex.process [CodexProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
-(import doeff_codex.effects [CodexStartTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest CodexCloseSession
-                             CodexLaunchCount BackendLost TurnStarted InterruptRequested TurnEventPage Answered SessionClosed
-                             ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn NoSuchRequest
-                             ProcessStillAlive])
+(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
+                             CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
+                             Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn
+                             NoSuchRequest ProcessStillAlive])
 
 (val RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 ;; 会話ごとに残すターンの記録の数(古いターンの出来事は読めなくなる — UnknownTurn)。
@@ -316,13 +316,15 @@
                (FreshThread)
                (request runtime "thread/start"
                         (fn [request-id] (thread-start-request request-id spec.cwd :approval-policy spec.approval-policy
-                                                               :sandbox spec.sandbox :model spec.model))
+                                                               :sandbox spec.sandbox :model spec.model
+                                                               :auto-compact-token-limit spec.auto-compact-token-limit))
                         host.launch-timeout)
                (ResumeThread)
                (request runtime "thread/resume"
                         (fn [request-id] (thread-resume-request request-id origin.thread-id :cwd spec.cwd
                                                                 :approval-policy spec.approval-policy :sandbox spec.sandbox
-                                                                :model spec.model))
+                                                                :model spec.model
+                                                                :auto-compact-token-limit spec.auto-compact-token-limit))
                         host.launch-timeout)))
   (when (and (isinstance opened lines.Response) (is-not opened.thread-id None))
     (return opened.thread-id))
@@ -336,6 +338,12 @@
 
 
 ;; --- effect の答え -----------------------------------------------------------------------------
+
+(defk image-urls-of [#^ CodexInput input]
+  {:pre [(: input CodexInput)] :post [(: % tuple)] :tags {:context "codex" :role "foundation"}}
+  "入力に添えた画像を、ターンの入力の image の url(data URL)へ写すため。"
+  (tuple (gfor image input.images (.format "data:{};base64,{}" image.mime image.data-base64))))
+
 
 (defk start-turn [#^ CodexHost host #^ CodexStartTurn asked]
   {:pre [(: host CodexHost) (: asked CodexStartTurn)] :post [(: % (| TurnStarted ThreadUnknown TurnInFlight LaunchFailed RequestRefused))]
@@ -362,7 +370,9 @@
       (setv runtime.thread-id opened
             runtime.closed False))
     (.register host runtime))
-  (<- answer (request runtime "turn/start" (fn [request-id] (turn-start-request request-id runtime.thread-id asked.text))
+  (<- urls (image-urls-of asked.input))
+  (<- answer (request runtime "turn/start"
+                      (fn [request-id] (turn-start-request request-id runtime.thread-id asked.input.text urls :effort asked.spec.effort))
                       host.launch-timeout))
   (match answer
     (lines.Response)
@@ -392,6 +402,28 @@
   (<- line (turn-interrupt-request request-id turn.thread-id turn.turn-id))
   (.send process line)
   (InterruptRequested))
+
+
+(defk steer-turn [#^ CodexHost host #^ CodexSteerTurn asked]
+  {:pre [(: host CodexHost) (: asked CodexSteerTurn)] :post [(: % (| Steered NoTurnInFlight RequestRefused LaunchFailed))]
+   :tags {:context "codex" :role "process"}}
+  "走っているターンに turn/steer を書き、codex が受けたかの答えを待つため(受けた入力はターンの次の区切りで読まれる)。"
+  (val turn asked.turn)
+  (val runtime (.runtime host turn.thread-id))
+  (when (is runtime None) (return (NoTurnInFlight :turn turn)))
+  (with [runtime.lock]
+    (val log (.running-log runtime))
+    (val running (and (is-not log None) (= runtime.current-turn turn.turn-id) (is-not runtime.process None)
+                      (.alive runtime.process))))
+  (when (not running) (return (NoTurnInFlight :turn turn)))
+  (<- urls (image-urls-of asked.input))
+  (<- answer (request runtime "turn/steer"
+                      (fn [request-id] (turn-steer-request request-id turn.thread-id turn.turn-id asked.input.text urls))
+                      host.launch-timeout))
+  (match answer
+    (lines.Response) (Steered)
+    (lines.ErrorResponse) (do (<- refusal (refused "turn/steer" answer)) refusal)
+    _ answer))
 
 
 (defk answer-request [#^ CodexHost host #^ CodexAnswerRequest asked]
@@ -474,8 +506,11 @@
 ;; 引数に残す理由: host は会話の process と状態の持ち主で、composition root が 1 つ作って渡す(Ask で読む設定ではなく、生きた資源の束 —
 ;; doeff-claude-code の claude-code-handler と同じ)。
 (defhandler codex-handler [host]
-  (CodexStartTurn [origin spec text]
+  (CodexStartTurn [origin spec input]
     (<- outcome (start-turn host effect))
+    (resume outcome))
+  (CodexSteerTurn [turn input]
+    (<- outcome (steer-turn host effect))
     (resume outcome))
   (CodexInterruptTurn [turn]
     (<- outcome (interrupt-turn host turn))

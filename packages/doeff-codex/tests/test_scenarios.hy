@@ -6,17 +6,18 @@
 ;; (決まりの元 = 利用者 2026-09-10「どの会話も、文字が届くたびに 1 文字ずつ更新されない」・2026-10-10 21:27 の答え A)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
-(import doeff_codex.values [FreshThread ResumeThread])
+(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexImage])
 (import doeff_codex.lines [TextDelta AgentMessageDone TurnEnded TurnStatus])
-(import doeff_codex.effects [CodexStartTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted InterruptRequested
-                             SessionClosed TurnInFlight BackendLost])
-(import tests.scenario_steps [settings read-to-end read-to-first-delta records-of])
+(import dataclasses [replace])
+(import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
+                             Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight BackendLost])
+(import tests.scenario_steps [settings read-until read-to-end read-to-first-delta records-of])
 
 
 (deftest test-the-text-deltas-reach-the-page-in-order-and-the-turn-ends-once
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
-  (<- started (CodexStartTurn (FreshThread) s.spec "say hello"))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "say hello")))
   (assert (isinstance started TurnStarted) started)
   (<- so-far (read-to-end started.turn s.turn-timeout))
   ;; 途中の文字は順に頁に載り、連ねると答えの全文。
@@ -38,7 +39,7 @@
 (deftest test-an-interrupted-turn-ends-interrupted-and-the-process-takes-the-next-turn
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
-  (<- started (CodexStartTurn (FreshThread) s.spec "SLOW please"))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "SLOW please")))
   (assert (isinstance started TurnStarted) started)
   ;; 途中の文字が届いてから止める。
   (<- before (read-to-first-delta started.turn s.turn-timeout))
@@ -50,7 +51,7 @@
   (<- stopped (read-to-end started.turn s.turn-timeout))
   (assert (and (isinstance stopped.end TurnEnded) (= stopped.end.status TurnStatus.INTERRUPTED)) stopped.end)
   ;; 同じ会話の次のターンは、同じ process が受けて終わりまで走る(起こした process は 1 つのまま)。
-  (<- next-turn (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec "say hello again"))
+  (<- next-turn (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec (CodexInput :text "say hello again")))
   (assert (isinstance next-turn TurnStarted) next-turn)
   (assert (= next-turn.turn.thread-id started.turn.thread-id) next-turn)
   (assert (!= next-turn.turn.turn-id started.turn.turn-id) next-turn)
@@ -63,17 +64,61 @@
 (deftest test-a-running-turn-refuses-a-second-start-and-closing-ends-it
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
-  (<- started (CodexStartTurn (FreshThread) s.spec "SLOW please"))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "SLOW please")))
   (assert (isinstance started TurnStarted) started)
   ;; 走っているターンが在る会話の 2 つ目の始めは断る(1 つの会話に走っているターンは多くとも 1 つ)。
-  (<- again (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec "say hello"))
+  (<- again (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec (CodexInput :text "say hello")))
   (assert (= again (TurnInFlight :turn started.turn)) again)
   ;; 閉じると、走っていたターンは BackendLost で終わり、続きは新しい process で thread を続ける。
   (<- closed (CodexCloseSession started.turn.thread-id "筋書きの終わり"))
   (assert (= closed (SessionClosed :was-running True)) closed)
-  (<- resumed (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec "say hello"))
+  (<- resumed (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec (CodexInput :text "say hello")))
   (assert (isinstance resumed TurnStarted) resumed)
   (<- finished (read-to-end resumed.turn s.turn-timeout))
   (assert (and (isinstance finished.end TurnEnded) (= finished.end.status TurnStatus.COMPLETED)) finished.end)
   (<- launches (CodexLaunchCount started.turn.thread-id))
   (assert (= launches 2) launches))
+
+
+(deftest test-a-steered-input-joins-the-running-turn
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "SLOW please")))
+  (assert (isinstance started TurnStarted) started)
+  (<- (read-to-first-delta started.turn s.turn-timeout))
+  ;; 走っているターンに足した入力は、同じターンの中で読まれる(替え玉と fake は足した文字を steered: の途中の文字として見せる)。
+  (<- steered (CodexSteerTurn started.turn (CodexInput :text "more")))
+  (assert (= steered (Steered)) steered)
+  (<- joined (read-until started.turn (fn [events end] (any (gfor event events (and (isinstance event.record TextDelta)
+                                                                                       (= event.record.text "steered:more ")))))
+                         s.turn-timeout))
+  (assert (is joined.end None) joined.end)
+  (<- (CodexInterruptTurn started.turn))
+  (<- stopped (read-to-end started.turn s.turn-timeout))
+  (assert (and (isinstance stopped.end TurnEnded) (= stopped.end.status TurnStatus.INTERRUPTED)) stopped.end)
+  ;; 終わったターンには足せない。
+  (<- late (CodexSteerTurn started.turn (CodexInput :text "too late")))
+  (assert (= late (NoTurnInFlight :turn started.turn)) late))
+
+
+(deftest test-the-images-ride-on-the-turn-input
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (val images #((CodexImage :mime "image/png" :data-base64 "iVBORw0KGgo=") (CodexImage :mime "image/jpeg" :data-base64 "/9j/4AAQ")))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "Count the attached images." :images images)))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (<- answers (records-of so-far AgentMessageDone))
+  (assert (= (tuple (gfor answer answers answer.text)) #("IMAGES 2")) answers))
+
+
+(deftest test-the-declared-effort-model-and-compaction-reach-the-app-server
+  {:interpreters ["stub"]}
+  ;; 宣言の考えの深さ・model・圧縮の閾値が、thread を開く要求と turn/start の行に載る(替え玉が受けた要求の欄を答えの文にする)。
+  (<- s (settings))
+  (val spec (replace s.spec :model "gpt-test" :effort "high" :auto-compact-token-limit 600000))
+  (<- started (CodexStartTurn (FreshThread) spec (CodexInput :text "Tell the settings.")))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (<- answers (records-of so-far AgentMessageDone))
+  (assert (= (tuple (gfor answer answers answer.text)) #("SETTINGS effort=high compact=600000 model=gpt-test")) answers))
