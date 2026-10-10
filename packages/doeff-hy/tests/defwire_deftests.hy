@@ -248,8 +248,8 @@
 ;; 解き手(pydantic の TypeAdapter の validator と serializer)は型を定義した時(module の読み込み)に組む。最初の parse / dump の呼び手
 ;; (検の実行・本番の最初の要求)が組み立ての費用を払わない。この 2 型は他の検が使わない(使う前の解き手を写すため)。
 
-(defwire BuiltAtDefinition
-  "定義した時に組める型(欄の型は全部この行より前に定義してある)"
+(defwire FieldsDefinedBefore
+  "欄の型が全部この行より前に定義してある型(定義した時に組めるが、組むのは最初に使う時)"
   {:names :camel}
   (#^ str lane-id)
   (setv #^ (get tuple #(Note ...)) notes #()))
@@ -274,21 +274,22 @@
              1)))
 
 
-(deftest test-the-solver-is-built-when-the-type-is-defined-and-never-rebuilt-by-use
+(deftest test-the-solver-is-built-at-first-use-and-never-rebuilt-by-use
   {:tags {:context "wire" :role "judgment"}}
-  (val adapter BuiltAtDefinition.__doeff_wire__.adapter)
-  ;; 定義した時に組み上がっている(使う前)。
+  ;; 定義した時には組まない — 使わない型の組む費用を、module を読み込む process ごとに払わない(card acp:kanban-issue:ki-8b518c8f8e9d:
+  ;; test_emulated_screen.hy の 1 回で組んだ 547 個のうち使ったのは 49 個)。最初に使う時に 1 度だけ組み、2 回目以降は組み直さない。
+  (val adapter FieldsDefinedBefore.__doeff_wire__.adapter)
+  (assert (not adapter.pydantic-complete))
+  (<- first (parse FieldsDefinedBefore {"laneId" "L1" "notes" [{"noteText" "x"}]}))
   (assert adapter.pydantic-complete)
-  (val at-definition #(adapter.validator adapter.serializer))
-  (<- first (parse BuiltAtDefinition {"laneId" "L1" "notes" [{"noteText" "x"}]}))
   (val after-first #(adapter.validator adapter.serializer))
   (<- text (dump-json first))
-  (<- second (parse-json BuiltAtDefinition text))
+  (<- second (parse-json FieldsDefinedBefore text))
   (<- _ (dump second))
   (val after-uses #(adapter.validator adapter.serializer))
   (assert (= second first))
-  ;; 最初の使用も 2 回目以降の使用も組み直さない。
-  (<- rebuilds (rebuilds-of #(at-definition after-first after-uses)))
+  ;; 2 回目以降の使用は組み直さない。
+  (<- rebuilds (rebuilds-of #(after-first after-uses)))
   (assert (= rebuilds 0)))
 
 
