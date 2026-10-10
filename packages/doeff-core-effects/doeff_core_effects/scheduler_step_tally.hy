@@ -9,6 +9,7 @@
 ;;;   sink    最初の窓を開けた時に測りの口へ据え、最後の窓を閉じた時に外す — 窓が 1 つも無い間は口に sink が無く、scheduler は出来事を
 ;;;           作らない。別の sink が据えてある時に窓を開けると RuntimeError で断る(他の測りの sink を黙って差し替えない)。
 ;;;   費用    窓が開いている間だけ、scheduler の出来事ごとに sink が 1 回呼ばれ、task-leave ごとに lock を取って窓を差し替える。
+;;;           task の spawn の場所ごとの和(SiteTally)は、窓ごとの表の 1 行を歩ごとに差し替え、閉じた時に 1 度だけ並べる。
 ;;;
 ;;; 窓を閉じずに run が終わると、その窓と sink は process に残る(次に同じ key を開けると断る)。Rust の scheduler は出来事を出さないので、
 ;;; 窓を開けている間に Rust の scheduler を組むと scheduled が断る。
@@ -24,16 +25,19 @@
 (import threading)
 (import time)
 (import doeff_core_effects.scheduler [scheduler-trace-sink set-scheduler-trace])
-(import doeff_core_effects.step_tally_effects [CloseStepTally EMPTY-STEP-TALLY OpenStepTally StepTally
+(import doeff_core_effects.step_tally_effects [CloseStepTally EMPTY-STEP-TALLY OpenStepTally SiteTally StepTally
                                                CloseTaskTally OpenTaskTally ReadTaskTally TaskTally])
 
 
 (defrecord StepWindow
-  "開いている窓 1 つ: thread = 開けた scheduler の thread の名・opened-ns = 開けた時刻(perf_counter_ns)・tally = ここまでの積算。"
+  "開いている窓 1 つ: thread = 開けた scheduler の thread の名・opened-ns = 開けた時刻(perf_counter_ns)・tally = ここまでの積算・
+   sites = task の spawn の場所 → ここまでの和(答え手の中だけの表 — 歩ごとに 1 行を差し替え、窓を閉じた時に CPU の多い順の tuple で
+   答える。TaskWindow の rows と同じ形)。"
   {:tags {:context "step-tally" :role "foundation"}}
   (#^ str thread)
   (#^ int opened-ns)
-  (#^ StepTally tally))
+  (#^ StepTally tally)
+  (#^ (get dict #((| str None) SiteTally)) sites))
 
 
 (defrecord TaskWindow
@@ -139,8 +143,14 @@
         (when (and (= window.thread thread) (>= started-ns window.opened-ns))
           (setv tally window.tally)
           (setv longer (> step-ns tally.longest-wall-ns))
+          (setv summed (.get window.sites site))
+          (setv (get window.sites site)
+                (if (is summed None)
+                    (SiteTally :site site :steps 1 :wall-ns step-ns :cpu-ns step-cpu-ns)
+                    (SiteTally :site site :steps (+ summed.steps 1) :wall-ns (+ summed.wall-ns step-ns)
+                               :cpu-ns (+ summed.cpu-ns step-cpu-ns))))
           (setv (get WINDOWS key)
-                (StepWindow :thread thread :opened-ns window.opened-ns
+                (StepWindow :thread thread :opened-ns window.opened-ns :sites window.sites
                             :tally (StepTally :steps (+ tally.steps 1)
                                               :wall-ns (+ tally.wall-ns step-ns)
                                               :cpu-ns (+ tally.cpu-ns step-cpu-ns)
@@ -152,6 +162,13 @@
   None)
 
 
+(defk tally-with-sites [window]
+  {:pre [(: window StepWindow)] :post [(: % StepTally)] :tags {:context "step-tally" :role "foundation"}}
+  "純粋: 閉じた窓 window の積算に、場所ごとの和を CPU の多い順(同じ CPU なら歩の多い順)の tuple で載せるため。"
+  (dataclasses.replace window.tally
+                       :sites (tuple (sorted (.values window.sites) :key (fn [row] #((- row.cpu-ns) (- row.steps)))))))
+
+
 (defk opened [key thread opened-ns]
   {:pre [(: key str) (: thread str) (: opened-ns int)] :post [(: % None)] :tags {:context "step-tally" :role "foundation"}}
   "窓 key を開くため: 開いている key は断り、最初の窓なら測りの口へ sink を据える(別の sink が据えてあれば断る)。"
@@ -159,7 +176,7 @@
     (when (in key WINDOWS)
       (raise (ValueError (.format "歩の積算の窓 {!r} は開いている(閉じてから開け直す)" key))))
     (sink-claimed)
-    (setv (get WINDOWS key) (StepWindow :thread thread :opened-ns opened-ns :tally EMPTY-STEP-TALLY)))
+    (setv (get WINDOWS key) (StepWindow :thread thread :opened-ns opened-ns :tally EMPTY-STEP-TALLY :sites {})))
   None)
 
 
@@ -169,7 +186,10 @@
   (with [LOCK]
     (val window (.pop WINDOWS key None))
     (sink-released))
-  (if (is window None) None window.tally))
+  (when (is window None)
+    (return None))
+  (<- tallied StepTally (tally-with-sites window))
+  tallied)
 
 
 (defk task-opened [key opened-ns]

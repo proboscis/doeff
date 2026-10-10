@@ -24,9 +24,22 @@
 (import dataclasses [dataclass])
 
 
+(defrecord SiteTally
+  "窓 1 つの中の、task の spawn の場所 1 つの歩の和: site = 場所(根の task など場所の無い task は None)・steps = 歩の数・wall-ns /
+   cpu-ns = 歩の壁の時間と thread の CPU の時間の和。窓の中のどの task が歩を食ったかを、最長の歩 1 つより広く読むため。"
+  {:tags {:context "step-tally" :role "type"}
+   :check [(>= steps 1) (>= wall-ns 0) (>= cpu-ns 0)]}
+  (#^ (| str None) site)
+  (#^ int steps)
+  (#^ int wall-ns)
+  (#^ int cpu-ns))
+
+
 (defrecord StepTally
   "窓 1 つの積算: steps = 歩の数・wall-ns / cpu-ns = 歩の壁の時間と thread の CPU の時間の和・longest-* = 壁の時間が最長の歩 1 つ
-   (壁・CPU・task の spawn の場所・歩を終えた効果の型の名 — 歩が無ければ 0 と None)・ready = 最後の歩を終えた時に走れる entry の数。"
+   (壁・CPU・task の spawn の場所・歩を終えた効果の型の名 — 歩が無ければ 0 と None)・ready = 最後の歩を終えた時に走れる entry の数・
+   sites = 歩を task の spawn の場所ごとに足した和(CPU の多い順・同じ CPU なら歩の多い順 — 行の和は steps・wall-ns・cpu-ns と同じ。
+   窓を閉じた時の答えにだけ載る)。"
   {:tags {:context "step-tally" :role "type"}
    :check [(>= steps 0) (>= wall-ns 0) (>= cpu-ns 0) (>= ready 0)]}
   (#^ int steps)
@@ -36,7 +49,8 @@
   (#^ int longest-cpu-ns)
   (#^ (| str None) longest-site)
   (#^ (| str None) longest-effect)
-  (#^ int ready))
+  (#^ int ready)
+  (setv #^ (get tuple #(SiteTally ...)) sites #()))
 
 
 ;; 歩を 1 つも数えていない積算。
