@@ -11,6 +11,8 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - IMAGES_PHRASE が在れば、入力の画像の数を ``IMAGES <数>`` と答える(画像が turn/start の入力に載ったかを見る)。
   - SETTINGS_PHRASE が在れば、thread を開いた要求の model と config の圧縮の閾値と、turn/start の effort を
     ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
+  - HOME_PHRASE が在れば、この process の CODEX_HOME の形を ``HOME dir=<権限> auth=<権限> account=<auth.json の口座の id>
+    config=<link|file|none> sessions=<link|dir|none>`` と答える(借りた資格の家の形を子の process から見る — 資格の値は答えない)。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
@@ -18,6 +20,7 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
 """
 
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -27,6 +30,7 @@ DELTA_PAUSE_SECONDS = 0.05
 MAX_SLOW_PIECES = 400
 IMAGES_PHRASE = "Count the attached images."
 SETTINGS_PHRASE = "Tell the settings."
+HOME_PHRASE = "Tell the home."
 STEERED_PREFIX = "steered:"
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
@@ -40,6 +44,25 @@ def said_text(inputs: list[dict[str, object]]) -> str:
 def image_count(inputs: list[dict[str, object]]) -> int:
     """ターンの入力の列の画像の数を数えるため。"""
     return sum(1 for item in inputs if item.get("type") == "image")
+
+
+def entry_kind(path: Path) -> str:
+    """家の中の 1 つの入り口が link か実物か無いかを名乗るため。"""
+    if path.is_symlink():
+        return "link"
+    if path.is_dir():
+        return "dir"
+    return "file" if path.exists() else "none"
+
+
+def home_text() -> str:
+    """この process の CODEX_HOME の形(dir と auth.json の権限・口座の id・config.toml と sessions の入り口)を答えの文にするため。"""
+    home = Path(os.environ.get("CODEX_HOME", ""))
+    auth = home / "auth.json"
+    account = json.loads(auth.read_text(encoding="utf-8"))["tokens"]["account_id"] if auth.exists() else None
+    auth_mode = oct(auth.stat().st_mode & 0o777) if auth.exists() else "none"
+    return (f"HOME dir={oct(home.stat().st_mode & 0o777)} auth={auth_mode} account={account} "
+            f"config={entry_kind(home / 'config.toml')} sessions={entry_kind(home / 'sessions')}")
 
 
 def recorded_messages(name: str) -> list[dict[str, object]]:
@@ -144,6 +167,9 @@ class Stub:
             return
         if SETTINGS_PHRASE in said:
             self.answer_turn(turn_id, self.settings_text(params))
+            return
+        if HOME_PHRASE in said:
+            self.answer_turn(turn_id, home_text())
             return
         if "SLOW" not in said:
             for notification in self.first_turn_notifications():

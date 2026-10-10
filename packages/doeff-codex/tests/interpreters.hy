@@ -29,6 +29,8 @@
 (val SLOW-WORD "SLOW")
 (val IMAGES-PHRASE "Count the attached images.")
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
+;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)。
+(val CODEX-HOME-DIR "codex-home")
 
 
 (defrecord Settings
@@ -69,9 +71,10 @@
 
 (defk settings-for [#^ str name #^ Path tmp-path]
   {:pre [(: name str) (: tmp-path Path)] :post [(: % Settings)] :tags {:context "codex-test" :role "entry"}}
-  "筋書きの宣言を作るため(作業の dir は検ごとの tmp の dir・許可の問いを出させない方針)。"
-  (Settings :spec (CodexSessionSpec :home (CodexHome :env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path)}) :cwd (str tmp-path)
-                                    :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY)
+  "筋書きの宣言を作るため(作業の dir は検ごとの tmp の dir・元の CODEX_HOME はその下の codex-home・許可の問いを出させない方針)。"
+  (Settings :spec (CodexSessionSpec :home (CodexHome :env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path)
+                                                           "CODEX_HOME" (str (/ tmp-path CODEX-HOME-DIR))})
+                                    :cwd (str tmp-path) :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY)
             :turn-timeout 30.0
             :interpreter name))
 
@@ -81,5 +84,8 @@
   "名 → Program を走らせる関数。plain は handler を被せない(純関数の検)。"
   (when (= name PLAIN)
     (return (fn [program] (run program))))
+  (setv codex-home (/ tmp-path CODEX-HOME-DIR))
+  (.mkdir codex-home :exist-ok True)
+  (.write-text (/ codex-home "config.toml") "# 検の元の CODEX_HOME\n" :encoding "utf-8")
   (setv stack (+ (run (handlers-for name)) [(scenario-settings (run (settings-for name tmp-path)))]))
   (fn [program] (run (scheduled (with_handlers stack program)))))

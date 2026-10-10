@@ -6,7 +6,8 @@
 ;; (決まりの元 = 利用者 2026-09-10「どの会話も、文字が届くたびに 1 文字ずつ更新されない」・2026-10-10 21:27 の答え A)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
-(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexImage])
+(import pathlib [Path])
+(import doeff_codex.values [FreshThread ResumeThread CodexInput CodexImage CodexHome])
 (import doeff_codex.lines [TextDelta AgentMessageDone TurnEnded TurnStatus])
 (import dataclasses [replace])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
@@ -122,3 +123,42 @@
   (<- so-far (read-to-end started.turn s.turn-timeout))
   (<- answers (records-of so-far AgentMessageDone))
   (assert (= (tuple (gfor answer answers answer.text)) #("SETTINGS effort=high compact=600000 model=gpt-test")) answers))
+
+
+;; 借りた口座の auth.json の中身(検の作り物 — 預かり所が封じる形。refresh token は貸し手の印の作り物)。
+(val LENT-AUTH-JSON "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null,\"tokens\":{\"id_token\":null,\"access_token\":\"test-access\",\"refresh_token\":\"NO.T.test-marker\",\"account_id\":\"acct-test\"},\"last_refresh\":null}")
+
+
+(deftest test-a-lent-account-gets-a-home-of-its-own-that-goes-with-the-process
+  {:interpreters ["stub"]}
+  ;; 借りた口座(auth-json)で起こす process は、元の CODEX_HOME の下の自分だけの家で走る: auth.json は 0600・家は 0700・config.toml と
+  ;; 会話の記録(sessions)は元への link。会話を閉じて process が降りたら家は消え、元の config.toml と会話の記録は残る。
+  (<- s (settings))
+  (val base (Path (get s.spec.home.env "CODEX_HOME")))
+  (val spec (replace s.spec :home (CodexHome :env s.spec.home.env :auth-json LENT-AUTH-JSON)))
+  (<- started (CodexStartTurn (FreshThread) spec (CodexInput :text "Tell the home.")))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (<- answers (records-of so-far AgentMessageDone))
+  (assert (= (tuple (gfor answer answers answer.text))
+             #("HOME dir=0o700 auth=0o600 account=acct-test config=link sessions=link"))
+          answers)
+  (assert (= (len (list (.iterdir (/ base ".credential-homes")))) 1) (list (.iterdir base)))
+  (<- closed (CodexCloseSession started.turn.thread-id "筋書きの終わり"))
+  (assert (isinstance closed SessionClosed) closed)
+  (assert (= (list (.iterdir (/ base ".credential-homes"))) []) (list (.iterdir (/ base ".credential-homes"))))
+  (assert (and (.is-file (/ base "config.toml")) (.is-dir (/ base "sessions"))) (list (.iterdir base)))
+  ;; 資格の家を持たない宣言の process は元の CODEX_HOME で走る(家を作らない)。
+  (<- plain (CodexStartTurn (FreshThread) s.spec (CodexInput :text "Tell the home.")))
+  (<- plain-read (read-to-end plain.turn s.turn-timeout))
+  (<- plain-answers (records-of plain-read AgentMessageDone))
+  (assert (and (= (len plain-answers) 1) (.endswith (. (get plain-answers 0) text) "auth=none account=None config=file sessions=dir"))
+          plain-answers))
+
+
+(deftest test-the-lent-account-stays-out-of-repr
+  ;; 借りた口座の中身と家の env は、宣言・effect の repr に写らない(例外・log に出ない)。
+  (val home (CodexHome :env {"CODEX_HOME" "/w/codex-home" "GH_TOKEN" "gh-never-printed"} :auth-json LENT-AUTH-JSON))
+  (assert (not-in "test-access" (repr home)) (repr home))
+  (assert (not-in "gh-never-printed" (repr home)) (repr home))
+  (assert (not-in "NO.T." (repr home)) (repr home)))

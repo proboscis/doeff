@@ -10,7 +10,7 @@
 ;; adapter と同じ形(agora の absorb-event を変えずに受けられる)。入力が読まれた事は AgentInputFateEvent(started)と完了の input_refs で
 ;; 届く(agora は入力の勘定をこの 2 つで数える)。
 ;; 筋書きの Program は doeff_codex を import しない(公開 effect と、組み立ての部品 headless_compose だけ)。
-(require doeff-hy.macros [deftest defk <- val var])
+(require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "headless-codex-adapter-test" :role "program"})
 (import dataclasses [dataclass])
 (import pathlib [Path])
@@ -25,7 +25,8 @@
   SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow
   AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
-  AgentCapabilityUnsupportedError NoTurnInFlightError])
+  AgentCapabilityUnsupportedError NoTurnInFlightError
+  RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents.effects.agent [AutocompactTokens])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
@@ -42,16 +43,34 @@
 (val SLOW-PROMPT "SLOW please")
 (val IMAGES-PHRASE "Count the attached images.")
 (val SETTINGS-PHRASE "Tell the settings.")
+;; 子の process から見た CODEX_HOME の形を答えさせる言い方(替え玉の規則 — 借りた資格の家の形を見る)。
+(val HOME-PHRASE "Tell the home.")
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
 (val ANSWER "Hello, world.")
+;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)と、借りた口座の auth.json の中身(検の作り物 —
+;; 預かり所が封じる形。refresh token は貸し手の印の作り物)。
+(val CODEX-HOME-DIR "codex-home")
+(val LENT-AUTH-JSON "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null,\"tokens\":{\"id_token\":null,\"access_token\":\"test-access\",\"refresh_token\":\"NO.T.test-marker\",\"account_id\":\"acct-test\"},\"last_refresh\":null}")
+;; 参照 → 引き換えの答え(検の環境が参照を出した側の代わりに答える)。
+(val LENT {"lease-codex" (CodexTurnCredential LENT-AUTH-JSON None)
+           "lease-claude" (TurnCredential "sk-ant-oat01-never-placed" None)
+           "lease-gone" (TurnCredentialUnavailable "returned")})
 
 
 ;; --- 解釈器(composition root) --------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] Setting []
-  "筋書きの宣言: work-dir = 作業 dir / timeout = 1 つの読みの上限(秒)。"
+  "筋書きの宣言: work-dir = 作業 dir / timeout = 1 つの読みの上限(秒)/ codex-home = 元の CODEX_HOME / world = fake の層 2 の世界
+   (stub は None — 層 2 の宣言に載った物を見る口)。"
   (#^ Path work-dir)
-  (#^ float timeout))
+  (#^ float timeout)
+  (#^ Path codex-home)
+  (#^ object world))
+
+;; 引数に残す理由: 答えの表は検の環境の値で、検ごとに同じ表を参照を出した側の代わりに使う(Ask で読む設定の handler は無い)。
+(defhandler lent-credentials [answers]
+  (RedeemTurnCredentialEffect [credential-ref]
+    (resume (get answers credential-ref))))
 
 (defk respond [#^ CodexTurnInput input]
   {:pre [(: input CodexTurnInput)] :post [(: % FakeCodexReply)] :tags {:context "headless-codex-adapter-test" :role "entry"}}
@@ -61,16 +80,17 @@
     (in IMAGES-PHRASE input.text) (FakeCodexReply :pieces #((.format "IMAGES {}" (len input.images))))
     True (FakeCodexReply :pieces ANSWER-PIECES)))
 
-(defk handlers-for [#^ str backend #^ Path tmp-path]
-  {:pre [(: backend str) (: tmp-path Path)] :post [(: % list)] :tags {:context "headless-codex-adapter-test" :role "entry"}}
-  "解釈器の handler の組(先頭が外側): 時間の handler → 層 2 の handler → headless の codex の adapter。"
-  (val env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path)})
+(defk handlers-for [#^ str backend #^ Path tmp-path world]
+  {:pre [(: backend str) (: tmp-path Path) (: world (| FakeCodexWorld None))] :post [(: % list)]
+   :tags {:context "headless-codex-adapter-test" :role "entry"}}
+  "解釈器の handler の組(先頭が外側): 時間の handler → 資格の引き換えの答え手 → 層 2 の handler → headless の codex の adapter。"
+  (val env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "CODEX_HOME" (str (/ tmp-path CODEX-HOME-DIR))})
   (<- adapter (codex-adapter env CodexApprovalPolicy.NEVER CodexSandboxMode.READ-ONLY))
   (match backend
-    "fake" (do (<- layer (fake-codex-process-layer (FakeCodexWorld (fn [input] (run (respond input))))))
-               [(sim-time-handler :clock (SimClock)) layer adapter])
+    "fake" (do (<- layer (fake-codex-process-layer world))
+               [(sim-time-handler :clock (SimClock)) (lent-credentials LENT) layer adapter])
     "stub" (do (<- layer (codex-process-layer #(sys.executable STUB-PATH) 30.0))
-               [(sync-time-handler) layer adapter])
+               [(sync-time-handler) (lent-credentials LENT) layer adapter])
     _ (raise (ValueError backend))))
 
 (defk run-on [#^ str backend #^ Path tmp-path #^ Callable scenario]
@@ -79,8 +99,12 @@
   "scenario(Setting) → Program を、層 2 の handler の組 + headless の codex の adapter の下で、検ごとの scheduler で走らせるため。"
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
-  (<- stack (handlers-for backend tmp-path))
-  (run (scheduled (with_handlers stack (scenario (Setting work 30.0))))))
+  (val codex-home (/ tmp-path CODEX-HOME-DIR))
+  (.mkdir codex-home :exist-ok True)
+  (.write-text (/ codex-home "config.toml") "# 検の元の CODEX_HOME\n" :encoding "utf-8")
+  (val world (if (= backend FAKE) (FakeCodexWorld (fn [input] (run (respond input)))) None))
+  (<- stack (handlers-for backend tmp-path world))
+  (run (scheduled (with_handlers stack (scenario (Setting work 30.0 codex-home world))))))
 
 
 ;; --- 筋書きの部品(公開 effect だけ) ----------------------------------------------------------------
@@ -382,11 +406,10 @@
 
 (defk refusals [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
-  "codex の adapter が持たない能力を、黙って捨てずに型で断るのを集めるため(名指しの文脈の id・手番の資格・写しの持ち込みと書き出し)。
+  "codex の adapter が持たない能力を、黙って捨てずに型で断るのを集めるため(名指しの文脈の id・写しの持ち込みと書き出し)。
    前もっての起動は持たないので偽を答える。"
   (var refused {})
   (for [#(name fields) [#("named" {"new_context_id" (NamedContextId "ctx-1")})
-                        #("credential" {"turn_credential_ref" "lease-1"})
                         #("snapshot" {"resume_from" "thread-1" "resume_snapshot" "{}"})]]
     (try
       (<- (launch s (+ "codex-refused-" name) "say hello" fields))
@@ -404,8 +427,58 @@
 (deftest test-headless-codex-refuses-what-it-cannot-honour-fake [tmp-path]
   (<- seen (run-on FAKE tmp-path refusals))
   (assert (= (get seen "refused") {"named" "LaunchEffect.new_context_id"
-                                   "credential" "LaunchEffect.turn_credential_ref"
                                    "snapshot" "LaunchEffect.resume_snapshot"
                                    "export" "ExportContextEffect(codex)"})
           seen)
   (assert (is (get seen "warmed") False) seen))
+
+
+(defk credential-turns [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "ターンの資格の参照を持つ起動を、引き換えの答えごとに走らせて集めるため: codex の口座 = そのターンの process の家に置かれる・
+   claude の形の資格と引き換えられない参照 = 起こさずに型で断る。"
+  (<- handle (launch s "codex-lent" HOME-PHRASE {"turn_credential_ref" "lease-codex"}))
+  (<- done (read-until handle ended s.timeout -1))
+  ;; fake の層 2 は家を作らないので、層 2 へ届いた宣言の家に資格が載ったかを見る(stub は子の process から家の形を見る)。
+  (val placed (if (is s.world None) None (tuple (gfor thread (.values s.world.threads) thread.spec.home.auth-json))))
+  (val homes (/ s.codex-home ".credential-homes"))
+  (val during (if (.exists homes) (len (list (.iterdir homes))) 0))
+  (<- (Stop handle))
+  (val after (if (.exists homes) (len (list (.iterdir homes))) 0))
+  (var refused {})
+  (for [ref ["lease-claude" "lease-gone"]]
+    (try
+      (<- (launch s (+ "codex-" ref) "say hello" {"turn_credential_ref" ref}))
+      (except [error TurnCredentialUnavailableError]
+        (:= refused (| refused {ref error.reason})))))
+  {"end" done.end "placed" placed "during" during "after" after "refused" refused})
+
+(defk check-credential-refusals [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "引き換えられない参照と codex の形でない資格は、起こさずに TurnCredentialUnavailableError で断られる(文に資格の値は出ない)ことを
+   確かめるため。"
+  (val refused (get seen "refused"))
+  (assert (= (set refused) #{"lease-claude" "lease-gone"}) refused)
+  (assert (= (get refused "lease-gone") "returned") refused)
+  (assert (in "TurnCredential" (get refused "lease-claude")) refused)
+  (assert (not-in "sk-ant" (get refused "lease-claude")) refused)
+  None)
+
+(deftest test-headless-codex-places-the-lent-account-in-the-process-home-fake [tmp-path]
+  (<- seen (run-on FAKE tmp-path credential-turns))
+  (assert (isinstance (get seen "end") AgentTurnCompleted) seen)
+  ;; 引き換えた auth.json の中身が、層 2 の宣言の家にそのまま載った。
+  (assert (= (get seen "placed") #(LENT-AUTH-JSON)) "the lent auth.json did not reach the declaration")
+  (<- (check-credential-refusals seen)))
+
+(deftest test-headless-codex-places-the-lent-account-in-the-process-home-stub [tmp-path]
+  (<- seen (run-on STUB tmp-path credential-turns))
+  ;; 子の process の CODEX_HOME は、元の CODEX_HOME の下の資格の家: dir 0700・auth.json 0600(借りた口座)・config.toml と会話の記録は
+  ;; 元への link。ターンの間は家が 1 つ在り、session を止めて process が降りたら消える。
+  (val end (get seen "end"))
+  (assert (and (isinstance end AgentTurnCompleted)
+               (= end.result-text "HOME dir=0o700 auth=0o600 account=acct-test config=link sessions=link"))
+          end)
+  (assert (= (get seen "during") 1) seen)
+  (assert (= (get seen "after") 0) seen)
+  (<- (check-credential-refusals seen)))
