@@ -10,7 +10,8 @@
 ;;;   - SqlTransaction = 許可を取り、接続を 1 本借りて、BEGIN(lock-key が在れば pg_advisory_xact_lock(hashtext(:key)) — postgres-sql-handler と
 ;;;     同じ文)→ program → COMMIT の各段を pool で流す。中の SqlQuery は transaction の scope の handler が同じ接続で pool へ回す(program 側の
 ;;;     約束は postgres-sql-handler と同じ)。batched = True を選んだ transaction だけは postgres-sql-handler と同じ往復のまとめ方(BEGIN と錠は
-;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)。transaction の外の SqlBatch は名指して断る
+;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)で、借りる・全部の往復と間の program・返すを
+;;;     pool の仕事 1 つで回す(往復の間に scheduler へ戻らない — postgres_sql.hy の offloaded-batched-transaction)。transaction の外の SqlBatch は名指して断る
 ;;;     (stray-batch)。
 ;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice — agora-redesign #3073・名で絞る形は #3688)は postgres-sql-handler と同じ手順
 ;;;     (postgres_sql.hy の notified・hung-notice — 名の重なる呼び鈴だけを、接続を返した後に鳴らす)。transaction の外の SqlNotify は接続の

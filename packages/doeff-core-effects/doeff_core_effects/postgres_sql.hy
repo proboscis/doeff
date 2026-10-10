@@ -19,6 +19,8 @@
 ;;;     pipeline mode の 1 つの pipeline で送り、出口の sync 1 度で答えを順に受ける(postgres-flush・run-in-batched-transaction)。途中の文が
 ;;;     落ちると PostgreSQL は次の sync までの文を流さないので、答えは最初に落ちた文の失敗(TransactionAborted へ写る)で、ROLLBACK は
 ;;;     run-in-batched-transaction が流す。pipeline の出入りは with で必ず閉じ、返す接続が pipeline mode のまま残っていれば捨てる(release)。
+;;;     束ねた transaction は、借りる・全部の往復と間の program・返すを driver の thread の仕事 1 つ(新しい VM)で回し、往復の間に scheduler の
+;;;     thread へ戻らない(offloaded-batched-transaction — 錠を持つ間に scheduler の待ちを挟まない・card ki-7f9808c3c3d8)。
 ;;;     借りた接続への driver の呼び(文・往復・ROLLBACK・返却)は transaction ごとの錠で 1 本ずつ(offloaded-transaction — 取り消された往復の
 ;;;     thread が走り切る前に ROLLBACK が割り込まない)。pipeline mode を持たない psycopg / libpq(libpq 14 未満)では、接続の貸し出しを作る時
 ;;;     (起動の時)に名を挙げて落ちる — batched の transaction を文 1 つずつ流す道へ黙って倒さない。
@@ -63,7 +65,7 @@
 (import doeff [Program])
 (import doeff_hy.wire [Malformed dump-json parse-json])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlParam SqlColumnType SqlText SqlPlaceholder split-statement checked-params
@@ -800,39 +802,140 @@
   answer)
 
 
+(defclass TransactionAbandoned [Exception]
+  "束ねた transaction を driver の thread で回す間に待ち手が去った印(次の往復を流さずに ROLLBACK へ倒す — offloaded-batched-transaction)。")
+
+
+(defk leased-here [driver]
+  {:pre [(: driver TransactionDriver)] :post [(: % (| PipelineConnection SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "束ねた transaction の driver の thread の中で、まだ借りていなければ接続を 1 本借りるため(最初の往復の時 — 文を流さない program は
+   借りない・開けなければ SqlUnreachable)。"
+  (when (is driver.lease.connection None)
+    (<- leased (postgres-lease driver.connections driver.database))
+    (setv driver.lease.connection leased))
+  driver.lease.connection)
+
+
+(defk flushed-here [driver lock-key origin raised flush]
+  {:pre [(: driver TransactionDriver) (: lock-key (| str None)) (: origin str) (: raised RaisedNotices) (: flush TransactionFlush)]
+   :post [(: % (| tuple SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "束ねた transaction の往復 1 回を、driver の thread の中でその場で流すため(offloaded-batched-transaction の註): 待ち手が去っていれば流さずに
+   TransactionAbandoned を上げ(ROLLBACK へ倒す)、往復に載る合図を覚え、COMMIT を載せる往復なら流す前に「届く所まで流した」の印を立てる。"
+  (when driver.lease.abandoned
+    (raise (TransactionAbandoned "待ち手が去ったので次の往復を流さない")))
+  (for [notify flush.notices]
+    (<- (noted-notice raised notify)))
+  (<- held (leased-here driver))
+  (when (isinstance held SqlUnreachable)
+    (return held))
+  (when flush.closing
+    (setv raised.sent True))
+  (<- answer (postgres-flush held lock-key origin flush))
+  answer)
+
+
+(defk rolled-back-here [driver]
+  {:pre [(: driver TransactionDriver)] :post [(: % (| SqlFailed SqlUnreachable None))]
+   :tags {:context "sql" :role "foundation"}}
+  "束ねた transaction の ROLLBACK を、driver の thread の中で借りた接続に流すため(借りていない・借りられなかった時は流す物が無い)。"
+  (val held driver.lease.connection)
+  (when (or (is held None) (isinstance held SqlUnreachable))
+    (return None))
+  (<- answer (postgres-control held "ROLLBACK"))
+  answer)
+
+
+(deff run-batched-here [driver lock-key origin raised program]  ; defk にできない: driver の thread で回す入口(VM の外から新しい VM を起こす)
+  {:pre [(: driver TransactionDriver) (: lock-key (| str None)) (: origin str) (: raised RaisedNotices) (: program Program)]
+   :post [(: % "program の答え | SqlFailed | SqlUnreachable | None")]}
+  "driver の thread の仕事 1 つで、錠 guard の下で、束ねた transaction の全部(program と往復・必要なら ROLLBACK)を新しい VM で回し、借りた
+   接続を同じ仕事で返すため(offloaded-batched-transaction の註)。待ち手が始まる前に去っていれば何もしない(None — 答えは誰にも届かない)。"
+  (setv lease driver.lease)
+  (with [_ driver.guard]
+    (when (or lease.abandoned lease.returned)
+      (return None))
+    (try
+      (run-detached (run-in-batched-transaction driver.database program
+                                                (fn [flush] (flushed-here driver lock-key origin raised flush))
+                                                (fn [] (rolled-back-here driver))
+                                                :accepts-notices True))
+      (finally
+        (setv held lease.connection)
+        (when (and (is-not held None) (not (isinstance held SqlUnreachable)))
+          (.release driver.connections driver.database held))
+        (setv lease.returned True)))))
+
+
+(deff abandoned-now [driver]  ; defk にできない: Executor の thread で回す止め方の入口(VM の外)
+  {:pre [(: driver TransactionDriver)] :post [(: % "None")]}
+  "走っている束ねた transaction に、待ち手が去った印を立てるため(錠 guard を取らない — 走っている仕事が guard を持ったまま次の往復の前に
+   読む)。"
+  (setv driver.lease.abandoned True)
+  None)
+
+
+(defk offloaded-batched-transaction [connections pool database program lock-key]
+  {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None))]
+   :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
+   :tags {:context "sql" :role "foundation"}}
+  "batched = True の transaction を、driver の thread の仕事 1 つ(借りる → program と往復 → 返す — run-batched-here)で回し、撃った task
+   だけが待つため。往復の間に scheduler の thread へ戻らない: 束ねた transaction の program が出せるのは SQL の effect と純粋な計算だけ
+   (sql_transaction.hy の scope — 他の effect は TransactionMisused)なので、program を driver の thread の新しい VM で回しても答えは変わらない。
+   往復ごとに scheduler へ戻ると、1 往復目の答えから 2 往復目を撃つまでの間(scheduler の列の待ち + 判定)も置き場の書きの錠を持ち続け、
+   scheduler が混むほど錠を持つ間が伸びて、同じ錠を待つ書きが積もった(agora-redesign の記録の service の PutRows・card ki-7f9808c3c3d8)。
+   取り消し: 待ち手が去ったら、次の往復の前に印(abandoned)を読んで流さずに ROLLBACK し、接続を返す — 走っている往復は止めない(文 1 つずつの
+   手順と同じ)。印は取り消しの callback(Executor の止め方 abandoned-now)と、取り消しを受けた task がその場で立てる。finally は錠 guard の
+   下の返し abandon-lease を待つので、合図(ring-local)は走っていた往復(COMMIT を含む)の後に鳴る。"
+  (val raised (RaisedNotices))
+  (val driver (TransactionDriver :connections connections :pool pool :database database :lease (TransactionLease) :guard (threading.Lock)))
+  (setv driver.lease.submitted True)
+  (try
+    (<- answer (offloaded pool (fn [] (run-batched-here driver lock-key connections.origin raised program)) keep-nothing
+                          (fn [] (abandoned-now driver))))
+    answer
+    (except [TaskCancelledError]
+      (setv driver.lease.abandoned True)
+      (raise))
+    (finally
+      (try
+        (when (not driver.lease.returned)
+          (<- (offloaded pool (fn [] (abandon-lease driver)) keep-nothing)))
+        (finally
+          (.ring-local connections database raised))))))
+
+
 (defk offloaded-transaction [connections pool database program lock-key batched]
   {:pre [(: connections PostgresConnections) (: pool Executor) (: database str) (: program Program) (: lock-key (| str None)) (: batched bool)]
    :post [(: % "program の答え | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
   "接続 1 本を借りて program を 1 つの transaction で回し、必ず接続を返すため(driver の I/O は pool の thread で — 頭の註)。postgres-sql-handler と
-   pooled-postgres-sql-handler が共に使う。batched = False(既定)は文 1 つを 1 回ずつ流す run-in-transaction・True は往復 1 回を pipeline 1 つで
-   送る run-in-batched-transaction(頭の註)。
-   借りた接続への driver の呼び(文・往復・ROLLBACK・返却)は錠 guard で 1 本ずつ回す(driven): 待ち手が取り消されても走り出した呼びの thread は
-   走り切るので、その後の ROLLBACK と返却が別の thread から同じ接続に来る。psycopg の接続の錠は pipeline の文を積む間と出口の間で外れる
-   ので、guard が無いと ROLLBACK が pipeline を出る前の接続に積まれ、接続は pipeline mode のまま返って捨てられた(#3605 の検で発見)。
-   文 1 つずつの手順では psycopg の接続の錠が同じ順を守るので、guard は流す文と順を変えない。
-   接続を借りる仕事は最初の driver の呼び(BEGIN か、束ねた transaction の最初の往復)と、返す仕事は最後の呼び(COMMIT か ROLLBACK を流す
-   呼び)と同じ pool の仕事にする(#3688 の子 (3) — 別の仕事にすると、共有の loop と driver の thread の間の乗り換えが書き 1 回に 2 つ増える)。
+   pooled-postgres-sql-handler が共に使う。batched = True は往復 1 回を pipeline 1 つで送る run-in-batched-transaction を driver の仕事 1 つで
+   回す(offloaded-batched-transaction — 往復の間に scheduler へ戻らない)。batched = False(既定)は文 1 つを 1 回ずつ流す run-in-transaction を
+   この下の手順で回す:
+   借りた接続への driver の呼び(文・ROLLBACK・返却)は錠 guard で 1 本ずつ回す(driven): 待ち手が取り消されても走り出した呼びの thread は
+   走り切るので、その後の ROLLBACK と返却が別の thread から同じ接続に来る(psycopg の接続の錠が同じ順を守るので、guard は流す文と順を
+   変えない)。接続を借りる仕事は最初の driver の呼び(BEGIN)と、返す仕事は最後の呼び(COMMIT か ROLLBACK を流す呼び)と同じ pool の仕事に
+   する(#3688 の子 (3) — 別の仕事にすると、共有の loop と driver の thread の間の乗り換えが書き 1 回に 2 つ増える)。
    文を 1 つも流さない program は接続を借りない。借りられなければ、最初の呼びの答えが SqlUnreachable になり、transaction の答えもそれになる。
    最後の呼びまで来なかった transaction(取り消し・BEGIN の失敗・例外)は、finally が返しの仕事 abandon-lease を 1 つ撃つ — guard の下なので
    走っている呼びの後に返し、まだ始まっていない呼びは流さずに終わる。
    合図(頭の註): transaction が出した合図を覚え(raised)、接続を返した後に同じ process の呼び鈴を鳴らす — COMMIT を流した(流そうとした)
    transaction だけ。鳴らすのは finally の中なので、COMMIT の答えを受ける前・返却を待つ間に取り消されても鳴らす。"
+  (when batched
+    (<- whole (offloaded-batched-transaction connections pool database program lock-key))
+    (return whole))
   (val raised (RaisedNotices))
   (val driver (TransactionDriver :connections connections :pool pool :database database :lease (TransactionLease) :guard (threading.Lock)))
   (try
-    (<- answer (if batched
-                   (run-in-batched-transaction database program
-                                               (fn [flush] (raised-flush driver lock-key connections.origin raised flush))
-                                               (fn [] (driven driver (fn [leased] (postgres-control leased "ROLLBACK")) True))
-                                               :accepts-notices True)
-                   (run-in-transaction database program
-                                       (fn [request] (driven driver (fn [leased] (postgres-query leased request)) False))
-                                       (fn [request] (driven driver (fn [leased] (postgres-insert leased request)) False))
-                                       (fn [] (driven driver (fn [leased] (postgres-begin leased lock-key)) False))
-                                       (fn [] (raised-commit driver raised))
-                                       (fn [] (driven driver (fn [leased] (postgres-control leased "ROLLBACK")) True))
-                                       :execute-notify (fn [request] (raised-notice driver connections.origin raised request)))))
+    (<- answer (run-in-transaction database program
+                                   (fn [request] (driven driver (fn [leased] (postgres-query leased request)) False))
+                                   (fn [request] (driven driver (fn [leased] (postgres-insert leased request)) False))
+                                   (fn [] (driven driver (fn [leased] (postgres-begin leased lock-key)) False))
+                                   (fn [] (raised-commit driver raised))
+                                   (fn [] (driven driver (fn [leased] (postgres-control leased "ROLLBACK")) True))
+                                   :execute-notify (fn [request] (raised-notice driver connections.origin raised request))))
     answer
     (finally
       (try
@@ -840,20 +943,6 @@
           (<- (offloaded pool (fn [] (abandon-lease driver)) keep-nothing)))
         (finally
           (.ring-local connections database raised))))))
-
-
-(defk raised-flush [driver lock-key origin raised flush]
-  {:pre [(: driver TransactionDriver) (: lock-key (| str None)) (: origin str) (: raised RaisedNotices) (: flush TransactionFlush)]
-   :post [(: % (| tuple SqlFailed SqlUnreachable None))]
-   :tags {:context "sql" :role "foundation"}}
-  "束ねた transaction の往復 1 回を流すため(offloaded-transaction の註): 往復に載る合図を覚え、COMMIT を載せる往復なら、流す前に「届く所まで
-   流した」の印を立て(往復の答えを受ける前に取り消されても、接続を返した後に鳴らす)、同じ driver の仕事で接続を返す。"
-  (for [notify flush.notices]
-    (<- (noted-notice raised notify)))
-  (when flush.closing
-    (setv raised.sent True))
-  (<- answer (driven driver (fn [leased] (postgres-flush leased lock-key origin flush)) flush.closing))
-  answer)
 
 
 (defk raised-commit [driver raised]

@@ -904,6 +904,50 @@
   (assert (= answer #(True 0)) answer))
 
 
+(defk slow-read-then-commit []
+  {:pre [] :post [(: % int)]
+   :tags {:context "sql" :role "program"}}
+  "1 往復目に 1 秒眠る読み、2 往復目の commit の束で 1 行を入れる束ねた transaction の program(1 往復目の間に待ち手を取り消す検のため)。"
+  (<- (SqlQuery DB "SELECT pg_sleep(1.0)" #()))
+  (<- answers (SqlBatch DB #((SqlQuery DB "INSERT INTO pooled_cancel (id) VALUES (1)" #())) :commit True))
+  (len answers))
+
+
+(defk cancel-mid-batched-transaction []
+  {:pre [] :post [(: % tuple)]
+   :tags {:context "sql" :role "program"}}
+  "束ねた transaction の 1 往復目の間に task を取り消し、取り消しが届くか・2 往復目(入れる行と COMMIT)が流れないか・許可が返って次の
+   問い合わせが通るかを見るため。"
+  (<- (SqlQuery DB "DROP TABLE IF EXISTS pooled_cancel" #()))
+  (<- (SqlQuery DB "CREATE TABLE pooled_cancel (id bigint)" #()))
+  (<- task (Spawn (SqlTransaction :database DB :program (slow-read-then-commit) :lock-key "pooled-cancel" :batched True)))
+  (<- (pause 0.5))
+  (<- (Cancel task))
+  (var cancelled False)
+  (try
+    (<- (Wait task))
+    (except [TaskCancelledError] (:= cancelled True)))
+  (<- counted SqlRows (SqlQuery DB "SELECT count(*) FROM pooled_cancel" #()))
+  #(cancelled (get counted.rows 0 0)))
+
+
+(deftest test-a-batched-transaction-cancelled-in-its-first-round-trip-sends-no-second
+  {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
+  (import psycopg)
+  ;; 束ねた transaction は往復の間に scheduler へ戻らず driver の thread の仕事 1 つで走る(card ki-7f9808c3c3d8)。それでも 1 往復目の間に
+  ;; 待ち手が去れば、2 往復目(行の書きと COMMIT)は流さずに ROLLBACK し、接続を transaction の外の形で返す(往復ごとに戻っていた時と同じ)。
+  ;; 接続 1 本: 取り消しの後の問い合わせが通れば、許可と接続が返っている。
+  (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
+  (val pool (ThreadPoolExecutor :max-workers 2))
+  (try
+    (<- answer (with-handler [(state) (pooled-postgres-sql-handler connections pool)] (cancel-mid-batched-transaction)))
+    (val idle (list (. (get connections.idle DB) queue)))
+    (assert (= (len idle) 1) idle)
+    (assert (= (. (get idle 0) info transaction-status) psycopg.pq.TransactionStatus.IDLE))
+    (finally (.close connections) (.shutdown pool)))
+  (assert (= answer #(True 0)) answer))
+
+
 (defk abandon-mid-transaction []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
@@ -1366,10 +1410,11 @@
   (get (. (get answers 1) rows) 0 0))
 
 
-(deftest test-pooled-postgres-drives-a-batched-transaction-in-one-job-per-round-trip
+(deftest test-pooled-postgres-drives-a-batched-transaction-in-one-job
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 失敗ケース(#3688 の子 (3)): 束ねた transaction は、接続を借りる仕事を最初の往復と、接続を返す仕事を最後の往復と、同じ driver の仕事に
-  ;; まとめる — 2 往復の書きで pool に出す仕事は 2 つ・往復 1 回で済む transaction は 1 つ(前は借りる・往復ごと・返すが別の仕事で 4 と 3)。
+  ;; 失敗ケース(card ki-7f9808c3c3d8): 束ねた transaction は、借りる・全部の往復と間の判定・返すを driver の仕事 1 つで回し、往復の間に
+  ;; scheduler の thread へ戻らない — 2 往復の書きも往復 1 回の transaction も pool に出す仕事は 1 つ(前は往復ごとに 1 つで 2 と 1 —
+  ;; 1 往復目の答えから 2 往復目までの scheduler の待ちの間も置き場の書きの錠を持ち、混むほど錠を待つ書きが積もった)。
   ;; 答えと、接続が 1 本のまま返ることも見る。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (val pool (CountingPool))
@@ -1386,7 +1431,7 @@
     (val idle (list (. (get connections.idle DB) queue)))
     (finally (.close connections) (.shutdown pool)))
   (assert (= #(two one) #(1 2)) #(two one))
-  (assert (= #(two-trips one-trip) #(2 1)) #(two-trips one-trip))
+  (assert (= #(two-trips one-trip) #(1 1)) #(two-trips one-trip))
   (assert (= (len idle) 1) idle))
 
 
