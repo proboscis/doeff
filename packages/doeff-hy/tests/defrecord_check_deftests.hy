@@ -12,6 +12,7 @@
 (import pytest)
 (import doeff [Pure])
 (import doeff_hy.declarations [DefinitionTags])
+(import doeff_hy.static_view [static-view])
 
 (setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
 (setv KINDS (frozenset #("chat" "agent")))
@@ -125,8 +126,12 @@
   (assert (= row.key "k"))
   (assert (not (hasattr Plain "__doeff_tags__")))
   (assert (not (hasattr Plain "__post_init__")))
-  (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
-             "'(defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str))")))
+  ;; 型検査の投影の展開は前の形のまま(pyright が dataclass として読む)。実行の展開は欄の表だけを dataclass に作らせ、関数は展開が
+  ;; 書く(card ki-a0cca3bdb9a0 — 振る舞いが同じ事は defrecord_shape_deftests.hy が確かめる)。
+  (with [_ (static-view)]
+    (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
+               "'(defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str))")))
+  (assert (in "(dataclass :init False :repr False :eq False :kw-only True)" (hy.repr (hy.macroexpand '(defrecord Plain #^ str key))))))
 
 
 (deftest test-a-check-that-returns-a-program-is-refused
