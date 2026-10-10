@@ -2,7 +2,7 @@
 ;;;
 ;;; 呼び手(agora など)が doeff_claude_code を import せずに組めるように、doeff-claude-code の handler(層 2)と
 ;;; headless の adapter(handlers/headless.hy・層 3)の対をここで作る。adapter の module は層 2 の handler も CLI の実行ファイルも
-;;; 知らない — 知るのはこの組み立ての module だけ。
+;;; 知らない — 知るのはこの組み立ての module だけ。codex も同じ形(doeff-codex の handler と handlers/headless_codex.hy — 末尾の節)。
 ;;; どちらの組も外側に doeff-time の時間の handler(本番 = sync-time-handler・模擬 = sim-time-handler)と scheduler を要る。
 ;;; 本番の組は加えて slog の答え手を要る(層 2 の本番の handler が CLI の起動の計時の行を slog で出す — agora-redesign #3605)。
 ;;; 本番の組と、上限(live-limit)を持つ fake の世界の組は、加えて知らせ ClaudeLiveLimitExceeded の答え手(ホスト)を要る — 層 2 は生かす
@@ -28,6 +28,13 @@
 ;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
 (import doeff_claude_code.effects [ClaudeLiveLimitExceeded])
 (import doeff_agents.handlers.headless [HeadlessClaudeConfig HeadlessState headless-claude-handler])
+;; codex の組(card acp:kanban-issue:ki-534a081e32eb): doeff-codex の handler(層 2)と headless の codex の adapter(層 3)。呼び手が
+;; doeff_codex を import せずに組めるように、宣言の語(許可の方針・sandbox)と fake の世界の型(筋書きの答え・入力)もここから読ませる。
+(import doeff_codex.values [CodexHome CodexInput :as CodexTurnInput])
+(import doeff_codex.rpc [ApprovalPolicy :as CodexApprovalPolicy SandboxMode :as CodexSandboxMode])
+(import doeff_codex.handler [CodexHost codex-handler])
+(import doeff_codex.fake [FakeCodexWorld FakeReply :as FakeCodexReply fake-codex-handler])
+(import doeff_agents.handlers.headless_codex [HeadlessCodexConfig HeadlessCodexState headless-codex-handler])
 
 
 (defn #^ list headless-claude-handlers [#^ str config-dir #^ (get FrozenMap str) env
@@ -94,3 +101,30 @@
   (headless-claude-handler (HeadlessClaudeConfig (ClaudeHome config-dir env) :settings settings :cold-resume-prompt cold-resume-prompt
                                                  :permission permission)
                            (HeadlessState)))
+
+
+;; --- codex の層 2 と adapter(card acp:kanban-issue:ki-534a081e32eb)------------------------------------------------------------------
+;; claude の別々の入口と同じ並び: 層 2 を土台の外側に・adapter を Program に近い側に置く。どちらの層 2 も外側に doeff-time の時間の
+;; handler と scheduler を要る。
+
+(defk codex-process-layer [command launch-timeout]
+  {:pre [(: command tuple) (all (gfor part command (isinstance part str))) (: launch-timeout float)] :post [(: % Callable)]
+   :tags {:context "headless-adapter" :role "entry"}}
+  "codex の層 2 の本番の handler(app-server の process を会話ごとにターンをまたいで生かす)を作るため。command = 実行ファイルと前置きの
+   引数(例 #(\"codex\"))・launch-timeout = 起動と要求の答えを待つ上限(秒)。"
+  (codex-handler (CodexHost command :launch-timeout launch-timeout)))
+
+(defk fake-codex-process-layer [world]
+  {:pre [(: world FakeCodexWorld)] :post [(: % Callable)] :tags {:context "headless-adapter" :role "entry"}}
+  "codex の層 2 の fake の handler(process を使わない — world = 筋書きの答え〔入力 CodexTurnInput → FakeCodexReply〕と fake の状態の
+   持ち主)を作るため。"
+  (fake-codex-handler world))
+
+(defk codex-adapter [env approval-policy sandbox]
+  {:pre [(: env Mapping) (: approval-policy CodexApprovalPolicy) (: sandbox CodexSandboxMode)] :post [(: % Callable)]
+   :tags {:context "headless-adapter" :role "entry"}}
+  "headless の codex の adapter(doeff-agents の公開 effect を codex の層 2 の effect へ写す — 層 2 が本物でも fake でも同じ adapter)を
+   作るため。env = codex の家の env(PATH・HOME・CODEX_HOME — 資格は呼び手が置く)・approval-policy・sandbox = 会話の宣言の許可の方針と
+   sandbox。"
+  (headless-codex-handler (HeadlessCodexConfig (CodexHome :env (dict env)) :approval-policy approval-policy :sandbox sandbox)
+                          (HeadlessCodexState)))

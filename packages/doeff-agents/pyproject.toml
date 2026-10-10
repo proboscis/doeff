@@ -26,6 +26,8 @@ dependencies = [
     "doeff-hy",
     # the headless handler is an adapter onto doeff-claude-code's effects (agora-redesign #604)
     "doeff-claude-code",
+    # the headless codex handler is an adapter onto doeff-codex's effects (card ki-534a081e32eb)
+    "doeff-codex",
     "click>=8.0.0",
     "rich>=13.0.0",
     "psutil>=6.0",

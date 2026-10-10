@@ -318,6 +318,39 @@ keys. Tests: `tests/test_headless_adapter.hy` runs the same programs over the
 fake, the production handler with a stand-in CLI, and (marked `e2e`) the real
 CLI.
 
+### Headless Codex handler
+
+`doeff_agents.handlers.headless_compose` also builds the Codex pair, so callers
+need not import `doeff-codex`: `codex_process_layer(command, launch_timeout)`
+(`doeff-codex`'s production handler — one `codex app-server` process per thread,
+kept across turns), `fake_codex_process_layer(world)` (its fake, over a
+`FakeCodexWorld` whose `respond` maps a `CodexTurnInput` to a `FakeCodexReply`)
+and `codex_adapter(env, approval_policy, sandbox)` (the adapter in
+`handlers/headless_codex.hy`, which answers `Launch(agent_type=CODEX)` and the
+session effects of the sessions it launched). The adapter emits the same event
+types as the Claude adapter, so an upper layer reads both the same way:
+
+| Codex line (`doeff-codex`) | Event |
+|---|---|
+| `item/agentMessage/delta` | `AgentTextDeltaEvent` |
+| `item/completed` (agent message) | `AgentTextEvent` |
+| `item/started` (reasoning) / reasoning deltas | `AgentThinkingStartedEvent` / `AgentThinkingDeltaEvent` |
+| `thread/tokenUsage/updated` | `AgentCallUsageEvent` (input tokens exclude cached ones) |
+| `turn/completed` | `AgentTurnEndEvent` (`resume_from` = the Codex thread id) |
+
+Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
+(`started`) when layer 2 accepts an input (a turn start or a `turn/steer`), and
+the completed end lists the same refs in `input_refs`. `resume_from`, `model`,
+`effort`, `autocompact` (as `model_auto_compact_token_limit`), image
+attachments and `FollowUp(mode=INJECT)` (as `turn/steer`) are honoured. A named
+`new_context_id` (Codex makes thread ids itself), `turn_credential_ref`,
+`resume_snapshot`, `ExportContextEffect`, `mcp_tools` and `bare` are refused
+with `AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
+cannot open a thread before the first input). Tool items are not mapped to
+events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
+over the fake and over the production handler with the stand-in app server
+(`packages/doeff-codex/tests/stub_cli/codex_app_server.py`).
+
 Related contracts —
 what the host owns and does not own, how exclusivity is decided, and why the
 public launch surface is auth-blind — are stated in ADR-DOE-AGENTS-004; launch
