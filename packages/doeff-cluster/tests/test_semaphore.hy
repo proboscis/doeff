@@ -279,7 +279,7 @@
   {:pre [(: session SemaphoreSession) (: program Program) (: cut (| int None)) (: clock (| SimClock None))]
    :post [(: % "program の答え(型は program ごと)")] :tags {:context "doeff-cluster-test" :role "program"}}
   "1 つの worker: (途絶) → cluster-semaphore → 書きの柵(一番内側)の下で program を走らせる。"
-  (val inner [(cluster-semaphore session) (leases-fence writer-a-lease #(FakeWrite) 2000)])
+  (val inner [(cluster-semaphore session) (leases-fence writer-a-lease #(FakeWrite) 2000 0)])
   (val handlers (cond
                   (is cut None) inner
                   (is clock None) (raise (ValueError "途絶(cut)には仮想の時計(clock)が要る"))
@@ -399,7 +399,7 @@
   (val session (SemaphoreSession "w" :ttl-seconds 15.0))
   (<- outcomes (get tuple #(str ...))
       (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) keyed-store]
-        (with_handlers [(cluster-semaphore session) (leases-fence leases-of-write #(KeyedWrite GatedWrite) 2000)]
+        (with_handlers [(cluster-semaphore session) (leases-fence leases-of-write #(KeyedWrite GatedWrite) 2000 0)]
           (writes-under-held-leases))))
   (assert (= outcomes #("ok" "fenced" "fenced" "ok")) outcomes))
 
@@ -417,10 +417,42 @@
   (setv clock (SimClock) store {} attempts [] written [])
   (setv sa (SemaphoreSession "w" :ttl-seconds 15.0))
   (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
-        (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (leases-fence writer-a-lease #(FakeWrite) 2000)]
+        (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa) (leases-fence writer-a-lease #(FakeWrite) 2000 0)]
           (lease-writer "a" attempts 1 40000))))
   (assert (= (! (times-of attempts "a" "fenced")) []) attempts)
   (assert (= (len (! (times-of attempts "a" "ok"))) 40)))
+
+
+(deftest test-a-patient-fence-holds-writes-through-a-cut-longer-than-the-margin
+  ;; 4〜30 秒に保存へ届かない(coordinator の作り直し — 柵の余裕を越える長さ)。延ばす係は試し直し続け、届いた後に延ばしが通る(盤は
+  ;; 持ち手の token を残している)。待つ柵は、期限が近い間の書きを外へ出さずに待ち、延ばしが通った後に通す — 断られた書きは 0。
+  ;; 待っている間に外へ着いた書きは 0(13 秒 = 最後に延ばせた期限 15 秒 − 余裕 2 秒 の後、延ばしが通るまで)。直す前は 13〜30 秒の書きを断った。
+  (setv clock (SimClock) store {} attempts [] written [])
+  (setv sa (SemaphoreSession "w" :ttl-seconds 15.0))
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
+        (with_handlers [(cut-between clock 4000 30000) (cluster-semaphore sa) (leases-fence writer-a-lease #(FakeWrite) 2000 60000)]
+          (lease-writer "a" attempts 1 40000))))
+  (assert (= (! (times-of attempts "a" "fenced")) []) attempts)
+  (setv landed (lfor #(w at) written at))
+  (assert (not (any (gfor at landed (< 13000 at 30000)))) landed)
+  (assert (any (gfor at landed (>= at 30000))) landed))
+
+
+(deftest test-a-patient-fence-refuses-after-the-lease-is-taken-and-lands-nothing-late
+  ;; 旧 A は 3 秒目から保存へ届かないまま(延ばせず、失ったとも分からない)。新 B は期限の後に lease を取って書く。待つ柵の A は、待った
+  ;; 末(待ちの上限 20 秒)に断り、A の書きは 13 秒より後に 1 本も着かない — 待つ事は、断る判断が通さない書きを通さない。試しの時刻は
+  ;; 書く前に読むので、13 秒の書きが 33 秒まで待って断られ、次の試しは 34 秒。直す前は 13 秒から毎秒断った。
+  (setv clock (SimClock) store {} attempts [] written [])
+  (setv sa (SemaphoreSession "old" :ttl-seconds 15.0)
+        sb (SemaphoreSession "new" :ttl-seconds 15.0))
+  (<- (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store) (written-log written)]
+        (run-all [(with_handlers [(cut-off-at clock 3000) (cluster-semaphore sa) (leases-fence writer-a-lease #(FakeWrite) 2000 20000)]
+                    (lease-writer "a" attempts 1 60000))
+                  (fenced-worker sb (lease-writer "b" attempts 1 60000))])))
+  (setv a-fenced (! (times-of attempts "a" "fenced")) b-ok (! (times-of attempts "b" "ok")))
+  (assert (and (>= (len a-fenced) 2) (= (get a-fenced 0) 13000) (>= (get a-fenced 1) 34000)) a-fenced)
+  (assert (<= 15000 (min b-ok) 15500) b-ok)
+  (assert (not (any (gfor #(w at) written (and (= w "a") (> at 13000))))) written))
 
 
 (defk release-in-a-cut [log]
