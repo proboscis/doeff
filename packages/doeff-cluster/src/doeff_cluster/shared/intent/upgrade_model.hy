@@ -27,7 +27,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
 (import dataclasses [dataclass])
 (import enum [StrEnum])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch StaticWorkerLaunch CoordinatorLaunch])
 
 
 ;; 入れ替える物の種類。
@@ -169,7 +169,7 @@
   "入れ替え先の値(worker か coordinator)で、コピーも状態も無い空の機体の起動が通るかを確かめる — 起動の時に読む物(版の root・
    dotfiles の master など)が壊れた版を入れ替えてから、空の Pod が起動で落ちる形(2026-10-05 07:1x に 15 本の job が約 20 分止まった)を
    入れ替えの前に拾うため。本番 = 起動の道を空の環境で 1 回通す・sim = 筋書きの答え。答え = CleanBootPassed か CleanBootRefused。"
-  {:fields [(: launch (| WorkerLaunch CoordinatorLaunch))]
+  {:fields [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch))]
    :answer (| CleanBootPassed CleanBootRefused)
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -218,7 +218,7 @@
    受け持ってから答える(呼び手は時間で読み直さない)。準備は足すだけで、今の版の root を消さない。上げる前の版は handler が自分で読む。
    本番 = 今の版の process の保存先で、入れ替え先の版の起動の script の準備の役を 1 回通す・sim = 模擬の保存先に足す(筋書きの答え)。
    答え = BootRootAlreadyPrepared か BootRootBuilt か BootRootRefused。"
-  {:fields [(: launch (| WorkerLaunch CoordinatorLaunch))]
+  {:fields [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch))]
    :answer (| BootRootAlreadyPrepared BootRootBuilt BootRootRefused)
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -270,7 +270,7 @@
    版上げの Program は worker の宣言を公開した後、当てる直前に 1 回出す(公開は数分かかり、その間も worker は仕事を受けるので、drain は
    当てる直前に置く)。答え手は 0 になるか timeout-seconds を越えるまで受け持ってから答える(呼び手は時間で読み直さない)。走っている仕事を
    止めて 0 にしない。sim = すぐ WorkerDrained。答え = WorkerDrained か WorkerDrainMissed。"
-  {:fields [(: launch WorkerLaunch) (: timeout-seconds float)]
+  {:fields [(: launch (| WorkerLaunch StaticWorkerLaunch)) (: timeout-seconds float)]
    :answer (| WorkerDrained WorkerDrainMissed)
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -280,7 +280,7 @@
    側の業務)が決める(#4177 — drain は worker を作り直しても、頼んだ側が外すまで残る)。版上げの Program は AwaitWorkerDrained を出した
    後に必ず 1 回出す: 当てた worker が新しい版で live に戻った後と、drain の後に止まる時(中の仕事が 0 にならない・当てが落ちた・live に
    戻らない)。もう無い drain を外すのは成功。sim = 何もしない。答え = None。"
-  {:fields [(: launch WorkerLaunch)]
+  {:fields [(: launch (| WorkerLaunch StaticWorkerLaunch))]
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 

@@ -39,7 +39,7 @@
 (import doeff_core_effects.scheduler [Spawn Gather Task])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.launch_rules [worker-launch-of-env coordinator-launch-of-env coordinator-launch-names])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch StaticWorkerLaunch CoordinatorLaunch])
 (import doeff [with-handlers])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
 (import doeff_cluster.worker.core.drain_client [await-drained DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
@@ -305,13 +305,14 @@
 
 
 (defk running-roots-of [launch applied]
-  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: applied (get tuple #(DeployedEnv ...)))]
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch)) (: applied (get tuple #(DeployedEnv ...)))]
    :post [(: % (get tuple #(BootRoot ...)))] :tags {:context "doeff-cluster" :role "program"}}
   "入れ替え先の値 launch が指す対象が、今 動いている版の自己起動の root を返すため(保存先に在る root のうち、準備しなくても在る物 —
    上げる前の版の root が在るかもここから読む)。読むのは指定された 1 つだけ(ほかの Deployment の env は読まない)。"
   (<- found (get tuple #(BootRoot ...))
       (match launch
         (WorkerLaunch :name name) (worker-running-roots name)
+        (StaticWorkerLaunch :name name) (worker-running-roots name)
         (CoordinatorLaunch) (coordinator-running-roots applied)))
   found)
 
@@ -411,7 +412,7 @@
 
 
 (defk boot-root-answer [launch target held running]
-  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: target str) (: held (get tuple #(BootRoot ...)))
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch)) (: target str) (: held (get tuple #(BootRoot ...)))
          (: running (get tuple #(BootRoot ...)))]
    :post [(: % (| BootRootAlreadyPrepared BootRootBuilt))] :tags {:context "doeff-cluster" :role "judgment"}}
   "模擬の保存先(held — 準備の前に指定された対象の保存先に在る root)から、入れ替え先の版の root の準備の答えを作るため: 在れば準備済み・
@@ -424,10 +425,12 @@
 
 
 (defk launch-target [launch]
-  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "入れ替え先の値が名指す物の名を、確かめの答えと止まりの訳に載せるため: worker なら名・coordinator なら \"coordinator\"。"
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch))] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "入れ替え先の値が名指す物の名を、確かめの答えと止まりの訳に載せるため: worker(機体ごとの静的な worker を含む)なら名・coordinator なら
+   \"coordinator\"。"
   (match launch
     (WorkerLaunch :name name) name
+    (StaticWorkerLaunch :name name) name
     (CoordinatorLaunch) "coordinator"))
 
 
@@ -436,8 +439,8 @@
   ;; 空の機体の起動が落ちる版の筋書きのため(2026-10-05 07:1x の形 — 起動の時に読む物が壊れていて、空の Pod が起動で落ちる): targets に
   ;; 名の在る入れ替え先の確かめだけを断る。ほかの確かめは外側(flux-declarations)へ渡す。
   (ConfirmCleanBoot [launch]
-    :when (in (if (isinstance launch WorkerLaunch) launch.name "coordinator") targets)
-    (resume (CleanBootRefused :target (if (isinstance launch WorkerLaunch) launch.name "coordinator")
+    :when (in (if (isinstance launch #(WorkerLaunch StaticWorkerLaunch)) launch.name "coordinator") targets)
+    (resume (CleanBootRefused :target (if (isinstance launch #(WorkerLaunch StaticWorkerLaunch)) launch.name "coordinator")
                               :reason "筋書き: 空の機体の起動が、起動の時に読む物で落ちる"))))
 
 
@@ -469,6 +472,6 @@
   ;; 自己起動の root を準備できない筋書きのため(入れ替え先の版の起動の script が準備の役を知らない・準備が落ちる など): targets に名の
   ;; 在る入れ替え先の準備だけを reason で断る(模擬の保存先には何も足さない)。ほかの準備は外側(flux-declarations)へ渡す。
   (PrepareBootRoot [launch]
-    :when (in (if (isinstance launch WorkerLaunch) launch.name "coordinator") targets)
+    :when (in (if (isinstance launch #(WorkerLaunch StaticWorkerLaunch)) launch.name "coordinator") targets)
     (<- target str (launch-target launch))
     (resume (BootRootRefused :target target :reason reason))))

@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch StaticWorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
 (import doeff_cluster.shared.intent.upgrade_model [UpgradeLimits UpgradeStalled UpgradeState UpgradeStart RosterEntry PendingTask PendingPhase
                                                    WorkerDeclaration VerifiedVersions ReadUpgradeState PublishDeclarations
                                                    ApplyDeclarations ConfirmCleanBoot CleanBootPassed CleanBootRefused UpgradeRefused
@@ -482,6 +482,34 @@
   (<- seen ScriptLog (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT)] (workers-only-run)))
   (assert (is seen.coordinator-at None) seen)
   (assert (= seen.reads (len WORKERS-ONLY-SCRIPT)) seen))
+
+
+;; --- 版だけを持つ機体の静的な worker ---------------------------------------------------------------------------------------------
+;; 機体ごとの静的な worker(deploy/k8s/nodes/<Node>)は、名乗り(Node の名)・能力・枠を宣言の外から受け、宣言が持つのは版だけ。
+;; a を静的な worker、b を WorkerLaunch にして混ぜて上げる。
+(val STATIC-A (StaticWorkerLaunch :name "a" :doeff-commit NEW))
+
+
+(deftest test-a-static-worker-with-only-its-version-goes-through-the-same-swap-steps
+  ;; 失敗ケース: 版だけを持つ静的な worker も、WorkerLaunch の worker と同じ入れ替えの手(空の機体の確認 → root の準備 → Desire → 公開 →
+  ;; drain → 当て → drain を外す)を、1 台ずつ同じ順で通る。upgrade-workers が WorkerLaunch だけを受ける形にすると型で断られて赤。
+  (<- seen tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (scripted-upgrade WORKERS-ONLY-SCRIPT) step-recorder]
+                   (recorded-run (upgrade-workers #(STATIC-A TARGET-B) LIMITS))))
+  (assert (is (get seen 0) None) seen)
+  (<- a tuple (swap-steps "DesireWorker" "a"))
+  (<- b tuple (swap-steps "DesireWorker" "b"))
+  (assert (= (. (get seen 1) steps) (+ a b)) (get seen 1)))
+
+
+(deftest test-a-static-worker-launch-refuses-an-empty-name-and-a-version-that-is-not-a-sha
+  ;; 起動の時に断られる値は、宣言の時に断る(WorkerLaunch と同じ検め — 名は空でない・版は 40 字の sha)。
+  (for [#(name commit) #(#("" NEW) #("a" "not-a-sha"))]
+    (var refused False)
+    (try
+      (StaticWorkerLaunch :name name :doeff-commit commit)
+      (except [ValueError]
+        (:= refused True)))
+    (assert refused #(name commit))))
 
 
 ;; a を入れ替えた後、a は live だが版を読めない(読み手が理由を書いた — 新しい世代が準備完了でない)まま戻らない。

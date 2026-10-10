@@ -37,7 +37,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
+(import doeff_cluster.shared.intent.launch_model [WorkerLaunch StaticWorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
 (import doeff_cluster.shared.intent.upgrade_model [PendingPhase WorkerDeclaration RosterEntry UpgradeState UpgradeLimits UpgradeStalled
                                                    ReadUpgradeState PublishDeclarations ApplyDeclarations ConfirmCleanBoot
                                                    CleanBootPassed CleanBootRefused UpgradeRefused PrepareBootRoot
@@ -271,7 +271,7 @@
 
 
 (defk confirm-clean-boot [launch target]
-  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: target str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch)) (: target str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "入れ替え先の値で空の機体の起動が通る事を、宣言を書く前に確かめるため。断られたら UpgradeRefused で target を名指して止まる
    (宣言を書かず公開もしない — cluster は変わらない)。"
   (<- verdict (ConfirmCleanBoot launch))
@@ -281,7 +281,7 @@
 
 
 (defk prepare-boot-root [launch target]
-  {:pre [(: launch (| WorkerLaunch CoordinatorLaunch)) (: target str)] :post [(: % (| BootRootAlreadyPrepared BootRootBuilt))]
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch CoordinatorLaunch)) (: target str)] :post [(: % (| BootRootAlreadyPrepared BootRootBuilt))]
    :tags {:context "doeff-cluster" :role "program"}}
   "入れ替え先の版の自己起動の root を、宣言を書く前に、入れ替える対象の今の保存先に準備しておくため(作り直した process が起動の中で root を
    準備して初回の import をする間 — 実測 15〜25 秒 — service に届かなくなるのを避ける・条 V5・#3725)。準備済みでも組んでも先へ進み、
@@ -297,7 +297,7 @@
 
 
 (defk drain-worker [launch limit-seconds]
-  {:pre [(: launch WorkerLaunch) (: limit-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch)) (: limit-seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "当てる直前に、入れ替える worker を drain し(新しい仕事を受けない)、worker の中で走っている仕事が終わって 0 になったのを確かめるため
    (AwaitWorkerDrained — drain の印の置き方と、何を「worker の中で走っている仕事」と数えるかは答え手が決める・#3968。
    coordinator の task の待ち(条 V2)は長く生きる task の中で回る子の仕事を数えない — 2026-10-07 13:44 に agent-worker-2 を入れ替えた時、
@@ -311,7 +311,7 @@
 
 
 (defk swap-drained [launch limits]
-  {:pre [(: launch WorkerLaunch) (: limits UpgradeLimits)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  {:pre [(: launch (| WorkerLaunch StaticWorkerLaunch)) (: limits UpgradeLimits)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "公開した worker の宣言を、その worker を drain してから当て(drain-worker)、新しい版で live に戻るのを待ち(条 V3)、置いた drain を
    外すため(ReleaseWorkerDrain — drain は worker を作り直しても、頼んだ側が外すまで残る・#4177)。drain を頼んだ後は、どの終わり方でも
    ちょうど 1 回外す: 戻った後と、途中で止まる時(中の仕事が 0 にならない UpgradeRefused・当ての例外・戻りの待ちの UpgradeStalled —
@@ -330,7 +330,7 @@
 
 
 (defk upgrade-workers [workers limits]
-  {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: limits UpgradeLimits)]
+  {:pre [(: workers (get tuple #((| WorkerLaunch StaticWorkerLaunch) ...))) (: limits UpgradeLimits)]
    :post [(: % (get tuple #((| BootRootAlreadyPrepared BootRootBuilt) ...)))]
    :tags {:context "doeff-cluster" :role "program"}}
   "worker を 1 つずつ新しい値へ入れ替えるため(条 V2・V3 の待ち — 頭の註)。coordinator は入れ替えない — worker だけを上げる時
@@ -453,7 +453,7 @@
 
 
 (defk upgrade-cluster [workers coordinator verified limits]
-  {:pre [(: workers (get tuple #(WorkerLaunch ...))) (: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: limits UpgradeLimits)
+  {:pre [(: workers (get tuple #((| WorkerLaunch StaticWorkerLaunch) ...))) (: coordinator CoordinatorLaunch) (: verified VerifiedVersions) (: limits UpgradeLimits)
          (= verified.coordinator coordinator.doeff-commit) (all (gfor w workers (in w.doeff-commit verified.workers)))]
    :post [(: % ClusterUpgraded)]
    :tags {:context "doeff-cluster" :role "program"}}
