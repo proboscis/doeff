@@ -482,36 +482,10 @@ Deployment の在る namespace の権限として配備する側が与えます�
 
 ### 配備の順
 
-worker と coordinator のどちらを先に上げるかは変更ごとに決まり、確かめた版の組み合わせで表します(#3772)。版上げの Program
-(`shared/core/upgrade_program.hy`)の入口は 3 つです: worker だけを入れ替える `upgrade-workers`・coordinator だけを入れ替える
-`upgrade-coordinator`・worker を入れ替えてから coordinator を入れ替える `upgrade-cluster`。coordinator を版 X へ入れ替える入口は、
-確かめた版の組み合わせ(`VerifiedVersions` — X と、X と組めると手元で確かめた worker の版の集合)を受け取り、宣言の内の worker が
-全部動いていて、その版が集合に入っている時だけ入れ替えます(条 V1)。集合に無い版の worker が 1 つでも居れば、宣言を書く前に
-`UpgradeRefused` で、その worker と版を明示して断ります。宣言の外の worker(配備する側の外で起動する worker)は待たず照らさず、
-入れ替えの答え(`CoordinatorUpgraded` の `undeclared`)に名と版を載せます。
-
-worker の入れ替えは 1 台ずつで、その worker に置かれた task が終わるのを待ち(条 V2)、空の機体の起動を確かめ、root を準備し、
-宣言を書いて公開した後、当てる直前にその worker を drain して中で走っている仕事が 0 になったのを確かめます(`AwaitWorkerDrained` —
-drain の印の置き方と、何を「worker の中で走っている仕事」と数えるかは配備する側の handler が決める・上限 `drain-seconds`・
-#3968)。coordinator の task の待ちは、長く生きる task の中で回る子の仕事を数えないためです。上限の内に 0 に
-ならなければ当てずに `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-APPLY`・理由は `WorkerDrainMissed`)で止まり、走っている仕事は
-止めません。置いた drain は、当てた worker が新しい版で live に戻った後に外します(`ReleaseWorkerDrain` — 外し方は配備する側の
-handler が決める・#4177)。drain を頼んだ後に止まる時(中の仕事が 0 にならない・当てが落ちた・live に戻らない)も、外してから同じ
-例外で止まります。coordinator の入れ替えの手順の並びは次のとおりです。
-
-1. 宣言を書く前: 待ち行列が空(条 V4)→ 条 V1 の照らし → 空の機体の起動の確かめ → 事前ビルドと、上げる前の版の自己起動の root
-   (戻し先)が在る事の確かめ。どれかが断れば `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-DESIRE`)で止まり、宣言を書きません。
-2. 宣言を書いて(`DesireCoordinator`)公開する(`PublishDeclarations`)。公開(マージの列・main 入り)は数分かかります。
-3. 当てる直前の確かめ(1 か所): 状態を読み直す → 条 V1 の照らし(公開の間に別の worker の入れ替えが入りうる)→ 待ち行列が空
-   (公開の間に積まれた queued の task は作り直しで落ちうる — 上限 `queue-seconds` まで待つ)→ 静かな時間帯(`AwaitQuietWindow` —
-   何を「入れ替えで切れて困る仕事」とみなすかは配備する側の handler が決める・上限 `quiet-seconds`)。どれかが断れば当てずに
-   `UpgradeRefused`(断った所 `RefusalPoint.BEFORE-APPLY`・理由は `UnverifiedWorkers` / `QueuedTasksRemain` / `QuietWindowMissed`)で
-   止まります。宣言と公開は済んだまま当てていない状態で、自動では戻しません(配備する側は Flux を止めたまま扱います)。
-4. 当てる(`ApplyDeclarations`)→ coordinator が版 X で答える・宣言の内の worker が live に戻る・入れ替えの前に待っていた task が
-   coordinator に在る、の 3 つを待ちます。「coordinator が版 X で答える」は、答えた coordinator が
-`GET /state` の `coordinatorCommit` で申告する版で判じます(宣言した版や Deployment の世代からは推しません — 作り直しの途中で古い Pod が
-答えている間も「新しい版」と読んでしまうため)。名簿の読みに答える handler は、この欄を `shared/protocol/coordinator_reads.hy` の
-`coordinator-commit-of-state` で読みます(本番の読みと模擬の Flux の読みが同じ 1 つを通る)。
+worker と coordinator のどちらを先に上げるかは変更ごとに決まります(#3772)。本番の worker と coordinator は Flux が `deploy/k8s` の宣言
+(機体ごとの `deploy/k8s/nodes`)から作り直すので、順は宣言を当てる順(main へ入れる順と、Flux の Kustomization の suspend / resume)で
+守ります。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
+入れ替えの順の不変条件 V1〜V5・模擬の Flux は、使い手が 0 になったので 2026-10-10 に退役しました。
 
 順が決まっている変更の例:
 

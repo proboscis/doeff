@@ -419,10 +419,6 @@
   "lone-pulses の needs を広げた宣言(#2804 — 能力 cluster-net を持つ worker ならどれにも置ける)"
   (pulse (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
-(defsystem host-a-pulses [#^ Callable foundation]
-  "pulses の needs を、模擬の Flux の worker a だけが持つ能力 host-a にした宣言(#3669 — 能力の合う別の worker が名簿に無い job を持つ
-   worker の drain が、上限を待たずに終わる検・tests/test_sim_flux.hy)"
-  (pulse (pulse-program foundation) :replicas 1 :needs #{"host-a"} :readiness {"windowSeconds" 5}))
 
 (defsystem reserved-trio [#^ Callable foundation]
   "見本の系: task を出す service 1 つと、拍ごとに盤へ書く service 2 つ(#3489 — capacity 3・task のために 1 つ空けておく worker に常駐を
