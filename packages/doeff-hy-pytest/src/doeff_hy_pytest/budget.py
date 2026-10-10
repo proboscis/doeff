@@ -6,7 +6,7 @@
 - ``doeff_test_call_budget_steps`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の doeff-vm の歩数
   (正の整数 — 機体の負荷で揺れない決まった数・agora-redesign #2670)。実行の判定の本体で、歩数で判じ、CPU 秒は測って報告に出すだけ。
   doeff-vm に数の口が無い build で在れば、秒へ倒さず ``pytest.UsageError`` で止める。
-- ``doeff_test_call_budget_by_marker`` — 印ごとの実行の上限(1 行 = ``印=秒``・例 ``real_world=10``)。検が持つ印
+- ``doeff_test_call_budget_by_marker`` — 印ごとの実行の上限の壁の時計の秒(1 行 = ``印=秒``・例 ``real_world=10``)。検が持つ印
   (``item.iter_markers()`` — module の頭の ``pytestmark`` を含む)に当たる行があればその秒、複数当たれば最も長い秒で判じる
   (本物の I/O を持つ検は歩数に重さが出ないので、歩数の上限があっても秒のまま)。1 つも当たらない検は歩数の上限で判じ、
   歩数の上限も無ければ実行を測らない。実行の秒の上限は印ごとの設定だけ(印の無い検の既定の秒 ``doeff_test_call_budget_seconds`` は
@@ -30,9 +30,13 @@
 上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
 
 - 対象は ``.hy`` の検の file(deftest と、同じ file の素の検)だけ。Python の検は模擬の handler の検とは限らないので外す。
-- 秒で判じる物(印ごとの実行・収集)の判定は CPU 時間(``time.process_time`` — process の全 thread の CPU 時間)で行い、壁時計を併記する。壁時計は機体の負荷
-  (並べて走る他の検・席)で伸び縮みし、同じ検の合否が機体の混み具合で変わるため。模擬の handler の検は本物の待ちを
-  持たない前提なので、遅さはほぼ CPU 時間に出る。
+- 印の上限に当たる実行の判定は壁の時計の秒(``time.perf_counter`` — call の段階の区間)で行い、報告には CPU 秒も並べる。印の付いた検
+  (real_world など)は本物の子 process・socket・待ち受けを相手にするので、重さは子 process と待ちに在り、process の CPU 秒
+  (``time.process_time`` — 自分の process の全 thread だけ)には出ない(card ki-f35bb95eddda・agora-redesign #3858 — 上限
+  60 秒の頃に 105 秒かかった印 real_world の検が CPU 秒では赤にならなかった)。壁の時計は機体の負荷(並べて走る他の検・席)で
+  伸びるので、日次の Pod の秒は手元より大きく出る。
+- 収集の判定は CPU 時間(``time.process_time``)のまま行い、壁の時計を併記する。import は子 process も待ちも持たない前提なので、
+  遅さはほぼ CPU 時間に出て、CPU 時間は機体の混み具合で合否が変わりにくい。
 - 実行は call の段階だけを測り、setup と teardown(fixture)は含めない。session / module の範囲の fixture の準備は、
   その範囲で最初に走った検 1 本に丸ごと乗るので、含めると検の選び方と並び順で同じ検の合否が変わる。deftest の本体
   (模擬の handler で Program を回す所)は call の段階にある。
@@ -45,12 +49,12 @@
   どちらで起きても同じ hook を通るので、同じ鍵(file の path)で測る。超えて赤にする時は、その場で落とす(収集なら
   収集の誤り、setup ならその item の setup の誤り)。
 - キャッシュ無しを赤にしない: 測った区間から、source から code への変換(``SourceFileLoader.source_to_code`` —
-  バイトコードのキャッシュに当たらなかった時だけ呼ばれる。Hy の import も Hy が差し替えた同じ口を通る)に使った CPU 時間を
-  引いた値で判定する(変換が入れ子になった時は最も外側の区間だけを引く)。回を丸ごと除く形にしないのは、着地の門と日次の
+  バイトコードのキャッシュに当たらなかった時だけ呼ばれる。Hy の import も Hy が差し替えた同じ口を通る)に使った時間を、判じる
+  単位と同じ時計(収集は CPU 時間・印ごとの実行は壁の時計)で引いた値で判定する(変換が入れ子になった時は最も外側の区間だけを引く)。回を丸ごと除く形にしないのは、着地の門と日次の
   走行が ``PYTHONDONTWRITEBYTECODE=1`` で撃ち、キャッシュが一度も作られないため — 除く形ではそこで一度も判定されない。
   キャッシュ有りなら引く物は 0 で値はそのまま。キャッシュ無しの値は下限(Hy が変換の中で読む ``require`` 先の module の
   実行も引かれる)なので、下限で超えた物は本当に超えている。
-- GC(ごみ集め)も引く: 測った区間の中で起きた GC の CPU 秒(``gc.callbacks``)は、その検の重さではなく process に生きている
+- GC(ごみ集め)も引く: 測った区間の中で起きた GC の時間(``gc.callbacks`` — 判じる単位と同じ時計の CPU 秒か壁の時計の秒)は、その検の重さではなく process に生きている
   object の数の費用で、いつ起きるかは割り当ての数の巡りで決まる(free-threaded の Python の GC は世代を分けず 1 回ごとに heap の
   全体を回る)。引かないと、長い session の中で GC に当たった検だけが赤になり、落ちる検が回ごとに入れ替わる(card ki-b2383fcc8b25)。
 - 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
@@ -58,7 +62,7 @@
   終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
   ``fail`` の形では、載った鍵が上限の ``STALE_RATIO``(半分)以下で終わった時、その検を古い登録として赤にする
   (消し忘れた行は、同じ検が遅く戻っても黙って通す — agora-redesign #1726・#1706。doeff-linter の DOEFF166 と同じ向き)。
-  上限の半分から上限までの間は報告だけ(CPU 秒の揺れで同じ検の合否が走りごとに変わらないように)。
+  上限の半分から上限までの間は報告だけ(秒の揺れで同じ検の合否が走りごとに変わらないように)。
   測った検だけを判じる(走らなかった検・別の検査の鍵が同じ dir に在っても判じない)。
 - 上限は doeff-vm の不変条件の検査が無効な走行を基準にする。検査が有効な走行(doeff 自身の pytest — root の
   conftest.py が有効にする・agora-redesign #980 からはどの build も検査を持ち実行時に切り替える)は VM の
@@ -98,8 +102,8 @@ DEFAULT_CALL_BUDGET_STEPS = 100_000
 # #2670 issuecomment-5967500669)が 10 倍では赤になったため。空回りは 30 秒で数十億歩まで行くので、20 倍でも 1〜2 秒で捕まる。
 # repo は ini の step_budget_multiplier で替えられる(#3147)。
 DEFAULT_RUNAWAY_STEPS_MULTIPLIER = 20
-# 判定の単位(上限・登録・文の書き方が分かれる)。
-Unit = Literal["seconds", "steps"]
+# 判定の単位(上限・登録・文の書き方が分かれる)— 収集の上限は CPU 秒・印ごとの実行の上限は壁の時計の秒・印の無い実行は歩数。
+Unit = Literal["cpu-seconds", "wall-seconds", "steps"]
 
 Phase = Literal["call", "collect"]
 # 測りから引く区間の種類(CompileCounter)。
@@ -275,7 +279,7 @@ class Budgets:
         """その単位の超過を赤にするか。歩数は不変条件の検査の有無で変わらない(検査は歩の中で走り、歩を足さない)ので、
         検査つきの build でも fail の形なら赤にする — 秒では判じられなかった doeff 自身の走行も歩数なら判じられる。"""
         match unit:
-            case "seconds":
+            case "cpu-seconds" | "wall-seconds":
                 return self.fails_over_budget
             case "steps":
                 return self.mode == "fail"
@@ -283,49 +287,65 @@ class Budgets:
 
 @dataclass(frozen=True)
 class CompileTally:
-    """ある時点までに数えた source からの変換の回数と、それに使った CPU 秒(最も外側の区間の和)。"""
+    """ある時点までに数えた source からの変換の回数と、それに使った CPU 秒と壁の時計の秒(最も外側の区間の和)。"""
 
     count: int
     cpu_seconds: float
+    wall_seconds: float
 
     def since(self, before: "CompileTally") -> "CompileTally":
         """before からこの時点までの差 — 1 つの測りの区間の中で起きた変換。"""
-        return CompileTally(self.count - before.count, self.cpu_seconds - before.cpu_seconds)
+        return CompileTally(
+            self.count - before.count,
+            self.cpu_seconds - before.cpu_seconds,
+            self.wall_seconds - before.wall_seconds,
+        )
 
 
 @dataclass(frozen=True)
 class ImportTally:
-    """ある時点までに数えた、別の module の初回の import の回数と、それに使った CPU 秒(最も外側の区間の和)。"""
+    """ある時点までに数えた、別の module の初回の import の回数と、それに使った CPU 秒と壁の時計の秒(最も外側の区間の和)。"""
 
     count: int
     cpu_seconds: float
+    wall_seconds: float
 
     def since(self, before: "ImportTally") -> "ImportTally":
         """before からこの時点までの差 — 1 つの測りの区間の中で起きた依存の初回の import。"""
-        return ImportTally(self.count - before.count, self.cpu_seconds - before.cpu_seconds)
+        return ImportTally(
+            self.count - before.count,
+            self.cpu_seconds - before.cpu_seconds,
+            self.wall_seconds - before.wall_seconds,
+        )
 
 
-NO_IMPORTS = ImportTally(0, 0.0)
+NO_IMPORTS = ImportTally(0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
 class GcTally:
-    """ある時点までに数えた GC(ごみ集め)の回数と、それに使った CPU 秒(変換・依存の初回の import の区間の外で起きた分だけ)。"""
+    """ある時点までに数えた GC(ごみ集め)の回数と、それに使った CPU 秒と壁の時計の秒(変換・依存の初回の import の区間の外で
+    起きた分だけ)。"""
 
     count: int
     cpu_seconds: float
+    wall_seconds: float
 
     def since(self, before: "GcTally") -> "GcTally":
         """before からこの時点までの差 — 1 つの測りの区間の中で起きた GC。"""
-        return GcTally(self.count - before.count, self.cpu_seconds - before.cpu_seconds)
+        return GcTally(
+            self.count - before.count,
+            self.cpu_seconds - before.cpu_seconds,
+            self.wall_seconds - before.wall_seconds,
+        )
 
 
-NO_GC = GcTally(0, 0.0)
+NO_GC = GcTally(0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
 class Measurement:
-    """測った 1 区間 — CPU 秒と壁時計の秒(どちらも区間の全体)と、区間の中の変換と依存の初回の import と GC。"""
+    """測った 1 区間 — CPU 秒と壁の時計の秒(どちらも区間の全体)と、区間の中の変換と依存の初回の import と GC。"""
 
     key: str
     phase: Phase
@@ -338,10 +358,16 @@ class Measurement:
     gc: GcTally = NO_GC
 
     @property
-    def judged_seconds(self) -> float:
-        """判定に使う秒 = 区間の CPU 秒から、変換の CPU 秒と依存の初回の import の CPU 秒と GC の CPU 秒を引いた値(どれも無ければ
-        区間の CPU 秒そのもの)。"""
+    def judged_cpu_seconds(self) -> float:
+        """CPU 秒で判じる時の値 = 区間の CPU 秒から、変換の CPU 秒と依存の初回の import の CPU 秒と GC の CPU 秒を引いた値(どれも
+        無ければ区間の CPU 秒そのもの)。"""
         return self.cpu_seconds - self.compile.cpu_seconds - self.imports.cpu_seconds - self.gc.cpu_seconds
+
+    @property
+    def judged_wall_seconds(self) -> float:
+        """壁の時計の秒で判じる時の値 = 区間の壁の時計の秒から、変換と依存の初回の import と GC の壁の時計の秒を引いた値(子 process と
+        待ちの時間は残る — 印の付いた検の重さはそこに在る)。"""
+        return self.wall_seconds - self.compile.wall_seconds - self.imports.wall_seconds - self.gc.wall_seconds
 
 
 @dataclass(frozen=True)
@@ -350,10 +376,12 @@ class WithinBudget:
 
 
 def judged_value(measurement: Measurement, unit: Unit) -> float:
-    """判定の単位で見た測りの値 — 秒なら変換と import を引いた CPU 秒、歩数なら区間の歩数(数の無い測りを歩数で判じない)。"""
+    """判定の単位で見た測りの値 — 変換と import を引いた CPU 秒か壁の時計の秒、歩数なら区間の歩数(数の無い測りを歩数で判じない)。"""
     match unit:
-        case "seconds":
-            return measurement.judged_seconds
+        case "cpu-seconds":
+            return measurement.judged_cpu_seconds
+        case "wall-seconds":
+            return measurement.judged_wall_seconds
         case "steps":
             if measurement.work is None:
                 raise AssertionError(f"歩数の無い測りを歩数で判じた: {measurement.key}")
@@ -366,7 +394,7 @@ class OverBudget:
 
     measurement: Measurement
     budget: float
-    unit: Unit = "seconds"
+    unit: Unit = "cpu-seconds"
 
 
 @dataclass(frozen=True)
@@ -374,7 +402,7 @@ class RegisteredOverBudget:
     """上限を超えたが登録簿に載っている(赤にしない)。"""
 
     measurement: Measurement
-    unit: Unit = "seconds"
+    unit: Unit = "cpu-seconds"
 
 
 @dataclass(frozen=True)
@@ -383,7 +411,7 @@ class RegisteredWithinBudget:
 
     measurement: Measurement
     budget: float
-    unit: Unit = "seconds"
+    unit: Unit = "cpu-seconds"
 
     @property
     def stale(self) -> bool:
@@ -477,15 +505,18 @@ def load_registry(directory: Path) -> dict[str, str]:
     return table
 
 
-def judge(measurement: Measurement, budget: float, registry: Mapping[str, str]) -> Verdict:
-    """測った 1 区間を、変換の CPU 秒を引いた値で上限と登録簿に照らす(キャッシュ無しの重さを検の重さにしない)。"""
-    if measurement.judged_seconds <= budget:
+def judge(
+    measurement: Measurement, budget: float, registry: Mapping[str, str], unit: Unit = "cpu-seconds"
+) -> Verdict:
+    """測った 1 区間を、変換と依存の初回の import を引いた秒(unit = CPU 秒か壁の時計の秒)で上限と登録簿に照らす(キャッシュ無しの
+    重さを検の重さにしない)。"""
+    if judged_value(measurement, unit) <= budget:
         if measurement.key in registry:
-            return RegisteredWithinBudget(measurement, budget)
+            return RegisteredWithinBudget(measurement, budget, unit)
         return WithinBudget(measurement)
     if measurement.key in registry:
-        return RegisteredOverBudget(measurement)
-    return OverBudget(measurement, budget)
+        return RegisteredOverBudget(measurement, unit)
+    return OverBudget(measurement, budget, unit)
 
 
 def judge_steps(measurement: Measurement, budget_steps: int, registry: Mapping[str, str]) -> Verdict:
@@ -556,11 +587,12 @@ def judge_call(
     budgets: Budgets, markers: Sequence[str], measurement: Measurement, declaration: StepDeclaration | None
 ) -> Verdict | None:
     """通った検 1 本の実行(call)を判じる(None = 測らない)。印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、
-    歩数に重さが出ないので秒で判じる。それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も当たらない
-    検は判じない。"""
+    歩数に重さが出ないので壁の時計の秒で判じる(重さは子 process と待ちに在り、process の CPU 秒には出ない — card
+    ki-f35bb95eddda・agora-redesign #3858)。それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も
+    当たらない検は判じない。"""
     marker_seconds = call_budget_for(markers, budgets.call_seconds_by_marker)
     if marker_seconds is not None:
-        return judge(measurement, marker_seconds, budgets.registry)
+        return judge(measurement, marker_seconds, budgets.registry, "wall-seconds")
     match budgets.call_steps:
         case None:
             return None
@@ -580,24 +612,47 @@ def load_registries(root: Path, directories: Sequence[str]) -> dict[str, str]:
 
 
 def _seconds_text(measurement: Measurement) -> str:
-    """測りの秒の書き方(判定に使う CPU 秒・壁時計・引いた変換)。"""
-    text = f"CPU {measurement.judged_seconds:.3f} 秒(壁時計 {measurement.wall_seconds:.3f} 秒"
-    if measurement.compile.count:
-        text += f"・キャッシュ無しの変換 {measurement.compile.count} 回の CPU {measurement.compile.cpu_seconds:.3f} 秒を引いた"
-    if measurement.imports.count:
-        text += f"・依存の module の初回の import {measurement.imports.count} 回の CPU {measurement.imports.cpu_seconds:.3f} 秒を引いた"
-    if measurement.gc.count:
-        text += f"・GC {measurement.gc.count} 回の CPU {measurement.gc.cpu_seconds:.3f} 秒を引いた"
-    if measurement.work is not None:
-        text += f"・doeff-vm の歩数 {measurement.work.steps}・handler の呼び出し {measurement.work.handler_calls} 回"
-    return text + ")"
+    """測りの秒の書き方(変換と import と GC を引いた壁の時計の秒と CPU 秒・引いた区間・歩数)。印ごとの実行は壁の時計の秒・
+    収集は CPU 秒で判じるので、文の頭は判じる側の秒を先に置かず、両方を同じ形で並べる。"""
+    compile_part = (
+        f"キャッシュ無しの変換 {measurement.compile.count} 回の壁の時計 {measurement.compile.wall_seconds:.3f} 秒・"
+        f"CPU {measurement.compile.cpu_seconds:.3f} 秒を引いた"
+        if measurement.compile.count
+        else None
+    )
+    imports_part = (
+        f"依存の module の初回の import {measurement.imports.count} 回の壁の時計 {measurement.imports.wall_seconds:.3f} 秒・"
+        f"CPU {measurement.imports.cpu_seconds:.3f} 秒を引いた"
+        if measurement.imports.count
+        else None
+    )
+    gc_part = (
+        f"GC {measurement.gc.count} 回の壁の時計 {measurement.gc.wall_seconds:.3f} 秒・CPU {measurement.gc.cpu_seconds:.3f} 秒を引いた"
+        if measurement.gc.count
+        else None
+    )
+    work_part = (
+        f"doeff-vm の歩数 {measurement.work.steps}・handler の呼び出し {measurement.work.handler_calls} 回"
+        if measurement.work is not None
+        else None
+    )
+    parts = tuple(part for part in (compile_part, imports_part, gc_part, work_part) if part is not None) or (
+        "引いた区間なし",
+    )
+    return (
+        f"壁の時計 {measurement.judged_wall_seconds:.3f} 秒・CPU {measurement.judged_cpu_seconds:.3f} 秒("
+        + "・".join(parts)
+        + ")"
+    )
 
 
 def _limit_text(budget: float, unit: Unit) -> str:
-    """上限の書き方(単位つき)— 文の中で秒と歩数を取り違えないため。"""
+    """上限の書き方(単位つき)— 文の中で CPU 秒・壁の時計の秒・歩数を取り違えないため。"""
     match unit:
-        case "seconds":
+        case "cpu-seconds":
             return f"CPU {budget:.3f} 秒"
+        case "wall-seconds":
+            return f"壁の時計 {budget:.3f} 秒"
         case "steps":
             return f"歩数 {int(budget)}"
 
@@ -670,11 +725,15 @@ class CompileCounter:
     def __init__(self) -> None:
         self._mut_count = 0
         self._mut_cpu_seconds = 0.0
+        self._mut_wall_seconds = 0.0
         self._mut_import_count = 0
         self._mut_import_cpu_seconds = 0.0
+        self._mut_import_wall_seconds = 0.0
         self._mut_gc_count = 0
         self._mut_gc_cpu_seconds = 0.0
-        self._mut_gc_started: float | None = None
+        self._mut_gc_wall_seconds = 0.0
+        # 走っている GC 1 回の始めの刻(CPU 秒・壁の時計の秒)— start の合図で置き、stop の合図で欄に足して外す。
+        self._mut_gc_started: tuple[float, float] | None = None
         self._mut_depth = 0
         self._mut_outer: SetAside | None = None
         self._mut_original: Callable[..., object] | None = None
@@ -683,33 +742,36 @@ class CompileCounter:
 
     def tally(self) -> CompileTally:
         """今までの変換の数え(区間の前後の差で使う)。"""
-        return CompileTally(self._mut_count, self._mut_cpu_seconds)
+        return CompileTally(self._mut_count, self._mut_cpu_seconds, self._mut_wall_seconds)
 
     def import_tally(self) -> ImportTally:
         """今までの依存の初回の import の数え(区間の前後の差で使う)。"""
-        return ImportTally(self._mut_import_count, self._mut_import_cpu_seconds)
+        return ImportTally(self._mut_import_count, self._mut_import_cpu_seconds, self._mut_import_wall_seconds)
 
     def gc_tally(self) -> GcTally:
         """今までの GC の数え(区間の前後の差で使う)。"""
-        return GcTally(self._mut_gc_count, self._mut_gc_cpu_seconds)
+        return GcTally(self._mut_gc_count, self._mut_gc_cpu_seconds, self._mut_gc_wall_seconds)
 
     def _on_gc(self, phase: str, info: Mapping[str, object]) -> None:
-        """``gc.callbacks`` の口 — 変換・依存の初回の import の区間の外で起きた GC 1 回の CPU 秒を GC の欄に足すため。"""
+        """``gc.callbacks`` の口 — 変換・依存の初回の import の区間の外で起きた GC 1 回の CPU 秒と壁の時計の秒を GC の欄に足すため。"""
         if self._mut_depth:
             return
         match phase:
             case "start":
-                self._mut_gc_started = time.process_time()
+                self._mut_gc_started = (time.process_time(), time.perf_counter())
             case "stop" if self._mut_gc_started is not None:
+                cpu_started, wall_started = self._mut_gc_started
                 self._mut_gc_count += 1
-                self._mut_gc_cpu_seconds += time.process_time() - self._mut_gc_started
+                self._mut_gc_cpu_seconds += time.process_time() - cpu_started
+                self._mut_gc_wall_seconds += time.perf_counter() - wall_started
                 self._mut_gc_started = None
             case _:
                 pass
 
     @contextlib.contextmanager
     def _set_aside(self, kind: SetAside) -> Generator[None]:
-        """引く区間 1 回 — 最も外側の区間なら、その CPU 秒をその区間の種類の欄に足すため。"""
+        """引く区間 1 回 — 最も外側の区間なら、その CPU 秒と壁の時計の秒をその区間の種類の欄に足すため(収集は CPU 秒・印ごとの
+        実行は壁の時計の秒で判じるので、両方の単位で引けるように)。"""
         if kind == "compile":
             self._mut_count += 1
         else:
@@ -717,17 +779,21 @@ class CompileCounter:
         if self._mut_depth == 0:
             self._mut_outer = kind
         self._mut_depth += 1
-        started = time.process_time()
+        cpu_started = time.process_time()
+        wall_started = time.perf_counter()
         try:
             yield
         finally:
             self._mut_depth -= 1
             if self._mut_depth == 0:
-                elapsed = time.process_time() - started
+                cpu_elapsed = time.process_time() - cpu_started
+                wall_elapsed = time.perf_counter() - wall_started
                 if self._mut_outer == "compile":
-                    self._mut_cpu_seconds += elapsed
+                    self._mut_cpu_seconds += cpu_elapsed
+                    self._mut_wall_seconds += wall_elapsed
                 else:
-                    self._mut_import_cpu_seconds += elapsed
+                    self._mut_import_cpu_seconds += cpu_elapsed
+                    self._mut_import_wall_seconds += wall_elapsed
                 self._mut_outer = None
 
     def converting(self) -> contextlib.AbstractContextManager[None]:
@@ -794,9 +860,10 @@ def observe_analyzer_expansions(
 
 @dataclass(frozen=True)
 class CallMeasured:
-    """call の段階の CPU 秒と、変換と依存の初回の import(makereport で判定するまで item に置く)。"""
+    """call の段階の CPU 秒と壁の時計の秒と、変換と依存の初回の import(makereport で判定するまで item に置く)。"""
 
     cpu_seconds: float
+    wall_seconds: float
     compile: CompileTally
     imports: ImportTally
     work: VmWork | None = None
@@ -813,7 +880,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     """設定の名を pytest に登録する。"""
     parser.addini(
         MARKER_CALL_BUDGET_INI,
-        "印ごとの Hy の検 1 本の実行の上限の CPU 秒(1 行 = 印=秒・複数の印に当たれば最も長い秒・当たる検は歩数の上限があっても秒で判じる)",
+        "印ごとの Hy の検 1 本の実行の上限の壁の時計の秒(1 行 = 印=秒・複数の印に当たれば最も長い秒・当たる検は歩数の上限があっても秒で判じる)",
         type="linelist",
         default=[],
     )
@@ -1063,6 +1130,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     imports_before = counter.import_tally()
     gc_before = counter.gc_tally()
     cpu_started = time.process_time()
+    wall_started = time.perf_counter()
     if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
         guard.arm(runaway_steps)
     try:
@@ -1071,9 +1139,11 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
         if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
             guard.disarm()
         cpu_seconds = time.process_time() - cpu_started
+        wall_seconds = time.perf_counter() - wall_started
         work = source.tally().since(work_before) if isinstance(source, WorkReader) and work_before is not None else None
         item.stash[_CALL_MEASURED_KEY] = CallMeasured(
             cpu_seconds=cpu_seconds,
+            wall_seconds=wall_seconds,
             compile=counter.tally().since(compile_before),
             imports=counter.import_tally().since(imports_before),
             work=work,
@@ -1103,7 +1173,7 @@ def pytest_runtest_makereport(
         key=item.nodeid,
         phase="call",
         cpu_seconds=measured.cpu_seconds,
-        wall_seconds=call.duration,
+        wall_seconds=measured.wall_seconds,
         compile=measured.compile,
         imports=measured.imports,
         work=measured.work,
