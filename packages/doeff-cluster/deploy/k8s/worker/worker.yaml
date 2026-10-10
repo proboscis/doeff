@@ -86,10 +86,11 @@ spec:
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             # 提供する能力: 機体の名の能力と、機体の systemd の unit を読めること。残りは worker-env の WORKER_PROVIDES_EXTRA。
             - { name: WORKER_PROVIDES, value: "host-$(NODE_NAME),host-systemd-readable,$(WORKER_PROVIDES_EXTRA)" }
-            # job の子へ渡す worker の env の名(実行環境の job の子は worker の env を許可表でしか継がない)。機体の事実と API server の
+            # job の子へ渡す worker の env の名(実行環境の job の子は worker の env を許可表でしか継がない)。機体の事実・worker の名(子が自分の
+            # 載る worker を名で知る — Node の名は同じ機体の別の worker と同じ値で、worker を分けられない)・API server の
             # 場所はここで渡し、残りは worker-env の WORKER_PASS_ENV_EXTRA。
             - name: WORKER_PASS_ENV
-              value: "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
+              value: "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
             - { name: WORKER_HOST_SYSTEMD_ROOT, value: /host/etc/systemd/system }
             # 機体の dir(/work)を使う worker を 1 つに限る(Deployment の名が変わる入れ替えで、旧と新の Pod が同じ dir に重ならない)。
             - { name: WORKER_DIR_LOCK, value: "1" }

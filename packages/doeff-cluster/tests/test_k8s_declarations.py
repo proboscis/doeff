@@ -266,9 +266,11 @@ def test_worker_reads_host_systemd_units_read_only(worker: Manifest) -> None:
 
 
 def test_worker_passes_machine_facts_to_job_children(worker: Manifest) -> None:
-    """機体の事実の 3 つ(Node の名・systemd の root・作業の root)は job の子の環境へ渡る(子は worker の env を許可表でしか継がない)。"""
+    """機体の事実の 3 つ(Node の名・systemd の root・作業の root)と worker の名は job の子の環境へ渡る(子は worker の env を許可表でしか
+    継がない)。worker の名(WORKER_NAME)は、job の子が自分の載る worker を名で知るため — Node の名は同じ機体の別の worker(機体の systemd の
+    worker など)と同じ値なので、worker を分けられない。"""
     passed = str(_env_value(worker, "WORKER_PASS_ENV")["value"]).split(",")
-    for name in ("NODE_NAME", "WORKER_HOST_SYSTEMD_ROOT", "WORK_DIR"):
+    for name in ("NODE_NAME", "WORKER_NAME", "WORKER_HOST_SYSTEMD_ROOT", "WORK_DIR"):
         assert name in passed
 
 
@@ -359,7 +361,7 @@ def test_atlas_worker_passes_the_rust_toolchain_to_tasks(rendered: list[Manifest
     """atlas の worker は、job の子へ渡す env の名(WORKER_PASS_ENV)に Rust の toolchain の置き場を足す — 雛形の名と使い手の残り
     $(WORKER_PASS_ENV_EXTRA) はそのまま(位置も同じ — k8s は前の行で定義した env だけを展開する)。ほかの機体は雛形のまま。
     反例: 足さないと、atlas で Rust の部品を組む task の rustup が toolchain を選べず落ちる。"""
-    base = "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
+    base = "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA)"
     for node in NODES:
         passed = str(_env_value(_worker_on(rendered, node), "WORKER_PASS_ENV")["value"])
         expected = ",".join((base, *ATLAS_TASK_PASS_ENV)) if node == "atlas" else base

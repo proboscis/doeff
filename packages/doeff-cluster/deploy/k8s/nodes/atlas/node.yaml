@@ -21,4 +21,4 @@ spec:
             # job の子へ渡す名に Rust の toolchain の置き場(image の env)を足す — task が Rust の部品を組む時に rustup が toolchain を選ぶ。
             # 雛形の値の後ろに足すだけ(道具の cache の置き場は task が WORK_DIR から自分で作る)。
             - name: WORKER_PASS_ENV
-              value: "NODE_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA),RUSTUP_HOME"
+              value: "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA),RUSTUP_HOME"
