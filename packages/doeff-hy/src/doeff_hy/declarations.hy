@@ -315,6 +315,53 @@
             ~@pre-code
             None)]
         []))
+  ;; 関数を展開の時に書く(card ki-e77d44aa61e5 — defrecord の 424a87f58 と同じ形): dataclass には欄の表(__dataclass_fields__・
+  ;; __match_args__・可変の既定の断り・__replace__)だけを作らせ、__init__(位置と名前の引数・既定値は class の本体で 1 度評価した値)・
+  ;; __repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は展開がここで書く — 関数は module の code として .pyc に入り、読み込みの
+  ;; 時に dataclass が関数の source を exec(compile)しない。既定値に field の呼びを書いた欄が在る時と、型検査の投影(static-view)の時は
+  ;; 今までの形(dataclass が関数を作る)のまま。
+  (import doeff_hy.static_view [static-view-enabled])
+  (setv items (or (declared-value contract ":fields") [])
+        field-call? (fn [item] (and (= (len item) 4) (isinstance (get item 3) hy.models.Expression) (get item 3)
+                                    (isinstance (get (get item 3) 0) Symbol)
+                                    (in (str (get (get item 3) 0)) #("field" "dataclasses.field"))))
+        written (not (or (static-view-enabled) (any (gfor item items (field-call? item))))))
+  (setv self-sym (hy.gensym "self")
+        other (hy.gensym "other")
+        attr (hy.gensym "name")
+        value (hy.gensym "value")
+        syms (lfor item items (get item 1))
+        params (lfor item items (if (= (len item) 4)
+                                    `(annotate [~(get item 1) ~(get item 1)] ~(get item 2))
+                                    `(annotate ~(get item 1) ~(get item 2))))
+        own `#(~@(lfor s syms `(. ~self-sym ~s)))
+        guard (if syms
+                  `(or (is (type ~self-sym) ~name) (in ~attr #{~@(lfor s syms (String (hy.mangle (str s))))}))
+                  `(is (type ~self-sym) ~name)))
+  (setv methods
+    (if written
+        [`(defn __init__ [~self-sym ~@params]
+            ~@(lfor s syms `(object.__setattr__ ~self-sym ~(hy.mangle (str s)) ~s))
+            ~@(if post-init [`(.__post-init__ ~self-sym)] [])
+            None)
+         `(defn [(doeff_hy.record_runtime.recursive-repr)] __repr__ [~self-sym]
+            (.format ~(+ "{}(" (.join ", " (gfor s syms (+ (hy.mangle (str s)) "={!r}"))) ")") (. ~self-sym __class__ __qualname__)
+                     ~@(lfor s syms `(. ~self-sym ~s))))
+         `(defn __eq__ [~self-sym ~other]
+            (if (is (. ~other __class__) (. ~self-sym __class__))
+                (= ~own #(~@(lfor s syms `(. ~other ~s))))
+                NotImplemented))
+         `(defn __hash__ [~self-sym]
+            (hash ~own))
+         `(defn __setattr__ [~self-sym ~attr ~value]
+            (when ~guard
+              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
+            (.__setattr__ (super ~name ~self-sym) ~attr ~value))
+         `(defn __delattr__ [~self-sym ~attr]
+            (when ~guard
+              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
+            (.__delattr__ (super ~name ~self-sym) ~attr))]
+        []))
   `(do
      (import dataclasses [dataclass :as _doeff-dataclass])
      (import doeff [EffectBase :as _doeff-effect-base])
@@ -326,11 +373,17 @@
      ;; (`<-` の束ねの型・handler の resume の型)は変えない。ClassVar は dataclass の欄にならない(pyright・実行時とも)。
      ;; from-import の別名の作法は defwire と同じ(record.hy)。
      (import typing [ClassVar :as _doeff-ClassVar cast :as _doeff-cast])
-     (defclass [(_doeff-dataclass :frozen True)] ~name [_doeff-effect-base]
+     ~@(if written [`(import doeff_hy.record_runtime)] [])
+     (defclass [~(if written
+                     `(_doeff-dataclass :init False :repr False :eq False)
+                     `(_doeff-dataclass :frozen True))]
+       ~name [_doeff-effect-base]
        ~@(if (is docstring None) [] [docstring])
        (setv #^ (get _doeff-ClassVar object) __doeff-answer__ ~(answer-value-form answer))
        ~@fields
-       ~@post-init)
+       ~@post-init
+       ~@methods)
+     ~@(if written [`(doeff_hy.record_runtime.seal-effect ~name)] [])
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_defeffect__" True)
      ~@(if runs-carried
