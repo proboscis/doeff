@@ -20,7 +20,9 @@
 ;;;   B1 stale-expansion-is-never-current — 記録の digest が依った物(macro を定義した file の中身・macro が辿る値の module の file の
 ;;;     中身・環境変数など file の外で決まる値)のどれかが記録を作った時と違えば、照らしは古いと判じて展開し直させる。digest は
 ;;;     process をまたいで覚えない(生きた値を辿った file の状態だけで信じる形になる)。process をまたいで覚えてよいのは、中身で
-;;;     決まる純な読み — 辿れない大域を覆う source の文の読み(bound_source — 鍵 = source の中身・名・読み方の code と版)— だけ。
+;;;     決まる純な読み — 辿れない大域を覆う source の文の読み(bound_source — 鍵 = source の中身・名・読み方の code と版)と、
+;;;     歩みが読む関数の code の読み(macro_use の CodeFacts — 鍵 = code の中身の marshal の sha256・読み方の code と版・card
+;;;     ki-be596ac8276f)— だけ。
 ;;;     失敗ケース = tests/test_macro_use_record.py の「process をまたぐ覚え」の条 1〜3(digest を file の状態で覚えて次の process が
 ;;;     信じる形で赤 — agora-redesign card ki-38508e6e56fd)。
 (defarchitecture doeff-hy

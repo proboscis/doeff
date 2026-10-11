@@ -18,6 +18,9 @@ from types import CodeType, ModuleType
 # bytecode を書く設定の中で書いてしまう)。
 from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION
 
+# 一番外の読み込み 1 つの間の覚え(contextvars だけを読む軽い module — 起動時に読んでよい)。
+from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope
+
 TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
@@ -33,6 +36,7 @@ from doeff_hy_bytecode_guard.code_store import HY_SOURCE_SUFFIXES as HY_SOURCE_S
 GetCode = Callable[[importlib.machinery.SourceFileLoader, str], "CodeType | None"]
 GetData = Callable[[importlib.machinery.SourceFileLoader, str], bytes]
 SourceToCode = Callable[..., CodeType]
+ExecModule = Callable[[importlib.machinery.SourceFileLoader, ModuleType], None]
 
 #: 包んだかどうか(process に 1 つ)。包みは process の ``SourceFileLoader`` という 1 つの共有物を書き換えるので、
 #: 持ち主はこの module 1 つ。
@@ -60,7 +64,8 @@ def installed() -> bool:
 
 def install() -> None:
     """macro が変わった Hy の module を compile し直すよう ``SourceFileLoader`` の 2 つの口を包む(何度呼んでも 1 度だけ)。
-    dataclasses が読み込み済みなら、型ごとの関数の source の compile も覚える(:mod:`doeff_hy_bytecode_guard.dataclass_code`)。"""
+    module の本体の実行の口も包み、一番外の実行の間、照らしが file の状態を 1 度だけ読む覚え(:mod:`doeff_hy_bytecode_guard.import_scope`)
+    を置く。dataclasses が読み込み済みなら、型ごとの関数の source の compile も覚える(:mod:`doeff_hy_bytecode_guard.dataclass_code`)。"""
     _remember_dataclass_code()
     if _installation["installed"]:
         return
@@ -68,6 +73,7 @@ def install() -> None:
     loader.source_to_code = _recording_source_to_code(loader.source_to_code)
     loader.get_code = _checking_get_code(loader.get_code)
     loader.get_data = _remembering_get_data(loader.get_data)
+    loader.exec_module = _scoped_exec_module(loader.exec_module)
     _installation["installed"] = True
 
 
@@ -287,6 +293,24 @@ def _remembering_get_data(previous: GetData):
         return data
 
     return get_data
+
+
+# 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
+def _scoped_exec_module(previous: ExecModule):
+    """module の本体の実行の口の包み — 一番外の実行(中の import を含む)の間、.pyc の記録の照らしが file の状態を 1 度だけ読む
+    覚えを置くため(照らしは Hy の module 1 つごとに走り、照らしごとに確かめると同じ file を何百回も stat した — agora-redesign card
+    ki-be596ac8276f)。入れ子の実行は外の覚えを使う。"""
+
+    def exec_module(self: importlib.machinery.SourceFileLoader, module: ModuleType) -> None:
+        if IMPORT_SCOPE.get() is not None:
+            return previous(self, module)
+        scope = IMPORT_SCOPE.set(ImportScope())
+        try:
+            return previous(self, module)
+        finally:
+            IMPORT_SCOPE.reset(scope)
+
+    return exec_module
 
 
 # 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。

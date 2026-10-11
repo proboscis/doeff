@@ -215,6 +215,9 @@ BINDING_TAG = "doeff-hy/bound-source/1"
 
 _HY_SUFFIXES = (".hy", ".hyk", ".hyp")
 
+#: hy.repr と登録の表を定義した Hy の module(``hy.repr`` を引くと Hy が遅れて読み込む)。
+_HY_REPR_MODULE = "hy.core.hy_repr"
+
 
 @dataclass(frozen=True)
 class _Missing:
@@ -275,11 +278,18 @@ def _binding_entry(source: SourceFile, path: str, name: str) -> str | None:
 def _hy_reading() -> str | None:
     """Hy の source の読みと文の形(``hy.repr``)を決める物 — Hy の版と、hy.repr の登録の表(process の中の共有の表)の指紋。表に
     Hy 自身と組み込み以外の関数が登録されている時は None(その関数の code は鍵で覆えない — 置き場を使わない)。Hy の読み
-    (``hy.read_many``)は毎回新しい reader で、process の reader macro に依らない。"""
+    (``hy.read_many``)は毎回新しい reader で、process の reader macro に依らない。
+
+    表の持ち主の module(:data:`_HY_REPR_MODULE`)がまだ読み込まれていなければ、表は Hy の既定のまま(登録の口 hy.repr_register も
+    同じ module を読み込む)— 鍵は既定の印にし、表を見るためだけに読み込まない(hy.repr を引くと Hy が読み込み、照らしだけが
+    0.055〜0.094 秒を払っていた — agora-redesign card ki-be596ac8276f)。置き場に無い時の読みは :func:`_hy_binding` の hy.repr が
+    読み込む既定の表で文を作るので、既定の印の entry の中身は既定の表の読みになる。"""
     from types import FunctionType  # Hy の source に当たった時だけ
 
     import hy
 
+    if _HY_REPR_MODULE not in sys.modules:
+        return f"{hy.__version__}\0default"
     # hy.repr の登録の表は hy.repr を定義した Hy の module の大域(型検査器からは見えないので、hy.repr の関数の大域から引く)。
     # 表の形が違えば読み方が分からない。
     shown = hy.repr
