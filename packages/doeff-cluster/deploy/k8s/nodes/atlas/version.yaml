@@ -3,4 +3,4 @@
 # 変えなくても Pod が作り直される。番号は ../../host-only が env の頭に 2 行を、node.yaml が 1 行(WORKER_PASS_ENV)を足した後の並び。
 # 雛形の env の並びが変わったら、test の操作が組み立てを止める(黙って別の場所へ足さない)。
 - { op: test, path: /spec/template/spec/containers/0/env/4/name, value: WORK_DIR }
-- { op: add, path: /spec/template/spec/containers/0/env/5, value: { name: WORKER_DOEFF_COMMIT, value: "f3f569e9d2dd2c093abb51feb2616216333fbee0" } }
+- { op: add, path: /spec/template/spec/containers/0/env/5, value: { name: WORKER_DOEFF_COMMIT, value: "43d055adcaca96d276a60d7a61a3ada0bf894f8f" } }
