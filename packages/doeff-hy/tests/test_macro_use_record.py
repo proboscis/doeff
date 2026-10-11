@@ -963,29 +963,17 @@ class CrossTree:
     def package(self) -> Path:
         return self.root / CROSS_PACKAGE
 
-    def run(self, mode: str, **env: str) -> dict[str, object]:
-        """子の process で 1 度走らせた答え(env = 足す環境変数)。"""
+    def run(self, mode: str) -> dict[str, object]:
+        """子の process で 1 度走らせた答え(子は検の環境を継ぐ — 置き場と pycache は fixture が monkeypatch で置く)。"""
         import json
-        import os
         import subprocess
 
-        inherited = {
-            name: value
-            for name, value in os.environ.items()
-            if name not in ("PYTHONDONTWRITEBYTECODE", "MACRO_USE_PROBE_MODE")
-        }
         done = subprocess.run(
             [sys.executable, "-c", CROSS_CHILD, str(self.root), str(self.stored), mode, CROSS_PACKAGE],
             capture_output=True,
             text=True,
             timeout=60,
             check=False,
-            env={
-                **inherited,
-                "DOEFF_HY_CODE_STORE": str(self.store),
-                "PYTHONPYCACHEPREFIX": str(self.root.parent / f"pycache-{self.root.name}"),
-                **env,
-            },
         )
         assert done.returncode == 0, done.stderr
         return json.loads(done.stdout.strip().splitlines()[-1])
@@ -1000,13 +988,17 @@ class CrossTree:
 
 
 @pytest.fixture
-def cross_tree(tmp_path: Path) -> CrossTree:
+def cross_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CrossTree:
+    """検の package の根 1 つと、子の process が継ぐ環境(共有の置き場・検の一時 dir の pycache・条 3 の環境変数は無し)。"""
     root = tmp_path / "tree-a"
     (root / CROSS_PACKAGE).mkdir(parents=True)
     for name, text in CROSS_FILES.items():
         (root / CROSS_PACKAGE / name).write_text(text.format(pkg=CROSS_PACKAGE), encoding="utf-8")
     store = tmp_path / "store"
     store.mkdir()
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
+    monkeypatch.delenv("MACRO_USE_PROBE_MODE", raising=False)
     return CrossTree(root, store, tmp_path / "record.json")
 
 
@@ -1036,9 +1028,12 @@ def test_a_changed_value_from_another_module_is_stale_in_a_second_process(cross_
     assert cross_tree.run("check")["current"] is False, "macro が返す別の module の値を替えたのに、2 つ目の process が古いと判じない"
 
 
-def test_a_changed_environment_value_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
+def test_a_changed_environment_value_is_stale_in_a_second_process(
+    cross_tree: CrossTree, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # 条 3(file の外で決まる値): MODE は読み込みの時に環境変数から組む。どの file も変わらないので、file の状態で覚えを
     # 信じる形は前の digest を使う。
     cross_tree.run("record")
-    answer = cross_tree.run("check", MACRO_USE_PROBE_MODE="strict")
+    monkeypatch.setenv("MACRO_USE_PROBE_MODE", "strict")  # 2 つ目の process だけが継ぐ
+    answer = cross_tree.run("check")
     assert answer["current"] is False, "macro が返す環境変数の値が違うのに、2 つ目の process が古いと判じない"
