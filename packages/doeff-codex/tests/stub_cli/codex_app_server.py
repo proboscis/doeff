@@ -16,9 +16,10 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - SPANNING の目印(BG-COMMAND・BG-WAIT)が在れば、2 つのターンにまたがる録り(後ろで走る命令の始まりのターンと、その命令が終わる
     次のターン)のうち、目印のターンの通知を流す。前のターンを名乗る遅れた行(命令の終わり)は、この process が前のターンに振った id へ
     差し替える。
-  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS)が在れば、その目印で録ったターンの通知(turn/start の答えの後 〜
-    turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と web 検索の道具の
-    item を持つターン)。
+  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS・OTHER-TOOLS)が在れば、その目印で録ったターンの通知(turn/start の
+    答えの後 〜 そのターンの turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と
+    web 検索の道具の item を持つターン・MCP と動的な道具と画像を見る道具と子の agent の道具の item を持つターン — 子の agent の
+    thread の行〔子のターンの始まりと終わりを含む〕も録った順のまま混ぜて流す)。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
@@ -39,7 +40,7 @@ SETTINGS_PHRASE = "Tell the settings."
 HOME_PHRASE = "Tell the home."
 STEERED_PREFIX = "steered:"
 # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
-REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls"}
+REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls", "OTHER-TOOLS": "other-tools"}
 # 入力の目印 → 2 つのターンにまたがる録りの名と、そのターンを始めた録りの要求の id(turn/start)。
 SPANNING = {"BG-COMMAND": ("background-command", 3), "BG-WAIT": ("background-command", 4)}
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
@@ -137,13 +138,15 @@ class Stub:
         return json.loads(text)
 
     def replayed_turn(self, name: str, turn_id: str) -> list[dict[str, object]]:
-        """録った筋書き name の 1 つ目のターンの通知(turn/start の答えの後から turn/completed まで)を、その録りの thread とターンの
-        id をこの process の id へ差し替えて取るため。"""
+        """録った筋書き name の 1 つ目のターンの通知(turn/start の答えの後から、そのターンの turn/completed まで — 子の agent の
+        ターンの終わりは数えない)を、その録りの thread とターンの id をこの process の id へ差し替えて取るため。"""
         messages = recorded_messages(name)
         thread = str(answer_of(messages, 2)["result"]["thread"]["id"])  # type: ignore[index]  # 録った答えの形は検が確かめている
         turn = str(answer_of(messages, 3)["result"]["turn"]["id"])  # type: ignore[index]  # 同上
         start = messages.index(answer_of(messages, 3)) + 1
-        end = next(index for index, message in enumerate(messages) if index >= start and message.get("method") == "turn/completed")
+        end = next(index for index, message in enumerate(messages)
+                   if index >= start and message.get("method") == "turn/completed"
+                   and message["params"]["turn"]["id"] == turn)  # type: ignore[index]  # 同上
         text = json.dumps(messages[start:end + 1], ensure_ascii=False)
         return json.loads(text.replace(thread, self.mut_thread_id).replace(turn, turn_id))
 
