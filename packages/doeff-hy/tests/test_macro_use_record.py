@@ -783,23 +783,26 @@ DEFRECORD = "doeff_hy.record:defrecord"
 DEFWIRE = "doeff_hy.record:defwire"
 
 
-def _order_child(real_tree: RealTree, mode: str, *names: str, **env: str) -> dict[str, object]:
-    """ORDER_CHILD を子の process で 1 度走らせた答え(env = 足す環境変数 — 写した doeff_hy を読んだことも確かめる)。
+@pytest.fixture
+def writing_tree(real_tree: RealTree, monkeypatch: pytest.MonkeyPatch) -> RealTree:
+    """子の process が .pyc を書く real_tree(書く先は検の一時 dir の PYTHONPYCACHEPREFIX の下 — real_tree が置く)。揺れは
+    record を .pyc から読む process(record.hy の記録の照らしが本体の実行の前に走る)でだけ起きるので、検の一式が子へ渡す
+    ``PYTHONDONTWRITEBYTECODE`` を、この検の間だけ外す。"""
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    return real_tree
 
-    子は .pyc を書く(検の一時 dir の PYTHONPYCACHEPREFIX の下 — real_tree が置く)。揺れは record を .pyc から読む process
-    (record.hy の記録の照らしが本体の実行の前に走る)でだけ起きるので、検の一式が子へ渡す ``PYTHONDONTWRITEBYTECODE`` を外す。"""
+
+def _order_child(real_tree: RealTree, mode: str, *names: str) -> dict[str, object]:
+    """ORDER_CHILD を子の process で 1 度走らせた答え(子は検の環境を継ぐ — 写した doeff_hy を読んだことも確かめる)。"""
     import json
-    import os
     import subprocess
 
-    inherited = {name: value for name, value in os.environ.items() if name != "PYTHONDONTWRITEBYTECODE"}
     done = subprocess.run(
         [sys.executable, "-c", ORDER_CHILD, str(real_tree.root), str(real_tree.stored), mode, *names],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
-        env={**inherited, **env},
     )
     assert done.returncode == 0, done.stderr
     answer = json.loads(done.stdout.strip().splitlines()[-1])
@@ -807,12 +810,21 @@ def _order_child(real_tree: RealTree, mode: str, *names: str, **env: str) -> dic
     return answer
 
 
+def _warm_bytecode(real_tree: RealTree) -> None:
+    """record と wire を 1 度 import して .pyc を作る(日次の 2 回目からの形)。作られた事も確かめる — .pyc が無いと record は
+    毎回 compile され、揺れの起きない形で緑になる(検の一式の PYTHONDONTWRITEBYTECODE が子へ渡った時がそうだった)。"""
+    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")
+    pycache = real_tree.stored.parent / "pycache"
+    assert any(pycache.rglob("record.*.pyc")), f"{pycache} に record.hy の .pyc が無い — 検の前提が崩れた"
+
+
 def test_the_digest_of_deff_does_not_depend_on_computing_defrecord_and_defwire_first(
-    real_tree: RealTree,
+    writing_tree: RealTree,
 ) -> None:
+    real_tree = writing_tree
     # 直す前は赤: 先に defrecord・defwire の digest を計算した process(record を .pyc から読み、record.hy の照らしの途中で
     # outcome_forms を import できない)の deff の digest は、単独の process の digest と違った(959a4c15 / f24dde8b)。
-    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")  # .pyc を作る(日次の 2 回目からの形)
+    _warm_bytecode(real_tree)
     alone = _order_child(real_tree, "digests", DEFF)["digests"]
     after = _order_child(real_tree, "digests", DEFRECORD, DEFWIRE, DEFF)["digests"]
     assert isinstance(alone, list), alone
@@ -824,12 +836,13 @@ def test_the_digest_of_deff_does_not_depend_on_computing_defrecord_and_defwire_f
 
 
 def test_a_deff_user_stays_current_in_a_process_that_computed_defrecord_and_defwire_first(
-    real_tree: RealTree,
+    writing_tree: RealTree,
 ) -> None:
+    real_tree = writing_tree
     # 直す前は赤: 単独の process では当たる deff の使い手の記録が、先に defrecord・defwire の digest を計算した process では
     # 古い(deff)と判じられた — 置き場の entry を、import の順の違う process が互いに書き直す元。
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFF_USER, encoding="utf-8")
-    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")  # .pyc を作る
+    _warm_bytecode(real_tree)
     _order_child(real_tree, "record")
     assert _order_child(real_tree, "check")["current"] is True, "単独の process で deff の使い手の記録が古い"
     assert _order_child(real_tree, "check", DEFRECORD, DEFWIRE)["current"] is True, (
@@ -843,24 +856,29 @@ RECORD_FIRST = ("doeff_hy.record", "doeff_hy.wire", "doeff_hy.clause_endings")
 DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy.clause_endings", "doeff_hy.wire", "doeff_hy.record")
 
 
+def _import_round(
+    real_tree: RealTree,
+    monkeypatch: pytest.MonkeyPatch,
+    store: Path,
+    pycache: Path,
+    order: tuple[str, ...],
+) -> tuple[str, object]:
+    """共有の保存先 store と、この process だけの空の pycache で order の順に import した 1 回(最初の module と、compile し
+    終えた Hy の file)。"""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(pycache))
+    return (order[0], _order_child(real_tree, "import", *order)["compiled"])
+
+
 def test_processes_importing_in_different_orders_share_the_store_without_recompiling(
-    real_tree: RealTree, tmp_path: Path
+    writing_tree: RealTree, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # 直す前は赤: 共有の置き場 1 つを、import の順の違う process が交互に使うと(pycache は毎回空 — 日次の pytest の段の形)、
     # 2 巡目からも毎回 record.hy・outcome_forms.hy・wire.hy・clause_endings.hy を作り直して置き場を書き直した。
     store = tmp_path / "store"
     store.mkdir()
     rounds = tuple(
-        (
-            order[0],
-            _order_child(
-                real_tree,
-                "import",
-                *order,
-                DOEFF_HY_CODE_STORE=str(store),
-                PYTHONPYCACHEPREFIX=str(tmp_path / f"pycache-{index}"),
-            )["compiled"],
-        )
+        _import_round(writing_tree, monkeypatch, store, tmp_path / f"pycache-{index}", order)
         for index, order in enumerate((RECORD_FIRST, DEFF_USER_FIRST) * 2)
     )
     assert rounds[0][1], "1 巡目(冷えた置き場)で何も compile していない — 検の前提が崩れた"
