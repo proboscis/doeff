@@ -406,6 +406,9 @@ def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
     # ようにする(テストの実行の側の DOEFF_HY_CODE_STORE・doeff-effect-analyzer の DOEFF_EFFECT_ANALYZER_CACHE と同じ形)。
     from doeff_hy.static_cache import default_cache_dir
 
+    # 名指しの無い形を確かめるので、走らせる側(日次の task・worker)が渡す名指しを外す(日次 10-11 08:05 JST の赤 — 名指しが
+    # 在ると XDG の段に届かない)。
+    monkeypatch.delenv("DOEFF_HY_CHECK_CACHE", raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert default_cache_dir() == tmp_path / "xdg" / "doeff-hy-check"
     monkeypatch.setenv("DOEFF_HY_CHECK_CACHE", str(tmp_path / "kept"))
