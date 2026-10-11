@@ -397,7 +397,7 @@ def _watchdog_timeout_for_item(item) -> int:
 # finds is the test's own red: a tool that starts and then answers wrong (or
 # lacks a login), a checkout whose content differs from what the test expects.
 # ---------------------------------------------------------------------------
-_CHECK_LAYER = Path.home() / "dotfiles" / "agentcli" / "src" / "agentcli" / "remote_check.py"
+_CHECK_LAYER = Path.home() / "dotfiles" / "agentcli" / "src" / "agentcli" / "ai" / "entry" / "remote_check.py"
 _CHECK_LAYER_MODULE = "doeff_check_layer_remote_check"
 _PREMISE_UNMET = "machine premise unmet:"
 #: The check layer's word for "the command's executable cannot be started here".
