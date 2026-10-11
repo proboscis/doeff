@@ -150,7 +150,8 @@
 (defk absorb [#^ SessionRuntime runtime record]
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
   "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンの記録はそのターンの出来事へ(終わりは end へ)・codex からの要求は
-   走っているターンへ(答えを待つ id として)・ほかは走っているターンへ(無ければ outside)。lock の中で呼ぶ。"
+   走っているターンへ(答えを待つ id として)・ほか(ターンを名乗らない口座の枠の知らせ RateLimits を含む — 利用枠切れの断りの前に
+   届き、上の層がそのターンの尽きた窓を読む)は走っているターンへ(無ければ outside)。lock の中で呼ぶ。"
   (match record
     (lines.Response) (setv (get runtime.answers record.id) record)
     (lines.ErrorResponse) (setv (get runtime.answers record.id) record)

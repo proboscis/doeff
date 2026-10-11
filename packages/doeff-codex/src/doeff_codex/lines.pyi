@@ -124,6 +124,22 @@ class TokenUsageParamsWire:
     token_usage: TokenUsageWire
 
 @dataclass(frozen=True, kw_only=True)
+class RateLimitWindowWire:
+    used_percent: int
+    window_duration_mins: int | None = None
+    resets_at: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class RateLimitSnapshotWire:
+    limit_id: str | None = None
+    primary: RateLimitWindowWire | None = None
+    secondary: RateLimitWindowWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class RateLimitsParamsWire:
+    rate_limits: RateLimitSnapshotWire
+
+@dataclass(frozen=True, kw_only=True)
 class UnknownValue:
     value: OpaqueJson
 
@@ -225,6 +241,18 @@ class TurnEnded:
     http_status: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class RateLimitWindow:
+    used_percent: int
+    minutes: int | None
+    resets_at: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class RateLimits:
+    limit_id: str | None
+    primary: RateLimitWindow | None
+    secondary: RateLimitWindow | None
+
+@dataclass(frozen=True, kw_only=True)
 class Other:
     method: str
 
@@ -232,7 +260,7 @@ class Other:
 class Unparsed:
     method: str
     reason: str
-CodexLine: TypeAlias = Response | ErrorResponse | ServerRequest | ThreadStarted | TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | TurnError | TurnEnded | Other | Unparsed
+CodexLine: TypeAlias = Response | ErrorResponse | ServerRequest | ThreadStarted | TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | RateLimits | TurnError | TurnEnded | Other | Unparsed
 
 @dataclass(frozen=True, kw_only=True)
 class ErrorFacts:
@@ -261,6 +289,12 @@ def turn_error_of(params: ErrorParamsWire) -> _Program[TurnError, object]:
     ...
 
 def token_usage_of(params: TokenUsageParamsWire) -> _Program[TokenUsage, object]:
+    ...
+
+def window_of(window: RateLimitWindowWire | None) -> _Program[RateLimitWindow | None, object]:
+    ...
+
+def rate_limits_of(params: RateLimitsParamsWire) -> _Program[RateLimits, object]:
     ...
 
 def item_started_of(params: ItemParamsWire) -> _Program[ItemStarted, object]:
