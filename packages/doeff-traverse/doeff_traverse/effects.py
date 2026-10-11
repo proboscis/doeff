@@ -265,7 +265,9 @@ class ItemOutcomeNotPassedError(RuntimeError):
     """A consumer of ItemOutcome answered the report or threw into it instead of passing it on.
 
     Raised by the Traverse handler where it performed the report (it fails the Traverse:
-    the consumer is wrong). ``cause`` is what the consumer threw, or None when it answered.
+    the consumer is wrong). It is no item's failure: a Traverse around a nested one lets it
+    through instead of keeping it in its Collection as a failed item. ``cause`` is what the
+    consumer threw, or None when it answered.
     """
 
     def __init__(self, report: ItemOutcome, cause: BaseException | None) -> None:

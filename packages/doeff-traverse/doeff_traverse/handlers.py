@@ -199,9 +199,12 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                         prog = install(prog)
                     prog = try_handler(install_self(prog))
 
-                    # Catch unhandled failures per item
+                    # Catch unhandled failures per item — but not a consumer breaking the
+                    # ItemOutcome contract in a nested Traverse: that is no item's failure.
                     try:
                         value = yield prog
+                    except ItemOutcomeNotPassedError:
+                        raise
                     except Exception as error:
                         result, outcome = ItemResult(
                             index=item.index,
@@ -395,6 +398,9 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
 
                     result = yield attempt()
                     yield ReleaseSemaphore(sem)
+                    if not isinstance(result, Ok) and isinstance(result.error, ItemOutcomeNotPassedError):
+                        # A consumer broke the ItemOutcome contract in a nested Traverse: no item's failure.
+                        raise result.error
                     if not isinstance(result, Ok):
                         done, outcome = ItemResult(
                             index=item.index,
@@ -574,6 +580,8 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                     # NO Try wrapper — exceptions propagate to Gather
                     try:
                         value = yield prog
+                    except ItemOutcomeNotPassedError:
+                        raise  # a consumer broke the ItemOutcome contract in a nested Traverse: no item's failure
                     except Exception as error:
                         if report_under is not None:
                             failed = ItemResult(
