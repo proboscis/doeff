@@ -108,8 +108,8 @@ struct Args {
     #[arg(long)]
     hook: bool,
 
-    /// git の commit の hook として走る — stage した source と repo 全体の規則(`[tool.doeff-linter.commit_hook] whole_repo_rules`)を
-    /// HEAD と比べ、新しい破れが在れば終了コード 1([issue])
+    /// git の commit の hook として走る — stage した source に file 1 つで決まる規則を当てて
+    /// HEAD の版と比べ、新しい破れが在れば終了コード 1([issue]・repo 全体の規則は当てない — card [id])
     #[arg(long)]
     commit_hook: bool,
 
