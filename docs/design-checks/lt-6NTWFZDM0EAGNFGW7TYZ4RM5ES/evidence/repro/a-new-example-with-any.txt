@@ -1,0 +1,52 @@
+# 盲検 A の再現(df9e62756 の木 + 例 ex10 と期待の出力を足しただけ・CASE_FAILURE_MUTANTS は変えない)
+# ex10 = ex04_simple.hy の 1〜28 行(require から pipeline の定義まで)+ 所要時間を印字する 4 行。期待の出力 = 'Valid: [2, 4, 6] in …s'
+$ uv run --no-sync pytest -q -m "not e2e" "packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_timed_double.hy]" packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are tests/test_contract_table_follows_packages.py::test_changing_an_example_or_its_macros_selects_the_examples_check
+
+deadline scale x2.6 (load per usable CPU) — per test 157s, watchdog 235s
+
+test-admission: focused — 3 件(変更箇所の検証)
+.F.                                                                      [100%]
+=================================== FAILURES ===================================
+____________________ test_tables_name_examples_as_they_are _____________________
+
+    def test_tables_name_examples_as_they_are() -> None:
+        """期待の出力は比べる例ちょうどに在り、比べない表と変異の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
+        compared = [name for name in _runnable() if name not in OUTPUT_NOT_COMPARED]
+        present = {path.name for path in EXPECTED.glob("*.txt")}
+        assert present - {_expected(name).name for name in compared} == set(), (
+            "比べる例の無い期待の出力が在る — 消すか、例を BROKEN から外す"
+        )
+        assert set(OUTPUT_NOT_COMPARED) - set(_runnable()) == set(), (
+            "OUTPUT_NOT_COMPARED の行が走る例を名指さない"
+        )
+        with_any = {
+            name
+            for name in compared
+            if _expected(name).is_file() and ANY in _expected(name).read_text(encoding="utf-8")
+        }
+>       assert with_any - set(CASE_FAILURE_MUTANTS) == set(), (
+            f"期待の出力に {ANY} を置いた例に、件の中で失敗する変異が無い — CASE_FAILURE_MUTANTS に行を足す"
+        )
+E       AssertionError: 期待の出力に … を置いた例に、件の中で失敗する変異が無い — CASE_FAILURE_MUTANTS に行を足す
+E       assert {'ex10_timed_double.hy'} == set()
+E         
+E         Extra items in the left set:
+E         'ex10_timed_double.hy'
+E         Use -v to get more diff
+
+packages/doeff-traverse/tests/test_examples_run.py:286: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-examples-premerge-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
+1 failed, 2 passed, 1 warning in 1.39s
+rc=1
+$ uv run --no-sync python select_probe.py . packages/doeff-traverse/examples/ex10_timed_double.hy packages/doeff-traverse/examples/expected/ex10_timed_double.txt
+選ぶ  packages/doeff-traverse/examples/ex10_timed_double.hy  -> ['packages/doeff-traverse/tests/test_traverse_answer_types.py', 'packages/doeff-traverse/tests/test_examples_run.py', 'tests/test_daily_test_population.py', 'tests/test_contract_table_follows_packages.py']
+選ぶ  packages/doeff-traverse/examples/expected/ex10_timed_double.txt  -> ['packages/doeff-traverse/tests/test_traverse_answer_types.py', 'packages/doeff-traverse/tests/test_examples_run.py', 'tests/test_daily_test_population.py', 'tests/test_contract_table_follows_packages.py']
+rc=0
