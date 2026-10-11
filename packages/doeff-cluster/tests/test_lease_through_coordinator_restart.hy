@@ -1,4 +1,4 @@
-;; coordinator が止まって起き直した時、止まっていた間に延ばせなかった lease を切らない(agora-controllers の card ki-3b7498747e4c — 親
+;; coordinator が止まって起き直した時、止まっていた間に延ばせなかった lease を切らない(ki-3b7498747e4c — 親
 ;; ki-be59e760eb6c。10-11 00:25:51 UTC の coordinator の作り直しで約 1〜2 分 延ばしが届かず、盤は戻った時の自分の時計で期限を判じて
 ;; 持ち主の会話の lease を切り、待っていた別の process に渡した — 同じ会話のターンが 2 本並んだ根)。
 ;;

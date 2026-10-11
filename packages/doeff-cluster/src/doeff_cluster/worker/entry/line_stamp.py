@@ -122,8 +122,8 @@ def read_some(source: int) -> bytes:
 class ShipLimits:
     """送りの上限(頭の註の「送り」): queue_lines と queue_bytes = 送りを待つ行の溜めの上限(行の数と中身の byte — 越える行は捨てて
     数える)・line_bytes = 1 行の中身(送る body の UTF-8)の上限(越えた分は送らず、行に印 doeff.cut を付ける — 取り決め job-log/1 の
-    1 行の上限。定義元は agora-controllers の deploy/claude-telemetry/claude-telemetry.yaml で、値と印の名が合う事は同じ repo の
-    controllers/agora_sim/tests/test_job_log_route.hy が見張る)・batch_lines と batch_bytes = 1 回の POST に
+    1 行の上限。定義元は使い手の repo の deploy/claude-telemetry/claude-telemetry.yaml で、値と印の名が合う事は同じ repo の
+    job の log の経路の検 test_job_log_route.hy が見張る)・batch_lines と batch_bytes = 1 回の POST に
     束ねる上限・interval_seconds = 束が満ちなくても送るまでの間・post_seconds = 1 回の POST の待ちの上限・end_seconds = 終わり(end)に
     残りを送る上限(shim の掃除の余裕 WorkerPolicy.shim-sweep-margin-ms 1.5 秒の内に、読み切りの上限 DRAIN_LIMIT_SECONDS と並べて
     収まる値)・pause_seconds = POST が失敗した後、次の POST までの間(落ちた送り先を叩き続けない)。"""

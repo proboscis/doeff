@@ -1,7 +1,7 @@
-"""doeff-codex の Hy の module の型の宣言のうち、doeff_hy.static_stub が作った .pyi の失敗ケース(agora-controllers の日次 10-11 12:00)。
+"""doeff-codex の Hy の module の型の宣言のうち、doeff_hy.static_stub が作った .pyi の失敗ケース(使い手の repo の日次 10-11 12:00)。
 
-使い手の repo(agora-controllers の agent_runtime.hy と codex の手番の検)が import する fake の名は .pyi が無く、strict の型の門が
-書き手に直せない Unknown の赤で止まった(FakeCodexWorld・FakeReply の型が分からない・card acp:kanban-issue:ki-f63f65c153b0)。
+使い手の repo(agent_runtime.hy と codex の手番の検)が import する fake の名は .pyi が無く、strict の型の門が
+書き手に直せない Unknown の赤で止まった(FakeCodexWorld・FakeReply の型が分からない・ki-f63f65c153b0)。
 .pyi は道具が .hy から作る(doeff-claude-code の tests/test_generated_stubs.py と同じ形)。
 
 - 使い手が import する名を 1 つずつ束ねた検の module に、「型が分からない」の赤が出ない(.pyi を外すと赤になる)。

@@ -334,7 +334,7 @@
 (val COMPACTING-STATUS "compacting")
 
 (defrecord CompactStarted
-  "CLI が会話の context の圧縮を始めた行(system/status の status = compacting — agora card ki-aeae6f9e643d)。上の層が、圧縮の間
+  "CLI が会話の context の圧縮を始めた行(system/status の status = compacting — ki-aeae6f9e643d)。上の層が、圧縮の間
    (要約を作る数十秒〜数分 — 実測 2026-10-10 の 2 分)会話の画面に圧縮中を出すため。終わりは CompactBoundary(compact_boundary)。
    行は token 数も起き方も持たない(それは終わりの行が持つ)。status の他の状態(requesting など)は今までどおり Other。")
 
