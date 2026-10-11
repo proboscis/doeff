@@ -1,0 +1,20 @@
+# C1(S1 正常例): ex07 の stack の fail_handler を normalize_to_none に替えるだけ(M2 だけの変更)・2026-10-11T20:49:16Z
+## 差分(例 → 変種。after の版)
+28c28
+< (import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
+---
+> (import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler normalize-to-none :as normalize_to_none])
+203c203
+<   [try_handler mock-backend fail_handler (sequential)]
+---
+>   [try_handler mock-backend normalize_to_none (sequential)]
+## before: uv run python -m hy C1-ex07-normalize-before(sequential の段だけ normalize_to_none)
+rc=0
+=== sequential (failed items skipped) ===
+Success: 3
+Failed: 2
+## after: uv run python -m hy C1-ex07-normalize-after(sequential の段だけ normalize_to_none)
+rc=0
+=== sequential (failed items skipped) ===
+Success: 5
+Failed: 0

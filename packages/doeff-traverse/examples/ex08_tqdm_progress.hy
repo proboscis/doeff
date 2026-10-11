@@ -31,14 +31,21 @@
    Uses the Traverse label as the bar description.
    Mutates the Traverse effect's f to wrap with tqdm update,
    then reperforms the effect to the next handler (sequential/parallel).
-   Other effects are not matched, so defhandler passes them through."
+   Other effects are not matched, so defhandler passes them through.
+
+   The bar counts items whose f finished. An item that fails, that an earlier
+   stage carried over as failed, or that When skipped is not counted, so the bar
+   can stop short of total and stay open: the Traverse handler answers the whole
+   Collection at once and does not report each item's outcome. Reperform is
+   required (the same k keeps the inner handlers visible to each item), so this
+   handler cannot run code when the Traverse finishes either."
   (Traverse [f items label]
     ;; Materialize for len (tqdm needs total)
     (setv all-items (if (isinstance items Collection) items (list items)))
     (setv bar (tqdm :total (len all-items)
                     :desc (or label "traverse")
                     :leave True))
-    ;; Wrap f: call original, then update bar (close it after the last item)
+    ;; Wrap f: call original, then update bar (close it when every item has finished)
     (defn wrapped [x]
       (do!
         (<- result (f x))

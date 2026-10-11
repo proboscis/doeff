@@ -1,0 +1,28 @@
+# C5(S3 正常例): mock-backend だけを替える・2026-10-11T20:50:41Z
+## c5o: diff 例 → 変種
+## uv run python -m hy C5-c5o
+rc=0
+Success: 3
+Failed: 2
+=== probe: 失敗の件を型で分ける(公開契約 SymbolNotFound / MarketClosed) ===
+{'SymbolNotFound': 1, 'MarketClosed': 1}
+## c5a: diff 例 → 変種
+<       (= symbol "CLOSED")
+>       (in symbol #{"CLOSED" "MSFT"})
+## uv run python -m hy C5-c5a
+rc=0
+Success: 2
+Failed: 3
+=== probe: 失敗の件を型で分ける(公開契約 SymbolNotFound / MarketClosed) ===
+{'SymbolNotFound': 1, 'MarketClosed': 2}
+## c5b: diff 例 → 変種
+<           (<- (Fail (SymbolNotFound (+ "symbol not found: " symbol))
+>           (<- (Fail (SymbolNotFound (+ "unknown symbol: " symbol))
+<           (<- (Fail (MarketClosed (+ "market closed for: " symbol))
+>           (<- (Fail (MarketClosed (+ "exchange closed: " symbol))
+## uv run python -m hy C5-c5b
+rc=0
+Success: 3
+Failed: 2
+=== probe: 失敗の件を型で分ける(公開契約 SymbolNotFound / MarketClosed) ===
+{'SymbolNotFound': 1, 'MarketClosed': 1}
