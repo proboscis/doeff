@@ -108,9 +108,12 @@
 
 ;; 深く凍らせた JSON の値の型の名(freeze-json・frozen-json-object が作る写像の中の値)。型の検査は型の宣言 frozen.pyi の FrozenJson
 ;; (写像は FrozenMap・列は tuple に深く凍った JSON の値の再帰の別名)を読む。ここは Hy の module が欄の注記に `(get FrozenMap FrozenJson)`
-;; と書けるための実行時の名で、値は 1 段だけの和(再帰の別名は Python 3.10 の実行時に書けない — 中の要素は object)。前は実行時の名が
+;; と書けるための実行時の名で、値は外側の型だけの 1 段の和(再帰の別名は Python 3.10 の実行時に書けない)。前は実行時の名が
 ;; 無く、深く凍らせた JSON の写像の欄を型引数の無い FrozenMap としか書けなかった(#4257)。
-(setv FrozenJson (| (get FrozenMap object) (get tuple #(object ...)) str int float bool None))
+;; 和に総称型(FrozenMap[object]・tuple[object, ...])を置かない: 契約 (: x FrozenJson)・束縛 (<- x FrozenJson e) は名をそのまま
+;; isinstance に渡すので(type_forms.py が外側の型へ写すのは字面の総称型だけ)、どの値でも TypeError になった(agora の受付が
+;; 500 を返した — card acp:kanban-issue:ki-e540d658e378)。実行時に確かめるのは外側の型だけ(#1790 の決め)。
+(setv FrozenJson (| FrozenMap tuple str int float bool None))
 
 
 (defn #^ bool deeply-frozen? [#^ object value]
