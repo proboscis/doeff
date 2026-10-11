@@ -235,6 +235,15 @@ tests = [
     "packages/doeff-traverse/tests/test_examples_run.py",
 ]
 
+# Hy の版を変える変更(uv.lock の hy の行)は、doeff が hy.* から import する名(macros.hy の hy.scoping の 3 つなど — Hy の公開の
+# API に無い名)が新しい版に在る事を登記の前に確かめる(card ki-a05a752e7545・ADR-DOE-HY-008 R4)。検は照合の版を uv.lock から読み、
+# 使い捨ての環境で import するので、作業木の venv を sync する前でも新しい版で測る。uv.lock の他の行の変更でも払う。
+[[tool.doeff.contract-tests]]
+prefix = "uv.lock"
+tests = [
+    "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_imports_exist_in_pypi_hy",  # 9.7 秒
+]
+
 # macro の実行時の半分(`<-`・`!` の束ねの開き方 — doeff-hy の outcome_forms.hy「実行時の意味は doeff_core_effects.outcomes が持ち」)
 # の変更も、例の検を選ぶ。doeff-core-effects の他の file には払わせない(file の接頭辞)。上の行だけでは選ばれず、この file の変更で
 # 例 ex05・ex08 が赤になる形を設計検証の盲検 B が見つけた(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。
