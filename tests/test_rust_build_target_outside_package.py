@@ -91,7 +91,8 @@ def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
     """build の process の命令の頭に付ける `env`: 子はこの process の環境を継ぎ、CARGO_TARGET_DIR を外して(`env -u`)渡す時だけ置き、
     一時の dir の置き場を temp_root に向ける。"""
     # wheel の置き場も検ごとの dir に(利用者の ~/.cache に書かず、検どうしで同じ source の wheel を引き合わない — agora-redesign #2364)。
-    settings = [f"TMPDIR={temp_root}", f"DOEFF_WHEEL_CACHE={temp_root / 'wheel-cache'}"]
+    # 機体の外の置き場は引かない(この検は手元で組む道を見る — 置き場の検は tests/test_wheel_remote_store.py)。
+    settings = [f"TMPDIR={temp_root}", f"DOEFF_WHEEL_CACHE={temp_root / 'wheel-cache'}", "DOEFF_WHEEL_REMOTE="]
     match target_dir:
         case None:
             target: list[str] = []
