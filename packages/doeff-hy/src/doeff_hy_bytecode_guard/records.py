@@ -2,15 +2,16 @@
 
 記録は Hy の module の code object の定数の末尾に 1 つ置く組:
 
-    ("doeff-hy/macro-dependencies/3", <Hy の版>,
-     ((<表の名>, <提供元の module 名>, <macro 名>, <digest>), ...),   # 展開が使った macro
-     (<引いて無かった名>, ...),                                          # 表に無かった名(後から同じ名の macro が足されたら古い)
+    ("doeff-hy/macro-dependencies/5", <Hy の版>,
+     ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None>), ...),   # 展開が使った macro
+     (<引いて無かった名>, ...),                                                  # 表に無かった名(後から同じ名の macro が足されたら古い)
      (<表に macro を入れた提供元の module 名>, ...),
-     ((<module 名>, <属性の名>, <digest>), ...),                         # macro の外で展開の結果を変える値
-     ((<module 名>, <file の sha256>), ...))                             # 閉包の中で file 単位で覆う module
+     ((<module 名>, <属性の名>, <digest か None>), ...),                         # macro の外で展開の結果を変える値
+     ((<module 名>, <file の sha256>), ...))                                     # 閉包が依った module の file
 
-digest は macro の関数の code の閉包の digest(作り方と照らし方は :mod:`doeff_hy_bytecode_guard.macro_use`)。file の path は
-持たない — 照らす時に module 名から今の環境で引き直す。
+digest は macro の関数の code の閉包の digest(作り方と照らし方は :mod:`doeff_hy_bytecode_guard.macro_use`)。閉包の歩みが
+import の途中の module か import できない module に当たった時は None(その時の材料は import の進み具合に依る)— その行は
+digest で比べず、閉包が依った module の file で比べる。file の path は持たない — 照らす時に module 名から今の環境で引き直す。
 
 code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
 image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
@@ -38,7 +39,11 @@ from typing import TypeVar
 #: 4 = 閉包の中の辿れない値を file の全体でなく狭く覆う digest(大域の表は名を束縛し書き換える source の文・拡張の class は名と
 #: 公開の形・ContextVar は名と既定値 — agora-redesign #3938)。3 の記録の digest は今の作り方で引き直すと必ず合わないので、上げなくても
 #: 1 度は古いと判じられるが、形の世代を記録の印で分ける(鍵の印を上げない理由は 2 と同じ)。
-RECORD_TAG = "doeff-hy/macro-dependencies/4"
+#: 5 = import の途中の状態で作った digest を記録に入れない(None)・file の行を、import できなかった module から閉包が依った
+#: module の全部へ広げ、digest で比べられない行がある時だけ比べる(agora-redesign card ki-464fa307a62b — 循環する import の途中の
+#: digest が process の import の順で変わり、順の違う process が置き場の entry を互いに書き直した)。4 の記録の file の行は
+#: 意味が違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
+RECORD_TAG = "doeff-hy/macro-dependencies/5"
 
 #: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。
 MACRO_TABLE = "_hy_macros"
@@ -69,12 +74,13 @@ class MacroDependency:
 @dataclass(frozen=True)
 class UsedMacro:
     """展開が使った macro 1 つ — 引いた表の名(``_hy_macros`` / ``_hy_reader_macros``)・macro を定義した module の名・その
-    module の表の中の名・macro の関数の code の閉包の digest。"""
+    module の表の中の名・macro の関数の code の閉包の digest(記録を作った時に閉包の歩みが import の途中の module か import
+    できない module に当たった時は None — 記録の file の行で比べる)。"""
 
     table: str
     module: str
     name: str
-    digest: str
+    digest: str | None
 
 
 @dataclass(frozen=True)
@@ -88,17 +94,19 @@ class ValueReference:
 
 @dataclass(frozen=True)
 class UsedValue:
-    """macro の外で展開の結果を変える値 1 つ — 在処(module の名・属性の名)と、値の閉包の digest。"""
+    """macro の外で展開の結果を変える値 1 つ — 在処(module の名・属性の名)と、値の閉包の digest(None の意味は
+    :class:`UsedMacro` と同じ)。"""
 
     module: str
     name: str
-    digest: str
+    digest: str | None
 
 
 @dataclass(frozen=True)
 class UsedFile:
-    """閉包の中で file 単位で覆う module 1 つ(macro の本体の中の import・hy.R の呼び出し・package の下の module の先)— module の
-    名と、記録を作った時の file の sha256。照らす時は module を import せず、module 名から今の環境の file を引いて比べる。"""
+    """閉包が依った module 1 つ(歩みが辿った物の持ち主・import できなかった macro の本体の中の import の先)— module の名と、
+    記録を作った時の file の sha256。digest で比べられない行(記録か今の歩みが import の途中の module に当たった)がある時だけ
+    比べる。照らす時は module を import せず、module 名から今の環境の file を引いて比べる。"""
 
     module: str
     sha256: str
@@ -124,7 +132,8 @@ class MacroRecord:
       名の macro を持つと、その呼び出しは macro の展開に変わる。
     - ``providers``: 使い手が macro を全部 require した提供元(名を選んだ require は入らない)。
     - ``values``: macro の外で展開の結果を変える値。
-    - ``files``: 閉包の中で file 単位で覆う module(照らす時に import しない — 照らしが import の順を変えないため)。
+    - ``files``: ``macros`` と ``values`` の閉包が依った module の file(digest で比べられない行がある時だけ比べる — 照らす時に
+      import しない)。
     """
 
     hy_version: str
@@ -242,7 +251,7 @@ def _whole_require(row: object) -> WholeRequire | None:
 def _used_macro(row: object) -> UsedMacro | None:
     """記録の使った macro の行 1 つ(形が違えば None)。"""
     match row:
-        case [str(table), str(module), str(name), str(digest)]:
+        case [str(table), str(module), str(name), digest] if digest is None or isinstance(digest, str):
             return UsedMacro(table, module, name, digest)
         case _:
             return None
@@ -251,7 +260,7 @@ def _used_macro(row: object) -> UsedMacro | None:
 def _used_value(row: object) -> UsedValue | None:
     """記録の macro の外の値の行 1 つ(形が違えば None)。"""
     match row:
-        case [str(module), str(name), str(digest)]:
+        case [str(module), str(name), digest] if digest is None or isinstance(digest, str):
             return UsedValue(module, name, digest)
         case _:
             return None

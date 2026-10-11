@@ -17,8 +17,13 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
 - 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
   file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
   .pyc を読む途中(import の途中)に走るので、関数の中の import の先は、展開の時には通らない枝で、循環する import の途中の
-  module を require して落ちうる — 落ちた時は名だけを入れ、記録の ``files`` にその file の sha256 を置く(照らす時は
-  import せずに比べる)。
+  module を require して落ちうる — 落ちた時は名だけを入れる。
+- import の途中の状態の digest(agora-redesign card ki-464fa307a62b): 歩みが import の途中の module(名前空間がまだ揃って
+  いない)か import できない module に当たった digest は、import の進み具合 — どの process がどの順で何を読んだか — に依る
+  (deff の閉包の doeff_hy.outcome_forms は、doeff_hy.record を .pyc から読む途中では import できず、読み込みの済んだ process
+  では中身ごと辿られる)。その digest は process の覚えに入れず、記録にも入れない(None)。記録は代わりに、閉包が依った
+  module の file の sha256(:attr:`MacroRecord.files`)を持ち、記録か今の歩みのどちらかが import の途中に当たった行は、
+  digest でなくその file で比べる。両方が読み込みの済んだ状態なら digest で比べる(file の行は見ない)。
 - enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
 - 辿れない値を狭く覆う(agora-redesign #3938):
   - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
@@ -157,15 +162,12 @@ class MacroRecording:
             (reference, value_digest(reference, self._sha256_of))
             for reference in sorted(also, key=lambda reference: (reference.module, reference.name))
         )
-        unimportable = {
-            *(module for _, closure in macros for module in closure.unimportable),
-            *(
-                module
-                for _, closure in others
-                if closure is not None
-                for module in closure.unimportable
-            ),
-        }
+        depended = frozenset(
+            module
+            for closure in (*(closure for _, closure in macros), *(closure for _, closure in others))
+            if closure is not None
+            for module in closure.modules
+        )
         return MacroRecord(
             self._hy_version,
             tuple(
@@ -179,34 +181,70 @@ class MacroRecording:
                 for reference, closure in others
                 if closure is not None
             ),
-            _unimportable_files(frozenset(unimportable), self._sha256_of),
+            _closure_files(depended, self._sha256_of),
         )
 
 
 def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of) -> bool:
-    """記録が今の環境に合うか — Hy の版、file 単位で覆う module の file(import しない)、使った macro を module 名から今の環境で
-    引き直した digest(定義した module を import する — 使い手の require がどのみち import する module)、引いて無かった名が
-    今も提供元に無いこと、macro の外の module の digest。"""
-    return (
-        record.hy_version == hy_version
-        and all(_macro_is_current(used, sha256_of) for used in record.macros)
-        and all(_file_is_current(used, sha256_of) for used in record.files)
-        and all(_still_absent(provider, record.absent) for provider in record.providers)
-        and all(_value_is_current(used, sha256_of) for used in record.values)
+    """記録が今の環境に合うか — Hy の版、使った macro を module 名から今の環境で引き直した digest(定義した module を import
+    する — 使い手の require がどのみち import する module)と macro の外の値の digest、引いて無かった名が今も提供元に無いこと。
+    digest で比べられない行(記録か今の歩みが import の途中の module に当たった)があれば、閉包が依った module の file
+    (import しない)も比べる。"""
+    if record.hy_version != hy_version:
+        return False
+    by_files = False
+    for check in _row_checks(record, sha256_of):
+        match check:
+            case RowCheck.STALE:
+                return False
+            case RowCheck.BY_FILES:
+                by_files = True
+            case RowCheck.SAME:
+                pass
+    return all(_still_absent(provider, record.absent) for provider in record.providers) and (
+        not by_files or all(_file_is_current(used, sha256_of) for used in record.files)
     )
 
 
+class RowCheck(enum.Enum):
+    """記録の digest の行 1 つ(使った macro・macro の外の値)の照らしの結末。
+
+    - SAME = 今の digest が記録と同じ。
+    - STALE = 違う・今の環境で引けない・記録は import の途中の状態で作ったが今は比べられる(作り直した記録は比べられる)。
+    - BY_FILES = 今の歩みが import の途中の module に当たった — 記録の file の行(閉包が依った module の file)で比べる。
+    """
+
+    SAME = "same"
+    STALE = "stale"
+    BY_FILES = "by-files"
+
+
+def _row_checks(record: MacroRecord, sha256_of: Sha256Of) -> Iterator[RowCheck]:
+    """記録の digest の行を順に今の環境で照らす(呼び手は古い行に当たったら止める — 残りの macro を import しない)。"""
+    for used in record.macros:
+        macro = _macro_now(used.table, used.module, used.name)
+        key = UsedMacroKey(used.table, used.module, used.name)
+        yield _row_check(used.digest, None if macro is None else macro_digest(key, macro, sha256_of))
+    for value in record.values:
+        reference = ValueReference(value.module, value.name)
+        yield _row_check(value.digest, value_digest(reference, sha256_of))
+
+
+def _row_check(recorded: str | None, now: "ClosureDigest | None") -> RowCheck:
+    """記録の digest(None = 記録の時に import の途中だった)と今の閉包(None = 今の環境で引けない)の照らしの結末。"""
+    if now is None:
+        return RowCheck.STALE
+    if now.digest is None:
+        return RowCheck.BY_FILES
+    if recorded is None:
+        return RowCheck.STALE
+    return RowCheck.SAME if now.digest == recorded else RowCheck.STALE
+
+
 def _file_is_current(used: UsedFile, sha256_of: Sha256Of) -> bool:
-    """file 単位で覆う module の file が記録と同じ中身か(module は import しない)。"""
+    """閉包が依った module の file が記録と同じ中身か(module は import しない)。"""
     path = _module_file(used.module)
     return path is not None and sha256_of(path) == used.sha256
-
-
-def _macro_is_current(used: UsedMacro, sha256_of: Sha256Of) -> bool:
-    """使った macro を今の環境で引き直した digest が記録と同じか(引けなければ偽)。"""
-    macro = _macro_now(used.table, used.module, used.name)
-    key = UsedMacroKey(used.table, used.module, used.name)
-    return macro is not None and macro_digest(key, macro, sha256_of).digest == used.digest
 
 
 def _still_absent(provider: WholeRequire, absent: tuple[str, ...]) -> bool:
@@ -261,12 +299,6 @@ def _exported(module_name: str) -> frozenset[str]:
     return frozenset(name for name in names if not name.startswith("_"))
 
 
-def _value_is_current(used: UsedValue, sha256_of: Sha256Of) -> bool:
-    """macro の外の値の今の digest が記録と同じか。"""
-    closure = value_digest(ValueReference(used.module, used.name), sha256_of)
-    return closure is not None and closure.digest == used.digest
-
-
 @dataclass(frozen=True)
 class UsedMacroKey:
     """使った macro の在処(表の名・定義した module の名・その module の表の中の名)— 照らす時に今の環境で引き直す鍵。"""
@@ -283,10 +315,12 @@ class UsedMacroKey:
 
 @dataclass(frozen=True)
 class ClosureDigest:
-    """閉包 1 つの digest と、その中で file 単位で覆う module の名(digest には名だけが入る)。"""
+    """閉包 1 つの digest と、閉包が依った module の名(歩みが辿った物の持ち主・import できなかった module — 記録の file の
+    行になる)。digest は、歩みが import の途中の module か import できない module に当たった時は None(その時の材料は
+    import の進み具合に依る — 比べずに file の行で比べる)。"""
 
-    digest: str
-    unimportable: tuple[str, ...]
+    digest: str | None
+    modules: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -343,12 +377,17 @@ def _remembered(
         return remembered.closure
     walker = _Walker(sha256_of)
     walk(walker)
-    closure = ClosureDigest(walker.digest(), tuple(sorted(walker.unimportable)))
+    digest = walker.digest()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
+    modules = tuple(sorted({*walker.files, *walker.unimportable}))
+    if walker._mut_partial:
+        # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
+        # 違う process と置き場の entry を書き直し合う(card ki-464fa307a62b)。
+        return ClosureDigest(None, modules)
+    closure = ClosureDigest(digest, modules)
     states = tuple(
         state for path in sorted(walker.files.values()) if (state := _file_state(path)) is not None
     )
-    if not walker._mut_partial:
-        _REMEMBERED[key] = RememberedDigest(subject, states, closure)
+    _REMEMBERED[key] = RememberedDigest(subject, states, closure)
     return closure
 
 
@@ -361,9 +400,10 @@ def _file_state(path: str) -> FileState | None:
     return FileState(path, status.st_mtime_ns, status.st_size)
 
 
-def _unimportable_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile, ...]:
-    """記録を作る時に import できなかった module(循環する import の途中の module を require する物など)の file の sha256 —
-    digest には名だけが入るので、file 単位で覆う(照らす時は import せずに比べる)。"""
+def _closure_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile, ...]:
+    """閉包が依った module の file の sha256 — digest で比べられない行(記録か今の歩みが import の途中の module に当たった)が
+    ある時に、照らしが import せずに比べる。import できなかった module の file も入る(引けない file は毎回違う印 — いつも
+    古いと判じられる)。"""
     return tuple(
         UsedFile(name, (sha256_of(path) if path is not None else None) or os.urandom(16).hex())
         for name in sorted(names)
@@ -916,9 +956,10 @@ class _Walker:
         self._texts: set[str] = set()
         #: 辿った物の持ち主の module の名 → file(digest の覚えが有効かを決める・file 単位で覆う module の記録の行)。
         self.files: dict[str, str] = {}
-        #: import できなかった module の名(digest には名だけが入り、記録の file 単位の行で覆う)。
+        #: import できなかった module の名(digest には名だけが入り、記録の file の行で覆う)。
         self.unimportable: set[str] = set()
-        #: import の途中の module に出会ったか(その digest は import の進み具合に依るので覚えない)。
+        #: import の途中の module か import できない module に出会ったか(その digest は import の進み具合に依るので、覚えず
+        #: 記録にも入れない)。
         self._mut_partial = False
         #: source の文で覆った大域(module の名・大域の名 — 2 度目は印だけ入れる)。
         self._bound_names: set[tuple[str, str]] = set()
@@ -981,8 +1022,8 @@ class _Walker:
         self, module_name: str, home: ModuleType | None, names: tuple[str, ...]
     ) -> ModuleType | None:
         """関数の中の import の先・package の下の module・hy.R の先 — import して、名の表の名の属性を入れる。import できない
-        時(循環する import の途中の module を require する物など)は名だけを入れ、記録の file 単位の行で覆う。読めない名は
-        関数の module の file で覆う。"""
+        時(循環する import の途中の module を require する物など)は名だけを入れ、import の途中の状態の digest として扱う
+        (覚えず・記録の行は file で比べる)。読めない名は関数の module の file で覆う。"""
         if not module_name:
             self._fold(home)
             return None
@@ -996,6 +1037,7 @@ class _Walker:
             case NotImportable():
                 self._feed("unimportable", module_name)
                 self.unimportable.add(module_name)
+                self._mut_partial = True
                 return None
 
     def function(self, function: FunctionType) -> None:
