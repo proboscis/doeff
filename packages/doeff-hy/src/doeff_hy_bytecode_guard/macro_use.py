@@ -825,7 +825,7 @@ class CodeReadings:
     def __init__(self, stored: dict[str, CodeFacts]) -> None:
         self._stored = stored
         self.used: dict[str, CodeFacts] = {}
-        self.missed = False
+        self._mut_missed = False
 
     def facts(self, code: CodeType) -> CodeFacts:
         """関数の code の読み — process の中の覚え・置き場の覚え(前の process が同じ中身の code を読んだ物)・読み直しの順。"""
@@ -838,9 +838,14 @@ class CodeReadings:
             _FACTS[id(code)] = (code, facts)
         else:
             facts = _code_facts(code)
-            self.missed = True
+            self._mut_missed = True
         self.used[sha] = facts
         return facts
+
+    @property
+    def missed(self) -> bool:
+        """置き場に無く読み直した code があったか(あれば歩みの後に entry を書く)。"""
+        return self._mut_missed
 
 
 #: process の中の code の中身の sha256 の覚え(code object の id → (code・sha256) — code を生かしておき id の使い回しを防ぐ)。
@@ -1298,17 +1303,7 @@ class _Walker:
         実行した後に file が書き換わっていれば(常駐の process)、この digest は展開が使った値を写さないので、import の途中の状態と
         同じく覚えず記録にも入れない(記録の行は None — 新しい process は古いと判じて展開し直す)。設計検証
         lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A(基準版 cf7ea9cc0 から在った・card ki-be596ac8276f)。"""
-        executed = loader_hooks.executed_source_state(file)
-        if executed is None:
-            return  # 読みの口を通らずに読み込まれた module(包む前の起動・拡張の module)— 確かめる材料が無い
-        # 読み込み 1 つの写し(覚えの確かめの _state_now)でなく今の disk を読む — 続けて今の disk から文と sha256 を読むので、
-        # 同じ時点で比べる(歩み 1 回に file 数個 — 照らしごとではない)。
-        try:
-            status = os.stat(file)
-        except OSError:
-            self._mut_partial = True
-            return
-        if (status.st_mtime_ns, status.st_size) != executed:
+        if not loader_hooks.executed_source_is_current(file):
             self._mut_partial = True
 
     def _fold(self, module: ModuleType | None) -> None:

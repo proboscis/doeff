@@ -22,17 +22,22 @@ class ImportScope:
     """一番外の読み込み 1 つの間の覚え — file の path → 状態(持ち主の照らしが置く・消えた file は None)と、この中で確かめた
     digest の覚え(鍵 → 覚え — 同じ覚えを 2 度確かめない)。置いた thread と、置いた口が閉じたかを持つ。"""
 
-    __slots__ = ("closed", "confirmed", "owner", "states")
+    __slots__ = ("_mut_closed", "confirmed", "owner", "states")
 
     def __init__(self) -> None:
         self.states: dict[str, object] = {}
         self.confirmed: dict[object, object] = {}
         self.owner = get_ident()
-        self.closed = False
+        self._mut_closed = False
+
+    @property
+    def closed(self) -> bool:
+        """置いた口が閉じたか。"""
+        return self._mut_closed
 
     def close(self) -> None:
         """置いた口が閉じた — 継いだ thread や写した context に値が残っても、もう使わない。"""
-        self.closed = True
+        self._mut_closed = True
 
 
 #: 今の読み込みの覚え(読み込みの外は None)。値を置く・戻すのは覚えを置く口だけで、読むのは :func:`current_scope` を通す —

@@ -331,7 +331,7 @@ def _scoped_exec_module(previous: ExecModule):
 
 def _note_executed(path: object) -> None:
     """本体を実行する source の file の今の状態を覚える(読めない file は覚えを消す)— 照らしの歩みが、module の値と今の file の
-    中身が同じ時点の物かを確かめるため(:func:`executed_source_state`)。"""
+    中身が同じ時点の物かを確かめるため(:func:`executed_source_is_current`)。"""
     if not isinstance(path, str):
         return
     try:
@@ -342,10 +342,19 @@ def _note_executed(path: object) -> None:
     _executed[path] = (status.st_mtime_ns, status.st_size)
 
 
-def executed_source_state(path: str) -> tuple[int, int] | None:
-    """path の module の本体を、この process の読みの口が最後に実行した時の file の状態(更新時刻 ns, 大きさ)— 読みの口を通らずに
-    読み込まれた module(包む前の起動・拡張の module)は None。"""
-    return _executed.get(path)
+def executed_source_is_current(path: str) -> bool:
+    """path の file が今も、この process の読みの口がその module の本体を最後に実行した時の状態(更新時刻 ns・大きさ)か(読めない
+    file は偽)。読みの口を通らずに読み込まれた module(包む前の起動・拡張の module)は確かめる材料が無いので真。読み込み 1 つの
+    写し(照らしの覚えの確かめ)でなく今の disk を stat する — 照らしの歩みは続けて今の disk から文と sha256 を読むので、同じ時点で
+    比べる(歩み 1 回に file 数個 — 照らしごとではない)。"""
+    executed = _executed.get(path)
+    if executed is None:
+        return True
+    try:
+        status = os.stat(path)
+    except OSError:
+        return False
+    return (status.st_mtime_ns, status.st_size) == executed
 
 
 # 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
