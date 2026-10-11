@@ -1374,3 +1374,51 @@ def test_an_import_after_the_outer_import_ended_does_not_use_its_snapshot(
     assert "user_1.hy" in answer["compiled"] and answer["values"] == {"user_1": 100}, (
         f"読み込みの中で起きた {reader} が、読み込みの後に reload した表を古い写しで今に合うと判じた: {answer}"
     )
+
+
+def test_the_code_reading_entry_is_keyed_by_the_hy_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 直す前は赤(盲検 A の付録): code の読みの called_modules は hy.R の module の名を Hy の mangle と slashes2dots で作るのに、
+    # 置き場の entry の鍵に Hy の版が無かった — Hy を上げて mangle が変わっても、前の Hy の読みを引く(置き場は作業木と版をまたぐ)。
+    import hy
+
+    from doeff_hy_bytecode_guard import macro_use
+
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(tmp_path))
+    key = macro_use.UsedMacroKey("macros", "doeff_hy.macros", "defk")
+    entry = macro_use._facts_entry(key)
+    assert entry is not None
+    monkeypatch.setattr(hy, "__version__", f"{hy.__version__}+other")
+    assert macro_use._facts_entry(key) != entry, "Hy の版が違うのに、code の読みの entry が同じ"
+
+
+def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers() -> None:
+    # 緑のまま守る(盲検 A の付録): code の読みの entry の鍵は、読み方の code をこの module の file の sha256(_own_digest)で覆う。
+    # 読みが呼ぶ関数を別の file に移して import すると、その file の直しが置き場の entry を冷やさず、前の読み方の読みを引く。読みが
+    # 大域の名で呼ぶ関数は全部この module に在る事を確かめる(Hy の関数は鍵の Hy の版が覆う — 関数の中で import する)。
+    from types import CodeType, FunctionType
+
+    from doeff_hy_bytecode_guard import macro_use
+
+    def names(code: CodeType) -> set[str]:
+        inner = (constant for constant in code.co_consts if isinstance(constant, CodeType))
+        return {*code.co_names, *(name for constant in inner for name in names(constant))}
+
+    seen: set[str] = set()
+    pending = ["_code_facts"]
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        function = vars(macro_use)[name]
+        assert function.__module__ == macro_use.__name__, (
+            f"code の読みが呼ぶ {name} が {function.__module__} に在る — _own_digest がその file を覆わない"
+        )
+        pending.extend(
+            called
+            for called in names(function.__code__)
+            if isinstance(vars(macro_use).get(called), FunctionType)
+        )
+    assert {"_code_facts", "_constant_text", "_called_modules", "_reference_module", "_mangle"} <= seen, seen

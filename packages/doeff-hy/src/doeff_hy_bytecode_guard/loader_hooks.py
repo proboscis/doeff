@@ -18,8 +18,8 @@ from types import CodeType, ModuleType
 # bytecode を書く設定の中で書いてしまう)。
 from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION
 
-# 一番外の読み込み 1 つの間の覚え(contextvars だけを読む軽い module — 起動時に読んでよい)。
-from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope
+# 一番外の読み込み 1 つの間の覚え(contextvars と _thread だけを読む軽い module — 起動時に読んでよい)。
+from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, current_scope
 
 # 一番外の読み込みの間の GC の閾値の持ち主(gc・os・_thread だけを読む軽い module — 起動時に読んでよい)。
 from doeff_hy_bytecode_guard import import_gc
@@ -308,20 +308,23 @@ def _remembering_get_data(previous: GetData):
 def _scoped_exec_module(previous: ExecModule):
     """module の本体の実行の口の包み — 一番外の実行(中の import を含む)の間、.pyc の記録の照らしが file の状態を 1 度だけ読む
     覚えを置くため(照らしは Hy の module 1 つごとに走り、照らしごとに確かめると同じ file を何百回も stat した — agora-redesign card
-    ki-be596ac8276f)。入れ子の実行は外の覚えを使う。同じ間、GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard.import_gc` —
-    読み込みが heap を育てるたびに heap 全体を掃いていた・card ki-de9d3593bbde)。"""
+    ki-be596ac8276f)。入れ子の実行は外の覚えを使う。閉じる時は覚えを閉じる — 中で起きた thread と写した context に値が残る。
+    同じ間、GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard.import_gc` — 読み込みが heap を育てるたびに heap 全体を掃いていた・
+    card ki-de9d3593bbde)。"""
 
     def exec_module(self: importlib.machinery.SourceFileLoader, module: ModuleType) -> None:
         _note_executed(self.path)
-        if IMPORT_SCOPE.get() is not None:
+        if current_scope() is not None:
             return previous(self, module)
-        scope = IMPORT_SCOPE.set(ImportScope())
+        scope = ImportScope()
+        token = IMPORT_SCOPE.set(scope)
         import_gc.hold()
         try:
             return previous(self, module)
         finally:
             import_gc.release()
-            IMPORT_SCOPE.reset(scope)
+            scope.close()
+            IMPORT_SCOPE.reset(token)
 
     return exec_module
 

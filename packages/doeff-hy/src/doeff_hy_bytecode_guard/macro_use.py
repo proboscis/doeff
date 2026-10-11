@@ -64,7 +64,7 @@ from itertools import chain
 from types import CodeType, FunctionType, ModuleType
 
 from doeff_hy_bytecode_guard import bound_source, loader_hooks
-from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope
+from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, current_scope
 from doeff_hy_bytecode_guard.records import (
     MACRO_TABLE,
     READER_TABLE,
@@ -200,13 +200,15 @@ def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of)
     (import しない)も比べる。"""
     if record.hy_version != hy_version:
         return False
-    if IMPORT_SCOPE.get() is not None:
+    if current_scope() is not None:
         return _rows_are_current(record, sha256_of)  # 一番外の読み込みの中 — file の状態はその中で 1 度だけ読む
-    scope = IMPORT_SCOPE.set(ImportScope())  # 読み込みの外(道具が直に照らす)— この照らしの間だけの覚え
+    scope = ImportScope()  # 読み込みの外(道具が直に照らす)— この照らしの間だけの覚え
+    token = IMPORT_SCOPE.set(scope)
     try:
         return _rows_are_current(record, sha256_of)
     finally:
-        IMPORT_SCOPE.reset(scope)
+        scope.close()
+        IMPORT_SCOPE.reset(token)
 
 
 def _rows_are_current(record: MacroRecord, sha256_of: Sha256Of) -> bool:
@@ -413,7 +415,7 @@ def _confirmed(key: UsedMacroKey | ValueReference, remembered: RememberedDigest)
     """覚えた digest を使ってよいか — 依った file が覚えた時の状態のままか。一番外の読み込み 1 つの中では file の状態は変わらない
     物として扱うので、確かめた覚えを 2 度確かめない(照らしは Hy の module 1 つごとに走り、同じ覚えを数百回確かめていた —
     agora-redesign card ki-be596ac8276f)。"""
-    scope = IMPORT_SCOPE.get()
+    scope = current_scope()
     if scope is not None and scope.confirmed.get(key) is remembered:
         return True
     if not all(map(_unchanged, remembered.files)):
@@ -440,7 +442,7 @@ def _state_now(path: str) -> FileState | None:
     """覚えの確かめと覚える時に使う file の今の状態 — 一番外の読み込み 1 つ(:mod:`doeff_hy_bytecode_guard.import_scope`)の中では
     file ごとに 1 度だけ stat する(検の読み込みで照らし 797 回・stat 9,700 回だった — card ki-be596ac8276f)。読み込みの外で
     覚える時(記録を作る道具)は毎回 stat する。"""
-    scope = IMPORT_SCOPE.get()
+    scope = current_scope()
     if scope is None:
         return _file_state(path)
     known = scope.states.get(path, _UNREAD)
@@ -799,7 +801,8 @@ def _constant_text(value: object) -> str:
 
 # ---- code の読みを process をまたいで覚える(agora-redesign card ki-be596ac8276f)-------------------------------------
 #
-# code の読み(:class:`CodeFacts`)は code object の中身と、読み方(この module の code・Python の版)だけで決まる純な計算なので、
+# code の読み(:class:`CodeFacts`)は code object の中身と、読み方(この module の code・Python の版・hy.R の module の名を作る Hy の
+# mangle の版)だけで決まる純な計算なので、
 # Hy の code の置き場(code_store の種類 FACTS_SUFFIX)に code の中身(marshal の bytes の sha256)で引いて覚える — 新しい process の
 # 照らしが、macro の閉包の code を毎回読み直していた(検の読み込みで歩みの約 3 割・関数 378 個 0.05〜0.06 秒。marshal と sha256 は
 # 0.006 秒)。digest は覚えない(生きた値に依る — packages/doeff-hy/architecture.hy の B1)。entry は歩み 1 つ(macro か値の在処と、
@@ -808,7 +811,8 @@ def _constant_text(value: object) -> str:
 
 
 #: code の読みの entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に
-#: 入れるこの module の file の sha256(:func:`_own_digest`)が覆う。
+#: 入れるこの module の file の sha256(:func:`_own_digest`)が覆い、読みが呼ぶ Hy の関数(``hy.mangle``・``slashes2dots``)の変更は
+#: 鍵に入れる Hy の版が覆う。
 FACTS_TAG = "doeff-hy/code-facts/1"
 
 #: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
@@ -858,7 +862,10 @@ def _code_sha256(code: CodeType) -> str:
 
 def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
     """歩み 1 つの code の読みの entry の path(置き場を使わない設定・この module の code を読めない時は None)。鍵 = 印・この module
-    の code・Python の版の全部(命令の番号)・在処・在処の module の file(作業木ごとに分ける — code の sha256 は file の名を含む)。"""
+    の code・Python の版の全部(命令の番号)・Hy の版(hy.R の module の名の mangle — 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A
+    の付録)・在処・在処の module の file(作業木ごとに分ける — code の sha256 は file の名を含む)。"""
+    import hy  # 歩みは Hy の module の照らしの中 — 読み込み済み
+
     from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
 
     store = code_store.store_dir()
@@ -870,7 +877,7 @@ def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
             place = f"macro\0{table}\0{module}\0{name}"
         case ValueReference(module=module, name=name):
             place = f"value\0{module}\0{name}"
-    parts = (FACTS_TAG, own, sys.version, place, _module_file(module) or "")
+    parts = (FACTS_TAG, own, sys.version, hy.__version__, place, _module_file(module) or "")
     return code_store.entry_path(store, code_store.content_key(parts, b""), code_store.FACTS_SUFFIX)
 
 
