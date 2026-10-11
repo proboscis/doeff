@@ -43,6 +43,26 @@
 (defrecord Empty
   "欄の無い record。")
 
+(defrecord Guarded
+  "本体に自前の __post_init__ を、型の注記つき(#^ None)で書いた record(doeff-cluster の EnvVar・RepoCheckout などと同じ書き方)。"
+  #^ str name
+  (defn #^ None __post-init__ [self]
+    (when (= self.name "PYTHONPATH")
+      (raise (ValueError f"予約の名 {self.name}")))))
+
+(defrecord GuardedPlain
+  "本体に自前の __post_init__ を、注記なしで書いた record。"
+  #^ str name
+  (defn __post-init__ [self]
+    (when (= self.name "PYTHONPATH")
+      (raise (ValueError f"予約の名 {self.name}")))))
+
+(defrecord Shown
+  "本体に自前の __repr__ を、型の注記つき(#^ str)で書いた record。"
+  #^ int x
+  (defn #^ str __repr__ [self]
+    f"<Shown {self.x}>"))
+
 
 (defk same-fields [left right]
   {:pre [(: left type) (: right type)] :post [(: % list)] :tags {:context "doeff-hy" :role "judgment"}}
@@ -119,6 +139,21 @@
   (with [caught (pytest.raises ValueError)]
     (Shape :a -1))
   (assert (= (str caught.value) "Shape の欄 a が検め (>= a 0) で落ちた: a=-1")))
+
+
+(deftest test-a-record-runs-its-own-annotated-post-init-and-keeps-its-own-methods
+  ;; 失敗ケース(cisco-c8 2026-10-11 10:5x・doeff 424a87f58 の後退 — 直す前は赤): 本体に (defn #^ None __post-init__ …) を書いた型は、
+  ;; 作る時にその __post_init__ が呼ばれる(入力の検査が効く)。Hy は #^ None __post-init__ を (annotate __post-init__ None) と読み、
+  ;; 展開が自前の関数を記号の時しか見つけず、自前の __post_init__ を呼ばない __init__ を書いていた(doeff-cluster の EnvVar・
+  ;; RepoCheckout が予約の名を断らなくなった)。注記つきの自前の __repr__ も、展開が書く物で上書きしない。
+  (<- _ (Pure None))
+  (with [caught (pytest.raises ValueError)]
+    (Guarded :name "PYTHONPATH"))
+  (assert (= (str caught.value) "予約の名 PYTHONPATH"))
+  (with [(pytest.raises ValueError)]
+    (GuardedPlain :name "PYTHONPATH"))
+  (assert (= (. (Guarded :name "HOME") name) "HOME"))
+  (assert (= (repr (Shown :x 3)) "<Shown 3>")))
 
 
 (deftest test-a-record-methods-are-module-code-not-compiled-at-import
