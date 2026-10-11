@@ -50,15 +50,18 @@ repos:
         files: '^ide-plugins/vscode/doeff-runner/src/read/.*\.ts$'
         pass_filenames: true
 
-      # 汎用の 3 package の業務の語の規則(doeff-packages-have-no-application-vocabulary — agora-redesign #2875)は文書・設定・型の
-      # 宣言にも当たる。Python と Hy は上の 2 項が渡すので、ここは残り(.pyi・.md・.toml・.json・.sh・Dockerfile など)を渡す。
-      # 入れた時点(2026-10-02)でこの範囲の既存の規則の所見は 0 件。
-      - id: semgrep-application-vocabulary
+      # 汎用の package の業務の語の規則(doeff-packages-have-no-application-vocabulary — agora-redesign #2875)のように、文書・設定・
+      # 型の宣言にも当たる規則がある。Python と Hy は上の 2 項が渡すので、ここは日次の走査(tests/test_semgrep_gate.py — doeff/ と
+      # packages/)と同じ根の残り(.pyi・.md・.toml・.json・.sh・Dockerfile など)を全部渡す。どの package に当てるかは規則の paths の
+      # 1 か所が決め、この項は package の名を持たない — 持っていた時は、規則に package を足した便が項を直し忘れると素の hook が
+      # その package の文書を黙って通した(card ki-2ff6e513ee7f・tests/test_lint_entrypoint_wiring.py の
+      # test_plain_hook_follows_the_rule_paths_for_documents)。広げた時点(2026-10-11)でこの範囲の 707 file の規則の所見は 0 件。
+      - id: semgrep-other-files
         alias: semgrep-rules
-        name: semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file)
+        name: semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ)
         entry: *semgrep-entry
         language: system
-        files: '^packages/doeff-(cluster|records|claude-code|codex)/'
+        files: '^(doeff|packages)/'
         exclude: '\.(py|hy|hyp|hyk)$'
         pass_filenames: true
 
