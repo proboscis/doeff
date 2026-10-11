@@ -72,10 +72,28 @@ HANDLE_SWEEP_INTERVAL = 1024
 # `.future` repeatedly must not accumulate dead refs until terminality.
 HANDLE_REFS_PRUNE_MIN = 8
 
-# Ready-heap entries that run a task when popped (the external-wait placeholder
-# does not); has_live_ready_entry counts the ones at or below the shield whose
-# owner is not cancelled.
-_RUNNABLE_ENTRY_KINDS = frozenset(("new", "resume", "raise", "sem_resume"))
+# The kinds of ready-heap entry, declared in one place (design check of card
+# ki-1294af4fa525): ready_push refuses any other kind, so a new kind is declared
+# here — not taught to Cancel or to the counts one by one.
+# - holding a started task's continuation, shaped (kind, owner_tid, k, ...):
+#   Cancel/Discard take the continuation out of the heap (detach_from_ready);
+_CONTINUATION_ENTRY_KINDS = frozenset(("resume", "raise", "sem_resume"))
+# - "new" starts a task that has no continuation yet;
+# - "wait_external" is the external-wait placeholder, which never runs anything.
+_PLACEHOLDER_ENTRY_KIND = "wait_external"
+# Entries that run a task when popped; has_live_ready_entry counts the ones at
+# or below the shield whose owner is not cancelled.
+_RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {"new"}
+_READY_ENTRY_KINDS = _RUNNABLE_ENTRY_KINDS | {_PLACEHOLDER_ENTRY_KIND}
+# Waiter entries registered under one waitable key ("wait" and the external
+# "wait_external"); the multi-key kinds (Gather, Race) are declared with their
+# withdrawal in the scheduler (withdraw_group_of) — park_waiter refuses others.
+_SINGLE_KEY_WAITER_KINDS = frozenset(("wait", "wait_external"))
+# Test switch (the scheduler tests turn it on through the scheduler_index_self_check
+# fixture of tests/conftest.py): every scheduler step
+# recomputes the waiters index and the ready counts from the structures and
+# raises SchedulerIndexDriftError on a difference. Read once when a run starts.
+_INDEX_SELF_CHECK = False
 # The wake of a ready entry enqueued while no trace sink was installed.
 _UNTRACKED_WAKE = ("untracked", None)
 # Claimed external-wait placeholders are taken out of the ready heap once there
@@ -350,6 +368,16 @@ class ExternalPromiseCancelCallbackError(RuntimeError):
             "external promise cancel callback(s) failed: "
             + "; ".join(repr(error) for error in self.errors)
         )
+
+
+class SchedulerIndexDriftError(AssertionError):
+    """The scheduler's index or counts no longer match its structures.
+
+    Raised only while ``_INDEX_SELF_CHECK`` is on (the scheduler tests): the
+    waiters index, the ready counts and the claimed-placeholder count are kept
+    by the entry functions alone, and a change that moves ``waiters`` or
+    ``ready`` some other way breaks them silently (card ki-1294af4fa525).
+    """
 
 
 class SchedulerDeadlockError(RuntimeError):
@@ -1120,6 +1148,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     # 走れる列に残っている claimed の外の待ちの印の数(pick_next は pop して捨てるだけの死んだ entry)。NORMAL の仕事が
     # 並び続ける間は pop されないので、多くなったら claim が列から外す。
     claimed_marks_in_ready = [0]
+    # 索引と数えを毎歩 数え直しと照らすか(テストの切り替え _INDEX_SELF_CHECK を run の始まりに 1 度読む)。
+    self_check = _INDEX_SELF_CHECK
     # 外からの完了の列。SimpleQueue の put は reentrant(Python の文書 — signal の受け手・__del__ から呼んでよい)。
     # 止めの合図の受け手(stop_signal_handlers の StopBox.receive)は主 thread の上で bytecode の区切りに割り込み、
     # ExternalPromise.complete からこの列へ put する。主 thread がこの列の empty / get の中に居ても put は止まらない
@@ -1301,6 +1331,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     def ready_push(heap_item: tuple[int, int, tuple[object, ...]]) -> None:
         """Push onto the ready heap — the one way in, so the counts stay in step (card ki-1294af4fa525)."""
+        if heap_item[2][0] not in _READY_ENTRY_KINDS:
+            raise TypeError(
+                f"ready entry kind {heap_item[2][0]!r} is not declared: a kind holding a task's continuation "
+                "belongs in _CONTINUATION_ENTRY_KINDS (Cancel takes it out of the heap from there)"
+            )
         heapq.heappush(ready, heap_item)
         # Only entries at or below the shield, or any entry while a sink is installed, are counted.
         if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
@@ -1394,6 +1429,47 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         claimed_marks_in_ready[0] = 0
         # The trace's per-wake counts no longer match the heap: counted again when next needed.
         ready_wake_count_generation[0] = None
+
+    def check_indexes() -> None:
+        """Recompute the index and counts from ``waiters`` and ``ready`` and fail on a difference (only while
+        ``_INDEX_SELF_CHECK`` is on — the scheduler tests), so a change that moves them outside the entry functions
+        is caught by the first test that runs it, not by a later stall (card ki-1294af4fa525)."""
+        held_parked = Counter({
+            (owner, key): count for owner, owned in parked_keys_of.items() for key, count in owned.items()
+        })
+        recounted_parked = Counter((entry[1], key) for key, entries in waiters.items() for entry in entries)
+        traced_counts = _trace_sink is not None and ready_wake_count_generation[0] == _trace_generation
+        held_wakes = Counter({
+            (neg, name): count for neg, counts in ready_wake_count.items() for name, count in counts.items() if count
+        }) if traced_counts else None
+        recounted_wakes = Counter(
+            (neg, wake_of_seq.get(seq, _UNTRACKED_WAKE)[0]) for neg, seq, _entry in ready
+        ) if traced_counts else None
+        live_entries = [
+            entry for neg, _seq, entry in ready
+            if neg >= -PRIORITY_EXTERNAL_WAIT and entry[0] in _RUNNABLE_ENTRY_KINDS
+            and not is_owner_cancelled(entry[1])
+        ]
+        recounted_live = [len(live_entries), sum(not is_daemon(entry[1]) for entry in live_entries)]
+        recounted_marks = sum(
+            entry[4][0] for _neg, _seq, entry in ready if entry[0] == _PLACEHOLDER_ENTRY_KIND
+        )
+        drifts = [
+            name for name, held, recounted in (
+                ("waiters index (parked_keys_of)", held_parked, recounted_parked),
+                ("waiters key order (waiter_key_stamp)",
+                 sorted(waiter_key_stamp, key=waiter_key_stamp.__getitem__), list(waiters)),
+                ("live ready counts (live_ready_count)", live_ready_count, recounted_live),
+                ("claimed placeholders in ready (claimed_marks_in_ready)", claimed_marks_in_ready[0], recounted_marks),
+                ("trace wake counts (ready_wake_count)", held_wakes, recounted_wakes),
+            )
+            if held != recounted
+        ]
+        if drifts:
+            raise SchedulerIndexDriftError(
+                f"scheduler index drifted from its structures: {', '.join(drifts)} — waiters and ready move only "
+                "through park_waiter/unpark_*/keep_waiters and ready_push/ready_pop/ready_remove_at/drop_claimed_marks"
+            )
 
     def has_live_ready_entry(include_daemons):
         """True when the ready heap holds an entry that can still run.
@@ -1584,7 +1660,17 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     def park_waiter(key: tuple[str, int], entry: tuple[object, ...]) -> None:
         """Register ``entry`` (owned by ``entry[1]``) under ``key``: the one way into ``waiters``, so its reverse index
-        (parked_keys_of) and key order (waiter_key_stamp) stay in step."""
+        (parked_keys_of) and key order (waiter_key_stamp) stay in step.
+
+        The entry's kind must be declared — a one-key kind in
+        _SINGLE_KEY_WAITER_KINDS, or a multi-key kind with its withdrawal in
+        withdraw_group_of — so Cancel/Discard can take it out without knowing it.
+        """
+        if entry[0] not in _SINGLE_KEY_WAITER_KINDS and entry[0] not in withdraw_group_of:
+            raise TypeError(
+                f"waiter entry kind {entry[0]!r} is not declared: a multi-key registration names the function "
+                "that withdraws it from every key in withdraw_group_of"
+            )
         entries = waiters.get(key)
         if entries is None:
             entries = waiters[key] = []
@@ -1708,21 +1794,21 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """Detach a Wait/Gather/Race registration of ``tid`` (see above).
 
         The external-wait placeholder is claimed so it drops itself, and a
-        Gather/Race registration is resolved and removed from every key. Only
-        the keys ``tid`` is parked on are read (card ki-1294af4fa525).
+        multi-key registration (Gather/Race — its state holds ``resolved`` and
+        ``waiter_k``) is resolved and withdrawn from every key by the function
+        its kind declared in withdraw_group_of. Only the keys ``tid`` is parked
+        on are read (card ki-1294af4fa525).
         """
         for key in keys_parked_by(tid):
             for index, entry in enumerate(waiters[key]):
                 if entry[1] != tid:
                     continue
                 entry_type = entry[0]
-                if entry_type in ("gather", "race"):
+                withdraw = withdraw_group_of.get(entry_type)
+                if withdraw is not None:
                     state = entry[2]
                     state["resolved"] = True
-                    if entry_type == "gather":
-                        remove_gather_waiters(state)
-                    else:
-                        remove_race_waiters(state)
+                    withdraw(state)
                     return state["waiter_k"]
                 if entry_type == "wait_external":
                     claim(entry[3])  # drop the paired ready placeholder
@@ -1733,11 +1819,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     def detach_from_ready(tid: int) -> object | None:
         """Detach a queued resume/raise/permit of ``tid`` (see above).
 
-        A permit already transferred to the task is handed on (#496).
+        A permit already transferred to the task is handed on (#496). Every
+        kind declared in _CONTINUATION_ENTRY_KINDS holds the continuation at [2].
         """
         for index, heap_item in enumerate(ready):
             entry = heap_item[2]
-            if entry[0] not in ("resume", "raise", "sem_resume") or entry[1] != tid:
+            if entry[0] not in _CONTINUATION_ENTRY_KINDS or entry[1] != tid:
                 continue
             ready_remove_at(index)
             if entry[0] == "sem_resume":
@@ -1983,6 +2070,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         shield_deferred = False
         try:
             while True:
+                if self_check:
+                    check_indexes()
                 drain()
                 while ready:
                     heap_item = ready_pop()
@@ -2239,6 +2328,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 withdrawn,
             )
 
+    # 複数の鍵にまたがる待ち手の登録の種類 → その登録を全部の鍵から外す関数(Cancel・Discard が呼ぶ)。登録の種類を足す effect
+    # はここに 1 行足す — park_waiter が宣言の無い種類を断り、detach_from_waiters は種類の名を持たない(card ki-1294af4fa525 の
+    # 設計検証・盲検 A: cancel が "gather"・"race" の名を持ち、新しい種類の Cancel が state の dict を継続として投げ込んだ)。
+    withdraw_group_of = {"gather": remove_gather_waiters, "race": remove_race_waiters}
+
     def wake_race_waiter(race_state, completed_key):
         """Returns the wake priority if the Race owner was queued, else None."""
         if race_state["resolved"]:
@@ -2363,6 +2457,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 "task-leave", current_tid, effect=type(effect).__name__, ready=len(ready),
                 site=tasks[current_tid].get("spawn_site") if current_tid in tasks else None,
             )
+        if self_check:
+            check_indexes()
         drain()
         if isinstance(effect, Spawn):
             # Capture the boundary stack (handlers AND WithObserve observers)
