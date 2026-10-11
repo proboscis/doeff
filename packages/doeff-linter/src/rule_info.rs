@@ -26,8 +26,8 @@ pub fn get_rule_info(rule_id: &str) -> RuleInfo {
         },
         "DOEFF002" => RuleInfo {
             name: "Mutable Attribute Naming",
-            description: "A mutable class attribute (list, dict, set) doesn't follow the `_mut_` naming convention.",
-            fix: "Prefix mutable attributes with `_mut_`: `self._mut_items = []` instead of `self.items = []`.",
+            description: "An attribute assigned outside `__init__` / `__post_init__` / `__set_name__` (of any type, not only list, dict, set) doesn't follow the `mut_` / `_mut` naming convention.",
+            fix: "Prefix attributes assigned after initialization with `mut_` / `_mut`: `self._mut_missed = True` instead of `self.missed = True`.",
             label: "可変な属性名に _mut_ が無い",
         },
         "DOEFF003" => RuleInfo {
