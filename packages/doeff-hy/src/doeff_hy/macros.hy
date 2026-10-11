@@ -624,16 +624,31 @@ defk {name}: :post type annotation cannot be an empty string.
                                   _guard-statement-value _doeff-check-program-return]))))
 
 (defn _with-scoped-helpers [form]
-  "式 `form` の前に補助を import する、関数の本体の中にも書かれる式の macro(fnk・do!)の展開。
+  "式 `form` の前に補助を import する、関数の本体の中にも書かれる式の macro(do!)の展開。
 
    実行時の展開は、補助の import と `form` を、すぐ呼ぶ引数なしの関数の中に入れる。関数の中で import した名は
    関数全体の局所の名になるので、defk の本体でそのまま import すると、同じ本体で先に読む traverse / for/do の
    `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
-   UnboundLocalError で落ちた(card ki-043ea763c926・tests/test_fnk_do_bang_scope.py)。すぐ呼ぶ関数の中なら名はその
-   関数に留まり、外は module の段の名を読み続ける。型検査のための展開は import を出さないので包まない。"
+   UnboundLocalError で落ちた(card ki-c67428538aec・tests/test_fnk_do_bang_scope.py)。すぐ呼ぶ関数の中なら名はその
+   関数に留まり、外は module の段の名を読み続ける。型検査のための展開は import を出さないので包まない。
+
+   前提: `form` のうち評価の時にすぐ走る部分に、利用者の式を置かない(利用者の式は `form` の中の関数の本体にだけ置く)。
+   すぐ呼ぶ関数の中で評価される式は class の本体の名を読めず、外の do の文脈の yield はその関数を生成器にしてしまう。
+   引数の既定値をすぐ評価する fnk はこの前提を満たさないので使わない(`_do-reference`)。"
   (if (_static-view?)
       `(do ~(_helper-imports) ~form)
       `((fn [] ~(_helper-imports) ~form))))
+
+(defn _do-reference []
+  "fnk の lambda が呼ばれた時に doeff の `do` を引く式 — 書いた場所の scope に名を束ねない。
+
+   fnk の lambda は書いた場所で作る(引数の既定値をその scope で評価する — class の本体の名も読める)ので、`do` を名で
+   読むと、その名を書いた場所の scope に置く事になり、defk の本体では先の traverse / for/do の `_doeff_do` の読みを
+   未束縛にする(`_with-scoped-helpers` の註)。実行時は束ね(outcome_forms.hy の open-form)と同じく `__import__` で
+   引く(1 回 約 0.3µs — 呼ぶたびの `@do` の組み立ての約 7µs の内)。型検査のための展開は module の頭の `_doeff_do`。"
+  (if (_static-view?)
+      '_doeff_do
+      '(. (__import__ "doeff.do" :fromlist #("do")) do)))
 
 (defn _scoped-definition [compiler name forms]
   "名 `name` を定義する macro(defk・defp・deftest)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
@@ -1109,9 +1124,13 @@ defk {name}: {{:post [...]}} is required.
    (fnk [x y] (+ (! (k1 x)) (! (k2 y))))"
   ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form body (_expand-bangs form "fnk")))
+  ;; lambda は書いた場所で作り(既定値はその scope で評価する)、`do` は名を束ねずに引く(`_do-reference`)。
+  ;; 型検査のための展開は前と同じ形(`_helper-imports` は何も出さない)。
+  (setv kleisli `(fn [~@params] ((~(_do-reference) (fn [] (do ~@expanded-forms))))))
   (locate-synthesized
-    (_with-scoped-helpers
-      `(fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))))
+    (if (_static-view?)
+        `(do ~(_helper-imports) ~kleisli)
+        kleisli)))
 
 
 ;; ---------------------------------------------------------------------------
