@@ -34,7 +34,6 @@ from doeff_adr.source_dependencies import (
     ProviderState,
     SourceDependency,
     SourceSnapshot,
-    loaded_sources,
 )
 
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
@@ -256,15 +255,16 @@ def write_cached(
     records: tuple[Record, ...],
     root: Path,
     dynamic: bool,
+    checks: DependencyChecks,
 ) -> None:
-    """照合済みの記録を保存する。動的な値には読込済みのlocal sourceも記録する。"""
+    """照合済みの記録を保存する。動的な値には読込済みのlocal sourceも記録する(収集 1 回の観測 checks を通して、同じ source は 1 度だけ読む)。"""
     entry_path = _entry_path(source, cache_dir)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     dependencies = tuple(
         MacroDependency(dependency.module, dependency.sha256)
         for dependency in macro_dependencies(module, module.__file__ or str(source))
     )
-    sources: tuple[SourceDependency, ...] = loaded_sources(root).sources if dynamic else ()
+    sources: tuple[SourceDependency, ...] = checks.loaded_sources(root).sources if dynamic else ()
     entry = CacheEntry(
         CACHE_FORMAT, tuple(encode_records(records)), dependencies, fixtures, sources
     )

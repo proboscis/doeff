@@ -56,21 +56,22 @@ class SourceSnapshot:
     sources: tuple[SourceDependency, ...]
 
 
-def loaded_sources(root: Path) -> SourceSnapshot:
-    """実値を作った時点で読込済みのlocal sourceを記録する。importを追加しない。"""
-    paths: set[Path] = set()
-    for module in tuple(sys.modules.values()):
-        origin: object = vars(module).get("__file__") if module is not None else None
-        if not isinstance(origin, str) or Path(origin).suffix not in {".py", ".hy"}:
-            continue
-        path: Path = Path(origin).resolve()
-        if path.is_relative_to(root) and ".venv" not in path.relative_to(root).parts:
-            paths.add(path)
-    result: list[SourceDependency] = []
-    for path in sorted(paths):
-        digest: str = hashlib.sha256(path.read_bytes()).hexdigest()
-        result.append(snapshot(path, path.relative_to(root).as_posix(), digest))
-    return SourceSnapshot(tuple(result))
+def local_source(origin: str, root: Path) -> Path | None:
+    """純粋でない(path を解く): module の ``__file__`` → root の中の .py / .hy の解いた path(root の外・.venv の下・source でない物は None)。"""
+    if Path(origin).suffix not in {".py", ".hy"}:
+        return None
+    path: Path = Path(origin).resolve()
+    if path.is_relative_to(root) and ".venv" not in path.relative_to(root).parts:
+        return path
+    return None
+
+
+@dataclass(frozen=True)
+class LoadedSource:
+    """読込済みの local source 1 つ — 並べる鍵の解いた path と、その記録。"""
+
+    path: Path
+    dependency: SourceDependency
 
 
 @dataclass(frozen=True)
@@ -94,11 +95,16 @@ class DependencyChecks:
 
     macro の提供元も同じく、module 名ごとに 1 度だけ調べる — 記録の file の多く(agora では 420 file)が同じ 9 個ほどの
     提供元を指し、file ごとに調べ直すと 3,700 回の stat と path の生成になっていた(agora-redesign #1551)。
+
+    実値の記録に残す読込済みの local source も、module の file ごとに 1 度だけ解いて読み hash を取る(``loaded_sources``)— 実値の
+    file ごとに全部を読み直すと、読み込んだ module の数(session が進むほど増える)に比例した費用が import の区間に乗り、
+    doeff-hy-pytest の読み込みの上限を session の後ろの file だけが越えた(card ki-b2383fcc8b25)。root は収集 1 回で 1 つ。
     """
 
     _mut_files: dict[str, SourceDependency | None] = field(default_factory=dict)
     _mut_hashes: dict[str, str] = field(default_factory=dict)
     _mut_providers: dict[str, ProviderState] = field(default_factory=dict)
+    _mut_loaded: dict[str, LoadedSource | None] = field(default_factory=dict)
     _mut_stat_hits: int = 0
     _mut_checks: int = 0
     _mut_rebuilds: int = 0
@@ -112,6 +118,34 @@ class DependencyChecks:
             known = find(module)
             self._mut_providers[module] = known
         return known
+
+    def loaded_sources(self, root: Path) -> SourceSnapshot:
+        """実値を作った時点で読込済みのlocal sourceを記録する。importを追加しない。"""
+        origins: set[str] = {
+            origin
+            for module in tuple(sys.modules.values())
+            if module is not None and isinstance(origin := vars(module).get("__file__"), str)
+        }
+        found: dict[Path, SourceDependency] = {
+            loaded.path: loaded.dependency
+            for origin in origins
+            if (loaded := self._loaded_source(origin, root)) is not None
+        }
+        return SourceSnapshot(tuple(found[path] for path in sorted(found)))
+
+    def _loaded_source(self, origin: str, root: Path) -> LoadedSource | None:
+        """module の file 1 つの記録(収集 1 回で 1 度だけ解いて読む)。"""
+        if origin not in self._mut_loaded:
+            path: Path | None = local_source(origin, root)
+            self._mut_loaded[origin] = (
+                None
+                if path is None
+                else LoadedSource(
+                    path,
+                    snapshot(path, path.relative_to(root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()),
+                )
+            )
+        return self._mut_loaded[origin]
 
     def verify(self, root: Path, saved: tuple[SourceDependency, ...]) -> SourceSnapshot | str:
         started: float = time.perf_counter()
