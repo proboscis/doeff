@@ -26,7 +26,7 @@
 ;; 展開が import する doeff-cluster の module の綴り(型検査のための展開の掃除が重ねを畳む綴りと 1 つの定義元 — static_view.py)。
 (import doeff-hy.static-view [DEFSYSTEM-MODEL-MODULE DEFSYSTEM-BUILD-MODULE DEFSYSTEM-IMPORTS])
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes"))
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
 (setv REPLICAS-VALUES #(0 1))
@@ -103,7 +103,7 @@
     (when (in (cut key 1 None) static)
       (raise (SyntaxError (.format "{}: 鍵 {} が 2 回ある" where key))))
     (match key
-      (| ":reads" ":writes")
+      (| ":reads" ":writes" ":serves")
         (setv (get static (cut key 1 None)) (record-names v where key))
       ":needs"
         (do (setv names (needs-names v where))
