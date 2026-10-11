@@ -1356,6 +1356,22 @@ SERVED_FILES = {
         "threading.Thread(target=serve, daemon=True).start()\n"
         "CONTEXT = contextvars.copy_context()\n"
     ),
+    # 一番外の読み込みの本体が終わらないうちに(app を回す本体の代わり)、表を書き換えて reload し、起こした thread に user_1 を読ませる。
+    "serving.py": (
+        "import importlib, pathlib, queue, threading\n"
+        "import {pkg}.tables, {pkg}.user_0\n"
+        "requests, answers = queue.Queue(), queue.Queue()\n"
+        "def serve():\n"
+        "    while (name := requests.get()) is not None:\n"
+        "        answers.put(importlib.import_module(name))\n"
+        "threading.Thread(target=serve, daemon=True).start()\n"
+        "table = pathlib.Path({pkg}.tables.__file__)\n"
+        "table.write_text(table.read_text().replace('ROWS[\"a\"] = 1', 'ROWS[\"a\"] = 100'))\n"
+        "importlib.invalidate_caches()\n"
+        "importlib.reload({pkg}.tables)\n"
+        'requests.put("{pkg}.user_1")\n'
+        "value = answers.get(timeout=30).value\n"
+    ),
 }
 
 
@@ -1373,6 +1389,19 @@ def test_an_import_after_the_outer_import_ended_does_not_use_its_snapshot(
     )
     assert "user_1.hy" in answer["compiled"] and answer["values"] == {"user_1": 100}, (
         f"読み込みの中で起きた {reader} が、読み込みの後に reload した表を古い写しで今に合うと判じた: {answer}"
+    )
+
+
+def test_a_thread_started_inside_a_running_import_does_not_share_its_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 緑のまま守る(盲検 A の付録): 覚えは置いた thread だけが使う。一番外の読み込みの本体が終わらないうちに起きた thread(本体で
+    # app を回す process の worker)が覚えを共有すると、本体の中で reload した表を、その thread も古い写しで今に合うと判じる。
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_served", SERVED_FILES)
+    tree.run("user_0", "user_1")
+    answer = tree.run("serving")
+    assert "user_1.hy" in answer["compiled"] and answer["values"] == {"serving": 100}, (
+        f"読み込みの本体の中で起きた thread が、本体の中で reload した表を古い写しで今に合うと判じた: {answer}"
     )
 
 
