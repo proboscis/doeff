@@ -1,0 +1,79 @@
+"""環境変数で決まる値を macro が読む形ごとに、環境変数だけを替えた新しい process が使い手の .pyc を古いと判じるかを見る。
+引数: 作業 dir(子は同じ python で走る)。e_probe.py.txt(lt-9TQ4 の付録 3)を形ごとに広げた物。"""
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+if work.exists():
+    shutil.rmtree(work)
+root = work / "tree"
+pkg = "probe_v"
+(root / pkg).mkdir(parents=True)
+(root / pkg / "__init__.py").write_text("")
+(root / pkg / "tables.py").write_text(
+    "import os\n"
+    'ROWS = {"a": os.environ.get("PROBE_V_MODE", "plain")}\n')
+(root / pkg / "macros.hy").write_text(
+    '(import os)\n'
+    '(import os [environ getenv])\n'
+    f'(import {pkg}.tables :as tables)\n'
+    '(setv MODE (os.environ.get "PROBE_V_MODE" "plain"))\n'
+    '(setv MODES {"a" (os.environ.get "PROBE_V_MODE" "plain")})\n'
+    '(setv LISTED [(os.environ.get "PROBE_V_MODE" "plain")])\n'
+    '(setv IMPORTED {"a" (environ.get "PROBE_V_MODE" "plain")})\n'
+    '(setv GOT {"a" (getenv "PROBE_V_MODE" "plain")})\n'
+    '(defn build [] {"a" (os.environ.get "PROBE_V_MODE" "plain")})\n'
+    '(setv BUILT (build))\n'
+    '(defn mode-now [] (os.environ.get "PROBE_V_MODE" "plain"))\n'
+    '(defmacro m-plain [] MODE)\n'
+    '(defmacro m-dict [] (get MODES "a"))\n'
+    '(defmacro m-list [] (get LISTED 0))\n'
+    '(defmacro m-imported [] (get IMPORTED "a"))\n'
+    '(defmacro m-getenv-dict [] (get GOT "a"))\n'
+    '(defmacro m-built [] (get BUILT "a"))\n'
+    '(defmacro m-py-table [] (get tables.ROWS "a"))\n'
+    '(defmacro m-direct [] (os.environ.get "PROBE_V_MODE" "plain"))\n'
+    '(defmacro m-helper [] (mode-now))\n')
+USERS = {
+    "plain": "m-plain", "dict": "m-dict", "list": "m-list", "imported": "m-imported",
+    "getenv_dict": "m-getenv-dict", "built": "m-built", "py_table": "m-py-table",
+    "direct": "m-direct", "helper": "m-helper",
+}
+for name, macro in USERS.items():
+    (root / pkg / f"u_{name}.hy").write_text(f"(require {pkg}.macros [{macro}])\n(setv value ({macro}))\n")
+CHILD = r'''
+import importlib, importlib.machinery, json, sys
+from pathlib import Path
+root, pkg, names = sys.argv[1], sys.argv[2], sys.argv[3].split(",")
+sys.path.insert(0, root)
+import hy
+compiled = []
+previous = importlib.machinery.SourceFileLoader.source_to_code
+def counting(self, data, path, *args, **kwargs):
+    code = previous(self, data, path, *args, **kwargs)
+    if isinstance(path, str) and path.endswith(".hy"):
+        compiled.append(Path(path).stem)
+    return code
+importlib.machinery.SourceFileLoader.source_to_code = counting
+import doeff_hy
+values = {name: importlib.import_module(f"{pkg}.u_{name}").value for name in names}
+print(json.dumps({"compiled": sorted(c for c in compiled if c.startswith("u_")), "values": values}))
+'''
+base = {k: v for k, v in os.environ.items() if k not in ("PYTHONDONTWRITEBYTECODE", "PROBE_V_MODE")} | {
+    "DOEFF_HY_CODE_STORE": str(work / "store"), "PYTHONPYCACHEPREFIX": str(work / "pycache")}
+def run(**extra):
+    done = subprocess.run([sys.executable, "-c", CHILD, str(root), pkg, ",".join(USERS)], capture_output=True,
+                          text=True, env=base | extra, timeout=300)
+    if done.returncode:
+        print(done.stderr[-3000:]); raise SystemExit(1)
+    return json.loads(done.stdout.strip().splitlines()[-1])
+first = run()
+second = run()
+third = run(PROBE_V_MODE="fancy")
+print("1 環境変数なし(plain) 展開した使い手:", first["compiled"])
+print("2 同じ環境の 2 つ目の process 展開した使い手:", second["compiled"])
+print("3 PROBE_V_MODE=fancy の process 展開した使い手:", third["compiled"])
+print("形ごとの値(3 の process — fancy が正しい):")
+for name in USERS:
+    verdict = "古いと判じた(正しい)" if third["values"][name] == "fancy" else "今に合うと判じた(古い値を使った)"
+    print(f"  {name:12s} {third['values'][name]!r:10s} {verdict}")

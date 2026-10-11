@@ -1,0 +1,59 @@
+"""S4(concurrency): 同じ process の中と別の thread で、環境変数を読む macro の使い手の記録はいつも古く(覚えない)、環境変数を読まない
+macro の使い手の記録は今に合うまま process の中で覚える事を見る。引数: 作業 dir。子の process 1 つの中で、記録を作り・照らし・
+os.environ を書き換えて照らし・別の thread で照らす。"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+work = Path(sys.argv[1])
+if work.exists():
+    shutil.rmtree(work)
+root = work / "tree"
+pkg = "probe_s4"
+(root / pkg).mkdir(parents=True)
+files = {
+    "__init__.py": "",
+    "macros.hy": '(import os)\n(defmacro body [] 1)\n(defmacro direct [] (os.environ.get "PROBE_S4_MODE" "plain"))\n',
+    "u_body.hy": f"(require {pkg}.macros [body])\n(setv value (body))\n",
+    "u_direct.hy": f"(require {pkg}.macros [direct])\n(setv value (direct))\n",
+}
+for name, text in files.items():
+    (root / pkg / name).write_text(text, encoding="utf-8")
+CHILD = r'''
+import importlib.machinery, json, os, sys, threading
+root, pkg = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root)
+import hy, doeff_hy
+from doeff_hy_bytecode_guard import macro_use, records, record_is_current_here, source_to_code_as_import
+def record(user):
+    path = f"{root}/{pkg}/{user}.hy"
+    loader = importlib.machinery.SourceFileLoader(f"{pkg}.{user}", path)
+    return records.record_of(source_to_code_as_import(loader, open(path, "rb").read(), path))
+body, direct = record("u_body"), record("u_direct")
+answers = {
+    "body_digest_is_mark": [row.digest == records.ENVIRONMENT_READ for row in body.macros],
+    "direct_digest_is_mark": [row.digest == records.ENVIRONMENT_READ for row in direct.macros],
+    "body_current": [record_is_current_here(body), record_is_current_here(body)],
+    "direct_current": [record_is_current_here(direct), record_is_current_here(direct)],
+    "remembered": sorted(f"{key.module}.{key.name}" for key in macro_use._REMEMBERED if hasattr(key, "name")),
+}
+os.environ["PROBE_S4_MODE"] = "fancy"
+answers["after_environ_write"] = {"body": record_is_current_here(body), "direct": record_is_current_here(direct)}
+seen = {}
+def in_thread():
+    seen["body"], seen["direct"] = record_is_current_here(body), record_is_current_here(direct)
+thread = threading.Thread(target=in_thread)
+thread.start(); thread.join()
+answers["in_thread"] = seen
+print(json.dumps(answers))
+'''
+env = {k: v for k, v in os.environ.items() if k not in ("PYTHONDONTWRITEBYTECODE", "PROBE_S4_MODE")} | {
+    "DOEFF_HY_CODE_STORE": str(work / "store"), "PYTHONPYCACHEPREFIX": str(work / "pycache")}
+done = subprocess.run([sys.executable, "-c", CHILD, str(root), pkg], capture_output=True, text=True, env=env, timeout=120)
+if done.returncode:
+    print(done.stderr[-3000:])
+    raise SystemExit(1)
+print(json.dumps(json.loads(done.stdout.strip().splitlines()[-1]), ensure_ascii=False, indent=1))

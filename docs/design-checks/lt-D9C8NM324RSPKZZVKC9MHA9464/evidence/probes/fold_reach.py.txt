@@ -1,0 +1,32 @@
+"""本物の macro の閉包の歩みが、file で覆う逃げ道(_Walker._fold)にどの module で何回落ちるか・どこから落ちるかを数える。引数: module の
+名の一覧の file・始め・終わり。PYTHONPYCACHEPREFIX を空の dir に向け、DOEFF_HY_CODE_STORE=off で走らせる。"""
+import importlib
+import json
+import sys
+from collections import Counter
+
+import doeff_hy  # noqa: F401
+import hy  # noqa: F401
+from doeff_hy_bytecode_guard import macro_use
+
+folds = Counter()
+original = macro_use._Walker._fold
+
+
+def fold(self, module):
+    """逃げ道 1 回を、覆う module と呼び手の関数の名で数える。"""
+    caller = sys._getframe(1).f_code.co_name
+    folds[(getattr(module, "__name__", "none"), caller)] += 1
+    return original(self, module)
+
+
+macro_use._Walker._fold = fold
+names = [line.strip() for line in open(sys.argv[1]) if line.strip()][int(sys.argv[2]) : int(sys.argv[3])]
+failed = Counter()
+for name in names:
+    try:
+        importlib.import_module(name)
+    except BaseException as error:  # noqa: BLE001 — 読めない module は数えるだけ
+        failed[type(error).__name__] += 1
+print(json.dumps({"modules": len(names), "failed": dict(failed),
+                  "folds": sorted(([m, c, n] for (m, c), n in folds.items()), key=lambda row: -row[2])}, ensure_ascii=False))

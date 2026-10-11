@@ -1,0 +1,107 @@
+"""overlay の loader_hooks.py に、失敗例の変更を当てる(木の file には触れない)。"""
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+text = target.read_text(encoding="utf-8")
+
+old_lookup = """    code = code_store.stored_code(_store_entry(store, fullname, path, source))
+    if code is None:
+        return None
+    record = records.record_of(code)
+    if record is None or not record_is_current_here(record):
+        return None
+"""
+new_lookup = """    code = code_store.stored_code(_store_entry(store, fullname, path, source))
+    record = None if code is None else records.record_of(code)
+    if record is None or not record_is_current_here(record):
+        # 環境変数の読みの印の行を持つ記録は、照らしがいつも古いと判じる(records.ENVIRONMENT_READ)— 同じ環境変数の値の process が
+        # 作った entry(鍵に今の環境の指紋を足した entry)を、印の行を除いて照らす。
+        code = code_store.stored_code(_environment_entry(store, fullname, path, source))
+        record = None if code is None else records.record_of(code)
+        if record is None or not record_is_current_here(_apart_from_environment(record)):
+            return None
+"""
+old_write = """    if records.record_of(code) is None:
+        return
+    import marshal
+
+    code_store.write_entry(_store_entry(store, fullname, path, source), marshal.dumps(code))
+"""
+new_write = """    record = records.record_of(code)
+    if record is None:
+        return
+    import marshal
+
+    # 環境変数の読みの印の行を持つ code は、今の環境の指紋を鍵に足した entry へ(同じ環境の process どうしだけが引き合う)。
+    entry = (
+        _environment_entry(store, fullname, path, source)
+        if _reads_environment(record)
+        else _store_entry(store, fullname, path, source)
+    )
+    code_store.write_entry(entry, marshal.dumps(code))
+"""
+old_key = '''    key = code_store.code_key(
+        path, source, fullname, _hy_version(), sys.implementation.cache_tag or "", sys.flags.optimize
+    )
+    return code_store.entry_path(store, key, code_store.CODE_SUFFIX)
+'''
+new_key = old_key + '''
+
+#: 環境変数の読みの印の行を持つ Hy の code の entry の鍵の印(code_store.CODE_TAG の entry と引き合わない)。
+ENVIRONMENT_CODE_TAG = "doeff-hy/code-store-environment/1"
+
+
+def _environment_entry(store: str, fullname: str, path: str, source: bytes) -> str:
+    """環境変数の読みの印の行を持つ Hy の code の entry の path — :func:`_store_entry` の鍵の欄に、今の環境変数の全部の指紋を足す
+    (環境変数が 1 つでも違う process は別の entry を引く)。worker の Pod の process は同じ環境で走るので、印の行を持つ使い手を
+    process ごと・作業木ごとに compile し直さずに引き合える。"""
+    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
+
+    parts = (
+        ENVIRONMENT_CODE_TAG,
+        fullname,
+        _hy_version(),
+        sys.implementation.cache_tag or "",
+        str(sys.flags.optimize),
+        _environment_fingerprint(),
+    )
+    return code_store.entry_path(store, code_store.content_key(parts, source), code_store.CODE_SUFFIX)
+
+
+def _environment_fingerprint() -> str:
+    """今の環境変数の全部(名と値)の sha256(名の順 — 値の bytes の違いも写す)。"""
+    import hashlib  # 保存先を使う時だけ読む
+
+    digest = hashlib.sha256()
+    for name, value in sorted(os.environ.items()):
+        digest.update(f"{name}={value}".encode("utf-8", "surrogateescape"))
+        digest.update(b"\\0")
+    return digest.hexdigest()
+
+
+def _reads_environment(record: "MacroRecord") -> bool:
+    """記録に環境変数の読みの印の行(使った macro・macro の外の値)があるか。"""
+    from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
+
+    return any(row.digest == records.ENVIRONMENT_READ for row in (*record.macros, *record.values))
+
+
+def _apart_from_environment(record: "MacroRecord") -> "MacroRecord":
+    """記録から環境変数の読みの印の行を除いた記録 — 環境の指紋を鍵に足した entry では、印の行の言う「環境変数で決まる」は鍵が
+    覆うので、残りの行(他の macro・macro の外の値・引いて無かった名・全部の require)を今の環境で照らす。"""
+    import dataclasses  # 環境の entry を引いた時だけ読む
+
+    from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
+
+    return dataclasses.replace(
+        record,
+        macros=tuple(row for row in record.macros if row.digest != records.ENVIRONMENT_READ),
+        values=tuple(row for row in record.values if row.digest != records.ENVIRONMENT_READ),
+    )
+'''
+for old, new in ((old_lookup, new_lookup), (old_write, new_write), (old_key, new_key)):
+    assert text.count(old) == 1, old
+    text = text.replace(old, new)
+target.write_text(text, encoding="utf-8")
+print("applied")

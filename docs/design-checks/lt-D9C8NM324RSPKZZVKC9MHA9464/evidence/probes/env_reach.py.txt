@@ -1,0 +1,44 @@
+"""本物の macro の閉包の歩みが、環境変数の読み(os.environ・os.getenv など)に当たるかを数える。引数: module の名の一覧の file。
+歩みの _module と _value を包み、当たった時の歩みの在処(macro か値)と、読みの形を出す。環境変数 PYTHONPYCACHEPREFIX を空の dir に
+向け、DOEFF_HY_CODE_STORE=off で走らせる(全部の Hy の module を compile し直し、記録を作る歩みを通す)。"""
+import importlib, json, os, sys, traceback
+from collections import Counter
+
+import hy  # noqa: F401
+import doeff_hy  # noqa: F401
+from doeff_hy_bytecode_guard import macro_use
+
+ENV_NAMES = {"environ", "environb", "getenv", "getenvb"}
+hits = Counter()
+current = {"key": None}
+original_remembered = macro_use._remembered
+def remembered(key, subject, walk, sha256_of):
+    outer = current["key"]
+    current["key"] = key
+    try:
+        return original_remembered(key, subject, walk, sha256_of)
+    finally:
+        current["key"] = outer
+macro_use._remembered = remembered
+original_module = macro_use._Walker._module
+def module(self, mod, names):
+    if mod.__name__ in ("os", "posix", "nt") and ENV_NAMES.intersection(names):
+        hits[(str(current["key"]), "names:" + mod.__name__ + ":" + ",".join(sorted(ENV_NAMES.intersection(names))))] += 1
+    return original_module(self, mod, names)
+macro_use._Walker._module = module
+original_value = macro_use._Walker._value
+def value(self, v, home, names, bound=None):
+    if v is os.environ or v is getattr(os, "environb", None) or v is os.getenv or v is getattr(os, "getenvb", None):
+        hits[(str(current["key"]), "object:" + repr(type(v)))] += 1
+    return original_value(self, v, home, names, bound)
+macro_use._Walker._value = value
+
+names = [line.strip() for line in open(sys.argv[1]) if line.strip()]
+failed = Counter()
+for name in names:
+    try:
+        importlib.import_module(name)
+    except BaseException as error:  # noqa: BLE001 — 読めない module は数えるだけ
+        failed[type(error).__name__] += 1
+print(json.dumps({"modules": len(names), "failed": dict(failed), "loaded_hy": sum(1 for m in sys.modules.values() if str(getattr(m, "__file__", "")).endswith(".hy")),
+                  "hits": [[k[0], k[1], c] for k, c in sorted(hits.items())]}, ensure_ascii=False, indent=1))

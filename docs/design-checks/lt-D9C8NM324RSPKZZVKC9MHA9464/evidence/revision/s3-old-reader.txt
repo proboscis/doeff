@@ -1,0 +1,6 @@
+命令: uv run --no-project python s3_old_reader.py <doeff の木> 4ca9fcd502928a0ffcde455f390f66bd629144b9
+---
+記録が印・今の歩みが完了(16 進): RowCheck.STALE
+記録が印・今の歩みが import の途中(None): RowCheck.BY_FILES
+記録が 16 進・今の歩みが完了で同じ 16 進: RowCheck.SAME
+--- 終了の code: 0

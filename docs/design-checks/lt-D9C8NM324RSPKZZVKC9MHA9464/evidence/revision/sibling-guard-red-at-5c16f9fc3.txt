@@ -1,0 +1,80 @@
+
+deadline scale x2.1 (load per usable CPU) — per test 127s, watchdog 189s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that_do _
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1720/test_macros_that_do_not_read_t0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x28424f16190>
+
+    def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that_do(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 緑のまま守る: 環境変数の読みは、それに当たった macro の照らしだけを変える。同じ module の環境変数を読まない macro(body)と、
+        # 環境変数から組んだ素の値を値で入れる macro(plain — 条 3)と、Hy の import の同じ form で環境変数から組んだ表と並べて
+        # import した表を読む macro(fixed — import の form の兄弟の名を辿らない・設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464)は、同じ
+        # 環境の次の process で compile せず、環境変数を替えた時は plain だけを展開し直す。
+        monkeypatch.delenv(ENV_MODE, raising=False)
+        tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
+        tree.run("u_body", "u_plain", "u_fixed")
+>       assert tree.run("u_body", "u_plain", "u_fixed")["compiled"] == [], "何も変えていないのに 2 つ目の process が compile した"
+E       AssertionError: 何も変えていないのに 2 つ目の process が compile した
+E       assert ['u_fixed.hy'] == []
+E         
+E         Left contains one more item: 'u_fixed.hy'
+E         Use -v to get more diff
+
+tests/test_macro_use_record.py:1605: AssertionError
+=============================== warnings summary ===============================
+../doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-hy-env-design-check/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_macro_use_record.py::test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that_do
+1 failed, 79 deselected, 1 warning in 3.74s

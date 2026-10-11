@@ -1,0 +1,18 @@
+import inspect, sys
+import hy  # noqa
+import doeff_hy  # noqa
+import importlib
+m = importlib.import_module("doeff_hy.env_places")
+print("file:", m.__file__)
+for name in sorted(vars(m)):
+    if name.startswith("__"):
+        continue
+    v = vars(m)[name]
+    kind = type(v).__name__
+    sig = ""
+    if callable(v):
+        try:
+            sig = str(inspect.signature(v))
+        except Exception as e:
+            sig = f"<{e}>"
+    print(f"{name:40s} {kind:20s} {getattr(v, '__module__', '')!s:30s} {sig}")

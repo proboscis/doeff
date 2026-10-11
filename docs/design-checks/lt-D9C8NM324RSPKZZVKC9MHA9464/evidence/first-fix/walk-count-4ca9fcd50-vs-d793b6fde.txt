@@ -1,0 +1,14 @@
+doeff: 4ca9fcd50 未 commit 0・agora-controllers: 0c9579aec・刻 18:15:27Z
+{'checks': 805, 'walks': 17, 'file_state': 20, 'facts': 0, 'scopes': 4}
+  45 秒
+{'checks': 802, 'walks': 17, 'file_state': 20, 'facts': 0, 'scopes': 4}
+  6 秒
+{'checks': 802, 'walks': 17, 'file_state': 20, 'facts': 0, 'scopes': 4}
+  5 秒
+doeff: d793b6fde 未 commit 0・agora-controllers: 0c9579aec・刻 18:16:24Z
+{'checks': 802, 'walks': 17, 'file_state': 20, 'facts': 3145, 'scopes': 4}
+  4 秒
+{'checks': 802, 'walks': 17, 'file_state': 20, 'facts': 0, 'scopes': 4}
+  5 秒
+{'checks': 802, 'walks': 17, 'file_state': 20, 'facts': 0, 'scopes': 4}
+  5 秒

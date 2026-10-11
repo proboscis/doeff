@@ -1,0 +1,46 @@
+"""file の sha256 で覆う「安全側」の逃げ道(既定値・閉包の cell)に環境変数で組んだ表が入る形を、環境変数だけを替えた
+2 つの process で読む(今の版・模しなし)。"""
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+
+base = Path("/tmp/blind-A/s1probe")
+PKG = "probe_fb"
+FILES = {
+    "__init__.py": "",
+    "m_extra.hy": (
+        "(import os)\n"
+        '(defn helper-default [[rows {"a" (os.environ.get "PROBE_MODE" "plain")}]] (get rows "a"))\n'
+        "(defmacro env-default [] (helper-default))\n"
+        '(defn make [] (setv rows {"a" (os.environ.get "PROBE_MODE" "plain")}) (fn [] (get rows "a")))\n'
+        "(setv reader (make))\n"
+        "(defmacro env-cell [] (reader))\n"
+    ),
+    "u_default.hy": f"(require {PKG}.m_extra [env-default])\n(setv value (env-default))\n",
+    "u_cell.hy": f"(require {PKG}.m_extra [env-cell])\n(setv value (env-cell))\n",
+}
+work = base / "fallbacks"
+if work.exists():
+    shutil.rmtree(work)
+(work / "tree" / PKG).mkdir(parents=True)
+for name, text in FILES.items():
+    (work / "tree" / PKG / name).write_text(text, encoding="utf-8")
+(work / "store").mkdir()
+
+
+def run(mode):
+    env = dict(os.environ)
+    env.update(DOEFF_HY_CODE_STORE=str(work / "store"), PYTHONPYCACHEPREFIX=str(work / "pycache"))
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    env.pop("PROBE_MODE", None)
+    if mode:
+        env["PROBE_MODE"] = mode
+    done = subprocess.run([sys.executable, str(base / "child.py"), str(work / "tree"), PKG, "base", "u_default", "u_cell"],
+                          capture_output=True, text=True, timeout=120, env=env)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+first = run(None)
+second = run("fancy")
+print("1st compiled:", sorted(first["compiled"]), first["values"])
+print("2nd(PROBE_MODE=fancy)compiled:", sorted(second["compiled"]), second["values"])

@@ -1,0 +1,140 @@
+"""盲検 B の probe — 環境の指紋で分けた置き場の entry(loader_hooks の変更)が、環境変数を読む macro の file の変更を見落とすか。
+
+同じ手順を 2 つの見張りで走らせる:
+  original = 木の doeff_hy_bytecode_guard(変更なし)
+  overlay  = /tmp/blind-B/overlay の写し(loader_hooks.py にだけ失敗例の差分を当てた物 — 子の PYTHONPATH の先頭に置く)
+
+手順(見張りごとに置き場と pycache を分ける。子の process の環境は、P4 を除いて全く同じ):
+  P1 根 A(元の macros.hy)で使い手を読む
+  P2 根 B(macros.hy の direct の本体だけを替えた写し — 別の作業木で macro を変えた形)で、P1 と同じ環境で読む
+  P3 根 C(根 A のそのままの写し — 新しい作業木)で、P1 と同じ環境で読む
+  P4 根 B で、環境変数 BLINDB_MODE=fancy だけを足して読む
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+BASE = Path("/tmp/blind-B/probe")
+OVERLAY = "/tmp/blind-B/overlay"
+PACKAGE = "blindb_env"
+
+MACROS = """\
+(import os)
+(defmacro direct [] (os.environ.get "BLINDB_MODE" "plain"))
+(defmacro other [] 1)
+"""
+CHANGED = MACROS.replace(
+    '(defmacro direct [] (os.environ.get "BLINDB_MODE" "plain"))',
+    '(defmacro direct [] (.upper (os.environ.get "BLINDB_MODE" "plain")))',
+)
+FILES = {
+    "__init__.py": "",
+    "macros.hy": MACROS,
+    "u_direct.hy": f"(require {PACKAGE}.macros [direct])\n(setv value (direct))\n",
+}
+
+CHILD = """\
+import importlib, importlib.machinery, json, sys
+from pathlib import Path
+root, package, store = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, root)
+import hy
+compiled = []
+previous = importlib.machinery.SourceFileLoader.source_to_code
+def counting(self, data, path, *args, **kwargs):
+    code = previous(self, data, path, *args, **kwargs)
+    if isinstance(path, str) and path.endswith(".hy"):
+        compiled.append(Path(path).name)
+    return code
+importlib.machinery.SourceFileLoader.source_to_code = counting
+import doeff_hy
+from doeff_hy_bytecode_guard import code_store, loader_hooks, records
+module = importlib.import_module(f"{package}.u_direct")
+answer = {"value": module.value, "compiled": compiled, "guard": loader_hooks.__file__}
+if hasattr(loader_hooks, "_environment_entry"):
+    # 失敗例の版だけ: 環境の entry に在る code の記録を、照らしの公開の口(C)にそのまま渡した答え。
+    path = module.__file__
+    source = Path(path).read_bytes()
+    stored = code_store.stored_code(loader_hooks._environment_entry(store, module.__name__, path, source))
+    record = None if stored is None else records.record_of(stored)
+    if record is not None:
+        answer["env_entry_rows"] = [[row.module, row.name, row.digest] for row in record.macros]
+        answer["env_entry_current_by_C"] = loader_hooks.record_is_current_here(record)
+print(json.dumps(answer))
+"""
+
+
+def tree(root: Path, macros: str) -> Path:
+    (root / PACKAGE).mkdir(parents=True)
+    for name, text in {**FILES, "macros.hy": macros}.items():
+        (root / PACKAGE / name).write_text(text, encoding="utf-8")
+    return root
+
+
+def run(variant: str, root: Path, extra: dict[str, str]) -> dict[str, object]:
+    work = BASE / variant
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "BLINDB_MODE")}
+    env["PYTHONPYCACHEPREFIX"] = str(work / "pycache")
+    env["DOEFF_HY_CODE_STORE"] = str(work / "store")
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    if variant == "overlay":
+        env["PYTHONPATH"] = OVERLAY
+    env.update(extra)
+    done = subprocess.run(
+        [sys.executable, "-c", CHILD, str(root), PACKAGE, str(work / "store")],
+        capture_output=True, text=True, timeout=120, env=env, check=False,
+    )
+    if done.returncode != 0:
+        return {"error": done.stderr[-2000:]}
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def main() -> None:
+    if BASE.exists():
+        shutil.rmtree(BASE)
+    report: dict[str, dict[str, object]] = {}
+    for variant in ("original", "overlay"):
+        work = BASE / variant
+        (work / "store").mkdir(parents=True)
+        root_a = tree(work / "tree-a", MACROS)
+        root_b = tree(work / "tree-b", CHANGED)
+        root_c = tree(work / "tree-c", MACROS)
+        steps = {
+            "P1 tree-a (env same)": run(variant, root_a, {}),
+            "P2 tree-b macro changed (env same)": run(variant, root_b, {}),
+            "P3 tree-c unchanged copy (env same)": run(variant, root_c, {}),
+            "P4 tree-b with BLINDB_MODE=fancy": run(variant, root_b, {"BLINDB_MODE": "fancy"}),
+        }
+        # 同じ作業木・同じ環境(.pyc を書かない設定 + 名指しの置き場)で、macro の file をその場で書き換えた次の process。
+        root_d = tree(work / "tree-d", MACROS)
+        nowrite = {"PYTHONDONTWRITEBYTECODE": "1"}
+        steps["Q1 tree-d (no .pyc, env same)"] = run(variant, root_d, nowrite)
+        (root_d / PACKAGE / "macros.hy").write_text(CHANGED, encoding="utf-8")
+        steps["Q2 tree-d macro edited in place (no .pyc, env same)"] = run(variant, root_d, nowrite)
+        steps["store entries (.code)"] = {
+            "count": sum(1 for _ in (work / "store").rglob("*.code"))
+        }
+        report[variant] = steps
+    expected = {
+        "P1 tree-a (env same)": "plain",
+        "P2 tree-b macro changed (env same)": "PLAIN",
+        "P3 tree-c unchanged copy (env same)": "plain",
+        "P4 tree-b with BLINDB_MODE=fancy": "FANCY",
+        "Q1 tree-d (no .pyc, env same)": "plain",
+        "Q2 tree-d macro edited in place (no .pyc, env same)": "PLAIN",
+    }
+    for variant, steps in report.items():
+        print(f"== {variant}")
+        for step, answer in steps.items():
+            mark = ""
+            if step in expected and isinstance(answer, dict) and "value" in answer:
+                mark = "  OK" if answer["value"] == expected[step] else f"  <-- 期待 {expected[step]!r}(macro の今の file で展開した値)"
+            print(f"  {step}: {json.dumps(answer, ensure_ascii=False)}{mark}")
+
+
+if __name__ == "__main__":
+    main()
