@@ -11,6 +11,7 @@
 (import dataclasses)
 (import dataclasses [dataclass FrozenInstanceError])
 (import copy)
+(import pickle)
 (import pytest)
 (import doeff [Pure EffectBase])
 
@@ -30,6 +31,34 @@
 
 (defeffect Bare
   {:answer None
+   :tags {:context "doeff-hy" :role "intent"}})
+
+(defeffect Holder
+  "値を 1 つ持つ effect(等価の比べ方を見る)。"
+  {:fields [(: item object)]
+   :answer None
+   :tags {:context "doeff-hy" :role "intent"}})
+
+(defclass [(dataclass :frozen True)] HolderTwin [EffectBase]
+  "Holder と同じ欄を手で書いた標準の dataclass。"
+  #^ object item)
+
+(defclass Loose []
+  "== が真偽でない値を返す値(numpy の配列と同じ形)。"
+  (defn __eq__ [self other] "loose")
+  (setv __hash__ None))
+
+(defeffect Named
+  "組み込みの名(object・type)を欄の名に持つ effect。"
+  {:fields [(: object int) (: type str "t")]
+   :answer None
+   :tags {:context "doeff-hy" :role "intent"}})
+
+(defeffect Dashed
+  "名に - を含む欄を :pre が読む effect。"
+  {:fields [(: max-count int) (: label str "x")]
+   :pre [(>= max-count 0)]
+   :answer None
    :tags {:context "doeff-hy" :role "intent"}})
 
 
@@ -61,6 +90,72 @@
   (assert (= (.replace (repr (Probe "t" #("k"))) "Probe" "Twin") (repr (Twin "t" #("k")))) #((repr (Probe "t" #("k"))) (repr (Twin "t" #("k")))))
   (assert (= (repr (Bare)) "Bare()"))
   (assert (= (Bare) (Bare))))
+
+
+(deftest test-an-effect-compares-field-by-field-like-its-twin
+  ;; 失敗ケース(直す前は赤): Python 3.14 の dataclass の __eq__ は「同じ物なら真・欄ごとの == を and で繋ぐ」で、組どうしの比較
+  ;; (要素が同じ物なら == を呼ばない・答えを真偽にする)と、NaN と真偽でない値を返す == で答えが違う。
+  (<- _ (Pure None))
+  (val nan (float "nan"))
+  (assert (= (= (Holder nan) (Holder nan)) (= (HolderTwin nan) (HolderTwin nan)) False))
+  (val h (Holder nan))
+  (assert (= h h))
+  (assert (= (.__eq__ (Holder (Loose)) (Holder (Loose))) (.__eq__ (HolderTwin (Loose)) (HolderTwin (Loose))) "loose")))
+
+
+(deftest test-an-effect-with-builtin-field-names-builds-like-its-dataclass
+  ;; 失敗ケース(直す前は赤): 展開の __init__ が object.__setattr__ で欄を置くと、欄の引数 object が組み込みの object を隠す
+  ;; (dataclass の __init__ は __dataclass_builtins_object__ の別名で置くので隠されない)。
+  (<- _ (Pure None))
+  (val n (Named 1))
+  (assert (= #(n.object n.type) #(1 "t")))
+  (assert (= (Named :object 2 :type "u") (Named 2 "u"))))
+
+
+(deftest test-an-effect-runs-its-pre-on-every-way-of-making-it
+  ;; 424a87f58 の後退(展開が __post_init__ を呼ばず、入力の検査が黙って効かない)と同じ穴が defeffect に無い事: :pre は位置・名前・
+  ;; 既定値・replace のどの作り方でも走り、名に - を含む欄も読む。
+  (<- _ (Pure None))
+  (assert (= (. (Dashed :max-count 2) max-count) 2))
+  (for [make [(fn [] (Dashed -1)) (fn [] (Dashed :max-count -1)) (fn [] (Dashed -1 "y"))
+              (fn [] (dataclasses.replace (Dashed 1) :max-count -1)) (fn [] (copy.replace (Dashed 1) :max-count -1))]]
+    (with [(pytest.raises Exception)]
+      (make))))
+
+
+(deftest test-an-effect-pickles-like-its-twin
+  (<- _ (Pure None))
+  (val p (Probe "t" #("k") 3))
+  (assert (= (pickle.loads (pickle.dumps p)) p))
+  (assert (= (pickle.loads (pickle.dumps (Dashed 1))) (Dashed 1))))
+
+
+(deftest test-the-seal-refuses-a-post-init-the-written-init-does-not-call
+  ;; 守りの 2 段目(defrecord の ec08cd77 と同じ): effect 型を仕上げる seal_effect は、型が __post_init__ を持つのに展開の __init__ が
+  ;; 呼ばない時に読み込みで断る。
+  (<- _ (Pure None))
+  (import doeff_hy.record_runtime [seal-effect])
+  (defclass [(dataclass :init False :repr False :eq False)] Missed [EffectBase]
+    #^ int n
+    (defn __post-init__ [self] None))
+  (with [(pytest.raises TypeError :match "__post_init__")]
+    (seal-effect Missed #("n") False))
+  (seal-effect Missed #("n") True))
+
+
+(deftest test-the-seal-refuses-fields-the-expansion-read-differently
+  ;; 守りの 2 段目: 展開は欄の型と既定値を字面で読む。名を介した field の印(既定値)や ClassVar の型は展開に見えず、展開の書いた
+  ;; __init__ が dataclass の欄の表と違う形になる — 読み込みで断る(黙って違う値を置かない)。
+  (<- _ (Pure None))
+  (with [(pytest.raises TypeError :match "field")]
+    (hy.eval (hy.read "(do (require doeff-hy.macros [defeffect]) (import dataclasses [field])
+                           (setv shared (field :default 5))
+                           (defeffect Shared {:fields [(: n int shared)] :answer None :tags {:context \"doeff-hy\" :role \"intent\"}}))")
+             :globals {"__name__" "defeffect_shape_shared"}))
+  (with [(pytest.raises TypeError :match "ClassVar")]
+    (hy.eval (hy.read "(do (require doeff-hy.macros [defeffect]) (import typing [ClassVar])
+                           (defeffect Classy {:fields [(: n (get ClassVar int) 1)] :answer None :tags {:context \"doeff-hy\" :role \"intent\"}}))")
+             :globals {"__name__" "defeffect_shape_classy"})))
 
 
 (deftest test-an-effect-is-frozen-and-replaceable-like-its-twin
