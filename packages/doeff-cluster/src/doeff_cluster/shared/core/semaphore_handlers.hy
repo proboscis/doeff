@@ -99,24 +99,46 @@
   ;; (2026-10-11 02:45 JST の coordinator の作り直しの最中の実例)。空きの待ちが届かない時も同じく retry-seconds おいて取り直す(待ちが
   ;; 終わった task は、空いた後も lease を取らない — 2026-10-12 01:00 JST ごろの /watch の ConnectTimeout の実例)。取り消し
   ;; (TaskCancelledError — scheduler が task の中へ投げる)は届かない失敗として飲まずに上げる(飲むと取り消した task が待ち続ける)。
+  ;; 取り消しが、最後の claim が盤に通ったか分からない間(返事を待つ間・届かずに試し直す間)に届いたら、上げる前に同じ token の返しを
+  ;; 1 度送る(claim-withdrawn — 盤に通っていた token を期限まで残さない。手元の記録は返事が ok と分かった後にしか付かないので、呼び手は
+  ;; この token を知らない・依頼 lt-VDFSDNZKFS9ACQHW4R64AGK4N0 の盲検 A)。断られた後の空きの待ちの間は、盤に token が無いので送らない。
   (setv token (.next-token session))
-  (while True
-    (<- sent int (now-epoch-ms))
-    (var answer None)
-    (try
-      (<- claimed LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
-      (:= answer claimed)
-      (except [cancelled TaskCancelledError] (raise cancelled))
-      (except [e Exception] (:= answer None)))
-    (cond
-      (is answer None) (<- (Delay session.retry-seconds))
-      answer.ok (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
-                    (.hold session semaphore.name token)
-                    (return token))
-      True (try
-             (<- _seen bool (AwaitLeaseFree semaphore.name))
-             (except [cancelled TaskCancelledError] (raise cancelled))
-             (except [e Exception] (<- (Delay session.retry-seconds)))))))
+  (var unsure False)
+  (try
+    (while True
+      (<- sent int (now-epoch-ms))
+      (var answer None)
+      (:= unsure True)
+      (try
+        (<- claimed LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
+        (:= answer claimed)
+        (except [cancelled TaskCancelledError] (raise cancelled))
+        (except [e Exception] (:= answer None)))
+      (cond
+        (is answer None) (<- (Delay session.retry-seconds))
+        answer.ok (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
+                      (.hold session semaphore.name token)
+                      (return token))
+        True (do (:= unsure False)
+                 (try
+                   (<- _seen bool (AwaitLeaseFree semaphore.name))
+                   (except [cancelled TaskCancelledError] (raise cancelled))
+                   (except [e Exception] (<- (Delay session.retry-seconds)))))))
+    (except [cancelled TaskCancelledError]
+      (when unsure
+        (<- (claim-withdrawn semaphore token)))
+      (raise cancelled))))
+
+
+(defk claim-withdrawn [semaphore token]
+  {:pre [(: semaphore ClusterSemaphore) (: token str)] :post [(: % (type None))]}
+  ;; 取り消した取りの、盤に通ったか分からない claim の token を返す 1 度だけの送り(acquire-lease の取り消しの時)。盤に通っていなければ
+  ;; 盤は断るだけ(返しは同じ token なら何度送っても同じ意味)。届かない時は例外を飲む — 通っていた token は期限で解ける(release-lease と
+  ;; 同じ終わり)。取り消しの片付けなので、答えを読まない。
+  (try
+    (<- _released LeaseAnswer (LeaseOp semaphore.name "release" token semaphore.permits 0))
+    (except [e Exception] None))
+  None)
 
 
 (defk renew-lease [session semaphore token]
