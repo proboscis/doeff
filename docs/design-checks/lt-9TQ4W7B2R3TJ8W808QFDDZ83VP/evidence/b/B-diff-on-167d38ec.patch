@@ -1,0 +1,119 @@
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
+index 66e4fdce1..895cfab9c 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
+@@ -390,12 +390,10 @@ def _remembered(
+     remembered = _REMEMBERED.get(key)
+     if remembered is not None and remembered.subject is subject and _confirmed(key, remembered):
+         return remembered.closure
+-    entry = _facts_entry(key)
+-    walker = _Walker(sha256_of, CodeReadings(_stored_facts(entry) if entry is not None else {}))
++    walker = _Walker(sha256_of, CodeReadings({}))
+     walk(walker)
+     digest = walker.digest()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
+-    if entry is not None and walker.readings.missed:
+-        _write_facts(entry, walker.readings.used)  # 次の process の同じ macro の歩みが code を読み直さない
++    walker.readings.write()  # 盲検 B の差分
+     modules = tuple(sorted({*walker.files, *walker.unimportable}))
+     if walker._mut_partial:
+         # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
+@@ -809,7 +807,7 @@ def _constant_text(value: object) -> str:
+ 
+ #: code の読みの entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に
+ #: 入れるこの module の file の sha256(:func:`_own_digest`)が覆う。
+-FACTS_TAG = "doeff-hy/code-facts/1"
++FACTS_TAG = "doeff-hy/code-facts/2"
+ 
+ #: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
+ _READS = frozenset(read.value for read in NamespaceRead)
+@@ -818,26 +816,40 @@ _READS = frozenset(read.value for read in NamespaceRead)
+ class CodeReadings:
+     """歩み 1 つが使う code の読み — 置き場から読んだ物(code の sha256 → 読み)・この歩みが使った物・置き場に無く読み直したか。"""
+ 
+-    def __init__(self, stored: dict[str, CodeFacts]) -> None:
++    def __init__(self, stored: dict[str, dict[str, CodeFacts]]) -> None:
+         self._stored = stored
+-        self.used: dict[str, CodeFacts] = {}
+-        self.missed = False
++        self.used: dict[str, dict[str, CodeFacts]] = {}
++        self.missed: set[str] = set()
+ 
+-    def facts(self, code: CodeType) -> CodeFacts:
+-        """関数の code の読み — process の中の覚え・置き場の覚え(前の process が同じ中身の code を読んだ物)・読み直しの順。"""
+-        sha = _code_sha256(code)
++    def facts(self, code: CodeType, entry: str | None = None) -> CodeFacts:
++        """盲検 B の差分: entry を source の file の中身で引き、行を在処(qualname と最初の行)で引く。"""
++        place = f"{code.co_qualname}\0{code.co_firstlineno}"
++        rows = self._rows(entry)
+         remembered = _FACTS.get(id(code))
+         if remembered is not None and remembered[0] is code:
+             facts = remembered[1]
+-        elif sha in self._stored:
+-            facts = self._stored[sha]
++        elif place in rows:
++            facts = rows[place]
+             _FACTS[id(code)] = (code, facts)
+         else:
+             facts = _code_facts(code)
+-            self.missed = True
+-        self.used[sha] = facts
++            if entry is not None:
++                self.missed.add(entry)
++        if entry is not None:
++            self.used.setdefault(entry, {})[place] = facts
+         return facts
+ 
++    def _rows(self, entry: str | None) -> dict[str, CodeFacts]:
++        if entry is None:
++            return {}
++        if entry not in self._stored:
++            self._stored[entry] = _stored_facts(entry)
++        return self._stored[entry]
++
++    def write(self) -> None:
++        for entry in sorted(self.missed):
++            _write_facts(entry, {**self._stored.get(entry, {}), **self.used[entry]})
++
+ 
+ #: process の中の code の中身の sha256 の覚え(code object の id → (code・sha256) — code を生かしておき id の使い回しを防ぐ)。
+ _CODE_SHAS: dict[int, tuple[CodeType, str]] = {}
+@@ -856,21 +868,18 @@ def _code_sha256(code: CodeType) -> str:
+     return sha
+ 
+ 
+-def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
+-    """歩み 1 つの code の読みの entry の path(置き場を使わない設定・この module の code を読めない時は None)。鍵 = 印・この module
+-    の code・Python の版の全部(命令の番号)・在処・在処の module の file(作業木ごとに分ける — code の sha256 は file の名を含む)。"""
+-    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
++def _facts_entry(home: ModuleType | None, sha256_of: Sha256Of) -> str | None:
++    """盲検 B の差分: 関数の module の source の file 1 つの entry(鍵 = 印・この module の code・Python の版・module 名・file の中身)。"""
++    from doeff_hy_bytecode_guard import code_store
+ 
+     store = code_store.store_dir()
+-    own = None if store is None else _own_digest()
+-    if store is None or own is None:
++    file = None if home is None else vars(home).get("__file__")
++    if store is None or home is None or not isinstance(file, str):
++        return None
++    own, content = _own_digest(), sha256_of(file)
++    if own is None or content is None:
+         return None
+-    match key:
+-        case UsedMacroKey(table=table, module=module, name=name):
+-            place = f"macro\0{table}\0{module}\0{name}"
+-        case ValueReference(module=module, name=name):
+-            place = f"value\0{module}\0{name}"
+-    parts = (FACTS_TAG, own, sys.version, place, _module_file(module) or "")
++    parts = (FACTS_TAG, own, sys.version, home.__name__, content)
+     return code_store.entry_path(store, code_store.content_key(parts, b""), code_store.FACTS_SUFFIX)
+ 
+ 
+@@ -1328,7 +1337,7 @@ class _Walker:
+             return
+         home = sys.modules.get(module_name)
+         self._note(home)
+-        facts = self.readings.facts(function.__code__)
++        facts = self.readings.facts(function.__code__, _facts_entry(home, self._sha256_of))
+         self._texts.update(facts.texts)
+         self._feed("function", module_name, function.__qualname__, facts.shape)
+         self._value(function.__defaults__, home, facts.names)

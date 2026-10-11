@@ -1,0 +1,130 @@
+変異: moved-reading — code の読みが呼ぶ _mangle を別の file(code_store.py)へ移して import する
+対象の版: 54f1cdfa33cd2fca1988c8731fa959f8e1406f87(変異の木 /home/ubuntu/.worktrees/doeff-wt-be59-mut)
+命令(cwd /home/ubuntu/.worktrees/doeff-wt-be59-mut/packages/doeff-hy): uv run --frozen pytest -q -p no:cacheprovider tests/test_macro_use_record.py -k 'keyed_by_the_hy_version or module_its_key_covers'
+終了の code: 1
+
+--- 当てた差分 ---
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py
+index 3cd15aeaa..35703ff71 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py
+@@ -172,3 +172,9 @@ def stored_code(path: str) -> CodeType | None:
+         discard_entry(path, f"code object でない: {type(code).__name__}")
+         return None
+     return code
++
++
++def _mangle(text: str) -> str:  # 変異: macro_use から移した読みの関数
++    import hy
++
++    return hy.mangle(text)
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
+index d62c1fe0c..71f6a317e 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
+@@ -600,11 +600,7 @@ def _reference_module(module_part: str) -> str:
+     return slashes2dots(_mangle(module_part))
+ 
+ 
+-def _mangle(text: str) -> str:
+-    """Hy の名の mangle(Hy は記録を作る時と照らす時には読み込み済み)。"""
+-    import hy
+-
+-    return hy.mangle(text)
++from doeff_hy_bytecode_guard.code_store import _mangle  # 変異: 読みの関数を別の file へ移した
+ 
+ 
+ # ---- code の閉包の digest ------------------------------------------------------------------------------------------
+
+--- pytest の出力 ---
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers __
+
+    def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers() -> None:
+        # 緑のまま守る(盲検 A の付録): code の読みの entry の鍵は、読み方の code をこの module の file の sha256(_own_digest)で覆う。
+        # 読みが呼ぶ関数を別の file に移して import すると、その file の直しが置き場の entry を冷やさず、前の読み方の読みを引く。読みが
+        # 大域の名で呼ぶ関数は全部この module に在る事を確かめる(Hy の関数は鍵の Hy の版が覆う — 関数の中で import する)。
+        from types import CodeType, FunctionType
+    
+        from doeff_hy_bytecode_guard import macro_use
+    
+        def names(code: CodeType) -> set[str]:
+            inner = (constant for constant in code.co_consts if isinstance(constant, CodeType))
+            return {*code.co_names, *(name for constant in inner for name in names(constant))}
+    
+        seen: set[str] = set()
+        pending = ["_code_facts"]
+        while pending:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            function = vars(macro_use)[name]
+>           assert function.__module__ == macro_use.__name__, (
+                f"code の読みが呼ぶ {name} が {function.__module__} に在る — _own_digest がその file を覆わない"
+            )
+E           AssertionError: code の読みが呼ぶ _mangle が doeff_hy_bytecode_guard.code_store に在る — _own_digest がその file を覆わない
+E           assert 'doeff_hy_byt...rd.code_store' == 'doeff_hy_byt...ard.macro_use'
+E             
+E             - doeff_hy_bytecode_guard.macro_use
+E             ?                         --  ----
+E             + doeff_hy_bytecode_guard.code_store
+E             ?                          +++++++
+
+tests/test_macro_use_record.py:1452: AssertionError
+=============================== warnings summary ===============================
+../doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-be59-mut/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_macro_use_record.py::test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers
+1 failed, 1 passed, 61 deselected, 1 warning in 0.88s
+
+deadline scale x1.7 (load per usable CPU) — per test 102s, watchdog 153s
+
+test-admission: focused — 2 件(変更箇所の検証)

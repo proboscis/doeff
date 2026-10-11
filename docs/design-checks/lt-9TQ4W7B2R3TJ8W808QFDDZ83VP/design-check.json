@@ -1,0 +1,684 @@
+{
+ "version": 1,
+ "task_id": "lt-9TQ4W7B2R3TJ8W808QFDDZ83VP",
+ "base_revision": "cf7ea9cc09a1da54c2bb4abbf984c0552818d837",
+ "implementation_revision": "67906435c3708455e175fb065a04bcc74144e8a8",
+ "author": {
+  "conversation_id": "c-VD2S8F3KBACXN3QBNA4887H6C1",
+  "model": "claude-opus-5-5",
+  "effort": "unspecified"
+ },
+ "requirements": [
+  "test_emulated_screen.hy の読み込み(温まった後の process)で、照らしの足す CPU を照らしを常に今に合うとした時との差 0.1 秒以内(card ki-be596ac8276f の受入 cac07f3cb — L2066 の時に依頼者が受け入れた)",
+  "不変条件 B1 を破らない — D の条 1〜3 と別の top の package の値の検が緑のまま(受入 c65fb6ffb)",
+  "照らしの答えと digest の綴りを変えない"
+ ],
+ "design": {
+  "path": "design.md",
+  "sha256": "9c60b62626d11458ff157c7b3a5bdb8f6a4973bf6d10c8ad6bfb722a6c318824"
+ },
+ "pre_blind_design": {
+  "path": "design-before-blind.md",
+  "sha256": "904398334d8dd73896461498835388a52d8deb3f94fbd5d70a63294baf16b11e"
+ },
+ "blind": {
+  "meta": {
+   "path": "blind/blind-meta.md",
+   "sha256": "aa30b13645128ca30fe425f32f2241f15ca366c88e591646ae77ad7c2686f6f7"
+  },
+  "A": {
+   "input": {
+    "path": "blind/blind-a-input.md",
+    "sha256": "3722c67a4a2cc21f385bdeb655af7c77e505ea8c47884ce664a6757438dbbe0a"
+   },
+   "return": {
+    "path": "blind/blind-a-return.md",
+    "sha256": "a21af49f89fb232f6f0cf027c691e69cc0a3a9192cea47d88176d9c050302a42"
+   },
+   "agent_id": "a1ea77ccb8f47f863",
+   "model": "opus(claude-opus-5-5 と読める・実 model の観測は未確認)",
+   "effort": "xhigh を指定(効きは未観測)",
+   "machine": "zeus の agora の会話の Pod",
+   "profile": "この会話の Claude の資格",
+   "launched": "2026-10-11T14:58Z 頃(入力の hash を取った 14:57:27Z の後)",
+   "duration_seconds": 542.4,
+   "fallback": "第 1 候補 gpt-6-astra / low は、この Pod の codex が Not logged in(資格が無い)ため第 2 候補へ"
+  },
+  "B": {
+   "input": {
+    "path": "blind/blind-b-input.md",
+    "sha256": "0e39803226bc8a67d8ff912c2975e64d7b1b36b6e4bce28f679ee0e06297806f"
+   },
+   "return": {
+    "path": "blind/blind-b-return.md",
+    "sha256": "ca0339c41bf89b0a154c60595fb92f1197c81a6aa6199f07299083f2c6d90e49"
+   },
+   "agent_id": "a27df1bd04affd41a",
+   "model": "opus(同上)",
+   "effort": "xhigh を指定(同上)",
+   "machine": "zeus の agora の会話の Pod",
+   "profile": "同上",
+   "launched": "A と同じ返事の中で同時に",
+   "duration_seconds": 824.8,
+   "fallback": "A と同じ"
+  }
+ },
+ "intermediate_evidence": [
+  {
+   "path": "evidence/tests/focused-at-54bd9355f.txt",
+   "sha256": "5d9035bcf371f20ffd92d738979fc2f2c5ee13abf6ebfd6bf42b724b766ad4ab"
+  },
+  {
+   "path": "evidence/tests/focused-load-timeouts-at-e28e3e11c.txt",
+   "sha256": "e53d10fb29b89e51bca0a731190f76e647bd47fc0e8c34e4849f64fbbf713648"
+  },
+  {
+   "path": "evidence/b/B-diff-on-167d38ec.patch",
+   "sha256": "52999603b756e24305cadcf472eb0a293cc50b24b746e975eb8d53211aa1789d"
+  },
+  {
+   "path": "evidence/b/B-probe-at-167d38ec.txt",
+   "sha256": "5a00cb90ee5b71be67497c5d2414b8e147441f630ccce5f9b194c40a1b39a4b9"
+  },
+  {
+   "path": "evidence/cost/cost-walk-count-be59-base.txt",
+   "sha256": "414d5903ac32cf1202127914c22da953dd6943aab4aefd87c990e34f7e0dbe32"
+  },
+  {
+   "path": "evidence/cost/sync-ab-gc.log",
+   "sha256": "7fd85a5edea469bf3cbe6146583b27d18bc8af9c8159a0ec8a657f5d8599b738"
+  },
+  {
+   "path": "evidence/cost/ab-thread-scope.log",
+   "sha256": "2446e47a7b113f2e2abc9e0c72d8e23abb8470bd9e0be2e0e5e662d6db3d5c60"
+  },
+  {
+   "path": "evidence/cost/accept-livesync.log",
+   "sha256": "c07ef63b1de22d19c08fa51b14d413c753dd2c4cdf0d9559b8975ec79f33963c"
+  },
+  {
+   "path": "evidence/cost/accept-base-now.log",
+   "sha256": "8ead5bfe33488a1e81ebb30d77590ee99decd3adf1f051ed2c6267dd15644739"
+  },
+  {
+   "path": "evidence/probes/a_repro.py",
+   "sha256": "a2926fdfa0fee93476f566f109a2c9d510bcf3231a322b8e638a3eeb7dc39c64"
+  },
+  {
+   "path": "evidence/probes/b_probe.py",
+   "sha256": "4dc613a88d58f968c017ab0e3f584edc776635b0e6b27880f6aaaae01b1f2377"
+  },
+  {
+   "path": "evidence/probes/t_probe.py",
+   "sha256": "aa0e5180e56ee9a2dbcede4d1b88ff5267d6e1826eaa53e40cadfafb6d886860"
+  },
+  {
+   "path": "evidence/probes/e_probe.py",
+   "sha256": "ad4140e54644a41032b22f48618e687710c8d195e1a9e85b41c3c9eb8d6ce265"
+  },
+  {
+   "path": "evidence/probes/mutate.py",
+   "sha256": "b4573d2d72c5b4720619b024592cfee5d56dd13bd20ab24e8cc851f06a2d12a4"
+  },
+  {
+   "path": "evidence/probes/run_probe.sh",
+   "sha256": "3220f43ed3f83161859032255497bf6b895ea50dbcb35a0267287f0fd12649ea"
+  },
+  {
+   "path": "evidence/probes/run_pytest.sh",
+   "sha256": "528b23dea161016ec41d08764122ad4ffd5554cff76dfa7f75cf2599dec864e2"
+  }
+ ],
+ "out_of_scope_findings": [
+  {
+   "id": "A-appendix-3",
+   "summary": "環境変数から組んだ dict を macro が読むと、環境変数を替えた process でも今に合うと判じる(素の文字列の形は古いと判じる)。基準版 cf7ea9cc0 でも同じで、この便が入れた物でも変えた所でもない — B1 の前からの穴として依頼者へ渡した。合格には数えない",
+   "evidence": [
+    {
+     "path": "evidence/appendix/E-probe-at-cf7ea9cc0.txt",
+     "sha256": "bd914fee9e2703dea85415a65dbca610b20f54187a0d42471a571698b7b5d284"
+    },
+    {
+     "path": "evidence/appendix/E-probe-at-54f1cdfa3.txt",
+     "sha256": "a28dcfd998c1dc2c353067b8b9723fb4a434e86450633917f89b0ec4a68cda0a"
+    }
+   ]
+  }
+ ],
+ "modules": [
+  {
+   "id": "G",
+   "responsibility": "一番外の読み込み 1 つの間の覚え(file の状態の写しと確かめた digest)の持ち主と、その覚えを今使ってよいかの判じ(import_scope.py)",
+   "owns": "覚えの形・置いた thread・置いた口が閉じたか・覚えを読む唯一の口 current_scope()",
+   "hides": "ContextVar が継いだ thread と写した context に値を残す事(読み手は current_scope() だけを見る)",
+   "interface": "ImportScope(states・confirmed・owner・closed・close())・IMPORT_SCOPE(置く口の set・reset だけ)・current_scope() -> ImportScope | None",
+   "effects": "なし、値を持つだけ(_thread.get_ident を読む — 起動時に読み込み済みの標準 library)",
+   "lifetime": "置いた口(L の exec_module・M の record_is_current)が閉じるまで。閉じた後は継いだ context に残っても使わない",
+   "invariants": "覚えは置いた thread の中で閉じる前だけ使う。import_scope.py の外では IMPORT_SCOPE を set・reset の呼びにしか使わない(構文木の検)"
+  },
+  {
+   "id": "L",
+   "responsibility": "SourceFileLoader の口の包み(読み・compile・本体の実行)— 一番外の本体の実行の間の覚えと GC の閾値の開け閉め、本体を実行した時の source の file の状態の持ち主(loader_hooks.py)",
+   "owns": "どの口でいつ照らすか・一番外の実行の間だけ覚えを置き閉じる事・本体を実行した時の file の状態(更新時刻 ns・大きさ)",
+   "hides": "実行した時の状態の形と比べ方(照らしの歩みには bool だけを答える)・照らしの中身",
+   "interface": "install・record_is_current_here・file_sha256・executed_source_is_current(path) -> bool ほか",
+   "effects": "読みの口の file の読み書き・.pyc の書き・本体の実行の前の os.stat・GC の閾値(import_gc 経由 — 別の card の持ち物)",
+   "lifetime": "process(実行した時の状態は process の間・module を実行し直すと上書き)",
+   "invariants": "一番外の exec_module が覚えを開け閉めし、閉じる時に覚えを閉じる(入れ子は外の覚え)。起動時は軽い module だけを読む"
+  },
+  {
+   "id": "M",
+   "responsibility": "使った macro の記録の作り方と照らし方・閉包の digest の歩み・process の中の digest の覚えと確かめ・code の読み(CodeFacts)と置き場の entry(macro_use.py)",
+   "owns": "digest の綴り・歩みの規則・覚えの確かめ方・code の読みの鍵(marshal の sha256 / entry = 印・この module の中身・Python と Hy の版・在処・file)と entry の形・歩みの disk の読みを実行した時の file と比べる事",
+   "hides": "歩みの中・entry の形・CodeReadings の作り直しの有無",
+   "interface": "record_is_current・macro_digest・value_digest・MacroRecording",
+   "effects": "歩みの中の import・file の stat と sha256・置き場の entry の読み書き",
+   "lifetime": "digest の覚えは process の間(依った file が覚えた時の状態のままの時だけ使う)・置き場の entry は 7 日の掃除まで",
+   "invariants": "B1(digest と照らしの答えを process をまたいで覚えない)・digest の綴り・code の読みは code の中身で引き鍵が読み方を全部覆う・module を実行した後に変わった file に当たった digest は覚えず記録の行を空にする"
+  },
+  {
+   "id": "B",
+   "responsibility": "辿れない大域を覆う source の文の読みと、その置き場の鍵(bound_source.py)",
+   "owns": "Hy と Python の読み方・鍵の欄(Hy の版と hy.repr の登録の表の指紋)",
+   "hides": "読みの形・hy.core.hy_repr が読み込まれているかの判じ",
+   "interface": "binding_of",
+   "effects": "source の読み・置き場の entry の読み書き",
+   "lifetime": "process の覚え・置き場の entry(7 日)",
+   "invariants": "鍵は読みを変える物を全部持つ。hy.core.hy_repr が読み込まれていなければ既定の表の印(読み込まない)。Hy の外の関数が hy.repr に登録された process は Hy の読みに置き場を使わない"
+  },
+  {
+   "id": "S",
+   "responsibility": "置き場(DOEFF_HY_CODE_STORE)の並び・entry の読み書き・壊れた entry の除き(code_store.py)",
+   "owns": "dir の並び・種類の末尾(.code・.imports・.binding・.facts)・書き方(一時 file → rename)",
+   "hides": "各種類の中身の形(使い手が持つ)",
+   "interface": "store_dir・content_key・entry_path・read_entry・write_entry・discard_entry",
+   "effects": "dir の作成・file の読み書き・時刻の更新",
+   "lifetime": "entry は 7 日使われなければ掃除が消す",
+   "invariants": "書きかけを読ませない"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "code の読みの置き場の形を変える(entry の単位を source の file ごとにする・CodeFacts に欄を足す・読みの関数を別の file に分ける・Hy を上げる)",
+   "claim": "(盲検の前・design-before-blind.md の S1)M の code の読みの節だけを変える。entry の鍵は当たりやすさだけを決め、正しさは中の code の sha256 で決まるので、形を変えても照らしの答えと digest は変わらない。形の違う entry は名指して除き、読み直す",
+   "expected_scope": "M(と、新しい種類が要れば S の末尾の定数 1 行)",
+   "actual_scope": "盲検 B の変更(entry を source の file の中身と在処で引く)は M だけを変え、提示した検 60 本を全部通ったまま、別の file の macro が作る helper の古い読みを使って使い手を今に合うと判じた(B-probe-on-B-diff: 値 1)。盲検 A の付録 2: 鍵に Hy の版が無く(called_modules は Hy の mangle に依る)、読みの関数を別の file へ移すと鍵が覆わない。直しも M だけ(鍵に hy.__version__・検 3 本)",
+   "changed_modules": [
+    "M"
+   ],
+   "unchanged_modules": [
+    "G",
+    "L",
+    "B",
+    "S"
+   ],
+   "reason": "範囲は予想どおりだが、主張(正しさは code の sha256 で決まる・鍵は読み方を覆う)を縛る検が無かった — 知識の漏洩ではなく強制の不足。Hy の版の欠けは鍵の組み立ての漏れ",
+   "revision": "検 test_a_helper_built_by_a_changed_macro_of_another_file_is_stale(L2072)・test_the_code_reading_entry_is_keyed_by_the_hy_version・test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers(L2080)。B の差分・鍵から Hy の版を外す変異・関数を移す変異で赤を確かめた"
+  },
+  {
+   "id": "S2",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "利用者の code が hy.repr の登録の表に関数を足す・Hy が hy.core.hy_repr を遅れて読み込む",
+   "claim": "(盲検の前の S2)鍵の判断は B の _hy_reading 1 か所。Hy 自身の外の関数が登録された process は Hy の読みに置き場を使わない。読み込まれていない process は既定の表の印(読み込まない)。M・L・G は変えない",
+   "expected_scope": "なし(B の中で閉じる)",
+   "actual_scope": "変更なし。盲検 A・B ともこの軸の失敗例を出さなかった。B の 2 つの判断を外す変異は、それぞれの検が赤にした",
+   "changed_modules": [
+    "B"
+   ],
+   "unchanged_modules": [
+    "G",
+    "L",
+    "M",
+    "S"
+   ],
+   "reason": "判断は B の _hy_reading の 1 か所に閉じたまま(この便の L2062 で B が変わった — 変更シナリオの下での波及は無し)",
+   "revision": "不要 — 変異 hy-repr-import・hy-repr-custom で既存の検が意図した文で赤になる事を確かめた"
+  },
+  {
+   "id": "S3",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "長く走る process(開発の繰り返し・遅れて Hy の module を読む worker・reload する道具)で、読み込みと読み込みの間に macro の依る file が変わる",
+   "claim": "(盲検の前の S3)一番外の読み込み 1 つの中では file の状態は 1 つの写し。次の一番外の読み込みは読み直すので、覚えた digest を使わず辿り直し、古いと判じる。覚えの開け閉めは L の _scoped_exec_module 1 か所、確かめは M の _confirmed・_state_now",
+   "expected_scope": "なし",
+   "actual_scope": "盲検 A の主の例: 読み込み済みの値の module の file を書き換えた後に作った記録が、新しい process で今に合うと判じられた(基準版から在った — A-repro-at-cf7ea9cc0)。直しは L(実行した時の状態)と M(歩みの前の確かめ)。付録 1: 読み込みの中で起きた thread と写した context が読み込みの後も写しを使う(この便の後退)— 直しは G・L・M",
+   "changed_modules": [
+    "G",
+    "L",
+    "M"
+   ],
+   "unchanged_modules": [
+    "B",
+    "S"
+   ],
+   "reason": "主の例は持ち主の無い共同の不変条件(歩みの disk の読み = 実行した時の file)の漏洩。付録 1 は覚えの寿命の見落とし(G の公開契約の意図的な変更 current_scope と、L・M の配線)",
+   "revision": "L2072: loader_hooks の実行した時の状態と macro_use._Walker._against_executed(L2080 で bool の口 executed_source_is_current に整え、状態の形を L に隠した)。L2080・L2081: ImportScope.owner・close・current_scope と構文木の検。赤の commit c135fa330・aaa65d93f、変異 no-against-executed・no-close・no-owner・direct-read で再検証"
+  },
+  {
+   "id": "S4",
+   "axis": "distribution",
+   "applicability": "applicable",
+   "change": "置き場(DOEFF_HY_CODE_STORE)を作業木と版をまたいで共有する(数十の作業木・日次)・候補 (a)(digest を証拠と一緒に覚える)を入れる",
+   "claim": "(盲検の前の S4)置き場に入るのは中身で決まる読み(source の文の読み・code の読み)だけ。別の作業木の別の中身は別の鍵か、code の sha256 が違って当たらない。digest も照らしの答えも置き場に入らないので、条 1〜3 と別の top の package の値の検は緑のまま",
+   "expected_scope": "なし",
+   "actual_scope": "鍵が Hy の版を覆っていなかった(付録 2 — M)。主の例の記録は置き場を通って作業木をまたいで広がりえた(L2072 で記録を作らない形にした)。候補 (a) の素直な形(digest を依った file の状態と一緒に置き場に覚える)は D の条の 4 本が赤にした",
+   "changed_modules": [
+    "M"
+   ],
+   "unchanged_modules": [
+    "G",
+    "L",
+    "B",
+    "S"
+   ],
+   "reason": "鍵の組み立ての漏れ(読み方の一部 — Hy の mangle — を覆っていなかった)",
+   "revision": "鍵に hy.__version__(L2080)。D の条の 4 本は直した版で緑(focused 123 passed)・変異 a-naive で 4 本とも赤"
+  },
+  {
+   "id": "S5",
+   "axis": "concurrency",
+   "applicability": "applicable",
+   "change": "free-threaded の Python 3.14 で、thread が並べて Hy の module を import する(thread は context を継ぐ)・読み込みの中で thread を起こす・context を写して後で走らせる",
+   "claim": "(盲検の前の S5)覚えは context ごと(ContextVar)。継いだ thread は同じ覚えの dict を共有するが、dict の書きは値が同じで、照らしの答えは変わらない。別の一番外の読み込みは自分の覚えを開く",
+   "expected_scope": "なし",
+   "actual_scope": "主張が誤り: 継いだ thread と写した context は読み込みが終わった後も覚えを持ち続け、reload した表の下で古い写しで今に合うと判じた(T-probe-at-54bd9355f: 値 1・基準版は 100)。直しは G(owner・close・current_scope)・L・M(閉じる・読みの口)",
+   "changed_modules": [
+    "G",
+    "L",
+    "M"
+   ],
+   "unchanged_modules": [
+    "B",
+    "S"
+   ],
+   "reason": "free-threaded の 3.14 で thread が context を継ぐ事(sys.flags.thread_inherit_context)の見落とし — 覚えの寿命と持ち主を G が持っていなかった。G の公開契約の意図的な変更と L・M の配線",
+   "revision": "L2080(赤の commit aaa65d93f)・L2081 の構文木の検。変異 no-close(context が赤)・no-owner(本体の中で起きた thread が赤)・direct-read(構文木の検が赤)。GC の card(import_gc)は thread ごとに数えるので、継いだ thread の hold・release の組と合う(test_import_gc 緑)"
+  },
+  {
+   "id": "S6",
+   "axis": "hardware",
+   "applicability": "excluded",
+   "reason": "照らしは機体に依らない。Python と Hy の版は鍵(sys.version・Hy の版・marshal の bytes)が覆い、別の版では当たらないだけ。この Pod の interpreter は 1 つで試せない"
+  },
+  {
+   "id": "S7",
+   "axis": "simulation",
+   "applicability": "excluded",
+   "reason": "照らしは時刻・乱数・外の service を読まない(file の中身・環境・読み込み済みの module だけ)。決定的な模擬の対象の層に無い"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C01",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "実装の版の focused の検(別の file の macro の helper・code の読みを作り直さない・鍵の Hy の版・読みの関数の在処を含む)が緑",
+   "observation": "123 passed・exit=0(doeff-hy の 9 file・54f1cdfa3 — macro_use と import_scope の中身は 67906435c と同じ)",
+   "evidence": {
+    "path": "evidence/tests/focused-at-54f1cdfa3.txt",
+    "sha256": "c7af1ad52aaf11d8ce6d8adcca21fde883ba2791ca8ac93901bc3d184e2af06c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C02",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "実装の版で defs.hy を替えた後の process は使い手を古いと判じ、値 10",
+   "observation": "手順 3 = {'compiled': ['defs.hy', 'macros.hy', 'user.hy'], 'value': 10}・終了の code 0",
+   "evidence": {
+    "path": "evidence/b/B-probe-at-54f1cdfa3.txt",
+    "sha256": "9f671e21fe6f2de53efa3cabfc556cebccab1fc1e007b7179f2d874bbb9db396"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C03",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B の差分は、提示した検を全部通る(失敗例の主張する検査の通過)",
+   "observation": "60 passed・終了の code 0(167d38ec + B の差分・検の file は 167d38ec のまま)",
+   "evidence": {
+    "path": "evidence/b/B-diff-existing-tests.txt",
+    "sha256": "c8f5f4c848fdb95f8013c6d4423f1043ebcf36accd69a5a1210251df24b70339"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C04",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B の差分は、足した検 test_a_helper_built_by_a_changed_macro_of_another_file_is_stale で意図した文の赤",
+   "observation": "1 failed・AssertionError「helper を作る macro を替えたのに、使い手を今に合うと判じた」・終了の code 1",
+   "evidence": {
+    "path": "evidence/b/B-guard-on-B-diff.txt",
+    "sha256": "d13c92a751eb25b175479f68337cb8d5b1d469df1a459399f14a53c924c26302"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C05",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B の差分では、defs.hy を替えた後も値 1(責務違反 — 古い展開を今に合うと判じる)",
+   "observation": "手順 3 = {'compiled': ['defs.hy', 'macros.hy'], 'value': 1}・対照の手順 4 = 10",
+   "evidence": {
+    "path": "evidence/b/B-probe-on-B-diff.txt",
+    "sha256": "0fc2c9368f8983efe7abb4d3a02d4f325681830df759a8792bcd56934572ecfc"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C06",
+   "scenarios": [
+    "S1",
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "code の読みの鍵から Hy の版を外す変異は、鍵の検が意図した文で赤",
+   "observation": "1 failed・AssertionError「Hy の版が違うのに、code の読みの entry が同じ」・exit 1・当てた後の木は差分なし",
+   "evidence": {
+    "path": "evidence/mut/mut-no-hy-key.txt",
+    "sha256": "4682ff01c613336e8f1d650c56f288a51dd600df114365eaf561f49267a3123c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C07",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "code の読みが呼ぶ _mangle を code_store.py へ移す変異は、在処の検が関数の名と移った先を言って赤",
+   "observation": "1 failed・AssertionError「code の読みが呼ぶ _mangle が doeff_hy_bytecode_guard.code_store に在る — _own_digest がその file を覆わない」・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-moved-reading.txt",
+    "sha256": "2b5802d9215842a6170a2a3168c0ad3c25c74e1c0e4dde2b2adec908a773a774"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C08",
+   "scenarios": [
+    "S2",
+    "S3",
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "実装の版 67906435c で、この検証が足した検と、hy.repr・読み込みの覚えの検が緑",
+   "observation": "12 passed・終了の code 0",
+   "evidence": {
+    "path": "evidence/tests/added-tests-at-67906435c.txt",
+    "sha256": "b5f850a1d7229a875e46e2abae51922bf24ee5f3df598a6c69324c97d3a651f4"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C09",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "読み込まれていない hy.core.hy_repr を鍵のために読み込む変異は、照らしの process の検が意図した文で赤",
+   "observation": "1 failed・AssertionError「置き場に読みが在るのに、照らしが hy.core.hy_repr を読み込んだ」・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-hy-repr-import.txt",
+    "sha256": "fb162517589f682c5f088eac159b12e700722bfac8ef18667b283cb6a00cee2e"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C10",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "Hy の外の関数が hy.repr に登録されていても置き場を使う変異は、置き場の検が意図した文で赤",
+   "observation": "1 failed・AssertionError「Hy 自身の外の hy.repr の登録がある process で、Hy の読みを置き場に足した」・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-hy-repr-custom.txt",
+    "sha256": "6c439fead9bdb06d00ace9ea37e72fc0b842f4ef583f5593b33f6486cf80bccd"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C11",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "実装の版で、常駐の process が値の module の file を書き換えた後に作った記録を、新しい process が古いと判じて値 20",
+   "observation": "手順 3 = {'compiled': ['user_1.hy'], 'values': {'user_1': 20}}・終了の code 0",
+   "evidence": {
+    "path": "evidence/a/A-repro-at-54f1cdfa3.txt",
+    "sha256": "f48bbdb347802abf339db32575e222c80b42586b3e419825bb70263f3489b049"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C12",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "基準版で盲検 A の主の例が成り立つ(前から在った)",
+   "observation": "手順 3 = {'compiled': [], 'values': {'user_1': 2}}・対照の手順 4 = 20",
+   "evidence": {
+    "path": "evidence/a/A-repro-at-cf7ea9cc0.txt",
+    "sha256": "a5c6533b8e10c8a343c996dfd58c20ce4050908532423442d7aa65cf3277e1cd"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C13",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "この便の本体の版(L2066)でも盲検 A の主の例が成り立つ",
+   "observation": "手順 3 = {'compiled': [], 'values': {'user_1': 2}}",
+   "evidence": {
+    "path": "evidence/a/A-repro-at-167d38ec.txt",
+    "sha256": "3a331d09c7253aae92eb0915c86d87cd51662d48ba7e9ae2a2317fd3e3191f4a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C14",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "直す前の赤の commit で、盲検 A の検が意図した文で赤(B の検は緑)",
+   "observation": "1 failed・1 passed・AssertionError「読み込み済みの表を書き換えた後の process が作った記録を、新しい process が今に合うと判じた」・exit 1",
+   "evidence": {
+    "path": "evidence/a/red-A-at-c135fa330.txt",
+    "sha256": "2a55121ef6b7b2910f3e4e22bb9508c46530855dc082850c5b7a18ec41b2f555"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C15",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A の直し(歩みの前の確かめ)を外す変異は、盲検 A の検が値 2 で赤",
+   "observation": "1 failed・{'user_1': 2} != {'user_1': 20}・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-no-against-executed.txt",
+    "sha256": "9060c420a275f404dfdb037698ab373b722d853c9051e9639557df15e9dc0c5c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C16",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "直しの後も、温まった process の照らし・歩み・覚えの確かめの stat・覚えを開いた回数が直す前と同じ",
+   "observation": "直した版 799・17・20・4(置き場の作り直しの 1 回目の後は code の読み 0)— 直す前の版(cost-walk-count-be59-base.txt)と同じ",
+   "evidence": {
+    "path": "evidence/cost/cost-walk-count-be59.txt",
+    "sha256": "c7a50cab06b51073bea3c3fa9fca411ee87ee768af2ebd2e76f94c260d2c15fc"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C17",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "盲検 A の直しの有る無しで、process 全体の GC の回数と時間が同じ(照らしの正味の増えは GC の位置のずれ)",
+   "observation": "sync・nosync とも gc_all_n=12・gc_all 0.41〜0.49 秒。照らしの中の GC だけ 1 回 → 2 回",
+   "evidence": {
+    "path": "evidence/cost/sync-ab-gcall.log",
+    "sha256": "3a4315cb80dfce19d51c1d2d6d5d2af61dde8bd63a4c8c185667f114aa729fed"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C18",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "候補 (a) の素直な形(digest を依った file の状態と一緒に置き場に覚え、次の process は状態だけ確かめる)は、D の条の 4 本が赤",
+   "observation": "4 failed(別の作業木の macro・別の module の値・環境変数・別の top の package の値)・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-a-naive.txt",
+    "sha256": "8ab788a44cd5b01cf35878c582f99e16c0f931c2c89b697da6d8117ccee5ff4a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C19",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "実装の版で、読み込みの中で起きた thread が読み込みの後に reload した表の下で user_1 を読むと、古いと判じて値 100",
+   "observation": "thread: {'compiled': ['user_1.hy'], 'value': 100}・main も 100・終了の code 0",
+   "evidence": {
+    "path": "evidence/appendix/T-probe-at-54f1cdfa3.txt",
+    "sha256": "8bf641446dd68eed9966ca195beb2309f35215f0027b4be0e3b3f7f53b755645"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C20",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "基準版では、同じ検(継いだ thread・写した context)が緑(この便の後退である事の対照)",
+   "observation": "2 passed・exit 0",
+   "evidence": {
+    "path": "evidence/appendix/thread-tests-at-cf7ea9cc0.txt",
+    "sha256": "233f736e52060111438d9271b3e498972891ee055cc7d72cf0708a6fba92f230"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C21",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "L2072 の版(L2080 の直しの前)で、読み込みの中で起きた thread が古い写しで今に合うと判じる",
+   "observation": "thread: {'compiled': [], 'value': 1}・main は 100",
+   "evidence": {
+    "path": "evidence/appendix/T-probe-at-54bd9355f.txt",
+    "sha256": "35f7f1d06ec06665fdc23008cacd2609222c96ae750d7e35f79170250cc3207c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C22",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "直す前の赤の commit で、継いだ thread と写した context の検が意図した文で赤",
+   "observation": "2 failed・AssertionError「読み込みの中で起きた thread/context が、読み込みの後に reload した表を古い写しで今に合うと判じた」・exit 1",
+   "evidence": {
+    "path": "evidence/appendix/red-thread-at-aaa65d93f.txt",
+    "sha256": "3551645c357aa056ac9d27b9de9060a46b95a4e5ec29e5feea0ca7be17e864b8"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C23",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "覚えを閉じない変異は、写した context の検が赤(置いた thread の印が守る thread の検は緑)",
+   "observation": "1 failed[context]・2 passed・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-no-close.txt",
+    "sha256": "bc4cc3b2179edca1b6ad546143a45263f9df8d7091e75a606a15d3e5b3c1aac3"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C24",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "置いた thread を確かめない変異は、読み込みの本体の中で起きた thread の検が赤",
+   "observation": "1 failed・AssertionError「読み込みの本体の中で起きた thread が、本体の中で reload した表を古い写しで今に合うと判じた」・exit 1",
+   "evidence": {
+    "path": "evidence/mut/mut-no-owner.txt",
+    "sha256": "0eab5a4149cae4d9a06d61f773c6ca43bb53470829f739a8c827bdb9802b56dd"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C25",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "覚えを IMPORT_SCOPE.get() で直に読む変異は、構文木の検が場所を言って赤",
+   "observation": "1 failed・('macro_use.py:445',)・exit 1(67906435c)",
+   "evidence": {
+    "path": "evidence/mut/mut-direct-read.txt",
+    "sha256": "b0073598e9525e5b1c91b57b6b2ca91195541baba5d2e9be9da9a15ab116dabb"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C26",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "実装の版で D の条の 4 本(別の作業木の macro・別の module の値・環境変数・別の top の package の値)が緑",
+   "observation": "focused 123 passed に含まれる(54f1cdfa3)",
+   "evidence": {
+    "path": "evidence/tests/focused-at-54f1cdfa3.txt",
+    "sha256": "c7af1ad52aaf11d8ce6d8adcca21fde883ba2791ca8ac93901bc3d184e2af06c"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

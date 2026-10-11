@@ -1,0 +1,95 @@
+変異: hy-repr-import — 文の読みの鍵を作るために、読み込まれていない hy.core.hy_repr を読み込む(hy.repr を引く)
+対象の版: 54f1cdfa33cd2fca1988c8731fa959f8e1406f87(変異の木 /home/ubuntu/.worktrees/doeff-wt-be59-mut)
+命令(cwd /home/ubuntu/.worktrees/doeff-wt-be59-mut/packages/doeff-hy): uv run --frozen pytest -q -p no:cacheprovider tests/test_macro_use_record.py -k 'does_not_import_hy_repr'
+終了の code: 1
+
+--- 当てた差分 ---
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/bound_source.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/bound_source.py
+index 2e86da480..4bb955172 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/bound_source.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/bound_source.py
+@@ -292,8 +292,6 @@ def _hy_reading() -> str | None:
+ 
+     import hy
+ 
+-    if _HY_REPR_MODULE not in sys.modules:
+-        return f"{hy.__version__}\0default"
+     # hy.repr の登録の表は hy.repr を定義した Hy の module の大域(型検査器からは見えないので、hy.repr の関数の大域から引く)。
+     # 表の形が違えば読み方が分からない。
+     shown = hy.repr
+
+--- pytest の出力 ---
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_a_steady_check_process_does_not_import_hy_repr ______________
+
+cross_tree = CrossTree(root=PosixPath('/tmp/pytest-of-ubuntu/pytest-929/test_a_steady_check_process_do0/tree-a'), store=PosixPath('..._process_do0/store'), stored=PosixPath('/tmp/pytest-of-ubuntu/pytest-929/test_a_steady_check_process_do0/record.json'))
+
+    def test_a_steady_check_process_does_not_import_hy_repr(cross_tree: CrossTree) -> None:
+        # 直す前は赤: 置き場に読みが在っても、鍵を作るために hy.repr を引き、Hy が hy.core.hy_repr を読み込んだ(照らしを常に今に
+        # 合うとした process は読まない — 0.055〜0.094 秒)。
+        cross_tree.run("record")
+        cross_tree.run("check")
+        answer = cross_tree.run("check")
+        assert answer["current"] is True, "何も変えていないのに check の process が古いと判じた"
+        assert answer["parsed"] == 0, f"check の process が同じ中身の source を {answer['parsed']} 回解き直した"
+>       assert answer["hy_repr"] is False, "置き場に読みが在るのに、照らしが hy.core.hy_repr を読み込んだ"
+E       AssertionError: 置き場に読みが在るのに、照らしが hy.core.hy_repr を読み込んだ
+E       assert True is False
+
+tests/test_macro_use_record.py:1130: AssertionError
+=============================== warnings summary ===============================
+../doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-be59-mut/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_macro_use_record.py::test_a_steady_check_process_does_not_import_hy_repr
+1 failed, 62 deselected, 1 warning in 7.71s
+
+deadline scale x1.9 (load per usable CPU) — per test 112s, watchdog 168s
+
+test-admission: focused — 1 件(変更箇所の検証)

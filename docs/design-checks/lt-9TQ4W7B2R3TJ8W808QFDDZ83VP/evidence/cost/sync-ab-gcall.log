@@ -1,0 +1,8 @@
+sync mode=normal cpu=3.513 check_net=0.158 n=799 imports_inside=0.115 gc_in_check=0.035 gc_n=2 gc_all=0.476 gc_all_n=12
+nosync mode=normal cpu=3.499 check_net=0.131 n=799 imports_inside=0.122 gc_in_check=0.011 gc_n=1 gc_all=0.474 gc_all_n=12
+sync mode=normal cpu=3.068 check_net=0.154 n=799 imports_inside=0.103 gc_in_check=0.041 gc_n=2 gc_all=0.408 gc_all_n=12
+nosync mode=normal cpu=3.413 check_net=0.131 n=799 imports_inside=0.110 gc_in_check=0.011 gc_n=1 gc_all=0.460 gc_all_n=12
+sync mode=normal cpu=3.566 check_net=0.177 n=799 imports_inside=0.120 gc_in_check=0.050 gc_n=2 gc_all=0.478 gc_all_n=12
+nosync mode=normal cpu=3.662 check_net=0.133 n=799 imports_inside=0.115 gc_in_check=0.010 gc_n=1 gc_all=0.483 gc_all_n=12
+sync mode=normal cpu=3.665 check_net=0.187 n=799 imports_inside=0.124 gc_in_check=0.050 gc_n=2 gc_all=0.487 gc_all_n=12
+nosync mode=normal cpu=3.583 check_net=0.122 n=799 imports_inside=0.125 gc_in_check=0.011 gc_n=1 gc_all=0.480 gc_all_n=12
