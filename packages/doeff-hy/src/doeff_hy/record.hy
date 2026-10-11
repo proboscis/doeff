@@ -215,7 +215,11 @@
             ;; 本体の form が、展開が書く関数を自分で書くか(defn・defn/a ほか — 名は飾りの list の後ろでも読む)。
             own-method? (fn [form] (and (isinstance form Expression) (>= (len form) 2) (isinstance (get form 0) Symbol)
                                         (.startswith (str (get form 0)) "def")
-                                        (do (setv named (if (and (isinstance (get form 1) List) (>= (len form) 3)) (get form 2) (get form 1)))
+                                        (do (setv named (if (and (isinstance (get form 1) List) (>= (len form) 3)) (get form 2) (get form 1))
+                                                  ;; #^ None __post-init__ は (annotate __post-init__ None) と読まれる — 名は注記の中(424a87f58 の後退)。
+                                                  named (if (and (isinstance named Expression) (= (len named) 3) (= (str (get named 0)) "annotate"))
+                                                            (get named 1)
+                                                            named))
                                             (and (isinstance named Symbol) (in (hy.mangle (str named)) generated)))))
             ;; 欄の的と既定値の組(的・既定値の form・既定値の有無)を書いた順に(field-targets と同じ読み方)。
             targets (sum (lfor form fields
@@ -320,7 +324,7 @@
            (when ~guard
              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
            (.__delattr__ (super ~name ~self-sym) ~attr)))
-       (doeff_hy.record_runtime.seal-record ~name ~plain))))
+       (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))
     (return (if (is written None)

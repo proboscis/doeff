@@ -9,9 +9,9 @@ doeff_hy.record を読み込む途中で読み込まれるので、展開が cla
 
 import dataclasses
 import reprlib
-from dataclasses import FrozenInstanceError
 
-__all__ = ["FACTORY_DEFAULT", "RECORD_PARAMS", "FrozenInstanceError", "recursive_repr", "seal_record"]
+#: 展開が書く凍結の __setattr__ / __delattr__ が出す error(dataclass と同じ型 — 呼び手の except FrozenInstanceError が今までどおり効く)。
+FrozenInstanceError = dataclasses.FrozenInstanceError
 
 
 class _FactoryDefault:
@@ -38,10 +38,13 @@ RECORD_PARAMS: object = getattr(_ReferenceRecord, "__dataclass_params__")
 recursive_repr = reprlib.recursive_repr
 
 
-def seal_record(cls: type, plain: tuple[str, ...]) -> None:
+def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> None:
     """展開が関数を書いた record を仕上げるため: __dataclass_params__ を今までの展開と同じ値に戻し、展開が字面の値と読んだ欄 plain の
     既定値が field の印(工場・init・repr・compare・hash を持つ Field)でない事を確かめる(名を介した field は展開が読めず、関数が
-    違う形になる — 欄に ``(field …)`` を直に書く)。"""
+    違う形になる — 欄に ``(field …)`` を直に書く)。型が __post_init__ を持つのに展開の __init__ がそれを呼ばない(calls_post_init が
+    偽)時は断る — 展開が本体の自前の __post_init__ を見落とすと、入力の検査が黙って効かなくなる(doeff 424a87f58 の後退)。"""
+    if "__post_init__" in vars(cls) and not calls_post_init:
+        raise TypeError(f"{cls.__name__} の __post_init__ を展開の __init__ が呼ばない — defrecord の展開が本体の自前の関数を見落とした")
     fields: dict[str, dataclasses.Field[object]] = getattr(cls, "__dataclass_fields__")
     for name in plain:
         f = fields[name]
