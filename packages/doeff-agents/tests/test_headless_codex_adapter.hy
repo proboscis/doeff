@@ -100,9 +100,9 @@
     "stub" (do (<- layer (codex-process-layer #(sys.executable STUB-PATH) 30.0))
                [(sync-time-handler) (lent-credentials LENT) layer adapter])
     "public-fake" [(sim-time-handler :clock (SimClock)) (lent-credentials LENT) (doeff_agents.fake-codex-process-layer-handler :world world)
-                   (public-adapter env)]
+                   (! (public-adapter env))]
     "public-stub" [(sync-time-handler) (lent-credentials LENT)
-                   (doeff_agents.codex-process-layer-handler :command #(sys.executable STUB-PATH) :launch-timeout 30.0) (public-adapter env)]
+                   (doeff_agents.codex-process-layer-handler :command #(sys.executable STUB-PATH) :launch-timeout 30.0) (! (public-adapter env))]
     _ (raise (ValueError backend))))
 
 (defk public-adapter [#^ dict env]

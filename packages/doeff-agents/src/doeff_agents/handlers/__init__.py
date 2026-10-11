@@ -12,6 +12,9 @@ from doeff_time import sync_time_handler
 
 if TYPE_CHECKING:
     from doeff_claude_code.fake import FakeClaudeWorld, FakeReply
+    from doeff_codex.fake import FakeCodexWorld
+    from doeff_codex.rpc import ApprovalPolicy as CodexApprovalPolicy
+    from doeff_codex.rpc import SandboxMode as CodexSandboxMode
 
 from doeff_agents.agentd_client import LazyAgentdClient
 from doeff_agents.effects import (
@@ -376,6 +379,61 @@ def claude_agent_adapter_handler(
             config_dir, env, settings, cold_resume_prompt, permission
         )
     )
+
+
+def codex_process_layer_handler(
+    *,
+    command: tuple[str, ...] = ("codex",),
+    launch_timeout: float = 120.0,
+) -> Callable[..., object]:
+    """Codex layer 2 alone: the production handler that keeps each conversation's app-server process alive across turns.
+
+    The codex counterpart of ``claude_process_layer_handler`` (card
+    acp:kanban-issue:ki-f63f65c153b0): a caller that places layer 2 and the
+    adapter at different depths builds both from these public entries — the
+    composition module's name carries the lower-layer word, which agora's
+    boundary rules keep out of agora's code. ``command`` is the executable
+    and its leading arguments (resolved through the PATH of the adapter's
+    env); ``launch_timeout`` bounds the start and each request's answer
+    (seconds). Install a doeff-time handler and the scheduler outside it.
+    """
+    from doeff import run
+
+    return run(_hy_headless_compose_module().codex_process_layer(tuple(command), float(launch_timeout)))
+
+
+def fake_codex_process_layer_handler(*, world: "FakeCodexWorld") -> Callable[..., object]:
+    """Codex layer 2 alone, fake (no process, no API).
+
+    ``world`` holds the scripted replies (``CodexTurnInput`` → ``FakeCodexReply``)
+    and the fake's state.
+    """
+    from doeff import run
+
+    return run(_hy_headless_compose_module().fake_codex_process_layer(world))
+
+
+def codex_agent_adapter_handler(
+    *,
+    env: Mapping[str, str],
+    approval_policy: "CodexApprovalPolicy | None" = None,
+    sandbox: "CodexSandboxMode | None" = None,
+) -> Callable[..., object]:
+    """The codex adapter alone: the public effects onto codex layer-2 effects.
+
+    The same adapter whether layer 2 is the production handler or the fake.
+    ``env`` is the codex home env (PATH, HOME, CODEX_HOME — the borrowed
+    credential is placed per process by layer 2). ``approval_policy`` /
+    ``sandbox`` default to the adapter's declaration defaults (never ask;
+    full access — the turn already runs in the caller's sandbox). Layer 2
+    must be answered outside it (``codex_process_layer_handler`` or the fake).
+    """
+    from doeff import run
+
+    compose = _hy_headless_compose_module()
+    policy = compose.CodexApprovalPolicy.NEVER if approval_policy is None else approval_policy
+    mode = compose.CodexSandboxMode.DANGER_FULL_ACCESS if sandbox is None else sandbox
+    return run(compose.codex_adapter(dict(env), policy, mode))
 
 
 _mock_effect_handler = MockAgentHandler()
