@@ -1,0 +1,93 @@
+# 盲検 B の再現 3: 機能の差分のうち outcomes.py だけを df9e62756 の版へ戻す(後の変更が暗黙の Await を外した形)。例 ex05・ex08 は Await を書かないまま
+ M packages/doeff-traverse/examples/ex05_parallel_timing.hy
+ M packages/doeff-traverse/examples/ex08_tqdm_progress.hy
+$ uv run --no-sync pytest -q -m "not e2e" packages/doeff-traverse/tests/test_examples_run.py -k "ex05 or ex08"
+
+deadline scale x2.3 (load per usable CPU) — per test 137s, watchdog 205s
+
+test-admission: focused — 5 件(変更箇所の検証)
+FF...                                                                    [100%]
+=================================== FAILURES ===================================
+__________________ test_example_runs[ex05_parallel_timing.hy] __________________
+
+name = 'ex05_parallel_timing.hy', deadline_scale_factor = 2.2855360243055554
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs(name: str, deadline_scale_factor: float) -> None:
+        result = _run_hy(EXAMPLES / name, deadline_scale_factor)
+        assert result.returncode == 0, result.stdout + result.stderr
+        if name in OUTPUT_NOT_COMPARED:
+            return
+        expected = _expected(name)
+        assert expected.is_file(), (
+            f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
+            f"走るたびに変わる所を {ANY} にする"
+        )
+>       assert _matches(expected.read_text(encoding="utf-8"), result.stdout), _output_diff(
+            expected, result.stdout
+        )
+E       AssertionError: --- expected/ex05_parallel_timing.txt
+E         +++ 標準出力
+E         @@ -1,4 +1,4 @@
+E         -async + sequential:   550 in …s
+E         -async + parallel(10): 550 in …s
+E         -async + parallel(3):  550 in …s
+E         -sync + sequential:    550 in …s
+E         +async + sequential:   0 in 0.02s
+E         +async + parallel(10): 0 in 0.01s
+E         +async + parallel(3):  0 in 0.0s
+E         +sync + sequential:    550 in 1.01s
+E       assert False
+E        +  where False = _matches('async + sequential:   550 in …s\nasync + parallel(10): 550 in …s\nasync + parallel(3):  550 in …s\nsync + sequential:    550 in …s\n', 'async + sequential:   0 in 0.02s\nasync + parallel(10): 0 in 0.01s\nasync + parallel(3):  0 in 0.0s\nsync + sequential:    550 in 1.01s\n')
+E        +    where 'async + sequential:   550 in …s\nasync + parallel(10): 550 in …s\nasync + parallel(3):  550 in …s\nsync + sequential:    550 in …s\n' = read_text(encoding='utf-8')
+E        +      where read_text = PosixPath('/work/toolset/worktrees/doeff-wt-examples-premerge-dc/packages/doeff-traverse/examples/expected/ex05_parallel_timing.txt').read_text
+E        +    and   'async + sequential:   0 in 0.02s\nasync + parallel(10): 0 in 0.01s\nasync + parallel(3):  0 in 0.0s\nsync + sequential:    550 in 1.01s\n' = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-examples-premerge-dc/.venv/bin/python', '-m', 'hy', '/work/to...'_async_sleep_compute' was never awaited\nRuntimeWarning: Enable tracemalloc to get the object allocation traceback\n").stdout
+
+packages/doeff-traverse/tests/test_examples_run.py:192: AssertionError
+___________________ test_example_runs[ex08_tqdm_progress.hy] ___________________
+
+name = 'ex08_tqdm_progress.hy', deadline_scale_factor = 2.2855360243055554
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs(name: str, deadline_scale_factor: float) -> None:
+        result = _run_hy(EXAMPLES / name, deadline_scale_factor)
+        assert result.returncode == 0, result.stdout + result.stderr
+        if name in OUTPUT_NOT_COMPARED:
+            return
+        expected = _expected(name)
+        assert expected.is_file(), (
+            f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
+            f"走るたびに変わる所を {ANY} にする"
+        )
+>       assert _matches(expected.read_text(encoding="utf-8"), result.stdout), _output_diff(
+            expected, result.stdout
+        )
+E       AssertionError: --- expected/ex08_tqdm_progress.txt
+E         +++ 標準出力
+E         @@ -1,5 +1,5 @@
+E          === without tqdm (parallel) ===
+E         -Done: [0.0048, 0.0095, 0.0143, 0.019, 0.0238, 0.0286, 0.0333, 0.0381, 0.0429, 0.0476, 0.0524, 0.0571, 0.0619, 0.0667, 0.0714, 0.0762, 0.081, 0.0857, 0.0905, 0.0952]
+E         +Done: []
+E          
+E          === with tqdm (parallel) ===
+E         -Done: [0.0048, 0.0095, 0.0143, 0.019, 0.0238, 0.0286, 0.0333, 0.0381, 0.0429, 0.0476, 0.0524, 0.0571, 0.0619, 0.0667, 0.0714, 0.0762, 0.081, 0.0857, 0.0905, 0.0952]
+E         +Done: []
+E       assert False
+E        +  where False = _matches('=== without tqdm (parallel) ===\nDone: [0.0048, 0.0095, 0.0143, 0.019, 0.0238, 0.0286, 0.0333, 0.0381, 0.0429, 0.0476...0286, 0.0333, 0.0381, 0.0429, 0.0476, 0.0524, 0.0571, 0.0619, 0.0667, 0.0714, 0.0762, 0.081, 0.0857, 0.0905, 0.0952]\n', '=== without tqdm (parallel) ===\nDone: []\n\n=== with tqdm (parallel) ===\nDone: []\n')
+E        +    where '=== without tqdm (parallel) ===\nDone: [0.0048, 0.0095, 0.0143, 0.019, 0.0238, 0.0286, 0.0333, 0.0381, 0.0429, 0.0476...0286, 0.0333, 0.0381, 0.0429, 0.0476, 0.0524, 0.0571, 0.0619, 0.0667, 0.0714, 0.0762, 0.081, 0.0857, 0.0905, 0.0952]\n' = read_text(encoding='utf-8')
+E        +      where read_text = PosixPath('/work/toolset/worktrees/doeff-wt-examples-premerge-dc/packages/doeff-traverse/examples/expected/ex08_tqdm_progress.txt').read_text
+E        +    and   '=== without tqdm (parallel) ===\nDone: []\n\n=== with tqdm (parallel) ===\nDone: []\n' = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-examples-premerge-dc/.venv/bin/python', '-m', 'hy', '/work/to...outine 'async_compute' was never awaited\nRuntimeWarning: Enable tracemalloc to get the object allocation traceback\n").stdout
+
+packages/doeff-traverse/tests/test_examples_run.py:192: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-examples-premerge-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy]
+2 failed, 3 passed, 27 deselected, 1 warning in 7.45s
+rc=1

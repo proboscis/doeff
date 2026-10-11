@@ -1,0 +1,16 @@
+# 盲検 A の再現の続き: examples-check の CASE_FAILURE_MUTANTS に ex10 の行を 1 つ足す(例の source の文字列 '(* x 2)' を件の中で割り算の誤りにする)
+$ uv run --no-sync pytest -q -m "not e2e" packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are "packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex10_timed_double.hy]"
+
+deadline scale x2.5 (load per usable CPU) — per test 147s, watchdog 220s
+
+test-admission: focused — 2 件(変更箇所の検証)
+..                                                                       [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-examples-premerge-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 1 warning in 1.47s
+rc=0

@@ -1,0 +1,7 @@
+# 盲検 B の再現 1: 直す前の表(df9e62756)で、path 1 つの差分が例の検を選ぶか(入口と同じ select_targets・B の select_probe.py)
+$ uv run --no-sync python select_probe.py . packages/doeff-core-effects/doeff_core_effects/outcomes.py doeff/do.py packages/doeff-hy/src/doeff_hy/outcome_forms.hy packages/doeff-hy/src/doeff_hy/macros.hy
+選ばない packages/doeff-core-effects/doeff_core_effects/outcomes.py  -> ['packages/doeff-core-effects/tests/test_hy_module_stubs.py', 'packages/doeff-domain/tests/test_domain_dogfood.py', 'docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green', 'tests/test_daily_test_population.py', 'tests/test_contract_table_follows_packages.py']
+選ばない doeff/do.py  -> ['tests/test_daily_test_population.py', 'tests/test_contract_table_follows_packages.py']
+選ぶ  packages/doeff-hy/src/doeff_hy/outcome_forms.hy  -> ['packages/doeff-hy/tests/test_hy_stubs.py', 'packages/doeff-traverse/tests/test_examples_run.py', 'tests/test_daily_test_population.py', 'tests/test_contract_table_follows_packages.py']
+選ぶ  packages/doeff-hy/src/doeff_hy/macros.hy  -> ['packages/doeff-hy/tests/test_hy_stubs.py', 'packages/doeff-traverse/tests/test_examples_run.py', 'tests/test_daily_test_population.py', 'tests/test_contract_table_follows_packages.py']
+rc=0
