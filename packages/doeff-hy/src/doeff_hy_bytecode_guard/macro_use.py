@@ -28,6 +28,16 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   だけ覚える(:data:`_REMEMBERED`)。digest は生きた値(別の module から来た素の値・環境変数で決まる値)に依り、辿った file の
   状態だけでは信じられないので、新しい process は閉包を辿り直す。辿り直しの費用の大半だった source の文の読みは、中身で決まる
   純な読みとして置き場に覚える(:mod:`doeff_hy_bytecode_guard.bound_source`)。
+- 環境変数の読み(設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録 3 — 基準版 cf7ea9cc0 から在った・依頼
+  lt-D9C8NM324RSPKZZVKC9MHA9464): 標準 library は名だけ入れる(版で覆う)が、``os.environ`` は process の状態で、版も file も
+  覆わない。環境変数から組んだ表は名を束縛する source の文で覆われ、文は環境変数の値を持たないので、環境変数だけを替えた
+  process が古い展開を今に合うと判じた。歩みが環境変数の読み — code か束縛の文が os(posix・nt)の module を大域の名で引いて
+  ``environ`` ・ ``environb`` ・ ``getenv`` ・ ``getenvb`` を読む・関数の中の import の os で読む・それらの object に値として当たる
+  (別名の import・既定値・閉包の cell)— に当たった digest は照らせない: 覚えず、記録の行は印
+  :data:`doeff_hy_bytecode_guard.records.ENVIRONMENT_READ`(照らしはいつも古いと判じ、使い手は process ごとに展開し直す)。
+  環境変数から組んだ素の値の大域(文字列・数)は値で入るので、この規則に当たらない。見ない読み: 標準 library の関数が中で読む
+  環境変数(``os.path.expanduser`` ・ ``tempfile`` など)・文字列で引く読み(``getattr(os, "environ")``)・module の表を通す読み
+  (``sys.modules["os"]``)。
 - enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
 - 辿れない値を狭く覆う(agora-redesign #3938):
   - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
@@ -58,7 +68,7 @@ import re
 import struct
 import sys
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import chain
 from types import CodeType, FunctionType, ModuleType
@@ -66,6 +76,7 @@ from types import CodeType, FunctionType, ModuleType
 from doeff_hy_bytecode_guard import bound_source, loader_hooks
 from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, current_scope
 from doeff_hy_bytecode_guard.records import (
+    ENVIRONMENT_READ,
     MACRO_TABLE,
     READER_TABLE,
     MacroRecord,
@@ -231,7 +242,8 @@ class RowCheck(enum.Enum):
     """記録の digest の行 1 つ(使った macro・macro の外の値)の照らしの結末。
 
     - SAME = 今の digest が記録と同じ。
-    - STALE = 違う・今の環境で引けない・記録は import の途中の状態で作ったが今は比べられる(作り直した記録は比べられる)。
+    - STALE = 違う・今の環境で引けない・記録は import の途中の状態で作ったが今は比べられる(作り直した記録は比べられる)・記録か
+      今の歩みが環境変数の読みに当たった(照らせない)。
     - BY_FILES = 今の歩みが import の途中の module に当たった — 記録の file の行(閉包が依った module の file)で比べる。
     """
 
@@ -253,7 +265,9 @@ def _row_checks(record: MacroRecord, sha256_of: Sha256Of) -> Iterator[RowCheck]:
 
 def _row_check(recorded: str | None, now: "ClosureDigest | None") -> RowCheck:
     """記録の digest(None = 記録の時に import の途中だった)と今の閉包(None = 今の環境で引けない)の照らしの結末。"""
-    if now is None:
+    if now is None or ENVIRONMENT_READ in (recorded, now.digest):
+        # 環境変数の読みは、記録の側でも今の側でも照らせない — 今の歩みが import の途中で file の行で比べる形になっても、file は
+        # 環境変数の違いを写さない。
         return RowCheck.STALE
     if now.digest is None:
         return RowCheck.BY_FILES
@@ -338,7 +352,8 @@ class UsedMacroKey:
 class ClosureDigest:
     """閉包 1 つの digest と、閉包が依った module の名(歩みが辿った物の持ち主・import できなかった module — 記録の file の
     行になる)。digest は、歩みが import の途中の module か import できない module に当たった時は None(その時の材料は
-    import の進み具合に依る — 比べずに file の行で比べる)。"""
+    import の進み具合に依る — 比べずに file の行で比べる)、環境変数の読みに当たった時は印 ENVIRONMENT_READ(照らせない —
+    いつも古いと判じる)。"""
 
     digest: str | None
     modules: tuple[str, ...]
@@ -399,6 +414,10 @@ def _remembered(
     if entry is not None and walker.readings.missed:
         _write_facts(entry, walker.readings.used)  # 次の process の同じ macro の歩みが code を読み直さない
     modules = tuple(sorted({*walker.files, *walker.unimportable}))
+    if walker._mut_environment:
+        # 環境変数の読みに当たった digest は環境変数の値を写さない — 照らせない印にし、覚えない。import の途中の状態より先に判じる
+        # (途中の状態の行は file で比べ、環境変数の違いに気づかない)。
+        return ClosureDigest(ENVIRONMENT_READ, modules)
     if walker._mut_partial:
         # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
         # 違う process と置き場の entry を書き直し合う(card ki-464fa307a62b)。
@@ -619,6 +638,39 @@ def _named_only(module_name: str) -> bool:
     """名だけ入れる module か(Hy 自身・標準 library・組み込み — 版で覆う物)。"""
     top = module_name.partition(".")[0]
     return top in _NAMED_ONLY or top in sys.stdlib_module_names
+
+
+#: 環境変数を持つ標準の module(os と、その下の posix・nt)と、環境変数を読む属性の名(表 environ・environb と、それを読む
+#: getenv・getenvb)— 名だけ入れる module のうち、版で覆えない process の状態の読み(module の docstring の「環境変数の読み」)。
+_ENVIRONMENT_MODULES = frozenset({"os", "posix", "nt"})
+_ENVIRONMENT_NAMES = frozenset({"environ", "environb", "getenv", "getenvb"})
+
+
+def _reads_environment(namespace: Mapping[str, object], names: tuple[str, ...]) -> bool:
+    """code か束縛の文が、環境変数を持つ module を大域の名で引いて環境変数を読むか — 照らせない digest を見分けるため。名の並びに
+    環境変数を読む属性の名が在り、並びの名のどれかが大域でその module を指す時(``os.environ.get`` ・ ``(import os :as o)`` の
+    ``o.getenv``)。名の並びは属性の名も含むので、別の object の属性 ``x.environ`` と os の参照が同じ code に在れば読みと数える
+    (安全側 — その macro の使い手が照らせなくなるだけ)。"""
+    if _ENVIRONMENT_NAMES.isdisjoint(names):
+        return False
+    return any(_environment_module(namespace.get(name)) for name in names)
+
+
+def _environment_module(value: object) -> bool:
+    """値が環境変数を持つ標準の module か(別名で import した os も同じ module の object)。"""
+    return isinstance(value, ModuleType) and value.__name__ in _ENVIRONMENT_MODULES
+
+
+def _environment_object(value: object) -> bool:
+    """値が環境変数を読む object そのものか(os.environ・os.environb・os.getenv・os.getenvb・posix か nt の environ)— 名で
+    module を引かずに値として当たった読み(別名の import・既定値・閉包の cell)を見分けるため。"""
+    return any(
+        value is found
+        for module in _ENVIRONMENT_MODULES
+        if (owner := sys.modules.get(module)) is not None
+        for name in _ENVIRONMENT_NAMES
+        if (found := vars(owner).get(name)) is not None
+    )
 
 
 class NamespaceRead(enum.Enum):
@@ -1245,6 +1297,8 @@ class _Walker:
         #: import の途中の module か import できない module に出会ったか、今の disk から読む file が module を実行した時から
         #: 変わっていたか(その digest は import の進み具合か、process の中の古い値に依るので、覚えず記録にも入れない)。
         self._mut_partial = False
+        #: 環境変数の読みに当たったか(その digest は環境変数の値を写さないので照らせない — 覚えず、記録の行は印 ENVIRONMENT_READ)。
+        self._mut_environment = False
         #: source の文で覆った大域(module の名・大域の名 — 2 度目は印だけ入れる)。
         self._bound_names: set[tuple[str, str]] = set()
 
@@ -1306,6 +1360,11 @@ class _Walker:
         if not loader_hooks.executed_source_is_current(file):
             self._mut_partial = True
 
+    def _note_environment(self, reads: bool) -> None:
+        """環境変数の読みに当たった事を覚える — この digest を照らせない印にするため(:func:`_remembered`)。"""
+        if reads:
+            self._mut_environment = True
+
     def _fold(self, module: ModuleType | None) -> None:
         """安全側: module の file の sha256 を digest に足す(読めなければ毎回違う印 — いつも古いと判じられる)。"""
         file = None if module is None else vars(module).get("__file__")
@@ -1328,6 +1387,10 @@ class _Walker:
             return None
         if _named_only(module_name):
             self._feed("module", module_name)
+            # 関数の中で import した os で環境変数を読む(大域に os が無くても)。
+            self._note_environment(
+                module_name in _ENVIRONMENT_MODULES and not _ENVIRONMENT_NAMES.isdisjoint(names)
+            )
             return None
         match _import_for_digest(module_name):
             case ModuleType() as module:
@@ -1344,6 +1407,7 @@ class _Walker:
         module_name = function.__module__ if isinstance(function.__module__, str) else ""
         if _named_only(module_name):
             self._feed("function-name", module_name, function.__qualname__)
+            self._note_environment(_environment_object(function))  # os から import した getenv など
             return
         if not self._first_visit(function):
             return
@@ -1352,6 +1416,8 @@ class _Walker:
         facts = self.readings.facts(function.__code__)
         self._texts.update(facts.texts)
         self._feed("function", module_name, function.__qualname__, facts.shape)
+        # 展開の時か読み込みの時に、code が環境変数を読む。
+        self._note_environment(_reads_environment(function.__globals__, facts.names))
         self._value(function.__defaults__, home, facts.names)
         # keyword だけの引数の既定値は名 → 値の dict(名の順に入れる — dict のまま入れると辿れない値になる)。
         for keyword, default in sorted((function.__kwdefaults__ or {}).items()):
@@ -1530,6 +1596,11 @@ class _Walker:
                 # TYPE_CHECK_EXPANSION が真の間の展開は記録を付けない — loader_hooks)。
                 self._feed("context-variable", value.name)
                 self._context_default(value, home, names)
+            case _ if _environment_object(value):
+                # 環境変数の表そのもの(os から別名で import した environ・既定値・閉包の cell)— 中身は process の状態で、束縛の
+                # 文も file も覆わない。
+                self._feed("environment")
+                self._note_environment(True)
             case _ if _frozen_dataclass_instance(value):
                 # frozen の dataclass の値(binding_forms の _TOP・ModuleNames() の既定値など)— class と欄の値で入れる。
                 self._feed("frozen-instance")
@@ -1588,6 +1659,11 @@ class _Walker:
             return
         for statement in binding.statements:
             self._feed("statement", statement.text)
+            # 読み込みの時に文が環境変数を読んで値を組む(Hy の文は記号の各部分を loads に持つ)— 文の text は環境変数の値を
+            # 持たない(付録 3 の形)。
+            self._note_environment(
+                _reads_environment(namespace, (*statement.loads, *statement.attributes))
+            )
             for load in statement.loads:
                 if load != name and load in namespace:
                     self._feed("load", load)

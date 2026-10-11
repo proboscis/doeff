@@ -25,10 +25,15 @@
 ;;;     読み(macro_use の CodeFacts — 鍵 = code の中身の marshal の sha256・読み方の code と Python・Hy の版・card ki-be596ac8276f)
 ;;;     — だけ。class を中身で辿るか公開の形だけで覆うかは、標準の拡張の module の末尾で判じる(source の拡張子の写しで判じない
 ;;;     — 知らない末尾は中身で辿る)。
+;;;     環境変数は版も file も覆わない process の状態: 歩みが環境変数の読み(os・posix・nt の environ・environb・getenv・getenvb
+;;;     — 名で引く code と束縛の文・関数の中の import・値として当たる object)に当たった digest は照らせない — 覚えず、記録の行は印
+;;;     records.ENVIRONMENT_READ で、照らしはいつも古いと判じる(環境変数から組んだ素の値の大域は値で入るので当たらない)。見ない読み:
+;;;     標準 library の関数が中で読む環境変数・文字列で引く読み・module の表を通す読み(macro_use の docstring)。
 ;;;     失敗ケース = tests/test_macro_use_record.py の「process をまたぐ覚え」の条 1〜3 と別の top の package の値の検(digest を
 ;;;     file の状態で覚える形・照らしの答えを package の file と環境で覚える形で赤)と、写しに無い拡張子の source の class の検
 ;;;     (agora-redesign card ki-38508e6e56fd とその設計検証の盲検 A・B)と、code の読みの鍵の検(別の file の macro が作る helper・
-;;;     鍵の Hy の版・読みの関数が鍵の覆う module に在る事 — 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 B と A の付録)。
+;;;     鍵の Hy の版・読みの関数が鍵の覆う module に在る事 — 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 B と A の付録)と、
+;;;     環境変数で決まる値を読む macro の形ごとの検(同じ設計検証の盲検 A の付録 3 — 依頼 lt-D9C8NM324RSPKZZVKC9MHA9464)。
 (defarchitecture doeff-hy
   :root "doeff_hy"
   :layers [(layer startup
