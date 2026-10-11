@@ -1,7 +1,8 @@
 ;;; worker の service の計器を coordinator が Prometheus の形で出す、純粋な判断。I/O はしない。
 ;;;
 ;;; - 受け取り(record-metrics): service の process が拍ごとに送る ReportMetrics(metrics_model.hy)を、readiness と同じく送り手の
-;;;   process の世代つきで Service ごとに残す(世代ごとに最新 1 つ・直近 4 世代)。
+;;;   process の世代つきで Service ごとに残す(世代ごとに最新 1 つ・置き先の process の報告は必ず残し、置き先でない送り手は直近
+;;;   4 世代 — resource_policy.keep-report・AL-D2o)。
 ;;; - 出す(metrics-text): GET /metrics。Service ごとに「今の宣言の spec で、担い手が running と報告している process」の最新の
 ;;;   報告だけを出す(resource_policy.running-process と report-matches — readiness と同じ判定)。止めた・前の設定の・前の担い手の
 ;;;   process の計器は出さない。報告が METRICS-STALE-MS より古ければ出さない(拍が止まった process の値を最新と見せない)。
@@ -23,7 +24,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES MetricsReport ReportOrigin])
 (import doeff_cluster.coordinator.intent.request_bodies [MetricsBody MetricsPayload])
-(import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report report-origin service-readiness])
+(import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report placed-senders report-origin service-readiness])
 (import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
 
 (setv METRICS-STALE-MS 180000)   ; これより古い報告は出さない(書き手の拍は 5〜15 秒 + 読みの時間)
@@ -95,7 +96,8 @@
   (setv report (run (metrics-report body now))
         seen state.observations)
   (replace state :observations
-           (replace seen :metrics (.with-writes seen.metrics #((TableWrite name (keep-report (.row seen.metrics name) report)))))))
+           (replace seen :metrics (.with-writes seen.metrics #((TableWrite name (keep-report (.row seen.metrics name) report
+                                                                                             (placed-senders state name))))))))
 
 
 ;; --- 出す ----------------------------------------------------------------------------------------
