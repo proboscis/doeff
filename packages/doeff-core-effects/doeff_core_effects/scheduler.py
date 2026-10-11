@@ -564,18 +564,101 @@ class ReleaseSemaphore(EffectBase[None]):
 class CreateExternalPromise(EffectBase["ExternalPromise[_T]"], Generic[_T]):
     """Create a promise completed from outside the run (another thread).
 
-    ``deadline`` marks a clock wait: the ``time.monotonic()`` instant by which
-    the producer is known to complete it (a timer / ``asyncio.sleep``). While
-    such a wait is pending and not overdue the scheduler is not stalled — it
-    knows when it will wake — so the stall warning stays silent; once the
-    deadline is exceeded by more than EXTERNAL_STALL_LOG_INTERVAL_SECONDS
-    without completion, the warning fires again (agora-redesign #765).
-    ``None`` = an open-ended external wait (the pre-#765 behaviour).
+    The optional fields say how the promise is known to wake the scheduler,
+    so that blocking on it is not reported as a stall (invariant S1,
+    ``_external_wait_is_stall``):
+
+    - ``deadline`` marks a clock wait: the ``time.monotonic()`` instant by
+      which the producer is known to complete it (a timer /
+      ``asyncio.sleep``, agora-redesign #765).
+    - ``source_alive`` marks a watched wait: the source that completes it is
+      registered (a watched child's exit descriptor) and this callable says,
+      on the scheduler's thread, whether that source is still live — True
+      while the child runs (agora-redesign card ki-6222e22d4179). It must
+      answer at once without blocking.
+
+    Neither = an open-ended external wait; a wait is never both.
     """
 
-    def __init__(self, deadline: float | None = None) -> None:
+    def __init__(
+        self,
+        deadline: float | None = None,
+        source_alive: Callable[[], bool] | None = None,
+    ) -> None:
         super().__init__()
+        if deadline is not None and source_alive is not None:
+            raise ValueError(
+                "an external wait is a clock wait (deadline) or a watched wait "
+                "(source_alive), not both"
+            )
         self.deadline = deadline
+        self.source_alive = source_alive
+
+
+@dataclass(frozen=True)
+class _ClockWake:
+    """A clock wait's wake: due at ``deadline`` (``time.monotonic()``)."""
+
+    deadline: float
+
+
+@dataclass
+class _WatchedWake:
+    """A watched wait's wake: due when the registered source ends.
+
+    ``ended_at`` is the instant the scheduler first saw ``source_alive()``
+    answer False (``None`` while the source is live) — the wake is due from
+    then on. It is per promise, so the scheduler makes one wake per promise.
+    """
+
+    source_alive: Callable[[], bool]
+    ended_at: float | None = None
+
+
+_ExternalWake = _ClockWake | _WatchedWake
+
+
+def _external_wake_of(effect: "CreateExternalPromise[_T]") -> _ExternalWake | None:
+    """The wake a new external promise carries (``None`` = open-ended).
+
+    Both scheduler implementations call it when they create the promise.
+    """
+    if effect.deadline is not None:
+        return _ClockWake(effect.deadline)
+    if effect.source_alive is not None:
+        return _WatchedWake(effect.source_alive)
+    return None
+
+
+def _external_wait_is_stall(wakes: Iterable[_ExternalWake], grace: float) -> bool:
+    """Invariant S1 (packages/doeff-core-effects/architecture.hy): whether a
+    scheduler that blocked on external completions for one interval
+    (``grace`` = EXTERNAL_STALL_LOG_INTERVAL_SECONDS) with none arriving is
+    stalled. ``wakes`` are those of its pending external promises.
+
+    Not a stall while at least one wake is scheduled and none is overdue: a
+    clock wait is due at its deadline; a watched wait is not due while its
+    source is live and is due from the instant its source is first seen
+    ended. A wake is overdue once ``grace`` has passed since it was due — a
+    lost wake. Every other block is a stall (#495b): no scheduled wake, or
+    an overdue one. Both scheduler implementations call this one function.
+    """
+    now = time.monotonic()
+    scheduled = False
+    for wake in wakes:
+        if isinstance(wake, _WatchedWake):
+            if wake.ended_at is None:
+                if wake.source_alive():
+                    scheduled = True
+                    continue
+                wake.ended_at = now
+            due = wake.ended_at
+        else:
+            due = wake.deadline
+        if now > due + grace:
+            return True
+        scheduled = True
+    return not scheduled
 
 
 class _SchedulerIntrospection(EffectBase):
@@ -820,6 +903,8 @@ def _rust_spec() -> dict[str, object]:
         "enrich_exception_traceback": _enrich_exception_traceback,
         "logger": _logger,
         "module": sys.modules[__name__],
+        "external_wake_of": _external_wake_of,
+        "external_wait_is_stall": _external_wait_is_stall,
         "PRIORITY_IDLE": PRIORITY_IDLE,
         "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
         "PRIORITY_NORMAL": PRIORITY_NORMAL,
@@ -1305,8 +1390,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         Blocks with a timeout so a stalled scheduler stays observable
         (#495b): every EXTERNAL_STALL_LOG_INTERVAL_SECONDS a warning with
         the parked-waiter summary is logged, then blocking continues —
-        semantics are unchanged. A pending clock wait that is not overdue
-        keeps the warning silent (#765, ``clock_wait_keeps_schedule``).
+        semantics are unchanged. A block is a stall only as invariant S1
+        says (``_external_wait_is_stall``): a pending clock wait not overdue
+        (#765) or a watched wait whose source is live (card ki-6222e22d4179)
+        keeps the warning silent.
         """
         waited = 0.0
         while True:
@@ -1316,7 +1403,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 break
             except queue_mod.Empty:
                 waited += interval
-                if clock_wait_keeps_schedule(interval):
+                wakes = [
+                    promise["wake"]
+                    for promise in promises.values()
+                    if promise["status"] == "pending" and promise.get("wake") is not None
+                ]
+                if not _external_wait_is_stall(wakes, interval):
                     continue
                 _logger.warning(
                     "scheduler stalled %.0fs waiting on external completions; "
@@ -1326,21 +1418,6 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     live_semaphore_waiters() or "none",
                 )
         settle_external(action, pid, value)
-
-    def clock_wait_keeps_schedule(grace: float) -> bool:
-        """True while a pending clock wait (an external promise with a
-        ``deadline``) is due to wake the scheduler and none is overdue by more
-        than ``grace`` — the block is then a known sleep, not a stall (#765).
-        """
-        deadlines = [
-            promise["deadline"]
-            for promise in promises.values()
-            if promise["status"] == "pending" and promise.get("deadline") is not None
-        ]
-        if not deadlines:
-            return False
-        now = time.monotonic()
-        return all(now <= deadline + grace for deadline in deadlines)
 
     def settle_external(action: str, pid: int, value: object) -> None:
         """Apply one drained external completion.
@@ -2482,7 +2559,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         elif isinstance(effect, CreateExternalPromise):
             pid = alloc_promise()
             promises[pid]["external"] = True
-            promises[pid]["deadline"] = effect.deadline
+            promises[pid]["wake"] = _external_wake_of(effect)
             ep = register_handle(
                 ("promise", pid),
                 ExternalPromise(

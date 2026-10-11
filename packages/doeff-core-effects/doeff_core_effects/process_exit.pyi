@@ -12,7 +12,9 @@ from doeff_core_effects.process_effects import ProcessEnded as ProcessEnded
 from doeff_core_effects.process_effects import ProcessNotChild as ProcessNotChild
 from doeff_core_effects.warm_effects import AwaitWarmChildExit as AwaitWarmChildExit
 from doeff_core_effects.os_process import STARTED_CHILDREN as STARTED_CHILDREN
+from doeff_core_effects.os_warm_process import proc_stat_of as proc_stat_of
 from doeff_core_effects.os_warm_process import same_child_running as same_child_running
+from doeff_core_effects.process_stat import ProcStat as ProcStat
 from doeff_core_effects.pidfd_exit import pidfd_of as pidfd_of
 from doeff_core_effects.kqueue_exit import kqueue_fd_of as kqueue_fd_of
 from doeff import Pass as Pass
@@ -29,6 +31,9 @@ def exit_fd_of(pid: int) -> _Program[int | None, object]:
     ...
 
 def child_unreaped(pid: int) -> _Program[bool, object]:
+    ...
+
+def child_running(pid: int) -> _Program[bool, object]:
     ...
 
 def ended(pid: int, still_ours: Callable) -> None:

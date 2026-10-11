@@ -13,6 +13,24 @@
 ;;;   - 外す規則: DOEFF004(os.environ を直に読む)— 名指しの 2 module に限り、ほかの file を足さない。
 ;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり 2 module に当たる。この file を消すと、この package の file の母集団は
 ;;;   根の設定へ戻る。
+;;;
+;;; 不変条件(scheduler の止まりの見張り — Program の外の scheduler の中の判じなので defservice の :invariants に置けず、条をここに
+;;; 1 か所で書く。判じる関数は doeff_core_effects.scheduler の _external_wait_is_stall の 1 つで、Python と Rust の scheduler が同じ
+;;; 関数を呼ぶ):
+;;;   S1 a-stall-is-a-block-no-registered-wake-will-end — scheduler が外の完了を待って 1 周期(EXTERNAL_STALL_LOG_INTERVAL_SECONDS・
+;;;     本番 30 秒)何も届かない時、それを止まりと数えて警告を書く(#495b の見張り)のは、次のどちらかの時だけ:
+;;;       - 起こしの約束の登録された待ちが 1 つも無い。約束の登録された待ち = 期限の分かる時計の待ち(CreateExternalPromise の
+;;;         deadline — Delay・WaitUntil など・#765)と、終わりの知らせの出どころを見張る待ち(source_alive — 子の process の終わりの
+;;;         fd など・card ki-6222e22d4179)。
+;;;       - 約束を破った待ちが在る(失われた起こし)。時計の待ちは期限から、見張りの待ちは出どころが終わったと初めて見た時から、
+;;;         1 周期を過ぎても届かない。
+;;;     期限も出どころも持たない外部の待ちだけで塞がっている間は、今どおり周期ごとに警告する。
+;;;     失敗ケース = tests/test_scheduler.py の TestDeadlockDiagnostics(出どころの生きた見張りの待ちで黙る・出どころの終わった
+;;;     待ちを報じる・期限の無い待ちを報じる)、packages/doeff-core-effects/tests/test_process_exit_wait.hy の
+;;;     test-waiting-on-a-running-child-is-not-a-stall(走っている子の待ちで黙る — 直す前は周期ごとに警告)と
+;;;     test-a-child-that-ended-without-its-exit-notice-is-a-stall(終わりの知らせの届かない子の待ちを報じる)、
+;;;     packages/doeff-time/tests/test_async_handler.py(時計の待ちで黙る・期限を過ぎた時計の待ちを報じる)。どれも python と rust の
+;;;     両方の scheduler で回す。
 (defarchitecture doeff-core-effects
   :root "."
   :layers [(layer foundation

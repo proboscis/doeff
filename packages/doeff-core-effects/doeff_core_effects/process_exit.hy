@@ -16,6 +16,11 @@
 ;;; 資源: fd を開く・確かめる・待つ・閉じるは全部、await された coroutine の中(loop の thread)で行う。Await が答え手に届く前に捨て
 ;;; られても開いた fd も待たれない coroutine も残らず、待っている task を取り消せば coroutine の finally が読み待ちを外して fd を閉じる。
 ;;;
+;;; 止まりの見張り: 待ちは終わりの知らせの出どころ(終わると読める fd)が登録された外部の待ちなので、Await の source-alive に
+;;; 「待つ相手がまだ終わっていないか」の読み(AwaitProcessExit = child-running・AwaitWarmChildExit = same-child-running)を渡す。
+;;; scheduler は相手が生きている間の待ちを止まりと数えず、相手が終わったのに知らせが届かない待ちは止まりと数える(条 S1 —
+;;; packages/doeff-core-effects/architecture.hy・card ki-6222e22d4179)。読みは scheduler の thread で、止まりの見張りの周期ごとに走る。
+;;;
 ;;; 外側に await-handler と scheduled が要る。
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "process" :role "foundation"})
@@ -28,7 +33,8 @@
 (import doeff_core_effects.process_effects [AwaitProcessExit ProcessEnded ProcessNotChild])
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_core_effects.os_process [STARTED-CHILDREN])
-(import doeff_core_effects.os_warm_process [same-child-running])
+(import doeff_core_effects.os_warm_process [proc-stat-of same-child-running])
+(import doeff_core_effects.process_stat [ProcStat])
 (import doeff_core_effects.pidfd_exit [pidfd-of])
 (import doeff_core_effects.kqueue_exit [kqueue-fd-of])
 
@@ -65,6 +71,17 @@
   (and (is-not found None) (is (. (get found 0) returncode) None)))
 
 
+(defk child-running [pid]
+  {:pre [(: pid int)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
+  "pid が、この process が立ててまだ回収していない子で、まだ終わっていない(zombie でない)かを確かめるため — 終わりの知らせの
+   出どころが生きているかの読み(頭の註の止まりの見張り)。回収前の子の pid は使い回されないので start-ticks は照らさない。"
+  (<- unreaped bool (child-unreaped pid))
+  (if unreaped
+      (do (<- seen (| ProcStat None) (proc-stat-of pid))
+          (and (is-not seen None) (!= seen.state "Z")))
+      False))
+
+
 (defn :async #^ None ended [#^ int pid #^ Callable still-ours]
   "pid の process が終わるまで待つ coroutine(loop の thread で走る)。終わると読める fd を開き、still-ours(開いた後に、まだ待つ相手の
    process か)が偽ならその場で、真なら fd が読めるまで待って返る。どの終わり方(取り消しを含む)でも読み待ちを外して fd を閉じる。"
@@ -96,8 +113,10 @@
   (AwaitProcessExit [pid]
     (if (is (.find STARTED-CHILDREN pid) None)
         (resume (ProcessNotChild :pid pid))
-        (do (<- (Await (ExitEnd pid (fn [] (run (child-unreaped pid))))))
+        (do (<- (Await (ExitEnd pid (fn [] (run (child-unreaped pid))))
+                       :source-alive (fn [] (run (child-running pid)))))
             (resume (ProcessEnded :pid pid)))))
   (AwaitWarmChildExit [pid start-ticks]
-    (<- (Await (ExitEnd pid (fn [] (run (same-child-running pid start-ticks))))))
+    (val running (fn [] (run (same-child-running pid start-ticks))))
+    (<- (Await (ExitEnd pid running) :source-alive running))
     (resume (ProcessEnded :pid pid))))

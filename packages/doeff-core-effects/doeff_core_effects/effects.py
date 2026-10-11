@@ -4,7 +4,7 @@ These are EffectBase subclasses. Yield them from @do functions.
 Handlers (reader, state, writer) handle them.
 """
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
@@ -105,12 +105,22 @@ class Await(EffectBase[_T], Generic[_T]):
     ``deadline`` (a ``time.monotonic()`` instant) marks a clock wait whose
     completion time is known, e.g. ``asyncio.sleep``: the scheduler does not
     report it as a stall until the deadline is exceeded (agora-redesign #765).
+    ``source_alive`` marks a watched wait, e.g. a child's exit descriptor: the
+    scheduler does not report it as a stall while ``source_alive()`` is True
+    (agora-redesign card ki-6222e22d4179). Both go to the promise the await
+    handler creates — see ``CreateExternalPromise`` (invariant S1).
     """
 
-    def __init__(self, coroutine: Awaitable[_T], deadline: float | None = None) -> None:
+    def __init__(
+        self,
+        coroutine: Awaitable[_T],
+        deadline: float | None = None,
+        source_alive: Callable[[], bool] | None = None,
+    ) -> None:
         super().__init__()
         self.coroutine = coroutine
         self.deadline = deadline
+        self.source_alive = source_alive
 
     def __repr__(self):
         return "Await(...)"

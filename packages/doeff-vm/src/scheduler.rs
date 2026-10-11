@@ -162,6 +162,10 @@ struct Spec {
     deadlock_error_cls: Py<PyAny>,
     enrich_traceback: Py<PyAny>,
     logger: Py<PyAny>,
+    /// `_external_wake_of`: the wake a new external promise carries.
+    external_wake_of: Py<PyAny>,
+    /// `_external_wait_is_stall`: invariant S1 — whether a block is a stall.
+    external_wait_is_stall: Py<PyAny>,
     /// The Python scheduler module: settings a test may monkeypatch
     /// (`EXTERNAL_STALL_LOG_INTERVAL_SECONDS`) are read from it when used.
     module: Py<PyAny>,
@@ -199,6 +203,8 @@ impl Spec {
             deadlock_error_cls: get("SchedulerDeadlockError")?.unbind(),
             enrich_traceback: get("enrich_exception_traceback")?.unbind(),
             logger: get("logger")?.unbind(),
+            external_wake_of: get("external_wake_of")?.unbind(),
+            external_wait_is_stall: get("external_wait_is_stall")?.unbind(),
             module: get("module")?.unbind(),
             priority_idle: get("PRIORITY_IDLE")?.extract()?,
             priority_external_wait: get("PRIORITY_EXTERNAL_WAIT")?.extract()?,
@@ -282,9 +288,11 @@ struct PromiseEntry {
     status: Status,
     result: Option<Py<PyAny>>,
     external: bool,
-    /// A clock wait's `time.monotonic()` wake instant
-    /// (`CreateExternalPromise.deadline`, #765); `None` = open-ended.
-    deadline: Option<f64>,
+    /// How an external promise is known to wake the scheduler — the Python
+    /// `_ClockWake` / `_WatchedWake` that `external_wake_of` made from the
+    /// `CreateExternalPromise` (#765, card ki-6222e22d4179); `None` =
+    /// open-ended. Judged by `external_wait_is_stall` (invariant S1).
+    wake: Option<Py<PyAny>>,
     cancel_callbacks: Option<Vec<Py<PyAny>>>,
 }
 
@@ -1199,7 +1207,7 @@ impl Locked<'_> {
                 status: Status::Pending,
                 result: None,
                 external,
-                deadline: None,
+                wake: None,
                 cancel_callbacks: None,
             },
         );
@@ -1259,7 +1267,7 @@ impl Locked<'_> {
                 return self.settle_external(py, settle, pid, value);
             }
             waited += interval;
-            if self.clock_wait_keeps_schedule(py, interval)? {
+            if !self.external_wait_is_stall(py, interval)? {
                 continue;
             }
             let parked = self.live_parked_waiter_summary(true);
@@ -1287,22 +1295,23 @@ impl Locked<'_> {
         }
     }
 
-    /// True while a pending clock wait (an external promise with a
-    /// `deadline`) is due to wake the scheduler and none is overdue by more
-    /// than `grace` — the block is then a known sleep, not a stall (#765).
-    /// The deadline is on Python's `time.monotonic()` clock.
-    fn clock_wait_keeps_schedule(&self, py: Python<'_>, grace: f64) -> PyResult<bool> {
-        let deadlines: Vec<f64> = self
+    /// Whether blocking `grace` seconds with no external completion is a
+    /// stall: invariant S1, judged by the Python scheduler's one function
+    /// (`_external_wait_is_stall`) over the wakes of the pending promises, so
+    /// both implementations count a stall the same way.
+    fn external_wait_is_stall(&self, py: Python<'_>, grace: f64) -> PyResult<bool> {
+        let pending: Vec<Py<PyAny>> = self
             .promises
             .values()
             .filter(|p| p.status == Status::Pending)
-            .filter_map(|p| p.deadline)
+            .filter_map(|p| p.wake.as_ref().map(|wake| wake.clone_ref(py)))
             .collect();
-        if deadlines.is_empty() {
-            return Ok(false);
-        }
-        let now: f64 = py.import("time")?.getattr("monotonic")?.call0()?.extract()?;
-        Ok(deadlines.iter().all(|deadline| now <= deadline + grace))
+        let wakes = PyList::new(py, pending)?;
+        self.spec()
+            .external_wait_is_stall
+            .bind(py)
+            .call1((wakes, grace))?
+            .extract()
     }
 
     fn keys_parked_by(&self, tid: Tid) -> Vec<WKey> {
@@ -2022,9 +2031,11 @@ impl Locked<'_> {
             Kind::FailPromise => self.on_settle_promise(py, current, effect, k, false),
             Kind::CreateExternalPromise => {
                 let pid = self.alloc_promise(py, true);
-                let deadline: Option<f64> = effect.getattr(pyo3::intern!(py, "deadline"))?.extract()?;
-                if let Some(promise) = self.promises.get_mut(&pid) {
-                    promise.deadline = deadline;
+                let wake = self.spec().external_wake_of.bind(py).call1((effect,))?;
+                if !wake.is_none() {
+                    if let Some(promise) = self.promises.get_mut(&pid) {
+                        promise.wake = Some(wake.unbind());
+                    }
                 }
                 let kwargs = PyDict::new(py);
                 kwargs.set_item("_register", self.core.registrar(py)?)?;
