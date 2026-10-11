@@ -450,14 +450,24 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     .collect(),
                 _ => Vec::new(),
             };
-            let env_files = settings.environment.as_ref().map(|env| collect_environment_files(root, env)).unwrap_or_default();
-            indexes = crate::timing::timed("hy-index", || whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw));
+            // 名指しの実行で有効な規則がどれも file 1 つで決まる時は、名指しの file だけを読む(file_local_scope)。
+            let scope = file_local_scope(focus, enabled);
+            let env_files: Vec<SourceFile> = settings
+                .environment
+                .as_ref()
+                .map(|env| collect_environment_files(root, env))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|file| in_scope(&file.path, scope))
+                .collect();
+            indexes = crate::timing::timed("hy-index", || whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw, scope));
             let hy = &indexes;
             let effect_world = crate::timing::timed("effect-world", || effect_world_for(root, settings, enabled, None));
             if let Some(layers) = &settings.layers {
                 let index = module_index(&layer_files);
                 let judged: Vec<LayerJudgement> = crate::timing::timed("layer-judge", || layer_files
                     .par_iter()
+                    .filter(|file| in_scope(&file.file.path, scope))
                     .map(|file| match std::fs::read_to_string(&file.file.path) {
                         Ok(source) => judge_layer_file(file, &source, layers, settings, enabled, &index, hy.get(&file.file.rel)),
                         Err(error) => LayerJudgement { errors: vec![format!("{}: 読めない: {}", file.file.rel, error)], ..LayerJudgement::default() },
@@ -1031,8 +1041,24 @@ fn raw_settings(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String
     }
 }
 
+/// 名指しの実行(focus)で、有効な規則がどれも file 1 つの中身と設定だけで決まると名乗る(`ProjectRule::needs_whole_repo` が偽・Jev に
+/// 問う規則でない)時の、読む範囲(名指しの path)— commit の hook の形(card ki-4c87df448c5f)。当たりは名指しの file の中身だけで
+/// 決まり、出力も名指しの path で絞るので、名指しの外を読まなくても答えは同じ。repo 全体が要る規則が 1 つでも在れば None(全体を読む)。
+/// 以前は DOEFF106・131・108 が名指しの実行でも repo 全体の Hy の索引を組み、agora-controllers の 1 file で CPU 20〜60 秒・0.8〜1 GB を使った。
+fn file_local_scope<'a>(focus: Option<&'a [PathBuf]>, enabled: &BTreeSet<ProjectRule>) -> Option<&'a [PathBuf]> {
+    focus.filter(|_| enabled.iter().all(|rule| !rule.needs_whole_repo() && !rule.is_semantic()))
+}
+
+/// path が読む範囲(file_local_scope — None = 全部)の中か。
+fn in_scope(path: &Path, scope: Option<&[PathBuf]>) -> bool {
+    scope.is_none_or(|only| only.iter().any(|p| path.starts_with(p)))
+}
+
 /// 全体の実行の Hy の索引(repo の根からの path → file の索引)。経由の証拠(DOEFF107)が要る時は根の全体を、
-/// そうでなければ判じる file だけを索引する。
+/// そうでなければ判じる file だけを索引する。読む範囲(scope)が在れば、その中の file だけを cache を通さずに読む — 経由は
+/// file をまたぐので辿らない(範囲を持つのは file 1 つで決まる規則だけの実行)。cache を通さないのは、cache の書き直しが渡した
+/// file の組に無い file を消えた物として扱い、全体の実行が置いた索引を消すため。
+#[allow(clippy::too_many_arguments)]
 fn whole_hy_index(
     root: &Path,
     settings: &ProjectSettings,
@@ -1041,6 +1067,7 @@ fn whole_hy_index(
     layer_files: &[LayerFile],
     env_files: &[SourceFile],
     wants_raw: bool,
+    scope: Option<&[PathBuf]>,
 ) -> HashMap<String, HyFileIndex> {
     let wants_env = enabled.contains(&ProjectRule::EnvironmentName) && settings.environment.is_some();
     // DOEFF119 は業務の file の class の生の副作用(経由も)を見るので、全体の索引を作る。
@@ -1083,11 +1110,16 @@ fn whole_hy_index(
             .collect();
         (paths.into_iter().collect::<Vec<_>>(), false)
     };
-    let mut files = crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths));
+    let mut files = match scope {
+        Some(_) => crate::timing::timed("hy-index.read-scoped", || {
+            paths.iter().filter(|path| in_scope(path, scope)).map(|path| hy_index::index_file(root, path)).collect()
+        }),
+        None => crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths)),
+    };
     // 経由の辿りは、実 I/O を担うと宣言した定義(:world-handlers)に入らない — その先の生の副作用はその定義の責務で、
     // 呼び手が届くと数える意味が無い(agora-redesign #1902 — DOEFF107 の 39 件がすべてこの形だった)。
     let stops: BTreeSet<String> = settings.architecture.as_ref().map(|a| a.world_definition_targets().into_keys().collect()).unwrap_or_default();
-    let trace = if via { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
+    let trace = if via && scope.is_none() { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
     crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, trace));
     files.into_iter().filter_map(|file| relative_path(root, Path::new(&file.path)).map(|rel| (rel, file))).collect()
 }
