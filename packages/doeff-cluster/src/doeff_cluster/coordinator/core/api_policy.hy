@@ -37,6 +37,8 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply
                                                        DeploymentSeen DeploymentUnreadable ServiceBody LegacyJobs])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
+(import doeff_cluster.shared.core.lease_rules [holders-shifted])
+(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
@@ -138,7 +140,9 @@
 (defn #^ tuple resume-after-downtime [#^ ClusterState state #^ int now]
   "純粋: 読み直した状態 → #(時計をずらした状態 止まっていた長さ ms)。ずらすのは進行中の Rollout の段の起点(shift-clocks)と
    task の lease の期限と、worker の最後の連絡の時刻(と、その印 WorkerInfo.seen-mark)と、Ready を待っている入れ替えの期限の起点
-   (HandoffWatch.since-ms — 止まっていた間は期限に数えない・2026-09-26)。生きていた時刻を知らない置き場(2026-09-25 より前)は 0。
+   (HandoffWatch.since-ms — 止まっていた間は期限に数えない・2026-09-26)と、盤の lease の行(semaphore/<名>)の担い手の期限
+   (lease_rules.holders-shifted — 止まっていた間に延ばせなかった持ち主を切らない・行の版を 1 進める・card ki-3b7498747e4c)。
+   生きていた時刻を知らない置き場(2026-09-25 より前)は 0。
    worker の最後の連絡の時刻は、止まる前の最後の印(alive-ms)の時点の沈黙を今から数え直した値になる: 止まる直前まで連絡のあった
    worker は起き直した直後も生きていて、その後に連絡が無ければ移し替えの期限の後に沈黙と判じる。止まる前から沈黙していた worker は
    沈黙のまま(再起動で「いま連絡があった」に戻さない)。止まっていた長さは沈黙に数えない(担い手が一斉に沈黙に倒れ、最初に
@@ -155,6 +159,9 @@
                                            :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
                  :handoffs (dfor #(k w) (.items state.handoffs)
                                  k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
+                 :board (dfor #(k r) (.items state.board)
+                              :setv shifted (if (.startswith k SEMAPHORE-PREFIX) (holders-shifted r.value gap) None)
+                              k (if (is shifted None) r (replace r :value shifted :version (+ r.version 1))))
                  :alive-ms now)
         gap)))
 

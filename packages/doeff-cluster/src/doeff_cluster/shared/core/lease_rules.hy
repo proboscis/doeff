@@ -135,6 +135,18 @@
 
 
 ;; row は盤の行の値そのもの(形を確かめてから読む — 形の読めない値は触らず None)。
+(defn #^ (| dict None) holders-shifted [#^ object row #^ int gap-ms]
+  "純粋: 担い手の期限を gap-ms だけ後へずらした行。coordinator が止まっていた長さ gap-ms を担い手の期限に数えないため(起き直した時に
+   api_policy.resume-after-downtime が盤の lease の行に当てる — task の lease・worker の最後の連絡と同じ)。持ち主は止まっていた間に
+   延ばせなかっただけなので、止まる前に残っていた時間を起き直した刻から持つ: 生きていれば延ばしが通り、本当に居なければその時間の後に
+   切れる(遅れは止まっていた長さ・切れない lease を作らない)。止まる前に既に切れていた担い手は、ずらしても切れたまま。
+   形の読めない値・担い手の無い行は触らない(None)。出自 = 2026-10-11 00:25:51 UTC の coordinator の作り直しで、盤が戻った時の時計で
+   持ち主の lease を切り、待っていた別の process に渡した(同じ会話のターンが 2 本並んだ — agora-controllers の card ki-3b7498747e4c)。"
+  (when (or (not (isinstance row dict)) (not (isinstance (.get row "holders") dict)) (not (get row "holders"))) (return None))
+  (| row {"holders" (dfor #(t e) (.items (get row "holders")) t (+ e gap-ms))}))
+
+
+;; row は盤の行の値そのもの(形を確かめてから読む — 形の読めない値は触らず None)。
 (defn #^ (| dict None) drop-holders [#^ object row #^ str prefix]
   "純粋: token が prefix で始まる担い手を外した後の行。外す物が無ければ None。終了を確かめた process の lease を、期限を待たずに
    返すために worker が使う(prefix = holder-tokens-prefix(lease-holder job 世代の名) — 頭の註)。
