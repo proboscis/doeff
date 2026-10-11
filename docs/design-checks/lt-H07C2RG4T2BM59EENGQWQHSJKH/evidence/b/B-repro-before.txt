@@ -1,0 +1,105 @@
+# 盲検 B の再現(設計者)— 直す前
+写しの木: /tmp/kie3a9-blind-b/tree(git archive 3293bc4cc に /tmp/kie3a9-blind-b/failure_budget.diff を当てた物)・環境は /home/ubuntu/.worktrees/doeff-blind-3293bc4cc の .venv を借り、PYTHONPATH で写しの doeff_traverse を先に読む
+刻: 2026-10-11T23:39:45Z
+
+## 1. 提示した検が通る
+$ cd /tmp/kie3a9-blind-b/tree && PYTHONPATH=$PWD/packages/doeff-traverse:$PWD/packages/doeff-effect-analyzer/python uv run --project /home/ubuntu/.worktrees/doeff-blind-3293bc4cc pytest -q -p no:cacheprovider <5 file>
+42 passed, 1 warning in 2.75s
+rc=0
+
+## 2. 違反(方針だけを替えると、件の走り方と bar の閉じ方が変わる)
+$ PYTHONPATH=... uv run --project /home/ubuntu/.worktrees/doeff-blind-3293bc4cc python /tmp/kie3a9-blind-b/exp/violation.py
+== 段 1 つ・8 件・2,3,5 が落ちる (failure_budget=なし) ==
+  [sequential]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 3, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 8, 8, True)]
+  [parallel(1)]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 3, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 8, 8, True)]
+  [parallel(2)]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 3, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 8, 8, True)]
+  [parallel(10)]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 3, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 8, 8, True)]
+  [parallel_fail_fast(1)]
+    結果: raised ConnectionError: backend down for 2
+    f が走った件: [0, 1, 2] (3 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed')]
+    bar (desc, n, total, closed): [('calls', 3, 8, False)]
+  [parallel_fail_fast(10)]
+    結果: raised ConnectionError: backend down for 2
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 3, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 8, 8, True)]
+== 段 1 つ・8 件・2,3,5 が落ちる (failure_budget=1) ==
+  [sequential]
+    結果: raised FailureBudgetExceeded: calls: 2 of 8 items failed
+    f が走った件: [0, 1, 2, 3] (4 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed')]
+    bar (desc, n, total, closed): [('calls', 3, 8, False)]
+  [parallel(1)]
+    結果: raised FailureBudgetExceeded: calls: 2 of 8 items failed
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 7, 8, False)]
+  [parallel(2)]
+    結果: raised FailureBudgetExceeded: calls: 2 of 8 items failed
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 7, 8, False)]
+  [parallel(10)]
+    結果: raised FailureBudgetExceeded: calls: 2 of 8 items failed
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 7, 8, False)]
+  [parallel_fail_fast(1)]
+    結果: raised ConnectionError: backend down for 2
+    f が走った件: [0, 1, 2] (3 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed')]
+    bar (desc, n, total, closed): [('calls', 3, 8, False)]
+  [parallel_fail_fast(10)]
+    結果: raised ConnectionError: backend down for 2
+    f が走った件: [0, 1, 2, 3, 4, 5, 6, 7] (8 件)
+    外の記録係が受けた知らせ: [('calls', 0, 'ok'), ('calls', 1, 'ok'), ('calls', 2, 'failed'), ('calls', 4, 'ok'), ('calls', 5, 'failed'), ('calls', 6, 'ok'), ('calls', 7, 'ok')]
+    bar (desc, n, total, closed): [('calls', 7, 8, False)]
+== 入れ子: outer 2 件 × inner 3 件(各 inner に落ちる件 2 つ) (failure_budget=1) ==
+  [sequential]
+    結果: raised FailureBudgetExceeded: outer: 2 of 2 items failed
+    f が走った件: [0, 2, 3, 10, 12, 13] (6 件)
+    外の記録係が受けた知らせ: [('inner0', 0, 'ok'), ('inner0', 1, 'failed'), ('outer', 0, 'failed'), ('inner1', 0, 'ok'), ('inner1', 1, 'failed')]
+    bar (desc, n, total, closed): [('inner0', 2, 3, False), ('outer', 1, 2, False), ('inner1', 2, 3, False)]
+  [parallel(1)]
+    結果: raised FailureBudgetExceeded: outer: 2 of 2 items failed
+    f が走った件: [0, 2, 3, 10, 12, 13] (6 件)
+    外の記録係が受けた知らせ: [('inner0', 0, 'ok'), ('inner0', 1, 'failed'), ('outer', 0, 'failed'), ('inner1', 0, 'ok'), ('inner1', 1, 'failed')]
+    bar (desc, n, total, closed): [('inner0', 2, 3, False), ('outer', 1, 2, False), ('inner1', 2, 3, False)]
+  [parallel(2)]
+    結果: raised FailureBudgetExceeded: outer: 2 of 2 items failed
+    f が走った件: [0, 2, 3, 10, 12, 13] (6 件)
+    外の記録係が受けた知らせ: [('inner0', 0, 'ok'), ('inner0', 1, 'failed'), ('inner1', 0, 'ok'), ('outer', 0, 'failed'), ('inner1', 1, 'failed')]
+    bar (desc, n, total, closed): [('inner0', 2, 3, False), ('inner1', 2, 3, False), ('outer', 1, 2, False)]
+  [parallel(10)]
+    結果: raised FailureBudgetExceeded: outer: 2 of 2 items failed
+    f が走った件: [0, 2, 3, 10, 12, 13] (6 件)
+    外の記録係が受けた知らせ: [('inner0', 0, 'ok'), ('inner0', 1, 'failed'), ('inner1', 0, 'ok'), ('outer', 0, 'failed'), ('inner1', 1, 'failed')]
+    bar (desc, n, total, closed): [('inner0', 2, 3, False), ('inner1', 2, 3, False), ('outer', 1, 2, False)]
+  [parallel_fail_fast(1)]
+    結果: raised ConnectionError: backend down for 2
+    f が走った件: [0, 2] (2 件)
+    外の記録係が受けた知らせ: [('inner0', 0, 'ok'), ('inner0', 1, 'failed'), ('outer', 0, 'failed')]
+    bar (desc, n, total, closed): [('inner0', 2, 3, False), ('outer', 1, 2, False)]
+  [parallel_fail_fast(10)]
+    結果: raised ConnectionError: backend down for 2
+    f が走った件: [0, 2, 3, 10, 12] (5 件)
+    外の記録係が受けた知らせ: [('inner0', 0, 'ok'), ('inner0', 1, 'failed'), ('inner1', 0, 'ok'), ('outer', 0, 'failed'), ('inner1', 1, 'failed')]
+    bar (desc, n, total, closed): [('inner0', 2, 3, False), ('inner1', 2, 3, False), ('outer', 1, 2, False)]
+rc=0

@@ -1,0 +1,58 @@
+# 盲検 B の再検証(設計者)— 直した後
+写しの木: /tmp/kie3a9-dc-b-after/tree(git archive 22d78239f に /tmp/kie3a9-blind-b/failure_budget.diff を当てた物 — 盲検 B の差分そのまま)・環境は /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome の .venv を借り、PYTHONPATH で写しの doeff_traverse を先に読む
+刻: 2026-10-11T23:45:43Z
+
+## 1. 提示した検と、B の実装者の検 test_failure_budget.py
+$ PYTHONPATH=$PWD/packages/doeff-traverse:$PWD/packages/doeff-effect-analyzer/python uv run --project /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome pytest -q -p no:cacheprovider <5 file>
+        with pytest.raises(FailureBudgetExceeded, match="calls: 2 of 8 items failed"):
+2 failed, 52 passed, 1 warning in 2.55s
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=3, total=8, label='calls') and threw FailureBudgetExceeded: calls: 2 of 8 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+E           doeff_traverse.handlers.FailureBudgetExceeded: calls: 2 of 8 items failed
+FAILED packages/doeff-traverse/tests/test_failure_budget.py::test_a_traverse_stops_once_its_failures_pass_the_budget[parallel]
+FAILED packages/doeff-traverse/tests/test_failure_budget.py::test_a_traverse_stops_once_its_failures_pass_the_budget[sequential]
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=3, total=8, label='calls') and threw FailureBudgetExceeded: calls: 2 of 8 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+report = ItemOutcome('failed', index=3, total=8, label='calls')
+rc=1
+
+## 2. B の違反の実験(方針だけを替える)
+$ PYTHONPATH=... uv run --project /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome python /tmp/kie3a9-blind-b/exp/violation.py
+== 段 1 つ・8 件・2,3,5 が落ちる (failure_budget=なし) ==
+  [sequential]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+  [parallel(1)]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+  [parallel(2)]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+  [parallel(10)]
+    結果: answered Collection(5 valid, 3 failed) valid=[0, 10, 40, 60, 70]
+  [parallel_fail_fast(1)]
+    結果: raised ConnectionError: backend down for 2
+  [parallel_fail_fast(10)]
+    結果: raised ConnectionError: backend down for 2
+== 段 1 つ・8 件・2,3,5 が落ちる (failure_budget=1) ==
+  [sequential]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=3, total=8, label='calls') and threw FailureBudgetExceeded: calls: 2 of 8 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel(1)]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=3, total=8, label='calls') and threw FailureBudgetExceeded: calls: 2 of 8 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel(2)]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=3, total=8, label='calls') and threw FailureBudgetExceeded: calls: 2 of 8 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel(10)]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=3, total=8, label='calls') and threw FailureBudgetExceeded: calls: 2 of 8 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel_fail_fast(1)]
+    結果: raised ConnectionError: backend down for 2
+  [parallel_fail_fast(10)]
+    結果: raised ConnectionError: backend down for 2
+== 入れ子: outer 2 件 × inner 3 件(各 inner に落ちる件 2 つ) (failure_budget=1) ==
+  [sequential]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=1, total=2, label='outer') and threw FailureBudgetExceeded: outer: 2 of 2 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel(1)]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=1, total=2, label='outer') and threw FailureBudgetExceeded: outer: 2 of 2 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel(2)]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=1, total=2, label='outer') and threw FailureBudgetExceeded: outer: 2 of 2 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel(10)]
+    結果: raised ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=1, total=2, label='outer') and threw FailureBudgetExceeded: outer: 2 of 2 items failed — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+  [parallel_fail_fast(1)]
+    結果: raised ConnectionError: backend down for 2
+  [parallel_fail_fast(10)]
+    結果: raised ConnectionError: backend down for 2
+rc=0
