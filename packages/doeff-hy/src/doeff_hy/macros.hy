@@ -287,6 +287,18 @@ defk {name}: :post must include a return type check (: % Type).
 ;; `(<- x T e)` が呼ぶ・外の道具〔品質検査の Hy の投影〕も同じ関数を呼ぶ — #3366 の根 2 で純 Python の公開の関数へ移した)。
 (import doeff-hy.type-forms [runtime-type-form])
 
+(defn _runtime-type-check [target rt message]
+  "契約の `(: x T)` と束縛 `(<- x T e)` が実行時に型を確かめる form の 1 点(card ki-8673c7bb5b0c)。rt = runtime-type-form で写した型の式。
+   正しい型の時の通り道は素の isinstance のまま(try の入りは Python 3.11 から費用が無い)。isinstance が TypeError を上げた時 —
+   型の式が名(型の別名)で、その値が型引数つきの総称型かそれを含む和の時(展開の時には名の値が分からない)— だけ、
+   doeff_hy.type_forms.runtime-class で値を外側の型へ写して確かめ直す(実行時は外側の型だけ — #1790 の決め)。型でない値の名は
+   runtime-class が名乗る TypeError で断る。"
+  `(try
+     (assert (isinstance ~target ~rt) ~message)
+     (except [TypeError]
+       (import doeff-hy.type-forms [runtime-class :as _doeff-runtime-class])
+       (assert (isinstance ~target (_doeff-runtime-class ~rt)) ~message))))
+
 ;; ---------------------------------------------------------------------------
 ;; 型の注記 — 契約の `(: x T)` を関数の注記にも書く(静的な検査が読む)
 ;; ---------------------------------------------------------------------------
@@ -431,10 +443,14 @@ defk {name}: :post type annotation cannot be an empty string.
           (_static-pre-type-check? target phase)
             '(do)
           True
-            (let [target-label (if (= (str target) "%") "return value" (str target))]
-              `(assert (isinstance ~target ~(runtime-type-form (_object-for (sfor p type-params (str p)) tp)))
-                       (+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
-                          (. (type ~target) __name__))))))
+            (let [target-label (if (= (str target) "%") "return value" (str target))
+                  rt (runtime-type-form (_object-for (sfor p type-params (str p)) tp))
+                  message `(+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
+                              (. (type ~target) __name__))]
+              ;; 型検査のための展開は素の isinstance(絞りの形 — 注記と同じ読み)・実行時は名の値が総称型でも落ちない 1 点。
+              (if (_static-view?)
+                  `(assert (isinstance ~target ~rt) ~message)
+                  (_runtime-type-check target rt message)))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
 
 (defn _is-validation-check [form]
@@ -1258,8 +1274,8 @@ defk {name}: {{:post [...]}} is required.
     (is tp None) `(setv ~name ~performed)
     True `(do
             (setv ~name ~performed)
-            (assert (isinstance ~name ~(runtime-type-form tp))
-                    (+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
+            ~(_runtime-type-check name (runtime-type-form tp)
+                                  `(+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
 
 ;; ---------------------------------------------------------------------------

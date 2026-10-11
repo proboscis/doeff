@@ -20,6 +20,9 @@ Hy の投影)も、束縛の実行時の保証を写す時にこの関数を呼�
 - それ以外の form はそのまま返す(同じ object)。
 """
 
+import types
+import typing
+
 from hy.models import Expression, Object, Sequence, Symbol, Tuple
 
 #: 総称型の頭(``(get 基 …)`` / ``(of 基 …)``)— 外側の型 ``基`` だけを実行時に確かめる。
@@ -40,6 +43,33 @@ def runtime_type_form(tp: Object) -> Object:
             return Expression([head, *(item if _is_none(item) else runtime_type_form(item) for item in members)])
         case _:
             return tp
+
+
+#: isinstance の第 2 引数に置ける値(型・型の組・型の和)。
+RuntimeClass: typing.TypeAlias = type | types.UnionType | tuple["RuntimeClass", ...]
+
+
+def runtime_class(tp: object) -> RuntimeClass:
+    """実行時の型の値 ``tp`` を外側の型へ写す — 契約と束縛の展開が、名(型の別名)を ``isinstance`` に渡して TypeError になった
+    時だけ呼ぶ(card ki-8673c7bb5b0c)。
+
+    ``runtime_type_form`` は字面の総称型を展開の時に写すが、名の値は展開の時に分からない。名の値が型引数つきの総称型
+    (``Callable[..., object]``・``FrozenMap[object]``)やそれを含む和だと ``isinstance`` が断るので、実行の時に同じ規則
+    (外側の型だけ — #1790 の決め)で写す。型でない値(数・文字列など)は、書き手が何を置いたかを名乗る TypeError で断る。
+    """
+    if tp is None:
+        return type(None)
+    if isinstance(tp, type):
+        return tp
+    if isinstance(tp, tuple):
+        members: tuple[object, ...] = tp
+        return tuple(runtime_class(item) for item in members)
+    origin = typing.get_origin(tp)
+    if isinstance(tp, types.UnionType) or origin is typing.Union:
+        return tuple(runtime_class(item) for item in typing.get_args(tp))
+    if isinstance(origin, type):
+        return origin
+    raise TypeError(f"契約の型が実行時に確かめられる型でない(型でない値か、外側の型を持たない形): {tp!r}")
 
 
 def _children(node: Sequence) -> tuple[Object, ...]:
