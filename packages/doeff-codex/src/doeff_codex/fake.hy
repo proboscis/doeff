@@ -61,7 +61,7 @@
 (defclass FakeCodexWorld []
   "fake の世界: respond = 入力(CodexInput)→ FakeReply(筋書き)。thread とターンの id は世界の数えで振る(fake-thread-N・
    fake-turn-N)。"
-  (defn __init__ [self #^ Callable respond]
+  (defn __init__ [self #^ (get Callable #([CodexInput] FakeReply)) respond]
     (setv self.respond respond
           self.made 0)
     (setv #^ (get dict #(str FakeThread)) self.threads {}))
