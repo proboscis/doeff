@@ -477,3 +477,46 @@ def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_
     finally:
         for loaded in (name, "typecheckpkg"):
             sys.modules.pop(loaded, None)
+
+
+def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_expansion_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同じ Hy の file を package の名で読んだ process で、path から別の名で読み直す(worker の bytecode の道具が判断の module
+    bake_plan.hy を読む形)と、Hy は compile の module を file の名から引く(``inspect.getmodule``)ので、展開は先に読んだ
+    package の名の module の表で走る。記録を別の名の module の表から作ると、表は一度も引かれず、使った macro の無い空の記録が
+    共有の置き場に入り、macro が変わった後も照らしが素通りで古い展開が使われた(2026-10-11 atlas — doeff の取り込みの検証の
+    pytest が書いた bake_plan.hy の entry を patrol の準備が引き、ec08cd77d より前の defrecord の展開で
+    ``seal_record() missing ... calls_post_init`` — card ki-9180656459ac)。記録は展開が実際に引いた表から作る。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import code_store, loader_hooks
+
+    store = tmp_path / "store"
+    monkeypatch.setenv(code_store.STORE_ENV, str(store))
+    package = tmp_path / "aliaspkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "macros.hy").write_text("(defmacro answer [] 11)\n")
+    source = package / "user.hy"
+    source.write_text("(require aliaspkg.macros [answer])\n(setv value (answer))\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    alias = "aliaspkg_user_by_path"
+    try:
+        assert importlib.import_module("aliaspkg.user").value == 11
+        loader = importlib.machinery.SourceFileLoader(alias, str(source))
+        spec = importlib.util.spec_from_file_location(alias, str(source), loader=loader)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        loader.exec_module(module)
+        assert module.value == 11
+        entry = Path(loader_hooks._store_entry(str(store), alias, str(source), source.read_bytes()))
+        assert entry.exists(), "path から別の名で読んだ code が共有の置き場に入らない"
+        record = records.record_of(marshal.loads(entry.read_bytes()))
+        assert record is not None
+        assert [(used.module, used.name) for used in record.macros] == [("aliaspkg.macros", "answer")], (
+            f"記録が展開の使った macro を名指さない: {record}"
+        )
+    finally:
+        for loaded in (alias, "aliaspkg.user", "aliaspkg.macros", "aliaspkg"):
+            sys.modules.pop(loaded, None)
