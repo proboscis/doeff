@@ -57,11 +57,11 @@ class FailingSeedreamClient(SeedreamClient):
     def __init__(self, error: Exception) -> None:
         super().__init__(api_key="test-key")
         self.error = error
-        self.calls = 0
+        self.mut_calls = 0
 
     async def a_generate_images(self, payload, *, timeout=None, headers=None):  # type: ignore[override]
         del payload, timeout, headers
-        self.calls += 1
+        self.mut_calls += 1
         raise self.error
 
 
@@ -181,7 +181,7 @@ def test_edit_image_seedream4_surfaces_api_error_with_handler():
     assert run_result.result.is_err()
     assert isinstance(run_result.result.error, RuntimeError)
     assert "seedream api failure" in str(run_result.result.error)
-    assert client.calls == 1
+    assert client.mut_calls == 1
     assert any("failed" in str(entry) for entry in run_result.log)
 
 
