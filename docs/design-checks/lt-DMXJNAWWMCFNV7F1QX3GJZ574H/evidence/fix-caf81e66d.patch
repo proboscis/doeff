@@ -1,0 +1,504 @@
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/hy_expansion.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/hy_expansion.py
+index ee7ebdbf6..902e3afbc 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/hy_expansion.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/hy_expansion.py
+@@ -14,7 +14,11 @@ module again — the screen job's closure test took 257.3 s in the daily run aft
+ (ki-81f1c868203f).
+ 
+ Only the expansion and the store of its trees are here: the digest of this file is in the key
+-(``_expander_digest``), so a tree another version of the expansion made is never read.
++(``_expander_digest``), so a tree another version of the expansion made is never read. Hence what
++lies in the store is decided here alone (design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B): a
++caller asks for a tree (``_expansion``) and never writes one, so a tree a reader reshaped cannot lie
++under a key without the reader; and this module imports no other module of the analyzer, so no code
++outside this file decides a tree. Both are kept by ``tests/python/test_hy_tree_cache.py``.
+ """
+ 
+ import ast
+@@ -133,6 +137,31 @@ def _entry_name(macros: "MacroRecord") -> str:
+     return f"{record_fingerprint(macros)}.pickle"
+ 
+ 
++def _expansion(source: str, filename: str, module_name: str, directory: Path | None) -> _Expanded:
++    """The tree ``source`` expands to as ``module_name``: from the store under ``directory`` when
++    these inputs were expanded before, else expanded here and stored there (None = no store). The
++    key is made of the very source expanded, and only a tree expanded here is written."""
++    if directory is None or _type_check_expansion():
++        return _expand_hy(source, filename, module_name)
++    place = _expansion_key(source, module_name).place(directory)
++    stored = _stored_expansion(place)
++    if stored is not None:
++        return stored
++    expanded = _expand_hy(source, filename, module_name)
++    _store_expansion(place, expanded)
++    return expanded
++
++
++def _type_check_expansion() -> bool:
++    """Whether expansions now are for type checking (``doeff_hy.static_view``): doeff-hy's macros
++    then write another tree (no ``:pre`` check, no runtime import), which no store may keep under the
++    key of a plain expansion — as the import side keeps no record of such code (``TYPE_CHECK_EXPANSION``).
++    Callers keep nothing derived from such a tree either (``program_effects._hy_cache_dir``)."""
++    from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
++
++    return TYPE_CHECK_EXPANSION.get()
++
++
+ def _stored_expansion(place: Path) -> _Expanded | None:
+     """The tree of the entry in ``place`` whose macros are this environment's, with their record
+     (None when no entry is — the caller expands again)."""
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
+index 230bff0f9..fbf5db2dd 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
+@@ -71,12 +71,11 @@ from typing import Any, Generic, TypeVar
+ from doeff_effect_analyzer import env_places
+ from doeff_effect_analyzer.hy_expansion import (
+     _entry_name,
+-    _expand_hy,
+     _Expanded,
++    _expansion,
+     _expansion_key,
+     _ExpansionKey,
+-    _store_expansion,
+-    _stored_expansion,
++    _type_check_expansion,
+ )
+ 
+ 
+@@ -515,9 +514,9 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
+     """The macro-expanded tree of a Hy module: from this reader's entry when it read the same inputs
+     before; else the tree another reader's expansion stored, with only what this reader derives
+     built again (ki-81f1c868203f); else expanded here."""
+-    places = _hy_cache_places(source, module_name)
+-    if places is not None:
+-        cached = _find_cached_tree(places.derived)
++    place = _hy_cache_place(source, module_name)
++    if place is not None:
++        cached = _find_cached_tree(place)
+         if cached is not None:
+             return cached
+     # The whole miss is observed: the expansion (or reading the tree it stored), and building and
+@@ -526,24 +525,12 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
+     with contextlib.ExitStack() as observed:
+         for observer in tuple(_EXPANSION_OBSERVERS):
+             observed.enter_context(observer())
+-        expanded = _expanded(source, filename, module_name, places)
+-        if places is not None:
+-            _write_cached_tree(places.derived, expanded)
++        expanded = _expansion(source, filename, module_name, _hy_cache_dir())
++        if place is not None:
++            _write_cached_tree(place, expanded)
+     return _WholeTree(expanded.tree)
+ 
+ 
+-def _expanded(source: str, filename: str, module_name: str, places: "_CachePlaces | None") -> _Expanded:
+-    """The tree the expansion's store holds for these inputs; else the expansion, stored there."""
+-    if places is None:
+-        return _expand_hy(source, filename, module_name)
+-    stored = _stored_expansion(places.expansion)
+-    if stored is not None:
+-        return stored
+-    expanded = _expand_hy(source, filename, module_name)
+-    _store_expansion(places.expansion, expanded)
+-    return expanded
+-
+-
+ # Who wants to know when an expansion missed the cache (the expansion and writing the
+ # cache entry). A test-time budget subtracts that time the way it subtracts bytecode
+ # compilation (a cold cache is not the test's weight); the analyzer itself does not know
+@@ -567,10 +554,11 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
+ # What the reader derives from an expanded tree (the definition index, the body nodes and the
+ # body facts — _CachedTree) was most of what was left of an analysis once the tree was read
+ # (agora-redesign #1586 / #1590), so it is kept on disk with the tree in this reader's entries:
+-# their key is what the tree is a function of (hy_expansion._ExpansionKey) and this module's
++# their key is what the tree is a function of (hy_expansion._ExpansionKey) and the reader's
+ # source (_reader_digest). The tree is kept apart as well, under a key without the reader
+-# (hy_expansion), so a changed reader builds only what it derives and expands nothing again.
+-# DOEFF_EFFECT_ANALYZER_CACHE names the directory of both; "off" disables them.
++# (hy_expansion — only that module writes it), so a changed reader builds only what it derives
++# and expands nothing again. DOEFF_EFFECT_ANALYZER_CACHE names the directory of both; "off"
++# disables them.
+ 
+ # The shape of the key; a new shape names other entries, and the old ones are never read.
+ # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
+@@ -587,7 +575,9 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
+ # (_entry_name is the record's fingerprint).
+ # v9: the tree is also kept on its own under a key without the reader (hy_expansion —
+ # ki-81f1c868203f), and this key names the expansion's code as well (_ExpansionKey.expander).
+-_TREE_KEY_FORMAT = "v9"
++# v10: the reader's source is every Python file of this package, not this file alone (design
++# check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A).
++_TREE_KEY_FORMAT = "v10"
+ 
+ 
+ @dataclass(frozen=True)
+@@ -606,19 +596,11 @@ class _TreeKey:
+         return directory / hashlib.sha256(text.encode("utf-8")).hexdigest()
+ 
+ 
+-@dataclass(frozen=True)
+-class _CachePlaces:
+-    """Where the entries of one source lie: its expanded trees (``_ExpansionKey`` — no reader in the
+-    key) and what this reader derives from them (``_TreeKey``)."""
+-
+-    expansion: Path
+-    derived: Path
+-
+-
+ def _hy_cache_dir() -> Path | None:
+-    """Where expanded trees and what is derived from them are kept (None = caching turned off)."""
++    """Where expanded trees and what is derived from them are kept (None = caching turned off, or
++    the expansions now are for type checking — ``hy_expansion._type_check_expansion``)."""
+     configured = env_places.tree_cache_setting()
+-    if configured == "off":
++    if configured == "off" or _type_check_expansion():
+         return None
+     if configured:
+         return Path(configured)
+@@ -631,23 +613,28 @@ def _tree_key(source: str, module_name: str) -> _TreeKey:
+     return _TreeKey(expansion=_expansion_key(source, module_name), reader=_reader_digest())
+ 
+ 
+-def _hy_cache_places(source: str, module_name: str) -> _CachePlaces | None:
+-    """The directories of the entries for these exact inputs (None = caching turned off); an entry
+-    in them is read only while the macros it was expanded with are unchanged."""
++def _hy_cache_place(source: str, module_name: str) -> Path | None:
++    """The directory of what this reader derived from these exact inputs (None = caching turned
++    off); an entry in it is read only while the macros it was expanded with are unchanged."""
+     directory = _hy_cache_dir()
+     if directory is None:
+         return None
+-    key = _tree_key(source, module_name)
+-    return _CachePlaces(expansion=key.expansion.place(directory), derived=key.place(directory))
++    return _tree_key(source, module_name).place(directory)
+ 
+ 
+ @functools.cache
+ def _reader_digest() -> str:
+-    """The digest of this module's source. What is stored with a tree (the definition index, the
+-    body nodes and the body facts — ``_derived``) is built by the code here, so an entry written by
+-    another version of the reader — another shape of a fact — is never read by this one; the tree
+-    itself is read again from the expansion's store (``hy_expansion``), which does not name it."""
+-    return f"reader={hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}"
++    """The digest of the reader's source: every Python file of this package, each by its name and
++    content. What is stored with a tree (the definition index, the body nodes and the body facts —
++    ``_derived``) is built by the reader's code, so an entry written by another version of it —
++    another shape of a fact — is never read by this one; the tree itself is read again from the
++    expansion's store (``hy_expansion``), which does not name it. The whole package and not this
++    file alone, so that code ``_derived`` follows may move to another of its modules (design check
++    lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: a helper split into a module of its own and changed
++    there read the older facts); that it stays in this package is kept by a test."""
++    files = sorted(Path(__file__).parent.glob("*.py"))
++    text = "\n".join(f"{file.name}={hashlib.sha256(file.read_bytes()).hexdigest()}" for file in files)
++    return f"reader={hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+ 
+ 
+ @dataclass(frozen=True)
+diff --git a/packages/doeff-effect-analyzer/tests/python/test_hy_tree_cache.py b/packages/doeff-effect-analyzer/tests/python/test_hy_tree_cache.py
+index c580e27a4..1dd764eda 100644
+--- a/packages/doeff-effect-analyzer/tests/python/test_hy_tree_cache.py
++++ b/packages/doeff-effect-analyzer/tests/python/test_hy_tree_cache.py
+@@ -13,9 +13,12 @@ file only costs one expansion.
+ import ast
+ import contextlib
+ import importlib
++import inspect
+ import pickle
+ import re
++import shutil
+ import sys
++import types
+ import uuid
+ from collections.abc import Callable, Iterator
+ from dataclasses import dataclass, replace
+@@ -47,13 +50,13 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+ def expansions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+     """Count how often the real expansion runs (the cache must spare the second one)."""
+     seen: list[str] = []
+-    real = pe._expand_hy
++    real = hy_expansion._expand_hy
+ 
+-    def counting(source: str, filename: str, module_name: str) -> pe._Expanded:
++    def counting(source: str, filename: str, module_name: str) -> hy_expansion._Expanded:
+         seen.append(module_name)
+         return real(source, filename, module_name)
+ 
+-    monkeypatch.setattr(pe, "_expand_hy", counting)
++    monkeypatch.setattr(hy_expansion, "_expand_hy", counting)
+     return seen
+ 
+ 
+@@ -302,10 +305,10 @@ def test_an_expansion_records_the_macros_it_used_by_their_digest() -> None:
+     require (the names are chosen, so a macro added to the provider never enters the table). A
+     source that calls ``defk``
+     names it with the digest of its code's closure."""
+-    record = pe._expand_hy(SOURCE, "/src/m.hy", "m").macros
++    record = hy_expansion._expand_hy(SOURCE, "/src/m.hy", "m").macros
+     assert record.macros == ()
+     assert record.providers == ()  # names chosen in the require: only a whole require is kept
+-    used = pe._expand_hy(DEFS, "/src/m.hy", "m").macros
++    used = hy_expansion._expand_hy(DEFS, "/src/m.hy", "m").macros
+     assert [(row.module, row.name) for row in used.macros] == [("doeff_hy.macros", "defk")]
+     assert len(used.macros[0].digest) == 64
+ 
+@@ -529,9 +532,8 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
+     monkeypatch.setattr(pe, "_reader_digest", reader)
+     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
+     assert seen == ["r"]
+-    places = pe._hy_cache_places(REWRAPPED, "r")
+-    assert places is not None
+-    place = places.derived
++    place = pe._hy_cache_place(REWRAPPED, "r")
++    assert place is not None
+     assert place != entry.parent
+     (path,) = sorted(place.glob("*.pickle"))
+     written = read_entry(path).tree
+@@ -567,21 +569,24 @@ def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, mo
+     assert inside == [True]
+ 
+ 
+-ChangeFile = Callable[[ModuleType], None]
++ChangeFile = Callable[..., None]
+ 
+ 
+ @pytest.fixture
+ def changed_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ChangeFile]:
+-    """Make a module of the analyzer read as the next commit would have it — its file with one more
+-    line — for the digest of its own file that a cache key names (``_reader_digest``,
+-    ``_expander_digest``). Nothing else of the analyzer changes."""
++    """Make the analyzer read as the next commit would have it, for the digests of its own files a
++    cache key names (``_reader_digest`` — every file of the package, ``_expander_digest`` — the
++    expansion's file): the package's files are copied, ``changed`` (by default ``module``'s file; None
++    = none) gets one more line, and ``module`` reads the copy as its file. Nothing else changes."""
+ 
+-    def change(module: ModuleType) -> None:
++    def change(module: ModuleType, changed: str | None = "") -> None:
+         source = Path(str(module.__file__))
+-        changed = tmp_path / "changed" / source.name
+-        changed.parent.mkdir()
+-        changed.write_text(source.read_text(encoding="utf-8") + "# one more line\n", encoding="utf-8")
+-        monkeypatch.setattr(module, "__file__", str(changed))
++        copy = tmp_path / "changed"
++        shutil.copytree(source.parent, copy, ignore=shutil.ignore_patterns("__pycache__"))
++        if changed is not None:
++            edited_file = copy / (changed or source.name)
++            edited_file.write_text(edited_file.read_text(encoding="utf-8") + "# one more line\n", encoding="utf-8")
++        monkeypatch.setattr(module, "__file__", str(copy / source.name))
+         forget_digests()
+ 
+     yield change
+@@ -652,3 +657,213 @@ def test_a_changed_expansion_is_expanded_again(
+     pe._compile_hy(SOURCE, "/src/m.hy", "m")
+     assert seen == ["m", "m"]
+     assert len(expansion_entries(cache_dir)) == 2
++
++
++def test_a_changed_module_of_the_reader_builds_what_is_derived_again(
++    cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
++) -> None:
++    """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: the reader's digest named
++    program_effects.py alone, so a helper of the body facts split into a module of its own and
++    changed there read the facts the older rule had built (``rewraps`` empty where the new rule finds
++    ``prog``). Every file of the package is the reader: a change of another one builds what is
++    derived again — and still expands nothing."""
++    seen = expansions(monkeypatch)
++    pe._compile_hy(SOURCE, "/src/m.hy", "m")
++    changed_file(pe, "handler_effects.py")
++    a_new_process()
++    pe._compile_hy(SOURCE, "/src/m.hy", "m")
++    assert seen == ["m"]
++    assert len(entries(cache_dir)) == 2
++
++
++def test_the_same_files_of_the_reader_elsewhere_read_the_same_entry(
++    cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
++) -> None:
++    """The reader's digest is made of the files' names and contents, not of where they lie: another
++    checkout of the same version reads what this one derived."""
++    pe._compile_hy(SOURCE, "/src/m.hy", "m")
++    changed_file(pe, None)
++    a_new_process()
++    read = pe._compile_hy(SOURCE, "/src/m.hy", "m")
++    assert isinstance(read, pe._ChunkedTree)
++    assert len(entries(cache_dir)) == 1
++
++
++PACKAGE = pe.__name__.split(".")[0]
++
++
++def code_names(code: types.CodeType) -> frozenset[str]:
++    """The global names a code object and the code nested in it read."""
++    nested = (const for const in code.co_consts if isinstance(const, types.CodeType))
++    return frozenset(code.co_names).union(*(code_names(inner) for inner in nested))
++
++
++def module_of(value: object) -> str | None:
++    """The module a function, class or module value is defined in (None for plain data)."""
++    if isinstance(value, types.ModuleType):
++        return value.__name__
++    if isinstance(value, (types.FunctionType, types.BuiltinFunctionType, type)) or callable(getattr(value, "__wrapped__", None)):
++        return getattr(value, "__module__", None)
++    return None
++
++
++def from_package(value: object) -> bool:
++    return (module_of(value) or "").split(".")[0] == PACKAGE
++
++
++def uses_of(value: object) -> tuple[tuple[str, object], ...]:
++    """What ``value`` reaches in one step, each with the name it is reached by: the globals the code
++    of a function of this package reads, and the functions of a class of this package."""
++    function = inspect.unwrap(value) if isinstance(value, types.FunctionType) or hasattr(value, "__wrapped__") else value
++    if isinstance(function, types.FunctionType) and from_package(function):
++        return tuple(
++            (f"{function.__module__}.{name}", function.__globals__[name])
++            for name in sorted(code_names(function.__code__))
++            if name in function.__globals__
++        )
++    if isinstance(value, type) and from_package(value):
++        return tuple(
++            (f"{value.__module__}.{value.__qualname__}.{name}", member)
++            for name, member in vars(value).items()
++            if isinstance(member, types.FunctionType)
++        )
++    return ()
++
++
++def reached(root: object) -> tuple[tuple[str, object], ...]:
++    """Everything reached from ``root`` by the global names the code of this package reads."""
++    found: tuple[tuple[str, object], ...] = ()
++    seen: frozenset[int] = frozenset()
++    frontier = uses_of(root)
++    while frontier:
++        new = tuple({id(value): (name, value) for name, value in frontier if id(value) not in seen}.values())
++        seen = seen | {id(value) for _, value in new}
++        found = found + new
++        frontier = tuple(use for _, value in new for use in uses_of(value))
++    return found
++
++
++def imported_from_outside() -> frozenset[str]:
++    """``module.name`` for every name a module of this package binds by importing it from outside
++    the package and the standard library (data such a module holds has no module of its own)."""
++    package_dir = Path(str(pe.__file__)).parent
++    return frozenset(
++        f"{PACKAGE}.{file.stem}.{alias.asname or alias.name.split('.')[0]}"
++        for file in sorted(package_dir.glob("*.py"))
++        for node in ast.parse(file.read_text(encoding="utf-8")).body
++        if isinstance(node, (ast.Import, ast.ImportFrom))
++        for alias in node.names
++        if not outside_allowed(node.module if isinstance(node, ast.ImportFrom) else alias.name)
++    )
++
++
++def outside_allowed(module: str | None) -> bool:
++    top = (module or "").split(".")[0]
++    return top in (PACKAGE, "builtins") or top in sys.stdlib_module_names
++
++
++def foreign_uses(root: object) -> list[str]:
++    """The names through which what ``root`` builds depends on code outside this package and the
++    standard library — code the reader's digest does not name."""
++    outside = imported_from_outside()
++    return sorted(
++        f"{name} → {module_of(value) or type(value).__name__}"
++        for name, value in reached(root)
++        if name in outside or (module_of(value) is not None and not outside_allowed(module_of(value)))
++    )
++
++
++def test_what_is_derived_is_built_by_code_of_this_package() -> None:
++    """Blind A: the derived values are keyed on the reader's digest — every file of this package —
++    so the code that builds them (``_derived`` and all it reaches) may lie in any module of the
++    package but nowhere else; a helper outside it could change and leave the entries as they were."""
++    assert len(reached(pe._derived)) > 20  # the walk reaches the reader's code (not a vacuous pass)
++    assert foreign_uses(pe._derived) == []
++
++
++def a_helper_outside_the_package(node: ast.AST) -> tuple[int, ...]:
++    return (getattr(node, "lineno", 0),)
++
++
++def test_a_helper_outside_the_package_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
++    """The negative case of the walk above: a helper of ``_derived`` from another module is named."""
++    monkeypatch.setattr(pe, "_definition_lines", a_helper_outside_the_package)
++    assert foreign_uses(pe._derived) == [f"{pe.__name__}._definition_lines → {__name__}"]
++
++
++EXPANSION_STORE = frozenset({"_store_expansion", "_stored_expansion", "_read_expansion"})
++
++
++def names_used(source: str) -> frozenset[str]:
++    """Every name a source reads, assigns, imports or reaches as an attribute."""
++    return frozenset(
++        name
++        for node in ast.walk(ast.parse(source))
++        for name in (
++            (node.id,) if isinstance(node, ast.Name)
++            else (node.attr,) if isinstance(node, ast.Attribute)
++            else tuple(alias.name for alias in node.names) if isinstance(node, (ast.Import, ast.ImportFrom))
++            else ()
++        )
++    )
++
++
++def analyzer_sources() -> dict[str, str]:
++    package_dir = Path(str(hy_expansion.__file__)).parent
++    return {file.name: file.read_text(encoding="utf-8") for file in sorted(package_dir.glob("*.py"))}
++
++
++def test_only_the_expansion_module_reads_or_writes_its_store() -> None:
++    """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B: the reader called the store's writer, so a
++    reader that reshaped a tree (renumbered its gensyms) could store it under a key without the
++    reader, and every later reader — a reverted one too — read that shape. A caller asks for a tree
++    (``_expansion``); no module but ``hy_expansion`` names the store."""
++    used = {name: names_used(text) & EXPANSION_STORE for name, text in analyzer_sources().items() if name != "hy_expansion.py"}
++    assert {name: names for name, names in used.items() if names} == {}
++    assert names_used(
++        "from doeff_effect_analyzer.hy_expansion import _store_expansion\n"
++        "def _expanded(place, expanded):\n    _store_expansion(place, _canonical_gensyms(expanded))\n"
++    ) & EXPANSION_STORE == {"_store_expansion"}  # the negative case: blind B's reader is named
++
++
++def analyzer_imports(source: str) -> frozenset[str]:
++    """The modules of the analyzer a source imports, at its top or inside a function."""
++    return frozenset(
++        module
++        for node in ast.walk(ast.parse(source))
++        for module in (
++            (node.module or "",) if isinstance(node, ast.ImportFrom) else tuple(alias.name for alias in node.names) if isinstance(node, ast.Import) else ()
++        )
++        if module.split(".")[0] == PACKAGE
++    )
++
++
++def test_the_expansion_module_imports_no_other_module_of_the_analyzer() -> None:
++    """The tree is keyed on ``hy_expansion``'s own file: code it took from the reader would decide
++    trees without being in their key."""
++    assert analyzer_imports(analyzer_sources()["hy_expansion.py"]) == frozenset()
++    assert analyzer_imports(
++        "def _expand_hy(source):\n    from doeff_effect_analyzer.program_effects import _canonical_gensyms\n"
++    ) == {"doeff_effect_analyzer.program_effects"}  # the negative case
++
++
++def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
++    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Blind A, another candidate: inside ``doeff_hy.static_view`` doeff-hy's macros write another
++    tree (for type checking). The import side keeps no record of such code; the analyzer neither
++    stores such a tree under a plain key nor gives a stored plain tree to such an expansion."""
++    from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
++
++    seen = expansions(monkeypatch)
++    pe._compile_hy(SOURCE, "/src/m.hy", "m")  # the positive case: a plain expansion is stored
++    assert (len(entries(cache_dir)), len(expansion_entries(cache_dir))) == (1, 1)
++    token = TYPE_CHECK_EXPANSION.set(True)
++    try:
++        a_new_process()
++        pe._compile_hy(SOURCE, "/src/m.hy", "m")
++        pe._compile_hy(SOURCE.replace("42", "43"), "/src/m.hy", "m")
++    finally:
++        TYPE_CHECK_EXPANSION.reset(token)
++    assert seen == ["m", "m", "m"]
++    assert (len(entries(cache_dir)), len(expansion_entries(cache_dir))) == (1, 1)
