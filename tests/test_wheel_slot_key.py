@@ -81,6 +81,14 @@ def test_another_python_abi_points_at_another_slot(backend: ModuleType, package:
     assert backend._wheel_slot(package, None) != here
 
 
+def test_another_libc_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補 2・card ki-5fab1f97d98b): 機体の外の置き場の wheel は CI の glibc で組む。glibc の版が違う
+    # 機体は別の置き場を指す — それより古い glibc の image が取ると import で落ちる。
+    here = backend._wheel_slot(package, None)
+    monkeypatch.setattr(backend.platform, "libc_ver", lambda: ("glibc", "2.17"))
+    assert backend._wheel_slot(package, None) != here
+
+
 @pytest.mark.parametrize("name", PLACE_ENV)
 def test_a_place_only_env_keeps_the_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     # 組む場所・並べる数だけを変える値は鍵に入らない — 作業木ごとに target を替えても同じ置き場の wheel を共有する(#2364 の効き目)。
