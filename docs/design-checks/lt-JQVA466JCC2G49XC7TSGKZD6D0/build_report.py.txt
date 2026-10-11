@@ -115,8 +115,8 @@ checks = [
      "status": "passed"},
     {"id": "C7", "scenarios": ["S1", "S2", "S3"], "control": "positive",
      "expectation": "直した例(D1〜D3)で M5 が緑: 走る例 5 本・BROKEN の 7 本",
-     "observation": "12 passed(test_example_runs の ex04_traverse_macro・ex07・ex08 を含む 5 件 PASSED、test_broken_example_is_still_broken 7 件 PASSED)",
-     "evidence": ref("evidence/gate/C7-examples-gate.txt"),
+     "observation": "12 passed(test_example_runs の ex04_traverse_macro・ex07・ex08 を含む 5 件 PASSED、test_broken_example_is_still_broken 7 件 PASSED)。載せ直しの後(679d70463 の上)も test_examples_run.py と tests/test_fnk_do_bang_scope.py が 36 passed・1 skipped(空の BROKEN の表)",
+     "evidence": ref("evidence/gate/C7-examples-gate.txt"), "evidence_files": [ref("evidence/gate/C7r-after-rebase.txt")],
      "status": "passed"},
 ]
 

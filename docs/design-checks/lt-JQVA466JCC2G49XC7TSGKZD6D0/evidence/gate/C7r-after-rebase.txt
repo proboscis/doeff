@@ -1,0 +1,47 @@
+# C7r(M5): origin/main 679d70463 の上へ載せ直した後の検・2026-10-11T20:56:51Z・HEAD cb391e4c3d7803c0e3c504e7c70d6f20d814fb47
+$ git status --short packages/
+$ uv run --no-sync python -c 'import doeff_traverse, doeff_hy, doeff; print(__path__)'
+['/work/toolset/worktrees/doeff-wt-ki-043e-dc/packages/doeff-traverse/doeff_traverse'] ['/work/toolset/worktrees/doeff-wt-ki-043e-dc/packages/doeff-hy/src/doeff_hy'] ['/work/toolset/worktrees/doeff-wt-ki-043e-dc/doeff']
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py tests/test_fnk_do_bang_scope.py -v -rs
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex01_basic_fail.hy] PASSED [  2%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex02_traverse_pipeline.hy] PASSED [  5%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex03_zip_multi_source.hy] PASSED [  8%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug.hy] PASSED [ 10%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug2.hy] PASSED [ 13%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_simple.hy] PASSED [ 16%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy] PASSED [ 18%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy] PASSED [ 21%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex06_mediagen_rewrite.hy] PASSED [ 24%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy] PASSED [ 27%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy] PASSED [ 29%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy] PASSED [ 32%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[NOTSET] SKIPPED [ 35%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex01_basic_fail.hy] PASSED [ 37%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex02_traverse_pipeline.hy] PASSED [ 40%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex03_zip_multi_source.hy] PASSED [ 43%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug.hy] PASSED [ 45%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug2.hy] PASSED [ 48%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_simple.hy] PASSED [ 51%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy] PASSED [ 54%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex05_parallel_timing.hy] PASSED [ 56%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex06_mediagen_rewrite.hy] PASSED [ 59%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex07_proboscis_ema_rewrite.hy] PASSED [ 62%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex08_tqdm_progress.hy] PASSED [ 64%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex09_for_do_when.hy] PASSED [ 67%]
+packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees_nested_forms PASSED [ 70%]
+packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are PASSED [ 72%]
+tests/test_fnk_do_bang_scope.py::test_fnk_and_do_bang_inside_defk_run[fnk-after-traverse] PASSED [ 75%]
+tests/test_fnk_do_bang_scope.py::test_fnk_and_do_bang_inside_defk_run[do-bang-after-for-do] PASSED [ 78%]
+tests/test_fnk_do_bang_scope.py::test_fnk_and_do_bang_inside_defk_run[fnk-after-statement-guard] PASSED [ 81%]
+tests/test_fnk_do_bang_scope.py::test_fnk_and_do_bang_inside_defk_run[fnk-in-untaken-branch] PASSED [ 83%]
+tests/test_fnk_do_bang_scope.py::test_fnk_and_do_bang_inside_defk_run[do-bang-in-untaken-branch] PASSED [ 86%]
+tests/test_fnk_do_bang_scope.py::test_defk_body_binds_no_helper_name[fnk-after-traverse] PASSED [ 89%]
+tests/test_fnk_do_bang_scope.py::test_defk_body_binds_no_helper_name[do-bang-after-for-do] PASSED [ 91%]
+tests/test_fnk_do_bang_scope.py::test_defk_body_binds_no_helper_name[fnk-after-statement-guard] PASSED [ 94%]
+tests/test_fnk_do_bang_scope.py::test_defk_body_binds_no_helper_name[fnk-in-untaken-branch] PASSED [ 97%]
+tests/test_fnk_do_bang_scope.py::test_defk_body_binds_no_helper_name[do-bang-in-untaken-branch] PASSED [100%]
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:146: got empty parameter set for (name)
+================== 36 passed, 1 skipped, 1 warning in 20.22s ===================
+rc=0
+$ grep -n ex07 packages/doeff-traverse/tests/test_examples_run.py
+45:    "ex07_proboscis_ema_rewrite.hy": (

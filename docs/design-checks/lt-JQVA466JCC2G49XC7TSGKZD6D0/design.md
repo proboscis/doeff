@@ -17,6 +17,7 @@
 | 書き直しの版(着地済み・L2111) | `4527ff9178e70150f9cf6b77a9aa7fde52bc176e` |
 | 盲検の前の主張 | `design-before-blind.md`(着地の後・盲検の前に書き、その後は変えていない。版 7548af7da) |
 | 盲検の後の直し | この記録と同じ commit の ex07・ex08 の変更 |
+| 載せ直しの先 | origin/main `679d70463`(盲検・再現・C1〜C7 は載せ直しの前の 4527ff917 + 直しで測った。載せ直しの後の実測は C7r) |
 
 順を正直に書く: 実装と着地が先で、設計検証は完了の検査に求められて後から行った。
 
@@ -79,7 +80,7 @@ D2 で M1 に分類の code は足していない(未要求の機能を足さな
 | strategy を pipeline の defk で書かない(M1 と M2 を分ける) | defk の展開が引数名 effect・eff・k を SyntaxError で断る | `packages/doeff-hy/src/doeff_hy/macros.hy` `_reject-handler-signature` | 例を読み込む時の展開 → M5(C2 で赤を確かめた) | 引数名だけを見る。名を変えた handler の形は通る |
 | M1 の各段の値の形(backend の答えの型) | defk の `:pre/:post` 必須と実行の時の型の確かめ | macros.hy の defk、ex07 `fetch-price` の `:post (: % (| float None))` | 例の実行(C6 で文字列を拒むのを確かめた) | 実行した道筋だけ。件の中の違反は handler が件の失敗として吸い込み、rc は 0 のまま |
 | 失敗の種類を文面でなく型で伝える | ex07 の FetchPrice の公開契約(`SymbolNotFound`・`MarketClosed`) | `packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy` | 書き物と例の実行 | **型を使うことを強制する静的な規則は無い**。M1 が `str(err)` を読む書き方(盲検 B)は今も通る。例の 1 file のために linter の規則は足さない |
-| 例が今の macro と library で走る | M5 | `packages/doeff-traverse/tests/test_examples_run.py` | 日次の全体検証の package の母集団(`make test-packages`)と手の実行。**着地の検証では走らない**(L2111 の log は衝突の印の検査と uv sync だけ) | rc しか見ない(出力の値・進捗の正確さは見ない) |
+| 例が今の macro と library で走る | M5 | `packages/doeff-traverse/tests/test_examples_run.py` | 日次の全体検証の package の母集団(`make test-packages`)と手の実行。**着地の検証では走らない**(L2111 の log は衝突の印の検査と uv sync だけ) | 4527ff917 では rc しか見なかった。載せ直しの先(679d70463)では別の設計検証(lt-QV9FJWHA394WE5MH3QVJFQBHV5・fd88198ef)が標準出力の比較と例の中の macro の定義の拒否を足したが、ex07 の出力は比べない(218272f9f)ので盲検 B の書き方は今も止まらない。stderr(進捗の bar)は比べない |
 
 import の向き・役割ごとの小さい interface・業務の意味を区別する型: 例は 1 file の読み物で、module の層を持たない。業務の意味の型は D2 の例外の型だけを足した(値の dict は例の元の形のまま)。
 
@@ -93,12 +94,12 @@ import の向き・役割ごとの小さい interface・業務の意味を区別
 | C4 | S2 | 失敗例 | `evidence/s2/C4-delegation-loses-inner-handlers.txt`(委ねる形で `Done: []`・`UnhandledEffect: Compute`) |
 | C5 | S3 | 正常例 | `evidence/s3/C5-mock-swap.txt` |
 | C6 | S3 | 失敗例 | `evidence/s3/C6-str-price-rejected.txt`(件 4 が `fetch-price: post-condition type error … got str`) |
-| C7 | S1・S2・S3 | 正常例 | `evidence/gate/C7-examples-gate.txt`(直した例で M5 が 12 passed) |
+| C7 | S1・S2・S3 | 正常例 | `evidence/gate/C7-examples-gate.txt`(直した例で M5 が 12 passed)・`evidence/gate/C7r-after-rebase.txt`(載せ直しの後 M5 と fnk の検が 36 passed・1 skipped — skipped は空になった BROKEN の表の分) |
 
 ## 後続(この card の範囲の外・依頼元へ報告する)
 
 1. **M3 の公開契約の拡張(盲検 A)**: Traverse の handler が件ごとの結末(ok・failed・skipped・持ち越し)を外へ出す effect か hook を持てば、進捗の handler は M3 の内部の規則を写さずに正確に数え、Traverse の終わりで bar を閉じられる。盲検 A の対照実験(`blind/a-files/m3_itemdone.py.txt`・`exp4_ex04_when_itemdone.hy.txt`)が sequential の写しで形を示した。sequential・parallel・parallel_fail_fast の 3 つに要る。
-2. **doeff-hy の fnk・do! の UnboundLocalError**(書き直しの途中で見つけた): 依頼元が card に切ると返事した(lt-MJ4TTEYNSXDPWFQBBQNX0695VJ)。
+2. **doeff-hy の fnk・do! の UnboundLocalError**(書き直しの途中で見つけた): 依頼元が card に切ると返事し(lt-MJ4TTEYNSXDPWFQBBQNX0695VJ)、載せ直しの先の main で 7613a2147 が直した(fnk・do! の補助の import をすぐ呼ぶ関数の中に置く・検 `tests/test_fnk_do_bang_scope.py`)。この記録の例は畳みの 1 歩を名のある defk にしたままで、fnk に戻していない。
 
 ## 未確認事項
 

@@ -13,7 +13,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "626d6b6c67f97d8cdeb622adcfa395aed8c12cedc153c124a36eaa934f2cae84"
+    "sha256": "23fd7cf436d95f83a7eedac411563aa3bb5c81d885a9b4c8161a6d9b69fce0cb"
   },
   "pre_blind_design": {
     "path": "design-before-blind.md",
@@ -335,11 +335,17 @@
       ],
       "control": "positive",
       "expectation": "直した例(D1〜D3)で M5 が緑: 走る例 5 本・BROKEN の 7 本",
-      "observation": "12 passed(test_example_runs の ex04_traverse_macro・ex07・ex08 を含む 5 件 PASSED、test_broken_example_is_still_broken 7 件 PASSED)",
+      "observation": "12 passed(test_example_runs の ex04_traverse_macro・ex07・ex08 を含む 5 件 PASSED、test_broken_example_is_still_broken 7 件 PASSED)。載せ直しの後(679d70463 の上)も test_examples_run.py と tests/test_fnk_do_bang_scope.py が 36 passed・1 skipped(空の BROKEN の表)",
       "evidence": {
         "path": "evidence/gate/C7-examples-gate.txt",
         "sha256": "b969365f9531ec1c8c2d074db0a07fd4adc7b33bf1a7f34bb8526194bea2542b"
       },
+      "evidence_files": [
+        {
+          "path": "evidence/gate/C7r-after-rebase.txt",
+          "sha256": "b8421c5a629e1f0e085914ed3d0b04ce6e748e59fd96bf3990ce80c5eef5e551"
+        }
+      ],
       "status": "passed"
     }
   ],
