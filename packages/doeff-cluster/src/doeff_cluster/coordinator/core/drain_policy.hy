@@ -33,7 +33,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster.coordinator.intent.request_bodies [DrainBody])
-(import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot LIVE-PHASES MAX-EVENTS])
+(import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot handover-pending
+                                                       LIVE-PHASES MAX-EVENTS])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
@@ -55,13 +56,24 @@
   ;; 今の世代でない頼み(退いた世代 = 旧い Pod の preStop・一度も見ていない世代 = 最初の heartbeat の前に消された新しい Pod の
   ;; preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。答えは superseded-worker-view(その世代に置いた task が
   ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(版上げの Program・手の頼み)は名前に付ける。
-  (when (other-generation-boot state name boot) (return state))
+  ;; 退いた世代の頼みは、その世代の Pod の止まりが始まった印でもある(AL-D2k): 重なりの組に leaving を付け、前の世代が残していた job を
+  ;; 新しい世代へ渡させる(cluster_policy.superseded-reply)。
+  (when (other-generation-boot state name boot) (return (superseded-leaving state name boot)))
   (setv until (+ now (int (* 1000 ttl)))
         current (.get state.drains name))
   (replace state :drains (| state.drains
                             {name (if (and current (> current.until-ms now))
                                       (replace current :until-ms until :boot (if (is boot None) None current.boot))
                                       (Drain name now until boot actor))})))
+
+
+(defn #^ ClusterState superseded-leaving [#^ ClusterState state #^ str name #^ (| str None) boot]
+  "純粋: 名 name の退いた世代 boot の組(SupersededRun)に、Pod の止まりが始まった印 leaving を付けるため(AL-D2k — 組が無い・もう
+   付いていれば state のまま)。"
+  (if (any (gfor r state.superseded-runs (and (= r.worker name) (= r.boot boot) (not r.leaving))))
+      (replace state :superseded-runs (tuple (gfor r state.superseded-runs
+                                                   (if (and (= r.worker name) (= r.boot boot)) (replace r :leaving True) r))))
+      state))
 
 
 (val STOPPING-DRAIN-ACTOR "worker-stopping")   ; 止まり始めの名乗りから立てた drain の頼み手(GET /state の drains に出る)
@@ -214,14 +226,18 @@
                                      n (get (service-readiness state n now timing (get state.surges n)) "reason"))))
 
 
-(defn #^ WorkerDrainView worker-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]
-  "GET /workers/<名>: 生存・世代・drain の進み。ready = 生きていて drain 中でない(新しい Pod の readinessProbe が見る)。"
+(defn #^ WorkerDrainView worker-view [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing
+                                     #^ (| dict None) [ready-instances None]]
+  "GET /workers/<名>: 生存・世代・drain の進み。ready = 生きていて drain 中でなく、同じ名の前の世代がまだ動かしている job を全部
+   受け取れる(handover-pending でない — AL-D2k・heartbeat の返事で worker が ready の file を書く判断と同じ)。ready-instances = handoff の
+   Service の Ready と数えている process(api_policy.ready-instances)。"
   (setv w (.get state.workers name))
   (when (is w None) (refuse 404 (+ "知らない worker: " name)))
   (setv drain (drain-view state name now timing)
-        live (alive now w timing.lease-ms))
+        live (alive now w timing.lease-ms)
+        pending (and (is-not w.boot None) (handover-pending state name w.boot now timing ready-instances)))
   (WorkerDrainView :info w :alive live :silent-ms (- now w.last-seen-ms) :superseded False :drain drain
-                   :ready (and live (is drain None))))
+                   :ready (and live (is drain None) (not pending))))
 
 
 (defn #^ WorkerDrainView superseded-worker-view [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
