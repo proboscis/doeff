@@ -107,6 +107,48 @@ def test_defk_answer_in_a_for_do_module_is_read(tmp_path: Path) -> None:
     assert ("reportOperatorIssue", _line_of(text, '"x"')) in [(d["rule"], d["line"]) for d in errors], errors
 
 
+# From を 2 つ重ねた for/do(card ki-7e6a11f56bd5)— 答えは組ごとの本体の値を平らに並べた Collection で、有効な値は本体の
+# 答え(int)と読める。前は内側の Traverse を外の件の関数が値として返し、型の上でも有効な値が Traverse だった。
+NESTED_PROBE = """\
+(require doeff-hy.macros [defk <- for/do])
+(import doeff [do :as _doeff-do])
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+
+(defk sums [xs ys]
+  {:pre [(: xs (get tuple #(int ...))) (: ys (get tuple #(int ...)))] :post [(: % (get tuple #(int ...)))]}
+  (<- got
+      (for/do
+        (<- x (From xs :label "outer"))
+        (<- y (From ys :label "inner"))
+        (+ x y)))
+  (tuple got.valid-values))
+"""
+
+
+@needs_pyright
+def test_two_froms_module_has_no_strict_error(tmp_path: Path) -> None:
+    assert _check(tmp_path, NESTED_PROBE) == []
+
+
+@needs_pyright
+def test_two_froms_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
+    text = NESTED_PROBE.replace("(tuple got.valid-values))", '(tuple (+ (get got.valid-values 0) "x")))')
+    errors = _check(tmp_path, text)
+    assert ("reportOperatorIssue", _line_of(text, '"x"')) in [(d["rule"], d["line"]) for d in errors], errors
+
+
+def test_two_froms_run_to_one_value_per_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from doeff_traverse import sequential
+
+    from doeff import run, with_handlers
+
+    importlib.import_module("doeff_hy")
+    (tmp_path / "for_do_nested_probe_ki7e6a.hy").write_text(NESTED_PROBE, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    probe = importlib.import_module("for_do_nested_probe_ki7e6a")
+    assert run(with_handlers([sequential()], probe.sums((1, 2), (10, 20)))) == (11, 21, 12, 22)
+
+
 def _expand(source: str) -> str:
     # doeff_hy の import が Hy の importer と macro を用意する(副作用のための import)
     importlib.import_module("doeff_hy")

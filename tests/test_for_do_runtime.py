@@ -79,3 +79,47 @@ def test_the_step_is_one_do_function_per_traverse() -> None:
     assert collection.valid_values == [0, 0, 1]
     [step] = seen
     assert hasattr(step, "__doeff_generator_function__"), "Traverse の関数が @do で包まれていない(件ごとに包み直す形)"
+
+
+# for/do に From を 2 つ以上重ねた形(card ki-7e6a11f56bd5)。重ねた From は list の内包・SQL の CROSS JOIN と同じく、外の件と
+# 内の件の組ごとに本体の値を 1 件として平らに並べる。前は 2 つ目の From の Traverse を外の件の関数が実行せずに値として返し、
+# valid_values に内側の Traverse の effect が入っていた。
+
+
+def test_two_froms_give_one_value_per_pair() -> None:
+    collection = _collect("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (+ a b))")
+    assert collection.valid_values == [11, 21, 12, 22]
+
+
+def test_three_froms_give_one_value_per_triple() -> None:
+    collection = _collect("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (<- c (From [100 200])) (+ a b c))")
+    assert collection.valid_values == [111, 211, 121, 221, 112, 212, 122, 222]
+
+
+def test_skips_and_failures_of_both_froms_keep_their_places() -> None:
+    # 内の items は外の件から作る。外の When で落ちた件は 1 件のまま外の位置に残り、内の件の失敗は外と内の履歴を続けて持つ。
+    collection = _collect(
+        '(for/do (<- a (From [0 1 2] :label "outer")) (When (!= a 1))'
+        ' (<- b (From (range a 3) :label "inner")) (<- y (half b)) #(a y))'
+    )
+    assert collection.valid_values == [(0, 0), (0, 0)]
+    assert [
+        (item.index, item.failed, [(entry.stage, entry.event) for entry in item.history])
+        for item in collection.all_items
+    ] == [
+        (0, False, [("outer", "ok"), ("inner", "ok")]),
+        (1, False, [("outer", "ok"), ("inner", "ok")]),
+        (2, True, [("outer", "ok"), ("inner", "failed")]),
+        (3, True, [("outer", "skipped")]),
+        (4, True, [("outer", "ok"), ("inner", "failed")]),
+    ]
+    assert [str(error) for error in collection.errors] == ["two", "two"]
+
+
+def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
+    from doeff_core_effects.scheduler import scheduled
+    from doeff_traverse.handlers import parallel
+
+    program = _eval("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (+ a b))")
+    collection = run(scheduled(parallel(concurrency=2)(program)))
+    assert collection.valid_values == [11, 21, 12, 22]
