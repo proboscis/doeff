@@ -276,12 +276,14 @@ def _hy_reading() -> str | None:
     """Hy の source の読みと文の形(``hy.repr``)を決める物 — Hy の版と、hy.repr の登録の表(process の中の共有の表)の指紋。表に
     Hy 自身と組み込み以外の関数が登録されている時は None(その関数の code は鍵で覆えない — 置き場を使わない)。Hy の読み
     (``hy.read_many``)は毎回新しい reader で、process の reader macro に依らない。"""
-    import importlib  # Hy の source に当たった時だけ
+    from types import FunctionType  # Hy の source に当たった時だけ
 
     import hy
 
-    # hy.repr の登録の表の持ち主(Hy の module — 型検査器からは見えないので名で引く)。表の形が違えば読み方が分からない。
-    registry = vars(importlib.import_module("hy.core.hy_repr")).get("_registry")
+    # hy.repr の登録の表は hy.repr を定義した Hy の module の大域(型検査器からは見えないので、hy.repr の関数の大域から引く)。
+    # 表の形が違えば読み方が分からない。
+    shown = hy.repr
+    registry = shown.__globals__.get("_registry") if isinstance(shown, FunctionType) else None
     if not isinstance(registry, dict):
         return None
     rows = tuple(sorted(_repr_row(kind, entry) for kind, entry in registry.items()))

@@ -100,14 +100,13 @@ def test_a_custom_hy_repr_keeps_hy_readings_out_of_the_store(
 ) -> None:
     # Hy の文の形(hy.repr)は process の中の共有の登録の表に依る。Hy 自身と組み込みの外の関数が登録された process は、置き場を
     # 使わない(その関数の code は鍵で覆えない)。
-    import importlib
-
     import hy
 
     class Probe:
         """検だけの型。"""
 
-    registry = vars(importlib.import_module("hy.core.hy_repr"))["_registry"]
+    # 登録の表(hy.repr を定義した Hy の module の大域)へ、検の後に消える形で登録する(hy.repr-register と同じ行の形)。
+    registry = hy.repr.__globals__["_registry"]
     monkeypatch.setitem(registry, Probe, (lambda _value: "probe", None))
     source = tmp_path / "table.hy"
     source.write_text('(setv TABLE {"a" 1})\n', encoding="utf-8")
