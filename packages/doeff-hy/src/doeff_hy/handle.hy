@@ -748,16 +748,30 @@
 
    Wraps body with the Rust handler node. Unmatched effects auto-Pass.
    Compile-time error if any clause branch lacks resume/transfer/finish/reperform; each clause's
-   ending is checked against its effect's declared resumption when the handle form is evaluated."
-  (import doeff-hy.macros [_module-names])
+   ending is checked against its effect's declared resumption when the handle form is evaluated.
+
+   関数の本体の中(defk の本体など)では、import・節の終わり方の検め・handler の組み立てを、すぐ呼ぶ引数なしの関数に
+   入れ、その関数が返す「本文に handler を被せる関数」を本文 body に当てる。関数の中で import した名は関数全体の局所の
+   名になるので、並べたままだと同じ本体で先に読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちた
+   (card ki-907f779b3290・tests/test_handle_scope.py)。本文は外の do の文脈に属する(`!` の yield は外の生成器の物)ので
+   すぐ呼ぶ関数の中に入れず、書いた場所で評価する。Python は呼ぶ関数の式を引数より先に評価するので、検めと組み立ては
+   本文の式より前に走る。module と class の本体は今までどおり並べる(`_in-function-body?`)。"
+  (import doeff-hy.macros [_module-names _in-function-body?])
   (setv specs [])
   (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
-  (locate-synthesized `(do
-     ~(_do-import)
-     ~(_vm-imports)
-     ~(_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
-     (_doeff-check-clause-endings "handle" [~@specs])
-     (WithHandler ~h-expr ~body))))
+  (setv prelude [(_do-import)
+                 (_vm-imports)
+                 (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
+                 `(_doeff-check-clause-endings "handle" [~@specs])])
+  (locate-synthesized (if (_in-function-body? _hy-compiler)
+      `(((fn []
+           ~@prelude
+           (setv __doeff-handler-data__ ~h-expr)
+           (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__))))
+        ~body)
+      `(do
+         ~@prelude
+         (WithHandler ~h-expr ~body)))))
 
 
 (defmacro with-handler [handlers body]
@@ -857,7 +871,7 @@
   ;; Separate lazy defs from effect clauses
   (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses name))
 
-  (import doeff-hy.macros [_module-names])
+  (import doeff-hy.macros [_module-names _scoped-definition])
   (setv module-names (_module-names _hy-compiler))
   (setv specs [])
   (setv handler-expr
@@ -894,41 +908,41 @@
   ;; defhandler produces a Program -> Program function instead of exposing a
   ;; raw handler dispatcher. The inner dispatcher is stored for introspection
   ;; and installed with the Rust VM WithHandler node.
-  (locate-synthesized (if (is params None)
-      `(do
-         ~(_do-import)
-         ~(_vm-imports)
-         ~(_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
-         ~lazy-imports
-         (setv ~name
-           ((fn []
-              (setv __doeff-handler-data__ ~handler-expr)
-              (setv __doeff-clause-endings__ (fn [] [~@specs]))
-              ~(_handler-fn-form endings-check)
-              (setattr __doeff-handler-fn__ "__doc__" ~docstring)
-              (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
-              (setattr __doeff-handler-fn__ "__doeff_handler_data__"
-                    __doeff-handler-data__)
-              __doeff-handler-fn__)))
-         (setattr ~name "__doeff_body__" ~quoted-body)
-         (setattr ~name "__doeff_name__" ~(str name))
-         ~@declared)
-      `(do
-         ~(_do-import)
-         ~(_vm-imports)
-         ~(_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
-         ~lazy-imports
-         (defn ~name [~@params]
-           (setv __doeff-handler-data__ ~handler-expr)
-           (setv __doeff-clause-endings__ (fn [] [~@specs]))
-           ~(_handler-fn-form endings-check)
-           (setattr __doeff-handler-fn__ "__doc__" ~docstring)
-           (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
-           (setattr __doeff-handler-fn__ "__doeff_handler_data__"
-                 __doeff-handler-data__)
-           (setattr __doeff-handler-fn__ "__doeff_name__" ~(str name))
-           __doeff-handler-fn__)
-         (setattr ~name "__doc__" ~docstring)
-         (setattr ~name "__doeff_body__" ~quoted-body)
-         (setattr ~name "__doeff_name__" ~(str name))
-         ~@declared))))
+  ;; 関数の本体の中に書いた defhandler は、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition —
+  ;; 外の関数で先に読む traverse / for/do の `_doeff_do` を未束縛にしない・card ki-907f779b3290)。
+  (locate-synthesized (_scoped-definition _hy-compiler name (if (is params None)
+      [(_do-import)
+       (_vm-imports)
+       (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
+       lazy-imports
+       `(setv ~name
+         ((fn []
+            (setv __doeff-handler-data__ ~handler-expr)
+            (setv __doeff-clause-endings__ (fn [] [~@specs]))
+            ~(_handler-fn-form endings-check)
+            (setattr __doeff-handler-fn__ "__doc__" ~docstring)
+            (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
+            (setattr __doeff-handler-fn__ "__doeff_handler_data__"
+                  __doeff-handler-data__)
+            __doeff-handler-fn__)))
+       `(setattr ~name "__doeff_body__" ~quoted-body)
+       `(setattr ~name "__doeff_name__" ~(str name))
+       #* declared]
+      [(_do-import)
+       (_vm-imports)
+       (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
+       lazy-imports
+       `(defn ~name [~@params]
+         (setv __doeff-handler-data__ ~handler-expr)
+         (setv __doeff-clause-endings__ (fn [] [~@specs]))
+         ~(_handler-fn-form endings-check)
+         (setattr __doeff-handler-fn__ "__doc__" ~docstring)
+         (setattr __doeff-handler-fn__ "_doeff_is_handler_fn" True)
+         (setattr __doeff-handler-fn__ "__doeff_handler_data__"
+               __doeff-handler-data__)
+         (setattr __doeff-handler-fn__ "__doeff_name__" ~(str name))
+         __doeff-handler-fn__)
+       `(setattr ~name "__doc__" ~docstring)
+       `(setattr ~name "__doeff_body__" ~quoted-body)
+       `(setattr ~name "__doeff_name__" ~(str name))
+       #* declared]))))
