@@ -1,6 +1,6 @@
 ;;; worker の実行環境(runtime env)の root の言い換え(handlers.hy の EnvStore を置き換えた・#2467)— PrepareEnv・SweepEnvs と観測
 ;;; ObserveEnvs・ObserveEnvDisk・heartbeat の名乗り EnvReport を、汎用の子 process の効果(StartProcess・PollProcess・StopProcess)と
-;;; file system の効果(StatPath・ReadText・WriteText・ListDirectory・RenamePath・MakeDirectory・RemoveTree・ReadDiskUsage・MeasureTree)
+;;; file system の効果(StatPath・ReadText・WriteText・ListDirectory・StatTree・RenamePath・MakeDirectory・RemoveTree・ReadDiskUsage・MeasureTree)
 ;;; へ言い換える。I/O を持たない — 本物は外側の subprocess-handler と os-file-handler。
 ;;;
 ;;; 振る舞いは前の EnvStore と同じ:
@@ -17,7 +17,10 @@
 ;;;     候補を全部消しても空きが戻らない時は準備を disk-full で断る)・uv の cache を prune(待たない)・
 ;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
-;;;     worker が自分で job を止めた)。選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
+;;;     worker が自分で job を止めた)。task の中でも同期の effect は scheduler の thread を占めるので、木を相手にする effect(MeasureTree・
+;;;     RemoveTree・bytecode の保存先の様子つきの歩き StatTree)は本番の offloaded-tree-handler が thread で待つ(card ki-0da6a0186492 —
+;;;     保存先を WalkTree と file ごとの StatPath で歩いた掃除が zeus で scheduler を 10〜19 秒止めた)。
+;;;     選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
 ;;;     選んだ root はその拍で . で始まる脇の名へ退けてから消す(消している間は選びにも完成品の観測にも出ない)。走っている掃除は同時に 1 つ。
 ;;;     固定は世代ごとに分け合う dir の root-pins/ へ file で知らせ合い、掃除はまだ走っている他の世代(状態の dir が在る)の固定も消さない
 ;;;     (AL-D2g)。
@@ -33,7 +36,7 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory WalkTree RenamePath MakeDirectory RemoveTree
+(import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
                                             ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
@@ -467,20 +470,18 @@
 (defk unused-store-entries [store now-ms]
   {:pre [(: store (| str None)) (: now-ms int)] :post [(: % tuple)]}
   "bytecode の保存先(store — None = 使わない設定)の file のうち、CODE-STORE-UNUSED-SECONDS より長く時刻の進んでいない物の path の列を
-   求めるため(掃除が消す・保存先の dir が無ければ空)。"
+   求めるため(掃除が消す・保存先の dir が無ければ空)。保存先は file ごとの時刻まで StatTree の 1 つの呼びで読む — 本番は
+   offloaded-tree-handler が thread で待つので、file が 10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(card
+   ki-0da6a0186492 — 前は WalkTree と file ごとの StatPath を scheduler の thread で歩き、zeus で 10〜19 秒止めた)。"
   (if (is store None)
       #()
-      (do (<- listed (| tuple FileFailed) (WalkTree store))
-          (var found #())
+      (do (<- listed (| tuple FileFailed) (StatTree store))
           (match listed
-            (FileFailed) None
-            entries (for [entry entries]
-                      (when (= entry.kind PathKind.FILE)
-                        (val path (posixpath.join store entry.name))
-                        (<- at (modified-ms path))
-                        (when (and (is-not at None) (> (- now-ms at) (* 1000 CODE-STORE-UNUSED-SECONDS)))
-                          (:= found (+ found #(path)))))))
-          found)))
+            (FileFailed) #()
+            entries (tuple (gfor entry entries
+                                 :if (and (= entry.kind PathKind.FILE)
+                                          (> (- now-ms (int (* 1000 entry.modified))) (* 1000 CODE-STORE-UNUSED-SECONDS)))
+                                 (posixpath.join store entry.name)))))))
 
 
 (defk measuring-roots [settings done]

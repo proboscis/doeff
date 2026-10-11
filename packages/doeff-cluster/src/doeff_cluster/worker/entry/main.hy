@@ -122,9 +122,9 @@
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
    code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
-   (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消し
-   (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
-   調整ループ(heartbeat)は回り続ける(#3715)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
+   (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消しと
+   様子つきの歩き(MeasureTree・RemoveTree・StatTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の
+   上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715・card ki-0da6a0186492)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
    leaving-observer が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p —
    印の書き手と形の module leaving_mark は読まない)。"

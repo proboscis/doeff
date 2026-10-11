@@ -16,9 +16,9 @@
 (import collections.abc [Callable])
 (import dataclasses [replace :as with-fields])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles StatPath
-                                         MakeSymlink
-                                         ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
+(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
+                                         StatPath MakeSymlink
+                                         ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
                                          MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
 (import doeff_core_effects.python_bytecode [compiled-pyc kept-pyc pyc-path])
@@ -411,6 +411,9 @@
   (WalkTree [path]
     (<- answer (on-path store path True walk-in))
     (resume answer))
+  (StatTree [path]
+    (<- answer (on-path store path True stats-in))
+    (resume answer))
   (CopyFile [source target]
     (<- content (on-path store source True content-of))
     (if (isinstance content FileFailed)
@@ -522,6 +525,21 @@
     (return refusal))
   (<- below tuple (entries-below store path))
   below)
+
+
+(defk stats-in [store path]
+  {:pre [(: store MemoryFiles) (: path str)] :post [(: % (| (get tuple #(EntryStat ...)) FileFailed))]}
+  "dir の下の全部を様子つきで相対 path の順に並べるため(dir でなければ断る・様子は stat-in と同じ — mtime は持たないので 0・link は辿らず
+   先の綴りの byte 数)。"
+  (<- refusal (dir-refusal store path))
+  (when (is-not refusal None)
+    (return refusal))
+  (<- below tuple (entries-below store path))
+  (var stats #())
+  (for [entry below]
+    (<- seen PathStat (stat-in store (posixpath.join path entry.name)))
+    (:= stats (+ stats #((EntryStat :name entry.name :kind entry.kind :size seen.size :modified seen.modified)))))
+  stats)
 
 
 (defk measured-in [store path]

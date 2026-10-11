@@ -6,9 +6,10 @@
 ;;; 塞がり、錠を持つ task が戻れず錠を返せない(agora-redesign #3051 — 着地の service の口を 1 つの scheduler の Program にする時に見つけた)。
 ;;; offloaded-lock-handler は錠の取りだけを呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で待ち、他の task を回し続ける —
 ;;; os-file-handler の内側に置き、外側に scheduled が要る。待つ task が取り消された後に取れた錠は、その場で返す(持ち主の無い錠を残さない)。
-;;; offloaded-tree-handler は木の数え(MeasureTree)と消し(RemoveTree)を同じく呼び 1 つに thread 1 本で待つ(agora-redesign #3715 — worker の
-;;; 掃除が数千の file の木を数え・消す間、詰まった disk の上でも他の task(worker の調整ループ)を回し続ける)。置き場は offloaded-lock-handler
-;;; と同じ(os-file-handler の内側・外側に scheduled)。
+;;; offloaded-tree-handler は木の数え(MeasureTree)と消し(RemoveTree)と様子つきの歩き(StatTree)を同じく呼び 1 つに thread 1 本で待つ
+;;; (agora-redesign #3715 — worker の掃除が数千の file の木を数え・消す間、詰まった disk の上でも他の task(worker の調整ループ)を回し続ける。
+;;; card ki-0da6a0186492 — 掃除が 10 万の file の bytecode の保存先を歩く間も同じ)。置き場は offloaded-lock-handler と同じ(os-file-handler の
+;;; 内側・外側に scheduled)。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import fcntl)
@@ -18,8 +19,8 @@
 (import stat)
 (import tempfile)
 (import pathlib [Path])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld DiskUsage StatPath ReadText ReadBytes WriteText WriteBytes
-                                         AppendText MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree
+(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage StatPath ReadText ReadBytes WriteText
+                                         WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 (import doeff_core_effects.python_bytecode [compile-python-sources])
@@ -27,7 +28,7 @@
 
 ;; offloaded-lock-handler の thread(錠の取り 1 つに thread 1 本 — 同時の数の上限は錠を取りに来る task の数)。
 (val LOCK-THREADS (ThreadPerCall))
-;; offloaded-tree-handler の thread(木の数え・消し 1 つに thread 1 本)。
+;; offloaded-tree-handler の thread(木の数え・消し・様子つきの歩き 1 つに thread 1 本)。
 (val TREE-THREADS (ThreadPerCall))
 
 
@@ -37,14 +38,14 @@
   (FileFailed :path path :detail (str error)))
 
 
+;; stat の mode の種類の印(stat.S_IFMT の値)→ 種類(kind-of-mode と stat-tree が読む — 表に無い印は OTHER)。
+(val KIND-OF-FORMAT {stat.S-IFLNK PathKind.SYMLINK stat.S-IFDIR PathKind.DIRECTORY stat.S-IFREG PathKind.FILE})
+
+
 (defk kind-of-mode [mode]
   {:pre [(: mode int)] :post [(: % PathKind)]}
   "stat の mode から種類を読むため。"
-  (cond
-    (stat.S-ISLNK mode) PathKind.SYMLINK
-    (stat.S-ISDIR mode) PathKind.DIRECTORY
-    (stat.S-ISREG mode) PathKind.FILE
-    True PathKind.OTHER))
+  (.get KIND-OF-FORMAT (stat.S-IFMT mode) PathKind.OTHER))
 
 
 (defk stat-path [path follow-symlinks]
@@ -132,6 +133,30 @@
         (<- entry DirEntry (entry-of full (.replace (os.path.relpath full path) os.sep "/")))
         (.append entries entry)))
     (tuple (sorted entries :key (fn [e] e.name)))
+    (except [error OSError]
+      (<- answer FileFailed (failed path error))
+      answer)))
+
+
+(defk stat-tree [path]
+  {:pre [(: path str)] :post [(: % (| (get tuple #(EntryStat ...)) FileFailed))]}
+  "dir の下の全部を様子(os.lstat — symlink は辿らない)つきで相対 path の順に並べるため(symlink の dir へは入らない・一覧の後で様子を
+   読む前に消えた物は StatPath の無い path と同じく kind MISSING・大きさ 0・mtime 0)。相対 path は dir ごとに 1 度求める(file が 10 万の
+   木でも file ごとに relpath を呼ばない)。無い path は無いと、dir でない path は dir でないと断る(memory の置き場と同じ断り)。"
+  (try
+    (when (not (os.path.exists path))
+      (raise (FileNotFoundError 2 "No such file or directory" path)))
+    (when (not (os.path.isdir path))
+      (raise (NotADirectoryError 20 "Not a directory" path)))
+    (val found (lfor #(root dirs files) (os.walk path)
+                     :setv base (.replace (os.path.relpath root path) os.sep "/")
+                     name (+ dirs files)
+                     :setv seen (try (os.lstat (os.path.join root name)) (except [FileNotFoundError] None))
+                     (EntryStat :name (if (= base ".") name (+ base "/" name))
+                                :kind (if (is seen None) PathKind.MISSING (.get KIND-OF-FORMAT (stat.S-IFMT seen.st-mode) PathKind.OTHER))
+                                :size (if (is seen None) 0 seen.st-size)
+                                :modified (if (is seen None) 0.0 seen.st-mtime))))
+    (tuple (sorted found :key (fn [e] e.name)))
     (except [error OSError]
       (<- answer FileFailed (failed path error))
       answer)))
@@ -266,6 +291,9 @@
   (WalkTree [path]
     (<- answer (walk-tree path))
     (resume answer))
+  (StatTree [path]
+    (<- answer (stat-tree path))
+    (resume answer))
   (CopyFile [source target]
     (<- answer (guarded source (fn [] (shutil.copyfile source target))))
     (resume answer))
@@ -319,11 +347,14 @@
 
 
 (defhandler offloaded-tree-handler
-  ;; 木の数え(MeasureTree)と消し(RemoveTree)だけを thread で待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。
-  ;; 待つ task が取り消された後の答えは何も持たない(数えは数・消しは終わった印)— 後始末は要らない。
+  ;; 木の数え(MeasureTree)と消し(RemoveTree)と様子つきの歩き(StatTree)だけを thread で待つ答え手(頭の註)。他の file の effect は外側の
+  ;; os-file-handler が答える。待つ task が取り消された後の答えは何も持たない(数えは数・消しは終わった印・歩きは様子の列)— 後始末は要らない。
   (MeasureTree [path]
     (<- answer (| int FileFailed) (offloaded TREE-THREADS (fn [] (run-detached (measure-tree path))) keep-nothing))
     (resume answer))
   (RemoveTree [path]
     (<- answer (| FileFailed None) (offloaded TREE-THREADS (fn [] (run-detached (remove-tree path))) keep-nothing))
-    (resume answer)))
+    (resume answer))
+  (StatTree [path]
+    (<- stats (| tuple FileFailed) (offloaded TREE-THREADS (fn [] (run-detached (stat-tree path))) keep-nothing))
+    (resume stats)))

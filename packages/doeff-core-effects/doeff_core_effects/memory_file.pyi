@@ -13,6 +13,7 @@ from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects.file_effects import DirEntry as DirEntry
+from doeff_core_effects.file_effects import EntryStat as EntryStat
 from doeff_core_effects.file_effects import LockHeld as LockHeld
 from doeff_core_effects.file_effects import MemoryFile as MemoryFile
 from doeff_core_effects.file_effects import MemoryLink as MemoryLink
@@ -28,6 +29,7 @@ from doeff_core_effects.file_effects import AppendText as AppendText
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects.file_effects import ListDirectory as ListDirectory
 from doeff_core_effects.file_effects import WalkTree as WalkTree
+from doeff_core_effects.file_effects import StatTree as StatTree
 from doeff_core_effects.file_effects import CopyFile as CopyFile
 from doeff_core_effects.file_effects import CopyTree as CopyTree
 from doeff_core_effects.file_effects import RenamePath as RenamePath
@@ -148,6 +150,9 @@ def appended_in(store: MemoryFiles, path: str, text: str) -> _Program[MemoryFile
     ...
 
 def walk_in(store: MemoryFiles, path: str) -> _Program[tuple[DirEntry, ...] | FileFailed, object]:
+    ...
+
+def stats_in(store: MemoryFiles, path: str) -> _Program[tuple[EntryStat, ...] | FileFailed, object]:
     ...
 
 def measured_in(store: MemoryFiles, path: str) -> _Program[int | FileFailed, object]:
