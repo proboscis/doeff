@@ -17,6 +17,7 @@ from doeff_core_effects.file_effects import AppendText as AppendText
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects.file_effects import ListDirectory as ListDirectory
 from doeff_core_effects.file_effects import WalkTree as WalkTree
+from doeff_core_effects.file_effects import StatTree as StatTree
 from doeff_core_effects.file_effects import CopyFile as CopyFile
 from doeff_core_effects.file_effects import CopyTree as CopyTree
 from doeff_core_effects.file_effects import RenamePath as RenamePath

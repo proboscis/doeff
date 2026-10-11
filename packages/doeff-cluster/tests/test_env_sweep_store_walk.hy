@@ -22,7 +22,7 @@
 (import doeff [Program with-handlers])
 (import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler])
-(import doeff_core_effects.scheduler [scheduled CreatePromise CreateExternalPromise Spawn Wait])
+(import doeff_core_effects.scheduler [scheduled CreatePromise CreateExternalPromise Spawn Wait Task])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings RemovedRoots removing-leftovers])
 (import doeff_cluster.worker.core.env_upkeep [CODE-STORE-UNUSED-SECONDS])
@@ -53,12 +53,12 @@
   {:pre [(: settings EnvSettings) (: now-ms int) (: walks list) (: gate threading.Event)] :post [(: % WalkRun)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "掃除の消しを本番と同じく別の task で始め、歩きが保存先の walk の頭に入った知らせ(walks に置く外の promise — 差し替えた walk が完了させる)を
-   待ち、歩きの間に BEATS 拍進めてから歩きの合図を出し、消しの答えを待つため。歩きが scheduler の thread で待つと、この task は歩きの間に
-   拍を進められず、合図を出せない。"
+   待ち、歩きの間に BEATS 拍進めてから歩きの合図を出し、消しの答えと task の終わりを待つため。歩きが scheduler の thread で待つと、この
+   task は歩きの間に拍を進められず、合図を出せない。"
   (<- entered (CreateExternalPromise))
   (.append walks entered)
   (<- done (CreatePromise))
-  (<- (Spawn (removing-leftovers settings now-ms done)))
+  (<- sweeping Task (Spawn (removing-leftovers settings now-ms done)))
   (<- (Wait entered.future))
   (var beats 0)
   (for [_ (range BEATS)]
@@ -66,6 +66,7 @@
     (:= beats (+ beats 1)))
   (.set gate)
   (<- removed RemovedRoots (Wait done.future))
+  (<- (Wait sweeping))
   (WalkRun :removed removed.paths :beats beats))
 
 
