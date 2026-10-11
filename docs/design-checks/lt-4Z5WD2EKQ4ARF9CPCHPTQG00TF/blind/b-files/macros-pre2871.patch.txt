@@ -1,0 +1,10 @@
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -1455,7 +1455,7 @@
+             `(do (setv ~items-ref ~items)
+                  (_doeff_traverse_Traverse ~step ~items-ref))))
+-      (let [step `(_doeff_do (fn [~param] (do ~inner-body)))]
++      (let [step `(fn [~param] ((_doeff_do (fn [] (do ~inner-body)))))]
+         (if (is-not label None)
+             `(_doeff_traverse_Traverse ~step ~items :label ~label)
+             `(_doeff_traverse_Traverse ~step ~items)))))

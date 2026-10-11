@@ -1,0 +1,30 @@
+E       AssertionError: --- expected/ex07_proboscis_ema_rewrite.txt
+E         +++ 標準出力
+E         @@ -20,10 +20,23 @@
+E                signal: ok
+E                price: failed — symbol not found: BADCO
+E                zip_failed
+E         -      raised in: _hy_anon_17:129 -> fetch_price:95 -> _hy_anon_28:174
+E         +      raised in: _hy_anon_19:129 -> fetch_price:95 -> _hy_anon_31:174
+E                --- traceback ---
+E                Traceback (most recent call last):
+E         -…
+E         +        File "/tmp/lt4z5w-blind-b/tree/packages/doeff-core-effects/doeff_core_effects/handlers.py", line 154, in attempt
+E         +    value = yield prog
+E         +            ^^^^^^^^^^
+E         +        File "/tmp/lt4z5w-blind-b/tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 129, in _hy_anon_19
+E         +    (<- price (fetch-price sig))
+E         +               ^^^^^^^^^^^^^^^^
+E         +        File "/tmp/lt4z5w-blind-b/tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 95, in fetch_price
+E         +    (<- result (FetchPrice signal))
+E         +                 ^^^^^^^^^^^^^^^^
+E         +        File "/tmp/lt4z5w-blind-b/tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 174, in _hy_anon_31
+E         +    (<- (Fail (SymbolNotFound (+ "symbol not found: " symbol))
+E         +          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         +              :symbol symbol))
+E         +              ^^^^^^^^^^^^^^
+E                SymbolNotFound: symbol not found: BADCO
+E            [2] OK: ({'symbol': 'GOOGL', 'time': '2024-01-01'}, 2800.0)
+E                index: ok
+E         @@ -38,10 +51,23 @@
+E                signal: ok

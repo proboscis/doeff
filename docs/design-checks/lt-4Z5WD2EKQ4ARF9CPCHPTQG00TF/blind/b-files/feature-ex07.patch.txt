@@ -1,0 +1,33 @@
+--- a/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy	2026-10-11 21:12:17.000000000 +0000
++++ b/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy	2026-10-11 21:28:26.513496172 +0000
+@@ -228,6 +228,12 @@
+     (print (+ "      " stage h.event detail)))
+   ;; Show traceback for failed items
+   (when (and item.failed (isinstance item.value BaseException))
++    ;; One line: where in THIS example the failure was raised (function:line, outermost first).
++    ;; Only this file's frames — the lib's frames and the checkout path differ between checkouts.
++    (print (+ "      raised in: "
++              (.join " -> " (gfor fs (tb.extract-tb item.value.__traceback__)
++                                  :if (= fs.filename __file__)
++                                  (+ fs.name ":" (str fs.lineno))))))
+     (print "      --- traceback ---")
+     (for [line (tb.format_exception item.value)]
+       (print (+ "      " (.rstrip line))))))
+--- a/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt	2026-10-11 21:12:17.000000000 +0000
++++ b/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt	2026-10-11 21:28:26.516121626 +0000
+@@ -20,6 +20,7 @@
+       signal: ok
+       price: failed — symbol not found: BADCO
+       zip_failed
++      raised in: _hy_anon_17:129 -> fetch_price:95 -> _hy_anon_28:174
+       --- traceback ---
+       Traceback (most recent call last):
+ …
+@@ -37,6 +38,7 @@
+       signal: ok
+       price: failed — market closed for: CLOSED
+       zip_failed
++      raised in: _hy_anon_17:129 -> fetch_price:95 -> _hy_anon_28:180
+       --- traceback ---
+       Traceback (most recent call last):
+ …

@@ -1,0 +1,33 @@
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex01_basic_fail.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex02_traverse_pipeline.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex03_zip_multi_source.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug2.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_simple.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex06_mediagen_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_not_compared_example_runs_no_program[ex04_debug.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_not_compared_example_runs_no_program[ex04_debug2.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex01_basic_fail.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex02_traverse_pipeline.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex03_zip_multi_source.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug2.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_simple.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex06_mediagen_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex08_tqdm_progress.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex09_for_do_when.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees_nested_forms
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_runner_check_sees_nested_forms
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:228: got empty parameter set for (name)
+31 passed, 1 skipped, 1 warning in 26.26s
