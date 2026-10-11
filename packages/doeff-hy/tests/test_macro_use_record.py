@@ -928,7 +928,8 @@ CROSS_VALUES_PACKAGE = "macro_use_cross_values"
 CROSS_VALUES_FILES = {"__init__.py": "", "limits.hy": "(setv LIMIT 3)\n"}
 
 #: 子の process: 使い手の記録を作り、同じ process でも照らす(record — 記録を作る歩みと照らしの両方を通す)・記録を照らす(check)。
-#: 答えに、照らしの間に source を解いた回数(parsed — bound_source の解き)を出す。
+#: 答えに、照らしの間に source を解いた回数(parsed — bound_source の解き)・code の定数を読んで code の読みを作った回数(facts —
+#: macro_use の _constant_text)・照らしの後に hy.core.hy_repr が読み込まれているか(hy_repr)を出す。
 CROSS_CHILD = """\
 import importlib.machinery, json, sys
 from pathlib import Path
@@ -936,14 +937,16 @@ root, stored, mode, package = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.a
 sys.path.insert(0, root)
 import hy
 import doeff_hy
-from doeff_hy_bytecode_guard import bound_source, record_from_json, record_is_current_here, record_to_json
+from doeff_hy_bytecode_guard import bound_source, macro_use, record_from_json, record_is_current_here, record_to_json
 from doeff_hy_bytecode_guard import records, source_to_code_as_import
-parsed = {"count": 0}
-reading = bound_source._read
-def counting(*args, **kwargs):
-    parsed["count"] += 1
-    return reading(*args, **kwargs)
-bound_source._read = counting
+counts = {"parsed": 0, "facts": 0}
+def counting(name, original):
+    def counted(*args, **kwargs):
+        counts[name] += 1
+        return original(*args, **kwargs)
+    return counted
+bound_source._read = counting("parsed", bound_source._read)
+macro_use._constant_text = counting("facts", macro_use._constant_text)
 if mode == "record":
     path = f"{root}/{package}/user.hy"
     loader = importlib.machinery.SourceFileLoader(f"{package}.user", path)
@@ -952,7 +955,7 @@ if mode == "record":
     current = record_is_current_here(record)
 else:
     current = record_is_current_here(record_from_json(json.loads(stored.read_text())))
-print(json.dumps({"current": current, "parsed": parsed["count"]}))
+print(json.dumps({"current": current, **counts, "hy_repr": "hy.core.hy_repr" in sys.modules}))
 """
 
 CROSS_PACKAGE = "macro_use_cross"
@@ -1100,3 +1103,137 @@ def test_a_class_in_a_source_with_an_unlisted_extension_is_covered_by_its_body(
         return macro_use.macro_digest(key, vars(module)["scaled"], loader_hooks.file_sha256).digest
 
     assert digest(3) != digest(30), "拡張子 .hym の module の class の method の本体を替えても digest が変わらない"
+
+
+# ---- 照らしの固定費(agora-redesign card ki-be596ac8276f)------------------------------------------------------------------
+#
+# 照らしを常に「今に合う」とした process と比べた差(test_emulated_screen.hy の読み込みで 0.385 秒)の内訳: 照らしの中だけで
+# hy.core.hy_repr を読む(置き場の鍵を作るために hy.repr を引く — Hy が遅れて import する)・code の読み(_code_facts — 命令を
+# Python で読む)を process ごとに作り直す・覚えた digest の確かめが照らし 1 回ごとに file を stat する(照らし 797 回で 9,700 回)。
+
+
+def test_a_steady_check_process_does_not_import_hy_repr(cross_tree: CrossTree) -> None:
+    # 直す前は赤: 置き場に読みが在っても、鍵を作るために hy.repr を引き、Hy が hy.core.hy_repr を読み込んだ(照らしを常に今に
+    # 合うとした process は読まない — 0.055〜0.094 秒)。
+    cross_tree.run("record")
+    cross_tree.run("check")
+    answer = cross_tree.run("check")
+    assert answer["current"] is True, "何も変えていないのに check の process が古いと判じた"
+    assert answer["parsed"] == 0, f"check の process が同じ中身の source を {answer['parsed']} 回解き直した"
+    assert answer["hy_repr"] is False, "置き場に読みが在るのに、照らしが hy.core.hy_repr を読み込んだ"
+
+
+def test_a_steady_check_process_does_not_read_code_facts_again(cross_tree: CrossTree) -> None:
+    # 直す前は赤: code の読み(名の表・文字列の定数・import・digest の形)は code の中身で決まるのに、process の中でしか覚えず、
+    # check の process が macro の閉包の code を毎回読み直した。
+    cross_tree.run("record")
+    cross_tree.run("check")
+    answer = cross_tree.run("check")
+    assert answer["current"] is True, "何も変えていないのに check の process が古いと判じた"
+    assert answer["facts"] == 0, f"check の process が code の読みを作り直した(定数の読み {answer['facts']} 回)"
+
+
+#: 一番外の読み込み 1 つ(top を import する — 中で使い手を 6 つ import する)の package。使い手はどれも同じ macro を使う。
+SCOPE_USERS = tuple(f"user_{index}" for index in range(6))
+SCOPE_FILES = {
+    "__init__.py": "",
+    "macros.hy": CROSS_MACROS,
+    "helper.hy": "(setv SCALE 3)\n",
+    "tables.py": 'ROWS = {{"a": 1}}\nROWS["b"] = 2\n',
+    **{f"{user}.hy": "(require {pkg}.macros [body scaled looks rows])\n(setv value [(body) (scaled) (looks) (rows)])\n" for user in SCOPE_USERS},
+    "top.hy": "".join(f"(import {{pkg}}.{user})\n" for user in SCOPE_USERS),
+}
+
+#: 子の process: 名指した module を順に import する(名ごとに一番外の読み込み 1 つ)。間に file を書き換える指図(``edit:<file>:<前>:<後>``)を
+#: 挟める。答え = 覚えた digest の確かめが file を stat した回数(file 名ごと — macro_use._file_state)と、compile した Hy の file。
+SCOPE_CHILD = """\
+import importlib, importlib.machinery, json, sys
+from pathlib import Path
+root, package, *steps = sys.argv[1], sys.argv[2], *sys.argv[3:]
+sys.path.insert(0, root)
+import hy
+compiled = []
+previous = importlib.machinery.SourceFileLoader.source_to_code
+def counting(self, data, path, *args, **kwargs):
+    code = previous(self, data, path, *args, **kwargs)
+    if isinstance(path, str) and path.endswith(".hy"):
+        compiled.append(Path(path).name)
+    return code
+importlib.machinery.SourceFileLoader.source_to_code = counting
+import doeff_hy
+from doeff_hy_bytecode_guard import macro_use
+stats = {}
+stating = macro_use._file_state
+def counted(path):
+    stats[Path(path).name] = stats.get(Path(path).name, 0) + 1
+    return stating(path)
+macro_use._file_state = counted
+for step in steps:
+    if step.startswith("edit:"):
+        _, name, old, new = step.split(":")
+        target = Path(root) / package / name
+        target.write_text(target.read_text().replace(old, new))
+        importlib.invalidate_caches()
+    else:
+        importlib.import_module(f"{package}.{step}")
+print(json.dumps({"stats": stats, "compiled": compiled}))
+"""
+
+SCOPE_PACKAGE = "macro_use_scope"
+
+
+@dataclass(frozen=True)
+class ScopeTree:
+    """子の process で読む検の package の根(.pyc は検の一時 dir の pycache に書く)。"""
+
+    root: Path
+
+    def run(self, *steps: str) -> dict[str, object]:
+        """子の process で steps を 1 度走らせた答え。"""
+        import json
+        import subprocess
+
+        done = subprocess.run(
+            [sys.executable, "-c", SCOPE_CHILD, str(self.root), SCOPE_PACKAGE, *steps],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+@pytest.fixture
+def scope_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ScopeTree:
+    root = tmp_path / "tree"
+    (root / SCOPE_PACKAGE).mkdir(parents=True)
+    for name, text in SCOPE_FILES.items():
+        (root / SCOPE_PACKAGE / name).write_text(text.format(pkg=SCOPE_PACKAGE), encoding="utf-8")
+    (root / CROSS_VALUES_PACKAGE).mkdir()
+    for name, text in CROSS_VALUES_FILES.items():
+        (root / CROSS_VALUES_PACKAGE / name).write_text(text, encoding="utf-8")
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    return ScopeTree(root)
+
+
+def test_one_import_stats_each_macro_file_once(scope_tree: ScopeTree) -> None:
+    # 直す前は赤: 使い手 6 つの .pyc の記録を照らすたびに、覚えた digest の確かめが macro の file を stat し直した(照らし 1 回の
+    # 中では 1 度 — 検の読み込みで照らし 797 回・stat 9,700 回)。一番外の読み込み 1 つの中では file の状態を 1 度だけ読む。
+    first = scope_tree.run("top")
+    assert {f"{user}.hy" for user in SCOPE_USERS} <= set(first["compiled"]), first
+    answer = scope_tree.run("top")
+    assert answer["compiled"] == [], f".pyc を読むだけの 2 つ目の process が compile した: {answer['compiled']}"
+    assert answer["stats"].get("macros.hy") == 1, f"一番外の読み込み 1 つの中で macros.hy の状態を読んだ回数: {answer['stats']}"
+
+
+def test_a_file_changed_between_two_imports_is_noticed_by_the_second(scope_tree: ScopeTree) -> None:
+    # 緑のまま守る: file の状態を 1 度だけ読むのは一番外の読み込み 1 つの中だけ。読み込みの間に tables.py の ROWS の文が変われば、
+    # 次の読み込みの照らしは覚えた digest を使わず辿り直し、古いと判じて使い手を compile し直す。
+    scope_tree.run("top")
+    answer = scope_tree.run("user_0", 'edit:tables.py:ROWS["b"] = 2:ROWS["b"] = 20', "user_1")
+    assert answer["compiled"] == ["user_1.hy"], f"読み込みの間に変えた tables.py に気づかない: {answer}"
