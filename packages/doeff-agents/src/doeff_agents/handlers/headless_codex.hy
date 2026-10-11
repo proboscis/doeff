@@ -32,10 +32,16 @@
 ;;;         AgentToolResultEvent(命令は出力の文 aggregatedOutput・ファイルの変更は空の文。誤りの印 = 状態が completed でない)
 ;;;       webSearch の始まり → AgentToolCallStartedEvent(始まりの item は検索の語を持たない — 上流は語を終わりで名乗る)、終わり →
 ;;;         AgentToolUseEvent と AgentToolResultEvent(空の文 — codex は検索の結果の文を item で運ばない)
+;;;       mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView(card acp:kanban-issue:ki-c09b93b72bff)の始まり →
+;;;         AgentToolUseEvent、終わり → AgentToolResultEvent(MCP の道具・動的な道具は答えの文〔MCP の誤りは誤りの文〕・子の agent の
+;;;         道具は子ごとの「thread の id: 状態」の行〔最後の答えが在れば「 — 答え」を続ける〕・画像を見る道具は空の文。誤りの印 = 状態が
+;;;         completed でない〔動的な道具は答え手が失敗と名乗った時も〕・画像を見る道具は状態を持たないので誤りでない)
 ;;;     ToolCall.input = 画面が読む命令の JSON の object(commandExecution = command・cwd / fileChange = changes の path・kind・diff・
-;;;     move_path / webSearch = query・action・queries・url・pattern — 名乗った欄だけ・欄の名は codex の綴り)。
-;;;     ほかの道具の item(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など — 録った行が無い)・誤りの通知・語彙の外の
-;;;     行は、今は出来事にしない。
+;;;     move_path / webSearch = query・action・queries・url・pattern / mcpToolCall = server・tool・arguments / dynamicToolCall =
+;;;     tool・namespace・arguments / collabAgentToolCall = tool・prompt・receivers・model / imageView = path — 名乗った欄だけ・欄の名は
+;;;     codex の綴り〔子の agent の相手は receivers〕・MCP と動的な道具の arguments は道具が決めた形のまま)。
+;;;     子の agent の thread の行は層 2 の handler が会話のターンに積まない(子の答えを会話の答えにしない)。
+;;;     ほかの item・誤りの通知・語彙の外の行は、今は出来事にしない。
 ;;;   口座の利用枠切れ: 失敗の終わりの利用枠切れの事実(TurnEnded.usage-limit = UsageLimitHit)→ AgentTurnFailed.account_limit
 ;;;     (AgentAccountLimit — claude の adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ・card acp:kanban-issue:ki-a59d80e0afa9)。
 ;;;     判定(誤りの種類の綴り・尽きた窓の選び・枠の知らせの重ね方)は層 2(doeff-codex の limits.hy)が持ち、ここは窓の長さを claude と
@@ -81,7 +87,8 @@
 (import doeff_codex.values [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
-                           TurnStatus UsageLimitHit ToolStatus ToolItem CommandRun FilePatch WebSearch])
+                           TurnStatus UsageLimitHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall DynamicCall AgentCall
+                           ImageView])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
                              BackendLost TurnStarted Steered InterruptRequested TurnEventPage
                              ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
@@ -245,7 +252,14 @@
                    (if (is tool.action None) {} {"action" tool.action})
                    (if tool.queries {"queries" (list tool.queries)} {})
                    (if (is tool.url None) {} {"url" tool.url})
-                   (if (is tool.pattern None) {} {"pattern" tool.pattern}))))
+                   (if (is tool.pattern None) {} {"pattern" tool.pattern}))
+    (McpCall) {"server" tool.server "tool" tool.tool "arguments" tool.arguments}
+    (DynamicCall) (| {"tool" tool.tool "arguments" tool.arguments} (if (is tool.namespace None) {} {"namespace" tool.namespace}))
+    (AgentCall) (| {"tool" tool.tool}
+                   (if (is tool.prompt None) {} {"prompt" tool.prompt})
+                   (if tool.receivers {"receivers" (list tool.receivers)} {})
+                   (if (is tool.model None) {} {"model" tool.model}))
+    (ImageView) {"path" tool.path}))
 
 (defk tool-call-of [#^ str item-id #^ str item-type tool]
   {:pre [(: item-id str) (: item-type str) (: tool ToolItem)] :post [(: % ToolCall)] :tags {:context "headless-adapter" :role "judgment"}}
@@ -255,13 +269,26 @@
 
 (defk tool-answer-of [#^ str item-id tool]
   {:pre [(: item-id str) (: tool ToolItem)] :post [(: % ToolAnswer)] :tags {:context "headless-adapter" :role "judgment"}}
-  "終わった道具の item を、claude の adapter と同じ形の道具の結果にするため: 文 = 命令の出力(ほかの道具は codex が結果の文を item で
-   運ばないので空)/ 誤りの印 = 状態が completed でない(失敗・断り・この版に無い状態 — 成功と名乗った時だけ誤りでない。web 検索は
-   状態を持たないので誤りでない)。"
+  "終わった道具の item を、claude の adapter と同じ形の道具の結果にするため: 文 = 命令の出力・MCP の道具と動的な道具の答えの文(MCP の
+   誤りは誤りの文)・子の agent の道具は子ごとの最後の状態の行(ファイルの変更・web 検索・画像を見る道具は codex が結果の文を item で
+   運ばないので空)/ 誤りの印 = 状態が completed でない(失敗・断り・止め・この版に無い状態 — 成功と名乗った時だけ誤りでない。動的な
+   道具は答え手が失敗と名乗った時も誤り。web 検索と画像を見る道具は状態を持たないので誤りでない)/ 文でない答えの種類(MCP の image の
+   block など)は claude と同じ欄で運ぶ。"
   (match tool
     (CommandRun) (ToolAnswer :id item-id :text (or tool.output "") :is-error (!= tool.status ToolStatus.COMPLETED))
     (FilePatch) (ToolAnswer :id item-id :text "" :is-error (!= tool.status ToolStatus.COMPLETED))
-    (WebSearch) (ToolAnswer :id item-id :text "" :is-error False)))
+    (WebSearch) (ToolAnswer :id item-id :text "" :is-error False)
+    (McpCall) (ToolAnswer :id item-id :text (or tool.output tool.error "") :is-error (!= tool.status ToolStatus.COMPLETED)
+                          :non-text-kinds tool.non-text-kinds)
+    (DynamicCall) (ToolAnswer :id item-id :text (or tool.output "")
+                              :is-error (or (!= tool.status ToolStatus.COMPLETED) (is tool.success False))
+                              :non-text-kinds tool.non-text-kinds)
+    (AgentCall) (ToolAnswer :id item-id :is-error (!= tool.status ToolStatus.COMPLETED)
+                            :text (.join "\n" (gfor state tool.states
+                                                    (if (is state.message None)
+                                                        (.format "{}: {}" state.thread-id state.status)
+                                                        (.format "{}: {} — {}" state.thread-id state.status state.message)))))
+    (ImageView) (ToolAnswer :id item-id :text "" :is-error False)))
 
 (defk tool-events-of [record tool #^ datetime at #^ int first-seq]
   {:pre [(: record (| ItemStarted ItemDone)) (: tool ToolItem) (: at datetime) (: first-seq int)] :post [(: % tuple)]
@@ -290,8 +317,8 @@
     ;; 考えの item の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(claude の adapter と同じ)。
     (ItemStarted :item-type "reasoning") #((AgentThinkingStartedEvent :seq first-seq :at at))
     ;; 道具の item(中身を持つ item だけ — 層 2 が道具の種類の中身を解いた物)。
-    (| (ItemStarted :tool (| (CommandRun) (FilePatch) (WebSearch)) :as tool)
-       (ItemDone :tool (| (CommandRun) (FilePatch) (WebSearch)) :as tool))
+    (| (ItemStarted :tool (| (CommandRun) (FilePatch) (WebSearch) (McpCall) (DynamicCall) (AgentCall) (ImageView)) :as tool)
+       (ItemDone :tool (| (CommandRun) (FilePatch) (WebSearch) (McpCall) (DynamicCall) (AgentCall) (ImageView)) :as tool))
     (do (<- made (tool-events-of record tool at first-seq)) made)
     (ReasoningDelta) #((AgentThinkingDeltaEvent :seq first-seq :at at :text record.text))
     (TokenUsage) (do (<- usage (call-usage-of record.last))

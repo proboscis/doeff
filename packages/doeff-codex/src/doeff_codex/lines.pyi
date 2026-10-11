@@ -5,6 +5,8 @@ from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
+from doeff_hy.frozen import FrozenJson as FrozenJson
+from doeff_hy.frozen import freeze_json_text as freeze_json_text
 from doeff_hy.json_value import OpaqueJson as OpaqueJson
 from doeff_hy.wire import parse as parse
 from doeff_hy.wire import parse_json as parse_json
@@ -21,6 +23,7 @@ class ToolStatus(StrEnum):
     COMPLETED = 'completed'
     FAILED = 'failed'
     DECLINED = 'declined'
+    INTERRUPTED = 'interrupted'
     IN_PROGRESS = 'inProgress'
 
 @dataclass(frozen=True, kw_only=True)
@@ -138,6 +141,60 @@ class WebSearchActionWire:
 class WebSearchWire:
     query: str
     action: WebSearchActionWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class McpContentWire:
+    type: str
+    text: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class McpResultWire:
+    content: tuple[McpContentWire, ...]
+
+@dataclass(frozen=True, kw_only=True)
+class McpErrorWire:
+    message: str
+
+@dataclass(frozen=True, kw_only=True)
+class McpToolCallWire:
+    server: str
+    tool: str
+    status: str
+    arguments: OpaqueJson
+    result: McpResultWire | None = None
+    error: McpErrorWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class DynamicContentWire:
+    type: str
+    text: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class DynamicToolCallWire:
+    tool: str
+    namespace: str | None = None
+    status: str
+    arguments: OpaqueJson
+    content_items: tuple[DynamicContentWire, ...] | None = None
+    success: bool | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class AgentStateWire:
+    status: str
+    message: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class CollabAgentToolCallWire:
+    tool: str
+    status: str
+    receiver_thread_ids: tuple[str, ...]
+    prompt: str | None = None
+    model: str | None = None
+    agents_states: dict[str, AgentStateWire]
+
+@dataclass(frozen=True, kw_only=True)
+class ImageViewWire:
+    path: str
 
 @dataclass(frozen=True, kw_only=True)
 class ErrorParamsWire:
@@ -262,7 +319,46 @@ class WebSearch:
     queries: tuple[str, ...] = ...
     url: str | None = None
     pattern: str | None = None
-ToolItem: TypeAlias = CommandRun | FilePatch | WebSearch
+
+@dataclass(frozen=True, kw_only=True)
+class McpCall:
+    server: str
+    tool: str
+    arguments: FrozenJson
+    status: ToolStatus | UnknownValue
+    output: str | None = None
+    non_text_kinds: tuple[str, ...] = ...
+    error: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class DynamicCall:
+    tool: str
+    namespace: str | None = None
+    arguments: FrozenJson
+    status: ToolStatus | UnknownValue
+    output: str | None = None
+    non_text_kinds: tuple[str, ...] = ...
+    success: bool | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class AgentState:
+    thread_id: str
+    status: str
+    message: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class AgentCall:
+    tool: str
+    status: ToolStatus | UnknownValue
+    receivers: tuple[str, ...] = ...
+    prompt: str | None = None
+    model: str | None = None
+    states: tuple[AgentState, ...] = ...
+
+@dataclass(frozen=True, kw_only=True)
+class ImageView:
+    path: str
+ToolItem: TypeAlias = CommandRun | FilePatch | WebSearch | McpCall | DynamicCall | AgentCall | ImageView
 
 @dataclass(frozen=True, kw_only=True)
 class ItemStarted:
@@ -389,6 +485,18 @@ def file_patch_of(wire: FileChangeWire) -> _Program[FilePatch, object]:
     ...
 
 def web_search_of(wire: WebSearchWire) -> _Program[WebSearch, object]:
+    ...
+
+def mcp_call_of(wire: McpToolCallWire) -> _Program[McpCall, object]:
+    ...
+
+def dynamic_call_of(wire: DynamicToolCallWire) -> _Program[DynamicCall, object]:
+    ...
+
+def agent_call_of(wire: CollabAgentToolCallWire) -> _Program[AgentCall, object]:
+    ...
+
+def image_view_of(wire: ImageViewWire) -> _Program[ImageView, object]:
     ...
 
 def tool_parsed(method: str, wire_type: type, convert: Callable, item: OpaqueJson) -> _Program[ToolItem | Unparsed, object]:
