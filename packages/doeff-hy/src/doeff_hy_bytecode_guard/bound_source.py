@@ -9,11 +9,17 @@ object)に出会うと、前はその module の file の sha256 で覆ってい
 - top-level の関数と class の定義のうち、import の時に評価される所(decorator・既定値・注記・基底・class の本体)でその名に
   触れる物は、文として入れる。呼ばれた時に走る本体でその名を書き換えうる物(:attr:`Binding.mutators`)は、歩みの側がその関数
   (か class)を辿る — import の時に呼ばれる登録の関数でも、閉包から辿られない関数でも、code が digest に入る。
-- その名を import で束縛する文(:attr:`Binding.imports`)は、歩みの側が import の先の module の同じ規則で辿る。
+- その名を import で束縛する文(:attr:`Binding.imports`)は、歩みの側が import の先の module の同じ規則で辿る。Hy の
+  ``(import …)`` も Python の import と同じ形に解く(``(import a.b)`` は a を・``(import a.b :as n)`` は a.b を・
+  ``(import a.b [x :as y])`` は a.b の x を束縛する — 設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A: 解かずに file で覆うと、
+  import の先の module が環境変数から組んだ表の変化を見落とした)。
 
-読めない時(source の無い module・読みの誤り・Hy の import の形)は ``None`` か :attr:`Binding.unresolved` を返し、歩みの側は
-安全側に file の全体で覆う。Hy の定義(defn など)の本体は import の時と呼ばれた時を分けず、その名に触れる定義の form を文として
-入れる。
+読めない時(source の無い module・読みの誤り・Hy の星の import と読めない import の形)は ``None`` か :attr:`Binding.unresolved` を
+返し、歩みの側は安全側に file の全体で覆う。Hy の定義(defn など)の本体は import の時と呼ばれた時を分けず、その名に触れる定義の
+form を文として入れる。
+
+:func:`source_names` は module の source に現れる名の全部を読む(同じく純な読み)— 歩みが辿れない値を持ち主の file で覆う時に、
+持ち主の source が file の外で決まる値(環境変数)を読むかを判じる材料。
 
 読みは source の中身と名(と読み方 — この module の code・Python の版・拡張子・Hy の版と hy.repr の登録)だけで決まる純な計算
 なので、process の中の覚えに加え、置き場(:mod:`doeff_hy_bytecode_guard.code_store` の種類 ``.binding``)に中身で引いて覚える —
@@ -124,6 +130,68 @@ def binding_of(path: str, name: str) -> Binding | None:
     binding = _stored_binding(source, path, name)
     _BINDINGS[(path, name)] = (source, binding)
     return binding
+
+
+#: source に現れる名の覚え(process の中 — file の path → (読んだ中身・名の全部))。
+_NAMES: dict[str, tuple["SourceFile", "tuple[str, ...] | None"]] = {}
+
+
+def source_names(path: str) -> tuple[str, ...] | None:
+    """module の file の source に現れる名の全部 — Python は名・属性の名・import の module と別名の各部分、Hy は記号の各部分
+    (mangle した名・点の式の各部分も)。歩みが辿れない値を持ち主の file で覆う時に、持ち主の source が file の外で決まる値
+    (環境変数)を読むかを判じるため。読めない・解けない source は None。process の中で file の状態ごとに 1 度読む(歩みが
+    辿れない値に当たった時だけ呼ぶ — 置き場には覚えない)。"""
+    source = _source(path)
+    if source is None:
+        return None
+    remembered = _NAMES.get(path)
+    if remembered is not None and remembered[0] is source:
+        return remembered[1]
+    names = _names_in(_parsed(source, path))
+    _NAMES[path] = (source, names)
+    return names
+
+
+def _names_in(parsed: "PythonModule | HyModule | None") -> tuple[str, ...] | None:
+    """読んだ source の名の全部(名の順)。"""
+    match parsed:
+        case None:
+            return None
+        case PythonModule(body=body):
+            return tuple(
+                sorted(
+                    {
+                        name
+                        for statement in body
+                        for node in ast.walk(statement)
+                        for name in _python_node_names(node)
+                    }
+                )
+            )
+        case HyModule(forms=forms):
+            return tuple(
+                sorted(
+                    {
+                        part
+                        for form in forms
+                        for symbol in _hy_symbols(form)
+                        for part in _hy_names(symbol)
+                    }
+                )
+            )
+
+
+def _python_node_names(node: ast.AST) -> tuple[str, ...]:
+    """Python の節 1 つ(中は見ない)の名 — 名の読み書き・属性の名・import の module と別名の各部分。"""
+    match node:
+        case ast.Name(id=found) | ast.Attribute(attr=found):
+            return (found,)
+        case ast.alias(name=found, asname=alias):
+            return (*found.split("."), *(() if alias is None else (alias,)))
+        case ast.ImportFrom(module=str() as module):
+            return tuple(module.split("."))
+        case _:
+            return ()
 
 
 def _source(path: str) -> SourceFile | None:
@@ -717,7 +785,8 @@ def _attribute_stays(attribute: ast.Attribute, name: str, parents: dict[int, ast
 
 def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
     """Hy の top-level の form から大域 ``name``(mangle した名)の束縛と書き換えを読む。その名に触れる form は全部文として入れる
-    (定義の form も — 本体を import の時と呼ばれた時に分けない)。import で束縛する形は辿らない(unresolved)。"""
+    (定義の form も — 本体を import の時と呼ばれた時に分けない)。import で束縛する形は import の先へ解き、解けない形(星の
+    import・読めない形)は辿らない(unresolved)。"""
     import hy
 
     touched = tuple(
@@ -725,6 +794,11 @@ def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
         for form in forms
         for symbols in (tuple(_hy_symbols(form)),)
         if any(_hy_names(symbol)[0] == name for symbol in symbols)
+    )
+    imported = tuple(
+        _hy_import_clauses(list(form)[1:], name)
+        for form, _ in touched
+        if _hy_head(form) in _HY_IMPORTS
     )
     return Binding(
         statements=tuple(
@@ -736,10 +810,98 @@ def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
             for form, symbols in touched
         ),
         mutators=(),
-        imports=(),
+        imports=tuple(found for clauses in imported if clauses is not None for found in clauses),
         bound=any(_hy_binds(form, name) for form, _ in touched),
-        unresolved=any(_hy_head(form) in _HY_IMPORTS for form, _ in touched),
+        unresolved=any(clauses is None for clauses in imported),
     )
+
+
+@dataclass(frozen=True)
+class HyImportedName:
+    """Hy の import の名の並び ``[x :as y]`` の 1 つ — import の先の属性の名と、束縛する名(どちらも mangle した名)。"""
+
+    imported: str
+    bound: str
+
+
+def _hy_import_clauses(items: list[object], name: str) -> tuple[ImportedName, ...] | None:
+    """``(import …)`` の引数を前から読み、その名を束縛する import を返す — module(記号か点の式)の後に ``:as 別名``・名の並び・
+    何も続かない(先頭の package を束縛)のどれか。星の import と読めない形は None(呼び手は辿れない束縛とする)。"""
+    from hy.models import Keyword, List, Symbol
+
+    if not items:
+        return ()
+    module = _hy_module_name(items[0])
+    if module is None:
+        return None
+    match items[1:]:
+        case [Keyword() as keyword, Symbol() as alias, *after] if keyword.name == "as":
+            here = (ImportedName(module.name, module.level, ""),) if _hy_names(alias) == (name,) else ()
+        case [List() as listed, *after]:
+            names = _hy_import_names(list(listed))
+            if names is None:
+                return None
+            here = tuple(
+                ImportedName(module.name, module.level, entry.imported)
+                for entry in names
+                if entry.bound == name
+            )
+        case [Symbol() as star, *_] if str(star) == "*":
+            return None
+        case after if module.level == 0:
+            top = module.name.partition(".")[0]
+            here = (ImportedName(top, 0, ""),) if top == name else ()
+        case _:
+            return None  # 名の並びも別名も無い相対の import(Hy の読みの形が分からない)
+    rest = _hy_import_clauses(list(after), name)
+    return None if rest is None else (*here, *rest)
+
+
+@dataclass(frozen=True)
+class HyModuleName:
+    """Hy の import の module の名(mangle した点の並び)と相対の段数。"""
+
+    name: str
+    level: int
+
+
+def _hy_module_name(item: object) -> HyModuleName | None:
+    """import の module の部分 — 記号(``os``)か、Hy の読みが作る点の式(``a.b`` は ``(. a b)``・相対の ``..h`` は
+    ``(.. None h)``)。読めない形は None。"""
+    import hy
+    from hy.models import Expression, Symbol
+
+    match item:
+        case Symbol() if str(item) != "*":
+            return HyModuleName(".".join(_hy_names(item)), 0)
+        case Expression() if len(item) >= 2 and all(isinstance(part, Symbol) for part in item):
+            head, *parts = (str(part) for part in item)
+            relative = parts[0] == "None"
+            names = parts[1:] if relative else parts
+            if set(head) != {"."} or not names:
+                return None
+            return HyModuleName(".".join(map(hy.mangle, names)), len(head) if relative else 0)
+        case _:
+            return None
+
+
+def _hy_import_names(items: list[object]) -> tuple[HyImportedName, ...] | None:
+    """import の名の並び ``[x y :as z]`` を読む(読めない形は None)。"""
+    from hy.models import Keyword, Symbol
+
+    match items:
+        case []:
+            return ()
+        case [Symbol() as imported, Keyword() as keyword, Symbol() as alias, *rest] if (
+            keyword.name == "as"
+        ):
+            here = HyImportedName(_hy_names(imported)[0], _hy_names(alias)[0])
+        case [Symbol() as imported, *rest]:
+            here = HyImportedName(_hy_names(imported)[0], _hy_names(imported)[0])
+        case _:
+            return None
+    tail = _hy_import_names(list(rest))
+    return None if tail is None else (here, *tail)
 
 
 def _hy_head(form: object) -> str:
@@ -752,7 +914,7 @@ def _hy_head(form: object) -> str:
 
 
 def _hy_binds(form: object, name: str) -> bool:
-    """form がその名を束縛するか(``(setv 名 …)`` の対の左・``(defn 名 …)`` などの定義の名・import)。"""
+    """form がその名を束縛するか(``(setv 名 …)`` の対の左・``(defn 名 …)`` などの定義の名 — import は除く)。"""
     from hy.models import Expression, Symbol
 
     if not isinstance(form, Expression):
@@ -764,7 +926,7 @@ def _hy_binds(form: object, name: str) -> bool:
                 for target in list(form)[1::2]
             )
         case head if head in _HY_IMPORTS:
-            return True
+            return False  # import の束縛は Binding.imports(Python の束縛と同じく bound に数えない)
         case head if head.startswith("def"):
             return any(
                 isinstance(item, Symbol) and _hy_names(item)[0] == name for item in list(form)[1:3]
