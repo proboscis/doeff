@@ -89,6 +89,22 @@ class Collection(Generic[_V]):
     def all_items(self) -> list[ItemResult]:
         return list(self._items)
 
+    def flatten(self) -> "Collection":
+        """Splice a Collection whose valid values are Collections into one Collection.
+
+        for/do with nested From binds answers one item per combination, like a list
+        comprehension (card ki-7e6a11f56bd5): the outer Traverse answers a Collection of the
+        inner Collections, and the expansion flattens it here. An inner item keeps its
+        value and failure, and its history follows the outer item's history. A failed or
+        skipped outer item has no inner Collection and stays one item. Indices are
+        renumbered in order.
+        """
+        spliced = [part for outer in self._items for part in _spliced(outer)]
+        return Collection([
+            ItemResult(index=index, value=value, failed=failed, history=history)
+            for index, (value, failed, history) in enumerate(spliced)
+        ])
+
     def __len__(self):
         return len(self._items)
 
@@ -100,3 +116,16 @@ class Collection(Generic[_V]):
         valid = len(self.valid_items)
         failed = len(self.failed_items)
         return f"Collection({valid} valid, {failed} failed)"
+
+
+def _spliced(outer: ItemResult) -> list[tuple[object, bool, list]]:
+    """The (value, failed, history) entries one outer item contributes to Collection.flatten.
+
+    A failed or skipped outer item stays itself; a valid one gives every item of its inner
+    Collection, with the outer history in front.
+    """
+    if outer.failed:
+        return [(outer.value, True, list(outer.history))]
+    if not isinstance(outer.value, Collection):
+        raise TypeError(f"Collection.flatten: item {outer.index} is {type(outer.value).__name__}, not a Collection")
+    return [(inner.value, inner.failed, outer.history + inner.history) for inner in outer.value.all_items]

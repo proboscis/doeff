@@ -1326,11 +1326,13 @@ defk {name}: {{:post [...]}} is required.
 ;; traverse — applicative traverse as effect (CPS-converted Iterate)
 ;; ---------------------------------------------------------------------------
 
-(defn _gen-traverse-body [bindings body-expr]
+(defn _gen-traverse-body [bindings body-expr [in-step False]]
   "Generate the CPS-converted body for traverse/for-do.
    Finds Iterate/From bindings and nests Traverse effects.
    Recognizes (When pred) as a guard — emits Skip when falsy.
-   Non-Iterate bindings become yield expressions inside the inner defk."
+   Non-Iterate bindings become yield expressions inside the inner defk.
+   in-step: the bindings are inside the per-item function of an outer From, so a From here
+   is performed in that function (see _place-traverse)."
   (import doeff-hy.outcome-forms [bind-form :as _bind-form])
   (if (not bindings)
       body-expr
@@ -1343,7 +1345,7 @@ defk {name}: {{:post [...]}} is required.
                   ;; (When (yield (validate x))) — evaluated at guard position
                   ;; [ADR-DOE-HY-003]
                   rewritten-pred (_expand-bangs pred-expr "for/do")
-                  inner (_gen-traverse-body rest body-expr)]
+                  inner (_gen-traverse-body rest body-expr in-step)]
               `(do
                  (when (not ~rewritten-pred)
                    ~(_skip-form))
@@ -1352,18 +1354,47 @@ defk {name}: {{:post [...]}} is required.
             (let [#(name tp expr) (_bind-parts bind)]
               (if (_is-iterate expr)
                   ;; CPS: wrap rest + body into a defk, emit Traverse effect
-                  ;; NOTE: does NOT yield — the outer <- / defk handles yield
                   (let [items (_iterate-arg expr)
                         ;; Extract optional :label from (Iterate items :label "name")
                         label (if (>= (len expr) 4) (get expr 3) None)
-                        inner-body (_gen-traverse-body rest body-expr)
+                        inner-body (_gen-traverse-body rest body-expr True)
                         param (if (is name None)
                                   (hy.models.Symbol "_unused")
                                   name)]
-                    (_traverse-form param items label inner-body))
+                    (_place-traverse (_traverse-form param items label inner-body)
+                                     (_binds-from? rest)
+                                     in-step))
                   ;; Non-Iterate: regular bind (typed bind keeps its isinstance)
-                  (let [inner (_gen-traverse-body rest body-expr)]
+                  (let [inner (_gen-traverse-body rest body-expr in-step)]
                     `(do ~(_bind-form bind) ~inner))))))))
+
+(defn _binds-from? [bindings]
+  "bindings に From / Iterate の束縛が在るか — 在れば、その前の From の件の関数は内側の From の Collection を答える。"
+  (any (gfor bind bindings
+             (and (_is-bind bind) (_is-iterate (get (_bind-parts bind) 2))))))
+
+(defn _place-traverse [traverse inner-from? in-step]
+  "From 1 つの Traverse を、置かれた所に合わせた形にする(card ki-7e6a11f56bd5)。
+
+   重ねた From は内包(list の <-・SQL の CROSS JOIN)と同じく、組ごとの本体の値を 1 件として平らに並べる。そのため:
+   - 外の From の件の関数の中(in-step)の From は、その関数の中で Traverse を実行し、答えの Collection を件の値にする。
+     前は実行せずに Traverse の effect を件の値として返し、valid_values に内側の Traverse が入っていた。
+   - 後ろに From が残る From(inner-from?)の Traverse は、件の値が内側の Collection の Collection を答えるので、
+     Collection.flatten で 1 段平らにする。for/do の一番外(in-step でない)は、書き手の `<-` が実行する Program にする
+     — Traverse の effect は展開の時に作り(items を読む時は From 1 つの時と同じ)、Program はそれを実行して平らにする。
+   From が 1 つの for/do(一番外で、後ろに From が無い)は今までどおり Traverse の effect そのまま。
+   型検査のための展開では yield を出さず `_doeff_perform` で包み(_skip-form と同じ訳)、一番外の Program は引数を持たない
+   関数にする(lambda の引数は注記を持てず strict の赤になる)。"
+  (setv perform (if (_static-view?)
+                    (fn [expr] `(_doeff_perform ~expr))
+                    (fn [expr] `(yield ~expr))))
+  (cond
+    (and in-step inner-from?) `(.flatten ~(perform traverse))
+    in-step (perform traverse)
+    (not inner-from?) traverse
+    (_static-view?) `((_doeff_do (fn [] (.flatten ~(perform traverse)))))
+    True (let [made (hy.gensym "traverse")]
+           `((_doeff_do (fn [~made] (.flatten ~(perform made)))) ~traverse))))
 
 (defn _skip-form []
   "When が偽の件を落とす Skip を出すため。実行時は `(yield (_doeff_traverse_Skip))`。型検査のための展開では `<-` と同じく
@@ -1440,6 +1471,8 @@ defk {name}: {{:post [...]}} is required.
      (When (valid? sub))
      (<- result (process item sub))
      result)
+   The answer has one item per (item, sub) combination, like a list comprehension — not one
+   item per outer item (card ki-7e6a11f56bd5).
 
    Requires:
      (import doeff [do :as _doeff-do])
