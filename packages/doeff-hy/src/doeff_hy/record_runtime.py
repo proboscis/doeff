@@ -9,6 +9,7 @@ doeff_hy.record を読み込む途中で読み込まれるので、展開が cla
 
 import dataclasses
 import reprlib
+import types
 
 #: 展開が書く凍結の __setattr__ / __delattr__ が出す error(dataclass と同じ型 — 呼び手の except FrozenInstanceError が今までどおり効く)。
 FrozenInstanceError = dataclasses.FrozenInstanceError
@@ -61,7 +62,28 @@ def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> Non
     setattr(cls, "__dataclass_params__", RECORD_PARAMS)
 
 
-def seal_effect(cls: type) -> None:
+def seal_effect(cls: type, names: tuple[str, ...], calls_post_init: bool) -> None:
     """展開が関数を書いた defeffect の effect 型を仕上げるため: __dataclass_params__ を今までの展開(frozen の dataclass・位置の
-    引数)と同じ値に戻す(card ki-e77d44aa61e5)。"""
+    引数)と同じ値に戻す(card ki-e77d44aa61e5)。展開は欄の型と既定値を字面で読むので、dataclass の欄の表が展開の読んだ形と
+    違う時は読み込みで断る(424a87f58 の後退と同じ穴 — 展開の関数が黙って違う値を置かない・card ki-c22d8fd6237d):
+    型が __post_init__ を持つのに展開の __init__ が呼ばない・欄の名の並び names が違う(ClassVar・InitVar・KW_ONLY の型)・
+    既定値が名を介した field の印(工場・init・repr・compare・hash を持つか、展開の __init__ の既定値が欄の既定値と違う)。"""
+    if "__post_init__" in vars(cls) and not calls_post_init:
+        raise TypeError(f"{cls.__name__} の __post_init__ を展開の __init__ が呼ばない — defeffect の展開が :pre を見落とした")
+    fields = dataclasses.fields(cls)
+    if tuple(f.name for f in fields) != names:
+        raise TypeError(
+            f"{cls.__name__} の欄 {tuple(f.name for f in fields)} が展開の読んだ欄 {names} と違う — "
+            ":fields の型に ClassVar・InitVar・KW_ONLY は書かない"
+        )
+    init = vars(cls)["__init__"]
+    if not isinstance(init, types.FunctionType):
+        raise TypeError(f"{cls.__name__} の __init__ が展開の書いた関数ではない: {init!r}")
+    for f in fields:
+        if f.default_factory is not dataclasses.MISSING or not f.init or not f.repr or not f.compare or f.hash is not None or f.kw_only:
+            raise TypeError(f"{cls.__name__} の欄 {f.name} の既定値は field の印 — defeffect の欄には (field …) を直に書く")
+    declared = tuple(f.default for f in fields if f.default is not dataclasses.MISSING)
+    written = init.__defaults__ or ()
+    if len(declared) != len(written) or any(d is not w for d, w in zip(declared, written)):
+        raise TypeError(f"{cls.__name__} の欄の既定値に名を介した field の印がある — defeffect の欄には (field …) を直に書く")
     setattr(cls, "__dataclass_params__", EFFECT_PARAMS)

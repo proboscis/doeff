@@ -334,25 +334,30 @@
         params (lfor item items (if (= (len item) 4)
                                     `(annotate [~(get item 1) ~(get item 1)] ~(get item 2))
                                     `(annotate ~(get item 1) ~(get item 2))))
-        own `#(~@(lfor s syms `(. ~self-sym ~s)))
         guard (if syms
                   `(or (is (type ~self-sym) ~name) (in ~attr #{~@(lfor s syms (String (hy.mangle (str s))))}))
                   `(is (type ~self-sym) ~name)))
   (setv methods
     (if written
         [`(defn __init__ [~self-sym ~@params]
-            ~@(lfor s syms `(object.__setattr__ ~self-sym ~(hy.mangle (str s)) ~s))
+            ;; 欄は組み込みの object の別名で置く — 欄の名 object(引数)が組み込みの名を隠さない(dataclass の
+            ;; __dataclass_builtins_object__ と同じ)。
+            ~@(lfor s syms `(_doeff-object.__setattr__ ~self-sym ~(hy.mangle (str s)) ~s))
             ~@(if post-init [`(.__post-init__ ~self-sym)] [])
             None)
          `(defn [(doeff_hy.record_runtime.recursive-repr)] __repr__ [~self-sym]
             (.format ~(+ "{}(" (.join ", " (gfor s syms (+ (hy.mangle (str s)) "={!r}"))) ")") (. ~self-sym __class__ __qualname__)
                      ~@(lfor s syms `(. ~self-sym ~s))))
+         ;; dataclass(Python 3.14)の __eq__ と同じ形: 同じ物なら真・欄ごとの == を and で繋ぐ(組どうしの比較は NaN と真偽でない値を
+         ;; 返す == で答えが違う)。
          `(defn __eq__ [~self-sym ~other]
-            (if (is (. ~other __class__) (. ~self-sym __class__))
-                (= ~own #(~@(lfor s syms `(. ~other ~s))))
-                NotImplemented))
+            (cond
+              (is ~self-sym ~other) True
+              (is (. ~other __class__) (. ~self-sym __class__))
+                (and ~@(or (lfor s syms `(= (. ~self-sym ~s) (. ~other ~s))) ['True]))
+              True NotImplemented))
          `(defn __hash__ [~self-sym]
-            (hash ~own))
+            (hash #(~@(lfor s syms `(. ~self-sym ~s)))))
          `(defn __setattr__ [~self-sym ~attr ~value]
             (when ~guard
               (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
@@ -373,7 +378,7 @@
      ;; (`<-` の束ねの型・handler の resume の型)は変えない。ClassVar は dataclass の欄にならない(pyright・実行時とも)。
      ;; from-import の別名の作法は defwire と同じ(record.hy)。
      (import typing [ClassVar :as _doeff-ClassVar cast :as _doeff-cast])
-     ~@(if written [`(import doeff_hy.record_runtime)] [])
+     ~@(if written [`(import doeff_hy.record_runtime) `(import builtins [object :as _doeff-object])] [])
      (defclass [~(if written
                      `(_doeff-dataclass :init False :repr False :eq False)
                      `(_doeff-dataclass :frozen True))]
@@ -383,7 +388,9 @@
        ~@fields
        ~@post-init
        ~@methods)
-     ~@(if written [`(doeff_hy.record_runtime.seal-effect ~name)] [])
+     ~@(if written
+           [`(doeff_hy.record_runtime.seal-effect ~name #(~@(lfor s syms (String (hy.mangle (str s))))) ~(bool post-init))]
+           [])
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_defeffect__" True)
      ~@(if runs-carried

@@ -137,6 +137,7 @@
   (import doeff_hy.record_runtime [seal-effect])
   (defclass [(dataclass :init False :repr False :eq False)] Missed [EffectBase]
     #^ int n
+    (defn __init__ [self n] (object.__setattr__ self "n" n) (.__post-init__ self))
     (defn __post-init__ [self] None))
   (with [(pytest.raises TypeError :match "__post_init__")]
     (seal-effect Missed #("n") False))
