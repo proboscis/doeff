@@ -11,11 +11,23 @@ package の根は import を遅らせるため、名を ``__getattr__(name) -> A
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
 
 import doeff_agents
 
 ROOT = Path(doeff_agents.__file__)
+
+
+def _defined_in_untyped_hy(name: str) -> bool:
+    """遅延の名 name の実物の定義元が、型の宣言(同じ名の .pyi)を持たない Hy の module か — 型の検査はその名を解けないので、
+    節に載せると根の file に解けない import の赤を足す(handlers/testing.hy の Mock*・Scenario*)。"""
+    module = getattr(getattr(doeff_agents, name), "__module__", None)
+    if not isinstance(module, str):
+        return False  # 定数(str など)は表の定義元(.py)で定義される
+    spec = importlib.util.find_spec(module)
+    origin = None if spec is None else spec.origin
+    return origin is not None and origin.endswith(".hy") and not Path(origin).with_suffix(".pyi").exists()
 
 
 def _lazy_exports(tree: ast.Module) -> dict[str, str]:
@@ -50,8 +62,11 @@ def _type_checking_imports(tree: ast.Module) -> dict[str, str]:
 
 def test_every_lazy_export_is_imported_for_type_checkers_from_its_own_module() -> None:
     tree = ast.parse(ROOT.read_text(encoding="utf-8"))
-    lazy = _lazy_exports(tree)
+    untyped = {name for name in _lazy_exports(tree) if _defined_in_untyped_hy(name)}
+    lazy = {name: module for name, module in _lazy_exports(tree).items() if name not in untyped}
     typed = _type_checking_imports(tree)
+    shown_untyped = sorted(untyped & set(typed))
+    assert shown_untyped == [], f"型の宣言の無い Hy の module の名を節が import している(型の検査が解けない): {shown_untyped}"
     missing = sorted(name for name in lazy if name not in typed)
     assert missing == [], f"型の検査の節に無い遅延の名 {len(missing)} 個: {missing[:10]}"
     moved = sorted((name, lazy[name], typed[name]) for name in lazy if typed[name] != lazy[name])
