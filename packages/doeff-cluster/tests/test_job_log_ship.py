@@ -30,7 +30,6 @@ from pathlib import Path
 
 import hy  # noqa: F401 — 許可表の module(Hy)を読むため
 import pytest
-from doeff_cluster.foundation.process_environ import child_environ
 from doeff_cluster.worker.core.launch import CHILD_ENV_ALLOWED
 from doeff_cluster.worker.entry.line_stamp import (
     JOB_LOG_ATTRIBUTES_VAR,
@@ -389,14 +388,6 @@ def silent() -> Iterator[Collector]:
 
 
 @dataclass(frozen=True)
-class Named:
-    """子へ足す環境変数 1 つ。"""
-
-    name: str
-    value: str
-
-
-@dataclass(frozen=True)
 class ShimRan:
     """shim の 1 回: code = 終了コード・log = log の file の中身・seconds = 起こしてから終わるまで。"""
 
@@ -407,13 +398,14 @@ class ShimRan:
 
 def shim_run(tmp: Path, script: str, env: dict[str, str]) -> ShimRan:
     """worker と同じ持ち方(stdin を pipe・自分の session・stdout と stderr を同じ file へ 2 度開く)で、--stamp-lines の shim の下に
-    python の 1 本を走らせるため。env = 検の process の環境に足す環境変数(worker が子へ置く物)。"""
+    python の 1 本を走らせるため。env = 検の process の環境に足す環境変数(worker が子へ置く物 — 命令 env が足してから shim に
+    置き換わるので、shim は同じ pid のまま自分の session の先頭になる)。"""
     log = tmp / "job.2.log"
-    argv = [sys.executable, "-B", "-m", SHIM, "1", "--stamp-lines", "--", sys.executable, "-B", "-c", script]
-    environ = child_environ((), tuple(Named(k, v) for k, v in env.items()))
+    added = [f"{name}={value}" for name, value in env.items()]
+    argv = ["env", *added, sys.executable, "-B", "-m", SHIM, "1", "--stamp-lines", "--", sys.executable, "-B", "-c", script]
     started = time.monotonic()
     with open(log, "ab") as out, open(log, "ab") as err:
-        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err, env=environ, start_new_session=True)
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err, start_new_session=True)
     try:
         code = process.wait(timeout=END_LIMIT_SECONDS)
     finally:
