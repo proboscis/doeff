@@ -1557,12 +1557,15 @@ ENV_FORM_MODULES = {
     "hy-import": "hy_import_macros",
     "default": "held_macros",
     "cell": "held_macros",
+    "fixed": "hy_import_macros",
 }
 ENV_FILES = {
     "__init__.py": "",
-    "tables.py": f'import os\nROWS = {{{{"a": os.environ.get("{ENV_MODE}", "plain")}}}}\n',
+    "tables.py": f'import os\nROWS = {{{{"a": os.environ.get("{ENV_MODE}", "plain")}}}}\nFIXED = {{{{"a": 1}}}}\n',
     "local_macros.hy": f'(defmacro local [] (import os) (os.environ.get "{ENV_MODE}" "plain"))\n',
-    "hy_import_macros.hy": '(import {pkg}.tables [ROWS])\n(defmacro hy-import [] (get ROWS "a"))\n',
+    "hy_import_macros.hy": (
+        '(import {pkg}.tables [ROWS FIXED])\n(defmacro hy-import [] (get ROWS "a"))\n(defmacro fixed [] (get FIXED "a"))\n'
+    ),
     "held_macros.hy": (
         "(import os)\n"
         f'(defn by-default [[rows {{{{"a" (os.environ.get "{ENV_MODE}" "plain")}}}}]] (get rows "a"))\n'
@@ -1597,7 +1600,7 @@ ENV_FILES = {
         f"u_{form.replace('-', '_')}.hy": (
             f"(require {{pkg}}.{ENV_FORM_MODULES.get(form, 'macros')} [{form}])\n(setv value ({form}))\n"
         )
-        for form in (*ENV_FORMS, "body", "plain")
+        for form in (*ENV_FORMS, "body", "plain", "fixed")
     },
 }
 
@@ -1622,18 +1625,19 @@ def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # 緑のまま守る: 環境変数の読みは、それに当たった macro の照らしだけを変える。同じ module の環境変数を読まない macro(body)と、
-    # 環境変数から組んだ素の値を値で入れる macro(plain — 条 3)は、同じ環境の次の process で compile せず、環境変数を替えた時は
-    # plain だけを展開し直す。
+    # 環境変数から組んだ素の値を値で入れる macro(plain — 条 3)と、Hy の import の同じ form で環境変数から組んだ表と並べて
+    # import した表を読む macro(fixed — import の form の兄弟の名を辿らない・設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464)は、同じ
+    # 環境の次の process で compile せず、環境変数を替えた時は plain だけを展開し直す。
     monkeypatch.delenv(ENV_MODE, raising=False)
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
-    tree.run("u_body", "u_plain")
-    assert tree.run("u_body", "u_plain")["compiled"] == [], "何も変えていないのに 2 つ目の process が compile した"
+    tree.run("u_body", "u_plain", "u_fixed")
+    assert tree.run("u_body", "u_plain", "u_fixed")["compiled"] == [], "何も変えていないのに 2 つ目の process が compile した"
     monkeypatch.setenv(ENV_MODE, "fancy")
-    answer = tree.run("u_body", "u_plain")
+    answer = tree.run("u_body", "u_plain", "u_fixed")
     assert answer["compiled"] == ["u_plain.hy"], (
         f"環境変数を替えた process が、環境変数を読まない macro の使い手まで compile したか、素の値の変化に気づかない: {answer}"
     )
-    assert answer["values"] == {"u_body": 1, "u_plain": "fancy"}, answer
+    assert answer["values"] == {"u_body": 1, "u_plain": "fancy", "u_fixed": 1}, answer
 
 
 def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_files() -> None:
