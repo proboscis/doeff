@@ -688,7 +688,7 @@ class BusyThenHealthyAgentdServer:
         self.socket_path = socket_path
         self._mut_server: socket.socket | None = None
         self._mut_thread: threading.Thread | None = None
-        self._requests_seen = 0
+        self._mut_requests_seen = 0
         self._lock = threading.Lock()
 
     def __enter__(self) -> BusyThenHealthyAgentdServer:
@@ -703,8 +703,8 @@ class BusyThenHealthyAgentdServer:
                 if not line:
                     return
                 with self._lock:
-                    self._requests_seen += 1
-                    first = self._requests_seen == 1
+                    self._mut_requests_seen += 1
+                    first = self._mut_requests_seen == 1
                 if first:
                     return
                 request = json.loads(line)
