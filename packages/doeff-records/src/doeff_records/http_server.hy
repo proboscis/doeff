@@ -732,7 +732,7 @@
   "serve-records の本体(prepared-slot と計器の内側 — 用意の task と要求の task が同じ session の値と計器を読む)。"
   (<- (place-answer-metrics))
   ;; 待ち受けは port の共有(share-port — SO_REUSEPORT)で開く: 同じ置き場を答える口が同じ port に何本並んでも答えは同じなので、
-  ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(agora-controllers の card ki-a4f46b3d98c5 — 2026-10-09 23:08 の
+  ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(ki-a4f46b3d98c5 — 2026-10-09 23:08 の
   ;; 17 分の止まりで、1 本の口が閉じた間の書きが全部 503 になった)。入れ替えで新旧を同じ port に並べる形も同じ共有で開ける。
   (<- bound HttpAddress (HttpListen :address serving.address :share-port True))
   (<- (RecordsListening :address bound))
