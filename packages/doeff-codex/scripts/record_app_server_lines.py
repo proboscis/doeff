@@ -102,6 +102,8 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
+        # 長さを名乗らない event-stream は、流し終えたら接続を閉じて終わりを伝える(send_header が close_connection を立てる)。
+        self.send_header("connection", "close")
         self.end_headers()
         try:
             for event in answer_events(SLOW_PIECES if slow else FAST_PIECES):
@@ -111,7 +113,6 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             # 止めたターン(interrupt)では codex が先に接続を閉じる — 録りの筋書きどおりなので、残りを書かずに終える。
             return
-        self.close_connection = True
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
