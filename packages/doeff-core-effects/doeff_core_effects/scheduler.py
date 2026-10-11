@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, TypeVar
 
 from doeff_vm import Callable as _VmCallable
-from doeff_vm import EffectBase, Err, Ok, TailEval
+from doeff_vm import EffectBase, Err, K, Ok, TailEval
 from doeff_vm import WithBoundaries as _WithBoundariesRaw
 from doeff_vm import WithHandler as _WithHandlerRaw
 
@@ -75,19 +75,24 @@ HANDLE_REFS_PRUNE_MIN = 8
 # The kinds of ready-heap entry, declared in one place (design check of card
 # ki-1294af4fa525): ready_push refuses any other kind, so a new kind is declared
 # here — not taught to Cancel or to the counts one by one.
-# - holding a started task's continuation, shaped (kind, owner_tid, k, ...):
-#   Cancel/Discard take the continuation out of the heap (detach_from_ready);
+# - holding a started task's continuation (a K) at [2], shaped (kind, owner_tid,
+#   k, ...): Cancel/Discard take the continuation out of the heap
+#   (detach_from_ready), and ready_push refuses an entry without one;
 _CONTINUATION_ENTRY_KINDS = frozenset(("resume", "raise", "sem_resume"))
 # - "new" starts a task that has no continuation yet;
+_NEW_TASK_ENTRY_KIND = "new"
 # - "wait_external" is the external-wait placeholder, which never runs anything.
 _PLACEHOLDER_ENTRY_KIND = "wait_external"
-# Entries that run a task when popped; has_live_ready_entry counts the ones at
-# or below the shield whose owner is not cancelled.
-_RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {"new"}
-_READY_ENTRY_KINDS = _RUNNABLE_ENTRY_KINDS | {_PLACEHOLDER_ENTRY_KIND}
-# Waiter entries registered under one waitable key ("wait" and the external
-# "wait_external"); the multi-key kinds (Gather, Race) are declared with their
-# withdrawal in the scheduler (withdraw_group_of) — park_waiter refuses others.
+_READY_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND, _PLACEHOLDER_ENTRY_KIND}
+# Derived, not a place to declare a kind: the entries that run a task when
+# popped; has_live_ready_entry counts the ones at or below the shield whose
+# owner is not cancelled.
+_RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND}
+# Waiter entries registered under one waitable key, holding the waiting task's
+# continuation (a K) at [2] ("wait" and the external "wait_external"). A kind
+# registered under several keys (Gather, Race) holds a shared state instead and
+# is declared with its withdrawal in the scheduler (withdraw_group_of);
+# park_waiter refuses anything else.
 _SINGLE_KEY_WAITER_KINDS = frozenset(("wait", "wait_external"))
 # Test switch (the scheduler tests turn it on through the scheduler_index_self_check
 # fixture of tests/conftest.py): every scheduler step
@@ -1331,9 +1336,16 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     def ready_push(heap_item: tuple[int, int, tuple[object, ...]]) -> None:
         """Push onto the ready heap — the one way in, so the counts stay in step (card ki-1294af4fa525)."""
-        if heap_item[2][0] not in _READY_ENTRY_KINDS:
+        entry = heap_item[2]
+        if entry[0] in _CONTINUATION_ENTRY_KINDS:
+            if not isinstance(entry[2], K):
+                raise TypeError(
+                    f"ready entry {entry[0]!r} is declared in _CONTINUATION_ENTRY_KINDS but holds "
+                    f"{type(entry[2]).__name__} at [2], not the task's continuation"
+                )
+        elif entry[0] not in _READY_ENTRY_KINDS:
             raise TypeError(
-                f"ready entry kind {heap_item[2][0]!r} is not declared: a kind holding a task's continuation "
+                f"ready entry kind {entry[0]!r} is not declared: a kind holding a task's continuation "
                 "belongs in _CONTINUATION_ENTRY_KINDS (Cancel takes it out of the heap from there)"
             )
         heapq.heappush(ready, heap_item)
@@ -1666,7 +1678,14 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         _SINGLE_KEY_WAITER_KINDS, or a multi-key kind with its withdrawal in
         withdraw_group_of — so Cancel/Discard can take it out without knowing it.
         """
-        if entry[0] not in _SINGLE_KEY_WAITER_KINDS and entry[0] not in withdraw_group_of:
+        if entry[0] in _SINGLE_KEY_WAITER_KINDS:
+            if not isinstance(entry[2], K):
+                raise TypeError(
+                    f"waiter entry {entry[0]!r} is declared in _SINGLE_KEY_WAITER_KINDS but holds "
+                    f"{type(entry[2]).__name__} at [2], not the task's continuation: a registration under several "
+                    "keys names the function that withdraws it in withdraw_group_of"
+                )
+        elif entry[0] not in withdraw_group_of:
             raise TypeError(
                 f"waiter entry kind {entry[0]!r} is not declared: a multi-key registration names the function "
                 "that withdraws it from every key in withdraw_group_of"
