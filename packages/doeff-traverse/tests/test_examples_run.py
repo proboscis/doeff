@@ -13,8 +13,9 @@ examples/ の `.hy` は全部この検に入る(新しい例も書いただけ�
 比べる。走るたびに変わる所(実時間・checkout の path・lib の traceback)は、期待の出力の側で ANY に置き換える —
 どこが変わるかは例の持ち分で、検は印の意味だけを知る。印を置いた例ごとに、件の中だけで失敗する変異を examples/
 の写しに当て、写しの出力が期待の出力に合わない事を確かめる(印が件の結果まで伏せていない事の検 — card
-ki-2d5b129f2ff2)。Hy の付ける名(番号は macro の展開で変わる)は期待の出力に置かない。件を走らせない debug 用の
-例だけは出力を比べず、件を走らせない事を確かめる。
+ki-2d5b129f2ff2)。Hy の付ける名(番号は macro の展開で変わる)は期待の出力に置かない。走る例は全部比べる —
+件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の中身だけを印字する debug 用の file は例ではなく、
+examples/ に置かない(card ki-3497c5fd38df が ex04_debug・ex04_debug2 と、それを比べずに通す表を外した)。
 
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
@@ -49,19 +50,6 @@ ANY = "…"
 # (設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 B)。印字に出るなら、その所を ANY にする。
 _HY_GENERATED_NAME = re.compile(r"_hy_(?:anon|gensym)_")
 
-# 走るが標準出力を比べない例(file の名 → 理由)。件を走らせず(doeff の run を名指さない)、印字が doeff-hy・Hy の
-# 隠す中身だけの debug 用の例に限る — 件を走らせない例には、印字にしか出ない件の失敗も無い。
-OUTPUT_NOT_COMPARED: dict[str, str] = {
-    "ex04_debug.hy": (
-        "traverse macro の展開(gensym の名を含む — 番号は compile の状態で変わる)を印字する debug 用 — "
-        "印字は doeff-hy の展開の中身で、例の結果ではない"
-    ),
-    "ex04_debug2.hy": (
-        "関数の repr(番地と Hy の無名関数の番号 — 番号は defk の展開で変わる)を印字する debug 用 — "
-        "印字は Hy・doeff-hy の中身で、例の結果ではない"
-    ),
-}
-
 # 期待の出力に ANY を置いた例の、件の中だけで失敗する変異(file の名 → 例の写しで置き換える元の文と先の文)。
 # 写しは終了コード 0 のまま件を失敗として印字する(盲検 A の形)ので、出力の比べ方だけが捕まえられる。
 CASE_FAILURE_MUTANTS: dict[str, tuple[str, str]] = {
@@ -70,9 +58,6 @@ CASE_FAILURE_MUTANTS: dict[str, tuple[str, str]] = {
     # mock が MSFT の価格を知らない — FetchPrice の件が KeyError で失敗し、成功が 3 から 2 へ
     "ex07_proboscis_ema_rewrite.hy": ('"MSFT" 300.0', '"MSFX" 300.0'),
 }
-
-# 件を走らせる口(doeff の run・async_run)。
-_PROGRAM_RUNNERS = frozenset({"run", "async_run"})
 
 # 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
 _MACRO_DEFINERS = frozenset({"defmacro", "defmacro!", "defreader"})
@@ -174,23 +159,10 @@ def _macro_violations(source: str, filename: str) -> list[str]:
     return violations
 
 
-def _program_runners(source: str, filename: str) -> list[str]:
-    """source が名指す、件を走らせる口(入れ子の form の中も・import の名も)。"""
-    return sorted(
-        {
-            hy.mangle(str(form))
-            for form in _forms(source, filename)
-            if isinstance(form, hy.models.Symbol) and hy.mangle(str(form)) in _PROGRAM_RUNNERS
-        }
-    )
-
-
 @pytest.mark.parametrize("name", _runnable())
 def test_example_runs(name: str, deadline_scale_factor: float) -> None:
     result = _run_hy(EXAMPLES / name, deadline_scale_factor)
     assert result.returncode == 0, result.stdout + result.stderr
-    if name in OUTPUT_NOT_COMPARED:
-        return
     expected = _expected(name)
     assert expected.is_file(), (
         f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
@@ -229,15 +201,6 @@ def test_case_failure_shows_in_compared_output(
     )
 
 
-@pytest.mark.parametrize("name", sorted(OUTPUT_NOT_COMPARED))
-def test_not_compared_example_runs_no_program(name: str) -> None:
-    path = EXAMPLES / name
-    assert _program_runners(path.read_text(encoding="utf-8"), str(path)) == [], (
-        f"{name} は件を走らせる — OUTPUT_NOT_COMPARED から外し、期待の出力を置いて比べる"
-        f"(走るたびに変わる所は {ANY} にする)"
-    )
-
-
 @pytest.mark.parametrize("name", sorted(BROKEN))
 def test_broken_example_is_still_broken(name: str, deadline_scale_factor: float) -> None:
     assert (EXAMPLES / name).is_file(), f"BROKEN の行 {name} の例が examples/ に無い — 行を外す"
@@ -270,26 +233,12 @@ def test_macro_check_sees_nested_forms() -> None:
     ]
 
 
-def test_runner_check_sees_nested_forms() -> None:
-    """比べない例は今どれも件を走らせないので、件を走らせる口を拾う事は、口を含む source で確かめる。"""
-    source = """
-(import doeff [run :as r])
-(when True
-  (print (doeff.run (prog)))
-  (async-run (prog)))
-"""
-    assert _program_runners(source, "<inline>") == ["async_run", "run"]
-
-
 def test_tables_name_examples_as_they_are() -> None:
-    """期待の出力は比べる例ちょうどに在り、比べない表と変異の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
-    compared = [name for name in _runnable() if name not in OUTPUT_NOT_COMPARED]
+    """期待の出力は走る例ちょうどに在り、変異の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
+    compared = _runnable()
     present = {path.name for path in EXPECTED.glob("*.txt")}
     assert present - {_expected(name).name for name in compared} == set(), (
         "比べる例の無い期待の出力が在る — 消すか、例を BROKEN から外す"
-    )
-    assert set(OUTPUT_NOT_COMPARED) - set(_runnable()) == set(), (
-        "OUTPUT_NOT_COMPARED の行が走る例を名指さない"
     )
     with_any = {
         name
