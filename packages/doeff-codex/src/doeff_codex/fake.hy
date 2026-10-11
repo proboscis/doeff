@@ -10,7 +10,8 @@
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
 (import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
-(import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnEnded TurnStatus])
+(import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
+                           UsageLimitHit USAGE-LIMIT-KIND])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
                              SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
@@ -22,10 +23,12 @@
 
 (defrecord FakeReply
   "筋書きの答え 1 つ: pieces = 答えの文字の途中の欠片(順に TextDelta になり、連ねると答えの全文)/ hold = 真なら終わりを出さずに
-   止め(CodexInterruptTurn)を待つ(途中で止める筋書きのため)。"
+   止め(CodexInterruptTurn)を待つ(途中で止める筋書きのため)/ usage-limit = 口座の利用枠切れの事実(在れば、欠片の後に答えの全文を
+   出さず、誤りの種類 USAGE-LIMIT-KIND の誤りと失敗の終わりで終える — 終わりは本番の handler が枠の知らせから作るのと同じ事実を運ぶ)。"
   {:tags {:context "codex" :role "type"}}
   (#^ (get tuple #(str ...)) pieces)
-  (setv #^ bool hold False))
+  (setv #^ bool hold False)
+  (setv #^ (| UsageLimitHit None) usage-limit None))
 
 
 (defclass FakeTurn []
@@ -75,7 +78,8 @@
 (defk fake-start [#^ FakeCodexWorld world #^ CodexStartTurn asked]
   {:pre [(: world FakeCodexWorld) (: asked CodexStartTurn)] :post [(: % (| TurnStarted ThreadUnknown TurnInFlight))]
    :tags {:context "codex" :role "process"}}
-  "ターンを始めるため: 筋書きの答えの欠片を TextDelta に並べ、hold でなければ全文と終わり(COMPLETED)まで出す。続きは同じ宣言で生きた
+  "ターンを始めるため: 筋書きの答えの欠片を TextDelta に並べ、hold でなければ、利用枠切れの事実が在れば誤りと失敗の終わり(FAILED)、
+   無ければ全文と終わり(COMPLETED)まで出す。続きは同じ宣言で生きた
    process が在れば使い回した数え(起こし直しは launches を増やす)。"
   (val origin asked.origin)
   (val thread (match origin
@@ -102,9 +106,17 @@
   (.add thread turn (ItemStarted :thread-id thread-id :turn-id turn-id :item-id item-id :item-type "agentMessage"))
   (for [piece reply.pieces]
     (.add thread turn (TextDelta :thread-id thread-id :turn-id turn-id :item-id item-id :text piece)))
-  (when (not reply.hold)
-    (.add thread turn (AgentMessageDone :thread-id thread-id :turn-id turn-id :item-id item-id :text (.join "" reply.pieces)))
-    (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.COMPLETED)))
+  (val hit reply.usage-limit)
+  (cond
+    reply.hold None
+    (is-not hit None)
+    (do (.add thread turn (TurnError :thread-id thread-id :turn-id turn-id :message hit.text :error-kind USAGE-LIMIT-KIND
+                                     :http-status None :will-retry False))
+        (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.FAILED :error-message hit.text
+                                     :error-kind USAGE-LIMIT-KIND :usage-limit hit)))
+    True
+    (do (.add thread turn (AgentMessageDone :thread-id thread-id :turn-id turn-id :item-id item-id :text (.join "" reply.pieces)))
+        (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.COMPLETED))))
   (TurnStarted :turn (CodexTurn :thread-id thread-id :turn-id turn-id)))
 
 

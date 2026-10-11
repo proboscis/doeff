@@ -20,6 +20,8 @@
 
 ;; ターンの状態(turn/started・turn/completed の turn.status の綴り — codex 0.162.1 の TurnStatus)。
 (defenum TurnStatus COMPLETED INTERRUPTED FAILED (IN-PROGRESS "inProgress"))
+;; 口座の利用枠切れの誤りの種類(codexErrorInfo の綴り — codex 0.162.1)。綴りの定義はここ 1 か所(handler の判定と fake の終わりが読む)。
+(val USAGE-LIMIT-KIND "usageLimitExceeded")
 
 ;; 道具の item の状態(commandExecution・fileChange の status の綴り — codex 0.162.1 の CommandExecutionStatus と PatchApplyStatus は
 ;; 同じ 4 つ)。
@@ -382,16 +384,27 @@
   (#^ (| int None) http-status)
   (#^ bool will-retry))
 
+(defrecord UsageLimitHit
+  "ターンが口座の利用枠切れで断られた事実(誤りの種類 USAGE-LIMIT-KIND の失敗の終わり): minutes = 口座が待つ窓の長さ(分)/
+   resets-at = その窓が戻る刻(epoch 秒)/ text = codex の誤りの文。窓と刻は、そのターンで届いた枠の知らせの尽きた窓から読む
+   (limits.hy の usage-limit-hit-of — 名乗られなければ None)。窓は長さで名乗る(窓の名は上の層の語)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ (| int None) minutes)
+  (#^ (| int None) resets-at)
+  (#^ str text))
+
 (defrecord TurnEnded
   "ターンの終わり(turn/completed — ターンごとにちょうど 1 つ): status = 終わりの状態(この版に無い綴りは UnknownValue — 知らない状態でも
-   終わりは届く)/ error-message・error-kind・http-status = 失敗の終わりの誤り(turn.error — 無ければ None・種類は TurnError と同じ)。"
+   終わりは届く)/ error-message・error-kind・http-status = 失敗の終わりの誤り(turn.error — 無ければ None・種類は TurnError と同じ)/
+   usage-limit = 口座の利用枠切れの事実(行の分類では None。handler がそのターンの枠の知らせから埋める・fake は筋書きから)。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
   (#^ str turn-id)
   (#^ (| TurnStatus UnknownValue) status)
   (setv #^ (| str None) error-message None)
   (setv #^ (| str UnknownValue None) error-kind None)
-  (setv #^ (| int None) http-status None))
+  (setv #^ (| int None) http-status None)
+  (setv #^ (| UsageLimitHit None) usage-limit None))
 
 (defrecord RateLimitWindow
   "口座の利用枠の窓 1 つ: used-percent = 使った割合(百分率 — 100 以上で尽きた)/ minutes = 窓の長さ(分)/ resets-at = 窓が戻る刻
