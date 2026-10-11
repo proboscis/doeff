@@ -235,6 +235,15 @@ tests = [
     "packages/doeff-traverse/tests/test_examples_run.py",
 ]
 
+# macro の実行時の半分(`<-`・`!` の束ねの開き方 — doeff-hy の outcome_forms.hy「実行時の意味は doeff_core_effects.outcomes が持ち」)
+# の変更も、例の検を選ぶ。doeff-core-effects の他の file には払わせない(file の接頭辞)。上の行だけでは選ばれず、この file の変更で
+# 例 ex05・ex08 が赤になる形を設計検証の盲検 B が見つけた(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-core-effects/doeff_core_effects/outcomes.py"
+tests = [
+    "packages/doeff-traverse/tests/test_examples_run.py",
+]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-vm/"
 tests = [
