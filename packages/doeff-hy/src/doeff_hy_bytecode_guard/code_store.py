@@ -1,7 +1,9 @@
 """source の中身で引く bytecode の保存先 — 引く・足す・使った印・壊れた entry の扱いの入口はこの module 1 つ(agora-redesign #1753・
 #2799・#3858)。
 
-使い手は 3 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
+使い手は 4 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
+  - dataclass が型ごとに作る関数の source の compile(:mod:`doeff_hy_bytecode_guard.dataclass_code`): 文の中身で code を引き、
+    compile したら足す(card ki-e77d44aa61e5)。
   - import の読みの口(:mod:`doeff_hy_bytecode_guard.loader_hooks`): 作業木の .pyc が使えない Hy の module の code を引き、compile したら
     足す。
   - .pyc の記録の照らしの source の読み(:mod:`doeff_hy_bytecode_guard.bound_source`): macro の閉包の digest の歩みが、辿れない大域を
