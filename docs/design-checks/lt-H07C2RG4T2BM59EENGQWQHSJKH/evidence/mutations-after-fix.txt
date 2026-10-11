@@ -1,0 +1,118 @@
+# 直した版(3f82ca1b5)の変異 — 検が後戻りを捕まえるか
+刻: 2026-10-11T23:49:02Z・道具: /tmp/probe/dc-mutate.sh(handlers.py の 1 か所を置き換え、検 4 file を走らせ、元へ戻す)
+
+=== 変異 N1-answer-not-checked
+--- 置き換え:     if answer is not _PASSED_ON: →     if False:
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler to
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse[sequential]
+2 failed, 51 passed, 3 warnings in 2.01s
+=== 変異 N2-throw-swallowed
+--- 置き換え:     except Exception as error: →     except Exception as error:
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-parallel_fail_fast]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-parallel_fail_fast]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel_fail_fast]
+9 failed, 44 passed, 1 warning in 2.65s
+=== 変異 N3-progress-bars-answers
+--- 置き換え:                 open_bars[effect.traverse] = replace(opened, counted=opened.counted + 1) →                 open_bars[effect.traverse] = replace(opened, counted=opened.counted + 1)
+report = ItemOutcome('failed', index=0, total=3, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and answered it — a consumer of Item
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and answered it — a consumer of ItemOutcome passes it on (Pass(effect, 
+report = ItemOutcome('failed', index=0, total=3, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and answered it — a consumer of Item
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and answered it — a consumer of ItemOutcome passes it on (Pass(effect, 
+report = ItemOutcome('failed', index=0, total=2, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and answered it — a consumer of Item
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and answered it — a consumer of ItemOutcome passes it on (Pass(effect, 
+report = ItemOutcome('failed', index=0, total=2, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and answered it — a consumer of Item
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and answered it — a consumer of ItemOutcome passes it on (Pass(effect, 
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler to
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler to
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_progress_bars_close_at_total_when_items_fail[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_progress_bars_close_at_total_when_items_fail[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_items_carried_before_the_first_run_item_are_reported_too[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_items_carried_before_the_first_run_item_are_reported_too[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_traverse_with_no_item_to_run_reports_nothing[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_traverse_with_no_item_to_run_reports_nothing[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_parallel_fail_fast_bar_closes_when_no_item_fails
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_nested_traverse_reports_as_its_own_run[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_nested_traverse_reports_as_its_own_run[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_nested_traverse_reports_as_its_own_run[parallel_fail_fast]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-inside-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-inside-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-outside-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-outside-sequential]
+14 failed, 39 passed, 7 warnings in 5.45s
+=== 変異 N4-seq-nested-absorbed
+--- 置き換え:                     except ItemOutcomeNotPassedError: →                     except Exception as error:
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='outer') and threw _BudgetError: failed at 0 — a consumer of ItemOutcome passes 
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler to
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[sequential]
+1 failed, 52 passed, 3 warnings in 1.35s
+=== 変異 N5-report-goes-outward
+--- 置き換え:         answer = yield WithHandlerType(handler, WithBoundaries(boundaries, report)) →         answer = yield report
+report = ItemOutcome('failed', index=0, total=3, label='first')
+E           doeff_vm.UnhandledEffect: no handler found for effect: ItemOutcome (ItemOutcome('failed', index=0, total=3, label='first'))
+report = ItemOutcome('failed', index=0, total=3, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and threw UnhandledEffect: no handler 
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and threw UnhandledEffect: no handler found for effect: ItemOutcome (Item
+report = ItemOutcome('failed', index=0, total=3, label='first')
+E           doeff_vm.UnhandledEffect: no handler found for effect: ItemOutcome (ItemOutcome('failed', index=0, total=3, label='first'))
+report = ItemOutcome('failed', index=0, total=3, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and threw UnhandledEffect: no handler 
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=3, label='first') and threw UnhandledEffect: no handler found for effect: ItemOutcome (Item
+report = ItemOutcome('failed', index=0, total=2, label='first')
+E           doeff_vm.UnhandledEffect: no handler found for effect: ItemOutcome (ItemOutcome('failed', index=0, total=2, label='first'))
+report = ItemOutcome('failed', index=0, total=2, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and threw UnhandledEffect: no handler 
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and threw UnhandledEffect: no handler found for effect: ItemOutcome (Item
+report = ItemOutcome('failed', index=0, total=2, label='first')
+E           doeff_vm.UnhandledEffect: no handler found for effect: ItemOutcome (ItemOutcome('failed', index=0, total=2, label='first'))
+report = ItemOutcome('failed', index=0, total=2, label='first')
+E           doeff_traverse.effects.ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and threw UnhandledEffect: no handler 
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='first') and threw UnhandledEffect: no handler found for effect: ItemOutcome (Item
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler to
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_progress_bars_close_at_total_when_items_fail[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_progress_bars_close_at_total_when_items_fail[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_each_item_reports_the_outcome_the_traverse_answers[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_each_item_reports_the_outcome_the_traverse_answers[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_items_carried_before_the_first_run_item_are_reported_too[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_items_carried_before_the_first_run_item_are_reported_too[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_traverse_with_no_item_to_run_reports_nothing[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_traverse_with_no_item_to_run_reports_nothing[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_parallel_fail_fast_reports_the_items_up_to_the_failure
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_parallel_fail_fast_bar_closes_when_no_item_fails
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_nested_traverse_reports_as_its_own_run[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_nested_traverse_reports_as_its_own_run[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_nested_traverse_reports_as_its_own_run[parallel_fail_fast]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_an_iterable_without_length_is_read_to_its_end_only_when_reported
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_report_no_handler_takes_is_answered_by_the_traverse_handler[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_report_no_handler_takes_is_answered_by_the_traverse_handler[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-inside-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-inside-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-outside-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_consumers_compose_in_any_order[bars-outside-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse[parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse[sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-parallel_fail_fast]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-sequential]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-parallel]
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-parallel_fail_fast]
+FAILED packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_doeff_traverse_item_outcomes_stay_inside_the_handler[sequential]
+FAILED packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_doeff_traverse_item_outcomes_stay_inside_the_handler[parallel]
+30 failed, 23 passed, 7 warnings in 7.09s
+=== 変異 N6-par-nested-absorbed
+--- 置き換え:                     if not isinstance(result, Ok) and isinstance(result.error, ItemOutcome →                     if False:
+ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=0, total=2, label='outer') and threw _BudgetError: failed at 0 — a consumer of ItemOutcome passes 
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler to
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel]
+1 failed, 52 passed, 3 warnings in 1.39s
