@@ -6,17 +6,16 @@
 ;;; proboscis-ema has throttled_gather_with_progress that manually wires tqdm.
 ;;; With doeff-traverse, just add (tqdm-progress) to the handler stack.
 
-(require doeff-hy.macros [defk <- traverse fold])
+(require doeff-hy.macros [defk <- traverse defhandler do!])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler Await])
 (import doeff_core_effects.handlers [await-handler :as await_handler])
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Traverse Reduce :as _doeff_traverse_Reduce])
+(import doeff_traverse.effects [Traverse Reduce])
 (import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
 (import doeff_traverse.collection [Collection])
 
@@ -27,40 +26,30 @@
 ;; tqdm-progress handler: wraps Traverse items with a progress bar
 ;; ===========================================================================
 
-(defn tqdm-progress []
+(defhandler tqdm-progress []
   "Handler that adds tqdm progress bar to every Traverse.
    Uses the Traverse label as the bar description.
    Mutates the Traverse effect's f to wrap with tqdm update,
-   then passes the effect through to the next handler (sequential/parallel)."
-
-  (defk handler [effect k]
-    (if (isinstance effect Traverse)
-        (do
-          ;; Materialize for len (tqdm needs total)
-          (setv items (if (isinstance effect.items Collection)
-                          effect.items
-                          (list effect.items)))
-          (setv total (if (isinstance items Collection) (len items) (len items)))
-          (setv bar (tqdm :total total
-                          :desc (or effect.label "traverse")
-                          :leave True))
-          (setv orig-f effect.f)
-          ;; Wrap f: call original, then update bar
-          (defn wrapped [x]
-            (defk _run []
-              (<- result (orig-f x))
-              (.update bar)
-              result)
-            (_run))
-          ;; Mutate effect and pass through
-          (setv effect.f wrapped)
-          (setv effect.items items)
-          ;; Pass to next handler (sequential/parallel handles execution)
-          (yield (Pass effect k))
-          (.close bar))
-        (yield (Pass effect k))))
-
-  handler)
+   then reperforms the effect to the next handler (sequential/parallel).
+   Other effects are not matched, so defhandler passes them through."
+  (Traverse [f items label]
+    ;; Materialize for len (tqdm needs total)
+    (setv all-items (if (isinstance items Collection) items (list items)))
+    (setv bar (tqdm :total (len all-items)
+                    :desc (or label "traverse")
+                    :leave True))
+    ;; Wrap f: call original, then update bar (close it after the last item)
+    (defn wrapped [x]
+      (do!
+        (<- result (f x))
+        (.update bar)
+        (when (>= bar.n bar.total) (.close bar))
+        result))
+    ;; Mutate effect and reperform it with the same continuation k
+    ;; (sequential/parallel handles execution; reperform is terminal)
+    (setv effect.f wrapped)
+    (setv effect.items all-items)
+    (reperform effect)))
 
 
 ;; ===========================================================================
@@ -86,20 +75,26 @@ async def async_compute(x):
     (.__init__ (super))
     (setv self.x x)))
 
-(defk compute-backend [effect k]
-  (if (isinstance effect Compute)
-      (do
-        (<- result (Await (async-compute effect.x)))
-        (return (yield (Resume k result))))
-      (yield (Pass effect k))))
+(defhandler compute-backend
+  (Compute [x]
+    (<- result (Await (async-compute x)))
+    (resume result)))
+
+(defk add-value [acc v]
+  "Reduce step: add one computed value to the running total."
+  {:pre [(: acc int) (: v int)]
+   :post [(: % int)]}
+  (+ acc v))
 
 (defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % Collection)]}
   (<- stage1
     (traverse
       (<- x (Iterate items :label "stage1: compute"))
       (<- y (Compute x))
       y))
-  (<- total (fold stage1 :init 0 (+ acc it)))
+  (<- total (Reduce add-value 0 stage1))
   (<- stage2
     (traverse
       (<- v (Iterate stage1 :label "stage2: normalize"))
