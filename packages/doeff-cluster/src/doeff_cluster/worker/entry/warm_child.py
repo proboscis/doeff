@@ -58,7 +58,7 @@ from doeff_core_effects.warm_effects import WarmForked, WarmRefused
 from doeff_hy.wire import Malformed
 
 from doeff_cluster.foundation.child_environ import replace_environ
-from doeff_cluster.worker.entry.line_stamp import stamped_lines
+from doeff_cluster.worker.entry.line_stamp import job_log_plan, stamped_lines
 from doeff_cluster.worker.entry.shim import become_subreaper, exit_status, shim_code
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の shim.py と同じ。
@@ -195,7 +195,8 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int) -> 
     os.dup2(log, 1)
     os.dup2(log, 2)
     os.close(log)
-    lines = stamped_lines()
+    # job の log の行を OTLP でも送るかは、頼みの env(worker が置いた送り先と job の文脈)で決める — この process の環境はまだ待ちの子の物。
+    lines = stamped_lines(job_log_plan({item.name: item.value for item in request.env}))
     # 環境の置き換えは foundation の 1 か所(生の環境変数に触ってよい層)— B は fork で A の環境を継ぎ、入口が自分の文脈を環境から読む。
     run(replace_environ(tuple((item.name, item.value) for item in request.env)))
     os.chdir(request.cwd)
