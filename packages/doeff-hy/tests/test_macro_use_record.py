@@ -897,10 +897,12 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
 #: macro の module(条ごとの macro)。body = 本体だけの macro(条 1 — macro を定義した file の中身)・scaled = 別の module から import
 #: した素の値を返す macro(条 2 — 値は helper.hy の中身で決まるが、macro の閉包が辿る file は macros.hy だけ)・moded = 読み込みの時に
 #: 環境変数から組んだ値を返す macro(条 3 — file の外で決まる値)・looks と rows = 辿れない大域の表を読む macro(Hy と Python の
-#: source の文で覆う — binding_of を通る)。
+#: source の文で覆う — binding_of を通る)・limited = macro と別の top の package から import した素の値を返す macro(条 2 の別の形 —
+#: 記録が名指す module はどれもその package に無い)。
 CROSS_MACROS = """\
 (import os)
 (import {pkg}.helper [SCALE])
+(import macro_use_cross_values.limits [LIMIT])
 (import {pkg}.tables :as tables)
 (setv TABLE {{"a" 1}})
 (setv MODE (os.environ.get "MACRO_USE_PROBE_MODE" "plain"))
@@ -909,6 +911,7 @@ CROSS_MACROS = """\
 (defmacro moded [] MODE)
 (defmacro looks [] (get TABLE "a"))
 (defmacro rows [] (get tables.ROWS "a"))
+(defmacro limited [] LIMIT)
 """
 
 CROSS_FILES = {
@@ -916,9 +919,13 @@ CROSS_FILES = {
     "macros.hy": CROSS_MACROS,
     "helper.hy": "(setv SCALE 3)\n",
     "tables.py": 'ROWS = {{"a": 1}}\nROWS["b"] = 2\n',
-    "user.hy": "(require {pkg}.macros [body scaled moded looks rows])\n"
-    "(setv value [(body) (scaled) (moded) (looks) (rows)])\n",
+    "user.hy": "(require {pkg}.macros [body scaled moded looks rows limited])\n"
+    "(setv value [(body) (scaled) (moded) (looks) (rows) (limited)])\n",
 }
+
+#: macro と別の top の package(limited が返す LIMIT の持ち主)。
+CROSS_VALUES_PACKAGE = "macro_use_cross_values"
+CROSS_VALUES_FILES = {"__init__.py": "", "limits.hy": "(setv LIMIT 3)\n"}
 
 #: 子の process: 使い手の記録を作り、同じ process でも照らす(record — 記録を作る歩みと照らしの両方を通す)・記録を照らす(check)。
 #: 答えに、照らしの間に source を解いた回数(parsed — bound_source の解き)を出す。
@@ -963,6 +970,10 @@ class CrossTree:
     def package(self) -> Path:
         return self.root / CROSS_PACKAGE
 
+    @property
+    def values(self) -> Path:
+        return self.root / CROSS_VALUES_PACKAGE
+
     def run(self, mode: str) -> dict[str, object]:
         """子の process で 1 度走らせた答え(子は検の環境を継ぐ — 置き場と pycache は fixture が monkeypatch で置く)。"""
         import json
@@ -983,7 +994,10 @@ class CrossTree:
         import shutil
 
         root = self.root.parent / name
-        shutil.copytree(self.package, root / CROSS_PACKAGE, ignore=shutil.ignore_patterns("__pycache__"))
+        for package in (CROSS_PACKAGE, CROSS_VALUES_PACKAGE):
+            shutil.copytree(
+                self.root / package, root / package, ignore=shutil.ignore_patterns("__pycache__")
+            )
         return CrossTree(root, self.store, self.stored)
 
 
@@ -991,9 +1005,10 @@ class CrossTree:
 def cross_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CrossTree:
     """検の package の根 1 つと、子の process が継ぐ環境(共有の置き場・検の一時 dir の pycache・条 3 の環境変数は無し)。"""
     root = tmp_path / "tree-a"
-    (root / CROSS_PACKAGE).mkdir(parents=True)
-    for name, text in CROSS_FILES.items():
-        (root / CROSS_PACKAGE / name).write_text(text.format(pkg=CROSS_PACKAGE), encoding="utf-8")
+    for package, files in ((CROSS_PACKAGE, CROSS_FILES), (CROSS_VALUES_PACKAGE, CROSS_VALUES_FILES)):
+        (root / package).mkdir(parents=True)
+        for name, text in files.items():
+            (root / package / name).write_text(text.format(pkg=package), encoding="utf-8")
     store = tmp_path / "store"
     store.mkdir()
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
@@ -1037,3 +1052,51 @@ def test_a_changed_environment_value_is_stale_in_a_second_process(
     monkeypatch.setenv("MACRO_USE_PROBE_MODE", "strict")  # 2 つ目の process だけが継ぐ
     answer = cross_tree.run("check")
     assert answer["current"] is False, "macro が返す環境変数の値が違うのに、2 つ目の process が古いと判じない"
+
+
+def test_a_changed_value_from_another_top_package_is_stale_after_an_unchanged_check(
+    cross_tree: CrossTree,
+) -> None:
+    # 条 2 の別の形(card ki-38508e6e56fd の設計検証の盲検 B): LIMIT は macro と別の top の package の file で決まり、記録が名指す
+    # module はどれもその package に無い。照らしの答え(合う / 古い)を、記録が名指す package の file と環境を鍵に置き場へ覚えて
+    # 次の process が信じる形は、変えない照らしの答え(合う)を覚え、LIMIT を替えた後も今に合うと判じて古い展開を使った。
+    cross_tree.run("record")
+    assert cross_tree.run("check")["current"] is True, "何も変えていないのに古いと判じた"
+    _replace(cross_tree.values / "limits.hy", "(setv LIMIT 3)", "(setv LIMIT 30)")
+    assert cross_tree.run("check")["current"] is False, (
+        "macro が返す別の top の package の値を替えたのに、次の process が古いと判じない"
+    )
+
+
+# ---- source の拡張子(card ki-38508e6e56fd の設計検証の盲検 A)----------------------------------------------------------
+#
+# 「source の無い module の class は公開の形だけで覆う」(#3938)の判じが、Hy の source の拡張子を自前の写しで持っていた。Hy の
+# 拡張子を定義点(code_store.HY_SOURCE_SUFFIXES)に足しても写しが古いまま残ると、その拡張子の module の class は拡張の module の
+# class として名と公開の形だけで覆われ、method の本体を替えても digest が変わらない(古い展開を今に合うと判じる)。
+
+
+def test_a_class_in_a_source_with_an_unlisted_extension_is_covered_by_its_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 直す前は赤: .hym(拡張の module の末尾でも、写しの source の末尾でもない)の module の class は method の本体が digest に入らず、
+    # 3 と 30 で同じ digest になった。
+    import types
+
+    from doeff_hy_bytecode_guard import loader_hooks, macro_use
+
+    name = f"macro_use_ext_{uuid.uuid4().hex[:8]}"  # 2 つの版で同じ名(名も digest に入る)
+
+    def digest(factor: int) -> str | None:
+        """method の本体の定数だけが違う版の module を置き直し、macro の digest を作る(関数は版ごとに別の object — 覚えは使わない)。"""
+        module = types.ModuleType(name)
+        module.__file__ = str(tmp_path / "macros.hym")
+        exec(  # 検の module の本体(source の拡張子だけが違う module の代わり)
+            f"class Scaler:\n    def factor(self):\n        return {factor}\n\n\n"
+            "def scaled():\n    return Scaler().factor()\n",
+            vars(module),
+        )
+        monkeypatch.setitem(sys.modules, name, module)
+        key = macro_use.UsedMacroKey(records.MACRO_TABLE, name, "scaled")
+        return macro_use.macro_digest(key, vars(module)["scaled"], loader_hooks.file_sha256).digest
+
+    assert digest(3) != digest(30), "拡張子 .hym の module の class の method の本体を替えても digest が変わらない"
