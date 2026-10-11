@@ -571,17 +571,23 @@ def _emits_read_later(
 ) -> Callable[[], ProgramEffects]:
     """What a clause performs (``region`` read with ``reader``), read when first asked for —
     under the handlers that were being read when the clause was, so a clause that installs its
-    handler again still stops there (``_READING``)."""
+    handler again still stops there (``_READING``) — and read once, holding the reader the
+    handler's other clauses share (``_Reader.lock``), from whichever thread asks."""
     reading = _READING.get()
+    answer: ProgramEffects | None = None
 
     def read() -> ProgramEffects:
-        token = _READING.set(reading)
-        try:
-            facts = _Facts()
-            reader.collect(region, scope, filename, facts, generator=True)
-            return _report_facts(reader, facts, label=label)
-        finally:
-            _READING.reset(token)
+        nonlocal answer
+        with reader.lock:
+            if answer is None:
+                token = _READING.set(reading)
+                try:
+                    facts = _Facts()
+                    reader.collect(region, scope, filename, facts, generator=True)
+                    answer = _report_facts(reader, facts, label=label)
+                finally:
+                    _READING.reset(token)
+            return answer
 
     return read
 
