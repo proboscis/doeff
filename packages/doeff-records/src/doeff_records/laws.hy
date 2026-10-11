@@ -547,7 +547,7 @@
 
 ;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------
 
-;; 消す前に送る(maintenance.hy の頭の註・agora-controllers の card ki-c32e43651f2e): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
+;; 消す前に送る(maintenance.hy の頭の註・card ki-c32e43651f2e): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
 ;; それを越えて消せば送っていない変更が失われる。
 (defk law-prune-stops-at-the-archived-seq [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
