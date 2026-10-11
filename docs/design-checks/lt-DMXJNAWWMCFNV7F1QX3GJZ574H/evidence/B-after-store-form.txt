@@ -1,0 +1,22 @@
+# 盲検 B の意図(読み手が加工した木を置き場へ)を直した版(caf81e66d)へ当てた形 store(B-patch-on-fix.py の store)— 契約の検
+........................F..                                              [100%]
+=================================== FAILURES ===================================
+___________ test_only_the_expansion_module_reads_or_writes_its_store ___________
+
+    def test_only_the_expansion_module_reads_or_writes_its_store() -> None:
+        """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B: the reader called the store's writer, so a
+        reader that reshaped a tree (renumbered its gensyms) could store it under a key without the
+        reader, and every later reader — a reverted one too — read that shape. A caller asks for a tree
+        (``_expansion``); no module but ``hy_expansion`` names the store."""
+        used = {name: names_used(text) & EXPANSION_STORE for name, text in analyzer_sources().items() if name != "hy_expansion.py"}
+>       assert {name: names for name, names in used.items() if names} == {}
+E       AssertionError: assert {'program_eff..._expansion'})} == {}
+E         
+E         Left contains 1 more item:
+E         {'program_effects.py': frozenset({'_store_expansion'})}
+E         Use -v to get more diff
+
+/tmp/ki81-exp.dDsxKw/Bf-store/tests/test_hy_tree_cache.py:822: AssertionError
+=========================== short test summary info ============================
+FAILED ../../../../tmp/ki81-exp.dDsxKw/Bf-store/tests/test_hy_tree_cache.py::test_only_the_expansion_module_reads_or_writes_its_store
+1 failed, 26 passed in 1.38s

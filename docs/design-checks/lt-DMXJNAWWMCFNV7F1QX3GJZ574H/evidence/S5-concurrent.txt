@@ -1,0 +1,9 @@
+# analyzer: /home/ubuntu/.worktrees/doeff-wt-ki81-design-check(caf81e66d)の packages/doeff-effect-analyzer/python
+per process (expansions, returned): [(1, '_WholeTree'), (1, '_WholeTree'), (1, '_WholeTree'), (1, '_WholeTree'), (1, '_WholeTree'), (1, '_WholeTree')]
+derived entries: 1 expansion entries: 1 temporary files left: []
+expansion entry readable: False
+derived entry readable: False
+# 親の process の読みの確かめ(記録が名指す macro の module を読み込んだ後 — 解析は module を import してから読むので、ふだんの読みと同じ条件)
+derived entries: 1 expansion entries: 1
+expansion entry readable: True
+derived entry readable: True

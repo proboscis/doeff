@@ -1,0 +1,9 @@
+# 盲検 B の再現(直す前): c1e7731d の analyzer の写しに B の差分 D1(B-d1-on-c1e7731d.patch — 盲検 B の返答の差分そのまま)を当て、
+# 既存の契約の検 test_hy_tree_cache.py(20 本)と B の違反の検 test_d1_violation.py(2 本)を同じ命令で走らせた。
+# 命令: PYTHONPATH=<写し> uv run --no-sync pytest <写し>/tests/test_hy_tree_cache.py <写し>/tests/test_d1_violation.py -q -p no:cacheprovider --rootdir <写し> -c /dev/null --import-mode=importlib
+# (D1 の写しでしか在らない pe._canonical_gensyms を v2 が monkeypatch で差し替えるので、写しが読まれた事も分かる)
+......................                                                   [100%]
+22 passed in 1.56s
+
+# ruff(repo の設定・--stdin-filename で program_effects.py の名で照らす): 基点と D1 の指摘の差
+差なし(D1 で新しい指摘なし)

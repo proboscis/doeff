@@ -1,0 +1,56 @@
+--- c1e7731d/program_effects.py
++++ D1/program_effects.py
+@@ -535,15 +535,41 @@
+ def _expanded(source: str, filename: str, module_name: str, places: "_CachePlaces | None") -> _Expanded:
+     """The tree the expansion's store holds for these inputs; else the expansion, stored there."""
+     if places is None:
+-        return _expand_hy(source, filename, module_name)
++        return _canonical_gensyms(_expand_hy(source, filename, module_name))
+     stored = _stored_expansion(places.expansion)
+     if stored is not None:
+         return stored
+-    expanded = _expand_hy(source, filename, module_name)
++    expanded = _canonical_gensyms(_expand_hy(source, filename, module_name))
+     _store_expansion(places.expansion, expanded)
+     return expanded
+ 
+ 
++def _canonical_gensyms(expanded: _Expanded) -> _Expanded:
++    """Hy's gensym names renumbered in module order (blind B's D1)."""
++    from doeff_hy_bytecode_guard import gensym_renaming
++
++    nodes = tuple(ast.walk(expanded.tree))
++    rename = gensym_renaming(
++        text for node in nodes for _, value in ast.iter_fields(node) for text in _field_texts(value)
++    )
++    for node in nodes:
++        for name, value in ast.iter_fields(node):
++            if isinstance(value, str):
++                setattr(node, name, rename(value))
++            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
++                setattr(node, name, [rename(item) for item in value])
++    return expanded
++
++
++def _field_texts(value: object) -> tuple[str, ...]:
++    """The strings of one AST field (an identifier, a string constant, global / nonlocal names)."""
++    if isinstance(value, str):
++        return (value,)
++    if isinstance(value, list):
++        return tuple(item for item in value if isinstance(item, str))
++    return ()
++
++
+ # Who wants to know when an expansion missed the cache (the expansion and writing the
+ # cache entry). A test-time budget subtracts that time the way it subtracts bytecode
+ # compilation (a cold cache is not the test's weight); the analyzer itself does not know
+@@ -587,7 +613,8 @@
+ # (_entry_name is the record's fingerprint).
+ # v9: the tree is also kept on its own under a key without the reader (hy_expansion —
+ # ki-81f1c868203f), and this key names the expansion's code as well (_ExpansionKey.expander).
+-_TREE_KEY_FORMAT = "v9"
++# v10: the tree's gensyms are renumbered as the import side's code has them (_canonical_gensyms).
++_TREE_KEY_FORMAT = "v10"
+ 
+ 
+ @dataclass(frozen=True)
