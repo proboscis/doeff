@@ -17,6 +17,9 @@
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist])
 (import tests.served_fixtures [ROOT HY start-coordinator])
 (import tests.program_rows [SAMPLE-RUN])
+(import doeff [with-handlers])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written leaving-path])
 
 (val NAME "zeus-host-t")
 (val SERVICE "old-service")
@@ -108,9 +111,17 @@
   (var worker None)
   (try
     (.mkdir (/ tmp-path "worker"))
+    ;; 前の process の世代の file と止まりの印が残る置き場(/tmp が worker の process より長く残る機体 — AL-D2p の設計検証の S1)。
+    ;; 止まりの印の書き手は preStop の入口だけ: worker の起動は印に触らない(引き継がない・消さない)。
+    (val boot-file (str (/ tmp-path "worker" "boot")))
+    (! (with-handlers [os-file-handler] (leaving-mark-written boot-file "b-prev")))
+    (val mark (Path (! (leaving-path boot-file))))
+    (.write-text (Path boot-file) "b-prev\n")
     (<- started subprocess.Popen (start-worker url (/ tmp-path "worker")))
     (:= worker started)
     (<- waited float (wait-registered url worker tmp-path))
+    (assert (!= (.strip (.read-text (Path boot-file))) "b-prev") "worker は自分の世代を書いた")
+    (assert (= (.read-text mark) "b-prev\n") "worker の起動は前の世代の止まりの印に触らない")
     (val view (.json (httpx.get (+ url "/workers/" NAME) :timeout 5.0)))
     (assert (and (get view "alive") (get view "ready")) view)
     (assert (= (get view "provides") ["agent" "boundary-personal" "host-t"]) view)
