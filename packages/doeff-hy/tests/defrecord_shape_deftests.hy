@@ -148,3 +148,31 @@
   (with [caught (pytest.raises ValueError)]
     (Checked :n -1))
   (assert (= (str caught.value) "n は 0 以上")))
+
+
+(defrecord Shown
+  "本体に注記つきの自前の __repr__ を書いた record。"
+  #^ int x
+  (defn #^ str __repr__ [self]
+    f"<Shown {self.x}>"))
+
+
+(deftest test-an-annotated-repr-written-in-the-body-is-kept
+  ;; 注記つきで書いた自前の __repr__ も、展開が書く物で上書きしない(own-method? は __post_init__ に限らず展開が書く関数を全部見る)。
+  (<- _ (Pure None))
+  (assert (= (repr (Shown :x 3)) "<Shown 3>")))
+
+
+(deftest test-the-seal-refuses-a-post-init-the-written-init-does-not-call
+  ;; 失敗ケース(card ki-a49427e82a0b — 守りの 2 段目・直す前は赤): 展開が本体の自前の __post_init__ を見落として __init__ を書くと、
+  ;; 入力の検査は黙って効かなくなる(424a87f58 の後退は日次の検 8 本の赤で見つかるまで本番の coordinator に載った)。展開が書いた
+  ;; record を仕上げる seal_record は、型が __post_init__ を持つのに展開の __init__ が呼ばない時に読み込みで断る。
+  (<- _ (Pure None))
+  (import doeff_hy.record_runtime [seal-record])
+  (defclass [(dataclass :frozen True :kw-only True)] Missed []
+    #^ int n
+    (defn __post-init__ [self] None))
+  (with [caught (pytest.raises TypeError)]
+    (seal-record Missed #() False))
+  (assert (in "__post_init__" (str caught.value)) (str caught.value))
+  (seal-record Missed #() True))
