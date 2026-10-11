@@ -1565,9 +1565,8 @@ def test_a_macro_reading_a_value_decided_by_the_environment_is_stale_when_it_cha
     assert tree.run(user)["values"] == {user: "plain"}
     monkeypatch.setenv(ENV_MODE, "fancy")  # 2 つ目の process だけが継ぐ
     answer = tree.run(user)
-    assert f"{user}.hy" in answer["compiled"] and answer["values"] == {user: "fancy"}, (
-        f"macro({form})が読む環境変数の値が違うのに、使い手を今に合うと判じた: {answer}"
-    )
+    assert f"{user}.hy" in answer["compiled"], f"macro({form})が読む環境変数の値が違うのに、使い手を今に合うと判じた: {answer}"
+    assert answer["values"] == {user: "fancy"}, f"展開し直した使い手の値が今の環境変数に合わない: {answer}"
 
 
 def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that_do(
@@ -1582,6 +1581,22 @@ def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that
     assert tree.run("u_body", "u_plain")["compiled"] == [], "何も変えていないのに 2 つ目の process が compile した"
     monkeypatch.setenv(ENV_MODE, "fancy")
     answer = tree.run("u_body", "u_plain")
-    assert answer["compiled"] == ["u_plain.hy"] and answer["values"] == {"u_body": 1, "u_plain": "fancy"}, (
+    assert answer["compiled"] == ["u_plain.hy"], (
         f"環境変数を替えた process が、環境変数を読まない macro の使い手まで compile したか、素の値の変化に気づかない: {answer}"
     )
+    assert answer["values"] == {"u_body": 1, "u_plain": "fancy"}, answer
+
+
+def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_files() -> None:
+    # 緑のまま守る: 環境変数の読みに当たった記録の行は、今の歩みが import の途中の module に当たって file の行で比べる形(digest が
+    # None)になっても古い — file は環境変数の違いを写さない。今の歩みが環境変数の読みに当たった時も、記録の印と同じでも古い。
+    from doeff_hy_bytecode_guard import macro_use
+
+    for recorded, now in (
+        (records.ENVIRONMENT_READ, None),
+        (records.ENVIRONMENT_READ, records.ENVIRONMENT_READ),
+        (None, records.ENVIRONMENT_READ),
+        ("0" * 64, records.ENVIRONMENT_READ),
+    ):
+        check = macro_use._row_check(recorded, macro_use.ClosureDigest(now, ()))
+        assert check is macro_use.RowCheck.STALE, f"記録 {recorded!r}・今 {now!r} の行を {check} と判じた"

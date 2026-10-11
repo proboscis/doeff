@@ -3,15 +3,16 @@
 記録は Hy の module の code object の定数の末尾に 1 つ置く組:
 
     ("doeff-hy/macro-dependencies/5", <Hy の版>,
-     ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None>), ...),   # 展開が使った macro
+     ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None か印>), ...),   # 展開が使った macro
      (<引いて無かった名>, ...),                                                  # 表に無かった名(後から同じ名の macro が足されたら古い)
      (<表に macro を入れた提供元の module 名>, ...),
-     ((<module 名>, <属性の名>, <digest か None>), ...),                         # macro の外で展開の結果を変える値
+     ((<module 名>, <属性の名>, <digest か None か印>), ...),                    # macro の外で展開の結果を変える値
      ((<module 名>, <file の sha256>), ...))                                     # 閉包が依った module の file
 
 digest は macro の関数の code の閉包の digest(作り方と照らし方は :mod:`doeff_hy_bytecode_guard.macro_use`)。閉包の歩みが
 import の途中の module か import できない module に当たった時は None(その時の材料は import の進み具合に依る)— その行は
-digest で比べず、閉包が依った module の file で比べる。file の path は持たない — 照らす時に module 名から今の環境で引き直す。
+digest で比べず、閉包が依った module の file で比べる。閉包の歩みが環境変数の読みに当たった時は印 :data:`ENVIRONMENT_READ`
+(照らせない — 照らしはいつも古いと判じる)。file の path は持たない — 照らす時に module 名から今の環境で引き直す。
 
 code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
 image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
@@ -59,6 +60,13 @@ FLAG_CHECK_SOURCE = 0b10
 #: 読めなかった file の sha256 の代わり(16 進の sha256 と決して一致しない — 記録はいつも古いと判じられる)。
 UNREADABLE = "unreadable"
 
+#: digest の代わり(閉包の歩みが環境変数の読みに当たった — digest は環境変数の値を写さないので照らせない)。16 進の sha256 とも
+#: None(import の途中)とも違う印で、照らしはこの行をいつも古いと判じる(使い手は process ごとに展開し直す — 設計検証
+#: lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録 3)。記録の印(RECORD_TAG)は上げない: 前の版の照らしはこの印を今の digest と
+#: 比べて古いと判じ、前の版の記録は今の歩みが印になるので古いと判じる(どちらも展開し直すだけ — 上げると全部の Hy の module が
+#: 1 度 compile し直される)。
+ENVIRONMENT_READ = "environment-read"
+
 #: Hy の module が require した macro の表(Hy が module の名前空間に置く 2 つの辞書)。
 MACRO_TABLES: tuple[str, ...] = (MACRO_TABLE, READER_TABLE)
 
@@ -77,7 +85,7 @@ class MacroDependency:
 class UsedMacro:
     """展開が使った macro 1 つ — 引いた表の名(``_hy_macros`` / ``_hy_reader_macros``)・macro を定義した module の名・その
     module の表の中の名・macro の関数の code の閉包の digest(記録を作った時に閉包の歩みが import の途中の module か import
-    できない module に当たった時は None — 記録の file の行で比べる)。"""
+    できない module に当たった時は None — 記録の file の行で比べる・環境変数の読みに当たった時は :data:`ENVIRONMENT_READ`)。"""
 
     table: str
     module: str
