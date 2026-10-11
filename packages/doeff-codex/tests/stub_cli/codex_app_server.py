@@ -13,6 +13,7 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
     ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
   - HOME_PHRASE が在れば、この process の CODEX_HOME の形を ``HOME dir=<権限> auth=<権限> account=<auth.json の口座の id>
     config=<link|file|none> sessions=<link|dir|none>`` と答える(借りた資格の家の形を子の process から見る — 資格の値は答えない)。
+  - TOOLS_PHRASE が在れば、録った道具の呼びのターン(tool-calls — 命令の成功・失敗・apply_patch・web 検索の item)の通知を流す。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
@@ -31,6 +32,7 @@ MAX_SLOW_PIECES = 400
 IMAGES_PHRASE = "Count the attached images."
 SETTINGS_PHRASE = "Tell the settings."
 HOME_PHRASE = "Tell the home."
+TOOLS_PHRASE = "TOOL-CALLS"
 STEERED_PREFIX = "steered:"
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
@@ -75,16 +77,29 @@ def answer_of(messages: list[dict[str, object]], request_id: int) -> dict[str, o
     return next(message for message in messages if message.get("id") == request_id and "result" in message)
 
 
+def recorded_ids(messages: list[dict[str, object]]) -> tuple[str, str]:
+    """録った 1 本の thread の id(thread/start の答え — 要求の id 2)と 1 つ目のターンの id(turn/start の答え — 要求の id 3)を取るため。"""
+    thread_answer = answer_of(messages, 2)
+    turn_answer = answer_of(messages, 3)
+    return (str(thread_answer["result"]["thread"]["id"]),  # type: ignore[index]  # 録った答えの形は検が確かめている
+            str(turn_answer["result"]["turn"]["id"]))  # type: ignore[index]  # 同上
+
+
+def first_turn_notifications(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+    """録った 1 本の 1 つ目のターンの通知(turn/start の答えの後から最初の turn/completed まで)を取るため。"""
+    start = messages.index(answer_of(messages, 3)) + 1
+    end = next(index for index, message in enumerate(messages) if index >= start and message.get("method") == "turn/completed")
+    return messages[start:end + 1]
+
+
 class Stub:
     """替え玉の 1 つの process の状態(thread とターンの id・止めの合図)。要求をまたいで書き換える欄は名の頭に mut_ を付ける(DOEFF002)。"""
 
     def __init__(self) -> None:
         self.two_turns = recorded_messages("two-turns")
         self.interrupt = recorded_messages("interrupt")
-        thread_answer = answer_of(self.two_turns, 2)
-        turn_answer = answer_of(self.two_turns, 3)
-        self.recorded_thread = str(thread_answer["result"]["thread"]["id"])  # type: ignore[index]  # 録った答えの形は検が確かめている
-        self.recorded_turn = str(turn_answer["result"]["turn"]["id"])  # type: ignore[index]  # 同上
+        self.tool_calls = recorded_messages("tool-calls")
+        self.recorded_thread, self.recorded_turn = recorded_ids(self.two_turns)
         self.mut_made = 0
         self.mut_thread_id = ""
         self.write_lock = threading.Lock()
@@ -99,22 +114,22 @@ class Stub:
             sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
             sys.stdout.flush()
 
-    def renamed(self, message: dict[str, object], turn_id: str) -> dict[str, object]:
-        """録った行の thread とターンの id を、この process の id へ差し替えるため。"""
+    def renamed(self, message: dict[str, object], turn_id: str, recorded: tuple[str, str] | None = None) -> dict[str, object]:
+        """録った行の thread とターンの id(recorded — 既定は two-turns の id)を、この process の id へ差し替えるため。"""
+        recorded_thread, recorded_turn = recorded or (self.recorded_thread, self.recorded_turn)
         text = json.dumps(message, ensure_ascii=False)
-        return json.loads(text.replace(self.recorded_thread, self.mut_thread_id).replace(self.recorded_turn, turn_id))
+        return json.loads(text.replace(recorded_thread, self.mut_thread_id).replace(recorded_turn, turn_id))
 
     def fresh_id(self, kind: str) -> str:
         """thread とターンの id を振るため。"""
         self.mut_made += 1
         return f"stub-{kind}-{self.mut_made}"
 
-    def first_turn_notifications(self) -> list[dict[str, object]]:
-        """録った 1 つ目のターンの通知(turn/start の答えの後から最初の turn/completed まで)を取るため。"""
-        start = self.two_turns.index(answer_of(self.two_turns, 3)) + 1
-        end = next(index for index, message in enumerate(self.two_turns)
-                   if index >= start and message.get("method") == "turn/completed")
-        return self.two_turns[start:end + 1]
+    def replay_first_turn(self, messages: list[dict[str, object]], turn_id: str) -> None:
+        """録った 1 本の 1 つ目のターンの通知を、この process の thread とターンの id に差し替えて流すため。"""
+        recorded = recorded_ids(messages)
+        for notification in first_turn_notifications(messages):
+            self.write(self.renamed(notification, turn_id, recorded))
 
     def handle(self, message: dict[str, object]) -> None:
         """要求 1 つに答えるため。"""
@@ -171,9 +186,11 @@ class Stub:
         if HOME_PHRASE in said:
             self.answer_turn(turn_id, home_text())
             return
+        if TOOLS_PHRASE in said:
+            self.replay_first_turn(self.tool_calls, turn_id)
+            return
         if "SLOW" not in said:
-            for notification in self.first_turn_notifications():
-                self.write(self.renamed(notification, turn_id))
+            self.replay_first_turn(self.two_turns, turn_id)
             return
         self.mut_slow_turn = turn_id
         self.stop_slow.clear()

@@ -2,11 +2,13 @@
 
 版を固定した本物の codex の binary を、手元に立てた偽の上流(OpenAI の Responses API の SSE を返す HTTP server)につなぎ、JSON-RPC の
 要求を stdin へ書いて、stdout の行をそのまま file に書く。口座も network の外も要らない — model の答えだけが偽物で、行の形は本物の
-binary が出した物。録る筋書きは 3 つと比べの 1 つ:
+binary が出した物。録る筋書きは 4 つと比べの 1 つ:
 
 - two-turns: 1 つの process で thread を始め、ターンを 2 回走らせる(答えの文字の途中・答えの全文・ターンの終わり)。
 - interrupt: 遅い答えの途中で turn/interrupt を送る(状態 interrupted の終わり)。
 - rate-limit: 上流が 429 で断る(誤りの通知と状態 failed の終わり)。
+- tool-calls: 上流が道具の呼びを順に返す(命令の成功・命令の失敗・apply_patch でのファイルの追加・web 検索)— 道具の item
+  (commandExecution・fileChange・webSearch)の始まりと終わりの形。
 - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。
 
 使い方(版を上げた時に録り直す):
@@ -36,6 +38,15 @@ APP_SERVER_ARGS = ("app-server", "--listen", "stdio://")
 FAST_PIECES = ("Hel", "lo, ", "wor", "ld.")
 SLOW_PIECES = tuple(f"slow-{index} " for index in range(40))
 WAIT_SECONDS = 60.0
+# 道具の筋書きの目印(要求の入力のどこかに在れば、上流は道具の呼びを返す)と、呼びの順(返した道具の結果の数で次を選ぶ)。
+TOOLS_MARK = "TOOL-CALLS"
+TOOL_COMMANDS = (
+    "echo tool-out",
+    "ls no-such-file",
+    "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\nEOF",
+)
+TOOLS_SEARCH = "doeff effects"
+TOOLS_DONE = ("Tools ", "done.")
 
 
 def sse_event(stream: IO[bytes], event: JsonObject) -> None:
@@ -72,8 +83,42 @@ def answer_events(pieces: tuple[str, ...]) -> list[JsonObject]:
     ]
 
 
+def tool_events(step: int) -> list[JsonObject]:
+    """道具の筋書きの step 番目の答え(TOOL_COMMANDS の命令を exec_command で呼ぶ・尽きたら web 検索と答えの全文)の SSE の列を作るため。"""
+    if step >= len(TOOL_COMMANDS):
+        search: JsonObject = {"type": "web_search_call", "id": "ws_1", "status": "completed",
+                              "action": {"type": "search", "query": TOOLS_SEARCH}}
+        answer = answer_events(TOOLS_DONE)
+        # 検索の始まりの item は検索の語(action)を持たない — 上流は語を検索の終わりの item で名乗る。
+        return [
+            answer[0],
+            {"type": "response.output_item.added", "output_index": 0,
+             "item": {"type": "web_search_call", "id": "ws_1", "status": "in_progress"}},
+            {"type": "response.output_item.done", "output_index": 0, "item": search},
+            *answer[1:],
+        ]
+    call: JsonObject = {"type": "function_call", "id": f"fc_{step}", "call_id": f"call_{step}", "name": "exec_command",
+                        "arguments": json.dumps({"cmd": TOOL_COMMANDS[step]})}
+    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
+             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
+    return [
+        {"type": "response.created", "response": {"id": f"resp_tool_{step}"}},
+        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
+        {"type": "response.output_item.done", "output_index": 0, "item": call},
+        {"type": "response.completed", "response": {"id": f"resp_tool_{step}", "usage": usage}},
+    ]
+
+
+def tool_step(body: JsonObject) -> int:
+    """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(function_call_output)の数で数えるため。"""
+    inputs = body.get("input", [])
+    return sum(1 for item in inputs if isinstance(item, dict) and item.get("type") == "function_call_output") \
+        if isinstance(inputs, list) else 0
+
+
 class Upstream(http.server.BaseHTTPRequestHandler):
-    """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、SLOW が在れば遅い答え、ほかは 4 つの差分の答え。"""
+    """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、SLOW が在れば遅い答え、入力のどこかに TOOL-CALLS が在れば道具の筋書き、
+    ほかは 4 つの差分の答え。"""
 
     protocol_version = "HTTP/1.1"
     request_log: IO[str]
@@ -99,14 +144,16 @@ class Upstream(http.server.BaseHTTPRequestHandler):
             self.wfile.write(refusal)
             return
         slow = "SLOW" in said
+        tools = TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
         # 長さを名乗らない event-stream は、流し終えたら接続を閉じて終わりを伝える(send_header が close_connection を立てる)。
         self.send_header("connection", "close")
         self.end_headers()
+        events = tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES)
         try:
-            for event in answer_events(SLOW_PIECES if slow else FAST_PIECES):
+            for event in events:
                 sse_event(self.wfile, event)
                 if event["type"] == "response.output_text.delta":
                     time.sleep(0.25 if slow else 0.05)
@@ -204,14 +251,14 @@ def json_path(message: JsonObject, *keys: str) -> object:
     return value
 
 
-def start_thread(send: Send, wait: Wait, cwd: Path) -> str:
-    """初期化から thread の始めまでを済ませ、ターンに使う thread の id を得るため。"""
+def start_thread(send: Send, wait: Wait, cwd: Path, sandbox: str = "read-only") -> str:
+    """初期化から thread の始めまでを済ませ、ターンに使う thread の id を得るため(sandbox = thread の sandbox の綴り)。"""
     send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
           "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}})
     wait(lambda message: message.get("id") == 1, WAIT_SECONDS)
     send({"jsonrpc": "2.0", "method": "initialized"})
     send({"jsonrpc": "2.0", "id": 2, "method": "thread/start",
-          "params": {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": "read-only"}})
+          "params": {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": sandbox}})
     answer = wait(lambda message: message.get("id") == 2, WAIT_SECONDS)
     return str(json_path(answer, "result", "thread", "id"))
 
@@ -251,8 +298,15 @@ def rate_limit(send: Send, wait: Wait, cwd: Path) -> None:
     wait(turn_ended(start_turn(send, wait, 3, thread_id, "RATE-LIMIT please")), WAIT_SECONDS * 1.5)
 
 
+def tool_calls(send: Send, wait: Wait, cwd: Path) -> None:
+    """道具を呼ぶターン(命令の成功・失敗・apply_patch・web 検索の後に答え)の道具の item の形を録るため。命令が本当に走り、ファイルを
+    書けるように、sandbox は会話の担当の既定と同じ danger-full-access(機体の sandbox の有無で行が変わらない)。"""
+    thread_id = start_thread(send, wait, cwd, "danger-full-access")
+    wait(turn_ended(start_turn(send, wait, 3, thread_id, f"{TOOLS_MARK} please")), WAIT_SECONDS * 2)
+
+
 def main(codex: str, out: Path, work: Path) -> None:
-    """偽の上流を立て、3 つの筋書きと exec の比べを録って、tests/recorded の 1 版分の file を作るため。"""
+    """偽の上流を立て、4 つの筋書きと exec の比べを録って、tests/recorded の 1 版分の file を作るため。"""
     out.mkdir(parents=True, exist_ok=True)
     with (out / "upstream-requests.jsonl").open("w", encoding="utf-8") as request_log:
         Upstream.request_log = request_log
@@ -263,7 +317,8 @@ def main(codex: str, out: Path, work: Path) -> None:
             env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "CODEX_HOME": str(home)}
             cwd = work / "cwd"
             cwd.mkdir(parents=True, exist_ok=True)
-            for name, script in (("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit)):
+            for name, script in (("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit),
+                                 ("tool-calls", tool_calls)):
                 record_app_server(codex, out, env, cwd, name, script)
             compared = subprocess.run([codex, "exec", "--json", "--skip-git-repo-check", "say hello"], capture_output=True,
                                       text=True, env=env, cwd=cwd, timeout=120, stdin=subprocess.DEVNULL, check=True)
