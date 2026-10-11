@@ -51,6 +51,7 @@ from doeff_claude_code.lines import RATE_LIMIT_REJECTED as RATE_LIMIT_REJECTED
 from doeff_claude_code.lines import ASSISTANT_ERROR_RATE_LIMIT as ASSISTANT_ERROR_RATE_LIMIT
 from doeff_claude_code.lines import StopHookFeedback as StopHookFeedback
 from doeff_claude_code.lines import AccountRefusalHit as AccountRefusalHit
+from doeff_claude_code.lines import CompactStarted as CompactStarted
 from doeff_claude_code.lines import CompactBoundary as CompactBoundary
 from doeff_claude_code.lines import HookNotice as HookNotice
 from doeff_claude_code.lines import HookPhase as HookPhase

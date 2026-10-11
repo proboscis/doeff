@@ -390,6 +390,17 @@ class AgentCompactionEvent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AgentCompactionStartedEvent:
+    """The runtime started compacting the conversation's context in the middle of the turn (agora card
+    ki-aeae6f9e643d — an upper layer shows "compacting" on the conversation screen while the summary is made,
+    which takes tens of seconds to minutes and otherwise looks like a stalled turn).  It carries only when it
+    started; how it started and the token counts come with the ``AgentCompactionEvent`` that ends it."""
+
+    seq: int
+    at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
 class AgentHookEvent:
     """A hook the runtime ran in the turn answered (card acp:kanban-issue:ki-d8b473480303 — an upper layer shows the
     hook's result, e.g. advice a conditional rule added or a Stop hook sending the answer back, in the conversation).
@@ -479,6 +490,7 @@ AgentEvent = (
     | AgentToolCallStartedEvent
     | AgentToolInputDeltaEvent
     | AgentStopHookFeedbackEvent
+    | AgentCompactionStartedEvent
     | AgentCompactionEvent
     | AgentHookEvent
     | AgentCallUsageEvent

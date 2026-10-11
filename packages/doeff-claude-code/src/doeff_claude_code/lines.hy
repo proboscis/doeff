@@ -330,13 +330,21 @@
   (setv #^ (| int None) cumulative-dropped-tokens None)
   (setv #^ (| int None) duration-ms None))
 
+;; CLI が自動の圧縮を始めた時に出す system/status の行の状態の語(CLI 2.1.294 — 替え玉の CLI tests/stub_cli/claude.hy が #4189 で写した形)。
+(val COMPACTING-STATUS "compacting")
+
+(defrecord CompactStarted
+  "CLI が会話の context の圧縮を始めた行(system/status の status = compacting — agora card ki-aeae6f9e643d)。上の層が、圧縮の間
+   (要約を作る数十秒〜数分 — 実測 2026-10-10 の 2 分)会話の画面に圧縮中を出すため。終わりは CompactBoundary(compact_boundary)。
+   行は token 数も起き方も持たない(それは終わりの行が持つ)。status の他の状態(requesting など)は今までどおり Other。")
+
 (defclass [(dataclass :frozen True)] Other []
   "語彙の外の行(名前だけ持つ)。"
   (#^ str type)
   (setv #^ str subtype ""))
 
 (setv ClaudeLineKind (| Init AssistantMessage ToolResult PartialMessage ThinkingTokens InputFate
-                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactBoundary
+                        PermissionRequested ControlResponse TaskEvent HookNotice RateLimit StopHookFeedback CompactStarted CompactBoundary
                         TurnResult Other))
 
 (defclass [(dataclass :frozen True)] ClaudeStreamLine []
@@ -611,6 +619,8 @@
     (= subtype "hook_started") (run (hook-notice-of record HookPhase.STARTED))
     (= subtype "hook_response") (run (hook-notice-of record HookPhase.RESPONSE))
     (= subtype "compact_boundary") (run (compact-boundary-of record))
+    ;; 圧縮の始まり(card ki-aeae6f9e643d)。status の他の状態は名前だけの Other のまま。
+    (and (= subtype "status") (= (text-at record "status") COMPACTING-STATUS)) (CompactStarted)
     True (Other :type "system" :subtype subtype)))
 
 (defn classify-rate-limit [#^ dict record]

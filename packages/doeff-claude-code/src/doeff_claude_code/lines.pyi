@@ -218,12 +218,17 @@ class CompactBoundary:
     post_tokens: int | None = None
     cumulative_dropped_tokens: int | None = None
     duration_ms: int | None = None
+COMPACTING_STATUS: str
+
+@dataclass(frozen=True, kw_only=True)
+class CompactStarted:
+    ...
 
 @dataclass(frozen=True)
 class Other:
     type: str
     subtype: str = ''
-ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactBoundary | TurnResult | Other
+ClaudeLineKind: TypeAlias = Init | AssistantMessage | ToolResult | PartialMessage | ThinkingTokens | InputFate | PermissionRequested | ControlResponse | TaskEvent | HookNotice | RateLimit | StopHookFeedback | CompactStarted | CompactBoundary | TurnResult | Other
 
 @dataclass(frozen=True)
 class ClaudeStreamLine:

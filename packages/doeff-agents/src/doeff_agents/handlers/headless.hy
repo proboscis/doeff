@@ -76,8 +76,8 @@
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
-  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger AgentHookEvent
-  AgentCallUsageEvent
+  AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent CompactionTrigger
+  AgentHookEvent AgentCallUsageEvent
   AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentAccountRefusal
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
@@ -88,7 +88,7 @@
   ReplacementCredentialUnavailable])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
                                   BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactBoundary
+(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactBoundary
                                  HookNotice HookPhase
                                  Completed Failed Interrupted BackendLost Usage AccountRefusalHit stderr-tail-within])
 (import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
@@ -141,8 +141,8 @@
     (setv #^ int self.cursor -1)
     (setv #^ (get list TurnInput) self.waiting [])
     (setv #^ (get list (| AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent
-                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionEvent AgentHookEvent AgentCallUsageEvent
-                          AgentTurnEndEvent))
+                          AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent AgentHookEvent
+                          AgentCallUsageEvent AgentTurnEndEvent))
           self.events [])
     (setv #^ (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost None) self.last-end None)))
 
@@ -223,6 +223,10 @@
     ;; Stop hook が答えを差し戻した(理由つき)— 上の層が差し戻された答えの本文を見分けて画面から落とすため(agora-redesign #4020)。
     (isinstance kind StopHookFeedback)
       [(fn [seq] (AgentStopHookFeedbackEvent :seq seq :at at :reason kind.reason))]
+    ;; CLI が会話の圧縮を始めた(status 行 compacting — 刻だけ)— 上の層が圧縮の間 会話の画面に圧縮中を出すため(agora card
+    ;; ki-aeae6f9e643d。終わりは下の CompactBoundary)。
+    (isinstance kind CompactStarted)
+      [(fn [seq] (AgentCompactionStartedEvent :seq seq :at at))]
     ;; CLI が会話を圧縮した(行の欄そのまま — 起き方は同じ綴りの層 3 の語へ写し、語彙の外は ValueError で止める)— 上の層が無人の
     ;; ターンの圧縮をターンの出来事として記録するため(agora-redesign #4189)。
     (isinstance kind CompactBoundary)
