@@ -16,6 +16,7 @@
 ;;;   - 置き場に届くかの公開の判断 store-reach(/readyz と同じ判断): 届く・届かない・上限の秒の内に答えない、をそれぞれの型で返す
 (require doeff-hy.macros [deftest defeffect defhandler defk <- val])
 (require doeff-hy.record [defrecord])
+(import errno)
 (import json)
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
@@ -24,7 +25,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
-(import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpNextRequest HttpReadBody HttpRequestArrived
+(import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived
                                                 HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA])
@@ -534,3 +535,24 @@
     (except [e ConnectionError]
       (:= raised e)))
   (assert (is-not raised None) "表の用意が落ちても run が 0 で終わった"))
+
+
+(defhandler port-held-by-a-twin
+  "同じ port を共有(share-port)で開いた別の待ち受けが既に居る網の代役: 共有を名乗らずに開く待ち受けを EADDRINUSE で断り(kernel の bind と
+   同じ)、共有を名乗る待ち受けは外側の台本の待ち受けへ回すため。"
+  {:tags {:context "records" :role "foundation"}}
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port]
+    (when (not share-port)
+      (raise (OSError errno.EADDRINUSE (.format "port {} は port を共有する別の待ち受けが使っている" address.port))))
+    (reperform effect)))
+
+
+(deftest test-the-entry-program-opens-its-port-beside-a-twin-that-shares-it
+  ;; 同じ置き場を答える記録の service の 2 本が 1 つの port で受ける形(agora-controllers の card ki-a4f46b3d98c5 — 1 本が止まっても、
+  ;; kernel が生きている待ち受けへ接続を渡す): 入口の Program は待ち受けを port の共有で開くので、共有で持つ別の待ち受けが居ても
+  ;; 開いて答え、0 で終わる。
+  (<- script HttpScript (served-script))
+  (val parts (ScriptedParts :script script :broken None :note (fn [commands] None)))
+  (val serving (! (serving-of (handlers-at-once (MemoryStore LAW-SCHEMA)) None)))
+  (val code (run (records-process (fn [body] (scripted-foundation parts (with-handlers [port-held-by-a-twin] body))) serving)))
+  (assert (= code 0) code))
