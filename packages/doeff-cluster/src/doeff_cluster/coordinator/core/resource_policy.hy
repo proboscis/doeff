@@ -81,7 +81,11 @@
 ;; 担い手の worker が running と報告している process」が出した報告だけ。以前は同じ担い手・同じ版の直近の報告なら数えたので、
 ;; 設定だけを変えた時(版は同じ)に、止めた前の process の Ready が window に残り、新しい process が 1 拍も終えないうちに Rollout が
 ;; 本番を止めた(Rollout 2026-09-25 05:11:12)。spec(設定を含む)が変われば指紋が変わり、以前の報告は数えない。
-(setv REPORTS-KEPT 4)            ; Service ごとに残す報告(process の世代ごとに最新 1 つ・直近の 4 世代)
+;; 残す報告(AL-D2o・2026-10-11): 置き先の process の報告は、他の送り手がいくつ報告しても必ず残す(keep-report・placed-senders)。
+;; 以前は送り手を問わず直近の 4 世代だけを残したので、退いた世代の worker が起こし直した process(同じ worker の名・同じ指紋・同じ
+;; 割り当ての世代を名乗る)が 4 つ並んで報告すると、置き先の process の報告が次の報告までに押し出され、Service が Ready と NotReady の
+;; 間で揺れた(10-11 12:14〜12:50 UTC — 揺れが入れ替えの合図 supersededBy を外し、退いた世代の起こし直しを毎周期に増やした)。
+(setv REPORTS-KEPT 4)            ; Service ごとに残す置き先でない送り手の報告(process の世代ごとに最新 1 つ・直近の 4 世代)
 
 
 ;; 判定の期限(#3064): readiness の判定が now と比べる期限の値の定義点。判定(running-process・service-readiness)はこの値と now を
@@ -187,11 +191,27 @@
   (next (gfor r (reversed (or reports #())) :if (report-matches r.origin proc) r) None))
 
 
-(defn #^ tuple keep-report [#^ (| tuple None) reports #^ (| ReadinessReport MetricsReport) report]
-  "世代ごとに最新 1 つ・直近の REPORTS-KEPT 世代だけ残す(古い順)。担い手の heartbeat より先に新しい process の報告が届いても、
-   heartbeat が追いついた時にその報告を数えられるよう、1 つに畳まない。"
-  (setv others (lfor r (or reports #()) :if (!= r.origin.instance report.origin.instance) r))
-  (tuple (cut (+ others [report]) (- REPORTS-KEPT) None)))
+(defn #^ frozenset placed-senders [#^ ClusterState state #^ str name]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — record-readiness・metrics_policy.record-metrics)が呼ぶ
+  "Service name の置き先(いまの置き先と drain で並べた置き先)の担い手が、名 name の行で動かしていると最後に報告した process の
+   送り手 #(worker 世代の名) の組。readiness の判定(running-process)が報告を数える相手の候補で、報告の表がこの送り手の報告を
+   必ず残す(keep-report)。時刻は問わない(担い手の報告が古い間も、最後に報告された process を置き先の process とみなす)。"
+  (frozenset (gfor a #((.get state.placements name) (.get state.surges name))
+                   :if (is-not a None)
+                   :setv row (job-status-row state a.worker name)
+                   :if (and (is-not row None) row.instance)
+                   #(a.worker row.instance))))
+
+
+(defn #^ tuple keep-report [#^ (| tuple None) reports #^ (| ReadinessReport MetricsReport) report #^ frozenset placed]
+  "報告 report を足した後の Service の報告の列(古い順・世代の名ごとに最新 1 つ)。送り手が置き先の process(placed — placed-senders の
+   #(worker 世代の名))の報告は必ず残し、それ以外の送り手の報告は直近の REPORTS-KEPT 世代だけ残す — 置き先でない送り手(退いた世代の
+   worker が起こし直した process など)がいくつ報告しても、置き先の報告を押し出さない(AL-D2o)。置き先でない報告も捨てずに残すのは、
+   担い手の heartbeat より先に新しい process の報告が届いても、heartbeat が追いついた時にその報告を数えられるようにするため。"
+  (setv rows (+ (lfor r (or reports #()) :if (!= r.origin.instance report.origin.instance) r) [report])
+        others (lfor r rows :if (not-in #(r.origin.worker r.origin.instance) placed) r.origin.instance)
+        dropped (frozenset (cut others 0 (max 0 (- (len others) REPORTS-KEPT)))))
+  (tuple (gfor r rows :if (not-in r.origin.instance dropped) r)))
 
 
 (defk report-origin [body now]
@@ -432,15 +452,17 @@
 
 
 (defn #^ ClusterState record-readiness [#^ ClusterState state #^ str name #^ ReadinessBody body #^ int now]
-  "POST /resources/Service/<名>/readiness: Service name の準備の報告を観測の表 readiness の名の行へ足すため(世代ごとに最新 1 つ —
-   keep-report)。表は保存しないが Service の status.ready の材料なので、版の比べ(dirty-keys)が読む。"
+  "POST /resources/Service/<名>/readiness: Service name の準備の報告を観測の表 readiness の名の行へ足すため(世代ごとに最新 1 つ・
+   送り手が置き先の process の報告は必ず残す — keep-report・placed-senders)。表は保存しないが Service の status.ready の材料なので、
+   版の比べ(dirty-keys)が読む。"
   (when (not (any (gfor j state.jobs (= j.spec.name name))))
     (refuse 404 (+ "無い Service: " name)))
   (setv report (run (readiness-report body now))
         seen state.observations)
   (replace state :observations
            (replace seen :readiness (.with-writes seen.readiness
-                                                  #((TableWrite name (keep-report (.row seen.readiness name) report)))))))
+                                                  #((TableWrite name (keep-report (.row seen.readiness name) report
+                                                                                  (placed-senders state name))))))))
 
 
 ;; --- 資源の写し(版と記録の比べる単位) ------------------------------------------------------------

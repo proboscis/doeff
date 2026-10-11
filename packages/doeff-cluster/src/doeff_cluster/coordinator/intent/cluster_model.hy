@@ -659,7 +659,7 @@
 ;; …/metrics の本文の JSON を道の型(coordinator/intent/request_bodies の ReadinessBody・MetricsBody)へ解くのは受け口の 1 点
 ;; (coordinator/protocol/request_bodies.body-of)で、core の受け取り(resource_policy.record-readiness・metrics_policy.record-metrics)は
 ;; 型の値に受けた時刻を添えてこの記録にする。ClusterState.observations の readiness・metrics の表に Service の名ごとに置く(process の
-;; 世代ごとに最新 1 つ・直近の数世代 — 古い順の tuple)。保存の差分(durable_kv の SOURCE-GROUPS)の外。readiness の表だけは Service の
+;; 世代ごとに最新 1 つ・置き先の process の報告は必ず残し、置き先でない送り手は直近の数世代 — 古い順の tuple・resource_policy.keep-report)。保存の差分(durable_kv の SOURCE-GROUPS)の外。readiness の表だけは Service の
 ;; status.ready の材料なので、版の比べ(resource_policy.dirty-keys)が読む(計器の表は読まない — 計器は資源の状態を変えない)。
 
 (defrecord ReportOrigin
@@ -698,7 +698,8 @@
 (defrecord ClusterObservations
   "coordinator が外から読んだ・受けた、保存しない観測の置き場(ClusterState.observations — 上の 2 つの註)。deployments = 「ns/名」→
    Deployment の最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)・readiness = Service の名 →
-   準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順)。"
+   準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順・置き先の process の報告は
+   他の送り手に押し出されない — resource_policy.keep-report)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
   (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
