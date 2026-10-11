@@ -1,0 +1,21 @@
+# S3 の正常例と失敗例(着地した main 4b254ec2 の linter = 2de2bbe4d)
+
+## 正常例: 着地した版の検 4 file(monkeypatch.setenv で置く形)
+$ doeff-linter --no-log --force-exclude --output-format json <4 file>
+DOEFF004 の error: 0
+
+## 失敗例 1: 同じ 4 file の直す前の版(61f060009・{**os.environ, …} で子へ渡す形)
+$ (cd <mktemp の dir> && doeff-linter --no-log --no-config --enable DOEFF004 --output-format json <4 file>)
+DOEFF004 の error: 4
+   ('test_dataclass_code_store.py', 61, 'env = {**os.environ, "DOEFF_HY_CODE_STORE": store, "PYTHONDONTWRITEBYTECODE": "1')
+   ('test_import_gc.py', 112, 'env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},')
+   ('test_hook_finding_baseline.py', 473, 'ran = subprocess.run([sys.executable, str(SCRIPT)], env={**os.environ, "PYTHONSA')
+   ('test_wheel_remote_store.py', 183, 'monkeypatch.setenv("PATH", f"{tmp_path / \'fake-bin\'}{os.pathsep}{os.environ[\'PAT')
+
+## 失敗例 2: tools の下の名指していない module(rust_wheel_release.py の写しを tools/_probe_env_tool.py に一時に置いた)
+$ doeff-linter --no-log --force-exclude --output-format json tools/_probe_env_tool.py tools/rust_wheel_release.py
+DOEFF004 の error: 2
+   ('_probe_env_tool.py', 67, 'env = {**os.environ, "DOEFF_WHEEL_CACHE": str(store), "DOEFF_WHEEL_REPORT": str(')
+   ('_probe_env_tool.py', 107, 'repo = os.environ["GITHUB_REPOSITORY"]')
+(一時の file は消した: git status --short の行数 = 0)
+期待: 正常例 0 件・失敗例 1 は直す前の os.environ の参照が所見・失敗例 2 は写しの _probe_env_tool.py だけが所見で、名指しの rust_wheel_release.py は 0 件(外しは名指しの module に限る)。

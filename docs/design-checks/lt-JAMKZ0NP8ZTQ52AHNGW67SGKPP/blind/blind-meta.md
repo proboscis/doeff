@@ -11,7 +11,7 @@
 | 2 回目の試み(採用) | 会話の資格が替わった後、2026-10-11T18:58Z 頃に新しい文脈で起こし直した | 同左 |
 | 起動の方法 | Agent tool(subagent_type general-purpose)の新しい文脈。会話の fork・resume は使わない。A と B は 1 つの返事の中で同時に起こし、互いの返答を見ない | 同左 |
 | 渡した物 | prompt = 入力の file の path と守る事(読むだけ・mktemp -d の dir の下だけに書く・repo 全体に検査を当てない・他へ連絡しない・設計検証の置き場の他の file を読まない・uv で python を走らせる・model の自己申告を書く)。入力 = blind-a-input.md・blind-common.md | 入力 = blind-b-input.md・blind-common.md |
-| 入力の hash(起こす前・18:52:41Z) | blind-common.md 05e9f2f31a4ff1242222dd7e489ba19ec39ae8954a93a527d41ac1ad1334bf6a・blind-a-input.md e3b98a86e087764803b6da91c9014ab6bf50c6d46b79bf1b9ba6bcc42438fc11(commit 6ff7d8f82) | blind-b-input.md 653bb4d18387bb1fc9b309504123708d2905b779ca286a645fec7eb7d80244f3 |
+| 入力の hash(起こす前・18:52:41Z) | blind-common.md 05e9f2f31a4ff1242222dd7e489ba19ec39ae8954a93a527d41ac1ad1334bf6a・blind-a-input.md e3b98a86e087764803b6da91c9014ab6bf50c6d46b79bf1b9ba6bcc42438fc11(作業の branch の commit 6ff7d8f82 — 着地の rebase で sha は替わる。同一性は sha256 で照らす) | blind-b-input.md 653bb4d18387bb1fc9b309504123708d2905b779ca286a645fec7eb7d80244f3 |
 | 機体・profile | agora の会話の Pod(依頼 lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP の会話)・この会話の Claude の資格 | 同左 |
 | agent id | a7d2f84c1d1d714db | a957b88c29207ff80 |
 | 時間 | 653.8 秒(tool の呼び 45 回) | 446.4 秒(tool の呼び 44 回) |

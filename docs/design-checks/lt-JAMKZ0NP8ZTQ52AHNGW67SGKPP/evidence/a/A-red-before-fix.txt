@@ -1,0 +1,9 @@
+# 直す前(origin/main 15db080f3 + 失敗ケースの検だけ)の赤
+$ uv run pytest -q tests/test_hook_finding_baseline.py -k changed_past_the_baseline
+        assert _run(rig, "init", "doeff-linter").returncode == 0
+>       assert moved.returncode == 1
+E       AssertionError: assert 0 == 1
+tests/test_hook_finding_baseline.py:432: AssertionError
+FAILED tests/test_hook_finding_baseline.py::test_strict_names_a_linter_changed_past_the_baseline_and_turns_it_red
+1 failed, 26 deselected, 1 warning in 1.42s
+rc=1

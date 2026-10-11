@@ -1,0 +1,365 @@
+{
+  "version": 1,
+  "task_id": "lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP",
+  "base_revision": "61f0600093debe4c04c6550985bc4b26a3b6e4dc",
+  "implementation_revision": "4b254ec2f7463a4c78645ea4aff0b976865e0e02",
+  "author": {
+    "conversation_id": "c-DBNB3C2EF8RPFZFWH38K5FPM18",
+    "model": "claude-opus-5-5",
+    "effort": "未確認(会話の起動の設定に従う・自己申告では読めない)"
+  },
+  "requirements": [
+    "R1(card ki-9da0a5c71947 の受入 c51f88e5f): 2026-10-12 00:00 JST より後の doeff の日次の lint で、program_effects.py の DOEFF002 が基点 1 件・macro_use.py の DOEFF002 が 0 件に戻る",
+    "R2: 誤検出なら linter を直して戻す — 基点に足して通さない",
+    "R3: 直しが日次の lint に新しい赤の行を足さない"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "ad3ba74971292447dea99a73ca13a4236cddc9410fbb89125d3bdd692c7fe5b3"
+  },
+  "pre_blind_design": {
+    "path": "design-before-blind.md",
+    "sha256": "1c778e48c2f4a97beb466162a2c4ee2250dbc0ed2210ae68ed49e0c6c4fea812"
+  },
+  "blind": {
+    "meta": {
+      "path": "blind/blind-meta.md",
+      "sha256": "2ce966e939ba936fac02d3583e51eedc73ed8dc957733db4022d1f3edc385fd9"
+    },
+    "a": {
+      "input": [
+        {
+          "path": "blind/blind-common.md",
+          "sha256": "05e9f2f31a4ff1242222dd7e489ba19ec39ae8954a93a527d41ac1ad1334bf6a"
+        },
+        {
+          "path": "blind/blind-a-input.md",
+          "sha256": "e3b98a86e087764803b6da91c9014ab6bf50c6d46b79bf1b9ba6bcc42438fc11"
+        }
+      ],
+      "return": {
+        "path": "blind/blind-a-return.md",
+        "sha256": "12f6cdbd3089d4ba923e29f9a00e682354625ca1b01bf9735db0bafb557fa34d"
+      }
+    },
+    "b": {
+      "input": [
+        {
+          "path": "blind/blind-common.md",
+          "sha256": "05e9f2f31a4ff1242222dd7e489ba19ec39ae8954a93a527d41ac1ad1334bf6a"
+        },
+        {
+          "path": "blind/blind-b-input.md",
+          "sha256": "653bb4d18387bb1fc9b309504123708d2905b779ca286a645fec7eb7d80244f3"
+        }
+      ],
+      "return": {
+        "path": "blind/blind-b-return.md",
+        "sha256": "6aec9d749bc48d5061ea6fa24044a0b5af764f05a2069b5d689819ae283e85eb"
+      }
+    }
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "DOEFF002 の規則 — 初期化の外で代入される self の属性に mut_ / _mut の名を強いる(packages/doeff-linter/src/rules/doeff002_mutable_attribute_naming.rs)",
+      "owns": "初期化の method の集合(is_init_method = __init__・__post_init__・__set_name__)・数える範囲(class の def / async def の method とその入れ子の本体の全部・代入の左辺の tuple / list / starred)・名の決まり",
+      "hides": "値の型を問わない事・入れ子の本体の一覧(utils::nested_bodies に委ねる)",
+      "interface": "LintRule::check(&RuleContext) -> Vec<Violation>(rule_id DOEFF002・severity error)",
+      "effects": "なし、AST を読むだけ",
+      "lifetime": "なし、linter の 1 回の実行の中で ClassDef ごとに呼ばれ、状態を持たない",
+      "invariants": "初期化の集合の外の method(とその入れ子の本体)で self.X に代入すれば、値の型と文の形に依らず所見。入れ子の class の self は数えない"
+    },
+    {
+      "id": "M2",
+      "responsibility": "DOEFF002 の説明文(rule_info.rs・report.rs)",
+      "owns": "人と道具に見せる説明と直し方の文",
+      "hides": "なし、文だけ",
+      "interface": "rule_info(rule_id) の RuleInfo・HTML の報告の RuleInfo",
+      "effects": "なし、定数の文",
+      "lifetime": "なし、定数",
+      "invariants": "M1 の判断(型を問わない・初期化の集合)と食い違わない"
+    },
+    {
+      "id": "M3",
+      "responsibility": "基点の比べ(scripts/hook_finding_baseline.py・scripts/hook_finding_baseline/doeff-linter.json・scripts/doeff_linter_locked.py・scripts/gate_tools.sh linter)",
+      "owns": "規則 × file の基点の数・数えた linter の組み立ての入力の鍵(version)・日次(--strict)の鍵の照らし",
+      "hides": "binary の探し方(land-arm の開発版・断面の置き場)と鍵の計算",
+      "interface": "hook_finding_baseline.py [--strict] check|lower|init doeff-linter|semgrep(rc 0 通す・1 赤・3 測れない)",
+      "effects": "linter の binary を子の process で走らせる・基点の file を書く(lower / init)・git を読む",
+      "lifetime": "1 回の実行の中だけ。基点の file は git の追跡で残る",
+      "invariants": "基点は下がる向きにだけ動く・鍵の合う binary が無ければ測れない・--strict は木の linter の鍵が基点の鍵と違えば赤"
+    },
+    {
+      "id": "M4",
+      "responsibility": "tools の層の宣言(tools/architecture.hy)",
+      "owns": "規則の母集団から外す名指しの module(build = doeff_cargo_backend・release = rust_wheel_release)と理由",
+      "hides": "なし、宣言だけ",
+      "interface": "defarchitecture の :layers・:modules・:exempt(理由が要る)",
+      "effects": "なし、linter が読む宣言",
+      "lifetime": "なし、file",
+      "invariants": "外すのは DOEFF004 だけ・名指しの module だけ"
+    },
+    {
+      "id": "M5",
+      "responsibility": "閉じの解析の reader(program_effects.py の _Reader・_ClauseEmits)",
+      "owns": "遅れて作る :absent の受け手(_mut_absent)・descriptor の名(_held)",
+      "hides": "読みの memo と lock",
+      "interface": "_Reader.absent_receiver() -> HandlerEffects",
+      "effects": "なし、解析の値を作るだけ",
+      "lifetime": "reader の生きる間(初めて問われた時に作る)",
+      "invariants": "後から代入する属性は _mut の名"
+    },
+    {
+      "id": "M6",
+      "responsibility": "子の process を起こす検(test_dataclass_code_store.py・test_import_gc.py・test_hook_finding_baseline.py・test_wheel_remote_store.py)",
+      "owns": "子へ渡す環境",
+      "hides": "なし",
+      "interface": "pytest の monkeypatch.setenv で検の process の環境に置き、子は受け継ぐ",
+      "effects": "子の process を起こす(subprocess)・環境変数を置く(monkeypatch)",
+      "lifetime": "検 1 本の間(monkeypatch が検の後に戻す)",
+      "invariants": "検の code は os.environ を参照しない(DOEFF004)"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "thread をまたいで共有される object に後から作って持つ状態を足す(例 _Reader.absent_receiver)、または descriptor が自分の名を __set_name__ で覚える",
+      "claim": "(盲検の前・design-before-blind.md の S1)M1 は後から代入する状態を型に依らず _mut の名に強い、__set_name__ だけで代入する descriptor の状態は強いない。初期化の集合を変えるのは M1 の is_init_method 1 か所だけ",
+      "expected_scope": "M1(と、その検・M2 の文)。M3 は version の 1 行だけ。M4・M5・M6 の code は変わらない",
+      "actual_scope": "L2099(__set_name__): M1・M2・M3 の version に加え、M4(層 release)と M6(検 4 file)が変わった(鍵の替えで 28 本分の linter の変更の DOEFF004 が判定に入った — 盲検 A)。盲検 B: async def の method・try の else / finally・match・for の else・組の左辺・method の中の関数の代入を M1 が数えず、前提の形のまま主張が崩れた(9 つのうち 1 つだけ所見)。直しの後の L2102: M1・M3 と DOEFF002 自身の新しい所見の持ち主 2 file だけ(他の規則の行は 0)",
+      "changed_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M6"
+      ],
+      "unchanged_modules": [
+        "M5"
+      ],
+      "reason": "M4・M6 の波及は知識の漏洩: 鍵を替える時機に持ち主がいなく、他の規則の意味の変更の代価が DOEFF002 の便に乗った。M1 の数える範囲の欠けは、入れ子の本体の一覧を M1 が自前に欠けたまま持っていた事(utils::nested_bodies と別の 2 つ目)と async def の method を歩かない事。M5 の改名は S1 の波及ではなく、日次の後に入った別の本物の所見",
+      "revision": "L2102: M1 は def / async def の method と utils::nested_bodies の入れ子の本体の全部・左辺の組を数える(検 3 本)。M3 は --strict で木の linter の鍵と基点の鍵の違いを赤にする(検 1 本)。再検証 C1・C2・C4・C5"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "linter の規則の意味を変え、日次が新しい linter で測るよう基点の鍵を替える",
+      "claim": "(盲検の前・S2)鍵の替えは基点の file の version の 1 行と下がる向きの数だけを変え、M3 の code は変えない。鍵の合わない状態では、日次は黙って測らず測れないと名乗る。鍵の替えで判定に入る所見は基点に足さず直す",
+      "expected_scope": "M3 の data 1 行と、判定に入る所見の持ち主",
+      "actual_scope": "data の範囲は予測どおり(L2099・L2102 とも version の 1 行・数は変わらない)。ただし盲検 A の再現で、基点の鍵の binary が在れば、木の linter の鍵が違っても日次は古い規則で黙って測った(7b3a9b190)。直しのため M3 の code(--strict の照らし)を変えた",
+      "changed_modules": [
+        "M3"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M4",
+        "M5",
+        "M6"
+      ],
+      "reason": "M3 の code の変更は、主張「測れないと名乗る」を破った照らしの欠けを塞ぐ直し(盲検 A)。鍵の替えそのものは data の 1 行に収まった",
+      "revision": "L2102: --strict は木の HEAD の linter の組み立ての入力の鍵が基点の鍵と違えば、両方の鍵と lower の手順を名指して赤。hook は止めない・git の無い木は照らさない。再検証 C4・C5・C7"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "検が子の process にもう 1 つ環境変数を渡す、または tools の下に環境変数を読む道具を足す",
+      "claim": "(盲検の前・S3)検は monkeypatch.setenv で置き(M6 だけ)、DOEFF004 は鳴らない。tools の新しい道具は M4 に名指して理由を書かない限り DOEFF004 が当たり、名指しは module 単位で層のほかの file へ広がらない",
+      "expected_scope": "M6 か、M4 の 1 項目",
+      "actual_scope": "L2099 で M6 の 4 file と M4 の層 1 つ。盲検 A・B はこのシナリオの失敗例を出さなかった。名指していない tools の module には DOEFF004 が当たり、名指しの rust_wheel_release.py は外れる事を実測した",
+      "changed_modules": [
+        "M4",
+        "M6"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M5"
+      ],
+      "reason": "予測どおり(検の環境は M6、CI の道具の外しは M4 の 1 項目)",
+      "revision": "不要 — C7・C8・C9 で正常例が通り、失敗例が DOEFF004 で拒まれる事を確かめた"
+    },
+    {
+      "id": "S4",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "静的な解析で、機体の資源に依らない"
+    },
+    {
+      "id": "S5",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "binary を機体ごとに組む・写す仕組み(linter_snapshot.py・land-arm)は変えていない。この変更はその仕組みを使うだけ"
+    },
+    {
+      "id": "S6",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "AST の読みは決定的で、時間と乱数を使わない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "着地した 4b254ec2 で、__set_name__ の代入・初期化の method の入れ子の本体の代入・method の中の class の self への代入を所見にしない検が緑。規則の母集団の検も緑",
+      "observation": "cargo test --locked --lib doeff002 8 passed・--test rule_population 12 passed(4b254ec2)",
+      "evidence": {
+        "path": "evidence/s1/cargo-at-4b254ec2.txt",
+        "sha256": "fb5f7a3e770494cef4e3c5145812f38ff03a3ab0904823afc2088853f90e4e75"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直しの後の linter が、盲検 B の 9 つの形の代入を全部所見にし、B の client.py の差分(after・twin)を拒む。before は 0",
+      "observation": "9 つの形 = 9 件・after 1 件(_http)・twin 1 件・before 0 件・min の reader_async 1 件・other_forms 9 件(2de2bbe4d の binary = 着地の鍵 abe8fc1e…)",
+      "evidence": {
+        "path": "evidence/b/B-after-fix-at-4b254ec2.txt",
+        "sha256": "4b165541d5dc3942a3a96fe8705d522eb52eb71094a94ceefddb96b8f4e9cfe2"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の linter で盲検 B の失敗例が成立する(9 つの形のうち所見は plain の 1 つだけ)",
+      "observation": "4ccab04ac の linter(02fca1e25 の binary)で DOEFF002 は (45, self._h = 1) の 1 件だけ",
+      "evidence": {
+        "path": "evidence/b/B-repro-at-4ccab04ac.txt",
+        "sha256": "58e556b64fc184aff5fc759f96df0c80f8bbec6bb6bf7be8cd65678d5ca6de1d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "着地した 4b254ec2 で日次と同じ lint の段: HEAD の鍵 = 基点の鍵・測って比べる・赤は元からの 5 組だけ・program_effects.py の DOEFF002 は _tree の 1 件・macro_use.py は 0 件",
+      "observation": "鍵 abe8fc1e… が一致・rc 1 は元からの 5 組(card ki-7f77141635f0)だけ・program_effects.py は (750, self._tree = tree) だけ",
+      "evidence": {
+        "path": "evidence/s2/lint-stage-at-4b254ec2.txt",
+        "sha256": "eb1e2812b83572939c3187dc7b3c9239bd407a753f1063455a08257933f36b2f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "着地した比べを、M1 を変えて鍵を替えていない 7b3a9b190 の木に --strict で当てると、鍵の違いを名指して赤。hook の形は鍵の違いで止めず測る",
+      "observation": "--strict: 5c59502e… と bee713059f… を名指して rc 1・hook の形: 鍵の文を出さず program_effects.py の増えで rc 1",
+      "evidence": {
+        "path": "evidence/a/A-after-fix-at-4b254ec2.txt",
+        "sha256": "2eb9ecb9a77f83766b521f2268d31e9d72fe552b6498559facbdbb43643c69dd"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "直す前の比べで盲検 A の失敗例が成立する(鍵の違う木を、測れないと名乗らず古い規則の linter で測る)",
+      "observation": "7b3a9b190 の木で gate_tools と --strict check が 780ef711a の鍵の linter で測り、program_effects.py 基点 1 → 今 3(__set_name__ の _held を含む)",
+      "evidence": {
+        "path": "evidence/a/A-repro-at-7b3a9b190.txt",
+        "sha256": "d80d6fa3729ebd501e70cfbb9a2d4bd13c2e1aff865b6431b081159585d114c5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "着地した 4b254ec2 の focused な検(基点の比べ・関門の道具・子へ環境を置く検 4 file・改名した属性の検)が緑。鍵の照らしの検と lower が上げない検を含む",
+      "observation": "60 passed(test_strict_names_a_linter_changed_past_the_baseline_and_turns_it_red・test_lower_only_lowers・test_strict_turns_unmeasured_red を含む)",
+      "evidence": {
+        "path": "evidence/s2/pytest-at-4b254ec2.txt",
+        "sha256": "3647a18b7fd41a26a38a0f0853f66fbbdf14fe714bf8751f8cd1433861227126"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "着地した版の検 4 file(monkeypatch.setenv の形)に DOEFF004 が当たらない",
+      "observation": "DOEFF004 の error 0 件(同じ file の失敗例 1・2 と同じ記録)",
+      "evidence": {
+        "path": "evidence/s3/env-at-4b254ec2.txt",
+        "sha256": "d8b39a11360f4cba4696cb43d1d94cb79001d6d937fd0842da8ae692f3638e5e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "直す前の 4 file の {**os.environ, …}・os.environ[...] は DOEFF004 の所見。tools の名指していない module は DOEFF004 が当たり、名指しの rust_wheel_release.py は外れる",
+      "observation": "直す前の 4 file で 4 件・tools/_probe_env_tool.py(rust_wheel_release.py の写し・一時に置いて消した)で 2 件・rust_wheel_release.py は 0 件",
+      "evidence": {
+        "path": "evidence/s3/env-at-4b254ec2.txt",
+        "sha256": "d8b39a11360f4cba4696cb43d1d94cb79001d6d937fd0842da8ae692f3638e5e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "M1 の直しの前に、失敗ケースの検 test_assignments_in_async_methods_and_every_nested_body_are_counted が赤",
+      "observation": "left {\"_j\"} / right 11 の名で FAILED(origin/main 15db080f3 + 検だけ)",
+      "evidence": {
+        "path": "evidence/b/B-red-before-fix.txt",
+        "sha256": "9fd09e66a969727f1f2001f45967a472d9693bfd63e2cd976e4b6c216b5c7a93"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C11",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "M3 の直しの前に、失敗ケースの検 test_strict_names_a_linter_changed_past_the_baseline_and_turns_it_red が赤",
+      "observation": "assert 0 == 1 で FAILED(--strict が鍵の違う木を rc 0 で通した)",
+      "evidence": {
+        "path": "evidence/a/A-red-before-fix.txt",
+        "sha256": "f9d0519f7bc757aecf8759a999dc85f0f292a69895d72548923fd85237370cb5"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
