@@ -18,11 +18,14 @@
 ;;; 不変条件(startup の層の .pyc の記録の照らし — doeff_hy_bytecode_guard.macro_use。Program の外なので defservice の :invariants に
 ;;; 置けず、条をここに 1 か所で書く):
 ;;;   B1 stale-expansion-is-never-current — 記録の digest が依った物(macro を定義した file の中身・macro が辿る値の module の file の
-;;;     中身・環境変数など file の外で決まる値)のどれかが記録を作った時と違えば、照らしは古いと判じて展開し直させる。digest は
-;;;     process をまたいで覚えない(生きた値を辿った file の状態だけで信じる形になる)。process をまたいで覚えてよいのは、中身で
-;;;     決まる純な読み — 辿れない大域を覆う source の文の読み(bound_source — 鍵 = source の中身・名・読み方の code と版)— だけ。
-;;;     失敗ケース = tests/test_macro_use_record.py の「process をまたぐ覚え」の条 1〜3(digest を file の状態で覚えて次の process が
-;;;     信じる形で赤 — agora-redesign card ki-38508e6e56fd)。
+;;;     中身・環境変数など file の外で決まる値)のどれかが記録を作った時と違えば、照らしは古いと判じて展開し直させる。digest も
+;;;     照らしの答え(合う / 古い)も process をまたいで覚えない(生きた値を、辿った file や記録が名指す package の file と環境だけで
+;;;     信じる形になる — 素の値はどの module から来たかを持たない)。process をまたいで覚えてよいのは、中身で決まる純な読み —
+;;;     辿れない大域を覆う source の文の読み(bound_source — 鍵 = source の中身・名・読み方の code と版)— だけ。class を中身で辿るか
+;;;     公開の形だけで覆うかは、標準の拡張の module の末尾で判じる(source の拡張子の写しで判じない — 知らない末尾は中身で辿る)。
+;;;     失敗ケース = tests/test_macro_use_record.py の「process をまたぐ覚え」の条 1〜3 と別の top の package の値の検(digest を
+;;;     file の状態で覚える形・照らしの答えを package の file と環境で覚える形で赤)と、写しに無い拡張子の source の class の検
+;;;     (agora-redesign card ki-38508e6e56fd とその設計検証の盲検 A・B)。
 (defarchitecture doeff-hy
   :root "doeff_hy"
   :layers [(layer startup

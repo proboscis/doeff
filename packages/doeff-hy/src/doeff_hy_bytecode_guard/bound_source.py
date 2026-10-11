@@ -28,6 +28,9 @@ import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
+# Hy の source の拡張子の定義点(標準 library だけを読む軽い module — loader_hooks も起動時に読む)。
+from doeff_hy_bytecode_guard.code_store import HY_SOURCE_SUFFIXES
+
 #: 中身の覚え(process の中 — file の path → 更新時刻・大きさ・中身)。
 _SOURCES: dict[str, "SourceFile"] = {}
 
@@ -213,7 +216,8 @@ def _read(data: bytes, path: str) -> PythonModule | HyModule | None:
 #: この module の file の sha256(:func:`_own_digest`)が覆う。
 BINDING_TAG = "doeff-hy/bound-source/1"
 
-_HY_SUFFIXES = (".hy", ".hyk", ".hyp")
+#: Hy の source の拡張子(定義点 code_store の写しを置かない — 拡張子を足した時に読み方と鍵の種類が揃って変わる)。
+_HY_SUFFIXES = HY_SOURCE_SUFFIXES
 
 
 @dataclass(frozen=True)
