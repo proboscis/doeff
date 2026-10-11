@@ -164,7 +164,7 @@ def test_the_body_is_otlp_logs_json_with_one_record_per_line() -> None:
     行の数 doeff.dropped(0 なら置かない)。"""
     target = JobLogTarget(endpoint="http://c/v1/logs", resource=(Attribute("service.name", "doeff.job-log"),))
     batch = (QueuedLine(1, line(b"one\r")), QueuedLine(3, line(b"bad-\xff", T + 1, cut=True)))
-    document = json.loads(logs_body(target, batch, 0))
+    document = json.loads(logs_body(target, batch, 0, 100))
     (resource_logs,) = document["resourceLogs"]
     assert resource_logs["resource"]["attributes"] == [{"key": "service.name", "value": {"stringValue": "doeff.job-log"}}]
     (scope_logs,) = resource_logs["scopeLogs"]
@@ -181,8 +181,46 @@ def test_the_body_is_otlp_logs_json_with_one_record_per_line() -> None:
             "attributes": [{"key": "doeff.line", "value": {"intValue": "3"}}, {"key": "doeff.cut", "value": {"boolValue": True}}],
         },
     ]
-    dropped = json.loads(logs_body(target, batch[:1], 7))["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
+    dropped = json.loads(logs_body(target, batch[:1], 7, 100))["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["attributes"]
     assert {"key": "doeff.dropped", "value": {"intValue": "7"}} in dropped
+
+
+@dataclass(frozen=True)
+class Shipped:
+    """送る本文の record 1 つの body と、印 doeff.cut を持つか。"""
+
+    body: str
+    cut: bool
+
+
+def shipped_records(lines: tuple[OpenLine, ...], line_bytes: int) -> list[Shipped]:
+    """切った行の並びを、送る本文の record の並びに戻すため(body の上限 = line_bytes)。"""
+    target = JobLogTarget(endpoint="http://c/v1/logs", resource=())
+    body = logs_body(target, tuple(QueuedLine(n, one) for n, one in enumerate(lines, 1)), 0, line_bytes)
+    return [
+        Shipped(r["body"]["stringValue"], {"key": "doeff.cut", "value": {"boolValue": True}} in r["attributes"])
+        for r in json.loads(body)["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    ]
+
+
+def test_the_body_keeps_the_line_limit_in_utf8_bytes_after_replacement() -> None:
+    """本番の上限で、送る body は UTF-8 で上限以下(取り決め job-log/1 の 1 行の上限 — 読んだ byte でなく送る body で数える)。
+    失敗ケース: UTF-8 でない byte だけの 10 KiB の行は、読んだ byte で上限に切っても置き換えの字(3 byte)で 3 倍に伸びる — 伸びた分も
+    字の境で落とし、印 doeff.cut を付ける。上限より短くても置き換えで上限を越える行も、同じく落として印を付ける。"""
+    limit = ShipLimits().line_bytes
+    long_bad = cut_lines(b"\xff" * (10 << 10) + b"\n", None, T, limit).closed
+    short_bad = cut_lines(b"\xff" * (limit // 2) + b"\n", None, T, limit).closed
+    for record in shipped_records((*long_bad, *short_bad), limit):
+        assert len(record.body.encode("utf-8")) <= limit
+        assert record.cut
+
+
+def test_a_character_split_by_the_cut_is_dropped_at_the_character_boundary() -> None:
+    """字の途中で切れた行は、切れた字を落として字の境で終わる(置き換えの字を末尾に残して上限を越えない)。上限ちょうどの UTF-8 の行は
+    切らず、印も付けない。"""
+    split = cut_lines("あ".encode() * 5 + b"\n", None, T, 8).closed
+    whole = cut_lines(b"abcdefgh\n", None, T, 8).closed
+    assert shipped_records((*split, *whole), 8) == [Shipped("ああ", True), Shipped("abcdefgh", False)]
 
 
 # --- 送り手(外の世界の代わりを渡す)-----------------------------------------------------------------------------------------
