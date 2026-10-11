@@ -37,6 +37,7 @@
   {JobPhase.PREPARING VersionState.UPDATING
    JobPhase.PROBING VersionState.UPDATING
    JobPhase.STARTING VersionState.UPDATING
+   JobPhase.ELDER-RUNS VersionState.UPDATING           ; 同じ名の前の世代が動かしている間、新しい世代が揃えて待つ(AL-D2f)
    JobPhase.STOPPING VersionState.UPDATING
    JobPhase.STOPPED VersionState.UPDATING              ; 担い手がまだ宣言を受け取っていない
    JobPhase.BACKOFF VersionState.BLOCKED
@@ -155,7 +156,7 @@
 
 (deftest test-every-phase-and-every-not-ready-kind-maps-to-one-of-the-five-states
   ;; 閉じた型の全部の値を回す: 値を足して写し忘れると match が何も返さず赤になる。
-  (assert (= (len JobPhase) 13))
+  (assert (= (len JobPhase) 14))
   (assert (= (len NotReadyKind) 11))
   (assert (= (len UnplacedKind) 3))
   (assert (= (sfor s VersionState s.value) #{"Current" "Updating" "Blocked" "Stopped" "Unknown"}))
