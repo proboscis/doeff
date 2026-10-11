@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import hy
@@ -38,6 +39,11 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXPECTED = EXAMPLES / "expected"
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1 秒(置き場が冷えていても 約 20 秒)。
 CHILD_DEADLINE_SECONDS = 50
+# 子(例・変異の写し)を同時に走らせる数。子 1 本は 約 1 秒で、多くは hy と doeff の import(例の中身は 0.2〜0.3 秒・ex05 は
+# sleep 2.5 秒)。1 本ずつ順に走らせると子 12 本の秒が足し算になり、この file 1 本が負荷の下で 25〜42 秒かかって、変えた所の検
+# (make test-changed)の 60 秒の上限で後ろの検を打ち切った(card ki-458fc8e0de36)。全部を一度に起こさないのは、機体の検の枠
+# 1 つ(root の conftest の _hold_check_slot)の目安 — 検 1 本 0.5〜2.5 core — を大きく越えないため。
+PARALLEL_CHILDREN = 4
 
 # 今の macro で走らない例(file の名 → 理由)。直したら行を外す。
 BROKEN: dict[str, str] = {}
@@ -80,6 +86,95 @@ def _run_hy(path: Path, deadline_scale_factor: float) -> subprocess.CompletedPro
         text=True,
         timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
     )
+
+
+def _mutant(copies: Path, name: str) -> Path:
+    """変異を当てた写しの中の例の path(写しは例ごとに別の dir)。"""
+    return copies / Path(name).stem / EXAMPLES.name / name
+
+
+def _write_mutant(copies: Path, name: str) -> None:
+    """examples/ の dir ごとの写しを作り、写しの中の例に変異を当てる。変異の元の文が 1 つだけでなければ作らない
+    (検がそれを名指す)。
+
+    写しを dir ごとにするのは、例が兄弟の file(共有の helper・data)と並んだ場所で走る物だから — 1 file だけを別の dir へ
+    移すと、変異と関わりなく import で落ちる(設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 A)。"""
+    source = (EXAMPLES / name).read_text(encoding="utf-8")
+    original, mutated = CASE_FAILURE_MUTANTS[name]
+    if source.count(original) != 1:
+        return
+    mutant = _mutant(copies, name)
+    shutil.copytree(EXAMPLES, mutant.parent, dirs_exist_ok=True)
+    mutant.write_text(source.replace(original, mutated), encoding="utf-8")
+
+
+def _child_of(item: pytest.Item) -> tuple[str, bool] | None:
+    """検 1 本が待つ子 — (例の file の名, 変異を当てた写しか)。子を待たない検は None(BROKEN が空の時に pytest が置く
+    空の parametrize の item も、name に例の名を持たないので None)。"""
+    callspec = getattr(item, "callspec", None)
+    name = callspec.params.get("name") if callspec is not None else None
+    if not isinstance(name, str):
+        return None
+    function = getattr(item, "function", None)
+    if function in (test_example_runs, test_broken_example_is_still_broken):
+        return name, False
+    if function is test_case_failure_shows_in_compared_output:
+        return name, True
+    return None
+
+
+class Children:
+    """選ばれた検が待つ子を、最初の検の時に全部起こして PARALLEL_CHILDREN 本ずつ並べて走らせ、検はそれぞれ自分の子の
+    結末を待つ。起こすのは、この session で選ばれた検の子だけ(-k で 1 本を選べば、子も 1 本)。"""
+
+    def __init__(self, copies: Path) -> None:
+        self.copies = copies
+        self._pool = ThreadPoolExecutor(max_workers=PARALLEL_CHILDREN)
+        self._runs: dict[Path, Future[subprocess.CompletedProcess[str]]] | None = None
+
+    def _script(self, name: str, mutated: bool) -> Path:
+        if not mutated:
+            return EXAMPLES / name
+        _write_mutant(self.copies, name)
+        return _mutant(self.copies, name)
+
+    def start(self, items: list[pytest.Item], deadline_scale_factor: float) -> None:
+        """写しを全部作ってから子を起こす(写しを作れずに落ちたら、次の検が同じ所で落ちて名指す)。file の無い子(消えた
+        BROKEN の例・元の文が 1 つでない変異)は起こさない — その検は子を待つ前に名指す。"""
+        if self._runs is not None:
+            return
+        children = (_child_of(item) for item in items)
+        scripts = [self._script(*child) for child in children if child is not None]
+        self._runs = {
+            script: self._pool.submit(_run_hy, script, deadline_scale_factor)
+            for script in scripts
+            if script.is_file()
+        }
+
+    def result(self, script: Path) -> subprocess.CompletedProcess[str]:
+        assert self._runs is not None, (
+            "子を起こす前に結末を待った — 検は children の fixture から受け取る"
+        )
+        return self._runs[script].result()
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=True, cancel_futures=True)
+
+
+@pytest.fixture(scope="module")
+def _children(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Children]:
+    children = Children(tmp_path_factory.mktemp("mutants"))
+    yield children
+    children.close()
+
+
+@pytest.fixture
+def children(
+    _children: Children, request: pytest.FixtureRequest, deadline_scale_factor: float
+) -> Children:
+    """子の池(負荷の倍率は関数の scope の fixture なので、module の scope の池へ最初の検が渡す)。"""
+    _children.start(request.session.items, deadline_scale_factor)
+    return _children
 
 
 def _expected(name: str) -> Path:
@@ -160,8 +255,8 @@ def _macro_violations(source: str, filename: str) -> list[str]:
 
 
 @pytest.mark.parametrize("name", _runnable())
-def test_example_runs(name: str, deadline_scale_factor: float) -> None:
-    result = _run_hy(EXAMPLES / name, deadline_scale_factor)
+def test_example_runs(name: str, children: Children) -> None:
+    result = children.result(EXAMPLES / name)
     assert result.returncode == 0, result.stdout + result.stderr
     expected = _expected(name)
     assert expected.is_file(), (
@@ -174,23 +269,14 @@ def test_example_runs(name: str, deadline_scale_factor: float) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(CASE_FAILURE_MUTANTS))
-def test_case_failure_shows_in_compared_output(
-    name: str, deadline_scale_factor: float, tmp_path: Path
-) -> None:
-    """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない。
-
-    写しは examples/ の dir ごと複製して作る — 例は兄弟の file(共有の helper・data)と並んだ場所で走る物で、
-    1 file だけを別の dir へ移すと、変異と関わりなく import で落ちる(設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 A)。"""
-    source = (EXAMPLES / name).read_text(encoding="utf-8")
-    original, mutated = CASE_FAILURE_MUTANTS[name]
-    assert source.count(original) == 1, (
+def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
+    """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない(写しの作り方は
+    _write_mutant)。"""
+    original, _ = CASE_FAILURE_MUTANTS[name]
+    assert (EXAMPLES / name).read_text(encoding="utf-8").count(original) == 1, (
         f"変異の元の文 {original!r} が {name} に 1 つだけ在るのではない — 変異を例に合わせて書き直す"
     )
-    copy = tmp_path / EXAMPLES.name
-    shutil.copytree(EXAMPLES, copy)
-    mutant = copy / name
-    mutant.write_text(source.replace(original, mutated), encoding="utf-8")
-    result = _run_hy(mutant, deadline_scale_factor)
+    result = children.result(_mutant(children.copies, name))
     assert result.returncode == 0, (
         f"変異を当てた写しが 0 以外で終わった — 変異が件の外で例を落とした(件の中だけで失敗する変異を選ぶ)\n"
         f"{result.stdout}{result.stderr}"
@@ -202,9 +288,9 @@ def test_case_failure_shows_in_compared_output(
 
 
 @pytest.mark.parametrize("name", sorted(BROKEN))
-def test_broken_example_is_still_broken(name: str, deadline_scale_factor: float) -> None:
+def test_broken_example_is_still_broken(name: str, children: Children) -> None:
     assert (EXAMPLES / name).is_file(), f"BROKEN の行 {name} の例が examples/ に無い — 行を外す"
-    result = _run_hy(EXAMPLES / name, deadline_scale_factor)
+    result = children.result(EXAMPLES / name)
     assert result.returncode != 0, (
         f"{name} は走るようになった — BROKEN の行(理由: {BROKEN[name]})を外す"
     )
