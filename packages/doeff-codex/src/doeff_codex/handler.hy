@@ -174,8 +174,9 @@
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
   "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンを名乗る記録(lines.TurnRecord — どの記録が名乗るかは lines が
    決める)は名乗ったターンの出来事へ(終わりは end へ — 終わりには、そのターンで重ねた口座の枠の知らせから作った利用枠切れの事実
-   UsageLimitHit を載せる)・codex からの要求は走っているターンへ(答えを待つ id として)・口座の枠の知らせ(RateLimits — ターンを
-   名乗らない)は走っているターンで重ねて積む・ほかは走っているターンへ(無ければ outside)。turn/start の答え(ターンの id を名乗る)と
+   UsageLimitHit を載せる)・codex からの要求は走っているターンへ(答えを待つ id として)・口座の枠の窓を運ぶ記録(lines.LimitRecord —
+   どの記録が運ぶかは lines が決める・ターンを名乗らない)は走っているターンの枠に重ねて積む(ターンをまたいで持ち越さない)・ほかは
+   走っているターンへ(無ければ outside)。turn/start の答え(ターンの id を名乗る)と
    turn/started は、読んだ時点で走っているターンを立てる(mark-running)— 答えを待つ側が起きる前に読んだ、ターンを名乗らない行も
    そのターンへ積むため(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS で再現した競合)。終わったターンを名乗る遅れた記録(後ろで走った命令の
    終わり — 前のターンの終わりの後に、次のターンの間かターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っている
@@ -191,13 +192,6 @@
     (lines.ErrorResponse) (setv (get runtime.answers record.id) record)
     (lines.TurnStarted) (do (.mark-running runtime record.turn-id)
                             (.add-event runtime (.log-of runtime record.turn-id) record))
-    (lines.RateLimits)
-    (do (setv log (.running-log runtime))
-        (if (is log None)
-            (setv runtime.outside (+ runtime.outside #(record)))
-            (do (<- limits (merged-limits log.limits record))
-                (setv log.limits limits)
-                (.add-event runtime log record))))
     (lines.ServerRequest)
     (do (setv log (.running-log runtime))
         (if (is log None)
@@ -210,17 +204,26 @@
         (setv ended (replace record :usage-limit hit))
         (.add-event runtime log ended)
         (when (is log.end None) (setv log.end ended)))
-    _ (if (isinstance record lines.TurnRecord)
-          (do (val named (.log-of runtime record.turn-id))
-              (val running (.running-log runtime))
-              (cond
-                (is named.end None) (.add-event runtime named record)
-                (is-not running None) (.add-event runtime running record)
-                True (setv runtime.late (+ runtime.late #(record)))))
-          (do (val current (.running-log runtime))
-              (if (is current None)
-                  (setv runtime.outside (+ runtime.outside #(record)))
-                  (.add-event runtime current record))))))
+    _ (cond
+        (isinstance record lines.LimitRecord)
+        (do (setv log (.running-log runtime))
+            (if (is log None)
+                (setv runtime.outside (+ runtime.outside #(record)))
+                (do (<- limits (merged-limits log.limits record))
+                    (setv log.limits limits)
+                    (.add-event runtime log record))))
+        (isinstance record lines.TurnRecord)
+        (do (val named (.log-of runtime record.turn-id))
+            (val running (.running-log runtime))
+            (cond
+              (is named.end None) (.add-event runtime named record)
+              (is-not running None) (.add-event runtime running record)
+              True (setv runtime.late (+ runtime.late #(record)))))
+        True
+        (do (val current (.running-log runtime))
+            (if (is current None)
+                (setv runtime.outside (+ runtime.outside #(record)))
+                (.add-event runtime current record))))))
 
 
 (deff on-line [#^ SessionRuntime runtime #^ int generation #^ str raw]  ; defk にできない: CodexProcess の読み手の thread が呼ぶ callback

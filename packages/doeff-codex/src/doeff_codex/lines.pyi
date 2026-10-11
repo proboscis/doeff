@@ -439,6 +439,7 @@ class Unparsed:
     reason: str
 CodexLine: TypeAlias = Response | ErrorResponse | ServerRequest | ThreadStarted | TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | RateLimits | TurnError | TurnEnded | Other | Unparsed
 TurnRecord: TypeAlias = TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | TurnError | TurnEnded
+LimitRecord = RateLimits
 
 @dataclass(frozen=True, kw_only=True)
 class ErrorFacts:
