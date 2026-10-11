@@ -1,10 +1,11 @@
-"""関数の本体の中に入れ子で書いた defk・defp・deftest が、外の関数に局所の名を作らない事の検(card ki-964823cd7feb)。
+"""関数の本体の中に入れ子で書いた defk・defp・deftest・defmcp-tool が、外の関数に局所の名を作らない事の検
+(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b)。
 
 defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助
 (と `doeff_hy`・`pytest`・`_doeff_QuotedForms`)を import する。関数の本体の中でそれを import すると、名が関数全体の
 局所の名になり、同じ関数で先に読む traverse / for/do の `_doeff_do`、本体の文の guard の `_guard_statement_value`、
 最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は card ki-c67428538aec・
-tests/test_fnk_do_bang_scope.py)。module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。
+tests/test_fnk_do_bang_scope.py)。defmcp-tool も展開の頭で `_doeff_do`・`McpToolDef`・`McpParamSchema` を import する。module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。
 """
 
 import sys
@@ -31,12 +32,14 @@ _SCOPE_LEAKING_NAMES = frozenset(
         "_doeff_QuotedForms",
         "doeff_hy",
         "pytest",
+        "McpToolDef",
+        "McpParamSchema",
     }
 )
 
 # module の段の defk が 1 つ在る(書き手の module の普通の形)— 入れ子の外の関数が先に読む補助は module の globals に在る
 _HEADER = """
-(require doeff-hy.macros [defk defp deftest <- traverse for/do])
+(require doeff-hy.macros [defk defp deftest defmcp-tool <- traverse for/do])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (defk _module-level [] {:pre [] :post [(: % int)]} 0)
 """
@@ -161,6 +164,30 @@ _CASES = {
         _collection_values,
         [2, 4, 6],
     ),
+    # 素の defn の for/do の `_doeff_do` の読みの後に、入れ子の defmcp-tool の import が来る(card ki-9de0a906e39b の再現の手順)
+    "defmcp-tool-in-defn-after-for-do": (
+        """
+        (defn subject [items]
+          (setv p (for/do (<- x (From items)) (* x 2)))
+          (defmcp-tool echo "Echo" [{:name "text" :type "string" :description "text"}] text)
+          p)
+        """,
+        _collection_values,
+        [2, 4, 6],
+    ),
+    # 外の defk の traverse の後に入れ子の defmcp-tool — 外の関数から tool の handler を呼べる
+    "defmcp-tool-in-defk-after-traverse": (
+        """
+        (defk subject [items]
+          {:pre [(: items list)] :post [(: % int)]}
+          (<- coll (traverse (<- x (Iterate items)) (* x 2)))
+          (defmcp-tool inc "Inc" [{:name "y" :type "integer" :description "y"}] (+ y 1))
+          (<- r ((. inc handler) (len items)))
+          r)
+        """,
+        _run_defk([1, 2, 3]),
+        4,
+    ),
     # 関数の中の class の本体の defk は class の段の展開のまま(method は module の globals の補助を読む)
     "defk-in-class-in-defn": (
         """
@@ -203,6 +230,7 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
         (defk subject [x] {:pre [(: x int)] :post [(: % int)]} x)
         (defp program {:post [(: % int)]} 1)
         (deftest test-top (assert True))
+        (defmcp-tool top-tool "Top" [{:name "y" :type "integer" :description "y"}] y)
         (defclass Base [] (defn m [self y] y))
         (defclass Child [Base]
           (defk m [self y] {:pre [(: self Child) (: y int)] :post [(: % int)]} (+ 1 (.m (super) y))))
@@ -210,6 +238,8 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     )
     assert mod.subject.__qualname__ == "subject"
     assert mod.test_top.__qualname__ == "test_top"
+    assert mod._top_tool_mcp_handler.__qualname__ == "_top_tool_mcp_handler"
+    assert mod.top_tool.handler is mod._top_tool_mcp_handler
     assert mod.Child.m.__qualname__ == "Child.m"
     assert _run(mod.Child().m(2)) == 3
     assert _run(mod.program) == 1
