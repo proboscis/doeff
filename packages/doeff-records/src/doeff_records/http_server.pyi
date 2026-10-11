@@ -33,6 +33,7 @@ REQUEST_MAX_BYTES: int
 class MaintenancePlan:
     interval_seconds: float
     keep_seconds: float
+    archive: Callable | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class RepoCommit:

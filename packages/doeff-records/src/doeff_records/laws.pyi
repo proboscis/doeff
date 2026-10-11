@@ -146,6 +146,9 @@ def law_none_removes_a_field(harness: LawHarness) -> _Program[list[object], obje
 def law_maintenance_prunes_and_sweeps(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
+def law_prune_stops_at_the_archived_seq(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
 def law_put_rows_is_all_or_nothing(harness: LawHarness) -> _Program[list[object], object]:
     ...
 

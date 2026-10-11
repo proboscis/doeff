@@ -2,6 +2,7 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
+from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff_time import Delay as Delay
 from doeff_records.values import Unreachable as Unreachable
@@ -13,9 +14,14 @@ class SweepExpired(EffectBase):
 @dataclass(frozen=True)
 class PruneChanges(EffectBase):
     keep_seconds: float
+    upto_seq: int | None = None
 
     def __post_init__(self) -> None:
         ...
+
+@dataclass(frozen=True)
+class ArchivedThrough:
+    seq: int
 
 @dataclass(frozen=True)
 class Swept:
@@ -30,9 +36,13 @@ class Pruned:
 class MaintenanceReport:
     swept: Swept | Unreachable
     pruned: Pruned | Unreachable
+    archived: ArchivedThrough | Unreachable | None = None
 
-def maintenance_tick(keep_seconds: int | float) -> _Program[MaintenanceReport, object]:
+def prune_after_archive(keep_seconds: int | float, archive: Callable | None) -> _Program[MaintenanceReport, object]:
     ...
 
-def maintenance_loop(interval_seconds: int | float, keep_seconds: int | float, ticks: int | None) -> _Program[list, object]:
+def maintenance_tick(keep_seconds: int | float, archive: Callable | None) -> _Program[MaintenanceReport, object]:
+    ...
+
+def maintenance_loop(interval_seconds: int | float, keep_seconds: int | float, archive: Callable | None, ticks: int | None) -> _Program[list, object]:
     ...

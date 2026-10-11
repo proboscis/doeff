@@ -6,7 +6,7 @@
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
-                            law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
+                            law-none-removes-a-field law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-expired-keys-are-remembered
                             law-expired-records-are-unseen-before-a-sweep law-a-write-clears-the-expired-row-it-touches
                             law-an-expired-key-answers-the-same-before-and-after-a-sweep law-short-page-ends-the-stream])
@@ -119,6 +119,12 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-maintenance-prunes-and-sweeps harness))
+  (assert transcript))
+
+(deftest test-prune-stops-at-the-archived-seq
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-prune-stops-at-the-archived-seq harness))
   (assert transcript))
 
 (deftest test-put-rows-is-all-or-nothing
