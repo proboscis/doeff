@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import pytest
@@ -64,6 +64,17 @@ _turn_vm_oracle_on(True)
 # constant.  A genuine hang is still bounded: the factor is capped, so the
 # worst case is CAP x the base deadline, not unbounded.
 #
+# Oversubscription is the 1-minute load average over the CPUs THIS process may
+# use — its affinity, cut by the CPU quota (cgroup v2 cpu.max) of its cgroup and
+# every cgroup above it — not over the machine's cores.  A container limited to
+# 8 CPUs on a 16-core machine still sees 16 in os.cpu_count() and its affinity,
+# and dividing by 16 halved what it lived through.  Measured 2026-10-11 20:00
+# JST (the daily run on atlas): the worker Pod sat at 7.3-8.0 of its 8 CPUs from
+# 20:10 to 20:40, and a 30 s child of packages/doeff-adr/tests/
+# test_indexed_collection.py was killed (card ki-bb91f171d222).  The load
+# average still counts the whole machine, so load from outside the cgroup reads
+# high — the safe side: a deadline held longer, bounded by the cap.
+#
 # BOTH deadlines scale together, and the watchdog stays strictly above the
 # per-test deadline.  Scaling only one is worse than scaling neither: raising
 # pytest-timeout alone moves the failure into the watchdog, which does not
@@ -105,13 +116,61 @@ _PROC_SELF_CGROUP = Path("/proc/self/cgroup")
 _CGROUP_MOUNT = Path("/sys/fs/cgroup")
 
 
+def _affinity_cpus() -> int:
+    """The CPUs the scheduler lets this process run on (the machine's where there is no affinity call — macOS)."""
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is None:
+        return os.cpu_count() or 1
+    return len(affinity(0)) or 1
+
+
+def _cpu_max(path: Path) -> float | None:
+    """One cgroup's CPU quota in CPUs (``cpu.max`` = "<quota> <period>"); None = unlimited or no file."""
+    try:
+        quota, period = path.read_text().split()
+    except FileNotFoundError:  # this cgroup has no cpu controller
+        return None
+    if quota == "max":
+        return None
+    return int(quota) / int(period)
+
+
+def _cgroup_cpu_limit() -> float | None:
+    """The tightest CPU quota on this process's cgroup v2 and the cgroups above it, in CPUs.
+
+    None where there is none: no quota, cgroup v1 only, or no /proc (macOS).  The mount
+    shows at least this process's own cgroup — in a container (a cgroup namespace) the
+    mount itself is that cgroup and /proc/self/cgroup names it "/".
+    """
+    try:
+        lines = _PROC_SELF_CGROUP.read_text().splitlines()
+    except FileNotFoundError:  # no /proc (macOS)
+        return None
+    own = next((line.removeprefix("0::") for line in lines if line.startswith("0::")), None)
+    if own is None:
+        return None
+    parts = PurePosixPath(own).parts[1:]
+    quotas = (
+        _cpu_max(_CGROUP_MOUNT.joinpath(*parts[:depth]) / "cpu.max")
+        for depth in range(len(parts), -1, -1)
+    )
+    return min((quota for quota in quotas if quota is not None), default=None)
+
+
+def usable_cpus() -> float:
+    """The CPUs this process can use: its affinity, cut to the CPU quota of its cgroups."""
+    affinity = float(_affinity_cpus())
+    limit = _cgroup_cpu_limit()
+    return affinity if limit is None else min(affinity, limit)
+
+
 def _oversubscription() -> float:
-    """1-minute load average per core; 1.0 on an idle or unmeasurable machine."""
+    """1-minute load average per CPU this process may use; 1.0 on an idle or unmeasurable machine."""
     try:
         load1 = os.getloadavg()[0]
     except (OSError, AttributeError):
         return 1.0
-    return max(1.0, load1 / (os.cpu_count() or 1))
+    return max(1.0, load1 / usable_cpus())
 
 
 def deadline_scale(setting: str, cap: float) -> float:
@@ -259,7 +318,7 @@ def pytest_configure(config):
         # usual must say so rather than just come back green.
         print(
             f"\ndeadline scale x{_DEADLINE_SCALE:.1f} "
-            f"(load/core) — per test {scaled_per_test:.0f}s, "
+            f"(load per usable CPU) — per test {scaled_per_test:.0f}s, "
             f"watchdog {_WATCHDOG_TIMEOUT}s\n",
             file=sys.stderr,
             flush=True,
@@ -346,6 +405,18 @@ def per_test_deadline(request: pytest.FixtureRequest) -> float | None:
     """The deadline pytest-timeout enforces on the requesting test (None = no deadline)."""
     deadline = enforced_deadline(request.node)
     return deadline if deadline > 0 else None
+
+
+@pytest.fixture
+def deadline_scale_factor() -> float:
+    """This run's load factor, for a deadline a test sets itself — a child process's ``timeout=``.
+
+    The deadlines pytest-timeout enforces are scaled above; a number a test hands a
+    subprocess is not, and stays fixed while the machine is oversubscribed (2026-10-11
+    20:00: a 30 s child of packages/doeff-adr/tests/test_indexed_collection.py, 1.5 s
+    alone, was killed — card ki-bb91f171d222).
+    """
+    return _DEADLINE_SCALE
 
 
 def pytest_runtest_setup(item):

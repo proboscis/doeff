@@ -3,6 +3,7 @@
 import ast
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -37,17 +38,33 @@ def indexed_project(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) 
     return pytester
 
 
-def collect(project: pytest.Pytester) -> pytest.RunResult:
-    return project.runpytest_subprocess(
-        "--collect-only", "-q", "-p", "no:cacheprovider", timeout=30
-    )
+# 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。
+CHILD_DEADLINE_SECONDS = 30
+
+Collect = Callable[[pytest.Pytester], pytest.RunResult]
+
+
+@pytest.fixture
+def child_deadline(deadline_scale_factor: float) -> float:
+    """子 1 つの制限時間。root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸ばす(card ki-bb91f171d222)。"""
+    return CHILD_DEADLINE_SECONDS * deadline_scale_factor
+
+
+@pytest.fixture
+def collect(child_deadline: float) -> Collect:
+    def run(project: pytest.Pytester) -> pytest.RunResult:
+        return project.runpytest_subprocess(
+            "--collect-only", "-q", "-p", "no:cacheprovider", timeout=child_deadline
+        )
+
+    return run
 
 
 def nodeids(result: pytest.RunResult) -> list[str]:
     return [line for line in result.stdout.lines if line.startswith("test_") and "::" in line]
 
 
-def test_plugin_import_defers_runtime_api_and_preserves_exports() -> None:
+def test_plugin_import_defers_runtime_api_and_preserves_exports(child_deadline: float) -> None:
     script = """
 import sys
 import doeff_adr.pytest_plugin
@@ -76,14 +93,14 @@ else:
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=child_deadline,
         check=False,
     )
     assert result.returncode == 0, result.stderr
 
 
 def test_duplicate_records_keep_last_value_and_first_position(
-    indexed_project: pytest.Pytester,
+    indexed_project: pytest.Pytester, collect: Collect
 ) -> None:
     project = indexed_project
     project.makefile(
@@ -108,7 +125,7 @@ def test_duplicate_records_keep_last_value_and_first_position(
 
 
 def test_unknown_hooks_import_real_module_and_keep_added_items(
-    indexed_project: pytest.Pytester,
+    indexed_project: pytest.Pytester, collect: Collect
 ) -> None:
     project = indexed_project
     conftest = project.path / "conftest.py"
@@ -157,7 +174,9 @@ def pytest_collection_finish(session):
     project.runpytest_subprocess("-q", "-p", "no:cacheprovider").assert_outcomes(passed=3)
 
 
-def test_fixture_visibility_and_nested_override(indexed_project: pytest.Pytester) -> None:
+def test_fixture_visibility_and_nested_override(
+    indexed_project: pytest.Pytester, collect: Collect
+) -> None:
     project = indexed_project
     project.makefile(
         ".hy",
@@ -211,7 +230,9 @@ def used(answer):
     project.runpytest_subprocess("-q", "-p", "no:cacheprovider").assert_outcomes(passed=7)
 
 
-def test_indirect_and_individual_marks_use_normal_import(indexed_project: pytest.Pytester) -> None:
+def test_indirect_and_individual_marks_use_normal_import(
+    indexed_project: pytest.Pytester, collect: Collect
+) -> None:
     project = indexed_project
     conftest = project.path / "conftest.py"
     conftest.write_text(
@@ -244,7 +265,7 @@ def indirect(request):
 
 
 def test_plain_items_share_closures_without_definition_nodes(
-    indexed_project: pytest.Pytester,
+    indexed_project: pytest.Pytester, collect: Collect
 ) -> None:
     project = indexed_project
     for file in ("test_one", "test_two"):
@@ -289,7 +310,7 @@ def pytest_collection_finish(session):
 
 
 def test_fixture_registration_between_files_invalidates_closure(
-    indexed_project: pytest.Pytester,
+    indexed_project: pytest.Pytester, collect: Collect
 ) -> None:
     project = indexed_project
     for filename in ("test_one", "test_two"):
@@ -336,7 +357,7 @@ def pytest_collection_finish(session):
 
 
 def test_recollection_in_same_process_owns_new_fixture_cache(
-    indexed_project: pytest.Pytester,
+    indexed_project: pytest.Pytester, collect: Collect
 ) -> None:
     project = indexed_project
     project.makefile(
@@ -357,6 +378,8 @@ def test_recollection_in_same_process_owns_new_fixture_cache(
 def test_path_patterns_keep_symlink_external_globs_and_collected_files(
     indexed_project: pytest.Pytester,
     tmp_path: Path,
+    collect: Collect,
+    child_deadline: float,
 ) -> None:
     project = indexed_project
     nested = project.path / "nested"
@@ -394,14 +417,16 @@ def pytest_collection_finish(session):
         str(external),
         "--collect-only",
         "-q",
-        timeout=30,
+        timeout=child_deadline,
     )
     assert outside.ret != 0
     assert "outside pytest root" in outside.stdout.str()
 
 
 @pytest.mark.semgrep
-def test_pytest_patch_guard_rejects_mutation_and_accepts_local_cache(tmp_path: Path) -> None:
+def test_pytest_patch_guard_rejects_mutation_and_accepts_local_cache(
+    tmp_path: Path, child_deadline: float
+) -> None:
     import yaml
 
     root = Path(__file__).resolve().parents[3]
@@ -438,7 +463,7 @@ item = Function.from_parent(collector, name=name, fixtureinfo=info)
         ["semgrep", "--test", "--config", str(config), str(fixture)],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=child_deadline,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -446,7 +471,7 @@ item = Function.from_parent(collector, name=name, fixtureinfo=info)
 
 
 def test_unknown_report_wrapper_preserves_module_additions(
-    indexed_project: pytest.Pytester,
+    indexed_project: pytest.Pytester, collect: Collect, child_deadline: float
 ) -> None:
     project = indexed_project
     project.makefile(
@@ -470,12 +495,12 @@ def pytest_make_collect_report(collector):
     return (yield)
 """
     )
-    result = project.runpytest_subprocess("-q", "-p", "no:cacheprovider", timeout=30)
+    result = project.runpytest_subprocess("-q", "-p", "no:cacheprovider", timeout=child_deadline)
     result.assert_outcomes(passed=2)
     assert "収集で import 1 file" in result.stdout.str()
 
 
-def test_lazy_runtime_import_keeps_import_errors() -> None:
+def test_lazy_runtime_import_keeps_import_errors(child_deadline: float) -> None:
     script = """
 import importlib.abc
 import sys
@@ -493,10 +518,23 @@ else:
     raise AssertionError('the original import error must reach the caller')
 """
     result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=child_deadline,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
 
+
+@pytest.mark.parametrize("deadline_scale_factor", [2.0])
+def test_child_deadline_follows_the_load_scale(child_deadline: float) -> None:
+    """子の制限時間は、root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸びる(card ki-bb91f171d222)。
+
+    反例: 子ごとの固定の 30 秒。日次 10-11 20:00 の atlas で worker の Pod が CPU の枠 8 に張り付いた間、
+    test_plain_items_share_closures_without_definition_nodes の 2 回目の子(単独なら 1.5 秒)が 30 秒で殺された。
+    """
+    assert child_deadline == pytest.approx(2.0 * CHILD_DEADLINE_SECONDS)
 
 
 def test_every_child_deadline_in_this_file_is_scaled() -> None:
