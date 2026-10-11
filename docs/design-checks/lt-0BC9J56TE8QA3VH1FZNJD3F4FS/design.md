@@ -17,8 +17,10 @@
 |---|---|---|
 | 競合の直し(読みの thread がターンを立てる) | 42e67d88e(この依頼より前・別の card ki-a59d80e0afa9) | L2086 |
 | turn/started の順の検(依頼のする事 1) | 6e09cde279ca8885e2cdace00d79821bfd1bdd0f | L2093 |
-| 盲検 A・B を受けた失敗ケース(赤) | 5ed5df176 | この記録と同じ登記 |
-| 盲検 A を受けた直し(緑) | f977f0d8c | 同上 |
+| 盲検 A・B を受けた失敗ケース(赤) | 5ed5df176(載せ直して 017dd1c37) | この記録と同じ登記 |
+| 盲検 A を受けた直し(緑) | f977f0d8c(載せ直して 410824c82) | 同上 |
+
+§7・§8 の実行記録は、載せ直す前の版 f977f0d8c(origin の branch `wt/design-check-lt-0bc9` に残す)で取った。登記の前に、同じ handler.hy・lines.hy を触った上流の 2a963f0db・61f060009(子の agent の thread の行を会話のターンに積まない — card ki-c09b93b72bff)の上へ衝突なく載せ直した(branch `wt/design-check-lt-0bc9-r2`)。載せ直した版でも触った所の検は 78 passed だった(`evidence/rebased-touched-tests.log`)。上流が足した記録は窓を運ばず、LimitRecord の一致の検も緑。
 
 書いた順:
 
@@ -155,5 +157,5 @@
 - LimitRecord の一致の検は欄の型の式だけを見る。窓を素の `tuple` や dict で運ぶ欄は拾わない。
 - handler が LimitRecord を使わず、新しい記録の class の枝を足す事は止めない(その時は handler の変更になる)。
 - 答えを待つ側が current-turn を書く事を止める静的な規則は無い。順の検 2 つが、absorb の呼びだけで割り当てが決まる事を確かめる。
-- 前提の外(未確認): codex の multiAgentMode で子 thread の turn/started が同じ stdout に来るなら、absorb は thread の id を見ずに走っているターンを立てる(盲検 A の付記)。子 thread の行が同じ stdout に来るかは確かめていない。§4 の前提「1 つの会話に 1 本の読みの thread」の外に当たる。
+- 前提の外: 盲検 A は付記で、子の agent の thread の turn/started が同じ stdout に来るなら、absorb は thread の id を見ずに走っているターンを立てる、と書いた。これは §4 の前提「1 つの会話に 1 本の読みの thread」の外。この記録では確かめていない。ただ載せ直した上流の 61f060009 が、会話の thread でない thread を名乗る記録を absorb の頭で outside へ置くようにした(録った行 other-tools・card ki-c09b93b72bff)。
 - 盲検の実際の model と effort は観測していない。

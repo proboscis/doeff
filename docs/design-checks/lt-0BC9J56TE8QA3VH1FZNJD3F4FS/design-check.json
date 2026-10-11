@@ -10,7 +10,7 @@
   "requirements": "codex の会話のターンが口座の利用枠で落ちた時、尽きた窓の戻りの刻が毎回 agora まで届く(R1)。turn/started の後・走っているターンの印を置く前に読んだ枠の知らせがそのターンの記録に積まれる事を absorb を順に呼んで決定的に確かめる(R2・受入 c09f307b3)。ターンの id を持たない知らせを終わったターンや outside に落とさない(R3)。agora の結合の検 test_codex_usage_limit_on_agent_runtime.hy が負荷の下でも続けて 12 回緑(R4・受入 cfd9ac1d3)。card ki-e154a953dee7。",
   "design": {
     "path": "design.md",
-    "sha256": "eb70a4c428fb64d63ad6990b11f70f74264c7e1bddc4b746cab5e8feb162fa74"
+    "sha256": "33de8d5208686c2f91129a32c2af1d6887d43bc7b069818913f6a3b4a13b9732"
   },
   "modules": [
     {
