@@ -14,18 +14,28 @@ object)に出会うと、前はその module の file の sha256 で覆ってい
 読めない時(source の無い module・読みの誤り・Hy の import の形)は ``None`` か :attr:`Binding.unresolved` を返し、歩みの側は
 安全側に file の全体で覆う。Hy の定義(defn など)の本体は import の時と呼ばれた時を分けず、その名に触れる定義の form を文として
 入れる。
+
+読みは source の中身と名(と読み方 — この module の code・Python の版・拡張子・Hy の版と hy.repr の登録)だけで決まる純な計算
+なので、process の中の覚えに加え、置き場(:mod:`doeff_hy_bytecode_guard.code_store` の種類 ``.binding``)に中身で引いて覚える —
+新しい process の照らしが、同じ中身の source を毎回解き直していた(agora-redesign card ki-38508e6e56fd — 検の読み込みで照らしの
+歩みの約 2/3)。読めない file(OSError)は覚えない。解けない source の読み(None)は中身で決まるので覚える。
 """
 
 import ast
+import io
 import os
+import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
-#: 読みの覚え(process の中 — file の path → (更新時刻・大きさ・読んだ物))。
-_PARSED: dict[str, "ParsedModule"] = {}
+#: 中身の覚え(process の中 — file の path → 更新時刻・大きさ・中身)。
+_SOURCES: dict[str, "SourceFile"] = {}
 
-#: 読んだ束縛の覚え(process の中 — (file の path・大域の名) → (読んだ source・束縛))。
-_BINDINGS: dict[tuple[str, str], tuple["ParsedModule", "Binding | None"]] = {}
+#: 解いた物の覚え(process の中 — file の path → (解いた中身・解いた物))。
+_PARSED: dict[str, tuple["SourceFile", "PythonModule | HyModule | None"]] = {}
+
+#: 読んだ束縛の覚え(process の中 — (file の path・大域の名) → (読んだ中身・束縛))。
+_BINDINGS: dict[tuple[str, str], tuple["SourceFile", "Binding | None"]] = {}
 
 #: 呼んでも値そのものを書き換えない method(``名.get(…)`` など)。結果は名から得た値(中の値を指しうる)として、その行き先を
 #: 同じ規則で遡って判じる。
@@ -91,71 +101,101 @@ class HyModule:
 
 
 @dataclass(frozen=True)
-class ParsedModule:
-    """file の状態(更新時刻・大きさ)と、読んだ source。"""
+class SourceFile:
+    """file の状態(更新時刻・大きさ)と、その時に読んだ中身の bytes — process の中の覚えの単位。"""
 
     mtime_ns: int
     size: int
-    source: PythonModule | HyModule
+    data: bytes
 
 
 def binding_of(path: str, name: str) -> Binding | None:
-    """module の file の source から、大域 ``name`` の束縛と書き換えを読む(読めなければ None — file の状態ごとに 1 度)。"""
-    parsed = _parsed(path)
+    """module の file の source から、大域 ``name`` の束縛と書き換えを読む(読めなければ None — process の中では file の状態ごとに
+    1 度・process をまたいでは source の中身ごとに 1 度)。"""
+    source = _source(path)
+    if source is None:
+        return None
     remembered = _BINDINGS.get((path, name))
-    if parsed is not None and remembered is not None and remembered[0] is parsed:
+    if remembered is not None and remembered[0] is source:
         return remembered[1]
-    binding = _binding_in(parsed, name)
-    if parsed is not None:
-        _BINDINGS[(path, name)] = (parsed, binding)
+    binding = _stored_binding(source, path, name)
+    _BINDINGS[(path, name)] = (source, binding)
     return binding
 
 
-def _binding_in(parsed: "ParsedModule | None", name: str) -> Binding | None:
-    """読んだ source から大域 ``name`` の束縛と書き換えを読む。"""
-    match parsed:
-        case None:
-            return None
-        case ParsedModule(source=PythonModule(body=body)):
-            return _python_binding(body, name)
-        case ParsedModule(source=HyModule(forms=forms)):
-            return _hy_binding(forms, name)
-
-
-def _parsed(path: str) -> ParsedModule | None:
-    """file を読んで解く(process の中で file の状態ごとに 1 度)。Python・Hy の source でない・読めない・解けない時は None。"""
+def _source(path: str) -> SourceFile | None:
+    """file の中身(process の中で file の状態ごとに 1 度読む — 読めなければ None)。"""
     try:
         status = os.stat(path)
     except OSError:
         return None
-    remembered = _PARSED.get(path)
+    remembered = _SOURCES.get(path)
     if (
         remembered is not None
         and remembered.mtime_ns == status.st_mtime_ns
         and remembered.size == status.st_size
     ):
         return remembered
-    source = _read(path)
-    if source is None:
+    try:
+        with open(path, "rb") as stream:
+            data = stream.read()
+    except OSError:
         return None
-    parsed = ParsedModule(status.st_mtime_ns, status.st_size, source)
-    _PARSED[path] = parsed
+    source = SourceFile(status.st_mtime_ns, status.st_size, data)
+    _SOURCES[path] = source
+    return source
+
+
+def _stored_binding(source: SourceFile, path: str, name: str) -> Binding | None:
+    """大域 ``name`` の束縛 — 置き場(:mod:`doeff_hy_bytecode_guard.code_store` の種類 BINDING_SUFFIX)に同じ中身の source の読みが
+    あればそれ、無ければ source を解いて読み、置き場へ足す。読みは source の中身と名(と Python・Hy の版とこの module の code)だけで
+    決まる純な計算なので、process・作業木・版をまたいで中身で引いてよい(生きた値は覚えない — 歩みの側が毎回辿る)。"""
+    entry = _binding_entry(source, path, name)
+    if entry is not None:
+        stored = _read_binding_entry(entry)
+        if not isinstance(stored, _Missing):
+            return stored
+    binding = _binding_in(_parsed(source, path), name)
+    if entry is not None:
+        _write_binding_entry(entry, binding)
+    return binding
+
+
+def _binding_in(parsed: "PythonModule | HyModule | None", name: str) -> Binding | None:
+    """読んだ source から大域 ``name`` の束縛と書き換えを読む。"""
+    match parsed:
+        case None:
+            return None
+        case PythonModule(body=body):
+            return _python_binding(body, name)
+        case HyModule(forms=forms):
+            return _hy_binding(forms, name)
+
+
+def _parsed(source: SourceFile, path: str) -> PythonModule | HyModule | None:
+    """file の中身を解く(process の中で file の状態ごとに 1 度)。Python・Hy の source でない・解けない時は None。"""
+    remembered = _PARSED.get(path)
+    if remembered is not None and remembered[0] is source:
+        return remembered[1]
+    parsed = _read(source.data, path)
+    _PARSED[path] = (source, parsed)
     return parsed
 
 
-def _read(path: str) -> PythonModule | HyModule | None:
-    """source を解く(Python は ast・Hy は Hy の読み — 自前の reader macro などで読めなければ None)。"""
+def _read(data: bytes, path: str) -> PythonModule | HyModule | None:
+    """source を解く(Python は ast・Hy は Hy の読み — 自前の reader macro などで読めなければ None)。path は種類(拡張子)と誤りの
+    文にだけ使う(解いた物は中身だけで決まる)。"""
     try:
-        with open(path, encoding="utf-8") as stream:
-            text = stream.read()
-    except (OSError, UnicodeDecodeError):
+        # 文字の file として開いた時と同じ読み(UTF-8・改行の正規化)。
+        text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8").read()
+    except UnicodeDecodeError:
         return None
     if path.endswith(".py"):
         try:
             return PythonModule(tuple(ast.parse(text, filename=path).body))
         except (SyntaxError, ValueError):
             return None
-    if path.endswith((".hy", ".hyk", ".hyp")):
+    if path.endswith(_HY_SUFFIXES):
         import hy  # Hy の source に当たった時だけ
         from hy.errors import HyError
 
@@ -164,6 +204,228 @@ def _read(path: str) -> PythonModule | HyModule | None:
         except (HyError, SyntaxError, ValueError):
             return None
     return None
+
+
+# ---- 置き場の束縛の entry ------------------------------------------------------------------------------------------------
+
+
+#: 束縛の entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に入れる
+#: この module の file の sha256(:func:`_own_digest`)が覆う。
+BINDING_TAG = "doeff-hy/bound-source/1"
+
+_HY_SUFFIXES = (".hy", ".hyk", ".hyp")
+
+
+@dataclass(frozen=True)
+class _Missing:
+    """置き場に使える entry が無い印(entry の中身の None = 束縛が読めない source、と分けるため)。"""
+
+
+@dataclass(frozen=True)
+class OwnCode:
+    """この module の file の中身の sha256(読めなければ None — 読み方の code が分からないので置き場を使わない)。"""
+
+    sha256: str | None
+
+
+#: この module の code の覚え(process に 1 度 — 鍵は "own" の 1 つだけ)。
+_OWN: dict[str, OwnCode] = {}
+
+
+def _own_digest() -> str | None:
+    """この module の file の中身の sha256 — 読み方の code を変えた版が、前の版の読みを置き場から引かないため(読めなければ None)。"""
+    known = _OWN.get("own")
+    if known is None:
+        known = _OWN.setdefault("own", _read_own_code())
+    return known.sha256
+
+
+def _read_own_code() -> OwnCode:
+    """この module の file を読んで sha256 を作る。"""
+    import hashlib  # 置き場を使う時だけ読む
+
+    try:
+        with open(__file__, "rb") as stream:
+            return OwnCode(hashlib.sha256(stream.read()).hexdigest())
+    except OSError:
+        return OwnCode(None)
+
+
+def _binding_entry(source: SourceFile, path: str, name: str) -> str | None:
+    """束縛の entry の path(置き場を使わない設定・この module の code を読めない・Hy の文の形が process の登録で変わりうる時は
+    None)。鍵 = 印・この module の code・Python の版の全部(ast の形)・source の種類(拡張子で読み方が違う)・Hy の読みと文の形
+    (:func:`_hy_reading`)・名・source の中身。"""
+    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
+
+    store = code_store.store_dir()
+    own = None if store is None else _own_digest()
+    if store is None or own is None:
+        return None
+    hy_source = path.endswith(_HY_SUFFIXES)
+    reading = _hy_reading() if hy_source else ""
+    if reading is None:
+        return None
+    kind = "hy" if hy_source else "py" if path.endswith(".py") else "other"
+    parts = (BINDING_TAG, own, sys.version, kind, reading, name)
+    return code_store.entry_path(
+        store, code_store.content_key(parts, source.data), code_store.BINDING_SUFFIX
+    )
+
+
+def _hy_reading() -> str | None:
+    """Hy の source の読みと文の形(``hy.repr``)を決める物 — Hy の版と、hy.repr の登録の表(process の中の共有の表)の指紋。表に
+    Hy 自身と組み込み以外の関数が登録されている時は None(その関数の code は鍵で覆えない — 置き場を使わない)。Hy の読み
+    (``hy.read_many``)は毎回新しい reader で、process の reader macro に依らない。"""
+    import importlib  # Hy の source に当たった時だけ
+
+    import hy
+
+    # hy.repr の登録の表の持ち主(Hy の module — 型検査器からは見えないので名で引く)。表の形が違えば読み方が分からない。
+    registry = vars(importlib.import_module("hy.core.hy_repr")).get("_registry")
+    if not isinstance(registry, dict):
+        return None
+    rows = tuple(sorted(_repr_row(kind, entry) for kind, entry in registry.items()))
+    if any(not row.function.startswith(("hy.", "builtins.")) for row in rows):
+        return None
+    return f"{hy.__version__}\0{rows!r}"
+
+
+@dataclass(frozen=True, order=True)
+class ReprRow:
+    """hy.repr の登録の表の行 1 つ(型・登録した関数・入れ子の印の名)— 表の指紋を作るため。"""
+
+    kind: str
+    function: str
+    placeholder: str
+
+
+def _repr_row(kind: object, entry: object) -> ReprRow:
+    """登録の表の行を名で書く(関数の組の形が違う行は、関数を読めない行として書く — Hy 自身の関数と数えない)。"""
+    kind_name = f"{getattr(kind, '__module__', '')}.{getattr(kind, '__qualname__', '')}"
+    match entry:
+        case (function, placeholder):
+            name = f"{getattr(function, '__module__', '')}.{getattr(function, '__qualname__', '')}"
+            return ReprRow(kind_name, name, repr(placeholder))
+        case _:
+            return ReprRow(kind_name, f"unreadable:{type(entry).__qualname__}", "")
+
+
+def _read_binding_entry(entry: str) -> "Binding | None | _Missing":
+    """置き場の束縛の entry を読む(無ければ _Missing)。形の違う entry は名指して除き、_Missing(呼び手は解き直して足し直す)。"""
+    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
+
+    data = code_store.read_entry(entry)
+    if data is None:
+        return _Missing()
+    import marshal  # 当たった時だけ読む
+
+    try:
+        value = marshal.loads(data)
+    except (EOFError, ValueError, TypeError) as error:
+        code_store.discard_entry(entry, f"marshal で読めない: {error}")
+        return _Missing()
+    binding = _binding_from_parts(value)
+    if isinstance(binding, _Missing):
+        code_store.discard_entry(entry, "束縛の形が違う")
+    return binding
+
+
+def _write_binding_entry(entry: str, binding: Binding | None) -> None:
+    """読んだ束縛を置き場へ足す(書かない設定では名指しの置き場だけ — loader_hooks の code の足し方と同じ決め。書けない置き場では
+    黙って足さない — 置き場は速さのためだけ)。"""
+    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
+
+    if sys.dont_write_bytecode and not code_store.store_is_named():
+        return
+    import marshal  # 足す時だけ読む
+
+    code_store.write_entry(entry, marshal.dumps(_binding_parts(binding)))
+
+
+#: 置き場の entry の中身の形(marshal の境界 — 欄の名と型は :class:`Binding` が持ち、ここは書く時と読む時の並びだけ)。
+BindingParts = (
+    tuple[
+        tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
+        tuple[str, ...],
+        tuple[tuple[str, int, str], ...],
+        bool,
+        bool,
+    ]
+    | None
+)
+
+
+def _binding_parts(binding: Binding | None) -> BindingParts:
+    """束縛を marshal で書ける組にする(None はそのまま — 読めない source)。:func:`_binding_from_parts` の逆。"""
+    if binding is None:
+        return None
+    return (
+        tuple((s.text, s.loads, s.attributes) for s in binding.statements),
+        binding.mutators,
+        tuple((i.module, i.level, i.name) for i in binding.imports),
+        binding.bound,
+        binding.unresolved,
+    )
+
+
+def _binding_from_parts(value: object) -> "Binding | None | _Missing":
+    """置き場から読んだ組を束縛に組む(形が違えば _Missing)。"""
+    match value:
+        case None:
+            return None
+        case (
+            tuple() as statements,
+            tuple() as mutators,
+            tuple() as imports,
+            bool() as bound,
+            bool() as unresolved,
+        ):
+            read_statements = tuple(_statement_from_parts(row) for row in statements)
+            read_imports = tuple(_import_from_parts(row) for row in imports)
+            names = _names_of(mutators)
+            if (
+                any(row is None for row in read_statements)
+                or any(row is None for row in read_imports)
+                or names is None
+            ):
+                return _Missing()
+            return Binding(
+                tuple(row for row in read_statements if row is not None),
+                names,
+                tuple(row for row in read_imports if row is not None),
+                bound,
+                unresolved,
+            )
+        case _:
+            return _Missing()
+
+
+def _statement_from_parts(row: object) -> Statement | None:
+    """束縛の entry の文の行 1 つ(形が違えば None)。"""
+    match row:
+        case (str() as text, tuple() as loads, tuple() as attributes):
+            read_loads = _names_of(loads)
+            read_attributes = _names_of(attributes)
+            if read_loads is None or read_attributes is None:
+                return None
+            return Statement(text, read_loads, read_attributes)
+        case _:
+            return None
+
+
+def _import_from_parts(row: object) -> ImportedName | None:
+    """束縛の entry の import の行 1 つ(形が違えば None)。"""
+    match row:
+        case (str() as module, int() as level, str() as name):
+            return ImportedName(module, level, name)
+        case _:
+            return None
+
+
+def _names_of(values: tuple[object, ...]) -> tuple[str, ...] | None:
+    """entry から読んだ並びを名(文字列)の並びとして読む(名でない物があれば None)。"""
+    names = tuple(value for value in values if isinstance(value, str))
+    return names if len(names) == len(values) else None
 
 
 # ---- Python ------------------------------------------------------------------------------------------------------

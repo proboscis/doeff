@@ -38,9 +38,11 @@ def _parses(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seen: list[str] = []
     reading = bound_source._read
 
-    def counting(*args: object) -> object:
-        seen.extend(str(arg) for arg in args if isinstance(arg, str))
-        return reading(*args)
+    def counting(
+        data: bytes, path: str
+    ) -> "bound_source.PythonModule | bound_source.HyModule | None":
+        seen.append(path)
+        return reading(data, path)
 
     monkeypatch.setattr(bound_source, "_read", counting)
     return seen
@@ -98,17 +100,21 @@ def test_a_custom_hy_repr_keeps_hy_readings_out_of_the_store(
 ) -> None:
     # Hy の文の形(hy.repr)は process の中の共有の登録の表に依る。Hy 自身と組み込みの外の関数が登録された process は、置き場を
     # 使わない(その関数の code は鍵で覆えない)。
+    import importlib
+
     import hy
-    from hy.core import hy_repr
 
     class Probe:
         """検だけの型。"""
 
-    registry = vars(hy_repr)["_registry"]
-    monkeypatch.setitem(registry, Probe, (lambda value: "probe", None))
+    registry = vars(importlib.import_module("hy.core.hy_repr"))["_registry"]
+    monkeypatch.setitem(registry, Probe, (lambda _value: "probe", None))
     source = tmp_path / "table.hy"
     source.write_text('(setv TABLE {"a" 1})\n', encoding="utf-8")
     binding = bound_source.binding_of(str(source), "TABLE")
-    assert binding is not None and binding.statements, binding
-    assert _entries(store) == (), "Hy 自身の外の hy.repr の登録がある process で、Hy の読みを置き場に足した"
+    assert binding is not None
+    assert binding.statements, binding
+    assert _entries(store) == (), (
+        "Hy 自身の外の hy.repr の登録がある process で、Hy の読みを置き場に足した"
+    )
     assert hy.repr(Probe()) == "probe"
