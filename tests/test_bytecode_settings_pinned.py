@@ -12,16 +12,26 @@ when bytecode files were written under the checkout during it (agora-redesign#63
 A test whose subprocesses need bytecode asks for the ``subprocess_bytecode`` fixture: its
 subprocesses write and reuse bytecode in one directory of the run under pytest's temporary
 directory, while the test body keeps the pinned settings (agora-redesign#2818).
+
+A subprocess started with an environment of its own (EnvMode.REPLACE) does not get the pin, and
+its first act is to write the bytecode of the interpreter's startup modules into the checkout.
+The run clears that bytecode when its tests start and looks for it after every test, so the
+test that wrote it is the one named — on a developer's tree, where an earlier run left the same
+bytecode in place, as well as in the daily run (card ki-23c3280da1a5).
 """
 
 from __future__ import annotations
 
 import importlib.util
 import os
+import py_compile
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 from tests._root_conftest_runs import REPO_ROOT, run_under_root_conftest
 
@@ -126,3 +136,75 @@ def test_a_run_that_writes_bytecode_into_the_checkout_fails(tmp_path: Path) -> N
     assert result.returncode != 0, result.stdout
     assert "bytecode file(s) were written under the checkout during this run" in result.stdout
     assert "in-tree-cache/" in result.stdout
+
+
+# The inner checkout's startup module is a sitecustomize on PYTHONPATH (the inner run's own interpreter is this
+# repository's .venv, whose startup modules are the outer run's to watch).  The children start Python the way a
+# child with an environment of its own (EnvMode.REPLACE) does: only the allowed names, so the conftest's
+# PYTHONDONTWRITEBYTECODE=1 is not among them, and no -B.  -S keeps a child off this repository's .venv startup
+# (it would write the outer run's startup bytecode); the child imports the inner startup module itself.
+WRITERS_AMONG_BYSTANDERS = """
+import os
+import subprocess
+import sys
+
+import pytest
+
+
+def start_python_with_an_environment_of_its_own():
+    env = {"PATH": os.environ["PATH"], "PYTHONPATH": os.environ["PYTHONPATH"]}
+    subprocess.run([sys.executable, "-S", "-c", "import sitecustomize"], env=env, check=True)
+
+
+def test_starts_python_with_an_environment_of_its_own():
+    start_python_with_an_environment_of_its_own()
+
+
+def test_runs_after_it():
+    pass
+
+
+@pytest.fixture(scope="class")
+def python_started_for_the_class():
+    start_python_with_an_environment_of_its_own()
+
+
+class TestUnderAWiderFixture:
+    def test_first(self, python_started_for_the_class):
+        pass
+
+    def test_last_of_the_session(self, python_started_for_the_class):
+        pass
+"""
+
+
+@pytest.mark.parametrize(
+    "tree_holds_startup_bytecode",
+    [
+        pytest.param(True, id="developer-tree"),  # an earlier run without the pin left it in place
+        pytest.param(False, id="fresh-tree"),  # the daily run: a new checkout and .venv under the pin
+    ],
+)
+def test_the_test_that_writes_startup_bytecode_is_named_not_the_last_test(
+    tmp_path: Path, tree_holds_startup_bytecode: bool
+) -> None:
+    startup = tmp_path / "startup"
+    startup.mkdir()
+    source = startup / "sitecustomize.py"
+    source.write_text("")
+    if tree_holds_startup_bytecode:
+        compiled = py_compile.compile(str(source), cfile=importlib.util.cache_from_source(str(source)))
+        an_hour_ago = time.time() - 3600
+        os.utime(compiled, (an_hour_ago, an_hour_ago))
+
+    result = run_under_root_conftest(
+        tmp_path, WRITERS_AMONG_BYSTANDERS, env={"PYTHONPATH": str(startup)}, budget=50.0
+    )
+
+    named = [line.split()[1] for line in result.stdout.splitlines() if line.startswith("ERROR ")]
+    assert named == [
+        "test_probe.py::test_starts_python_with_an_environment_of_its_own",
+        "test_probe.py::TestUnderAWiderFixture::test_first",
+    ], result.stdout
+    assert f"startup/__pycache__/sitecustomize.{sys.implementation.cache_tag}.pyc" in result.stdout
+    assert list(startup.rglob("*.pyc")) == [], "the run leaves the tree without the bytecode it named"
