@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | 実装(card ki-2d5b129f2ff2) | c9e1622b589dcde007b42baaa5817ea9332b61e7(L2120 で main に着地) | 実施済み |
 | 盲検の前の主張と盲検の入力 | 3769c3e85 | 実施済み(実装の後に固めた — 下の注) |
-| 盲検 A・B の直し | 7d56f9307b(branch `wt/design-check-lt-4z5w`) | 実施済み・この記録と一緒にマージの列へ載せる |
+| 盲検 A・B の直し | 7d56f9307b(branch `wt/design-check-lt-4z5w`。main へ載せ直した版は 6207142d6 — §7.3) | 実施済み・この記録と一緒にマージの列へ載せる |
 | 測り直し(c0〜c9) | 7d56f9307b | 実施済み |
 
 注: 依頼 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の class は investigate で、実装と着地を先に行い、終わりの検査が設計検証を求めた。主張は実装の後で、盲検の前に固めた([design-before-blind.md](design-before-blind.md)・sha256 3f2b0c4e…)。§1〜§3 の主張はその file のとおりで、この文書では書き換えない。
@@ -117,6 +117,11 @@ design-before-blind.md §2 の 5 つ(macros・traverse-lib・examples・example-
 | c7 | 負 | S3(盲検 A) | A の変更の上で `…` を合計まで広げると、変異の検が赤 |
 | c8 | 負 | S1(盲検 B) | B の差分で、表の検が「Hy の付ける名が在る」で赤 |
 | c9 | 正 | S1(盲検 B) | 名の所を `…` にすると、答えを変えない macro の変更を足しても 3 passed |
+
+### 7.3 マージの前の載せ直し
+
+マージの列へ載せる前に、main が 8389145e0(doeff-hy の macro の記録と fnk の展開の変更)へ進んだので、その上へ載せ直した(直しの commit は 6207142d6)。
+`packages/doeff-traverse` の木は 7d56f9307 と同じ(`git diff 7d56f9307 6207142d6 -- packages/doeff-traverse` が 0 行)。載せ直した版でも検の file は全部緑だった([evidence/checks/c0r-rebased-green.txt](evidence/checks/c0r-rebased-green.txt) — 32 passed, 1 skipped)。c1〜c9 は 7d56f9307 で測った物で、載せ直した版では測り直していない。
 
 ## 8. 残る限界(強制していない事)
 

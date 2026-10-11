@@ -13,7 +13,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "157d5a82114257f35e939903c2c333c13920a8cb9703e8366a9800b98af6c8de"
+    "sha256": "1e9e6a97dad24a442d5c0e57940bdeeb5e2bf2da4e0566acf8a4629b66e75c58"
   },
   "modules": [
     {
@@ -242,6 +242,15 @@
       "expectation": "盲検 B の機能で Hy の名の所を … にすると、答えを変えない macro の変更(072dce983 の前の展開)を足しても緑",
       "observation": "3 passed(表の検・test_example_runs[ex07]・変異の検[ex07])",
       "evidence": {"path": "evidence/checks/c9-blind-b-any-names-macro-green.txt", "sha256": "2f43f54a997f312620f5d6ee237d5697df5ae54f5ba2791eb8ade71d6b96b6fc"},
+      "status": "passed"
+    },
+    {
+      "id": "c0r",
+      "scenarios": ["S1", "S2", "S3"],
+      "control": "positive",
+      "expectation": "main 8389145e0 の上へ載せ直した版 6207142d6(doeff-traverse の木は 7d56f9307 と同じ)でも検の file が全部緑",
+      "observation": "32 passed, 1 skipped",
+      "evidence": {"path": "evidence/checks/c0r-rebased-green.txt", "sha256": "26f43f3613aeadb250e44be33344b7f66271676b54e476ed6222a73f1c516e5a"},
       "status": "passed"
     },
     {

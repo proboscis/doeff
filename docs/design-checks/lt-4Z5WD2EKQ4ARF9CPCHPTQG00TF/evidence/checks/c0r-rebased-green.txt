@@ -1,0 +1,10 @@
+# c0r: 載せ直した版(main 8389145e0dda1a58f8b8319910896d897aadc43e の上)で検の file が全部緑
+対象の版: 6207142d6b0100ff6157791a155bf6f776095e0c(7d56f9307 の載せ直し・doeff-traverse の木は 7d56f9307 と同じ: git diff 7d56f9307 6207142d6b0100ff6157791a155bf6f776095e0c -- packages/doeff-traverse の行数 = 0)・作業木 /home/ubuntu/.worktrees/doeff-wt-dc-4z5w
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q
+
+deadline scale x3.3 (load per usable CPU) — per test 200s, watchdog 300s
+
+test-admission: focused — 33 件(変更箇所の検証)
+................s................                                        [100%]
+32 passed, 1 skipped in 97.91s (0:01:37)
+pytest rc=0
