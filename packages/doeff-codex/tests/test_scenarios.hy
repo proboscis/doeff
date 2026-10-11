@@ -13,6 +13,7 @@
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
                              Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight BackendLost])
 (import tests.scenario_steps [settings read-until read-to-end read-to-first-delta records-of])
+(import tests.interpreters [USAGE-LIMIT-HIT])
 
 
 (deftest test-the-text-deltas-reach-the-page-in-order-and-the-turn-ends-once
@@ -35,6 +36,21 @@
   (assert (= seqs (tuple (sorted (set seqs)))) seqs)
   (val end-seq (next (gfor event so-far.events :if (isinstance event.record TurnEnded) event.seq)))
   (assert (all (gfor event so-far.events :if (isinstance event.record TextDelta) (< event.seq end-seq))) so-far.events))
+
+
+(deftest test-a-usage-limited-turn-ends-failed-with-the-usage-limit-fact
+  ;; 口座の利用枠切れで断られたターンは、誤りの種類 usageLimitExceeded の失敗で終わり、その終わりが利用枠切れの事実(口座が待つ窓の
+  ;; 長さ・戻りの刻・codex の文)を運ぶ — 本番の handler は録った枠の知らせから作り、fake は筋書きの事実をそのまま出す
+  ;; (上の層は同じ終わりを読む・card ki-a59d80e0afa9)。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "USAGE-LIMIT please")))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (val end so-far.end)
+  (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.FAILED) (= end.error-kind "usageLimitExceeded")) end)
+  (assert (= end.usage-limit USAGE-LIMIT-HIT) end)
+  (assert (= end.error-message USAGE-LIMIT-HIT.text) end))
 
 
 (deftest test-an-interrupted-turn-ends-interrupted-and-the-process-takes-the-next-turn
