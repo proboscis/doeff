@@ -58,6 +58,49 @@ PROBE = """\
 
 BASE = {"LABEL": "(+ head prefix)"}
 
+# := の無い handler だけの module。上の PROBE は := を持つ remembering と並べるので、展開が module に出す Put / Some の
+# import を remembering が読み、:= の無い handler の分の「import が使われていない」の赤が隠れていた(agora-controllers の
+# 日次 2026-10-11 16:00 — profile_openings.hy など 7 file・各 Put / Some の 2 件)。
+LABELLED_ONLY = """\
+(require doeff-hy.macros [defhandler])
+(import probe_effects [Name])
+
+(defhandler labelled
+  "Name に固定の前置きで答える(session val だけ — := の無い handler)。"
+  {:tags {:context "probe" :role "protocol"}}
+  (session val head "x-")
+  (Name [prefix]
+    (resume (+ head prefix))))
+"""
+
+# := を持つ handler だけの module(Put / Some の import を外し過ぎていない事の見張り — 外せば名が未定義の赤)。
+COUNTING_ONLY = """\
+(require doeff-hy.macros [defhandler])
+(import probe_effects [Tick])
+
+(defhandler counting
+  "Tick を数える(session var と := だけ)。"
+  {:tags {:context "probe" :role "protocol"}}
+  (session var count 0)
+  (Tick [step]
+    (:= count (+ count step))
+    (resume count)))
+"""
+
+# 旧い lazy-var と set! だけの module。set! は (<- (Put key (Some 名))) に展開するので、:= が無くても Put / Some を使う。
+LEGACY_SET_ONLY = """\
+(require doeff-hy.macros [defhandler <- set!])
+(import probe_effects [Tick])
+
+(defhandler counting
+  "Tick を数える(旧い lazy-var と set!)。"
+  {:tags {:context "probe" :role "protocol"}}
+  (lazy-var count 0)
+  (Tick [step]
+    (set! count (+ count step))
+    (resume count)))
+"""
+
 
 def _render(change: dict[str, str]) -> str:
     text = PROBE
@@ -86,6 +129,18 @@ def _line_of(text: str, fragment: str) -> int:
 @needs_pyright
 def test_strict_has_no_error_from_session_expansions(tmp_path: Path) -> None:
     assert _check(tmp_path, _render({})) == []
+
+
+@needs_pyright
+@pytest.mark.parametrize(
+    "text",
+    [LABELLED_ONLY, COUNTING_ONLY, LEGACY_SET_ONLY],
+    ids=["no-assign", "assign", "legacy-set"],
+)
+def test_strict_has_no_error_for_one_handler_module(tmp_path: Path, text: str) -> None:
+    # := も set! も無い handler の展開は Put / Some の import を出さない(出せば strict の reportUnusedImport が 2 件)。
+    # := / set! を持つ handler は今までどおり出す(出さなければ Put / Some が未定義の赤)。
+    assert _check(tmp_path, text) == []
 
 
 @needs_pyright
