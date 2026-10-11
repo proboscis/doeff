@@ -22,6 +22,10 @@ import の外で bytecode を前もって作る道具は :func:`source_to_code_a
 置いた中で compile し、記録を付ける — 記録の無い .pyc は読みの口が compile し直す)。前の木から引き継いだ .pyc を
 焼き直すかは :func:`bytecode_is_current`(読みの口と同じ照らし方)で決める。
 
+同じ保存先(code_store)で、dataclass が型ごとに作る関数の source の compile も中身で覚える(:mod:`doeff_hy_bytecode_guard.dataclass_code`
+— compile は文と Python の版だけで決まるので照らしは要らない。読み込みの固定費の大半が型ごとの compile だった・card ki-e77d44aa61e5)。
+dataclasses は読み込み済みの時だけ包む(起動時の :func:`install` と Hy の source の初めての読み)。
+
 入れる所は venv の起動時(doeff-hy が配る ``doeff_hy_bytecode_guard.pth``)と ``import doeff_hy`` の 2 か所。
 どちらも :func:`install` を呼ぶだけで、何度呼んでも 1 度しか包まない。Hy の import の前でも後でも効く
 (前なら Hy の ``source_to_code`` の下に、後なら上に入る — どちらでも compile の直後に一覧を足せる)。
