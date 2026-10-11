@@ -106,3 +106,14 @@ def test_a_run_that_reads_everything_from_the_store_starts_no_pool(
     second = project_closure(tmp_path, [tmp_path], [main], cache, limit=3)
     assert started == [], "全部引ける実行で pool を起こした"
     assert _shape(second) == _shape(first)
+
+
+def test_the_expander_limit_defaults_to_four_and_is_set_by_the_environment() -> None:
+    """展開の子の数の上限は既定 4(core の数ではない — 36 core の機体で検査 2 本が 30 本超の子を起こした・2026-10-11)。環境変数
+    DOEFF_HY_CHECK_EXPANDERS で替えられ、1 以上の整数でない値は黙って既定へ落とさず断る。"""
+    assert static_check.expander_limit(None) == 4
+    assert static_check.expander_limit("") == 4
+    assert static_check.expander_limit("2") == 2
+    for wrong in ("0", "-1", "four", "1.5"):
+        with pytest.raises(ValueError, match="DOEFF_HY_CHECK_EXPANDERS"):
+            static_check.expander_limit(wrong)

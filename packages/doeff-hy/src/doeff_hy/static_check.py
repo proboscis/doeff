@@ -655,7 +655,21 @@ def _to_cache(projection: Projection) -> CachedProjection:
 
 #: 保存から引けない依存の展開を並べる子の process の数の上限(agora-redesign #3869)。日次の検証の機体(CPU の上限が在る Pod)でも、
 #: 手で測る時でも同じ値 — 実際の数は min(この上限, この process が使える CPU の数, その段の引けない file の数)。
-EXPANDER_LIMIT = 8
+#: 8 → 4(2026-10-11): 36 core の機体で同じ作業木の検査 2 本と別の検 4 本が重なり load 163 になった(展開の子と forkserver で 30 本超)。
+#: 1 本の速さより、同じ機体で並ぶ検査の合計を抑える。機体ごとに替える時は環境変数 EXPANDERS_ENV(入口の main だけが読む)。
+EXPANDER_LIMIT = 4
+EXPANDERS_ENV = "DOEFF_HY_CHECK_EXPANDERS"
+
+
+def expander_limit(configured: str | None) -> int:
+    """展開の子の数の上限を決める(configured = 環境変数 EXPANDERS_ENV の値・無ければ EXPANDER_LIMIT)。1 以上の整数でない値は
+    黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。"""
+    if configured is None or not configured.strip():
+        return EXPANDER_LIMIT
+    text = configured.strip()
+    if not text.isdigit() or int(text) < 1:
+        raise ValueError(f"{EXPANDERS_ENV} は 1 以上の整数: {configured!r}")
+    return int(text)
 
 
 class ExpansionWorkerLostError(RuntimeError):
@@ -1120,7 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
     report = hy_files([placed for _, placed in named if placed is not None])
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
-        closure = project_closure(root, roots, report, cache_dir)
+        closure = project_closure(root, roots, report, cache_dir, expander_limit(os.environ.get(EXPANDERS_ENV)))
         checked = run_pyright(
             root, settings, closure.projections, report, args.pyright, args.python
         )
