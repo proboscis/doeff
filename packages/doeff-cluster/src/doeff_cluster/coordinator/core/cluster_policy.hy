@@ -1849,9 +1849,17 @@
   (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances)
                                      :if (or (and s.handoff (in s.name running))
                                              (and (not s.handoff) (not s.once) (in s.name held) (in s.name running) (not-in s.name taken)))
-                                     (if (and (is-not s.ready-instance None) (not-in s.ready-instance own) (not staying))
+                                     (cond
+                                       staying s
+                                       (and (is-not s.ready-instance None) (not-in s.ready-instance own))
                                          (replace s :superseded-by s.ready-instance)
-                                         s)))
+                                       ;; 止まりの始まった重なりの組(AL-D2n): 今の世代の process が Ready と数えられていない拍(負荷の
+                                       ;; 間など)でも印を付ける — 印が無いと、退かせた process が終わった後に、この世代の worker が
+                                       ;; 新しい試行を起こし、今の世代の process から lease を取る(10-11 21:29 JST の zeus)。値は今の
+                                       ;; 世代(worker は値を読まず、在るかだけを読む)。
+                                       (and s.handoff (is-not run None) run.leaving)
+                                         (replace s :superseded-by (+ "generation:" (or (getattr (.get state.workers name) "boot" None) "")))
+                                       True s)))
                   :tasks (tuple (gfor offer (tasks-for state name boot)
                                       :setv task (get state.tasks offer.id)
                                       :if (and task.detached (= task.boot boot))

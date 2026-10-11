@@ -41,7 +41,9 @@
   ;; 世代をまたぐ入れ替えの印(handoff の job だけ・AL-D2)。同じ名の worker の新しい世代が同じ job の process を Ready にした後、
   ;; coordinator が退いた世代の worker への返事(superseded-reply)に、その Ready の process の世代の名を載せる。退いた世代の worker は
   ;; 今の process を止めずに退かせ(RetireJob — 走っている仕事を終えて自分で終わる・寿命の上限は retired-ms)、名が空いても起こし直さない
-  ;; (worker_policy.plan-job)。None = 今どおり。比べない欄(値が変わっても process を起こし直さない)。
+  ;; (worker_policy.plan-job)。退いた世代の Pod の止まりが始まった後(AL-D2k の leaving)は、今の世代の process が Ready と数えられて
+  ;; いなくても今の世代の名(generation:<boot>)を載せる(AL-D2n — 印が無いと、退かせた process の終わりの後に新しい試行を起こす)。
+  ;; worker は値を読まず、在るかだけを読む。None = 今どおり。比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ (| str None) superseded-by (field :default None :compare False))
   ;; 前の世代が動かしている印(recreate の job だけ・AL-D2f)。同じ名の worker の前の世代がまだ走っている間に起きた新しい世代への返事で、
   ;; 前の世代がこの job を動かしている間、coordinator が付ける。worker は準備と入口の検めだけをして起こさず、揃ったら状態の行を
