@@ -1,0 +1,75 @@
+# 設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP の確かめ c0〜c5 を取る。doeff の作業木の根で `bash <この file> <盲検 B の作業 dir>` と走らせる。
+# 木に当てた差分は各段の終わりに逆に当て、置いた file は消す(段の後に git status が docs/ の外で空)。
+set -u
+D=docs/design-checks/lt-C53PGBQD7WWPYAA1WWSW41BHDP
+C=$D/evidence/checks
+EX=packages/doeff-traverse/examples
+F=packages/doeff-traverse/tests/test_examples_run.py
+BLIND_B=${1:?盲検 B の作業 dir}
+mkdir -p "$C"
+
+run_check() {  # 例の検の全部を走らせ、各検の合否と要約を出す
+  echo "HEAD=$(git log -1 --format=%H)"
+  echo "木の差分(docs/ の外):"; git status --short | grep -v ' docs/' || echo "(なし)"
+  echo "\$ uv run pytest $F -q -p no:randomly -rA --tb=line $*"
+  uv run pytest "$F" -q -p no:randomly -rA --tb=line "$@" 2>&1 | grep -E '^(PASSED|FAILED|ERROR|SKIPPED)|^E? *AssertionError|^/.*AssertionError|passed|failed' | cut -c1-400
+  echo "exit=${PIPESTATUS[0]}"
+}
+
+# c0(S1・S2 正常): 直した後の版で例の検が全部緑
+{ echo "# c0: 直した後の版で例の検が全部緑"; run_check; } > "$C/c0-all-green.txt" 2>&1
+
+# c1(S1 正常): 答えを変えない macro の変更 2 つを当て、examples・期待の出力・例の検を変えずに緑
+git apply "$D/evidence/gensym-rename.patch.txt" && git apply "$BLIND_B/s1-macro-change.patch"
+{ echo "# c1: 答えを変えない macro の変更 2 つ(盲検 B の s1-macro-change.patch = 実行時の traverse の展開から余分な (do …) を外す・gensym-rename.patch.txt = <- の展開の gensym の名 bound → bound_value)を当て、examples と例の検は変えない"; git diff --stat; run_check; } > "$C/c1-macro-change-examples-green.txt" 2>&1
+git apply -R "$BLIND_B/s1-macro-change.patch" && git apply -R "$D/evidence/gensym-rename.patch.txt"
+
+# c2(S1 失敗): 展開を印字する例(盲検 B の ex04 の節・盲検 A の ex10)と、消した ex04_debug を戻すと赤
+git apply "$BLIND_B/proposed-ex04.patch"
+cp "$D/blind/a-files/ex10_for_do_desugar.hy.txt" "$EX/ex10_for_do_desugar.hy"
+cp "$D/blind/a-files/ex10_for_do_desugar.expected.txt" "$EX/expected/ex10_for_do_desugar.txt"
+git show cefb92a17fcbfc2bf44801e26dfe7ced66f22041:$EX/ex04_debug.hy > "$EX/ex04_debug.hy"
+{ echo "# c2: 盲検 B の proposed-ex04.patch・盲検 A の ex10(期待の出力つき)・cefb92a17 の ex04_debug を置く — 展開の引き出しと、件を走らせない file を断るか"; run_check; } > "$C/c2-expansion-printing-examples-red.txt" 2>&1
+git apply -R "$BLIND_B/proposed-ex04.patch"
+rm "$EX/ex10_for_do_desugar.hy" "$EX/expected/ex10_for_do_desugar.txt" "$EX/ex04_debug.hy"
+
+# c3(S2 正常): 新しい読み物の例(ex04_simple の写し)を期待の出力つきで足すと、検の表を変えずに緑
+cp "$EX/ex04_simple.hy" "$EX/ex10_simple_copy.hy"
+cp "$EX/expected/ex04_simple.txt" "$EX/expected/ex10_simple_copy.txt"
+{ echo "# c3: 新しい読み物の例 ex10_simple_copy.hy(ex04_simple の写し)と期待の出力を足す — 例の検は変えない"; run_check; } > "$C/c3-new-example-green.txt" 2>&1
+rm "$EX/ex10_simple_copy.hy" "$EX/expected/ex10_simple_copy.txt"
+
+# c4(S2 失敗): doeff の外の run(asyncio.run・例の中で定義した run)だけを呼ぶ debug 用の file に、
+# 標準出力どおりの期待の出力を置いても赤 — 盲検 B の 2 つ目の穴。あわせて盲検 B の runner_probe を直した後の検に当てる
+cat > "$EX/ex10_debug_repr.hy" <<'HY'
+;;; debug: defk が返す物の型を見る(件を走らせない)
+(require doeff-hy.macros [defk])
+(import asyncio)
+
+(defk double [x]
+  {:pre [(: x int)]
+   :post [(: % int)]}
+  (* x 2))
+
+(defn run [] (print "type:" (. (type (double 1)) __name__)))
+(run)
+(asyncio.run (asyncio.sleep 0))
+HY
+uv run python -m hy "$EX/ex10_debug_repr.hy" > "$EX/expected/ex10_debug_repr.txt"
+{ echo "# c4: 件を走らせない debug 用の file ex10_debug_repr.hy(asyncio.run と例の中で定義した run だけを呼ぶ)と、標準出力どおりの期待の出力を置く"; echo "置いた期待の出力:"; cat "$EX/expected/ex10_debug_repr.txt"; run_check; echo; echo "\$ uv run python $BLIND_B/scratch/runner_probe.py packages/doeff-traverse/tests"; uv run python "$BLIND_B/scratch/runner_probe.py" packages/doeff-traverse/tests 2>&1; echo "exit=$?"; } > "$C/c4-debug-file-other-runs-red.txt" 2>&1
+rm "$EX/ex10_debug_repr.hy" "$EX/expected/ex10_debug_repr.txt"
+
+# c5(S1・S2 失敗): inline の検が直しを守る事 — 検の file の写しで直しを 1 つずつ外すと、対応する inline の検が赤
+T=$(mktemp -d)
+mkdir -p "$T/f1/tests" "$T/f2/tests"
+sed 's/^_MACRO_EXPANDERS = frozenset({"macroexpand", "macroexpand_1", "macroexpand_all"})$/_MACRO_EXPANDERS: frozenset[str] = frozenset()/' "$F" > "$T/f1/tests/test_examples_run.py"
+sed 's/        return name if name in runners else None$/        return name if name in _PROGRAM_RUNNERS else None/' "$F" > "$T/f2/tests/test_examples_run.py"
+{ echo "# c5: 検の file の写しで F1(展開の引き出しを断る)・F2(口を doeff の物に限る)を 1 つずつ外し、inline の検だけを走らせる"
+  for v in f1 f2; do
+    echo "## $v: 元との差"; diff "$F" "$T/$v/tests/test_examples_run.py"
+    echo "\$ uv run pytest <写し>/$v/tests/test_examples_run.py -q -p no:randomly -p no:cacheprovider --tb=line -k 'macro_check_sees_nested_forms or runner_call_check_sees_nested_forms'"
+    uv run pytest "$T/$v/tests/test_examples_run.py" -q -p no:randomly -p no:cacheprovider --tb=line -k 'macro_check_sees_nested_forms or runner_call_check_sees_nested_forms' 2>&1 | grep -E '^(FAILED|PASSED)|AssertionError|passed|failed' | cut -c1-300
+    echo "exit=${PIPESTATUS[0]}"
+  done; } > "$C/c5-inline-checks-guard-the-fix-red.txt" 2>&1
+
+echo "段の後の木の差分(docs/ の外):"; git status --short | grep -v ' docs/' || echo "(なし)"

@@ -1,0 +1,298 @@
+{
+  "version": 1,
+  "task_id": "lt-C53PGBQD7WWPYAA1WWSW41BHDP",
+  "base_revision": "a2254d66cfc52f9fa9c3b4829bff2d76191bccb3",
+  "author": {
+    "conversation_id": "c-YAFJJ0FTRF4AV9NQAHV3AC8N95",
+    "model": "claude-opus-5-5",
+    "effort": "既定(この会話の設定 — 自己申告・未観測)"
+  },
+  "requirements": [
+    "R1: doeff-traverse の debug 用の 2 本(ex04_debug・ex04_debug2)を examples/ に残すか外すかを決め、doeff の docs/adr と 4 つの repo(agora・agora-controllers・doeff・dotfiles)の origin/main で名を引いた結果を card ki-3497c5fd38df に書く",
+    "R2(card の受入 cc167f1e0): 外すなら doeff の main で 2 本と比べない表の行が無い(7edd471c6・land L2133)",
+    "R3: examples/ の file は Program を走らせて結果を印字する読み物で、標準出力を期待の出力と比べられる。macro の展開や関数の番地のような doeff-hy・Hy の中身を印字する debug 用の file は置けない"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "4de9e6086506c521b58cb098c9d0901d87bf1c794d3dd0c90263d23e86ab2c0a"
+  },
+  "design_before_blind": {
+    "path": "design-before-blind.md",
+    "sha256": "6aaf55bc5f3e36275f72a295d26903aad3766281da8c33a199edb800ee815f5d"
+  },
+  "blind": {
+    "meta": {
+      "path": "blind/blind-meta.md",
+      "sha256": "5acdf0e724efc954452498852a3fbfbb09196e621c7ff03ed1ca1dd8c8a57dee"
+    },
+    "a_input": {
+      "path": "blind/blind-a-input.md",
+      "sha256": "5459ddf1114c8e67f9681a030aa5425c83ef686cb14620d36f2a6398af065b69"
+    },
+    "a_return": {
+      "path": "blind/blind-a-return.md",
+      "sha256": "9247c614f66307a86c43620c5c6a975a4e0e632932e476a82e32537dbae7614d"
+    },
+    "b_input": {
+      "path": "blind/blind-b-input.md",
+      "sha256": "5011fb778d66db0d14434375e155cc8d2b310ffc6d41a3ba10b6c8e4e5005682"
+    },
+    "b_return": {
+      "path": "blind/blind-b-return.md",
+      "sha256": "f47c4ecb942774071557245b7017c2054f6f338ba30c894e2e54d144a4b6c972"
+    }
+  },
+  "repro": [
+    {
+      "path": "evidence/repro/r1-blind-examples-green.txt",
+      "sha256": "ec389641f87b2a33ca91c2ab57b95eb94b49d95df93ee73fba3e1bac039eb1dc"
+    },
+    {
+      "path": "evidence/repro/r2-macro-change-red.txt",
+      "sha256": "320b61e6f46d79614633c15e22dd1ca50ecee70655aac2c303536d2307c2f6a9"
+    },
+    {
+      "path": "evidence/repro/r3-runner-probe.txt",
+      "sha256": "b4a16b85d52bf10e6b4ff32f692113006ed04a8c145de920ffc87b0617901d55"
+    },
+    {
+      "path": "evidence/repro/r4-ex09-without-skip-import.txt",
+      "sha256": "c1dd66449a79a2129f4649bbd5d5f2caac86e1f7d0569cfd862defb66f370850"
+    }
+  ],
+  "measure": {
+    "path": "evidence/measure.sh.txt",
+    "sha256": "62f34139a86d697d8e815129bf0227027bc621f77cd4e9dfe9f48aceba0301df"
+  },
+  "modules": [
+    {
+      "id": "macros",
+      "responsibility": "doeff-hy の macro(packages/doeff-hy/src/doeff_hy/macros.hy・outcome_forms.hy)— 在る macro の名と展開の規則",
+      "owns": [
+        "在る macro の名",
+        "展開の規則(展開の形・gensym の名)"
+      ],
+      "hides": "展開の形・gensym の名・Hy の無名関数の番号",
+      "interface": "(require doeff-hy.macros [名 …]) と、展開が使い手の module から引く名(_doeff_do・_doeff_traverse_Traverse・_doeff_traverse_Skip — macro の docstring の Requires)",
+      "effects": "展開の時だけ(compile 時)。実行時の作用は持たない",
+      "lifetime": "compile 1 回",
+      "invariants": "展開の形を変えても、例の答え(件の結果)と Requires の名は変わらない"
+    },
+    {
+      "id": "traverse-lib",
+      "responsibility": "doeff-traverse の effect と handler(packages/doeff-traverse/src)",
+      "owns": [
+        "件の失敗の方針",
+        "件の履歴の形"
+      ],
+      "hides": "handler の frame・行番号",
+      "interface": "effect の class・handler の関数",
+      "effects": "なし(effect は handler が解く)。この変更では変えない",
+      "lifetime": "Program 1 回",
+      "invariants": "件の失敗は Collection の件に記録され、Program 全体は止まらない"
+    },
+    {
+      "id": "examples",
+      "responsibility": "packages/doeff-traverse/examples/*.hy の読み物と期待の出力 examples/expected/<stem>.txt",
+      "owns": [
+        "例ごとの data・handler の組・印字",
+        "期待の出力のどこが走るたびに変わるか(印 …)"
+      ],
+      "hides": "なし(読み物 — 何を示すかを全部見せる)",
+      "interface": "python -m hy <examples の dir>/<file> が 0 で終わり、標準出力が期待の出力に合う",
+      "effects": "stdout・stderr への印字(ex05 は実時間の sleep)",
+      "lifetime": "process 1 つ",
+      "invariants": [
+        "どの例も doeff の Program を走らせる",
+        "例は macro の展開を引き出さない(展開の形は macros の隠す中身)",
+        "期待の出力に Hy の付ける名と checkout の path を置かない"
+      ]
+    },
+    {
+      "id": "example-check",
+      "responsibility": "packages/doeff-traverse/tests/test_examples_run.py — 例を走らせ、標準出力・変異・表・macro の出どころ・件を走らせる口を確かめる",
+      "owns": [
+        "例の母集団(examples/*.hy の glob)",
+        "表 BROKEN・CASE_FAILURE_MUTANTS",
+        "印 ANY = … の意味",
+        "件を走らせる口の名(_RUNNER_MODULE・_PROGRAM_RUNNERS)",
+        "例が呼ばない展開の関数(_MACRO_EXPANDERS)",
+        "合否"
+      ],
+      "hides": "下請けの関数(_program_calls・_imported_runners・_runner_call・_unquoted_subforms・_form_macro_violations・_callee ほか)",
+      "interface": "pytest の id test_example_runs_a_program[<file>]・test_example_runs[<file>]・test_case_failure_shows_in_compared_output[<file>]・test_broken_example_is_still_broken[<file>]・test_example_uses_only_doeff_hy_macros[<file>]・test_macro_check_sees_nested_forms・test_runner_call_check_sees_nested_forms・test_tables_name_examples_as_they_are・test_hy_name_check_sees_generated_names",
+      "effects": "子 process を起こす・例と期待の出力を読む・pytest の tmp_path に examples の写しを書く",
+      "lifetime": "検 1 つ。子は終わるか締切(50 秒 × deadline_scale_factor)で殺される",
+      "invariants": [
+        "比べない表は無い(走る例は全部比べる)",
+        "口は doeff から import した run・async_run か doeff.run の呼び出しだけを数える",
+        "quote・quasiquote の中の呼び出しは数えない"
+      ]
+    },
+    {
+      "id": "premerge-selection",
+      "responsibility": "pyproject.toml の [[tool.doeff.contract-tests]] の表(変更の path の頭 → マージの前に走らせる検)と、その表の検 tests/test_contract_table_follows_packages.py",
+      "owns": "どの変更で例の検を走らせるか",
+      "hides": "選び方の組み立て",
+      "interface": "表の行(packages/doeff-traverse/・packages/doeff-hy/src/doeff_hy/・packages/doeff-core-effects/doeff_core_effects/outcomes.py → packages/doeff-traverse/tests/test_examples_run.py)",
+      "effects": "検を選ぶ(この変更では変えない)",
+      "lifetime": "マージの前の 1 回",
+      "invariants": "examples・macros・outcomes の変更は例の検を選ぶ"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "doeff-hy の traverse・<- の展開の形や gensym の名を、例の答えと Requires の名を変えずに変える(例: 実行時の traverse の展開から余分な (do …) を外す・gensym の名 bound → bound_value)",
+      "claim": "変えるのは macros だけ。examples・期待の出力・example-check は 1 行も変えず、例の検は緑のまま。展開を印字したり手で写したりする file を examples/ に戻すと、E1・E3 が断る(design-before-blind.md §4 S1)",
+      "expected_scope": "macros だけ。examples・期待の出力・example-check は変えない",
+      "actual_scope": "直す前(cf27cee98): 盲検 A・B が、Program を走らせる例に hy.macroexpand の印字を足すと検を全部通る事を示し(再現 r1: 39 passed)、その後の macro の変更でその 2 本の期待の出力の書き直しが要った(r2: 2 failed)— 隠すはずの展開の形が examples に漏れた。直した後(ddbd4cd66): 同じ macro の変更 2 つで examples・検を変えずに緑(c1)、展開を印字する例は F1 で赤(c2)",
+      "changed_modules": [
+        "macros"
+      ],
+      "unchanged_modules": [
+        "examples",
+        "example-check",
+        "traverse-lib",
+        "premerge-selection"
+      ],
+      "reason": "直す前の波及は知識の漏洩(展開の形が例の期待の出力に写る)で、正当な契約の変更ではない。E1 は口の有無だけを見て、E3 は Hy の付ける名しか見なかったので、Program を走らせつつ展開を印字する例を断れなかった。盲検 A の付記の Requires の名(ex09 の Skip の import)は macros の公開の契約で、変えれば使い手全部が変わる — S1 の前提の外(再現 r4: 消すと例の検 E2 が赤)",
+      "revision": "F1: example-check の test_example_uses_only_doeff_hy_macros が hy.macroexpand・macroexpand-1・macroexpand-all の呼び出しを違反に数える(b47af0f0f・文は ddbd4cd66)。macros の口に Requires の名を書き足し、S1 の前提に「Requires の名は変えない」を足した。再検証 c1・c2・c5"
+    },
+    {
+      "id": "S2",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "新しい読み物の例(Program を走らせ、件の結果を印字する)を examples/ に足す",
+      "claim": "変えるのは examples(例と期待の出力)だけ。出力を比べずに通す除外の行は要らないし作れない。Program を走らせない debug 用の file は、期待の出力の中身に依らず E1 が赤にする(design-before-blind.md §4 S2)",
+      "expected_scope": "examples だけ(… を置く例は CASE_FAILURE_MUTANTS の 1 行も)",
+      "actual_scope": "直す前(cf27cee98): 盲検 B が、E1 の拾い方が名だけで口を数え、asyncio.run・subprocess.run・例の中で定義した run も口に見える事を示した(再現 r3)— debug 用の file が E1 を通り得た。直した後(ddbd4cd66): 新しい読み物の例は検の表を変えずに緑(c3)、doeff の外の run だけを呼ぶ debug 用の file は標準出力どおりの期待の出力でも E1 で赤(c4)",
+      "changed_modules": [
+        "examples"
+      ],
+      "unchanged_modules": [
+        "macros",
+        "traverse-lib",
+        "example-check",
+        "premerge-selection"
+      ],
+      "reason": "読み物の例を足す時の波及は examples の中で閉じる(c3)。直す前の穴は、example-check が「doeff の口」という知識を名だけで持っていた事による強制の抜け",
+      "revision": "F2: 口は doeff から import した run・async_run(別名も)か (doeff.run …) の呼び出しに限る(_imported_runners・_runner_call・b47af0f0f)。inline の検に asyncio.run・subprocess.run・例の中の defn run・別名の pure :as run を足した。再検証 c3・c4・c5"
+    },
+    {
+      "id": "S3",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "例は機体の資源に依らない script で、この変更は機体の扱いに触れない"
+    },
+    {
+      "id": "S4",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "例と期待の出力は repo の file で、保存の方法を変える要求が無い"
+    },
+    {
+      "id": "S5",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "例の検は 1 つの機体の pytest の子 process で閉じる。別の木で走る事は既存の path の検が受け持ち、この変更では変えない"
+    },
+    {
+      "id": "S6",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "例は 1 本ずつ子 process で走る。ex05 の並列は例の中身で、この変更では変えない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "c0",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "直した後の版 ddbd4cd66 で例の検が全部緑",
+      "observation": "36 passed・1 skipped(空の BROKEN の表)・exit 0",
+      "evidence": {
+        "path": "evidence/checks/c0-all-green.txt",
+        "sha256": "4f6d3429e1a39c18c8ea141443a23752289ed5431ae5f697ff4c850b5d51c54f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "答えを変えない macro の変更 2 つ(盲検 B の s1-macro-change.patch・evidence/gensym-rename.patch.txt)を当て、examples・期待の出力・例の検を変えずに緑",
+      "observation": "36 passed・1 skipped・exit 0(木の差分は macros.hy・outcome_forms.hy だけ)",
+      "evidence": {
+        "path": "evidence/checks/c1-macro-change-examples-green.txt",
+        "sha256": "8658e4860f75257439e37eaaaa814e182e82f32a2ae92995b357f345ff4dd8a9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の ex04 の展開の節・盲検 A の ex10・cefb92a17 の ex04_debug を置くと、展開の引き出しと口を呼ばない事を理由に赤",
+      "observation": "5 failed: test_example_uses_only_doeff_hy_macros[ex04_traverse_macro・ex10_for_do_desugar・ex04_debug](macroexpand の呼び出し)・test_example_runs_a_program[ex04_debug]・test_example_runs[ex04_debug](期待の出力が無い)。ex04_traverse_macro・ex10 の test_example_runs は緑 — 断ったのは F1",
+      "evidence": {
+        "path": "evidence/checks/c2-expansion-printing-examples-red.txt",
+        "sha256": "cd5504915c81b4452a6431fc3671b867b8b2c4b8196aad0b80b9bb91e4457494"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c3",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "新しい読み物の例 ex10_simple_copy.hy(ex04_simple の写し)と期待の出力を足すと、検の表を変えずに緑",
+      "observation": "39 passed・1 skipped・exit 0",
+      "evidence": {
+        "path": "evidence/checks/c3-new-example-green.txt",
+        "sha256": "f9328fc602a0d04946438b77a1770fcefabe180a575b42478f47a55bd9b238c7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c4",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "asyncio.run と例の中で定義した run だけを呼ぶ debug 用の file は、標準出力どおりの期待の出力を置いても E1 で赤。盲検 B の probe の 3 形は口と数えない",
+      "observation": "1 failed: test_example_runs_a_program[ex10_debug_repr.hy](doeff の件を走らせる口を呼ばない)・他は緑。probe: subprocess.run・asyncio.run・local defn run → いずれも []",
+      "evidence": {
+        "path": "evidence/checks/c4-debug-file-other-runs-red.txt",
+        "sha256": "e8d2204339b2070c6b8421af239fc13d37a49d9659cc69d854fb902d24c2de86"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c5",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "検の file の写しで F1(_MACRO_EXPANDERS を空)・F2(口を名だけで数える)をそれぞれ外すと、対応する inline の検が赤",
+      "observation": "f1: test_macro_check_sees_nested_forms が赤(macroexpand の違反が出ない)。f2: test_runner_call_check_sees_nested_forms が赤(['doeff.run','run'] — 別名 arun を拾わず、写しは doeff の外の run も数える形)",
+      "evidence": {
+        "path": "evidence/checks/c5-inline-checks-guard-the-fix-red.txt",
+        "sha256": "48a840de5f174b1678d2a876fde9c73cff9bcc8954ba4315e2649362ef002fe1"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

@@ -1,0 +1,14 @@
+"""例の検の _program_calls が、doeff の口でない run を口として数えるかを確かめる(検の file を import して関数だけを呼ぶ)。"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1])))
+import test_examples_run as check
+
+cases = {
+    "subprocess.run(hy2py)": '(import subprocess)\n(print (. (subprocess.run ["hy2py" "ex04_simple.hy"] :capture-output True :text True) stdout))',
+    "asyncio.run": "(import asyncio)\n(asyncio.run (main))",
+    "local defn run": "(defn run [] (print (hy.repr (hy.macroexpand '(traverse (<- v (Iterate xs)) v)))))\n(run)",
+}
+for label, source in cases.items():
+    print(label, "->", check._program_calls(source, "<probe>"))
