@@ -12,7 +12,11 @@ repos:
       # scripts/lint-doeff-cluster.sh の段は木の環境の python のまま)。semgrep_locked.py は走っている
       # python の版を uv tool run へ渡す。宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の ruamel-yaml-clib が
       # 組めずに落ちる(Pod 2026-10-10・card acp:kanban-issue:ki-a28a482132ab)。
+      # semgrep の 4 項はどれも別名 semgrep-rules を持つ — 素の commit の hook(scripts/git-hooks/pre-commit・make hooks-install と
+      # agora の担当の Pod が入れる物)が `pre-commit run semgrep-rules` で同じ 4 項を撃つ(card ki-8c0bb496bfab)。semgrep の項を足す時も
+      # 別名を書く(書き忘れは tests/test_lint_entrypoint_wiring.py の test_plain_hook_runs_every_semgrep_hook_of_the_config が赤にする)。
       - id: semgrep
+        alias: semgrep-rules
         name: semgrep architectural rules(Python・基点に無い所見だけ止める)
         entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check semgrep
         language: system
@@ -26,6 +30,7 @@ repos:
 
       # identifyにHyのtype tagは無い。Python専用linterへ渡さず、既存generic規則で検査する。
       - id: semgrep-hy
+        alias: semgrep-rules
         name: semgrep Hy architectural rules
         entry: &semgrep-entry uv run --no-project --python 3.12 python scripts/semgrep_locked.py --metrics=off --disable-version-check
           --config .semgrep.yaml --error
@@ -38,6 +43,7 @@ repos:
       # ADR-DOE-RUNNER-001 R2 / R3: 読む面(doeff-runner の src/read/)の TypeScript も同じ規則の file で検める。
       # 規則の paths.include が src/read/ だけに当たるので、ほかの TypeScript は渡さない。
       - id: semgrep-reading-plane
+        alias: semgrep-rules
         name: semgrep reading plane rules
         entry: *semgrep-entry
         language: system
@@ -48,6 +54,7 @@ repos:
       # 宣言にも当たる。Python と Hy は上の 2 項が渡すので、ここは残り(.pyi・.md・.toml・.json・.sh・Dockerfile など)を渡す。
       # 入れた時点(2026-10-02)でこの範囲の既存の規則の所見は 0 件。
       - id: semgrep-application-vocabulary
+        alias: semgrep-rules
         name: semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file)
         entry: *semgrep-entry
         language: system

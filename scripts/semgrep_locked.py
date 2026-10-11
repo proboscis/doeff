@@ -7,7 +7,8 @@ uv tool = 1.161.0・lock = 1.169.0。`.venv` の無い作業木では `uv run --
 機体で 1 つ(作業木が何本あっても 1 度だけ入る・作業木に `.venv` を作らない)。
 
 使い方: uv run --no-project --python <版> python scripts/semgrep_locked.py <semgrep の引数…>(repo の根で。semgrep の答えと終了の値をそのまま返す)。
-uv.lock に semgrep が無ければ、理由を名指して 1 で止まる(探し道の物へ黙って戻らない)。
+uv.lock に semgrep が無ければ、理由を名指して 1 で止まる(探し道の物へ黙って戻らない)。素の commit の hook が呼ぶ pre-commit も同じ
+読みで版を決める(scripts/precommit_locked.py・card ki-8c0bb496bfab)。
 """
 
 from __future__ import annotations
@@ -22,28 +23,29 @@ LOCK_FILE: str = "uv.lock"
 PACKAGE: str = "semgrep"
 
 
-def locked_version(top: Path) -> str:
-    """uv.lock が決める semgrep の版。lock が無い・semgrep が 1 つに決まらない時は理由を名指して止める(既定の版にしない)。"""
+def locked_version(top: Path, package: str = PACKAGE) -> str:
+    """uv.lock が決める package(既定は semgrep)の版。lock が無い・package が 1 つに決まらない時は理由を名指して止める(既定の版に
+    しない)。"""
     lock: Path = top / LOCK_FILE
     if not lock.is_file():
-        raise SystemExit(f"semgrep の版を決める {lock} が無い — 探し道の semgrep へは戻らない")
+        raise SystemExit(f"{package} の版を決める {lock} が無い — 探し道の {package} へは戻らない")
     parsed: dict[str, object] = tomllib.loads(lock.read_text(encoding="utf-8"))
     packages: object = parsed.get("package", [])
     versions: list[str] = (
-        [str(entry["version"]) for entry in packages if isinstance(entry, dict) and entry.get("name") == PACKAGE]
+        [str(entry["version"]) for entry in packages if isinstance(entry, dict) and entry.get("name") == package]
         if isinstance(packages, list) else []
     )
     if len(versions) != 1:
-        raise SystemExit(f"{lock} の semgrep の版が 1 つに決まらない({versions})— 探し道の semgrep へは戻らない")
+        raise SystemExit(f"{lock} の {package} の版が 1 つに決まらない({versions})— 探し道の {package} へは戻らない")
     return versions[0]
 
 
-def locked_command(top: Path) -> list[str]:
-    """uv.lock の版の semgrep を、uv の道具の置き場から呼ぶ命令(作業木の `.venv` にも探し道にも依らない)。道具の python は、この
+def locked_command(top: Path, package: str = PACKAGE) -> list[str]:
+    """uv.lock の版の package(既定は semgrep)を、uv の道具の置き場から呼ぶ命令(作業木の `.venv` にも探し道にも依らない)。道具の python は、この
     script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 渡さないと uv は木の .python-version(3.14t)を
     選び、semgrep の依存の ruamel-yaml-clib が組めない(card acp:kanban-issue:ki-a28a482132ab)。"""
     running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
-    return ["uv", "tool", "run", "--python", running, "--from", f"{PACKAGE}=={locked_version(top)}", PACKAGE]
+    return ["uv", "tool", "run", "--python", running, "--from", f"{package}=={locked_version(top, package)}", package]
 
 
 def main(argv: list[str]) -> int:

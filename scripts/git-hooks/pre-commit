@@ -1,6 +1,9 @@
 #!/bin/sh
-# enforcement 台帳の著述時突合(ADR-DOE-ENFORCE-001 R7)。
-# 導入 = make hooks-install(tracked 原本はこのファイル)。
+# doeff の素の commit の hook — stage した断面に (1) semgrep の規則(card ki-8c0bb496bfab)と
+# (2) enforcement 台帳の著述時突合(ADR-DOE-ENFORCE-001 R7)を当てる。
+# 導入 = make hooks-install(tracked 原本はこのファイル)。agora の担当の Pod も同じ写しを入れる
+# (agora deploy/agent-worker/worker-prepare.sh)。pre-commit の枠組みを据え付けた機体(make pre-commit-install)は
+# .pre-commit-config.yaml の項が同じ 2 つを撃ち、この file は入らない。
 #
 # なぜ著述時か: 着地の窓は力学のみ(2026-08-17 operator 裁定・mode = "focus")で、
 # 直接 push は窓さえ通らない — どの経路でも commit は必ず著述機の git を通るので、
@@ -23,6 +26,21 @@ fi
 
 TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$TOP" ] || exit 0
+
+# (1) semgrep の規則(.semgrep.yaml)を stage した file に当てる。どの file にどの項を当てるかは .pre-commit-config.yaml の
+# semgrep の項(別名 semgrep-rules)の 1 か所 — ここは uv.lock の版の pre-commit でその別名を撃つだけ(作業木の .venv は要らない)。
+# 無いと素の hook だけの機体の commit は semgrep の規則を通らず、所見は翌日の日次(test_semgrep_findings_match_baseline_ratchet)で
+# 初めて赤になる(2026-10-11 の 5 回 — Pod の commit が汎用の package に使い手の系の名を足した)。古い断面(入口の無い木)は塞がない。
+RULES="$TOP/scripts/precommit_locked.py"
+if [ -f "$RULES" ]; then
+  (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run semgrep-rules) || {
+    echo "doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。" \
+      "所見を直して stage し直す。" >&2
+    exit 1
+  }
+fi
+
+# (2) enforcement 台帳の著述時突合。
 CHECK="$TOP/scripts/check_enforcement_ledger.py"
 # 古い断面には機構が無い — 塞がない。
 [ -f "$CHECK" ] || exit 0
