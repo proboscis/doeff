@@ -95,6 +95,9 @@ def where_refusal(decl: TableDecl, where: FrozenMap) -> NotIndexed | None:
 def hyx_row_matchesXquestion_markX(where: FrozenMap, value: FrozenMap) -> bool:
     ...
 
+def hyx_descending_valueXquestion_markX(value: object) -> bool:
+    ...
+
 def projected(decl: TableDecl, fields: tuple | None, value: FrozenMap) -> FrozenMap:
     ...
 
