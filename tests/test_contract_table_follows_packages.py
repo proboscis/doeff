@@ -9,6 +9,10 @@
 2. 失敗ケース — 本物の pyproject.toml の写しを持つ模型の repo で: package を 1 つ足して表を直さないと名指す・表の検の file を
    消すと読み手が止まる・組の在る package を消すと読み手が止まる・理由の無い除外(reason の鍵が無い・空・空白だけ)と
    package でない接頭辞の除外は読み手が止まる。
+3. 木を歩く検が、歩く先の変更で選ばれる: doeff-traverse の例の検は examples/ を glob して子の process で走らせ、例も
+   macro も import しないので、逆依存では選ばれない。例・期待の出力・例が require する doeff-hy の macro の module を
+   変えた差分は、本物の表から例の検を選ぶ(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間、例を壊す変更は登記の前に
+   測られず、翌日の日次で初めて赤になった)。
 
 日次の母集団(tests/)と、表の repo 全体の行(prefix = "")の両方から走る — 変えた所の検は、どの変更でもこの file を先頭の
 組で走らせる。入口の main は呼ばず、読み手の純粋な定義(read_contract_table・workspace_packages・table_gaps)を直に呼ぶ。
@@ -31,6 +35,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "scripts" / "run_changed_tests.py"
 #: 模型に足す package の名(本物の木に無い名)。
 ADDED = "packages/doeff-added-without-row/"
+#: 例の検と、それが歩く例の dir(例の `.hy` と expected/ の期待の出力)と、例が require する macro の module。
+EXAMPLES_CHECK = "packages/doeff-traverse/tests/test_examples_run.py"
+EXAMPLES_DIR = "packages/doeff-traverse/examples"
+EXAMPLE_MACROS = "packages/doeff-hy/src/doeff_hy/macros.hy"
 
 
 @dataclass(frozen=True)
@@ -72,6 +80,12 @@ def _copy_of_real_table(runner: ModuleType, tmp_path: Path) -> Copy:
     test_paths = tuple(sorted({test.split("::", 1)[0] for row in table.rows for test in row.tests}))
     for prefix in units.prefixes:
         _touch(root / prefix / "pyproject.toml")
+    # package の中の dir の行(例 doeff-hy の src)— 読み手は接頭辞の dir(`/` で終わる)か file が木に在る事を求める。
+    for row in table.rows:
+        if row.prefix.endswith("/"):
+            (root / row.prefix).mkdir(parents=True, exist_ok=True)
+        elif row.prefix:
+            _touch(root / row.prefix)
     for path in test_paths:
         _touch(root / path)
     return Copy(
@@ -100,6 +114,38 @@ def test_every_package_has_a_contract_row_or_a_reasoned_exemption(runner: Module
         " 全体で確かめる検(stub の突き合わせ・公開の名・母集団)の組を足すか、prefix と reason の行で要らない理由を書く"
     )
     assert all(row.reason for row in table.exemptions), table.exemptions
+
+
+def test_changing_an_example_or_its_macros_selects_the_examples_check(runner: ModuleType) -> None:
+    """本物の表: 例 1 つ・期待の出力 1 つ・例が require する doeff-hy の macro の module のどれを変えた差分も、
+    変えた所の検の選び(入口と同じ select_targets)が例の検を選ぶ。"""
+    table = runner.read_contract_table(REPO_ROOT)
+    patterns = runner.collector_patterns(REPO_ROOT)
+    examples = REPO_ROOT / EXAMPLES_DIR
+    changed = sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (*examples.glob("*.hy"), *(examples / "expected").glob("*.txt"))
+    )
+    assert any(p.endswith(".hy") for p in changed), f"{EXAMPLES_DIR} に例が無い — 検の前提が崩れた"
+    assert any(p.endswith(".txt") for p in changed), f"{EXAMPLES_DIR}/expected に期待の出力が無い"
+    assert (REPO_ROOT / EXAMPLE_MACROS).is_file(), (
+        f"{EXAMPLE_MACROS} が無い — 例が require する module を直す"
+    )
+    unselected = [
+        path
+        for path in (*changed, EXAMPLE_MACROS)
+        if EXAMPLES_CHECK
+        not in {
+            target.arg
+            for target in runner.select_targets(
+                table, runner.ChangeSet(base="", files=(path,)), patterns, REPO_ROOT
+            ).targets
+        }
+    ]
+    assert unselected == [], (
+        f"例の検 {EXAMPLES_CHECK} を選ばない変更: {unselected} — root の pyproject.toml の [[tool.doeff.contract-tests]]"
+        " で、その path に当たる行の tests に例の検を足す(例の検は例も macro も import しないので、逆依存では選ばれない)"
+    )
 
 
 @dataclass(frozen=True)

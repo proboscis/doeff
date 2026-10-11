@@ -227,6 +227,14 @@ tests = [
     "packages/doeff-hy/tests/test_hy_stubs.py",  # 6.6 秒 — 配る hy の stub と実行時の hy
 ]
 
+# 例の検(下の doeff-traverse の行と同じ検)は、例が require する macro の持ち主の source(展開の中身)の変更でも選ぶ。
+# 接頭辞は src だけ — doeff-hy の検だけを変えた差分には払わせない(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-hy/src/doeff_hy/"
+tests = [
+    "packages/doeff-traverse/tests/test_examples_run.py",
+]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-vm/"
 tests = [
@@ -285,6 +293,10 @@ tests = [
 prefix = "packages/doeff-traverse/"
 tests = [
     "packages/doeff-traverse/tests/test_traverse_answer_types.py",  # 3.6 秒 — effect の答えの型を実行時と pyright(.pyi を読む)で
+    # 25〜40 秒(2026-10-12 の会話の Pod・load average 110〜130 の下 — 他の行の秒より重い負荷での測り)— examples/ の例を全部 子の process で
+    # 走らせ、期待の出力(examples/expected/)と比べる。例 1 本 1〜9 秒(ex05・ex08 は例の中の sleep を含む)。例も macro も
+    # import しないので、import の逆依存では選ばれない(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間は日次でしか走らなかった)
+    "packages/doeff-traverse/tests/test_examples_run.py",
 ]
 
 [[tool.doeff.contract-tests]]
