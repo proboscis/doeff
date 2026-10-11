@@ -1,4 +1,4 @@
-;; 道具の item(commandExecution・fileChange・webSearch)の行の分類の検 — 版を固定した本物の codex(0.162.1)が、偽の上流の道具の
+;; 道具の item(commandExecution・fileChange・webSearch と、mcpToolCall・dynamicToolCall・imageView・collabAgentToolCall)の行の分類の検 — 版を固定した本物の codex(0.162.1)が、偽の上流の道具の
 ;; 呼びに答えて命令を走らせ、ファイルを書いた行を録った物(tests/recorded/codex-0.162.1/tool-calls・録り方は
 ;; scripts/record_app_server_lines.py の筋書き tool-calls)で確かめる(ki-77e76c7c07ce)。
 ;;
@@ -10,7 +10,9 @@
 (require doeff-hy.macros [deftest defk <-])
 (import json)
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_codex.lines [classify-line ItemStarted ItemDone Unparsed UnknownValue ToolStatus CommandRun FilePatch WebSearch])
+(import doeff_hy.frozen [freeze-json])
+(import doeff_codex.lines [classify-line ItemStarted ItemDone TurnStarted Unparsed UnknownValue ToolStatus CommandRun FilePatch WebSearch
+                           McpCall DynamicCall AgentCall AgentState ImageView])
 (import tests.test_lines [recorded-records])
 
 
@@ -95,3 +97,60 @@
   (assert (isinstance unparsed Unparsed) unparsed)
   (assert (= unparsed.method "item/started") unparsed)
   (assert (in "command" unparsed.reason) unparsed))
+
+
+(deftest test-other-tool-items-carry-the-mcp-call-the-dynamic-call-the-image-and-the-agent-calls
+  ;; 失敗ケース(card ki-c09b93b72bff): 版を固定した本物の codex(0.162.1)が、偽の上流の呼びに答えて録りの MCP の server の道具・
+  ;; thread に宣言した動的な道具・画像を見る道具・子の agent を始めて待つ道具を走らせた行(tests/recorded/codex-0.162.1/other-tools・
+  ;; 録り方は scripts/record_app_server_lines.py の筋書き other-tools)。どの item も道具の中身を型つきの記録で運ぶ(崩れると上の層は
+  ;; この 4 種の呼びと結果を道具の出来事へ写せず、画面の道具カードに出ない)。
+  (<- records (recorded-records "other-tools"))
+  (assert (not (any (gfor record records (isinstance record Unparsed)))) records)
+  (<- started (tool-items records ItemStarted))
+  (<- done (tool-items records ItemDone))
+  (val order #(#("call_other_0" "mcpToolCall") #("call_other_1" "dynamicToolCall") #("call_other_2" "imageView")
+               #("call_other_3" "collabAgentToolCall") #("call_other_4" "collabAgentToolCall")))
+  (assert (= (tuple (gfor record started #(record.item-id record.item-type))) order) started)
+  (assert (= (tuple (gfor record done #(record.item-id record.item-type))) order) done)
+  (setv [mcp-start dynamic-start image-start spawn-start wait-start] (lfor record started record.tool))
+  (setv [mcp-done dynamic-done image-done spawn-done wait-done] (lfor record done record.tool))
+  ;; MCP の道具: server と道具の名と引数(凍らせた JSON のまま)は始まりから・結果の文は終わりで届く。
+  (assert (= mcp-start (McpCall :server "recorder" :tool "echo" :arguments (freeze-json {"text" "hi"}) :status ToolStatus.IN-PROGRESS))
+          mcp-start)
+  (assert (= mcp-done (McpCall :server "recorder" :tool "echo" :arguments (freeze-json {"text" "hi"}) :status ToolStatus.COMPLETED
+                               :output "echo: hi"))
+          mcp-done)
+  ;; 動的な道具: 答え手(録りでは録りの手順 — item/tool/call の要求に答えた)の答えの文と成否は終わりで届く。
+  (assert (= dynamic-start (DynamicCall :tool "lookup_ticket" :arguments (freeze-json {"id" "T-1"}) :status ToolStatus.IN-PROGRESS))
+          dynamic-start)
+  (assert (= dynamic-done (DynamicCall :tool "lookup_ticket" :arguments (freeze-json {"id" "T-1"}) :status ToolStatus.COMPLETED
+                                       :output "ticket T-1: open" :success True))
+          dynamic-done)
+  ;; 画像を見る道具: 始まりも終わりも画像の path だけ(codex 0.162.1 の item は状態も結果も持たない)。
+  (assert (and (isinstance image-start ImageView) (= image-start image-done)) #(image-start image-done))
+  (assert (.endswith image-start.path "/cwd/pixel.png") image-start)
+  ;; 子の agent を始める: 頼みは始まりから・子の thread の id と model と子の状態は終わりで届く(始まりの model の空の綴りは None)。
+  (assert (= spawn-start (AgentCall :tool "spawnAgent" :status ToolStatus.IN-PROGRESS :prompt "SUB-AGENT say hi")) spawn-start)
+  (val child (get spawn-done.receivers 0))
+  (assert (= spawn-done (AgentCall :tool "spawnAgent" :status ToolStatus.COMPLETED :receivers #(child) :prompt "SUB-AGENT say hi"
+                                   :model "gpt-mock" :states #((AgentState :thread-id child :status "pendingInit"))))
+          spawn-done)
+  ;; 子を待つ: 待つ相手は始まりから・子の最後の答えは終わりで届く。
+  (assert (= wait-start (AgentCall :tool "wait" :status ToolStatus.IN-PROGRESS :receivers #(child))) wait-start)
+  (assert (= wait-done (AgentCall :tool "wait" :status ToolStatus.COMPLETED :receivers #(child)
+                                  :states #((AgentState :thread-id child :status "completed" :message "Sub done."))))
+          wait-done)
+  ;; 子の agent のターンは子の thread を名乗って同じ stdout に混ざる(handler が親のターンと分ける — test_sub_agent_threads.hy)。
+  (val child-turns (tuple (gfor record records :if (and (isinstance record TurnStarted) (= record.thread-id child)) record.turn-id)))
+  (assert (= (len child-turns) 1) child-turns))
+
+
+(deftest test-an-agent-call-keeps-the-interrupted-status
+  ;; 子の agent の道具の状態 interrupted(codex 0.162.1 の CollabAgentToolCallStatus — 命令・ファイルの変更の状態には無い)は、
+  ;; 道具の状態の閉じた語彙で読む(この版に無い綴りの UnknownValue にしない)。
+  (<- line (command-item-line "item/completed" {"type" "collabAgentToolCall" "id" "call_9" "tool" "wait" "status" "interrupted"
+                                                 "senderThreadId" "thread-1" "receiverThreadIds" ["child-1"] "prompt" None
+                                                 "model" None "reasoningEffort" None "agentsStates" {}}))
+  (<- record (classify-line line))
+  (assert (isinstance record ItemDone) record)
+  (assert (= record.tool (AgentCall :tool "wait" :status ToolStatus.INTERRUPTED :receivers #("child-1"))) record))

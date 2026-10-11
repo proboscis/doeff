@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}, "capabilities": {"experimentalApi": true}}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.codex-rec-gzsX/cwd", "approvalPolicy": "never", "sandbox": "danger-full-access", "dynamicTools": [{"type": "function", "name": "lookup_ticket", "description": "Look up a ticket.", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}]}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a12c13-6b1e-7393-8de3-106b1d63828f", "input": [{"type": "text", "text": "OTHER-TOOLS please"}]}}
+{"jsonrpc": "2.0", "id": 0, "result": {"contentItems": [{"type": "inputText", "text": "ticket T-1: open"}], "success": true}}

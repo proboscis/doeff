@@ -2,7 +2,7 @@
 
 版を固定した本物の codex の binary を、手元に立てた偽の上流(OpenAI の Responses API の SSE を返す HTTP server)につなぎ、JSON-RPC の
 要求を stdin へ書いて、stdout の行をそのまま file に書く。口座も network の外も要らない — model の答えだけが偽物で、行の形は本物の
-binary が出した物。録る筋書きは 6 つと比べの 1 つ:
+binary が出した物。録る筋書きは 7 つと比べの 1 つ:
 
 - two-turns: 1 つの process で thread を始め、ターンを 2 回走らせる(答えの文字の途中・答えの全文・ターンの終わり)。
 - interrupt: 遅い答えの途中で turn/interrupt を送る(状態 interrupted の終わり)。
@@ -13,6 +13,11 @@ binary が出した物。録る筋書きは 6 つと比べの 1 つ:
   (commandExecution・fileChange・webSearch)の始まりと終わりの形。
 - background-command: 1 つ目のターンで、短い待ち(yield_time_ms)で戻って後ろで走り続ける命令を呼び、2 つ目のターン(遅い答え)の
   間にその命令が終わる — 前のターンを名乗る命令の終わり(item/completed)が次のターンの間に届く形。
+- other-tools: 上流がほかの道具を順に呼ぶ(録りの MCP の server の道具・thread に宣言した動的な道具・画像を見る道具・子の agent を
+  始めて待つ)— 道具の item(mcpToolCall・dynamicToolCall・imageView・collabAgentToolCall)の始まりと終わりの形。この筋書きだけ
+  CODEX_HOME に録りの MCP の server(record_mcp_server.py)を宣言し、initialize で試験の口(experimentalApi — thread/start の
+  dynamicTools)を名乗り、codex からの動的な道具の呼び(item/tool/call)に答える。子の agent の thread の行(子のターンの始まりと
+  終わり・答え)も同じ stdout に混ざる。
 - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。
 
 使い方(版を上げた時に録り直す。筋書きの名を続けて書くと、その筋書きだけを録る — 既定は全部):
@@ -26,11 +31,14 @@ import http.server
 import json
 import queue
 import socketserver
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
@@ -58,6 +66,26 @@ TOOLS_DONE = ("Tools ", "done.")
 BACKGROUND_MARK = "BG-COMMAND"
 BACKGROUND_WAIT_MARK = "BG-WAIT"
 BACKGROUND_COMMAND = "sleep 1; echo late-1; sleep 1; echo late-2; sleep 1; echo late-3"
+# ほかの道具の筋書きの目印と、子の agent への頼み(子の要求は目印を持たず、この頼みだけを持つ — 上流は答えの全文で答える)。
+OTHER_TOOLS_MARK = "OTHER-TOOLS"
+SUB_AGENT_MARK = "SUB-AGENT"
+SUB_AGENT_TASK = f"{SUB_AGENT_MARK} say hi"
+SUB_AGENT_DONE = ("Sub ", "done.")
+OTHER_TOOLS_DONE = ("Others ", "done.")
+# 録りの MCP の server の名(config.toml の mcp_servers の鍵 — codex は道具を namespace mcp__<名> の下に model へ渡す)と道具の呼び。
+MCP_SERVER = "recorder"
+MCP_SERVER_SCRIPT = Path(__file__).resolve().parent / "record_mcp_server.py"
+MCP_CALL: JsonObject = {"text": "hi"}
+# thread/start で宣言する動的な道具と呼び・codex からの呼び(item/tool/call)への答え。
+DYNAMIC_TOOL: JsonObject = {"type": "function", "name": "lookup_ticket", "description": "Look up a ticket.",
+                            "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}
+DYNAMIC_CALL: JsonObject = {"id": "T-1"}
+DYNAMIC_ANSWER: JsonObject = {"contentItems": [{"type": "inputText", "text": "ticket T-1: open"}], "success": True}
+# 画像を見る道具が開く画像(作業の dir に書く 1 画素の PNG)と、子の agent を待つ上限(codex の下限 10 秒)。
+IMAGE_NAME = "pixel.png"
+WAIT_AGENT_MS = 10000
+# 子の agent の道具の namespace(codex 0.162.1 の multi_agent が model へ渡す名)。
+AGENT_NAMESPACE = "multi_agent_v1"
 
 
 def sse_event(stream: IO[bytes], event: JsonObject) -> None:
@@ -137,6 +165,45 @@ def background_events(step: int) -> list[JsonObject]:
     ]
 
 
+def call_events(step: int, name: str, arguments: JsonObject, namespace: str | None = None) -> list[JsonObject]:
+    """ほかの道具の筋書きの 1 つの答え(道具 name を arguments で 1 回呼ぶ — namespace の下の道具は namespace を名乗る)の SSE の列を作るため。"""
+    call: JsonObject = {"type": "function_call", "id": f"fc_other_{step}", "call_id": f"call_other_{step}", "name": name,
+                        "arguments": json.dumps(arguments)}
+    if namespace is not None:
+        call["namespace"] = namespace
+    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
+             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
+    return [
+        {"type": "response.created", "response": {"id": f"resp_other_{step}"}},
+        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
+        {"type": "response.output_item.done", "output_index": 0, "item": call},
+        {"type": "response.completed", "response": {"id": f"resp_other_{step}", "usage": usage}},
+    ]
+
+
+def spawned_agent(body: JsonObject) -> str:
+    """ほかの道具の筋書きで、子の agent を始めた呼びの結果(spawn_agent の答え — JSON の agent_id)から、待つ子の id を読むため。"""
+    outputs = [item for item in body.get("input", []) if isinstance(item, dict) and item.get("type") == "function_call_output"]
+    spawned = json.loads(str(outputs[-1]["output"]))
+    return str(spawned["agent_id"])
+
+
+def other_tool_events(step: int, body: JsonObject, image: str) -> list[JsonObject]:
+    """ほかの道具の筋書きの step 番目の答え(MCP の道具・動的な道具・画像を見る道具・子の agent を始める・子を待つ・尽きたら答えの全文)の
+    SSE の列を作るため。image = 画像を見る道具に渡す画像の path。"""
+    if step == 0:
+        return call_events(step, "echo", MCP_CALL, f"mcp__{MCP_SERVER}")
+    if step == 1:
+        return call_events(step, str(DYNAMIC_TOOL["name"]), DYNAMIC_CALL)
+    if step == 2:
+        return call_events(step, "view_image", {"path": image})
+    if step == 3:
+        return call_events(step, "spawn_agent", {"message": SUB_AGENT_TASK}, AGENT_NAMESPACE)
+    if step == 4:
+        return call_events(step, "wait_agent", {"targets": [spawned_agent(body)], "timeout_ms": WAIT_AGENT_MS}, AGENT_NAMESPACE)
+    return answer_events(OTHER_TOOLS_DONE)
+
+
 def tool_step(body: JsonObject) -> int:
     """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(function_call_output)の数で数えるため。"""
     inputs = body.get("input", [])
@@ -147,10 +214,12 @@ def tool_step(body: JsonObject) -> int:
 class Upstream(http.server.BaseHTTPRequestHandler):
     """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、USAGE-LIMIT が在れば利用枠切れの 429、SLOW が在れば遅い答え、入力の
     どこかに TOOL-CALLS が在れば道具の筋書き、BG-COMMAND が在れば後ろで走る命令の筋書き、最後の入力に BG-WAIT が在れば遅い答え、
-    ほかは 4 つの差分の答え。"""
+    OTHER-TOOLS が在ればほかの道具の筋書き、SUB-AGENT が在れば(子の agent の要求)答えの全文、ほかは 4 つの差分の答え。"""
 
     protocol_version = "HTTP/1.1"
     request_log: IO[str]
+    # ほかの道具の筋書きで画像を見る道具に渡す画像の path(録る前に main が置く)。
+    image_path: str = ""
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - BaseHTTPRequestHandler の引数の名のまま
         """要求ごとの既定の log の行を stderr に出さないため(要求は request_log に JSON で残す)。"""
@@ -178,6 +247,8 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         slow = "SLOW" in said or BACKGROUND_WAIT_MARK in said
         tools = TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         background = BACKGROUND_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
+        others = OTHER_TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
+        sub_agent = SUB_AGENT_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
@@ -185,7 +256,10 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         self.send_header("connection", "close")
         self.end_headers()
         # 2 つ目のターン(BG-WAIT)は遅い答え — その間に 1 つ目のターンの命令が終わる。
+        # 子の agent の要求は頼み(SUB-AGENT)だけを持ち、親の要求は目印(OTHER-TOOLS)と頼みの両方を持つ — 親を先に見分ける。
         events = (answer_events(SLOW_PIECES) if BACKGROUND_WAIT_MARK in said
+                  else other_tool_events(tool_step(body), body, self.image_path) if others
+                  else answer_events(SUB_AGENT_DONE) if sub_agent
                   else background_events(tool_step(body)) if background
                   else tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES))
         try:
@@ -222,14 +296,18 @@ class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 
-def codex_home(work: Path, port: int) -> Path:
-    """録りの codex を偽の上流にだけつなぐため、口座の要らない provider を名指す config.toml を持つ CODEX_HOME を作る。"""
-    home = work / "codex-home"
+def codex_home(work: Path, port: int, mcp_server: bool = False) -> Path:
+    """録りの codex を偽の上流にだけつなぐため、口座の要らない provider を名指す config.toml を持つ CODEX_HOME を作る。mcp_server =
+    録りの MCP の server を宣言するか(宣言する家は別の dir — 宣言しない筋書きの行に MCP の server の知らせを混ぜない)。"""
+    home = work / ("codex-home-mcp" if mcp_server else "codex-home")
     home.mkdir(parents=True, exist_ok=True)
+    # MCP の server は録りと同じ python で起こす(-I — 作業の dir の file を読み込まない)。
+    declared = (f'[mcp_servers.{MCP_SERVER}]\ncommand = {json.dumps(sys.executable)}\n'
+                f'args = ["-I", {json.dumps(str(MCP_SERVER_SCRIPT))}]\n') if mcp_server else ""
     (home / "config.toml").write_text(
         'model = "gpt-mock"\nmodel_provider = "mock"\n[model_providers.mock]\nname = "mock"\n'
         f'base_url = "http://127.0.0.1:{port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n'
-        "request_max_retries = 0\nstream_max_retries = 0\n",
+        "request_max_retries = 0\nstream_max_retries = 0\n" + declared,
         encoding="utf-8",
     )
     return home
@@ -305,14 +383,18 @@ def json_path(message: JsonObject, *keys: str) -> object:
     return value
 
 
-def start_thread(send: Send, wait: Wait, cwd: Path, sandbox: str = "read-only") -> str:
-    """初期化から thread の始めまでを済ませ、ターンに使う thread の id を得るため(sandbox = thread の sandbox の綴り)。"""
+def start_thread(send: Send, wait: Wait, cwd: Path, sandbox: str = "read-only",
+                 dynamic_tools: tuple[JsonObject, ...] = ()) -> str:
+    """初期化から thread の始めまでを済ませ、ターンに使う thread の id を得るため(sandbox = thread の sandbox の綴り・dynamic_tools =
+    thread に宣言する動的な道具 — 在れば initialize で試験の口 experimentalApi を名乗る)。"""
+    capabilities = {"capabilities": {"experimentalApi": True}} if dynamic_tools else {}
     send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-          "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}})
+          "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}, **capabilities}})
     wait(lambda message: message.get("id") == 1, WAIT_SECONDS)
     send({"jsonrpc": "2.0", "method": "initialized"})
+    declared = {"dynamicTools": list(dynamic_tools)} if dynamic_tools else {}
     send({"jsonrpc": "2.0", "id": 2, "method": "thread/start",
-          "params": {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": sandbox}})
+          "params": {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": sandbox, **declared}})
     answer = wait(lambda message: message.get("id") == 2, WAIT_SECONDS)
     return str(json_path(answer, "result", "thread", "id"))
 
@@ -372,15 +454,59 @@ def background_command(send: Send, wait: Wait, cwd: Path) -> None:
     wait(turn_ended(start_turn(send, wait, 4, thread_id, f"{BACKGROUND_WAIT_MARK} please")), WAIT_SECONDS * 2)
 
 
-SCENARIOS: tuple[tuple[str, Callable[[Send, Wait, Path], None]], ...] = (
-    ("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit), ("usage-limit", usage_limit),
-    ("tool-calls", tool_calls), ("background-command", background_command))
+def answering_tool_calls(send: Send, matches: Callable[[JsonObject], bool]) -> Callable[[JsonObject], bool]:
+    """待つ間に届いた codex からの動的な道具の呼び(item/tool/call)に録りの答えを返しながら、matches に合う行を見分けるため。"""
+    def check(message: JsonObject) -> bool:
+        if message.get("method") == "item/tool/call" and "id" in message:
+            send({"jsonrpc": "2.0", "id": message["id"], "result": DYNAMIC_ANSWER})
+        return matches(message)
+    return check
+
+
+def mcp_server_settled(message: JsonObject) -> bool:
+    """録りの MCP の server が立ち上がったか落ちたかの知らせを見分けるため(ターンの前に待つ — 立つ前の呼びは道具が無い)。"""
+    return (message.get("method") == "mcpServer/startupStatus/updated" and json_path(message, "params", "name") == MCP_SERVER
+            and json_path(message, "params", "status") in ("ready", "failed"))
+
+
+def png_pixel() -> bytes:
+    """画像を見る道具が開く 1 画素の PNG の中身を作るため。"""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00")) + chunk(b"IEND", b"")
+
+
+def other_tools(send: Send, wait: Wait, cwd: Path) -> None:
+    """ほかの道具を呼ぶターン(MCP の道具・動的な道具・画像を見る道具・子の agent を始めて待つ — その後に答え)の道具の item の形を録る
+    ため。子の agent の thread の行も同じ stdout に混ざる。"""
+    (cwd / IMAGE_NAME).write_bytes(png_pixel())
+    thread_id = start_thread(send, wait, cwd, "danger-full-access", (DYNAMIC_TOOL,))
+    wait(mcp_server_settled, WAIT_SECONDS)
+    turn_id = start_turn(send, wait, 3, thread_id, f"{OTHER_TOOLS_MARK} please")
+    wait(answering_tool_calls(send, turn_ended(turn_id)), WAIT_SECONDS * 2)
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """録る筋書き 1 つ: name = 録った file の名の頭 / script = 要求を書いて行を待つ手順 / mcp_server = CODEX_HOME に録りの MCP の
+    server を宣言するか。"""
+
+    name: str
+    script: Callable[[Send, Wait, Path], None]
+    mcp_server: bool = False
+
+
+SCENARIOS: tuple[Scenario, ...] = (
+    Scenario("two-turns", two_turns), Scenario("interrupt", interrupt), Scenario("rate-limit", rate_limit),
+    Scenario("usage-limit", usage_limit), Scenario("tool-calls", tool_calls), Scenario("background-command", background_command),
+    Scenario("other-tools", other_tools, mcp_server=True))
 
 
 def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
     """偽の上流を立て、筋書き(chosen が空なら全部と exec の比べ)を録って、tests/recorded の 1 版分の file を作るため。"""
     out.mkdir(parents=True, exist_ok=True)
-    unknown = set(chosen) - {name for name, _ in SCENARIOS}
+    unknown = set(chosen) - {scenario.name for scenario in SCENARIOS}
     if unknown:
         raise ValueError(f"筋書きの名が無い: {sorted(unknown)}")
     # 筋書きを選んで録る時は、前に録った要求の記録を消さずに後ろへ足す。
@@ -389,13 +515,15 @@ def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
         server = ThreadingServer(("127.0.0.1", 0), Upstream)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
-            home = codex_home(work, server.server_address[1])
-            env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "CODEX_HOME": str(home)}
+            port = server.server_address[1]
+            env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "CODEX_HOME": str(codex_home(work, port))}
             cwd = work / "cwd"
             cwd.mkdir(parents=True, exist_ok=True)
-            for name, script in SCENARIOS:
-                if not chosen or name in chosen:
-                    record_app_server(codex, out, env, cwd, name, script)
+            Upstream.image_path = str(cwd / IMAGE_NAME)
+            for scenario in SCENARIOS:
+                if not chosen or scenario.name in chosen:
+                    home = codex_home(work, port, scenario.mcp_server)
+                    record_app_server(codex, out, {**env, "CODEX_HOME": str(home)}, cwd, scenario.name, scenario.script)
             if chosen:
                 return
             compared = subprocess.run([codex, "exec", "--json", "--skip-git-repo-check", "say hello"], capture_output=True,
