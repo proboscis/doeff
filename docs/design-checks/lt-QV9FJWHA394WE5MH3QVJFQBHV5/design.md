@@ -162,3 +162,8 @@
 | 例の検(例が走り標準出力が合う・表の例は今も落ちる・macro の出どころ・inline の確かめ・表と期待の出力の整合と path) | `packages/doeff-traverse/tests/test_examples_run.py` | 37ff3b9a |
 | 期待の出力 8 本 | `packages/doeff-traverse/examples/expected/*.txt` | 72ce60d2 |
 | 走る所 | 日次の全体検証の段 packages(`make test-packages`)。マージの列は検を走らせない | — |
+
+### 7.4 マージの前の載せ直し
+
+マージの列へ載せる前に、main が 7613a2147(doeff-hy の fnk・do! の展開の変更 — 盲検 B が範囲外の所見に挙げた UnboundLocalError の直しに当たる)へ進んだので、その上へ載せ直した(code の commit は fd88198e・218272f9)。
+`packages/doeff-traverse` の木は 37ff3b9a と同じ(`git diff 37ff3b9a 218272f9 -- packages/doeff-traverse` が 0 行)。載せ直した版でも例の検は全部緑だった([evidence/checks/c1r-rebased-green.txt](evidence/checks/c1r-rebased-green.txt))。c2〜c7 は 37ff3b9a で測った物で、載せ直した版では測り直していない。

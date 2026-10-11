@@ -13,7 +13,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "cd1e700c06a8e07c8900a68eb79e08cc695ad3ec19a536673d5ba24be9bf9bf7"
+    "sha256": "ddb51a91c3fe68a7349237ebcd990f04cad657d2084069f4a02e10d50ec01250"
   },
   "modules": [
     {
@@ -315,6 +315,21 @@
       "evidence": {
         "path": "evidence/checks/c7-s2-expected-with-checkout-path-red.txt",
         "sha256": "f97c439e60794b506e74a83fbdec48b4554942038af2eb4f5697f02d6e345877"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c1r-rebased-green",
+      "scenarios": [
+        "S1",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "doeff-hy の展開を変えた 7613a2147 の上へ載せ直した版(packages/doeff-traverse の木は 37ff3b9a と同じ)でも、例の検が全部緑",
+      "observation": "26 passed・1 skipped・pytest rc 0",
+      "evidence": {
+        "path": "evidence/checks/c1r-rebased-green.txt",
+        "sha256": "401f25ac3cd654b9055cbc325a701648ee616ce11f360adbfeb749249c1e5961"
       },
       "status": "passed"
     }
