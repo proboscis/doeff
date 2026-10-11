@@ -34,7 +34,9 @@
 (import posixpath)
 (import re)
 (import sys)
+(import datetime [datetime])
 (import doeff [Program])
+(import doeff_time [GetTime])
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText
@@ -46,7 +48,7 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -247,6 +249,54 @@
     (<- answer (| MirrorReady WheelReady EnvFailure) body)
     (finally (<- (ReleaseLock held))))
   answer)
+
+
+(defk finished-root [text]
+  {:pre [(: text (| str FileFailed))] :post [(: % (| dict None))] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "完成マーカーの file の読み(ReadText の答え)から、完成した root の印を返すため(無い・読めない・形の違う印は None)。"
+  (match text
+    (str) (do (val data (try (json.loads text) (except [ValueError] None)))
+              (if (and (isinstance data dict) (isinstance (.get data "interpreter") str)) data None))
+    _ None))
+
+
+(defk prepared-under-lock [request]
+  {:pre [(: request PrepareRequest)] :post [(: % (| EnvReady EnvFailure))]}
+  "キーの錠を持つ間に root を準備するため(prepared-once の中身): 完成マーカーが在れば準備し直さずにその root を答え、無ければ在る物
+   (途中で止まった準備の残り)を脇の名 .<キー>.broken.<時刻> へ退けて(掃除の残りの片づけが消す)準備する。"
+  (<- marker (| str FileFailed) (ReadText (posixpath.join request.root ENV-MARKER)))
+  (<- done (| dict None) (finished-root marker))
+  (when (is-not done None)
+    (<- (PrepareNote (.format "準備済みの root を使う(準備し直さない — 同じ root を分け合う他の世代が準備した): {}" request.root)))
+    (return (EnvReady :env request.env :key request.key :root request.root :stages #() :downloaded 0 :built None
+                      :interpreter (get done "interpreter"))))
+  (<- kind PathKind (kind-at request.root))
+  (when (!= kind PathKind.MISSING)
+    (<- now datetime (GetTime))
+    (val aside (posixpath.join (posixpath.dirname request.root) (.format ".{}.broken.{}" request.key (int (* 1000 (.timestamp now))))))
+    (<- moved (| None FileFailed) (RenamePath request.root aside))
+    (<- (settled moved "途中の root を退けられない")))
+  (<- prepared (| EnvReady EnvFailure) (prepare-env request))
+  prepared)
+
+
+(defk prepared-once [request]
+  {:pre [(: request PrepareRequest)] :post [(: % (| EnvReady EnvFailure))]}
+  "root 1 つを、キーごとの錠(分け合う dir の locks/root-<キー>)の中で準備するため(AL-D2g — 同じ機体に同じ名の worker の 2 つの世代が
+   root の置き場を分け合う)。片方の世代が準備している間、もう片方の同じキーの準備は錠で待ち、錠を取った時には完成した root を
+   準備し直さずに使う。途中の root を脇へ退けるのも錠を持つ間だけ(錠の外で退けると、もう片方の世代の走っている準備を壊す)。
+   錠を待つ間は進みの印を触らないので、待ちが準備の停滞の期限(PrepareLimits.stall-seconds)を越えると worker が止めて、一時の失敗として
+   次の頼みで起こし直す。"
+  (<- shared str (Ask "runtime-env.shared"))
+  (val lock (posixpath.join shared "locks" (+ "root-" request.key)))
+  (<- (MakeDirectory (posixpath.dirname lock)))
+  (<- got (| LockHeld FileFailed) (AcquireLock lock))
+  (match got
+    (FileFailed :path path :detail detail) (raise (RuntimeError (.format "錠を取れない: {} — {}" path detail)))
+    (LockHeld) (try
+                 (<- answer (| EnvReady EnvFailure) (prepared-under-lock request))
+                 (return answer)
+                 (finally (<- (ReleaseLock got))))))
 
 
 (defk remove-if-present [path]

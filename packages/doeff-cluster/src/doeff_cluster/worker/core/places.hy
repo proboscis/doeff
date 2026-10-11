@@ -3,7 +3,8 @@
 ;;;
 ;;; 世代ごと = 版の木(code)・job の cwd(jobs)・取り寄せた Program(programs)・task の結果(tasks)・温める子(warm)・入口の検め(probe)・
 ;;; 拍の状態(status.json)。分け合う = job の log(logs — 名は job の名と試みの番号なので、世代が違えば試みが違い、同じ file を書かない)。
-;;; 実行環境の root と準備の要求は EnvSettings の state(世代ごと)、Python・wheel・mirror と錠は EnvSettings の shared(worker/protocol/env_store)。
+;;; 準備の要求は EnvSettings の state(世代ごと)、実行環境の root・固定の file・Python・wheel・mirror と錠は EnvSettings の shared
+;;; (worker/protocol/env_store — root を世代ごとに準備し直さない・AL-D2g)。
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
