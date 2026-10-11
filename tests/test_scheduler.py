@@ -1570,6 +1570,87 @@ class TestDeadlockDiagnostics:
         assert stall_messages, "expected a stall warning while blocked >50ms"
         assert "parked waiters" in stall_messages[0]
 
+    @pytest.mark.realtime
+    @pytest.mark.parametrize("implementation", ["python", "rust"])
+    def test_watched_external_wait_with_a_live_source_is_not_stalled(
+        self, implementation, monkeypatch, caplog
+    ):
+        """S1 (packages/doeff-core-effects/architecture.hy): an external wait
+        whose completion source is registered and still live — a watched
+        child's exit, ``source_alive`` — wakes the scheduler when the source
+        ends, so blocking on it is not a stall (agora-redesign card
+        ki-6222e22d4179: a courier job waiting on its tool child logged the
+        stall warning every 30 s)."""
+        import logging
+        import time
+
+        import doeff_core_effects.scheduler as sched_module
+
+        monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise(source_alive=lambda: True)
+
+            def completer():
+                time.sleep(0.5)
+                ep.complete("ended")
+
+            threading.Thread(target=completer, daemon=True).start()
+            return (yield Wait(ep.future))
+
+        assert doeff_run(scheduled(body(), implementation=implementation)) == "ended"
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if "scheduler stalled" in record.getMessage()
+        ] == []
+
+    @pytest.mark.realtime
+    @pytest.mark.parametrize("implementation", ["python", "rust"])
+    def test_watched_external_wait_whose_source_ended_is_reported(
+        self, implementation, monkeypatch, caplog
+    ):
+        """S1 counterexample: the watched source has ended (the child is
+        gone) yet its completion never arrives — a lost wake, the hang #495b
+        watches for. The scheduler must report it once one interval has
+        passed since it saw the end. The completion arrives only when the
+        stall is reported; if it never is, the completer gives up after 40
+        intervals and the assertion fails."""
+        import logging
+
+        import doeff_core_effects.scheduler as sched_module
+
+        monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+        reported = threading.Event()
+
+        class OnStall(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                if "scheduler stalled" in record.getMessage():
+                    reported.set()
+
+        watcher = OnStall(level=logging.WARNING)
+        logging.getLogger("doeff_core_effects.scheduler").addHandler(watcher)
+
+        @do
+        def body():
+            ep = yield CreateExternalPromise(source_alive=lambda: False)
+
+            def completer():
+                reported.wait(timeout=0.05 * 40)
+                ep.complete("woken")
+
+            threading.Thread(target=completer, daemon=True).start()
+            return (yield Wait(ep.future))
+
+        try:
+            assert doeff_run(scheduled(body(), implementation=implementation)) == "woken"
+        finally:
+            logging.getLogger("doeff_core_effects.scheduler").removeHandler(watcher)
+        assert reported.is_set(), "a watched wait whose source ended must be reported as stalled"
+
 
 # ---------------------------------------------------------------------------
 # Root close-out (#501)

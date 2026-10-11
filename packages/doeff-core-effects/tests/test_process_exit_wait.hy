@@ -8,31 +8,43 @@
 ;;;     start-ticks が違う(pid が使い回された)なら、その場で答える(居る別の process の終わりを待たない)。
 ;;;   - 取り消した待ちは fd を残さず、待たれない coroutine の警告も出さない。
 ;;;   - 終わると読める fd を取る関数(機体の開き方)は、居ない pid に None を返す。
-(require doeff-hy.macros [defk deftest <- val])
+;;;   - 走っている子の終わりの待ちは、scheduler の止まりと数えない。子が終わったのに知らせの届かない待ちは止まりと数える
+;;;     (条 S1 — packages/doeff-core-effects/architecture.hy・card ki-6222e22d4179)。
+(require doeff-hy.macros [defk deff deftest <- val])
 (import gc)
+(import logging)
 (import os)
+(import platform)
 (import subprocess)
+(import threading)
 (import time)
 (import warnings)
 (import asyncio)
+(import collections.abc [Callable])
 (import doeff [run with-handlers])
+(import doeff.program [Pure])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.scheduler [scheduled Spawn Race Cancel Wait TaskCancelledError])
+(import doeff_core_effects.scheduler :as scheduler-module)
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler proc-stat-of])
 (import doeff_core_effects.process_effects [StartProcess PollProcess AwaitProcessExit ProcessStarted ProcessExited ProcessEnded
                                             ProcessNotChild])
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_core_effects.process_exit [process-exit-handler exit-fd-of])
+(import doeff_core_effects.process_exit :as process-exit-module)
 
 ;; 終わりから答えまでの遅れの上限(秒)と、終わる前に答えない事を見る下限の余裕(秒)。
 (val PROMPT 0.3)
+;; 止まりの検で縮める、scheduler の止まりの見張りの周期(秒 — 本番は 30 秒)。
+(val STALL-INTERVAL 0.05)
 
 
-(defn #^ object handled [#^ object program]
-  "本物の答え手の組(外側が先)の上で program を回すため。"
-  (run (scheduled (with-handlers [(await-handler) subprocess-handler os-warm-process-handler process-exit-handler] program))))
+(defn #^ object handled [#^ object program #^ (| str None) [implementation None]]
+  "本物の答え手の組(外側が先)の上で program を回すため。implementation = scheduler の実装(None = 既定)。"
+  (run (scheduled (with-handlers [(await-handler) subprocess-handler os-warm-process-handler process-exit-handler] program)
+                  :implementation implementation)))
 
 
 (defk started-then-awaited [argv]
@@ -51,10 +63,10 @@
   answer)
 
 
-(defn #^ tuple timed [#^ object program]
+(defn #^ tuple timed [#^ object program #^ (| str None) [implementation None]]
   "program を回し、#(答え 秒) を返すため。"
   (setv started (time.monotonic))
-  (setv answer (handled program))
+  (setv answer (handled program implementation))
   #(answer (- (time.monotonic) started)))
 
 
@@ -151,3 +163,60 @@
   (setv child (subprocess.Popen ["true"]))
   (.wait child)
   (assert (is (run (exit-fd-of child.pid)) None)))
+
+
+(defclass OnStallReport [logging.Handler]
+  "scheduler が止まりの警告を書いた時に on-report を呼ぶ(どの thread からでも)。"
+  (deff __init__ [self on-report]  ; defk にできない: logging.Handler の作り手(VM の外)
+    {:pre [(: self OnStallReport) (: on-report Callable)] :post [(: % None)]}
+    "止まりの警告を見た時の呼びを受けるため。"
+    (.__init__ (super) :level logging.WARNING)
+    (setv self.on-report on-report))
+
+  (deff emit [self record]  ; defk にできない: logging が記録ごとに呼ぶ callback
+    {:pre [(: self OnStallReport) (: record logging.LogRecord)] :post [(: % None)]}
+    "記録が scheduler の止まりの警告なら on-report を呼ぶため。"
+    (when (in "scheduler stalled" (.getMessage record))
+      (self.on-report))))
+
+
+(deftest test-waiting-on-a-running-child-is-not-a-stall [implementation monkeypatch caplog]
+  {:params {"implementation" ["python" "rust"]}}
+  ;; 条 S1: 走っている子の終わりの待ちは、終わりの知らせの出どころ(終わると読める fd)が登録され、子が生きている間は止まりでない。
+  ;; 子の 0.5 秒は、縮めた止まりの見張りの周期の 10 倍。直す前は周期ごとに警告を書いた(courier の job で 30 秒ごと・card ki-6222e22d4179)。
+  (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
+  (.set-level caplog logging.WARNING :logger scheduler-module.__name__)
+  (val answers (get (timed (started-then-awaited #("sleep" "0.5")) implementation) 0))
+  (val reports (lfor record caplog.records :if (in "scheduler stalled" (.getMessage record)) (.getMessage record)))
+  (assert (isinstance (get answers 0) ProcessEnded) answers)
+  (assert (= reports []) reports))
+
+
+(deftest test-a-child-that-ended-without-its-exit-notice-is-a-stall [implementation monkeypatch caplog]
+  {:params {"implementation" ["python" "rust"]}}
+  ;; 条 S1 の失敗ケース: 子は終わったのに終わりの知らせが届かない待ち(失われた起こし — #495b の見張りの対象)は止まり。
+  ;; 終わると読める fd の開き方を、書かれるまで読めない pipe に差し替え、scheduler が止まりを報じた時に初めて書く。報じなければ
+  ;; 40 周期の後に書かれ、検は赤。
+  (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
+  (.set-level caplog logging.WARNING :logger scheduler-module.__name__)
+  (val pipe-ends (os.pipe))
+  (val never-ready (get pipe-ends 0))
+  (val notice (get pipe-ends 1))
+  (.setattr monkeypatch process-exit-module "EXIT_FD_OPENERS" {(platform.system) (fn [pid] (Pure (os.dup never-ready)))})
+  (val reported (threading.Event))
+  (val watcher (OnStallReport (fn [] (.set reported))))
+  (val logger (logging.getLogger scheduler-module.__name__))
+  (deff notice-late []  ; defk にできない: threading.Thread が別の thread で呼ぶ口(VM の外)
+    {:pre [] :post [(: % None)]}
+    "止まりが報じられた時(報じられなければ 40 周期の後)に、終わりの知らせの pipe を読めるようにするため。"
+    (.wait reported :timeout (* STALL-INTERVAL 40))
+    (os.write notice b"x")
+    None)
+  (.addHandler logger watcher)
+  (.start (threading.Thread :target notice-late :daemon True))
+  (val answers (try (get (timed (started-then-awaited #("true")) implementation) 0)
+                    (finally (.removeHandler logger watcher)
+                             (os.close never-ready)
+                             (os.close notice))))
+  (assert (isinstance (get answers 0) ProcessEnded) answers)
+  (assert (.is-set reported) "子が終わったのに知らせの届かない待ちは、止まりと報じる"))
