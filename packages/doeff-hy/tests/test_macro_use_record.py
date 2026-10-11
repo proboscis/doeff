@@ -905,20 +905,24 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
 #: した素の値を返す macro(条 2 — 値は helper.hy の中身で決まるが、macro の閉包が辿る file は macros.hy だけ)・moded = 読み込みの時に
 #: 環境変数から組んだ値を返す macro(条 3 — file の外で決まる値)・looks と rows = 辿れない大域の表を読む macro(Hy と Python の
 #: source の文で覆う — binding_of を通る)・limited = macro と別の top の package から import した素の値を返す macro(条 2 の別の形 —
-#: 記録が名指す module はどれもその package に無い)。
+#: 記録が名指す module はどれもその package に無い)・placed = 補助が自分の module の __file__ を名で引き、作った module に
+#: __file__ を書く macro(code の名の表に __file__ が出る — doeff_hy.static_check の project の形・使い手は placed.hy)。
 CROSS_MACROS = """\
 (import os)
+(import types)
 (import {pkg}.helper [SCALE])
 (import macro_use_cross_values.limits [LIMIT])
 (import {pkg}.tables :as tables)
 (setv TABLE {{"a" 1}})
 (setv MODE (os.environ.get "MACRO_USE_PROBE_MODE" "plain"))
+(defn place-of [module] (setv module.__file__ __file__) module)
 (defmacro body [] 1)
 (defmacro scaled [] SCALE)
 (defmacro moded [] MODE)
 (defmacro looks [] (get TABLE "a"))
 (defmacro rows [] (get tables.ROWS "a"))
 (defmacro limited [] LIMIT)
+(defmacro placed [] (place-of (types.ModuleType "placed")) 1)
 """
 
 CROSS_FILES = {
@@ -928,19 +932,22 @@ CROSS_FILES = {
     "tables.py": 'ROWS = {{"a": 1}}\nROWS["b"] = 2\n',
     "user.hy": "(require {pkg}.macros [body scaled moded looks rows limited])\n"
     "(setv value [(body) (scaled) (moded) (looks) (rows) (limited)])\n",
+    "placed.hy": "(require {pkg}.macros [placed])\n(setv value (placed))\n",
 }
 
 #: macro と別の top の package(limited が返す LIMIT の持ち主)。
 CROSS_VALUES_PACKAGE = "macro_use_cross_values"
 CROSS_VALUES_FILES = {"__init__.py": "", "limits.hy": "(setv LIMIT 3)\n"}
 
-#: 子の process: 使い手の記録を作り、同じ process でも照らす(record — 記録を作る歩みと照らしの両方を通す)・記録を照らす(check)。
+#: 子の process: 使い手(既定 user.hy・5 つ目の引数で名指す)の記録を作り、同じ process でも照らす(record — 記録を作る歩みと
+#: 照らしの両方を通す)・記録を照らす(check)。
 #: 答えに、照らしの間に source を解いた回数(parsed — bound_source の解き)・code の定数を読んで code の読みを作った回数(facts —
 #: macro_use の _constant_text)・照らしの後に hy.core.hy_repr が読み込まれているか(hy_repr)を出す。
 CROSS_CHILD = """\
 import importlib.machinery, json, sys
 from pathlib import Path
 root, stored, mode, package = sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+user = sys.argv[5] if len(sys.argv) > 5 else "user"
 sys.path.insert(0, root)
 import hy
 import doeff_hy
@@ -955,8 +962,8 @@ def counting(name, original):
 bound_source._read = counting("parsed", bound_source._read)
 macro_use._constant_text = counting("facts", macro_use._constant_text)
 if mode == "record":
-    path = f"{root}/{package}/user.hy"
-    loader = importlib.machinery.SourceFileLoader(f"{package}.user", path)
+    path = f"{root}/{package}/{user}.hy"
+    loader = importlib.machinery.SourceFileLoader(f"{package}.{user}", path)
     record = records.record_of(source_to_code_as_import(loader, open(path, "rb").read(), path))
     stored.write_text(json.dumps(record_to_json(record)))
     current = record_is_current_here(record)
@@ -984,13 +991,14 @@ class CrossTree:
     def values(self) -> Path:
         return self.root / CROSS_VALUES_PACKAGE
 
-    def run(self, mode: str) -> dict[str, object]:
-        """子の process で 1 度走らせた答え(子は検の環境を継ぐ — 置き場と pycache は fixture が monkeypatch で置く)。"""
+    def run(self, mode: str, user: str = "user") -> dict[str, object]:
+        """子の process で 1 度走らせた答え(user = 使い手の file の名・子は検の環境を継ぐ — 置き場と pycache は fixture が
+        monkeypatch で置く)。"""
         import json
         import subprocess
 
         done = subprocess.run(
-            [sys.executable, "-c", CROSS_CHILD, str(self.root), str(self.stored), mode, CROSS_PACKAGE],
+            [sys.executable, "-c", CROSS_CHILD, str(self.root), str(self.stored), mode, CROSS_PACKAGE, user],
             capture_output=True,
             text=True,
             timeout=60,
@@ -1043,6 +1051,27 @@ def test_a_macro_changed_in_another_tree_is_stale_in_a_second_process(cross_tree
     other = cross_tree.elsewhere("tree-b")
     _replace(other.package / "macros.hy", "(defmacro body [] 1)", "(defmacro body [] 20)")
     assert other.run("check")["current"] is False, "別の木で macro の本体が違うのに、2 つ目の process が古いと判じない"
+
+
+def test_a_macro_naming_the_place_of_its_module_is_current_in_another_tree(cross_tree: CrossTree) -> None:
+    # 直す前は赤(agora-redesign card ki-1475765a3f18): macro が呼ぶ補助の code の名の表に __file__ が出ると(自分の module の
+    # __file__ を読む・作った module に __file__ を書く)、digest にその module の置き場の path が入り、同じ中身を別の作業木に
+    # 置いただけで古いと判じた(日次の全体検証は回ごとに別の dir に doeff を置き、型検査の展開の保存が毎回全部外れた)。
+    cross_tree.run("record", "placed")
+    other = cross_tree.elsewhere("tree-b")
+    assert other.run("check", "placed")["current"] is True, "同じ中身の macro を別の木に置いただけで古いと判じた"
+
+
+def test_a_changed_macro_naming_the_place_of_its_module_is_stale_in_another_tree(cross_tree: CrossTree) -> None:
+    # 冷えるべき時: 置き場の path を入れなくても、同じ macro の本体を替えた別の木では古い。
+    cross_tree.run("record", "placed")
+    other = cross_tree.elsewhere("tree-b")
+    _replace(
+        other.package / "macros.hy",
+        '(place-of (types.ModuleType "placed")) 1)',
+        '(place-of (types.ModuleType "placed")) 20)',
+    )
+    assert other.run("check", "placed")["current"] is False, "別の木で macro の本体が違うのに古いと判じない"
 
 
 def test_a_changed_value_from_another_module_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
