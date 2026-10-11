@@ -520,3 +520,45 @@ def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_e
     finally:
         for loaded in (alias, "aliaspkg.user", "aliaspkg.macros", "aliaspkg"):
             sys.modules.pop(loaded, None)
+
+
+def test_a_hy_module_read_from_a_current_pyc_does_not_look_up_the_expansion_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """作業木の .pyc が source に合う Hy の module の読み込みは compile しないので、展開の走る module(Hy の compile の口と同じく
+    ``inspect.getmodule`` で file の名から引く)を引かない。引き方は読み込み済みの module 全部を歩くので、Hy の module 1 つごとに
+    引くと、検の読み込み(約 800 の Hy の module・約 1500 の module)で CPU 約 0.6 秒の固定費になった(2026-10-11 の測り —
+    test_emulated_screen.hy の固定費 3.5 → 4.1 秒・card ki-e77d44aa61e5)。"""
+    import inspect
+
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import code_store
+
+    monkeypatch.setenv(code_store.STORE_ENV, str(tmp_path / "store"))
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)  # この suite は .pyc を書かない — ここだけ書いて 2 度目に読む
+    package = tmp_path / "pycpkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "macros.hy").write_text("(defmacro answer [] 11)\n")
+    source = package / "user.hy"
+    source.write_text("(require pycpkg.macros [answer])\n(setv value (answer))\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    looked_up: list[str] = []
+    getmodule = inspect.getmodule
+
+    def counting_getmodule(target: object, _filename: str | None = None) -> object:
+        if _filename == str(source):
+            looked_up.append(_filename)
+        return getmodule(target, _filename)
+
+    try:
+        assert importlib.import_module("pycpkg.user").value == 11
+        assert looked_up == [], "数え始める前に引いた"  # 数えるのは 2 度目だけ
+        assert list((package / "__pycache__").glob("user.*.pyc")), "1 度目の読み込みが .pyc を書かない"
+        sys.modules.pop("pycpkg.user")
+        monkeypatch.setattr(inspect, "getmodule", counting_getmodule)
+        assert importlib.import_module("pycpkg.user").value == 11
+        assert looked_up == [], f"使える .pyc を読むだけの読み込みが展開の module を {len(looked_up)} 回引いた"
+    finally:
+        for loaded in ("pycpkg.user", "pycpkg.macros", "pycpkg"):
+            sys.modules.pop(loaded, None)
