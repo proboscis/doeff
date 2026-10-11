@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from types import CodeType, FunctionType, ModuleType
 
 from doeff_hy_bytecode_guard import bound_source
+from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope
 from doeff_hy_bytecode_guard.records import (
     MACRO_TABLE,
     READER_TABLE,
@@ -196,11 +197,13 @@ def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of)
     (import しない)も比べる。"""
     if record.hy_version != hy_version:
         return False
-    scope = _CHECKED_STATES.set({})  # この照らしの中の file の状態の覚え(入れ子の照らしは自分の覚えを置く)
+    if IMPORT_SCOPE.get() is not None:
+        return _rows_are_current(record, sha256_of)  # 一番外の読み込みの中 — file の状態はその中で 1 度だけ読む
+    scope = IMPORT_SCOPE.set(ImportScope())  # 読み込みの外(道具が直に照らす)— この照らしの間だけの覚え
     try:
         return _rows_are_current(record, sha256_of)
     finally:
-        _CHECKED_STATES.reset(scope)
+        IMPORT_SCOPE.reset(scope)
 
 
 def _rows_are_current(record: MacroRecord, sha256_of: Sha256Of) -> bool:
@@ -382,15 +385,14 @@ def _remembered(
 ) -> ClosureDigest:
     """覚えた digest か、歩いて作った digest(同じ macro を照らす度に閉包を辿り直さないため)。"""
     remembered = _REMEMBERED.get(key)
-    if (
-        remembered is not None
-        and remembered.subject is subject
-        and all(map(_unchanged, remembered.files))
-    ):
+    if remembered is not None and remembered.subject is subject and _confirmed(key, remembered):
         return remembered.closure
-    walker = _Walker(sha256_of)
+    entry = _facts_entry(key)
+    walker = _Walker(sha256_of, CodeReadings(_stored_facts(entry) if entry is not None else {}))
     walk(walker)
     digest = walker.digest()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
+    if entry is not None and walker.readings.missed:
+        _write_facts(entry, walker.readings.used)  # 次の process の同じ macro の歩みが code を読み直さない
     modules = tuple(sorted({*walker.files, *walker.unimportable}))
     if walker._mut_partial:
         # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
@@ -398,10 +400,24 @@ def _remembered(
         return ClosureDigest(None, modules)
     closure = ClosureDigest(digest, modules)
     states = tuple(
-        state for path in sorted(walker.files.values()) if (state := _file_state(path)) is not None
+        state for path in sorted(walker.files.values()) if (state := _state_now(path)) is not None
     )
     _REMEMBERED[key] = RememberedDigest(subject, states, closure)
     return closure
+
+
+def _confirmed(key: UsedMacroKey | ValueReference, remembered: RememberedDigest) -> bool:
+    """覚えた digest を使ってよいか — 依った file が覚えた時の状態のままか。一番外の読み込み 1 つの中では file の状態は変わらない
+    物として扱うので、確かめた覚えを 2 度確かめない(照らしは Hy の module 1 つごとに走り、同じ覚えを数百回確かめていた —
+    agora-redesign card ki-be596ac8276f)。"""
+    scope = IMPORT_SCOPE.get()
+    if scope is not None and scope.confirmed.get(key) is remembered:
+        return True
+    if not all(map(_unchanged, remembered.files)):
+        return False
+    if scope is not None:
+        scope.confirmed[key] = remembered
+    return True
 
 
 def _file_state(path: str) -> FileState | None:
@@ -413,23 +429,26 @@ def _file_state(path: str) -> FileState | None:
     return FileState(path, status.st_mtime_ns, status.st_size)
 
 
-#: 照らし 1 回(:func:`record_is_current`)の中で確かめた file の今の状態(path → 状態・消えた file は None)。照らしの間だけ置き、
-#: 同じ照らしの中で同じ file を 2 度 stat しない(照らし 1 回に覚えの確かめが数回・1 回に file 数個 — 検の読み込みで 1 万回を越え、
-#: うち約 1/3 が同じ照らしの中の同じ file だった — card ki-38508e6e56fd)。照らしの外(記録を作る時)は毎回 stat する。
-_CHECKED_STATES: "contextvars.ContextVar[dict[str, FileState | None] | None]" = contextvars.ContextVar(
-    "doeff_hy_checked_states", default=None
-)
+#: 一番外の読み込みの覚えに、まだ状態を読んでいない file の印(消えた file の None と分ける)。
+_UNREAD = object()
+
+
+def _state_now(path: str) -> FileState | None:
+    """覚えの確かめと覚える時に使う file の今の状態 — 一番外の読み込み 1 つ(:mod:`doeff_hy_bytecode_guard.import_scope`)の中では
+    file ごとに 1 度だけ stat する(検の読み込みで照らし 797 回・stat 9,700 回だった — card ki-be596ac8276f)。読み込みの外で
+    覚える時(記録を作る道具)は毎回 stat する。"""
+    scope = IMPORT_SCOPE.get()
+    if scope is None:
+        return _file_state(path)
+    known = scope.states.get(path, _UNREAD)
+    if known is _UNREAD:
+        known = scope.states[path] = _file_state(path)
+    return known if isinstance(known, FileState) else None
 
 
 def _unchanged(state: FileState) -> bool:
     """file が覚えた時の状態のままか(消えた file は偽)— :func:`_file_state` と同じ判じ。"""
-    checked = _CHECKED_STATES.get()
-    if checked is None:
-        now = _file_state(state.path)
-    elif state.path in checked:
-        now = checked[state.path]
-    else:
-        now = checked.setdefault(state.path, _file_state(state.path))
+    now = _state_now(state.path)
     return now is not None and now.mtime_ns == state.mtime_ns and now.size == state.size
 
 
@@ -775,6 +794,208 @@ def _constant_text(value: object) -> str:
             return f"{type(value).__name__}:{value!r}"
 
 
+# ---- code の読みを process をまたいで覚える(agora-redesign card ki-be596ac8276f)-------------------------------------
+#
+# code の読み(:class:`CodeFacts`)は code object の中身と、読み方(この module の code・Python の版)だけで決まる純な計算なので、
+# Hy の code の置き場(code_store の種類 FACTS_SUFFIX)に code の中身(marshal の bytes の sha256)で引いて覚える — 新しい process の
+# 照らしが、macro の閉包の code を毎回読み直していた(検の読み込みで歩みの約 3 割・関数 378 個 0.05〜0.06 秒。marshal と sha256 は
+# 0.006 秒)。digest は覚えない(生きた値に依る — packages/doeff-hy/architecture.hy の B1)。entry は歩み 1 つ(macro か値の在処と、
+# その module の file)ごとに、その歩みが使った code の読みを並べる。entry の鍵は当たりやすさだけを決め、正しさは中の code の
+# sha256 で決まる。
+
+
+#: code の読みの entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に
+#: 入れるこの module の file の sha256(:func:`_own_digest`)が覆う。
+FACTS_TAG = "doeff-hy/code-facts/1"
+
+#: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
+_READS = frozenset(read.value for read in NamespaceRead)
+
+
+class CodeReadings:
+    """歩み 1 つが使う code の読み — 置き場から読んだ物(code の sha256 → 読み)・この歩みが使った物・置き場に無く読み直したか。"""
+
+    def __init__(self, stored: dict[str, CodeFacts]) -> None:
+        self._stored = stored
+        self.used: dict[str, CodeFacts] = {}
+        self.missed = False
+
+    def facts(self, code: CodeType) -> CodeFacts:
+        """関数の code の読み — process の中の覚え・置き場の覚え(前の process が同じ中身の code を読んだ物)・読み直しの順。"""
+        sha = _code_sha256(code)
+        remembered = _FACTS.get(id(code))
+        if remembered is not None and remembered[0] is code:
+            facts = remembered[1]
+        elif sha in self._stored:
+            facts = self._stored[sha]
+            _FACTS[id(code)] = (code, facts)
+        else:
+            facts = _code_facts(code)
+            self.missed = True
+        self.used[sha] = facts
+        return facts
+
+
+#: process の中の code の中身の sha256 の覚え(code object の id → (code・sha256) — code を生かしておき id の使い回しを防ぐ)。
+_CODE_SHAS: dict[int, tuple[CodeType, str]] = {}
+
+
+def _code_sha256(code: CodeType) -> str:
+    """code object の中身の sha256(marshal の bytes — 入れ子の code・定数・名の表・file の名・行番号まで入る。行番号と file の名が
+    違う同じ code は別の鍵になり、読み直すだけ)。"""
+    remembered = _CODE_SHAS.get(id(code))
+    if remembered is not None and remembered[0] is code:
+        return remembered[1]
+    import marshal  # 歩みが関数に当たった時だけ読む
+
+    sha = hashlib.sha256(marshal.dumps(code)).hexdigest()
+    _CODE_SHAS[id(code)] = (code, sha)
+    return sha
+
+
+def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
+    """歩み 1 つの code の読みの entry の path(置き場を使わない設定・この module の code を読めない時は None)。鍵 = 印・この module
+    の code・Python の版の全部(命令の番号)・在処・在処の module の file(作業木ごとに分ける — code の sha256 は file の名を含む)。"""
+    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
+
+    store = code_store.store_dir()
+    own = None if store is None else _own_digest()
+    if store is None or own is None:
+        return None
+    match key:
+        case UsedMacroKey(table=table, module=module, name=name):
+            place = f"macro\0{table}\0{module}\0{name}"
+        case ValueReference(module=module, name=name):
+            place = f"value\0{module}\0{name}"
+    parts = (FACTS_TAG, own, sys.version, place, _module_file(module) or "")
+    return code_store.entry_path(store, code_store.content_key(parts, b""), code_store.FACTS_SUFFIX)
+
+
+@dataclass(frozen=True)
+class OwnCode:
+    """この module の file の中身の sha256(読めなければ None — 読み方の code が分からないので置き場を使わない)。"""
+
+    sha256: str | None
+
+
+#: この module の code の覚え(process に 1 度 — 鍵は "own" の 1 つだけ)。
+_OWN: dict[str, OwnCode] = {}
+
+
+def _own_digest() -> str | None:
+    """この module の file の中身の sha256 — 読み方の code を変えた版が、前の版の読みを置き場から引かないため。"""
+    known = _OWN.get("own")
+    if known is None:
+        try:
+            with open(__file__, "rb") as stream:
+                known = OwnCode(hashlib.sha256(stream.read()).hexdigest())
+        except OSError:
+            known = OwnCode(None)
+        known = _OWN.setdefault("own", known)
+    return known.sha256
+
+
+#: 置き場の entry の中身の形(marshal の境界 — 欄の名と型は :class:`CodeFacts` が持ち、ここは書く時と読む時の並びだけ):
+#: code の sha256・digest の形・名の表・文字列の定数・import(名・段数)・hy.R の module・名で辿れない読みの広さ。
+FactsRow = tuple[
+    str, str, tuple[str, ...], tuple[str, ...], tuple[tuple[str, int], ...], tuple[str, ...], str
+]
+
+
+def _stored_facts(entry: str) -> dict[str, CodeFacts]:
+    """置き場の code の読みの entry を読む(無ければ空)。形の違う entry は名指して除き、空(歩みは読み直して足し直す)。"""
+    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
+
+    data = code_store.read_entry(entry)
+    if data is None:
+        return {}
+    import marshal  # 当たった時だけ読む
+
+    try:
+        rows = marshal.loads(data)
+    except (EOFError, ValueError, TypeError) as error:
+        code_store.discard_entry(entry, f"marshal で読めない: {error}")
+        return {}
+    read = _facts_from_rows(rows)
+    if read is None:
+        code_store.discard_entry(entry, "code の読みの形が違う")
+        return {}
+    return read
+
+
+def _write_facts(entry: str, used: dict[str, CodeFacts]) -> None:
+    """歩みが使った code の読みを置き場へ足す(書かない設定では名指しの置き場だけ — loader_hooks の code の足し方と同じ決め。
+    書けない置き場では黙って足さない — 置き場は速さのためだけ)。"""
+    from doeff_hy_bytecode_guard import code_store  # 置き場を使う時だけ読む
+
+    if sys.dont_write_bytecode and not code_store.store_is_named():
+        return
+    import marshal  # 足す時だけ読む
+
+    rows: tuple[FactsRow, ...] = tuple(
+        (
+            sha,
+            facts.shape,
+            facts.names,
+            facts.texts,
+            tuple((reference.name, reference.level) for reference in facts.imports),
+            facts.called_modules,
+            facts.reads.value,
+        )
+        for sha, facts in sorted(used.items())
+    )
+    code_store.write_entry(entry, marshal.dumps(rows))
+
+
+def _facts_from_rows(rows: object) -> dict[str, CodeFacts] | None:
+    """置き場から読んだ並びを code の読みに組む(形が違えば None)。"""
+    if not isinstance(rows, tuple):
+        return None
+    read: dict[str, CodeFacts] = {}
+    for row in rows:
+        match row:
+            case (
+                str() as sha,
+                str() as shape,
+                tuple() as names,
+                tuple() as texts,
+                tuple() as imports,
+                tuple() as called,
+                str() as reads,
+            ) if (
+                _strings(names)
+                and _strings(texts)
+                and _strings(called)
+                and all(_import_pair(pair) for pair in imports)
+                and reads in _READS
+            ):
+                read[sha] = CodeFacts(
+                    shape,
+                    names,
+                    texts,
+                    tuple(ImportReference(name, level) for name, level in imports),
+                    called,
+                    NamespaceRead(reads),
+                )
+            case _:
+                return None
+    return read
+
+
+def _strings(values: tuple[object, ...]) -> bool:
+    """組の中身が全部文字列か。"""
+    return all(isinstance(value, str) for value in values)
+
+
+def _import_pair(pair: object) -> bool:
+    """import の行(名・段数)の形か。"""
+    match pair:
+        case (str(), int()):
+            return True
+        case _:
+            return False
+
+
 _IMPORT_NAME = dis.opmap["IMPORT_NAME"]
 _LOAD_CONST = dis.opmap["LOAD_CONST"]
 _LOAD_SMALL_INT = dis.opmap.get("LOAD_SMALL_INT", -1)
@@ -981,9 +1202,11 @@ def _plain_text(value: object) -> str:
 class _Walker:
     """code の閉包の digest を 1 つ作る歩み。同じ関数と class は 2 度目から番号で入れる(循環と共有)。"""
 
-    def __init__(self, sha256_of: Sha256Of) -> None:
+    def __init__(self, sha256_of: Sha256Of, readings: CodeReadings) -> None:
         self._hash = hashlib.sha256()
         self._sha256_of = sha256_of
+        #: 関数の code の読み(置き場に覚えた前の process の読みを使い、この歩みが使った読みを集める)。
+        self.readings = readings
         #: 辿った object の id → (順の番号・object — 歩みの間 object を生かし、id の使い回しを防ぐ)。
         self._seen: dict[int, tuple[int, object]] = {}
         #: 参照した module(名 → module)と、入れた属性の名。
@@ -1011,11 +1234,15 @@ class _Walker:
         その名の属性を入れる(入れた属性が新しい module と文字列を持ち込む間くり返す)。読みの関数と module の参照が
         別の関数にあっても(module を引数で渡す)覆う。"""
         while True:
+            # 名前空間に在る文字列だけを集合の積で先に選ぶ(_text_attribute は名前空間に無い名を偽とする — module × 文字列を
+            # 1 つずつ判じると、検の読み込みで 3 万回を越えた・card ki-be596ac8276f)。並びは前と同じ(module の名・文字列の順)。
             pending = tuple(
                 (name, text)
                 for name in sorted(self._modules)
-                for text in sorted(self._texts)
-                if text not in self._attributes[name] and _text_attribute(self._modules[name], text)
+                for text in sorted(
+                    self._texts.intersection(vars(self._modules[name])) - self._attributes[name]
+                )
+                if _text_attribute(self._modules[name], text)
             )
             if not pending:
                 return
@@ -1087,7 +1314,7 @@ class _Walker:
             return
         home = sys.modules.get(module_name)
         self._note(home)
-        facts = _code_facts(function.__code__)
+        facts = self.readings.facts(function.__code__)
         self._texts.update(facts.texts)
         self._feed("function", module_name, function.__qualname__, facts.shape)
         self._value(function.__defaults__, home, facts.names)
