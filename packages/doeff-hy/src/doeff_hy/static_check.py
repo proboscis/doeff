@@ -536,7 +536,9 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         rendered,
         tuple(spans),
         tuple(_finding_diagnostic(relative, f) for f in (*found, *top_level)),
-        used=recording.record(text, also=(value_reference(__name__, "POST_PROCESSING"),)),
+        used=recording.record(
+            text, also=(value_reference(_POST_PROCESSING_MODULE, "POST_PROCESSING"),)
+        ),
     )
 
 
@@ -544,6 +546,13 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
 #: 型検査の展開の保存(static_cache)の記録は、この値の閉包の digest で後処理の変更を見る(``project`` が呼ぶ関数を名で辿る)。
 #: module の属性の ``project`` ではなく、定義した時の関数を持つ(検が ``project`` を差し替えても、記録は変わらない)。
 POST_PROCESSING = (project,)
+
+#: 記録が POST_PROCESSING を名指す module の名 — import で引ける名(``__spec__.name``)。``python -m doeff_hy.static_check`` で撃つと
+#: この file は親で ``__main__``・展開の子で ``__mp_main__`` の名で読まれ、``__name__`` で名指すと、子の記録(``__mp_main__`` の
+#: ``project`` を辿った digest)と次の実行の親の照らし(``__main__`` の ``project`` を辿った digest)が持ち主の名の違う関数を辿って
+#: 合わず、保存した展開を 1 つも引けなかった(agora-redesign card ki-1475765a3f18)。引ける名なら、親も子もその名で import した
+#: 同じ file を辿る。
+_POST_PROCESSING_MODULE = __spec__.name if __spec__ is not None else __name__
 
 
 def _shown_to(scope: ModuleScope, forms: Iterable[Object]) -> Iterator[Object]:
