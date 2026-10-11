@@ -8,13 +8,18 @@
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+(import doeff_traverse.collection [Collection])
 (import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
 
 
 (defk double [x]
+  {:pre [(: x int)]
+   :post [(: % int)]}
   (* x 2))
 
 (defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % Collection)]}
   (<- results
     (traverse
       (<- x (Iterate items))

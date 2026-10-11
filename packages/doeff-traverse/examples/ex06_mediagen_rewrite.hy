@@ -12,17 +12,17 @@
 ;;;
 ;;; This example uses mock LLM calls for demonstration.
 
-(require doeff-hy.macros [defk <- traverse fnk])
+(require doeff-hy.macros [defk defhandler <- traverse])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler Ask slog])
 (import doeff_core_effects.handlers [lazy-ask :as lazy_ask])
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Fail Reduce Inspect])
+(import doeff_traverse.collection [Collection])
+(import doeff_traverse.effects [Fail Inspect])
 (import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
 
 
@@ -62,6 +62,8 @@
 
 (defk list-speakers [transcript]
   "Stage 1a: list all speakers (single LLM call)."
+  {:pre [(: transcript str)]
+   :post [(: % list)]}
   (<- model (Ask "s1a_model"))
   (<- result (LLMStructuredQuery
                :messages [{"role" "user" "content" (+ "List speakers in: " transcript)}]
@@ -72,6 +74,8 @@
 
 (defk assign-spans-one [transcript all-speakers model speaker-name]
   "Stage 1b worker: assign spans for one speaker."
+  {:pre [(: transcript str) (: all-speakers str) (: model str) (: speaker-name str)]
+   :post [(: % SpeakerProfile)]}
   (<- result (LLMStructuredQuery
                :messages [{"role" "user"
                            "content" (+ "Assign spans for " speaker-name
@@ -84,8 +88,10 @@
 
 (defk assign-speaker-spans [transcript speaker-names]
   "Stage 1b: assign spans per speaker (traverse — handler decides seq/par)."
+  {:pre [(: transcript str) (: speaker-names list)]
+   :post [(: % Collection)]}
   (<- model (Ask "s1b_model"))
-  (setv all-speakers (.join ", " speaker-names))
+  (val all-speakers (.join ", " speaker-names))
   (<- speakers
     (traverse
       (<- name (Iterate speaker-names :label "s1b_assign_spans"))
@@ -95,6 +101,8 @@
 
 (defk extract-opinions-one [transcript model speaker]
   "Stage 2 worker: extract opinions for one speaker."
+  {:pre [(: transcript str) (: model str) (: speaker SpeakerProfile)]
+   :post [(: % Opinion)]}
   (<- result (LLMStructuredQuery
                :messages [{"role" "user"
                            "content" (+ "Extract opinions for " speaker.name
@@ -106,6 +114,8 @@
 
 (defk extract-opinions [transcript speakers]
   "Stage 2: extract opinions per speaker (traverse)."
+  {:pre [(: transcript str) (: speakers Collection)]
+   :post [(: % Collection)]}
   (<- model (Ask "s2_model"))
   (<- opinions
     (traverse
@@ -118,6 +128,8 @@
   "Main pipeline: speakers → spans → opinions.
    No Spawn, no Gather, no Try, no retry.
    Strategy is entirely external."
+  {:pre [(: transcript str)]
+   :post [(: % dict)]}
   (<- speaker-names (list-speakers transcript))
   (<- speakers (assign-speaker-spans transcript speaker-names))
   (<- opinions (extract-opinions transcript speakers))
@@ -132,37 +144,41 @@
 ;; Mock LLM backend (returns fake data, simulates occasional failure)
 (setv _call-count [0])
 
-(defk mock-llm-backend [effect k]
+(defhandler mock-llm-backend
   "Mock LLM: returns fake results. Simulates JSONDecodeError on 3rd call."
-  (if (isinstance effect LLMStructuredQuery)
-      (do
-        (+= (get _call-count 0) 1)
-        (setv n (get _call-count 0))
-        ;; Simulate JSONDecodeError on call #3
-        (when (= n 3)
-          (yield (Fail (Exception "JSONDecodeError: simulated parse failure")
-                       :query effect)))
-        ;; Return mock result
-        (setv fmt effect.response-format)
-        (return (yield (Resume k (+ "mock_result_" (str n) "_" (str fmt))))))
-      (yield (Pass effect k))))
+  (LLMStructuredQuery [response-format]
+    (setv (get _call-count 0) (+ (get _call-count 0) 1))
+    (val n (get _call-count 0))
+    ;; Simulate JSONDecodeError on call #3. fail_handler (outside) raises the Fail here,
+    ;; so the exception reaches whoever performed this query — the retry handler.
+    (when (= n 3)
+      (<- (Fail (Exception "JSONDecodeError: simulated parse failure")
+                :query effect)))
+    ;; Return mock result (a speaker list answers names, other formats answer text)
+    (resume (if (= response-format "SpeakerList")
+                ["Alice" "Bob"]
+                (+ "mock_result_" (str n) "_" response-format)))))
 
 ;; Retry handler: retry LLM failures once
-(defk retry-on-json-error [effect k]
-  "Retry Fail from LLM if it looks like a JSON parse error."
-  (if (and (isinstance effect Fail)
-           (in "JSONDecodeError" (str effect.cause)))
-      (do
-        ;; Re-perform the original query (available in context)
-        (setv query (get effect.context "query"))
-        (<- retried (LLMStructuredQuery
-                      :messages query.messages
-                      :response-format query.response-format
-                      :model query.model
-                      :temperature query.temperature
-                      :max-tokens query.max-tokens))
-        (return (yield (Resume k retried))))
-      (yield (Pass effect k))))
+(defk query-with-retry [query]
+  "Ask the outer LLM backend, and once more if the answer fails as a JSON parse error."
+  {:pre [(: query LLMStructuredQuery)]
+   :post [(: % (| str list))]}
+  (try
+    (<- answer query)
+    answer
+    (except [e Exception]
+      (when (not-in "JSONDecodeError" (str e))
+        (raise))
+      (<- retried query)
+      retried)))
+
+(defhandler retry-on-json-error
+  "Retry an LLM query once when it fails with a JSON parse error."
+  (LLMStructuredQuery []
+    ;; Performed from this clause, the query goes to the handlers outside (the backend)
+    (<- answer (query-with-retry effect))
+    (resume answer)))
 
 
 ;; ===========================================================================
@@ -194,6 +210,7 @@
   program)))
 (print "Speakers:" (get out "speakers"))
 (print "Opinions valid:" (len (. (get out "opinions") valid_values)))
+(print "LLM calls (call #3 failed and was retried):" (get _call-count 0))
 (print)
 
 ;; Parallel + mock backend + retry
@@ -209,6 +226,7 @@
   program)))
 (print "Speakers:" (get out "speakers"))
 (print "Opinions valid:" (len (. (get out "opinions") valid_values)))
+(print "LLM calls (call #3 failed and was retried):" (get _call-count 0))
 (print)
 
 ;; Inspect history

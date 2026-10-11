@@ -4,7 +4,7 @@
 ;;; Different items may fail in different stages.
 ;;; Zip produces failure union.
 
-(require doeff-hy.macros [defk <- do!])
+(require doeff-hy.macros [defk <- fnk])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 
@@ -40,22 +40,25 @@
 ;; ---------------------------------------------------------------------------
 
 (defk embed [item]
+  {:pre [(: item str)]
+   :post [(: % list)]}
   (<- result (try_call compute-embedding item))
   result)
 
 (defk summarize [item]
+  {:pre [(: item str)]
+   :post [(: % str)]}
   (<- result (try_call generate-summary item))
   result)
 
 (defk score [pair]
+  {:pre [(: pair tuple)]
+   :post [(: % float)]}
   (score-pair pair))
 
-(defk compute-avg [values]
-  (if values
-      (round (/ (sum values) (len values)) 2)
-      0))
-
 (defk multi-source-pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % dict)]}
   ;; Two independent traversals
   (<- embeddings (Traverse embed items))
   (<- summaries (Traverse summarize items))
@@ -67,7 +70,9 @@
   (<- scores (Traverse score combined))
 
   ;; Aggregate
-  (<- avg-score (Reduce compute-avg scores))
+  (<- total (Reduce (fnk [acc x] (+ acc x)) 0.0 scores))
+  (<- count (Reduce (fnk [acc _] (+ acc 1)) 0 scores))
+  (val avg-score (if count (round (/ total count) 2) 0))
 
   (<- report (Inspect scores))
   {"avg_score" avg-score "report" report})

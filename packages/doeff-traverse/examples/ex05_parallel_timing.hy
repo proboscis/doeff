@@ -8,10 +8,9 @@
 ;;;
 ;;; Same program runs with any combination.
 
-(require doeff-hy.macros [defk <- traverse fnk])
+(require doeff-hy.macros [defk defhandler <- traverse])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler Await])
 (import doeff_core_effects.handlers [await-handler :as await_handler])
@@ -39,13 +38,21 @@
 ;; Pipeline — uses SlowCompute effect, no backend knowledge
 ;; ===========================================================================
 
+(defk add [acc x]
+  "Fold step: sum the computed values."
+  {:pre [(: acc int) (: x int)]
+   :post [(: % int)]}
+  (+ acc x))
+
 (defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % int)]}
   (<- results
     (traverse
       (<- x (Iterate items))
       (<- y (SlowCompute x))    ;; effect — handler decides how
       y))
-  (<- total (Reduce (fnk [acc x] (+ acc x)) 0 results))
+  (<- total (Reduce add 0 results))
   total)
 
 
@@ -62,26 +69,22 @@ async def _async_sleep_compute(x):
 " _ns)
 (setv _async-impl (get _ns "_async_sleep_compute"))
 
-(defk async-backend [effect k]
+(defhandler async-backend
   "Handle SlowCompute via async sleep (non-blocking)."
-  (if (isinstance effect SlowCompute)
-      (do
-        (<- result (Await (_async-impl effect.x)))
-        (return (yield (Resume k result))))
-      (yield (Pass effect k))))
+  (SlowCompute [x]
+    (<- result (Await (_async-impl x)))
+    (resume result)))
 
 
 ;; ===========================================================================
 ;; Backend 2: sync (blocking, no parallelism benefit)
 ;; ===========================================================================
 
-(defk sync-backend [effect k]
+(defhandler sync-backend
   "Handle SlowCompute via sync sleep (blocking)."
-  (if (isinstance effect SlowCompute)
-      (do
-        (sleep 0.1)
-        (return (yield (Resume k (* effect.x 10)))))
-      (yield (Pass effect k))))
+  (SlowCompute [x]
+    (sleep 0.1)
+    (resume (* x 10))))
 
 
 ;; ===========================================================================
