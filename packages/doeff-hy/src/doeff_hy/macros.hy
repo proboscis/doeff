@@ -2374,7 +2374,7 @@ defpipeline {pipeline}: no stages defined.
     (.append param-syms (hy.models.Symbol (.replace pname "-" "_"))))
   #(schemas param-syms))
 
-(defmacro defmcp-tool [name description param-list #* body]
+(defmacro defmcp-tool [_hy-compiler name description param-list #* body]
   "Define an MCP tool backed by a doeff @do handler.
 
    The body uses <- for effect binding, same as defk.
@@ -2390,7 +2390,10 @@ defpipeline {pipeline}: no stages defined.
 
    Expands to:
    1. A @do function _<name>_mcp_handler with params from the schema
-   2. An McpToolDef instance <name> with the schema + handler"
+   2. An McpToolDef instance <name> with the schema + handler
+
+   関数の本体の中に書くと、import と handler をすぐ呼ぶ関数に入れて <name> だけを束ねる(_scoped-definition —
+   外の関数で先に読む for/do・traverse の `_doeff_do` を未束縛にしない。handler は <name> の :handler で引く)。"
   (when (not (isinstance description hy.models.String))
     (raise (SyntaxError (.format "
 defmcp-tool {name}: second argument must be a description string.
@@ -2416,17 +2419,17 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   ;; Expand bangs in body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms
     (lfor form body (_expand-bangs form (+ "defmcp-tool " (str name)))))
-  `(do
-     (import doeff.do [do :as _doeff_do])
-     (import doeff.mcp [McpToolDef McpParamSchema])
-     (defn [_doeff_do] ~handler-name ~param-syms
+  (_scoped-definition _hy-compiler name [
+     '(import doeff.do [do :as _doeff_do])
+     '(import doeff.mcp [McpToolDef McpParamSchema])
+     `(defn [_doeff_do] ~handler-name ~param-syms
        ~@expanded-forms)
-     (setv ~name
+     `(setv ~name
        (McpToolDef
          :name ~(str name)
          :description ~description
          :params (tuple [~@schema-exprs])
-         :handler ~handler-name))))
+         :handler ~handler-name))]))
 
 
 ;; ---------------------------------------------------------------------------
