@@ -17,17 +17,9 @@ import pytest
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 # 今の macro で走らない例(file の名 → 理由)。直したら行を外す。
-_NO_CONTRACT = "defk に :pre/:post が無い(fa37eaaf1 から必須)"
 _FOLD = "消えた fold macro を require して使う(fa37eaaf1 で消えた・Reduce で書き直す)"
 BROKEN: dict[str, str] = {
-    "ex01_basic_fail.hy": _NO_CONTRACT,
-    "ex02_traverse_pipeline.hy": _NO_CONTRACT,
-    "ex03_zip_multi_source.hy": _NO_CONTRACT,
-    "ex04_debug2.hy": _NO_CONTRACT,
-    "ex04_simple.hy": _NO_CONTRACT,
     "ex04_traverse_macro.hy": _FOLD,
-    "ex05_parallel_timing.hy": _NO_CONTRACT,
-    "ex06_mediagen_rewrite.hy": _NO_CONTRACT,
     "ex07_proboscis_ema_rewrite.hy": _FOLD,
     "ex08_tqdm_progress.hy": _FOLD,
 }

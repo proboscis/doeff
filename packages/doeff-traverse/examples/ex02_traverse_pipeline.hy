@@ -4,14 +4,14 @@
 ;;; No error handling in logic. Strategy composed externally.
 ;;; Program is defined once, run with different strategies.
 
-(require doeff-hy.macros [defk <- do!])
+(require doeff-hy.macros [defk defhandler <- fnk])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
 
+(import doeff_traverse.collection [Collection])
 (import doeff_traverse.effects [Fail Traverse Reduce Inspect])
 (import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
 (import doeff_traverse.helpers [try-call :as try_call])
@@ -35,20 +35,26 @@
 ;; ---------------------------------------------------------------------------
 
 (defk extract [item]
+  {:pre [(: item dict)]
+   :post [(: % float)]}
   (<- result (try_call extract-feature item))
   result)
 
 (defk normalize-item [pair]
-  (setv #(value mean) pair)
-  (normalize-value value mean))
-
-(defk compute-mean [values]
-  (if values (/ (sum values) (len values)) 0))
+  {:pre [(: pair tuple)]
+   :post [(: % float)]}
+  (normalize-value (get pair 0) (get pair 1)))
 
 (defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % dict)]}
   (<- features (Traverse extract items :label "extract"))
-  (<- mean (Reduce compute-mean features))
+  (<- total (Reduce (fnk [acc x] (+ acc x)) 0.0 features))
+  (<- count (Reduce (fnk [acc _] (+ acc 1)) 0 features))
+  (val mean (if count (/ total count) 0.0))
   (defk normalize-with-mean [v]
+    {:pre [(: v float)]
+     :post [(: % float)]}
     (<- result (normalize-item #(v mean)))
     result)
   (<- normalized (Traverse normalize-with-mean features :label "normalize"))
@@ -60,10 +66,10 @@
 ;; Strategies (handler compositions)
 ;; ---------------------------------------------------------------------------
 
-(defk replace-with-zero [effect k]
-  (if (isinstance effect Fail)
-      (return (yield (Resume k 0.0)))
-      (yield (Pass effect k))))
+(defhandler replace-with-zero
+  "Answer every Fail with 0.0; other effects pass to the outer handlers."
+  (Fail []
+    (resume 0.0)))
 
 ;; Base handler stack: sequential + fail_handler + try_handler
 (setv base-stack

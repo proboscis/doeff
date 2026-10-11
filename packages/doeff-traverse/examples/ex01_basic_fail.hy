@@ -3,10 +3,9 @@
 ;;; Same logic, different error strategies via handler composition.
 ;;; No error handling in the logic itself.
 
-(require doeff-hy.macros [defk <- do!])
+(require doeff-hy.macros [defk defhandler <-])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -27,11 +26,13 @@
 
 (defk process-scores [raw-scores]
   "Parse and sum scores. Errors are Fail effects."
-  (setv total 0)
+  {:pre [(: raw-scores list)]
+   :post [(: % int)]}
+  (var total 0)
   (for [raw raw-scores]
     (<- score (try_call parse-score raw))
     (when (is-not score None)
-      (+= total score)))
+      (:= total (+ total score))))
   total)
 
 
@@ -47,10 +48,10 @@
   (run (scheduled
     (fail_handler (normalize_to_none (try_handler program))))))
 
-(defk replace-with-zero [effect k]
-  (if (isinstance effect Fail)
-      (return (yield (Resume k 0)))
-      (yield (Pass effect k))))
+(defhandler replace-with-zero
+  "Answer every Fail with 0; other effects pass to the outer handlers."
+  (Fail []
+    (resume 0)))
 
 (defn run-replace-zero [program]
   (run (scheduled
