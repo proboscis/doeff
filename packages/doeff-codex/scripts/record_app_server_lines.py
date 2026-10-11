@@ -7,11 +7,13 @@ binary が出した物。録る筋書きは 3 つと比べの 1 つ:
 - two-turns: 1 つの process で thread を始め、ターンを 2 回走らせる(答えの文字の途中・答えの全文・ターンの終わり)。
 - interrupt: 遅い答えの途中で turn/interrupt を送る(状態 interrupted の終わり)。
 - rate-limit: 上流が 429 で断る(誤りの通知と状態 failed の終わり)。
+- usage-limit: 上流が口座の利用枠切れ(429 の usage_limit_reached と枠の header)で断る(codexErrorInfo usageLimitExceeded の誤りと
+  枠の通知と状態 failed の終わり)。
 - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。
 
-使い方(版を上げた時に録り直す):
+使い方(版を上げた時に録り直す。筋書きの名を続けて書くと、その筋書きだけを録る — 既定は全部):
 
-    uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> <書く dir> <作業の dir>
+    uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> <書く dir> <作業の dir> [筋書き…]
 
 作業の dir は /tmp の外に置く(codex は /tmp の下の CODEX_HOME に助けの binary を作らず、警告の行を stderr に出す)。
 """
@@ -35,6 +37,9 @@ Wait = Callable[[Callable[[JsonObject], bool], float], JsonObject]
 APP_SERVER_ARGS = ("app-server", "--listen", "stdio://")
 FAST_PIECES = ("Hel", "lo, ", "wor", "ld.")
 SLOW_PIECES = tuple(f"slow-{index} " for index in range(40))
+# 利用枠切れの断りが名乗る戻りの刻(epoch 秒)。録り直しても同じ値になるよう固定し、録る日より先の刻にする。
+USAGE_RESETS_AT = 1893456000
+USAGE_SECONDARY_RESETS_AT = 1893888000
 WAIT_SECONDS = 60.0
 
 
@@ -73,7 +78,8 @@ def answer_events(pieces: tuple[str, ...]) -> list[JsonObject]:
 
 
 class Upstream(http.server.BaseHTTPRequestHandler):
-    """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、SLOW が在れば遅い答え、ほかは 4 つの差分の答え。"""
+    """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、USAGE-LIMIT が在れば利用枠切れの 429、SLOW が在れば遅い答え、ほかは
+    4 つの差分の答え。"""
 
     protocol_version = "HTTP/1.1"
     request_log: IO[str]
@@ -98,6 +104,9 @@ class Upstream(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(refusal)
             return
+        if "USAGE-LIMIT" in said:
+            self.refuse_usage_limit()
+            return
         slow = "SLOW" in said
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
@@ -113,6 +122,24 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             # 止めたターン(interrupt)では codex が先に接続を閉じる — 録りの筋書きどおりなので、残りを書かずに終える。
             return
+
+
+    def refuse_usage_limit(self) -> None:
+        """口座の利用枠が尽きた断り(429)を返すため。body の欄(type usage_limit_reached・plan_type・resets_at)と枠の header
+        (x-codex-primary-* / secondary-*)の名は、codex 0.162.1 の binary が読む名(binary の文字列で確かめた)に合わせた — 中身の値は偽物。"""
+        refusal = json.dumps({"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached",
+                                        "plan_type": "plus", "resets_at": USAGE_RESETS_AT}}).encode()
+        self.send_response(429)
+        self.send_header("content-type", "application/json")
+        self.send_header("x-codex-primary-used-percent", "100")
+        self.send_header("x-codex-primary-window-minutes", "300")
+        self.send_header("x-codex-primary-reset-at", str(USAGE_RESETS_AT))
+        self.send_header("x-codex-secondary-used-percent", "37")
+        self.send_header("x-codex-secondary-window-minutes", "10080")
+        self.send_header("x-codex-secondary-reset-at", str(USAGE_SECONDARY_RESETS_AT))
+        self.send_header("content-length", str(len(refusal)))
+        self.end_headers()
+        self.wfile.write(refusal)
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -251,10 +278,24 @@ def rate_limit(send: Send, wait: Wait, cwd: Path) -> None:
     wait(turn_ended(start_turn(send, wait, 3, thread_id, "RATE-LIMIT please")), WAIT_SECONDS * 1.5)
 
 
-def main(codex: str, out: Path, work: Path) -> None:
-    """偽の上流を立て、3 つの筋書きと exec の比べを録って、tests/recorded の 1 版分の file を作るため。"""
+def usage_limit(send: Send, wait: Wait, cwd: Path) -> None:
+    """上流が口座の利用枠切れで断ったターンの誤り・枠の通知・終わりの形を録るため。"""
+    thread_id = start_thread(send, wait, cwd)
+    wait(turn_ended(start_turn(send, wait, 3, thread_id, "USAGE-LIMIT please")), WAIT_SECONDS * 1.5)
+
+
+SCENARIOS: tuple[tuple[str, Callable[[Send, Wait, Path], None]], ...] = (
+    ("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit), ("usage-limit", usage_limit))
+
+
+def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
+    """偽の上流を立て、筋書き(chosen が空なら全部と exec の比べ)を録って、tests/recorded の 1 版分の file を作るため。"""
     out.mkdir(parents=True, exist_ok=True)
-    with (out / "upstream-requests.jsonl").open("w", encoding="utf-8") as request_log:
+    unknown = set(chosen) - {name for name, _ in SCENARIOS}
+    if unknown:
+        raise ValueError(f"筋書きの名が無い: {sorted(unknown)}")
+    # 筋書きを選んで録る時は、前に録った要求の記録を消さずに後ろへ足す。
+    with (out / "upstream-requests.jsonl").open("a" if chosen else "w", encoding="utf-8") as request_log:
         Upstream.request_log = request_log
         server = ThreadingServer(("127.0.0.1", 0), Upstream)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -263,8 +304,11 @@ def main(codex: str, out: Path, work: Path) -> None:
             env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "CODEX_HOME": str(home)}
             cwd = work / "cwd"
             cwd.mkdir(parents=True, exist_ok=True)
-            for name, script in (("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit)):
-                record_app_server(codex, out, env, cwd, name, script)
+            for name, script in SCENARIOS:
+                if not chosen or name in chosen:
+                    record_app_server(codex, out, env, cwd, name, script)
+            if chosen:
+                return
             compared = subprocess.run([codex, "exec", "--json", "--skip-git-repo-check", "say hello"], capture_output=True,
                                       text=True, env=env, cwd=cwd, timeout=120, stdin=subprocess.DEVNULL, check=True)
             (out / "exec-json.stdout.jsonl").write_text(compared.stdout, encoding="utf-8")
@@ -274,4 +318,4 @@ def main(codex: str, out: Path, work: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]))
+    main(sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]), tuple(sys.argv[4:]))
