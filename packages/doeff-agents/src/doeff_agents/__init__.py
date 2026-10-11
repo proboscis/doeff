@@ -223,7 +223,7 @@ if TYPE_CHECKING:
     # 答えの型は Any なので、無いと使い手の isinstance の絞りと欄の型が Unknown になる)。実行の時は読まない — 遅延は今のまま。
     # 表に名を足したら、ここにも足す(tests/test_package_root_typed_exports.py が 1 名ずつ照らす)。定義が型の宣言(.pyi)を持たない
     # Hy の module に在る名(handlers/testing.hy の Mock*・Scenario*)は型の検査から見えないので載せない — 検は実物の定義元で分ける。
-    from .adapters.base import (
+    from doeff_agents.adapters.base import (
         AgentAdapter as AgentAdapter,
         AgentSessionLifecycle as AgentSessionLifecycle,
         AgentType as AgentType,
@@ -231,7 +231,7 @@ if TYPE_CHECKING:
         LaunchConfig as LaunchConfig,
         LaunchParams as LaunchParams,
     )
-    from .agentd_client import (
+    from doeff_agents.agentd_client import (
         AgentdClient as AgentdClient,
         AgentdClientError as AgentdClientError,
         AgentdPaths as AgentdPaths,
@@ -247,7 +247,7 @@ if TYPE_CHECKING:
         ensure_agentd as ensure_agentd,
         load_supervisor_declaration as load_supervisor_declaration,
     )
-    from .effects import (
+    from doeff_agents.effects import (
         AgentAttemptExhaustedError as AgentAttemptExhaustedError,
         AgentDeadlineExceededError as AgentDeadlineExceededError,
         AgentEffect as AgentEffect,
@@ -362,7 +362,7 @@ if TYPE_CHECKING:
         HandlerMadeContextId as HandlerMadeContextId,
         NamedContextId as NamedContextId,
     )
-    from .handlers import (
+    from doeff_agents.handlers import (
         AGENT_SESSIONS_KEY as AGENT_SESSIONS_KEY,
         MOCK_AGENT_STATE_KEY as MOCK_AGENT_STATE_KEY,
         AgentHandler as AgentHandler,
@@ -393,12 +393,12 @@ if TYPE_CHECKING:
         mock_handlers as mock_handlers,
         production_handlers as production_handlers,
     )
-    from .monitor import (
+    from doeff_agents.monitor import (
         MonitorState as MonitorState,
         OnStatusChange as OnStatusChange,
         SessionStatus as SessionStatus,
     )
-    from .programs import (
+    from doeff_agents.programs import (
         AgentResult as AgentResult,
         interactive_session as interactive_session,
         monitor_agent_to_completion as monitor_agent_to_completion,
@@ -410,10 +410,10 @@ if TYPE_CHECKING:
         wait_agent_session as wait_agent_session,
         with_session as with_session,
     )
-    from .runtime import (
+    from doeff_agents.runtime import (
         ClaudeRuntimePolicy as ClaudeRuntimePolicy,
     )
-    from .session import (
+    from doeff_agents.session import (
         AgentLaunchError as AgentLaunchError,
         AgentReadyTimeoutError as AgentReadyTimeoutError,
         AgentSession as AgentSession,
@@ -429,19 +429,19 @@ if TYPE_CHECKING:
         session_scope as session_scope,
         stop_session as stop_session,
     )
-    from .session_backend import (
+    from doeff_agents.session_backend import (
         SessionBackend as SessionBackend,
         SessionConfig as SessionConfig,
         SessionInfo as SessionInfo,
         default_session_backend as default_session_backend,
     )
-    from .session_store import (
+    from doeff_agents.session_store import (
         AgentSessionEvent as AgentSessionEvent,
         AgentSessionRepository as AgentSessionRepository,
         InMemoryAgentSessionRepository as InMemoryAgentSessionRepository,
         JsonlAgentSessionRepository as JsonlAgentSessionRepository,
     )
-    from .tmux import (
+    from doeff_agents.tmux import (
         StableTmuxSessionBackend as StableTmuxSessionBackend,
         TmuxError as TmuxError,
         TmuxNotAvailableError as TmuxNotAvailableError,
