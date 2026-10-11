@@ -56,6 +56,7 @@ macro の展開が型のために持つ形:
 | 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
 | `deftest` の関数 | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:`(fixture の名 → 型の表 = `static_view.py` の `DEFTEST_FIXTURE_TYPES`・型 = `static_types.pyi`。表に無い名は書き手の `#^ T 名` を写し、無ければ `object`)。decorator の pytest は module の頭の `_doeff_pytest`(agora-redesign #2214) |
 | pytest の item の記録 | `doeff_hy.pytest_items.record_at_import(globals(), …)` | 記帳として外す(`static_check.without_bookkeeping`) |
+| `defsystem` の import | 系ごとに `import doeff_cluster.shared.intent.service_model`・`import doeff_cluster.shared.entry.service_build`・`import doeff_hy.declarations` | 同じ文を出し、module の直下の重ねを `static_check.without_bookkeeping` が最初の 1 つに畳む(畳む綴り = `static_view.py` の `DEFSYSTEM_IMPORTS` と根 `doeff_hy` の import。展開の綴りも同じ定義元から引く)。系を 2 つ持つ module に、書き手の書いていない import の reportDuplicateImport を出さない。書き手が自分で重ねた import は畳まず赤のまま |
 
 ## 捕まえるもの(2026-09-23 の測定)
 

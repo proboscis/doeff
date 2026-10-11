@@ -79,7 +79,12 @@ from doeff_hy.static_cache import (
     place,
     store,
 )
-from doeff_hy.static_view import STATIC_HELPER_IMPORTS, collect_findings, static_view
+from doeff_hy.static_view import (
+    DEFSYSTEM_IMPORTS,
+    STATIC_HELPER_IMPORTS,
+    collect_findings,
+    static_view,
+)
 
 if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
@@ -356,14 +361,24 @@ def _without_unused_bookkeeping(statement: ast.stmt, used: frozenset[str]) -> as
             return ast.copy_location(narrowed, statement)
 
 
-def _doeff_hy_import(statement: ast.stmt) -> bool:
-    """doeff-hy 自身の module の import か(macro が定義ごとに合成する物 — 利用者の重複の import は赤のまま残すため、
-    重ねを 1 つにするのはこれだけ)。"""
+def _doeff_hy_module(module: str) -> bool:
+    """doeff-hy 自身の module か(macro が定義ごとに import を合成する先)。"""
+    return module.split(".")[0] == "doeff_hy"
+
+
+def _synthesized_import(statement: ast.stmt) -> bool:
+    """macro が定義ごとに合成する import の文か(利用者の重複の import は赤のまま残すため、重ねを 1 つにするのはこれだけ):
+    doeff-hy 自身の module の import と、defsystem が系ごとに出す別名の無い `import <module>`(static_view.DEFSYSTEM_IMPORTS —
+    展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)。"""
     match statement:
         case ast.Import(names=names):
-            return all(alias.name.split(".")[0] == "doeff_hy" for alias in names)
+            return all(
+                _doeff_hy_module(alias.name)
+                or (alias.name in DEFSYSTEM_IMPORTS and alias.asname is None)
+                for alias in names
+            )
         case ast.ImportFrom(module=str(module), level=0):
-            return module.split(".")[0] == "doeff_hy"
+            return _doeff_hy_module(module)
         case _:
             return False
 
@@ -407,7 +422,8 @@ def without_bookkeeping(tree: ast.Module) -> ast.Module:
 
     - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。ただし宣言 :effects の記帳は、名を読む形に
       縮めて残す(_effects_reads — 宣言にだけ出る効果の名の import を、読まれない import にしない)。
-    - module の直下で同じ doeff-hy の import の文が繰り返されたら最初の 1 つだけを残す(macro が定義ごとに出す import)。
+    - module の直下で macro が定義ごとに出す import の文(doeff-hy の module と defsystem の doeff-cluster の module —
+      _synthesized_import)が繰り返されたら最初の 1 つだけを残す。
     - 記帳だけが使う module(BOOKKEEPING_MODULES)の import の名(1 つの文に並んだ名も 1 つずつ)と Hy の `import hy` で、
       もう読まれない物を外す。
     消費 repo の利用者が書いた式は外さない(外すのは macro が合成した文の形だけ)。"""
@@ -417,7 +433,7 @@ def without_bookkeeping(tree: ast.Module) -> ast.Module:
         if _effects_reads(statement) is not None or not _bookkeeping_statement(statement)
     ]
     imports = (ast.Import, ast.ImportFrom)
-    seen_keys = [ast.dump(s) if _doeff_hy_import(s) else None for s in kept]
+    seen_keys = [ast.dump(s) if _synthesized_import(s) else None for s in kept]
     first = [
         statement
         for index, statement in enumerate(kept)

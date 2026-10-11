@@ -154,6 +154,15 @@ STATIC_HELPER_IMPORTS: str = (
     "import pytest as _doeff_pytest\n" + SESSION_STATIC_IMPORTS
 )
 
+#: defsystem の展開(system_form.hy の defsystem-form)が系ごとに出す doeff-cluster の module の import — 系の型(System・CallShape)の
+#: 置き場と構成子(job・system_of)の置き場。展開の綴りと、型検査のための展開の掃除(static_check.without_bookkeeping)が module の直下の
+#: 重ねを 1 つに畳む綴りの唯一の定義元。畳む物が根 doeff_hy の import だけだった間は、1 つの module に defsystem を 2 つ書くと同じ
+#: import が 2 度残り、strict の reportDuplicateImport になって書き手は直せなかった(書き手は import を書いていない — agora-controllers の
+#: 日次 2026-10-12 00:00 の 3 file・6 件)。
+DEFSYSTEM_MODEL_MODULE: str = "doeff_cluster.shared.intent.service_model"
+DEFSYSTEM_BUILD_MODULE: str = "doeff_cluster.shared.entry.service_build"
+DEFSYSTEM_IMPORTS: tuple[str, ...] = (DEFSYSTEM_MODEL_MODULE, DEFSYSTEM_BUILD_MODULE)
+
 
 def static_view_enabled() -> bool:
     return _STATIC_VIEW.get()

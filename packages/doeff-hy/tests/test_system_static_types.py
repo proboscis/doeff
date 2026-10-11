@@ -121,3 +121,52 @@ def test_an_empty_needs_set_reads_as_a_set_of_names(tmp_path: Path) -> None:
     assert not [e for e in errors if "Unknown" in e[2] or e[0].startswith("reportUnknown")], errors
     # 系の宣言の行(10〜13 行目)には赤が 1 つも無い。
     assert not [e for e in errors if 10 <= e[1] <= 13], errors
+
+
+#: 1 つの module に系を 2 つ(test の file に系を並べる形・agora-controllers の daily_verify/entry/log_reads.hy)。defsystem は系ごとに
+#: service_model・service_build の import を出す。型検査のための展開の掃除がその重ねを畳まないと、2 つ目の系の行(16 行目)に strict の
+#: reportDuplicateImport が 2 件出て、import を書いていない書き手は module を分ける外に直せない(agora-controllers の日次
+#: 2026-10-12 00:00 の 3 file・6 件)。書き手が自分で 2 度書いた import(json の 2・3 行目)は畳まず、赤のまま残す。
+TWO_SYSTEMS = """\
+(require doeff-hy.macros [defk defsystem val])
+(import json)
+(import json)
+
+(defclass Ping []
+  "土台の型の見本")
+
+(defk tally [step]
+  {:pre [(: step int)] :post [(: % int)]}
+  step)
+
+(defsystem lab [#^ Ping foundation]
+  "1 つ目の系"
+  (quiet (tally 1) :needs #{"net"} :replicas 1))
+
+(defsystem lab-two [#^ Ping foundation]
+  "2 つ目の系"
+  (noisy (tally 2) :needs #{"net"} :replicas 1))
+
+(val text (json.dumps {"systems" 2}))
+"""
+
+
+@pytest.fixture
+def two_systems(tmp_path: Path) -> Run:
+    (tmp_path / "probe.hy").write_text(TWO_SYSTEMS, encoding="utf-8")
+    return _check(tmp_path)
+
+
+@needs_pyright
+def test_two_systems_do_not_duplicate_the_synthesized_imports(two_systems: Run) -> None:
+    errors = two_systems.errors()
+    duplicated = [e for e in errors if e[0] == "reportDuplicateImport" and "doeff_cluster" in e[2]]
+    assert not duplicated, errors
+    # 2 つの系の宣言の行(12〜18 行目)には赤が 1 つも無い。
+    assert not [e for e in errors if 12 <= e[1] <= 18], errors
+
+
+@needs_pyright
+def test_an_import_the_writer_repeated_stays_red(two_systems: Run) -> None:
+    errors = two_systems.errors()
+    assert [e for e in errors if e[0] == "reportDuplicateImport" and '"json"' in e[2]], errors

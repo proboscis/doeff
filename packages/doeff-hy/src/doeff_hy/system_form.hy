@@ -23,6 +23,8 @@
 (import hy)
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
 (import doeff-hy.declarations [needs-names])
+;; 展開が import する doeff-cluster の module の綴り(型検査のための展開の掃除が重ねを畳む綴りと 1 つの定義元 — static_view.py)。
+(import doeff-hy.static-view [DEFSYSTEM-MODEL-MODULE DEFSYSTEM-BUILD-MODULE DEFSYSTEM-IMPORTS])
 
 (setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
@@ -128,6 +130,18 @@
   #(name program values static))
 
 
+(defn dotted [#^ str spelling]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "展開が import する module と、そこから引く型と構成子を、1 つの綴りの定義元(static_view.py)から書くため — 点つきの綴りを
+   Hy の読み取り器が source から作るのと同じ形 `(. a b c)` にする(点つきの Symbol は作れない)。位置は持たせない — 展開の常として
+   defsystem の form の位置が入る(hy.read で読むと読んだ文字列の 1 行目の位置が残り、この式の赤が file の頭を指す)。"
+  (Expression [(Symbol ".") #* (gfor part (.split spelling ".") (Symbol part))]))
+
+
+(defn in-module [#^ str module #^ str name]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "module の名を引く式を作るため — `(import a.b.c)` が束縛するのは根の名だけなので、module の綴りを頭に持つ点つきの式で引く。"
+  (dotted (+ module "." name)))
+
+
 (defn call-shape-form [program]  ; defk にできない: macro の展開の時に呼ぶ関数
   "Program の呼び出し (関数 引数… :鍵 値 …) → 実行時に CallShape(関数・位置の引数・名の引数の値)を作る form。
    defk の呼び出しの結果からは引数を読めないので、宣言の表示(describe)と土台の置き方の検めのために形を残す。"
@@ -138,7 +152,7 @@
         (.extend named [(String (hy.mangle (cut (str head) 1 None))) (.pop rest 0)])
         (.append positional head)))
   ;; CallShape は defrecord(構成子は名の引数だけを受ける)。
-  `(doeff_cluster.shared.intent.service_model.CallShape :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
+  `(~(in-module DEFSYSTEM-MODEL-MODULE "CallShape") :function ~(get program 0) :args [~@positional] :kwargs {~@named}))
 
 
 (defn param-parts [param #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
@@ -178,7 +192,7 @@
       (raise (SyntaxError (.format "defsystem {}: job の名 {} が 2 回ある" system n)))))
   (setv job-forms
         (lfor #(job-name program values _) jobs
-              `(doeff_cluster.shared.entry.service_build.job
+              `(~(in-module DEFSYSTEM-BUILD-MODULE "job")
                  ~(String job-name) ~program
                  :call ~(call-shape-form program)
                  ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
@@ -193,12 +207,13 @@
             (hy.models.as-model static)))
   ;; 系の関数の答えの型は System(service_build.system-of の答え)— 注記を展開に書く。型検査が系の値を System と読み、
   ;; 書き手に直せない「公開の関数に答えの型が無い」の所見を出さないため(agora-redesign #3366 — 道具がこの展開に委ねる)。
+  ;; 系ごとに同じ import を出す — 1 つの module に系を 2 つ書いた時の重ねは、doeff-hy-check が型検査のための展開で 1 つに畳む
+  ;; (static_check.without_bookkeeping・畳む綴りは DEFSYSTEM-IMPORTS)。
   `(do
-     (import doeff_cluster.shared.intent.service_model)
-     (import doeff_cluster.shared.entry.service_build)
+     ~@(lfor module DEFSYSTEM-IMPORTS `(import ~(dotted module)))
      (import doeff_hy.declarations)
-     (defn #^ doeff_cluster.shared.intent.service_model.System ~name [~@params]
+     (defn #^ ~(in-module DEFSYSTEM-MODEL-MODULE "System") ~name [~@params]
        ~@(if (is doc None) [] [doc])
-       (doeff_cluster.shared.entry.service_build.system-of ~(String system) #(~@job-forms)))
+       (~(in-module DEFSYSTEM-BUILD-MODULE "system-of") ~(String system) #(~@job-forms)))
      (setattr ~name "__doeff_system__" ~description)
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))
