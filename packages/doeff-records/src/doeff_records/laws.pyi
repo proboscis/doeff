@@ -64,6 +64,8 @@ from doeff_records.effects import ReadEventByKey as ReadEventByKey
 from doeff_records.faults import AdvanceStoreEpoch as AdvanceStoreEpoch
 from doeff_records.maintenance import SweepExpired as SweepExpired
 from doeff_records.maintenance import PruneChanges as PruneChanges
+from doeff_records.maintenance import ReadChangeLog as ReadChangeLog
+from doeff_records.maintenance import ChangeLog as ChangeLog
 from doeff_records.maintenance import Swept as Swept
 from doeff_records.maintenance import Pruned as Pruned
 from doeff_records.admission import hyx_row_matchesXquestion_markX as hyx_row_matchesXquestion_markX
@@ -153,6 +155,9 @@ def law_maintenance_prunes_and_sweeps(harness: LawHarness) -> _Program[list[obje
     ...
 
 def law_prune_stops_at_the_archived_seq(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_change_log_reads_every_change(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
 def law_put_rows_is_all_or_nothing(harness: LawHarness) -> _Program[list[object], object]:

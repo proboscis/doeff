@@ -1,7 +1,7 @@
 ;;; 置き場の手入れ — 保持の期限を過ぎた行と出来事の回収、古い変更の列の刈り取り(記録の service の中で回す Program)。
 ;;;
-;;; どちらも公開 effect ではない(業務の Program は撃たない)。記録の service の composition root が手入れの係を 1 つ立て、
-;;; maintenance-loop を回す。handler の組(memory・PostgreSQL)はどれもこの 2 つに答える。
+;;; どれも公開 effect ではない(業務の Program は撃たない)。記録の service の composition root が手入れの係を 1 つ立て、
+;;; maintenance-loop を回す。handler の組(memory・PostgreSQL)はどれもこの 3 つに答える。
 ;;;
 ;;;   SweepExpired   期限を過ぎた行を消して変更の列に RowRemoved を積み、期限を過ぎた出来事を捨てる。回収はこの effect の時だけ
 ;;;                  走る — 読みは回収せず期限を自分で見て(#3561)、書き(PutRow・PutRows・AppendEvent)は自分が触る行と出来事だけを
@@ -10,6 +10,10 @@
 ;;;                  伸びないようにする。floor より前の位置で WatchChanges を頼んだ読み手は Reset を受けて一覧から読み直す
 ;;;                  (keep-seconds は読み手の遅れの許容 — これより遅れた読み手だけが読み直す)。upto-seq を持てば、消すのはその番号まで
 ;;;                  (送りの答え — 下)
+;;;   ReadChangeLog  変更の列を、after より後から番号の順に limit 件まで、表と保持の期限で絞らずに読む(送りの関数の読み — 下)。
+;;;                  WatchChanges は頼んだ表の、読み手に見える変更だけを答えるので、送りがそれで読むと、置き場の今の宣言に無い
+;;;                  (退役した)表の変更と期限を過ぎた終端の行の変わりを送らずに刈る(card ki-e4ca6fc87109 — 2026-10-11 の使い手の本番で、
+;;;                  退役した 4 表の変更 約 22,450 行が送り先に無いまま刈られた)
 ;;;
 ;;; 消す前に送る(card ki-c32e43651f2e・親 ki-e26367fd8fcb — 2026-10-11 11:21 に使い手の記録の Postgres の disk が 100% に
 ;;; なった。古い変更を消さずに階層つきの保管へ送ってから外す): 手入れの計画が送りの関数 archive(keep-seconds → Program)を持てば、
@@ -38,6 +42,23 @@
       (raise (ValueError (.format "PruneChanges.keep_seconds は 0 以上の秒: {!r}" self.keep-seconds))))
     (when (and (is-not self.upto-seq None) (or (isinstance self.upto-seq bool) (not (isinstance self.upto-seq int)) (< self.upto-seq 0)))
       (raise (ValueError (.format "PruneChanges.upto_seq は 0 以上の番号か None: {!r}" self.upto-seq))))))
+
+
+(defclass [(dataclass :frozen True)] ReadChangeLog [EffectBase]
+  "変更の列の、番号 after より後の変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む。答え = ChangeLog | Unreachable。"
+  (#^ int after)
+  (#^ int limit)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
+      (raise (ValueError (.format "ReadChangeLog.after は 0 以上の番号: {!r}" self.after))))
+    (when (or (isinstance self.limit bool) (not (isinstance self.limit int)) (< self.limit 1))
+      (raise (ValueError (.format "ReadChangeLog.limit は 1 以上の数: {!r}" self.limit))))))
+
+
+(defclass [(dataclass :frozen True)] ChangeLog []
+  "変更の列の生の読みの答え: changes = 番号の昇順の変更(RowChanged | RowRemoved の tuple — 空 = after より後に無い)/ epoch = 置き場の版。"
+  (#^ tuple changes)
+  (#^ int epoch))
 
 
 (defclass [(dataclass :frozen True)] ArchivedThrough []

@@ -60,7 +60,7 @@
                                ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
-(import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
+(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
@@ -68,7 +68,7 @@
                               schema-statements drop-statements
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
-                              changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
+                              changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
                               insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement expire-events-statement
                               expire-event-groups-statement touched-events-statement delete-events-statement expiring-events-statement
                               retire-keys-statement find-retired-key-statement])
@@ -894,6 +894,21 @@
   (Pruned (int (get record 0)) (int (get record 1))))
 
 
+(defk change-log [store ask]
+  {:pre [(: store PreparedStore) (: ask ReadChangeLog)] :post [(: % ChangeLog)]
+   :tags {:context "records" :role "foundation"}}
+  "変更の列の ask.after より後の変更を番号の順に ask.limit 件まで、表と保持の期限で絞らずに読むため(手入れの送りの読み — 錠の外)。
+   版は同じ読みの前に置き場の頭から読む(版を進めると変更の列は空になり、番号は進み続ける)。"
+  (<- head (store-head store))
+  (<- statement (change-log-statement store.prefix ask.after ask.limit))
+  (<- rows (query-rows store.database statement))
+  (var changes #())
+  (for [record rows]
+    (<- change (change-of record))
+    (:= changes (+ changes #(change))))
+  (ChangeLog changes head.epoch))
+
+
 (defk swept-count [store now-ms]
   {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % Swept)]
    :tags {:context "records" :role "foundation"}}
@@ -976,5 +991,8 @@
     (<- now (GetTime))
     ;; 床は全部の表の待ち手の位置に関わる(名の分からない合図)。
     (<- answer (reached (writing store None (prune-locked store effect (epoch-ms now)))))
+    (resume answer))
+  (ReadChangeLog [after limit]
+    (<- answer (reached (change-log store effect)))
     (resume answer)))
 

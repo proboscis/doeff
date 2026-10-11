@@ -484,6 +484,16 @@
              :params #()))
 
 
+(defk change-log-statement [prefix after limit]
+  {:pre [(: prefix str) (: after int) (: limit int)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "変更の列の after より後の変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む文を作るため(手入れの送りの読み
+   ReadChangeLog — 主鍵 seq の索引で引く)。行の並びは changes-statement と同じ(change-of が読む)。"
+  (Statement :text (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes WHERE seq > :after ORDER BY seq LIMIT :limit"
+                            :p prefix)
+             :params (! (params-of #(#("after" after) #("limit" limit))))))
+
+
 ;; 上限の無い刈りの番号の上限(bigint の最大 — 送りを持たない計画の PruneChanges)。
 (val UNBOUNDED-SEQ 9223372036854775807)
 
