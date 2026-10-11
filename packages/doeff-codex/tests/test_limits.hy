@@ -6,10 +6,13 @@
 ;; None(刻を発明しない — 早すぎる刻は口座を早く戻し、また断られる)。窓は長さ(分)で名乗る — 窓の名は上の層の語。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
-(require doeff-hy.macros [deftest <- var])
+(require doeff-hy.macros [deftest defk <- var])
 (import json)
+(import dataclasses [fields])
 (import pathlib [Path])
-(import doeff_codex.lines [classify-line RateLimits RateLimitWindow TurnEnded TurnStatus UnknownValue UsageLimitHit])
+(import typing [get-args])
+(import doeff_codex.lines [classify-line CodexLine LimitRecord RateLimits RateLimitWindow TurnEnded TurnStatus UnknownValue
+                           UsageLimitHit])
 (import doeff_codex.limits [merged-limits usage-limit-hit-of])
 (import doeff_codex.handler [SessionRuntime absorb])
 (import doeff_codex.values [CodexSessionSpec CodexHome])
@@ -125,6 +128,67 @@
   (assert (= (. (get runtime.turns "u0") limits) #()) (. (get runtime.turns "u0") limits))
   (val end (. (get runtime.turns "u1") end))
   (assert (= end.usage-limit (UsageLimitHit :minutes 300 :resets-at FIVE-HOURS-AT :text TEXT)) end))
+
+
+(defk limited-turn-lines [#^ str turn-id #^ int request-id #^ tuple told]
+  {:pre [(: turn-id str) (: request-id int) (: told tuple)] :post [(: % tuple)] :tags {:context "codex-test" :role "foundation"}}
+  "続きの会話の利用枠切れの 1 ターンを、読みの thread が読む順の行(JSON の文字)にするため: turn/start の答え → turn/started → told
+   (ターンの中で届く枠の知らせの行 — 空なら知らせは無い)→ 誤り → 失敗の終わり。"
+  (val failed {"message" TEXT "codexErrorInfo" "usageLimitExceeded"})
+  (+ #((json.dumps {"id" request-id "result" {"turn" {"id" turn-id "status" "inProgress"}}})
+       (json.dumps {"method" "turn/started" "params" {"threadId" "t1" "turn" {"id" turn-id "status" "inProgress"}}}))
+     told
+     #((json.dumps {"method" "error" "params" {"error" failed "willRetry" False "threadId" "t1" "turnId" turn-id}})
+       (json.dumps {"method" "turn/completed" "params" {"threadId" "t1" "turn" {"id" turn-id "status" "failed" "error" failed}}}))))
+
+
+(deftest test-a-usage-limit-turn-reads-only-the-notices-of-its-own-turn
+  ;; 失敗ケース(依頼 lt-0BC9J56TE8QA3VH1FZNJD3F4FS の設計検証・盲検 B): 口座の枠の知らせはターンの記録ごとに重ね、ターンをまたいで
+  ;; 持ち越さない。前のターン u0 が尽きた窓(5 時間・戻り FIVE-HOURS-AT)を名乗って利用枠切れで終わった後、続きのターン u1 も利用枠切れで
+  ;; 終わる。u1 の中で窓を名乗る知らせが無い(知らせが来ない・来ても窓を名乗らない)なら、u1 の事実は窓も刻も None — u0 の古い刻を
+  ;; u1 の事実として運ばない(会話の一生で枠を重ねて終わりの事実を作る実装は、ほかの検を全部通したままこれを破った)。
+  (val spent (json.dumps {"method" "account/rateLimits/updated"
+                          "params" {"rateLimits" {"limitId" "codex"
+                                                  "primary" {"usedPercent" 100 "windowDurationMins" 300 "resetsAt" FIVE-HOURS-AT}
+                                                  "secondary" {"usedPercent" 37 "windowDurationMins" 10080
+                                                               "resetsAt" SEVEN-DAYS-AT}}}}))
+  (val quiet (json.dumps {"method" "account/rateLimits/updated"
+                          "params" {"rateLimits" {"limitId" "codex" "primary" None "secondary" None}}}))
+  (for [later [#() #(quiet)]]
+    (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                   :sandbox SandboxMode.READ-ONLY)))
+    (<- first (limited-turn-lines "u0" 3 #(spent)))
+    (<- second (limited-turn-lines "u1" 4 later))
+    (for [raw (+ first second)]
+      (<- record (classify-line raw))
+      (<- (absorb runtime record)))
+    (val before (. (get runtime.turns "u0") end usage-limit))
+    (assert (= before (UsageLimitHit :minutes 300 :resets-at FIVE-HOURS-AT :text TEXT)) before)
+    (val hit (. (get runtime.turns "u1") end usage-limit))
+    (assert (= hit (UsageLimitHit :minutes None :resets-at None :text TEXT)) #(later hit))))
+
+
+(deftest test-every-record-that-carries-limit-windows-is-a-limit-record
+  ;; 失敗ケース(依頼 lt-0BC9J56TE8QA3VH1FZNJD3F4FS の設計検証・盲検 A): どの記録が利用枠切れの事実の材料(口座の枠の窓)を運ぶかは、
+  ;; 記録の型を持つ lines が 1 か所(LimitRecord)で名乗り、handler はその集まりでターンの枠へ重ねる(handler は記録の class を列挙しない
+  ;; — TurnRecord と同じ形)。codex の版上げで窓を運ぶ記録(例: 枠の断面をまとめた通知)を足して LimitRecord に入れ忘れると、handler は
+  ;; その記録をただの出来事として積み、ターンの枠に重ねない — 利用枠切れの戻りの刻が黙って None になる。この検が赤にする。
+  ;; 窓を運ぶ = 欄の型の式のどこか(和・tuple の中も辿る)に RateLimitWindow か RateLimits が在る。
+  (var carrying #())
+  (var pending #())
+  (for [record (get-args CodexLine)]
+    (:= pending (tuple (gfor field (fields record) field.type)))
+    (while pending
+      (when (in (get pending 0) #(RateLimitWindow RateLimits))
+        (:= carrying (+ carrying #(record)))
+        (:= pending #()))
+      (when pending
+        (:= pending (+ (cut pending 1 None) (get-args (get pending 0)))))))
+  (val declared (frozenset (or (get-args LimitRecord) #(LimitRecord))))
+  (assert (= (frozenset carrying) declared)
+          (.format "窓を運ぶのに LimitRecord に無い: {} / LimitRecord に在るのに窓を運ばない: {}"
+                   (sorted (gfor kind (- (frozenset carrying) declared) kind.__name__))
+                   (sorted (gfor kind (- declared (frozenset carrying)) kind.__name__)))))
 
 
 (deftest test-the-codex-layer-names-windows-by-their-length
