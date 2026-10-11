@@ -5,6 +5,8 @@ from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff_time import Delay as Delay
+from doeff_records.values import RowChanged as RowChanged
+from doeff_records.values import RowRemoved as RowRemoved
 from doeff_records.values import Unreachable as Unreachable
 
 @dataclass(frozen=True)
@@ -29,7 +31,7 @@ class ReadChangeLog(EffectBase):
 
 @dataclass(frozen=True)
 class ChangeLog:
-    changes: tuple
+    changes: tuple[RowChanged | RowRemoved, ...]
     epoch: int
 
 @dataclass(frozen=True)
