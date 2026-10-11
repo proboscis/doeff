@@ -154,6 +154,25 @@
   (#^ str turn-id)
   (#^ TokenUsageWire token-usage))
 
+(defwire RateLimitWindowWire
+  "口座の利用枠の窓 1 つ(codex 0.162.1 の RateLimitWindow — 使った割合は必ず在り、長さと戻りの刻は無いこともある)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ int used-percent)
+  (setv #^ (| int None) window-duration-mins None)
+  (setv #^ (| int None) resets-at None))
+
+(defwire RateLimitSnapshotWire
+  "account/rateLimits/updated の rateLimits のうち使う欄(枠の名と 2 つの窓 — 名乗らない窓は null)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| str None) limit-id None)
+  (setv #^ (| RateLimitWindowWire None) primary None)
+  (setv #^ (| RateLimitWindowWire None) secondary None))
+
+(defwire RateLimitsParamsWire
+  "account/rateLimits/updated の params(thread もターンも名乗らない — process の口座の通知)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ RateLimitSnapshotWire rate-limits))
+
 
 ;; --- 記録の型(上の層が読む) ---------------------------------------------------------------------
 
@@ -282,6 +301,23 @@
   (setv #^ (| str UnknownValue None) error-kind None)
   (setv #^ (| int None) http-status None))
 
+(defrecord RateLimitWindow
+  "口座の利用枠の窓 1 つ: used-percent = 使った割合(百分率 — 100 以上で尽きた)/ minutes = 窓の長さ(分)/ resets-at = 窓が戻る刻
+   (epoch 秒)。長さと戻りの刻は名乗らなければ None。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ int used-percent)
+  (#^ (| int None) minutes)
+  (#^ (| int None) resets-at))
+
+(defrecord RateLimits
+  "口座の利用枠の知らせ(account/rateLimits/updated): limit-id = 枠の名(例 codex)/ primary・secondary = 窓(この知らせが名乗らなければ
+   None — codex 0.162.1 の schema の註: 名乗らない欄は前に見た値を消さない)。codex は上流の答えの header から読んだ枠を出し、利用枠
+   切れの断り(誤りの種類 usageLimitExceeded)ではその誤りの通知より先に出す。thread もターンも名乗らない(process の口座の通知)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ (| str None) limit-id)
+  (#^ (| RateLimitWindow None) primary)
+  (#^ (| RateLimitWindow None) secondary))
+
 (defrecord Other
   "語彙の外の通知: method = 通知の名(中身は持たない — 発明しない)。"
   {:tags {:context "codex" :role "type"}}
@@ -294,7 +330,7 @@
   (#^ str reason))
 
 (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
-                   ItemStarted ItemDone TokenUsage TurnError TurnEnded Other Unparsed))
+                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded Other Unparsed))
 
 (defrecord ErrorFacts
   "codexErrorInfo から読んだ誤りの種類の名(この版に無い形は UnknownValue)と HTTP の status(どちらも名乗らなければ None)。"
@@ -387,6 +423,23 @@
               :model-context-window params.token-usage.model-context-window))
 
 
+(defk window-of [window]
+  {:pre [(: window (| RateLimitWindowWire None))] :post [(: % (| RateLimitWindow None))] :tags {:context "codex" :role "foundation"}}
+  "枠の窓の wire を記録の窓にするため(名乗らない窓は None のまま)。"
+  (if (is window None)
+      None
+      (RateLimitWindow :used-percent window.used-percent :minutes window.window-duration-mins :resets-at window.resets-at)))
+
+
+(defk rate-limits-of [#^ RateLimitsParamsWire params]
+  {:pre [(: params RateLimitsParamsWire)] :post [(: % RateLimits)] :tags {:context "codex" :role "foundation"}}
+  "account/rateLimits/updated を、上の層が尽きた窓と戻りの刻を読む枠の知らせにするため。"
+  (val limits params.rate-limits)
+  (<- primary (window-of limits.primary))
+  (<- secondary (window-of limits.secondary))
+  (RateLimits :limit-id limits.limit-id :primary primary :secondary secondary))
+
+
 (defk item-started-of [#^ ItemParamsWire params]
   {:pre [(: params ItemParamsWire)] :post [(: % ItemStarted)] :tags {:context "codex" :role "foundation"}}
   "item/started を、上の層が「考えている」「道具を呼んでいる」を出す材料(item の種類と id)にするため。"
@@ -464,6 +517,7 @@
     "item/completed" (do (<- record (parsed-into method ItemParamsWire item-done-of params)) record)
     "error" (do (<- record (parsed-into method ErrorParamsWire turn-error-of params)) record)
     "thread/tokenUsage/updated" (do (<- record (parsed-into method TokenUsageParamsWire token-usage-of params)) record)
+    "account/rateLimits/updated" (do (<- record (parsed-into method RateLimitsParamsWire rate-limits-of params)) record)
     _ (Other :method method)))
 
 

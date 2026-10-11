@@ -67,6 +67,7 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 | `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status) |
 | `TurnError` | `error` | ターンの誤り(文・誤りの種類・HTTP の status・codex が繰り返すか) |
 | `TokenUsage` | `thread/tokenUsage/updated` | この呼びの分(last)と thread の累積(total)の token の数 |
+| `RateLimits` | `account/rateLimits/updated` | 口座の利用枠の名と窓(`RateLimitWindow` = 使った割合・長さ〔分〕・戻りの刻〔epoch 秒〕— 名乗らない窓は None)。thread もターンも名乗らない口座の通知で、handler は走っているターンに積む。利用枠切れ(誤りの種類 `usageLimitExceeded`)では誤りの通知より先に届く(実測 `tests/recorded/codex-0.162.1/usage-limit`) |
 | `ThreadStarted` | `thread/started` | thread の id |
 | `Response` / `ErrorResponse` | 要求への答え(id の在る行) | 要求の id と、答えが名乗る thread・ターンの id / 誤りの code と文 |
 | `ServerRequest` | codex からの要求(id と method の両方が在る行 — 道具の許可など) | 答えに使う id と method と、中を読まずに運ぶ params |
@@ -90,8 +91,10 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 口座は要らない(答えの中身だけが偽物で、行の形は本物の binary が出した物)。版を上げる時は録り直す:
 
 ```sh
-uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> packages/doeff-codex/tests/recorded/codex-<版> <作業の dir>
+uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> packages/doeff-codex/tests/recorded/codex-<版> <作業の dir> [筋書き…]
 ```
+
+筋書きの名(two-turns・interrupt・rate-limit・usage-limit)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
 
 ## 検
 

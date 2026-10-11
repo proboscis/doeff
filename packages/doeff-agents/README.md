@@ -337,6 +337,16 @@ types as the Claude adapter, so an upper layer reads both the same way:
 | `item/started` (reasoning) / reasoning deltas | `AgentThinkingStartedEvent` / `AgentThinkingDeltaEvent` |
 | `thread/tokenUsage/updated` | `AgentCallUsageEvent` (input tokens exclude cached ones) |
 | `turn/completed` | `AgentTurnEndEvent` (`resume_from` = the Codex thread id) |
+| `turn/completed` (failed, error kind `usageLimitExceeded`) + `account/rateLimits/updated` | `AgentTurnFailed.account_limit` (`AgentAccountLimit`, as for Claude) |
+
+A turn that Codex fails with `usageLimitExceeded` carries `AgentAccountLimit`:
+`text` is Codex's error message; `resets_at` and `window` come from the rate
+limit windows Codex stated in that turn (`account/rateLimits/updated`, merged so
+that an update which omits a window keeps the one seen before). The exhausted
+window (used ≥ 100%) gives them; with two exhausted windows the later reset wins.
+A 300-minute window is named `five_hour` and a 10080-minute one `seven_day`
+(the Claude CLI's words); other lengths get `None`. When no window is exhausted,
+or an exhausted window states no reset, both stay `None` — no time is invented.
 
 Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
 (`started`) when layer 2 accepts an input (a turn start or a `turn/steer`), and
