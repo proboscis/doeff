@@ -7,10 +7,12 @@ semgrep の起動(1 回 約 8 秒)を毎回払っていた。置き場は環境�
 鍵は semgrep の版・設定の中身・例の中身で、semgrep と設定の path は入れない — 日次は回ごとに HOME を替え、semgrep(``uv tool install``)も
 設定(clone)も毎回違う path に在る。中身で引くので、規則か例を 1 つ変えた回は semgrep が回り直し、悪い例は赤になる。
 
-別の process は、process の中の答え(``_INSTALLED_VERDICTS``)を空にして写す。別の HOME は、semgrep を別の dir の symlink から呼び、
-同じ中身の設定を別の木から読んで写す。
+別の process は、process の中の答え(``_INSTALLED_VERDICTS``)を空にして写す。別の HOME は、回ごとの uv tool の venv の形
+(``bin/semgrep`` と同じ venv の dist-info・HOME の ``.local/bin`` からの symlink)に入れた semgrep を呼び、同じ中身の設定を
+別の木から読んで写す。
 """
 
+import re
 import shutil
 import subprocess
 from collections.abc import Generator
@@ -61,28 +63,48 @@ class Run:
         self.base = base
         self.monkeypatch = monkeypatch
         self.real_semgrep = real_semgrep
+        (self.dist_info,) = Path(real_semgrep).parent.parent.glob(
+            "lib/python*/site-packages/semgrep-*.dist-info"
+        )
         self.count = 0
 
-    def start(self, config: str) -> Path:
-        """新しい回: 空の登録簿と process の答え・新しい木・新しい path の semgrep。答え = 木の根。"""
+    def start(self, config: str, *, version: str | None = None) -> Path:
+        """新しい回: 空の登録簿と process の答え・新しい木・新しい path の semgrep(version = dist-info に書く版・既定は本物の版)。
+        答え = 木の根。"""
         self.count += 1
         registry_module.clear_registry()
         home = self.base / f"home-{self.count}"
         tree = home / "repos" / "tree"
         tree.mkdir(parents=True)
         (tree / ".semgrep.yaml").write_text(config, encoding="utf-8")
+        # uv tool install の形: 回ごとの venv の bin/semgrep と同じ venv の dist-info、HOME の .local/bin からの symlink。
+        venv = home / ".local" / "share" / "uv" / "tools" / "semgrep"
+        (venv / "bin").mkdir(parents=True)
+        installed = venv / "bin" / "semgrep"
+        installed.write_text(f'#!/bin/sh\nexec "{self.real_semgrep}" "$@"\n', encoding="utf-8")
+        installed.chmod(0o755)
+        dist_info = venv / "lib" / "python3.14" / "site-packages" / self.dist_info.name
+        dist_info.mkdir(parents=True)
+        metadata = (self.dist_info / "METADATA").read_text(encoding="utf-8")
+        if version is not None:
+            metadata = re.sub(r"(?m)^Version: .*$", f"Version: {version}", metadata)
+        (dist_info / "METADATA").write_text(metadata, encoding="utf-8")
         bin_dir = home / ".local" / "bin"
         bin_dir.mkdir(parents=True)
-        (bin_dir / "semgrep").symlink_to(self.real_semgrep)
+        (bin_dir / "semgrep").symlink_to(installed)
         self.monkeypatch.chdir(tree)
-        self.monkeypatch.setattr(registry_module.shutil, "which", lambda _name: str(bin_dir / "semgrep"))
+        self.monkeypatch.setattr(
+            registry_module.shutil, "which", lambda _name: str(bin_dir / "semgrep")
+        )
         self.monkeypatch.setattr(registry_module, "_INSTALLED_VERDICTS", {})
         return tree
 
 
 def _semgrep_runs(spy: mock.Mock) -> int:
     return sum(
-        1 for call in spy.call_args_list if any(Path(str(part)).name == "semgrep" for part in call.args[0])
+        1
+        for call in spy.call_args_list
+        if any(Path(str(part)).name == "semgrep" for part in call.args[0])
     )
 
 
@@ -146,4 +168,16 @@ def test_a_changed_fixture_runs_semgrep_again_and_is_red(run: Run, spy: mock.Moc
     _register(hit_source="print('{word}')\n")
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
         assert_semgrep_enforcement("store_probe_eval")
+    assert _semgrep_runs(spy) == 2
+
+
+def test_another_semgrep_version_runs_semgrep_again(run: Run, spy: mock.Mock) -> None:
+    run.start(_rules(WORDS))
+    _register()
+    assert_semgrep_enforcement("store_probe_eval")
+
+    # semgrep の版を上げた回: 設定も例も同じでも、前の版の答えは読まない。
+    run.start(_rules(WORDS), version="99.0.0")
+    _register()
+    assert_semgrep_enforcement("store_probe_eval")
     assert _semgrep_runs(spy) == 2
