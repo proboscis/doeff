@@ -21,6 +21,8 @@ from doeff_hy_bytecode_guard.expansion import TYPE_CHECK_EXPANSION
 TYPE_CHECKING = False  # typing を起動時に読まない(2 ms)— 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
+    import contextlib
+
     from doeff_hy_bytecode_guard.macro_use import MacroRecording
     from doeff_hy_bytecode_guard.records import MacroDependency, MacroRecord, ValueReference
 
@@ -279,40 +281,46 @@ def _checking_get_code(previous: GetCode):
         path = self.get_filename(fullname)
         if not is_hy_source(path):
             return previous(self, fullname)
-        module = _module_being_loaded(self, path)
         try:
-            if module is None:
-                return _hy_code(self, fullname, path)
-            # compile し直す時(.pyc が無い・古い)に、展開が使った macro を拾う(compile の口の包みが記録を作る)。
-            with macro_recording(module):
-                return _hy_code(self, fullname, path)
+            return _hy_code(self, fullname, path)
         finally:
             _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
 
     def _hy_code(self: importlib.machinery.SourceFileLoader, fullname: str, path: str) -> CodeType | None:
         """Hy の source の code — 保存先・.pyc・compile のどれかから、展開が今の macro に依る物を返すため。"""
-        shared = _from_shared_store(self, fullname, path)
+        header = _bytecode_header(self, path)
+        shared = _from_shared_store(self, fullname, path, header)
         if shared is not None:
             return shared  # 別の作業木で作った同じ中身の code — 記録は今の環境の macro の file で確かめた
         counts = _counts()
         before = counts.get(path, 0)
-        code = previous(self, fullname)
-        if code is None or counts.get(path, 0) != before:
-            if code is not None:
-                _to_shared_store(fullname, path, _compiled_source(path), code)
-            return code  # 今 compile した物 — 依った macro は今の file
+        if _bytecode_matches_source(self, path, header):
+            # 作業木の .pyc が source に合う — 標準の口は .pyc を読むだけで compile しないので、展開の module を引かない(引き方は
+            # 読み込み済みの module 全部を歩く。Hy の module ごとに引くと、検の読み込みで CPU 約 0.6 秒の固定費になった —
+            # card ki-e77d44aa61e5)。.pyc が壊れていて compile した時は記録が無いので、下の照らしが囲みの中で compile し直す。
+            code = previous(self, fullname)
+        else:
+            # compile し直す時(.pyc が無い・古い)に、展開が使った macro を拾う(compile の口の包みが記録を作る)。
+            with _expansion_recording(self, path):
+                code = previous(self, fullname)
+            if code is None or counts.get(path, 0) != before:
+                if code is not None:
+                    _to_shared_store(fullname, path, _compiled_source(path), code)
+                return code  # 今 compile した物 — 依った macro は今の file
+        if code is None:
+            return None
         from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
 
         if _record_is_current_here(code):
             return code
-        header = _bytecode_header(self, path)
         if header is not None and not records.python_checks_source(
             header, _check_hash_based_pycs()
         ):
             # Python が source と突き合わせない .pyc(PEP 552 の unchecked-hash — image の組み立てが焼く形)は、
             # Python が source の変更を信じないのと同じく、macro の変更も信じない(組み立ての中で焼き直す前提)。
             return code
-        recompiled = _recompile(self, path, header)
+        with _expansion_recording(self, path):
+            recompiled = _recompile(self, path, header)
         _to_shared_store(fullname, path, _compiled_source(path), recompiled)
         return recompiled
 
@@ -364,7 +372,7 @@ def _store_entry(store: str, fullname: str, path: str, source: bytes) -> str:
 
 
 def _from_shared_store(
-    self: importlib.machinery.SourceFileLoader, fullname: str, path: str
+    self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
 ) -> CodeType | None:
     """作業木の .pyc が使えない時に、別の作業木で作った同じ中身の code を保存先(code_store — 作業木・版をまたいで中身で引く)から
     引く(当たらなければ None)— 新しい作業木の .pyc は source の絶対 path に結びつくので必ず冷え、同じ中身の file の変換(macro の
@@ -384,7 +392,6 @@ def _from_shared_store(
     except OSError:
         return None
     mtime, size = int(stats["mtime"]), int(stats["size"])
-    header = _bytecode_header(self, path)
     if header is not None and (
         records.timestamp_header_matches(header, mtime=mtime, size=size)
         or int.from_bytes(header[4:8], "little") & records.FLAG_HASH_BASED
@@ -475,6 +482,33 @@ def _bytecode_header(self: importlib.machinery.SourceFileLoader, path: str) -> b
     from doeff_hy_bytecode_guard import records  # 古い記録に当たった時だけ呼ばれる
 
     return data[: records.PYC_HEADER_BYTES]
+
+
+def _bytecode_matches_source(
+    self: importlib.machinery.SourceFileLoader, path: str, header: bytes | None
+) -> bool:
+    """作業木の .pyc(頭 header)が、標準の timestamp の形で今の source の更新時刻と大きさに合うか — 合えば標準の get_code は
+    .pyc を読むだけで compile しない。hash の形は Python 自身の判定に任せ、合うとしない(compile し得る側に数える)。"""
+    if header is None or header[:4] != importlib.util.MAGIC_NUMBER:
+        return False
+    from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
+
+    try:
+        stats = self.path_stats(path)
+    except OSError:
+        return False
+    return records.timestamp_header_matches(header, mtime=int(stats["mtime"]), size=int(stats["size"]))
+
+
+def _expansion_recording(
+    self: importlib.machinery.SourceFileLoader, path: str
+) -> "contextlib.AbstractContextManager[object]":
+    """compile し得る読みを囲む口 — 展開が走る module(:func:`_module_being_loaded`)の表で、展開が使った macro を拾う。module が
+    無ければ(module の外の compile)何も拾わない。module は compile し得る時にだけ引く(引き方は読み込み済みの module 全部を歩く)。"""
+    import contextlib  # compile し得る時だけ読む
+
+    module = _module_being_loaded(self, path)
+    return contextlib.nullcontext() if module is None else macro_recording(module)
 
 
 def _module_being_loaded(
