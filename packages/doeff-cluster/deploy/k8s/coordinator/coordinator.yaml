@@ -109,8 +109,11 @@ spec:
             # 43d055adc = 前の世代と重なる新しい世代は、前の世代の job を全部受け取れるまで Ready にならず、recreate の job は前の世代の
             # Pod の preStop の drain が来てから一度に移す版(AL-D2k 43d055adc)と、実行環境の root を 2 つの世代で分け合う版(AL-D2g
             # 2ceb078fa)。10-11 18:42 JST の zeus の worker の入れ替えで、前の世代の Pod が Service の振り先から外れた後も job が前の世代に
-            # 残り、API が 2〜7 分届かなかった事の直し。前の版 d3d7baf10(L2034)は 43d055adc の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 43d055adcaca96d276a60d7a61a3ada0bf894f8f }
+            # 残り、API が 2〜7 分届かなかった事の直し。
+            # ae47d60a2 = 旧い Pod の preStop の drain の問いに、旧い世代が lease の窓より長く黙っていても『Pod が消えた』と読んで
+            # drained を返さない版(AL-D2l — 10-11 18:58 JST に負荷で heartbeat が途絶えた拍に preStop が終わり、ターンが 15 本切れた事の
+            # 直し)。前の版 43d055adc(L2043)は ae47d60a2 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: ae47d60a2b1a110cf4e37dac3676561276757923 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
