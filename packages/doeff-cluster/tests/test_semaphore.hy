@@ -233,7 +233,7 @@
 (import doeff [EffectBase])
 (require doeff-hy.macros [defhandler])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp AwaitLeaseFree])
+(import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp AwaitLeaseFree LeaseAnswer])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict])
 (import doeff_cluster.shared.core.semaphore_handlers [leases-fence])
 
@@ -581,6 +581,45 @@
                             (with_handlers [(cluster-semaphore sb)] (cancel-a-waiting-taker))])))
   (val ended (get done 1))
   (assert (= ended #("cancelled" 3000)) ended))
+
+
+(defhandler claim-reply-held-back [#^ int seconds]
+  ;; 引数に残す理由: seconds は筋書きの返事を遅らせる秒(筋書きごとに違う)。
+  ;; claim を盤に通した後、返事を seconds 秒遅らせる(本番は返事が失われて送り直す間 — claim は盤に通っているのに、取りはまだ知らない)。
+  (LeaseOp [name op token permits ttl-ms]
+    :when (= op "claim")
+    (<- answer LeaseAnswer effect)
+    (<- (Delay seconds))
+    (resume answer)))
+
+
+(defk cancel-a-taker-before-its-claim-reply []
+  {:pre [] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 秒に lease writer-a を取りに行く task を始め、3 秒(claim は盤に通ったが返事を待っている途中)に取り消して、取り消しの終わりを待つため。"
+  (<- task Task (Spawn (take-after 1.0)))
+  (<- (Delay 3))
+  (<- (Cancel task))
+  (try
+    (<- _took int (Wait task))
+    (except [cancelled TaskCancelledError]
+      None))
+  None)
+
+
+(deftest test-a-cancelled-claim-whose-reply-is-late-gives-the-lease-back
+  ;; 取りの claim が盤に通った後、返事を待っている間に取りが取り消される(常駐の process の入れ替え・drain の時点 — 依頼
+  ;; lt-VDFSDNZKFS9ACQHW4R64AGK4N0 の盲検 A)。B は 1 秒に取りに行き、claim は盤に通るが返事が 20 秒遅れる。3 秒に B の取りを取り消す。
+  ;; 次の持ち手 C は 4 秒に取りに行き、B の取り消しが同じ token で返した後なので、4 秒(試し直しの間の内)に取る。
+  ;; 直す前: 取りは取り消しをそのまま上げ、盤に通った B の token が期限(1 秒 + 15 秒)まで残り、C は 16 秒の後に取った。
+  (val clock (SimClock))
+  (val store {})
+  (val sb (SemaphoreSession "b" :ttl-seconds 15.0))
+  (val sc (SemaphoreSession "c" :ttl-seconds 15.0))
+  (<- done list (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
+                  (run-all [(with_handlers [(claim-reply-held-back 20) (cluster-semaphore sb)] (cancel-a-taker-before-its-claim-reply))
+                            (with_handlers [(cluster-semaphore sc)] (take-after 4.0))])))
+  (val took (get done 1))
+  (assert (<= 4000 took 4500) took))
 
 
 (deftest test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock
