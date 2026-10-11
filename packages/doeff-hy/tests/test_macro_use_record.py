@@ -710,3 +710,151 @@ def test_a_changed_table_in_binding_forms_makes_a_defk_user_stale(real_tree: Rea
         '_KINDS: Mapping[str, Mutability] = {"val": Mutability.VAR, "var": Mutability.VAR, "v": Mutability.VAL}',
     )
     assert real_tree.run("check")["current"] is False, "binding_forms の _KINDS を替えたのに古いと判じない"
+
+
+# ---- import の順に依らない digest(閉包の中の module が循環する import の途中で引けない時)-------------------------------------
+#
+# deff の閉包は、関数の中の import で doeff_hy.outcome_forms を引く。outcome_forms は doeff_hy.record の defrecord を require し、
+# record.hy は deff を使う。.pyc から record を読む process では、record.hy の記録の照らしが record の本体の実行の前に走るので、
+# outcome_forms を import できない(record の macro の表がまだ空)。直す前は、その時の digest(名だけ)が process の覚えに残り、
+# その process の deff の使い手の照らしと記録が全部その値になって、import の順の違う process と置き場の entry を書き直し合った
+# (agora-redesign card ki-464fa307a62b・日次 10-11 16:03 の回)。
+
+#: deff だけを使う module。
+REAL_DEFF_USER = """\
+(require doeff-hy.macros [deff])
+
+(deff add-one [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "foundation"}}
+  "1 を足す。"
+  (+ n 1))
+"""
+
+#: 子の process(import の順を変える): 名指した macro(module:名)の digest を順に計算する(digests)・使い手の記録を作る
+#: (record)・名指した macro の digest を先に計算してから記録を照らす(check)・module を順に import して compile した Hy の
+#: file を出す(import)。
+ORDER_CHILD = """\
+import importlib, importlib.machinery, json, sys
+from pathlib import Path
+root, stored, mode, *names = sys.argv[1], Path(sys.argv[2]), sys.argv[3], *sys.argv[4:]
+sys.path.insert(0, root)
+import hy
+compiled = []
+previous = importlib.machinery.SourceFileLoader.source_to_code
+def counting(self, data, path, *args, **kwargs):
+    if isinstance(path, str) and path.endswith(".hy"):
+        compiled.append(Path(path).name)
+    return previous(self, data, path, *args, **kwargs)
+importlib.machinery.SourceFileLoader.source_to_code = counting
+import doeff_hy
+from doeff_hy_bytecode_guard import loader_hooks, macro_use, record_from_json, record_is_current_here, record_to_json
+from doeff_hy_bytecode_guard import records, source_to_code_as_import
+def digest(spec):
+    module, name = spec.split(":")
+    key = macro_use.UsedMacroKey("_hy_macros", module, hy.mangle(name))
+    macro = vars(importlib.import_module(module))["_hy_macros"][key.name]
+    return macro_use.macro_digest(key, macro, loader_hooks.file_sha256).digest
+answer = {"doeff_hy": doeff_hy.__file__}
+if mode == "digests":
+    answer["digests"] = [digest(spec) for spec in names]
+elif mode == "record":
+    path = root + "/macro_use_probe/user.hy"
+    loader = importlib.machinery.SourceFileLoader("macro_use_probe.user", path)
+    code = source_to_code_as_import(loader, open(path, "rb").read(), path)
+    stored.write_text(json.dumps(record_to_json(records.record_of(code))))
+elif mode == "check":
+    for spec in names:
+        digest(spec)
+    answer["current"] = record_is_current_here(record_from_json(json.loads(stored.read_text())))
+else:
+    for name in names:
+        importlib.import_module(name)
+    answer["compiled"] = compiled
+print(json.dumps(answer))
+"""
+
+DEFF = "doeff_hy.macros:deff"
+DEFRECORD = "doeff_hy.record:defrecord"
+DEFWIRE = "doeff_hy.record:defwire"
+
+
+def _order_child(real_tree: RealTree, mode: str, *names: str, **env: str) -> dict[str, object]:
+    """ORDER_CHILD を子の process で 1 度走らせた答え(env = 足す環境変数 — 写した doeff_hy を読んだことも確かめる)。
+
+    子は .pyc を書く(検の一時 dir の PYTHONPYCACHEPREFIX の下 — real_tree が置く)。揺れは record を .pyc から読む process
+    (record.hy の記録の照らしが本体の実行の前に走る)でだけ起きるので、検の一式が子へ渡す ``PYTHONDONTWRITEBYTECODE`` を外す。"""
+    import json
+    import os
+    import subprocess
+
+    inherited = {name: value for name, value in os.environ.items() if name != "PYTHONDONTWRITEBYTECODE"}
+    done = subprocess.run(
+        [sys.executable, "-c", ORDER_CHILD, str(real_tree.root), str(real_tree.stored), mode, *names],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env={**inherited, **env},
+    )
+    assert done.returncode == 0, done.stderr
+    answer = json.loads(done.stdout.strip().splitlines()[-1])
+    assert Path(str(answer["doeff_hy"])).is_relative_to(real_tree.lib), answer
+    return answer
+
+
+def test_the_digest_of_deff_does_not_depend_on_computing_defrecord_and_defwire_first(
+    real_tree: RealTree,
+) -> None:
+    # 直す前は赤: 先に defrecord・defwire の digest を計算した process(record を .pyc から読み、record.hy の照らしの途中で
+    # outcome_forms を import できない)の deff の digest は、単独の process の digest と違った(959a4c15 / f24dde8b)。
+    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")  # .pyc を作る(日次の 2 回目からの形)
+    alone = _order_child(real_tree, "digests", DEFF)["digests"]
+    after = _order_child(real_tree, "digests", DEFRECORD, DEFWIRE, DEFF)["digests"]
+    assert isinstance(alone, list) and isinstance(after, list)
+    assert alone[0] is not None, "単独の process で deff の digest を作れない"
+    assert after[-1] == alone[0], (
+        f"先に defrecord・defwire の digest を計算した process の deff の digest {after[-1]} が単独の {alone[0]} と違う"
+    )
+
+
+def test_a_deff_user_stays_current_in_a_process_that_computed_defrecord_and_defwire_first(
+    real_tree: RealTree,
+) -> None:
+    # 直す前は赤: 単独の process では当たる deff の使い手の記録が、先に defrecord・defwire の digest を計算した process では
+    # 古い(deff)と判じられた — 置き場の entry を、import の順の違う process が互いに書き直す元。
+    (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_DEFF_USER, encoding="utf-8")
+    _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")  # .pyc を作る
+    _order_child(real_tree, "record")
+    assert _order_child(real_tree, "check")["current"] is True, "単独の process で deff の使い手の記録が古い"
+    assert _order_child(real_tree, "check", DEFRECORD, DEFWIRE)["current"] is True, (
+        "先に defrecord・defwire の digest を計算した process で、deff の使い手の記録を古いと判じた"
+    )
+
+
+#: import の順の違う 2 つの process の形 — record を先に読む(record.hy の照らしの途中で outcome_forms を import できない)と、
+#: deff の使い手を先に読む(record.hy の照らしの途中で outcome_forms が import の途中)。
+RECORD_FIRST = ("doeff_hy.record", "doeff_hy.wire", "doeff_hy.clause_endings")
+DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy.clause_endings", "doeff_hy.wire", "doeff_hy.record")
+
+
+def test_processes_importing_in_different_orders_share_the_store_without_recompiling(
+    real_tree: RealTree, tmp_path: Path
+) -> None:
+    # 直す前は赤: 共有の置き場 1 つを、import の順の違う process が交互に使うと(pycache は毎回空 — 日次の pytest の段の形)、
+    # 2 巡目からも毎回 record.hy・outcome_forms.hy・wire.hy・clause_endings.hy を作り直して置き場を書き直した。
+    store = tmp_path / "store"
+    store.mkdir()
+    rounds: list[tuple[str, object]] = []
+    for index in range(4):
+        order = RECORD_FIRST if index % 2 == 0 else DEFF_USER_FIRST
+        answer = _order_child(
+            real_tree,
+            "import",
+            *order,
+            DOEFF_HY_CODE_STORE=str(store),
+            PYTHONPYCACHEPREFIX=str(tmp_path / f"pycache-{index}"),
+        )
+        rounds.append((order[0], answer["compiled"]))
+    assert rounds[0][1], "1 巡目(冷えた置き場)で何も compile していない — 検の前提が崩れた"
+    again = [(first, compiled) for first, compiled in rounds[2:] if compiled]
+    assert not again, f"2 巡目からも Hy の module を作り直した: {again}(全部の回: {rounds})"
