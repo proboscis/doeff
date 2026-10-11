@@ -933,7 +933,12 @@
   None)
 
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]
-  "手番を走らせていない生きた process の資格が床を切っていれば止めるため(訳 CREDENTIAL-FLOOR)。"
+  "手番を走らせていない生きた process の資格が床を切っていれば止めるため(訳 CREDENTIAL-FLOOR)。見回りは層 2 の効果のたび(上の層が
+   CLI の行ごとに撃つ読みを含む)に host の全部の会話を回るので、床を切っていない会話は lock も process の生き死にの確かめ(poll —
+   system call)も取らずに通す — 読み 1 回の費用を会話の数に比例させない(agora card acp:kanban-issue:ki-07d7059e1eea —
+   tests/test_page_reads.hy)。止める刻 retire-after は lock の中で替わり得るので、lock を取った後に同じ判じを読み直す。"
+  (when (not (credential-due runtime.retire-after now))
+    (return None))
   (with [runtime.lock]
     (setv process runtime.process)
     (when (and (is-not process None) (.alive process) (is process.retiring None) (is (.running-turn runtime) None)
