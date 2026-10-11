@@ -25,6 +25,7 @@
   LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession
   SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow
   AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent
+  AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentCapabilityUnsupportedError NoTurnInFlightError
   RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
@@ -58,6 +59,8 @@
 (val USAGE-RESETS-AT 1893456000)
 (val USAGE-LIMIT-TEXT (+ "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
                          "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM."))
+;; 道具を呼ぶターンの言い方(替え玉の規則 — 録った codex 0.162.1 の道具の呼びのターン tool-calls を流す)。
+(val TOOLS-PROMPT "TOOL-CALLS please")
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
 (val ANSWER "Hello, world.")
 ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)と、借りた口座の auth.json の中身(検の作り物 —
@@ -570,3 +573,57 @@
   (assert (isinstance end AgentTurnFailed) end)
   (assert (is end.account-limit None) end)
   (assert (in "429" end.detail) end))
+
+
+(defk tool-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "道具を呼ぶ 1 つのターンを公開 effect だけで最後まで読むため。"
+  (<- handle (launch s "codex-tools" TOOLS-PROMPT {}))
+  (<- done (read-until handle ended s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(deftest test-headless-codex-tool-items-reach-tool-use-and-tool-result-events-stub [tmp-path]
+  ;; 失敗ケース(card acp:kanban-issue:ki-77e76c7c07ce): 録った codex 0.162.1 の道具の item(命令の成功・失敗・apply_patch・web 検索)が、
+  ;; claude の adapter と同じ出来事(AgentToolUseEvent の ToolCall・AgentToolResultEvent の ToolAnswer)で届く — agora は absorb-event を
+  ;; 変えずに画面の道具カードへ出す。道具の名は codex の item の種類の名、命令は画面の shell の card が読む command の欄。
+  (<- done (run-on STUB tmp-path tool-turn))
+  (assert (isinstance done Read) done)
+  (assert (and (isinstance done.end AgentTurnCompleted) (= done.end.result-text "Tools done.")) done.end)
+  (<- uses (of-kind done.events AgentToolUseEvent))
+  (val calls (tuple (gfor use uses call use.tool-calls call)))
+  (assert (= (tuple (gfor call calls #(call.id call.name)))
+             #(#("call_0" "commandExecution") #("call_1" "commandExecution") #("call_2" "fileChange") #("ws_1" "webSearch")))
+          calls)
+  (val echo (get calls 0))
+  (val fail (get calls 1))
+  (val patch (get calls 2))
+  (val search (get calls 3))
+  (assert (= (get echo.input "command") "/bin/bash -lc 'echo tool-out'") echo.input)
+  (assert (.endswith (get echo.input "cwd") "/cwd") echo.input)
+  (assert (= (get fail.input "command") "/bin/bash -lc 'ls no-such-file'") fail.input)
+  (val edits (get patch.input "changes"))
+  (assert (= (len edits) 1) patch.input)
+  (val edit (get edits 0))
+  (assert (= #((get edit "kind") (get edit "diff")) #("add" "hello\n")) patch.input)
+  (assert (.endswith (get edit "path") "/cwd/note.txt") patch.input)
+  (assert (= (dict search.input) {"query" "doeff effects" "action" "search"}) search.input)
+  ;; 結果: 出力の文と誤りの印 — 失敗した命令(終了 code 2)は誤り。ファイルの変更と検索は出力の文を持たない。
+  (<- results (of-kind done.events AgentToolResultEvent))
+  (val answers (tuple (gfor result results answer result.answers answer)))
+  (assert (= (tuple (gfor answer answers #(answer.id answer.text answer.is-error)))
+             #(#("call_0" "tool-out\n" False)
+               #("call_1" "ls: cannot access 'no-such-file': No such file or directory\n" True)
+               #("call_2" "" False)
+               #("ws_1" "" False)))
+          answers)
+  ;; 順: どの呼びもその結果より前に届き、道具は答えの文字の途中より前(codex が走らせた順)。web 検索は語の無い始まりで「呼んでいる」
+  ;; (AgentToolCallStartedEvent)を先に出し、語は呼び(AgentToolUseEvent)で届く。
+  (val use-seqs (dfor use uses call use.tool-calls call.id use.seq))
+  (val result-seqs (dfor result results answer result.answers answer.id result.seq))
+  (assert (all (gfor #(id seq) (.items use-seqs) (< seq (get result-seqs id)))) #(use-seqs result-seqs))
+  (<- deltas (of-kind done.events AgentTextDeltaEvent))
+  (assert (< (max (.values result-seqs)) (. (get deltas 0) seq)) #(result-seqs deltas))
+  (<- starts (of-kind done.events AgentToolCallStartedEvent))
+  (assert (= (tuple (gfor start starts #(start.id start.name))) #(#("ws_1" "webSearch"))) starts)
+  (assert (< (. (get starts 0) seq) (get use-seqs "ws_1")) #(starts use-seqs)))

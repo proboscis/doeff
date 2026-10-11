@@ -13,8 +13,9 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
     ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
   - HOME_PHRASE が在れば、この process の CODEX_HOME の形を ``HOME dir=<権限> auth=<権限> account=<auth.json の口座の id>
     config=<link|file|none> sessions=<link|dir|none>`` と答える(借りた資格の家の形を子の process から見る — 資格の値は答えない)。
-  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT)が在れば、その目印で録ったターンの通知(turn/start の答えの後 〜 turn/completed)を
-    そのまま流す(利用枠切れ・429 の断りで失敗したターン)。
+  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS)が在れば、その目印で録ったターンの通知(turn/start の答えの後 〜
+    turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と web 検索の道具の
+    item を持つターン)。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
@@ -35,7 +36,7 @@ SETTINGS_PHRASE = "Tell the settings."
 HOME_PHRASE = "Tell the home."
 STEERED_PREFIX = "steered:"
 # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
-REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit"}
+REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls"}
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
 
