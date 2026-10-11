@@ -204,7 +204,8 @@ def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest
         assert _mapping(doc["metadata"], "metadata")["name"] == f"doeff-worker-{node}"
         spec = _mapping(doc["spec"], "spec")
         assert spec["replicas"] == 1
-        assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
+        expected = "RollingUpdate" if node in ROLLING_NODES else "Recreate"
+        assert _mapping(spec["strategy"], "strategy")["type"] == expected
         selector = _mapping(_mapping(spec["selector"], "selector")["matchLabels"], "matchLabels")
         assert selector.get("doeff.dev/node") == node
 
@@ -214,10 +215,53 @@ def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Mani
     CPU 4・memory 8Gi。"""
     spec = _mapping(zeus_worker["spec"], "spec")
     assert spec["replicas"] == 1
-    assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
     resources = _mapping(_container(zeus_worker)["resources"], "resources")
     assert resources["limits"] == {"memory": "100Gi"}
     assert resources["requests"] == {"cpu": "4", "memory": "8Gi"}
+
+
+# 入れ替えで同じ機体に同じ名の worker の 2 つの世代を並べる機体(AL-D2・card ki-2f5186034976): 新しい Pod を先に起こし、Ready になって
+# から旧い Pod を止める。2 つの世代は状態を世代ごとの dir に置き(WORKER_GENERATION_DIRS・POD_UID — boot.sh)、旧い Pod の drain は
+# 退いた process が走り切るまで待つ。世代の dir を知らない版の boot.sh は WORKER_DIR_LOCK の錠で旧い Pod の終わりを待ち続け、入れ替えが
+# 進まない — だから世代の dir を置く worker の版は GENERATION_DIRS_SINCE かその子孫。
+ROLLING_NODES = ("zeus",)
+GENERATION_DIRS_SINCE = "036d47c48a9204214149ccd19b1c6b4ea9ecb33d"
+# 退いた process が走り切る上限(上に載る系の宣言の retiredSeconds)と、worker が子 process を止める猶予(--stop-grace)。
+RETIRED_SECONDS = 21600
+STOP_GRACE_SECONDS = 10
+
+
+def test_zeus_worker_starts_the_new_generation_before_stopping_the_old(zeus_worker: Manifest) -> None:
+    """zeus の worker は RollingUpdate(maxSurge 1・maxUnavailable 0)で入れ替わり、状態を Pod の uid の dir に置き、旧い Pod の drain は
+    退いた process が走り切る上限まで待ち、猶予はその drain と子を止める猶予を含む。"""
+    spec = _mapping(zeus_worker["spec"], "spec")
+    assert spec["strategy"] == {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0}}
+    assert _env_value(zeus_worker, "POD_UID")["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.uid"}}
+    assert _env_value(zeus_worker, "WORKER_GENERATION_DIRS")["value"] == "1"
+    drain = int(str(_env_value(zeus_worker, "DRAIN_DEADLINE")["value"]))
+    assert drain >= RETIRED_SECONDS
+    grace = _pod_spec(zeus_worker)["terminationGracePeriodSeconds"]
+    assert isinstance(grace, int) and grace > drain + STOP_GRACE_SECONDS
+
+
+@pytest.mark.parametrize("node", NODES)
+def test_worker_with_generation_dirs_runs_a_boot_script_that_knows_them(rendered: list[Manifest], node: str) -> None:
+    """世代の dir を置く worker の版は、boot.sh が世代の dir を知る版(GENERATION_DIRS_SINCE)かその子孫。置かない worker は Recreate
+    (同じ dir の 2 つの世代を並べない)。"""
+    worker = _worker_on(rendered, node)
+    strategy = _mapping(_mapping(worker["spec"], "spec")["strategy"], "strategy")
+    if not any(entry["name"] == "WORKER_GENERATION_DIRS" for entry in _env(worker)):
+        assert strategy["type"] == "Recreate"
+        return
+    version = str(_env_value(worker, "WORKER_DOEFF_COMMIT")["value"])
+    assert _same_or_ancestor(GENERATION_DIRS_SINCE, version), (
+        f"{node} の worker の版 {version} は世代の dir を知らない(GENERATION_DIRS_SINCE {GENERATION_DIRS_SINCE} の子孫でない)"
+    )
+
+
+def test_generation_dirs_on_a_version_without_them_is_refused() -> None:
+    """世代の dir の前の版(10-11 朝の zeus の版 44778ca69)で世代の dir を置く宣言を、版の判じが断る。"""
+    assert not _same_or_ancestor(GENERATION_DIRS_SINCE, "44778ca69e9d101f757721c4b5d283c57f856d80")
 
 
 # worker の doeff の版(WORKER_DOEFF_COMMIT)の定義元は機体の dir の version.yaml 1 つ(JSON patch の add 1 行)— 雛形には版の行を置かない。
