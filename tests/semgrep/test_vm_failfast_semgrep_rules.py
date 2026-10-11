@@ -263,6 +263,41 @@ def test_program_arguments_rule_detects_a_second_config_to_arguments_copy() -> N
     ) == {8, 12}
 
 
+def test_report_tables_rule_detects_a_reader_outside_the_owner() -> None:
+    # Design check 2026-10-11 (AL-D2o・card ki-02ca1a2bfc6c, blind B): a copy in
+    # handoff_policy that picked "Ready" reports by worker・spec hash・placement
+    # only held off a handoff abandonment with reports from processes other than
+    # the placed one, and passed every presented check.
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/"
+        "report_table_read_outside_owner_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(
+        results, "doeff-cluster-report-tables-are-read-by-their-owner"
+    ) == {9, 13}
+
+
+def test_report_tables_are_read_only_by_their_owners_in_the_tree() -> None:
+    # The same rule over the real package: only resource_policy.hy and
+    # metrics_policy.hy read ClusterState.observations.readiness / .metrics.
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src",
+        cwd=REPO_ROOT,
+    )
+
+    readers = sorted(
+        f"{result['path']}:{cast(dict[str, int], result['start'])['line']}"
+        for result in results
+        if _has_rule({str(result["check_id"])}, "doeff-cluster-report-tables-are-read-by-their-owner")
+    )
+    assert readers == []
+
+
 def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:
     # Design check 2026-09-26 (agora-redesign#639 request H, blind B): the
     # herdr substrate picking "the first non-idle-shell process" passed every

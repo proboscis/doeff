@@ -309,6 +309,27 @@ rules:
         # Python の module の名に直すのに hy.mangle を使う — 設定の鍵を引数の名に直す写しではない(日次 t69 の誤検出・#639)。
         - "**/doeff_cluster/worker/core/code_plan.hy"
 
+  - id: doeff-cluster-report-tables-are-read-by-their-owner
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      Service ごとの報告の表(ClusterState.observations の readiness と metrics)を直に読むのは、表の持ち主だけ:
+      coordinator/core/resource_policy.hy(残し方 keep-report・placed-senders と、数える報告の選び running-process・
+      report-matches・current-report・service-readiness)と coordinator/core/metrics_policy.hy(計器)。他の module は
+      service-readiness などの持ち主の関数を呼ぶ。表から自分の規則で報告を選ぶと、置き先でない process(退いた世代の
+      worker が起こし直した process・止めた試行)の報告が置き先の判断を決める — 設計検証 2026-10-11 の盲検 B: 入れ替えの
+      諦めを、worker・指紋・割り当ての世代だけで選んだ Ready で止める写しが、提示した検査をすべて通った(AL-D2o・card
+      ki-02ca1a2bfc6c)。表を読む判断が要るなら、持ち主の module に足す。
+    patterns:
+      - pattern-regex: '\bobservations\s*\.\s*(readiness|metrics)\b'
+    paths:
+      include:
+        - "**/doeff_cluster/**/*.hy"
+      exclude:
+        - "**/doeff_cluster/coordinator/core/resource_policy.hy"
+        - "**/doeff_cluster/coordinator/core/metrics_policy.hy"
+
   - id: doeff-packages-have-no-application-vocabulary
     languages:
       - generic
