@@ -143,14 +143,18 @@ def test_each_external_completion_is_drained_or_ignored(events: list[dict[str, A
     @do
     def body():
         promise = yield CreateExternalPromise()
+        resumed = threading.Event()
 
         def complete_twice() -> None:
             promise.complete("first")
+            # The worst order: the second completion lands only after the body is back from Wait.
+            resumed.wait()
             promise.complete("second")
 
         thread = threading.Thread(target=complete_twice)
         thread.start()
         value = yield Wait(promise.future)
+        resumed.set()
         thread.join()
         return value
 
