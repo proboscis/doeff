@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with_handlers Program run])
-(import doeff_core_effects.scheduler [Spawn Gather AcquireSemaphore ReleaseSemaphore Semaphore Task])
+(import doeff_core_effects.scheduler [Spawn Gather Wait Cancel TaskCancelledError AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
@@ -233,7 +233,7 @@
 (import doeff [EffectBase])
 (require doeff-hy.macros [defhandler])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp])
+(import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp AwaitLeaseFree])
 (import doeff_cluster.shared.core.lease_rules [fence-verdict])
 (import doeff_cluster.shared.core.semaphore_handlers [leases-fence])
 
@@ -405,10 +405,16 @@
 
 
 (defhandler cut-between [#^ SimClock clock #^ int start #^ int end]
-  ;; 仮想の時計が start〜end の間、保存(盤・lease)へ届かない。
+  ;; 仮想の時計が start〜end の間、保存(盤・lease)へ届かない。空きの待ち(AwaitLeaseFree — 本番は coordinator の GET /watch の長い待ち)は、
+  ;; 途絶の間に待ち始めるか、途絶の間に答えが来ると届かない(本番は待ちの送り直しが期限を越えて RouteUnreachable)。
   (ReadShared [prefix] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
   (WriteShared [key value expect ttl-seconds] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
-  (LeaseOp [name op token permits ttl-ms] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない"))))
+  (LeaseOp [name op token permits ttl-ms] :when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
+  (AwaitLeaseFree [name]
+    (when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
+    (<- seen bool effect)
+    (when (<= start (run (clock-ms clock)) end) (raise (ConnectionError "保存へ届かない")))
+    (resume seen)))
 
 
 (deftest test-renewal-survives-a-short-cut-and-keeps-the-lease
@@ -517,6 +523,64 @@
   (<- took int (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
                  (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sa)] (take-after 5.0))))
   (assert (< 9000 took 9600) took))
+
+
+(defk hold-for [seconds]
+  {:pre [(: seconds float)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起点で lease writer-a を取り、seconds 秒持ってから返すため(次の持ち手が空きを待つ間の前の持ち手 — 持つ間は延ばす)。"
+  (<- sem Semaphore (CreateNamedSemaphore "writer-a"))
+  (<- (AcquireSemaphore sem))
+  (<- (Delay seconds))
+  (<- (ReleaseSemaphore sem))
+  None)
+
+
+(deftest test-a-lease-wait-cut-off-from-the-store-takes-the-lease-once-it-is-free
+  ;; 空きを待っている間に保存へ届かなくなる(2026-10-12 01:00 JST ごろの本番 — 常駐の process が lease を取りに行った task が、coordinator の
+  ;; 空きの待ち GET /watch の ConnectTimeout(RouteUnreachable)で終わった。その lease は前の持ち手が返した後も取られず、05:15 に process が
+  ;; 退く時に取りを取り消して Wait した所で、残っていたその例外で process が落ちた)。
+  ;; 旧 A が起点から 12 秒持つ。新 B は 1 秒に取りに行き、断られて空きを待つ。B の機体からは 4〜9 秒に保存へ届かない — 5 秒の A の延ばしで
+  ;; 起きた B の待ちの答えは届かない。待ちは例外を投げずに retry-seconds(0.5 秒)おいて取り直し、A が返した 12 秒の後(試し直しの間の内)に
+  ;; 取る。直す前は待ちが届かない例外を投げ、取りに行った task ごと終わった。
+  (val clock (SimClock))
+  (val store {})
+  (val sa (SemaphoreSession "old" :ttl-seconds 15.0))
+  (val sb (SemaphoreSession "new" :ttl-seconds 15.0))
+  (<- done list (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
+                  (run-all [(with_handlers [(cluster-semaphore sa)] (hold-for 12.0))
+                            (with_handlers [(cut-between clock 4000 9000) (cluster-semaphore sb)] (take-after 1.0))])))
+  (val took (get done 1))
+  (assert (<= 12000 took 12500) took))
+
+
+(defk cancel-a-waiting-taker []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 秒に lease writer-a を取りに行く task を始め、3 秒(空きを待っている途中)に取り消して、取り消しが終わった刻(#(\"cancelled\" 刻))か
+   取れた刻(#(\"took\" 刻))を答えるため。"
+  (<- task Task (Spawn (take-after 1.0)))
+  (<- (Delay 3))
+  (<- (Cancel task))
+  (try
+    (<- took int (Wait task))
+    #("took" took)
+    (except [cancelled TaskCancelledError]
+      (<- at int (now-epoch-ms))
+      #("cancelled" at))))
+
+
+(deftest test-a-cancel-reaches-a-taker-waiting-for-the-lease
+  ;; 壊さない事の検(直す前も後も緑): 空きを待っている取りの task を取り消すと、取り消しはその場で task を終える(待ちの失敗を試し直す
+  ;; 取りが、取り消し TaskCancelledError を届かない失敗として飲んで待ち直さない)。旧 A が起点から 20 秒持ち、B の取りは 1 秒から空きを待つ。
+  ;; 3 秒に取り消す — 取り消しの終わりは 3 秒で、B は lease を取らない。飲んだ場合は A が返す 20 秒に取れて赤。
+  (val clock (SimClock))
+  (val store {})
+  (val sa (SemaphoreSession "old" :ttl-seconds 15.0))
+  (val sb (SemaphoreSession "new" :ttl-seconds 15.0))
+  (<- done list (with_handlers [(sim-time-handler :clock clock) #* (board-handlers store)]
+                  (run-all [(with_handlers [(cluster-semaphore sa)] (hold-for 20.0))
+                            (with_handlers [(cluster-semaphore sb)] (cancel-a-waiting-taker))])))
+  (val ended (get done 1))
+  (assert (= ended #("cancelled" 3000)) ended))
 
 
 (deftest test-fence-verdict-is-a-pure-check-of-the-hold-and-the-clock
