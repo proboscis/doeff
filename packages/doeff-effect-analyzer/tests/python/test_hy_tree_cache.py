@@ -1,28 +1,34 @@
 """The macro-expanded tree of a Hy module is cached on disk under its exact inputs.
 
 Expansion is most of an analysis' time and every process used to redo it for each
-Hy module it read. The cache key is the source's content (never its path), the
-module name, every macro file the expansion went through (the modules the source
-requires and the ones they require in turn), the Hy / Python versions and the
-reader's own source — so a changed source, macro file or reader is expanded again,
-the same source in another checkout is not, and an unreadable cache file only
-costs one expansion.
+Hy module it read. The tree is kept under the source's content (never its path), the
+module name, every macro the expansion used, the Hy / Python versions and the code of
+the expansion (``hy_expansion``); what the reader derives from it is kept apart under
+the same key and the reader's own source — so a changed source, macro or expansion is
+expanded again, a changed reader only builds what it derives again (ki-81f1c868203f),
+the same source in another checkout is not expanded again, and an unreadable cache
+file only costs one expansion.
 """
 
 import ast
+import contextlib
 import importlib
 import pickle
+import re
 import sys
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from unittest import mock
 
 import pytest
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
 
+from doeff_effect_analyzer import hy_expansion  # noqa: E402
 from doeff_effect_analyzer import program_effects as pe  # noqa: E402
 
 SOURCE = """
@@ -52,8 +58,14 @@ def expansions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def entries(cache_dir: Path) -> list[Path]:
-    """Every entry of the cache: one directory per source, one entry in it per set of macro files."""
+    """Every entry of what the reader derives: one directory per source and reader, one entry in it
+    per set of macros used."""
     return sorted(cache_dir.glob("*/*.pickle"))
+
+
+def expansion_entries(cache_dir: Path) -> list[Path]:
+    """Every entry of the expanded trees: one directory per source, one entry in it per set of macros used."""
+    return sorted((cache_dir / "expansions").glob("*/*.pickle"))
 
 
 def test_the_second_read_of_the_same_source_comes_from_the_cache(
@@ -312,9 +324,25 @@ def test_an_unreadable_cache_file_is_expanded_again_and_rewritten(
     seen = expansions(monkeypatch)
     pe._compile_hy(SOURCE, "/src/m.hy", "m")
     (cached,) = entries(cache_dir)
+    (stored,) = expansion_entries(cache_dir)
     cached.write_bytes(b"not a pickle")
+    stored.write_bytes(b"not a pickle")
     tree = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m", "m"]
+    assert isinstance(tree.tree, ast.Module)
+    assert pe._read_cached_tree(cached) is not None
+    assert hy_expansion._read_expansion(stored) is not None
+
+
+def test_an_unreadable_derived_entry_is_built_again_from_the_stored_tree(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = expansions(monkeypatch)
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    (cached,) = entries(cache_dir)
+    cached.write_bytes(b"not a pickle")
+    tree = pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    assert seen == ["m"]
     assert isinstance(tree.tree, ast.Module)
     assert pe._read_cached_tree(cached) is not None
 
@@ -484,9 +512,10 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     #2973 changed ``_BodyFacts.rewraps`` from one first value per local to a tuple of them and
     kept the key, so the newer reader read the older reader's entries and raised
     ``TypeError: 'Attribute' object is not iterable`` on ``prog = effect.program`` … ``prog =
-    wrap(prog)``. The key names the reader's source, so an entry the older reader wrote (the
-    older shape, stored under its own digest) is not read: the tree is expanded again and its
-    facts are this reader's."""
+    wrap(prog)``. The key of what the reader derives names the reader's source, so an entry the
+    older reader wrote (the older shape, stored under its own digest) is not read: the tree is read
+    from the expansion's store (not expanded again — ki-81f1c868203f) and its facts are this
+    reader's."""
     seen = expansions(monkeypatch)
     reader = pe._reader_digest
     monkeypatch.setattr(pe, "_reader_digest", lambda: "reader=an older reader")
@@ -499,9 +528,10 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     a_new_process()
     monkeypatch.setattr(pe, "_reader_digest", reader)
     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
-    assert seen == ["r", "r"]
-    place = pe._hy_cache_place(REWRAPPED, "r")
-    assert place is not None
+    assert seen == ["r"]
+    places = pe._hy_cache_places(REWRAPPED, "r")
+    assert places is not None
+    place = places.derived
     assert place != entry.parent
     (path,) = sorted(place.glob("*.pickle"))
     written = read_entry(path).tree
@@ -535,3 +565,90 @@ def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, mo
     finally:
         stop()
     assert inside == [True]
+
+
+ChangeFile = Callable[[ModuleType], None]
+
+
+@pytest.fixture
+def changed_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ChangeFile]:
+    """Make a module of the analyzer read as the next commit would have it — its file with one more
+    line — for the digest of its own file that a cache key names (``_reader_digest``,
+    ``_expander_digest``). Nothing else of the analyzer changes."""
+
+    def change(module: ModuleType) -> None:
+        source = Path(str(module.__file__))
+        changed = tmp_path / "changed" / source.name
+        changed.parent.mkdir()
+        changed.write_text(source.read_text(encoding="utf-8") + "# one more line\n", encoding="utf-8")
+        monkeypatch.setattr(module, "__file__", str(changed))
+        forget_digests()
+
+    yield change
+    forget_digests()  # the next call reads the module's own file again (monkeypatch restores it after)
+
+
+def forget_digests() -> None:
+    """Forget the digests of the analyzer's own files, so the next key reads them again."""
+    pe._reader_digest.cache_clear()
+    hy_expansion._expander_digest.cache_clear()
+
+
+def the_answer(report: pe.ProgramEffects) -> str:
+    """The answer of an analysis, without the addresses of the objects it names."""
+    return re.sub(r"0x[0-9a-f]+", "0x", repr(report))
+
+
+def test_a_changed_reader_expands_nothing_again_and_answers_the_same(
+    cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
+) -> None:
+    """ki-81f1c868203f: the tree was kept only with what the reader derives from it, under a key
+    naming the reader's source, so any change of program_effects.py expanded every Hy module again —
+    the screen job's closure test took 257.3 s in the daily run after one (212 s of 244 s expansion
+    when measured by hand). The tree does not depend on the reader: after a change of
+    program_effects.py alone, the first analysis expands nothing, builds what this reader derives,
+    and answers as before."""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    seen = expansions(monkeypatch)
+    name = f"tree_reader_{uuid.uuid4().hex[:8]}"
+    file = written_file(tmp_path / "checkout", f"{name}.hy", ASKING)
+    before = analyzed_from(file, monkeypatch)
+    changed_file(pe)
+    after = analyzed_from(file, monkeypatch)
+    assert seen == [name], "a change of the reader expanded the module again"
+    assert the_answer(after) == the_answer(before)
+    assert [use.effect.__name__ for use in after.effects] == ["Ask"]
+    assert len(entries(cache_dir)) == 2  # one entry of what is derived per reader
+    assert len(expansion_entries(cache_dir)) == 1
+
+
+def test_building_what_a_changed_reader_derives_is_inside_the_observed_miss(
+    cache_dir: Path, changed_file: ChangeFile
+) -> None:
+    """The tree read from the expansion's store and the derived values built for the changed reader
+    are paid once per change, like an expansion: the budget subtracts them."""
+    watching = mock.Mock(side_effect=contextlib.nullcontext)
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    changed_file(pe)
+    a_new_process()
+    stop = pe.observe_expansions(watching)
+    try:
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    finally:
+        stop()
+    assert watching.call_count == 1
+
+
+def test_a_changed_expansion_is_expanded_again(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
+) -> None:
+    """How a module is expanded is the code of ``hy_expansion``: its source is in the key, so a tree
+    another version of it made is not read, and the reader's entries name it too."""
+    seen = expansions(monkeypatch)
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    changed_file(hy_expansion)
+    a_new_process()
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    assert seen == ["m", "m"]
+    assert len(expansion_entries(cache_dir)) == 2
