@@ -11,9 +11,10 @@ examples/ の `.hy` は全部この検に入る(新しい例も書いただけ�
 展開が件の中で壊れても例は 0 で終わる(設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の盲検 A — When の展開が引く名を
 変えると、ex09 は件を skipped ではなく failed と印字して 0 で終わった)。走る例は標準出力を expected/<stem>.txt と
 比べる。走るたびに変わる所(実時間・checkout の path・lib の traceback)は、期待の出力の側で ANY に置き換える —
-どこが変わるかは例の持ち分で、検は印の意味だけを知る。印を置いた例ごとに、件の中だけで失敗する変異を例の写しに
-当て、写しの出力が期待の出力に合わない事を確かめる(印が件の結果まで伏せていない事の検 — card ki-2d5b129f2ff2)。
-件を走らせない debug 用の例だけは出力を比べず、件を走らせない事を確かめる。
+どこが変わるかは例の持ち分で、検は印の意味だけを知る。印を置いた例ごとに、件の中だけで失敗する変異を examples/
+の写しに当て、写しの出力が期待の出力に合わない事を確かめる(印が件の結果まで伏せていない事の検 — card
+ki-2d5b129f2ff2)。Hy の付ける名(番号は macro の展開で変わる)は期待の出力に置かない。件を走らせない debug 用の
+例だけは出力を比べず、件を走らせない事を確かめる。
 
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
@@ -22,6 +23,7 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 
 import difflib
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -41,6 +43,11 @@ BROKEN: dict[str, str] = {}
 
 # 期待の出力の中で、どの文字列(改行を含む・空も)にも合う印。走るたびに変わる所だけに置く。
 ANY = "…"
+
+# Hy が compile の時に付ける名(無名関数・gensym)。番号は macro の展開と compile の順で決まる Hy・doeff-hy の
+# 隠す中身で、例の結果ではない — 期待の出力に置くと、答えを変えない macro の変更で例が赤になる
+# (設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 B)。印字に出るなら、その所を ANY にする。
+_HY_GENERATED_NAME = re.compile(r"_hy_(?:anon|gensym)_")
 
 # 走るが標準出力を比べない例(file の名 → 理由)。件を走らせず(doeff の run を名指さない)、印字が doeff-hy・Hy の
 # 隠す中身だけの debug 用の例に限る — 件を走らせない例には、印字にしか出ない件の失敗も無い。
@@ -198,17 +205,23 @@ def test_example_runs(name: str, deadline_scale_factor: float) -> None:
 def test_case_failure_shows_in_compared_output(
     name: str, deadline_scale_factor: float, tmp_path: Path
 ) -> None:
-    """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない。"""
+    """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない。
+
+    写しは examples/ の dir ごと複製して作る — 例は兄弟の file(共有の helper・data)と並んだ場所で走る物で、
+    1 file だけを別の dir へ移すと、変異と関わりなく import で落ちる(設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 A)。"""
     source = (EXAMPLES / name).read_text(encoding="utf-8")
     original, mutated = CASE_FAILURE_MUTANTS[name]
     assert source.count(original) == 1, (
         f"変異の元の文 {original!r} が {name} に 1 つだけ在るのではない — 変異を例に合わせて書き直す"
     )
-    mutant = tmp_path / name
+    copy = tmp_path / EXAMPLES.name
+    shutil.copytree(EXAMPLES, copy)
+    mutant = copy / name
     mutant.write_text(source.replace(original, mutated), encoding="utf-8")
     result = _run_hy(mutant, deadline_scale_factor)
     assert result.returncode == 0, (
-        f"変異が件の外で例を落とした — 件の中だけで失敗する変異を選ぶ\n{result.stdout}{result.stderr}"
+        f"変異を当てた写しが 0 以外で終わった — 変異が件の外で例を落とした(件の中だけで失敗する変異を選ぶ)\n"
+        f"{result.stdout}{result.stderr}"
     )
     assert not _matches(_expected(name).read_text(encoding="utf-8"), result.stdout), (
         f"件の中で失敗した写しの出力が {_expected(name).relative_to(EXAMPLES)} に合う — "
@@ -295,3 +308,19 @@ def test_tables_name_examples_as_they_are() -> None:
         path.name for path in EXPECTED.glob("*.txt") if checkout in path.read_text(encoding="utf-8")
     )
     assert with_path == [], f"期待の出力に checkout の path が在る — path を含む所を {ANY} にする"
+    with_hy_names = sorted(
+        path.name
+        for path in EXPECTED.glob("*.txt")
+        if _HY_GENERATED_NAME.search(path.read_text(encoding="utf-8"))
+    )
+    assert with_hy_names == [], (
+        f"期待の出力に Hy の付ける名(_hy_anon_・_hy_gensym_)が在る — 番号は macro の展開で変わる。"
+        f"その所を {ANY} にする"
+    )
+
+
+def test_hy_name_check_sees_generated_names() -> None:
+    """今の期待の出力には Hy の付ける名が無いので、拾う事は名を含む文で確かめる。"""
+    assert _HY_GENERATED_NAME.search("raised in: _hy_anon_17:129 -> fetch_price:95")
+    assert _HY_GENERATED_NAME.search("(setx _hy_gensym_bound_2 x)")
+    assert not _HY_GENERATED_NAME.search("raised in: …:129 -> fetch_price:95")
