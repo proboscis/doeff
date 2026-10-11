@@ -434,9 +434,14 @@ def test_collect_budget_does_not_charge_a_garbage_collection_to_the_file(
 
 
 # 重い依存(本体の実行で CPU を回す Python の module)を import するだけの軽い検の file — 2 本が同じ依存を読む。
+HEAVY_DEPENDENCY_CPU_SECONDS = 0.3
 HEAVY_DEPENDENCY = (
-    "import time\n_t0 = time.process_time()\nwhile time.process_time() - _t0 < 0.3:\n    pass\nVALUE = 1\n"
+    "import time\n_t0 = time.process_time()\n"
+    f"while time.process_time() - _t0 < {HEAVY_DEPENDENCY_CPU_SECONDS}:\n    pass\nVALUE = 1\n"
 )
+# 共有の依存の検の上限は依存の CPU 秒の半分: 依存を file に数えれば必ず越え、file 自身の読み込み(手元 0.03 秒・負荷の中 0.058 秒 —
+# 日次 10-11 16:00 JST の 0.052 秒の赤・手元で CPU を埋めて 0.058 秒の赤を再現)の揺れでは越えない。0.05 秒では幅が無かった。
+SHARED_DEPENDENCY_COLLECT_BUDGET_SECONDS = HEAVY_DEPENDENCY_CPU_SECONDS / 2
 READS_HEAVY_DEPENDENCY = """\
 (require doeff-hy.macros [deftest])
 (import budget-heavy-dependency [VALUE])
@@ -452,7 +457,7 @@ def test_collect_budget_does_not_charge_a_shared_dependency_to_the_first_file(
     (agora-redesign #1752)。file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。"""
     _project(
         pytester,
-        'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n',
+        f'doeff_test_collect_budget_seconds = {SHARED_DEPENDENCY_COLLECT_BUDGET_SECONDS}\ndoeff_test_budget_mode = "fail"\n',
         {"test_reads_a": READS_HEAVY_DEPENDENCY, "test_reads_b": READS_HEAVY_DEPENDENCY},
     )
     pytester.makeconftest(CONFTEST + PIN_UNCHECKED_VM_BUILD)
@@ -489,7 +494,7 @@ def test_compile_counter_sets_aside_a_first_import_once_and_not_a_loaded_module(
         counter.uninstall()
         sys.modules.pop("budget_first_import", None)
     assert first_imports.count == 1
-    assert first_imports.cpu_seconds >= 0.3
+    assert first_imports.cpu_seconds >= HEAVY_DEPENDENCY_CPU_SECONDS
     assert first_compile.count == 1 and first_compile.cpu_seconds == 0.0
     assert again == ImportTally(0, 0.0, 0.0)
     assert bootstrap._find_and_load is original_find_and_load
