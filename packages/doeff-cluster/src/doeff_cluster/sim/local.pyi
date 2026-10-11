@@ -623,6 +623,7 @@ class HostTruth:
     stop_bell: Promise | None = None
     ticks: int = 0
     warm_children: tuple = ...
+    overlaps_elder: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class HostTruthChange:

@@ -1741,7 +1741,7 @@
   "heartbeat を送った process に、動かす job・task・温める表・時間の設定・drain の印を返すため。boot = 送った process の世代・
    statuses = その heartbeat の状態の報告。退いた世代(superseded-boot)への返事は superseded-reply。"
   (when (and (is-not boot None) (superseded-boot state name boot))
-    (return (superseded-reply state name boot (or statuses #()) timing ready-instances)))
+    (return (superseded-reply state name boot statuses timing ready-instances)))
   ;; warm = 温める表のうち、この worker に合う行(2026-09-26 — worker は job の準備より低い優先度で準備する)。drain 中の worker には
   ;; 配らない(warms-for — #3669)。
   ;; draining = この worker が drain 中か(2026-09-25): worker は返事ごとに Pod の中の ready の file へ写し、readinessProbe は sh でそれを読む
@@ -1783,7 +1783,7 @@
                    (or row.retired-from row.name))))
 
 
-(defn #^ HeartbeatReply superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ ClusterTiming timing
+(defn #^ HeartbeatReply superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ (| tuple None) statuses #^ ClusterTiming timing
                                 #^ (| dict None) [ready-instances None]]
   "退いた世代の process への heartbeat の返事(2026-09-27)。退く process に新しい仕事を起こさせず、動いている物は安全に畳ませるため:
    jobs = 名の置き先の入れ替え(handoff)の job のうち、その世代が running と報告している物だけ(lease を持ったまま Pod の停止まで
@@ -1793,8 +1793,11 @@
    世代をまたぐ入れ替え(AL-D2): 載せる handoff の job のうち、Ready と数えている process の世代(ready-instance)がこの世代の報告の
    行に無い物 = 新しい世代の process が Ready の物には印 superseded-by を載せる(worker は今の process を止めずに退かせ、起こし直さない —
    走っている仕事を終えて自分で終わる)。"
-  (setv running (running-names statuses)
-        own (frozenset (gfor row statuses :if row.instance row.instance))
+  ;; statuses = None は名指しの待ちの見え方(watch_policy.worker-mark — 報告を持たない): その世代の記録(SupersededRun)の jobs を
+  ;; 走っている job と数える(数えなければ見え方が変わらず、前の世代を外す返事の変化で待ちが起きない — AL-D2f)。
+  (setv recorded (frozenset (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) job r.jobs job))
+        running (if (is statuses None) recorded (running-names statuses))
+        own (frozenset (gfor row (or statuses #()) :if row.instance row.instance))
         ;; 今の世代が起こせると報告した recreate の job(状態の行の phase が elder-runs — AL-D2f)。それまでは前の世代に残す。
         current (.get state.statuses name)
         taken (frozenset (gfor row (if (is current None) #() current.jobs) :if (= row.phase "elder-runs") row.name))
