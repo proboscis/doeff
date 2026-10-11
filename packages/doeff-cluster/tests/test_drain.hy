@@ -593,12 +593,19 @@
   (c.beat "atlas" [] :boot "old")
   (setv done (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
   (assert (get done "drain" "drained") done)
-  ;; 走らせたまま沈黙した旧い世代(Pod が消えた)は待たない。
+  ;; 失敗ケース(AL-D2l — 10-11 18:58 JST の zeus): 走らせたまま黙った旧い世代(負荷で heartbeat が lease の 10 秒を越えて途絶えた)も、
+  ;; その Pod の preStop が頼んでいる間は待つ — 頼みが来る事がその Pod の worker が生きている証。直す前は黙りを「Pod が消えた」と読んで
+  ;; drained を返し、preStop が終わって止めの合図がターン 15 本を切った。
   (c.beat "atlas" ["w"] :boot "old")
   (c.advance 120)
   (c.beat "atlas" :boot "new")
-  (setv gone (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
-  (assert (get gone "drain" "drained") gone))
+  (val silent (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (assert (not (get silent "drain" "drained")) silent)
+  (assert (in "job/w" (get silent "drain" "remaining")) silent)
+  ;; 黙りが明けて、退いた process が終わったと報告したら drained。
+  (c.beat "atlas" [] :boot "old")
+  (val back (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
+  (assert (get back "drain" "drained") back))
 
 
 (deftest test-a-prestop-of-a-never-seen-generation-does-not-drain-the-live-generation
