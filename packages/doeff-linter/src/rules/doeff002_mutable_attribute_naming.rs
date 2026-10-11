@@ -1,7 +1,9 @@
 //! DOEFF002: Mutable Attribute Naming
 //!
-//! Class attributes that are assigned outside of __init__ or __post_init__
-//! must be prefixed with mut_ (public) or _mut (private).
+//! Class attributes that are assigned outside of __init__, __post_init__ or __set_name__
+//! must be prefixed with mut_ (public) or _mut (private), whatever the type of the value.
+//! __set_name__ is a descriptor's initialization: Python calls it once, when the owner class
+//! is created (PEP 487).
 
 use crate::models::{RuleContext, Severity, Violation};
 use crate::rules::base::LintRule;
@@ -20,7 +22,7 @@ impl MutableAttributeNamingRule {
     }
 
     fn is_init_method(func_name: &str) -> bool {
-        func_name == "__init__" || func_name == "__post_init__"
+        func_name == "__init__" || func_name == "__post_init__" || func_name == "__set_name__"
     }
 
     fn extract_self_attribute(expr: &Expr) -> Option<&str> {
@@ -193,7 +195,7 @@ impl LintRule for MutableAttributeNamingRule {
                     violations.push(Violation::new(
                         self.rule_id().to_string(),
                         format!(
-                            "Attribute '{}' in class '{}' is mutated outside __init__/__post_init__. \
+                            "Attribute '{}' in class '{}' is mutated outside __init__/__post_init__/__set_name__. \
                              Mutable attributes must be prefixed with '{}'.",
                             attr_name, class_def.name, prefix
                         ),
@@ -277,6 +279,45 @@ class MyClass:
         let violations = check_code(code);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("_mut"));
+    }
+
+    #[test]
+    fn test_descriptor_set_name_is_initialization() {
+        // Python calls __set_name__ once, when the owner class is created (PEP 487): what it
+        // assigns is the descriptor's initial state, as in __init__.
+        let code = r#"
+class Field:
+    def __set_name__(self, owner, name):
+        self._held = f"_{name}"
+
+    def __get__(self, instance, owner=None):
+        return instance.__dict__[self._held]
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_value_kept_on_first_use_is_mutated() {
+        // Assigned again after construction whatever its type: str and bool count as list does.
+        let code = r#"
+class Reader:
+    def __init__(self):
+        self._absent = None
+        self.missed = False
+
+    def absent(self):
+        if self._absent is None:
+            self._absent = read()
+        return self._absent
+
+    def facts(self):
+        self.missed = True
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 2);
+        assert!(violations[0].message.contains("'_absent'"));
+        assert!(violations[1].message.contains("'missed'"));
     }
 }
 
