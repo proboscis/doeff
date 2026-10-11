@@ -42,6 +42,10 @@ OUTPUT_NOT_COMPARED: dict[str, str] = {
     ),
     "ex04_debug2.hy": "関数の repr(番地を含む)を印字する debug 用 — 走るたびに変わる",
     "ex05_parallel_timing.hy": "実時間の経過(秒)を印字する — 走るたびに変わる",
+    "ex07_proboscis_ema_rewrite.hy": (
+        "件の失敗の履歴に traceback(checkout の絶対 path と doeff-core-effects の行番号)を印字する — "
+        "木ごとに変わり、lib の行番号は lib の隠す中身"
+    ),
 }
 
 # 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
@@ -181,3 +185,9 @@ def test_tables_name_examples_as_they_are() -> None:
     assert set(OUTPUT_NOT_COMPARED) - set(_runnable()) == set(), (
         "OUTPUT_NOT_COMPARED の行が走る例を名指さない"
     )
+    # checkout の path を含む期待の出力は、別の木(日次の作業木)では必ず外れる — 置いた木で気づくように断る。
+    checkout = str(EXAMPLES.parents[2])
+    with_path = sorted(
+        path.name for path in EXPECTED.glob("*.txt") if checkout in path.read_text(encoding="utf-8")
+    )
+    assert with_path == [], "期待の出力に checkout の path が在る — 例を OUTPUT_NOT_COMPARED へ移す"
