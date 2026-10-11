@@ -1,0 +1,7 @@
+# S4 の失敗例: 派生の値を作って書く _write_cached_tree を観測の区間の外へ出した写し(caf81e66d の上)
+E       assert [False] == [True]
+E         
+E         At index 0 diff: False != True
+E         Use -v to get more diff
+FAILED ../../../../tmp/ki81-exp.dDsxKw/S4-mut/tests/test_hy_tree_cache.py::test_writing_the_cache_entry_is_inside_the_observed_miss
+1 failed, 26 passed in 1.32s

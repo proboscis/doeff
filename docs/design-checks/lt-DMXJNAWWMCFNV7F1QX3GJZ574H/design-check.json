@@ -1,0 +1,575 @@
+{
+ "version": 1,
+ "task_id": "lt-DMXJNAWWMCFNV7F1QX3GJZ574H",
+ "base_revision": "c1e7731d67cf0b6bbc60102a72fa4113c23b8dc9",
+ "implementation_revision": "caf81e66d72dde2744e38df33a8c493a229ed4b7",
+ "author": {
+  "conversation_id": "c-78EFVBVV86CT7S49ARBKB5A8JE",
+  "model": "claude-opus-5-5",
+  "effort": "未指定(会話の既定)"
+ },
+ "requirements": [
+  "Hy の展開の木(と macro の記録)を、読み手(program_effects.py)の版に依らない鍵で置く",
+  "analyzer の source(program_effects.py)だけを変えた後の 1 回目の解析で、Hy の展開(_expand_hy)が 0 回になり、答えが変える前と同じ事の検が緑(受入 c2d906709)",
+  "派生の値の形が変わった時に古い項を読まない守り(#2973)を派生の値の側に残す",
+  "触らない: 置き場を無くす・閉じの検を外す・時間の予算で隠す・RECORD_TAG が変わった時に展開を捨てる事"
+ ],
+ "design": {
+  "path": "design.md",
+  "sha256": "569076d601041b5fba4425c1fdcbb5aed905f11a8befb4492cef421b33c5c214"
+ },
+ "pre_blind_design": {
+  "path": "design-before-blind.md",
+  "sha256": "a27fbad95bd208627a8d185a097e90d1c53a713d87f3eddfd78c17a87369b65a"
+ },
+ "blind": {
+  "meta": {
+   "path": "blind/blind-meta.md",
+   "sha256": "3579646a8f798850188cd92f759b7ff29dca31a71b0b42b6267d056f590ede95"
+  },
+  "A": {
+   "input": {
+    "path": "blind/blind-a-input.md",
+    "sha256": "7109b63f2db6f39f9c1418bc04e917bc37ba2d3fa86ab2991bfb53c828d9ef23"
+   },
+   "return": {
+    "path": "blind/blind-a-return.md",
+    "sha256": "829711d8069e44a06fd79f537c4b4c2b684a330f65144cf312c9cdef1ac622e1"
+   },
+   "agent_id": "a9d2ce29e24a9ce46",
+   "model": "要求 opus(Opus 5.5)・実 model は未確認",
+   "effort": "xhigh を指定・効いたかは未確認",
+   "duration_seconds": 519.9,
+   "fallback": "第 1 候補 gpt-6-astra / low: この Pod の codex が Not logged in"
+  },
+  "B": {
+   "input": {
+    "path": "blind/blind-b-input.md",
+    "sha256": "400011dcf43438afa1b454a58077337515b4d4c47d2afde149525b13faf88874"
+   },
+   "return": {
+    "path": "blind/blind-b-return.md",
+    "sha256": "d86aaccfe40114847cfeb55f95b9d9a5cdd3ffb55f6a2ee08f9719e5dc90b637"
+   },
+   "agent_id": "afe060bea75efa759",
+   "model": "同上",
+   "effort": "同上",
+   "duration_seconds": 624.7,
+   "fallback": "同上"
+  }
+ },
+ "modules": [
+  {
+   "id": "X",
+   "responsibility": "hy_expansion.py — Hy の module の展開と、展開の木の置き場(読み手の版に依らない鍵)",
+   "owns": "展開のやり方・展開の鍵 _ExpansionKey(python・hy・自分の file の digest・RECORD_TAG・module の名・source の sha256)・項の形と名・置き場の読み書き・型検査用の展開の判定",
+   "hides": "項の pickle の並び・expansions/ の dir の並び・置き場の読み書きの関数(_stored_expansion・_store_expansion・_read_expansion は X の外から名指さない)",
+   "interface": "_expansion(source, filename, module_name, directory) -> _Expanded・_expand_hy・_expansion_key・_ExpansionKey.text()/.place()・_entry_name・_type_check_expansion",
+   "effects": "Hy の compile(scratch の module に macro を登録)・置き場の dir の作成・一時 file から os.replace で項を書く・項を読む",
+   "lifetime": "項は disk に残り誰も消さない(前から同じ)。_expander_digest は process の間 functools.cache",
+   "invariants": "置き場の木は、その鍵の source を X の _expand_hy が展開した物だけ。X は analyzer の他の module を import しない。型検査用の展開の木は置かず読まない"
+  },
+  {
+   "id": "R",
+   "responsibility": "program_effects.py の派生の値の置き場(_compile_hy・_TreeKey・_derived・_CachedTree・_ChunkedTree・_read_cached_tree・_write_cached_tree・_reader_digest・_hy_cache_dir・_hy_cache_place)",
+   "owns": "派生の値(定義の索引・塊ごとの本体の節と本体の事実)の形・その鍵(v10・展開の鍵・読み手の digest = package の全 .py の名と中身)・読む順(派生の項 → X → 展開)",
+   "hides": "派生の値の pickle の並び・塊の切り方",
+   "interface": "_compile_hy(source, filename, module_name) -> _WholeTree | _ChunkedTree・_hy_cache_dir()・_hy_cache_place()",
+   "effects": "派生の項の書きと読み(一時 file → os.replace)",
+   "lifetime": "項は disk に残り誰も消さない。_reader_digest は process の間 functools.cache",
+   "invariants": "派生の項は、それを作った読み手(package の全 .py)と同じ読み手だけが読む。派生の値を作る code は package と標準 library の中"
+  },
+  {
+   "id": "A",
+   "responsibility": "program_effects.py ほかの読み手(_Reader・analyze_program・_body_facts・_body_nodes・_find_function)",
+   "owns": "木から effect の答えを読む規則",
+   "hides": "木がどこから来たか(置き場か展開か)",
+   "interface": "analyze_program・module_ast ほか公開の関数",
+   "effects": "なし(解析の対象の module を import する以外は木を読むだけ)。この便で変えていない",
+   "lifetime": "process の memo(_BODY_FACTS など)",
+   "invariants": "答えは木と規則だけで決まり、置き場の履歴に依らない"
+  },
+  {
+   "id": "O",
+   "responsibility": "外れの観測(observe_expansions・_EXPANSION_OBSERVERS。使い手 = doeff-hy-pytest の予算)",
+   "owns": "外れの区間(展開・展開の項の読み・派生の値の作りと書き)を観測者に知らせる",
+   "hides": "観測者が誰か",
+   "interface": "observe_expansions(observer) -> stop",
+   "effects": "なし(観測者の context manager を入れるだけ)",
+   "lifetime": "process の間・stop で外す",
+   "invariants": "当たりは観測しない。外れの費用は全部観測の中"
+  },
+  {
+   "id": "C",
+   "responsibility": "result_cache.py — 閉じの解析の答えの置き場",
+   "owns": "答えの依る module の組",
+   "hides": "置き場の形",
+   "interface": "cached_result(identity, compute)",
+   "effects": "答えの項の書きと読み(この便で変えていない — 置き場の根は R の _hy_cache_dir)",
+   "lifetime": "identity ごとに直近 8 件",
+   "invariants": "型検査用の展開の間は置き場を使わない(_hy_cache_dir が None)"
+  },
+  {
+   "id": "P",
+   "responsibility": "env_places.py — 置き場の場所の環境変数の素の値",
+   "owns": "DOEFF_EFFECT_ANALYZER_CACHE の素の値",
+   "hides": "判断(off など)は呼び手",
+   "interface": "tree_cache_setting()",
+   "effects": "なし、環境変数を読むだけ",
+   "lifetime": "なし、状態を持たない",
+   "invariants": "値を解釈しない"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "読み手を変える — 派生の値の形や読む規則、読み手の file の分け方(program_effects.py から helper を別の module へ分ける)",
+   "claim": "(盲検の前の主張・design-before-blind.md の S1)変えるのは program_effects.py(R・A)だけで X は変えない。形の印を手で上げなくても、変えた後の 1 回目の解析は展開 0 回で、派生の値は今の読み手が作り直す(古い読み手の派生の項は読まない)",
+   "expected_scope": "program_effects.py だけ(X・O・C・P は変えない)",
+   "actual_scope": "c1e7731d: program_effects.py の変更は主張どおり(展開 0 回・答え同じ・toolset 91.2 → 11.3 秒)。盲検 A の分割(body_facts.py へ分けて body_facts.py だけ変える)では R の鍵が変わらず古い事実を読んだ。caf81e66d: R の鍵を package の全 .py にし、A の分割は新しい派生の置き場で作り直し(展開 0 回)",
+   "changed_modules": [
+    "R"
+   ],
+   "unchanged_modules": [
+    "X",
+    "A",
+    "O",
+    "C",
+    "P"
+   ],
+   "reason": "直す前の波及(古い事実)は知識の漏れ — R の鍵が A の file の分け方(program_effects.py 1 file)に依っていた。直しは R の中(_reader_digest)だけで、A の分け方を R が知らなくてよくなった。package の外へ出る分けは閉包の検が名指す",
+   "revision": "caf81e66d: _reader_digest を package の全 .py の名と中身の digest に(v10)。検 test_a_changed_module_of_the_reader_builds_what_is_derived_again・test_the_same_files_of_the_reader_elsewhere_read_the_same_entry・test_what_is_derived_is_built_by_code_of_this_package とその失敗例を足した。直す前の版で前者が赤(evidence/before-fix-new-tests.txt)、直した後に緑"
+  },
+  {
+   "id": "S2",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "展開のやり方や展開の項の形を変える(gensym の振り直しなど、置き場に入る木を変える)",
+   "claim": "(盲検の前の主張・S2)変えるのは hy_expansion.py だけ。X の digest が両方の鍵に入るので、前の版が作った木を読まない",
+   "expected_scope": "hy_expansion.py だけ",
+   "actual_scope": "c1e7731d: 盲検 B の D1(読み手の _expanded が木を振り直してから _store_expansion で書く)は program_effects.py だけの変更で、既存の検を全部通り、前の版の木・D1 の木を版に依らない鍵で読み続けた。caf81e66d: 置き場へ書けるのは X の _expansion だけになり、同じ意図は X を変える(→ X の digest で全部外れる)か、R の側だけで加工する(置き場の木は展開したまま)のどちらかになった",
+   "changed_modules": [
+    "X",
+    "R"
+   ],
+   "unchanged_modules": [
+    "A",
+    "O",
+    "C",
+    "P"
+   ],
+   "reason": "直す前の波及は知識の漏れ — 置き場に何を入れるかの判断が R へ出られた(_store_expansion を R が呼んでいた)。直しで X と R の口が変わった(R は _expansion だけを呼ぶ)のは、X の公開の口を狭める意図した変更",
+   "revision": "caf81e66d: _expansion を X に置き、R の _expanded と _CachePlaces を消した。検 test_only_the_expansion_module_reads_or_writes_its_store・test_the_expansion_module_imports_no_other_module_of_the_analyzer を足した。直す前の版で前者が赤、直した後に B の書く形が赤・正しい形が 29 passed"
+  },
+  {
+   "id": "S3",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "木の中身を決める外の材料が変わる — 使った macro の本体・Hy / Python の版・RECORD_TAG・型検査用の展開の印(TYPE_CHECK_EXPANSION)",
+   "claim": "(盲検の前の主張・S3)code を変えずに展開し直す。使わない macro の変更では外れない",
+   "expected_scope": "なし(変える module は無い)",
+   "actual_scope": "macro と版は主張どおり。盲検 A の別の候補: 型検査用の展開の印は鍵にも記録にも無く、型検査用の展開が普通の木を読み、型検査の形の木を普通の鍵で置き得た(c1e7731d の前の v8 から在った穴)。caf81e66d で X の判断を足した",
+   "changed_modules": [
+    "X",
+    "R"
+   ],
+   "unchanged_modules": [
+    "A",
+    "O",
+    "C",
+    "P"
+   ],
+   "reason": "鍵に入れ忘れた材料(X の知識の不足)。X の _type_check_expansion を X の _expansion と R の _hy_cache_dir が読む(判断の持ち主は X 1 つ)",
+   "revision": "caf81e66d: 型検査用の展開の間は 3 つの置き場を使わない。検 test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(直す前の版で赤)"
+  },
+  {
+   "id": "S4",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "読み手が変わった後の外れ(展開の項を読み、派生の値を作って書く)の費用を、予算が差し引く観測に入れる",
+   "claim": "(盲検の前の主張・S4)O は変えない。当たりは観測しない",
+   "expected_scope": "なし",
+   "actual_scope": "なし(O は変わらない。R の観測の区間に X の _expansion と派生の書きが入る)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "X",
+    "R",
+    "A",
+    "O",
+    "C",
+    "P"
+   ],
+   "reason": "波及なし。観測の区間は R の _compile_hy の 1 か所",
+   "revision": "不要 — 観測の外へ書きを出す改変は既存の検が赤にした(evidence/S4-mutation.txt)"
+  },
+  {
+   "id": "S5",
+   "axis": "concurrency",
+   "applicability": "applicable",
+   "change": "並べた pytest の process や日次の 3 つの session が、同じ source を同時に外す",
+   "claim": "(盲検の前の主張・S5)書き手は一時 file から os.replace で置くので書きかけは読まれない。読めない項は外れとして展開し直して書き直す。鍵は要らない",
+   "expected_scope": "なし",
+   "actual_scope": "なし(6 process 同時で各 1 回展開・項は 1 つずつ・一時 file の残り 0・項は読める)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "X",
+    "R",
+    "A",
+    "O",
+    "C",
+    "P"
+   ],
+   "reason": "波及なし。同じ中身を 2 度書くだけで、os.replace が原子的",
+   "revision": "不要 — 実験 evidence/S5-concurrent.txt と読めない項の検で確かめた"
+  },
+  {
+   "id": "S6",
+   "axis": "distribution",
+   "applicability": "excluded",
+   "reason": "置き場は機体ごと(/work/state/doeff-effect-analyzer-cache)で、機体をまたいで分け合う変更はこの便に無い。鍵は python の版の文字列と内容の hash で決まり path を含まないが、機体をまたぐ共有は測っていない"
+  },
+  {
+   "id": "S7",
+   "axis": "hardware",
+   "applicability": "excluded",
+   "reason": "木は機体の性質に依らない(Python の AST と pickle の形は python の版で決まり、sys.version は鍵に在る)"
+  },
+  {
+   "id": "S8",
+   "axis": "simulation",
+   "applicability": "excluded",
+   "reason": "analyzer は doeff の Program の外の道具で、時刻・乱数・外の世界の effect を持たない。置き場は中身の hash で決まる"
+  }
+ ],
+ "checks": [
+  {
+   "id": "S1-reader-change",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "program_effects.py に 1 行足した package の写しを読み手にすると、1 回目の解析で展開 0 回・答えの repr が同じ・派生の項が 2 つ",
+   "observation": "test_a_changed_reader_expands_nothing_again_and_answers_the_same PASSED(caf81e66d)",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-toolset-measure",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "実物の閉じの検の組(toolset)で、program_effects.py だけを変えた後の展開が 0 回・答えの digest が同じ",
+   "observation": "main は 107 → 107 回・91.5 → 91.2 秒。c1e7731d の形は 107 → 0 回・69.2 → 11.3 秒。digest は 4 回とも d2403829db68",
+   "evidence": {
+    "path": "evidence/measure-toolset.txt",
+    "sha256": "5c92ac96d918cdfd4a8688132b441e3db64d9ea0a4417a96e453f58ee9c02037"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-same-files-elsewhere",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "同じ中身の package を別の場所に置いても、同じ派生の項を読む(_ChunkedTree・項 1 つ)",
+   "observation": "test_the_same_files_of_the_reader_elsewhere_read_the_same_entry PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-A-reproduced-before",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "直す前の版(c1e7731d)で盲検 A の分割と変更が成立する(同じ派生の置き場で古い事実を読む)— 失敗例の実在の確かめ",
+   "observation": "A2 は A1 と同じ派生の置き場 ade75611b8ba を読み rewraps [{}]。空の置き場では [{'prog': 1}]",
+   "evidence": {
+    "path": "evidence/A-before-split-on-c1e7731d.txt",
+    "sha256": "022b8fe29cd939e4e3cf27210690893acdd03a45a14030f8e317725732f4d65c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-A-rejected-after",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "直した版で盲検 A の分割と変更をすると、新しい派生の置き場で今の規則の事実を作る",
+   "observation": "A2f は新しい派生の置き場 f0aae8e4ef6e(項 2 つ)で rewraps [{'prog': 1}]",
+   "evidence": {
+    "path": "evidence/A-after-split-on-fix.txt",
+    "sha256": "d57335f11e33ad55f8a6428d60f4c45e4f4cff6b401e76ef9f3415f6ecf1858c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-other-module-before",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "読み手の別 file(handler_effects.py)の変更で派生を作り直す検が、直す前の版では赤",
+   "observation": "test_a_changed_module_of_the_reader_builds_what_is_derived_again FAILED: assert 1 == 2(派生の項が 1 つのまま)",
+   "evidence": {
+    "path": "evidence/before-fix-new-tests.txt",
+    "sha256": "b7c9b412472e01c7401ba345280373707f67b857501986baca0cd0de7de75fad"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-older-reader-entry",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "#2973: 古い読み手の形の派生の項は読まず、木は展開の置き場から読む(展開 1 回)",
+   "observation": "test_an_entry_written_by_another_reader_is_not_read PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S1-foreign-helper",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "_derived の helper を package の外の関数に差すと、閉包の検がその名を名指す。実物の _derived は 70 個を辿り外の物は 0",
+   "observation": "test_what_is_derived_is_built_by_code_of_this_package PASSED・test_a_helper_outside_the_package_is_named PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S2-same-source-hit",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "同じ source は 2 度目に置き場から読み、別の dir の同じ source も読む",
+   "observation": "test_the_second_read_of_the_same_source_comes_from_the_cache PASSED・test_the_same_source_in_another_directory_is_read_from_the_cache PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S2-B-legit-form",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "直した版で読み手の側だけで木を加工すると、契約の検が緑で、置き場の履歴で木が変わらず、戻した読み手は展開したままの木を読む",
+   "observation": "29 passed(契約の検 27 本 + B の検の裏返し 2 本)",
+   "evidence": {
+    "path": "evidence/B-after-legit-form.txt",
+    "sha256": "447cd4f94cec0cf99358ead4572e06fac1550a310ecc64ded2acc86e6b8cfd36"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S2-B-reproduced-before",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "直す前の版(c1e7731d)で盲検 B の D1 が既存の検を通り、違反の検 2 本も通る — 失敗例の実在の確かめ",
+   "observation": "22 passed(既存 20 + 違反 2)・ruff の新しい指摘なし",
+   "evidence": {
+    "path": "evidence/B-before-D1-on-c1e7731d.txt",
+    "sha256": "9fec8f68e80a2ff557bfbcd3ce189e5d7b03057579db8f11a6a79e7fa1fa844f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S2-B-store-rejected",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "直した版で読み手が加工した木を展開の置き場へ書くと、名指しの検が program_effects.py を名指して赤",
+   "observation": "1 failed(test_only_the_expansion_module_reads_or_writes_its_store: {'program_effects.py': {'_store_expansion'}})/ 26 passed",
+   "evidence": {
+    "path": "evidence/B-after-store-form.txt",
+    "sha256": "80b72c5de9bcfb56f66c853366e4311928994fd4b8e2413f77dbb05384249c63"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S2-store-names-before",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "直す前の版では program_effects.py が置き場の関数を名指していて、名指しの検が赤",
+   "observation": "test_only_the_expansion_module_reads_or_writes_its_store FAILED: {'program_effects.py': {'_store_expansion', '_stored_expansion'}}",
+   "evidence": {
+    "path": "evidence/before-fix-new-tests.txt",
+    "sha256": "b7c9b412472e01c7401ba345280373707f67b857501986baca0cd0de7de75fad"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S2-expansion-code-change",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "hy_expansion.py を変えると前の版の木を読まずに展開し直す。hy_expansion.py は analyzer の他の module を import しない(失敗例の文字列は名指す)",
+   "observation": "test_a_changed_expansion_is_expanded_again PASSED・test_the_expansion_module_imports_no_other_module_of_the_analyzer PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S3-unused-macro",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "使わない macro の変更では置き場から読む",
+   "observation": "test_a_changed_unused_macro_is_read_from_the_cache PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S3-used-macro",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "使った macro の本体の変更・require した macro の module が require する module の変更では展開し直す",
+   "observation": "test_a_changed_body_of_the_used_macro_is_expanded_again PASSED・test_a_changed_macro_module_that_a_required_macro_module_requires_is_expanded_again PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S3-type-check-before",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "直す前の版では型検査用の展開が置いてある普通の木を読む(検が赤)",
+   "observation": "test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store FAILED: ['m', 'm'] == ['m', 'm', 'm']",
+   "evidence": {
+    "path": "evidence/before-fix-new-tests.txt",
+    "sha256": "b7c9b412472e01c7401ba345280373707f67b857501986baca0cd0de7de75fad"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S3-type-check-after",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "直した版では型検査用の展開は置き場を読まず書かない(展開 3 回・項は 1 つずつのまま)",
+   "observation": "test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S4-hits-unobserved",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "当たりは観測しない・読み手が変わった後の外れは 1 度だけ観測する",
+   "observation": "test_an_observer_sees_only_the_expansions_that_missed_the_cache PASSED・test_building_what_a_changed_reader_derives_is_inside_the_observed_miss PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S4-write-outside-rejected",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "派生の値の書きを観測の区間の外へ出した写しは、書きの観測の検が赤",
+   "observation": "1 failed(test_writing_the_cache_entry_is_inside_the_observed_miss: [False] == [True])/ 26 passed",
+   "evidence": {
+    "path": "evidence/S4-mutation.txt",
+    "sha256": "5b9e736f35f5dbb5c5d611463445ac59d1d6a360be3e2610ab4b640997740efd"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S5-concurrent",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "6 process が空の置き場で同じ source を同時に外しても、各々が木を得て、項は 1 つずつで読め、一時 file が残らない",
+   "observation": "各 (1, '_WholeTree')・派生 1・展開 1・一時 file []・両方 readable True(macro の module を読み込んだ後)",
+   "evidence": {
+    "path": "evidence/S5-concurrent.txt",
+    "sha256": "4b480a1164390488e78c12e5321560431ff045d27677334c0b29fabd9e509972"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "S5-unreadable",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "壊れた項(書きかけと同じく読めない)は外れとして展開し直して書き直す。派生の項だけ壊れたら木から作り直す",
+   "observation": "test_an_unreadable_cache_file_is_expanded_again_and_rewritten PASSED・test_an_unreadable_derived_entry_is_built_again_from_the_stored_tree PASSED",
+   "evidence": {
+    "path": "evidence/after-fix-tests-verbose.txt",
+    "sha256": "2509c7ae3b4cb24d1cdd2975c88cf0053ec45265d5adb9a2d21eeab6f8a35a9a"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "all-package-tests",
+   "scenarios": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "analyzer の tests/python・doeff-hy-pytest の test_budget.py・ADR-DOE-ANALYZER-001 が直した版で緑",
+   "observation": "182 passed",
+   "evidence": {
+    "path": "evidence/after-fix-package.txt",
+    "sha256": "13acf29641fbd2ed10b6a32d093ec57dbf8991937eb99653ef3f78584563c536"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

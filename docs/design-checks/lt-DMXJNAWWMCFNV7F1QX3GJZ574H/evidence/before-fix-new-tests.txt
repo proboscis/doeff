@@ -1,0 +1,79 @@
+.F...F.F                                                                 [100%]
+=================================== FAILURES ===================================
+_______ test_a_changed_module_of_the_reader_builds_what_is_derived_again _______
+
+cache_dir = PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_a_changed_module_of_the_r0/trees')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x3f30b278d50>
+changed_file = <function changed_file.<locals>.change at 0x3f30b6906c0>
+
+    def test_a_changed_module_of_the_reader_builds_what_is_derived_again(
+        cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
+    ) -> None:
+        """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: the reader's digest named
+        program_effects.py alone, so a helper of the body facts split into a module of its own and
+        changed there read the facts the older rule had built (``rewraps`` empty where the new rule finds
+        ``prog``). Every file of the package is the reader: a change of another one builds what is
+        derived again — and still expands nothing."""
+        seen = expansions(monkeypatch)
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+        changed_file(pe, "handler_effects.py")
+        a_new_process()
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+        assert seen == ["m"]
+>       assert len(entries(cache_dir)) == 2
+E       AssertionError: assert 1 == 2
+E        +  where 1 = len([PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_a_changed_module_of_the_r0/trees/401a2595f3aaf4618cb677773108371d534cd01097907d17ef64cf1e9b8c1cec/5bb5d537c0af21d69da01d491ee44ac930626f912f9c08a3c598e70accab8fc5.pickle')])
+E        +    where [PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_a_changed_module_of_the_r0/trees/401a2595f3aaf4618cb677773108371d534cd01097907d17ef64cf1e9b8c1cec/5bb5d537c0af21d69da01d491ee44ac930626f912f9c08a3c598e70accab8fc5.pickle')] = entries(PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_a_changed_module_of_the_r0/trees'))
+
+/tmp/ki81-exp.dDsxKw/old/tests/test_hy_tree_cache.py:676: AssertionError
+___________ test_only_the_expansion_module_reads_or_writes_its_store ___________
+
+    def test_only_the_expansion_module_reads_or_writes_its_store() -> None:
+        """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B: the reader called the store's writer, so a
+        reader that reshaped a tree (renumbered its gensyms) could store it under a key without the
+        reader, and every later reader — a reverted one too — read that shape. A caller asks for a tree
+        (``_expansion``); no module but ``hy_expansion`` names the store."""
+        used = {name: names_used(text) & EXPANSION_STORE for name, text in analyzer_sources().items() if name != "hy_expansion.py"}
+>       assert {name: names for name, names in used.items() if names} == {}
+E       AssertionError: assert {'program_eff..._expansion'})} == {}
+E         
+E         Left contains 1 more item:
+E         {'program_effects.py': frozenset({'_store_expansion', '_stored_expansion'})}
+E         Use -v to get more diff
+
+/tmp/ki81-exp.dDsxKw/old/tests/test_hy_tree_cache.py:822: AssertionError
+___ test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store ____
+
+cache_dir = PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_a_type_check_expansion_is0/trees')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x3f30b276f50>
+
+    def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
+        cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blind A, another candidate: inside ``doeff_hy.static_view`` doeff-hy's macros write another
+        tree (for type checking). The import side keeps no record of such code; the analyzer neither
+        stores such a tree under a plain key nor gives a stored plain tree to such an expansion."""
+        from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
+    
+        seen = expansions(monkeypatch)
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")  # the positive case: a plain expansion is stored
+        assert (len(entries(cache_dir)), len(expansion_entries(cache_dir))) == (1, 1)
+        token = TYPE_CHECK_EXPANSION.set(True)
+        try:
+            a_new_process()
+            pe._compile_hy(SOURCE, "/src/m.hy", "m")
+            pe._compile_hy(SOURCE.replace("42", "43"), "/src/m.hy", "m")
+        finally:
+            TYPE_CHECK_EXPANSION.reset(token)
+>       assert seen == ["m", "m", "m"]
+E       AssertionError: assert ['m', 'm'] == ['m', 'm', 'm']
+E         
+E         Right contains one more item: 'm'
+E         Use -v to get more diff
+
+/tmp/ki81-exp.dDsxKw/old/tests/test_hy_tree_cache.py:868: AssertionError
+=========================== short test summary info ============================
+FAILED ../../../../tmp/ki81-exp.dDsxKw/old/tests/test_hy_tree_cache.py::test_a_changed_module_of_the_reader_builds_what_is_derived_again
+FAILED ../../../../tmp/ki81-exp.dDsxKw/old/tests/test_hy_tree_cache.py::test_only_the_expansion_module_reads_or_writes_its_store
+FAILED ../../../../tmp/ki81-exp.dDsxKw/old/tests/test_hy_tree_cache.py::test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store
+3 failed, 5 passed, 19 deselected in 0.83s
