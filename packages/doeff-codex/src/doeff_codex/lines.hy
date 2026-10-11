@@ -21,6 +21,10 @@
 ;; ターンの状態(turn/started・turn/completed の turn.status の綴り — codex 0.162.1 の TurnStatus)。
 (defenum TurnStatus COMPLETED INTERRUPTED FAILED (IN-PROGRESS "inProgress"))
 
+;; 道具の item の状態(commandExecution・fileChange の status の綴り — codex 0.162.1 の CommandExecutionStatus と PatchApplyStatus は
+;; 同じ 4 つ)。
+(defenum ToolStatus COMPLETED FAILED DECLINED (IN-PROGRESS "inProgress"))
+
 
 ;; --- 読む行の wire の型(使う欄だけ・知らない欄は読み捨てる) ---------------------------------------
 
@@ -110,18 +114,62 @@
   (#^ str delta))
 
 (defwire ItemWire
-  "item/started・item/completed の item のうち使う欄(種類と id と、答えの全文 — agentMessage だけが text を持つ)。"
+  "item/started・item/completed の item のうち、どの種類も持つ欄(種類と id と、答えの全文 — agentMessage だけが text を持つ)。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str type)
   (#^ str id)
   (setv #^ (| str None) text None))
 
 (defwire ItemParamsWire
-  "item/started・item/completed の params。"
+  "item/started・item/completed の params。item は種類ごとに形が違うので中を読まずに運び、どの種類も持つ欄(ItemWire)と、道具の
+   種類の中身(種類で選んだ下の wire の型)を順に解く。"
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str thread-id)
   (#^ str turn-id)
-  (#^ ItemWire item))
+  (#^ OpaqueJson item))
+
+(defwire CommandExecutionWire
+  "item の種類 commandExecution(命令を走らせる道具)の中身のうち使う欄。aggregatedOutput・exitCode は命令が終わるまで null。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str command)
+  (#^ str cwd)
+  (#^ str status)
+  (setv #^ (| str None) aggregated-output None)
+  (setv #^ (| int None) exit-code None))
+
+(defwire PatchKindWire
+  "fileChange の 1 つの変更の種類(PatchChangeKind — type は add・delete・update、update は移す先 move_path を持てる)。この object
+   だけ欄の名が snake(codex 0.162.1 の schema のまま)。"
+  {:tags {:context "codex" :role "type"} :names :snake :unknown :ignore}
+  (#^ str type)
+  (setv #^ (| str None) move-path None))
+
+(defwire FileUpdateWire
+  "fileChange の 1 つのファイルの変更(FileUpdateChange)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str path)
+  (#^ PatchKindWire kind)
+  (#^ str diff))
+
+(defwire FileChangeWire
+  "item の種類 fileChange(ファイルを変える道具 — apply_patch)の中身のうち使う欄。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(FileUpdateWire ...)) changes)
+  (#^ str status))
+
+(defwire WebSearchActionWire
+  "webSearch の動き(WebSearchAction — type は search・openPage・findInPage・other、種類ごとに語の列・頁・頁の中の語を持てる)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str type)
+  (setv #^ (| (get tuple #(str ...)) None) queries None)
+  (setv #^ (| str None) url None)
+  (setv #^ (| str None) pattern None))
+
+(defwire WebSearchWire
+  "item の種類 webSearch(web 検索の道具)の中身のうち使う欄。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str query)
+  (setv #^ (| WebSearchActionWire None) action None))
 
 (defwire ErrorParamsWire
   "error の通知の params(ターンの誤り — willRetry が偽なら codex はこのターンを繰り返さない)。"
@@ -223,22 +271,66 @@
   (#^ str item-id)
   (#^ str text))
 
+(defrecord CommandRun
+  "道具の item commandExecution の中身(命令を走らせる): command = codex が走らせた命令の文(codex が包んだ形のまま — 例
+   `/bin/bash -lc 'echo hi'`)/ cwd = 走らせた dir / status = 状態(この版に無い綴りは UnknownValue)/ output = 標準出力と標準誤りを
+   合わせた出力(aggregatedOutput — 終わるまで None)/ exit-code = 終了 code(終わるまで None)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str command)
+  (#^ str cwd)
+  (#^ (| ToolStatus UnknownValue) status)
+  (setv #^ (| str None) output None)
+  (setv #^ (| int None) exit-code None))
+
+(defrecord FileEdit
+  "fileChange の 1 つのファイルの変更: path = ファイル / kind = 変更の種類の名(add・delete・update — 版で増えるので名のまま)/
+   diff = 変更の中身(codex の綴りのまま — add は新しい中身・update は unified diff)/ move-path = update で移す先(ほかは None)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str path)
+  (#^ str kind)
+  (#^ str diff)
+  (setv #^ (| str None) move-path None))
+
+(defrecord FilePatch
+  "道具の item fileChange の中身(ファイルを変える — apply_patch): changes = ファイルごとの変更(FileEdit の tuple)/ status = 状態
+   (この版に無い綴りは UnknownValue)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ (get tuple #(FileEdit ...)) changes)
+  (#^ (| ToolStatus UnknownValue) status))
+
+(defrecord WebSearch
+  "道具の item webSearch の中身(web 検索): query = 検索の語(始まりの item は空 — 上流は語を検索の終わりで名乗る)/ action = 動きの
+   種類の名(search・openPage・findInPage・other — 名乗らなければ None)/ queries = 動きが名乗る検索の語の列 / url・pattern = 動きが
+   名乗る頁と頁の中の語(名乗らなければ None)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str query)
+  (setv #^ (| str None) action None)
+  (setv #^ (get tuple #(str ...)) queries #())
+  (setv #^ (| str None) url None)
+  (setv #^ (| str None) pattern None))
+
+(val ToolItem (| CommandRun FilePatch WebSearch))
+
 (defrecord ItemStarted
   "ターンの中の item が始まった(item/started): item-type = codex の item の種類の名(userMessage・agentMessage・reasoning・
-   commandExecution など — 版で増えるので名のまま)。上の層が「考えている」「道具を呼んでいる」を出す材料。"
+   commandExecution など — 版で増えるので名のまま)/ tool = 道具の種類(commandExecution・fileChange・webSearch)の item の中身
+   (ほかの種類は None)。上の層が「考えている」「道具を呼んでいる」を出す材料。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
   (#^ str turn-id)
   (#^ str item-id)
-  (#^ str item-type))
+  (#^ str item-type)
+  (setv #^ (| ToolItem None) tool None))
 
 (defrecord ItemDone
-  "答えの全文でない item が終わった(item/completed の agentMessage 以外): item-type は ItemStarted と同じ。"
+  "答えの全文でない item が終わった(item/completed の agentMessage 以外): item-type・tool は ItemStarted と同じ(tool は終わりの
+   時点の中身 — 命令の出力と終了 code・検索の語はここで届く)。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
   (#^ str turn-id)
   (#^ str item-id)
-  (#^ str item-type))
+  (#^ str item-type)
+  (setv #^ (| ToolItem None) tool None))
 
 (defrecord TokenCount
   "token の数の組(名乗らない欄は None)。"
@@ -387,22 +479,92 @@
               :model-context-window params.token-usage.model-context-window))
 
 
+(defk tool-status-of [#^ str spelled]
+  {:pre [(: spelled str)] :post [(: % (| ToolStatus UnknownValue))] :tags {:context "codex" :role "foundation"}}
+  "道具の item の status の綴りを ToolStatus にするため。この版に無い綴りは UnknownValue(既知の状態に読み替えない)。"
+  (if (in spelled (frozenset (gfor known ToolStatus known.value)))
+      (ToolStatus spelled)
+      (UnknownValue :value (OpaqueJson.of spelled))))
+
+
+(defk command-run-of [#^ CommandExecutionWire wire]
+  {:pre [(: wire CommandExecutionWire)] :post [(: % CommandRun)] :tags {:context "codex" :role "foundation"}}
+  "commandExecution の中身を、命令・dir・状態・出力・終了 code の記録にするため。"
+  (<- status (tool-status-of wire.status))
+  (CommandRun :command wire.command :cwd wire.cwd :status status :output wire.aggregated-output :exit-code wire.exit-code))
+
+
+(defk file-patch-of [#^ FileChangeWire wire]
+  {:pre [(: wire FileChangeWire)] :post [(: % FilePatch)] :tags {:context "codex" :role "foundation"}}
+  "fileChange の中身を、ファイルごとの変更と状態の記録にするため。"
+  (<- status (tool-status-of wire.status))
+  (FilePatch :changes (tuple (gfor change wire.changes (FileEdit :path change.path :kind change.kind.type :diff change.diff
+                                                                 :move-path change.kind.move-path)))
+             :status status))
+
+
+(defk web-search-of [#^ WebSearchWire wire]
+  {:pre [(: wire WebSearchWire)] :post [(: % WebSearch)] :tags {:context "codex" :role "foundation"}}
+  "webSearch の中身を、検索の語と動き(種類・語の列・頁・頁の中の語)の記録にするため。"
+  (val action wire.action)
+  (if (is action None)
+      (WebSearch :query wire.query)
+      (WebSearch :query wire.query :action action.type :queries (or action.queries #()) :url action.url :pattern action.pattern)))
+
+
+(defk tool-parsed [#^ str method #^ type wire-type convert item]
+  {:pre [(: method str) (: wire-type type) (: convert Callable) (: item OpaqueJson)] :post [(: % (| ToolItem Unparsed))]
+   :tags {:context "codex" :role "foundation"}}
+  "道具の item の中身を、その種類の wire の型で解いて記録へ写すため(convert = 写す defk)。形の合わない中身は、method と訳を持つ
+   Unparsed(道具の中身の無い item に読み替えない)。"
+  (<- parsed (parse wire-type item))
+  (when (isinstance parsed Malformed)
+    (<- reason (reason-of parsed))
+    (return (Unparsed :method method :reason reason)))
+  (<- record (convert parsed))
+  record)
+
+
+(defk tool-of [#^ str method #^ str item-type item]
+  {:pre [(: method str) (: item-type str) (: item OpaqueJson)] :post [(: % (| ToolItem Unparsed None))]
+   :tags {:context "codex" :role "foundation"}}
+  "item の種類が道具(commandExecution・fileChange・webSearch)なら中身を記録にするため(ほかの種類は None)。"
+  (match item-type
+    "commandExecution" (do (<- tool (tool-parsed method CommandExecutionWire command-run-of item)) tool)
+    "fileChange" (do (<- tool (tool-parsed method FileChangeWire file-patch-of item)) tool)
+    "webSearch" (do (<- tool (tool-parsed method WebSearchWire web-search-of item)) tool)
+    _ None))
+
+
 (defk item-started-of [#^ ItemParamsWire params]
-  {:pre [(: params ItemParamsWire)] :post [(: % ItemStarted)] :tags {:context "codex" :role "foundation"}}
-  "item/started を、上の層が「考えている」「道具を呼んでいる」を出す材料(item の種類と id)にするため。"
-  (ItemStarted :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :item-type params.item.type))
+  {:pre [(: params ItemParamsWire)] :post [(: % (| ItemStarted Unparsed))] :tags {:context "codex" :role "foundation"}}
+  "item/started を、上の層が「考えている」「道具を呼んでいる」を出す材料(item の種類と id と、道具の中身)にするため。"
+  (<- item (parse ItemWire params.item))
+  (when (isinstance item Malformed)
+    (<- reason (reason-of item))
+    (return (Unparsed :method "item/started" :reason reason)))
+  (<- tool (tool-of "item/started" item.type params.item))
+  (when (isinstance tool Unparsed)
+    (return tool))
+  (ItemStarted :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :item-type item.type :tool tool))
 
 
 (defk item-done-of [#^ ItemParamsWire params]
   {:pre [(: params ItemParamsWire)] :post [(: % (| AgentMessageDone ItemDone Unparsed))] :tags {:context "codex" :role "foundation"}}
-  "item/completed のうち答えの全文(agentMessage)を AgentMessageDone に、ほかの種類の item を ItemDone にするため。全文の無い
-   agentMessage は読めない行(答えの全文を空と読み替えない)。"
-  (match params.item.type
-    "agentMessage" (if (is params.item.text None)
-                       (Unparsed :method "item/completed" :reason (.format "agentMessage の item {} に text が無い" params.item.id))
-                       (AgentMessageDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id
-                                         :text params.item.text))
-    _ (ItemDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :item-type params.item.type)))
+  "item/completed のうち答えの全文(agentMessage)を AgentMessageDone に、ほかの種類の item を ItemDone(道具の種類は終わりの時点の
+   中身つき)にするため。全文の無い agentMessage は読めない行(答えの全文を空と読み替えない)。"
+  (<- item (parse ItemWire params.item))
+  (when (isinstance item Malformed)
+    (<- reason (reason-of item))
+    (return (Unparsed :method "item/completed" :reason reason)))
+  (when (= item.type "agentMessage")
+    (return (if (is item.text None)
+                (Unparsed :method "item/completed" :reason (.format "agentMessage の item {} に text が無い" item.id))
+                (AgentMessageDone :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :text item.text))))
+  (<- tool (tool-of "item/completed" item.type params.item))
+  (when (isinstance tool Unparsed)
+    (return tool))
+  (ItemDone :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :item-type item.type :tool tool))
 
 
 (defk text-delta-of [#^ DeltaParamsWire params]

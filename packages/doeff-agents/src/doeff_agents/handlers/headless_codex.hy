@@ -27,7 +27,15 @@
 ;;;   WarmSessionEffect             → 偽(前もって起こさない — doeff-codex に入力の前に thread を開く口が無い)
 ;;;   行 → 出来事: TextDelta → AgentTextDeltaEvent・AgentMessageDone → AgentTextEvent・item の種類 reasoning の始まり →
 ;;;     AgentThinkingStartedEvent・ReasoningDelta → AgentThinkingDeltaEvent・TokenUsage → AgentCallUsageEvent(この呼びの分)。
-;;;     道具の item(commandExecution など)・誤りの通知・語彙の外の行は、今は出来事にしない(行の記録が道具の命令と出力を運ばない)。
+;;;     道具の item(card acp:kanban-issue:ki-77e76c7c07ce)— 道具の名は codex の item の種類の名、ToolCall の id は item の id:
+;;;       commandExecution・fileChange の始まり → AgentToolUseEvent(始まりの item が命令・変えるファイルを持つ)、終わり →
+;;;         AgentToolResultEvent(命令は出力の文 aggregatedOutput・ファイルの変更は空の文。誤りの印 = 状態が completed でない)
+;;;       webSearch の始まり → AgentToolCallStartedEvent(始まりの item は検索の語を持たない — 上流は語を終わりで名乗る)、終わり →
+;;;         AgentToolUseEvent と AgentToolResultEvent(空の文 — codex は検索の結果の文を item で運ばない)
+;;;     ToolCall.input = 画面が読む命令の JSON の object(commandExecution = command・cwd / fileChange = changes の path・kind・diff・
+;;;     move_path / webSearch = query・action・queries・url・pattern — 名乗った欄だけ・欄の名は codex の綴り)。
+;;;     ほかの道具の item(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など — 録った行が無い)・誤りの通知・語彙の外の
+;;;     行は、今は出来事にしない。
 ;;;   入力の行方: ターンを始めた入力・足した入力は、層 2 が受けた時に AgentInputFateEvent(started)を出し、完了の input_refs にも載せる
 ;;;     (codex は入力ごとの行方を行で名乗らない — 受けた入力はそのターンが読む)。
 ;;;   usage: 入力の側は cache から読んだ分を除く(codex の inputTokens は cachedInputTokens を含む — 層 3 の input_tokens は claude と同じ
@@ -59,6 +67,7 @@
   NamedContextId RedeemTurnCredentialEffect TurnCredential CodexTurnCredential HomeTurnCredential TurnCredentialUnavailable
   TurnCredentialUnavailableError
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentCallUsageEvent
+  AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent ToolCall ToolAnswer
   AgentInputFateEvent AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
@@ -66,7 +75,8 @@
 (import doeff_agents.handlers.headless [outcome-of])
 (import doeff_codex.values [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
-(import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted TokenUsage TokenCount TurnEnded TurnStatus])
+(import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
+                           TurnStatus ToolStatus ToolItem CommandRun FilePatch WebSearch])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
                              BackendLost TurnStarted Steered InterruptRequested TurnEventPage
                              ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
@@ -215,16 +225,66 @@
                       :output-tokens (! (added total.output-tokens usage.output-tokens))
                       :cache-read-tokens (! (added total.cache-read-tokens usage.cache-read-tokens)))))
 
+(defk tool-input-of [tool]
+  {:pre [(: tool ToolItem)] :post [(: % dict)] :tags {:context "headless-adapter" :role "judgment"}}
+  "道具の item の中身を、道具の呼びの命令にするため。ToolCall.input は契約で JSON の object(画面は command の欄が文字列なら shell
+   の card にする)なので、ここが JSON の object を作る境目 — 欄の名は codex の綴り、名乗らない欄は載せない(空を発明しない — ファイルの
+   変更の移す先・検索の動きの欄)。"
+  (match tool
+    (CommandRun) {"command" tool.command "cwd" tool.cwd}
+    (FilePatch) {"changes" (lfor edit tool.changes (| {"path" edit.path "kind" edit.kind "diff" edit.diff}
+                                                      (if (is edit.move-path None) {} {"move_path" edit.move-path})))}
+    (WebSearch) (| {"query" tool.query}
+                   (if (is tool.action None) {} {"action" tool.action})
+                   (if tool.queries {"queries" (list tool.queries)} {})
+                   (if (is tool.url None) {} {"url" tool.url})
+                   (if (is tool.pattern None) {} {"pattern" tool.pattern}))))
+
+(defk tool-call-of [#^ str item-id #^ str item-type tool]
+  {:pre [(: item-id str) (: item-type str) (: tool ToolItem)] :post [(: % ToolCall)] :tags {:context "headless-adapter" :role "judgment"}}
+  "道具の item を、claude の adapter と同じ形の道具の呼び(id = item の id・名 = item の種類の名)にするため。"
+  (<- input (tool-input-of tool))
+  (ToolCall :id item-id :name item-type :input input))
+
+(defk tool-answer-of [#^ str item-id tool]
+  {:pre [(: item-id str) (: tool ToolItem)] :post [(: % ToolAnswer)] :tags {:context "headless-adapter" :role "judgment"}}
+  "終わった道具の item を、claude の adapter と同じ形の道具の結果にするため: 文 = 命令の出力(ほかの道具は codex が結果の文を item で
+   運ばないので空)/ 誤りの印 = 状態が completed でない(失敗・断り・この版に無い状態 — 成功と名乗った時だけ誤りでない。web 検索は
+   状態を持たないので誤りでない)。"
+  (match tool
+    (CommandRun) (ToolAnswer :id item-id :text (or tool.output "") :is-error (!= tool.status ToolStatus.COMPLETED))
+    (FilePatch) (ToolAnswer :id item-id :text "" :is-error (!= tool.status ToolStatus.COMPLETED))
+    (WebSearch) (ToolAnswer :id item-id :text "" :is-error False)))
+
+(defk tool-events-of [record #^ datetime at #^ int first-seq]
+  {:pre [(: record (| ItemStarted ItemDone)) (: at datetime) (: first-seq int)] :post [(: % tuple)]
+   :tags {:context "headless-adapter" :role "judgment"}}
+  "道具の item の始まりか終わり 1 つを、道具の出来事(0 から 2 つ — seq は first-seq から続けて)へ写すため(頭の註の「道具の item」)。"
+  (val tool record.tool)
+  (match #(record tool)
+    #((ItemStarted) (WebSearch)) #((AgentToolCallStartedEvent :seq first-seq :at at :id record.item-id :name record.item-type))
+    #((ItemStarted) _) (do (<- call (tool-call-of record.item-id record.item-type tool))
+                           #((AgentToolUseEvent :seq first-seq :at at :tool-calls #(call))))
+    #((ItemDone) (WebSearch)) (do (<- call (tool-call-of record.item-id record.item-type tool))
+                                  (<- answer (tool-answer-of record.item-id tool))
+                                  #((AgentToolUseEvent :seq first-seq :at at :tool-calls #(call))
+                                    (AgentToolResultEvent :seq (+ first-seq 1) :at at :answers #(answer))))
+    #((ItemDone) _) (do (<- answer (tool-answer-of record.item-id tool))
+                        #((AgentToolResultEvent :seq first-seq :at at :answers #(answer))))))
+
 (defk events-of [record #^ datetime at #^ int first-seq model]
   {:pre [(: record CodexLine) (: at datetime) (: first-seq int) (: model (| str None))] :post [(: % tuple)]
    :tags {:context "headless-adapter" :role "judgment"}}
-  "層 2 の行の記録 1 つを層 3 の出来事(0 か 1 つ)へ写すため(頭の註の「行 → 出来事」— 語彙の外の行は空・生の行は上へ渡さない)。
-   seq は first-seq。"
+  "層 2 の行の記録 1 つを層 3 の出来事(0 から 2 つ)へ写すため(頭の註の「行 → 出来事」— 語彙の外の行は空・生の行は上へ渡さない)。
+   seq は first-seq から続けて振る。"
   (match record
     (TextDelta) #((AgentTextDeltaEvent :seq first-seq :at at :text record.text))
     (AgentMessageDone) (if record.text #((AgentTextEvent :seq first-seq :at at :text record.text)) #())
     ;; 考えの item の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(claude の adapter と同じ)。
     (ItemStarted :item-type "reasoning") #((AgentThinkingStartedEvent :seq first-seq :at at))
+    ;; 道具の item(中身を持つ item だけ — 層 2 が道具の種類の中身を解いた物)。
+    (| (ItemStarted :tool (| (CommandRun) (FilePatch) (WebSearch))) (ItemDone :tool (| (CommandRun) (FilePatch) (WebSearch))))
+    (do (<- made (tool-events-of record at first-seq)) made)
     (ReasoningDelta) #((AgentThinkingDeltaEvent :seq first-seq :at at :text record.text))
     (TokenUsage) (do (<- usage (call-usage-of record.last))
                      (if (is usage None) #() #((AgentCallUsageEvent :seq first-seq :at at :usage usage :model model))))

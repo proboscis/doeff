@@ -63,7 +63,7 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 | `TextDelta` | `item/agentMessage/delta` | 答えの文字の途中(thread・ターン・item の id と差分の文字) |
 | `AgentMessageDone` | `item/completed`(item の種類 agentMessage) | 答えの全文 |
 | `ReasoningDelta` | `item/reasoning/textDelta`・`item/reasoning/summaryTextDelta` | 考えている間の差分(要約か本文か) |
-| `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料) |
+| `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料)と、道具の種類の item の中身 `tool`(下の表・ほかの種類は None) |
 | `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status) |
 | `TurnError` | `error` | ターンの誤り(文・誤りの種類・HTTP の status・codex が繰り返すか) |
 | `TokenUsage` | `thread/tokenUsage/updated` | この呼びの分(last)と thread の累積(total)の token の数 |
@@ -73,7 +73,18 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 | `Other` | 語彙の外の通知 | method の名だけ(発明しない) |
 | `Unparsed` | JSON として読めない行・形の合わない行 | method(読めた時)と訳 |
 
-この版の語彙に無い値(版で増えたターンの状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
+道具の種類の item の中身(`ItemStarted.tool` / `ItemDone.tool` — 始まりと終わりの時点の中身):
+
+| item の種類 | 記録 | 欄 | 始まりと終わりの違い(録った行で確かめた) |
+|---|---|---|---|
+| `commandExecution` | `CommandRun` | 命令の文(codex が包んだ形のまま — 例 `/bin/bash -lc 'echo hi'`)・dir・状態 `ToolStatus`・出力(stdout と stderr を合わせた aggregatedOutput)・終了 code | 出力と終了 code は終わりで届く(始まりは None)。終了 code が 0 でない命令は状態 failed |
+| `fileChange` | `FilePatch` | ファイルごとの変更 `FileEdit`(path・種類 add/delete/update・diff・移す先)・状態 `ToolStatus` | 始まりから変えるファイルと中身を持つ |
+| `webSearch` | `WebSearch` | 検索の語・動きの種類(search・openPage・findInPage・other)・語の列・頁・頁の中の語 | 始まりは語が空で動きは other — 語は終わりで届く |
+
+ほかの道具の種類(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など)は録った行が無く、中身を読まない(`tool` は None)。
+道具の中身の使う欄が無い・型が違う item は、method と訳を持つ `Unparsed` にする(道具の中身の無い item に読み替えない)。
+
+この版の語彙に無い値(版で増えたターンの状態・道具の状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
 行も落とさない — 知らない状態でもターンの終わり(`TurnEnded`)は必ず届く(上の層がターンの終わりを待ち続けないため)。
 
 ## 起動の形を app-server にした訳
@@ -87,7 +98,9 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 
 `tests/recorded/codex-0.162.1/` は、版を固定した本物の codex(release rust-v0.162.1 の linux musl・tar.gz の sha256
 `86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057`)を、手元の偽の上流(Responses API の SSE)につないで録った行。
-口座は要らない(答えの中身だけが偽物で、行の形は本物の binary が出した物)。版を上げる時は録り直す:
+口座は要らない(答えの中身だけが偽物で、行の形は本物の binary が出した物)。`tool-calls.*`(道具の呼びのターン — 偽の上流が
+`exec_command` で命令の成功・失敗・apply_patch を呼び、web 検索の後に答える。命令は本当に走る)は 2026-10-11 に同じ版で足した。
+版を上げる時は録り直す:
 
 ```sh
 uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> packages/doeff-codex/tests/recorded/codex-<版> <作業の dir>
