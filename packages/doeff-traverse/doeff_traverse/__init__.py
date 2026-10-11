@@ -19,6 +19,9 @@ from doeff_traverse.effects import (
     ItemOutcome as ItemOutcome,
 )
 from doeff_traverse.effects import (
+    ItemOutcomeNotPassedError as ItemOutcomeNotPassedError,
+)
+from doeff_traverse.effects import (
     Reduce as Reduce,
 )
 from doeff_traverse.effects import (
