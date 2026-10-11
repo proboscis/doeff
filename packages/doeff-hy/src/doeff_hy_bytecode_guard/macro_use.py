@@ -13,6 +13,8 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   (``module.名`` の読み)を入れる。code の文字列の定数は名の候補として、辿った module のその名の属性も入れる
   (``getattr(module, "名")`` の読み — 読む関数と module の参照が別の関数にあっても覆う)。ただし module の説明の文
   (``__doc__``)は入れない(展開の code の "__doc__" は展開の結果に説明を書く印で、module の説明の文は展開の結果に効かない)。
+  module の置き場を名指すだけの属性(``__file__``・``__cached__`` — :data:`_LOCATION_NAMES`)は、名で出会っても値(作業木の
+  置き場の path)を入れず印だけを入れる(同じ中身の木を別の dir に置いても digest は変わらない — card ki-1475765a3f18)。
 - Hy 自身(``hy.*``)と Python の標準 library と組み込みは名だけ入れる(Hy の版・Python の版で覆う)。
 - 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
   file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
@@ -1436,6 +1438,9 @@ class _Walker:
         for name in facts.names:
             if name in namespace:
                 self._feed("global", name)
+                if name in _LOCATION_NAMES:
+                    self._feed("location")
+                    continue
                 self._value(
                     namespace[name],
                     home,
@@ -1766,9 +1771,12 @@ class _Walker:
                 self._attribute(module, name, names)
 
     def _attribute(self, module: ModuleType, name: str, names: tuple[str, ...]) -> None:
-        """module の属性 1 つを入れる(module ごとに 1 度)。"""
+        """module の属性 1 つを入れる(module ごとに 1 度 — 置き場を名指すだけの属性は値でなく印だけ・:data:`_LOCATION_NAMES`)。"""
         self._attributes[module.__name__].add(name)
         self._feed("attribute", module.__name__, name)
+        if name in _LOCATION_NAMES:
+            self._feed("location")
+            return
         self._value(vars(module)[name], module, names, GlobalName(module, name))
 
     def _compiled(self, value: object, home: ModuleType | None) -> None:
@@ -1856,6 +1864,14 @@ def _submodule(module: ModuleType, name: str) -> str | None:
 #: 説明を書く印で、module の説明の文は展開の結果に効かない(入れると、doeff_hy の record_runtime の docstring の 1 行の変更で
 #: defhandler の使い手が全部古いと判じられた — card ki-70d92767a917 の子)。
 _TEXT_SKIP = frozenset({"__doc__"})
+
+#: module の置き場を名指すだけの属性(import の仕組みが入れる source と bytecode の file の path)— 大域の名・module の属性・
+#: 文字列の定数の名のどれで出会っても、値でなく印だけを入れる。値は作業木の置き場で変わり、同じ中身の code の振る舞いは
+#: 変えない(記録は別の木へ引き継いで照らす — #2598)。入れると、日次の全体検証が回ごとに別の dir に置いた doeff で、
+#: 型検査の展開の後処理(static_check の project — `module.__file__ = …` が名の表に __file__ を出す)の digest が回ごとに
+#: 変わり、保存した展開が毎回全部外れた(agora-redesign card ki-1475765a3f18)。path の綴りは path の先の file の中身を
+#: 覆わないので、外しても覆う物は減らない(module の code と値は、それを辿る規則が中身で覆う)。
+_LOCATION_NAMES = frozenset({"__file__", "__cached__"})
 
 
 def _text_attribute(module: ModuleType, text: str) -> bool:
