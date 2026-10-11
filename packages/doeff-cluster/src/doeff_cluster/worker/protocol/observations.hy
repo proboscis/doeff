@@ -39,3 +39,8 @@
 (defclass [(dataclass :frozen True)] ObserveWarmChildren [EffectBase]
   "root ごとの待ちの子の観測(WarmChildView の tuple — 起こし中・準備済み・終わった・止め中)。世界の観測のまとめ(local-host)が、
    待ちの子の言い換え(worker/protocol/warm_host)へ問う(#3646)。")
+
+
+(defclass [(dataclass :frozen True)] ObserveLeaving [EffectBase]
+  "この Pod の止まり(preStop の drain)が始まったかの観測(bool)。世界の観測のまとめ(local-host)が、止まりの印の言い換え
+   (worker/protocol/leaving_mark)へ問う(AL-D2p)。")

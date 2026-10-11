@@ -50,6 +50,7 @@
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
+(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
 (import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
@@ -113,10 +114,10 @@
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
-(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm]
+(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
          (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings)
-         (: warm WarmSettings)]
+         (: warm WarmSettings) (: boot-file (| str None))]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
@@ -124,11 +125,12 @@
    (ForkFromWarm・PollWarmChild・SignalWarmChild — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)。木の数えと消し
    (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
    調整ループ(heartbeat)は回り続ける(#3715)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
-   最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。"
+   最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
+   leaving-mark が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p)。"
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler process-exit-handler
    os-file-handler offloaded-tree-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (warm-host warm) (process-host host) local-host tick-pauses])
+   (probe-host probes) (warm-host warm) (process-host host) (leaving-mark boot-file link.boot) local-host tick-pauses])
 
 
 (defk timing-checked [fence-ms policy timing]
@@ -295,7 +297,7 @@
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
-                                           places.status codes envs warm)))
+                                           places.status codes envs warm (.get machine-env BOOT-FILE-VAR))))
   ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
   (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
