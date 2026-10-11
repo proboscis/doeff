@@ -115,19 +115,20 @@ def load(cache_dir: Path, name: str) -> CachedProjection | CacheMiss:
 
 
 def _read_entry(path: Path) -> CachedProjection | CacheMiss:
-    """entry 1 つを読む(読めない・形が違う時は CacheMiss)。"""
+    """entry 1 つを読む(読めない・形が違う時は CacheMiss)。保存の形の版は CACHE_VERSION と照らす(literal の版で照らすと、
+    CACHE_VERSION を上げた版は自分の書いた entry を読めない — 設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A)。"""
     try:
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return CacheMiss(f"読めない: {error}")
     match loaded:
         case {
-            "version": 3,
+            "version": int(version),
             "used": used,
             "text": str(text),
             "spans": list(spans),
             "findings": list(findings),
-        }:
+        } if version == CACHE_VERSION:
             record = record_from_json(used)
             if record is None:
                 return CacheMiss("記録の形が違う")

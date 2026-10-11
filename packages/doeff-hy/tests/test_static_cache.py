@@ -134,6 +134,44 @@ def test_an_entry_of_the_current_store_version_is_read_back(
     assert expansions == [tree.user], "今の版で書いた entry を読めず、展開し直した"
 
 
+#: 型検査の展開の後処理(static_check の with_canonical_gensyms)が使う gensym の名の振り直しの規則の source の sha256 → その規則で
+#: 書いた保存の形の版(CACHE_VERSION)。規則は doeff_hy_bytecode_guard(閉包の歩みが名だけ入れる package)に在り、記録の digest が
+#: 覆わない(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A — 規則を替えても保存した展開が古い名のまま引かれた)。規則を替えたら
+#: CACHE_VERSION を上げ、この表に新しい行を足す(版は行ごとに違う — 同じ版のまま hash だけを足すと下の検が断る)。
+GENSYM_RULE_VERSIONS = {
+    "5b4612a4186ae2b6d222d3393e2a566c9de66e0df007391fb7f1f9a4e2dccebc": 3,
+}
+
+
+def _gensym_rule_sha256() -> str:
+    """振り直しの規則の source(入口 gensym_renaming・対応を作る gensym_renames・名の一致・替え方・名の形の 2 つの正規表現)の sha256。"""
+    import hashlib
+    import inspect
+
+    from doeff_hy_bytecode_guard import loader_hooks, records
+
+    parts = (
+        inspect.getsource(loader_hooks.gensym_renaming),
+        inspect.getsource(records.gensym_renames),
+        inspect.getsource(records._gensym_match),
+        inspect.getsource(records.renamed),
+        records.GENSYM_NAME.pattern,
+        records.RENAMED_BINDING.pattern,
+    )
+    return hashlib.sha256("\0".join(parts).encode()).hexdigest()
+
+
+def test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version() -> None:
+    # 守り(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A): 振り直しの規則の source が表に無ければ、規則を替えたのに保存の形の版を
+    # 上げていない(保存した展開が古い規則の名のまま引かれる)。表の版は行ごとに違い、今の規則の行の版が CACHE_VERSION。
+    assert len(set(GENSYM_RULE_VERSIONS.values())) == len(GENSYM_RULE_VERSIONS), "同じ版に 2 つの規則の行がある"
+    rule = _gensym_rule_sha256()
+    assert GENSYM_RULE_VERSIONS.get(rule) == static_cache.CACHE_VERSION, (
+        f"gensym の名の振り直しの規則({rule})を替えたら static_cache.CACHE_VERSION を上げ、GENSYM_RULE_VERSIONS に"
+        " 新しい規則の行を足す"
+    )
+
+
 def test_a_changed_macro_module_expands_again(tree: Tree, expansions: list[Path]) -> None:
     # 失敗ケース 2: require した macro の module の source を変えたら作り直す。
     _project(tree)

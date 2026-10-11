@@ -15,6 +15,8 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   (``__doc__``)は入れない(展開の code の "__doc__" は展開の結果に説明を書く印で、module の説明の文は展開の結果に効かない)。
   module の置き場を名指すだけの属性(``__file__``・``__cached__`` — :data:`_LOCATION_NAMES`)は、名で出会っても値(作業木の
   置き場の path)を入れず印だけを入れる(同じ中身の木を別の dir に置いても digest は変わらない — card ki-1475765a3f18)。
+  置き場を値として読む code か束縛の文(``Path(__file__).with_name(…)`` で隣の file を読む形)の digest は、その file の中身を
+  覆えないので照らせない印にする(環境変数の読みと同じ :data:`doeff_hy_bytecode_guard.records.ENVIRONMENT_READ`)。
 - Hy 自身(``hy.*``)と Python の標準 library と組み込みは名だけ入れる(Hy の版・Python の版で覆う)。
 - 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
   file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
@@ -790,7 +792,8 @@ class ImportReference:
 @dataclass(frozen=True)
 class CodeFacts:
     """code object 1 つ(入れ子の code を含む)から読んだ物 — 行番号と位置を除いた中身の digest・名の表・文字列の定数
-    (``getattr(x, "名")`` と ``d["名"]`` の名の候補)・import・hy.R の呼び出しの module・名で辿れない読みを持つか。"""
+    (``getattr(x, "名")`` と ``d["名"]`` の名の候補)・import・hy.R の呼び出しの module・名で辿れない読みを持つか・module の
+    置き場(:data:`_LOCATION_NAMES`)を値として読むか(大域の読み・属性の読み・文字列の定数の名 — 書くだけなら偽)。"""
 
     shape: str
     names: tuple[str, ...]
@@ -798,6 +801,7 @@ class CodeFacts:
     imports: tuple[ImportReference, ...]
     called_modules: tuple[str, ...]
     reads: NamespaceRead
+    reads_location: bool
 
 
 #: process の中の code の読みの覚え(code object の id → (code・読んだ物) — code を生かしておき id の使い回しを防ぐ)。
@@ -845,9 +849,22 @@ def _code_facts(code: CodeType) -> CodeFacts:
             )
         ),
         reads=_widest((_namespace_read(code), *(inner.reads for inner in nested))),
+        reads_location=_reads_location(code, texts) or any(inner.reads_location for inner in nested),
     )
     _FACTS[id(code)] = (code, facts)
     return facts
+
+
+def _reads_location(code: CodeType, texts: tuple[str, ...]) -> bool:
+    """code(入れ子を除く)が module の置き場を値として読むか — 大域の読み(``__file__``)・属性の読み(``m.__file__``)・文字列の
+    定数の名(``getattr(m, "__file__")``)。作った module に書く(``module.__file__ = …`` — STORE_ATTR)だけなら読みではない。"""
+    if not _LOCATION_NAMES.isdisjoint(texts):
+        return True
+    if _LOCATION_NAMES.isdisjoint(code.co_names):
+        return False
+    return any(
+        use.name in _LOCATION_NAMES and use.way is not NameWay.OTHER for use in _name_uses(code)
+    )
 
 
 def _constant_text(value: object) -> str:
@@ -877,7 +894,8 @@ def _constant_text(value: object) -> str:
 #: code の読みの entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に
 #: 入れるこの module の file の sha256(:func:`_own_digest`)が覆い、読みが呼ぶ Hy の関数(``hy.mangle``・``slashes2dots``)の変更は
 #: 鍵に入れる Hy の版が覆う。
-FACTS_TAG = "doeff-hy/code-facts/1"
+#: 2 = 置き場を値として読むかの欄を足した形(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。
+FACTS_TAG = "doeff-hy/code-facts/2"
 
 #: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
 _READS = frozenset(read.value for read in NamespaceRead)
@@ -975,9 +993,9 @@ def _own_digest() -> str | None:
 
 
 #: 置き場の entry の中身の形(marshal の境界 — 欄の名と型は :class:`CodeFacts` が持ち、ここは書く時と読む時の並びだけ):
-#: code の sha256・digest の形・名の表・文字列の定数・import(名・段数)・hy.R の module・名で辿れない読みの広さ。
+#: code の sha256・digest の形・名の表・文字列の定数・import(名・段数)・hy.R の module・名で辿れない読みの広さ・置き場の読み。
 FactsRow = tuple[
-    str, str, tuple[str, ...], tuple[str, ...], tuple[tuple[str, int], ...], tuple[str, ...], str
+    str, str, tuple[str, ...], tuple[str, ...], tuple[tuple[str, int], ...], tuple[str, ...], str, bool
 ]
 
 
@@ -1020,6 +1038,7 @@ def _write_facts(entry: str, used: dict[str, CodeFacts]) -> None:
             tuple((reference.name, reference.level) for reference in facts.imports),
             facts.called_modules,
             facts.reads.value,
+            facts.reads_location,
         )
         for sha, facts in sorted(used.items())
     )
@@ -1041,6 +1060,7 @@ def _facts_from_rows(rows: object) -> dict[str, CodeFacts] | None:
                 tuple() as imports,
                 tuple() as called,
                 str() as reads,
+                bool() as location,
             ) if (
                 _strings(names)
                 and _strings(texts)
@@ -1055,6 +1075,7 @@ def _facts_from_rows(rows: object) -> dict[str, CodeFacts] | None:
                     tuple(ImportReference(name, level) for name, level in imports),
                     called,
                     NamespaceRead(reads),
+                    location,
                 )
             case _:
                 return None
@@ -1377,6 +1398,12 @@ class _Walker:
         if reads:
             self._mut_environment = True
 
+    def _note_location(self, reads: bool) -> None:
+        """module の置き場を値として読む code か束縛の文に当たった事を覚える — 置き場から辿る file(隣の data・stub)の中身を歩みは
+        覆わないので、環境変数の読みと同じく照らせない印にする(:data:`_LOCATION_NAMES`・設計検証
+        lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。"""
+        self._note_environment(reads)
+
     def _fold(self, module: ModuleType | None) -> None:
         """安全側: module の file の sha256 を digest に足す(読めなければ毎回違う印 — いつも古いと判じられる)。"""
         file = None if module is None else vars(module).get("__file__")
@@ -1437,8 +1464,9 @@ class _Walker:
         facts = self.readings.facts(function.__code__)
         self._texts.update(facts.texts)
         self._feed("function", module_name, function.__qualname__, facts.shape)
-        # 展開の時か読み込みの時に、code が環境変数を読む。
+        # 展開の時か読み込みの時に、code が環境変数を読む・module の置き場を値として読む。
         self._note_environment(_reads_environment(function.__globals__, facts.names))
+        self._note_location(facts.reads_location)
         self._value(function.__defaults__, home, facts.names)
         # keyword だけの引数の既定値は名 → 値の dict(名の順に入れる — dict のまま入れると辿れない値になる)。
         for keyword, default in sorted((function.__kwdefaults__ or {}).items()):
@@ -1689,6 +1717,10 @@ class _Walker:
             self._note_environment(
                 _reads_environment(namespace, (*statement.loads, *statement.attributes))
             )
+            # 読み込みの時に文が置き場から隣の file を読んで値を組む(``TABLE = json.loads(Path(__file__).with_name(…)…)``)。
+            self._note_location(
+                not _LOCATION_NAMES.isdisjoint((*statement.loads, *statement.attributes))
+            )
             for load in statement.loads:
                 if load != name and load in namespace:
                     self._feed("load", load)
@@ -1891,6 +1923,9 @@ _TEXT_SKIP = frozenset({"__doc__"})
 #: 型検査の展開の後処理(static_check の project — `module.__file__ = …` が名の表に __file__ を出す)の digest が回ごとに
 #: 変わり、保存した展開が毎回全部外れた(agora-redesign card ki-1475765a3f18)。path の綴りは path の先の file の中身を
 #: 覆わないので、外しても覆う物は減らない(module の code と値は、それを辿る規則が中身で覆う)。
+#: 置き場を値として読む code(大域の読み・属性の読み・文字列の定数の名)か束縛の文は、その先の file(隣の data・stub)を読みうるが、
+#: 歩みはその中身を覆わない — 環境変数の読みと同じく照らせない印にする(_note_location・設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の
+#: 盲検 B)。作った module に書くだけ(STORE_ATTR)は読みではない。
 _LOCATION_NAMES = frozenset({"__file__", "__cached__"})
 
 
