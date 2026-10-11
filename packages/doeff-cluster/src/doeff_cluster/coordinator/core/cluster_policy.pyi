@@ -33,6 +33,8 @@ from doeff_cluster.coordinator.intent.cluster_model import ServiceView as Servic
 from doeff_cluster.coordinator.intent.cluster_model import WorkerView as WorkerView
 from doeff_cluster.coordinator.intent.cluster_model import StatusView as StatusView
 from doeff_cluster.coordinator.intent.cluster_model import StateView as StateView
+from doeff_cluster.coordinator.intent.cluster_model import GroupLimitView as GroupLimitView
+from doeff_cluster.coordinator.intent.cluster_model import GroupHeld as GroupHeld
 from doeff_cluster.coordinator.intent.cluster_model import BoardRow as BoardRow
 from doeff_cluster.coordinator.intent.cluster_model import WorkerReport as WorkerReport
 from doeff_cluster.coordinator.intent.cluster_model import GenerationOrder as GenerationOrder
@@ -51,6 +53,7 @@ from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
 from doeff_cluster.coordinator.intent.cluster_model import SupersededRun as SupersededRun
 from doeff_cluster.shared.intent.detached_model import TaskLimit as TaskLimit
+from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
 from doeff_cluster.shared.intent.due_model import DueNow as DueNow
 from doeff_cluster.shared.intent.due_model import DueNever as DueNever
@@ -293,19 +296,25 @@ def unplaced_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:
 def task_unplaced_text(kind: TaskUnplacedKind) -> _Program[str, object]:
     ...
 
-def limit_slot(limit: TaskLimit, worker: str | None) -> _Program[tuple, object]:
+def limit_slot(limit: TaskLimit, declared: GroupLimit, worker: str | None) -> _Program[tuple, object]:
     ...
 
-def limit_holdings(tasks: dict) -> _Program[dict, object]:
+def limit_holdings(tasks: dict, groups: Table) -> _Program[dict, object]:
     ...
 
-def hold_limits(held: dict, task: TaskRecord, worker: str | None) -> _Program[dict, object]:
+def hold_limits(held: dict, task: TaskRecord, worker: str | None, groups: Table) -> _Program[dict, object]:
     ...
 
-def task_misfit(task: TaskRecord, worker: WorkerInfo, room: int, held: dict) -> _Program[TaskUnplacedKind | None, object]:
+def task_misfit(task: TaskRecord, worker: WorkerInfo, room: int, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:
     ...
 
 def misfit_reason(kinds: list) -> _Program[TaskUnplacedKind, object]:
+    ...
+
+def limits_undeclared_refusal(groups: Table, value: list | None) -> _Program[str | None, object]:
+    ...
+
+def group_limit_views(state: ClusterState) -> _Program[tuple, object]:
     ...
 DETACHED_TERMINAL: tuple[str, ...]
 ENV_RETRIES: int

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from doeff_cluster.shared.intent.service_model import (
     CallShape,
     Declaration,
+    GroupLimit,
     Job,
     System,
     _RuntimeEnvView,
@@ -27,7 +28,7 @@ def job(
     update: str = "recreate",
     environ: dict[str, str] | None = None,
 ) -> Job: ...
-def system_of(name: str, jobs: tuple[Job, ...]) -> System: ...
+def system_of(name: str, jobs: tuple[Job, ...], *, task_limits: tuple[GroupLimit, ...] = ...) -> System: ...
 def system_declaration(
     system: System,
     revision: str,

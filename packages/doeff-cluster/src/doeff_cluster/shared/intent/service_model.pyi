@@ -22,6 +22,8 @@ from typing import Any, ClassVar, NotRequired, Protocol, TypedDict, runtime_chec
 
 from doeff_hy.json_value import JsonValue
 
+from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
+
 UPDATE_FORMS: tuple[str, ...]
 REPLICAS_VALUES: tuple[int, ...]
 
@@ -91,10 +93,12 @@ class Job:
 
 @dataclass(frozen=True, kw_only=True)
 class System:
-    """系 = job の組(defsystem の関数が返す値)。name = 系の名・jobs = Job の tuple(名は重ならない)。"""
+    """系 = job の組(defsystem の関数が返す値)。name = 系の名・jobs = Job の tuple(名は重ならない)・task-limits = 系が宣言する組の
+    同時数の上限(GroupLimit の tuple — 組の名は重ならない)。"""
 
     name: str
     jobs: tuple[Job, ...]
+    task_limits: tuple[GroupLimit, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class Declaration:
@@ -102,6 +106,7 @@ class Declaration:
 
     rows: list[_DeclarationRow]
     programs: dict[str, str]
+    limits: tuple[GroupLimit, ...] = ...
 
 @runtime_checkable
 class RecordArgument(Protocol):
