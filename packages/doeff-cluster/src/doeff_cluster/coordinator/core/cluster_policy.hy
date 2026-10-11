@@ -1633,12 +1633,14 @@
         kept (if (is info None) #() info.retired)
         prior (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
         overlap (if (is overlapped None) (and (is-not prior None) prior.overlapped) overlapped)
+        ;; 止まりの始まりの印(AL-D2k)は前の組から引き継ぐ(drain_policy.request-drain が付ける)。
+        leaving (and (is-not prior None) prior.leaving)
         counted (frozenset (gfor j state.jobs :if (if overlap (not j.spec.once) j.spec.handoff) j.spec.name))
         jobs (tuple (sorted (& (running-names statuses) counted)))
         others (tuple (gfor r state.superseded-runs
                             :if (not (and (= r.worker name) (or (= r.boot boot) (not-in r.boot kept))))
                             r)))
-  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now :overlapped overlap)) #()))
+  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now :overlapped overlap :leaving leaving)) #()))
                  :key (fn [r] #(r.worker r.boot)))))
 
 
@@ -1754,6 +1756,8 @@
   ;; elder = 同じ名の前の世代がまだ動かしている常駐の job(AL-D2f)。その recreate の job には印 elder-runs を付ける — worker は準備と
   ;; 入口の検めだけをして起こさず、揃ったら状態の行を elder-runs にする(superseded-reply が前の世代から外す)。
   (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.lease-ms) (frozenset)))
+  ;; 前の世代の job をまだ受け取れない間は、worker が Pod の ready の file を書かない(AL-D2k — handover-pending)。
+  (val pending (and (is-not boot None) (> now 0) (handover-pending state name boot now timing ready-instances)))
   (HeartbeatReply :jobs (tuple (gfor spec (jobs-for state name ready-instances)
                                      :setv kept (if (in spec.name marked) (replace spec :keep-when-cut-off True) spec)
                                      (if (and (in spec.name elder) (not spec.handoff) (not spec.once))
@@ -1761,7 +1765,40 @@
                                          kept)))
                   :tasks (tasks-for state name boot) :warm (warms-for state name now)
                   :timing timing :draining (in name state.drains) :superseded False :formats (tuple ACCEPTED-FORMATS)
-                  :revision state.revision))
+                  :revision state.revision :handover-pending pending))
+
+
+;; 受け渡しで「今の世代が受け取れる」と数える recreate の job の phase(AL-D2k): 準備と検めが揃って待っている(elder-runs)か、もう
+;; 動いているか、準備できないと確定した(待っても揃わない — 入れ替えを止めない)。
+(val HANDOVER-SETTLED-PHASES #{"elder-runs" "running" "code-failed" "probe-failed" "env-failed" "handoff-abandoned"})
+
+
+(defn #^ bool handover-pending [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
+                                #^ (| dict None) ready-instances]
+  ;; defk にできない: coordinator の純粋な判断(heartbeat-reply の値・drain_policy.worker-view — defn)が呼ぶ
+  "純粋: 名 name の今の世代 boot が、同じ名の前の世代がまだ動かしている常駐の job をまだ受け取れないか(AL-D2k)。数えるのは、
+   重なりを名乗った前の世代(overlapped)のうち、止まりがまだ始まっていない(leaving でない)組の job だけ。recreate の job = 今の世代の
+   状態の行が HANDOVER-SETTLED-PHASES に無い。handoff の job = Ready と数えている process(ready-instance)が今の世代の報告の行に無い
+   (入れ替えを諦めた handoff-abandoned は数えない)。真の間、worker は Pod の ready の file を書かず、Deployment は前の世代の Pod の削除を
+   始めない — Service は worker の Pod を振り先にし、Terminating の Pod を振り先から外すので、前の世代で動く job へ届かなくなる前に、
+   今の世代が全部を受け取れる姿にしておく。"
+  (setv waiting (frozenset (gfor r state.superseded-runs
+                                 :if (and r.overlapped (not r.leaving) (= r.worker name) (!= r.boot boot)
+                                          (< (- now r.seen-ms) timing.lease-ms))
+                                 job r.jobs
+                                 job)))
+  (when (not waiting) (return False))
+  ;; 状態の報告(statuses)は今の世代の物だけを持つ — 名乗りの世代(WorkerInfo.boot)が boot の時だけ読む。
+  (setv info (.get state.workers name)
+        current (.get state.statuses name)
+        rows (if (and (is-not current None) (is-not info None) (= info.boot boot)) current.jobs #())
+        phases (dfor row rows row.name row.phase)
+        own (frozenset (gfor row rows :if row.instance row.instance)))
+  (any (gfor spec (jobs-for state name ready-instances)
+             :if (in spec.name waiting)
+             (if spec.handoff
+                 (not (or (in spec.ready-instance own) (= (.get phases spec.name) "handoff-abandoned")))
+                 (not-in (.get phases spec.name) HANDOVER-SETTLED-PHASES)))))
 
 
 (defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]
@@ -1800,13 +1837,19 @@
         own (frozenset (gfor row (or statuses #()) :if row.instance row.instance))
         ;; 今の世代が起こせると報告した recreate の job(状態の行の phase が elder-runs — AL-D2f)。それまでは前の世代に残す。
         current (.get state.statuses name)
-        taken (frozenset (gfor row (if (is current None) #() current.jobs) :if (= row.phase "elder-runs") row.name))
+        ;; 重なりの組は、この世代の Pod の止まりが始まる(leaving)まで何も渡さない(AL-D2k — Service の振り先は止まりが始まるまで
+        ;; この世代の Pod なので、先に渡すと渡した job へ届かない)。始まったら、起こせると報告した job を一度に渡す。
+        run (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
+        staying (and (is-not run None) run.overlapped (not run.leaving))
+        taken (if staying
+                  (frozenset)
+                  (frozenset (gfor row (if (is current None) #() current.jobs) :if (= row.phase "elder-runs") row.name)))
         ;; 新しい世代が重なりを名乗った組(overlapped)の recreate の job だけを残す(名乗らない新しい世代 = 今どおり止める)。
         held (frozenset (gfor r state.superseded-runs :if (and r.overlapped (= r.worker name) (= r.boot boot)) job r.jobs job)))
   (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances)
                                      :if (or (and s.handoff (in s.name running))
                                              (and (not s.handoff) (not s.once) (in s.name held) (in s.name running) (not-in s.name taken)))
-                                     (if (and (is-not s.ready-instance None) (not-in s.ready-instance own))
+                                     (if (and (is-not s.ready-instance None) (not-in s.ready-instance own) (not staying))
                                          (replace s :superseded-by s.ready-instance)
                                          s)))
                   :tasks (tuple (gfor offer (tasks-for state name boot)

@@ -231,6 +231,7 @@ class SupersededRun:
     jobs: tuple[str, ...]
     seen_ms: int
     overlapped: bool = False
+    leaving: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class StateView:
@@ -729,6 +730,7 @@ class HeartbeatReply:
     superseded: bool
     formats: tuple[int, ...]
     revision: int
+    handover_pending: bool = False
 
 @dataclass(frozen=True)
 class Watcher:

@@ -489,13 +489,15 @@
 (defn #^ (| dict None) handover-of [#^ ClusterState state #^ str name]
   ;; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
   "worker name の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
-   起こせると報告した job。前の世代が動かしている job が無ければ None。"
-  (setv elder (sorted (sfor r state.superseded-runs :if (and r.overlapped (= r.worker name)) job r.jobs job)))
+   起こせると報告した job・leaving = 前の世代の Pod の止まりが始まった(AL-D2k — 受け渡しはここから。印が付いた拍で版を進め、前の世代の
+   名指しの待ちを起こす)。前の世代が動かしている job が無ければ None。"
+  (setv runs (tuple (gfor r state.superseded-runs :if (and r.overlapped (= r.worker name)) r))
+        elder (sorted (sfor r runs job r.jobs job)))
   (when (not elder)
     (return None))
   (setv report (.get state.statuses name)
         ready (sorted (sfor row (if (is report None) #() report.jobs) :if (= row.phase "elder-runs") row.name)))
-  {"elder" elder "ready" ready})
+  {"elder" elder "ready" ready "leaving" (any (gfor r runs r.leaving))})
 
 
 (defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w #^ int now]
