@@ -21,7 +21,8 @@ from doeff_hy_bytecode_guard import record_is_current_here, records, source_to_c
 
 #: macro の module。used = 補助の関数(同じ module)と別の module の定数を読む macro・unused = 誰も使わない macro・
 #: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro・
-#: hands = 別の module を引数で渡し、受けた補助が getattr で読む macro。
+#: hands = 別の module を引数で渡し、受けた補助が getattr で読む macro・documented = 別の module の定数を読み、展開の結果に
+#: 関数の __doc__ を書く macro(code の文字列の定数に "__doc__" が出る — defhandler の形)。
 MACROS = """\
 (import {pkg}.consts :as consts)
 (setv FACTOR 3)
@@ -50,9 +51,10 @@ MACROS = """\
 (defmacro hy-looks [] (hy-look "a"))
 (defmacro thing [] (do Thing 1))
 (defmacro mode [] (do (.get MODE) 1))
+(defmacro documented [] `(do (defn f [] ~consts.OFFSET) (setv (. f __doc__) "f") (f)))
 """
 
-CONSTS = "(setv OFFSET 1)\n(setv HIDDEN 5)\n"
+CONSTS = '"定数の module。"\n(setv OFFSET 1)\n(setv HIDDEN 5)\n'
 
 #: macro が展開の時に読む大域の表(Python の module)。TABLE は top-level の文と、import の時に呼ぶ登録の関数で行が足される。
 #: OTHER と unrelated は閉包から辿られない。
@@ -132,6 +134,7 @@ USERS = {
     "hylooker": "(require {pkg}.macros [hy-looks])\n(setv value (hy-looks))\n",
     "thinger": "(require {pkg}.macros [thing])\n(setv value (thing))\n",
     "moder": "(require {pkg}.macros [mode])\n(setv value (mode))\n",
+    "documenter": "(require {pkg}.macros [documented])\n(setv value (documented))\n",
 }
 
 
@@ -450,6 +453,24 @@ def test_a_changed_unused_macro_beside_a_context_variable_keeps_the_record_curre
     assert tree.is_current(record), "ContextVar を読む macro の module の別の行を替えただけで古いと判じた"
 
 
+# ---- module の説明の文(card ki-70d92767a917 の子)----------------------------------------------------------------------
+
+
+def test_a_changed_docstring_of_a_module_the_macro_reads_keeps_the_record_current(tree: Tree) -> None:
+    # 直す前は赤: macro の code の文字列の定数 "__doc__"(展開の結果の関数に書く説明)を名の候補として、macro が参照する
+    # module(consts)の __doc__ を digest に入れていた。module の説明の文は展開の結果に効かない。
+    record = tree.record("documenter")
+    _replace(tree.consts, '"定数の module。"', '"定数の module(説明を書き替えた)。"')
+    assert tree.is_current(record), "macro が参照する module の説明の文を替えただけで古いと判じた"
+
+
+def test_a_changed_constant_of_a_module_the_documenting_macro_reads_is_stale(tree: Tree) -> None:
+    # 冷えるべき時: 同じ macro が読む同じ module の定数を替えたら古い(__doc__ を外しても module の属性の読みは覆う)。
+    record = tree.record("documenter")
+    _replace(tree.consts, "(setv OFFSET 1)", "(setv OFFSET 10)")
+    assert not tree.is_current(record), "macro が読む module の定数を替えたのに古いと判じない"
+
+
 # ---- 実物の doeff_hy の macro(doeff_hy を一時の dir に写し、別の process で記録を作って照らす)------------------------------
 
 #: defk・val・<-・defrecord・defhandler だけを使う module(agora の controllers の module の形)。
@@ -641,6 +662,41 @@ def test_an_unreached_function_in_clause_endings_keeps_a_defhandler_user_current
     _append(real_tree.lib / "doeff_hy" / "static_view.py", UNREACHED_PY)
     assert real_tree.run("check")["current"] is True, (
         "clause_endings・binding_forms・static_view に辿られない関数を足しただけで defhandler の使い手を古いと判じた"
+    )
+
+
+#: defhandler だけを使う module。
+REAL_HANDLER_USER = """\
+(require doeff-hy.handle [defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Fetch [EffectBase]
+  #^ str source)
+
+(defhandler fetch-handler
+  (Fetch [source]
+    (resume source)))
+"""
+
+#: defhandler の閉包が辿る、説明の文(module の docstring)を持つ module の file と、その説明の文の頭。
+DOCUMENTED_MODULES = {
+    "__init__.py": '"""doeff-hy — Standard Hy macros for doeff effect composition.',
+    "record_runtime.py": '"""defrecord と defeffect の実行の展開が読み込みの時に読む部品',
+    "type_forms.py": '"""型の式を、実行時に ``isinstance`` の第 2 引数へ渡せる form へ写す',
+}
+
+
+def test_changed_module_docstrings_keep_a_defhandler_user_current(real_tree: RealTree) -> None:
+    # 直す前は赤(card ki-70d92767a917 の子・doeff b44c49c → 0f2fa6f で defhandler の使い手 540 file が Hy の展開の置き場で
+    # 外れた): defhandler の展開の code の文字列の定数 "__doc__" を名の候補として、閉包で辿った module の __doc__ を digest に
+    # 入れていた。digest の材料の違いは record_runtime の docstring の 1 行だけだった。
+    (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_HANDLER_USER, encoding="utf-8")
+    real_tree.run("record")
+    for name, head in DOCUMENTED_MODULES.items():
+        _replace(real_tree.lib / "doeff_hy" / name, head, f"{head}(説明を書き替えた)")
+    assert real_tree.run("check")["current"] is True, (
+        "defhandler の閉包の module の説明の文を替えただけで defhandler の使い手を古いと判じた"
     )
 
 
