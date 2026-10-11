@@ -250,12 +250,15 @@
   (.mkdir tasks :parents True :exist-ok True)
   (val blob (encode-program (report)))
   (val sha (program-sha blob))
-  (<- spec (task-spec {"id" task-id "revision" "" "versions" (or versions (! (process-versions os.environ))) "program" sha
+  ;; 送り手は env の root の外として名乗る(空の environ — process-versions の註)。検を回す process が外側の env の中で動くと
+  ;; os.environ に外側の env のキーが在り、台の env のキーと食い違って断られる(card ki-6dde100393cd)。
+  (val sent (or versions (! (process-versions {}))))
+  (<- spec (task-spec {"id" task-id "revision" "" "versions" sent "program" sha
                         "runtimeEnv" declared}
                        tasks))
   ;; cache の file の置き方は worker と同じ定義点(task は task の行の版ごとの dir — launch.spec-program-file・#3762)。
   (<- cached Path (spec-program-file (Path rig.host.program-dir) spec))
-  (write-program-file cached.parent sha blob (or versions (! (process-versions os.environ))))
+  (write-program-file cached.parent sha blob sent)
   (<- key str (env-key env (current-platform)))
   (<- root str (env-root rig.envs (+ "env-" key)))
   (val ended (! (run-on-host rig.host (job-ended spec root DEADLINE-SECONDS) :around around)))
