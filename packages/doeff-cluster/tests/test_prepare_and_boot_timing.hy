@@ -19,7 +19,7 @@
 (import pathlib [Path])
 (import httpx)
 (import doeff [Program with-handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects.handlers [state reader])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
@@ -29,7 +29,8 @@
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.core.env_prepare [prepare-env volume-of-mountinfo])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady VolumeKind])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady VolumeKind ReadVolume])
+(import doeff_cluster.worker.protocol.env_translation [env-translation])
 (import doeff_cluster.worker.intent.worker_model [BootMarks])
 (import doeff_cluster.worker.core.boot_timing [read-boot-marks boot-stamps stamps-out-of-order BOOT-STARTED-VAR BOOT-EXEC-VAR])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
@@ -132,6 +133,29 @@
   (assert (= root.device "/dev/sda1") root)
   (<- none (| VolumeKind None) (volume-of-mountinfo "" "/x"))
   (assert (is none None)))
+
+
+(defk volume-read-by-the-translation [files path]
+  {:pre [(: files MemoryFiles) (: path str)] :post [(: % (| VolumeKind None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker の準備の process と同じ翻訳 env-translation の下で、置き場 path の disk の種類を 1 回読むため(file は memory の置き場 files)。"
+  (val settings {"runtime-env.state" "/w/state" "runtime-env.shared" "/w/state" "runtime-env.uv-cache" "/w/uv" "runtime-env.repo-keys" {}
+                 "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
+  (<- volume (| VolumeKind None) (with-handlers [(state) (reader settings) (memory-file-handler files) env-translation] (ReadVolume path)))
+  volume)
+
+
+(deftest test-a-machine-without-the-mount-table-reads-no-volume
+  ;; mount の表(/proc/self/mountinfo)の無い機体(macOS の機体の worker)は、disk の種類を読まない(None)で準備を続ける。直す前は表の読めない
+  ;; 枝が効果でない素の None を答えの読みへ渡し、VM が「expected DoExpr or EffectBase, got: NoneType」で準備の process を落とした(2026-10-11
+  ;; 15:27 JST — macOS の worker の初めての準備が終了 1 の env-failed)。
+  (<- none (| VolumeKind None) (volume-read-by-the-translation (MemoryFiles :files #() :dirs #("/w")) "/w/state/roots/x"))
+  (assert (is none None) none)
+  ;; 表の在る機体(Linux)は今までどおり根の mount を読む。
+  (<- root (| VolumeKind None) (volume-read-by-the-translation
+                                 (MemoryFiles :files #((MemoryFile :path "/proc/self/mountinfo" :content b"22 1 8:1 / / rw - ext4 /dev/sda1 rw\n"))
+                                              :dirs #("/w"))
+                                 "/w/state/roots/x"))
+  (assert (= root (VolumeKind :fs-type "ext4" :device "/dev/sda1" :mount "/")) root))
 
 
 ;; --- 2 process の始まりの刻 ------------------------------------------------------------------

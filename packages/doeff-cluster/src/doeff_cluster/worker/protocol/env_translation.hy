@@ -606,15 +606,15 @@
     (resume value))
   (ReadVolume [path]
     ;; 置き場の disk の種類(#3676): mount の表(/proc/self/mountinfo)を読み、path の実の path(symlink を解く — 無い path はそのまま)を含む
-    ;; 最も深い mount の行を引く。表を読めない機体(macOS 等)は None。
+    ;; 最も深い mount の行を引く。表を読めない機体(macOS 等)は None — 読めない表は行の無い表として引く(当たる行が無く None)。
+    ;; 2 つの枝で答えの形を分けると、読めない枝が効果でない素の None を答えの読みへ渡し、VM が準備の process を落とす(2026-10-11 の
+    ;; macOS の worker の準備の env-failed)。
     (<- table (| str FileFailed) (ReadText MOUNT-TABLE))
     (<- seen (| PathStat FileFailed) (StatPath path))
     (val real (match seen
                 (PathStat) (if (= seen.kind PathKind.MISSING) path seen.real-path)
                 _ path))
-    (<- volume (| VolumeKind None) (match table
-                                     (FileFailed) None
-                                     _ (volume-of-mountinfo table real)))
+    (<- volume (| VolumeKind None) (volume-of-mountinfo (if (isinstance table str) table "") real))
     (resume volume))
 
   (EnsureMirror [url]
