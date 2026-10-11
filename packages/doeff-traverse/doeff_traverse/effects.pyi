@@ -8,7 +8,7 @@ Resume に渡す Collection)で、ここは型の宣言だけ。
 """
 
 from collections.abc import Callable, Iterable
-from typing import Any, ClassVar, Generic, Never, TypeVar
+from typing import Any, ClassVar, Generic, Literal, Never, TypeAlias, TypeVar
 
 from _typeshed import SupportsRichComparison
 from doeff_vm import EffectBase
@@ -79,6 +79,22 @@ class Skip(EffectBase[Never]):
     """for/do の When が偽の件を落とす(handler は続きへ戻らない)。"""
 
     def __init__(self) -> None: ...
+
+# 件 1 つの結末: ok・failed・skipped はこの Traverse が件を走らせた結末、carried は前の段で失敗(か skipped)した件を走らせずに持ち越した物。
+ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried"]
+
+class ItemOutcome(EffectBase[None]):
+    """Traverse の handler が件 1 つの結末を知らせる(effects.py の docstring)。Traverse と handler の間の handler の下で出し、
+    受け手が無ければ handler 自身が None で答える。間の handler のどれかが効果の引数の注記に ItemOutcome を名指す時だけ出す。"""
+
+    traverse: object
+    label: str | None
+    total: int
+    outcome: ItemOutcomeKind
+    item: ItemResult
+    def __init__(
+        self, traverse: object, label: str | None, total: int, outcome: ItemOutcomeKind, item: ItemResult
+    ) -> None: ...
 
 class SortBy(EffectBase[Collection[_V]], Generic[_V]):
     """有効な件を key の順に並べ替える。"""

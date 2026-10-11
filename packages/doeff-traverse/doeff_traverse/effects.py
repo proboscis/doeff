@@ -13,6 +13,9 @@ Zip: item-indexed join of two collections. Handler manages failure union.
 
 Inspect: extract values + per-item history from an opaque collection.
 
+ItemOutcome: the Traverse handler's report that one item got its outcome
+             (ok, failed, skipped, carried) — what a progress handler counts.
+
 Answer types: each effect declares what its handler answers with (EffectBase[T]),
 so ``coll = yield from Traverse(f, items)`` is typed and a Hy ``(<- coll (for/do ...))``
 reads ``coll.failed_items`` / ``coll.valid_values`` under the type checker
@@ -24,7 +27,7 @@ while ``__init__`` was unannotated, and Collection once annotated).
 """
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Never, TypeVar
 
 from doeff_vm import EffectBase
 
@@ -178,6 +181,69 @@ class Skip(EffectBase[Never]):
 
     def __repr__(self):
         return "Skip()"
+
+
+# How one item of a Traverse ended. ok / failed / skipped are this Traverse's own run of
+# the item (the history event it records); carried = the item came in failed or skipped
+# from an earlier stage, so this Traverse kept it without running f.
+ItemOutcomeKind = Literal["ok", "failed", "skipped", "carried"]
+
+
+class ItemOutcome(EffectBase[None]):
+    """The Traverse handler's report that one item of a Traverse got its outcome.
+
+    sequential, parallel and parallel_fail_fast perform it once per item of a Traverse that
+    runs at least one item, as soon as the item's outcome is known (parallel: in the order
+    items finish; carried items before the first run item are reported when it starts), so a
+    progress handler counts every item — failed, skipped and carried ones too — without
+    knowing how the handler runs items, and reaches ``total``. A Traverse with no item to run
+    (no items, or only carried ones) reports nothing: sequential reads no inner handlers for
+    it (agora-redesign #2958). parallel_fail_fast stops at the first failure: the failed
+    item is reported, the items it cancels are not.
+
+    Where it goes: the handler performs it under the handlers between the Traverse and the
+    Traverse handler (the ones it puts back around every item program), then under itself,
+    which answers None — so a handler that counts outcomes is installed inside the Traverse
+    handler, like a body handler: ``[... (progress-bars tqdm) (sequential)]``. Performed only
+    when one of those handlers names ItemOutcome (or a subclass) in the annotation of its
+    effect parameter (``doeff.handler_effect_types`` — a ``defhandler`` clause
+    ``(ItemOutcome [...] ...)`` names it): reporting adds half to all of an item's own cost
+    (sequential, 2026-10-12), so a Traverse nobody counts does not pay for it — it pays one
+    read of the inner handlers' annotations, kept on each handler function. A handler that
+    admits every effect (no annotation, or ``EffectBase``) does not count as naming it — nor
+    does ``Listen(prog, types=(ItemOutcome,))``, whose collector admits every effect.
+
+    Args:
+        traverse: identity of this run of a Traverse — the same object for every item it
+            reports, a new one for every Traverse performed (nested ones too). Compare
+            with ``is`` or use it as a dict key.
+        label: the Traverse's label.
+        total: how many items this Traverse has, carried ones included (sequential reads
+            an iterable without a length to its end to know it, only when reporting).
+        outcome: how the item ended (ItemOutcomeKind).
+        item: the ItemResult the Traverse answers for this item (index, value or the
+            exception, failed, history); for the item parallel_fail_fast stops at, the
+            failed ItemResult it would have answered.
+    """
+
+    def __init__(
+        self,
+        traverse: object,
+        label: str | None,
+        total: int,
+        outcome: ItemOutcomeKind,
+        item: ItemResult,
+    ) -> None:
+        super().__init__()
+        self.traverse = traverse
+        self.label = label
+        self.total = total
+        self.outcome = outcome
+        self.item = item
+
+    def __repr__(self):
+        lbl = f", label={self.label!r}" if self.label else ""
+        return f"ItemOutcome({self.outcome!r}, index={self.item.index}, total={self.total}{lbl})"
 
 
 class SortBy(EffectBase[Collection]):
