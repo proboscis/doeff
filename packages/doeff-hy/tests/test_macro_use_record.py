@@ -732,6 +732,90 @@ def test_a_changed_table_in_binding_forms_makes_a_defk_user_stale(real_tree: Rea
     assert real_tree.run("check")["current"] is False, "binding_forms の _KINDS を替えたのに古いと判じない"
 
 
+#: defk・val・var と、var の書き換え(:=)を使う module — 展開で binding_forms の _Walker._assign を通る。
+REAL_ASSIGN_USER = """\
+(require doeff-hy.macros [defk <- val var])
+
+(val base 1)
+
+(defk step [n]
+  {:pre [(: n int)] :post [(: % int)] :tags {:context "macro-use-probe" :role "judgment"}}
+  "1 を足す。"
+  (var total n)
+  (:= total (+ total base))
+  total)
+"""
+
+#: binding_forms の _Walker._assign(:= の書き換え)の code だけを替える置き換え(誤りの文の定数)。
+ASSIGN_MESSAGE = "の節の本体にだけ書けます(({where.head} …) の中には書けません)。"
+
+#: 子の process: 写した doeff_hy で、:= を使わない使い手(user.hy)と使う使い手(assigning.hy)を 1 つの process で記録し(record)、
+#: 書いた 2 つの記録を 1 つの process で照らす(check)— 写した doeff_hy の compile を 1 度で済ませる。
+REAL_PAIR_CHILD = """\
+import importlib.machinery, json, sys
+from pathlib import Path
+root, mode, stored = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+sys.path.insert(0, root)
+import doeff_hy
+from doeff_hy_bytecode_guard import record_from_json, record_is_current_here, record_to_json
+from doeff_hy_bytecode_guard import records, source_to_code_as_import
+users = ("user", "assigning")
+if mode == "record":
+    made = {}
+    for user in users:
+        path = f"{root}/macro_use_probe/{user}.hy"
+        loader = importlib.machinery.SourceFileLoader(f"macro_use_probe.{user}", path)
+        made[user] = record_to_json(records.record_of(source_to_code_as_import(loader, open(path, "rb").read(), path)))
+    stored.write_text(json.dumps(made))
+    print(json.dumps({"doeff_hy": doeff_hy.__file__}))
+else:
+    made = json.loads(stored.read_text())
+    current = {user: record_is_current_here(record_from_json(made[user])) for user in users}
+    print(json.dumps({"current": current, "doeff_hy": doeff_hy.__file__}))
+"""
+
+
+def _run_pair(real_tree: RealTree, mode: str) -> dict[str, object]:
+    """:data:`REAL_PAIR_CHILD` を子の process で 1 度走らせた答え(写した doeff_hy を読んだことも確かめる)。"""
+    import json
+    import subprocess
+
+    done = subprocess.run(
+        [sys.executable, "-c", REAL_PAIR_CHILD, str(real_tree.root), mode, str(real_tree.stored)],
+        capture_output=True,
+        text=True,
+        timeout=40,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    answer = json.loads(done.stdout.strip().splitlines()[-1])
+    assert Path(str(answer["doeff_hy"])).is_relative_to(real_tree.lib), answer
+    return answer
+
+
+def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_record_stale(
+    real_tree: RealTree,
+) -> None:
+    # 直す前は赤(#3769 の子・日次 10-12 04:00 で中身の同じ Hy の module 1,197 本を作り直した): defk の閉包の歩みが、defk から
+    # 届く class(binding_forms._Walker)を method ごと全部辿り、展開で呼ばれない _assign の code の変更で、:= を使わない使い手の
+    # 記録まで古いと判じた(doeff 167d38ec2 → 1db4cb7bf の digest の材料の違いは _assign の code の hash だけ)。
+    # 対照(直す前も後も緑): := を使う使い手は、展開で _assign を通るので、同じ変更で古い。
+    probe = real_tree.root / "macro_use_probe"
+    (probe / "user.hy").write_text(REAL_DEFK_USER, encoding="utf-8")
+    (probe / "assigning.hy").write_text(REAL_ASSIGN_USER, encoding="utf-8")
+    _run_pair(real_tree, "record")
+    _replace(
+        real_tree.lib / "doeff_hy" / "binding_forms.py",
+        ASSIGN_MESSAGE,
+        ASSIGN_MESSAGE.replace("書けます", "書けます(替えた)"),
+    )
+    current = _run_pair(real_tree, "check")["current"]
+    assert current == {"user": True, "assigning": False}, (
+        "binding_forms._Walker._assign だけを替えた時、展開で呼ばない := 無しの使い手は合う・展開で通る := の使い手は古い、の"
+        f"はずが {current}"
+    )
+
+
 # ---- import の順に依らない digest(閉包の中の module が循環する import の途中で引けない時)-------------------------------------
 #
 # deff の閉包は、関数の中の import で doeff_hy.outcome_forms を引く。outcome_forms は doeff_hy.record の defrecord を require し、
@@ -1335,7 +1419,11 @@ def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
         data = part.encode("utf-8", "surrogatepass")
         expected.update(len(data).to_bytes(8, "little"))
         expected.update(data)
-    assert walker.digest() == expected.hexdigest(), "歩みの digest の綴りが、長さを前に置いた文字列の並びの sha256 でない"
+    # 関数の中身を全部覆う digest(macro の外の値の行・拾えない時の行)は、前と同じ綴り。
+    walked = walker.walked()
+    assert walked.digest(walked.everything) == expected.hexdigest(), (
+        "歩みの digest の綴りが、長さを前に置いた文字列の並びの sha256 でない"
+    )
 
 
 # ---- 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A・B(card ki-be596ac8276f)----------------------------------------------

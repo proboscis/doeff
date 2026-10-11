@@ -25,6 +25,11 @@
 ;;;     読み(macro_use の CodeFacts — 鍵 = code の中身の marshal の sha256・読み方の code と Python・Hy の版・card ki-be596ac8276f)
 ;;;     — だけ。class を中身で辿るか公開の形だけで覆うかは、標準の拡張の module の末尾で判じる(source の拡張子の写しで判じない
 ;;;     — 知らない末尾は中身で辿る)。
+;;;     関数の code の中身は、その module の展開で実行された関数(called_code が sys.monitoring で拾う)と、束縛の文の先の関数(値を
+;;;     作った code)だけを覆い、記録は覆った関数の印を持つ — 実行されなかった関数の code は展開の結果を変えない(#3769 の子)。関数の
+;;;     名・class の member の名・値・束縛の文は今までどおり全部入る。関数の中身を値として読む code(説明の文・引数の形)を覆う時と、
+;;;     拾えない環境では全部を覆う。失敗ケース = tests/test_macro_use_called.py(呼ばない method を替えても合う・呼ぶ method なら古い・
+;;;     import の時に表を作る関数・中身を読む macro)と、test_macro_use_record.py の := の有無の検(実物の defk と binding_forms)。
 ;;;     環境変数は版も file も覆わない process の状態: 歩みが環境変数の読み(os・posix・nt の environ・environb・getenv・getenvb
 ;;;     — 名で引く code と束縛の文・関数の中の import・値として当たる object)に当たった digest は照らせない — 覚えず、記録の行は印
 ;;;     records.ENVIRONMENT_READ で、照らしはいつも古いと判じる(環境変数から組んだ素の値の大域は値で入るので当たらない)。辿れない

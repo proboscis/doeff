@@ -2,8 +2,8 @@
 
 記録は Hy の module の code object の定数の末尾に 1 つ置く組:
 
-    ("doeff-hy/macro-dependencies/5", <Hy の版>,
-     ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None か印>), ...),   # 展開が使った macro
+    ("doeff-hy/macro-dependencies/6", <Hy の版>,
+     ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None か印>, <覆った code の印>), ...),   # 展開が使った macro
      (<引いて無かった名>, ...),                                                  # 表に無かった名(後から同じ名の macro が足されたら古い)
      (<表に macro を入れた提供元の module 名>, ...),
      ((<module 名>, <属性の名>, <digest か None か印>), ...),                    # macro の外で展開の結果を変える値
@@ -13,6 +13,9 @@ digest は macro の関数の code の閉包の digest(作り方と照らし方�
 import の途中の module か import できない module に当たった時は None(その時の材料は import の進み具合に依る)— その行は
 digest で比べず、閉包が依った module の file で比べる。閉包の歩みが環境変数の読みに当たった時は印 :data:`ENVIRONMENT_READ`
 (照らせない — 照らしはいつも古いと判じる)。file の path は持たない — 照らす時に module 名から今の環境で引き直す。
+使った macro の digest は、閉包の関数のうち中身(code)を覆った関数を、覆った code の印(閉包の歩みが関数に出会った順の番号の
+bit の 16 進 — その module の展開で実行された関数と、絞らない関数)で名指す。照らしは同じ印で今の閉包の digest を作り直して比べる
+(agora-redesign #3769 の子)。
 
 code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
 image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
@@ -46,7 +49,11 @@ from doeff_hy_bytecode_guard.code_store import HY_SOURCE_SUFFIXES
 #: module の全部へ広げ、digest で比べられない行がある時だけ比べる(agora-redesign card ki-464fa307a62b — 循環する import の途中の
 #: digest が process の import の順で変わり、順の違う process が置き場の entry を互いに書き直した)。4 の記録の file の行は
 #: 意味が違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
-RECORD_TAG = "doeff-hy/macro-dependencies/5"
+#: 6 = 使った macro の行に、digest が中身(code)を覆った閉包の関数の印を足し、digest が覆う関数の code を、その module の展開で
+#: 実行された関数と絞らない関数(束縛の文の先・関数の中身を値として読む code の閉包)に絞った形(agora-redesign #3769 の子 —
+#: defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手 1,197 本が作り直された)。5 の記録は行の形が
+#: 違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
+RECORD_TAG = "doeff-hy/macro-dependencies/6"
 
 #: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。
 MACRO_TABLE = "_hy_macros"
@@ -68,6 +75,10 @@ UNREADABLE = "unreadable"
 #: 1 度 compile し直される)。
 ENVIRONMENT_READ = "environment-read"
 
+#: 使った macro の digest が中身(code)を覆った閉包の関数の印の形 — 閉包の歩みが関数に初めて出会った順の番号を bit にした数の
+#: 16 進(番号 i の関数を覆えば bit i が 1。作り方と読み方は macro_use)。digest を持たない行(None・ENVIRONMENT_READ)は "0"。
+COVERED = re.compile(r"[0-9a-f]+")
+
 #: Hy の module が require した macro の表(Hy が module の名前空間に置く 2 つの辞書)。
 MACRO_TABLES: tuple[str, ...] = (MACRO_TABLE, READER_TABLE)
 
@@ -86,12 +97,14 @@ class MacroDependency:
 class UsedMacro:
     """展開が使った macro 1 つ — 引いた表の名(``_hy_macros`` / ``_hy_reader_macros``)・macro を定義した module の名・その
     module の表の中の名・macro の関数の code の閉包の digest(記録を作った時に閉包の歩みが import の途中の module か import
-    できない module に当たった時は None — 記録の file の行で比べる・環境変数の読みに当たった時は :data:`ENVIRONMENT_READ`)。"""
+    できない module に当たった時は None — 記録の file の行で比べる・環境変数の読みに当たった時は :data:`ENVIRONMENT_READ`)・
+    digest が中身を覆った閉包の関数の印(:data:`COVERED`)。"""
 
     table: str
     module: str
     name: str
     digest: str | None
+    covered: str
 
 
 @dataclass(frozen=True)
@@ -187,7 +200,7 @@ def record_parts(record: MacroRecord) -> RecordParts:
     """記録を、code の定数と保存の file に書ける欄にする — :func:`record_from_parts` の逆。"""
     return RecordParts(
         record.hy_version,
-        tuple((row.table, row.module, row.name, row.digest) for row in record.macros),
+        tuple((row.table, row.module, row.name, row.digest, row.covered) for row in record.macros),
         record.absent,
         tuple((row.module, row.prefix) for row in record.providers),
         tuple((row.module, row.name, row.digest) for row in record.values),
@@ -262,8 +275,10 @@ def _whole_require(row: object) -> WholeRequire | None:
 def _used_macro(row: object) -> UsedMacro | None:
     """記録の使った macro の行 1 つ(形が違えば None)。"""
     match row:
-        case [str(table), str(module), str(name), digest] if digest is None or isinstance(digest, str):
-            return UsedMacro(table, module, name, digest)
+        case [str(table), str(module), str(name), digest, str(covered)] if (
+            digest is None or isinstance(digest, str)
+        ) and COVERED.fullmatch(covered):
+            return UsedMacro(table, module, name, digest, covered)
         case _:
             return None
 

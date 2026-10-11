@@ -10,6 +10,8 @@ Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包�
 - ``source_to_code``(compile の口): Hy の module を compile した直後に、その展開が実際に使った macro(提供元の module 名・
   macro 名・macro の関数の code の閉包の digest)の記録を、code object の定数の末尾に 1 つ足す。使った macro は、展開の間だけ
   module の macro の表を引いた名を覚える表に替えて拾う(``macro_recording`` — 読みの口と import の外の compile の口が開く)。
+  digest は閉包の関数の code の中身を、その展開で実行された関数(展開の間に :mod:`doeff_hy_bytecode_guard.called_code` が拾う)と
+  値を作った関数に絞って覆う(展開で呼ばれない method の変更で使い手が冷えない — agora-redesign #3769 の子)。
   .pyc は標準の形のまま(隣に別の file を書かない)。
   その前に code の Hy の gensym の名を module の中の順の通し番号へ振り直す(``records.canonical_gensyms`` —
   同じ source の code を compile の順・process・thread に依らず同じにする・agora-redesign #3667)。

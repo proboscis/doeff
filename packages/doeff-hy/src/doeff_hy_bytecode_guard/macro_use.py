@@ -17,6 +17,27 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   置き場の path)を入れず印だけを入れる(同じ中身の木を別の dir に置いても digest は変わらない — card ki-1475765a3f18)。
   置き場を値として読む code か束縛の文(``Path(__file__).with_name(…)`` で隣の file を読む形)の digest は、その file の中身を
   覆えないので照らせない印にする(環境変数の読みと同じ :data:`doeff_hy_bytecode_guard.records.ENVIRONMENT_READ`)。
+- 関数の code の中身は、その module の展開で実行された関数だけを覆う(agora-redesign #3769 の子 — defk の閉包の歩みが、defk から
+  届く class(binding_forms._Walker)を method ごと全部辿り、展開で呼ばれない _assign の code の変更で、defk の使い手 1,197 本が
+  作り直された)。歩みは今までどおり全部を辿り(関数の名・class の member の名・値・束縛の文・関数の大域と import の先)、関数に
+  初めて出会った所の code の中身(:attr:`CodeFacts.shape`)だけを、記録が覆うと名指した関数の物にし、他は印 :data:`_UNCOVERED`
+  にする(:class:`ClosureWalk`)。覆う関数 = 展開の間(:class:`MacroRecording` の ``with`` の中)に実行の始まった code の関数
+  (:mod:`doeff_hy_bytecode_guard.called_code` が拾う)と、絞らない関数。記録は覆った関数を、歩みが関数に出会った順の番号の bit
+  (:attr:`doeff_hy_bytecode_guard.records.UsedMacro.covered`)で持ち、照らしは同じ印で今の閉包の digest を作り直して比べる。
+  実行されなかった関数の code は展開の結果を変えないので、中身を外しても照らしは古い展開を合うと判じない — 実行された関数の
+  中身と、それが読む値が記録と同じなら、展開は同じ道を通る(呼ぶ関数を変えるには、実行された関数の中身か読む値が変わる)。
+  絞らない関数:
+  - 束縛の文の先(:meth:`_Walker._bound` の中で出会った関数と class と、そこから届く物)— 値を作った code は展開の外(読み込みの
+    時・前の展開)で実行され、その中身が値を覆う(書き換える関数・束縛の文が呼ぶ関数)。2 度目に出会った物(番号だけ入る)も
+    絞らない — 関数と class ごとに、中身を歩く間に出会った物を覚えて辿る。
+  - 関数の中身を値として読む code(:data:`_CODE_READ_NAMES` — ``__doc__`` ・ ``__code__`` ・ ``inspect.signature`` など)を覆う時は、
+    閉包の関数の中身を全部覆う(実行しない関数の説明の文・引数の形が展開の結果に効く)。
+  - 拾えない環境(Python 3.11 まで・sys.monitoring の道具の番号が空いていない)・``with`` の外で作った記録・macro の外の値の行は全部。
+  見ない形: 別の module の大域の表に、外の module の関数が展開をまたいで書き込む覚え(書き手は束縛の文の先にならず、前の展開で
+  表を埋めた関数の中身を、今の展開が呼ばなければ覆わない — 同じ module の関数や class が書き込む表・``functools.lru_cache`` で包んだ
+  関数は覆う)・文字列で引く ``getattr(f, "__doc__")``(展開の code の文字列の定数 "__doc__" は展開の結果に説明を書く印)・標準
+  library と Hy が中で読む関数の中身。囲みの中で macro の module を初めて読むと、読み込みの時に実行された関数も覆うので、同じ
+  source の記録の印が process で違いうる(どちらの記録も照らしでは合う)。
 - Hy 自身(``hy.*``)と Python の標準 library と組み込みは名だけ入れる(Hy の版・Python の版で覆う)。
 - 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
   file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
@@ -77,10 +98,10 @@ import sys
 import types
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from itertools import chain
+from itertools import chain, pairwise
 from types import CodeType, FunctionType, ModuleType
 
-from doeff_hy_bytecode_guard import bound_source, loader_hooks
+from doeff_hy_bytecode_guard import bound_source, called_code, loader_hooks
 from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, current_scope
 from doeff_hy_bytecode_guard.records import (
     ENVIRONMENT_READ,
@@ -124,7 +145,9 @@ class RecordingTable(dict[str, object]):
 
 class MacroRecording:
     """展開 1 回の間、module の macro の表を :class:`RecordingTable` に替える(``with`` の中が展開)。抜けた後も
-    :meth:`record` で記録を作れる。同じ module で入れ子に開いた時は外の記録をそのまま使う(表を替えない)。"""
+    :meth:`record` で記録を作れる。同じ module で入れ子に開いた時は外の記録をそのまま使う(表を替えない)。``with`` の中では
+    実行の始まった code も拾う(:mod:`doeff_hy_bytecode_guard.called_code` — digest が覆う関数の code を、展開で実行された関数に
+    絞るため)。"""
 
     def __init__(self, module: ModuleType, hy_version: str, sha256_of: Sha256Of) -> None:
         self._module = module
@@ -139,17 +162,28 @@ class MacroRecording:
             if isinstance(present, RecordingTable)
             else RecordingTable(present if isinstance(present, dict) else {})
         )
+        #: 展開の間の実行の拾い(``with`` に入る前は拾っていない — その時の記録は閉包の関数の code を全部覆う)。
+        self._mut_called: called_code.CalledCode | called_code.Uncollectable = (
+            called_code.Uncollectable("展開を囲んでいない(with の外)")
+        )
         if self._owner:
             self.table.recording = self
 
     def __enter__(self) -> "MacroRecording":
-        """展開の前に、module の表を引いた名を覚える表に替える。"""
+        """展開の前に、module の表を引いた名を覚える表に替え、実行の始まった code を拾い始める。"""
         if self._owner:
             vars(self._module)[MACRO_TABLE] = self.table
+            if isinstance(self._mut_called, called_code.CalledCode):
+                # 同じ囲みに 2 度入った — 表は前の展開が引いた名を持ち続けるので、拾った code も残して続きを足す。
+                self._mut_called.reopen()
+            else:
+                self._mut_called = called_code.start()
         return self
 
     def __exit__(self, *exc_info: object) -> None:
         """展開の後に、module の表を普通の dict に戻す(展開の外の読みを覚えない)。"""
+        if self._owner and isinstance(self._mut_called, called_code.CalledCode):
+            self._mut_called.close()
         namespace = vars(self._module)
         if not self._owner or namespace.get(MACRO_TABLE) is not self.table:
             return
@@ -162,6 +196,12 @@ class MacroRecording:
         """展開が使った macro の記録(source = 展開した source の文 — 表を通らない hy.R の呼び出しを読む・also = macro の外で
         展開の結果を変える値の在処)。"""
         name = self._module.__name__
+        # 展開の間に実行の始まった code(記録を作る歩みの間の実行は入れない — 歩みは閉包の関数を呼ばない)。
+        match self._mut_called:
+            case called_code.CalledCode() as collecting:
+                executed: frozenset[CodeType] | None = collecting.codes()
+            case called_code.Uncollectable():
+                executed = None
         table = dict(self.table)
         found: dict[UsedMacroKey, FunctionType] = {}
         for used in sorted(self.table.used):
@@ -181,7 +221,7 @@ class MacroRecording:
             if called is not None:
                 found[UsedMacroKey(MACRO_TABLE, reference.module, reference.name)] = called
         macros = tuple(
-            (key, macro_digest(key, macro, self._sha256_of))
+            (key, macro_digest(key, macro, self._sha256_of).called(executed))
             for key, macro in sorted(found.items(), key=lambda item: item[0].sort_key)
         )
         others = tuple(
@@ -197,7 +237,7 @@ class MacroRecording:
         return MacroRecord(
             self._hy_version,
             tuple(
-                UsedMacro(key.table, key.module, key.name, closure.digest)
+                UsedMacro(key.table, key.module, key.name, closure.digest, f"{closure.covered:x}")
                 for key, closure in macros
             ),
             tuple(sorted(self.table.absent - table.keys())),
@@ -264,7 +304,13 @@ def _row_checks(record: MacroRecord, sha256_of: Sha256Of) -> Iterator[RowCheck]:
     for used in record.macros:
         macro = _macro_now(used.table, used.module, used.name)
         key = UsedMacroKey(used.table, used.module, used.name)
-        yield _row_check(used.digest, None if macro is None else macro_digest(key, macro, sha256_of))
+        # 記録が中身を覆った関数(と今の歩みの絞らない関数)の中身で、今の閉包の digest を作り直す。
+        yield _row_check(
+            used.digest,
+            None
+            if macro is None
+            else macro_digest(key, macro, sha256_of).covering(int(used.covered, 16)),
+        )
     for value in record.values:
         reference = ValueReference(value.module, value.name)
         yield _row_check(value.digest, value_digest(reference, sha256_of))
@@ -360,10 +406,85 @@ class ClosureDigest:
     """閉包 1 つの digest と、閉包が依った module の名(歩みが辿った物の持ち主・import できなかった module — 記録の file の
     行になる)。digest は、歩みが import の途中の module か import できない module に当たった時は None(その時の材料は
     import の進み具合に依る — 比べずに file の行で比べる)、環境変数の読みに当たった時は印 ENVIRONMENT_READ(照らせない —
-    いつも古いと判じる)。"""
+    いつも古いと判じる)。
+
+    digest を持つ時は、閉包の歩みの材料(walk)と、digest が中身を覆った関数の印(covered — 番号 i の関数を覆えば bit i が 1)
+    も持つ。歩みが作る digest は閉包の関数の中身を全部覆い(macro の外の値の行はこの digest)、使った macro の行は
+    :meth:`called` (記録の時)と :meth:`covering` (照らしの時)で覆う関数を絞る。"""
 
     digest: str | None
     modules: tuple[str, ...]
+    walk: "ClosureWalk | None" = None
+    covered: int = 0
+
+    def called(self, codes: frozenset[CodeType] | None) -> "ClosureDigest":
+        """記録の時の digest — 展開で実行の始まった code(None = 拾えなかった — 全部)の関数と、絞らない関数の中身を覆う。"""
+        if self.walk is None:
+            return self
+        covered = self.walk.covered_by(codes)
+        return ClosureDigest(self.walk.digest(covered), self.modules, self.walk, covered)
+
+    def covering(self, covered: int) -> "ClosureDigest":
+        """照らしの時の digest — 記録が中身を覆った関数(covered)と、今の歩みの絞らない関数の中身を覆う(今の歩みで絞らない関数が
+        増えれば、その中身が入って digest は記録と違う — 古いと判じる)。"""
+        if self.walk is None:
+            return self
+        widened = covered | self.walk.forced
+        return ClosureDigest(self.walk.digest(widened), self.modules, self.walk, widened)
+
+
+@dataclass(frozen=True)
+class CodeSlot:
+    """閉包の歩みが初めて出会った関数 1 つ — その code(記録の時に、展開で実行が始まったかを引く)と、code の中身の digest
+    (:attr:`CodeFacts.shape`)。"""
+
+    code: CodeType
+    shape: str
+
+
+#: 中身を覆わない関数の code の中身の代わりに入れる文(16 進の digest と決して一致しない)。
+_UNCOVERED = "uncovered"
+
+
+@dataclass(frozen=True)
+class ClosureWalk:
+    """閉包の歩み 1 つの材料 — 関数の code の中身の所で切った材料の bytes(関数の数 + 1 個 — 文字列ごとに長さを前に置いた綴り)と、
+    出会った順の関数(slots)・絞らない関数の印(forced — 束縛の文の先)・関数の中身を値として読む関数の印(reads_code)。"""
+
+    segments: tuple[bytes, ...]
+    slots: tuple[CodeSlot, ...]
+    forced: int
+    reads_code: int
+    #: 印ごとの digest の覚え(process の中 — 同じ印の使い手を照らす度に、材料を hash し直さない)。
+    digests: dict[int, str] = dataclasses.field(default_factory=dict, compare=False, repr=False)
+
+    @property
+    def everything(self) -> int:
+        """全部の関数の中身を覆う印。"""
+        return (1 << len(self.slots)) - 1
+
+    def covered_by(self, codes: frozenset[CodeType] | None) -> int:
+        """記録の時に中身を覆う関数の印 — 展開で実行の始まった code の関数と、絞らない関数。拾えなかった時(None)と、覆う関数の
+        どれかが関数の中身を値として読む時(呼ばない関数の説明の文・引数の形 — 実行しなくても展開に効く)は全部。"""
+        if codes is None:
+            return self.everything
+        covered = functools.reduce(
+            operator.or_,
+            (1 << index for index, slot in enumerate(self.slots) if slot.code in codes),
+            self.forced,
+        )
+        return self.everything if covered & self.reads_code else covered
+
+    def digest(self, covered: int) -> str:
+        """covered の関数は code の中身を、他の関数は印 :data:`_UNCOVERED` を入れた digest(16 進)。"""
+        known = self.digests.get(covered)
+        if known is not None:
+            return known
+        pieces = [self.segments[0]]
+        for index, slot in enumerate(self.slots):
+            text = (slot.shape if covered >> index & 1 else _UNCOVERED).encode("utf-8")
+            pieces.extend((_LENGTH.pack(len(text)), text, self.segments[index + 1]))
+        return self.digests.setdefault(covered, hashlib.sha256(b"".join(pieces)).hexdigest())
 
 
 @dataclass(frozen=True)
@@ -417,7 +538,7 @@ def _remembered(
     entry = _facts_entry(key)
     walker = _Walker(sha256_of, CodeReadings(_stored_facts(entry) if entry is not None else {}))
     walk(walker)
-    digest = walker.digest()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
+    walked = walker.walked()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
     if entry is not None and walker.readings.missed:
         _write_facts(entry, walker.readings.used)  # 次の process の同じ macro の歩みが code を読み直さない
     modules = tuple(sorted({*walker.files, *walker.unimportable}))
@@ -429,7 +550,7 @@ def _remembered(
         # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
         # 違う process と置き場の entry を書き直し合う(card ki-464fa307a62b)。
         return ClosureDigest(None, modules)
-    closure = ClosureDigest(digest, modules)
+    closure = ClosureDigest(walked.digest(walked.everything), modules, walked, walked.everything)
     states = tuple(
         state for path in sorted(walker.files.values()) if (state := _state_now(path)) is not None
     )
@@ -1310,8 +1431,7 @@ class _Walker:
     """code の閉包の digest を 1 つ作る歩み。同じ関数と class は 2 度目から番号で入れる(循環と共有)。"""
 
     def __init__(self, sha256_of: Sha256Of, readings: CodeReadings) -> None:
-        self._hash = hashlib.sha256()
-        #: digest に入れる文字列(:meth:`digest` が順に hash する)。
+        #: digest に入れる文字列(:meth:`walked` が順に綴る)。
         self._parts: list[str] = []
         self._sha256_of = sha256_of
         #: 関数の code の読み(置き場に覚えた前の process の読みを使い、この歩みが使った読みを集める)。
@@ -1334,16 +1454,51 @@ class _Walker:
         self._mut_environment = False
         #: source の文で覆った大域(module の名・大域の名 — 2 度目は印だけ入れる)。
         self._bound_names: set[tuple[str, str]] = set()
+        #: 初めて出会った関数の code の中身の在処(:attr:`_parts` の番号 → 関数の番号・関数・関数の中身を値として読むか — 番号の順)。
+        self._slots: dict[int, _SlotPlace] = {}
+        #: 歩いている途中の関数と class の番号(:attr:`_seen` の順の番号 — 一番後ろが今歩いている物)。
+        self._mut_stack: tuple[int, ...] = ()
+        #: 関数と class の番号 → その中身を歩く間に出会った関数と class の番号(初めて・2 度目のどちらも)。
+        self._edges: dict[int, set[int]] = {}
+        #: 束縛の文の先(:meth:`_bound` の中)で出会った関数と class の番号 — その物とそこから届く物の関数の中身は絞らない。
+        self._state_roots: set[int] = set()
+        #: :meth:`_bound` の入れ子の深さ(0 = 束縛の文の外)。
+        self._mut_state_depth = 0
 
-    def digest(self) -> str:
-        """辿った物の digest(16 進)— 参照した module の、文字列の定数の名の属性を入れ終えてから。積んだ文字列は、それぞれの bytes の
-        長さ(8 byte の little endian)を前に置いて 1 度に hash する(文字列ごとに hash を呼ぶと、検の読み込みで 2.8 万回 — card
-        ki-be596ac8276f。綴りは前と同じ)。"""
+    def walked(self) -> "ClosureWalk":
+        """辿った物の材料 — 参照した module の、文字列の定数の名の属性を入れ終えてから。積んだ文字列は、それぞれの bytes の長さ
+        (8 byte の little endian)を前に置いて綴り(文字列ごとに hash を呼ぶと、検の読み込みで 2.8 万回 — card ki-be596ac8276f)、
+        関数の code の中身の所で切る(中身を覆うかは記録と照らしが決める — :meth:`ClosureWalk.digest`)。"""
         self._attributes_named_by_texts()
         encoded = list(map(_ENCODE, self._parts))
-        self._hash.update(b"".join(chain.from_iterable(zip(map(_LENGTH.pack, map(len, encoded)), encoded))))
+        framed = list(
+            chain.from_iterable(zip(map(_LENGTH.pack, map(len, encoded)), encoded, strict=True))
+        )
+        cuts = (-1, *self._slots, len(encoded))
+        segments = tuple(
+            b"".join(framed[2 * (start + 1) : 2 * end]) for start, end in pairwise(cuts)
+        )
         self._parts.clear()
-        return self._hash.hexdigest()
+        places = tuple(self._slots.values())
+        forced_nodes = self._reached_from(self._state_roots)
+        return ClosureWalk(
+            segments,
+            tuple(place.slot for place in places),
+            _bits(index for index, place in enumerate(places) if place.node in forced_nodes),
+            _bits(index for index, place in enumerate(places) if place.reads_code),
+        )
+
+    def _reached_from(self, roots: set[int]) -> frozenset[int]:
+        """roots から、中身を歩く間に出会った物を辿って届く関数と class の番号(roots も入る)。"""
+        reached: frozenset[int] = frozenset()
+        frontier = frozenset(roots)
+        while frontier:
+            reached |= frontier
+            frontier = (
+                frozenset(chain.from_iterable(self._edges.get(node, ()) for node in frontier))
+                - reached
+            )
+        return reached
 
     def _attributes_named_by_texts(self) -> None:
         """名前で引かない読み(``getattr(m, "名")``・文字列の key)の先 — 歩みで出会った文字列の定数を名として、参照した module の
@@ -1367,17 +1522,27 @@ class _Walker:
                     self._attribute(self._modules[name], text, ())
 
     def _feed(self, *parts: str) -> None:
-        """digest に文字列を足す(:meth:`digest` が長さを前に置いて hash する — 切れ目の違う 2 つの並びが同じ digest にならない)。"""
+        """digest に文字列を足す(:meth:`walked` が長さを前に置いて綴る — 切れ目の違う 2 つの並びが同じ digest にならない)。"""
         self._parts.extend(parts)
 
     def _first_visit(self, value: object) -> bool:
-        """初めて辿る object か(2 度目からは番号だけを入れる — 循環で止まらず、共有と複製を分ける)。"""
+        """初めて辿る object か(2 度目からは番号だけを入れる — 循環で止まらず、共有と複製を分ける)。どちらの時も、今歩いている
+        関数か class から出会った事と、束縛の文の先で出会った事を覚える(絞らない関数を決める — :meth:`walked`)。"""
         seen = self._seen.get(id(value))
+        node = len(self._seen) if seen is None else seen[0]
+        if self._mut_stack:
+            self._edges.setdefault(self._mut_stack[-1], set()).add(node)
+        if self._mut_state_depth:
+            self._state_roots.add(node)
         if seen is not None:
             self._feed("seen", str(seen[0]))
             return False
-        self._seen[id(value)] = (len(self._seen), value)
+        self._seen[id(value)] = (node, value)
         return True
+
+    def _node(self, value: object) -> int:
+        """辿った object の番号(:meth:`_first_visit` の後に引く)。"""
+        return self._seen[id(value)][0]
 
     def _note(self, module: ModuleType | None) -> None:
         """辿った物の持ち主の module の file を覚える(digest の覚えの有効の判じと、file 単位の記録の行に使う)。"""
@@ -1459,11 +1624,24 @@ class _Walker:
             return
         if not self._first_visit(function):
             return
+        outer = self._mut_stack
+        self._mut_stack = (*outer, self._node(function))
+        try:
+            self._function_body(function, module_name)
+        finally:
+            self._mut_stack = outer
+
+    def _function_body(self, function: FunctionType, module_name: str) -> None:
+        """初めて出会った関数の中身(code の中身は在処を覚え、覆うかを記録と照らしが決める — :class:`ClosureWalk`)。"""
         home = sys.modules.get(module_name)
         self._note(home)
         facts = self.readings.facts(function.__code__)
         self._texts.update(facts.texts)
-        self._feed("function", module_name, function.__qualname__, facts.shape)
+        self._feed("function", module_name, function.__qualname__)
+        self._slots[len(self._parts)] = _SlotPlace(
+            self._node(function), CodeSlot(function.__code__, facts.shape), _reads_code(facts)
+        )
+        self._feed(facts.shape)
         # 展開の時か読み込みの時に、code が環境変数を読む・module の置き場を値として読む。
         self._note_environment(_reads_environment(function.__globals__, facts.names))
         self._note_location(facts.reads_location)
@@ -1695,12 +1873,22 @@ class _Walker:
     def _bound(self, bound: "GlobalName") -> None:
         """module の大域 1 つを、その名を束縛し書き換える source の文で覆う(:mod:`doeff_hy_bytecode_guard.bound_source`)。
         文が読む名は同じ規則で辿り、本体でその名を書き換えうる top-level の定義はその関数か class を辿り、import で束縛する名は
-        import の先の module で辿る。source を読めない・束縛が見つからない・辿れない束縛がある時は、module の file で覆う。"""
+        import の先の module で辿る。source を読めない・束縛が見つからない・辿れない束縛がある時は、module の file で覆う。
+        ここで出会う関数と class(と、そこから届く物)は値を作った code — 展開の外(読み込みの時・前の展開)で実行されて値を
+        作るので、その関数の code の中身は絞らない(:meth:`walked`)。"""
         module, name = bound.module, bound.name
         self._feed("bound", module.__name__, name)
         if (module.__name__, name) in self._bound_names:
             return
         self._bound_names.add((module.__name__, name))
+        self._mut_state_depth += 1
+        try:
+            self._bound_statements(module, name)
+        finally:
+            self._mut_state_depth -= 1
+
+    def _bound_statements(self, module: ModuleType, name: str) -> None:
+        """大域 1 つの束縛の文・書き換える関数・import の先を辿る(:meth:`_bound` の中身)。"""
         self._note(module)
         namespace = vars(module)
         file = namespace.get("__file__")
@@ -1767,6 +1955,15 @@ class _Walker:
             return
         if not self._first_visit(cls):
             return
+        outer = self._mut_stack
+        self._mut_stack = (*outer, self._node(cls))
+        try:
+            self._class_body(cls, module_name)
+        finally:
+            self._mut_stack = outer
+
+    def _class_body(self, cls: type, module_name: str) -> None:
+        """初めて出会った class の基底と中身。"""
         home = sys.modules.get(module_name)
         self._note(home)
         self._feed("class", module_name, cls.__qualname__)
@@ -1848,6 +2045,63 @@ class GlobalName:
 
     module: ModuleType
     name: str
+
+
+@dataclass(frozen=True)
+class _SlotPlace:
+    """歩みが初めて出会った関数 1 つの在処 — 関数の番号(:attr:`_Walker._seen` の順)・関数の code と中身の digest・関数の中身を
+    値として読む code か(:func:`_reads_code`)。"""
+
+    node: int
+    slot: CodeSlot
+    reads_code: bool
+
+
+#: 関数の中身を値として読む名(属性の読み・大域の名)— 呼ばない関数の code・既定値・説明の文・引数の形・注記を読む。この名を
+#: 持つ関数の中身を覆う(展開で実行された・絞らない)時は、閉包の関数の中身を全部覆う(実行しない関数の中身が展開の結果に効く)。
+#: 文字列の定数(``getattr(f, "__code__")`` の名)としても読む。ただし ``__doc__`` は名の表だけで見る — 展開の code の文字列の
+#: 定数 "__doc__" は展開の結果に説明を書く印(:data:`_TEXT_SKIP` と同じ)。
+_CODE_READ_NAMES = frozenset(
+    {
+        "__code__",
+        "__defaults__",
+        "__kwdefaults__",
+        "__closure__",
+        "__doc__",
+        "__signature__",
+        "__text_signature__",
+        "__annotations__",
+        "__annotate__",
+        "signature",
+        "getsource",
+        "getsourcelines",
+        "findsource",
+        "getfullargspec",
+        "getdoc",
+        "getcomments",
+        "getclosurevars",
+        "getcallargs",
+        "get_annotations",
+        "get_type_hints",
+        "get_instructions",
+        "Bytecode",
+        "code_info",
+        "show_code",
+    }
+)
+_CODE_READ_TEXTS = _CODE_READ_NAMES - {"__doc__"}
+
+
+def _reads_code(facts: CodeFacts) -> bool:
+    """関数の code が、関数の中身を値として読むか(:data:`_CODE_READ_NAMES`)。"""
+    return not (
+        _CODE_READ_NAMES.isdisjoint(facts.names) and _CODE_READ_TEXTS.isdisjoint(facts.texts)
+    )
+
+
+def _bits(indexes: Iterator[int]) -> int:
+    """番号の並びを bit にした数(番号 i なら bit i が 1)。"""
+    return functools.reduce(operator.or_, (1 << index for index in indexes), 0)
 
 
 def _frozen_dataclass_instance(value: object) -> bool:
