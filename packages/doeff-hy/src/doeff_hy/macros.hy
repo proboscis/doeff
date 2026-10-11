@@ -621,6 +621,18 @@ defk {name}: :post type annotation cannot be an empty string.
          (import doeff-hy.macros [_install-guard-globals _guard-performed
                                   _guard-statement-value _doeff-check-program-return]))))
 
+(defn _with-scoped-helpers [form]
+  "式 `form` の前に補助を import する、関数の本体の中にも書かれる式の macro(fnk・do!)の展開。
+
+   実行時の展開は、補助の import と `form` を、すぐ呼ぶ引数なしの関数の中に入れる。関数の中で import した名は
+   関数全体の局所の名になるので、defk の本体でそのまま import すると、同じ本体で先に読む traverse / for/do の
+   `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
+   UnboundLocalError で落ちた(card ki-043ea763c926・tests/test_fnk_do_bang_scope.py)。すぐ呼ぶ関数の中なら名はその
+   関数に留まり、外は module の段の名を読み続ける。型検査のための展開は import を出さないので包まない。"
+  (if (_static-view?)
+      `(do ~(_helper-imports) ~form)
+      `((fn [] ~(_helper-imports) ~form))))
+
 (defn _quoted-forms [forms]
   "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。
    本体を quote で埋め込むと、Hy は import のたびに model の木を組み立てる code へ compile し、.pyc の無い compile の時間の
@@ -1081,8 +1093,8 @@ defk {name}: {{:post [...]}} is required.
   ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form body (_expand-bangs form "fnk")))
   (locate-synthesized
-    `(do ~(_helper-imports)
-         (fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))))
+    (_with-scoped-helpers
+      `(fn [~@params] ((_doeff_do (fn [] (do ~@expanded-forms))))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1124,26 +1136,24 @@ defk {name}: {{:post [...]}} is required.
                        (_wrap-statement-guard (get bind 1) "do!")
                        ;; Effect binding — yield (typed bind keeps its isinstance)
                        (_bind-form bind))))
-  (locate-synthesized (if post-checks
+  (locate-synthesized (_with-scoped-helpers (if post-checks
       (let [post-asserts (_contract-code post-checks "do!" "post-condition" True)]
-        `(do ~(_helper-imports)
-             ((_install-guard-globals
-                (_doeff-do (fn []
-                  ~@pre-code
-                  ~@expanded
-                  ~(_result-binding body-expr (.get (_contract-types post-checks) "%"))
-                  ~(_performed-guard-form "do!")
-                  (let [% _contract_result]
-                    ~@post-asserts)
-                  (return ~(_result-symbol body-expr))))))))
-      `(do ~(_helper-imports)
-           ((_install-guard-globals
-              (_doeff-do (fn []
-                ~@pre-code
-                ~@expanded
-                ~(_result-binding body-expr None)
-                ~(_performed-guard-form "do!")
-                (return ~(_result-symbol body-expr))))))))))
+        `((_install-guard-globals
+            (_doeff-do (fn []
+              ~@pre-code
+              ~@expanded
+              ~(_result-binding body-expr (.get (_contract-types post-checks) "%"))
+              ~(_performed-guard-form "do!")
+              (let [% _contract_result]
+                ~@post-asserts)
+              (return ~(_result-symbol body-expr)))))))
+      `((_install-guard-globals
+          (_doeff-do (fn []
+            ~@pre-code
+            ~@expanded
+            ~(_result-binding body-expr None)
+            ~(_performed-guard-form "do!")
+            (return ~(_result-symbol body-expr))))))))))
 
 
 ;; ---------------------------------------------------------------------------
