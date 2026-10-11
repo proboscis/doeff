@@ -14,6 +14,15 @@
 ;;; 道具が使う置き場を環境変数から読む module(doeff_hy.env_places)を外していた層 environment は消した — 環境変数を ReadEnvironment の
 ;;;   効果で本物の答え手 subprocess_handler の下で問う形にしたので、DOEFF004 が当たらない(agora-redesign #3012)。
 ;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり見張りに当たる。
+;;;
+;;; 不変条件(startup の層の .pyc の記録の照らし — doeff_hy_bytecode_guard.macro_use。Program の外なので defservice の :invariants に
+;;; 置けず、条をここに 1 か所で書く):
+;;;   B1 stale-expansion-is-never-current — 記録の digest が依った物(macro を定義した file の中身・macro が辿る値の module の file の
+;;;     中身・環境変数など file の外で決まる値)のどれかが記録を作った時と違えば、照らしは古いと判じて展開し直させる。digest は
+;;;     process をまたいで覚えない(生きた値を辿った file の状態だけで信じる形になる)。process をまたいで覚えてよいのは、中身で
+;;;     決まる純な読み — 辿れない大域を覆う source の文の読み(bound_source — 鍵 = source の中身・名・読み方の code と版)— だけ。
+;;;     失敗ケース = tests/test_macro_use_record.py の「process をまたぐ覚え」の条 1〜3(digest を file の状態で覚えて次の process が
+;;;     信じる形で赤 — agora-redesign card ki-38508e6e56fd)。
 (defarchitecture doeff-hy
   :root "doeff_hy"
   :layers [(layer startup

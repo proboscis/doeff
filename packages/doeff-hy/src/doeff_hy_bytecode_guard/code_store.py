@@ -1,9 +1,12 @@
 """source の中身で引く bytecode の保存先 — 引く・足す・使った印・壊れた entry の扱いの入口はこの module 1 つ(agora-redesign #1753・
 #2799・#3858)。
 
-使い手は 2 つで、どちらもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
+使い手は 3 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
   - import の読みの口(:mod:`doeff_hy_bytecode_guard.loader_hooks`): 作業木の .pyc が使えない Hy の module の code を引き、compile したら
     足す。
+  - .pyc の記録の照らしの source の読み(:mod:`doeff_hy_bytecode_guard.bound_source`): macro の閉包の digest の歩みが、辿れない大域を
+    覆う source の文の読み(中身と名で決まる純な読み)を引き、無ければ解いて足す(agora-redesign card ki-38508e6e56fd — 新しい
+    process の照らしが、同じ中身の source を毎回解き直していた)。
   - doeff-cluster の worker の bytecode の道具(worker/entry/code_prepare.hy と foundation/bytecode_pool.hy): 版をまたいで、中身の同じ
     source の code と import の名を引き、無い物だけを compile して足す。道具は準備する root の venv の python で走るので、root の版の
     doeff-hy でなく worker の版のこの file を path で読む — だから標準 library だけを import する(この package の他の module も読まない)。
@@ -38,6 +41,9 @@ CODE_TAG = "doeff-hy/code-store/2"
 #: entry の種類の末尾。
 CODE_SUFFIX = ".code"
 IMPORTS_SUFFIX = ".imports"
+#: macro の閉包の digest の歩みが、辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard.bound_source — 中身と名で決まる
+#: 純な読み。形は bound_source が持つ)。
+BINDING_SUFFIX = ".binding"
 
 #: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる)— code の鍵に module 名と Hy の版を入れるかを分ける。
 HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")

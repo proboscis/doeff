@@ -24,6 +24,10 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   では中身ごと辿られる)。その digest は process の覚えに入れず、記録にも入れない(None)。記録は代わりに、閉包が依った
   module の file の sha256(:attr:`MacroRecord.files`)を持ち、記録か今の歩みのどちらかが import の途中に当たった行は、
   digest でなくその file で比べる。両方が読み込みの済んだ状態なら digest で比べる(file の行は見ない)。
+- process をまたぐ覚え(agora-redesign card ki-38508e6e56fd・条は packages/doeff-hy/architecture.hy の B1): digest は process の中で
+  だけ覚える(:data:`_REMEMBERED`)。digest は生きた値(別の module から来た素の値・環境変数で決まる値)に依り、辿った file の
+  状態だけでは信じられないので、新しい process は閉包を辿り直す。辿り直しの費用の大半だった source の文の読みは、中身で決まる
+  純な読みとして置き場に覚える(:mod:`doeff_hy_bytecode_guard.bound_source`)。
 - enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
 - 辿れない値を狭く覆う(agora-redesign #3938):
   - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
@@ -192,6 +196,15 @@ def record_is_current(record: MacroRecord, hy_version: str, sha256_of: Sha256Of)
     (import しない)も比べる。"""
     if record.hy_version != hy_version:
         return False
+    scope = _CHECKED_STATES.set({})  # この照らしの中の file の状態の覚え(入れ子の照らしは自分の覚えを置く)
+    try:
+        return _rows_are_current(record, sha256_of)
+    finally:
+        _CHECKED_STATES.reset(scope)
+
+
+def _rows_are_current(record: MacroRecord, sha256_of: Sha256Of) -> bool:
+    """記録の行(使った macro・macro の外の値・引いて無かった名・digest で比べられない時の file)が今の環境に合うか。"""
     by_files = False
     for check in _row_checks(record, sha256_of):
         match check:
@@ -372,7 +385,7 @@ def _remembered(
     if (
         remembered is not None
         and remembered.subject is subject
-        and all(_file_state(state.path) == state for state in remembered.files)
+        and all(map(_unchanged, remembered.files))
     ):
         return remembered.closure
     walker = _Walker(sha256_of)
@@ -398,6 +411,26 @@ def _file_state(path: str) -> FileState | None:
     except OSError:
         return None
     return FileState(path, status.st_mtime_ns, status.st_size)
+
+
+#: 照らし 1 回(:func:`record_is_current`)の中で確かめた file の今の状態(path → 状態・消えた file は None)。照らしの間だけ置き、
+#: 同じ照らしの中で同じ file を 2 度 stat しない(照らし 1 回に覚えの確かめが数回・1 回に file 数個 — 検の読み込みで 1 万回を越え、
+#: うち約 1/3 が同じ照らしの中の同じ file だった — card ki-38508e6e56fd)。照らしの外(記録を作る時)は毎回 stat する。
+_CHECKED_STATES: "contextvars.ContextVar[dict[str, FileState | None] | None]" = contextvars.ContextVar(
+    "doeff_hy_checked_states", default=None
+)
+
+
+def _unchanged(state: FileState) -> bool:
+    """file が覚えた時の状態のままか(消えた file は偽)— :func:`_file_state` と同じ判じ。"""
+    checked = _CHECKED_STATES.get()
+    if checked is None:
+        now = _file_state(state.path)
+    elif state.path in checked:
+        now = checked[state.path]
+    else:
+        now = checked.setdefault(state.path, _file_state(state.path))
+    return now is not None and now.mtime_ns == state.mtime_ns and now.size == state.size
 
 
 def _closure_files(names: frozenset[str], sha256_of: Sha256Of) -> tuple[UsedFile, ...]:
@@ -773,7 +806,11 @@ def _units(code: CodeType) -> Iterator[_Unit]:
 
 def _imports(code: CodeType) -> Iterator[ImportReference]:
     """関数の中の import の命令(macro が展開の時にだけ import する補助を、閉包に入れるため)。相対の段数は import の命令の
-    2 つ前の命令(段数の数・fromlist・import の順に積まれる)。"""
+    2 つ前の命令(段数の数・fromlist・import の順に積まれる)。import の命令を持たない code(閉包の関数のほとんど)は、命令の番号の
+    並び(偶数の位置の byte)を C で探すだけで命令を読まない(macro の閉包の歩みの約 1/4 が、ここで全部の命令を読む所だった —
+    agora-redesign card ki-38508e6e56fd)。"""
+    if _IMPORT_NAME not in code.co_code[::2]:
+        return
     previous: tuple[_Unit | None, _Unit | None] = (None, None)
     for unit in _units(code):
         if unit.op == _IMPORT_NAME:
