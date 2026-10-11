@@ -1552,9 +1552,12 @@ def _compiled_owner(value: object) -> str | None:
 
 
 def _python_source(module: ModuleType | None) -> bool:
-    """module が Python の source から読まれたか(拡張の module・file の無い module は偽)。"""
+    """module の class を中身(基底・method の本体)で辿れるか — 偽は、拡張の module(file の末尾が標準の
+    importlib.machinery.EXTENSION_SUFFIXES のどれか)と file の無い module だけ。source の拡張子の写しで判じない: Hy の拡張子を
+    定義点(code_store.HY_SOURCE_SUFFIXES)に足した時、写しの直し忘れでその module の class を公開の形だけで覆い、method の本体の
+    変更を見逃した(card ki-38508e6e56fd の設計検証の盲検 A)。知らない末尾は中身で辿る側(安全側)に倒す。"""
     file = None if module is None else vars(module).get("__file__")
-    return isinstance(file, str) and file.endswith((".py", ".hy", ".hyk", ".hyp", ".pyc"))
+    return isinstance(file, str) and not file.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES))
 
 
 def _import_target(reference: ImportReference, package: str | None) -> str:

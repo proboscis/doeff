@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from types import CodeType, FunctionType, ModuleType
 from typing import TypeVar
 
+from doeff_hy_bytecode_guard.code_store import HY_SOURCE_SUFFIXES
+
 #: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
 #: 2 = gensym の名を正準化した code の記録(agora-redesign #3667)。1 の記録の code は gensym の番号が compile の順で決まって
 #: いるので、1 度 compile し直させる。保存先の code の鍵の印(code_store.CODE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
@@ -507,7 +509,8 @@ def pyc_bytes(
     return header + marshal.dumps(code)
 
 
-_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp", ".py")
+#: file 単位の辿り方が数える source の拡張子(Hy の拡張子は定義点 code_store から引く — 写しを置かない)。
+_SOURCE_SUFFIXES: tuple[str, ...] = (*HY_SOURCE_SUFFIXES, ".py")
 
 
 def _top_package(module_name: str) -> str:
