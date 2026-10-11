@@ -98,6 +98,7 @@ from doeff_cluster.shared.protocol.declaration_requests import service_read as s
 from doeff_cluster.shared.protocol.declaration_requests import reread_after_conflict as reread_after_conflict
 from doeff_cluster.shared.protocol.declaration_requests import needed_programs as needed_programs
 from doeff_cluster.shared.protocol.declaration_requests import body_of as service_body_of
+from doeff_cluster.shared.protocol.declaration_requests import group_limit_write as group_limit_write
 from doeff_cluster.shared.protocol.detached import detached_path as detached_path
 from doeff_cluster.shared.protocol.detached import detached_submit_body as detached_submit_body
 from doeff_cluster.shared.protocol.detached import detached_refusal as detached_refusal

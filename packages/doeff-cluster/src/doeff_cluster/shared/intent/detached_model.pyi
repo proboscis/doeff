@@ -13,10 +13,16 @@ DETACHED_DEFAULT_RETAIN_SECONDS: float
 TASK_LIMIT_SCOPES: frozenset[str]
 
 @dataclass(frozen=True, kw_only=True)
+class GroupLimit:
+    group: str
+    scope: str
+    limit: int
+    per_part: bool = False
+
+@dataclass(frozen=True, kw_only=True)
 class TaskLimit:
     group: str
-    limit: int
-    scope: str
+    part: str = ''
 
 @dataclass(frozen=True)
 class SubmitDetached(EffectBase):

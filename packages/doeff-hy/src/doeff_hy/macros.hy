@@ -2145,6 +2145,8 @@ the effect in the enclosing do-context.
        :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
 
    :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)で、必ず書く。
+   説明の文の後・job の行の前に :task-limits {\"<組>\" {\"scope\" \"worker\" \"limit\" 6}} を置くと、系が組の同時数の上限を宣言する
+   (task は組の名だけを名乗る — 値の持ち主は系の宣言)。
    形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。
    関数には静的な記述 __doeff_system__(名・引数・job ごとの関数の名と約束)が付く。"
   (import doeff-hy.system-form [defsystem-form])

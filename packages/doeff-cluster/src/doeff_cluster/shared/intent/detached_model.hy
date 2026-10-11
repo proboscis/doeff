@@ -28,19 +28,31 @@
 (setv DETACHED-DEFAULT-RETAIN-SECONDS 86400.0)   ; 終わった後に結果を持っておく長さ
 
 
-;; --- task の置き方の名乗り(2026-10-11)------------------------------------------------
-;; task の同時数の上限の範囲: worker = 置いた worker ごとに数える・cluster = cluster の全体で数える。
+;; --- task の置き方の名乗りと、組の同時数の上限の宣言(2026-10-11・値の持ち主を系の宣言にした 2026-10-12)---------------
+;; 組の同時数の上限の範囲: worker = 置いた worker ごとに数える・cluster = cluster の全体で数える。
 (val TASK-LIMIT-SCOPES (frozenset #("worker" "cluster")))
 
 
-(defrecord TaskLimit
-  "task が名乗る同時数の上限 1 つ(2026-10-11 — Airflow の pool の形): group = 組の名(同じ名と範囲を名乗る task を数える)・limit = 置いて
-   いる(PLACED-PHASES の)task の数の上限(1 以上)・scope = 数える範囲(TASK-LIMIT-SCOPES — worker か cluster)。上限は送り手が名乗り、
-   coordinator の置き方(coordinator の cluster_policy.place-tasks)が守る — 上限に達した組の task は失敗にせず queued のまま待つ。"
+(defrecord GroupLimit
+  "系が宣言する組の同時数の上限 1 つ(2026-10-12 — Airflow の pool の形。値の持ち主を系の宣言 1 つにした・card ki-b0e8028c8c8d。以前は
+   送り手が task ごとに値を名乗り、送り手ごとに値が割れた): group = 組の名・scope = 数える範囲(TASK-LIMIT-SCOPES)・limit = 置いている
+   (PLACED-PHASES の)task の数の上限(1 以上)・per-part = 組を名乗る task が区分(TaskLimit の part — 例: 呼び手の id)を名乗り、区分ごとに
+   この値で数える組か(偽の組は区分を名乗る task を断る — 区分で上限を逃れさせない)。系の宣言(service_model の System の task-limits)に
+   書き、coordinator は資源 GroupLimit として持つ。置き方(coordinator の cluster_policy.place-tasks)はこの値で数え、上限に達した組の
+   task は失敗にせず queued のまま待つ。形の検めは doeff_cluster.shared.core.detached_rules の group-limit-refusal。"
   {:tags {:context "doeff-cluster" :role "intent"}}
   (#^ str group)
+  (#^ str scope)
   (#^ int limit)
-  (#^ str scope))
+  (setv #^ bool per-part False))
+
+
+(defrecord TaskLimit
+  "task が名乗る同時数の上限の組 1 つ: group = 組の名(値と範囲は系の宣言の GroupLimit が持ち、task は名乗らない — coordinator は
+   宣言に無い組を名乗る task を受け口で断る)・part = 組の中の区分(宣言の per-part が真の組だけが名乗る — 空 = 名乗らない)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str group)
+  (setv #^ str part ""))
 
 
 ;; --- effect ----------------------------------------------------------------------
@@ -59,8 +71,9 @@
   ;; 子の環境変数(EnvVar の tuple・既定は空 — 名と値の規則は service の :environ と同じ EnvVar 1 つ)。同じ key の送り直しで違えば
   ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
   (setv #^ (get tuple #(EnvVar ...)) environ #())
-  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の task-reserve を使わない)と同時数の上限(TaskLimit の tuple)。coordinator の
-  ;; 置き方が守る(2026-10-11)。同じ key の送り直しの比べには入れない(置き方の名乗りで、仕事の中身ではない)。形の検めは構築関数。
+  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の task-reserve を使わない)と同時数の上限の組(TaskLimit の tuple — 値は系の
+  ;; 宣言が持つ)。coordinator の置き方が守る(2026-10-11)。同じ key の送り直しの比べには入れない(置き方の名乗りで、仕事の中身ではない)。
+  ;; 形の検めは構築関数。
   (setv #^ int priority 0)
   (setv #^ (get tuple #(TaskLimit ...)) limits #())
   (defn #^ None __post-init__ [self]

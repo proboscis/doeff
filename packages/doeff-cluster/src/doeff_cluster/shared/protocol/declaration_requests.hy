@@ -11,6 +11,8 @@
 (import json)
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.service_model [Declaration])
+(import doeff_cluster.shared.intent.detached_model [GroupLimit])
+(import doeff_cluster.shared.core.detached_rules [group-limit-spec])
 
 
 (defk spec-for-update [row current]
@@ -95,6 +97,20 @@
    置き直す(coordinator は同じ sha の置き直しで掃除の期限を延ばす — 行を書く前に掃かれない)。"
   (val written (sfor read reads :if (is-not read.body None) read.name))
   (tuple (sorted (sfor row declaration.rows :if (in (get row "name") written) (get (get row "run") "program")))))
+
+
+(defk group-limit-write [limit current]
+  {:pre [(: limit GroupLimit) (: current (| dict None))] :post [(: % (| dict None))]
+   :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "系の宣言の組の上限 1 つを資源 GroupLimit へ書く本文を、読んだ今の資源 current(GET の本文・無ければ None)から決めるため(declare の
+   CLI と手元の sim-cluster で同じ形 — 送り手は current が None なら POST /resources/GroupLimit・在れば PUT /resources/GroupLimit/<名>):
+   無ければ作る本文 {name spec}・spec が今と同じなら None(書かない)・違えば読んだ版つきの本文 {resourceVersion spec}(読んでから書く
+   までに誰かが書いていれば 409 で止まる — 資源 GroupLimit の版は spec の変化でだけ進むので、読み直して書き直さない)。"
+  (val spec (group-limit-spec limit))
+  (cond
+    (is current None) {"name" limit.group "spec" spec}
+    (= (get current "spec") spec) None
+    True (! (update-body (get current "resourceVersion") spec))))
 
 
 (deff create-body [#^ Mapping row]  ; defk にできない: CLI の入口(Program の外)と sim-cluster の宣言が同じ形を作る純粋な判断
