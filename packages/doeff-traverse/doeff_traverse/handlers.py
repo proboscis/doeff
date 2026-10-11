@@ -21,6 +21,7 @@ from doeff_traverse.effects import (
     Fail,
     Inspect,
     ItemOutcome,
+    ItemOutcomeNotPassedError,
     Reduce,
     Skip,
     SortBy,
@@ -76,6 +77,30 @@ def _names_item_outcome(raw_handler: object) -> bool:
     return names
 
 
+# What a Traverse handler answers its own ItemOutcome with: _report sees it come back only
+# when every consumer passed the report on (ItemOutcome — a consumer neither answers it nor
+# throws into it).
+_PASSED_ON = object()
+
+
+@do
+def _report(handler, boundaries, report: ItemOutcome):
+    """Perform ``report`` under the inner handlers (``boundaries``), then under ``handler`` —
+    the Traverse handler itself, which answers _PASSED_ON — and fail the Traverse with
+    ItemOutcomeNotPassedError when a consumer answered it or threw into it instead. A cancelled
+    parallel task stays cancelled (TaskCancelledError is the scheduler's, not a consumer's)."""
+    from doeff_core_effects.scheduler import TaskCancelledError
+
+    try:
+        answer = yield WithHandlerType(handler, WithBoundaries(boundaries, report))
+    except TaskCancelledError:
+        raise
+    except Exception as error:
+        raise ItemOutcomeNotPassedError(report, error) from error
+    if answer is not _PASSED_ON:
+        raise ItemOutcomeNotPassedError(report, None)
+
+
 def _report_boundaries(
     inner_handlers: list[object],
 ) -> list[tuple[Literal["handler"], object]] | None:
@@ -118,8 +143,8 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
             return _SKIPPED
 
         if isinstance(effect, ItemOutcome):
-            # No handler between the Traverse and this one took the report.
-            return (yield Resume(k, None))
+            # Every consumer between the Traverse and this one passed the report on (_report).
+            return (yield Resume(k, _PASSED_ON))
 
         if isinstance(effect, Traverse):
             # One installer per inner handler for the whole Traverse, not one per item —
@@ -165,10 +190,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                                     items_iter = iter(rest)
                             # The items carried before this one, reported now that it is known.
                             for carried in results:
-                                yield WithHandlerType(handler, WithBoundaries(
-                                    report_under,
-                                    ItemOutcome(this_run, effect.label, total, "carried", carried),
-                                ))
+                                yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "carried", carried))
                     # Build fresh program for this item
                     prog = effect.f(item.value)
                     # Reinstall inner handlers + this handler for nested Traverse,
@@ -209,9 +231,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                 if report_under is not None:
                     # Under the inner handlers (where a progress handler sits), then under
                     # this handler, which answers None when none of them takes it.
-                    yield WithHandlerType(handler, WithBoundaries(
-                        report_under, ItemOutcome(this_run, effect.label, total, outcome, result),
-                    ))
+                    yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, result))
 
             return (yield Resume(k, Collection(results)))
 
@@ -322,8 +342,8 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
             return _SKIPPED
 
         if isinstance(effect, ItemOutcome):
-            # No handler between the Traverse and this one took the report.
-            return (yield Resume(k, None))
+            # Every consumer between the Traverse and this one passed the report on (_report).
+            return (yield Resume(k, _PASSED_ON))
 
         if isinstance(effect, Traverse):
             inner_hs = yield get_inner_handlers(k)
@@ -351,9 +371,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
 
             if report_under is not None:
                 for item in carry_forward:
-                    yield WithHandlerType(handler, WithBoundaries(
-                        report_under, ItemOutcome(this_run, effect.label, total, "carried", item),
-                    ))
+                    yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "carried", item))
 
             # Create semaphore for concurrency limiting
             sem = yield CreateSemaphore(concurrency)
@@ -402,9 +420,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
                             history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
                         ), "ok"
                     if report_under is not None:
-                        yield WithHandlerType(handler, WithBoundaries(
-                            report_under, ItemOutcome(this_run, effect.label, total, outcome, done),
-                        ))
+                        yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, done))
                     return done
 
                 task = yield Spawn(run_item())
@@ -514,8 +530,8 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
             return _SKIPPED
 
         if isinstance(effect, ItemOutcome):
-            # No handler between the Traverse and this one took the report.
-            return (yield Resume(k, None))
+            # Every consumer between the Traverse and this one passed the report on (_report).
+            return (yield Resume(k, _PASSED_ON))
 
         if isinstance(effect, Traverse):
             inner_hs = yield get_inner_handlers(k)
@@ -570,9 +586,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                                     detail=str(error),
                                 )],
                             )
-                            yield WithHandlerType(handler, WithBoundaries(
-                                report_under, ItemOutcome(this_run, effect.label, total, "failed", failed),
-                            ))
+                            yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "failed", failed))
                         raise
                     yield ReleaseSemaphore(sem)
                     if value is _SKIPPED:
@@ -589,9 +603,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                             history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
                         ), "ok"
                     if report_under is not None:
-                        yield WithHandlerType(handler, WithBoundaries(
-                            report_under, ItemOutcome(this_run, effect.label, total, outcome, done),
-                        ))
+                        yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, done))
                     return done
 
                 task = yield Spawn(run_item())
@@ -736,8 +748,10 @@ def progress_bars(make_bar: BarFactory):
     desc=<label or "traverse">)`` builds a bar when a Traverse reports its first item
     (``tqdm.tqdm`` fits); the handler calls its ``update(1)`` per item and ``close()`` at
     ``total``. Install it inside the Traverse handler, like a body handler:
-    ``[... (progress-bars tqdm) (parallel 10)]`` (ItemOutcome says why). A Traverse that
-    parallel_fail_fast stops keeps its bar open: the items it cancels report nothing.
+    ``[... (progress-bars tqdm) (parallel 10)]`` (ItemOutcome says why). It passes each
+    report on, as every consumer does, so other consumers (a second bar, a failure log) sit
+    on either side of it. A Traverse that parallel_fail_fast stops keeps its bar open: the
+    items it cancels report nothing.
     """
     # The bars of the Traverse runs (ItemOutcome.traverse) not yet at their total.
     open_bars: dict[object, _OpenBar] = {}
@@ -754,7 +768,6 @@ def progress_bars(make_bar: BarFactory):
                 open_bars.pop(effect.traverse, None)
             else:
                 open_bars[effect.traverse] = replace(opened, counted=opened.counted + 1)
-            return (yield Resume(k, None))
         yield Pass(effect, k)
 
     return _program_handler(handler)

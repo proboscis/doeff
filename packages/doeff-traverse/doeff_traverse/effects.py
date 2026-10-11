@@ -206,9 +206,20 @@ class ItemOutcome(EffectBase[None]):
     item is reported, the items it cancels are not.
 
     Where it goes: the handler performs it under the handlers between the Traverse and the
-    Traverse handler (the ones it puts back around every item program), then under itself,
-    which answers None — so a handler that counts outcomes is installed inside the Traverse
-    handler, like a body handler: ``[... (progress-bars tqdm) (sequential)]``. Performed only
+    Traverse handler (the ones it puts back around every item program), then under itself —
+    so a handler that counts outcomes is installed inside the Traverse handler, like a body
+    handler: ``[... (progress-bars tqdm) (sequential)]``.
+
+    What a consumer does with it: it looks at the report and passes it on (``Pass(effect,
+    k)`` — ``(reperform effect)`` in a ``defhandler`` clause), so every consumer sees every
+    report, in any order, and the Traverse handler itself answers it. A consumer neither
+    answers it (that would hide it from the consumers further out) nor throws into it (how
+    the Traverse runs is the Traverse handler's decision — parallel_fail_fast is the one
+    that stops at a failure): the Traverse handler raises ItemOutcomeNotPassedError when the
+    report comes back answered by someone else or thrown into (design check
+    lt-H07C2RG4T2BM59EENGQWQHSJKH, blind A and B).
+
+    When it is performed: only
     when one of those handlers names ItemOutcome (or a subclass) in the annotation of its
     effect parameter (``doeff.handler_effect_types`` — a ``defhandler`` clause
     ``(ItemOutcome [...] ...)`` names it): reporting adds half to all of an item's own cost
@@ -248,6 +259,23 @@ class ItemOutcome(EffectBase[None]):
     def __repr__(self):
         lbl = f", label={self.label!r}" if self.label else ""
         return f"ItemOutcome({self.outcome!r}, index={self.item.index}, total={self.total}{lbl})"
+
+
+class ItemOutcomeNotPassedError(RuntimeError):
+    """A consumer of ItemOutcome answered the report or threw into it instead of passing it on.
+
+    Raised by the Traverse handler where it performed the report (it fails the Traverse:
+    the consumer is wrong). ``cause`` is what the consumer threw, or None when it answered.
+    """
+
+    def __init__(self, report: ItemOutcome, cause: BaseException | None) -> None:
+        how = f"threw {type(cause).__name__}: {cause}" if cause is not None else "answered it"
+        super().__init__(
+            f"a handler took {report!r} and {how} — a consumer of ItemOutcome passes it on "
+            "(Pass(effect, k) / (reperform effect)); only the Traverse handler answers it"
+        )
+        self.report = report
+        self.cause = cause
 
 
 class SortBy(EffectBase[Collection]):
