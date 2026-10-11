@@ -1202,7 +1202,7 @@ def _scheduler_lines_per_timed_wait(
             yield Cancel(task)
         return per_wait, counted
 
-    set_scheduler_trace((lambda event: None) if traced else None)
+    set_scheduler_trace((lambda _event: None) if traced else None)
     previous_trace = sys.gettrace()
     sys.settrace(trace_calls)
     try:
