@@ -39,6 +39,7 @@ import dataclasses
 import json
 import multiprocessing
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -907,6 +908,16 @@ def locate(index: SpanIndex, line: int, character: int) -> HyPosition:
     return HyPosition(best.hy_line, best.hy_column)
 
 
+def python_without_bytecode(directory: Path, python: str) -> Path:
+    """pyright が検索 path を問うために起こす python が .pyc を書かないようにするため: python を `-B`(PYTHON* の環境変数を読まない
+    起こし方の下でも効く)で起こす包みを directory に置く。pyright は呼び手の PYTHONDONTWRITEBYTECODE を効かせない形で起こすので、
+    包まないと site の起動で .pth が読む module の .pyc を checkout へ書く(日次 2026-10-11 16:00 の doeff・card ki-04d762c59dac)。"""
+    wrapper = directory / "python-without-bytecode"
+    wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(python)} -B "$@"\n', encoding="utf-8")
+    wrapper.chmod(0o755)
+    return wrapper
+
+
 def run_pyright(
     root: Path,
     settings: dict[str, object],
@@ -935,8 +946,9 @@ def run_pyright(
         targets = [str(dest) for dest, proj in written.items() if proj.source in report]
         if not targets:
             return Checked([], notes)
+        searched = python_without_bytecode(Path(temporary).resolve(), python)
         completed = subprocess.run(
-            [pyright, "--outputjson", "-p", str(config), "--pythonpath", python, *targets],
+            [pyright, "--outputjson", "-p", str(config), "--pythonpath", str(searched), *targets],
             capture_output=True,
             text=True,
             check=False,
