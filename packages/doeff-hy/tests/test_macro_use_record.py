@@ -1412,6 +1412,49 @@ def test_a_thread_started_inside_a_running_import_does_not_share_its_snapshot(
     )
 
 
+def _scope_variable_uses(source: Path) -> tuple[str, ...]:
+    """source の中の IMPORT_SCOPE の使い(set と reset の呼びの受け手を除く)と、別名の import。"""
+    import ast
+
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    receivers = {
+        id(node.func.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in ("set", "reset")
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "IMPORT_SCOPE"
+    }
+    names = tuple(
+        f"{source.name}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "IMPORT_SCOPE" and id(node) not in receivers
+    )
+    aliases = tuple(
+        f"{source.name}:{node.lineno}(別名 {node.asname})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.alias) and node.name == "IMPORT_SCOPE" and node.asname not in (None, "IMPORT_SCOPE")
+    )
+    return names + aliases
+
+
+def test_the_import_scope_variable_is_read_only_through_current_scope() -> None:
+    # 緑のまま守る(盲検 A の付録): 読み込みの覚えの ContextVar は、読み込みの中で起きた thread と写した context に値が残るので、
+    # 値があるだけでは今の読み込みの覚えと決まらない — 読みは import_scope.current_scope() だけが行う(置いた thread の中で、閉じる
+    # 前だけ)。import_scope.py の外では、覚えを置く口の set と reset の呼びにしか使わない(別名で持ち出すと読みを縛れない)。
+    import doeff_hy_bytecode_guard
+
+    package = Path(doeff_hy_bytecode_guard.__file__).parent
+    uses = tuple(
+        use
+        for source in sorted(package.glob("*.py"))
+        if source.name != "import_scope.py"
+        for use in _scope_variable_uses(source)
+    )
+    assert not uses, f"import_scope.py の外で IMPORT_SCOPE を set・reset の呼びの外で使う — 読みは current_scope() を通す: {uses}"
+
+
 def test_the_code_reading_entry_is_keyed_by_the_hy_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
