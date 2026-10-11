@@ -96,7 +96,7 @@ class TurnInterruptParamsWire:
     thread_id: str
     turn_id: str
 
-def app_server_argv(command: tuple) -> _Program[list, object]:
+def app_server_argv(command: tuple, disabled_features: tuple) -> _Program[list, object]:
     ...
 RequestParams: TypeAlias = InitializeParamsWire | ThreadStartParamsWire | ThreadResumeParamsWire | TurnStartParamsWire | TurnSteerParamsWire | TurnInterruptParamsWire
 

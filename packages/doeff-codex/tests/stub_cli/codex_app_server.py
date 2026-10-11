@@ -9,8 +9,9 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - SLOW が在れば、答えの文字の途中(item/agentMessage/delta)を 0.05 秒ごとに出し続け、turn/interrupt を受けたら録った止めの終わり
     (状態 interrupted の turn/completed)を出す。
   - IMAGES_PHRASE が在れば、入力の画像の数を ``IMAGES <数>`` と答える(画像が turn/start の入力に載ったかを見る)。
-  - SETTINGS_PHRASE が在れば、thread を開いた要求の model と config の圧縮の閾値と、turn/start の effort を
-    ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
+  - SETTINGS_PHRASE が在れば、thread を開いた要求の model と config の圧縮の閾値と、turn/start の effort と、この process を起こした
+    argv の --disable の機能の名を ``SETTINGS effort=<値> compact=<値> model=<値> disabled=<名,…>`` と答える(宣言が要求の行と argv に
+    載ったかを見る — 名乗らない欄は None・切る機能が無ければ disabled=)。
   - HOME_PHRASE が在れば、この process の CODEX_HOME の形を ``HOME dir=<権限> auth=<権限> account=<auth.json の口座の id>
     config=<link|file|none> sessions=<link|dir|none>`` と答える(借りた資格の家の形を子の process から見る — 資格の値は答えない)。
   - SPANNING の目印(BG-COMMAND・BG-WAIT)が在れば、2 つのターンにまたがる録り(後ろで走る命令の始まりのターンと、その命令が終わる
@@ -23,7 +24,7 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
-- 引数(app-server --listen stdio://)は読まない。
+- 引数は --disable の機能の名だけを読む(SETTINGS の答え — app-server --listen stdio:// は読まない)。
 """
 
 import json
@@ -45,6 +46,11 @@ REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALL
 SPANNING = {"BG-COMMAND": ("background-command", 3), "BG-WAIT": ("background-command", 4)}
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
+
+
+def disabled_features(argv: list[str]) -> list[str]:
+    """起こされた argv の --disable の後ろの機能の名を順に取るため(会話の宣言の切る機能が argv に載ったかを答える)。"""
+    return [name for flag, name in zip(argv, argv[1:]) if flag == "--disable"]
 
 
 def said_text(inputs: list[dict[str, object]]) -> str:
@@ -192,10 +198,11 @@ class Stub:
                     "params": {"threadId": self.mut_thread_id, "turn": {"id": turn_id, "status": "completed", "error": None}}})
 
     def settings_text(self, params: dict[str, object]) -> str:
-        """thread を開いた要求と turn/start が名乗った宣言(effort・圧縮の閾値・model)を答えの文にするため。"""
+        """thread を開いた要求と turn/start が名乗った宣言(effort・圧縮の閾値・model)と、argv の切る機能を答えの文にするため。"""
         config = self.mut_opened_with.get("config") or {}
         compact = config.get("model_auto_compact_token_limit") if isinstance(config, dict) else None
-        return f"SETTINGS effort={params.get('effort')} compact={compact} model={self.mut_opened_with.get('model')}"
+        disabled = ",".join(disabled_features(sys.argv))
+        return f"SETTINGS effort={params.get('effort')} compact={compact} model={self.mut_opened_with.get('model')} disabled={disabled}"
 
     def start_turn(self, request_id: object, params: dict[str, object]) -> None:
         """ターンを始め、入力の文字で決めた筋書き(頭の註)を流すため。"""
