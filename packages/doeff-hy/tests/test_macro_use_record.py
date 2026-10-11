@@ -1516,12 +1516,32 @@ ENV_MODE = "MACRO_USE_ENV_MODE"
 #: aliased = os から別名で import した environ で組む dict・got = os から import した getenv で組む dict・built = 読み込みの時に
 #: 補助の関数が組む dict・py-table = Python の module の文が組む dict・direct = 展開の時に macro が直に読む・helper = 展開の時に
 #: 補助の関数が読む・local = 関数の中の import で読む(module の大域に os が無い)。body と plain は環境変数を読まない macro と、
-#: 環境変数から組んだ素の値を返す macro(条 3 — 値で入る)。
-ENV_FORMS = ("table", "listed", "aliased", "got", "built", "py-table", "direct", "helper", "local")
+#: 環境変数から組んだ素の値を返す macro(条 3 — 値で入る)。設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A の形: hy-import = Hy の
+#: import で別の module の表を名で束縛して読む・default = 環境変数から組んだ表を補助の関数の既定値に持つ・cell = 読み込みの時に
+#: 組んだ表を閉包の cell に持つ(どちらも大域の名で引けない値)。
+ENV_FORMS = (
+    "table", "listed", "aliased", "got", "built", "py-table", "direct", "helper", "local", "hy-import", "default", "cell",
+)
+#: 形ごとの macro の module(書いていない形は macros.hy)。
+ENV_FORM_MODULES = {
+    "local": "local_macros",
+    "hy-import": "hy_import_macros",
+    "default": "held_macros",
+    "cell": "held_macros",
+}
 ENV_FILES = {
     "__init__.py": "",
     "tables.py": f'import os\nROWS = {{{{"a": os.environ.get("{ENV_MODE}", "plain")}}}}\n',
     "local_macros.hy": f'(defmacro local [] (import os) (os.environ.get "{ENV_MODE}" "plain"))\n',
+    "hy_import_macros.hy": '(import {pkg}.tables [ROWS])\n(defmacro hy-import [] (get ROWS "a"))\n',
+    "held_macros.hy": (
+        "(import os)\n"
+        f'(defn by-default [[rows {{{{"a" (os.environ.get "{ENV_MODE}" "plain")}}}}]] (get rows "a"))\n'
+        "(defmacro default [] (by-default))\n"
+        f'(defn make-reader [] (setv rows {{{{"a" (os.environ.get "{ENV_MODE}" "plain")}}}}) (fn [] (get rows "a")))\n'
+        "(setv reader (make-reader))\n"
+        "(defmacro cell [] (reader))\n"
+    ),
     "macros.hy": (
         "(import os)\n"
         "(import os [environ :as env getenv])\n"
@@ -1546,7 +1566,7 @@ ENV_FILES = {
     ),
     **{
         f"u_{form.replace('-', '_')}.hy": (
-            f"(require {{pkg}}.{'local_macros' if form == 'local' else 'macros'} [{form}])\n(setv value ({form}))\n"
+            f"(require {{pkg}}.{ENV_FORM_MODULES.get(form, 'macros')} [{form}])\n(setv value ({form}))\n"
         )
         for form in (*ENV_FORMS, "body", "plain")
     },
@@ -1600,3 +1620,47 @@ def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_f
     ):
         check = macro_use._row_check(recorded, macro_use.ClosureDigest(now, ()))
         assert check is macro_use.RowCheck.STALE, f"記録 {recorded!r}・今 {now!r} の行を {check} と判じた"
+
+
+def test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 緑のまま守る(設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 B): 環境変数を読む macro の使い手の記録は、環境変数が同じ process
+    # でも照らせない — 共有の置き場から引く路でも。印の行を記録から除いて照らし、環境変数の指紋を鍵に置き場の entry を使い回す
+    # 読み込みの口は、別の作業木で macro の本体を替えた後も、環境変数が同じだけで前の展開("plain")を今に合うと判じた。
+    import shutil
+
+    monkeypatch.delenv(ENV_MODE, raising=False)
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
+    assert tree.run("u_direct")["values"] == {"u_direct": "plain"}
+    other = ScopeTree(tmp_path / "tree-b", tree.package)
+    shutil.copytree(tree.root, other.root, ignore=shutil.ignore_patterns("__pycache__"))
+    _replace(
+        other.root / tree.package / "macros.hy",
+        f'(defmacro direct [] (os.environ.get "{ENV_MODE}" "plain"))',
+        f'(defmacro direct [] (.upper (os.environ.get "{ENV_MODE}" "plain")))',
+    )
+    answer = other.run("u_direct")
+    assert "u_direct.hy" in answer["compiled"], f"macro を替えた木の使い手を、置き場の前の展開で今に合うと判じた: {answer}"
+    assert answer["values"] == {"u_direct": "PLAIN"}, answer
+
+
+def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
+    # 緑のまま守る(盲検 B): 印 ENVIRONMENT_READ の意味(閉包の digest 全体の代わり — 照らせない)は、定義点(records.py)と、印を作る
+    # 歩みと印を照らす照らし(macro_use.py)だけが持つ。読み込みの口などが印の行を見分けて記録を作り替えると、照らしの判断がその口へ
+    # 移る(印の行を除いた記録を照らす形)。
+    import ast
+
+    import doeff_hy_bytecode_guard
+
+    package = Path(doeff_hy_bytecode_guard.__file__).parent
+    uses = tuple(
+        f"{source.name}:{getattr(node, 'lineno', 0)}"
+        for source in sorted(package.glob("*.py"))
+        if source.name not in ("records.py", "macro_use.py")
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8")))
+        if (isinstance(node, ast.Name) and node.id == "ENVIRONMENT_READ")
+        or (isinstance(node, ast.Attribute) and node.attr == "ENVIRONMENT_READ")
+        or (isinstance(node, ast.alias) and node.name == "ENVIRONMENT_READ")
+    )
+    assert not uses, f"records.py・macro_use.py の外で印 ENVIRONMENT_READ を読む — 印の判断は照らし(macro_use)が持つ: {uses}"
