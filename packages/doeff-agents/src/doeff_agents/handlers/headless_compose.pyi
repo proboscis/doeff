@@ -61,5 +61,5 @@ def codex_process_layer(command: tuple, launch_timeout: float) -> _Program[Calla
 def fake_codex_process_layer(world: FakeCodexWorld) -> _Program[Callable, object]:
     ...
 
-def codex_adapter(env: Mapping, approval_policy: CodexApprovalPolicy, sandbox: CodexSandboxMode) -> _Program[Callable, object]:
+def codex_adapter(env: Mapping, approval_policy: CodexApprovalPolicy, sandbox: CodexSandboxMode, disabled_features: tuple) -> _Program[Callable, object]:
     ...

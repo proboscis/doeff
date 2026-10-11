@@ -23,6 +23,7 @@ class CodexSessionSpec:
     sandbox: SandboxMode | None = None
     effort: str | None = None
     auto_compact_token_limit: int | None = None
+    disabled_features: tuple[str, ...] = ...
 
     def __post_init__(self) -> None:
         ...

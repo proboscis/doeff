@@ -51,6 +51,8 @@
 (val SLOW-PROMPT "SLOW please")
 (val IMAGES-PHRASE "Count the attached images.")
 (val SETTINGS-PHRASE "Tell the settings.")
+;; 公開の口の backend の adapter が切って起こす codex の機能(組み立ての部品の backend は何も切らない — 宣言が argv に載るかを両方で見る)。
+(val PUBLIC-DISABLED #("hooks"))
 ;; 子の process から見た CODEX_HOME の形を答えさせる言い方(替え玉の規則 — 借りた資格の家の形を見る)。
 (val HOME-PHRASE "Tell the home.")
 ;; 録った断りのターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の利用枠切れ・429 のターンをそのまま流す)と、利用枠切れの
@@ -108,7 +110,7 @@
   ;; 子の process は自前の env で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 明示で渡し、替え玉の app-server
   ;; の python が checkout(.venv の site-packages)へ .pyc を書かない(書くと根の conftest の session の終わりの見張りが赤)。
   (val env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "CODEX_HOME" (str (/ tmp-path CODEX-HOME-DIR)) "PYTHONDONTWRITEBYTECODE" "1"})
-  (<- adapter (codex-adapter env CodexApprovalPolicy.NEVER CodexSandboxMode.READ-ONLY))
+  (<- adapter (codex-adapter env CodexApprovalPolicy.NEVER CodexSandboxMode.READ-ONLY #()))
   (match backend
     "fake" (do (<- layer (fake-codex-process-layer world))
                [(sim-time-handler :clock (SimClock)) (lent-credentials LENT) layer adapter])
@@ -122,8 +124,10 @@
 
 (defk public-adapter [#^ dict env]
   {:pre [(: env dict)] :post [(: % Callable)] :tags {:context "headless-codex-adapter-test" :role "entry"}}
-  "公開の口の adapter(組み立ての部品の codex-adapter と同じ宣言 — 許可は NEVER・sandbox は READ-ONLY)を作るため。"
-  (doeff_agents.codex-agent-adapter-handler :env env :approval-policy CodexApprovalPolicy.NEVER :sandbox CodexSandboxMode.READ-ONLY))
+  "公開の口の adapter(組み立ての部品の codex-adapter と同じ許可 NEVER・sandbox READ-ONLY に、切る機能 PUBLIC-DISABLED を足した宣言 —
+   agora は公開の口から hook を切った codex を起こす)を作るため。"
+  (doeff_agents.codex-agent-adapter-handler :env env :approval-policy CodexApprovalPolicy.NEVER :sandbox CodexSandboxMode.READ-ONLY
+                                            :disabled-features PUBLIC-DISABLED))
 
 (defk run-on [#^ str backend #^ Path tmp-path #^ Callable scenario]
   {:pre [(: backend str) (: tmp-path Path) (: scenario Callable)] :post [(: % (| Read dict))]
@@ -425,7 +429,14 @@
 (deftest test-headless-codex-model-effort-and-compaction-reach-the-app-server-stub [tmp-path]
   (<- done (run-on STUB tmp-path declared-settings))
   (assert (and (isinstance done.end AgentTurnCompleted)
-               (= done.end.result-text "SETTINGS effort=high compact=600000 model=gpt-test"))
+               (= done.end.result-text "SETTINGS effort=high compact=600000 model=gpt-test disabled="))
+          done.end))
+
+(deftest test-the-public-codex-handlers-carry-the-disabled-features-to-the-app-server-stub [tmp-path]
+  ;; 公開の口の adapter が宣言した切る機能が、層 2 が起こす app-server の argv の --disable に載る(替え玉が argv を読み返す)。
+  (<- done (run-on PUBLIC-STUB tmp-path declared-settings))
+  (assert (and (isinstance done.end AgentTurnCompleted)
+               (= done.end.result-text "SETTINGS effort=high compact=600000 model=gpt-test disabled=hooks"))
           done.end))
 
 

@@ -138,7 +138,19 @@
   (assert (isinstance started TurnStarted) started)
   (<- so-far (read-to-end started.turn s.turn-timeout))
   (<- answers (records-of so-far AgentMessageDone))
-  (assert (= (tuple (gfor answer answers answer.text)) #("SETTINGS effort=high compact=600000 model=gpt-test")) answers))
+  (assert (= (tuple (gfor answer answers answer.text)) #("SETTINGS effort=high compact=600000 model=gpt-test disabled=")) answers))
+
+
+(deftest test-the-declared-disabled-features-reach-the-app-server-argv
+  {:interpreters ["stub"]}
+  ;; 宣言の切る機能が、app-server を起こす argv の --disable に載る(替え玉が起こされた argv を答えの文にする)。
+  (<- s (settings))
+  (val spec (replace s.spec :disabled-features #("hooks")))
+  (<- started (CodexStartTurn (FreshThread) spec (CodexInput :text "Tell the settings.")))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (<- answers (records-of so-far AgentMessageDone))
+  (assert (= (tuple (gfor answer answers answer.text)) #("SETTINGS effort=None compact=None model=None disabled=hooks")) answers))
 
 
 ;; 借りた口座の auth.json の中身(検の作り物 — 預かり所が封じる形。refresh token は貸し手の印の作り物)。

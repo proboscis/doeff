@@ -418,6 +418,7 @@ def codex_agent_adapter_handler(
     env: Mapping[str, str],
     approval_policy: "CodexApprovalPolicy | None" = None,
     sandbox: "CodexSandboxMode | None" = None,
+    disabled_features: tuple[str, ...] = (),
 ) -> Callable[..., object]:
     """The codex adapter alone: the public effects onto codex layer-2 effects.
 
@@ -425,15 +426,18 @@ def codex_agent_adapter_handler(
     ``env`` is the codex home env (PATH, HOME, CODEX_HOME — the borrowed
     credential is placed per process by layer 2). ``approval_policy`` /
     ``sandbox`` default to the adapter's declaration defaults (never ask;
-    full access — the turn already runs in the caller's sandbox). Layer 2
-    must be answered outside it (``codex_process_layer_handler`` or the fake).
+    full access — the turn already runs in the caller's sandbox).
+    ``disabled_features`` names the codex features each process starts with
+    turned off (``--disable <name>`` — e.g. ``("hooks",)`` runs no hook from
+    any layer); empty keeps codex's defaults. Layer 2 must be answered
+    outside it (``codex_process_layer_handler`` or the fake).
     """
     from doeff import run
 
     compose = _hy_headless_compose_module()
     policy = compose.CodexApprovalPolicy.NEVER if approval_policy is None else approval_policy
     mode = compose.CodexSandboxMode.DANGER_FULL_ACCESS if sandbox is None else sandbox
-    return run(compose.codex_adapter(dict(env), policy, mode))
+    return run(compose.codex_adapter(dict(env), policy, mode, tuple(disabled_features)))
 
 
 _mock_effect_handler = MockAgentHandler()
