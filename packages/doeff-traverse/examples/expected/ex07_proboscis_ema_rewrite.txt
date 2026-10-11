@@ -10,12 +10,8 @@ Failed: 2
   [0] OK: ({'symbol': 'AAPL', 'time': '2024-01-01'}, 150.0)
       index: ok
       signal: ok
-      index: ok
-      signal: ok
       price: ok
   [1] FAILED: symbol not found: BADCO
-      index: ok
-      signal: ok
       index: ok
       signal: ok
       price: failed — symbol not found: BADCO
@@ -27,12 +23,8 @@ Failed: 2
   [2] OK: ({'symbol': 'GOOGL', 'time': '2024-01-01'}, 2800.0)
       index: ok
       signal: ok
-      index: ok
-      signal: ok
       price: ok
   [3] FAILED: market closed for: CLOSED
-      index: ok
-      signal: ok
       index: ok
       signal: ok
       price: failed — market closed for: CLOSED
@@ -42,8 +34,6 @@ Failed: 2
 …
       MarketClosed: market closed for: CLOSED
   [4] OK: ({'symbol': 'MSFT', 'time': '2024-01-01'}, 300.0)
-      index: ok
-      signal: ok
       index: ok
       signal: ok
       price: ok
