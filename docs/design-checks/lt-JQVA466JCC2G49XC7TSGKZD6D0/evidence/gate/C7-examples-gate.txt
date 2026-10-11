@@ -1,0 +1,19 @@
+# C7(M5): 直した例で検 test_examples_run.py・2026-10-11T20:50:54Z・HEAD ac6600f00ca4e66fce246c919c680dd01191d507 + 作業木の直し(ex07・ex08)
+ M packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
+ M packages/doeff-traverse/examples/ex08_tqdm_progress.hy
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -v
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug.hy] PASSED [  8%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy] PASSED [ 16%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy] PASSED [ 25%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy] PASSED [ 33%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy] PASSED [ 41%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex01_basic_fail.hy] PASSED [ 50%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex02_traverse_pipeline.hy] PASSED [ 58%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex03_zip_multi_source.hy] PASSED [ 66%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex04_debug2.hy] PASSED [ 75%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex04_simple.hy] PASSED [ 83%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex05_parallel_timing.hy] PASSED [ 91%]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex06_mediagen_rewrite.hy] PASSED [100%]
+======================== 12 passed, 1 warning in 9.51s =========================
+rc=0
+['/work/toolset/worktrees/doeff-wt-ki-043e-dc/packages/doeff-traverse/doeff_traverse'] ['/work/toolset/worktrees/doeff-wt-ki-043e-dc/packages/doeff-hy/src/doeff_hy'] ['/work/toolset/worktrees/doeff-wt-ki-043e-dc/doeff']

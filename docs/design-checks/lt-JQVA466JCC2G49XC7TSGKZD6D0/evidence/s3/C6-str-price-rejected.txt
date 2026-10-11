@@ -1,0 +1,16 @@
+# C6(S3 失敗例): mock が MSFT の価格を文字列で答える・2026-10-11T20:50:44Z
+## diff 例 → 変種
+<         (resume (get _mock-prices symbol)))))
+>         (resume (if (= symbol "MSFT") "300.0" (get _mock-prices symbol))))))
+> 
+## uv run python -m hy C6-ex07-str-price
+rc=0
+Success: 2
+Failed: 3
+=== probe: 落ちた件の理由 ===
+1 SymbolNotFound symbol not found: BADCO
+3 MarketClosed market closed for: CLOSED
+4 AssertionError fetch-price: post-condition type error: `return value` expected hy.models.Expression([
+  hy.models.Symbol('|'),
+  hy.models.Symbol('float'),
+  hy.models.Symbol('None')]), got str

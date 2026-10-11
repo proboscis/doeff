@@ -46,10 +46,18 @@
     (setv self.indexed-event indexed-event)))
 
 (defclass FetchPrice [EffectBase]
-  "Fetch price series for a signal's symbol."
+  "Fetch price series for a signal's symbol.
+   The backend reports a failure as Fail with SymbolNotFound or MarketClosed,
+   so a reader of the failed items tells the kinds apart by type, not by message."
   (defn __init__ [self signal]
     (.__init__ (super))
     (setv self.signal signal)))
+
+(defclass SymbolNotFound [ValueError]
+  "FetchPrice failure: the backend does not know the symbol.")
+
+(defclass MarketClosed [ValueError]
+  "FetchPrice failure: the market for the symbol is closed.")
 
 
 ;; ===========================================================================
@@ -80,9 +88,10 @@
   result)
 
 (defk fetch-price [signal]
-  "Fetch price data for one signal."
+  "Fetch price data for one signal.
+   None when a Fail handler resumes the failure with None (e.g. normalize_to_none)."
   {:pre [(: signal dict)]
-   :post [(: % float)]}
+   :post [(: % (| float None))]}
   (<- result (FetchPrice signal))
   result)
 
@@ -162,13 +171,13 @@
     (cond
       (= symbol "BADCO")
         (do
-          (<- (Fail (ValueError (+ "symbol not found: " symbol))
+          (<- (Fail (SymbolNotFound (+ "symbol not found: " symbol))
                     :symbol symbol))
           ;; if Fail handler resumes (e.g., normalize-to-none), this continues
           (resume None))
       (= symbol "CLOSED")
         (do
-          (<- (Fail (ValueError (+ "market closed for: " symbol))
+          (<- (Fail (MarketClosed (+ "market closed for: " symbol))
                     :symbol symbol))
           (resume None))
       True

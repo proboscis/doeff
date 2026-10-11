@@ -1,0 +1,21 @@
+# C2(S1 失敗例): ex04 の replace-with-zero を [effect k] の defk で書く(契約は書く)・2026-10-11T20:49:35Z
+## 差分
+23a24
+> (import doeff.program [Resume])
+145,147c146,149
+< (defhandler replace-with-zero
+<   (Fail [cause]
+<     (resume 0.0)))
+---
+> (defk replace-with-zero [effect k]
+>   {:pre [(: effect Fail) (: k "continuation")]
+>    :post [(: % float)]}
+>   (return (yield (Resume k 0.0))))
+## uv run python -m hy C2-ex04-defk-handler
+rc=1
+defk replace-with-zero: parameter names [effect, k] look like an effect handler signature.
+
+## M5 を写しの木(git archive HEAD + 直した examples、ex04 だけ C2 に差し替え)で: uv run --project /home/ubuntu/.worktrees/doeff-wt-ki-043e-dc pytest packages/doeff-traverse/tests/test_examples_run.py -q
+E         defk replace-with-zero: parameter names [effect, k] look like an effect handler signature.
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy]
+1 failed, 11 passed, 1 warning in 8.75s
