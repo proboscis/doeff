@@ -30,6 +30,7 @@
   AgentCapabilityUnsupportedError NoTurnInFlightError
   RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents.effects.agent [AutocompactTokens])
+(import doeff_hy.frozen [freeze-json])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
@@ -676,3 +677,54 @@
   ;; 結果は次のターンの出来事として届く(前のターンの終わりの後)。
   (<- later (of-kind second.events AgentToolResultEvent))
   (assert (= (len later) 1) second.events))
+
+
+;; ほかの道具を呼ぶターンの言い方(替え玉の規則 — 録った codex 0.162.1 のほかの道具の呼びのターン other-tools を流す。子の agent の
+;; thread の行も録った順のまま混ざる)。
+(val OTHER-TOOLS-PROMPT "OTHER-TOOLS please")
+
+(defk other-tools-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "ほかの道具(MCP・動的な道具・画像を見る道具・子の agent)を呼ぶ 1 つのターンを公開 effect だけで最後まで読むため。"
+  (<- handle (launch s "codex-other-tools" OTHER-TOOLS-PROMPT {}))
+  (<- done (read-until handle ended s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(deftest test-headless-codex-other-tool-items-reach-tool-use-and-tool-result-events-stub [tmp-path]
+  ;; 失敗ケース(card ki-c09b93b72bff): 録った codex 0.162.1 の mcpToolCall・dynamicToolCall・imageView・collabAgentToolCall の item も、
+  ;; commandExecution ほかと同じ出来事(AgentToolUseEvent の ToolCall・AgentToolResultEvent の ToolAnswer)で届く — 道具の名は codex の
+  ;; item の種類の名、命令は item の中身の欄(MCP と動的な道具の引数は道具が決めた形のまま)。子の agent の thread の答えは親の答えに
+  ;; 混ざらない。
+  (<- done (run-on STUB tmp-path other-tools-turn))
+  (assert (isinstance done Read) done)
+  (assert (and (isinstance done.end AgentTurnCompleted) (= done.end.result-text "Others done.")) done.end)
+  (<- uses (of-kind done.events AgentToolUseEvent))
+  (val calls (tuple (gfor use uses call use.tool-calls call)))
+  (assert (= (tuple (gfor call calls #(call.id call.name)))
+             #(#("call_other_0" "mcpToolCall") #("call_other_1" "dynamicToolCall") #("call_other_2" "imageView")
+               #("call_other_3" "collabAgentToolCall") #("call_other_4" "collabAgentToolCall")))
+          calls)
+  (setv [mcp dynamic image spawn wait] calls)
+  (assert (= mcp.input (freeze-json {"server" "recorder" "tool" "echo" "arguments" {"text" "hi"}})) mcp.input)
+  (assert (= dynamic.input (freeze-json {"tool" "lookup_ticket" "arguments" {"id" "T-1"}})) dynamic.input)
+  (assert (= (list image.input) ["path"]) image.input)
+  (assert (.endswith (get image.input "path") "/cwd/pixel.png") image.input)
+  (assert (= spawn.input (freeze-json {"tool" "spawnAgent" "prompt" "SUB-AGENT say hi"})) spawn.input)
+  (val child (get wait.input "receivers" 0))
+  (assert (= wait.input (freeze-json {"tool" "wait" "receivers" [child]})) wait.input)
+  ;; 結果: MCP の道具と動的な道具は答えの文・画像を見る道具は空の文・子の agent の道具は子ごとの状態(と最後の答え)の行。
+  (<- results (of-kind done.events AgentToolResultEvent))
+  (val answers (tuple (gfor result results answer result.answers #(answer.id answer.text answer.is-error))))
+  (assert (= answers #(#("call_other_0" "echo: hi" False)
+                       #("call_other_1" "ticket T-1: open" False)
+                       #("call_other_2" "" False)
+                       #("call_other_3" (+ child ": pendingInit") False)
+                       #("call_other_4" (+ child ": completed — Sub done.") False)))
+          answers)
+  (val use-seqs (dfor use uses call use.tool-calls call.id use.seq))
+  (val result-seqs (dfor result results answer result.answers answer.id result.seq))
+  (assert (all (gfor #(id seq) (.items use-seqs) (< seq (get result-seqs id)))) #(use-seqs result-seqs))
+  ;; 子の agent の答え(Sub done.)は親の答えの文に届かない。
+  (<- texts (of-kind done.events AgentTextEvent))
+  (assert (= (tuple (gfor text texts text.text)) #("Others done.")) texts))
