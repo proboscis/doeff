@@ -30,7 +30,8 @@ OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(�
   名乗りなど — この部品は上に載る系の属性の名を持たない。同じ名なら doeff の 5 つが勝つ)。
 - 送りは job の write を止めない: 書き手の thread は行を切って上限つきの溜め(行の数と byte)へ入れるだけで待たない。溢れた行は捨てて
   数える。束ねて POST するのは別の送りの thread(送り先が遅い・落ちている時も、file へは今まで通り全部書く — 書けなければ読み捨てるのと
-  同じ考え方)。1 行の中身は上限(ShipLimits.line_bytes)で切って送る(file には切らずに書く)。
+  同じ考え方)。1 行の中身は上限(ShipLimits.line_bytes)で切って送る(file には切らずに書く)。上限は送る body の UTF-8 の byte で
+  守る — 読んだ byte で切った後、置き換えの字(3 byte)で伸びた分と字の途中で切れた分も、字の境で落とす。
 - 終わり(end): 書き手が pipe を読み切ってから、残りの行を短い上限(ShipLimits.end_seconds)の内で送って止める — 送りが file の書きの
   後なので、送りが遅れて shim が KILL に先を越されても file は欠けない。上限の後に残った行は捨てて数える。
 - 送り先の値が使えない(URL の形・属性の並べ方・job の文脈の欠け)時は送らず、理由を 1 行 log に書く(job はそのまま走る)。
@@ -120,14 +121,16 @@ def read_some(source: int) -> bytes:
 @dataclass(frozen=True)
 class ShipLimits:
     """送りの上限(頭の註の「送り」): queue_lines と queue_bytes = 送りを待つ行の溜めの上限(行の数と中身の byte — 越える行は捨てて
-    数える)・line_bytes = 1 行の中身の上限(越えた分は送らず、行に印 doeff.cut を付ける)・batch_lines と batch_bytes = 1 回の POST に
+    数える)・line_bytes = 1 行の中身(送る body の UTF-8)の上限(越えた分は送らず、行に印 doeff.cut を付ける — 取り決め job-log/1 の
+    1 行の上限。定義元は agora-controllers の deploy/claude-telemetry/claude-telemetry.yaml で、値と印の名が合う事は同じ repo の
+    controllers/agora_sim/tests/test_job_log_route.hy が見張る)・batch_lines と batch_bytes = 1 回の POST に
     束ねる上限・interval_seconds = 束が満ちなくても送るまでの間・post_seconds = 1 回の POST の待ちの上限・end_seconds = 終わり(end)に
     残りを送る上限(shim の掃除の余裕 WorkerPolicy.shim-sweep-margin-ms 1.5 秒の内に、読み切りの上限 DRAIN_LIMIT_SECONDS と並べて
     収まる値)・pause_seconds = POST が失敗した後、次の POST までの間(落ちた送り先を叩き続けない)。"""
 
     queue_lines: int = 10_000
     queue_bytes: int = 4 << 20
-    line_bytes: int = 16 << 10
+    line_bytes: int = 4 << 10
     batch_lines: int = 1_000
     batch_bytes: int = 1 << 20
     interval_seconds: float = 1.0
@@ -312,28 +315,33 @@ def any_value(value: str | int | bool) -> dict[str, object]:
             return {"stringValue": value}
 
 
-def record_json(item: QueuedLine, dropped: int) -> dict[str, object]:
+def record_json(item: QueuedLine, dropped: int, line_bytes: int) -> dict[str, object]:
     """送る行 1 つを OTLP の log の record 1 つ(JSON)にするため。body = 刻の頭と改行(CR LF の CR も)を除いた行 — UTF-8 でない byte は
-    置き換えの字にする(file には元の byte のまま在る)。印は 3 つ: 通し番号の doeff.line・中身を切った印の doeff.cut・それまでに捨てた
-    行の数の doeff.dropped(0 なら置かない)。"""
+    置き換えの字にする(file には元の byte のまま在る)。置き換えた後の UTF-8 が line_bytes を越えれば、越えた分を字の境で落とす(読んだ
+    byte で切っても、置き換えの字と字の途中の切れ目で伸びる)。印は 3 つ: 通し番号の doeff.line・中身を切った印の doeff.cut(読んだ
+    byte で切った行と、ここで落とした行)・それまでに捨てた行の数の doeff.dropped(0 なら置かない)。"""
     head = item.line.head
-    body = head[:-1] if head.endswith(b"\r") and not item.line.cut else head
-    marks = (("doeff.line", item.number), *((("doeff.cut", True),) if item.line.cut else ()), *((("doeff.dropped", dropped),) if dropped else ()))
+    text = (head[:-1] if head.endswith(b"\r") and not item.line.cut else head).decode("utf-8", errors="replace")
+    encoded = text.encode("utf-8")
+    trimmed = len(encoded) > line_bytes
+    body = encoded[:line_bytes].decode("utf-8", errors="ignore") if trimmed else text
+    cut = item.line.cut or trimmed
+    marks = (("doeff.line", item.number), *((("doeff.cut", True),) if cut else ()), *((("doeff.dropped", dropped),) if dropped else ()))
     return {
         "timeUnixNano": str(item.line.at_ns),
-        "body": {"stringValue": body.decode("utf-8", errors="replace")},
+        "body": {"stringValue": body},
         "attributes": [{"key": key, "value": any_value(value)} for key, value in marks],
     }
 
 
-def logs_body(target: JobLogTarget, batch: tuple[QueuedLine, ...], dropped: int) -> bytes:
-    """送る行の束 1 つを、OTLP/HTTP の logs の JSON の本文(resource 1 つ・scope 1 つ)にするため。"""
+def logs_body(target: JobLogTarget, batch: tuple[QueuedLine, ...], dropped: int, line_bytes: int) -> bytes:
+    """送る行の束 1 つを、OTLP/HTTP の logs の JSON の本文(resource 1 つ・scope 1 つ — 1 行の body は line_bytes まで)にするため。"""
     resource = [{"key": attribute.key, "value": any_value(attribute.value)} for attribute in target.resource]
     document = {
         "resourceLogs": [
             {
                 "resource": {"attributes": resource},
-                "scopeLogs": [{"scope": {"name": JOB_LOG_SERVICE}, "logRecords": [record_json(item, dropped) for item in batch]}],
+                "scopeLogs": [{"scope": {"name": JOB_LOG_SERVICE}, "logRecords": [record_json(item, dropped, line_bytes) for item in batch]}],
             }
         ]
     }
@@ -470,7 +478,7 @@ class JobLogShipper:
     def sent(self, poster: Poster, batch: Batch) -> bool:
         """束 1 つを POST するため。答え = 送り先が受けたか。受けなければ束を捨てて数え、終わりの前なら pause_seconds だけ次の POST を
         控える(終わりが来たら控えをやめる)。"""
-        body = logs_body(self.target, batch.lines, self.counts().dropped)
+        body = logs_body(self.target, batch.lines, self.counts().dropped, self.limits.line_bytes)
         if poster.posted(body, batch.timeout):
             return True
         with self.ready:
