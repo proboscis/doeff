@@ -100,10 +100,15 @@ def _required_packages(form: hy.models.Expression) -> list[str]:
     return packages
 
 
-def _macro_violations(name: str) -> list[str]:
-    source = (EXAMPLES / name).read_text(encoding="utf-8")
+def _forms(source: str, filename: str) -> Iterator[object]:
+    """source の form を全部(入れ子の form も)。"""
+    for top in hy.read_many(source, filename=filename):
+        yield from _subforms(top)
+
+
+def _macro_violations(source: str, filename: str) -> list[str]:
     violations: list[str] = []
-    for form in _subforms(list(hy.read_many(source, filename=str(EXAMPLES / name)))):
+    for form in _forms(source, filename):
         if not (
             isinstance(form, hy.models.Expression)
             and form
@@ -112,7 +117,7 @@ def _macro_violations(name: str) -> list[str]:
             continue
         head = str(form[0])
         if head in _MACRO_DEFINERS:
-            violations.append(f"{head} {hy.repr(form[1]) if len(form) > 1 else ''}")
+            violations.append(f"{head} {form[1] if len(form) > 1 else ''}".strip())
         elif head == "require":
             violations.extend(
                 f"require {package}"
@@ -146,9 +151,21 @@ def test_broken_example_is_still_broken(name: str, deadline_scale_factor: float)
 
 @pytest.mark.parametrize("name", _examples())
 def test_example_uses_only_doeff_hy_macros(name: str) -> None:
-    assert _macro_violations(name) == [], (
+    path = EXAMPLES / name
+    assert _macro_violations(path.read_text(encoding="utf-8"), str(path)) == [], (
         f"{name} が macro を定義するか doeff-hy の外から require している — macro は doeff-hy に置く"
     )
+
+
+def test_macro_check_sees_nested_forms() -> None:
+    """今の例には違反が無いので、確かめが form の中へ降りる事は違反を含む source で確かめる
+    (降りない確かめは、例の中の defmacro を見逃して緑のまま — 設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の c6a)。"""
+    source = """
+(require doeff-hy.macros [defk] my-shims [fold] doeff_hy.handle :as h)
+(when True
+  (defmacro fold [coll] coll))
+"""
+    assert _macro_violations(source, "<inline>") == ["require my_shims", "defmacro fold"]
 
 
 def test_tables_name_examples_as_they_are() -> None:
