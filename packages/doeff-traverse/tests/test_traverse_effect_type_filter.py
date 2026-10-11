@@ -13,13 +13,14 @@ import pytest
 from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader
 from doeff_core_effects.scheduler import scheduled
-from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
+from doeff_traverse.effects import Fail, Inspect, ItemOutcome, Reduce, Skip, SortBy, Take, Traverse, Zip
 from doeff_traverse.handlers import fail_handler, normalize_to_none, parallel, parallel_fail_fast, sequential
 from doeff_vm._effect_types import handler_effect_types
 
 from doeff import do, run, with_handlers
 
-COLLECTION = (Skip, Traverse, Reduce, Zip, Inspect, SortBy, Take)
+# ItemOutcome: 件の結末の知らせ(handler 自身が出す)を内側の handler のどれも受けなかった時、handler 自身が None で答える。
+COLLECTION = (Skip, Traverse, Reduce, Zip, Inspect, SortBy, Take, ItemOutcome)
 
 
 def _raw(installed: object) -> Callable[..., object]:

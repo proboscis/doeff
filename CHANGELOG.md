@@ -4,6 +4,12 @@
 
 ### Added
 
+- `doeff-traverse`: added `ItemOutcome(traverse, label, total, outcome, item)` — `sequential`, `parallel` and
+  `parallel_fail_fast` report each item's outcome (`ok` / `failed` / `skipped` / `carried`) under the handlers between
+  the Traverse and themselves, while one of those handlers names `ItemOutcome`; and `progress_bars(make_bar)`, which
+  counts them into one bar per Traverse (`tqdm.tqdm` fits) — the bar now reaches its total and closes when items fail
+  (card ki-e3a936788353).
+
 - Added `HttpRequest`, `HttpResponse`, and `HttpError` to `doeff-core-effects`.
 - Added Hy `defhandler`-backed `http_production_handler` with owned `httpx.AsyncClient` lifecycle
   cleanup, JSON body serialization, retry/backoff, timeout/redirect forwarding, and `slog` request

@@ -2,7 +2,8 @@
 doeff-traverse — collection comprehension as effects.
 
 Provides Traverse, Reduce, Zip, Fail, SortBy, Take, and try_call for
-handler-injected error recovery and execution strategy.
+handler-injected error recovery and execution strategy, and ItemOutcome
+(with the progress_bars handler) for counting each item's outcome.
 
 Comprehension macro (for/do) uses From, When, and Skip internally.
 """
@@ -13,6 +14,9 @@ from doeff_traverse.effects import (
 )
 from doeff_traverse.effects import (
     Inspect as Inspect,
+)
+from doeff_traverse.effects import (
+    ItemOutcome as ItemOutcome,
 )
 from doeff_traverse.effects import (
     Reduce as Reduce,
@@ -43,6 +47,9 @@ from doeff_traverse.handlers import (
 )
 from doeff_traverse.handlers import (
     parallel_fail_fast as parallel_fail_fast,
+)
+from doeff_traverse.handlers import (
+    progress_bars as progress_bars,
 )
 from doeff_traverse.handlers import (
     sequential as sequential,
