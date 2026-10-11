@@ -1,23 +1,23 @@
 # c5: 検の file の写しで F1(展開の引き出しを断る)・F2(口を doeff の物に限る)を 1 つずつ外し、inline の検だけを走らせる
 ## f1: 元との差
-78c78
+84c84
 < _MACRO_EXPANDERS = frozenset({"macroexpand", "macroexpand_1", "macroexpand_all"})
 ---
 > _MACRO_EXPANDERS: frozenset[str] = frozenset()
 $ uv run pytest <写し>/f1/tests/test_examples_run.py -q -p no:randomly -p no:cacheprovider --tb=line -k 'macro_check_sees_nested_forms or runner_call_check_sees_nested_forms'
 E   AssertionError: assert ['require sup...efmacro fold'] == ['require sup...pand_1 の呼び出し']
-/tmp/tmp.UMWRx2XciL/f1/tests/test_examples_run.py:356: AssertionError: assert ['require sup...efmacro fold'] == ['require sup...pand_1 の呼び出し']
-FAILED ../../../../tmp/tmp.UMWRx2XciL/f1/tests/test_examples_run.py::test_macro_check_sees_nested_forms
-1 failed, 1 passed, 8 deselected in 0.55s
+/tmp/tmp.Ex24Lj6Pq7/f1/tests/test_examples_run.py:442: AssertionError: assert ['require sup...efmacro fold'] == ['require sup...pand_1 の呼び出し']
+FAILED ../../../../tmp/tmp.Ex24Lj6Pq7/f1/tests/test_examples_run.py::test_macro_check_sees_nested_forms
+1 failed, 1 passed, 8 deselected in 0.38s
 exit=1
 ## f2: 元との差
-229c229
+324c324
 <         return name if name in runners else None
 ---
 >         return name if name in _PROGRAM_RUNNERS else None
 $ uv run pytest <写し>/f2/tests/test_examples_run.py -q -p no:randomly -p no:cacheprovider --tb=line -k 'macro_check_sees_nested_forms or runner_call_check_sees_nested_forms'
 E   AssertionError: assert ['doeff.run', 'run'] == ['arun', 'doeff.run', 'run']
-/tmp/tmp.UMWRx2XciL/f2/tests/test_examples_run.py:376: AssertionError: assert ['doeff.run', 'run'] == ['arun', 'doeff.run', 'run']
-FAILED ../../../../tmp/tmp.UMWRx2XciL/f2/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
-1 failed, 1 passed, 8 deselected in 0.32s
+/tmp/tmp.Ex24Lj6Pq7/f2/tests/test_examples_run.py:462: AssertionError: assert ['doeff.run', 'run'] == ['arun', 'doeff.run', 'run']
+FAILED ../../../../tmp/tmp.Ex24Lj6Pq7/f2/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
+1 failed, 1 passed, 8 deselected in 0.42s
 exit=1

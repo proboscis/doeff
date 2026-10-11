@@ -1,9 +1,10 @@
 # c1: 答えを変えない macro の変更 2 つ(盲検 B の s1-macro-change.patch = 実行時の traverse の展開から余分な (do …) を外す・gensym-rename.patch.txt = <- の展開の gensym の名 bound → bound_value)を当て、examples と例の検は変えない
- .../evidence/checks/c0-all-green.txt               | 83 +++++++++++-----------
+ .../evidence/checks/c0-all-green.txt               |  6 +--
+ .../checks/c1-macro-change-examples-green.txt      | 48 ----------------------
  packages/doeff-hy/src/doeff_hy/macros.hy           |  2 +-
  packages/doeff-hy/src/doeff_hy/outcome_forms.hy    |  2 +-
- 3 files changed, 45 insertions(+), 42 deletions(-)
-HEAD=ddbd4cd66bc451e0133ff5c3c26856eefc338ac4
+ 4 files changed, 5 insertions(+), 53 deletions(-)
+HEAD=af08454efbfe81c64ccf173dd3fd20fef9cdbbef
 木の差分(docs/ の外):
  M packages/doeff-hy/src/doeff_hy/macros.hy
  M packages/doeff-hy/src/doeff_hy/outcome_forms.hy
@@ -44,6 +45,6 @@ PASSED packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_hy_name_check_sees_generated_names
-SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:327: got empty parameter set for (name)
-36 passed, 1 skipped, 1 warning in 32.70s
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:413: got empty parameter set for (name)
+36 passed, 1 skipped, 1 warning in 13.51s
 exit=0

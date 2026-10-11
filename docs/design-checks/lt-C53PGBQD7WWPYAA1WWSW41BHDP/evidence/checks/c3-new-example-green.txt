@@ -1,5 +1,5 @@
 # c3: 新しい読み物の例 ex10_simple_copy.hy(ex04_simple の写し)と期待の出力を足す — 例の検は変えない
-HEAD=ddbd4cd66bc451e0133ff5c3c26856eefc338ac4
+HEAD=af08454efbfe81c64ccf173dd3fd20fef9cdbbef
 木の差分(docs/ の外):
 ?? packages/doeff-traverse/examples/ex10_simple_copy.hy
 ?? packages/doeff-traverse/examples/expected/ex10_simple_copy.txt
@@ -43,6 +43,6 @@ PASSED packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_hy_name_check_sees_generated_names
-SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:327: got empty parameter set for (name)
-39 passed, 1 skipped, 1 warning in 37.36s
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:413: got empty parameter set for (name)
+39 passed, 1 skipped, 1 warning in 8.39s
 exit=0

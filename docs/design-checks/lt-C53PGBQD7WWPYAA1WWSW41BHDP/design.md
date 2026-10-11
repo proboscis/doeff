@@ -28,11 +28,12 @@ doeff-hy の macros.hy・outcome_forms.hy(macros)    macros — 展開の形を�
 
 - 依頼 lt-C53PGBQD7WWPYAA1WWSW41BHDP(class=investigate)。範囲は**実装完了まで**。
 - 実装済み: doeff main 7edd471c6(land L2133・基 cefb92a17)で 2 本・表 OUTPUT_NOT_COMPARED・その付属の検を外した。
-- この設計検証で足した物(branch wt/ki-3497-design-check・基 a2254d66c):
-  - cf27cee98: E1 `test_example_runs_a_program`
-  - b47af0f0f: 盲検への直し F1・F2
-  - ddbd4cd66: 断りの文
-- 盲検の前の主張は design-before-blind.md(commit dd5eddeeb で固定)。この文書は盲検の後の結論で、前の主張は書き換えていない。
+- この設計検証で足した物。初めは基 a2254d66c の上で branch wt/ki-3497-design-check に積んだ。登記の前に、例の検の子を 4 本ずつ並べる main の 78adffc5d と同じ file を触るので origin/main 2bf226a96 の上へ載せ直し、branch wt/ki-3497-design-check-r2 にした。code は載せ直しの前後で同じ。
+  - 1ead5ed24(前 cf27cee98): E1 `test_example_runs_a_program`
+  - fc1472b2d(前 b47af0f0f): 盲検への直し F1・F2
+  - 2c306ccc8(前 ddbd4cd66): 断りの文
+- 盲検の前の主張は design-before-blind.md(commit 9fde5a1b4・前 dd5eddeeb で固定)。この文書は盲検の後の結論で、前の主張は書き換えていない。
+- 盲検 A・B に読ませた版は cf27cee98(E1 だけを足した版)。前の sha は branch wt/ki-3497-design-check に残る。
 
 ## 1. 要件
 
@@ -116,7 +117,7 @@ doeff-hy の macros.hy・outcome_forms.hy(macros)    macros — 展開の形を�
 | distribution | 例の検は 1 つの機体の pytest の子 process で閉じる。別の木(日次の作業木)で走る事は既存の path の検が受け持ち、この変更では変えない |
 | concurrency | 例は 1 本ずつ子 process で走る。ex05 の並列は例の中身で、この変更では変えない |
 
-## 5. 確かめの一覧(版 ddbd4cd66・evidence/measure.sh.txt で取る)
+## 5. 確かめの一覧(載せ直した後の版 af08454ef・evidence/measure.sh.txt で取る — 載せ直しの前の版 ddbd4cd66 でも同じ合否だった)
 
 | id | シナリオ | 種類 | 期待 | 観測 | 証拠 |
 |---|---|---|---|---|---|

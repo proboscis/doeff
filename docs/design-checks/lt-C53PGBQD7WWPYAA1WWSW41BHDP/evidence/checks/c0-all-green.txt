@@ -1,5 +1,5 @@
 # c0: 直した後の版で例の検が全部緑
-HEAD=ddbd4cd66bc451e0133ff5c3c26856eefc338ac4
+HEAD=af08454efbfe81c64ccf173dd3fd20fef9cdbbef
 木の差分(docs/ の外):
 (なし)
 $ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q -p no:randomly -rA --tb=line 
@@ -39,6 +39,6 @@ PASSED packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_hy_name_check_sees_generated_names
-SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:327: got empty parameter set for (name)
-36 passed, 1 skipped, 1 warning in 29.42s
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:413: got empty parameter set for (name)
+36 passed, 1 skipped, 1 warning in 12.21s
 exit=0

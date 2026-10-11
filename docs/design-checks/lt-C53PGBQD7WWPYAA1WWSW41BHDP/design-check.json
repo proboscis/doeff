@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "lt-C53PGBQD7WWPYAA1WWSW41BHDP",
-  "base_revision": "a2254d66cfc52f9fa9c3b4829bff2d76191bccb3",
+  "base_revision": "2bf226a96ed1a2abb3e66dbaf1c5119a4e61098c",
   "author": {
     "conversation_id": "c-YAFJJ0FTRF4AV9NQAHV3AC8N95",
     "model": "claude-opus-5-5",
@@ -14,7 +14,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "4de9e6086506c521b58cb098c9d0901d87bf1c794d3dd0c90263d23e86ab2c0a"
+    "sha256": "22fb6923a466e4887c87cb02e42e5854699d95ed9038295a01fd7c239c563835"
   },
   "design_before_blind": {
     "path": "design-before-blind.md",
@@ -148,7 +148,7 @@
       "change": "doeff-hy の traverse・<- の展開の形や gensym の名を、例の答えと Requires の名を変えずに変える(例: 実行時の traverse の展開から余分な (do …) を外す・gensym の名 bound → bound_value)",
       "claim": "変えるのは macros だけ。examples・期待の出力・example-check は 1 行も変えず、例の検は緑のまま。展開を印字したり手で写したりする file を examples/ に戻すと、E1・E3 が断る(design-before-blind.md §4 S1)",
       "expected_scope": "macros だけ。examples・期待の出力・example-check は変えない",
-      "actual_scope": "直す前(cf27cee98): 盲検 A・B が、Program を走らせる例に hy.macroexpand の印字を足すと検を全部通る事を示し(再現 r1: 39 passed)、その後の macro の変更でその 2 本の期待の出力の書き直しが要った(r2: 2 failed)— 隠すはずの展開の形が examples に漏れた。直した後(ddbd4cd66): 同じ macro の変更 2 つで examples・検を変えずに緑(c1)、展開を印字する例は F1 で赤(c2)",
+      "actual_scope": "直す前(cf27cee98): 盲検 A・B が、Program を走らせる例に hy.macroexpand の印字を足すと検を全部通る事を示し(再現 r1: 39 passed)、その後の macro の変更でその 2 本の期待の出力の書き直しが要った(r2: 2 failed)— 隠すはずの展開の形が examples に漏れた。直した後(載せ直した後の af08454ef — 載せ直す前の ddbd4cd66 でも同じ): 同じ macro の変更 2 つで examples・検を変えずに緑(c1)、展開を印字する例は F1 で赤(c2)",
       "changed_modules": [
         "macros"
       ],
@@ -159,7 +159,7 @@
         "premerge-selection"
       ],
       "reason": "直す前の波及は知識の漏洩(展開の形が例の期待の出力に写る)で、正当な契約の変更ではない。E1 は口の有無だけを見て、E3 は Hy の付ける名しか見なかったので、Program を走らせつつ展開を印字する例を断れなかった。盲検 A の付記の Requires の名(ex09 の Skip の import)は macros の公開の契約で、変えれば使い手全部が変わる — S1 の前提の外(再現 r4: 消すと例の検 E2 が赤)",
-      "revision": "F1: example-check の test_example_uses_only_doeff_hy_macros が hy.macroexpand・macroexpand-1・macroexpand-all の呼び出しを違反に数える(b47af0f0f・文は ddbd4cd66)。macros の口に Requires の名を書き足し、S1 の前提に「Requires の名は変えない」を足した。再検証 c1・c2・c5"
+      "revision": "F1: example-check の test_example_uses_only_doeff_hy_macros が hy.macroexpand・macroexpand-1・macroexpand-all の呼び出しを違反に数える(fc1472b2d・文は 2c306ccc8 — 載せ直す前は b47af0f0f・ddbd4cd66)。macros の口に Requires の名を書き足し、S1 の前提に「Requires の名は変えない」を足した。再検証 c1・c2・c5"
     },
     {
       "id": "S2",
@@ -168,7 +168,7 @@
       "change": "新しい読み物の例(Program を走らせ、件の結果を印字する)を examples/ に足す",
       "claim": "変えるのは examples(例と期待の出力)だけ。出力を比べずに通す除外の行は要らないし作れない。Program を走らせない debug 用の file は、期待の出力の中身に依らず E1 が赤にする(design-before-blind.md §4 S2)",
       "expected_scope": "examples だけ(… を置く例は CASE_FAILURE_MUTANTS の 1 行も)",
-      "actual_scope": "直す前(cf27cee98): 盲検 B が、E1 の拾い方が名だけで口を数え、asyncio.run・subprocess.run・例の中で定義した run も口に見える事を示した(再現 r3)— debug 用の file が E1 を通り得た。直した後(ddbd4cd66): 新しい読み物の例は検の表を変えずに緑(c3)、doeff の外の run だけを呼ぶ debug 用の file は標準出力どおりの期待の出力でも E1 で赤(c4)",
+      "actual_scope": "直す前(cf27cee98): 盲検 B が、E1 の拾い方が名だけで口を数え、asyncio.run・subprocess.run・例の中で定義した run も口に見える事を示した(再現 r3)— debug 用の file が E1 を通り得た。直した後(載せ直した後の af08454ef — 載せ直す前の ddbd4cd66 でも同じ): 新しい読み物の例は検の表を変えずに緑(c3)、doeff の外の run だけを呼ぶ debug 用の file は標準出力どおりの期待の出力でも E1 で赤(c4)",
       "changed_modules": [
         "examples"
       ],
@@ -179,7 +179,7 @@
         "premerge-selection"
       ],
       "reason": "読み物の例を足す時の波及は examples の中で閉じる(c3)。直す前の穴は、example-check が「doeff の口」という知識を名だけで持っていた事による強制の抜け",
-      "revision": "F2: 口は doeff から import した run・async_run(別名も)か (doeff.run …) の呼び出しに限る(_imported_runners・_runner_call・b47af0f0f)。inline の検に asyncio.run・subprocess.run・例の中の defn run・別名の pure :as run を足した。再検証 c3・c4・c5"
+      "revision": "F2: 口は doeff から import した run・async_run(別名も)か (doeff.run …) の呼び出しに限る(_imported_runners・_runner_call・fc1472b2d — 載せ直す前は b47af0f0f)。inline の検に asyncio.run・subprocess.run・例の中の defn run・別名の pure :as run を足した。再検証 c3・c4・c5"
     },
     {
       "id": "S3",
@@ -214,11 +214,11 @@
         "S2"
       ],
       "control": "positive",
-      "expectation": "直した後の版 ddbd4cd66 で例の検が全部緑",
+      "expectation": "載せ直した後の版 af08454ef で例の検が全部緑",
       "observation": "36 passed・1 skipped(空の BROKEN の表)・exit 0",
       "evidence": {
         "path": "evidence/checks/c0-all-green.txt",
-        "sha256": "4f6d3429e1a39c18c8ea141443a23752289ed5431ae5f697ff4c850b5d51c54f"
+        "sha256": "1dbf3b274c5e4612f3bc7d0fc3f2fe3168703a9d5b677505c5085729b95f5824"
       },
       "status": "passed"
     },
@@ -232,7 +232,7 @@
       "observation": "36 passed・1 skipped・exit 0(木の差分は macros.hy・outcome_forms.hy だけ)",
       "evidence": {
         "path": "evidence/checks/c1-macro-change-examples-green.txt",
-        "sha256": "8658e4860f75257439e37eaaaa814e182e82f32a2ae92995b357f345ff4dd8a9"
+        "sha256": "d13ddb0505fe7ae691959360189342b084de7db96f1f453f41b2361f567aea75"
       },
       "status": "passed"
     },
@@ -246,7 +246,7 @@
       "observation": "5 failed: test_example_uses_only_doeff_hy_macros[ex04_traverse_macro・ex10_for_do_desugar・ex04_debug](macroexpand の呼び出し)・test_example_runs_a_program[ex04_debug]・test_example_runs[ex04_debug](期待の出力が無い)。ex04_traverse_macro・ex10 の test_example_runs は緑 — 断ったのは F1",
       "evidence": {
         "path": "evidence/checks/c2-expansion-printing-examples-red.txt",
-        "sha256": "cd5504915c81b4452a6431fc3671b867b8b2c4b8196aad0b80b9bb91e4457494"
+        "sha256": "c7c525280ab31238d0ff3c68494014563d4f2f80fe7d9870daaa74ad2bbb143a"
       },
       "status": "passed"
     },
@@ -260,7 +260,7 @@
       "observation": "39 passed・1 skipped・exit 0",
       "evidence": {
         "path": "evidence/checks/c3-new-example-green.txt",
-        "sha256": "f9328fc602a0d04946438b77a1770fcefabe180a575b42478f47a55bd9b238c7"
+        "sha256": "473e70a26570bf8d1c24a0ecfe6dd644adb4e7f551196685d0b32df7fcea3509"
       },
       "status": "passed"
     },
@@ -274,7 +274,7 @@
       "observation": "1 failed: test_example_runs_a_program[ex10_debug_repr.hy](doeff の件を走らせる口を呼ばない)・他は緑。probe: subprocess.run・asyncio.run・local defn run → いずれも []",
       "evidence": {
         "path": "evidence/checks/c4-debug-file-other-runs-red.txt",
-        "sha256": "e8d2204339b2070c6b8421af239fc13d37a49d9659cc69d854fb902d24c2de86"
+        "sha256": "5093d7c8aa2bdf45eb7cc852ae44639b5c1f78dd25241468854b85d8b315d832"
       },
       "status": "passed"
     },
@@ -289,7 +289,7 @@
       "observation": "f1: test_macro_check_sees_nested_forms が赤(macroexpand の違反が出ない)。f2: test_runner_call_check_sees_nested_forms が赤(['doeff.run','run'] — 別名 arun を拾わず、写しは doeff の外の run も数える形)",
       "evidence": {
         "path": "evidence/checks/c5-inline-checks-guard-the-fix-red.txt",
-        "sha256": "48a840de5f174b1678d2a876fde9c73cff9bcc8954ba4315e2649362ef002fe1"
+        "sha256": "2c306da8bf085bd2d649ff70605f2880c0a12dd3cbd5c1a4a783ea3c9db13d16"
       },
       "status": "passed"
     }

@@ -1,5 +1,5 @@
 # c2: 盲検 B の proposed-ex04.patch・盲検 A の ex10(期待の出力つき)・cefb92a17 の ex04_debug を置く — 展開の引き出しと、件を走らせない file を断るか
-HEAD=ddbd4cd66bc451e0133ff5c3c26856eefc338ac4
+HEAD=af08454efbfe81c64ccf173dd3fd20fef9cdbbef
 木の差分(docs/ の外):
  M packages/doeff-traverse/examples/ex04_traverse_macro.hy
  M packages/doeff-traverse/examples/expected/ex04_traverse_macro.txt
@@ -8,15 +8,15 @@ HEAD=ddbd4cd66bc451e0133ff5c3c26856eefc338ac4
 ?? packages/doeff-traverse/examples/expected/ex10_for_do_desugar.txt
 $ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q -p no:randomly -rA --tb=line 
 E   AssertionError: ex04_debug.hy は doeff の件を走らせる口(async_run・run — doeff から import した名か doeff.run)を呼ばない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
-/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:278: AssertionError: ex04_debug.hy は doeff の件を走らせる口(async_run・run — doeff から import した名か doeff.run)を呼ばない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用
+/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:373: AssertionError: ex04_debug.hy は doeff の件を走らせる口(async_run・run — doeff から import した名か doeff.run)を呼ばない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用
 E   AssertionError: ex04_debug.hy の期待の出力 expected/ex04_debug.txt が無い — 例を走らせた標準出力を置き、走るたびに変わる所を … にする
-/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:290: AssertionError: ex04_debug.hy の期待の出力 expected/ex04_debug.txt が無い — 例を走らせた標準出力を置き、走るたびに変わる所を … にする
+/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:385: AssertionError: ex04_debug.hy の期待の出力 expected/ex04_debug.txt が無い — 例を走らせた標準出力を置き、走るたびに変わる所を … にする
 E   AssertionError: ex04_debug.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
-/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:340: AssertionError: ex04_debug.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
+/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:426: AssertionError: ex04_debug.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
 E   AssertionError: ex04_traverse_macro.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
-/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:340: AssertionError: ex04_traverse_macro.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
+/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:426: AssertionError: ex04_traverse_macro.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
 E   AssertionError: ex10_for_do_desugar.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
-/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:340: AssertionError: ex10_for_do_desugar.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
+/work/toolset/worktrees/doeff-wt-ki-3497-dc/packages/doeff-traverse/tests/test_examples_run.py:426: AssertionError: ex10_for_do_desugar.hy が macro を定義するか、doeff-hy の外から require するか、展開を引き出している(['macroexpand の呼び出し']) — macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex01_basic_fail.hy]
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex02_traverse_pipeline.hy]
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex03_zip_multi_source.hy]
@@ -54,11 +54,11 @@ PASSED packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
 PASSED packages/doeff-traverse/tests/test_examples_run.py::test_hy_name_check_sees_generated_names
-SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:327: got empty parameter set for (name)
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:413: got empty parameter set for (name)
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_debug.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex10_for_do_desugar.hy]
-5 failed, 37 passed, 1 skipped, 1 warning in 41.27s
+5 failed, 37 passed, 1 skipped, 1 warning in 9.86s
 exit=1
