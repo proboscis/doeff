@@ -37,9 +37,12 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   ``environ`` ・ ``environb`` ・ ``getenv`` ・ ``getenvb`` を読む・関数の中の import の os で読む・それらの object に値として当たる
   (別名の import・既定値・閉包の cell)— に当たった digest は照らせない: 覚えず、記録の行は印
   :data:`doeff_hy_bytecode_guard.records.ENVIRONMENT_READ`(照らしはいつも古いと判じ、使い手は process ごとに展開し直す)。
-  環境変数から組んだ素の値の大域(文字列・数)は値で入るので、この規則に当たらない。見ない読み: 標準 library の関数が中で読む
-  環境変数(``os.path.expanduser`` ・ ``tempfile`` など)・文字列で引く読み(``getattr(os, "environ")``)・module の表を通す読み
-  (``sys.modules["os"]``)。
+  環境変数から組んだ素の値の大域(文字列・数)は値で入るので、この規則に当たらない。辿れない値を持ち主の module の file で覆う
+  時(既定値・閉包の cell・束縛を辿れない大域・名で辿れない読みの先 — :meth:`_Walker._fold_opaque`)は、持ち主の source に
+  環境変数を持つ module の名と環境変数を読む属性の名の両方が現れれば印にする — file は読み込みの時に読んだ環境変数を写さない
+  (設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A)。見ない読み: 標準 library の関数が中で読む環境変数(``os.path.expanduser`` ・
+  ``tempfile`` など)・文字列で引く読み(``getattr(os, "environ")``)・module の表を通す読み(``sys.modules["os"]`` ・
+  ``hy.I.os``)・星の import で束縛した表(持ち主の file で覆い、import の先の source は読まない)。
 - enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
 - 辿れない値を狭く覆う(agora-redesign #3938):
   - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
@@ -656,6 +659,13 @@ def _reads_environment(namespace: Mapping[str, object], names: tuple[str, ...]) 
     if _ENVIRONMENT_NAMES.isdisjoint(names):
         return False
     return any(_environment_module(namespace.get(name)) for name in names)
+
+
+def _source_reads_environment(names: tuple[str, ...]) -> bool:
+    """module の source に現れる名の全部が環境変数の読みを含みうるか — 辿れない値を持ち主の file で覆う時に、照らせない印に
+    するかを決めるため。環境変数を持つ module の名と、環境変数を読む属性の名の両方が現れる時(どこで読むか — 読み込みの時か
+    呼ばれた時か — は分けない。安全側)。"""
+    return not (_ENVIRONMENT_NAMES.isdisjoint(names) or _ENVIRONMENT_MODULES.isdisjoint(names))
 
 
 def _environment_module(value: object) -> bool:
@@ -1378,6 +1388,15 @@ class _Walker:
         digest = self._sha256_of(file)
         self._feed("file", module.__name__, digest if digest is not None else os.urandom(16).hex())
 
+    def _fold_opaque(self, module: ModuleType | None) -> None:
+        """辿れない値(大域の名で引けない値・束縛を辿れない大域・名で辿れない読みの先)を、持ち主の module の file で覆う
+        (:meth:`_fold`)。file は持ち主の source が読み込みの時に読んだ環境変数を写さないので、source が環境変数を読みうるなら
+        照らせない印にする(設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A — 環境変数から組んだ表を既定値・閉包の cell に持つ形)。"""
+        self._fold(module)
+        file = None if module is None else vars(module).get("__file__")
+        names = bound_source.source_names(file) if isinstance(file, str) else None
+        self._note_environment(names is not None and _source_reads_environment(names))
+
     def _lazy_module(
         self, module_name: str, home: ModuleType | None, names: tuple[str, ...]
     ) -> ModuleType | None:
@@ -1458,7 +1477,7 @@ class _Walker:
             self._called_macros(called, facts.texts, home)
         match facts.reads:
             case NamespaceRead.MODULE:
-                self._fold(home)
+                self._fold_opaque(home)
                 self._fold_referenced_modules(namespace, facts.names)
             case NamespaceRead.OBJECT:
                 self._fold_referenced_modules(namespace, facts.names)
@@ -1472,7 +1491,7 @@ class _Walker:
         for name in names:
             value = namespace.get(name)
             if isinstance(value, ModuleType) and not _named_only(value.__name__):
-                self._fold(value)
+                self._fold_opaque(value)
 
     def outside_value(self, module: ModuleType, value: object) -> None:
         """macro の外で展開の結果を変える値(module の属性)を入れる。"""
@@ -1621,9 +1640,10 @@ class _Walker:
                 self._feed("opaque", type(value).__module__, type(value).__qualname__)
                 self._bound(bound)
             case _:
-                # 辿れない値を大域の名でなく引いた(既定値・閉包の cell・組の中・class の値)— 持ち主の module の file で覆う。
+                # 辿れない値を大域の名でなく引いた(既定値・閉包の cell・組の中・class の値)— 持ち主の module の file で覆う
+                # (source が環境変数を読みうるなら照らせない印)。
                 self._feed("opaque", type(value).__module__, type(value).__qualname__)
-                self._fold(home)
+                self._fold_opaque(home)
 
     def _context_default(
         self,
@@ -1660,7 +1680,7 @@ class _Walker:
             self._against_executed(file)
         binding = bound_source.binding_of(file, name) if isinstance(file, str) else None
         if binding is None or binding.unresolved or not (binding.bound or binding.imports):
-            self._fold(module)
+            self._fold_opaque(module)
             return
         for statement in binding.statements:
             self._feed("statement", statement.text)
@@ -1681,7 +1701,7 @@ class _Walker:
             if isinstance(value, (FunctionType, type)):
                 self._value(value, module, ())
             else:
-                self._fold(module)
+                self._fold_opaque(module)
         for imported in binding.imports:
             self._imported_binding(module, imported)
 
@@ -1695,17 +1715,17 @@ class _Walker:
         self._feed("imported", target, imported.name)
         source = None if not target or _named_only(target) else sys.modules.get(target)
         if not target:
-            self._fold(module)
+            self._fold_opaque(module)
         elif source is None:
             # 標準 library・Hy 自身(版で覆う)か、読み込まれていない module(import の名が値と合わない)。
             if not _named_only(target):
-                self._fold(module)
+                self._fold_opaque(module)
         elif not imported.name:
             self._module(source, ())
         elif imported.name in vars(source):
             self._value(vars(source)[imported.name], source, (), GlobalName(source, imported.name))
         else:
-            self._fold(module)
+            self._fold_opaque(module)
 
     def _class(self, cls: type) -> None:
         """class の基底と中身(method・class の値)を辿る。"""
