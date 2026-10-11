@@ -24,7 +24,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
                                ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
-(import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
+(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
 (import doeff_records.admission [row-matches? epoch-ms])
 
 ;; OVERSEER = 宣言の operators に入る書き手(宣言の形の例 — 置き場は書き手の名では断らない・#2994)。
@@ -573,6 +573,34 @@
   [w1 w2 bounded kept again rest])
 
 
+;; 送りの読みは絞らない(maintenance.hy の頭の註・card ki-e4ca6fc87109): 刈りは表を問わず番号で消すので、送りの読みが表や保持の期限で
+;; 絞れば、絞られた変更は送られずに刈られる。
+(defk law-change-log-reads-every-change [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
+  "変更の列の生の読み(ReadChangeLog)が、位置より後の変更を表と保持の期限で絞らずに番号の順に答え、limit で切り、先端の後は空で、
+   置き場の版を添えるため — 期限を過ぎた終端の行の変わり(WatchChanges が出さない)も答える。"
+  (setv law "生の読みは位置より後の変更を表と期限で絞らずに番号の順に答え・limit で切り・先端の後は空・版を添える")
+  (<- start (as-writer harness MAKER (ListRows "parts")))
+  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (<- t1 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
+  (<- done (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"state" "done"}) (ExpectVersion 1))))
+  ;; tickets の終端の行は期限を過ぎる(回収はまだ — WatchChanges はこの行の変わりを出さない)。
+  (<- (Delay (+ TICKET-KEEP-SECONDS 1)))
+  (<- log (as-writer harness MAKER (ReadChangeLog start.sequence 10)))
+  (setv seen (if (isinstance log ChangeLog) (lfor change log.changes #(change.table change.key)) []))
+  (setv sequences (if (isinstance log ChangeLog) (lfor change log.changes change.sequence) []))
+  (<- (require-law (and (= seen [#("parts" #("p1")) #("tickets" #("g1" "t1")) #("tickets" #("g1" "t1"))])
+                        (= sequences (sorted (set sequences))) (> (min sequences :default 0) start.sequence)
+                        (= log.epoch start.epoch))
+               law (.format "位置より後の 3 つの変更を番号の順に・版を添えて: {!r}" log)))
+  (<- head (as-writer harness MAKER (ReadChangeLog start.sequence 2)))
+  (<- (require-law (and (isinstance head ChangeLog) (= (lfor change head.changes change.sequence) (cut sequences 2)))
+               law (.format "limit 2 は頭の 2 つ: {!r}" head)))
+  (<- tail (as-writer harness MAKER (ReadChangeLog (get sequences -1) 10)))
+  (<- (require-law (and (isinstance tail ChangeLog) (= tail.changes #())) law (.format "先端の後は空: {!r}" tail)))
+  [w1 t1 done log head tail])
+
+
 (defk law-put-rows-is-all-or-nothing [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "複数行の書き(PutRows)が 1 transaction の約束を守ることを、どの置き場の組でも同じに確かめるための法:
@@ -1057,6 +1085,7 @@
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
             "prune-stops-at-the-archived-seq" law-prune-stops-at-the-archived-seq
+            "change-log-reads-every-change" law-change-log-reads-every-change
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing
             "grouped-events-expire-together" law-grouped-events-expire-together
             "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence

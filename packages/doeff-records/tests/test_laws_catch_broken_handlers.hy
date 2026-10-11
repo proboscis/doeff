@@ -16,13 +16,14 @@
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
                             law-none-removes-a-field
-                            law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-put-rows-is-all-or-nothing
+                            law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
+                            law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
                             law-watch-tails-match-last-events law-event-by-key-reads-the-same-event
                             law-short-page-ends-the-stream])
-(import doeff_records.maintenance [PruneChanges Pruned])
+(import doeff_records.maintenance [PruneChanges Pruned ReadChangeLog ChangeLog])
 
 
 (defhandler ignore-expectation []
@@ -94,6 +95,14 @@
   (PruneChanges [keep-seconds upto-seq]
     (<- answer (PruneChanges keep-seconds))
     (resume answer)))
+
+(defhandler watched-change-log []
+  ;; 送りの読みを読み手の見え方で絞る handler の顔: 生の読みから表 parts の外の変更を落とす(落とした変更は送られずに刈られる)。
+  (ReadChangeLog [after limit]
+    (<- answer (ReadChangeLog after limit))
+    (resume (if (isinstance answer ChangeLog)
+                (ChangeLog (tuple (gfor change answer.changes :if (= change.table "parts") change)) answer.epoch)
+                answer))))
 
 (defk put-each-row [writes]
   {:pre [(: writes tuple)] :post [(: % (| WrittenRows RowsConflict RowsRefused))]}
@@ -202,6 +211,7 @@
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
                       #(law-prune-stops-at-the-archived-seq (ignore-prune-bound))
+                      #(law-change-log-reads-every-change (watched-change-log))
                       #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
                       #(law-stream-end-is-the-last-sequence (end-of-every-stream))
                       #(law-event-by-key-reads-the-same-event (event-of-any-stream))

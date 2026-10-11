@@ -20,6 +20,19 @@ class PruneChanges(EffectBase):
         ...
 
 @dataclass(frozen=True)
+class ReadChangeLog(EffectBase):
+    after: int
+    limit: int
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ChangeLog:
+    changes: tuple
+    epoch: int
+
+@dataclass(frozen=True)
 class ArchivedThrough:
     seq: int
 

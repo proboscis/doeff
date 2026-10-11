@@ -55,7 +55,7 @@
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey
                                AwaitRecordsBack ReadSourcePatience])
 (import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
-(import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
+(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
 (import doeff_records.store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
@@ -709,6 +709,12 @@
 
 ;; --- 手入れ ------------------------------------------------------------------------------------------------
 
+(defk memory-change-log [store ask]
+  {:pre [(: store MemoryStore) (: ask ReadChangeLog)] :post [(: % ChangeLog)]}
+  "変更の列の ask.after より後の変更を番号の順に ask.limit 件まで、表と保持の期限で絞らずに読むため(送りの関数の読み)。"
+  (guarded store (fn [] (ChangeLog (tuple (cut (lfor change store.changes :if (> change.sequence ask.after) change) ask.limit)) store.epoch))))
+
+
 (defk memory-prune-changes [store ask now-ms]
   {:pre [(: store MemoryStore) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]}
   "変更の列が際限なく伸びないように、keep-seconds より古い変更(刻 <= 今 − 保持 — upto-seq が在ればその番号まで)を消して floor を上げる。"
@@ -914,7 +920,10 @@
   (PruneChanges [keep-seconds upto-seq]
     (<- now (GetTime))
     (<- pruned (memory-prune-changes store effect (epoch-ms now)))
-    (resume pruned)))
+    (resume pruned))
+  (ReadChangeLog [after limit]
+    (<- log (memory-change-log store effect))
+    (resume log)))
 
 
 ;; --- 置き場の選び(records-serving に渡す値)----------------------------------------------------------------
