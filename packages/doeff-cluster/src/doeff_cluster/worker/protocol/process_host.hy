@@ -40,12 +40,14 @@
 
 
 (defrecord HostSettings
-  "job の子 process の置き場と起こし方の設定(worker の組み立ての入口 main が作る): log-dir = 子の出力の file の dir・jobs-dir = 実行環境の
+  "job の子 process の置き場と起こし方の設定(worker の組み立ての入口 main が作る): log-dir = 子の出力の file の dir(世代をまたいで分け合う)・
+   generation = log-dir の中の名に入れる世代の印(worker/core/places の WorkerPlaces.generation — AL-D2j)・jobs-dir = 実行環境の
    job の作業 dir の親・program-dir = 詰めた Program の cache の dir・python = shim を起こす interpreter・hy-command = 木の job の hy・
    uv = 実行環境の job の uv・extra-env = 子へ渡す worker の文脈(名前・coordinator — 資格は渡さない)・layout = 業務の repo の木の形・
    program-env = 詰めた Program の file を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT)・shim = shim の時間の内訳(worker の方針から
    shim_timing.shim-spans が導く — 子の shim の猶予と、回収の時に shim を待つ秒が同じ値を読む・#2940)。"
   (#^ str log-dir)
+  (#^ str generation)
   (#^ str jobs-dir)
   (#^ str program-dir)
   (#^ str python)
@@ -169,6 +171,14 @@
   (+ settings.jobs-dir "/" (.replace name "/" "_")))
 
 
+(defk job-log-stem [settings name attempt]
+  {:pre [(: settings HostSettings) (: name str) (: attempt int)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "job の子の出力の file と、待ちの子から分けた子の exit の file の共通の頭(<log-dir>/<job の名>.<世代の印>.<試みの番号> — task の名前
+   task/<id> の / は _)を、起こす時と読む時が同じ綴りで作るため。log-dir は世代をまたいで分け合い、試みの番号は worker の process ごとに
+   1 から数えるので、世代の印が無いと 2 つの世代が同じ file に書き足す(AL-D2j)。"
+  (.format "{}/{}.{}.{}" settings.log-dir (.replace name "/" "_") settings.generation attempt))
+
+
 (defk process-instance [attempt worker-pid started-ms name]
   {:pre [(: attempt int) (: worker-pid int) (: started-ms int) (: name str)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "process の世代の名(頭の註)を、起こすたびに新しく・worker を起こし直しても重ならない形で振るため。"
@@ -210,7 +220,7 @@
   (when plan.work-dir
     (<- (RemoveTree plan.work-dir))  ; 無い dir の断りは捨てる(前の job の作業 dir が在れば消す)
     (<- (file-done (MakeDirectory plan.work-dir))))
-  (val stem (.format "{}/{}.{}" settings.log-dir (.replace spec.name "/" "_") action.attempt))  ; task の名前は task/<id>
+  (<- stem str (job-log-stem settings spec.name action.attempt))
   (val log (+ stem ".log"))
   (var started None)
   (if (is-not action.warm-key None)
@@ -228,10 +238,10 @@
             (raise (OSError answer.detail)))
           (:= started (Started :view (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance) :fork None))))
   ;; 起こした job の記録(新しい版の job は worker を再起動せず、worker が展開した版の木の子 process で走ることを worker の記録で示すため):
-  ;; job の名・版・木の path・子の pid・worker の pid・道(shim か待ちの子か)を 1 行。env と引数の値は書かない(資格を運びうる)。
-  (<- (slog (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={} via={}"
+  ;; job の名・版・木の path・子の pid・worker の pid・道(shim か待ちの子か)・子の出力の file を 1 行。env と引数の値は書かない(資格を運びうる)。
+  (<- (slog (.format "worker: job-start name={} revision={} tree={} pid={} worker-pid={} via={} log={}"
                      spec.name spec.revision action.code-path started.view.pid facts.pid
-                     (if (is action.warm-key None) "shim" (+ "warm:" action.warm-key)))))
+                     (if (is action.warm-key None) "shim" (+ "warm:" action.warm-key)) log)))
   started)
 
 

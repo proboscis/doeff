@@ -230,8 +230,11 @@
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
         shared-dir (Path (or args.shared-dir args.state-dir))
-        ;; 世代ごとの置き場と分け合う置き場(AL-D2c — worker/core/places の 1 か所で決める)。
-        places (run (worker-places (str state-dir) (str shared-dir)))
+        ;; この process の世代(boot)は起動の時に 1 度だけ決める — 置き場(log の名の世代の印)・coordinator への名乗り・Pod の中の file が
+        ;; 同じ値を読む。
+        boot (run (with-handlers [os-random-handler] (boot-name)))
+        ;; 世代ごとの置き場と分け合う置き場と、分け合う log の dir の中の名に入れる世代の印(AL-D2c・AL-D2j — worker/core/places の 1 か所で決める)。
+        places (run (worker-places (str state-dir) (str shared-dir) boot))
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000)))
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
@@ -252,13 +255,13 @@
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
-        host (HostSettings :log-dir places.logs :jobs-dir places.jobs
+        host (HostSettings :log-dir places.logs :generation places.generation :jobs-dir places.jobs
                            :program-dir places.programs :python sys.executable :hy-command hy-command :uv args.uv
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
-        warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :uv args.uv)
+        warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :repo-access args.repo-access :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
@@ -274,9 +277,8 @@
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
-  ;; 届かない拍は次の拍で送り直す)。世代(boot)は起動の時に 1 度だけ決め、Pod の中の file に書く(readinessProbe が比べる)。
+  ;; 届かない拍は次の拍で送り直す)。世代(boot — 上で決めた値)は Pod の中の file にも書く(readinessProbe が比べる)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
-        boot (run (with-handlers [os-random-handler] (boot-name)))
         link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
@@ -294,7 +296,8 @@
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm)))
-  (print "worker: 起動します" :file sys.stderr :flush True)
+  ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
+  (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
     (run (scheduled (worker-on handlers policy)))
     (finally

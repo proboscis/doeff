@@ -7,7 +7,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   待ちの子 ── fork ──▶ A(setsid で group の先頭・子孫の引き取り手・log へ dup2・env と cwd を整え、shim と同じ見張り shim_code)
                           └ fork ──▶ B(読み込み済みの入口の main を同じ process の中で走らせる)
   A の log は task の log なので、shim の --stamp-lines と同じ部品(worker/entry/line_stamp)で 1 行ごとに壁の時計の刻を付ける(#3714)。
-  B は書き手の fd を閉じてから入口を走らせる。待ちの子自身の log(warm-<root のキー>.log)には付けない — 待ちの子は fork のために
+  B は書き手の fd を閉じてから入口を走らせる。待ちの子自身の log(warm-<root のキー>.<世代の印>.log — warm_host の warm-log-path)には付けない — 待ちの子は fork のために
   thread を 1 本に保つので、書き手の thread を置けない。
   A は setsid を済ませたら待ちの子へ 1 byte で知らせ、job の終了コードを exit の file へ置き換えで書いてから、shim と同じ値で終わる。
   待ちの子は、その知らせを受けてから A の pid と起動の刻(機体ごとの読み proc-stat-of の start-ticks — pid の使い回しを見分ける)を

@@ -3,6 +3,8 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_cluster.worker.core.warm_rules import warm_dir_of as warm_dir_of
+GENERATION_MARK_LENGTH: int
+HEX_DIGITS: str
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerPlaces:
@@ -14,6 +16,7 @@ class WorkerPlaces:
     probe: str
     status: str
     logs: str
+    generation: str
 
-def worker_places(state: str, shared: str) -> _Program[WorkerPlaces, object]:
+def worker_places(state: str, shared: str, boot: str) -> _Program[WorkerPlaces, object]:
     ...

@@ -30,16 +30,20 @@
 
 (defrecord WarmSettings
   "待ちの子の置き場と起こし方の設定(worker の組み立ての入口 main が作る): warm-dir = 待ちの子の置き場の根(warm_rules.warm-dir-of)・
-   log-dir = 待ちの子の出力の file の dir(job の子と同じ dir — warm-<root のキー>.log)・uv = root の venv の uv。"
+   log-dir = 待ちの子の出力の file の dir(job の子と同じ dir — 世代をまたいで分け合う・名は warm-log-path)・generation = log-dir の中の
+   名に入れる世代の印(worker/core/places の WorkerPlaces.generation — AL-D2j)・uv = root の venv の uv。"
   (#^ str warm-dir)
   (#^ str log-dir)
+  (#^ str generation)
   (#^ str uv))
 
 
 (defk warm-log-path [settings key]
   {:pre [(: settings WarmSettings) (: key str)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
-  "待ちの子の出力の file を、起こす時と終わりの訳を読む時が同じ綴りで作るため。"
-  (.format "{}/warm-{}.log" settings.log-dir key))
+  "待ちの子の出力の file(<log-dir>/warm-<root のキー>.<世代の印>.log)を、起こす時と終わりの訳を読む時が同じ綴りで作るため。root は
+   世代をまたいで分け合うので、2 つの世代が同じ root のキーの待ちの子を起こす — 世代の印が無いと同じ file に書き足し、終わりの訳に
+   別の世代の子の行を読む(AL-D2j)。"
+  (.format "{}/warm-{}.{}.log" settings.log-dir key settings.generation))
 
 
 (defk ready-mark-of [text]
@@ -88,7 +92,8 @@
     (ProcessNotStarted) (WarmChildView :key key :pid 0 :started-ms now :exit-code -1 :ended-ms now
                                        :detail (+ "待ちの子を起こせない: " answer.detail))
     (ProcessStarted)
-      (do (<- (slog (.format "worker: warm-child-start key={} root={} pid={} preload={}" key launch.root answer.pid (len launch.preload))))
+      (do (<- (slog (.format "worker: warm-child-start key={} root={} pid={} preload={} log={}" key launch.root answer.pid (len launch.preload)
+                             log)))
           (WarmChildView :key key :pid answer.pid :started-ms now))))
 
 

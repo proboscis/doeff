@@ -17,7 +17,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy StartJob SignalJob ReapJob RetireJob NoticeJob Outcome StopStage ProcessView
                                                  Retired HandoffAbandoned])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.protocol.process_host [HostSettings])
+(import doeff_cluster.worker.protocol.process_host [HostSettings job-log-stem])
 (import tests.host_rig [host-settings run-on-host])
 (import tests.test_shim_descendants [end-of])
 
@@ -55,15 +55,17 @@
   seen)
 
 
-(defk notices-through-the-pipe [spec out retired-wait]
-  {:pre [(: spec JobSpec) (: out Path) (: retired-wait float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+(defk notices-through-the-pipe [settings spec out retired-wait]
+  {:pre [(: settings HostSettings) (: spec JobSpec) (: out Path) (: retired-wait float)] :post [(: % tuple)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: job を起こし、待ち始めの印を待ってから名から外し(RetireJob — 退く)、知らせの行を retired-wait 秒まで待ち、退きの取り消し
    (NoticeJob — HandoffAbandoned)を送ってもう 1 行を待ち、止めて回収する。#(退いた後の行 取り消しの後の行) を返すため。"
   (<- (StartJob spec 1 PACKAGE))
   (<- started tuple (ObserveProcesses))
   (val pid (. (get started 0) pid))
   (<- listening tuple (lines-of out 1 START-SECONDS))
-  (val log (/ out.parent "logs" "svc.1.log"))
+  (<- stem str (job-log-stem settings spec.name 1))
+  (val log (Path (+ stem ".log")))
   (assert (= listening #("Listening")) #("job が待ち始めない" listening (if (.exists log) (.read-text log :encoding "utf-8") "log が無い")))
   (<- (RetireJob spec.name pid RETIRED-NAME))
   (<- retired tuple (lines-of out 2 retired-wait))
@@ -87,7 +89,7 @@
   (<- settings HostSettings (host-settings tmp-path :hy-command HY :policy SHORT))
   (val out (/ tmp-path "notices"))
   (<- spec JobSpec (listener-spec out))
-  (<- got tuple (run-on-host settings (notices-through-the-pipe spec out NOTICE-SECONDS)))
+  (<- got tuple (run-on-host settings (notices-through-the-pipe settings spec out NOTICE-SECONDS)))
   (assert (= (get got 0) #("Listening" "Retired")) got)
   (assert (= (get got 1) #("Listening" "Retired" "HandoffAbandoned")) got))
 
@@ -110,7 +112,7 @@
   (<- settings HostSettings (host-settings tmp-path :hy-command HY :policy SHORT))
   (val out (/ tmp-path "notices"))
   (<- spec JobSpec (listener-spec out))
-  (<- got tuple (run-on-host settings (notices-through-the-pipe spec out SILENCE-SECONDS) :around #(notice-flag-dropped)))
+  (<- got tuple (run-on-host settings (notices-through-the-pipe settings spec out SILENCE-SECONDS) :around #(notice-flag-dropped)))
   (assert (= got #(#("Listening") #("Listening"))) got))
 
 
