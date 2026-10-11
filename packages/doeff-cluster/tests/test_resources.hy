@@ -7,9 +7,9 @@
 (import doeff_cluster.coordinator.core.cluster_policy [board-changes job-from-json] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json board-rows-of])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts])
+(import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts ready-instance])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.resource_policy [LEGACY-OWNER adopt-legacy])
+(import doeff_cluster.coordinator.core.resource_policy [LEGACY-OWNER REPORTS-KEPT adopt-legacy])
 (import tests.program_rows [SAMPLE-RUN program-placed program-run])
 (import doeff [run])
 
@@ -403,6 +403,69 @@
   (assert (= (! (ready-of s (+ back-at 1500))) "NotReady"))
   (:= s (! (report s (! (ready-report spec "1-atlas-again" :placement 3)) (+ back-at 4000))))
   (assert (= (! (ready-of s (+ back-at 4000))) "Ready")))
+
+
+;; --- 置き先でない世代の報告(AL-D2o・ki-02ca1a2bfc6c)----------------------------------------------------------------------
+;; 10-11 12:14〜12:50 UTC の本番: 退いた世代の worker が同じ名の画面の process を、前の process を止めずに起こし直し続けた。退いた
+;; process は置き先の process と同じ worker の名・同じ宣言の指紋・同じ割り当ての世代を名乗り、並んで約 10 秒ごとに準備の報告を送った。
+
+(val ELDER-ATTEMPTS (tuple (range 6 11)))   ; 退いた世代の process 5 つの試行の番号(世代の名は <番号>-elder)
+
+
+(deftest test-the-placed-process-stays-ready-while-five-other-generations-report
+  ;; 表が送り手を確かめず直近 4 世代しか残さないと、置き先でない送り手が 4 つ報告した所で置き先の process の報告が押し出され、
+  ;; 置き先の process は報告を続けているのに NotReady になる(本番では入れ替えの合図 supersededBy が外れ、退いた世代の起こし直しが
+  ;; 毎周期に増えた)。
+  ;; 失敗ケース: keep-report を「世代ごとに最新 1 つ・送り手を問わず直近の 4 世代」へ戻すと、各周期の 4 つ目の退いた報告の後に
+  ;; NotReady になり赤。
+  (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
+  (<- created tuple (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
+  (var s (get created 0))
+  (:= s (! (beat s "atlas" 1000)))
+  (<- running list (running-row spec "1-placed"))
+  (for [cycle (range 3)]
+    (val start (+ 2000 (* cycle 10000)))
+    (:= s (! (beat s "atlas" start running)))
+    (:= s (! (report s (! (ready-report spec "1-placed")) start)))
+    (for [attempt ELDER-ATTEMPTS]
+      (val at (+ start (* (- attempt 5) 1000)))
+      (:= s (! (report s (! (ready-report spec (.format "{}-elder" attempt) :attempt attempt :ready False)) at)))
+      (assert (= (! (ready-of s at)) "Ready") #(cycle attempt (.row s.observations.readiness "w")))))
+  ;; 置き先でない送り手の報告は直近の REPORTS-KEPT 世代に限る(退いた世代がいくつ報告しても表は伸びない)。
+  (assert (<= (len (.row s.observations.readiness "w")) (+ REPORTS-KEPT 1)) (.row s.observations.readiness "w")))
+
+
+(deftest test-reports-from-processes-other-than-the-placed-one-never-decide-its-readiness
+  ;; 置き先でない送り手の報告は、置き先の process と同じ worker の名・宣言の指紋・割り当ての世代・試行の番号を名乗っても、置き先の
+  ;; 判断(status.ready と、入れ替えの合図 ready-instance)に使わない。使うのは、担い手の行に載る世代の名(instance)の process の報告だけ。
+  ;; 失敗ケース: 報告と担い手の行の照合(report-matches)から世代の名を外すか、判断が送り手を問わず最新の報告を読むと、退いた世代の
+  ;; Ready で置き先が Ready になり赤。
+  (val spec (| SPEC {"readiness" {"windowSeconds" 30}}))
+  (<- created tuple (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" spec} :now 1000))
+  (var s (get created 0))
+  (:= s (! (beat s "atlas" 1000)))
+  (<- running list (running-row spec "1-placed"))
+  (:= s (! (beat s "atlas" 2000 running)))
+  (:= s (! (report s (| (! (ready-report spec "1-placed" :ready False)) {"reason" "置き先はまだ温めている"}) 2000)))
+  ;; 退いた世代の process 5 つが Ready を報告する(試行の番号も置き先の process と同じ 1 — 違うのは世代の名だけ)。
+  (for [attempt ELDER-ATTEMPTS]
+    (:= s (! (report s (! (ready-report spec (.format "1-elder{}" attempt))) (+ 2000 (* (- attempt 5) 1000))))))
+  (assert (= (! (ready-of s 7000)) "NotReady"))
+  (assert (in "置き先はまだ温めている" (get (! (call s "GET" "/resources/Service/w" :now 7000)) 2 "status" "readyReason")))
+  (assert (is (ready-instance s "w" 7000 T) None))
+  ;; 置き先の process が Ready を報告した → Ready(入れ替えの合図はその世代の名)。
+  (:= s (! (report s (! (ready-report spec "1-placed")) 8000)))
+  (assert (= (! (ready-of s 8000)) "Ready"))
+  (assert (= (ready-instance s "w" 8000 T) "1-placed"))
+  ;; 置き先の process が黙った後は、退いた世代が Ready を報告し続けても window(30 秒)を過ぎれば NotReady。
+  (for [cycle (range 1 5)]
+    (val start (+ 8000 (* cycle 10000)))
+    (:= s (! (beat s "atlas" start running)))
+    (for [attempt ELDER-ATTEMPTS]
+      (:= s (! (report s (! (ready-report spec (.format "1-elder{}" attempt))) (+ start (* (- attempt 5) 1000)))))))
+  (assert (= (! (ready-of s 53000)) "NotReady"))
+  (assert (in "最後の報告から" (get (! (call s "GET" "/resources/Service/w" :now 53000)) 2 "status" "readyReason")))
+  (assert (is (ready-instance s "w" 53000 T) None)))
 
 
 (defk metrics-body [instance spec writes [attempt 1]]

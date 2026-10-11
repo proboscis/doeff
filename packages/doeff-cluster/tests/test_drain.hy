@@ -153,6 +153,39 @@
   (assert (any (gfor n notes (in "付け替えた" n))) notes))
 
 
+(defk zeus-report [row instance attempt ready reason]
+  {:pre [(: row dict) (: instance str) (: attempt str) (: ready bool) (: reason str)] :post [(: % dict)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "zeus の上の w の process の準備の報告の本文(standby)を作るため — 版・指紋・割り当ての世代は担い手の行 row から写し、世代の名
+   instance と試行の番号 attempt だけを送り手ごとに変える。"
+  {"worker" "zeus" "pid" 1 "revision" (get row "runningRevision") "instance" instance "attempt" attempt
+   "specHash" (get row "specHash") "placement" (get row "placement") "ready" ready "reason" reason "role" "standby"})
+
+
+(deftest test-a-surge-target-keeps-its-report-while-other-generations-report
+  ;; AL-D2o(ki-02ca1a2bfc6c): 並べた置き先(surge)の process の報告も置き先の報告として残す。退いた世代の process 5 つ(並べた先と同じ
+  ;; worker の名・指紋・割り当ての世代を名乗る)が報告しても、drain の画面は並べた先がまだ Ready でない理由に並べた先の報告を出し続け、
+  ;; 並べた先が Ready を報告すれば付け替える。
+  ;; 失敗ケース: 報告の表が送り手を問わず直近 4 世代しか残さないか、必ず残す報告をいまの置き先(placements)の process だけに絞ると、
+  ;; 並べた先の報告が押し出され、理由が「報告がまだ無い」になり赤。
+  (<- c (running-writer))
+  (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
+  (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
+  (c.beat "zeus" ["w"])
+  (val row (c.row "zeus" "w"))
+  (<- placed dict (zeus-report row (get row "instance") "1" False "並べた先は lease を待っている"))
+  (c.call "POST" "/resources/Service/w/readiness" placed :actor None)
+  (for [attempt (range 6 11)]
+    (<- elder dict (zeus-report row (.format "{}-elder" attempt) (str attempt) True "退いた世代"))
+    (c.call "POST" "/resources/Service/w/readiness" elder :actor None))
+  (c.advance)
+  (assert (= #((c.placed "w") (c.surge "w")) #("atlas" "zeus")) c.state.surges)
+  (val view (c.call "GET" "/workers/atlas"))
+  (assert (in "並べた先は lease を待っている" (get view "drain" "movingReady" "w")) view)
+  (c.ready "zeus" "w")
+  (assert (= #((c.placed "w") (c.surge "w")) #("zeus" None)) c.state.surges))
+
+
 (deftest test-no-target-means-no-surge-and-the-old-keeps-running-until-a-target-appears
   (<- c (running-writer))
   ;; zeus が沈黙(死んだ)。
