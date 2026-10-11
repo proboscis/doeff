@@ -14,7 +14,8 @@ uv が入れ直し、uninstall でも消える)。source は作業木の maturin
 探すので、前の形が source の木に残した成果物は使われない。
 
 鍵(_wheel_slot): 組みに効く物の sha256 — tool.uv.cache-keys の file(宣言が無ければ DEFAULT_SOURCE_GLOBS)の中身と相対 path・maturin の
-版・機体・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と作業木の
+版・機体・libc の名と版(置き場の wheel は CI の glibc で組むので、それより古い glibc の機体が取って import で落ちないように — ADR-DOE-BUILD-001
+R4 の追補 2)・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と作業木の
 path には依らない — pin を上げて作業木を作り直しても、中身が同じなら同じ鍵。uv も tool.uv.cache-keys の file を見て口を呼ぶので、この
 宣言が「uv が組み直しを問う集合」と「保存先の鍵」の 1 つの定義になる。鍵は子 process を起こさずに作る(ADR-DOE-BUILD-001 R4 の追補 —
 rustc の版を鍵に入れない。鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の
@@ -27,8 +28,16 @@ wheel の置き場(state/wheels/<package>-<鍵>/ と .used — shared/core/nativ
 置き場に渡して共有する — worker の掃除(7 日使われない dir を消す)がそのまま効く。保存先の wheel は使う前に RECORD の hash で
 確かめ、壊れていれば名指しの 1 行を出してその wheel を除き、組み直す(黙って壊れた物を使わない)。
 
+機体の外の置き場(_remote_wheel・ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution・card ki-5fab1f97d98b): 手元の
+保存先に無い時、組む前に doeff の公開の GitHub の release `rust-wheels` の asset `<package>-<鍵>.whl` を鍵なしの HTTPS で取り
+(WHEEL_REMOTE_TIMEOUT_SECONDS 秒まで)、RECORD の hash で確かめ、本当の file 名を dist-info と WHEEL の Tag から作り直して手元の
+保存先へ置く。置き場に書くのは doeff の GitHub Actions(.github/workflows/rust-wheels.yml)だけで、口は置き場に書かない。取れない時
+(404・網の失敗・時間切れ・壊れた wheel)は名指しの 1 行を出して今どおり組む。env DOEFF_WHEEL_REMOTE で置き場の頭を替え、空の値なら
+置き場を引かない(手元で組む道を見る検・網の無い場所)。uv の find-links・index は使わない(uv は path・editable・git の依存に使わない)。
+
 報告(_write_report): env DOEFF_WHEEL_REPORT が在れば、その file に 1 行の JSON {"project": <package の名>, "wheel": <保存先の中の
-wheel の path>, "built": <この呼び出しが組んだか>} を足す。doeff-cluster の worker(実行環境の準備と起動の script)は `uv build --wheel
+wheel の path>, "source": <出どころ local・remote・built>, "built": <この呼び出しが組んだか>} を足す("built" は読み手の
+doeff-cluster の native_wheel.reported_built が読む欄なので残す)。doeff-cluster の worker(実行環境の準備と起動の script)は `uv build --wheel
 --out-dir` でこの口を通り、出た wheel を入れる — 自前の鍵と置き場を持たない。報告は組んだかを見るためだけに使う(読み手は
 shared/core/native_wheel.py の reported_built・報告を書かない版の口なら組んだかは UNREPORTED・#3860)。
 
@@ -64,18 +73,26 @@ import sysconfig
 import tempfile
 import time
 import tomllib
+import urllib.error
+import urllib.request
 import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 import maturin
 
 TARGET_ENV = "CARGO_TARGET_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
+# 機体の外の置き場の頭を替える env(空の値なら置き場を引かない — 頭の註の置き場)。
+WHEEL_REMOTE_ENV = "DOEFF_WHEEL_REMOTE"
+# 置き場の既定 = doeff の公開の release rust-wheels の download の URL(鍵なしで読む・API を使わない — 鍵なしの API は 1 時間 60 回の上限)。
+WHEEL_REMOTE_DEFAULT = "https://github.com/proboscis/doeff/releases/download/rust-wheels"
+# 置き場から 1 つ取るのを待つ秒(過ぎれば名指しの 1 行を出して手元で組む)。
+WHEEL_REMOTE_TIMEOUT_SECONDS = 20
 # 保存先の中の wheel と組んだかを 1 行の JSON で足す file を指す env(頭の註の報告 — 無ければ書かない)。
 WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
 # 保存先の dir の使った印(dir の時刻を進める — worker の掃除は 7 日使われない dir を dir の時刻で選ぶ)。
@@ -96,14 +113,21 @@ NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 ConfigSettings: TypeAlias = Mapping[str, str | list[str]]
 # 保存先に無い時に wheel を組む関数: (この build の cargo の target, wheel を出す dir, build の設定) → 出した wheel の file の名。
 Compile: TypeAlias = Callable[[Path, str, "ConfigSettings | None"], str]
+# 保存先の wheel の出どころ: local = 手元の保存先に在った・remote = 機体の外の置き場から取った・built = この呼び出しが組んだ。
+WheelSource: TypeAlias = Literal["local", "remote", "built"]
 
 
 @dataclass(frozen=True)
 class StoredWheel:
-    """保存先の wheel 1 つ: path = 保存先の中の wheel の file・built = この呼び出しが組んだ(保存先に無かったか壊れていた)。"""
+    """保存先の wheel 1 つ: path = 保存先の中の wheel の file・source = 出どころ。"""
 
     path: Path
-    built: bool
+    source: WheelSource
+
+    @property
+    def built(self) -> bool:
+        """この呼び出しが組んだか(手元にも置き場にも無かったか、壊れていた)。"""
+        return self.source == "built"
 
 
 @dataclass(frozen=True)
@@ -177,14 +201,19 @@ def _maturin_wheel(target: Path, wheel_directory: str, config_settings: ConfigSe
 
 
 def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_wheel: Compile) -> StoredWheel:
-    """package の source の鍵の wheel を保存先から引き、無ければ(壊れていれば)組んで置くため — Rust の部品を組む・引く入口の本体
-    (頭の註)。答え = 保存先の中の wheel。stderr に 1 行(使った / 組んだ秒)。"""
+    """package の source の鍵の wheel を手元の保存先から引き、無ければ(壊れていれば)機体の外の置き場から取り、そこにも無ければ組んで
+    置くため — Rust の部品を組む・引く入口の本体(頭の註)。答え = 保存先の中の wheel。stderr に 1 行(使った / 取った / 組んだ秒)。"""
     slot = _wheel_slot(package, config_settings)
     match _intact_wheel(slot):
         case Path() as found:
             _mark_used(slot)
             print(f"doeff_cargo_backend: 同じ source の wheel を使う(組まない)— {found.name}・{slot}", file=sys.stderr)
-            return _write_report(package, StoredWheel(path=found, built=False))
+            return _write_report(package, StoredWheel(path=found, source="local"))
+        case None:
+            pass
+    match _remote_wheel(slot):
+        case Path() as fetched:
+            return _write_report(package, StoredWheel(path=fetched, source="remote"))
         case None:
             pass
     started = time.monotonic()
@@ -193,7 +222,64 @@ def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_
             name = compile_wheel(target, out, config_settings)
         stored = _store_wheel(slot, Path(out) / name)
     print(f"doeff_cargo_backend: wheel を組んだ({time.monotonic() - started:.0f} 秒)— {name}・{slot} に置いた", file=sys.stderr)
-    return _write_report(package, StoredWheel(path=stored, built=True))
+    return _write_report(package, StoredWheel(path=stored, source="built"))
+
+
+def _remote_wheel(slot: Path) -> Path | None:
+    """機体の外の置き場から、鍵の wheel(`<置き場>/<slot の名>.whl`)を取り、RECORD の hash で確かめてから手元の保存先へ置くため
+    (頭の註の置き場)。答え = 手元の保存先に置いた wheel。取れない時(置き場を引かない設定・404・網の失敗・時間切れ・壊れた wheel)は
+    名指しの 1 行を出して None(呼び手が組む)— 黙って組まない・黙って壊れた物を使わない。"""
+    base = os.environ.get(WHEEL_REMOTE_ENV, WHEEL_REMOTE_DEFAULT)
+    if not base:
+        return None
+    url = f"{base.rstrip('/')}/{slot.name}.whl"
+    with tempfile.TemporaryDirectory(prefix="doeff-wheel-remote-") as fetched:
+        raw = Path(fetched) / f"{slot.name}.whl"
+        try:
+            with urllib.request.urlopen(url, timeout=WHEEL_REMOTE_TIMEOUT_SECONDS) as response:
+                raw.write_bytes(response.read())
+        except urllib.error.HTTPError as error:
+            print(f"doeff_cargo_backend: 置き場に同じ鍵の wheel が無い(HTTP {error.code})— {url}・手元で組む", file=sys.stderr)
+            return None
+        except (urllib.error.URLError, OSError) as error:
+            print(f"doeff_cargo_backend: 置き場に繋がらない({error})— {url}・手元で組む", file=sys.stderr)
+            return None
+        # 壊れていない(zip として読め RECORD が合う)と分かってから名を読む。
+        match _wheel_problem(raw):
+            case str() as problem:
+                print(f"doeff_cargo_backend: 置き場の wheel が壊れている({problem})— {url}・使わずに手元で組む", file=sys.stderr)
+                return None
+            case None:
+                pass
+        match _wheel_file_name(raw):
+            case str() as name:
+                pass
+            case None:
+                print(f"doeff_cargo_backend: 置き場の wheel の名と tag を読めない — {url}・使わずに手元で組む", file=sys.stderr)
+                return None
+        named = Path(fetched) / name
+        raw.rename(named)
+        placed = _store_wheel(slot, named)
+    print(f"doeff_cargo_backend: 置き場の wheel を使う(組まない)— {name}・{url}", file=sys.stderr)
+    return placed
+
+
+def _wheel_file_name(wheel: Path) -> str | None:
+    """wheel の本当の file 名(`<名>-<版>-<python>-<abi>-<platform>.whl`)を、中の `*.dist-info` の dir の名と WHEEL の Tag の行から
+    作り直すため — 置き場の asset の名は鍵(`<package>-<鍵>.whl`)なので、名を持ってこない。読めなければ None。"""
+    with zipfile.ZipFile(wheel) as archive:
+        infos = sorted({name.split("/", 1)[0] for name in archive.namelist() if name.split("/", 1)[0].endswith(".dist-info")})
+        match infos:
+            case [dist_info]:
+                text = archive.read(f"{dist_info}/WHEEL").decode("utf-8")
+            case _:
+                return None
+    distribution, _, version = dist_info.removesuffix(".dist-info").rpartition("-")
+    tags = [line.removeprefix("Tag:").strip().split("-") for line in text.splitlines() if line.startswith("Tag:")]
+    if not distribution or not tags or any(len(tag) != 3 for tag in tags):
+        return None
+    parts = (".".join(dict.fromkeys(tag[index] for tag in tags)) for index in range(3))
+    return f"{distribution}-{version}-{'-'.join(parts)}.whl"
 
 
 def _write_report(package: Path, stored: StoredWheel) -> StoredWheel:
@@ -206,7 +292,9 @@ def _write_report(package: Path, stored: StoredWheel) -> StoredWheel:
                     pass
                 case _:
                     project = "unnamed"
-            line = json.dumps({"project": project, "wheel": str(stored.path), "built": stored.built}, ensure_ascii=False)
+            line = json.dumps(
+                {"project": project, "wheel": str(stored.path), "source": stored.source, "built": stored.built}, ensure_ascii=False
+            )
             with open(report, "a", encoding="utf-8") as out:
                 out.write(line + "\n")
         case _:
@@ -305,7 +393,10 @@ def _wheel_slot(package: Path, config_settings: ConfigSettings | None) -> Path:
     (file の時刻と作業木の path に依らない — 置き場だけを変える CARGO_TARGET_DIR なども入れない)。dir の名は <package>-<鍵>
     (作業木の dir の名は作業木ごとに違うので使わない・worker の wheel の置き場と同じ並び — 頭の註)。"""
     digest = hashlib.sha256()
-    lines = (_tool_versions(), sys.platform, platform.machine(), _python_abi(), _build_environment(), repr(sorted((config_settings or {}).items())))
+    lines = (
+        _tool_versions(), sys.platform, platform.machine(), repr(platform.libc_ver()), _python_abi(), _build_environment(),
+        repr(sorted((config_settings or {}).items())),
+    )
     for line in lines:
         digest.update(line.encode("utf-8") + b"\0")
     for path in _source_files(package):

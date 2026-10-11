@@ -133,6 +133,8 @@
   :title "Rust の部品を組む・引く入口は build の口 tools/doeff_cargo_backend.py の 1 つ。口は組む前に必ず source の中身の hash を鍵にした wheel の保存先を引き、wheel の hook も editable の hook も同じ保存先の同じ wheel から答える。自前の鍵や保存先を持つ 2 つ目の入口を作らない"
   :status "accepted"
   :scope ["tools/doeff_cargo_backend.py"
+          "tools/rust_wheel_release.py"
+          ".github/workflows/rust-wheels.yml"
           "packages/doeff-indexer/doeff_indexer_build_backend.py"
           "packages/doeff-vm/pyproject.toml"
           "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py"
@@ -167,7 +169,9 @@
      (rule R3 "組み方が maturin だけでない package(doeff-indexer)は、無い時の組み方(Compile)を wheel_from_store・editable_from_store に渡す。自前で保存先・鍵を持たず、build の hook から maturin を直に撃たない。")
      (rule R4 "鍵 = tool.uv.cache-keys の file(宣言が無ければ既定の glob)の中身と相対 path・rustc と maturin の版・機体・組む Python の ABI・組みを変える環境変数・build の設定。wheel に入る file はどれも宣言に並べる(doeff-vm は doeff_vm/ の .py・.pyi・py.typed も)。")
      (rule R4b "R4 の追補(2026-10-07・agora-redesign #3850・cisco-c8 の可): 鍵の材料から rustc の版を外し、鍵は子 process を起こさずに作る(maturin の版は配布の記録 importlib.metadata から読む)。訳: 鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の wheel が在っても鍵を作る所で落ちた。wheel の中身を決めるのは source・Python の ABI・機体・組みを変える環境変数(RUSTC・RUSTFLAGS・CARGO_PROFILE_* は R4 のとおり鍵に入る)・build の設定で、Python へ見せる ABI は C-API なので rustc の版は wheel の外へ出ない。失敗ケース = tests/test_wheel_store_entry.py の test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process。")
+     (rule R4c "R4 の追補 2(2026-10-11・card ki-5fab1f97d98b・設計 docs/design/rust-wheel-distribution): 鍵の材料に libc の名と版(platform.libc_ver)を足す。訳: R5b の置き場の wheel は CI の glibc(ubuntu-24.04 = 2.39)で組むので、それより古い glibc の機体が同じ鍵で取ると import で落ちる。鍵が変わる 1 度だけ、どの機体も 1 回組み直すか置き場から取る。失敗ケース = tests/test_wheel_slot_key.py の test_another_libc_points_at_another_slot。")
      (rule R5 "保存先 = env DOEFF_WHEEL_CACHE(無ければ $XDG_CACHE_HOME/doeff-cargo-wheels)の <package>-<鍵>/<wheel> と .used。使う前に RECORD の hash で確かめ、壊れていれば名指しの 1 行を出してその wheel を除き組み直す。")
+     (rule R5b "R5 の追補(2026-10-11・card ki-5fab1f97d98b・置き場は利用者の答え A〔依頼書 lt-GSHT1T6XNZ87XQCNBTGZG8FTFQ・答え lt-63JZ6GP7M0KHJAMHA1S840W8WX〕「公開の release に置く(doeff の CI だけが書き、誰でも取れる)— 資格・Pod を足さない。空の機体で Rust を組まなくなる」): 入口は 手元の保存先 → 機体の外の置き場 → 組む の順に引く。置き場 = doeff の公開の GitHub の release rust-wheels の asset <package>-<鍵>.whl(env DOEFF_WHEEL_REMOTE で頭を替え、空の値なら引かない)。取った wheel は RECORD の hash で確かめ、本当の file 名を dist-info と WHEEL の Tag から作り直して手元の保存先へ置く。取れない時(404・網の失敗・20 秒の時間切れ・壊れた wheel)は名指しの 1 行を出して組む。置き場に書くのは doeff の GitHub Actions(.github/workflows/rust-wheels.yml → tools/rust_wheel_release.py)だけで、それも入口を `uv build --wheel` で通し、入口の報告の出どころが built の wheel だけを上げる(同じ名は上書きしない・800 個を越えたら古い順に消す)。入口は置き場に書かない。uv の find-links・index は使わない(uv は path・editable・git の依存にそれらを使わない)。報告の 1 行は出どころ source(local・remote・built)を足し、built の欄は R7 の読み手のために残す。失敗ケース = tests/test_wheel_remote_store.py(空の機体で偽の cargo が 1 度も呼ばれない — card ki-c4dbd8771633 の受入 c1f9f7ae2)。")
      (rule R6 "移す予定の入口(commit の hook の linter の binary)は台帳 PENDING-ENTRIES に理由つきで置く。台帳に無い新しい入口は赤。入口へ移した・消した変更は同じ commit で台帳の行を削る(残すと赤)。")
      (rule R7 "doeff-cluster の worker(実行環境の準備の EnsureNativeWheel)と起動の script(worker/entry/boot_wheel)は、native の wheel を `uv build --wheel` で入口へ渡すだけにし、自前の鍵(git の tree hash)と置き場を持たない。保存先は入口の DOEFF_WHEEL_CACHE(worker の state/wheels)。入れる wheel は uv build が root の下の --out-dir(native_wheel.wheel_out_dir)に出した file で、どの版の入口でも出る(宣言の古い doeff の root も同じ形で通る)。入口が env DOEFF_WHEEL_REPORT の file に書く 1 行(組んだか)は観測だけで、書かない版の入口では由来を閉じた型の UNREPORTED にし、準備を止めず、組んだ・使ったのどちらにも埋めない — 読みの定義点は native_wheel.reported_built(#3860 の 1 の続き)。")]
   :laws
