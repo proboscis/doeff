@@ -8,7 +8,6 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import pathlib [Path])
 (import doeff_cluster.worker.core.warm_rules [warm-dir-of])
 
 
@@ -31,11 +30,11 @@
   "状態の dir(世代ごと)と分け合う dir から worker の置き場を作るため — 世代ごとの物は state の下、log だけを shared の下に置く。"
   ;; 温める子の根は、起こす宿・分ける宿・掃除の係と同じ綴り(warm-dir-of)。
   (<- warm str (warm-dir-of state))
-  (WorkerPlaces :code (str (/ (Path state) "code"))
-                :jobs (str (/ (Path state) "jobs"))
-                :programs (str (/ (Path state) "programs"))
-                :tasks (str (/ (Path state) "tasks"))
+  (WorkerPlaces :code (+ state "/code")
+                :jobs (+ state "/jobs")
+                :programs (+ state "/programs")
+                :tasks (+ state "/tasks")
                 :warm warm
-                :probe (str (/ (Path state) "probe"))
-                :status (str (/ (Path state) "status.json"))
-                :logs (str (/ (Path shared) "logs"))))
+                :probe (+ state "/probe")
+                :status (+ state "/status.json")
+                :logs (+ shared "/logs")))
