@@ -83,8 +83,10 @@
   (val log (+ root "/warm.log"))
   (val flags (replace WARM-CHILD-FLAGS :reap-group reap-group))
   (<- env tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
+  ;; sleeper は -B で起こす: env は許可表の名だけなので根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)が届かず、--project の REPO は
+  ;; この checkout — 素の python は起動の .pth の module(_virtualenv・doeff_hy_bytecode_guard ほか)の .pyc を checkout へ書く。
   (<- started (| ProcessStarted ProcessNotStarted)
-      (StartProcess :argv #("uv" "run" "--no-sync" "--frozen" "--project" REPO "python" "-c" SLEEPER pid-file) :cwd root :env env
+      (StartProcess :argv #("uv" "run" "--no-sync" "--frozen" "--project" REPO "python" "-B" "-c" SLEEPER pid-file) :cwd root :env env
                     :env-mode EnvMode.REPLACE :stdout-path log :stderr-path log
                     :process-group flags.process-group :hold-stdin flags.hold-stdin :reap-group flags.reap-group))
   (assert (isinstance started ProcessStarted) (.format "uv を起こせない: {}" started))
