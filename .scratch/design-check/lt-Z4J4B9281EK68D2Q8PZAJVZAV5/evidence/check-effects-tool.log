@@ -1,0 +1,13 @@
+# effects-tool: uv を PATH から外す
+2026-10-11T13:33:47Z
+src HEAD = 7060adcb641f07abfa5742c843256ad0318a66ff
+## positive: 普段の PATH(uv = /usr/local/bin/uv)
+rc=0
+- hook id: semgrep
+semgrep Hy architectural rules.............................................................(no files to check)Skipped
+semgrep reading plane rules................................................................(no files to check)Skipped
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ).......................Passed
+## negative: PATH=/usr/bin:/bin(uv が無い)
+rc=1
+scripts/git-hooks/pre-commit: 36: uv: not found
+doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。 所見を直して stage し直す。

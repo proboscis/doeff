@@ -1,0 +1,13 @@
+# distribution-rules: 規則の paths.include に package を足す(項・hook の写しは不変)
+2026-10-11T13:33:57Z
+src HEAD = 7060adcb641f07abfa5742c843256ad0318a66ff
+## negative: 規則の include = 1 行 / 項の files = 64 行目
+stage = packages/doeff-example-generic/README.md / 文 = 宣言の欄(agora の kanban の行) / git commit rc=1 / HEAD の数 4766 → 4766
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ).......................Failed
+   ❯❯❱ doeff-packages-have-no-application-vocabulary
+## positive: 規則の include = 1 行 / 項の files = 64 行目
+stage = packages/doeff-example-generic/README.md / 文 = 宣言の欄(#2830) / git commit rc=0 / HEAD の数 4766 → 4767
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ).......................Passed
+## outside: 規則の include = 1 行 / 項の files = 64 行目
+stage = packages/doeff-example-app/README.md / 文 = 宣言の欄(agora の kanban の行) / git commit rc=0 / HEAD の数 4766 → 4767
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ).......................Passed

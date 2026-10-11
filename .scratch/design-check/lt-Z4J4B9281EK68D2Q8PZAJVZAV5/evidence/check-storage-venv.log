@@ -1,0 +1,26 @@
+# storage-venv: .venv の無い写しで素の hook を撃つ
+2026-10-11T13:32:59Z
+src HEAD = 7060adcb641f07abfa5742c843256ad0318a66ff
+.venv の有無: 無い
+## positive: 所見の無い Hy の註を stage
+semgrep architectural rules(Python・基点に無い所見だけ止める)..............................(no files to check)Skipped
+- hook id: semgrep
+semgrep Hy architectural rules.................................................................................Passed
+semgrep reading plane rules................................................................(no files to check)Skipped
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ)...(no files to check)Skipped
+positive rc=0
+## negative: 業務の語を足した Hy の註を stage
+          の名や issue の参照も同じ(「agora-redesign #2830」は「#2830」と書く)。語の一覧の定義元はこの規則 1 つ(元は 3  
+  package の                                                                                                            
+          tests/test_no_application_vocabulary.hy の写し — agora-redesign #2875。写しの差は、.pyi                       
+  を全部で見る・doeff-records                                                                                           
+          の宣言の 欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は        
+          tests/test_package_file_names_have_no_application_vocabulary.py がこの規則の語の一覧を読んで確かめる。        
+                                                                                                                        
+            1┆ ;; 起き直しの lease(agora-controllers の card ki-0)
+
+semgrep reading plane rules................................................................(no files to check)Skipped
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ)...(no files to check)Skipped
+doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。 所見を直して stage し直す。
+negative rc=1
+rule in output: 1

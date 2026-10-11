@@ -1,0 +1,21 @@
+code-quality: passed (scope=changed・型検査は未実行(fast の段))
+code-quality-base: {'revision': 'c4f1423f48011808b826924f0137ed1fda08cc72', 'repo': '/work/toolset/worktrees/doeff-wt-vocab-item-by-rule-paths'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: tests/test_lint_entrypoint_wiring.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-timing: prepare 3.239s inventory=2697 scoped=835 sources=3 changed=2 selected=1
+code-quality-timing: node-toolchain 0.0s status=checkout path=/work/toolset/worktrees/doeff-wt-vocab-item-by-rule-paths
+code-quality-timing: verdict-lookup 0.0s hit=False key=cd8875decb90
+code-quality-timing: candidate.sources 0.069s sources=3 selected=1 analyzed={'hy': 2} by_language={'hy': 0.07} cache_hits=2 cache_misses=0
+code-quality-timing: candidate.closure 0.0s affected=1 languages={'python': 1} touched_languages=[]
+code-quality-timing: base.workspace 2.634s paths=4599
+code-quality-timing: base.read 0.304s inventory=2697 sources=3
+code-quality-timing: base.sources 0.049s sources=3 selected=1 analyzed={'hy': 2} by_language={'hy': 0.05} cache_hits=2 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=1 languages={'python': 1} touched_languages=['python']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.03s modules=268 paths=2697
+code-quality-timing: base.policy 0.002s dependencies=11 findings=0
+code-quality-timing: observe-baseline 3.323s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.03s
+code-quality-coverage: partial / 対象 835 / 全体 2697 / 未導入 {'hy': 342, 'javascript': 12, 'lua': 17, 'python': 1265, 'rust': 88, 'shell': 15, 'typescript': 123} / typed:true だが include に無い 24(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 419 件（自動増加しない）

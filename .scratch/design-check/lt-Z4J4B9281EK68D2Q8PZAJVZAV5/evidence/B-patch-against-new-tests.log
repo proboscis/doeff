@@ -1,0 +1,17 @@
+# 盲検 B の近道(blind/B-hook.patch)を直しの後の木(1d07cbfde + 項の直し)に当て、素の hook の検を走らせる — 期待: 赤
+2026-10-11T13:30:18Z
+ .pre-commit-config.yaml      | 15 +++++++++------
+ scripts/git-hooks/pre-commit |  6 +++++-
+ 2 files changed, 14 insertions(+), 7 deletions(-)
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_stops_staged_application_vocabulary[hy-comment]
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_stops_staged_application_vocabulary[python-docstring]
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_stops_staged_application_vocabulary[document]
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_passes_staged_file_without_findings[hy-comment]
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_passes_staged_file_without_findings[document]
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_follows_the_rule_paths_for_documents[package-outside-the-rule]
+PASSED tests/test_lint_entrypoint_wiring.py::test_plain_hook_runs_every_semgrep_hook_of_the_config
+FAILED tests/test_lint_entrypoint_wiring.py::test_plain_hook_stops_staged_application_vocabulary[document-non-ascii-name]
+FAILED tests/test_lint_entrypoint_wiring.py::test_plain_hook_follows_the_rule_paths_for_documents[package-added-to-the-rule]
+FAILED tests/test_lint_entrypoint_wiring.py::test_plain_hook_leaves_file_selection_to_the_config
+3 failed, 7 passed, 16 deselected, 1 warning in 56.48s
+pytest rc=1

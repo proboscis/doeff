@@ -1,0 +1,15 @@
+# 盲検 B の失敗例の再現(設計者・修正前の版 15e6fc9c4 に blind/B-hook.patch を当てた写し)
+2026-10-11T13:23:52Z
+## 検 6 本(差分の後の hook)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 16 deselected, 1 warning in 29.62s
+## 違反 1: 日本語の file 名
+[patched-hook sh] exit=0 rule_in_output=False
+[original-hook sh] exit=1 rule_in_output=True
+[framework pre-commit run semgrep-rules] exit=1 rule_in_output=True
+[git commit via .git/hooks copy of patched-hook] exit=0 rule_in_output=False
+    commits on HEAD = 2(1 = base だけ・2 = 違反の file が commit に入った)
+[git commit via .git/hooks copy of original-hook] exit=1 rule_in_output=True
+    commits on HEAD = 1(1 = base だけ・2 = 違反の file が commit に入った)
+driver rc=0

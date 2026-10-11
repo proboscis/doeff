@@ -1,0 +1,463 @@
+{
+  "version": 1,
+  "task_id": "lt-Z4J4B9281EK68D2Q8PZAJVZAV5",
+  "base_revision": "15e6fc9c4ef0d9de254adc7b70f5395d69a5de31",
+  "author": {
+    "conversation_id": "c-GPQPMMK7CZKZE1Z0WVXRKDYS92",
+    "model": "claude-opus-5-5",
+    "effort": "不明(この会話から effort の設定を読めない — 自己申告)"
+  },
+  "requirements": "card ki-2ff6e513ee7f / ki-8c0bb496bfab: 汎用の package に使い手の系の名を足す commit を commit の時に止める(R1)。止める所は著述機の commit の hook(R2)。Pod は素の hook の写しを入れる(R3)。作業木に .venv が無くても走る(R4)。stage した断面にだけ当て、既存の所見で塞がない(R5)。完了の範囲 = 実装完了まで(L2051・L2055 で main へ)",
+  "design": {
+    "path": "design.md",
+    "sha256": "28a8a2c9bebdd2a59586b9522a3045cc026d0464bb047b3efe45d957a2aa9ad1"
+  },
+  "modules": [
+    {
+      "id": "plain-hook",
+      "responsibility": "commit の時の入口(scripts/git-hooks/pre-commit)。作り直し中は判定しない・(1) pre-commit の別名 semgrep-rules → (2) 台帳の突合 の順に撃ち、赤なら止める",
+      "owns": "撃つ順・止め方・入口の無い古い断面を塞がない判断",
+      "hides": "どの file にどの semgrep の項・規則を当てるか(stage の名を自分で読まない)・道具の版",
+      "interface": "git の pre-commit hook の契約(引数なし・cwd は作業木の根・exit 0 = 通す・非 0 = 止める)",
+      "effects": "子 process(uv・pre-commit・semgrep)・stderr への文・uv の置き場の読み書き(初回の取り寄せは network)・pre-commit による未 stage の変更の一時退避と戻し",
+      "lifetime": "commit 1 回の process。解放する資源なし(子 process は終わりを待つ)",
+      "invariants": [
+        "stage した断面にだけ当てる",
+        "走らせられない時は止める(黙って通さない)",
+        "作り直し(rebase・cherry-pick 等)中は判定しない"
+      ]
+    },
+    {
+      "id": "hook-items",
+      "responsibility": ".pre-commit-config.yaml の semgrep の 4 項(semgrep・semgrep-hy・semgrep-reading-plane・semgrep-other-files、別名 semgrep-rules)— どの file 種を semgrep へ渡すかの唯一の定義点",
+      "owns": "files / types / exclude の選別(file 種と根)・Python は基点と比べる",
+      "hides": "機体に枠組みが据わっているか・どの package が汎用か(規則の paths が持つ)",
+      "interface": "pre-commit の項・別名 semgrep-rules",
+      "effects": "なし(宣言だけ — 撃つのは pre-commit)",
+      "lifetime": "repo の版に乗る宣言。解放なし",
+      "invariants": [
+        "semgrep を撃つ項はどれも別名 semgrep-rules を持つ",
+        "項は package の名を持たない(L2055)"
+      ]
+    },
+    {
+      "id": "locked-entry",
+      "responsibility": "uv.lock の版の pre-commit / semgrep を uv の道具の置き場から呼ぶ(scripts/precommit_locked.py・scripts/semgrep_locked.py)",
+      "owns": "版の読み(uv.lock)",
+      "hides": "作業木の .venv・探し道の道具",
+      "interface": "uv run --no-project --python 3.12 python scripts/precommit_locked.py <pre-commit の引数…> → pre-commit の終了値をそのまま返す",
+      "effects": "exec・uv tool の取り寄せ(network・置き場への書き込み)",
+      "lifetime": "1 回の呼び(exec で置き換わる)。解放なし",
+      "invariants": [
+        "版は uv.lock の 1 か所",
+        "uv.lock に無ければ理由を名指して 1"
+      ]
+    },
+    {
+      "id": "rules",
+      "responsibility": ".semgrep.yaml — 何が違反か・どこに当てるか(paths)",
+      "owns": "規則の pattern と paths(どの package が汎用か)",
+      "hides": "どこから撃たれるか(commit・日次)",
+      "interface": "semgrep の規則の file",
+      "effects": "なし(宣言)",
+      "lifetime": "repo の版に乗る宣言。解放なし",
+      "invariants": [
+        "語の一覧と package の一覧の定義元は規則 1 つ"
+      ]
+    },
+    {
+      "id": "baseline",
+      "responsibility": "Python の既存の所見と比べ、増えた所見だけ止める(scripts/hook_finding_baseline.py)",
+      "owns": "規則 × file の基点",
+      "hides": "—(基点の置き場は scripts/hook_finding_baseline/)",
+      "interface": "hook_finding_baseline.py check semgrep <files…>",
+      "effects": "子 process(semgrep)・基点の読み",
+      "lifetime": "1 回の呼び。解放なし",
+      "invariants": [
+        "基点に無い所見だけを止める"
+      ]
+    },
+    {
+      "id": "pod-installer",
+      "responsibility": "Pod の準備の時に doeff の clone へ hook の写しを入れる(agora deploy/agent-worker/worker-prepare.sh の 5.)",
+      "owns": "いつ・どこへ写すか",
+      "hides": "hook の中身・規則・項",
+      "interface": "Pod の準備の段 doeff",
+      "effects": "file の写し(.git/hooks/pre-commit)",
+      "lifetime": "Pod の準備の 1 回。解放なし",
+      "invariants": [
+        "本線の先端の hook を写す"
+      ]
+    },
+    {
+      "id": "wiring-tests",
+      "responsibility": "素の hook の振る舞いと別名の配線を検で固定する(tests/test_lint_entrypoint_wiring.py の test_plain_hook_*)",
+      "owns": "検の repo の組み立て(偽の uv.lock・偽の基点・規則 1 つ)",
+      "hides": "—",
+      "interface": "pytest の検",
+      "effects": "一時 dir の git repo・子 process",
+      "lifetime": "検 1 回(tmp_path は pytest が片付ける)",
+      "invariants": [
+        "止める例と通す例の両方を持つ",
+        "素の hook が file を先に選ばない事を確かめる(L2055)"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S-hardware",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "hook は機器を使わない。機体の違いは uv の python の解き(--python 3.12・既存の宣言 ki-a28a482132ab)に閉じ、この変更は触らない。Linux/x86_64 の Pod の外は試せない"
+    },
+    {
+      "id": "S-storage-venv",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "作業木に .venv が無い・uv の道具の置き場が初めて",
+      "claim": "hook は作業木の .venv を読まず、uv.lock の版を uv の置き場から呼ぶ。置き場の違いは locked-entry に閉じる",
+      "expected_scope": "locked-entry だけ(plain-hook・hook-items は不変)",
+      "actual_scope": "変更なしで走った — .venv の無い写しで正常例 rc 0・失敗例 rc 1",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "plain-hook",
+        "hook-items",
+        "locked-entry",
+        "rules",
+        "baseline",
+        "pod-installer",
+        "wiring-tests"
+      ],
+      "reason": "環境の違いで、どの module も変える必要が無かった",
+      "revision": "不要 — evidence/check-storage-venv.log で両例を観測"
+    },
+    {
+      "id": "S-storage-index",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "stage した断面と作業木の中身が違う(一部だけ stage)",
+      "claim": "当てるのは stage した断面だけ。作業木の未 stage の変更は判定に入らず、hook の後も残る",
+      "expected_scope": "変更なし(pre-commit の stash の契約に依る)",
+      "actual_scope": "変更なし — 未 stage の業務の語は判定に入らず残り、stage した業務の語は止まった",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "plain-hook",
+        "hook-items",
+        "locked-entry",
+        "rules",
+        "baseline",
+        "pod-installer",
+        "wiring-tests"
+      ],
+      "reason": "pre-commit が未 stage の変更を退避して stage の断面を検める",
+      "revision": "不要 — evidence/check-storage-index.log"
+    },
+    {
+      "id": "S-effects-tool",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "道具を走らせられない(uv が無い・取り寄せに失敗)",
+      "claim": "走らせられない時は commit を止め、名指す(黙って通さない)",
+      "expected_scope": "変更なし(plain-hook の || exit 1)",
+      "actual_scope": "変更なし — uv を PATH から外すと uv: not found・rc 1・「走らせられなかった」の文",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "plain-hook",
+        "hook-items",
+        "locked-entry",
+        "rules",
+        "baseline",
+        "pod-installer",
+        "wiring-tests"
+      ],
+      "reason": "plain-hook が子の失敗を止める側へ倒す",
+      "revision": "不要 — evidence/check-effects-tool.log"
+    },
+    {
+      "id": "S-distribution-rules",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": ".semgrep.yaml に規則を足す・規則を変える(例 業務の語の規則に package を足す)",
+      "claim": "規則の変更は作業木の版で効き、各 Pod に入った hook の写しを替えなくてよい",
+      "expected_scope": "rules だけ(plain-hook・pod-installer は不変)",
+      "actual_scope": "修正前: rules と hook-items(盲検 A — 項の files が規則の 4 package を写して持ち、規則だけを変えると素の hook が通した)。修正後(L2055): rules だけ — Pod と同じく写した hook で commit が止まる",
+      "changed_modules": [
+        "rules"
+      ],
+      "unchanged_modules": [
+        "plain-hook",
+        "hook-items",
+        "locked-entry",
+        "baseline",
+        "pod-installer",
+        "wiring-tests"
+      ],
+      "reason": "修正前は知識の漏洩(どの package が汎用かが規則と項の 2 か所)— 宣言した共同の不変条件ではなかった。修正後は項が package の名を持たず、規則の paths の 1 か所",
+      "revision": "L2055(ee7a4e8f4 失敗ケース・bf6e78bc3 直し): 項 semgrep-other-files・files '^(doeff|packages)/'・検 test_plain_hook_follows_the_rule_paths_for_documents。再検証 evidence/A-repro-after-fix.log・evidence/check-distribution-rules.log"
+    },
+    {
+      "id": "S-distribution-items",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "新しい file 種へ semgrep の項を足す",
+      "claim": "項に別名 semgrep-rules を書けば、枠組みの機体と素の hook の機体の両方に届く。書き忘れは wiring-tests が赤にする",
+      "expected_scope": "hook-items だけ(plain-hook は不変)",
+      "actual_scope": "hook-items だけ。ただし盲検 B: plain-hook が stage の名を読んで先に選ぶ近道は検 6 本を通り、名が ASCII の外の文書と将来の項の file を通した — 検を足して拒むようにした",
+      "changed_modules": [
+        "hook-items"
+      ],
+      "unchanged_modules": [
+        "plain-hook",
+        "locked-entry",
+        "rules",
+        "baseline",
+        "pod-installer",
+        "wiring-tests"
+      ],
+      "reason": "実装は選別を持っていなかったが、検査が plain-hook の選別の禁止を表していなかった(検査の穴)",
+      "revision": "L2055: 検 test_plain_hook_leaves_file_selection_to_the_config・document-non-ascii-name。B の近道に当てて 3 failed(evidence/B-patch-against-new-tests.log)"
+    },
+    {
+      "id": "S-concurrency",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "同じ Pod の同じ clone の別の作業木で、2 つの会話が同時に commit する",
+      "claim": "hook は commit ごとの process で、共有する可変の状態は uv の置き場(uv が鍵を持つ)だけ。結論はそれぞれの stage で決まる",
+      "expected_scope": "変更なし",
+      "actual_scope": "変更なし — 共有の hook の写しで同時に commit し、所見なし同士は rc 0 / rc 0、一方に業務の語は rc 1 / rc 0",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "plain-hook",
+        "hook-items",
+        "locked-entry",
+        "rules",
+        "baseline",
+        "pod-installer",
+        "wiring-tests"
+      ],
+      "reason": "hook は作業木ごとの stage を読み、共有の状態を書かない",
+      "revision": "不要 — evidence/check-concurrency.log"
+    },
+    {
+      "id": "S-simulation",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "道具を偽に差し替えた検の repo で hook を決定的に検める",
+      "claim": "偽の uv.lock・偽の基点・本物の semgrep で、止める例と通す例を検で再現できる",
+      "expected_scope": "wiring-tests だけ",
+      "actual_scope": "wiring-tests だけ — 検の repo の組み立てに規則へ package を足す引数を加えた",
+      "changed_modules": [
+        "wiring-tests"
+      ],
+      "unchanged_modules": [
+        "plain-hook",
+        "hook-items",
+        "locked-entry",
+        "rules",
+        "baseline",
+        "pod-installer"
+      ],
+      "reason": "検の組み立ての拡張(公開契約の変更なし)",
+      "revision": "L2055 の検。evidence/tests-before-item-fix.log(直す前 1 failed)・evidence/tests-after-item-fix.log(26 passed)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "c-storage-venv-positive",
+      "scenarios": [
+        "S-storage-venv"
+      ],
+      "control": "positive",
+      "expectation": ".venv の無い写しで所見の無い Hy の註を stage → 素の hook rc 0",
+      "observation": ".venv: 無い・positive rc=0",
+      "evidence": {
+        "path": "evidence/check-storage-venv.log",
+        "sha256": "4f6d09687b60be5f21e3ff914b44c85847d217a8577482d7292e75cc9732ce59"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-storage-venv-negative",
+      "scenarios": [
+        "S-storage-venv"
+      ],
+      "control": "negative",
+      "expectation": ".venv の無い写しで業務の語の Hy の註を stage → rc 1・規則の名",
+      "observation": "negative rc=1・rule in output: 1",
+      "evidence": {
+        "path": "evidence/check-storage-venv.log",
+        "sha256": "4f6d09687b60be5f21e3ff914b44c85847d217a8577482d7292e75cc9732ce59"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-storage-index-positive",
+      "scenarios": [
+        "S-storage-index"
+      ],
+      "control": "positive",
+      "expectation": "所見の無い行を stage・業務の語の行は未 stage → rc 0・未 stage の行が残る",
+      "observation": "rc=0・hook の後の未 stage の差分に業務の語の行",
+      "evidence": {
+        "path": "evidence/check-storage-index.log",
+        "sha256": "b15f5fbe518ff59ea83b2b9aa0b2175842a352d0f6b7801c43c3a63a2a198a1e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-storage-index-negative",
+      "scenarios": [
+        "S-storage-index"
+      ],
+      "control": "negative",
+      "expectation": "業務の語を stage・作業木では消した → rc 1",
+      "observation": "rc=1・rule in output: 1",
+      "evidence": {
+        "path": "evidence/check-storage-index.log",
+        "sha256": "b15f5fbe518ff59ea83b2b9aa0b2175842a352d0f6b7801c43c3a63a2a198a1e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-effects-tool-positive",
+      "scenarios": [
+        "S-effects-tool"
+      ],
+      "control": "positive",
+      "expectation": "普段の PATH で所見の無い文書 → rc 0",
+      "observation": "rc=0(uv = /usr/local/bin/uv)",
+      "evidence": {
+        "path": "evidence/check-effects-tool.log",
+        "sha256": "463894d45ad19edcc2673ec41823dc1ff94bc6441edd3be9e9b89a0e61c3b2e1"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-effects-tool-negative",
+      "scenarios": [
+        "S-effects-tool"
+      ],
+      "control": "negative",
+      "expectation": "PATH から uv を外す → 止める(rc 非 0)・名指す",
+      "observation": "uv: not found・rc=1・「走らせられなかった」の文",
+      "evidence": {
+        "path": "evidence/check-effects-tool.log",
+        "sha256": "463894d45ad19edcc2673ec41823dc1ff94bc6441edd3be9e9b89a0e61c3b2e1"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-distribution-rules-positive",
+      "scenarios": [
+        "S-distribution-rules"
+      ],
+      "control": "positive",
+      "expectation": "規則にだけ package を足した写し(項・写した hook は不変)で、その package の所見の無い README と、規則の外の package の業務の語は commit できる",
+      "observation": "positive: git commit rc=0・HEAD +1 / outside: rc=0・HEAD +1",
+      "evidence": {
+        "path": "evidence/check-distribution-rules.log",
+        "sha256": "a13f7c212fbf2dbdfde0eea7d270528b65ecd9782c3c1ba58dee2305e2a10b35"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-distribution-rules-negative",
+      "scenarios": [
+        "S-distribution-rules"
+      ],
+      "control": "negative",
+      "expectation": "同じ写しで、規則に足した package の README の業務の語を commit → 止まる",
+      "observation": "negative: git commit rc=1・HEAD 不変・規則の名。盲検 A の手順の c2 も修正後は rc 1(evidence/A-repro-after-fix.log)",
+      "evidence": {
+        "path": "evidence/check-distribution-rules.log",
+        "sha256": "a13f7c212fbf2dbdfde0eea7d270528b65ecd9782c3c1ba58dee2305e2a10b35"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-distribution-items-positive",
+      "scenarios": [
+        "S-distribution-items"
+      ],
+      "control": "positive",
+      "expectation": "直しの後の木で tests/test_lint_entrypoint_wiring.py が緑",
+      "observation": "26 passed",
+      "evidence": {
+        "path": "evidence/tests-after-item-fix.log",
+        "sha256": "6e4ed0781a1e2ed27d78101e155f26e26f2576bd053716d033305d6708f33fd5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-distribution-items-negative",
+      "scenarios": [
+        "S-distribution-items"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の近道(plain-hook が stage の名で先に選ぶ)を当てると検が拒む",
+      "observation": "3 failed(document-non-ascii-name・package-added-to-the-rule・leaves_file_selection_to_the_config)/ 7 passed",
+      "evidence": {
+        "path": "evidence/B-patch-against-new-tests.log",
+        "sha256": "6b15d7ba463147c2c039de62a2cc0a0a7b843b2eecba9828f289f4d77b39714b"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-concurrency-positive",
+      "scenarios": [
+        "S-concurrency"
+      ],
+      "control": "positive",
+      "expectation": "同じ clone の 2 作業木で同時に所見の無い commit → 両方 rc 0",
+      "observation": "r rc=0 HEAD +1 / o rc=0 HEAD +1・hook の置き場は共有の .git/hooks",
+      "evidence": {
+        "path": "evidence/check-concurrency.log",
+        "sha256": "22d9f0f96194c64e9640ee632c656416f9a784bf74b57b2a7fa53263e01521aa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-concurrency-negative",
+      "scenarios": [
+        "S-concurrency"
+      ],
+      "control": "negative",
+      "expectation": "同時に、一方は業務の語・他方は所見なし → 一方だけ止まる",
+      "observation": "r rc=1 HEAD 不変 / o rc=0 HEAD +1",
+      "evidence": {
+        "path": "evidence/check-concurrency.log",
+        "sha256": "22d9f0f96194c64e9640ee632c656416f9a784bf74b57b2a7fa53263e01521aa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-simulation-positive",
+      "scenarios": [
+        "S-simulation"
+      ],
+      "control": "positive",
+      "expectation": "検の repo で所見の無い stage・規則の外の package・どの項にも当たらない stage が通る",
+      "observation": "passes_staged_file_without_findings ×2・follows_the_rule_paths[package-outside-the-rule]・leaves_file_selection が PASSED",
+      "evidence": {
+        "path": "evidence/tests-after-item-fix.log",
+        "sha256": "6e4ed0781a1e2ed27d78101e155f26e26f2576bd053716d033305d6708f33fd5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-simulation-negative",
+      "scenarios": [
+        "S-simulation"
+      ],
+      "control": "negative",
+      "expectation": "検の repo で業務の語(Hy の註・docstring・文書・名が ASCII の外の文書・規則に足した package)を止める",
+      "observation": "stops_staged_application_vocabulary ×4・follows_the_rule_paths[package-added-to-the-rule] が PASSED(直す前の項では package-added が FAILED — evidence/tests-before-item-fix.log)",
+      "evidence": {
+        "path": "evidence/tests-after-item-fix.log",
+        "sha256": "6e4ed0781a1e2ed27d78101e155f26e26f2576bd053716d033305d6708f33fd5"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

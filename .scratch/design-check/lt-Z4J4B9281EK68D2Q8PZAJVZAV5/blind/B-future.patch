@@ -1,0 +1,25 @@
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+index 6883e2a8b..606a05314 100644
+--- a/.pre-commit-config.yaml
++++ b/.pre-commit-config.yaml
+@@ -58,7 +58,7 @@ repos:
+         name: semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file)
+         entry: *semgrep-entry
+         language: system
+-        files: '^packages/doeff-(cluster|records|claude-code|codex)/'
++        files: '^packages/doeff-(cluster|records|claude-code|codex|agents)/'
+         exclude: '\.(py|hy|hyp|hyk)$'
+         pass_filenames: true
+ 
+diff --git a/.semgrep.yaml b/.semgrep.yaml
+index ceb136cd7..3253c4e3a 100644
+--- a/.semgrep.yaml
++++ b/.semgrep.yaml
+@@ -331,6 +331,7 @@ rules:
+         - "/packages/doeff-records/**"
+         - "/packages/doeff-claude-code/**"
+         - "/packages/doeff-codex/**"
++        - "/packages/doeff-agents/**"
+         - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
+         - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
+ 

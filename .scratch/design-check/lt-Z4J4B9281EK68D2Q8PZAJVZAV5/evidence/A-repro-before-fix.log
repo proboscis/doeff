@@ -1,0 +1,79 @@
+# 盲検 A の失敗例の再現(設計者・修正前の版 15e6fc9c4)— script = blind/A-exp.sh の T だけを替えた写し
+2026-10-11T13:23:19Z
+== c1-control: stage = packages/doeff-records/README.md, hook-items を広げた = no
+-- 規則の paths.include:
+20:        - "/packages/doeff-cluster/**"
+21:        - "/packages/doeff-records/**"
+22:        - "/packages/doeff-claude-code/**"
+23:        - "/packages/doeff-codex/**"
+24:        - "/packages/doeff-core-effects/**"
+25:        - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
+26:        - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
+-- hook-items の files:
+61:        files: '^packages/doeff-(cluster|records|claude-code|codex)/'
+81:        files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
+素の hook の exit = 1
+-- hook の出力(業務の語の規則と項の行):
+1:semgrep architectural rules(Python・基点に無い所見だけ止める)................................................(no files to check)Skipped
+2:- hook id: semgrep
+3:semgrep Hy architectural rules...............................................................................(no files to check)Skipped
+4:semgrep reading plane rules..................................................................................(no files to check)Skipped
+5:semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file).......................Failed
+6:- hook id: semgrep-application-vocabulary
+33:   ❯❯❱ doeff-packages-have-no-application-vocabulary
+45:          の宣言の 欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は        
+52:doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。 所見を直して stage し直す。
+-- 日次と同じく packages/ を丸ごと撃った時(--config .semgrep.yaml packages/ --error):
+日次相当の exit = 1
+[('doeff-packages-have-no-application-vocabulary', 'packages/doeff-records/README.md'), ('doeff-packages-have-no-application-vocabulary', 'packages/doeff-records/README.md')]
+exp.sh rc=0
+== c2-rules-only: stage = packages/doeff-core-effects/README.md, hook-items を広げた = no
+-- 規則の paths.include:
+20:        - "/packages/doeff-cluster/**"
+21:        - "/packages/doeff-records/**"
+22:        - "/packages/doeff-claude-code/**"
+23:        - "/packages/doeff-codex/**"
+24:        - "/packages/doeff-core-effects/**"
+25:        - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
+26:        - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
+-- hook-items の files:
+61:        files: '^packages/doeff-(cluster|records|claude-code|codex)/'
+81:        files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
+素の hook の exit = 0
+-- hook の出力(業務の語の規則と項の行):
+1:semgrep architectural rules(Python・基点に無い所見だけ止める)................................................(no files to check)Skipped
+2:- hook id: semgrep
+3:semgrep Hy architectural rules...............................................................................(no files to check)Skipped
+4:semgrep reading plane rules..................................................................................(no files to check)Skipped
+5:semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file)...(no files to check)Skipped
+-- 日次と同じく packages/ を丸ごと撃った時(--config .semgrep.yaml packages/ --error):
+日次相当の exit = 1
+[('doeff-packages-have-no-application-vocabulary', 'packages/doeff-core-effects/README.md'), ('doeff-packages-have-no-application-vocabulary', 'packages/doeff-core-effects/README.md')]
+exp.sh rc=0
+== c3-rules-and-items: stage = packages/doeff-core-effects/README.md, hook-items を広げた = yes
+-- 規則の paths.include:
+20:        - "/packages/doeff-cluster/**"
+21:        - "/packages/doeff-records/**"
+22:        - "/packages/doeff-claude-code/**"
+23:        - "/packages/doeff-codex/**"
+24:        - "/packages/doeff-core-effects/**"
+25:        - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
+26:        - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
+-- hook-items の files:
+61:        files: '^packages/doeff-(cluster|records|claude-code|codex|core-effects)/'
+81:        files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
+素の hook の exit = 1
+-- hook の出力(業務の語の規則と項の行):
+1:semgrep architectural rules(Python・基点に無い所見だけ止める)................................................(no files to check)Skipped
+2:- hook id: semgrep
+3:semgrep Hy architectural rules...............................................................................(no files to check)Skipped
+4:semgrep reading plane rules..................................................................................(no files to check)Skipped
+5:semgrep 業務の語(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex の Python と Hy の外の file).......................Failed
+6:- hook id: semgrep-application-vocabulary
+33:   ❯❯❱ doeff-packages-have-no-application-vocabulary
+45:          の宣言の 欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は        
+52:doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。 所見を直して stage し直す。
+-- 日次と同じく packages/ を丸ごと撃った時(--config .semgrep.yaml packages/ --error):
+日次相当の exit = 1
+[('doeff-packages-have-no-application-vocabulary', 'packages/doeff-core-effects/README.md'), ('doeff-packages-have-no-application-vocabulary', 'packages/doeff-core-effects/README.md')]
+exp.sh rc=0

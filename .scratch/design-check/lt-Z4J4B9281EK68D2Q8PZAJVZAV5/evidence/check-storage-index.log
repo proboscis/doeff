@@ -1,0 +1,26 @@
+# storage-index: stage した断面と作業木の中身が違う
+2026-10-11T13:33:34Z
+src HEAD = 7060adcb641f07abfa5742c843256ad0318a66ff
+## positive: 所見の無い行を stage・業務の語の行は stage しない
+rc=0
+semgrep architectural rules(Python・基点に無い所見だけ止める)..............................(no files to check)Skipped
+- hook id: semgrep
+semgrep Hy architectural rules.............................................................(no files to check)Skipped
+semgrep reading plane rules................................................................(no files to check)Skipped
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ).......................Passed
+[INFO] Restored changes from /work/toolset/cache/pre-commit/patch1791725616-1202786.
+hook の後の未 stage の差分(業務の語の行が残る事):
++宣言の欄(agora の kanban の行)
+## negative: 業務の語の行を stage・作業木では消した(未 stage)
+rc=1
+  を全部で見る・doeff-records                                                                                           
+          の宣言の 欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は        
+          tests/test_package_file_names_have_no_application_vocabulary.py がこの規則の語の一覧を読んで確かめる。        
+                                                                                                                        
+          275┆ 宣言の欄(agora の kanban の行)
+            ⋮┆----------------------------------------
+          275┆ 宣言の欄(agora の kanban の行)
+
+[INFO] Restored changes from /work/toolset/cache/pre-commit/patch1791725623-1204817.
+doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。 所見を直して stage し直す。
+rule in output: 1

@@ -1,0 +1,7 @@
+# concurrency: 同じ clone の 2 つの作業木(hook の写しは共有の 1 つ)で同時に git commit
+2026-10-11T13:34:20Z
+src HEAD = 7060adcb641f07abfa5742c843256ad0318a66ff
+hook の置き場: .git/hooks / /tmp/dc-checks-TXHDKk/concurrency/.git/hooks
+## positive: r(文 = 宣言の欄(#2830))rc=0 HEAD 4765 → 4766 / o(文 = 宣言の欄(#2830))rc=0 HEAD 4765 → 4766
+## negative: r(文 = 宣言の欄(agora の kanban の行))rc=1 HEAD 4766 → 4766 / o(文 = 宣言の欄(#2830))rc=0 HEAD 4766 → 4767
+   ❯❯❱ doeff-packages-have-no-application-vocabulary

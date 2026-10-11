@@ -1,0 +1,17 @@
+diff --git a/scripts/git-hooks/pre-commit b/scripts/git-hooks/pre-commit
+index a32a6d298..80c377d0e 100755
+--- a/scripts/git-hooks/pre-commit
++++ b/scripts/git-hooks/pre-commit
+@@ -32,7 +32,11 @@ TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+ # 無いと素の hook だけの機体の commit は semgrep の規則を通らず、所見は翌日の日次(test_semgrep_findings_match_baseline_ratchet)で
+ # 初めて赤になる(2026-10-11 の 5 回 — Pod の commit が汎用の package に使い手の系の名を足した)。古い断面(入口の無い木)は塞がない。
+ RULES="$TOP/scripts/precommit_locked.py"
+-if [ -f "$RULES" ]; then
++# semgrep の項が当たる file の形(Python と Hy・読む面の TypeScript・汎用の 4 package の中)。この形の file を 1 つも stage して
++# いない commit(docs/adr・Makefile・uv.lock だけなど)では pre-commit を起こさない — uv の python の解き・道具の置き場からの
++# 起動・未 stage の変更の stash と戻しを、当たらない commit で毎回払わない(Pod の担当は小さな commit を多く積む)。
++SEMGREP_FILES='\.(py|hy|hyp|hyk)$|^ide-plugins/vscode/doeff-runner/src/read/.*\.ts$|^packages/doeff-(cluster|records|claude-code|codex)/'
++if [ -f "$RULES" ] && git diff --cached --name-only --diff-filter=ACMR | grep -Eq "$SEMGREP_FILES"; then
+   (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run semgrep-rules) || {
+     echo "doeff の commit の hook: semgrep の規則の項が赤(stage した file の所見か、走らせられなかった — 上の出力)。" \
+       "所見を直して stage し直す。" >&2
