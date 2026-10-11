@@ -16,14 +16,17 @@ examples/ の `.hy` は全部この検に入る(新しい例も書いただけ�
 ki-2d5b129f2ff2)。Hy の付ける名(番号は macro の展開で変わる)は期待の出力に置かない。走る例は全部比べる —
 件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の中身だけを印字する debug 用の file は例ではなく、
 examples/ に置かない(card ki-3497c5fd38df が ex04_debug・ex04_debug2 と、それを比べずに通す表を外した)。
-例が件を走らせる口(run・async_run)を本名で呼ぶ事を確かめる(設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP)。
+例が doeff の件を走らせる口(doeff から import した run・async_run か doeff.run)を呼ぶ事を確かめる(設計検証
+lt-C53PGBQD7WWPYAA1WWSW41BHDP)。
 
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
-走った)。例の中の macro の定義と、doeff-hy の外からの require を断る。
+走った)。例の中の macro の定義と、doeff-hy の外からの require を断る。展開の形も doeff-hy の隠す中身で、例が
+印字すると答えを変えない macro の変更で例が赤になるので、展開の引き出し(hy.macroexpand)も断る。
 """
 
 import difflib
+import itertools
 import re
 import shutil
 import subprocess
@@ -66,7 +69,9 @@ CASE_FAILURE_MUTANTS: dict[str, tuple[str, str]] = {
     "ex07_proboscis_ema_rewrite.hy": ('"MSFT" 300.0', '"MSFX" 300.0'),
 }
 
-# 件を走らせる口(doeff の run・async_run)。例はどれも口の 1 つを本名で呼ぶ — `(run …)`・`(doeff.run …)` の形。
+# 件を走らせる口(doeff の run・async_run)。例はどれも、doeff から import した口か `doeff.run` を呼ぶ — 名だけで
+# 数えると asyncio.run・subprocess.run・例の中で定義した run も口に見える(設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP の盲検 B)。
+_RUNNER_MODULE = "doeff"
 _PROGRAM_RUNNERS = frozenset({"run", "async_run"})
 # 中身を呼ばずに data として持つ form。`'(run x)` は呼び出しではない。
 _QUOTES = frozenset({"quote", "quasiquote"})
@@ -74,6 +79,9 @@ _QUOTES = frozenset({"quote", "quasiquote"})
 # 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
 _MACRO_DEFINERS = frozenset({"defmacro", "defmacro!", "defreader"})
 _MACRO_OWNER = "doeff_hy"
+# 例の中で呼ばない、macro の展開を引き出す関数。展開の形は doeff-hy の隠す中身で、例が印字すると、答えを変えない
+# macro の変更で例が赤になる(同じ設計検証の盲検 A・B — Program を走らせる例に展開の印字を足すと検を通った)。
+_MACRO_EXPANDERS = frozenset({"macroexpand", "macroexpand_1", "macroexpand_all"})
 
 
 def _examples() -> list[str]:
@@ -239,38 +247,90 @@ def _forms(source: str, filename: str) -> Iterator[object]:
         yield from _subforms(top)
 
 
-def _macro_violations(source: str, filename: str) -> list[str]:
-    violations: list[str] = []
-    for form in _forms(source, filename):
-        if not (
-            isinstance(form, hy.models.Expression)
-            and form
-            and isinstance(form[0], hy.models.Symbol)
-        ):
-            continue
-        head = str(form[0])
-        if head in _MACRO_DEFINERS:
-            violations.append(f"{head} {form[1] if len(form) > 1 else ''}".strip())
-        elif head == "require":
-            violations.extend(
-                f"require {package}"
-                for package in _required_packages(form)
-                if package != _MACRO_OWNER
-            )
-    return violations
-
-
-def _runner_name(head: object) -> str | None:
-    """呼び出しの頭が件を走らせる口なら、その名(`doeff.run` は reader が `(. doeff run)` と読む)。"""
+def _callee(head: object) -> str | None:
+    """呼び出しの頭の関数の名(`a.b` は reader が `(. a b)` と読む — その最後の名)。"""
     if isinstance(head, hy.models.Symbol):
-        name = hy.mangle(str(head))
-        return name if name in _PROGRAM_RUNNERS else None
+        return hy.mangle(str(head))
     if (
         isinstance(head, hy.models.Expression)
         and len(head) > 2
         and head[0] == hy.models.Symbol(".")
     ):
-        return _runner_name(head[-1])
+        return _callee(head[-1])
+    return None
+
+
+def _macro_violations(source: str, filename: str) -> list[str]:
+    return [
+        violation for form in _forms(source, filename) for violation in _form_macro_violations(form)
+    ]
+
+
+def _form_macro_violations(form: object) -> list[str]:
+    """form 1 つの違反: macro の展開の引き出し・macro の定義・doeff-hy の外からの require。"""
+    if not (isinstance(form, hy.models.Expression) and form):
+        return []
+    callee = _callee(form[0])
+    expanded = [f"{callee} の呼び出し"] if callee in _MACRO_EXPANDERS else []
+    head = str(form[0]) if isinstance(form[0], hy.models.Symbol) else ""
+    if head in _MACRO_DEFINERS:
+        return [*expanded, f"{head} {form[1] if len(form) > 1 else ''}".strip()]
+    if head == "require":
+        return [
+            *expanded,
+            *(
+                f"require {package}"
+                for package in _required_packages(form)
+                if package != _MACRO_OWNER
+            ),
+        ]
+    return expanded
+
+
+def _imported_runners(form: object) -> set[str]:
+    """`(import doeff [run async-run :as arun] …)` が module に置く、件を走らせる口の名(別名ならその名)。"""
+    if not (
+        isinstance(form, hy.models.Expression) and form and form[0] == hy.models.Symbol("import")
+    ):
+        return set()
+    args = list(form)[1:]
+    return {
+        name
+        for module, listed in itertools.pairwise(args)
+        if isinstance(module, hy.models.Symbol)
+        and hy.mangle(str(module)) == _RUNNER_MODULE
+        and isinstance(listed, hy.models.List)
+        for name in _listed_runners(list(listed))
+    }
+
+
+def _listed_runners(items: list[object]) -> set[str]:
+    """import の名の列 `[run async-run :as arun …]` のうち、件を走らせる口が module に置かれる名(別名の語は名ではない)。"""
+    return {
+        hy.mangle(str(items[index + 2]))
+        if index + 2 < len(items) and items[index + 1] == hy.models.Keyword("as")
+        else hy.mangle(str(item))
+        for index, item in enumerate(items)
+        if not (index > 0 and isinstance(items[index - 1], hy.models.Keyword))
+        and isinstance(item, hy.models.Symbol)
+        and hy.mangle(str(item)) in _PROGRAM_RUNNERS
+    }
+
+
+def _runner_call(head: object, runners: set[str]) -> str | None:
+    """呼び出しの頭が件を走らせる口なら、その名(doeff から import した名か、`doeff.run` = `(. doeff run)`)。"""
+    if isinstance(head, hy.models.Symbol):
+        name = hy.mangle(str(head))
+        return name if name in runners else None
+    if (
+        isinstance(head, hy.models.Expression)
+        and len(head) == 3
+        and head[0] == hy.models.Symbol(".")
+        and head[1] == hy.models.Symbol(_RUNNER_MODULE)
+        and isinstance(head[2], hy.models.Symbol)
+        and hy.mangle(str(head[2])) in _PROGRAM_RUNNERS
+    ):
+        return f"{_RUNNER_MODULE}.{hy.mangle(str(head[2]))}"
     return None
 
 
@@ -290,15 +350,19 @@ def _unquoted_subforms(form: object) -> Iterator[object]:
 
 
 def _program_calls(source: str, filename: str) -> list[str]:
-    """source が呼ぶ、件を走らせる口(入れ子の form の中も)。import するだけ・名を書くだけ・quote の中は数えない。"""
+    """source が呼ぶ、doeff の件を走らせる口(入れ子の form の中も)。import するだけ・名を書くだけ・quote の中・
+    doeff の外の同じ名(asyncio.run・例の中で定義した run)は数えない。"""
+    forms = [
+        form for top in hy.read_many(source, filename=filename) for form in _unquoted_subforms(top)
+    ]
+    runners = set().union(*(_imported_runners(form) for form in forms))
     return sorted(
         {
             name
-            for top in hy.read_many(source, filename=filename)
-            for form in _unquoted_subforms(top)
+            for form in forms
             if isinstance(form, hy.models.Expression)
             and form
-            and (name := _runner_name(form[0])) is not None
+            and (name := _runner_call(form[0], runners)) is not None
         }
     )
 
@@ -307,8 +371,9 @@ def _program_calls(source: str, filename: str) -> list[str]:
 def test_example_runs_a_program(name: str) -> None:
     path = EXAMPLES / name
     assert _program_calls(path.read_text(encoding="utf-8"), str(path)) != [], (
-        f"{name} は件を走らせる口({'・'.join(sorted(_PROGRAM_RUNNERS))})を本名で呼ばない — examples/ は Program を"
-        "走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        f"{name} は doeff の件を走らせる口({'・'.join(sorted(_PROGRAM_RUNNERS))} — doeff から import した名か "
+        f"{_RUNNER_MODULE}.run)を呼ばない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+        "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
     )
 
 
@@ -368,29 +433,48 @@ def test_macro_check_sees_nested_forms() -> None:
     source = """
 (require doeff-hy.macros [defk] support.fold-shim [fold] bare [x] doeff_hy.handle :as h)
 (when True
-  (defmacro fold [coll] coll))
+  (defmacro fold [coll] coll)
+  (print (hy.repr (hy.macroexpand '(traverse (<- v (Iterate xs)) v))))
+  (print (macroexpand-1 '(fold xs))))
 """
     assert _macro_violations(source, "<inline>") == [
         "require support",
         "require bare",
         "defmacro fold",
+        "macroexpand の呼び出し",
+        "macroexpand_1 の呼び出し",
     ]
 
 
 def test_runner_call_check_sees_nested_forms() -> None:
-    """今の例はどれも口を呼ぶので、拾う側と拾わない側は inline の source で確かめる: 入れ子の呼び出しと
-    `doeff.run` の形は拾い、import するだけ・呼ばずに名を書くだけ・quote の中の呼び出しは拾わない。"""
+    """今の例はどれも口を呼ぶので、拾う側と拾わない側は inline の source で確かめる: doeff から import した口の
+    入れ子の呼び出し(別名も)と `doeff.run` の形は拾い、import するだけ・呼ばずに名を書くだけ・quote の中・
+    doeff の外の同じ名(asyncio.run・subprocess.run・例の中で定義した run)は拾わない(設計検証
+    lt-C53PGBQD7WWPYAA1WWSW41BHDP の盲検 B)。"""
     calls = """
+(import doeff [do :as _doeff-do run async-run :as arun])
 (when True
-  (print (doeff.run (prog))))
-(defn go [] (async-run (prog)))
+  (print (run (prog)) (doeff.run (prog))))
+(defn go [] (arun (prog)))
 """
-    assert _program_calls(calls, "<inline>") == ["async_run", "run"]
+    assert _program_calls(calls, "<inline>") == ["arun", "doeff.run", "run"]
     no_calls = """
 (import doeff [run async-run])
 (print run (hy.repr '(run x)) (hy.repr `(async-run ~x)))
 """
     assert _program_calls(no_calls, "<inline>") == []
+    other_runs = """
+(import asyncio subprocess doeff [pure :as run])
+(asyncio.run (main))
+(subprocess.run ["hy2py" "ex04_simple.hy"])
+(run 1)
+"""
+    assert _program_calls(other_runs, "<inline>") == []
+    local_run = """
+(defn run [] (print "local"))
+(run)
+"""
+    assert _program_calls(local_run, "<inline>") == []
 
 
 def test_tables_name_examples_as_they_are() -> None:
