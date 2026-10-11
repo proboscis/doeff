@@ -15,7 +15,7 @@
 ;;;           socket と別の thread の run を通さないのは、変化の待ちが service の中で待つ long-poll だから(#3074): 待ち受けの外の I/O を
 ;;;           抱えた run では仮想の時計が進まず、service の待ちが期限に届かない。1 つの scheduler なら、待ちも書きも 1 つの仮想の
 ;;;           時計の上で進む。本物の口(socket・待ち受けの loop)は test_http_service.hy などが確かめる。検の口と手入れの effect
-;;;           (AdvanceStoreEpoch・SweepExpired・PruneChanges — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
+;;;           (AdvanceStoreEpoch・SweepExpired・PruneChanges・ReadChangeLog — HTTP の口に出さない)は、client の外側に被せた置き場の handler が直に答える。
 ;;;
 ;;; 法は LawSetup の effect で自分の LawHarness(書き手の名 → その書き手の handler で包む関数)を読む。
 ;;;
