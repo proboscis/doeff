@@ -651,7 +651,7 @@ defk {name}: :post type annotation cannot be an empty string.
       '(. (__import__ "doeff.do" :fromlist #("do")) do)))
 
 (defn _scoped-definition [compiler name forms]
-  "名 `name` を定義する macro(defk・defp・deftest)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・defp・deftest・defmcp-tool)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
 
    module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
    読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
@@ -659,7 +659,16 @@ defk {name}: :post type annotation cannot be an empty string.
    traverse / for/do の `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
    UnboundLocalError で落ちた(card ki-964823cd7feb・tests/test_nested_definition_scope.py)。module と class の本体を
    包まないのは、包むと定義の `__qualname__` が変わり(pickle が名で引けない)、class の本体の method の引数なしの
-   `super()` が `__class__` を失うから。型検査のための展開は補助を import しないので包まない。"
+   `super()` が `__class__` を失うから。型検査のための展開は補助を import しないので包まない。
+
+   呼び手(定義の macro)が `forms` に負う事 — 包むかどうかはここが決めるので、どの場所でも成り立つ形にする:
+   - 関数の中では `forms` は外の関数を呼ぶたびに評価される。`forms` は定義して `name` に束ねるだけにし、module の
+     globals に記録を積む文を置かない(呼ぶたびに積み増す — tests/test_nested_definition_scope.py の
+     test_nested_definition_leaves_module_globals_unchanged)。
+   - class の本体では `forms` の import は class の属性になり、`forms` の中で定義した関数からは見えない。その関数が
+     名で読む補助は `_install-guard-globals` で関数の globals へ入れる(同 test_class_body_definition_runs_without_module_definitions)。
+   - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
+     関数の局所の名になる。"
   (if (and (not (_static-view?))
            (is-function-scope (nearest-python-scope (. compiler scope))))
       `(setv ~name ((fn [] ~@forms ~name)))
