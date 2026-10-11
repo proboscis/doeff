@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -368,13 +368,33 @@
   (setv #^ bool leaving False))
 
 
+(defrecord GroupHeld
+  "組の同時数の上限 1 つを数える升 1 つに置いている task の数(GET /state の組の画面 — cluster_policy.group-limit-views): worker = 置いた
+   worker(範囲 worker の組だけ・cluster の組は None)・part = 区分(区分ごとに数える組だけ・それ以外は空)・count = 置いている
+   (PLACED-PHASES の)task の数。"
+  (#^ (| str None) worker)
+  (#^ str part)
+  (#^ int count))
+
+
+(defrecord GroupLimitView
+  "組 1 つの画面(GET /state の groupLimits — 2026-10-12・card ki-b0e8028c8c8d): limit = 系が宣言した値(GroupLimit)・resource-version =
+   資源 GroupLimit の版・held = 置いている数の升の列(数の在る升だけ — worker と区分の順)・queued = この組を名乗って待っている task の数。
+   運用者が、組ごとの宣言の値と置いている数を 1 か所で読むため。"
+  (#^ GroupLimit limit)
+  (#^ (| int None) resource-version)
+  (#^ (get tuple #(GroupHeld ...)) held)
+  (#^ int queued))
+
+
 (defrecord StateView
   "GET /state の状態の画面(cluster_policy.state-view — #2595): now・services・workers・placements(job の名 → Placement)・unplaced(job の名 →
    置き先が無い理由)・statuses(worker の名 → StatusView)・tasks・board-keys = 盤の行の数・surges(job の名 → Placement)・events = 直近
    50 件の割り当ての移り変わり・revision・keep-marks = 途絶しても動かし続けてよい印の約束の列(job の名の順 — #2883: 版上げの後と障害の時に、
    どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)・coordinator-commit = 答えた coordinator の process が走っている
    doeff の版(ClusterState の running-commit — 読めなければ None で、JSON の欄 coordinatorCommit を書かない。版上げの Program が「新しい
-   版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)。JSON の形は coordinator/protocol/replies が綴る。"
+   版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)・group-limits = 組の同時数の上限の画面の列
+   (組の名の順 — GroupLimitView)。JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
   (#^ (get tuple #(WorkerView ...)) workers)
@@ -387,7 +407,8 @@
   (#^ (get tuple #(object ...)) events)
   (#^ int revision)
   (#^ (get tuple #(KeepMark ...)) keep-marks)
-  (#^ (| str None) coordinator-commit))
+  (#^ (| str None) coordinator-commit)
+  (setv #^ (get tuple #(GroupLimitView ...)) group-limits #()))
 
 
 (defenum DrainPhase
@@ -555,12 +576,13 @@
 ;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
 
 
-(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED)
+(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-UNDECLARED)
 
 
 ;; 待っている task を置けない理由(cluster_policy.task-unplaced-text)。TASK-NO-ROOM = 置ける worker のどれにも task の空きが無い・
-;; TASK-LIMITED = 空きは在るが、task の名乗った同時数の上限(TaskLimit)に達している・TASK-RESERVED = 空きは在るが、残りが worker の
-;; task-reserve の分だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11)。
+;; TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に達している・TASK-RESERVED = 空きは在るが、
+;; 残りが worker の task-reserve の分だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11)・TASK-UNDECLARED = task の名乗った
+;; 組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から読み直した — 宣言されるまで待つ・2026-10-12)。
 
 
 
@@ -984,7 +1006,8 @@
   ;; --- 置く順と同時数(2026-10-11)---
   ;; priority = 置く順の優先(大きいほど先・既定 0)。待っている task は (優先の大きい順, id) で置く。負の優先の task(背景の仕事)は
   ;; worker の task-reserve を使わない(置いた後にも予約の数の空きが残る worker にだけ置く)— 背景の仕事が何本積まれても、予約の分は
-  ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 同時数の上限(TaskLimit の tuple)。どちらも欄の無い旧い行は既定で読む。
+  ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 名乗った同時数の上限の組(TaskLimit の tuple — 値と範囲は系の宣言の
+  ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
   (setv #^ int priority 0)
   (setv #^ (get tuple #(TaskLimit ...)) limits #()))
 
@@ -1066,7 +1089,11 @@
   ;; 退いた世代が走らせている入れ替えの job(AL-D2): SupersededRun の列(名と世代の順)。退いた世代の heartbeat ごとに
   ;; cluster_policy.absorb-superseded-heartbeat が書き直し、空になれば外す。保存する(durable_kv の superseded/<名>/<世代>)。
   ;; 位置の引数の呼び手のため最後に置く。
-  (setv #^ (get tuple #(SupersededRun ...)) superseded-runs #()))
+  (setv #^ (get tuple #(SupersededRun ...)) superseded-runs #())
+  ;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d): 組の名で引く、系が宣言した GroupLimit の表(資源 GroupLimit — 宣言の道具が
+  ;; 書く・書き換えない表 Table — 写像として持ち回らない)。task は組の名だけを名乗り、置き方(cluster_policy.task-misfit)はこの値で
+  ;; 数える。受け口は宣言に無い組を名乗る task を断る。保存する(durable_kv の grouplimit/<名>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table GroupLimit) group-limits (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []

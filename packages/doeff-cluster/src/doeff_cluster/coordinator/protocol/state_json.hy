@@ -12,6 +12,9 @@
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
+(import doeff_cluster.shared.intent.detached_model [GroupLimit])
+(import doeff_hy.table [TableWrite table-of])
+(import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 
 (deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断
@@ -50,6 +53,7 @@
    "audit" (lfor e state.audit (audit-event-to-json e))
    "auditSeq" state.audit-seq
    "rollouts" (dfor #(k r) (.items state.rollouts) k (rollout-row-to-json r))
+   "groupLimits" (dfor #(k l) (.items state.group-limits) k (group-limit-spec l))
    "drains" (dfor #(k v) (.items state.drains) k (asdict v))
    "surges" (dfor #(k v) (.items state.surges) k (asdict v))
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
@@ -110,6 +114,16 @@
 (defn #^ RolloutRow rollout-row-from-json [#^ dict data]
   "保存の JSON の形 → Rollout 1 つ(rollout-row-to-json の逆)。"
   (RolloutRow :spec (validate-rollout-spec (get data "spec")) :status (rollout-status-from-json (get data "status"))))
+
+
+(deff group-limit-from-json [#^ str name #^ (| dict list str int float bool None) spec]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: name str) (: spec (| dict list str int float bool None))] :post [(: % GroupLimit)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "保存の組の上限 1 つ(組の名と spec — group-limit-spec の形)→ GroupLimit。系の構成子・受け口と同じ規則(group-limit-refusal)で検め、
+   受けられない値は理由つきの ValueError(保存の行の壊れ — 黙って既定の値で読まない)。"
+  (setv refusal (group-limit-refusal name spec))
+  (when (is-not refusal None)
+    (raise (ValueError (+ "保存の組の上限が誤っている: " refusal))))
+  (group-limit-of name spec))
 
 
 (deff audit-event-to-json [#^ AuditEvent event]  ; defk にできない: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
@@ -219,6 +233,8 @@
     :audit (tuple (gfor #(_ event) audit event))
     :audit-seq (.get data "auditSeq" 0)
     :rollouts (dfor #(k r) (.items (.get data "rollouts" {})) k (rollout-row-from-json r))
+    ;; 組の同時数の上限(2026-10-12)は、それより前の file には無い(空として読む)。
+    :group-limits (table-of (tuple (gfor #(k v) (.items (.get data "groupLimits" {})) (TableWrite k (group-limit-from-json k v)))))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
     :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
     :surges (dfor #(k v) (.items (.get data "surges" {})) k (Placement #** v))
