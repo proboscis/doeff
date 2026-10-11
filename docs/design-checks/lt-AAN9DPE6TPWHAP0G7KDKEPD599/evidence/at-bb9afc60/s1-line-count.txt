@@ -1,0 +1,22 @@
+# S1(待つ task が増える): 行の数の契約の検を、直す前の版と直した版で
+刻: 2026-10-11T23:29Z・場所: 作業木 /home/ubuntu/.worktrees/doeff-wt-ki1294-dcfix
+- 直す前の版: main の 2c3432f23(失敗ケースの commit — scheduler.py は直す前の物)の doeff_core_effects を git archive で /tmp/w1294dc/exp/s1-before へ写し、
+  同じ commit の tests/test_scheduler.py を /tmp/w1294dc/exp/s1-before/tests/test_scheduler_at_2c3432f23.py へ写して走らせた
+  命令: PYTHONPATH=/tmp/w1294dc/exp/s1-before/packages/doeff-core-effects uv run pytest /tmp/w1294dc/exp/s1-before/tests/test_scheduler_at_2c3432f23.py -k TestTimedWaitWorkDoesNotGrowWithParkedTasks -q
+  終了の状態: 1(2 failed — この commit の時点で条は 2 つ。列の長さの条は後の 0bfee8954 で足した)
+- 直した版: df1ea3efc(= bb9afc60 と同じ中身)の作業木の検
+  命令: uv run pytest tests/test_scheduler.py -k TestTimedWaitWorkDoesNotGrowWithParkedTasks -q(tests/conftest.py の fixture で自己照合つき・行の数の条だけ自己照合を外す)
+  終了の状態: 0(3 passed)
+出力は grep で E の行・要約の行だけを残した
+
+=== 直す前の版(2c3432f23 の scheduler と検)
+E       AssertionError: one WaitWithin ran 1376.0 scheduler lines with 16 tasks parked and 11929.0 with 256; lines per wait grown most: [('detach_from_waiters', 4320), ('keys_parked_by', 2880), ('has_live_ready_entry', 1920), ('<genexpr>', 1440), ('wrapped', 0)]
+E       assert 11929.0 <= (1376.0 * 1.1)
+E       AssertionError: one WaitWithin ran 1948.5 scheduler lines with 16 tasks parked and 13229.0 with 256; lines per wait grown most: [('detach_from_waiters', 4320), ('keys_parked_by', 2880), ('has_live_ready_entry', 1920), ('<genexpr>', 1440), ('trace_enqueued', 720)]
+E       assert 13229.0 <= (1948.5 * 1.1)
+FAILED ../../../../tmp/w1294dc/exp/s1-before/tests/test_scheduler_at_2c3432f23.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_one_timed_wait_does_not_walk_the_parked_tasks[untraced]
+FAILED ../../../../tmp/w1294dc/exp/s1-before/tests/test_scheduler_at_2c3432f23.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_one_timed_wait_does_not_walk_the_parked_tasks[traced]
+2 failed, 85 deselected, 18 warnings in 17.34s
+rc=1
+=== 直した版(df1ea3efc = bb9afc60 と同じ中身の scheduler と検)
+3 passed, 85 deselected, 94 warnings in 18.25s

@@ -56,3 +56,86 @@ effects: どの部品も scheduler の thread の中の状態だけを書く(I/O
 | 型 | なし(scheduler の closure の中は素の dict・tuple — 既存の作り)| — | pyright(make lint-pyright)は scheduler.py を見るが、entry の tuple の形は型で表していない | entry の形の取り違えは型で拒まない |
 
 既存の検査の経路: commit の hook(`.semgrep.yaml` の規則を staged の file へ・台帳)・`make lint`(ruff・pyright・semgrep・doeff-linter)・pytest。
+
+---
+
+以下 §5〜§10 は盲検の後に足した(§1〜§4 は盲検の前の sha256 37dc1566096772ba8df2d065cd17c3de4f896d118badf70dbb2931456d2a68fb のまま — この file の頭から §4 の終わりまでは変えていない)。
+
+## §5 盲検の結果
+
+起動の記録は [blind/blind-meta.md](blind/blind-meta.md)、返答は未加工で [blind/blind-a-return.md](blind/blind-a-return.md)・[blind/blind-b-return.md](blind/blind-b-return.md)。要求した model(codex の gpt-6-astra・low)はこの Pod に codex の資格が無く使えず([blind/codex-attempt.txt](blind/codex-attempt.txt))、この会話の subagent(Opus 5.5・xhigh を要求 — 実 model と effort の効きは観測していない)で代えた。
+
+- **A(変更が複数の責務へ波及する失敗例)**: S2 の WaitSome(k 個を待つ — 複数の鍵の待ち `"some"`)と S3 の Reschedule(列の新しい種類 `"reschedule"`)を、§3 の主張どおり dispatch と `_RUNNABLE_ENTRY_KINDS` だけで足すと、正の場面は通るのに Cancel・Discard が壊れる。
+- **B(検査を通りながら責務分離を破る失敗例)**: 走っている task の優先度を変える effect `SetTaskPriority` が、`drop_claimed_marks` の形を写して `ready[:] = [...]` と heapify で列をその場で書き換える。提示の検査(pytest・ruff・semgrep、参考に pyright)を全部通り、外の約束を待つ間に IDLE へ下げた完了者が走らず run が止まる。
+
+## §6 再現(版 1021b8946 — 盲検の前の実装)
+
+| 失敗例 | 命令と結果 | 証拠 |
+|---|---|---|
+| A | A の差分+A の検を 1021b8946 の作業木で: WaitSome の task の Cancel が `TypeError: argument 'k': 'dict' object is not an instance of 'K'`(state の dict を継続として投げ込んだ)・外の約束の on_cancel は ep1 だけ・Discard の後に待ち手が 1 つ残る・列に並んだ Reschedule の task の Cancel は except/finally を走らせずに落とす(fallback の警告)。既存の検は 117 passed | [evidence/at-1021b8946/a1-s2-s3-new-kinds-cancel.txt](evidence/at-1021b8946/a1-s2-s3-new-kinds-cancel.txt) |
+| B | B の差分で pytest 121 passed(基準 117+B の 4 条)・ruff は基準と同じ 6 件・semgrep 0 findings。B の再現の場面 1 は 3 秒で終わらず、`has_live_ready_entry` の時の数え `[0,0]`・列からの数え直し `[1,1]` | [evidence/at-1021b8946/b1-set-task-priority.txt](evidence/at-1021b8946/b1-set-task-priority.txt) |
+
+成立の根拠(どちらも成立した):
+
+- A は**知識の漏洩**。cancel の `detach_from_waiters` が複数の鍵の待ちの種類の名 `("gather", "race")` を、`detach_from_ready` が継続を持つ列の種類の名 `("resume", "raise", "sem_resume")` を持っていた。新しい種類を足す人は cancel の中を知らないと Cancel を正しくできず、§3 の S2・S3 の「cancel は変えない」は前提ごと崩れていた。
+- B は**強制の欠け**。`ready`・`waiters` を入口の関数の外から動かさない事を守るのは docstring と註だけで(§4 の「waiters・ready を入口の外から書き換えない」の行の限界の通り)、どの検査も拒まなかった。§3 の S3 の「列は ready_push・ready_pop を通るので数は合ったまま」は、通らない書き方を止める物が無かった。
+
+## §7 直し(doeff L2137 → main e8569d4a36f6・bb9afc60fef9 — branch wt/ki-1294-dc-fix の bb614cbb7・df1ea3efc)
+
+1. **種類の宣言を module の頭の 1 か所に置く**: `_CONTINUATION_ENTRY_KINDS`(継続 = `doeff_vm.K` を `[2]` に持つ列の種類)・`_NEW_TASK_ENTRY_KIND`・`_PLACEHOLDER_ENTRY_KIND`・`_READY_ENTRY_KINDS`(この 3 つから作る)・`_RUNNABLE_ENTRY_KINDS`(導いた集合 — 宣言の場ではない)・`_SINGLE_KEY_WAITER_KINDS`(1 つの鍵の待ちで `[2]` に継続を持つ種類)。
+2. **入口が宣言を検める**: `ready_push` は宣言の無い種類を `TypeError` で断り、継続の種類は `[2]` が `K` かを検める。`park_waiter` は 1 つの鍵の種類なら `[2]` が `K` か、それ以外は `withdraw_group_of` に宣言があるかを検める。断りの文言は宣言する場所を名指す。どちらも何も動かす前に断る。
+3. **cancel は種類の名を持たない**: 複数の鍵の待ちは `withdraw_group_of = {"gather": remove_gather_waiters, "race": remove_race_waiters}` に外し方の関数と 1 行で宣言する。`detach_from_waiters` はそこを引き、`detach_from_ready` は `_CONTINUATION_ENTRY_KINDS` を読む。
+4. **自己照合**: `_INDEX_SELF_CHECK`(既定 off)が on の間、`pick_next` の各周と `handle_scheduler_effect` の頭で `check_indexes` が `waiters`・`ready` から I-W1・I-W2・I-R1・I-P1 と測りの口の起こされ方ごとの数を数え直し、食い違えば `SchedulerIndexDriftError` で食い違った数の名を挙げる。`tests/conftest.py` の fixture `scheduler_index_self_check` を、scheduler の検 4 file が `pytestmark` で使う(行の数の条だけ外す — 照合の行が数えに入るため)。
+5. **静的な検** `tests/test_scheduler_index_guards.py`: `_scheduled_python` の中の `waiters`・`ready` の書き換え(添字への代入・del・変更の method・`heapq` の書き換えの関数・`nonlocal`)が入口の関数の中だけにある事を AST で確かめる条、その検が書き換えの形を見落とさず読みを拾わない条、入口の名が今も在る条、宣言の無い・誤って宣言した種類の 4 つを入口が断る条、別名を経た `ready` の書き換えを自己照合が捕まえる条と、外すと黙って通る対照。
+
+途中の版の穴: bb614cbb7 では `_READY_ENTRY_KINDS` を `_RUNNABLE_ENTRY_KINDS` から導いていたので、A の S3 を直した版へ素直に写す形(`_RUNNABLE_ENTRY_KINDS` に `"reschedule"` を足す)を `ready_push` が受け入れた。また、複数の鍵の種類を `_SINGLE_KEY_WAITER_KINDS` に誤って足すと元の TypeError に戻る形だった。どちらも A の差分を写す準備の中で読んで見つけ(bb614cbb7 の上で走らせてはいない)、df1ea3efc で上の 1・2 の形に直した。
+
+### §7.1 強制方法(直した後 — §4 の表の更新)
+
+| 守る責務 | 強制方法 | 実装の場所 | 実行の経路 | 限界 |
+|---|---|---|---|---|
+| R1(1 回の WaitWithin の仕事が待つ task の数で増えない)| 行の数の契約の検(§4 と同じ) | `tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks` | pytest(着地の列の root の段 `pytest -q -m 'not e2e'`・testpaths に `tests`)| §4 と同じ(WaitWithin の形だけ)|
+| 新しい列・待ちの種類は宣言してから使う(cancel が種類の名を持たない)| 入口の実行時の検め(宣言の集合・`withdraw_group_of`・`[2]` が `K`)— 断りの文言が宣言の場所を名指す | `scheduler.py` の module の頭の宣言・`ready_push`・`park_waiter`・`withdraw_group_of`。検は `test_the_entry_functions_refuse_an_undeclared_or_misdeclared_kind` | 本番でも常に効く(新しい種類を使う最初の正の検で落ちる)| 種類ごとの特別な後始末(`sem_resume` の permit の返し・`wait_external` の印の claim)は今も種類の名を持つ。新しい種類が後始末を要るかは宣言では分からない |
+| `waiters`・`ready` は入口の関数の中でだけ動かす | AST の検(名 `waiters`・`ready` の書き換えの位置)| `tests/test_scheduler_index_guards.py` | pytest(同上)| 別名を経た書き換え・`_scheduled_python` の外からの書き換えは見えない(下の自己照合が見る)|
+| 索引と数えは構造と合う(I-W1・I-W2・I-R1・I-P1・測りの口の数)| 自己照合 `_INDEX_SELF_CHECK` → `SchedulerIndexDriftError` | `scheduler.py` の `check_indexes`・`tests/conftest.py` の fixture・scheduler の検 4 file の `pytestmark` | pytest の中だけ(本番は off — 歩ごとに列と待ち手を全部数え直すため)| 検が走らせた歩だけを見る。package の検(doeff-time など)は fixture を使っていない |
+| 型 | なし(§4 と同じ)| — | — | entry の tuple の形は型で表していない(`K` の検めは実行時)。pyright は走らせていない |
+
+## §8 再検証(版 df1ea3efc — main の bb9afc60 と scheduler.py・tests の触った file が同じ中身)
+
+| 何を | 結果 | 証拠 |
+|---|---|---|
+| A を素直に写した版 a0(宣言なし)| 新しい種類を使う 5 場面が、その種類が入る入口で TypeError(文言が `withdraw_group_of`・`_CONTINUATION_ENTRY_KINDS` を名指す)。Cancel が task を黙って落とす場面は無くなった | [evidence/at-bb9afc60/blind-a-on-fix.txt](evidence/at-bb9afc60/blind-a-on-fix.txt) |
+| A に宣言 2 行を足した版 a1 | WaitSome の Cancel・外の約束の Cancel(on_cancel ep1・ep2)・Discard(待ち手 0)・列に並んだ Reschedule の Cancel が、どれも except/finally を走らせ、既存の Race と同じ結果(自己照合つき)| 同上 |
+| 誤って宣言した版 a2 | 複数の鍵の種類を 1 つの鍵の種類と宣言すると、`[2]` が dict だと入口が断る | 同上 |
+| B の違反の版 b0 | AST の検が `handle_scheduler_effect` の 2 行(`ready[:] =`・heapify)を名指して落ちる。B の正の検 4 条のうち「並んでいる間に下げる」条が自己照合で `SchedulerIndexDriftError`。B の再現の場面 1 は止まらず 0.09 秒で同じ例外、場面 3(測りの口つき)は「trace wake counts」も名指す | [evidence/at-bb9afc60/blind-b-on-fix.txt](evidence/at-bb9afc60/blind-b-on-fix.txt) |
+| B の対照 C の版 b1(同じ機能を `ready_remove_at`+`ready_push` で)| AST の検が通り、4 条が自己照合つきで通り、再現の 5 場面がどれも正しい値で終わる | 同上 |
+| S1: 行の数の条 | 直す前の版(2c3432f23)で 2 failed(待つ task 16 本で 1376 行・256 本で 11929 行。増えた所の上位 `detach_from_waiters`・`keys_parked_by`・`has_live_ready_entry`)・直した版で 3 passed | [evidence/at-bb9afc60/s1-line-count.txt](evidence/at-bb9afc60/s1-line-count.txt) |
+| scheduler の検 4 file(自己照合つき)| 123 passed(python と rust の 2 実装を同じ検で走らせる `test_scheduler_implementation.py` を含む)| [evidence/at-bb9afc60/suite-selfcheck.txt](evidence/at-bb9afc60/suite-selfcheck.txt) |
+| S4: doeff-time の sim の daemon の形・close-out の検(自己照合つき)| 8 passed | [evidence/at-bb9afc60/s4-sim-clock.txt](evidence/at-bb9afc60/s4-sim-clock.txt) |
+| S9: 同じ WaitWithin の形を Python と Rust で、待つ task 16 本と 1024 本 | 1 回の CPU の比(1024 本 ÷ 16 本)は Python 1.16(5 回の値が重なる)・Rust 2.25(重ならない)。Rust は今も表をなめ、Python の索引は Rust に及んでいない | [evidence/at-bb9afc60/s9-rust-walk.txt](evidence/at-bb9afc60/s9-rust-walk.txt) |
+| 普段の歩の CPU(直しの前と後)| 後 ÷ 前は 0.90〜1.17 で片寄り無し(負荷 50〜90 の機体)| [evidence/at-bb9afc60/step-cost.txt](evidence/at-bb9afc60/step-cost.txt) |
+| 変更箇所の品質検査(速い段)| passed(型は含まない・tests の 5 file は対象に未登録)| [evidence/at-bb9afc60/code-quality.txt](evidence/at-bb9afc60/code-quality.txt) |
+
+## §9 予測(§3)と実際の差
+
+| id | 予測した範囲(§3)| 実際(1021b8946 の時)| 実際(直した後)| 差の訳 |
+|---|---|---|---|---|
+| S1 | 変える部品なし | 同じ(行の数の条が守る)| 同じ | 差なし |
+| S2 | dispatch だけ | dispatch+cancel の中(`detach_from_waiters` に種類の名を足す)— 足さないと Cancel が壊れる | dispatch+`withdraw_group_of` への宣言 1 行(cancel の処理は変えない)| 1021b8946 の差は**知識の漏洩**(cancel が種類の名を持っていた)で、直した。直した後の宣言 1 行は cancel の公開の契約(宣言の表)への意図した登録 |
+| S3 | dispatch と `_RUNNABLE_ENTRY_KINDS` だけ | dispatch+cancel の中(`detach_from_ready` の種類の名)。列をその場で書き換える実装(B)は数えを壊して止まる | dispatch+`_CONTINUATION_ENTRY_KINDS` への宣言 1 行。列を入口の外で動かす実装は AST の検と自己照合が落とす | 1021b8946 の差は漏洩(cancel の種類の名)と強制の欠け(列の書き換え)。宣言の場所は予測(`_RUNNABLE_ENTRY_KINDS`)から `_CONTINUATION_ENTRY_KINDS` に替わった — `_RUNNABLE_ENTRY_KINDS` は導いた集合にした |
+| S4 | scheduler の部品は変えない | 予測どおり(盲検は S4 の失敗例を出していない)。ただし B の場面 1 は #505(非 daemon の仕事は印の下でも走る)を破った | sim の検が自己照合つきで通る。外の部品が closure の列を別名で書き換えると自己照合が落とす | 時計の中身の変更そのものは試していない — 試したのは、scheduler の外から列を動かすと見つかる事 |
+| S5 | trace だけ(数を足すなら `ready_push`・`ready_pop` の所)| B の場面 3 で、列をその場で書き換えると `ahead`・`ahead_by_wake` が実際と違う値になった | 測りの口つきの歩でも起こされ方ごとの数を数え直して照らす。b0 の場面 3 で「trace wake counts」が名指された | 新しい欄を足す実験はしていない |
+| S9 | rust-scheduler だけ | 予測どおり | 予測どおり(Rust は 2.25 倍・Python は 1.16 倍)| 差なし。Rust に索引を入れる時は Rust の側に数の検が要る(行の数の検は Python の行しか数えない)|
+
+S6・S7・S8 は §3 のとおり対象外(盲検もこの軸の失敗例を出していない)。
+
+## §10 限界と未確認
+
+- 自己照合は検の中だけで効く(本番は off)。検が走らせない書き方・形は見ない。package の検(doeff-time・doeff-events など)は fixture を使っていない。
+- AST の検は名 `waiters`・`ready` の書き換えだけを見る。別名・`_scheduled_python` の外からの書き換えは自己照合だけが見る。
+- 宣言は「Cancel が継続を見つけて外せる」ことだけを保証する。種類ごとの特別な後始末(`sem_resume` の permit の返し・`wait_external` の印の claim)は今も種類の名を持つ所があり、新しい種類が後始末を要るかは宣言では分からない。
+- 型: entry の tuple の形は型で表していない。pyright も code-quality の型の段も走らせていない。
+- `root_close_out` の `except BaseException` が GeneratorExit も受けるので、handler が例外で抜けた run の generator が gc で閉じられると「generator ignored GeneratorExit」の警告が出る。この変更の前から在る(既存の検 `test_wait_on_swept_id_raises_loud_keyerror` でも出る)。自己照合の例外の時も出るが、検は意図した例外で落ちる。
+- code-quality の速い段は、tests/ の 5 file を検査の対象に登録していないと出す(登録は日次か明示の操作)。
+- 盲検の model は要求した物(gpt-6-astra・low)でなく、Opus 5.5(xhigh を要求)の subagent。
+- 本番の前後(受入の条 3)は §0 のとおりこの検証の範囲外で、card ki-1294af4fa525 に書く。

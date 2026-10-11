@@ -1,0 +1,480 @@
+{
+  "version": 1,
+  "task_id": "lt-AAN9DPE6TPWHAP0G7KDKEPD599",
+  "base_revision": "bb9afc60fef9c344c50e7b5f9697c2c537537b73",
+  "author": {
+    "conversation_id": "c-WFT0YCZYCTSC96B1MB2WEK5JB3",
+    "model": "claude-opus-5-5",
+    "effort": "会話の起動の設定(値は観測していない — 自己申告できる値を持たない)"
+  },
+  "requirements": [
+    "R1: 走っている手番の数(待ち手の数・走れる列の長さ)で、1 回の WaitWithin の Cancel と pick_next の scheduler の仕事が増えない",
+    "R2: 失敗ケース先 — 待つ task の数を増やすと 1 回の WaitWithin の scheduler の仕事が増える事を、時計でなく数で赤にする条を先に commit する",
+    "R3: 模擬(feed_bench)で走っている手番 8 本と 36 本の feed-turn の 1 歩の CPU の前後を測り、直した後の 36 本が 8 本の 1.1 倍以内",
+    "R4: scheduler の意味を変えない(Cancel が task に投げ込む・印が daemon を止める順・#505・pop の順・取り消しの callback の順・deadlock の診断)",
+    "受入の条(card ki-1294af4fa525): cdb14d9ba 失敗ケース先と main の sha・pin の sha / c5f0a44e5 模擬 8/36 本の前後・1.1 倍以内 / c1d8f65d3 本番の続きのターン 20 本以上の前後(この検証の範囲外 — card に書く)"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "673bc79d85a13407e8afcb5f9d2de419576a78cf758ac23dde78201b039d7b70"
+  },
+  "modules": [
+    {
+      "id": "waiters-index",
+      "responsibility": "誰が何を待つかの表 waiters と、その逆の索引 parked_keys_of・鍵の入った順 waiter_key_stamp を保つ",
+      "owns": "waiters(鍵 → entry の list)・parked_keys_of(持ち主 → {鍵: 数})・waiter_key_stamp・1 つの鍵の待ちの種類の宣言 _SINGLE_KEY_WAITER_KINDS",
+      "hides": "索引の形と鍵の順の番号の付け方",
+      "interface": "park_waiter(入る唯一の口 — 宣言の無い種類・[2] が K でない 1 つの鍵の種類を TypeError で断る)・unpark_key・unpark_at・keep_waiters・keys_parked_by",
+      "effects": "なし — scheduler の thread の中の dict を書くだけ(I/O なし)",
+      "lifetime": "1 つの run の closure と同じ。run の終わりに closure ごと捨てる(止め・再開・解放の持ち主は不要)",
+      "invariants": [
+        "I-W1: parked_keys_of は waiters から数え直した物と等しい",
+        "I-W2: sorted(waiter_key_stamp, key=stamp) は list(waiters) と等しい",
+        "自己照合(_INDEX_SELF_CHECK)が検の中で毎歩照らす"
+      ]
+    },
+    {
+      "id": "ready-counts",
+      "responsibility": "走れる列 ready と、印の下の生きた runnable entry の数 live_ready_count・持ち主ごとの数 live_ready_of を保つ",
+      "owns": "ready(heap の項 (-priority, seq, entry))・live_ready_count・live_ready_of・列の種類の宣言(_CONTINUATION_ENTRY_KINDS・_NEW_TASK_ENTRY_KIND・_PLACEHOLDER_ENTRY_KIND・_READY_ENTRY_KINDS と導いた _RUNNABLE_ENTRY_KINDS)",
+      "hides": "数の形・優先度の境(PRIORITY_EXTERNAL_WAIT)で数える判断",
+      "interface": "ready_push(入る唯一の口 — 宣言の無い種類と、継続の種類で [2] が K でない entry を断る)・ready_pop・ready_remove_at・has_live_ready_entry",
+      "effects": "なし — scheduler の thread の中の list と数だけを書く",
+      "lifetime": "1 つの run の closure と同じ",
+      "invariants": [
+        "I-R1: live_ready_count は列から数え直した物と等しい(持ち主が cancelled の entry は数えない)",
+        "I-R2: has_live_ready_entry は印を pop した直後だけ問う",
+        "ready は入口の関数の中でだけ動く(AST の検)"
+      ]
+    },
+    {
+      "id": "placeholder",
+      "responsibility": "外の約束を待つ task の印(wait_external)と対の待ち手が共有する cell の生き死にと、列の中の claimed の印の数",
+      "owns": "cell [claimed, 列の中に居るか]・claimed_marks_in_ready",
+      "hides": "cell の 2 つ目の欄・claimed の印を一度に外す閾(64 以上かつ列の半分)",
+      "interface": "claim(印を claimed にする唯一の口)・drop_claimed_marks",
+      "effects": "なし — scheduler の thread の中だけ",
+      "lifetime": "1 つの run の closure と同じ",
+      "invariants": [
+        "I-P1: claimed_marks_in_ready は列の中の claimed の印の数と等しい",
+        "I-P2: 外しても pop の順は変わらない"
+      ]
+    },
+    {
+      "id": "cancel",
+      "responsibility": "Cancel・Discard の処理(待ちと列から継続を外し、TaskCancelledError を投げ込むか捨てる・外の約束の on_cancel を呼ぶ)",
+      "owns": "取り消しの意味・複数の鍵の待ちの外し方の表 withdraw_group_of(種類 → 全部の鍵から外す関数)",
+      "hides": "どの表から継続を外したか(待ち・列・semaphore)",
+      "interface": "effect Cancel・Discard。新しい種類は withdraw_group_of か _CONTINUATION_ENTRY_KINDS に宣言する(detach_from_waiters・detach_from_ready は種類の名を持たない)",
+      "effects": "外の約束の on_cancel の callback を呼ぶ(取り消しの時だけ・waiters の鍵の順)",
+      "lifetime": "1 つの run の closure と同じ",
+      "invariants": [
+        "投げ込みの順・on_cancel の順は waiters の鍵の順",
+        "始まった task には TaskCancelledError を投げ込み except/finally を走らせる"
+      ]
+    },
+    {
+      "id": "dispatch",
+      "responsibility": "次に走る物を選ぶ pick_next と、scheduler の effect の処理 handle_scheduler_effect",
+      "owns": "選びの順・印の保留(#505)・daemon の shield・外の完了を待つ所・deadlock の診断・各 effect の処理",
+      "hides": "選びの手順",
+      "interface": "内部(scheduler の effect を受ける handler)",
+      "effects": "外の完了の列(SimpleQueue)を読む・deadlock の時に例外",
+      "lifetime": "1 つの run の closure と同じ",
+      "invariants": [
+        "今まで通りの選びの順",
+        "非 daemon の仕事は印の下でも走る(#505)"
+      ]
+    },
+    {
+      "id": "trace",
+      "responsibility": "測りの口(sink への出来事・ahead・ahead_by_wake)",
+      "owns": "wake_of_seq・ready_wake_count・_trace_generation",
+      "hides": "数の形(sink が在る間だけ保ち、世代が替われば要る時に数え直す)",
+      "interface": "set_scheduler_trace の sink への出来事",
+      "effects": "sink の呼び出し(sink が据えられた間だけ)",
+      "lifetime": "数は run の closure・sink は process に 1 つ",
+      "invariants": [
+        "ahead・ahead_by_wake・ready の欄は今まで通りの値",
+        "起こされ方ごとの数は列から数え直した物と等しい(自己照合が測りの口つきの歩で照らす)"
+      ]
+    },
+    {
+      "id": "rust-scheduler",
+      "responsibility": "同じ意味の Rust の実装(doeff-vm/src/scheduler.rs)",
+      "owns": "Rust の側の待ち手の表と列",
+      "hides": "Rust の内部",
+      "interface": "scheduled(..., implementation=\"rust\")",
+      "effects": "なし(Python の側と同じ — process の中の状態だけ)",
+      "lifetime": "1 つの run",
+      "invariants": [
+        "Python の実装と同じ意味(test_scheduler_implementation.py が同じ検で照らす)",
+        "この変更では変えていない(今も表をなめる)"
+      ]
+    },
+    {
+      "id": "tests",
+      "responsibility": "R1・R4 と索引の不変条件の見張り",
+      "owns": "tests/test_scheduler.py(行の数・列の長さの条)・tests/test_scheduler_index_guards.py(AST の検・種類の断り・自己照合の条)・tests/conftest.py の fixture scheduler_index_self_check",
+      "hides": "なし(検は公開の記録)",
+      "interface": "pytest(着地の列の root の段・日次の全体の回・変えた所の検)",
+      "effects": "なし — 検の process の中だけ",
+      "lifetime": "検の 1 回",
+      "invariants": [
+        "scheduler の検 4 file は自己照合つきで走る(行の数の条だけ外す)"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "走っている手番がさらに増える(待つ task 数百〜数千・列の長さ数千)",
+      "claim": "1 回の WaitWithin の scheduler の行の数は増えない。変える部品なし(負荷だけ)",
+      "expected_scope": "変える部品なし(前提: 待つ task はそれぞれ自分の鍵で待つ — 1 つの鍵の fan-in は除く)",
+      "actual_scope": "変える部品なし。行の数の条は直した版で通り(3 passed)、直す前の版で落ちる(16 本 1376 行・256 本 11929 行)。普段の歩の CPU は直しの前後で揺れの幅の中",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "waiters-index",
+        "ready-counts",
+        "placeholder",
+        "cancel",
+        "dispatch",
+        "trace",
+        "rust-scheduler",
+        "tests"
+      ],
+      "reason": "予測どおり(波及なし)",
+      "revision": "不要 — 行の数の契約の検が守る(design.md §7.1・§8)"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "task を待ちに置く新しい scheduler の effect を足す(例: 複数の future のうち k 個を待つ WaitSome)",
+      "claim": "変えるのは dispatch(新しい effect の処理)だけで、登録は park_waiter、外すのは unpark_*・keep_waiters を呼ぶ。waiters-index・cancel・ready-counts の中は変えない。Cancel はその task を見つけて投げ込む",
+      "expected_scope": "dispatch だけ",
+      "actual_scope": "1021b8946: dispatch だけでは Cancel が state の dict を継続として投げ込み(TypeError)、on_cancel が 1 つ漏れ、Discard が待ち手を残した — cancel の detach_from_waiters に種類の名を足す必要があった。直した後(bb9afc60): dispatch(effect の処理と、その種類の外し方の関数)+ withdraw_group_of への宣言 1 行。cancel の処理の中身は変えない。宣言しないと park_waiter が断る",
+      "changed_modules": [
+        "dispatch",
+        "cancel"
+      ],
+      "unchanged_modules": [
+        "waiters-index",
+        "ready-counts",
+        "placeholder",
+        "trace",
+        "rust-scheduler",
+        "tests"
+      ],
+      "reason": "1021b8946 の波及は知識の漏洩(cancel が複数の鍵の待ちの種類の名 gather・race を持っていた)。直した後の cancel への変更は、公開の宣言の表 withdraw_group_of への意図した 1 行の登録(処理は変えない)",
+      "revision": "種類の宣言・withdraw_group_of・park_waiter の検めを入れた(doeff main e8569d4a3・bb9afc60)。盲検 A の差分を直した版へ当て、宣言なしは入口で断られ、宣言 2 行で Cancel・Discard が正しく動く事を再検証した(evidence/at-bb9afc60/blind-a-on-fix.txt)"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "走れる列に新しい種類の entry を足す(例: 優先度を替えて並べ直す reschedule)",
+      "claim": "変えるのは dispatch と _RUNNABLE_ENTRY_KINDS(runnable かの宣言)だけ。列は ready_push・ready_pop を通るので数は合ったまま",
+      "expected_scope": "dispatch と _RUNNABLE_ENTRY_KINDS",
+      "actual_scope": "1021b8946: Cancel の detach_from_ready が種類の名を持ち、新しい種類の task を except/finally なしで落とした(A)。列をその場で書き換える実装(B の SetTaskPriority)は検査を全部通り、数えがずれて印の下の仕事が走らず止まった。直した後: dispatch + _CONTINUATION_ENTRY_KINDS への宣言 1 行。宣言しない・_RUNNABLE_ENTRY_KINDS だけに足すと ready_push が断る。列を入口の外で動かすと AST の検と自己照合が落とす",
+      "changed_modules": [
+        "dispatch",
+        "ready-counts"
+      ],
+      "unchanged_modules": [
+        "waiters-index",
+        "placeholder",
+        "cancel",
+        "trace",
+        "rust-scheduler",
+        "tests"
+      ],
+      "reason": "1021b8946 の波及は知識の漏洩(cancel が列の種類の名を持っていた)と強制の欠け(列を入口の外から動かす事を止める物が docstring だけ)。直した後の ready-counts への変更は、module の頭の種類の宣言への意図した 1 行(宣言の場所は予測の _RUNNABLE_ENTRY_KINDS から _CONTINUATION_ENTRY_KINDS へ替わり、_RUNNABLE_ENTRY_KINDS は導いた集合にした)",
+      "revision": "種類の宣言と ready_push の検め・AST の検・自己照合を入れた。盲検 A の reschedule と盲検 B の違反の版・対照 C を直した版へ当てて再検証した(evidence/at-bb9afc60/blind-a-on-fix.txt・blind-b-on-fix.txt)"
+    },
+    {
+      "id": "S4",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "sim の時計(sim_time_handler — daemon の時計の driver を印が止める)の中身を替える",
+      "claim": "scheduler の部品は変えない。印が daemon を止める順・非 daemon が印の下で走る順(#505)は今まで通り",
+      "expected_scope": "変える部品なし(前提: 時計は scheduler の effect だけを使う)",
+      "actual_scope": "盲検は時計の失敗例を出していない。時計の中身の変更は試していない。試したのは: sim の daemon の形・close-out の検が自己照合つきで通る事と、#505 を破る列の書き換え(B の場面 1)を自己照合が止まる前に名指す事",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "waiters-index",
+        "ready-counts",
+        "placeholder",
+        "cancel",
+        "dispatch",
+        "trace",
+        "rust-scheduler",
+        "tests"
+      ],
+      "reason": "予測どおり(波及なし)。時計は closure の外に在り、scheduler の effect でしか状態に触れない — closure へ別名で手を入れる書き換えは自己照合が見る",
+      "revision": "不要 — 自己照合を検の経路に繋いだ(design.md §7.1)"
+    },
+    {
+      "id": "S5",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "測りの口に新しい欄を足す(例: 前に並ぶ entry を持ち主の種類ごとに)",
+      "claim": "変えるのは trace だけ(数を足すなら ready_push・ready_pop の数えの所)。sink が無い間の歩の CPU は変わらない",
+      "expected_scope": "trace(と ready_push・ready_pop の数えの所)",
+      "actual_scope": "新しい欄を足す実験はしていない。B の場面 3 で、列を入口の外で書き換えると ahead・ahead_by_wake が実際と違う値になった(1021b8946)。直した後は測りの口つきの歩でも起こされ方ごとの数を数え直して照らし、b0 の場面 3 で trace wake counts が名指された。今の測りの口の検は自己照合つきで通る",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "waiters-index",
+        "ready-counts",
+        "placeholder",
+        "cancel",
+        "dispatch",
+        "trace",
+        "rust-scheduler",
+        "tests"
+      ],
+      "reason": "測りの口の数の持ち主は ready_push・ready_pop で、外から列を動かすと数がずれる(B)— 予測の前提(数を足すなら入口の所)を自己照合が守る形にした",
+      "revision": "自己照合に測りの口の数を入れた(check_indexes の trace wake counts)"
+    },
+    {
+      "id": "S6",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "scheduler の状態は scheduler の thread に閉じ、外の thread(asyncio の橋・CLI の読み手)は SimpleQueue に put するだけ。free-threaded の Python でもこの形は替わらない(この変更は thread を跨ぐ状態を足していない)"
+    },
+    {
+      "id": "S7",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "scheduler の状態は 1 run の memory の中だけで、永続化しない"
+    },
+    {
+      "id": "S8",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "scheduler は 1 process の 1 thread の協調の scheduler。機体を跨ぐ仕事は doeff-cluster が process ごとに別の scheduler で回す(この変更の外)"
+    },
+    {
+      "id": "S9",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "Rust の scheduler に同じ索引を入れる(本番を Rust へ切り替える時)",
+      "claim": "変えるのは rust-scheduler だけ。Python の部品と検(行の数の条は implementation=\"python\" を名指す)は変えない",
+      "expected_scope": "rust-scheduler だけ(前提: 2 つの実装は同じ意味)",
+      "actual_scope": "Rust に索引を入れる実験はしていない。測ったのは: 同じ検が python と rust の両方で通る事(2 つの実装の意味が同じ)と、Rust は今も待つ task の数で 1 回の仕事が増え(16 → 1024 本で 2.25 倍)、Python は増えない(1.16 倍・揺れの中)事 — Python の索引は Rust に及んでおらず、Rust の変更は Rust の側だけで閉じる",
+      "changed_modules": [
+        "rust-scheduler"
+      ],
+      "unchanged_modules": [
+        "waiters-index",
+        "ready-counts",
+        "placeholder",
+        "cancel",
+        "dispatch",
+        "trace",
+        "tests"
+      ],
+      "reason": "予測どおり。Rust に索引を入れる時は Rust の側に数の検が要る(行の数の検は Python の行しか数えない — design.md §9)",
+      "revision": "不要"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、行の数の条(待つ task 256 本の WaitWithin 1 回の scheduler の行が 16 本の 1.1 倍以内・測りの口なし/あり)と列の長さの条が通る",
+      "observation": "uv run pytest tests/test_scheduler.py -k TestTimedWaitWorkDoesNotGrowWithParkedTasks → 3 passed(rc 0)",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/s1-line-count.txt",
+        "sha256": "7bb88d1c493b41b2781e71ea89327cd2369bceb93fb225fcf18b88988f93693a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の版(2c3432f23)で同じ条が、待つ task の数で行が増える事を数で名指して落ちる",
+      "observation": "2 failed(rc 1): 16 本 1376 行 → 256 本 11929 行(測りの口なし)・1948.5 → 13229(あり)。増えた所の上位 detach_from_waiters・keys_parked_by・has_live_ready_entry",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/s1-line-count.txt",
+        "sha256": "7bb88d1c493b41b2781e71ea89327cd2369bceb93fb225fcf18b88988f93693a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "設計検証の直し(宣言の検め・自己照合の切り替え)で普段の歩の CPU が増えない",
+      "observation": "後 ÷ 前: Spawn と Wait 0.93〜1.05・100 本の外の約束 0.90〜1.06・WaitWithin 0.90〜1.17(片寄りなし・負荷 50〜90 の機体の thread の CPU の中央値)",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/step-cost.txt",
+        "sha256": "04c82ef25eb1f9ea7202cd3d91c9704f87fb0e61d471539e74bd094809a129fc"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "修正前の記録: 盲検 A の失敗例(dispatch だけで足した WaitSome・Reschedule)が 1021b8946 で成立する",
+      "observation": "WaitSome の Cancel が TypeError(state の dict を継続として投げ込む)・on_cancel は ep1 だけ・Discard の後に待ち手 1 つ・Reschedule の Cancel は except/finally なしで落とす(fallback の警告)。既存の検 117 passed",
+      "evidence": {
+        "path": "evidence/at-1021b8946/a1-s2-s3-new-kinds-cancel.txt",
+        "sha256": "e127774a5572888940f1e700c2f13db1886f1251544e554bca5348e651ae06aa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "直した版で、盲検 A の差分を素直に写した版(宣言なし・_RUNNABLE_ENTRY_KINDS にだけ足す)と誤って宣言した版は、新しい種類が入る入口で、宣言の場所を名指す TypeError で断られる(Cancel が黙って task を落とす場面が無い)",
+      "observation": "a0: some の 4 場面が park_waiter の『waiter entry kind 'some' is not declared … withdraw_group_of』、reschedule が ready_push の『ready entry kind 'reschedule' is not declared … _CONTINUATION_ENTRY_KINDS』。a2: 『declared in _SINGLE_KEY_WAITER_KINDS but holds dict at [2]』。Race・resume の対照は正しく動く",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/blind-a-on-fix.txt",
+        "sha256": "3abcce5c3131200d3f32256ebf6563f5888ae8591a9e347485c3e1d487c7e8ba"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、盲検 A の差分に宣言 2 行(_CONTINUATION_ENTRY_KINDS に reschedule・withdraw_group_of に some)だけを足すと、Cancel・Discard が既存の Race・resume と同じに動く(自己照合つき)",
+      "observation": "a1: WaitSome の正の場面・Cancel(except/finally)・外の約束の Cancel(on_cancel ep1・ep2)・Discard(待ち手 0)・列の Reschedule の Cancel(except/finally・fallback の警告なし)。9 passed",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/blind-a-on-fix.txt",
+        "sha256": "3abcce5c3131200d3f32256ebf6563f5888ae8591a9e347485c3e1d487c7e8ba"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "control": "negative",
+      "expectation": "修正前の記録: 盲検 B の失敗例(ready をその場で書き換える SetTaskPriority)が 1021b8946 で既存の検査を通り、印の下の非 daemon の仕事が走らず止まる",
+      "observation": "pytest 121 passed・ruff は基準と同じ 6 件・semgrep 0 findings。再現の場面 1 は 3 秒で終わらず、数え [0,0]・数え直し [1,1]。場面 3 は ahead=1 だが前に並ぶ物は 0",
+      "evidence": {
+        "path": "evidence/at-1021b8946/b1-set-task-priority.txt",
+        "sha256": "a810019081afc2210d6a29d0c6a8353cf10e4cd0e9b46479b53b05a94a1ce45a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "control": "negative",
+      "expectation": "直した版で、盲検 B の違反の版は AST の検が書き換えの行を名指して落とし、自己照合が数えのずれ(#505 の印の下の仕事・測りの口の数)を止まる前に名指す",
+      "observation": "AST の検: handle_scheduler_effect の 2787・2793 行を名指して失敗。B の 4 条のうち『並んでいる間に下げる』が SchedulerIndexDriftError(live ready counts)。再現の場面 1 は 0.09 秒で SchedulerIndexDriftError、場面 3 は trace wake counts も名指す",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/blind-b-on-fix.txt",
+        "sha256": "24a0df3d0c43db340247b9fdb1a6615eb9d99eb80d06e26391f0c54e80fd2ecc"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、同じ機能を入口の関数(ready_remove_at+ready_push)で書いた対照 C は、AST の検・自己照合を通り、正しく動く",
+      "observation": "AST の検 1 passed・B の 4 条 4 passed(自己照合つき)・再現の 5 場面がどれも正しい値で終わる(場面 1 は 0.08 秒で from-lowered-task)",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/blind-b-on-fix.txt",
+        "sha256": "24a0df3d0c43db340247b9fdb1a6615eb9d99eb80d06e26391f0c54e80fd2ecc"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "sim の時計の daemon の形と close-out の検が、自己照合つきで通る(印が daemon を止める順・#505 は今まで通り)",
+      "observation": "uv run pytest -p selfcheck_plugin packages/doeff-time/tests/test_sim_daemon_pattern.py packages/doeff-time/tests/test_sim_close_out.py → 8 passed(rc 0)",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/s4-sim-clock.txt",
+        "sha256": "c437ad444d742cb237db8a715937fd69e05671d923f55757eead3bd3745b7137"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C11",
+      "scenarios": [
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S9"
+      ],
+      "control": "positive",
+      "expectation": "scheduler の検 4 file(意味の検・測りの口の検・python と rust の 2 実装の検・索引の守りの検)が自己照合つきで通る",
+      "observation": "123 passed(rc 0)— 1021b8946 の時の 117 と足した 6",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/suite-selfcheck.txt",
+        "sha256": "bba7147bcd92518b49fa08f94dec23221ed1fe7fdcd17e769cd35c786334cb0f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C12",
+      "scenarios": [
+        "S9"
+      ],
+      "control": "negative",
+      "expectation": "変えていない Rust の scheduler は今も待つ task の数で WaitWithin 1 回の仕事が増え、索引を入れた Python は増えない(Python の索引は Rust に及ばない)",
+      "observation": "待つ task 16 → 1024 本の 1 回の CPU の比: Rust 2.25(347〜373 µs と 775〜920 µs で重ならない)・Python 1.16(714〜868 µs と 770〜1114 µs で重なる)",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/s9-rust-walk.txt",
+        "sha256": "184d94dae94d6e1a8b40fb0fd172c8fb11eb80d01b19d198a1c9d68aff51aab4"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C13",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "変更箇所の品質検査(速い段)が通る",
+      "observation": "code-quality: passed(scope=changed・型検査は含まない段)。tests の 5 file は検査の対象に未登録と出る",
+      "evidence": {
+        "path": "evidence/at-bb9afc60/code-quality.txt",
+        "sha256": "9a2ba082a8c17649b4fd16e01ff3eababc019bfa4abb514658d0d13868d1dce7"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

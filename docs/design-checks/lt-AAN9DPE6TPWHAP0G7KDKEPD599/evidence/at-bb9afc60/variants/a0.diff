@@ -1,0 +1,150 @@
+--- a/packages/doeff-core-effects/doeff_core_effects/scheduler.py (df1ea3efc)
++++ b/packages/doeff-core-effects/doeff_core_effects/scheduler.py (a0)
+@@ -87,7 +87,7 @@
+ # Derived, not a place to declare a kind: the entries that run a task when
+ # popped; has_live_ready_entry counts the ones at or below the shield whose
+ # owner is not cancelled.
+-_RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND}
++_RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND, "reschedule"}  # EXPERIMENT (blind-a, S3)
+ # Waiter entries registered under one waitable key, holding the waiting task's
+ # continuation (a K) at [2] ("wait" and the external "wait_external"). A kind
+ # registered under several keys (Gather, Race) holds a shared state instead and
+@@ -547,6 +547,28 @@
+         self.priority = priority
+ 
+ 
++class WaitSome(EffectBase[list[Any]]):
++    """EXPERIMENT (blind-a, S2): wait until ``count`` of the Tasks/Futures complete.
++
++    Resolves with ``[(index, value), ...]`` in completion order; the first
++    failure/cancel raises (fail-fast, like Gather). Same park modes as Race.
++    """
++
++    def __init__(self, count: int, *tasks: "Task[Any] | Future[Any]", priority: int | None = None) -> None:
++        super().__init__()
++        self.count = count
++        self.tasks = tasks
++        self.priority = priority
++
++
++class Reschedule(EffectBase[None]):
++    """EXPERIMENT (blind-a, S3): requeue the current task at ``priority`` (and keep that priority)."""
++
++    def __init__(self, priority: int) -> None:
++        super().__init__()
++        self.priority = priority
++
++
+ class CreatePromise(EffectBase["Promise[_T]"], Generic[_T]):
+     """``promise = yield from CreatePromise[int]()`` gives ``Promise[int]``."""
+ 
+@@ -2148,6 +2170,14 @@
+                             continue
+                         trace_entered(heap_item, owner_tid)
+                         return ResumeThrow(cont, error)
++                    if entry[0] == "reschedule":  # EXPERIMENT (blind-a, S3): dispatch
++                        _, owner_tid, cont, new_priority = entry
++                        if is_owner_cancelled(owner_tid):
++                            continue
++                        if owner_tid is not None:
++                            tasks[owner_tid]["priority"] = new_priority
++                        trace_entered(heap_item, owner_tid)
++                        return Transfer(cont, None)
+                     if entry[0] == "wait_external":
+                         # Placeholder for a task waiting on an external promise.
+                         # Keeps DAEMON tasks (sim clock driver) from running
+@@ -2371,6 +2401,41 @@
+             race_state["owner_tid"], race_state["waiter_k"], TaskCancelledError()
+         )
+ 
++    # --- EXPERIMENT (blind-a, S2): WaitSome — dispatch only; uses park_waiter (via
++    # register_pending_waiter), keep_waiters and claim, like Race/Gather. ---
++    def remove_some_waiters(some_state):
++        for wk in set(some_state["pending_keys"]):
++            entries = waiters.get(wk)
++            if not entries:
++                continue
++            withdrawn = [e for e in entries if e[0] == "some" and e[2] is some_state]
++            for entry in withdrawn:
++                if entry[3] is not None:
++                    claim(entry[3])
++            keep_waiters(
++                wk,
++                [e for e in entries if not (e[0] == "some" and e[2] is some_state)],
++                withdrawn,
++            )
++
++    def wake_some_waiter(some_state, completed_key):
++        if some_state["resolved"]:
++            return None
++        status, result = waitable_status(completed_key)
++        if status not in terminal_statuses:
++            return None
++        if status != "completed":
++            some_state["resolved"] = True
++            remove_some_waiters(some_state)
++            err = result if status == "failed" else TaskCancelledError()
++            return enqueue_raise(some_state["owner_tid"], some_state["waiter_k"], err)
++        some_state["done"].append((some_state["keys"].index(completed_key), result))
++        if len(some_state["done"]) < some_state["count"]:
++            return None
++        some_state["resolved"] = True
++        remove_some_waiters(some_state)
++        return enqueue_resume(some_state["owner_tid"], some_state["waiter_k"], list(some_state["done"]))
++
+     def wake_waiters(completed_key):
+         """Wake everything parked on ``completed_key``.
+ 
+@@ -2408,6 +2473,11 @@
+                 if claimed is not None:
+                     claim(claimed)
+                 queued_at = wake_race_waiter(race_state, completed_key)
++            elif w[0] == "some":  # EXPERIMENT (blind-a, S2)
++                _, _owner_tid, some_state, claimed = w
++                if claimed is not None:
++                    claim(claimed)
++                queued_at = wake_some_waiter(some_state, completed_key)
+             if queued_at is not None and (woken_min is None or queued_at < woken_min):
+                 woken_min = queued_at
+         return woken_min
+@@ -2681,6 +2751,40 @@
+                     )
+             yield TailEval(pick_next())
+ 
++        elif isinstance(effect, Reschedule):  # EXPERIMENT (blind-a, S3): dispatch only
++            enqueue(("reschedule", current_tid, k, effect.priority), effect.priority)
++            yield TailEval(pick_next())
++
++        elif isinstance(effect, WaitSome):  # EXPERIMENT (blind-a, S2): dispatch only
++            wks = [waitable_key(t) for t in effect.tasks]
++            done = []
++            for index, wk in enumerate(wks):
++                status, result = waitable_status(wk)
++                if status in ("failed", "cancelled"):
++                    from doeff.program import ResumeThrow
++                    err = result if status == "failed" else TaskCancelledError()
++                    return (yield ResumeThrow(k, err))
++                if status == "completed":
++                    done.append((index, result))
++            if len(done) >= effect.count:
++                r = yield Resume(k, done[: effect.count])
++                return r
++            some_state = {
++                "owner_tid": current_tid,
++                "waiter_k": k,
++                "keys": wks,
++                "pending_keys": [wk for wk in wks if waitable_status(wk)[0] not in terminal_statuses],
++                "count": effect.count,
++                "done": done,
++                "resolved": False,
++            }
++            for wk in some_state["pending_keys"]:
++                register_pending_waiter(
++                    wk, "some", current_tid, some_state,  # pyright: ignore[reportArgumentType]
++                    park=effect.priority == PRIORITY_IDLE,
++                )
++            yield TailEval(pick_next())
++
+         elif isinstance(effect, Cancel):
+             # Cancellation is delivered INTO the task (see Cancel's docstring):
+             # a started task receives TaskCancelledError at its suspension

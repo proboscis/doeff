@@ -1,0 +1,712 @@
+# scheduler の検 4 file を自己照合つきで(R4 の意味・S1・S2・S3・S4・S5・S9 の正常例の土台)
+対象の版: 作業木 /home/ubuntu/.worktrees/doeff-wt-ki1294-dcfix の df1ea3efc と同じ中身(走らせた時は未 commit で、走らせた直後にその中身のまま df1ea3efc として commit した。main の bb9afc60 と同じ中身)
+刻: 2026-10-11T23:12Z
+命令: set -o pipefail; uv run pytest tests/test_scheduler.py tests/test_scheduler_index_guards.py tests/test_scheduler_trace.py tests/test_scheduler_implementation.py -q 2>&1 | grep -v 'docs/adr' | tee ...
+  (test_scheduler.py・test_scheduler_trace.py・test_scheduler_implementation.py・test_scheduler_index_guards.py は pytestmark で tests/conftest.py の fixture scheduler_index_self_check を使い、
+   全部の歩で索引と数えを数え直して照らす。test_scheduler_implementation.py は python と rust の 2 つの実装を同じ検で走らせる)
+終了の状態: 0(123 passed — 1021b8946 の時は 3 file で 117 passed・足した検の file が 6)
+grep -v で除いたのは doeff-adr の「収集していない ADR の file の一覧」の警告の行だけ。警告のうち「generator ignored GeneratorExit」は root_close_out の except BaseException が GeneratorExit を受ける、前からの振る舞い
+(この変更の前からある検 test_wait_on_swept_id_raises_loud_keyerror でも出る — design.md §6 の限界)
+
+
+deadline scale x1.7 (load per usable CPU) — per test 104s, watchdog 155s
+
+test-admission: focused — 123 件(変更箇所の検証)
+........................................................................ [ 58%]
+...................................................                      [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+tests/test_scheduler.py::TestGather::test_gather_wake_waiter_status_checks_are_linear
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 400]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestGather::test_gather_wake_waiter_status_checks_are_linear
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 800]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestGather::test_gather_wakes_on_first_failed_pending_task
+tests/test_scheduler.py::TestRace::test_race_wakes_when_second_pending_task_completes
+tests/test_scheduler.py::TestRace::test_race_raises_when_pending_winner_fails
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 4]; parked waiters [task 2 (wait) on promise 0] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestRace::test_race_wakes_when_third_pending_task_completes
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 6]; parked waiters [task 3 (wait) on promise 0; task 4 (wait) on promise 1] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestRace::test_race_raises_when_pending_winner_is_cancelled
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries []; parked waiters [task 2 (wait) on promise 0] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestRace::test_race_duplicate_waitable_resolves_once
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 2]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestCancel::test_cancelled_external_waiter_does_not_block_scheduler
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 3]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_one_timed_wait_does_not_walk_the_parked_tasks[traced]
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_one_timed_wait_does_not_walk_the_parked_tasks[traced]
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2538: RuntimeWarning: coroutine 'sleep' was never awaited
+    error.__traceback__ = None
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:707: RuntimeWarning: coroutine 'sleep' was never awaited
+    super().update(iterable)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/_py_warnings.py:837: RuntimeWarning: coroutine 'sleep' was never awaited
+    def _warn_unawaited_coroutine(coro):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/handlers/async_time.py:89: RuntimeWarning: coroutine 'sleep' was never awaited
+    yield Cancel(timer)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1576: RuntimeWarning: coroutine 'sleep' was never awaited
+    ctx = yield _GetExecCtx()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1467: RuntimeWarning: coroutine 'sleep' was never awaited
+    entry[4][0] for _neg, _seq, entry in ready if entry[0] == _PLACEHOLDER_ENTRY_KIND
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2472: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:665: RuntimeWarning: coroutine 'sleep' was never awaited
+    def _external_wake_of(effect: "CreateExternalPromise[_T]") -> _ExternalWake | None:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2415: RuntimeWarning: coroutine 'sleep' was never awaited
+    def drain():
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:332: RuntimeWarning: coroutine 'sleep' was never awaited
+    definition = DoFunction(fn, list(tail_resume_lines), _is_generator_function(fn))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/.venv/lib/python3.14t/site-packages/_pytest/unraisableexception.py:107: RuntimeWarning: coroutine 'sleep' was never awaited
+    def unraisable_hook(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/functools.py:76: RuntimeWarning: coroutine 'sleep' was never awaited
+    return partial(update_wrapper, wrapped=wrapped,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2490: RuntimeWarning: coroutine 'sleep' was never awaited
+    spawn_frames = yield GetTraceback(k)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/_py_warnings.py:849: RuntimeWarning: coroutine 'sleep' was never awaited
+    msg = "".join(msg_lines).rstrip("\n")
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1473: RuntimeWarning: coroutine 'sleep' was never awaited
+    sorted(waiter_key_stamp, key=waiter_key_stamp.__getitem__), list(waiters)),
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/handlers/async_time.py:62: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/handlers/async_time.py:107: RuntimeWarning: coroutine 'sleep' was never awaited
+    yield Pass(effect, k)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/_py_warnings.py:576: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __init__(self, message, category, filename, lineno, file=None,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/_py_warnings.py:133: RuntimeWarning: coroutine 'sleep' was never awaited
+    def _showwarnmsg_impl(msg):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  <frozen abc>:119: RuntimeWarning: coroutine 'sleep' was never awaited
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1461: RuntimeWarning: coroutine 'sleep' was never awaited
+    entry for neg, _seq, entry in ready
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1560: RuntimeWarning: coroutine 'sleep' was never awaited
+    def alloc_promise():
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1715: RuntimeWarning: coroutine 'sleep' was never awaited
+    entry = entries.pop(index)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2460: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/asyncio/selector_events.py:152: RuntimeWarning: coroutine 'sleep' was never awaited
+    csock.send(b'\0')
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:679: RuntimeWarning: coroutine 'sleep' was never awaited
+    def update(self, iterable=None, /, **kwds):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1356: RuntimeWarning: coroutine 'sleep' was never awaited
+    def ready_pop() -> tuple[int, int, tuple[object, ...]]:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1293: RuntimeWarning: coroutine 'sleep' was never awaited
+    def enqueue(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/asyncio/base_events.py:870: RuntimeWarning: coroutine 'sleep' was never awaited
+    def call_soon_threadsafe(self, callback, *args, context=None):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/handlers/async_time.py:56: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/threading.py:144: RuntimeWarning: coroutine 'sleep' was never awaited
+    return _CRLock(*args, **kwargs)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/typing.py:2300: RuntimeWarning: coroutine 'sleep' was never awaited
+    def cast(typ, val):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:337: RuntimeWarning: coroutine 'sleep' was never awaited
+    return make_call(args, kwargs)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/handlers.py:469: RuntimeWarning: coroutine 'sleep' was never awaited
+    ep = yield CreateExternalPromise(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1465: RuntimeWarning: coroutine 'sleep' was never awaited
+    recounted_live = [len(live_entries), sum(not is_daemon(entry[1]) for entry in live_entries)]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:803: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __ne__(self, other):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-vm/doeff_vm/_bind.py:18: RuntimeWarning: coroutine 'sleep' was never awaited
+    def returning(value):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:602: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __init__(self, iterable=None, /, **kwds):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/_py_warnings.py:856: RuntimeWarning: coroutine 'sleep' was never awaited
+    _wm.warn(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1450: RuntimeWarning: coroutine 'sleep' was never awaited
+    (owner, key): count for owner, owned in parked_keys_of.items() for key, count in owned.items()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1783: RuntimeWarning: coroutine 'sleep' was never awaited
+    if any(not is_owner_cancelled(entry[1]) for entry in entries):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/functools.py:56: RuntimeWarning: coroutine 'sleep' was never awaited
+    setattr(wrapper, attr, value)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1267: RuntimeWarning: coroutine 'sleep' was never awaited
+    def waitable_key(obj):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-vm/doeff_vm/_effect_types.py:182: RuntimeWarning: coroutine 'sleep' was never awaited
+    return _EffectParameter(current, index)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:335: RuntimeWarning: coroutine 'sleep' was never awaited
+    @wraps(fn)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/handler_utils.py:66: RuntimeWarning: coroutine 'sleep' was never awaited
+    all_boundaries = yield GetBoundaries(k)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/handlers.py:466: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/asyncio/base_events.py:752: RuntimeWarning: coroutine 'sleep' was never awaited
+    def is_closed(self):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1566: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/handlers/async_time.py:85: RuntimeWarning: coroutine 'sleep' was never awaited
+    timer = yield Spawn(self._expire_after(timed_wait_seconds(effect)), daemon=True)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/functools.py:58: RuntimeWarning: coroutine 'sleep' was never awaited
+    getattr(wrapper, attr).update(getattr(wrapped, attr, {}))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2715: RuntimeWarning: coroutine 'sleep' was never awaited
+    enqueue_raise(tid, cont, TaskCancelledError())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2081: RuntimeWarning: coroutine 'sleep' was never awaited
+    def pick_next():  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/effects/time.py:107: RuntimeWarning: coroutine 'sleep' was never awaited
+    object.__setattr__(self, "seconds", seconds)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/tests/test_scheduler.py:1302: RuntimeWarning: coroutine 'sleep' was never awaited
+    assert (yield timed_wait()) is True
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:613: RuntimeWarning: coroutine 'sleep' was never awaited
+    super().__init__()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1696: RuntimeWarning: coroutine 'sleep' was never awaited
+    waiter_key_stamp[key] = next(next_waiter_key_stamp)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2722: RuntimeWarning: coroutine 'sleep' was never awaited
+    r = yield Resume(k, None)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1549: RuntimeWarning: coroutine 'sleep' was never awaited
+    def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:296: RuntimeWarning: coroutine 'sleep' was never awaited
+    def decorate(fn: Callable[P, Any]) -> Callable[P, Expand]:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/effects/time.py:22: RuntimeWarning: coroutine 'sleep' was never awaited
+    if math.isnan(coerced) or math.isinf(coerced):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/tests/test_scheduler.py:1292: RuntimeWarning: coroutine 'sleep' was never awaited
+    @do
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/threading.py:126: RuntimeWarning: coroutine 'sleep' was never awaited
+    def RLock(*args, **kwargs):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-vm/doeff_vm/_effect_types.py:294: RuntimeWarning: coroutine 'sleep' was never awaited
+    def _parameter_annotation(function: types.FunctionType, name: str) -> object:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/functools.py:35: RuntimeWarning: coroutine 'sleep' was never awaited
+    def update_wrapper(wrapper,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2462: RuntimeWarning: coroutine 'sleep' was never awaited
+    return (yield TailEval(handle_scheduler_effect(current_tid, effect, k)))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:734: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __init__(self, promise_id):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/program.py:109: RuntimeWarning: coroutine 'sleep' was never awaited
+    wrapped = current.__dict__.get("__doeff_generator_function__")
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1452: RuntimeWarning: coroutine 'sleep' was never awaited
+    recounted_parked = Counter((entry[1], key) for key, entries in waiters.items() for entry in entries)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:314: RuntimeWarning: coroutine 'sleep' was never awaited
+    return bool(fn.__code__.co_flags & inspect.CO_GENERATOR)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1191: RuntimeWarning: coroutine 'sleep' was never awaited
+    refs = handle_refs.setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1445: RuntimeWarning: coroutine 'sleep' was never awaited
+    def check_indexes() -> None:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2048: RuntimeWarning: coroutine 'sleep' was never awaited
+    def trace_entered(heap_item: tuple[int, int, tuple[object, ...]], tid: int | None) -> None:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:322: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __init__(self, task: "Task[Any]") -> None:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1744: RuntimeWarning: coroutine 'sleep' was never awaited
+    def keys_parked_by(tid: int) -> list[tuple[str, int]]:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-vm/doeff_vm/_effect_types.py:122: RuntimeWarning: coroutine 'sleep' was never awaited
+    def handler_spec(handler: object) -> HandlerSpec:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:196: RuntimeWarning: coroutine 'sleep' was never awaited
+    cached = _RESUME_ANALYSIS_CACHE.get(cache_key)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:2573: RuntimeWarning: coroutine 'sleep' was never awaited
+    if kind == "promise" and promises.get(wid, {}).get("external"):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/do.py:187: RuntimeWarning: coroutine 'sleep' was never awaited
+    def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[int, ...]:  # noqa: DOEFF006 - immutable line-number set for IRStream
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:797: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __eq__(self, other):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/program.py:188: RuntimeWarning: coroutine 'sleep' was never awaited
+    if getattr(raw_handler, "_doeff_is_handler_fn", False) is True:
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1466: RuntimeWarning: coroutine 'sleep' was never awaited
+    recounted_marks = sum(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:801: RuntimeWarning: coroutine 'sleep' was never awaited
+    return all(self[e] == other[e] for c in (self, other) for e in c)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-time/src/doeff_time/handlers/async_time.py:87: RuntimeWarning: coroutine 'sleep' was never awaited
+    first = yield Race(effect.future, timer, priority=PRIORITY_IDLE if effect.park else None)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:627: RuntimeWarning: coroutine 'sleep' was never awaited
+    def __init__(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/tests/test_scheduler.py:1294: RuntimeWarning: coroutine 'sleep' was never awaited
+    bell = yield CreateExternalPromise()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/collections/__init__.py:614: RuntimeWarning: coroutine 'sleep' was never awaited
+    self.update(iterable, **kwds)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py:1291: RuntimeWarning: coroutine 'sleep' was never awaited
+    return entry["status"], entry.get("result")
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/functools.py:52: RuntimeWarning: coroutine 'sleep' was never awaited
+    value = getattr(wrapped, attr)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/tests/test_scheduler.py:1296: RuntimeWarning: coroutine 'sleep' was never awaited
+    return (yield WaitWithin(bell.future, 3600.0, park=True))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/.venv/lib/python3.14t/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored while finalizing coroutine <coroutine object sleep at 0x2db9e6b8000>: None
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/.venv/lib/python3.14t/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored while finalizing coroutine <coroutine object sleep at 0x2db9e6b1500>: None
+  
+  Traceback (most recent call last):
+    File "<string>", line 1, in <lambda>
+  KeyError: '__import__'
+  
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_scheduler.py::TestTimedWaitWorkDoesNotGrowWithParkedTasks::test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap
+  /work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/threading.py:369: RuntimeWarning: coroutine 'sleep' was never awaited
+    waiter.acquire()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_scheduler.py::TestRootCloseOut::test_root_close_out_failure_does_not_replace_the_answer
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries []; parked waiters [task 1 (wait_external) on promise 0] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+tests/test_scheduler.py::TestTerminalEntrySweep::test_wait_on_swept_id_raises_loud_keyerror
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/.venv/lib/python3.14t/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored while closing generator <generator object _scheduled_python.<locals>.root_close_out at 0x2db57df5780>: None
+  
+  Traceback (most recent call last):
+    File "/work/toolset/worktrees/doeff-wt-ki1294-dcfix/tests/test_scheduler.py", line 2469, in test_wait_on_swept_id_raises_loud_keyerror
+      with pytest.raises(KeyError, match="swept"):
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  RuntimeError: generator ignored GeneratorExit
+  
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_scheduler_index_guards.py::test_self_check_catches_ready_moved_outside_its_entry_functions
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/.venv/lib/python3.14t/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored while closing generator <generator object _scheduled_python.<locals>.root_close_out at 0x2db57df63c0>: None
+  
+  Traceback (most recent call last):
+    File "/work/toolset/worktrees/doeff-wt-ki1294-dcfix/tests/test_scheduler_index_guards.py", line 264, in test_self_check_catches_ready_moved_outside_its_entry_functions
+      with pytest.raises(SchedulerIndexDriftError, match="live ready counts"):
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  RuntimeError: generator ignored GeneratorExit
+  
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_scheduler_implementation.py::test_a_run_left_waiting_after_a_completion_that_keeps_its_turn_is_named_a_deadlock[rust]
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries []; parked waiters [task 2 (wait) on promise 1] — cancelled at root return; still live after 5.0s of unwinding: [task 2 (wait) on promise 1] (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+123 passed, 168 warnings in 48.26s

@@ -1,0 +1,38 @@
+# 再現 B: 版 1021b8946 + 盲検 B の作業木の最終の差分(worktree-final.diff.txt — SetTaskPriority の分岐が ready を直に書き換える物と、その正の検 TestSetTaskPriority 4 条)
+$ uv run pytest tests/test_scheduler.py tests/test_scheduler_trace.py tests/test_scheduler_implementation.py -q
+tests/test_scheduler.py::TestGather::test_gather_wakes_on_first_failed_pending_task
+121 passed, 109 warnings in 14.34s
+
+$ uv run ruff check --output-format concise packages/doeff-core-effects/doeff_core_effects/scheduler.py tests/test_scheduler.py
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:108:12: PLW0603 Using the global statement to update `_trace_sink` is discouraged
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:108:25: PLW0603 Using the global statement to update `_trace_generation` is discouraged
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:995:9: PLR1711 [*] Useless `return` statement at end of function
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1028:5: PLR1711 [*] Useless `return` statement at end of function
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1874:9: PLR1711 [*] Useless `return` statement at end of function
+tests/test_scheduler.py:2151:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+Found 6 errors.
+[*] 3 fixable with the `--fix` option.
+
+$ uv run --no-project --python 3.12 python scripts/semgrep_locked.py --metrics=off --disable-version-check --config .semgrep.yaml packages/doeff-core-effects/doeff_core_effects/scheduler.py --error
+ • No ignore information available
+Ran 34 rules on 1 file: 0 findings.
+rc=0
+
+$ uv run python <盲検 B の repro_set_task_priority.py>
+scheduler file: /work/toolset/worktrees/doeff-wt-ki1294-repro/packages/doeff-core-effects/doeff_core_effects/scheduler.py
+== {"case": "1 lowered_while_queued (本体)", "finished": false, "elapsed_s": 3.0}
+   probe {"at": "has_live_ready_entry", "include_daemons": false, "kept_count[live, non_daemon]": [0, 0], "recount[live, non_daemon]": [1, 1], "ready(priority, kind, owner)": [[0, "resume", 2]]}
+   probe {"at": "has_live_ready_entry", "include_daemons": true, "kept_count[live, non_daemon]": [0, 0], "recount[live, non_daemon]": [1, 1], "ready(priority, kind, owner)": [[0, "resume", 2]]}
+== {"case": "A spawned_idle (対照)", "finished": true, "elapsed_s": 0.01, "value": "from-lowered-task"}
+   probe {"at": "has_live_ready_entry", "include_daemons": false, "kept_count[live, non_daemon]": [1, 1], "recount[live, non_daemon]": [1, 1], "ready(priority, kind, owner)": [[0, "new", 2]]}
+== {"case": "B lowered_while_parked (対照)", "finished": true, "elapsed_s": 0.0, "value": "from-lowered-task"}
+   probe {"at": "has_live_ready_entry", "include_daemons": false, "kept_count[live, non_daemon]": [1, 1], "recount[live, non_daemon]": [1, 1], "ready(priority, kind, owner)": [[0, "resume", 2]]}
+== {"case": "2 raised_while_queued", "finished": true, "elapsed_s": 0.31, "value": "late"}
+   probe {"at": "has_live_ready_entry", "include_daemons": false, "kept_count[live, non_daemon]": [1, 1], "recount[live, non_daemon]": [0, 0], "ready(priority, kind, owner)": []}
+== {"case": "3 traced_order", "finished": true, "elapsed_s": 0.72, "value": "ep1 completed (foreign thread)", "order": ["ep0 completed", "ep1 completed (foreign thread)", "lowered task ran"]}
+   probe {"at": "has_live_ready_entry", "include_daemons": false, "kept_count[live, non_daemon]": [0, 0], "recount[live, non_daemon]": [0, 0], "ready(priority, kind, owner)": []}
+   probe {"at": "has_live_ready_entry", "include_daemons": true, "kept_count[live, non_daemon]": [0, 0], "recount[live, non_daemon]": [0, 0], "ready(priority, kind, owner)": []}
+   probe {"at": "has_live_ready_entry", "include_daemons": false, "kept_count[live, non_daemon]": [0, 0], "recount[live, non_daemon]": [1, 1], "ready(priority, kind, owner)": [[0, "resume", 2]]}
+   probe {"at": "has_live_ready_entry", "include_daemons": true, "kept_count[live, non_daemon]": [0, 0], "recount[live, non_daemon]": [1, 1], "ready(priority, kind, owner)": [[0, "resume", 2]]}
+   external-enqueued {"tid": null, "wake": "external", "priority": 10, "ready": 1, "ahead": 0, "ahead_by_wake": {}} | heap then: [[10, "resume", null]]
+   external-enqueued {"tid": null, "wake": "external", "priority": 10, "ready": 2, "ahead": 1, "ahead_by_wake": {"internal": 1}} | heap then: [[10, "resume", null], [0, "resume", 2]]
