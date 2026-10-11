@@ -5,7 +5,6 @@ small: it records ADR specs and executable enforcement specs, then exposes
 assertions that pytest-generated functions can call.
 """
 
-
 import hashlib
 import json
 import shutil
@@ -18,6 +17,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+
+from doeff_adr.semgrep_verdicts import (
+    fixture_set_key,
+    read_verdict,
+    semgrep_identity,
+    verdict_store,
+    write_verdicts,
+)
 
 AdrStatus = Literal["proposed", "accepted", "superseded", "rejected"]
 EnforcementMode = Literal["green", "expected-red"]
@@ -82,7 +89,7 @@ class AdrSpec:
 
 _ADRS: dict[str, AdrSpec] = {}
 _ENFORCEMENTS: dict[str, EnforcementRef | SemgrepSpec] = {}
-# installed の defsemgrep の例の組 1 つに当たった規則の id(鍵 = semgrep・設定の path と中身・例の中身の digest)。
+# installed の defsemgrep の例の組 1 つに当たった規則の id(鍵 = semgrep の版・設定の中身・例の中身の digest — semgrep_verdicts)。
 # 同じ設定を読む規則の例を 1 回の semgrep で確かめ、同じ process の残りの検はここから読む(agora-redesign #2976 I-3)。
 _INSTALLED_VERDICTS: dict[str, frozenset[str]] = {}
 
@@ -404,40 +411,40 @@ def _installed_verdict(
 
     規則の検 1 本ごとに semgrep を起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ重なる
     (agora-controllers の defadr_turn_boundary は 7 規則で 14 回・約 33 秒 — agora-redesign #2976 I-3)。最初の検の時に、
-    同じ設定を読む登録済みの規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。
+    同じ設定を読む登録済みの規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。呼び手が置き場を名指して
+    いれば(semgrep_verdicts.verdict_store)、先に置き場から読み、回した答えを置き場に残す — 設定も例も変わらない次の process は
+    semgrep を起こさない(card ki-f81dde817291 — 日次は session と設定ごとに 1 回の起動 約 8 秒を毎回払っていた)。
     """
+    identity = semgrep_identity(semgrep)
     config_digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
-    key = _fixture_set_key(semgrep, config_path, config_digest, fixtures)
-    if key not in _INSTALLED_VERDICTS:
-        siblings = {
-            _fixture_set_key(
-                semgrep, config_path, config_digest, sibling_fixtures
-            ): sibling_fixtures
-            for sibling in _ENFORCEMENTS.values()
-            if isinstance(sibling, SemgrepSpec)
-            and sibling.installed_rule_id is not None
-            and not sibling.expand_hy
-            and (sibling.config, sibling.config_base) == (spec.config, spec.config_base)
-            for sibling_fixtures in (sibling.hit_fixtures, sibling.clean_fixtures)
-            if sibling_fixtures
-        }
-        pending = {
-            pending_key: pending_fixtures
-            for pending_key, pending_fixtures in (siblings | {key: fixtures}).items()
-            if pending_key not in _INSTALLED_VERDICTS
-        }
-        _INSTALLED_VERDICTS.update(_run_installed_semgrep_batch(semgrep, config_path, pending))
-    return _INSTALLED_VERDICTS[key]
-
-
-def _fixture_set_key(
-    semgrep: str, config_path: Path, config_digest: str, fixtures: tuple[dict[str, str], ...]
-) -> str:
-    """覚えた答えを引く鍵 — semgrep・設定・例のどれかが変われば別の鍵になり、古い答えを使い回さないため。"""
-    material = json.dumps(
-        [semgrep, str(config_path), config_digest, list(fixtures)], sort_keys=True
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    key = fixture_set_key(identity, config_digest, fixtures)
+    if key in _INSTALLED_VERDICTS:
+        return _INSTALLED_VERDICTS[key]
+    store = verdict_store()
+    stored = None if store is None else read_verdict(store, key)
+    if stored is not None:
+        _INSTALLED_VERDICTS[key] = stored
+        return stored
+    siblings = {
+        fixture_set_key(identity, config_digest, sibling_fixtures): sibling_fixtures
+        for sibling in _ENFORCEMENTS.values()
+        if isinstance(sibling, SemgrepSpec)
+        and sibling.installed_rule_id is not None
+        and not sibling.expand_hy
+        and (sibling.config, sibling.config_base) == (spec.config, spec.config_base)
+        for sibling_fixtures in (sibling.hit_fixtures, sibling.clean_fixtures)
+        if sibling_fixtures
+    }
+    pending = {
+        pending_key: pending_fixtures
+        for pending_key, pending_fixtures in (siblings | {key: fixtures}).items()
+        if pending_key not in _INSTALLED_VERDICTS
+    }
+    verdicts = _run_installed_semgrep_batch(semgrep, config_path, pending)
+    _INSTALLED_VERDICTS.update(verdicts)
+    if store is not None:
+        write_verdicts(store, verdicts)
+    return verdicts[key]
 
 
 # 子 process を、git の repo の場所を決める環境変数を外して起こす前置き — 外の repo の hook の中で回っても、
