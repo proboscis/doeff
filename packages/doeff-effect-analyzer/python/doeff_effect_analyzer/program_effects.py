@@ -140,11 +140,46 @@ class Basis(str, Enum):
     UNREAD = "unread"  # neither — the handler may handle anything; coverage is unknown
 
 
+class _ClauseEmits:
+    """``Clause.emits``: given as the ``ProgramEffects``, or as a function that reads it — called
+    the first time ``emits`` is asked for, and its answer kept.
+
+    A handler is read wherever it is installed, but ``pass_through`` asks only the clauses an
+    effect reaches what they emit: reading every clause's body when the handler was read built
+    the emits of 452 clauses for the 118 the delivery job's closure asked for (ki-5a5f6bd26d5e).
+    A clause read later counts the sources it reads in the ``reading_sources`` around the place
+    that asks — an analysis that keeps an answer asks for what the answer needs inside it."""
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._held = f"_{name}"
+
+    def __get__(self, clause: "Clause | None", owner: type | None = None) -> "ProgramEffects":
+        if clause is None:
+            raise AttributeError(self._held)  # no default: the dataclass requires ``emits``
+        held = clause.__dict__[self._held]
+        if not isinstance(held, ProgramEffects):
+            held = held()
+            clause.__dict__[self._held] = held
+        return held
+
+    def __set__(
+        self, clause: "Clause", value: "ProgramEffects | Callable[[], ProgramEffects]"
+    ) -> None:
+        clause.__dict__[self._held] = value
+
+
 @dataclass(frozen=True)
 class Clause:
+    """One effect class a handler answers (``handles``), and what the clause performs when it
+    answers (``emits`` — see ``_ClauseEmits``)."""
+
     handles: type
-    emits: "ProgramEffects"
+    emits: _ClauseEmits = _ClauseEmits()
     location: Location
+
+    def __getstate__(self) -> dict[str, Any]:
+        """A pickled clause holds its emits read (the function that reads them does not pickle)."""
+        return {"handles": self.handles, "_emits": self.emits, "location": self.location}
 
 
 @dataclass(frozen=True)
@@ -2264,12 +2299,35 @@ class _Wrapper:
 
 
 class _Reader:
-    """Reads function bodies into facts, once per function and bindings."""
+    """Reads function bodies into facts, once per function and bindings, and keeps the reports
+    walked from them (``_walk``)."""
 
     def __init__(self) -> None:
         self._facts: dict[_ReadKey, _Facts] = {}
         # Local functions being read (a local function calling itself is read once).
         self._local_reads: set[_Identity] = set()
+        # Reports walked from facts read here, by the facts each starts from (``_walk``).
+        self._reports: dict[int, list[_KeptReport]] = {}
+
+    def kept_report(
+        self, start: _Facts, label: str, active: frozenset[_ReadKey]
+    ) -> "_KeptReport | None":
+        """The report walked before from ``start`` under ``label`` that a walk with ``active``
+        would build again (see ``_KeptReport``)."""
+        return next(
+            (
+                kept
+                for kept in self._reports.get(id(start), ())
+                if kept.start is start
+                and kept.label == label
+                and active & kept.checked == kept.active_checked
+            ),
+            None,
+        )
+
+    def keep_report(self, kept: "_KeptReport") -> None:
+        """Keep a walked report for the walks that would build it again."""
+        self._reports.setdefault(id(kept.start), []).append(kept)
 
     def facts(self, function: types.FunctionType, bound: _Bound = _NO_BINDINGS) -> _Facts:
         """What ``function`` does when read with ``bound`` (cached)."""
@@ -2889,11 +2947,47 @@ def _report_facts(
     ``active`` = the functions being reported further up (a recursion through a
     handled scope or a carrier stops there — its effects are already counted).
     """
+    return _walk(reader, start, label, active).report
+
+
+@dataclass(frozen=True)
+class _KeptReport:
+    """A report ``_walk`` built from ``start`` under ``label``, kept on the reader.
+
+    ``active`` decides a walk only where the walk looks a call up in what it has seen (``checked``
+    — its own lookups and those of the walks it nests): a walk from the same facts under the same
+    label whose ``active`` holds the same of those keys (``active_checked``) takes the same bodies
+    in the same order, so it builds this report — and reads nothing this one did not.  Before, every
+    walk that reached a body reported the handled scopes and carried Programs in it again: 7,000 -
+    17,500 reports from 800 - 1,900 bodies in one closure check (ki-5a5f6bd26d5e)."""
+
+    start: _Facts
+    label: str
+    active_checked: frozenset[_ReadKey]
+    checked: frozenset[_ReadKey]
+    report: ProgramEffects
+
+
+def _walk(
+    reader: _Reader, start: _Facts, label: str, active: frozenset[_ReadKey]
+) -> _KeptReport:
+    """The report of ``start`` (see ``_report_facts``), kept on ``reader`` with the lookups it made."""
+    kept = reader.kept_report(start, label, active)
+    if kept is not None:
+        return kept
     effects: list[EffectUse] = []
     carried: list[CarriedProgram] = []
     unresolved: list[Unresolved] = []
     handled: list[HandledProgram] = []
     seen: set[_ReadKey] = set(active)
+    checked: set[_ReadKey] = set()
+
+    def nested(body: _Facts, text: str, path: frozenset[_ReadKey]) -> ProgramEffects:
+        """The report of a handled scope or a carried Program in a body walked here (its
+        lookups are this walk's too)."""
+        inner = _walk(reader, body, text, path)
+        checked.update(inner.checked)
+        return inner.report
 
     def absorb(facts: _Facts, via: tuple[str, ...], path: frozenset[_ReadKey]) -> None:
         """Add one body's facts, then the bodies it calls (each once)."""
@@ -2904,26 +2998,29 @@ def _report_facts(
         unresolved.extend(
             Unresolved(reason, text, location, via) for reason, text, location in facts.unresolved
         )
-        for item in facts.carried:
-            # A carried Program that recurses into one being reported (``path``) stops
-            # there: its calls into ``path`` are skipped.
-            program = _report_facts(reader, item.body, label=item.label, active=path)
-            carried.append(
-                CarriedProgram(
-                    carrier=item.carrier, program=program, location=item.location, via=via
-                )
+        # A carried Program that recurses into one being reported (``path``) stops there: its
+        # calls into ``path`` are skipped.
+        carried.extend(
+            CarriedProgram(
+                carrier=item.carrier,
+                program=nested(item.body, item.label, path),
+                location=item.location,
+                via=via,
             )
-        for scope in facts.handled:
-            handled.append(
-                HandledProgram(
-                    handlers=scope.handlers,
-                    program=_report_facts(reader, scope.body, label=scope.text, active=path),
-                    location=scope.location,
-                    via=via,
-                )
+            for item in facts.carried
+        )
+        handled.extend(
+            HandledProgram(
+                handlers=scope.handlers,
+                program=nested(scope.body, scope.text, path),
+                location=scope.location,
+                via=via,
             )
+            for scope in facts.handled
+        )
         for call in facts.calls:
             call_key = _ReadKey(call.function, call.bound.key)
+            checked.add(call_key)
             if call_key in seen:
                 continue
             seen.add(call_key)
@@ -2934,10 +3031,13 @@ def _report_facts(
             )
 
     absorb(start, (), active)
-    return ProgramEffects(
+    report = ProgramEffects(
         target=label,
         effects=tuple(effects),
         carried=tuple(carried),
         unresolved=tuple(unresolved),
         handled=tuple(handled),
     )
+    kept = _KeptReport(start, label, active & checked, frozenset(checked), report)
+    reader.keep_report(kept)
+    return kept

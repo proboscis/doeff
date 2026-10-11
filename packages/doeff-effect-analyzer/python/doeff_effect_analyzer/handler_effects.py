@@ -491,30 +491,99 @@ def _clauses_in(
     return _ReadClauses(tuple(clauses), tuple(unresolved))
 
 
+@dataclass(frozen=True)
+class _Branch:
+    """A branch of a dispatcher, taken when the effect is of the classes ``classes`` names: the
+    node that tests it (``at``) and the nodes it runs (``region``)."""
+
+    at: ast.AST
+    classes: ast.expr
+    region: tuple[ast.AST, ...]
+
+
+@dataclass(frozen=True)
+class _Dispatch:
+    """What a dispatcher's def dispatches on: its effect parameter and its branches."""
+
+    param: str | None
+    branches: tuple[_Branch, ...]
+
+
+_DISPATCHES: dict[int, tuple[FunctionNode, _Dispatch]] = {}
+
+
+def _dispatch_of(node: FunctionNode) -> _Dispatch:
+    """The effect parameter and the branches of ``node``, found once per def node: a handler is
+    read again wherever it is installed, and the tree never changes — finding them at every read
+    ran ``_branches`` 544,643 times for 924 reads in five closure checks (ki-5a5f6bd26d5e)."""
+    cached = _DISPATCHES.get(id(node))
+    if cached is not None and cached[0] is node:
+        return cached[1]
+    param = _effect_param(node)
+    everything = list(_body_nodes(node))
+    dispatch = _Dispatch(
+        param,
+        tuple(
+            _Branch(child, classes, tuple(region))
+            for child in everything
+            for classes, region in _branches(child, param, everything)
+        ),
+    )
+    _DISPATCHES[id(node)] = (node, dispatch)
+    return dispatch
+
+
 def _read_clauses(
     reader: _Reader, node: FunctionNode, scope: _Scope, filename: str, label: str
 ) -> _ReadClauses:
-    param = _effect_param(node)
+    dispatch = _dispatch_of(node)
     clauses: list[Clause] = []
     unresolved: list[Unresolved] = []
-    everything = list(_body_nodes(node))
-    for child in everything:
-        branches = _branches(child, param, everything)
-        for classes_expr, region in branches:
-            location = Location(filename, getattr(child, "lineno", 0))
-            named = _classes(classes_expr, scope)
-            unresolved.extend(
-                Unresolved("handled class is not an importable effect class", text, location)
-                for text in named.missing
+    for branch in dispatch.branches:
+        location = Location(filename, getattr(branch.at, "lineno", 0))
+        named = _classes(branch.classes, scope)
+        unresolved.extend(
+            Unresolved("handled class is not an importable effect class", text, location)
+            for text in named.missing
+        )
+        # Read once per handled class, with the effect parameter bound to the effect of that
+        # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
+        # reaches the clause (``Clause.emits``).
+        clauses.extend(
+            Clause(
+                handles=cls,
+                emits=_emits_read_later(
+                    reader,
+                    branch.region,
+                    _received_in(scope, dispatch.param, cls),
+                    filename,
+                    f"{label} clause",
+                ),
+                location=location,
             )
-            # Read once per handled class, with the effect parameter bound to the effect
-            # of that class (performing it emits that class — ``ReceivedEffect``).
-            for cls in named.found:
-                facts = _Facts()
-                reader.collect(region, _received_in(scope, param, cls), filename, facts, generator=True)
-                emits = _report_facts(reader, facts, label=f"{label} clause")
-                clauses.append(Clause(handles=cls, emits=emits, location=location))
+            for cls in named.found
+        )
     return _ReadClauses(tuple(clauses), tuple(unresolved))
+
+
+def _emits_read_later(
+    reader: _Reader, region: Sequence[ast.AST], scope: _Scope, filename: str, label: str
+) -> Callable[[], ProgramEffects]:
+    """What a clause performs (``region`` read with ``reader``), read when first asked for —
+    under the handlers that were being read when the clause was, so a clause that installs its
+    handler again still stops there (``_READING``)."""
+    reading = _READING.get()
+
+    def read() -> ProgramEffects:
+        token = _READING.set(reading)
+        try:
+            facts = _Facts()
+            reader.collect(region, scope, filename, facts, generator=True)
+            return _report_facts(reader, facts, label=label)
+        finally:
+            _READING.reset(token)
+
+    return read
 
 
 def _received_in(scope: _Scope, param: str | None, cls: type) -> _Scope:
