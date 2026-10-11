@@ -5,8 +5,10 @@
 ;;;
 ;;; 振る舞いは前の EnvStore と同じ:
 ;;;   * root を env のキーごとに準備する。準備は worker 自身の code の env_handlers を別の process として起こし(worker のループは待たない)、
-;;;     完成マーカーの在る root だけを READY として観測する。root は state/roots/<キー> の最終の path に作る(venv が絶対 path を持つので
-;;;     rename しない)。マーカーの無い root は次に求められた時に脇へ退けて作り直す。準備は同時に max-parallel 本まで・同じキーは 1 本。
+;;;     完成マーカーの在る root だけを READY として観測する。root は分け合う dir(settings.shared — 無ければ state)の roots/<キー> の最終の
+;;;     path に作る(venv が絶対 path を持つので rename しない)。同じ機体に同じ名の worker の 2 つの世代が並ぶ時、新しい世代は前の世代の
+;;;     準備した root を準備し直さずに使う(AL-D2g)。マーカーの無い root は、準備の process がキーごとの錠の中で脇へ退けて作り直す
+;;;     (もう片方の世代が準備している root を退けない — env_translation の prepared-once)。準備は同時に max-parallel 本まで・同じキーは 1 本。
 ;;;   * 先読み(warm): 温める表の root は job の準備より後に起こし、同時の枠の 1 つを job に残す(起こす順と数は env_rules.launch-order)。
 ;;;     期限は env_upkeep.prepare-overdue(先読みも job の準備も、進みの印が動かない長さだけ)。期限を判じる前に答えの file を読み、
 ;;;     完成を書いた準備(終わりの処理の途中)は止めない — 次の観測で終わりを読む。
@@ -17,11 +19,14 @@
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
 ;;;     選んだ root はその拍で . で始まる脇の名へ退けてから消す(消している間は選びにも完成品の観測にも出ない)。走っている掃除は同時に 1 つ。
+;;;     固定は世代ごとに分け合う dir の root-pins/ へ file で知らせ合い、掃除はまだ走っている他の世代(状態の dir が在る)の固定も消さない
+;;;     (AL-D2g)。
 ;;; 記録(待ち・準備中・失敗・固定の集合・掃除と prune の時刻・最後の観測)は handler の session の値で持つ。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass replace])
+(import hashlib)
 (import json)
 (import posixpath)
 (import re)
@@ -66,12 +71,17 @@
 ;; free-bytes・min-free-bytes・root-bytes = root 1 つの見積もり・roots-bytes = roots の合計〔まだ数えていなければ -1〕・reclaimable-bytes・
 ;; cap-bytes・memory-current・memory-max〔測れなければ -1〕・peak-bytes = 組みの山の見積もり)。
 (val WARM-REFUSED-LOG "worker: 先の組みを断った")
+;; 固定を世代の間で知らせ合う file の dir の名(分け合う dir の下 — AL-D2g)。file 1 つが世代 1 つ: {"state" 世代の状態の dir "keys" 固定の
+;; キーの列}。掃除は、状態の dir がまだ在る他の世代の固定も消さない。
+(val PINS-DIR "root-pins")
+;; 固定の file を書けなかった行の名(欄: path・detail — 掃除は止めない)。
+(val PINS-UNWRITTEN-LOG "worker: 固定の file を書けない")
 ;; 先の組みの前に memory を測れなかった行の名(#3748 — 欄: key・reason = 訳)。断らずに組み、heartbeat の memoryUnmeasured に root のキーを載せる。
 (val MEMORY-UNMEASURED-LOG "worker: 先の組みの memory を測れない")
 
 
 (defrecord EnvSettings
-  "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(root は state/roots の下)・
+  "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(準備の要求の置き場)・
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
    repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・repo-access = 鍵の表を組み直す起動の script
    (準備の前ごとに ROLE=access で撃ち、表の file の今の値から JSON と git / ssh の設定を組み直す — 空 = 組み直さない・card ki-2de748a0eac5)・
@@ -81,9 +91,10 @@
    (割った時は固定されていない root を古い順に消し — #4051、戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る)・limits = 準備の期限・max-parallel = 同時の準備の
    上限・tool = 準備の process の入口・cgroup-dir = worker の container の cgroup(v2)の dir(先の組みの前に memory.current と memory.max を
    読む — #3748)・code-store = source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・None = 保存先を使わない
-   設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)・shared = 世代をまたいで分け合う dir(Python の
-   置き場・Rust の wheel の保存先・mirror とその錠・wheel の錠 — 値は main の --shared-dir・None = state と同じ dir。同じ機体に同じ名の
-   worker の 2 つの世代が並ぶ時、root と準備の要求は世代ごとの state に置き、重い cache だけを分け合う・AL-D2)。2 つの量の値は worker の
+   設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)・shared = 世代をまたいで分け合う dir(root の
+   置き場 roots・固定の file・Python の置き場・Rust の wheel の保存先・mirror とその錠・wheel と root の錠 — 値は main の --shared-dir・
+   None = state と同じ dir。同じ機体に同じ名の worker の 2 つの世代が並ぶ時、準備の要求は世代ごとの state に置き、root と重い cache を
+   分け合う・AL-D2・AL-D2g)。2 つの量の値は worker の
    起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
   (#^ str state)
   (#^ str hy-command)
@@ -121,10 +132,18 @@
   (#^ bool warm))
 
 
+(defk roots-dir [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % str)]}
+  "root の置き場の dir を返すため — 分け合う dir(無ければ state)の roots。同じ機体に同じ名の worker の 2 つの世代が並ぶ時、新しい世代は
+   前の世代の準備した root をそのまま使う(AL-D2g — 世代ごとの state に置くと、入れ替えのたびに全 root を準備し直した)。"
+  (+ (or settings.shared settings.state) "/roots"))
+
+
 (defk env-root [settings key]
   {:pre [(: settings EnvSettings) (: key str)] :post [(: % str)]}
   "env のキー(env-<キー>)の root の path を返すため。"
-  (+ settings.state "/roots/" (cut key (len ENV-KEY-PREFIX) None)))
+  (<- roots str (roots-dir settings))
+  (+ roots "/" (cut key (len ENV-KEY-PREFIX) None)))
 
 
 (defk read-marker [root]
@@ -149,8 +168,9 @@
 
 (defk root-dirs [settings]
   {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
-  "state/roots の直下の dir の名(. で始まる名を除く・名の順)を返すため。"
-  (<- entries (ListDirectory (+ settings.state "/roots")))
+  "root の置き場の直下の dir の名(. で始まる名を除く・名の順)を返すため。"
+  (<- roots str (roots-dir settings))
+  (<- entries (ListDirectory roots))
   (if (isinstance entries FileFailed)
       #()
       (tuple (gfor e entries :if (and (= e.kind PathKind.DIRECTORY) (not (.startswith e.name "."))) e.name))))
@@ -163,9 +183,10 @@
    新しい物から選ぶ・#3515 の B)。マーカーを読めても時刻を読めない root(読む間に掃除で消えた)は完成した root に数えない。Hy の版は
    引き継ぎ元の候補の比べにだけ使い(#3706)、完成した root に数えるかには使わない — 欄の無い前の印の root は null で列に入る。"
   (<- names tuple (root-dirs settings))
+  (<- roots str (roots-dir settings))
   (var known #())
   (for [name names]
-    (val root (+ settings.state "/roots/" name))
+    (val root (+ roots "/" name))
     (<- marker (read-marker root))
     (<- made (| int None) (modified-ms (+ root "/" ENV-MARKER)))
     (when (and (is-not marker None) (is-not made None))
@@ -195,14 +216,11 @@
 
 (defk launch-prepare [settings key runtime-env compile-jobs warm]
   {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool)] :post [(: % PendingEnv)]}
-  "root の準備の process を 1 本起こして記録を返すため。マーカーの無い root(途中で止まった準備)は脇へ退ける(名は . で始まるので
-   完成品としては読まれない)。compile-jobs = 焼く道具の並べる数(頼みの JSON の compileJobs に書く)。"
+  "root の準備の process を 1 本起こして記録を返すため。マーカーの無い root(途中で止まった準備)は、準備の process がキーごとの錠を
+   取ってから脇へ退ける(AL-D2g — root の置き場を分け合う他の世代がそのキーを準備している間に、ここで退けるとその準備を壊す)。
+   compile-jobs = 焼く道具の並べる数(頼みの JSON の compileJobs に書く)。"
   (<- root str (env-root settings key))
   (<- now-ms int (now-epoch-ms))
-  (<- seen (StatPath root))
-  (when (and (not (isinstance seen FileFailed)) (!= seen.kind PathKind.MISSING))
-    (val name (cut key (len ENV-KEY-PREFIX) None))
-    (<- (file-done (RenamePath root (.format "{}/roots/.{}.broken.{}" settings.state name now-ms)))))
   (val requests (+ settings.state "/env-requests"))
   (<- (file-done (MakeDirectory requests)))
   (val declared (json.loads runtime-env))
@@ -241,11 +259,12 @@
   {:pre [(: settings EnvSettings) (: busy frozenset)] :post [(: % tuple)]}
   "完成マーカーの在る root の観測(READY)を返すため(busy = 準備中か失敗の記録の在るキー — 除く)。"
   (<- names tuple (root-dirs settings))
+  (<- roots str (roots-dir settings))
   (var views #())
   (for [name names]
     (val key (+ ENV-KEY-PREFIX name))
     (when (not-in key busy)
-      (val root (+ settings.state "/roots/" name))
+      (val root (+ roots "/" name))
       (<- marker (read-marker root))
       (when (is-not marker None)
         (:= views (+ views #((CodeView key CodeState.READY :path root)))))))
@@ -277,9 +296,10 @@
   {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
   "掃除の候補(roots の直下の dir)を返すため。worker が作った root = キーの形の名で完成マーカーを持つ dir。"
   (<- names tuple (root-dirs settings))
+  (<- roots str (roots-dir settings))
   (var infos #())
   (for [name names]
-    (val root (+ settings.state "/roots/" name))
+    (val root (+ roots "/" name))
     (<- marker (read-marker root))
     (val owned (and (is-not marker None) (bool (ROOT-NAME-PATTERN.fullmatch name))))
     (var made 0)
@@ -333,6 +353,80 @@
   (#^ (get tuple #(str ...)) keys))
 
 
+(defrecord PinRecord
+  "他の世代の固定の file 1 つの読み: path = file・state = その世代の状態の dir・keys = 固定のキー・alive = 状態の dir が在るか(無ければ
+   その世代は終わり、起動の script が dir を消した — 固定に数えず、掃除の残りの片づけが file を消す)。"
+  (#^ str path)
+  (#^ str state)
+  (#^ (get frozenset str) keys)
+  (#^ bool alive))
+
+
+(defk pins-dir [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % str)]}
+  "固定を世代の間で知らせ合う file の dir を返すため(root の置き場と同じ分け合う dir の下)。"
+  (+ (or settings.shared settings.state) "/" PINS-DIR))
+
+
+(defk own-pin-file [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % str)]}
+  "この世代の固定の file の path を返すため(名 = 状態の dir の sha256 の頭 16 字 — 世代ごとに違い、同じ世代の起き直しでは同じ)。"
+  (<- place str (pins-dir settings))
+  (+ place "/" (cut (.hexdigest (hashlib.sha256 (.encode settings.state))) 0 16) ".json"))
+
+
+(defk wrote-pins [settings pinned]
+  {:pre [(: settings EnvSettings) (: pinned frozenset)] :post [(: % None)] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "この世代の固定の集合を固定の file へ置き換えで書くため(root の置き場を分け合う他の世代の掃除が読む — AL-D2g)。書けなければ 1 行
+   (PINS-UNWRITTEN-LOG)出して続ける(掃除は止めない)。"
+  (<- place str (pins-dir settings))
+  (<- (MakeDirectory place))
+  (<- path str (own-pin-file settings))
+  (<- written (WriteText path (json.dumps {"state" settings.state "keys" (sorted pinned)}) :replace True))
+  (when (isinstance written FileFailed)
+    (<- (slog PINS-UNWRITTEN-LOG :path path :detail written.detail)))
+  None)
+
+
+(defk pin-of-text [text]
+  {:pre [(: text str)] :post [(: % (| tuple None))] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "固定の file の中身を #(状態の dir 固定のキーの frozenset) にするため(形の読めない中身は None)。"
+  (val data (try (json.loads text) (except [ValueError] None)))
+  (match data
+    {"state" (str) "keys" (list)} #((get data "state") (frozenset (gfor k (get data "keys") :if (isinstance k str) k)))
+    _ None))
+
+
+(defk pin-records [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
+  "他の世代の固定の file を読むため(自分の file・読めない file は除く)。答え = PinRecord の列。"
+  (<- place str (pins-dir settings))
+  (<- own str (own-pin-file settings))
+  (<- entries (ListDirectory place))
+  (var records #())
+  (when (not (isinstance entries FileFailed))
+    (for [entry entries]
+      (val path (+ place "/" entry.name))
+      (when (and (= entry.kind PathKind.FILE) (.endswith entry.name ".json") (!= path own))
+        (<- text (ReadText path))
+        (when (isinstance text str)
+          (<- read (| tuple None) (pin-of-text text))
+          (when (is-not read None)
+            (val state (get read 0))
+            (val keys (get read 1))
+            (<- seen (StatPath state))
+            (val alive (and (not (isinstance seen FileFailed)) (!= seen.kind PathKind.MISSING)))
+            (:= records (+ records #((PinRecord :path path :state state :keys keys :alive alive)))))))))
+  records)
+
+
+(defk others-pins [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % frozenset)]}
+  "まだ走っている他の世代(状態の dir が在る)の固定のキーの集合を返すため(AL-D2g — 掃除が他の世代の使う root を退けない)。"
+  (<- records tuple (pin-records settings))
+  (frozenset (gfor r records :if r.alive k r.keys k)))
+
+
 (defrecord PruneState
   "uv の cache の prune の記録: pid = 走っている prune の子(None = 走っていない)・started-ms = 最後に起こした時刻(0 = まだ起こしていない)。"
   (setv #^ (| int None) pid None)
@@ -343,13 +437,14 @@
   {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
   "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
    wheel(build の口の保存先 — 口が使うたびに dir の中の印の file を置き換えて dir の時刻を進める)と、7 日使われない bytecode の
-   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)を消し、消した path の列を
-   返すため。"
-  (<- roots (ListDirectory (+ settings.state "/roots")))
+   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)と、終わった世代の固定の
+   file(AL-D2g)を消し、消した path の列を返すため。"
+  (<- place str (roots-dir settings))
+  (<- roots (ListDirectory place))
   (val aside (if (isinstance roots FileFailed)
                  #()
                  (tuple (gfor entry roots :if (and (.startswith entry.name ".") (or (in ".broken." entry.name) (in SWEPT-MARK entry.name)))
-                              (+ settings.state "/roots/" entry.name)))))
+                              (+ place "/" entry.name)))))
   (<- wheels (ListDirectory (wheels-root (or settings.shared settings.state))))
   (var stale #())
   (when (not (isinstance wheels FileFailed))
@@ -360,7 +455,10 @@
         (when (and (is-not at None) (> (- now-ms at) (* 1000 WHEEL-UNUSED-SECONDS)))
           (:= stale (+ stale #(path)))))))
   (<- unused tuple (unused-store-entries settings.code-store now-ms))
-  (val doomed (+ aside stale unused))
+  ;; 終わった世代(状態の dir が無い)の固定の file(AL-D2g)。
+  (<- pins tuple (pin-records settings))
+  (val ended (tuple (gfor r pins :if (not r.alive) r.path)))
+  (val doomed (+ aside stale unused ended))
   (for [target doomed]
     (<- (RemoveTree target)))
   doomed)
@@ -430,21 +528,25 @@
   "消すと選んだ root を . で始まる脇の名へ退けるため(名の付け替え 1 回 — 木の消しはループの外の task)。答え = 退けたか(root が
    もう無ければ False)。"
   (<- root str (env-root settings key))
-  (<- moved (RenamePath root (.format "{}/roots/.{}{}{}" settings.state (cut key (len ENV-KEY-PREFIX) None) SWEPT-MARK now-ms)))
+  (<- roots str (roots-dir settings))
+  (<- moved (RenamePath root (.format "{}/.{}{}{}" roots (cut key (len ENV-KEY-PREFIX) None) SWEPT-MARK now-ms)))
   (not (isinstance moved FileFailed)))
 
 
 (defk start-removing [settings measured busy free started-ms]
   {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int) (: started-ms int)] :post [(: % SweepRemoving)]}
-  "数えの答えが届いた時に、その時の固定(busy — 数えの間に固定になった root も入る)と、roots の合計の上限・共有の disk の空き free と
+  "数えの答えが届いた時に、その時の固定(busy — 数えの間に固定になった root も入る・root の置き場を分け合う他の世代の固定 — AL-D2g)と、roots の合計の上限・共有の disk の空き free と
    その最低で消す root を選び(#4051)、脇へ退け、消しをループの外の task として起こすため。答え = 走っている消しの記録。"
   (<- total int (roots-bytes measured.infos))
   (val cap settings.roots-cap-bytes)
   (val min-free settings.min-free-bytes)
-  (<- candidates tuple (sweep-candidates measured.infos busy))
-  (<- chosen tuple (sweep-choice measured.infos busy cap free min-free))
+  ;; root の置き場を分け合う他の世代の固定も消さない(AL-D2g)。
+  (<- others frozenset (others-pins settings))
+  (val held (| busy others))
+  (<- candidates tuple (sweep-candidates measured.infos held))
+  (<- chosen tuple (sweep-choice measured.infos held cap free min-free))
   ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・空きの最低・roots の合計・上限・固定の数・候補の数・選んだ数。
-  (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len busy)
+  (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len held)
             :candidates (len candidates) :chosen (len chosen)))
   (<- now-ms int (now-epoch-ms))
   (var aside #())
@@ -674,6 +776,9 @@
     ;; policy.sweep-actions が撃たない — #3731)。ここで二重に止めない。
     (val changed (!= pinned pinned-roots))
     (:= pinned-roots pinned)
+    ;; 固定が変われば、root の置き場を分け合う他の世代の掃除が読む file へ書く(AL-D2g)。
+    (when changed
+      (<- (wrote-pins settings pinned)))
     (<- now-ms int (now-epoch-ms))
     (match sweeping
       None

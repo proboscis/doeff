@@ -406,9 +406,9 @@ esac
 # 待たずに同じ node へ次の Pod を作るので、旧 worker が job を止め終えて終わるまで、新しい Pod は git にも状態にも触らずに待つ。
 # lock は fd 9 に持ち、exec した worker が終わるまで離さない(job の子 process へは渡らない — subprocess の close_fds)。
 # WORKER_GENERATION_DIRS=1(同じ機体に同じ名の worker の 2 つの世代を並べる Deployment の RollingUpdate — AL-D2): 新しい Pod は旧い Pod の
-# 終わりを待たずに起き、worker の状態(版の木・job の cwd・task の結果・温める子・実行環境の root と準備の要求・入口の検め)を世代ごとの
-# dir $WORK_DIR/gen/<Pod の uid>/state に置く。log・Python・Rust の wheel・mirror とその錠は $WORK_DIR/state を分け合う(worker の
-# --shared-dir — 重い cache を世代ごとに作り直さない)。世代の dir の錠(fd 9)は exec した worker が終わるまで持ち、起きる時に、錠を誰も
+# 終わりを待たずに起き、worker の状態(版の木・job の cwd・task の結果・温める子・準備の要求・入口の検め)を世代ごとの
+# dir $WORK_DIR/gen/<Pod の uid>/state に置く。log・実行環境の root・Python・Rust の wheel・mirror とその錠は $WORK_DIR/state を分け合う
+# (worker の --shared-dir — 重い cache と root を世代ごとに作り直さない・AL-D2g)。世代の dir の錠(fd 9)は exec した worker が終わるまで持ち、起きる時に、錠を誰も
 # 持たない(worker が終わった)前の世代の dir を消す。まだ走る前の世代(入れ替えの重なり)の dir は、脇の子がその錠を待って、前の世代の
 # worker が終わった時に消す(前の世代の root を次の入れ替えまで残さない)。POD_UID は downward API の metadata.uid。
 state_dir=$WORK_DIR/state
@@ -437,18 +437,19 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
   done
   # 世代の dir を使う前の worker(WORKER_DIR_LOCK — $WORK_DIR/worker.lock を持ち、$WORK_DIR/state を状態の dir にした)が置いた世代ごとの物
   # (worker の入口が --state-dir から作る物)は、分け合う dir に残る。その worker が終わって錠が空いた後に消す(初めて世代の dir で起きた
-  # 時の入れ替えでは、前の Pod がまだ走っている)。
-  if [ -e "$WORK_DIR/state/roots" ] || [ -e "$WORK_DIR/state/jobs" ]; then
-    echo "boot: 前の worker の状態($WORK_DIR/state の roots・jobs ほか)はその worker が終わった後に消す" >&2
+  # 時の入れ替えでは、前の Pod がまだ走っている)。実行環境の root($WORK_DIR/state/roots)は世代をまたいで分け合う置き場なので消さない
+  # (AL-D2g — 前の worker の root もそのまま使う)。
+  if [ -e "$WORK_DIR/state/jobs" ]; then
+    echo "boot: 前の worker の状態($WORK_DIR/state の jobs ほか)はその worker が終わった後に消す" >&2
     if ! flock -n "$WORK_DIR/worker.lock" true 2>/dev/null; then
       overlaps_elder=--overlaps-elder
     fi
     (
       flock "$WORK_DIR/worker.lock" true
-      for name in code jobs programs warm roots env-requests probe tasks status.json; do
+      for name in code jobs programs warm env-requests probe tasks status.json; do
         rm -rf "${WORK_DIR:?}/state/$name"
       done
-      echo "boot: 前の worker の状態($WORK_DIR/state の roots・jobs ほか)を消した" >&2
+      echo "boot: 前の worker の状態($WORK_DIR/state の jobs ほか)を消した" >&2
     ) 9>&- &
   fi
   state_dir=$gen_root/$POD_UID/state
