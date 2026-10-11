@@ -16,16 +16,15 @@
 ;;;
 ;;; This example uses mock effects for demonstration.
 
-(require doeff-hy.macros [defk <- traverse fold])
+(require doeff-hy.macros [defk <- traverse defhandler])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Fail Reduce :as _doeff_traverse_Reduce Zip Inspect])
+(import doeff_traverse.effects [Fail Reduce Zip Inspect])
 (import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
 (import doeff_traverse.helpers [try-call :as try_call])
 
@@ -68,24 +67,38 @@
 
 (defk index-event [event]
   "Index one news event."
+  {:pre [(: event str)]
+   :post [(: % dict)]}
   (<- result (IndexNews event))
   result)
 
 (defk generate-signal [indexed]
   "Generate signal from one indexed event."
+  {:pre [(: indexed dict)]
+   :post [(: % dict)]}
   (<- result (GenerateSignal indexed))
   result)
 
 (defk fetch-price [signal]
   "Fetch price data for one signal."
+  {:pre [(: signal dict)]
+   :post [(: % float)]}
   (<- result (FetchPrice signal))
   result)
+
+(defk count-pair [n pair]
+  "Reduce step: count one valid (signal, price) pair."
+  {:pre [(: n int) (: pair tuple)]
+   :post [(: % int)]}
+  (+ n 1))
 
 (defk news-pipeline [events]
   "Full news pipeline: index → signals → prices → report.
 
    Original was ~100 lines with throttled_gather, Try, zip, filter.
    This is ~10 lines."
+  {:pre [(: events list)]
+   :post [(: % dict)]}
   ;; Stage 1: index each event
   (<- indexed
     (traverse
@@ -110,9 +123,8 @@
   ;; Stage 4: zip signals with prices (failure union)
   (<- paired (Zip signals prices))
 
-  ;; Stage 5: count successes via fold (only valid items are folded)
-  (<- success-count
-    (fold paired :init 0 (+ acc 1)))
+  ;; Stage 5: count successes via Reduce (only valid items are folded)
+  (<- success-count (Reduce count-pair 0 paired))
   ;; Total - success = failed
   (setv fail-count (- (len events) success-count))
 
@@ -137,35 +149,30 @@
    ;; CLOSED → market closed
    "MSFT" 300.0})
 
-(defk mock-backend [effect k]
+(defhandler mock-backend
   "Mock handler for all domain effects."
-  (cond
-    (isinstance effect IndexNews)
-      (return (yield (Resume k {"event" effect.event "indexed" True})))
+  (IndexNews [event]
+    (resume {"event" event "indexed" True}))
 
-    (isinstance effect GenerateSignal)
-      (let [evt (get effect.indexed-event "event")]
-        (return (yield (Resume k {"symbol" evt "time" "2024-01-01"}))))
+  (GenerateSignal [indexed-event]
+    (resume {"symbol" (get indexed-event "event") "time" "2024-01-01"}))
 
-    (isinstance effect FetchPrice)
-      (let [symbol (get effect.signal "symbol")]
-        (cond
-          (= symbol "BADCO")
-            (do
-              (yield (Fail (ValueError (+ "symbol not found: " symbol))
-                           :symbol symbol))
-              ;; if Fail handler resumes (e.g., normalize-to-none), this continues
-              (return (yield (Resume k None))))
-          (= symbol "CLOSED")
-            (do
-              (yield (Fail (ValueError (+ "market closed for: " symbol))
-                           :symbol symbol))
-              (return (yield (Resume k None))))
-          True
-            (return (yield (Resume k (get _mock-prices symbol))))))
-
-    True
-      (yield (Pass effect k))))
+  (FetchPrice [signal]
+    (setv symbol (get signal "symbol"))
+    (cond
+      (= symbol "BADCO")
+        (do
+          (<- (Fail (ValueError (+ "symbol not found: " symbol))
+                    :symbol symbol))
+          ;; if Fail handler resumes (e.g., normalize-to-none), this continues
+          (resume None))
+      (= symbol "CLOSED")
+        (do
+          (<- (Fail (ValueError (+ "market closed for: " symbol))
+                    :symbol symbol))
+          (resume None))
+      True
+        (resume (get _mock-prices symbol)))))
 
 
 ;; ===========================================================================
