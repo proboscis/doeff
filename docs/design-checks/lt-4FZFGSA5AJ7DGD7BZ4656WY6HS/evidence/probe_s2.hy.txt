@@ -1,0 +1,41 @@
+;; S2(上流が 1440 分の窓を足し、その名を出したい)の確かめ: 層 2 の fake の筋書きで 1440 分の窓の利用枠切れのターンを走らせ、adapter が
+;; 出す AgentAccountLimit を見る。fake は窓を長さで受けるので、名の表(adapter の WINDOW-NAMES)に行を足すかどうかだけで答えが変わる。
+(require doeff-hy.macros [defk <- val var])
+(import pathlib [Path])
+(import tempfile)
+(import doeff [run with_handlers])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
+(import doeff_agents.effects [LaunchEffect Events Stop SessionHandle AgentTurnFailed])
+(import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexUsageLimitHit CodexApprovalPolicy CodexSandboxMode
+                                                fake-codex-process-layer codex-adapter])
+(import doeff_agents.handlers.headless_codex [WINDOW-NAMES])
+
+(val HIT (CodexUsageLimitHit :minutes 1440 :resets-at 1893456000 :text "You’ve hit your usage limit."))
+
+(defk one-turn [#^ str work]
+  {:pre [(: work str)] :post [(: % AgentTurnFailed)] :tags {:context "probe" :role "program"}}
+  "利用枠切れで断られる 1 つのターンを最後まで読むため。"
+  (<- handle (LaunchEffect :session-name "probe" :agent-type AgentType.CODEX :work-dir work :prompt "go"
+                           :lifecycle AgentSessionLifecycle.MULTI-TURN))
+  (var position -1)
+  (var end None)
+  (for [_ (range 200)]
+    (<- page (Events handle :after-seq position :wait-seconds 1.0))
+    (for [event page.events] (:= position event.seq))
+    (when (is-not page.end None)
+      (:= end page.end)
+      (break)))
+  (<- (Stop handle))
+  end)
+
+(val tmp (Path (tempfile.mkdtemp)))
+(.mkdir (/ tmp "codex-home"))
+(val world (FakeCodexWorld (fn [input] (FakeCodexReply :pieces #() :usage-limit HIT))))
+(val env {"PATH" "/usr/bin:/bin" "HOME" (str tmp) "CODEX_HOME" (str (/ tmp "codex-home"))})
+(val adapter (run (codex-adapter env CodexApprovalPolicy.NEVER CodexSandboxMode.READ-ONLY)))
+(val layer (run (fake-codex-process-layer world)))
+(val end (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) layer adapter] (one-turn (str tmp))))))
+(print "adapter の WINDOW-NAMES:" WINDOW-NAMES)
+(print "終わり:" (. (type end) __name__) "account_limit =" end.account-limit)

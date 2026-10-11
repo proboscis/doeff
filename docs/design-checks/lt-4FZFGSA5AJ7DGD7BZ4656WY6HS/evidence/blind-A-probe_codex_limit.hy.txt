@@ -1,0 +1,92 @@
+;; 読み取りだけの実験(共有の source を変えない)。S1 の「fake に利用枠切れの欄を足す」を、fake の世界の状態へ記録を直に差し込んで模擬し、
+;; adapter の答え(AgentTurnFailed.account_limit)が、筋書きを書く側の符号化(窓の長さ・使った割合・誤りの種類の綴り・知らせの置き場)に
+;; どう依存するかを観測する。
+(require doeff-hy.macros [defk <- val var])
+(import dataclasses)
+(import pathlib [Path])
+(import tempfile)
+(import doeff [run with_handlers])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
+(import doeff_agents.effects [LaunchEffect FollowUp Events Stop TurnInputMode SessionHandle])
+(import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexApprovalPolicy CodexSandboxMode
+                                                fake-codex-process-layer codex-adapter])
+(import doeff_agents.handlers.headless_codex [account-limit-of WINDOW-NAMES USAGE-LIMIT-KIND])
+(import doeff_codex.lines [RateLimits RateLimitWindow TurnEnded TurnStatus])
+
+(val T 1893456000)
+(val TEXT "You've hit your usage limit.")
+
+(print "E1 FakeReply の欄:" (tuple (gfor f (dataclasses.fields FakeCodexReply) f.name)))
+(print "E1 adapter の内部の表:" WINDOW-NAMES USAGE-LIMIT-KIND)
+
+;; E2: 「5 時間の枠が尽き、T に戻る」を筋書きの側が書き得る符号化ごとに、判定の答えを見る。
+(defn limited [kind] (TurnEnded :thread-id "t" :turn-id "u" :status TurnStatus.FAILED :error-message TEXT :error-kind kind))
+(defn snap [used minutes] (RateLimits :limit-id "codex" :primary (RateLimitWindow :used-percent used :minutes minutes :resets-at T)
+                                      :secondary None))
+(for [#(label end limits) [#("正(綴り usageLimitExceeded・300 分・100%)" (limited "usageLimitExceeded") (snap 100 300))
+                           #("使った割合 99%" (limited "usageLimitExceeded") (snap 99 300))
+                           #("窓 360 分" (limited "usageLimitExceeded") (snap 100 360))
+                           #("綴り usage_limit_reached" (limited "usage_limit_reached") (snap 100 300))]]
+  (print "E2" label "->" (run (account-limit-of end limits))))
+
+;; E3: adapter + fake の層 2 の通し。hold のターンを開け、fake の世界のそのターンへ記録を差し込む(S1 の欄の代わり)。
+(defn inject [world records]
+  (setv thread (get (list (.values world.threads)) 0))
+  (setv turn (get thread.turns thread.current))
+  (setv tid (get (list (.keys world.threads)) 0))
+  (for [make records]
+    (.add thread turn (make tid thread.current))))
+
+(defk read-end [handle after]
+  {:pre [(: handle SessionHandle) (: after int)] :post [(: % tuple)]}
+  (var position after)
+  (for [_ (range 200)]
+    (<- page (Events handle :after-seq position :wait-seconds 1.0))
+    (for [event page.events] (:= position event.seq))
+    (when (is-not page.end None) (return #(page.end position))))
+  (raise (AssertionError "終わりが届かない")))
+
+(defn rl [used reset] (fn [tid uid] (RateLimits :limit-id "codex" :primary (RateLimitWindow :used-percent used :minutes 300 :resets-at reset)
+                                                :secondary None)))
+(defn done [status kind] (fn [tid uid] (TurnEnded :thread-id tid :turn-id uid :status status
+                                                 :error-message (if kind TEXT None) :error-kind kind)))
+
+(defk scenario [world work plan]
+  {:pre [(: world FakeCodexWorld) (: work str) (: plan list)] :post [(: % tuple)]}
+  "plan = ターンごとの差し込む記録の列。1 つ目は起動、2 つ目以降は NEXT_TURN の追送で始める。"
+  (var ends #())
+  (var after -1)
+  (<- handle (LaunchEffect :session-name "probe" :agent-type AgentType.CODEX :work-dir work :prompt "turn-1"
+                           :lifecycle AgentSessionLifecycle.MULTI-TURN))
+  (for [#(index records) (enumerate plan)]
+    (when (> index 0)
+      (<- (FollowUp handle (.format "turn-{}" (+ index 1)) :mode TurnInputMode.NEXT-TURN)))
+    (inject world records)
+    (<- got (read-end handle after))
+    (:= after (get got 1))
+    (:= ends (+ ends #((get got 0)))))
+  (<- (Stop handle))
+  ends)
+
+(defn probe [label plan]
+  (setv tmp (Path (tempfile.mkdtemp)))
+  (setv home (/ tmp "codex-home"))
+  (.mkdir home)
+  (setv world (FakeCodexWorld (fn [input] (FakeCodexReply :pieces #() :hold True))))
+  (setv env {"PATH" "/usr/bin:/bin" "HOME" (str tmp) "CODEX_HOME" (str home)})
+  (setv adapter (run (codex-adapter env CodexApprovalPolicy.NEVER CodexSandboxMode.READ-ONLY)))
+  (setv layer (run (fake-codex-process-layer world)))
+  (setv ends (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) layer adapter] (scenario world (str tmp) plan)))))
+  (for [end ends]
+    (print "E3" label "->" (. (type end) __name__) "account_limit =" (getattr end "account_limit" None))))
+
+;; C1: 同じターンの中で、枠の知らせ → 利用枠切れの失敗(録った codex 0.162.1 と同じ順)。
+(probe "C1 同じターンに知らせ" [[(rl 100 T) (done TurnStatus.FAILED "usageLimitExceeded")]])
+;; C2: 枠の知らせは前のターン(完了)に届き、失敗のターンには届かない。
+(probe "C2 前のターンに知らせ" [[(rl 100 T) (done TurnStatus.COMPLETED None)]
+                               [(done TurnStatus.FAILED "usageLimitExceeded")]])
+;; C3: 層 2 が前の(戻りの刻を過ぎた)知らせを次のターンへ持ち越した形(S3 の「持ち越す」を handler だけで入れた場合の頁)。
+(probe "C3 過去の知らせを持ち越し" [[(rl 100 1000) (done TurnStatus.COMPLETED None)]
+                                   [(rl 100 1000) (done TurnStatus.FAILED "usageLimitExceeded")]])

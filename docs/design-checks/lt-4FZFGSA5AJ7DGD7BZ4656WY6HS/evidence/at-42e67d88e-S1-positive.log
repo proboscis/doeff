@@ -1,0 +1,10 @@
+rev=42e67d88e63b978def59f2afa5c6fbc7ed7907a9
+$ pytest(fake の筋書き)
+packages/doeff-codex/tests/test_scenarios.hy::test_a_usage_limited_turn_ends_failed_with_the_usage_limit_fact[fake] PASSED [ 25%]
+packages/doeff-codex/tests/test_scenarios.hy::test_a_usage_limited_turn_ends_failed_with_the_usage_limit_fact[stub] PASSED [ 50%]
+packages/doeff-agents/tests/test_headless_codex_adapter.hy::test_headless_codex_usage_limit_carries_the_account_limit_fake PASSED [ 75%]
+packages/doeff-agents/tests/test_headless_codex_adapter.hy::test_the_public_codex_handlers_carry_the_account_limit_fake PASSED [100%]
+========================= 4 passed, 1 warning in 0.86s =========================
+rc=0
+$ grep five_hour|seven_day|usageLimitExceeded fake.hy
+(当たり無し = fake は窓の名も綴りの文字列も持たない)

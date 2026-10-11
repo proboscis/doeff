@@ -1,0 +1,34 @@
+;; S4(codex の版上げで利用枠切れの誤りの種類の綴りが変わる — 例 usageLimitReached)の確かめ: 新しい綴りの行を、読みの thread と同じ順で
+;; 本番の handler の absorb に通し、層 2 の終わりの事実と adapter の AgentAccountLimit を見る。fake も同じ綴りの定義(lines.hy の
+;; USAGE-LIMIT-KIND)で終わりを作るので、fake の終わりの綴りも見る。
+(require doeff-hy.macros [val])
+(import json)
+(import doeff [run])
+(import doeff_codex.lines [classify-line USAGE-LIMIT-KIND])
+(import doeff_codex.handler [SessionRuntime absorb])
+(import doeff_codex.values [CodexSessionSpec CodexHome CodexInput FreshThread])
+(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
+(import doeff_codex.fake [FakeCodexWorld FakeReply UsageLimitHit fake-start])
+(import doeff_codex.effects [CodexStartTurn])
+(import doeff_agents.handlers.headless_codex [account-limit-of])
+
+(val NEW-SPELLING "usageLimitReached")
+(val spec (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY))
+(val runtime (SessionRuntime spec))
+(for [line [{"id" 3 "result" {"turn" {"id" "u1" "status" "inProgress"}}}
+            {"method" "account/rateLimits/updated"
+             "params" {"rateLimits" {"limitId" "codex" "secondary" None
+                                     "primary" {"usedPercent" 100 "windowDurationMins" 300 "resetsAt" 1893456000}}}}
+            {"method" "turn/completed"
+             "params" {"threadId" "t1" "turn" {"id" "u1" "status" "failed"
+                                               "error" {"message" "You’ve hit your usage limit." "codexErrorInfo" NEW-SPELLING}}}}]]
+  (with [runtime.lock]
+    (run (absorb runtime (run (classify-line (json.dumps line)))))))
+(val end (. (get runtime.turns "u1") end))
+(print "lines の USAGE-LIMIT-KIND:" USAGE-LIMIT-KIND)
+(print "新しい綴りの終わり:" end.status end.error-kind "usage-limit =" end.usage-limit)
+(print "adapter:" (run (account-limit-of end.usage-limit)))
+(val world (FakeCodexWorld (fn [input] (FakeReply :pieces #() :usage-limit (UsageLimitHit :minutes 300 :resets-at 1893456000 :text "x")))))
+(val started (run (fake-start world (CodexStartTurn (FreshThread) spec (CodexInput :text "go")))))
+(val fake-end (. (get (. (get world.threads started.turn.thread-id) turns) started.turn.turn-id) end))
+(print "fake の終わりの綴り:" fake-end.error-kind)
