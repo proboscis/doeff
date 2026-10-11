@@ -1,0 +1,102 @@
+
+deadline scale x1.3 (load/core) — per test 76s, watchdog 113s
+
+test-admission: focused — 4 件(変更箇所の検証)
+.FFF                                                                     [100%]
+=================================== FAILURES ===================================
+______ test_a_macro_changed_in_another_tree_is_stale_in_a_second_process _______
+
+cross_tree = CrossTree(root=PosixPath('/tmp/pytest-of-ubuntu/pytest-88/test_a_macro_changed_in_anothe0/tree-a'), store=PosixPath('/...ed_in_anothe0/store'), stored=PosixPath('/tmp/pytest-of-ubuntu/pytest-88/test_a_macro_changed_in_anothe0/record.json'))
+
+    def test_a_macro_changed_in_another_tree_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
+        # 条 1(macro を定義した file の中身): 別の作業木の macros.hy は body の本体が違う。前の process が覚えた digest の file
+        # (前の木の macros.hy)は変わっていないので、file の状態で覚えを信じる形は前の digest を使い、古い展開を今に合うと判じる。
+        cross_tree.run("record")
+        other = cross_tree.elsewhere("tree-b")
+        _replace(other.package / "macros.hy", "(defmacro body [] 1)", "(defmacro body [] 20)")
+>       assert other.run("check")["current"] is False, "別の木で macro の本体が違うのに、2 つ目の process が古いと判じない"
+E       AssertionError: 別の木で macro の本体が違うのに、2 つ目の process が古いと判じない
+E       assert True is False
+
+packages/doeff-hy/tests/test_macro_use_record.py:1010: AssertionError
+____ test_a_changed_value_from_another_module_is_stale_in_a_second_process _____
+
+cross_tree = CrossTree(root=PosixPath('/tmp/pytest-of-ubuntu/pytest-88/test_a_changed_value_from_anot0/tree-a'), store=PosixPath('/...ue_from_anot0/store'), stored=PosixPath('/tmp/pytest-of-ubuntu/pytest-88/test_a_changed_value_from_anot0/record.json'))
+
+    def test_a_changed_value_from_another_module_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
+        # 条 2(macro が辿る値の module の file の中身): SCALE は helper.hy の中身で決まるが、scaled の閉包が辿る file は macros.hy
+        # だけ(素の値はどの module から来たかを持たない)。file の状態で覚えを信じる形は、helper.hy を替えても前の digest を使う。
+        cross_tree.run("record")
+        _replace(cross_tree.package / "helper.hy", "(setv SCALE 3)", "(setv SCALE 30)")
+>       assert cross_tree.run("check")["current"] is False, "macro が返す別の module の値を替えたのに、2 つ目の process が古いと判じない"
+E       AssertionError: macro が返す別の module の値を替えたのに、2 つ目の process が古いと判じない
+E       assert True is False
+
+packages/doeff-hy/tests/test_macro_use_record.py:1018: AssertionError
+________ test_a_changed_environment_value_is_stale_in_a_second_process _________
+
+cross_tree = CrossTree(root=PosixPath('/tmp/pytest-of-ubuntu/pytest-88/test_a_changed_environment_val0/tree-a'), store=PosixPath('/...ironment_val0/store'), stored=PosixPath('/tmp/pytest-of-ubuntu/pytest-88/test_a_changed_environment_val0/record.json'))
+
+    def test_a_changed_environment_value_is_stale_in_a_second_process(cross_tree: CrossTree) -> None:
+        # 条 3(file の外で決まる値): MODE は読み込みの時に環境変数から組む。どの file も変わらないので、file の状態で覚えを
+        # 信じる形は前の digest を使う。
+        cross_tree.run("record")
+        answer = cross_tree.run("check", MACRO_USE_PROBE_MODE="strict")
+>       assert answer["current"] is False, "macro が返す環境変数の値が違うのに、2 つ目の process が古いと判じない"
+E       AssertionError: macro が返す環境変数の値が違うのに、2 つ目の process が古いと判じない
+E       assert True is False
+
+packages/doeff-hy/tests/test_macro_use_record.py:1026: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ki-3850/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-hy/tests/test_macro_use_record.py::test_a_macro_changed_in_another_tree_is_stale_in_a_second_process
+FAILED packages/doeff-hy/tests/test_macro_use_record.py::test_a_changed_value_from_another_module_is_stale_in_a_second_process
+FAILED packages/doeff-hy/tests/test_macro_use_record.py::test_a_changed_environment_value_is_stale_in_a_second_process
+3 failed, 1 passed, 45 deselected, 1 warning in 17.26s

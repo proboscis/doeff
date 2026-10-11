@@ -1,0 +1,14 @@
+{"mode": "storage-move", "fresh_statements": 2, "a_entries": ["6a/eca4ac8e4f005c83d3bcf29bdaf3ad9ff035abef3b7abe4dd360ad542dc9df.binding"], "b_entries": ["6a/eca4ac8e4f005c83d3bcf29bdaf3ad9ff035abef3b7abe4dd360ad542dc9df.binding"], "same_as_fresh": true, "parses_after_move": 1}
+rc=0
+doeff-hy: bytecode の保存先の entry が壊れている(marshal で読めない: bad marshal data (unknown type code))— /tmp/ki3850-store.wg3McR/storage-bad-entry/store/6a/eca4ac8e4f005c83d3bcf29bdaf3ad9ff035abef3b7abe4dd360ad542dc9df.binding を除いて作り直す
+{"mode": "storage-bad-entry", "fresh_statements": 2, "same_as_fresh": true, "entry_rewritten_valid": true}
+rc=0
+{"mode": "storage-reading-code-changed", "fresh_statements": 2, "same_as_fresh": true, "parses_with_other_reading_code": 1, "entries": 2}
+rc=0
+{"mode": "effects-readonly", "fresh_statements": 2, "same_as_fresh": true, "entries": []}
+rc=0
+{"mode": "concurrency-parallel", "fresh_statements": 2, "distinct_answers": 1, "same_as_fresh": true, "stderr": [], "entries": 1, "codes": [0, 0, 0, 0, 0, 0]}
+rc=0
+doeff-hy: bytecode の保存先の entry が壊れている(marshal で読めない: marshal data too short)— /tmp/ki3850-store.wg3McR/concurrency-truncated/store/6a/eca4ac8e4f005c83d3bcf29bdaf3ad9ff035abef3b7abe4dd360ad542dc9df.binding を除いて作り直す
+{"mode": "concurrency-truncated", "fresh_statements": 2, "same_as_fresh": true, "entry_rewritten_valid": true}
+rc=0

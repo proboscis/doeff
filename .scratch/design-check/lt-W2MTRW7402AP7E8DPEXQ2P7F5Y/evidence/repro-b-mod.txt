@@ -1,0 +1,3 @@
+B の置き場の .verdict の数: 4
+C3 check(同じ package の STEP 5→50) {"current": false, "walked": 3}
+要約 {"A3_current": true, "B3_value": [3, 5], "C3_current": false}

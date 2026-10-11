@@ -1,0 +1,125 @@
+--- base/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py	2026-10-11 13:27:52.000000000 +0000
++++ mod/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py	2026-10-11 13:57:18.006605626 +0000
+@@ -46,6 +46,9 @@
+ #: macro の閉包の digest の歩みが、辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard.bound_source — 中身と名で決まる
+ #: 純な読み。形は bound_source が持つ)。
+ BINDING_SUFFIX = ".binding"
++#: .pyc の記録の照らしの答え(doeff_hy_bytecode_guard.loader_hooks — 記録と、記録が名指す package の source の中身と環境で引く。
++#: 形は loader_hooks が持つ)。
++VERDICT_SUFFIX = ".verdict"
+ 
+ #: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる)— code の鍵に module 名と Hy の版を入れるかを分ける。
+ HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")
+--- base/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py	2026-10-11 13:27:52.000000000 +0000
++++ mod/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py	2026-10-11 13:57:13.727596283 +0000
+@@ -132,10 +132,108 @@
+     digest でなく閉包が依った module の file の sha256 を import せずに比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
+     準備が前の root から hardlink で引き継ぐ物 — agora-redesign #2598)や保存先の code も今の木の macro で照らす。.pyc の記録と、
+     展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の保存(doeff_hy.static_cache)が同じ 1 つの
+-    照らし方を使うための公開の口。"""
++    照らし方を使うための公開の口。
++
++    新しい process の照らしは、同じ記録を同じ source・同じ環境で照らした前の process の答え(合う)を置き場から引く — 照らしの
++    歩みを process ごとにやり直していた(子 card ki-be596ac8276f・性能の条 cefc8ccca)。鍵は :func:`_verdict_entry`。"""
+     from doeff_hy_bytecode_guard import macro_use  # 起動時に読まない
+ 
+-    return macro_use.record_is_current(record, _hy_version(), file_sha256)
++    entry = _verdict_entry(record)
++    if entry is not None and _remembered_current(entry):
++        return True
++    current = macro_use.record_is_current(record, _hy_version(), file_sha256)
++    if current and entry is not None:
++        _remember_current(entry)
++    return current
++
++
++#: 照らしの答えの entry の鍵の印(形を変えたら末尾の番号を上げる)。
++VERDICT_TAG = "doeff-hy/verdict/1"
++
++#: 照らしの答えの entry の中身(合うと判じた答えだけを覚える — 古いと判じた記録は compile し直されて別の記録になる)。
++_CURRENT = b"current"
++
++
++def _verdict_entry(record: "MacroRecord") -> str | None:
++    """照らしの答えの entry の path(置き場を使わない設定・記録が名指す package の source を読めない時は None)。鍵 = 印・Hy と
++    Python の版・環境変数の全部・記録の指紋・記録が名指す package の source の file の中身 — 照らしの digest が依る物(macro を
++    定義した file・macro が辿る値の module の file・環境変数で決まる値)のどれかが違えば鍵が変わり、歩きなおす。"""
++    from doeff_hy_bytecode_guard import code_store, records  # 保存先を使う時だけ読む
++
++    store = code_store.store_dir()
++    if store is None:
++        return None
++    sources = _package_sources(record)
++    if sources is None:
++        return None
++    environment = "\0".join(f"{name}={value}" for name, value in sorted(os.environ.items()))
++    parts = (VERDICT_TAG, _hy_version(), sys.version, environment, records.record_fingerprint(record))
++    return code_store.entry_path(store, code_store.content_key(parts, sources), code_store.VERDICT_SUFFIX)
++
++
++def _package_sources(record: "MacroRecord") -> bytes | None:
++    """記録が名指す module(使った macro・macro の外の値・閉包が依った module)の package の source の file の中身の sha256 の並び
++    (package の根からの path の順 — 作業木をまたいで同じ中身なら同じ並び)。読めない package があれば None。"""
++    tops = sorted(
++        {
++            name.partition(".")[0]
++            for name in (
++                *(row.module for row in record.macros),
++                *(row.module for row in record.values),
++                *(row.module for row in record.files),
++            )
++        }
++        - {"hy", "builtins"}
++        - set(sys.stdlib_module_names)
++    )
++    lines: list[str] = []
++    for top in tops:
++        try:
++            spec = importlib.util.find_spec(top)  # top の名は親の package を持たない — 本体を実行しない
++        except (ImportError, ValueError):
++            return None
++        if spec is None:
++            return None
++        roots = list(spec.submodule_search_locations or ())
++        if not roots and isinstance(spec.origin, str) and os.path.isfile(spec.origin):
++            digest = file_sha256(spec.origin)
++            if digest is None:
++                return None
++            lines.append(f"{top}\0{digest}")
++        for root in roots:
++            for relative in sorted(_source_files(root)):
++                digest = file_sha256(os.path.join(root, relative))
++                if digest is None:
++                    return None
++                lines.append(f"{top}/{relative}\0{digest}")
++    return "\n".join(lines).encode("utf-8")
++
++
++def _source_files(root: str) -> list[str]:
++    """package の根の下の Python と Hy の source の file(根からの path)。"""
++    found: list[str] = []
++    for directory, _, names in os.walk(root):
++        for name in names:
++            if name.endswith((".py", *HY_SOURCE_SUFFIXES)):
++                found.append(os.path.relpath(os.path.join(directory, name), root))
++    return found
++
++
++def _remembered_current(entry: str) -> bool:
++    """置き場に、前の process が同じ鍵で「合う」と判じた答えがあるか。"""
++    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
++
++    return code_store.read_entry(entry) == _CURRENT
++
++
++def _remember_current(entry: str) -> None:
++    """「合う」の答えを置き場へ足す(書かない設定では名指しの置き場だけ — 保存先の code の足し方と同じ決め。書けない置き場では
++    黙って足さない — 置き場は速さのためだけ)。"""
++    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
++
++    if sys.dont_write_bytecode and not code_store.store_is_named():
++        return
++    code_store.write_entry(entry, _CURRENT)
+ 
+ 
+ def value_reference(module: str, name: str) -> "ValueReference":

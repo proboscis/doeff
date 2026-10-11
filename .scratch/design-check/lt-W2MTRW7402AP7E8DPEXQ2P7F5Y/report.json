@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "task_id": "lt-W2MTRW7402AP7E8DPEXQ2P7F5Y",
+  "base_revision": "cf7ea9cc09a1da54c2bb4abbf984c0552818d837",
+  "author": {
+    "conversation_id": "c-9RGHB8ZGA786QSA0NRK04T0JVR",
+    "model": "claude-opus-5-5",
+    "effort": "high(会話の設定 — 自己申告)"
+  },
+  "requirements": [
+    "R1 B1: digest が依った物(macro を定義した file・macro が辿る値の module の file・環境変数など file の外で決まる値)のどれかが記録の時と違えば、照らしは古いと判じる。process をまたいでも同じ",
+    "R2 新しい process は、前の process と同じ中身の source を解き直さない",
+    "R3 card ki-38508e6e56fd の受入 c8a812c6d・c44cacf91・c40d0dda5(性能の条 cefc8ccca は配り役が子 card ki-be596ac8276f へ移した)"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "4ea0e2526d52fd79282ba856947129897c07567e254ee1fa01d1aaa0bd4c504b"
+  },
+  "modules": [
+    {
+      "id": "macro_use",
+      "responsibility": "記録の digest の作り方(閉包の歩み)と照らしの判じ(record_is_current)。",
+      "owns": "何を digest に入れるか・import の途中の状態の扱い・class を中身で辿るか公開の形で覆うかの判じ(標準の EXTENSION_SUFFIXES)・process の中の digest の覚え _REMEMBERED・照らし 1 回の中の stat の覚え _CHECKED_STATES",
+      "hides": "歩みの順と覚えの形。digest も照らしの答えも process の外へ出さない",
+      "interface": "record_is_current(record, hy_version, sha256_of) -> bool・macro_digest・value_digest -> ClosureDigest・MacroRecording",
+      "effects": "読み: module の import(_import_for_digest)・file の stat と sha256・bound_source.binding_of 経由の source。書き: なし(process の外へは書かない)",
+      "lifetime": "process の中の覚えは process と共に消える。_CHECKED_STATES は record_is_current の 1 回の間だけ(ContextVar の token で戻す)",
+      "invariants": "B1 — digest が依った物が記録の時と違えば古いと判じる。digest と照らしの答えは process をまたいで覚えない"
+    },
+    {
+      "id": "bound_source",
+      "responsibility": "辿れない大域を覆う source の文の読み(binding_of)。中身・名・読み方で決まる純な計算を、置き場の .binding に中身で引いて覚える。",
+      "owns": "Python の ast と Hy の読みによる束縛の読み方・entry の形(BindingParts)・鍵の欄(BINDING_TAG・自分の code の sha256・sys.version・拡張子の種類・Hy の版と hy.repr の登録の指紋・名・中身)",
+      "hides": "置き場の並び・書き方(code_store に任せる)",
+      "interface": "binding_of(path, name) -> Binding | None",
+      "effects": "読み: source の file・置き場の entry。書き: 置き場の entry(code_store.write_entry — 書けなければ足さない)",
+      "lifetime": "process の中の覚え(_SOURCES・_PARSED・_BINDINGS)は file の状態ごと。置き場の entry は code_store の掃除(7 日使われない物)に任せる",
+      "invariants": "置き場から返す束縛は、その process で解き直した束縛と同じ。読めない file(OSError)は覚えない。Hy 自身と組み込みの外の hy.repr の登録がある process は Hy の読みに置き場を使わない"
+    },
+    {
+      "id": "code_store",
+      "responsibility": "source の中身で引く置き場の入口(dir・並び・鍵の綴り・entry の読み書き・時刻・壊れた entry の扱い)と、Hy の拡張子の定義点。",
+      "owns": "DOEFF_HY_CODE_STORE の読み・content_key・entry_path・種類の末尾(.code・.imports・.binding)・HY_SOURCE_SUFFIXES",
+      "hides": "一時の file から置き換える書き・使った印の時刻",
+      "interface": "store_dir・store_is_named・content_key・entry_path・read_entry・write_entry・discard_entry・stored_code",
+      "effects": "置き場の file の読み書きと時刻の更新・壊れた entry の削除と stderr の 1 行",
+      "lifetime": "entry は 7 日使われなければ worker の掃除が消す。process の状態は持たない",
+      "invariants": "書きかけの entry を読ませない(一時の file から置き換え)。壊れた entry は使わず名指して除く"
+    },
+    {
+      "id": "loader_hooks",
+      "responsibility": "SourceFileLoader の口の包み — Hy の module の .pyc・保存先の code・compile のどれを使うかと、いつ照らすか。",
+      "owns": "照らしの時点・compile し直しの判じ・.pyc と保存先の code の書き",
+      "hides": "なし(digest の作り方は知らない — record_is_current_here で macro_use に任せる)",
+      "interface": "install・record_is_current_here・macro_recording・file_sha256・source_to_code_as_import ほか",
+      "effects": ".pyc の書き・保存先の code の読み書き・compile",
+      "lifetime": "process の起動(.pth)で 1 度包み、process と共に消える",
+      "invariants": "記録が今に合わない .pyc・保存先の code は使わない"
+    },
+    {
+      "id": "records",
+      "responsibility": "記録の形(code の定数・JSON)と file 単位の辿り方(macro_provider_files)。",
+      "owns": "RECORD_TAG・行の形・source の拡張子の集合(Hy の部分は code_store から引く)",
+      "hides": "照らし方",
+      "interface": "MacroRecord・record_of・with_record・record_to_json・record_from_json・macro_provider_files",
+      "effects": "なし(純関数 — file も sys.modules も引数で受け取る)",
+      "lifetime": "状態を持たない",
+      "invariants": "形の違う記録は記録なしと同じに扱う"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S-hw",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "読みは純 Python の ast・Hy の読みで機体に依らない。置き場は機体ごと(/work/state)で、Python の build の違いは鍵の sys.version が分ける。機体をまたぐ実行は試していない(design.md の未確認)"
+    },
+    {
+      "id": "S-sim",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "この層は Python の起動の時点(.pth)で入り doeff の Program の外(architecture.hy の startup の層)。仮想の時計の handler を差す口が無く、時刻を判じに使わない(置き場の時刻は掃除のためだけ)"
+    },
+    {
+      "id": "S-storage",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "置き場の在処や並びを替える(DOEFF_HY_CODE_STORE の dir を替える・壊れた entry・読み方の code の版違いの entry が残る)",
+      "claim": "置き場の在処・並びの変更は code_store だけが変わり、bound_source・macro_use は変わらない",
+      "expected_scope": "code_store",
+      "actual_scope": "code_store(dir を替えても bound_source は同じ答え・同じ鍵の entry を新しい dir に作った。壊れた entry と別の読み方の code の entry は使われなかった)",
+      "changed_modules": [
+        "code_store"
+      ],
+      "unchanged_modules": [
+        "bound_source",
+        "macro_use",
+        "loader_hooks",
+        "records"
+      ],
+      "reason": "bound_source は code_store の公開の口(content_key・entry_path・read_entry・write_entry・discard_entry)だけを通る",
+      "revision": "直し不要 — store_checks.log の storage-move・storage-bad-entry・storage-reading-code-changed が予想どおり"
+    },
+    {
+      "id": "S-storage-ext",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "Hy の source を置く file の種類(拡張子)を 1 つ足す(盲検 A の .hym)",
+      "claim": "拡張子の追加は定義点 code_store.HY_SOURCE_SUFFIXES と doeff_hy の登録だけが変わる(claims.md の前提「path が効くのは拡張子と誤りの文だけ」と loader_hooks の宣言「定義点は保存先の module」)",
+      "expected_scope": "code_store と doeff_hy の登録",
+      "actual_scope": "直す前は macro_use._python_source・bound_source._HY_SUFFIXES・records._SOURCE_SUFFIXES の写しも要った(macro_use の写しの直し忘れで B1 が破れた — 照らし True・古い値 3)。直した後は定義点と登録だけ(.hym で照らし False・値 30)",
+      "changed_modules": [
+        "code_store",
+        "macro_use",
+        "bound_source",
+        "records"
+      ],
+      "unchanged_modules": [
+        "loader_hooks"
+      ],
+      "reason": "隠すはずの知識の漏れ — 「どの file が source か」を macro_use・bound_source・records が自前の写しで持っていた(公開契約の変更ではない)",
+      "revision": "doeff cf7ea9cc0(L2061): macro_use は標準の EXTENSION_SUFFIXES で拡張の module を判じ(知らない末尾は中身で辿る)、bound_source・records は定義点を import。失敗ケース 84072f2bb が赤 → 緑"
+    },
+    {
+      "id": "S-effects",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "置き場に書けない(読み取り専用)・source が読めない・process が hy.repr に別の表示を登録している",
+      "claim": "答え(束縛・照らしの判じ)は変わらず速さだけが落ちる。書けない時は足さず、読めない file と Hy の外の登録がある時は置き場を使わない",
+      "expected_scope": "なし(振る舞いの変更なし)",
+      "actual_scope": "なし — 読み取り専用の置き場でも解き直した答えと同じで entry 0。読めない file は entry 0。外の登録がある process は entry 0",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "bound_source",
+        "code_store",
+        "macro_use",
+        "loader_hooks",
+        "records"
+      ],
+      "reason": "書きの失敗は code_store.write_entry が理由を返し、bound_source は答えに混ぜない",
+      "revision": "直し不要 — store_checks.log の effects-readonly と test_bound_source_store の検が予想どおり"
+    },
+    {
+      "id": "S-dist",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "作業木・版をまたいで置き場を共有し、新しい process が前の process の覚えを使う",
+      "claim": "同じ中身の source の読みだけが当たる。digest(と照らしの答え)は覚えないので、別の木の macro・別の module の値・環境変数の違いは毎 process 辿り直して古いと判じる(B1)",
+      "expected_scope": "なし",
+      "actual_scope": "今の版ではなし(2 つ目の process の解き 0 回・条 1〜3 と別の top の package の値で古いと判じた)。盲検 B は、照らしの答えを覚える将来の差分が前の検を全部通って B1 を破ることを示した — 検と条の文の不足",
+      "changed_modules": [
+        "macro_use"
+      ],
+      "unchanged_modules": [
+        "bound_source",
+        "code_store",
+        "loader_hooks",
+        "records"
+      ],
+      "reason": "強制の不足(検が同じ package の値しか試していなかった)。実装の漏れではない — 変えたのは検と B1 の宣言(architecture.hy・macro_use の条の文)",
+      "revision": "doeff 84072f2bb: 別の top の package の値の検(変えない照らしを挟む)を足した — 盲検 B の差分の写しで赤・main で緑。cf7ea9cc0: B1 に「照らしの答えも覚えない」を書いた"
+    },
+    {
+      "id": "S-conc",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "同じ置き場に複数の process が同時に読み書きする・書きかけの entry が見える",
+      "claim": "書きは一時の file から置き換えなので半分の entry は読まれない。壊れた entry は名指して除き解き直す",
+      "expected_scope": "code_store の作法のまま",
+      "actual_scope": "code_store の作法のまま — 6 process の同時の読みで答え 1 つ・entry 1 つ・誤り 0。途中で切った entry は除いて解き直した",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "bound_source",
+        "code_store",
+        "macro_use",
+        "loader_hooks",
+        "records"
+      ],
+      "reason": "書きと壊れた entry の扱いは code_store の 1 か所",
+      "revision": "直し不要 — store_checks.log の concurrency-parallel・concurrency-truncated が予想どおり"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C-storage-pos",
+      "scenarios": [
+        "S-storage"
+      ],
+      "control": "positive",
+      "expectation": "置き場の dir を替えても、束縛は解き直した物と同じで、同じ鍵の entry が新しい dir にできる",
+      "observation": "storage-move: same_as_fresh true・a と b の entry が同じ鍵 6a/eca4ac8e…・新しい dir では 1 回解いた",
+      "evidence": {
+        "path": "evidence/store_checks.log",
+        "sha256": "4a35ab5e48edd2e485f65233596821a6c95c531be4a9af2f770368cb78808ff5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-storage-neg",
+      "scenarios": [
+        "S-storage"
+      ],
+      "control": "negative",
+      "expectation": "壊れた entry と、読み方の code が違う版の entry は使わない(除くか別の鍵で解き直す)",
+      "observation": "storage-bad-entry: 名指しの 1 行で除き、解き直した答えと同じ。storage-reading-code-changed: 1 回解き直し entry が 2 つ",
+      "evidence": {
+        "path": "evidence/store_checks.log",
+        "sha256": "4a35ab5e48edd2e485f65233596821a6c95c531be4a9af2f770368cb78808ff5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-ext-pos",
+      "scenarios": [
+        "S-storage-ext"
+      ],
+      "control": "positive",
+      "expectation": "直した後も、今ある拡張子 .hy の module の digest は直す前と同じ(既存の記録を古くしない)",
+      "observation": ".hy の対照の scaled の digest は直す前も後も 774c995b487c → f744158cbd47・照らし False・値 30",
+      "evidence": {
+        "path": "evidence/repro-a-after.txt",
+        "sha256": "0a5ad4e8a79427b1559fcf5dbf941cbdc8cb980672ee7c1cee17b7c5440eb260"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-ext-neg",
+      "scenarios": [
+        "S-storage-ext"
+      ],
+      "control": "negative",
+      "expectation": "写しに無い拡張子 .hym の macro の file を替えたら、次の process は古いと判じる",
+      "observation": "直す前(ce9c19488): 照らし True・値 3・失敗ケース 84072f2bb が赤。直した後(cf7ea9cc0): 照らし False・値 30・検が緑",
+      "evidence": {
+        "path": "evidence/check-ext-negative.md",
+        "sha256": "d65151ad0ca6d18642117732400ad7ad13d324d2fa5626a270321ada68a57d7a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-effects-pos",
+      "scenarios": [
+        "S-effects"
+      ],
+      "control": "positive",
+      "expectation": "読み取り専用の置き場でも、束縛は解き直した物と同じで誤りを出さない",
+      "observation": "effects-readonly: same_as_fresh true・entry 0・rc 0",
+      "evidence": {
+        "path": "evidence/store_checks.log",
+        "sha256": "4a35ab5e48edd2e485f65233596821a6c95c531be4a9af2f770368cb78808ff5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-effects-neg",
+      "scenarios": [
+        "S-effects"
+      ],
+      "control": "negative",
+      "expectation": "読めない file の読みと、Hy の外の hy.repr の登録がある process の Hy の読みは置き場に足さない",
+      "observation": "test_a_file_that_cannot_be_read_is_not_remembered・test_a_custom_hy_repr_keeps_hy_readings_out_of_the_store が cf7ea9cc0 で PASSED",
+      "evidence": {
+        "path": "evidence/check-effects-negative.md",
+        "sha256": "a97125c56f2b466642017cfa3a10bf15d4b6edab8e4374031f66a8d6f60aa0d4"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-dist-pos",
+      "scenarios": [
+        "S-dist"
+      ],
+      "control": "positive",
+      "expectation": "2 つ目の process(同じ置き場)は同じ中身の source を解き直さず、何も変えていない記録を今に合うと判じる",
+      "observation": "test_a_second_process_does_not_parse_the_sources_the_first_one_read が cf7ea9cc0 で PASSED(parsed 0)",
+      "evidence": {
+        "path": "evidence/green-cf7ea9cc0.log",
+        "sha256": "8bf0fe782aad7920eedbabc70ce992f7dc115c94af0f1e28d45430a6964e34b6"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-dist-neg",
+      "scenarios": [
+        "S-dist"
+      ],
+      "control": "negative",
+      "expectation": "別の木の macro・別の module の値・環境変数・別の top の package の値が違えば、次の process は古いと判じる。digest を file の状態で覚える形と照らしの答えを覚える形はこの検で赤",
+      "observation": "素朴な形 3d37e76ce で条 1〜3 が 3 failed。盲検 B の差分の写しで新しい検が 1 failed(A3 true・値 [3, 5])。main cf7ea9cc0 で 5 本とも PASSED",
+      "evidence": {
+        "path": "evidence/check-dist-negative.md",
+        "sha256": "4787e7e2f4ca20b392509868892237c3a5663a3495feda79362b8566f7170459"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-conc-pos",
+      "scenarios": [
+        "S-conc"
+      ],
+      "control": "positive",
+      "expectation": "空の置き場に 6 process が同時に読み書きしても、答えは 1 つで解き直した物と同じ・誤り 0",
+      "observation": "concurrency-parallel: distinct_answers 1・same_as_fresh true・stderr 無し・entry 1・rc 全部 0",
+      "evidence": {
+        "path": "evidence/store_checks.log",
+        "sha256": "4a35ab5e48edd2e485f65233596821a6c95c531be4a9af2f770368cb78808ff5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-conc-neg",
+      "scenarios": [
+        "S-conc"
+      ],
+      "control": "negative",
+      "expectation": "途中で切れた entry(書きかけの代わり)は使わず、除いて解き直す",
+      "observation": "concurrency-truncated: marshal data too short の名指しの 1 行で除き、解き直した答えと同じ・書き直した entry は正しい",
+      "evidence": {
+        "path": "evidence/store_checks.log",
+        "sha256": "4a35ab5e48edd2e485f65233596821a6c95c531be4a9af2f770368cb78808ff5"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

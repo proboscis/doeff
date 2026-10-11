@@ -1,0 +1,6 @@
+== hy
+{"variant": "hy", "phase": "edit", "edited": "macros.hy"}
+{"variant": "hy", "phase": "second", "patched": [], "pyc_record_macros": [["sepx_pkg.macros", "scaled", "774c995b487c"]], "pyc_record_is_current_here": false, "user.value": 30, "macros.__file__": "macros.hy", "scaled_digest_now": "f744158cbd47", "macro_dependencies(user)": ["macros.hy"], "binding_of(macros, TABLE)": ["'(setv TABLE {\"a\" 1})", "'(defmacro looks [] (get TABLE \"a\"))"]}
+== hym-defpoint
+{"variant": "hym-defpoint", "phase": "edit", "edited": "macros.hym"}
+{"variant": "hym-defpoint", "phase": "second", "patched": [], "pyc_record_macros": [["sepx_pkg.macros", "scaled", "437dc7f45958"]], "pyc_record_is_current_here": true, "user.value": 3, "macros.__file__": "macros.hym", "scaled_digest_now": "437dc7f45958", "macro_dependencies(user)": [], "binding_of(macros, TABLE)": null}
