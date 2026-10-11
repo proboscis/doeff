@@ -28,9 +28,20 @@ SCRIPT: Path = ROOT / "scripts" / "doeff_cluster_warning_baseline.py"
 HY_CODE_STORE_ENV: str = "DOEFF_HY_CODE_STORE"
 
 
+def _environment_value(name: str) -> str | None:
+    """環境変数 1 つの素の値(無ければ None)— foundation の答え手 env_var_ask の下で Ask を問う(doeff_hy.env_places の読みと同じ形)。
+    os.environ を直に読むと doeff-linter の DOEFF004 に当たる(日次の lint の段の赤 2026-10-11 08:05 JST)。"""
+    from doeff import run, with_handlers
+    from doeff_core_effects.effects import Ask
+    from doeff_core_effects.handlers import env_var_ask, reader
+
+    value = run(with_handlers([reader({name: None}), env_var_ask(prefix="")], Ask(name)))
+    return value if isinstance(value, str) else None
+
+
 def _child_environment(**names: str) -> dict[str, str]:
     """自前の環境で起こす子の process の環境: 与えた名の値・.pyc を書かない旗・呼び手の Hy の展開の置き場の名指し(在れば)。"""
-    store: str | None = os.environ.get(HY_CODE_STORE_ENV)
+    store: str | None = _environment_value(HY_CODE_STORE_ENV)
     named_store: dict[str, str] = {HY_CODE_STORE_ENV: store} if store is not None else {}
     return {**names, "PYTHONDONTWRITEBYTECODE": "1", **named_store}
 
