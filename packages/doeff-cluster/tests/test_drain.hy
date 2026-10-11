@@ -575,6 +575,32 @@
   (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "atlas-w-new")]) (get after "jobs")))
 
 
+(deftest test-a-leaving-generation-is-told-not-to-start-a-handoff-job-even-while-the-new-process-is-not-ready
+  ;; 失敗ケース(AL-D2n — 10-11 21:29 JST の zeus): 退いた世代の Pod の止まりが始まった(preStop の drain)後、今の世代の process が
+  ;; Ready と数えられていない拍(負荷の間)にも、退いた世代への返事の handoff の job に印 supersededBy を付ける。worker は印の在る
+  ;; job を起こし直さない(policy.plan-job)。直す前は、今の世代の process が Ready でない拍に印を付けず、退かせた process が終わった
+  ;; 後に退いた世代の worker が新しい試行を起こし、今の世代の process から lease を取った。止まりの始まる前は今どおり印を付けない。
+  (val c (Coord #("atlas")))
+  (c.beat "atlas" :boot "old")
+  (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
+  (c.beat "atlas" ["w"] :boot "old")
+  (c.ready "atlas" "w" :role "active")
+  (c.advance 1)
+  (val old-row (c.row "atlas" "w"))
+  (val new-row (| old-row {"instance" "atlas-w-new"}))
+  (setv (get c.boots "atlas") "new")
+  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+                               "statuses" [new-row] "overlapsElder" True "stopping" False}
+          :actor None)
+  ;; 今の世代の process はまだ Ready を報告していない。止まりの始まる前: 印を付けない(前の世代が書き手のまま)。
+  (val before (c.beat "atlas" ["w"] :boot "old"))
+  (assert (= (lfor j (get before "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" None)]) (get before "jobs"))
+  ;; 前の世代の Pod の preStop が drain を頼んだ → 今の世代の process が Ready でなくても印を付ける(値は今の世代)。
+  (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas")
+  (val after (c.beat "atlas" ["w"] :boot "old"))
+  (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "generation:new")]) (get after "jobs")))
+
+
 (deftest test-the-old-pod-drain-waits-for-the-handoff-processes-of-its-own-generation
   ;; 世代をまたぐ入れ替え(AL-D2): 旧い Pod の preStop は、その世代がまだ走らせている入れ替えの job の process(退かせた process — 走って
   ;; いる仕事を終えて自分で終わる)が終わるまで drained を返さない(返すと SIGTERM で仕事が切れる)。その世代の報告から job が消えたら
