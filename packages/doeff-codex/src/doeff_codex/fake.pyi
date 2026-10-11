@@ -16,8 +16,11 @@ from doeff_codex.lines import TurnStarted as TurnStartedLine
 from doeff_codex.lines import TextDelta as TextDelta
 from doeff_codex.lines import AgentMessageDone as AgentMessageDone
 from doeff_codex.lines import ItemStarted as ItemStarted
+from doeff_codex.lines import TurnError as TurnError
 from doeff_codex.lines import TurnEnded as TurnEnded
 from doeff_codex.lines import TurnStatus as TurnStatus
+from doeff_codex.lines import UsageLimitHit as UsageLimitHit
+from doeff_codex.lines import USAGE_LIMIT_KIND as USAGE_LIMIT_KIND
 from doeff_codex.effects import CodexStartTurn as CodexStartTurn
 from doeff_codex.effects import CodexSteerTurn as CodexSteerTurn
 from doeff_codex.effects import CodexInterruptTurn as CodexInterruptTurn
@@ -44,6 +47,7 @@ STEERED_PREFIX: str
 class FakeReply:
     pieces: tuple[str, ...]
     hold: bool = False
+    usage_limit: UsageLimitHit | None = None
 
 class FakeTurn:
     events: tuple[CodexEvent, ...]

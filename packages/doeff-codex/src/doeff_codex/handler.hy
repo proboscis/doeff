@@ -22,6 +22,8 @@
 (import doeff_time [GetMonotonic WaitWithin])
 (import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex.lines :as lines)
+(import doeff_codex.limits [merged-limits usage-limit-hit-of])
+(import dataclasses [replace])
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_codex.process [CodexProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
@@ -67,11 +69,13 @@
 
 
 (defclass TurnLog []
-  "1 つのターンの出来事と終わり(まだなら end は None)。pending = 答えを待つ codex からの要求の id(ServerRequest)。"
+  "1 つのターンの出来事と終わり(まだなら end は None)。pending = 答えを待つ codex からの要求の id(ServerRequest)。limits = そのターンで
+   届いた口座の枠の知らせを重ねた物(limits.hy の merged-limits の答え — 枠の名ごとに 1 つ・終わりの利用枠切れの事実の材料)。"
   (defn __init__ [self]
     (setv #^ (get tuple #(CodexEvent ...)) self.events #())
     (setv self.end None)
-    (setv #^ tuple self.pending #())))
+    (setv #^ tuple self.pending #())
+    (setv #^ tuple self.limits #())))
 
 
 (defclass SessionRuntime []
@@ -116,6 +120,17 @@
           (del (get self.turns old)))))
     (get self.turns turn-id))
 
+  (defn mark-running [self #^ str turn-id]
+    "codex が始めたと名乗ったターンを走っているターンにするため(その記録も作る)。ターンの無い間に届いた、終わったターンを名乗る遅れた
+     記録(late)は、このターンの頭に積む。読みの thread(turn/start の答えと turn/started を読んだ時)と、答えを受けた handler の側の
+     両方から呼ばれ、2 回目は何も足さない。lock の中で呼ぶ。"
+    (setv self.current-turn turn-id)
+    (setv started (.log-of self turn-id))
+    (for [late self.late]
+      (.add-event self started late))
+    (setv self.late #())
+    None)
+
   (defn running-log [self]
     "走っているターンの記録(無ければ None)。lock の中で呼ぶ。"
     (setv log (if (is self.current-turn None) None (.get self.turns self.current-turn)))
@@ -152,14 +167,27 @@
 (defk absorb [#^ SessionRuntime runtime record]
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
   "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンを名乗る記録(lines.TurnRecord — どの記録が名乗るかは lines が
-   決める)は名乗ったターンの出来事へ(終わりは end へ)・codex からの要求は走っているターンへ(答えを待つ id として)・ほか(ターンを
-   名乗らない口座の枠の知らせ RateLimits を含む — 利用枠切れの断りの前に届き、上の層がそのターンの尽きた窓を読む)は走っているターンへ
-   (無ければ outside)。終わったターンを名乗る遅れた記録(後ろで走った命令の終わり — 前のターンの終わりの後に、次のターンの間か
-   ターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っているターンへ積み、無ければ late に取っておく(次のターンを
-   始めた時にその頭に積む)。lock の中で呼ぶ。"
+   決める)は名乗ったターンの出来事へ(終わりは end へ — 終わりには、そのターンで重ねた口座の枠の知らせから作った利用枠切れの事実
+   UsageLimitHit を載せる)・codex からの要求は走っているターンへ(答えを待つ id として)・口座の枠の知らせ(RateLimits — ターンを
+   名乗らない)は走っているターンで重ねて積む・ほかは走っているターンへ(無ければ outside)。turn/start の答え(ターンの id を名乗る)と
+   turn/started は、読んだ時点で走っているターンを立てる(mark-running)— 答えを待つ側が起きる前に読んだ、ターンを名乗らない行も
+   そのターンへ積むため(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS で再現した競合)。終わったターンを名乗る遅れた記録(後ろで走った命令の
+   終わり — 前のターンの終わりの後に、次のターンの間かターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っている
+   ターンへ積み、無ければ late に取っておく(次のターンを立てた時にその頭に積む)。lock の中で呼ぶ。"
   (match record
-    (lines.Response) (setv (get runtime.answers record.id) record)
+    (lines.Response) (do (setv (get runtime.answers record.id) record)
+                         (when (is-not record.turn-id None)
+                           (.mark-running runtime record.turn-id)))
     (lines.ErrorResponse) (setv (get runtime.answers record.id) record)
+    (lines.TurnStarted) (do (.mark-running runtime record.turn-id)
+                            (.add-event runtime (.log-of runtime record.turn-id) record))
+    (lines.RateLimits)
+    (do (setv log (.running-log runtime))
+        (if (is log None)
+            (setv runtime.outside (+ runtime.outside #(record)))
+            (do (<- limits (merged-limits log.limits record))
+                (setv log.limits limits)
+                (.add-event runtime log record))))
     (lines.ServerRequest)
     (do (setv log (.running-log runtime))
         (if (is log None)
@@ -168,8 +196,10 @@
                 (.add-event runtime log record))))
     (lines.TurnEnded)
     (do (setv log (.log-of runtime record.turn-id))
-        (.add-event runtime log record)
-        (when (is log.end None) (setv log.end record)))
+        (<- hit (usage-limit-hit-of record log.limits))
+        (setv ended (replace record :usage-limit hit))
+        (.add-event runtime log ended)
+        (when (is log.end None) (setv log.end ended)))
     _ (if (isinstance record lines.TurnRecord)
           (do (val named (.log-of runtime record.turn-id))
               (val running (.running-log runtime))
@@ -417,14 +447,8 @@
     (lines.Response)
     (if (is answer.turn-id None)
         (LaunchFailed :detail "turn/start の答えがターンの id を名乗らない")
-        (do (with [runtime.lock]
-              (setv runtime.current-turn answer.turn-id)
-              (val started (.log-of runtime answer.turn-id))
-              ;; ターンの無い間に届いた、終わったターンを名乗る遅れた記録を、このターンの頭に積む(absorb の late)。
-              (for [late runtime.late]
-                (.add-event runtime started late))
-              (setv runtime.late #()))
-            (TurnStarted :turn (CodexTurn :thread-id runtime.thread-id :turn-id answer.turn-id))))
+        ;; 走っているターンは、読みの thread がこの答えを読んだ時に立てた(absorb の mark-running — 遅れた記録もその時に頭に積んだ)。
+        (TurnStarted :turn (CodexTurn :thread-id runtime.thread-id :turn-id answer.turn-id)))
     (lines.ErrorResponse) (do (<- refusal (refused "turn/start" answer)) refusal)
     _ answer))
 

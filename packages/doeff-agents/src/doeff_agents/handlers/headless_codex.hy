@@ -36,9 +36,10 @@
 ;;;     move_path / webSearch = query・action・queries・url・pattern — 名乗った欄だけ・欄の名は codex の綴り)。
 ;;;     ほかの道具の item(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など — 録った行が無い)・誤りの通知・語彙の外の
 ;;;     行は、今は出来事にしない。
-;;;   口座の利用枠切れ: 失敗の終わり(誤りの種類 usageLimitExceeded)→ AgentTurnFailed.account_limit(AgentAccountLimit — claude の
-;;;     adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ・card acp:kanban-issue:ki-a59d80e0afa9)。戻りの刻と窓の名は、
-;;;     そのターンで届いた枠の知らせ(RateLimits — 名乗らない窓は前の値を消さずに重ねる)の尽きた窓から読む(account-limit-of)。
+;;;   口座の利用枠切れ: 失敗の終わりの利用枠切れの事実(TurnEnded.usage-limit = UsageLimitHit)→ AgentTurnFailed.account_limit
+;;;     (AgentAccountLimit — claude の adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ・card acp:kanban-issue:ki-a59d80e0afa9)。
+;;;     判定(誤りの種類の綴り・尽きた窓の選び・枠の知らせの重ね方)は層 2(doeff-codex の limits.hy)が持ち、ここは窓の長さを claude と
+;;;     同じ綴りの窓の名にして運ぶだけ(account-limit-of)。
 ;;;   入力の行方: ターンを始めた入力・足した入力は、層 2 が受けた時に AgentInputFateEvent(started)を出し、完了の input_refs にも載せる
 ;;;     (codex は入力ごとの行方を行で名乗らない — 受けた入力はそのターンが読む)。
 ;;;   usage: 入力の側は cache から読んだ分を除く(codex の inputTokens は cachedInputTokens を含む — 層 3 の input_tokens は claude と同じ
@@ -80,14 +81,12 @@
 (import doeff_codex.values [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
-                           TurnStatus RateLimits ToolStatus ToolItem CommandRun FilePatch WebSearch])
+                           TurnStatus UsageLimitHit ToolStatus ToolItem CommandRun FilePatch WebSearch])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
                              BackendLost TurnStarted Steered InterruptRequested TurnEventPage
                              ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
 
 (val HANDLER-NAME "headless-codex-handler")
-;; 口座の利用枠切れの誤りの種類(codex 0.162.1 の codexErrorInfo の綴り)。
-(val USAGE-LIMIT-KIND "usageLimitExceeded")
 ;; 枠の窓の長さ(分)→ 窓の名(claude の CLI の rateLimitType と同じ綴り — 上の層が claude と同じ語で読む)。表に無い長さは名乗らない。
 (val WINDOW-NAMES {300 "five_hour" 10080 "seven_day"})
 
@@ -115,8 +114,7 @@
    cursor = そのターンの読んだ所 / turn-refs = 走っているターンが受けた入力の参照 / waiting = 走っているターンの後に回す入力
    (WaitingInput の tuple)/ events = 層 3 の出来事(seq → 出来事 — seq は 0 から欠けずに続く。答えの文字の途中が 1 つずつ積もるので、
    頁は読む分の seq だけを引く)/ last-end = 最後のターンの終わり / stopped = 止めた / answer = 走っているターンの最後の答えの全文 /
-   turn-usage = 走っているターンの呼びの分の和 / last-call = 最後の呼びの分 / window = codex が名乗った model の窓の大きさ /
-   limits = 走っているターンで届いた口座の枠の知らせを重ねた物(RateLimits — 届かなければ None)。"
+   turn-usage = 走っているターンの呼びの分の和 / last-call = 最後の呼びの分 / window = codex が名乗った model の窓の大きさ。"
   (defn __init__ [self #^ str name #^ CodexSessionSpec spec thread-id lifecycle]
     (setv self.name name
           self.spec spec
@@ -132,12 +130,11 @@
     (.reset-turn self))
 
   (defn reset-turn [self]
-    "ターンごとの数え(答えの全文・usage・窓・口座の枠)を、新しいターンの始めに戻すため。"
+    "ターンごとの数え(答えの全文・usage・窓)を、新しいターンの始めに戻すため。"
     (setv self.answer ""
           self.turn-usage None
           self.last-call None
-          self.window None
-          self.limits None)))
+          self.window None)))
 
 (defclass HeadlessCodexState []
   "handler の状態: session の名 → CodexHeadlessSession(composition root が 1 つ作って渡す)。"
@@ -301,21 +298,9 @@
                      (if (is usage None) #() #((AgentCallUsageEvent :seq first-seq :at at :usage usage :model model))))
     _ #()))
 
-(defk merged-limits [kept #^ RateLimits fresh]
-  {:pre [(: kept (| RateLimits None)) (: fresh RateLimits)] :post [(: % RateLimits)]
-   :tags {:context "headless-adapter" :role "judgment"}}
-  "ターンの中で届いた口座の枠の知らせを 1 つに重ね、ターンの終わりに尽きた窓を読めるようにするため(codex 0.162.1 の schema の註:
-   名乗らない欄は前に見た値を消さない)。同じ枠(limit-id)の知らせは、名乗った窓だけを新しい値に替える。最初の知らせと別の枠の
-   知らせはそのまま(別の枠の窓を引き継がない)。"
-  (if (or (is kept None) (!= kept.limit-id fresh.limit-id))
-      fresh
-      (RateLimits :limit-id fresh.limit-id
-                  :primary (if (is fresh.primary None) kept.primary fresh.primary)
-                  :secondary (if (is fresh.secondary None) kept.secondary fresh.secondary))))
-
 (defk absorb-record [#^ CodexHeadlessSession session record]
   {:pre [(: session CodexHeadlessSession) (: record CodexLine)] :post [(: % None)] :tags {:context "headless-adapter" :role "judgment"}}
-  "ターンの終わりが運ぶ数え(最後の答えの全文・呼びの usage の和・最後の呼び・窓・口座の枠)を、行の記録 1 つで進めるため。"
+  "ターンの終わりが運ぶ数え(最後の答えの全文・呼びの usage の和・最後の呼び・窓)を、行の記録 1 つで進めるため。"
   (match record
     (AgentMessageDone) (setv session.answer record.text)
     (TokenUsage) (do (<- usage (call-usage-of record.last))
@@ -325,31 +310,18 @@
                              session.last-call usage))
                      (when (is-not record.model-context-window None)
                        (setv session.window record.model-context-window)))
-    (RateLimits) (do (<- limits (merged-limits session.limits record))
-                     (setv session.limits limits))
     _ None)
   None)
 
-(defk account-limit-of [#^ TurnEnded end limits]
-  {:pre [(: end TurnEnded) (: limits (| RateLimits None))] :post [(: % (| AgentAccountLimit None))]
+(defk account-limit-of [hit]
+  {:pre [(: hit (| UsageLimitHit None))] :post [(: % (| AgentAccountLimit None))]
    :tags {:context "headless-adapter" :role "judgment"}}
-  "上の層(agora)が口座の替えと待ちを claude と同じ道で決められるように、codex が口座の利用枠切れ(誤りの種類 usageLimitExceeded)で
-   終えたターンを AgentAccountLimit にするため(ほかの終わりは None)。text = codex の誤りの文。戻りの刻と窓の名は、そのターンの枠の
-   知らせ limits の尽きた窓(使った割合 100 以上)から読む: 尽きた窓が 2 つなら遅く戻る方(口座はどちらも戻るまで使えない)。尽きた
-   窓が無い・尽きた窓の 1 つでも戻りの刻を名乗らない・知らせが無ければ、刻も窓の名も None(刻を発明しない — 早すぎる刻は口座を早く
-   戻し、また断られる)。窓の名は WINDOW-NAMES の綴りで、表に無い長さは None。"
-  (when (!= end.error-kind USAGE-LIMIT-KIND)
-    (return None))
-  (val text (or end.error-message ""))
-  (val windows (if (is limits None)
-                   #()
-                   (tuple (gfor window #(limits.primary limits.secondary)
-                                :if (and (is-not window None) (>= window.used-percent 100))
-                                window))))
-  (when (or (not windows) (any (gfor window windows (is window.resets-at None))))
-    (return (AgentAccountLimit :text text)))
-  (val last (max windows :key (fn [window] window.resets-at)))
-  (AgentAccountLimit :window (.get WINDOW-NAMES last.minutes) :resets-at last.resets-at :text text))
+  "上の層(agora)が口座の替えと待ちを claude と同じ道で決められるように、層 2 が名乗った利用枠切れの事実(UsageLimitHit か None)を
+   公開型 AgentAccountLimit にするため。刻と文はそのまま運び、窓の長さを WINDOW-NAMES の綴りの窓の名にする(表に無い長さ・名乗られない
+   長さは None — 綴りを発明しない)。"
+  (if (is hit None)
+      None
+      (AgentAccountLimit :window (.get WINDOW-NAMES hit.minutes) :resets-at hit.resets-at :text hit.text)))
 
 (defk end-of [#^ CodexHeadlessSession session end]
   {:pre [(: session CodexHeadlessSession) (: end (| TurnEnded BackendLost))]
@@ -373,13 +345,13 @@
     (AgentTurnFailed :detail (or end.error-message "codex のターンが失敗した(状態 failed)") :input-refs session.turn-refs
                      :resume-from thread-id :usage session.turn-usage
                      :last-call-usage session.last-call :last-call-model last-model :model-windows windows
-                     :account-limit (! (account-limit-of end session.limits)))
+                     :account-limit (! (account-limit-of end.usage-limit)))
     ;; 終わりの行の状態が語彙の外(版で増えた綴り)か inProgress — 終わりは届いたので失敗の終わりとして名乗る(待ち続けない)。
     (TurnEnded)
     (AgentTurnFailed :detail (.format "codex のターンの終わりの状態が語彙の外: {!r}" end.status) :input-refs session.turn-refs
                      :resume-from thread-id :usage session.turn-usage
                      :last-call-usage session.last-call :last-call-model last-model :model-windows windows
-                     :account-limit (! (account-limit-of end session.limits)))
+                     :account-limit (! (account-limit-of end.usage-limit)))
     (BackendLost)
     (if session.stopped
         (AgentTurnInterrupted :cli-kept False :resume-from thread-id

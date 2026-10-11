@@ -34,6 +34,8 @@
 (import doeff_codex.rpc [ApprovalPolicy :as CodexApprovalPolicy SandboxMode :as CodexSandboxMode])
 (import doeff_codex.handler [CodexHost codex-handler])
 (import doeff_codex.fake [FakeCodexWorld FakeReply :as FakeCodexReply fake-codex-handler])
+;; 利用枠切れの事実(fake の筋書きの FakeCodexReply.usage-limit に渡す・層 2 の終わりが運ぶ — 窓は長さ〔分〕で名乗る)。
+(import doeff_codex.lines [UsageLimitHit :as CodexUsageLimitHit])
 (import doeff_agents.handlers.headless_codex [HeadlessCodexConfig HeadlessCodexState headless-codex-handler])
 
 
