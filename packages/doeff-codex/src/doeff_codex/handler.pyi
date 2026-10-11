@@ -16,6 +16,9 @@ from doeff_codex.values import CodexInput as CodexInput
 from doeff_codex.values import FreshThread as FreshThread
 from doeff_codex.values import ResumeThread as ResumeThread
 import doeff_codex.lines as lines
+from doeff_codex.limits import merged_limits as merged_limits
+from doeff_codex.limits import usage_limit_hit_of as usage_limit_hit_of
+from dataclasses import replace as replace
 from doeff_codex.rpc import app_server_argv as app_server_argv
 from doeff_codex.rpc import initialize_request as initialize_request
 from doeff_codex.rpc import initialized_notification as initialized_notification
@@ -79,6 +82,7 @@ class TurnLog:
     events: tuple[CodexEvent, ...]
     end: Incomplete
     pending: tuple
+    limits: tuple
 
     def __init__(self) -> None:
         ...
@@ -109,6 +113,9 @@ class SessionRuntime:
         ...
 
     def log_of(self, turn_id: str) -> TurnLog:
+        ...
+
+    def mark_running(self, turn_id: str) -> Incomplete:
         ...
 
     def running_log(self) -> Incomplete:

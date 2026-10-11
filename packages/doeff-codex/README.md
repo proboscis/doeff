@@ -11,7 +11,8 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | `doeff_codex.effects` | 上の層が codex のターンを effect で頼むため(公開の口) | 下の「公開 effect」の表 |
 | `doeff_codex.values` | effect の欄の値 | `CodexSessionSpec`(環境・作業の dir・model・許可の方針・sandbox・考えの深さ・圧縮の閾値)・`CodexHome`・`CodexInput`(文字と画像)・`CodexImage`・`FreshThread`・`ResumeThread`・`CodexTurn`・`CodexEvent` |
 | `doeff_codex.handler` | 本番の handler — 公開 effect に app-server の子 process で答えるため | `codex-handler`・`CodexHost`(composition root が 1 つ作る状態の持ち主) |
-| `doeff_codex.fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply` |
+| `doeff_codex.fake` | fake の handler — 公開 effect に筋書きの答えで memory の上で答えるため | `fake-codex-handler`・`FakeCodexWorld`・`FakeReply`(`usage-limit` = 利用枠切れの事実 `UsageLimitHit` — 在れば誤りの種類 `usageLimitExceeded` の失敗で終える) |
+| `doeff_codex.limits` | ターンの中の枠の知らせを重ね、利用枠切れで終わったターンの事実を作るため(純粋 — handler が使う) | `merged-limits`・`usage-limit-hit-of` |
 | `doeff_codex.rpc` | app-server を起こす argv と、stdin へ書く要求・答えの 1 行を作るため | `app-server-argv`・`initialize-request`・`initialized-notification`・`thread-start-request`・`thread-resume-request`・`turn-start-request`・`turn-steer-request`・`turn-interrupt-request`・`server-response-line`・閉じた語彙 `ApprovalPolicy`・`SandboxMode` |
 | `doeff_codex.lines` | stdout の 1 行を、上の層が読む型つきの記録へ分けるため | `classify-line`(1 行 → `CodexLine`)と記録の型 |
 | `doeff_codex.process` | app-server の子 process を、ターンをまたいで生かして行を運ぶため(handler だけが持つ内部の器) | `CodexProcess`(stdin の書き手・stdout と stderr の読み手の thread・降ろす梯子) |
@@ -64,10 +65,10 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 | `AgentMessageDone` | `item/completed`(item の種類 agentMessage) | 答えの全文 |
 | `ReasoningDelta` | `item/reasoning/textDelta`・`item/reasoning/summaryTextDelta` | 考えている間の差分(要約か本文か) |
 | `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料)と、道具の種類の item の中身 `tool`(下の表・ほかの種類は None) |
-| `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status) |
+| `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status、利用枠切れの事実 `usage-limit` — 下の段落) |
 | `TurnError` | `error` | ターンの誤り(文・誤りの種類・HTTP の status・codex が繰り返すか) |
 | `TokenUsage` | `thread/tokenUsage/updated` | この呼びの分(last)と thread の累積(total)の token の数 |
-| `RateLimits` | `account/rateLimits/updated` | 口座の利用枠の名と窓(`RateLimitWindow` = 使った割合・長さ〔分〕・戻りの刻〔epoch 秒〕— 名乗らない窓は None)。thread もターンも名乗らない口座の通知で、handler は走っているターンに積む。利用枠切れ(誤りの種類 `usageLimitExceeded`)では誤りの通知より先に届く(実測 `tests/recorded/codex-0.162.1/usage-limit`) |
+| `RateLimits` | `account/rateLimits/updated` | 口座の利用枠の名と窓(`RateLimitWindow` = 使った割合・長さ〔分〕・戻りの刻〔epoch 秒〕— 名乗らない窓は None)。thread もターンも名乗らない口座の通知で、handler は走っているターンに積む(turn/start の答えを読んだ時点でそのターンを走っているターンにする)。利用枠切れ(誤りの種類 `usageLimitExceeded`)では誤りの通知より先に届く(実測 `tests/recorded/codex-0.162.1/usage-limit`) |
 | `ThreadStarted` | `thread/started` | thread の id |
 | `Response` / `ErrorResponse` | 要求への答え(id の在る行) | 要求の id と、答えが名乗る thread・ターンの id / 誤りの code と文 |
 | `ServerRequest` | codex からの要求(id と method の両方が在る行 — 道具の許可など) | 答えに使う id と method と、中を読まずに運ぶ params |
@@ -84,6 +85,8 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 
 ほかの道具の種類(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など)は録った行が無く、中身を読まない(`tool` は None)。
 道具の中身の使う欄が無い・型が違う item は、method と訳を持つ `Unparsed` にする(道具の中身の無い item に読み替えない)。
+
+利用枠切れの事実 `UsageLimitHit`(`minutes` = 口座が待つ窓の長さ〔分〕・`resets-at` = その窓が戻る刻〔epoch 秒〕・`text` = codex の誤りの文)は、handler がターンの終わり(`TurnEnded.usage-limit`)に載せる。行の分類では None。誤りの種類が `usageLimitExceeded` の時だけ作り、窓と刻はそのターンの枠の知らせ(枠の名ごとに重ねる — 名乗らない窓は前の値を消さない)のうち使った割合 100 以上の窓から読む。尽きた窓が 2 つ以上なら遅く戻る方。尽きた窓が無い・戻りの刻を名乗らない・知らせが無ければ長さも刻も None(刻を発明しない)。窓は長さで名乗る(窓の名は上の層の語)。fake は `FakeReply.usage-limit` の事実をそのまま終わりに載せる。
 
 この版の語彙に無い値(版で増えたターンの状態・道具の状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
 行も落とさない — 知らない状態でもターンの終わり(`TurnEnded`)は必ず届く(上の層がターンの終わりを待ち続けないため)。

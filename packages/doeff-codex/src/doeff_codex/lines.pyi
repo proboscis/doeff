@@ -15,6 +15,7 @@ class TurnStatus(StrEnum):
     INTERRUPTED = 'interrupted'
     FAILED = 'failed'
     IN_PROGRESS = 'inProgress'
+USAGE_LIMIT_KIND: str
 
 class ToolStatus(StrEnum):
     COMPLETED = 'completed'
@@ -305,6 +306,12 @@ class TurnError:
     will_retry: bool
 
 @dataclass(frozen=True, kw_only=True)
+class UsageLimitHit:
+    minutes: int | None
+    resets_at: int | None
+    text: str
+
+@dataclass(frozen=True, kw_only=True)
 class TurnEnded:
     thread_id: str
     turn_id: str
@@ -312,6 +319,7 @@ class TurnEnded:
     error_message: str | None = None
     error_kind: str | UnknownValue | None = None
     http_status: int | None = None
+    usage_limit: UsageLimitHit | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class RateLimitWindow:
