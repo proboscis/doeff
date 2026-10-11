@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.codex-rec-NgRy/cwd", "approvalPolicy": "never", "sandbox": "danger-full-access"}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a12be6-fe31-7fa3-9695-6251c49eb2fb", "input": [{"type": "text", "text": "BG-COMMAND please"}]}}
+{"jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": {"threadId": "01a12be6-fe31-7fa3-9695-6251c49eb2fb", "input": [{"type": "text", "text": "BG-WAIT please"}]}}

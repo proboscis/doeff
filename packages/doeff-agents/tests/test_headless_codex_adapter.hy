@@ -627,3 +627,38 @@
   (<- starts (of-kind done.events AgentToolCallStartedEvent))
   (assert (= (tuple (gfor start starts #(start.id start.name))) #(#("ws_1" "webSearch"))) starts)
   (assert (< (. (get starts 0) seq) (get use-seqs "ws_1")) #(starts use-seqs)))
+
+
+;; 後ろで走る命令の筋書きの言い方(替え玉の規則 — 録った codex 0.162.1 の 2 つのターン background-command を流す)。1 つ目のターンで
+;; 命令 call_bg を始めて答え、2 つ目のターンの間にその命令が終わる(命令の終わりの行は 1 つ目のターンを名乗る)。
+(val BACKGROUND-PROMPT "BG-COMMAND please")
+(val BACKGROUND-WAIT-PROMPT "BG-WAIT please")
+
+(defk background-turns [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "命令を後ろで走らせて終わるターンと、その命令が終わる次のターンを、公開 effect だけで読むため。"
+  (<- handle (launch s "codex-background" BACKGROUND-PROMPT {}))
+  (<- first (read-until handle ended s.timeout -1))
+  (<- (FollowUp handle BACKGROUND-WAIT-PROMPT :input-ref "ref-wait" :mode TurnInputMode.NEXT-TURN))
+  (<- second (read-until handle ended s.timeout first.after))
+  (<- (Stop handle))
+  {"first" first "second" second})
+
+(deftest test-headless-codex-background-command-result-reaches-a-tool-result-event-stub [tmp-path]
+  ;; 失敗ケース(card acp:kanban-issue:ki-77e76c7c07ce の設計検証・盲検 A): 前のターンで始めて後ろで走った命令の終わりは、前のターンを
+  ;; 名乗って次のターンの間に届く。その結果も AgentToolResultEvent で届く(届かないと画面の道具カードは結果の無いまま残る)。
+  (<- read (run-on STUB tmp-path background-turns))
+  (assert (isinstance read dict) read)
+  (val first (get read "first"))
+  (val second (get read "second"))
+  (assert (and (isinstance first.end AgentTurnCompleted) (isinstance second.end AgentTurnCompleted)) #(first.end second.end))
+  (<- uses (of-kind first.events AgentToolUseEvent))
+  (assert (= (tuple (gfor use uses call use.tool-calls #(call.id (get call.input "command"))))
+             #(#("call_bg" "/bin/bash -lc 'sleep 1; echo late-1; sleep 1; echo late-2; sleep 1; echo late-3'")))
+          uses)
+  (<- results (of-kind (+ first.events second.events) AgentToolResultEvent))
+  (val answers (tuple (gfor result results answer result.answers #(answer.id answer.text answer.is-error))))
+  (assert (= answers #(#("call_bg" "late-1\nlate-2\nlate-3\n" False))) answers)
+  ;; 結果は次のターンの出来事として届く(前のターンの終わりの後)。
+  (<- later (of-kind second.events AgentToolResultEvent))
+  (assert (= (len later) 1) second.events))

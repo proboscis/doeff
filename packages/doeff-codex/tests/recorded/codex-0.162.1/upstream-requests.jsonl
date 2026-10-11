@@ -8,3 +8,6 @@
 {"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
 {"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
 {"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
+{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
+{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
+{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}

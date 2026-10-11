@@ -13,6 +13,9 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
     ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
   - HOME_PHRASE が在れば、この process の CODEX_HOME の形を ``HOME dir=<権限> auth=<権限> account=<auth.json の口座の id>
     config=<link|file|none> sessions=<link|dir|none>`` と答える(借りた資格の家の形を子の process から見る — 資格の値は答えない)。
+  - SPANNING の目印(BG-COMMAND・BG-WAIT)が在れば、2 つのターンにまたがる録り(後ろで走る命令の始まりのターンと、その命令が終わる
+    次のターン)のうち、目印のターンの通知を流す。前のターンを名乗る遅れた行(命令の終わり)は、この process が前のターンに振った id へ
+    差し替える。
   - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS)が在れば、その目印で録ったターンの通知(turn/start の答えの後 〜
     turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と web 検索の道具の
     item を持つターン)。
@@ -37,6 +40,8 @@ HOME_PHRASE = "Tell the home."
 STEERED_PREFIX = "steered:"
 # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
 REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls"}
+# 入力の目印 → 2 つのターンにまたがる録りの名と、そのターンを始めた録りの要求の id(turn/start)。
+SPANNING = {"BG-COMMAND": ("background-command", 3), "BG-WAIT": ("background-command", 4)}
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
 
@@ -97,6 +102,8 @@ class Stub:
         self.mut_slow_turn = ""
         self.mut_slow_thread: threading.Thread | None = None
         self.mut_opened_with: dict[str, object] = {}
+        # 2 つのターンにまたがる録りの、録ったターンの id → この process が振ったターンの id。
+        self.mut_spanned: dict[str, str] = {}
 
     def write(self, message: dict[str, object]) -> None:
         """1 行の message を stdout へ書くため(止めの thread と主の loop の両方から書くので lock の中で)。"""
@@ -113,6 +120,21 @@ class Stub:
         """thread とターンの id を振るため。"""
         self.mut_made += 1
         return f"stub-{kind}-{self.mut_made}"
+
+    def spanning_turn(self, name: str, request_id: int, turn_id: str) -> list[dict[str, object]]:
+        """2 つのターンにまたがる録り name のうち、要求 request_id で始めたターンの通知(その答えの後から最初の turn/completed まで)を
+        取るため。thread の id と、この録りでこれまでに流したターン(前のターンを名乗る遅れた行を含む)の id を、この process の id へ
+        差し替える。"""
+        messages = recorded_messages(name)
+        thread = str(answer_of(messages, 2)["result"]["thread"]["id"])  # type: ignore[index]  # 録った答えの形は検が確かめている
+        recorded_turn = str(answer_of(messages, request_id)["result"]["turn"]["id"])  # type: ignore[index]  # 同上
+        self.mut_spanned[recorded_turn] = turn_id
+        start = messages.index(answer_of(messages, request_id)) + 1
+        end = next(index for index, message in enumerate(messages) if index >= start and message.get("method") == "turn/completed")
+        text = json.dumps(messages[start:end + 1], ensure_ascii=False).replace(thread, self.mut_thread_id)
+        for recorded, mine in self.mut_spanned.items():
+            text = text.replace(recorded, mine)
+        return json.loads(text)
 
     def replayed_turn(self, name: str, turn_id: str) -> list[dict[str, object]]:
         """録った筋書き name の 1 つ目のターンの通知(turn/start の答えの後から turn/completed まで)を、その録りの thread とターンの
@@ -186,6 +208,11 @@ class Stub:
             return
         if HOME_PHRASE in said:
             self.answer_turn(turn_id, home_text())
+            return
+        spanning = next((recorded for marker, recorded in SPANNING.items() if marker in said), None)
+        if spanning is not None:
+            for notification in self.spanning_turn(spanning[0], spanning[1], turn_id):
+                self.write(notification)
             return
         replayed = next((name for marker, name in REPLAYED.items() if marker in said), None)
         if replayed is not None:

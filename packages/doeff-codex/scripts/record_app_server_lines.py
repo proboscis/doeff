@@ -2,7 +2,7 @@
 
 版を固定した本物の codex の binary を、手元に立てた偽の上流(OpenAI の Responses API の SSE を返す HTTP server)につなぎ、JSON-RPC の
 要求を stdin へ書いて、stdout の行をそのまま file に書く。口座も network の外も要らない — model の答えだけが偽物で、行の形は本物の
-binary が出した物。録る筋書きは 5 つと比べの 1 つ:
+binary が出した物。録る筋書きは 6 つと比べの 1 つ:
 
 - two-turns: 1 つの process で thread を始め、ターンを 2 回走らせる(答えの文字の途中・答えの全文・ターンの終わり)。
 - interrupt: 遅い答えの途中で turn/interrupt を送る(状態 interrupted の終わり)。
@@ -11,6 +11,8 @@ binary が出した物。録る筋書きは 5 つと比べの 1 つ:
   枠の通知と状態 failed の終わり)。
 - tool-calls: 上流が道具の呼びを順に返す(命令の成功・命令の失敗・apply_patch でのファイルの追加・web 検索)— 道具の item
   (commandExecution・fileChange・webSearch)の始まりと終わりの形。
+- background-command: 1 つ目のターンで、短い待ち(yield_time_ms)で戻って後ろで走り続ける命令を呼び、2 つ目のターン(遅い答え)の
+  間にその命令が終わる — 前のターンを名乗る命令の終わり(item/completed)が次のターンの間に届く形。
 - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。
 
 使い方(版を上げた時に録り直す。筋書きの名を続けて書くと、その筋書きだけを録る — 既定は全部):
@@ -52,6 +54,10 @@ TOOL_COMMANDS = (
 )
 TOOLS_SEARCH = "doeff effects"
 TOOLS_DONE = ("Tools ", "done.")
+# 後ろで走る命令の筋書きの目印(1 つ目のターン = 命令を始めて答える・2 つ目のターン = 遅い答えの間に命令が終わる)と命令。
+BACKGROUND_MARK = "BG-COMMAND"
+BACKGROUND_WAIT_MARK = "BG-WAIT"
+BACKGROUND_COMMAND = "sleep 1; echo late-1; sleep 1; echo late-2; sleep 1; echo late-3"
 
 
 def sse_event(stream: IO[bytes], event: JsonObject) -> None:
@@ -114,6 +120,23 @@ def tool_events(step: int) -> list[JsonObject]:
     ]
 
 
+def background_events(step: int) -> list[JsonObject]:
+    """後ろで走る命令の筋書きの 1 つ目のターンの答え(step 0 = 短い待ちで戻る命令を exec_command で呼ぶ・ほか = 答えの全文)の SSE の
+    列を作るため。"""
+    if step >= 1:
+        return answer_events(("Started.",))
+    call: JsonObject = {"type": "function_call", "id": "fc_bg", "call_id": "call_bg", "name": "exec_command",
+                        "arguments": json.dumps({"cmd": BACKGROUND_COMMAND, "yield_time_ms": 250})}
+    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
+             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
+    return [
+        {"type": "response.created", "response": {"id": "resp_bg_0"}},
+        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
+        {"type": "response.output_item.done", "output_index": 0, "item": call},
+        {"type": "response.completed", "response": {"id": "resp_bg_0", "usage": usage}},
+    ]
+
+
 def tool_step(body: JsonObject) -> int:
     """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(function_call_output)の数で数えるため。"""
     inputs = body.get("input", [])
@@ -123,7 +146,8 @@ def tool_step(body: JsonObject) -> int:
 
 class Upstream(http.server.BaseHTTPRequestHandler):
     """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、USAGE-LIMIT が在れば利用枠切れの 429、SLOW が在れば遅い答え、入力の
-    どこかに TOOL-CALLS が在れば道具の筋書き、ほかは 4 つの差分の答え。"""
+    どこかに TOOL-CALLS が在れば道具の筋書き、BG-COMMAND が在れば後ろで走る命令の筋書き、最後の入力に BG-WAIT が在れば遅い答え、
+    ほかは 4 つの差分の答え。"""
 
     protocol_version = "HTTP/1.1"
     request_log: IO[str]
@@ -151,15 +175,19 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         if "USAGE-LIMIT" in said:
             self.refuse_usage_limit()
             return
-        slow = "SLOW" in said
+        slow = "SLOW" in said or BACKGROUND_WAIT_MARK in said
         tools = TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
+        background = BACKGROUND_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
         # 長さを名乗らない event-stream は、流し終えたら接続を閉じて終わりを伝える(send_header が close_connection を立てる)。
         self.send_header("connection", "close")
         self.end_headers()
-        events = tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES)
+        # 2 つ目のターン(BG-WAIT)は遅い答え — その間に 1 つ目のターンの命令が終わる。
+        events = (answer_events(SLOW_PIECES) if BACKGROUND_WAIT_MARK in said
+                  else background_events(tool_step(body)) if background
+                  else tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES))
         try:
             for event in events:
                 sse_event(self.wfile, event)
@@ -337,9 +365,16 @@ def tool_calls(send: Send, wait: Wait, cwd: Path) -> None:
     wait(turn_ended(start_turn(send, wait, 3, thread_id, f"{TOOLS_MARK} please")), WAIT_SECONDS * 2)
 
 
+def background_command(send: Send, wait: Wait, cwd: Path) -> None:
+    """後ろで走る命令を始めたターンの後に、遅い答えのターンを走らせ、前のターンを名乗る命令の終わりが次のターンの間に届く形を録るため。"""
+    thread_id = start_thread(send, wait, cwd, "danger-full-access")
+    wait(turn_ended(start_turn(send, wait, 3, thread_id, f"{BACKGROUND_MARK} please")), WAIT_SECONDS * 2)
+    wait(turn_ended(start_turn(send, wait, 4, thread_id, f"{BACKGROUND_WAIT_MARK} please")), WAIT_SECONDS * 2)
+
+
 SCENARIOS: tuple[tuple[str, Callable[[Send, Wait, Path], None]], ...] = (
     ("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit), ("usage-limit", usage_limit),
-    ("tool-calls", tool_calls))
+    ("tool-calls", tool_calls), ("background-command", background_command))
 
 
 def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
