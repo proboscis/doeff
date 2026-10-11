@@ -339,16 +339,16 @@ types as the Claude adapter, so an upper layer reads both the same way:
 | `item/started` / `item/completed` (`webSearch`) | `AgentToolCallStartedEvent` / `AgentToolUseEvent` + `AgentToolResultEvent` |
 | `thread/tokenUsage/updated` | `AgentCallUsageEvent` (input tokens exclude cached ones) |
 | `turn/completed` | `AgentTurnEndEvent` (`resume_from` = the Codex thread id) |
-| `turn/completed` (failed, error kind `usageLimitExceeded`) + `account/rateLimits/updated` | `AgentTurnFailed.account_limit` (`AgentAccountLimit`, as for Claude) |
+| `turn/completed` (failed) carrying `TurnEnded.usage-limit` | `AgentTurnFailed.account_limit` (`AgentAccountLimit`, as for Claude) |
 
-A turn that Codex fails with `usageLimitExceeded` carries `AgentAccountLimit`:
-`text` is Codex's error message; `resets_at` and `window` come from the rate
-limit windows Codex stated in that turn (`account/rateLimits/updated`, merged so
-that an update which omits a window keeps the one seen before). The exhausted
-window (used ≥ 100%) gives them; with two exhausted windows the later reset wins.
-A 300-minute window is named `five_hour` and a 10080-minute one `seven_day`
-(the Claude CLI's words); other lengths get `None`. When no window is exhausted,
-or an exhausted window states no reset, both stay `None` — no time is invented.
+`doeff-codex` decides whether a turn ran into the account's usage limit and
+puts the fact (`UsageLimitHit`: window length in minutes, `resets_at`, Codex's
+message) on the turn end; the adapter only carries it as `AgentAccountLimit`,
+naming a 300-minute window `five_hour` and a 10080-minute one `seven_day` (the
+Claude CLI's words; other lengths get `None`). `resets_at` and `text` pass
+through unchanged, so an unstated reset stays `None`. The fake layer takes the
+same fact as `FakeCodexReply(usage_limit=CodexUsageLimitHit(...))`
+(`headless_compose` re-exports both).
 
 A tool item becomes a `ToolCall` named after the Codex item type
 (`commandExecution`, `fileChange`, `webSearch`) with the item id as its id. Its

@@ -22,6 +22,8 @@
 (import doeff_time [GetMonotonic WaitWithin])
 (import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex.lines :as lines)
+(import doeff_codex.limits [merged-limits usage-limit-hit-of])
+(import dataclasses [replace])
 (import doeff_codex.rpc [app-server-argv initialize-request initialized-notification thread-start-request thread-resume-request
                          turn-start-request turn-steer-request turn-interrupt-request server-response-line])
 (import doeff_codex.process [CodexProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
@@ -67,11 +69,13 @@
 
 
 (defclass TurnLog []
-  "1 つのターンの出来事と終わり(まだなら end は None)。pending = 答えを待つ codex からの要求の id(ServerRequest)。"
+  "1 つのターンの出来事と終わり(まだなら end は None)。pending = 答えを待つ codex からの要求の id(ServerRequest)。limits = そのターンで
+   届いた口座の枠の知らせを重ねた物(limits.hy の merged-limits の答え — 枠の名ごとに 1 つ・終わりの利用枠切れの事実の材料)。"
   (defn __init__ [self]
     (setv #^ (get tuple #(CodexEvent ...)) self.events #())
     (setv self.end None)
-    (setv #^ tuple self.pending #())))
+    (setv #^ tuple self.pending #())
+    (setv #^ tuple self.limits #())))
 
 
 (defclass SessionRuntime []
@@ -114,6 +118,12 @@
           (del (get self.turns old)))))
     (get self.turns turn-id))
 
+  (defn mark-running [self #^ str turn-id]
+    "codex が始めたと名乗ったターンを走っているターンにするため(その記録も作る)。lock の中で呼ぶ。"
+    (setv self.current-turn turn-id)
+    (.log-of self turn-id)
+    None)
+
   (defn running-log [self]
     "走っているターンの記録(無ければ None)。lock の中で呼ぶ。"
     (setv log (if (is self.current-turn None) None (.get self.turns self.current-turn)))
@@ -150,24 +160,39 @@
 (defk absorb [#^ SessionRuntime runtime record]
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
   "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンの記録はそのターンの出来事へ(終わりは end へ)・codex からの要求は
-   走っているターンへ(答えを待つ id として)・ほか(ターンを名乗らない口座の枠の知らせ RateLimits を含む — 利用枠切れの断りの前に
-   届き、上の層がそのターンの尽きた窓を読む)は走っているターンへ(無ければ outside)。lock の中で呼ぶ。"
+   走っているターンへ(答えを待つ id として)・口座の枠の知らせ(RateLimits — ターンを名乗らない)は走っているターンで重ね、その
+   ターンの終わりに利用枠切れの事実(UsageLimitHit)を載せる・ほかは走っているターンへ(無ければ outside)。turn/start の答えと
+   turn/started は、読んだ時点で走っているターンを立てる — 答えを待つ側が起きる前に読んだ、ターンを名乗らない行もそのターンへ積む
+   ため(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS で再現した競合)。lock の中で呼ぶ。"
   (match record
-    (lines.Response) (setv (get runtime.answers record.id) record)
+    (lines.Response) (do (setv (get runtime.answers record.id) record)
+                         (when (is-not record.turn-id None)
+                           (.mark-running runtime record.turn-id)))
     (lines.ErrorResponse) (setv (get runtime.answers record.id) record)
+    (lines.TurnStarted) (do (.mark-running runtime record.turn-id)
+                            (.add-event runtime (.log-of runtime record.turn-id) record))
+    (lines.RateLimits)
+    (do (setv log (.running-log runtime))
+        (if (is log None)
+            (setv runtime.outside (+ runtime.outside #(record)))
+            (do (<- limits (merged-limits log.limits record))
+                (setv log.limits limits)
+                (.add-event runtime log record))))
     (lines.ServerRequest)
     (do (setv log (.running-log runtime))
         (if (is log None)
             (setv runtime.outside (+ runtime.outside #(record)))
             (do (setv log.pending (+ log.pending #(record.id)))
                 (.add-event runtime log record))))
-    (| (lines.TurnStarted) (lines.TextDelta) (lines.ReasoningDelta) (lines.AgentMessageDone) (lines.ItemStarted) (lines.ItemDone)
+    (| (lines.TextDelta) (lines.ReasoningDelta) (lines.AgentMessageDone) (lines.ItemStarted) (lines.ItemDone)
        (lines.TokenUsage) (lines.TurnError))
     (.add-event runtime (.log-of runtime record.turn-id) record)
     (lines.TurnEnded)
     (do (setv log (.log-of runtime record.turn-id))
-        (.add-event runtime log record)
-        (when (is log.end None) (setv log.end record)))
+        (<- hit (usage-limit-hit-of record log.limits))
+        (setv ended (replace record :usage-limit hit))
+        (.add-event runtime log ended)
+        (when (is log.end None) (setv log.end ended)))
     _ (do (setv log (.running-log runtime))
           (if (is log None)
               (setv runtime.outside (+ runtime.outside #(record)))
