@@ -194,8 +194,9 @@
 ;; 起こしの見送りの訳(#3713): 宣言の job を、動いている process が無いのにこの拍で起こさない・起こせない訳。
 ;;   PREPARING = 木・root の準備待ち・PREPARE-FAILED = 準備の失敗(code-retry-ms の後の撃ち直しの間も)・DISK-FULL = 準備が disk の空き不足で
 ;;   失敗・PROBING = 入口の検め待ち・PROBE-FAILED = 入口の検めの失敗(撃ち直しの間も)・BACKOFF = 落ちた後の起こし直しの間・
-;;   WARM-CHILD = 分かれ元の待ちの子の準備待ち・HANDOFF-ABANDONED = 入れ替えの諦め(宣言が変わるまで起こさない)。
-(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED)
+;;   WARM-CHILD = 分かれ元の待ちの子の準備待ち・HANDOFF-ABANDONED = 入れ替えの諦め(宣言が変わるまで起こさない)・ELDER-RUNS = 準備と
+;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)。
+(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS)
 
 
 ;; --- 待ちの子(#3646)-------------------------------------------------------------

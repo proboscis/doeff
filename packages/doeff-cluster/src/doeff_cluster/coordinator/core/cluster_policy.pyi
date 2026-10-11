@@ -406,7 +406,7 @@ def register_heartbeat(given: ClusterState, body: HeartbeatBody, now: int) -> _P
 def absorb_superseded_heartbeat(state: ClusterState, name: str, boot: str, statuses: tuple, now: int) -> ClusterState:
     ...
 
-def superseded_runs_after(state: ClusterState, name: str, boot: str, statuses: tuple, now: int) -> tuple:
+def superseded_runs_after(state: ClusterState, name: str, boot: str, statuses: tuple, now: int, overlapped: bool | None=None) -> tuple:
     ...
 ADOPTABLE_PHASES: set[str]
 
@@ -432,6 +432,9 @@ def warms_for(state: ClusterState, worker: str, now: int) -> tuple:
     ...
 
 def heartbeat_reply(state: ClusterState, name: str, timing: ClusterTiming, ready_instances: dict | None=None, now: int=0, boot: str | None=None, statuses: tuple | None=None) -> _Program[HeartbeatReply, object]:
+    ...
+
+def elder_held(state: ClusterState, name: str, boot: str, now: int, window_ms: int) -> frozenset:
     ...
 
 def running_names(statuses: tuple) -> frozenset:

@@ -383,7 +383,8 @@
 
 
 ;; probing(2026-09-27)= starting の手前の入口の検めの間(その worker で起こしかけている — 他へ置かない)。
-(setv LIVE-PHASES #{"preparing" "probing" "starting" "backoff" "running" "stopping" "stop-unconfirmed"})
+;; elder-runs(AL-D2f)= 同じ名の前の世代が動かしている間、新しい世代が準備と検めを揃えて待っている(その worker で起こしかけている)。
+(setv LIVE-PHASES #{"preparing" "probing" "starting" "elder-runs" "backoff" "running" "stopping" "stop-unconfirmed"})
 
 
 (defn #^ tuple service-rows [#^ int now #^ ClusterState state #^ str name #^ ClusterTiming timing]
@@ -1593,15 +1594,23 @@
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
                      :statuses (| adopted.statuses {name report})
-                     :board board))
+                     :board board)
+        ;; 前の世代がまだ走っている間に起きた世代の名乗り(AL-D2f): 前の世代の最新の報告の running の常駐の job を、前の世代が動かして
+        ;; いる組(SupersededRun)の種にする — 前の世代の次の heartbeat を待たずに、今の世代への最初の返事から印 elder-runs を付ける。
+        previous-report (.get adopted.statuses name)
+        seeded (if (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
+                        (is-not previous-report None))
+                   (replace registered :superseded-runs (superseded-runs-after registered name previous.boot previous-report.jobs now
+                                                                               :overlapped True))
+                   registered))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
   ;; 置き直しの待ちへ戻す(absorb-task-reports・#2976 の I-3 の赤 R5)— 退いた世代の heartbeat はここへ来ないので戻さない。
-  (replace registered :tasks (promote-prepared (renew-detached (absorb-task-reports registered name statuses now boot
+  (replace seeded :tasks (promote-prepared (renew-detached (absorb-task-reports seeded name statuses now boot
                                                                                     :stopping body.stopping)
                                                                name boot now)
                                               info)
-                      :keep-marks (! (released-keep-marks registered.keep-marks name body.kept-when-cut-off))))
+                      :keep-marks (! (released-keep-marks seeded.keep-marks name body.kept-when-cut-off))))
 
 
 (defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
@@ -1612,19 +1621,24 @@
                  :superseded-runs (superseded-runs-after state name boot statuses now)))
 
 
-(defn #^ tuple superseded-runs-after [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
+(defn #^ tuple superseded-runs-after [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
+                                      #^ (| bool None) [overlapped None]]
   ;; defk にできない: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
-  "純粋: 退いた世代 boot の報告 statuses の後の、退いた世代の走らせている入れ替えの job の組の列(AL-D2)。この世代の行を、報告の
-   running の handoff の job の名で置き直す(空なら外す)。名 name の行のうち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も
-   外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。"
+  "純粋: 退いた世代 boot の報告 statuses の後の、退いた世代の走らせている常駐の job の組の列(AL-D2)。この世代の行を、報告の
+   running の job の名で置き直す(空なら外す)。数える job は handoff の job、組が overlapped(新しい世代が重なりを名乗った — 名乗りの
+   時に overlapped = 真で種を置く・それ以外の報告は前の組の印を引き継ぐ)なら recreate の job も(task は除く)— recreate の job は
+   新しい世代が起こせると報告するまで退いた世代に残す(AL-D2f — heartbeat-reply の印 elder-runs と superseded-reply)。名 name の行の
+   うち、もう退いた世代の列(WorkerInfo.retired)に無い世代の行も外す(覚えの上限 RETIRED-BOOTS-KEPT と同じ長さで捨てる)。"
   (setv info (.get state.workers name)
         kept (if (is info None) #() info.retired)
-        handoff (frozenset (gfor j state.jobs :if j.spec.handoff j.spec.name))
-        jobs (tuple (sorted (& (running-names statuses) handoff)))
+        prior (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
+        overlap (if (is overlapped None) (and (is-not prior None) prior.overlapped) overlapped)
+        counted (frozenset (gfor j state.jobs :if (if overlap (not j.spec.once) j.spec.handoff) j.spec.name))
+        jobs (tuple (sorted (& (running-names statuses) counted)))
         others (tuple (gfor r state.superseded-runs
                             :if (not (and (= r.worker name) (or (= r.boot boot) (not-in r.boot kept))))
                             r)))
-  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now)) #()))
+  (tuple (sorted (+ others (if jobs #((SupersededRun :worker name :boot boot :jobs jobs :seen-ms now :overlapped overlap)) #()))
                  :key (fn [r] #(r.worker r.boot)))))
 
 
@@ -1737,11 +1751,28 @@
   ;; keepWhenCutOff = 他へ移せない job に付ける「途絶しても動かし続けてよい」印(#2804 — keep-marked)。印を渡した事実は呼び手が
   ;; remember-keep-marks で約束として状態に残す。
   (<- marked frozenset (keep-marked now state name timing))
+  ;; elder = 同じ名の前の世代がまだ動かしている常駐の job(AL-D2f)。その recreate の job には印 elder-runs を付ける — worker は準備と
+  ;; 入口の検めだけをして起こさず、揃ったら状態の行を elder-runs にする(superseded-reply が前の世代から外す)。
+  (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.lease-ms) (frozenset)))
   (HeartbeatReply :jobs (tuple (gfor spec (jobs-for state name ready-instances)
-                                     (if (in spec.name marked) (replace spec :keep-when-cut-off True) spec)))
+                                     :setv kept (if (in spec.name marked) (replace spec :keep-when-cut-off True) spec)
+                                     (if (and (in spec.name elder) (not spec.handoff) (not spec.once))
+                                         (replace kept :elder-runs True)
+                                         kept)))
                   :tasks (tasks-for state name boot) :warm (warms-for state name now)
                   :timing timing :draining (in name state.drains) :superseded False :formats (tuple ACCEPTED-FORMATS)
                   :revision state.revision))
+
+
+(defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]
+  ;; defk にできない: coordinator の純粋な判断(heartbeat-reply の内包表記の前の値)が呼ぶ
+  "純粋: 名 name の worker の、送り手の世代 boot と違う前の世代がまだ動かしている常駐の job の名(AL-D2f — その世代の最後の報告が
+   window-ms 以内の、新しい世代が重なりを名乗った(overlapped)SupersededRun の行だけ。黙った世代の行は数えない — 前の世代が止まれば
+   今の世代が起こす)。"
+  (frozenset (gfor r state.superseded-runs
+                   :if (and r.overlapped (= r.worker name) (!= r.boot boot) (< (- now r.seen-ms) window-ms))
+                   job r.jobs
+                   job)))
 
 
 (defn #^ frozenset running-names [#^ tuple statuses]
@@ -1763,8 +1794,15 @@
    行に無い物 = 新しい世代の process が Ready の物には印 superseded-by を載せる(worker は今の process を止めずに退かせ、起こし直さない —
    走っている仕事を終えて自分で終わる)。"
   (setv running (running-names statuses)
-        own (frozenset (gfor row statuses :if row.instance row.instance)))
-  (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances) :if (and s.handoff (in s.name running))
+        own (frozenset (gfor row statuses :if row.instance row.instance))
+        ;; 今の世代が起こせると報告した recreate の job(状態の行の phase が elder-runs — AL-D2f)。それまでは前の世代に残す。
+        current (.get state.statuses name)
+        taken (frozenset (gfor row (if (is current None) #() current.jobs) :if (= row.phase "elder-runs") row.name))
+        ;; 新しい世代が重なりを名乗った組(overlapped)の recreate の job だけを残す(名乗らない新しい世代 = 今どおり止める)。
+        held (frozenset (gfor r state.superseded-runs :if (and r.overlapped (= r.worker name) (= r.boot boot)) job r.jobs job)))
+  (HeartbeatReply :jobs (tuple (gfor s (jobs-for state name ready-instances)
+                                     :if (or (and s.handoff (in s.name running))
+                                             (and (not s.handoff) (not s.once) (in s.name held) (in s.name running) (not-in s.name taken)))
                                      (if (and (is-not s.ready-instance None) (not-in s.ready-instance own))
                                          (replace s :superseded-by s.ready-instance)
                                          s)))

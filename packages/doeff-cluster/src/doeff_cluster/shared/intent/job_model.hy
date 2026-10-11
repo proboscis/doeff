@@ -43,6 +43,10 @@
   ;; 今の process を止めずに退かせ(RetireJob — 走っている仕事を終えて自分で終わる・寿命の上限は retired-ms)、名が空いても起こし直さない
   ;; (worker_policy.plan-job)。None = 今どおり。比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ (| str None) superseded-by (field :default None :compare False))
+  ;; 前の世代が動かしている印(recreate の job だけ・AL-D2f)。同じ名の worker の前の世代がまだ走っている間に起きた新しい世代への返事で、
+  ;; 前の世代がこの job を動かしている間、coordinator が付ける。worker は準備と入口の検めだけをして起こさず、揃ったら状態の行を
+  ;; elder-runs にする(coordinator はそれを見て前の世代から外し、前の世代が止め終えたら印を外す)。偽 = 今どおり。比べない欄。
+  (setv #^ bool elder-runs (field :default False :compare False))
   ;; 切り離した task(2026-09-25・once と組)。coordinator との連絡が途絶えても止めない(担い手の heartbeat が lease を延ばし、途絶が
   ;; lease より長ければ coordinator が lost にして、再接続の返事から外れた時に止める — worker_policy.kept-when-cut-off)。比べない欄。
   (setv #^ bool detached (field :default False :compare False))
@@ -111,5 +115,6 @@
         PROBE-FAILED "probe-failed"    ; 木は揃ったが、実行環境で入口の module を読み込めない(起動しない)
         ENV-FAILED "env-failed"        ; 実行環境(runtime env)の root を準備できない(子 process を起こしていない)
         HANDOFF-ABANDONED "handoff-abandoned"  ; 入れ替えを諦めた(新は起こさない・退いた旧が動いている — 宣言が変わるまで)
+        ELDER-RUNS "elder-runs"        ; コードと入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — 起こさない)
         FINISHED "finished"            ; task が終わった(起動し直さない)
         STOPPED "stopped"))

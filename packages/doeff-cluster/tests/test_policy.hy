@@ -529,3 +529,26 @@
   (val kill (! (plan 1000 #() w records POLICY)))
   (assert (= kill #((SignalJob "a" 10 StopStage.KILL cut))) kill)
   (assert (= (! (plan 0 #() w {} POLICY :absent (WorkerStopping))) #((SignalJob "a" 10 StopStage.TERM (WorkerStopping))))))
+
+
+;; --- 前の世代が動かしている recreate の job(AL-D2f・card ki-76506cc96202): 同じ名の前の世代がまだ走っている間、新しい世代は coordinator の
+;;     印 elder-runs を受けた job を準備と入口の検めまで進めて起こさず、揃ったら状態の行を elder-runs にする。印が外れたら起こす。 --------
+
+(deftest test-a-job-the-elder-runs-is-prepared-but-not-started-until-the-mark-is-lifted
+  (val held (replace A1 :elder-runs True))
+  ;; 木の準備は進める(起こさないのは揃った後だけ)。
+  (assert (= (! (plan 0 #(held) (! (world :codes #())) {} POLICY)) #((PrepareCode "rev1" None))))
+  (assert (= (. (get (! (statuses 0 #(held) (! (world :codes #())) {} POLICY)) 0) phase) JobPhase.PREPARING))
+  ;; 揃ったら起こさず、状態の行は elder-runs・見送りの訳は ELDER-RUNS。
+  (assert (= (! (plan 0 #(held) (! (world)) {} POLICY)) #()) "前の世代が動かしている間は起こさない")
+  (assert (= (. (get (! (statuses 0 #(held) (! (world)) {} POLICY)) 0) phase) JobPhase.ELDER-RUNS))
+  (assert (= (! (start-holds 0 #(held) (! (world)) {} POLICY)) #((JobHold :name "a" :hold StartHold.ELDER-RUNS))))
+  ;; 印が外れたら起こす(印は比べない欄 — 同じ spec)。
+  (assert (= held A1))
+  (assert (= (! (plan 0 #(A1) (! (world)) {} POLICY)) #((StartJob A1 1 "/c/rev1")))))
+
+
+(deftest test-the-elder-runs-mark-does-not-hold-a-handoff-job
+  ;; handoff の job は世代をまたぐ入れ替え(superseded-by)が受け持つので、印を受けても今どおり起こす。
+  (val handoff (replace A1 :handoff True :elder-runs True))
+  (assert (= (! (plan 0 #(handoff) (! (world)) {} POLICY)) #((StartJob handoff 1 "/c/rev1")))))

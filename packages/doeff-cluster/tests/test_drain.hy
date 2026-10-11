@@ -478,6 +478,49 @@
   (assert (= (lfor j (get current "jobs") (.get j "supersededBy")) [None]) (get current "jobs")))
 
 
+(deftest test-the-old-generation-keeps-a-recreate-job-until-the-new-generation-can-start-it
+  ;; 失敗ケース(AL-D2f・card ki-76506cc96202 — 10-11 17:36 JST の zeus の RollingUpdate): 同じ名 atlas の新しい世代が、前の世代がまだ
+  ;; 走っている間に名乗る(overlapsElder)。前の世代の動かしている recreate の job r は、新しい世代が r を起こせる(準備と入口の検めが
+  ;; 揃った — 状態の行の phase が elder-runs)と報告するまで前の世代に残す。新しい世代には印 elderRuns を付けて渡す(準備と検めだけを
+  ;; して起こさない)。新しい世代が起こせると報告したら前の世代の返事から外し(前の世代が止める)、前の世代が止め終えたら新しい世代の
+  ;; 印を外す(起こす)。直す前は、新しい世代の名乗りと同時に前の世代の返事から r が外れ、新しい世代の準備の間(本番で 6 分)誰も動かさなかった。
+  (setv c (Coord #("atlas")))
+  (c.beat "atlas" :boot "old")
+  (c.call "POST" "/resources/Service" {"name" "r" "spec" (! (service {"update" "recreate"}))} :expect 201)
+  (c.beat "atlas" ["r"] :boot "old")
+  (c.advance 1)
+  (setv old-row (c.row "atlas" "r"))
+  (setv (get c.boots "atlas") "new")
+  (setv preparing {"name" "r" "phase" "preparing" "desiredRevision" (get old-row "desiredRevision")})
+  (setv first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+                                          "statuses" [preparing] "overlapsElder" True}
+                      :actor None))
+  (assert (= (lfor j (get first "jobs") #((get j "name") (.get j "elderRuns"))) [#("r" True)]) (get first "jobs"))
+  ;; 前の世代はまだ r を動かし続ける(返事に r が残る)。
+  (setv old-reply (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
+                                              "statuses" [old-row]}
+                          :actor None))
+  (assert (get old-reply "superseded") old-reply)
+  (assert (= (lfor j (get old-reply "jobs") (get j "name")) ["r"]) (get old-reply "jobs"))
+  ;; 新しい世代が r を起こせると報告した → 前の世代の返事から r が外れる(前の世代が止める)。新しい世代の印はまだ残る。
+  (setv ready-row (| preparing {"phase" "elder-runs"}))
+  (setv second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+                                           "statuses" [ready-row] "overlapsElder" True}
+                       :actor None))
+  (assert (= (lfor j (get second "jobs") (.get j "elderRuns")) [True]) (get second "jobs"))
+  (setv told (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
+                                         "statuses" [old-row]}
+                     :actor None))
+  (assert (= (get told "jobs") []) (get told "jobs"))
+  ;; 前の世代が r を止め終えた(報告に running の r が無い)→ 新しい世代の印が外れる(起こす)。
+  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old" "statuses" []}
+          :actor None)
+  (setv third (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+                                          "statuses" [ready-row] "overlapsElder" True}
+                      :actor None))
+  (assert (= (lfor j (get third "jobs") #((get j "name") (.get j "elderRuns"))) [#("r" None)]) (get third "jobs")))
+
+
 (deftest test-the-old-pod-drain-waits-for-the-handoff-processes-of-its-own-generation
   ;; 世代をまたぐ入れ替え(AL-D2): 旧い Pod の preStop は、その世代がまだ走らせている入れ替えの job の process(退かせた process — 走って
   ;; いる仕事を終えて自分で終わる)が終わるまで drained を返さない(返すと SIGTERM で仕事が切れる)。その世代の報告から job が消えたら

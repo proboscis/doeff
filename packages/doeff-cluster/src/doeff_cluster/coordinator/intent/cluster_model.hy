@@ -353,12 +353,15 @@
   "退いた世代(同じ名の新しい世代が名乗った後の旧い Pod)が、まだ走らせていると報告した入れ替え(handoff)の job の組(AL-D2)。旧い Pod の
    preStop の drain(drain_policy.superseded-worker-view)は、この組が空になるまで(退かせた process が走っている仕事を終えて自分で終わる
    まで)drained を返さない。worker = 名・boot = 退いた世代・jobs = 走っている handoff の job の名(名の順)・seen-ms = その世代の最後の
-   報告の刻(lease の間 沈黙した世代 = Pod が消えた — 待たない)。保存する(durable_kv の superseded/<名>/<世代>)。"
+   報告の刻(lease の間 沈黙した世代 = Pod が消えた — 待たない)・overlapped = 同じ名の新しい世代が、この世代がまだ走っている間に
+   起きたと名乗った(overlapsElder — AL-D2f)。真の組は recreate の job も持ち、新しい世代が起こせると報告するまでこの世代に残す
+   (偽 = 新しい世代が名乗った時に止める今どおりの形 — Recreate・突然の停止の後)。保存する(durable_kv の superseded/<名>/<世代>)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
   (#^ str boot)
   (#^ (get tuple #(str ...)) jobs)
-  (#^ int seen-ms))
+  (#^ int seen-ms)
+  (setv #^ bool overlapped False))
 
 
 (defrecord StateView

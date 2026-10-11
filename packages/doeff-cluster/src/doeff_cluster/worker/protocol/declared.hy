@@ -62,6 +62,8 @@
            :retired-limit (.get job "retiredLimit")
            ;; 世代をまたぐ入れ替えの印(AL-D2 — 退いた世代への返事の handoff の job だけが持つ・無ければ None = 動かし続ける)。
            :superseded-by (.get job "supersededBy")
+           ;; 前の世代が動かしている印(AL-D2f — 前の世代がまだ走っている間の新しい世代への返事の recreate の job だけが持つ)。
+           :elder-runs (bool (.get job "elderRuns" False))
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
            ;; 子の入口が比べる送り手の版 = 宣言の版(Program の job の行は必ず持つ — cache の file は版ごと・card ki-172e63fed4c7)。

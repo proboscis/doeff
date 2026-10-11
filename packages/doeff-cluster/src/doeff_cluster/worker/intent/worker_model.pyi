@@ -177,6 +177,7 @@ class StartHold(StrEnum):
     BACKOFF = "backoff"
     WARM_CHILD = "warm-child"
     HANDOFF_ABANDONED = "handoff-abandoned"
+    ELDER_RUNS = "elder-runs"
 
 # --- 待ちの子(#3646)-------------------------------------------------------------
 

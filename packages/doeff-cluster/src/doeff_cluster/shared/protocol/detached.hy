@@ -451,7 +451,7 @@
 ;; worker の状態の行の phase のうち、子 process が動いている物と、まだ起きていない(準備・起動待ち・入口の検め)物。どちらでもない行
 ;; (backoff・finished・stopped・各種の失敗)は、その job の最後の process が終わった姿。
 (val LIVE-JOB-PHASES (frozenset #("running" "stopping" "stop-unconfirmed")))
-(val UNSTARTED-JOB-PHASES (frozenset #("preparing" "starting" "probing")))
+(val UNSTARTED-JOB-PHASES (frozenset #("preparing" "starting" "probing" "elder-runs")))
 
 
 (defrecord ProcessWatch

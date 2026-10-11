@@ -156,7 +156,8 @@
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-job-model",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-worker-model"
+        "doeff-cluster-worker-model",
+        "doeff-cluster-detached-model"
       ],
       "layer": "domain",
       "name": "doeff-cluster-cluster-model",
@@ -360,7 +361,8 @@
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-warm-rules",
         "doeff-cluster-clock",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-detached",

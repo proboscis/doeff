@@ -62,6 +62,9 @@
      ;; 世代をまたぐ入れ替えの印を持つ handoff の job だけ(AL-D2 — 退いた世代への返事): worker は今の process を止めずに退かせ、起こし直さ
      ;; ない。欄を読まない古い worker は今どおり動かし続ける(Pod の停止で止める)。
      (if (and spec.handoff (is-not spec.superseded-by None)) {"supersededBy" spec.superseded-by} {})
+     ;; 前の世代が動かしている印を持つ recreate の job だけ(AL-D2f — 前の世代がまだ走っている新しい世代への返事): worker は準備と検めだけを
+     ;; して起こさない。欄を読まない古い worker は今どおり起こす(前の世代と並びうる — 世代の重なりを名乗る worker だけが印を受ける)。
+     (if spec.elder-runs {"elderRuns" True} {})
      ;; 退いた process の寿命の上限を宣言した handoff の job だけ(#4072 の D-2): worker は新の Ready で退いた旧を止めず、旧が自分で
      ;; 終わるか、退いてからこの ms を越えた時に止める。欄を読まない古い worker は今どおり新の Ready で止める。
      (if (and spec.handoff (is-not spec.retired-ms None)) {"retiredMs" spec.retired-ms} {})

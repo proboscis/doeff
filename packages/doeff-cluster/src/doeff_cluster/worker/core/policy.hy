@@ -219,6 +219,19 @@
     _ StartHold.PROBE-FAILED))
 
 
+(defn #^ bool elder-waits [#^ JobSpec spec]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "前の世代が動かしている印(elder-runs)を持つ常駐の recreate の job か(AL-D2f — 起こしの段 ready-tree-step と状態の行の phase-of が
+   同じ述語を読む)。handoff と task は印を受けない。"
+  (and spec.elder-runs (not spec.handoff) (not spec.once)))
+
+
+(defn #^ bool elder-ready [#^ int now #^ JobSpec spec #^ (| CodeView None) code #^ WorldView world #^ WorkerPolicy policy]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "前の世代が動かしている印の job が、起こせる所まで揃ったか(AL-D2f — 状態の行の elder-runs): 木が READY で、入口の検めが通った
+   (起こしの段 ready-tree-step が検めの action を返さない)。coordinator はこの行を見て前の世代から外す。"
+  (setv tree (ready-path code))
+  (and (elder-waits spec) (is-not tree None) (is (probe-actions now spec tree world policy) None)))
+
+
 (defk ready-tree-step [now spec tree world record policy]
   {:pre [(: now int) (: spec JobSpec) (: tree str) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy)] :post [(: % StartStep)]
    :tags {:context "worker" :role "judgment"}}
@@ -230,6 +243,9 @@
     (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world spec))))
     (in-backoff now record policy) (StartStep :actions #() :hold StartHold.BACKOFF)
     (and forks (not (warm-child-ready (warm-child-of world (warm-key-of spec))))) (StartStep :actions #() :hold StartHold.WARM-CHILD)
+    ;; 同じ名の前の世代がこの job を動かしている(AL-D2f): 準備と検めは揃ったので、coordinator が印を外すまで起こさない(状態の行は
+    ;; elder-runs — coordinator はそれを見て前の世代から外す)。
+    (elder-waits spec) (StartStep :actions #() :hold StartHold.ELDER-RUNS)
     True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if forks (warm-key-of spec) None))) :hold None)))
 
 
@@ -640,6 +656,8 @@
           (and (forks-from-warm-child want) (warm-child-refused (warm-child-of world (warm-key-of want)) policy)) JobPhase.ENV-FAILED
           ;; 待ちの子から分かれる task は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は状態の行の文 — #3646)。
           (and (forks-from-warm-child want) (not (warm-child-ready (warm-child-of world (warm-key-of want))))) JobPhase.PREPARING
+          ;; 前の世代が動かしている印の job(AL-D2f): 入口の検めまで揃った時だけ elder-runs(coordinator はこれで前の世代から外す)。
+          (elder-ready now want code world policy) JobPhase.ELDER-RUNS
           True JobPhase.STARTING))))
 
 (defn #^ (| WarmChildView None) refused-warm-child [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process

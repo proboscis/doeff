@@ -230,6 +230,7 @@ class SupersededRun:
     boot: str
     jobs: tuple[str, ...]
     seen_ms: int
+    overlapped: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class StateView:

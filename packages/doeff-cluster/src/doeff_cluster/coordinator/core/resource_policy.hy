@@ -341,6 +341,8 @@
     JobPhase.PREPARING VersionState.UPDATING
     JobPhase.PROBING VersionState.UPDATING
     JobPhase.STARTING VersionState.UPDATING
+    ;; 同じ名の前の世代が動かしている間、新しい世代は準備と検めを揃えて待つ(AL-D2f)— 世代の入れ替えの正常な途中。
+    JobPhase.ELDER-RUNS VersionState.UPDATING
     JobPhase.STOPPING VersionState.UPDATING
     ;; 担い手がまだ宣言を受け取っていない。
     JobPhase.STOPPED VersionState.UPDATING
