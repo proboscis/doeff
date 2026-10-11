@@ -19,6 +19,8 @@
 ;;;   append_rows (ledger, 組の名の式) 組で数える列(ByKeySuffix)の区切りごとに 1 つ — 書きが触る組の読み(touched-events-statement)と
 ;;;                                  組の照らし(expired-event-condition)が引く。式は key-suffix-expression の 1 か所から作り、区切りは宣言の値を
 ;;;                                  文に直に置く(引数にすると文の式が索引の式と揃わず、索引に当たらない — 区切りの字は values.SEPARATOR-PATTERN)
+;;;   append_rows (ledger, 頭の式, seq) 頭で引ける列(key-lookup の ByKeyHead)の区切りごとに 1 つ — 頭で引く読み(read-events-statement の
+;;;                                  key-head)が引く。式は key-head-expression の 1 か所から作り、区切りは宣言の値を文に直に置く(組の名の式と同じ)
 ;;;   row_changes (at)                変更の列の刈り(prune-changes-statement の at <= 境)
 ;;;   state_rows (ledger, 状態の欄の式) 保持の期限の在る表の状態の欄が、どの表の索引の欄にも無い時だけ(名と式は宣言した索引の欄と同じ — 終端の行の
 ;;;                                  読み terminal-rows-statement が引く)
@@ -175,6 +177,17 @@
   (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}append_rows (ledger, {g})" :i name :p prefix :g group) :params #()))
 
 
+(defk head-index-statement [prefix separator]
+  {:pre [(: prefix str) (: separator str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "頭で引ける列の区切り separator の頭の式の索引 append_rows (ledger, 頭の式, seq) を作る文を作るため(区切りごとに 1 つ — 同じ区切りの列は
+   索引を分け合う)。頭で引く読み(read-events-statement の key-head)が、列の他の頭の出来事を辿らずに、その頭の after より後を番号の順に
+   上から読む。式は文と同じ key-head-expression。"
+  (val name (+ prefix "append_rows_head_" (cut (.hexdigest (hashlib.sha1 (.encode separator "utf-8"))) 12)))
+  (<- head (key-head-expression "payload" separator))
+  (Statement :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}append_rows (ledger, {h}, seq)" :i name :p prefix :h head) :params #()))
+
+
 (defk schema-statements [prefix schema]
   {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
@@ -222,7 +235,7 @@
   {:pre [(: prefix str) (: schema RecordsSchema)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
   "旧い版より後に足した索引の文の列を宣言 schema から作るため(#3614 — 頭の註の 4 つ。どれも CREATE INDEX IF NOT EXISTS で、表の欄と
-   データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・変更の列の刻・欄の名の順の状態の欄の式。状態の欄の索引は、保持の期限の在る
+   データに触らない)。並びは (ledger, at)・区切りの順の組の名の式・区切りの順の頭の式・変更の列の刻・欄の名の順の状態の欄の式。状態の欄の索引は、保持の期限の在る
    表(KeepFor かつ終端の語を持つ — 回収の候補の読み terminal-rows-statement を流す表)の状態の欄のうち、どの表の索引の欄にも無い物だけ
    (在る欄は旧い版の文が同じ名で作る)。"
   (val p prefix)
@@ -232,10 +245,14 @@
   (val state-fields (sorted (sfor decl (.values schema.tables)
                                   :if (and (isinstance decl.retention KeepFor) decl.terminal (not-in decl.state-field indexed))
                                   decl.state-field)))
+  (val head-separators (sorted (sfor decl (.values schema.streams) :if (is-not decl.key-lookup None) decl.key-lookup.separator)))
   (var groups #())
   (for [separator separators]
     (<- statement (group-index-statement p separator))
     (:= groups (+ groups #(statement))))
+  (for [separator head-separators]
+    (<- head-statement (head-index-statement p separator))
+    (:= groups (+ groups #(head-statement))))
   (var states #())
   (for [field state-fields]
     (<- state-index (field-index-statement p field))
@@ -528,16 +545,29 @@
   (Clause :text (.format " AND NOT ({})" expired) :params named))
 
 
-(defk read-events-statement [prefix stream after limit expiry]
-  {:pre [(: prefix str) (: stream str) (: after int) (: limit int) (: expiry (| EventExpiry None))] :post [(: % Statement)]
+(defrecord HeadRead
+  "頭で引く読みの材料(read-events-statement に渡す): separator = 列の宣言の頭の区切り / head = 引く頭(ReadEvents の key-head)。"
+  (#^ str separator)
+  (#^ str head))
+
+
+(defk read-events-statement [prefix stream after limit expiry head]
+  {:pre [(: prefix str) (: stream str) (: after int) (: limit int) (: expiry (| EventExpiry None)) (: head (| HeadRead None))]
+   :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "追記の列の after より後を読む文を作るため。expiry = 列の保持の期限の境(None = 期限の無い列)— 期限を過ぎた出来事は、回収の前でも
-   読みに出さない(上限の前に除く)。"
+   読みに出さない(上限の前に除く)。head = 頭で引く読み(None = 列の全部の出来事)— 冪等キーの頭が head.head の出来事だけを、頭の式の
+   索引 (ledger, 頭の式, seq) で番号の順に読む(条件の式は索引と同じ key-head-expression)。"
   (<- living (living-events-filter prefix expiry "before_at"))
+  (var head-clause NO-CLAUSE)
+  (when (is-not head None)
+    (<- head-of (key-head-expression "old.payload" head.separator))
+    (<- head-params (params-of #(#("key_head" head.head))))
+    (:= head-clause (Clause :text (.format " AND {} = :key_head" head-of) :params head-params)))
   (Statement :text (.format "SELECT old.seq, old.at, old.payload FROM {p}append_rows AS old
-                       WHERE old.ledger = :ledger AND old.seq > :after{l} ORDER BY old.seq LIMIT :limit"
-                            :p prefix :l living.text)
-             :params (+ (! (params-of #(#("ledger" stream) #("after" after) #("limit" limit)))) living.params)))
+                       WHERE old.ledger = :ledger{h} AND old.seq > :after{l} ORDER BY old.seq LIMIT :limit"
+                            :p prefix :h head-clause.text :l living.text)
+             :params (+ (! (params-of #(#("ledger" stream) #("after" after) #("limit" limit)))) head-clause.params living.params)))
 
 
 (defk stream-end-statement [prefix stream expiry]
@@ -723,6 +753,16 @@
    組の名の式の索引(group-index-statement)と、組を照らす文(expired-event-condition・touched-events-statement)がこの 1 つを使う。"
   (<- suffix (key-suffix-of (.format "(({}::jsonb) ->> 'idempotencyKey')" payload) separator))
   suffix)
+
+
+(defk key-head-expression [payload separator]
+  {:pre [(: payload str) (: separator str) (.match SEPARATOR-PATTERN separator)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "出来事の payload の列(綴り payload — 索引は payload・文は old.payload)の冪等キーの頭(最初の区切り separator より前・区切りを含まない
+   キーはキー全体 — admission.key-head-of と同じ頭)の式を作るため。頭の式の索引(head-index-statement)と頭で引く読み
+   (read-events-statement)がこの 1 つを使う。区切りは宣言の値を文字列の literal で文に直に置く(key-suffix-of と同じ — 引数にすると文の
+   式が索引の式と揃わず索引に当たらない)。"
+  (.format "split_part((({}::jsonb) ->> 'idempotencyKey'), '{}', 1)" payload separator))
 
 
 (defk expire-event-groups-statement [prefix stream before-at separator]

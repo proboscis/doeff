@@ -103,7 +103,7 @@
                     OP-PUT-ROW #("written" "conflict" "refused")
                     OP-WATCH-CHANGES #("changes" "reset")
                     OP-APPEND-EVENT #("appended" "refused")
-                    OP-READ-EVENTS #("events")
+                    OP-READ-EVENTS #("events" "notIndexed")
                     OP-PUT-ROWS #("writtenRows" "rowsConflict" "rowsRefused")
                     OP-READ-STREAM-END #("streamEnd" "streamEmpty")
                     OP-WATCH-EVENTS #("eventsMoved" "eventsQuiet")
@@ -359,8 +359,11 @@
                                        (if streams {"streams" (list streams)} {})))
     (AppendEvent :stream stream :idempotency_key idempotency-key :body body)
       (WireRequest OP-APPEND-EVENT {"stream" stream "idempotencyKey" idempotency-key "body" (thaw-json body)})
-    (ReadEvents :stream stream :after after :limit limit)
-      (WireRequest OP-READ-EVENTS {"stream" stream "after" after "limit" limit})
+    (ReadEvents :stream stream :after after :limit limit :key_head key-head)
+      ;; 鍵 keyHead は頭で引く読みの時だけ送る(列の全部を読む読みは前の形のまま。古い記録の service は知らない鍵を 400 で断るので、
+      ;; 頭で引く client より先に service を新しい版で起こす)。
+      (WireRequest OP-READ-EVENTS (| {"stream" stream "after" after "limit" limit}
+                                     (if (is key-head None) {} {"keyHead" key-head})))
     (ReadStreamEnd :stream stream)
       (WireRequest OP-READ-STREAM-END {"stream" stream})
     (WatchEvents :stream stream :after after :timeout timeout)
@@ -421,10 +424,11 @@
             (AppendEvent (! (string-of (get body "stream") "stream")) (! (string-of (get body "idempotencyKey") "idempotencyKey"))
                          (get body "body")))
       "read-events"
-        (do (<- (object-of body "read-events の本文" #("stream") #("after" "limit")))
+        (do (<- (object-of body "read-events の本文" #("stream") #("after" "limit" "keyHead")))
             (setv keywords {})
             (when (in "after" body) (setv (get keywords "after") (! (integer-of (get body "after") "after"))))
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
+            (when (in "keyHead" body) (setv (get keywords "key_head") (! (string-of (get body "keyHead") "keyHead"))))
             (ReadEvents (! (string-of (get body "stream") "stream")) #** keywords))
       "put-rows"
         (PutRows (! (row-writes-from body)))

@@ -204,6 +204,17 @@
     _ None))
 
 
+(defn #^ str key-head-of [#^ str separator #^ str idempotency-key]
+  "冪等キーの頭(ReadEvents の key-head と比べる値)— 最初の区切り separator より前・区切りを含まないキーはキー全体。memory と PostgreSQL の
+   置き場が同じ出来事を出すための 1 点(PostgreSQL の式は pg_sql の key-head-expression)。"
+  (get (.split idempotency-key separator 1) 0))
+
+
+(defn #^ (| NotIndexed None) key-head-refusal [#^ StreamDecl decl #^ (| str None) key-head]
+  "頭で引く ReadEvents を、列が頭で引けると宣言していない(key-lookup が None)時に断るため(頭で引かない読みは断らない)。"
+  (if (and (is-not key-head None) (is decl.key-lookup None)) (NotIndexed #("idempotencyKey")) None))
+
+
 ;; --- 索引と頁 --------------------------------------------------------------------------------------------
 
 (defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where]

@@ -62,14 +62,14 @@
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records.maintenance [SweepExpired PruneChanges Swept Pruned])
 (import doeff_records.admission [AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
-                                 where-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
+                                 where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               schema-statements drop-statements
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
-                              insert-event-statement read-events-statement stream-end-statement event-by-key-statement expire-events-statement
+                              insert-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement expire-events-statement
                               expire-event-groups-statement touched-events-statement delete-events-statement expiring-events-statement
                               retire-keys-statement find-retired-key-statement])
 
@@ -799,10 +799,14 @@
 (defk pg-read-events [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadEvents) (: now-ms int)] :post [(: % Events)]
    :tags {:context "records" :role "foundation"}}
-  "ReadEvents に答えるため(刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない — 文の条件・頭の註)。"
+  "ReadEvents に答えるため(刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない — 文の条件・頭の註)。key-head を付けた読みは
+   冪等キーの頭が key-head の出来事だけを読む(列が頭で引けるかは呼び手の節が key-head-refusal で先に判じる)。"
   (val decl (store.schema.stream ask.stream))
   (<- expiry (event-expiry decl now-ms))
-  (<- statement (read-events-statement store.prefix ask.stream ask.after ask.limit expiry))
+  (val head (if (and (is-not ask.key-head None) (is-not decl.key-lookup None))
+                (HeadRead :separator decl.key-lookup.separator :head ask.key-head)
+                None))
+  (<- statement (read-events-statement store.prefix ask.stream ask.after ask.limit expiry head))
   (<- records (query-rows store.database statement))
   (var items [])
   (for [record records]
@@ -842,6 +846,18 @@
     (return (EventRetired (int (get record 1)))))
   (<- event (event-of ask.stream (tuple (cut record 1 4))))
   event)
+
+
+(defk pg-answer-read-events [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask ReadEvents) (: now-ms int)] :post [(: % (| Events NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "公開の ReadEvents に答えるため: 頭で引けない列への頭の読みは文を流さずに断り(memory の置き場と同じ判じ admission.key-head-refusal)、
+   ほかは pg-read-events で読む(列の待ち WatchEvents の読みは頭で引かないので pg-read-events を直に呼ぶ)。"
+  (val refusal (key-head-refusal (store.schema.stream ask.stream) ask.key-head))
+  (when refusal
+    (return refusal))
+  (<- events (pg-read-events store ask now-ms))
+  events)
 
 
 (defk moved-after [program]
@@ -938,7 +954,7 @@
     (resume answer))
   (ReadEvents [stream after limit]
     (<- now (GetTime))
-    (<- answer (reached (pg-read-events store effect (epoch-ms now))))
+    (<- answer (reached (pg-answer-read-events store effect (epoch-ms now))))
     (resume answer))
   (ReadStreamEnd [stream]
     (<- now (GetTime))
