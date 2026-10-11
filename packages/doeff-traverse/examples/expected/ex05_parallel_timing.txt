@@ -1,0 +1,4 @@
+async + sequential:   550 in …s
+async + parallel(10): 550 in …s
+async + parallel(3):  550 in …s
+sync + sequential:    550 in …s
