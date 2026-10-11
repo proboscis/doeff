@@ -1,0 +1,110 @@
+--- a/packages/doeff-codex/src/doeff_codex/fake.hy
++++ b/packages/doeff-codex/src/doeff_codex/fake.hy
+@@ -10,7 +10,8 @@
+ (import dataclasses [dataclass])
+ (import doeff_time [Delay])
+ (import doeff_codex.values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
+-(import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnEnded TurnStatus])
++(import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnEnded TurnStatus
++                           TurnError RateLimits RateLimitWindow])
+ (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
+                              CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
+                              SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
+@@ -19,13 +20,25 @@
+ ;; ターンに届いたことを筋書きが読めるように)。
+ (val STEERED-PREFIX "steered:")
+ 
++;; 利用枠切れで断る筋書きの窓の名 → codex が名乗る窓の長さ(分)。名は claude の筋書きの限度の窓(five_hour・seven_day)と同じ綴り —
++;; 上の層の模擬が claude と codex の利用枠切れを同じ筋書き(窓の名・戻りの刻・文)で書けるように。
++(val USAGE-LIMIT-WINDOW-MINUTES {"five_hour" 300 "seven_day" 10080})
++;; codex 0.162.1 が口座の利用枠切れで名乗る誤りの種類と枠の名(録った usage-limit の行と同じ綴り)。
++(val USAGE-LIMIT-KIND "usageLimitExceeded")
++(val USAGE-LIMIT-ID "codex")
++
+ 
+ (defrecord FakeReply
+   "筋書きの答え 1 つ: pieces = 答えの文字の途中の欠片(順に TextDelta になり、連ねると答えの全文)/ hold = 真なら終わりを出さずに
+-   止め(CodexInterruptTurn)を待つ(途中で止める筋書きのため)。"
++   止め(CodexInterruptTurn)を待つ(途中で止める筋書きのため)/ usage-limit-text = 在れば、答えの代わりに口座の利用枠切れで断る
++   (codex の誤りの文)/ usage-limit-window = 尽きた窓の名(five_hour・seven_day — None は窓を名乗らない)/ usage-limit-resets-at =
++   その窓の戻りの刻(epoch 秒 — None は名乗らない)。"
+   {:tags {:context "codex" :role "type"}}
+   (#^ (get tuple #(str ...)) pieces)
+-  (setv #^ bool hold False))
++  (setv #^ bool hold False)
++  (setv #^ (| str None) usage-limit-text None)
++  (setv #^ (| str None) usage-limit-window None)
++  (setv #^ (| int None) usage-limit-resets-at None))
+ 
+ 
+ (defclass FakeTurn []
+@@ -72,6 +85,28 @@
+     (.format "fake-{}-{}" kind self.made)))
+ 
+ 
++(defk usage-limit-records [#^ str thread-id #^ str turn-id #^ FakeReply reply]
++  {:pre [(: thread-id str) (: turn-id str) (: reply FakeReply)] :post [(: % tuple)] :tags {:context "codex" :role "process"}}
++  "利用枠切れで断る筋書きを、録った codex 0.162.1 と同じ順の記録(枠の知らせ → 誤りの通知 → 失敗の終わり)にするため。窓を名乗る
++   筋書きは、その窓を使い切った(使った割合 100)枠の知らせを出す — 5 時間の窓は primary・ほかは secondary(録りと同じ置き方)。"
++  (val text reply.usage-limit-text)
++  (val name reply.usage-limit-window)
++  (val spent (if (is name None)
++                 None
++                 (RateLimitWindow :used-percent 100 :minutes (get USAGE-LIMIT-WINDOW-MINUTES name)
++                                  :resets-at reply.usage-limit-resets-at)))
++  (val limits (if (is spent None)
++                  #()
++                  #((RateLimits :limit-id USAGE-LIMIT-ID
++                                :primary (if (= name "five_hour") spent None)
++                                :secondary (if (= name "five_hour") None spent)))))
++  (+ limits
++     #((TurnError :thread-id thread-id :turn-id turn-id :message text :error-kind USAGE-LIMIT-KIND :http-status None
++                  :will-retry False)
++       (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.FAILED :error-message text
++                  :error-kind USAGE-LIMIT-KIND))))
++
++
+ (defk fake-start [#^ FakeCodexWorld world #^ CodexStartTurn asked]
+   {:pre [(: world FakeCodexWorld) (: asked CodexStartTurn)] :post [(: % (| TurnStarted ThreadUnknown TurnInFlight))]
+    :tags {:context "codex" :role "process"}}
+@@ -99,6 +134,12 @@
+         thread.current turn-id)
+   (val reply (world.respond asked.input))
+   (.add thread turn (TurnStartedLine :thread-id thread-id :turn-id turn-id))
++  ;; 利用枠切れの筋書きは答えを出さずに断る(本番と同じ順の記録 — 終わりは失敗)。
++  (when (is-not reply.usage-limit-text None)
++    (<- refused (usage-limit-records thread-id turn-id reply))
++    (for [record refused]
++      (.add thread turn record))
++    (return (TurnStarted :turn (CodexTurn :thread-id thread-id :turn-id turn-id))))
+   (.add thread turn (ItemStarted :thread-id thread-id :turn-id turn-id :item-id item-id :item-type "agentMessage"))
+   (for [piece reply.pieces]
+     (.add thread turn (TextDelta :thread-id thread-id :turn-id turn-id :item-id item-id :text piece)))
+--- a/packages/doeff-agents/tests/test_headless_codex_adapter.hy
++++ b/packages/doeff-agents/tests/test_headless_codex_adapter.hy
+@@ -91,6 +91,9 @@
+   (cond
+     (in "SLOW" input.text) (FakeCodexReply :pieces #("slow-0 " "slow-1 ") :hold True)
+     (in IMAGES-PHRASE input.text) (FakeCodexReply :pieces #((.format "IMAGES {}" (len input.images))))
++    ;; 利用枠切れの筋書き(録りと同じ値 — 5 時間の窓が尽き、戻りの刻と codex の文を名乗る)。
++    (in USAGE-LIMIT-PROMPT input.text) (FakeCodexReply :pieces #() :usage-limit-text USAGE-LIMIT-TEXT :usage-limit-window "five_hour"
++                                                       :usage-limit-resets-at USAGE-RESETS-AT)
+     True (FakeCodexReply :pieces ANSWER-PIECES)))
+ 
+ (defk handlers-for [#^ str backend #^ Path tmp-path world]
+@@ -562,6 +565,15 @@
+   (<- done (run-on PUBLIC-STUB tmp-path usage-limited-turn))
+   (<- (check-usage-limit done)))
+ 
++(deftest test-headless-codex-usage-limit-carries-the-account-limit-fake [tmp-path]
++  ;; 層 2 の fake の利用枠切れの筋書きでも、録った行と同じ AgentTurnFailed.account_limit が届く(模擬が claude と同じ筋書きで書ける)。
++  (<- done (run-on FAKE tmp-path usage-limited-turn))
++  (<- (check-usage-limit done)))
++
++(deftest test-the-public-codex-handlers-carry-the-account-limit-fake [tmp-path]
++  (<- done (run-on PUBLIC-FAKE tmp-path usage-limited-turn))
++  (<- (check-usage-limit done)))
++
+ (deftest test-headless-codex-rate-limit-is-not-an-account-limit-stub [tmp-path]
+   ;; 上流の 429(誤り responseTooManyFailedAttempts — 口座の利用枠切れでない断り)のターンは、口座の利用枠切れを名乗らずに失敗で終わる
+   ;; (口座を外す訳にしない)。

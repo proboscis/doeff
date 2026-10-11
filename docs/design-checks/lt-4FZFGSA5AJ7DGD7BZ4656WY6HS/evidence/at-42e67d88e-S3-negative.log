@@ -1,0 +1,5 @@
+rev=42e67d88e63b978def59f2afa5c6fbc7ed7907a9
+$ hy probe_outside.hy
+outside: ('RateLimits',)
+u1 の終わり: completed None
+u2 の終わり: failed UsageLimitHit(minutes=None, resets_at=None, text='You’ve hit your usage limit.')

@@ -1,0 +1,109 @@
+
+deadline scale x1.4 (load/core) — per test 84s, watchdog 125s
+
+test-admission: focused — 39 件(変更箇所の検証)
+doeff-adr: 記録から収集 3 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000025 秒・依存変更で再作成 0 file
+...............................F.......                                  [100%]
+=================================== FAILURES ===================================
+_________ test_the_public_codex_handlers_carry_the_account_limit_stub __________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x3ff90e5b640>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-946/test_the_public_codex_handlers2')
+
+    (deftest test-the-public-codex-handlers-carry-the-account-limit-stub [tmp-path]
+      ;; agora が組む公開の口でも同じ(card acp:kanban-issue:ki-a59d80e0afa9)。
+>     (<- done (run-on PUBLIC-STUB tmp-path usage-limited-turn))
+
+packages/doeff-agents/tests/test_headless_codex_adapter.hy:565: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-agents/tests/conftest.py:70: in run_program
+    return run(compose(program))
+           ^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-agents/tests/test_headless_codex_adapter.hy:566: in _hy_anon_144
+    (<- (check-usage-limit done)))
+          ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+done = Read(events=(AgentInputFateEvent(seq=0, at=datetime.datetime(2026, 10, 11, 16, 44, 19, 472798, tzinfo=datetime.timezon...re credits or try again at Jan 1st, 2030 12:00 AM.'), account_refusal=None, exit_code=None, stderr_tail=None), after=1)
+
+    (defk check-usage-limit [#^ Read done]
+      {:pre [(: done Read)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+      "利用枠切れで失敗したターンの終わりが、尽きた窓(5 時間の窓)と戻りの刻と codex の文を AgentAccountLimit で運ぶことを確かめるため —
+       agora は claude と同じ道(account_limit の在る失敗 = 口座の利用枠切れ・戻りの刻まで口座を外す)で口座を替える・待つ。"
+      (<- ends (of-kind done.events AgentTurnEndEvent))
+      (assert (= (len ends) 1) done.events)
+      (val end done.end)
+      (assert (isinstance end AgentTurnFailed) end)
+>     (assert (= end.account-limit (AgentAccountLimit :window "five_hour" :resets-at USAGE-RESETS-AT :text USAGE-LIMIT-TEXT)) end)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E     AssertionError: AgentTurnFailed(detail='You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM.', input_refs=('18df3e7a-1f0e-4152-8a33-0d54a0da1868',), resume_from='stub-thread-1', usage=None, last_call_usage=None, last_call_model=None, model_windows=(), account_limit=AgentAccountLimit(window=None, resets_at=None, text='You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM.'), account_refusal=None, exit_code=None, stderr_tail=None)
+
+packages/doeff-agents/tests/test_headless_codex_adapter.hy:553: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_the_public_codex_handlers_carry_the_account_limit_stub.<locals>._hy_anon_144()  packages/doeff-agents/tests/test_headless_codex_adapter.hy:566
+    (<- (check-usage-limit done)))
+  check_usage_limit()  packages/doeff-agents/tests/test_headless_codex_adapter.hy:553
+    (assert (= end.account-limit (AgentAccountLimit :window "five_hour" :resets-at USAGE-RESETS-AT :text USAGE-LIMIT-TEXT)) end)
+  _hy_anon_144()  packages/doeff-agents/tests/test_headless_codex_adapter.hy:566
+    (<- (check-usage-limit done)))
+
+AssertionError: AgentTurnFailed(detail='You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM.', input_refs=('18df3e7a-1f0e-4152-8a33-0d54a0da1868',), resume_from='stub-thread-1', usage=None, last_call_usage=None, last_call_model=None, model_windows=(), account_limit=AgentAccountLimit(window=None, resets_at=None, text='You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM.'), account_refusal=None, exit_code=None, stderr_tail=None)
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ak-dc-exp/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-agents/tests/test_headless_codex_adapter.hy::test_the_public_codex_handlers_carry_the_account_limit_stub
+1 failed, 38 passed, 1 warning in 10.32s

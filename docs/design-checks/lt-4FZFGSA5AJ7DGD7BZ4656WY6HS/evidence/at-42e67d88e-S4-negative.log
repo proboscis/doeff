@@ -1,0 +1,6 @@
+rev=42e67d88e63b978def59f2afa5c6fbc7ed7907a9
+$ hy probe_s4.hy(綴りの定義は usageLimitExceeded のまま)
+lines の USAGE-LIMIT-KIND: usageLimitExceeded
+新しい綴りの終わり: failed usageLimitReached usage-limit = None
+adapter: None
+fake の終わりの綴り: usageLimitExceeded

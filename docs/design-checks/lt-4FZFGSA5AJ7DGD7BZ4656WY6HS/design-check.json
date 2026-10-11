@@ -1,0 +1,333 @@
+{
+  "version": 1,
+  "task_id": "lt-4FZFGSA5AJ7DGD7BZ4656WY6HS",
+  "base_revision": "42e67d88e63b978def59f2afa5c6fbc7ed7907a9",
+  "author": {
+    "conversation_id": "c-BKM85J4QVXB8Q0X4SWDZ5HQBQ2",
+    "model": "claude-opus-5-5",
+    "effort": "unspecified"
+  },
+  "requirements": "codex(CLI 0.162.1 の app-server)の利用枠切れ(codexErrorInfo usageLimitExceeded)で失敗したターンを、doeff-agents の公開型 AgentAccountLimit として AgentTurnFailed.account_limit に載せ、agora が claude と同じ道で口座を外し resets_at まで待てるようにする。resets_at は usedPercent ≥ 100 の窓の resetsAt(複数なら遅い方)・名乗られない値は None。失敗ケース先(録った codex 0.162.1 の行で赤 → 緑)で doeff main に入れる(card ki-a59d80e0afa9・受入の条 c105690e8)。層の向き: codex 固有の型と handler は doeff-codex、doeff-agents は adapter、agora は doeff-agents の公開型だけを読む。",
+  "design": {
+    "path": "design.md",
+    "sha256": "0ba30571db31059c86ef6f5c7f26f19269a092e8dfbace6245601424be85ad91"
+  },
+  "modules": [
+    {
+      "id": "codex-lines",
+      "responsibility": "app-server の stdout の 1 行を型つきの記録へ分ける(純粋)。利用枠切れの事実の型 UsageLimitHit と、誤りの種類の綴り USAGE-LIMIT-KIND を定義する",
+      "owns": "codex 0.162.1 の JSON-RPC の形と欄の綴り・誤りの種類の綴り usageLimitExceeded(定義の 1 か所)・記録の型(RateLimits・RateLimitWindow・TurnEnded・UsageLimitHit)",
+      "hides": "JSON・camelCase の欄の名・wire の型(defwire)",
+      "interface": "classify-line(str → CodexLine)・TurnEnded.usage-limit: UsageLimitHit | None(行の分類では None)・USAGE-LIMIT-KIND",
+      "effects": "なし(純粋な分類 — 1 行から 1 記録)",
+      "lifetime": "なし(行ごとに状態を持たない)",
+      "invariants": "形の合わない行は Unparsed・知らない値は UnknownValue。窓は長さ(分)で名乗り、上の層の窓の名(five_hour・seven_day)を持たない"
+    },
+    {
+      "id": "codex-limits",
+      "responsibility": "ターンの中の枠の知らせを枠の名ごとに重ね、利用枠切れで終わったターンの事実(UsageLimitHit)を作る(純粋)",
+      "owns": "使った割合の閾値 100・尽きた窓が 2 つ以上なら遅く戻る方・名乗らない窓は前の値を消さない事・別の枠は別に覚える事",
+      "hides": "判定の中身(上の層は事実だけを読む)",
+      "interface": "merged-limits(tuple, RateLimits → tuple)・usage-limit-hit-of(TurnEnded, tuple → UsageLimitHit | None)",
+      "effects": "なし(純粋)",
+      "lifetime": "なし(呼び手の値だけを読む)",
+      "invariants": "誤りの種類が USAGE-LIMIT-KIND の時だけ事実を作る。尽きた窓が無い・刻を名乗らない・知らせが無ければ長さも刻も None(刻を発明しない)"
+    },
+    {
+      "id": "codex-handler",
+      "responsibility": "app-server の process の寿命と、行の記録をターンの記録へ積む事。ターンの終わりに利用枠切れの事実を載せる",
+      "owns": "どのターンへ積むか(turn/start の答えと turn/started を読んだ時点で走っているターンを立てる mark-running・遅れた記録 late・ターンの外 outside)・ターンの記録の枠の重ね TurnLog.limits",
+      "hides": "子 process・pid・stdin/stdout・読みの thread",
+      "interface": "公開 effect CodexStartTurn・CodexReadTurnEvents ほか(頁の end = TurnEnded が usage-limit を運ぶ)",
+      "effects": "子 process の起動と停止・読みの thread・lock",
+      "lifetime": "thread ごとに 1 process — CodexCloseSession か process の終わりまで。枠の重ねはターンの記録ごと",
+      "invariants": "1 thread に走るターンは多くとも 1 つ。ターンを名乗らない枠の知らせは、答えを読んだターン(無ければ outside)へ積み、次のターンへ持ち越さない"
+    },
+    {
+      "id": "codex-fake",
+      "responsibility": "同じ公開 effect に筋書きで答える層 2 の替え玉",
+      "owns": "筋書き(FakeReply — pieces・hold・usage-limit)",
+      "hides": "記録の作り方",
+      "interface": "fake-codex-handler・FakeCodexWorld・FakeReply(usage-limit = UsageLimitHit — 在れば同じ事実を運ぶ誤りと失敗の終わり)",
+      "effects": "仮想の時計の Delay だけ(process も API も使わない)",
+      "lifetime": "handler の値の寿命(world が状態を持つ)",
+      "invariants": "本番と同じ記録の型と同じ終わりの事実を出す。窓の名・誤りの種類の綴りの文字列を自分で持たない"
+    },
+    {
+      "id": "codex-adapter",
+      "responsibility": "doeff-agents の公開 effect と doeff-codex の effect の写し。層 2 の利用枠切れの事実を公開型 AgentAccountLimit へ写す",
+      "owns": "窓の長さ → 窓の名の表 WINDOW-NAMES(claude の CLI の綴り)",
+      "hides": "doeff-codex の型(呼び手は見ない)",
+      "interface": "LaunchEffect ほか → AgentTurnFailed.account_limit: AgentAccountLimit | None(account-limit-of: UsageLimitHit | None → AgentAccountLimit | None)",
+      "effects": "層 2 の effect・GetTime",
+      "lifetime": "session の値の寿命(利用枠の状態は持たない)",
+      "invariants": "刻と文はそのまま運ぶ。表に無い長さ・名乗られない長さの窓の名は None"
+    },
+    {
+      "id": "agent-contract",
+      "responsibility": "口座の利用枠切れの事実の公開型(claude と codex の adapter が同じ型で出す)",
+      "owns": "欄の意味(window・resets_at〔epoch 秒〕・text)",
+      "hides": "どの CLI か",
+      "interface": "AgentAccountLimit(frozen dataclass)・AgentTurnFailed.account_limit",
+      "effects": "なし(値)",
+      "lifetime": "なし(値)",
+      "invariants": "名乗らない欄は None"
+    },
+    {
+      "id": "agora-consumer",
+      "responsibility": "AgentAccountLimit を agora の型へ写し、口座を resets_at まで外す(agora-controllers の agent_turn.hy の account-limit-of・cli_host_rules.hy の limit-of)",
+      "owns": "口座の名・配る判断",
+      "hides": "doeff-codex を知らない(agora の semgrep が import を禁じる)",
+      "interface": "TurnAccountLimit → AccountLimit(:until)",
+      "effects": "agora の記録の書き(この設計の外)",
+      "lifetime": "agora の配る担当の寿命",
+      "invariants": "戻りの刻の無い印は LimitUnknown の待ち"
+    },
+    {
+      "id": "test-infra",
+      "responsibility": "本物の codex 0.162.1 の行を録り、替え玉の app-server で流す",
+      "owns": "入力の目印 USAGE-LIMIT・RATE-LIMIT と録った筋書き usage-limit・rate-limit",
+      "hides": "録りの偽の上流",
+      "interface": "scripts/record_app_server_lines.py の筋書きの名・tests/stub_cli/codex_app_server.py の入力の目印",
+      "effects": "録り: 子 process と HTTP の偽の上流。替え玉: 検の子 process",
+      "lifetime": "録りは版を上げる時に 1 回・替え玉は検の session ごと",
+      "invariants": "録った行をそのまま流す(thread とターンの id だけ差し替える)"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "層 2 の fake に、利用枠切れで失敗するターン(枠の知らせ・誤り・失敗の終わり)を出す欄を足す(agora 側の検が fake で回したい)",
+      "claim": "(盲検の前・design-pre-blind.md の §4)判定は adapter にあり、fake は本番と同じ記録の型を出すだけなので、fake の変更だけで adapter の判定がそのまま働く",
+      "expected_scope": "(盲検の前・design-pre-blind.md の §4)codex-fake(と、その検)。変えない: codex-lines・codex-handler・codex-adapter・agent-contract・agora-consumer",
+      "actual_scope": "元の設計(30d01f936): fake だけに欄を足すと、adapter の窓の名の表の逆(名 → 長さ)・閾値 100・綴りが fake に 2 つ目の定義として要った(盲検 B の差分で再現 — repro-B-base.log・盲検 A の E1〜E3)。修正後(42e67d88e): fake.hy の差分は import・FakeReply.usage-limit・終わりの分岐だけで、lines の型(UsageLimitHit・USAGE-LIMIT-KIND)を使い、窓の名も綴りの文字列も持たない(at-42e67d88e-S1-positive.log)",
+      "changed_modules": [
+        "codex-fake"
+      ],
+      "unchanged_modules": [
+        "codex-handler",
+        "codex-adapter",
+        "agent-contract",
+        "agora-consumer"
+      ],
+      "reason": "元の設計では隠すはずの知識(窓の名の表・閾値・綴り)が adapter にしか無く、層 2 の替え玉を上の層の言葉で動かすと漏れた — 知識の漏洩。根本は利用枠切れの概念が層 3 にしか無く層 2 に型が無い事(claude は層 2 に AccountLimitHit を持つ)",
+      "revision": "判定を層 2 へ移した(lines.hy の UsageLimitHit・USAGE-LIMIT-KIND、limits.hy の merged-limits・usage-limit-hit-of、handler がターンの終わりに載せる)。fake は事実を長さで受ける。層 2 が窓の名を持たない事の検を足し、B の逆の表を入れる変異が赤になる事を確かめた(at-42e67d88e-S1-negative.log)。L2086(赤 f26a34ffb → 緑 42e67d88e)"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "上流が新しい長さの窓(1440 分)を足し、その名(one_day)を出したい",
+      "claim": "(盲検の前・design-pre-blind.md の §4)窓の名の表は adapter の 1 か所なので、表の 1 行で済む",
+      "expected_scope": "(盲検の前・design-pre-blind.md の §4)codex-adapter(WINDOW-NAMES)。変えない: codex-lines・codex-handler・codex-fake・agent-contract・agora-consumer",
+      "actual_scope": "修正後(42e67d88e): adapter の WINDOW-NAMES の 1 行(差分 1 file — headless_codex.hy)で、fake の筋(長さ 1440 の事実)も AgentAccountLimit(window one_day)を出した(at-42e67d88e-S2-positive.log)。adapter 自身の表の検(1440 分 → None を確かめる 1 件)が赤になり、表と一緒に直す。元の設計の上で盲検 B の差分を入れた形では fake も直す必要があった(KeyError)",
+      "changed_modules": [
+        "codex-adapter"
+      ],
+      "unchanged_modules": [
+        "codex-lines",
+        "codex-limits",
+        "codex-handler",
+        "codex-fake",
+        "agent-contract",
+        "agora-consumer"
+      ],
+      "reason": "修正後は予想どおり。元の設計で fake が名で受けると表の逆が fake に入る(S1 と同じ漏洩)",
+      "revision": "S1 の修正(fake は長さで受ける)で解消。表に無い長さは None のまま(at-42e67d88e-S2-negative.log)"
+    },
+    {
+      "id": "S3",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "ターンを名乗らない枠の知らせを、どのターンへ積むかを変える(1 つの process で複数の thread を走らせる・ターンの外で届いた知らせを持ち越す)",
+      "claim": "(盲検の前・design-pre-blind.md の §4)ターンへの割り当ては handler の absorb の 1 か所で決まり、adapter は自分のターンの頁だけを読むので、handler だけが変わる",
+      "expected_scope": "(盲検の前・design-pre-blind.md の §4)codex-handler。変えない: codex-lines・codex-adapter・agent-contract・agora-consumer",
+      "actual_scope": "元の設計(30d01f936)で、割り当ての持ち主の中に競合が在った: 読みの thread が turn/start の答えを answers に置くだけで、走っているターンは答えを待つ側が立てるため、その間に読んだ枠の知らせが outside に落ちた(repro-race-base.log・stub の検が負荷の下で 4 回中 3 回赤 — repro-B-base-pytest-run1.log・run2.log)。修正は handler の absorb の中(mark-running)で、lines・adapter・agora は変えていない(at-42e67d88e-S3-positive.log)。ターンの外・前のターンの知らせは次のターンに使わない(at-42e67d88e-S3-negative.log — 盲検 A の付記の古い刻の持ち越しを避ける)",
+      "changed_modules": [
+        "codex-handler"
+      ],
+      "unchanged_modules": [
+        "codex-lines",
+        "codex-adapter",
+        "agent-contract",
+        "agora-consumer"
+      ],
+      "reason": "範囲は予想どおり handler の中。持ち主の中の不具合(競合)で、知識の漏洩ではない。持ち越しを入れる場合も、修正後は判定と枠の重ねが層 2 にあるので、古さの判断は handler / limits の中に置ける",
+      "revision": "absorb が turn/start の答えと turn/started を読んだ時点で走っているターンを立てる(SessionRuntime.mark-running)。先に main に入った 8b0a1b812 の遅れた記録を頭に積む処理も mark-running へ移した。決定的な検 test-a-rate-limit-update-read-right-after-the-turn-start-answer-joins-that-turn を足した"
+    },
+    {
+      "id": "S4",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "codex の版上げで、利用枠切れの誤りの種類の綴りが変わる(例 usageLimitExceeded → usageLimitReached・文字列の形のまま)",
+      "claim": "(盲検の前・design-pre-blind.md の §4)lines は綴りをそのまま運ぶので、adapter の定数 USAGE-LIMIT-KIND だけが変わる",
+      "expected_scope": "(盲検の前・design-pre-blind.md の §4)codex-adapter(USAGE-LIMIT-KIND)。変えない: codex-lines・codex-handler・agent-contract・agora-consumer",
+      "actual_scope": "修正後(42e67d88e): 綴りの定義は lines.hy の USAGE-LIMIT-KIND の 1 か所になり、その 1 行(差分 1 file)で本番の handler の判定・fake の終わり・adapter の AgentAccountLimit が新しい綴りに従った(at-42e67d88e-S4-positive.log)。今の版では新しい綴りの失敗は利用枠切れにしない(at-42e67d88e-S4-negative.log)",
+      "changed_modules": [
+        "codex-lines"
+      ],
+      "unchanged_modules": [
+        "codex-limits",
+        "codex-handler",
+        "codex-fake",
+        "codex-adapter",
+        "agent-contract",
+        "agora-consumer"
+      ],
+      "reason": "変える module は 1 つのまま。S1 の修正で綴りの持ち主を adapter から lines へ移したので、変える module が予想(adapter)から lines に替わった — 公開の契約の意図した変更(判定を層 2 へ)",
+      "revision": "S1 の修正に含む(綴りの定義を lines の 1 か所にし、handler と fake が読む)"
+    },
+    {
+      "id": "X-hw",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "行は JSON の文字で、機体・CPU・GPU に依らない"
+    },
+    {
+      "id": "X-st",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "枠の重ねはターンの間の memory の値で、保存しない。利用枠切れの保存は agora の側(TurnAccountLimit)で、この設計の外"
+    },
+    {
+      "id": "X-dist",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "codex の process は 1 つの worker の Pod の中で走り、事実はターンの終わりの値として agora へ運ばれる。機体をまたいで共有する状態を持たない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C01",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3",
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "着地した版で、触った検(doeff-codex の検の全部・doeff-agents の codex の検 2 file)が緑",
+      "observation": "71 passed(42e67d88e)",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-touched-tests.log",
+        "sha256": "74255eb5907643c15c83ae66f3cd609e604260a32c03ba26651ab42f97acd0ed"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C02",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "fake の筋書き(FakeReply.usage-limit = 長さ 300 の事実)で、層 2 の終わりと adapter の AgentAccountLimit が stub(本番の handler + 録った行)と同じになり、fake.hy は窓の名も綴りの文字列も持たない",
+      "observation": "scenario[fake]・[stub]・adapter の fake・public-fake の 4 件 PASSED。fake.hy に five_hour・seven_day・usageLimitExceeded の当たり無し",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S1-positive.log",
+        "sha256": "01356cf64fa3577871f47b796320d965b753b16b77d259bc3f125c6a3d735ca6"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C03",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の逆の表(窓の名 → 長さ)を fake.hy に入れる変異を、検 test-the-codex-layer-names-windows-by-their-length が拒む",
+      "observation": "1 failed — AssertionError: [('fake.hy', 'five_hour'), ('fake.hy', 'seven_day')]。変異は戻した",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S1-negative.log",
+        "sha256": "3378b3881cbaed3dd1c7a482cf4743dd0e2c789df66b6a138decc1ffe16e2557"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C04",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "adapter の WINDOW-NAMES に 1440 → one_day の 1 行だけを足すと、fake の筋(長さ 1440)が AgentAccountLimit(window one_day)を出し、変えた file は headless_codex.hy だけ",
+      "observation": "account_limit = AgentAccountLimit(window='one_day', resets_at=1893456000, …)・diff --stat は headless_codex.hy 1 file",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S2-positive.log",
+        "sha256": "f9399f53d682db8bcc57843cfbe538fcb86c772372f41d53b591c5df2cda5931"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C05",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "表に無い長さ(1440 分)の窓は、名を発明せず window None・刻は運ぶ",
+      "observation": "AgentAccountLimit(window=None, resets_at=1893456000, …)",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S2-negative.log",
+        "sha256": "35de821764993043e291f146848659a4af66d6b039ec8e1f8465da5ef67733c7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C06",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "読みの thread の順(turn/start の答え → 枠の知らせ → turn/started)で absorb を呼ぶと、枠の知らせが答えのターンに載り outside は空。決定的な検が緑",
+      "observation": "current-turn: u1・outside: ()・ターン u1 に RateLimits が載った・検 1 passed",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S3-positive.log",
+        "sha256": "84c3d1159a796702cbfa9558bead5aabd5eaf30df970ab29180f576361f7607a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C07",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "走っているターンが無い時の知らせは outside に積まれ、前のターンの知らせも含めて、次のターンの利用枠切れの事実に使われない(古い刻を持ち越さない)",
+      "observation": "outside: ('RateLimits',)・u2 の終わり: UsageLimitHit(minutes=None, resets_at=None, …)",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S3-negative.log",
+        "sha256": "7c723fe18f98100be701c1ff4102ad27f497e6024a7c1c58ef728d9dd524c904"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C08",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "lines.hy の USAGE-LIMIT-KIND の 1 行だけを新しい綴りにすると、本番の handler の判定・fake の終わり・adapter の AgentAccountLimit が新しい綴りに従う",
+      "observation": "新しい綴りの終わりが UsageLimitHit(300, 1893456000, …)・adapter が AgentAccountLimit(five_hour, …)・fake の終わりの綴り usageLimitReached・diff --stat は lines.hy 1 file",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S4-positive.log",
+        "sha256": "ef2d3876ab49e7821aa8e1e508b12d29813bab77b007b2e84f90c8d19be7ea88"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C09",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "今の版では、綴りの変わった失敗の終わりを利用枠切れにしない(失敗としては届く)",
+      "observation": "failed usageLimitReached usage-limit = None・adapter: None",
+      "evidence": {
+        "path": "evidence/at-42e67d88e-S4-negative.log",
+        "sha256": "135c7871763b0cff37bae1f7863053ac07108e67593f8d7b2fa4718d49c931b4"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
