@@ -52,12 +52,15 @@ import importlib
 import importlib.machinery
 import importlib.util
 import io
+import operator
 import os
 import re
+import struct
 import sys
 import types
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from itertools import chain
 from types import CodeType, FunctionType, ModuleType
 
 from doeff_hy_bytecode_guard import bound_source
@@ -983,8 +986,8 @@ def _facts_from_rows(rows: object) -> dict[str, CodeFacts] | None:
 
 
 def _strings(values: tuple[object, ...]) -> bool:
-    """組の中身が全部文字列か。"""
-    return all(isinstance(value, str) for value in values)
+    """組の中身が全部文字列か(型の集合で判じる — 置き場の entry 1 つに名と文字列が数千ある)。"""
+    return set(map(type, values)) <= _STR_TYPE
 
 
 def _import_pair(pair: object) -> bool:
@@ -995,6 +998,13 @@ def _import_pair(pair: object) -> bool:
         case _:
             return False
 
+
+#: 文字列だけの組の型の集合(:func:`_strings`)。
+_STR_TYPE = frozenset({str})
+
+#: digest の文字列 1 つの bytes の長さの綴り(8 byte の little endian)と、文字列の bytes の作り方(:meth:`_Walker.digest`)。
+_LENGTH = struct.Struct("<Q")
+_ENCODE = operator.methodcaller("encode", "utf-8", "surrogatepass")
 
 _IMPORT_NAME = dis.opmap["IMPORT_NAME"]
 _LOAD_CONST = dis.opmap["LOAD_CONST"]
@@ -1204,6 +1214,8 @@ class _Walker:
 
     def __init__(self, sha256_of: Sha256Of, readings: CodeReadings) -> None:
         self._hash = hashlib.sha256()
+        #: digest に入れる文字列(:meth:`digest` が順に hash する)。
+        self._parts: list[str] = []
         self._sha256_of = sha256_of
         #: 関数の code の読み(置き場に覚えた前の process の読みを使い、この歩みが使った読みを集める)。
         self.readings = readings
@@ -1225,8 +1237,13 @@ class _Walker:
         self._bound_names: set[tuple[str, str]] = set()
 
     def digest(self) -> str:
-        """辿った物の digest(16 進)— 参照した module の、文字列の定数の名の属性を入れ終えてから。"""
+        """辿った物の digest(16 進)— 参照した module の、文字列の定数の名の属性を入れ終えてから。積んだ文字列は、それぞれの bytes の
+        長さ(8 byte の little endian)を前に置いて 1 度に hash する(文字列ごとに hash を呼ぶと、検の読み込みで 2.8 万回 — card
+        ki-be596ac8276f。綴りは前と同じ)。"""
         self._attributes_named_by_texts()
+        encoded = list(map(_ENCODE, self._parts))
+        self._hash.update(b"".join(chain.from_iterable(zip(map(_LENGTH.pack, map(len, encoded)), encoded))))
+        self._parts.clear()
         return self._hash.hexdigest()
 
     def _attributes_named_by_texts(self) -> None:
@@ -1251,11 +1268,8 @@ class _Walker:
                     self._attribute(self._modules[name], text, ())
 
     def _feed(self, *parts: str) -> None:
-        """digest に文字列を足す(長さを前に置く — 切れ目の違う 2 つの並びが同じ digest にならない)。"""
-        for part in parts:
-            data = part.encode("utf-8", "surrogatepass")
-            self._hash.update(len(data).to_bytes(8, "little"))
-            self._hash.update(data)
+        """digest に文字列を足す(:meth:`digest` が長さを前に置いて hash する — 切れ目の違う 2 つの並びが同じ digest にならない)。"""
+        self._parts.extend(parts)
 
     def _first_visit(self, value: object) -> bool:
         """初めて辿る object か(2 度目からは番号だけを入れる — 循環で止まらず、共有と複製を分ける)。"""
