@@ -21,18 +21,26 @@
       B1 (JobSpec "b" "jobs.b" #() "rev1"))
 
 (defclass FakeWorld []
-  "子 process とコードの展開を模す。TERM を無視する job と、KILL でも死なない job を指定できる。"
-  (defn #^ None __init__ [self #^ tuple [ignore-term #()] #^ tuple [unkillable #()]]
+  "子 process とコードの展開を模す。TERM を無視する job と、KILL でも死なない job を指定できる。crashes = job の名 → 自分で落ちる刻
+   (その刻の後の最初の観測で exit code 1 — 1 度だけ)・leaving-at = この宿の Pod の止まり(preStop)が始まる刻(その後の観測は
+   WorldView.leaving — AL-D2p)。"
+  (defn #^ None __init__ [self #^ tuple [ignore-term #()] #^ tuple [unkillable #()] #^ dict [crashes None] #^ (| int None) [leaving-at None]]
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。now = その epoch ミリ秒(記録の刻)。
     (setv self.clock (SimClock) self.codes {} self.procs {} self.next-pid 100 self.events []
-          self.ignore-term ignore-term self.unkillable unkillable self.statuses []))
+          self.ignore-term ignore-term self.unkillable unkillable self.statuses []
+          self.crashes (dict (or crashes {})) self.leaving-at leaving-at))
   (defn [property] #^ int now [self] (run (clock-ms self.clock)))
   (defn #^ WorldView observe [self]
     ;; 展開は依頼の次の拍で終わる。
     (setv views (tuple (gfor #(rev state) (.items self.codes)
       (CodeView rev state (when (= state CodeState.READY) f"/c/{rev}")))))
     (for [rev (list self.codes)] (setv (get self.codes rev) CodeState.READY))
-    (WorldView views (tuple (.values self.procs))))
+    (for [#(name at) (list (.items self.crashes))]
+      (when (and (>= self.now at) (in name self.procs))
+        (setv (get self.procs name) (replace (get self.procs name) :exit-code 1))
+        (del (get self.crashes name))))
+    (WorldView views (tuple (.values self.procs))
+               :leaving (and (is-not self.leaving-at None) (>= self.now self.leaving-at))))
   (defn #^ None start [self #^ StartJob action]
     (setv self.next-pid (+ self.next-pid 1))
     (.append self.events #("start" action.spec.name action.spec.revision self.now))
@@ -94,6 +102,21 @@
   (setv b-signal (lfor e world.events :if (= (cut e 0 2) #("signal" "b")) (get e 3)))
   (assert (>= (get b-signal 0) 3000))
   (assert (= world.procs {})))
+
+(deftest test-a-leaving-pod-does-not-restart-a-crashed-handoff-job
+  ;; 調整ループ全体で(AL-D2p・設計検証 lt-C071SZK8EQTX19F3YV1MSWT53X の S6): 宿の観測が止まり(preStop の始まり)になった後は、同じ
+  ;; 判断の Program(run-worker)が、落ちた handoff の job を起こし直さない。止まりでなければ backoff の後に起こし直す。変えるのは宿の
+  ;; 観測(FakeWorld の leaving-at)だけ。
+  (val handoff (replace A1 :handoff True))
+  (val script #(#(0 (DesiredJobs #(handoff)))))
+  (val staying (FakeWorld :crashes {"a" 1000}))
+  (<- (fake-host staying script 6000 (run-worker POLICY)))
+  (assert (= (! (events-of staying "a"))
+             [#("start" "a" "rev1") #("reap" "a" "exited") #("start" "a" "rev1") #("signal" "a" "term") #("reap" "a" "stopped")]))
+  (val leaving (FakeWorld :crashes {"a" 1000} :leaving-at 500))
+  (<- (fake-host leaving script 6000 (run-worker POLICY)))
+  (assert (= (! (events-of leaving "a")) [#("start" "a" "rev1") #("reap" "a" "exited")])
+          "止まりの後に落ちた handoff の job は起こし直さない"))
 
 (deftest test-unreadable-declaration-does-not-stop-jobs
   (setv world (FakeWorld)

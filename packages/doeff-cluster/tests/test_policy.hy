@@ -368,6 +368,25 @@
           "backoff を過ぎても起こし直さない"))
 
 
+(deftest test-a-leaving-generation-does-not-swap-the-version-of-a-handoff-job
+  ;; 失敗ケース(設計検証 lt-C071SZK8EQTX19F3YV1MSWT53X の盲検 B の読み): 止まりの Pod で宣言の版が変わり、返事に版の据え置き
+  ;; (hold-version — drain 中の印)も印 supersededBy も欠けると、handoff の入れ替え(handoff-actions)が新しい版の準備と入口の検めの後に
+  ;; 今の process を退かせていた。次の拍の起こしは止まりで撃たない(start-step)ので、退いた process が走っている仕事を終えて自分で
+  ;; 終わると、その Pod の job は誰も動かさない。止まる Pod は handoff の job の版を入れ替えない(準備・検め・退かせを撃たない)。
+  (val current (! (proc H1 10 "1-cur")))
+  (val codes #(READY1 READY2))
+  (assert (= (! (plan 0 #(H2) (replace (! (world current :codes codes)) :leaving True) {} POLICY)) #())
+          "止まる Pod では今の process を退かせない")
+  (assert (= (! (plan 0 #(H2) (replace (! (world current :codes #(READY1))) :leaving True) {} POLICY)) #())
+          "止まる Pod では新しい版の準備も撃たない")
+  (assert (= (! (plan 0 #(H2) (! (world current :codes codes)) {} POLICY)) #((RetireJob "a" 10 (retired-name "a" "1-cur"))))
+          "止まりでなければ今どおり入れ替える")
+  ;; 新しい世代が Ready の印 supersededBy は止まりでも今どおり退かせる(退いた process は走っている仕事を終えて自分で終わる)。
+  (val marked (replace H2 :superseded-by "generation:new"))
+  (assert (= (! (plan 0 #(marked) (replace (! (world current :codes codes)) :leaving True) {} POLICY))
+             #((RetireJob "a" 10 (retired-name "a" "1-cur"))))))
+
+
 (deftest test-a-generation-that-is-not-leaving-still-restarts-its-handoff-job
   ;; 守りの範囲(AL-D2p): 止まりの始まっていない worker は今どおり起こす — 今の世代の handoff の job の process が落ちた後(backoff の後)の
   ;; 起こし直しと、退かせた process の傍らの新しい試行(同じ世代の入れ替えの後半 — 印の無い宣言)。

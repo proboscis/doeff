@@ -1,5 +1,6 @@
 ;; Pod の止まりの印(AL-D2p — card ki-bfa05ac34c77): worker の Pod の preStop(drain の入口 drain_main の drain)が止まりの始まりを Pod の
-;; 中の file(世代の file の隣)に書き、worker の観測のまとめ(local-host)が拍ごとに WorldView.leaving として読む。worker の判断
+;; 中の file(世代の file の隣)に書き(書き手と印の形 = worker/protocol/leaving_mark)、worker の観測のまとめ(local-host)が拍ごとに
+;; WorldView.leaving として読む(worker の入口が並べる答え手 = worker/protocol/leaving_observer — 書き手と形を import しない)。worker の判断
 ;; (worker/core/policy の start-step)はこの観測で、止まる Pod の handoff の job の新しい試行を起こさない — coordinator の返事の印
 ;; supersededBy が欠けても(10-11 の zeus の画面の process の群 — card ki-3a57786eba88)。判断の側の検は test_policy.hy の AL-D2p の節。
 (require doeff-hy.macros [defhandler deftest <- val])
@@ -12,7 +13,8 @@
 (import doeff_cluster.worker.intent.worker_model [EnvDisk ObserveWorld])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren])
 (import doeff_cluster.worker.protocol.world [local-host])
-(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark leaving-mark-written])
+(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written])
+(import doeff_cluster.worker.protocol.leaving_observer [leaving-observer])
 (import doeff_cluster.worker.entry.main [boot-file-written])
 (import doeff_cluster.worker.entry.drain_main [main :as drain-main])
 
@@ -35,7 +37,7 @@
   ;; 返事の印だけで退いていた。preStop の入口が世代の file の隣に印を書き、worker の観測(本番と同じ local-host・本物の file の答え手)が読む。
   (val boot-file (str (/ tmp-path "doeff-worker-boot")))
   (! (with-handlers [os-file-handler] (boot-file-written boot-file "b-new")))
-  (val observe (with-handlers [os-file-handler (leaving-mark boot-file "b-new") nothing-else-observed local-host] (ObserveWorld)))
+  (val observe (with-handlers [os-file-handler (leaving-observer boot-file "b-new") nothing-else-observed local-host] (ObserveWorld)))
   (assert (not (. (! observe) leaving)) "preStop の前は止まっていない")
   (! (with-handlers [os-file-handler] (leaving-mark-written boot-file "b-new")))
   (assert (. (! observe) leaving) "preStop の印の後の拍は、止まりの始まった Pod と読む"))
@@ -46,10 +48,10 @@
   ;; 読まない。読めば、新しい process は落ちた handoff の job を起こし直さなくなる。世代の file を持たない worker(Pod の外)は印を読まない。
   (val boot-file (str (/ tmp-path "doeff-worker-boot")))
   (! (with-handlers [os-file-handler] (leaving-mark-written boot-file "b-old")))
-  (assert (not (. (! (with-handlers [os-file-handler (leaving-mark boot-file "b-new") nothing-else-observed local-host] (ObserveWorld)))
+  (assert (not (. (! (with-handlers [os-file-handler (leaving-observer boot-file "b-new") nothing-else-observed local-host] (ObserveWorld)))
                   leaving))
           "別の世代の印は、この process の止まりではない")
-  (assert (not (. (! (with-handlers [os-file-handler (leaving-mark None "b-old") nothing-else-observed local-host] (ObserveWorld)))
+  (assert (not (. (! (with-handlers [os-file-handler (leaving-observer None "b-old") nothing-else-observed local-host] (ObserveWorld)))
                   leaving))
           "世代の file の無い worker は止まりを読まない"))
 
@@ -59,7 +61,7 @@
   ;; 書く — preStop の頼みが届かない間も Pod の止まりは始まっている)。readinessProbe(ready)は書かない。
   (val boot-file (str (/ tmp-path "doeff-worker-boot")))
   (! (with-handlers [os-file-handler] (boot-file-written boot-file "b-1234")))
-  (val observe (with-handlers [os-file-handler (leaving-mark boot-file "b-1234") nothing-else-observed local-host] (ObserveWorld)))
+  (val observe (with-handlers [os-file-handler (leaving-observer boot-file "b-1234") nothing-else-observed local-host] (ObserveWorld)))
   (.setattr monkeypatch sys "argv" ["drain_main" "ready" "--coordinator" UNREACHABLE "--name" "zeus" "--boot-file" boot-file])
   (with [exited (pytest.raises SystemExit)] (drain-main))
   (assert (= exited.value.code 1) "届かない coordinator の readinessProbe は NotReady")
