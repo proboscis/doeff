@@ -80,10 +80,11 @@ class FakeCompile:
 
 @pytest.fixture
 def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
-    """道具の版を固定し、保存先と一時の dir を tmp に向けた口。"""
+    """道具の版を固定し、保存先と一時の dir を tmp に向け、機体の外の置き場を引かない口(置き場の検は tests/test_wheel_remote_store.py)。"""
     module = _backend()
     monkeypatch.setattr(module, "_tool_versions", lambda: "maturin=fixed")
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
+    monkeypatch.setenv("DOEFF_WHEEL_REMOTE", "")
     monkeypatch.setattr(module.tempfile, "tempdir", str(tmp_path))
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     return module
@@ -256,6 +257,7 @@ def test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process
     # 固定の文字に差し替えない(鍵を作る本物の道筋を通す)。
     module = _backend()
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
+    monkeypatch.setenv("DOEFF_WHEEL_REMOTE", "")
     monkeypatch.setattr(module.tempfile, "tempdir", str(tmp_path))
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     no_tools = tmp_path / "no-tools"

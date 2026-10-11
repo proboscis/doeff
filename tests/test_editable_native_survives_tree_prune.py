@@ -91,7 +91,8 @@ class Tree:
     def __init__(self, root: Path, store: Path) -> None:
         self.root = root
         self.env = {"HOME": str(Path.home()), "UV_OFFLINE": "1", "UV_CACHE_DIR": _uv_cache_dir(), "UV_PYTHON": sys.executable,
-                    "UV_NO_CONFIG": "1", "DOEFF_WHEEL_CACHE": str(store), "PYTHONDONTWRITEBYTECODE": "1", "PATH": _tool_path()}
+                    "UV_NO_CONFIG": "1", "DOEFF_WHEEL_CACHE": str(store), "DOEFF_WHEEL_REMOTE": "", "PYTHONDONTWRITEBYTECODE": "1",
+                    "PATH": _tool_path()}
         package = root / "packages" / "probe-native"
         (package / "probe_native").mkdir(parents=True)
         (package / "src").mkdir()
