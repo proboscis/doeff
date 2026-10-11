@@ -191,6 +191,17 @@
   (next (gfor r (reversed (or reports #())) :if (report-matches r.origin proc) r) None))
 
 
+(defn #^ (| str None) last-refusal [#^ ClusterState state #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断(handoff_policy.next-watch)が呼ぶ
+  "入れ替えを諦めた記録(HandoffWatch.last-report — 表示)に、新の世代が「なぜ準備できないか」を添えるため: 今の宣言の spec(指紋 want)を
+   名乗る送り手が送った最後の ReportReady(偽)の reason(業務の側が書く)。無ければ None。前の試行の reason も載せるよう世代の名で
+   絞らないので、Ready かどうかの判断には使わない(判断は service-readiness — 置き先の process の報告だけを数える)。表を読むのは
+   表の持ち主のこの module だけ(semgrep doeff-cluster-report-tables-are-read-by-their-owner)なので、handoff_policy から移した。"
+  (next (gfor report (reversed (or (.row state.observations.readiness name) #()))
+              :if (and (= report.origin.spec-hash want) (not report.ready))
+              report.reason)
+        None))
+
+
 (defn #^ frozenset placed-senders [#^ ClusterState state #^ str name]
   ;; defk にできない: coordinator の純粋な判断(Program の外 — record-readiness・metrics_policy.record-metrics)が呼ぶ
   "Service name の置き先(いまの置き先と drain で並べた置き先)の担い手が、名 name の行で動かしていると最後に報告した process の

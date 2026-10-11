@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState HandoffWatch HandoffPhase])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
-(import doeff_cluster.coordinator.core.resource_policy [service-readiness carrier-stale-from readiness-due])
+(import doeff_cluster.coordinator.core.resource_policy [service-readiness carrier-stale-from readiness-due last-refusal])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 
@@ -56,14 +56,6 @@
 (defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "担い手の行に、今の宣言の spec(指紋 want)で起こした Service name の process が動いている形で在るか(期限の起点)。"
   (any (gfor row rows (and (= row.name name) (= row.spec-hash want) (in row.phase LIVE-PHASES)))))
-
-
-(defn #^ (| str None) last-refusal [#^ ClusterState state #^ str name #^ str want]  ; defk にできない: coordinator の純粋な判断が呼ぶ
-  "今の宣言の spec(指紋 want)の process が送った最後の ReportReady(偽)の reason(業務の側が「なぜ準備できないか」を書く)。無ければ None。"
-  (next (gfor report (reversed (or (.row state.observations.readiness name) #()))
-              :if (and (= report.origin.spec-hash want) (not report.ready))
-              report.reason)
-        None))
 
 
 (defn #^ int handoff-deadline [#^ HandoffWatch watch #^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(next-watch)が呼ぶ
