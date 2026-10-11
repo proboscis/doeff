@@ -17,6 +17,7 @@
 (import sys)
 (import collections.abc [Callable])
 (import doeff [run with_handlers])
+(import doeff_agents)
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
@@ -35,6 +36,11 @@
 
 (val FAKE "fake")
 (val STUB "stub")
+;; 同じ層 2 と adapter を、doeff_agents の公開の口(codex_process_layer_handler・fake_codex_process_layer_handler・codex_agent_adapter_handler)
+;; で組む backend。agora は module の名に下の層の語が出る組み立ての部品を import できない(agora-controllers の境界の検 — 名の語の禁止)ので、
+;; claude と同じく公開の口から組む(card acp:kanban-issue:ki-f63f65c153b0)。
+(val PUBLIC-FAKE "public-fake")
+(val PUBLIC-STUB "public-stub")
 (val REPO-PACKAGES (. (Path __file__) (resolve) parent parent parent))
 (val STUB-PATH (str (/ REPO-PACKAGES "doeff-codex" "tests" "stub_cli" "codex_app_server.py")))
 (val PAGE-WAIT 1.0)
@@ -84,14 +90,25 @@
   {:pre [(: backend str) (: tmp-path Path) (: world (| FakeCodexWorld None))] :post [(: % list)]
    :tags {:context "headless-codex-adapter-test" :role "entry"}}
   "解釈器の handler の組(先頭が外側): 時間の handler → 資格の引き換えの答え手 → 層 2 の handler → headless の codex の adapter。"
-  (val env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "CODEX_HOME" (str (/ tmp-path CODEX-HOME-DIR))})
+  ;; 子の process は自前の env で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 明示で渡し、替え玉の app-server
+  ;; の python が checkout(.venv の site-packages)へ .pyc を書かない(書くと根の conftest の session の終わりの見張りが赤)。
+  (val env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "CODEX_HOME" (str (/ tmp-path CODEX-HOME-DIR)) "PYTHONDONTWRITEBYTECODE" "1"})
   (<- adapter (codex-adapter env CodexApprovalPolicy.NEVER CodexSandboxMode.READ-ONLY))
   (match backend
     "fake" (do (<- layer (fake-codex-process-layer world))
                [(sim-time-handler :clock (SimClock)) (lent-credentials LENT) layer adapter])
     "stub" (do (<- layer (codex-process-layer #(sys.executable STUB-PATH) 30.0))
                [(sync-time-handler) (lent-credentials LENT) layer adapter])
+    "public-fake" [(sim-time-handler :clock (SimClock)) (lent-credentials LENT) (doeff_agents.fake-codex-process-layer-handler :world world)
+                   (public-adapter env)]
+    "public-stub" [(sync-time-handler) (lent-credentials LENT)
+                   (doeff_agents.codex-process-layer-handler :command #(sys.executable STUB-PATH) :launch-timeout 30.0) (public-adapter env)]
     _ (raise (ValueError backend))))
+
+(defk public-adapter [#^ dict env]
+  {:pre [(: env dict)] :post [(: % Callable)] :tags {:context "headless-codex-adapter-test" :role "entry"}}
+  "公開の口の adapter(組み立ての部品の codex-adapter と同じ宣言 — 許可は NEVER・sandbox は READ-ONLY)を作るため。"
+  (doeff_agents.codex-agent-adapter-handler :env env :approval-policy CodexApprovalPolicy.NEVER :sandbox CodexSandboxMode.READ-ONLY))
 
 (defk run-on [#^ str backend #^ Path tmp-path #^ Callable scenario]
   {:pre [(: backend str) (: tmp-path Path) (: scenario Callable)] :post [(: % (| Read dict))]
@@ -102,7 +119,7 @@
   (val codex-home (/ tmp-path CODEX-HOME-DIR))
   (.mkdir codex-home :exist-ok True)
   (.write-text (/ codex-home "config.toml") "# 検の元の CODEX_HOME\n" :encoding "utf-8")
-  (val world (if (= backend FAKE) (FakeCodexWorld (fn [input] (run (respond input)))) None))
+  (val world (if (in backend #(FAKE PUBLIC-FAKE)) (FakeCodexWorld (fn [input] (run (respond input)))) None))
   (<- stack (handlers-for backend tmp-path world))
   (run (scheduled (with_handlers stack (scenario (Setting work 30.0 codex-home world))))))
 
@@ -202,6 +219,17 @@
 
 (deftest test-headless-codex-text-deltas-reach-agent-text-delta-events-fake [tmp-path]
   (<- seen (run-on FAKE tmp-path one-turn))
+  (<- (check-one-turn seen))
+  None)
+
+(deftest test-the-public-codex-handlers-carry-the-text-deltas-fake [tmp-path]
+  ;; 失敗ケース(card acp:kanban-issue:ki-f63f65c153b0): doeff_agents の公開の口だけで組んだ層 2 と adapter でも、答えの文字の途中が届く。
+  (<- seen (run-on PUBLIC-FAKE tmp-path one-turn))
+  (<- (check-one-turn seen))
+  None)
+
+(deftest test-the-public-codex-handlers-carry-the-text-deltas-stub [tmp-path]
+  (<- seen (run-on PUBLIC-STUB tmp-path one-turn))
   (<- (check-one-turn seen))
   None)
 
