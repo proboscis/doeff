@@ -4,8 +4,12 @@
 - 1 つの file の展開に失敗しても、同じ段の他の file の結果は揃う。
 - 子の process が答えを返さずに落ちたら、答えの無い file を名指して道具の失敗にする(黙って抜かない)。
 - 全部保存から引ける実行では pool を起こさない(保存が効く時の秒を増やさない)。
+- `python -m doeff_hy.static_check` で撃った入口(この file は親で __main__・展開の子で __mp_main__ の名で読まれる)も、展開の子が
+  書いた保存を次の実行の親が引く。
 """
 
+import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,6 +111,59 @@ def test_a_run_that_reads_everything_from_the_store_starts_no_pool(
     second = project_closure(tmp_path, [tmp_path], [main], cache, limit=3)
     assert started == [], "全部引ける実行で pool を起こした"
     assert _shape(second) == _shape(first)
+
+
+#: 日次の命令と同じく doeff_hy.static_check を __main__ の名で撃つ子の process(`python -m` と同じ — 展開の子は __mp_main__ の名で
+#: 読む)。保存を引けた数(hit)と外れた数(miss)を最後の行に JSON で出す。pyright は診断の無い答えを返す偽物(引数で名指す)。
+MAIN_CHILD = """\
+import json, runpy, sys
+import doeff_hy.static_cache as cache
+seen = {"hit": 0, "miss": 0}
+real = cache.load
+def load(cache_dir, name):
+    answer = real(cache_dir, name)
+    seen["hit" if isinstance(answer, cache.CachedProjection) else "miss"] += 1
+    return answer
+cache.load = load
+root, cache_dir, pyright = sys.argv[1:4]
+sys.argv = ["doeff-hy-check", "--root", root, "--cache-dir", cache_dir, "--pyright", pyright, root]
+try:
+    runpy.run_module("doeff_hy.static_check", run_name="__main__", alter_sys=True)
+except SystemExit:
+    pass
+print(json.dumps(seen))
+"""
+
+
+def test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 直す前は赤(agora-redesign card ki-1475765a3f18): 記録は後処理 POST_PROCESSING を __name__ の module で名指していた。
+    # `python -m` の入口では、展開の子が __mp_main__ の project を辿った digest を書き、次の実行の親は __main__ の project を
+    # 辿って照らす(関数の持ち主の名と __name__ の値が違う)ので、同じ木・同じ置き場でも保存を 1 つも引けなかった
+    # (agora-controllers の日次の hy-type-trend は同じ dir でも 593 本中 592 本を展開し直す形だった)。
+    project = tmp_path / "proj"
+    project.mkdir()
+    _tree(project)
+    pyright = tmp_path / "pyright"
+    pyright.write_text('#!/bin/sh\necho \'{"generalDiagnostics": []}\'\n', encoding="utf-8")
+    pyright.chmod(0o755)
+    monkeypatch.setenv("DOEFF_HY_CHECK_EXPANDERS", "3")
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
+
+    def run() -> dict[str, int]:
+        done = subprocess.run(
+            [sys.executable, "-c", MAIN_CHILD, str(project), str(tmp_path / ".cache"), str(pyright)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    assert run() == {"hit": 0, "miss": 4}
+    assert run() == {"hit": 4, "miss": 0}, "展開の子が書いた保存を、次の実行の親が引けなかった"
 
 
 def test_the_expander_limit_defaults_to_four_and_is_set_by_the_environment() -> None:
