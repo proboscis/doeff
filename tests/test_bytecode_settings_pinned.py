@@ -178,12 +178,12 @@ class TestUnderAWiderFixture:
 """
 
 
+# developer-tree: an earlier run without the pin left the startup bytecode in place, so a writer
+# rewrites nothing unless the run removes it first.  fresh-tree: the daily run — a new checkout and
+# .venv under the pin, where the writer was named by the session's last test.
 @pytest.mark.parametrize(
     "tree_holds_startup_bytecode",
-    [
-        pytest.param(True, id="developer-tree"),  # an earlier run without the pin left it in place
-        pytest.param(False, id="fresh-tree"),  # the daily run: a new checkout and .venv under the pin
-    ],
+    [pytest.param(True, id="developer-tree"), pytest.param(False, id="fresh-tree")],
 )
 def test_the_test_that_writes_startup_bytecode_is_named_not_the_last_test(
     tmp_path: Path, tree_holds_startup_bytecode: bool
@@ -193,9 +193,10 @@ def test_the_test_that_writes_startup_bytecode_is_named_not_the_last_test(
     source = startup / "sitecustomize.py"
     source.write_text("")
     if tree_holds_startup_bytecode:
-        compiled = py_compile.compile(str(source), cfile=importlib.util.cache_from_source(str(source)))
+        cached = importlib.util.cache_from_source(str(source))
+        py_compile.compile(str(source), cfile=cached, doraise=True)
         an_hour_ago = time.time() - 3600
-        os.utime(compiled, (an_hour_ago, an_hour_ago))
+        os.utime(cached, (an_hour_ago, an_hour_ago))
 
     result = run_under_root_conftest(
         tmp_path, WRITERS_AMONG_BYSTANDERS, env={"PYTHONPATH": str(startup)}, budget=50.0
@@ -207,4 +208,4 @@ def test_the_test_that_writes_startup_bytecode_is_named_not_the_last_test(
         "test_probe.py::TestUnderAWiderFixture::test_first",
     ], result.stdout
     assert f"startup/__pycache__/sitecustomize.{sys.implementation.cache_tag}.pyc" in result.stdout
-    assert list(startup.rglob("*.pyc")) == [], "the run leaves the tree without the bytecode it named"
+    assert list(startup.rglob("*.pyc")) == [], "the run removes the bytecode it named"
