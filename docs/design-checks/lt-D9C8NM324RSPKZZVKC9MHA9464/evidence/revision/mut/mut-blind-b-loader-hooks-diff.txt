@@ -1,0 +1,226 @@
+変異: blind-b-loader-hooks-diff
+対象の版: 5c16f9fc3d769f960a411b28f7916e6b161fc960
+狙った検: ('test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree', 'test_the_environment_mark_is_read_only_by_the_walk_and_the_check')
+終了の code: 1
+要約: 2 failed, 15 passed, 63 deselected, 1 warning in 39.35s
+落ちた検: ('test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree', 'test_the_environment_mark_is_read_only_by_the_walk_and_the_check')
+---- 当てた差分
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py
+index 2720dfcbe..43e52b3eb 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py
+@@ -456,6 +456,59 @@ def _store_entry(store: str, fullname: str, path: str, source: bytes) -> str:
+     return code_store.entry_path(store, key, code_store.CODE_SUFFIX)
+ 
+ 
++#: 環境変数の読みの印の行を持つ Hy の code の entry の鍵の印(code_store.CODE_TAG の entry と引き合わない)。
++ENVIRONMENT_CODE_TAG = "doeff-hy/code-store-environment/1"
++
++
++def _environment_entry(store: str, fullname: str, path: str, source: bytes) -> str:
++    """環境変数の読みの印の行を持つ Hy の code の entry の path — :func:`_store_entry` の鍵の欄に、今の環境変数の全部の指紋を足す
++    (環境変数が 1 つでも違う process は別の entry を引く)。worker の Pod の process は同じ環境で走るので、印の行を持つ使い手を
++    process ごと・作業木ごとに compile し直さずに引き合える。"""
++    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
++
++    parts = (
++        ENVIRONMENT_CODE_TAG,
++        fullname,
++        _hy_version(),
++        sys.implementation.cache_tag or "",
++        str(sys.flags.optimize),
++        _environment_fingerprint(),
++    )
++    return code_store.entry_path(store, code_store.content_key(parts, source), code_store.CODE_SUFFIX)
++
++
++def _environment_fingerprint() -> str:
++    """今の環境変数の全部(名と値)の sha256(名の順 — 値の bytes の違いも写す)。"""
++    import hashlib  # 保存先を使う時だけ読む
++
++    digest = hashlib.sha256()
++    for name, value in sorted(os.environ.items()):
++        digest.update(f"{name}={value}".encode("utf-8", "surrogateescape"))
++        digest.update(b"\0")
++    return digest.hexdigest()
++
++
++def _reads_environment(record: "MacroRecord") -> bool:
++    """記録に環境変数の読みの印の行(使った macro・macro の外の値)があるか。"""
++    from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
++
++    return any(row.digest == records.ENVIRONMENT_READ for row in (*record.macros, *record.values))
++
++
++def _apart_from_environment(record: "MacroRecord") -> "MacroRecord":
++    """記録から環境変数の読みの印の行を除いた記録 — 環境の指紋を鍵に足した entry では、印の行の言う「環境変数で決まる」は鍵が
++    覆うので、残りの行(他の macro・macro の外の値・引いて無かった名・全部の require)を今の環境で照らす。"""
++    import dataclasses  # 環境の entry を引いた時だけ読む
++
++    from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
++
++    return dataclasses.replace(
++        record,
++        macros=tuple(row for row in record.macros if row.digest != records.ENVIRONMENT_READ),
++        values=tuple(row for row in record.values if row.digest != records.ENVIRONMENT_READ),
++    )
++
++
+ def _from_shared_store(
+     self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
+ ) -> CodeType | None:
+@@ -487,11 +540,14 @@ def _from_shared_store(
+     except OSError:
+         return None  # source を読めなければ標準の get_code が同じ誤りを名乗る
+     code = code_store.stored_code(_store_entry(store, fullname, path, source))
+-    if code is None:
+-        return None
+-    record = records.record_of(code)
++    record = None if code is None else records.record_of(code)
+     if record is None or not record_is_current_here(record):
+-        return None
++        # 環境変数の読みの印の行を持つ記録は、照らしがいつも古いと判じる(records.ENVIRONMENT_READ)— 同じ環境変数の値の process が
++        # 作った entry(鍵に今の環境の指紋を足した entry)を、印の行を除いて照らす。
++        code = code_store.stored_code(_environment_entry(store, fullname, path, source))
++        record = None if code is None else records.record_of(code)
++        if record is None or not record_is_current_here(_apart_from_environment(record)):
++            return None
+     import _imp  # 標準の _compile_bytecode と同じ口で、code の file 名を今の source の path に直す
+ 
+     _imp._fix_co_filename(code, path)
+@@ -525,11 +581,18 @@ def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeT
+         return
+     from doeff_hy_bytecode_guard import records  # 保存先を使う時だけ読む
+ 
+-    if records.record_of(code) is None:
++    record = records.record_of(code)
++    if record is None:
+         return
+     import marshal
+ 
+-    code_store.write_entry(_store_entry(store, fullname, path, source), marshal.dumps(code))
++    # 環境変数の読みの印の行を持つ code は、今の環境の指紋を鍵に足した entry へ(同じ環境の process どうしだけが引き合う)。
++    entry = (
++        _environment_entry(store, fullname, path, source)
++        if _reads_environment(record)
++        else _store_entry(store, fullname, path, source)
++    )
++    code_store.write_entry(entry, marshal.dumps(code))
+ 
+ 
+ def _recompile(
+
+---- pytest の出力
+...............FF                                                        [100%]
+=================================== FAILURES ===================================
+_ test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree _
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1631/test_an_environment_reading_us0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x271367ea210>
+
+    def test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 緑のまま守る(設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 B): 環境変数を読む macro の使い手の記録は、環境変数が同じ process
+        # でも照らせない — 共有の置き場から引く路でも。印の行を記録から除いて照らし、環境変数の指紋を鍵に置き場の entry を使い回す
+        # 読み込みの口は、別の作業木で macro の本体を替えた後も、環境変数が同じだけで前の展開("plain")を今に合うと判じた。
+        import shutil
+    
+        monkeypatch.delenv(ENV_MODE, raising=False)
+        tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
+        assert tree.run("u_direct")["values"] == {"u_direct": "plain"}
+        other = ScopeTree(tmp_path / "tree-b", tree.package)
+        shutil.copytree(tree.root, other.root, ignore=shutil.ignore_patterns("__pycache__"))
+        _replace(
+            other.root / tree.package / "macros.hy",
+            f'(defmacro direct [] (os.environ.get "{ENV_MODE}" "plain"))',
+            f'(defmacro direct [] (.upper (os.environ.get "{ENV_MODE}" "plain")))',
+        )
+        answer = other.run("u_direct")
+>       assert "u_direct.hy" in answer["compiled"], f"macro を替えた木の使い手を、置き場の前の展開で今に合うと判じた: {answer}"
+E       AssertionError: macro を替えた木の使い手を、置き場の前の展開で今に合うと判じた: {'stats': {}, 'compiled': ['macros.hy'], 'values': {'u_direct': 'plain'}}
+E       assert 'u_direct.hy' in ['macros.hy']
+
+tests/test_macro_use_record.py:1644: AssertionError
+_______ test_the_environment_mark_is_read_only_by_the_walk_and_the_check _______
+
+    def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
+        # 緑のまま守る(盲検 B): 印 ENVIRONMENT_READ の意味(閉包の digest 全体の代わり — 照らせない)は、定義点(records.py)と、印を作る
+        # 歩みと印を照らす照らし(macro_use.py)だけが持つ。読み込みの口などが印の行を見分けて記録を作り替えると、照らしの判断がその口へ
+        # 移る(印の行を除いた記録を照らす形)。
+        import ast
+    
+        import doeff_hy_bytecode_guard
+    
+        package = Path(doeff_hy_bytecode_guard.__file__).parent
+        uses = tuple(
+            f"{source.name}:{getattr(node, 'lineno', 0)}"
+            for source in sorted(package.glob("*.py"))
+            if source.name not in ("records.py", "macro_use.py")
+            for node in ast.walk(ast.parse(source.read_text(encoding="utf-8")))
+            if (isinstance(node, ast.Name) and node.id == "ENVIRONMENT_READ")
+            or (isinstance(node, ast.Attribute) and node.attr == "ENVIRONMENT_READ")
+            or (isinstance(node, ast.alias) and node.name == "ENVIRONMENT_READ")
+        )
+>       assert not uses, f"records.py・macro_use.py の外で印 ENVIRONMENT_READ を読む — 印の判断は照らし(macro_use)が持つ: {uses}"
+E       AssertionError: records.py・macro_use.py の外で印 ENVIRONMENT_READ を読む — 印の判断は照らし(macro_use)が持つ: ('loader_hooks.py:495', 'loader_hooks.py:507', 'loader_hooks.py:508')
+E       assert not ('loader_hooks.py:495', 'loader_hooks.py:507', 'loader_hooks.py:508')
+
+tests/test_macro_use_record.py:1666: AssertionError
+=============================== warnings summary ===============================
+../doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-hy-env-design-check/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_macro_use_record.py::test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree
+FAILED tests/test_macro_use_record.py::test_the_environment_mark_is_read_only_by_the_walk_and_the_check
+2 failed, 15 passed, 63 deselected, 1 warning in 39.35s
+
+
+deadline scale x1.4 (load per usable CPU) — per test 86s, watchdog 129s
+
+test-admission: focused — 17 件(変更箇所の検証)

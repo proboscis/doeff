@@ -1,0 +1,24 @@
+版: 5c16f9fc3d769f960a411b28f7916e6b161fc960
+命令(cwd 木): uv run --frozen python dc/s1probe/run.py(盲検 A の run.py・child.py の置き場の path だけを替えた写し)
+---
+== base(1 つ目: cwd1・PROBE_MODE 無し → 同じ環境の 2 つ目 → cwd2・PROBE_MODE=fancy の 3 つ目)
+1st compiled: ['hy_repr.hy', 'm_bridge.hy', 'm_module.hy', 'm_name.hy', 'u_cwd_bridge.hy', 'u_cwd_mod.hy', 'u_cwd_name.hy', 'u_env_bridge.hy', 'u_env_mod.hy', 'u_env_name.hy']
+2nd(同じ環境)compiled: ['u_cwd_name.hy', 'u_env_bridge.hy', 'u_env_mod.hy', 'u_env_name.hy']
+3rd(環境を替えた)compiled: ['u_cwd_name.hy', 'u_env_bridge.hy', 'u_env_mod.hy', 'u_env_name.hy']
+  u_env_mod      1st='plain'                                  3rd='fancy'
+  u_env_name     1st='plain'                                  3rd='fancy'
+  u_env_bridge   1st='plain'                                  3rd='fancy'
+  u_cwd_mod      1st='base/cwd1' 3rd='base/cwd1'
+  u_cwd_name     1st='base/cwd1' 3rd='base/cwd2'
+  u_cwd_bridge   1st='base/cwd1' 3rd='base/cwd1'
+== s1(1 つ目: cwd1・PROBE_MODE 無し → 同じ環境の 2 つ目 → cwd2・PROBE_MODE=fancy の 3 つ目)
+1st compiled: ['hy_repr.hy', 'm_bridge.hy', 'm_module.hy', 'm_name.hy', 'u_cwd_bridge.hy', 'u_cwd_mod.hy', 'u_cwd_name.hy', 'u_env_bridge.hy', 'u_env_mod.hy', 'u_env_name.hy']
+2nd(同じ環境)compiled: ['u_cwd_bridge.hy', 'u_cwd_mod.hy', 'u_cwd_name.hy', 'u_env_bridge.hy', 'u_env_mod.hy', 'u_env_name.hy']
+3rd(環境を替えた)compiled: ['u_cwd_bridge.hy', 'u_cwd_mod.hy', 'u_cwd_name.hy', 'u_env_bridge.hy', 'u_env_mod.hy', 'u_env_name.hy']
+  u_env_mod      1st='plain'                                  3rd='fancy'
+  u_env_name     1st='plain'                                  3rd='fancy'
+  u_env_bridge   1st='plain'                                  3rd='fancy'
+  u_cwd_mod      1st='s1/cwd1' 3rd='s1/cwd2'
+  u_cwd_name     1st='s1/cwd1' 3rd='s1/cwd2'
+  u_cwd_bridge   1st='s1/cwd1' 3rd='s1/cwd2'
+--- 終了の code: 0

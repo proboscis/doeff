@@ -1,0 +1,16 @@
+#!/bin/bash
+# 使い方: walk_count_ab.sh <出力の file> — agora-controllers の数えの木で、doeff(兄弟の link の先 = 変異の作業木)を基準と直しの版に
+# 替え、版ごとに test_emulated_screen の読み込みの照らしの回数を 3 回数える(3 回目が置き場の温まった後の数)。
+out=$1
+cd /home/ubuntu/.worktrees/hyenv-cnt/agora-controllers || exit 2
+{
+  for v in 4ca9fcd502928a0ffcde455f390f66bd629144b9 d793b6fde46a2a9b030708bf06968fbb44d0f2ab; do
+    git -C ../doeff checkout -q --detach "$v"
+    echo "doeff: $(git -C ../doeff rev-parse --short HEAD) 未 commit $(git -C ../doeff status --short | wc -l)・agora-controllers: $(git rev-parse --short HEAD)・刻 $(date -u +%H:%M:%SZ)"
+    for i in 1 2 3; do
+      s=$(date +%s)
+      uv run --frozen python /work/agent-workspaces/a-P3XK61KTD6P4A1FJZ3Y6RKN9QY/probe/walk_count.py 2>&1 | tail -n 1
+      echo "  $(( $(date +%s) - s )) 秒"
+    done
+  done
+} > "$out" 2>&1

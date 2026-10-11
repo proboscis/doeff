@@ -1,0 +1,100 @@
+"""直し(d793b6fde)の検出と照らしの各所を 1 つずつ外し、環境変数の検が狙った形で赤になるかを見る。引数: 変異を当てる作業木・出力の dir。
+変異ごとに macro_use.py を書き換え、tests/test_macro_use_record.py -k environment を走らせ、落ちた検の名と終了の code を file に残し、
+git checkout で元に戻す(当てた木は変異の後に元のまま)。"""
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Mutation:
+    """変異 1 つ — 名・外す所の文・替える文・赤になるはずの検。"""
+
+    name: str
+    old: str
+    new: str
+    expected: tuple[str, ...]
+
+
+MUTATIONS = (
+    Mutation(
+        "no-statement-read",
+        "_reads_environment(namespace, (*statement.loads, *statement.attributes))",
+        "False",
+        ("[table]", "[listed]", "[py-table]"),
+    ),
+    Mutation(
+        "no-code-read",
+        "self._note_environment(_reads_environment(function.__globals__, facts.names))",
+        "self._note_environment(False)",
+        ("[built]", "[direct]", "[helper]"),
+    ),
+    Mutation(
+        "no-local-import-read",
+        "module_name in _ENVIRONMENT_MODULES and not _ENVIRONMENT_NAMES.isdisjoint(names)",
+        "False",
+        ("[local]",),
+    ),
+    Mutation(
+        "no-environment-object-value",
+        "case _ if _environment_object(value):",
+        "case _ if False:",
+        ("[aliased]",),
+    ),
+    Mutation(
+        "no-getenv-function",
+        "self._note_environment(_environment_object(function))",
+        "self._note_environment(False)",
+        ("[got]",),
+    ),
+    Mutation(
+        "row-check-ignores-recorded-mark",
+        "ENVIRONMENT_READ in (recorded, now.digest)",
+        "now.digest == ENVIRONMENT_READ",
+        ("test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_files",),
+    ),
+    Mutation(
+        "remember-environment-digest",
+        "    if walker._mut_environment:\n",
+        "    if False:\n",
+        ("[table]", "[listed]", "[aliased]", "[got]", "[built]", "[py-table]", "[direct]", "[helper]", "[local]"),
+    ),
+)
+
+
+def run(tree: Path, out: Path, mutation: Mutation) -> str:
+    """変異 1 つを当てて検を走らせ、結果の 1 行を返す(出力の全文は out の下の file)。"""
+    target = tree / "packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py"
+    text = target.read_text(encoding="utf-8")
+    assert text.count(mutation.old) == 1, f"{mutation.name}: 外す所が 1 つでない"
+    target.write_text(text.replace(mutation.old, mutation.new), encoding="utf-8")
+    try:
+        done = subprocess.run(
+            ["uv", "run", "--frozen", "pytest", "-q", "-p", "no:cacheprovider", "-k", "environment",
+             "tests/test_macro_use_record.py"],
+            cwd=tree / "packages/doeff-hy", capture_output=True, text=True, timeout=500, check=False,
+        )
+        diff = subprocess.run(["git", "-C", str(tree), "diff"], capture_output=True, text=True, check=False).stdout
+    finally:
+        subprocess.run(["git", "-C", str(tree), "checkout", "--", str(target)], check=True)
+    failed = tuple(line.split("::", 1)[1] for line in done.stdout.splitlines() if line.startswith("FAILED "))
+    hit = all(any(want in name for name in failed) for want in mutation.expected)
+    summary = next((line for line in reversed(done.stdout.splitlines()) if " in " in line and ("passed" in line or "failed" in line)), "")
+    (out / f"mut-{mutation.name}.txt").write_text(
+        f"変異: {mutation.name}\n狙った検: {mutation.expected}\n終了の code: {done.returncode}\n要約: {summary}\n"
+        f"落ちた検: {failed}\n---- 当てた差分\n{diff}\n---- pytest の出力\n{done.stdout}\n{done.stderr[-3000:]}",
+        encoding="utf-8",
+    )
+    return f"{mutation.name}: code={done.returncode} {summary} 狙いが赤={'はい' if hit else 'いいえ'} 落ちた={len(failed)}"
+
+
+def main() -> None:
+    """変異を順に当てて結果を出す。"""
+    tree, out = Path(sys.argv[1]), Path(sys.argv[2])
+    out.mkdir(parents=True, exist_ok=True)
+    for line in map(lambda mutation: run(tree, out, mutation), MUTATIONS):
+        print(line, flush=True)
+
+
+main()
