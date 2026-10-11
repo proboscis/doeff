@@ -158,3 +158,30 @@
   (assert (in ":reads の要素は文字列の literal" e) e)
   (<- f (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{} :reads #{}))"))
   (assert (in "鍵 :reads が 2 回ある" f) f))
+
+
+(deftest test-defsystem-keeps-the-served-entries-in-the-static-description
+  ;; job が開いて待ち受ける入口(:serves — 任意の欄)は静的な記述の job の dict に整列した名の列で載り、書かない job の dict には
+  ;; 鍵が無い — 使い手が同じ入口を開く job の組を、job の形から推し量らずに記述から引くため。
+  (<- ns (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem shop [foundation]
+  (front (notice foundation) :replicas 1 :serves #{\"shop:http\" \"shop:admin\"} :reads #{\"store:orders\"})
+  (sweeper (notice foundation) :replicas 1 :reads #{\"store:orders\"}))
+"))
+  (val jobs (get (. (get ns "shop") __doeff_system__) "jobs"))
+  (assert (= (get jobs 0) {"name" "front" "function" "notice" "replicas" 1
+                           "serves" ["shop:admin" "shop:http"] "reads" ["store:orders"]})
+          jobs)
+  (assert (= (get jobs 1) {"name" "sweeper" "function" "notice" "replicas" 1 "reads" ["store:orders"]}) jobs)
+  (assert (not-in "serves" (get jobs 1)) jobs))
+
+
+(deftest test-defsystem-refuses-served-entries-that-are-not-store-colon-entry
+  ;; 反例: :serves も :reads と同じ綴りの検めを通る — `:` の無い綴り・集合でない値・同じ鍵の 2 回目は展開で断る。
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves #{\"http\"}))"))
+  (assert (in ":serves の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)" a) a)
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves [\"shop:http\"]))"))
+  (assert (in ":serves は置き場の名の文字列の集合" b) b)
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves #{\"shop:http\"} :serves #{\"shop:http\"}))"))
+  (assert (in "鍵 :serves が 2 回ある" c) c))

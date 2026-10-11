@@ -19,6 +19,9 @@
 ;;;   <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。置き場の名の集合は使い手の repo の語彙なので doeff は持たない。静的な記述の
 ;;;   job の dict にだけ載り、job の値(doeff-cluster の Job)と宣言の行には載らない(実行時に読む物が無い)。使い手の系の job に欄を
 ;;;   求める・置き場の名を照らすのは使い手の側の doeff-linter の規則(#3495・#3496)。
+;;;   :serves は job が開いて待ち受ける外の入口(HTTP の口など)の集合で、任意の欄 — 形と綴り(<置き場>:<入口>)と載る所は :reads / :writes と
+;;;   同じ(静的な記述の job の dict にだけ載り、書かない job の dict には鍵が無い)。入口を開かない job は書かない。使い手が同じ入口を
+;;;   開く job の組(同じ口で受ける組)を、job の形から推し量らずに記述から引くため。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
 (import hy)
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
@@ -26,7 +29,7 @@
 ;; 展開が import する doeff-cluster の module の綴り(型検査のための展開の掃除が重ねを畳む綴りと 1 つの定義元 — static_view.py)。
 (import doeff-hy.static-view [DEFSYSTEM-MODEL-MODULE DEFSYSTEM-BUILD-MODULE DEFSYSTEM-IMPORTS])
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes"))
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
 (setv REPLICAS-VALUES #(0 1))
@@ -56,7 +59,7 @@
 
 
 (defn record-names [form #^ str where #^ str key]  ; defk にできない: macro の展開の時に呼ぶ関数
-  "`:reads` / `:writes` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
+  "`:reads` / `:writes` / `:serves` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
    形は文字列の literal の集合だけ(空の集合 = 読み書きしないと宣言した)、綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。
    置き場の名が何かは照らさない(使い手の repo の語彙 — 頭注)。"
   (when (not (isinstance form Set))
@@ -99,11 +102,11 @@
     (setv key (str k))
     (when (not (and (isinstance k Keyword) (in key JOB-KEYS)))
       (raise (SyntaxError (.format "{}: 鍵 {} は受けない — 受ける鍵は {}" where (hy.repr k) (.join " " JOB-KEYS)))))
-    ;; 2 回目の鍵は静的な記述で見る(どの鍵も記述に載り、:reads / :writes は job の値に載らない)。
+    ;; 2 回目の鍵は静的な記述で見る(どの鍵も記述に載り、:reads / :writes / :serves は job の値に載らない)。
     (when (in (cut key 1 None) static)
       (raise (SyntaxError (.format "{}: 鍵 {} が 2 回ある" where key))))
     (match key
-      (| ":reads" ":writes")
+      (| ":reads" ":writes" ":serves")
         (setv (get static (cut key 1 None)) (record-names v where key))
       ":needs"
         (do (setv names (needs-names v where))
