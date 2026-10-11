@@ -70,7 +70,7 @@ The comprehension supports three forms, freely interleaved:
 | `(When pred)` | `(when (not pred) (yield (Skip)))` | Guard (MonadPlus `mzero`) |
 | `(<- y (effect x))` | `(setv y (yield (effect x)))` | Effect bind (kleisli) |
 
-Multiple `From` binds create nested `Traverse` effects. `When` guards land inside whichever thunk they fall into based on the preceding `From` — the CPS nesting is purely positional:
+Multiple `From` binds create nested `Traverse` effects: the thunk of an outer `From` performs the inner `Traverse` (`(yield (Traverse …))`), and the outer answer — a Collection of the inner Collections — is spliced by `Collection.flatten`, so the comprehension answers one item per combination (list monad `<-`, card ki-7e6a11f56bd5). `When` guards land inside whichever thunk they fall into based on the preceding `From` — the CPS nesting is purely positional:
 
 ```hy
 ;; Nested generators with guards at different levels

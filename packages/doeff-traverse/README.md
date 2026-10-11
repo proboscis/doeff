@@ -61,7 +61,7 @@ for/do                              SQL
 (<- result (process item))          SELECT process(item)
 ```
 
-Multiple `From` binds nest (like SQL `CROSS JOIN`). `When` guards can appear at any nesting level. All binds are kleisli (effectful).
+Multiple `From` binds nest (like SQL `CROSS JOIN`): the answer has one item per combination, e.g. `(for/do (<- a (From [1 2])) (<- b (From [10 20])) (+ a b))` gives `11 21 12 22`. `When` guards can appear at any nesting level. All binds are kleisli (effectful).
 
 ### Pure vs effectful predicates
 
