@@ -21,6 +21,7 @@ from doeff_adr.registry import (
     isolated_registry,
     register_semgrep_enforcement,
 )
+from doeff_adr.semgrep_verdicts import verdict_store
 
 WORDS = ("eval", "exec", "compile")
 
@@ -121,3 +122,10 @@ def test_a_rule_that_does_not_fire_on_its_hit_fixture_is_still_red(
 
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
         assert_semgrep_enforcement("batch_probe_outside_the_include")
+
+
+def test_an_outer_verdict_store_does_not_reach_the_mechanism_checks() -> None:
+    # 失敗ケース(日次 10-11 16:00 の doeff): 日次は子へ DOEFF_ADR_SEMGREP_VERDICTS を渡す。root の処理ステージが同じ置き場に
+    # 答えを書き、packages の段のこの file の検がその答えを読んで semgrep を 0 回しか起こさず、「1 回にまとめる」の検が赤になった。
+    # 仕組みを確かめる検は外の置き場を読まない(置き場を確かめる検は test_semgrep_verdict_store.py が自分の置き場を名指す)。
+    assert verdict_store() is None
