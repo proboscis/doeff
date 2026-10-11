@@ -60,6 +60,7 @@ from hy.errors import HyLanguageError
 from hy.models import Object
 
 from doeff_hy.binding_forms import Finding, ModuleScope
+from doeff_hy.env_places import EXPANDERS_ENV, expanders_setting
 from doeff_hy.static_baseline import (
     BaselineUnreadable,
     Split,
@@ -657,9 +658,9 @@ def _to_cache(projection: Projection) -> CachedProjection:
 #: 保存から引けない依存の展開を並べる子の process の数の上限(agora-redesign #3869)。日次の検証の機体(CPU の上限が在る Pod)でも、
 #: 手で測る時でも同じ値 — 実際の数は min(この上限, この process が使える CPU の数, その段の引けない file の数)。
 #: 8 → 4(2026-10-11): 36 core の機体で同じ作業木の検査 2 本と別の検 4 本が重なり load 163 になった(展開の子と forkserver で 30 本超)。
-#: 1 本の速さより、同じ機体で並ぶ検査の合計を抑える。機体ごとに替える時は環境変数 EXPANDERS_ENV(入口の main だけが読む)。
+#: 1 本の速さより、同じ機体で並ぶ検査の合計を抑える。機体ごとに替える時は環境変数 EXPANDERS_ENV(env_places が読み、入口の main
+#: だけが受ける)。
 EXPANDER_LIMIT = 4
-EXPANDERS_ENV = "DOEFF_HY_CHECK_EXPANDERS"
 
 
 def expander_limit(configured: str | None) -> int:
@@ -1146,7 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
     report = hy_files([placed for _, placed in named if placed is not None])
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
-        closure = project_closure(root, roots, report, cache_dir, expander_limit(os.environ.get(EXPANDERS_ENV)))
+        closure = project_closure(root, roots, report, cache_dir, expander_limit(expanders_setting()))
         checked = run_pyright(
             root, settings, closure.projections, report, args.pyright, args.python
         )
