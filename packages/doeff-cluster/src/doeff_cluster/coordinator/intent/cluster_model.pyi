@@ -16,6 +16,7 @@ from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.coordinator.intent.request_bodies import StatusRow as StatusRow
 from doeff_cluster.coordinator.intent.request_bodies import DurationRow as DurationRow
 from doeff_cluster.shared.intent.detached_model import TaskLimit as TaskLimit
+from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
 
 class ComponentVersion(NamedTuple):
     component: str
@@ -234,6 +235,19 @@ class SupersededRun:
     leaving: bool = False
 
 @dataclass(frozen=True, kw_only=True)
+class GroupHeld:
+    worker: str | None
+    part: str
+    count: int
+
+@dataclass(frozen=True, kw_only=True)
+class GroupLimitView:
+    limit: GroupLimit
+    resource_version: int | None
+    held: tuple[GroupHeld, ...]
+    queued: int
+
+@dataclass(frozen=True, kw_only=True)
 class StateView:
     now: int
     services: tuple[ServiceView, ...]
@@ -248,6 +262,7 @@ class StateView:
     revision: int
     keep_marks: tuple[KeepMark, ...]
     coordinator_commit: str | None
+    group_limits: tuple[GroupLimitView, ...] = ...
 
 class DrainPhase(StrEnum):
     DRAINING = 'Draining'
@@ -360,6 +375,7 @@ class TaskUnplacedKind(StrEnum):
     TASK_NO_ROOM = 'task-no-room'
     TASK_LIMITED = 'task-limited'
     TASK_RESERVED = 'task-reserved'
+    TASK_UNDECLARED = 'task-undeclared'
 
 class NotReadyKind(StrEnum):
     NO_DECLARATION = 'no-declaration'
@@ -691,6 +707,7 @@ class ClusterState:
     observations: ClusterObservations = ...
     keep_marks: tuple[KeepMark, ...] = ...
     superseded_runs: tuple[SupersededRun, ...] = ...
+    group_limits: Table[GroupLimit] = ...
 
 @dataclass(frozen=True)
 class Fault:

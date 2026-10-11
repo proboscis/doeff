@@ -22,14 +22,24 @@
 ;;;   :serves は job が開いて待ち受ける外の入口(HTTP の口など)の集合で、任意の欄 — 形と綴り(<置き場>:<入口>)と載る所は :reads / :writes と
 ;;;   同じ(静的な記述の job の dict にだけ載り、書かない job の dict には鍵が無い)。入口を開かない job は書かない。使い手が同じ入口を
 ;;;   開く job の組(同じ口で受ける組)を、job の形から推し量らずに記述から引くため。
+;;;   系の頭(説明の文の後・job の行の前)に `:task-limits {"<組>" {"scope" "worker" "limit" 6} …}` を置ける(2026-10-12・card
+;;;   ki-b0e8028c8c8d)— 系が宣言する組の同時数の上限(doeff-cluster の GroupLimit)。組の名は「/」を含まない文字列の literal、scope は
+;;;   "worker" か "cluster"、limit は 1 以上の整数の literal、"perPart" True は組を名乗る task が区分(part)ごとに数える組。task は組の名
+;;;   だけを名乗り、値はここが持つ。静的な記述の task_limits に載る。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
 (import hy)
+(import itertools [takewhile])
 (import hy.models [Dict Expression Float Integer Keyword List Set String Symbol])
 (import doeff-hy.declarations [needs-names])
 ;; 展開が import する doeff-cluster の module の綴り(型検査のための展開の掃除が重ねを畳む綴りと 1 つの定義元 — static_view.py)。
 (import doeff-hy.static-view [DEFSYSTEM-MODEL-MODULE DEFSYSTEM-BUILD-MODULE DEFSYSTEM-IMPORTS])
 
 (setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves"))
+;; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d)。
+(setv SYSTEM-KEYS #(":task-limits"))
+;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ)。
+(setv LIMIT-KEYS #("scope" "limit" "perPart"))
+(setv LIMIT-SCOPES #("worker" "cluster"))
 (setv UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)。
 (setv REPLICAS-VALUES #(0 1))
@@ -133,6 +143,56 @@
   #(name program values static))
 
 
+(defn read-task-limit [group spec #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "`:task-limits` の組の上限 1 つ(組の名の form と上限の dict の form)を展開の時に検め、#(名 範囲 上限 区分ごとか) を返すため。"
+  (setv name (str group))
+  (when (or (not name) (in "/" name))
+    (raise (SyntaxError (.format "{}: 組の名は「/」を含まない空でない文字列: {}" where (hy.repr group)))))
+  (setv fields (dfor #(k v) (string-dict spec (+ where " の組 " name) "上限" #(String Integer Symbol) "文字列・整数・真偽")
+                     (str k) v)
+        unknown (sorted (gfor k fields :if (not-in k LIMIT-KEYS) k))
+        scope (.get fields "scope")
+        limit (.get fields "limit")
+        per-part (.get fields "perPart" (Symbol "False")))
+  (when unknown
+    (raise (SyntaxError (.format "{} の組 {}: 受けない欄 {} — 受ける欄は {}" where name unknown (.join " " LIMIT-KEYS)))))
+  (when (not (and (isinstance scope String) (in (str scope) LIMIT-SCOPES)))
+    (raise (SyntaxError (.format "{} の組 {}: \"scope\" は {} のどれか: {}" where name (.join " / " LIMIT-SCOPES) (hy.repr scope)))))
+  (when (not (and (isinstance limit Integer) (>= (int limit) 1)))
+    (raise (SyntaxError (.format "{} の組 {}: \"limit\" は 1 以上の整数の literal: {}" where name (hy.repr limit)))))
+  (when (not (and (isinstance per-part Symbol) (in (str per-part) #("True" "False"))))
+    (raise (SyntaxError (.format "{} の組 {}: \"perPart\" は True か False: {}" where name (hy.repr per-part)))))
+  #(name (str scope) (int limit) (= (str per-part) "True")))
+
+
+(defn read-task-limits [form #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "系の頭の `:task-limits` の値の form を展開の時に検め、#(組の上限の #(名 範囲 上限 区分ごとか) の list 静的な記述の dict) を返すため —
+   linter が実行せずに読めるように、形は組の名(「/」を含まない空でない文字列の literal)→ {\"scope\" 範囲 \"limit\" 1 以上の整数
+   \"perPart\" True|False?} の dict の literal だけ。同じ規則で doeff-cluster の service_build.system-of がもう 1 度検める。"
+  (setv where (.format "defsystem {} の :task-limits" system)
+        groups (lfor #(group spec) (string-dict form where ":task-limits" Dict "組の上限の dict") (read-task-limit group spec where))
+        names (lfor g groups (get g 0))
+        twice (sorted (sfor n names :if (> (.count names n) 1) n)))
+  (when twice
+    (raise (SyntaxError (.format "{}: 組 {} が 2 回ある" where twice))))
+  #(groups (dfor #(name scope limit per-part) groups name {"scope" scope "limit" limit "perPart" per-part})))
+
+
+(defn head-options [rows #^ str system]  ; defk にできない: macro の展開の時に呼ぶ関数
+  "系の本体の form の列(説明の文を除いた物)から、頭の `:鍵 値` の組(job の行の前 — SYSTEM-KEYS)を読み、#(鍵の綴り → 値の form の
+   dict 残りの job の行) を返すため。知らない鍵・値の無い鍵・2 回目の鍵は展開の時の SyntaxError。"
+  (setv count (len (list (takewhile (fn [i] (isinstance (get rows i) Keyword)) (range 0 (len rows) 2))))
+        keys (lfor i (range count) (str (get rows (* 2 i)))))
+  (for [k keys]
+    (when (not-in k SYSTEM-KEYS)
+      (raise (SyntaxError (.format "defsystem {}: 系の頭の鍵 {} は受けない — 受ける鍵は {}" system k (.join " " SYSTEM-KEYS)))))
+    (when (> (.count keys k) 1)
+      (raise (SyntaxError (.format "defsystem {}: 系の頭の鍵 {} が 2 回ある" system k)))))
+  (when (< (len rows) (* 2 count))
+    (raise (SyntaxError (.format "defsystem {}: 系の頭の鍵 {} に値が無い" system (get keys -1)))))
+  #((dfor i (range count) (get keys i) (get rows (+ (* 2 i) 1))) (list (cut rows (* 2 count) None))))
+
+
 (defn dotted [#^ str spelling]  ; defk にできない: macro の展開の時に呼ぶ関数
   "展開が import する module と、そこから引く型と構成子を、1 つの綴りの定義元(static_view.py)から書くため — 点つきの綴りを
    Hy の読み取り器が source から作るのと同じ形 `(. a b c)` にする(点つきの Symbol は作れない)。位置は持たせない — 展開の常として
@@ -186,6 +246,9 @@
         doc None)
   (when (and rows (isinstance (get rows 0) String))
     (setv doc (get rows 0) rows (cut rows 1 None)))
+  ;; 系の頭の鍵(説明の文の後・job の行の前 — SYSTEM-KEYS)。今は :task-limits だけ。
+  (setv #(options rows) (head-options rows system)
+        #(limits limits-static) (if (in ":task-limits" options) (read-task-limits (get options ":task-limits") system) #([] {})))
   (when (not rows)
     (raise (SyntaxError (.format "defsystem {}: job の行が 1 つも無い" system))))
   (setv jobs (lfor row rows (read-job row param-names system))
@@ -199,7 +262,13 @@
                  ~(String job-name) ~program
                  :call ~(call-shape-form program)
                  ~@(sum (lfor #(k v) (.items values) [(Keyword (hy.mangle (cut k 1 None))) v]) []))))
-  (setv static {"name" system "params" param-names "jobs" (lfor j jobs (get j 3))})
+  (setv static (| {"name" system "params" param-names "jobs" (lfor j jobs (get j 3))}
+                  (if limits-static {"task_limits" limits-static} {})))
+  ;; 組の上限は GroupLimit(doeff-cluster の service_model が引き渡す型)の tuple にして system-of へ渡す(無ければ鍵を書かない)。
+  (setv limit-forms
+        (lfor #(group scope limit per-part) limits
+              `(~(in-module DEFSYSTEM-MODEL-MODULE "GroupLimit") :group ~(String group) :scope ~(String scope) :limit ~(Integer limit)
+                 :per-part ~(Symbol (str per-part)))))
   ;; 静的な記述は setattr 1 回で置く(param_types も同じ式の中で足す)。置いた後に関数の属性 __doeff_system__ を読み直す文を
   ;; 展開に出さない — 関数の型は欄を持たず、型検査の展開で reportFunctionMemberAccess になり書き手に直せない(agora-redesign #2291)。
   ;; setattr の記帳は doeff-hy-check が型検査の展開から外す(static_check._bookkeeping_statement)。
@@ -217,6 +286,7 @@
      (import doeff_hy.declarations)
      (defn #^ ~(in-module DEFSYSTEM-MODEL-MODULE "System") ~name [~@params]
        ~@(if (is doc None) [] [doc])
-       (~(in-module DEFSYSTEM-BUILD-MODULE "system-of") ~(String system) #(~@job-forms)))
+       (~(in-module DEFSYSTEM-BUILD-MODULE "system-of") ~(String system) #(~@job-forms)
+         ~@(if limit-forms [(Keyword "task-limits") `#(~@limit-forms)] [])))
      (setattr ~name "__doeff_system__" ~description)
      (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))

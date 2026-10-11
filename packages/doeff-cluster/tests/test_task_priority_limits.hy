@@ -13,10 +13,14 @@
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
+(import doeff_hy.table [TableWrite table-of])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (setv PY3 #((ComponentVersion "python" "3")))
+;; 系が宣言する組の上限(2026-10-12 — 値と範囲は宣言が持ち、task は組の名だけを名乗る): 背景の仕事は worker ごとに 6 本・呼び手(区分)ごとに 2 本。
+(setv GROUPS (table-of #((TableWrite "bg" (GroupLimit :group "bg" :scope "worker" :limit 6))
+                         (TableWrite "bg-caller" (GroupLimit :group "bg-caller" :scope "cluster" :limit 2 :per-part True)))))
 
 (defk zeus-like [capacity reserve]
   {:pre [(: capacity int) (: reserve int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -38,8 +42,7 @@
 (defk background [id caller]
   {:pre [(: id str) (: caller str)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "呼び手 caller の背景の仕事の形の task(優先 -1・呼び手ごとに 2 本・worker ごとに 6 本)を作るため。"
-  (! (queued id :priority -1 :limits #((TaskLimit :group (+ "bg/" caller) :limit 2 :scope "cluster")
-                                       (TaskLimit :group "bg" :limit 6 :scope "worker")))))
+  (! (queued id :priority -1 :limits #((TaskLimit :group "bg-caller" :part caller) (TaskLimit :group "bg")))))
 
 (defk phases [tasks ids]
   {:pre [(: tasks dict) (: ids list)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -57,7 +60,7 @@
   (setv tasks {"t11" (! (queued "t11"))})
   (for [#(i id) (enumerate LONG-IDS)]
     (setv (get tasks id) (! (background id (.format "c-{}" i)))))
-  (val state (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements tasks))
+  (val state (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements tasks :group-limits GROUPS))
   (val placed (! (place-tasks 1000 state placements T)))
   (assert (= (. (get placed "t11") phase) "assigned") (get placed "t11"))
   (val longs (! (phases placed LONG-IDS)))
@@ -92,7 +95,7 @@
   ;; 1 本が終われば 3 本目が置かれる。
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
-  (val state (ClusterState #() {"zeus" (! (zeus-like 30 3))} {} tasks))
+  (val state (ClusterState #() {"zeus" (! (zeus-like 30 3))} {} tasks :group-limits GROUPS))
   (val placed (! (place-tasks 1000 state {} T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (get placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (get placed "t3"))
@@ -104,19 +107,19 @@
   {:pre [(: key str) (: body dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "詰めた Program を置き場に置いた状態へ、本文の JSON body を受け口と同じ解きで PUT /detached/<key> として送った #(status 答え 状態) を得るため。"
   (<- placed (get tuple #(ClusterState str)) (program-placed (ClusterState) {"python" "3"}))
-  (setv #(state sha) placed)
+  (setv #(placed-state sha) placed)
+  (val state (replace placed-state :group-limits GROUPS))
   (<- parsed TaskBody (task-body-of (| {"program" sha "revision" "rev" "name" "bg" "needs" ["host-zeus"]} body)))
   (val reply (submit-detached state key parsed 0))
   #(reply.status reply.body reply.state))
 
 (deftest test-priority-and-limits-survive-the-store-and-come-from-the-detached-body
-  ;; 送り手が PUT /detached の本文で名乗った優先と上限が行に入り、保存の形を往復しても変わらない。欄の無い本文は優先 0・上限なし。
-  (setv #(status _ state) (! (submitted "bg/c-a/x" {"priority" -1
-                                                    "limits" [{"group" "bg/c-a" "limit" 2 "scope" "cluster"}
-                                                              {"group" "bg" "limit" 6 "scope" "worker"}]})))
+  ;; 送り手が PUT /detached の本文で名乗った優先と上限の組が行に入り、保存の形を往復しても変わらない。欄の無い本文は優先 0・上限なし。
+  (setv #(status _ state) (! (submitted "bg/caller-a/x" {"priority" -1
+                                                         "limits" [{"group" "bg-caller" "part" "caller-a"} {"group" "bg"}]})))
   (assert (= status 200) status)
   (val row (get (list (.values state.tasks)) 0))
-  (assert (= #(row.priority row.limits) #(-1 #((TaskLimit :group "bg/c-a" :limit 2 :scope "cluster") (TaskLimit :group "bg" :limit 6 :scope "worker")))) row)
+  (assert (= #(row.priority row.limits) #(-1 #((TaskLimit :group "bg-caller" :part "caller-a") (TaskLimit :group "bg")))) row)
   (<- back TaskRecord (task-record-from-json (task-record-to-json row)))
   (assert (= back row) back)
   (setv #(_ _ plain-state) (! (submitted "k" {})))
@@ -124,11 +127,11 @@
   (assert (= #(plain.priority plain.limits) #(0 #())) plain))
 
 (deftest test-a-malformed-limit-is-refused-by-name
-  ;; 上限の形の誤り(範囲の綴り・0 以下の数・空の組の名・整数でない優先)は 400 で、どの欄がどう違うかを名乗る。
-  (for [#(body word) [#({"limits" [{"group" "g" "limit" 2 "scope" "node"}]} "scope")
-                      #({"limits" [{"group" "g" "limit" 0 "scope" "worker"}]} "limit")
-                      #({"limits" [{"group" "" "limit" 1 "scope" "worker"}]} "group")
-                      #({"limits" {"group" "g"}} "limits")
+  ;; 上限の組の名乗りの形の誤り(値や範囲を送る・空の組の名・列でない・整数でない優先)は 400 で、どの欄がどう違うかを名乗る。
+  (for [#(body word) [#({"limits" [{"group" "bg" "scope" "worker"}]} "scope")
+                      #({"limits" [{"group" "bg" "limit" 2}]} "limit")
+                      #({"limits" [{"group" ""}]} "group")
+                      #({"limits" {"group" "bg"}} "limits")
                       #({"priority" "high"} "priority")
                       #({"priority" True} "priority")]]
     (setv #(status answer _) (! (submitted "k" body)))

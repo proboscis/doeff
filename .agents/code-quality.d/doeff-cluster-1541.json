@@ -333,7 +333,8 @@
         "doeff-cluster-process-versions",
         "doeff-cluster-service-build",
         "doeff-cluster-service-model",
-        "doeff-cluster-service-rules"
+        "doeff-cluster-service-rules",
+        "doeff-cluster-detached-model"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-declare",
@@ -402,7 +403,8 @@
         "doeff-cluster-detached-model",
         "doeff-cluster-shared-capabilities",
         "doeff-cluster-shared-protocol",
-        "doeff-cluster-coordinator-request-bodies-model"
+        "doeff-cluster-coordinator-request-bodies-model",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-detached-policy",
@@ -475,7 +477,9 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-cluster-rules",
-        "doeff-cluster-state-json"
+        "doeff-cluster-state-json",
+        "doeff-cluster-detached-rules",
+        "doeff-hy-table"
       ],
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
@@ -1189,7 +1193,9 @@
         "doeff-cluster-coordinator-request-bodies-model",
         "doeff-cluster-readiness-report",
         "doeff-cluster-readiness-rules",
-        "doeff-cluster-cluster-rules"
+        "doeff-cluster-cluster-rules",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",
@@ -1305,7 +1311,9 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-detached-model"
+      ],
       "layer": "domain",
       "name": "doeff-cluster-service-model",
       "paths": [
@@ -1703,7 +1711,8 @@
         "doeff-cluster-cluster-model",
         "doeff-cluster-cluster-rules",
         "doeff-cluster-shared-capabilities",
-        "doeff-cluster-shared-protocol"
+        "doeff-cluster-shared-protocol",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "domain",
       "name": "doeff-cluster-cluster-json",
@@ -1857,7 +1866,10 @@
       "typed": true
     },
     {
-      "allow": [],
+      "allow": [
+        "doeff-cluster-detached-model",
+        "doeff-cluster-detached-rules"
+      ],
       "layer": "io",
       "name": "doeff-cluster-declaration-requests",
       "paths": [
@@ -2560,7 +2572,9 @@
         "doeff-cluster-runtime-env-rules",
         "doeff-cluster-service-model",
         "doeff-cluster-service-rules",
-        "doeff-cluster-shared-capabilities"
+        "doeff-cluster-shared-capabilities",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "domain",
       "name": "doeff-cluster-service-build",
@@ -2599,7 +2613,10 @@
         "doeff-cluster-rollout-policy",
         "doeff-cluster-cluster-policy",
         "doeff-cluster-shared-capabilities",
-        "doeff-hy-wire"
+        "doeff-hy-wire",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-detached-rules",
+        "doeff-hy-table"
       ],
       "layer": "pure",
       "name": "doeff-cluster-state-json",
@@ -2658,7 +2675,8 @@
         "doeff-hy-wire",
         "doeff-cluster-semaphore-model",
         "doeff-cluster-warm-model",
-        "doeff-cluster-warm-rules"
+        "doeff-cluster-warm-rules",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-coordinator-replies",

@@ -16,6 +16,8 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvVar])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES CallShape Job System Declaration])
+(import doeff_cluster.shared.intent.detached_model [GroupLimit])
+(import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-spec])
 
 
 (deff job [#^ str name program * #^ CallShape call needs #^ int replicas #^ (| dict None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
@@ -45,14 +47,25 @@
        :environ env-vars))
 
 
-(deff system-of [#^ str name #^ tuple jobs]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-  {:pre [(: name str) (: jobs tuple)] :post [(: % System)] :tags {:context "doeff-cluster" :role "main"}}
-  "job の組を系にする(名の重なりは断る)。"
+(deff system-of [#^ str name #^ tuple jobs * #^ tuple [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
+  {:pre [(: name str) (: jobs tuple) (: task-limits tuple)] :post [(: % System)] :tags {:context "doeff-cluster" :role "main"}}
+  "job の組と組の同時数の上限を系にする(job の名の重なり・組の名の重なり・受けられない上限は断る — 上限の規則は coordinator の
+   受け口と同じ group-limit-refusal)。"
   (setv names (lfor j jobs j.name))
   (for [n names]
     (when (> (.count names n) 1)
       (raise (ValueError (.format "系 {} に job {} が 2 つある" name n)))))
-  (System :name name :jobs jobs))
+  (for [l task-limits]
+    (when (not (isinstance l GroupLimit))
+      (raise (TypeError (.format "系 {} の :task-limits は GroupLimit の tuple: {!r}" name l))))
+    (setv refusal (group-limit-refusal l.group (group-limit-spec l)))
+    (when (is-not refusal None)
+      (raise (ValueError (.format "系 {} の :task-limits: {}" name refusal)))))
+  (setv groups (lfor l task-limits l.group))
+  (for [g groups]
+    (when (> (.count groups g) 1)
+      (raise (ValueError (.format "系 {} の :task-limits に組 {} が 2 つある" name g)))))
+  (System :name name :jobs jobs :task-limits task-limits))
 
 
 (deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions]  ; defk にできない: declare の CLI が呼ぶ
@@ -89,7 +102,7 @@
                 (if j.readiness {"readiness" (dict j.readiness)} {})
                 (if (= j.update "recreate") {} {"update" j.update})
                 (if (is env-json None) {} {"runtimeEnv" env-json}))))
-  (Declaration :rows rows :programs programs))
+  (Declaration :rows rows :programs programs :limits system.task-limits))
 
 
 (deff resolve-value [#^ str path]  ; defk にできない: CLI の入口(declare)が引数の文字列を解く

@@ -12,7 +12,9 @@ from doeff_cluster.shared.protocol.declaration_requests import service_read as s
 from doeff_cluster.shared.protocol.declaration_requests import reread_after_conflict as reread_after_conflict
 from doeff_cluster.shared.protocol.declaration_requests import needed_programs as needed_programs
 from doeff_cluster.shared.protocol.declaration_requests import body_of as body_of
+from doeff_cluster.shared.protocol.declaration_requests import group_limit_write as group_limit_write
 from doeff_cluster.shared.intent.service_model import Declaration as Declaration
+from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
 DECLARE_REPLY_SECONDS: float
 
 def declare_request(method: str, url: str, actor: str, body: dict[str, object] | None) -> _Program[HttpResponse, object]:
@@ -28,6 +30,9 @@ def service_written(base: str, actor: str, read: ServiceRead) -> _Program[HttpRe
     ...
 
 def service_written_rereading(base: str, actor: str, read: ServiceRead) -> _Program[HttpResponse, object]:
+    ...
+
+def group_limit_written(base: str, actor: str, limit: GroupLimit) -> _Program[bool, object]:
     ...
 
 def apply_declaration(url: str, declaration: Declaration, actor: str) -> _Program[bool, object]:

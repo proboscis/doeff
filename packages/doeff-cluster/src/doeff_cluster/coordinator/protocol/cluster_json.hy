@@ -63,7 +63,9 @@
   (val extra (sorted (gfor k data :if (not-in k known) k)))
   (val phase (stored-str data "phase" "queued"))
   (val unended (not-in phase ENDED-PHASES))
-  (val reason (old-task-row-reason (.get data "requires") extra))
+  ;; 上限の値と範囲を名乗る limits(2026-10-12 より前の形)も旧い形(読み分けて値を捨てて数えない — card ki-b0e8028c8c8d)。
+  (val old-limits (old-limits-reason (list (stored-items data "limits"))))
+  (val reason (or (old-task-row-reason (.get data "requires") extra) old-limits))
   ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
   (val failure (if unended reason None))
   ;; 欄ごとに型を確かめて読む(#** で辞書を渡すと、型の違う保存の値が黙って欄に入る — #1662)。
@@ -94,9 +96,10 @@
               :retryable (stored-bool data "retryable" False)
               ;; 子の環境変数の欄の無い旧い行は空(欄が無いだけで旧い形とは数えない — 足した欄)。
               :environ (environ-pairs (.get data "environ" {}))
-              ;; 置き方の名乗り(2026-10-11)の欄の無い旧い行は優先 0・上限なし(足した欄)。
+              ;; 置き方の名乗り(2026-10-11)の欄の無い旧い行は優先 0・上限なし(足した欄)。旧い形の limits の行は組を名乗らない
+              ;; (まだ終わっていなければ上の failure で failed — 置かない行は数えない)。
               :priority (stored-int data "priority" 0)
-              :limits (stored-limits data)))
+              :limits (if old-limits #() (stored-limits data))))
 
 
 ;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの
@@ -177,6 +180,15 @@
   (when problem
     (raise (ValueError (.format "保存の task の行の limits が誤っている: {}" problem))))
   (task-limits-of value))
+
+
+(deff old-limits-reason [#^ list limits]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
+  {:pre [(: limits list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
+  "保存の task の行の limits が旧い形(上限の値 limit と範囲 scope を task が名乗る — 2026-10-12 より前)なら、まだ終わっていない行を
+   failed にする理由の文(新しい形なら None)。値の持ち主は系の宣言 1 つになった(card ki-b0e8028c8c8d)ので、旧い行の値を読んで数えない。"
+  (if (any (gfor item limits (and (isinstance item dict) (or (in "limit" item) (in "scope" item)))))
+      "旧い形の task(上限の値と範囲を名乗る limits)は受け付けない — 上限の値と範囲は系の宣言(:task-limits)が持つ。組の名だけで送り直す"
+      None))
 
 
 (deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断

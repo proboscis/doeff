@@ -1,11 +1,12 @@
-;;; 切り離した task(SubmitDetached)の純粋な判断: 送る effect を作る前の needs の検めと、置き方の名乗り(優先・同時数の上限)の
-;;; 形の検めと本文の綴り(送り手と coordinator の受け口が同じ規則を読む — 2026-10-11)。
+;;; 切り離した task(SubmitDetached)の純粋な判断: 送る effect を作る前の needs の検めと、置き方の名乗り(優先・同時数の上限の組)の
+;;; 形の検めと本文の綴り(送り手と coordinator の受け口が同じ規則を読む — 2026-10-11)。系が宣言する組の上限(GroupLimit)の形の検めと
+;;; 綴りも同じ所に置く(系の構成子・coordinator の資源の口・保存の読み直しが同じ規則を読む — 2026-10-12・card ki-b0e8028c8c8d)。
 ;;; 型は doeff_cluster.shared.intent.detached_model、coordinator への口(送る・待つ)は doeff_cluster.shared.protocol.detached。
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import doeff [Program])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached DetachedSubmitAnswer DETACHED-DEFAULT-LEASE-SECONDS
-                                                    DETACHED-DEFAULT-RETAIN-SECONDS TaskLimit TASK-LIMIT-SCOPES])
+                                                    DETACHED-DEFAULT-RETAIN-SECONDS TaskLimit GroupLimit TASK-LIMIT-SCOPES])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar])
 (import doeff_cluster.shared.core.capabilities [effect-needs-problem])
 
@@ -18,39 +19,85 @@
       (.format "priority は整数(大きいほど先に置く・負 = 背景の仕事): {!r}" value)))
 
 
+(val TASK-LIMIT-KEYS (frozenset #("group" "part")))
+
+
 (deff task-limit-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読みと構築関数が呼ぶ純粋な判断
   {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "同時数の上限 1 つ(本文の JSON の object {group limit scope})が受けられない理由(受けられれば None)。"
+  "同時数の上限の組の名乗り 1 つ(本文の JSON の object {group part?})が受けられない理由(受けられれば None)。上限の値と範囲の欄
+   (limit・scope — 2026-10-12 より前の送り手の形)は受けない — 値と範囲は系の宣言の GroupLimit が持つ(card ki-b0e8028c8c8d)。"
   (cond
-    (not (isinstance value dict)) (.format "limits の 1 つは {{group limit scope}} の object: {!r}" value)
+    (not (isinstance value dict)) (.format "limits の 1 つは {{group part?}} の object: {!r}" value)
+    (- (set value) TASK-LIMIT-KEYS)
+      (.format "limits の 1 つは組の名 group(と区分 part)だけを名乗る — 上限の値と範囲は系の宣言(:task-limits)が持つ。受けない欄: {}"
+               (sorted (- (set value) TASK-LIMIT-KEYS)))
     (not (and (isinstance (.get value "group") str) (.get value "group")))
       (.format "limits の group は空でない文字列: {!r}" (.get value "group"))
-    (not (and (isinstance (.get value "limit") int) (not (isinstance (.get value "limit") bool)) (>= (.get value "limit") 1)))
-      (.format "limits の limit は 1 以上の整数: {!r}" (.get value "limit"))
-    (not-in (.get value "scope") TASK-LIMIT-SCOPES)
-      (.format "limits の scope は {} のどれか: {!r}" (sorted TASK-LIMIT-SCOPES) (.get value "scope"))
+    (and (in "part" value) (not (and (isinstance (get value "part") str) (get value "part"))))
+      (.format "limits の part は空でない文字列(区分を名乗らない時は欄を置かない): {!r}" (get value "part"))
     True None))
 
 
 (deff task-limits-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
   {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "task の本文の欄 limits(同時数の上限の列)が受けられない理由(None = 欄が無い・どれも受けられる)。"
+  "task の本文の欄 limits(同時数の上限の組の列)が受けられない理由(None = 欄が無い・どれも受けられる)。同じ組を 2 度名乗る列は断る。"
   (cond
     (is value None) None
-    (not (isinstance value list)) (.format "limits は {{group limit scope}} の object の列: {!r}" value)
-    True (next (gfor item value :setv problem (task-limit-refusal item) :if problem problem) None)))
+    (not (isinstance value list)) (.format "limits は {{group part?}} の object の列: {!r}" value)
+    True (or (next (gfor item value :setv problem (task-limit-refusal item) :if problem problem) None)
+             (let [groups (lfor item value (get item "group"))
+                   twice (sorted (sfor g groups :if (> (.count groups g) 1) g))]
+               (if twice (.format "limits に同じ組が 2 度ある: {}" twice) None)))))
 
 
 (deff task-limits-of [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文と保存の行の読み(Program の外)が呼ぶ純粋な読み
   {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "受けられる limits の JSON(task-limits-refusal が None の値)→ TaskLimit の tuple(欄が無ければ空)。"
-  (tuple (gfor item (or value []) (TaskLimit :group (get item "group") :limit (get item "limit") :scope (get item "scope")))))
+  (tuple (gfor item (or value []) (TaskLimit :group (get item "group") :part (.get item "part" "")))))
+
+
+(deff task-limit-json [#^ TaskLimit limit]  ; defk にできない: 本文の綴り(handler と模擬の宿)と保存の綴り(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: limit TaskLimit)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "組の名乗り 1 つ → 本文と保存の JSON の object を綴るため(区分を名乗らない組は part の欄を置かない)。"
+  (| {"group" limit.group} (if limit.part {"part" limit.part} {})))
 
 
 (deff task-limits-json [#^ tuple limits]  ; defk にできない: 本文の綴り(handler と模擬の宿)と保存の綴り(Program の外)が呼ぶ純粋な綴り
   {:pre [(: limits tuple)] :post [(: % list)] :tags {:context "doeff-cluster" :role "judgment"}}
   "TaskLimit の tuple → 本文と保存の JSON の形(task-limits-of の逆)。"
-  (lfor l limits {"group" l.group "limit" l.limit "scope" l.scope}))
+  (lfor l limits (task-limit-json l)))
+
+
+(val GROUP-LIMIT-KEYS (frozenset #("scope" "limit" "perPart")))
+
+
+(deff group-limit-refusal [#^ (| dict list tuple str int float bool None) name #^ (| dict list tuple str int float bool None) spec]  ; defk にできない: 系の構成子(module の読み込みの時)・coordinator の受け口と保存の読み直し(Program の外)が呼ぶ純粋な判断
+  {:pre [(: name (| dict list tuple str int float bool None)) (: spec (| dict list tuple str int float bool None))] :post [(: % (| str None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "系が宣言する組の上限 1 つ(name = 組の名・spec = JSON の object {scope limit perPart?})が受けられない理由(受けられれば None)。
+   系の構成子(service_build.system-of)・coordinator の資源の口(GroupLimit の作り・書き直し)・保存の読み直しが同じ規則で読む。"
+  (cond
+    (not (and (isinstance name str) name (not-in "/" name))) (.format "組の名は「/」を含まない空でない文字列: {!r}" name)
+    (not (isinstance spec dict)) (.format "組 {} の上限は {{scope limit perPart?}} の object: {!r}" name spec)
+    (- (set spec) GROUP-LIMIT-KEYS) (.format "組 {} の上限の知らない欄: {}" name (sorted (- (set spec) GROUP-LIMIT-KEYS)))
+    (not-in (.get spec "scope") TASK-LIMIT-SCOPES)
+      (.format "組 {} の scope は {} のどれか: {!r}" name (sorted TASK-LIMIT-SCOPES) (.get spec "scope"))
+    (not (and (isinstance (.get spec "limit") int) (not (isinstance (.get spec "limit") bool)) (>= (.get spec "limit") 1)))
+      (.format "組 {} の limit は 1 以上の整数: {!r}" name (.get spec "limit"))
+    (not (isinstance (.get spec "perPart" False) bool)) (.format "組 {} の perPart は真偽値: {!r}" name (.get spec "perPart"))
+    True None))
+
+
+(deff group-limit-of [#^ str name #^ dict spec]  ; defk にできない: 系の構成子と coordinator の受け口・保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: name str) (: spec dict)] :post [(: % GroupLimit)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "受けられる組の上限(group-limit-refusal が None の名と spec)→ GroupLimit。"
+  (GroupLimit :group name :scope (get spec "scope") :limit (get spec "limit") :per-part (.get spec "perPart" False)))
+
+
+(deff group-limit-spec [#^ GroupLimit limit]  ; defk にできない: 宣言の行の組み立て(module の外の CLI)と coordinator の資源の行・保存の綴り(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: limit GroupLimit)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "GroupLimit → 資源 GroupLimit の spec の JSON の形(group-limit-of の逆 — 区分ごとに数えない組は perPart の欄を置かない)。"
+  (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {})))
 
 
 (deff task-placing-json [#^ int priority #^ tuple limits]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り

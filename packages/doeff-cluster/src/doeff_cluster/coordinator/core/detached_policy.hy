@@ -15,12 +15,14 @@
 (import dataclasses [replace])
 (import typing [NamedTuple])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff [run])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
-(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions])
+(import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
+                                                     limits-undeclared-refusal])
 (import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -70,7 +72,9 @@
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
                     (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)
                     (task-priority-refusal body.priority)
-                    (task-limits-refusal body.limits)))
+                    (task-limits-refusal body.limits)
+                    ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ — card ki-b0e8028c8c8d)。
+                    (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
   (setv needs (needs-named body.needs body.requires "切り離した task の needs")
         environ (environ-pairs (or body.environ {}))

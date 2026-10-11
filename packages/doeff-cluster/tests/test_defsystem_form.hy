@@ -185,3 +185,50 @@
   (assert (in ":serves は置き場の名の文字列の集合" b) b)
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves #{\"shop:http\"} :serves #{\"shop:http\"}))"))
   (assert (in "鍵 :serves が 2 回ある" c) c))
+
+
+(deftest test-defsystem-declares-the-task-limits-of-the-system
+  ;; 系の頭の :task-limits(2026-10-12・card ki-b0e8028c8c8d)は、系の値の task-limits(GroupLimit)と静的な記述の task_limits に載る —
+  ;; 組の上限の値の持ち主は系の宣言 1 つで、task は組の名だけを名乗る。:task-limits の無い系の静的な記述は前と同じ形(鍵を書かない)。
+  (<- ns (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem land [foundation]
+  \"着地の系\"
+  :task-limits {\"heavy\" {\"scope\" \"worker\" \"limit\" 6}
+                \"heavy-caller\" {\"scope\" \"cluster\" \"limit\" 2 \"perPart\" True}}
+  (land-notice (notice foundation) :needs #{\"net\"} :replicas 1))
+"))
+  (val land (get ns "land"))
+  (assert (= (get land.__doeff_system__ "task_limits")
+             {"heavy" {"scope" "worker" "limit" 6 "perPart" False}
+              "heavy-caller" {"scope" "cluster" "limit" 2 "perPart" True}})
+          land.__doeff_system__)
+  (import doeff_cluster.shared.intent.detached_model [GroupLimit])
+  (import sys types)
+  ;; 系の値を作るには job の関数が module:qualname で引ける要る(identity)— 評価した名前空間を module として置いてから呼ぶ。
+  (val module (types.ModuleType "defsystem_probe"))
+  (.update module.__dict__ ns)
+  (setv (get sys.modules "defsystem_probe") module)
+  (val system (try (land (get ns "notice")) (finally (.pop sys.modules "defsystem_probe" None))))
+  (assert (= system.task-limits #((GroupLimit :group "heavy" :scope "worker" :limit 6)
+                                  (GroupLimit :group "heavy-caller" :scope "cluster" :limit 2 :per-part True)))
+          system.task-limits)
+  (assert (= (len system.jobs) 1) system.jobs))
+
+
+(deftest test-defsystem-refuses-task-limits-that-are-not-static-or-not-valid
+  ;; 反例: 範囲の名・0 の上限・整数でない上限・知らない欄・「/」を含む組の名・dict でない値・知らない頭の鍵・2 回目の鍵は展開で断る —
+  ;; linter が実行せずに読める形だけを通し、値の規則は coordinator の受け口と同じにするため。
+  (val job-row "(job (make foundation) :replicas 1)")
+  (for [#(limits word) [#("{\"g\" {\"scope\" \"node\" \"limit\" 1}}" "\"scope\" は worker / cluster のどれか")
+                        #("{\"g\" {\"scope\" \"worker\" \"limit\" 0}}" "\"limit\" は 1 以上の整数の literal")
+                        #("{\"g\" {\"scope\" \"worker\" \"limit\" \"6\"}}" "\"limit\" は 1 以上の整数の literal")
+                        #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"max\" 2}}" "受けない欄 ['max']")
+                        #("{\"a/b\" {\"scope\" \"worker\" \"limit\" 1}}" "組の名は「/」を含まない")
+                        #("[\"g\"]" ":task-limits は文字列の鍵の dict の literal")]]
+    (<- message (refusal (.format "(defsystem s [foundation] :task-limits {} {})" limits job-row)))
+    (assert (in word message) #(word message)))
+  (<- unknown (refusal (.format "(defsystem s [foundation] :limits {{}} {})" job-row)))
+  (assert (in "系の頭の鍵 :limits は受けない" unknown) unknown)
+  (<- twice (refusal (.format "(defsystem s [foundation] :task-limits {{}} :task-limits {{}} {})" job-row)))
+  (assert (in "系の頭の鍵 :task-limits が 2 回ある" twice) twice))

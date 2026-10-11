@@ -24,6 +24,8 @@
 ;;;     revision・versions・environ から作り、詰めた文字列は比べない(改訂 1 の A — cloudpickle の出力は同じ Program でも揺れる)。
 ;;;   - describe = identity から作る表示の 1 行(coordinator は業務の code を持たず Program を解けないので、表示は宣言が運ぶ)。
 ;;; 旧い宣言(:env・:config・:env-config・:requires・関数の参照 + 設定)は受け付けない(operator 2026-09-27)。
+;;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d): 系は task-limits(GroupLimit — 組の名・範囲・上限の値)を持ち、宣言は資源
+;;; GroupLimit として coordinator へ書く。task は組の名だけを名乗る(値の持ち主は系の宣言 1 つ)。
 ;;; 置き場(#2540): この module は型だけ(CallShape・Job・System・RecordArgument・Declaration・UPDATE-FORMS・REPLICAS-VALUES)。identity と検めの判断は
 ;;; doeff_cluster.shared.core.service_rules、構成子と宣言の行の組み立ては doeff_cluster.shared.entry.service_build。
 (require doeff-hy.macros [val])
@@ -32,6 +34,8 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import typing [ClassVar Protocol runtime-checkable])
+;; 系の task-limits の要素の型(defsystem の展開はこの module から引く — 展開の import の綴りを増やさない)。
+(import .detached_model [GroupLimit])
 
 (val UPDATE-FORMS #("recreate" "handoff"))
 ;; job の望む台数として受ける値(coordinator の Service の replicas と同じ — 0 = 取り下げ・1 = 動かす)。
@@ -61,9 +65,11 @@
 
 
 (defrecord System
-  "系 = job の組(defsystem の関数が返す値)。name = 系の名・jobs = Job の tuple(名は重ならない)。"
+  "系 = job の組(defsystem の関数が返す値)。name = 系の名・jobs = Job の tuple(名は重ならない)・task-limits = 系が宣言する組の同時数の
+   上限(GroupLimit の tuple — 組の名は重ならない。task は組の名だけを名乗り、値と範囲はここが持つ — card ki-b0e8028c8c8d)。"
   (#^ str name)
-  (#^ tuple jobs))
+  (#^ tuple jobs)
+  (setv #^ (get tuple #(GroupLimit ...)) task-limits #()))
 
 
 (defclass [runtime-checkable] RecordArgument [Protocol]
@@ -72,7 +78,9 @@
 
 
 (defrecord Declaration
-  "system-declaration の答え: rows = coordinator へ渡す宣言の行(Service ごと)・programs = 行が参照する詰めた Program(sha → 文字列)。
-   declare は programs を /programs へ置いてから rows を書く。"
+  "system-declaration の答え: rows = coordinator へ渡す宣言の行(Service ごと)・programs = 行が参照する詰めた Program(sha → 文字列)・
+   limits = 組の上限(系の task-limits — 資源 GroupLimit 1 つずつに書く。本文の形は declaration_requests が綴る)。declare は limits を
+   書き、programs を /programs へ置いてから rows を書く。"
   (#^ list rows)
-  (#^ dict programs))
+  (#^ dict programs)
+  (setv #^ (get tuple #(GroupLimit ...)) limits #()))

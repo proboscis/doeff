@@ -4,9 +4,9 @@
 ;;; 「それを受けた調停の変化(送り手 = coordinator)」を分けて版と記録を付ける(resource_policy.stamp)。
 ;;;
 ;;; HTTP(資源の口・2026-09-24):
-;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout)
+;;;   GET    /resources/<Kind>             一覧(Kind = Service | Worker | Task | Rollout | GroupLimit)
 ;;;   GET    /resources/<Kind>/<名>        1 つ(resourceVersion・generation・所有者・作った / 書いた送り手・spec・status)
-;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service と Rollout)。在れば 409
+;;;   POST   /resources/<Kind>             作る {"name", "spec"}(Service・Rollout・GroupLimit — 組の同時数の上限)。在れば 409
 ;;;   PUT    /resources/<Kind>/<名>        書き換える {"spec", "resourceVersion"}。版が古ければ 409・版が無ければ 400
 ;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(送り手が誰でも消せる。進行中の Rollout が扱う Service・進行中の Rollout は force でだけ消す)
 ;;;   POST   /resources/Service/<名>/readiness   ReportReady の報告 {worker pid revision instance attempt specHash placement ready reason}

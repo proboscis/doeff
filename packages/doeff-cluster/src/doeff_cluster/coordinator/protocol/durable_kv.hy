@@ -5,7 +5,7 @@
 ;;; Service や Rollout の書きに引きずられず、逆に Service の書きが盤全体を書き直さない。
 ;;;
 ;;; キー:
-;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  audit/<番号 10 桁>  counter
+;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
@@ -33,7 +33,10 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes value-size
-] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each])
+] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
+                                               group-limit-from-json])
+(import doeff_cluster.shared.core.detached_rules [group-limit-spec])
+(import doeff_hy.table [TableWrite table-of])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")
@@ -41,6 +44,8 @@
 (val HANDOFF "handoff/")
 (val KEEP "keep/")
 (val SUPERSEDED "superseded/")
+;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d — 資源 GroupLimit 1 つに鍵 1 つ)。
+(val GROUP-LIMIT "grouplimit/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -119,6 +124,9 @@
     (SourceGroup :fields #("rollouts")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor #(k r) (.items state.rollouts) (+ "rollout/" k) #(#(r) (partial rollout-row-to-json r)))))
+    (SourceGroup :fields #("group_limits")
+                 :build (fn #^ Sources [#^ ClusterState state]
+                          (dfor #(k l) (.items state.group-limits) (+ GROUP-LIMIT k) #(#(l) (partial group-limit-spec l)))))
     (SourceGroup :fields #("drains")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor #(k d) (.items state.drains) (+ DRAIN k) #(#(d) (partial asdict d)))))
@@ -244,6 +252,7 @@
     :alive-ms alive-ms
     :meta (dfor #(k v) (part "meta/") k (resource-meta-from-json v))
     :rollouts (dfor #(k v) (part "rollout/") k (rollout-row-from-json v))
+    :group-limits (table-of (tuple (gfor #(k v) (part GROUP-LIMIT) (TableWrite k (group-limit-from-json k v)))))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
     :surges (dfor #(k v) (part SURGE) k (Placement #** v))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。

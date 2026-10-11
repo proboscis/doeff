@@ -1,16 +1,18 @@
-;;; coordinator の資源(Service・Worker・Task・Rollout)の純粋な判断。I/O はしない。
+;;; coordinator の資源(Service・Worker・Task・Rollout・GroupLimit)の純粋な判断。I/O はしない。
 ;;;
 ;;; - 版と出来事の記録: stamp が「前の状態と後の状態」の差から、変わった資源ごとに resourceVersion を進め(spec が変われば
 ;;;   generation も)、送り手・時刻・前後の版を出来事の記録へ足す。変化を起こした経路(API・heartbeat・調停・Rollout)を問わず
 ;;;   ここ 1 か所で付くので、版の付け忘れ・記録の漏れが起きない。
-;;; - 書きの口: Service と Rollout は資源 1 つずつの compare-and-set(PUT は resourceVersion 必須・古ければ 409)。
+;;; - 書きの口: Service・Rollout・GroupLimit は資源 1 つずつの compare-and-set(PUT は resourceVersion 必須・古ければ 409)。
+;;;   GroupLimit(2026-10-12・card ki-b0e8028c8c8d)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart?})。
+;;;   宣言の道具が書き、置き方はこの値で数える。spec の形は系の構成子と同じ規則(detached_rules.group-limit-refusal)で検める。
 ;;;   一覧の丸ごとの上書きはしない。所有者(owner)は誰が宣言したかの記録で、書き・消しを断る照合には使わない(名乗りの X-Actor は
 ;;;   確かめないので守りにならない — 2026-10-05 に照合して断る分岐を外した)。force は進行中の Rollout が扱う資源を消す時だけに効く。
 ;;; - readiness: Service が Ready か(service-readiness)。process の生存(worker の報告の running)と、宣言が readiness を
 ;;;   持てば ReportReady の直近の報告の両方で決める。
 ;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
 ;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
-(require doeff-hy.macros [defk val <-])
+(require doeff-hy.macros [defk deff val <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import json)
@@ -28,12 +30,14 @@
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms readiness-refusal])
 (import doeff_cluster.shared.core.readiness_report [reported-readiness])
 (import doeff_cluster.shared.intent.readiness_model [ReadinessClaim])
+(import doeff_cluster.shared.intent.detached_model [GroupLimit])
+(import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 (setv LEGACY-OWNER "legacy:jobs")        ; 旧い PUT /jobs の頃からの宣言の所有者の記録(本当の持ち主は coordinator には分からない)
 (setv COORDINATOR "coordinator")          ; 調停(割り当て・task の置き先)の送り手
 (setv MIGRATION "migration")              ; 旧い形の状態の file に版を振った送り手
 (setv AUDIT-PER-KIND 300)                 ; 出来事の記録の上限(kind ごと)
-(setv KINDS #("Service" "Worker" "Task" "Rollout"))
+(setv KINDS #("Service" "Worker" "Task" "Rollout" "GroupLimit"))
 
 
 (defclass Refused [Exception]
@@ -582,6 +586,13 @@
   {"spec" (rollout-spec-to-json r.spec) "status" (rollout-status-to-json r.status)})
 
 
+(deff group-limit-row [#^ GroupLimit limit]  ; defk にできない: 版の比べ(snapshot・row-of — Program の外の純粋な判断)が呼ぶ
+  {:pre [(: limit GroupLimit)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "組の上限 1 つの資源の行 {spec status} を綴るため(status は空 — 置いている数は拍ごとに動くので版に入れず、GET /state の groupLimits
+   に出す)。"
+  {"spec" (group-limit-spec limit) "status" {}})
+
+
 (defn #^ dict snapshot [#^ ClusterState state #^ int now #^ ClusterTiming timing]
   "資源ごとの {spec status}。比べて版を進める単位。変わりやすい観測(生存の時刻・lease の期限)は入れない。同じ名の宣言と受け付けない
    行が両方在れば受け付けない行(後に書く)が勝つ — row-of と同じ順。"
@@ -589,7 +600,8 @@
      (dfor r (.values state.refused) (key-of "Service" r.name) (refused-row state r now timing))
      (dfor w (.values state.workers) (key-of "Worker" w.name) (worker-row state w now))
      (dfor t (.values state.tasks) (key-of "Task" t.id) (task-row t))
-     (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))))
+     (dfor #(name r) (.items state.rollouts) (key-of "Rollout" name) (rollout-row r))
+     (dfor #(name l) (.items state.group-limits) (key-of "GroupLimit" name) (group-limit-row l))))
 
 
 (defn #^ (| dict None) row-of [#^ ClusterState state #^ dict jobs #^ str key #^ int now #^ ClusterTiming timing]
@@ -602,6 +614,7 @@
     "Worker" (if (in name state.workers) (worker-row state (get state.workers name) now) None)
     "Task" (if (in name state.tasks) (task-row (get state.tasks name)) None)
     "Rollout" (if (in name state.rollouts) (rollout-row (get state.rollouts name)) None)
+    "GroupLimit" (if (setx limit (.row state.group-limits name)) (group-limit-row limit) None)
     _ (raise (ValueError (+ "snapshot の鍵の種類を知らない: " key)))))
 
 
@@ -637,7 +650,7 @@
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
    - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)/
      世代をまたぐ受け渡し(退いた世代の組と、組の在る worker の報告 — AL-D2f)。
-     Task・Rollout: 自分の行。"
+     Task・Rollout・GroupLimit: 自分の行。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
                        (moved-names before.observations.readiness after.observations.readiness)
@@ -670,11 +683,13 @@
         moved (| (frozenset (gfor n services (key-of "Service" n)))
                  (frozenset (gfor n workers (key-of "Worker" n)))
                  (frozenset (gfor n (moved-names before.tasks after.tasks) (key-of "Task" n)))
-                 (frozenset (gfor n (moved-names before.rollouts after.rollouts) (key-of "Rollout" n))))
+                 (frozenset (gfor n (moved-names before.rollouts after.rollouts) (key-of "Rollout" n)))
+                 (frozenset (gfor n (moved-names before.group-limits after.group-limits) (key-of "GroupLimit" n))))
         present (| (frozenset (gfor n all-services :if (or (in n jobs-after) (in n after.refused)) (key-of "Service" n)))
                    (frozenset (gfor n after.workers (key-of "Worker" n)))
                    (frozenset (gfor n after.tasks (key-of "Task" n)))
-                   (frozenset (gfor n after.rollouts (key-of "Rollout" n))))
+                   (frozenset (gfor n after.rollouts (key-of "Rollout" n)))
+                   (frozenset (gfor n (.keys after.group-limits) (key-of "GroupLimit" n))))
         unversioned (frozenset (gfor k present :if (not-in k after.meta) k)))
   (| moved unversioned))
 
@@ -810,7 +825,7 @@
   (EventsView :revision state.revision :seq state.audit-seq :events (cut rows (- limit) None)))
 
 
-;; --- 書きの口(Service と Rollout)--------------------------------------------------------------
+;; --- 書きの口(Service・Rollout・GroupLimit)---------------------------------------------------
 
 (defn #^ None check-version [#^ ClusterState state #^ str key #^ (| int None) version #^ bool [required True]]
   (setv current (resource-version-of state key))
@@ -826,6 +841,13 @@
                :if (and (!= name skip) (not-in r.status.phase TERMINAL-PHASES)
                         (& (set target-keys) (sfor t (rollout-targets r.spec) (target-key t))))
                name)))
+
+
+(defn #^ GroupLimit checked-group-limit [#^ str name #^ (| dict None) spec]
+  "資源 GroupLimit の作り・書き直しの spec を、系の構成子と同じ規則(group-limit-refusal)で検めて GroupLimit にするため(受けられなければ 400)。"
+  (setv refusal (group-limit-refusal name spec))
+  (when (is-not refusal None) (refuse 400 refusal))
+  (group-limit-of name spec))
 
 
 (defn #^ ClusterState create-resource [#^ ClusterState state #^ str kind #^ (| ResourceBody ServiceBody) body #^ str actor #^ int now]
@@ -848,6 +870,9 @@
           (setv busy (active-rollouts-touching state (lfor t (rollout-targets spec) (target-key t))))
           (when busy (refuse 409 (+ "同じ相手を扱う Rollout が進行中: " (.join ", " busy))))
           (replace state :rollouts (| state.rollouts {name (RolloutRow :spec spec :status (RolloutStatus :created-ms now))})))
+    (= kind "GroupLimit")
+      (do (when (is-not (.row state.group-limits name) None) (refuse 409 (+ "もう在る GroupLimit: " name)))
+          (replace state :group-limits (.with-writes state.group-limits #((TableWrite name (checked-group-limit name body.spec))))))
     True (refuse 405 (+ "この kind は API から作れない: " kind))))
 
 
@@ -882,6 +907,11 @@
                     (dfor #(k v) (.items old-json) :if (!= k "abort") k v))
             (refuse 409 "Rollout の spec は変えられない(変えてよいのは abort だけ。別の向きは新しい Rollout で表す)"))
           (replace state :rollouts (| state.rollouts {name (replace current :spec (replace old :abort (bool (.get spec "abort"))))})))
+    (= kind "GroupLimit")
+      (do (when (is (.row state.group-limits name) None) (refuse 404 (+ "無い GroupLimit: " name)))
+          (check-version state key body.resource-version)
+          ;; 値と範囲を変えてよい(宣言し直し)。置いている task は止めず、次の置きから新しい値で数える。
+          (replace state :group-limits (.with-writes state.group-limits #((TableWrite name (checked-group-limit name body.spec))))))
     True (refuse 405 (+ "この kind は API から書けない: " kind))))
 
 
@@ -920,6 +950,10 @@
     (= kind "Task")
       (do (when (not-in name state.tasks) (refuse 404 (+ "無い Task: " name)))
           (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k name) k v)))
+    ;; 消した組を名乗る task は、置いている物は止めず、待っている物は宣言し直されるまで待つ(TASK-UNDECLARED)。新しい task は受け口が断る。
+    (= kind "GroupLimit")
+      (do (when (is (.row state.group-limits name) None) (refuse 404 (+ "無い GroupLimit: " name)))
+          (replace state :group-limits (.with-writes state.group-limits #((TableWrite name None)))))
     True (refuse 404 (+ "知らない kind: " kind))))
 
 
