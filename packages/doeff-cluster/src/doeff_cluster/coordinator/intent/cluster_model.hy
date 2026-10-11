@@ -25,6 +25,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit])
 
 
 (defclass ComponentVersion [NamedTuple]
@@ -547,7 +548,13 @@
 ;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
 
 
-(defenum TaskUnplacedKind TASK-NO-ROOM)
+(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED)
+
+
+;; 待っている task を置けない理由(cluster_policy.task-unplaced-text)。TASK-NO-ROOM = 置ける worker のどれにも task の空きが無い・
+;; TASK-LIMITED = 空きは在るが、task の名乗った同時数の上限(TaskLimit)に達している・TASK-RESERVED = 空きは在るが、残りが worker の
+;; task-reserve の分だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11)。
+
 
 
 ;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
@@ -965,7 +972,13 @@
   ;; --- 子の環境変数(2026-09-28)---
   ;; environ = 送り手の effect の :environ(名の順の #(名 値) の tuple — service の JobSpec.environ と同じ形)。heartbeat の返事で worker へ
   ;; 運び、worker は service と同じ路(ProcessHost.launch)で子の環境変数に置く。この欄の無い行(2026-09-28 より前)は空で読む。
-  (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #()))
+  (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #())
+  ;; --- 置く順と同時数(2026-10-11)---
+  ;; priority = 置く順の優先(大きいほど先・既定 0)。待っている task は (優先の大きい順, id) で置く。負の優先の task(背景の仕事)は
+  ;; worker の task-reserve を使わない(置いた後にも予約の数の空きが残る worker にだけ置く)— 背景の仕事が何本積まれても、予約の分は
+  ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 同時数の上限(TaskLimit の tuple)。どちらも欄の無い旧い行は既定で読む。
+  (setv #^ int priority 0)
+  (setv #^ (get tuple #(TaskLimit ...)) limits #()))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

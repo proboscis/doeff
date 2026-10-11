@@ -228,7 +228,7 @@
 (defwire TaskBody
   "POST /tasks と PUT /detached/<key> の本文: program = 置き場に置いた Program の sha・revision = 送り手の commit・name・needs = 要る能力の
    名の列・runtime-env = 実行環境の宣言(JSON の object)・environ = 子の環境変数(名 → 文字列)・lease-seconds / retain-seconds(None = 道の
-   既定)・format。旧い形の欄(requires・env・blob・versions)は判断が理由つきで断る。欄の中身の規則(sha の形と置き場に在るか・needs の名・
+   既定)・priority / limits(置き方の名乗り)・format。旧い形の欄(requires・env・blob・versions)は判断が理由つきで断る。欄の中身の規則(sha の形と置き場に在るか・needs の名・
    環境変数の名・宣言の形)は判断が読む — 判断の理由の文を前のまま保つため、ここでは欄の在否と大きな型だけを決める。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ object program None)
@@ -243,6 +243,9 @@
   (setv #^ object environ None)
   (setv #^ object lease-seconds None)
   (setv #^ object retain-seconds None)
+  ;; 置き方の名乗り(2026-10-11): priority = 置く順の優先(整数・None = 0)・limits = 同時数の上限の列(None = 無し)。形は判断が読む。
+  (setv #^ object priority None)
+  (setv #^ object limits None)
   (setv #^ object format 1))
 
 

@@ -26,6 +26,8 @@ from doeff_cluster.coordinator.intent.cluster_model import DeploymentUnreadable 
 from doeff_cluster.coordinator.intent.cluster_model import ServiceBody as ServiceBody
 from doeff_cluster.coordinator.intent.cluster_model import LegacyJobs as LegacyJobs
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
+from doeff_cluster.shared.core.lease_rules import holders_shifted as holders_shifted
+from doeff_cluster.shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMAPHORE_PREFIX
 from doeff_cluster.coordinator.core.metrics_policy import record_metrics as record_metrics
 from doeff_cluster.coordinator.core.metrics_policy import metrics_text as metrics_text
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
