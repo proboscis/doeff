@@ -1,0 +1,91 @@
+
+deadline scale x3.2 (load per usable CPU) — per test 193s, watchdog 288s
+
+test-admission: focused — 32 件(変更箇所の検証)
+............FF..s...............                                         [100%]
+=================================== FAILURES ===================================
+_____ test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy] ______
+
+name = 'ex05_parallel_timing.hy', deadline_scale_factor = 3.2104627821180554
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2133/test_case_failure_shows_in_com0')
+
+    @pytest.mark.parametrize("name", sorted(CASE_FAILURE_MUTANTS))
+    def test_case_failure_shows_in_compared_output(
+        name: str, deadline_scale_factor: float, tmp_path: Path
+    ) -> None:
+        """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない。"""
+        source = (EXAMPLES / name).read_text(encoding="utf-8")
+        original, mutated = CASE_FAILURE_MUTANTS[name]
+        assert source.count(original) == 1, (
+            f"変異の元の文 {original!r} が {name} に 1 つだけ在るのではない — 変異を例に合わせて書き直す"
+        )
+        mutant = tmp_path / name
+        mutant.write_text(source.replace(original, mutated), encoding="utf-8")
+        result = _run_hy(mutant, deadline_scale_factor)
+>       assert result.returncode == 0, (
+            f"変異が件の外で例を落とした — 件の中だけで失敗する変異を選ぶ\n{result.stdout}{result.stderr}"
+        )
+E       AssertionError: 変異が件の外で例を落とした — 件の中だけで失敗する変異を選ぶ
+E         Traceback (most recent call last):
+E           File "<frozen runpy>", line 198, in _run_module_as_main
+E           File "<frozen runpy>", line 88, in _run_code
+E           File "/tmp/exnc/repro/tree/.venv/lib/python3.14t/site-packages/hy/__main__.py", line 8, in <module>
+E             sys.exit(hy_main())
+E                      ~~~~~~~^^
+E           File "<frozen runpy>", line 287, in run_path
+E           File "<frozen runpy>", line 98, in _run_module_code
+E           File "<frozen runpy>", line 88, in _run_code
+E           File "/tmp/pytest-of-ubuntu/pytest-2133/test_case_failure_shows_in_com0/ex05_parallel_timing.hy", line 97, in <module>
+E             (import common.stack [with-stack])
+E              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         ModuleNotFoundError: No module named 'common'
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/tmp/exnc/repro/tree/.venv/bin/python', '-m', 'hy', '/tmp/pytest-of-ubuntu/pytest-2133/test_ca...common.stack [with-stack])\n     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named \'common\'\n').returncode
+
+packages/doeff-traverse/tests/test_examples_run.py:210: AssertionError
+__ test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy] ___
+
+name = 'ex07_proboscis_ema_rewrite.hy'
+deadline_scale_factor = 3.2104627821180554
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2133/test_case_failure_shows_in_com1')
+
+    @pytest.mark.parametrize("name", sorted(CASE_FAILURE_MUTANTS))
+    def test_case_failure_shows_in_compared_output(
+        name: str, deadline_scale_factor: float, tmp_path: Path
+    ) -> None:
+        """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない。"""
+        source = (EXAMPLES / name).read_text(encoding="utf-8")
+        original, mutated = CASE_FAILURE_MUTANTS[name]
+        assert source.count(original) == 1, (
+            f"変異の元の文 {original!r} が {name} に 1 つだけ在るのではない — 変異を例に合わせて書き直す"
+        )
+        mutant = tmp_path / name
+        mutant.write_text(source.replace(original, mutated), encoding="utf-8")
+        result = _run_hy(mutant, deadline_scale_factor)
+>       assert result.returncode == 0, (
+            f"変異が件の外で例を落とした — 件の中だけで失敗する変異を選ぶ\n{result.stdout}{result.stderr}"
+        )
+E       AssertionError: 変異が件の外で例を落とした — 件の中だけで失敗する変異を選ぶ
+E         Traceback (most recent call last):
+E           File "<frozen runpy>", line 198, in _run_module_as_main
+E           File "<frozen runpy>", line 88, in _run_code
+E           File "/tmp/exnc/repro/tree/.venv/lib/python3.14t/site-packages/hy/__main__.py", line 8, in <module>
+E             sys.exit(hy_main())
+E                      ~~~~~~~^^
+E           File "<frozen runpy>", line 287, in run_path
+E           File "<frozen runpy>", line 98, in _run_module_code
+E           File "<frozen runpy>", line 88, in _run_code
+E           File "/tmp/pytest-of-ubuntu/pytest-2133/test_case_failure_shows_in_com1/ex07_proboscis_ema_rewrite.hy", line 191, in <module>
+E             (import common.stack [with-stack])
+E              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         ModuleNotFoundError: No module named 'common'
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/tmp/exnc/repro/tree/.venv/bin/python', '-m', 'hy', '/tmp/pytest-of-ubuntu/pytest-2133/test_ca...common.stack [with-stack])\n     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named \'common\'\n').returncode
+
+packages/doeff-traverse/tests/test_examples_run.py:210: AssertionError
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]
+2 failed, 29 passed, 1 skipped in 35.75s

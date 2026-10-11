@@ -1,0 +1,155 @@
+
+deadline scale x2.9 (load per usable CPU) — per test 173s, watchdog 258s
+
+test-admission: focused — 12 件(変更箇所の検証)
+.......F.F..                                                             [100%]
+=================================== FAILURES ===================================
+__________________ test_example_runs[ex05_parallel_timing.hy] __________________
+
+name = 'ex05_parallel_timing.hy', deadline_scale_factor = 2.8759901258680554
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs(name: str, deadline_scale_factor: float) -> None:
+        result = _run_hy(EXAMPLES / name, deadline_scale_factor)
+        assert result.returncode == 0, result.stdout + result.stderr
+        if name in OUTPUT_NOT_COMPARED:
+            return
+        expected = _expected(name)
+        assert expected.is_file(), (
+            f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
+            f"走るたびに変わる所を {ANY} にする"
+        )
+>       assert _matches(expected.read_text(encoding="utf-8"), result.stdout), _output_diff(
+            expected, result.stdout
+        )
+E       AssertionError: --- expected/ex05_parallel_timing.txt
+E         +++ 標準出力
+E         @@ -1,4 +1,4 @@
+E         -async + sequential:   550 in …s
+E         -async + parallel(10): 550 in …s
+E         -async + parallel(3):  550 in …s
+E         -sync + sequential:    550 in …s
+E         +async + sequential:   550 in 1.05s
+E         +async + parallel(10): 550 in 0.15s
+E         +async + parallel(3):  550 in 0.41s
+E         +sync + sequential:    9 in 1.03s
+E       assert False
+E        +  where False = _matches('async + sequential:   550 in …s\nasync + parallel(10): 550 in …s\nasync + parallel(3):  550 in …s\nsync + sequential:    550 in …s\n', 'async + sequential:   550 in 1.05s\nasync + parallel(10): 550 in 0.15s\nasync + parallel(3):  550 in 0.41s\nsync + sequential:    9 in 1.03s\n')
+E        +    where 'async + sequential:   550 in …s\nasync + parallel(10): 550 in …s\nasync + parallel(3):  550 in …s\nsync + sequential:    550 in …s\n' = read_text(encoding='utf-8')
+E        +      where read_text = PosixPath('/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/expected/ex05_parallel_timing.txt').read_text
+E        +    and   'async + sequential:   550 in 1.05s\nasync + parallel(10): 550 in 0.15s\nasync + parallel(3):  550 in 0.41s\nsync + sequential:    9 in 1.03s\n' = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-examples-not-compared/.venv/bin/python', '-m', 'hy', '/work/t...async + parallel(10): 550 in 0.15s\nasync + parallel(3):  550 in 0.41s\nsync + sequential:    9 in 1.03s\n', stderr='').stdout
+
+packages/doeff-traverse/tests/test_examples_run.py:192: AssertionError
+_______________ test_example_runs[ex07_proboscis_ema_rewrite.hy] _______________
+
+name = 'ex07_proboscis_ema_rewrite.hy'
+deadline_scale_factor = 2.8759901258680554
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs(name: str, deadline_scale_factor: float) -> None:
+        result = _run_hy(EXAMPLES / name, deadline_scale_factor)
+        assert result.returncode == 0, result.stdout + result.stderr
+        if name in OUTPUT_NOT_COMPARED:
+            return
+        expected = _expected(name)
+        assert expected.is_file(), (
+            f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
+            f"走るたびに変わる所を {ANY} にする"
+        )
+>       assert _matches(expected.read_text(encoding="utf-8"), result.stdout), _output_diff(
+            expected, result.stdout
+        )
+E       AssertionError: --- expected/ex07_proboscis_ema_rewrite.txt
+E         +++ 標準出力
+E         @@ -1,10 +1,10 @@
+E          === sequential (failed items skipped) ===
+E         -Success: 3
+E         -Failed: 2
+E         +Success: 2
+E         +Failed: 3
+E          
+E          === parallel(3) (same result, faster) ===
+E         -Success: 3
+E         -Failed: 2
+E         +Success: 2
+E         +Failed: 3
+E          
+E          === item history ===
+E            [0] OK: ({'symbol': 'AAPL', 'time': '2024-01-01'}, 150.0)
+E         @@ -22,7 +22,20 @@
+E                zip_failed
+E                --- traceback ---
+E                Traceback (most recent call last):
+E         -…
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-core-effects/doeff_core_effects/handlers.py", line 154, in attempt
+E         +    value = yield prog
+E         +            ^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 129, in _hy_anon_17
+E         +    (<- price (fetch-price sig))
+E         +               ^^^^^^^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 95, in fetch_price
+E         +    (<- result (FetchPrice signal))
+E         +                 ^^^^^^^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 174, in _hy_anon_28
+E         +    (<- (Fail (SymbolNotFound (+ "symbol not found: " symbol))
+E         +          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         +              :symbol symbol))
+E         +              ^^^^^^^^^^^^^^
+E                SymbolNotFound: symbol not found: BADCO
+E            [2] OK: ({'symbol': 'GOOGL', 'time': '2024-01-01'}, 2800.0)
+E                index: ok
+E         @@ -39,11 +52,40 @@
+E                zip_failed
+E                --- traceback ---
+E                Traceback (most recent call last):
+E         -…
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-core-effects/doeff_core_effects/handlers.py", line 154, in attempt
+E         +    value = yield prog
+E         +            ^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 129, in _hy_anon_17
+E         +    (<- price (fetch-price sig))
+E         +               ^^^^^^^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 95, in fetch_price
+E         +    (<- result (FetchPrice signal))
+E         +                 ^^^^^^^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 180, in _hy_anon_28
+E         +    (<- (Fail (MarketClosed (+ "market closed for: " symbol))
+E         +          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         +              :symbol symbol))
+E         +              ^^^^^^^^^^^^^^
+E                MarketClosed: market closed for: CLOSED
+E         -  [4] OK: ({'symbol': 'MSFT', 'time': '2024-01-01'}, 300.0)
+E         +  [4] FAILED: 'MSFT'
+E                index: ok
+E                signal: ok
+E                index: ok
+E                signal: ok
+E         -      price: ok
+E         +      price: failed — 'MSFT'
+E         +      zip_failed
+E         +      --- traceback ---
+E         +      Traceback (most recent call last):
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-core-effects/doeff_core_effects/handlers.py", line 154, in attempt
+E         +    value = yield prog
+E         +            ^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 129, in _hy_anon_17
+E         +    (<- price (fetch-price sig))
+E         +               ^^^^^^^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 95, in fetch_price
+E         +    (<- result (FetchPrice signal))
+E         +                 ^^^^^^^^^^^^^^^^
+E         +        File "/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 184, in _hy_anon_28
+E         +    (resume (get _mock-prices symbol)))))
+E         +              ^^^^^^^^^^^^^^^^^^^^^^
+E         +      KeyError: 'MSFT'
+E       assert False
+E        +  where False = _matches("=== sequential (failed items skipped) ===\nSuccess: 3\nFailed: 2\n\n=== parallel(3) (same result, faster) ===\nSucces...'time': '2024-01-01'}, 300.0)\n      index: ok\n      signal: ok\n      index: ok\n      signal: ok\n      price: ok\n", "=== sequential (failed items skipped) ===\nSuccess: 2\nFailed: 3\n\n=== parallel(3) (same result, faster) ===\nSucces..._hy_anon_28\n    (resume (get _mock-prices symbol)))))\n              ^^^^^^^^^^^^^^^^^^^^^^\n      KeyError: 'MSFT'\n")
+E        +    where "=== sequential (failed items skipped) ===\nSuccess: 3\nFailed: 2\n\n=== parallel(3) (same result, faster) ===\nSucces...'time': '2024-01-01'}, 300.0)\n      index: ok\n      signal: ok\n      index: ok\n      signal: ok\n      price: ok\n" = read_text(encoding='utf-8')
+E        +      where read_text = PosixPath('/work/toolset/worktrees/doeff-wt-examples-not-compared/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt').read_text
+E        +    and   "=== sequential (failed items skipped) ===\nSuccess: 2\nFailed: 3\n\n=== parallel(3) (same result, faster) ===\nSucces..._hy_anon_28\n    (resume (get _mock-prices symbol)))))\n              ^^^^^^^^^^^^^^^^^^^^^^\n      KeyError: 'MSFT'\n" = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-examples-not-compared/.venv/bin/python', '-m', 'hy', '/work/t...   (resume (get _mock-prices symbol)))))\n              ^^^^^^^^^^^^^^^^^^^^^^\n      KeyError: \'MSFT\'\n', stderr='').stdout
+
+packages/doeff-traverse/tests/test_examples_run.py:192: AssertionError
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
+2 failed, 10 passed in 14.63s

@@ -1,0 +1,101 @@
+# c8-blind-b-hy-names-red: 盲検 B の機能の差分(ex07 に raised in: _hy_anon_17:129 … を印字)を当てると、表の検が Hy の付ける名を名指して赤
+対象の版: 7d56f9307(写しの木 /tmp/exnc/measure/tree)+ 下の差分
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
+--- pristine/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy	2026-10-11 21:39:06.000000000 +0000
++++ tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy	2026-10-11 21:45:10.228236175 +0000
+@@ -228,6 +228,12 @@
+     (print (+ "      " stage h.event detail)))
+   ;; Show traceback for failed items
+   (when (and item.failed (isinstance item.value BaseException))
++    ;; One line: where in THIS example the failure was raised (function:line, outermost first).
++    ;; Only this file's frames — the lib's frames and the checkout path differ between checkouts.
++    (print (+ "      raised in: "
++              (.join " -> " (gfor fs (tb.extract-tb item.value.__traceback__)
++                                  :if (= fs.filename __file__)
++                                  (+ fs.name ":" (str fs.lineno))))))
+     (print "      --- traceback ---")
+     (for [line (tb.format_exception item.value)]
+       (print (+ "      " (.rstrip line))))))
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt tree/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt
+--- pristine/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt	2026-10-11 21:39:06.000000000 +0000
++++ tree/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt	2026-10-11 21:45:10.228571147 +0000
+@@ -20,6 +20,7 @@
+       signal: ok
+       price: failed — symbol not found: BADCO
+       zip_failed
++      raised in: _hy_anon_17:129 -> fetch_price:95 -> _hy_anon_28:174
+       --- traceback ---
+       Traceback (most recent call last):
+ …
+@@ -37,6 +38,7 @@
+       signal: ok
+       price: failed — market closed for: CLOSED
+       zip_failed
++      raised in: _hy_anon_17:129 -> fetch_price:95 -> _hy_anon_28:180
+       --- traceback ---
+       Traceback (most recent call last):
+ …
+
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy] -q
+   Building doeff-traverse @ file:///tmp/exnc/measure/tree/packages/doeff-traverse
+      Built doeff-traverse @ file:///tmp/exnc/measure/tree/packages/doeff-traverse
+Uninstalled 1 package in 0.62ms
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 1 package in 3ms
+
+deadline scale x3.7 (load per usable CPU) — per test 221s, watchdog 332s
+
+test-admission: focused — 2 件(変更箇所の検証)
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+____________________ test_tables_name_examples_as_they_are _____________________
+
+    def test_tables_name_examples_as_they_are() -> None:
+        """期待の出力は比べる例ちょうどに在り、比べない表と変異の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
+        compared = [name for name in _runnable() if name not in OUTPUT_NOT_COMPARED]
+        present = {path.name for path in EXPECTED.glob("*.txt")}
+        assert present - {_expected(name).name for name in compared} == set(), (
+            "比べる例の無い期待の出力が在る — 消すか、例を BROKEN から外す"
+        )
+        assert set(OUTPUT_NOT_COMPARED) - set(_runnable()) == set(), (
+            "OUTPUT_NOT_COMPARED の行が走る例を名指さない"
+        )
+        with_any = {
+            name
+            for name in compared
+            if _expected(name).is_file() and ANY in _expected(name).read_text(encoding="utf-8")
+        }
+        assert with_any - set(CASE_FAILURE_MUTANTS) == set(), (
+            f"期待の出力に {ANY} を置いた例に、件の中で失敗する変異が無い — CASE_FAILURE_MUTANTS に行を足す"
+        )
+        assert set(CASE_FAILURE_MUTANTS) - with_any == set(), (
+            f"CASE_FAILURE_MUTANTS の行が、期待の出力に {ANY} を置いた例を名指さない — 行を外す"
+        )
+        # checkout の path を含む期待の出力は、別の木(日次の作業木)では必ず外れる — 置いた木で気づくように断る。
+        checkout = str(EXAMPLES.parents[2])
+        with_path = sorted(
+            path.name for path in EXPECTED.glob("*.txt") if checkout in path.read_text(encoding="utf-8")
+        )
+        assert with_path == [], f"期待の出力に checkout の path が在る — path を含む所を {ANY} にする"
+        with_hy_names = sorted(
+            path.name
+            for path in EXPECTED.glob("*.txt")
+            if _HY_GENERATED_NAME.search(path.read_text(encoding="utf-8"))
+        )
+>       assert with_hy_names == [], (
+            f"期待の出力に Hy の付ける名(_hy_anon_・_hy_gensym_)が在る — 番号は macro の展開で変わる。"
+            f"その所を {ANY} にする"
+        )
+E       AssertionError: 期待の出力に Hy の付ける名(_hy_anon_・_hy_gensym_)が在る — 番号は macro の展開で変わる。その所を … にする
+E       assert ['ex07_probos..._rewrite.txt'] == []
+E         
+E         Left contains one more item: 'ex07_proboscis_ema_rewrite.txt'
+E         Use -v to get more diff
+
+packages/doeff-traverse/tests/test_examples_run.py:316: AssertionError
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
+1 failed, 1 passed in 8.21s
+pytest rc=1

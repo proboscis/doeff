@@ -1,0 +1,77 @@
+# c6-blind-a-helper-green: 盲検 A の変更(with-stack を examples/common/stack.hy へ寄せる)を当てても、直した版では全部緑
+対象の版: 7d56f9307(写しの木 /tmp/exnc/measure/tree)+ 下の差分
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/common/stack.hy tree/packages/doeff-traverse/examples/common/stack.hy
+--- pristine/packages/doeff-traverse/examples/common/stack.hy	1970-01-01 00:00:00.000000000 +0000
++++ tree/packages/doeff-traverse/examples/common/stack.hy	2026-10-11 21:44:00.543614961 +0000
+@@ -0,0 +1,7 @@
++(import doeff_core_effects.scheduler [scheduled])
++
++(defn with-stack [stack program]
++  (setv body program)
++  (for [h stack]
++    (setv body (h body)))
++  (scheduled body))
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/ex05_parallel_timing.hy tree/packages/doeff-traverse/examples/ex05_parallel_timing.hy
+--- pristine/packages/doeff-traverse/examples/ex05_parallel_timing.hy	2026-10-11 21:39:06.000000000 +0000
++++ tree/packages/doeff-traverse/examples/ex05_parallel_timing.hy	2026-10-11 21:44:00.576988912 +0000
+@@ -94,11 +94,7 @@
+ (setv items (list (range 1 11)))
+ (setv program (pipeline items))
+ 
+-(defn with-stack [stack program]
+-  (setv body program)
+-  (for [h stack]
+-    (setv body (h body)))
+-  (scheduled body))
++(import common.stack [with-stack])
+ 
+ (defn timed-run [label stack]
+   (setv t0 (time))
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy tree/packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy
+--- pristine/packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy	2026-10-11 21:39:06.000000000 +0000
++++ tree/packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy	2026-10-11 21:44:00.595988710 +0000
+@@ -185,11 +185,7 @@
+ ;; Run: same program, different strategies
+ ;; ===========================================================================
+ 
+-(defn with-stack [stack program]
+-  (setv body program)
+-  (for [h stack]
+-    (setv body (h body)))
+-  (scheduled body))
++(import common.stack [with-stack])
+ 
+ (setv env {"s1a_model" "gpt-4o"
+             "s1b_model" "gpt-4o"
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
+--- pristine/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy	2026-10-11 21:39:06.000000000 +0000
++++ tree/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy	2026-10-11 21:44:00.605988604 +0000
+@@ -188,11 +188,7 @@
+ ;; Run
+ ;; ===========================================================================
+ 
+-(defn with-stack [stack program]
+-  (setv body program)
+-  (for [h stack]
+-    (setv body (h body)))
+-  (scheduled body))
++(import common.stack [with-stack])
+ 
+ (setv events ["AAPL" "BADCO" "GOOGL" "CLOSED" "MSFT"])
+ (setv program (news-pipeline events))
+
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q
+   Building doeff-traverse @ file:///tmp/exnc/measure/tree/packages/doeff-traverse
+      Built doeff-traverse @ file:///tmp/exnc/measure/tree/packages/doeff-traverse
+Uninstalled 1 package in 0.76ms
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 1 package in 9ms
+
+deadline scale x2.3 (load per usable CPU) — per test 138s, watchdog 207s
+
+test-admission: focused — 33 件(変更箇所の検証)
+................s................                                        [100%]
+32 passed, 1 skipped in 51.13s
+pytest rc=0

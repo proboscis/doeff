@@ -1,0 +1,164 @@
+# c5-new-varying-example-green: 走るたびに印字が変わる新しい例を、例 1 file + 期待の出力 1 file + 変異の表の 1 行で足すと緑(S3 の正 — 判じの code は変えない)
+対象の版: 7d56f9307(写しの木 /tmp/exnc/measure/tree)+ 下の差分
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/ex10_timing_copy.hy tree/packages/doeff-traverse/examples/ex10_timing_copy.hy
+--- pristine/packages/doeff-traverse/examples/ex10_timing_copy.hy	1970-01-01 00:00:00.000000000 +0000
++++ tree/packages/doeff-traverse/examples/ex10_timing_copy.hy	2026-10-11 21:43:42.248195383 +0000
+@@ -0,0 +1,123 @@
++;;; Example 5: Parallel execution — same program, swappable backend + strategy.
++;;;
++;;; The pipeline performs a SlowCompute effect per item.
++;;; Both the execution strategy AND the compute backend are handlers:
++;;;
++;;;   - sequential / parallel: how items are dispatched
++;;;   - async-backend / sync-backend: how each SlowCompute is executed
++;;;
++;;; Same program runs with any combination.
++
++(require doeff-hy.macros [defk defhandler <- traverse])
++(import doeff [do :as _doeff-do])
++(import doeff [run EffectBase])
++
++(import doeff_core_effects [try-handler :as try_handler Await])
++(import doeff_core_effects.handlers [await-handler :as await_handler])
++(import doeff_core_effects.scheduler [scheduled])
++
++(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
++(import doeff_traverse.effects [Reduce])
++(import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
++
++(import time [time sleep])
++
++
++;; ===========================================================================
++;; SlowCompute effect — "compute x, takes ~100ms"
++;; The logic doesn't know HOW this is executed.
++;; ===========================================================================
++
++(defclass SlowCompute [EffectBase]
++  (defn __init__ [self x]
++    (.__init__ (super))
++    (setv self.x x)))
++
++
++;; ===========================================================================
++;; Pipeline — uses SlowCompute effect, no backend knowledge
++;; ===========================================================================
++
++(defk add [acc x]
++  "Fold step: sum the computed values."
++  {:pre [(: acc int) (: x int)]
++   :post [(: % int)]}
++  (+ acc x))
++
++(defk pipeline [items]
++  {:pre [(: items list)]
++   :post [(: % int)]}
++  (<- results
++    (traverse
++      (<- x (Iterate items))
++      (<- y (SlowCompute x))    ;; effect — handler decides how
++      y))
++  (<- total (Reduce add 0 results))
++  total)
++
++
++;; ===========================================================================
++;; Backend 1: async (non-blocking, benefits from parallelism)
++;; ===========================================================================
++
++(setv _ns {})
++(exec "
++import asyncio
++async def _async_sleep_compute(x):
++    await asyncio.sleep(0.1)
++    return x * 10
++" _ns)
++(setv _async-impl (get _ns "_async_sleep_compute"))
++
++(defhandler async-backend
++  "Handle SlowCompute via async sleep (non-blocking)."
++  (SlowCompute [x]
++    (<- result (Await (_async-impl x)))
++    (resume result)))
++
++
++;; ===========================================================================
++;; Backend 2: sync (blocking, no parallelism benefit)
++;; ===========================================================================
++
++(defhandler sync-backend
++  "Handle SlowCompute via sync sleep (blocking)."
++  (SlowCompute [x]
++    (sleep 0.1)
++    (resume (* x 10))))
++
++
++;; ===========================================================================
++;; Run: same program, different combinations
++;; ===========================================================================
++
++(setv items (list (range 1 11)))
++(setv program (pipeline items))
++
++(defn with-stack [stack program]
++  (setv body program)
++  (for [h stack]
++    (setv body (h body)))
++  (scheduled body))
++
++(defn timed-run [label stack]
++  (setv t0 (time))
++  (setv result (run (with-stack stack program)))
++  (setv dt (round (- (time) t0) 2))
++  (print (+ label (str result) " in " (str dt) "s")))
++
++;; async backend + sequential: 10 × 100ms = ~1.0s
++(timed-run "async + sequential:   "
++  [try_handler async-backend fail_handler (await_handler) (sequential)])
++
++;; async backend + parallel(10): all at once = ~0.1s
++(timed-run "async + parallel(10): "
++  [try_handler async-backend fail_handler (await_handler) (parallel 10)])
++
++;; async backend + parallel(3): 4 batches = ~0.4s
++(timed-run "async + parallel(3):  "
++  [try_handler async-backend fail_handler (await_handler) (parallel 3)])
++
++;; sync backend + sequential: 10 × 100ms = ~1.0s (same as async seq)
++(timed-run "sync + sequential:    "
++  [try_handler sync-backend fail_handler (sequential)])
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/examples/expected/ex10_timing_copy.txt tree/packages/doeff-traverse/examples/expected/ex10_timing_copy.txt
+--- pristine/packages/doeff-traverse/examples/expected/ex10_timing_copy.txt	1970-01-01 00:00:00.000000000 +0000
++++ tree/packages/doeff-traverse/examples/expected/ex10_timing_copy.txt	2026-10-11 21:43:42.252175092 +0000
+@@ -0,0 +1,4 @@
++async + sequential:   550 in …s
++async + parallel(10): 550 in …s
++async + parallel(3):  550 in …s
++sync + sequential:    550 in …s
+diff -ruN -x __pycache__ -x '*.egg-info' pristine/packages/doeff-traverse/tests/test_examples_run.py tree/packages/doeff-traverse/tests/test_examples_run.py
+--- pristine/packages/doeff-traverse/tests/test_examples_run.py	2026-10-11 21:39:06.000000000 +0000
++++ tree/packages/doeff-traverse/tests/test_examples_run.py	2026-10-11 21:43:42.260183377 +0000
+@@ -65,6 +65,7 @@
+ # 期待の出力に ANY を置いた例の、件の中だけで失敗する変異(file の名 → 例の写しで置き換える元の文と先の文)。
+ # 写しは終了コード 0 のまま件を失敗として印字する(盲検 A の形)ので、出力の比べ方だけが捕まえられる。
+ CASE_FAILURE_MUTANTS: dict[str, tuple[str, str]] = {
++    "ex10_timing_copy.hy": ("(resume (* x 10))", "(resume (// 10 (- x 3)))"),
+     # sync-backend が x = 3 の件で ZeroDivisionError — 合計が 550 でなくなる
+     "ex05_parallel_timing.hy": ("(resume (* x 10))", "(resume (// 10 (- x 3)))"),
+     # mock が MSFT の価格を知らない — FetchPrice の件が KeyError で失敗し、成功が 3 から 2 へ
+
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_timing_copy.hy] packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex10_timing_copy.hy] -q
+   Building doeff-traverse @ file:///tmp/exnc/measure/tree/packages/doeff-traverse
+      Built doeff-traverse @ file:///tmp/exnc/measure/tree/packages/doeff-traverse
+Uninstalled 1 package in 1ms
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 1 package in 1ms
+
+deadline scale x2.5 (load per usable CPU) — per test 150s, watchdog 224s
+
+test-admission: focused — 3 件(変更箇所の検証)
+...                                                                      [100%]
+3 passed in 10.23s
+pytest rc=0
