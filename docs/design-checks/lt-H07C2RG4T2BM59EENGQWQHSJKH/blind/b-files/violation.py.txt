@@ -1,0 +1,134 @@
+"""failure_budget を足した stack で、実行の方針(M3)だけを替えた時に何が変わるかを測る。
+
+S1 の主張: 実行の方針を sequential・parallel(N)・parallel_fail_fast の間で替えても、変わるのは stack の 1 要素だけで、
+数える件・total・bar の閉じ方は同じ(parallel_fail_fast が止めた Traverse を除く)。
+ここでは stack を [failure_budget(1), progress_bars, fail_handler, try_handler](内側が先)に固定し、方針だけを替える。
+"""
+
+import io
+
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
+from doeff_traverse.effects import ItemOutcome, Traverse
+from doeff_traverse.handlers import (
+    fail_handler,
+    failure_budget,
+    parallel,
+    parallel_fail_fast,
+    progress_bars,
+    sequential,
+)
+from tqdm import tqdm
+
+from doeff import Pass, do, run
+from doeff import handler as _program_handler
+
+ITEMS = [0, 1, 2, 3, 4, 5, 6, 7]
+FAILING = (2, 3, 5)
+
+
+class Log:
+    def __init__(self) -> None:
+        self.ran: list[int] = []
+        self.reports: list[tuple[str | None, int, str]] = []
+        self.bars: list[tqdm] = []
+
+    def make_bar(self, *, total: int, desc: str) -> tqdm:
+        bar = tqdm(total=total, desc=desc, file=io.StringIO())
+        bar.closed_by_handler = False
+        orig = bar.close
+
+        def close() -> None:
+            bar.closed_by_handler = True
+            orig()
+
+        bar.close = close
+        self.bars.append(bar)
+        return bar
+
+    def recorder(self):
+        """結末を記録する別の消費者(S2 の「段ごとに失敗した件を記録する handler」)。failure_budget の外に置く。"""
+
+        @do
+        def watch(effect: ItemOutcome, k):
+            if isinstance(effect, ItemOutcome):
+                self.reports.append((effect.label, effect.item.index, effect.outcome))
+            yield Pass(effect, k)
+
+        return _program_handler(watch)
+
+
+def make_step(log: Log):
+    @do
+    def call_backend(x: int):
+        log.ran.append(x)
+        if x % 10 in FAILING:
+            raise ConnectionError(f"backend down for {x}")
+        if False:
+            yield
+        return x * 10
+
+    return call_backend
+
+
+def run_with(strategy, log: Log, program, *, budget: bool = True):
+    body = program
+    inside = ([failure_budget(1)] if budget else []) + [log.recorder(), progress_bars(log.make_bar)]
+    for install in [*inside, fail_handler, try_handler]:
+        body = install(body)
+    try:
+        answered = run(scheduled(strategy(body)))
+        return f"answered {answered!r} valid={answered.valid_values}"
+    except Exception as error:  # noqa: BLE001 - 実験: 何が上がったかを記録する
+        return f"raised {type(error).__name__}: {error}"
+
+
+def one_stage(log: Log):
+    @do
+    def program():
+        return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+
+    return program()
+
+
+def nested(log: Log):
+    step = make_step(log)
+
+    @do
+    def outer_item(group: int):
+        inner = yield Traverse(step, [group * 10 + i for i in (0, 2, 3)], label=f"inner{group}")
+        return inner.valid_values
+
+    @do
+    def program():
+        return (yield Traverse(outer_item, [0, 1], label="outer"))
+
+    return program()
+
+
+STRATEGIES = {
+    "sequential": sequential,
+    "parallel(1)": lambda: parallel(concurrency=1),
+    "parallel(2)": lambda: parallel(concurrency=2),
+    "parallel(10)": lambda: parallel(concurrency=10),
+    "parallel_fail_fast(1)": lambda: parallel_fail_fast(concurrency=1),
+    "parallel_fail_fast(10)": lambda: parallel_fail_fast(concurrency=10),
+}
+
+
+def show(title: str, build, *, budget: bool = True) -> None:
+    print(f"== {title} (failure_budget={'1' if budget else 'なし'}) ==")
+    for name, strategy in STRATEGIES.items():
+        log = Log()
+        outcome = run_with(strategy(), log, build(log), budget=budget)
+        print(f"  [{name}]")
+        print(f"    結果: {outcome}")
+        print(f"    f が走った件: {sorted(log.ran)} ({len(log.ran)} 件)")
+        print(f"    外の記録係が受けた知らせ: {log.reports}")
+        print(f"    bar (desc, n, total, closed): {[(b.desc, b.n, b.total, b.closed_by_handler) for b in log.bars]}")
+
+
+if __name__ == "__main__":
+    show("段 1 つ・8 件・2,3,5 が落ちる", one_stage, budget=False)
+    show("段 1 つ・8 件・2,3,5 が落ちる", one_stage)
+    show("入れ子: outer 2 件 × inner 3 件(各 inner に落ちる件 2 つ)", nested)
