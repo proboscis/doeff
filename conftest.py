@@ -300,6 +300,8 @@ def pytest_configure(config):
     """
     global _WATCHDOG_TIMEOUT, _WATCHDOG_BASE, _DEADLINE_SCALE  # noqa: PLW0603
 
+    # 期限の倍率は機体の混みから読むので、枠を取った後(走り始める拍の混み)で読む。
+    _hold_check_slot(config)
     _turn_vm_oracle_on(bool(config.getini(VM_INVARIANT_CHECKS_INI)))
 
     _WATCHDOG_BASE = float(config.getini("watchdog_timeout"))
@@ -714,6 +716,19 @@ def _broad_run_admission():
     sys.modules[_ADMISSION_MODULE] = module  # dataclass reads sys.modules
     spec.loader.exec_module(module)
     return module
+
+
+def _hold_check_slot(config):
+    """収集の前に、機体の検の枠を 1 つ取る(埋まっていれば待つ)— 受付の正本の hold_check_slot へ委譲する(card ki-aabe38bf85ef)。
+
+    枠の値(本数・置き場・待ちの上限)と取り方は正本 1 点(~/dotfiles/agent/tests/machine_check_slots.py と隣の .json)が持ち、
+    ここは呼ぶだけ。受付は本体の前(pytest_collection_finish)にも同じ枠を取るが、Hy の検の収集は CPU を数分使うので収集の前に取る
+    (同じ config の 2 度目は何もしない・xdist の親は取らず子が取る)。正本が無い宿・口の無い古い正本の宿では取らない。
+    """
+    admission = _broad_run_admission()
+    hold = getattr(admission, "hold_check_slot", None) if admission is not None else None
+    if hold is not None:
+        hold(config)
 
 
 def pytest_collection_finish(session):
