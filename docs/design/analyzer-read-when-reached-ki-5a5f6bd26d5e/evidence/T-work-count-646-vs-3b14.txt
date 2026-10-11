@@ -1,0 +1,8 @@
+== /work/agent-workspaces/a-QRFPES57Q2P7XNZQ3W8VHE8597/v646/packages/doeff-effect-analyzer/python
+  数 screen: facts の外れ 1325・別の (関数, 束縛) 1325・handler の読み 445・別の handler 143
+  数 deliver: facts の外れ 1410・別の (関数, 束縛) 1308・handler の読み 484・別の handler 148
+  数 intake: facts の外れ 1030・別の (関数, 束縛) 775・handler の読み 511・別の handler 103
+== /work/toolset/worktrees/doeff-wt-ki-5a5f-design-check/packages/doeff-effect-analyzer/python
+  数 screen: facts の外れ 1325・別の (関数, 束縛) 1325・handler の読み 445・別の handler 143
+  数 deliver: facts の外れ 1410・別の (関数, 束縛) 1308・handler の読み 484・別の handler 148
+  数 intake: facts の外れ 1030・別の (関数, 束縛) 775・handler の読み 511・別の handler 103

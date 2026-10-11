@@ -1,0 +1,34 @@
+# 版 3b141537a69f28203cdb677d5c2c8874b5c0b41e・2026-10-11T15:52:16Z・壊した写しの差
+  nogetstate: <     def __getstate__(self) -> dict[str, Any]:
+  nogetstate: >     def _no_getstate(self) -> dict[str, Any]:
+  noactive: <                 and active & kept.checked == kept.active_checked
+  noactive: >                 and True
+  noreading: <                 token = _READING.set(reading)
+  noreading: >                 token = _READING.set(_READING.get())
+== nogetstate: test_read_when_reached.py
+E       _pickle.PicklingError: Can't pickle local object <function _emits_read_later.<locals>.read at 0x2805214e340>
+E       when serializing dict item '_emits'
+E       when serializing doeff_effect_analyzer.program_effects.Clause state
+E       when serializing doeff_effect_analyzer.program_effects.Clause object
+E       when serializing tuple item 0
+E       when serializing dict item 'clauses'
+== noactive: test_read_when_reached.py
+E       AssertionError: assert (EffectUse(ef...arded=False),) == ()
+E         
+E         Left contains one more item: EffectUse(effect=<class 'fx_cc043798.effects.Tick'>, location=Location(file='/tmp/pytest-of-ubuntu/pytest-595/test_a_scope_reached_where_a_c0/fx_cc043798/programs.py', line=36), via=('fx_cc043798.programs.x',), forwarded=False)
+E         Use -v to get more diff
+FAILED packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py::test_a_scope_reached_where_a_call_in_it_is_being_reported_is_walked_again
+1 failed, 6 passed in 3.83s
+== noreading: test_inference_gaps.py::test_residual_through_an_env_and_recursion_through_a_scope(timeout 180)
+E               RecursionError: maximum recursion depth exceeded
+/work/state/python/cpython-3.14.3+freethreaded-linux-x86_64-gnu/lib/python3.14t/copy.py:240: RecursionError
+FAILED packages/doeff-effect-analyzer/tests/python/test_inference_gaps.py::test_residual_through_an_env_and_recursion_through_a_scope
+1 failed in 133.76s (0:02:13)
+exit=0
+== 直す前の先読みの版(bf6e78bc3): test_read_when_reached.py
+FAILED packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py::test_a_clause_is_read_when_an_effect_reaches_it_and_counted_where_it_is_read
+FAILED packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py::test_a_scope_reached_again_under_the_same_lookups_is_the_report_walked_before
+FAILED packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py::test_two_analyses_each_count_the_absent_receiver_they_read
+3 failed, 4 passed in 2.63s
+== 直した版: test_read_when_reached.py と test_inference_gaps.py
+33 passed in 71.61s (0:01:11)

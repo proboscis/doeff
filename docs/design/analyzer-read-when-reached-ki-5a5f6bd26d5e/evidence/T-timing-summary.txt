@@ -1,0 +1,12 @@
+# 19 組の analyze と coverage の和(秒)— 直す前(bf6e78bc3 の analyzer)と、直した版を同じ帯で交互に
+646-final-base-1(load=24.48)64.1 → 646-final-new-1(load=23.15)23.4 = 37%
+646-final-base-2(load=19.97)52.5 → 646-final-new-2(load=21.74)23.0 = 44%
+3b14-time-base-1(load=30.02)75.0 → 3b14-time-new-1(load=33.08)38.7 = 52%
+3b14-time-base-2(load=36.58)63.6 → 3b14-time-new-2(load=28.64)29.8 = 47%
+3b14-time-base-3(load=104.30)121.9 → 3b14-time-new-3(load=86.83)53.9 = 44%
+3b14-time-base-4(load=97.78)119.5 → 3b14-time-new-4(load=95.77)54.9 = 46%
+# 646a3e986 と 3b141537a を交互に(仕事の量の差を見る)
+3b14-cmp-646-1(load=31.20)analyze の和 21.0 秒・coverage の和 10.7 秒・合計 31.7 秒(19 組)
+3b14-cmp-new-1(load=30.57)analyze の和 22.9 秒・coverage の和 12.5 秒・合計 35.4 秒(19 組)
+3b14-cmp-646-2(load=34.37)analyze の和 29.3 秒・coverage の和 16.5 秒・合計 45.8 秒(19 組)
+3b14-cmp-new-2(load=64.82)analyze の和 35.1 秒・coverage の和 21.3 秒・合計 56.4 秒(19 組)

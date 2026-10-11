@@ -1,0 +1,12 @@
+screen: import 1.4s  analyze 5.4s (うち展開の外れ 0.0s)  coverage 0.0s  答え b3093794397c
+  数 screen: facts の外れ 1325・別の (関数, 束縛) 1325・_report_facts 12712・handler の読み 445・別の handler 143
+  多く読んだ handler: _replace 111, replace 94, _folded_or_queued 24, spawn_work 18, on_cache_change 12, subscribed_event_handler 5, _hy_anon_24.<locals>._hy_anon_23 5, _try_handler 4
+deliver: import 0.1s  analyze 2.7s (うち展開の外れ 0.0s)  coverage 1.4s  答え 028f8cd08a77
+  数 deliver: facts の外れ 1410・別の (関数, 束縛) 1308・_report_facts 11280・handler の読み 484・別の handler 148
+  多く読んだ handler: frozen_json_object 50, deep_frozen_map 35, text_field 26, freeze_json 23, shape_problem 15, placements_of 12, named_refs 12, leave_placement 12
+intake: import 0.0s  analyze 1.3s (うち展開の外れ 0.0s)  coverage 0.9s  答え de7d900a3565
+  数 intake: facts の外れ 1030・別の (関数, 束縛) 775・_report_facts 7193・handler の読み 511・別の handler 103
+  多く読んだ handler: _hy_anon_18.<locals>._hy_anon_17 42, _hy_anon_152.<locals>._hy_anon_151 26, text_field 26, frozen_json_object 25, freeze_json 23, _hy_anon_99.<locals>._hy_anon_98 22, _hy_anon_270.<locals>._hy_anon_269 21, _hy_anon_389.<locals>._hy_anon_388 21
+cli-host-loop: import 0.4s  analyze 3.9s (うち展開の外れ 0.0s)  coverage 0.5s  答え e64d24c18d7e
+  数 cli-host-loop: facts の外れ 1227・別の (関数, 束縛) 1128・_report_facts 17540・handler の読み 392・別の handler 137
+  多く読んだ handler: _replace 59, replace 41, settings_handler 12, _hy_anon_9.<locals>._hy_anon_8 8, JSONEncoder.encode 8, _hy_anon_15.<locals>._hy_anon_14 6, without_held 6, dropped 6

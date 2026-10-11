@@ -1,0 +1,16 @@
+== main: plain:job
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+== main: plain:warm plain:job
+{"step": "plain:warm", "answer": {"gaps": ["Z by handler_b"], "unknown": ["handler_a"], "complete": false}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+== main: plain:job plain:job
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+== variant: plain:job
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+== variant: plain:warm plain:job
+{"step": "plain:warm", "answer": {"gaps": ["Z by handler_b"], "unknown": ["handler_a"], "complete": false}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+{"step": "plain:job", "answer": {"gaps": ["Z by handler_b"], "unknown": ["handler_a"], "complete": false}, "read": ["blindb_mutual.programs"]}
+== variant: plain:job plain:job
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.programs"]}

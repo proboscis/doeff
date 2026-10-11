@@ -1,0 +1,17 @@
+# 版 3b141537a69f28203cdb677d5c2c8874b5c0b41e・2026-10-11T15:28:16Z
+## A の競合(hook なし・200 回)
+{'right': 200}
+## A の共有(独立の 2 解析)
+p1 と p2 の受け手の節は同じ object: False
+節が握る _Reader: _Reader 同じ object: False
+p1 gaps: ['Raise']
+p2 gaps: ['Raise']
+## B の順(直した版・B の差分は当てない)
+-- plain:job
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+-- plain:warm plain:job
+{"step": "plain:warm", "answer": {"gaps": ["Z by handler_b"], "unknown": ["handler_a"], "complete": false}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+-- plain:job plain:warm
+{"step": "plain:job", "answer": {"gaps": [], "unknown": [], "complete": true}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
+{"step": "plain:warm", "answer": {"gaps": ["Z by handler_b"], "unknown": ["handler_a"], "complete": false}, "read": ["blindb_mutual.handlers", "blindb_mutual.inner", "blindb_mutual.programs"]}
