@@ -116,7 +116,10 @@ spec:
             # bca4c2f9a = 止まりの始まった退いた世代への返事で、今の世代の process が Ready と数えられていない拍にも handoff の job に
             # 印 supersededBy を付け、退いた世代に新しい試行を起こさせない版(AL-D2n — 10-11 21:29 JST に退いた世代が新しい試行を起こし、
             # 今の世代から受付を取った事の直し)。前の版 ae47d60a2(L2046)は bca4c2f9a の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: bca4c2f9a0c14f0b0339d2c834f43202feab0e02 }
+            # fb32909f3 = 準備と計器の報告の表が、置き先の process の報告を他の世代の送り手の報告に押し出させない版(AL-D2o — 退いた世代の
+            # process が 4 つを越えて報告すると置き先の Ready が押し出され、入れ替えの合図 supersededBy が外れて退いた世代が起こし直しを
+            # 増やした事の直し)。前の版 bca4c2f9a(L2060)は fb32909f3 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: fb32909f3312e8f060113f34a514f3621f3b7ded }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
