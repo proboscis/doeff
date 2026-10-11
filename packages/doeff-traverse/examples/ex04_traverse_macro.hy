@@ -17,11 +17,10 @@
 ;; defk: define a kleisli arrow (function returning DoExpr)
 ;; <-:   bind (yield + assign) inside defk
 ;; traverse: macro that CPS-converts Iterate into Traverse effect
-;; fnk:  anonymous kleisli (lambda returning DoExpr, can perform effects)
-(require doeff-hy.macros [defk <- traverse fnk fold])
+;; defhandler: define an effect handler by pattern-matching on effect types
+(require doeff-hy.macros [defk <- traverse defhandler])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
-(import doeff.program [Resume Pass])
 
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
@@ -31,7 +30,7 @@
 ;; Fail: low-level failure effect. Handler decides what to do.
 ;; Reduce: fold over opaque collection. f is kleisli: (acc, item) -> DoExpr[acc]
 ;; Inspect: extract per-item value + history for post-hoc analysis
-(import doeff_traverse.effects [Fail Reduce :as _doeff_traverse_Reduce Inspect])
+(import doeff_traverse.effects [Fail Reduce Inspect])
 ;; sequential: Traverse handler — runs items one by one, isolates per-item failure
 ;; fail_handler: converts unhandled Fail into Python exception
 (import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
@@ -72,7 +71,8 @@
 ;;   - Without handler, Fail becomes exception → item marked as failed
 ;;
 ;; Reduce: fold over the opaque collection returned by traverse
-;;   - fnk creates an anonymous kleisli arrow (can perform effects inside)
+;;   - (Reduce f init collection): f is a kleisli arrow (acc, item) -> DoExpr[acc]
+;;   - a defk is a kleisli arrow, so it can be f (and can perform effects inside)
 ;;   - Only valid (non-failed) items are folded; failed items are skipped
 ;;
 ;; Inspect: extracts per-item value + execution history
@@ -80,7 +80,15 @@
 ;;   - Used for post-hoc analysis ("why did this item fail?")
 ;; ===========================================================================
 
+(defk add-to-total-count [acc v]
+  "Reduce step: add one feature to the (total, count) accumulator."
+  {:pre [(: acc tuple) (: v float)]
+   :post [(: % tuple)]}
+  #((+ (get acc 0) v) (+ (get acc 1) 1)))
+
 (defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % dict)]}
   ;; Stage 1: extract features per item
   ;; traverse + Iterate: each item processed independently
   ;; try_call: plain function → Fail effect on exception
@@ -90,12 +98,10 @@
       (<- result (try_call extract-feature item))
       result))
 
-  ;; Stage 2: compute mean via fold
-  ;; fold: implicit `acc` (accumulator) and `it` (current item)
+  ;; Stage 2: compute mean via Reduce
+  ;; add-to-total-count is called as (f acc v) for each valid item's value v
   ;; Accumulates (total, count) tuple, only valid items are folded
-  (<- #(total count)
-    (fold features :init #(0 0)
-      #((+ (get acc 0) it) (+ (get acc 1) 1))))
+  (<- #(total count) (Reduce add-to-total-count #(0 0) features))
   (setv mean (if (> count 0) (/ total count) 0))
 
   ;; Stage 3: normalize each feature using mean
@@ -133,12 +139,12 @@
 (setv base-stack [try_handler fail_handler (sequential)])
 
 ;; replace-with-zero: custom Fail handler — injects 0.0 at the yield site
-;; When try_call performs Fail, this handler Resume(k, 0.0) → item continues with 0.0
+;; When try_call performs Fail, this handler resumes with 0.0 → item continues with 0.0
 ;; The item does NOT fail — it succeeds with 0.0 as its value
-(defk replace-with-zero [effect k]
-  (if (isinstance effect Fail)
-      (return (yield (Resume k 0.0)))
-      (yield (Pass effect k))))
+;; Other effects are not matched, so defhandler passes them to the outer handler
+(defhandler replace-with-zero
+  (Fail [cause]
+    (resume 0.0)))
 
 ;; replace-zero-stack: same as base but with replace-with-zero inside fail_handler
 ;; replace-with-zero catches Fail BEFORE fail_handler does
