@@ -322,10 +322,13 @@ def test_no_root_test_hands_pyright_the_bare_python() -> None:
     # 失敗ケース(日次の全体検証の doeff の root の段・card ki-04d762c59dac): 上の包みを使わず、pyright に --pythonpath で素の
     # sys.executable を渡す検が 2 本残り(test_expand_program_static_types・test_handler_installer_typing)、同じ .pyc 6 個を checkout へ
     # 書いた。根の conftest の見張りは .venv が新しい時(日次)にしか赤くならないので、書き手の形をここで名指す。
-    tests = Path(__file__).resolve().parent
+    # 日次 2026-10-11 16:00 で packages の下の検(doeff-traverse の test_traverse_answer_types)にも同じ形が残っていたので、packages の
+    # 下も見る(包みの定義元は doeff_hy.static_check の python_without_bytecode — doeff-hy-check の run_pyright も同じ包みを使う)。
+    repo = Path(__file__).resolve().parents[1]
     bare = re.compile(r'"--pythonpath",\s*sys\.executable\b')
-    offenders = sorted(str(path.relative_to(tests)) for path in tests.rglob("*.py") if bare.search(path.read_text(encoding="utf-8")))
-    assert offenders == [], f"pyright に素の python を渡している — _pyright_python(tmp_path) を渡す: {offenders}"
+    places = (*(repo / "tests").rglob("*.py"), *(repo / "packages").glob("*/tests/**/*.py"))
+    offenders = sorted(str(path.relative_to(repo)) for path in places if bare.search(path.read_text(encoding="utf-8")))
+    assert offenders == [], f"pyright に素の python を渡している — python_without_bytecode(tmp_path, sys.executable) を渡す: {offenders}"
 
 
 def _pyright(tmp_path: Path, source: str) -> dict:
