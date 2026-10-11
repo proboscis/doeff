@@ -29,6 +29,8 @@ from doeff import run as doeff_run
 
 RACE_TIMEOUT_SECONDS = 2
 
+pytestmark = pytest.mark.usefixtures("scheduler_index_self_check")
+
 
 def _run_race_with_timeout(program: Any) -> Any:
     result: dict[str, Any] = {}
@@ -1238,6 +1240,8 @@ class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
         # The terminal-entry sweep walks every task row once per
         # HANDLE_SWEEP_INTERVAL ids (amortized, #502) — kept out of the count.
         monkeypatch.setattr(scheduler_module, "HANDLE_SWEEP_INTERVAL", 1 << 30)
+        # The self-check recomputes the index on every step — its own lines would be counted.
+        monkeypatch.setattr(scheduler_module, "_INDEX_SELF_CHECK", False)
         few, few_by_function = _scheduler_lines_per_timed_wait(
             self.PARKED_FEW, self.WAITS, traced=traced
         )

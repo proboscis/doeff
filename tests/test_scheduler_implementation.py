@@ -37,6 +37,8 @@ from doeff import EffectBase, Pass, Resume, do, run
 from doeff import handler as install_handler
 from doeff.program import GetOuterHandlers
 
+pytestmark = pytest.mark.usefixtures("scheduler_index_self_check")
+
 IMPLEMENTATIONS: list[SchedulerImplementation] = ["python", "rust"]
 
 

@@ -38,6 +38,8 @@ from doeff_core_effects.scheduler import (
 
 from doeff import do, run
 
+pytestmark = pytest.mark.usefixtures("scheduler_index_self_check")
+
 STEPS = 6
 BUSY_CPU_MS = 4
 
