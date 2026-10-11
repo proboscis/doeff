@@ -527,6 +527,7 @@ class DoeffAdrHyFile(pytest.Module):
             verified.records,
             session_paths(self.config).root_resolved,
             verified.dynamic,
+            self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks()),
         )
 
     def _pytest_collects(self, name: str) -> bool:
