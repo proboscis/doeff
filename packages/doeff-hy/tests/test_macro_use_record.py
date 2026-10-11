@@ -1145,7 +1145,8 @@ SCOPE_FILES = {
 }
 
 #: 子の process: 名指した module を順に import する(名ごとに一番外の読み込み 1 つ)。間に file を書き換える指図(``edit:<file>:<前>:<後>``)を
-#: 挟める。答え = 覚えた digest の確かめが file を stat した回数(file 名ごと — macro_use._file_state)と、compile した Hy の file。
+#: 挟める。答え = 覚えた digest の確かめが file を stat した回数(file 名ごと — macro_use._file_state)と、compile した Hy の file と、
+#: import した module の値 ``value``(在れば — 展開の結果)。
 SCOPE_CHILD = """\
 import importlib, importlib.machinery, json, sys
 from pathlib import Path
@@ -1168,6 +1169,7 @@ def counted(path):
     stats[Path(path).name] = stats.get(Path(path).name, 0) + 1
     return stating(path)
 macro_use._file_state = counted
+values = {}
 for step in steps:
     if step.startswith("edit:"):
         _, name, old, new = step.split(":")
@@ -1175,8 +1177,10 @@ for step in steps:
         target.write_text(target.read_text().replace(old, new))
         importlib.invalidate_caches()
     else:
-        importlib.import_module(f"{package}.{step}")
-print(json.dumps({"stats": stats, "compiled": compiled}))
+        module = importlib.import_module(f"{package}.{step}")
+        if hasattr(module, "value"):
+            values[step] = module.value
+print(json.dumps({"stats": stats, "compiled": compiled, "values": values}))
 """
 
 SCOPE_PACKAGE = "macro_use_scope"
@@ -1187,6 +1191,7 @@ class ScopeTree:
     """子の process で読む検の package の根(.pyc は検の一時 dir の pycache に書く)。"""
 
     root: Path
+    package: str = SCOPE_PACKAGE
 
     def run(self, *steps: str) -> dict[str, object]:
         """子の process で steps を 1 度走らせた答え。"""
@@ -1194,7 +1199,7 @@ class ScopeTree:
         import subprocess
 
         done = subprocess.run(
-            [sys.executable, "-c", SCOPE_CHILD, str(self.root), SCOPE_PACKAGE, *steps],
+            [sys.executable, "-c", SCOPE_CHILD, str(self.root), self.package, *steps],
             capture_output=True,
             text=True,
             timeout=60,
@@ -1204,12 +1209,15 @@ class ScopeTree:
         return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-@pytest.fixture
-def scope_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ScopeTree:
+def _scope_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package: str, files: dict[str, str]
+) -> ScopeTree:
+    """検の package 1 つ(files — {pkg} を package の名に替える)と別の top の package を置いた根と、子の process が継ぐ環境(共有の
+    置き場・検の一時 dir の pycache・.pyc を書く)。"""
     root = tmp_path / "tree"
-    (root / SCOPE_PACKAGE).mkdir(parents=True)
-    for name, text in SCOPE_FILES.items():
-        (root / SCOPE_PACKAGE / name).write_text(text.format(pkg=SCOPE_PACKAGE), encoding="utf-8")
+    (root / package).mkdir(parents=True)
+    for name, text in files.items():
+        (root / package / name).write_text(text.format(pkg=package), encoding="utf-8")
     (root / CROSS_VALUES_PACKAGE).mkdir()
     for name, text in CROSS_VALUES_FILES.items():
         (root / CROSS_VALUES_PACKAGE / name).write_text(text, encoding="utf-8")
@@ -1218,7 +1226,12 @@ def scope_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ScopeTree:
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
     monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
-    return ScopeTree(root)
+    return ScopeTree(root, package)
+
+
+@pytest.fixture
+def scope_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ScopeTree:
+    return _scope_tree(tmp_path, monkeypatch, SCOPE_PACKAGE, SCOPE_FILES)
 
 
 def test_one_import_stats_each_macro_file_once(scope_tree: ScopeTree) -> None:
@@ -1257,3 +1270,56 @@ def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
         expected.update(len(data).to_bytes(8, "little"))
         expected.update(data)
     assert walker.digest() == expected.hexdigest(), "歩みの digest の綴りが、長さを前に置いた文字列の並びの sha256 でない"
+
+
+# ---- 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A・B(card ki-be596ac8276f)----------------------------------------------
+
+#: 盲検 A の package — macro rows が、読み込み済みの値の module tables.py の表の行 "b" を返す(歩みは表を tables.py の文で覆う)。
+LIVE_FILES = {
+    "__init__.py": "",
+    "tables.py": 'ROWS = {{"a": 1}}\nROWS["b"] = 2\n',
+    "macros.hy": '(import {pkg}.tables :as tables)\n(defmacro rows [] (get tables.ROWS "b"))\n',
+    "user_0.hy": "(require {pkg}.macros [rows])\n(setv value (rows))\n",
+    "user_1.hy": "(require {pkg}.macros [rows])\n(setv value (rows))\n",
+}
+
+
+def test_a_record_made_after_the_file_of_a_loaded_module_changed_is_stale_in_a_new_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 直す前は赤(盲検 A — 基準版 cf7ea9cc0 から在った): 常駐の process が tables を読み込んだ後(ROWS["b"] = 2)に tables.py が
+    # 書き換わり(20)、同じ process が user_1 を compile し直すと、展開は process の中の古い表(2)を使うのに、記録の digest は今の
+    # file の文(20)から作られた。新しい process(表は 20)はその記録を今に合うと判じ、展開し直せば 20 になる所で 2 を使った。
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_live", LIVE_FILES)
+    tree.run("user_0", "user_1")
+    edited = tree.run("user_0", 'edit:tables.py:ROWS["b"] = 2:ROWS["b"] = 20', "user_1")
+    assert edited["compiled"] == ["user_1.hy"], f"読み込みの間に変えた tables.py に気づかない: {edited}"
+    answer = tree.run("user_1")
+    assert answer["values"] == {"user_1": 20}, (
+        f"読み込み済みの表を書き換えた後の process が作った記録を、新しい process が今に合うと判じた: {answer}"
+    )
+
+
+#: 盲検 B の package — macro body が展開の時に呼ぶ補助 helper は、別の file の macro defhelper が macros.hy の中に作る関数。
+HELPER_FILES = {
+    "__init__.py": "",
+    "defs.hy": "(defmacro defhelper [name value] `(defn ~name [] ~value))\n",
+    "macros.hy": "(require {pkg}.defs [defhelper])\n(defhelper helper 1)\n(defmacro body [] (helper))\n",
+    "user.hy": "(require {pkg}.macros [body])\n(setv value (body))\n",
+}
+
+
+def test_a_helper_built_by_a_changed_macro_of_another_file_is_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 緑のまま守る(盲検 B): helper の code は macros.hy の中身だけでなく defhelper の展開にも依る。code の読みを置き場に覚える鍵を
+    # source の file の中身と関数の在処にする形は、提示した検を全部通ったのに、defs.hy を替えて macros.hy が compile し直された後も
+    # 前の process の helper の読みを使い、使い手を今に合うと判じた(value 1 のまま)。code の読みは code の中身で引く。
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_helper", HELPER_FILES)
+    assert tree.run("user")["values"] == {"user": 1}
+    assert tree.run("user")["compiled"] == [], "2 つ目の process が compile した — 検の前提が崩れた"
+    _replace(tree.root / "macro_use_helper" / "defs.hy", "[] ~value)", "[] (* ~value 10))")
+    answer = tree.run("user")
+    assert "user.hy" in answer["compiled"] and answer["values"] == {"user": 10}, (
+        f"helper を作る macro を替えたのに、使い手を今に合うと判じた: {answer}"
+    )
