@@ -49,6 +49,8 @@ Same program, different strategies. Handler decides:
 - **Failure strategy**: fail-fast or per-item isolation
 - **Compute backend**: async, sync, mock, batch API
 
+A `Traverse` handler runs each item program under itself: with nested `From` binds an item program performs `Traverse` again to the same handler. A handler must not hold a resource shared across `Traverse`s (one semaphore for the whole handler) while an item runs, or nested `From` deadlocks. `(parallel N)` bounds each `Traverse` separately, so k nested `From` binds can run up to N^k leaf items at once — bound a leaf resource (an API call) in the handler of that effect. `tests/test_for_do_runtime.py::test_nested_froms_answer_under_every_shipped_handler` runs every shipped handler on nested `From`.
+
 ## SQL analogy
 
 The `for/do` comprehension reads like SQL:
