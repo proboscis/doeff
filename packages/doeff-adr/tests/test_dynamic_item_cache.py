@@ -180,19 +180,33 @@ import pytest
 from doeff import run
 
 _reads = collections.Counter()
+_inside_import = collections.Counter()
 _read_bytes = pathlib.Path.read_bytes
 
 
 def _counting_read_bytes(self):
     _reads[self.name] += 1
+    if _inside_import["depth"]:
+        _reads[f"{self.name}@import"] += 1
     return _read_bytes(self)
 
 
 pathlib.Path.read_bytes = _counting_read_bytes
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_doeff_import_hy_module(collector):
+    # doeff-hy-pytest の読み込みの上限が測る区間(file 1 本の import)の中の読みを別に数える。
+    _inside_import["depth"] += 1
+    try:
+        return (yield)
+    finally:
+        _inside_import["depth"] -= 1
+
+
 def pytest_terminal_summary(terminalreporter):
     terminalreporter.write_line(f"inputs.py を読んだ回数 {_reads['inputs.py']}")
+    terminalreporter.write_line(f"import の区間の中で inputs.py を読んだ回数 {_reads['inputs.py@import']}")
 
 
 @pytest.fixture
@@ -206,12 +220,8 @@ def doeff_interpreter(doeff_interpreter_name):
 """
 
 
-def test_two_dynamic_files_in_one_collection_read_each_loaded_source_once(dynamic_project: pytest.Pytester) -> None:
-    """失敗ケース(card ki-b2383fcc8b25・agora-controllers の日次 2026-10-11 12:00): 実値の記録を書くたびに、読み込み済みの local source を
-    全部読み直して hash を取っていた。読み込んだ module は session が進むほど増えるので、実値の file の import の区間の CPU が file の位置と
-    ともに増え、doeff-hy-pytest の読み込みの上限 1 秒を負荷の高い回だけ越えた(表の 13 本のうち 9 本)。収集 1 回の中では、同じ source を
-    1 度だけ読む。"""
-    project: pytest.Pytester = dynamic_project
+def collect_two_dynamic_files(project: pytest.Pytester) -> pytest.RunResult:
+    """実値の file 2 本を 1 回で収集し、読込済みの pkg/inputs.py を読んだ回数(全体と import の区間の中)を出す。"""
     (project.path / "pkg/test_dynamic_b.hy").write_text(SOURCE + ";; 2 本目(中身の hash を変えて、記録の cache に当てない)\n")
     project.makeini(
         """
@@ -230,6 +240,24 @@ def test_two_dynamic_files_in_one_collection_read_each_loaded_source_once(dynami
     )
     assert "収集で import 2 file" in result.stdout.str(), result.stdout.str()
     assert len(list((project.path / "items").glob("*.json"))) == 2
+    return result
+
+
+def test_two_dynamic_files_in_one_collection_read_each_loaded_source_once(dynamic_project: pytest.Pytester) -> None:
+    """失敗ケース(card ki-b2383fcc8b25・agora-controllers の日次 2026-10-11 12:00): 実値の記録を書くたびに、読み込み済みの local source を
+    全部読み直して hash を取っていた。読み込んだ module は session が進むほど増えるので、実値の file の import の区間の CPU が file の位置と
+    ともに増え、doeff-hy-pytest の読み込みの上限 1 秒を負荷の高い回だけ越えた(表の 13 本のうち 9 本)。収集 1 回の中では、同じ source を
+    1 度だけ読む。"""
+    result: pytest.RunResult = collect_two_dynamic_files(dynamic_project)
+    assert "inputs.py を読んだ回数 1" in result.stdout.str(), result.stdout.str()
+
+
+def test_the_import_window_of_a_dynamic_file_reads_no_loaded_source(dynamic_project: pytest.Pytester) -> None:
+    """失敗ケース(同じ card): 1 度だけ読む形でも、session の最初の実値の file は、読込済みの全部をその file の import の区間の中で読んだ
+    (手元の 23 本の並びで、最初の実値の file の引いた後の CPU 0.941 秒)。記録の書き込みは収集の道具の費用で、検の file の重さではない —
+    import の区間の中では読込済みの module の file の名を集めるだけにし、読みと hash は区間の外で行う。"""
+    result: pytest.RunResult = collect_two_dynamic_files(dynamic_project)
+    assert "import の区間の中で inputs.py を読んだ回数 0" in result.stdout.str(), result.stdout.str()
     assert "inputs.py を読んだ回数 1" in result.stdout.str(), result.stdout.str()
 
 
