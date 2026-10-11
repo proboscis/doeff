@@ -772,6 +772,7 @@
         "doeff-cluster-declare",
         "doeff-cluster-detached",
         "doeff-cluster-detached-model",
+        "doeff-cluster-detached-rules",
         "doeff-cluster-drain-client",
         "doeff-cluster-handlers",
         "doeff-cluster-host-contract",

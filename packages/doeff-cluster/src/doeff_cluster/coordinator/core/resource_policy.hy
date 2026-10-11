@@ -486,6 +486,18 @@
    "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}})
 
 
+(defn #^ (| dict None) handover-of [#^ ClusterState state #^ str name]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
+  "worker name の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
+   起こせると報告した job。前の世代が動かしている job が無ければ None。"
+  (setv elder (sorted (sfor r state.superseded-runs :if (and r.overlapped (= r.worker name)) job r.jobs job)))
+  (when (not elder)
+    (return None))
+  (setv report (.get state.statuses name)
+        ready (sorted (sfor row (if (is report None) #() report.jobs) :if (= row.phase "elder-runs") row.name)))
+  {"elder" elder "ready" ready})
+
+
 (defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w #^ int now]
   "worker 1 つの {spec status}。now = 温める表の行のうち、この worker に当たる行(期限の内)を選ぶ刻。"
   {"spec" {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "taskReserve" w.task-reserve
@@ -513,6 +525,11 @@
                ;; disk の条件(heartbeat の envCapacity — near = 準備の最低に近い・exhausted = 最低を割った)。ok でない間だけ載せる(ok の worker の
                ;; status の形・版は以前と同じ)。切り替わりの拍で版が進み、読み手が GET /resources/Worker で予告を読む。
                (if (!= w.env-capacity "ok") {"envCapacity" w.env-capacity} {})
+               ;; 世代をまたぐ recreate の job の受け渡し(AL-D2f): 前の世代がまだ動かしている job(重なりを名乗った新しい世代の間の
+               ;; SupersededRun)と、今の世代が起こせると報告した job(状態の行の phase が elder-runs)。受け渡しが進むたびに版が進み、
+               ;; この worker を名指した 2 つの世代の GET /watch が起きる(前の世代は外す返事を、今の世代は印の外れを次の heartbeat を
+               ;; 待たずに受ける — watch_policy.worker-mark)。受け渡しの間だけ載せる(無い worker の status の形・版は以前と同じ)。
+               (if (setx handover (handover-of state w.name)) {"handover" handover} {})
                (if (setx offers (warms-for state w.name now))
                    {"warm" (sorted (gfor o offers o.key))}
                    {}))})
@@ -583,7 +600,8 @@
      印の約束(名ごと)/ 置き先か並べた置き先の
      worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 置き先の無い Service は全 worker の生存と
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
-   - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)。
+   - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)/
+     世代をまたぐ受け渡し(退いた世代の組と、組の在る worker の報告 — AL-D2f)。
      Task・Rollout: 自分の行。"
   (setv names-moved (| (moved-names jobs-before jobs-after) (moved-names before.placements after.placements)
                        (moved-names before.surges after.surges) (moved-names before.handoffs after.handoffs)
@@ -607,7 +625,12 @@
                      (frozenset))
         services (if global-moved all-services (| names-moved carried reported unplaced))
         silent-moved (^ (frozenset before.silent) (frozenset after.silent))
-        workers (| (moved-names before.workers after.workers) (moved-names before.drains after.drains) silent-moved
+        ;; 世代をまたぐ受け渡し(AL-D2f — worker-row の handover): 退いた世代の組か、今の世代の報告が変わった worker。
+        handover-moved (| (frozenset (gfor r (^ (set before.superseded-runs) (set after.superseded-runs)) r.worker))
+                          (frozenset (gfor n (moved-names before.statuses after.statuses)
+                                           :if (any (gfor r after.superseded-runs (= r.worker n)))
+                                           n)))
+        workers (| (moved-names before.workers after.workers) (moved-names before.drains after.drains) silent-moved handover-moved
                    (if (moved-names before.warms after.warms) (| (frozenset before.workers) (frozenset after.workers)) (frozenset)))
         moved (| (frozenset (gfor n services (key-of "Service" n)))
                  (frozenset (gfor n workers (key-of "Worker" n)))

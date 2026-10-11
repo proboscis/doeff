@@ -747,7 +747,10 @@
   (setv #^ int ticks 0)
   ;; root ごとの待ちの子の観測(#3646 — WarmChildView の列)。模擬の待ちの子は読み込みの秒を持たず、起こした刻に準備済み(印は分かれる前の
   ;; 形)で、分かれる task は今までどおり世界の task として走る(fork の代役は Spawn)。
-  (setv #^ tuple warm-children #()))
+  (setv #^ tuple warm-children #())
+  ;; 前の世代がまだ走っている間に起きた世代(RollWorker の新しい世代 — 本番の起動の script が前の世代の dir の錠を見て渡す
+  ;; --overlaps-elder と同じ・AL-D2e)。heartbeat に overlapsElder を載せる。
+  (setv #^ bool overlaps-elder False))
 
 
 (defrecord HostTruthChange
@@ -1864,7 +1867,7 @@
                                 :versions (or worker.versions plan.versions)
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
-                                :boot-at truth.boot-at :tools {} :kept kept :stopping stopping))
+                                :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder))
   (val full (| base (env-heartbeat-part (env-report views "ok" (frozenset)) (current-platform))))
   (if worker.ignores-keep-marks (dfor #(k v) (.items full) :if (!= k "keptWhenCutOff") k v) full))
 
@@ -3233,7 +3236,9 @@
         (resume None)
         (do (<- now int (now-epoch-ms))
             (val generation (+ (get generations name) 1))
-            (<- fresh HostTruth (fresh-truth name generation now plan.timing))
+            (<- born HostTruth (fresh-truth name generation now plan.timing))
+            ;; 前の世代を止めずに起こした新しい世代は、重なりを名乗る(本番の起動の script の --overlaps-elder — AL-D2e)。
+            (val fresh (replace born :overlaps-elder True))
             (:= generations (| generations {name generation}))
             (:= hosts (| hosts {(elder-key name truth.boot) truth name fresh}))
             (:= roll-bells (dfor #(k v) (.items roll-bells) :if (!= k name) k v))
