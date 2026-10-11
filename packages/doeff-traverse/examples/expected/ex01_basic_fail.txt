@@ -1,0 +1,8 @@
+=== Strategy 1: fail-fast ===
+Failed: invalid literal for int() with base 10: 'bad'
+
+=== Strategy 2: normalize (skip bad) ===
+Result: 60
+
+=== Strategy 3: replace with 0 ===
+Result: 60
