@@ -1,0 +1,19 @@
+--- /tmp/blind-b/handlers.orig.pyi	2026-10-11 20:06:45.410824706 +0000
++++ /tmp/blind-b/overlay/doeff_traverse/handlers.pyi	2026-10-11 20:07:45.238065383 +0000
+@@ -4,6 +4,7 @@
+ どれも doeff.program.handler が包んだ Program → Program の handler。
+ """
+ 
++from collections.abc import Callable
+ from typing import TypeAlias
+ 
+ from doeff.program import ProgramHandler
+@@ -13,7 +14,7 @@
+     Skip | Traverse[object, object] | Reduce[object, object] | Zip[object, object] | Inspect | SortBy[object] | Take[object]
+ )
+ 
+-def sequential() -> ProgramHandler: ...
++def sequential(on_progress: Callable[[str | None, int, int], None] | None = None) -> ProgramHandler: ...
+ def parallel(concurrency: int = 10) -> ProgramHandler: ...
+ def parallel_fail_fast(concurrency: int = 10) -> ProgramHandler: ...
+ 
