@@ -66,14 +66,13 @@ class Run:
         (self.dist_info,) = Path(real_semgrep).parent.parent.glob(
             "lib/python*/site-packages/semgrep-*.dist-info"
         )
-        self.count = 0
 
-    def start(self, config: str, *, version: str | None = None) -> Path:
-        """新しい回: 空の登録簿と process の答え・新しい木・新しい path の semgrep(version = dist-info に書く版・既定は本物の版)。
+    def start(self, home_name: str, config: str, *, version: str | None = None) -> Path:
+        """新しい回 home_name: 空の登録簿と process の答え・新しい HOME の木・その HOME の semgrep(version = dist-info に書く版・
+        既定は本物の版)。
         答え = 木の根。"""
-        self.count += 1
         registry_module.clear_registry()
-        home = self.base / f"home-{self.count}"
+        home = self.base / home_name
         tree = home / "repos" / "tree"
         tree.mkdir(parents=True)
         (tree / ".semgrep.yaml").write_text(config, encoding="utf-8")
@@ -127,13 +126,13 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> mock.Mock:
 def test_a_second_run_with_the_same_rules_and_fixtures_does_not_start_semgrep(
     run: Run, spy: mock.Mock
 ) -> None:
-    run.start(_rules(WORDS))
+    run.start("first", _rules(WORDS))
     _register()
     for word in WORDS:
         assert_semgrep_enforcement(f"store_probe_{word}")
     assert _semgrep_runs(spy) == 1
 
-    run.start(_rules(WORDS))
+    run.start("second", _rules(WORDS))
     _register()
     for word in WORDS:
         assert_semgrep_enforcement(f"store_probe_{word}")
@@ -146,12 +145,12 @@ def test_a_second_run_with_the_same_rules_and_fixtures_does_not_start_semgrep(
 def test_a_changed_rule_runs_semgrep_again_and_its_hit_fixture_is_red(
     run: Run, spy: mock.Mock
 ) -> None:
-    run.start(_rules(WORDS))
+    run.start("first", _rules(WORDS))
     _register()
     assert_semgrep_enforcement("store_probe_eval")
 
     # 規則を 1 つ変えた回: store-probe-no-eval の pattern が当たる例に当たらない形になる。
-    run.start(_rules(WORDS).replace("pattern: eval(...)", "pattern: evaluate(...)"))
+    run.start("second", _rules(WORDS).replace("pattern: eval(...)", "pattern: evaluate(...)"))
     _register()
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
         assert_semgrep_enforcement("store_probe_eval")
@@ -159,12 +158,12 @@ def test_a_changed_rule_runs_semgrep_again_and_its_hit_fixture_is_red(
 
 
 def test_a_changed_fixture_runs_semgrep_again_and_is_red(run: Run, spy: mock.Mock) -> None:
-    run.start(_rules(WORDS))
+    run.start("first", _rules(WORDS))
     _register()
     assert_semgrep_enforcement("store_probe_eval")
 
     # 例を 1 つ変えた回: 当たる例が規則の当たらない形になる。
-    run.start(_rules(WORDS))
+    run.start("second", _rules(WORDS))
     _register(hit_source="print('{word}')\n")
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
         assert_semgrep_enforcement("store_probe_eval")
@@ -172,12 +171,12 @@ def test_a_changed_fixture_runs_semgrep_again_and_is_red(run: Run, spy: mock.Moc
 
 
 def test_another_semgrep_version_runs_semgrep_again(run: Run, spy: mock.Mock) -> None:
-    run.start(_rules(WORDS))
+    run.start("first", _rules(WORDS))
     _register()
     assert_semgrep_enforcement("store_probe_eval")
 
     # semgrep の版を上げた回: 設定も例も同じでも、前の版の答えは読まない。
-    run.start(_rules(WORDS), version="99.0.0")
+    run.start("second", _rules(WORDS), version="99.0.0")
     _register()
     assert_semgrep_enforcement("store_probe_eval")
     assert _semgrep_runs(spy) == 2
