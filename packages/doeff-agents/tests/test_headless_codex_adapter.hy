@@ -33,7 +33,7 @@
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
 (import doeff_agents.handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
-                                                codex-process-layer fake-codex-process-layer codex-adapter])
+                                                CodexUsageLimitHit codex-process-layer fake-codex-process-layer codex-adapter])
 
 (val FAKE "fake")
 (val STUB "stub")
@@ -94,6 +94,10 @@
   (cond
     (in "SLOW" input.text) (FakeCodexReply :pieces #("slow-0 " "slow-1 ") :hold True)
     (in IMAGES-PHRASE input.text) (FakeCodexReply :pieces #((.format "IMAGES {}" (len input.images))))
+    ;; 利用枠切れ: 層 2 の事実(5 時間の窓・戻りの刻・codex の文)を筋書きで渡す — 替え玉は録った行から本番の handler が同じ事実を作る。
+    (in USAGE-LIMIT-PROMPT input.text) (FakeCodexReply :pieces #()
+                                                       :usage-limit (CodexUsageLimitHit :minutes 300 :resets-at USAGE-RESETS-AT
+                                                                                        :text USAGE-LIMIT-TEXT))
     True (FakeCodexReply :pieces ANSWER-PIECES)))
 
 (defk handlers-for [#^ str backend #^ Path tmp-path world]
@@ -563,6 +567,16 @@
 (deftest test-the-public-codex-handlers-carry-the-account-limit-stub [tmp-path]
   ;; agora が組む公開の口でも同じ(card acp:kanban-issue:ki-a59d80e0afa9)。
   (<- done (run-on PUBLIC-STUB tmp-path usage-limited-turn))
+  (<- (check-usage-limit done)))
+
+(deftest test-headless-codex-usage-limit-carries-the-account-limit-fake [tmp-path]
+  ;; 層 2 の fake が筋書きの利用枠切れの事実で失敗のターンを出せば、adapter は本番と同じ AgentAccountLimit を出す(fake は adapter の
+  ;; 窓の名の表を知らない — 長さで受ける・設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS の盲検 A・B)。
+  (<- done (run-on FAKE tmp-path usage-limited-turn))
+  (<- (check-usage-limit done)))
+
+(deftest test-the-public-codex-handlers-carry-the-account-limit-fake [tmp-path]
+  (<- done (run-on PUBLIC-FAKE tmp-path usage-limited-turn))
   (<- (check-usage-limit done)))
 
 (deftest test-headless-codex-rate-limit-is-not-an-account-limit-stub [tmp-path]
