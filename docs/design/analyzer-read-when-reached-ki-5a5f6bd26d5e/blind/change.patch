@@ -1,0 +1,530 @@
+diff --git a/packages/doeff-effect-analyzer/README.md b/packages/doeff-effect-analyzer/README.md
+index f34a7647b..67a70801a 100644
+--- a/packages/doeff-effect-analyzer/README.md
++++ b/packages/doeff-effect-analyzer/README.md
+@@ -77,7 +77,10 @@ How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
+   parameters — the shape `defhandler` expands to (a lambda when the only clause
+   is `(resume v)`) and hand-written handlers use. The effects a clause performs
+   (`(<- (Await ...))` in a clock handler) must be handled by an outer handler;
+-  `check_coverage` walks the env from the innermost handler out.
++  `check_coverage` walks the env from the innermost handler out. A clause's body
++  is read the first time its `emits` is asked for — `check_coverage` asks only
++  the clauses an effect reaches — so a caller that keys an answer on
++  `reading_sources` asks for what the answer needs inside it.
+ - Factories returning `doeff.handler(dispatch)`, `functools.partial(dispatch,
+   ...)`, a method of an object they build (`handler(runtime.handle)`, or an
+   attribute `__init__` sets to one — doeff-time's clocks), dispatchers that
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
+index a2c362f07..1129f65ea 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
+@@ -491,32 +491,101 @@ def _clauses_in(
+     return _ReadClauses(tuple(clauses), tuple(unresolved))
+ 
+ 
++@dataclass(frozen=True)
++class _Branch:
++    """A branch of a dispatcher, taken when the effect is of the classes ``classes`` names: the
++    node that tests it (``at``) and the nodes it runs (``region``)."""
++
++    at: ast.AST
++    classes: ast.expr
++    region: tuple[ast.AST, ...]
++
++
++@dataclass(frozen=True)
++class _Dispatch:
++    """What a dispatcher's def dispatches on: its effect parameter and its branches."""
++
++    param: str | None
++    branches: tuple[_Branch, ...]
++
++
++_DISPATCHES: dict[int, tuple[FunctionNode, _Dispatch]] = {}
++
++
++def _dispatch_of(node: FunctionNode) -> _Dispatch:
++    """The effect parameter and the branches of ``node``, found once per def node: a handler is
++    read again wherever it is installed, and the tree never changes — finding them at every read
++    ran ``_branches`` 544,643 times for 924 reads in five closure checks (ki-5a5f6bd26d5e)."""
++    cached = _DISPATCHES.get(id(node))
++    if cached is not None and cached[0] is node:
++        return cached[1]
++    param = _effect_param(node)
++    everything = list(_body_nodes(node))
++    dispatch = _Dispatch(
++        param,
++        tuple(
++            _Branch(child, classes, tuple(region))
++            for child in everything
++            for classes, region in _branches(child, param, everything)
++        ),
++    )
++    _DISPATCHES[id(node)] = (node, dispatch)
++    return dispatch
++
++
+ def _read_clauses(
+     reader: _Reader, node: FunctionNode, scope: _Scope, filename: str, label: str
+ ) -> _ReadClauses:
+-    param = _effect_param(node)
++    dispatch = _dispatch_of(node)
+     clauses: list[Clause] = []
+     unresolved: list[Unresolved] = []
+-    everything = list(_body_nodes(node))
+-    for child in everything:
+-        branches = _branches(child, param, everything)
+-        for classes_expr, region in branches:
+-            location = Location(filename, getattr(child, "lineno", 0))
+-            named = _classes(classes_expr, scope)
+-            unresolved.extend(
+-                Unresolved("handled class is not an importable effect class", text, location)
+-                for text in named.missing
++    for branch in dispatch.branches:
++        location = Location(filename, getattr(branch.at, "lineno", 0))
++        named = _classes(branch.classes, scope)
++        unresolved.extend(
++            Unresolved("handled class is not an importable effect class", text, location)
++            for text in named.missing
++        )
++        # Read once per handled class, with the effect parameter bound to the effect of that
++        # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
++        # reaches the clause (``Clause.emits``).
++        clauses.extend(
++            Clause(
++                handles=cls,
++                emits=_emits_read_later(
++                    reader,
++                    branch.region,
++                    _received_in(scope, dispatch.param, cls),
++                    filename,
++                    f"{label} clause",
++                ),
++                location=location,
+             )
+-            # Read once per handled class, with the effect parameter bound to the effect
+-            # of that class (performing it emits that class — ``ReceivedEffect``).
+-            for cls in named.found:
+-                facts = _Facts()
+-                reader.collect(region, _received_in(scope, param, cls), filename, facts, generator=True)
+-                emits = _report_facts(reader, facts, label=f"{label} clause")
+-                clauses.append(Clause(handles=cls, emits=emits, location=location))
++            for cls in named.found
++        )
+     return _ReadClauses(tuple(clauses), tuple(unresolved))
+ 
+ 
++def _emits_read_later(
++    reader: _Reader, region: Sequence[ast.AST], scope: _Scope, filename: str, label: str
++) -> Callable[[], ProgramEffects]:
++    """What a clause performs (``region`` read with ``reader``), read when first asked for —
++    under the handlers that were being read when the clause was, so a clause that installs its
++    handler again still stops there (``_READING``)."""
++    reading = _READING.get()
++
++    def read() -> ProgramEffects:
++        token = _READING.set(reading)
++        try:
++            facts = _Facts()
++            reader.collect(region, scope, filename, facts, generator=True)
++            return _report_facts(reader, facts, label=label)
++        finally:
++            _READING.reset(token)
++
++    return read
++
++
+ def _received_in(scope: _Scope, param: str | None, cls: type) -> _Scope:
+     """``scope`` with the clause's effect parameter bound to the effect it received."""
+     if param is None:
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
+index fbf5db2dd..e0a6f3b76 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
+@@ -140,12 +140,47 @@ class Basis(str, Enum):
+     UNREAD = "unread"  # neither — the handler may handle anything; coverage is unknown
+ 
+ 
++class _ClauseEmits:
++    """``Clause.emits``: given as the ``ProgramEffects``, or as a function that reads it — called
++    the first time ``emits`` is asked for, and its answer kept.
++
++    A handler is read wherever it is installed, but ``pass_through`` asks only the clauses an
++    effect reaches what they emit: reading every clause's body when the handler was read built
++    the emits of 452 clauses for the 118 the delivery job's closure asked for (ki-5a5f6bd26d5e).
++    A clause read later counts the sources it reads in the ``reading_sources`` around the place
++    that asks — an analysis that keeps an answer asks for what the answer needs inside it."""
++
++    def __set_name__(self, owner: type, name: str) -> None:
++        self._held = f"_{name}"
++
++    def __get__(self, clause: "Clause | None", owner: type | None = None) -> "ProgramEffects":
++        if clause is None:
++            raise AttributeError(self._held)  # no default: the dataclass requires ``emits``
++        held = clause.__dict__[self._held]
++        if not isinstance(held, ProgramEffects):
++            held = held()
++            clause.__dict__[self._held] = held
++        return held
++
++    def __set__(
++        self, clause: "Clause", value: "ProgramEffects | Callable[[], ProgramEffects]"
++    ) -> None:
++        clause.__dict__[self._held] = value
++
++
+ @dataclass(frozen=True)
+ class Clause:
++    """One effect class a handler answers (``handles``), and what the clause performs when it
++    answers (``emits`` — see ``_ClauseEmits``)."""
++
+     handles: type
+-    emits: "ProgramEffects"
++    emits: _ClauseEmits = _ClauseEmits()
+     location: Location
+ 
++    def __getstate__(self) -> dict[str, Any]:
++        """A pickled clause holds its emits read (the function that reads them does not pickle)."""
++        return {"handles": self.handles, "_emits": self.emits, "location": self.location}
++
+ 
+ @dataclass(frozen=True)
+ class HandlerEffects:
+@@ -2264,12 +2299,35 @@ class _Wrapper:
+ 
+ 
+ class _Reader:
+-    """Reads function bodies into facts, once per function and bindings."""
++    """Reads function bodies into facts, once per function and bindings, and keeps the reports
++    walked from them (``_walk``)."""
+ 
+     def __init__(self) -> None:
+         self._facts: dict[_ReadKey, _Facts] = {}
+         # Local functions being read (a local function calling itself is read once).
+         self._local_reads: set[_Identity] = set()
++        # Reports walked from facts read here, by the facts each starts from (``_walk``).
++        self._reports: dict[int, list[_KeptReport]] = {}
++
++    def kept_report(
++        self, start: _Facts, label: str, active: frozenset[_ReadKey]
++    ) -> "_KeptReport | None":
++        """The report walked before from ``start`` under ``label`` that a walk with ``active``
++        would build again (see ``_KeptReport``)."""
++        return next(
++            (
++                kept
++                for kept in self._reports.get(id(start), ())
++                if kept.start is start
++                and kept.label == label
++                and active & kept.checked == kept.active_checked
++            ),
++            None,
++        )
++
++    def keep_report(self, kept: "_KeptReport") -> None:
++        """Keep a walked report for the walks that would build it again."""
++        self._reports.setdefault(id(kept.start), []).append(kept)
+ 
+     def facts(self, function: types.FunctionType, bound: _Bound = _NO_BINDINGS) -> _Facts:
+         """What ``function`` does when read with ``bound`` (cached)."""
+@@ -2889,11 +2947,47 @@ def _report_facts(
+     ``active`` = the functions being reported further up (a recursion through a
+     handled scope or a carrier stops there — its effects are already counted).
+     """
++    return _walk(reader, start, label, active).report
++
++
++@dataclass(frozen=True)
++class _KeptReport:
++    """A report ``_walk`` built from ``start`` under ``label``, kept on the reader.
++
++    ``active`` decides a walk only where the walk looks a call up in what it has seen (``checked``
++    — its own lookups and those of the walks it nests): a walk from the same facts under the same
++    label whose ``active`` holds the same of those keys (``active_checked``) takes the same bodies
++    in the same order, so it builds this report — and reads nothing this one did not.  Before, every
++    walk that reached a body reported the handled scopes and carried Programs in it again: 7,000 -
++    17,500 reports from 800 - 1,900 bodies in one closure check (ki-5a5f6bd26d5e)."""
++
++    start: _Facts
++    label: str
++    active_checked: frozenset[_ReadKey]
++    checked: frozenset[_ReadKey]
++    report: ProgramEffects
++
++
++def _walk(
++    reader: _Reader, start: _Facts, label: str, active: frozenset[_ReadKey]
++) -> _KeptReport:
++    """The report of ``start`` (see ``_report_facts``), kept on ``reader`` with the lookups it made."""
++    kept = reader.kept_report(start, label, active)
++    if kept is not None:
++        return kept
+     effects: list[EffectUse] = []
+     carried: list[CarriedProgram] = []
+     unresolved: list[Unresolved] = []
+     handled: list[HandledProgram] = []
+     seen: set[_ReadKey] = set(active)
++    checked: set[_ReadKey] = set()
++
++    def nested(body: _Facts, text: str, path: frozenset[_ReadKey]) -> ProgramEffects:
++        """The report of a handled scope or a carried Program in a body walked here (its
++        lookups are this walk's too)."""
++        inner = _walk(reader, body, text, path)
++        checked.update(inner.checked)
++        return inner.report
+ 
+     def absorb(facts: _Facts, via: tuple[str, ...], path: frozenset[_ReadKey]) -> None:
+         """Add one body's facts, then the bodies it calls (each once)."""
+@@ -2904,26 +2998,29 @@ def _report_facts(
+         unresolved.extend(
+             Unresolved(reason, text, location, via) for reason, text, location in facts.unresolved
+         )
+-        for item in facts.carried:
+-            # A carried Program that recurses into one being reported (``path``) stops
+-            # there: its calls into ``path`` are skipped.
+-            program = _report_facts(reader, item.body, label=item.label, active=path)
+-            carried.append(
+-                CarriedProgram(
+-                    carrier=item.carrier, program=program, location=item.location, via=via
+-                )
++        # A carried Program that recurses into one being reported (``path``) stops there: its
++        # calls into ``path`` are skipped.
++        carried.extend(
++            CarriedProgram(
++                carrier=item.carrier,
++                program=nested(item.body, item.label, path),
++                location=item.location,
++                via=via,
+             )
+-        for scope in facts.handled:
+-            handled.append(
+-                HandledProgram(
+-                    handlers=scope.handlers,
+-                    program=_report_facts(reader, scope.body, label=scope.text, active=path),
+-                    location=scope.location,
+-                    via=via,
+-                )
++            for item in facts.carried
++        )
++        handled.extend(
++            HandledProgram(
++                handlers=scope.handlers,
++                program=nested(scope.body, scope.text, path),
++                location=scope.location,
++                via=via,
+             )
++            for scope in facts.handled
++        )
+         for call in facts.calls:
+             call_key = _ReadKey(call.function, call.bound.key)
++            checked.add(call_key)
+             if call_key in seen:
+                 continue
+             seen.add(call_key)
+@@ -2934,10 +3031,13 @@ def _report_facts(
+             )
+ 
+     absorb(start, (), active)
+-    return ProgramEffects(
++    report = ProgramEffects(
+         target=label,
+         effects=tuple(effects),
+         carried=tuple(carried),
+         unresolved=tuple(unresolved),
+         handled=tuple(handled),
+     )
++    kept = _KeptReport(start, label, active & checked, frozenset(checked), report)
++    reader.keep_report(kept)
++    return kept
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/result_cache.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/result_cache.py
+index d1009e82e..db5a944d2 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/result_cache.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/result_cache.py
+@@ -151,7 +151,9 @@ def importable_name(obj: object) -> str | None:
+ def cached_result(identity: tuple[str, ...] | None, compute: Callable[[], T]) -> T:
+     """``compute()``, or an answer stored under ``identity`` whose module files have the same
+     content here. ``identity`` names the analysis and its arguments (None = the arguments cannot be
+-    named: compute without the cache). The answer must pickle."""
++    named: compute without the cache). The answer must pickle, and hold only what ``compute`` read:
++    a ``HandlerEffects`` in it would read its clauses not yet asked for when pickled — outside
++    ``reading_sources``, so their modules would not be in the key (``program_effects.Clause``)."""
+     place = _place(identity)
+     if place is None:
+         return compute()
+diff --git a/packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py b/packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py
+new file mode 100644
+index 000000000..b1b13d6f4
+--- /dev/null
++++ b/packages/doeff-effect-analyzer/tests/python/test_read_when_reached.py
+@@ -0,0 +1,171 @@
++"""閉じの解析が、effect の届いた節だけを読み、同じ scope を辿り直さない事の検(card ki-5a5f6bd26d5e)。
++
++agora-controllers の閉じの検は、土台の handler を読むたびに全部の節の emits(節が中で出す effect)を読み、handled の scope と運ばれた
++Program を、そこへ届いた walk ごとに報告し直していた(deliver の組で作った節 452 のうち引かれたのは 118・報告 7,000〜17,500 回に
++別の本体 800〜1,900)。節の emits は effect が届いた時に読み、報告は reader に覚えて、答えを変えずに同じ物を作り直さない。
++"""
++
++import importlib
++import pickle
++
++import pytest
++from doeff_effect_analyzer.handler_effects import analyze_handler, check_coverage
++from doeff_effect_analyzer.program_effects import analyze_program, reading_sources
++
++EFFECTS_PY = """\
++from doeff_vm import EffectBase
++
++
++class Ping(EffectBase):
++    pass
++
++
++class Pong(EffectBase):
++    pass
++
++
++class Far(EffectBase):
++    pass
++
++
++class Tick(EffectBase):
++    pass
++"""
++
++# Ping の節だけが読む module(節の emits を読んだかを、読んだ source の記録で見るため)。
++FAR_PY = """\
++from doeff import do
++
++from {pkg}.effects import Far
++
++
++@do
++def far_away():
++    yield Far()
++"""
++
++HANDLERS_PY = """\
++from doeff import Pass, Transfer
++
++from {pkg}.effects import Ping, Pong
++from {pkg}.far import far_away
++
++
++def two_clauses(effect, k):
++    if isinstance(effect, Ping):
++        yield far_away()
++        return (yield Transfer(k, None))
++    if isinstance(effect, Pong):
++        return (yield Transfer(k, None))
++    yield Pass(effect, k)
++"""
++
++PROGRAMS_PY = """\
++from doeff import do
++from doeff.program import with_handlers
++
++from {pkg}.effects import Tick
++from {pkg}.handlers import two_clauses
++
++
++@do
++def inner():
++    yield Tick()
++
++
++@do
++def shared():
++    return (yield with_handlers([two_clauses], inner()))
++
++
++@do
++def through_a():
++    yield shared()
++
++
++@do
++def through_b():
++    yield shared()
++
++
++@do
++def both():
++    yield with_handlers([two_clauses], through_a())
++    yield with_handlers([two_clauses], through_b())
++
++
++@do
++def x():
++    yield Tick()
++    yield helper()
++
++
++@do
++def helper():
++    return (yield with_handlers([two_clauses], x()))
++
++
++@do
++def top():
++    yield x()
++    return (yield with_handlers([two_clauses], helper()))
++"""
++
++
++@pytest.fixture
++def pkg(make_package) -> str:
++    return make_package(
++        {"effects.py": EFFECTS_PY, "far.py": FAR_PY, "handlers.py": HANDLERS_PY, "programs.py": PROGRAMS_PY}
++    )
++
++
++def _effect(pkg: str, name: str) -> type:
++    """検の package の effect の class(check_coverage に渡す effect の組を作るため)。"""
++    return getattr(importlib.import_module(f"{pkg}.effects"), name)
++
++
++def test_a_clause_is_read_when_an_effect_reaches_it_and_counted_where_it_is_read(pkg: str) -> None:
++    handler = reading_sources(lambda: analyze_handler(f"{pkg}.handlers:two_clauses"))
++    assert f"{pkg}.handlers" in handler.read
++    assert f"{pkg}.far" not in handler.read  # Ping の節の本体はまだ読んでいない
++
++    pong = reading_sources(lambda: check_coverage([_effect(pkg, "Pong")], [handler.value]))
++    assert pong.value.complete
++    assert f"{pkg}.far" not in pong.read  # Pong が届くのは Pong の節だけ
++
++    ping = reading_sources(lambda: check_coverage([_effect(pkg, "Ping")], [handler.value]))
++    assert f"{pkg}.far" in ping.read  # 遅れて読んだ source は、引いた所の reading_sources が数える
++    assert [gap.effect.__name__ for gap in ping.value.gaps] == ["Far"]
++
++
++def test_a_pickled_handler_keeps_what_its_clauses_emit(pkg: str) -> None:
++    handler = analyze_handler(f"{pkg}.handlers:two_clauses")
++
++    copied = pickle.loads(pickle.dumps(handler))
++
++    assert copied == handler
++    [ping] = [clause for clause in copied.clauses if clause.handles.__name__ == "Ping"]
++    assert [use.effect.__name__ for use in ping.emits.effects] == ["Far"]
++
++
++def test_a_scope_reached_again_under_the_same_lookups_is_the_report_walked_before(pkg: str) -> None:
++    report = analyze_program(f"{pkg}.programs:both")
++
++    under_a, under_b = report.handled
++    [shared_a] = under_a.program.handled
++    [shared_b] = under_b.program.handled
++    assert shared_a.via != shared_b.via  # 別の道で届いた
++    assert shared_a.program is shared_b.program  # 同じ本体を辿り直さない
++    assert [use.effect.__name__ for use in shared_a.program.effects] == ["Tick"]
++
++
++def test_a_scope_reached_where_a_call_in_it_is_being_reported_is_walked_again(pkg: str) -> None:
++    # helper の scope は x を呼ぶ。top の handled の scope から届いた時は x を読み(Tick)、x を報告している途中で届いた時は
++    # x を読まない — 覚えた報告を、見た鍵の上の active が違う所で使い回さない。
++    report = analyze_program(f"{pkg}.programs:top")
++
++    in_scope, under_x = report.handled
++    [helper_in_scope] = in_scope.program.handled
++    assert helper_in_scope.program.target == under_x.program.target
++    assert [use.effect.__name__ for use in helper_in_scope.program.effects] == ["Tick"]
++    assert under_x.program.effects == ()

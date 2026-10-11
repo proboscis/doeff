@@ -1,0 +1,6 @@
+== main
+analyzer: /work/toolset/worktrees/doeff-wt-ki-5a5f-design-check/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/__init__.py GIL enabled: False
+{'wrong:Pong': 91, 'wrong:Ping': 82, 'right': 27}
+== before
+analyzer: /work/agent-workspaces/a-QRFPES57Q2P7XNZQ3W8VHE8597/base-analyzer/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/__init__.py GIL enabled: False
+{'right': 200}

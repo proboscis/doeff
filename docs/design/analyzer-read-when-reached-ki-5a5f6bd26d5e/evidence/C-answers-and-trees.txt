@@ -1,0 +1,41 @@
+# 19 組の答え(gaps・unknown・unresolved・origin の digest)と ProgramEffects の木全体の digest — 直す前(bf6e78bc3)と比べる
+## 答えの digest: 直す前(646-final-base-1)・646a3e986 rebase 後(646-rebased-2)・3b141537a(3b14-new-answers)
+screen b3093794397c	b3093794397c	b3093794397c 同じ
+exhaustion fddc24256537	fddc24256537	fddc24256537 同じ
+profile-keeper 3db81f6d507e	3db81f6d507e	3db81f6d507e 同じ
+cli-host-loop e64d24c18d7e	e64d24c18d7e	e64d24c18d7e 同じ
+cli-host-turn b6e335290c4c	b6e335290c4c	b6e335290c4c 同じ
+deliver 028f8cd08a77	028f8cd08a77	028f8cd08a77 同じ
+route 028f8cd08a77	028f8cd08a77	028f8cd08a77 同じ
+custody 0418c267c242	0418c267c242	0418c267c242 同じ
+attend 34176e900cce	34176e900cce	34176e900cce 同じ
+keeper 83ffdda183f2	83ffdda183f2	83ffdda183f2 同じ
+dispatcher-records 6a5227c28f31	6a5227c28f31	6a5227c28f31 同じ
+dispatcher-host 5ed6bfa0ec1f	5ed6bfa0ec1f	5ed6bfa0ec1f 同じ
+daily-verify 620a09ff7eec	620a09ff7eec	620a09ff7eec 同じ
+daily-verify-task 8c38fe7bc552	8c38fe7bc552	8c38fe7bc552 同じ
+custody-contract 620a09ff7eec	620a09ff7eec	620a09ff7eec 同じ
+durable-keeper 7f5527ffc5fb	7f5527ffc5fb	7f5527ffc5fb 同じ
+durable-attempt 3577f73c0270	3577f73c0270	3577f73c0270 同じ
+intake de7d900a3565	de7d900a3565	de7d900a3565 同じ
+toolset d2403829db68	d2403829db68	d2403829db68 同じ
+## 木の digest: 直す前(646-deep-base)・646a3e986 rebase 前(646-deep-final)・3b141537a(3b14-new-deep)
+screen: 60f305c0c3da	60f305c0c3da	60f305c0c3da 同じ
+exhaustion: f0f53e7002e6	f0f53e7002e6	f0f53e7002e6 同じ
+profile-keeper: 03ded4270b0f	03ded4270b0f	03ded4270b0f 同じ
+cli-host-loop: e85862887ea5	e85862887ea5	e85862887ea5 同じ
+cli-host-turn: 9ee5811c2a30	9ee5811c2a30	9ee5811c2a30 同じ
+deliver: a362bab4998a	a362bab4998a	a362bab4998a 同じ
+route: cdeec41576af	cdeec41576af	cdeec41576af 同じ
+custody: e0b5e2ed9e22	e0b5e2ed9e22	e0b5e2ed9e22 同じ
+attend: c34526c3e833	c34526c3e833	c34526c3e833 同じ
+keeper: 689b5876cc78	689b5876cc78	689b5876cc78 同じ
+dispatcher-records: 054f692af3e9	054f692af3e9	054f692af3e9 同じ
+dispatcher-host: 28d3d70e6e7f	28d3d70e6e7f	28d3d70e6e7f 同じ
+daily-verify: 57b1208553bd	57b1208553bd	57b1208553bd 同じ
+daily-verify-task: 33467f3af792	33467f3af792	33467f3af792 同じ
+custody-contract: 896ac545b2eb	896ac545b2eb	896ac545b2eb 同じ
+durable-keeper: e1898ecf0bc5	e1898ecf0bc5	e1898ecf0bc5 同じ
+durable-attempt: 9a15e265c75f	9a15e265c75f	9a15e265c75f 同じ
+intake: dbbdbace0664	dbbdbace0664	dbbdbace0664 同じ
+toolset: 639f7c7ea474	639f7c7ea474	639f7c7ea474 同じ

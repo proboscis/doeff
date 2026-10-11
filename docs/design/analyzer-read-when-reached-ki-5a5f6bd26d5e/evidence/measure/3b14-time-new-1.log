@@ -1,0 +1,41 @@
+# 2026-10-11T15:33:23Z analyzer=/work/toolset/worktrees/doeff-wt-ki-5a5f-design-check/packages/doeff-effect-analyzer/python load=33.08 26.87 21.92
+  screen: 木の digest -
+screen: import 2.2s  analyze 5.5s (うち展開の外れ 0.0s)  coverage 0.0s  答え b3093794397c  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  exhaustion: 木の digest -
+exhaustion: import 1.4s  analyze 1.0s (うち展開の外れ 0.0s)  coverage 0.5s  答え fddc24256537  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  profile-keeper: 木の digest -
+profile-keeper: import 0.0s  analyze 0.2s (うち展開の外れ 0.0s)  coverage 0.2s  答え 3db81f6d507e  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  cli-host-loop: 木の digest -
+cli-host-loop: import 0.6s  analyze 2.6s (うち展開の外れ 0.0s)  coverage 0.9s  答え e64d24c18d7e  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  cli-host-turn: 木の digest -
+cli-host-turn: import 0.0s  analyze 0.8s (うち展開の外れ 0.0s)  coverage 0.9s  答え b6e335290c4c  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  deliver: 木の digest -
+deliver: import 1.6s  analyze 2.7s (うち展開の外れ 0.0s)  coverage 2.0s  答え 028f8cd08a77  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  route: 木の digest -
+route: import 0.0s  analyze 0.7s (うち展開の外れ 0.0s)  coverage 0.9s  答え 028f8cd08a77  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  custody: 木の digest -
+custody: import 1.5s  analyze 2.7s (うち展開の外れ 0.0s)  coverage 1.4s  答え 0418c267c242  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  attend: 木の digest -
+attend: import 1.6s  analyze 1.2s (うち展開の外れ 0.0s)  coverage 0.8s  答え 34176e900cce  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  keeper: 木の digest -
+keeper: import 0.0s  analyze 0.3s (うち展開の外れ 0.0s)  coverage 0.2s  答え 83ffdda183f2  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  dispatcher-records: 木の digest -
+dispatcher-records: import 0.0s  analyze 1.4s (うち展開の外れ 0.0s)  coverage 0.4s  答え 6a5227c28f31  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  dispatcher-host: 木の digest -
+dispatcher-host: import 0.0s  analyze 0.5s (うち展開の外れ 0.0s)  coverage 0.3s  答え 5ed6bfa0ec1f  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  daily-verify: 木の digest -
+daily-verify: import 1.3s  analyze 0.7s (うち展開の外れ 0.0s)  coverage 0.3s  答え 620a09ff7eec  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  daily-verify-task: 木の digest -
+daily-verify-task: import 0.0s  analyze 0.2s (うち展開の外れ 0.0s)  coverage 1.1s  答え 8c38fe7bc552  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  custody-contract: 木の digest -
+custody-contract: import 0.0s  analyze 0.1s (うち展開の外れ 0.0s)  coverage 0.1s  答え 620a09ff7eec  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  durable-keeper: 木の digest -
+durable-keeper: import 1.3s  analyze 1.4s (うち展開の外れ 0.0s)  coverage 1.2s  答え 7f5527ffc5fb  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  durable-attempt: 木の digest -
+durable-attempt: import 0.0s  analyze 0.2s (うち展開の外れ 0.0s)  coverage 0.0s  答え 3577f73c0270  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  intake: 木の digest -
+intake: import 1.7s  analyze 2.0s (うち展開の外れ 0.0s)  coverage 1.3s  答え de7d900a3565  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+  toolset: 木の digest -
+toolset: import 1.5s  analyze 1.3s (うち展開の外れ 0.0s)  coverage 0.7s  答え d2403829db68  外れの内訳 {'expand': 0.0, 'write': 0.0, 'expand_n': 0}
+# end 2026-10-11T15:34:29Z load=36.58 29.13 23.03
+analyze の和 25.5 秒・coverage の和 13.2 秒・合計 38.7 秒(19 組)

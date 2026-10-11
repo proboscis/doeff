@@ -1,0 +1,11 @@
+## A の absent_share(share)— main
+p1 と p2 の受け手の節は同じ object: True
+節が握る _Reader: _Reader 同じ object: True
+p1 gaps: ['Raise']
+p2 gaps: ['Raise']
+## B の variant を main に当てた写し
+--- base/doeff_effect_analyzer/handler_effects.py	2026-10-11 15:08:33.219225703 +0000
++++ variant/doeff_effect_analyzer/handler_effects.py	2026-10-11 15:12:05.823293235 +0000
+@@ -139,6 +139,14 @@
+ )
+ 
