@@ -1,4 +1,4 @@
-"""defrecord の実行の展開が読み込みの時に読む部品(card acp:kanban-issue:ki-a0cca3bdb9a0)。
+"""defrecord と defeffect の実行の展開が読み込みの時に読む部品(card acp:kanban-issue:ki-a0cca3bdb9a0・defeffect は ki-e77d44aa61e5)。
 
 defrecord は関数(__init__・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__)を展開の時に書き、dataclass には欄の表だけを
 作らせる(doeff_hy/record.hy の頭注)。展開が書いた class の本体と、class を作った直後の文がここを読む。
@@ -34,6 +34,14 @@ class _ReferenceRecord:
 #: (frozen・eq・init・repr が真・kw_only)と同じ値に戻す。
 RECORD_PARAMS: object = getattr(_ReferenceRecord, "__dataclass_params__")
 
+@dataclasses.dataclass(frozen=True)
+class _ReferenceEffect:
+    """defeffect の今までの展開(dataclass frozen・位置の引数)と同じ __dataclass_params__ を持つ見本(card ki-e77d44aa61e5)。"""
+
+
+#: 展開が関数を書いた effect 型の __dataclass_params__ — 今までの展開(frozen・eq・init・repr が真・kw_only が偽)と同じ値に戻す。
+EFFECT_PARAMS: object = getattr(_ReferenceEffect, "__dataclass_params__")
+
 #: 展開が書く __repr__ の再帰の守り(dataclass の __repr__ と同じ — 自分を含む値は ``...``)。
 recursive_repr = reprlib.recursive_repr
 
@@ -51,3 +59,9 @@ def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> Non
         if f.default_factory is not dataclasses.MISSING or not f.init or not f.repr or not f.compare or f.hash is not None:
             raise TypeError(f"{cls.__name__} の欄 {name} の既定値は field の印 — defrecord の欄には (field …) を直に書く")
     setattr(cls, "__dataclass_params__", RECORD_PARAMS)
+
+
+def seal_effect(cls: type) -> None:
+    """展開が関数を書いた defeffect の effect 型を仕上げるため: __dataclass_params__ を今までの展開(frozen の dataclass・位置の
+    引数)と同じ値に戻す(card ki-e77d44aa61e5)。"""
+    setattr(cls, "__dataclass_params__", EFFECT_PARAMS)
