@@ -1,0 +1,18 @@
+"""defk の本体の (<- …) と、defhandler の節の (<- …) の展開が、どの module の名を引くかを印字する。"""
+import hy
+
+SRC = """
+(require doeff-hy.macros [defk defhandler <-])
+(defk pipeline [x]
+  {:pre [(: x int)] :post [(: % int)]}
+  (<- y (foo x))
+  y)
+"""
+for top in hy.read_many(SRC):
+    expanded = hy.macroexpand_all(top, module="__main__") if hasattr(hy, "macroexpand_all") else None
+import hy.macros, hy.compiler, ast
+tree = hy.compiler.hy_compile(hy.read_many(SRC), "__main__")
+text = ast.unparse(tree)
+for line in text.splitlines():
+    if "open_bind" in line or "_doeff_outcomes" in line or "doeff_core_effects" in line:
+        print(line.strip()[:200])
