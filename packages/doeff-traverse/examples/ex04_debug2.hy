@@ -3,6 +3,8 @@
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 
 (defk double [x]
+  {:pre [(: x int)]
+   :post [(: % int)]}
   (* x 2))
 
 ;; Manually construct what the macro produces
