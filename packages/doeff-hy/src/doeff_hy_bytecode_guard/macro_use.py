@@ -11,7 +11,8 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
 - 名で引く大域(code の名の表を関数の ``__globals__`` で引いた値)・既定値・閉包の cell を辿る。関数と class(class はその
   method)は同じ規則で再帰に辿る。素の値と、中身が素の値の組・集合は値で入れる。module は名と、code の名の表に出る属性
   (``module.名`` の読み)を入れる。code の文字列の定数は名の候補として、辿った module のその名の属性も入れる
-  (``getattr(module, "名")`` の読み — 読む関数と module の参照が別の関数にあっても覆う)。
+  (``getattr(module, "名")`` の読み — 読む関数と module の参照が別の関数にあっても覆う)。ただし module の説明の文
+  (``__doc__``)は入れない(展開の code の "__doc__" は展開の結果に説明を書く印で、module の説明の文は展開の結果に効かない)。
 - Hy 自身(``hy.*``)と Python の標準 library と組み込みは名だけ入れる(Hy の版・Python の版で覆う)。
 - 関数の中の import の先・hy.R の呼び出しの先・package の下の module: import して、名の表の名の属性を入れる(module 全体を
   file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
@@ -1432,10 +1433,17 @@ def _submodule(module: ModuleType, name: str) -> str | None:
     return full if found and name not in vars(module) else None
 
 
+#: 文字列の定数の名の候補から外す module の属性 — module の説明の文。展開の code の "__doc__" は展開の結果の関数や class に
+#: 説明を書く印で、module の説明の文は展開の結果に効かない(入れると、doeff_hy の record_runtime の docstring の 1 行の変更で
+#: defhandler の使い手が全部古いと判じられた — card ki-70d92767a917 の子)。
+_TEXT_SKIP = frozenset({"__doc__"})
+
+
 def _text_attribute(module: ModuleType, text: str) -> bool:
-    """文字列の定数の名の属性を入れるか — module の名前空間にあり、package の下の module でない物(package の下の module は
-    読み込まれたかで属性に現れるかが変わる — 名の表の名なら :func:`_submodule` が file 単位で覆う)。"""
-    if text not in vars(module):
+    """文字列の定数の名の属性を入れるか — module の名前空間にあり、module の説明の文(:data:`_TEXT_SKIP`)でも package の下の
+    module でもない物(package の下の module は読み込まれたかで属性に現れるかが変わる — 名の表の名なら :func:`_submodule` が
+    file 単位で覆う)。"""
+    if text in _TEXT_SKIP or text not in vars(module):
         return False
     value = vars(module)[text]
     return not (isinstance(value, ModuleType) and value.__name__ == f"{module.__name__}.{text}")
