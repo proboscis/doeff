@@ -30,6 +30,12 @@ def _defined_in_untyped_hy(name: str) -> bool:
     return origin is not None and origin.endswith(".hy") and not Path(origin).with_suffix(".pyi").exists()
 
 
+def _absolute(module: str) -> str:
+    """表の相対の定義元(``.handlers``)と節の絶対の定義元(``doeff_agents.handlers`` — 相対の import は doeff-linter の DOEFF016)を
+    同じ綴りで比べるため、根の package の下の絶対の名にする。"""
+    return "doeff_agents" + module if module.startswith(".") else module
+
+
 def _lazy_exports(tree: ast.Module) -> dict[str, str]:
     for node in tree.body:
         if (
@@ -40,19 +46,19 @@ def _lazy_exports(tree: ast.Module) -> dict[str, str]:
         ):
             table = ast.literal_eval(node.value)
             assert isinstance(table, dict)
-            return {str(name): str(module) for name, module in table.items()}
+            return {str(name): _absolute(str(module)) for name, module in table.items()}
     raise AssertionError("doeff_agents/__init__.py に _LAZY_EXPORTS が無い")
 
 
 def _type_checking_imports(tree: ast.Module) -> dict[str, str]:
-    """``if TYPE_CHECKING:`` の節が ``from <相対の定義元> import 名 as 名`` で import する名 → 定義元。"""
+    """``if TYPE_CHECKING:`` の節が ``from <定義元> import 名 as 名`` で import する名 → 定義元(絶対の名)。"""
     found: dict[str, str] = {}
     for node in tree.body:
         if not (isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"):
             continue
         for stmt in node.body:
             assert isinstance(stmt, ast.ImportFrom), ast.dump(stmt)
-            module = "." * stmt.level + (stmt.module or "")
+            module = _absolute("." * stmt.level + (stmt.module or ""))
             for alias in stmt.names:
                 # ``as 名`` で同じ名を付ける形だけが再輸出(pyright の strict は別名の無い import を再輸出と読まない)。
                 assert alias.asname == alias.name, (module, alias.name, alias.asname)
