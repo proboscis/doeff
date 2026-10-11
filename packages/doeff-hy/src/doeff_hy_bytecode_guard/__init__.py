@@ -25,6 +25,8 @@ import の外で bytecode を前もって作る道具は :func:`source_to_code_a
 同じ保存先(code_store)で、dataclass が型ごとに作る関数の source の compile も中身で覚える(:mod:`doeff_hy_bytecode_guard.dataclass_code`
 — compile は文と Python の版だけで決まるので照らしは要らない。読み込みの固定費の大半が型ごとの compile だった・card ki-e77d44aa61e5)。
 dataclasses は読み込み済みの時だけ包む(起動時の :func:`install` と Hy の source の初めての読み)。
+同じ module の本体の実行の口の包みで、一番外の読み込みの間だけ GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard.import_gc` —
+読み込みが heap を育てるたびに heap 全体を掃いていた・card ki-de9d3593bbde)。
 
 入れる所は venv の起動時(doeff-hy が配る ``doeff_hy_bytecode_guard.pth``)と ``import doeff_hy`` の 2 か所。
 どちらも :func:`install` を呼ぶだけで、何度呼んでも 1 度しか包まない。Hy の import の前でも後でも効く
