@@ -1,0 +1,12 @@
+--- 実験 1・同じ木 a・表 warning・cache-1
+{"hit": 0, "miss": 1, "exit": 0, "findings": [["doeff-hy-setv", "warning"]], "doeff_hy": "/tmp/kiwork/reproB/a/doeff_hy/__init__.py"}
+--- 実験 1・同じ木 a・表を error に替えた・cache-1
+{"hit": 0, "miss": 1, "exit": 1, "findings": [["doeff-hy-setv", "error"]], "doeff_hy": "/tmp/kiwork/reproB/a/doeff_hy/__init__.py"}
+--- 実験 1・a・error・保存なし
+{"hit": 0, "miss": 0, "exit": 1, "findings": [["doeff-hy-setv", "error"]], "doeff_hy": "/tmp/kiwork/reproB/a/doeff_hy/__init__.py"}
+--- 実験 2・a・warning・cache-2
+{"hit": 0, "miss": 1, "exit": 0, "findings": [["doeff-hy-setv", "warning"]], "doeff_hy": "/tmp/kiwork/reproB/a/doeff_hy/__init__.py"}
+--- 実験 2・b・error・cache-2(a の後)
+{"hit": 0, "miss": 1, "exit": 1, "findings": [["doeff-hy-setv", "error"]], "doeff_hy": "/tmp/kiwork/reproB/b/doeff_hy/__init__.py"}
+--- 実験 2・b・error・保存なし
+{"hit": 0, "miss": 0, "exit": 1, "findings": [["doeff-hy-setv", "error"]], "doeff_hy": "/tmp/kiwork/reproB/b/doeff_hy/__init__.py"}

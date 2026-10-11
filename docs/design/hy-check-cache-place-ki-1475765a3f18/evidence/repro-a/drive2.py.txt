@@ -1,0 +1,37 @@
+"""盲検 A の実験 2: 引数の file を同じ process で順に展開して保存し、user.hy の保存の文と展開し直した文を比べる(引数: 根・保存先・先に展開する file の名…)。"""
+import json, sys
+from pathlib import Path
+import doeff_hy_bytecode_guard.records as records
+from doeff_hy_bytecode_guard import macro_use
+from doeff_hy_bytecode_guard.records import ValueReference
+from doeff_hy import static_check, static_cache
+seen = {"hit": 0, "miss": 0}
+real = static_check.load
+def counting(cache_dir, name):
+    answer = real(cache_dir, name)
+    seen["hit" if isinstance(answer, static_cache.CachedProjection) else "miss"] += 1
+    return answer
+static_check.load = counting
+root, cache = Path(sys.argv[1]), Path(sys.argv[2])
+sys.path.insert(0, str(root))
+targets = [root / name for name in sys.argv[3:]] or [root / "user.hy"]
+user = root / "user.hy"
+closure = static_check.project_closure(root, [root], targets, cache, 1)
+if closure.failures:
+    print(closure.failures); raise SystemExit(1)
+served = closure.projections[user]
+fresh = static_check.project(root, [root], user)
+post = [v for v in served.used.values if v.name == "POST_PROCESSING"]
+from doeff_hy_bytecode_guard import loader_hooks
+rule = macro_use.value_digest(ValueReference("doeff_hy_bytecode_guard.records", "gensym_renames"), loader_hooks.file_sha256)
+print(json.dumps({
+    "records_py": records.__file__,
+    "record_tag": records.RECORD_TAG,
+    "cache_version": static_cache.CACHE_VERSION,
+    "lookups": seen,
+    "served_print": [l for l in served.text.splitlines() if l.startswith("print")],
+    "fresh_print": [l for l in fresh.text.splitlines() if l.startswith("print")],
+    "same": served.text == fresh.text,
+    "post_processing_digest": post[0].digest if post else None,
+    "gensym_rule_value_digest": rule.digest if rule else None,
+}, ensure_ascii=False, indent=1))

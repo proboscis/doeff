@@ -1,0 +1,7 @@
+(require doeff-hy.macros [defk])
+
+(setv limit 3)
+
+(defk twice [x]
+  {:pre [(: x int)] :post [(: % int)]}
+  (* 2 x))

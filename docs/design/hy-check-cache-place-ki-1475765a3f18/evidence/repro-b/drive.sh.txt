@@ -1,0 +1,6 @@
+#!/bin/sh
+# 使い方: drive.sh <置き場 a|b> <保存先 | -> — 盲検 B の drive.py を、直した版(29ba29c9f)の写しに盲検 B の差分を当てた doeff_hy で撃つ
+R=/tmp/kiwork/reproB; WT=/work/toolset/worktrees/doeff-wt-design-check-ki1475
+cd $R || exit 2
+export PYTHONPATH=$R/$1 PYTHONPYCACHEPREFIX=$R/pyc DOEFF_HY_CODE_STORE=$R/codestore
+exec uv run --frozen --no-sync --project $WT python /tmp/ki1475-blind-B/scripts/drive.py $R/proj "$2" $R/pyright

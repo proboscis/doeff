@@ -1,0 +1,12 @@
+doeff 29ba29c9f171752ba22310a308dd50edf17377c0 — 名指した検(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C)
+packages/doeff-hy/tests/test_static_cache.py::test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion PASSED [ 10%]
+packages/doeff-hy/tests/test_static_cache.py::test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again PASSED [ 20%]
+packages/doeff-hy/tests/test_static_cache.py::test_an_entry_of_the_current_store_version_is_read_back PASSED [ 30%]
+packages/doeff-hy/tests/test_static_cache.py::test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version PASSED [ 40%]
+packages/doeff-hy/tests/test_static_cache.py::test_a_changed_type_check_post_processing_expands_again PASSED [ 50%]
+packages/doeff-hy/tests/test_static_cache.py::test_a_doeff_hy_file_the_expansion_does_not_go_through_keeps_the_stored_expansion PASSED [ 60%]
+packages/doeff-hy/tests/test_static_check_parallel.py::test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote PASSED [ 70%]
+packages/doeff-hy/tests/test_macro_use_record.py::test_a_macro_naming_the_place_of_its_module_is_current_in_another_tree PASSED [ 80%]
+packages/doeff-hy/tests/test_macro_use_record.py::test_a_changed_macro_naming_the_place_of_its_module_is_stale_in_another_tree PASSED [ 90%]
+packages/doeff-hy/tests/test_macro_use_record.py::test_a_changed_file_a_macro_reads_beside_its_module_is_stale PASSED [100%]
+======================== 10 passed, 1 warning in 28.46s ========================

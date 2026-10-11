@@ -1,0 +1,220 @@
+"""設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の報告の JSON を組む(参照する file の sha256 を読んで入れる)。"""
+
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+DIR = Path(sys.argv[1])
+
+
+def ref(path: str) -> dict[str, str]:
+    return {"path": path, "sha256": hashlib.sha256((DIR / path).read_bytes()).hexdigest()}
+
+
+ALL = ["walker", "record", "post-processing", "store", "expanders", "daily-stage"]
+
+
+def others(changed: list[str]) -> list[str]:
+    return [m for m in ALL if m not in changed]
+
+
+modules = [
+    {
+        "id": "walker",
+        "responsibility": "閉包の digest を作る(何を digest に入れるか)— doeff_hy_bytecode_guard.macro_use の _Walker",
+        "owns": "code の読み(CodeFacts — reads_location を含む)・大域/属性/文字列の定数の辿りの規則・_LOCATION_NAMES・_TEXT_SKIP・照らせない読み(環境変数・置き場の読み)の判じ",
+        "hides": "辿りの順・process の中の覚え _REMEMBERED・code の読みの置き場(FACTS_TAG 2)",
+        "interface": "macro_digest(key, macro, sha256_of)・value_digest(reference, sha256_of) → ClosureDigest(digest | None | ENVIRONMENT_READ, modules)",
+        "effects": "module の import(_import_for_digest)・file の sha256 の読み・code の読みの置き場の読み書き",
+        "lifetime": "覚えは process の中だけ(辿った file の状態が変われば捨てる)",
+        "invariants": "同じ中身(code・値・file の sha256)なら置き場の dir に依らず同じ digest。中身が変われば変わる。import の途中は None。歩みが覆えない入力(環境変数・置き場から辿る file)に当たった digest は照らせない印",
+    },
+    {
+        "id": "record",
+        "responsibility": "展開が使った物の記録の形と、今の環境との照らし(doeff_hy_bytecode_guard.records・loader_hooks)。gensym の名の振り直しの規則の持ち主",
+        "owns": "MacroRecord の行(macro・also・files)・record_fingerprint・照らしの判定(digest か file か・ENVIRONMENT_READ はいつも古い)・gensym_renames / renamed",
+        "hides": "digest の作り方(walker へ任せる)",
+        "interface": "macro_recording(module).record(text, also=…)・record_is_current_here(record) → bool・value_reference(module, name)・gensym_renaming(names)・record_to_json / record_from_json",
+        "effects": "照らしの時に記録が名指す module を import する",
+        "lifetime": "なし(記録は値・保存は呼び手)",
+        "invariants": "記録は path を持たず、module の名で今の環境から引き直す",
+    },
+    {
+        "id": "post-processing",
+        "responsibility": "1 つの .hy の型検査の展開(Python・位置の対応・所見)と、その結果を変える後処理を記録に名指す(doeff_hy.static_check の project・POST_PROCESSING)",
+        "owns": "展開の手順・POST_PROCESSING の範囲・名指す module の名 _POST_PROCESSING_MODULE(__spec__.name)",
+        "hides": "後処理の中身(記録には名と digest だけ)",
+        "interface": "project(root, roots, source) → Projection | CompileFailure(Projection.used = MacroRecord)",
+        "effects": "source の読み・Hy の compile(macro の module の import)— file の読みはこの 2 つだけ(置き場から隣の file を読まない)",
+        "lifetime": "なし(1 呼びごと)",
+        "invariants": "名指す module は親・子・console script のどの入口でも同じ名。置き場を読まない(守りの検 test_doeff_hy_sources_do_not_read_their_place)",
+    },
+    {
+        "id": "store",
+        "responsibility": "展開の結果を、場所(source の中身・module 名・相対 path・保存の形の版)と記録の指紋の entry で保存して引く(doeff_hy.static_cache)",
+        "owns": "場所の名 place・entry の JSON の形・CACHE_VERSION・書きの置き換え(書き手ごとの一時 file)",
+        "hides": "dir の並び(頭 2 字)・一時 file の名",
+        "interface": "place(text, module, relative)・load(dir, name) → CachedProjection | CacheMiss・store(dir, name, projection)・default_cache_dir()",
+        "effects": "保存先の dir の file の読み書き",
+        "lifetime": "entry は消さない(消すのは置き場の持ち主)",
+        "invariants": "場所の名に絶対 path を入れない。今の CACHE_VERSION で書いた entry で、記録が今に合う物だけを返す。gensym の振り直しの規則を替えたら CACHE_VERSION を上げる(守りの表 GENSYM_RULE_VERSIONS)",
+    },
+    {
+        "id": "expanders",
+        "responsibility": "検める file と依存の .hy を段ごとに保存から引き、引けない物を子の process で展開して保存する(static_check.project_closure・_Expanders)",
+        "owns": "段の進め方・子の数(expander_limit・DOEFF_HY_CHECK_EXPANDERS)・pool の寿命・保存の書きの 1 か所(親)",
+        "hides": "pool(forkserver)・子の起こし方",
+        "interface": "project_closure(root, roots, targets, cache_dir, limit) → Closure",
+        "effects": "子 process の起動・保存先の読み書き(親だけ)",
+        "lifetime": "pool は 1 回の実行の中で使い回し、出口で降ろす",
+        "invariants": "照らしは親・展開は親か子 — どちらが展開しても同じ記録",
+    },
+    {
+        "id": "daily-stage",
+        "responsibility": "日次の処理ステージ hy-type-trend として repo 全体に doeff-hy-check を当て、前の回と比べる(agora-controllers scripts/hy_type_trend.hy・pyproject の doeff-min-commit)",
+        "owns": "命令(python -m doeff_hy.static_check)・時間の上限・保存先の dir の設定(DOEFF_HY_CHECK_CACHE)・doeff の版の下限",
+        "hides": "doeff の置き場(task ごとの作業木)",
+        "interface": "hy scripts/hy_type_trend.hy --timeout-s N",
+        "effects": "子 process・結果の file の読み書き",
+        "lifetime": "1 回の日次の回",
+        "invariants": "doeff の版は doeff-min-commit ちょうど・保存先は回をまたいで残る",
+    },
+]
+
+scenarios = [
+    {
+        "id": "S1",
+        "axis": "storage",
+        "applicability": "applicable",
+        "change": "doeff の checkout の置き場を変える(日次は回ごとに /work/state/jobs/task_t<番号>/… に置く)、または保存先の dir を替える",
+        "claim": "同じ中身の doeff なら置き場が変わっても保存を引く。置き場の変更は daily-stage の設定だけで済む(design-before-blind.md の S1)",
+        "expected_scope": "daily-stage(walker・record・store・post-processing・expanders は変えない)",
+        "actual_scope": "置き場を替えるのは daily-stage だけで、別の dir の doeff で 593 本すべて引けた(C05)。盲検 B は、後処理が置き場から隣の data を読む形では D1 の後に別の dir どうしで data が違っても引き、R3 を破る事を実測した(再現 C02)",
+        "changed_modules": ["daily-stage"],
+        "unchanged_modules": others(["daily-stage"]),
+        "reason": "置き場の設定は daily-stage の知識で、正当。漏れは walker の判じ — __file__ を「置き場を名指すだけ」と判じたが、値として読む code では入力への道になる",
+        "revision": "D3(失敗ケース d8c82385b → 直し 29ba29c9f): 置き場を値として読む code と束縛の文の digest を照らせない印にし、doeff_hy の source に置き場の読みを持ち込ませない守りの検を足した。再検証 = C02・C10・C11",
+    },
+    {
+        "id": "S2",
+        "axis": "concurrency",
+        "applicability": "applicable",
+        "change": "入口を python -m と console script の間で替える・展開の子の数(DOEFF_HY_CHECK_EXPANDERS)を 1・4・8 に替える",
+        "claim": "どの入口・どの子の数でも同じ記録を書き、次の実行の親が引く。替えるのは daily-stage の命令か env だけ(design-before-blind.md の S2)",
+        "expected_scope": "daily-stage",
+        "actual_scope": "daily-stage だけ。__main__ の名の入口で 2 度目に全部引き(C03)、展開の子 4 の測りで別の dir の回も全部引けた(C05)。直す前の版はこの検で断られる(C04)。盲検はこの軸の失敗例を返さなかった",
+        "changed_modules": ["daily-stage"],
+        "unchanged_modules": others(["daily-stage"]),
+        "reason": "命令と env は daily-stage の知識で、正当な配線。D2 で名指す module を import で引ける名にした後は、入口の名の知識は post-processing の 1 つの定数に閉じる",
+        "revision": "不要 — 根拠は C03・C04・C05(D2 は盲検の前に着地済み)",
+    },
+    {
+        "id": "S3",
+        "axis": "effects",
+        "applicability": "applicable",
+        "change": "型検査の展開の後処理(project が呼ぶ関数・使う規則)を足す・変える",
+        "claim": "記録が古くなり展開し直す。保存・照らし・並べ方は変えない(design-before-blind.md の S3)",
+        "expected_scope": "post-processing(walker・record・store・expanders・daily-stage は変えない)",
+        "actual_scope": "static_check の中の後処理は post-processing だけで古くなる(C06・C08)。盲検 A は、後処理が使う gensym の名の振り直しの規則(record が持ち、歩みが名だけ入れる package に在る)を替えると記録が古くならず、store の CACHE_VERSION を上げる要があり、さらに _read_entry の literal の版のせいで上げても自分の entry を読めない事を実測した(再現 C07)",
+        "changed_modules": ["post-processing", "record", "store"],
+        "unchanged_modules": ["walker", "expanders", "daily-stage"],
+        "reason": "共同の不変条件(展開の結果を変える code は、記録の digest か保存の版で覆う)に持ち主と検が無かった — walker の名だけ入れる規則の知識と store の版の意味が、規則の持ち主(record)から見えなかった。規則の変更が record・store を変えるのは、この不変条件を明示した後の意図した範囲",
+        "revision": "A2(_read_entry を CACHE_VERSION で照らす)と守りの表 GENSYM_RULE_VERSIONS・検 test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version(失敗ケース d8c82385b → 直し 29ba29c9f)。再検証 = C07・C08",
+    },
+    {
+        "id": "S4",
+        "axis": "distribution",
+        "applicability": "applicable",
+        "change": "複数の機体の worker(別の置き場の doeff)が 1 つの保存先を共有する",
+        "claim": "中身が同じなら他の機体の entry を引き、違えば引かない。共有は store の既存の書きで足りる(design-before-blind.md の S4)",
+        "expected_scope": "daily-stage(保存先を共有の場所へ向ける)",
+        "actual_scope": "別の dir の doeff が書いた entry を引く(C05)。盲検 B の実験 2(置き場ごとに data だけが違う木)で、D1 の後は違う方の木が古い答えを引いた — D3 の後は外れ、保存なしと同じ答え(C09)",
+        "changed_modules": ["daily-stage"],
+        "unchanged_modules": others(["daily-stage"]),
+        "reason": "S1 と同じ walker の判じの漏れ。保存先の共有そのものは daily-stage の設定で、store の書きは変えない",
+        "revision": "D3(S1 と同じ)。再検証 = C09",
+    },
+    {
+        "id": "S5",
+        "axis": "hardware",
+        "applicability": "excluded",
+        "reason": "digest と記録に機体に依る入力が無い。CPU の数は展開の子の数の上限だけに効き、記録を変えない(S2 で扱う)",
+    },
+    {
+        "id": "S6",
+        "axis": "simulation",
+        "applicability": "excluded",
+        "reason": "決定的な模擬(agora_sim)は doeff-hy-check の保存を使わない。保存は答えを変えない速さの層(R3)で、模擬の時間の進みにも入らない",
+    },
+]
+
+checks = [
+    {"id": "C01", "scenarios": ["S1"], "control": "positive",
+     "expectation": "同じ中身の doeff_hy を別の dir に写し、同じ保存先で 2 度目に展開 0",
+     "observation": "test_static_cache.py::test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion PASSED(doeff 29ba29c9f・10 passed の 1 本)",
+     "evidence": ref("evidence/C-named-checks-after-fix.log"), "status": "passed"},
+    {"id": "C02", "scenarios": ["S1"], "control": "negative",
+     "expectation": "後処理が置き場から隣の file を読む形で、file を替えたら古い展開を引かず、保存なしと同じ答え",
+     "observation": "盲検 B の差分を直した版に当てた写しで、同じ木で表を error に替えた回は外れ 1・error・exit 1(保存なしと同じ)。直す前の版の盲検 B の実測は引けた 1・warning・exit 0。検 test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again は直す前に赤(C-red-blind-fixes-before.log)・直した後に PASSED",
+     "evidence": ref("evidence/repro-b/repro-B.log"), "status": "passed"},
+    {"id": "C03", "scenarios": ["S2"], "control": "positive",
+     "expectation": "static_check を __main__ の名で 2 度撃ち(展開の子 3)、2 度目に全部引く",
+     "observation": "test_static_check_parallel.py::test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote PASSED(doeff 29ba29c9f)",
+     "evidence": ref("evidence/C-named-checks-after-fix.log"), "status": "passed"},
+    {"id": "C04", "scenarios": ["S2"], "control": "negative",
+     "expectation": "記録を __name__ で名指す直す前の実装を、同じ検が意図した理由で断る",
+     "observation": "doeff 0dd35678c(D2 の前)で 2 度目が {'hit': 0, 'miss': 4} — AssertionError「展開の子が書いた保存を、次の実行の親が引けなかった」",
+     "evidence": ref("evidence/C-red-main-before-D2.log"), "status": "passed"},
+    {"id": "C05", "scenarios": ["S1", "S2", "S4"], "control": "positive",
+     "expectation": "同じ負荷(controllers/screen 593 本・展開の子 4・__main__ の名)で、別の dir の doeff が書いた保存を全部引き、秒が下がる",
+     "observation": "直す前 A 2 回目 182.5 秒・外れ 592 / B 179.9 秒・外れ 593 → D1・D2 の後 A 2 回目 20.7 秒・引けた 593 / B 21.1 秒・引けた 593 → D3 の後 B 20.7 秒・引けた 593 / A 21.2 秒・引けた 593(D3 の後の A 2 回目の外れ 109 は展開の置き場を 1 回だけ温めた直後の揺れ — design.md の注)",
+     "evidence": ref("evidence/measure/results.txt"), "status": "passed"},
+    {"id": "C06", "scenarios": ["S3"], "control": "positive",
+     "expectation": "展開が通らない doeff_hy の file を替えても保存から引く",
+     "observation": "test_static_cache.py::test_a_doeff_hy_file_the_expansion_does_not_go_through_keeps_the_stored_expansion PASSED(doeff 29ba29c9f)",
+     "evidence": ref("evidence/C-named-checks-after-fix.log"), "status": "passed"},
+    {"id": "C07", "scenarios": ["S3"], "control": "negative",
+     "expectation": "gensym の振り直しの規則を替えて保存の版を上げない変更を守りの検が断り、版を上げた形では古い展開を引かない",
+     "observation": "規則を替えた写しで守りの検が AssertionError「gensym の名の振り直しの規則(a441bc1a…)を替えたら static_cache.CACHE_VERSION を上げ…」。版 3 のまま行を足す形は「同じ版に 2 つの規則の行がある」で断られ、版 4 の行は通る。駆動: 版 3 のままは引けた 2・文が違う(守りが無ければ起きる古い答え)/ 版 4 は外れ 2・同じ → 2 回目 引けた 2・同じ",
+     "evidence": ref("evidence/repro-a/repro-A.log"), "status": "passed"},
+    {"id": "C08", "scenarios": ["S3"], "control": "negative",
+     "expectation": "static_check の後処理を変えたら展開し直し、CACHE_VERSION を上げた版は自分の entry を読む",
+     "observation": "test_a_changed_type_check_post_processing_expands_again PASSED・test_an_entry_of_the_current_store_version_is_read_back PASSED(直す前は赤 — C-red-blind-fixes-before.log)",
+     "evidence": ref("evidence/C-named-checks-after-fix.log"), "status": "passed"},
+    {"id": "C09", "scenarios": ["S4"], "control": "negative",
+     "expectation": "置き場ごとに data だけが違う 2 つの木が保存先を共有しても、違う方の木は古い答えを引かない",
+     "observation": "盲検 B の実験 2 を直した版で: a は warning、b は外れ 1・error・exit 1(保存なしと同じ)。module の直下で読む副次の形も外れ・保存なしと同じ(repro-B2.log)",
+     "evidence": ref("evidence/repro-b/repro-B2.log"), "status": "passed"},
+    {"id": "C10", "scenarios": ["S1", "S4"], "control": "negative",
+     "expectation": "置き場を名指すだけの書きの検が D1 の前の実装を断り、D1 の後も macro の本体を替えた別の木では古いと判じる",
+     "observation": "D1 の前(60dfc1059 の src)で test_the_same_doeff_hy_in_another_place と test_a_macro_naming_the_place_of_its_module_is_current_in_another_tree が赤(2 failed)・test_a_changed_macro_naming_the_place_of_its_module_is_stale_in_another_tree は緑(2 passed — その時の placed の補助は __file__ を読んで書く形で、d8c82385b で書くだけの形に替えた)",
+     "evidence": ref("evidence/C-red-place-before-D1.log"), "status": "passed"},
+    {"id": "C11", "scenarios": ["S1", "S4"], "control": "negative",
+     "expectation": "doeff_hy の source に置き場から作った素の文字列の大域を足す変更を、守りの検が断る",
+     "observation": "素の文字列の大域 HERE を読む関数の digest は隣の file を替えても f49f9dee… のまま(覆わない)・別の置き場で 6d641b1d…。doeff 29ba29c9f の作業木で守りの検 1 passed、static_view.py に HERE = os.path.dirname(__file__) を足した写しで AssertionError(('static_view.py', 'HERE = os.path.dirname(__file__)'))",
+     "evidence": ref("evidence/C-place-read-guard.log"), "status": "passed"},
+    {"id": "C12", "scenarios": ["S1", "S2", "S3", "S4"], "control": "positive",
+     "expectation": "触った所に近い検の file が直した版で全部通る",
+     "observation": "test_static_cache・test_static_check_parallel・test_bytecode_guard・test_bound_source_store 50 passed、test_macro_use_record・test_static_cache 100 passed(doeff 29ba29c9f の作業木)。守りの検を足した後の test_static_cache 23 passed(C-static-cache-file-after-guard.log)",
+     "evidence": ref("evidence/C-focused-files-after-fix.log"), "status": "passed"},
+]
+
+report = {
+    "version": 1,
+    "task_id": "lt-TBEF3PAMAVQ8B3Z07MDSCA994C",
+    "base_revision": "4ccab04aca929df800e6d33d36b8e31c8f87fcea",
+    "author": {
+        "conversation_id": "c-XTC7RB24JH38PC0PET3XV4F1EJ",
+        "model": "claude-opus-5-5",
+        "effort": "既定(この会話の起動の設定 — 自己申告できる値が無い)",
+    },
+    "requirements": "card ki-1475765a3f18・依頼 lt-TBEF3PAMAVQ8B3Z07MDSCA994C: (R1) agora-controllers の日次の hy-type-trend の秒を自分の上限 3,300 秒と全体の上限 4,800 秒に余裕をもって収める(受入 c5df0dcbc は日次の回の観測 — この報告の範囲の外)。(R2) 速さの変更は同じ負荷の前後の数を出してから(受入 c1e99980f)。(R3) 保存は速さのためだけの層で、引いた答えは展開し直した答えと同じでなければならない(古い展開を今に合うと判じない)",
+    "design": ref("design.md"),
+    "modules": modules,
+    "scenarios": scenarios,
+    "checks": checks,
+    "unresolved": [],
+}
+(DIR / "design-check-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print("written", DIR / "design-check-report.json")

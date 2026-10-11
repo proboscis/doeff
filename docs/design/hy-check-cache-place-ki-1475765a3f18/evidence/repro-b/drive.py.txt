@@ -1,0 +1,49 @@
+"""doeff-hy-check を `python -m doeff_hy.static_check` と同じく __main__ の名で 1 度撃ち、保存を引いた数・外れた数・exit・
+所見の (規則, 重さ) を 1 行の JSON で出す(検 test_static_check_parallel.py の MAIN_CHILD と同じ形 — pyright は診断の無い偽物)。
+
+使い方: python drive.py <根> <保存先 | "-"(--no-cache)> <偽の pyright>
+"""
+
+import contextlib
+import io
+import json
+import runpy
+import sys
+
+import doeff_hy.static_cache as cache
+
+seen = {"hit": 0, "miss": 0}
+real = cache.load
+
+
+def load(cache_dir, name):
+    answer = real(cache_dir, name)
+    seen["hit" if isinstance(answer, cache.CachedProjection) else "miss"] += 1
+    return answer
+
+
+cache.load = load
+root, cache_dir, pyright = sys.argv[1:4]
+store = ["--no-cache"] if cache_dir == "-" else ["--cache-dir", cache_dir]
+sys.argv = ["doeff-hy-check", "--root", root, *store, "--pyright", pyright, "--json", root]
+out = io.StringIO()
+code: object = None
+with contextlib.redirect_stdout(out):
+    try:
+        runpy.run_module("doeff_hy.static_check", run_name="__main__", alter_sys=True)
+    except SystemExit as stop:
+        code = stop.code
+diagnostics = json.loads(out.getvalue())
+import doeff_hy
+
+print(
+    json.dumps(
+        {
+            **seen,
+            "exit": code,
+            "findings": sorted({(d["rule"], d["severity"]) for d in diagnostics}),
+            "doeff_hy": doeff_hy.__file__,
+        },
+        ensure_ascii=False,
+    )
+)

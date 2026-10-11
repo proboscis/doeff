@@ -172,6 +172,28 @@ def test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version() -> None
     )
 
 
+#: doeff_hy の source のうち、module の置き場(__file__・__cached__)に触れてよい行(file の名・行の中身)— 作った module に書くだけの
+#: static_check の project の 1 行。
+PLACE_LINES = {("static_check.py", "    module.__file__ = str(source)")}
+
+
+def test_doeff_hy_sources_do_not_read_their_place() -> None:
+    # 守り(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C): doeff_hy の macro と型検査の後処理は、自分の置き場から隣の file を読まない。
+    # 置き場から作った素の文字列の大域(HERE = os.path.dirname(__file__))を関数が読む形は、閉包の歩みが値(path)を入れるだけで path の
+    # 先の file の中身を覆わず、隣の file を替えても古い展開を引く(code か束縛の文が置き場を直に読む形は、歩みが照らせない印にする)。
+    package = Path(doeff_hy.__file__).parent
+    touching = sorted(
+        (path.relative_to(package).as_posix(), line)
+        for path in package.rglob("*")
+        if path.suffix in (".py", ".hy", ".pyi")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if ("__file__" in line or "__cached__" in line) and not line.lstrip().startswith(("#", ";"))
+    )
+    assert [row for row in touching if row not in PLACE_LINES] == [], (
+        "doeff_hy の source が module の置き場を読む(隣の file の中身は保存した展開の記録に入らない)"
+    )
+
+
 def test_a_changed_macro_module_expands_again(tree: Tree, expansions: list[Path]) -> None:
     # 失敗ケース 2: require した macro の module の source を変えたら作り直す。
     _project(tree)

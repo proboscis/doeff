@@ -1,0 +1,16 @@
+"""日次と同じく doeff_hy.static_check を __main__ として撃ち(python -m と同じ)、保存を引けた数・外れた数と外れの理由を標準エラーへ出す。"""
+import atexit, collections, runpy, sys, time
+import doeff_hy.static_cache as cache
+seen = collections.Counter()
+real_load = cache.load
+def load(cache_dir, name):
+    answer = real_load(cache_dir, name)
+    seen["引けた" if isinstance(answer, cache.CachedProjection) else f"外れ({answer.reason})"] += 1
+    return answer
+cache.load = load
+start = time.monotonic()
+def report():
+    print(f"全体 {time.monotonic() - start:.1f} 秒 " + "・".join(f"{k} {v}" for k, v in sorted(seen.items())), file=sys.stderr)
+atexit.register(report)
+sys.argv = ["doeff-hy-check", *sys.argv[1:]]
+runpy.run_module("doeff_hy.static_check", run_name="__main__", alter_sys=True)

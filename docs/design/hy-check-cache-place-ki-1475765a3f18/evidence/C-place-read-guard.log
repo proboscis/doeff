@@ -1,0 +1,11 @@
+== 素の文字列の大域 HERE を読む関数の digest(/tmp/kiwork/reproHERE・doeff 29ba29c9f)
+1 元: f49f9dee504b792049cfbb384bdd814aef7dcda5c658597018d9132b298b75e9
+2 隣の note.txt を替えた: f49f9dee504b792049cfbb384bdd814aef7dcda5c658597018d9132b298b75e9(同じ — 中身を覆わない)
+3 別の置き場: 6d641b1d21aaae47507662feffb5dbf37840ae98a2edd6d84d03115d6192b0d2(path が値で入る)
+== 守りの検・doeff 29ba29c9f の作業木
+1 passed, 1 warning in 0.68s
+== 守りの検・static_view.py に HERE = os.path.dirname(__file__) を足した写し(PYTHONPATH)
+E       AssertionError: doeff_hy の source が module の置き場を読む(隣の file の中身は保存した展開の記録に入らない)
+E         Left contains one more item: ('static_view.py', 'HERE = os.path.dirname(__file__)')
+packages/doeff-hy/tests/test_static_cache.py:192: AssertionError
+1 failed, 1 warning in 6.22s

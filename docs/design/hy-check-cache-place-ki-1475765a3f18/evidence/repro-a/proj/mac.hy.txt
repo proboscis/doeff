@@ -1,0 +1,3 @@
+(defmacro bound-twice [x]
+  (setv g (hy.gensym "v"))
+  `(do (setv ~g ~x) (print ~(+ "bound " (str g))) (+ ~g ~g)))
