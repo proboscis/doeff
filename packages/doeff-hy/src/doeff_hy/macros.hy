@@ -651,7 +651,7 @@ defk {name}: :post type annotation cannot be an empty string.
       '(. (__import__ "doeff.do" :fromlist #("do")) do)))
 
 (defn _scoped-definition [compiler name forms]
-  "名 `name` を定義する macro(defk・defp・deftest・defmcp-tool)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・defp・deftest・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
 
    module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
    読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
@@ -669,10 +669,19 @@ defk {name}: :post type annotation cannot be an empty string.
      名で読む補助は `_install-guard-globals` で関数の globals へ入れる(同 test_class_body_definition_runs_without_module_definitions)。
    - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
      関数の局所の名になる。"
-  (if (and (not (_static-view?))
-           (is-function-scope (nearest-python-scope (. compiler scope))))
+  (if (_in-function-body? compiler)
       `(setv ~name ((fn [] ~@forms ~name)))
       `(do ~@forms)))
+
+(defn _in-function-body? [compiler]
+  "実行時の展開で、macro が関数の本体の中に書かれたか — 書いた場所で補助を import すると外の関数の局所の名を作る所か。
+
+   展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope(`hy.scoping` の
+   nearest-python-scope)が関数なら真。module と class の本体は偽(import した名は module の globals か class の属性に
+   なり、先の読みを壊さない)。型検査のための展開は偽(包まない — `_scoped-definition` の註)。読み手は
+   `_scoped-definition` と handle.hy の handle。"
+  (and (not (_static-view?))
+       (is-function-scope (nearest-python-scope (. compiler scope)))))
 
 (defn _quoted-forms [forms]
   "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。
