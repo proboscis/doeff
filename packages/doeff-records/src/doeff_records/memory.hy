@@ -59,7 +59,7 @@
 (import doeff_records.store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
-                                 retention-group-of where-refusal row-matches? listed-row key-text next-watch-sequence
+                                 retention-group-of where-refusal row-matches? descending-value? listed-row key-text next-watch-sequence
                                  epoch-ms terminal-row? body-digest row-expired? event-expired?])
 
 (defclass StoredRow []
@@ -404,8 +404,17 @@
         matching (lfor text (sorted table)
                        :if (and (or (is after None) (> text after)) (row-matches? ask.where (. (get table text) row value))
                                 (not (stored-row-expired? decl (get table text) now-ms)))
-                       text)
-        taken (cut matching ask.limit)
+                       text))
+  (when (is-not ask.descending-by None)
+    ;; 上から読む読み(ListRows の註): 値が整数の行だけを (値, 鍵の綴り) の大きい順に limit 件 — 続きは返さない。
+    (setv top (cut (sorted (gfor text matching
+                                 :setv value (.get (. (get table text) row value) ask.descending-by)
+                                 :if (descending-value? value)
+                                 #(value text))
+                           :reverse True)
+                   ask.limit))
+    (return (Page (tuple (gfor #(_ text) top (listed-row decl ask.fields (. (get table text) row)))) None store.epoch store.head)))
+  (setv taken (cut matching ask.limit)
         rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
   (Page rows
         (if (> (len matching) ask.limit) (ListCursor store.epoch (get taken -1)) None)

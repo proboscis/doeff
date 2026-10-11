@@ -356,6 +356,29 @@
              :params (+ (! (params-of (tuple pairs))) unexpired.params)))
 
 
+(defk top-rows-statement [prefix table descending-by where-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by) (: where-json dict) (: limit int)
+         (: expiry (| RowExpiry None))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "上から読む ListRows(descending-by — effects.hy の ListRows の註)の 1 頁を読む文を作るため: 欄 descending-by の値が JSON の整数の行
+   (memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、(値, 鍵の綴り) の大きい順に limit 件。続きを
+   返さないので 1 行多く読まない。where と保持の期限の条件は list-rows-statement と同じ。"
+  (val wheres (tuple (enumerate (sorted (.items where-json)))))
+  (<- ordered (field-expression "payload" descending-by))
+  (val clauses (+ #("ledger = :ledger")
+                  (tuple (gfor #(i #(name _)) wheres (.format "(payload::jsonb) -> '{}' = :w{}::jsonb" name i)))
+                  #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered))))
+  (val pairs (+ #(#("ledger" table))
+                (tuple (gfor #(i #(_ encoded)) wheres #((.format "w{}" i) encoded)))
+                #(#("limit" limit))))
+  (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
+  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
+                       ORDER BY ({o})::text::numeric DESC, key COLLATE \"C\" DESC LIMIT :limit"
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered)
+             :params (+ (! (params-of pairs)) unexpired.params)))
+
+
 (defk terminal-rows-statement [prefix table state-field terminal]
   {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}

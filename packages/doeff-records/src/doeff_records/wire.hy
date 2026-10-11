@@ -343,9 +343,12 @@
   (match ask
     (ReadRow :table table :key key)
       (WireRequest OP-READ-ROW {"table" table "key" (list key)})
-    (ListRows :table table :where where :fields fields :cursor cursor :limit limit)
-      (WireRequest OP-LIST-ROWS {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
-                                 "cursor" (! (list-cursor-json cursor)) "limit" limit})
+    (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by)
+      ;; 鍵 descendingBy は上から読む読みの時だけ送る(鍵の順の読みは前の形のまま。古い記録の service は知らない鍵を 400 で断るので、
+      ;; 上から読む client より先に service を新しい版で起こす)。
+      (WireRequest OP-LIST-ROWS (| {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
+                                    "cursor" (! (list-cursor-json cursor)) "limit" limit}
+                                   (if (is descending-by None) {} {"descendingBy" descending-by})))
     (PutRow :table table :key key :value value :expect expect)
       (WireRequest OP-PUT-ROW {"table" table "key" (list key) "value" (thaw-json value) "expect" (! (expect-json expect))})
     (WatchChanges :tables tables :cursor cursor :timeout timeout :limit limit :streams streams)
@@ -380,13 +383,15 @@
         (do (<- (object-of body "read-row の本文" #("table" "key") #()))
             (ReadRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))))
       "list-rows"
-        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit")))
+        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy")))
             (setv keywords {})
             (when (in "where" body) (setv (get keywords "where") (! (json-object-in (get body "where") "where"))))
             (when (in "fields" body)
               (setv (get keywords "fields") (if (is (get body "fields") None) None (! (strings-of (get body "fields") "fields")))))
             (when (in "cursor" body) (setv (get keywords "cursor") (! (list-cursor-from (get body "cursor") "cursor"))))
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
+            (when (in "descendingBy" body)
+              (setv (get keywords "descending_by") (! (string-of (get body "descendingBy") "descendingBy"))))
             (ListRows (! (string-of (get body "table") "table")) #** keywords))
       "put-row"
         (do (<- (object-of body "put-row の本文" #("table" "key" "value" "expect") #("approval")))

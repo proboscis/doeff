@@ -54,12 +54,16 @@
 
 (defclass [(dataclass :frozen True)] ListRows [EffectBase]
   "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値の凍らせた写像(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
-   cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限。答え = Page | Reset | Unreachable | NotIndexed。"
+   cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限。答え = Page | Reset | Unreachable | NotIndexed。
+   descending-by = 欄の名(None = 鍵の綴りの順): 値が整数の行だけを、その値の大きい順(同じ値は鍵の綴りの逆順)に上から limit 件読む。
+   上から読む読みは 1 頁だけで、cursor を受けず(作る時に ValueError)、答えの next-cursor は常に None(続きを返さない — 呼び手は
+   上から何件かだけを求める。値が整数でない行・欄の無い行は出さない)。"
   (#^ str table)
   (setv #^ FrozenMap where (field :default-factory FrozenMap))
   (setv #^ (| tuple None) fields None)
   (setv #^ (| ListCursor None) cursor None)
   (setv #^ int limit DEFAULT-LIST-LIMIT)
+  (setv #^ (| str None) descending-by None)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.table "ListRows.table")
     (freeze-field self "where" "ListRows.where")
@@ -68,7 +72,11 @@
       (for [name self.fields] (checked-field-name name "ListRows.fields の欄")))
     (when (not (or (is self.cursor None) (isinstance self.cursor ListCursor)))
       (raise (TypeError "ListRows.cursor は ListCursor か None")))
-    (checked-limit self.limit "ListRows.limit")))
+    (checked-limit self.limit "ListRows.limit")
+    (when (is-not self.descending-by None)
+      (checked-field-name self.descending-by "ListRows.descending_by")
+      (when (is-not self.cursor None)
+        (raise (ValueError "ListRows.descending_by の読みは上から 1 頁だけで、cursor を受けない"))))))
 
 
 (defclass [(dataclass :frozen True)] PutRow [EffectBase]

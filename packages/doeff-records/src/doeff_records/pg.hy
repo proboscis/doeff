@@ -66,7 +66,7 @@
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               schema-statements drop-statements
-                              store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement
+                              store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
                               insert-event-statement read-events-statement stream-end-statement event-by-key-statement expire-events-statement
@@ -346,6 +346,17 @@
   (Row (key-from-text (get record 0)) (! (decoded-value (get record 1))) (int (get record 2))))
 
 
+(defk listed-rows-of [decl fields records]
+  {:pre [(: decl TableDecl) (: fields (| tuple None)) (: records (| tuple list))] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の頁に出す行(返す欄だけ)を state_rows の行の列から作るため — 鍵の順の読みと上から読む読みが同じ形で行を出す 1 点。"
+  (var rows #())
+  (for [record records]
+    (<- row (row-of record))
+    (:= rows (+ rows #((listed-row decl fields row)))))
+  rows)
+
+
 (defk change-of [record]
   {:pre [(: record tuple)] :post [(: % (| RowChanged RowRemoved))]
    :tags {:context "records" :role "foundation"}}
@@ -520,18 +531,22 @@
   (val refusal (where-refusal decl ask.where))
   (when refusal (return refusal))
   (<- expiry (row-expiry decl now-ms))
+  (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
+  (when (is-not ask.descending-by None)
+    ;; 上から読む読み(ListRows の註): 1 頁だけ・続きを返さない。
+    (<- top-statement (top-rows-statement store.prefix ask.table ask.descending-by where-json ask.limit expiry))
+    (<- top-records (query-rows store.database top-statement))
+    (<- top-rows (listed-rows-of decl ask.fields top-records))
+    (return (Page top-rows None head.epoch head.head)))
   (<- statement (list-rows-statement store.prefix ask.table
                                      (if (is ask.cursor None) None ask.cursor.after-key)
-                                     (dfor #(name value) (.items ask.where) name (canonical-json value))
+                                     where-json
                                      ask.limit
                                      expiry))
   (<- records (query-rows store.database statement))
   (val taken (cut records ask.limit))
-  (var rows [])
-  (for [record taken]
-    (<- row (row-of record))
-    (.append rows (listed-row decl ask.fields row)))
-  (Page (tuple rows)
+  (<- rows (listed-rows-of decl ask.fields taken))
+  (Page rows
         (if (> (len records) ask.limit) (ListCursor head.epoch (get (get taken -1) 0)) None)
         head.epoch
         head.head))

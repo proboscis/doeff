@@ -215,6 +215,12 @@
   (all (gfor #(name wanted) (.items where) (and (in name value) (json-equal? (get value name) wanted)))))
 
 
+(defn #^ bool descending-value? [#^ object value]
+  "上から読む ListRows(descending-by)が並べる値か — JSON の整数だけ(真偽・小数・文字列・欄の無い行は並べない)。memory と PostgreSQL の
+   置き場が同じ行を出すための 1 点(PostgreSQL の文の条件は pg_sql の top-rows-statement)。"
+  (and (isinstance value int) (not (isinstance value bool))))
+
+
 (defn #^ FrozenMap projected [#^ TableDecl decl #^ (| tuple None) fields #^ FrozenMap value]
   "返す欄だけの値(fields = None は全部・鍵の欄は常に残す)。"
   (if (is fields None)

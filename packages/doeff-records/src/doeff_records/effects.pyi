@@ -46,6 +46,7 @@ class ListRows(EffectBase[ListRowsAnswer]):
     fields: tuple[str, ...] | None = None
     cursor: ListCursor | None = None
     limit: int = ...
+    descending_by: str | None = None
 
 @dataclass(frozen=True)
 class PutRow(EffectBase[PutRowAnswer]):
