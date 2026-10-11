@@ -375,7 +375,10 @@
     ;; 版を据え置く(#3684 — この worker が drain 中): spec が変わっても、止めていない process をそのまま動かす(新しい版の準備・入口の検め・
     ;; 退かせ・止めをしない)。移し先で新しい版が Ready になれば宣言から消え(want が None)、下の止めへ進む。drain が解けて印が偽に戻った
     ;; 拍から、下の入れ替えへ進む。宣言から消えた job(want が None)は今までどおり止める。
-    (and (is-not want None) want.hold-version (is record.stopping None)) #()
+    ;; 止まりの Pod(AL-D2p)も handoff の job の版を入れ替えない: 退かせた今の process の後継は、止まりの Pod では起こさない(start-step)
+    ;; ので、入れ替えると退いた process が自分で終わった後に誰も動かさない。返事の hold-version が欠けた拍(drain の頼みが届く前)にも効く。
+    ;; 新しい世代が Ready の印 supersededBy で退かせる道は上の枝(止まりでも今どおり)。
+    (and (is-not want None) (or want.hold-version (and want.handoff world.leaving)) (is record.stopping None)) #()
     ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在っても、今の process を退かせて並べる — 退いた
     ;; process の上限 R は handoff-actions と retired-actions が守る・#4072 の D-3)。
     (and (is-not want None) want.handoff (is record.stopping None))

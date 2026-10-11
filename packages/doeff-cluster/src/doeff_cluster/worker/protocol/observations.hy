@@ -43,4 +43,4 @@
 
 (defclass [(dataclass :frozen True)] ObserveLeaving [EffectBase]
   "この Pod の止まり(preStop の drain)が始まったかの観測(bool)。世界の観測のまとめ(local-host)が、止まりの印の言い換え
-   (worker/protocol/leaving_mark)へ問う(AL-D2p)。")
+   (worker/protocol/leaving_observer)へ問う(AL-D2p)。")

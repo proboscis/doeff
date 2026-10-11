@@ -3,14 +3,17 @@
 ;;; 印(supersededBy)でしか退けなかった — 印の欠けた拍に、止まる Pod の古い世代が handoff の job の新しい試行を起こした(10-11 の zeus の
 ;;; 画面の process の群 — card ki-3a57786eba88)。
 ;;;   書く口 = leaving-mark-written(preStop の drain の頭 — coordinator へ頼む前に、この Pod の worker の世代を書く)
-;;;   読む口 = 答え手 leaving-mark(worker の観測 ObserveLeaving に、印の世代がこの process の世代と同じかで答える)
+;;;   読む口 = leaving-mark-read(印の世代がこの process の世代と同じか — worker の観測の答え手 worker/protocol/leaving_observer が呼ぶ)
 ;;; 置き場は世代の file(DOEFF_WORKER_BOOT_FILE・boot.sh の既定 /tmp/doeff-worker-boot)の隣 — 両方の入口が既に知る path から決める。印は
 ;;; 世代つきなので、/tmp が worker の process より長く残る機体でも、前の process の印を新しい process の止まりと読まない。file の I/O は
 ;;; file の効果(答え手 = 入口が並べる os-file-handler)。
-(require doeff-hy.macros [defhandler defk <- val])
+;;; 書き手と path と形はこの module だけが持つ。依存してよいのは preStop の入口(drain_main)と観測の答え手(leaving_observer)だけで、
+;;; worker の入口(main)は答え手の module だけを読む(module の契約 .agents/code-quality.d/doeff-cluster-worker-leaving-mark.json — 設計検証
+;;; lt-C071SZK8EQTX19F3YV1MSWT53X の盲検 B: 入口が印を新しい世代へ引き継ぐ 2 人目の書き手になると、前の process の印を新しい process の
+;;; 止まりと読む)。
+(require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_core_effects.file_effects [FileFailed ReadText WriteText])
-(import doeff_cluster.worker.protocol.observations [ObserveLeaving])
 
 ;; 世代の file の名に足して止まりの印の名にする。
 (val LEAVING-SUFFIX ".leaving")
@@ -40,11 +43,3 @@
   (<- path str (leaving-path boot-file))
   (<- text (ReadText path))
   (and (isinstance text str) (= (.strip text) boot)))
-
-
-(defhandler leaving-mark [#^ (| str None) boot-file #^ str boot]
-  ;; 引数に残す理由: 世代の file の path と、この process の世代は起動の時に 1 度だけ決まる入口の値(worker/entry/main)。
-  ;; 印は拍ごとに読み直す(file 1 つの読み — preStop は拍の間にいつでも始まる)。
-  (ObserveLeaving []
-    (<- leaving bool (leaving-mark-read boot-file boot))
-    (resume leaving)))

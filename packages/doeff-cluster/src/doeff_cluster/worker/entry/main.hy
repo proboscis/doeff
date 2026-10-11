@@ -50,7 +50,7 @@
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
-(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark])
+(import doeff_cluster.worker.protocol.leaving_observer [leaving-observer])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
 (import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
@@ -126,11 +126,12 @@
    (MeasureTree・RemoveTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の上で木を数え・消す間も、
    調整ループ(heartbeat)は回り続ける(#3715)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
-   leaving-mark が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p)。"
+   leaving-observer が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p —
+   印の書き手と形の module leaving_mark は読まない)。"
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler process-exit-handler
    os-file-handler offloaded-tree-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (warm-host warm) (process-host host) (leaving-mark boot-file link.boot) local-host tick-pauses])
+   (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) local-host tick-pauses])
 
 
 (defk timing-checked [fence-ms policy timing]
