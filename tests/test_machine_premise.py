@@ -42,7 +42,7 @@ class _Declaration(Protocol):
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_CONFTEST = REPO_ROOT / "conftest.py"
-CHECK_LAYER_UNDER_HOME = Path("dotfiles") / "agentcli" / "src" / "agentcli" / "remote_check.py"
+CHECK_LAYER_UNDER_HOME = Path("dotfiles") / "agentcli" / "src" / "agentcli" / "ai" / "entry" / "remote_check.py"
 REAL_CHECK_LAYER = Path.home() / CHECK_LAYER_UNDER_HOME
 
 CODEX_FILE = "packages/doeff-conductor/tests/test_agent_effect_c1.py"
