@@ -16,6 +16,7 @@ examples/ の `.hy` は全部この検に入る(新しい例も書いただけ�
 ki-2d5b129f2ff2)。Hy の付ける名(番号は macro の展開で変わる)は期待の出力に置かない。走る例は全部比べる —
 件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の中身だけを印字する debug 用の file は例ではなく、
 examples/ に置かない(card ki-3497c5fd38df が ex04_debug・ex04_debug2 と、それを比べずに通す表を外した)。
+例が件を走らせる口(run・async_run)を本名で呼ぶ事を確かめる(設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP)。
 
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
@@ -64,6 +65,11 @@ CASE_FAILURE_MUTANTS: dict[str, tuple[str, str]] = {
     # mock が MSFT の価格を知らない — FetchPrice の件が KeyError で失敗し、成功が 3 から 2 へ
     "ex07_proboscis_ema_rewrite.hy": ('"MSFT" 300.0', '"MSFX" 300.0'),
 }
+
+# 件を走らせる口(doeff の run・async_run)。例はどれも口の 1 つを本名で呼ぶ — `(run …)`・`(doeff.run …)` の形。
+_PROGRAM_RUNNERS = frozenset({"run", "async_run"})
+# 中身を呼ばずに data として持つ form。`'(run x)` は呼び出しではない。
+_QUOTES = frozenset({"quote", "quasiquote"})
 
 # 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
 _MACRO_DEFINERS = frozenset({"defmacro", "defmacro!", "defreader"})
@@ -254,6 +260,58 @@ def _macro_violations(source: str, filename: str) -> list[str]:
     return violations
 
 
+def _runner_name(head: object) -> str | None:
+    """呼び出しの頭が件を走らせる口なら、その名(`doeff.run` は reader が `(. doeff run)` と読む)。"""
+    if isinstance(head, hy.models.Symbol):
+        name = hy.mangle(str(head))
+        return name if name in _PROGRAM_RUNNERS else None
+    if (
+        isinstance(head, hy.models.Expression)
+        and len(head) > 2
+        and head[0] == hy.models.Symbol(".")
+    ):
+        return _runner_name(head[-1])
+    return None
+
+
+def _unquoted_subforms(form: object) -> Iterator[object]:
+    """form とその入れ子の form(quote・quasiquote の中には降りない)。"""
+    if (
+        isinstance(form, hy.models.Expression)
+        and form
+        and isinstance(form[0], hy.models.Symbol)
+        and str(form[0]) in _QUOTES
+    ):
+        return
+    yield form
+    if isinstance(form, hy.models.Sequence):
+        for child in form:
+            yield from _unquoted_subforms(child)
+
+
+def _program_calls(source: str, filename: str) -> list[str]:
+    """source が呼ぶ、件を走らせる口(入れ子の form の中も)。import するだけ・名を書くだけ・quote の中は数えない。"""
+    return sorted(
+        {
+            name
+            for top in hy.read_many(source, filename=filename)
+            for form in _unquoted_subforms(top)
+            if isinstance(form, hy.models.Expression)
+            and form
+            and (name := _runner_name(form[0])) is not None
+        }
+    )
+
+
+@pytest.mark.parametrize("name", _examples())
+def test_example_runs_a_program(name: str) -> None:
+    path = EXAMPLES / name
+    assert _program_calls(path.read_text(encoding="utf-8"), str(path)) != [], (
+        f"{name} は件を走らせる口({'・'.join(sorted(_PROGRAM_RUNNERS))})を本名で呼ばない — examples/ は Program を"
+        "走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+    )
+
+
 @pytest.mark.parametrize("name", _runnable())
 def test_example_runs(name: str, children: Children) -> None:
     result = children.result(EXAMPLES / name)
@@ -317,6 +375,22 @@ def test_macro_check_sees_nested_forms() -> None:
         "require bare",
         "defmacro fold",
     ]
+
+
+def test_runner_call_check_sees_nested_forms() -> None:
+    """今の例はどれも口を呼ぶので、拾う側と拾わない側は inline の source で確かめる: 入れ子の呼び出しと
+    `doeff.run` の形は拾い、import するだけ・呼ばずに名を書くだけ・quote の中の呼び出しは拾わない。"""
+    calls = """
+(when True
+  (print (doeff.run (prog))))
+(defn go [] (async-run (prog)))
+"""
+    assert _program_calls(calls, "<inline>") == ["async_run", "run"]
+    no_calls = """
+(import doeff [run async-run])
+(print run (hy.repr '(run x)) (hy.repr `(async-run ~x)))
+"""
+    assert _program_calls(no_calls, "<inline>") == []
 
 
 def test_tables_name_examples_as_they_are() -> None:
