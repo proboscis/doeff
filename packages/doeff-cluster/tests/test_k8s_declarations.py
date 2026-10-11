@@ -163,10 +163,12 @@ HOST_ONLY_RESOURCES = {
 # (ここが式の定義点 — yaml の値はこの和と同じでなければ赤)。
 # 2026-10-11: 上に載る系が host-atlas を要る常駐の job を 1 つ足したので 4 → 5。後の 1 は、次に常駐の job を足す時に worker の Pod を
 # 作り直さずに済ませる余裕(上に載る系の側の決め 2026-10-11 10:20 JST)。
+# 2026-10-12: 上に載る系が host-atlas を要る常駐の job を 3 つ足す(別の機体から移す — 上に載る系の側の決め 2026-10-11 07:2x JST)ので
+# 5 → 8。余裕の 1 はその 3 つの 1 つに充て、残りの 2 を足す(受ける数 10 → 12・余裕 1 → 0)。
 ATLAS_MACHINE_JOBS = 1
-ATLAS_OVERLAY_RESIDENT_JOBS = 5
+ATLAS_OVERLAY_RESIDENT_JOBS = 8
 ATLAS_TASK_RESERVE = 3
-ATLAS_KEPT_ROOM = 1
+ATLAS_KEPT_ROOM = 0
 # 受ける数が既定(WORKER_CAPACITY 2・WORKER_TASK_RESERVE 0)と違う機体 — (受ける数, task に空けておく数)。
 HOST_ONLY_ROOM = {
     "atlas": (str(ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM), str(ATLAS_TASK_RESERVE)),
