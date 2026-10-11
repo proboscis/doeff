@@ -86,3 +86,85 @@
 | I2: doeff-hy の検だけの差分は例の検を選ばない | 行の接頭辞を src に絞る(`packages/doeff-hy/src/doeff_hy/`) | `pyproject.toml` の行 | 入口 | 検で固定していない(table-guard は選ぶ側だけを見る) |
 | I3: 予算越えは未測 | 入口の既存の振る舞い(打ち切った束の検を未測と名指し、rc を変えない) | `scripts/run_changed_tests.py`(`run_batches`・`classify`) | 入口 | 未測の検は日次まで測られない。負荷の高い Pod では例・macro の差分で repo 全体の行の 2 本が未測になる(実測) |
 | 表の行が読める・書いた検が在る | 既存の読み手(接頭辞の dir が木に在る・書いた検の file が在る)と既存の検 | `read_contract_table`・`test_every_package_has_a_contract_row_or_a_reasoned_exemption` | 入口・日次 | — |
+
+<!-- ここから下は盲検の後に書いた。§0〜§4 は盲検の前の版(sha256 5c3a1778…・commit 06653af3)のまま。 -->
+
+## 5. 盲検
+
+起動の記録は `blind/blind-meta.md`。第 1 候補(codex の `gpt-6-astra`・low)は 401 で起きず(`blind/codex-attempt.txt`)、第 2 候補の
+Opus 5.5(Agent tool の subagent・effort xhigh を要求・実の model と effort は観測していない)で A・B を別々の新しい文脈で同時に起こした。
+返答は `blind/blind-a-return.md`・`blind/blind-b-return.md`(未加工)。
+
+## 6. 再現と判定
+
+### 6.1 盲検 A — 成立(予想の範囲の誤り・この変更の外の漏洩)
+
+- 失敗例: 期待の出力に `…` を置いた例 ex10 を examples/ に足す(S1(a) の前提のまま)。
+- 再現(`evidence/repro/a-new-example-with-any.txt`): 例は走り期待の出力に合う。選び(`select_targets`)は ex10 の `.hy` と `.txt` の
+  どちらでも例の検を選び、table-guard は緑。ただし examples-check の `test_tables_name_examples_as_they_are` が「`…` を置いた例に
+  `CASE_FAILURE_MUTANTS` の行が無い」で赤。行を 1 つ足すと緑(`evidence/repro/a-new-example-needs-a-mutant-row.txt`)。
+- 判定: §3 S1(a) の「表・table-guard・入口は変えない」と I1 は成り立った。外れたのは予想の範囲「examples/ だけ」— examples-check の
+  例ごとの表(`CASE_FAILURE_MUTANTS`)に行が要る。原因は §2 で examples-check の持つ知識を c9e1622b5(card ki-2d5b129f2ff2・載せ直しの
+  親)より前の形で書き、その表を落とした事(予測の誤り)。行が要る事は examples-check の共同の不変条件で、検が名指して赤にする(黙らない)。
+- A の指す漏洩(examples-check が例の source の文字列 — handler の式・mock の値 — を持ち、出力を変えない例の中の書き換えでも検を直す)は
+  examples-check の設計(card ki-2d5b129f2ff2)の持ち分で、この依頼の変更(表と table-guard)の外。ここでは直さず、依頼元へ知らせる。
+  §3 の主張は書き換えない。
+
+### 6.2 盲検 B — 成立(境界の誤り)→ 直した
+
+- 失敗例: `<-` の実行時の意味は doeff-hy の外の `doeff_core_effects/outcomes.py` が持つ(doeff-hy の `outcome_forms.hy` の頭の註
+  「実行時の意味は doeff_core_effects.outcomes が持ち、ここは形だけを作る」・`macros.hy` の `_install-guard-globals` が defk の
+  globals に置く)。B は outcomes.py に「coroutine を Await にする」判断を足し、ex05・ex08 が Await を書かない形にした後、outcomes.py だけを
+  戻す変更を入口に通した。
+- 再現(直す前の df9e62756):
+  - 選び(`evidence/repro/b-selection-before-fix.txt`): outcomes.py と `doeff/do.py` は例の検を選ばない。macros.hy と outcome_forms.hy は選ぶ。
+  - 機能の差分を当てた木で ex05・ex08 は緑(`evidence/repro/b-feature-applied-examples-green.txt`)。outcomes.py だけを戻すと
+    `test_example_runs[ex05…]`・`[ex08…]` が赤(`evidence/repro/b-runtime-reverted-examples-red.txt`)。
+  - B の入口の実測(`blind/b-artifacts/entry-probe.txt`): 変えた file は outcomes.py の 1 本で、例の検は選ばれず rc 0。
+- 判定: §3 S2(a) の「macro の持ち主の source の変更は `packages/doeff-hy/src/doeff_hy/` の行が拾う」は、macro の意味の半分を持つ
+  outcomes.py について成り立たなかった。隠す知識の漏洩ではなく、表が macro の持ち主を doeff-hy の dir だけと取り違えた(持ち主の境界の誤り)。
+- 直し(commit c50541815): 表に file の接頭辞 `packages/doeff-core-effects/doeff_core_effects/outcomes.py` → 例の検 の行を足した
+  (core-effects の他の file には払わせない)。table-guard に `EXAMPLE_MACRO_RUNTIME`(outcomes.py)を足し、macros.hy が実行時の module の名
+  `"doeff_core_effects.outcomes"` を名指す事も確かめる(移した時に古い名のまま緑にしない)。
+- 再検証:
+  - 表を直す前に table-guard だけを広げると、outcomes.py を名指して赤(`evidence/checks/c-guard-runtime-half-red-before-row.txt`)。
+  - 行を足した後: table-guard と入口の検 31 本が緑。選びは outcomes.py・macros.hy・ex05 で例の検を選び、doeff-core-effects の scheduler.py と
+    doeff-hy の検(test_hy_stubs.py)だけの差分では選ばない(`evidence/checks/c-after-fix-guard-and-selection.txt`)。
+  - B の手順を直した後の版で入口に通すと(基点 = B の機能を入れた状態・作業木 = outcomes.py だけを戻した物)、予算 300 秒で例の検が選ばれ
+    ex05・ex08 の 2 本が赤・rc 1(`evidence/checks/c-entry-after-fix-runtime-revert-budget300.txt`)。既定の予算 60 秒では、load average 約 90 の
+    下で前に並ぶ core-effects の組と repo 全体の行が予算を使い、例の検は「未測 0/32」と名指され rc 0
+    (`evidence/checks/c-entry-after-fix-runtime-revert-default-budget.txt` — I3 の限界)。
+- 直さなかった物: B の挙げた `doeff/do.py`(`@do`)と doeff-vm の `BindOpener` も `<-` の実行に関わるが、どれもすべての Program が使う
+  汎用の実行時で、macro に固有の物ではない。例の検をこれらの契約の組にすると、核のどの変更にも例の検の時間を払わせる。これらの変更は
+  それぞれの契約の組・逆依存と日次が測る(限界として §8 に記す)。
+
+### 6.3 S1(b) の失敗ケース(盲検の外・設計者の確かめ)
+
+例の dir を `examples/traverse` へ動かし表を直さない時(`evidence/checks/c-s1-moved-examples-red.txt`): table-guard の `EXAMPLES_DIR` も
+直し忘れると「例が無い」で赤、`EXAMPLES_DIR` だけを直すと動かした 22 の path を名指して赤。§3 S1(b) の主張どおり。
+
+## 7. 予測と実際
+
+| シナリオ | 予測(§3) | 実際 | 差の原因 |
+| --- | --- | --- | --- |
+| S1(a) 例を足す | examples/ だけ | examples/ + 期待の出力に `…` を置く時は examples-check の `CASE_FAILURE_MUTANTS` に 1 行。表・table-guard・入口は変えない | §2 の examples-check の知識の書き落とし(c9e1622b5 の表)。共同の不変条件で、検が名指す |
+| S1(b) 置き場を動かす | examples-check・table-guard・contract-table | 同じ(table-guard が 2 つの直し忘れを赤にした) | — |
+| S2(a) macro の持ち主の source | macro-owner(doeff-hy の src)だけ・表は変えない | outcomes.py(doeff-core-effects)も macro の意味の半分。直す前は例の検を選ばなかった。直した後は outcomes.py の変更も表を変えずに拾う | 持ち主の境界の誤り → 表の行と table-guard で直した |
+| S2(b) doeff-hy の検だけ | 例の検を選ばない | 選ばない(実測) | — |
+| S3 負荷の高い機体 | 表と入口は変えない・収まらない検は未測 | 同じ。例・macro の差分では例の検は予算内で走った。outcomes.py の差分では load average 約 90 で例の検が未測になった | 入口の予算(既定 60 秒)と順(表の順)— 入口の持ち分 |
+
+## 8. 実装の証拠・接続・限界
+
+- 実装: `pyproject.toml` の `[[tool.doeff.contract-tests]]` の 3 か所(`packages/doeff-traverse/` の行に例の検・`packages/doeff-hy/src/doeff_hy/` の行・
+  `packages/doeff-core-effects/doeff_core_effects/outcomes.py` の行)と、`tests/test_contract_table_follows_packages.py` の
+  `test_changing_an_example_or_its_macros_selects_the_examples_check`(df9e62756 と c50541815)。
+- 接続: 表は入口 `make test-changed`(`scripts/run_changed_tests.py`)が読む。table-guard は表の repo 全体の行でどの差分でも入口が走らせ、
+  日次の root の段(`pytest tests`)でも走る。マージの列は検を走らせない(operator の裁定)— 入口を回すのは書き手。
+- 限界:
+  - I3: 予算 60 秒の内に収まらない時、例の検は未測と名指され rc 0。負荷の高い Pod では例・macro・outcomes.py の差分で、例の検かその後ろの検が
+    未測になる(実測)。例の検を速くする仕事は依頼元の配り役が card にする(2026-10-12 06:24 JST の受け入れの文)。
+  - `doeff/do.py`・doeff-vm の `BindOpener` など汎用の実行時の変更は、例の検を選ばない(§6.2)。
+  - table-guard は macro-owner の src の中で macros.hy の 1 file と、実行時の半分の outcomes.py だけを確かめる。行の接頭辞を file 単位に狭める
+    変更は気づかない。I2(doeff-hy の検だけでは選ばない)は検で固定していない(実測だけ)。
+  - examples-check が例の source の文字列を持つ漏洩(§6.1)は、この変更の外として残す。
+  - 型検査(pyright)と日次の全体検証は走らせていない(型は日次)。
