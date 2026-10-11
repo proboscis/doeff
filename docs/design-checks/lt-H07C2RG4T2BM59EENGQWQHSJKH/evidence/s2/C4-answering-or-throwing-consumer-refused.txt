@@ -1,0 +1,18 @@
+# C4(S2 失敗例): 知らせに答える・投げ返す受け手は ItemOutcomeNotPassedError で断られ、入れ子でも件の失敗に飲み込まれない
+版: 3f82ca1b55eebabb7cfee57df5f84907936e1699(作業木 /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome・未 commit の変更 0 件)
+刻: 2026-10-11T23:49:59Z
+$ cd /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome && uv run pytest -v -p no:cacheprovider packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse[parallel] PASSED [  9%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_answers_the_report_fails_the_traverse[sequential] PASSED [ 18%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-sequential] PASSED [ 27%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-parallel] PASSED [ 36%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[resume-throw-parallel_fail_fast] PASSED [ 45%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-sequential] PASSED [ 54%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-parallel] PASSED [ 63%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_consumer_that_throws_into_the_report_fails_the_traverse[raise-parallel_fail_fast] PASSED [ 72%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[sequential] PASSED [ 81%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel] PASSED [ 90%]
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel_fail_fast] PASSED [100%]
+  /work/toolset/worktrees/doeff-wt-dc-item-outcome/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=1, total=2, label='outer') and threw _BudgetError: failed at 1 — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+======================== 11 passed, 3 warnings in 0.72s ========================
+rc=0

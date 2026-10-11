@@ -1,0 +1,16 @@
+# C2b(S1 失敗例の静的な側): analyzer の読みで、3 つの handler のどの節も ItemOutcome を外へ出さない
+版: 3f82ca1b55eebabb7cfee57df5f84907936e1699(作業木 /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome・未 commit の変更 0 件)
+刻: 2026-10-11T23:50:06Z
+$ cd /home/ubuntu/.worktrees/doeff-wt-dc-item-outcome && uv run pytest -v -p no:cacheprovider packages/doeff-effect-analyzer/tests/python/test_carried_builders.py
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_a_declared_function_field_is_read_where_the_effect_is_performed[local_body_job] PASSED [ 10%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_a_declared_function_field_is_read_where_the_effect_is_performed[program_function_job] PASSED [ 20%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_a_declared_function_field_is_read_where_the_effect_is_performed[lambda_job] PASSED [ 30%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_an_undeclared_function_field_is_not_read_as_a_carried_program PASSED [ 40%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_a_handler_yielding_a_program_a_declared_field_built_is_followed PASSED [ 50%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_a_handler_yielding_a_program_an_undeclared_field_built_stays_unresolved PASSED [ 60%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_doeff_traverse_sequential_is_followed PASSED [ 70%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_doeff_traverse_item_outcomes_stay_inside_the_handler[sequential] PASSED [ 80%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_doeff_traverse_item_outcomes_stay_inside_the_handler[parallel] PASSED [ 90%]
+packages/doeff-effect-analyzer/tests/python/test_carried_builders.py::test_doeff_traverse_item_outcomes_stay_inside_the_handler[parallel_fail_fast] PASSED [100%]
+======================== 10 passed, 1 warning in 0.90s =========================
+rc=0
