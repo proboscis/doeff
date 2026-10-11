@@ -856,18 +856,25 @@ RECORD_FIRST = ("doeff_hy.record", "doeff_hy.wire", "doeff_hy.clause_endings")
 DEFF_USER_FIRST = ("doeff_hy.macros", "doeff_hy.clause_endings", "doeff_hy.wire", "doeff_hy.record")
 
 
+@dataclass(frozen=True)
+class ImportRound:
+    """import の 1 回 — 最初に import した module と、compile し終えた Hy の file。"""
+
+    first: str
+    compiled: object
+
+
 def _import_round(
     real_tree: RealTree,
     monkeypatch: pytest.MonkeyPatch,
     store: Path,
     pycache: Path,
     order: tuple[str, ...],
-) -> tuple[str, object]:
-    """共有の保存先 store と、この process だけの空の pycache で order の順に import した 1 回(最初の module と、compile し
-    終えた Hy の file)。"""
+) -> ImportRound:
+    """共有の保存先 store と、この process だけの空の pycache で order の順に import した 1 回。"""
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(pycache))
-    return (order[0], _order_child(real_tree, "import", *order)["compiled"])
+    return ImportRound(order[0], _order_child(real_tree, "import", *order)["compiled"])
 
 
 def test_processes_importing_in_different_orders_share_the_store_without_recompiling(
@@ -881,8 +888,8 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
         _import_round(writing_tree, monkeypatch, store, tmp_path / f"pycache-{index}", order)
         for index, order in enumerate((RECORD_FIRST, DEFF_USER_FIRST) * 2)
     )
-    assert rounds[0][1], "1 巡目(冷えた置き場)で何も compile していない — 検の前提が崩れた"
-    again = [(first, compiled) for first, compiled in rounds[2:] if compiled]
+    assert rounds[0].compiled, "1 巡目(冷えた置き場)で何も compile していない — 検の前提が崩れた"
+    again = [(round_.first, round_.compiled) for round_ in rounds[2:] if round_.compiled]
     assert not again, f"2 巡目からも Hy の module を作り直した: {again}(全部の回: {rounds})"
 
 
