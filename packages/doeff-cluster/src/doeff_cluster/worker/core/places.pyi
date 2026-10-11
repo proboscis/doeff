@@ -2,7 +2,6 @@
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-from pathlib import Path as Path
 from doeff_cluster.worker.core.warm_rules import warm_dir_of as warm_dir_of
 
 @dataclass(frozen=True, kw_only=True)

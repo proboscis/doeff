@@ -935,6 +935,24 @@
   (setv #(_ ok) (! (lease-asked reborn "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
   (assert ok "新しい世代の process が期限の前に lease を取れる"))
 
+(deftest test-a-new-generation-overlapping-a-running-elder-leaves-the-elder-leases-held
+  ;; 失敗ケース(AL-D2e・card ki-d17d5d63d9ed — 10-11 17:36:49 JST の zeus の RollingUpdate): 新しい世代が、前の世代がまだ走っている
+  ;; (起動の script が前の世代の dir の錠を持たれていると見た)と名乗る(overlapsElder)。前の世代の process は走り続けているので、担い手を
+  ;; 外さず、その process の延長も通す(直す前は #3770 が外し、recreate の job の process が返しで LeaseLost で落ち、退き中の handoff の
+  ;; process の lease の延長が断られて走っていた仕事が切れた)。新しい世代の process は、前の担い手が返すか期限が来るまで取れない。
+  (val held (! (old-generation-holding)))
+  (val body {"name" "atlas" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
+             "statuses" [] "overlapsElder" True})
+  (val overlapping (! (register-heartbeat held (! (heartbeat-of body)) (+ BOOT-1 4000))))
+  (assert (= (. (get overlapping.workers "atlas") boot) "b2"))
+  (assert (= overlapping.board held.board) (! (holders-of overlapping "writer-lock")))
+  (setv #(renewed-state renewed) (! (lease-asked overlapping "writer-lock" "renew" (! (token-of "w" "1-aaa")) (+ BOOT-1 4600))))
+  (assert renewed "走っている前の世代の process の延長が通る")
+  (setv #(_ retired-renewed) (! (lease-asked renewed-state "retired-lock" "renew" (! (token-of "w" "0-zzz")) (+ BOOT-1 4600))))
+  (assert retired-renewed "前の世代の退き中の process の延長も通る")
+  (setv #(_ ok) (! (lease-asked renewed-state "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
+  (assert (not ok) "新しい世代の process は前の担い手が持つ間は取れない"))
+
 (deftest test-heartbeats-of-the-same-generation-do-not-free-the-leases
   ;; 誤って外さない側: 同じ世代(同じ boot)の heartbeat は、何度来ても lease に触らない。
   (val held (! (old-generation-holding)))

@@ -191,7 +191,9 @@
    envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(StatusRow)・
    endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版・kept-when-cut-off = 途絶しても動かし続けてよい印を
    今持っている job の名の列(#2804 — None = 欄の無い古い worker = 印を知らない)・stopping = この世代が止まり始めた
-   (drain の頼みを通らない止めの名乗り — 判断はこの世代を drain に載せる・#2819。名乗らない旧い worker は偽)。"
+   (drain の頼みを通らない止めの名乗り — 判断はこの世代を drain に載せる・#2819。名乗らない旧い worker は偽)・overlaps-elder = この
+   世代は同じ名の前の世代がまだ走っている間に起きた(起動の script が前の世代の dir の錠を持たれていると見た — RollingUpdate・AL-D2e)。
+   判断は新しい世代の名乗りで前の世代の process の lease を外さない(#3770 は前の世代が終わった時だけ)。名乗らない旧い worker は偽。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (<= 0 task-reserve capacity)]}
   (#^ str name)
@@ -212,7 +214,8 @@
   (setv #^ (| int None) boot-at None)
   (setv #^ int format 1)
   (setv #^ (| (get tuple #(str ...)) None) kept-when-cut-off None)
-  (setv #^ bool stopping False))
+  (setv #^ bool stopping False)
+  (setv #^ bool overlaps-elder False))
 
 
 (defwire ResourceBody

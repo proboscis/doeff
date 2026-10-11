@@ -190,7 +190,9 @@
         "doeff-cluster-rollout-policy",
         "doeff-cluster-program-policy",
         "doeff-cluster-due-model",
-        "doeff-cluster-due-policy"
+        "doeff-cluster-due-policy",
+        "doeff-cluster-detached-model",
+        "doeff-cluster-detached-rules"
       ],
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
@@ -858,7 +860,8 @@
         "doeff-cluster-run-context-rules",
         "doeff-cluster-worker-warm-host",
         "doeff-cluster-worker-warm-rules",
-        "doeff-cluster-native-wheel"
+        "doeff-cluster-native-wheel",
+        "doeff-cluster-worker-places"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",

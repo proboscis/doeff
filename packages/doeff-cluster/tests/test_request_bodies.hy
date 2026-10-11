@@ -7,6 +7,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
 (import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
 (import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))
@@ -93,6 +94,21 @@
   (val old (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "w" "taskReserve" 0 "labels" {"kind" "mac"}})) 1000 T))
   (assert (= (get old 1) 400) old)
   (assert (in "labels" (get old 2 "error")) old))
+
+
+(deftest test-a-worker-overlapping-a-running-elder-says-so-and-the-coordinator-reads-it
+  ;; 前の世代がまだ走っている間に起きた worker(起動の script の --overlaps-elder — AL-D2e)の heartbeat の本文は overlapsElder を載せ、
+  ;; coordinator の本文の型はそれを真と読む。印の無い worker の本文は前と同じ形(欄を書かない)で、偽と読む。
+  (<- overlapping (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :capacity 3 :task-reserve 0 :versions {}
+                                  :statuses [] :endpoint "http://c" :boot "b2" :boot-at 2 :tools {} :kept #() :overlaps-elder True))
+  (assert (= (get overlapping "overlapsElder") True) overlapping)
+  (<- read (body-of (! (http-request "POST" "/heartbeat" {} overlapping))))
+  (assert (= read.overlaps-elder True) read)
+  (<- plain (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :capacity 3 :task-reserve 0 :versions {}
+                            :statuses [] :endpoint "http://c" :boot "b2" :boot-at 2 :tools {} :kept #()))
+  (assert (not-in "overlapsElder" plain) plain)
+  (<- plain-read (body-of (! (http-request "POST" "/heartbeat" {} plain))))
+  (assert (= plain-read.overlaps-elder False) plain-read))
 
 
 (deftest test-a-heartbeat-without-its-task-reserve-or-outside-its-range-is-refused-before-the-decision

@@ -185,6 +185,8 @@
   (.add-argument parser "--state-dir" :required True :help "コードの cache・状態の置き場(世代ごと)")
   (.add-argument parser "--shared-dir" :default None
                  :help "世代をまたいで分け合う置き場(log・Python・Rust の wheel・mirror と錠 — 同じ機体に同じ名の worker の 2 つの世代が並ぶ時・AL-D2。省けば --state-dir)")
+  (.add-argument parser "--overlaps-elder" :action "store_true"
+                 :help "同じ名の前の世代がまだ走っている間に起きた(起動の script が前の世代の dir の錠を持たれていると見た時に渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)")
   (.add-argument parser "--no-warm" :action "store_true" :help "bytecode の準備を省く")
   (.add-argument parser "--stop-grace" :type float :default 10.0)
   (.add-argument parser "--import-roots" :default "."
@@ -278,7 +280,7 @@
         link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
-                        :node args.node :boot-marks boot-marks
+                        :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)

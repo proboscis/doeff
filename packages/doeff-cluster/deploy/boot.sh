@@ -412,6 +412,9 @@ esac
 # 持たない(worker が終わった)前の世代の dir を消す。まだ走る前の世代(入れ替えの重なり)の dir は、脇の子がその錠を待って、前の世代の
 # worker が終わった時に消す(前の世代の root を次の入れ替えまで残さない)。POD_UID は downward API の metadata.uid。
 state_dir=$WORK_DIR/state
+# 前の世代の worker がまだ走っている(その dir の錠が持たれている)なら、worker に --overlaps-elder を渡す — coordinator は新しい世代の
+# 名乗りを前の世代の終わりの印と数えず、前の世代の process の lease を外さない(AL-D2e)。
+overlaps_elder=
 if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
   if [ -z "${POD_UID:-}" ]; then
     echo "boot: WORKER_GENERATION_DIRS=1 には POD_UID(downward API の metadata.uid)が要る" >&2
@@ -428,6 +431,7 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
       echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2
     else
       echo "boot: 前の世代の dir $gen_dir はその worker が終わった後に消す" >&2
+      overlaps_elder=--overlaps-elder
       (flock "$gen_dir/worker.lock" rm -rf "$gen_dir" 9>&- && echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2) 9>&- &
     fi
   done
@@ -436,6 +440,9 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
   # 時の入れ替えでは、前の Pod がまだ走っている)。
   if [ -e "$WORK_DIR/state/roots" ] || [ -e "$WORK_DIR/state/jobs" ]; then
     echo "boot: 前の worker の状態($WORK_DIR/state の roots・jobs ほか)はその worker が終わった後に消す" >&2
+    if ! flock -n "$WORK_DIR/worker.lock" true 2>/dev/null; then
+      overlaps_elder=--overlaps-elder
+    fi
     (
       flock "$WORK_DIR/worker.lock" true
       for name in code jobs programs warm roots env-requests probe tasks status.json; do
@@ -445,7 +452,7 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
     ) 9>&- &
   fi
   state_dir=$gen_root/$POD_UID/state
-  echo "boot: 世代の dir $state_dir(分け合う dir $WORK_DIR/state)" >&2
+  echo "boot: 世代の dir $state_dir(分け合う dir $WORK_DIR/state)${overlaps_elder:+ — 前の世代がまだ走っている}" >&2
 elif [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
   exec 9>"$WORK_DIR/worker.lock"
   echo "boot: $WORK_DIR/worker.lock を待つ $(date +%T)" >&2
@@ -519,7 +526,7 @@ export DOEFF_BOOT_EXEC_MS
 exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" --capacity "${WORKER_CAPACITY:-10}" \
   --task-reserve "${WORKER_TASK_RESERVE}" \
-  --repo "$repo" --state-dir "$state_dir" --shared-dir "$WORK_DIR/state" --stop-grace 10 \
+  --repo "$repo" --state-dir "$state_dir" --shared-dir "$WORK_DIR/state" ${overlaps_elder} --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --repo-access "$repo_access_script" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
   --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \

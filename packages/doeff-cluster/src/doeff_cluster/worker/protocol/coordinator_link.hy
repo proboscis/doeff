@@ -80,11 +80,12 @@
    watch = 名指しの待ちを使うか(本番の入口が真にする)・beat-beside = 拍の外の背景の task でも heartbeat を送るか(既定 真 — card
    ki-e38dbfca7671。偽は操作ごとに run を分ける検の道具だけ: 背景の task は run をまたいで生きない)・boot = この process の世代・
    boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡とみなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・
-   boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)。"
+   boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)・overlaps-elder = この世代は同じ名の
+   前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms * #^ (| dict None) [versions None] #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
-                          #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None]]
+                          #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
           self.task-reserve task-reserve self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -103,7 +104,7 @@
           self.last-ok-ms started-ms
           ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
           self.last-jobs #() self.last-tasks #() self.last-warm #() self.warm-keys {}
-          self.boot boot self.boot-at boot-at
+          self.boot boot self.boot-at boot-at self.overlaps-elder overlaps-elder
           ;; 切り離した task の id → 置かれた時の返事の行。状態の報告に写して添え、状態を失った coordinator が走っている task を引き取れる
           ;; ようにする(cluster_policy.adopt-running-detached・2026-09-27)。
           self.task-echo {}
@@ -380,7 +381,7 @@
   (<- base dict (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
                                 :capacity state.capacity :task-reserve state.task-reserve :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
-                                :stopping stopping))
+                                :stopping stopping :overlaps-elder state.overlaps-elder))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}

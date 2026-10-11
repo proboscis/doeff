@@ -500,6 +500,8 @@
 ;; 担い手を外す。担い手の綴りと外し方は worker が終わった process の lease を返すのと同じ定義(lease_rules.lease-holder・
 ;; holder-tokens-prefix・drop-holders)。退いた世代の heartbeat(OLDER)はここへ来ない — 外した担い手を戻さず、その process の延長は
 ;; lost と答える(lease_rules.renew)。前の世代が最後の報告の後に起こした process の担い手は報告に無いので、期限まで残る。
+;; 例外(AL-D2e): 前の世代がまだ走っている間に起きた世代(heartbeat の overlaps-elder — 同じ機体に 2 つの世代を並べる RollingUpdate で、
+;; 起動の script が前の世代の dir の錠を持たれていると見た)の名乗りは前の世代の終わりの印でないので、担い手を外さない。
 
 (defk generation-holder-prefixes [report]
   {:pre [(: report (| WorkerReport None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
@@ -1583,10 +1585,11 @@
         ;; job の行の最後に終わったと知れた刻は、known-exits-after が前の知れた刻と世代の比べから数えた known(worker-report — #3672)。
         report (! (worker-report statuses now body.endpoint known))
         ;; 新しい世代の名乗りで、前の世代の process が持っていた名前付きの lease を外す(#3770 — 前の世代の最新の報告は、この
-        ;; heartbeat で置き換える前の adopted.statuses の行)。
-        board (match order
-                GenerationOrder.NEWER (! (board-without-generation-holders adopted.board (.get adopted.statuses name)))
-                _ adopted.board)
+        ;; heartbeat で置き換える前の adopted.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
+        ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。
+        board (if (and (= order GenerationOrder.NEWER) (not body.overlaps-elder))
+                  (! (board-without-generation-holders adopted.board (.get adopted.statuses name)))
+                  adopted.board)
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
                      :statuses (| adopted.statuses {name report})
