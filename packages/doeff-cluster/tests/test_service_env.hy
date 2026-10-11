@@ -236,7 +236,10 @@
   (.splitlines (.read-text out :encoding "utf-8")))
 
 
-(deftest test-careful-a-service-runs-in-the-env-root-and-follows-a-new-commit [tmp-path subprocess-bytecode job-child-code-store]
+(deftest test-careful-a-service-runs-in-the-env-root-and-follows-a-new-commit [tmp-path subprocess-bytecode job-child-code-store monkeypatch]
+  ;; 失敗ケース(card ki-6dde100393cd): 検を回す process が外側の env の中で動く時(日次の検証の worker・会話の Pod)は、環境変数に外側の env の
+  ;; キーが在る。その時も送り手は env の root の外として名乗り、台の準備した env の鍵と食い違わない事を確かめる。
+  (.setenv monkeypatch "DOEFF_RUNTIME_ENV_KEY" "outer-env-of-the-test-process")
   (<- rig Rig (make-rig tmp-path))
   (<- a1 str (push-commit rig.app (! (service-files 1)) "app 1"))
   (<- l1 str (push-commit rig.lib {"native/core/lib.rs" "fn a() {}\n" "native/core/Cargo.toml" "[package]\n"} "lib 1"))
