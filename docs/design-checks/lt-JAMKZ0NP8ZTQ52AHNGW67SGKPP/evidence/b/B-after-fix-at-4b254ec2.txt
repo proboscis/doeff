@@ -1,0 +1,47 @@
+# 盲検 B の失敗例の再検証(着地した main 4b254ec2 の linter = 2de2bbe4d から組んだ binary・鍵 abe8fc1e…)
+$ /home/ubuntu/.cache/doeff-linter-snapshots/2de2bbe4d93862069b1e9d501cacc10616ec3ca7/doeff-linter --version
+doeff-linter 0.2.0 (doeff 2de2bbe4d93862069b1e9d501cacc10616ec3ca7)
+
+## 1. 9 つの形の file(B-repro-at-4ccab04ac.txt と同じ入力)
+$ doeff-linter --no-log --no-config --enable DOEFF002 --output-format json forms.py
+DOEFF002 の error: 9
+   ('forms.py', 8, 'self._absent = await read_absent()')
+   ('forms.py', 17, 'self._a = 1')
+   ('forms.py', 23, 'self._b = 1')
+   ('forms.py', 28, 'self._c = 1')
+   ('forms.py', 34, 'self._d = 1')
+   ('forms.py', 37, 'self._e, self._f = 1, 2')
+   ('forms.py', 37, 'self._e, self._f = 1, 2')
+   ('forms.py', 41, 'self._g = 1')
+   ('forms.py', 45, 'self._h = 1')
+期待: __init__ の外の 9 つ(_absent・_a〜_h)が全部所見。
+
+## 2. 盲検 B の差分の client.py(B が残した写しの木 /tmp/tmp.lgT0CD25H6 の after・twin・before)
+$ (cd /tmp/tmp.lgT0CD25H6/after && doeff-linter --no-log --force-exclude --output-format json packages/doeff-openrouter/src/doeff_openrouter/client.py)
+DOEFF002 の error: 1
+   ('client.py', 117, 'self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.ti')
+$ (cd /tmp/tmp.lgT0CD25H6/twin && doeff-linter --no-log --force-exclude --output-format json packages/doeff-openrouter/src/doeff_openrouter/client.py)
+DOEFF002 の error: 1
+   ('client.py', 128, 'self._http = httpx.AsyncClient(base_url=self.base_url, timeout=self.ti')
+$ (cd /tmp/tmp.lgT0CD25H6/before && doeff-linter --no-log --force-exclude --output-format json packages/doeff-openrouter/src/doeff_openrouter/client.py)
+DOEFF002 の error: 0
+期待: after と twin は _http の代入が所見(B の差分は検査を通らない)・before は 0。
+
+## 3. B の最小の入力(min/reader_async.py・reader_sync.py・other_forms.py)
+$ (cd /tmp/tmp.lgT0CD25H6/min && doeff-linter --no-log --force-exclude --output-format json reader_async.py)
+DOEFF002 の error: 1
+   ('reader_async.py', 7, 'self._absent = await read_absent()')
+$ (cd /tmp/tmp.lgT0CD25H6/min && doeff-linter --no-log --force-exclude --output-format json reader_sync.py)
+DOEFF002 の error: 1
+   ('reader_sync.py', 7, 'self._absent = read_absent()')
+$ (cd /tmp/tmp.lgT0CD25H6/min && doeff-linter --no-log --force-exclude --output-format json other_forms.py)
+DOEFF002 の error: 9
+   ('other_forms.py', 11, 'self._a = 1')
+   ('other_forms.py', 22, 'self._b = 1')
+   ('other_forms.py', 32, 'self._c = 1')
+   ('other_forms.py', 43, 'self._d = 1')
+   ('other_forms.py', 52, 'self._e, self._f = 1, 2')
+   ('other_forms.py', 52, 'self._e, self._f = 1, 2')
+   ('other_forms.py', 61, 'self._g = 1')
+   ('other_forms.py', 72, 'self._h = 1')
+   ('other_forms.py', 80, 'self._z = 1')
