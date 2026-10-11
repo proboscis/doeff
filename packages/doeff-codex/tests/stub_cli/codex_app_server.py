@@ -19,7 +19,7 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS・OTHER-TOOLS)が在れば、その目印で録ったターンの通知(turn/start の
     答えの後 〜 そのターンの turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と
     web 検索の道具の item を持つターン・MCP と動的な道具と画像を見る道具と子の agent の道具の item を持つターン — 子の agent の
-    thread の行〔子のターンの始まりと終わりを含む〕も録った順のまま混ぜて流す)。
+    thread の行(子のターンの始まりと終わりを含む)も録った順のまま混ぜて流す)。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
