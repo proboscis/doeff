@@ -106,11 +106,11 @@ spec:
             # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。どの機体の worker の版も
             # この版と同じかその祖先に保つ — worker を上げる前にここを先に上げる(../../../README.md「配備の順」・宣言の検
             # tests/test_k8s_declarations.py の test_no_worker_is_newer_than_the_coordinator が断る)。
-            # 198e51303 = 036d47c48(世代をまたぐ入れ替え L1973・card ki-c098449218bc AL-D2b と boot.sh の世代ごとの状態の dir L1979・L1981
-            # AL-D2c)に、doeff-hy の defrecord の後退(424a87f58 — #^ None の __post-init__ の検査が効かない)の直し(card ki-e77d44aa61e5)を
-            # 足した版。zeus の worker を世代の dir と RollingUpdate へ移す宣言(card ki-2e89e0abbf1c AL-D2d)の前に上げる。前の版 036d47c48
-            # (L1984 で 10-11 09:25 JST に入った)は 198e51303 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 198e513037620c6c19c06355b9bbaabf0f882ac1 }
+            # f3f569e9d = coordinator が起き直した時、盤の lease の行の担い手の期限も止まっていた長さだけずらし、止まっていた間に延ばせ
+            # なかった持ち主の lease を切らない版(L2004・card ki-3b7498747e4c — 10-11 00:25:51 UTC の作り直しで同じ会話のターンが 2 本並んだ
+            # 根)。前の版 198e51303(036d47c48 に defrecord の後退 424a87f58 の直しを足した版・L2000 で 10-11 10:57 JST に入った)は
+            # f3f569e9d の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: f3f569e9d2dd2c093abb51feb2616216333fbee0 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
