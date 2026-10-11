@@ -36,7 +36,7 @@ def _root_conftest() -> Any:
 
 
 def test_deadline_scales_with_oversubscription(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The factor is load-per-core, floored at 1 and capped.
+    """The factor is load per usable CPU, floored at 1 and capped.
 
     Counterexample: a constant deadline.  At load 100 on 18 cores every
     subprocess-spawning test takes ~5.5x longer while the budget stays 60 s,
@@ -44,7 +44,7 @@ def test_deadline_scales_with_oversubscription(monkeypatch: pytest.MonkeyPatch) 
     """
     conftest = _root_conftest()
 
-    monkeypatch.setattr(conftest.os, "cpu_count", lambda: 10)
+    monkeypatch.setattr(conftest, "usable_cpus", lambda: 10.0)
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (50.0, 0.0, 0.0))
     assert conftest.deadline_scale("auto", 8.0) == pytest.approx(5.0)
 
@@ -63,7 +63,7 @@ def test_scale_is_capped_so_a_real_hang_still_fails(
     """
     conftest = _root_conftest()
 
-    monkeypatch.setattr(conftest.os, "cpu_count", lambda: 10)
+    monkeypatch.setattr(conftest, "usable_cpus", lambda: 10.0)
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (10_000.0, 0.0, 0.0))
     assert conftest.deadline_scale("auto", 8.0) == pytest.approx(8.0)
 
@@ -72,7 +72,7 @@ def test_scaling_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """CI controls its own load, so it must be able to hold the deadline fixed."""
     conftest = _root_conftest()
 
-    monkeypatch.setattr(conftest.os, "cpu_count", lambda: 10)
+    monkeypatch.setattr(conftest, "usable_cpus", lambda: 10.0)
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (50.0, 0.0, 0.0))
     assert conftest.deadline_scale("off", 8.0) == pytest.approx(1.0)
 
@@ -84,7 +84,7 @@ def _machine(
     monkeypatch.setattr(conftest.os, "cpu_count", lambda: cores)
     # macOS has no affinity call (the root conftest falls back to os.cpu_count() there).
     monkeypatch.setattr(
-        conftest.os, "sched_getaffinity", lambda pid: set(range(affinity)), raising=False
+        conftest.os, "sched_getaffinity", lambda _pid: set(range(affinity)), raising=False
     )
     monkeypatch.setattr(conftest.os, "getloadavg", lambda: (load1, 0.0, 0.0))
 
