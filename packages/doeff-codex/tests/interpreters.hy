@@ -72,7 +72,7 @@
 (defk settings-for [#^ str name #^ Path tmp-path]
   {:pre [(: name str) (: tmp-path Path)] :post [(: % Settings)] :tags {:context "codex-test" :role "entry"}}
   "筋書きの宣言を作るため(作業の dir は検ごとの tmp の dir・元の CODEX_HOME はその下の codex-home・許可の問いを出させない方針)。"
-  (Settings :spec (CodexSessionSpec :home (CodexHome :env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path)
+  (Settings :spec (CodexSessionSpec :home (CodexHome :env {"PATH" "/usr/bin:/bin" "HOME" (str tmp-path) "PYTHONDONTWRITEBYTECODE" "1"
                                                            "CODEX_HOME" (str (/ tmp-path CODEX-HOME-DIR))})
                                     :cwd (str tmp-path) :approval-policy ApprovalPolicy.NEVER :sandbox SandboxMode.READ-ONLY)
             :turn-timeout 30.0
