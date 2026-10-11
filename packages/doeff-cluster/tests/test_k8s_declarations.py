@@ -158,15 +158,18 @@ HOST_ONLY_RESOURCES = {
 }
 
 
-# atlas の受ける数の内訳(2026-10-10 調整役 cisco-c8 の可・22:2x): 機体の仕事 1 + 上に載る系の常駐の job で atlas の能力(host-atlas)を要る物 4
-# + 上に載る系の日次の全体検証の task(:needs host-atlas)に空けておく 3(同時に 3 本まで)。受ける数 = 3 つの和(ここが式の定義点 — yaml の値は
-# この和と同じでなければ赤)。
+# atlas の受ける数の内訳(2026-10-10 調整役 cisco-c8 の可・22:2x): 機体の仕事 1 + 上に載る系の常駐の job で atlas の能力(host-atlas)を要る物 5
+# + 上に載る系の日次の全体検証の task(:needs host-atlas)に空けておく 3(同時に 3 本まで)+ 後で足す常駐の job に空けておく 1。受ける数 = 4 つの和
+# (ここが式の定義点 — yaml の値はこの和と同じでなければ赤)。
+# 2026-10-11: 上に載る系が host-atlas を要る常駐の job を 1 つ足したので 4 → 5。後の 1 は、次に常駐の job を足す時に worker の Pod を
+# 作り直さずに済ませる余裕(上に載る系の側の決め 2026-10-11 10:20 JST)。
 ATLAS_MACHINE_JOBS = 1
-ATLAS_OVERLAY_RESIDENT_JOBS = 4
+ATLAS_OVERLAY_RESIDENT_JOBS = 5
 ATLAS_TASK_RESERVE = 3
+ATLAS_KEPT_ROOM = 1
 # 受ける数が既定(WORKER_CAPACITY 2・WORKER_TASK_RESERVE 0)と違う機体 — (受ける数, task に空けておく数)。
 HOST_ONLY_ROOM = {
-    "atlas": (str(ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE), str(ATLAS_TASK_RESERVE)),
+    "atlas": (str(ATLAS_MACHINE_JOBS + ATLAS_OVERLAY_RESIDENT_JOBS + ATLAS_TASK_RESERVE + ATLAS_KEPT_ROOM), str(ATLAS_TASK_RESERVE)),
 }
 # atlas の worker が job の子へ足して渡す env の名: Rust の toolchain の置き場(image の env)。task は Rust の部品を組むので、継がないと
 # rustup が toolchain を選べない。道具の cache の置き場は task が機体の事実 WORK_DIR から自分で作る(worker は上に載る系の置き場を知らない)。
