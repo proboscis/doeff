@@ -63,7 +63,11 @@ class Reduce(EffectBase[_Acc], Generic[_Acc, _Item]):
     ) -> None: ...
 
 class Zip(EffectBase[Collection[tuple[_Left, _Right]]], Generic[_Left, _Right]):
-    """2 つの列を件の位置で組む(どちらかで失敗した件は失敗)。有効な件の値は組 (a の値, b の値)。"""
+    """2 つの列を件の位置で組む(どちらかで失敗した件は失敗)。有効な件の値は組 (a の値, b の値)。
+
+    件の履歴は走った段を 1 度ずつ持つ: a の履歴の後に、b の履歴のうち a に無い段を足す(b が a から、
+    または両方が 1 つの列から作られて共に持つ段は繰り返さない)。
+    """
 
     a: Iterable[_Left]
     b: Iterable[_Right]
