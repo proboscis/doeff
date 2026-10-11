@@ -11,7 +11,7 @@
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses)
-(import dataclasses [dataclass field])
+(import dataclasses [dataclass])
 (import functools)
 (import types [NoneType])
 (import typing [Generic TypeVar])
@@ -26,15 +26,17 @@
 
 (defclass [(dataclass :frozen True)] RowType [(get Generic M)]
   "表 1 つの行の型: table = 表の名 / model = 行の値の型(pydantic の BaseModel か dataclass — 欄の名は表の宣言の欄の名で、
-   鍵の欄も含む)。adapter = 写しに使う pydantic の TypeAdapter(作る時に組む)。"
+   鍵の欄も含む)。adapter = 写しに使う pydantic の TypeAdapter(最初に写す時に組んで覚える)。"
   (#^ str table)
   (#^ (get type M) model)
-  (setv #^ (get TypeAdapter M) adapter (field :init False :repr False :compare False))
   (defn __post_init__ [self]
     (checked-table-name self.table "RowType.table")
     (when (not (isinstance self.model type))
-      (raise (TypeError (.format "RowType.model は型(pydantic の BaseModel か dataclass): {!r}" self.model))))
-    (object.__setattr__ self "adapter" (TypeAdapter self.model))))
+      (raise (TypeError (.format "RowType.model は型(pydantic の BaseModel か dataclass): {!r}" self.model)))))
+  (defn [functools.cached-property] #^ (get TypeAdapter M) adapter [self]
+    ;; 作る時に組まない: 行の型は使い手の module の読み込みの時に作られ、写さない表の分まで読み込みの固定費に載る
+    ;; (agora-controllers の画面の検で 29 表・ki-dd5358f7eb46)。
+    (TypeAdapter self.model)))
 
 
 (defclass [(dataclass :frozen True)] TypedRow [(get Generic M)]

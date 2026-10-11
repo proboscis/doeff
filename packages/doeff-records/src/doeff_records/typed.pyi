@@ -7,11 +7,13 @@ typed.hy は Hy の module なので、pyright は中を読めず、`from doeff_
 - 行の型の値の型 M を総称の引数にする — RowType[M] を渡した読み書きの答え(TypedRow[M]・TypedPage[M]・TypedRowChanged[M] ほか)の
   value が M と読める。
 - 値の型は全部 frozen の dataclass(実装と同じ欄の名・順・既定値)。欄の注記は実装の注記に、実装が素の `tuple` と書く所だけ
-  中身の型を足す(鍵は文字列の tuple・頁の行は TypedRow[M] の tuple)。RowType.adapter は作る時に組む欄(init=False)。
+  中身の型を足す(鍵は文字列の tuple・頁の行は TypedRow[M] の tuple)。RowType.adapter は最初に写す時に組んで覚える
+  cached_property(欄ではない)。
 - defn(普通の関数)は実装の注記どおり。defk は呼ぶと Program を返す(答えの型 = 実装の :post の型・行の型は M)。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from functools import cached_property
 from typing import Generic, TypeVar
 
 from pydantic import TypeAdapter
@@ -37,7 +39,8 @@ M = TypeVar("M")
 class RowType(Generic[M]):
     table: str
     model: type[M]
-    adapter: TypeAdapter[M] = field(init=False, repr=False, compare=False)
+    @cached_property
+    def adapter(self) -> TypeAdapter[M]: ...
 
 @dataclass(frozen=True)
 class TypedRow(Generic[M]):

@@ -8,6 +8,7 @@
 (import doeff_records.effects [WatchChanges ReadRow PutRow PutRows RowWrite])
 (import doeff_records.typed [RowType TypedRow TypedPage TypedWritten TypedConflict TypedRowChanged read-typed list-typed put-typed
                              typed-change fields-of-value value-of-fields])
+(import doeff_records.typed :as typed)
 (import doeff_records.laws [MAKER PAINTER])
 (import tests.interpreters [LawSetup])
 
@@ -54,6 +55,22 @@
   ;; 値 None の書きは欄を消す — 既定値の無い None を許す欄も、置き場に無ければ None と読んで行の型に戻る。
   (assert (= (value-of-fields (RowType "strict" Strict) (FrozenMap {"id" "s1"})) (Strict "s1" None)))
   (assert (= (value-of-fields (RowType "strict" Strict) (FrozenMap {"id" "s1" "note" "n"})) (Strict "s1" "n"))))
+
+
+(deftest test-a-row-type-builds-its-adapter-at-the-first-mapping-and-keeps-it [monkeypatch]
+  ;; 表の行の型は使い手の module の読み込みの時に作られる(agora-controllers の画面の検で 29 表)。作る時に TypeAdapter を組むと、
+  ;; 検が写さない表の分まで読み込みの固定費に載る(ki-dd5358f7eb46)。作る時は組まず、最初の写しで 1 度だけ組んで覚える。
+  (setv built [])
+  (setv original typed.TypeAdapter)
+  (defn counting [model]
+    (.append built model)
+    (original model))
+  (monkeypatch.setattr typed "TypeAdapter" counting)
+  (setv row-type (RowType "tickets" Ticket))
+  (assert (= built []) built)
+  (assert (= (fields-of-value row-type (Ticket "g" "t" :owner "o")) {"group" "g" "id" "t" "state" None "owner" "o"}))
+  (assert (= (value-of-fields row-type (FrozenMap {"group" "g" "id" "t"})) (Ticket "g" "t")))
+  (assert (= built [Ticket]) built))
 
 
 (deftest test-typed-rows-round-trip-through-the-generic-effects
