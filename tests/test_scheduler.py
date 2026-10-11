@@ -1257,6 +1257,59 @@ class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
             f"{[(name, round(delta)) for delta, name in grown]}"
         )
 
+    def test_cancelled_deadline_timers_do_not_pile_up_in_the_ready_heap(self):
+        """A WaitWithin whose future wins cancels its deadline timer; the
+        timer's external-wait placeholder (PRIORITY_EXTERNAL_WAIT) is then
+        claimed, but it stayed in the ready heap until popped — and it is
+        popped only when no NORMAL work is queued. A busy turn-host never got
+        there, so every timed wait left one dead placeholder (holding the
+        timer's continuation): 3,971 of a 4,110-entry heap in the card's
+        simulation. Here other NORMAL work stays queued for the whole run;
+        the heap must not grow with the waits done meanwhile."""
+        from doeff_core_effects.handlers import await_handler
+        from doeff_core_effects.scheduler import _SchedulerIntrospection
+        from doeff_time import WaitWithin, async_time_handler
+
+        from doeff import with_handlers
+
+        waits = 1000
+        stop = [False]
+
+        @do
+        def noop():
+            return None
+
+        @do
+        def busy():
+            # Keeps NORMAL work queued until the waits are done.
+            while not stop[0]:
+                yield Wait((yield Spawn(noop())))
+
+        @do
+        def timed_wait():
+            bell = yield CreateExternalPromise()
+            bell.complete(True)  # drained before the race: the future wins at once
+            return (yield WaitWithin(bell.future, 3600.0, park=True))
+
+        @do
+        def body():
+            worker = yield Spawn(busy())
+            for _ in range(waits):
+                assert (yield timed_wait()) is True
+            counts = yield _SchedulerIntrospection()
+            stop[0] = True
+            yield Wait(worker)
+            return counts["ready"]
+
+        ready = doeff_run(scheduled(
+            with_handlers([await_handler(), async_time_handler()], body()),
+            implementation="python",
+        ))
+        assert ready < waits / 4, (
+            f"the ready heap held {ready} entries after {waits} timed waits while other "
+            "work stayed queued"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Error propagation
