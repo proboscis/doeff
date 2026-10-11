@@ -1,4 +1,4 @@
-;; 手入れの「消す前に送る」(maintenance.hy の頭の註 — agora-controllers の card ki-c32e43651f2e・2026-10-11 11:21 に記録の Postgres の
+;; 手入れの「消す前に送る」(maintenance.hy の頭の註 — card ki-c32e43651f2e・2026-10-11 11:21 に使い手の記録の Postgres の
 ;; disk が 100% になった事故の根の直し): 送りの関数を持つ計画の手入れ 1 回は、送りの答えの番号を刈りの上限に渡し、送り先に届かなかった
 ;; 回は刈らない。送りを持たない計画は上限なしで刈る(今までと同じ)。置き場の handler は撃たれた PruneChanges を控えるだけの顔。
 (require doeff-hy.macros [deftest defhandler defk <- val var])
@@ -8,17 +8,20 @@
 (import doeff_records.maintenance [ArchivedThrough MaintenanceReport PruneChanges Pruned SweepExpired Swept maintenance-tick])
 
 
+(defhandler recorder [#^ list asked]
+  ;; 引数に残す理由: asked は検が読む控え — 置き場の顔が撃たれた PruneChanges をそこへ積む。回収は何もしない。
+  (SweepExpired []
+    (resume (Swept 0)))
+  (PruneChanges [keep-seconds upto-seq]
+    (.append asked effect)
+    (resume (Pruned (or upto-seq 99) 1))))
+
+
 (defk pruned-asks [archive]
   {:pre [(: archive (| Callable None))] :post [(: % tuple)]}
   "送りの関数 archive の計画で手入れを 1 回撃ち、#(答え 撃たれた PruneChanges の並び) を返すため(置き場は控えるだけの顔)。"
-  (var asked [])
-  (defhandler recorder []
-    (SweepExpired []
-      (resume (Swept 0)))
-    (PruneChanges [keep-seconds upto-seq]
-      (.append asked effect)
-      (resume (Pruned (or upto-seq 99) 1))))
-  (<- report (with_handlers [(recorder)] (maintenance-tick 60.0 archive)))
+  (val asked [])
+  (<- report (with_handlers [(recorder asked)] (maintenance-tick 60.0 archive)))
   #(report (tuple asked)))
 
 

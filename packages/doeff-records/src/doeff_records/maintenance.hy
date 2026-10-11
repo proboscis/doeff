@@ -11,7 +11,7 @@
 ;;;                  (keep-seconds は読み手の遅れの許容 — これより遅れた読み手だけが読み直す)。upto-seq を持てば、消すのはその番号まで
 ;;;                  (送りの答え — 下)
 ;;;
-;;; 消す前に送る(agora-controllers の card ki-c32e43651f2e・親 ki-e26367fd8fcb — 2026-10-11 11:21 に記録の Postgres の disk が 100% に
+;;; 消す前に送る(card ki-c32e43651f2e・親 ki-e26367fd8fcb — 2026-10-11 11:21 に使い手の記録の Postgres の disk が 100% に
 ;;; なった。古い変更を消さずに階層つきの保管へ送ってから外す): 手入れの計画が送りの関数 archive(keep-seconds → Program)を持てば、
 ;;; 刈りの前にそれを走らせ、答え ArchivedThrough の番号までだけを刈る(送りが Unreachable の回は刈らない)。送りは書きの錠の外で走る
 ;;; (送り先の I/O で書き手を止めない)。送り先とその効果は使い手の composition が決める(この package は送り先を知らない)。
