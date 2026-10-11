@@ -10,9 +10,10 @@
    消すと読み手が止まる・組の在る package を消すと読み手が止まる・理由の無い除外(reason の鍵が無い・空・空白だけ)と
    package でない接頭辞の除外は読み手が止まる。
 3. 木を歩く検が、歩く先の変更で選ばれる: doeff-traverse の例の検は examples/ を glob して子の process で走らせ、例も
-   macro も import しないので、逆依存では選ばれない。例・期待の出力・例が require する doeff-hy の macro の module を
-   変えた差分は、本物の表から例の検を選ぶ(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間、例を壊す変更は登記の前に
-   測られず、翌日の日次で初めて赤になった)。
+   macro も import しないので、逆依存では選ばれない。例・期待の出力・例が require する doeff-hy の macro の module・
+   macro の実行時の半分(`<-`・`!` の束ねの開き方を持つ doeff_core_effects.outcomes)を変えた差分は、本物の表から例の検を
+   選ぶ(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間、例を壊す変更は登記の前に測られず、翌日の日次で初めて赤になった。
+   実行時の半分は同じ依頼の設計検証の盲検 B が見つけた — doeff-hy の行だけでは選ばれなかった)。
 
 日次の母集団(tests/)と、表の repo 全体の行(prefix = "")の両方から走る — 変えた所の検は、どの変更でもこの file を先頭の
 組で走らせる。入口の main は呼ばず、読み手の純粋な定義(read_contract_table・workspace_packages・table_gaps)を直に呼ぶ。
@@ -39,6 +40,10 @@ ADDED = "packages/doeff-added-without-row/"
 EXAMPLES_CHECK = "packages/doeff-traverse/tests/test_examples_run.py"
 EXAMPLES_DIR = "packages/doeff-traverse/examples"
 EXAMPLE_MACROS = "packages/doeff-hy/src/doeff_hy/macros.hy"
+#: macro の実行時の半分の module と、その file。doeff-hy の outcome_forms.hy は「実行時の意味は doeff_core_effects.outcomes が
+#: 持ち、ここは形だけを作る」で、defk の本体の束ねは macros.hy が globals に置くこの module の open_bind を引く。
+EXAMPLE_MACRO_RUNTIME_MODULE = "doeff_core_effects.outcomes"
+EXAMPLE_MACRO_RUNTIME = "packages/doeff-core-effects/doeff_core_effects/outcomes.py"
 
 
 @dataclass(frozen=True)
@@ -117,8 +122,8 @@ def test_every_package_has_a_contract_row_or_a_reasoned_exemption(runner: Module
 
 
 def test_changing_an_example_or_its_macros_selects_the_examples_check(runner: ModuleType) -> None:
-    """本物の表: 例 1 つ・期待の出力 1 つ・例が require する doeff-hy の macro の module のどれを変えた差分も、
-    変えた所の検の選び(入口と同じ select_targets)が例の検を選ぶ。"""
+    """本物の表: 例 1 つ・期待の出力 1 つ・例が require する doeff-hy の macro の module・macro の実行時の半分の module の
+    どれを変えた差分も、変えた所の検の選び(入口と同じ select_targets)が例の検を選ぶ。"""
     table = runner.read_contract_table(REPO_ROOT)
     patterns = runner.collector_patterns(REPO_ROOT)
     examples = REPO_ROOT / EXAMPLES_DIR
@@ -131,9 +136,19 @@ def test_changing_an_example_or_its_macros_selects_the_examples_check(runner: Mo
     assert (REPO_ROOT / EXAMPLE_MACROS).is_file(), (
         f"{EXAMPLE_MACROS} が無い — 例が require する module を直す"
     )
+    # macro が実行時の半分を別の module へ移したら、ここの module の名と file を直す(古い名のまま緑にしない)。
+    assert f'"{EXAMPLE_MACRO_RUNTIME_MODULE}"' in (REPO_ROOT / EXAMPLE_MACROS).read_text(
+        encoding="utf-8"
+    ), (
+        f"{EXAMPLE_MACROS} が実行時の module {EXAMPLE_MACRO_RUNTIME_MODULE} を名指さない — 移した先の module を書く"
+    )
+    assert EXAMPLE_MACRO_RUNTIME.endswith(EXAMPLE_MACRO_RUNTIME_MODULE.replace(".", "/") + ".py"), (
+        EXAMPLE_MACRO_RUNTIME
+    )
+    assert (REPO_ROOT / EXAMPLE_MACRO_RUNTIME).is_file(), f"{EXAMPLE_MACRO_RUNTIME} が無い"
     unselected = [
         path
-        for path in (*changed, EXAMPLE_MACROS)
+        for path in (*changed, EXAMPLE_MACROS, EXAMPLE_MACRO_RUNTIME)
         if EXAMPLES_CHECK
         not in {
             target.arg

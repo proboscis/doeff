@@ -1,0 +1,68 @@
+# 直しの失敗ケース: 守りの検に macro の実行時の半分(outcomes.py)を足し、表はまだ直さない(df9e62756 の表)
+$ uv run --no-sync pytest -q -m "not e2e" tests/test_contract_table_follows_packages.py::test_changing_an_example_or_its_macros_selects_the_examples_check
+
+deadline scale x3.7 (load per usable CPU) — per test 219s, watchdog 328s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_changing_an_example_or_its_macros_selects_the_examples_check _______
+
+runner = <module 'run_changed_tests' from '/work/toolset/worktrees/doeff-wt-examples-premerge-dc/scripts/run_changed_tests.py'>
+
+    def test_changing_an_example_or_its_macros_selects_the_examples_check(runner: ModuleType) -> None:
+        """本物の表: 例 1 つ・期待の出力 1 つ・例が require する doeff-hy の macro の module・macro の実行時の半分の module の
+        どれを変えた差分も、変えた所の検の選び(入口と同じ select_targets)が例の検を選ぶ。"""
+        table = runner.read_contract_table(REPO_ROOT)
+        patterns = runner.collector_patterns(REPO_ROOT)
+        examples = REPO_ROOT / EXAMPLES_DIR
+        changed = sorted(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (*examples.glob("*.hy"), *(examples / "expected").glob("*.txt"))
+        )
+        assert any(p.endswith(".hy") for p in changed), f"{EXAMPLES_DIR} に例が無い — 検の前提が崩れた"
+        assert any(p.endswith(".txt") for p in changed), f"{EXAMPLES_DIR}/expected に期待の出力が無い"
+        assert (REPO_ROOT / EXAMPLE_MACROS).is_file(), (
+            f"{EXAMPLE_MACROS} が無い — 例が require する module を直す"
+        )
+        # macro が実行時の半分を別の module へ移したら、ここの module の名と file を直す(古い名のまま緑にしない)。
+        assert f'"{EXAMPLE_MACRO_RUNTIME_MODULE}"' in (REPO_ROOT / EXAMPLE_MACROS).read_text(encoding="utf-8"), (
+            f"{EXAMPLE_MACROS} が実行時の module {EXAMPLE_MACRO_RUNTIME_MODULE} を名指さない — 移した先の module を書く"
+        )
+        assert EXAMPLE_MACRO_RUNTIME.endswith(EXAMPLE_MACRO_RUNTIME_MODULE.replace(".", "/") + ".py"), (
+            EXAMPLE_MACRO_RUNTIME
+        )
+        assert (REPO_ROOT / EXAMPLE_MACRO_RUNTIME).is_file(), f"{EXAMPLE_MACRO_RUNTIME} が無い"
+        unselected = [
+            path
+            for path in (*changed, EXAMPLE_MACROS, EXAMPLE_MACRO_RUNTIME)
+            if EXAMPLES_CHECK
+            not in {
+                target.arg
+                for target in runner.select_targets(
+                    table, runner.ChangeSet(base="", files=(path,)), patterns, REPO_ROOT
+                ).targets
+            }
+        ]
+>       assert unselected == [], (
+            f"例の検 {EXAMPLES_CHECK} を選ばない変更: {unselected} — root の pyproject.toml の [[tool.doeff.contract-tests]]"
+            " で、その path に当たる行の tests に例の検を足す(例の検は例も macro も import しないので、逆依存では選ばれない)"
+        )
+E       AssertionError: 例の検 packages/doeff-traverse/tests/test_examples_run.py を選ばない変更: ['packages/doeff-core-effects/doeff_core_effects/outcomes.py'] — root の pyproject.toml の [[tool.doeff.contract-tests]] で、その path に当たる行の tests に例の検を足す(例の検は例も macro も import しないので、逆依存では選ばれない)
+E       assert ['packages/do.../outcomes.py'] == []
+E         
+E         Left contains one more item: 'packages/doeff-core-effects/doeff_core_effects/outcomes.py'
+E         Use -v to get more diff
+
+tests/test_contract_table_follows_packages.py:158: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-examples-premerge-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_contract_table_follows_packages.py::test_changing_an_example_or_its_macros_selects_the_examples_check
+1 failed, 1 warning in 0.76s
+rc=1
