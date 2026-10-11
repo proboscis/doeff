@@ -879,15 +879,13 @@
   (setv quoted-body (_quoted-forms clauses))
 
   ;; Extra imports needed when lazy is used
-  ;; 型検査のための展開では Get を使わない(名は初期化の値に束ねる — _build-lazy-init-forms)。Put と Some は session var の := だけが
-  ;; 使うので、使わない handler で「import が使われていない」の赤にならない再輸出の綴り(X :as X)で取る(agora-redesign #2293)。
+  ;; 型検査のための展開では Get を使わない(名は初期化の値に束ねる — _build-lazy-init-forms)。Put・Some・キーの session-key は
+  ;; `_doeff_<名>` で引き、doeff-hy-check が module の頭で読む時だけ import する(static_view.py の SESSION_STATIC_IMPORTS)。
+  ;; ここで handler ごとに出すと、:= も set! も無い handler の module で Put / Some が「import が使われていない」の赤になっていた
+  ;; (再輸出の綴り X :as X は Hy が同じ名の別名を落とすので pyright に届かない)。
   (setv lazy-imports
     (cond
-      (not lazy-defs) `(do)
-      (static-view-enabled)
-        `(do (import doeff [Some :as Some])
-             (import doeff_core_effects.effects [Put :as Put])
-             (import doeff-hy.session [session-key :as _doeff-session-key]))
+      (or (not lazy-defs) (static-view-enabled)) `(do)
       True
         `(do (import doeff [Some])
              (import doeff_core_effects.effects [Get Put])

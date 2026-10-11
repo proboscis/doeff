@@ -24,6 +24,9 @@
 - defk の返り値: `:post` の `(: % T)` の T を注記する(agora-redesign #2308 — この展開の defk は yield の無い
   普通の関数なので、自分を呼び直す defk でも答えの型を推論に頼らず読める。実行時の defk は生成器なので付けない・
   macros.hy の `_annotates-return?`)
+- defhandler の session val / session var(agora-redesign #2293 — handle.hy の `_build-lazy-init-forms`): 名は初期化の値に
+  束ねる(Get を使わない)。session var の書き換え(`:=`・旧い `set!`)の Put / Some と初期化のキーの session_key は
+  `_doeff_<名>` で引き、module の頭の補助の import(SESSION_STATIC_IMPORTS)から取る
 
 所見の受け渡し(ADR-DOE-HY-006): val / var の検査のうち展開を止めない物(setv の使用・同じ名前の
 束縛し直し・defhandler の旧い lazy-val / set!)は、macro が `report_findings` に渡す。doeff-hy-check が
@@ -115,6 +118,18 @@ HANDLER_STATIC_NAMES: tuple[str, ...] = (
 #: 型へ読み直す `traverse_item`(macros.hy の _traverse-form)。展開の中では `_doeff_<名>` で引く。
 TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
 
+#: defhandler の session val / session var の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く。
+#: - `Put` と `Some`: session var の書き換え(`:=` — binding_forms.py の `_assign`、旧い `set!` — macros.hy)だけが使う。
+#: - `session_key`: session val / session var の初期化のキーを作る(handle.hy の `_build-lazy-init-forms` — 旧い lazy は使わない)。
+#: handler ごとに import を出すと、:= も set! も無い handler の module で Put / Some が strict の「import が使われていない」の赤に
+#: なり、書き手は直せなかった(agora-controllers の日次 2026-10-11 16:00 の 7 file・14 件)。module の頭の補助の import に載せ、
+#: 読む時だけ置く。名に `_doeff_` を付けるのは、書き手の書いた Put / Some の import と 1 つの名を分け合わないため。
+SESSION_STATIC_IMPORTS: str = (
+    "from doeff import Some as _doeff_Some\n"
+    "from doeff_core_effects.effects import Put as _doeff_Put\n"
+    "from doeff_hy.session import session_key as _doeff_session_key\n"
+)
+
 
 #: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
 #: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
@@ -136,7 +151,7 @@ STATIC_HELPER_IMPORTS: str = (
     "from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, "
     "_doeff_check_program_return\n"
     # deftest の decorator(@pytest.mark.…)が引く pytest(deftest ごとの import が書き手の import と重ならないように)
-    "import pytest as _doeff_pytest\n"
+    "import pytest as _doeff_pytest\n" + SESSION_STATIC_IMPORTS
 )
 
 

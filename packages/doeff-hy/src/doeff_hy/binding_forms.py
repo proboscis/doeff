@@ -609,6 +609,10 @@ class _Walker:
                     f"(session val {name} …) は書き換えられません。書き換えるなら (session var {name} …) で宣言してください。",
                 )
             key = Symbol(f"_lazy_{name}_key")
+            # 型検査のための展開では、doeff-hy-check が module の頭で読む時だけ置く補助の名で引く
+            # (static_view.SESSION_STATIC_IMPORTS)。実行時は defhandler が出す import の Put / Some。
+            put = Symbol("_doeff_Put" if self.static else "Put")
+            some = Symbol("_doeff_Some" if self.static else "Some")
             return _Walked(
                 self._located(
                     Expression(
@@ -618,9 +622,7 @@ class _Walker:
                             Expression(
                                 [
                                     Symbol("yield"),
-                                    Expression(
-                                        [Symbol("Put"), key, Expression([Symbol("Some"), target])]
-                                    ),
+                                    Expression([put, key, Expression([some, target])]),
                                 ]
                             ),
                         ]
