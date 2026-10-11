@@ -487,7 +487,7 @@ REAL_USER = """\
 """
 
 #: 子の process: 写した doeff_hy で使い手を import と同じ口で compile して記録を JSON で書く(record)か、書いた記録を照らす
-#: (check)。読んだ doeff_hy の在りかと、記録の file 単位で覆う module の名も出す。
+#: (check)。読んだ doeff_hy の在りかと、digest を持たない(file の行で比べる)macro の行の名も出す。
 REAL_CHILD = """\
 import importlib.machinery, json, sys
 from pathlib import Path
@@ -502,7 +502,8 @@ if mode == "record":
     loader = importlib.machinery.SourceFileLoader("macro_use_probe.user", path)
     record = records.record_of(source_to_code_as_import(loader, open(path, "rb").read(), path))
     stored.write_text(json.dumps(record_to_json(record)))
-    print(json.dumps({"files": [row.module for row in record.files], "doeff_hy": doeff_hy.__file__}))
+    by_files = [row.module + ":" + row.name for row in record.macros if row.digest is None]
+    print(json.dumps({"by_files": by_files, "doeff_hy": doeff_hy.__file__}))
 else:
     record = record_from_json(json.loads(stored.read_text()))
     print(json.dumps({"current": record_is_current_here(record), "doeff_hy": doeff_hy.__file__}))
@@ -561,9 +562,11 @@ def real_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RealTree:
 
 def test_the_record_of_a_defk_user_does_not_cover_doeff_hy_macros_by_its_file(real_tree: RealTree) -> None:
     # 直す前は赤(agora の records_turns.hy の記録): defk などの閉包の途中で、関数の中の import の先(outcome_forms・
-    # declarations・defhandler が読む doeff_hy.macros)を module ごと file 単位で覆い、macros.hy が入っていた。
-    files = real_tree.run("record")["files"]
-    assert "doeff_hy.macros" not in files, files
+    # declarations・defhandler が読む doeff_hy.macros)を module ごと file 単位で覆い、macros.hy が入っていた。記録の file の行
+    # (閉包が依った module の file — macros.hy も入る)は、digest を持たない行がある時だけ比べるので、全部の行が digest を持つ
+    # (読み込みの済んだ状態で作った)ことを確かめる。macros.hy の別の行を替えても古くないことは次の検が確かめる。
+    by_files = real_tree.run("record")["by_files"]
+    assert by_files == [], by_files
 
 
 def test_a_changed_deftest_keeps_the_record_of_a_defk_user_current(real_tree: RealTree) -> None:
@@ -675,20 +678,22 @@ REAL_DEFF_USER = """\
 """
 
 #: 子の process(import の順を変える): 名指した macro(module:名)の digest を順に計算する(digests)・使い手の記録を作る
-#: (record)・名指した macro の digest を先に計算してから記録を照らす(check)・module を順に import して compile した Hy の
-#: file を出す(import)。
+#: (record)・名指した macro の digest を先に計算してから記録を照らす(check)・module を順に import して compile し終えた Hy の
+#: file を出す(import — 循環する import の途中で require が落ちた compile は何も作らないので数えない)。
 ORDER_CHILD = """\
 import importlib, importlib.machinery, json, sys
 from pathlib import Path
 root, stored, mode, *names = sys.argv[1], Path(sys.argv[2]), sys.argv[3], *sys.argv[4:]
 sys.path.insert(0, root)
 import hy
-compiled = []
+compiled = ()
 previous = importlib.machinery.SourceFileLoader.source_to_code
 def counting(self, data, path, *args, **kwargs):
+    global compiled
+    code = previous(self, data, path, *args, **kwargs)
     if isinstance(path, str) and path.endswith(".hy"):
-        compiled.append(Path(path).name)
-    return previous(self, data, path, *args, **kwargs)
+        compiled = (*compiled, Path(path).name)
+    return code
 importlib.machinery.SourceFileLoader.source_to_code = counting
 import doeff_hy
 from doeff_hy_bytecode_guard import loader_hooks, macro_use, record_from_json, record_is_current_here, record_to_json
@@ -754,7 +759,8 @@ def test_the_digest_of_deff_does_not_depend_on_computing_defrecord_and_defwire_f
     _order_child(real_tree, "import", "doeff_hy.record", "doeff_hy.wire")  # .pyc を作る(日次の 2 回目からの形)
     alone = _order_child(real_tree, "digests", DEFF)["digests"]
     after = _order_child(real_tree, "digests", DEFRECORD, DEFWIRE, DEFF)["digests"]
-    assert isinstance(alone, list) and isinstance(after, list)
+    assert isinstance(alone, list), alone
+    assert isinstance(after, list), after
     assert alone[0] is not None, "単独の process で deff の digest を作れない"
     assert after[-1] == alone[0], (
         f"先に defrecord・defwire の digest を計算した process の deff の digest {after[-1]} が単独の {alone[0]} と違う"
@@ -788,17 +794,19 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
     # 2 巡目からも毎回 record.hy・outcome_forms.hy・wire.hy・clause_endings.hy を作り直して置き場を書き直した。
     store = tmp_path / "store"
     store.mkdir()
-    rounds: list[tuple[str, object]] = []
-    for index in range(4):
-        order = RECORD_FIRST if index % 2 == 0 else DEFF_USER_FIRST
-        answer = _order_child(
-            real_tree,
-            "import",
-            *order,
-            DOEFF_HY_CODE_STORE=str(store),
-            PYTHONPYCACHEPREFIX=str(tmp_path / f"pycache-{index}"),
+    rounds = tuple(
+        (
+            order[0],
+            _order_child(
+                real_tree,
+                "import",
+                *order,
+                DOEFF_HY_CODE_STORE=str(store),
+                PYTHONPYCACHEPREFIX=str(tmp_path / f"pycache-{index}"),
+            )["compiled"],
         )
-        rounds.append((order[0], answer["compiled"]))
+        for index, order in enumerate((RECORD_FIRST, DEFF_USER_FIRST) * 2)
+    )
     assert rounds[0][1], "1 巡目(冷えた置き場)で何も compile していない — 検の前提が崩れた"
     again = [(first, compiled) for first, compiled in rounds[2:] if compiled]
     assert not again, f"2 巡目からも Hy の module を作り直した: {again}(全部の回: {rounds})"

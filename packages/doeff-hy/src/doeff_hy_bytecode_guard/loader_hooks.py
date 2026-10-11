@@ -110,8 +110,8 @@ def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
 
 def record_is_current_here(record: "MacroRecord") -> bool:
     """記録が、今の Hy の版と今の環境の macro に合うか — 使った macro を module 名から今の環境で引き直し(定義した module を
-    import する — 引けなければ古い)、その code の閉包の digest を比べる。file 単位で覆う module は import せずに file の sha256 を
-    比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
+    import する — 引けなければ古い)、その code の閉包の digest を比べる。記録か今の歩みが import の途中の module に当たった行は、
+    digest でなく閉包が依った module の file の sha256 を import せずに比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
     準備が前の root から hardlink で引き継ぐ物 — agora-redesign #2598)や保存先の code も今の木の macro で照らす。.pyc の記録と、
     展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の保存(doeff_hy.static_cache)が同じ 1 つの
     照らし方を使うための公開の口。"""
