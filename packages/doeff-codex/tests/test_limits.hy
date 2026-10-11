@@ -99,6 +99,34 @@
   (assert (= end.usage-limit (UsageLimitHit :minutes 300 :resets-at FIVE-HOURS-AT :text TEXT)) end))
 
 
+(deftest test-a-rate-limit-update-read-right-after-turn-started-joins-that-turn
+  ;; 失敗ケース(依頼 lt-0BC9J56TE8QA3VH1FZNJD3F4FS・設計検証 lt-H32P81572MAR6ANS1EAQJRXAAQ の盲検 B): 続きの会話で、前のターン u0 が
+  ;; 終わって走っているターンの印がまだ u0 を指す間に、読みの thread が turn/started(u1)を読み、続けて枠の知らせを読む(turn/start の
+  ;; 答えはまだ読んでいない)。枠の知らせは u1 に積まれ(終わった u0 にも outside にも落ちない)、u1 の失敗の終わりが利用枠切れの事実を
+  ;; 運ぶ(読みの thread と同じ順で absorb を呼ぶ — 答えを待つ側は何もしない)。
+  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                                 :sandbox SandboxMode.READ-ONLY)))
+  (for [line [{"id" 3 "result" {"turn" {"id" "u0" "status" "inProgress"}}}
+              {"method" "turn/started" "params" {"threadId" "t1" "turn" {"id" "u0" "status" "inProgress"}}}
+              {"method" "turn/completed" "params" {"threadId" "t1" "turn" {"id" "u0" "status" "completed"}}}
+              {"method" "turn/started" "params" {"threadId" "t1" "turn" {"id" "u1" "status" "inProgress"}}}
+              {"method" "account/rateLimits/updated"
+               "params" {"rateLimits" {"limitId" "codex" "secondary" None
+                                       "primary" {"usedPercent" 100 "windowDurationMins" 300 "resetsAt" FIVE-HOURS-AT}}}}
+              {"method" "error"
+               "params" {"error" {"message" TEXT "codexErrorInfo" "usageLimitExceeded"} "willRetry" False "threadId" "t1"
+                         "turnId" "u1"}}
+              {"method" "turn/completed"
+               "params" {"threadId" "t1" "turn" {"id" "u1" "status" "failed"
+                                                 "error" {"message" TEXT "codexErrorInfo" "usageLimitExceeded"}}}}]]
+    (<- record (classify-line (json.dumps line)))
+    (<- (absorb runtime record)))
+  (assert (= runtime.outside #()) runtime.outside)
+  (assert (= (. (get runtime.turns "u0") limits) #()) (. (get runtime.turns "u0") limits))
+  (val end (. (get runtime.turns "u1") end))
+  (assert (= end.usage-limit (UsageLimitHit :minutes 300 :resets-at FIVE-HOURS-AT :text TEXT)) end))
+
+
 (deftest test-the-codex-layer-names-windows-by-their-length
   ;; 層 2 は窓を長さ(分)で名乗り、上の層の窓の名(claude の CLI の綴り five_hour・seven_day)を持たない — 名の表は doeff-agents の
   ;; adapter の 1 か所(層 2 の fake が名で筋書きを受けると、名の表の逆が層 2 に 2 つ目の定義として入る — 設計検証の盲検 B)。
