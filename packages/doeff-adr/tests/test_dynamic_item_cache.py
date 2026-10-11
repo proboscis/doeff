@@ -173,6 +173,66 @@ def test_runtime_mismatch_fails_before_body_and_forgets_cache(
     assert not cache_path(project).exists()
 
 
+READS_CONFTEST = """
+import collections
+import pathlib
+import pytest
+from doeff import run
+
+_reads = collections.Counter()
+_read_bytes = pathlib.Path.read_bytes
+
+
+def _counting_read_bytes(self):
+    _reads[self.name] += 1
+    return _read_bytes(self)
+
+
+pathlib.Path.read_bytes = _counting_read_bytes
+
+
+def pytest_terminal_summary(terminalreporter):
+    terminalreporter.write_line(f"inputs.py を読んだ回数 {_reads['inputs.py']}")
+
+
+@pytest.fixture
+def doeff_interpreter_name():
+    return "default"
+
+
+@pytest.fixture
+def doeff_interpreter(doeff_interpreter_name):
+    return run
+"""
+
+
+def test_two_dynamic_files_in_one_collection_read_each_loaded_source_once(dynamic_project: pytest.Pytester) -> None:
+    """失敗ケース(card ki-b2383fcc8b25・agora-controllers の日次 2026-10-11 12:00): 実値の記録を書くたびに、読み込み済みの local source を
+    全部読み直して hash を取っていた。読み込んだ module は session が進むほど増えるので、実値の file の import の区間の CPU が file の位置と
+    ともに増え、doeff-hy-pytest の読み込みの上限 1 秒を負荷の高い回だけ越えた(表の 13 本のうち 9 本)。収集 1 回の中では、同じ source を
+    1 度だけ読む。"""
+    project: pytest.Pytester = dynamic_project
+    (project.path / "pkg/test_dynamic_b.hy").write_text(SOURCE + ";; 2 本目(中身の hash を変えて、記録の cache に当てない)\n")
+    project.makeini(
+        """
+        [pytest]
+        pythonpath = .
+        doeff_adr_hy_files =
+            pkg/test_dynamic.hy
+            pkg/test_dynamic_b.hy
+        doeff_adr_wiring = off
+        doeff_adr_items_cache = items
+        """
+    )
+    project.makeconftest(READS_CONFTEST)
+    result: pytest.RunResult = project.runpytest_subprocess(
+        "pkg/test_dynamic.hy", "pkg/test_dynamic_b.hy", "--collect-only", "-q"
+    )
+    assert "収集で import 2 file" in result.stdout.str(), result.stdout.str()
+    assert len(list((project.path / "items").glob("*.json"))) == 2
+    assert "inputs.py を読んだ回数 1" in result.stdout.str(), result.stdout.str()
+
+
 def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Path) -> None:
     """stat の速い経路・stamp だけの変化での hash の取り直し・同じ大きさの書き換え。速い経路は、file の最後の変更が記録の時刻より
     RACY_WINDOW_NS 以上前の記録だけに効く(card ki-5b70c4b62814)— 記録の時刻は渡して決める(書いた直後の本物の時刻では、どの記録も
