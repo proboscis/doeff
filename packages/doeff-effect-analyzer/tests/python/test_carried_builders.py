@@ -188,3 +188,18 @@ def test_doeff_traverse_sequential_is_followed() -> None:
     ]
     assert clauses
     assert all(c.emits.unresolved == () for c in clauses), [c.emits.unresolved for c in clauses]
+
+
+@pytest.mark.parametrize("name", ["sequential", "parallel", "parallel_fail_fast"])
+def test_doeff_traverse_item_outcomes_stay_inside_the_handler(name: str) -> None:
+    """The Traverse handlers report each item's outcome (``ItemOutcome``, card ki-e3a936788353)
+    under the inner handlers and then under themselves, which answer it — so no clause emits
+    it past the handler.  A clause that did would leave ``ItemOutcome`` unanswered in every
+    stack installing the handler (a foundation closure check reports it as a gap, whether or
+    not anything counts outcomes)."""
+    from doeff_traverse import handlers
+    from doeff_traverse.effects import ItemOutcome
+
+    read = analyze_handler(getattr(handlers, name)(), name=name)
+    assert ItemOutcome in read.handled
+    assert [c.handles.__name__ for c in read.clauses if ItemOutcome in c.emits.effect_types] == []
