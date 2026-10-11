@@ -802,7 +802,11 @@ def _hy_binding(forms: tuple[object, ...], name: str) -> Binding:
     )
     return Binding(
         statements=tuple(
-            Statement(
+            # import の form は Python の import の文と同じく読む名を持たない(束縛は imports で辿る — 同じ form が import する
+            # 兄弟の名を読む名として辿らない)。
+            Statement(hy.repr(form), (), ())
+            if _hy_head(form) in _HY_IMPORTS
+            else Statement(
                 hy.repr(form),
                 tuple(sorted({_hy_names(symbol)[0] for symbol in symbols})),
                 tuple(sorted({part for symbol in symbols for part in _hy_names(symbol)[1:]})),
