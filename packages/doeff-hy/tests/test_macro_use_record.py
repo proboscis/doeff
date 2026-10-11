@@ -1144,9 +1144,11 @@ SCOPE_FILES = {
     "top.hy": "".join(f"(import {{pkg}}.{user})\n" for user in SCOPE_USERS),
 }
 
-#: 子の process: 名指した module を順に import する(名ごとに一番外の読み込み 1 つ)。間に file を書き換える指図(``edit:<file>:<前>:<後>``)を
-#: 挟める。答え = 覚えた digest の確かめが file を stat した回数(file 名ごと — macro_use._file_state)と、compile した Hy の file と、
-#: import した module の値 ``value``(在れば — 展開の結果)。
+#: 子の process: 名指した module を順に import する(名ごとに一番外の読み込み 1 つ)。間に file を書き換える指図(``edit:<file>:<前>:<後>``)・
+#: module を読み直す指図(``reload:<module>``)・読み込みの中で起きた読み手に import させる指図(``<server の module>:<thread か
+#: context>:<module>`` — server の module が置いた ``requests``・``answers``・``CONTEXT``)を挟める。答え = 覚えた digest の確かめが
+#: file を stat した回数(file 名ごと — macro_use._file_state)と、compile した Hy の file と、import した module の値 ``value``(在れば
+#: — 展開の結果)。
 SCOPE_CHILD = """\
 import importlib, importlib.machinery, json, sys
 from pathlib import Path
@@ -1176,6 +1178,17 @@ for step in steps:
         target = Path(root) / package / name
         target.write_text(target.read_text().replace(old, new))
         importlib.invalidate_caches()
+    elif step.startswith("reload:"):
+        importlib.reload(importlib.import_module(f"{package}.{step.split(':')[1]}"))
+    elif step.count(":") == 2:
+        server, reader, name = step.split(":")
+        server = sys.modules[f"{package}.{server}"]
+        if reader == "thread":
+            server.requests.put(f"{package}.{name}")
+            module = server.answers.get(timeout=30)
+        else:
+            module = server.CONTEXT.run(importlib.import_module, f"{package}.{name}")
+        values[name] = module.value
     else:
         module = importlib.import_module(f"{package}.{step}")
         if hasattr(module, "value"):
@@ -1322,4 +1335,42 @@ def test_a_helper_built_by_a_changed_macro_of_another_file_is_stale(
     answer = tree.run("user")
     assert "user.hy" in answer["compiled"] and answer["values"] == {"user": 10}, (
         f"helper を作る macro を替えたのに、使い手を今に合うと判じた: {answer}"
+    )
+
+
+#: 盲検 A の付録の package — server.py は一番外の読み込みの中で user_0 を照らし(覚えと file の状態の写しができる)、読み込みの中で
+#: thread を起こし(free-threaded の 3.14 では起こした側の context を継ぐ — sys.flags.thread_inherit_context)、context を写す。
+SERVED_FILES = {
+    "__init__.py": "",
+    "tables.py": 'ROWS = {{}}\nROWS["a"] = 1\n',
+    "macros.hy": '(import {pkg}.tables :as tables)\n(defmacro rows [] (get tables.ROWS "a"))\n',
+    "user_0.hy": "(require {pkg}.macros [rows])\n(setv value (rows))\n",
+    "user_1.hy": "(require {pkg}.macros [rows])\n(setv value (rows))\n",
+    "server.py": (
+        "import contextvars, importlib, queue, threading\n"
+        "import {pkg}.user_0\n"
+        "requests, answers = queue.Queue(), queue.Queue()\n"
+        "def serve():\n"
+        "    while (name := requests.get()) is not None:\n"
+        "        answers.put(importlib.import_module(name))\n"
+        "threading.Thread(target=serve, daemon=True).start()\n"
+        "CONTEXT = contextvars.copy_context()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("reader", ["thread", "context"])
+def test_an_import_after_the_outer_import_ended_does_not_use_its_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: str
+) -> None:
+    # 直す前は赤(盲検 A の付録 — card ki-be596ac8276f の読み込みの覚えが入れた・基準版 cf7ea9cc0 は緑): 一番外の読み込みの中で
+    # 起きた thread と写した context は、読み込みが終わった後も覚え(file の状態の写しと確かめた digest)を持ち続けた。tables.py を
+    # 書き換えて reload した後(表は 100)に user_1 を読むと、古い写しで覚えを確かめて今に合うと判じた(値 1 のまま・compile しない)。
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_served", SERVED_FILES)
+    tree.run("user_0", "user_1")
+    answer = tree.run(
+        "server", 'edit:tables.py:ROWS["a"] = 1:ROWS["a"] = 100', "reload:tables", f"server:{reader}:user_1"
+    )
+    assert "user_1.hy" in answer["compiled"] and answer["values"] == {"user_1": 100}, (
+        f"読み込みの中で起きた {reader} が、読み込みの後に reload した表を古い写しで今に合うと判じた: {answer}"
     )
