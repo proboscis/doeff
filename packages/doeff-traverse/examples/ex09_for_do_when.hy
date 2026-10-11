@@ -9,7 +9,7 @@
 ;;; Same pipeline, SQL-like reading:
 ;;;   SELECT process(item) FROM items WHERE predicate(item)
 
-(require doeff-hy.macros [defk <- for/do fold])
+(require doeff-hy.macros [defk <- for/do])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 
@@ -18,6 +18,7 @@
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (import doeff_traverse [Skip :as _doeff_traverse_Skip])
+(import doeff_traverse.collection [Collection])
 (import doeff_traverse.effects [Inspect SortBy Take])
 (import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
 (import doeff_traverse.helpers [try-call :as try_call])
@@ -40,6 +41,8 @@
 ;; ===========================================================================
 
 (defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % dict)]}
   ;; Stage 1: for/do with From and When — filter + transform in one comprehension
   (<- results
     (for/do
@@ -66,10 +69,14 @@
 
 ;; Effectful predicate — could perform effects (e.g., check DB, call API)
 (defk check-eligible [item]
+  {:pre [(: item dict)]
+   :post [(: % bool)]}
   ;; In real code this might be an effect like (CheckEligibility item)
   (and (get item "active") (>= (get item "score") 50)))
 
 (defk pipeline-bang [items]
+  {:pre [(: items list)]
+   :post [(: % Collection)]}
   ;; When + bang: effectful predicate inlined
   (<- results
     (for/do
