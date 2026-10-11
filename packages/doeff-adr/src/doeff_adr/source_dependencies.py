@@ -66,6 +66,15 @@ def local_source(origin: str, root: Path) -> Path | None:
     return None
 
 
+def loaded_origins() -> frozenset[str]:
+    """今読込済みの module の file の名(``__file__``)— 読みも path の解きもしない(import の区間の中で呼ぶため)。"""
+    return frozenset(
+        origin
+        for module in tuple(sys.modules.values())
+        if module is not None and isinstance(origin := vars(module).get("__file__"), str)
+    )
+
+
 @dataclass(frozen=True)
 class LoadedSource:
     """読込済みの local source 1 つ — 並べる鍵の解いた path と、その記録。"""
@@ -96,7 +105,7 @@ class DependencyChecks:
     macro の提供元も同じく、module 名ごとに 1 度だけ調べる — 記録の file の多く(agora では 420 file)が同じ 9 個ほどの
     提供元を指し、file ごとに調べ直すと 3,700 回の stat と path の生成になっていた(agora-redesign #1551)。
 
-    実値の記録に残す読込済みの local source も、module の file ごとに 1 度だけ解いて読み hash を取る(``loaded_sources``)— 実値の
+    実値の記録に残す読込済みの local source も、module の file ごとに 1 度だけ解いて読み hash を取る(``sources_of``)— 実値の
     file ごとに全部を読み直すと、読み込んだ module の数(session が進むほど増える)に比例した費用が import の区間に乗り、
     doeff-hy-pytest の読み込みの上限を session の後ろの file だけが越えた(card ki-b2383fcc8b25)。root は収集 1 回で 1 つ。
     """
@@ -119,13 +128,9 @@ class DependencyChecks:
             self._mut_providers[module] = known
         return known
 
-    def loaded_sources(self, root: Path) -> SourceSnapshot:
-        """実値を作った時点で読込済みのlocal sourceを記録する。importを追加しない。"""
-        origins: set[str] = {
-            origin
-            for module in tuple(sys.modules.values())
-            if module is not None and isinstance(origin := vars(module).get("__file__"), str)
-        }
+    def sources_of(self, origins: frozenset[str], root: Path) -> SourceSnapshot:
+        """実値を作った時点で読込済みだった module の file(``loaded_origins`` で集めた名)のうち、root の中の local source の記録。
+        importを追加しない。"""
         found: dict[Path, SourceDependency] = {
             loaded.path: loaded.dependency
             for origin in origins

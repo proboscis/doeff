@@ -34,6 +34,7 @@ from doeff_adr.source_dependencies import (
     ProviderState,
     SourceDependency,
     SourceSnapshot,
+    loaded_origins,
 )
 
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
@@ -247,28 +248,44 @@ def _read_runtime_entry(
     return CacheHit(tuple(decode_records(entry.records)), entry.fixtures)
 
 
-def write_cached(
+@dataclass(frozen=True)
+class PendingEntry:
+    """import した直後に照合した記録 1 つ — 書くのは収集の終わり。書き込みと、読込済みの source の読みと hash は、doeff-hy-pytest の
+    読み込みの上限が測る import の区間の外で行う(収集の道具の費用で、検の file の重さではない — card ki-b2383fcc8b25)。
+    origins = 実値の記録が依存する、import した時点で読込済みだった module の file(静的な記録は空)。"""
+
+    source: Path
+    module: types.ModuleType
+    fixtures: tuple[FixtureRecord, ...]
+    records: tuple[Record, ...]
+    origins: frozenset[str]
+
+
+def pending_entry(
     source: Path,
     module: types.ModuleType,
     fixtures: tuple[FixtureRecord, ...],
-    cache_dir: Path,
     records: tuple[Record, ...],
-    root: Path,
     dynamic: bool,
-    checks: DependencyChecks,
-) -> None:
-    """照合済みの記録を保存する。動的な値には読込済みのlocal sourceも記録する(収集 1 回の観測 checks を通して、同じ source は 1 度だけ読む)。"""
-    entry_path = _entry_path(source, cache_dir)
+) -> PendingEntry:
+    """照合済みの記録を、書くまで持つ形にする。実値の記録なら、この時点で読込済みの module の file の名だけを集める(読まない)。"""
+    return PendingEntry(source, module, fixtures, records, loaded_origins() if dynamic else frozenset())
+
+
+def write_cached(pending: PendingEntry, cache_dir: Path, root: Path, checks: DependencyChecks) -> None:
+    """照合済みの記録を保存する。実値の記録には、import した時点で読込済みだった local source も記録する(収集 1 回の観測 checks を
+    通して、同じ source は 1 度だけ読む)。"""
+    entry_path = _entry_path(pending.source, cache_dir)
     entry_path.parent.mkdir(parents=True, exist_ok=True)
     dependencies = tuple(
         MacroDependency(dependency.module, dependency.sha256)
-        for dependency in macro_dependencies(module, module.__file__ or str(source))
+        for dependency in macro_dependencies(pending.module, pending.module.__file__ or str(pending.source))
     )
-    sources: tuple[SourceDependency, ...] = checks.loaded_sources(root).sources if dynamic else ()
+    sources: tuple[SourceDependency, ...] = checks.sources_of(pending.origins, root).sources
     entry = CacheEntry(
-        CACHE_FORMAT, tuple(encode_records(records)), dependencies, fixtures, sources
+        CACHE_FORMAT, tuple(encode_records(pending.records)), dependencies, pending.fixtures, sources
     )
-    _write_entry(entry_path, entry, source)
+    _write_entry(entry_path, entry, pending.source)
 
 
 def _write_entry(entry_path: Path, entry: CacheEntry, source: Path) -> None:
