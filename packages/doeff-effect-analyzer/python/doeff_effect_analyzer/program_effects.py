@@ -51,6 +51,7 @@ treated as handling nothing, so what it might absorb is still reported).
 import ast
 import collections
 import contextlib
+import contextvars
 import functools
 import hashlib
 import importlib
@@ -65,7 +66,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from doeff_effect_analyzer import env_places
 
@@ -451,7 +452,43 @@ def module_ast(module: types.ModuleType) -> ast.Module:
     return _module_source(module).definitions.tree
 
 
+# The names of the modules whose source was read inside ``reading_sources`` (None outside it).
+_SOURCES_READ: contextvars.ContextVar[frozenset[str] | None] = contextvars.ContextVar(
+    "doeff_effect_analyzer_sources_read", default=None
+)
+
+_Answer = TypeVar("_Answer")
+
+
+@dataclass(frozen=True)
+class SourcesRead(Generic[_Answer]):
+    """An analysis' answer and the modules whose source it read — what the result cache keys the
+    answer on."""
+
+    value: _Answer
+    read: frozenset[str]
+
+
+def reading_sources(compute: Callable[[], _Answer]) -> SourcesRead[_Answer]:
+    """``compute()`` and the names of the modules whose source it read — from the disk, the
+    expanded-tree cache or this process's cache alike (the result cache keys an answer on them).
+    A ``reading_sources`` around this one sees these names too."""
+    token = _SOURCES_READ.set(frozenset())
+    try:
+        value = compute()
+        read = _SOURCES_READ.get() or frozenset()
+    finally:
+        _SOURCES_READ.reset(token)
+    outer = _SOURCES_READ.get()
+    if outer is not None:
+        _SOURCES_READ.set(outer | read)
+    return SourcesRead(value=value, read=read)
+
+
 def _module_source(module: types.ModuleType) -> _ModuleSource:
+    read = _SOURCES_READ.get()
+    if read is not None:
+        _SOURCES_READ.set(read | {module.__name__})
     cached = _MODULE_CACHE.get(module.__name__)
     if cached is not None and cached.module is module:
         return cached

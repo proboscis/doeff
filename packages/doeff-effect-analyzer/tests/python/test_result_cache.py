@@ -324,7 +324,7 @@ def test_only_objects_found_again_by_their_name_are_named() -> None:
 # --- The key is the modules the answer depends on (ki-30d28550680c) ---------------------------------
 # A test session loads hundreds of test files the closure analysis never reads; the key named every
 # loaded module, so a change in any of them (and ``conftest`` / ``__mp_main__``, named alike in every
-# session) made the next session analyze in full (20–60 s per closure test). The key is the modules
+# session) made the next session analyze in full (20-60 s per closure test). The key is the modules
 # whose source the analysis read and the modules their values were built from.
 
 
@@ -437,16 +437,17 @@ def test_a_package_submodule_is_in_the_key_only_when_a_read_module_uses_it(
 ) -> None:
     """``import pkg.inner`` binds ``pkg``; every loaded submodule hangs on ``pkg``, but only the one
     the read module uses is in the key — a sibling loaded by other tests is not."""
+    sibling_name = ".".join(("result_key_pkg", unrelated_name("sibling")))
     write(modules, "result_key_pkg.__init__", "")
     inner = write(modules, "result_key_pkg.inner", "VALUE = 1\n")
-    sibling = write(modules, "result_key_pkg.sibling", "VALUE = 1\n")
+    sibling = write(modules, sibling_name, "VALUE = 1\n")
     write(
         modules,
         "result_key_job",
         "import result_key_pkg.inner\n\ndef job():\n    return result_key_pkg.inner.VALUE\n",
     )
     importlib.import_module("result_key_job")
-    importlib.import_module("result_key_pkg.sibling")
+    importlib.import_module(sibling_name)
     analysis = Counting("result_key_job")
     rc.cached_result(IDENTITY, analysis)
     sibling.write_text("VALUE = 2\n", encoding="utf-8")
