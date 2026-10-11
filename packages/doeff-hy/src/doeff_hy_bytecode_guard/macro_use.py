@@ -375,6 +375,19 @@ def _remembered(
         and all(_file_state(state.path) == state for state in remembered.files)
     ):
         return remembered.closure
+    # 素朴な形(着地させない — card ki-38508e6e56fd の条 1〜3 が赤になることを示すため): 前の process が置き場に覚えた digest を、
+    # 辿った file の状態(path・更新時刻・大きさ)が同じなら信じる。
+    naive = _naive_entry(key)
+    if remembered is None and naive is not None:
+        import marshal
+
+        from doeff_hy_bytecode_guard import code_store
+
+        data = code_store.read_entry(naive)
+        if data is not None:
+            digest, modules, states = marshal.loads(data)
+            if all(_file_state(path) == FileState(path, mtime, size) for path, mtime, size in states):
+                return ClosureDigest(digest, tuple(modules))
     walker = _Walker(sha256_of)
     walk(walker)
     digest = walker.digest()  # 文字列の定数の名の属性を入れ終える(そこでも import の途中の module に当たりうる)
@@ -388,7 +401,30 @@ def _remembered(
         state for path in sorted(walker.files.values()) if (state := _file_state(path)) is not None
     )
     _REMEMBERED[key] = RememberedDigest(subject, states, closure)
+    if naive is not None:
+        import marshal
+
+        from doeff_hy_bytecode_guard import code_store
+
+        code_store.write_entry(
+            naive,
+            marshal.dumps(
+                (digest, modules, tuple((s.path, s.mtime_ns, s.size) for s in states))
+            ),
+        )
     return closure
+
+
+def _naive_entry(key: "UsedMacroKey | ValueReference") -> str | None:
+    """素朴な形の digest の entry(鍵 = macro の在処だけ)。"""
+    from doeff_hy_bytecode_guard import code_store
+
+    store = code_store.store_dir()
+    if store is None:
+        return None
+    return code_store.entry_path(
+        store, code_store.content_key(("naive-digest", repr(key)), b""), ".digest"
+    )
 
 
 def _file_state(path: str) -> FileState | None:
