@@ -78,10 +78,10 @@ dir の下(1 か所の定義 = `project::hy_files::walked`)。
 - **既知の一覧を持たない規則**(登録簿で下げない規則 — DOEFF206〜209): path を名指した実行(commit の hook の stage した file・登録の前の
   変えた所の検査)では、名指しの下のその規則の critical を、基点に同じ識別子が在っても全部 `new_critical` に入れる — 変えた file に
   当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)(agora-redesign #3834)。
-  repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook の repo 全体の比べに回り、そこで HEAD の木との鍵の差に、stage した
-  path に在るこの規則の critical を足す(判定は同じ 1 か所 `baseline::blocks_regardless_of_baseline`)。
+  repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook では当てず、repo 全体の検証が見る(card ki-7da14032cf9c — 下の
+  「commit の hook が当てる範囲」)。
   commit の hook は止める当たりを HEAD の版に同じ識別子が在るかで分けて書く(`commit_hook::split_by_head` — 止める判断は変えない):
-  無い物は「HEAD に無い critical: <識別子>」「repo 全体の規則の HEAD に無い当たり: <識別子>」、在る物は
+  無い物は「HEAD に無い critical: <識別子>」、在る物は
   「変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): <識別子>」と書き、後者が在れば
   「この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)」を 1 行足す(既存の当たりにも「HEAD に無い」と書いていて、
   hook の不具合と読まれた・agora-redesign #3834)。
@@ -214,7 +214,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
 | `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節。DOEFF174 の到達も同じ `max_depth`)・`domain_layers`(DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り) | protocol・intent・8・domain_layers は core・intent のうち宣言に在る層 |
-| `commit_hook` | `whole_repo_rules`(`--commit-hook` が stage した path でなく repo 全体に当て、HEAD の木と比べる規則 — 当たりが変更の外の file に付く物。列に DOEFF166 が在れば、登録簿の行が名指す規則も同じ実行で当てるので、列だけで当たらない行を見逃さない・agora-redesign #2033)・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」・agora-redesign #1989・#3834) | なし・20 |
+| `commit_hook` | `whole_repo_rules`(退役した鍵 — 読まずに 1 行で名乗る。repo 全体が要るかは規則が名乗り、hook はその規則を当てない・agora-redesign #2090・card ki-7da14032cf9c)・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」・agora-redesign #1989・#3834) | なし・20 |
 | `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
 | `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
 | `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 下の「既定の重大さ」の表、表に無い規則は規則そのものの重さから(error = major・warning = minor・info = info) |
@@ -224,6 +224,19 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 `--commit-hook` を撃つ linter は、各 repo が pin した doeff の commit の断面から機体で 1 度だけ組んだ物を使う — 組み立ての入口は
 `packages/doeff-linter/scripts/linter_snapshot.py`(`uv run --script <path> <doeff の checkout> <commit>` が置き場の binary の path を
 印字する・組めなければ 1 で終わり、呼び手は自分の環境の linter へ戻る・agora-redesign #1582・#2001)。repo は組み立てを写して持たない。
+
+### commit の hook が当てる範囲(card ki-7da14032cf9c・cisco-c8 の決め 2026-10-11)
+
+`--commit-hook` は、有効な規則のうち file 1 つの中身と設定だけで決まる規則(`--split-rules` の `quick` — 宣言の file を変えたかを問わない)
+だけを、stage した path と、その HEAD の版(stage で消した file の HEAD の版を含む)に当てる。repo 全体(path `.`)は測らない。
+
+- 当てない物: repo 全体が要ると名乗る規則(`--list-rules` の `whole_repo` が真の規則)の当たり — stage した file の中の物も、変更の外の
+  file(architecture.hy・登録簿の表・別の source)に付く物も。宣言の file を変えた commit の、stage していない file に付く当たり。
+  どれも repo 全体の検証(各 repo の日次 — agora-controllers は 4 時間ごと)が見る。
+- 訳: repo 全体の比べ(先端の木と HEAD の木を repo 全体で測る)は agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB かかり、日次の赤を
+  直す 23 会話が同時に commit して機体を埋めた(zeus の load 102/24 core・swap 全部 — 2026-10-11)。repo 全体の規則は file 1 つに
+  当てても repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒・42 規則の合計で約 20 秒)ので、stage した path に当てる形でも軽くならない。
+- 門の口 `--split-rules` の分け(宣言の file を変えた変更は全部の規則を `whole` へ)は変えない — 呼び手が repo 全体の比べに使う。
 
 ### commit の hook の上限(agora-redesign #3834・元の issue #2723)
 
@@ -237,7 +250,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   子の CPU 秒を読めない)`・`wall の予備の上限 M 秒で打ち切った(…CPU を使わずに終わらない子)`)。
 
 - 打ち切った時は終了コード 1 で commit を止める(以前は 0 で通していて、作業役は通った commit を確かめ直さず、宣言の file を変えた
-  commit の DOEFF167 の当たりが main に入った)。stage した file の当たりが測れていれば、それも並べて出す。
+  commit の DOEFF167 の当たりが main に入った)。
 - 止める時の stderr は 3 行(頭は `doeff-linter commit-hook: `):
   1. どの比べを・どの木で・どの規則を・どの物差しの何秒の上限で打ち切ったか(`…を測れなかった — …の子の linter をCPU 秒の上限 N 秒で打ち切った。
      この規則の当たりを確かめていないので commit を止める…`)。
@@ -246,8 +259,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
      `--commit-hook-timeout-s 0` を足した 1 行。shell にそのまま貼れる形(空白などを含む語は ' で囲む)。
   3. `この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない`
 - 打ち切られなかった時の判じは変わらない。
-- cache の無い 1 回目は agora-controllers で CPU 約 66 秒かかり、既定の 20 秒の上限では止まる。HEAD の木は cache の根に repo ごとに
-  1 つ置いて差分で進めるので(#3858)、2 回目からは変わった file だけを読み直す。
+- HEAD の版を測る木は cache の根に repo ごとに 1 つ置いて差分で進めるので(#3858)、2 回目からは変わった file だけを書き換える。
 
 ### 既定の重大さ(agora-redesign #1041)
 
