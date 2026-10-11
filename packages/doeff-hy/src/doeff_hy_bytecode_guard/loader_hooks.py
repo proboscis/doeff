@@ -37,7 +37,7 @@ SourceToCode = Callable[..., CodeType]
 #: 包んだかどうか(process に 1 つ)。包みは process の ``SourceFileLoader`` という 1 つの共有物を書き換えるので、
 #: 持ち主はこの module 1 つ。
 #: .pth(起動時の 1 thread)と ``import doeff_hy``(import の lock の中)からしか呼ばれないので lock は持たない。
-_installation = {"installed": False}
+_installation = {"installed": False, "dataclasses": False}
 
 #: この thread で Hy の source を compile した回数(path ごと)— get_code が「今の呼び出しの中で compile したか」を
 #: 前後の回数の差で知るため(get_code は入れ子になる — compile の中の require が別の module を import する)。
@@ -59,7 +59,9 @@ def installed() -> bool:
 
 
 def install() -> None:
-    """macro が変わった Hy の module を compile し直すよう ``SourceFileLoader`` の 2 つの口を包む(何度呼んでも 1 度だけ)。"""
+    """macro が変わった Hy の module を compile し直すよう ``SourceFileLoader`` の 2 つの口を包む(何度呼んでも 1 度だけ)。
+    dataclasses が読み込み済みなら、型ごとの関数の source の compile も覚える(:mod:`doeff_hy_bytecode_guard.dataclass_code`)。"""
+    _remember_dataclass_code()
     if _installation["installed"]:
         return
     loader = importlib.machinery.SourceFileLoader
@@ -67,6 +69,20 @@ def install() -> None:
     loader.get_code = _checking_get_code(loader.get_code)
     loader.get_data = _remembering_get_data(loader.get_data)
     _installation["installed"] = True
+
+
+def _remember_dataclass_code() -> None:
+    """読み込み済みの dataclasses の関数の source の compile を覚える形にする(1 度だけ)。dataclasses を自分から読まない — 起動時の
+    .pth では大抵まだ無く、Hy の import が読むので、Hy の source を初めて読む時(読みの口)にもう一度呼ぶ。"""
+    if _installation["dataclasses"]:
+        return
+    dataclasses = sys.modules.get("dataclasses")
+    if dataclasses is None:
+        return
+    from doeff_hy_bytecode_guard import dataclass_code  # dataclasses が在る時だけ読む
+
+    dataclass_code.install(dataclasses)
+    _installation["dataclasses"] = True
 
 
 def is_hy_source(path: object) -> bool:
@@ -281,6 +297,7 @@ def _checking_get_code(previous: GetCode):
         path = self.get_filename(fullname)
         if not is_hy_source(path):
             return previous(self, fullname)
+        _remember_dataclass_code()  # Hy の import の後なら dataclasses は読み込み済み
         try:
             return _hy_code(self, fullname, path)
         finally:
