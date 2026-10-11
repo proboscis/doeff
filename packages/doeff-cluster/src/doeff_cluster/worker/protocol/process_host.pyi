@@ -73,6 +73,7 @@ from doeff_core_effects.effects import Put as Put
 @dataclass(frozen=True, kw_only=True)
 class HostSettings:
     log_dir: str
+    generation: str
     jobs_dir: str
     program_dir: str
     python: str
@@ -128,6 +129,9 @@ def tell_retirement(started: Started, notice: Retired | HandoffAbandoned) -> _Pr
     ...
 
 def job_work_dir(settings: HostSettings, name: str) -> _Program[str, object]:
+    ...
+
+def job_log_stem(settings: HostSettings, name: str, attempt: int) -> _Program[str, object]:
     ...
 
 def process_instance(attempt: int, worker_pid: int, started_ms: int, name: str) -> _Program[str, object]:

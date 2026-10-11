@@ -27,7 +27,7 @@
 (import tests.host_rig [host-settings])
 
 (val STATE "/state")
-(val SETTINGS (WarmSettings :warm-dir "/state/warm" :log-dir "/state/logs" :uv "uv"))
+(val SETTINGS (WarmSettings :warm-dir "/state/warm" :log-dir "/state/logs" :generation "0b6f5e2a9c1d" :uv "uv"))
 (val LAUNCH (WarmLaunch :root "/roots/env-a" :project "/roots/env-a/app" :preload #("app.jobs" "app.models")))
 (val ARGV-RECORD "/record/argv.json")
 ;; 検の memory の世界(root の dir だけが在る — 待ちの子の cwd と task の作業 dir の親)。

@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy StartJob SignalJob ReapJob Outcome StopStage ProcessView Undeclared])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.protocol.process_host [HostSettings])
+(import doeff_cluster.worker.protocol.process_host [HostSettings job-log-stem])
 (import doeff_cluster.worker.core.invariants [DescendantLife DescendantOutlivedTheStop stopped-job-leaves-no-descendant])
 (import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
 (import tests.host_rig [host-settings run-on-host job-ended])
@@ -143,7 +143,8 @@
   (val signalled (get got 0))
   (val stopped-ms (+ signalled limit-ms))
   (<- life DescendantLife (life-after (get got 3) "別の session の孫" (+ stopped-ms WATCH-AFTER-MS)))
-  #(signalled stopped-ms (get got 1) (get got 2) life (.read-text (/ tmp "logs" "svc.1.log") :encoding "utf-8")))
+  (<- stem str (job-log-stem settings spec.name 1))
+  #(signalled stopped-ms (get got 1) (get got 2) life (.read-text (Path (+ stem ".log")) :encoding "utf-8")))
 
 
 (deftest test-c4b-names-each-descendant-seen-alive-after-the-stop
