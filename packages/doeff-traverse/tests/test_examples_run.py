@@ -422,8 +422,10 @@ def test_broken_example_is_still_broken(name: str, children: Children) -> None:
 @pytest.mark.parametrize("name", _examples())
 def test_example_uses_only_doeff_hy_macros(name: str) -> None:
     path = EXAMPLES / name
-    assert _macro_violations(path.read_text(encoding="utf-8"), str(path)) == [], (
-        f"{name} が macro を定義するか doeff-hy の外から require している — macro は doeff-hy に置く"
+    violations = _macro_violations(path.read_text(encoding="utf-8"), str(path))
+    assert violations == [], (
+        f"{name} が macro を定義するか、doeff-hy の外から require するか、展開を引き出している({violations}) — "
+        "macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない"
     )
 
 
