@@ -25,7 +25,7 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase])
 (import doeff_time [Delay])
-(import doeff_records.values [Unreachable])
+(import doeff_records.values [RowChanged RowRemoved Unreachable])
 
 
 (defclass [(dataclass :frozen True)] SweepExpired [EffectBase]
@@ -56,8 +56,8 @@
 
 
 (defclass [(dataclass :frozen True)] ChangeLog []
-  "変更の列の生の読みの答え: changes = 番号の昇順の変更(RowChanged | RowRemoved の tuple — 空 = after より後に無い)/ epoch = 置き場の版。"
-  (#^ tuple changes)
+  "変更の列の生の読みの答え: changes = 番号の昇順の変更(空 = after より後に無い)/ epoch = 置き場の版。"
+  (#^ (get tuple #((| RowChanged RowRemoved) ...)) changes)
   (#^ int epoch))
 
 
