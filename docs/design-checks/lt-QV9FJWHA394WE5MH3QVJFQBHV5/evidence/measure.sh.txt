@@ -1,0 +1,83 @@
+# 設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の c1〜c7 を、再現用の木(最後の版へ detach した物)で測る。
+# 各段の後に木を戻し、最後に変更の残りが 0 行である事を出す。走らせ方: bash measure.sh.txt
+R=/home/ubuntu/.worktrees/doeff-wt-ex09-repro
+E=/home/ubuntu/.worktrees/doeff-wt-ex09-r2/docs/design-checks/lt-QV9FJWHA394WE5MH3QVJFQBHV5/evidence/checks
+P=packages/doeff-traverse/examples; T=packages/doeff-traverse/tests/test_examples_run.py
+X=$P/ex09_for_do_when.hy; M=packages/doeff-hy/src/doeff_hy/macros.hy
+HEAD=$(git -C $R rev-parse HEAD)
+cd $R || exit 1
+restore() { local s; s=$(mktemp -d); git -C $R diff > "$s/all.patch"; [ -s "$s/all.patch" ] && git -C $R apply -R "$s/all.patch"; rm -f "$s/all.patch"; rmdir "$s"; }
+run() { echo "\$ uv run --no-sync pytest $*"; uv run --no-sync pytest "$@" 2>&1 | grep -E "$FILTER" | sort -u; echo "pytest rc=${PIPESTATUS[0]}"; }
+
+FILTER='PASSED|FAILED|SKIPPED|passed|failed'
+{ echo "# c1: 最後の版の検が全部緑(1 回目・2 回目は置き場が温まった状態)。作った木(doeff-wt-ex09-r2)と別の path の木で走らせる"; echo "対象の版: $HEAD(作業木 $R・変更なし: $(git -C $R status --short | wc -l) 行)"; echo
+  for i in 1 2; do echo "(${i} 回目)"; run $T -v; echo; done; } > $E/c1-all-green.txt 2>&1
+
+git show 6ee49cc246aae1ab9aa6b3aa3d6e9494c5d5527e:$X > $X
+FILTER='HyRequireError|FAILED|passed|failed'
+{ echo "# c2: 直す前の ex09(6ee49cc2 の版 — fold を require する)を置くと test_example_runs[ex09] が赤"; echo "対象の版: $HEAD + 下の差分"; git -C $R diff; echo
+  run "$T::test_example_runs" -q; } > $E/c2-s1-pre-fix-ex09-red.txt 2>&1
+restore
+
+sed -i "1406s/(_doeff_traverse_Skip))))/(_doeff_traverse_SkipWithReason))))/" $M
+FILTER="^E .*(SkipWithReason|skipped)|FAILED|passed|failed"
+{ echo "# c3: 盲検 A の変更(When の展開が引く名を変える)を、置き場が温まった後(c1 の 2 回の後)に当てると、When を使う例が出力の違いで赤"; echo "対象の版: $HEAD + 下の差分(DOEFF_HY_CODE_STORE=$DOEFF_HY_CODE_STORE を c1 と共有)"; git -C $R diff; echo
+  run "$T::test_example_runs" -q; } > $E/c3-a-macro-change-red.txt 2>&1
+restore
+
+cp $X $P/ex10_new_example.hy; cp $P/expected/ex09_for_do_when.txt $P/expected/ex10_new_example.txt
+FILTER='PASSED|FAILED|passed|failed'
+{ echo "# c4: 新しい例 ex10(ex09 の写し)を期待の出力と一緒に足すと、検の file を変えずに集まり緑"; echo "対象の版: $HEAD + 新しい file 2 つ(検の file の差分: $(git -C $R diff --stat -- $T | wc -l) 行)"; git -C $R status --short; echo
+  run $T -v -k "ex10 or tables"; } > $E/c4-s2-new-example-green.txt 2>&1
+rm $P/expected/ex10_new_example.txt
+sed -i 's/^BROKEN: dict\[str, str\] = {}$/BROKEN: dict[str, str] = {"ex04_simple.hy": "(c5 の模し)今の macro で走らない"}/' $T
+FILTER='AssertionError|FAILED|passed|failed'
+{ echo "# c5: 期待の出力の無い新しい例 ex10・走るのに BROKEN に在る例 ex04_simple は、それぞれの理由で赤"; echo "対象の版: $HEAD + 下の差分と新しい file"; git -C $R status --short; git -C $R diff; echo
+  run $T -q -k "ex10 or ex04_simple or tables"; } > $E/c5-s2-missing-expected-and-stale-broken-red.txt 2>&1
+rm $P/ex10_new_example.hy; restore
+
+OLD_FOLD=$(git -C $R show fa37eaaf1^:$M | sed -n 677,712p)
+uv run --no-project python - "$P/ex04_traverse_macro.hy" "$OLD_FOLD" <<'EOF'
+import sys
+from pathlib import Path
+p, old_fold = Path(sys.argv[1]), sys.argv[2]
+s = p.read_text()
+anchor = "(import doeff [do :as _doeff-do])\n"
+assert s.count(anchor) == 1
+s = s.replace(anchor, anchor + ";; fold: doeff-hy の fold は fa37eaaf1 で消えた。この例の説明(implicit `acc` / `it`)を保つため、\n;; 消える前の doeff-hy の定義と同じ展開(Reduce への書き換え)をここに置く\n" + old_fold + "\n", 1)
+p.write_text(s)
+EOF
+FILTER='assert \[|PASSED|FAILED|passed|failed'
+{ echo "# c6: 盲検 B の形 — ex04 の中に消えた fold を defmacro で定義し直す(例は走り、出力も変わらない)と test_example_uses_only_doeff_hy_macros[ex04] で赤"; echo "対象の版: $HEAD + 下の差分"; git -C $R diff; echo
+  run $T -v -k ex04_traverse_macro; } > $E/c6-b-shim-red.txt 2>&1
+mkdir -p $P/support
+uv run --no-project python - "$P/ex04_traverse_macro.hy" "$P/support/fold_shim.hy" <<'EOF'
+import sys
+from pathlib import Path
+ex, shim = Path(sys.argv[1]), Path(sys.argv[2])
+s = ex.read_text()
+start = s.index("(defmacro fold")
+end = s.index("~collection))", start) + len("~collection))")
+shim.write_text(s[start:end] + "\n")
+anchor = "(import doeff [do :as _doeff-do])\n"
+s = s[:start] + s[end:]
+s = s.replace(anchor, anchor + "(require support.fold_shim [fold])\n", 1)
+ex.write_text(s)
+EOF
+{ echo "# c6b: 盲検 B の変形 — fold の defmacro を examples/support/fold_shim.hy(glob の外)へ移し、ex04 は (require support.fold_shim [fold]) とする。test_example_uses_only_doeff_hy_macros[ex04] で赤"; echo "対象の版: $HEAD + 下の差分と新しい file examples/support/fold_shim.hy"; git -C $R diff; echo '--- examples/support/fold_shim.hy の頭'; head -3 $P/support/fold_shim.hy; echo
+  run $T -v -k ex04_traverse_macro; } > $E/c6b-b-shim-module-red.txt 2>&1
+restore; rm -f $P/support/fold_shim.hy $P/support/__pycache__/fold_shim.*.pyc; rmdir $P/support/__pycache__ 2>/dev/null; rmdir $P/support
+
+sed -i 's/^    for form in _forms(source, filename):$/    for form in _subforms(list(hy.read_many(source, filename=filename))):/' $T
+FILTER='^E  |FAILED|passed|failed'
+{ echo "# c6c: 確かめを d524b2fa の形(read_many の結果を Python の list のまま _subforms に渡す — form の中へ降りない)へ戻すと、test_macro_check_sees_nested_forms が赤"; echo "対象の版: $HEAD + 下の差分"; git -C $R diff; echo
+  run "$T::test_macro_check_sees_nested_forms" -q; } > $E/c6c-vacuous-walker-red.txt 2>&1
+restore
+
+sed -i '/^    "ex07_proboscis_ema_rewrite.hy": ($/,/^    ),$/d' $T
+(cd packages/doeff-traverse && uv run --no-sync hy examples/ex07_proboscis_ema_rewrite.hy > examples/expected/ex07_proboscis_ema_rewrite.txt 2>/dev/null)
+FILTER='AssertionError|FAILED|PASSED|passed|failed'
+{ echo "# c7: ex07 を OUTPUT_NOT_COMPARED から外し、この木で走らせた標準出力(traceback に checkout の path が入る)を期待の出力に置くと、置いた木で test_tables_name_examples_as_they_are が path を名指して赤"; echo "対象の版: $HEAD + 下の差分と新しい file examples/expected/ex07_proboscis_ema_rewrite.txt(path を含む行の数: $(grep -c "$R" $P/expected/ex07_proboscis_ema_rewrite.txt))"; git -C $R diff; echo
+  run $T -v -k "tables or ex07"; } > $E/c7-s2-expected-with-checkout-path-red.txt 2>&1
+rm $P/expected/ex07_proboscis_ema_rewrite.txt; restore
+echo "left: $(git -C $R status --short --untracked-files=all | wc -l)"

@@ -1,0 +1,29 @@
+# c6b: 盲検 B の変形 — fold の defmacro を examples/support/fold_shim.hy(glob の外)へ移し、ex04 は (require support.fold_shim [fold]) とする。test_example_uses_only_doeff_hy_macros[ex04] で赤
+対象の版: 72ce60d29c6560c0e436d7013777b35b8796ef98 + 下の差分と新しい file examples/support/fold_shim.hy
+diff --git a/packages/doeff-traverse/examples/ex04_traverse_macro.hy b/packages/doeff-traverse/examples/ex04_traverse_macro.hy
+index e7b0c176c..68e87e7ae 100644
+--- a/packages/doeff-traverse/examples/ex04_traverse_macro.hy
++++ b/packages/doeff-traverse/examples/ex04_traverse_macro.hy
+@@ -20,6 +20,10 @@
+ ;; defhandler: define an effect handler by pattern-matching on effect types
+ (require doeff-hy.macros [defk <- traverse defhandler])
+ (import doeff [do :as _doeff-do])
++(require support.fold_shim [fold])
++;; fold: doeff-hy の fold は fa37eaaf1 で消えた。この例の説明(implicit `acc` / `it`)を保つため、
++;; 消える前の doeff-hy の定義と同じ展開(Reduce への書き換え)をここに置く
++
+ (import doeff [run])
+ 
+ (import doeff_core_effects [try-handler :as try_handler])
+--- examples/support/fold_shim.hy の頭
+(defmacro fold [collection #* args]
+  "Fold over a collection with implicit `acc` and `it` bindings.
+
+
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py -v -k ex04_traverse_macro
+============ 1 failed, 1 passed, 25 deselected, 1 warning in 1.34s =============
+E       assert ['require support'] == []
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy] PASSED [ 50%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy] FAILED [100%]
+pytest rc=1

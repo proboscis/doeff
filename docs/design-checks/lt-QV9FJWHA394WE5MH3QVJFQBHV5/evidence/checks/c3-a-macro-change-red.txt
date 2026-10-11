@@ -1,0 +1,23 @@
+# c3: 盲検 A の変更(When の展開が引く名を変える)を、置き場が温まった後(c1 の 2 回の後)に当てると、When を使う例が出力の違いで赤
+対象の版: 37ff3b9a376fb04c0a187bd792908c2dea5bf6fb + 下の差分(DOEFF_HY_CODE_STORE=/work/state/doeff-hy-code-store を c1 と共有)
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index 205f8ad13..479bf6bc2 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -1403,7 +1403,7 @@ defk {name}: {{:post [...]}} is required.
+    agora-redesign #2321)。"
+   (if (_static-view?)
+       '(_doeff_perform (_doeff_traverse_Skip))
+-      '(yield (_doeff_traverse_Skip))))
++      '(yield (_doeff_traverse_SkipWithReason))))
+ 
+ (defn _traverse-form [param items label inner-body]
+   "From / Iterate の 1 つを Traverse の effect にする: 件ごとの関数(param を受け、残りの束縛と本体を do で包む)と items。
+
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py::test_example_runs -q
+1 failed, 11 passed, 1 warning in 18.79s
+E         +       process: failed...
+E         + [1] SKIP: name '_doeff_traverse_SkipWithReason' is not defined
+E         -       process: skipped
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy]
+pytest rc=1

@@ -1,0 +1,71 @@
+# c1: 最後の版の検が全部緑(1 回目・2 回目は置き場が温まった状態)
+対象の版: 72ce60d29c6560c0e436d7013777b35b8796ef98(作業木 /home/ubuntu/.worktrees/doeff-wt-ex09-repro・変更なし: 0 行)
+
+(1 回目)
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py -v
+============= 1 failed, 25 passed, 1 skipped, 1 warning in 12.19s ==============
+E           === sequential (failed items skipped) ===
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[NOTSET] SKIPPED [ 48%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex01_basic_fail.hy] PASSED [  3%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex02_traverse_pipeline.hy] PASSED [  7%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex03_zip_multi_source.hy] PASSED [ 11%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug.hy] PASSED [ 14%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug2.hy] PASSED [ 18%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_simple.hy] PASSED [ 22%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy] PASSED [ 25%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy] PASSED [ 29%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex06_mediagen_rewrite.hy] PASSED [ 33%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy] FAILED [ 37%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy] PASSED [ 40%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy] PASSED [ 44%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex01_basic_fail.hy] PASSED [ 51%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex02_traverse_pipeline.hy] PASSED [ 55%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex03_zip_multi_source.hy] PASSED [ 59%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug.hy] PASSED [ 62%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug2.hy] PASSED [ 66%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_simple.hy] PASSED [ 70%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy] PASSED [ 74%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex05_parallel_timing.hy] PASSED [ 77%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex06_mediagen_rewrite.hy] PASSED [ 81%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex07_proboscis_ema_rewrite.hy] PASSED [ 85%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex08_tqdm_progress.hy] PASSED [ 88%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex09_for_do_when.hy] PASSED [ 92%]
+packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees_nested_forms PASSED [ 96%]
+packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are PASSED [100%]
+pytest rc=1
+
+(2 回目)
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py -v
+============= 1 failed, 25 passed, 1 skipped, 1 warning in 11.98s ==============
+E           === sequential (failed items skipped) ===
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
+packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[NOTSET] SKIPPED [ 48%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex01_basic_fail.hy] PASSED [  3%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex02_traverse_pipeline.hy] PASSED [  7%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex03_zip_multi_source.hy] PASSED [ 11%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug.hy] PASSED [ 14%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_debug2.hy] PASSED [ 18%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_simple.hy] PASSED [ 22%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy] PASSED [ 25%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy] PASSED [ 29%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex06_mediagen_rewrite.hy] PASSED [ 33%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy] FAILED [ 37%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy] PASSED [ 40%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy] PASSED [ 44%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex01_basic_fail.hy] PASSED [ 51%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex02_traverse_pipeline.hy] PASSED [ 55%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex03_zip_multi_source.hy] PASSED [ 59%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug.hy] PASSED [ 62%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_debug2.hy] PASSED [ 66%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_simple.hy] PASSED [ 70%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy] PASSED [ 74%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex05_parallel_timing.hy] PASSED [ 77%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex06_mediagen_rewrite.hy] PASSED [ 81%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex07_proboscis_ema_rewrite.hy] PASSED [ 85%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex08_tqdm_progress.hy] PASSED [ 88%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex09_for_do_when.hy] PASSED [ 92%]
+packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees_nested_forms PASSED [ 96%]
+packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are PASSED [100%]
+pytest rc=1
+

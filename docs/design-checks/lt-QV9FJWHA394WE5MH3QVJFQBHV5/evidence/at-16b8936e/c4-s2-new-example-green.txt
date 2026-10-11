@@ -1,0 +1,10 @@
+# c4: 新しい例 ex10(ex09 の写し)を期待の出力と一緒に足すと、検の file を変えずに集まり緑
+対象の版: 16b8936ecf737a1e771c0c23075ae46d6a5b47ba + 新しい file 2 つ(検の file の差分: 0 行)
+?? packages/doeff-traverse/examples/ex10_new_example.hy
+?? packages/doeff-traverse/examples/expected/ex10_new_example.txt
+
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py -v -k ex10
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_new_example.hy] PASSED [ 50%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex10_new_example.hy] PASSED [100%]
+================= 2 passed, 26 deselected, 1 warning in 5.17s ==================
+pytest rc=0

@@ -1,0 +1,30 @@
+# c5: 期待の出力の無い新しい例 ex10・走るのに BROKEN に在る例 ex04_simple は、それぞれの理由で赤
+対象の版: 37ff3b9a376fb04c0a187bd792908c2dea5bf6fb + 下の差分と新しい file
+ M packages/doeff-traverse/tests/test_examples_run.py
+?? packages/doeff-traverse/examples/ex10_new_example.hy
+diff --git a/packages/doeff-traverse/tests/test_examples_run.py b/packages/doeff-traverse/tests/test_examples_run.py
+index a5ef78bd8..18ea01bb2 100644
+--- a/packages/doeff-traverse/tests/test_examples_run.py
++++ b/packages/doeff-traverse/tests/test_examples_run.py
+@@ -32,7 +32,7 @@ EXPECTED = EXAMPLES / "expected"
+ CHILD_DEADLINE_SECONDS = 50
+ 
+ # 今の macro で走らない例(file の名 → 理由)。直したら行を外す。
+-BROKEN: dict[str, str] = {}
++BROKEN: dict[str, str] = {"ex04_simple.hy": "(c5 の模し)今の macro で走らない"}
+ 
+ # 走るが標準出力を比べない例(file の名 → 理由)。印字が走るたびに変わるか、doeff-hy の隠す中身を写す例だけ。
+ OUTPUT_NOT_COMPARED: dict[str, str] = {
+
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py -q -k ex10 or ex04_simple or tables
+3 failed, 2 passed, 23 deselected, 1 warning in 2.35s
+E       AssertionError: ex04_simple.hy は走るようになった — BROKEN の行(理由: (c5 の模し)今の macro で走らない)を外す
+E       AssertionError: ex10_new_example.hy の期待の出力 expected/ex10_new_example.txt が無い — 例を走らせた標準出力を置く
+E       AssertionError: 比べる例の無い期待の出力が在る — 消すか、例を BROKEN から外す
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_broken_example_is_still_broken[ex04_simple.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_new_example.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
+packages/doeff-traverse/tests/test_examples_run.py:140: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:150: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:182: AssertionError
+pytest rc=1

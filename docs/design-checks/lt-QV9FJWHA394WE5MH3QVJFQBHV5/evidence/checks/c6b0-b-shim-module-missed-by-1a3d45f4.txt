@@ -1,0 +1,42 @@
+# c6b0: 1a3d45f4 の require の確かめは、別の module に移した shim(require support.fold_shim)を見逃した — Hy 1.3.1 の reader は a.b を (. a b) と読み、確かめは素の名だけを module と見ていた
+対象の版: 1a3d45f4d3ee9279430198f0013a8cdea31e7702 + 下の差分と新しい file
+diff --git a/packages/doeff-traverse/examples/ex04_traverse_macro.hy b/packages/doeff-traverse/examples/ex04_traverse_macro.hy
+index b355167dc..1c0b95a3d 100644
+--- a/packages/doeff-traverse/examples/ex04_traverse_macro.hy
++++ b/packages/doeff-traverse/examples/ex04_traverse_macro.hy
+@@ -18,8 +18,12 @@
+ ;; <-:   bind (yield + assign) inside defk
+ ;; traverse: macro that CPS-converts Iterate into Traverse effect
+ ;; fnk:  anonymous kleisli (lambda returning DoExpr, can perform effects)
+-(require doeff-hy.macros [defk <- traverse fnk fold])
++(require doeff-hy.macros [defk defhandler <- traverse fnk])
++(require support.fold_shim [fold])
+ (import doeff [do :as _doeff-do])
++;; fold: doeff-hy の fold は fa37eaaf1 で消えた。この例の説明(implicit `acc` / `it`)を保つため、
++;; 消える前の doeff-hy の定義と同じ展開(Reduce への書き換え)をここに置く
++
+ (import doeff [run])
+ (import doeff.program [Resume Pass])
+ 
+@@ -81,6 +85,8 @@
+ ;; ===========================================================================
+ 
+ (defk pipeline [items]
++  {:pre [(: items list)]
++   :post [(: % dict)]}
+   ;; Stage 1: extract features per item
+   ;; traverse + Iterate: each item processed independently
+   ;; try_call: plain function → Fail effect on exception
+@@ -135,10 +141,7 @@
+ ;; replace-with-zero: custom Fail handler — injects 0.0 at the yield site
+ ;; When try_call performs Fail, this handler Resume(k, 0.0) → item continues with 0.0
+--- examples/support/fold_shim.hy の頭
+(defmacro fold [collection #* args]
+  "Fold over a collection with implicit `acc` and `it` bindings.
+
+
+$ uv run --no-sync pytest packages/doeff-traverse/tests/test_examples_run.py -v -k ex04_traverse_macro
+================= 2 passed, 24 deselected, 1 warning in 1.90s ==================
+packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy] PASSED [ 50%]
+packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy] PASSED [100%]
+pytest rc=0

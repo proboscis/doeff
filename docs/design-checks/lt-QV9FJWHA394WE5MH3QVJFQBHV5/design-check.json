@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "task_id": "lt-QV9FJWHA394WE5MH3QVJFQBHV5",
+  "base_revision": "37ff3b9a376fb04c0a187bd792908c2dea5bf6fb",
+  "author": {
+    "conversation_id": "c-BKEK98T5QAWA57PJWN398PDX1B",
+    "model": "claude-opus-5-5",
+    "effort": "既定(この会話の設定 — 自己申告・未観測)"
+  },
+  "requirements": [
+    "R1: packages/doeff-traverse/examples/ex09_for_do_when.hy の require を今の macro の名に合わせる(main で (require … fold) の所で落ちていた)",
+    "R2: 例が走る事を確かめる検を置く(例を全部走らせる検があればそれに入れる — 無かった)"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "cd1e700c06a8e07c8900a68eb79e08cc695ad3ec19a536673d5ba24be9bf9bf7"
+  },
+  "modules": [
+    {
+      "id": "macros",
+      "responsibility": "doeff-hy の macro の面(packages/doeff-hy/src/doeff_hy/macros.hy)— 在る macro の名と展開の規則(defk の契約の必須・handler の形の拒否・for/do・traverse)",
+      "owns": [
+        "在る macro の名",
+        "展開の規則"
+      ],
+      "hides": "展開の中身(gensym の名・展開が引く補助の名の配置)",
+      "interface": "(require doeff-hy.macros [名 …])。for/do は docstring の Requires: の import を呼び手に求める",
+      "effects": "展開の時だけ(compile 時)。実行時の作用は持たない",
+      "lifetime": "compile 1 回",
+      "invariants": "消した macro の require は compile 時に HyRequireError になる"
+    },
+    {
+      "id": "traverse-lib",
+      "responsibility": "doeff-traverse の lib(effect の型 Traverse・Reduce・Skip … と handler sequential・fail-handler …)",
+      "owns": [
+        "effect の型",
+        "handler の失敗の方針(件の中の例外を件の失敗として記録して先へ進む)"
+      ],
+      "hides": "Collection の中身",
+      "interface": "effect の class・handler の関数",
+      "effects": "なし(effect は handler が解く)",
+      "lifetime": "Program 1 回",
+      "invariants": "件の失敗は Collection の件に記録され、Program 全体は止まらない"
+    },
+    {
+      "id": "examples",
+      "responsibility": "packages/doeff-traverse/examples/*.hy の読み物と、その期待の出力 examples/expected/<stem>.txt",
+      "owns": [
+        "例ごとの data・handler の組・印字",
+        "例ごとの期待の標準出力(走るたびに同じ印字の例だけ)"
+      ],
+      "hides": "なし(読み物 — 何を示すかを全部見せる)",
+      "interface": "python -m hy <file> が 0 で終わり、標準出力が期待の出力と一致する",
+      "effects": "stdout・stderr への印字。ex05・ex08 は実時間の sleep、ex08 は tqdm(どちらも BROKEN)",
+      "lifetime": "process 1 つ",
+      "invariants": [
+        "今の macro と traverse-lib の口だけで最後まで走る(I3)",
+        "macro を自分で定義せず、doeff-hy の外から require しない"
+      ]
+    },
+    {
+      "id": "example-check",
+      "responsibility": "packages/doeff-traverse/tests/test_examples_run.py — 例を走らせ、結果と macro の出どころを確かめる",
+      "owns": [
+        "例の母集団(examples/*.hy の glob)",
+        "BROKEN・OUTPUT_NOT_COMPARED の表(file の名 → 理由)",
+        "走らせ方(sys.executable -m hy・子の締切 = 50 秒 × deadline_scale_factor)",
+        "合否(終了コード・標準出力の一致・macro の定義と外の require の不在・期待の出力に checkout の path が無い事)"
+      ],
+      "hides": "下請けの関数(_examples・_run_example・_forms・_macro_violations)",
+      "interface": "pytest の id test_example_runs[<file>]・test_broken_example_is_still_broken[<file>]・test_example_uses_only_doeff_hy_macros[<file>]・test_tables_name_examples_as_they_are・test_macro_check_sees_nested_forms",
+      "effects": "子 process を起こす(env を受け継ぐ)・例と期待の出力の file を読む",
+      "lifetime": "検 1 つ。子は終わるか締切で殺される",
+      "invariants": [
+        "examples/ の .hy はどれも test_example_runs か test_broken_example_is_still_broken のちょうど片方に入る(I1)",
+        "BROKEN の行は在る file を名指し、その例は今も落ちる(I2)",
+        "期待の出力は比べる例ちょうどに在る"
+      ]
+    },
+    {
+      "id": "daily-gate",
+      "responsibility": "日次の全体検証の段 packages(Makefile の test-packages・.agents/land-queue.toml の gate.full)",
+      "owns": "いつ・どの母集団を走らせるか",
+      "hides": "段の組み立て",
+      "interface": "日次の段 packages → pytest packages/<p>/tests -m 'not e2e'",
+      "effects": "検を走らせる(この変更では変えない)",
+      "lifetime": "日次 1 回",
+      "invariants": "package の tests/ の下の検は全部走る。マージの列は検を走らせない"
+    },
+    {
+      "id": "bytecode-store",
+      "responsibility": "doeff_hy_bytecode_guard と DOEFF_HY_CODE_STORE — compile 済みの Hy の置き場と、macro が変わった時の無効化",
+      "owns": [
+        "置き場の鍵",
+        "無効化の判じ"
+      ],
+      "hides": "置き場の形",
+      "interface": "loader の hook(import の時に効く)",
+      "effects": "置き場の読み書き",
+      "lifetime": "置き場は走行をまたいで残る",
+      "invariants": "require した macro の定義が変われば compile し直す"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "doeff-hy が macro の面を変える(macro を消す・名を変える・規則を締める・展開が引く名を変える)",
+      "claim": "変更は macros と、それを使う例の file に収まる。example-check は 1 行も変えずに、壊れた例ごとに test_example_runs[<file>] を赤にする。traverse-lib・daily-gate は変えない(§3 S1 — 8f4e8b69 で固定)",
+      "expected_scope": "macros + 影響を受ける例。example-check は変えない",
+      "actual_scope": "2cff14d6 では、件の中で壊れる変更(When の展開が引く名)を見逃した(盲検 A・evidence/repro/a-mutated-check.txt)。example-check に標準出力の一致を足し、examples に例ごとの期待の出力を足した後(最後の版 37ff3b9a)は、macros の変更で examples の例と期待の出力だけが変わり、example-check は変わらない(c2・c3 を 37ff3b9a で実測)。標準出力を比べない 4 本(ex04_debug・ex04_debug2・ex05・ex07)では件の中の壊れは見えない(design.md §7.2)",
+      "changed_modules": [
+        "macros",
+        "examples"
+      ],
+      "unchanged_modules": [
+        "example-check",
+        "traverse-lib",
+        "daily-gate",
+        "bytecode-store"
+      ],
+      "reason": "直す前の漏れ: example-check の合否(終了コード)が traverse-lib の失敗の方針(件の中の例外を件の失敗として記録して先へ進む)に黙って依っていた。直しは example-check の公開の合否の拡張(標準出力の一致)と、examples の持ち分の拡張(期待の出力)で、traverse-lib の知識を example-check へ移していない",
+      "revision": "d524b2fa(wt/ex09-design-check): 標準出力を examples/expected/<stem>.txt と比べる・子の締切を deadline_scale_factor で伸ばす。72ce60d2: ex01〜ex08 を書き直した main に載せ、2 回走らせて同じだった例に期待の出力を置き、毎回変わる例と展開を印字する例は比べない。37ff3b9a: traceback に checkout の path と lib の行番号を印字する ex07 を比べない側へ移す(72ce60d2 の c1 が別の path の木で赤)。再検証 = c1・c2・c3(37ff3b9a)"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "例を足す・BROKEN の例を直す・例を消す/名を変える",
+      "claim": "新しい例は example-check を変えずに集まる。直した例は test_broken_example_is_still_broken で赤になり、BROKEN の 1 行を外すのが検の唯一の変更。表に残った行は赤(§3 S2 — 8f4e8b69 で固定)",
+      "expected_scope": "examples の 1 file(+ BROKEN の 1 行)",
+      "actual_scope": "examples の 1 file + その期待の出力 1 file(+ BROKEN の 1 行)。期待の出力の無い新しい例は赤(c5)、期待の出力と一緒に足すと検を変えずに緑(c4)。checkout の path を含む期待の出力は置いた木で赤(c7)。2cff14d6 では、消えた macro を例の中で定義し直して例を直すと通った(盲検 B・evidence/repro/b-shim-check.txt)。37ff3b9a ではその直し方を断る(c6・c6b)",
+      "changed_modules": [
+        "examples"
+      ],
+      "unchanged_modules": [
+        "example-check",
+        "macros",
+        "traverse-lib",
+        "daily-gate",
+        "bytecode-store"
+      ],
+      "reason": "期待の出力の 1 file は S1 の直しで増えた examples の持ち分で、意図した契約の拡張。盲検 B の形は macros の知識(在る macro の名と展開)が examples へ 2 つ目の定義元として移る漏れで、example-check が macro の出どころを見分けなかった事が原因",
+      "revision": "d524b2fa: 例の中の macro の定義と doeff_hy の外からの require を断る。1a3d45f4: form の中へ降りていなかった確かめを直し、違反を含む inline の source の検を足す(c6a で見逃しを実測)。16b8936e: 点を含む module の名((. a b))を読む(c6b0 で見逃しを実測)。37ff3b9a: 期待の出力に checkout の path が在れば赤。再検証 = c4・c5・c6・c6b・c6c・c7(37ff3b9a)"
+    },
+    {
+      "id": "S3",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "例を走らせて compile 済みの物が DOEFF_HY_CODE_STORE に残った後に、例が require する macro の定義を変える",
+      "claim": "example-check は置き場の無効化を持たない。子 process は env を受け継いで同じ置き場を使い、bytecode-store が macro の変更を見て compile し直すので、古い緑にならない。example-check も examples も変えない(§3 S3 — 8f4e8b69 で固定)",
+      "expected_scope": "変更なし",
+      "actual_scope": "変更なし。置き場が温まった 2 回目も緑(c1)、温まった後の macro の変更は ex09 の出力に出て赤(c3)。盲検 A も変えた macro が出力に出た事を申告",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "example-check",
+        "examples",
+        "bytecode-store",
+        "macros"
+      ],
+      "reason": "置き場の無効化は bytecode-store の持ち分で、example-check は env を受け継ぐだけ。漏れは見つからなかった",
+      "revision": "不要 — c1・c3 で主張どおりを実測"
+    },
+    {
+      "id": "S4",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "例は CPU だけを使う script で、機体に依る code が無い。時間の上限は子の締切(50 秒 × deadline_scale_factor — 直しで root の conftest の係数に揃えた)と pytest の検ごとの上限が持つ"
+    },
+    {
+      "id": "S5",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "検は同じ機体の上で子 process を起こすだけで、例どうしも機体をまたいで話さない。日次は機体 1 つの上で走る"
+    },
+    {
+      "id": "S6",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "日次の make test-packages は直列で走る(-n を付けない)。例は互いに独立した process で、共に触るのは compile の置き場だけ。置き場への同時の書き込みは bytecode-store の持ち分"
+    },
+    {
+      "id": "S7",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "時間・乱数の決定性は主張しない。標準出力を比べる走る例(ex09)は実時間も乱数も使わない。実時間の sleep を使う ex05・ex08 は BROKEN に在る"
+    }
+  ],
+  "checks": [
+    {
+      "id": "c1-all-green",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "37ff3b9a の検が、作った木と別の path の木で全部緑(BROKEN が空なので表の例の検は skip)。置き場が温まった 2 回目も緑",
+      "observation": "2 回とも 26 passed・1 skipped・pytest rc 0",
+      "evidence": {
+        "path": "evidence/checks/c1-all-green.txt",
+        "sha256": "f607dd0d4bba6ab6915335ae4b77b688255604a6ea653a1ae1344b2d10ee07cc"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c2-s1-pre-fix-ex09-red",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の ex09(fold を require する 6ee49cc2 の版)を置くと test_example_runs[ex09] が HyRequireError で赤",
+      "observation": "1 failed(test_example_runs[ex09_for_do_when.hy] — HyRequireError: Could not require name fold)・11 passed・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c2-s1-pre-fix-ex09-red.txt",
+        "sha256": "1528652cdaa0171384bd76a3622eef9780913fac2db25ccaec3843e3ccb3c66a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c3-a-macro-change-red",
+      "scenarios": [
+        "S1",
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "置き場が温まった後に盲検 A の変更(When の展開が引く名)を当てると、ex09 は終了コード 0 のまま出力が変わり、test_example_runs[ex09] が出力の違いで赤",
+      "observation": "1 failed(ex09 — 期待の出力との差 'name '_doeff_traverse_SkipWithReason' is not defined' / 'process: failed')・11 passed・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c3-a-macro-change-red.txt",
+        "sha256": "22028d5d80f3fa59af2c7b0d90af3ca36a6669487d75bfc2f9f010a8bf1d2d31"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c4-s2-new-example-green",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "新しい例 ex10 を期待の出力と一緒に足すと、検の file を変えずに test_example_runs[ex10]・test_example_uses_only_doeff_hy_macros[ex10] が集まり、表の整合も緑",
+      "observation": "3 passed・検の file の差分 0 行・pytest rc 0",
+      "evidence": {
+        "path": "evidence/checks/c4-s2-new-example-green.txt",
+        "sha256": "1a77be7e50412ddae9029e9422b61efcedb886bf6bdacf73444cc6ef8e7eddef"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c5-s2-missing-expected-and-stale-broken-red",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "期待の出力の無い新しい例と、走るのに BROKEN に在る例が、それぞれの理由を名指して赤",
+      "observation": "3 failed — 'ex10_new_example.hy の期待の出力 … が無い'・'ex04_simple.hy は走るようになった — BROKEN の行 … を外す'・'比べる例の無い期待の出力が在る'(BROKEN の ex04_simple の期待の出力)・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c5-s2-missing-expected-and-stale-broken-red.txt",
+        "sha256": "a9b73cfa761309c00fa7c2b84b59ba715292fd546e004a3d52f538e98a569d2f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c6-b-shim-red",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の形(ex04 の中に消えた fold を defmacro で定義し直す — 例は走り出力も変わらない)は test_example_uses_only_doeff_hy_macros[ex04] で赤",
+      "observation": "test_example_runs[ex04] PASSED・test_example_uses_only_doeff_hy_macros[ex04] FAILED(assert ['defmacro fold'] == [])・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c6-b-shim-red.txt",
+        "sha256": "b740464806ba39625501ad2d367926375f174e6d43a2d7eb8356410952e5d2f4"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c6b-b-shim-module-red",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の変形(defmacro を examples/support/fold_shim.hy へ移し、ex04 は require support.fold_shim で使う)も赤",
+      "observation": "test_example_uses_only_doeff_hy_macros[ex04] FAILED(assert ['require support'] == [])・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c6b-b-shim-module-red.txt",
+        "sha256": "73a684da1365b57d884cadcafba5a7cc1467892a0cb80876f98065cfde39860d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c6c-vacuous-walker-red",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "確かめを d524b2fa の形(form の中へ降りない)へ戻すと、違反を含む inline の source の検 test_macro_check_sees_nested_forms が赤",
+      "observation": "1 failed(assert [] == ['require support', 'require bare', 'defmacro fold'])・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c6c-vacuous-walker-red.txt",
+        "sha256": "47071cd6fca3e2fd1af02ced656da863e1b2e9a1e7c3191b89c0c8c40f863cb9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c7-s2-expected-with-checkout-path-red",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "ex07 を OUTPUT_NOT_COMPARED から外し、traceback に checkout の path が入る標準出力を期待の出力に置くと、置いた木で test_tables_name_examples_as_they_are が赤",
+      "observation": "test_tables_name_examples_as_they_are FAILED('期待の出力に checkout の path が在る — 例を OUTPUT_NOT_COMPARED へ移す')・pytest rc 1",
+      "evidence": {
+        "path": "evidence/checks/c7-s2-expected-with-checkout-path-red.txt",
+        "sha256": "f97c439e60794b506e74a83fbdec48b4554942038af2eb4f5697f02d6e345877"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
