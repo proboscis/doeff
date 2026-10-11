@@ -15,8 +15,7 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.worker.core.env_prepare [prepare-env])
-(import doeff_cluster.worker.protocol.env_translation [env-translation request-of-json answer-json])
+(import doeff_cluster.worker.protocol.env_translation [env-translation request-of-json answer-json prepared-once])
 (import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest])
 
 
@@ -39,8 +38,9 @@
 
 (defk prepared-to-file [request result]
   {:pre [(: request PrepareRequest) (: result str)] :post [(: % None)] :tags {:context "worker" :role "main" :spells "json"}}
-  "実行環境を準備し、答えの JSON を result へ置き換えで書くため(worker は置き換わった file だけを読む — 書きかけを読ませない)。"
-  (<- answer (prepare-env request))
+  "実行環境を準備し、答えの JSON を result へ置き換えで書くため(worker は置き換わった file だけを読む — 書きかけを読ませない)。準備は
+   キーごとの錠の中で行い、root の置き場を分け合う他の世代が準備し終えた root は準備し直さない(prepared-once — AL-D2g)。"
+  (<- answer (prepared-once request))
   (<- content (answer-json answer))
   (<- (file-done (WriteText result (json.dumps content :ensure-ascii False) :replace True)))
   None)

@@ -3,7 +3,9 @@
 ;; 渡す。ここでは、その 2 つの dir から worker が作る置き場が衝突しない事を縛る:
 ;;   * 版の木・job の cwd・Program・task の結果・温める子・入口の検め・拍の状態は、世代ごとに別の場所で、それぞれ自分の状態の dir の下。
 ;;   * job の log の dir は分け合う(名は job の名と試みの番号 — 新しい世代が引き継ぐ job は試みが違う)。
-;;   * 実行環境の root は世代ごと(Rust の wheel の保存先を分け合う事は test_boot_wheel・準備の process へ --shared を渡す事は test_env_rules)。
+;;   * 実行環境の root は分け合う(AL-D2g — 新しい世代は前の世代の準備した root を準備し直さない・錠と掃除の固定は
+;;     test_env_roots_shared_by_generations。Rust の wheel の保存先を分け合う事は test_boot_wheel・準備の process へ --shared を渡す事は
+;;     test_env_rules)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_cluster.worker.core.places [worker-places])
@@ -36,12 +38,16 @@
   (assert (= places.logs (+ SHARED "/logs"))))
 
 
-(deftest test-two-generations-prepare-their-own-roots
+(deftest test-two-generations-share-the-roots
   (val old (EnvSettings :state OLD-STATE :shared SHARED :uv-cache (+ SHARED "/uv-cache") :hy-command "hy" :platform "test"
                         :code-prepare PREPARE-TOOL :roots-cap-bytes (** 2 62)))
   (val new (EnvSettings :state NEW-STATE :shared SHARED :uv-cache (+ SHARED "/uv-cache") :hy-command "hy" :platform "test"
                         :code-prepare PREPARE-TOOL :roots-cap-bytes (** 2 62)))
   (<- old-root (env-root old "env-abc"))
   (<- new-root (env-root new "env-abc"))
-  (assert (.startswith old-root (+ OLD-STATE "/roots/")))
-  (assert (.startswith new-root (+ NEW-STATE "/roots/"))))
+  (assert (= old-root new-root (+ SHARED "/roots/abc")) #(old-root new-root))
+  ;; --shared-dir を省いた worker は、今までどおり状態の dir の下に置く。
+  (val unsplit (EnvSettings :state SHARED :uv-cache (+ SHARED "/uv-cache") :hy-command "hy" :platform "test" :code-prepare PREPARE-TOOL
+                            :roots-cap-bytes (** 2 62)))
+  (<- unsplit-root (env-root unsplit "env-abc"))
+  (assert (= unsplit-root (+ SHARED "/roots/abc")) unsplit-root))
