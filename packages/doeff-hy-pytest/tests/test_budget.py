@@ -47,6 +47,17 @@ from doeff_hy_pytest.budget import (
 
 pytest_plugins = ["pytester"]
 
+
+@pytest.fixture(autouse=True)
+def _own_stores(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """この file の検は Hy の変換の回数と収集の秒を測るので、検ごとに空の置き場で走らせる。pytester は検ごとに HOME を空の dir に
+    替えるので、名指しが無ければ子の Hy の code の置き場と doeff-adr の収集の記録は検ごとに空だった。走らせる側(日次の task・
+    worker)が DOEFF_HY_CODE_STORE・DOEFF_ADR_ITEMS_CACHE で共有の置き場を名指すと子がそれを継ぎ、置き場から読む分が収集の秒に
+    乗って test_collect_budget_does_not_charge_a_shared_dependency_to_the_first_file が赤(日次 10-11 08:05 JST の 0.146 秒 —
+    agora-controllers 220e2e963 の後。検ごとの空の置き場では 0.054 秒)。"""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(tmp_path_factory.mktemp("code-store")))
+    monkeypatch.delenv("DOEFF_ADR_ITEMS_CACHE", raising=False)
+
 CONFTEST = """\
 import pytest
 
