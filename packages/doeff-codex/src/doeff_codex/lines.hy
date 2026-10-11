@@ -442,6 +442,12 @@
 ;; 列挙しない。ターンの id を必ず持つ記録を足したらここにも足す(tests/test_turn_records.hy が一致を確かめる)。
 (val TurnRecord (| TurnStarted TextDelta ReasoningDelta AgentMessageDone ItemStarted ItemDone TokenUsage TurnError TurnEnded))
 
+;; 口座の枠の窓を運ぶ記録(利用枠切れの事実の材料 — limits.hy の merged-limits が重ねる)。どの記録が窓を運ぶかも codex の行の形から
+;; 決まる知識なので、TurnRecord と同じくこの file が 1 か所で名乗る — handler はこの集まりで記録をターンの枠へ重ね、記録の class を
+;; 列挙しない。窓(RateLimitWindow・RateLimits)を運ぶ記録を足したらここにも足し、重ね方は limits.hy の merged-limits が受ける
+;; (tests/test_limits.hy が一致を確かめる)。
+(val LimitRecord (| RateLimits))
+
 (defrecord ErrorFacts
   "codexErrorInfo から読んだ誤りの種類の名(この版に無い形は UnknownValue)と HTTP の status(どちらも名乗らなければ None)。"
   {:tags {:context "codex" :role "type"}}
