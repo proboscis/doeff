@@ -212,10 +212,13 @@
                                       (isinstance (get form 1) Symbol)))
             field-call? (fn [form] (and (isinstance form Expression) form (isinstance (get form 0) Symbol)
                                         (in (str (get form 0)) #("field" "dataclasses.field"))))
-            ;; 本体の form が、展開が書く関数を自分で書くか(defn・defn/a ほか — 名は飾りの list の後ろでも読む)。
+            ;; 本体の form が、展開が書く関数を自分で書くか(defn・defn/a ほか — 名は飾りの list の後ろでも読む)。答えの型の注記つきの名
+            ;; (defn #^ None __post-init__ …)は Hy が (annotate __post-init__ None) と読むので、注記の中の名を読む(card ki-e77d44aa61e5 —
+            ;; 記号の名だけを見た形は本体の __post_init__ を見落とし、展開の __init__ が呼ばなかった)。
             own-method? (fn [form] (and (isinstance form Expression) (>= (len form) 2) (isinstance (get form 0) Symbol)
                                         (.startswith (str (get form 0)) "def")
-                                        (do (setv named (if (and (isinstance (get form 1) List) (>= (len form) 3)) (get form 2) (get form 1)))
+                                        (do (setv written (if (and (isinstance (get form 1) List) (>= (len form) 3)) (get form 2) (get form 1))
+                                                  named (if (annotated written) (get written 1) written))
                                             (and (isinstance named Symbol) (in (hy.mangle (str named)) generated)))))
             ;; 欄の的と既定値の組(的・既定値の form・既定値の有無)を書いた順に(field-targets と同じ読み方)。
             targets (sum (lfor form fields
