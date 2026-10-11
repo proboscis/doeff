@@ -1,7 +1,8 @@
 ;;; worker の Pod の drain の入口(composition root・2026-09-25)。Program は drain_client.hy。
 ;;;
 ;;;   hy -m doeff_cluster.worker.entry.drain_main drain --coordinator URL --name NAME [--deadline 90] [--interval 2]
-;;;       preStop: drain を頼み、自分の上の job が他へ移るか上限まで待つ。いつも 0 で終わる(結末は stderr の 1 行)。
+;;;       preStop: 止まりの印を世代の file の隣に書き(AL-D2p — worker/protocol/leaving_mark)、drain を頼み、自分の上の job が他へ移るか
+;;;       上限まで待つ。いつも 0 で終わる(結末は stderr の 1 行)。
 ;;;   hy -m doeff_cluster.worker.entry.drain_main ready --coordinator URL --name NAME
 ;;;       readinessProbe: coordinator から見て生きていて drain 中でなければ 0、それ以外は 1。
 (require doeff-hy.macros [defhandler defk <- val])
@@ -23,6 +24,7 @@
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])
 (import doeff_cluster.worker.core.drain_client [await-drained worker-ready DRAIN-DEADLINE-SECONDS DRAIN-INTERVAL-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [coordinator-calls])
+(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written])
 
 ;; 要求 1 つの返事を待つ上限(秒)。coordinator の fsync の詰まり(最長 13 秒 — ClusterTiming.client-reply-ms の訳)より短くはしない。
 ;; readinessProbe は timeoutSeconds の内で終わるよう短くする。
@@ -58,6 +60,13 @@
     (run (scheduled (with-handlers [(await-handler) (http-production-handler) (sync-time-handler) (coordinator-calls cell options)] program))))
   ;; この Pod の worker の世代は、本物の file の答え手を被せて 1 度だけ読む(--boot-file が無ければ None)。
   (setv boot (if args.boot-file (run (with-handlers [os-file-handler] (read-boot args.boot-file))) None))
+  (when (and (= args.mode "drain") args.boot-file boot)
+    ;; preStop の頭で、この Pod の止まりが始まった印を世代つきで書く(AL-D2p — worker の本体は印の在る拍から handoff の job の新しい試行を
+    ;; 起こさない)。coordinator へ頼む前に書く — 頼みが届かない間も Pod の止まりは始まっている。書けなくても drain は続ける。
+    (setv refused (run (with-handlers [os-file-handler] (leaving-mark-written args.boot-file boot))))
+    (when (is-not refused None)
+      (print (.format "drain: 止まりの印を書けない(worker は coordinator の印でだけ退く): {}: {}" refused.path refused.detail)
+             :file sys.stderr :flush True)))
   (if (= args.mode "ready")
       (sys.exit (if (on-coordinator (worker-ready args.name boot)) 0 1))
       (do (setv result (on-coordinator (await-drained args.name args.deadline args.interval boot)))

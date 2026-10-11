@@ -145,7 +145,11 @@
   ;; 実行環境の root の置き場の disk(EnvDisk)。実行環境の job を扱わない worker は None(掃除をしない)。
   (setv #^ (| EnvDisk None) env-disk None)
   ;; root ごとの待ちの子の観測(WarmChildView — #3646)。起こした待ちの子が無ければ空。
-  (setv #^ tuple warm-children #()))
+  (setv #^ tuple warm-children #())
+  ;; この Pod の止まり(preStop の drain)が始まった(AL-D2p): preStop の入口が世代の file の隣に置いた印の世代が、この process の世代と
+  ;; 同じ(worker/protocol/leaving_mark)。真の間、worker は handoff の job の新しい試行を起こさない(coordinator の返事の印 supersededBy に
+  ;; 依らない — policy.start-step)。既定は偽(印を読まない呼び手・Pod の外の worker)。
+  (setv #^ bool leaving False))
 
 
 (defclass StopStage [Enum]
@@ -195,8 +199,9 @@
 ;;   PREPARING = 木・root の準備待ち・PREPARE-FAILED = 準備の失敗(code-retry-ms の後の撃ち直しの間も)・DISK-FULL = 準備が disk の空き不足で
 ;;   失敗・PROBING = 入口の検め待ち・PROBE-FAILED = 入口の検めの失敗(撃ち直しの間も)・BACKOFF = 落ちた後の起こし直しの間・
 ;;   WARM-CHILD = 分かれ元の待ちの子の準備待ち・HANDOFF-ABANDONED = 入れ替えの諦め(宣言が変わるまで起こさない)・ELDER-RUNS = 準備と
-;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)。
-(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS)
+;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)・
+;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)。
+(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING)
 
 
 ;; --- 待ちの子(#3646)-------------------------------------------------------------

@@ -257,6 +257,11 @@
   (val code (code-of world (code-key spec)))
   (val tree (ready-path code))
   (cond
+    ;; この Pod の止まり(preStop の drain)が始まった(AL-D2p): handoff の job の新しい試行を起こさず、準備も撃たない。coordinator の返事の
+    ;; 印 supersededBy が欠けた拍にも効く守り — 退かせた process が走っている間、返事は job を載せ続け、名が空いているので、印の欠けた
+    ;; 拍ごとに新しい試行を前の process と並べていた(10-11 の zeus の画面の process の群)。続きは同じ名の新しい世代か、coordinator が
+    ;; 移した先が起こす。
+    (and spec.handoff world.leaving) (StartStep :actions #() :hold StartHold.LEAVING)
     ;; task は 1 度だけ走らせる。終わった後は宣言から外れるまで待つ(結果は状態の報告で運ぶ)。
     (and spec.once (is-not record.last-outcome None)) (StartStep :actions #() :hold None)
     ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限)で焼く。
@@ -347,6 +352,7 @@
         superseded (and (is-not want None) want.handoff (is-not want.superseded-by None)))
   (cond
     ;; 諦めた入れ替えの新・新しい世代へ移った job は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
+    ;; 止まりの始まった Pod の handoff の job も起こさない(印の有無に依らない — start-step の頭・AL-D2p)。
     (is process None) (if (or (is want None) abandoned superseded) #() (. (run (start-step now want world record policy)) actions))
     (is-not process.exit-code None)
       (+ #((ReapJob name process.pid

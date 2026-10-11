@@ -118,6 +118,7 @@ class WorldView:
     probes: tuple[ProbeView, ...] = ()
     env_disk: EnvDisk | None = None
     warm_children: tuple[WarmChildView, ...] = ()
+    leaving: bool = False
 
 class StopStage(Enum):
     TERM = "term"
@@ -178,6 +179,7 @@ class StartHold(StrEnum):
     WARM_CHILD = "warm-child"
     HANDOFF_ABANDONED = "handoff-abandoned"
     ELDER_RUNS = "elder-runs"
+    LEAVING = "leaving"
 
 # --- 待ちの子(#3646)-------------------------------------------------------------
 

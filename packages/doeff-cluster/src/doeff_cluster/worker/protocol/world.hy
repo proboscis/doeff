@@ -1,12 +1,14 @@
 ;;; worker の世界の観測のまとめ local-host(handlers.hy から移した・#2469)— 判断(worker/core/policy)が拍ごとに問う ObserveWorld に、
 ;;; 各言い換え(外側に置く)の観測を問うて 1 つの WorldView にまとめて答える: 版ごとのコードの木 = worker/protocol/code_store(#2466)・
 ;;; 実行環境の root = worker/protocol/env_store(#2467)・job の子 process = worker/protocol/process_host(#2464)・入口の検め =
-;;; worker/protocol/probes(#2465)・root ごとの待ちの子 = worker/protocol/warm_host(#3646)。I/O を持たない。
+;;; worker/protocol/probes(#2465)・root ごとの待ちの子 = worker/protocol/warm_host(#3646)・この Pod の止まり = worker/protocol/leaving_mark
+;;; (AL-D2p)。I/O を持たない。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk 
+(import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk
 ])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren])
+(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
+  ObserveLeaving])
 
 
 (defhandler local-host
@@ -18,4 +20,5 @@
     (<- probed tuple (ObserveProbes))
     (<- disk EnvDisk (ObserveEnvDisk))
     (<- children tuple (ObserveWarmChildren))
-    (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children))))
+    (<- leaving bool (ObserveLeaving))
+    (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving))))
