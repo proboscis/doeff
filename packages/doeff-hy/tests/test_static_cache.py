@@ -20,7 +20,7 @@ from pathlib import Path
 
 import doeff_hy
 import pytest
-from doeff_hy import static_check
+from doeff_hy import static_cache, static_check
 from doeff_hy.static_check import Projection, project_cached
 
 PACKAGE = "probe_cache"
@@ -121,6 +121,17 @@ def test_an_unchanged_tree_reads_the_stored_expansion(tree: Tree, expansions: li
     assert all(word in first.text for word in ("'old'", "'late'", "'deep'")), first.text
     assert _project(tree).text == first.text
     assert expansions == [tree.user], "何も変えていないのに展開し直した"
+
+
+def test_an_entry_of_the_current_store_version_is_read_back(
+    tree: Tree, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 直す前は赤(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A・card ki-1475765a3f18): entry の読みは保存の形の版を literal の 3 で
+    # 照らしていた。CACHE_VERSION を上げた版は、自分が書いた entry を 1 つも読めず、毎回全部を展開し直す。
+    monkeypatch.setattr(static_cache, "CACHE_VERSION", static_cache.CACHE_VERSION + 1)
+    first = _project(tree)
+    assert _project(tree).text == first.text
+    assert expansions == [tree.user], "今の版で書いた entry を読めず、展開し直した"
 
 
 def test_a_changed_macro_module_expands_again(tree: Tree, expansions: list[Path]) -> None:
@@ -410,6 +421,31 @@ def test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion(
     monkeypatch.setenv("PYTHONPATH", str(elsewhere))
     moved = CopiedDoeffHy(elsewhere, copied_doeff_hy.root, copied_doeff_hy.cache)
     assert moved.expanded() == 0, "同じ中身の doeff_hy を別の dir に置いただけで展開し直した"
+
+
+def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again(
+    copied_doeff_hy: CopiedDoeffHy,
+) -> None:
+    # 直す前は赤(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B・card ki-1475765a3f18): 後処理が自分の module の置き場
+    # (__file__)から隣の file を読んで展開の結果を変えると、歩みはその file の中身を覆わない。置き場の path を digest から
+    # 外した後は、別の dir の木どうしでも、同じ木でも、file を替えた後に古い展開を引いた。置き場を値として読む code の
+    # digest は照らせない印になり、使い手は毎回展開し直す。
+    static_check_file = copied_doeff_hy.package / "static_check.py"
+    text = static_check_file.read_text(encoding="utf-8")
+    assert text.count("    rendered = ast.unparse(tree)\n") == 1
+    static_check_file.write_text(
+        text.replace(
+            "    rendered = ast.unparse(tree)\n", "    rendered = ast.unparse(tree) + _probe_note()\n"
+        )
+        + '\n\ndef _probe_note() -> str:\n    return "\\n# " + Path(__file__).with_name("probe-note.txt")'
+        '.read_text(encoding="utf-8")\n',
+        encoding="utf-8",
+    )
+    note = copied_doeff_hy.package / "probe-note.txt"
+    note.write_text("one", encoding="utf-8")
+    assert copied_doeff_hy.expanded() == 1
+    note.write_text("two-two", encoding="utf-8")
+    assert copied_doeff_hy.expanded() == 1, "後処理が読む隣の file を替えたのに、保存した古い展開を引いた"
 
 
 # ---- 保存先(agora-redesign #3863)--------------------------------------------------------------------------

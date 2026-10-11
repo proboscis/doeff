@@ -22,7 +22,8 @@ from doeff_hy_bytecode_guard import record_is_current_here, records, source_to_c
 #: macro の module。used = 補助の関数(同じ module)と別の module の定数を読む macro・unused = 誰も使わない macro・
 #: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro・
 #: hands = 別の module を引数で渡し、受けた補助が getattr で読む macro・documented = 別の module の定数を読み、展開の結果に
-#: 関数の __doc__ を書く macro(code の文字列の定数に "__doc__" が出る — defhandler の形)。
+#: 関数の __doc__ を書く macro(code の文字列の定数に "__doc__" が出る — defhandler の形)・reads-data = 補助が自分の module の
+#: 置き場(__file__)から隣の file(data.txt)を読んで返す macro。
 MACROS = """\
 (import {pkg}.consts :as consts)
 (setv FACTOR 3)
@@ -52,6 +53,9 @@ MACROS = """\
 (defmacro thing [] (do Thing 1))
 (defmacro mode [] (do (.get MODE) 1))
 (defmacro documented [] `(do (defn f [] ~consts.OFFSET) (setv (. f __doc__) "f") (f)))
+(import pathlib)
+(defn data-of [] (.read-text (/ (. (pathlib.Path __file__) parent) "data.txt")))
+(defmacro reads-data [] (data-of))
 """
 
 CONSTS = '"定数の module。"\n(setv OFFSET 1)\n(setv HIDDEN 5)\n'
@@ -135,6 +139,7 @@ USERS = {
     "thinger": "(require {pkg}.macros [thing])\n(setv value (thing))\n",
     "moder": "(require {pkg}.macros [mode])\n(setv value (mode))\n",
     "documenter": "(require {pkg}.macros [documented])\n(setv value (documented))\n",
+    "datareader": "(require {pkg}.macros [reads-data])\n(setv value (reads-data))\n",
 }
 
 
@@ -206,6 +211,7 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Tree]:
     (directory / "fakeext.py").write_text(FAKEEXT, encoding="utf-8")
     (directory / "fakeext.cpython-test.so").write_bytes(b"binary one")
     (directory / "contexts.py").write_text(CONTEXTS, encoding="utf-8")
+    (directory / "data.txt").write_text("one", encoding="utf-8")
     for name, text in USERS.items():
         (directory / f"{name}.hy").write_text(text.format(pkg=package), encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -469,6 +475,17 @@ def test_a_changed_constant_of_a_module_the_documenting_macro_reads_is_stale(tre
     record = tree.record("documenter")
     _replace(tree.consts, "(setv OFFSET 1)", "(setv OFFSET 10)")
     assert not tree.is_current(record), "macro が読む module の定数を替えたのに古いと判じない"
+
+
+# ---- module の置き場を値として読む code(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B・card ki-1475765a3f18)-----------------
+
+
+def test_a_changed_file_a_macro_reads_beside_its_module_is_stale(tree: Tree) -> None:
+    # 直す前は赤: 補助が自分の module の __file__ から隣の file を読んで展開の結果を決めると、歩みはその file の中身を覆わない
+    # (置き場の path を digest から外した後は、別の木どうしでも同じ)。置き場を値として読む code の digest は照らせない印になる。
+    record = tree.record("datareader")
+    _replace(tree.directory / "data.txt", "one", "two-two")
+    assert not tree.is_current(record), "macro が置き場から読む隣の file を替えたのに古いと判じない"
 
 
 # ---- 実物の doeff_hy の macro(doeff_hy を一時の dir に写し、別の process で記録を作って照らす)------------------------------
@@ -905,8 +922,8 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
 #: した素の値を返す macro(条 2 — 値は helper.hy の中身で決まるが、macro の閉包が辿る file は macros.hy だけ)・moded = 読み込みの時に
 #: 環境変数から組んだ値を返す macro(条 3 — file の外で決まる値)・looks と rows = 辿れない大域の表を読む macro(Hy と Python の
 #: source の文で覆う — binding_of を通る)・limited = macro と別の top の package から import した素の値を返す macro(条 2 の別の形 —
-#: 記録が名指す module はどれもその package に無い)・placed = 補助が自分の module の __file__ を名で引き、作った module に
-#: __file__ を書く macro(code の名の表に __file__ が出る — doeff_hy.static_check の project の形・使い手は placed.hy)。
+#: 記録が名指す module はどれもその package に無い)・placed = 補助が作った module に __file__ を書く macro(code の名の表に
+#: __file__ が出るが、置き場を値として読まない — doeff_hy.static_check の project の形・使い手は placed.hy)。
 CROSS_MACROS = """\
 (import os)
 (import types)
@@ -915,7 +932,7 @@ CROSS_MACROS = """\
 (import {pkg}.tables :as tables)
 (setv TABLE {{"a" 1}})
 (setv MODE (os.environ.get "MACRO_USE_PROBE_MODE" "plain"))
-(defn place-of [module] (setv module.__file__ __file__) module)
+(defn place-of [module] (setv module.__file__ "placed") module)
 (defmacro body [] 1)
 (defmacro scaled [] SCALE)
 (defmacro moded [] MODE)
@@ -1054,9 +1071,9 @@ def test_a_macro_changed_in_another_tree_is_stale_in_a_second_process(cross_tree
 
 
 def test_a_macro_naming_the_place_of_its_module_is_current_in_another_tree(cross_tree: CrossTree) -> None:
-    # 直す前は赤(agora-redesign card ki-1475765a3f18): macro が呼ぶ補助の code の名の表に __file__ が出ると(自分の module の
-    # __file__ を読む・作った module に __file__ を書く)、digest にその module の置き場の path が入り、同じ中身を別の作業木に
-    # 置いただけで古いと判じた(日次の全体検証は回ごとに別の dir に doeff を置き、型検査の展開の保存が毎回全部外れた)。
+    # 直す前は赤(agora-redesign card ki-1475765a3f18): macro が呼ぶ補助の code の名の表に __file__ が出ると(作った module に
+    # __file__ を書く)、digest にその module の置き場の path が入り、同じ中身を別の作業木に置いただけで古いと判じた(日次の
+    # 全体検証は回ごとに別の dir に doeff を置き、型検査の展開の保存が毎回全部外れた)。
     cross_tree.run("record", "placed")
     other = cross_tree.elsewhere("tree-b")
     assert other.run("check", "placed")["current"] is True, "同じ中身の macro を別の木に置いただけで古いと判じた"
