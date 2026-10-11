@@ -401,7 +401,10 @@
     ;; job の行も ready の前に読む — 行の形の誤り(古い coordinator の返事の版の欄の無い Program の job など・card ki-01d1f8cb0391)も
     ;; 読めない返事で、ready を書かない。
     (<- jobs tuple (declared-job-specs declared))
-    (<- (ready-file-written))
+    ;; 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない間(handoverPending — AL-D2k)は ready を書かない:
+    ;; Pod が Ready になると Deployment が前の世代の Pod の削除を始め、Service がその Pod を振り先から外す。
+    (when (not declared.handover-pending)
+      (<- (ready-file-written)))
     ;; 自己停止の時間は coordinator の ClusterTiming が持つ(移し替えの時間と組で決まる)。受け取った値に合わせる。
     (val timing (.get answered "timing"))
     (when (and timing (in "fence_ms" timing))

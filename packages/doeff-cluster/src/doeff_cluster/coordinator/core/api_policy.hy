@@ -431,7 +431,7 @@
   (cond
     ;; --- worker の drain(2026-09-25 — drain_policy)---
     (and (= head "workers") (= (len parts) 2) (= method "GET"))
-      #(state 200 (worker-view state (get parts 1) now timing))
+      #(state 200 (worker-view state (get parts 1) now timing (ready-instances state (get parts 1) now timing)))
     (and (= head "workers") (= (len parts) 3) (= (get parts 2) "drain") (= method "POST"))
       (do (setv actor (require-actor request.actor))
           (setv after (! (settle state (request-drain state (get parts 1) body actor now) actor now timing)))

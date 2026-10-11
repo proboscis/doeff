@@ -433,6 +433,10 @@ def warms_for(state: ClusterState, worker: str, now: int) -> tuple:
 
 def heartbeat_reply(state: ClusterState, name: str, timing: ClusterTiming, ready_instances: dict | None=None, now: int=0, boot: str | None=None, statuses: tuple | None=None) -> _Program[HeartbeatReply, object]:
     ...
+HANDOVER_SETTLED_PHASES: set[str]
+
+def handover_pending(state: ClusterState, name: str, boot: str, now: int, timing: ClusterTiming, ready_instances: dict | None) -> bool:
+    ...
 
 def elder_held(state: ClusterState, name: str, boot: str, now: int, window_ms: int) -> frozenset:
     ...

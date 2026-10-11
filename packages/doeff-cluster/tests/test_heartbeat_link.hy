@@ -37,16 +37,18 @@
   "heartbeat に版つき(revision が None なら版の欄の無い旧い形)の返事をし、/watch に mode で答える偽の coordinator。
    mode = unchanged(少し待って「変わっていない」)・changed(最初の確かめの後に 1 度だけ「変わった」)・missing(404)・
    broken(待ちの答え手が思わぬ例外で落ちる)・gated(gate-open が立った後に 1 度だけ「変わった」— 変化の刻を検が決める)。
-   beats = 受けた heartbeat の数・watches = 受けた待ちの数・draining = heartbeat の返事の drain の印(既定 False)。"
-  (defn #^ None __init__ [self #^ str mode #^ (| int None) [revision 3] #^ bool [draining False]]
+   beats = 受けた heartbeat の数・watches = 受けた待ちの数・draining = heartbeat の返事の drain の印(既定 False)・handover-pending =
+   返事の handoverPending(前の世代の job をまだ受け取れない — AL-D2k・既定 False)。"
+  (defn #^ None __init__ [self #^ str mode #^ (| int None) [revision 3] #^ bool [draining False] #^ bool [handover-pending False]]
     (setv self.mode mode self.revision revision self.beats 0 self.watches 0 self.changed-sent False self.gate-open False
-          self.draining draining self.lock (threading.Lock)))
+          self.draining draining self.handover-pending handover-pending self.lock (threading.Lock)))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
     (if (= request.url.path "/heartbeat")
         (do (with [self.lock] (+= self.beats 1))
             (httpx.Response 200 :json (| {"jobs" [] "tasks" [] "warm" [] "timing" TIMING "draining" self.draining}
-                                         (if (is self.revision None) {} {"revision" self.revision}))))
+                                         (if (is self.revision None) {} {"revision" self.revision})
+                                         (if self.handover-pending {"handoverPending" True} {}))))
         (do (with [self.lock] (+= self.watches 1))
             (setv query (dict (parse-qsl (.decode request.url.query "ascii"))))
             (cond
@@ -317,3 +319,24 @@
   (val probe (subprocess.run ["sh" boot-sh] :env {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" (str path)}
                              :capture-output True))
   (assert (= probe.returncode 0) probe))
+
+
+(deftest test-a-generation-that-cannot-take-the-elder-jobs-yet-keeps-the-pod-not-ready [#^ Path tmp-path monkeypatch]
+  ;; 失敗ケース(AL-D2k・card ki-c66651db99d6 — 2026-10-11 18:44 JST の zeus): 同じ名の前の世代がまだ動かしている job を、この世代が
+  ;; まだ受け取れない間(返事の handoverPending)は、worker は readiness の file に ready を書かず、Pod の readinessProbe は NotReady と
+  ;; 答える(Deployment は前の世代の Pod の削除を始めず、Service の振り先は前の世代の Pod のまま)。直す前: 最初の返事で ready を書き、
+  ;; 前の世代の Pod が振り先から外れた後、その Pod で動く job へ 2〜7 分 届かなかった。
+  (val path (/ tmp-path "doeff-worker-ready"))
+  (.setenv monkeypatch "DOEFF_WORKER_READY_FILE" (str path))
+  (val coordinator (FakeCoordinator "unchanged" :handover-pending True))
+  (val link (! (watching-link coordinator tmp-path :watch False)))
+  (<- (on-link link (polls 1)))
+  (assert (not (.exists path)) "受け取れない間は ready を書かない")
+  (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
+  (val probe (subprocess.run ["sh" boot-sh] :env {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" (str path)}
+                             :capture-output True))
+  (assert (!= probe.returncode 0) probe)
+  ;; 受け取れる姿になった(handoverPending の無い返事)→ ready を書く。
+  (setv coordinator.handover-pending False)
+  (<- (on-link link (polls 1)))
+  (assert (= (.read-text path :encoding "utf-8") "ready\n") (.read-text path :encoding "utf-8")))

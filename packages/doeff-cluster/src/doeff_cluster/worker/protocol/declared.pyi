@@ -30,6 +30,7 @@ def declared_job_spec(job: dict[str, object], draining: bool) -> _Program[JobSpe
 class DeclaredReply:
     jobs: tuple[dict[str, object], ...]
     draining: bool
+    handover_pending: bool = False
 
 class DeclaredReplyMalformed(ValueError):
     ...

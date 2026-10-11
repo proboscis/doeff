@@ -355,13 +355,17 @@
    まで)drained を返さない。worker = 名・boot = 退いた世代・jobs = 走っている handoff の job の名(名の順)・seen-ms = その世代の最後の
    報告の刻(lease の間 沈黙した世代 = Pod が消えた — 待たない)・overlapped = 同じ名の新しい世代が、この世代がまだ走っている間に
    起きたと名乗った(overlapsElder — AL-D2f)。真の組は recreate の job も持ち、新しい世代が起こせると報告するまでこの世代に残す
-   (偽 = 新しい世代が名乗った時に止める今どおりの形 — Recreate・突然の停止の後)。保存する(durable_kv の superseded/<名>/<世代>)。"
+   (偽 = 新しい世代が名乗った時に止める今どおりの形 — Recreate・突然の停止の後)。leaving = この世代の Pod の止まりが始まった(その世代の
+   preStop の drain か、止まり始めの名乗りが届いた — AL-D2k)。重なりの組は、この印が付くまで job を新しい世代へ渡さない: Service は
+   worker の Pod を振り先にし、Terminating の Pod を振り先から外すので、印の前に渡すと、渡した job へは新しい Pod が Ready になるまで
+   届かず、印の後まで残すと、残した job へは届かない。保存する(durable_kv の superseded/<名>/<世代>)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
   (#^ str boot)
   (#^ (get tuple #(str ...)) jobs)
   (#^ int seen-ms)
-  (setv #^ bool overlapped False))
+  (setv #^ bool overlapped False)
+  (setv #^ bool leaving False))
 
 
 (defrecord StateView
@@ -1113,7 +1117,9 @@
 (defrecord HeartbeatReply
   "heartbeat の返事(cluster_policy.heartbeat-reply・superseded-reply — #2595): jobs = 動かす job の spec・tasks = 走らせる task・warm =
    温める表の行・timing = 時間の設定・draining = drain 中か・superseded = 退いた世代への返事か・formats = 受け入れる本文の形の版・
-   revision = 返事を作った時の coordinator の版。JSON の形は coordinator/protocol/replies が綴る(superseded は真の時だけ書く)。"
+   revision = 返事を作った時の coordinator の版・handover-pending = 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない
+   (cluster_policy.handover-pending — worker はこの間 Pod の ready の file を書かない・AL-D2k)。JSON の形は coordinator/protocol/replies が
+   綴る(superseded・handover-pending は真の時だけ書く)。"
   (#^ (get tuple #(JobSpec ...)) jobs)
   (#^ (get tuple #(TaskOffer ...)) tasks)
   (#^ (get tuple #(WarmOffer ...)) warm)
@@ -1121,7 +1127,8 @@
   (#^ bool draining)
   (#^ bool superseded)
   (#^ (get tuple #(int ...)) formats)
-  (#^ int revision))
+  (#^ int revision)
+  (setv #^ bool handover-pending False))
 
 
 (defclass [(dataclass :frozen True)] Watcher []

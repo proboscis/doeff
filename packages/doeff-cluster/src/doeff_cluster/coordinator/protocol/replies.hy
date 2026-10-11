@@ -92,7 +92,8 @@
   (| {"jobs" (! (spelled-each spec-json reply.jobs)) "tasks" (! (spelled-each task-offer-json reply.tasks))
       "warm" (lfor w reply.warm {"key" w.key "runtimeEnv" w.runtime-env}) "timing" (asdict reply.timing)
       "draining" reply.draining "formats" (list reply.formats) "revision" reply.revision}
-     (if reply.superseded {"superseded" True} {})))
+     (if reply.superseded {"superseded" True} {})
+     (if reply.handover-pending {"handoverPending" True} {})))
 
 
 (defk state-view-json [#^ StateView view]
