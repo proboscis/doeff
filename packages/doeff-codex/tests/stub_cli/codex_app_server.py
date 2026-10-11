@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 RECORDED = Path(__file__).resolve().parent.parent / "recorded" / "codex-0.162.1"
@@ -77,12 +78,20 @@ def answer_of(messages: list[dict[str, object]], request_id: int) -> dict[str, o
     return next(message for message in messages if message.get("id") == request_id and "result" in message)
 
 
-def recorded_ids(messages: list[dict[str, object]]) -> tuple[str, str]:
+@dataclass(frozen=True)
+class RecordedIds:
+    """録った 1 本の thread の id と 1 つ目のターンの id(替え玉が自分の id へ差し替える元)。"""
+
+    thread: str
+    turn: str
+
+
+def recorded_ids(messages: list[dict[str, object]]) -> RecordedIds:
     """録った 1 本の thread の id(thread/start の答え — 要求の id 2)と 1 つ目のターンの id(turn/start の答え — 要求の id 3)を取るため。"""
     thread_answer = answer_of(messages, 2)
     turn_answer = answer_of(messages, 3)
-    return (str(thread_answer["result"]["thread"]["id"]),  # type: ignore[index]  # 録った答えの形は検が確かめている
-            str(turn_answer["result"]["turn"]["id"]))  # type: ignore[index]  # 同上
+    return RecordedIds(thread=str(thread_answer["result"]["thread"]["id"]),  # type: ignore[index]  # 録った答えの形は検が確かめている
+                       turn=str(turn_answer["result"]["turn"]["id"]))  # type: ignore[index]  # 同上
 
 
 def first_turn_notifications(messages: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -99,7 +108,7 @@ class Stub:
         self.two_turns = recorded_messages("two-turns")
         self.interrupt = recorded_messages("interrupt")
         self.tool_calls = recorded_messages("tool-calls")
-        self.recorded_thread, self.recorded_turn = recorded_ids(self.two_turns)
+        self.recorded = recorded_ids(self.two_turns)
         self.mut_made = 0
         self.mut_thread_id = ""
         self.write_lock = threading.Lock()
@@ -114,11 +123,11 @@ class Stub:
             sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
             sys.stdout.flush()
 
-    def renamed(self, message: dict[str, object], turn_id: str, recorded: tuple[str, str] | None = None) -> dict[str, object]:
+    def renamed(self, message: dict[str, object], turn_id: str, recorded: RecordedIds | None = None) -> dict[str, object]:
         """録った行の thread とターンの id(recorded — 既定は two-turns の id)を、この process の id へ差し替えるため。"""
-        recorded_thread, recorded_turn = recorded or (self.recorded_thread, self.recorded_turn)
+        ids = recorded or self.recorded
         text = json.dumps(message, ensure_ascii=False)
-        return json.loads(text.replace(recorded_thread, self.mut_thread_id).replace(recorded_turn, turn_id))
+        return json.loads(text.replace(ids.thread, self.mut_thread_id).replace(ids.turn, turn_id))
 
     def fresh_id(self, kind: str) -> str:
         """thread とターンの id を振るため。"""

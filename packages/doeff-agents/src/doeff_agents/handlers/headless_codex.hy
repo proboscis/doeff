@@ -73,6 +73,7 @@
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
 ;; 手番の終わり → AwaitOutcome の写し(L2 の見え方)は claude の adapter と同じ 1 つの関数を使う。
 (import doeff_agents.handlers.headless [outcome-of])
+(import doeff_hy.frozen [frozen-json-object])
 (import doeff_codex.values [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
@@ -244,7 +245,7 @@
   {:pre [(: item-id str) (: item-type str) (: tool ToolItem)] :post [(: % ToolCall)] :tags {:context "headless-adapter" :role "judgment"}}
   "道具の item を、claude の adapter と同じ形の道具の呼び(id = item の id・名 = item の種類の名)にするため。"
   (<- input (tool-input-of tool))
-  (ToolCall :id item-id :name item-type :input input))
+  (ToolCall :id item-id :name item-type :input (frozen-json-object input "codex の道具の呼びの命令")))
 
 (defk tool-answer-of [#^ str item-id tool]
   {:pre [(: item-id str) (: tool ToolItem)] :post [(: % ToolAnswer)] :tags {:context "headless-adapter" :role "judgment"}}
@@ -256,11 +257,11 @@
     (FilePatch) (ToolAnswer :id item-id :text "" :is-error (!= tool.status ToolStatus.COMPLETED))
     (WebSearch) (ToolAnswer :id item-id :text "" :is-error False)))
 
-(defk tool-events-of [record #^ datetime at #^ int first-seq]
-  {:pre [(: record (| ItemStarted ItemDone)) (: at datetime) (: first-seq int)] :post [(: % tuple)]
+(defk tool-events-of [record tool #^ datetime at #^ int first-seq]
+  {:pre [(: record (| ItemStarted ItemDone)) (: tool ToolItem) (: at datetime) (: first-seq int)] :post [(: % tuple)]
    :tags {:context "headless-adapter" :role "judgment"}}
-  "道具の item の始まりか終わり 1 つを、道具の出来事(0 から 2 つ — seq は first-seq から続けて)へ写すため(頭の註の「道具の item」)。"
-  (val tool record.tool)
+  "道具の item の始まりか終わり 1 つ(tool = その道具の中身)を、道具の出来事(1 つか 2 つ — seq は first-seq から続けて)へ写すため
+   (頭の註の「道具の item」)。"
   (match #(record tool)
     #((ItemStarted) (WebSearch)) #((AgentToolCallStartedEvent :seq first-seq :at at :id record.item-id :name record.item-type))
     #((ItemStarted) _) (do (<- call (tool-call-of record.item-id record.item-type tool))
@@ -283,8 +284,9 @@
     ;; 考えの item の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(claude の adapter と同じ)。
     (ItemStarted :item-type "reasoning") #((AgentThinkingStartedEvent :seq first-seq :at at))
     ;; 道具の item(中身を持つ item だけ — 層 2 が道具の種類の中身を解いた物)。
-    (| (ItemStarted :tool (| (CommandRun) (FilePatch) (WebSearch))) (ItemDone :tool (| (CommandRun) (FilePatch) (WebSearch))))
-    (do (<- made (tool-events-of record at first-seq)) made)
+    (| (ItemStarted :tool (| (CommandRun) (FilePatch) (WebSearch)) :as tool)
+       (ItemDone :tool (| (CommandRun) (FilePatch) (WebSearch)) :as tool))
+    (do (<- made (tool-events-of record tool at first-seq)) made)
     (ReasoningDelta) #((AgentThinkingDeltaEvent :seq first-seq :at at :text record.text))
     (TokenUsage) (do (<- usage (call-usage-of record.last))
                      (if (is usage None) #() #((AgentCallUsageEvent :seq first-seq :at at :usage usage :model model))))

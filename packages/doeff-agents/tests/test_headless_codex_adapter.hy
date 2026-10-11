@@ -528,6 +528,7 @@
   ;; claude の adapter と同じ出来事(AgentToolUseEvent の ToolCall・AgentToolResultEvent の ToolAnswer)で届く — agora は absorb-event を
   ;; 変えずに画面の道具カードへ出す。道具の名は codex の item の種類の名、命令は画面の shell の card が読む command の欄。
   (<- done (run-on STUB tmp-path tool-turn))
+  (assert (isinstance done Read) done)
   (assert (and (isinstance done.end AgentTurnCompleted) (= done.end.result-text "Tools done.")) done.end)
   (<- uses (of-kind done.events AgentToolUseEvent))
   (val calls (tuple (gfor use uses call use.tool-calls call)))

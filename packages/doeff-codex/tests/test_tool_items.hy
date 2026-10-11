@@ -1,10 +1,10 @@
 ;; 道具の item(commandExecution・fileChange・webSearch)の行の分類の検 — 版を固定した本物の codex(0.162.1)が、偽の上流の道具の
 ;; 呼びに答えて命令を走らせ、ファイルを書いた行を録った物(tests/recorded/codex-0.162.1/tool-calls・録り方は
-;; scripts/record_app_server_lines.py の筋書き tool-calls)で確かめる(card acp:kanban-issue:ki-77e76c7c07ce)。
+;; scripts/record_app_server_lines.py の筋書き tool-calls)で確かめる(ki-77e76c7c07ce)。
 ;;
 ;; 守る事: 道具の item の始まりと終わりが、命令と出力と終了 code(commandExecution)・変えたファイル(fileChange)・検索の語(webSearch)を
 ;; 型つきの記録で運ぶ。崩れると上の層(doeff-agents の adapter)は codex の道具の呼びと結果を AgentToolUseEvent・AgentToolResultEvent
-;; へ写せず、agora の画面の道具カードに codex の会話の道具が出ない。
+;; へ写せず、その上の画面の道具カードに codex の道具が出ない。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest defk <-])
@@ -85,7 +85,9 @@
                                                  "commandActions" [] "aggregatedOutput" "" "exitCode" None}))
   (<- record (classify-line line))
   (assert (isinstance record ItemDone) record)
-  (assert (= record.tool.status (UnknownValue :value (OpaqueJson.of "paused"))) record)
+  (val run record.tool)
+  (assert (isinstance run CommandRun) run)
+  (assert (= run.status (UnknownValue :value (OpaqueJson.of "paused"))) run)
   ;; 使う欄(command)の無い道具の item は、method と訳を持つ読めない行(黙って道具の中身の無い item にしない)。
   (<- broken (command-item-line "item/started" {"type" "commandExecution" "id" "call_9" "cwd" "/w" "status" "inProgress"
                                                  "commandActions" []}))
