@@ -1,0 +1,17 @@
+--- 守りの検・写し base
+1 passed, 1 warning in 8.03s
+--- 守りの検・写し rule
+        # 守り(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A): 振り直しの規則の source が表に無ければ、規則を替えたのに保存の形の版を
+            f"gensym の名の振り直しの規則({rule})を替えたら static_cache.CACHE_VERSION を上げ、GENSYM_RULE_VERSIONS に"
+E       AssertionError: gensym の名の振り直しの規則(a441bc1aefe9b555fa60a4110f14fbf131aa10200f6162a9266d094427303182)を替えたら static_cache.CACHE_VERSION を上げ、GENSYM_RULE_VERSIONS に 新しい規則の行を足す
+packages/doeff-hy/tests/test_static_cache.py:169: AssertionError
+--- 表の行の検・写し rule-v4(CACHE_VERSION 4)
+2 passed in 0.69s
+--- drive2・base(元の規則)・空の cache-y
+{"records_py": "/tmp/kiwork/reproA/base/doeff_hy_bytecode_guard/records.py", "record_tag": "doeff-hy/macro-dependencies/5", "cache_version": 3, "lookups": {"hit": 0, "miss": 2}, "served_print": ["print('bound _hy_gensym_v_2')"], "fresh_print": ["print('bound _hy_gensym_v_3')"], "same": false, "post_processing_digest": "41dc7b05fb0ad114338b0f29000388b8e34b157ee8bc6e870bbeb89d159db8ef", "gensym_rule_value_digest": "7402d80158c307a659ec5bf3e7bcdc6315d5e432689b27d7c7fe4b1e14a6db36"}
+--- drive2・rule(規則を替え版 3 のまま)・cache-y
+{"records_py": "/tmp/kiwork/reproA/rule/doeff_hy_bytecode_guard/records.py", "record_tag": "doeff-hy/macro-dependencies/5", "cache_version": 3, "lookups": {"hit": 2, "miss": 0}, "served_print": ["print('bound _hy_gensym_v_2')"], "fresh_print": ["print('bound _hy_gensym_v_1')"], "same": false, "post_processing_digest": "41dc7b05fb0ad114338b0f29000388b8e34b157ee8bc6e870bbeb89d159db8ef", "gensym_rule_value_digest": "7402d80158c307a659ec5bf3e7bcdc6315d5e432689b27d7c7fe4b1e14a6db36"}
+--- drive2・rule-v4(規則を替え版 4)・cache-y
+{"records_py": "/tmp/kiwork/reproA/rule-v4/doeff_hy_bytecode_guard/records.py", "record_tag": "doeff-hy/macro-dependencies/5", "cache_version": 4, "lookups": {"hit": 0, "miss": 2}, "served_print": ["print('bound _hy_gensym_v_1')"], "fresh_print": ["print('bound _hy_gensym_v_1')"], "same": true, "post_processing_digest": "41dc7b05fb0ad114338b0f29000388b8e34b157ee8bc6e870bbeb89d159db8ef", "gensym_rule_value_digest": "7402d80158c307a659ec5bf3e7bcdc6315d5e432689b27d7c7fe4b1e14a6db36"}
+--- drive2・rule-v4・cache-y の 2 回目
+{"records_py": "/tmp/kiwork/reproA/rule-v4/doeff_hy_bytecode_guard/records.py", "record_tag": "doeff-hy/macro-dependencies/5", "cache_version": 4, "lookups": {"hit": 2, "miss": 0}, "served_print": ["print('bound _hy_gensym_v_1')"], "fresh_print": ["print('bound _hy_gensym_v_1')"], "same": true, "post_processing_digest": "41dc7b05fb0ad114338b0f29000388b8e34b157ee8bc6e870bbeb89d159db8ef", "gensym_rule_value_digest": "7402d80158c307a659ec5bf3e7bcdc6315d5e432689b27d7c7fe4b1e14a6db36"}

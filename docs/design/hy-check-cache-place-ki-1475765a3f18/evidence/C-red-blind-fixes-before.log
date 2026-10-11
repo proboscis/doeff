@@ -1,0 +1,130 @@
+
+deadline scale x1.4 (load per usable CPU) — per test 85s, watchdog 127s
+
+test-admission: focused — 6 件(変更箇所の検証)
+F.FF..                                                                   [100%]
+=================================== FAILURES ===================================
+___________ test_an_entry_of_the_current_store_version_is_read_back ____________
+
+tree = Tree(root=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_an_entry_of_the_current_s0/tree'), cache=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_an_entry_of_the_current_s0/.cache'))
+expansions = [PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_an_entry_of_the_current_s0/tree/probe_cache/user.hy'), PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_an_entry_of_the_current_s0/tree/probe_cache/user.hy')]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x29ee4e280d0>
+
+    def test_an_entry_of_the_current_store_version_is_read_back(
+        tree: Tree, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 直す前は赤(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A・card ki-1475765a3f18): entry の読みは保存の形の版を literal の 3 で
+        # 照らしていた。CACHE_VERSION を上げた版は、自分が書いた entry を 1 つも読めず、毎回全部を展開し直す。
+        monkeypatch.setattr(static_cache, "CACHE_VERSION", static_cache.CACHE_VERSION + 1)
+        first = _project(tree)
+        assert _project(tree).text == first.text
+>       assert expansions == [tree.user], "今の版で書いた entry を読めず、展開し直した"
+E       AssertionError: 今の版で書いた entry を読めず、展開し直した
+E       assert [PosixPath('/...che/user.hy')] == [PosixPath('/...che/user.hy')]
+E         
+E         Left contains one more item: PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_an_entry_of_the_current_s0/tree/probe_cache/user.hy')
+E         Use -v to get more diff
+
+packages/doeff-hy/tests/test_static_cache.py:134: AssertionError
+_ test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again _
+
+copied_doeff_hy = CopiedDoeffHy(lib=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_a_changed_file_the_post_p0/lib'), root=PosixPath('...d_file_the_post_p0/proj'), cache=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_a_changed_file_the_post_p0/.cache'))
+
+    def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again(
+        copied_doeff_hy: CopiedDoeffHy,
+    ) -> None:
+        # 直す前は赤(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B・card ki-1475765a3f18): 後処理が自分の module の置き場
+        # (__file__)から隣の file を読んで展開の結果を変えると、歩みはその file の中身を覆わない。置き場の path を digest から
+        # 外した後は、別の dir の木どうしでも、同じ木でも、file を替えた後に古い展開を引いた。置き場を値として読む code の
+        # digest は照らせない印になり、使い手は毎回展開し直す。
+        static_check_file = copied_doeff_hy.package / "static_check.py"
+        text = static_check_file.read_text(encoding="utf-8")
+        assert text.count("    rendered = ast.unparse(tree)\n") == 1
+        static_check_file.write_text(
+            text.replace(
+                "    rendered = ast.unparse(tree)\n", "    rendered = ast.unparse(tree) + _probe_note()\n"
+            )
+            + '\n\ndef _probe_note() -> str:\n    return "\\n# " + Path(__file__).with_name("probe-note.txt")'
+            '.read_text(encoding="utf-8")\n',
+            encoding="utf-8",
+        )
+        note = copied_doeff_hy.package / "probe-note.txt"
+        note.write_text("one", encoding="utf-8")
+        assert copied_doeff_hy.expanded() == 1
+        note.write_text("two-two", encoding="utf-8")
+>       assert copied_doeff_hy.expanded() == 1, "後処理が読む隣の file を替えたのに、保存した古い展開を引いた"
+E       AssertionError: 後処理が読む隣の file を替えたのに、保存した古い展開を引いた
+E       assert 0 == 1
+E        +  where 0 = expanded()
+E        +    where expanded = CopiedDoeffHy(lib=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_a_changed_file_the_post_p0/lib'), root=PosixPath('...d_file_the_post_p0/proj'), cache=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_a_changed_file_the_post_p0/.cache')).expanded
+
+packages/doeff-hy/tests/test_static_cache.py:448: AssertionError
+_________ test_a_changed_file_a_macro_reads_beside_its_module_is_stale _________
+
+tree = Tree(package='macro_use_ca50152e', directory=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_a_changed_file_a_macro_re0/macro_use_ca50152e'))
+
+    def test_a_changed_file_a_macro_reads_beside_its_module_is_stale(tree: Tree) -> None:
+        # 直す前は赤: 補助が自分の module の __file__ から隣の file を読んで展開の結果を決めると、歩みはその file の中身を覆わない
+        # (置き場の path を digest から外した後は、別の木どうしでも同じ)。置き場を値として読む code の digest は照らせない印になる。
+        record = tree.record("datareader")
+        _replace(tree.directory / "data.txt", "one", "two-two")
+>       assert not tree.is_current(record), "macro が置き場から読む隣の file を替えたのに古いと判じない"
+E       AssertionError: macro が置き場から読む隣の file を替えたのに古いと判じない
+E       assert not True
+E        +  where True = is_current(MacroRecord(hy_version='1.3.1', macros=(UsedMacro(table='_hy_macros', module='macro_use_ca50152e.macros', name='reads_...dFile(module='macro_use_ca50152e.macros', sha256='2f8d2add5bfee651ff85c1317896783ac11bdc599b296cb5e6f854fcabc1d006'),)))
+E        +    where is_current = Tree(package='macro_use_ca50152e', directory=PosixPath('/tmp/pytest-of-ubuntu/pytest-1690/test_a_changed_file_a_macro_re0/macro_use_ca50152e')).is_current
+
+packages/doeff-hy/tests/test_macro_use_record.py:488: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-design-check-ki1475/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-hy/tests/test_static_cache.py::test_an_entry_of_the_current_store_version_is_read_back
+FAILED packages/doeff-hy/tests/test_static_cache.py::test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again
+FAILED packages/doeff-hy/tests/test_macro_use_record.py::test_a_changed_file_a_macro_reads_beside_its_module_is_stale
+3 failed, 3 passed, 93 deselected, 1 warning in 13.88s

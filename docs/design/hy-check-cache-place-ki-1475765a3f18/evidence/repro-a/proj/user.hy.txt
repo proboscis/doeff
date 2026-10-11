@@ -1,0 +1,2 @@
+(require mac [bound-twice])
+(setv value (bound-twice 1))

@@ -1,0 +1,18 @@
+"""盲検 A の再現: 振り直しの規則を替えた写しで、表に新しい版の行を足した形は通り、前の版の行のまま足した形は断られる。"""
+import sys
+
+import pytest
+
+sys.path.insert(0, "/work/toolset/worktrees/doeff-wt-design-check-ki1475/packages/doeff-hy/tests")
+import test_static_cache as t  # noqa: E402
+
+
+def test_a_new_rule_with_a_new_version_row_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(t.GENSYM_RULE_VERSIONS, t._gensym_rule_sha256(), t.static_cache.CACHE_VERSION)
+    t.test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version()
+
+
+def test_a_new_rule_under_the_old_version_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(t.GENSYM_RULE_VERSIONS, t._gensym_rule_sha256(), 3)
+    with pytest.raises(AssertionError, match="同じ版に 2 つの規則の行がある"):
+        t.test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version()
