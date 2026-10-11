@@ -103,10 +103,12 @@
 (defclass [(dataclass :frozen True)] HeadlessCodexConfig []
   "composition root が渡す宣言: home = codex の家(env — PATH・HOME・CODEX_HOME。資格は root が置く — この handler は読むだけ)/
    approval-policy・sandbox = 会話の宣言の許可の方針と sandbox(既定は問わない NEVER と DANGER-FULL-ACCESS — 答え手の無い許可の問いで
-   ターンを止めないため。claude の adapter の既定 BypassAll と同じ構え)/ page-wait = 層 2 へ 1 回に待つ秒数の上限。"
+   ターンを止めないため。claude の adapter の既定 BypassAll と同じ構え)/ disabled-features = 会話の宣言の切って起こす codex の機能の名
+   (例 hooks = hook を全部の層で切る・空なら codex の既定)/ page-wait = 層 2 へ 1 回に待つ秒数の上限。"
   (#^ CodexHome home)
   (setv #^ ApprovalPolicy approval-policy ApprovalPolicy.NEVER)
   (setv #^ SandboxMode sandbox SandboxMode.DANGER-FULL-ACCESS)
+  (setv #^ (get tuple #(str ...)) disabled-features #())
   (setv #^ float page-wait 5.0))
 
 (defrecord WaitingInput
@@ -173,7 +175,8 @@
   {:pre [(: config HeadlessCodexConfig) (: request LaunchEffect) (: auth-json (| str None))] :post [(: % CodexSessionSpec)]
    :tags {:context "headless-adapter" :role "judgment"}}
   "LaunchEffect を層 2 の会話の宣言にするため。process の env = 家の env + session_env(資格を持てない上書き)。auth-json = 引き換えた
-   借りた口座の auth.json の中身(None = 家の資格のまま — 層 2 がその process だけの家に置く)。許可の方針と sandbox は config から。"
+   借りた口座の auth.json の中身(None = 家の資格のまま — 層 2 がその process だけの家に置く)。許可の方針と sandbox と切る機能は
+   config から。"
   (assert-session-env-is-non-auth-overlay request.session-env :context "LaunchEffect.session_env (headless-codex-handler)")
   (val env (| (dict config.home.env) (dict (or request.session-env {}))))
   (assert-no-forbidden-agent-env env :context "headless-codex-handler の process の env")
@@ -184,7 +187,8 @@
                     :approval-policy config.approval-policy
                     :sandbox config.sandbox
                     :effort request.effort
-                    :auto-compact-token-limit limit))
+                    :auto-compact-token-limit limit
+                    :disabled-features config.disabled-features))
 
 (defk refuse-launch [#^ LaunchEffect request]
   {:pre [(: request LaunchEffect)] :post [(: % None)] :tags {:context "headless-adapter" :role "judgment"}}

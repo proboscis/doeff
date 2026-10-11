@@ -120,11 +120,12 @@
 
 ;; --- 組み立て -------------------------------------------------------------------------------
 
-(defk app-server-argv [#^ tuple command]
-  {:pre [(: command tuple) (> (len command) 0)] :post [(: % list)] :tags {:context "codex" :role "foundation"}}
+(defk app-server-argv [#^ tuple command #^ tuple disabled-features]
+  {:pre [(: command tuple) (> (len command) 0) (: disabled-features tuple)] :post [(: % list)] :tags {:context "codex" :role "foundation"}}
   "app-server を stdio の JSON-RPC で起こす argv を作るため。command = 実行ファイルと前置きの引数(例 #(\"codex\")・
-   #(\"codex\" \"-c\" \"model=…\"))— 前置きの後ろに app-server と待ち受けの形を足す。"
-  (+ (list command) (list APP-SERVER-ARGS)))
+   #(\"codex\" \"-c\" \"model=…\"))・disabled-features = 切って起こす機能の名(会話の宣言の disabled-features)— 前置きの後ろに機能
+   1 つにつき --disable <名> を置き、その後ろに app-server と待ち受けの形を足す。"
+  (+ (list command) (lfor feature disabled-features flag #("--disable" feature) flag) (list APP-SERVER-ARGS)))
 
 
 ;; 要求の params の型(method ごとに 1 つ)。

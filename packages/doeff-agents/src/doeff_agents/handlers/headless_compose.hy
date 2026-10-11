@@ -122,11 +122,13 @@
    持ち主)を作るため。"
   (fake-codex-handler world))
 
-(defk codex-adapter [env approval-policy sandbox]
-  {:pre [(: env Mapping) (: approval-policy CodexApprovalPolicy) (: sandbox CodexSandboxMode)] :post [(: % Callable)]
+(defk codex-adapter [env approval-policy sandbox disabled-features]
+  {:pre [(: env Mapping) (: approval-policy CodexApprovalPolicy) (: sandbox CodexSandboxMode) (: disabled-features tuple)]
+   :post [(: % Callable)]
    :tags {:context "headless-adapter" :role "entry"}}
   "headless の codex の adapter(doeff-agents の公開 effect を codex の層 2 の effect へ写す — 層 2 が本物でも fake でも同じ adapter)を
    作るため。env = codex の家の env(PATH・HOME・CODEX_HOME — 資格は呼び手が置く)・approval-policy・sandbox = 会話の宣言の許可の方針と
-   sandbox。"
-  (headless-codex-handler (HeadlessCodexConfig (CodexHome :env (dict env)) :approval-policy approval-policy :sandbox sandbox)
+   sandbox・disabled-features = 会話の宣言の切って起こす codex の機能の名。"
+  (headless-codex-handler (HeadlessCodexConfig (CodexHome :env (dict env)) :approval-policy approval-policy :sandbox sandbox
+                                               :disabled-features disabled-features)
                           (HeadlessCodexState)))

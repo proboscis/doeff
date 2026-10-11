@@ -360,7 +360,7 @@
   (val base (.get spec.home.env "CODEX_HOME"))
   (when (and (is-not spec.home.auth-json None) (not base))
     (return (LaunchFailed :detail "借りた資格を置く元の CODEX_HOME が宣言の env に無い")))
-  (<- argv (app-server-argv host.command))
+  (<- argv (app-server-argv host.command spec.disabled-features))
   (with [runtime.lock]
     (setv runtime.generation (+ runtime.generation 1)
           runtime.launches (+ runtime.launches 1)

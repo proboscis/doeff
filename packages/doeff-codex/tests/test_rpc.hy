@@ -24,10 +24,17 @@
 
 (deftest test-the-app-server-argv-speaks-json-rpc-on-stdio
   ;; 起こす命令は前置き(実行ファイルと前の引数)の後に app-server と stdio の待ち受け。
-  (<- argv (app-server-argv #("codex")))
+  (<- argv (app-server-argv #("codex") #()))
   (assert (= argv ["codex" "app-server" "--listen" "stdio://"]) argv)
-  (<- wrapped (app-server-argv #("/opt/bin/codex" "-c" "model=\"gpt-6-astra\"")))
+  (<- wrapped (app-server-argv #("/opt/bin/codex" "-c" "model=\"gpt-6-astra\"") #()))
   (assert (= wrapped ["/opt/bin/codex" "-c" "model=\"gpt-6-astra\"" "app-server" "--listen" "stdio://"]) wrapped))
+
+
+(deftest test-the-disabled-features-go-before-the-app-server
+  ;; 切る機能は前置きの後・app-server の前に 1 つにつき --disable <名>(codex の全体の旗 — 0.162.1 で `codex --disable hooks app-server`
+  ;; が CODEX_HOME と作業の dir の .codex の hook を 1 つも走らせない事を測った)。
+  (<- argv (app-server-argv #("codex" "-c" "model=\"m\"") #("hooks" "goals")))
+  (assert (= argv ["codex" "-c" "model=\"m\"" "--disable" "hooks" "--disable" "goals" "app-server" "--listen" "stdio://"]) argv))
 
 
 (deftest test-the-built-requests-match-the-recorded-exchange
