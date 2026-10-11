@@ -18,7 +18,7 @@
 (import doeff_codex.values [CodexHome CodexSessionSpec CodexInput])
 (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
 (import doeff_codex.handler [CodexHost codex-handler])
-(import doeff_codex.fake [FakeCodexWorld FakeReply fake-codex-handler])
+(import doeff_codex.fake [FakeCodexWorld FakeReply UsageLimitHit fake-codex-handler])
 
 (val PLAIN "plain")
 (val FAKE "fake")
@@ -29,6 +29,12 @@
 (val SLOW-WORD "SLOW")
 (val IMAGES-PHRASE "Count the attached images.")
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
+;; 利用枠切れで断られる筋書きの言葉と、その終わりが運ぶ事実(stub は録った codex 0.162.1 の利用枠切れのターンを流し、本番の handler が
+;; 枠の知らせから作る — 戻りの刻は録りの偽の上流が header で名乗った値・文は codex の誤りの文。fake は同じ事実を筋書きで受ける)。
+(val USAGE-LIMIT-WORD "USAGE-LIMIT")
+(val USAGE-LIMIT-HIT (UsageLimitHit :minutes 300 :resets-at 1893456000
+                                    :text (+ "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+                                             "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM.")))
 ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)。
 (val CODEX-HOME-DIR "codex-home")
 
@@ -55,6 +61,7 @@
   (cond
     (in SLOW-WORD input.text) (FakeReply :pieces #("slow-0 " "slow-1 ") :hold True)
     (in IMAGES-PHRASE input.text) (FakeReply :pieces #((.format "IMAGES {}" (len input.images))))
+    (in USAGE-LIMIT-WORD input.text) (FakeReply :pieces #() :usage-limit USAGE-LIMIT-HIT)
     True (FakeReply :pieces ANSWER-PIECES)))
 
 
