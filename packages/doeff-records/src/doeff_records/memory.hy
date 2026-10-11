@@ -59,7 +59,8 @@
 (import doeff_records.store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
-                                 retention-group-of where-refusal row-matches? descending-value? listed-row key-text next-watch-sequence
+                                 retention-group-of key-head-of key-head-refusal where-refusal row-matches? descending-value? listed-row key-text
+                                 next-watch-sequence
                                  epoch-ms terminal-row? body-digest row-expired? event-expired?])
 
 (defclass StoredRow []
@@ -657,11 +658,16 @@
              (Appended event.sequence False))))
 
 
-(defn #^ Events memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
-  "ReadEvents に答えるため: 刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない(上限の前に除く)。"
+(defn #^ (| Events NotIndexed) memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "ReadEvents に答えるため: 刻 now-ms で保持の期限を過ぎた出来事は、回収の前でも出さない(上限の前に除く)。key-head を付けた読みは、
+   冪等キーの頭が key-head の出来事だけを数える(列が頭で引けなければ NotIndexed)。"
   (setv decl (store.schema.stream ask.stream)
-        items (tuple (cut (lfor event store.events
+        refusal (key-head-refusal decl ask.key-head))
+  (when refusal (return refusal))
+  (setv items (tuple (cut (lfor event store.events
                                 :if (and (= event.stream ask.stream) (> event.sequence ask.after)
+                                         (or (is ask.key-head None)
+                                             (= (key-head-of decl.key-lookup.separator event.idempotency-key) ask.key-head))
                                          (not (stored-event-expired? store decl event now-ms)))
                                 event)
                           ask.limit)))

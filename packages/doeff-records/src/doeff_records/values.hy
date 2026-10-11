@@ -509,7 +509,7 @@
 (setv PutRowAnswer (| Written Conflict Refused Unreachable))
 (setv WatchChangesAnswer (| Changes Reset Unreachable))
 (setv AppendEventAnswer (| Appended Refused Unreachable))
-(setv ReadEventsAnswer (| Events Unreachable))
+(setv ReadEventsAnswer (| Events NotIndexed Unreachable))
 (val WatchEventsAnswer (| EventsMoved EventsQuiet Unreachable))
 (val ReadStreamEndAnswer (| StreamEnd StreamEmpty Unreachable))
 (val ReadEventByKeyAnswer (| Event EventAbsent EventRetired Unreachable))
