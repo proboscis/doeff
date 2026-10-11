@@ -318,9 +318,10 @@ VOCABULARY_RULE: str = "doeff-packages-have-no-application-vocabulary"
 FAKE_LOCKED: dict[str, str] = {"semgrep": FAKE_VERSIONS["semgrep"], "pre-commit": "0.0.0-fake"}
 
 
-def _plain_hook_repository(directory: Path, changed: str, source: str) -> Path:
+def _plain_hook_repository(directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = ()) -> Path:
     """素の hook が読む物(scripts/ の追跡している file・hook の設定・木の python の宣言)と、業務の語の規則だけの .semgrep.yaml を
-    写して commit した repo に、changed だけを stage するため(台帳の突合は docs/adr と .semgrep.yaml に触れた commit だけが撃つ)。"""
+    写して commit した repo に、changed だけを stage するため(台帳の突合は docs/adr と .semgrep.yaml に触れた commit だけが撃つ)。
+    rule_packages = 検の repo の規則の paths.include にだけ足す package(項は写したまま — 規則に package を足す便の形)。"""
     repository: Path = directory / "repository"
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
@@ -331,9 +332,9 @@ def _plain_hook_repository(directory: Path, changed: str, source: str) -> Path:
         (repository / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, repository / name)
     rules = yaml.safe_load((ROOT / ".semgrep.yaml").read_text())["rules"]
-    (repository / ".semgrep.yaml").write_text(
-        yaml.safe_dump({"rules": [rule for rule in rules if rule["id"] == VOCABULARY_RULE]}), encoding="utf-8",
-    )
+    vocabulary = [rule for rule in rules if rule["id"] == VOCABULARY_RULE]
+    vocabulary[0]["paths"]["include"].extend(f"/packages/{package}/**" for package in rule_packages)
+    (repository / ".semgrep.yaml").write_text(yaml.safe_dump({"rules": vocabulary}), encoding="utf-8")
     (repository / "uv.lock").write_text(
         "version = 1\n"
         + "".join(f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n' for name, version in FAKE_LOCKED.items()),
@@ -353,12 +354,12 @@ def _plain_hook_repository(directory: Path, changed: str, source: str) -> Path:
     return repository
 
 
-def _plain_hook(directory: Path, changed: str, source: str) -> ProcessOutcome:
+def _plain_hook(directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = ()) -> ProcessOutcome:
     """本物の semgrep を偽の uv の隣に置いた検の repo で、素の hook を git が撃つのと同じく repo の根で走らせるため。"""
     executable: str | None = shutil.which("semgrep")
     assert executable is not None, "実検体の検査には dev 依存の semgrep が必要です"
     (directory / "semgrep").symlink_to(executable)
-    repository: Path = _plain_hook_repository(directory, changed, source)
+    repository: Path = _plain_hook_repository(directory, changed, source, rule_packages)
     uv: str | None = shutil.which("uv")
     assert uv is not None, "uv が要る(hook の script を走らせる)"
     return _run_child(
@@ -368,13 +369,15 @@ def _plain_hook(directory: Path, changed: str, source: str) -> ProcessOutcome:
 
 
 # 10-11 の日次の赤の形 — 汎用の package の Hy の註(5431b983e・f3f569e9d・7438f793f)・Python の docstring(abae18074・
-# 0e39b2cbd)と、枠組みが Python と Hy の外から渡す文書の 3 つ。
+# 0e39b2cbd)と、枠組みが Python と Hy の外から渡す文書の 3 つ。名が ASCII の外の文書も同じく止める(git は既定でその名を
+# 引用符つきで出す — stage の名を自分で読んで選ぶ hook は、そこで黙って通す)。
 @pytest.mark.parametrize(("changed", "source"), [
     pytest.param("packages/doeff-cluster/src/doeff_cluster/example.hy",
                  ";; 起き直しの lease(agora-controllers の card ki-0)\n(setv value 1)\n", id="hy-comment"),
     pytest.param("packages/doeff-codex/tests/test_example.py",
                  '"""使い手の repo(agora-controllers)の日次の赤。"""\n\nvalue = 1\n', id="python-docstring"),
     pytest.param("packages/doeff-records/README.md", "宣言の欄(agora の kanban の行)\n", id="document"),
+    pytest.param("packages/doeff-records/説明.md", "宣言の欄(agora の kanban の行)\n", id="document-non-ascii-name"),
 ])
 def test_plain_hook_stops_staged_application_vocabulary(tmp_path: Path, changed: str, source: str) -> None:
     result: ProcessOutcome = _plain_hook(tmp_path, changed, source)
@@ -391,6 +394,40 @@ def test_plain_hook_stops_staged_application_vocabulary(tmp_path: Path, changed:
 def test_plain_hook_passes_staged_file_without_findings(tmp_path: Path, changed: str, source: str) -> None:
     result: ProcessOutcome = _plain_hook(tmp_path, changed, source)
     assert result.exit_code == 0, result.stdout + result.stderr
+
+
+# どの package に業務の語の規則を当てるかは、規則の paths.include の 1 か所が決める — 項は package の名を持たない。持っていた
+# 時は、規則に package を足した便(10-10 の doeff-codex は規則と項を別の commit で足した)が項を直し忘れると、素の hook がその
+# package の文書を黙って通した(設計検証 lt-Z4J4B9281EK68D2Q8PZAJVZAV5 の盲検 A)。
+PACKAGE_ADDED_TO_THE_RULE: str = "doeff-example-generic"
+
+
+@pytest.mark.parametrize(("rule_packages", "stops"), [
+    pytest.param((PACKAGE_ADDED_TO_THE_RULE,), True, id="package-added-to-the-rule"),
+    pytest.param((), False, id="package-outside-the-rule"),
+])
+def test_plain_hook_follows_the_rule_paths_for_documents(
+    tmp_path: Path, rule_packages: tuple[str, ...], stops: bool,
+) -> None:
+    result: ProcessOutcome = _plain_hook(
+        tmp_path, f"packages/{PACKAGE_ADDED_TO_THE_RULE}/README.md", "宣言の欄(agora の kanban の行)\n", rule_packages,
+    )
+    output: str = result.stdout + result.stderr
+    assert (result.exit_code != 0) == stops, output
+    assert (VOCABULARY_RULE in output) == stops, output
+
+
+def test_plain_hook_leaves_file_selection_to_the_config(tmp_path: Path) -> None:
+    # 素の hook は stage した file を自分で選ばず、どの項にも当たらない stage でも pre-commit を起こす — file を選ぶのは項の
+    # files / types の 1 か所(設計検証 lt-Z4J4B9281EK68D2Q8PZAJVZAV5 の盲検 B: 「当たる file が無ければ起こさない」近道を hook に
+    # 足すと、名が ASCII の外の文書や、項に足した file 種を黙って通した)。
+    hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
+    names: list[str] = [hook["name"] for hook in hooks if hook.get("alias") == PLAIN_HOOK_ALIAS]
+    result: ProcessOutcome = _plain_hook(tmp_path, "notes/plain.txt", "宣言の欄\n")
+    output: str = result.stdout + result.stderr
+    assert names
+    assert result.exit_code == 0, output
+    assert [name for name in names if name not in output] == [], output
 
 
 def test_plain_hook_runs_every_semgrep_hook_of_the_config() -> None:
