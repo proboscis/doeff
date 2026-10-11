@@ -77,6 +77,95 @@ def test_scaling_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert conftest.deadline_scale("off", 8.0) == pytest.approx(1.0)
 
 
+def _machine(
+    monkeypatch: pytest.MonkeyPatch, conftest: Any, *, cores: int, affinity: int, load1: float
+) -> None:
+    """A machine of ``cores`` cores, this process allowed on ``affinity`` of them, at ``load1``."""
+    monkeypatch.setattr(conftest.os, "cpu_count", lambda: cores)
+    # macOS has no affinity call (the root conftest falls back to os.cpu_count() there).
+    monkeypatch.setattr(
+        conftest.os, "sched_getaffinity", lambda pid: set(range(affinity)), raising=False
+    )
+    monkeypatch.setattr(conftest.os, "getloadavg", lambda: (load1, 0.0, 0.0))
+
+
+def _cgroup_v2(
+    monkeypatch: pytest.MonkeyPatch,
+    conftest: Any,
+    root: Path,
+    proc_self_cgroup: str | None,
+    cpu_max: dict[str, str],
+) -> None:
+    """Point the root conftest at a cgroup view under ``root``.
+
+    ``proc_self_cgroup`` is what /proc/self/cgroup says (None = no such file, as on macOS);
+    ``cpu_max`` maps a directory under the cgroup mount ("" = the mount itself) to its cpu.max.
+    """
+    proc = root / "proc-self-cgroup"
+    if proc_self_cgroup is not None:
+        proc.write_text(proc_self_cgroup)
+    mount = root / "sys-fs-cgroup"
+    mount.mkdir()
+    for directory, line in cpu_max.items():
+        (mount / directory).mkdir(parents=True, exist_ok=True)
+        (mount / directory / "cpu.max").write_text(f"{line}\n")
+    monkeypatch.setattr(conftest, "_PROC_SELF_CGROUP", proc)
+    monkeypatch.setattr(conftest, "_CGROUP_MOUNT", mount)
+
+
+def test_the_load_is_divided_by_the_cpus_this_process_may_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Counterexample: dividing the load by the machine's cores.
+
+    Measured 2026-10-11 20:00 JST (the daily doeff run on atlas): the worker Pod is limited
+    to 8 CPUs (cgroup cpu.max 800000 100000) on a 16-core machine, and it sat at 7.3-8.0
+    cores from 20:10 to 20:40.  load1 / os.cpu_count() halves what the Pod lives through:
+    at load 12 it reads 0.75 and holds every deadline fixed, while the Pod's 8 CPUs are
+    1.5 times oversubscribed — and a 30 s child of
+    packages/doeff-adr/tests/test_indexed_collection.py was killed (card ki-bb91f171d222).
+    """
+    conftest = _root_conftest()
+    _machine(monkeypatch, conftest, cores=16, affinity=16, load1=12.0)
+    _cgroup_v2(monkeypatch, conftest, tmp_path, "0::/\n", {"": "800000 100000"})
+    assert conftest.deadline_scale("auto", 8.0) == pytest.approx(1.5)
+
+
+@pytest.mark.parametrize(
+    ("affinity", "proc_self_cgroup", "cpu_max", "usable"),
+    [
+        # A limit on an ancestor binds its descendants: the tightest one on the way up wins.
+        (
+            16,
+            "0::/kubepods/pod/ctr\n",
+            {"kubepods/pod": "400000 100000", "kubepods/pod/ctr": "max 100000"},
+            4.0,
+        ),
+        # An affinity narrower than the quota (taskset, a static CPU manager) is the bound.
+        (2, "0::/\n", {"": "800000 100000"}, 2.0),
+        # A fractional quota stays a fraction of a CPU.
+        (16, "0::/\n", {"": "250000 100000"}, 2.5),
+        # No quota, cgroup v1 only, or no cgroup at all: the affinity.
+        (16, "0::/\n", {"": "max 100000"}, 16.0),
+        (16, "4:cpu,cpuacct:/kubepods/pod/ctr\n", {}, 16.0),
+        (16, None, {}, 16.0),
+    ],
+)
+def test_usable_cpus_is_the_tightest_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    affinity: int,
+    proc_self_cgroup: str | None,
+    cpu_max: dict[str, str],
+    usable: float,
+) -> None:
+    """The CPUs the load is divided by: the affinity, cut by every cgroup CPU quota above us."""
+    conftest = _root_conftest()
+    _machine(monkeypatch, conftest, cores=16, affinity=affinity, load1=0.0)
+    _cgroup_v2(monkeypatch, conftest, tmp_path, proc_self_cgroup, cpu_max)
+    assert conftest.usable_cpus() == pytest.approx(usable)
+
+
 def test_watchdog_never_fires_before_the_per_test_deadline() -> None:
     """Counterexample: scaling one deadline and not the other.
 
