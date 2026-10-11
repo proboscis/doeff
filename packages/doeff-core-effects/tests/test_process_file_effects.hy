@@ -23,7 +23,7 @@
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
-                                         ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree CopyFile
+                                         ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 (import doeff_core_effects.python_bytecode [pyc-path])
@@ -339,6 +339,58 @@
   (assert (= (get real 0) (+ (len (.encode "あい" "utf-8")) 3)) real)
   (assert (isinstance (get real 2) FileFailed) real)
   (assert (= (on [(state) (memory-file-handler (MemoryFiles :free 7 :total 9))] (ReadDiskUsage "/none")) (DiskUsage :total 9 :free 7))))
+
+
+(defk stat-tree-journey [root]
+  {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "木(file 2 つ・下の dir・file を指す symlink)を作って様子つきで歩き(StatTree)、WalkTree と同じ名を並べたかと、名・種類・大きさ(dir の
+   大きさは本物の file system ごとに違うので None)と、断りの 2 つ(file を歩く・無い path を歩く)を返す筋(card ki-0da6a0186492)。"
+  (<- (MakeDirectory (+ root "/t/sub")))
+  (<- (WriteText (+ root "/t/a") "あい"))
+  (<- (WriteText (+ root "/t/sub/b") "xyz"))
+  (<- (MakeSymlink (+ root "/t/l") "sub/b"))
+  (<- stats tuple (StatTree (+ root "/t")))
+  (<- walked tuple (WalkTree (+ root "/t")))
+  (<- file (StatTree (+ root "/t/a")))
+  (<- missing (StatTree (+ root "/t/none")))
+  (val shown (lfor answer [file missing]
+                   (if (isinstance answer FileFailed)
+                       #((.replace answer.path root "") (get (.split (get (.split answer.detail "] " 1) -1) ":") 0))
+                       answer)))
+  #((= (tuple (gfor e stats e.name)) (tuple (gfor e walked e.name)))
+    (tuple (gfor e stats #(e.name e.kind (if (= e.kind PathKind.DIRECTORY) None e.size))))
+    #* shown))
+
+
+(deftest test-stat-tree-answers-the-same-on-the-real-and-memory-file-systems [tmp-path]
+  ;; card ki-0da6a0186492: StatTree は WalkTree と同じ名を同じ順に並べ、種類と大きさ(link は辿らずリンク自身)と断りは本物と memory で同じ。
+  ;; 本物の mtime は os.lstat と同じ(memory は時刻を持たないので 0)。
+  (val root (os.path.realpath tmp-path))
+  (<- real tuple (with_handlers [os-file-handler] (stat-tree-journey root)))
+  (<- memory tuple (with_handlers [(state) (memory-file-handler (MemoryFiles :dirs #("/m")))] (stat-tree-journey "/m")))
+  (assert (= real memory) #(real memory))
+  (assert (get real 0) real)
+  (assert (= (get real 1) #(#("a" PathKind.FILE (len (.encode "あい" "utf-8"))) #("l" PathKind.SYMLINK (len "sub/b")) #("sub" PathKind.DIRECTORY None)
+                            #("sub/b" PathKind.FILE 3)))
+          real)
+  (assert (= (cut real 2 None) #(#("/t/a" "Not a directory") #("/t/none" "No such file or directory"))) real)
+  (<- stats tuple (with_handlers [os-file-handler] (StatTree (+ root "/t"))))
+  (assert (= (. (get stats 0) modified) (. (os.lstat (+ root "/t/a")) st-mtime)) stats))
+
+
+(deftest test-stat-tree-names-an-entry-gone-before-its-stat-missing [tmp-path monkeypatch]
+  ;; 一覧の後で様子を読む前に消えた物は落とさず、StatPath の無い path と同じく kind MISSING・大きさ 0 で並べる(歩きは断らない — 書き手が
+  ;; 一時の file から置き換える保存先を歩くため)。消えた所は os.lstat の差し替え。
+  (.mkdir (/ tmp-path "t"))
+  (.write-bytes (/ tmp-path "t" "kept") b"abc")
+  (.write-bytes (/ tmp-path "t" "gone") b"x")
+  (val original os.lstat)
+  (.setattr monkeypatch os "lstat" (fn [path #* args #** options]
+                                     (if (.endswith (str path) "/t/gone")
+                                         (raise (FileNotFoundError 2 "No such file or directory" path))
+                                         (original path #* args #** options))))
+  (<- stats tuple (with_handlers [os-file-handler] (StatTree (str (/ tmp-path "t")))))
+  (assert (= (tuple (gfor e stats #(e.name e.kind e.size))) #(#("gone" PathKind.MISSING 0) #("kept" PathKind.FILE 3))) stats))
 
 
 (defk link-journey [root]

@@ -17,6 +17,9 @@
 ;;;   MakeDirectory  dir を親ごと作る(在ってもよい)。mode は新しく作った最後の dir に与える。答え = None
 ;;;   ListDirectory  dir の直下。答え = DirEntry の tuple(名の順)
 ;;;   WalkTree       dir の下の全部(再帰)。答え = DirEntry の tuple(name = dir からの相対 path・/ 区切り・並べた順)
+;;;   StatTree       dir の下の全部(再帰)を様子つきで。答え = EntryStat の tuple(name は WalkTree と同じ・種類と大きさと mtime は symlink を
+;;;                  辿らない — os.lstat・一覧の後で様子を読む前に消えた物は StatPath の無い path と同じく kind MISSING)。木の file ごとの時刻を
+;;;                  1 つの呼びで読む書き手のため(card ki-0da6a0186492 — WalkTree の後に file ごとの StatPath を出すと、file の数だけ effect を出す)
 ;;;   CopyFile       file 1 つを写す(写し先は上書き)。答え = None
 ;;;   CompilePythonSources  木の source(#(相対 path module 名) の列)を import が検める方式(PEP 552 の checked hash)の .pyc に焼いて
 ;;;                  __pycache__ へ置く(本物は jobs 個の process で並列・roots = 焼く間の import の根 — #2463)。答え = 焼けなかった物の
@@ -65,6 +68,15 @@
   "dir の中の 1 つ。name = 名(WalkTree では dir からの相対 path)・kind = 種類(symlink は辿らずに SYMLINK)。"
   (#^ str name)
   (#^ PathKind kind))
+
+
+(defrecord EntryStat
+  "dir の下の 1 つの様子(StatTree の答え)。name = dir からの相対 path(/ 区切り)・kind = 種類(symlink は辿らずに SYMLINK・一覧の後で
+   消えた物は MISSING)・size = byte 数・modified = mtime(epoch 秒)— 大きさと mtime も symlink は辿らずリンク自身の物。"
+  (#^ str name)
+  (#^ PathKind kind)
+  (#^ int size)
+  (#^ float modified))
 
 
 (defrecord DiskUsage
@@ -144,6 +156,11 @@
 
 (defclass [(dataclass :frozen True)] WalkTree [(get EffectBase (| (get tuple #(DirEntry ...)) FileFailed))]
   "dir の下の全部を並べる(頭の註)。"
+  (#^ str path))
+
+
+(defclass [(dataclass :frozen True)] StatTree [(get EffectBase (| (get tuple #(EntryStat ...)) FileFailed))]
+  "dir の下の全部を様子つきで並べる(頭の註)。"
   (#^ str path))
 
 

@@ -8,7 +8,7 @@
 ;;; 付け替え:
 ;;;   要求   path・source・target を root + 内側の path へ(ReleaseLock は錠の path を)。
 ;;;   答え   PathStat の real-path・LockHeld の path・FileFailed の path と理由の文の中の path を内側の path へ戻す(内側に root を見せない)。
-;;;          DirEntry の name は dir からの名か相対 path なので変えない。
+;;;          DirEntry と EntryStat の name は dir からの名か相対 path なので変えない。
 ;;; path を持たない effect(ReadMemoryFiles など)は触らずに外側へ通す。
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
@@ -16,12 +16,12 @@
 (import dataclasses [replace])
 (import doeff [EffectBase])
 (import doeff_core_effects.file_effects [FileFailed PathStat LockHeld StatPath ReadText ReadBytes WriteText WriteBytes AppendText
-                                         MakeDirectory ListDirectory WalkTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
+                                         MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 
 ;; path 1 つを持つ effect と、写し元と写し先の 2 つを持つ effect。
-(val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree RemoveTree
+(val PATH-EFFECTS #(StatPath ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree RemoveTree
                     AcquireLock ReadDiskFree ReadDiskUsage MeasureTree))
 (val MOVE-EFFECTS #(CopyFile LinkFile CopyTree RenamePath))
 ;; file の effect の答えの型の和(失敗・様子・錠・総量と空き・中身・一覧・空きと大きさの byte・答えの無い書き)。

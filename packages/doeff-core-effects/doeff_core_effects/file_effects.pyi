@@ -30,6 +30,13 @@ class DirEntry:
     kind: PathKind
 
 @dataclass(frozen=True, kw_only=True)
+class EntryStat:
+    name: str
+    kind: PathKind
+    size: int
+    modified: float
+
+@dataclass(frozen=True, kw_only=True)
 class DiskUsage:
     total: int
     free: int
@@ -95,6 +102,10 @@ class ListDirectory(EffectBase[tuple[DirEntry, ...] | FileFailed]):
 
 @dataclass(frozen=True)
 class WalkTree(EffectBase[tuple[DirEntry, ...] | FileFailed]):
+    path: str
+
+@dataclass(frozen=True)
+class StatTree(EffectBase[tuple[EntryStat, ...] | FileFailed]):
     path: str
 
 @dataclass(frozen=True)
