@@ -32,7 +32,7 @@
 ### A の主の例(S3・S4): 常駐の process で、読み込み済みの値の module の file を書き換えた後に作った記録
 
 - **主張との食い違い**: S3 は「長く走る process で読み込みの間に file が変わっても、変える所はなし」と予想した。
-- **再現**(probe = [evidence/probes/a_repro.py](evidence/probes/a_repro.py)): 常駐の process が tables を読み込んだ後(ROWS["b"] = 2)に
+- **再現**(probe = [evidence/probes/a_repro.py.txt](evidence/probes/a_repro.py.txt)): 常駐の process が tables を読み込んだ後(ROWS["b"] = 2)に
   tables.py を 20 に書き換え、同じ process が user_1 を compile し直すと、展開は process の中の古い表(2)を使い、記録の digest は今の
   file の文(20)から作られた。新しい process はその記録を今に合うと判じ、値 2 を使った(展開し直せば 20)。
   [A-repro-at-cf7ea9cc0.txt](evidence/a/A-repro-at-cf7ea9cc0.txt)・[A-repro-at-167d38ec.txt](evidence/a/A-repro-at-167d38ec.txt)
@@ -64,7 +64,7 @@
 
 ### A の付録 1(S3・S5): 読み込みの中で起きた thread と写した context が、読み込みの後も覚えの写しを使う
 
-- **再現**(probe = [t_probe.py](evidence/probes/t_probe.py)): この Python(3.14.3 free-threaded)は `sys.flags.thread_inherit_context = 1`
+- **再現**(probe = [t_probe.py.txt](evidence/probes/t_probe.py.txt)): この Python(3.14.3 free-threaded)は `sys.flags.thread_inherit_context = 1`
   で、thread は起こした側の context を継ぐ。一番外の読み込みの中で起きた thread が、読み込みの後に reload した表(100)の下で user_1 を
   読むと、継いだ古い写しで覚えを確かめて今に合うと判じた([T-probe-at-54bd9355f.txt](evidence/appendix/T-probe-at-54bd9355f.txt) —
   `'compiled': [], 'value': 1`。本 thread の読みは 100)。基準版は thread でも 100
@@ -99,7 +99,7 @@
 
 ### A の付録 3(範囲外): 環境変数から組んだ dict を macro が読む
 
-- **再現**(probe = [e_probe.py](evidence/probes/e_probe.py)): `(setv MODES {"a" (os.environ.get ...)})` を読む macro の使い手は、環境変数を
+- **再現**(probe = [e_probe.py.txt](evidence/probes/e_probe.py.txt)): `(setv MODES {"a" (os.environ.get ...)})` を読む macro の使い手は、環境変数を
   替えた process でも 'plain' のまま今に合うと判じた(素の文字列の形 — 条 3 — は古いと判じて 'fancy')。
   [E-probe-at-cf7ea9cc0.txt](evidence/appendix/E-probe-at-cf7ea9cc0.txt)・[E-probe-at-54f1cdfa3.txt](evidence/appendix/E-probe-at-54f1cdfa3.txt)。
 - **判断**: 基準版でも同じで、この便が入れた物でも、この便が変えた所でもない(辿れない大域の表を source の文で覆う規則 — bound_source
@@ -181,3 +181,5 @@
 | evidence/cost/ | 費用の測りの log |
 
 頭に「頭は後から足した」とある file は、この会話の記録の命令を写した物(出力の本体は走らせた時の物のまま)。
+evidence/probes/ の Python の script は、走らせた中身のまま `.py.txt` の名で置いた(repo の Python の lint の対象に入れない —
+子の process の環境を組むために os.environ を読む)。走らせる時は `uv run --frozen python <名>.py.txt …`。

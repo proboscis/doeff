@@ -15,7 +15,7 @@
  ],
  "design": {
   "path": "design.md",
-  "sha256": "9c60b62626d11458ff157c7b3a5bdb8f6a4973bf6d10c8ad6bfb722a6c318824"
+  "sha256": "fa2615795b55137886f2c28c8bb61f58597552e7dcb70e8dfc9268a8fbbe4bde"
  },
  "pre_blind_design": {
   "path": "design-before-blind.md",
@@ -101,23 +101,23 @@
    "sha256": "8ead5bfe33488a1e81ebb30d77590ee99decd3adf1f051ed2c6267dd15644739"
   },
   {
-   "path": "evidence/probes/a_repro.py",
+   "path": "evidence/probes/a_repro.py.txt",
    "sha256": "a2926fdfa0fee93476f566f109a2c9d510bcf3231a322b8e638a3eeb7dc39c64"
   },
   {
-   "path": "evidence/probes/b_probe.py",
+   "path": "evidence/probes/b_probe.py.txt",
    "sha256": "4dc613a88d58f968c017ab0e3f584edc776635b0e6b27880f6aaaae01b1f2377"
   },
   {
-   "path": "evidence/probes/t_probe.py",
+   "path": "evidence/probes/t_probe.py.txt",
    "sha256": "aa0e5180e56ee9a2dbcede4d1b88ff5267d6e1826eaa53e40cadfafb6d886860"
   },
   {
-   "path": "evidence/probes/e_probe.py",
+   "path": "evidence/probes/e_probe.py.txt",
    "sha256": "ad4140e54644a41032b22f48618e687710c8d195e1a9e85b41c3c9eb8d6ce265"
   },
   {
-   "path": "evidence/probes/mutate.py",
+   "path": "evidence/probes/mutate.py.txt",
    "sha256": "b4573d2d72c5b4720619b024592cfee5d56dd13bd20ab24e8cc851f06a2d12a4"
   },
   {
