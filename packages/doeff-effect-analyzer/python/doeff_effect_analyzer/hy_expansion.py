@@ -14,7 +14,11 @@ module again — the screen job's closure test took 257.3 s in the daily run aft
 (ki-81f1c868203f).
 
 Only the expansion and the store of its trees are here: the digest of this file is in the key
-(``_expander_digest``), so a tree another version of the expansion made is never read.
+(``_expander_digest``), so a tree another version of the expansion made is never read. Hence what
+lies in the store is decided here alone (design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B): a
+caller asks for a tree (``_expansion``) and never writes one, so a tree a reader reshaped cannot lie
+under a key without the reader; and this module imports no other module of the analyzer, so no code
+outside this file decides a tree. Both are kept by ``tests/python/test_hy_tree_cache.py``.
 """
 
 import ast
@@ -131,6 +135,31 @@ def _entry_name(macros: "MacroRecord") -> str:
     from doeff_hy_bytecode_guard import record_fingerprint
 
     return f"{record_fingerprint(macros)}.pickle"
+
+
+def _expansion(source: str, filename: str, module_name: str, directory: Path | None) -> _Expanded:
+    """The tree ``source`` expands to as ``module_name``: from the store under ``directory`` when
+    these inputs were expanded before, else expanded here and stored there (None = no store). The
+    key is made of the very source expanded, and only a tree expanded here is written."""
+    if directory is None or _type_check_expansion():
+        return _expand_hy(source, filename, module_name)
+    place = _expansion_key(source, module_name).place(directory)
+    stored = _stored_expansion(place)
+    if stored is not None:
+        return stored
+    expanded = _expand_hy(source, filename, module_name)
+    _store_expansion(place, expanded)
+    return expanded
+
+
+def _type_check_expansion() -> bool:
+    """Whether expansions now are for type checking (``doeff_hy.static_view``): doeff-hy's macros
+    then write another tree (no ``:pre`` check, no runtime import), which no store may keep under the
+    key of a plain expansion — as the import side keeps no record of such code (``TYPE_CHECK_EXPANSION``).
+    Callers keep nothing derived from such a tree either (``program_effects._hy_cache_dir``)."""
+    from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
+
+    return TYPE_CHECK_EXPANSION.get()
 
 
 def _stored_expansion(place: Path) -> _Expanded | None:
