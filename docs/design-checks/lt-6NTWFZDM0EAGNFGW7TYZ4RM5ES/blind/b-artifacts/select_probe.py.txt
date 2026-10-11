@@ -1,0 +1,17 @@
+"""本物の表と入口の select_targets で、path 1 つの差分が例の検を選ぶかを印字する(table-guard と同じ呼び方)。"""
+import importlib.util
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1]).resolve()
+spec = importlib.util.spec_from_file_location("run_changed_tests", repo / "scripts" / "run_changed_tests.py")
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+EXAMPLES_CHECK = "packages/doeff-traverse/tests/test_examples_run.py"
+table = runner.read_contract_table(repo)
+patterns = runner.collector_patterns(repo)
+for path in sys.argv[2:]:
+    sel = runner.select_targets(table, runner.ChangeSet(base="", files=(path,)), patterns, repo)
+    args = [t.arg for t in sel.targets]
+    print(f"{'選ぶ ' if EXAMPLES_CHECK in args else '選ばない'} {path}  -> {args}")
