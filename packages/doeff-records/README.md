@@ -119,7 +119,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `POST /v1/records/put-row` | `{table, key, value, expect}`(`approval` は廃止 — null だけ読み飛ばし、値があれば 400) | `written` / `conflict` / `refused` |
 | `POST /v1/records/watch-changes` | `{tables, cursor, timeout?, limit?, streams?}`(`streams` は列を名指す時だけ・1 つ以上 — 空の配列は 400。古い service は鍵を知らず 400 なので、名指す client より先に service を新しい版で起こす) | `changes`(`items, cursor` と、`streams` を名指した要求の答えだけ `tails` = 名指した順の `{kind: streamTail, stream, sequence, at}` / `{kind: streamTailEmpty, stream}` の列 — 名指さない要求の答えに鍵は無い)/ `reset` |
 | `POST /v1/records/append-event` | `{stream, idempotencyKey, body}` | `appended` / `refused` |
-| `POST /v1/records/read-events` | `{stream, after?, limit?}` | `events` |
+| `POST /v1/records/read-events` | `{stream, after?, limit?, keyHead?}`(`keyHead` は冪等キーの頭で引く時だけ — 列の宣言の `key-lookup` の区切りより前が等しい出来事だけを読む。古い service は鍵を知らず 400 なので、頭で引く client より先に service を新しい版で起こす) | `events` / `notIndexed`(`key-lookup` を宣言していない列への頭の読み) |
 | `POST /v1/records/put-rows` | `{writes: [{table, key, value, expect}, …]}`(1 つ以上・同じ表の同じキーは 1 度だけ — 外れれば 400) | `writtenRows`(`items` = `written` の列)/ `rowsConflict`(`index, table, key, current`)/ `rowsRefused`(`index, table, key, reason`) |
 | `POST /v1/records/read-stream-end` | `{stream}` | `streamEnd`(`sequence`)/ `streamEmpty` |
 | `POST /v1/records/read-event-by-key` | `{stream, idempotencyKey}` | `event`(`event` = `read-events` の `items` と同じ形の出来事 1 つ)/ `eventAbsent` / `eventRetired`(`sequence`) |

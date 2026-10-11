@@ -18,6 +18,7 @@ from doeff_records.values import RecordsSchema as RecordsSchema
 from doeff_records.values import KeepFor as KeepFor
 from doeff_records.values import KeepForever as KeepForever
 from doeff_records.values import ByKeySuffix as ByKeySuffix
+from doeff_records.values import ByKeyHead as ByKeyHead
 from doeff_records.values import ExpectAbsent as ExpectAbsent
 from doeff_records.values import ExpectVersion as ExpectVersion
 from doeff_records.values import ExpectAny as ExpectAny
@@ -126,6 +127,11 @@ def law_descending_list_is_the_head_of_the_sorted_scan(harness: LawHarness) -> _
     ...
 
 def law_append_is_idempotent(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+TRAIL_KEYS: tuple[str, ...]
+TRAIL_HEADS: tuple[str, ...]
+
+def law_key_head_read_equals_filtered_scan(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
 def late_write(harness: LawHarness) -> _Program[Written, object]:

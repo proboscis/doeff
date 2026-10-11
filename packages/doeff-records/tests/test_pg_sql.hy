@@ -44,7 +44,7 @@
 (val EPOCH-ROW-AT (.index BEFORE-880-DDL BEFORE-880-EPOCH-ROW))
 (val EXPECTED-DDL (+ (cut BEFORE-880-DDL EPOCH-ROW-AT) [UNIQUE-EPOCH-ROW] (cut BEFORE-880-DDL (+ EPOCH-ROW-AT 1) None)))
 ;; 旧い版より後に足した表と索引の文("records_" の答え・旧い版の文の後ろに足した順)。索引は #3614: 列の期限の境 (ledger, at)・
-;; 組で数える列 pairs の区切り「:」の組の名の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(どの表の索引の欄にも無い)。
+;; 組で数える列 pairs の区切り「:」の組の名の式・頭で引ける列 trails の区切り「#」の頭の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(どの表の索引の欄にも無い)。
 (val ADDED-AFTER-880
   ["CREATE TABLE IF NOT EXISTS records_retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
@@ -53,6 +53,7 @@
    "CREATE INDEX IF NOT EXISTS records_append_rows_group_05a79f06cf3f ON records_append_rows (ledger, (CASE WHEN strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') > 0
                  THEN substr(((payload::jsonb) ->> 'idempotencyKey'), strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') + 1)
                  ELSE ((payload::jsonb) ->> 'idempotencyKey') END))"
+   "CREATE INDEX IF NOT EXISTS records_append_rows_head_d08f88df745f ON records_append_rows (ledger, split_part(((payload::jsonb) ->> 'idempotencyKey'), '#', 1), seq)"
    "CREATE INDEX IF NOT EXISTS records_row_changes_at ON records_row_changes (at)"
    "CREATE INDEX IF NOT EXISTS records_ix_aa4a5f8125f2 ON records_state_rows (ledger, ((payload::jsonb) -> 'state'))"])
 ;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
