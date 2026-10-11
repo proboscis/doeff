@@ -415,3 +415,28 @@ def test_a_consumer_that_throws_into_the_report_fails_the_traverse(
         )
     assert isinstance(raised.value.cause, _BudgetError)
     assert raised.value.report.outcome == "failed"
+
+
+@do
+def _nested_failing(x: int):
+    inner = yield Traverse(_first, [x, 3], label="inner")
+    return inner.valid_values
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [sequential, lambda: parallel(concurrency=2), lambda: parallel_fail_fast(concurrency=1)],
+    ids=["sequential", "parallel", "parallel_fail_fast"],
+)
+def test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure(
+    strategy: Callable[[], ProgramHandler],
+) -> None:
+    """入れ子の Traverse で受け手が投げ返しても、外の Traverse はそれを外の件の失敗として Collection に飲み込まない
+    (for/do の From を 2 つ重ねると、外の件ごとに内の Traverse が出る — 飲み込むと契約の誤りが黙る)。"""
+    with pytest.raises(ItemOutcomeNotPassedError) as raised:
+        _run_under(
+            strategy(),
+            [_program_handler(_throws_back)],
+            _traversed(_nested_failing, [1, 2], label="outer"),
+        )
+    assert raised.value.report.label == "inner"
