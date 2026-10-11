@@ -7,8 +7,11 @@
   busy task runs between its steps; the plain "thread CPU at the start of the
   span minus at its end" would bill it the busy task's work.
 - Without a sink the scheduler emits nothing.
-- Every external completion is accounted for: each ``external-complete`` is
-  matched by one ``external-drained`` or ``external-ignored``.
+- Every external completion the scheduler takes out of its queue is accounted
+  for: each ``external-complete`` taken out before the run ends is matched by
+  one ``external-drained`` or ``external-ignored``. A completion still queued
+  when the root returns is never taken out, so the test waits for one queued
+  after it (the queue is FIFO) instead of racing the root's return.
 - Only the Python scheduler emits events; the Rust scheduler refuses to run
   while a sink is installed instead of measuring nothing.
 
@@ -143,6 +146,7 @@ def test_each_external_completion_is_drained_or_ignored(events: list[dict[str, A
     @do
     def body():
         promise = yield CreateExternalPromise()
+        settled = yield CreateExternalPromise()
         resumed = threading.Event()
 
         def complete_twice() -> None:
@@ -150,17 +154,21 @@ def test_each_external_completion_is_drained_or_ignored(events: list[dict[str, A
             # The worst order: the second completion lands only after the body is back from Wait.
             resumed.wait()
             promise.complete("second")
+            # The completion queue is one FIFO, so the scheduler takes "second" out before this one.
+            settled.complete(None)
 
         thread = threading.Thread(target=complete_twice)
         thread.start()
         value = yield Wait(promise.future)
         resumed.set()
+        yield Wait(settled.future)
         thread.join()
-        return value
+        return value, promise.promise_id
 
-    assert run(scheduled(body(), implementation="python")) == "first"
+    value, pid = run(scheduled(body(), implementation="python"))
+    assert value == "first"
     counts = {
-        name: sum(1 for e in events if e["event"] == name)
+        name: sum(1 for e in events if e["event"] == name and e["pid"] == pid)
         for name in ("external-complete", "external-drained", "external-ignored")
     }
     assert counts == {"external-complete": 2, "external-drained": 1, "external-ignored": 1}
