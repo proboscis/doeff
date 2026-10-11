@@ -15,6 +15,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
+(import doeff_hy.frozen [FrozenJson freeze-json-text])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.wire [parse parse-json Malformed])
 
@@ -23,9 +24,10 @@
 ;; 口座の利用枠切れの誤りの種類(codexErrorInfo の綴り — codex 0.162.1)。綴りの定義はここ 1 か所(handler の判定と fake の終わりが読む)。
 (val USAGE-LIMIT-KIND "usageLimitExceeded")
 
-;; 道具の item の状態(commandExecution・fileChange の status の綴り — codex 0.162.1 の CommandExecutionStatus と PatchApplyStatus は
-;; 同じ 4 つ)。
-(defenum ToolStatus COMPLETED FAILED DECLINED (IN-PROGRESS "inProgress"))
+;; 道具の item の状態(道具の item の status の綴り — codex 0.162.1 の CommandExecutionStatus と PatchApplyStatus は completed・failed・
+;; declined・inProgress、McpToolCallStatus と DynamicToolCallStatus はそのうち 3 つ、CollabAgentToolCallStatus は declined の代わりに
+;; interrupted)。
+(defenum ToolStatus COMPLETED FAILED DECLINED INTERRUPTED (IN-PROGRESS "inProgress"))
 
 
 ;; --- 読む行の wire の型(使う欄だけ・知らない欄は読み捨てる) ---------------------------------------
@@ -172,6 +174,73 @@
   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
   (#^ str query)
   (setv #^ (| WebSearchActionWire None) action None))
+
+(defwire McpContentWire
+  "mcpToolCall の結果の 1 つの block(MCP の content — type は text・image・resource など。text の block だけが text を持つ)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str type)
+  (setv #^ (| str None) text None))
+
+(defwire McpResultWire
+  "mcpToolCall の結果(McpToolCallResult)のうち使う欄。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(McpContentWire ...)) content))
+
+(defwire McpErrorWire
+  "mcpToolCall の誤り(McpToolCallError)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str message))
+
+(defwire McpToolCallWire
+  "item の種類 mcpToolCall(MCP の server の道具の呼び)の中身のうち使う欄。arguments は道具が決めた形の JSON(中を読まずに運ぶ)・
+   result と error は呼びが終わるまで null。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str server)
+  (#^ str tool)
+  (#^ str status)
+  (#^ OpaqueJson arguments)
+  (setv #^ (| McpResultWire None) result None)
+  (setv #^ (| McpErrorWire None) error None))
+
+(defwire DynamicContentWire
+  "dynamicToolCall の答えの 1 つの項目(DynamicToolCallOutputContentItem — type は inputText・inputImage・inputAudio。inputText だけが
+   text を持つ)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str type)
+  (setv #^ (| str None) text None))
+
+(defwire DynamicToolCallWire
+  "item の種類 dynamicToolCall(thread に宣言した動的な道具の呼び)の中身のうち使う欄。arguments は道具が決めた形の JSON・
+   contentItems と success は答え手が答えるまで null。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str tool)
+  (setv #^ (| str None) namespace None)
+  (#^ str status)
+  (#^ OpaqueJson arguments)
+  (setv #^ (| (get tuple #(DynamicContentWire ...)) None) content-items None)
+  (setv #^ (| bool None) success None))
+
+(defwire AgentStateWire
+  "collabAgentToolCall の子の agent 1 つの最後の状態(CollabAgentState)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str status)
+  (setv #^ (| str None) message None))
+
+(defwire CollabAgentToolCallWire
+  "item の種類 collabAgentToolCall(子の agent を始める・頼む・待つ・閉じる道具)の中身のうち使う欄。agentsStates は子の thread の
+   id → 最後の状態(codex 0.162.1 の schema のまま — 鍵は thread の id)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str tool)
+  (#^ str status)
+  (#^ (get tuple #(str ...)) receiver-thread-ids)
+  (setv #^ (| str None) prompt None)
+  (setv #^ (| str None) model None)
+  (#^ (get dict #(str AgentStateWire)) agents-states))
+
+(defwire ImageViewWire
+  "item の種類 imageView(作業の dir の画像を model に見せる道具)の中身。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (#^ str path))
 
 (defwire ErrorParamsWire
   "error の通知の params(ターンの誤り — willRetry が偽なら codex はこのターンを繰り返さない)。"
@@ -330,11 +399,68 @@
   (setv #^ (| str None) url None)
   (setv #^ (| str None) pattern None))
 
-(val ToolItem (| CommandRun FilePatch WebSearch))
+(defrecord McpCall
+  "道具の item mcpToolCall の中身(MCP の server の道具の呼び): server = server の名(codex の設定の mcp_servers の鍵)/ tool = 道具の
+   名 / arguments = 道具に渡した引数(凍らせた JSON — 形は MCP の server の道具が決めるので、中を読まずに上の層の道具の呼びの命令へ
+   運ぶ)/ status = 状態(この版に無い綴りは UnknownValue)/ output = 結果の text の block を改行でつないだ文(終わるまで・結果が無ければ
+   None)/ non-text-kinds = 結果の text でない block の種類の名(image など)/ error = 誤りの文(誤りで終わった時だけ)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str server)
+  (#^ str tool)
+  (#^ FrozenJson arguments)
+  (#^ (| ToolStatus UnknownValue) status)
+  (setv #^ (| str None) output None)
+  (setv #^ (get tuple #(str ...)) non-text-kinds #())
+  (setv #^ (| str None) error None))
+
+(defrecord DynamicCall
+  "道具の item dynamicToolCall の中身(thread に宣言した動的な道具の呼び — codex は呼びを item/tool/call の要求で答え手へ頼む):
+   tool = 道具の名 / namespace = 道具の namespace(無ければ None)/ arguments = 道具に渡した引数(凍らせた JSON — 形は道具の宣言が
+   決める)/ status = 状態 / output = 答えの inputText の項目を改行でつないだ文(答えるまで None)/ non-text-kinds = 答えの文でない項目の
+   種類の名(inputImage など)/ success = 答え手が名乗った成否(答えるまで None)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str tool)
+  (setv #^ (| str None) namespace None)
+  (#^ FrozenJson arguments)
+  (#^ (| ToolStatus UnknownValue) status)
+  (setv #^ (| str None) output None)
+  (setv #^ (get tuple #(str ...)) non-text-kinds #())
+  (setv #^ (| bool None) success None))
+
+(defrecord AgentState
+  "子の agent 1 つの最後の状態: thread-id = 子の thread の id / status = 状態の名(pendingInit・running・completed など — 版で増える
+   ので名のまま)/ message = 子の最後の答え(無ければ None)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str thread-id)
+  (#^ str status)
+  (setv #^ (| str None) message None))
+
+(defrecord AgentCall
+  "道具の item collabAgentToolCall の中身(子の agent を始める・頼む・待つ・閉じる): tool = 動きの名(spawnAgent・sendInput・wait・
+   closeAgent など — 版で増えるので名のまま)/ status = 状態 / receivers = 相手の子の thread の id(始める動きの始まりは空 — 子の id は
+   終わりで届く)/ prompt = 子への頼み(頼む動きだけ)/ model = 子の model(名乗らなければ None — 始まりの空の綴りも None)/ states =
+   子ごとの最後の状態(thread の id の順 — 終わりで届く)。子の agent は同じ process の別の thread で走り、その thread の行は会話の
+   ターンに積まない(handler — 頭の註の TurnRecord)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str tool)
+  (#^ (| ToolStatus UnknownValue) status)
+  (setv #^ (get tuple #(str ...)) receivers #())
+  (setv #^ (| str None) prompt None)
+  (setv #^ (| str None) model None)
+  (setv #^ (get tuple #(AgentState ...)) states #()))
+
+(defrecord ImageView
+  "道具の item imageView の中身(作業の dir の画像を model に見せる): path = 画像の path。codex 0.162.1 の item は状態も結果も持たない
+   (始まりと終わりが同じ中身)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str path))
+
+(val ToolItem (| CommandRun FilePatch WebSearch McpCall DynamicCall AgentCall ImageView))
 
 (defrecord ItemStarted
   "ターンの中の item が始まった(item/started): item-type = codex の item の種類の名(userMessage・agentMessage・reasoning・
-   commandExecution など — 版で増えるので名のまま)/ tool = 道具の種類(commandExecution・fileChange・webSearch)の item の中身
+   commandExecution など — 版で増えるので名のまま)/ tool = 道具の種類(commandExecution・fileChange・webSearch・mcpToolCall・
+   dynamicToolCall・collabAgentToolCall・imageView)の item の中身
    (ほかの種類は None)。上の層が「考えている」「道具を呼んでいる」を出す材料。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
@@ -583,6 +709,46 @@
       (WebSearch :query wire.query :action action.type :queries (or action.queries #()) :url action.url :pattern action.pattern)))
 
 
+(defk mcp-call-of [#^ McpToolCallWire wire]
+  {:pre [(: wire McpToolCallWire)] :post [(: % McpCall)] :tags {:context "codex" :role "foundation"}}
+  "mcpToolCall の中身を、server と道具の名・凍らせた引数・状態・結果の文(text の block)と文でない block の種類・誤りの文の記録に
+   するため。引数は道具が決めた形の JSON なので、この JSON の境目で凍らせるだけで中を読まない。"
+  (<- status (tool-status-of wire.status))
+  (val blocks (if (is wire.result None) #() wire.result.content))
+  (McpCall :server wire.server :tool wire.tool :arguments (freeze-json-text wire.arguments.text) :status status
+           :output (if (is wire.result None) None (.join "\n" (gfor block blocks :if (= block.type "text") (or block.text ""))))
+           :non-text-kinds (tuple (gfor block blocks :if (!= block.type "text") block.type))
+           :error (if (is wire.error None) None wire.error.message)))
+
+
+(defk dynamic-call-of [#^ DynamicToolCallWire wire]
+  {:pre [(: wire DynamicToolCallWire)] :post [(: % DynamicCall)] :tags {:context "codex" :role "foundation"}}
+  "dynamicToolCall の中身を、道具の名と namespace・凍らせた引数・状態・答えの文(inputText の項目)と文でない項目の種類・成否の記録に
+   するため。"
+  (<- status (tool-status-of wire.status))
+  (val items (or wire.content-items #()))
+  (DynamicCall :tool wire.tool :namespace wire.namespace :arguments (freeze-json-text wire.arguments.text) :status status
+               :output (if (is wire.content-items None) None (.join "\n" (gfor item items :if (= item.type "inputText") (or item.text ""))))
+               :non-text-kinds (tuple (gfor item items :if (!= item.type "inputText") item.type))
+               :success wire.success))
+
+
+(defk agent-call-of [#^ CollabAgentToolCallWire wire]
+  {:pre [(: wire CollabAgentToolCallWire)] :post [(: % AgentCall)] :tags {:context "codex" :role "foundation"}}
+  "collabAgentToolCall の中身を、動きの名・状態・相手の子の thread・頼み・model・子ごとの最後の状態の記録にするため(model の空の
+   綴りは名乗らないと読む — 子を始める動きの始まりは model を空で名乗る)。"
+  (<- status (tool-status-of wire.status))
+  (AgentCall :tool wire.tool :status status :receivers wire.receiver-thread-ids :prompt wire.prompt :model (or wire.model None)
+             :states (tuple (gfor [thread state] (sorted (.items wire.agents-states))
+                                  (AgentState :thread-id thread :status state.status :message state.message)))))
+
+
+(defk image-view-of [#^ ImageViewWire wire]
+  {:pre [(: wire ImageViewWire)] :post [(: % ImageView)] :tags {:context "codex" :role "foundation"}}
+  "imageView の中身を、見せた画像の path の記録にするため。"
+  (ImageView :path wire.path))
+
+
 (defk tool-parsed [#^ str method #^ type wire-type convert item]
   {:pre [(: method str) (: wire-type type) (: convert Callable) (: item OpaqueJson)] :post [(: % (| ToolItem Unparsed))]
    :tags {:context "codex" :role "foundation"}}
@@ -599,11 +765,16 @@
 (defk tool-of [#^ str method #^ str item-type item]
   {:pre [(: method str) (: item-type str) (: item OpaqueJson)] :post [(: % (| ToolItem Unparsed None))]
    :tags {:context "codex" :role "foundation"}}
-  "item の種類が道具(commandExecution・fileChange・webSearch)なら中身を記録にするため(ほかの種類は None)。"
+  "item の種類が道具(commandExecution・fileChange・webSearch・mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView)なら
+   中身を記録にするため(ほかの種類は None)。"
   (match item-type
     "commandExecution" (do (<- tool (tool-parsed method CommandExecutionWire command-run-of item)) tool)
     "fileChange" (do (<- tool (tool-parsed method FileChangeWire file-patch-of item)) tool)
     "webSearch" (do (<- tool (tool-parsed method WebSearchWire web-search-of item)) tool)
+    "mcpToolCall" (do (<- tool (tool-parsed method McpToolCallWire mcp-call-of item)) tool)
+    "dynamicToolCall" (do (<- tool (tool-parsed method DynamicToolCallWire dynamic-call-of item)) tool)
+    "collabAgentToolCall" (do (<- tool (tool-parsed method CollabAgentToolCallWire agent-call-of item)) tool)
+    "imageView" (do (<- tool (tool-parsed method ImageViewWire image-view-of item)) tool)
     _ None))
 
 

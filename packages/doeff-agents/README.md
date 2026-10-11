@@ -351,15 +351,25 @@ same fact as `FakeCodexReply(usage_limit=CodexUsageLimitHit(...))`
 (`headless_compose` re-exports both).
 
 A tool item becomes a `ToolCall` named after the Codex item type
-(`commandExecution`, `fileChange`, `webSearch`) with the item id as its id. Its
-`input` holds the fields Codex names: `command` and `cwd` for a command (the
-command as Codex ran it, e.g. `/bin/bash -lc '…'`), `changes` (`path`, `kind`,
-`diff`, `move_path`) for a file change, and `query`, `action`, `queries`, `url`,
-`pattern` for a web search. The `ToolAnswer` text is the command's
-`aggregatedOutput` (empty for a file change and a web search, whose items carry
-no result text); `is_error` is true when the status is anything but `completed`.
-A web search starts without its query (the upstream names it when the search
-ends), so its call is sent when the item completes.
+(`commandExecution`, `fileChange`, `webSearch`, `mcpToolCall`,
+`dynamicToolCall`, `collabAgentToolCall`, `imageView`) with the item id as its
+id. Its `input` holds the fields Codex names: `command` and `cwd` for a command
+(the command as Codex ran it, e.g. `/bin/bash -lc '…'`), `changes` (`path`,
+`kind`, `diff`, `move_path`) for a file change, `query`, `action`, `queries`,
+`url`, `pattern` for a web search, `server`, `tool`, `arguments` for an MCP tool
+call, `tool`, `namespace`, `arguments` for a dynamic tool call (the arguments
+as the tool's schema shapes them), `tool`, `prompt`, `receivers`, `model` for a
+sub-agent call, and `path` for an image view. The `ToolAnswer` text is the
+command's `aggregatedOutput`, the MCP result text (or its error message), the
+dynamic tool's answer text, one `<thread id>: <status>[ — <last message>]` line
+per sub-agent, and empty for a file change, a web search and an image view
+(their items carry no result text); `is_error` is true when the status is
+anything but `completed` (and when a dynamic tool's answerer reports failure);
+non-text MCP blocks ride in `non_text_kinds`. A web search starts without its
+query (the upstream names it when the search ends), so its call is sent when
+the item completes. A sub-agent runs as another thread in the same app server
+and its lines share stdout; layer 2 keeps them out of the conversation's turns,
+so a sub-agent's answer never becomes the turn's answer.
 
 Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
 (`started`) when layer 2 accepts an input (a turn start or a `turn/steer`), and
@@ -369,9 +379,7 @@ attachments and `FollowUp(mode=INJECT)` (as `turn/steer`) are honoured. A named
 `new_context_id` (Codex makes thread ids itself), `resume_snapshot`,
 `ExportContextEffect`, `mcp_tools` and `bare` are refused with
 `AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
-cannot open a thread before the first input). Other tool items
-(`mcpToolCall`, `dynamicToolCall`, `collabAgentToolCall`, `imageView`) are not
-mapped to events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
+cannot open a thread before the first input). Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
 over the fake and over the production handler with the stand-in app server
 (`packages/doeff-codex/tests/stub_cli/codex_app_server.py`).
 

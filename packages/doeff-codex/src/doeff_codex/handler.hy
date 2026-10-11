@@ -164,6 +164,12 @@
 
 ;; --- 読み手の thread からの呼び(lock の中で状態を進める) --------------------------------------------
 
+(defk another-thread [#^ SessionRuntime runtime record]
+  {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % bool)] :tags {:context "codex" :role "process"}}
+  "記録が会話の thread でない thread(子の agent)を名乗るかを答えるため(ターンを名乗る記録だけが thread を名乗る。会話の thread は
+   turn/start を書く前に決まる — handler の start-turn)。"
+  (and (isinstance record lines.TurnRecord) (is-not runtime.thread-id None) (!= record.thread-id runtime.thread-id)))
+
 (defk absorb [#^ SessionRuntime runtime record]
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
   "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンを名乗る記録(lines.TurnRecord — どの記録が名乗るかは lines が
@@ -173,8 +179,12 @@
    turn/started は、読んだ時点で走っているターンを立てる(mark-running)— 答えを待つ側が起きる前に読んだ、ターンを名乗らない行も
    そのターンへ積むため(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS で再現した競合)。終わったターンを名乗る遅れた記録(後ろで走った命令の
    終わり — 前のターンの終わりの後に、次のターンの間かターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っている
-   ターンへ積み、無ければ late に取っておく(次のターンを立てた時にその頭に積む)。lock の中で呼ぶ。"
+   ターンへ積み、無ければ late に取っておく(次のターンを立てた時にその頭に積む)。会話の thread でない thread を名乗る記録(子の
+   agent — collabAgentToolCall の spawnAgent が同じ process の別の thread で走らせる。録った行 other-tools)は会話のターンに積まず
+   outside へ置く(子のターンの始まりで走っているターンを替えない・子の答えを会話の答えにしない)。lock の中で呼ぶ。"
+  (<- foreign (another-thread runtime record))
   (match record
+    _ :if foreign (setv runtime.outside (+ runtime.outside #(record)))
     (lines.Response) (do (setv (get runtime.answers record.id) record)
                          (when (is-not record.turn-id None)
                            (.mark-running runtime record.turn-id)))

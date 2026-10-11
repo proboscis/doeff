@@ -41,6 +41,7 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 | ターンを名乗る記録(`lines.TurnRecord` — どの記録が名乗るかは lines が 1 か所で決める) | 名乗ったターン |
 | 終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 録った行 `background-command`) | 走っているターン。無ければ取っておき、次のターンを始めた時にその頭に積む(上の層は終わったターンをもう読まない) |
 | ターンを名乗らない記録(口座の枠の知らせ `RateLimits`・codex からの要求など) | 走っているターン(無ければ頁に載せない) |
+| 会話の thread でない thread を名乗る記録(子の agent — `collabAgentToolCall` の spawnAgent が同じ process の別の thread で走らせ、子のターンの始まりと終わり・答えを同じ stdout に出す。録った行 `other-tools`) | 載せない(ターンの外 — 子のターンの始まりで走っているターンを替えず、子の答えを会話の答えにしない) |
 
 会話の宣言(`CodexSessionSpec`)の欄が、どの要求のどの欄に載るか:
 
@@ -90,8 +91,13 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 | `commandExecution` | `CommandRun` | 命令の文(codex が包んだ形のまま — 例 `/bin/bash -lc 'echo hi'`)・dir・状態 `ToolStatus`・出力(stdout と stderr を合わせた aggregatedOutput)・終了 code | 出力と終了 code は終わりで届く(始まりは None)。終了 code が 0 でない命令は状態 failed |
 | `fileChange` | `FilePatch` | ファイルごとの変更 `FileEdit`(path・種類 add/delete/update・diff・移す先)・状態 `ToolStatus` | 始まりから変えるファイルと中身を持つ |
 | `webSearch` | `WebSearch` | 検索の語・動きの種類(search・openPage・findInPage・other)・語の列・頁・頁の中の語 | 始まりは語が空で動きは other — 語は終わりで届く |
+| `mcpToolCall` | `McpCall` | MCP の server の名・道具の名・引数(凍らせた JSON — 形は道具が決める)・状態・結果の text の block をつないだ文・text でない block の種類・誤りの文 | 結果と誤りは終わりで届く(始まりは None) |
+| `dynamicToolCall` | `DynamicCall` | 道具の名・namespace・引数(凍らせた JSON)・状態・答えの inputText をつないだ文・文でない項目の種類・答え手が名乗った成否 | 答えと成否は終わりで届く。codex は呼びを要求 `item/tool/call` で答え手へ頼む(thread/start の `dynamicTools` に宣言した時だけ — 試験の口 experimentalApi) |
+| `collabAgentToolCall` | `AgentCall` | 動きの名(spawnAgent・wait など)・状態・相手の子の thread の id・子への頼み・子の model・子ごとの最後の状態 `AgentState`(状態の名と最後の答え) | 子を始める動きの始まりは相手が空で model は空の綴り(None と読む)— 子の id・model・状態は終わりで届く |
+| `imageView` | `ImageView` | 画像の path | 始まりと終わりが同じ(状態も結果も持たない) |
 
-ほかの道具の種類(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など)は録った行が無く、中身を読まない(`tool` は None)。
+道具の状態 `ToolStatus` は completed・failed・declined・interrupted(子の agent の道具だけ)・inProgress。
+ほかの item の種類は中身を読まない(`tool` は None)。
 道具の中身の使う欄が無い・型が違う item は、method と訳を持つ `Unparsed` にする(道具の中身の無い item に読み替えない)。
 
 利用枠切れの事実 `UsageLimitHit`(`minutes` = 口座が待つ窓の長さ〔分〕・`resets-at` = その窓が戻る刻〔epoch 秒〕・`text` = codex の誤りの文)は、handler がターンの終わり(`TurnEnded.usage-limit`)に載せる。行の分類では None。誤りの種類が `usageLimitExceeded` の時だけ作り、窓と刻はそのターンの枠の知らせ(枠の名ごとに重ねる — 名乗らない窓は前の値を消さない)のうち使った割合 100 以上の窓から読む。尽きた窓が 2 つ以上なら遅く戻る方。尽きた窓が無い・戻りの刻を名乗らない・知らせが無ければ長さも刻も None(刻を発明しない)。窓は長さで名乗る(窓の名は上の層の語)。fake は `FakeReply.usage-limit` の事実をそのまま終わりに載せる。
@@ -112,13 +118,15 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確�
 `86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057`)を、手元の偽の上流(Responses API の SSE)につないで録った行。
 口座は要らない(答えの中身だけが偽物で、行の形は本物の binary が出した物)。`tool-calls.*`(道具の呼びのターン — 偽の上流が
 `exec_command` で命令の成功・失敗・apply_patch を呼び、web 検索の後に答える。命令は本当に走る)は 2026-10-11 に同じ版で、筋書きを選ぶ形で足した。
+`other-tools.*`(ほかの道具の呼びのターン — 録りの MCP の server `scripts/record_mcp_server.py` の道具・thread に宣言した動的な道具・
+画像を見る道具・子の agent を始めて待つ道具を呼ぶ。子の agent の thread の行も混ざる)は 2026-10-12 に同じ版で足した。
 版を上げる時は録り直す:
 
 ```sh
 uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> packages/doeff-codex/tests/recorded/codex-<版> <作業の dir> [筋書き…]
 ```
 
-筋書きの名(two-turns・interrupt・rate-limit・usage-limit・tool-calls)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
+筋書きの名(two-turns・interrupt・rate-limit・usage-limit・tool-calls・background-command・other-tools)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
 
 ## 検
 

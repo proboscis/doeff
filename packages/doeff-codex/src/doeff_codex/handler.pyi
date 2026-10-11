@@ -140,6 +140,9 @@ class CodexHost:
     def register(self, runtime: SessionRuntime) -> Incomplete:
         ...
 
+def another_thread(runtime: SessionRuntime, record: lines.CodexLine) -> _Program[bool, object]:
+    ...
+
 def absorb(runtime: SessionRuntime, record: lines.CodexLine) -> _Program[None, object]:
     ...
 
