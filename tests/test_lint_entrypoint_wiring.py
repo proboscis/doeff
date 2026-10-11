@@ -64,12 +64,15 @@ def _tool(directory: Path, name: str, exit_code: int, *, report: str | None = No
 
 # hook の semgrep の 3 項は uv.lock の版を `uv tool run --python <版> --from semgrep==<版> semgrep` で呼ぶ(#2906)。偽の uv はその
 # 呼びを記録して同じ dir の偽の semgrep へ回し、ほかの呼び(`uv run --no-project --python … python …`)は本物の uv へ渡す。
+# 素の hook(scripts/git-hooks/pre-commit)は pre-commit も同じ形で呼ぶ — 偽の uv は記録して検の環境の pre-commit へ回す。
 FAKE_UV: str = (
     "import json, os, sys\n"
     "args = sys.argv[1:]\n"
-    "if args[:3] == ['tool', 'run', '--python'] and args[4] == '--from' and args[6] == 'semgrep':\n"
+    "if args[:3] == ['tool', 'run', '--python'] and args[4] == '--from' and args[6] in ('semgrep', 'pre-commit'):\n"
     "    with open(os.environ['LINT_CALLS'], 'a') as output:\n"
     "        output.write(json.dumps(['uv', *args[:7]]) + '\\n')\n"
+    "    if args[6] == 'pre-commit':\n"
+    "        os.execv(sys.executable, [sys.executable, '-m', 'pre_commit', *args[7:]])\n"
     "    semgrep = os.path.join(os.path.dirname(sys.argv[0]), 'semgrep')\n"
     "    os.execv(semgrep, [semgrep, *args[7:]])\n"
     "os.execv(os.environ['REAL_UV'], [os.environ['REAL_UV'], *args])\n"
@@ -302,6 +305,103 @@ def test_hy_only_hook_runs_real_semgrep_handler_boundary_rule(
     assert result.exit_code == int(nested), result.stdout + result.stderr
     if nested:
         assert rule_id in result.stdout + result.stderr
+
+
+# 素の commit の hook(scripts/git-hooks/pre-commit)— make hooks-install と agora の担当の Pod の準備(agora の
+# deploy/agent-worker/worker-prepare.sh)が入れる物。pre-commit の枠組みを据え付けない機体でも、commit は semgrep の規則を通る
+# (card ki-8c0bb496bfab — 10-11 の日次の 5 回の赤は、Pod の commit が枠組みの semgrep の項を通らずに入れた業務の語)。
+PLAIN_HOOK: Path = ROOT / "scripts" / "git-hooks" / "pre-commit"
+# 素の hook が撃つ pre-commit の項の別名 — .pre-commit-config.yaml の semgrep の項はどれもこの別名を持つ。
+PLAIN_HOOK_ALIAS: str = "semgrep-rules"
+VOCABULARY_RULE: str = "doeff-packages-have-no-application-vocabulary"
+# 素の hook の検の repo の uv.lock — 道具の版は木の uv.lock が決める(#2906)。偽の uv は版を見ずに回す。
+FAKE_LOCKED: dict[str, str] = {"semgrep": FAKE_VERSIONS["semgrep"], "pre-commit": "0.0.0-fake"}
+
+
+def _plain_hook_repository(directory: Path, changed: str, source: str) -> Path:
+    """素の hook が読む物(scripts/ の追跡している file・hook の設定・木の python の宣言)と、業務の語の規則だけの .semgrep.yaml を
+    写して commit した repo に、changed だけを stage するため(台帳の突合は docs/adr と .semgrep.yaml に触れた commit だけが撃つ)。"""
+    repository: Path = directory / "repository"
+    repository.mkdir()
+    subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
+    tracked: list[str] = subprocess.run(
+        ["/usr/bin/git", "ls-files", "scripts"], cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split()
+    for name in (*tracked, ".pre-commit-config.yaml", ".python-version"):
+        (repository / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, repository / name)
+    rules = yaml.safe_load((ROOT / ".semgrep.yaml").read_text())["rules"]
+    (repository / ".semgrep.yaml").write_text(
+        yaml.safe_dump({"rules": [rule for rule in rules if rule["id"] == VOCABULARY_RULE]}), encoding="utf-8",
+    )
+    (repository / "uv.lock").write_text(
+        "version = 1\n"
+        + "".join(f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n' for name, version in FAKE_LOCKED.items()),
+        encoding="utf-8",
+    )
+    # Python の semgrep の項は基点と比べる(#2848)— 偽の版の空の基点にする(本線の基点の所見を検に持ち込まない)。
+    (repository / "scripts" / "hook_finding_baseline" / "semgrep.json").write_text(
+        json.dumps({"version": FAKE_VERSIONS["semgrep"], "counts": {}}), encoding="utf-8",
+    )
+    subprocess.run(["/usr/bin/git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["/usr/bin/git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"],
+                   cwd=repository, check=True)
+    changed_path: Path = repository / changed
+    changed_path.parent.mkdir(parents=True, exist_ok=True)
+    changed_path.write_text(source, encoding="utf-8")
+    subprocess.run(["/usr/bin/git", "add", changed], cwd=repository, check=True)
+    return repository
+
+
+def _plain_hook(directory: Path, changed: str, source: str) -> ProcessOutcome:
+    """本物の semgrep を偽の uv の隣に置いた検の repo で、素の hook を git が撃つのと同じく repo の根で走らせるため。"""
+    executable: str | None = shutil.which("semgrep")
+    assert executable is not None, "実検体の検査には dev 依存の semgrep が必要です"
+    (directory / "semgrep").symlink_to(executable)
+    repository: Path = _plain_hook_repository(directory, changed, source)
+    uv: str | None = shutil.which("uv")
+    assert uv is not None, "uv が要る(hook の script を走らせる)"
+    return _run_child(
+        ("/bin/sh", str(PLAIN_HOOK)), repository,
+        _environment(directory, f"{directory}:{Path(uv).parent}:/usr/bin:/bin"), ("SKIP", "VIRTUAL_ENV"),
+    )
+
+
+# 10-11 の日次の赤の形 — 汎用の package の Hy の註(5431b983e・f3f569e9d・7438f793f)・Python の docstring(abae18074・
+# 0e39b2cbd)と、枠組みが Python と Hy の外から渡す文書の 3 つ。
+@pytest.mark.parametrize(("changed", "source"), [
+    pytest.param("packages/doeff-cluster/src/doeff_cluster/example.hy",
+                 ";; 起き直しの lease(agora-controllers の card ki-0)\n(setv value 1)\n", id="hy-comment"),
+    pytest.param("packages/doeff-codex/tests/test_example.py",
+                 '"""使い手の repo(agora-controllers)の日次の赤。"""\n\nvalue = 1\n', id="python-docstring"),
+    pytest.param("packages/doeff-records/README.md", "宣言の欄(agora の kanban の行)\n", id="document"),
+])
+def test_plain_hook_stops_staged_application_vocabulary(tmp_path: Path, changed: str, source: str) -> None:
+    result: ProcessOutcome = _plain_hook(tmp_path, changed, source)
+    output: str = result.stdout + result.stderr
+    assert result.exit_code != 0, f"素の hook が業務の語を足した stage を通した:\n{output}"
+    assert VOCABULARY_RULE in output, output
+
+
+@pytest.mark.parametrize(("changed", "source"), [
+    pytest.param("packages/doeff-cluster/src/doeff_cluster/example.hy",
+                 ";; 起き直しの lease(card ki-0)\n(setv value 1)\n", id="hy-comment"),
+    pytest.param("packages/doeff-records/README.md", "宣言の欄(#2830)\n", id="document"),
+])
+def test_plain_hook_passes_staged_file_without_findings(tmp_path: Path, changed: str, source: str) -> None:
+    result: ProcessOutcome = _plain_hook(tmp_path, changed, source)
+    assert result.exit_code == 0, result.stdout + result.stderr
+
+
+def test_plain_hook_runs_every_semgrep_hook_of_the_config() -> None:
+    # 素の hook は semgrep の項を名で並べず別名で撃つ — semgrep の項を足した便が別名を書き忘れると、素の hook だけの機体
+    # (agora の担当の Pod)でその項が黙って抜ける。
+    hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
+    semgrep_hooks: list[str] = sorted(hook["id"] for hook in hooks if "semgrep" in hook["entry"])
+    aliased: list[str] = sorted(hook["id"] for hook in hooks if hook.get("alias") == PLAIN_HOOK_ALIAS)
+    assert semgrep_hooks
+    assert aliased == semgrep_hooks
+    assert f"run {PLAIN_HOOK_ALIAS}" in PLAIN_HOOK.read_text(encoding="utf-8")
 
 
 def test_every_uv_hook_declares_the_hook_python() -> None:
