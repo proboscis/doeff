@@ -20,6 +20,8 @@
 (import doeff [with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written leaving-path])
+(import doeff_cluster.worker.entry.main [boot-file-written])
+(import doeff_cluster.worker.entry.drain_main [read-boot])
 
 (val NAME "zeus-host-t")
 (val SERVICE "old-service")
@@ -112,16 +114,18 @@
   (try
     (.mkdir (/ tmp-path "worker"))
     ;; 前の process の世代の file と止まりの印が残る置き場(/tmp が worker の process より長く残る機体 — AL-D2p の設計検証の S1)。
-    ;; 止まりの印の書き手は preStop の入口だけ: worker の起動は印に触らない(引き継がない・消さない)。
+    ;; 止まりの印の書き手は preStop の入口だけ: worker の起動は印に触らない(引き継がない・消さない)。印と世代の file の形は書き手の
+    ;; 口(leaving-mark-written・boot-file-written)と読み手の口(read-boot)だけが知り、検は形を写さず、起動の前後の中身を比べる。
     (val boot-file (str (/ tmp-path "worker" "boot")))
     (! (with-handlers [os-file-handler] (leaving-mark-written boot-file "b-prev")))
+    (! (with-handlers [os-file-handler] (boot-file-written boot-file "b-prev")))
     (val mark (Path (! (leaving-path boot-file))))
-    (.write-text (Path boot-file) "b-prev\n")
+    (val marked (.read-bytes mark))
     (<- started subprocess.Popen (start-worker url (/ tmp-path "worker")))
     (:= worker started)
     (<- waited float (wait-registered url worker tmp-path))
-    (assert (!= (.strip (.read-text (Path boot-file))) "b-prev") "worker は自分の世代を書いた")
-    (assert (= (.read-text mark) "b-prev\n") "worker の起動は前の世代の止まりの印に触らない")
+    (assert (!= (! (with-handlers [os-file-handler] (read-boot boot-file))) "b-prev") "worker は自分の世代を書いた")
+    (assert (= (.read-bytes mark) marked) "worker の起動は前の世代の止まりの印に触らない")
     (val view (.json (httpx.get (+ url "/workers/" NAME) :timeout 5.0)))
     (assert (and (get view "alive") (get view "ready")) view)
     (assert (= (get view "provides") ["agent" "boundary-personal" "host-t"]) view)
