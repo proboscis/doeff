@@ -53,3 +53,32 @@
   "見本の系: handoff で入れ替える、12 秒の仕事を持つ service(退いた旧の寿命の上限 600 秒)"
   (host (working-program foundation "work" 12.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
         :readiness {"windowSeconds" 5 "retiredSeconds" 600}))
+
+
+;; --- recreate の job の世代をまたぐ受け渡し(AL-D2f): 止められるまで動き続ける service。起きた刻を盤に書く。 --------------------------
+(val KEEP-PREFIX "keep")
+
+
+(defk keeping-body [prefix]
+  {:pre [(: prefix str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "準備の報告を並べ、盤に起きた刻を書き、止められるまで動き続けるため(recreate の job の受け渡しの検 — 起きた刻と止まった刻で
+   2 つの世代の process が重ならず、間が短い事を読む)。"
+  (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
+  (<- _beats Task (Spawn (ready-beats True 1.0 0.0)))
+  (<- begun int (now-epoch-ms))
+  (<- (WriteShared (.format "{}/{}/begun" prefix ctx.instance) (OpaqueJson.of {"at" begun})))
+  (<- (Delay 3600.0))
+  "kept")
+
+
+(defk keeping-program [foundation prefix]
+  {:pre [(: foundation Callable) (: prefix str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: keeping-body を土台で包む。"
+  (<- reason str (foundation (keeping-body prefix)))
+  reason)
+
+
+;; 盤の行の頭は KEEP-PREFIX と同じ "keep"。needs は cluster-net だけ(筋書きの worker は 1 台なので、他の worker へ移せない)。
+(defsystem keeping-hosts [#^ Callable foundation]
+  "見本の系: recreate で入れ替える、止められるまで動き続ける service"
+  (keeper (keeping-program foundation "keep") :replicas 1 :needs #{"cluster-net"} :update "recreate"))

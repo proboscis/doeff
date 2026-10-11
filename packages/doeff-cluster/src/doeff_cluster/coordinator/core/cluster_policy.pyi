@@ -440,7 +440,7 @@ def elder_held(state: ClusterState, name: str, boot: str, now: int, window_ms: i
 def running_names(statuses: tuple) -> frozenset:
     ...
 
-def superseded_reply(state: ClusterState, name: str, boot: str, statuses: tuple, timing: ClusterTiming, ready_instances: dict | None=None) -> HeartbeatReply:
+def superseded_reply(state: ClusterState, name: str, boot: str, statuses: tuple | None, timing: ClusterTiming, ready_instances: dict | None=None) -> HeartbeatReply:
     ...
 
 def state_view(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[StateView, object]:
