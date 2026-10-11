@@ -3,7 +3,7 @@
 ;;; process は 1 つの run・1 つの scheduler で動く。要求ごとに run を撃つ形(標準の http.server・要求ごとの thread と 1 本の thread の
 ;;; 切り替え・時計と scheduler を被せて run する runner・要求ごとに handler の組を借りる lease)は退役した。
 ;;;
-;;;   serve-records        入口の Program(本体): 待ち受けを開き(HttpListen)、結んだ宛先を名乗り(RecordsListening)、表の用意・受けの loop・
+;;;   serve-records        入口の Program(本体): 待ち受けを port の共有で開き(HttpListen の share-port)、結んだ宛先を名乗り(RecordsListening)、表の用意・受けの loop・
 ;;;                        止めの見張りの task を立てて待つ。表の用意が済んだ拍に告知する(RecordsPrepared)。形は下の「入口の形」
 ;;;   answer-arrival       要求 1 つに答える task の本体: 本文を読み(HttpReadBody)→ service.respond → 答えを送る(HttpRespond)
 ;;;   store-reach          置き場に届くかの公開の判断(/readyz と同じ判断 — 届く StoreReachable・届かない StoreUnreachable・上限の秒の内に
@@ -731,7 +731,10 @@
   {:pre [(: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
   "serve-records の本体(prepared-slot と計器の内側 — 用意の task と要求の task が同じ session の値と計器を読む)。"
   (<- (place-answer-metrics))
-  (<- bound HttpAddress (HttpListen :address serving.address))
+  ;; 待ち受けは port の共有(share-port — SO_REUSEPORT)で開く: 同じ置き場を答える口が同じ port に何本並んでも答えは同じなので、
+  ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(agora-controllers の card ki-a4f46b3d98c5 — 2026-10-09 23:08 の
+  ;; 17 分の止まりで、1 本の口が閉じた間の書きが全部 503 になった)。入れ替えで新旧を同じ port に並べる形も同じ共有で開ける。
+  (<- bound HttpAddress (HttpListen :address serving.address :share-port True))
   (<- (RecordsListening :address bound))
   ;; 用意を受けの loop より先に立てる(同じ拍に並んだ時に用意が先に走る)。用意の告知は用意の task の終わりが出す(prepare-store)。
   (<- preparing Task (Spawn (prepare-store serving.prepare bound)))
