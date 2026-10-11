@@ -33,6 +33,14 @@ doeff-claude-code と同じ置き場で、codex に固有の物だけを持つ�
 新しい process で `thread/resume` する(判断は handler の start-turn の 1 か所)。どちらの handler も外側に doeff-time の時間の handler
 (本番 = `sync-time-handler`・模擬 = `sim-time-handler`)と doeff の scheduler が要る。
 
+ターンの頁に載る記録(本番の handler の振り分け):
+
+| 記録 | 載るターン |
+|---|---|
+| ターンを名乗る記録(`lines.TurnRecord` — どの記録が名乗るかは lines が 1 か所で決める) | 名乗ったターン |
+| 終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 録った行 `background-command`) | 走っているターン。無ければ取っておき、次のターンを始めた時にその頭に積む(上の層は終わったターンをもう読まない) |
+| ターンを名乗らない記録(口座の枠の知らせ `RateLimits`・codex からの要求など) | 走っているターン(無ければ頁に載せない) |
+
 会話の宣言(`CodexSessionSpec`)の欄が、どの要求のどの欄に載るか:
 
 | 宣言の欄 | 載る要求と欄 | None の時 |

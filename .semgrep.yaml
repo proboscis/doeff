@@ -355,6 +355,24 @@ rules:
         - "/tests/semgrep/fixtures/python/packages/doeff-records/vocabulary/**"
         - "/tests/semgrep/fixtures/python/packages/doeff-cluster/vocabulary/**"
 
+  - id: doeff-agents-decodes-no-wire-json
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-agents は外の CLI の行(JSON)の形を解かない — 解くのは層 2 の package(doeff-codex の lines・doeff-claude-code の lines)
+      だけで、doeff-agents(層 3 の adapter)はその型つきの記録だけを読む(層の決まり — operator 2026-09-25 "clear boundary for
+      headless mode via effect and handler")。doeff-agents の src に wire の型と JSON の解き手(defwire・doeff_hy.wire・OpaqueJson・
+      parse-json)を書かない。要る欄が層 2 の記録に無ければ、層 2 に wire の型と記録を足す。出自 = ki-77e76c7c07ce の設計検証の
+      盲検 B(層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・pre-commit・
+      型検査を全部通った)。検 = tests/semgrep/test_doeff_agents_wire_json_rule.py。
+    patterns:
+      - pattern-regex: '(?<![\w-])(defwire|OpaqueJson|parse-json|parse_json)(?![\w-])|doeff_hy\.wire'
+    paths:
+      include:
+        - /packages/doeff-agents/src/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/**
+
   - id: doeff-agents-idle-shell-vocabulary-is-policy-owned
     languages:
       - generic

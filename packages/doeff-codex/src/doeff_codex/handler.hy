@@ -78,7 +78,8 @@
   "1 つの会話(thread)の状態(handler の中だけ)。thread-id は新しい会話の thread/start の答えまで None。generation = 今の process を
    起こした回の番号(古い process の行と終わりを、今の process の物と取り違えないため)。credential-home = 今の process の資格の家
    (借りた資格で起こした時だけ — 降ろしたら消す)。answers = 要求の id → 答えの記録(要求ごとに
-   handler が待って読む — 読んだら消す)。outside = 走っているターンの外で読んだ記録(数えて見せるため・ターンの頁には載せない)。"
+   handler が待って読む — 読んだら消す)。outside = 走っているターンの外で読んだ記録(数えて見せるため・ターンの頁には載せない)。
+   late = 走っているターンの無い間に届いた、終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 次のターンの頭に積む)。"
   (defn __init__ [self #^ CodexSessionSpec spec]
     (setv self.spec spec
           self.thread-id None
@@ -96,7 +97,8 @@
           self.credential-home None)
     (setv #^ (get dict #((| int str) object)) self.answers {})
     (setv #^ (get dict #(str TurnLog)) self.turns {})
-    (setv #^ tuple self.outside #()))
+    (setv #^ tuple self.outside #())
+    (setv #^ tuple self.late #()))
 
   (defn #^ int take-request-id [self]
     "次の要求の id を取るため(lock の中で呼ぶ — 1 つの process の中で重ならない)。"
@@ -149,9 +151,12 @@
 
 (defk absorb [#^ SessionRuntime runtime record]
   {:pre [(: runtime SessionRuntime) (: record lines.CodexLine)] :post [(: % None)] :tags {:context "codex" :role "process"}}
-  "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンの記録はそのターンの出来事へ(終わりは end へ)・codex からの要求は
-   走っているターンへ(答えを待つ id として)・ほか(ターンを名乗らない口座の枠の知らせ RateLimits を含む — 利用枠切れの断りの前に
-   届き、上の層がそのターンの尽きた窓を読む)は走っているターンへ(無ければ outside)。lock の中で呼ぶ。"
+  "分けた記録を会話の状態へ積むため: 要求の答えは answers へ・ターンを名乗る記録(lines.TurnRecord — どの記録が名乗るかは lines が
+   決める)は名乗ったターンの出来事へ(終わりは end へ)・codex からの要求は走っているターンへ(答えを待つ id として)・ほか(ターンを
+   名乗らない口座の枠の知らせ RateLimits を含む — 利用枠切れの断りの前に届き、上の層がそのターンの尽きた窓を読む)は走っているターンへ
+   (無ければ outside)。終わったターンを名乗る遅れた記録(後ろで走った命令の終わり — 前のターンの終わりの後に、次のターンの間か
+   ターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っているターンへ積み、無ければ late に取っておく(次のターンを
+   始めた時にその頭に積む)。lock の中で呼ぶ。"
   (match record
     (lines.Response) (setv (get runtime.answers record.id) record)
     (lines.ErrorResponse) (setv (get runtime.answers record.id) record)
@@ -161,17 +166,21 @@
             (setv runtime.outside (+ runtime.outside #(record)))
             (do (setv log.pending (+ log.pending #(record.id)))
                 (.add-event runtime log record))))
-    (| (lines.TurnStarted) (lines.TextDelta) (lines.ReasoningDelta) (lines.AgentMessageDone) (lines.ItemStarted) (lines.ItemDone)
-       (lines.TokenUsage) (lines.TurnError))
-    (.add-event runtime (.log-of runtime record.turn-id) record)
     (lines.TurnEnded)
     (do (setv log (.log-of runtime record.turn-id))
         (.add-event runtime log record)
         (when (is log.end None) (setv log.end record)))
-    _ (do (setv log (.running-log runtime))
-          (if (is log None)
-              (setv runtime.outside (+ runtime.outside #(record)))
-              (.add-event runtime log record)))))
+    _ (if (isinstance record lines.TurnRecord)
+          (do (val named (.log-of runtime record.turn-id))
+              (val running (.running-log runtime))
+              (cond
+                (is named.end None) (.add-event runtime named record)
+                (is-not running None) (.add-event runtime running record)
+                True (setv runtime.late (+ runtime.late #(record)))))
+          (do (val current (.running-log runtime))
+              (if (is current None)
+                  (setv runtime.outside (+ runtime.outside #(record)))
+                  (.add-event runtime current record))))))
 
 
 (deff on-line [#^ SessionRuntime runtime #^ int generation #^ str raw]  ; defk にできない: CodexProcess の読み手の thread が呼ぶ callback
@@ -410,7 +419,11 @@
         (LaunchFailed :detail "turn/start の答えがターンの id を名乗らない")
         (do (with [runtime.lock]
               (setv runtime.current-turn answer.turn-id)
-              (.log-of runtime answer.turn-id))
+              (val started (.log-of runtime answer.turn-id))
+              ;; ターンの無い間に届いた、終わったターンを名乗る遅れた記録を、このターンの頭に積む(absorb の late)。
+              (for [late runtime.late]
+                (.add-event runtime started late))
+              (setv runtime.late #()))
             (TurnStarted :turn (CodexTurn :thread-id runtime.thread-id :turn-id answer.turn-id))))
     (lines.ErrorResponse) (do (<- refusal (refused "turn/start" answer)) refusal)
     _ answer))

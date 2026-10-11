@@ -101,6 +101,7 @@ class SessionRuntime:
     answers: dict[int | str, object]
     turns: dict[str, TurnLog]
     outside: tuple
+    late: tuple
 
     def __init__(self, spec: CodexSessionSpec) -> None:
         ...
