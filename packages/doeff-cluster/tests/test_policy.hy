@@ -341,6 +341,46 @@
              #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))
           "退いてから寿命の上限を越えたら止める"))
 
+;; --- 止まりの始まった世代の守り(AL-D2p): Pod の preStop の drain が始まった worker は、handoff の job の新しい試行を起こさない ------
+
+(import doeff_cluster.worker.intent.worker_model [StartHold] doeff_cluster.worker.core.policy [start-holds])
+
+(deftest test-a-leaving-generation-starts-no-new-trial-of-a-handoff-job-even-without-the-superseded-mark
+  ;; 失敗ケース(10-11 の zeus の画面の process の群 — card ki-3a57786eba88): 止まり(preStop の drain)の始まった Pod の古い世代は、
+  ;; 退かせた process(名 = <元の名>#retired-<世代>)が走っている間、coordinator の返事に handoff の job が載り続け、名が空いているので、
+  ;; 印 supersededBy の欠けた拍ごとに新しい試行を起こした(群 1 で 45 回・群 2 で 58 回 — 前の process を止めずに並べた)。守りは worker の
+  ;; 手元の観測(WorldView.leaving — preStop の入口が置いた印)で、coordinator の印に依らない。
+  (val retired (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
+  (val leaving (replace (! (world retired)) :leaving True))
+  (assert (= (! (plan 2000 #(H1) leaving {} POLICY)) #()) "印の無い返事でも、退かせた process の傍らに新しい試行を起こさない")
+  ;; 起こしの見送りの行に訳を出す(同じ訳が続く間は 1 行だけ — #3713)。
+  (<- holds tuple (start-holds 2000 #(H1) leaving {} POLICY))
+  (assert (= (lfor h holds #(h.name h.hold)) [#("a" StartHold.LEAVING)]))
+  ;; 止まる Pod では新しい版の木の準備も撃たない(焼いても起こさない)。
+  (assert (= (! (plan 2000 #(H1) (replace (! (world retired :codes #())) :leaving True) {} POLICY)) #())
+          "木の無い拍も準備を撃たない")
+  ;; 今の process が落ちた後も同じ: 回収はするが、名が空いた拍(backoff の後)に起こし直さない。
+  (val crashed (replace (! (world (replace (! (proc H1 11 "1-cur")) :exit-code 3))) :leaving True))
+  (val reap (! (plan 3000 #(H1) crashed {} POLICY)))
+  (assert (= reap #((ReapJob "a" 11 Outcome.EXITED 3) (ReleaseLeases "a" "1-cur"))))
+  (val records (! (records-after 3000 {"a" (JobRecord "a" :attempts 1)} reap)))
+  (assert (= (! (plan 60000 #(H1) (replace (! (world)) :leaving True) records POLICY)) #())
+          "backoff を過ぎても起こし直さない"))
+
+
+(deftest test-a-generation-that-is-not-leaving-still-restarts-its-handoff-job
+  ;; 守りの範囲(AL-D2p): 止まりの始まっていない worker は今どおり起こす — 今の世代の handoff の job の process が落ちた後(backoff の後)の
+  ;; 起こし直しと、退かせた process の傍らの新しい試行(同じ世代の入れ替えの後半 — 印の無い宣言)。
+  ;; 直す前から緑(直しの守り — 観測の既定は止まっていない)。
+  (val crashed (! (world (replace (! (proc H1 11 "1-cur")) :exit-code 3))))
+  (val reap (! (plan 3000 #(H1) crashed {} POLICY)))
+  (val records (! (records-after 3000 {"a" (JobRecord "a" :attempts 1)} reap)))
+  (assert (= (! (plan 4999 #(H1) (! (world)) records POLICY)) #()) "backoff の間は待つ")
+  (assert (= (! (plan 5000 #(H1) (! (world)) records POLICY)) #((StartJob H1 2 "/c/rev1"))) "backoff の後に起こし直す")
+  (val retired (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
+  (assert (= (! (plan 2000 #(H1) (! (world retired)) {} POLICY)) #((StartJob H1 1 "/c/rev1")))
+          "退かせた process の傍らに新しい process を起こす(入れ替えの後半)"))
+
 
 (deftest test-handoff-stops-the-retired-process-when-the-service-goes-away
   (setv old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
