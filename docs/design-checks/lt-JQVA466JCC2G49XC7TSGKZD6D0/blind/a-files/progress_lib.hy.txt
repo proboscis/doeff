@@ -1,0 +1,140 @@
+;;; 盲検 A の実験の共有の部品(作業木の file は変えない)。
+;;;
+;;; - tqdm: 本物の tqdm を継いで、作った bar を全部 BARS に残す記録係(n・total・close の有無を後で読む)。
+;;;   tqdm-progress は大域の名 `tqdm` を引くので、この module の中ではこの記録係が使われる。
+;;; - tqdm-progress: examples/ex08_tqdm_progress.hy の 29〜52 行の写し(中身は 1 文字も変えない)。
+;;; - tqdm-progress-v2: M2 だけで直す試み 1 — 件の失敗を Try で受けても数え、
+;;;   入りの Collection の失敗した件(Traverse の handler が f を呼ばずに持ち越す件)を total から外す。
+;;; - tqdm-progress-v3: M2 だけで直す試み 2 — v2 に加え、内部の effect Skip を件ごとに横取りして数える。
+
+(require doeff-hy.macros [defk <- traverse defhandler do!])
+(import doeff [do :as _doeff-do])
+(import doeff_core_effects [Try])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_vm [Ok])
+(import doeff_traverse.effects [Traverse Skip])
+(import doeff_traverse.collection [Collection])
+
+(import tqdm [tqdm :as _real-tqdm])
+
+(setv BARS [])
+
+(defclass tqdm [_real-tqdm]
+  "記録係: 作った bar を BARS に積み、handler が close を呼んだかを残す。"
+  (defn __init__ [self #* args #** kwargs]
+    (.__init__ (super) #* args #** kwargs)
+    (setv self.closed-by-handler False)
+    (.append BARS self))
+  (defn close [self]
+    (setv self.closed-by-handler True)
+    (.close (super))))
+
+(defn reset-bars []
+  (.clear BARS))
+
+(defn bar-report [title]
+  "bar ごとに desc・n/total・close の有無を 1 行で出す(刷った後に読む)。"
+  (print (+ "  [bars] " title))
+  (for [b BARS]
+    (print (.format "    desc={!r} n={}/{} closed={} complete={}"
+                    b.desc b.n b.total b.closed-by-handler (= b.n b.total))))
+  (reset-bars))
+
+(defn with-stack [stack program]
+  (setv body program)
+  (for [h stack]
+    (setv body (h body)))
+  (scheduled body))
+
+
+;; ---------------------------------------------------------------------------
+;; ex08 の tqdm-progress の写し(29〜52 行・中身は同じ)
+;; ---------------------------------------------------------------------------
+
+(defhandler tqdm-progress []
+  "Handler that adds tqdm progress bar to every Traverse.
+   Uses the Traverse label as the bar description.
+   Mutates the Traverse effect's f to wrap with tqdm update,
+   then reperforms the effect to the next handler (sequential/parallel).
+   Other effects are not matched, so defhandler passes them through."
+  (Traverse [f items label]
+    ;; Materialize for len (tqdm needs total)
+    (setv all-items (if (isinstance items Collection) items (list items)))
+    (setv bar (tqdm :total (len all-items)
+                    :desc (or label "traverse")
+                    :leave True))
+    ;; Wrap f: call original, then update bar (close it after the last item)
+    (defn wrapped [x]
+      (do!
+        (<- result (f x))
+        (.update bar)
+        (when (>= bar.n bar.total) (.close bar))
+        result))
+    ;; Mutate effect and reperform it with the same continuation k
+    ;; (sequential/parallel handles execution; reperform is terminal)
+    (setv effect.f wrapped)
+    (setv effect.items all-items)
+    (reperform effect)))
+
+
+;; ---------------------------------------------------------------------------
+;; 試み 1: M2 だけで直す(失敗も数える・持ち越しの件を total から外す)
+;; ---------------------------------------------------------------------------
+
+(defn _tick [bar]
+  (.update bar)
+  (when (>= bar.n bar.total) (.close bar)))
+
+(defhandler tqdm-progress-v2 []
+  (Traverse [f items label]
+    (setv all-items (if (isinstance items Collection) items (list items)))
+    ;; M3 の規則の写し: 入りが Collection なら、失敗した件(failed=True)は Traverse の handler が
+    ;; f を呼ばずに持ち越す(handlers.py sequential 65〜69 行・parallel 226〜228 行)。
+    (setv n-run (if (isinstance all-items Collection)
+                    (len (. all-items valid_items))
+                    (len all-items)))
+    (setv bar (tqdm :total n-run :desc (or label "traverse") :leave True))
+    (when (= n-run 0) (.close bar))
+    (defn wrapped [x]
+      (do!
+        (<- r (Try (f x)))
+        (_tick bar)
+        (if (isinstance r Ok)
+            (. r value)
+            (raise (. r error)))))
+    (setv effect.f wrapped)
+    (setv effect.items all-items)
+    (reperform effect)))
+
+
+;; ---------------------------------------------------------------------------
+;; 試み 2: 試み 1 + 内部の effect Skip を件ごとに横取りする
+;; ---------------------------------------------------------------------------
+
+;; 引数に残す理由: bar は Traverse 1 つごとに作る物で、件の program 1 つに 1 つ結ぶため(Ask で区別できない)。
+(defhandler skip-ticker [bar]
+  ;; Skip は「Internal ... Not intended for direct use」(effects.py 170〜180 行)。
+  ;; Traverse の handler は Skip を受けると件の続きを捨てる(handlers.py 45〜46 行)ので、
+  ;; 捨てられる前にここで数え、同じ Skip を外へ出し直す。
+  (Skip []
+    (_tick bar)
+    (reperform effect)))
+
+(defhandler tqdm-progress-v3 []
+  (Traverse [f items label]
+    (setv all-items (if (isinstance items Collection) items (list items)))
+    (setv n-run (if (isinstance all-items Collection)
+                    (len (. all-items valid_items))
+                    (len all-items)))
+    (setv bar (tqdm :total n-run :desc (or label "traverse") :leave True))
+    (when (= n-run 0) (.close bar))
+    (defn wrapped [x]
+      (do!
+        (<- r (Try ((skip-ticker bar) (f x))))
+        (_tick bar)
+        (if (isinstance r Ok)
+            (. r value)
+            (raise (. r error)))))
+    (setv effect.f wrapped)
+    (setv effect.items all-items)
+    (reperform effect)))

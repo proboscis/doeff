@@ -1,0 +1,97 @@
+"""対照の実験: M3(doeff_traverse.handlers.sequential)の写しに「件が終わった」の effect を足した物。
+
+共有の source は変えない。handlers.py の sequential(23〜183 行)を _seq_orig.txt に写し、
+Traverse の枝で件の結末(ok・failed・skipped・持ち越し)が決まる 4 か所の後に ItemDone を出すだけを足す。
+進捗の handler はこの ItemDone だけを読み、Skip・持ち越しの規則・f の包み直しを知らない。
+"""
+
+import itertools
+import re
+from pathlib import Path
+
+from doeff import do
+from doeff.program import Pass, Resume
+from doeff.program import handler as _program_handler
+from doeff_vm import EffectBase
+
+import doeff_traverse.handlers as _h
+
+
+class ItemDone(EffectBase[None]):
+    """Traverse の件 1 つの結末が決まった(M3 の公開の契約を広げる案)。"""
+
+    def __init__(self, traverse_id: int, label: str | None, total: int, index: int, event: str) -> None:
+        super().__init__()
+        self.traverse_id = traverse_id
+        self.label = label
+        self.total = total
+        self.index = index
+        self.event = event
+
+
+_ids = itertools.count()
+
+_SRC = (Path(__file__).parent / "_seq_orig.txt").read_text()
+
+# 足す所: Traverse の枝の頭で id と件の数を決め、results.append の後に ItemDone を出す。
+_PATCHED = _SRC.replace(
+    "            inner_installs = None\n            results = []\n",
+    "            inner_installs = None\n            results = []\n"
+    "            _tid = next(_ids)\n"
+    "            if not isinstance(effect.items, Collection):\n"
+    "                effect.items = list(effect.items)\n"
+    "            _total = len(effect.items)\n",
+    1,
+)
+_PATCHED = re.sub(
+    r"(\n(\s+)results\.append\(item\)\n)",
+    r"\1\2yield ItemDone(_tid, effect.label, _total, item.index, 'carried')\n",
+    _PATCHED,
+    count=1,
+)
+# failed・skipped・ok の 3 つの append(ItemResult(...)) の閉じ括弧の後
+_n = 0
+
+
+def _after_append(match: re.Match) -> str:
+    global _n
+    _n += 1
+    indent = match.group(2)
+    return f"{match.group(1)}{indent}yield ItemDone(_tid, effect.label, _total, item.index, results[-1].history[-1].event)\n"
+
+
+_traverse_start = _PATCHED.index("if isinstance(effect, Traverse):")
+_traverse_end = _PATCHED.index("return (yield Resume(k, Collection(results)))", _traverse_start)
+_head, _body, _tail = _PATCHED[:_traverse_start], _PATCHED[_traverse_start:_traverse_end], _PATCHED[_traverse_end:]
+_body = re.sub(r"(\n(\s+)\)\)\n)", _after_append, _body)
+_PATCHED = _head + _body + _tail
+assert _n == 3, f"ItemDone を足した append の数が 3 でない: {_n}"
+
+_ns = dict(vars(_h))
+_ns.update(ItemDone=ItemDone, _ids=_ids)
+exec(compile(_PATCHED.replace("def sequential(", "def sequential_itemdone(", 1), "<m3_itemdone>", "exec"), _ns)
+sequential_itemdone = _ns["sequential_itemdone"]
+PATCHED_SOURCE = _PATCHED
+
+
+def itemdone_progress(make_bar):
+    """ItemDone だけを読む進捗の handler(Traverse の handler の外に置く)。"""
+    bars = {}
+
+    @do
+    def handler(effect: ItemDone, k):
+        if isinstance(effect, ItemDone):
+            bar = bars.get(effect.traverse_id)
+            if bar is None:
+                bar = bars[effect.traverse_id] = make_bar(total=effect.total, desc=effect.label or "traverse", leave=True)
+            bar.update()
+            if bar.n >= bar.total:
+                bar.close()
+            return (yield Resume(k, None))
+        yield Pass(effect, k)
+
+    return _program_handler(handler)
+
+
+if __name__ == "__main__":
+    print(PATCHED_SOURCE)
