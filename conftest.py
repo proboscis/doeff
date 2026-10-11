@@ -100,6 +100,11 @@ def pytest_addoption(parser):
     )
 
 
+# Where this process's cgroup (v2) is named, and where its CPU quota (cpu.max) is read.
+_PROC_SELF_CGROUP = Path("/proc/self/cgroup")
+_CGROUP_MOUNT = Path("/sys/fs/cgroup")
+
+
 def _oversubscription() -> float:
     """1-minute load average per core; 1.0 on an idle or unmeasurable machine."""
     try:
