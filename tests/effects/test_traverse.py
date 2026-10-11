@@ -1,10 +1,17 @@
 """Tests for doeff-traverse: Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take."""
 
+import pytest
 from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.collection import Collection
 from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
-from doeff_traverse.handlers import fail_handler, normalize_to_none, sequential
+from doeff_traverse.handlers import (
+    fail_handler,
+    normalize_to_none,
+    parallel,
+    parallel_fail_fast,
+    sequential,
+)
 from doeff_traverse.helpers import try_call
 
 from doeff import do, run
@@ -290,6 +297,93 @@ class TestZip:
         assert len(col.valid_items) == 2
         assert col.valid_values == [(1, 10), (3, 30)]
         assert len(col.failed_items) == 1
+
+
+# Every shipped handler answers Zip with its own branch, so each one is checked.
+_ZIP_HANDLERS = {
+    "sequential": sequential,
+    "parallel": lambda: parallel(3),
+    "parallel_fail_fast": lambda: parallel_fail_fast(3),
+}
+
+
+def _zipped_steps(make_handler, program):
+    """Run program under make_handler() and give each item's history as (stage, event)."""
+    items = run(scheduled(make_handler()(fail_handler(try_handler(program)))))
+    return [[(entry.stage, entry.event) for entry in item.history] for item in items]
+
+
+class TestZipHistory:
+    """A Zip item's history holds each step that ran for it once (card ki-7be8e95f45eb).
+
+    A collection built by a Traverse over another carries the other's history, so a Zip
+    of the two (ex07's Zip(signals, prices)) used to repeat the shared steps.
+    """
+
+    @pytest.mark.parametrize("make_handler", _ZIP_HANDLERS.values(), ids=_ZIP_HANDLERS.keys())
+    def test_zip_of_derived_collection_keeps_each_step_once(self, make_handler):
+        """Zip(signals, prices), prices built from signals: index and signal appear once."""
+        @do
+        def program():
+            indexed = yield Traverse(_pure, [1, 2], label="index")
+            signals = yield Traverse(_pure, indexed, label="signal")
+            prices = yield Traverse(_pure, signals, label="price")
+            return (yield Inspect((yield Zip(signals, prices))))
+
+        steps = [("index", "ok"), ("signal", "ok"), ("price", "ok")]
+        assert _zipped_steps(make_handler, program()) == [steps, steps]
+
+    @pytest.mark.parametrize("make_handler", _ZIP_HANDLERS.values(), ids=_ZIP_HANDLERS.keys())
+    def test_zip_of_siblings_keeps_shared_ancestor_once(self, make_handler):
+        """Zip of two Traverses over one collection: the shared step appears once."""
+        @do
+        def program():
+            indexed = yield Traverse(_pure, [1, 2], label="index")
+            embeddings = yield Traverse(_pure, indexed, label="embed")
+            summaries = yield Traverse(_pure, indexed, label="summarize")
+            return (yield Inspect((yield Zip(embeddings, summaries))))
+
+        steps = [("index", "ok"), ("embed", "ok"), ("summarize", "ok")]
+        assert _zipped_steps(make_handler, program()) == [steps, steps]
+
+    @pytest.mark.parametrize("make_handler", _ZIP_HANDLERS.values(), ids=_ZIP_HANDLERS.keys())
+    def test_zip_of_independent_collections_keeps_both_steps(self, make_handler):
+        """Two independent Traverses with one label ran twice: both steps stay (ex03)."""
+        @do
+        def program():
+            embeddings = yield Traverse(_pure, [1, 2], label="embed")
+            summaries = yield Traverse(_pure, [1, 2], label="embed")
+            return (yield Inspect((yield Zip(embeddings, summaries))))
+
+        steps = [("embed", "ok"), ("embed", "ok")]
+        assert _zipped_steps(make_handler, program()) == [steps, steps]
+
+    @pytest.mark.parametrize(
+        "make_handler",
+        [_ZIP_HANDLERS["sequential"], _ZIP_HANDLERS["parallel"]],
+        ids=["sequential", "parallel"],
+    )
+    def test_zip_of_derived_failed_item_keeps_each_step_once(self, make_handler):
+        """A price that failed: index and signal once, then the failure and zip_failed."""
+        @do
+        def fetch_price(x):
+            if x == 2:
+                raise ValueError("bad")
+            if False:
+                yield
+            return x
+
+        @do
+        def program():
+            indexed = yield Traverse(_pure, [1, 2], label="index")
+            signals = yield Traverse(_pure, indexed, label="signal")
+            prices = yield Traverse(fetch_price, signals, label="price")
+            return (yield Inspect((yield Zip(signals, prices))))
+
+        assert _zipped_steps(make_handler, program()) == [
+            [("index", "ok"), ("signal", "ok"), ("price", "ok")],
+            [("index", "ok"), ("signal", "ok"), ("price", "failed"), (None, "zip_failed")],
+        ]
 
 
 # ---------------------------------------------------------------------------
