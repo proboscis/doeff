@@ -167,7 +167,7 @@ def source_to_code_as_import(
     name = loader.name
     present = sys.modules.get(name)
     if present is not None and vars(present).get("__file__") == path:
-        with macro_recording(present):  # 読み込み済みの module の中で compile する(import の途中と同じ)
+        with macro_recording(_expansion_or(loader, path, present)):  # 読み込み済みの module の中で compile する(import の途中と同じ)
             return loader.source_to_code(data, path)
     spec = importlib.util.spec_from_file_location(name, path, loader=loader)
     if spec is None:
@@ -175,7 +175,7 @@ def source_to_code_as_import(
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     try:
-        with macro_recording(module):  # compile の口の包みが、この展開が使った macro の記録を足す
+        with macro_recording(_expansion_or(loader, path, module)):  # compile の口の包みが、この展開が使った macro の記録を足す
             return loader.source_to_code(data, path)
     finally:
         if present is None:
@@ -480,11 +480,32 @@ def _bytecode_header(self: importlib.machinery.SourceFileLoader, path: str) -> b
 def _module_being_loaded(
     self: importlib.machinery.SourceFileLoader, path: str
 ) -> ModuleType | None:
-    """import の途中の module(``sys.modules`` に先に置かれている)— compile の中の require がここへ macro を載せるので、記録の元になる。"""
-    module = sys.modules.get(self.name)
+    """Hy の compile の展開が走る module — compile の中の require がここの表へ macro を載せ、展開がここの表を引くので、記録の元になる。
+
+    引き方は Hy の compile の口(``hy.importer.loader_module_obj``)と同じ: file の名から読み込み済みの module を引き
+    (``inspect.getmodule`` — 同じ file を別の名で先に読んだ module があればそれ)、無ければ import の途中の module
+    (``sys.modules`` に先に置かれている ``self.name``)。``self.name`` だけで引くと、同じ file を package の名で読んだ process で
+    path から別の名で読み直した時(worker の bytecode の道具の bake_plan.hy)、展開が引かない表から空の記録を作り、照らしが
+    素通りの entry を共有の置き場に入れた(2026-10-11 atlas・card ki-9180656459ac)。"""
+    import inspect  # Hy の source に当たった時だけ読む(Hy の compile の口も読む)
+
+    try:
+        module = inspect.getmodule(None, _filename=self.path)
+    except KeyError:  # Hy の口と同じ — 引く途中で sys.modules から消えた module は無いのと同じ
+        module = None
+    if module is None:
+        module = sys.modules.get(self.name)
     if module is None or vars(module).get("__file__") != path:
         return None
     return module
+
+
+def _expansion_or(
+    loader: importlib.machinery.SourceFileLoader, path: str, placed: ModuleType
+) -> ModuleType:
+    """import の外の compile で展開が走る module — 置いた module placed より、Hy が file の名から引く読み込み済みの module
+    (:func:`_module_being_loaded`)が先。記録の囲みを、展開が引く表の module に開くため。"""
+    return _module_being_loaded(loader, path) or placed
 
 
 def _last_sources() -> dict[str, bytes]:
