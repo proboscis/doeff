@@ -136,6 +136,10 @@ class Zip(EffectBase[Collection]):
     Items are matched by index. If an item failed in either collection,
     it is marked as failed in the result (failure union).
 
+    A result item's history holds each step that ran for it once: a's history, then
+    the steps of b's history a does not hold — a step shared because b was built from
+    a, or both from one collection, is not repeated.
+
     Args:
         a: first Collection
         b: second Collection

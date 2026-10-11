@@ -20,6 +20,19 @@ CollectionEffect = Skip | Traverse | Reduce | Zip | Inspect | SortBy | Take
 _SKIPPED = object()
 
 
+def _joined_history(history_a: list, history_b: list) -> list:
+    """The history of a Zip item: a's entries, then b's entries that a does not already hold.
+
+    A Traverse over a collection carries each item's history entries forward as the same
+    objects, so when b was built from a (ex07's Zip(signals, prices)) or both from one
+    collection, b repeats steps a holds. An entry is one step that ran once, so a shared
+    entry is kept once (card ki-7be8e95f45eb). Entries are compared by identity, not
+    equality: two independent Traverses with one label give equal entries for two steps.
+    """
+    held = {id(entry) for entry in history_a}
+    return history_a + [entry for entry in history_b if id(entry) not in held]
+
+
 def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Sequential handler for Traverse/Reduce/Zip/Inspect.
 
@@ -132,7 +145,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
             for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
                 failed = item_a.failed or item_b.failed
                 value = (item_a.value if item_a.failed else item_b.value) if failed else (item_a.value, item_b.value)
-                history = item_a.history + item_b.history
+                history = _joined_history(item_a.history, item_b.history)
                 if failed:
                     history.append(HistoryEntry(event="zip_failed"))
                 results.append(ItemResult(
@@ -313,7 +326,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
             for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
                 failed = item_a.failed or item_b.failed
                 value = (item_a.value if item_a.failed else item_b.value) if failed else (item_a.value, item_b.value)
-                history = item_a.history + item_b.history
+                history = _joined_history(item_a.history, item_b.history)
                 if failed:
                     history.append(HistoryEntry(event="zip_failed"))
                 results.append(ItemResult(
@@ -475,7 +488,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                 results.append(ItemResult(
                     index=item_a.index,
                     value=(item_a.value, item_b.value),
-                    history=item_a.history + item_b.history,
+                    history=_joined_history(item_a.history, item_b.history),
                 ))
             return (yield Resume(k, Collection(results)))
 
