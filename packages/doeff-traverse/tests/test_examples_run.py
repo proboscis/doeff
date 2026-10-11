@@ -89,13 +89,23 @@ def _subforms(form: object) -> Iterator[object]:
             yield from _subforms(child)
 
 
+def _module_package(arg: object) -> str | None:
+    """require の module の語の頭の package(module の語でなければ None)。Hy 1.x の reader は `a.b` を `(. a b)` と読む。"""
+    if isinstance(arg, hy.models.Symbol):
+        return hy.mangle(str(arg))
+    if isinstance(arg, hy.models.Expression) and len(arg) > 1 and arg[0] == hy.models.Symbol("."):
+        return _module_package(arg[1])
+    return None
+
+
 def _required_packages(form: hy.models.Expression) -> list[str]:
     """`(require <module> [名 …] <module> :as <別名> …)` の module の頭の package(keyword の次の語は別名)。"""
     packages: list[str] = []
     after_keyword = False
     for arg in list(form)[1:]:
-        if isinstance(arg, hy.models.Symbol) and not after_keyword:
-            packages.append(hy.mangle(str(arg)).split(".")[0])
+        package = None if after_keyword else _module_package(arg)
+        if package is not None:
+            packages.append(package)
         after_keyword = isinstance(arg, hy.models.Keyword)
     return packages
 
@@ -161,11 +171,15 @@ def test_macro_check_sees_nested_forms() -> None:
     """今の例には違反が無いので、確かめが form の中へ降りる事は違反を含む source で確かめる
     (降りない確かめは、例の中の defmacro を見逃して緑のまま — 設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の c6a)。"""
     source = """
-(require doeff-hy.macros [defk] my-shims [fold] doeff_hy.handle :as h)
+(require doeff-hy.macros [defk] support.fold-shim [fold] bare [x] doeff_hy.handle :as h)
 (when True
   (defmacro fold [coll] coll))
 """
-    assert _macro_violations(source, "<inline>") == ["require my_shims", "defmacro fold"]
+    assert _macro_violations(source, "<inline>") == [
+        "require support",
+        "require bare",
+        "defmacro fold",
+    ]
 
 
 def test_tables_name_examples_as_they_are() -> None:
