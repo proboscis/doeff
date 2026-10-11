@@ -158,6 +158,21 @@ Items in a Collection can be:
 
 Both `failed` and `skipped` items are excluded from downstream `for/do` and `fold`. `Inspect` reveals the full history including the cause.
 
+## Counting item outcomes (progress)
+
+`sequential`, `parallel` and `parallel_fail_fast` report each item's outcome with the effect `ItemOutcome(traverse, label, total, outcome, item)` as soon as it is known — `outcome` is `ok`, `failed`, `skipped`, or `carried` (an item an earlier stage failed or skipped, kept without running `f`), and `item` is the `ItemResult` the Traverse answers for it. A handler that counts them reaches `total` for every Traverse, failed items included. `progress_bars(make_bar)` draws one bar per Traverse and closes it at `total`:
+
+```hy
+(import tqdm [tqdm])
+(import doeff_traverse.handlers [progress-bars parallel])
+
+(run (with-stack [backend fail_handler (progress-bars tqdm) (parallel 10)] program))
+```
+
+- **Where**: the Traverse handler performs `ItemOutcome` under the handlers between the Traverse and itself (the ones it puts back around each item program), then under itself, which answers `None`. A counting handler therefore goes *inside* the Traverse handler, like a body handler; installed outside it sees nothing.
+- **When**: only while one of those handlers names `ItemOutcome` in the annotation of its effect parameter (a `defhandler` clause `(ItemOutcome [...] ...)` does). Reporting adds half to all of an item's own cost, so a Traverse nobody counts does not pay for it. A handler that admits every effect does not count as naming it — nor does `Listen(prog, types=(ItemOutcome,))`.
+- **Limits**: a Traverse with no item to run (no items, or only carried ones) reports nothing, so no bar opens for it. `sequential` reads an iterable without a length to its end at the first item when it reports (to know `total`). `parallel_fail_fast` reports the items finished before the first failure and the failed one; the items it cancels report nothing, so that Traverse's bar stays open.
+
 ## Examples
 
 See `examples/` directory:
@@ -169,7 +184,7 @@ See `examples/` directory:
 - **ex05** — Parallel timing: 10x speedup confirmed (sequential 1.0s -> parallel 0.1s)
 - **ex06** — mediagen pipeline rewrite
 - **ex07** — proboscis-ema pipeline rewrite with per-item failure tracking
-- **ex08** — tqdm progress bar integration
+- **ex08** — tqdm progress bar integration (bars close with a failing item too)
 - **ex09** — for/do comprehension: From + When + SortBy + Take
 
 ## ADR

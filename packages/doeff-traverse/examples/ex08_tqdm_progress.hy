@@ -1,12 +1,13 @@
 ;;; Example 8: tqdm progress bar — handler-injected visualization.
 ;;;
 ;;; The pipeline knows nothing about progress bars.
-;;; A handler wraps each Traverse with tqdm, updating on each item completion.
+;;; The Traverse handler reports each item's outcome (ItemOutcome: ok, failed,
+;;; skipped, carried), and a handler that counts them draws one bar per Traverse.
 ;;;
 ;;; proboscis-ema has throttled_gather_with_progress that manually wires tqdm.
 ;;; With doeff-traverse, just add (tqdm-progress) to the handler stack.
 
-(require doeff-hy.macros [defk <- traverse defhandler do!])
+(require doeff-hy.macros [defk <- traverse defhandler])
 (import doeff [do :as _doeff-do])
 (import doeff [run EffectBase])
 
@@ -15,48 +16,26 @@
 (import doeff_core_effects.scheduler [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Traverse Reduce])
-(import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
+(import doeff_traverse.effects [Reduce])
+(import doeff_traverse.handlers [parallel progress-bars fail-handler :as fail_handler])
 (import doeff_traverse.collection [Collection])
 
 (import tqdm [tqdm])
 
 
 ;; ===========================================================================
-;; tqdm-progress handler: wraps Traverse items with a progress bar
+;; tqdm-progress handler: one tqdm bar per Traverse
 ;; ===========================================================================
 
-(defhandler tqdm-progress []
-  "Handler that adds tqdm progress bar to every Traverse.
+(defn tqdm-progress []
+  "Handler that adds a tqdm progress bar to every Traverse.
    Uses the Traverse label as the bar description.
-   Mutates the Traverse effect's f to wrap with tqdm update,
-   then reperforms the effect to the next handler (sequential/parallel).
-   Other effects are not matched, so defhandler passes them through.
-
-   The bar counts items whose f finished. An item that fails, that an earlier
-   stage carried over as failed, or that When skipped is not counted, so the bar
-   can stop short of total and stay open: the Traverse handler answers the whole
-   Collection at once and does not report each item's outcome. Reperform is
-   required (the same k keeps the inner handlers visible to each item), so this
-   handler cannot run code when the Traverse finishes either."
-  (Traverse [f items label]
-    ;; Materialize for len (tqdm needs total)
-    (setv all-items (if (isinstance items Collection) items (list items)))
-    (setv bar (tqdm :total (len all-items)
-                    :desc (or label "traverse")
-                    :leave True))
-    ;; Wrap f: call original, then update bar (close it when every item has finished)
-    (defn wrapped [x]
-      (do!
-        (<- result (f x))
-        (.update bar)
-        (when (>= bar.n bar.total) (.close bar))
-        result))
-    ;; Mutate effect and reperform it with the same continuation k
-    ;; (sequential/parallel handles execution; reperform is terminal)
-    (setv effect.f wrapped)
-    (setv effect.items all-items)
-    (reperform effect)))
+   The Traverse handler (sequential/parallel) reports every item's outcome —
+   failed items, items an earlier stage carried over as failed, and items When
+   skipped included — so each bar reaches its total and closes.
+   Install it inside the Traverse handler, like a body handler: the outcome is
+   reported under the handlers between the Traverse and its handler."
+  (progress-bars tqdm))
 
 
 ;; ===========================================================================
@@ -84,6 +63,14 @@ async def async_compute(x):
 
 (defhandler compute-backend
   (Compute [x]
+    (<- result (Await (async-compute x)))
+    (resume result)))
+
+;; A backend that is down for one item: that item fails, the others go on.
+(defhandler flaky-backend
+  (Compute [x]
+    (when (= x 7)
+      (raise (ConnectionError "backend down for 7")))
     (<- result (Await (async-compute x)))
     (resume result)))
 
@@ -130,11 +117,21 @@ async def async_compute(x):
 (print "Done:" (. result valid_values))
 
 ;; With tqdm — just add (tqdm-progress) to the stack
-;; tqdm-progress sits between parallel and the body handlers
-;; so it sees each Traverse before parallel dispatches it
+;; tqdm-progress sits between parallel and the body handlers,
+;; where parallel reports each item's outcome
 (print)
 (print "=== with tqdm (parallel) ===")
 (setv result (run (with-stack
   [try_handler compute-backend fail_handler (await_handler) (tqdm-progress) (parallel 10)]
   program)))
 (print "Done:" (. result valid_values))
+
+;; With tqdm and a failing item — both bars still reach 20/20 and close:
+;; stage1 counts the failed item, stage2 the item it carries over
+(print)
+(print "=== with tqdm, item 7 failing (parallel) ===")
+(setv result (run (with-stack
+  [try_handler flaky-backend fail_handler (await_handler) (tqdm-progress) (parallel 10)]
+  program)))
+(print "Done:" (len (. result valid_values)) "valid,"
+       (lfor item (. result failed_items) (. item index)) "failed")
