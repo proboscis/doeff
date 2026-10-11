@@ -1,5 +1,6 @@
 """記録からの収集の最適化と、通常の pytest に戻す互換性の反例(#1551)。"""
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -495,3 +496,18 @@ else:
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, result.stderr
+
+
+
+def test_every_child_deadline_in_this_file_is_scaled() -> None:
+    """この file が子に渡す ``timeout=`` は、数の直書きでなく伸びた child_deadline(反例は上の固定の 30 秒)。"""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    fixed = [
+        keyword.value.lineno
+        for keyword in ast.walk(tree)
+        if isinstance(keyword, ast.keyword)
+        and keyword.arg == "timeout"
+        and isinstance(keyword.value, ast.Constant)
+        and isinstance(keyword.value.value, (int, float))
+    ]
+    assert fixed == [], f"固定の制限時間で子を起こす行: {fixed}"
