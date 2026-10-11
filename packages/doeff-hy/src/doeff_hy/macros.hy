@@ -34,6 +34,8 @@
 (import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
+;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
+(import hy.scoping [nearest-python-scope is-function-scope])
 
 ;; Re-export handle macros so users only need one require line.
 ;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes
@@ -633,6 +635,21 @@ defk {name}: :post type annotation cannot be an empty string.
       `(do ~(_helper-imports) ~form)
       `((fn [] ~(_helper-imports) ~form))))
 
+(defn _scoped-definition [compiler name forms]
+  "名 `name` を定義する macro(defk・defp・deftest)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+
+   module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
+   読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
+   `name` に束ねる。関数の中で import した名は関数全体の局所の名になるので、並べたままだと外の関数で先に読む
+   traverse / for/do の `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
+   UnboundLocalError で落ちた(card ki-964823cd7feb・tests/test_nested_definition_scope.py)。module と class の本体を
+   包まないのは、包むと定義の `__qualname__` が変わり(pickle が名で引けない)、class の本体の method の引数なしの
+   `super()` が `__class__` を失うから。型検査のための展開は補助を import しないので包まない。"
+  (if (and (not (_static-view?))
+           (is-function-scope (nearest-python-scope (. compiler scope))))
+      `(setv ~name ((fn [] ~@forms ~name)))
+      `(do ~@forms)))
+
 (defn _quoted-forms [forms]
   "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。
    本体を quote で埋め込むと、Hy は import のたびに model の木を組み立てる code へ compile し、.pyc の無い compile の時間の
@@ -1062,14 +1079,14 @@ defk {name}: {{:post [...]}} is required.
     (lfor form real-body (_expand-bangs form (+ "defk " (str name)) HELPERS-NAME)))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms
                                           (_type-params body (+ "defk " (str name)))))
-  (locate-synthesized `(do
-     ~(_helper-imports)
-     ~fn-form
-     (_install-guard-globals ~name)
-     (setattr ~name "__doeff_body__" ~(_quoted-forms written-body))
-     (setattr ~name "__doeff_args__" ~(_quoted-forms params))
-     (setattr ~name "__doeff_name__" ~(str name))
-     ~@(declaration-setters name (get (_find-contract body) 0) (+ "defk " (str name))))))
+  (locate-synthesized (_scoped-definition _hy-compiler name [
+     (_helper-imports)
+     fn-form
+     `(_install-guard-globals ~name)
+     `(setattr ~name "__doeff_body__" ~(_quoted-forms written-body))
+     `(setattr ~name "__doeff_args__" ~(_quoted-forms params))
+     `(setattr ~name "__doeff_name__" ~(str name))
+     #* (declaration-setters name (get (_find-contract body) 0) (+ "defk " (str name)))])))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1806,9 +1823,9 @@ the effect in the enclosing do-context.
                        (_bind-form bind))))
   (setv post-asserts (lfor check post-checks
                        (_expand-check check name "post-condition")))
-  `(do
-     ~(_helper-imports)
-     (setv ~name
+  (_scoped-definition compiler name [
+     (_helper-imports)
+     `(setv ~name
        ((_install-guard-globals
           (_doeff_do (fn []
             ~@expanded
@@ -1817,10 +1834,10 @@ the effect in the enclosing do-context.
               ~@post-asserts)
             (return ~(_result-symbol body-expr)))))))
      ;; Preserve S-expr body directly on Program value (DoExpr has __dict__ via pyclass(dict))
-     (setattr ~name "__doeff_body__" ~(_quoted-forms real-body))
-     (setattr ~name "__doeff_name__" ~(str name))
-     (setattr ~name "__doeff_module__" __name__)
-     ~@(declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))))
+     `(setattr ~name "__doeff_body__" ~(_quoted-forms real-body))
+     `(setattr ~name "__doeff_name__" ~(str name))
+     `(setattr ~name "__doeff_module__" __name__)
+     #* (declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))]))
 
 (defmacro defp [_hy-compiler name #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
@@ -2083,18 +2100,17 @@ the effect in the enclosing do-context.
   (setv item-record (_record-test-function name fn-params item-decorators))
 
   ;; Assemble the function definition with decorators
-  (locate-synthesized (if decorators
-    `(do
-       ~pytest-import
-       ~(_helper-imports)
-       (defn [~@decorators] ~fn-name [~@fn-signature] ~fn-body)
-       (_install-guard-globals ~name {"_doeff_do" _doeff_do})
-       ~item-record)
-    `(do
-       ~(_helper-imports)
-       (defn ~fn-name [~@fn-signature] ~fn-body)
-       (_install-guard-globals ~name {"_doeff_do" _doeff_do})
-       ~item-record))))
+  (locate-synthesized (_scoped-definition _hy-compiler name
+    (if decorators
+      [pytest-import
+       (_helper-imports)
+       `(defn [~@decorators] ~fn-name [~@fn-signature] ~fn-body)
+       `(_install-guard-globals ~name {"_doeff_do" _doeff_do})
+       item-record]
+      [(_helper-imports)
+       `(defn ~fn-name [~@fn-signature] ~fn-body)
+       `(_install-guard-globals ~name {"_doeff_do" _doeff_do})
+       item-record]))))
 
 
 ;; ---------------------------------------------------------------------------
