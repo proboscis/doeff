@@ -2373,9 +2373,13 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     DeprecationWarning
     :stacklevel 2)
   (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
+  ;; 型検査のための展開では、doeff-hy-check が module の頭で読む時だけ置く補助の名で引く
+  ;; (doeff_hy/static_view.py の SESSION_STATIC_IMPORTS)。実行時は defhandler が出す import の Put / Some。
+  (setv put (if (_static-view?) '_doeff_Put 'Put)
+        some (if (_static-view?) '_doeff_Some 'Some))
   `(do
      (setv ~name ~val)
-     (<- (Put ~key-var (Some ~name)))))
+     (<- (~put ~key-var (~some ~name)))))
 
 
 ;; ---------------------------------------------------------------------------
