@@ -1,0 +1,13 @@
+agora-controllers 3f158ed46(origin/main の archive)/ doeff f977f0d8c(兄弟の doeff = 作業木 /home/ubuntu/.worktrees/doeff-wt-dc-lt0bc9)
+run 1 rc=0 loadavg=124.99 1 passed, 1 deselected, 1 warning in 52.84s 
+run 2 rc=0 loadavg=103.56 1 passed, 1 deselected, 1 warning in 3.94s 
+run 3 rc=0 loadavg=102.95 1 passed, 1 deselected, 1 warning in 3.72s 
+run 4 rc=0 loadavg=99.11 1 passed, 1 deselected, 1 warning in 3.14s 
+run 5 rc=0 loadavg=97.26 1 passed, 1 deselected, 1 warning in 3.40s 
+run 6 rc=0 loadavg=96.04 1 passed, 1 deselected, 1 warning in 3.26s 
+run 7 rc=0 loadavg=94.35 1 passed, 1 deselected, 1 warning in 3.15s 
+run 8 rc=0 loadavg=91.76 1 passed, 1 deselected, 1 warning in 4.11s 
+run 9 rc=0 loadavg=88.97 1 passed, 1 deselected, 1 warning in 3.87s 
+run 10 rc=0 loadavg=88.07 1 passed, 1 deselected, 1 warning in 4.02s 
+run 11 rc=0 loadavg=88.39 1 passed, 1 deselected, 1 warning in 3.59s 
+run 12 rc=0 loadavg=87.16 1 passed, 1 deselected, 1 warning in 3.94s 

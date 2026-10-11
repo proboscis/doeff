@@ -1,0 +1,63 @@
+--- /tmp/dc-lt0bc9-H2VP/c-orig/packages/doeff-codex/src/doeff_codex/lines.hy	2026-10-11 18:21:10.000000000 +0000
++++ /tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/src/doeff_codex/lines.hy	2026-10-11 18:23:34.874534328 +0000
+@@ -423,6 +423,11 @@
+   (#^ (| RateLimitWindow None) primary)
+   (#^ (| RateLimitWindow None) secondary))
+ 
++
++(defrecord AccountSnapshot
++  "口座の断面(仮の通知 account/snapshot/updated — 盲検 A の失敗例): limits = 枠ごとの断面。thread もターンも名乗らない。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ (get tuple #(RateLimits ...)) limits))
+ (defrecord Other
+   "語彙の外の通知: method = 通知の名(中身は持たない — 発明しない)。"
+   {:tags {:context "codex" :role "type"}}
+@@ -435,7 +440,7 @@
+   (#^ str reason))
+ 
+ (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
+-                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded Other Unparsed))
++                   ItemStarted ItemDone TokenUsage RateLimits AccountSnapshot TurnError TurnEnded Other Unparsed))
+ 
+ ;; ターンを名乗る記録(params の turnId か turn.id でターンの id を必ず持つ記録)。どの記録がターンを名乗るかは codex の行の形から
+ ;; 決まる知識なので、記録の型と同じこの file が 1 か所で名乗る — handler はこの集まりで記録をターンの列へ振り分け、記録の class を
+@@ -446,7 +451,7 @@
+ ;; 決まる知識なので、TurnRecord と同じくこの file が 1 か所で名乗る — handler はこの集まりで記録をターンの枠へ重ね、記録の class を
+ ;; 列挙しない。窓(RateLimitWindow・RateLimits)を運ぶ記録を足したらここにも足し、重ね方は limits.hy の merged-limits が受ける
+ ;; (tests/test_limits.hy が一致を確かめる)。
+-(val LimitRecord (| RateLimits))
++(val LimitRecord (| RateLimits AccountSnapshot))
+ 
+ (defrecord ErrorFacts
+   "codexErrorInfo から読んだ誤りの種類の名(この版に無い形は UnknownValue)と HTTP の status(どちらも名乗らなければ None)。"
+--- /tmp/dc-lt0bc9-H2VP/c-orig/packages/doeff-codex/src/doeff_codex/limits.hy	2026-10-11 18:21:10.000000000 +0000
++++ /tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/src/doeff_codex/limits.hy	2026-10-11 18:23:34.915539262 +0000
+@@ -5,18 +5,24 @@
+ ;;; 出せる)。実物の行は tests/recorded/codex-0.162.1/usage-limit(枠の知らせ → 誤り usageLimitExceeded → 失敗の終わり)。
+ (require doeff-hy.macros [val])
+ (val MODULE-TAGS {:context "codex" :role "foundation"})
+-(require doeff-hy.macros [defk])
+-(import doeff_codex.lines [RateLimits TurnEnded UsageLimitHit USAGE-LIMIT-KIND])
++(require doeff-hy.macros [defk <- var])
++(import doeff_codex.lines [RateLimits AccountSnapshot LimitRecord TurnEnded UsageLimitHit USAGE-LIMIT-KIND])
+ 
+ ;; 窓が尽きたと読む使った割合(百分率)。
+ (val SPENT-PERCENT 100)
+ 
+ 
+-(defk merged-limits [#^ tuple kept #^ RateLimits fresh]
+-  {:pre [(: kept tuple) (: fresh RateLimits)] :post [(: % tuple)] :tags {:context "codex" :role "judgment"}}
++(defk merged-limits [#^ tuple kept fresh]
++  {:pre [(: kept tuple) (: fresh LimitRecord)] :post [(: % tuple)] :tags {:context "codex" :role "judgment"}}
+   "ターンの中で届いた枠の知らせを重ねるため(ターンの終わりに尽きた窓を読む材料)。kept = 枠の名(limit-id)ごとに 1 つの重ねた知らせの
+    列(届いた順)。同じ枠の後の知らせが名乗らない窓は、前に名乗った窓を消さない(codex 0.162.1 の schema の註: 名乗らない欄は前に見た
+    値を消さない)。名乗った窓は新しい値に替わる。別の枠の知らせは列の後ろに足す(前の枠の窓を消さない)。"
++  (when (isinstance fresh AccountSnapshot)
++    (var folded kept)
++    (for [one fresh.limits]
++      (<- next-kept (merged-limits folded one))
++      (:= folded next-kept))
++    (return folded))
+   (val before (next (gfor snapshot kept :if (= snapshot.limit-id fresh.limit-id) snapshot) None))
+   (when (is before None)
+     (return (+ kept #(fresh))))

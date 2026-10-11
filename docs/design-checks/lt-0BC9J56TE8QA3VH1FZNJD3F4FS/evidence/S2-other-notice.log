@@ -1,0 +1,5 @@
+== S2: f977f0d8c(作業木そのもの・handler は変えない)
+u0 の出来事の型: ['TurnStarted', 'Other', 'TurnEnded']
+u1 の出来事の型: ['TurnStarted', 'TurnEnded']
+outside: (Other(method='account/credits/updated'),)
+probe rc=0

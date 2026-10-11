@@ -1,0 +1,6 @@
+== N-A: f977f0d8c + mutant-A-forgotten-limit-record.diff(窓を運ぶ記録 AccountSnapshot を CodexLine に足し、LimitRecord に入れ忘れた)
+E   AssertionError: 窓を運ぶのに LimitRecord に無い: ['AccountSnapshot'] / LimitRecord に在るのに窓を運ばない: []
+AssertionError: 窓を運ぶのに LimitRecord に無い: ['AccountSnapshot'] / LimitRecord に在るのに窓を運ばない: []
+FAILED ../../../tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/tests/test_limits.hy::test_every_record_that_carries_limit_windows_is_a_limit_record
+1 failed, 9 passed, 1 warning in 15.24s
+pytest rc=1

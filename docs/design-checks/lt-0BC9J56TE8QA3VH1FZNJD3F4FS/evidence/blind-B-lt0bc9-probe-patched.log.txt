@@ -1,0 +1,9 @@
+handler の file: /tmp/blind-B/doeff/packages/doeff-codex/src/doeff_codex/handler.hy
+== 1. u1 の中に枠の知らせが無い
+  u0 limits=1 usage-limit=UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.')
+  u1 limits=0 usage-limit=UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.')
+  outside=0
+== 2. u1 の知らせが 7 日の窓を名乗らない
+  u0 limits=1 usage-limit=UsageLimitHit(minutes=10080, resets_at=1893888000, text='You’ve hit your usage limit.')
+  u1 limits=1 usage-limit=UsageLimitHit(minutes=10080, resets_at=1893888000, text='You’ve hit your usage limit.')
+  outside=0

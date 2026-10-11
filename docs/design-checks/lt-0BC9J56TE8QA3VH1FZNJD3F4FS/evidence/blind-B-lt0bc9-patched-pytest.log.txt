@@ -1,0 +1,90 @@
+
+deadline scale x2.0 (load per usable CPU) — per test 120s, watchdog 179s
+
+============================= test session starts ==============================
+platform linux -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0 -- /tmp/blind-B/doeff/.venv/bin/python
+rootdir: /tmp/blind-B/doeff
+configfile: pyproject.toml
+plugins: xdist-3.8.0, anyio-4.14.2, doeff-hy-pytest-0.1.0, timeout-2.4.0, doeff-adr-0.1.0, asyncio-1.4.0
+timeout: 119.68424479166667s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... test-admission: focused — 23 件(変更箇所の検証)
+collected 23 items
+doeff-adr: 記録から収集 3 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000022 秒・依存変更で再作成 0 file
+
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_the_account_waits_for_the_exhausted_window_that_resets_last PASSED [  4%]
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_an_unstated_return_stays_unstated PASSED [  8%]
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_other_failures_are_not_usage_limits PASSED [ 13%]
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_a_quiet_update_keeps_the_windows_already_named PASSED [ 17%]
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_a_rate_limit_update_read_right_after_the_turn_start_answer_joins_that_turn PASSED [ 21%]
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_a_rate_limit_update_read_right_after_turn_started_joins_that_turn PASSED [ 26%]
+blind-B/doeff/packages/doeff-codex/tests/test_limits.hy::test_the_codex_layer_names_windows_by_their_length PASSED [ 30%]
+blind-B/doeff/packages/doeff-codex/tests/test_turn_records.hy::test_every_record_that_must_name_a_turn_is_a_turn_record PASSED [ 34%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_the_text_deltas_reach_the_page_in_order_and_the_turn_ends_once[fake] PASSED [ 39%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_the_text_deltas_reach_the_page_in_order_and_the_turn_ends_once[stub] PASSED [ 43%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_usage_limited_turn_ends_failed_with_the_usage_limit_fact[fake] PASSED [ 47%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_usage_limited_turn_ends_failed_with_the_usage_limit_fact[stub] PASSED [ 52%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_an_interrupted_turn_ends_interrupted_and_the_process_takes_the_next_turn[fake] PASSED [ 56%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_an_interrupted_turn_ends_interrupted_and_the_process_takes_the_next_turn[stub] PASSED [ 60%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_running_turn_refuses_a_second_start_and_closing_ends_it[fake] PASSED [ 65%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_running_turn_refuses_a_second_start_and_closing_ends_it[stub] PASSED [ 69%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_steered_input_joins_the_running_turn[fake] PASSED [ 73%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_steered_input_joins_the_running_turn[stub] PASSED [ 78%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_the_images_ride_on_the_turn_input[fake] PASSED [ 82%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_the_images_ride_on_the_turn_input[stub] PASSED [ 86%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_the_declared_effort_model_and_compaction_reach_the_app_server[stub] PASSED [ 91%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_a_lent_account_gets_a_home_of_its_own_that_goes_with_the_process[stub] PASSED [ 95%]
+blind-B/doeff/packages/doeff-codex/tests/test_scenarios.hy::test_the_lent_account_stays_out_of_repr PASSED [100%]
+
+=============================== warnings summary ===============================
+blind-B/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /tmp/blind-B/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 23 passed, 1 warning in 7.65s =========================

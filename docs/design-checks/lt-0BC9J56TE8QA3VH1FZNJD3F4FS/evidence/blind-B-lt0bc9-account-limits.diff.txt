@@ -1,0 +1,46 @@
+--- a/packages/doeff-codex/src/doeff_codex/handler.hy
++++ b/packages/doeff-codex/src/doeff_codex/handler.hy
+@@ -83,7 +83,9 @@
+    起こした回の番号(古い process の行と終わりを、今の process の物と取り違えないため)。credential-home = 今の process の資格の家
+    (借りた資格で起こした時だけ — 降ろしたら消す)。answers = 要求の id → 答えの記録(要求ごとに
+    handler が待って読む — 読んだら消す)。outside = 走っているターンの外で読んだ記録(数えて見せるため・ターンの頁には載せない)。
+-   late = 走っているターンの無い間に届いた、終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 次のターンの頭に積む)。"
++   late = 走っているターンの無い間に届いた、終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 次のターンの頭に積む)。
++   account-limits = この会話で読んだ口座の枠の知らせを、走っているターンの有無によらず重ねた口座の断面(merged-limits の答え — 口座の
++   枠は process の口座の状態で、ターンの物ではない。ターンの外で届いた知らせも落とさない)。"
+   (defn __init__ [self #^ CodexSessionSpec spec]
+     (setv self.spec spec
+           self.thread-id None
+@@ -102,7 +104,8 @@
+     (setv #^ (get dict #((| int str) object)) self.answers {})
+     (setv #^ (get dict #(str TurnLog)) self.turns {})
+     (setv #^ tuple self.outside #())
+-    (setv #^ tuple self.late #()))
++    (setv #^ tuple self.late #())
++    (setv #^ tuple self.account-limits #()))
+ 
+   (defn #^ int take-request-id [self]
+     "次の要求の id を取るため(lock の中で呼ぶ — 1 つの process の中で重ならない)。"
+@@ -182,7 +185,10 @@
+     (lines.TurnStarted) (do (.mark-running runtime record.turn-id)
+                             (.add-event runtime (.log-of runtime record.turn-id) record))
+     (lines.RateLimits)
+-    (do (setv log (.running-log runtime))
++    ;; 口座の枠は会話の口座の状態 — 走っているターンの外で届いた知らせも、会話の口座の断面に重ねる(R3: outside に落とさない)。
++    (do (<- account (merged-limits runtime.account-limits record))
++        (setv runtime.account-limits account)
++        (setv log (.running-log runtime))
+         (if (is log None)
+             (setv runtime.outside (+ runtime.outside #(record)))
+             (do (<- limits (merged-limits log.limits record))
+@@ -196,7 +202,9 @@
+                 (.add-event runtime log record))))
+     (lines.TurnEnded)
+     (do (setv log (.log-of runtime record.turn-id))
+-        (<- hit (usage-limit-hit-of record log.limits))
++        ;; 利用枠切れの刻は会話の口座の断面から読む — そのターンの中で知らせが届かなかった・窓を名乗らなかった時も、口座が待つ窓と
++        ;; 戻りの刻が毎回 agora まで届く(R1)。
++        (<- hit (usage-limit-hit-of record runtime.account-limits))
+         (setv ended (replace record :usage-limit hit))
+         (.add-event runtime log ended)
+         (when (is log.end None) (setv log.end ended)))

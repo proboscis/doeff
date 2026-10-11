@@ -1,0 +1,11 @@
+== P-A: f977f0d8c + change-A-received-in-lines-and-limits.diff(handler.hy は変えない)
+handler の file: /tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/src/doeff_codex/handler.hy
+LimitRecord: doeff_codex.lines.RateLimits | doeff_codex.lines.AccountSnapshot
+u1 の出来事の型: ['TurnStarted', 'AccountSnapshot', 'TurnEnded']
+outside: ()
+u1.limits の枠: ['codex', 'codex_other']
+u1.end.usage-limit: UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.')
+AgentAccountLimit: AgentAccountLimit(window='five_hour', resets_at=1893456000, text='You’ve hit your usage limit.')
+probe rc=0
+25 passed, 1 warning in 3.47s
+pytest rc=0
