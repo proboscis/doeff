@@ -77,7 +77,10 @@ How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
   parameters — the shape `defhandler` expands to (a lambda when the only clause
   is `(resume v)`) and hand-written handlers use. The effects a clause performs
   (`(<- (Await ...))` in a clock handler) must be handled by an outer handler;
-  `check_coverage` walks the env from the innermost handler out.
+  `check_coverage` walks the env from the innermost handler out. A clause's body
+  is read the first time its `emits` is asked for — `check_coverage` asks only
+  the clauses an effect reaches — so a caller that keys an answer on
+  `reading_sources` asks for what the answer needs inside it.
 - Factories returning `doeff.handler(dispatch)`, `functools.partial(dispatch,
   ...)`, a method of an object they build (`handler(runtime.handle)`, or an
   attribute `__init__` sets to one — doeff-time's clocks), dispatchers that

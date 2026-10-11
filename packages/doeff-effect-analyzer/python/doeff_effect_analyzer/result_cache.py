@@ -151,7 +151,9 @@ def importable_name(obj: object) -> str | None:
 def cached_result(identity: tuple[str, ...] | None, compute: Callable[[], T]) -> T:
     """``compute()``, or an answer stored under ``identity`` whose module files have the same
     content here. ``identity`` names the analysis and its arguments (None = the arguments cannot be
-    named: compute without the cache). The answer must pickle."""
+    named: compute without the cache). The answer must pickle, and hold only what ``compute`` read:
+    a ``HandlerEffects`` in it would read its clauses not yet asked for when pickled — outside
+    ``reading_sources``, so their modules would not be in the key (``program_effects.Clause``)."""
     place = _place(identity)
     if place is None:
         return compute()
