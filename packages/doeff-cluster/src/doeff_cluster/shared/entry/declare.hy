@@ -8,7 +8,8 @@
 ;;;     :needs の一部 — checkout の読みは effect で、答えるのは doeff_cluster.shared.protocol.checkout_reads の checkout-reads と
 ;;;     汎用の子 process の handler)。
 ;;;   - 宣言の行と詰めた Program を doeff_cluster.shared.entry.service_build の system-declaration で組む。
-;;;   - ここの apply-declaration で書く: 先に詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で
+;;;   - ここの apply-declaration で書く: 先に系の組の同時数の上限を資源 GroupLimit へ書き(2026-10-12 — 無ければ作り・spec が違えば
+;;;     読んだ版つきで書き直す)、詰めた Program を PUT /programs/<sha> で置き(改訂 1 の F)、次に Service ごとに資源の口で
 ;;;     書く — 無ければ POST /resources/Service で作る(所有者 = 送り手)。在れば GET で読んだ resourceVersion を付けて PUT する
 ;;;     (読んでから書くまでに誰かが spec を書いていれば 409 で止まる — 他の作業係の変更を消さない。版は状態の欄の変化でも進むので、
 ;;;     409 の後に読み直して spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。所有者はいまの値を保ち、台数は行の値
@@ -23,8 +24,10 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs body-of])
+(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs body-of
+                                                            group-limit-write])
 (import doeff_cluster.shared.intent.service_model [Declaration])
+(import doeff_cluster.shared.intent.detached_model [GroupLimit])
 
 
 ;; 要求 1 つの上限(秒)。書きは送り直さない(返事を読む前に切れた書きは相手に届いたか分からない)。
@@ -98,13 +101,40 @@
   written)
 
 
+(defk group-limit-written [base actor limit]
+  {:pre [(: base str) (: actor str) (: limit GroupLimit)] :post [(: % bool)]
+   :tags {:context "doeff-cluster" :role "main"}}
+  "系の宣言の組の上限 1 つを資源 GroupLimit へ差分だけ書くため(無ければ作る・spec が同じなら書かない・違えば読んだ版つきで書き直す —
+   本文の判断は declaration_requests.group-limit-write)。返事を 1 行出す(slog)。答え = 通ったか。"
+  (val url (+ base "/resources/GroupLimit/" (url-quote limit.group :safe "")))
+  (<- current (| dict None) (service-current url actor))
+  (<- body (| dict None) (group-limit-write limit current))
+  (when (is body None)
+    (<- (slog (.format "GroupLimit {}: unchanged" limit.group)))
+    (return True))
+  (<- written HttpResponse (if (is current None)
+                               (declare-request "POST" (+ base "/resources/GroupLimit") actor body)
+                               (declare-request "PUT" url actor body)))
+  (<- (slog (.format "GroupLimit {}: {} {}" limit.group written.status (cut written.text 0 300))))
+  (< written.status 300))
+
+
 (defk apply-declaration [url declaration actor]
   {:pre [(: url str) (: declaration Declaration) (: actor str)] :post [(: % bool)]
    :tags {:context "doeff-cluster" :role "main" :spells "json"}}
-  "宣言の行を差分だけ資源の口で書くため: Service を全部読み、書く Service(無い・spec が変わった)が名指す Program だけを置いてから、
-   書く Service だけを書く(spec の変わらない Service には書きを送らない — declaration_requests の頭注)。HTTP は汎用の effect(HttpRequest)
-   で送り、要求ごとの返事を 1 行出す(slog)。答え = 全部が通ったか(Program の置きが 1 つでも落ちれば行は書かずに偽 — 入口が 1 で終わる)。"
+  "宣言の行を差分だけ資源の口で書くため: 先に系の組の上限(資源 GroupLimit)を書き(新しい版の job と送り手が名乗る組を先に在らせる —
+   coordinator は宣言に無い組を名乗る task を断る)、Service を全部読み、書く Service(無い・spec が変わった)が名指す Program だけを置いて
+   から、書く Service だけを書く(spec の変わらない Service には書きを送らない — declaration_requests の頭注)。HTTP は汎用の effect
+   (HttpRequest)で送り、要求ごとの返事を 1 行出す(slog)。答え = 全部が通ったか(組の上限か Program の置きが 1 つでも落ちれば行は
+   書かずに偽 — 入口が 1 で終わる)。系に無くなった組の資源は消さない(一覧に無い Service に触らないのと同じ)。"
   (val base (.rstrip url "/"))
+  (var limits-written True)
+  (for [limit declaration.limits]
+    (<- ok bool (group-limit-written base actor limit))
+    (when (not ok)
+      (:= limits-written False)))
+  (when (not limits-written)
+    (return False))
   (val versions (get (get (get declaration.rows 0) "run") "versions"))
   (var reads #())
   (for [row declaration.rows]

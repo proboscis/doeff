@@ -175,7 +175,7 @@
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 ;; 宣言の本文を組む body-of は別名で受ける — coordinator の要求の本文の解き(request_bodies.body-of)と取り違えないため。
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs
-                                                             body-of :as service-body-of])
+                                                             body-of :as service-body-of group-limit-write])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable])
@@ -2558,8 +2558,19 @@
   "宣言を本番の declare(declare.apply-declaration)と同じ順と本文で coordinator へ書くため: Service を全部読み、書く Service(無い・spec が
    変わった)が名指す Program だけを PUT /programs/<sha> で置いてから、無ければ POST(create-body)・spec が変わった Service だけ読んだ版を
    付けて PUT(差分の宣言の判断は本番と同じ declaration_requests の service-read・needed-programs。PUT が 409 を受けたら本番と同じく
-   読み直し、spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。台数は本番と同じく行の値(job の :replicas)。答え = 宣言した
-   Service の名(書かなかった Service も含む)。"
+   読み直し、spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。台数は本番と同じく行の値(job の :replicas)。系の組の同時数の
+   上限(資源 GroupLimit)は本番と同じく先に書く(declaration_requests.group-limit-write)。答え = 宣言した Service の名(書かなかった
+   Service も含む)。"
+  (for [limit declaration.limits]
+    (val limit-path (+ "/resources/GroupLimit/" (url-quote limit.group :safe "")))
+    (<- limit-read tuple (send-request link "GET" limit-path {} None))
+    (val limit-now (if (= (get limit-read 0) 404) None (answered-object limit-read (+ "GroupLimit " limit.group))))
+    (<- limit-body (| dict None) (group-limit-write limit limit-now))
+    (when (is-not limit-body None)
+      (<- limit-written tuple (if (is limit-now None)
+                                  (send-request link "POST" "/resources/GroupLimit" {} limit-body)
+                                  (send-request link "PUT" limit-path {} limit-body)))
+      (answered-body limit-written (+ "GroupLimit " limit.group))))
   (var reads #())
   (for [row declaration.rows]
     (val path (+ "/resources/Service/" (url-quote (get row "name") :safe "")))
