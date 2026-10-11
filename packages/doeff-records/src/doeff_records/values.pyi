@@ -53,6 +53,10 @@ class ByKeySuffix:
 
 RetentionGroup: TypeAlias = EachEvent | ByKeySuffix
 
+@dataclass(frozen=True)
+class ByKeyHead:
+    separator: str
+
 # --- 表の宣言 ---
 
 @dataclass(frozen=True)
@@ -86,6 +90,7 @@ class StreamDecl:
     retention: Retention = ...
     size_budget: int | None = None
     retention_group: RetentionGroup = ...
+    key_lookup: ByKeyHead | None = None
 
 @dataclass(frozen=True)
 class RecordsSchema:
@@ -278,7 +283,7 @@ ListRowsAnswer: TypeAlias = Page | Reset | Unreachable | NotIndexed
 PutRowAnswer: TypeAlias = Written | Conflict | Refused | Unreachable
 WatchChangesAnswer: TypeAlias = Changes | Reset | Unreachable
 AppendEventAnswer: TypeAlias = Appended | Refused | Unreachable
-ReadEventsAnswer: TypeAlias = Events | Unreachable
+ReadEventsAnswer: TypeAlias = Events | NotIndexed | Unreachable
 WatchEventsAnswer: TypeAlias = EventsMoved | EventsQuiet | Unreachable
 ReadStreamEndAnswer: TypeAlias = StreamEnd | StreamEmpty | Unreachable
 ReadEventByKeyAnswer: TypeAlias = Event | EventAbsent | EventRetired | Unreachable

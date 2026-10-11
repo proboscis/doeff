@@ -91,6 +91,7 @@ class ReadEvents(EffectBase[ReadEventsAnswer]):
     stream: str
     after: int = 0
     limit: int = ...
+    key_head: str | None = None
 
 @dataclass(frozen=True)
 class ReadStreamEnd(EffectBase[ReadStreamEndAnswer]):

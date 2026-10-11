@@ -100,6 +100,16 @@
 
 (setv RetentionGroup (| EachEvent ByKeySuffix))
 
+;; 追記の列を冪等キーの頭で引く読み(StreamDecl.key-lookup・ReadEvents.key-head)— 列に多くの書き手の出来事が混ざって積まれる時に、読み手が
+;; 1 つの頭(例: 1 つの仕事)の出来事だけを、列の他の出来事の数に依らずに読むため。
+(defclass [(dataclass :frozen True)] ByKeyHead []
+  "冪等キーの最初の区切り separator より前を出来事の頭とし、頭で出来事を引けるようにする(ReadEvents の key-head)。区切りを含まない
+   冪等キーはキー全体が頭。区切りの字は SEPARATOR-PATTERN(ByKeySuffix と同じ — PostgreSQL の置き場は区切りを頭の式の索引と文に直に置く)。"
+  (#^ str separator)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.separator str) (.match SEPARATOR-PATTERN self.separator)))
+      (raise (ValueError (.format "ByKeyHead.separator は英数字と記号 _.:;,/|#@=+~^!?*&<>- の 1〜16 字: {!r}" self.separator))))))
+
 
 ;; --- 表の宣言 ------------------------------------------------------------------------------------------------
 
@@ -211,12 +221,13 @@
 (defclass [(dataclass :frozen True)] StreamDecl []
   "追記の列の宣言。writers = 積んでよい書き手の名 / retention = KeepForever | KeepFor(積んでから秒)/
    size-budget = 本文の JSON の byte の上限(None = 無し)/ retention-group = 保持を数える単位(EachEvent | ByKeySuffix — ByKeySuffix は
-   KeepFor の列だけ)。"
+   KeepFor の列だけ)/ key-lookup = 冪等キーの頭で引く読みの区切り(ByKeyHead | None — None の列は頭で引けない)。"
   (#^ str name)
   (#^ tuple writers)
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
   (setv #^ object retention-group (EachEvent))
+  (setv #^ (| ByKeyHead None) key-lookup None)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
@@ -227,6 +238,8 @@
       (raise (TypeError "StreamDecl.retention_group は EachEvent | ByKeySuffix")))
     (when (and (isinstance self.retention-group ByKeySuffix) (not (isinstance self.retention KeepFor)))
       (raise (ValueError "StreamDecl.retention_group の ByKeySuffix は KeepFor の列だけ(消えない列に組は要らない)")))
+    (when (not (or (is self.key-lookup None) (isinstance self.key-lookup ByKeyHead)))
+      (raise (TypeError "StreamDecl.key_lookup は ByKeyHead | None")))
     (when (and (is-not self.size-budget None)
                (or (isinstance self.size-budget bool) (not (isinstance self.size-budget int)) (<= self.size-budget 0)))
       (raise (ValueError (.format "StreamDecl.size_budget は正の整数か None: {!r}" self.size-budget))))))

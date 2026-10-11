@@ -17,7 +17,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_core_effects.scheduler [Spawn Wait])
 (import doeff_time [Delay GetTime])
-(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ExpectAbsent ExpectVersion ExpectAny
+(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable])
@@ -55,10 +55,12 @@
                                              (FieldDecl "note" #(OVERSEER)))
                                    :operator-paths #("rule" "note"))})
     ;; pairs = 保持の組(ByKeySuffix「:」)の列 — 法 12。pulses = 出来事ごとに数える期限つきの列 — 法 15。
+    ;; trails = 冪等キーの頭(ByKeyHead「#」)で引ける列 — 法 7b。
     :streams (FrozenMap {"journal" (StreamDecl :name "journal" :writers #(MAKER) :size-budget 200)
                          "pairs" (StreamDecl :name "pairs" :writers #(MAKER) :retention (KeepFor PAIR-KEEP-SECONDS)
                                              :retention-group (ByKeySuffix ":"))
-                         "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor PULSE-KEEP-SECONDS))})
+                         "pulses" (StreamDecl :name "pulses" :writers #(MAKER) :retention (KeepFor PULSE-KEEP-SECONDS))
+                         "trails" (StreamDecl :name "trails" :writers #(MAKER) :key-lookup (ByKeyHead "#"))})
     :operators #(OVERSEER)))
 
 
@@ -373,6 +375,46 @@
   (<- tail (as-writer harness MAKER (ReadEvents "journal" :after a1.sequence)))
   (<- (require-law (= (lfor e tail.items e.idempotency-key) ["k2" "k3"]) law (.format "after より後: {!r}" tail)))
   [a1 a2 again other stranger big read tail])
+
+
+;; --- 法 7b: 冪等キーの頭で引く ReadEvents は全部の出来事を読んで頭で絞った列と同じ ------------------------------
+
+;; 列 trails に積む冪等キー(積む順): 頭 a・b の出来事を混ぜ、頭が a で始まる別の頭 ab・区切りを含まないキー(キー全体が頭)・
+;; 区切りで終わるキー(頭 a)を含む。
+(val TRAIL-KEYS #("a#1#1" "b#1#1" "ab#1" "a#1#2" "b#1#2" "a" "b" "a#2#1" "ab" "b#2#1" "a#" "a#2#2"))
+(val TRAIL-HEADS #("a" "b" "ab" "zz"))
+
+(defk law-key-head-read-equals-filtered-scan [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "冪等キーの頭で引く ReadEvents の法: key-head を付けた読みは、列の全部の出来事を読み、冪等キーの最初の区切りより前(区切りを含まない
+   キーはキー全体)が key-head と等しい出来事だけに絞った列の、after より後の上から limit 件と同じ出来事を返し、次の after は最後の
+   出来事の番号(無ければ after のまま)。使い手が 1 つの頭の出来事を、列に混ざる他の頭の出来事の数でなく、その頭の出来事の数に比例する
+   読みで得るため。key-lookup を宣言していない列への頭の読みは NotIndexed。どの置き場の handler も同じ答えを返すことを確かめる。"
+  (val law "冪等キーの頭で引く ReadEvents は全部の出来事を読んで頭で絞った列と同じ")
+  (var transcript [])
+  (for [key TRAIL-KEYS]
+    (<- appended (as-writer harness MAKER (AppendEvent "trails" key {"key" key})))
+    (:= transcript (+ transcript [appended])))
+  (<- whole (as-writer harness MAKER (ReadEvents "trails" :limit 500)))
+  (<- (require-law (and (isinstance whole Events) (= (len whole.items) (len TRAIL-KEYS))) law
+                   (.format "列の全部の出来事: {!r}" whole)))
+  (val middle (. (get whole.items 4) sequence))
+  (for [head TRAIL-HEADS]
+    ;; 頭 = 冪等キーの最初の「#」より前 — 法は置き場の判じを借りずに書く。
+    (val mine (lfor event whole.items :if (= (get (.split event.idempotency-key "#" 1) 0) head) event))
+    (for [after [0 middle]]
+      (val later (lfor event mine :if (> event.sequence after) event))
+      (for [limit [1 2 50]]
+        (<- read (as-writer harness MAKER (ReadEvents "trails" :after after :limit limit :key-head head)))
+        (val expected (tuple (cut later limit)))
+        (<- (require-law (and (isinstance read Events) (= read.items expected)
+                              (= read.last-sequence (if expected (. (get expected -1) sequence) after)))
+                         law (.format "頭 {!r} の after {} の上から {} 件が全部を絞った列と違う: {!r} / {!r}" head after limit read expected)))
+        (:= transcript (+ transcript [read])))))
+  (<- loose (as-writer harness MAKER (ReadEvents "journal" :key-head "a")))
+  (<- (require-law (= loose (NotIndexed #("idempotencyKey"))) law (.format "頭で引けない列の頭の読み: {!r}" loose)))
+  (+ transcript [whole loose]))
 
 
 ;; --- 法 8: WatchChanges は変更が来るまで待つ ---------------------------------------------------------------
@@ -1009,6 +1051,7 @@
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "descending-list-is-the-head-of-the-sorted-scan" law-descending-list-is-the-head-of-the-sorted-scan
             "append-is-idempotent" law-append-is-idempotent
+            "key-head-read-equals-filtered-scan" law-key-head-read-equals-filtered-scan
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append
             "none-removes-a-field" law-none-removes-a-field
