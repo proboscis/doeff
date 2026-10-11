@@ -213,7 +213,8 @@
   (val declared (job "reporter" (report-service (str out))
                      :call (CallShape :function report-service :args [(str out)] :kwargs {}) :replicas 1
                      :needs #{"net"}))
-  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (! (process-versions os.environ)) :runtime-env env))
+  ;; 送り手は env の root の外として名乗る(空の environ — 外側の env のキーを宣言に載せない・card ki-6dde100393cd)。
+  (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (! (process-versions {})) :runtime-env env))
   (val row (get declaration.rows 0))
   (<- spec (declared-job-spec (! (spec-json (. (job-from-json row) spec))) False))
   ;; worker が /programs/<sha> から取って置くのと同じ file(coordinator への口の fetched-programs の形)を子 process の言い換えが読む cache に置く。

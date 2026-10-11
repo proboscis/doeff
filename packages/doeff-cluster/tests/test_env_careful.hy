@@ -197,7 +197,7 @@
   (import doeff_cluster.shared.intent.detached_model [DetachedVersionMismatch])
   (import doeff_cluster.shared.protocol.detached [outcome-from-task-outcome])
   (<- key str (env-key env (current-platform)))
-  (val shifted (| (! (process-versions os.environ)) {"doeff" "0.0.0-shifted"}))
+  (val shifted (| (! (process-versions {})) {"doeff" "0.0.0-shifted"}))  ; 送り手は env の root の外(careful_rig の run-task と同じ)
   (<- refused (run-task rig env "shifted" :versions shifted))
   (assert (isinstance refused TaskFailed) refused)
   (val answer (outcome-from-task-outcome refused))
