@@ -6,7 +6,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -814,6 +814,131 @@ def _bytecode_settings_pinned():
         f"{len(written)} bytecode file(s) were written under the checkout during this run "
         f"(first: {written[:5]}) — a subprocess that needs bytecode gets a directory under "
         f"pytest's temporary directory (tmp_path_factory), never one inside the checkout"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The test that wrote the startup bytecode is the one named.
+#
+# A subprocess started with an environment of its own (EnvMode.REPLACE with its allow-list, a
+# test's own ``env=``) does not get the pin above, and the first thing a Python started without it
+# does is write the bytecode of the modules its startup imports — the ``import`` lines of the .pth
+# files in site-packages: the .venv's _virtualenv, an editable install's finder,
+# doeff_hy_bytecode_guard — beside their sources in the checkout.  The check at the end of the
+# session then failed under the name of the session's last test, and only in the daily run (a new
+# checkout and .venv under the pin): a developer's tree already held that bytecode, written by an
+# earlier run without the pin, so the subprocess rewrote nothing there.  Six writers were found one
+# at a time this way, each a day later and under an unrelated test's name (2026-10-10 to 10-12,
+# cf46518d5 to 48d59512d — card ki-23c3280da1a5).
+#
+# So the run removes the startup bytecode under the checkout before its tests start, and looks for
+# it again after each phase (setup, call, teardown) of each test.  A file that is back was written
+# by that test — its body, or a fixture of any scope set up for it or torn down after it — and the
+# test fails at its teardown under its own name, on any tree.  The file is removed again, so the
+# next writer is named too.  The startup modules are read from a start of this interpreter (with
+# -B, so the reading writes nothing) rather than listed here.  Hooks rather than an autouse
+# fixture, so a Hy script item (a plain pytest.Item, without fixtures) is watched as well.
+#
+# Not under pytest-xdist: the tests of the other workers run at the same time, so a file that
+# appears during a test cannot be laid to it (the check at the end of the session still holds).
+# A process outside this run that starts this checkout's Python without the pin while the run
+# goes on is named as a test too.
+# ---------------------------------------------------------------------------
+_LIST_STARTUP_SOURCES = (
+    "import sys\n"
+    "for module in list(sys.modules.values()):\n"
+    "    print(getattr(module, '__file__', None) or '')\n"
+)
+_STARTUP_PROBE_TIMEOUT_S = 30.0
+_STARTUP_BYTECODE = pytest.StashKey[tuple[Path, ...]]()
+_STARTUP_BYTECODE_WRITTEN = pytest.StashKey[tuple[tuple[str, tuple[Path, ...]], ...]]()
+
+
+def startup_bytecode(root: Path, python: str, timeout: float) -> tuple[Path, ...]:
+    """The bytecode files a start of ``python`` that may write bytecode leaves under ``root``.
+
+    One file per module the start imports from under ``root``, at the standard location beside
+    its source (a subprocess with an environment of its own has no PYTHONPYCACHEPREFIX).
+    """
+    tag = sys.implementation.cache_tag
+    if tag is None:  # this Python writes no bytecode at all
+        return ()
+    listed = subprocess.run(
+        [python, "-B", "-c", _LIST_STARTUP_SOURCES],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=True,
+    )
+    sources = {Path(line).resolve() for line in listed.stdout.splitlines() if line.endswith(".py")}
+    return tuple(
+        sorted(
+            source.parent / "__pycache__" / f"{source.stem}.{tag}.pyc"
+            for source in sources
+            if source.is_relative_to(root)
+        )
+    )
+
+
+def _remove_present(files: Sequence[Path]) -> tuple[Path, ...]:
+    """Remove those of ``files`` that exist, and return them — the ones a test wrote."""
+    return tuple(path for path in files if _removed(path))
+
+
+def _removed(path: Path) -> bool:
+    """Remove ``path`` if it exists, saying whether it did (another process may remove it first)."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtestloop(session: pytest.Session) -> Generator[None, object, object]:
+    """Remove the startup bytecode under the checkout before the tests start, and watch for it."""
+    config = session.config
+    if not (hasattr(config, "workerinput") or getattr(config.option, "numprocesses", None)):
+        timeout = _STARTUP_PROBE_TIMEOUT_S * _DEADLINE_SCALE
+        files = startup_bytecode(_CHECKOUT, sys.executable, timeout)
+        _remove_present(files)
+        config.stash[_STARTUP_BYTECODE] = files
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Fail a test at its teardown when the startup bytecode came back during one of its phases."""
+    report = yield
+    written = _remove_present(item.config.stash.get(_STARTUP_BYTECODE, ()))
+    if written:
+        noted = item.stash.get(_STARTUP_BYTECODE_WRITTEN, ())
+        item.stash[_STARTUP_BYTECODE_WRITTEN] = (*noted, (call.when, written))
+    if call.when == "teardown" and _STARTUP_BYTECODE_WRITTEN in item.stash:
+        message = _startup_bytecode_message(item.stash[_STARTUP_BYTECODE_WRITTEN])
+        if report.failed:  # the teardown failed on its own: keep its error and add this one
+            report.sections = [*report.sections, ("startup bytecode written", message)]
+        else:
+            report.outcome = "failed"
+            report.longrepr = message
+    return report
+
+
+def _startup_bytecode_message(written: Sequence[tuple[str, tuple[Path, ...]]]) -> str:
+    """Tell the test's author which files the test wrote in which phase, and how to stop it."""
+    phases = "\n".join(
+        f"  {when}: {', '.join(str(path.relative_to(_CHECKOUT)) for path in paths)}"
+        for when, paths in written
+    )
+    return (
+        "this test wrote the bytecode of the interpreter's startup under the checkout:\n"
+        f"{phases}\n"
+        "A subprocess started Python without -B and without PYTHONDONTWRITEBYTECODE=1 (an "
+        "environment of its own leaves out the root conftest's pin): start it with -B, or put "
+        "PYTHONDONTWRITEBYTECODE=1 in its environment.  Setup and teardown include the fixtures of "
+        "any scope set up for this test or torn down after it."
     )
 
 
