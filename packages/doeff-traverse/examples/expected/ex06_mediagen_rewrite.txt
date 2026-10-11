@@ -1,0 +1,17 @@
+=== sequential + retry ===
+Speakers: Collection(2 valid, 0 failed)
+Opinions valid: 2
+LLM calls (call #3 failed and was retried): 6
+
+=== parallel(5) + retry ===
+Speakers: Collection(2 valid, 0 failed)
+Opinions valid: 2
+LLM calls (call #3 failed and was retried): 6
+
+=== item history ===
+  [0] OK: Opinion(Alice: mock_result_5_OpinionMap)
+      ok
+      ok
+  [1] OK: Opinion(Bob: mock_result_6_OpinionMap)
+      ok
+      ok

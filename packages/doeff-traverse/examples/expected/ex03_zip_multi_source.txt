@@ -1,0 +1,8 @@
+Average score: 28.0
+
+Per-item report:
+  [0] OK: value=26.4
+  [1] FAILED: value=embedding failed for: error_embed here
+  [2] OK: value=19.8
+  [3] FAILED: value=summary failed for: error_summary here
+  [4] OK: value=37.8

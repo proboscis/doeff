@@ -1,0 +1,24 @@
+=== skip_failed (base stack) ===
+Mean: 45.0
+Valid results: [-30.0, -15.0, 15.0, 30.0]
+Failed items: 1
+
+=== replace_zero ===
+Mean: 36.0
+All results: [-21.0, -6.0, -36.0, 24.0, 39.0]
+
+=== item history (base stack) ===
+  [0] OK: value=-30.0
+      stage=extract event=ok
+      stage=normalize event=ok
+  [1] OK: value=-15.0
+      stage=extract event=ok
+      stage=normalize event=ok
+  [2] FAILED: value=corrupt data: charlie
+      stage=extract event=failed detail=corrupt data: charlie
+  [3] OK: value=15.0
+      stage=extract event=ok
+      stage=normalize event=ok
+  [4] OK: value=30.0
+      stage=extract event=ok
+      stage=normalize event=ok

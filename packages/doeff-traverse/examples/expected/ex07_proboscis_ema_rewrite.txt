@@ -1,0 +1,75 @@
+=== sequential (failed items skipped) ===
+Success: 3
+Failed: 2
+
+=== parallel(3) (same result, faster) ===
+Success: 3
+Failed: 2
+
+=== item history ===
+  [0] OK: ({'symbol': 'AAPL', 'time': '2024-01-01'}, 150.0)
+      index: ok
+      signal: ok
+      index: ok
+      signal: ok
+      price: ok
+  [1] FAILED: symbol not found: BADCO
+      index: ok
+      signal: ok
+      index: ok
+      signal: ok
+      price: failed — symbol not found: BADCO
+      zip_failed
+      --- traceback ---
+      Traceback (most recent call last):
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-core-effects/doeff_core_effects/handlers.py", line 154, in attempt
+    value = yield prog
+            ^^^^^^^^^^
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 120, in _hy_anon_17
+    (<- price (fetch-price sig))
+               ^^^^^^^^^^^^^^^^
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 86, in fetch_price
+    (<- result (FetchPrice signal))
+                 ^^^^^^^^^^^^^^^^
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 165, in _hy_anon_28
+    (<- (Fail (ValueError (+ "symbol not found: " symbol))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              :symbol symbol))
+              ^^^^^^^^^^^^^^
+      ValueError: symbol not found: BADCO
+  [2] OK: ({'symbol': 'GOOGL', 'time': '2024-01-01'}, 2800.0)
+      index: ok
+      signal: ok
+      index: ok
+      signal: ok
+      price: ok
+  [3] FAILED: market closed for: CLOSED
+      index: ok
+      signal: ok
+      index: ok
+      signal: ok
+      price: failed — market closed for: CLOSED
+      zip_failed
+      --- traceback ---
+      Traceback (most recent call last):
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-core-effects/doeff_core_effects/handlers.py", line 154, in attempt
+    value = yield prog
+            ^^^^^^^^^^
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 120, in _hy_anon_17
+    (<- price (fetch-price sig))
+               ^^^^^^^^^^^^^^^^
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 86, in fetch_price
+    (<- result (FetchPrice signal))
+                 ^^^^^^^^^^^^^^^^
+        File "/work/toolset/worktrees/doeff-wt-ex09-r2/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy", line 171, in _hy_anon_28
+    (<- (Fail (ValueError (+ "market closed for: " symbol))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              :symbol symbol))
+              ^^^^^^^^^^^^^^
+      ValueError: market closed for: CLOSED
+  [4] OK: ({'symbol': 'MSFT', 'time': '2024-01-01'}, 300.0)
+      index: ok
+      signal: ok
+      index: ok
+      signal: ok
+      price: ok
