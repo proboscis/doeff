@@ -335,6 +335,8 @@ types as the Claude adapter, so an upper layer reads both the same way:
 | `item/agentMessage/delta` | `AgentTextDeltaEvent` |
 | `item/completed` (agent message) | `AgentTextEvent` |
 | `item/started` (reasoning) / reasoning deltas | `AgentThinkingStartedEvent` / `AgentThinkingDeltaEvent` |
+| `item/started` / `item/completed` (`commandExecution`, `fileChange`) | `AgentToolUseEvent` / `AgentToolResultEvent` |
+| `item/started` / `item/completed` (`webSearch`) | `AgentToolCallStartedEvent` / `AgentToolUseEvent` + `AgentToolResultEvent` |
 | `thread/tokenUsage/updated` | `AgentCallUsageEvent` (input tokens exclude cached ones) |
 | `turn/completed` | `AgentTurnEndEvent` (`resume_from` = the Codex thread id) |
 | `turn/completed` (failed, error kind `usageLimitExceeded`) + `account/rateLimits/updated` | `AgentTurnFailed.account_limit` (`AgentAccountLimit`, as for Claude) |
@@ -348,6 +350,17 @@ A 300-minute window is named `five_hour` and a 10080-minute one `seven_day`
 (the Claude CLI's words); other lengths get `None`. When no window is exhausted,
 or an exhausted window states no reset, both stay `None` — no time is invented.
 
+A tool item becomes a `ToolCall` named after the Codex item type
+(`commandExecution`, `fileChange`, `webSearch`) with the item id as its id. Its
+`input` holds the fields Codex names: `command` and `cwd` for a command (the
+command as Codex ran it, e.g. `/bin/bash -lc '…'`), `changes` (`path`, `kind`,
+`diff`, `move_path`) for a file change, and `query`, `action`, `queries`, `url`,
+`pattern` for a web search. The `ToolAnswer` text is the command's
+`aggregatedOutput` (empty for a file change and a web search, whose items carry
+no result text); `is_error` is true when the status is anything but `completed`.
+A web search starts without its query (the upstream names it when the search
+ends), so its call is sent when the item completes.
+
 Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
 (`started`) when layer 2 accepts an input (a turn start or a `turn/steer`), and
 the completed end lists the same refs in `input_refs`. `resume_from`, `model`,
@@ -356,8 +369,9 @@ attachments and `FollowUp(mode=INJECT)` (as `turn/steer`) are honoured. A named
 `new_context_id` (Codex makes thread ids itself), `resume_snapshot`,
 `ExportContextEffect`, `mcp_tools` and `bare` are refused with
 `AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
-cannot open a thread before the first input). Tool items are not mapped to
-events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
+cannot open a thread before the first input). Other tool items
+(`mcpToolCall`, `dynamicToolCall`, `collabAgentToolCall`, `imageView`) are not
+mapped to events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
 over the fake and over the production handler with the stand-in app server
 (`packages/doeff-codex/tests/stub_cli/codex_app_server.py`).
 

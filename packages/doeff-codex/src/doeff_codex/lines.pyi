@@ -16,6 +16,12 @@ class TurnStatus(StrEnum):
     FAILED = 'failed'
     IN_PROGRESS = 'inProgress'
 
+class ToolStatus(StrEnum):
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+    DECLINED = 'declined'
+    IN_PROGRESS = 'inProgress'
+
 @dataclass(frozen=True, kw_only=True)
 class RpcErrorWire:
     code: int
@@ -94,7 +100,43 @@ class ItemWire:
 class ItemParamsWire:
     thread_id: str
     turn_id: str
-    item: ItemWire
+    item: OpaqueJson
+
+@dataclass(frozen=True, kw_only=True)
+class CommandExecutionWire:
+    command: str
+    cwd: str
+    status: str
+    aggregated_output: str | None = None
+    exit_code: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class PatchKindWire:
+    type: str
+    move_path: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class FileUpdateWire:
+    path: str
+    kind: PatchKindWire
+    diff: str
+
+@dataclass(frozen=True, kw_only=True)
+class FileChangeWire:
+    changes: tuple[FileUpdateWire, ...]
+    status: str
+
+@dataclass(frozen=True, kw_only=True)
+class WebSearchActionWire:
+    type: str
+    queries: tuple[str, ...] | None = None
+    url: str | None = None
+    pattern: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class WebSearchWire:
+    query: str
+    action: WebSearchActionWire | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class ErrorParamsWire:
@@ -193,11 +235,41 @@ class AgentMessageDone:
     text: str
 
 @dataclass(frozen=True, kw_only=True)
+class CommandRun:
+    command: str
+    cwd: str
+    status: ToolStatus | UnknownValue
+    output: str | None = None
+    exit_code: int | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class FileEdit:
+    path: str
+    kind: str
+    diff: str
+    move_path: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class FilePatch:
+    changes: tuple[FileEdit, ...]
+    status: ToolStatus | UnknownValue
+
+@dataclass(frozen=True, kw_only=True)
+class WebSearch:
+    query: str
+    action: str | None = None
+    queries: tuple[str, ...] = ...
+    url: str | None = None
+    pattern: str | None = None
+ToolItem: TypeAlias = CommandRun | FilePatch | WebSearch
+
+@dataclass(frozen=True, kw_only=True)
 class ItemStarted:
     thread_id: str
     turn_id: str
     item_id: str
     item_type: str
+    tool: ToolItem | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class ItemDone:
@@ -205,6 +277,7 @@ class ItemDone:
     turn_id: str
     item_id: str
     item_type: str
+    tool: ToolItem | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class TokenCount:
@@ -297,7 +370,25 @@ def window_of(window: RateLimitWindowWire | None) -> _Program[RateLimitWindow | 
 def rate_limits_of(params: RateLimitsParamsWire) -> _Program[RateLimits, object]:
     ...
 
-def item_started_of(params: ItemParamsWire) -> _Program[ItemStarted, object]:
+def tool_status_of(spelled: str) -> _Program[ToolStatus | UnknownValue, object]:
+    ...
+
+def command_run_of(wire: CommandExecutionWire) -> _Program[CommandRun, object]:
+    ...
+
+def file_patch_of(wire: FileChangeWire) -> _Program[FilePatch, object]:
+    ...
+
+def web_search_of(wire: WebSearchWire) -> _Program[WebSearch, object]:
+    ...
+
+def tool_parsed(method: str, wire_type: type, convert: Callable, item: OpaqueJson) -> _Program[ToolItem | Unparsed, object]:
+    ...
+
+def tool_of(method: str, item_type: str, item: OpaqueJson) -> _Program[ToolItem | Unparsed | None, object]:
+    ...
+
+def item_started_of(params: ItemParamsWire) -> _Program[ItemStarted | Unparsed, object]:
     ...
 
 def item_done_of(params: ItemParamsWire) -> _Program[AgentMessageDone | ItemDone | Unparsed, object]:
