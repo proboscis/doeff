@@ -1,0 +1,36 @@
+"""S2 の確かめ: codex の版で増えた道具の状態の綴り(paused)と、使う欄の無い道具の item を、層 2 の分類から層 3 の写しまで通す。
+
+使い方(doeff の作業木の根で): uv run --no-sync python -I docs/design/codex-tool-items-ki-77e76c7c07ce/evidence/probe_unknown_status.py
+"""
+
+import json
+from datetime import UTC, datetime
+
+import hy  # noqa: F401  - Hy の module を import できるようにする
+from doeff import run
+from doeff_agents.handlers.headless_codex import events_of
+from doeff_codex.lines import classify_line
+
+
+def line(method: str, item: dict[str, object]) -> str:
+    """item の通知の 1 行を作るため。"""
+    return json.dumps({"method": method, "params": {"threadId": "thread-1", "turnId": "turn-1", "item": item}})
+
+
+def show(title: str, raw: str) -> None:
+    """1 行を層 2 で分類し、層 3 の出来事へ写した結果を出すため。"""
+    record = run(classify_line(raw))
+    events = run(events_of(record, datetime(2026, 10, 12, tzinfo=UTC), 0, None))
+    print(f"## {title}")
+    print("layer2:", record)
+    print("layer3:", events)
+    print()
+
+
+show("知らない状態 paused の終わり(commandExecution)",
+     line("item/completed", {"type": "commandExecution", "id": "call_9", "command": "ls", "cwd": "/w", "status": "paused",
+                             "commandActions": [], "aggregatedOutput": "out\n", "exitCode": None}))
+show("使う欄 command の無い始まり(commandExecution)",
+     line("item/started", {"type": "commandExecution", "id": "call_9", "cwd": "/w", "status": "inProgress", "commandActions": []}))
+show("知らない道具の種類 mcpToolCall の始まり(写さない種類)",
+     line("item/started", {"type": "mcpToolCall", "id": "mcp_1", "server": "s", "tool": "t", "arguments": {}, "status": "inProgress"}))

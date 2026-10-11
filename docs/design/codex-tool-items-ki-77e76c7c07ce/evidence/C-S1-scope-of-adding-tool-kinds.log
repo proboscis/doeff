@@ -1,0 +1,18 @@
+$ git diff --stat fca21e823 af7bd4857   # 道具の種類 3 つ(commandExecution・fileChange・webSearch)を足した変更の実際の波及
+ packages/doeff-agents/README.md                    |  18 +-
+ .../src/doeff_agents/handlers/headless_codex.hy    |  71 +++++++-
+ .../tests/test_headless_codex_adapter.hy           |  57 ++++++
+ packages/doeff-codex/README.md                     |  21 ++-
+ .../doeff-codex/scripts/record_app_server_lines.py |  70 +++++++-
+ packages/doeff-codex/src/doeff_codex/lines.hy      | 198 +++++++++++++++++++--
+ packages/doeff-codex/src/doeff_codex/lines.pyi     |  95 +++++++++-
+ .../recorded/codex-0.162.1/tool-calls.stdin.jsonl  |   4 +
+ .../recorded/codex-0.162.1/tool-calls.stdout.jsonl |  36 ++++
+ .../recorded/codex-0.162.1/upstream-requests.jsonl |   4 +
+ .../doeff-codex/tests/stub_cli/codex_app_server.py |   7 +-
+ packages/doeff-codex/tests/test_tool_items.hy      |  97 ++++++++++
+ 12 files changed, 636 insertions(+), 42 deletions(-)
+exit=0
+
+$ git diff --name-only fca21e823 af7bd4857 -- packages/doeff-codex/src/doeff_codex/handler.hy packages/doeff-codex/src/doeff_codex/effects.hy packages/doeff-agents/src/doeff_agents/effects/agent.py packages/doeff-claude-code   # handler・公開 effect・出来事の型
+exit=0 (出力なし = 変わっていない)

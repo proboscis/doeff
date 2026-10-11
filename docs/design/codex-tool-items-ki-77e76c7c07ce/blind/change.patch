@@ -1,0 +1,1008 @@
+diff --git a/packages/doeff-agents/README.md b/packages/doeff-agents/README.md
+index 3d10874d9..e6978aca9 100644
+--- a/packages/doeff-agents/README.md
++++ b/packages/doeff-agents/README.md
+@@ -335,6 +335,8 @@ types as the Claude adapter, so an upper layer reads both the same way:
+ | `item/agentMessage/delta` | `AgentTextDeltaEvent` |
+ | `item/completed` (agent message) | `AgentTextEvent` |
+ | `item/started` (reasoning) / reasoning deltas | `AgentThinkingStartedEvent` / `AgentThinkingDeltaEvent` |
++| `item/started` / `item/completed` (`commandExecution`, `fileChange`) | `AgentToolUseEvent` / `AgentToolResultEvent` |
++| `item/started` / `item/completed` (`webSearch`) | `AgentToolCallStartedEvent` / `AgentToolUseEvent` + `AgentToolResultEvent` |
+ | `thread/tokenUsage/updated` | `AgentCallUsageEvent` (input tokens exclude cached ones) |
+ | `turn/completed` | `AgentTurnEndEvent` (`resume_from` = the Codex thread id) |
+ | `turn/completed` (failed, error kind `usageLimitExceeded`) + `account/rateLimits/updated` | `AgentTurnFailed.account_limit` (`AgentAccountLimit`, as for Claude) |
+@@ -348,6 +350,17 @@ A 300-minute window is named `five_hour` and a 10080-minute one `seven_day`
+ (the Claude CLI's words); other lengths get `None`. When no window is exhausted,
+ or an exhausted window states no reset, both stay `None` — no time is invented.
+ 
++A tool item becomes a `ToolCall` named after the Codex item type
++(`commandExecution`, `fileChange`, `webSearch`) with the item id as its id. Its
++`input` holds the fields Codex names: `command` and `cwd` for a command (the
++command as Codex ran it, e.g. `/bin/bash -lc '…'`), `changes` (`path`, `kind`,
++`diff`, `move_path`) for a file change, and `query`, `action`, `queries`, `url`,
++`pattern` for a web search. The `ToolAnswer` text is the command's
++`aggregatedOutput` (empty for a file change and a web search, whose items carry
++no result text); `is_error` is true when the status is anything but `completed`.
++A web search starts without its query (the upstream names it when the search
++ends), so its call is sent when the item completes.
++
+ Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
+ (`started`) when layer 2 accepts an input (a turn start or a `turn/steer`), and
+ the completed end lists the same refs in `input_refs`. `resume_from`, `model`,
+@@ -356,8 +369,9 @@ attachments and `FollowUp(mode=INJECT)` (as `turn/steer`) are honoured. A named
+ `new_context_id` (Codex makes thread ids itself), `resume_snapshot`,
+ `ExportContextEffect`, `mcp_tools` and `bare` are refused with
+ `AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
+-cannot open a thread before the first input). Tool items are not mapped to
+-events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
++cannot open a thread before the first input). Other tool items
++(`mcpToolCall`, `dynamicToolCall`, `collabAgentToolCall`, `imageView`) are not
++mapped to events yet. Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
+ over the fake and over the production handler with the stand-in app server
+ (`packages/doeff-codex/tests/stub_cli/codex_app_server.py`).
+ 
+diff --git a/packages/doeff-agents/src/doeff_agents/handlers/headless_codex.hy b/packages/doeff-agents/src/doeff_agents/handlers/headless_codex.hy
+index 1504957b9..6b59fa46b 100644
+--- a/packages/doeff-agents/src/doeff_agents/handlers/headless_codex.hy
++++ b/packages/doeff-agents/src/doeff_agents/handlers/headless_codex.hy
+@@ -27,7 +27,15 @@
+ ;;;   WarmSessionEffect             → 偽(前もって起こさない — doeff-codex に入力の前に thread を開く口が無い)
+ ;;;   行 → 出来事: TextDelta → AgentTextDeltaEvent・AgentMessageDone → AgentTextEvent・item の種類 reasoning の始まり →
+ ;;;     AgentThinkingStartedEvent・ReasoningDelta → AgentThinkingDeltaEvent・TokenUsage → AgentCallUsageEvent(この呼びの分)。
+-;;;     道具の item(commandExecution など)・誤りの通知・語彙の外の行は、今は出来事にしない(行の記録が道具の命令と出力を運ばない)。
++;;;     道具の item(card acp:kanban-issue:ki-77e76c7c07ce)— 道具の名は codex の item の種類の名、ToolCall の id は item の id:
++;;;       commandExecution・fileChange の始まり → AgentToolUseEvent(始まりの item が命令・変えるファイルを持つ)、終わり →
++;;;         AgentToolResultEvent(命令は出力の文 aggregatedOutput・ファイルの変更は空の文。誤りの印 = 状態が completed でない)
++;;;       webSearch の始まり → AgentToolCallStartedEvent(始まりの item は検索の語を持たない — 上流は語を終わりで名乗る)、終わり →
++;;;         AgentToolUseEvent と AgentToolResultEvent(空の文 — codex は検索の結果の文を item で運ばない)
++;;;     ToolCall.input = 画面が読む命令の JSON の object(commandExecution = command・cwd / fileChange = changes の path・kind・diff・
++;;;     move_path / webSearch = query・action・queries・url・pattern — 名乗った欄だけ・欄の名は codex の綴り)。
++;;;     ほかの道具の item(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など — 録った行が無い)・誤りの通知・語彙の外の
++;;;     行は、今は出来事にしない。
+ ;;;   口座の利用枠切れ: 失敗の終わり(誤りの種類 usageLimitExceeded)→ AgentTurnFailed.account_limit(AgentAccountLimit — claude の
+ ;;;     adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ・card acp:kanban-issue:ki-a59d80e0afa9)。戻りの刻と窓の名は、
+ ;;;     そのターンで届いた枠の知らせ(RateLimits — 名乗らない窓は前の値を消さずに重ねる)の尽きた窓から読む(account-limit-of)。
+@@ -62,15 +70,17 @@
+   NamedContextId RedeemTurnCredentialEffect TurnCredential CodexTurnCredential HomeTurnCredential TurnCredentialUnavailable
+   TurnCredentialUnavailableError
+   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentCallUsageEvent
++  AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent ToolCall ToolAnswer
+   AgentInputFateEvent AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
+   AgentAccountLimit AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
+   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
+ ;; 手番の終わり → AwaitOutcome の写し(L2 の見え方)は claude の adapter と同じ 1 つの関数を使う。
+ (import doeff_agents.handlers.headless [outcome-of])
++(import doeff_hy.frozen [frozen-json-object])
+ (import doeff_codex.values [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread])
+ (import doeff_codex.rpc [ApprovalPolicy SandboxMode])
+-(import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted TokenUsage TokenCount TurnEnded TurnStatus
+-                           RateLimits])
++(import doeff_codex.lines [CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
++                           TurnStatus RateLimits ToolStatus ToolItem CommandRun FilePatch WebSearch])
+ (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
+                              BackendLost TurnStarted Steered InterruptRequested TurnEventPage
+                              ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
+@@ -225,16 +235,67 @@
+                       :output-tokens (! (added total.output-tokens usage.output-tokens))
+                       :cache-read-tokens (! (added total.cache-read-tokens usage.cache-read-tokens)))))
+ 
++(defk tool-input-of [tool]
++  {:pre [(: tool ToolItem)] :post [(: % dict)] :tags {:context "headless-adapter" :role "judgment"}}
++  "道具の item の中身を、道具の呼びの命令にするため。ToolCall.input は契約で JSON の object(画面は command の欄が文字列なら shell
++   の card にする)なので、ここが JSON の object を作る境目 — 欄の名は codex の綴り、名乗らない欄は載せない(空を発明しない — ファイルの
++   変更の移す先・検索の動きの欄)。"
++  (match tool
++    (CommandRun) {"command" tool.command "cwd" tool.cwd}
++    (FilePatch) {"changes" (lfor edit tool.changes (| {"path" edit.path "kind" edit.kind "diff" edit.diff}
++                                                      (if (is edit.move-path None) {} {"move_path" edit.move-path})))}
++    (WebSearch) (| {"query" tool.query}
++                   (if (is tool.action None) {} {"action" tool.action})
++                   (if tool.queries {"queries" (list tool.queries)} {})
++                   (if (is tool.url None) {} {"url" tool.url})
++                   (if (is tool.pattern None) {} {"pattern" tool.pattern}))))
++
++(defk tool-call-of [#^ str item-id #^ str item-type tool]
++  {:pre [(: item-id str) (: item-type str) (: tool ToolItem)] :post [(: % ToolCall)] :tags {:context "headless-adapter" :role "judgment"}}
++  "道具の item を、claude の adapter と同じ形の道具の呼び(id = item の id・名 = item の種類の名)にするため。"
++  (<- input (tool-input-of tool))
++  (ToolCall :id item-id :name item-type :input (frozen-json-object input "codex の道具の呼びの命令")))
++
++(defk tool-answer-of [#^ str item-id tool]
++  {:pre [(: item-id str) (: tool ToolItem)] :post [(: % ToolAnswer)] :tags {:context "headless-adapter" :role "judgment"}}
++  "終わった道具の item を、claude の adapter と同じ形の道具の結果にするため: 文 = 命令の出力(ほかの道具は codex が結果の文を item で
++   運ばないので空)/ 誤りの印 = 状態が completed でない(失敗・断り・この版に無い状態 — 成功と名乗った時だけ誤りでない。web 検索は
++   状態を持たないので誤りでない)。"
++  (match tool
++    (CommandRun) (ToolAnswer :id item-id :text (or tool.output "") :is-error (!= tool.status ToolStatus.COMPLETED))
++    (FilePatch) (ToolAnswer :id item-id :text "" :is-error (!= tool.status ToolStatus.COMPLETED))
++    (WebSearch) (ToolAnswer :id item-id :text "" :is-error False)))
++
++(defk tool-events-of [record tool #^ datetime at #^ int first-seq]
++  {:pre [(: record (| ItemStarted ItemDone)) (: tool ToolItem) (: at datetime) (: first-seq int)] :post [(: % tuple)]
++   :tags {:context "headless-adapter" :role "judgment"}}
++  "道具の item の始まりか終わり 1 つ(tool = その道具の中身)を、道具の出来事(1 つか 2 つ — seq は first-seq から続けて)へ写すため
++   (頭の註の「道具の item」)。"
++  (match #(record tool)
++    #((ItemStarted) (WebSearch)) #((AgentToolCallStartedEvent :seq first-seq :at at :id record.item-id :name record.item-type))
++    #((ItemStarted) _) (do (<- call (tool-call-of record.item-id record.item-type tool))
++                           #((AgentToolUseEvent :seq first-seq :at at :tool-calls #(call))))
++    #((ItemDone) (WebSearch)) (do (<- call (tool-call-of record.item-id record.item-type tool))
++                                  (<- answer (tool-answer-of record.item-id tool))
++                                  #((AgentToolUseEvent :seq first-seq :at at :tool-calls #(call))
++                                    (AgentToolResultEvent :seq (+ first-seq 1) :at at :answers #(answer))))
++    #((ItemDone) _) (do (<- answer (tool-answer-of record.item-id tool))
++                        #((AgentToolResultEvent :seq first-seq :at at :answers #(answer))))))
++
+ (defk events-of [record #^ datetime at #^ int first-seq model]
+   {:pre [(: record CodexLine) (: at datetime) (: first-seq int) (: model (| str None))] :post [(: % tuple)]
+    :tags {:context "headless-adapter" :role "judgment"}}
+-  "層 2 の行の記録 1 つを層 3 の出来事(0 か 1 つ)へ写すため(頭の註の「行 → 出来事」— 語彙の外の行は空・生の行は上へ渡さない)。
+-   seq は first-seq。"
++  "層 2 の行の記録 1 つを層 3 の出来事(0 から 2 つ)へ写すため(頭の註の「行 → 出来事」— 語彙の外の行は空・生の行は上へ渡さない)。
++   seq は first-seq から続けて振る。"
+   (match record
+     (TextDelta) #((AgentTextDeltaEvent :seq first-seq :at at :text record.text))
+     (AgentMessageDone) (if record.text #((AgentTextEvent :seq first-seq :at at :text record.text)) #())
+     ;; 考えの item の始まり — 考えの最初の差分より先に、上の層が「考えている」と分かる合図(claude の adapter と同じ)。
+     (ItemStarted :item-type "reasoning") #((AgentThinkingStartedEvent :seq first-seq :at at))
++    ;; 道具の item(中身を持つ item だけ — 層 2 が道具の種類の中身を解いた物)。
++    (| (ItemStarted :tool (| (CommandRun) (FilePatch) (WebSearch)) :as tool)
++       (ItemDone :tool (| (CommandRun) (FilePatch) (WebSearch)) :as tool))
++    (do (<- made (tool-events-of record tool at first-seq)) made)
+     (ReasoningDelta) #((AgentThinkingDeltaEvent :seq first-seq :at at :text record.text))
+     (TokenUsage) (do (<- usage (call-usage-of record.last))
+                      (if (is usage None) #() #((AgentCallUsageEvent :seq first-seq :at at :usage usage :model model))))
+diff --git a/packages/doeff-agents/tests/test_headless_codex_adapter.hy b/packages/doeff-agents/tests/test_headless_codex_adapter.hy
+index f641df4b9..dc7c86952 100644
+--- a/packages/doeff-agents/tests/test_headless_codex_adapter.hy
++++ b/packages/doeff-agents/tests/test_headless_codex_adapter.hy
+@@ -25,6 +25,7 @@
+   LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession
+   SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow
+   AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent
++  AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent
+   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
+   AgentCapabilityUnsupportedError NoTurnInFlightError
+   RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
+@@ -58,6 +59,8 @@
+ (val USAGE-RESETS-AT 1893456000)
+ (val USAGE-LIMIT-TEXT (+ "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+                          "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM."))
++;; 道具を呼ぶターンの言い方(替え玉の規則 — 録った codex 0.162.1 の道具の呼びのターン tool-calls を流す)。
++(val TOOLS-PROMPT "TOOL-CALLS please")
+ (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
+ (val ANSWER "Hello, world.")
+ ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)と、借りた口座の auth.json の中身(検の作り物 —
+@@ -570,3 +573,57 @@
+   (assert (isinstance end AgentTurnFailed) end)
+   (assert (is end.account-limit None) end)
+   (assert (in "429" end.detail) end))
++
++
++(defk tool-turn [#^ Setting s]
++  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
++  "道具を呼ぶ 1 つのターンを公開 effect だけで最後まで読むため。"
++  (<- handle (launch s "codex-tools" TOOLS-PROMPT {}))
++  (<- done (read-until handle ended s.timeout -1))
++  (<- (Stop handle))
++  done)
++
++(deftest test-headless-codex-tool-items-reach-tool-use-and-tool-result-events-stub [tmp-path]
++  ;; 失敗ケース(card acp:kanban-issue:ki-77e76c7c07ce): 録った codex 0.162.1 の道具の item(命令の成功・失敗・apply_patch・web 検索)が、
++  ;; claude の adapter と同じ出来事(AgentToolUseEvent の ToolCall・AgentToolResultEvent の ToolAnswer)で届く — agora は absorb-event を
++  ;; 変えずに画面の道具カードへ出す。道具の名は codex の item の種類の名、命令は画面の shell の card が読む command の欄。
++  (<- done (run-on STUB tmp-path tool-turn))
++  (assert (isinstance done Read) done)
++  (assert (and (isinstance done.end AgentTurnCompleted) (= done.end.result-text "Tools done.")) done.end)
++  (<- uses (of-kind done.events AgentToolUseEvent))
++  (val calls (tuple (gfor use uses call use.tool-calls call)))
++  (assert (= (tuple (gfor call calls #(call.id call.name)))
++             #(#("call_0" "commandExecution") #("call_1" "commandExecution") #("call_2" "fileChange") #("ws_1" "webSearch")))
++          calls)
++  (val echo (get calls 0))
++  (val fail (get calls 1))
++  (val patch (get calls 2))
++  (val search (get calls 3))
++  (assert (= (get echo.input "command") "/bin/bash -lc 'echo tool-out'") echo.input)
++  (assert (.endswith (get echo.input "cwd") "/cwd") echo.input)
++  (assert (= (get fail.input "command") "/bin/bash -lc 'ls no-such-file'") fail.input)
++  (val edits (get patch.input "changes"))
++  (assert (= (len edits) 1) patch.input)
++  (val edit (get edits 0))
++  (assert (= #((get edit "kind") (get edit "diff")) #("add" "hello\n")) patch.input)
++  (assert (.endswith (get edit "path") "/cwd/note.txt") patch.input)
++  (assert (= (dict search.input) {"query" "doeff effects" "action" "search"}) search.input)
++  ;; 結果: 出力の文と誤りの印 — 失敗した命令(終了 code 2)は誤り。ファイルの変更と検索は出力の文を持たない。
++  (<- results (of-kind done.events AgentToolResultEvent))
++  (val answers (tuple (gfor result results answer result.answers answer)))
++  (assert (= (tuple (gfor answer answers #(answer.id answer.text answer.is-error)))
++             #(#("call_0" "tool-out\n" False)
++               #("call_1" "ls: cannot access 'no-such-file': No such file or directory\n" True)
++               #("call_2" "" False)
++               #("ws_1" "" False)))
++          answers)
++  ;; 順: どの呼びもその結果より前に届き、道具は答えの文字の途中より前(codex が走らせた順)。web 検索は語の無い始まりで「呼んでいる」
++  ;; (AgentToolCallStartedEvent)を先に出し、語は呼び(AgentToolUseEvent)で届く。
++  (val use-seqs (dfor use uses call use.tool-calls call.id use.seq))
++  (val result-seqs (dfor result results answer result.answers answer.id result.seq))
++  (assert (all (gfor #(id seq) (.items use-seqs) (< seq (get result-seqs id)))) #(use-seqs result-seqs))
++  (<- deltas (of-kind done.events AgentTextDeltaEvent))
++  (assert (< (max (.values result-seqs)) (. (get deltas 0) seq)) #(result-seqs deltas))
++  (<- starts (of-kind done.events AgentToolCallStartedEvent))
++  (assert (= (tuple (gfor start starts #(start.id start.name))) #(#("ws_1" "webSearch"))) starts)
++  (assert (< (. (get starts 0) seq) (get use-seqs "ws_1")) #(starts use-seqs)))
+diff --git a/packages/doeff-codex/README.md b/packages/doeff-codex/README.md
+index 93a1d3c1d..eb8d5128d 100644
+--- a/packages/doeff-codex/README.md
++++ b/packages/doeff-codex/README.md
+@@ -63,7 +63,7 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確
+ | `TextDelta` | `item/agentMessage/delta` | 答えの文字の途中(thread・ターン・item の id と差分の文字) |
+ | `AgentMessageDone` | `item/completed`(item の種類 agentMessage) | 答えの全文 |
+ | `ReasoningDelta` | `item/reasoning/textDelta`・`item/reasoning/summaryTextDelta` | 考えている間の差分(要約か本文か) |
+-| `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料) |
++| `ItemStarted` / `ItemDone` | `item/started` / `item/completed`(agentMessage 以外) | item の種類の名と id(上の層が「考えている」「道具を呼んでいる」を出す材料)と、道具の種類の item の中身 `tool`(下の表・ほかの種類は None) |
+ | `TurnStarted` / `TurnEnded` | `turn/started` / `turn/completed` | ターンの始まりと終わり(状態 `TurnStatus` = completed・interrupted・failed・inProgress、失敗の文と HTTP の status) |
+ | `TurnError` | `error` | ターンの誤り(文・誤りの種類・HTTP の status・codex が繰り返すか) |
+ | `TokenUsage` | `thread/tokenUsage/updated` | この呼びの分(last)と thread の累積(total)の token の数 |
+@@ -74,7 +74,18 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確
+ | `Other` | 語彙の外の通知 | method の名だけ(発明しない) |
+ | `Unparsed` | JSON として読めない行・形の合わない行 | method(読めた時)と訳 |
+ 
+-この版の語彙に無い値(版で増えたターンの状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
++道具の種類の item の中身(`ItemStarted.tool` / `ItemDone.tool` — 始まりと終わりの時点の中身):
++
++| item の種類 | 記録 | 欄 | 始まりと終わりの違い(録った行で確かめた) |
++|---|---|---|---|
++| `commandExecution` | `CommandRun` | 命令の文(codex が包んだ形のまま — 例 `/bin/bash -lc 'echo hi'`)・dir・状態 `ToolStatus`・出力(stdout と stderr を合わせた aggregatedOutput)・終了 code | 出力と終了 code は終わりで届く(始まりは None)。終了 code が 0 でない命令は状態 failed |
++| `fileChange` | `FilePatch` | ファイルごとの変更 `FileEdit`(path・種類 add/delete/update・diff・移す先)・状態 `ToolStatus` | 始まりから変えるファイルと中身を持つ |
++| `webSearch` | `WebSearch` | 検索の語・動きの種類(search・openPage・findInPage・other)・語の列・頁・頁の中の語 | 始まりは語が空で動きは other — 語は終わりで届く |
++
++ほかの道具の種類(mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView など)は録った行が無く、中身を読まない(`tool` は None)。
++道具の中身の使う欄が無い・型が違う item は、method と訳を持つ `Unparsed` にする(道具の中身の無い item に読み替えない)。
++
++この版の語彙に無い値(版で増えたターンの状態・道具の状態・誤りの種類)は `UnknownValue` に中を読まずに入れて運ぶ。既知の値や None に読み替えず、
+ 行も落とさない — 知らない状態でもターンの終わり(`TurnEnded`)は必ず届く(上の層がターンの終わりを待ち続けないため)。
+ 
+ ## 起動の形を app-server にした訳
+@@ -88,13 +99,15 @@ sqlite・log は家と一緒に消える。形は本物の codex 0.162.1 で確
+ 
+ `tests/recorded/codex-0.162.1/` は、版を固定した本物の codex(release rust-v0.162.1 の linux musl・tar.gz の sha256
+ `86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057`)を、手元の偽の上流(Responses API の SSE)につないで録った行。
+-口座は要らない(答えの中身だけが偽物で、行の形は本物の binary が出した物)。版を上げる時は録り直す:
++口座は要らない(答えの中身だけが偽物で、行の形は本物の binary が出した物)。`tool-calls.*`(道具の呼びのターン — 偽の上流が
++`exec_command` で命令の成功・失敗・apply_patch を呼び、web 検索の後に答える。命令は本当に走る)は 2026-10-11 に同じ版で、筋書きを選ぶ形で足した。
++版を上げる時は録り直す:
+ 
+ ```sh
+ uv run --no-project python -I packages/doeff-codex/scripts/record_app_server_lines.py <codex の binary> packages/doeff-codex/tests/recorded/codex-<版> <作業の dir> [筋書き…]
+ ```
+ 
+-筋書きの名(two-turns・interrupt・rate-limit・usage-limit)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
++筋書きの名(two-turns・interrupt・rate-limit・usage-limit・tool-calls)を続けて書くと、その筋書きだけを録る(既定は全部と `codex exec --json` の比べ)。
+ 
+ ## 検
+ 
+diff --git a/packages/doeff-codex/scripts/record_app_server_lines.py b/packages/doeff-codex/scripts/record_app_server_lines.py
+index 0e0091f12..82264587d 100644
+--- a/packages/doeff-codex/scripts/record_app_server_lines.py
++++ b/packages/doeff-codex/scripts/record_app_server_lines.py
+@@ -2,13 +2,15 @@
+ 
+ 版を固定した本物の codex の binary を、手元に立てた偽の上流(OpenAI の Responses API の SSE を返す HTTP server)につなぎ、JSON-RPC の
+ 要求を stdin へ書いて、stdout の行をそのまま file に書く。口座も network の外も要らない — model の答えだけが偽物で、行の形は本物の
+-binary が出した物。録る筋書きは 3 つと比べの 1 つ:
++binary が出した物。録る筋書きは 5 つと比べの 1 つ:
+ 
+ - two-turns: 1 つの process で thread を始め、ターンを 2 回走らせる(答えの文字の途中・答えの全文・ターンの終わり)。
+ - interrupt: 遅い答えの途中で turn/interrupt を送る(状態 interrupted の終わり)。
+ - rate-limit: 上流が 429 で断る(誤りの通知と状態 failed の終わり)。
+ - usage-limit: 上流が口座の利用枠切れ(429 の usage_limit_reached と枠の header)で断る(codexErrorInfo usageLimitExceeded の誤りと
+   枠の通知と状態 failed の終わり)。
++- tool-calls: 上流が道具の呼びを順に返す(命令の成功・命令の失敗・apply_patch でのファイルの追加・web 検索)— 道具の item
++  (commandExecution・fileChange・webSearch)の始まりと終わりの形。
+ - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。
+ 
+ 使い方(版を上げた時に録り直す。筋書きの名を続けて書くと、その筋書きだけを録る — 既定は全部):
+@@ -41,6 +43,15 @@ SLOW_PIECES = tuple(f"slow-{index} " for index in range(40))
+ USAGE_RESETS_AT = 1893456000
+ USAGE_SECONDARY_RESETS_AT = 1893888000
+ WAIT_SECONDS = 60.0
++# 道具の筋書きの目印(要求の入力のどこかに在れば、上流は道具の呼びを返す)と、呼びの順(返した道具の結果の数で次を選ぶ)。
++TOOLS_MARK = "TOOL-CALLS"
++TOOL_COMMANDS = (
++    "echo tool-out",
++    "ls no-such-file",
++    "apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\nEOF",
++)
++TOOLS_SEARCH = "doeff effects"
++TOOLS_DONE = ("Tools ", "done.")
+ 
+ 
+ def sse_event(stream: IO[bytes], event: JsonObject) -> None:
+@@ -77,9 +88,42 @@ def answer_events(pieces: tuple[str, ...]) -> list[JsonObject]:
+     ]
+ 
+ 
++def tool_events(step: int) -> list[JsonObject]:
++    """道具の筋書きの step 番目の答え(TOOL_COMMANDS の命令を exec_command で呼ぶ・尽きたら web 検索と答えの全文)の SSE の列を作るため。"""
++    if step >= len(TOOL_COMMANDS):
++        search: JsonObject = {"type": "web_search_call", "id": "ws_1", "status": "completed",
++                              "action": {"type": "search", "query": TOOLS_SEARCH}}
++        answer = answer_events(TOOLS_DONE)
++        # 検索の始まりの item は検索の語(action)を持たない — 上流は語を検索の終わりの item で名乗る。
++        return [
++            answer[0],
++            {"type": "response.output_item.added", "output_index": 0,
++             "item": {"type": "web_search_call", "id": "ws_1", "status": "in_progress"}},
++            {"type": "response.output_item.done", "output_index": 0, "item": search},
++            *answer[1:],
++        ]
++    call: JsonObject = {"type": "function_call", "id": f"fc_{step}", "call_id": f"call_{step}", "name": "exec_command",
++                        "arguments": json.dumps({"cmd": TOOL_COMMANDS[step]})}
++    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
++             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
++    return [
++        {"type": "response.created", "response": {"id": f"resp_tool_{step}"}},
++        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
++        {"type": "response.output_item.done", "output_index": 0, "item": call},
++        {"type": "response.completed", "response": {"id": f"resp_tool_{step}", "usage": usage}},
++    ]
++
++
++def tool_step(body: JsonObject) -> int:
++    """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(function_call_output)の数で数えるため。"""
++    inputs = body.get("input", [])
++    return sum(1 for item in inputs if isinstance(item, dict) and item.get("type") == "function_call_output") \
++        if isinstance(inputs, list) else 0
++
++
+ class Upstream(http.server.BaseHTTPRequestHandler):
+-    """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、USAGE-LIMIT が在れば利用枠切れの 429、SLOW が在れば遅い答え、ほかは
+-    4 つの差分の答え。"""
++    """偽の上流: 要求の最後の入力に RATE-LIMIT が在れば 429、USAGE-LIMIT が在れば利用枠切れの 429、SLOW が在れば遅い答え、入力の
++    どこかに TOOL-CALLS が在れば道具の筋書き、ほかは 4 つの差分の答え。"""
+ 
+     protocol_version = "HTTP/1.1"
+     request_log: IO[str]
+@@ -108,14 +152,16 @@ class Upstream(http.server.BaseHTTPRequestHandler):
+             self.refuse_usage_limit()
+             return
+         slow = "SLOW" in said
++        tools = TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
+         self.send_response(200)
+         self.send_header("content-type", "text/event-stream")
+         self.send_header("cache-control", "no-cache")
+         # 長さを名乗らない event-stream は、流し終えたら接続を閉じて終わりを伝える(send_header が close_connection を立てる)。
+         self.send_header("connection", "close")
+         self.end_headers()
++        events = tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES)
+         try:
+-            for event in answer_events(SLOW_PIECES if slow else FAST_PIECES):
++            for event in events:
+                 sse_event(self.wfile, event)
+                 if event["type"] == "response.output_text.delta":
+                     time.sleep(0.25 if slow else 0.05)
+@@ -231,14 +277,14 @@ def json_path(message: JsonObject, *keys: str) -> object:
+     return value
+ 
+ 
+-def start_thread(send: Send, wait: Wait, cwd: Path) -> str:
+-    """初期化から thread の始めまでを済ませ、ターンに使う thread の id を得るため。"""
++def start_thread(send: Send, wait: Wait, cwd: Path, sandbox: str = "read-only") -> str:
++    """初期化から thread の始めまでを済ませ、ターンに使う thread の id を得るため(sandbox = thread の sandbox の綴り)。"""
+     send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+           "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}})
+     wait(lambda message: message.get("id") == 1, WAIT_SECONDS)
+     send({"jsonrpc": "2.0", "method": "initialized"})
+     send({"jsonrpc": "2.0", "id": 2, "method": "thread/start",
+-          "params": {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": "read-only"}})
++          "params": {"cwd": str(cwd), "approvalPolicy": "never", "sandbox": sandbox}})
+     answer = wait(lambda message: message.get("id") == 2, WAIT_SECONDS)
+     return str(json_path(answer, "result", "thread", "id"))
+ 
+@@ -284,8 +330,16 @@ def usage_limit(send: Send, wait: Wait, cwd: Path) -> None:
+     wait(turn_ended(start_turn(send, wait, 3, thread_id, "USAGE-LIMIT please")), WAIT_SECONDS * 1.5)
+ 
+ 
++def tool_calls(send: Send, wait: Wait, cwd: Path) -> None:
++    """道具を呼ぶターン(命令の成功・失敗・apply_patch・web 検索の後に答え)の道具の item の形を録るため。命令が本当に走り、ファイルを
++    書けるように、sandbox は会話の担当の既定と同じ danger-full-access(機体の sandbox の有無で行が変わらない)。"""
++    thread_id = start_thread(send, wait, cwd, "danger-full-access")
++    wait(turn_ended(start_turn(send, wait, 3, thread_id, f"{TOOLS_MARK} please")), WAIT_SECONDS * 2)
++
++
+ SCENARIOS: tuple[tuple[str, Callable[[Send, Wait, Path], None]], ...] = (
+-    ("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit), ("usage-limit", usage_limit))
++    ("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit), ("usage-limit", usage_limit),
++    ("tool-calls", tool_calls))
+ 
+ 
+ def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
+diff --git a/packages/doeff-codex/src/doeff_codex/lines.hy b/packages/doeff-codex/src/doeff_codex/lines.hy
+index 2ba88bd96..2609aa620 100644
+--- a/packages/doeff-codex/src/doeff_codex/lines.hy
++++ b/packages/doeff-codex/src/doeff_codex/lines.hy
+@@ -21,6 +21,10 @@
+ ;; ターンの状態(turn/started・turn/completed の turn.status の綴り — codex 0.162.1 の TurnStatus)。
+ (defenum TurnStatus COMPLETED INTERRUPTED FAILED (IN-PROGRESS "inProgress"))
+ 
++;; 道具の item の状態(commandExecution・fileChange の status の綴り — codex 0.162.1 の CommandExecutionStatus と PatchApplyStatus は
++;; 同じ 4 つ)。
++(defenum ToolStatus COMPLETED FAILED DECLINED (IN-PROGRESS "inProgress"))
++
+ 
+ ;; --- 読む行の wire の型(使う欄だけ・知らない欄は読み捨てる) ---------------------------------------
+ 
+@@ -110,18 +114,62 @@
+   (#^ str delta))
+ 
+ (defwire ItemWire
+-  "item/started・item/completed の item のうち使う欄(種類と id と、答えの全文 — agentMessage だけが text を持つ)。"
++  "item/started・item/completed の item のうち、どの種類も持つ欄(種類と id と、答えの全文 — agentMessage だけが text を持つ)。"
+   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+   (#^ str type)
+   (#^ str id)
+   (setv #^ (| str None) text None))
+ 
+ (defwire ItemParamsWire
+-  "item/started・item/completed の params。"
++  "item/started・item/completed の params。item は種類ごとに形が違うので中を読まずに運び、どの種類も持つ欄(ItemWire)と、道具の
++   種類の中身(種類で選んだ下の wire の型)を順に解く。"
+   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+   (#^ str thread-id)
+   (#^ str turn-id)
+-  (#^ ItemWire item))
++  (#^ OpaqueJson item))
++
++(defwire CommandExecutionWire
++  "item の種類 commandExecution(命令を走らせる道具)の中身のうち使う欄。aggregatedOutput・exitCode は命令が終わるまで null。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ str command)
++  (#^ str cwd)
++  (#^ str status)
++  (setv #^ (| str None) aggregated-output None)
++  (setv #^ (| int None) exit-code None))
++
++(defwire PatchKindWire
++  "fileChange の 1 つの変更の種類(PatchChangeKind — type は add・delete・update、update は移す先 move_path を持てる)。この object
++   だけ欄の名が snake(codex 0.162.1 の schema のまま)。"
++  {:tags {:context "codex" :role "type"} :names :snake :unknown :ignore}
++  (#^ str type)
++  (setv #^ (| str None) move-path None))
++
++(defwire FileUpdateWire
++  "fileChange の 1 つのファイルの変更(FileUpdateChange)。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ str path)
++  (#^ PatchKindWire kind)
++  (#^ str diff))
++
++(defwire FileChangeWire
++  "item の種類 fileChange(ファイルを変える道具 — apply_patch)の中身のうち使う欄。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ (get tuple #(FileUpdateWire ...)) changes)
++  (#^ str status))
++
++(defwire WebSearchActionWire
++  "webSearch の動き(WebSearchAction — type は search・openPage・findInPage・other、種類ごとに語の列・頁・頁の中の語を持てる)。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ str type)
++  (setv #^ (| (get tuple #(str ...)) None) queries None)
++  (setv #^ (| str None) url None)
++  (setv #^ (| str None) pattern None))
++
++(defwire WebSearchWire
++  "item の種類 webSearch(web 検索の道具)の中身のうち使う欄。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ str query)
++  (setv #^ (| WebSearchActionWire None) action None))
+ 
+ (defwire ErrorParamsWire
+   "error の通知の params(ターンの誤り — willRetry が偽なら codex はこのターンを繰り返さない)。"
+@@ -242,22 +290,66 @@
+   (#^ str item-id)
+   (#^ str text))
+ 
++(defrecord CommandRun
++  "道具の item commandExecution の中身(命令を走らせる): command = codex が走らせた命令の文(codex が包んだ形のまま — 例
++   `/bin/bash -lc 'echo hi'`)/ cwd = 走らせた dir / status = 状態(この版に無い綴りは UnknownValue)/ output = 標準出力と標準誤りを
++   合わせた出力(aggregatedOutput — 終わるまで None)/ exit-code = 終了 code(終わるまで None)。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ str command)
++  (#^ str cwd)
++  (#^ (| ToolStatus UnknownValue) status)
++  (setv #^ (| str None) output None)
++  (setv #^ (| int None) exit-code None))
++
++(defrecord FileEdit
++  "fileChange の 1 つのファイルの変更: path = ファイル / kind = 変更の種類の名(add・delete・update — 版で増えるので名のまま)/
++   diff = 変更の中身(codex の綴りのまま — add は新しい中身・update は unified diff)/ move-path = update で移す先(ほかは None)。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ str path)
++  (#^ str kind)
++  (#^ str diff)
++  (setv #^ (| str None) move-path None))
++
++(defrecord FilePatch
++  "道具の item fileChange の中身(ファイルを変える — apply_patch): changes = ファイルごとの変更(FileEdit の tuple)/ status = 状態
++   (この版に無い綴りは UnknownValue)。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ (get tuple #(FileEdit ...)) changes)
++  (#^ (| ToolStatus UnknownValue) status))
++
++(defrecord WebSearch
++  "道具の item webSearch の中身(web 検索): query = 検索の語(始まりの item は空 — 上流は語を検索の終わりで名乗る)/ action = 動きの
++   種類の名(search・openPage・findInPage・other — 名乗らなければ None)/ queries = 動きが名乗る検索の語の列 / url・pattern = 動きが
++   名乗る頁と頁の中の語(名乗らなければ None)。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ str query)
++  (setv #^ (| str None) action None)
++  (setv #^ (get tuple #(str ...)) queries #())
++  (setv #^ (| str None) url None)
++  (setv #^ (| str None) pattern None))
++
++(val ToolItem (| CommandRun FilePatch WebSearch))
++
+ (defrecord ItemStarted
+   "ターンの中の item が始まった(item/started): item-type = codex の item の種類の名(userMessage・agentMessage・reasoning・
+-   commandExecution など — 版で増えるので名のまま)。上の層が「考えている」「道具を呼んでいる」を出す材料。"
++   commandExecution など — 版で増えるので名のまま)/ tool = 道具の種類(commandExecution・fileChange・webSearch)の item の中身
++   (ほかの種類は None)。上の層が「考えている」「道具を呼んでいる」を出す材料。"
+   {:tags {:context "codex" :role "type"}}
+   (#^ str thread-id)
+   (#^ str turn-id)
+   (#^ str item-id)
+-  (#^ str item-type))
++  (#^ str item-type)
++  (setv #^ (| ToolItem None) tool None))
+ 
+ (defrecord ItemDone
+-  "答えの全文でない item が終わった(item/completed の agentMessage 以外): item-type は ItemStarted と同じ。"
++  "答えの全文でない item が終わった(item/completed の agentMessage 以外): item-type・tool は ItemStarted と同じ(tool は終わりの
++   時点の中身 — 命令の出力と終了 code・検索の語はここで届く)。"
+   {:tags {:context "codex" :role "type"}}
+   (#^ str thread-id)
+   (#^ str turn-id)
+   (#^ str item-id)
+-  (#^ str item-type))
++  (#^ str item-type)
++  (setv #^ (| ToolItem None) tool None))
+ 
+ (defrecord TokenCount
+   "token の数の組(名乗らない欄は None)。"
+@@ -440,22 +532,92 @@
+   (RateLimits :limit-id limits.limit-id :primary primary :secondary secondary))
+ 
+ 
++(defk tool-status-of [#^ str spelled]
++  {:pre [(: spelled str)] :post [(: % (| ToolStatus UnknownValue))] :tags {:context "codex" :role "foundation"}}
++  "道具の item の status の綴りを ToolStatus にするため。この版に無い綴りは UnknownValue(既知の状態に読み替えない)。"
++  (if (in spelled (frozenset (gfor known ToolStatus known.value)))
++      (ToolStatus spelled)
++      (UnknownValue :value (OpaqueJson.of spelled))))
++
++
++(defk command-run-of [#^ CommandExecutionWire wire]
++  {:pre [(: wire CommandExecutionWire)] :post [(: % CommandRun)] :tags {:context "codex" :role "foundation"}}
++  "commandExecution の中身を、命令・dir・状態・出力・終了 code の記録にするため。"
++  (<- status (tool-status-of wire.status))
++  (CommandRun :command wire.command :cwd wire.cwd :status status :output wire.aggregated-output :exit-code wire.exit-code))
++
++
++(defk file-patch-of [#^ FileChangeWire wire]
++  {:pre [(: wire FileChangeWire)] :post [(: % FilePatch)] :tags {:context "codex" :role "foundation"}}
++  "fileChange の中身を、ファイルごとの変更と状態の記録にするため。"
++  (<- status (tool-status-of wire.status))
++  (FilePatch :changes (tuple (gfor change wire.changes (FileEdit :path change.path :kind change.kind.type :diff change.diff
++                                                                 :move-path change.kind.move-path)))
++             :status status))
++
++
++(defk web-search-of [#^ WebSearchWire wire]
++  {:pre [(: wire WebSearchWire)] :post [(: % WebSearch)] :tags {:context "codex" :role "foundation"}}
++  "webSearch の中身を、検索の語と動き(種類・語の列・頁・頁の中の語)の記録にするため。"
++  (val action wire.action)
++  (if (is action None)
++      (WebSearch :query wire.query)
++      (WebSearch :query wire.query :action action.type :queries (or action.queries #()) :url action.url :pattern action.pattern)))
++
++
++(defk tool-parsed [#^ str method #^ type wire-type convert item]
++  {:pre [(: method str) (: wire-type type) (: convert Callable) (: item OpaqueJson)] :post [(: % (| ToolItem Unparsed))]
++   :tags {:context "codex" :role "foundation"}}
++  "道具の item の中身を、その種類の wire の型で解いて記録へ写すため(convert = 写す defk)。形の合わない中身は、method と訳を持つ
++   Unparsed(道具の中身の無い item に読み替えない)。"
++  (<- parsed (parse wire-type item))
++  (when (isinstance parsed Malformed)
++    (<- reason (reason-of parsed))
++    (return (Unparsed :method method :reason reason)))
++  (<- record (convert parsed))
++  record)
++
++
++(defk tool-of [#^ str method #^ str item-type item]
++  {:pre [(: method str) (: item-type str) (: item OpaqueJson)] :post [(: % (| ToolItem Unparsed None))]
++   :tags {:context "codex" :role "foundation"}}
++  "item の種類が道具(commandExecution・fileChange・webSearch)なら中身を記録にするため(ほかの種類は None)。"
++  (match item-type
++    "commandExecution" (do (<- tool (tool-parsed method CommandExecutionWire command-run-of item)) tool)
++    "fileChange" (do (<- tool (tool-parsed method FileChangeWire file-patch-of item)) tool)
++    "webSearch" (do (<- tool (tool-parsed method WebSearchWire web-search-of item)) tool)
++    _ None))
++
++
+ (defk item-started-of [#^ ItemParamsWire params]
+-  {:pre [(: params ItemParamsWire)] :post [(: % ItemStarted)] :tags {:context "codex" :role "foundation"}}
+-  "item/started を、上の層が「考えている」「道具を呼んでいる」を出す材料(item の種類と id)にするため。"
+-  (ItemStarted :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :item-type params.item.type))
++  {:pre [(: params ItemParamsWire)] :post [(: % (| ItemStarted Unparsed))] :tags {:context "codex" :role "foundation"}}
++  "item/started を、上の層が「考えている」「道具を呼んでいる」を出す材料(item の種類と id と、道具の中身)にするため。"
++  (<- item (parse ItemWire params.item))
++  (when (isinstance item Malformed)
++    (<- reason (reason-of item))
++    (return (Unparsed :method "item/started" :reason reason)))
++  (<- tool (tool-of "item/started" item.type params.item))
++  (when (isinstance tool Unparsed)
++    (return tool))
++  (ItemStarted :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :item-type item.type :tool tool))
+ 
+ 
+ (defk item-done-of [#^ ItemParamsWire params]
+   {:pre [(: params ItemParamsWire)] :post [(: % (| AgentMessageDone ItemDone Unparsed))] :tags {:context "codex" :role "foundation"}}
+-  "item/completed のうち答えの全文(agentMessage)を AgentMessageDone に、ほかの種類の item を ItemDone にするため。全文の無い
+-   agentMessage は読めない行(答えの全文を空と読み替えない)。"
+-  (match params.item.type
+-    "agentMessage" (if (is params.item.text None)
+-                       (Unparsed :method "item/completed" :reason (.format "agentMessage の item {} に text が無い" params.item.id))
+-                       (AgentMessageDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id
+-                                         :text params.item.text))
+-    _ (ItemDone :thread-id params.thread-id :turn-id params.turn-id :item-id params.item.id :item-type params.item.type)))
++  "item/completed のうち答えの全文(agentMessage)を AgentMessageDone に、ほかの種類の item を ItemDone(道具の種類は終わりの時点の
++   中身つき)にするため。全文の無い agentMessage は読めない行(答えの全文を空と読み替えない)。"
++  (<- item (parse ItemWire params.item))
++  (when (isinstance item Malformed)
++    (<- reason (reason-of item))
++    (return (Unparsed :method "item/completed" :reason reason)))
++  (when (= item.type "agentMessage")
++    (return (if (is item.text None)
++                (Unparsed :method "item/completed" :reason (.format "agentMessage の item {} に text が無い" item.id))
++                (AgentMessageDone :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :text item.text))))
++  (<- tool (tool-of "item/completed" item.type params.item))
++  (when (isinstance tool Unparsed)
++    (return tool))
++  (ItemDone :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :item-type item.type :tool tool))
+ 
+ 
+ (defk text-delta-of [#^ DeltaParamsWire params]
+diff --git a/packages/doeff-codex/src/doeff_codex/lines.pyi b/packages/doeff-codex/src/doeff_codex/lines.pyi
+index 061a18964..8cfa12c06 100644
+--- a/packages/doeff-codex/src/doeff_codex/lines.pyi
++++ b/packages/doeff-codex/src/doeff_codex/lines.pyi
+@@ -16,6 +16,12 @@ class TurnStatus(StrEnum):
+     FAILED = 'failed'
+     IN_PROGRESS = 'inProgress'
+ 
++class ToolStatus(StrEnum):
++    COMPLETED = 'completed'
++    FAILED = 'failed'
++    DECLINED = 'declined'
++    IN_PROGRESS = 'inProgress'
++
+ @dataclass(frozen=True, kw_only=True)
+ class RpcErrorWire:
+     code: int
+@@ -94,7 +100,43 @@ class ItemWire:
+ class ItemParamsWire:
+     thread_id: str
+     turn_id: str
+-    item: ItemWire
++    item: OpaqueJson
++
++@dataclass(frozen=True, kw_only=True)
++class CommandExecutionWire:
++    command: str
++    cwd: str
++    status: str
++    aggregated_output: str | None = None
++    exit_code: int | None = None
++
++@dataclass(frozen=True, kw_only=True)
++class PatchKindWire:
++    type: str
++    move_path: str | None = None
++
++@dataclass(frozen=True, kw_only=True)
++class FileUpdateWire:
++    path: str
++    kind: PatchKindWire
++    diff: str
++
++@dataclass(frozen=True, kw_only=True)
++class FileChangeWire:
++    changes: tuple[FileUpdateWire, ...]
++    status: str
++
++@dataclass(frozen=True, kw_only=True)
++class WebSearchActionWire:
++    type: str
++    queries: tuple[str, ...] | None = None
++    url: str | None = None
++    pattern: str | None = None
++
++@dataclass(frozen=True, kw_only=True)
++class WebSearchWire:
++    query: str
++    action: WebSearchActionWire | None = None
+ 
+ @dataclass(frozen=True, kw_only=True)
+ class ErrorParamsWire:
+@@ -192,12 +234,42 @@ class AgentMessageDone:
+     item_id: str
+     text: str
+ 
++@dataclass(frozen=True, kw_only=True)
++class CommandRun:
++    command: str
++    cwd: str
++    status: ToolStatus | UnknownValue
++    output: str | None = None
++    exit_code: int | None = None
++
++@dataclass(frozen=True, kw_only=True)
++class FileEdit:
++    path: str
++    kind: str
++    diff: str
++    move_path: str | None = None
++
++@dataclass(frozen=True, kw_only=True)
++class FilePatch:
++    changes: tuple[FileEdit, ...]
++    status: ToolStatus | UnknownValue
++
++@dataclass(frozen=True, kw_only=True)
++class WebSearch:
++    query: str
++    action: str | None = None
++    queries: tuple[str, ...] = ...
++    url: str | None = None
++    pattern: str | None = None
++ToolItem: TypeAlias = CommandRun | FilePatch | WebSearch
++
+ @dataclass(frozen=True, kw_only=True)
+ class ItemStarted:
+     thread_id: str
+     turn_id: str
+     item_id: str
+     item_type: str
++    tool: ToolItem | None = None
+ 
+ @dataclass(frozen=True, kw_only=True)
+ class ItemDone:
+@@ -205,6 +277,7 @@ class ItemDone:
+     turn_id: str
+     item_id: str
+     item_type: str
++    tool: ToolItem | None = None
+ 
+ @dataclass(frozen=True, kw_only=True)
+ class TokenCount:
+@@ -297,7 +370,25 @@ def window_of(window: RateLimitWindowWire | None) -> _Program[RateLimitWindow |
+ def rate_limits_of(params: RateLimitsParamsWire) -> _Program[RateLimits, object]:
+     ...
+ 
+-def item_started_of(params: ItemParamsWire) -> _Program[ItemStarted, object]:
++def tool_status_of(spelled: str) -> _Program[ToolStatus | UnknownValue, object]:
++    ...
++
++def command_run_of(wire: CommandExecutionWire) -> _Program[CommandRun, object]:
++    ...
++
++def file_patch_of(wire: FileChangeWire) -> _Program[FilePatch, object]:
++    ...
++
++def web_search_of(wire: WebSearchWire) -> _Program[WebSearch, object]:
++    ...
++
++def tool_parsed(method: str, wire_type: type, convert: Callable, item: OpaqueJson) -> _Program[ToolItem | Unparsed, object]:
++    ...
++
++def tool_of(method: str, item_type: str, item: OpaqueJson) -> _Program[ToolItem | Unparsed | None, object]:
++    ...
++
++def item_started_of(params: ItemParamsWire) -> _Program[ItemStarted | Unparsed, object]:
+     ...
+ 
+ def item_done_of(params: ItemParamsWire) -> _Program[AgentMessageDone | ItemDone | Unparsed, object]:
+diff --git a/packages/doeff-codex/tests/recorded/codex-0.162.1/tool-calls.stdin.jsonl b/packages/doeff-codex/tests/recorded/codex-0.162.1/tool-calls.stdin.jsonl
+new file mode 100644
+index 000000000..98d449cd9
+--- /dev/null
++++ b/packages/doeff-codex/tests/recorded/codex-0.162.1/tool-calls.stdin.jsonl
+@@ -0,0 +1,4 @@
++{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
++{"jsonrpc": "2.0", "method": "initialized"}
++{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.codex-rec-VJhw/cwd", "approvalPolicy": "never", "sandbox": "danger-full-access"}}
++{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a12bc3-43b5-7881-91e8-63e066f4f0de", "input": [{"type": "text", "text": "TOOL-CALLS please"}]}}
+diff --git a/packages/doeff-codex/tests/recorded/codex-0.162.1/tool-calls.stdout.jsonl b/packages/doeff-codex/tests/recorded/codex-0.162.1/tool-calls.stdout.jsonl
+new file mode 100644
+index 000000000..186c850d0
+--- /dev/null
++++ b/packages/doeff-codex/tests/recorded/codex-0.162.1/tool-calls.stdout.jsonl
+@@ -0,0 +1,36 @@
++{"id":1,"result":{"userAgent":"doeff-codex-recorder/0.162.1 (Ubuntu 24.4.0; x86_64) unknown (doeff-codex-recorder; 0)","codexHome":"/home/ubuntu/.codex-rec-VJhw/codex-home","platformFamily":"unix","platformOs":"linux"}}
++{"method":"configWarning","params":{"summary":"Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.","details":null},"emittedAtMs":1791735579551}
++{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"doeff-worker-zeus-5d6d78459d-zl8pw","installationId":"72b9f771-91d3-4f50-94bd-741425ffef56","environmentId":null},"emittedAtMs":1791735579551}
++{"id":2,"result":{"thread":{"id":"01a12bc3-43b5-7881-91e8-63e066f4f0de","environments":[{"environmentId":"local","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","runtimeWorkspaceRoots":["/home/ubuntu/.codex-rec-VJhw/cwd"]}],"extra":null,"sessionId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"section":null,"sectionEnteredAt":null,"projectId":null,"historyMode":"paginated","modelProvider":"mock","model":"gpt-mock","reasoningEffort":null,"createdAt":1791735579,"updatedAt":1791735579,"recencyAt":1791735579,"status":{"type":"idle"},"path":"/home/ubuntu/.codex-rec-VJhw/codex-home/sessions/2026/10/11/rollout-2026-10-11T16-19-39-01a12bc3-43b5-7881-91e8-63e066f4f0de.jsonl","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","cliVersion":"0.162.1","originator":"doeff-codex-recorder","source":"vscode","canAcceptDirectInput":true,"threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"daybreakEnabled":null,"turns":[]},"model":"gpt-mock","modelProvider":"mock","serviceTier":null,"disabledPluginIds":[],"cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","runtimeWorkspaceRoots":["/home/ubuntu/.codex-rec-VJhw/cwd"],"instructionSources":[],"approvalPolicy":"never","approvalsReviewer":"user","sandbox":{"type":"dangerFullAccess"},"activePermissionProfile":null,"reasoningEffort":null,"multiAgentMode":"explicitRequestOnly"}}
++{"method":"thread/started","params":{"thread":{"id":"01a12bc3-43b5-7881-91e8-63e066f4f0de","environments":[{"environmentId":"local","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","runtimeWorkspaceRoots":["/home/ubuntu/.codex-rec-VJhw/cwd"]}],"extra":null,"sessionId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","forkedFromId":null,"parentThreadId":null,"preview":"","ephemeral":false,"section":null,"sectionEnteredAt":null,"projectId":null,"historyMode":"paginated","modelProvider":"mock","model":"gpt-mock","reasoningEffort":null,"createdAt":1791735579,"updatedAt":1791735579,"recencyAt":1791735579,"status":{"type":"idle"},"path":"/home/ubuntu/.codex-rec-VJhw/codex-home/sessions/2026/10/11/rollout-2026-10-11T16-19-39-01a12bc3-43b5-7881-91e8-63e066f4f0de.jsonl","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","cliVersion":"0.162.1","originator":"doeff-codex-recorder","source":"vscode","canAcceptDirectInput":true,"threadSource":null,"agentNickname":null,"agentRole":null,"gitInfo":null,"name":null,"daybreakEnabled":null,"turns":[]}},"emittedAtMs":1791735579621}
++{"method":"warning","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","message":"Model metadata for `gpt-mock` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."},"emittedAtMs":1791735579632}
++{"id":3,"result":{"turn":{"id":"01a12bc3-43ea-73e1-b958-63429babefbf","rootTurnId":"01a12bc3-43ea-73e1-b958-63429babefbf","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}
++{"method":"thread/status/changed","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","status":{"type":"active","activeFlags":[]}},"emittedAtMs":1791735579702}
++{"method":"turn/started","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turn":{"id":"01a12bc3-43ea-73e1-b958-63429babefbf","rootTurnId":"01a12bc3-43ea-73e1-b958-63429babefbf","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":1791735579,"completedAt":null,"durationMs":null}},"emittedAtMs":1791735579702}
++{"method":"item/started","params":{"item":{"type":"userMessage","id":"01a12bc3-4445-7d43-aed4-a4caa6db103c","clientId":null,"content":[{"type":"text","text":"TOOL-CALLS please","text_elements":[]}]},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","startedAtMs":1791735579718},"emittedAtMs":1791735579718}
++{"method":"item/completed","params":{"item":{"type":"userMessage","id":"01a12bc3-4445-7d43-aed4-a4caa6db103c","clientId":null,"content":[{"type":"text","text":"TOOL-CALLS please","text_elements":[]}]},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","completedAtMs":1791735579718},"emittedAtMs":1791735579729}
++{"method":"item/started","params":{"item":{"type":"commandExecution","id":"call_0","pluginId":null,"scriptPath":null,"command":"/bin/bash -lc 'echo tool-out'","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","processId":"18757","source":"unifiedExecStartup","status":"inProgress","commandActions":[{"type":"unknown","command":"echo tool-out"}],"aggregatedOutput":null,"exitCode":null,"durationMs":null},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","startedAtMs":1791735580046},"emittedAtMs":1791735580050}
++{"method":"item/completed","params":{"item":{"type":"commandExecution","id":"call_0","pluginId":null,"scriptPath":null,"command":"/bin/bash -lc 'echo tool-out'","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","processId":"18757","source":"unifiedExecStartup","status":"completed","commandActions":[{"type":"unknown","command":"echo tool-out"}],"aggregatedOutput":"tool-out\n","exitCode":0,"durationMs":0},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","completedAtMs":1791735580047},"emittedAtMs":1791735580052}
++{"method":"thread/tokenUsage/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","tokenUsage":{"total":{"totalTokens":14,"inputTokens":10,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":4,"reasoningOutputTokens":0},"last":{"totalTokens":14,"inputTokens":10,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":4,"reasoningOutputTokens":0},"modelContextWindow":258400}},"emittedAtMs":1791735580063}
++{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":null,"secondary":null,"credits":null,"individualLimit":null,"spendControlReached":null,"planType":null,"rateLimitReachedType":null}},"emittedAtMs":1791735580063}
++{"method":"item/started","params":{"item":{"type":"commandExecution","id":"call_1","pluginId":null,"scriptPath":null,"command":"/bin/bash -lc 'ls no-such-file'","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","processId":"47236","source":"unifiedExecStartup","status":"inProgress","commandActions":[{"type":"listFiles","command":"ls no-such-file","path":"no-such-file"}],"aggregatedOutput":null,"exitCode":null,"durationMs":null},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","startedAtMs":1791735580156},"emittedAtMs":1791735580157}
++{"method":"item/completed","params":{"item":{"type":"commandExecution","id":"call_1","pluginId":null,"scriptPath":null,"command":"/bin/bash -lc 'ls no-such-file'","cwd":"/home/ubuntu/.codex-rec-VJhw/cwd","processId":"47236","source":"unifiedExecStartup","status":"failed","commandActions":[{"type":"listFiles","command":"ls no-such-file","path":"no-such-file"}],"aggregatedOutput":"ls: cannot access 'no-such-file': No such file or directory\n","exitCode":2,"durationMs":0},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","completedAtMs":1791735580157},"emittedAtMs":1791735580159}
++{"method":"thread/tokenUsage/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","tokenUsage":{"total":{"totalTokens":28,"inputTokens":20,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":8,"reasoningOutputTokens":0},"last":{"totalTokens":14,"inputTokens":10,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":4,"reasoningOutputTokens":0},"modelContextWindow":258400}},"emittedAtMs":1791735580169}
++{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":null,"secondary":null,"credits":null,"individualLimit":null,"spendControlReached":null,"planType":null,"rateLimitReachedType":null}},"emittedAtMs":1791735580169}
++{"method":"item/started","params":{"item":{"type":"fileChange","id":"call_2","changes":[{"path":"/home/ubuntu/.codex-rec-VJhw/cwd/note.txt","kind":{"type":"add"},"diff":"hello\n"}],"status":"inProgress"},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","startedAtMs":1791735580236},"emittedAtMs":1791735580236}
++{"method":"item/completed","params":{"item":{"type":"fileChange","id":"call_2","changes":[{"path":"/home/ubuntu/.codex-rec-VJhw/cwd/note.txt","kind":{"type":"add"},"diff":"hello\n"}],"status":"completed"},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","completedAtMs":1791735580237},"emittedAtMs":1791735580239}
++{"method":"turn/diff/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","diff":"diff --git a/note.txt b/note.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..ce013625030ba8dba906f756967f9e9ca394464a\n--- /dev/null\n+++ b/note.txt\n@@ -0,0 +1 @@\n+hello\n"},"emittedAtMs":1791735580239}
++{"method":"thread/tokenUsage/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","tokenUsage":{"total":{"totalTokens":42,"inputTokens":30,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":12,"reasoningOutputTokens":0},"last":{"totalTokens":14,"inputTokens":10,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":4,"reasoningOutputTokens":0},"modelContextWindow":258400}},"emittedAtMs":1791735580245}
++{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":null,"secondary":null,"credits":null,"individualLimit":null,"spendControlReached":null,"planType":null,"rateLimitReachedType":null}},"emittedAtMs":1791735580245}
++{"method":"turn/diff/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","diff":"diff --git a/note.txt b/note.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..ce013625030ba8dba906f756967f9e9ca394464a\n--- /dev/null\n+++ b/note.txt\n@@ -0,0 +1 @@\n+hello\n"},"emittedAtMs":1791735580245}
++{"method":"item/started","params":{"item":{"type":"webSearch","id":"ws_1","query":"","action":{"type":"other"},"results":null},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","startedAtMs":1791735580275},"emittedAtMs":1791735580275}
++{"method":"item/completed","params":{"item":{"type":"webSearch","id":"ws_1","query":"doeff effects","action":{"type":"search","query":"doeff effects","queries":null},"results":null},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","completedAtMs":1791735580275},"emittedAtMs":1791735580277}
++{"method":"item/started","params":{"item":{"type":"agentMessage","id":"msg_1","text":"","phase":null,"memoryCitation":null,"delivery":null,"questions":null},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","startedAtMs":1791735580278},"emittedAtMs":1791735580278}
++{"method":"item/agentMessage/delta","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","itemId":"msg_1","delta":"Tools "},"emittedAtMs":1791735580278}
++{"method":"item/agentMessage/delta","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","itemId":"msg_1","delta":"done."},"emittedAtMs":1791735580325}
++{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"msg_1","text":"Tools done.","phase":null,"memoryCitation":null,"delivery":null,"questions":null},"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","completedAtMs":1791735580377},"emittedAtMs":1791735580379}
++{"method":"thread/tokenUsage/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","tokenUsage":{"total":{"totalTokens":56,"inputTokens":40,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":16,"reasoningOutputTokens":0},"last":{"totalTokens":14,"inputTokens":10,"cachedInputTokens":0,"cacheWriteInputTokens":0,"outputTokens":4,"reasoningOutputTokens":0},"modelContextWindow":258400}},"emittedAtMs":1791735580385}
++{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":null,"secondary":null,"credits":null,"individualLimit":null,"spendControlReached":null,"planType":null,"rateLimitReachedType":null}},"emittedAtMs":1791735580385}
++{"method":"turn/diff/updated","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turnId":"01a12bc3-43ea-73e1-b958-63429babefbf","diff":"diff --git a/note.txt b/note.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..ce013625030ba8dba906f756967f9e9ca394464a\n--- /dev/null\n+++ b/note.txt\n@@ -0,0 +1 @@\n+hello\n"},"emittedAtMs":1791735580385}
++{"method":"thread/status/changed","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","status":{"type":"idle"}},"emittedAtMs":1791735580391}
++{"method":"turn/completed","params":{"threadId":"01a12bc3-43b5-7881-91e8-63e066f4f0de","turn":{"id":"01a12bc3-43ea-73e1-b958-63429babefbf","rootTurnId":"01a12bc3-43ea-73e1-b958-63429babefbf","items":[{"type":"agentMessage","id":"msg_1","text":"Tools done.","phase":null,"memoryCitation":null,"delivery":null,"questions":null}],"itemsView":"summary","status":"completed","error":null,"startedAt":1791735579,"completedAt":1791735580,"durationMs":756}},"emittedAtMs":1791735580391}
+diff --git a/packages/doeff-codex/tests/recorded/codex-0.162.1/upstream-requests.jsonl b/packages/doeff-codex/tests/recorded/codex-0.162.1/upstream-requests.jsonl
+index 9def038e8..f06735361 100644
+--- a/packages/doeff-codex/tests/recorded/codex-0.162.1/upstream-requests.jsonl
++++ b/packages/doeff-codex/tests/recorded/codex-0.162.1/upstream-requests.jsonl
+@@ -4,3 +4,7 @@
+ {"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
+ {"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
+ {"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
++{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
++{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
++{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
++{"method": "POST", "path": "/v1/responses", "model": "gpt-mock", "stream": true}
+diff --git a/packages/doeff-codex/tests/stub_cli/codex_app_server.py b/packages/doeff-codex/tests/stub_cli/codex_app_server.py
+index 8c55280cd..8311a982b 100644
+--- a/packages/doeff-codex/tests/stub_cli/codex_app_server.py
++++ b/packages/doeff-codex/tests/stub_cli/codex_app_server.py
+@@ -13,8 +13,9 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
+     ``SETTINGS effort=<値> compact=<値> model=<値>`` と答える(宣言が要求の行に載ったかを見る — 名乗らない欄は None)。
+   - HOME_PHRASE が在れば、この process の CODEX_HOME の形を ``HOME dir=<権限> auth=<権限> account=<auth.json の口座の id>
+     config=<link|file|none> sessions=<link|dir|none>`` と答える(借りた資格の家の形を子の process から見る — 資格の値は答えない)。
+-  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT)が在れば、その目印で録ったターンの通知(turn/start の答えの後 〜 turn/completed)を
+-    そのまま流す(利用枠切れ・429 の断りで失敗したターン)。
++  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS)が在れば、その目印で録ったターンの通知(turn/start の答えの後 〜
++    turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と web 検索の道具の
++    item を持つターン)。
+   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
+ - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
+   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
+@@ -35,7 +36,7 @@ SETTINGS_PHRASE = "Tell the settings."
+ HOME_PHRASE = "Tell the home."
+ STEERED_PREFIX = "steered:"
+ # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
+-REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit"}
++REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls"}
+ # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
+ NOT_STEERABLE_CODE = -32600
+ 
+diff --git a/packages/doeff-codex/tests/test_tool_items.hy b/packages/doeff-codex/tests/test_tool_items.hy
+new file mode 100644
+index 000000000..4357b281c
+--- /dev/null
++++ b/packages/doeff-codex/tests/test_tool_items.hy
+@@ -0,0 +1,97 @@
++;; 道具の item(commandExecution・fileChange・webSearch)の行の分類の検 — 版を固定した本物の codex(0.162.1)が、偽の上流の道具の
++;; 呼びに答えて命令を走らせ、ファイルを書いた行を録った物(tests/recorded/codex-0.162.1/tool-calls・録り方は
++;; scripts/record_app_server_lines.py の筋書き tool-calls)で確かめる(ki-77e76c7c07ce)。
++;;
++;; 守る事: 道具の item の始まりと終わりが、命令と出力と終了 code(commandExecution)・変えたファイル(fileChange)・検索の語(webSearch)を
++;; 型つきの記録で運ぶ。崩れると上の層(doeff-agents の adapter)は codex の道具の呼びと結果を AgentToolUseEvent・AgentToolResultEvent
++;; へ写せず、その上の画面の道具カードに codex の道具が出ない。
++(require doeff-hy.macros [val])
++(val MODULE-TAGS {:context "codex-test" :role "foundation"})
++(require doeff-hy.macros [deftest defk <-])
++(import json)
++(import doeff_hy.json_value [OpaqueJson])
++(import doeff_codex.lines [classify-line ItemStarted ItemDone Unparsed UnknownValue ToolStatus CommandRun FilePatch WebSearch])
++(import tests.test_lines [recorded-records])
++
++
++(defk tool-items [#^ tuple records #^ type kind]
++  {:pre [(: records tuple) (: kind type)] :post [(: % tuple)] :tags {:context "codex-test" :role "foundation"}}
++  "行の記録の列から、道具の中身を持つ item の始まり(ItemStarted)か終わり(ItemDone)を順に取り出すため。"
++  (tuple (gfor record records :if (and (isinstance record kind) (is-not record.tool None)) record)))
++
++
++(deftest test-tool-items-carry-the-command-the-patch-and-the-search
++  (<- records (recorded-records "tool-calls"))
++  ;; 録った行は、どれも読めない行にならない(道具の item の形がこの版の型に合う)。
++  (assert (not (any (gfor record records (isinstance record Unparsed)))) records)
++  (<- started (tool-items records ItemStarted))
++  (<- done (tool-items records ItemDone))
++  (val order #(#("call_0" "commandExecution") #("call_1" "commandExecution") #("call_2" "fileChange") #("ws_1" "webSearch")))
++  (assert (= (tuple (gfor record started #(record.item-id record.item-type))) order) started)
++  (assert (= (tuple (gfor record done #(record.item-id record.item-type))) order) done)
++  ;; どの道具の item も、始まりが終わりより前に届く。
++  (for [#(item-id _) order]
++    (val begun (next (gfor #(index record) (enumerate records) :if (and (isinstance record ItemStarted) (= record.item-id item-id)) index)))
++    (val ended (next (gfor #(index record) (enumerate records) :if (and (isinstance record ItemDone) (= record.item-id item-id)) index)))
++    (assert (< begun ended) #(item-id begun ended)))
++  (val echo-start (. (get started 0) tool))
++  (val fail-start (. (get started 1) tool))
++  (val patch-start (. (get started 2) tool))
++  (val search-start (. (get started 3) tool))
++  (val echo-done (. (get done 0) tool))
++  (val fail-done (. (get done 1) tool))
++  (val patch-done (. (get done 2) tool))
++  (val search-done (. (get done 3) tool))
++  ;; 命令: 始まりは命令の文(codex が包んだ形のまま)と dir を持ち、出力と終了 code は終わりで届く。
++  (assert (isinstance echo-start CommandRun) echo-start)
++  (assert (= #(echo-start.command echo-start.status echo-start.output echo-start.exit-code)
++             #("/bin/bash -lc 'echo tool-out'" ToolStatus.IN-PROGRESS None None))
++          echo-start)
++  (assert (.endswith echo-start.cwd "/cwd") echo-start)
++  (assert (= #(echo-done.command echo-done.cwd) #(echo-start.command echo-start.cwd)) echo-done)
++  (assert (= #(echo-done.status echo-done.output echo-done.exit-code) #(ToolStatus.COMPLETED "tool-out\n" 0)) echo-done)
++  ;; 失敗した命令(終了 code 2)は状態 failed で終わり、標準誤りの出力を運ぶ。
++  (assert (= fail-start.command "/bin/bash -lc 'ls no-such-file'") fail-start)
++  (assert (= #(fail-done.status fail-done.exit-code fail-done.output)
++             #(ToolStatus.FAILED 2 "ls: cannot access 'no-such-file': No such file or directory\n"))
++          fail-done)
++  ;; ファイルの変更(apply_patch): 始まりから変えるファイルと中身を持つ。
++  (assert (and (isinstance patch-start FilePatch) (isinstance patch-done FilePatch)) #(patch-start patch-done))
++  (assert (= #(patch-start.status patch-done.status) #(ToolStatus.IN-PROGRESS ToolStatus.COMPLETED)) #(patch-start patch-done))
++  (assert (= patch-start.changes patch-done.changes) #(patch-start patch-done))
++  (assert (= (len patch-done.changes) 1) patch-done)
++  (val edit (get patch-done.changes 0))
++  (assert (= #(edit.kind edit.diff edit.move-path) #("add" "hello\n" None)) edit)
++  (assert (.endswith edit.path "/cwd/note.txt") edit)
++  ;; web 検索: 始まりは語を持たず(上流は語を検索の終わりで名乗る)、終わりが語と動きの種類を持つ。
++  (assert (and (isinstance search-start WebSearch) (isinstance search-done WebSearch)) #(search-start search-done))
++  (assert (= #(search-start.query search-start.action) #("" "other")) search-start)
++  (assert (= #(search-done.query search-done.action search-done.url search-done.pattern) #("doeff effects" "search" None None))
++          search-done)
++  ;; 道具でない item(利用者の発言・答え)は道具の中身を持たない。
++  (val plain (tuple (gfor record records :if (and (isinstance record ItemStarted) (is record.tool None)) record.item-type)))
++  (assert (= plain #("userMessage" "agentMessage")) plain))
++
++
++(defk command-item-line [#^ str method #^ dict item]
++  {:pre [(: method str) (: item dict)] :post [(: % str)] :tags {:context "codex-test" :role "foundation"}}
++  "item の通知の 1 行を作るため(録った行に無い形 — 版で増えた状態の綴り・欠けた欄 — を当てる)。"
++  (json.dumps {"method" method "params" {"threadId" "thread-1" "turnId" "turn-1" "item" item}}))
++
++
++(deftest test-a-tool-item-keeps-an-unknown-status-and-refuses-a-missing-field
++  ;; 版で増えた状態の綴りは UnknownValue で運ぶ(既知の状態に読み替えない・行も落とさない)。
++  (<- line (command-item-line "item/completed" {"type" "commandExecution" "id" "call_9" "command" "ls" "cwd" "/w" "status" "paused"
++                                                 "commandActions" [] "aggregatedOutput" "" "exitCode" None}))
++  (<- record (classify-line line))
++  (assert (isinstance record ItemDone) record)
++  (val run record.tool)
++  (assert (isinstance run CommandRun) run)
++  (assert (= run.status (UnknownValue :value (OpaqueJson.of "paused"))) run)
++  ;; 使う欄(command)の無い道具の item は、method と訳を持つ読めない行(黙って道具の中身の無い item にしない)。
++  (<- broken (command-item-line "item/started" {"type" "commandExecution" "id" "call_9" "cwd" "/w" "status" "inProgress"
++                                                 "commandActions" []}))
++  (<- unparsed (classify-line broken))
++  (assert (isinstance unparsed Unparsed) unparsed)
++  (assert (= unparsed.method "item/started") unparsed)
++  (assert (in "command" unparsed.reason) unparsed))

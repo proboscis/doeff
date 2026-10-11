@@ -1,0 +1,277 @@
+diff --git a/packages/doeff-agents/tests/test_headless_codex_adapter.hy b/packages/doeff-agents/tests/test_headless_codex_adapter.hy
+index dc7c86952..0e8688d04 100644
+--- a/packages/doeff-agents/tests/test_headless_codex_adapter.hy
++++ b/packages/doeff-agents/tests/test_headless_codex_adapter.hy
+@@ -627,3 +627,29 @@
+   (<- starts (of-kind done.events AgentToolCallStartedEvent))
+   (assert (= (tuple (gfor start starts #(start.id start.name))) #(#("ws_1" "webSearch"))) starts)
+   (assert (< (. (get starts 0) seq) (get use-seqs "ws_1")) #(starts use-seqs)))
++
++
++;; --- 実験(ki77e7-blind-A — 共有しない): 本物の codex 0.162.1 で録った、後ろで走り続ける命令(exec_command の yield_time_ms で戻る)の
++;; ターン T1 と次のターン T2。T1 で始めた命令 call_bg の出力の途中と item の終わりは、T2 の間に T1 を名乗って届く(録った行)。
++(defk background-turns [#^ Setting s]
++  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
++  "T1(命令を後ろで走らせて答える)と T2(遅い答え)を公開 effect だけで読むため。"
++  (<- handle (launch s "codex-bg" "BG-COMMAND please" {}))
++  (<- first (read-until handle ended s.timeout -1))
++  (<- (FollowUp handle "BG-WAIT please" :input-ref "ref-wait" :mode TurnInputMode.NEXT-TURN))
++  (<- second (read-until handle ended s.timeout first.after))
++  (<- (Stop handle))
++  {"first" first "second" second})
++
++(deftest test-ki77e7-d-a-background-command-result-reaches-a-tool-result-event-stub [tmp-path]
++  (<- read (run-on STUB tmp-path background-turns))
++  (val first (get read "first"))
++  (val second (get read "second"))
++  (val events (+ first.events second.events))
++  (<- uses (of-kind events AgentToolUseEvent))
++  (<- results (of-kind events AgentToolResultEvent))
++  (val called (tuple (gfor use uses call use.tool-calls call.id)))
++  (val answered (tuple (gfor result results answer result.answers answer.id)))
++  (assert (and (= called #("call_bg")) (= answered #("call_bg")))
++          {"called" called "answered" answered "T1 end" (type first.end) "T2 end" (type second.end)
++           "kinds" (tuple (gfor event events (. (type event) __name__)))}))
+diff --git a/packages/doeff-codex/scripts/record_app_server_lines.py b/packages/doeff-codex/scripts/record_app_server_lines.py
+index 82264587d..3df1ffd14 100644
+--- a/packages/doeff-codex/scripts/record_app_server_lines.py
++++ b/packages/doeff-codex/scripts/record_app_server_lines.py
+@@ -22,6 +22,7 @@ binary が出した物。録る筋書きは 5 つと比べの 1 つ:
+ 
+ import http.server
+ import json
++import os
+ import queue
+ import socketserver
+ import subprocess
+@@ -114,6 +115,57 @@ def tool_events(step: int) -> list[JsonObject]:
+     ]
+ 
+ 
++def background_events(step: int) -> list[JsonObject]:
++    """実験(ki77e7-blind-A): 1 つ目の答えで、短い待ちで戻る(後ろで走り続ける)命令を exec_command で呼び、2 つ目で答えの全文を返す。"""
++    if step >= 1:
++        return answer_events(("Started.",))
++    call: JsonObject = {"type": "function_call", "id": "fc_bg", "call_id": "call_bg", "name": "exec_command",
++                        "arguments": json.dumps({"cmd": "sleep 1; echo late-1; sleep 1; echo late-2; sleep 1; echo late-3",
++                                                 "yield_time_ms": 250})}
++    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
++             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
++    return [
++        {"type": "response.created", "response": {"id": "resp_bg_0"}},
++        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
++        {"type": "response.output_item.done", "output_index": 0, "item": call},
++        {"type": "response.completed", "response": {"id": "resp_bg_0", "usage": usage}},
++    ]
++
++
++def slow_command_events(step: int) -> list[JsonObject]:
++    """実験(ki77e7-blind-A): 1 つ目の答えで出力を少しずつ出す命令を exec_command で呼び、2 つ目で答えの全文を返す。"""
++    if step >= 1:
++        return answer_events(("Slow ", "done."))
++    call: JsonObject = {"type": "function_call", "id": "fc_slow", "call_id": "call_slow", "name": "exec_command",
++                        "arguments": json.dumps({"cmd": "for i in 1 2 3; do echo line-$i; sleep 0.7; done"})}
++    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
++             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
++    return [
++        {"type": "response.created", "response": {"id": "resp_slow_0"}},
++        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
++        {"type": "response.output_item.done", "output_index": 0, "item": call},
++        {"type": "response.completed", "response": {"id": "resp_slow_0", "usage": usage}},
++    ]
++
++
++def plan_events(step: int) -> list[JsonObject]:
++    """実験(ki77e7-blind-A): 1 つ目の答えで update_plan を呼び、2 つ目で答えの全文を返す。"""
++    if step >= 1:
++        return answer_events(("Plan ", "done."))
++    call: JsonObject = {"type": "function_call", "id": "fc_plan", "call_id": "call_plan", "name": "update_plan",
++                        "arguments": json.dumps({"explanation": "two steps",
++                                                 "plan": [{"step": "read the code", "status": "in_progress"},
++                                                          {"step": "fix", "status": "pending"}]})}
++    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
++             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
++    return [
++        {"type": "response.created", "response": {"id": "resp_plan_0"}},
++        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "arguments": ""}},
++        {"type": "response.output_item.done", "output_index": 0, "item": call},
++        {"type": "response.completed", "response": {"id": "resp_plan_0", "usage": usage}},
++    ]
++
++
+ def tool_step(body: JsonObject) -> int:
+     """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(function_call_output)の数で数えるため。"""
+     inputs = body.get("input", [])
+@@ -137,7 +189,11 @@ class Upstream(http.server.BaseHTTPRequestHandler):
+         body = json.loads(self.rfile.read(int(self.headers.get("content-length", "0"))) or b"{}")
+         said = json.dumps(body.get("input", []), ensure_ascii=False)[-400:]
+         self.request_log.write(json.dumps({"method": "POST", "path": self.path, "model": body.get("model"),
+-                                           "stream": body.get("stream")}) + "\n")
++                                           "stream": body.get("stream"),
++                                           "outputs": [item for item in body.get("input", []) if isinstance(item, dict)
++                                                       and item.get("type") == "function_call_output"],
++                                           "tools": [tool.get("name") or tool.get("type") for tool in body.get("tools", [])
++                                                     if isinstance(tool, dict)]}) + "\n")
+         self.request_log.flush()
+         if "RATE-LIMIT" in said:
+             refusal = b'{"error": {"type": "rate_limit_exceeded", "message": "Rate limit reached"}}'
+@@ -151,7 +207,7 @@ class Upstream(http.server.BaseHTTPRequestHandler):
+         if "USAGE-LIMIT" in said:
+             self.refuse_usage_limit()
+             return
+-        slow = "SLOW" in said
++        slow = "SLOW" in said or "BG-WAIT" in said
+         tools = TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
+         self.send_response(200)
+         self.send_header("content-type", "text/event-stream")
+@@ -159,7 +215,14 @@ class Upstream(http.server.BaseHTTPRequestHandler):
+         # 長さを名乗らない event-stream は、流し終えたら接続を閉じて終わりを伝える(send_header が close_connection を立てる)。
+         self.send_header("connection", "close")
+         self.end_headers()
+-        events = tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES)
++        planned = "PLAN-UPDATE" in json.dumps(body.get("input", []), ensure_ascii=False)
++        streamed = "SLOW-COMMAND" in json.dumps(body.get("input", []), ensure_ascii=False)
++        background = "BG-COMMAND" in json.dumps(body.get("input", []), ensure_ascii=False)
++        events = (answer_events(SLOW_PIECES) if "BG-WAIT" in said
++                  else background_events(tool_step(body)) if background
++                  else slow_command_events(tool_step(body)) if streamed
++                  else plan_events(tool_step(body)) if planned
++                  else tool_events(tool_step(body)) if tools else answer_events(SLOW_PIECES if slow else FAST_PIECES))
+         try:
+             for event in events:
+                 sse_event(self.wfile, event)
+@@ -199,7 +262,7 @@ def codex_home(work: Path, port: int) -> Path:
+     home = work / "codex-home"
+     home.mkdir(parents=True, exist_ok=True)
+     (home / "config.toml").write_text(
+-        'model = "gpt-mock"\nmodel_provider = "mock"\n[model_providers.mock]\nname = "mock"\n'
++        f'model = "{os.environ.get("KI77E7_MODEL", "gpt-mock")}"\nmodel_provider = "mock"\n[model_providers.mock]\nname = "mock"\n'
+         f'base_url = "http://127.0.0.1:{port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n'
+         "request_max_retries = 0\nstream_max_retries = 0\n",
+         encoding="utf-8",
+@@ -337,9 +400,29 @@ def tool_calls(send: Send, wait: Wait, cwd: Path) -> None:
+     wait(turn_ended(start_turn(send, wait, 3, thread_id, f"{TOOLS_MARK} please")), WAIT_SECONDS * 2)
+ 
+ 
++def plan_update(send: Send, wait: Wait, cwd: Path) -> None:
++    """実験(ki77e7-blind-A): update_plan を呼ぶターン。"""
++    thread_id = start_thread(send, wait, cwd)
++    wait(turn_ended(start_turn(send, wait, 3, thread_id, "PLAN-UPDATE please")), WAIT_SECONDS * 2)
++
++
++def background_command(send: Send, wait: Wait, cwd: Path) -> None:
++    """実験(ki77e7-blind-A): 後ろで走り続ける命令を始めたターンの後に、遅い答えの 2 つ目のターンを走らせる。"""
++    thread_id = start_thread(send, wait, cwd, "danger-full-access")
++    wait(turn_ended(start_turn(send, wait, 3, thread_id, "BG-COMMAND please")), WAIT_SECONDS * 2)
++    wait(turn_ended(start_turn(send, wait, 4, thread_id, "BG-WAIT please")), WAIT_SECONDS * 2)
++
++
++def slow_command(send: Send, wait: Wait, cwd: Path) -> None:
++    """実験(ki77e7-blind-A): 出力を少しずつ出す命令を走らせるターン。"""
++    thread_id = start_thread(send, wait, cwd, "danger-full-access")
++    wait(turn_ended(start_turn(send, wait, 3, thread_id, "SLOW-COMMAND please")), WAIT_SECONDS * 2)
++
++
+ SCENARIOS: tuple[tuple[str, Callable[[Send, Wait, Path], None]], ...] = (
+     ("two-turns", two_turns), ("interrupt", interrupt), ("rate-limit", rate_limit), ("usage-limit", usage_limit),
+-    ("tool-calls", tool_calls))
++    ("tool-calls", tool_calls), ("plan-update", plan_update), ("slow-command", slow_command),
++    ("background-command", background_command))
+ 
+ 
+ def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
+diff --git a/packages/doeff-codex/tests/stub_cli/codex_app_server.py b/packages/doeff-codex/tests/stub_cli/codex_app_server.py
+index 8311a982b..60b243f31 100644
+--- a/packages/doeff-codex/tests/stub_cli/codex_app_server.py
++++ b/packages/doeff-codex/tests/stub_cli/codex_app_server.py
+@@ -97,6 +97,7 @@ class Stub:
+         self.mut_slow_turn = ""
+         self.mut_slow_thread: threading.Thread | None = None
+         self.mut_opened_with: dict[str, object] = {}
++        self.mut_bg_first = ""
+ 
+     def write(self, message: dict[str, object]) -> None:
+         """1 行の message を stdout へ書くため(止めの thread と主の loop の両方から書くので lock の中で)。"""
+@@ -187,6 +188,24 @@ class Stub:
+         if HOME_PHRASE in said:
+             self.answer_turn(turn_id, home_text())
+             return
++        # 実験(ki77e7-blind-A): 本物の codex 0.162.1 で録った、後ろで走り続ける命令のターン(BG-COMMAND)と次のターン(BG-WAIT)を流す。
++        # 次のターンの行は前のターンの id を名乗る行(命令の出力の途中と item の終わり)を含むので、録りの 2 つのターンの id を両方差し替える。
++        if "BG-COMMAND" in said or "BG-WAIT" in said:
++            messages = recorded_messages("background-command")
++            thread = str(answer_of(messages, 2)["result"]["thread"]["id"])  # type: ignore[index]
++            first = str(answer_of(messages, 3)["result"]["turn"]["id"])  # type: ignore[index]
++            second = str(answer_of(messages, 4)["result"]["turn"]["id"])  # type: ignore[index]
++            request = 3 if "BG-COMMAND" in said else 4
++            if request == 3:
++                self.mut_bg_first = turn_id
++            start = messages.index(answer_of(messages, request)) + 1
++            end = next(index for index, message in enumerate(messages)
++                       if index >= start and message.get("method") == "turn/completed")
++            text = json.dumps(messages[start:end + 1], ensure_ascii=False)
++            text = text.replace(thread, self.mut_thread_id).replace(first, self.mut_bg_first).replace(second, turn_id)
++            for notification in json.loads(text):
++                self.write(notification)
++            return
+         replayed = next((name for marker, name in REPLAYED.items() if marker in said), None)
+         if replayed is not None:
+             for notification in self.replayed_turn(replayed, turn_id):
+diff --git a/packages/doeff-codex/tests/test_tool_items.hy b/packages/doeff-codex/tests/test_tool_items.hy
+index 4357b281c..39244b073 100644
+--- a/packages/doeff-codex/tests/test_tool_items.hy
++++ b/packages/doeff-codex/tests/test_tool_items.hy
+@@ -95,3 +95,53 @@
+   (assert (isinstance unparsed Unparsed) unparsed)
+   (assert (= unparsed.method "item/started") unparsed)
+   (assert (in "command" unparsed.reason) unparsed))
++
++
++;; --- 実験(ki77e7-blind-A — 共有しない): 本物の codex 0.162.1 で録った命令の出力の途中(item/commandExecution/outputDelta)と、
++;; 後ろで走り続けた命令の終わりが、handler のどのターンの列へ積まれるか ---
++(import doeff_codex.lines [Response ItemDone TurnEnded CommandOutputDelta])
++(import doeff_codex.handler [SessionRuntime absorb])
++(import doeff_codex.values [CodexSessionSpec CodexHome])
++
++
++(defk replayed [#^ str name #^ bool prompt]
++  {:pre [(: name str) (: prompt bool)] :post [(: % SessionRuntime)] :tags {:context "codex-test" :role "foundation"}}
++  "録った行を順に分類して absorb し、会話の状態を返すため。prompt = turn/start の答えを積んだ直後に current-turn を置く(handler の
++   節が窓なく追いつく時)/ 偽 = 録りの全部を積み終えるまで置かない(替え玉が答えの直後に一気に流し、読み手の thread が先に進む時)。"
++  (<- records (recorded-records name))
++  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/w")))
++  (for [record records]
++    (<- (absorb runtime record))
++    (when (and prompt (isinstance record Response) (is-not record.turn-id None))
++      (setv runtime.current-turn record.turn-id)))
++  runtime)
++
++
++(defk placement [#^ SessionRuntime runtime]
++  {:pre [(: runtime SessionRuntime)] :post [(: % tuple)] :tags {:context "codex-test" :role "foundation"}}
++  "出力の途中と命令の item の終わりが、どの列(ターンの番号 T1・T2 か outside)に、そのターンの終わりの前か後に積まれたか。"
++  (val names (dfor #(index turn-id) (enumerate runtime.turns) turn-id f"T{(+ index 1)}"))
++  (val placed [])
++  (var ended False)
++  (for [#(turn-id log) (.items runtime.turns)]
++    (:= ended False)
++    (for [event log.events]
++      (when (isinstance event.record TurnEnded) (:= ended True))
++      (when (or (isinstance event.record CommandOutputDelta)
++                (and (isinstance event.record ItemDone) (= event.record.item-type "commandExecution")))
++        (.append placed #((. (type event.record) __name__) event.record.item-id (get names event.record.turn-id) "in"
++                          (get names turn-id) (if ended "after-end" "before-end"))))))
++  (for [outside runtime.outside]
++    (when (isinstance outside CommandOutputDelta)
++      (.append placed #((. (type outside) __name__) outside.item-id (.get names outside.turn-id outside.turn-id) "in" "outside" ""))))
++  (tuple placed))
++
++
++(deftest test-ki77e7-c-where-output-deltas-and-late-command-ends-land
++  (<- slow-prompt (replayed "slow-command" True))
++  (<- slow-window (replayed "slow-command" False))
++  (<- bg-prompt (replayed "background-command" True))
++  (<- p1 (placement slow-prompt))
++  (<- p2 (placement slow-window))
++  (<- p3 (placement bg-prompt))
++  (assert False {"slow-command/current-turn-set" p1 "slow-command/window" p2 "background-command/current-turn-set" p3}))

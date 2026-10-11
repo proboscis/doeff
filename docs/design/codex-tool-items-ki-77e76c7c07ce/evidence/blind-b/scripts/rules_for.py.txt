@@ -1,0 +1,27 @@
+"""Which .semgrep.yaml rules could apply to the given repo-relative paths (by paths.include/exclude and languages)."""
+import fnmatch, sys, yaml
+root = sys.argv[1]
+targets = sys.argv[2:]
+rules = yaml.safe_load(open(f"{root}/.semgrep.yaml"))["rules"]
+def match(pat, path):
+    p = pat.lstrip("/")
+    if p.startswith("**/"):
+        return fnmatch.fnmatch(path, p) or fnmatch.fnmatch(path, p[3:]) or any(fnmatch.fnmatch("/".join(path.split("/")[i:]), p[3:]) for i in range(len(path.split("/"))))
+    return fnmatch.fnmatch(path, p) or fnmatch.fnmatch(path, p.rstrip("/") + "/**") or path.startswith(p.rstrip("*").rstrip("/") + "/") and p.endswith("**")
+for t in targets:
+    print("==", t)
+    for r in rules:
+        langs = r.get("languages", [])
+        ext = t.rsplit(".", 1)[-1]
+        if ext == "hy" and not any(l in ("generic", "hy", "regex") for l in langs):
+            continue
+        if ext == "py" and not any(l in ("python", "generic", "regex") for l in langs):
+            continue
+        paths = r.get("paths", {})
+        inc = paths.get("include")
+        exc = paths.get("exclude", [])
+        if inc and not any(match(p, t) for p in inc):
+            continue
+        if any(match(p, t) for p in exc):
+            continue
+        print(" ", r["id"], langs, "include=" + str(inc)[:120])

@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/tmp/ki77e7-blind-A/work-bg/cwd", "approvalPolicy": "never", "sandbox": "danger-full-access"}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a12bdc-6d09-7fd1-aca0-e6184f33fc8d", "input": [{"type": "text", "text": "BG-COMMAND please"}]}}
+{"jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": {"threadId": "01a12bdc-6d09-7fd1-aca0-e6184f33fc8d", "input": [{"type": "text", "text": "BG-WAIT please"}]}}

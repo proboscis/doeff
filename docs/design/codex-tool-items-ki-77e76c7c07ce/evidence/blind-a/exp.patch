@@ -1,0 +1,161 @@
+diff --git a/packages/doeff-codex/src/doeff_codex/handler.hy b/packages/doeff-codex/src/doeff_codex/handler.hy
+index 24c7d8c08..87ea347fc 100644
+--- a/packages/doeff-codex/src/doeff_codex/handler.hy
++++ b/packages/doeff-codex/src/doeff_codex/handler.hy
+@@ -162,7 +162,7 @@
+             (do (setv log.pending (+ log.pending #(record.id)))
+                 (.add-event runtime log record))))
+     (| (lines.TurnStarted) (lines.TextDelta) (lines.ReasoningDelta) (lines.AgentMessageDone) (lines.ItemStarted) (lines.ItemDone)
+-       (lines.TokenUsage) (lines.TurnError))
++       (lines.TokenUsage) (lines.TurnError) (lines.PlanUpdated))
+     (.add-event runtime (.log-of runtime record.turn-id) record)
+     (lines.TurnEnded)
+     (do (setv log (.log-of runtime record.turn-id))
+diff --git a/packages/doeff-codex/src/doeff_codex/lines.hy b/packages/doeff-codex/src/doeff_codex/lines.hy
+index 2609aa620..3a82344ee 100644
+--- a/packages/doeff-codex/src/doeff_codex/lines.hy
++++ b/packages/doeff-codex/src/doeff_codex/lines.hy
+@@ -171,6 +171,20 @@
+   (#^ str query)
+   (setv #^ (| WebSearchActionWire None) action None))
+ 
++(defwire PlanStepWire
++  "実験(ki77e7-blind-A): turn/plan/updated の計画の 1 段(TurnPlanStep — step と status)。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ str step)
++  (#^ str status))
++
++(defwire PlanParamsWire
++  "実験(ki77e7-blind-A): turn/plan/updated の params(codex 0.162.1 の schema の TurnPlanUpdatedNotification)。"
++  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
++  (#^ str thread-id)
++  (#^ str turn-id)
++  (#^ (get tuple #(PlanStepWire ...)) plan)
++  (setv #^ (| str None) explanation None))
++
+ (defwire ErrorParamsWire
+   "error の通知の params(ターンの誤り — willRetry が偽なら codex はこのターンを繰り返さない)。"
+   {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+@@ -328,6 +342,20 @@
+   (setv #^ (| str None) url None)
+   (setv #^ (| str None) pattern None))
+ 
++(defrecord PlanStep
++  "実験(ki77e7-blind-A): 計画の 1 段(step = 段の文・status = 綴りのまま)。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ str step)
++  (#^ str status))
++
++(defrecord PlanUpdated
++  "実験(ki77e7-blind-A): ターンの計画が替わった(turn/plan/updated — codex の update_plan の道具)。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ str thread-id)
++  (#^ str turn-id)
++  (#^ (get tuple #(PlanStep ...)) steps)
++  (setv #^ (| str None) explanation None))
++
+ (val ToolItem (| CommandRun FilePatch WebSearch))
+ 
+ (defrecord ItemStarted
+@@ -422,7 +450,7 @@
+   (#^ str reason))
+ 
+ (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
+-                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded Other Unparsed))
++                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded PlanUpdated Other Unparsed))
+ 
+ (defrecord ErrorFacts
+   "codexErrorInfo から読んだ誤りの種類の名(この版に無い形は UnknownValue)と HTTP の status(どちらも名乗らなければ None)。"
+@@ -620,6 +648,14 @@
+   (ItemDone :thread-id params.thread-id :turn-id params.turn-id :item-id item.id :item-type item.type :tool tool))
+ 
+ 
++(defk plan-updated-of [#^ PlanParamsWire params]
++  {:pre [(: params PlanParamsWire)] :post [(: % PlanUpdated)] :tags {:context "codex" :role "foundation"}}
++  "実験(ki77e7-blind-A): turn/plan/updated を計画の記録にするため。"
++  (PlanUpdated :thread-id params.thread-id :turn-id params.turn-id
++               :steps (tuple (gfor step params.plan (PlanStep :step step.step :status step.status)))
++               :explanation params.explanation))
++
++
+ (defk text-delta-of [#^ DeltaParamsWire params]
+   {:pre [(: params DeltaParamsWire)] :post [(: % TextDelta)] :tags {:context "codex" :role "foundation"}}
+   "item/agentMessage/delta を答えの文字の途中にするため。"
+@@ -680,6 +716,7 @@
+     "error" (do (<- record (parsed-into method ErrorParamsWire turn-error-of params)) record)
+     "thread/tokenUsage/updated" (do (<- record (parsed-into method TokenUsageParamsWire token-usage-of params)) record)
+     "account/rateLimits/updated" (do (<- record (parsed-into method RateLimitsParamsWire rate-limits-of params)) record)
++    "turn/plan/updated" (do (<- record (parsed-into method PlanParamsWire plan-updated-of params)) record)
+     _ (Other :method method)))
+ 
+ 
+diff --git a/packages/doeff-codex/tests/test_tool_items.hy b/packages/doeff-codex/tests/test_tool_items.hy
+index 4357b281c..020e21a91 100644
+--- a/packages/doeff-codex/tests/test_tool_items.hy
++++ b/packages/doeff-codex/tests/test_tool_items.hy
+@@ -95,3 +95,65 @@
+   (assert (isinstance unparsed Unparsed) unparsed)
+   (assert (= unparsed.method "item/started") unparsed)
+   (assert (in "command" unparsed.reason) unparsed))
++
++
++;; --- 実験(ki77e7-blind-A — 共有しない): ターンを名乗る新しい記録(turn/plan/updated)を、turn/start の答えの直後に読んだ時の積み先 ---
++(import doeff_codex.lines [TurnStarted TurnEnded TurnStatus PlanUpdated])
++(import doeff_codex.handler [SessionRuntime absorb])
++(import doeff_codex.values [CodexSessionSpec CodexHome])
++
++
++(defk plan-line [#^ str turn-id]
++  {:pre [(: turn-id str)] :post [(: % str)] :tags {:context "codex-test" :role "foundation"}}
++  "turn/plan/updated の 1 行(形は codex 0.162.1 の app-server の schema の TurnPlanUpdatedNotification)。"
++  (json.dumps {"method" "turn/plan/updated"
++               "params" {"threadId" "thread-1" "turnId" turn-id "explanation" None
++                         "plan" [{"step" "read the code" "status" "inProgress"} {"step" "fix" "status" "pending"}]}}))
++
++
++(defk kinds-of [#^ SessionRuntime runtime #^ str turn-id]
++  {:pre [(: runtime SessionRuntime) (: turn-id str)] :post [(: % tuple)] :tags {:context "codex-test" :role "foundation"}}
++  "ターンの列に積まれた記録の型の名(順)。"
++  (tuple (gfor event (. (get runtime.turns turn-id) events) (. (type event.record) __name__))))
++
++
++(deftest test-ki77e7-a-plan-update-read-before-current-turn-is-set-lands-in-the-turn-it-names
++  ;; S3 の窓: 読み手の thread が turn/start の答えを積んだ後、handler の節が current-turn を置く前に、そのターンを名乗る行を読む。
++  (<- line (plan-line "turn-1"))
++  (<- plan (classify-line line))
++  (assert (and (isinstance plan PlanUpdated) (= plan.turn-id "turn-1")) plan)
++  (<- item-line (command-item-line "item/started" {"type" "commandExecution" "id" "call_1" "command" "ls" "cwd" "/w"
++                                                   "status" "inProgress" "commandActions" []}))
++  (<- item (classify-line item-line))
++  ;; 1 つ目のターン(current-turn は None)。
++  (val first (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/w")))
++  (<- (absorb first (TurnStarted :thread-id "thread-1" :turn-id "turn-1")))
++  (<- (absorb first plan))
++  (<- (absorb first item))
++  (<- first-kinds (kinds-of first "turn-1"))
++  ;; 2 つ目のターン(current-turn は終わった前のターン turn-0)。
++  (val second (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/w")))
++  (<- (absorb second (TurnStarted :thread-id "thread-1" :turn-id "turn-0")))
++  (<- (absorb second (TurnEnded :thread-id "thread-1" :turn-id "turn-0" :status TurnStatus.COMPLETED)))
++  (setv second.current-turn "turn-0")
++  (<- (absorb second (TurnStarted :thread-id "thread-1" :turn-id "turn-1")))
++  (<- (absorb second plan))
++  (<- (absorb second item))
++  (<- second-kinds (kinds-of second "turn-1"))
++  (<- second-old (kinds-of second "turn-0"))
++  (assert (= #(first-kinds second-kinds)
++             #(#("TurnStarted" "PlanUpdated" "ItemStarted") #("TurnStarted" "PlanUpdated" "ItemStarted")))
++          {"first" first-kinds "first.outside" first.outside "second" second-kinds "second.outside" second.outside
++           "second.turn-0" second-old}))
++
++
++(deftest test-ki77e7-b-plan-update-read-after-current-turn-is-set-lands-in-the-running-turn
++  ;; 比べ: current-turn が置かれた後に読めば、同じ行は走っているターンの列へ積まれる(名乗りではなく「走っている」で選ばれても同じ)。
++  (<- line (plan-line "turn-1"))
++  (<- plan (classify-line line))
++  (val runtime (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/w")))
++  (<- (absorb runtime (TurnStarted :thread-id "thread-1" :turn-id "turn-1")))
++  (setv runtime.current-turn "turn-1")
++  (<- (absorb runtime plan))
++  (<- kinds (kinds-of runtime "turn-1"))
++  (assert (= kinds #("TurnStarted" "PlanUpdated")) #(kinds runtime.outside)))

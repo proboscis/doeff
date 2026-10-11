@@ -1,0 +1,47 @@
+"""責務違反の probe: codex の行 1 本を層 2(classify-line)→ 層 3(events-of)へ通し、どの層が codex の JSON の形を判じたかを見る。"""
+import json
+from datetime import datetime
+
+import hy  # noqa: F401  - Hy の module を import できるようにする
+from doeff import run
+from doeff_codex.lines import Unparsed, classify_line
+from doeff_agents.handlers.headless_codex import events_of
+
+AT = datetime(2026, 10, 11)
+
+
+def value(result):
+    return getattr(result, "value", result)
+
+
+def line(method, item):
+    return json.dumps({"method": method, "params": {"threadId": "thread-1", "turnId": "turn-1", "item": item}})
+
+
+def probe(label, method, item):
+    record = value(run(classify_line(line(method, item))))
+    print(f"[{label}]")
+    print(f"  層 2 classify-line -> {type(record).__name__}", end="")
+    if isinstance(record, Unparsed):
+        print(f"(method={record.method!r} reason={record.reason[:90]!r})")
+        return
+    tool = getattr(record, "tool", None)
+    print(f"(item_type={record.item_type!r} tool={type(tool).__name__})")
+    events = value(run(events_of(record, AT, 0, None)))
+    print(f"  層 3 events-of     -> {len(events)} 件 {[type(e).__name__ for e in events]}")
+    for event in events:
+        for call in getattr(event, "tool_calls", ()):
+            print(f"    ToolCall name={call.name!r} input={dict(call.input)!r}")
+        for answer in getattr(event, "answers", ()):
+            print(f"    ToolAnswer text={answer.text!r} is_error={answer.is_error}")
+
+
+MCP = {"type": "mcpToolCall", "id": "mcp_1", "server": "docs", "tool": "search", "status": "inProgress",
+       "arguments": {"q": "doeff"}, "result": None, "error": None}
+probe("A mcpToolCall 整った始まり", "item/started", MCP)
+drift = {k: v for k, v in MCP.items() if k != "server"} | {"serverName": "docs"}
+probe("B mcpToolCall 使う欄 server が無い(版で綴りが変わった想定)", "item/started", drift)
+CMD = {"type": "commandExecution", "id": "call_9", "cwd": "/w", "status": "inProgress", "commandActions": []}
+probe("C commandExecution 使う欄 command が無い(同じ種類の食い違い)", "item/started", CMD)
+probe("D mcpToolCall 知らない状態の綴り paused で終わり", "item/completed",
+      MCP | {"status": "paused", "result": {"content": [{"type": "text", "text": "partial"}]}})
