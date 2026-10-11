@@ -1,0 +1,386 @@
+{
+  "version": 1,
+  "task_id": "lt-BD5XYC8Z64P5YMHZDEAPKXQXK5",
+  "base_revision": "4b254ec2f7463a4c78645ea4aff0b976865e0e02",
+  "implementation_revision": "6ee49cc246aae1ab9aa6b3aa3d6e9494c5d5527e",
+  "author": {
+    "conversation_id": "c-NGKHQ411KPEGNX0GF9PR5KYN9J",
+    "model": "claude-opus-5-5",
+    "effort": "未確認(会話の起動の設定に従う・自己申告では読めない)"
+  },
+  "requirements": [
+    "R1(card ki-7e6a11f56bd5 の受入 c4bf65060): 再現の手順(最小の Hy の program・期待の値・実の値)が card に 1 つ書かれている",
+    "R2(受入 c14cda45b): 不具合なら失敗ケースの検と直しが doeff の main に在り緑、仕様どおりならその訳が card に書かれている"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "d4c7a65f8bfbc7018128097c76549842537b35d9f0d3b00220165dbf904d73e9"
+  },
+  "pre_blind_design": {
+    "path": "design-before-blind.md",
+    "sha256": "f71b59d3f2480f4ad730ab3820e7ac53c6dccc8a648382b6e489525e61b69164"
+  },
+  "blind": {
+    "meta": {
+      "path": "blind/blind-meta.md",
+      "sha256": "934ebb32fc970f033064646348f34a96593bc23642e3ec7a8560338bfa6413f4"
+    },
+    "a": {
+      "input": [
+        {
+          "path": "blind/blind-common.md",
+          "sha256": "b3e096c7819f66088a655453c7f2cb36f9dd5541d6d2f19fba3b0acd82df9281"
+        },
+        {
+          "path": "blind/blind-a-input.md",
+          "sha256": "d58ee886848d05cdfdbc6124c051b2c0526c915b20de1b3793e2ab2eb0ae6c53"
+        }
+      ],
+      "return": {
+        "path": "blind/blind-a-return.md",
+        "sha256": "fbc65bc060fa589822549983b867f979e8623343f704e165ec39c9d7fae270ee"
+      }
+    },
+    "b": {
+      "input": [
+        {
+          "path": "blind/blind-common.md",
+          "sha256": "b3e096c7819f66088a655453c7f2cb36f9dd5541d6d2f19fba3b0acd82df9281"
+        },
+        {
+          "path": "blind/blind-b-input.md",
+          "sha256": "cee9e566d6d829650671deb9e7d40c6d3c5e24186c4594db304fc36173a7a3a9"
+        }
+      ],
+      "return": {
+        "path": "blind/blind-b-return.md",
+        "sha256": "87d2ced54f747ab979ef6064c0a02d97ed8d1405fad1107e31af757d255d699a"
+      }
+    }
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "for/do・traverse の展開(packages/doeff-hy/src/doeff_hy/macros.hy の _gen-traverse-body・_binds-from?・_place-traverse・_traverse-form・_skip-form)",
+      "owns": "From / When / <- の CPS の置き方・From の Traverse を一番外は式のまま、件の関数の中は実行する置き分け・後ろに From が残る From の答えを Collection.flatten で平らにする段",
+      "hides": "実行時の展開と型検査のための展開(_static-view?)の形の違い・件の関数を @do で包む回数",
+      "interface": "(<- x (for/do …)) の x は Collection[本体の答え]。From 1 つなら式は Traverse の effect、2 つ以上なら Program。書き手の import は _doeff_do・_doeff_traverse_Traverse(When の時だけ _doeff_traverse_Skip)",
+      "effects": "なし、展開の時に form を作るだけ",
+      "lifetime": "なし、macro の展開",
+      "invariants": "本体の値は組ごとに 1 件。From が 1 つの展開は直す前と同じ"
+    },
+    {
+      "id": "M2",
+      "responsibility": "Collection(packages/doeff-traverse/doeff_traverse/collection.py・.pyi)",
+      "owns": "件ごとの結果の列(値・失敗・履歴・番号)・flatten の継ぎ方(内の件は値と失敗を保ち、履歴は外の件に続け、落ちた外の件は 1 件のまま残し、番号を振り直す)",
+      "hides": "件の列の持ち方(_items)",
+      "interface": "valid_values・errors・all_items・valid_items・failed_items・flatten(self: Collection[Collection[W]]) -> Collection[W](有効な外の件の値が Collection でなければ TypeError)",
+      "effects": "なし、値を作るだけ",
+      "lifetime": "なし、記憶の中の値",
+      "invariants": "flatten は値を変えず、件の順(外の順 → 内の順)を保つ"
+    },
+    {
+      "id": "M3",
+      "responsibility": "Traverse の handler(packages/doeff-traverse/doeff_traverse/handlers.py の sequential・parallel・parallel_fail_fast)",
+      "owns": "実行の順・並列の度合い(Traverse 1 つごとの枠)・件の失敗の扱い・Skip の受け",
+      "hides": "件の program の組み立て(内の handler と自分を被せ直す)",
+      "interface": "Traverse の答えは Collection[f の答え]。件の program を自分の下で走らせ、件の program が同じ handler へ出す Traverse(重ねた From)にも答える",
+      "effects": "件の program を走らせる・Spawn / Gather / Semaphore(parallel)",
+      "lifetime": "handler の install の間。枠は Traverse 1 つの間だけ持つ",
+      "invariants": "件の結果は元の番号の順。Traverse をまたぐ資源を件の program の間に持ち続けない"
+    },
+    {
+      "id": "M4",
+      "responsibility": "型検査のための補助(packages/doeff-hy/src/doeff_hy/static_types.pyi・static_view.py の TRAVERSE_STATIC_NAMES)",
+      "owns": "<- の答えの型(_doeff_perform)・件の型の読み直し(traverse_item)",
+      "hides": "なし、宣言だけ",
+      "interface": "_doeff_perform(Program[T, …]) -> T・traverse_item(Iterable[T], object) -> T",
+      "effects": "なし、型の宣言",
+      "lifetime": "なし、file",
+      "invariants": "展開の型は実行時の答えの型と同じ"
+    },
+    {
+      "id": "M5",
+      "responsibility": "Traverse の effect(packages/doeff-traverse/doeff_traverse/effects.py・.pyi)",
+      "owns": "f・items・label と、handler への契約の文(再入・資源・平らにするのは展開)",
+      "hides": "なし、値の入れ物",
+      "interface": "Traverse(f: Callable[[I], Program[A, …]], items: Iterable[I], label) : EffectBase[Collection[A]]",
+      "effects": "なし、effect の値",
+      "lifetime": "なし、出した所から handler が答えるまで",
+      "invariants": "f の Program は同じ handler へ Traverse をもう一度出しうる"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "Traverse を答える handler を 1 つ足す(例: 件をまとめて外の API へ投げる batch の handler・件ごとに retry する handler・for/do 全体の同時の数を縛る handler)",
+      "claim": "(盲検の前・design-before-blind.md の S1)新しい handler は「Traverse に Collection で答え、件の program を自分の下で走らせる」の既存の契約(M3)だけを守れば、From を重ねた for/do も正しく答える。重ねの知識は M1 と M2 に閉じていて、handler は重ねを知らない",
+      "expected_scope": "変わる: 新しい handler だけ。変わらない: M1・M2・M4・M5・既存の M3",
+      "actual_scope": "盲検 A: handler に 1 つの枠を持つ handler は From 1 つで正しく From 2 つで SchedulerDeadlockError(6ee49cc2 で再現)。同じ止まりは直す前の 4b254ec2 でも本体の <- で受けた for/do で起きる。盲検 B: 重ねを推して進捗を数える sequential は提示の検査を通る(16 passed・6ee49cc2 で再現)。直しの後: M5 の docstring・M3 の parallel の docstring・README・契約の検(tests/test_for_do_runtime.py)を足した。M1・M2 の code は変えていない",
+      "changed_modules": [
+        "M3",
+        "M5"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M4"
+      ],
+      "reason": "隠す知識の漏洩ではなく、M1 と M3 の共同の不変条件(件の program が同じ handler へ Traverse を再び出す・handler は Traverse をまたぐ資源を件の間に持たない)が契約に書かれていなかった。直す前から本体の for/do で同じ義務が在った(A の 4b254ec2 の再現)。B の handler は M1・M2 の知識を M3 へ写す契約の違反",
+      "revision": "M5(effects.py・.pyi)の Traverse の docstring と README に再入・資源・平らにするのは展開(handler は内側の From かを推さない)を書いた。出荷する handler の全部(sequential・parallel 1/2・parallel_fail_fast 1/2)に重ねた From を当てる契約の検 test_nested_froms_answer_under_every_shipped_handler を足し、A の変更を parallel に当てると赤になる事を確かめた(C2)。B の推しを拒む静的な規則は置かない(design.md 第 6 節の訳)"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "平らにした件の記録の決まりを変える(例: 落ちた外の件を答えから外す・内の件に外の件の番号を持たせる)",
+      "claim": "(盲検の前・S2)継ぎ方は M2 の flatten(と _spliced)の 1 点に在り、M1 の展開も M3 の handler も変えずに変えられる",
+      "expected_scope": "変わる: M2 の flatten とその検。変わらない: M1・M3・M4・M5",
+      "actual_scope": "出荷する handler では M2 の flatten だけを替えて答えが替わり、決まりを撃つ検が赤になる(S2 の対照)。盲検 B の D2: 継ぎ方を写した handler が在ると M3 も直す必要が出る",
+      "changed_modules": [
+        "M2"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "reason": "予測どおり。B の D2 は M3 が M2 の知識を写した違反の handler でだけ起き、出荷する handler には無い",
+      "revision": "M5 の docstring と README に「handler は内側の From かを推さない・平らにするのは展開の Collection.flatten」を書いた(S1 と同じ直し)。M2 の code は変えていない"
+    },
+    {
+      "id": "S3",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "重ねた From を parallel(concurrency) の handler の下で走らせる・並列の度合いを変える",
+      "claim": "(盲検の前・S3)平らにした答えの順は件の番号の順で、件が終わった順に依らない。並列の度合いを変えても M1・M2 は変わらない",
+      "expected_scope": "変わる: なし(handler の引数だけ)。変わらない: M1〜M5",
+      "actual_scope": "件が逆の順に終わっても答えは番号の順(S3 の対照・parallel・parallel_fail_fast)。M1・M2 は変わらない。盲検 A: parallel(N) の N は Traverse 1 つごとで、From を k 段重ねると葉の同時の数は N の k 乗まで(concurrency 2 で 4×4 は 4・3×3×3 は 8)",
+      "changed_modules": [
+        "M3"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M4",
+        "M5"
+      ],
+      "reason": "M3 の code は変わらない。concurrency の意味(Traverse 1 つごと)が M3 の docstring に書かれていなかったので、文を足した(M3 の changed は docstring だけ)",
+      "revision": "handlers.py の parallel の docstring と README に、concurrency は Traverse 1 つの件を縛り、重ねると N の k 乗になる事と、葉の資源の枠はその葉の effect の handler に置く事を書いた"
+    },
+    {
+      "id": "S4",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "Collection は記憶の中の値で保存の仕方を持たない。保存は呼び手の責務で、この変更は触らない"
+    },
+    {
+      "id": "S5",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "macro の展開と記憶の中の列の継ぎ方は機体の資源に依らない"
+    },
+    {
+      "id": "S6",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "件を別の機体で走らせる仕組みは handler(M3)の選び方で、この変更は handler の振る舞いを変えない。分散の handler は S1 の「handler を足す」に含めて検めた"
+    },
+    {
+      "id": "S7",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "展開と flatten は時間・乱数を使わず決定的。答えの順は件の番号の順で、終わった順に依らない(S3 の対照)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "直しと契約の検の後の木で、出荷する handler の全部(sequential・parallel 1/2・parallel_fail_fast 1/2)が From 2 つ・3 つの for/do に組ごとの平らな答えを返す。focused の 6 file が緑",
+      "observation": "74 passed(tests/test_for_do_runtime.py の 12 本を含む)",
+      "evidence": {
+        "path": "evidence/fix/focused-at-final.txt",
+        "sha256": "10194d403a16429219b0a3c6a4ed4489fca5faf18d062779611ecc49a8fee05c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A の変更(枠を Traverse ごとでなく handler に 1 つ)を出荷する parallel に当てた overlay で、契約の検が SchedulerDeadlockError で赤",
+      "observation": "test_nested_froms_answer_under_every_shipped_handler[parallel-1]・[parallel-2] と既存の parallel の検が SchedulerDeadlockError で FAILED(3 failed・9 passed)。overlay の handlers.py を import した事を path で確かめた",
+      "evidence": {
+        "path": "evidence/a/A-after-contract-test.txt",
+        "sha256": "5f5590a21a0ee866f76dda5e1eefbd604b58a8992e59c97da3d9da134a0470e7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "6ee49cc2 で盲検 A の失敗例が成立する(handler に 1 つの枠を持つ handler は From 1 つで正しく、From 2 つで止まる)",
+      "observation": "N=2 の From 1 つは [0..5]・From 2 つ(3×2)は SchedulerDeadlockError・本体の <- の for/do も DEADLOCK",
+      "evidence": {
+        "path": "evidence/a/A-repro-at-6ee49cc2.txt",
+        "sha256": "84cd066ef97f6aa1deb5605c9c0b1ef9a9521bf90f06d0d521b290e8e52f51f7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の 4b254ec2 でも、本体の <- で受けた for/do は同じ handler で止まる(再入の義務は直す前から在った)",
+      "observation": "本体の <- の for/do は DEADLOCK・From 2 つの for/do は Traverse の effect を返す(直した不具合)",
+      "evidence": {
+        "path": "evidence/a/A-repro-at-4b254ec2.txt",
+        "sha256": "e38ba29c0988128a310b2dd709a385a7a699ceb7e7ce4eaea0751d517623595e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "6ee49cc2 で盲検 B の失敗例が成立する: B の sequential を当てた overlay で提示の検査が通り、進捗の数が答えの件の数と食い違う(静的な強制を置かない限界の実測)",
+      "observation": "overlay の import を path で確かめ、16 passed。D1 は ('users', 8, 6)・D2 は答え 4 件に進捗 5・D3 は 2 度目の run に 1 度目の段が残る",
+      "evidence": {
+        "path": "evidence/b/B-repro-at-6ee49cc2.txt",
+        "sha256": "5198874bc418488b4937ada5536eb81f44e4c372386b9146dc8aceb567e31341"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "今の flatten で、外の When と内の失敗の位置と履歴を撃つ検が通る",
+      "observation": "all_items は 5 件(外の skip の件 3 を含む)・test_skips_and_failures_of_both_froms_keep_their_places は passed",
+      "evidence": {
+        "path": "evidence/s2/S2-control.txt",
+        "sha256": "37ba224bc4b799c29787befce3cba0a5e30d04ac00dc940bd3716cded1ac7a00"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "flatten だけを「落ちた外の件を外す」に替えると(M1・M3 は替えない)、出荷する handler の答えから外の skip の件が消え、決まりを撃つ検が赤",
+      "observation": "valid_values は同じ・all_items は 4 件(外の skip の件が消えた)・検は AssertionError",
+      "evidence": {
+        "path": "evidence/s2/S2-control.txt",
+        "sha256": "37ba224bc4b799c29787befce3cba0a5e30d04ac00dc940bd3716cded1ac7a00"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "sequential・parallel 4・parallel_fail_fast 4 の答えが番号の順 [110 120 130 210 220 230]",
+      "observation": "3 つの handler とも index_order=True",
+      "evidence": {
+        "path": "evidence/s3/S3-control.txt",
+        "sha256": "915f4a81ddfa67e094fa8b75c6afd97b43f66a5444712a5e675117865108ee2a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "葉の件を後のほど先に終わるようにしても(終わった順が番号の順と違う)、parallel・parallel_fail_fast の答えは番号の順のまま",
+      "observation": "parallel-4・parallel_fail_fast-4 は finished_order が (1,30)(2,30)(1,20)… で finished_differs=True、index_order=True",
+      "evidence": {
+        "path": "evidence/s3/S3-control.txt",
+        "sha256": "915f4a81ddfa67e094fa8b75c6afd97b43f66a5444712a5e675117865108ee2a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "parallel(N) の N は Traverse 1 つごとの枠で、From を重ねると葉の同時の数が N の k 乗まで増える(docstring に書いた意味の実測)",
+      "observation": "concurrency 2: 平らな 16 件で 2・4×4 で 4・3×3×3 で 8。concurrency 3: 3・9・22",
+      "evidence": {
+        "path": "evidence/a/A-repro-at-6ee49cc2.txt",
+        "sha256": "84cd066ef97f6aa1deb5605c9c0b1ef9a9521bf90f06d0d521b290e8e52f51f7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C11",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前(失敗ケースの検だけ)の木で、From 2 つ・3 つの実行の検が赤(valid_values に Traverse)",
+      "observation": "4 failed・3 passed(At index 0 diff: Traverse(...) != 11 ほか)",
+      "evidence": {
+        "path": "evidence/fix/runtime-red-before-fix.txt",
+        "sha256": "f956ef0c78cf5039d385a7c06ad6028cec856a6c1e56b78940a89be8179ea9d3"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C12",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の木で、From 2 つの defk の型の検が赤(有効な値が Traverse[int, int] と読める)",
+      "observation": "2 failed・7 passed(test_two_froms_module_has_no_strict_error・test_two_froms_run_to_one_value_per_pair)",
+      "evidence": {
+        "path": "evidence/fix/static-red-before-fix.txt",
+        "sha256": "5134facac504c49687915f19b7fc9e91e4168d51edb62f65582c116e38523b55"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C13",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "flatten の self の型: Collection[Collection[int]] では Collection[int] と読め、Collection[int] に呼ぶと pyright strict が赤",
+      "observation": "information: Type of c.flatten() is Collection[int]・error: Could not bind method flatten because Collection[int] is not assignable to parameter self(reportAttributeAccessIssue)",
+      "evidence": {
+        "path": "evidence/types/flatten-types.txt",
+        "sha256": "6049f76c54f5e678d61a7002e0c5b64c66ae9e3ab640295c154b6417bc06fc3d"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

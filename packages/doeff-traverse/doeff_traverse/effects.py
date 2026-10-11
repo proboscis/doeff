@@ -76,6 +76,17 @@ class Traverse(EffectBase[Collection]):
     the inner handlers and themselves back around it), so ``f`` is declared in
     ``__doeff_runs_carried__``: a closure check reads ``f``'s body at the performing site
     (agora-redesign #2973).
+
+    Nesting: the Program ``f`` builds may itself perform Traverse to the same handler — a
+    for/do with several From binds does this for every outer item, as does a for/do bound
+    inside another one's body. A handler therefore runs each item program under itself and
+    does not hold a resource shared across Traverses (one semaphore for the whole handler,
+    a batch seat) while an item program runs: the outer item would keep it while waiting
+    for its inner items and the scheduler deadlocks. A bound on a leaf resource (an API
+    call) belongs to the handler of that leaf effect. Splicing the inner answers is not
+    the handler's job either: the for/do expansion applies Collection.flatten, so a
+    handler answers every Traverse alike and does not infer whether it is an inner From
+    (design check lt-BD5XYC8Z64P5YMHZDEAPKXQXK5).
     """
 
     __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"f"})

@@ -12,9 +12,11 @@ import types
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import hy.macros
+import pytest
+from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.collection import Collection
 from doeff_traverse.effects import Traverse
-from doeff_traverse.handlers import sequential
+from doeff_traverse.handlers import parallel, parallel_fail_fast, sequential
 
 from doeff import Pass, do, run
 from doeff import handler as program_handler
@@ -123,3 +125,25 @@ def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
     program = _eval("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (+ a b))")
     collection = run(scheduled(parallel(concurrency=2)(program)))
     assert collection.valid_values == [11, 21, 12, 22]
+
+
+# Traverse の handler の契約(設計検証 lt-BD5XYC8Z64P5YMHZDEAPKXQXK5 の盲検 A): 重ねた From の外の件の program は、内側の Traverse を
+# 同じ handler へもう一度出す。handler は件の program を自分の下で走らせ、Traverse をまたぐ資源(handler に 1 つの枠など)を件の
+# program の間に持ち続けない。持ち続ける handler は、外の件が枠を占めたまま内の件を待って止まる(枠 1 で必ず止まる)。
+# 出荷する handler の全部をここで回し、どれかがこの形に変わると赤になる。
+_SHIPPED_HANDLERS = {
+    "sequential": lambda: sequential(),
+    "parallel-1": lambda: parallel(concurrency=1),
+    "parallel-2": lambda: parallel(concurrency=2),
+    "parallel_fail_fast-1": lambda: parallel_fail_fast(concurrency=1),
+    "parallel_fail_fast-2": lambda: parallel_fail_fast(concurrency=2),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SHIPPED_HANDLERS))
+def test_nested_froms_answer_under_every_shipped_handler(name: str) -> None:
+    handler = _SHIPPED_HANDLERS[name]
+    two = _eval("(for/do (<- a (From [1 2 3])) (<- b (From [10 20])) (+ a b))")
+    three = _eval("(for/do (<- a (From [1 2])) (<- b (From [10 20])) (<- c (From [100 200])) (+ a b c))")
+    assert run(scheduled(handler()(two))).valid_values == [11, 21, 12, 22, 13, 23]
+    assert run(scheduled(handler()(three))).valid_values == [111, 211, 121, 221, 112, 212, 122, 222]

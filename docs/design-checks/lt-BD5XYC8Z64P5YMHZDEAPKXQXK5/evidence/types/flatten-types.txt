@@ -1,0 +1,12 @@
+== at 9abed41dbbcf40db60c6009481129f973fa194b7 + 作業木・pyright strict
+/tmp/dc-repro-a-8HzR/pyr/flatten_types.py
+  /tmp/dc-repro-a-8HzR/pyr/flatten_types.py:9:17 - information: Type of "c.flatten()" is "Collection[int]"
+  /tmp/dc-repro-a-8HzR/pyr/flatten_types.py:14:5 - error: Type of "flatten" is unknown (reportUnknownMemberType)
+  /tmp/dc-repro-a-8HzR/pyr/flatten_types.py:14:7 - error: Cannot access attribute "flatten" for class "Collection[int]"
+    Could not bind method "flatten" because "Collection[int]" is not assignable to parameter "self"
+      "Collection[int]" is not assignable to "Collection[Collection[_W@flatten]]"
+        Type parameter "_V@Collection" is covariant, but "int" is not a subtype of "Collection[_W@flatten]"
+          "int" is not assignable to "Collection[_W@flatten]" (reportAttributeAccessIssue)
+2 errors, 0 warnings, 1 information
+
+rc=1

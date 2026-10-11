@@ -190,6 +190,10 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
     Reduce/Zip/Inspect: same as sequential (these are inherently sequential).
 
     Items from generators are materialized before spawning.
+
+    `concurrency` bounds the items of one Traverse. Each nested From (or for/do bound in
+    an item) is its own Traverse with its own bound, so k nested From binds can run up to
+    concurrency**k leaf items at once; bound a leaf resource in the handler of its effect.
     """
     from doeff_core_effects.effects import Try
     from doeff_core_effects.scheduler import (

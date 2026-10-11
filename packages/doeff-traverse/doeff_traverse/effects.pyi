@@ -31,7 +31,12 @@ class Fail(EffectBase[Any]):
     def __init__(self, cause: object, **context: object) -> None: ...
 
 class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
-    """items の各件に f を当てる(順・並列は handler が決める)。答えは f の答えを有効な件の値に持つ Collection。"""
+    """items の各件に f を当てる(順・並列は handler が決める)。答えは f の答えを有効な件の値に持つ Collection。
+
+    f の Program は同じ handler へ Traverse をもう一度出しうる(重ねた From・本体で受けた for/do)。handler は件の Program を自分の
+    下で走らせ、Traverse をまたぐ資源を件の Program の間に持ち続けない。内側の答えを平らにするのは展開(Collection.flatten)で、
+    handler は内側の From かを推さない(effects.py の docstring・設計検証 lt-BD5XYC8Z64P5YMHZDEAPKXQXK5)。
+    """
 
     # f が作る Program を出した所の handler の下で走らせる宣言(閉じの検が f の本体を出した所で読む・agora-redesign #2973)。
     __doeff_runs_carried__: ClassVar[frozenset[str]]

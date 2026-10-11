@@ -1,0 +1,4 @@
+== at 9abed41dbbcf40db60c6009481129f973fa194b7 + 作業木(contract test・docstring・README)
+== uv run --no-sync pytest -q tests/test_for_do_runtime.py packages/doeff-hy/tests/test_static_check_for_do.py packages/doeff-traverse/tests/test_traverse_answer_types.py packages/doeff-traverse/tests/test_sequential_item_failures.py packages/doeff-traverse/tests/test_traverse_effect_type_filter.py tests/effects/test_traverse.py
+74 passed, 1 warning in 16.99s
+rc=0
