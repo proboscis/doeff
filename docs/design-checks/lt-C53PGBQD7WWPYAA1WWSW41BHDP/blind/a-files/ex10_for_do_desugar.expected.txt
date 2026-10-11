@@ -1,0 +1,5 @@
+=== for/do の展開 ===
+'(_doeff_traverse_Traverse (_doeff_do (fn [x] (do (* x 2)))) items :label "double")
+
+=== 走らせた答え ===
+Valid: [2, 4, 6]

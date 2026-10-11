@@ -1,0 +1,19 @@
+--- /tmp/ki3497-blind-A/tree/packages/doeff-hy/src/doeff_hy/macros.hy	2026-10-11 23:17:21.000000000 +0000
++++ /tmp/ki3497-blind-A/case-b/packages/doeff-hy/src/doeff_hy/macros.hy	2026-10-11 23:26:57.304956467 +0000
+@@ -1482,10 +1482,13 @@
+                  (_doeff_traverse_Traverse ~step ~items-ref :label ~label))
+             `(do (setv ~items-ref ~items)
+                  (_doeff_traverse_Traverse ~step ~items-ref))))
+-      (let [step `(_doeff_do (fn [~param] (do ~inner-body)))]
++      (let [step `(_doeff_do (fn [~param] (do ~inner-body)))
++            items-ref (hy.gensym "items")]
+         (if (is-not label None)
+-            `(_doeff_traverse_Traverse ~step ~items :label ~label)
+-            `(_doeff_traverse_Traverse ~step ~items)))))
++            `(do (setv ~items-ref ~items)
++                 (_doeff_traverse_Traverse ~step ~items-ref :label ~label))
++            `(do (setv ~items-ref ~items)
++                 (_doeff_traverse_Traverse ~step ~items-ref))))))
+ 
+ (defmacro traverse [#* forms]
+   "Applicative traverse — batch processing with handler-injected strategy.

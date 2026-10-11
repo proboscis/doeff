@@ -1,0 +1,60 @@
+        )
+E       AssertionError: --- expected/ex10_for_do_desugar.txt
+E         +++ 標準出力
+E         @@ -1,5 +1,5 @@
+E          === for/do の展開 ===
+E         -'(_doeff_traverse_Traverse (_doeff_do (fn [x] (do (* x 2)))) items :label "double")
+E         +'(_doeff_traverse_Traverse (_doeff_do (fn [x] (* x 2))) items :label "double")
+E          
+E          === 走らせた答え ===
+E          Valid: [2, 4, 6]
+E       assert False
+E        +  where False = _matches('=== for/do の展開 ===\n\'(_doeff_traverse_Traverse (_doeff_do (fn [x] (do (* x 2)))) items :label "double")\n\n=== 走らせた答え ===\nValid: [2, 4, 6]\n', '=== for/do の展開 ===\n\'(_doeff_traverse_Traverse (_doeff_do (fn [x] (* x 2))) items :label "double")\n\n=== 走らせた答え ===\nValid: [2, 4, 6]\n')
+E        +    where '=== for/do の展開 ===\n\'(_doeff_traverse_Traverse (_doeff_do (fn [x] (do (* x 2)))) items :label "double")\n\n=== 走らせた答え ===\nValid: [2, 4, 6]\n' = read_text(encoding='utf-8')
+E        +      where read_text = PosixPath('/tmp/ki3497-blind-A/case-a/packages/doeff-traverse/examples/expected/ex10_for_do_desugar.txt').read_text
+E        +    and   '=== for/do の展開 ===\n\'(_doeff_traverse_Traverse (_doeff_do (fn [x] (* x 2))) items :label "double")\n\n=== 走らせた答え ===\nValid: [2, 4, 6]\n' = CompletedProcess(args=['/home/ubuntu/repos/doeff/.venv/bin/python', '-m', 'hy', '/tmp/ki3497-blind-A/case-a/packages/d...raverse_Traverse (_doeff_do (fn [x] (* x 2))) items :label "double")\n\n=== 走らせた答え ===\nValid: [2, 4, 6]\n', stderr='').stdout
+
+packages/doeff-traverse/tests/test_examples_run.py:229: AssertionError
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex01_basic_fail.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex02_traverse_pipeline.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex03_zip_multi_source.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_simple.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_traverse_macro.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex06_mediagen_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex08_tqdm_progress.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex09_for_do_when.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex10_for_do_desugar.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex01_basic_fail.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex02_traverse_pipeline.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex03_zip_multi_source.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_simple.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex06_mediagen_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex01_basic_fail.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex02_traverse_pipeline.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex03_zip_multi_source.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_simple.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_traverse_macro.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex05_parallel_timing.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex06_mediagen_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex07_proboscis_ema_rewrite.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex08_tqdm_progress.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex09_for_do_when.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex10_for_do_desugar.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_macro_check_sees_nested_forms
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_runner_call_check_sees_nested_forms
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_tables_name_examples_as_they_are
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_hy_name_check_sees_generated_names
+SKIPPED [1] packages/doeff-traverse/tests/test_examples_run.py:262: got empty parameter set for (name)
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_for_do_desugar.hy]
+1 failed, 38 passed, 1 skipped in 40.44s

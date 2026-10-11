@@ -1,0 +1,31 @@
+--- a/packages/doeff-traverse/examples/ex04_traverse_macro.hy
++++ b/packages/doeff-traverse/examples/ex04_traverse_macro.hy
+@@ -194,3 +194,19 @@
+   (for [h item.history]
+     (print (+ "      stage=" (str h.stage) " event=" h.event
+               (if h.detail (+ " detail=" h.detail) "")))))
++
++;; ===========================================================================
++;; What traverse becomes — the CPS conversion described at the top
++;;
++;; Stage 3 of the pipeline, as the macro rewrites it: the per-item body becomes
++;; a function (the thunk the handler calls once per item) and Iterate becomes a
++;; Traverse effect over the items. This is why the handler, not the pipeline,
++;; decides sequential vs parallel.
++;; ===========================================================================
++
++(print)
++(print "=== what traverse expands to (stage 3) ===")
++(print (hy.repr (hy.macroexpand
++  '(traverse
++     (<- v (Iterate features :label "normalize"))
++     (normalize-value v mean)))))
+--- a/packages/doeff-traverse/examples/expected/ex04_traverse_macro.txt
++++ b/packages/doeff-traverse/examples/expected/ex04_traverse_macro.txt
+@@ -22,3 +22,6 @@
+   [4] OK: value=30.0
+       stage=extract event=ok
+       stage=normalize event=ok
++
++=== what traverse expands to (stage 3) ===
++'(_doeff_traverse_Traverse (_doeff_do (fn [v] (do (normalize-value v mean)))) features :label "normalize")
