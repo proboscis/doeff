@@ -8,7 +8,9 @@
   `parallel_fail_fast` report each item's outcome (`ok` / `failed` / `skipped` / `carried`) under the handlers between
   the Traverse and themselves, while one of those handlers names `ItemOutcome`; and `progress_bars(make_bar)`, which
   counts them into one bar per Traverse (`tqdm.tqdm` fits) — the bar now reaches its total and closes when items fail
-  (card ki-e3a936788353).
+  (card ki-e3a936788353). Consumers pass each report on (only the Traverse handler answers it), so several compose in
+  any order; one that answers a report or throws into it fails the Traverse with `ItemOutcomeNotPassedError` (design
+  check lt-H07C2RG4T2BM59EENGQWQHSJKH).
 
 - Added `HttpRequest`, `HttpResponse`, and `HttpError` to `doeff-core-effects`.
 - Added Hy `defhandler`-backed `http_production_handler` with owned `httpx.AsyncClient` lifecycle

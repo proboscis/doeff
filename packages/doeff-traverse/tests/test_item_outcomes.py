@@ -18,7 +18,7 @@ import pytest
 from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.collection import Collection
-from doeff_traverse.effects import ItemOutcome, Skip, Traverse
+from doeff_traverse.effects import ItemOutcome, ItemOutcomeNotPassedError, Skip, Traverse
 from doeff_traverse.handlers import (
     fail_handler,
     parallel,
@@ -28,7 +28,7 @@ from doeff_traverse.handlers import (
 )
 from tqdm import tqdm
 
-from doeff import Pass, Program, do, run
+from doeff import Pass, Program, Resume, ResumeThrow, do, run
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
 
@@ -330,7 +330,7 @@ def test_nothing_is_reported_unless_a_handler_inside_names_item_outcome(name: st
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_a_report_no_handler_takes_is_answered_by_the_traverse_handler(name: str) -> None:
-    """名指すが受けずに Pass する handler の下でも、Traverse の handler が None で答えて走り終わる。"""
+    """名指すが受けずに Pass する handler の下でも、Traverse の handler が答えて走り終わる。"""
 
     @do
     def passes(effect: ItemOutcome, k):
@@ -341,3 +341,77 @@ def test_a_report_no_handler_takes_is_answered_by_the_traverse_handler(name: str
     )
     assert isinstance(second, Collection)
     assert second.valid_values == [11, 21, 41, 61]
+
+
+# 受け手の決まり(設計検証 lt-H07C2RG4T2BM59EENGQWQHSJKH の盲検 A・B): 受け手は知らせを見て外へ渡し、答えるのは Traverse の
+# handler だけ。A — 答えて止める受け手が 1 つ居ると、並び次第で別の受け手(2 本目の bar・失敗の記録)が黙って何も受けなかった。
+# B — 知らせに例外を投げ返す受け手(失敗の上限で Traverse を止める)が、Traverse の走り方の判断を受け手へ移したまま検を通った。
+
+
+@pytest.mark.parametrize("name", sorted(_STRATEGIES))
+@pytest.mark.parametrize("order", ["bars-inside", "bars-outside"])
+def test_consumers_compose_in_any_order(name: str, order: str) -> None:
+    """progress_bars 2 本と記録係は、どの並びでも全部の知らせを受ける(どれも渡すので)。"""
+    reports = _Reports()
+    bars, more_bars = _Bars(), _Bars()
+    consumers = [progress_bars(bars.make), reports.handler(), progress_bars(more_bars.make)]
+    _, second = _run_under(
+        _STRATEGIES[name](),
+        consumers if order == "bars-inside" else consumers[::-1],
+        _pipeline([1, 2, 3, 4, 5, 6]),
+    )
+    assert second.valid_values == [11, 21, 41, 61]
+    assert len(reports.seen) == 12
+    closed = [("first", 6, 6, True), ("second", 6, 6, True)]
+    assert (bars.states(), more_bars.states()) == (closed, closed)
+
+
+@pytest.mark.parametrize("name", sorted(_STRATEGIES))
+def test_a_consumer_that_answers_the_report_fails_the_traverse(name: str) -> None:
+    """知らせに答えて止める受け手は、外の受け手から知らせを隠す — Traverse の handler が ItemOutcomeNotPassedError で断る。"""
+
+    @do
+    def answers(effect: ItemOutcome, k):
+        return (yield Resume(k, None))
+
+    with pytest.raises(ItemOutcomeNotPassedError) as raised:
+        _run_under(_STRATEGIES[name](), [_program_handler(answers)], _pipeline([1, 2, 3, 4, 5, 6]))
+    assert raised.value.cause is None
+
+
+class _BudgetError(RuntimeError):
+    """受け手が投げ返す例外(Traverse を止めようとする受け手の形)。"""
+
+
+@do
+def _throws_back(effect: ItemOutcome, k):
+    if effect.outcome == "failed":
+        return (yield ResumeThrow(k, _BudgetError(f"failed at {effect.item.index}")))
+    yield Pass(effect, k)
+
+
+@do
+def _raises(effect: ItemOutcome, k):
+    if effect.outcome == "failed":
+        raise _BudgetError(f"failed at {effect.item.index}")
+    yield Pass(effect, k)
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [sequential, lambda: parallel(concurrency=2), lambda: parallel_fail_fast(concurrency=1)],
+    ids=["sequential", "parallel", "parallel_fail_fast"],
+)
+@pytest.mark.parametrize("consumer", [_throws_back, _raises], ids=["resume-throw", "raise"])
+def test_a_consumer_that_throws_into_the_report_fails_the_traverse(
+    strategy: Callable[[], ProgramHandler], consumer: Callable[..., object]
+) -> None:
+    """知らせに投げ返す受け手は Traverse を止める判断を握る — Traverse の handler が ItemOutcomeNotPassedError で断り、投げた物を cause に持つ。"""
+    with pytest.raises(ItemOutcomeNotPassedError) as raised:
+        _run_under(
+            strategy(),
+            [_program_handler(consumer)],
+            _traversed(_first, [1, 2, 3, 4], label="first"),
+        )
+    assert isinstance(raised.value.cause, _BudgetError)
+    assert raised.value.report.outcome == "failed"

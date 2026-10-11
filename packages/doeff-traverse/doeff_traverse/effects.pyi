@@ -89,7 +89,8 @@ ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried"]
 
 class ItemOutcome(EffectBase[None]):
     """Traverse の handler が件 1 つの結末を知らせる(effects.py の docstring)。Traverse と handler の間の handler の下で出し、
-    受け手が無ければ handler 自身が None で答える。間の handler のどれかが効果の引数の注記に ItemOutcome を名指す時だけ出す。"""
+    最後に handler 自身が答える。受け手は見て外へ渡す(答えない・投げない — 破れば ItemOutcomeNotPassedError)。
+    間の handler のどれかが効果の引数の注記に ItemOutcome を名指す時だけ出す。"""
 
     traverse: object
     label: str | None
@@ -99,6 +100,14 @@ class ItemOutcome(EffectBase[None]):
     def __init__(
         self, traverse: object, label: str | None, total: int, outcome: ItemOutcomeKind, item: ItemResult
     ) -> None: ...
+
+class ItemOutcomeNotPassedError(RuntimeError):
+    """ItemOutcome の受け手が知らせに答えたか投げ返した(渡さなかった)— Traverse の handler が知らせを出した所で上げる。
+    cause は受け手が投げた物、答えた時は None。"""
+
+    report: ItemOutcome
+    cause: BaseException | None
+    def __init__(self, report: ItemOutcome, cause: BaseException | None) -> None: ...
 
 class SortBy(EffectBase[Collection[_V]], Generic[_V]):
     """有効な件を key の順に並べ替える。"""
