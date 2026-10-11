@@ -30,6 +30,7 @@ import threading
 import time
 import warnings
 import weakref
+from collections import Counter
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, TypeVar
@@ -70,6 +71,13 @@ HANDLE_SWEEP_INTERVAL = 1024
 # registration time (#502): a long-lived PENDING promise whose owner mints
 # `.future` repeatedly must not accumulate dead refs until terminality.
 HANDLE_REFS_PRUNE_MIN = 8
+
+# Ready-heap entries that run a task when popped (the external-wait placeholder
+# does not); has_live_ready_entry counts the ones at or below the shield whose
+# owner is not cancelled.
+_RUNNABLE_ENTRY_KINDS = frozenset(("new", "resume", "raise", "sem_resume"))
+# The wake of a ready entry enqueued while no trace sink was installed.
+_UNTRACKED_WAKE = ("untracked", None)
 
 # 測りの口(agora-redesign #3861・#3855)。sink を据えると、Python の scheduler が出来事ごとに dict を 1 つ渡す。
 # sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない。
@@ -1090,6 +1098,22 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
     waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
     ready = []           # heapq: (-priority, seq, entry)
+    # 待ち手の表と走れる列の索引(card ki-1294af4fa525)。走っている手番ごとに待つ task が居るので、Cancel が待ち手の表を、
+    # 外の待ちの印が走れる列を毎回なめると、1 回の WaitWithin の仕事が待つ task の数で増えた。索引は waiters・ready を
+    # 書き換える入口(park_waiter・unpark_*・ready_push・ready_pop・ready_remove_at)だけが保つ。
+    parked_keys_of = {}  # owner_tid → {waitable_key: その task の entry の数}(waiters の逆の索引)
+    waiter_key_stamp = {}  # waitable_key → waiters に入った順の番号(task の鍵を waiters の順で返すため)
+    next_waiter_key_stamp = itertools.count()
+    # 外の待ちの印の下(優先度 PRIORITY_EXTERNAL_WAIT 以下)に並ぶ生きた entry(new・resume・raise・sem_resume で、持ち主が
+    # cancelled でない物)の数: 持ち主 → 数。持ち主が cancelled になった時(finish_cancelled)にその分を外す — cancelled は
+    # 終わりの状態で、その後に並べた entry は数えないので、持ち主の entry は全部 数えてあるか、全部 数えていないかのどちらか。
+    live_ready_of = {}
+    live_ready_count = [0, 0]  # [生きた entry の数, そのうち daemon でない物の数]
+    # 走れる列の entry の数を -priority → {起こされ方: 数} で(測りの口の ahead を、列をなめずに出すため)。測りの口が
+    # 開いている間だけ保つ。数え始めた時の口の番号(_trace_generation)が今の番号と違えば(据え直した・外していた間に
+    # 列が動いたかもしれない)、次に要る時に列から数え直す。
+    ready_wake_count = {}
+    ready_wake_count_generation = [None]
     # 外からの完了の列。SimpleQueue の put は reentrant(Python の文書 — signal の受け手・__del__ から呼んでよい)。
     # 止めの合図の受け手(stop_signal_handlers の StopBox.receive)は主 thread の上で bytecode の区切りに割り込み、
     # ExternalPromise.complete からこの列へ put する。主 thread がこの列の empty / get の中に居ても put は止まらない
@@ -1231,34 +1255,103 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """Add entry to priority queue. Higher priority = served first."""
         seq = insertion_seq[0]
         insertion_seq[0] += 1
-        heapq.heappush(ready, (-priority, seq, entry))
-        if _trace_sink is not None:
-            trace_enqueued(entry, priority, seq, wake)
-
-    def trace_enqueued(
-        entry: tuple[object, ...], priority: int, seq: int, wake: tuple[str, int | None] | None,
-    ) -> None:
-        """測りの口(#3861): 並べた entry の起こされ方を出す。前に並ぶ entry の数と起こされ方は、
-        外から起きた entry の時だけ数える(並べるたびに ready を舐めると、測りそのものが遅れを足す)。"""
-        kind, pid = (
+        if _trace_sink is None:
+            ready_push((-priority, seq, entry))
+            return
+        # 起こされ方は並べる前に覚える(ready_push がその起こされ方で数える)。
+        wake_of_seq[seq] = (
             ("placeholder", None) if entry[0] == "wait_external"
             else wake if wake is not None
             else wake_context[0]
         )
-        wake_of_seq[seq] = (kind, pid)
+        ready_push((-priority, seq, entry))
+        trace_enqueued(entry, priority, seq)
+
+    def trace_enqueued(entry: tuple[object, ...], priority: int, seq: int) -> None:
+        """測りの口(#3861): 並べた entry の起こされ方を出す。前に並ぶ entry の数と起こされ方は、
+        外から起きた entry の時だけ数える。前に並ぶ = 優先度が同じか高い entry(同じ優先度では今 並べた物が一番後ろ)で、
+        ready をなめずに (-priority, 起こされ方) ごとの数から足す(card ki-1294af4fa525 — なめは ready の長さで増えた)。"""
+        kind, pid = wake_of_seq[seq]
         if kind != "external":
             _trace("enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority)
             return
-        ahead = [
-            wake_of_seq.get(other_seq, ("untracked", None))[0]
-            for neg, other_seq, _entry in ready
-            if (neg, other_seq) < (-priority, seq)
-        ]
+        if ready_wake_count_generation[0] != _trace_generation:
+            # Not kept under this sink yet: count the heap once.
+            flat = Counter((neg, wake_of_seq.get(s, _UNTRACKED_WAKE)[0]) for neg, s, _e in ready)
+            ready_wake_count.clear()
+            ready_wake_count.update({
+                neg: Counter({name: n for (other, name), n in flat.items() if other == neg})
+                for neg, _name in flat
+            })
+            ready_wake_count_generation[0] = _trace_generation
+        at_or_above = sum(
+            (counts for neg, counts in ready_wake_count.items() if neg <= -priority), Counter()
+        )
+        ahead_by_wake = dict(at_or_above - Counter(external=1))  # 今 並べた物を外す
         _trace(
             "enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority,
-            ready=len(ready), ahead=len(ahead),
-            ahead_by_wake={name: ahead.count(name) for name in set(ahead)},
+            ready=len(ready), ahead=sum(ahead_by_wake.values()), ahead_by_wake=ahead_by_wake,
         )
+
+    def ready_push(heap_item: tuple[int, int, tuple[object, ...]]) -> None:
+        """Push onto the ready heap — the one way in, so the counts stay in step (card ki-1294af4fa525)."""
+        heapq.heappush(ready, heap_item)
+        # Only entries at or below the shield, or any entry while a sink is installed, are counted.
+        if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
+            count_ready(heap_item, 1)
+
+    def ready_pop() -> tuple[int, int, tuple[object, ...]]:
+        """Pop the first ready entry (and uncount it)."""
+        heap_item = heapq.heappop(ready)
+        if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
+            count_ready(heap_item, -1)
+        return heap_item
+
+    def ready_remove_at(index: int) -> tuple[int, int, tuple[object, ...]]:
+        """Take the ready entry at heap position ``index`` out (and uncount it)."""
+        heap_item = ready.pop(index)
+        heapq.heapify(ready)
+        count_ready(heap_item, -1)
+        return heap_item
+
+    def count_ready(heap_item: tuple[int, int, tuple[object, ...]], delta: int) -> None:
+        """Keep the counts in step with an entry entering (+1) or leaving (-1) the ready heap.
+
+        The trace's per-wake counts are kept while a sink is installed. A
+        runnable entry (new/resume/raise/sem_resume) at or below the
+        external-wait shield whose owner is not cancelled is counted live
+        for has_live_ready_entry; finish_cancelled uncounts the owner's.
+        """
+        neg, seq, entry = heap_item
+        if _trace_sink is not None and ready_wake_count_generation[0] == _trace_generation:
+            wakes = ready_wake_count.get(neg)
+            if wakes is None:
+                wakes = ready_wake_count[neg] = Counter()
+            wakes[wake_of_seq.get(seq, _UNTRACKED_WAKE)[0]] += delta
+        if neg < -PRIORITY_EXTERNAL_WAIT or entry[0] not in _RUNNABLE_ENTRY_KINDS:
+            return
+        owner = entry[1]
+        if delta > 0:
+            row = tasks.get(owner)  # None for the root
+            if row is None or row["status"] != "cancelled":
+                live_ready_of[owner] = live_ready_of.get(owner, 0) + 1
+                count_live(row, 1)
+            return
+        counted = live_ready_of.get(owner)
+        if counted is None:
+            return  # its owner is cancelled: never counted, or uncounted by finish_cancelled
+        if counted == 1:
+            del live_ready_of[owner]
+        else:
+            live_ready_of[owner] = counted - 1
+        count_live(tasks.get(owner), -1)
+
+    def count_live(row: dict[str, object] | None, delta: int) -> None:
+        """Move has_live_ready_entry's counts by ``delta`` entries of the owner whose task row is ``row`` (None for
+        the root)."""
+        live_ready_count[0] += delta
+        if row is None or not row.get("daemon", False):
+            live_ready_count[1] += delta
 
     def has_live_ready_entry(include_daemons):
         """True when the ready heap holds an entry that can still run.
@@ -1266,23 +1359,13 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         ``include_daemons=False`` asks the narrower question the
         external-wait shield needs: is there real (non-daemon) work below
         the shield? Placeholders are never "work"; cancelled owners are
-        dead entries.
+        dead entries. Asked only right after pick_next popped an
+        external-wait placeholder (PRIORITY_EXTERNAL_WAIT), when every entry
+        still in the heap is at or below it — so it is answered from the
+        live counts ready_push keeps for those entries, not by walking the
+        heap (card ki-1294af4fa525).
         """
-        for _neg_prio, _seq, entry in ready:
-            kind = entry[0]
-            if kind == "new":
-                tid = entry[1]
-                if tasks[tid]["status"] == "cancelled":
-                    continue
-                if include_daemons or not is_daemon(tid):
-                    return True
-            elif kind in ("resume", "raise", "sem_resume"):
-                owner_tid = entry[1]
-                if is_owner_cancelled(owner_tid):
-                    continue
-                if include_daemons or not is_daemon(owner_tid):
-                    return True
-        return False
+        return live_ready_count[0 if include_daemons else 1] > 0
 
     def is_live_daemon_entry(entry):
         """True for a runnable entry owned by a live daemon task."""
@@ -1457,13 +1540,67 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         elif status == "pending":
             promise.setdefault("cancel_callbacks", []).append(callback)
 
+    def park_waiter(key: tuple[str, int], entry: tuple[object, ...]) -> None:
+        """Register ``entry`` (owned by ``entry[1]``) under ``key``: the one way into ``waiters``, so its reverse index
+        (parked_keys_of) and key order (waiter_key_stamp) stay in step."""
+        entries = waiters.get(key)
+        if entries is None:
+            entries = waiters[key] = []
+            waiter_key_stamp[key] = next(next_waiter_key_stamp)
+        entries.append(entry)
+        owned = parked_keys_of.get(entry[1])
+        if owned is None:
+            owned = parked_keys_of[entry[1]] = {}
+        owned[key] = owned.get(key, 0) + 1
+
+    def unpark_key(key: tuple[str, int]) -> list[tuple[object, ...]]:
+        """Take every entry under ``key`` out of ``waiters`` (answers them; [] when none)."""
+        entries = waiters.pop(key, None)
+        if entries is None:
+            return []
+        del waiter_key_stamp[key]
+        unindex_parked(key, entries)
+        return entries
+
+    def unpark_at(key: tuple[str, int], index: int) -> tuple[object, ...]:
+        """Take the one entry at ``index`` under ``key`` out of ``waiters`` (answers it)."""
+        entries = waiters[key]
+        entry = entries.pop(index)
+        if not entries:
+            del waiters[key]
+            del waiter_key_stamp[key]
+        unindex_parked(key, (entry,))
+        return entry
+
+    def keep_waiters(
+        key: tuple[str, int], kept: list[tuple[object, ...]], removed: list[tuple[object, ...]],
+    ) -> None:
+        """Leave only ``kept`` under ``key`` after a Gather/Race withdrew ``removed`` from it."""
+        if kept:
+            waiters[key] = kept
+        else:
+            del waiters[key]
+            del waiter_key_stamp[key]
+        unindex_parked(key, removed)
+
+    def unindex_parked(key: tuple[str, int], removed: Iterable[tuple[object, ...]]) -> None:
+        """Drop entries just taken out of ``waiters[key]`` from the reverse index."""
+        for entry in removed:
+            owned = parked_keys_of[entry[1]]
+            if owned[key] == 1:
+                del owned[key]
+                if not owned:
+                    del parked_keys_of[entry[1]]
+            else:
+                owned[key] -= 1
+
     def keys_parked_by(tid: int) -> list[tuple[str, int]]:
-        """Waitable keys that hold a Wait/Gather/Race entry owned by ``tid``."""
-        return [
-            key
-            for key, entries in waiters.items()
-            if any(entry[1] == tid for entry in entries)
-        ]
+        """Waitable keys that hold a Wait/Gather/Race entry owned by ``tid``, in ``waiters``' order.
+
+        Read from the reverse index, so a Cancel does not walk every parked
+        waiter (card ki-1294af4fa525).
+        """
+        return sorted(parked_keys_of.get(tid, ()), key=waiter_key_stamp.__getitem__)
 
     def cancel_abandoned_external_promises(
         parked_keys: list[tuple[str, int]],
@@ -1498,7 +1635,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             entries = waiters.get(key, [])
             if any(not is_owner_cancelled(entry[1]) for entry in entries):
                 continue
-            waiters.pop(key, None)
+            unpark_key(key)
             promise["status"] = "cancelled"
             promise["result"] = TaskCancelledError()
             for callback in promise.pop("cancel_callbacks"):
@@ -1529,11 +1666,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """Detach a Wait/Gather/Race registration of ``tid`` (see above).
 
         The external-wait placeholder is claimed so it drops itself, and a
-        Gather/Race registration is resolved and removed from every key.
+        Gather/Race registration is resolved and removed from every key. Only
+        the keys ``tid`` is parked on are read (card ki-1294af4fa525).
         """
-        for key in list(waiters):
-            entries = waiters[key]
-            for index, entry in enumerate(entries):
+        for key in keys_parked_by(tid):
+            for index, entry in enumerate(waiters[key]):
                 if entry[1] != tid:
                     continue
                 entry_type = entry[0]
@@ -1547,9 +1684,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     return state["waiter_k"]
                 if entry_type == "wait_external":
                     entry[3][0] = True  # drop the paired ready placeholder
-                del entries[index]
-                if not entries:
-                    del waiters[key]
+                unpark_at(key, index)
                 return entry[2]
         return None
 
@@ -1562,8 +1697,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             entry = heap_item[2]
             if entry[0] not in ("resume", "raise", "sem_resume") or entry[1] != tid:
                 continue
-            ready.pop(index)
-            heapq.heapify(ready)
+            ready_remove_at(index)
             if entry[0] == "sem_resume":
                 return_inflight_permit(entry[3], tid)
             return entry[2]
@@ -1581,6 +1715,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     def finish_cancelled(tid: int, error: BaseException) -> None:
         """Make ``tid`` terminal as cancelled and wake whoever waits on it."""
         tasks[tid]["status"] = "cancelled"
+        # Its queued entries are dead from now on (has_live_ready_entry).
+        counted = live_ready_of.pop(tid, None)
+        if counted is not None:
+            count_live(tasks[tid], -counted)
         tasks[tid]["result"] = error
         wake_waiters(("task", tid))
         _release_task_refs(tid)
@@ -1805,7 +1943,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             while True:
                 drain()
                 while ready:
-                    heap_item = heapq.heappop(ready)
+                    heap_item = ready_pop()
                     entry = heap_item[2]
                     armed_step_budget = _armed_step_budget
                     if armed_step_budget is not None:
@@ -1924,7 +2062,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             # Restore every held tuple with its original (priority, seq) so
             # the heap looks exactly as if the deferral never happened.
             for heap_item in held:
-                heapq.heappush(ready, heap_item)
+                ready_push(heap_item)
 
     terminal_statuses = ("completed", "failed", "cancelled")
 
@@ -1987,7 +2125,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 ("wait_external", owner_tid, None, wk, claimed),
                 PRIORITY_EXTERNAL_WAIT,
             )
-        waiters.setdefault(wk, []).append((entry_type, owner_tid, state, claimed))
+        park_waiter(wk, (entry_type, owner_tid, state, claimed))
 
     def remove_gather_waiters(gather_state):
         """Remove unresolved waiter refs for a fail-fast Gather resolution."""
@@ -1995,20 +2133,18 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             entries = waiters.get(wk)
             if not entries:
                 continue
-            remaining_entries = []
-            for entry in entries:
-                if entry[0] == "gather" and entry[2] is gather_state:
-                    if entry[3] is not None:
-                        # Drop the paired external-wait placeholder (#505) so
-                        # it cannot block the run on a completion nobody
-                        # observes anymore.
-                        entry[3][0] = True
-                    continue
-                remaining_entries.append(entry)
-            if remaining_entries:
-                waiters[wk] = remaining_entries
-            else:
-                waiters.pop(wk, None)
+            withdrawn = [e for e in entries if e[0] == "gather" and e[2] is gather_state]
+            for entry in withdrawn:
+                if entry[3] is not None:
+                    # Drop the paired external-wait placeholder (#505) so
+                    # it cannot block the run on a completion nobody
+                    # observes anymore.
+                    entry[3][0] = True
+            keep_waiters(
+                wk,
+                [e for e in entries if not (e[0] == "gather" and e[2] is gather_state)],
+                withdrawn,
+            )
 
     def resolve_gather_with_error(gather_state, error):
         """Resolve a Gather with an error; returns the wake priority used."""
@@ -2048,20 +2184,18 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             entries = waiters.get(wk)
             if not entries:
                 continue
-            remaining_entries = []
-            for entry in entries:
-                if entry[0] == "race" and entry[2] is race_state:
-                    if entry[3] is not None:
-                        # Drop the paired external-wait placeholder (#505):
-                        # the losing external promise may never complete and
-                        # must not keep blocking the drain loop.
-                        entry[3][0] = True
-                    continue
-                remaining_entries.append(entry)
-            if remaining_entries:
-                waiters[wk] = remaining_entries
-            else:
-                waiters.pop(wk, None)
+            withdrawn = [e for e in entries if e[0] == "race" and e[2] is race_state]
+            for entry in withdrawn:
+                if entry[3] is not None:
+                    # Drop the paired external-wait placeholder (#505):
+                    # the losing external promise may never complete and
+                    # must not keep blocking the drain loop.
+                    entry[3][0] = True
+            keep_waiters(
+                wk,
+                [e for e in entries if not (e[0] == "race" and e[2] is race_state)],
+                withdrawn,
+            )
 
     def wake_race_waiter(race_state, completed_key):
         """Returns the wake priority if the Race owner was queued, else None."""
@@ -2089,7 +2223,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         nothing was queued), so CompletePromise/FailPromise can guarantee the
         completer resumes only after every task its resolution woke (#493).
         """
-        ws = waiters.pop(completed_key, [])
+        ws = unpark_key(completed_key)
         woken_min = None
         for w in ws:
             queued_at = None
@@ -2294,9 +2428,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         # priority: the waiter wakes at its own task priority
                         # (wake_priority=None). Waking at IDLE would starve
                         # it behind the PRIORITY_EXTERNAL_WAIT shield.
-                        waiters.setdefault(wk, []).append(
-                            ("wait", current_tid, k, None)
-                        )
+                        park_waiter(wk, ("wait", current_tid, k, None))
                     else:
                         # Register in `waiters` too so the resume is enqueued
                         # by wake_waiters the moment the completion is drained
@@ -2306,8 +2438,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         # the blocking drain; `claimed` marks that the waiters
                         # side owns the (one-shot) resume.
                         claimed = [False]
-                        waiters.setdefault(wk, []).append(
-                            ("wait_external", current_tid, k, claimed, effect.priority)
+                        park_waiter(
+                            wk, ("wait_external", current_tid, k, claimed, effect.priority)
                         )
                         enqueue(
                             ("wait_external", current_tid, k, wk, claimed),
@@ -2318,9 +2450,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     # tasks). An explicit Wait priority is honored as the
                     # wake priority (#504); None wakes at the waiter's own
                     # task priority.
-                    waiters.setdefault(wk, []).append(
-                        ("wait", current_tid, k, effect.priority)
-                    )
+                    park_waiter(wk, ("wait", current_tid, k, effect.priority))
                 yield TailEval(pick_next())
 
         elif isinstance(effect, Gather):
