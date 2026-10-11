@@ -424,6 +424,11 @@
 (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
                    ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded Other Unparsed))
 
+;; ターンを名乗る記録(params の turnId か turn.id でターンの id を必ず持つ記録)。どの記録がターンを名乗るかは codex の行の形から
+;; 決まる知識なので、記録の型と同じこの file が 1 か所で名乗る — handler はこの集まりで記録をターンの列へ振り分け、記録の class を
+;; 列挙しない。ターンの id を必ず持つ記録を足したらここにも足す(tests/test_turn_records.hy が一致を確かめる)。
+(val TurnRecord (| TurnStarted TextDelta ReasoningDelta AgentMessageDone ItemStarted ItemDone TokenUsage TurnError TurnEnded))
+
 (defrecord ErrorFacts
   "codexErrorInfo から読んだ誤りの種類の名(この版に無い形は UnknownValue)と HTTP の status(どちらも名乗らなければ None)。"
   {:tags {:context "codex" :role "type"}}

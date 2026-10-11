@@ -85,6 +85,7 @@
     "doeff-agents-charter-carried-key-hand-written-in-a-roster",
     "doeff-agents-claude-md-excludes-spelling-has-one-home",
     "doeff-agents-cli-monitoring-uses-agentd",
+    "doeff-agents-decodes-no-wire-json",
     "doeff-agents-does-not-spell-seat-facing-env",
     "doeff-agents-driver-lookup-reads-only-the-path",
     "doeff-agents-executable-lookup-has-one-home",
