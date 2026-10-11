@@ -12,7 +12,8 @@
                          repo の全部の file。doeff-linter は、基点が名乗る組み立ての入力の鍵と同じ鍵の binary を land-arm の
                          開発版 → 断面の置き場から探して呼ぶ(scripts/doeff_linter_locked.py・#2906 — 探し道の linter は見ない)。
                          置き場に無ければ(linter を変えた便の commit の間・land-arm が組み直すまでの数分)、赤でも緑でもなく
-                         「測れない」と名指して通す — hook の中では組まない。semgrep の版は木の中の uv.lock だけで決まる
+                         「測れない」と名指して通す — hook の中では組まない。--strict(日次)は、木の linter の組み立ての
+                         入力の鍵が基点の鍵と違えば赤(linter を変えた便が lower していない)。semgrep の版は木の中の uv.lock だけで決まる
                          (scripts/semgrep_locked.py・#2906)ので、基点と違えば「lock を上げたのに数え直していない」木として赤。
   lower <道具>           repo の全部の file を測り、基点を今の数まで下げ、版をその道具の版にする(上げない・新しい組を足さない)。
                          直した便と、道具の版を変えた便が実行して stage する。今の版で基点より増えた組は下げられないので名指す。
@@ -373,6 +374,15 @@ def _check(top: Path, tool: str, baseline: Baseline, paths: list[str], unmeasure
         print(f"semgrep: 基点の版 {baseline.version} と uv.lock の版 {instrument.version} が違う — lock を上げた便が "
               "`uv run --no-project python scripts/hook_finding_baseline.py lower semgrep` で基点を数え直し、同じ commit に入れる",
               file=sys.stderr)
+        return 1
+    if tool == "doeff-linter" and unmeasured_rc and (head := input_key(top, "HEAD")) not in (None, baseline.version):
+        # 日次(--strict)だけ: 基点の鍵の binary で測れても、木の linter の規則は別物(linter を変えて基点を数え直していない)。
+        # 黙って古い規則で測ると、数え直しの代価が次に鍵を替える便へ溜まる(10-03〜10-11 に linter の入力を変えた commit 28 本・
+        # 基点を書いた commit 0 本 — 設計検証 lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP の盲検 A)。hook は止めない(他人の linter の変更で、
+        # その後の全部の commit を止めない)。git の無い木は HEAD の鍵が無いので照らさない。
+        print(f"doeff-linter: 木の linter の組み立ての入力({head})が基点の版({baseline.version})と違う — linter を変えた便が "
+              "自分の build を `uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` "
+              "で渡して基点を数え直し、判定に入る所見を同じ便で直す(--strict: 古い規則の linter で黙って測らない)", file=sys.stderr)
         return 1
     checked: list[str] = (
         [p for p in paths if not (tool == "semgrep" and p.startswith(SEMGREP_FIXTURES))] if paths else population(top, tool)

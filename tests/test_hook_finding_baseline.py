@@ -420,6 +420,28 @@ def test_strict_turns_unmeasured_red(tmp_path: Path) -> None:
     assert _run(rig, "check", "doeff-linter").returncode == 0
 
 
+def test_strict_names_a_linter_changed_past_the_baseline_and_turns_it_red(tmp_path: Path) -> None:
+    # 失敗ケース(設計検証 lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP の盲検 A): linter の src を変えて基点を数え直していない木でも、基点の鍵の
+    # binary が在れば、日次は規則の古い linter で黙って測り、鍵の違いを名乗らなかった(実例: 10-03〜10-11 に linter の入力を変えた
+    # commit 28 本・基点を書いた commit 0 本)。
+    rig = _rig(tmp_path)
+    assert _run(rig, "init", "doeff-linter").returncode == 0
+    built_for = _baseline_version(rig)
+    changed = _change_linter_source(rig, "fn main() { /* 規則を変えた */ }\n")
+    moved = _run(rig, "--strict", "check", "doeff-linter")
+    assert moved.returncode == 1
+    assert built_for in moved.stderr
+    assert str(LINTER_LOCKED.input_key(rig.repo, changed)) in moved.stderr
+    assert "lower doeff-linter" in moved.stderr
+    # hook(--strict なし)は基点の鍵の linter で測って通す — 他人の linter の変更で、その後の全部の commit を止めない。
+    assert _run(rig, "check", "doeff-linter").returncode == 0
+    # linter を変えた便が自分の build で数え直せば、日次も通る。
+    built = _place_linter(tmp_path / "built", changed)
+    assert _run(rig, "--linter", str(built), "lower", "doeff-linter").returncode == 0
+    _install_dev(rig, changed)
+    assert _run(rig, "--strict", "check", "doeff-linter").returncode == 0
+
+
 def test_a_recorded_key_measures_a_tree_without_git(tmp_path: Path) -> None:
     rig = _rig(tmp_path)
     assert _run(rig, "init", "doeff-linter").returncode == 0
