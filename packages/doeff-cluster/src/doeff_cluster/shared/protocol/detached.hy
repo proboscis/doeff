@@ -29,6 +29,7 @@
 (import doeff_cluster.shared.protocol.remote [program-put])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
+(import doeff_cluster.shared.core.detached_rules [task-placing-json])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmUnreachable WarmAnswer AwaitWarm WarmReady WarmFailed
@@ -340,13 +341,14 @@
           body)))
 
 
-(defk detached-submitted [cell options sender key blob needs name lease-seconds retain-seconds environ]
+(defk detached-submitted [cell options sender key blob needs name lease-seconds retain-seconds environ [placing {}]]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str) (: blob str) (: needs frozenset) (: name str)
-         (: lease-seconds float) (: retain-seconds float) (: environ dict)]
+         (: lease-seconds float) (: retain-seconds float) (: environ dict) (: placing dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "切り離した task を 1 本出すため: 詰めた Program を版と一緒に置き場 /programs/<sha> に先に置き、本文は sha だけを運ぶ(service の宣言と
    同じ運び方 — ADR-DOE-CLUSTER-001 R3b)。置きも送りも何度送っても同じ意味なので、通信の失敗を越えて送り直し、期限まで届かなければ
-   DetachedUnreachable(送れたかは分からない — key で冪等)。呼び手の誤りは DetachedRefused。"
+   DetachedUnreachable(送れたかは分からない — key で冪等)。呼び手の誤りは DetachedRefused。placing = 置き方の名乗りの本文の欄
+   (detached_rules.task-placing-json — 優先・同時数の上限)。"
   (<- put tuple (program-put cell options blob sender.versions sender.deadline-seconds))
   (setv #(sha stored) put)
   (when (isinstance stored HttpFailed)
@@ -356,8 +358,8 @@
   (when (is-not sender.runtime-env None)
     (<- env-json dict (runtime-env->json sender.runtime-env))
     (:= declared env-json))
-  (<- body dict (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
-  (<- sent (resent-answer cell options "PUT" (detached-path key "") None body sender.deadline-seconds))
+  (<- base dict (detached-submit-body sha sender.revision needs name lease-seconds retain-seconds declared environ))
+  (<- sent (resent-answer cell options "PUT" (detached-path key "") None (| base placing) sender.deadline-seconds))
   (when (isinstance sent HttpFailed)
     (return (submit-unreachable sent.detail)))
   (<- answer dict (detached-json sent))
@@ -507,12 +509,13 @@
 ;; 持っていた DetachedClient を替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す
 ;; 入れ物(RouteCell)。出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
 (defhandler detached-cluster [#^ RouteCell cell #^ RouteOptions options #^ DetachedSender sender #^ float [poll-seconds 1.0]]
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
     ;; effect の EnvVar の tuple を、coordinator への本文の形(名 → 値の object)へ綴る(#2179)。
     (<- environ-body dict (env-mapping environ))
-    (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body))
+    (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body
+                                      (task-placing-json priority limits)))
     (resume submitted))
   (AwaitDetached [key timeout-seconds]
     (<- outcome (await-cluster cell options sender key timeout-seconds poll-seconds))

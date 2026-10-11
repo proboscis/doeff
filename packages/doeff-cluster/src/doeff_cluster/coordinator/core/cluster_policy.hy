@@ -15,8 +15,10 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
+(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
@@ -878,7 +880,67 @@
    文は種類ごとに固定 — 待つ間に調停が拍ごとに書き換えて保存の版を進めない。"
   (match kind
     TaskUnplacedKind.TASK-NO-ROOM
-      "能力と版の合う worker は在るが、どれも task を置ける空きが無い(常駐の job と置かれた task で capacity が埋まっている)— 空くまで待つ"))
+      "能力と版の合う worker は在るが、どれも task を置ける空きが無い(常駐の job と置かれた task で capacity が埋まっている)— 空くまで待つ"
+    TaskUnplacedKind.TASK-LIMITED
+      "task の名乗った同時数の上限(limits)に達している — 同じ組の task が終わるまで待つ"
+    TaskUnplacedKind.TASK-RESERVED
+      "負の優先の task(背景の仕事)は worker の task-reserve を使わない — 予約を越える空きができるまで待つ"))
+
+
+(defk limit-slot [limit worker]
+  {:pre [(: limit TaskLimit) (: worker (| str None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "同時数の上限 1 つを数える升の鍵を知るため(置いている数を升ごとに数え、置く前に比べる): worker の範囲は #(範囲 組 worker)・
+   cluster の範囲は #(範囲 組 None)。"
+  #(limit.scope limit.group (if (= limit.scope "worker") worker None)))
+
+
+(defk limit-holdings [tasks]
+  {:pre [(: tasks dict)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "置いている(PLACED-PHASES の)task が名乗る上限の升ごとの数(limit-slot → 数)を知るため — place-tasks はこの数から始め、置くたびに
+   足す(hold-limits)。"
+  (var held {})
+  (for [t (.values tasks)]
+    (when (in t.phase PLACED-PHASES)
+      (<- more dict (hold-limits held t t.worker))
+      (:= held more)))
+  held)
+
+
+(defk hold-limits [held task worker]
+  {:pre [(: held dict) (: task TaskRecord) (: worker (| str None))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "task 1 本を worker に置いた後の上限の升ごとの数を知るため(held を変えずに新しい dict を返す)。"
+  (var after (dict held))
+  (for [l task.limits]
+    (<- slot tuple (limit-slot l worker))
+    (:= after (| after {slot (+ (.get after slot 0) 1)})))
+  after)
+
+
+(defk task-misfit [task worker room held]
+  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: room int) (: held dict)] :post [(: % (| TaskUnplacedKind None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "能力と版の合う worker 1 台に待っている task を今置けない理由を知るため(None = 置ける)。room = その worker の task の空き
+   (task-room-of)・held = 置いている task の上限の升ごとの数(limit-holdings)。空きが無い → TASK-NO-ROOM・名乗った上限のどれかに
+   達している → TASK-LIMITED・負の優先の task で、空きが worker の task-reserve 以下(置けば予約を食う)→ TASK-RESERVED(2026-10-11)。"
+  (var full False)
+  (for [l task.limits]
+    (<- slot tuple (limit-slot l worker.name))
+    (when (>= (.get held slot 0) l.limit) (:= full True)))
+  (cond
+    (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
+    full TaskUnplacedKind.TASK-LIMITED
+    (and (< task.priority 0) (<= room worker.task-reserve)) TaskUnplacedKind.TASK-RESERVED
+    True None))
+
+
+(defk misfit-reason [kinds]
+  {:pre [(: kinds list)] :post [(: % TaskUnplacedKind)] :tags {:context "coordinator" :role "judgment"}}
+  "置ける worker のどれにも置けない task の待ちの理由を 1 つに決めるため(kinds = worker ごとの task-misfit の答え・空でない)。
+   上限 → 予約 → 空きの順に、待てば晴れる理由の具体な物を名乗る。"
+  (cond
+    (in TaskUnplacedKind.TASK-LIMITED kinds) TaskUnplacedKind.TASK-LIMITED
+    (in TaskUnplacedKind.TASK-RESERVED kinds) TaskUnplacedKind.TASK-RESERVED
+    True TaskUnplacedKind.TASK-NO-ROOM))
 
 
 (setv DETACHED-TERMINAL #("finished" "code-failed" "env-failed" "failed" "version-mismatch" "lost" "cancelled"))
@@ -965,18 +1027,26 @@
   (setv placed (replace state :tasks tasks))
   (setv load (load-of placed placements)
         draining (draining-workers state now))
-  (for [id (sorted tasks)]
+  ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
+  (var held (! (limit-holdings tasks)))
+  ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
+  (for [id (sorted tasks :key (fn [i] #((- (. (get tasks i) priority)) i)))]
     (setv task (get tasks id))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
       (setv able (lfor w (.values state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
-      ;; task を置けるのは task の空き(task-room-of — capacity 全体から job・surge・置かれた task を引いた数)の在る worker だけ。
+      ;; task を置けるのは task の空き(task-room-of — capacity 全体から job・surge・置かれた task を引いた数)が在り、名乗った上限に
+      ;; 達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の理由は待ちの文に使う。
       (var roomy #())
+      (var misfits [])
       (for [w able-now]
         (<- room int (task-room-of w load))
-        (when (> room 0) (:= roomy #(#* roomy w))))
+        (<- misfit (| TaskUnplacedKind None) (task-misfit task w room held))
+        (if (is misfit None)
+            (:= roomy #(#* roomy w))
+            (:= misfits [#* misfits misfit])))
       ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
       ;; 次は担っている数(job と task の和)の少ない順。
       (setv free (sorted roomy :key (fn [w] #((not (env-ready-on task.runtime-env w))
@@ -988,16 +1058,18 @@
                                  "preparing" "assigned")
                        used (get load chosen.name)
                        (get load chosen.name) (replace used :tasks (+ used.tasks 1)))
+                 (<- after-hold dict (hold-limits held task chosen.name))
+                 (:= held after-hold)
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
                  (setv (get tasks id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
                                           (replace task :phase phase :worker chosen.name :started-ms now))))
-        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれも task を置ける空き(task-room-of)が 0: 失敗にせず待つ。
-        ;; 理由は閉じた語 TASK-NO-ROOM の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
+        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(空きが 0・上限・予約): 失敗にせず待つ。
+        ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now
-          (let [text (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))]
+          (let [text (! (task-unplaced-text (! (misfit-reason misfits))))]
             (when (!= task.detail text)
               (setv (get tasks id) (replace task :detail text))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
@@ -1747,7 +1819,8 @@
   {:pre [(: state ClusterState) (: body TaskBody) (: now int) (: owner (| str None))] :post [(: % tuple)]
    :tags {:context "coordinator" :role "judgment"}}
   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
-  (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)))
+  (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)
+                    (task-priority-refusal body.priority) (task-limits-refusal body.limits)))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。
   (setv lease-value (if (is body.lease-seconds None) 15.0 body.lease-seconds))
@@ -1767,7 +1840,8 @@
                          (needs-named body.needs body.requires "task の needs")
                          lease-ms (+ now lease-ms) now
                          :runtime-env body.runtime-env
-                         :environ (environ-pairs (or body.environ {}))))
+                         :environ (environ-pairs (or body.environ {}))
+                         :priority (or body.priority 0) :limits (task-limits-of body.limits)))
   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
 
 

@@ -180,6 +180,7 @@
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
+(import doeff_cluster.shared.core.detached_rules [task-placing-json])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable])
@@ -1308,13 +1309,14 @@
           declared)))
 
 
-(defk submit-detached [link program key needs name lease-seconds retain-seconds environ]
+(defk submit-detached [link program key needs name lease-seconds retain-seconds environ [placing {}]]
   {:pre [(: link SimLink) (: program (| Program EffectBase)) (: key str) (: needs frozenset) (: name str) (: lease-seconds float)
-         (: retain-seconds float) (: environ dict)]
+         (: retain-seconds float) (: environ dict) (: placing dict)]
    :post [(: % DetachedSubmitAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "SubmitDetached を本番の detached-cluster(detached-submitted)と同じ手順で送るため: 詰めた Program を版と一緒に PUT /programs/<sha> に置き、PUT /detached/<key>
    (detached-submit-body)で出す。どちらも何度送っても同じ意味なので期限まで送り直し、届かなければ DetachedUnreachable(送れたかは
-   分からない — key で冪等)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。"
+   分からない — key で冪等)。送れない値は送る前に断る(UnsendableProgram)・呼び手の誤りは DetachedRefused。placing = 置き方の名乗りの
+   本文の欄(detached_rules.task-placing-json)。"
   (val blob (encode-program program))
   (val sha (program-sha blob))
   (<- put tuple (send-resent link "PUT" (+ "/programs/" sha) {} {"blob" blob "versions" link.versions}))
@@ -1323,7 +1325,7 @@
       (do (refused-or-body put "task の Program を置けない")
           (<- declared (| dict None) (declared-env link.runtime-env))
           (<- body dict (detached-submit-body sha link.revision needs name lease-seconds retain-seconds declared environ))
-          (<- sent tuple (send-resent link "PUT" (detached-path key "") {} body))
+          (<- sent tuple (send-resent link "PUT" (detached-path key "") {} (| body placing)))
           (if (is (get sent 0) None)
               (submit-unreachable (unreached-reason sent))
               (DetachedSubmitted key (get (refused-or-object sent "task を出せない") "created"))))))
@@ -1670,10 +1672,11 @@
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits]
     ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
     (<- environ-body dict (env-mapping environ))
-    (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body))
+    (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
+                                   (task-placing-json priority limits)))
     (resume submitted))
   (AwaitDetached [key timeout-seconds]
     (<- awaited (await-detached link key timeout-seconds))

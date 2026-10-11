@@ -15,6 +15,7 @@ from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.coordinator.intent.request_bodies import StatusRow as StatusRow
 from doeff_cluster.coordinator.intent.request_bodies import DurationRow as DurationRow
+from doeff_cluster.shared.intent.detached_model import TaskLimit as TaskLimit
 
 class ComponentVersion(NamedTuple):
     component: str
@@ -355,6 +356,8 @@ class UnplacedKind(StrEnum):
 
 class TaskUnplacedKind(StrEnum):
     TASK_NO_ROOM = 'task-no-room'
+    TASK_LIMITED = 'task-limited'
+    TASK_RESERVED = 'task-reserved'
 
 class NotReadyKind(StrEnum):
     NO_DECLARATION = 'no-declaration'
@@ -650,6 +653,8 @@ class TaskRecord:
     failure_kind: str = ''
     retryable: bool = False
     environ: tuple[tuple[str, str], ...] = ...
+    priority: int = 0
+    limits: tuple[TaskLimit, ...] = ...
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 

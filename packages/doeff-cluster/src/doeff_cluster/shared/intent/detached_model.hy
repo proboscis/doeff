@@ -28,6 +28,21 @@
 (setv DETACHED-DEFAULT-RETAIN-SECONDS 86400.0)   ; 終わった後に結果を持っておく長さ
 
 
+;; --- task の置き方の名乗り(2026-10-11)------------------------------------------------
+;; task の同時数の上限の範囲: worker = 置いた worker ごとに数える・cluster = cluster の全体で数える。
+(val TASK-LIMIT-SCOPES (frozenset #("worker" "cluster")))
+
+
+(defrecord TaskLimit
+  "task が名乗る同時数の上限 1 つ(2026-10-11 — Airflow の pool の形): group = 組の名(同じ名と範囲を名乗る task を数える)・limit = 置いて
+   いる(PLACED-PHASES の)task の数の上限(1 以上)・scope = 数える範囲(TASK-LIMIT-SCOPES — worker か cluster)。上限は送り手が名乗り、
+   coordinator の置き方(coordinator の cluster_policy.place-tasks)が守る — 上限に達した組の task は失敗にせず queued のまま待つ。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str group)
+  (#^ int limit)
+  (#^ str scope))
+
+
 ;; --- effect ----------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] SubmitDetached [EffectBase]
@@ -44,6 +59,10 @@
   ;; 子の環境変数(EnvVar の tuple・既定は空 — 名と値の規則は service の :environ と同じ EnvVar 1 つ)。同じ key の送り直しで違えば
   ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
   (setv #^ (get tuple #(EnvVar ...)) environ #())
+  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の task-reserve を使わない)と同時数の上限(TaskLimit の tuple)。coordinator の
+  ;; 置き方が守る(2026-10-11)。同じ key の送り直しの比べには入れない(置き方の名乗りで、仕事の中身ではない)。形の検めは構築関数。
+  (setv #^ int priority 0)
+  (setv #^ (get tuple #(TaskLimit ...)) limits #())
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数

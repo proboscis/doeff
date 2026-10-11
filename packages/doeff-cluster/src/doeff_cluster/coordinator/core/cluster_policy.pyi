@@ -12,6 +12,9 @@ from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
 from doeff_cluster.shared.core.capabilities import capabilities_of as capabilities_of
 from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
+from doeff_cluster.shared.core.detached_rules import task_priority_refusal as task_priority_refusal
+from doeff_cluster.shared.core.detached_rules import task_limits_refusal as task_limits_refusal
+from doeff_cluster.shared.core.detached_rules import task_limits_of as task_limits_of
 from doeff_cluster.coordinator.intent.cluster_model import ClusterJob as ClusterJob
 from doeff_cluster.coordinator.intent.cluster_model import ErrorReply as ErrorReply
 from doeff_cluster.coordinator.intent.cluster_model import TaskAccepted as TaskAccepted
@@ -47,6 +50,7 @@ from doeff_cluster.coordinator.intent.cluster_model import NodeLabelsSeen as Nod
 from doeff_cluster.coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster.coordinator.intent.cluster_model import KnownExit as KnownExit
 from doeff_cluster.coordinator.intent.cluster_model import SupersededRun as SupersededRun
+from doeff_cluster.shared.intent.detached_model import TaskLimit as TaskLimit
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
 from doeff_cluster.shared.intent.due_model import DueNow as DueNow
 from doeff_cluster.shared.intent.due_model import DueNever as DueNever
@@ -287,6 +291,21 @@ def unplaced_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:
     ...
 
 def task_unplaced_text(kind: TaskUnplacedKind) -> _Program[str, object]:
+    ...
+
+def limit_slot(limit: TaskLimit, worker: str | None) -> _Program[tuple, object]:
+    ...
+
+def limit_holdings(tasks: dict) -> _Program[dict, object]:
+    ...
+
+def hold_limits(held: dict, task: TaskRecord, worker: str | None) -> _Program[dict, object]:
+    ...
+
+def task_misfit(task: TaskRecord, worker: WorkerInfo, room: int, held: dict) -> _Program[TaskUnplacedKind | None, object]:
+    ...
+
+def misfit_reason(kinds: list) -> _Program[TaskUnplacedKind, object]:
     ...
 DETACHED_TERMINAL: tuple[str, ...]
 ENV_RETRIES: int

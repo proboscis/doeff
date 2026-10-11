@@ -16,6 +16,7 @@
 (import typing [NamedTuple])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
+(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
@@ -67,7 +68,9 @@
                     (runtime-env-value-refusal body.runtime-env)
                     (key-refusal key)
                     (seconds-refusal "leaseSeconds" lease DETACHED-MAX-LEASE-SECONDS)
-                    (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)))
+                    (seconds-refusal "retainSeconds" retain DETACHED-MAX-RETAIN-SECONDS)
+                    (task-priority-refusal body.priority)
+                    (task-limits-refusal body.limits)))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
   (setv needs (needs-named body.needs body.requires "切り離した task の needs")
         environ (environ-pairs (or body.environ {}))
@@ -92,7 +95,8 @@
                          (program-versions state body.program)
                          needs lease-ms (+ now lease-ms) now
                          :detached True :key key :retain-ms (int (* 1000 retain))
-                         :runtime-env body.runtime-env :environ environ))
+                         :runtime-env body.runtime-env :environ environ
+                         :priority (or body.priority 0) :limits (task-limits-of body.limits)))
   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 

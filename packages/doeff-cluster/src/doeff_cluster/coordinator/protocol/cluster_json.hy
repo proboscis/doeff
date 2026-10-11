@@ -5,6 +5,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase HandoffWatch ClusterNaming TaskRecord ENDED-PHASES])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
+(import doeff_cluster.shared.core.detached_rules [task-limits-refusal task-limits-of task-limits-json])
 
 
 (defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; defk にできない: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ
@@ -47,7 +48,8 @@
 (deff task-record-to-json [#^ TaskRecord task]  ; defk にできない: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り
   {:pre [(: task TaskRecord)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。"
-  (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)}))
+  (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)
+                    "limits" (task-limits-json task.limits)}))
 
 
 (defk task-record-from-json [data]
@@ -91,7 +93,10 @@
               :failure-kind (stored-str data "failure_kind" "")
               :retryable (stored-bool data "retryable" False)
               ;; 子の環境変数の欄の無い旧い行は空(欄が無いだけで旧い形とは数えない — 足した欄)。
-              :environ (environ-pairs (.get data "environ" {}))))
+              :environ (environ-pairs (.get data "environ" {}))
+              ;; 置き方の名乗り(2026-10-11)の欄の無い旧い行は優先 0・上限なし(足した欄)。
+              :priority (stored-int data "priority" 0)
+              :limits (stored-limits data)))
 
 
 ;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの
@@ -162,6 +167,16 @@
   (when (not (isinstance value #(list tuple)))
     (raise (ValueError (.format "保存の task の行の {} は配列: {!r}" key value))))
   (tuple value))
+
+
+(deff stored-limits [#^ dict data]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な読み
+  {:pre [(: data dict)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol"}}
+  "保存の行の欄 limits(同時数の上限の列)を TaskLimit の tuple として読むため(無ければ空)。形の違う値は受け口と同じ規則の理由で断る。"
+  (setv value (list (stored-items data "limits"))
+        problem (task-limits-refusal value))
+  (when problem
+    (raise (ValueError (.format "保存の task の行の limits が誤っている: {}" problem))))
+  (task-limits-of value))
 
 
 (deff old-task-row-reason [#^ (| dict list None) old #^ list extra]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断

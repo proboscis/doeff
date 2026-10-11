@@ -117,6 +117,7 @@ from doeff_cluster.shared.protocol.detached import service_ready_of as service_r
 from doeff_cluster.shared.protocol.detached import service_facts_of_json as service_facts_of_json
 from doeff_cluster.shared.protocol.detached import services_unreachable as services_unreachable
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
+from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
 from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
 from doeff_cluster.shared.intent.detached_model import CancelDetached as CancelDetached
@@ -953,7 +954,7 @@ def remote_outcome(link: SimLink, program: Program | EffectBase, needs: frozense
 def declared_env(env: RuntimeEnv | None) -> _Program[dict | None, object]:
     ...
 
-def submit_detached(link: SimLink, program: Program | EffectBase, key: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, environ: dict) -> _Program[DetachedSubmitAnswer, object]:
+def submit_detached(link: SimLink, program: Program | EffectBase, key: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, environ: dict, placing: dict=...) -> _Program[DetachedSubmitAnswer, object]:
     ...
 
 def bell_span(view: dict | None, timeout_seconds: float | int | None, waited: float) -> _Program[float | None, object]:
