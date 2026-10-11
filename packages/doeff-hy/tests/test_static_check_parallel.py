@@ -6,6 +6,7 @@
 - 全部保存から引ける実行では pool を起こさない(保存が効く時の秒を増やさない)。
 """
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -117,3 +118,14 @@ def test_the_expander_limit_defaults_to_four_and_is_set_by_the_environment() -> 
     for wrong in ("0", "-1", "four", "1.5"):
         with pytest.raises(ValueError, match="DOEFF_HY_CHECK_EXPANDERS"):
             static_check.expander_limit(wrong)
+
+
+def test_the_entry_takes_the_limit_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """入口の main は上限の素の値を env_places から受けて expander_limit に渡す(os.environ を直に読まない — doeff-linter の
+    DOEFF004・日次 2026-10-11 16:00 の lint の段の赤・card ki-72c8b0827b29)。1 以上の整数でない値は走れなかった(exit 2)。"""
+    monkeypatch.setattr(sys, "path", list(sys.path))  # main は根を sys.path の頭に足す
+    monkeypatch.setenv("DOEFF_HY_CHECK_EXPANDERS", "0")
+    assert static_check.main(["--root", str(tmp_path), "--no-cache"]) == 2
+    assert "DOEFF_HY_CHECK_EXPANDERS" in capsys.readouterr().err
