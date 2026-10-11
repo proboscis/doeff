@@ -1,0 +1,243 @@
+"""盲検 B の再現: SetTaskPriority が走れる列をその場で書き換えると、印の下の生きた仕事の数が列と食い違う。
+
+作業木の根で `uv run python /tmp/blindb-scripts/repro_set_task_priority.py` と撃つ。
+各場面を別の thread で走らせ、時間切れ(秒)で「止まった」を判じる。closure の中の数は、
+has_live_ready_entry・trace_enqueued が呼ばれた瞬間の frame から写して、列から数え直した値と比べる。
+"""
+
+import sys
+import threading
+import time
+from typing import Any
+
+from doeff_core_effects import scheduler as sched
+from doeff_core_effects.scheduler import (
+    PRIORITY_EXTERNAL_WAIT,
+    PRIORITY_IDLE,
+    PRIORITY_NORMAL,
+    CompletePromise,
+    CreateExternalPromise,
+    CreatePromise,
+    SetTaskPriority,
+    Spawn,
+    Wait,
+    scheduled,
+    set_scheduler_trace,
+)
+
+from doeff import do
+from doeff import run as doeff_run
+
+RUNNABLE = sched._RUNNABLE_ENTRY_KINDS
+
+
+def recount(ready: list[Any], tasks: dict[int, Any]) -> tuple[int, int]:
+    """I-R1 の右辺: 印の下(優先度 <= PRIORITY_EXTERNAL_WAIT)の生きた runnable entry を列から数え直す。"""
+    live = non_daemon = 0
+    for neg, _seq, entry in ready:
+        if neg < -PRIORITY_EXTERNAL_WAIT or entry[0] not in RUNNABLE:
+            continue
+        row = tasks.get(entry[1])
+        if row is not None and row["status"] == "cancelled":
+            continue
+        live += 1
+        if row is None or not row.get("daemon", False):
+            non_daemon += 1
+    return live, non_daemon
+
+
+def run_case(name: str, program: Any, timeout: float, traced: bool = False) -> dict[str, Any]:
+    probes: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    out: dict[str, Any] = {}
+
+    def tracer(frame: Any, event: str, arg: Any) -> Any:
+        if event != "call" or not frame.f_code.co_filename.endswith("scheduler.py"):
+            return None
+        fname = frame.f_code.co_name
+        if fname == "has_live_ready_entry":
+            caller = frame.f_back  # pick_next
+            ready = caller.f_locals["ready"]
+            tasks = caller.f_locals["tasks"]
+            probes.append({
+                "at": "has_live_ready_entry",
+                "include_daemons": frame.f_locals["include_daemons"],
+                "kept_count[live, non_daemon]": list(frame.f_locals["live_ready_count"]),
+                "recount[live, non_daemon]": list(recount(ready, tasks)),
+                "ready(priority, kind, owner)": sorted(
+                    ((-neg, e[0], e[1]) for neg, _s, e in ready), reverse=True
+                ),
+            })
+        elif fname == "trace_enqueued":
+            ready = frame.f_locals["ready"]
+            probes.append({
+                "at": "trace_enqueued",
+                "wake": frame.f_locals["wake_of_seq"][frame.f_locals["seq"]][0],
+                "priority": frame.f_locals["priority"],
+                "ready(priority, kind, owner)": sorted(
+                    ((-neg, e[0], e[1]) for neg, _s, e in ready), reverse=True
+                ),
+            })
+        return None
+
+    def worker() -> None:
+        sys.settrace(tracer)
+        try:
+            out["value"] = doeff_run(scheduled(program, implementation="python"))
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            out["error"] = repr(exc)
+        finally:
+            sys.settrace(None)
+
+    if traced:
+        set_scheduler_trace(events.append)
+    started = time.monotonic()
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    elapsed = time.monotonic() - started
+    if traced:
+        set_scheduler_trace(None)
+    result = {
+        "case": name,
+        "finished": not thread.is_alive(),
+        "elapsed_s": round(elapsed, 2),
+        **out,
+        "probes": probes,
+    }
+    if traced:
+        result["external_enqueued_events"] = [
+            {k: e.get(k) for k in ("tid", "wake", "priority", "ready", "ahead", "ahead_by_wake")}
+            for e in events
+            if e.get("event") == "enqueued" and e.get("wake") == "external"
+        ]
+    return result
+
+
+# --- 場面 1(本体): 走れる列に並んだ完了者を IDLE へ下げてから、その完了者が満たす外の約束を待つ ---
+@do
+def completer(gate: Any, ep: Any):
+    yield Wait(gate.future)
+    ep.complete("from-lowered-task")
+
+
+@do
+def lowered_while_queued():
+    gate = yield CreatePromise()
+    ep = yield CreateExternalPromise()
+    t = yield Spawn(completer(gate, ep))
+    yield CompletePromise(gate, None, yield_to_woken=False)  # t の resume が NORMAL で列に並ぶ
+    yield SetTaskPriority(t, PRIORITY_IDLE)  # 並んだ resume を IDLE へ動かす
+    value = yield Wait(ep.future)  # 外の約束の印(PRIORITY_EXTERNAL_WAIT)の下に t が居る
+    yield Wait(t)
+    return value
+
+
+# --- 対照 A: 同じ完了者を最初から IDLE で生む(既存の #505 の検と同じ形)---
+@do
+def spawned_idle():
+    gate = yield CreatePromise()
+    ep = yield CreateExternalPromise()
+    t = yield Spawn(completer(gate, ep), priority=PRIORITY_IDLE)
+    yield CompletePromise(gate, None, yield_to_woken=False)
+    value = yield Wait(ep.future)
+    yield Wait(t)
+    return value
+
+
+# --- 対照 B: 完了者が待ちに居る(列に居ない)間に IDLE へ下げる ---
+@do
+def lowered_while_parked():
+    gate = yield CreatePromise()
+    ep = yield CreateExternalPromise()
+    t = yield Spawn(completer(gate, ep))
+    yield SetTaskPriority(t, PRIORITY_IDLE)
+    yield CompletePromise(gate, None, yield_to_woken=False)
+    value = yield Wait(ep.future)
+    yield Wait(t)
+    return value
+
+
+# --- 場面 2: 逆向き(IDLE で並んだ resume を NORMAL へ上げる)— 数え過ぎが残るか ---
+@do
+def noop_after(gate: Any):
+    yield Wait(gate.future)
+
+
+@do
+def raised_while_queued():
+    gate = yield CreatePromise()
+    t = yield Spawn(noop_after(gate), priority=PRIORITY_IDLE)
+    yield CompletePromise(gate, None, yield_to_woken=False)  # t の resume が IDLE で並び、数えられる
+    yield SetTaskPriority(t, PRIORITY_NORMAL)  # NORMAL へ動かす(pop で数えが外れない)
+    yield Wait(t)  # t が走り終わる
+    ep = yield CreateExternalPromise()
+    threading.Timer(0.3, ep.complete, args=("late",)).start()
+    return (yield Wait(ep.future))  # 印を pop した時の数を見る
+
+
+# --- 場面 3: 測りの口を開いたまま、外の完了の前に並ぶ数(ahead)と #505 の順を見る ---
+def traced_order_case(order: list[str]) -> Any:
+    @do
+    def note(gate: Any):
+        yield Wait(gate.future)
+        order.append("lowered task ran")
+
+    def complete_later(ep: Any, delay: float, label: str) -> None:
+        def fire() -> None:
+            order.append(label)
+            ep.complete(label)
+        threading.Timer(delay, fire).start()
+
+    @do
+    def body():
+        ep0 = yield CreateExternalPromise()
+        complete_later(ep0, 0.2, "ep0 completed")
+        yield Wait(ep0.future)  # 外の起こしで、測りの口の数え(ready_wake_count)を作らせる
+        gate = yield CreatePromise()
+        t = yield Spawn(note(gate))
+        yield CompletePromise(gate, None, yield_to_woken=False)  # t の resume が NORMAL で並ぶ
+        yield SetTaskPriority(t, PRIORITY_IDLE)
+        ep1 = yield CreateExternalPromise()
+        complete_later(ep1, 0.5, "ep1 completed (foreign thread)")
+        value = yield Wait(ep1.future)
+        yield Wait(t)
+        return value
+
+    return body()
+
+
+def show(result: dict[str, Any]) -> None:
+    import json
+
+    head = {k: v for k, v in result.items() if k not in ("probes", "external_enqueued_events")}
+    print("==", json.dumps(head, ensure_ascii=False, default=str))
+    for probe in result["probes"]:
+        if probe["at"] == "has_live_ready_entry":
+            print("   probe", json.dumps(probe, ensure_ascii=False, default=str))
+    if "external_enqueued_events" in result:
+        external = [p for p in result["probes"] if p["at"] == "trace_enqueued" and p["wake"] == "external"]
+        for event, probe in zip(result["external_enqueued_events"], external, strict=True):
+            print(
+                "   external-enqueued", json.dumps(event, ensure_ascii=False, default=str),
+                "| heap then:", json.dumps(probe["ready(priority, kind, owner)"], default=str),
+            )
+
+
+def main() -> None:
+    print("scheduler file:", sched.__file__)
+    for name, prog, timeout in (
+        ("1 lowered_while_queued (本体)", lowered_while_queued(), 3.0),
+        ("A spawned_idle (対照)", spawned_idle(), 3.0),
+        ("B lowered_while_parked (対照)", lowered_while_parked(), 3.0),
+        ("2 raised_while_queued", raised_while_queued(), 3.0),
+    ):
+        show(run_case(name, prog, timeout))
+    order: list[str] = []
+    result = run_case("3 traced_order", traced_order_case(order), 3.0, traced=True)
+    result["order"] = order
+    show(result)
+
+
+if __name__ == "__main__":
+    main()

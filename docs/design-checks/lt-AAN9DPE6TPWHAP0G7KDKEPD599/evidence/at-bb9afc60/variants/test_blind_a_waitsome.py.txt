@@ -1,0 +1,204 @@
+"""EXPERIMENT (blind-a, ki-1294 S2): a new parking effect added in dispatch only, vs Cancel/Discard.
+
+Race is the control (built-in multi-key parking effect). WaitSome is the new effect,
+implemented with park_waiter (via register_pending_waiter), keep_waiters and claim only.
+"""
+
+import threading
+from typing import Any
+
+import pytest
+from doeff_core_effects.scheduler import (
+    Cancel,
+    CompletePromise,
+    CreateExternalPromise,
+    CreatePromise,
+    Discard,
+    Race,
+    Spawn,
+    TaskCancelledError,
+    Wait,
+    WaitSome,
+    _SchedulerIntrospection,
+    scheduled,
+)
+
+from doeff import do
+from doeff import run as doeff_run
+
+TIMEOUT = 10
+
+
+def run_bounded(program: Any) -> tuple[str, Any]:
+    out: dict[str, Any] = {}
+
+    def worker() -> None:
+        try:
+            out["ok"] = doeff_run(scheduled(program, implementation="python"))
+        except BaseException as exc:  # noqa: BLE001 - experiment records any outcome
+            out["err"] = exc
+
+    th = threading.Thread(target=worker, daemon=True)
+    th.start()
+    th.join(TIMEOUT)
+    if th.is_alive():
+        return ("hang", None)
+    if "err" in out:
+        return ("raised", out["err"])
+    return ("ok", out["ok"])
+
+
+def park_on(kind: str, futures: list[Any]) -> Any:
+    if kind == "race":
+        return Race(*futures)
+    return WaitSome(1, *futures)
+
+
+@do
+def parked(kind: str, futures: list[Any], events: list[Any]):
+    try:
+        value = yield park_on(kind, futures)
+        events.append(("resumed", value))
+        return value
+    except TaskCancelledError:
+        events.append("except")
+        raise
+    finally:
+        events.append("finally")
+
+
+def body_cancel_internal(kind: str, events: list[Any]):
+    @do
+    def body():
+        p1 = yield CreatePromise()
+        p2 = yield CreatePromise()
+        t = yield Spawn(parked(kind, [p1.future, p2.future], events))  # runs first, parks
+        yield Cancel(t)
+        try:
+            yield Wait(t)
+            outcome = "completed"
+        except TaskCancelledError:
+            outcome = "cancelled"
+        info = yield _SchedulerIntrospection()
+        return outcome, info["waiters"]
+
+    return body()
+
+
+def body_cancel_external(kind: str, events: list[Any], on_cancel_called: list[str]):
+    @do
+    def body():
+        ep1 = yield CreateExternalPromise()
+        ep2 = yield CreateExternalPromise()
+        ep1.on_cancel(lambda: on_cancel_called.append("ep1"))
+        ep2.on_cancel(lambda: on_cancel_called.append("ep2"))
+        t = yield Spawn(parked(kind, [ep1.future, ep2.future], events))
+        yield Cancel(t)
+        try:
+            yield Wait(t)
+            outcome = "completed"
+        except TaskCancelledError:
+            outcome = "cancelled"
+        return outcome
+
+    return body()
+
+
+def body_discard_internal(kind: str, events: list[Any]):
+    @do
+    def body():
+        p1 = yield CreatePromise()
+        p2 = yield CreatePromise()
+        t = yield Spawn(parked(kind, [p1.future, p2.future], events))
+        yield Discard(t)
+        info = yield _SchedulerIntrospection()
+        return info["waiters"]
+
+    return body()
+
+
+def test_waitsome_happy_path_works_with_dispatch_only_change():
+    @do
+    def body():
+        p1 = yield CreatePromise()
+        p2 = yield CreatePromise()
+        p3 = yield CreatePromise()
+
+        @do
+        def completer():
+            yield CompletePromise(p2, "b")
+            yield CompletePromise(p3, "c")
+
+        _ = yield Spawn(completer())
+        got = yield WaitSome(2, p1.future, p2.future, p3.future)
+        info = yield _SchedulerIntrospection()
+        return got, info["waiters"]
+
+    print("\nHAPPY", run_bounded(body()))
+
+
+@pytest.mark.parametrize("kind", ["race", "some"])
+def test_cancel_task_parked_on_internal_promises(kind: str):
+    events: list[Any] = []
+    status, value = run_bounded(body_cancel_internal(kind, events))
+    print(f"\nCANCEL-INTERNAL kind={kind} status={status} value={value!r} events={events}")
+
+
+@pytest.mark.parametrize("kind", ["race", "some"])
+def test_cancel_task_parked_on_external_promises_with_on_cancel(kind: str):
+    events: list[Any] = []
+    on_cancel_called: list[str] = []
+    status, value = run_bounded(body_cancel_external(kind, events, on_cancel_called))
+    print(
+        f"\nCANCEL-EXTERNAL kind={kind} status={status} value={value!r} "
+        f"events={events} on_cancel_called={on_cancel_called}"
+    )
+
+
+@pytest.mark.parametrize("kind", ["race", "some"])
+def test_discard_task_parked_on_internal_promises(kind: str):
+    events: list[Any] = []
+    status, value = run_bounded(body_discard_internal(kind, events))
+    print(f"\nDISCARD-INTERNAL kind={kind} status={status} waiters_left={value!r} events={events}")
+
+
+# --- S3 (secondary): a new ready-entry kind added in dispatch + _RUNNABLE_ENTRY_KINDS only ---
+from doeff_core_effects.scheduler import Reschedule  # noqa: E402
+
+
+@pytest.mark.parametrize("kind", ["resume", "reschedule"])
+def test_cancel_task_whose_continuation_is_queued_in_ready(kind: str, caplog):
+    events: list[Any] = []
+
+    @do
+    def child():
+        return None
+
+    @do
+    def queued():
+        try:
+            if kind == "resume":
+                _ = yield Spawn(child())  # leaves a ("resume", T, k, task) entry in ready
+            else:
+                yield Reschedule(10)  # leaves a ("reschedule", T, k, 10) entry in ready
+            events.append("resumed")
+            return "resumed"
+        except TaskCancelledError:
+            events.append("except")
+            raise
+        finally:
+            events.append("finally")
+
+    @do
+    def body():
+        t = yield Spawn(queued())  # runs first; its continuation is then queued in ready
+        yield Cancel(t)
+        try:
+            yield Wait(t)
+            return "completed"
+        except TaskCancelledError:
+            return "cancelled"
+
+    status, value = run_bounded(body())
+    dropped = [r.getMessage() for r in caplog.records if "does not hold its continuation" in r.getMessage()]
+    print(f"\nCANCEL-QUEUED kind={kind} status={status} value={value!r} events={events} fallback_warning={dropped}")

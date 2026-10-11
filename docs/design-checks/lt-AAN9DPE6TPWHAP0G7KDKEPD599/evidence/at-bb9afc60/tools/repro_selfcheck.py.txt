@@ -1,0 +1,9 @@
+"""盲検 B の再現の script を、直した版の自己照合を入れて走らせる(使い方: repro_selfcheck.py <再現の script>)。"""
+import runpy
+import sys
+
+import doeff_core_effects.scheduler as scheduler_module
+
+scheduler_module._INDEX_SELF_CHECK = True
+print("self-check:", scheduler_module._INDEX_SELF_CHECK)
+runpy.run_path(sys.argv[1], run_name="__main__")

@@ -1,0 +1,28 @@
+# S4(sim の時計): doeff-time の sim の daemon の形と close-out の検を、自己照合つきで
+対象の版: df1ea3efc(= bb9afc60 と同じ中身)・刻 2026-10-11T23:29Z・場所: 作業木 /home/ubuntu/.worktrees/doeff-wt-ki1294-dcfix
+命令: set -o pipefail; PYTHONPATH=/tmp/w1294dc/plugin uv run pytest -p selfcheck_plugin packages/doeff-time/tests/test_sim_daemon_pattern.py packages/doeff-time/tests/test_sim_close_out.py -q
+  (package の検は repo の根の conftest を読まないので、同じ働きの plugin tools/selfcheck_plugin.py.txt を -p で入れた)
+終了の状態: 0(8 passed)
+grep -v で除いたのは doeff-adr の ADR の file の一覧の行だけ
+
+
+deadline scale x3.6 (load per usable CPU) — per test 214s, watchdog 320s
+
+test-admission: focused — 8 件(変更箇所の検証)
+........                                                                 [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+packages/doeff-time/tests/test_sim_daemon_pattern.py::test_spawned_service_publishes_events_received_by_main
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [queued resume for task 0]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+packages/doeff-time/tests/test_sim_daemon_pattern.py::test_main_program_returns_while_daemons_still_running
+  /work/toolset/worktrees/doeff-wt-ki1294-dcfix/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries []; parked waiters [task 0 (wait) on promise 1] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+8 passed, 3 warnings in 3.57s

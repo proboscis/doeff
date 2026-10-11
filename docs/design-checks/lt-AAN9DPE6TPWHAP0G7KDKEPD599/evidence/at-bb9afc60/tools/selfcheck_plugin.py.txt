@@ -1,0 +1,12 @@
+"""実験の pytest plugin: どの検も Python の scheduler の自己照合(_INDEX_SELF_CHECK)を入れて走らせる(repo の根の conftest の
+fixture scheduler_index_self_check と同じ働き — package の検はその conftest を読まないので -p で入れる)。"""
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _scheduler_index_self_check(monkeypatch):
+    import doeff_core_effects.scheduler as scheduler_module
+
+    monkeypatch.setattr(scheduler_module, "_INDEX_SELF_CHECK", True)
+    yield
+    assert scheduler_module._INDEX_SELF_CHECK is True

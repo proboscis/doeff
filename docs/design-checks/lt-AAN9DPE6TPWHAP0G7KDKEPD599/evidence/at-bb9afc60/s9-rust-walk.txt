@@ -1,0 +1,33 @@
+# S9(Rust の scheduler): 同じ WaitWithin の形を Python と Rust の scheduler で、待つ task の数を変えて
+対象の版: df1ea3efc(= bb9afc60 と同じ中身 — Rust の scheduler は 1021b8946 の前から変えていない)・場所: 作業木 /home/ubuntu/.worktrees/doeff-wt-ki1294-dcfix
+道具: tools/s9_walk.py.txt — 本番の層 2 の呼び鈴の形(WaitWithin park=True・外の thread が 0.2 ms 後に鳴らす)を、ほかに待つ task(daemon・各々 WaitWithin で待つ)の下で回し、
+  WaitWithin を 600 回 回した run と 100 回 回した run の main thread の CPU(thread_time)の差 ÷ 500 = 1 回の増分(待つ task の Spawn と Cancel の費用を引く)
+注意: 機体の負荷 50〜90(36 core)。CPU の値は揺れる — 契約は負荷に揺れない行の数の検(s1-line-count.txt)が持ち、これは Rust との比べの参考の数
+命令と結果:
+1. 2026-10-11T23:26Z: for g in off on; do S9_GC=$g uv run python s9_walk.py 2>/dev/null; done(待つ task 16 本と 256 本・3 回の中央値・S9_GC=off は測る間 gc を止める — free-threaded の 3.14t の gc は生きた object を全部なめる)
+   終了の状態: 0・0
+   scheduler: /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py gc: off(測る間) python: 3.14.3 False
+   python parked=16: WaitWithin 1 回の CPU 中央値 824 µs(3 回 [850, 824, 678]・600 回と 100 回の差 ÷ 500)
+   python parked=256: WaitWithin 1 回の CPU 中央値 728 µs(3 回 [728, 691, 746]・600 回と 100 回の差 ÷ 500)
+   python: 256 本 ÷ 16 本 = 0.88
+   rust parked=16: WaitWithin 1 回の CPU 中央値 388 µs(3 回 [388, 395, 385]・600 回と 100 回の差 ÷ 500)
+   rust parked=256: WaitWithin 1 回の CPU 中央値 491 µs(3 回 [491, 512, 410]・600 回と 100 回の差 ÷ 500)
+   rust: 256 本 ÷ 16 本 = 1.27
+   scheduler: /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py gc: on python: 3.14.3 False
+   python parked=16: WaitWithin 1 回の CPU 中央値 696 µs(3 回 [838, 664, 696]・600 回と 100 回の差 ÷ 500)
+   python parked=256: WaitWithin 1 回の CPU 中央値 819 µs(3 回 [603, 838, 819]・600 回と 100 回の差 ÷ 500)
+   python: 256 本 ÷ 16 本 = 1.18
+   rust parked=16: WaitWithin 1 回の CPU 中央値 354 µs(3 回 [356, 321, 354]・600 回と 100 回の差 ÷ 500)
+   rust parked=256: WaitWithin 1 回の CPU 中央値 427 µs(3 回 [427, 451, 427]・600 回と 100 回の差 ÷ 500)
+   rust: 256 本 ÷ 16 本 = 1.21
+2. 2026-10-11T23:28Z: S9_GC=off S9_PARKED=16,1024 S9_REPEAT=5 uv run python s9_walk.py 2>/dev/null(待つ task 16 本と 1024 本・5 回の中央値)
+   終了の状態: 0
+   scheduler: /work/toolset/worktrees/doeff-wt-ki1294-dcfix/packages/doeff-core-effects/doeff_core_effects/scheduler.py gc: off(測る間) python: 3.14.3 False
+   python parked=16: WaitWithin 1 回の CPU 中央値 764 µs(5 回 [868, 714, 795, 754, 764]・600 回と 100 回の差 ÷ 500)
+   python parked=1024: WaitWithin 1 回の CPU 中央値 889 µs(5 回 [889, 1114, 965, 770, 866]・600 回と 100 回の差 ÷ 500)
+   python: 1024 本 ÷ 16 本 = 1.16
+   rust parked=16: WaitWithin 1 回の CPU 中央値 364 µs(5 回 [372, 364, 364, 373, 347]・600 回と 100 回の差 ÷ 500)
+   rust parked=1024: WaitWithin 1 回の CPU 中央値 821 µs(5 回 [885, 792, 920, 821, 775]・600 回と 100 回の差 ÷ 500)
+   rust: 1024 本 ÷ 16 本 = 2.25
+読み: Rust(索引を入れていない)は 16 → 1024 本で 1 回の CPU が 2.25 倍(5 回の値が重ならない: 347〜373 µs と 775〜920 µs)。Python(索引を入れた)は 1.16 倍で 5 回の値が
+重なる(714〜868 µs と 770〜1114 µs)。stderr を捨てたのは doeff-time の async_time.py:84 の「coroutine 'sleep' was never awaited」の警告が多いため(前から在る物)。

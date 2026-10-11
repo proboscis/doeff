@@ -1,0 +1,10 @@
+"""使い方: edit.py <file> <old> <new> — file の中の old(1 か所だけ)を new へ替える。"""
+import sys
+from pathlib import Path
+
+path, old, new = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+text = path.read_text()
+if text.count(old) != 1:
+    sys.exit(f"{path}: {old!r} は {text.count(old)} か所")
+path.write_text(text.replace(old, new))
+print(f"{path.name}: 1 か所を替えた")
