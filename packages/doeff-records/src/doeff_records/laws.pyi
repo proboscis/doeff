@@ -119,6 +119,11 @@ WHERES: list[FrozenMap]
 
 def law_indexed_list_equals_filtered_scan(harness: LawHarness) -> _Program[list[object], object]:
     ...
+TOP_NOTES: dict[int, int | str | float | bool | None]
+TOP_WHERES: list[FrozenMap]
+
+def law_descending_list_is_the_head_of_the_sorted_scan(harness: LawHarness) -> _Program[list[object], object]:
+    ...
 
 def law_append_is_idempotent(harness: LawHarness) -> _Program[list[object], object]:
     ...

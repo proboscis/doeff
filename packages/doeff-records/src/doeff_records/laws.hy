@@ -304,6 +304,46 @@
   (+ transcript [everything narrow loose]))
 
 
+;; --- 法 6b: 上から読む ListRows は全件を読んで並べた上から limit 件と同じ ----------------------------------
+
+;; 欄 note の値(行の番号 → 値): 整数(同じ値の行を含む)と、並べない値(文字列・小数・真偽・欄の無い行)。
+(setv TOP-NOTES {1 30 2 "30" 3 10 4 30 5 2.5 6 20 7 True 8 None 9 -5 10 20 11 40 12 7})
+(setv TOP-WHERES (lfor where [{} {"color" "red"} {"label" "b"} {"color" "none"}] (FrozenMap where)))
+
+(defk law-descending-list-is-the-head-of-the-sorted-scan [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "上から読む ListRows の法: descending-by を付けた読みは、where に合う行を全件読み、欄の値が整数の行だけを (値, 鍵) の大きい順に並べた
+   上から limit 件と同じ行を、同じ順で 1 頁に返し、続き(next-cursor)を返さない。使い手が最新の何件かを、表の行の数でなく limit に比例する
+   読み 1 回で得るため。どの置き場の handler も同じ答えを返すことを確かめる。"
+  (val law "上から読む ListRows は全件を読んで並べた上から limit 件と同じ")
+  (var transcript [])
+  (for [#(n note) (.items TOP-NOTES)]
+    (val value (| {"color" (get COLORS (% n 3)) "label" (get LABELS (% n 2))} (if (is note None) {} {"note" note})))
+    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n)) (FrozenMap value) (ExpectAbsent))))
+    (:= transcript (+ transcript [written])))
+  (for [where TOP-WHERES]
+    (<- pages (collect-pages harness "parts" where 500))
+    ;; 並べる行 = 欄 note の値が JSON の整数(真偽は整数に数えない)の行 — 法は置き場の判じを借りずに書く。
+    (val scanned (lfor page pages row page.rows :setv noted (.get row.value "note")
+                       :if (and (isinstance noted int) (not (isinstance noted bool))) row))
+    (val ordered (sorted scanned :key (fn [row] #((get row.value "note") row.key)) :reverse True))
+    (for [limit [1 3 50]]
+      (<- top (as-writer harness MAKER (ListRows "parts" :where where :descending-by "note" :limit limit)))
+      (<- (require-law (and (isinstance top Page) (is top.next-cursor None)) law
+                       (.format "{!r} の上から {} 件の答えが 1 頁でない・続きを返した: {!r}" where limit top)))
+      (<- (require-law (= top.rows (tuple (cut ordered limit))) law
+                       (.format "{!r} の上から {} 件が全件を並べた上の {} 件と違う: {!r} / {!r}" where limit limit top.rows
+                                (cut ordered limit))))
+      (:= transcript (+ transcript [top]))))
+  (<- narrow (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"color" "red"}) :fields #("color") :descending-by "note" :limit 2)))
+  (<- (require-law (and (= (len narrow.rows) 2) (all (gfor row narrow.rows (= (set row.value) #{"id" "color"})))) law
+                   (.format "上から読む読みの欄の絞り: {!r}" narrow)))
+  (<- loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" 30}) :descending-by "note")))
+  (<- (require-law (= loose (NotIndexed #("note"))) law (.format "上から読む読みの索引の無い欄: {!r}" loose)))
+  (+ transcript [narrow loose]))
+
+
 ;; --- 法 7: 追記の冪等キー ----------------------------------------------------------------------------------
 
 (defk law-append-is-idempotent [#^ LawHarness harness]
@@ -941,6 +981,7 @@
             "undeclared-writes-are-refused" law-undeclared-writes-are-refused
             "transient-rows-expire" law-transient-rows-expire
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
+            "descending-list-is-the-head-of-the-sorted-scan" law-descending-list-is-the-head-of-the-sorted-scan
             "append-is-idempotent" law-append-is-idempotent
             "watch-waits-for-a-change" law-watch-waits-for-a-change
             "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append

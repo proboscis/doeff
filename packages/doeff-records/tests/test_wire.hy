@@ -17,6 +17,8 @@
   [(ReadRow "parts" #("p1"))
    (ListRows "parts")
    (ListRows "parts" :where {"color" "red"} :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
+   ;; 上から読む読み(descending-by — 鍵 descendingBy は付けた時だけ送る)。
+   (ListRows "parts" :where {"color" "red"} :fields #("color") :limit 3 :descending-by "note")
    (PutRow "parts" #("p1") {"label" "a" "color" None} (ExpectAbsent))
    (PutRow "parts" #("p1") {"grant" "yes"} (ExpectVersion 4))
    (PutRow "parts" #("p1") {} (ExpectAny))
@@ -105,6 +107,10 @@
                            #("read-row" {"table" "Parts!" "key" ["p1"]})
                            #("list-rows" {"table" "parts" "limit" True})
                            #("list-rows" {"table" "parts" "limit" 0})
+                           ;; 上から読む読み: 欄の名は文字列・上から読む読みは cursor を受けない(続きを返さない 1 頁)。
+                           #("list-rows" {"table" "parts" "descendingBy" None})
+                           #("list-rows" {"table" "parts" "descendingBy" "Note!"})
+                           #("list-rows" {"table" "parts" "descendingBy" "note" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]"}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version"}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version" "version" 0}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" [] "expect" {"kind" "any"}})

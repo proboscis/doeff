@@ -4,7 +4,7 @@
 (require doeff-hy.macros [deftest <-])
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
-                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-watch-waits-for-a-change
+                            law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-expired-keys-are-remembered
@@ -82,6 +82,13 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-indexed-list-equals-filtered-scan harness))
+  (assert transcript))
+
+(deftest test-descending-list-is-the-head-of-the-sorted-scan
+  ;; 上から読む ListRows(descending-by): 全件を読んで並べた上から limit 件と同じ行を同じ順で 1 頁に返し、続きを返さない(4 つの組で同じ)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-descending-list-is-the-head-of-the-sorted-scan harness))
   (assert transcript))
 
 (deftest test-append-is-idempotent

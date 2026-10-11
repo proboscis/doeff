@@ -14,7 +14,7 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
-                            law-indexed-list-equals-filtered-scan law-append-is-idempotent law-none-removes-a-field
+                            law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
@@ -63,6 +63,12 @@
 (defhandler ignore-where []
   (ListRows [table where fields cursor limit]
     (<- answer (ListRows table :fields fields :cursor cursor :limit limit))
+    (resume answer)))
+
+(defhandler ignore-descending []
+  ;; 上から読む読みを知らない handler の顔: descending-by を捨てて鍵の順の頁を返す。
+  (ListRows [table where fields cursor limit descending-by]
+    (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit))
     (resume answer)))
 
 (defhandler ignore-removals []
@@ -177,6 +183,7 @@
                       #(law-committed-changes-appear-once-in-order (repeat-changes))
                       #(law-epoch-change-resets (hide-reset))
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
+                      #(law-descending-list-is-the-head-of-the-sorted-scan (ignore-descending))
                       #(law-append-is-idempotent (forget-idempotency))
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
