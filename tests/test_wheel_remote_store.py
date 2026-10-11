@@ -180,7 +180,7 @@ def test_an_empty_machine_takes_the_wheel_from_the_remote_store_without_calling_
     # 撃った(空の機体の同期で doeff-linter を一から組んで +435 秒 — agora 3466059e5)。
     log = tmp_path / "rust-tools.log"
     _fake_rust_tools(tmp_path / "fake-bin", log)
-    monkeypatch.setenv("PATH", f"{tmp_path / 'fake-bin'}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("PATH", str(tmp_path / "fake-bin"), prepend=os.pathsep)
     for name in ("CARGO", "RUSTC"):
         monkeypatch.delenv(name, raising=False)
     package = _checkout(tmp_path / "wt")

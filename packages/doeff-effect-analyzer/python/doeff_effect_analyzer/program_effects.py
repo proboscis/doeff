@@ -2314,16 +2314,16 @@ class _Reader:
         # a handler's clauses share the reader, and a thread asking for one clause walked the empty
         # facts another thread had placed but not yet read (blind A of ki-5a5f6bd26d5e).
         self.lock = threading.RLock()
-        self._absent: HandlerEffects | None = None
+        self._mut_absent: HandlerEffects | None = None
 
     def absent_receiver(self) -> HandlerEffects:
         """The ``:absent`` receiver this reader's binds are read under, read once per reader.
         Kept for the process, its clauses — read when an effect reaches them, with the reader they
         were made with — were shared by every analysis, and counted their sources only in the one
         that read them first (blind A of ki-5a5f6bd26d5e)."""
-        if self._absent is None:
-            self._absent = _absent_receiver()
-        return self._absent
+        if self._mut_absent is None:
+            self._mut_absent = _absent_receiver()
+        return self._mut_absent
 
     def kept_report(
         self, start: _Facts, label: str, active: frozenset[_ReadKey]

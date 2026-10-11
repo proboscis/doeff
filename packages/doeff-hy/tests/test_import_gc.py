@@ -12,10 +12,11 @@ ki-de9d3593bbde・親 ki-e77d44aa61e5)の検。
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 #: 子の process — 包みを入れ、場面(argv[2])ごとに一時の package(argv[1])を読み、見た閾値を JSON で出す。module の本体は
 #: 見た閾値を自分の名 ``threshold`` に置く(途中で落ちる module は例外に載せる)。
@@ -96,8 +97,9 @@ _MODULES = {
 }
 
 
-def _run(tmp_path: Path, scene: str) -> dict[str, object]:
-    """子の process で場面を 1 つ走らせ、見た閾値(before・seen・after ほか)を返す。"""
+def _run(tmp_path: Path, scene: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """子の process で場面を 1 つ走らせ、見た閾値(before・seen・after ほか)を返す。子は検の process の環境を受け継ぎ、.pyc を
+    書かない設定だけを足す(検の後に monkeypatch が戻す)。"""
     package = tmp_path / "pkg"
     package.mkdir(exist_ok=True)
     (package / "__init__.py").write_text("")
@@ -105,11 +107,11 @@ def _run(tmp_path: Path, scene: str) -> dict[str, object]:
         (package / f"{name}.py").write_text(body)
     script = tmp_path / "child.py"
     script.write_text(_CHILD)
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
     completed = subprocess.run(
         [sys.executable, "-W", "ignore::DeprecationWarning", str(script), str(tmp_path), scene],
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         timeout=120,
         check=False,
     )
@@ -117,9 +119,9 @@ def _run(tmp_path: Path, scene: str) -> dict[str, object]:
     return json.loads(completed.stdout.splitlines()[-1])
 
 
-def test_the_threshold_is_raised_while_the_outermost_import_runs_and_restored_after(tmp_path: Path) -> None:
+def test_the_threshold_is_raised_while_the_outermost_import_runs_and_restored_after(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """一番外の読み込みの本体も、中の import の本体も、上げた閾値を見る(下の 2 つの欄は変えない)。終わったら前の閾値に戻る。"""
-    result = _run(tmp_path, "nested")
+    result = _run(tmp_path, "nested", monkeypatch)
     before = result["before"]
     seen = result["seen"]
     raised = seen["outer"]
@@ -129,39 +131,39 @@ def test_the_threshold_is_raised_while_the_outermost_import_runs_and_restored_af
     assert result["after"] == before
 
 
-def test_the_threshold_is_restored_when_the_import_fails(tmp_path: Path) -> None:
+def test_the_threshold_is_restored_when_the_import_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """読み込みが例外で終わっても、前の閾値に戻る。"""
-    result = _run(tmp_path, "raises")
+    result = _run(tmp_path, "raises", monkeypatch)
     assert result["seen"]["bad"][0] > result["before"][0]
     assert result["after"] == result["before"]
 
 
-def test_a_threshold_set_by_the_imported_module_is_kept(tmp_path: Path) -> None:
+def test_a_threshold_set_by_the_imported_module_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """読み込まれた module が自分で決めた閾値は、終わりに上書きしない。"""
-    result = _run(tmp_path, "own")
+    result = _run(tmp_path, "own", monkeypatch)
     assert result["after"][0] == 500
 
 
-def test_a_zero_threshold_is_left_off_during_the_import(tmp_path: Path) -> None:
+def test_a_zero_threshold_is_left_off_during_the_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """閾値 0(自動の GC を切ってある)は、読み込みの間も 0 のまま(切った GC を動かさない)。"""
-    result = _run(tmp_path, "off")
+    result = _run(tmp_path, "off", monkeypatch)
     assert result["seen"] == {"inner": [0, *result["before"][1:]]}
     assert result["after"][0] == 0
 
 
-def test_the_threshold_stays_raised_until_the_last_of_two_concurrent_imports_ends(tmp_path: Path) -> None:
+def test_the_threshold_stays_raised_until_the_last_of_two_concurrent_imports_ends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """閾値は process に 1 つ。別の thread の読み込みが続いている間に 1 つ目の読み込みが終わっても戻さず、最後の読み込みが
     終わった時に、どちらの読み込みよりも前の閾値へ戻る。"""
-    result = _run(tmp_path, "two-threads")
+    result = _run(tmp_path, "two-threads", monkeypatch)
     raised = result["seen"]["slow"]
     assert raised[0] > result["before"][0]
     assert result["while_other_imports"] == result["seen"]["inner"] == raised
     assert result["after"] == result["before"]
 
 
-def test_a_child_forked_while_another_thread_imports_gets_the_threshold_back(tmp_path: Path) -> None:
+def test_a_child_forked_while_another_thread_imports_gets_the_threshold_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """別の thread の読み込みの途中で fork した子は、その thread を持たない(読み込みは子の中で終わらない)ので、前の閾値に戻る。"""
-    result = _run(tmp_path, "fork")
+    result = _run(tmp_path, "fork", monkeypatch)
     assert result["seen"]["slow"][0] > result["before"][0]
     assert result["child"] == result["before"]
     assert result["after"] == result["before"]
