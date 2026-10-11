@@ -1,0 +1,212 @@
+"""盲検 A の実験: 件の結末の消費者を 2 つ目に足す(S2)と、既存の progress_bars か新しい消費者のどちらかが黙って何も受けない。
+
+走らせ方(作業木は変えない):
+    cd /home/ubuntu/.worktrees/doeff-blind-3293bc4cc && \
+        uv run python /tmp/kie3a9-blind-a/exp_consumers.py
+
+前提(主張 S2 の前提をすべて守る):
+- 消費者は効果の引数の注記で ItemOutcome を名指す。
+- 消費者は Traverse の handler(sequential / parallel / parallel_fail_fast)の内側に置く。
+- Traverse の handler は 3 つのうちのどれか。
+"""
+
+from collections.abc import Callable, Iterable
+
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
+from doeff_traverse.effects import ItemOutcome, Skip, Traverse
+from doeff_traverse.handlers import (
+    fail_handler,
+    parallel,
+    parallel_fail_fast,
+    progress_bars,
+    sequential,
+)
+
+from doeff import Pass, Resume, do, run
+from doeff import handler as _program_handler
+
+
+# --- 利用者の pipeline(M1)— 検の test_item_outcomes.py と同じ形 -----------------------------------
+@do
+def _first(x: int):
+    if x == 3:
+        raise ValueError("three")
+    if x == 5:
+        yield Skip()
+    return x * 10
+
+
+@do
+def _second(v: int):
+    if False:
+        yield
+    return v + 1
+
+
+@do
+def _pipeline(items: Iterable[int]):
+    first = yield Traverse(_first, items, label="first")
+    second = yield Traverse(_second, first, label="second")
+    return (first, second)
+
+
+# --- 既存の消費者(M2): progress_bars の bar を記録する make_bar ------------------------------------
+class RecBar:
+    def __init__(self, *, total: int, desc: str) -> None:
+        self.total, self.desc, self.n, self.closed = total, desc, 0, False
+
+    def update(self, n: int = 1) -> None:
+        self.n += n
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class Bars:
+    def __init__(self) -> None:
+        self.made: list[RecBar] = []
+
+    def make(self, *, total: int, desc: str) -> RecBar:
+        bar = RecBar(total=total, desc=desc)
+        self.made.append(bar)
+        return bar
+
+    def states(self) -> list[tuple[str, int, int, bool]]:
+        return [(b.desc, b.n, b.total, b.closed) for b in self.made]
+
+
+# --- 足す消費者(M2): 段ごとに失敗・skipped の件と理由を記録する(S2 の例そのもの) ------------------
+class FailureLedger:
+    """段(label)ごとに、その段で失敗・skipped になった件と理由を持つ。
+
+    answer = "resume": 同梱の progress_bars と同じ終わり方(受けて None で再開する)。
+    answer = "pass"  : 受けて外へ渡す(test_item_outcomes.py の _Reports と同じ終わり方)。
+    """
+
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.rows: list[tuple[str | None, int, str, str]] = []
+
+    def handler(self):
+        ledger = self
+
+        @do
+        def failure_ledger(effect: ItemOutcome, k):
+            if isinstance(effect, ItemOutcome):
+                if effect.outcome in ("failed", "skipped"):
+                    reason = effect.item.history[-1].detail if effect.outcome == "failed" else "when"
+                    ledger.rows.append((effect.label, effect.item.index, effect.outcome, str(reason)))
+                if ledger.answer == "resume":
+                    return (yield Resume(k, None))
+            yield Pass(effect, k)
+
+        return _program_handler(failure_ledger)
+
+
+STRATEGIES: dict[str, Callable] = {
+    "sequential": sequential,
+    "parallel(2)": lambda: parallel(concurrency=2),
+}
+
+
+def run_under(strategy, inside, program):
+    """inside は内側が先(ex08 の with-stack と同じ並び)。その外に fail_handler・try_handler、一番外に Traverse の handler。"""
+    body = program
+    for install in [*inside, fail_handler, try_handler]:
+        body = install(body)
+    return run(scheduled(strategy(body)))
+
+
+def case(name: str, strategy_name: str, build) -> None:
+    bars = Bars()
+    bars2 = Bars()
+    ledger_r = FailureLedger("resume")
+    ledger_p = FailureLedger("pass")
+    inside = build(bars, bars2, ledger_r, ledger_p)
+    _first_c, second = run_under(STRATEGIES[strategy_name](), inside, _pipeline([1, 2, 3, 4, 5, 6]))
+    print(f"[{strategy_name:11}] {name}")
+    print(f"    answer.valid_values = {second.valid_values}")
+    print(f"    bars(tqdm 役)       = {bars.states()}")
+    if bars2.made or "2 本目" in name:
+        print(f"    bars2(2 本目の表示) = {bars2.states()}")
+    rows = ledger_r.rows or ledger_p.rows
+    print(f"    ledger              = {rows}")
+
+
+CASES = [
+    ("0 既存: [progress_bars]", lambda b, b2, lr, lp: [progress_bars(b.make)]),
+    ("1 足す: [ledger(resume), progress_bars]  ledger が内側", lambda b, b2, lr, lp: [lr.handler(), progress_bars(b.make)]),
+    ("2 足す: [progress_bars, ledger(resume)]  ledger が外側", lambda b, b2, lr, lp: [progress_bars(b.make), lr.handler()]),
+    ("3 足す: [ledger(pass), progress_bars]    ledger が内側", lambda b, b2, lr, lp: [lp.handler(), progress_bars(b.make)]),
+    ("4 足す: [progress_bars, ledger(pass)]    ledger が外側", lambda b, b2, lr, lp: [progress_bars(b.make), lp.handler()]),
+    ("5 2 本目の表示: [progress_bars(tqdm), progress_bars(webui)]", lambda b, b2, lr, lp: [progress_bars(b.make), progress_bars(b2.make)]),
+]
+
+
+def main() -> None:
+    for strategy_name in STRATEGIES:
+        for name, build in CASES:
+            case(name, strategy_name, build)
+        print()
+
+    # parallel_fail_fast(失敗の無い件)でも同じ: 2 本目の消費者は外側に置くと何も受けない
+    bars = Bars()
+    ledger = FailureLedger("resume")
+
+    @do
+    def ok_or_skip(x: int):
+        if x == 2:
+            yield Skip()
+        return x
+
+    @do
+    def one_stage():
+        return (yield Traverse(ok_or_skip, [1, 2, 3], label="only"))
+
+    answered = run_under(parallel_fail_fast(concurrency=2), [progress_bars(bars.make), ledger.handler()], one_stage())
+    print("[parallel_fail_fast(2)] [progress_bars, ledger(resume)]  ledger が外側・skipped 1 件")
+    print(f"    answer.valid_values = {answered.valid_values}")
+    print(f"    bars                = {bars.states()}")
+    print(f"    ledger              = {ledger.rows}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+# --- 対照: progress_bars を「受けて外へ渡す」形に書き換えた写し(作業木は変えない)----------------------
+def progress_bars_forwarding(make_bar):
+    """handlers.progress_bars の写し。違いは最後の Resume(k, None) を Pass(effect, k) にしただけ。"""
+    open_bars: dict[object, list] = {}
+
+    @do
+    def handler(effect: ItemOutcome, k):
+        if isinstance(effect, ItemOutcome):
+            opened = open_bars.get(effect.traverse) or [make_bar(total=effect.total, desc=effect.label or "traverse"), 0]
+            opened[0].update(1)
+            if opened[1] + 1 >= effect.total:
+                opened[0].close()
+                open_bars.pop(effect.traverse, None)
+            else:
+                open_bars[effect.traverse] = [opened[0], opened[1] + 1]
+        yield Pass(effect, k)
+
+    return _program_handler(handler)
+
+
+def contrast() -> None:
+    print("===== 対照: progress_bars が渡す形なら、渡す記録係はどちらの並びでも両方が受ける =====")
+    for strategy_name in STRATEGIES:
+        for name, build in [
+            ("A [ledger(pass), pb_fwd]", lambda b, lr, lp: [lp.handler(), progress_bars_forwarding(b.make)]),
+            ("B [pb_fwd, ledger(pass)]", lambda b, lr, lp: [progress_bars_forwarding(b.make), lp.handler()]),
+            ("C [ledger(resume), pb_fwd]", lambda b, lr, lp: [lr.handler(), progress_bars_forwarding(b.make)]),
+        ]:
+            bars = Bars()
+            lr, lp = FailureLedger("resume"), FailureLedger("pass")
+            run_under(STRATEGIES[strategy_name](), build(bars, lr, lp), _pipeline([1, 2, 3, 4, 5, 6]))
+            print(f"[{strategy_name:11}] {name}: bars={bars.states()} ledger={lr.rows or lp.rows}")
+
+
+contrast()

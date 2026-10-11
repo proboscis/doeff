@@ -1,0 +1,17 @@
+"""analyzer で 3 つの Traverse の handler と、足した failure_budget・既存の progress_bars を読む。"""
+from doeff_effect_analyzer.handler_effects import analyze_handler
+from doeff_traverse import handlers
+from doeff_traverse.effects import ItemOutcome
+
+for name, made in [
+    ("sequential", handlers.sequential()),
+    ("parallel", handlers.parallel()),
+    ("parallel_fail_fast", handlers.parallel_fail_fast()),
+    ("progress_bars", handlers.progress_bars(lambda **kw: None)),
+    ("failure_budget", handlers.failure_budget(1)),
+]:
+    read = analyze_handler(made, name=name)
+    emitting = [c.handles.__name__ for c in read.clauses if ItemOutcome in c.emits.effect_types]
+    print(f"{name:20s} handles ItemOutcome={ItemOutcome in read.handled}  clauses emitting ItemOutcome={emitting}")
+    for c in read.clauses:
+        print(f"    clause {c.handles.__name__}: emits={sorted(t.__name__ for t in c.emits.effect_types)}")

@@ -1,0 +1,259 @@
+
+doeff Traceback (most recent call last):
+
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+    handlers:
+      _scheduled_python ↗
+
+ConnectionError: backend down for 2
+
+
+doeff Traceback (most recent call last):
+
+  parallel_fail_fast.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:601
+    done_items = yield Gather(*tasks)
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+    handlers:
+      _scheduled_python ↗
+
+ConnectionError: backend down for 2
+
+
+doeff Traceback (most recent call last):
+
+  sequential.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:182
+    value = yield prog
+  make_step.<locals>.call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+    handlers:
+      failure_budget ↗
+      Log.recorder ↗
+      progress_bars ↗
+      _fail_handler ↗
+      _try_handler ↗
+      sequential ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+FailureBudgetExceeded: calls: 2 of 8 items failed
+
+
+doeff Traceback (most recent call last):
+
+  parallel.<locals>.handler.<locals>.run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:378
+    result = yield attempt()
+  parallel.<locals>.handler.<locals>.run_item.<locals>.attempt()  packages/doeff-traverse/doeff_traverse/handlers.py:375
+    value = yield try_handler(Try(prog))
+  make_step.<locals>.call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:405
+    yield WithHandlerType(handler, WithBoundaries(
+    handlers:
+      failure_budget ↗
+      Log.recorder ↗
+      progress_bars ↗
+      _fail_handler ↗
+      _try_handler ↗
+      parallel ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+FailureBudgetExceeded: calls: 2 of 8 items failed
+
+
+doeff Traceback (most recent call last):
+
+  parallel.<locals>.handler.<locals>.run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:378
+    result = yield attempt()
+  parallel.<locals>.handler.<locals>.run_item.<locals>.attempt()  packages/doeff-traverse/doeff_traverse/handlers.py:375
+    value = yield try_handler(Try(prog))
+  make_step.<locals>.call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:405
+    yield WithHandlerType(handler, WithBoundaries(
+    handlers:
+      failure_budget ↗
+      Log.recorder ↗
+      progress_bars ↗
+      _fail_handler ↗
+      _try_handler ↗
+      parallel ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+FailureBudgetExceeded: calls: 2 of 8 items failed
+
+
+doeff Traceback (most recent call last):
+
+  parallel.<locals>.handler.<locals>.run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:378
+    result = yield attempt()
+  parallel.<locals>.handler.<locals>.run_item.<locals>.attempt()  packages/doeff-traverse/doeff_traverse/handlers.py:375
+    value = yield try_handler(Try(prog))
+  make_step.<locals>.call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:405
+    yield WithHandlerType(handler, WithBoundaries(
+    handlers:
+      failure_budget ↗
+      Log.recorder ↗
+      progress_bars ↗
+      _fail_handler ↗
+      _try_handler ↗
+      parallel ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+FailureBudgetExceeded: calls: 2 of 8 items failed
+
+
+doeff Traceback (most recent call last):
+
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+    handlers:
+      _scheduled_python ↗
+
+ConnectionError: backend down for 2
+
+
+doeff Traceback (most recent call last):
+
+  parallel_fail_fast.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:601
+    done_items = yield Gather(*tasks)
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:89
+    return (yield Traverse(make_step(log), list(ITEMS), label="calls"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+    handlers:
+      _scheduled_python ↗
+
+ConnectionError: backend down for 2
+
+
+doeff Traceback (most recent call last):
+
+  sequential.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:182  [×2]
+    value = yield prog
+  make_step.<locals>.call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:104
+    return (yield Traverse(outer_item, [0, 1], label="outer"))
+    handlers:
+      failure_budget ↗
+      Log.recorder ↗
+      progress_bars ↗
+      _fail_handler ↗
+      _try_handler ↗
+      sequential ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+FailureBudgetExceeded: outer: 2 of 2 items failed
+
+
+doeff Traceback (most recent call last):
+
+  parallel.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:414
+    done_items = yield Gather(*tasks)
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:104
+    return (yield Traverse(outer_item, [0, 1], label="outer"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:405
+    yield WithHandlerType(handler, WithBoundaries(
+    handlers:
+      _scheduled_python ↗
+
+FailureBudgetExceeded: outer: 2 of 2 items failed
+
+
+doeff Traceback (most recent call last):
+
+  parallel.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:414
+    done_items = yield Gather(*tasks)
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:104
+    return (yield Traverse(outer_item, [0, 1], label="outer"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:405
+    yield WithHandlerType(handler, WithBoundaries(
+    handlers:
+      _scheduled_python ↗
+
+FailureBudgetExceeded: outer: 2 of 2 items failed
+
+
+doeff Traceback (most recent call last):
+
+  parallel.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:414
+    done_items = yield Gather(*tasks)
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:104
+    return (yield Traverse(outer_item, [0, 1], label="outer"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:405
+    yield WithHandlerType(handler, WithBoundaries(
+    handlers:
+      _scheduled_python ↗
+
+FailureBudgetExceeded: outer: 2 of 2 items failed
+
+
+doeff Traceback (most recent call last):
+
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:104
+    return (yield Traverse(outer_item, [0, 1], label="outer"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  outer_item()  /tmp/kie3a9-blind-b/exp/violation.py:99
+    inner = yield Traverse(step, [group * 10 + i for i in (0, 2, 3)], label=f"inner{group}")
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+    handlers:
+      _scheduled_python ↗
+
+ConnectionError: backend down for 2
+
+/work/toolset/worktrees/doeff-blind-3293bc4cc/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with FailureBudgetExceeded: outer: 2 of 2 items failed
+  return vm.run(doexpr)
+/work/toolset/worktrees/doeff-blind-3293bc4cc/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [unstarted task 10; queued resume for task 4]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+  return vm.run(doexpr)
+
+doeff Traceback (most recent call last):
+
+  program()  /tmp/kie3a9-blind-b/exp/violation.py:104
+    return (yield Traverse(outer_item, [0, 1], label="outer"))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  outer_item()  /tmp/kie3a9-blind-b/exp/violation.py:99
+    inner = yield Traverse(step, [group * 10 + i for i in (0, 2, 3)], label=f"inner{group}")
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:560
+    value = yield prog
+  call_backend()  /tmp/kie3a9-blind-b/exp/violation.py:66
+    raise ConnectionError(f"backend down for {x}")
+    handlers:
+      _scheduled_python ↗
+
+ConnectionError: backend down for 2
+
