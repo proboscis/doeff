@@ -1120,6 +1120,145 @@ class TestCancel:
 
 
 # ---------------------------------------------------------------------------
+# One timed wait does not grow with the tasks parked elsewhere
+# (agora-redesign card ki-1294af4fa525)
+# ---------------------------------------------------------------------------
+
+def _scheduler_lines_per_timed_wait(
+    parked: int, waits: int, *, traced: bool
+) -> tuple[float, dict[str, float]]:
+    """Lines of scheduler.py one WaitWithin runs while ``parked`` other tasks wait.
+
+    The production shape (doeff-claude-code's doorbell under the async clock):
+    a task waits on an external promise with ``WaitWithin(bell.future, s,
+    park=True)`` — the clock spawns a deadline timer (a daemon task parked on
+    an Await), races it against the bell and cancels it when the bell wins.
+    ``parked`` daemon tasks wait like that on bells nobody rings; then the
+    root runs ``waits`` such waits whose bell rings the moment the scheduler
+    blocks for an external completion (as a CLI line arriving while it
+    waits), so every wait takes the same path: park, block, wake, cancel the
+    timer. ``traced`` installs a scheduler trace sink (the measuring window
+    turn-host opens). The work is counted, not timed: the scheduler.py lines
+    this thread executes (sys.settrace — the tracer itself is not traced, so
+    ringing from it adds no line). Answers the median lines of one wait (the
+    first wait also runs the parked tasks' starts, so it is not counted) and
+    the lines per wait by function.
+    """
+    import statistics
+    from collections import Counter
+
+    import doeff_core_effects.scheduler as scheduler_module
+    from doeff_core_effects.handlers import await_handler
+    from doeff_core_effects.scheduler import ExternalPromise, set_scheduler_trace
+    from doeff_time import WaitWithin, async_time_handler
+
+    from doeff import with_handlers
+
+    scheduler_file = scheduler_module.__file__
+    lines = [0]
+    by_function: Counter[str] = Counter()
+    # The bell of the wait in progress; rung (and cleared) when the scheduler
+    # starts blocking for an external completion.
+    ringing: list[ExternalPromise[bool] | None] = [None]
+
+    def trace_lines(frame: FrameType, event: str, arg: object) -> object:
+        if event == "line":
+            lines[0] += 1
+            by_function[frame.f_code.co_name] += 1
+            if ringing[0] is not None and frame.f_code.co_name == "_drain_one_external":
+                bell, ringing[0] = ringing[0], None
+                bell.complete(True)
+        return trace_lines
+
+    def trace_calls(frame: FrameType, event: str, arg: object) -> object:
+        return trace_lines if frame.f_code.co_filename == scheduler_file else None
+
+    @do
+    def parked_waiter():
+        bell = yield CreateExternalPromise()
+        yield WaitWithin(bell.future, 3600.0, park=True)
+
+    @do
+    def one_wait():
+        bell = yield CreateExternalPromise()
+        ringing[0] = bell
+        before = lines[0]
+        answer = yield WaitWithin(bell.future, 3600.0, park=True)
+        assert answer is True
+        return lines[0] - before
+
+    @do
+    def body():
+        parked_tasks: tuple[Task[None], ...] = ()
+        for _ in range(parked):
+            parked_tasks = (*parked_tasks, (yield Spawn(parked_waiter(), daemon=True)))
+        yield one_wait()  # also runs the parked tasks' starts
+        counted_from = Counter(by_function)
+        per_wait: tuple[int, ...] = ()
+        for _ in range(waits):
+            per_wait = (*per_wait, (yield one_wait()))
+        counted = by_function - counted_from
+        for task in parked_tasks:
+            yield Cancel(task)
+        return per_wait, counted
+
+    set_scheduler_trace((lambda event: None) if traced else None)
+    previous_trace = sys.gettrace()
+    sys.settrace(trace_calls)
+    try:
+        per_wait, counted = doeff_run(scheduled(
+            with_handlers([await_handler(), async_time_handler()], body()),
+            implementation="python",
+        ))
+    finally:
+        sys.settrace(previous_trace)
+        set_scheduler_trace(None)
+    return statistics.median(per_wait), {
+        name: count / waits for name, count in counted.most_common()
+    }
+
+
+class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
+    """card ki-1294af4fa525: every running agent turn keeps tasks parked in the
+    turn-host scheduler (its doorbell and deadline waits), and each line the
+    CLI writes ends a WaitWithin — its Cancel of the deadline timer walked
+    every parked waiter (keys_parked_by, detach_from_waiters) and the block
+    for the next completion walked the ready heap (has_live_ready_entry, and
+    trace_enqueued while a trace sink is installed). One wait's scheduler
+    work must not grow with the number of tasks parked elsewhere."""
+
+    PARKED_FEW = 16
+    PARKED_MANY = 256
+    WAITS = 8
+
+    @pytest.mark.parametrize("traced", [False, True], ids=["untraced", "traced"])
+    def test_one_timed_wait_does_not_walk_the_parked_tasks(self, monkeypatch, traced):
+        from doeff_core_effects import scheduler as scheduler_module
+
+        # The terminal-entry sweep walks every task row once per
+        # HANDLE_SWEEP_INTERVAL ids (amortized, #502) — kept out of the count.
+        monkeypatch.setattr(scheduler_module, "HANDLE_SWEEP_INTERVAL", 1 << 30)
+        few, few_by_function = _scheduler_lines_per_timed_wait(
+            self.PARKED_FEW, self.WAITS, traced=traced
+        )
+        many, many_by_function = _scheduler_lines_per_timed_wait(
+            self.PARKED_MANY, self.WAITS, traced=traced
+        )
+        grown = sorted(
+            (
+                (many_by_function.get(name, 0) - few_by_function.get(name, 0), name)
+                for name in set(few_by_function) | set(many_by_function)
+            ),
+            reverse=True,
+        )[:5]
+        assert many <= few * 1.1, (
+            f"one WaitWithin ran {few} scheduler lines with {self.PARKED_FEW} tasks "
+            f"parked and {many} with {self.PARKED_MANY}; lines per wait grown most: "
+            f"{[(name, round(delta)) for delta, name in grown]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Error propagation
 # ---------------------------------------------------------------------------
 
