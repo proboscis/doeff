@@ -1237,3 +1237,23 @@ def test_a_file_changed_between_two_imports_is_noticed_by_the_second(scope_tree:
     scope_tree.run("top")
     answer = scope_tree.run("user_0", 'edit:tables.py:ROWS["b"] = 2:ROWS["b"] = 20', "user_1")
     assert answer["compiled"] == ["user_1.hy"], f"読み込みの間に変えた tables.py に気づかない: {answer}"
+
+
+def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
+    # 緑のまま守る: 記録の digest の綴り(歩みが入れた文字列ごとに、UTF-8(surrogatepass)の bytes の長さを 8 byte の little endian で
+    # 前に置いた並びの sha256)。綴りが変わると、全部の .pyc と置き場の code の記録が古いと判じられ、全部の Hy の module が compile
+    # し直される(歩みの文字列の入れ方を速くした card ki-be596ac8276f の便が、綴りを変えていない証拠)。
+    import hashlib
+
+    from doeff_hy_bytecode_guard import loader_hooks, macro_use
+
+    walker = macro_use._Walker(loader_hooks.file_sha256, macro_use.CodeReadings({}))
+    fed = (("module", "a"), ("値", ""), ("\ud800",))
+    for parts in fed:
+        walker._feed(*parts)
+    expected = hashlib.sha256()
+    for part in (part for parts in fed for part in parts):
+        data = part.encode("utf-8", "surrogatepass")
+        expected.update(len(data).to_bytes(8, "little"))
+        expected.update(data)
+    assert walker.digest() == expected.hexdigest(), "歩みの digest の綴りが、長さを前に置いた文字列の並びの sha256 でない"
