@@ -36,6 +36,8 @@ from doeff_core_effects.scheduler import (
 from doeff import do
 from doeff import run as doeff_run
 
+pytestmark = pytest.mark.usefixtures("scheduler_index_self_check")
+
 # The functions allowed to mutate each structure (design.md §2 of the design check).
 ENTRY_FUNCTIONS = {
     "waiters": frozenset({"park_waiter", "unpark_key", "unpark_at", "keep_waiters"}),
@@ -198,20 +200,37 @@ def _scheduled_python(body):
     ]
 
 
-def _ready_of_the_run_holding(program: object) -> list:
-    """The ``ready`` heap of the scheduler run whose pending task holds ``program`` (found from pick_next's closure)."""
+def _scheduler_functions(name: str) -> tuple[types.FunctionType, ...]:
     gc.collect()
-    for obj in gc.get_objects():
-        if (
-            type(obj) is types.FunctionType
-            and obj.__name__ == "pick_next"
-            and obj.__code__.co_filename == scheduler_module.__file__
-        ):
-            cells = dict(zip(obj.__code__.co_freevars, obj.__closure__ or (), strict=True))
-            tasks = cells["tasks"].cell_contents
-            if any(row.get("program") is program for row in tasks.values()):
-                return cells["ready"].cell_contents
+    return tuple(
+        obj
+        for obj in gc.get_objects()
+        if type(obj) is types.FunctionType
+        and obj.__name__ == name
+        and obj.__code__.co_filename == scheduler_module.__file__
+    )
+
+
+def _cells(function: types.FunctionType) -> dict[str, types.CellType]:
+    return dict(zip(function.__code__.co_freevars, function.__closure__ or (), strict=True))
+
+
+def _run_holding(program: object) -> dict[str, types.CellType]:
+    """The closure cells of pick_next of the scheduler run whose task holds ``program``."""
+    for pick_next in _scheduler_functions("pick_next"):
+        cells = _cells(pick_next)
+        if any(row.get("program") is program for row in cells["tasks"].cell_contents.values()):
+            return cells
     raise LookupError("no scheduler run holds the program")
+
+
+def _park_waiter_of(run: dict[str, types.CellType]) -> types.FunctionType:
+    """park_waiter of the same run (it shares the ``waiters`` cell with pick_next)."""
+    return next(
+        function
+        for function in _scheduler_functions("park_waiter")
+        if _cells(function)["waiters"] is run["waiters"]
+    )
 
 
 def _raise_a_queued_idle_start_through_an_alias():
@@ -226,7 +245,7 @@ def _raise_a_queued_idle_start_through_an_alias():
     def body():
         program = noop()
         task = yield Spawn(program, priority=PRIORITY_IDLE)
-        heap = _ready_of_the_run_holding(program)
+        heap = _run_holding(program)["ready"].cell_contents
         heap[:] = [
             (-PRIORITY_NORMAL, seq, entry)
             if entry[0] == "new" and entry[1] == task.task_id
@@ -253,3 +272,48 @@ def test_without_the_self_check_the_same_drift_goes_unnoticed(monkeypatch) -> No
         doeff_run(scheduled(_raise_a_queued_idle_start_through_an_alias(), implementation="python"))
         == "done"
     )
+
+
+def _refusal(entry_function, argument) -> str | None:
+    try:
+        entry_function(argument)
+    except TypeError as error:
+        return str(error)
+    return None
+
+
+def test_the_entry_functions_refuse_an_undeclared_or_misdeclared_kind() -> None:
+    # The blind A's changes: a new ready kind taught only to dispatch (Cancel dropped the task without its finally
+    # blocks) and a multi-key waiter kind (Cancel threw its state dict in as the continuation). Each is refused where
+    # it would enter, before anything moves — the run then ends normally under the self-check.
+    @do
+    def noop():
+        return None
+
+    @do
+    def body():
+        program = noop()
+        task = yield Spawn(program, priority=PRIORITY_IDLE)  # still queued while body looks
+        run = _run_holding(program)
+        ready_push = run["ready_push"].cell_contents
+        park_waiter = _park_waiter_of(run)
+        tid, state = task.task_id, {"resolved": False, "waiter_k": None}
+        refusals = tuple(
+            _refusal(entry_function, argument)
+            for entry_function, argument in (
+                (ready_push, (-PRIORITY_NORMAL, -1, ("reschedule", tid, None))),
+                (ready_push, (-PRIORITY_NORMAL, -1, ("resume", tid, state))),
+                (lambda entry: park_waiter(("task", tid), entry), ("some", tid, state, None)),
+                (lambda entry: park_waiter(("task", tid), entry), ("wait", tid, state, None)),
+            )
+        )
+        yield Wait(task)
+        return refusals
+
+    refusals = doeff_run(scheduled(body(), implementation="python"))
+    assert [message and message.split(":", 1)[0] for message in refusals] == [
+        "ready entry kind 'reschedule' is not declared",
+        "ready entry 'resume' is declared in _CONTINUATION_ENTRY_KINDS but holds dict at [2], not the task's continuation",
+        "waiter entry kind 'some' is not declared",
+        "waiter entry 'wait' is declared in _SINGLE_KEY_WAITER_KINDS but holds dict at [2], not the task's continuation",
+    ], refusals
