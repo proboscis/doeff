@@ -1,0 +1,102 @@
+;;; 盲検 A の実験: ex08 の形(tqdm-progress を据えた parallel の stack)に、段ごとの失敗の記録係を defhandler の
+;;; 普通の書き方(節を (resume None) で終える)で 1 つ足す。
+;;;
+;;; 走らせ方(作業木は変えない):
+;;;   cd /home/ubuntu/.worktrees/doeff-blind-3293bc4cc && uv run python -m hy /tmp/kie3a9-blind-a/exp_ex08_ledger.hy
+
+(require doeff-hy.macros [defk <- traverse defhandler])
+(import doeff [do :as _doeff-do])
+(import doeff [run EffectBase])
+(import io)
+
+(import doeff_core_effects [try-handler :as try_handler])
+(import doeff_core_effects.scheduler [scheduled])
+
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+(import doeff_traverse.effects [ItemOutcome])
+(import doeff_traverse.handlers [parallel sequential progress-bars fail-handler :as fail_handler])
+(import doeff_traverse.collection [Collection])
+
+(import tqdm [tqdm])
+
+
+;; ex08 の tqdm-progress と同じ。ただし bar の出力を捨て、作った bar を数える。
+(setv made [])
+(defn quiet-tqdm [* total desc]
+  (setv bar (tqdm :total total :desc desc :file (io.StringIO)))
+  (.append made bar)
+  bar)
+(defn tqdm-progress [] (progress-bars quiet-tqdm))
+
+
+;; S2 の例: 段ごとに失敗した件と理由を記録する handler(普通の defhandler の節 — 受けて再開する)。
+(defhandler failure-ledger [rows]
+  (ItemOutcome [outcome item label]
+    (when (= outcome "failed")
+      (.append rows #(label item.index (str item.value))))
+    (resume None)))
+
+
+(defclass Compute [EffectBase]
+  (defn __init__ [self x]
+    (.__init__ (super))
+    (setv self.x x)))
+
+;; ex08 の flaky-backend と同じ形(件 7 だけ backend が落ちる)。待ちは省く。
+(defhandler flaky-backend
+  (Compute [x]
+    (when (= x 7)
+      (raise (ConnectionError "backend down for 7")))
+    (resume (* x 10))))
+
+(defk pipeline [items]
+  {:pre [(: items list)]
+   :post [(: % Collection)]}
+  (<- stage1
+    (traverse
+      (<- x (Iterate items :label "stage1: compute"))
+      (<- y (Compute x))
+      y))
+  (<- stage2
+    (traverse
+      (<- v (Iterate stage1 :label "stage2: normalize"))
+      (+ v 1)))
+  stage2)
+
+(defn with-stack [stack program]
+  (setv body program)
+  (for [h stack]
+    (setv body (h body)))
+  (scheduled body))
+
+(defn show [title stack-fn strategy]
+  (.clear made)
+  (setv rows [])
+  (setv result (run (with-stack (stack-fn rows) (pipeline (list (range 1 21))))))
+  (print title)
+  (print "   valid" (len (. result valid_values)) "failed" (lfor i (. result failed_items) (. i index)))
+  (print "   bars " (lfor b made #((. b desc) (. b n) (. b total) (. b disable))))
+  (print "   ledger" rows))
+
+(for [#(name strategy) [#("parallel(10)" (fn [] (parallel 10))) #("sequential" (fn [] (sequential)))]]
+  (print "=====" name "=====")
+  (show "ex08 のまま: [... (tqdm-progress) (Traverse の handler)]"
+        (fn [rows] [try_handler flaky-backend fail_handler (tqdm-progress) (strategy)]) strategy)
+  (show "記録係を足す(tqdm-progress の内側): [... (failure-ledger rows) (tqdm-progress) (Traverse の handler)]"
+        (fn [rows] [try_handler flaky-backend fail_handler (failure-ledger rows) (tqdm-progress) (strategy)]) strategy)
+  (show "記録係を足す(tqdm-progress の外側): [... (tqdm-progress) (failure-ledger rows) (Traverse の handler)]"
+        (fn [rows] [try_handler flaky-backend fail_handler (tqdm-progress) (failure-ledger rows) (strategy)]) strategy))
+
+
+;; 対照: 節を (reperform effect) で終える(受けて外へ渡す)記録係。tqdm-progress の内側なら両方が受け、外側なら記録係は何も受けない。
+(defhandler forwarding-ledger [rows]
+  (ItemOutcome [outcome item label]
+    (when (= outcome "failed")
+      (.append rows #(label item.index (str item.value))))
+    (reperform effect)))
+
+(print "===== 対照 parallel(10): 渡す記録係 =====")
+(show "渡す記録係を内側: [... (forwarding-ledger rows) (tqdm-progress) (parallel 10)]"
+      (fn [rows] [try_handler flaky-backend fail_handler (forwarding-ledger rows) (tqdm-progress) (parallel 10)]) None)
+(show "渡す記録係を外側: [... (tqdm-progress) (forwarding-ledger rows) (parallel 10)]"
+      (fn [rows] [try_handler flaky-backend fail_handler (tqdm-progress) (forwarding-ledger rows) (parallel 10)]) None)

@@ -1,0 +1,148 @@
+diff --git a/packages/doeff-traverse/doeff_traverse/__init__.py b/packages/doeff-traverse/doeff_traverse/__init__.py
+index 7deb39e..fbb0f57 100644
+--- a/packages/doeff-traverse/doeff_traverse/__init__.py
++++ b/packages/doeff-traverse/doeff_traverse/__init__.py
+@@ -36,9 +36,15 @@ from doeff_traverse.effects import (
+ from doeff_traverse.effects import (
+     Zip as Zip,
+ )
++from doeff_traverse.handlers import (
++    FailureBudgetExceeded as FailureBudgetExceeded,
++)
+ from doeff_traverse.handlers import (
+     fail_handler as fail_handler,
+ )
++from doeff_traverse.handlers import (
++    failure_budget as failure_budget,
++)
+ from doeff_traverse.handlers import (
+     normalize_to_none as normalize_to_none,
+ )
+diff --git a/packages/doeff-traverse/doeff_traverse/handlers.py b/packages/doeff-traverse/doeff_traverse/handlers.py
+index 624a465..409a58c 100644
+--- a/packages/doeff-traverse/doeff_traverse/handlers.py
++++ b/packages/doeff-traverse/doeff_traverse/handlers.py
+@@ -758,3 +758,41 @@ def progress_bars(make_bar: BarFactory):
+         yield Pass(effect, k)
+ 
+     return _program_handler(handler)
++
++
++class FailureBudgetExceeded(RuntimeError):
++    """A Traverse failed more of its items than failure_budget allows."""
++
++    def __init__(self, label: str | None, failed: int, total: int) -> None:
++        super().__init__(f"{label or 'traverse'}: {failed} of {total} items failed")
++        self.label = label
++        self.failed = failed
++        self.total = total
++
++
++def failure_budget(max_failed: int):
++    """ItemOutcome handler: stop a Traverse once more than ``max_failed`` of its items failed.
++
++    Counts the items the Traverse handler reports ``failed`` (a ``carried`` item failed in an
++    earlier stage and is not counted again) and, at the first one past the budget, throws
++    FailureBudgetExceeded where the report was performed, so the Traverse stops instead of
++    running the rest of its items against a backend that is down. Every other report goes on
++    to the handlers outside it (a progress_bars installed outside it still counts them).
++    Install it inside the Traverse handler, like progress_bars:
++    ``[... (failure-budget 5) (progress-bars tqdm) (parallel 10)]``.
++    """
++    # The failed items counted so far for each Traverse run (ItemOutcome.traverse).
++    failed_by_run: dict[object, int] = {}
++
++    @do
++    def handler(effect: ItemOutcome, k):
++        if isinstance(effect, ItemOutcome):
++            if effect.outcome == "failed":
++                failed = failed_by_run.get(effect.traverse, 0) + 1
++                failed_by_run[effect.traverse] = failed
++                if failed > max_failed:
++                    failed_by_run.pop(effect.traverse, None)
++                    return (yield ResumeThrow(k, FailureBudgetExceeded(effect.label, failed, effect.total)))
++        yield Pass(effect, k)
++
++    return _program_handler(handler)
+diff --git a/packages/doeff-traverse/doeff_traverse/handlers.pyi b/packages/doeff-traverse/doeff_traverse/handlers.pyi
+index 9a878ef..ea8b406 100644
+--- a/packages/doeff-traverse/doeff_traverse/handlers.pyi
++++ b/packages/doeff-traverse/doeff_traverse/handlers.pyi
+@@ -39,3 +39,13 @@ class BarFactory(Protocol):
+     def __call__(self, *, total: int, desc: str) -> ProgressBar: ...
+ 
+ def progress_bars(make_bar: BarFactory) -> ProgramHandler: ...
++
++class FailureBudgetExceeded(RuntimeError):
++    """failure_budget が、Traverse の失敗した件が上限を越えた時に、知らせの所へ投げる例外。"""
++
++    label: str | None
++    failed: int
++    total: int
++    def __init__(self, label: str | None, failed: int, total: int) -> None: ...
++
++def failure_budget(max_failed: int) -> ProgramHandler: ...
+diff --git a/packages/doeff-traverse/tests/test_failure_budget.py b/packages/doeff-traverse/tests/test_failure_budget.py
+new file mode 100644
+index 0000000..d4f3527
+--- /dev/null
++++ b/packages/doeff-traverse/tests/test_failure_budget.py
+@@ -0,0 +1,58 @@
++"""failure_budget の検: Traverse の失敗した件が上限を越えたら、その Traverse を止める。"""
++
++from collections.abc import Callable
++
++import pytest
++from doeff_core_effects.handlers import try_handler
++from doeff_core_effects.scheduler import scheduled
++from doeff_traverse.effects import Traverse
++from doeff_traverse.handlers import (
++    FailureBudgetExceeded,
++    fail_handler,
++    failure_budget,
++    parallel,
++    sequential,
++)
++
++from doeff import do, run
++from doeff.program import ProgramHandler
++
++_STRATEGIES: dict[str, Callable[[], ProgramHandler]] = {
++    "sequential": sequential,
++    "parallel": lambda: parallel(concurrency=2),
++}
++
++
++@do
++def _call_backend(x: int):
++    """件: 2・3・5 は backend が落ちて失敗する。"""
++    if x in (2, 3, 5):
++        raise ConnectionError(f"backend down for {x}")
++    if False:
++        yield
++    return x * 10
++
++
++@do
++def _stage(items: list[int]):
++    return (yield Traverse(_call_backend, items, label="calls"))
++
++
++def _run(strategy: ProgramHandler, max_failed: int, items: list[int]):
++    body = _stage(items)
++    for install in [failure_budget(max_failed), fail_handler, try_handler]:
++        body = install(body)
++    return run(scheduled(strategy(body)))
++
++
++@pytest.mark.parametrize("name", sorted(_STRATEGIES))
++def test_a_traverse_stops_once_its_failures_pass_the_budget(name: str) -> None:
++    with pytest.raises(FailureBudgetExceeded, match="calls: 2 of 8 items failed"):
++        _run(_STRATEGIES[name](), 1, [0, 1, 2, 3, 4, 5, 6, 7])
++
++
++@pytest.mark.parametrize("name", sorted(_STRATEGIES))
++def test_a_traverse_within_the_budget_answers_its_collection(name: str) -> None:
++    answered = _run(_STRATEGIES[name](), 3, [0, 1, 2, 3, 4, 5, 6, 7])
++    assert answered.valid_values == [0, 10, 40, 60, 70]
++    assert [item.index for item in answered.failed_items] == [2, 3, 5]
