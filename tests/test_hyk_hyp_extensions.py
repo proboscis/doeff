@@ -27,8 +27,13 @@ import pytest
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def tmp_hy_dir(tmp_path):
-    """Create a temp directory on sys.path for .hyk/.hyp imports."""
+def tmp_hy_dir(tmp_path, monkeypatch):
+    """Create a temp directory on sys.path for .hyk/.hyp imports.
+
+    この file の検は Hy の展開そのもの(展開の時の警告・断り)を確かめるので、Hy の code の置き場も検ごとに空にする。走らせる側
+    (日次の task・worker)が DOEFF_HY_CODE_STORE で共有の置き場を名指すと、前の実行が書いた同じ中身の code を引いて展開を通らず、
+    test_defk_in_hyp_warns の警告が出ない(日次 10-11 16:00 JST の赤 — 同じ置き場で 2 回目が failed)。"""
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(tmp_path / "code-store"))
     sys.path.insert(0, str(tmp_path))
     yield tmp_path
     sys.path.remove(str(tmp_path))
