@@ -61,6 +61,7 @@ import os
 import pickle
 import sys
 import tempfile
+import threading
 import types
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -148,7 +149,9 @@ class _ClauseEmits:
     effect reaches what they emit: reading every clause's body when the handler was read built
     the emits of 452 clauses for the 118 the delivery job's closure asked for (ki-5a5f6bd26d5e).
     A clause read later counts the sources it reads in the ``reading_sources`` around the place
-    that asks — an analysis that keeps an answer asks for what the answer needs inside it."""
+    that asks — an analysis that keeps an answer asks for what the answer needs inside it. Two
+    threads asking at once may both call the function: it answers the same value to both (the
+    analyzer's own reads once, holding its reader — ``handler_effects._emits_read_later``)."""
 
     def __set_name__(self, owner: type, name: str) -> None:
         self._held = f"_{name}"
@@ -2239,10 +2242,9 @@ def _opened_answers(effect: Imported) -> list[type]:
     ]
 
 
-@functools.cache
 def _absent_receiver() -> HandlerEffects:
     """The receiver ``(<- x e :absent F)`` wraps the one bind in (``absent_raises``:
-    Absent → Raise), read from its clauses once."""
+    Absent → Raise), read from its clauses (once per reader — ``_Reader.absent_receiver``)."""
     from doeff_effect_analyzer import handler_effects
 
     outcomes = importlib.import_module("doeff_core_effects.outcomes")
@@ -2308,6 +2310,20 @@ class _Reader:
         self._local_reads: set[_Identity] = set()
         # Reports walked from facts read here, by the facts each starts from (``_walk``).
         self._reports: dict[int, list[_KeptReport]] = {}
+        # Held while a clause made with this reader is read (``handler_effects._emits_read_later``):
+        # a handler's clauses share the reader, and a thread asking for one clause walked the empty
+        # facts another thread had placed but not yet read (blind A of ki-5a5f6bd26d5e).
+        self.lock = threading.RLock()
+        self._absent: HandlerEffects | None = None
+
+    def absent_receiver(self) -> HandlerEffects:
+        """The ``:absent`` receiver this reader's binds are read under, read once per reader.
+        Kept for the process, its clauses — read when an effect reaches them, with the reader they
+        were made with — were shared by every analysis, and counted their sources only in the one
+        that read them first (blind A of ki-5a5f6bd26d5e)."""
+        if self._absent is None:
+            self._absent = _absent_receiver()
+        return self._absent
 
     def kept_report(
         self, start: _Facts, label: str, active: frozenset[_ReadKey]
@@ -2518,7 +2534,7 @@ class _Reader:
         if target is not UNBOUND and _is_effect_class(target):
             inner.effects.extend((answer, location, False) for answer in _opened_answers(target))
         if opening.absent is not None:
-            receiver = replace(_absent_receiver(), name=f":absent {ast.unparse(opening.absent)}")
+            receiver = replace(self.absent_receiver(), name=f":absent {ast.unparse(opening.absent)}")
             text = ast.unparse(opening.operand)
             facts.handled.append(_HandledFacts((receiver,), inner, text, location))
 
