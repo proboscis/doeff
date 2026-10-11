@@ -4,21 +4,22 @@
 //! `[tool.doeff-linter.commit_hook]`(上限の秒)だけ。元の実装 = agora-controllers の
 //! `scripts/commit_hook.hy`(lint-staged・whole-repo-fresh)。
 //!
-//! 止める物は 4 種:
+//! 止める物は 3 種(どれも stage した path の中だけ — 子の linter は stage した path と、その HEAD の版だけを測る):
 //! - stage した source(.hy・.hyk・.hyp・.py)の、critical でない規則の登録簿の外の error(登録簿の既知は linter が warning に下げる)。
 //! - stage した source の critical のうち HEAD の版に無い物(`--baseline-report` の `new_critical`)。
 //! - stage した source の major の warning の数が、規則ごとに HEAD の版より増えた物(agora-redesign #2683 — warning は終了コードを
 //!   変えないので、直している間に新しい warning が入っても減らなかった)。数は stage した file の組の合計で比べる(移した・消した
 //!   file の HEAD の版も数える)— file ごとに比べると、warning を増やさない移しや分割まで止まる。基点は HEAD の版そのものなので、
 //!   減らした commit の後は次の commit の基点が自ずと下がる(基点の file を持たない・下げ忘れが無い)。
-//! - repo 全体の比べ(repo 全体が要ると規則が名乗る列 — `ProjectRule::needs_whole_repo`・agora-redesign #2090 — を repo 全体に当てる)の
-//!   当たりのうち HEAD の木に無い物 — 当たりが変更の外の file(architecture.hy・登録簿の表・別の source)に付きうる規則は、stage した
-//!   path に当てても出ない。source を 1 つも stage しない commit(表だけの変更)にも当てる。この列は stage した path に当てる規則から
-//!   外す(以前は設定の手の一覧 whole_repo_rules — 足し忘れた DOEFF149・161 がどちらにも掛からなかった)。列に DOEFF166(当たらない登録簿の行)が在れば、linter が
-//!   行の名指す規則を enable に無くても同じ実行で当てるので、列だけで当たらない行を見逃さない(agora-redesign #1999・#2033 — それまでは
-//!   全部の規則で撃っていた・#1998)。
 //!
-//! 既知の一覧を持たない規則(DOEFF206〜209)の critical は、上の 2 つ目と 4 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
+//! 当てる規則は、有効な規則のうち file 1 つの中身と設定だけで決まる物(split_rules の quick)だけ。repo 全体が要ると規則が名乗る物
+//! (`ProjectRule::needs_whole_repo`)と、宣言の file を変えた commit の stage していない file の当たりは、hook では測らず、repo 全体の
+//! 検証(各 repo の日次 — agora-controllers は 4 時間ごと)が見る(card ki-7da14032cf9c・cisco-c8 の決め 2026-10-11 11:1x)。以前は
+//! repo 全体の比べ(先端の木と HEAD の木を repo 全体で測る)も hook が持ち、agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB かかり、
+//! 日次の赤を直す 23 会話が同時に commit して zeus を埋めた(load 102/24 core・swap 全部)。repo 全体の規則は file 1 つに当てても
+//! repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒)ので、stage した path に当てる形でも軽くならない。
+//!
+//! 既知の一覧を持たない規則(DOEFF206〜209)の critical は、上の 2 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
 //! 止める(agora-redesign #3834)。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
 //! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
 //!
@@ -27,14 +28,11 @@
 //! CPU を使わずに終わらない子には wall の予備の上限〔上限 × WALL_BACKSTOP_FACTOR〕を残し、子の CPU 秒を読めない機体〔/proc の無い
 //! Mac〕では wall の秒で測る — 判断は cut_measure の 1 か所・
 //! 元の issue #2723)。以前は越えたら通していて、何を確かめずに通したかを 1 行で書くだけだった — 作業役は通った commit を
-//! 確かめ直さず、宣言の file を変えた commit の DOEFF167 の当たりが main に入った。止める時は、どの比べの、どの木で、どの規則を、
+//! 確かめ直さなかった。止める時は、どの比べの、どの木で、どの規則を、
 //! 何秒の上限で打ち切ったかを 1 行で書き、上限なしで同じ比べをやり直す命令(unbounded_command — そのまま貼って実行できる形)と、
-//! その結果が 0 件である事を確かめてから commit し直す(--no-verify は使わない)案内を続けて出す。repo 全体の比べが打ち切られても、
-//! stage した file の当たりは捨てずに並べる。
-//! repo 全体の比べの HEAD の木の結果は置き場(head_report_cache — HEAD の commit・子の linter の版・規則の組・木の中の設定が鍵)に残し、
-//! 同じ鍵の次の hook は先端の木だけを測る(上限の秒は上げない)。
-//! HEAD の木そのものは事実の cache の根の `commit-hook-tree/<repo を表す名>/tree` に repo ごとに 1 つ置き、HEAD が進んだら git の差分で変わった
-//! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の木を測る 1 回にも事実の cache が効く・
+//! その結果が 0 件である事を確かめてから commit し直す(--no-verify は使わない)案内を続けて出す。
+//! HEAD の版を測る木は事実の cache の根の `commit-hook-tree/<repo を表す名>/tree` に repo ごとに 1 つ置き、HEAD が進んだら git の差分で変わった
+//! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の版を測る 1 回にも事実の cache が効く・
 //! agora-redesign #3858)。
 //! 純粋な部分(規則の分け・識別子の差・止める当たりの選び・測れなかった比べの文・上限なしの命令)は関数に分けて、単体のテストで確かめる。
 
@@ -55,7 +53,8 @@ pub const LINTED_SUFFIXES: [&str; 4] = [".hy", ".hyk", ".hyp", ".py"];
 /// 出す行の頭。
 const PREFIX: &str = "doeff-linter commit-hook: ";
 
-/// 有効な規則を、stage した path に当てる規則(quick)と、stage した path から外して repo 全体の比べに当てる規則(whole)に分けた物。
+/// 有効な規則を、file 1 つで決まる規則(quick — commit の hook が stage した path に当てる)と、repo 全体が要る規則(whole — 門の口 `--split-rules` が
+/// repo 全体の比べに当てる・hook は当てない)に分けた物。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuleSplit {
     pub quick: Vec<String>,
@@ -105,30 +104,6 @@ fn relative_to_root<'a>(report: &Value, path: &'a str) -> &'a str {
     }
 }
 
-/// 純粋: 違反の識別子 — 鍵(repo の根からの相対)か、鍵の無い違反(Python の文ごとの規則)は `<相対 path>::<規則>::<message>`。
-/// 先端と HEAD の木は根が違うので、path は根からの相対で綴る。
-pub fn violation_identity(report: &Value, violation: &Value) -> String {
-    match violation["key"].as_str() {
-        Some(key) => key.to_string(),
-        None => format!(
-            "{}::{}::{}",
-            relative_to_root(report, violation["path"].as_str().unwrap_or("")),
-            violation["rule"].as_str().unwrap_or(""),
-            violation["message"].as_str().unwrap_or("")
-        ),
-    }
-}
-
-/// 純粋: 止める当たりの識別子の集合 — critical と、critical でない規則の登録簿の外の error。件数でなく鍵で比べるので、
-/// 1 つ直して 1 つ足した変更も止まる。
-pub fn report_idents(report: &Value) -> BTreeSet<String> {
-    violations(report)
-        .filter(|v| v["level"] == "critical")
-        .chain(blocking_violations(report))
-        .map(|v| violation_identity(report, v))
-        .collect()
-}
-
 /// 純粋: 報告の major の warning(severity が warning・level が major — critical は new_critical、登録簿の外の error は
 /// blocking_violations が受け持つ)を規則ごとに数える。
 fn major_warning_counts(report: &Value) -> std::collections::BTreeMap<String, usize> {
@@ -167,28 +142,11 @@ impl ByHead {
     }
 }
 
-/// 純粋: 止める当たりの識別子(blocking)を、HEAD の版の識別子の集合(head)に在るかで分ける — 分ける判定の 1 か所(stage した path に
-/// 当てる列の new_critical と、repo 全体の比べの両方が使う)。
+/// 純粋: 止める当たりの識別子(blocking — stage した path に当てる列の new_critical)を、HEAD の版の識別子の集合(head)に在るかで分ける。
 pub fn split_by_head(head: &BTreeSet<String>, blocking: impl IntoIterator<Item = String>) -> ByHead {
     let all: BTreeSet<String> = blocking.into_iter().collect();
     let (already_on_head, not_on_head) = all.into_iter().partition(|id| head.contains(id));
     ByHead { not_on_head, already_on_head }
-}
-
-/// 純粋: repo 全体の規則の当たりのうち止める物の識別子 — 先端(tip)に在って HEAD(head)に無い物と、stage した path(`staged`
-/// — repo の根からの相対)に在る、基点の差で下げずに止める当たり(baseline::blocks_regardless_of_baseline — 既知の一覧を持たない
-/// DOEFF206〜209 の critical)。後者は HEAD に同じ鍵が在っても止める(細かさは file 単位・agora-redesign #3834)ので、HEAD に在るかで
-/// 分けて返す(split_by_head)。
-pub fn fresh_whole_repo_hits(head: &Value, tip: &Value, staged: &[String]) -> ByHead {
-    let before = report_idents(head);
-    let unlisted = violations(tip)
-        .filter(|v| {
-            let level = v["level"].as_str().and_then(crate::project::rule::RuleLevel::parse);
-            level.is_some_and(|level| crate::baseline::blocks_regardless_of_baseline(v["rule"].as_str().unwrap_or(""), level))
-                && staged.iter().any(|p| p == relative_to_root(tip, v["path"].as_str().unwrap_or("")))
-        })
-        .map(|v| violation_identity(tip, v));
-    split_by_head(&before, report_idents(tip).into_iter().filter(|id| !before.contains(id)).chain(unlisted))
 }
 
 /// 純粋: 報告の違反の path と根を、from の根から to の根へ付け替える — HEAD の木で走らせた出力を、先端の根で走らせた出力と
@@ -429,7 +387,7 @@ pub struct Cut {
     pub measure: Measure,
 }
 
-/// 測れなかった比べ — 比べの名(「HEAD の木の repo 全体の比べ」など)と、打ち切った 1 回。
+/// 測れなかった比べ — 比べの名(「HEAD の版」など)と、打ち切った 1 回。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unmeasured {
     pub what: String,
@@ -985,14 +943,12 @@ fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String],
     LintRun { side: if tree.is_some() { Side::Head } else { Side::Tip }, rules: rules.to_vec(), args }
 }
 
-/// 止める物の一覧(種類ごと)と、repo 全体の比べを上限で測れなかった時の 1 回(これも止める)。
+/// 止める物の一覧(種類ごと)。
 #[derive(Debug, Default)]
 struct Blocking {
     staged: Vec<String>,
     fresh_critical: ByHead,
     grown_warnings: Vec<String>,
-    whole: ByHead,
-    unmeasured: Option<Unmeasured>,
     /// stage した Hy の file のうち linter が歩く範囲の外の物 — 測っていない事を名指すだけで止めない(agora-redesign #2821)。
     out_of_scope: Vec<String>,
 }
@@ -1036,9 +992,7 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
             let code = u8::from(
                 !(blocking.staged.is_empty()
                     && blocking.fresh_critical.is_empty()
-                    && blocking.grown_warnings.is_empty()
-                    && blocking.whole.is_empty()
-                    && blocking.unmeasured.is_none()),
+                    && blocking.grown_warnings.is_empty()),
             );
             let lines = blocking
                 .staged
@@ -1046,9 +1000,7 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                 .map(|line| format!("stage した file の破れ: {}", line))
                 .chain(blocking.fresh_critical.not_on_head.iter().map(|ident| format!("HEAD に無い critical: {}", ident)))
                 .chain(blocking.grown_warnings.iter().map(|line| format!("major の warning が HEAD の版より増えた(stage した file の組の数): {}", line)))
-                .chain(blocking.whole.not_on_head.iter().map(|ident| format!("repo 全体の規則の HEAD に無い当たり: {}", ident)))
                 .chain(already_on_head_lines(&blocking))
-                .chain(blocking.unmeasured.iter().flat_map(|unmeasured| cut_lines(options, unmeasured)))
                 .chain(blocking.out_of_scope.iter().map(|path| format!("対象の外(linter が歩く範囲の外 — 層の規則はこの file を測っていない): {}", path)))
                 .collect();
             Assessment { code, lines }
@@ -1074,7 +1026,6 @@ fn already_on_head_lines(blocking: &Blocking) -> Vec<String> {
         .fresh_critical
         .already_on_head
         .iter()
-        .chain(blocking.whole.already_on_head.iter())
         .map(|ident| format!("変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): {}", ident))
         .collect();
     let guide = (!hits.is_empty()).then(|| "この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)".to_string());
@@ -1088,11 +1039,11 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     if staged.is_empty() {
         return Ok(blocking);
     }
-    // 宣言の file を変えた commit は、file 1 つで判じる規則も repo 全体の比べに当てる(門と同じ判定 split_for_change・#2127)。
-    let split = split_for_change(&options.enabled, &staged, &options.declarations);
-    let RuleSplit { quick, whole } = &split;
-    let paths = if quick.is_empty() { Vec::new() } else { linted_paths(&staged, |p| root.join(p).exists()) };
-    if paths.is_empty() && whole.is_empty() {
+    // file 1 つで決まる規則だけを stage した path に当てる — repo 全体が要る規則と、宣言の file を変えた commit の stage していない
+    // file の当たりは repo 全体の検証が見る(card ki-7da14032cf9c・頭の註)。
+    let quick = split_rules(&options.enabled).quick;
+    let paths = linted_paths(&staged, |p| root.join(p).exists());
+    if quick.is_empty() || paths.is_empty() {
         return Ok(blocking);
     }
     let scratch = Scratch::create().map_err(Stop::Failed)?;
@@ -1115,108 +1066,41 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
     }
     let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
 
-    if !paths.is_empty() {
-        // HEAD の版(HEAD に在る path だけ)を同じ規則で撃ち、先端の根の path へ付け替えて基点にする。stage で消えた file(名前替えの
-        // 旧い側を含む)の HEAD の版も撃つ — major の warning の数を、移した・消した file の分も含めて比べるため。
-        let removed = removed_paths(root).map_err(Stop::Failed)?;
-        let head_paths: Vec<String> = tree
-            .map(|t| {
-                paths
-                    .iter()
-                    .chain(linted_paths(&removed, |p| t.join(p).is_file()).iter())
-                    .filter(|p| t.join(p).is_file())
-                    .cloned()
-                    .collect::<BTreeSet<String>>()
-                    .into_iter()
-                    .collect()
-            })
-            .unwrap_or_default();
-        let base = match tree {
-            Some(t) if !head_paths.is_empty() => {
-                let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), quick, &[], &head_paths), options.timeout), "HEAD の版")?;
-                rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
-                report
-            }
-            _ => empty_report(),
-        };
-        let baseline = scratch.path.join("baseline.json");
-        std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("{} を書けない: {}", baseline.display(), e)))?;
-        let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
-        let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, quick, &extra, &paths), options.timeout), "stage した file ")?;
-        blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
-        // 子の linter が基点の file を読むのと同じ綴り(baseline::baseline_identities)で HEAD の版の識別子を読み、止める当たりを分ける。
-        let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("HEAD の版の報告を読めない: {}", reason)))?;
-        blocking.fresh_critical =
-            split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
-        blocking.grown_warnings = grown_major_warnings(&base, &tip);
-        blocking.out_of_scope = out_of_scope_of(&tip);
-    }
-
-    if !whole.is_empty() {
-        // 上限で打ち切られても、stage した file の当たりは捨てずに並べ、測れなかった比べを書いて止める(agora-redesign #2723・#3834)。
-        match whole_repo_hits(options, tree, whole, &tip_root, &staged) {
-            Ok(hits) => blocking.whole = hits,
-            Err(Stop::TimedOut(unmeasured)) => blocking.unmeasured = Some(unmeasured),
-            Err(failed) => return Err(failed),
+    // HEAD の版(HEAD に在る path だけ)を同じ規則で撃ち、先端の根の path へ付け替えて基点にする。stage で消えた file(名前替えの
+    // 旧い側を含む)の HEAD の版も撃つ — major の warning の数を、移した・消した file の分も含めて比べるため。
+    let removed = removed_paths(root).map_err(Stop::Failed)?;
+    let head_paths: Vec<String> = tree
+        .map(|t| {
+            paths
+                .iter()
+                .chain(linted_paths(&removed, |p| t.join(p).is_file()).iter())
+                .filter(|p| t.join(p).is_file())
+                .cloned()
+                .collect::<BTreeSet<String>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+    let base = match tree {
+        Some(t) if !head_paths.is_empty() => {
+            let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), options.timeout), "HEAD の版")?;
+            rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
+            report
         }
-    }
-    Ok(blocking)
-}
-
-/// repo 全体の比べ — 先端の木の当たりのうち HEAD の木に無い物と、stage した path の基点の差で下げない当たり(fresh_whole_repo_hits)。HEAD の木の結果は置き場から読めれば測らない(head_whole_report)。
-fn whole_repo_hits(options: &CommitHookOptions, tree: Option<&Path>, whole: &[String], tip_root: &Path, staged: &[String]) -> Result<ByHead, Stop> {
-    let head = match tree {
-        Some(t) => head_whole_report(options, t, whole, tip_root)?,
-        None => empty_report(),
+        _ => empty_report(),
     };
-    let dot = vec![".".to_string()];
-    let tip = measured(run_linter(&options.linter, &options.root, &lint_args(options, None, whole, &[], &dot), options.timeout), "先端の木の repo 全体の比べ")?;
-    Ok(fresh_whole_repo_hits(&head, &tip, staged))
-}
-
-/// HEAD の木の repo 全体の比べの結果(違反の path は先端の根へ付け替え済み)。置き場に同じ鍵の結果が在ればそれを使い、無ければ木を測って
-/// 置き場に残す(head_report_cache・agora-redesign #2723)。
-fn head_whole_report(options: &CommitHookOptions, tree: &Path, whole: &[String], tip_root: &Path) -> Result<Value, Stop> {
-    let place = options.cache.as_deref().and_then(|base| head_key(options, tree, whole).map(|key| (base, key)));
-    if let Some(stored) = place.as_ref().and_then(|(base, key)| crate::head_report_cache::load(base, key)) {
-        let mut report = stored.report;
-        rebase_paths(&mut report, &stored.tree, &tip_root.to_string_lossy());
-        return Ok(report);
-    }
-    let dot = vec![".".to_string()];
-    let mut report = measured(run_linter(&options.linter, tree, &lint_args(options, Some(tree), whole, &[], &dot), options.timeout), "HEAD の木の repo 全体の比べ")?;
-    if let Some((base, key)) = &place {
-        crate::head_report_cache::store(base, key, tree, &report);
-    }
-    rebase_paths(&mut report, &tree.to_string_lossy(), &tip_root.to_string_lossy());
-    Ok(report)
-}
-
-/// 純粋: 設定 file の、HEAD の木の中の相対 path — 設定 file が無ければ Some(None)、木の外(根の外・HEAD に無い)なら None
-/// (子は先端の設定を読むので、木の中身では答えが決まらない — config_args と同じ選び)。
-pub fn config_in_tree(options: &CommitHookOptions, tree: &Path) -> Option<Option<String>> {
-    match &options.config {
-        None => Some(None),
-        Some(config) => {
-            let rel = config.strip_prefix(&options.root).ok()?;
-            tree.join(rel).is_file().then(|| Some(rel.to_string_lossy().into_owned()))
-        }
-    }
-}
-
-/// HEAD の木の結果の鍵(HEAD の commit・子の linter の版・規則の組・木の中の設定)。鍵に入らない入力が答えを変えうる時は None
-/// (置き場を使わない): 基点へ今の宣言を写す 1 回限りの指定(Lint-Baseline)・設定 file が HEAD の木の外・HEAD や linter を読めない。
-fn head_key(options: &CommitHookOptions, tree: &Path, rules: &[String]) -> Option<crate::head_report_cache::HeadKey> {
-    if !options.overlay.is_empty() {
-        return None;
-    }
-    // 設定の path は作業木の根からの相対で鍵に入れる(根の位置が違う 2 つの実行の結果を取り違えない — agora-redesign #3934)。
-    let prefix = root_prefix(&options.root).ok()?;
-    let config = config_in_tree(options, tree)?.map(|rel| format!("{}{}", prefix, rel));
-    let head = git(&options.root, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
-    let head = String::from_utf8_lossy(&head).trim().to_string();
-    let linter = crate::head_report_cache::linter_identity(&options.linter)?;
-    Some(crate::head_report_cache::HeadKey { head, linter, rules: rules.to_vec(), config })
+    let baseline = scratch.path.join("baseline.json");
+    std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("{} を書けない: {}", baseline.display(), e)))?;
+    let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
+    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), options.timeout), "stage した file ")?;
+    blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
+    // 子の linter が基点の file を読むのと同じ綴り(baseline::baseline_identities)で HEAD の版の識別子を読み、止める当たりを分ける。
+    let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("HEAD の版の報告を読めない: {}", reason)))?;
+    blocking.fresh_critical =
+        split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
+    blocking.grown_warnings = grown_major_warnings(&base, &tip);
+    blocking.out_of_scope = out_of_scope_of(&tip);
+    Ok(blocking)
 }
 
 #[cfg(test)]
@@ -1353,43 +1237,6 @@ mod tests {
     }
 
     #[test]
-    fn commit_hook_whole_repo_diff_returns_only_new_keys() {
-        let head = json!({ "root": "/h", "violations": [v("old-critical", "warning", "critical"), v("old-error", "error", "major")] });
-        let tip = json!({ "root": "/r", "violations": [
-            v("old-critical", "warning", "critical"),
-            v("old-error", "error", "major"),
-            v("new-critical", "warning", "critical"),
-            v("new-error", "error", "major"),
-            v("new-warning", "warning", "major"),
-        ]});
-        assert_eq!(fresh_whole_repo_hits(&head, &tip, &[]), ByHead { not_on_head: ids(&["new-critical", "new-error"]), already_on_head: vec![] });
-        // 鍵の無い違反は根からの相対 path で比べる(先端と HEAD の木で根が違っても同じ識別子)。
-        let keyless = |root: &str| json!({ "root": root, "violations": [
-            { "severity": "error", "level": "major", "path": format!("{}/x.py", root), "rule": "DOEFF016", "message": "m" }
-        ]});
-        assert!(fresh_whole_repo_hits(&keyless("/h"), &keyless("/r"), &[]).is_empty());
-        assert_eq!(fresh_whole_repo_hits(&empty_report(), &keyless("/r"), &[]).not_on_head, ids(&["x.py::DOEFF016::m"]));
-    }
-
-    /// agora-redesign #3834: 既知の一覧を持たない規則(DOEFF206〜209)の critical は、stage した path に在れば HEAD に同じ鍵が在っても止める。
-    /// stage していない file の当たり・登録簿で下げる規則の HEAD に在る critical は止めない。
-    #[test]
-    fn commit_hook_whole_repo_diff_keeps_unlisted_rule_hits_in_staged_files() {
-        let hit = |rule: &str, path: &str, key: &str| json!({ "rule": rule, "path": format!("/r/{}", path), "key": key, "severity": "error", "level": "critical" });
-        let all = json!({ "root": "/r", "violations": [
-            hit("DOEFF209", "a.hy", "a.hy::DOEFF209::poll::Delay::periodic"),
-            hit("DOEFF209", "b.hy", "b.hy::DOEFF209::poll::Delay::periodic"),
-            hit("DOEFF163", "a.hy", "a.hy::DOEFF163::queue"),
-        ]});
-        // HEAD にも同じ鍵が在る当たりなので「HEAD に在る」側に分ける(文が「HEAD に無い」にならない・cisco-c8 の頼み 2026-10-07)。
-        assert_eq!(
-            fresh_whole_repo_hits(&all, &all, &ids(&["a.hy"])),
-            ByHead { not_on_head: vec![], already_on_head: ids(&["a.hy::DOEFF209::poll::Delay::periodic"]) }
-        );
-        assert!(fresh_whole_repo_hits(&all, &all, &ids(&["c.hy"])).is_empty());
-    }
-
-    #[test]
     fn commit_hook_rebase_paths_moves_only_paths_under_the_tree() {
         let mut report = json!({ "root": "/tmp/t/tree", "violations": [
             { "path": "/tmp/t/tree/a.hy" }, { "path": "/tmp/t/treeish/b.hy" }, { "path": "/elsewhere/c.hy" }
@@ -1404,15 +1251,15 @@ mod tests {
     #[test]
     fn commit_hook_unmeasured_line_names_the_comparison_tree_rules_and_limit() {
         let cut = Cut { side: Side::Head, rules: ids(&["DOEFF163", "DOEFF167"]), limit: Duration::from_secs(20), measure: Measure::Cpu };
-        let line = unmeasured_line(&Unmeasured { what: "HEAD の木の repo 全体の比べ".to_string(), cut });
-        for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "CPU 秒の上限 20 秒で打ち切った", "確かめていないので commit を止める"] {
+        let line = unmeasured_line(&Unmeasured { what: "HEAD の版".to_string(), cut });
+        for part in ["HEAD の版を測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "CPU 秒の上限 20 秒で打ち切った", "確かめていないので commit を止める"] {
             assert!(line.contains(part), "{:?} が無い: {}", part, line);
         }
         let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(1), measure: Measure::Wall };
-        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: tip })
+        assert!(unmeasured_line(&Unmeasured { what: "stage した file ".to_string(), cut: tip })
             .contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter をwall の上限 1 秒で打ち切った(この機体では子の CPU 秒を読めない)"));
         let idle = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(2), measure: Measure::WallBackstop };
-        assert!(unmeasured_line(&Unmeasured { what: "repo 全体の比べ".to_string(), cut: idle })
+        assert!(unmeasured_line(&Unmeasured { what: "stage した file ".to_string(), cut: idle })
             .contains("wall の予備の上限 8 秒で打ち切った(CPU 秒の上限 2 秒の 4 倍"));
     }
 
@@ -1436,35 +1283,6 @@ mod tests {
         assert_eq!(cpu_of_stat(stat), Some(Duration::from_millis(3000)));
         assert_eq!(cpu_of_stat("4242 (x) R 1"), None);
         assert_eq!(cpu_of_stat("no paren"), None);
-    }
-
-    #[test]
-    fn commit_hook_head_cache_is_used_only_when_the_tree_holds_the_config() {
-        let tree = tempfile::TempDir::new().unwrap();
-        std::fs::write(tree.path().join("pyproject.toml"), "").unwrap();
-        let options = |config: Option<&str>| CommitHookOptions {
-            root: PathBuf::from("/repo"),
-            config: config.map(PathBuf::from),
-            enabled: Vec::new(),
-            declarations: Declarations::default(),
-            overlay: Vec::new(),
-            message: None,
-            cli_enable: Vec::new(),
-            cli_disable: Vec::new(),
-            timeout: Some(Duration::from_secs(20)),
-            linter: PathBuf::from("/bin/doeff-linter"),
-            cache: None,
-        };
-        // 設定が木の中に在れば木の中の相対 path・設定が無ければ Some(None)。
-        assert_eq!(config_in_tree(&options(Some("/repo/pyproject.toml")), tree.path()), Some(Some("pyproject.toml".to_string())));
-        assert_eq!(config_in_tree(&options(None), tree.path()), Some(None));
-        // 反例: HEAD の木に無い設定・根の外の設定は、子が先端の設定を読むので鍵で答えが決まらない(置き場を使わない)。
-        assert_eq!(config_in_tree(&options(Some("/repo/sub/pyproject.toml")), tree.path()), None);
-        assert_eq!(config_in_tree(&options(Some("/elsewhere/pyproject.toml")), tree.path()), None);
-        // 反例: 1 回限りの指定(Lint-Baseline)は今の宣言を基点の木へ写すので、置き場を使わない。
-        let mut overlaid = options(None);
-        overlaid.overlay = ids(&["architecture.hy"]);
-        assert!(head_key(&overlaid, tree.path(), &ids(&["DOEFF167"])).is_none());
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub fn baseline_identities(report: &Value) -> Result<BTreeSet<String>, String> {
 
 /// 違反 1 つが、基点の差で下げずに止める当たりか — 規則 `rule` が既知の一覧を持たない規則(登録簿で下げない規則 —
 /// `ProjectRule::lowered_by_registry` が偽 = DOEFF206〜209)で、重大さが critical(agora-redesign #3834)。変えた file に在れば止める判定の
-/// 1 か所 — 名指しの実行の new_critical(blocking_criticals)と commit の hook の repo 全体の比べ(commit_hook::fresh_whole_repo_hits)が使う。
+/// 1 か所 — 名指しの実行の new_critical(blocking_criticals — commit の hook も stage した path に当てる子の linter でこれを読む)が使う。
 pub fn blocks_regardless_of_baseline(rule: &str, level: RuleLevel) -> bool {
     level == RuleLevel::Critical && ProjectRule::parse(rule).is_some_and(|rule| !rule.lowered_by_registry())
 }

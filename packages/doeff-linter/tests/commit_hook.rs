@@ -1,6 +1,6 @@
 //! `doeff-linter --commit-hook` の検(agora-redesign #1989)— 一時の git の repo を作り、きれいな基点を commit してから変更を stage し、
-//! hook の終了コードと stderr の行を見る。repo 全体の規則は DOEFF163(service の不変条件の宣言)— 当たりは defservice の位置
-//! (architecture.hy)に付くので、不変条件の関数の file だけを変えた commit でも、変更の外の file に新しい当たりが出る(merge-queue の形)。
+//! hook の終了コードと stderr の行を見る。hook は stage した path に file 1 つで決まる規則(DOEFF016 など)だけを当て、repo 全体が
+//! 要る規則(DOEFF163 — 当たりは defservice の位置 architecture.hy に付く)は当てない(card ki-7da14032cf9c — repo 全体の検証が見る)。
 
 use serde_json::Value;
 use std::path::Path;
@@ -81,39 +81,6 @@ fn hook(root: &Path, extra: &[&str]) -> (i32, String) {
     (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).into_owned())
 }
 
-/// 登録簿の当たらない行の検の設定(#1992 の形)— DOEFF110(defn の残り)は stage した path に当てる規則で、repo 全体の比べの列
-/// (規則が repo 全体が要ると名乗る物 — agora-redesign #2090)は DOEFF163・166 だけ。
-const REGISTRY_PYPROJECT: &str = r#"[tool.doeff-linter]
-enable = ["DOEFF163", "DOEFF110", "DOEFF166"]
-[tool.doeff-linter.definitions]
-[tool.doeff-linter.registry]
-dirs = ["reg"]
-
-[tool.doeff-linter.commit_hook]
-timeout_s = 120
-"#;
-
-/// 失敗ケース(iii・#1992 の形): 登録簿に載った defn を直したのに行を消し忘れた commit は、repo 全体の比べの列が DOEFF163・166 だけでも
-/// 止まる — 166 が行の名指す規則(DOEFF110)を同じ実行で当てる(agora-redesign #1999・#2033)。行も消した commit は通る。
-#[test]
-fn a_registry_row_left_behind_blocks_with_only_the_whole_repo_rules() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    write(root, "pyproject.toml", REGISTRY_PYPROJECT);
-    write(root, "app/core/x.hy", "(defn helper [] 1)\n");
-    write(root, "reg/k1.txt", "app/core/x.hy::DOEFF110::helper\n既存の defn\n");
-    git(root, &["add", "-A"]);
-    git(root, &["commit", "-q", "-m", "登録簿つきの基点"]);
-    write(root, "app/core/x.hy", "(defk helper [] 1)\n");
-    git(root, &["add", "app/core/x.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: reg/k1.txt::DOEFF166::app/core/x.hy::DOEFF110::helper"), "{}", stderr);
-    git(root, &["rm", "-q", "reg/k1.txt"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
-}
-
 /// 基点そのものが緑で、設定の `[tool.doeff-linter.commit_hook]` は知らない鍵(DOEFF100)にならない。
 #[test]
 fn commit_hook_section_is_a_known_key_and_the_baseline_is_clean() {
@@ -126,35 +93,6 @@ fn commit_hook_section_is_a_known_key_and_the_baseline_is_clean() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("{}: {}", e, String::from_utf8_lossy(&output.stderr)));
     let rules: Vec<&str> = report["violations"].as_array().unwrap().iter().map(|v| v["rule"].as_str().unwrap()).collect();
     assert!(rules.is_empty(), "{}", report["violations"]);
-}
-
-/// 失敗ケース(i): 不変条件の関数の file だけを変え(名を変えて architecture.hy の :invariants が実在しない関数を指す)、stage した
-/// file の外(architecture.hy)に DOEFF163 の新しい当たりが出る — hook は 1 で止め、鍵を名指す。
-#[test]
-fn a_new_hit_outside_the_staged_file_blocks() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"柵の条。\"\n  #())\n", JUDGED));
-    git(root, &["add", "app/queue/lease_invariants.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(
-        stderr.contains("doeff-linter commit-hook: repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue::app.queue.lease_invariants:fenced-writes"),
-        "{}",
-        stderr
-    );
-}
-
-/// merge-queue の形(#1989): architecture.hy から :entry-modules を持つ service の :invariants を消した commit は止まる。
-#[test]
-fn removing_invariants_from_the_architecture_blocks() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
-    git(root, &["add", "architecture.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
 }
 
 /// 失敗ケース(agora-redesign #2377): 目録(data/world_handlers.json)に無い :wraps を宣言した architecture.hy は設定の誤り — linter は
@@ -198,52 +136,21 @@ fn a_clean_change_passes_and_a_staged_error_blocks() {
     assert!(stderr.contains("doeff-linter commit-hook: stage した file の破れ: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
 }
 
-/// 失敗ケース(agora-redesign #2090・L3137 の形): 数を決めた綴り(DOEFF161)の当たりは、:files のうち最初に当たった file に付く。
-/// stage した file(more.hy)に 2 つ目の綴りを足すと、当たりは stage していない main.hy に付く — stage した path だけに当てると出ない。
-/// 規則が repo 全体が要ると名乗るので、設定に手の一覧が無くても repo 全体の比べが拾って 1 で止める。綴りを 1 つに戻せば通る。
-#[test]
-fn a_rule_that_needs_the_whole_repo_blocks_without_a_hand_list() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF161\"]"));
-    write(
-        root,
-        "architecture.hy",
-        &ARCHITECTURE.replace(
-            ":foundation foundation",
-            ":foundation foundation\n  :counted-spellings [(counted-spelling \"cycles\" :pattern r\"defk cycle\" \
-             :files [\"app/queue/main.hy\" \"app/queue/more.hy\"] :count 1 :why \"周りの 1 点\")]",
-        ),
-    );
-    write(root, "app/queue/more.hy", "(defk other [] 1)\n");
-    git(root, &["add", "-A"]);
-    git(root, &["commit", "-q", "-m", "数を決めた綴りつきの基点"]);
-    write(root, "app/queue/more.hy", "(defk other [] 1)\n(defk cycle-again [] 2)\n");
-    git(root, &["add", "app/queue/more.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: app/queue/main.hy::DOEFF161::cycles"), "{}", stderr);
-    write(root, "app/queue/more.hy", "(defk other [] 1)\n");
-    git(root, &["add", "app/queue/more.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
-}
-
-/// 退役した設定の鍵 whole_repo_rules が残っていれば、読まずに 1 行で名乗る(規則の分けは規則の名乗りのまま — 一覧に 163 を書かず
-/// 110 を書いても、163 の当たりは repo 全体の比べが拾う)。
+/// 退役した設定の鍵 whole_repo_rules が残っていれば、読まずに 1 行で名乗る(規則の分けは規則の名乗りのまま — 一覧に 016 を書いても、
+/// stage した Python の file の DOEFF016 は stage した path に当てる規則として止まる)。
 #[test]
 fn a_retired_hand_list_is_named_and_not_read() {
     let dir = baseline_repo();
     let root = dir.path();
-    write(root, "pyproject.toml", &PYPROJECT.replace("timeout_s = 120", "whole_repo_rules = [\"DOEFF110\"]\ntimeout_s = 120"));
+    write(root, "pyproject.toml", &PYPROJECT.replace("timeout_s = 120", "whole_repo_rules = [\"DOEFF016\"]\ntimeout_s = 120"));
     git(root, &["add", "pyproject.toml"]);
     git(root, &["commit", "-q", "-m", "退役した鍵"]);
-    write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"柵の条。\"\n  #())\n", JUDGED));
-    git(root, &["add", "app/queue/lease_invariants.hy"]);
+    write(root, "app/queue/tool.py", "from . import main\n");
+    git(root, &["add", "app/queue/tool.py"]);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
     assert!(stderr.contains("whole_repo_rules は退役した鍵で読まない"), "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
+    assert!(stderr.contains("stage した file の破れ: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
 }
 
 /// `--list-rules` は全部の規則の ID と repo 全体が要るかの名乗りを出す(門と hook が選ぶ 1 か所)。Python の文ごとの規則は file 1 つ。
@@ -351,37 +258,38 @@ const ALREADY_ON_HEAD: &str = "変えた file の既存の当たり(main にも�
 const FIX_IT_IN_THE_SAME_CHANGE: &str = "この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)";
 
 /// 失敗ケース(agora-redesign #3834・cisco-c8 の頼み 2026-10-07): HEAD にも同じ鍵が在る当たりで止めた時に「HEAD に無い」と書くと、
-/// 作業役が hook の不具合と読んで hook を飛ばしかける。stage した path に当てる規則(DOEFF208)と repo 全体の比べ(DOEFF209)の両方で、
-/// 既存の当たりは「変えた file の既存の当たり」と書き、直し方の案内を 1 行足し、「HEAD に無い」と書かない。
+/// 作業役が hook の不具合と読んで hook を飛ばしかける。stage した path に当てる規則(DOEFF208)の既存の当たりは「変えた file の既存の
+/// 当たり」と書き、直し方の案内を 1 行足し、「HEAD に無い」と書かない。
 #[test]
 fn an_old_hit_that_blocks_is_named_as_already_on_head() {
-    for (rule, text, key) in [
-        ("DOEFF208", RECORD_WAIT, "app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"),
-        ("DOEFF209", POLLING_LOOP, "app/queue/wait.hy::DOEFF209::poll::Delay::periodic"),
-    ] {
-        let dir = repo_with_an_old_hit(rule, text);
-        let (code, stderr) = hook(dir.path(), &[]);
-        assert_eq!(code, 1, "{}", stderr);
-        assert!(stderr.contains(&format!("{}{}", ALREADY_ON_HEAD, key)), "{}", stderr);
-        assert!(stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
-        assert!(!stderr.contains("HEAD に無い"), "{}", stderr);
-    }
+    let dir = repo_with_an_old_hit("DOEFF208", RECORD_WAIT);
+    let (code, stderr) = hook(dir.path(), &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF208::wait-for::WatchChanges", ALREADY_ON_HEAD)), "{}", stderr);
+    assert!(stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
+    assert!(!stderr.contains("HEAD に無い"), "{}", stderr);
 }
 
 /// 失敗ケース(同上の対): HEAD に同じ鍵が無い当たり(新しく足した file の当たり)は今までどおり「HEAD に無い」と書き、既存の当たりの
 /// 行と案内は出さない。
 #[test]
 fn a_new_hit_that_blocks_is_still_named_as_not_on_head() {
-    for (rule, text, line) in [
-        ("DOEFF208", RECORD_WAIT, "HEAD に無い critical: app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"),
-        ("DOEFF209", POLLING_LOOP, "repo 全体の規則の HEAD に無い当たり: app/queue/wait.hy::DOEFF209::poll::Delay::periodic"),
-    ] {
-        let dir = repo_with_a_new_hit(rule, text);
+    let dir = repo_with_a_new_hit("DOEFF208", RECORD_WAIT);
+    let (code, stderr) = hook(dir.path(), &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("HEAD に無い critical: app/queue/wait.hy::DOEFF208::wait-for::WatchChanges"), "{}", stderr);
+    assert!(!stderr.contains(ALREADY_ON_HEAD), "{}", stderr);
+    assert!(!stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
+}
+
+/// card ki-7da14032cf9c の対: repo 全体が要る規則(DOEFF209 — 定期の見回りの loop)の当たりは、stage した file の中に在っても hook は
+/// 測らない(file 1 つに当てても repo 全体の推論の世界を組む規則)— 新しく足した当たりも既存の当たりも止めず、repo 全体の検証が見る。
+#[test]
+fn a_whole_repo_rule_hit_in_a_staged_file_is_left_to_the_whole_verification() {
+    for dir in [repo_with_an_old_hit("DOEFF209", POLLING_LOOP), repo_with_a_new_hit("DOEFF209", POLLING_LOOP)] {
         let (code, stderr) = hook(dir.path(), &[]);
-        assert_eq!(code, 1, "{}", stderr);
-        assert!(stderr.contains(line), "{}", stderr);
-        assert!(!stderr.contains(ALREADY_ON_HEAD), "{}", stderr);
-        assert!(!stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
+        assert_eq!(code, 0, "{}", stderr);
+        assert!(!stderr.contains("DOEFF209"), "{}", stderr);
     }
 }
 
@@ -407,62 +315,26 @@ fn a_staged_file_with_an_old_record_wait_blocks_and_an_untouched_one_does_not() 
     assert_eq!(code, 0, "{}", stderr);
 }
 
-/// 失敗ケース(agora-redesign #3834・案 1): repo 全体の比べに回る DOEFF209 も、stage した file に HEAD の版から在る当たりで commit を止める
-/// (HEAD の木との識別子の差に、stage した path の基点の差で下げない当たりを足す)。当たりの在る file に触らない commit は止まらない。
-/// 上限なし(--commit-hook-timeout-s 0)でも同じ当たりで止まる。
-#[test]
-fn a_staged_file_with_an_old_polling_loop_blocks_and_an_untouched_one_does_not() {
-    let dir = repo_with_an_old_hit("DOEFF209", POLLING_LOOP);
-    let root = dir.path();
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF209::poll::Delay::periodic", ALREADY_ON_HEAD)), "{}", stderr);
-    let (code, stderr) = hook(root, &["--commit-hook-timeout-s", "0"]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains(&format!("{}app/queue/wait.hy::DOEFF209::poll::Delay::periodic", ALREADY_ON_HEAD)), "{}", stderr);
-    assert!(!stderr.contains("測れなかった"), "{}", stderr);
-    stage_only_an_untouched_file(root);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
-}
-
-/// 失敗ケース(agora-redesign #2127): file 1 つで判じる規則(DOEFF102 — 層に禁じた module の import)でも、宣言(architecture.hy)だけを
-/// 変えた commit で、stage していない file に新しい当たりが付く。宣言の file を変えた commit は全部の規則を repo 全体の比べに当てて
-/// 止める。宣言を戻せば通る。
-#[test]
-fn a_declaration_change_blocks_a_new_hit_in_an_unstaged_file() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
-    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
-    git(root, &["add", "-A"]);
-    git(root, &["commit", "-q", "-m", "json を読む core の基点"]);
-    let forbidding = ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])");
-    write(root, "architecture.hy", &forbidding);
-    git(root, &["add", "architecture.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("app/queue/core/rule.hy") && stderr.contains("DOEFF102"), "{}", stderr);
-    write(root, "architecture.hy", ARCHITECTURE);
-    git(root, &["add", "architecture.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
-}
-
-/// 規則を鳴らし始める commit(agora-redesign #2143): 層 core に json を禁じる宣言を足すと、触っていない core の file の既存の import が
-/// 新しい当たりになり、本文に指定の無い commit は止まる(#2127 のまま)。本文に理由つきの `Lint-Baseline: declarations` の行が在れば、
-/// HEAD の木を今の宣言で測るので既存の当たりは基点に在る物になって通る。同じ commit で新しい違反を足せば、指定が在っても止まる。
+/// 規則を鳴らし始める commit(agora-redesign #2143): 層 core に json を禁じる宣言を足し、同じ commit で core の file(既存の import を
+/// 持つ)にも触ると、その file の既存の import が HEAD の版に無い当たりになり、本文に指定の無い commit は止まる。本文に理由つきの
+/// `Lint-Baseline: declarations` の行が在れば、HEAD の木を今の宣言で測るので既存の当たりは基点に在る物になって通る。同じ commit で
+/// 新しい違反を足せば、指定が在っても止まる。
 #[test]
 fn a_reasoned_baseline_trailer_lets_rules_start_ringing_but_still_blocks_new_hits() {
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
-    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
+    let rule = format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED);
+    write(root, "app/queue/core/rule.hy", &rule);
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "json を読む core の基点"]);
     let forbidding = ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])");
     write(root, "architecture.hy", &forbidding);
-    git(root, &["add", "architecture.hy"]);
+    write(root, "app/queue/core/rule.hy", &format!("{};; 註\n", rule));
+    git(root, &["add", "architecture.hy", "app/queue/core/rule.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("app/queue/core/rule.hy::DOEFF102"), "{}", stderr);
     let message = root.join("MSG");
     std::fs::write(&message, "core に json を禁じる\n\nLint-Baseline: declarations — 既存の import は別の変更で直す\n").unwrap();
     let message_arg = message.to_string_lossy().into_owned();
@@ -524,6 +396,87 @@ fn split_rules_tells_the_gate_the_same_split_as_the_hook() {
     assert_eq!(plain["whole"], serde_json::json!(["DOEFF163"]), "{}", plain);
 }
 
+/// 記録する代役の linter — 子の linter の 1 回ごとに、引数を 1 行に 1 つずつ log に書き、区切りの行 `===` を足してから本物を実行する。
+fn recording_linter(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("recording-doeff-linter");
+    let log = dir.join("runs.log");
+    let script = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" '===' >> '{}'\nexec '{}' \"$@\"\n", log.display(), env!("CARGO_BIN_EXE_doeff-linter"));
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (path, log)
+}
+
+/// 記録した子の linter の 1 回ごとの (--enable の値・`--` の後ろの path の列)。
+fn recorded_runs(log: &Path) -> Vec<(String, Vec<String>)> {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    text.split("===\n")
+        .filter(|run| !run.is_empty())
+        .map(|run| {
+            let args: Vec<&str> = run.lines().collect();
+            let enable = args.iter().position(|a| *a == "--enable").map(|i| args[i + 1].to_string()).unwrap_or_default();
+            let paths = args.iter().position(|a| *a == "--").map(|i| args[i + 1..].iter().map(|p| p.to_string()).collect()).unwrap_or_default();
+            (enable, paths)
+        })
+        .collect()
+}
+
+/// 失敗ケース(card ki-7da14032cf9c・2026-10-11 — zeus の load 102/24 core・cisco-c8 の決め): hook の子の linter は、stage した path だけに、
+/// file 1 つで決まる規則(DOEFF016)だけを当てる — repo 全体(path `.`)を測らず、repo 全体が要ると名乗る規則(DOEFF163)を当てない。
+/// 直す前は先端の木と HEAD の木を repo 全体で測り(agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB)、日次の赤を直す 23 会話が同時に
+/// commit して機体を埋めた。repo 全体の規則は file 1 つに当てても repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒)ので、
+/// 変えた path に当てても軽くならない — repo 全体の規則の当たりは 4 時間ごとの全体検証が見る。
+#[test]
+fn the_hook_lints_only_the_staged_paths_with_the_rules_judged_from_one_file() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let side = tempfile::TempDir::new().unwrap();
+    let (linter, log) = recording_linter(side.path());
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(root, &["add", "app/queue/main.hy"]);
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 60));
+    assert_eq!(got.code, 0, "{:?}", got);
+    let runs = recorded_runs(&log);
+    assert!(!runs.is_empty(), "子の linter を撃っていない");
+    for (enable, paths) in &runs {
+        assert_eq!(enable, "DOEFF016", "repo 全体の規則を当てた: {:?}", runs);
+        assert_eq!(paths, &vec!["app/queue/main.hy".to_string()], "stage した path の外を測った: {:?}", runs);
+    }
+}
+
+/// 失敗ケース(同上の対): repo 全体の規則の当たり(stage した file の外の architecture.hy に付く DOEFF163 — 不変条件の関数の名を変えた
+/// commit・:invariants を消した commit)と、宣言だけを変えた commit の stage していない file の当たり(DOEFF102)で、hook は止めない
+/// (直す前は 1 で止めた)。どれも 4 時間ごとの全体検証(repo 全体)が見る。
+#[test]
+fn hits_outside_the_staged_files_are_left_to_the_whole_verification() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"柵の条。\"\n  #())\n", JUDGED));
+    git(root, &["add", "app/queue/lease_invariants.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(!stderr.contains("repo 全体"), "{}", stderr);
+
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
+    git(root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
+    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "json を読む core の基点"]);
+    let forbidding = ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])");
+    write(root, "architecture.hy", &forbidding);
+    git(root, &["add", "architecture.hy"]);
+    let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+}
+
 /// 何も stage していなければ linter を撃たずに 0。
 #[test]
 fn nothing_staged_passes() {
@@ -539,11 +492,11 @@ fn nothing_staged_passes() {
 fn a_zero_timeout_measures_to_the_end() {
     let dir = baseline_repo();
     let root = dir.path();
-    write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
-    git(root, &["add", "architecture.hy"]);
+    write(root, "app/queue/tool.py", "from . import main\n");
+    git(root, &["add", "app/queue/tool.py"]);
     let (code, stderr) = hook(root, &["--commit-hook-timeout-s", "0"]);
     assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
+    assert!(stderr.contains("stage した file の破れ: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
     assert!(!stderr.contains("測れなかった"), "{}", stderr);
 }
 
@@ -571,13 +524,13 @@ fn run_rerun(root: &Path, command: &str) -> (i32, String) {
     (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).into_owned())
 }
 
-/// 遅い代役の linter — HEAD の木(hook が cache の `commit-hook-tree/<repo を表す名>/tree` に置く・agora-redesign #3858)で repo 全体(path が `.`)を実行された
-/// 時だけ secs 秒眠ってから本物を実行する(冷えた事実の cache で HEAD の木を測る 1 回が上限を越える形の代役)。
+/// 遅い代役の linter — HEAD の木(hook が cache の `commit-hook-tree/<repo を表す名>/tree` に置く・agora-redesign #3858)で実行された
+/// 時だけ secs 秒眠ってから本物を実行する(冷えた事実の cache で HEAD の版を測る 1 回が上限を越える形の代役)。
 fn slow_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join("slow-doeff-linter");
     let script = format!(
-        "#!/bin/sh\nfor last in \"$@\"; do :; done\ncase \"$(pwd -P)\" in\n  */commit-hook-tree/*) [ \"$last\" = . ] && sleep {} ;;\nesac\nexec '{}' \"$@\"\n",
+        "#!/bin/sh\ncase \"$(pwd -P)\" in\n  */commit-hook-tree/*) sleep {} ;;\nesac\nexec '{}' \"$@\"\n",
         secs,
         env!("CARGO_BIN_EXE_doeff-linter")
     );
@@ -586,14 +539,14 @@ fn slow_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     path
 }
 
-/// CPU を使う遅い代役の linter — HEAD の木で repo 全体を実行された時だけ、secs 秒(wall)の間 CPU を回し続けてから(bash の組み込みだけの
+/// CPU を使う遅い代役の linter — HEAD の木で実行された時だけ、secs 秒(wall)の間 CPU を回し続けてから(bash の組み込みだけの
 /// 空回り — 同じ process の CPU 秒が積もる)本物を実行する。上限は子の CPU 秒で測るので(card ki-79532edd43dd)、上限を越える形は眠る
 /// 代役でなくこの代役で作る。
 fn burning_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join("burning-doeff-linter");
     let script = format!(
-        "#!/bin/bash\nfor last in \"$@\"; do :; done\ncase \"$(pwd -P)\" in\n  */commit-hook-tree/*) if [ \"$last\" = . ]; then SECONDS=0; while [ $SECONDS -lt {} ]; do :; done; fi ;;\nesac\nexec '{}' \"$@\"\n",
+        "#!/bin/bash\ncase \"$(pwd -P)\" in\n  */commit-hook-tree/*) SECONDS=0; while [ $SECONDS -lt {} ]; do :; done ;;\nesac\nexec '{}' \"$@\"\n",
         secs,
         env!("CARGO_BIN_EXE_doeff-linter")
     );
@@ -613,118 +566,30 @@ fn options_with(root: &Path, linter: &Path, cache: &Path, timeout_s: u64) -> doe
     options
 }
 
-/// 宣言の file(architecture.hy)— service queue が条を宣言し、反例の表の節が壊した handler の反例を名乗る(DOEFF167 の形)。
-fn clause_architecture(clauses: &[&str]) -> String {
-    let fakes = ":foundation foundation\n  :business-fakes {:simulation [\"app/sim/**\"] :tests [\"tests/**\"] :production [\"app/**\"] \
-                 :business-modules [\"app.queue\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
-    let listed = clauses.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(" ");
-    let text = ARCHITECTURE.replace(":foundation foundation", fakes).replace(
-        ":invariants [\"app.queue.lease_invariants:fenced-writes\"]}",
-        &format!(":invariants [\"app.queue.lease_invariants:fenced-writes\"] :clauses [{}]}}", listed),
-    );
-    assert!(text.contains(":clauses ["), "queue の宣言を差し替えられない:\n{}", text);
-    text
-}
-
-/// 条 Q1 に反例(`breaks: queue::Q1`)の在る基点を commit した repo(DOEFF167 は 0)。
-fn clause_repo() -> tempfile::TempDir {
-    let dir = baseline_repo();
-    let root = dir.path();
-    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF167\"]"));
-    write(root, "app/queue/effects.hy", "(import doeff [EffectBase])\n(defclass Put [EffectBase])\n");
-    write(root, "app/queue/main.hy", "(import app.queue.effects [Put])\n(defk cycle [] (Put))\n");
-    write(
-        root,
-        "tests/test_fence.hy",
-        "(import app.queue.effects [Put])\n(import app.queue.main [cycle])\n\
-         (defhandler unfenced (Put [] (resume 0)))\n(deftest test-unfenced-breaks-the-fence (with-handlers [unfenced] (cycle)))\n",
-    );
-    write(root, "tables/COUNTEREXAMPLES/queue.txt", "tests/test_fence.hy::unfenced::app.queue.effects.Put\n柵を迂回する書き手\nbreaks: queue::Q1\n");
-    write(root, "architecture.hy", &clause_architecture(&["Q1"]));
-    git(root, &["add", "-A"]);
-    git(root, &["commit", "-q", "-m", "条と反例つきの基点"]);
-    dir
-}
-
-/// 失敗ケース(agora-redesign #2723・条 S10 の形): 宣言(architecture.hy)に条 Q2 を足した commit は、反例の無い条の DOEFF167 の新しい当たりを
-/// 生む。(i) HEAD の木の 1 回が上限を越えると(遅い代役 — 冷えた cache)、測れなかった比べ・木・規則・秒を書いて止める(#3834)。
-/// (ii) 上限の内で 1 度測れた HEAD の木の結果は置き場に残り(使った印つき)、同じ HEAD の次の hook は先端の木だけを上限の内で測って、
-/// DOEFF167 の当たりで止める(上限の秒は上げない)。
-#[test]
-fn a_declaration_change_names_an_unmeasured_head_tree_and_blocks_doeff167_from_the_stored_head() {
-    let dir = clause_repo();
-    let root = dir.path();
-    let side = tempfile::TempDir::new().unwrap();
-    let linter = burning_head_linter(side.path(), 6);
-    let cache = side.path().join("cache");
-    write(root, "architecture.hy", &clause_architecture(&["Q1", "Q2"]));
-    git(root, &["add", "architecture.hy"]);
-    let new_hit = "repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF167::queue::Q2";
-
-    let cold = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 2));
-    assert_eq!(cold.code, 1, "{:?}", cold);
-    assert_eq!(cold.lines.len(), 3, "{:?}", cold);
-    for part in ["HEAD の木の repo 全体の比べを測れなかった", "HEAD の木で当てた規則 3 個", "DOEFF167", "上限 2 秒で打ち切った", "commit を止める"] {
-        assert!(cold.lines[0].contains(part), "{:?} が無い: {:?}", part, cold);
-    }
-    assert!(cold.lines[1].starts_with(RERUN_COMMAND) && cold.lines[2] == RERUN_GUIDE, "{:?}", cold);
-
-    let measured = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 60));
-    assert_eq!(measured.code, 1, "{:?}", measured);
-    assert!(measured.lines.iter().any(|line| line == new_hit), "{:?}", measured);
-    let stored: Vec<std::path::PathBuf> = std::fs::read_dir(&cache)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(doeff_linter::head_report_cache::DIR_PREFIX)))
-        .collect();
-    assert_eq!(stored.len(), 1, "{:?}", stored);
-    assert!(stored[0].join("used").is_file() && stored[0].join("report.json").is_file(), "{:?}", stored);
-
-    let warm = doeff_linter::commit_hook::assess(&options_with(root, &linter, &cache, 4));
-    assert_eq!(warm.code, 1, "{:?}", warm);
-    assert_eq!(warm.lines, vec![new_hit.to_string()], "{:?}", warm);
-}
-
-/// 失敗ケース(agora-redesign #2723): stage した file の当たり(DOEFF016)が在る commit で、repo 全体の比べが上限で打ち切られても、stage した
-/// file の当たりは捨てずに止め、打ち切った比べを名指す(以前は repo 全体の比べの打ち切りで判じ全体を「測れなかった」として通した)。
-#[test]
-fn a_cut_whole_repo_comparison_keeps_the_staged_hits_blocking() {
-    let dir = baseline_repo();
-    let root = dir.path();
-    let side = tempfile::TempDir::new().unwrap();
-    let linter = burning_head_linter(side.path(), 6);
-    write(root, "app/queue/tool.py", "from . import main\n");
-    git(root, &["add", "app/queue/tool.py"]);
-    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 2));
-    assert_eq!(got.code, 1, "{:?}", got);
-    assert!(got.lines.iter().any(|line| line.starts_with("stage した file の破れ: app/queue/tool.py:1: DOEFF016")), "{:?}", got);
-    assert!(got.lines.iter().any(|line| line.contains("HEAD の木の repo 全体の比べを測れなかった") && line.contains("(DOEFF163)")), "{:?}", got);
-    assert!(got.lines.iter().any(|line| line == RERUN_GUIDE), "{:?}", got);
-}
-
-/// 失敗ケース(agora-redesign #3834・元の issue #2723・cisco-c8 の可 2026-10-07): repo 全体の比べが上限で打ち切られた commit は、stage した
-/// file に当たりが無くても止める(終了コード 1 — 以前は 0 で通し、作業役は通った commit を確かめ直さなかった)。止める時の行は、測れなかった
-/// 比べの 1 行・上限なしで同じ比べをやり直す命令・「0 件を確かめてから commit し直す・--no-verify は使わない」の 3 行。命令はそのまま
-/// shell で実行でき、打ち切らずに終わりまで測って、新しい当たり(DOEFF163)で止める。
+/// 失敗ケース(agora-redesign #3834・元の issue #2723・cisco-c8 の可 2026-10-07): 子の linter が上限で打ち切られた commit は止める
+/// (終了コード 1 — 以前は 0 で通し、作業役は通った commit を確かめ直さなかった)。止める時の行は、測れなかった比べの 1 行・上限なしで
+/// 同じ比べをやり直す命令・「0 件を確かめてから commit し直す・--no-verify は使わない」の 3 行。命令はそのまま shell で実行でき、
+/// 打ち切らずに終わりまで測って、stage した file の新しい当たり(DOEFF016)で止める。
 #[test]
 fn a_cut_comparison_blocks_and_names_the_command_to_rerun_without_a_limit() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
     let linter = burning_head_linter(side.path(), 6);
-    write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
-    git(root, &["add", "architecture.hy"]);
+    write(root, "app/queue/tool.py", "from . import main\n");
+    git(root, &["add", "app/queue/tool.py"]);
     let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &root.join(".git").join("doeff-linter-cache"), 2));
-    assert_ne!(got.code, 0, "{:?}", got);
     assert_eq!(got.code, 1, "{:?}", got);
-    assert!(got.lines.iter().any(|line| line.contains("HEAD の木の repo 全体の比べを測れなかった") && line.contains("commit を止める")), "{:?}", got);
-    assert!(got.lines.iter().any(|line| line == RERUN_GUIDE), "{:?}", got);
+    assert_eq!(got.lines.len(), 3, "{:?}", got);
+    for part in ["HEAD の版を測れなかった", "HEAD の木で当てた規則 1 個(DOEFF016)", "上限 2 秒で打ち切った", "commit を止める"] {
+        assert!(got.lines[0].contains(part), "{:?} が無い: {:?}", part, got);
+    }
+    assert!(got.lines[1].starts_with(RERUN_COMMAND) && got.lines[2] == RERUN_GUIDE, "{:?}", got);
     let command = rerun_command(&got.lines);
     assert!(command.ends_with("--commit-hook-timeout-s 0"), "{}", command);
     let (code, stderr) = run_rerun(root, &command);
     assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("repo 全体の規則の HEAD に無い当たり: architecture.hy::DOEFF163::queue"), "{}", stderr);
+    assert!(stderr.contains("stage した file の破れ: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
     assert!(!stderr.contains("測れなかった"), "{}", stderr);
 }
 
