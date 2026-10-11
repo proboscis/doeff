@@ -18,7 +18,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import collections.abc [Callable])
 (import doeff [EffectBase])
-(import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel])
+(import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced
@@ -96,7 +96,9 @@
   ;; 柵の期限 = 送る前に読んだ自分の時計 + TTL(coordinator が書いた期限より必ず前 — semaphore_model の冒頭)。
   ;; coordinator に届かない(通信の失敗・作り直しの途中)時は、延長と同じく retry-seconds ごとに同じ token で取り直す(claim は同じ token なら
   ;; 何度送っても同じ意味)。届かない例外を呼び手へ投げると、取りに行った task ごと終わり、それを待つ常駐の process が落ちる
-  ;; (2026-10-11 02:45 JST の coordinator の作り直しの最中の実例)。
+  ;; (2026-10-11 02:45 JST の coordinator の作り直しの最中の実例)。空きの待ちが届かない時も同じく retry-seconds おいて取り直す(待ちが
+  ;; 終わった task は、空いた後も lease を取らない — 2026-10-12 01:00 JST ごろの /watch の ConnectTimeout の実例)。取り消し
+  ;; (TaskCancelledError — scheduler が task の中へ投げる)は届かない失敗として飲まずに上げる(飲むと取り消した task が待ち続ける)。
   (setv token (.next-token session))
   (while True
     (<- sent int (now-epoch-ms))
@@ -104,13 +106,17 @@
     (try
       (<- claimed LeaseAnswer (LeaseOp semaphore.name "claim" token semaphore.permits (.ttl-ms session)))
       (:= answer claimed)
+      (except [cancelled TaskCancelledError] (raise cancelled))
       (except [e Exception] (:= answer None)))
     (cond
       (is answer None) (<- (Delay session.retry-seconds))
       answer.ok (do (setv (get session.expires token) (+ sent (.ttl-ms session)))
                     (.hold session semaphore.name token)
                     (return token))
-      True (<- _seen bool (AwaitLeaseFree semaphore.name)))))
+      True (try
+             (<- _seen bool (AwaitLeaseFree semaphore.name))
+             (except [cancelled TaskCancelledError] (raise cancelled))
+             (except [e Exception] (<- (Delay session.retry-seconds)))))))
 
 
 (defk renew-lease [session semaphore token]
