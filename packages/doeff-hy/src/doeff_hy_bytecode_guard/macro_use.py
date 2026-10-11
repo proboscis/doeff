@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from itertools import chain
 from types import CodeType, FunctionType, ModuleType
 
-from doeff_hy_bytecode_guard import bound_source
+from doeff_hy_bytecode_guard import bound_source, loader_hooks
 from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope
 from doeff_hy_bytecode_guard.records import (
     MACRO_TABLE,
@@ -1230,8 +1230,8 @@ class _Walker:
         self.files: dict[str, str] = {}
         #: import できなかった module の名(digest には名だけが入り、記録の file の行で覆う)。
         self.unimportable: set[str] = set()
-        #: import の途中の module か import できない module に出会ったか(その digest は import の進み具合に依るので、覚えず
-        #: 記録にも入れない)。
+        #: import の途中の module か import できない module に出会ったか、今の disk から読む file が module を実行した時から
+        #: 変わっていたか(その digest は import の進み具合か、process の中の古い値に依るので、覚えず記録にも入れない)。
         self._mut_partial = False
         #: source の文で覆った大域(module の名・大域の名 — 2 度目は印だけ入れる)。
         self._bound_names: set[tuple[str, str]] = set()
@@ -1286,6 +1286,24 @@ class _Walker:
         if module is not None and isinstance(file, str):
             self.files[module.__name__] = file
 
+    def _against_executed(self, file: str) -> None:
+        """今の disk から読む部分(file の sha256・値を覆う文)が、process の中の module の値と同じ時点の物かを確かめる — module を
+        実行した後に file が書き換わっていれば(常駐の process)、この digest は展開が使った値を写さないので、import の途中の状態と
+        同じく覚えず記録にも入れない(記録の行は None — 新しい process は古いと判じて展開し直す)。設計検証
+        lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A(基準版 cf7ea9cc0 から在った・card ki-be596ac8276f)。"""
+        executed = loader_hooks.executed_source_state(file)
+        if executed is None:
+            return  # 読みの口を通らずに読み込まれた module(包む前の起動・拡張の module)— 確かめる材料が無い
+        # 読み込み 1 つの写し(覚えの確かめの _state_now)でなく今の disk を読む — 続けて今の disk から文と sha256 を読むので、
+        # 同じ時点で比べる(歩み 1 回に file 数個 — 照らしごとではない)。
+        try:
+            status = os.stat(file)
+        except OSError:
+            self._mut_partial = True
+            return
+        if (status.st_mtime_ns, status.st_size) != executed:
+            self._mut_partial = True
+
     def _fold(self, module: ModuleType | None) -> None:
         """安全側: module の file の sha256 を digest に足す(読めなければ毎回違う印 — いつも古いと判じられる)。"""
         file = None if module is None else vars(module).get("__file__")
@@ -1293,6 +1311,7 @@ class _Walker:
             self._feed("file", "none" if module is None else module.__name__)
             return
         self.files[module.__name__] = file
+        self._against_executed(file)
         digest = self._sha256_of(file)
         self._feed("file", module.__name__, digest if digest is not None else os.urandom(16).hex())
 
@@ -1559,6 +1578,8 @@ class _Walker:
         self._note(module)
         namespace = vars(module)
         file = namespace.get("__file__")
+        if isinstance(file, str):
+            self._against_executed(file)
         binding = bound_source.binding_of(file, name) if isinstance(file, str) else None
         if binding is None or binding.unresolved or not (binding.bound or binding.imports):
             self._fold(module)

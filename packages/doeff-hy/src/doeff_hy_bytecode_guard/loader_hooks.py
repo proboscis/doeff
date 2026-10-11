@@ -56,6 +56,12 @@ _source_reads: dict[str, object] = {}
 #: 変わっていない file を読み直さない。
 _digests: dict[tuple[str, int, int], str] = {}
 
+#: 本体を実行した source の file の状態(path → (更新時刻 ns, 大きさ) — 読みの口が本体の実行の直前に読んだ物・process の間)。
+#: .pyc の記録の照らしの歩みは、読み込み済みの module の値を process の中から、その値を覆う文と file の sha256 を今の disk から
+#: 読む。module を実行した後に file が書き換わった常駐の process では 2 つが食い違うので、歩みが確かめる(設計検証
+#: lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A — card ki-be596ac8276f)。
+_executed: dict[str, tuple[int, int]] = {}
+
 
 def installed() -> bool:
     """この process の ``SourceFileLoader`` が包まれているか(起動時の .pth が効いたかを検査が確かめるため)。"""
@@ -302,6 +308,7 @@ def _scoped_exec_module(previous: ExecModule):
     ki-be596ac8276f)。入れ子の実行は外の覚えを使う。"""
 
     def exec_module(self: importlib.machinery.SourceFileLoader, module: ModuleType) -> None:
+        _note_executed(self.path)
         if IMPORT_SCOPE.get() is not None:
             return previous(self, module)
         scope = IMPORT_SCOPE.set(ImportScope())
@@ -311,6 +318,25 @@ def _scoped_exec_module(previous: ExecModule):
             IMPORT_SCOPE.reset(scope)
 
     return exec_module
+
+
+def _note_executed(path: object) -> None:
+    """本体を実行する source の file の今の状態を覚える(読めない file は覚えを消す)— 照らしの歩みが、module の値と今の file の
+    中身が同じ時点の物かを確かめるため(:func:`executed_source_state`)。"""
+    if not isinstance(path, str):
+        return
+    try:
+        status = os.stat(path)
+    except OSError:
+        _executed.pop(path, None)
+        return
+    _executed[path] = (status.st_mtime_ns, status.st_size)
+
+
+def executed_source_state(path: str) -> tuple[int, int] | None:
+    """path の module の本体を、この process の読みの口が最後に実行した時の file の状態(更新時刻 ns, 大きさ)— 読みの口を通らずに
+    読み込まれた module(包む前の起動・拡張の module)は None。"""
+    return _executed.get(path)
 
 
 # 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
