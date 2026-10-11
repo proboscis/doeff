@@ -323,7 +323,7 @@
            (when ~guard
              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
            (.__delattr__ (super ~name ~self-sym) ~attr)))
-       (doeff_hy.record_runtime.seal-record ~name ~plain))))
+       (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))
     (return (if (is written None)
