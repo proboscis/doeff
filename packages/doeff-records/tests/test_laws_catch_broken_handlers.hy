@@ -14,7 +14,8 @@
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
-                            law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-none-removes-a-field
+                            law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
+                            law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
@@ -69,6 +70,12 @@
   ;; 上から読む読みを知らない handler の顔: descending-by を捨てて鍵の順の頁を返す。
   (ListRows [table where fields cursor limit descending-by]
     (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit))
+    (resume answer)))
+
+(defhandler ignore-key-head []
+  ;; 冪等キーの頭で引く読みを知らない handler の顔: key-head を捨てて列の全部の出来事を返す。
+  (ReadEvents [stream after limit key-head]
+    (<- answer (ReadEvents stream :after after :limit limit))
     (resume answer)))
 
 (defhandler ignore-removals []
@@ -191,6 +198,7 @@
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
                       #(law-descending-list-is-the-head-of-the-sorted-scan (ignore-descending))
                       #(law-append-is-idempotent (forget-idempotency))
+                      #(law-key-head-read-equals-filtered-scan (ignore-key-head))
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
                       #(law-prune-stops-at-the-archived-seq (ignore-prune-bound))

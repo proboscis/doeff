@@ -27,6 +27,8 @@
    (AppendEvent "journal" "k1" {"n" [1 {"m" None}]})
    (AppendEvent "journal" "k2" "a string body")
    (ReadEvents "journal" :after 4 :limit 2)
+   ;; 冪等キーの頭で引く読み(key-head — 鍵 keyHead は付けた時だけ送る)。
+   (ReadEvents "trails" :after 4 :limit 2 :key-head "a")
    (ReadStreamEnd "journal")
    (WatchEvents "journal" :after 4 :timeout 2.5)
    (ReadEventByKey "journal" "k1")
@@ -55,6 +57,7 @@
    #("append-event" (Appended 7 True))
    #("append-event" (Refused "別の本文"))
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
+   #("read-events" (NotIndexed #("idempotencyKey")))
    #("read-stream-end" (StreamEnd 7))
    #("read-stream-end" (StreamEmpty))
    #("watch-events" (EventsMoved))
@@ -125,6 +128,10 @@
                            #("watch-changes" {"tables" ["parts"] "cursor" {"epoch" 1 "sequence" 0} "streams" ["journal" "journal"]})
                            #("append-event" {"stream" "journal" "idempotencyKey" "" "body" 1})
                            #("read-events" {"stream" "journal" "after" -1})
+                           ;; 冪等キーの頭で引く読み: 頭は空でない文字列(引かない時は鍵ごと無い)。
+                           #("read-events" {"stream" "trails" "keyHead" None})
+                           #("read-events" {"stream" "trails" "keyHead" ""})
+                           #("read-events" {"stream" "trails" "keyHead" 3})
                            #("read-stream-end" {})
                            #("read-stream-end" {"stream" "journal" "after" 0})
                            #("read-stream-end" {"stream" "Journal!"})

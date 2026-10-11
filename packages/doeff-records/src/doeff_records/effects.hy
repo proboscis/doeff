@@ -171,15 +171,21 @@
 
 
 (defclass [(dataclass :frozen True)] ReadEvents [EffectBase]
-  "追記の列の after より後の出来事を limit まで読む。答え = Events | Unreachable。"
+  "追記の列の after より後の出来事を limit まで読む。答え = Events | Unreachable | NotIndexed。
+   key-head = 冪等キーの頭(None = 列の全部の出来事): 列の宣言の key-lookup(ByKeyHead)の区切りより前が key-head と等しい出来事だけを、
+   after より後から番号の順に limit まで読む(列の他の出来事は数えない — 上限より短い頁は、その頭の出来事の終わり)。key-lookup を
+   宣言していない列への頭の読みは NotIndexed(欄の名 idempotencyKey)。"
   (#^ str stream)
   (setv #^ int after 0)
   (setv #^ int limit DEFAULT-READ-EVENTS-LIMIT)
+  (setv #^ (| str None) key-head None)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.stream "ReadEvents.stream")
     (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
       (raise (ValueError (.format "ReadEvents.after は 0 以上の整数: {!r}" self.after))))
-    (checked-limit self.limit "ReadEvents.limit")))
+    (checked-limit self.limit "ReadEvents.limit")
+    (when (not (or (is self.key-head None) (and (isinstance self.key-head str) self.key-head)))
+      (raise (ValueError (.format "ReadEvents.key_head は空でない文字列か None: {!r}" self.key-head))))))
 
 
 (defclass [(dataclass :frozen True)] ReadStreamEnd [EffectBase]
