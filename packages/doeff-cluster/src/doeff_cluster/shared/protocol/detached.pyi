@@ -17,6 +17,7 @@ from doeff_cluster.shared.protocol.coordinator_route import answer_json as answe
 from doeff_cluster.shared.protocol.remote import program_put as program_put
 from doeff_cluster.shared.intent.protocol import PROTOCOL_FORMAT as PROTOCOL_FORMAT
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
+from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
 from doeff_cluster.shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv
@@ -162,7 +163,7 @@ def resent_answer(cell: RouteCell, options: RouteOptions, method: str, path: str
 def detached_json(answer: HttpResponse | HttpFailed | None) -> _Program[dict | list | str | int | float | bool | None, object]:
     ...
 
-def detached_submitted(cell: RouteCell, options: RouteOptions, sender: DetachedSender, key: str, blob: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, environ: dict) -> _Program[DetachedSubmitAnswer, object]:
+def detached_submitted(cell: RouteCell, options: RouteOptions, sender: DetachedSender, key: str, blob: str, needs: frozenset, name: str, lease_seconds: float, retain_seconds: float, environ: dict, placing: dict=...) -> _Program[DetachedSubmitAnswer, object]:
     ...
 
 def detached_view(cell: RouteCell, options: RouteOptions, sender: DetachedSender, key: str) -> _Program[dict | str, object]:

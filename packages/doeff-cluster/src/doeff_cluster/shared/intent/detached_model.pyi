@@ -10,6 +10,13 @@ from doeff import Program as Program
 from .runtime_env_model import EnvVar as EnvVar
 DETACHED_DEFAULT_LEASE_SECONDS: float
 DETACHED_DEFAULT_RETAIN_SECONDS: float
+TASK_LIMIT_SCOPES: frozenset[str]
+
+@dataclass(frozen=True, kw_only=True)
+class TaskLimit:
+    group: str
+    limit: int
+    scope: str
 
 @dataclass(frozen=True)
 class SubmitDetached(EffectBase):
@@ -20,6 +27,8 @@ class SubmitDetached(EffectBase):
     lease_seconds: float = ...
     retain_seconds: float = ...
     environ: tuple[EnvVar, ...] = ...
+    priority: int = 0
+    limits: tuple[TaskLimit, ...] = ...
 
     def __post_init__(self) -> None:
         ...
