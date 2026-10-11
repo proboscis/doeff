@@ -44,10 +44,12 @@
 ;;; までの ms を載せる — 入力ごとの hook と API へ出すまで・モデルが考えた秒・最初の文字が画面に出るまでの起点を割るため。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defrecord])
+(import bisect)
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])
 (import datetime [datetime])
 (import math)
+(import operator [attrgetter])
 (import os)
 (import os.path)
 (import pathlib [Path])
@@ -1111,11 +1113,14 @@
   (Answered))
 
 (defn #^ (| TurnEventPage None) page-of [#^ SessionRuntime runtime #^ ClaudeTurn turn #^ int after-seq]
-  "名指した手番の after-seq より後の行と終わり(知らない手番は None)。"
+  "名指した手番の after-seq より後の行と終わり(知らない手番は None)。上の層の源の task は CLI の行が届くたびに読むので、読みの費用は
+   手番の長さに比例させない: 手番の記録の行は seq の昇順(足すのは on-line の 1 か所 — 会話の lock の中で next-line-seq を進めて
+   末尾に足す)なので、読み始めの位置を二分探しで引き、その後ろだけを写す(agora card acp:kanban-issue:ki-07d7059e1eea —
+   tests/test_page_reads.hy)。"
   (with [runtime.lock]
     (setv log (.get runtime.turns turn.turn-seq))
     (when (is log None) (return None))
-    (setv lines (tuple (gfor line log.lines :if (> line.seq after-seq) line)))
+    (setv lines (tuple (cut log.lines (bisect.bisect-right log.lines after-seq :key (attrgetter "seq")) None)))
     (TurnEventPage lines (if lines (. (get lines -1) seq) after-seq) log.end)))
 
 (defk read-events [#^ ClaudeCodeHost host #^ ClaudeReadTurnEvents request]
