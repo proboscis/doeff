@@ -505,6 +505,32 @@
 
 ;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------
 
+;; 消す前に送る(maintenance.hy の頭の註・agora-controllers の card ki-c32e43651f2e): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
+;; それを越えて消せば送っていない変更が失われる。
+(defk law-prune-stops-at-the-archived-seq [#^ LawHarness harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
+  "刈りは送って確かめた番号(PruneChanges の upto-seq)を越えて変更を消さない — 上限の内の古い変更だけを消し、上限より後の古い変更は
+   次の刈り(上限を上げた時)まで残るため。"
+  (setv law "刈りは upto-seq を越えて消さない・上限より後の古い変更は残り読める・上限を外せば残りを刈る")
+  (<- start (as-writer harness MAKER (ListRows "parts")))
+  (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (<- first (as-writer harness MAKER (ListRows "parts")))
+  (<- w2 (as-writer harness MAKER (PutRow "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent))))
+  (<- second (as-writer harness MAKER (ListRows "parts")))
+  (<- (Delay 100))
+  ;; 2 つの変更はどちらも 50 秒より古い。送って確かめた番号は 1 つ目まで。
+  (<- bounded (as-writer harness MAKER (PruneChanges 50 :upto-seq first.sequence)))
+  (<- (require-law (= bounded (Pruned first.sequence 1)) law (.format "上限の内の 1 つだけを刈る: {!r}" bounded)))
+  (<- kept (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch first.sequence))))
+  (<- (require-law (and (isinstance kept Changes) (= (lfor item kept.items #(item.key item.version)) [#(#("p2") 1)]))
+               law (.format "上限より後の古い変更が残り読める: {!r}" kept)))
+  (<- again (as-writer harness MAKER (PruneChanges 50 :upto-seq first.sequence)))
+  (<- (require-law (= again (Pruned first.sequence 0)) law (.format "同じ上限の 2 度目の刈りは何も消さない: {!r}" again)))
+  (<- rest (as-writer harness MAKER (PruneChanges 50 :upto-seq second.sequence)))
+  (<- (require-law (= rest (Pruned second.sequence 1)) law (.format "上限を上げれば残りを刈る: {!r}" rest)))
+  [w1 w2 bounded kept again rest])
+
+
 (defk law-put-rows-is-all-or-nothing [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "複数行の書き(PutRows)が 1 transaction の約束を守ることを、どの置き場の組でも同じに確かめるための法:
@@ -987,6 +1013,7 @@
             "watch-events-waits-for-an-append" law-watch-events-waits-for-an-append
             "none-removes-a-field" law-none-removes-a-field
             "maintenance-prunes-and-sweeps" law-maintenance-prunes-and-sweeps
+            "prune-stops-at-the-archived-seq" law-prune-stops-at-the-archived-seq
             "put-rows-is-all-or-nothing" law-put-rows-is-all-or-nothing
             "grouped-events-expire-together" law-grouped-events-expire-together
             "stream-end-is-the-last-sequence" law-stream-end-is-the-last-sequence

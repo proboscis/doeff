@@ -467,20 +467,26 @@
              :params #()))
 
 
-(defk prune-changes-statement [prefix before-at]
-  {:pre [(: prefix str) (: before-at int)] :post [(: % Statement)]
+;; 上限の無い刈りの番号の上限(bigint の最大 — 送りを持たない計画の PruneChanges)。
+(val UNBOUNDED-SEQ 9223372036854775807)
+
+
+(defk prune-changes-statement [prefix before-at upto-seq]
+  {:pre [(: prefix str) (: before-at int) (: upto-seq int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "刻が before-at 以下の変更のうち最大の番号までを変更の列から消し(刈る範囲は番号の前方の連なり — 刻が番号の順と揃わなくても
-   floor の下に取り残しを作らない)、floor をそこまで上げ、#(floor 消した数) を返す文を作るため(書きの錠の中で流す —
-   錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。"
+  "刻が before-at 以下の変更のうち最大の番号まで(ただし upto-seq — 送って確かめた番号の上限 — を越えない)を変更の列から消し(刈る範囲は
+   番号の前方の連なり — 刻が番号の順と揃わなくても floor の下に取り残しを作らない)、floor をそこまで上げ、#(floor 消した数) を返す文を
+   作るため(書きの錠の中で流す — 錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。上限の無い刈りは
+   呼び手が UNBOUNDED-SEQ を渡す。"
   (Statement :text (.format "WITH removed AS (DELETE FROM {p}row_changes
-                                        WHERE seq <= (SELECT coalesce(max(seq), 0) FROM {p}row_changes WHERE at <= :before_at)
+                                        WHERE seq <= least(:upto_seq,
+                                                           (SELECT coalesce(max(seq), 0) FROM {p}row_changes WHERE at <= :before_at))
                                         RETURNING seq),
                             raised AS (UPDATE {p}store_epoch
                                        SET floor = greatest(floor, (SELECT coalesce(max(seq), 0) FROM removed))
                                        WHERE id = 1 RETURNING floor)
                        SELECT (SELECT floor FROM raised), (SELECT count(*) FROM removed)" :p prefix)
-             :params (! (params-of #(#("before_at" before-at))))))
+             :params (! (params-of #(#("before_at" before-at) #("upto_seq" upto-seq))))))
 
 
 (defk forget-changes-statement [prefix]

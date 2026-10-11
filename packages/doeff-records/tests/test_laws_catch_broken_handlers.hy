@@ -15,7 +15,7 @@
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-none-removes-a-field
-                            law-maintenance-prunes-and-sweeps law-put-rows-is-all-or-nothing
+                            law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-put-rows-is-all-or-nothing
                             law-grouped-events-expire-together law-stream-end-is-the-last-sequence
                             law-expired-keys-are-remembered law-expired-records-are-unseen-before-a-sweep
                             law-a-write-clears-the-expired-row-it-touches law-an-expired-key-answers-the-same-before-and-after-a-sweep
@@ -81,6 +81,12 @@
   ;; 刈り取りをしない handler の顔: 変更の列を消さず floor も上げないまま「刈った」と答える。
   (PruneChanges [keep-seconds]
     (resume (Pruned 0 0))))
+
+(defhandler ignore-prune-bound []
+  ;; 送りの上限を知らない handler の顔: upto-seq を捨てて時の境だけで刈る(送っていない変更まで消す)。
+  (PruneChanges [keep-seconds upto-seq]
+    (<- answer (PruneChanges keep-seconds))
+    (resume answer)))
 
 (defk put-each-row [writes]
   {:pre [(: writes tuple)] :post [(: % (| WrittenRows RowsConflict RowsRefused))]}
@@ -187,6 +193,7 @@
                       #(law-append-is-idempotent (forget-idempotency))
                       #(law-none-removes-a-field (ignore-removals))
                       #(law-maintenance-prunes-and-sweeps (skip-pruning))
+                      #(law-prune-stops-at-the-archived-seq (ignore-prune-bound))
                       #(law-put-rows-is-all-or-nothing (put-rows-one-by-one))
                       #(law-stream-end-is-the-last-sequence (end-of-every-stream))
                       #(law-event-by-key-reads-the-same-event (event-of-any-stream))

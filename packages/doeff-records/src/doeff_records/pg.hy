@@ -68,7 +68,7 @@
                               schema-statements drop-statements
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
-                              changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement find-event-statement
+                              changes-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
                               insert-event-statement read-events-statement stream-end-statement event-by-key-statement expire-events-statement
                               expire-event-groups-statement touched-events-statement delete-events-statement expiring-events-statement
                               retire-keys-statement find-retired-key-statement])
@@ -869,8 +869,10 @@
 (defk prune-locked [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]
    :tags {:context "records" :role "foundation"}}
-  "変更の列が際限なく伸びないように、keep-seconds より古い変更を消して floor を上げるため(書きの錠の中 — 読み手の断面と揃える)。"
-  (<- statement (prune-changes-statement store.prefix (- now-ms (int (* 1000 ask.keep-seconds)))))
+  "変更の列が際限なく伸びないように、keep-seconds より古い変更を(upto-seq が在ればその番号まで)消して floor を上げるため(書きの錠の
+   中 — 読み手の断面と揃える)。"
+  (<- statement (prune-changes-statement store.prefix (- now-ms (int (* 1000 ask.keep-seconds)))
+                                         (if (is ask.upto-seq None) UNBOUNDED-SEQ ask.upto-seq)))
   (<- rows (query-rows store.database statement))
   (val record (get rows 0))
   (Pruned (int (get record 0)) (int (get record 1))))
@@ -954,7 +956,7 @@
     (<- now (GetTime))
     (<- answer (reached (swept-count store (epoch-ms now))))
     (resume answer))
-  (PruneChanges [keep-seconds]
+  (PruneChanges [keep-seconds upto-seq]
     (<- now (GetTime))
     ;; 床は全部の表の待ち手の位置に関わる(名の分からない合図)。
     (<- answer (reached (writing store None (prune-locked store effect (epoch-ms now)))))

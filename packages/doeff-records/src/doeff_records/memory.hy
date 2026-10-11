@@ -705,15 +705,17 @@
 
 (defk memory-prune-changes [store ask now-ms]
   {:pre [(: store MemoryStore) (: ask PruneChanges) (: now-ms int)] :post [(: % Pruned)]}
-  "変更の列が際限なく伸びないように、keep-seconds より古い変更(刻 <= 今 − 保持)を消して floor を上げる。"
+  "変更の列が際限なく伸びないように、keep-seconds より古い変更(刻 <= 今 − 保持 — upto-seq が在ればその番号まで)を消して floor を上げる。"
   (guarded store (fn [] (prune-changes-locked store ask now-ms))))
 
 
 (defn #^ Pruned prune-changes-locked [#^ MemoryStore store #^ PruneChanges ask #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き
   "memory-prune-changes の中身(呼び手が錠を持つ)。"
   (setv before (- now-ms (int (* 1000 ask.keep-seconds)))
-        ;; 刈る範囲は番号の前方の連なり(刻が古い変更の最大の番号まで — PostgreSQL の handler と同じ)。
-        edge (max (gfor change store.changes :if (<= (get store.changed-at change.sequence) before) change.sequence) :default 0)
+        ;; 刈る範囲は番号の前方の連なり(刻が古い変更の最大の番号まで — PostgreSQL の handler と同じ)。upto-seq(送って確かめた番号の
+        ;; 上限)が在れば、それを越えない。
+        timed (max (gfor change store.changes :if (<= (get store.changed-at change.sequence) before) change.sequence) :default 0)
+        edge (if (is ask.upto-seq None) timed (min timed ask.upto-seq))
         old (lfor change store.changes :if (<= change.sequence edge) change))
   (for [change old] (del (get store.changed-at change.sequence)))
   (when old
@@ -903,7 +905,7 @@
   (SweepExpired []
     (<- now (GetTime))
     (resume (Swept (purge-expired store (epoch-ms now)))))
-  (PruneChanges [keep-seconds]
+  (PruneChanges [keep-seconds upto-seq]
     (<- now (GetTime))
     (<- pruned (memory-prune-changes store effect (epoch-ms now)))
     (resume pruned)))

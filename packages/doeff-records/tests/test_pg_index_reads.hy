@@ -13,7 +13,7 @@
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
-                              touched-events-statement prune-changes-statement terminal-rows-statement watch-head-statement
+                              touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
                               event-by-key-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
@@ -115,7 +115,7 @@
   (<- pair-key (event-by-key-statement prefix "pairs" "done:m-1" (EventExpiry :before-at BEFORE :separator ":")))
   (<- pulse-sweep (expire-events-statement prefix "pulses" BEFORE))
   (<- pair-sweep (expire-event-groups-statement prefix "pairs" BEFORE ":"))
-  (<- prune (prune-changes-statement prefix BEFORE))
+  (<- prune (prune-changes-statement prefix BEFORE UNBOUNDED-SEQ))
   #(#("出来事ごとの列の回収の候補の読み" pulse-probe)
     #("組で数える列の回収の候補の読み" pair-probe)
     #("期限の在る表の終端の行の読み" terminal)

@@ -124,9 +124,12 @@
 ;; --- 入口の設定 -------------------------------------------------------------------------------------------------------------------
 
 (defrecord MaintenancePlan
-  "手入れの周期の設定: interval-seconds = 拍の秒・keep-seconds = 変更の列に残す秒(maintenance.hy の PruneChanges)。"
+  "手入れの周期の設定: interval-seconds = 拍の秒・keep-seconds = 変更の列に残す秒(maintenance.hy の PruneChanges)・archive = 刈る前に
+   古い変更を送る関数(keep-seconds → 答えが ArchivedThrough | Unreachable の Program — 刈りはその番号まで・None = 送らない置き場。
+   maintenance.hy の頭の註の「消す前に送る」)。"
   (#^ float interval-seconds)
-  (#^ float keep-seconds))
+  (#^ float keep-seconds)
+  (setv #^ (| Callable None) archive None))
 
 
 (defrecord RepoCommit
@@ -705,7 +708,7 @@
 (defk maintain [handler-for plan]
   {:pre [(: handler-for Callable) (: plan MaintenancePlan)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "手入れの係: 止めるまで maintenance-loop を手入れの係の書き手の handler の下で回すため(置き場に届かない回は Unreachable の値で次の回へ)。"
-  (<- (with-handlers [(handler-for MAINTAINER)] (maintenance-loop plan.interval-seconds plan.keep-seconds None)))
+  (<- (with-handlers [(handler-for MAINTAINER)] (maintenance-loop plan.interval-seconds plan.keep-seconds plan.archive None)))
   None)
 
 
