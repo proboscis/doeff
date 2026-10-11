@@ -22,7 +22,8 @@ job が終わらなければ group へ KILL を送る(shim 自身も止まる)�
 macOS には親の死を子へ知らせる仕組み(Linux の PR_SET_PDEATHSIG)が無いので、worker の消失はパイプの EOF で知る。
 
 job の出力(#3714): --stamp-lines の時は、job の stdout・stderr(worker が同じ log の file へ向けた物)を pipe で受け、1 行ごとに壁の
-時計の刻の頭を付けて log へ書く(部品 worker/entry/line_stamp — 待ちの子から分かれた子 A と同じ部品)。旗が無ければ、job の出力は
+時計の刻の頭を付けて log へ書く(部品 worker/entry/line_stamp — 待ちの子から分かれた子 A と同じ部品)。環境に送り先(DOEFF_JOB_LOG_OTLP)
+が在れば、同じ行を OTLP/HTTP の logs としても送る(card ki-ae919abe5b26 — job の write は止めない)。旗が無ければ、job の出力は
 worker の向け替えのまま(入口の検め — worker が stdout の行を読んで判じる)。
 
 退きの知らせ(#3672): --notice-env <名> の時は、job へ知らせの pipe の読み口を継がせ(fd の番号を環境変数 <名> で渡す — 宿の契約
@@ -47,8 +48,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import FrameType
 
-from doeff_cluster.foundation.process_environ import child_environ
-from doeff_cluster.worker.entry.line_stamp import OutputLines, RawLines, stamped_lines
+from doeff_cluster.foundation.process_environ import child_environ, named_environ
+from doeff_cluster.worker.entry.line_stamp import (
+    JOB_LOG_ENV_NAMES,
+    OutputLines,
+    RawLines,
+    job_log_plan,
+    stamped_lines,
+)
 from doeff_lifeline import Group, Single, Target, watched_until_eof
 
 # 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
@@ -414,7 +421,8 @@ def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
     grace = float(sys.argv[1])
     split = sys.argv.index("--")
     flags = shim_flags(sys.argv[2:split])
-    lines = stamped_lines() if flags.stamp_lines else RawLines()
+    # job の log の行を OTLP でも送るかは、この process の環境(worker が置いた送り先と job の文脈)で決める — 読みは foundation の層。
+    lines = stamped_lines(job_log_plan(named_environ(JOB_LOG_ENV_NAMES))) if flags.stamp_lines else RawLines()
     relay = None if flags.notice_env is None else open_relay(flags.notice_env)
     code = shim_code(grace, PopenSpawner(sys.argv[split + 1 :], relay), lines, adopt, relay=relay)
     # 終了処理を経ずに抜ける: stdin を読んでいる補助の thread が残ったまま終了処理に入ると、Python が

@@ -20,9 +20,13 @@
 ;; 起動の script の 1 か所)と cargo / rustup の場所は継ぐ: 子の uv sync が worker と同じ wheel と bytecode を使い、doeff-vm を組み直さない
 ;; (#3972 — 継がなかった時、job の子の uv sync が 5 分半)。DOEFF_ の名は宣言の env-vars に書けない(予約の接頭辞)ので worker が継ぐ。宣言の env-vars と worker が組む DOEFF_WORKER_*・DOEFF_RUNTIME_ENV* を足す。LC_* は名を前もって知らない
 ;; 一族なので頭で拾う(CHILD-ENV-PREFIXES — ReadEnvironment の prefixes に渡せる形)。
+;; job の log の送り先(DOEFF_JOB_LOG_OTLP)と配備が足す属性(DOEFF_JOB_LOG_ATTRIBUTES)も継ぐ: 子の shim と待ちの子から分かれた子 A の
+;; 刻つきの書き手が、worker の環境に在る時だけ job の log の行を OTLP でも送る(card ki-ae919abe5b26 — 名の読み手は
+;; worker/entry/line_stamp の JOB_LOG_ENV_NAMES。木の job は worker の環境を EXTEND で継ぐので、この表は実行環境の job と待ちの子の分)。
 (setv CHILD-ENV-ALLOWED (frozenset #("PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TZ" "TMPDIR" "TERM"
                                      "SSL_CERT_FILE" "SSL_CERT_DIR" "UV_CACHE_DIR" "UV_PYTHON_INSTALL_DIR"
-                                     "DOEFF_WHEEL_CACHE" "DOEFF_HY_CODE_STORE" "CARGO_HOME" "RUSTUP_HOME")))
+                                     "DOEFF_WHEEL_CACHE" "DOEFF_HY_CODE_STORE" "CARGO_HOME" "RUSTUP_HOME"
+                                     "DOEFF_JOB_LOG_OTLP" "DOEFF_JOB_LOG_ATTRIBUTES")))
 (setv CHILD-ENV-PREFIXES #("LC_"))
 
 
