@@ -11,13 +11,16 @@
 (val ECHO "import sys\nfor line in sys.stdin:\n    sys.stdout.write(line)\n    sys.stdout.flush()\n")
 ;; 替え玉の CLI: stderr に 2 行書いて code 3 で終わる(stdout には何も出さない)。
 (val FAIL "import sys\nsys.stderr.write('first\\n')\nsys.stderr.write('boom\\n')\nsys.exit(3)\n")
+;; 子の python の env(PYTHONDONTWRITEBYTECODE は子へ明示する — 渡す env の写像は呼び手の環境変数を継がないので、作り立ての venv では子が
+;; site の起動で読む module の .pyc を checkout へ書いた・日次 2026-10-11 の doeff の後片付けの検)。
+(val CHILD-ENV {"PATH" "/usr/bin:/bin" "PYTHONDONTWRITEBYTECODE" "1"})
 (val WAIT-SECONDS 15)
 
 
 (deftest test-the-process-stays-up-between-exchanges-and-ends-on-eof
   (val got (queue.Queue))
   (val ended (queue.Queue))
-  (val process (CodexProcess [sys.executable "-u" "-c" ECHO] "/" {"PATH" "/usr/bin:/bin"}
+  (val process (CodexProcess [sys.executable "-u" "-c" ECHO] "/" CHILD-ENV
                              (fn [raw] (.put got raw))
                              (fn [code tail] (.put ended #(code tail)))
                              (fn [] None)))
@@ -38,7 +41,7 @@
 
 (deftest test-a-failing-process-reports-its-code-and-stderr-tail
   (val ended (queue.Queue))
-  (val process (CodexProcess [sys.executable "-u" "-c" FAIL] "/" {"PATH" "/usr/bin:/bin"}
+  (val process (CodexProcess [sys.executable "-u" "-c" FAIL] "/" CHILD-ENV
                              (fn [raw] None)
                              (fn [code tail] (.put ended #(code tail)))
                              (fn [] None)))
