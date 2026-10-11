@@ -1,0 +1,100 @@
+;; 盲検 A の probe — S2(codex の版上げで、ターンを名乗らない口座の断面の新しい通知が増え、ターンの中で届く)を、S2 の予想どおり
+;; 「codex-lines に記録を足すだけ」で受けた時に、利用枠切れの事実(R1)がどうなるかを、absorb を読みの順に呼んで確かめる。
+;; 木の file は変えない: codex-lines が足すはずの記録の型をこの probe の中で作り、lines.CodexLine の union に足した物として渡す
+;; (handler・limits・adapter は木のまま)。
+(require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
+(import json)
+(import dataclasses [dataclass])
+(import doeff [run])
+(import doeff_codex.lines :as lines)
+(import doeff_codex.lines [classify-line RateLimits RateLimitWindow UsageLimitHit])
+(import doeff_codex.handler [SessionRuntime absorb])
+(import doeff_codex.limits [merged-limits])
+(import doeff_codex.values [CodexSessionSpec CodexHome])
+(import doeff_codex.rpc [ApprovalPolicy SandboxMode])
+(import doeff_agents.handlers.headless_codex [account-limit-of])
+
+(val TEXT "You’ve hit your usage limit.")
+(val AT 1893456000)
+
+;; codex-lines が足すはずの記録(仮): 口座の断面の通知 1 つ = 枠ごとの断面の列(limit-id ごとの RateLimits)。classify-line は
+;; 1 行 → 1 記録なので、枠が 2 つ以上の断面は RateLimits 1 つにできない。
+(defrecord AccountSnapshot
+  "口座の断面(仮の通知 account/snapshot/updated): limits = 枠ごとの断面(RateLimits の tuple)。thread もターンも名乗らない。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ tuple limits))
+
+;; S2 の予想の変更 = codex-lines の union に記録を足す(TurnRecord には足さない — ターンを名乗らない)。
+(setv lines.CodexLine (| lines.CodexLine AccountSnapshot))
+
+(defn fresh-runtime []
+  "検ごとに空の会話の状態を作るため(前の検の状態を持ち越さない)。"
+  (SessionRuntime (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
+                                    :sandbox SandboxMode.READ-ONLY)))
+
+(defn feed [runtime records]
+  "読みの thread と同じ順に、行(dict)か記録を absorb へ渡すため。"
+  (for [record records]
+    (run (absorb runtime (if (isinstance record dict) (run (classify-line (json.dumps record))) record)))))
+
+(val ANSWER {"id" 3 "result" {"turn" {"id" "u1" "status" "inProgress"}}})
+(val STARTED {"method" "turn/started" "params" {"threadId" "t1" "turn" {"id" "u1" "status" "inProgress"}}})
+(val FAILED {"method" "turn/completed"
+             "params" {"threadId" "t1" "turn" {"id" "u1" "status" "failed"
+                                               "error" {"message" TEXT "codexErrorInfo" "usageLimitExceeded"}}}})
+(val SPENT (RateLimitWindow :used-percent 100 :minutes 300 :resets-at AT))
+(val PART (RateLimitWindow :used-percent 37 :minutes 10080 :resets-at (+ AT 432000)))
+
+(defn report [name runtime]
+  "u1 の記録と、adapter が agora へ渡す利用枠切れの事実を見比べるため。"
+  (setv log (get runtime.turns "u1"))
+  (print (.format "--- {}" name))
+  (print "  u1 の出来事の型:" (lfor event log.events (. (type event.record) __name__)))
+  (print "  outside:" runtime.outside)
+  (print "  u1.limits:" log.limits)
+  (print "  u1.end.usage-limit:" log.end.usage-limit)
+  (print "  adapter が agora へ渡す AgentAccountLimit:" (run (account-limit-of log.end.usage-limit))))
+
+;; A: 今の codex 0.162.1 の形(account/rateLimits/updated)— 基準。
+(val a (fresh-runtime))
+(feed a [ANSWER STARTED
+         {"method" "account/rateLimits/updated"
+          "params" {"rateLimits" {"limitId" "codex_other" "primary" {"usedPercent" 100 "windowDurationMins" 300 "resetsAt" AT}
+                                  "secondary" None}}}
+         FAILED])
+(report "A: account/rateLimits/updated(今の形)" a)
+
+;; B: 版上げ後 — 同じ窓を新しい口座の断面の通知で受ける。codex-lines は記録 AccountSnapshot を足し、handler・limits は変えない(S2)。
+(val b (fresh-runtime))
+(feed b [ANSWER STARTED
+         (AccountSnapshot :limits #((RateLimits :limit-id "codex" :primary PART :secondary None)
+                                    (RateLimits :limit-id "codex_other" :primary SPENT :secondary None)))
+         FAILED])
+(report "B: 新しい口座の断面の通知(S2 の予想の変更だけ)" b)
+
+;; C: limits の公開の口は RateLimits 1 つを受ける形 — 断面の列をそのまま渡せるか。
+(print "--- C: merged-limits に AccountSnapshot を渡す")
+(try
+  (print "  答え:" (run (merged-limits #() (AccountSnapshot :limits #()))))
+  (except [error Exception]
+    (print "  断り:" (. (type error) __name__) (cut (str error) 0 200))))
+
+;; E: 今の強制方法(test_turn_records の規則 = turn_id を必ず持つ記録は TurnRecord)が、足した記録で赤になるか。
+(import dataclasses [fields])
+(print "--- E: test_turn_records の規則が足した記録を拾うか")
+(print "  AccountSnapshot は turn_id を持つ:" (any (gfor field (fields AccountSnapshot) (= field.name "turn_id"))))
+(print "  TurnRecord に入っている:" (issubclass AccountSnapshot lines.TurnRecord))
+
+;; D: handler の absorb に「断面の列を 1 つずつ merged-limits へ」の枝を足した場合と同じ積み方を、手で当てる(直しの置き場の確かめ)。
+(val d (fresh-runtime))
+(feed d [ANSWER STARTED])
+(val snapshot (AccountSnapshot :limits #((RateLimits :limit-id "codex" :primary PART :secondary None)
+                                         (RateLimits :limit-id "codex_other" :primary SPENT :secondary None))))
+(.acquire d.lock)
+(val running (.running-log d))
+(for [one snapshot.limits]
+  (setv running.limits (run (merged-limits running.limits one))))
+(.release d.lock)
+(feed d [FAILED])
+(report "D: handler 側で断面の列を重ねた場合(直しの置き場)" d)

@@ -1,0 +1,25 @@
+== repro B: base 6e09cde27 + blind-B-lt0bc9-account-limits.diff (copy /tmp/dc-lt0bc9-H2VP/b-copy)
+23 passed, 1 warning in 4.46s
+pytest rc=0
+== probe on patched copy
+handler の file: /tmp/dc-lt0bc9-H2VP/b-copy/packages/doeff-codex/src/doeff_codex/handler.hy
+== 1. u1 の中に枠の知らせが無い
+  u0 limits=1 usage-limit=UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.')
+  u1 limits=0 usage-limit=UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.')
+  outside=0
+== 2. u1 の知らせが 7 日の窓を名乗らない
+  u0 limits=1 usage-limit=UsageLimitHit(minutes=10080, resets_at=1893888000, text='You’ve hit your usage limit.')
+  u1 limits=1 usage-limit=UsageLimitHit(minutes=10080, resets_at=1893888000, text='You’ve hit your usage limit.')
+  outside=0
+probe rc=0
+== probe on base (contract)
+handler の file: /work/toolset/worktrees/doeff-wt-dc-lt0bc9/packages/doeff-codex/src/doeff_codex/handler.hy
+== 1. u1 の中に枠の知らせが無い
+  u0 limits=1 usage-limit=UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.')
+  u1 limits=0 usage-limit=UsageLimitHit(minutes=None, resets_at=None, text='You’ve hit your usage limit.')
+  outside=0
+== 2. u1 の知らせが 7 日の窓を名乗らない
+  u0 limits=1 usage-limit=UsageLimitHit(minutes=10080, resets_at=1893888000, text='You’ve hit your usage limit.')
+  u1 limits=1 usage-limit=UsageLimitHit(minutes=300, resets_at=1893474000, text='You’ve hit your usage limit.')
+  outside=0
+probe rc=0

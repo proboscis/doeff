@@ -1,0 +1,30 @@
+--- /tmp/dc-lt0bc9-H2VP/c-orig/packages/doeff-codex/src/doeff_codex/handler.hy	2026-10-11 18:21:10.000000000 +0000
++++ /tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/src/doeff_codex/handler.hy	2026-10-11 18:22:07.530505850 +0000
+@@ -102,7 +102,8 @@
+     (setv #^ (get dict #((| int str) object)) self.answers {})
+     (setv #^ (get dict #(str TurnLog)) self.turns {})
+     (setv #^ tuple self.outside #())
+-    (setv #^ tuple self.late #()))
++    (setv #^ tuple self.late #())
++    (setv #^ tuple self.account-limits #()))
+ 
+   (defn #^ int take-request-id [self]
+     "次の要求の id を取るため(lock の中で呼ぶ — 1 つの process の中で重ならない)。"
+@@ -190,13 +191,15 @@
+                 (.add-event runtime log record))))
+     (lines.TurnEnded)
+     (do (setv log (.log-of runtime record.turn-id))
+-        (<- hit (usage-limit-hit-of record log.limits))
++        (<- hit (usage-limit-hit-of record runtime.account-limits))
+         (setv ended (replace record :usage-limit hit))
+         (.add-event runtime log ended)
+         (when (is log.end None) (setv log.end ended)))
+     _ (cond
+         (isinstance record lines.LimitRecord)
+-        (do (setv log (.running-log runtime))
++        (do (<- account (merged-limits runtime.account-limits record))
++            (setv runtime.account-limits account)
++            (setv log (.running-log runtime))
+             (if (is log None)
+                 (setv runtime.outside (+ runtime.outside #(record)))
+                 (do (<- limits (merged-limits log.limits record))

@@ -1,0 +1,23 @@
+--- /tmp/dc-lt0bc9-H2VP/c-orig/packages/doeff-codex/src/doeff_codex/lines.hy	2026-10-11 18:21:10.000000000 +0000
++++ /tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/src/doeff_codex/lines.hy	2026-10-11 18:22:56.402730485 +0000
+@@ -423,6 +423,11 @@
+   (#^ (| RateLimitWindow None) primary)
+   (#^ (| RateLimitWindow None) secondary))
+ 
++
++(defrecord AccountSnapshot
++  "口座の断面(仮の通知 account/snapshot/updated — 盲検 A の失敗例): limits = 枠ごとの断面。thread もターンも名乗らない。"
++  {:tags {:context "codex" :role "type"}}
++  (#^ (get tuple #(RateLimits ...)) limits))
+ (defrecord Other
+   "語彙の外の通知: method = 通知の名(中身は持たない — 発明しない)。"
+   {:tags {:context "codex" :role "type"}}
+@@ -435,7 +440,7 @@
+   (#^ str reason))
+ 
+ (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
+-                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded Other Unparsed))
++                   ItemStarted ItemDone TokenUsage RateLimits AccountSnapshot TurnError TurnEnded Other Unparsed))
+ 
+ ;; ターンを名乗る記録(params の turnId か turn.id でターンの id を必ず持つ記録)。どの記録がターンを名乗るかは codex の行の形から
+ ;; 決まる知識なので、記録の型と同じこの file が 1 か所で名乗る — handler はこの集まりで記録をターンの列へ振り分け、記録の class を
