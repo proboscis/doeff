@@ -395,6 +395,23 @@ def test_a_comment_in_doeff_hy_macros_keeps_the_stored_expansion(copied_doeff_hy
     assert copied_doeff_hy.expanded() == 0
 
 
+def test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion(
+    copied_doeff_hy: CopiedDoeffHy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 冷えなくてよい時(直す前は赤 — agora-redesign card ki-1475765a3f18): 同じ中身の doeff_hy を別の dir に置いても保存から引く。
+    # 日次の全体検証は回ごとに別の dir(task の作業 dir の下の作業木)に doeff を置く。後処理(POST_PROCESSING)の閉包の digest に
+    # static_check の __file__ の値(置き場の path — project の `module.__file__ = …` が code の名の表に __file__ を出す)が入り、
+    # 保存した展開が回ごとに全部外れた(agora-controllers の hy-type-trend が毎回 .hy 約 2,450 本を冷えて展開した)。
+    assert copied_doeff_hy.expanded() == 1
+    elsewhere = tmp_path / "elsewhere"
+    shutil.copytree(
+        copied_doeff_hy.package, elsewhere / "doeff_hy", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    monkeypatch.setenv("PYTHONPATH", str(elsewhere))
+    moved = CopiedDoeffHy(elsewhere, copied_doeff_hy.root, copied_doeff_hy.cache)
+    assert moved.expanded() == 0, "同じ中身の doeff_hy を別の dir に置いただけで展開し直した"
+
+
 # ---- 保存先(agora-redesign #3863)--------------------------------------------------------------------------
 
 
