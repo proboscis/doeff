@@ -13,9 +13,12 @@ file only costs one expansion.
 import ast
 import contextlib
 import importlib
+import inspect
 import pickle
 import re
+import shutil
 import sys
+import types
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
@@ -47,13 +50,13 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def expansions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Count how often the real expansion runs (the cache must spare the second one)."""
     seen: list[str] = []
-    real = pe._expand_hy
+    real = hy_expansion._expand_hy
 
-    def counting(source: str, filename: str, module_name: str) -> pe._Expanded:
+    def counting(source: str, filename: str, module_name: str) -> hy_expansion._Expanded:
         seen.append(module_name)
         return real(source, filename, module_name)
 
-    monkeypatch.setattr(pe, "_expand_hy", counting)
+    monkeypatch.setattr(hy_expansion, "_expand_hy", counting)
     return seen
 
 
@@ -302,10 +305,10 @@ def test_an_expansion_records_the_macros_it_used_by_their_digest() -> None:
     require (the names are chosen, so a macro added to the provider never enters the table). A
     source that calls ``defk``
     names it with the digest of its code's closure."""
-    record = pe._expand_hy(SOURCE, "/src/m.hy", "m").macros
+    record = hy_expansion._expand_hy(SOURCE, "/src/m.hy", "m").macros
     assert record.macros == ()
     assert record.providers == ()  # names chosen in the require: only a whole require is kept
-    used = pe._expand_hy(DEFS, "/src/m.hy", "m").macros
+    used = hy_expansion._expand_hy(DEFS, "/src/m.hy", "m").macros
     assert [(row.module, row.name) for row in used.macros] == [("doeff_hy.macros", "defk")]
     assert len(used.macros[0].digest) == 64
 
@@ -529,9 +532,8 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     monkeypatch.setattr(pe, "_reader_digest", reader)
     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
     assert seen == ["r"]
-    places = pe._hy_cache_places(REWRAPPED, "r")
-    assert places is not None
-    place = places.derived
+    place = pe._hy_cache_place(REWRAPPED, "r")
+    assert place is not None
     assert place != entry.parent
     (path,) = sorted(place.glob("*.pickle"))
     written = read_entry(path).tree
@@ -567,21 +569,24 @@ def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, mo
     assert inside == [True]
 
 
-ChangeFile = Callable[[ModuleType], None]
+ChangeFile = Callable[..., None]
 
 
 @pytest.fixture
 def changed_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ChangeFile]:
-    """Make a module of the analyzer read as the next commit would have it — its file with one more
-    line — for the digest of its own file that a cache key names (``_reader_digest``,
-    ``_expander_digest``). Nothing else of the analyzer changes."""
+    """Make the analyzer read as the next commit would have it, for the digests of its own files a
+    cache key names (``_reader_digest`` — every file of the package, ``_expander_digest`` — the
+    expansion's file): the package's files are copied, ``changed`` (by default ``module``'s file; None
+    = none) gets one more line, and ``module`` reads the copy as its file. Nothing else changes."""
 
-    def change(module: ModuleType) -> None:
+    def change(module: ModuleType, changed: str | None = "") -> None:
         source = Path(str(module.__file__))
-        changed = tmp_path / "changed" / source.name
-        changed.parent.mkdir()
-        changed.write_text(source.read_text(encoding="utf-8") + "# one more line\n", encoding="utf-8")
-        monkeypatch.setattr(module, "__file__", str(changed))
+        copy = tmp_path / "changed"
+        shutil.copytree(source.parent, copy, ignore=shutil.ignore_patterns("__pycache__"))
+        if changed is not None:
+            edited_file = copy / (changed or source.name)
+            edited_file.write_text(edited_file.read_text(encoding="utf-8") + "# one more line\n", encoding="utf-8")
+        monkeypatch.setattr(module, "__file__", str(copy / source.name))
         forget_digests()
 
     yield change
@@ -652,3 +657,213 @@ def test_a_changed_expansion_is_expanded_again(
     pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m", "m"]
     assert len(expansion_entries(cache_dir)) == 2
+
+
+def test_a_changed_module_of_the_reader_builds_what_is_derived_again(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
+) -> None:
+    """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: the reader's digest named
+    program_effects.py alone, so a helper of the body facts split into a module of its own and
+    changed there read the facts the older rule had built (``rewraps`` empty where the new rule finds
+    ``prog``). Every file of the package is the reader: a change of another one builds what is
+    derived again — and still expands nothing."""
+    seen = expansions(monkeypatch)
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    changed_file(pe, "handler_effects.py")
+    a_new_process()
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    assert seen == ["m"]
+    assert len(entries(cache_dir)) == 2
+
+
+def test_the_same_files_of_the_reader_elsewhere_read_the_same_entry(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
+) -> None:
+    """The reader's digest is made of the files' names and contents, not of where they lie: another
+    checkout of the same version reads what this one derived."""
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    changed_file(pe, None)
+    a_new_process()
+    read = pe._compile_hy(SOURCE, "/src/m.hy", "m")
+    assert isinstance(read, pe._ChunkedTree)
+    assert len(entries(cache_dir)) == 1
+
+
+PACKAGE = pe.__name__.split(".")[0]
+
+
+def code_names(code: types.CodeType) -> frozenset[str]:
+    """The global names a code object and the code nested in it read."""
+    nested = (const for const in code.co_consts if isinstance(const, types.CodeType))
+    return frozenset(code.co_names).union(*(code_names(inner) for inner in nested))
+
+
+def module_of(value: object) -> str | None:
+    """The module a function, class or module value is defined in (None for plain data)."""
+    if isinstance(value, types.ModuleType):
+        return value.__name__
+    if isinstance(value, (types.FunctionType, types.BuiltinFunctionType, type)) or callable(getattr(value, "__wrapped__", None)):
+        return getattr(value, "__module__", None)
+    return None
+
+
+def from_package(value: object) -> bool:
+    return (module_of(value) or "").split(".")[0] == PACKAGE
+
+
+def uses_of(value: object) -> tuple[tuple[str, object], ...]:
+    """What ``value`` reaches in one step, each with the name it is reached by: the globals the code
+    of a function of this package reads, and the functions of a class of this package."""
+    function = inspect.unwrap(value) if isinstance(value, types.FunctionType) or hasattr(value, "__wrapped__") else value
+    if isinstance(function, types.FunctionType) and from_package(function):
+        return tuple(
+            (f"{function.__module__}.{name}", function.__globals__[name])
+            for name in sorted(code_names(function.__code__))
+            if name in function.__globals__
+        )
+    if isinstance(value, type) and from_package(value):
+        return tuple(
+            (f"{value.__module__}.{value.__qualname__}.{name}", member)
+            for name, member in vars(value).items()
+            if isinstance(member, types.FunctionType)
+        )
+    return ()
+
+
+def reached(root: object) -> tuple[tuple[str, object], ...]:
+    """Everything reached from ``root`` by the global names the code of this package reads."""
+    found: tuple[tuple[str, object], ...] = ()
+    seen: frozenset[int] = frozenset()
+    frontier = uses_of(root)
+    while frontier:
+        new = tuple({id(value): (name, value) for name, value in frontier if id(value) not in seen}.values())
+        seen = seen | {id(value) for _, value in new}
+        found = found + new
+        frontier = tuple(use for _, value in new for use in uses_of(value))
+    return found
+
+
+def imported_from_outside() -> frozenset[str]:
+    """``module.name`` for every name a module of this package binds by importing it from outside
+    the package and the standard library (data such a module holds has no module of its own)."""
+    package_dir = Path(str(pe.__file__)).parent
+    return frozenset(
+        f"{PACKAGE}.{file.stem}.{alias.asname or alias.name.split('.')[0]}"
+        for file in sorted(package_dir.glob("*.py"))
+        for node in ast.parse(file.read_text(encoding="utf-8")).body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+        if not outside_allowed(node.module if isinstance(node, ast.ImportFrom) else alias.name)
+    )
+
+
+def outside_allowed(module: str | None) -> bool:
+    top = (module or "").split(".")[0]
+    return top in (PACKAGE, "builtins") or top in sys.stdlib_module_names
+
+
+def foreign_uses(root: object) -> list[str]:
+    """The names through which what ``root`` builds depends on code outside this package and the
+    standard library — code the reader's digest does not name."""
+    outside = imported_from_outside()
+    return sorted(
+        f"{name} → {module_of(value) or type(value).__name__}"
+        for name, value in reached(root)
+        if name in outside or (module_of(value) is not None and not outside_allowed(module_of(value)))
+    )
+
+
+def test_what_is_derived_is_built_by_code_of_this_package() -> None:
+    """Blind A: the derived values are keyed on the reader's digest — every file of this package —
+    so the code that builds them (``_derived`` and all it reaches) may lie in any module of the
+    package but nowhere else; a helper outside it could change and leave the entries as they were."""
+    assert len(reached(pe._derived)) > 20  # the walk reaches the reader's code (not a vacuous pass)
+    assert foreign_uses(pe._derived) == []
+
+
+def a_helper_outside_the_package(node: ast.AST) -> tuple[int, ...]:
+    return (getattr(node, "lineno", 0),)
+
+
+def test_a_helper_outside_the_package_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The negative case of the walk above: a helper of ``_derived`` from another module is named."""
+    monkeypatch.setattr(pe, "_definition_lines", a_helper_outside_the_package)
+    assert foreign_uses(pe._derived) == [f"{pe.__name__}._definition_lines → {__name__}"]
+
+
+EXPANSION_STORE = frozenset({"_store_expansion", "_stored_expansion", "_read_expansion"})
+
+
+def names_used(source: str) -> frozenset[str]:
+    """Every name a source reads, assigns, imports or reaches as an attribute."""
+    return frozenset(
+        name
+        for node in ast.walk(ast.parse(source))
+        for name in (
+            (node.id,) if isinstance(node, ast.Name)
+            else (node.attr,) if isinstance(node, ast.Attribute)
+            else tuple(alias.name for alias in node.names) if isinstance(node, (ast.Import, ast.ImportFrom))
+            else ()
+        )
+    )
+
+
+def analyzer_sources() -> dict[str, str]:
+    package_dir = Path(str(hy_expansion.__file__)).parent
+    return {file.name: file.read_text(encoding="utf-8") for file in sorted(package_dir.glob("*.py"))}
+
+
+def test_only_the_expansion_module_reads_or_writes_its_store() -> None:
+    """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B: the reader called the store's writer, so a
+    reader that reshaped a tree (renumbered its gensyms) could store it under a key without the
+    reader, and every later reader — a reverted one too — read that shape. A caller asks for a tree
+    (``_expansion``); no module but ``hy_expansion`` names the store."""
+    used = {name: names_used(text) & EXPANSION_STORE for name, text in analyzer_sources().items() if name != "hy_expansion.py"}
+    assert {name: names for name, names in used.items() if names} == {}
+    assert names_used(
+        "from doeff_effect_analyzer.hy_expansion import _store_expansion\n"
+        "def _expanded(place, expanded):\n    _store_expansion(place, _canonical_gensyms(expanded))\n"
+    ) & EXPANSION_STORE == {"_store_expansion"}  # the negative case: blind B's reader is named
+
+
+def analyzer_imports(source: str) -> frozenset[str]:
+    """The modules of the analyzer a source imports, at its top or inside a function."""
+    return frozenset(
+        module
+        for node in ast.walk(ast.parse(source))
+        for module in (
+            (node.module or "",) if isinstance(node, ast.ImportFrom) else tuple(alias.name for alias in node.names) if isinstance(node, ast.Import) else ()
+        )
+        if module.split(".")[0] == PACKAGE
+    )
+
+
+def test_the_expansion_module_imports_no_other_module_of_the_analyzer() -> None:
+    """The tree is keyed on ``hy_expansion``'s own file: code it took from the reader would decide
+    trees without being in their key."""
+    assert analyzer_imports(analyzer_sources()["hy_expansion.py"]) == frozenset()
+    assert analyzer_imports(
+        "def _expand_hy(source):\n    from doeff_effect_analyzer.program_effects import _canonical_gensyms\n"
+    ) == {"doeff_effect_analyzer.program_effects"}  # the negative case
+
+
+def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blind A, another candidate: inside ``doeff_hy.static_view`` doeff-hy's macros write another
+    tree (for type checking). The import side keeps no record of such code; the analyzer neither
+    stores such a tree under a plain key nor gives a stored plain tree to such an expansion."""
+    from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
+
+    seen = expansions(monkeypatch)
+    pe._compile_hy(SOURCE, "/src/m.hy", "m")  # the positive case: a plain expansion is stored
+    assert (len(entries(cache_dir)), len(expansion_entries(cache_dir))) == (1, 1)
+    token = TYPE_CHECK_EXPANSION.set(True)
+    try:
+        a_new_process()
+        pe._compile_hy(SOURCE, "/src/m.hy", "m")
+        pe._compile_hy(SOURCE.replace("42", "43"), "/src/m.hy", "m")
+    finally:
+        TYPE_CHECK_EXPANSION.reset(token)
+    assert seen == ["m", "m", "m"]
+    assert (len(entries(cache_dir)), len(expansion_entries(cache_dir))) == (1, 1)

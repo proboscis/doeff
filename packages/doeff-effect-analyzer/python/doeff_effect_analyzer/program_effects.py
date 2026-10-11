@@ -71,12 +71,11 @@ from typing import Any, Generic, TypeVar
 from doeff_effect_analyzer import env_places
 from doeff_effect_analyzer.hy_expansion import (
     _entry_name,
-    _expand_hy,
     _Expanded,
+    _expansion,
     _expansion_key,
     _ExpansionKey,
-    _store_expansion,
-    _stored_expansion,
+    _type_check_expansion,
 )
 
 
@@ -515,9 +514,9 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
     """The macro-expanded tree of a Hy module: from this reader's entry when it read the same inputs
     before; else the tree another reader's expansion stored, with only what this reader derives
     built again (ki-81f1c868203f); else expanded here."""
-    places = _hy_cache_places(source, module_name)
-    if places is not None:
-        cached = _find_cached_tree(places.derived)
+    place = _hy_cache_place(source, module_name)
+    if place is not None:
+        cached = _find_cached_tree(place)
         if cached is not None:
             return cached
     # The whole miss is observed: the expansion (or reading the tree it stored), and building and
@@ -526,22 +525,10 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
     with contextlib.ExitStack() as observed:
         for observer in tuple(_EXPANSION_OBSERVERS):
             observed.enter_context(observer())
-        expanded = _expanded(source, filename, module_name, places)
-        if places is not None:
-            _write_cached_tree(places.derived, expanded)
+        expanded = _expansion(source, filename, module_name, _hy_cache_dir())
+        if place is not None:
+            _write_cached_tree(place, expanded)
     return _WholeTree(expanded.tree)
-
-
-def _expanded(source: str, filename: str, module_name: str, places: "_CachePlaces | None") -> _Expanded:
-    """The tree the expansion's store holds for these inputs; else the expansion, stored there."""
-    if places is None:
-        return _expand_hy(source, filename, module_name)
-    stored = _stored_expansion(places.expansion)
-    if stored is not None:
-        return stored
-    expanded = _expand_hy(source, filename, module_name)
-    _store_expansion(places.expansion, expanded)
-    return expanded
 
 
 # Who wants to know when an expansion missed the cache (the expansion and writing the
@@ -567,10 +554,11 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
 # What the reader derives from an expanded tree (the definition index, the body nodes and the
 # body facts — _CachedTree) was most of what was left of an analysis once the tree was read
 # (agora-redesign #1586 / #1590), so it is kept on disk with the tree in this reader's entries:
-# their key is what the tree is a function of (hy_expansion._ExpansionKey) and this module's
+# their key is what the tree is a function of (hy_expansion._ExpansionKey) and the reader's
 # source (_reader_digest). The tree is kept apart as well, under a key without the reader
-# (hy_expansion), so a changed reader builds only what it derives and expands nothing again.
-# DOEFF_EFFECT_ANALYZER_CACHE names the directory of both; "off" disables them.
+# (hy_expansion — only that module writes it), so a changed reader builds only what it derives
+# and expands nothing again. DOEFF_EFFECT_ANALYZER_CACHE names the directory of both; "off"
+# disables them.
 
 # The shape of the key; a new shape names other entries, and the old ones are never read.
 # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
@@ -587,7 +575,9 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
 # (_entry_name is the record's fingerprint).
 # v9: the tree is also kept on its own under a key without the reader (hy_expansion —
 # ki-81f1c868203f), and this key names the expansion's code as well (_ExpansionKey.expander).
-_TREE_KEY_FORMAT = "v9"
+# v10: the reader's source is every Python file of this package, not this file alone (design
+# check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A).
+_TREE_KEY_FORMAT = "v10"
 
 
 @dataclass(frozen=True)
@@ -606,19 +596,11 @@ class _TreeKey:
         return directory / hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-@dataclass(frozen=True)
-class _CachePlaces:
-    """Where the entries of one source lie: its expanded trees (``_ExpansionKey`` — no reader in the
-    key) and what this reader derives from them (``_TreeKey``)."""
-
-    expansion: Path
-    derived: Path
-
-
 def _hy_cache_dir() -> Path | None:
-    """Where expanded trees and what is derived from them are kept (None = caching turned off)."""
+    """Where expanded trees and what is derived from them are kept (None = caching turned off, or
+    the expansions now are for type checking — ``hy_expansion._type_check_expansion``)."""
     configured = env_places.tree_cache_setting()
-    if configured == "off":
+    if configured == "off" or _type_check_expansion():
         return None
     if configured:
         return Path(configured)
@@ -631,23 +613,28 @@ def _tree_key(source: str, module_name: str) -> _TreeKey:
     return _TreeKey(expansion=_expansion_key(source, module_name), reader=_reader_digest())
 
 
-def _hy_cache_places(source: str, module_name: str) -> _CachePlaces | None:
-    """The directories of the entries for these exact inputs (None = caching turned off); an entry
-    in them is read only while the macros it was expanded with are unchanged."""
+def _hy_cache_place(source: str, module_name: str) -> Path | None:
+    """The directory of what this reader derived from these exact inputs (None = caching turned
+    off); an entry in it is read only while the macros it was expanded with are unchanged."""
     directory = _hy_cache_dir()
     if directory is None:
         return None
-    key = _tree_key(source, module_name)
-    return _CachePlaces(expansion=key.expansion.place(directory), derived=key.place(directory))
+    return _tree_key(source, module_name).place(directory)
 
 
 @functools.cache
 def _reader_digest() -> str:
-    """The digest of this module's source. What is stored with a tree (the definition index, the
-    body nodes and the body facts — ``_derived``) is built by the code here, so an entry written by
-    another version of the reader — another shape of a fact — is never read by this one; the tree
-    itself is read again from the expansion's store (``hy_expansion``), which does not name it."""
-    return f"reader={hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}"
+    """The digest of the reader's source: every Python file of this package, each by its name and
+    content. What is stored with a tree (the definition index, the body nodes and the body facts —
+    ``_derived``) is built by the reader's code, so an entry written by another version of it —
+    another shape of a fact — is never read by this one; the tree itself is read again from the
+    expansion's store (``hy_expansion``), which does not name it. The whole package and not this
+    file alone, so that code ``_derived`` follows may move to another of its modules (design check
+    lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: a helper split into a module of its own and changed
+    there read the older facts); that it stays in this package is kept by a test."""
+    files = sorted(Path(__file__).parent.glob("*.py"))
+    text = "\n".join(f"{file.name}={hashlib.sha256(file.read_bytes()).hexdigest()}" for file in files)
+    return f"reader={hashlib.sha256(text.encode('utf-8')).hexdigest()}"
 
 
 @dataclass(frozen=True)
