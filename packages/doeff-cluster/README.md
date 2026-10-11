@@ -111,6 +111,9 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - `:reads` / `:writes` は job が外の置き場から読む・書く物の文字列の集合で、任意です(綴りは `<置き場>:<名>` — `:` がちょうど 1 つ・
   両側が空でない。空の集合 `#{}` は「読み書きしない」の宣言)。静的な記述 `__doeff_system__` の job にだけ載り、Job と宣言の行には
   載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。
+- `:serves` は job が開いて待ち受ける外の入口(HTTP の口など)の文字列の集合で、任意です(綴りは `<置き場>:<入口>`・形と載る所は
+  `:reads` / `:writes` と同じ — 書かない job の記述には鍵が無い)。入口を開かない job は書きません。同じ入口を開く job の組を、
+  job の形から推し量らずに静的な記述から引くための欄です。
 - `:readiness` は `{"windowSeconds" n}`(handoff の期限 `handoffTimeoutSeconds` も書ける)、`:update` は `"recreate"`(既定)か
   `"handoff"`、`:environ` は子 process の環境変数(名は `[A-Z][A-Z0-9_]*`・`DOEFF_`・`PYTHON`・`UV_` などの予約は不可・秘密は置かない)。
   設定は Program の中の `Ask` と、宣言の `:environ` を字面どおり読む handler(本番の子は `host_contract.os-environ-reader`・sim の宿は値の表の `host_contract.environ-table-reader`)で読みます。
