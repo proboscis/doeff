@@ -1501,3 +1501,87 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
             if isinstance(vars(macro_use).get(called), FunctionType)
         )
     assert {"_code_facts", "_constant_text", "_called_modules", "_reference_module", "_mangle"} <= seen, seen
+
+
+# ---- 環境変数で決まる値を読む macro(設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録 3・依頼 lt-D9C8NM324RSPKZZVKC9MHA9464)---
+#
+# 歩みは標準 library を名だけ入れる(Python の版で覆う)が、os.environ は process の状態で、版も file も覆わない。環境変数から組んだ
+# 素の値の大域(条 3 の MODE)は値で入るので古いと判じるが、環境変数から組んだ表は名を束縛する source の文で覆われ、文は環境変数の
+# 値を持たない。macro が展開の時に直に読む形・補助の関数が読む形も、code の中身と os の名だけが入る。
+
+#: 環境変数の名(検の子の process だけが継ぐ — monkeypatch で置く)。
+ENV_MODE = "MACRO_USE_ENV_MODE"
+
+#: 環境変数で決まる値を形ごとに読む macro。table = 文が直に環境変数を読んで組む dict(付録 3 の形)・listed = 同じく list・
+#: aliased = os から別名で import した environ で組む dict・got = os から import した getenv で組む dict・built = 読み込みの時に
+#: 補助の関数が組む dict・py-table = Python の module の文が組む dict・direct = 展開の時に macro が直に読む・helper = 展開の時に
+#: 補助の関数が読む・local = 関数の中の import で読む(module の大域に os が無い)。body と plain は環境変数を読まない macro と、
+#: 環境変数から組んだ素の値を返す macro(条 3 — 値で入る)。
+ENV_FORMS = ("table", "listed", "aliased", "got", "built", "py-table", "direct", "helper", "local")
+ENV_FILES = {
+    "__init__.py": "",
+    "tables.py": f'import os\nROWS = {{{{"a": os.environ.get("{ENV_MODE}", "plain")}}}}\n',
+    "local_macros.hy": f'(defmacro local [] (import os) (os.environ.get "{ENV_MODE}" "plain"))\n',
+    "macros.hy": (
+        "(import os)\n"
+        "(import os [environ :as env getenv])\n"
+        "(import {pkg}.tables :as tables)\n"
+        f'(setv MODE (os.environ.get "{ENV_MODE}" "plain"))\n'
+        f'(setv MODES {{{{"a" (os.environ.get "{ENV_MODE}" "plain")}}}})\n'
+        f'(setv LISTED [(os.environ.get "{ENV_MODE}" "plain")])\n'
+        f'(setv ALIASED {{{{"a" (env.get "{ENV_MODE}" "plain")}}}})\n'
+        f'(setv GOT {{{{"a" (getenv "{ENV_MODE}" "plain")}}}})\n'
+        f'(defn mode-now [] (os.environ.get "{ENV_MODE}" "plain"))\n'
+        '(setv BUILT {{"a" (mode-now)}})\n'
+        "(defmacro body [] 1)\n"
+        "(defmacro plain [] MODE)\n"
+        '(defmacro table [] (get MODES "a"))\n'
+        "(defmacro listed [] (get LISTED 0))\n"
+        '(defmacro aliased [] (get ALIASED "a"))\n'
+        '(defmacro got [] (get GOT "a"))\n'
+        '(defmacro built [] (get BUILT "a"))\n'
+        '(defmacro py-table [] (get tables.ROWS "a"))\n'
+        f'(defmacro direct [] (os.environ.get "{ENV_MODE}" "plain"))\n'
+        "(defmacro helper [] (mode-now))\n"
+    ),
+    **{
+        f"u_{form.replace('-', '_')}.hy": (
+            f"(require {{pkg}}.{'local_macros' if form == 'local' else 'macros'} [{form}])\n(setv value ({form}))\n"
+        )
+        for form in (*ENV_FORMS, "body", "plain")
+    },
+}
+
+
+@pytest.mark.parametrize("form", ENV_FORMS)
+def test_a_macro_reading_a_value_decided_by_the_environment_is_stale_when_it_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str
+) -> None:
+    # 直す前は赤(付録 3 — 基準版 cf7ea9cc0 から在った): 環境変数だけを替えた新しい process は、使い手の .pyc の記録を今に合うと判じ、
+    # 展開し直せば "fancy" になる所で前の process の展開("plain")を使った。B1 の条(環境変数など file の外で決まる値が違えば古い)。
+    monkeypatch.delenv(ENV_MODE, raising=False)
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
+    user = f"u_{form.replace('-', '_')}"
+    assert tree.run(user)["values"] == {user: "plain"}
+    monkeypatch.setenv(ENV_MODE, "fancy")  # 2 つ目の process だけが継ぐ
+    answer = tree.run(user)
+    assert f"{user}.hy" in answer["compiled"] and answer["values"] == {user: "fancy"}, (
+        f"macro({form})が読む環境変数の値が違うのに、使い手を今に合うと判じた: {answer}"
+    )
+
+
+def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that_do(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 緑のまま守る: 環境変数の読みは、それに当たった macro の照らしだけを変える。同じ module の環境変数を読まない macro(body)と、
+    # 環境変数から組んだ素の値を値で入れる macro(plain — 条 3)は、同じ環境の次の process で compile せず、環境変数を替えた時は
+    # plain だけを展開し直す。
+    monkeypatch.delenv(ENV_MODE, raising=False)
+    tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
+    tree.run("u_body", "u_plain")
+    assert tree.run("u_body", "u_plain")["compiled"] == [], "何も変えていないのに 2 つ目の process が compile した"
+    monkeypatch.setenv(ENV_MODE, "fancy")
+    answer = tree.run("u_body", "u_plain")
+    assert answer["compiled"] == ["u_plain.hy"] and answer["values"] == {"u_body": 1, "u_plain": "fancy"}, (
+        f"環境変数を替えた process が、環境変数を読まない macro の使い手まで compile したか、素の値の変化に気づかない: {answer}"
+    )
