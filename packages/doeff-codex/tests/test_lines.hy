@@ -12,9 +12,13 @@
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_codex.lines [classify-line TextDelta AgentMessageDone ReasoningDelta TurnStarted TurnEnded TurnStatus TurnError
                            ThreadStarted TokenUsage Response ErrorResponse ServerRequest Other Unparsed ItemStarted ItemDone
-                           UnknownValue])
+                           UnknownValue RateLimits RateLimitWindow])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
+;; 利用枠切れの録りで、偽の上流が枠の header で名乗った戻りの刻(scripts/record_app_server_lines.py の USAGE_RESETS_AT・
+;; USAGE_SECONDARY_RESETS_AT)。
+(val USAGE-RESETS-AT 1893456000)
+(val USAGE-SECONDARY-RESETS-AT 1893888000)
 
 
 (defk recorded-records [#^ str name]
@@ -108,6 +112,36 @@
   (assert (and (isinstance refused TurnError) (= refused.error-kind "usageLimitExceeded") (is refused.http-status None)) refused))
 
 
+(deftest test-a-usage-limit-names-its-windows-and-its-kind
+  ;; 口座の利用枠切れ(上流の 429 の usage_limit_reached と枠の header)のターン: codex は枠の知らせ(account/rateLimits/updated)で窓
+  ;; ごとの使った割合・長さ・戻りの刻を名乗り、その後の誤りの通知と失敗の終わりで種類 usageLimitExceeded を名乗る — 上の層が口座の
+  ;; 替えと待ちを claude と同じ道で決める材料(card acp:kanban-issue:ki-a59d80e0afa9)。
+  (<- records (recorded-records "usage-limit"))
+  (val limits (tuple (gfor record records :if (isinstance record RateLimits) record)))
+  (assert (= limits #((RateLimits :limit-id "codex"
+                                  :primary (RateLimitWindow :used-percent 100 :minutes 300 :resets-at USAGE-RESETS-AT)
+                                  :secondary (RateLimitWindow :used-percent 37 :minutes 10080 :resets-at USAGE-SECONDARY-RESETS-AT))))
+          limits)
+  (val errors (tuple (gfor record records :if (isinstance record TurnError) record)))
+  (assert (= (tuple (gfor error errors #(error.error-kind error.http-status error.will-retry))) #(#("usageLimitExceeded" None False)))
+          errors)
+  (val ends (tuple (gfor record records :if (isinstance record TurnEnded) record)))
+  (assert (= (tuple (gfor end ends #(end.status end.error-kind))) #(#(TurnStatus.FAILED "usageLimitExceeded"))) ends)
+  (assert (= (. (get ends 0) error-message) (. (get errors 0) message)) ends)
+  (assert (.startswith (. (get ends 0) error-message) "You’ve hit your usage limit.") ends)
+  ;; 枠の知らせは誤りの通知と終わりより先に届く(上の層は終わりを読む時に、尽きた窓を知っている)。
+  (val order (tuple (gfor record records :if (isinstance record #(RateLimits TurnError TurnEnded)) (. (type record) __name__))))
+  (assert (= order #("RateLimits" "TurnError" "TurnEnded")) order)
+  ;; 窓を名乗らない知らせ(ふつうのターン — 偽の上流は枠の header を返さない)は窓が None(使った割合 0 を発明しない)。
+  (<- two-turns (recorded-records "two-turns"))
+  (val quiet (tuple (gfor record two-turns :if (isinstance record RateLimits) record)))
+  (assert (= quiet (* #((RateLimits :limit-id "codex" :primary None :secondary None)) 2)) quiet)
+  ;; 使った割合を名乗らない窓は形の合わない知らせ — method を名乗る読めない行(版の食い違いを黙って窓なしに読み替えない)。
+  (<- drifted (classify-line (json.dumps {"method" "account/rateLimits/updated"
+                                          "params" {"rateLimits" {"limitId" "codex" "primary" {"windowDurationMins" 300}}}})))
+  (assert (and (isinstance drifted Unparsed) (= drifted.method "account/rateLimits/updated")) drifted))
+
+
 (deftest test-items-start-and-end-with-their-kind
   ;; item/started はどの item も種類と id を名乗る(上の層が「考えている」「道具を呼んでいる」を出す材料)。答えの全文でない item の
   ;; 終わりは ItemDone。全文の無い agentMessage は読めない行。
@@ -153,7 +187,7 @@
   (<- records (recorded-records "two-turns"))
   (val others (tuple (gfor record records :if (isinstance record Other) record.method)))
   (assert (in "remoteControl/status/changed" others) others)
-  (assert (in "account/rateLimits/updated" others) others)
+  (assert (in "thread/status/changed" others) others)
   ;; 読めない行は Unparsed で、訳を持つ: 壊れた行・object でない行は method が空、語彙の中の method で形の合わない行は method を名乗る
   ;; (版の食い違いを黙って Other に混ぜない)。
   (<- broken (classify-line "not json"))

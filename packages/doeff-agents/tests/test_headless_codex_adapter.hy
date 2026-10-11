@@ -25,7 +25,7 @@
   LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession
   SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow
   AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent
-  AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
+  AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit
   AgentCapabilityUnsupportedError NoTurnInFlightError
   RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents.effects.agent [AutocompactTokens])
@@ -51,6 +51,13 @@
 (val SETTINGS-PHRASE "Tell the settings.")
 ;; 子の process から見た CODEX_HOME の形を答えさせる言い方(替え玉の規則 — 借りた資格の家の形を見る)。
 (val HOME-PHRASE "Tell the home.")
+;; 録った断りのターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の利用枠切れ・429 のターンをそのまま流す)と、利用枠切れの
+;; 録りで codex が名乗った値(戻りの刻 = 録りの偽の上流が header で名乗った 5 時間の窓の刻・文 = codex の誤りの文)。
+(val USAGE-LIMIT-PROMPT "USAGE-LIMIT please")
+(val RATE-LIMIT-PROMPT "RATE-LIMIT please")
+(val USAGE-RESETS-AT 1893456000)
+(val USAGE-LIMIT-TEXT (+ "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+                         "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM."))
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
 (val ANSWER "Hello, world.")
 ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)と、借りた口座の auth.json の中身(検の作り物 —
@@ -510,3 +517,56 @@
   (assert (= (get seen "during") 1) seen)
   (assert (= (get seen "after") 0) seen)
   (<- (check-credential-refusals seen)))
+
+
+(defk refused-turn [#^ Setting s #^ str prompt]
+  {:pre [(: s Setting) (: prompt str)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "上流が断ったターン(替え玉が録った断りのターンを流す言い方 prompt)を 1 つ最後まで読むため。"
+  (<- handle (launch s "codex-refused" prompt {}))
+  (<- done (read-until handle ended s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk usage-limited-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "口座の利用枠切れで断られたターンを読むため。"
+  (<- done (refused-turn s USAGE-LIMIT-PROMPT))
+  done)
+
+(defk rate-limited-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "上流の 429(口座の利用枠切れでない断り)で断られたターンを読むため。"
+  (<- done (refused-turn s RATE-LIMIT-PROMPT))
+  done)
+
+(defk check-usage-limit [#^ Read done]
+  {:pre [(: done Read)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "利用枠切れで失敗したターンの終わりが、尽きた窓(5 時間の窓)と戻りの刻と codex の文を AgentAccountLimit で運ぶことを確かめるため —
+   agora は claude と同じ道(account_limit の在る失敗 = 口座の利用枠切れ・戻りの刻まで口座を外す)で口座を替える・待つ。"
+  (<- ends (of-kind done.events AgentTurnEndEvent))
+  (assert (= (len ends) 1) done.events)
+  (val end done.end)
+  (assert (isinstance end AgentTurnFailed) end)
+  (assert (= end.account-limit (AgentAccountLimit :window "five_hour" :resets-at USAGE-RESETS-AT :text USAGE-LIMIT-TEXT)) end)
+  (assert (= end.detail USAGE-LIMIT-TEXT) end)
+  None)
+
+(deftest test-headless-codex-usage-limit-carries-the-account-limit-stub [tmp-path]
+  ;; 失敗ケース(card acp:kanban-issue:ki-a59d80e0afa9): 録った codex 0.162.1 の利用枠切れのターン(枠の知らせ・誤り usageLimitExceeded・
+  ;; 失敗の終わり)が、AgentTurnFailed.account_limit に届く。
+  (<- done (run-on STUB tmp-path usage-limited-turn))
+  (<- (check-usage-limit done)))
+
+(deftest test-the-public-codex-handlers-carry-the-account-limit-stub [tmp-path]
+  ;; agora が組む公開の口でも同じ(card acp:kanban-issue:ki-a59d80e0afa9)。
+  (<- done (run-on PUBLIC-STUB tmp-path usage-limited-turn))
+  (<- (check-usage-limit done)))
+
+(deftest test-headless-codex-rate-limit-is-not-an-account-limit-stub [tmp-path]
+  ;; 上流の 429(誤り responseTooManyFailedAttempts — 口座の利用枠切れでない断り)のターンは、口座の利用枠切れを名乗らずに失敗で終わる
+  ;; (口座を外す訳にしない)。
+  (<- done (run-on STUB tmp-path rate-limited-turn))
+  (val end done.end)
+  (assert (isinstance end AgentTurnFailed) end)
+  (assert (is end.account-limit None) end)
+  (assert (in "429" end.detail) end))
