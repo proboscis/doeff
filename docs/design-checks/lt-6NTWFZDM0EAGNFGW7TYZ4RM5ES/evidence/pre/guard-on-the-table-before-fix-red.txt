@@ -1,0 +1,55 @@
+
+deadline scale x3.4 (load per usable CPU) — per test 203s, watchdog 303s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_changing_an_example_or_its_macros_selects_the_examples_check _______
+
+runner = <module 'run_changed_tests' from '/work/toolset/worktrees/doeff-wt-examples-premerge/scripts/run_changed_tests.py'>
+
+    def test_changing_an_example_or_its_macros_selects_the_examples_check(runner: ModuleType) -> None:
+        """本物の表: 例 1 つ・期待の出力 1 つ・例が require する doeff-hy の macro の module のどれを変えた差分も、
+        変えた所の検の選び(入口と同じ select_targets)が例の検を選ぶ。"""
+        table = runner.read_contract_table(REPO_ROOT)
+        patterns = runner.collector_patterns(REPO_ROOT)
+        examples = REPO_ROOT / EXAMPLES_DIR
+        changed = sorted(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (*examples.glob("*.hy"), *(examples / "expected").glob("*.txt"))
+        )
+        assert any(p.endswith(".hy") for p in changed), f"{EXAMPLES_DIR} に例が無い — 検の前提が崩れた"
+        assert any(p.endswith(".txt") for p in changed), f"{EXAMPLES_DIR}/expected に期待の出力が無い"
+        assert (REPO_ROOT / EXAMPLE_MACROS).is_file(), f"{EXAMPLE_MACROS} が無い — 例が require する module を直す"
+        unselected = [
+            path
+            for path in (*changed, EXAMPLE_MACROS)
+            if EXAMPLES_CHECK
+            not in {
+                target.arg
+                for target in runner.select_targets(
+                    table, runner.ChangeSet(base="", files=(path,)), patterns, REPO_ROOT
+                ).targets
+            }
+        ]
+>       assert unselected == [], (
+            f"例の検 {EXAMPLES_CHECK} を選ばない変更: {unselected} — root の pyproject.toml の [[tool.doeff.contract-tests]]"
+            " で、その path に当たる行の tests に例の検を足す(例の検は例も macro も import しないので、逆依存では選ばれない)"
+        )
+E       AssertionError: 例の検 packages/doeff-traverse/tests/test_examples_run.py を選ばない変更: ['packages/doeff-traverse/examples/ex01_basic_fail.hy', 'packages/doeff-traverse/examples/ex02_traverse_pipeline.hy', 'packages/doeff-traverse/examples/ex03_zip_multi_source.hy', 'packages/doeff-traverse/examples/ex04_debug.hy', 'packages/doeff-traverse/examples/ex04_debug2.hy', 'packages/doeff-traverse/examples/ex04_simple.hy', 'packages/doeff-traverse/examples/ex04_traverse_macro.hy', 'packages/doeff-traverse/examples/ex05_parallel_timing.hy', 'packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy', 'packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy', 'packages/doeff-traverse/examples/ex08_tqdm_progress.hy', 'packages/doeff-traverse/examples/ex09_for_do_when.hy', 'packages/doeff-traverse/examples/expected/ex01_basic_fail.txt', 'packages/doeff-traverse/examples/expected/ex02_traverse_pipeline.txt', 'packages/doeff-traverse/examples/expected/ex03_zip_multi_source.txt', 'packages/doeff-traverse/examples/expected/ex04_simple.txt', 'packages/doeff-traverse/examples/expected/ex04_traverse_macro.txt', 'packages/doeff-traverse/examples/expected/ex06_mediagen_rewrite.txt', 'packages/doeff-traverse/examples/expected/ex08_tqdm_progress.txt', 'packages/doeff-traverse/examples/expected/ex09_for_do_when.txt', 'packages/doeff-hy/src/doeff_hy/macros.hy'] — root の pyproject.toml の [[tool.doeff.contract-tests]] で、その path に当たる行の tests に例の検を足す(例の検は例も macro も import しないので、逆依存では選ばれない)
+E       assert ['packages/do...mple.hy', ...] == []
+E         
+E         Left contains 21 more items, first extra item: 'packages/doeff-traverse/examples/ex01_basic_fail.hy'
+E         Use -v to get more diff
+
+tests/test_contract_table_follows_packages.py:137: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-examples-premerge/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_contract_table_follows_packages.py::test_changing_an_example_or_its_macros_selects_the_examples_check
+1 failed, 1 warning in 1.80s
