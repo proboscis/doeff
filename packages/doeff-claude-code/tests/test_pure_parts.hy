@@ -501,3 +501,13 @@
              (Other :type "system" :subtype "compact_boundary_without_pre_tokens")))
   (assert (= (classify-record {"type" "system" "subtype" "compact_boundary"})
              (Other :type "system" :subtype "compact_boundary_unknown_trigger"))))
+
+(deftest test-a-compacting-status-line-is-compact-started
+  ;; card ki-aeae6f9e643d: CLI は自動の圧縮を始めると、compact_boundary(終わり)の前に system/status の行(status = compacting)を
+  ;; 1 つ出す(CLI 2.1.294 の stream-json の書き手 — 替え玉の CLI tests/stub_cli/claude.hy が #4189 で写した形)。名前だけの Other に
+  ;; 捨てると、上の層は圧縮の始まりを知れず、会話の画面は圧縮の 2 分間 何も出さない。ほかの状態(requesting など)は今までどおり Other。
+  (import doeff_claude_code.lines [CompactStarted])
+  (assert (= (classify-record {"type" "system" "subtype" "status" "status" "compacting" "session_id" "s"})
+             (CompactStarted)))
+  (assert (= (classify-record {"type" "system" "subtype" "status" "status" "requesting" "session_id" "s"})
+             (Other :type "system" :subtype "status"))))

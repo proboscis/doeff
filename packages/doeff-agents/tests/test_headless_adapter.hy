@@ -844,6 +844,28 @@
   (assert (= done.end.result-text "COMPACTED") (repr done.end))
   None)
 
+(defk check-the-compaction-start-comes-before-the-compaction [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "CLI が会話を 1 度圧縮した手番は、圧縮の始まりの出来事(AgentCompactionStartedEvent — status 行 compacting)をちょうど 1 つ、圧縮の
+   出来事(AgentCompactionEvent)より前に運ぶ。始まりを捨てる adapter では 0 で赤 — 上の層は圧縮の間 会話の画面に何も出せず、利用者には
+   手番が止まって見える(card acp:kanban-issue:ki-aeae6f9e643d・実測 2026-10-10 の 2 分の沈黙)。"
+  (import doeff_agents [AgentCompactionStartedEvent])
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (val started (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionStartedEvent) index))
+  (val compactions (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionEvent) index))
+  (assert (= (len started) 1) (repr done.events))
+  (assert (= (len compactions) 1) (repr done.events))
+  (assert (< (get started 0) (get compactions 0)) (repr done.events))
+  None)
+
+(defk check-a-turn-without-compaction-has-no-compaction-start [#^ Read done]
+  {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
+  "圧縮の行を出さない手番は、圧縮の始まりの出来事を 1 つも運ばない(card acp:kanban-issue:ki-aeae6f9e643d)。"
+  (import doeff_agents [AgentCompactionStartedEvent])
+  (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
+  (assert (= (lfor event done.events :if (isinstance event AgentCompactionStartedEvent) event) []) (repr done.events))
+  None)
+
 (defk check-a-turn-without-compaction-has-no-compaction-event [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "圧縮の行を出さない手番は、圧縮の出来事を 1 つも運ばない(出来事を発明しない — agora-redesign #4189)。"
@@ -2028,3 +2050,15 @@
     (assert (= #(end.exit-code end.stderr-tail) #(exit-code expected)) #(end.exit-code (len (or end.stderr-tail ""))))
     (assert (in "手番を起こせない" end.detail) end.detail)
     (assert (= (lfor event events :if (isinstance event AgentTurnEndEvent) event.end) [end]) (repr events))))
+
+(deftest test-headless-carries-the-compaction-start-fake [tmp-path]
+  (<- (check-the-compaction-start-comes-before-the-compaction (run-on FAKE tmp-path compacting-turn))))
+
+(deftest test-headless-carries-the-compaction-start-stub [tmp-path]
+  (<- (check-the-compaction-start-comes-before-the-compaction (run-on STUB tmp-path compacting-turn))))
+
+(deftest test-headless-invents-no-compaction-start-fake [tmp-path]
+  (<- (check-a-turn-without-compaction-has-no-compaction-start (run-on FAKE tmp-path uncompacted-turn))))
+
+(deftest test-headless-invents-no-compaction-start-stub [tmp-path]
+  (<- (check-a-turn-without-compaction-has-no-compaction-start (run-on STUB tmp-path uncompacted-turn))))
