@@ -56,8 +56,9 @@ def _run_child(tmp_path: Path, store: str) -> list[str]:
     """子の process を 1 つ走らせ、出力の欄(compile の回数・repr・等価・hash・順序・frozen)を返す。"""
     script = tmp_path / "child.py"
     script.write_text(_CHILD)
-    env = {**os.environ, "DOEFF_HY_CODE_STORE": store}
-    env.pop("PYTHONDONTWRITEBYTECODE", None)  # この suite の固定は .pyc の書きの決め — 名指しの保存先には足す(code_store の作法)
+    # 子も checkout の下に .pyc を書かない(root の conftest の検査 — 書くと包みの module の .pyc が editable の checkout に残る)。
+    # 保存先は名指しなので、.pyc を書かない設定でも足す(code_store の作法)。
+    env = {**os.environ, "DOEFF_HY_CODE_STORE": store, "PYTHONDONTWRITEBYTECODE": "1"}
     completed = subprocess.run(
         [sys.executable, str(script)], capture_output=True, text=True, env=env, timeout=120, check=False
     )
