@@ -1,10 +1,13 @@
-"""An analysis answer is reused from disk only while every module file it was computed under has the same content.
+"""An analysis answer is reused from disk only while every module file it depends on has the same content.
 
 The answer of a closure analysis depends on the sources it reads and on the runtime values importing
-them made, so it is keyed on the files of all modules loaded when it was computed (agora-redesign
-#1645). One changed byte in any of them must make the next call analyze again. The key is the
-files' content, not their path (agora-redesign #3777): another checkout with the same content reads
-the stored answer, and checkouts with other contents keep their answers side by side.
+them made (agora-redesign #1645). It is keyed on the files of the modules the analysis read and the
+modules their values were built from — not on every module the process had loaded (ki-30d28550680c:
+a test session loads hundreds of unrelated test files, and one change among them made every closure
+test analyze again). One changed byte in a module of the key must make the next call analyze again;
+a change in a module outside it must not. The key is the files' content, not their path
+(agora-redesign #3777): another checkout with the same content reads the stored answer, and
+checkouts with other contents keep their answers side by side.
 """
 
 import contextlib
@@ -12,7 +15,7 @@ import functools
 import importlib
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -43,14 +46,29 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 class Counting:
-    """An analysis that counts how often it really runs."""
+    """An analysis that counts how often it really runs. It reads the source of the module ``reads``
+    when that is loaded, as the closure analysis reads a job's module."""
 
-    def __init__(self) -> None:
+    def __init__(self, reads: str = "result_cache_material") -> None:
+        self.reads = reads
         self.runs = 0
 
     def __call__(self) -> tuple[str, ...]:
         self.runs += 1
+        module = sys.modules.get(self.reads)
+        if module is not None:
+            pe.module_ast(module)
         return ("gap ← somewhere",)
+
+
+def reading(name: str, answer: tuple[str, ...]) -> Callable[[], tuple[str, ...]]:
+    """An analysis that reads the source of the loaded module ``name`` and answers ``answer``."""
+
+    def analysis() -> tuple[str, ...]:
+        pe.module_ast(sys.modules[name])
+        return answer
+
+    return analysis
 
 
 IDENTITY = ("test.analysis", "module:job", "module:foundation")
@@ -119,11 +137,11 @@ def test_the_same_content_in_another_checkout_reads_the_stored_answer(
     second = checkout_with(tmp_path, "b", name, "CHECKOUT = 'same'\n")
     try:
         load_from(first, name, monkeypatch)
-        assert rc.cached_result(IDENTITY, lambda: ("from a",)) == ("from a",)
+        assert rc.cached_result(IDENTITY, reading(name, ("from a",))) == ("from a",)
         load_from(second, name, monkeypatch)
-        assert rc.cached_result(IDENTITY, lambda: ("from b",)) == ("from a",)
+        assert rc.cached_result(IDENTITY, reading(name, ("from b",))) == ("from a",)
         monkeypatch.setattr(rc, "_digest", no_reading)
-        assert rc.cached_result(IDENTITY, lambda: ("again",)) == ("from a",)
+        assert rc.cached_result(IDENTITY, reading(name, ("again",))) == ("from a",)
     finally:
         sys.modules.pop(name, None)
 
@@ -139,13 +157,13 @@ def test_checkouts_with_other_contents_keep_their_answers_side_by_side(
     second = checkout_with(tmp_path, "b", name, "CHECKOUT = 'b'\n")
     try:
         load_from(first, name, monkeypatch)
-        assert rc.cached_result(IDENTITY, lambda: ("from a",)) == ("from a",)
+        assert rc.cached_result(IDENTITY, reading(name, ("from a",))) == ("from a",)
         load_from(second, name, monkeypatch)
-        assert rc.cached_result(IDENTITY, lambda: ("from b",)) == ("from b",)
+        assert rc.cached_result(IDENTITY, reading(name, ("from b",))) == ("from b",)
         load_from(first, name, monkeypatch)
-        assert rc.cached_result(IDENTITY, lambda: ("again in a",)) == ("from a",)
+        assert rc.cached_result(IDENTITY, reading(name, ("again in a",))) == ("from a",)
         load_from(second, name, monkeypatch)
-        assert rc.cached_result(IDENTITY, lambda: ("again in b",)) == ("from b",)
+        assert rc.cached_result(IDENTITY, reading(name, ("again in b",))) == ("from b",)
     finally:
         sys.modules.pop(name, None)
 
@@ -163,7 +181,7 @@ def test_a_module_not_loaded_here_is_compared_by_the_file_the_import_would_find(
     monkeypatch.syspath_prepend(str(package.parent))
     importlib.import_module("result_cache_package.inner")
     try:
-        analysis = Counting()
+        analysis = Counting("result_cache_package.inner")
         rc.cached_result(IDENTITY, analysis)
         sys.modules.pop("result_cache_package.inner")
         sys.modules.pop("result_cache_package")
@@ -194,7 +212,7 @@ def test_a_module_under_namespace_packages_not_loaded_here_does_not_raise(
     names = ("result_cache_ns.middle.inner", "result_cache_ns.middle", "result_cache_ns")
     importlib.import_module(names[0])
     try:
-        analysis = Counting()
+        analysis = Counting(names[0])
         first = rc.cached_result(IDENTITY, analysis)
         for name in names:
             sys.modules.pop(name)
@@ -241,14 +259,14 @@ def test_an_answer_from_another_checkout_is_not_reused(
     try:
         monkeypatch.syspath_prepend(str(checkouts["a"]))
         importlib.import_module(name)
-        assert rc.cached_result(IDENTITY, lambda: ("from a",)) == ("from a",)
+        assert rc.cached_result(IDENTITY, reading(name, ("from a",))) == ("from a",)
         sys.modules.pop(name)
         sys.path.remove(str(checkouts["a"]))
         monkeypatch.syspath_prepend(str(checkouts["b"]))
         importlib.import_module(name)
-        assert rc.cached_result(IDENTITY, lambda: ("from b",)) == ("from b",)
+        assert rc.cached_result(IDENTITY, reading(name, ("from b",))) == ("from b",)
         # The same checkout still reads its stored answer.
-        assert rc.cached_result(IDENTITY, lambda: ("again",)) == ("from b",)
+        assert rc.cached_result(IDENTITY, reading(name, ("again",))) == ("from b",)
     finally:
         sys.modules.pop(name, None)
 
@@ -301,3 +319,179 @@ def test_only_objects_found_again_by_their_name_are_named() -> None:
     assert rc.importable_name(nested) is None
     assert rc.importable_name(lambda: None) is None
     assert rc.importable_name(functools.partial(module_level_job)) is None
+
+
+# --- The key is the modules the answer depends on (ki-30d28550680c) ---------------------------------
+# A test session loads hundreds of test files the closure analysis never reads; the key named every
+# loaded module, so a change in any of them (and ``conftest`` / ``__mp_main__``, named alike in every
+# session) made the next session analyze in full (20–60 s per closure test). The key is the modules
+# whose source the analysis read and the modules their values were built from.
+
+
+@pytest.fixture
+def modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """A directory on the import path whose modules are unloaded after the test."""
+    directory = tmp_path / "modules"
+    directory.mkdir()
+    monkeypatch.syspath_prepend(str(directory))
+    yield directory
+    for name, module in tuple(sys.modules.items()):
+        if str(module.__dict__.get("__file__") or "").startswith(str(directory)):
+            sys.modules.pop(name, None)
+
+
+def write(directory: Path, name: str, text: str) -> Path:
+    """The module ``name`` (dotted: a package's submodule) under ``directory`` with ``text``."""
+    path = directory.joinpath(*name.split(".")).with_suffix(".py")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def unrelated_name(stem: str) -> str:
+    """A module name no code of this test module names (a constant naming it would tie the test
+    module — the analysis' own code here — to it)."""
+    return "_".join(("result_key", stem))
+
+
+def test_a_changed_module_the_analysis_does_not_depend_on_reuses_the_answer(
+    cache_dir: Path, modules: Path
+) -> None:
+    """A test file loaded in the same session that the analysis neither reads nor builds a value
+    from does not take part in the key: changing it reuses the answer."""
+    write(modules, "result_key_job", "def job():\n    return 1\n")
+    other = write(modules, unrelated_name("other_test"), "def test_something():\n    assert True\n")
+    importlib.import_module("result_key_job")
+    importlib.import_module(unrelated_name("other_test"))
+    analysis = Counting("result_key_job")
+    rc.cached_result(IDENTITY, analysis)
+    other.write_text("def test_something():\n    assert 1 == 1\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 1
+
+
+def test_a_session_entry_named_alike_from_another_file_reuses_the_answer(
+    cache_dir: Path, modules: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``conftest`` and ``__mp_main__`` are loaded by every session from other files (another
+    rootdir, another runner); the analysis does not depend on them, so another one reuses the answer."""
+    entry = unrelated_name("conftest")
+    first = checkout_with(modules.parent, "a", entry, "FIXTURE = 'a'\n")
+    second = checkout_with(modules.parent, "b", entry, "FIXTURE = 'b'\n")
+    write(modules, "result_key_job", "def job():\n    return 1\n")
+    importlib.import_module("result_key_job")
+    try:
+        load_from(first, entry, monkeypatch)
+        analysis = Counting("result_key_job")
+        rc.cached_result(IDENTITY, analysis)
+        load_from(second, entry, monkeypatch)
+        rc.cached_result(IDENTITY, analysis)
+        assert analysis.runs == 1
+    finally:
+        sys.modules.pop(entry, None)
+
+
+def test_a_changed_module_a_read_module_built_a_value_from_analyzes_again(
+    cache_dir: Path, modules: Path
+) -> None:
+    """The analysis reads the job's module only, but a value there was made by another module at
+    import time (a handler from a factory): that module is in the key."""
+    dep = write(
+        modules,
+        "result_key_dep",
+        "def make():\n    def handler():\n        return 1\n    return handler\n",
+    )
+    write(modules, "result_key_job", "from result_key_dep import make\nHANDLER = make()\n")
+    importlib.import_module("result_key_job")
+    analysis = Counting("result_key_job")
+    rc.cached_result(IDENTITY, analysis)
+    dep.write_text(
+        "def make():\n    def handler():\n        return 2\n    return handler\n", encoding="utf-8"
+    )
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 2
+
+
+def test_a_module_a_read_function_imports_when_called_is_in_the_key(
+    cache_dir: Path, modules: Path
+) -> None:
+    """A function of a read module imports another module in its body (the analysis follows such
+    imports): that module is in the key, though nothing binds it at import time."""
+    lazy = write(modules, "result_key_lazy", "VALUE = 1\n")
+    write(
+        modules,
+        "result_key_job",
+        "def job():\n    import result_key_lazy\n    return result_key_lazy.VALUE\n",
+    )
+    importlib.import_module("result_key_job")
+    importlib.import_module("result_key_lazy")
+    analysis = Counting("result_key_job")
+    rc.cached_result(IDENTITY, analysis)
+    lazy.write_text("VALUE = 2\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 2
+
+
+def test_a_package_submodule_is_in_the_key_only_when_a_read_module_uses_it(
+    cache_dir: Path, modules: Path
+) -> None:
+    """``import pkg.inner`` binds ``pkg``; every loaded submodule hangs on ``pkg``, but only the one
+    the read module uses is in the key — a sibling loaded by other tests is not."""
+    write(modules, "result_key_pkg.__init__", "")
+    inner = write(modules, "result_key_pkg.inner", "VALUE = 1\n")
+    sibling = write(modules, "result_key_pkg.sibling", "VALUE = 1\n")
+    write(
+        modules,
+        "result_key_job",
+        "import result_key_pkg.inner\n\ndef job():\n    return result_key_pkg.inner.VALUE\n",
+    )
+    importlib.import_module("result_key_job")
+    importlib.import_module("result_key_pkg.sibling")
+    analysis = Counting("result_key_job")
+    rc.cached_result(IDENTITY, analysis)
+    sibling.write_text("VALUE = 2\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 1
+    inner.write_text("VALUE = 2\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 2
+
+
+def test_the_module_of_the_analysis_is_in_the_key(cache_dir: Path, modules: Path) -> None:
+    """The answer is a function of the analysis' own code (the caller's module and what it imports
+    to analyze): changing it analyzes again."""
+    write(modules, "result_key_job", "def job():\n    return 1\n")
+    code = write(
+        modules,
+        "result_key_analysis",
+        "import sys\nRUNS = []\n\ndef analyze():\n"
+        "    from doeff_effect_analyzer import program_effects\n"
+        "    RUNS.append(1)\n"
+        "    program_effects.module_ast(sys.modules['result_key_job'])\n"
+        "    return ('answer',)\n",
+    )
+    importlib.import_module("result_key_job")
+    analysis_module = importlib.import_module("result_key_analysis")
+    rc.cached_result(IDENTITY, analysis_module.analyze)
+    rc.cached_result(IDENTITY, analysis_module.analyze)
+    assert len(analysis_module.RUNS) == 1
+    code.write_text(code.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis_module.analyze)
+    assert len(analysis_module.RUNS) == 2
+
+
+def test_a_changed_macro_of_a_read_hy_module_analyzes_again(cache_dir: Path, modules: Path) -> None:
+    """A Hy module's values are built by the macros it requires: their module is in the key."""
+    import hy  # noqa: F401 - registers the .hy import hook
+
+    macros = modules / "result_key_macros.hy"
+    macros.write_text("(defmacro answer [] 1)\n", encoding="utf-8")
+    (modules / "result_key_hy_job.hy").write_text(
+        "(require result_key_macros [answer])\n(defn job [] (answer))\n", encoding="utf-8"
+    )
+    importlib.import_module("result_key_hy_job")
+    analysis = Counting("result_key_hy_job")
+    rc.cached_result(IDENTITY, analysis)
+    macros.write_text("(defmacro answer [] 2)\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 2
