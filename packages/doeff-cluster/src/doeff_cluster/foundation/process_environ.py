@@ -28,3 +28,9 @@ def child_environ(drop: tuple[str, ...], add: tuple[NamedValue, ...]) -> dict[st
     add が勝つ)。答えは subprocess へそのまま渡す写像。"""
     kept = {name: value for name, value in os.environ.items() if not any(fnmatch.fnmatchcase(name, p) for p in drop)}
     return kept | {variable.name: variable.value for variable in add}
+
+
+def named_environ(names: tuple[str, ...]) -> dict[str, str]:
+    """この process の環境から、名指した環境変数のうち在る物だけを名 → 値で読むため(shim が job の log の送り先と job の文脈を読む —
+    worker/entry/line_stamp の JOB_LOG_ENV_NAMES)。"""
+    return {name: os.environ[name] for name in names if name in os.environ}
