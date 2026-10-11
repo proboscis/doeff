@@ -2,6 +2,7 @@
 ;; 同じ筋書きを memory と PostgreSQL の handler の両方で回す(層は handler を足さないので、どの組の上でも同じ答え)。
 (require doeff-hy.macros [deftest <- val])
 (import dataclasses [dataclass])
+(import unittest.mock [Mock call])
 (import doeff_hy.frozen [FrozenMap])
 (import pydantic [BaseModel ConfigDict])
 (import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny Refused Missing WatchCursor Changes Row Written WrittenRows])
@@ -60,17 +61,13 @@
 (deftest test-a-row-type-builds-its-adapter-at-the-first-mapping-and-keeps-it [monkeypatch]
   ;; 表の行の型は使い手の module の読み込みの時に作られる(agora-controllers の画面の検で 29 表)。作る時に TypeAdapter を組むと、
   ;; 検が写さない表の分まで読み込みの固定費に載る(ki-dd5358f7eb46)。作る時は組まず、最初の写しで 1 度だけ組んで覚える。
-  (setv built [])
-  (setv original typed.TypeAdapter)
-  (defn counting [model]
-    (.append built model)
-    (original model))
-  (monkeypatch.setattr typed "TypeAdapter" counting)
-  (setv row-type (RowType "tickets" Ticket))
-  (assert (= built []) built)
+  (val spy (Mock :wraps typed.TypeAdapter))
+  (monkeypatch.setattr typed "TypeAdapter" spy)
+  (val row-type (RowType "tickets" Ticket))
+  (assert (= spy.call-args-list []) spy.call-args-list)
   (assert (= (fields-of-value row-type (Ticket "g" "t" :owner "o")) {"group" "g" "id" "t" "state" None "owner" "o"}))
   (assert (= (value-of-fields row-type (FrozenMap {"group" "g" "id" "t"})) (Ticket "g" "t")))
-  (assert (= built [Ticket]) built))
+  (assert (= spy.call-args-list [(call Ticket)]) spy.call-args-list))
 
 
 (deftest test-typed-rows-round-trip-through-the-generic-effects
