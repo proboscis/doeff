@@ -129,3 +129,22 @@
   ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。
   (val sources (lfor n names #(n (. (getattr (getattr Shape n) "__wrapped__" (getattr Shape n)) __code__ co-filename))))
   (assert (all (gfor #(n source) sources (.endswith source "defrecord_shape_deftests.hy"))) sources))
+
+
+(defrecord Checked
+  "本体に注記つきの __post_init__ を書いた record(doeff-cluster の EnvVar・RepoCheckout・RuntimeEnv と同じ書き方)。"
+  #^ int n
+  (defn #^ None __post-init__ [self]
+    (when (< self.n 0)
+      (raise (ValueError "n は 0 以上")))))
+
+
+(deftest test-an-annotated-post-init-written-in-the-body-still-runs
+  ;; 失敗ケース(直す前は赤 — 日次 10-11 08:00 の doeff 044fd20a9・vg-w44 の知らせ): Hy は (defn #^ None __post-init__ …) の名を
+  ;; (annotate __post-init__ None) と読む。展開の own-method? が記号の名しか見ないと、本体の __post_init__ を見落として展開が
+  ;; __init__ を書き、__post_init__ が呼ばれない(doeff-cluster の入力の検査が効かず、断られるはずの値が通る)。
+  (<- _ (Pure None))
+  (assert (= (. (Checked :n 1) n) 1))
+  (with [caught (pytest.raises ValueError)]
+    (Checked :n -1))
+  (assert (= (str caught.value) "n は 0 以上")))
