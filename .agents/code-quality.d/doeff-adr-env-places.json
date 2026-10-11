@@ -1,0 +1,27 @@
+{
+  "include": [
+    "packages/doeff-adr/src/doeff_adr/env_places.py"
+  ],
+  "module_extensions": {
+    "pytest-item-collection": {
+      "allow": [
+        "doeff-adr-env-places"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "io",
+      "name": "doeff-adr-env-places",
+      "paths": [
+        "packages/doeff-adr/src/doeff_adr/env_places.py"
+      ],
+      "public": [
+        "packages/doeff-adr/src/doeff_adr/env_places.py"
+      ],
+      "responsibility": "doeff-adr の置き場のうち環境変数が名指す物を読む唯一の module — 変数の素の値を返すだけで、判断は呼び手(item の記録の cache の置き場・semgrep の答えの置き場)に残す(doeff_hy.env_places と同じ形)",
+      "typed": true
+    }
+  ]
+}

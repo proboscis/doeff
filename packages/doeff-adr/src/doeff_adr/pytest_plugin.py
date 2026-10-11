@@ -22,7 +22,7 @@ from doeff_hy.pytest_items import FunctionItem
 from hy.importer import HyLoader
 
 from doeff_adr.indexed_pytest import IndexedFunctions, supports_indexed_collection
-from doeff_adr.item_cache import forget_cached, items_cache_dir_for, write_cached
+from doeff_adr.item_cache import PendingEntry, forget_cached, items_cache_dir_for, pending_entry, write_cached
 from doeff_adr.lazy_collection import (
     Indexed,
     NeedsImport,
@@ -127,6 +127,7 @@ _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
 _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 _DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
+_PENDING_ENTRIES_KEY = pytest.StashKey[tuple[PendingEntry, ...]]()
 _SESSION_PATHS_KEY = pytest.StashKey["SessionPaths"]()
 # ini の doeff_hy_test_skips を起動の時に読んだ物(agora-redesign #2591)。
 _HY_TEST_SKIPS_KEY = pytest.StashKey["HyTestSkips"]()
@@ -388,7 +389,19 @@ def _resolved_item_files(items: Iterable[pytest.Item]) -> frozenset[Path]:
     return frozenset(path.resolve() for path in {item.path for item in items})
 
 
+def _write_pending(config: pytest.Config) -> None:
+    """収集で import して照合した記録を、収集の終わりにまとめて書く(どの file の import の区間の外)。"""
+    pending: tuple[PendingEntry, ...] = config.stash.get(_PENDING_ENTRIES_KEY, ())
+    config.stash[_PENDING_ENTRIES_KEY] = ()
+    checks = config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
+    root = session_paths(config).root_resolved
+    cache_dir = items_cache_dir(config)
+    for entry in pending:
+        write_cached(entry, cache_dir, root, checks)
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
+    _write_pending(session.config)
     mode = _wiring_mode(session.config)
     if mode == "off":
         return
@@ -519,15 +532,9 @@ class DoeffAdrHyFile(pytest.Module):
             imported = self.config.stash[_IMPORTED_FILES_KEY]
             imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(verified.problems))
             return
-        write_cached(
-            self.path.resolve(),
-            module,
-            verified.fixtures,
-            items_cache_dir(self.config),
-            verified.records,
-            session_paths(self.config).root_resolved,
-            verified.dynamic,
-            self.config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks()),
+        # 書くのは収集の終わり(_write_pending)— 記録の書き込みと読込済みの source の読みを、この file の import の区間に乗せない。
+        self.config.stash[_PENDING_ENTRIES_KEY] = self.config.stash.get(_PENDING_ENTRIES_KEY, ()) + (
+            pending_entry(self.path.resolve(), module, verified.fixtures, verified.records, verified.dynamic),
         )
 
     def _pytest_collects(self, name: str) -> bool:
