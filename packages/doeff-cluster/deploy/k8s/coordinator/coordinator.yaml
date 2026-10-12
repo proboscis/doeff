@@ -119,7 +119,13 @@ spec:
             # fb32909f3 = 準備と計器の報告の表が、置き先の process の報告を他の世代の送り手の報告に押し出させない版(AL-D2o — 退いた世代の
             # process が 4 つを越えて報告すると置き先の Ready が押し出され、入れ替えの合図 supersededBy が外れて退いた世代が起こし直しを
             # 増やした事の直し)。前の版 bca4c2f9a(L2060)は fb32909f3 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: fb32909f3312e8f060113f34a514f3621f3b7ded }
+            # 74ebb50b6 = 組の同時数の上限の値を系の宣言(資源 GroupLimit)から持ち、task は組の名だけを名乗る版(card ki-b0e8028c8c8d・
+            # L2139)。上に載る系の送り手は既に組の名だけを名乗り(card ki-ab95a4b49e16)、fb32909f3 の受け口は値と範囲の欄の無い名乗りを
+            # 断るので、この版が先。入れ替えたら続けて、組を :task-limits で宣言する系を宣言し直す(上に載る系の配備の順の表が、
+            # coordinatorCommit がこの版を含むまで断る)。この版は、保存に残った旧い形の行(上限の値と範囲を名乗る limits)のうち
+            # 終わっていない行を failed にするので、入れ替えは組を名乗る task が queued・走っていない刻に当てる。前の版 fb32909f3(L2067)は
+            # 74ebb50b6 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 74ebb50b6c3c5de9a652088d11e16371d954abb1 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
