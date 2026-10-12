@@ -35,7 +35,7 @@
       (raise (TypeError (.format "RowType.model は型(pydantic の BaseModel か dataclass): {!r}" self.model)))))
   (defn [functools.cached-property] #^ (get TypeAdapter M) adapter [self]
     ;; 作る時に組まない: 行の型は使い手の module の読み込みの時に作られ、写さない表の分まで読み込みの固定費に載る
-    ;; (agora-controllers の画面の検で 29 表・ki-dd5358f7eb46)。
+    ;; (使い手の画面の検で 29 表・ki-dd5358f7eb46)。
     (TypeAdapter self.model)))
 
 

@@ -935,7 +935,7 @@
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]
   "手番を走らせていない生きた process の資格が床を切っていれば止めるため(訳 CREDENTIAL-FLOOR)。見回りは層 2 の効果のたび(上の層が
    CLI の行ごとに撃つ読みを含む)に host の全部の会話を回るので、床を切っていない会話は lock も process の生き死にの確かめ(poll —
-   system call)も取らずに通す — 読み 1 回の費用を会話の数に比例させない(agora card acp:kanban-issue:ki-07d7059e1eea —
+   system call)も取らずに通す — 読み 1 回の費用を会話の数に比例させない(card ki-07d7059e1eea —
    tests/test_page_reads.hy)。止める刻 retire-after は lock の中で替わり得るので、lock を取った後に同じ判じを読み直す。"
   (when (not (credential-due runtime.retire-after now))
     (return None))
@@ -1120,7 +1120,7 @@
 (defn #^ (| TurnEventPage None) page-of [#^ SessionRuntime runtime #^ ClaudeTurn turn #^ int after-seq]
   "名指した手番の after-seq より後の行と終わり(知らない手番は None)。上の層の源の task は CLI の行が届くたびに読むので、読みの費用は
    手番の長さに比例させない: 手番の記録の行は seq の昇順(足すのは on-line の 1 か所 — 会話の lock の中で next-line-seq を進めて
-   末尾に足す)なので、読み始めの位置を二分探しで引き、その後ろだけを写す(agora card acp:kanban-issue:ki-07d7059e1eea —
+   末尾に足す)なので、読み始めの位置を二分探しで引き、その後ろだけを写す(card ki-07d7059e1eea —
    tests/test_page_reads.hy)。"
   (with [runtime.lock]
     (setv log (.get runtime.turns turn.turn-seq))
