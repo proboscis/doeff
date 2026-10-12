@@ -497,6 +497,7 @@
     "ADR-DOE-HY-008 dependency-declarations-name-no-hy-fork",
     "ADR-DOE-HY-008 doeff-hy-caps-hy-at-the-locked-version",
     "ADR-DOE-HY-008 imports-exist-in-pypi-hy",
+    "ADR-DOE-HY-008 internal-reliances-exist-in-pypi-hy",
     "ADR-DOE-PRESET-001 display-default-owned-by-slog-handler",
     "ADR-DOE-PRESET-001 preset-stays-retired",
     "ADR-DOE-RECORDS-001 no-raw-operation-is-offered-outside",
@@ -611,7 +612,9 @@
     "ADR-DOE-HY-008 test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-exceptions-do-not-outlive-their-cause",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-imports-exist-in-pypi-hy",
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-internal-reliances-exist-in-pypi-hy",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-judgments-reject-the-counterexamples",
+    "ADR-DOE-HY-008 test-adr-doe-hy-008-reliance-probe-names-what-pypi-hy-lacks",
     "ADR-DOE-RECORDS-001 test-adr-doe-records-001-raw-operations-do-not-grow"
   ],
   "adr_defsemgrep_enforcements": [
