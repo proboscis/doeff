@@ -256,8 +256,8 @@ def _named_failed_packages(output: str) -> list[str] | None:
     return summary[-1].split(":", 1)[1].split() if summary else None
 
 
-# 偽の runner(make の PACKAGE_UV_RUN に置く)— 受けた cwd と引数を記録の file へ 1 行(タブ区切り)で足し、引数の 1 つが
-# DOEFF_FAKE_RUNNER_FAIL の dir に当たる時だけ 1 で終わる。引数は runner の cwd から解くので、package の dir から走らせる形でも
+# 偽の runner(make の PACKAGE_UV_RUN に置く)— 引数の 1 つが DOEFF_FAKE_RUNNER_FAIL の dir に当たる時だけ 1 で終わり、返す rc・
+# cwd・引数を記録の file へ 1 行(タブ区切り)で足す。引数は runner の cwd から解くので、package の dir から走らせる形でも
 # 同じ package と数える。sh で書く: Python で書くと 1 巡で Python 3.14t を session の数(35)だけ起こし、load 65〜70 で
 # 1 巡 4.75 秒かかった(card acp:kanban-issue:ki-e8f54a86b0a8)。path は cd と pwd -P で解く(realpath -m は Mac に無い)。
 _FAKE_RUNNER = """\
@@ -269,16 +269,29 @@ for arg in "$@"; do
     line="$line\t$arg"
     if [ -n "$fail" ] && [ -d "$arg" ] && [ "$(cd -- "$arg" && pwd -P)" = "$fail" ]; then rc=1; fi
 done
-printf '%s\\n' "$line" >> "$DOEFF_FAKE_RUNNER_RECORD"
+printf '%s\\t%s\\n' "$rc" "$line" >> "$DOEFF_FAKE_RUNNER_RECORD"
 exit $rc
 """
+
+
+@dataclass(frozen=True)
+class _RunnerCall:
+    """偽の runner の 1 回の呼び — 返した rc と、受けた cwd と引数。"""
+
+    rc: int
+    cwd: str
+    argv: list[str]
+
+    def dirs(self) -> list[Path]:
+        """引数のうち dir を指す物を、runner の cwd から解いた物理の path で(綴り・末尾の `/`・相対か絶対かに依らない)。"""
+        return [path for arg in self.argv if (path := Path(self.cwd, arg).resolve()).is_dir()]
 
 
 @dataclass(frozen=True)
 class _MakeRound:
     """偽の runner で回した本物の Makefile の `make test-packages` の一巡。"""
 
-    calls: list[tuple[str, list[str]]]  # runner が呼ばれた順の (cwd, 引数)
+    calls: list[_RunnerCall]  # runner が呼ばれた順
     output: str
     exit_code: int
     timed_out: bool
@@ -319,7 +332,10 @@ def _run_test_packages(repo: Path, tmp: Path, fail: Path, *overrides: str) -> _M
     )
     lines = record.read_text(encoding="utf-8").splitlines() if record.exists() else []
     return _MakeRound(
-        calls=[(cwd, argv) for cwd, *argv in (line.split("\t") for line in lines)],
+        calls=[
+            _RunnerCall(rc=int(rc), cwd=cwd, argv=argv)
+            for rc, cwd, *argv in (line.split("\t") for line in lines)
+        ],
         output=proc.stdout + proc.stderr,
         exit_code=proc.exit_code,
         timed_out=proc.timed_out,
@@ -341,7 +357,9 @@ def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
 
     検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す(card acp:kanban-issue:ki-e8f54a86b0a8)。
     この一巡には赤が在るので、「全部が緑なら rc 0」は模型の木の検
-    test_make_test_packages_is_green_when_every_package_is_green が見る。
+    test_make_test_packages_is_green_when_every_package_is_green が見る。この一巡の模擬の結末は「最初の package だけが赤」の
+    1 つで、別の結末(rc 5・赤 2 つ・時間切れ)を見る検は `_run_test_packages` で自分の一巡を回す — 相乗りすると、訪ねの検の
+    rc≠0 が何の赤から来たかを言えなくなる(訪ねの検が赤にする — 設計検証 lt-F2VNSACTHQE41RVE9CC16NPBR3 の盲検 B)。
     """
     expected = _expected_packages(REPO_ROOT)
     assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
@@ -359,8 +377,10 @@ def test_make_test_packages_is_green_when_every_package_is_green(tmp_path: Path)
 
     この repo の一巡は最初の package を赤にするので、緑の終わり方(要約の行の if を `[ … ] && …` に書き換えると、緑の時に
     recipe の最後の命令が 1 を返す)はこの検だけが見る — 一巡を 2 本で共有する前は、秒の flag の検が全部緑の一巡で rc 0 を見ていた。
+    訪ねた根は解いた dir で比べる(Makefile が根を `tests/` や絶対 path で綴っても同じ根と数える — 盲検 A)。
     """
-    for root in ("packages/a/tests", "packages/b/tests", "extra/sim"):
+    roots = ("extra/sim", "packages/a/tests", "packages/b/tests")
+    for root in roots:
         (tmp_path / root).mkdir(parents=True)
         (tmp_path / root / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
     made = _run_test_packages(
@@ -368,11 +388,9 @@ def test_make_test_packages_is_green_when_every_package_is_green(tmp_path: Path)
     )
     output = made.output
     assert not made.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
-    visited = sorted(
-        arg for _cwd, argv in made.calls for arg in argv if arg.endswith(("tests", "sim"))
-    )
-    assert visited == ["extra/sim", "packages/a/tests", "packages/b/tests"], (
-        f"模型の木の session を全部訪ねていない: {visited}\n{output[-2000:]}"
+    visited = sorted(path for call in made.calls for path in call.dirs())
+    assert visited == sorted((tmp_path / root).resolve() for root in roots), (
+        f"模型の木の session を 1 度ずつ全部訪ねていない: {visited}\n{output[-2000:]}"
     )
     assert made.exit_code == 0, (
         f"どの session も緑なのに make test-packages の rc が {made.exit_code}"
@@ -394,12 +412,12 @@ def test_make_test_packages_visits_every_package_after_a_red(
     )
 
     packages_dir = (REPO_ROOT / "packages").resolve()
-    reached: set[str] = set()
-    for cwd, argv in calls:
-        for arg in argv:
-            resolved = Path(cwd, arg).resolve()
-            if resolved.parent.parent == packages_dir and resolved.name == "tests":
-                reached.add(resolved.parent.name)
+    reached = {
+        path.parent.name
+        for call in calls
+        for path in call.dirs()
+        if path.parent.parent == packages_dir and path.name == "tests"
+    }
 
     assert reached == set(expected), (
         f"make test-packages が訪ねた package が期待と違う: 欠け {sorted(set(expected) - reached)}"
@@ -408,11 +426,18 @@ def test_make_test_packages_visits_every_package_after_a_red(
         f"止めた・または母集団から外した)— ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
     )
     extra_roots = _package_extra_test_roots(REPO_ROOT)
-    passed = {Path(cwd, arg).resolve() for cwd, argv in calls for arg in argv}
+    passed = {path for call in calls for path in call.dirs()}
     missed_roots = [root for root in extra_roots if (REPO_ROOT / root).resolve() not in passed]
     assert not missed_roots, (
         f"make test-packages が package の tests/ の外の根 {missed_roots} を訪ねていない(最初の {first}"
         f" だけを赤にした)— その根の検は日次で 1 本も走らない — R8\n{output[-2000:]}"
+    )
+    first_tests = (REPO_ROOT / "packages" / first / "tests").resolve()
+    nonzero = [call for call in calls if call.rc != 0]
+    assert [first_tests in call.dirs() for call in nonzero] == [True], (
+        f"この一巡で 0 以外を返した session が最初の package {first} の 1 つでない: {[c.argv for c in nonzero]}"
+        " — 下の rc≠0 と名指しの判定は「赤は最初の package だけ」の一巡を前提にする。別の模擬の結末(rc 5・赤 2 つ・"
+        "時間切れ)を見る検は `_run_test_packages` で自分の一巡を回す — R8"
     )
     assert packages_round.made.exit_code != 0, (
         f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
@@ -705,7 +730,7 @@ def test_make_test_packages_lists_every_slow_test(packages_round: _PackagesRound
     )
     assert calls, f"make test-packages が runner を 1 度も呼ばなかった\n{output[-2000:]}"
     short = [
-        argv for _cwd, argv in calls if not all(flag in argv for flag in _DAILY_DURATIONS_FLAGS)
+        call.argv for call in calls if not all(flag in call.argv for flag in _DAILY_DURATIONS_FLAGS)
     ]
     assert not short, (
         f"package の session {len(short)} / {len(calls)} 本の pytest に {list(_DAILY_DURATIONS_FLAGS)} が揃っていない"
