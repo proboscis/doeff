@@ -11,6 +11,4 @@ from doeff_cluster.worker.protocol.process_host import stop_reason_word as stop_
 from doeff_cluster.worker.protocol.process_host import retirement_of_word as retirement_of_word
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 pipe_retirement_notices: _Handler

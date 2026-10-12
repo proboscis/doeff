@@ -21,8 +21,6 @@ from doeff_core_effects.sqlite_sql import sqlite_answer_tables as sqlite_answer_
 from doeff_core_effects.sqlite_sql import sqlite_answer_transaction as sqlite_answer_transaction
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 JOURNAL_MODE: str
 
 @dataclass(frozen=True, kw_only=True)

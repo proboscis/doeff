@@ -34,8 +34,6 @@ from doeff_core_effects.sql_transaction import run_in_batched_transaction as run
 from doeff_core_effects.sql_transaction import stray_batch as stray_batch
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 SQLITE_CLASS_SQLSTATES: dict[str, str]
 BIND_ERRORS: tuple[type, ...]
 BIND_CLASS_SQLSTATES: dict[str, str]
