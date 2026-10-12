@@ -37,9 +37,9 @@ lt-0ZP7AYKXMDX83R8DKGFBA73DBJ)。
 
 展開を写さずに、展開が作った値を実行時に覗いて印字する例(値の class 名・型・属性)は、文字列の印を持たないので上の検が
 見分けない — 答えを変えない macro の変更で、その例だけが赤になる(card ki-b7c40391ac8e)。そこで例を、答えを変えない展開の変異
-の下でも走らせ(run_example_mutated_expansion.py — 値を作る macro の展開を、何もしない handler の下で走らせる Program で包む)、出力が期待の出力の
-ままである事を求める。変わる例は、macro を変えなくても名指して赤になる。包む macro は MUTATED_MACROS・包まない macro は訳つきで
-UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。変異は例の file の展開だけに当てるので、examples/ の下には
+の下でも走らせ(run_example_mutated_expansion.py — 値を作る macro の展開を、何もしない handler の下で走らせる Program で包む。defk・fnk は
+定義した・作った関数を呼んだ値を包む)、出力が期待の出力のままである事を求める。変わる例は、macro を変えなくても名指して赤になる。
+包む macro は MUTATED_MACROS・包まない macro は訳つきで UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。変異は例の file の展開だけに当てるので、examples/ の下には
 例と期待の出力だけを置かせる。
 """
 
@@ -86,16 +86,14 @@ class Entrance:
 # 例を件の中で失敗させて走らせる子の入口(Traverse の走りごとに最初の件を失敗させ、実行の印を標準エラーに書く)。
 FAILING_A_CASE = Entrance(Path(__file__).with_name("run_example_failing_a_case.py"))
 # 例の展開を答えを変えない形に変えて走らせる子の入口: MUTATED_MACROS の macro の展開を、何もしない handler の下で走らせる Program で
-# 包む(包んだ値の class は、元が Traverse の effect でも Program でも WithHandler になる)。
-# どの macro の展開が実行時の値を作るかは doeff-hy の持ち分で、検は表で名指す。
-MUTATED_MACROS: tuple[str, ...] = ("traverse", "for/do")
+# 包む(包んだ値の class は、元が Traverse の effect でも Program でも WithHandler になる。defk・fnk は、定義した・作った関数を呼んだ
+# 値を包む)。どの macro の展開が実行時の値を作るかは doeff-hy の持ち分で、検は表で名指す。包み方は入口の _MUTATIONS が知る。
+MUTATED_MACROS: tuple[str, ...] = ("defk", "fnk", "traverse", "for/do")
 MUTATED_EXPANSION = Entrance(
     Path(__file__).with_name("run_example_mutated_expansion.py"), MUTATED_MACROS
 )
 # 変異を言う文(断りの文に出す)。
-MUTATION = (
-    f"{'・'.join(MUTATED_MACROS)} が作る値を、何もしない handler の下で走らせる Program で包む"
-)
+MUTATION = f"{'・'.join(MUTATED_MACROS)} が作る値(defk・fnk は呼んだ値)を、何もしない handler の下で走らせる Program で包む"
 # 件の中で失敗させる子が標準エラーに書く、実行の印の行(子の COUNTS_LINE)。
 _COUNTS = re.compile(r"^case-calls: (\d+) program-runs: (\d+)$", re.MULTILINE)
 
@@ -112,14 +110,13 @@ NO_CASES: dict[str, str] = {
 # 持たない)。印を持つようになった・例が使わなくなった macro の行は外す。
 UNMARKED_EXPANSIONS: dict[str, str] = {}
 
-# 例が使う doeff-hy の macro のうち、展開の変異(MUTATED_MACROS)で包まない物(macro の名 → 訳)。包めるのは実行時の値を作る式で、
-# 名の束縛・定義の文は包めない。例が初めて使う macro は、MUTATED_MACROS に足すか、ここに訳つきで置く。使わなくなった・
-# MUTATED_MACROS に移した macro の行は外す。
+# 例が使う doeff-hy の macro のうち、展開の変異(MUTATED_MACROS)で包まない物(macro の名 → 訳)。包めるのは実行時の値を作る式・
+# kleisli の関数を定義する(作る)式で、名の束縛の文や、Program でも kleisli の関数でもない物を定義する文は包めない。例が初めて
+# 使う macro は、MUTATED_MACROS に足す(入口が包み方を知る物だけ)か、ここに訳つきで置く。使わなくなった・MUTATED_MACROS に移した
+# macro の行は外す。
 UNMUTATED_MACROS: dict[str, str] = {
-    "defk": "関数を定義する文 — 包める値が無い。定義した関数の型・署名を印字する例は変異で見分けない(残る限界)",
-    "defhandler": "handler を定義する文 — 包める値が無い。定義した handler の型・署名を印字する例は変異で見分けない(残る限界)",
-    "<-": "束縛の文 — 束縛する式(traverse・for/do)は MUTATED_MACROS が包む",
-    "fnk": "関数を作る式 — 展開が作る関数の型・署名を印字する例は変異で見分けない(残る限界)",
+    "defhandler": "handler を定義する文 — handler は Program を受けて Program を返す別の形で、包み方が無い。定義した handler の型・署名・受けた effect の中身を印字する例は変異で見分けない(残る限界)",
+    "<-": "束縛の文 — 束縛する式(traverse・for/do・defk を呼んだ値)は、それぞれの変異が包む",
 }
 
 # 期待の出力の印の字。印の種類は置く所で決まり、種類ごとに呑める物が決まっている:
@@ -932,15 +929,32 @@ def test_examples_dir_holds_only_examples_and_their_expected_outputs() -> None:
     )
 
 
-# 変異が包む macro ごとの使い所: 走らせると同じ答え(2 倍した 3 つ)を出す式。
-BUILT_VALUE_USES: dict[str, str] = {
-    "traverse": "(traverse (<- x (Iterate [1 2 3])) (* x 2))",
-    "for/do": "(for/do (<- x (From [1 2 3])) (* x 2))",
+@dataclass(frozen=True)
+class BuiltValue:
+    """変異が包む macro の使い所 1 つ: 展開が作る値(defk・fnk は呼んだ値)を `built` に置く式と、走らせた答え。"""
+
+    # 式の前に置く定義(defk の定義など)
+    setup: str
+    # `built` に置く式
+    expression: str
+    # 走らせた答え(run の後の値の印字)
+    answer: str
+
+
+# 変異が包む macro ごとの使い所: 変異の下でも走らせると同じ答えを出す式。
+BUILT_VALUES: dict[str, BuiltValue] = {
+    "traverse": BuiltValue("", "(traverse (<- x (Iterate [1 2 3])) (* x 2))", "[2, 4, 6]"),
+    "for/do": BuiltValue("", "(for/do (<- x (From [1 2 3])) (* x 2))", "[2, 4, 6]"),
+    "fnk": BuiltValue("", "((fnk [x] (* x 2)) 21)", "42"),
+    "defk": BuiltValue(
+        "(defk twice [x] {:pre [(: x int)] :post [(: % int)]} (* x 2))", "(twice 21)", "42"
+    ),
 }
 
-# 展開が作った値を `built` に置いて、その形(class 名・Traverse の判定・属性)と run の後の答えを印字する、変異の確かめの例。
-_BUILT_VALUE_PREAMBLE = """
-(require doeff-hy.macros [<- traverse for/do])
+# 展開が作った値を `built` に置いて、その形(class 名・属性)と run の後の答えを印字する、変異の確かめの例。
+_REQUIRE_BUILDERS = "(require doeff-hy.macros [<- defk fnk traverse for/do])"
+_BUILT_VALUE_PREAMBLE = f"""
+{_REQUIRE_BUILDERS}
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 (import doeff_core_effects [try-handler :as try_handler])
@@ -949,17 +963,18 @@ _BUILT_VALUE_PREAMBLE = """
 (import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
 
 (defn answer [built]
-  (. (run (scheduled ((sequential) (fail_handler (try_handler built))))) valid_values))
+  (setv outcome (run (scheduled ((sequential) (fail_handler (try_handler built))))))
+  (if (hasattr outcome "valid_values") outcome.valid_values outcome))
 """
 
 
-def _built_value_example(uses: list[str]) -> str:
-    """uses の式が作る値の class 名・Traverse の判定と、run の後の答えを、式ごとに印字する例の source。"""
+def _built_value_example(uses: list[BuiltValue]) -> str:
+    """uses の式が作る値の class 名と、run の後の答えを、式ごとに印字する例の source。"""
     return _BUILT_VALUE_PREAMBLE + "".join(
         f"""
-(setv built_{index} {use})
+{use.setup}
+(setv built_{index} {use.expression})
 (print "built:" (. (type built_{index}) __name__))
-(print "is-traverse:" (isinstance built_{index} _doeff_traverse_Traverse))
 (print "answer:" (answer built_{index}))
 """
         for index, use in enumerate(uses)
@@ -974,15 +989,16 @@ def test_expansion_mutation_changes_the_built_value_not_the_answer(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     """今の例は展開が作った値の形を印字しないので、変異が空振りしない事(包む macro ごとに、作る値が WithHandler になる)・答えを
-    変えない事(run の後の答えは同じ)・値の形を印字する例を名指す事(card ki-b7c40391ac8e の失敗ケース — ex10 の形: 設計検証
-    lt-0ZP7AYKXMDX83R8DKGFBA73DBJ の盲検 B)は、値の形を印字する source で確かめる。例の他の検 — 走る・Program を走らせる・
-    macro の持ち主・期待の出力に置かない物 — は通る形(展開の文字列の写しではないので、印の検が見分けない)。変異の後の姿だけを
-    決め、macro が今どんな値を作るか(Traverse か Program か)は決めない — 答えを変えない macro の変更でこの検は変わらない。"""
-    assert set(BUILT_VALUE_USES) == set(MUTATED_MACROS), (
-        "MUTATED_MACROS の macro ごとに、変異で値の形が変わる使い所を BUILT_VALUE_USES に足す"
+    変えない事(run の後の答えは同じ)・値の形を印字する例を名指す事(card ki-b7c40391ac8e の失敗ケース — ex10 の形と、defk が
+    定義した関数を呼んだ値の形: 設計検証 lt-0ZP7AYKXMDX83R8DKGFBA73DBJ・lt-17JV52X9T2DN5SK9TQQZ31VXA6 の盲検 B)は、値の形を印字する
+    source で確かめる。例の他の検 — 走る・Program を走らせる・macro の持ち主・期待の出力に置かない物 — は通る形(展開の文字列の
+    写しではないので、印の検が見分けない)。変異の後の姿だけを決め、macro が今どんな値を作るか(Traverse か Program か)は決めない
+    — 答えを変えない macro の変更でこの検は変わらない。"""
+    assert set(BUILT_VALUES) == set(MUTATED_MACROS), (
+        "MUTATED_MACROS の macro ごとに、変異で値の形が変わる使い所を BUILT_VALUES に足す"
     )
     script = tmp_path / "prints_built_values.hy"
-    script.write_text(_built_value_example(list(BUILT_VALUE_USES.values())), encoding="utf-8")
+    script.write_text(_built_value_example(list(BUILT_VALUES.values())), encoding="utf-8")
     assert _macro_violations(script.read_text(encoding="utf-8"), str(script)) == []
     plain = _run_example(script, None, deadline_scale_factor)
     mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
@@ -990,10 +1006,9 @@ def test_expansion_mutation_changes_the_built_value_not_the_answer(
     assert mutated.returncode == 0, mutated.stdout + mutated.stderr
     # 書き手が置く期待の出力 = 走らせた出力。置かない物は含まない
     assert _unplaceable_in(plain.stdout) == []
-    uses = len(BUILT_VALUE_USES)
-    assert _lines(mutated, "built") == ["built: WithHandler"] * uses
-    assert _lines(mutated, "is-traverse") == ["is-traverse: False"] * uses
-    assert _lines(plain, "answer") == _lines(mutated, "answer") == ["answer: [2, 4, 6]"] * uses
+    assert _lines(mutated, "built") == ["built: WithHandler"] * len(BUILT_VALUES)
+    answers = [f"answer: {use.answer}" for use in BUILT_VALUES.values()]
+    assert _lines(plain, "answer") == _lines(mutated, "answer") == answers
     change = _expansion_mutation_change(script, plain.stdout, mutated)
     assert change is not None
     assert script.name in change
@@ -1007,7 +1022,7 @@ def test_expansion_mutation_names_an_example_that_breaks_on_the_built_value(
     script = tmp_path / "reads_built_value.hy"
     script.write_text(
         _BUILT_VALUE_PREAMBLE
-        + f"(setv built {BUILT_VALUE_USES['traverse']})\n(print (len (list (. built items))))\n",
+        + f"(setv built {BUILT_VALUES['traverse'].expression})\n(print (len (list (. built items))))\n",
         encoding="utf-8",
     )
     mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
@@ -1024,15 +1039,22 @@ def test_expansion_mutation_spares_the_modules_an_example_imports(
     """変異は例の module の展開だけに当たる — 例が import する lib の `.hy` が同じ macro を使っても、その展開は変えない(変えた展開を
     compile した lib の bytecode が、機体で共有する保存先へ書かれて、変異を知らない走りが包まれた展開を読むのを防ぐ)。"""
     (tmp_path / "built_by_a_library.hy").write_text(
-        _BUILT_VALUE_PREAMBLE + f"(setv library_value {BUILT_VALUE_USES['traverse']})\n",
+        _BUILT_VALUE_PREAMBLE
+        + "".join(
+            f"{use.setup}\n(setv library_{index} {use.expression})\n"
+            for index, use in enumerate(BUILT_VALUES.values())
+        ),
         encoding="utf-8",
     )
     script = tmp_path / "prints_library_and_own_values.hy"
     script.write_text(
         _BUILT_VALUE_PREAMBLE
         + "(import built_by_a_library)\n"
-        + f"(setv own_value {BUILT_VALUE_USES['traverse']})\n"
-        + '(print "library:" (. (type built_by_a_library.library_value) __name__))\n'
+        + f"(setv own_value {BUILT_VALUES['traverse'].expression})\n"
+        + "".join(
+            f'(print "library:" (. (type built_by_a_library.library_{index}) __name__))\n'
+            for index in range(len(BUILT_VALUES))
+        )
         + '(print "own:" (. (type own_value) __name__))\n',
         encoding="utf-8",
     )
@@ -1040,10 +1062,10 @@ def test_expansion_mutation_spares_the_modules_an_example_imports(
     mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
     assert plain.returncode == 0, plain.stdout + plain.stderr
     assert mutated.returncode == 0, mutated.stdout + mutated.stderr
-    assert mutated.stdout.splitlines()[1] == "own: WithHandler"
+    assert _lines(mutated, "own") == ["own: WithHandler"]
     # lib が作った値は包まれない(変異の下でも、通常の走りと同じ値)
-    assert mutated.stdout.splitlines()[0] == plain.stdout.splitlines()[0]
-    assert plain.stdout.splitlines()[0].startswith("library: ")
+    assert _lines(mutated, "library") == _lines(plain, "library")
+    assert len(_lines(plain, "library")) == len(BUILT_VALUES)
 
 
 def test_expansion_mutation_follows_the_macro_not_how_the_example_requires_it(
@@ -1054,8 +1076,7 @@ def test_expansion_mutation_follows_the_macro_not_how_the_example_requires_it(
     script = tmp_path / "requires_by_alias.hy"
     script.write_text(
         _BUILT_VALUE_PREAMBLE.replace(
-            "(require doeff-hy.macros [<- traverse for/do])",
-            "(require doeff-hy.macros [<- traverse :as aliased_traverse])",
+            _REQUIRE_BUILDERS, "(require doeff-hy.macros [<- traverse :as aliased_traverse])"
         )
         + "(setv own_value (aliased_traverse (<- x (Iterate [1 2 3])) (* x 2)))\n"
         + '(print "own:" (. (type own_value) __name__))\n',
