@@ -1,12 +1,10 @@
 
-import asyncio
 from dataclasses import dataclass
 
-from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Spawn, Wait
+from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
-from events_test_support import run_scheduled
+from events_test_support import announce_listening, run_scheduled
 
 from doeff import do
 
@@ -26,15 +24,18 @@ def test_publish_wakes_multiple_listeners_waiting_same_type() -> None:
         return (name, received.symbol, received.price_cents)
 
     @do
-    def publisher():
-        _ = yield Await(asyncio.sleep(0.01))
+    def publisher(registered: Promise[object]):
+        # event_handler drops a Publish that comes before the listener listens: publish once it is registered.
+        yield Wait(registered.future)
         yield Publish(event)
         return "published"
 
     @do
     def run_listener(name: str):
-        listener_task = yield Spawn(listener(name))
-        publisher_task = yield Spawn(publisher())
+        registered = yield CreatePromise()
+        # The publisher is spawned first: only `registered` puts its Publish after the listener's WaitForEvent.
+        publisher_task = yield Spawn(publisher(registered))
+        listener_task = yield Spawn(announce_listening(registered)(listener(name)))
         result = yield Wait(listener_task)
         publish_status = yield Wait(publisher_task)
         return (result, publish_status)

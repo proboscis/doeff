@@ -1,12 +1,10 @@
 
-import asyncio
 from dataclasses import dataclass
 
-from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Spawn, Wait
+from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
-from events_test_support import run_scheduled
+from events_test_support import announce_listening, run_scheduled
 
 from doeff import do
 
@@ -21,15 +19,17 @@ def test_wait_for_event_receives_next_matching_event() -> None:
     published_event = OrderFilled(symbol="AAPL", quantity=100)
 
     @do
-    def delayed_publisher():
-        _ = yield Await(asyncio.sleep(0.01))
+    def publisher(registered: Promise[object]):
+        # event_handler drops a Publish that comes before the program listens: publish once it is registered.
+        yield Wait(registered.future)
         yield Publish(published_event)
         return "published"
 
     @do
     def program():
-        publisher_task = yield Spawn(delayed_publisher())
-        received_event = yield WaitForEvent(OrderFilled)
+        registered = yield CreatePromise()
+        publisher_task = yield Spawn(publisher(registered))
+        received_event = yield announce_listening(registered)(WaitForEvent(OrderFilled))
         publish_status = yield Wait(publisher_task)
         return (received_event, publish_status)
 
