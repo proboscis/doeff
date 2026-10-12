@@ -10,12 +10,18 @@ examples/ の `.hy` は全部この検に入る(新しい例も書いただけ�
 終了コードだけでは足りない: Traverse の handler は件の中の例外を件の失敗として記録して先へ進むので、macro の
 展開が件の中で壊れても例は 0 で終わる(設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の盲検 A — When の展開が引く名を
 変えると、ex09 は件を skipped ではなく failed と印字して 0 で終わった)。走る例は標準出力を expected/<stem>.txt と
-比べる。走るたびに変わる所(実時間・checkout の path・lib の traceback)は、期待の出力の側で ANY に置き換える —
-どこが変わるかは例の持ち分で、検は印の意味だけを知る。印を置いた例ごとに、件の中だけで失敗する変異を examples/
-の写しに当て、写しの出力が期待の出力に合わない事を確かめる(印が件の結果まで伏せていない事の検 — card
-ki-2d5b129f2ff2)。Hy の付ける名(番号は macro の展開で変わる)は期待の出力に置かない。走る例は全部比べる —
-件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の中身だけを印字する debug 用の file は例ではなく、
-examples/ に置かない(card ki-3497c5fd38df が ex04_debug・ex04_debug2 と、それを比べずに通す表を外した)。
+比べる。走るたびに変わる所(実時間・lib の traceback)は、期待の出力の側で印に置き換える — どこが変わるかは例の
+持ち分で、検は印の意味だけを知る。印は種類ごとに呑める物が決まっていて(行だけの ANY は traceback の frame の行・行の
+中の印は MARKS の形の文字列)、件の結果の行を呑む印は赤になる(card ki-f8a58fb49dd9)。書いた木の上では毎回同じに出て、
+別の木・別の機体や答えを変えない変更で外れる物(checkout や機体の path・Hy の付ける名・frame の行)は、期待の出力に
+置かない(UNPLACEABLE)。
+
+件の中の失敗が比べる出力に出る事は、例ごとに、Traverse の走りごとに最初の件を件の中で失敗させる子
+(run_example_failing_a_case.py)で確かめる — その子の出力は期待の出力に合わない(card ki-2d5b129f2ff2)。失敗は例の
+source を書き換えずに起こすので、出力を変えない例の中の書き換えで検の file を直す事は無い。同じ子が件の関数を呼んだ数を
+数え、件を 1 つも走らせない例は NO_CASES に理由つきで置く: 件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の
+中身だけを印字する debug 用の file は例ではなく、examples/ に置かない(card ki-3497c5fd38df が ex04_debug・ex04_debug2 を
+外した)。
 
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
@@ -23,8 +29,9 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 """
 
 import difflib
+import functools
+import itertools
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -39,30 +46,62 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXPECTED = EXAMPLES / "expected"
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1 秒(置き場が冷えていても 約 20 秒)。
 CHILD_DEADLINE_SECONDS = 50
-# 子(例・変異の写し)を同時に走らせる数。子 1 本は 約 1 秒で、多くは hy と doeff の import(例の中身は 0.2〜0.3 秒・ex05 は
+# 子(例・件の中で失敗させる例)を同時に走らせる数。子 1 本は 約 1 秒で、多くは hy と doeff の import(例の中身は 0.2〜0.3 秒・ex05 は
 # sleep 2.5 秒)。1 本ずつ順に走らせると子 12 本の秒が足し算になり、この file 1 本が負荷の下で 25〜42 秒かかって、変えた所の検
 # (make test-changed)の 60 秒の上限で後ろの検を打ち切った(card ki-458fc8e0de36)。全部を一度に起こさないのは、機体の検の枠
 # 1 つ(root の conftest の _hold_check_slot)の目安 — 検 1 本 0.5〜2.5 core — を大きく越えないため。
 PARALLEL_CHILDREN = 4
+# 例を件の中で失敗させて走らせる子の入口(Traverse の走りごとに最初の件を失敗させ、件の関数を呼んだ数を標準エラーに書く)。
+FAILING_A_CASE = Path(__file__).with_name("run_example_failing_a_case.py")
+# 件の中で失敗させる子が標準エラーに書く、件の関数を呼んだ数の行(子の CALLS_LINE)。
+_CASE_CALLS = re.compile(r"^case-calls: (\d+)$", re.MULTILINE)
 
 # 今の macro で走らない例(file の名 → 理由)。直したら行を外す。
 BROKEN: dict[str, str] = {}
 
-# 期待の出力の中で、どの文字列(改行を含む・空も)にも合う印。走るたびに変わる所だけに置く。
+# Traverse の件を 1 つも走らせない例(file の名 → 理由)。件の中の失敗を起こせないので、出力の比べ方だけで確かめる。
+NO_CASES: dict[str, str] = {
+    "ex01_basic_fail.hy": "Fail の効果を Traverse の外で見せる例 — 失敗は 3 つの戦略の結果として出力に出る",
+}
+
+# 期待の出力の印の字。印の種類は置く所で決まり、種類ごとに呑める物が決まっている:
+#   - 行が ANY だけの行は、traceback の frame の行を 1 行以上呑む(_frame_violations) — 件の結果の行は呑めない。
+#   - 行の中の印は MARKS のどれかの形で置き、その形の文字列だけを呑む(行を越えない)。
+# どの文字列にも合う印は、件の結果を載せる行まで伏せられ、その行を変える変異が無いと気づけなかった(card ki-f8a58fb49dd9)。
 ANY = "…"
+# 行の中の印(綴り → 呑む文字列)。走るたびに変わる物の種類を増やす時は、ここに行を足す。
+MARKS: dict[str, str] = {
+    # 実時間の秒(ex05 の「550 in …s」)
+    f"{ANY}s": r"\d+(?:\.\d+)?s",
+}
+_MARK = re.compile(
+    "(" + "|".join(re.escape(mark) for mark in sorted(MARKS, key=len, reverse=True)) + ")"
+)
 
-# Hy が compile の時に付ける名(無名関数・gensym)。番号は macro の展開と compile の順で決まる Hy・doeff-hy の
-# 隠す中身で、例の結果ではない — 期待の出力に置くと、答えを変えない macro の変更で例が赤になる
-# (設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 B)。印字に出るなら、その所を ANY にする。
-_HY_GENERATED_NAME = re.compile(r"_hy_(?:anon|gensym)_")
+# traceback の frame の頭の行と、frame の中の印の行(位置の印 ^~・Python 3.13 からの略した source の行・繰り返しの略)。
+_FRAME_HEAD = re.compile(r'\s*File "(?P<path>[^"]+)", line \d+, in \S+')
+_FRAME_MARKER = re.compile(
+    r"\s*(?:[\^~]+|\.\.\.<\d+ lines>\.\.\.|\[Previous line repeated \d+ more times?\])"
+)
 
-# 期待の出力に ANY を置いた例の、件の中だけで失敗する変異(file の名 → 例の写しで置き換える元の文と先の文)。
-# 写しは終了コード 0 のまま件を失敗として印字する(盲検 A の形)ので、出力の比べ方だけが捕まえられる。
-CASE_FAILURE_MUTANTS: dict[str, tuple[str, str]] = {
-    # sync-backend が x = 3 の件で ZeroDivisionError — 合計が 550 でなくなる
-    "ex05_parallel_timing.hy": ("(resume (* x 10))", "(resume (// 10 (- x 3)))"),
-    # mock が MSFT の価格を知らない — FetchPrice の件が KeyError で失敗し、成功が 3 から 2 へ
-    "ex07_proboscis_ema_rewrite.hy": ('"MSFT" 300.0', '"MSFX" 300.0'),
+# 機体と利用者で変わる置き場(venv・Python・home)。
+_MACHINE_PATHS = sorted(
+    {path.rstrip("/") for path in (sys.prefix, sys.base_prefix, str(Path.home()))} - {""}
+)
+
+# 期待の出力に置かない物(名 → 正規表現)。どれも書いた木の上では毎回同じに出るので緑のまま置けてしまい、別の木・別の
+# 機体や、答えを変えない macro・lib の変更で外れる — 置いた木で気づくように断る。印字に出るなら、その所を印にする。
+UNPLACEABLE: dict[str, re.Pattern[str]] = {
+    # 日次の作業木など、別の checkout では必ず外れる
+    "checkout の path": re.compile(re.escape(str(EXAMPLES.parents[2]))),
+    "機体の置き場(venv・Python・home)": re.compile(
+        "|".join(re.escape(f"{path}/") for path in _MACHINE_PATHS)
+    ),
+    # 番号は macro の展開と compile の順で決まる Hy・doeff-hy の隠す中身で、例の結果ではない(設計検証
+    # lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 B)
+    "Hy が付ける名(_hy_anon_・_hy_gensym_)": re.compile(r"_hy_(?:anon|gensym)_"),
+    # path と、lib・例の行番号が入る — frame は行だけの ANY にする
+    "traceback の frame の行": re.compile(r'^\s*File "[^"]*", line \d+', re.MULTILINE),
 }
 
 # 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
@@ -78,9 +117,18 @@ def _runnable() -> list[str]:
     return [name for name in _examples() if name not in BROKEN]
 
 
-def _run_hy(path: Path, deadline_scale_factor: float) -> subprocess.CompletedProcess[str]:
+def _run_child(
+    name: str, failing_a_case: bool, deadline_scale_factor: float
+) -> subprocess.CompletedProcess[str]:
+    """例を `hy <例>` で走らせる(failing_a_case なら、件の中で失敗させる子の入口から)。"""
+    example = str(EXAMPLES / name)
+    command = (
+        [sys.executable, str(FAILING_A_CASE), example]
+        if failing_a_case
+        else [sys.executable, "-m", "hy", example]
+    )
     return subprocess.run(
-        [sys.executable, "-m", "hy", str(path)],
+        command,
         capture_output=True,
         check=False,
         text=True,
@@ -88,29 +136,9 @@ def _run_hy(path: Path, deadline_scale_factor: float) -> subprocess.CompletedPro
     )
 
 
-def _mutant(copies: Path, name: str) -> Path:
-    """変異を当てた写しの中の例の path(写しは例ごとに別の dir)。"""
-    return copies / Path(name).stem / EXAMPLES.name / name
-
-
-def _write_mutant(copies: Path, name: str) -> None:
-    """examples/ の dir ごとの写しを作り、写しの中の例に変異を当てる。変異の元の文が 1 つだけでなければ作らない
-    (検がそれを名指す)。
-
-    写しを dir ごとにするのは、例が兄弟の file(共有の helper・data)と並んだ場所で走る物だから — 1 file だけを別の dir へ
-    移すと、変異と関わりなく import で落ちる(設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 A)。"""
-    source = (EXAMPLES / name).read_text(encoding="utf-8")
-    original, mutated = CASE_FAILURE_MUTANTS[name]
-    if source.count(original) != 1:
-        return
-    mutant = _mutant(copies, name)
-    shutil.copytree(EXAMPLES, mutant.parent, dirs_exist_ok=True)
-    mutant.write_text(source.replace(original, mutated), encoding="utf-8")
-
-
 def _child_of(item: pytest.Item) -> tuple[str, bool] | None:
-    """検 1 本が待つ子 — (例の file の名, 変異を当てた写しか)。子を待たない検は None(BROKEN が空の時に pytest が置く
-    空の parametrize の item も、name に例の名を持たないので None)。"""
+    """検 1 本が待つ子 — (例の file の名, 件の中で失敗させる子か)。子を待たない検は None(BROKEN が空の時に pytest が
+    置く空の parametrize の item も、name に例の名を持たないので None)。"""
     callspec = getattr(item, "callspec", None)
     name = callspec.params.get("name") if callspec is not None else None
     if not isinstance(name, str):
@@ -127,43 +155,34 @@ class Children:
     """選ばれた検が待つ子を、最初の検の時に全部起こして PARALLEL_CHILDREN 本ずつ並べて走らせ、検はそれぞれ自分の子の
     結末を待つ。起こすのは、この session で選ばれた検の子だけ(-k で 1 本を選べば、子も 1 本)。"""
 
-    def __init__(self, copies: Path) -> None:
-        self.copies = copies
+    def __init__(self) -> None:
         self._pool = ThreadPoolExecutor(max_workers=PARALLEL_CHILDREN)
-        self._runs: dict[Path, Future[subprocess.CompletedProcess[str]]] | None = None
-
-    def _script(self, name: str, mutated: bool) -> Path:
-        if not mutated:
-            return EXAMPLES / name
-        _write_mutant(self.copies, name)
-        return _mutant(self.copies, name)
+        self._runs: dict[tuple[str, bool], Future[subprocess.CompletedProcess[str]]] | None = None
 
     def start(self, items: list[pytest.Item], deadline_scale_factor: float) -> None:
-        """写しを全部作ってから子を起こす(写しを作れずに落ちたら、次の検が同じ所で落ちて名指す)。file の無い子(消えた
-        BROKEN の例・元の文が 1 つでない変異)は起こさない — その検は子を待つ前に名指す。"""
+        """file の無い例(消えた BROKEN の例)の子は起こさない — その検は子を待つ前に名指す。"""
         if self._runs is not None:
             return
         children = (_child_of(item) for item in items)
-        scripts = [self._script(*child) for child in children if child is not None]
         self._runs = {
-            script: self._pool.submit(_run_hy, script, deadline_scale_factor)
-            for script in scripts
-            if script.is_file()
+            child: self._pool.submit(_run_child, *child, deadline_scale_factor)
+            for child in children
+            if child is not None and (EXAMPLES / child[0]).is_file()
         }
 
-    def result(self, script: Path) -> subprocess.CompletedProcess[str]:
+    def result(self, name: str, failing_a_case: bool) -> subprocess.CompletedProcess[str]:
         assert self._runs is not None, (
             "子を起こす前に結末を待った — 検は children の fixture から受け取る"
         )
-        return self._runs[script].result()
+        return self._runs[name, failing_a_case].result()
 
     def close(self) -> None:
         self._pool.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.fixture(scope="module")
-def _children(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Children]:
-    children = Children(tmp_path_factory.mktemp("mutants"))
+def _children() -> Iterator[Children]:
+    children = Children()
     yield children
     children.close()
 
@@ -181,10 +200,87 @@ def _expected(name: str) -> Path:
     return EXPECTED / f"{Path(name).stem}.txt"
 
 
+def _line_pattern(line: str) -> str | None:
+    """期待の出力の 1 行(行だけの ANY でない行)の正規表現。MARKS の形でない ANY が在れば None。"""
+    # 印で割ると、偶数番目は字のままの所・奇数番目は印。
+    pieces = _MARK.split(line)
+    if any(ANY in literal for literal in pieces[::2]):
+        return None
+    return "".join(
+        MARKS[piece] if index % 2 else re.escape(piece) for index, piece in enumerate(pieces)
+    )
+
+
+def _mark_violations(expected: str) -> list[str]:
+    """期待の出力の、印の形でない ANY を持つ行(行番号つき)。"""
+    return [
+        f"{number}: {line}"
+        for number, line in enumerate(expected.split("\n"), start=1)
+        if line != ANY and _line_pattern(line) is None
+    ]
+
+
+def _expected_line_pattern(index: int, line: str) -> str:
+    """期待の出力の index 行目の正規表現。行だけの ANY は 1 行以上を名のある組(frames<行>)で呑む。印の形でない ANY は
+    字のまま比べる(どこが悪いかは _mark_violations が名指す)。"""
+    if line == ANY:
+        return rf"(?P<frames{index}>[^\n]*(?:\n[^\n]*)*?)"
+    pattern = _line_pattern(line)
+    return re.escape(line) if pattern is None else pattern
+
+
+def _pattern(expected: str) -> re.Pattern[str]:
+    return re.compile(
+        "\n".join(
+            _expected_line_pattern(index, line) for index, line in enumerate(expected.split("\n"))
+        )
+    )
+
+
+@functools.cache
+def _source_lines(path: str) -> frozenset[str]:
+    """file の空でない行(前後の空白を除く)。読めない file(<frozen …> など)は空。"""
+    file = Path(path)
+    if not file.is_file():
+        return frozenset()
+    lines = file.read_text(encoding="utf-8", errors="replace").splitlines()
+    return frozenset(stripped for line in lines if (stripped := line.strip()))
+
+
+def _frame_violations(lines: list[str]) -> list[str]:
+    """traceback の frame の行でない行。frame の並びは File の行で始まり、続く行は File の行・直前の File の行の file の
+    source の行・frame の中の印の行。"""
+    heads = [_FRAME_HEAD.fullmatch(line) for line in lines]
+    # 行ごとの、直前の File の行の file の source の行(その行より前に File の行が無ければ空)。
+    sources = itertools.accumulate(
+        heads,
+        lambda source, head: source if head is None else _source_lines(head["path"]),
+        initial=frozenset[str](),
+    )
+    return [
+        line
+        for index, (line, head, source) in enumerate(zip(lines, heads, sources, strict=False))
+        if head is None
+        and (index == 0 or not (line.strip() in source or _FRAME_MARKER.fullmatch(line)))
+    ]
+
+
+def _compare(expected: str, actual: str) -> list[str] | None:
+    """actual を expected と比べる: 合わなければ None、合えば行だけの ANY が呑んだ行のうち frame の行でない物(無ければ
+    空)。"""
+    match = _pattern(expected).fullmatch(actual)
+    if match is None:
+        return None
+    return [
+        line
+        for frames in match.groupdict().values()
+        for line in _frame_violations(frames.split("\n"))
+    ]
+
+
 def _matches(expected: str, actual: str) -> bool:
-    """actual が expected と同じか(expected の ANY は、どの文字列にも合う)。"""
-    pattern = ".*?".join(re.escape(part) for part in expected.split(ANY))
-    return re.fullmatch(pattern, actual, flags=re.DOTALL) is not None
+    """actual が expected に合い、行だけの ANY が frame の行だけを呑んだか。"""
+    return _compare(expected, actual) == []
 
 
 def _output_diff(expected: Path, actual: str) -> str:
@@ -256,41 +352,53 @@ def _macro_violations(source: str, filename: str) -> list[str]:
 
 @pytest.mark.parametrize("name", _runnable())
 def test_example_runs(name: str, children: Children) -> None:
-    result = children.result(EXAMPLES / name)
+    result = children.result(name, failing_a_case=False)
     assert result.returncode == 0, result.stdout + result.stderr
     expected = _expected(name)
     assert expected.is_file(), (
         f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
-        f"走るたびに変わる所を {ANY} にする"
+        f"走るたびに変わる所を印にする"
     )
-    assert _matches(expected.read_text(encoding="utf-8"), result.stdout), _output_diff(
-        expected, result.stdout
+    swallowed = _compare(expected.read_text(encoding="utf-8"), result.stdout)
+    assert swallowed is not None, _output_diff(expected, result.stdout)
+    assert swallowed == [], (
+        f"{expected.relative_to(EXAMPLES)} の行だけの {ANY} が traceback の frame でない行を呑んだ — 行だけの {ANY} は"
+        f" frame だけを伏せる。呑んだ行を期待の出力に書く: {swallowed}"
     )
 
 
-@pytest.mark.parametrize("name", sorted(CASE_FAILURE_MUTANTS))
+@pytest.mark.parametrize("name", _runnable())
 def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
-    """ANY を置いた期待の出力が、件の結果まで伏せていない事: 件の中で失敗する写しの出力は合わない(写しの作り方は
-    _write_mutant)。"""
-    original, _ = CASE_FAILURE_MUTANTS[name]
-    assert (EXAMPLES / name).read_text(encoding="utf-8").count(original) == 1, (
-        f"変異の元の文 {original!r} が {name} に 1 つだけ在るのではない — 変異を例に合わせて書き直す"
+    """件の中の失敗が、比べる出力に出る事: Traverse の走りごとに最初の件を件の中で失敗させた子の出力は、期待の出力に
+    合わない(子が落ちれば、失敗は終了コードに出る)。件を 1 つも走らせない例は NO_CASES に理由つきで置く。"""
+    result = children.result(name, failing_a_case=True)
+    calls = _CASE_CALLS.search(result.stderr)
+    assert calls is not None, (
+        f"件の中で失敗させる子が、件の関数を呼んだ数を書かずに終わった\n{result.stdout}{result.stderr}"
     )
-    result = children.result(_mutant(children.copies, name))
-    assert result.returncode == 0, (
-        f"変異を当てた写しが 0 以外で終わった — 変異が件の外で例を落とした(件の中だけで失敗する変異を選ぶ)\n"
-        f"{result.stdout}{result.stderr}"
+    if name in NO_CASES:
+        assert calls[1] == "0", (
+            f"{name} は件を走らせるようになった — NO_CASES の行(理由: {NO_CASES[name]})を外す"
+        )
+        return
+    assert calls[1] != "0", (
+        f"{name} が Traverse の件を 1 つも走らせない — 件を走らせず doeff-hy・Hy の中身だけを印字する debug 用の file は"
+        f"例ではない(examples/ に置かない)。件の無い例なら NO_CASES に理由つきで足す"
     )
-    assert not _matches(_expected(name).read_text(encoding="utf-8"), result.stdout), (
-        f"件の中で失敗した写しの出力が {_expected(name).relative_to(EXAMPLES)} に合う — "
-        f"{ANY} が件の結果まで伏せている\n{result.stdout}"
+    expected = _expected(name)
+    assert expected.is_file(), f"{name} の期待の出力が無い(test_example_runs が名指す)"
+    assert result.returncode != 0 or not _matches(
+        expected.read_text(encoding="utf-8"), result.stdout
+    ), (
+        f"件の中で失敗した子の出力が {expected.relative_to(EXAMPLES)} に合う — 例が件の結果を印字しないか、"
+        f"印が件の結果まで伏せている\n{result.stdout}"
     )
 
 
 @pytest.mark.parametrize("name", sorted(BROKEN))
 def test_broken_example_is_still_broken(name: str, children: Children) -> None:
     assert (EXAMPLES / name).is_file(), f"BROKEN の行 {name} の例が examples/ に無い — 行を外す"
-    result = children.result(EXAMPLES / name)
+    result = children.result(name, failing_a_case=False)
     assert result.returncode != 0, (
         f"{name} は走るようになった — BROKEN の行(理由: {BROKEN[name]})を外す"
     )
@@ -320,42 +428,92 @@ def test_macro_check_sees_nested_forms() -> None:
 
 
 def test_tables_name_examples_as_they_are() -> None:
-    """期待の出力は走る例ちょうどに在り、変異の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
+    """期待の出力は走る例ちょうどに在り、件の無い例の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
     compared = _runnable()
     present = {path.name for path in EXPECTED.glob("*.txt")}
     assert present - {_expected(name).name for name in compared} == set(), (
         "比べる例の無い期待の出力が在る — 消すか、例を BROKEN から外す"
     )
-    with_any = {
-        name
-        for name in compared
-        if _expected(name).is_file() and ANY in _expected(name).read_text(encoding="utf-8")
+    assert set(NO_CASES) - set(compared) == set(), "NO_CASES の行が、走る例を名指さない — 行を外す"
+
+
+def test_expected_output_places_only_known_marks() -> None:
+    """期待の出力の ANY は、行だけの ANY か MARKS の形でだけ置く(どの文字列にも合う印は件の結果まで伏せられる)。"""
+    violations = {
+        path.name: found
+        for path in sorted(EXPECTED.glob("*.txt"))
+        if (found := _mark_violations(path.read_text(encoding="utf-8")))
     }
-    assert with_any - set(CASE_FAILURE_MUTANTS) == set(), (
-        f"期待の出力に {ANY} を置いた例に、件の中で失敗する変異が無い — CASE_FAILURE_MUTANTS に行を足す"
-    )
-    assert set(CASE_FAILURE_MUTANTS) - with_any == set(), (
-        f"CASE_FAILURE_MUTANTS の行が、期待の出力に {ANY} を置いた例を名指さない — 行を外す"
-    )
-    # checkout の path を含む期待の出力は、別の木(日次の作業木)では必ず外れる — 置いた木で気づくように断る。
-    checkout = str(EXAMPLES.parents[2])
-    with_path = sorted(
-        path.name for path in EXPECTED.glob("*.txt") if checkout in path.read_text(encoding="utf-8")
-    )
-    assert with_path == [], f"期待の出力に checkout の path が在る — path を含む所を {ANY} にする"
-    with_hy_names = sorted(
-        path.name
-        for path in EXPECTED.glob("*.txt")
-        if _HY_GENERATED_NAME.search(path.read_text(encoding="utf-8"))
-    )
-    assert with_hy_names == [], (
-        f"期待の出力に Hy の付ける名(_hy_anon_・_hy_gensym_)が在る — 番号は macro の展開で変わる。"
-        f"その所を {ANY} にする"
+    assert violations == {}, (
+        f"期待の出力に印の形でない {ANY} が在る — 行の中の印は MARKS の形(呑める物の決まった印)で置き、traceback の"
+        f" frame は行だけの {ANY} にする。走るたびに変わる物の種類が新しければ MARKS に行を足す: {violations}"
     )
 
 
-def test_hy_name_check_sees_generated_names() -> None:
-    """今の期待の出力には Hy の付ける名が無いので、拾う事は名を含む文で確かめる。"""
-    assert _HY_GENERATED_NAME.search("raised in: _hy_anon_17:129 -> fetch_price:95")
-    assert _HY_GENERATED_NAME.search("(setx _hy_gensym_bound_2 x)")
-    assert not _HY_GENERATED_NAME.search("raised in: …:129 -> fetch_price:95")
+def test_expected_output_places_nothing_unplaceable() -> None:
+    found = {
+        path.name: names
+        for path in sorted(EXPECTED.glob("*.txt"))
+        if (
+            names := [
+                name
+                for name, pattern in UNPLACEABLE.items()
+                if pattern.search(path.read_text(encoding="utf-8"))
+            ]
+        )
+    }
+    assert found == {}, f"期待の出力に置かない物が在る — その所を印にする: {found}"
+
+
+def test_mark_check_sees_unknown_marks() -> None:
+    """今の期待の出力の印は全部決まった形なので、形でない印を拾う事・印が決まった物しか呑まない事は、それを含む文で
+    確かめる。"""
+    expected = f"Success: {ANY}\nasync: {ANY} in {ANY}s\nsync: 550 in {ANY}s\n{ANY}\n"
+    assert _mark_violations(expected) == [f"1: Success: {ANY}", f"2: async: {ANY} in {ANY}s"]
+    assert _matches(f"sync: 550 in {ANY}s\n", "sync: 550 in 1.02s\n")
+    # 秒の印は秒の数しか呑まず、行を越えない
+    assert not _matches(f"sync: {ANY}s\n", "sync: 550 in 1.02s\n")
+    assert not _matches(f"sync: 550 in {ANY}s\n", "sync: 550 in 1.02\n  [2] OK: 3s\n")
+
+
+def test_frame_mark_swallows_only_frames() -> None:
+    """今の例の行だけの ANY は frame だけを伏せているので、件の結果の行を呑む事を拾うのは、それを含む出力で確かめる。"""
+    frame = (
+        f'        File "{Path(__file__)}", line 1, in <module>\n    import difflib\n    ^^^^^^\n'
+    )
+    traceback = f"  [1] FAILED: boom\n      Traceback (most recent call last):\n{frame}"
+    actual = f"{traceback}      KeyError: 'boom'\n  [2] OK: 2\n  [3] OK: 3\n"
+    assert (
+        _compare(
+            f"  [1] FAILED: boom\n      Traceback (most recent call last):\n{ANY}\n      KeyError: 'boom'\n  [2] OK: 2\n  [3] OK: 3\n",
+            actual,
+        )
+        == []
+    )
+    # 呑みすぎ: 例外の行と件 [2] の行まで伏せた期待の出力
+    swallowing = (
+        f"  [1] FAILED: boom\n      Traceback (most recent call last):\n{ANY}\n  [3] OK: 3\n"
+    )
+    assert _compare(swallowing, actual) == ["      KeyError: 'boom'", "  [2] OK: 2"]
+    assert not _matches(swallowing, actual)
+    # frame の並びは File の行で始まる
+    assert _frame_violations(["  [0] OK: 1", *frame.rstrip("\n").split("\n")]) == ["  [0] OK: 1"]
+
+
+def test_unplaceable_table_catches_its_samples() -> None:
+    """今の期待の出力には置かない物が無いので、表の行ごとに、その物を含む文を拾い、印にした文は拾わない事を確かめる。"""
+    samples = {
+        "checkout の path": f"{EXAMPLES / 'ex07_proboscis_ema_rewrite.hy'}:129",
+        "機体の置き場(venv・Python・home)": f"{Path(sys.base_prefix) / 'lib' / 'traceback.py'}",
+        "Hy が付ける名(_hy_anon_・_hy_gensym_)": "raised in: _hy_anon_17:129 -> fetch_price:95",
+        "traceback の frame の行": '        File "/x/doeff_core_effects/handlers.py", line 154, in attempt',
+    }
+    assert set(samples) == set(UNPLACEABLE), "UNPLACEABLE の行ごとに、拾う文をここに足す"
+    assert [name for name, sample in samples.items() if not UNPLACEABLE[name].search(sample)] == []
+    assert UNPLACEABLE["Hy が付ける名(_hy_anon_・_hy_gensym_)"].search(
+        "(setx _hy_gensym_bound_2 x)"
+    )
+    masked = (
+        f"raised in: {ANY}:129 -> fetch_price:95\n      Traceback (most recent call last):\n{ANY}\n"
+    )
+    assert [name for name, pattern in UNPLACEABLE.items() if pattern.search(masked)] == []
