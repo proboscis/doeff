@@ -17,6 +17,9 @@
 4. uv.lock の Hy の版で測る検が、uv.lock の変更と、uv.lock の版の読み手(scripts/semgrep_locked.py の locked_version)の
    変更で選ばれる: 版は data の file から読むので、逆依存では選ばれない。測る検は source から数える(card ki-33d2441b7e28 —
    test_bytecode_guard.py は uv.lock から版を読むのに表に無く、Hy を上げる便で選ばれず日次でだけ走った)。
+5. handle・defhandler の節の形を作る doeff-hy の module(handle.hy・clause_ops.hy・expansion_names.py)の変更で、doeff-effect-analyzer の
+   検が選ばれる: analyzer は Hy の source を本物の macro で展開して読むが doeff-hy を import しないので、逆依存では選ばれない
+   (card ki-f0192874690b — 4f284efa9 が節の局所名を変えた時、analyzer の検 12 本と agora-controllers の閉じの検が赤のまま main に入った)。
 
 日次の母集団(tests/)と、表の repo 全体の行(prefix = "")の両方から走る — 変えた所の検は、どの変更でもこの file を先頭の
 組で走らせる。入口の main は呼ばず、読み手の純粋な定義(read_contract_table・workspace_packages・table_gaps)を直に呼ぶ。
@@ -51,6 +54,19 @@ EXAMPLE_MACRO_RUNTIME = "packages/doeff-core-effects/doeff_core_effects/outcomes
 #: uv.lock と、doeff で uv.lock の版を読む 1 か所(card ki-33d2441b7e28)。
 LOCK = "uv.lock"
 LOCK_READER = "scripts/semgrep_locked.py"
+#: handle・defhandler の節の形(節を回す関数の引数・節の操作が読む effect と続きの名)を作る doeff-hy の module(card ki-6af9862aed32 の
+#: 4f284efa9 が変えた 3 file — macro の定義元・節の操作・名の綴りの定義元)と、それを本物の macro で展開して読む analyzer の検の file。
+HANDLER_EXPANSION_MODULES = (
+    "packages/doeff-hy/src/doeff_hy/handle.hy",
+    "packages/doeff-hy/src/doeff_hy/clause_ops.hy",
+    "packages/doeff-hy/src/doeff_hy/expansion_names.py",
+)
+ANALYZER_EXPANSION_CHECKS = (
+    "packages/doeff-effect-analyzer/tests/python/test_program_effects.py",
+    "packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py",
+)
+#: analyzer の検が Hy の source の中で本物の defhandler を require する行(展開を通す印 — doeff-hy.macros か doeff-hy.handle から)。
+HANDLER_MACRO_REQUIRE = re.compile(r"\(require doeff-hy\.(?:macros|handle) \[[^\]]*\bdefhandler\b")
 #: 検の source が読み手を Hy の版の読みに呼ぶ行(Python の locked_version・Hy の .locked-version の呼びで、package に hy の名を
 #: 渡す行)。
 LOCKED_HY_READ = re.compile(r'locked[-_]version\b[^\n]*"hy"')
@@ -227,6 +243,32 @@ def test_changing_the_lock_or_its_reader_selects_every_check_measuring_the_locke
         f"uv.lock の Hy の版で測る検を選ばない変更 #(変えた file 検): {unselected} — root の pyproject.toml の"
         " [[tool.doeff.contract-tests]] で、その path に当たる行の tests に検を足す(版は data の file から読むので、"
         "逆依存では選ばれない)"
+    )
+
+
+def test_changing_the_handler_expansion_selects_the_analyzer_checks(runner: ModuleType) -> None:
+    """本物の表: handle・defhandler の節の形を作る doeff-hy の module(4f284efa9 が変えた 3 file)のどれを変えた差分も、
+    変えた所の検の選び(入口と同じ select_targets)が doeff-effect-analyzer の検の file を選ぶ。analyzer の検は Hy の source に
+    `(require doeff-hy.macros [defhandler …])` を書いて本物の macro で展開してから読み、doeff-hy を import しないので、逆依存では選ばれない
+    (card ki-f0192874690b — 4f284efa9 が節の局所名を変えた時、analyzer の検 12 本と agora-controllers の閉じの検が赤のまま main に
+    入り、日次で初めて出た)。行を外すと、この検が赤になる。"""
+    for module in HANDLER_EXPANSION_MODULES:
+        assert (REPO_ROOT / module).is_file(), f"{module} が無い — 移した先・改めた名を書く"
+    for check in ANALYZER_EXPANSION_CHECKS:
+        source = (REPO_ROOT / check).read_text(encoding="utf-8")
+        # 検が本物の macro を通さなくなったら、この選びは何も守らない(古い前提のまま緑にしない)。
+        assert HANDLER_MACRO_REQUIRE.search(source), (
+            f"{check} が本物の defhandler を require しない — 展開した本物の節を読む検でなくなった。選ぶ検を直す"
+        )
+    unselected = [
+        (module, check)
+        for module in HANDLER_EXPANSION_MODULES
+        for check in ANALYZER_EXPANSION_CHECKS
+        if check not in _selected_files(runner, module)
+    ]
+    assert unselected == [], (
+        f"analyzer の検を選ばない変更 #(変えた file 検): {unselected} — root の pyproject.toml の [[tool.doeff.contract-tests]] で、"
+        "doeff-hy の src の行の tests に analyzer の検を足す(analyzer は doeff-hy を import しないので、逆依存では選ばれない)"
     )
 
 
