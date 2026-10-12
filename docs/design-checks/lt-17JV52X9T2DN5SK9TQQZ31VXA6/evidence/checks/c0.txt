@@ -1,0 +1,10 @@
+# 確かめ c0 — 直した版で例の検が全部緑(例 9 本・期待の出力は書き換えない)
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:14:23Z
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=short -rf 
+..........................................s............................. [ 91%]
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+78 passed, 1 skipped, 1 warning in 25.25s
+exit=0

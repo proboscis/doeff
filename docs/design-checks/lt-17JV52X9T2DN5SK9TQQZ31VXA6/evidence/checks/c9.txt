@@ -1,0 +1,21 @@
+# 確かめ c9 — 例の補助の lib を examples/support/ に置き、その lib が traverse で作った値の class 名を例が印字する — 独立の評価者の ex11。population の検が名指して赤
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:25:26Z
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=short -rf 
+..............................................s......................... [ 84%]
+.....F.......                                                            [100%]
+=================================== FAILURES ===================================
+_______ test_examples_dir_holds_only_examples_and_their_expected_outputs _______
+packages/doeff-traverse/tests/test_examples_run.py:926: in test_examples_dir_holds_only_examples_and_their_expected_outputs
+    assert stray == [], (
+E   AssertionError: examples/ の下に、例でも期待の出力でもない file が在る — 例の補助の lib を置くと、その lib が macro で作った値の形は例の検の変異に当たらない。lib は例の中に書くか、利用者が使う package に置く: ['support/stages.hy']
+E   assert ['support/stages.hy'] == []
+E     
+E     Left contains one more item: 'support/stages.hy'
+E     Use -v to get more diff
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_examples_dir_holds_only_examples_and_their_expected_outputs
+1 failed, 83 passed, 1 skipped, 1 warning in 20.92s
+exit=1

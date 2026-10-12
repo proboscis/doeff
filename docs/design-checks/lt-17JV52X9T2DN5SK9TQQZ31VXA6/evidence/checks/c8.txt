@@ -1,0 +1,12 @@
+# 確かめ c8 — 答えを変えない macro の変更: traverse の展開を恒久に何もしない handler の下で走らせる(変異と同じ形)— 独立の評価者の R2b
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:24:35Z
+ packages/doeff-hy/src/doeff_hy/macros.hy | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=short -rf 
+..........................................s............................. [ 91%]
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+78 passed, 1 skipped, 1 warning in 20.54s
+exit=0

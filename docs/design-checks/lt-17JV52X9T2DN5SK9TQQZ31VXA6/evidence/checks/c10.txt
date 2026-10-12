@@ -1,0 +1,10 @@
+# 確かめ c10 — (限界の実測)内側の defhandler が受けた Traverse の中身(件の関数の形)を印字する例 — 独立の評価者の ex10。変異は一番外の値だけを包むので、検は全部緑のまま
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:25:49Z
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=short -rf 
+..............................................s......................... [ 84%]
+.............                                                            [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+84 passed, 1 skipped, 1 warning in 20.31s
+exit=0

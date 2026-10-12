@@ -1,0 +1,20 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index 54ba65730..89a56935a 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -1571,7 +1571,14 @@ defk {name}: {{:post [...]}} is required.
+      (import doeff [do :as _doeff-do])
+      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
+   (setv #(bindings body-expr) (_parse-do-body forms "traverse"))
+-  (locate-synthesized (_gen-traverse-body bindings body-expr)))
++  ;; R2b (blind eval): run the built value under a handler that forwards every effect (a scope for later handlers).
++  (locate-synthesized
++    (if (_static-view?)
++        (_gen-traverse-body bindings body-expr)
++        `((. (__import__ "doeff" :fromlist #("WithHandlerType")) WithHandlerType)
++           ((. (__import__ "doeff" :fromlist #("do")) do)
++            (fn [effect k] (yield ((. (__import__ "doeff" :fromlist #("Pass")) Pass) effect k))))
++           ~(_gen-traverse-body bindings body-expr)))))
+ 
+ 
+ (defmacro for/do [#* forms]

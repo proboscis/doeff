@@ -1,0 +1,4 @@
+# 確かめ c4 — 変異で包む macro の名が今の doeff-hy に無い — 入口が 0 以外で終わり、表を合わせると名指す
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:22:57Z
+doeff-hy の macro に nosuchmacro が無い — 変異で包む macro の表(test_examples_run.py の MUTATED_MACROS)を今の macro に合わせる
+exit=1

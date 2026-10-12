@@ -1,0 +1,7 @@
+# r3 — 盲検 B の例(defk が定義した関数 pipeline を呼んだ値の class を印字する ex14)を足す — 版 91b9b8bbc(盲検の対象の版)
+# 材料: inputs/ex_program_is_data.hy.txt(.txt を外して examples/ex14_program_is_data.hy)・ex_program_is_data.expected.txt(expected/ex14_program_is_data.txt)
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=short -rf
+84 passed, 1 skipped, 1 warning in 26.98s
+exit=0
+$ git add -N <ex14 の 2 file>; sh ~/dotfiles/agent/venv-run.sh ~/dotfiles/agentcli code-quality --repo "$PWD" --scope changed --base $(git merge-base HEAD origin/main)
+code-quality: passed (scope=changed・型検査は未実行(fast の段))

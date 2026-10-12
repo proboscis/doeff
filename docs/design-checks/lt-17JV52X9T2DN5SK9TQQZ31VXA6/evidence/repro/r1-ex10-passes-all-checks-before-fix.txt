@@ -1,0 +1,6 @@
+# r1 — 直す前(基の版の検)に、盲検 B(前の設計検証 lt-0ZP7AYKXMDX83R8DKGFBA73DBJ)の ex10 を足す — 検が全部緑のまま(展開が作った値の class 名 Traverse / Call を印字する例)
+# 版: c33b881a9 + ex10(blind/b-files の patch)
+deadline scale x3.1 (load per usable CPU) — per test 185s, watchdog 277s
+test-admission: focused — 68 件(変更箇所の検証)
+...................................s................................     [100%]
+67 passed, 1 skipped in 16.16s

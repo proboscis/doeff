@@ -1,0 +1,12 @@
+;;; Shared stages for the examples: a stage is the value the traverse macro builds, ready to be run.
+
+(require doeff-hy.macros [<- traverse])
+(import doeff [do :as _doeff-do])
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+
+
+(defn doubling-stage [items]
+  "Build the stage that doubles every item (the caller decides when and how to run it)."
+  (traverse
+    (<- x (Iterate items))
+    (* x 2)))
