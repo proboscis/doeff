@@ -584,7 +584,7 @@ pub struct VocabularyScope {
 /// :files と :except は repo の根からの path の glob。:except の file だけがこの綴りを書ける(空なら :files のどこにも書かない)。
 /// 註を落とした本文を読み、文字列の中は数える(DOEFF146 は文字列を数えない — 外の口の動詞や route の綴りは文字列に在る)。
 /// `:names-bound-in [<repo の根からの path> …]` を書けば、その Hy の file で群の綴りに当たる値に結んだ名(宣言の `:environ` の組の名・
-/// 最上位の `(val 名 値)` の名)も群の綴りにする(名を正規表現の写しで持たず、定義元から導く — confined_spellings::names_bound_to)。
+/// 最上位の `(val 名 値)` の名)も群の綴りにする(名を正規表現の写しで持たず、定義元から導く — bound_names::names_bound_to)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConfinedSpelling {
     /// 群の名(登録簿の鍵の細目)。
@@ -1793,7 +1793,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 群 group の `:names-bound-in [<repo の根からの path> …]` の Hy の file を読み、群の綴りに当たる値に結んだ名を group の綴りに足す
-    /// (confined_spellings::names_bound_to — 足した名に当たる値に結んだ名も、増えなくなるまで足す)。名を結ぶ file は群の綴りを書いてよい
+    /// (bound_names::names_bound_to — 足した名に当たる値に結んだ名も、増えなくなるまで足す)。名を結ぶ file は群の綴りを書いてよい
     /// file(:except に当たる)でなければならない — 外の file の結びはそれ自身が当たりになる。根の外の path・:except の外・読めない・
     /// 括弧の閉じない file と、名を 1 つも導けない file は、黙って写しの無い群にせず位置つきの宣言の誤りにする(:contract-files の file
     /// ごとの「綴りが 1 つも無い」と同じ — 定数を関数の中へ移す・結びの形を変えると、その file の名が黙って群から落ちるため。
@@ -1823,7 +1823,7 @@ impl<'a> Parser<'a> {
             }
             let path = self.root.join(&rel);
             match std::fs::read_to_string(&path) {
-                Ok(source) => match super::confined_spellings::bindings_of(&rel, &source) {
+                Ok(source) => match super::bound_names::bindings_of(&rel, &source) {
                     Some(found) => {
                         bindings.extend(found);
                         read.push((item, rel.clone()));
@@ -1834,7 +1834,7 @@ impl<'a> Parser<'a> {
             }
             group.names_bound_in.push(rel);
         }
-        let derived = super::confined_spellings::names_bound_to(&group.patterns, &bindings);
+        let derived = super::bound_names::names_bound_to(&group.patterns, &bindings);
         for (item, rel) in read {
             if !derived.iter().any(|name| name.origin == rel) {
                 self.problem(item, &format!("confined-spelling {} の :names-bound-in の {} に、群の綴りに当たる値に結んだ名が 1 つも無い", group.name, rel));
