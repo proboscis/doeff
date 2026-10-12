@@ -1,5 +1,5 @@
 # 変異: M11-runner-stops-counting-runs(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/tests/run_example_failing_a_case.py
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
 ## 要約: 11 failed, 38 passed, 1 skipped, 1 warning in 8.83s
@@ -10,7 +10,7 @@
 _______________ test_example_runs_a_program[ex01_basic_fail.hy] ________________
 
 name = 'ex01_basic_fail.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -26,11 +26,11 @@ E       AssertionError: ex01_basic_fail.hy は doeff の run で Program を走�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 ____________ test_example_runs_a_program[ex02_traverse_pipeline.hy] ____________
 
 name = 'ex02_traverse_pipeline.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -46,11 +46,11 @@ E       AssertionError: ex02_traverse_pipeline.hy は doeff の run で Program 
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=25, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 ____________ test_example_runs_a_program[ex03_zip_multi_source.hy] _____________
 
 name = 'ex03_zip_multi_source.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -66,11 +66,11 @@ E       AssertionError: ex03_zip_multi_source.hy は doeff の run で Program �
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=12, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 _________________ test_example_runs_a_program[ex04_simple.hy] __________________
 
 name = 'ex04_simple.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -86,11 +86,11 @@ E       AssertionError: ex04_simple.hy は doeff の run で Program を走ら�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=3, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 _____________ test_example_runs_a_program[ex04_traverse_macro.hy] ______________
 
 name = 'ex04_traverse_macro.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -106,11 +106,11 @@ E       AssertionError: ex04_traverse_macro.hy は doeff の run で Program を
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=25, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 _____________ test_example_runs_a_program[ex05_parallel_timing.hy] _____________
 
 name = 'ex05_parallel_timing.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -126,11 +126,11 @@ E       AssertionError: ex05_parallel_timing.hy は doeff の run で Program �
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=40, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 ____________ test_example_runs_a_program[ex06_mediagen_rewrite.hy] _____________
 
 name = 'ex06_mediagen_rewrite.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -146,11 +146,11 @@ E       AssertionError: ex06_mediagen_rewrite.hy は doeff の run で Program �
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=6, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 __________ test_example_runs_a_program[ex07_proboscis_ema_rewrite.hy] __________
 
 name = 'ex07_proboscis_ema_rewrite.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -166,11 +166,11 @@ E       AssertionError: ex07_proboscis_ema_rewrite.hy は doeff の run で Prog
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=24, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 ______________ test_example_runs_a_program[ex08_tqdm_progress.hy] ______________
 
 name = 'ex08_tqdm_progress.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -186,11 +186,11 @@ E       AssertionError: ex08_tqdm_progress.hy は doeff の run で Program を�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=116, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 _______________ test_example_runs_a_program[ex09_for_do_when.hy] _______________
 
 name = 'ex09_for_do_when.hy'
-children = <test_examples_run.Children object at 0x30fa049df90>
+children = <test_examples_run.Children object at 0x5c2b049df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -206,10 +206,10 @@ E       AssertionError: ex09_for_do_when.hy は doeff の run で Program を走
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=12, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 ________________________ test_marks_count_only_what_ran ________________________
 
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2910/test_marks_count_only_what_ran0')
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2982/test_marks_count_only_what_ran0')
 deadline_scale_factor = 1.0
 
     def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float) -> None:
@@ -248,7 +248,7 @@ E
 E         Drill down into differing attribute program_runs:
 E           program_runs: 0 != 1
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:500: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:498: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:

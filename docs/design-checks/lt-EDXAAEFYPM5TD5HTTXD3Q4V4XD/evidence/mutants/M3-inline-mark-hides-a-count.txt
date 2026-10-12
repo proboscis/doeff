@@ -1,8 +1,8 @@
 # 変異: M3-inline-mark-hides-a-count(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 2 failed, 47 passed, 1 skipped, 1 warning in 8.71s
+## 要約: 2 failed, 47 passed, 1 skipped, 1 warning in 8.64s
 ## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_only_known_marks']
 ## 出力
 .......F........................s............F....                       [100%]
@@ -10,7 +10,7 @@
 _______________ test_example_runs[ex07_proboscis_ema_rewrite.hy] _______________
 
 name = 'ex07_proboscis_ema_rewrite.hy'
-children = <test_examples_run.Children object at 0x46f1649df90>
+children = <test_examples_run.Children object at 0x48b0849df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs(name: str, children: Children) -> None:
@@ -78,7 +78,7 @@ E            [4] OK: ({'symbol': 'MSFT', 'time': '2024-01-01'}, 300.0)
 E                index: ok
 E       assert None is not None
 
-packages/doeff-traverse/tests/test_examples_run.py:424: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:422: AssertionError
 _________________ test_expected_output_places_only_known_marks _________________
 
     def test_expected_output_places_only_known_marks() -> None:
@@ -99,7 +99,7 @@ E         Left contains 1 more item:
 E         {'ex07_proboscis_ema_rewrite.txt': ['2: Success: …']}
 E         Use -v to get more diff
 
-packages/doeff-traverse/tests/test_examples_run.py:571: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:570: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
@@ -151,4 +151,4 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 =========================== short test summary info ============================
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_only_known_marks
-2 failed, 47 passed, 1 skipped, 1 warning in 8.71s
+2 failed, 47 passed, 1 skipped, 1 warning in 8.64s

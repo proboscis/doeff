@@ -79,7 +79,7 @@ def mutations(name: str) -> dict[Path, str]:
     if name == "M11-runner-stops-counting-runs":
         return {RUNNER: replaced(RUNNER, "    _count_program_runs()\n", "    pass\n")}
     if name == "M12-child-time-zone-pin-dropped":
-        return {NEW: replaced(NEW, 'return {**os.environ, "TZ": CHILD_TIME_ZONE}', "return dict(os.environ)")}
+        return {NEW: replaced(NEW, 'return ["env", f"TZ={CHILD_TIME_ZONE}", *command]', "return command")}
     raise SystemExit(f"unknown mutation {name}")
 
 
@@ -94,6 +94,7 @@ def run_pytest() -> tuple[str, list[str]]:
 
 
 for name in sys.argv[2:]:
+    before_status = subprocess.run(["git", "-C", str(WT), "status", "--short", "--", "packages"], capture_output=True, text=True).stdout.strip()
     changes = mutations(name)
     originals = {path: path.read_text(encoding="utf-8") if path.exists() else None for path in changes}
     try:
@@ -107,8 +108,9 @@ for name in sys.argv[2:]:
             else:
                 path.write_text(text, encoding="utf-8")
     head = subprocess.run(["git", "-C", str(WT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    dirty = before_status
     record = (f"# 変異: {name}(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)\n"
-              f"# 版: {head} + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)\n"
+              f"# 版: {head}(当てる前の packages/ の作業木の差分: {dirty or 'なし'})\n"
               f"# 当てた file: {', '.join(str(p.relative_to(WT)) for p in changes)}\n"
               f"# 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf\n"
               f"## 要約: {summary}\n## 赤: {failed}\n## 出力\n{out}")
