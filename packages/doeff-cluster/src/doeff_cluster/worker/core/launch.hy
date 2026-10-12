@@ -12,6 +12,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.core.run_context_rules [process-context-environ])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster.shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
 
 
@@ -34,9 +35,11 @@
   {:pre [(: base (get dict #(str str))) (: extra (get dict #(str str))) (: declared (get dict #(str str))) (: worker (get dict #(str str)))]
    :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
   "実行環境の job の子の環境変数を組むため: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
-   → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。"
-  (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v)
-     extra declared worker))
+   → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。重ねた後に、どの層から
+   来た物でも WITHHELD-ENV-NAMES の名を外す(許可表・--pass-env・宣言のどれを広げても子へ届かない)。"
+  (val merged (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v)
+                 extra declared worker))
+  (dfor #(k v) (.items merged) :if (not-in k WITHHELD-ENV-NAMES) k v))
 
 
 (defk env-project-dir [root declared]
@@ -146,7 +149,10 @@
                      :work-dir work-dir
                      :last-used (+ code-path "/.last-used")
                      :entry-args (+ spec.args program-args)))
-      (do (val tree-env (| extra-env environ {"PYTHONPATH" (.pythonpath layout code-path)} worker-env))
+      ;; 木の job も、足す環境変数から WITHHELD-ENV-NAMES の名を外す。EXTEND で継ぐ worker の環境そのものからは外せない(StartProcess に名を
+      ;; 落とす口が無い)— worker の環境に置かない事は雛形(deploy/)の側が守る。
+      (do (val tree-env (dfor #(k v) (.items (| extra-env environ {"PYTHONPATH" (.pythonpath layout code-path)} worker-env))
+                              :if (not-in k WITHHELD-ENV-NAMES) k v))
           (JobLaunch :argv (+ shim #(hy-command "-m" spec.entry) spec.args program-args)
                      :cwd code-path
                      :env (tuple (gfor k (sorted tree-env) (EnvEntry :name k :value (get tree-env k))))

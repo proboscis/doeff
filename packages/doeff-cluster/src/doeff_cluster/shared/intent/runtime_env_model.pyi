@@ -28,6 +28,7 @@ SHA256_PATTERN: re.Pattern[str]
 ENV_VAR_PATTERN: re.Pattern[str]
 RESERVED_ENV_PREFIXES: tuple[str, ...]
 RESERVED_ENV_NAMES: frozenset[str]
+WITHHELD_ENV_NAMES: frozenset[str]
 SECRET_ENV_SUFFIXES: tuple[str, ...]
 PATH_ENV_SUFFIXES: tuple[str, ...]
 
