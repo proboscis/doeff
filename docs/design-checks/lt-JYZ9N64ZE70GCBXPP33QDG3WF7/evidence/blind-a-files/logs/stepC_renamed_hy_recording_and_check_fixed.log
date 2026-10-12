@@ -1,0 +1,107 @@
+
+deadline scale x1.5 (load per usable CPU) — per test 89s, watchdog 134s
+
+test-admission: focused — 23 件(変更箇所の検証)
+.....................F.                                                  [100%]
+=================================== FAILURES ===================================
+_ test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_expansion_used _
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-227/test_a_file_loaded_again_by_pa0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x2f86672b810>
+
+    def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_expansion_used(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """同じ Hy の file を package の名で読んだ process で、path から別の名で読み直す(worker の bytecode の道具が判断の module
+        bake_plan.hy を読む形)と、Hy は compile の module を file の名から引く(``inspect.getmodule``)ので、展開は先に読んだ
+        package の名の module の表で走る。記録を別の名の module の表から作ると、表は一度も引かれず、使った macro の無い空の記録が
+        共有の置き場に入り、macro が変わった後も照らしが素通りで古い展開が使われた(2026-10-11 atlas — doeff の取り込みの検証の
+        pytest が書いた bake_plan.hy の entry を patrol の準備が引き、ec08cd77d より前の defrecord の展開で
+        ``seal_record() missing ... calls_post_init`` — card ki-9180656459ac)。記録は展開が実際に引いた表から作る。"""
+        import hy  # noqa: F401 — Hy の source を compile する口を載せる
+        from doeff_hy_bytecode_guard import code_store
+    
+        store = tmp_path / "store"
+        monkeypatch.setenv(code_store.STORE_ENV, str(store))
+        package = tmp_path / "aliaspkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        (package / "macros.hy").write_text("(defmacro answer [] 11)\n")
+        source = package / "user.hy"
+        source.write_text("(require aliaspkg.macros [answer])\n(setv value (answer))\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        alias = "aliaspkg_user_by_path"
+        try:
+            assert importlib.import_module("aliaspkg.user").value == 11
+            loader = importlib.machinery.SourceFileLoader(alias, str(source))
+            spec = importlib.util.spec_from_file_location(alias, str(source), loader=loader)
+            assert spec is not None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[alias] = module
+            loader.exec_module(module)
+            assert module.value == 11
+            entries = _stored_entries(store, alias, source, source.read_bytes())
+            assert len(entries) == 1, f"path から別の名で読んだ code が共有の置き場に 1 つ入らない: {entries}"
+            record = records.record_of(marshal.loads(Path(entries[0]).read_bytes()))
+            assert record is not None
+>           assert [(used.module, used.name) for used in record.macros] == [("aliaspkg.macros", "answer")], (
+                f"記録が展開の使った macro を名指さない: {record}"
+            )
+E           AssertionError: 記録が展開の使った macro を名指さない: MacroRecord(hy_version='1.3.1', macros=(), absent=(), providers=(), values=(), files=())
+E           assert [] == [('aliaspkg.m...s', 'answer')]
+E             
+E             Right contains one more item: ('aliaspkg.macros', 'answer')
+E             Use -v to get more diff
+
+packages/doeff-hy/tests/test_bytecode_guard.py:689: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-blind-a-eafa/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-hy/tests/test_bytecode_guard.py::test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_expansion_used
+1 failed, 22 passed, 1 warning in 46.50s

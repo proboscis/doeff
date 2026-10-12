@@ -11,10 +11,16 @@ Hy は **PyPI の版**(fork ではない — 利用者の決定 2026-09-29「Hy 
 `make test-changed` がこの file を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])。
 
 包みは import でない形でも Hy の内部に依り、この file がその版の Hy で包みを動かして測る(card ki-eafa369600cd — ADR-DOE-HY-008 の
-R7 の母集団の外): module の macro の表の名(``_hy_macros``)と Hy の展開がその表を ``名 in 表`` と ``表[名]`` で引く事(引いた名を
-覚える表が使った macro を拾う — macro の変更の検)・reader macro の表の名(``_hy_reader_macros`` — reader macro の変更の検)・
+R7 の母集団の外): module の macro の表の名(``records.MACRO_TABLE``)と Hy の展開がその表を ``名 in 表`` と ``表[名]`` で引く事
+(引いた名と表に無かった名を覚える表が拾う — macro の変更の検・使う側の呼ぶ名の macro が足された時の検)・reader macro の表の名
+(``records.READER_TABLE`` — reader macro の変更の検)・Hy の export が書く公開の macro の名の表(全部の require の判定が読む)・
 gensym と let が改めた束縛の名の形(compile の口の正準化が読む — gensym の数えの検)。どれかが替わると、包みは使った macro を
 記録し損ねて古い展開を黙って使うか、code が compile の順で揺れる。
+
+同じ process で包みを動かす検(置き場・口の包み・型検査の展開)は venv の Hy を測る。venv の Hy が uv.lock の版でない作業木(Hy を
+上げて sync していない)では、どの検も uv.lock の版を測らずに緑になりうるので、file の全部の検が先に版の一致を確かめる
+(:func:`_venv_hy_is_the_locked_version` — 設計検証 lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の盲検 A・B)。PyPI の版の中身は版ごとに変わらない
+ので、版が同じなら同じ Hy を測る。Hy の内部への依りを包みに足す便は、その振る舞いの検をこの file に置く。
 """
 
 from __future__ import annotations
@@ -61,6 +67,17 @@ def _locked_hy_version() -> str:
     reader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reader)
     return reader.locked_version(ROOT, "hy")
+
+
+@pytest.fixture(autouse=True)
+def _venv_hy_is_the_locked_version() -> None:
+    """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+    import hy
+
+    assert hy.__version__ == _locked_hy_version(), (
+        f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+        " 測らないので、`make sync` してから測る"
+    )
 
 
 _LOADER = """\
@@ -270,7 +287,7 @@ def test_a_reader_macro_change_recompiles_the_user_on_pypi_hy(
     tmp_path: Path, guard: str, after: int
 ) -> None:
     """reader macro を変えた後、使う側は新しい展開で動く(包みが無いと古い展開のまま — この検が包みを測る事の確かめ)。包みは
-    使う側の module の reader macro の表(``_hy_reader_macros``)に在る他の module の reader macro を記録に入れるので、Hy が表の
+    使う側の module の reader macro の表(``records.READER_TABLE``)に在る他の module の reader macro を記録に入れるので、Hy が表の
     名を替えると記録から漏れ、古い展開を黙って使う(card ki-eafa369600cd)。"""
     package = tmp_path / "pkg"
     package.mkdir()
@@ -283,6 +300,31 @@ def test_a_reader_macro_change_recompiles_the_user_on_pypi_hy(
     assert _run_on_pypi_hy(tmp_path, guard) == 10
     _edit(package / "readers.hy", reader.format(3))
     assert _run_on_pypi_hy(tmp_path, guard) == after
+
+
+@pytest.mark.parametrize("exports", ["", "(export :macros [answer])\n"], ids=["all", "exported"])
+def test_a_new_macro_named_like_a_function_the_user_calls_recompiles_the_user_on_pypi_hy(
+    tmp_path: Path, exports: str
+) -> None:
+    """全部を require する使う側が呼ぶ関数と同じ名の macro が提供元に足されると、使う側は作り直され、呼び出しが macro の展開に
+    変わる。包みは展開が表に引いて無かった名(``名 in 表`` が偽)を覚え、提供元に足されたら古いと判じるので、Hy が表を ``in`` で
+    確かめなくなると覚え損ねる。提供元が Hy の export で公開の macro を絞る形(exported)では、全部の require の判定が Hy の公開の
+    名の表を読むので、Hy がその名を替えると全部の require と数えず、足された macro を見逃す(card ki-eafa369600cd・設計検証
+    lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の盲検 A・B)。"""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    provider = exports + "(defmacro answer [] 1)\n(defmacro hidden [] 2)\n"
+    (package / "macros.hy").write_text(provider)
+    (package / "user.hy").write_text(
+        "(require pkg.macros *)\n(defn shadow [x] x)\n(setv value (+ (answer) (shadow 10)))\n"
+    )
+    assert _run_on_pypi_hy(tmp_path, "before-hy") == 11
+    _edit(
+        package / "macros.hy",
+        provider.replace("[answer]", "[answer shadow]") + "(defmacro shadow [x] 0)\n",
+    )
+    assert _run_on_pypi_hy(tmp_path, "before-hy") == 1
 
 
 def test_the_code_does_not_depend_on_how_many_gensyms_the_process_made_on_pypi_hy(
@@ -317,7 +359,7 @@ def test_the_record_lives_inside_a_standard_pyc(tmp_path: Path) -> None:
     assert record.hy_version == _locked_hy_version()
     # 記録は展開が使った macro(提供元の module 名・macro 名・digest)で、file の path を持たない。
     assert [(used.table, used.module, used.name) for used in record.macros] == [
-        ("_hy_macros", "pkg.macros", "answer")
+        (records.MACRO_TABLE, "pkg.macros", "answer")
     ]
     # 提供元の macro は answer だけなので、名を選んだ require でも全部の require と数える(古いと判じる側に倒れるだけ)。
     assert record.providers == (records.WholeRequire("pkg.macros", ""),)
