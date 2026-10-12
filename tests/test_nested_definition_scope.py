@@ -1,7 +1,8 @@
 """関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff・defsystem ほか
-doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum)が、外の関数に局所の名を
-作らない事の検(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を
-検体で数える事は card ki-93395c51de1e・defrecord と defwire は card ki-8a17293bc3e5)。
+doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum、doeff_hy.conductor の defworkflow)が、
+外の関数に局所の名を作らない事の検(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を
+検体で数える事は card ki-93395c51de1e・defrecord と defwire は card ki-8a17293bc3e5・class の本体と型検査の投影と defworkflow は
+ki-8a17293bc3e5 の残り)。
 
 defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助
 (と `doeff_hy`・`pytest`・`_doeff_QuotedForms`)を import する。関数の本体の中でそれを import すると、名が関数全体の
@@ -16,7 +17,8 @@ module と class の本体の展開は包まない(`__qualname__` と引数な�
 
 包む `_scoped-definition` の呼び手が負う事も検める(設計検証 lt-ZE5XJCF7YRE6ES4S8QDQASD1FF の失敗例): 関数の中の定義は
 外の関数を呼ぶたびに評価されるので module の globals に記録を積まない事、class の本体の定義の関数が読む補助は
-module の段に他の定義が無くても届く事。
+module の段に他の定義が無くても届く事(型を建てる定義は入れ子の型の本体と method も読む)。型検査の投影では、関数・class の本体の
+中の展開の import が局所の名にならず、module の段で解ける事。
 """
 
 import ast
@@ -25,7 +27,6 @@ import types
 from collections.abc import Callable
 from pathlib import Path
 
-import doeff_hy.conductor  # defworkflow の名を読む
 import doeff_hy.macros  # registers extensions(定義の macro の名も読む)
 import doeff_hy.record  # defrecord・defwire・defenum の名を読む
 import hy
@@ -437,19 +438,27 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
 _NOT_DEFINITION_MACROS = frozenset({"defphase"})
 
 
+def _conductor_macro_names() -> set[str]:
+    """`(require doeff-hy.conductor *)` が書き手の module に引く macro の名 — conductor.hy は Python から import せず、書き手と
+    同じに Hy の require で読む(この検の module 契約が許す依存の外)。"""
+    reader = types.ModuleType("conductor_macro_names")
+    hy.eval(hy.read("(require doeff-hy.conductor *)"), reader.__dict__, module=reader)
+    return {hy.unmangle(name) for name in vars(reader)["_hy_macros"]}
+
+
 def _exported_definition_macros() -> set[str]:
     """`(require doeff-hy.macros [...])`・`(require doeff-hy.record [...])`・`(require doeff-hy.conductor [...])` で書き手が引ける
     定義の macro の名(handle.hy から出し直す defhandler を含む)。"""
-    return {
+    named = {
         hy.unmangle(name)
-        for module in (doeff_hy.macros, doeff_hy.record, doeff_hy.conductor)
+        for module in (doeff_hy.macros, doeff_hy.record)
         for name in vars(module)["_hy_macros"]
-        if hy.unmangle(name).startswith("def") and hy.unmangle(name) not in _NOT_DEFINITION_MACROS
-    }
+    } | _conductor_macro_names()
+    return {name for name in named if name.startswith("def") and name not in _NOT_DEFINITION_MACROS}
 
 
 def test_every_definition_macro_has_a_nested_sample() -> None:
-    """doeff_hy.macros と doeff_hy.record が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
+    """doeff_hy.macros・doeff_hy.record・doeff_hy.conductor が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
     補助の import が外の関数の局所の名になるかを誰も検めない(足した macro は検体を足すまで赤)。"""
     assert _exported_definition_macros() == set(_DEFINITION_SAMPLES)
 
