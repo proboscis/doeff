@@ -36,11 +36,12 @@ _ACCEPTED = [
 ]
 
 # 断る値: json.dumps が断る物は of も断る(同じ例外の型)。
+# 検の名は id で固定する — object() の repr は番地を含み、xdist の worker ごとに名が変わって集めが割れる。
 _REJECTED = [
-    ({1, 2}, TypeError),
-    (object(), TypeError),
-    ({("tuple", "鍵"): 1}, TypeError),
-    (b"bytes", TypeError),
+    pytest.param({1, 2}, TypeError, id="set"),
+    pytest.param(object(), TypeError, id="object"),
+    pytest.param({("tuple", "鍵"): 1}, TypeError, id="tuple-key"),
+    pytest.param(b"bytes", TypeError, id="bytes"),
 ]
 
 
@@ -70,7 +71,7 @@ def test_of_spells_frozen_json_and_nan_as_before() -> None:
     assert OpaqueJson.of(frozen) == OpaqueJson.from_text('{ "a" : [1, 2], "b": {"c": null} }')
 
 
-@pytest.mark.parametrize(("value", "error"), _REJECTED, ids=repr)
+@pytest.mark.parametrize(("value", "error"), _REJECTED)
 def test_of_rejects_what_json_dumps_rejects(value: object, error: type[Exception]) -> None:
     """書けない値は、解き直す道と同じ例外の型で断る。"""
     with pytest.raises(error):
