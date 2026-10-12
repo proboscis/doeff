@@ -889,7 +889,13 @@ class ChildClock:
     spawned = 起こした拍・configuring = configure に入った拍・started = session が始まった拍(来ていなければ None)。
     configure の間は root の conftest が機体の検の枠を取る(埋まっていれば待つ)ので数えない — 枠の正本の hold_check_slot は
     「待ちを変更箇所の検証の 60 秒に数えない」と約束している(card ki-55970a1649be)。起こしてから configure まで(uv・python・
-    conftest の import)と session が始まってからは今までどおり数える(止まったままの子も上限で切るため)。"""
+    conftest の import)と session が始まってからは今までどおり数える(止まったままの子も上限で切るため)。
+
+    ⚠ 数えない区間は、入口が時間で切らない区間でもある(_ChildProgress.wait_within は paused の間、子の終わりか拍だけを待つ)。
+    だから数えない区間は、上限を別の持ち主が持つ区間 — configure の間の枠の待ち(上限は枠の正本の 1 点が持ち、越えれば
+    pytest が未実行を名乗って終わる)— だけにする。収集や検の本体を数えない区間に足すと、止まった子を誰も切らず入口が
+    終わらない(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 A — test_a_collection_over_the_budget_is_cut_not_excluded が守る)。
+    区間を足す時は、その区間の上限の持ち主を先に決め、paused と wait_within を一緒に変える。"""
 
     spawned: float
     configuring: float | None
@@ -907,7 +913,7 @@ class ChildClock:
 
     @property
     def paused(self) -> bool:
-        """configure の間か(上限の時計が止まっている)。"""
+        """configure の間か — 上限の時計が止まり、入口が時間で切らない区間(上限の持ち主は枠の正本 — class の註)。"""
         return self.configuring is not None and self.started is None
 
     def counted(self, now: float) -> float:
@@ -978,7 +984,10 @@ class _ChildProgress:
 
     def wait_within(self, budget: float) -> bool:
         """process が終わるまで待つ — 上限に数える秒が budget に達したら False(呼び手が打ち切る)。configure の間は数えない
-        ので時間を切らずに待つ(枠の待ちは枠の正本の上限が限り、越えれば pytest が未実行を名乗って終わる)。"""
+        ので時間を切らずに待つ(枠の待ちは枠の正本の上限が限り、越えれば pytest が未実行を名乗って終わる)。
+        ⚠ この区間に入口の側の上限を置かない — 置くと、待ちを諦める判断が枠の正本(待ちの上限の .json と未実行の名乗り)から
+        入口へ移り、2 つの上限の小さい方が効く(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 B)。待ちの上限を変える時は
+        正本の値を変える。"""
         with self._changed:
             while not self._exited:
                 if self._clock.paused:
