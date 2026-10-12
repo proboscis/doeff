@@ -25,6 +25,7 @@ from doeff_core_effects.http_server_effects import HttpForward as HttpForward
 from doeff_core_effects.http_server_effects import WsForward as WsForward
 from doeff_core_effects.http_server_effects import WsAccept as WsAccept
 from doeff_core_effects.http_server_effects import WsSendText as WsSendText
+from doeff_core_effects.http_server_effects import WsSendTextEach as WsSendTextEach
 from doeff_core_effects.http_server_effects import WsClose as WsClose
 from doeff_core_effects.http_server_effects import HttpShutdown as HttpShutdown
 from doeff_core_effects.http_server_effects import HttpStopListening as HttpStopListening
@@ -210,6 +211,12 @@ class WebEdge:
         ...
 
     def post_text(self, ticket: str, text: str) -> None:
+        ...
+
+    def post_text_each(self, tickets: tuple[str, ...], text: str) -> None:
+        ...
+
+    def send_text_each(self, tickets: tuple[str, ...], text: str) -> None:
         ...
 
     def send_text(self, ticket: str, text: str) -> None:
