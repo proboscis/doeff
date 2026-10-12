@@ -49,6 +49,12 @@ def patch(variant: str, rel: str, text: str) -> str:
     if variant == "tryget" and rel == "hy/macros.py":
         assert GET_OLD in text
         return text.replace(GET_OLD, TRYGET_NEW) + TRYGET_HELPER
+    if variant == "localstate" and rel == "hy/compiler.py":
+        # 盲検 B の代役と同じ替え方(blind-b-files/scripts/build_wheels.py の local-state): Hy の振る舞いは同じで、compiler の局所の
+        # 状態を new_local_state を通さずに積む。
+        old = "    def local_state(self):\n        self.new_local_state()\n"
+        assert old in text
+        return text.replace(old, "    def local_state(self):\n        self.local_state_stack.append(dict(macros = {}))\n")
     if variant == "export" and rel.endswith((".py", ".hy")):
         return re.sub(r"(?<![A-Za-z0-9_])_hy_export_macros(?![A-Za-z0-9_])", "_hy_export_macro_names", text)
     if variant == "table" and rel.endswith((".py", ".hy")):

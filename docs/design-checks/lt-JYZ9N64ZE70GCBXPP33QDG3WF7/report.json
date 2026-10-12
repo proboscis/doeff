@@ -1,0 +1,485 @@
+{
+  "version": 1,
+  "task_id": "lt-JYZ9N64ZE70GCBXPP33QDG3WF7",
+  "base_revision": "d406b28914b20875e8b452c0b384adf8a0390ea7",
+  "author": {
+    "conversation_id": "c-PX52E1C685SM9V7R2V7NRZFVXD",
+    "model": "claude-opus-5-5",
+    "effort": "既定(この会話の起動の設定・自己申告)"
+  },
+  "requirements": "card ki-eafa369600cd の受入の条: bytecode の包みの Hy の内部への依りを R7 の母集団に足すか、uv.lock の変更で包みの検が選ばれる形にして、Hy の表の引き方を .get に替えた失敗ケースが赤になる事を doeff main で確かめる。完了の範囲 = 実装完了まで(branch wt/hy-bytecode-guard-internals の 0de52de26・4eec37a06・1c9f4699a)。main での確かめは着地の後(design.md)",
+  "design": {
+    "path": "design.md",
+    "sha256": "deaf323e523d61167b02b5b16d3faaa13eaa74abc25765d1faf8cc72e899725b"
+  },
+  "modules": [
+    {
+      "id": "guard-recording",
+      "responsibility": "展開が使った macro と表に無かった名を拾い、記録を作る(doeff_hy_bytecode_guard/macro_use.py の RecordingTable・MacroRecording・_whole_requires・_exported)",
+      "owns": "Hy が module の macro の表を引く口(__contains__・__getitem__)への差し込み・表の名(records.MACRO_TABLE・READER_TABLE)・export の名の表の読み",
+      "hides": "表の差し替えと戻し・拾った code の絞り・閉包の digest の作り方",
+      "interface": "MacroRecording(module, hy_version, sha256_of) の with の中が展開 → record(source) -> MacroRecord",
+      "effects": "展開の間だけ module の名前空間の表を差し替える(process の中)・sys.monitoring で実行の始まった code を拾う",
+      "lifetime": "with の出口で表を普通の dict に戻す。記録は .pyc と共有の置き場に残り、照らしで今の環境と比べる",
+      "invariants": "使った macro・表に無かった名・全部の require の提供元は、Hy の展開がその表を引いた事からだけ数える(Hy の引き方が変われば uv.lock の版の検が赤)"
+    },
+    {
+      "id": "guard-canonicalization",
+      "responsibility": "compile の済んだ code の gensym の名(let が改めた束縛の名に埋まった物も)を module の中の順へ振り直す(records.canonical_gensyms)",
+      "owns": "gensym の名の形 GENSYM_NAME・let が改めた束縛の名の形 RENAMED_BINDING(定義元は records の 1 か所)",
+      "hides": "名の集め方・振り直しの対応の作り方",
+      "interface": "canonical_gensyms(code) -> code・gensym_renames(texts) -> dict・unread_gensym_texts(code) -> tuple",
+      "effects": "なし(純な code の書き換え — 元の code は替えない)",
+      "lifetime": "なし(呼びごとに閉じる)",
+      "invariants": "同じ source の code は process の gensym の数えに依らない(code の == で同じ)"
+    },
+    {
+      "id": "guard-hooks",
+      "responsibility": "SourceFileLoader の口を包み、compile の直後に正準化と記録を足す(loader_hooks.py)",
+      "owns": "口の包み方・compile の口 source_to_code_as_import・展開の module の見つけ方",
+      "hides": "Hy の importer との重なり",
+      "interface": "install()・source_to_code_as_import(loader, data, path)",
+      "effects": "process の SourceFileLoader の口を書き換える(1 度だけ)",
+      "lifetime": "process の間ずっと(外さない)",
+      "invariants": "Hy の source の compile はどの道でも同じ口を通る"
+    },
+    {
+      "id": "guard-check",
+      "responsibility": "包みを uv.lock の版の Hy で動かして測る(packages/doeff-hy/tests/test_bytecode_guard.py)",
+      "owns": "見本の package・使い捨ての環境(uv run --no-project --isolated --with hy==<uv.lock の版>)の作り方・確かめの script・venv の Hy の版の一致の確かめ(autouse の fixture)",
+      "hides": "子の process の環境変数の掃除・.pyc の更新時刻の進め方",
+      "interface": "pytest の検(file ごと uv.lock の組で選ばれる)",
+      "effects": "子の process・一時の dir の file・uv の cache(使い捨ての環境)",
+      "lifetime": "検ごと(tmp_path)",
+      "invariants": "file の全部の検が uv.lock の版の Hy を測る — 使い捨ての環境はその版を入れ、同じ process の検は venv の Hy がその版である事を先に確かめる"
+    },
+    {
+      "id": "guard-detail-tests",
+      "responsibility": "正準化と記録の細部を venv の Hy で測る(test_gensym_canonical.py・test_macro_use_record.py)",
+      "owns": "見本(doeff-hy の macro を全部通る module など)",
+      "hides": "子の process の .pyc の置き場",
+      "interface": "pytest の検(uv.lock の組には無い — 日次と逆依存で走る)",
+      "effects": "子の process・一時の dir",
+      "lifetime": "検ごと",
+      "invariants": "名の形と表の名は records の定数・関数から読み、写しを持たない"
+    },
+    {
+      "id": "version-source",
+      "responsibility": "uv.lock の hy の版を読む(scripts/semgrep_locked.py の locked_version)",
+      "owns": "uv.lock の読み方・index の外の版を止める判定",
+      "hides": "toml の読み方",
+      "interface": "locked_version(repo, \"hy\") -> str(決まらなければ SystemExit)",
+      "effects": "uv.lock を読むだけ",
+      "lifetime": "なし",
+      "invariants": "版は uv.lock の 1 行から決まる"
+    },
+    {
+      "id": "selection",
+      "responsibility": "uv.lock を変えた便が払う検を決める(root の pyproject.toml の [[tool.doeff.contract-tests]] と tests/test_contract_table_follows_packages.py)",
+      "owns": "表の行(prefix = \"uv.lock\" に test_bytecode_guard.py)",
+      "hides": "なし(表は宣言)",
+      "interface": "表の行(scripts/run_changed_tests.py の select_targets が読む)",
+      "effects": "なし(宣言)",
+      "lifetime": "なし",
+      "invariants": "uv.lock の版で測る検の file は uv.lock の行に在る(表の検が source から数える)"
+    },
+    {
+      "id": "adr-record",
+      "responsibility": "ADR-DOE-HY-008 の R7 の文・事実・解釈 — 包みの依りをどの検が測るか",
+      "owns": "設計の記録",
+      "hides": "なし",
+      "interface": "設計記録の文",
+      "effects": "なし",
+      "lifetime": "なし",
+      "invariants": "依りの名は records の定数を指し、写しを持たない(事実の節は日付の付いた実測の記録)"
+    },
+    {
+      "id": "hy-version-pin",
+      "responsibility": "doeff が入れる Hy の版(uv.lock の hy の行と doeff-hy の Hy の上限 — R6)",
+      "owns": "版",
+      "hides": "なし",
+      "interface": "uv.lock・packages/doeff-hy/pyproject.toml",
+      "effects": "なし",
+      "lifetime": "なし",
+      "invariants": "上限は uv.lock の版ちょうど"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "Hy を上げ、新しい版が module の macro の表を .get で引く・表に無い名を KeyError で知る・表の名や reader の表の名・export の名の表の名を替える(.pyc と共有の置き場の古い展開を黙って使う形)",
+      "claim": "検は包みの振る舞い(macro・reader macro を変えたら使う側が作り直されるか)を測り、引き方や名の写しを持たず、版は uv.lock から読むので、直すのは hy-version-pin と guard-recording だけ(evidence/design-pre-blind.md の S1)",
+      "expected_scope": "hy-version-pin。依りが壊れたら guard-recording。guard-check・version-source・selection・adr-record・guard-canonicalization・guard-hooks は変えない",
+      "actual_scope": "直す前(0de52de26): 表の名を替えた版では guard-check の期待値の字 \"_hy_macros\" も変える必要があり(盲検 A)、sync していない便では同じ process の検が古い Hy を測った。reader の表の名を替えた版は直す前の基準版で緑(before-reader.log)。直した後(1c9f4699a): uv.lock を 1.3.2 へ上げ表の名を替えた代役を sync し、records.MACRO_TABLE だけを直して 25 本緑(exp-s1-c)。sync の前は fixture が 25 本を止め(exp-s1-a)、直す前の包みは 12 本赤(exp-s1-b)",
+      "changed_modules": [
+        "hy-version-pin",
+        "guard-recording"
+      ],
+      "unchanged_modules": [
+        "guard-check",
+        "guard-canonicalization",
+        "guard-hooks",
+        "version-source",
+        "selection",
+        "adr-record"
+      ],
+      "reason": "直す前の波及は知識の漏れ(期待値の字の写し)と、検の環境の契約の欠け(同じ process の検の Hy の版)。直した後は契約どおり",
+      "revision": "4eec37a06: 期待値を records.MACRO_TABLE へ・autouse の fixture _venv_hy_is_the_locked_version・表に無かった名と export の検を足した。再検証 = exp-s1-a〜c・fixed-*.log"
+    },
+    {
+      "id": "S2",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "Hy を上げ、新しい版の gensym の名か let が改めた束縛の名の形が変わる(同じ source の code が worker・作業木・process ごとに揺れ、共有の置き場と詰めた Program の指紋が割れる形)",
+      "claim": "検は「同じ source の code が process の gensym の数えに依らない」性質を測り、名の形の写しを持たないので、直すのは hy-version-pin と guard-canonicalization だけ(design-pre-blind.md の S2)",
+      "expected_scope": "hy-version-pin。依りが壊れたら guard-canonicalization。guard-check・version-source・selection・adr-record・guard-recording・guard-hooks は変えない",
+      "actual_scope": "直す前(4eec37a06): let の名の形を替えた代役を sync し records.RENAMED_BINDING を直すと test_bytecode_guard.py は 25 本緑(exp-s2-c)だが、test_gensym_canonical.py(guard-detail-tests)は名の形の写しで 3 本赤のまま(exp-s2-d)。直した後(1c9f4699a): records を直せば 8 本緑(exp-s2-e)、直さなければ 3 本赤(exp-s2-f)",
+      "changed_modules": [
+        "hy-version-pin",
+        "guard-canonicalization"
+      ],
+      "unchanged_modules": [
+        "guard-check",
+        "guard-detail-tests",
+        "guard-recording",
+        "guard-hooks",
+        "version-source",
+        "selection",
+        "adr-record"
+      ],
+      "reason": "直す前の波及は知識の漏れ(guard-detail-tests が名の形を写していた — 設計者の実験で見つけた)。直した後は契約どおり",
+      "revision": "1c9f4699a: test_gensym_canonical.py の写しを records.GENSYM_NAME・RENAMED_BINDING・gensym_renames・unread_gensym_texts と hy.gensym で作る名へ。再検証 = exp-s2-e・exp-s2-f・final-checks.log"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "包みに Hy の内部への新しい依りを足す(例: 関数の中の require の macro を拾うため、compiler が局所の状態を開く口を包む — 盲検 B の差分)",
+      "claim": "test_bytecode_guard.py は uv.lock の組に在るので、依りの振る舞いの検をそこへ足せば、表を変えずに uv.lock の変更で選ばれ、uv.lock の版で測られる(design-pre-blind.md の S3 — 前提: 依りを足す便がその検を test_bytecode_guard.py に置く)",
+      "expected_scope": "guard-recording か guard-canonicalization と、guard-check の検 1 本。version-source・selection・adr-record・hy-version-pin は変えない",
+      "actual_scope": "直す前(0de52de26): 盲検 B の差分(依りを guard-hooks に置き、検を同じ process に置いた)と、局所の状態の開き方を替えた代役で、検の file は 24 本緑のまま(exp-s3-pre-before-fix.log)— 足した検は venv の Hy を測っていた。直した後(1c9f4699a): 同じ差分で uv.lock を 1.3.2 へ上げると sync の前は 26 本が fixture で赤(exp-s3-a)、代役を sync すると足した検が「記録に無い」で赤(exp-s3-b)、替えていない 1.3.2 なら 26 本緑(exp-s3-c)",
+      "changed_modules": [
+        "guard-hooks",
+        "guard-recording",
+        "guard-check"
+      ],
+      "unchanged_modules": [
+        "version-source",
+        "selection",
+        "adr-record",
+        "hy-version-pin",
+        "guard-canonicalization"
+      ],
+      "reason": "直す前の穴は検の環境の契約の欠け(同じ process の検が uv.lock の版を測らない)で、fixture で閉じた。B の差分が依りを guard-hooks に置いた事は契約の拡張ではなく置き場の選び方で、静的には強制していない(design.md の限界)",
+      "revision": "4eec37a06: autouse の fixture。再検証 = exp-s3-a〜c"
+    },
+    {
+      "id": "X-hardware",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "検は source と PyPI の Hy を読み、子の process を走らせるだけで機体に依らない(Python の版は検を走らせる venv の major.minor)"
+    },
+    {
+      "id": "X-concurrency",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "thread の並走での正準化は test_gensym_canonical.py の test_compiles_on_two_threads_at_once_keep_every_name_apart_and_the_same(venv の Hy)が持ち、この便は変えていない。この便の検は process の gensym の数えの状態だけを動かす"
+    },
+    {
+      "id": "X-simulation",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "決定的な模擬の対象の振る舞いを持たない(検そのものが Hy の版上げの模擬 — 代役の wheel)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "最後の版 1c9f4699a で、替えていない Hy 1.3.1(find-links の base)で包みの検の file が全部緑",
+      "observation": "25 passed・rc 0",
+      "evidence": {
+        "path": "evidence/fixed-base.log",
+        "sha256": "bf9ff498fdf9a6c9d847f3155383ed7f7a36e68145c51283f50ec1b2fcaa3d43"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "uv.lock だけを変えた便で select_targets が test_bytecode_guard.py を選ぶ",
+      "observation": "test_bytecode_guard.py | 接頭辞 uv.lock を含む 6 本・rc 0",
+      "evidence": {
+        "path": "evidence/selection-uv-lock.log",
+        "sha256": "5877bd5200fc4b15dfa9344e35f1866f39154440f816df6b7eb61089800e595d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "uv.lock を 1.3.2 へ上げ表の名を替えた代役を sync し、records.MACRO_TABLE だけを直すと全部緑(変えたのは uv.lock と records.py の 2 file)",
+      "observation": "git diff は records.py と uv.lock・25 passed・rc 0",
+      "evidence": {
+        "path": "evidence/exp-s1-c-synced-fixed.log",
+        "sha256": "8f18f217fc45e4ea9ff7389c02f93fa0da5623037bb699ce5c2b7e697e53221c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "受入の条の失敗ケース: Hy が module の表を .get で引くと、macro を変えても使う側が古い展開のままになり赤",
+      "observation": "11 failed(assert 11 == 12 など)・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-get.log",
+        "sha256": "91929ff3c03eb1df3397c0f294ab6aa451ec46846e8436f1630f16ffdd64f1d5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "表の名を替えた Hy で赤",
+      "observation": "11 failed・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-table.log",
+        "sha256": "45854e7921aeade75e56474f14ceb31084c0913a0f0111864ea3031297b92fe0"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "reader の表の名を替えた Hy で reader macro の変更の検が赤",
+      "observation": "1 failed(test_a_reader_macro_change_recompiles_the_user_on_pypi_hy[before-hy-15] — assert 10 == 15)・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-reader.log",
+        "sha256": "9176db177f1de2587892c85a5cb8a565b7e2b4eabd7f16ab09dc5e780c3d4b83"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "表を in で確かめない Hy(表に無い名を KeyError で知る)で、表に無かった名の検が赤",
+      "observation": "2 failed(all・exported — assert 11 == 1)・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-tryget.log",
+        "sha256": "5aebb3710284edc12e7fe2a239ecc8f0f1d449c741abf12a9d7d458ad265b6cd"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "export の名の表の名を替えた Hy で exported の検が赤",
+      "observation": "1 failed(exported)・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-export.log",
+        "sha256": "4edc27807b7b6ed4f9d08d0cfc905bcfddd77a281d56a6cda1a2f6be4ff3730a"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S1",
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "uv.lock を 1.3.2 へ上げ venv を sync していない便では、全部の検が fixture で止まり make sync を名指す",
+      "observation": "25 errors(venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — make sync してから測る)・rc 1",
+      "evidence": {
+        "path": "evidence/exp-s1-a-unsynced.log",
+        "sha256": "aebc9b3e10e47eee3e3a1cae02a2f58c0dd1b5611aec3a6632c3ec03e3ebff29"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "代役を sync し包みを直さないと、同じ process の検も含めて赤",
+      "observation": "12 failed(test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_expansion_used を含む)・rc 1",
+      "evidence": {
+        "path": "evidence/exp-s1-b-synced-unfixed.log",
+        "sha256": "4fced40678be97c6f38a1ebe757ce04b57c3813172c04e589eaf4405a753250c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C11",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "uv.lock を 1.3.2 へ上げ let の名の形を替えた代役を sync し、records.RENAMED_BINDING だけを直すと包みの検が全部緑",
+      "observation": "git diff は records.py と uv.lock・25 passed・rc 0",
+      "evidence": {
+        "path": "evidence/exp-s2-c-synced-fixed.log",
+        "sha256": "aaf1d87c3d62b2d1fc25226966deb673328c30c746950ada82dbffd1290cd23f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C12",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "同じ状態で、写しを外した test_gensym_canonical.py も全部緑",
+      "observation": "8 passed・rc 0",
+      "evidence": {
+        "path": "evidence/exp-s2-e-gensym-canonical-fixed.log",
+        "sha256": "48b2b14d28427720ab2af87230af72378cee89a5b2363f29233f2428e6e898d6"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C13",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "gensym の名の形を替えた Hy で gensym の数えの検が、片方にだけ在る名を挙げて赤",
+      "observation": "1 failed・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-gensym.log",
+        "sha256": "38f66bfd0ea1bcc729aa5fb57453a141ef7f86ecfc19961ef604ea6eb09b1aee"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C14",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "get_anon_var の名の形を替えた Hy で gensym の数えの検が赤",
+      "observation": "1 failed・rc 1",
+      "evidence": {
+        "path": "evidence/fixed-anon.log",
+        "sha256": "094ff2632a6a7dae56dff6cceca9e84b422606c19b24be0048b81ad53a73c37d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C15",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "代役を sync し records を直さないと、包みの検の gensym の数えの検だけが赤",
+      "observation": "1 failed・24 passed・rc 1",
+      "evidence": {
+        "path": "evidence/exp-s2-b-synced-unfixed.log",
+        "sha256": "4dc530a12028b6f19ecdc30cc64ed9b9d91122bbd04e4de6aca577f2b67f8f9c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C16",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "写しを外した test_gensym_canonical.py は、records を直さない代役で形の変化をまだ赤で知らせる",
+      "observation": "3 failed・rc 1",
+      "evidence": {
+        "path": "evidence/exp-s2-f-gensym-canonical-unfixed.log",
+        "sha256": "df43470472569af817773985bbeb200d6228e0dfb2eefdcc0fbe1b831ce5ce20"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C17",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "盲検 B の差分(関数の中の require の macro を記録する直しと同じ process の検)で、替えていない 1.3.2 を sync すると全部緑",
+      "observation": "26 passed・rc 0",
+      "evidence": {
+        "path": "evidence/exp-s3-c-synced-base.log",
+        "sha256": "725645808e8b092f662b85331cf3dc5129cbb9a94fd3d3c7ed8464c158a8df19"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C18",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "同じ差分で、局所の状態の開き方を替えた代役を sync すると、足した検が uv.lock の版の破れを赤で知らせる",
+      "observation": "1 failed(Hy 1.3.2: 関数の中の require で使った macro が記録に無い)・rc 1",
+      "evidence": {
+        "path": "evidence/exp-s3-b-synced-localstate.log",
+        "sha256": "679e8fa0d18a60ed68081fde645d2177095568a3abbf2377bc85135055877b62"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C19",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "同じ差分で、sync していない便は全部の検が fixture で止まる",
+      "observation": "26 errors・rc 1",
+      "evidence": {
+        "path": "evidence/exp-s3-a-unsynced.log",
+        "sha256": "9efb548c0d159f71b88b7296b8bfbc1b269ba75e987104cb24e90aca055e77dd"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C20",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "最後の版の本物の PyPI の Hy 1.3.1 で、触った検と表・ADR の検が緑",
+      "observation": "25・8・1・1・15 passed",
+      "evidence": {
+        "path": "evidence/final-checks.log",
+        "sha256": "6bf7fa804391324204a121b82a8c947ce60a9880819726d323852d79a6454dae"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
