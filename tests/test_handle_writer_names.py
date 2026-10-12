@@ -90,7 +90,9 @@ _DEFHANDLER_PROGRAM = "(h ({N} 1))"
 _HOSTS = ("module", "defk", "defn", "class")
 
 
-def _expression_module(host: str, expression: str) -> tuple[str, Callable[[types.ModuleType], object]]:
+def _expression_module(
+    host: str, expression: str
+) -> tuple[str, Callable[[types.ModuleType], object]]:
     """handle の式 `expression` を host に書いた source と、答えを出す Program の取り方。"""
     match host:
         case "module":
@@ -108,9 +110,7 @@ def _expression_module(host: str, expression: str) -> tuple[str, Callable[[types
             raise AssertionError(host)
 
 
-def _defhandler_module(
-    host: str, name: str
-) -> tuple[str, Callable[[types.ModuleType], object]]:
+def _defhandler_module(host: str, name: str) -> tuple[str, Callable[[types.ModuleType], object]]:
     """defhandler を host に書いた source と、答えを出す Program の取り方。"""
     definition = _DEFHANDLER.replace("{N}", name)
     program = _DEFHANDLER_PROGRAM.replace("{N}", name)
@@ -146,9 +146,7 @@ def _scenarios() -> dict[str, tuple[str, str, Callable[[types.ModuleType], objec
 _SCENARIOS = _scenarios()
 
 
-@pytest.mark.parametrize(
-    ("name", "source", "program"), _SCENARIOS.values(), ids=_SCENARIOS.keys()
-)
+@pytest.mark.parametrize(("name", "source", "program"), _SCENARIOS.values(), ids=_SCENARIOS.keys())
 def test_clause_answers_the_writers_effect_named_like_an_expansion_name(
     name: str, source: str, program: Callable[[types.ModuleType], object]
 ) -> None:

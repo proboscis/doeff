@@ -1,0 +1,34 @@
+{
+  "module_extensions": {
+    "doeff-hy-binding-forms": {
+      "allow": [
+        "doeff-hy-expansion-names"
+      ]
+    },
+    "doeff-hy-macros": {
+      "allow": [
+        "doeff-hy-expansion-names"
+      ]
+    },
+    "doeff-hy-static-check": {
+      "allow": [
+        "doeff-hy-expansion-names"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "allow": [],
+      "layer": "pure",
+      "name": "doeff-hy-expansion-names",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/expansion_names.py"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/expansion_names.py"
+      ],
+      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)の `_doeff_` の別名の綴りと import の唯一の定義元 — 書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・static_view.py が引く純粋な表",
+      "typed": false
+    }
+  ]
+}
