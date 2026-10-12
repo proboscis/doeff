@@ -148,6 +148,7 @@
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError Race])
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopBell StopRequested])
+(import doeff_core_effects.world_phases [mark-world-phase])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [Delay GetMonotonic epoch-ms-of sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
@@ -248,6 +249,9 @@
 (val DETACHED-POLL-SECONDS 1.0)              ; 切り離した task の待ちの問い合わせの間隔(本番の detached-cluster の既定と同じ)
 (val QUEUE-WAIT-SECONDS 0.01)                ; coordinator が受け付けを始める・worker が最初に名乗るのを待つ間隔
 (val WORKER-WAIT-SECONDS 5.0)                ; 筋書きの前に worker が最初に名乗るのを待つ上限(名乗れない worker が在っても筋書きは始める)
+;; 世界が静まった時だけ走る優先度: 普通の task(PRIORITY_NORMAL = 10)と外の待ちの席(PRIORITY_EXTERNAL_WAIT = 5)が 1 つも走れない時に
+;; 走り、仮想の時計を進める係(PRIORITY_IDLE = 0)より先に走る — 今の刻の仕事が尽きた時(card ki-a27b195a3f92)。
+(val SETTLED-PRIORITY 1)
 (val DRAIN-TTL-SECONDS (float (+ DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS)))  ; drain の期限(本番の preStop の頼みと同じ)
 (val REPORT-KINDS #("readiness" "metrics"))
 (val TERM-REASON (+ "signal " (str (int signal.SIGTERM))))  ; 止めの合図の理由(本番の os-signal-stop-handler の StopBox と同じ綴り)
@@ -2563,6 +2567,33 @@
   None)
 
 
+(defk placed-jobs [declaration]
+  {:pre [(: declaration Declaration)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "世界の立ち上がりに待つ job の名(宣言の行のうち台数が 1 以上の物 — 0 は取り下げで起きない)を並べるため。"
+  (tuple (gfor row declaration.rows :if (> (.get row "replicas" 1) 0) (get row "name"))))
+
+
+(defk mark-settled-up []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "SETTLED-PRIORITY で起こされ、世界が静まったその刻に「立ち上がった」の印を残すため(印は歩数の上限の plugin が読む — 開いて
+   いなければ何もしない)。"
+  (mark-world-phase "up")
+  None)
+
+
+(defk world-up-watch [jobs]
+  {:pre [(: jobs tuple)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "世界が立ち上がった出来事を歩数の印に残すため: 宣言の job が全部 最初の process を起こした後、世界が初めて静まった(普通の task が
+   1 つも走れず、時計を進めるしか無い)時を「立ち上がった」とする(card ki-a27b195a3f92 — 歩数の上限は立ち上がりから止め始めまでの
+   走りの分だけを数え、起動の追いつきは起動の歩数に入る)。時刻では区切らない。起きない job が在れば立ち上がらず、止めの時に
+   sim-main が取り消す(その世界の歩数は全部 起動に数える)。"
+  (for [job jobs]
+    (<- _ SimProcess (AwaitProcessStarted job)))
+  (<- settled Task (Spawn (mark-settled-up) :priority SETTLED-PRIORITY :daemon True))
+  (<- (Wait settled))
+  None)
+
+
 (defk apply-declaration [link declaration]
   {:pre [(: link SimLink) (: declaration Declaration)] :post [(: % tuple)]
    :tags {:context "doeff-cluster" :role "protocol"}}
@@ -3641,7 +3672,9 @@
   {:pre [(: scenario (| Program EffectBase))] :post [(: % "scenario の答え(型は筋書きごと)")] :tags {:context "doeff-cluster" :role "program"}}
   "coordinator の Pod を起こし、宣言を書き、worker を並べてから scenario を(筋書きの送り手の口の下で)走らせ、終われば worker・
    coordinator の順に止めるため。scenario は行き止まりの見張り(deadlock-watch)と競わせ、見張りが行き止まりを見つければ scenario を
-   待たずに SimDeadlockError で終わる(#3078)。"
+   待たずに SimDeadlockError で終わる(#3078)。歩数の上限の plugin のために、始まり・立ち上がり(world-up-watch)・止め始め・
+   終わりの印を残す(card ki-a27b195a3f92)。"
+  (mark-world-phase "begun")
   (<- plan SimPlan (PlanOf))
   (<- parts SimParts (PartsOf))
   (<- pod Task (Spawn (coordinator-pod)))
@@ -3657,6 +3690,8 @@
     (<- t Task (Spawn (worker-keeper w plan.policy)))
     (:= keepers (+ keepers [t])))
   (<- (await-workers (tuple (gfor w plan.workers w.name))))
+  (<- jobs tuple (placed-jobs plan.declaration))
+  (<- up Task (Spawn (world-up-watch jobs) :daemon True))
   (<- client SimLink (ClientLink))
   (<- story Task (Spawn (with-handlers [(coordinator-answers client) scenario-wait-tap] scenario)))
   (<- watch Task (Spawn (deadlock-watch control)))
@@ -3664,6 +3699,8 @@
     (<- answer (Race story watch #* guards))
     answer
     (finally
+      (mark-world-phase "stopping")
+      (<- (Cancel up))
       (for [guard guards]
         (<- (Cancel guard)))
       (<- (Cancel watch))
@@ -3672,7 +3709,8 @@
       (<- (Gather #* keepers))
       (setattr parts.stop "requested" True)
       (<- (nudge-takers parts.queue))
-      (<- (Wait pod)))))
+      (<- (Wait pod))
+      (mark-world-phase "ended"))))
 
 
 (defk sim-under-clock [system scenario workers environ revision timing policy outside store [deployments None] [runtime-env None]

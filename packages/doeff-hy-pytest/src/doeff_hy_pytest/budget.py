@@ -26,6 +26,13 @@
   検の定義の隣で要る歩数と理由 1 行を宣言する(Mac の調整役の決め 2026-10-03 21:5x・agora-redesign #2670 の 3 — 別の file の
   登録簿の代わり)。歩数で判じる時、宣言のある検は宣言の値で判じる: 超えれば赤・宣言の ``STALE_RATIO``(半分)以下で
   終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
+- 模擬の世界の走りの歩数だけで判じる(調整役 cisco-c8 の決め 2026-10-12 15:47 JST・card ki-a27b195a3f92 — #2670 の数え方を改めた):
+  doeff-cluster の ``sim-main`` は、始まり・立ち上がり(宣言の job が全部 起きた後、世界が初めて静まった時)・止め始め・終わりの
+  印を ``doeff_core_effects.world_phases`` に残す。歩数で判じる検の call の間はその記録を開き、世界を回した検は、立ち上がりから
+  止め始めまでの走りの歩数だけを上限(宣言)と比べる。起動・止め・世界の外(支度と判定)の歩数は数えず、報告の文に別の値で出す
+  (部品を足すたびに伸びる起動と止めの費用で上限を上げ続けず、空回りを見つける感度を保つため)。世界を回さない検は今までどおり
+  call の全部で判じる。走っている最中の歩の上限(暴走の検出)は call の全部の歩数のまま。戻し方 = ``world_steps`` を使わず
+  ``Measurement.judged_steps`` を区間の歩数に戻す。
 
 上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
 
@@ -75,6 +82,7 @@ import contextlib
 import gc
 import hashlib
 import importlib.machinery
+import itertools
 import sys
 import time
 import types
@@ -82,7 +90,7 @@ import warnings
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 import pytest
 
@@ -230,6 +238,103 @@ def read_step_guard() -> StepGuard:
     return SchedulerStepGuard(arm, disarm)
 
 
+class PhaseMarkRead(Protocol):
+    """区切りの印の口が返す印 1 つの形(``doeff_core_effects.world_phases.PhaseMark`` — この plugin は doeff に依らないので形だけ読む)。"""
+
+    @property
+    def phase(self) -> str: ...
+
+    @property
+    def steps(self) -> int: ...
+
+
+@dataclass(frozen=True)
+class WorldPhaseLog:
+    """模擬の世界の区切りの印の口(``doeff_core_effects.world_phases`` の ``open_phase_log`` / ``close_phase_log`` — card
+    ki-a27b195a3f92)。開いている間、doeff-cluster の ``sim-main`` が始まり・立ち上がり・止め始め・終わりの印を、その時の歩数と残す。"""
+
+    open: Callable[[], None]
+    close: Callable[[], tuple[PhaseMarkRead, ...]]
+
+
+@dataclass(frozen=True)
+class NoWorldPhaseLog:
+    """区切りの印の口が無い(理由つき — import できない・口より前の版)。歩数は call の全部で判じる(今までどおり)。"""
+
+    reason: str
+
+
+PhaseLogSource = WorldPhaseLog | NoWorldPhaseLog
+
+
+def read_phase_log() -> PhaseLogSource:
+    """区切りの印の口を session の始めに 1 回探す(この plugin は doeff に依らないので、無ければ call の全部で判じるだけ)。"""
+    try:
+        from doeff_core_effects import world_phases
+    except ImportError as exc:
+        return NoWorldPhaseLog(f"doeff_core_effects.world_phases を import できない: {exc}")
+    return WorldPhaseLog(world_phases.open_phase_log, world_phases.close_phase_log)
+
+
+@dataclass(frozen=True)
+class WorldSteps:
+    """call の歩数を模擬の世界の出来事で分けた値(card ki-a27b195a3f92)。running = 立ち上がってから止め始めるまで(判じる値)・
+    starting = 始まってから立ち上がるまで(立ち上がらなかった世界は止め始めまで)・stopping = 止め始めてから終わるまで・outside =
+    世界の外(筋書きの支度・答えの判定)。worlds = 始まった世界の数・up = 立ち上がった世界の数。"""
+
+    outside: int
+    starting: int
+    running: int
+    stopping: int
+    worlds: int
+    up: int
+
+
+@dataclass(frozen=True)
+class WorldMark:
+    """世界の印 1 つ(区切りの名 — begun・up・stopping・ended)と、その時の process の積み上げの歩数。"""
+
+    phase: str
+    steps: int
+
+
+Segment = Literal["outside", "starting", "running", "stopping"]
+
+
+def segment_after(mark: WorldMark, segment: Segment) -> Segment:
+    """印の後の区間を決めるため — 立ち上がりは起動の区間の中でだけ区切る(止め始めた後に届いた立ち上がりは区切らない)。"""
+    match mark.phase:
+        case "begun":
+            return "starting"
+        case "up" if segment == "starting":
+            return "running"
+        case "stopping":
+            return "stopping"
+        case "ended":
+            return "outside"
+        case _:
+            return segment
+
+
+def world_steps(marks: Sequence[WorldMark], started_at: int, ended_at: int) -> WorldSteps | None:
+    """call の始まり started_at から終わり ended_at までの歩数を、世界の印 marks(起きた順)で区間に分けるため。世界が 1 つも
+    始まらなかった検(模擬の世界を回さない検)は None — call の全部で判じる。"""
+    if not any(mark.phase == "begun" for mark in marks):
+        return None
+    # segments[i] = i 番目の区間(i = 0 は call の始まりから最初の印まで・最後は最後の印から call の終わりまで)。
+    segments = tuple(itertools.accumulate(marks, lambda segment, mark: segment_after(mark, segment), initial="outside"))
+    bounds = (started_at, *(mark.steps for mark in marks), ended_at)
+    spans = tuple(zip(segments, (end - start for start, end in itertools.pairwise(bounds)), strict=True))
+    return WorldSteps(
+        outside=sum(steps for segment, steps in spans if segment == "outside"),
+        starting=sum(steps for segment, steps in spans if segment == "starting"),
+        running=sum(steps for segment, steps in spans if segment == "running"),
+        stopping=sum(steps for segment, steps in spans if segment == "stopping"),
+        worlds=sum(1 for mark in marks if mark.phase == "begun"),
+        up=sum(1 for mark, segment in zip(marks, segments, strict=False) if mark.phase == "up" and segment == "starting"),
+    )
+
+
 def vm_build_line(build: VmBuild) -> str:
     """終わりの要約の見出しに出す build の種類の 1 行。"""
     match build:
@@ -260,6 +365,7 @@ class Budgets:
     work_source: WorkSource = NoWorkReader("測っていない")
     step_guard: StepGuard = NoSchedulerStepGuard("探していない")
     runaway_multiplier: int = DEFAULT_RUNAWAY_STEPS_MULTIPLIER
+    phase_log: PhaseLogSource = NoWorldPhaseLog("探していない")
 
     def runaway_steps_for(self, markers: Sequence[str], declared_steps: int | None = None) -> int | None:
         """その検の call の間に scheduler へ入れる歩の上限(#3143)— 歩数で判じる検だけ、歩数の上限(宣言のある検は
@@ -356,6 +462,16 @@ class Measurement:
     # 区間の doeff-vm の仕事の量(数の口が無い時・収集の段階は None)。
     work: VmWork | None = None
     gc: GcTally = NO_GC
+    # 区間の歩数を模擬の世界の出来事で分けた値(世界を回さない検・収集の段階は None)。
+    world: WorldSteps | None = None
+
+    @property
+    def judged_steps(self) -> int:
+        """歩数で判じる時の値 = 模擬の世界を回した検は世界の走りの歩数(起動と止めは数えない — card ki-a27b195a3f92)、それ以外は
+        区間の歩数。"""
+        if self.work is None:
+            raise AssertionError(f"歩数の無い測りを歩数で判じた: {self.key}")
+        return self.world.running if self.world is not None else self.work.steps
 
     @property
     def judged_cpu_seconds(self) -> float:
@@ -376,16 +492,15 @@ class WithinBudget:
 
 
 def judged_value(measurement: Measurement, unit: Unit) -> float:
-    """判定の単位で見た測りの値 — 変換と import を引いた CPU 秒か壁の時計の秒、歩数なら区間の歩数(数の無い測りを歩数で判じない)。"""
+    """判定の単位で見た測りの値 — 変換と import を引いた CPU 秒か壁の時計の秒、歩数なら判じる歩数(模擬の世界は走りの分・数の無い
+    測りを歩数で判じない)。"""
     match unit:
         case "cpu-seconds":
             return measurement.judged_cpu_seconds
         case "wall-seconds":
             return measurement.judged_wall_seconds
         case "steps":
-            if measurement.work is None:
-                raise AssertionError(f"歩数の無い測りを歩数で判じた: {measurement.key}")
-            return float(measurement.work.steps)
+            return float(measurement.judged_steps)
 
 
 @dataclass(frozen=True)
@@ -631,8 +746,15 @@ def _seconds_text(measurement: Measurement) -> str:
         if measurement.gc.count
         else None
     )
+    world = measurement.world
+    world_part = (
+        f"(世界の走り {world.running}・起動 {world.starting}・止め {world.stopping}・世界の外 {world.outside}・"
+        f"世界 {world.worlds} 回のうち立ち上がり {world.up} 回 — 判じるのは走り)"
+        if world is not None
+        else ""
+    )
     work_part = (
-        f"doeff-vm の歩数 {measurement.work.steps}・handler の呼び出し {measurement.work.handler_calls} 回"
+        f"doeff-vm の歩数 {measurement.work.steps}{world_part}・handler の呼び出し {measurement.work.handler_calls} 回"
         if measurement.work is not None
         else None
     )
@@ -868,6 +990,7 @@ class CallMeasured:
     imports: ImportTally
     work: VmWork | None = None
     gc: GcTally = NO_GC
+    world: WorldSteps | None = None
 
 
 _BUDGETS_KEY = pytest.StashKey[Budgets]()
@@ -1013,6 +1136,7 @@ def pytest_configure(config: pytest.Config) -> None:
         work_source=work_source,
         step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("歩数の上限の設定が無い"),
         runaway_multiplier=_runaway_multiplier(config),
+        phase_log=read_phase_log() if call_steps is not None else NoWorldPhaseLog("歩数の上限の設定が無い"),
     )
     counter = CompileCounter()
     counter.install()
@@ -1125,12 +1249,15 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
         if item.path.suffix == ".hy" and isinstance(guard, SchedulerStepGuard)
         else None
     )
+    phase_log = budgets.phase_log if isinstance(source, WorkReader) else NoWorldPhaseLog("歩数を測らない")
     work_before = source.tally() if isinstance(source, WorkReader) else None
     compile_before = counter.tally()
     imports_before = counter.import_tally()
     gc_before = counter.gc_tally()
     cpu_started = time.process_time()
     wall_started = time.perf_counter()
+    if isinstance(phase_log, WorldPhaseLog):
+        phase_log.open()
     if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
         guard.arm(runaway_steps)
     try:
@@ -1138,9 +1265,15 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     finally:
         if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
             guard.disarm()
+        marks = (
+            tuple(WorldMark(mark.phase, mark.steps) for mark in phase_log.close())
+            if isinstance(phase_log, WorldPhaseLog)
+            else ()
+        )
         cpu_seconds = time.process_time() - cpu_started
         wall_seconds = time.perf_counter() - wall_started
-        work = source.tally().since(work_before) if isinstance(source, WorkReader) and work_before is not None else None
+        work_after = source.tally() if isinstance(source, WorkReader) else None
+        work = work_after.since(work_before) if work_after is not None and work_before is not None else None
         item.stash[_CALL_MEASURED_KEY] = CallMeasured(
             cpu_seconds=cpu_seconds,
             wall_seconds=wall_seconds,
@@ -1148,6 +1281,11 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
             imports=counter.import_tally().since(imports_before),
             work=work,
             gc=counter.gc_tally().since(gc_before),
+            world=(
+                world_steps(marks, work_before.steps, work_after.steps)
+                if work_after is not None and work_before is not None
+                else None
+            ),
         )
 
 
@@ -1178,6 +1316,7 @@ def pytest_runtest_makereport(
         imports=measured.imports,
         work=measured.work,
         gc=measured.gc,
+        world=measured.world,
     )
     verdict = judge_call(budgets, markers, measurement, declared_steps_of(getattr(item, "obj", None)))
     if verdict is None:
