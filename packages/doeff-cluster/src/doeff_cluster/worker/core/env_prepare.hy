@@ -8,7 +8,8 @@
 ;;; 処理ステージ(失敗はその場で EnvFailure を値で返し、後の処理ステージを走らせない — どれも子 process を起こす前):
 ;;;   1 空き      DiskFree                                   空きが下限を切れば disk-full
 ;;;   2 mirror    EnsureMirror / FetchCommit                 repo-unreachable・commit-missing(URL は断らない — 鍵の表に無い URL は鍵なしで clone)
-;;;   3 展開      MaterializeTree                            同じ commit のツリーを持つ別の root があれば複製(.venv・マーカー・__pycache__ を除く)
+;;;   3 展開      MaterializeTree                            元の鍵(source-key)が同じ完成済みの root の木を hardlink で写し、変わった path だけ
+;;;                                                          新しく置く(追跡しない .venv・__pycache__・マーカーは写さない)・写し元が無ければ展開 — #3677
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
@@ -38,10 +39,10 @@
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
-(import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json])
+(import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json source-key])
 (import doeff_cluster.shared.core.runtime_env [project-dir])
 (import doeff_cluster.shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TREE-COPY TREE-EXPAND VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -86,15 +87,29 @@
   (+ declared (tuple (gfor r extra :if (not-in r declared) r))))
 
 
-(defk reuse-tree [known repo]
-  {:pre [(: known tuple) (: repo RepoCheckout)] :post [(: % (| str None))]}
-  "同じ url と commit のツリーを持つ完成済みの root の dir(展開を複製で済ませるため)。無ければ None。"
-  (var found None)
-  (for [k known]
-    (for [r k.env.repos]
-      (when (and (is found None) (= r.url repo.url) (= r.commit repo.commit))
-        (:= found (.format "{}/{}" k.root r.name)))))
-  found)
+(defk copy-root [request]
+  {:pre [(: request PrepareRequest)] :post [(: % (| KnownRoot None))]}
+  "木を写す元の root を選ぶため: 元の鍵(source-key — commit が替わっても変わらない環境の同一性)が要求と同じ完成済みの root のうち、
+   最も新しく完成した物(同じ時刻なら root の path の大きい方 — 並びに依らず同じ root を選ぶ)。無ければ None(木は全部 mirror から展開する)。
+   repo の url は綴りでなく正体で比べる(元の鍵の中で url-location を通す — #3693)。"
+  (<- wanted str (source-key request.env request.platform))
+  (var best None)
+  (for [k request.known]
+    (when (and (!= k.root request.root) (is-not k.platform None))
+      (<- key str (source-key k.env k.platform))
+      (when (and (= key wanted) (or (is best None) (> #(k.made-ms k.root) #(best.made-ms best.root))))
+        (:= best k))))
+  best)
+
+
+(defk tree-source [from-root repo]
+  {:pre [(: from-root (| KnownRoot None)) (: repo RepoCheckout)] :post [(: % (| TreeSource None))]}
+  "写し元の root(copy-root の答え)の中の repo の木と、その木が置いた commit(その root の宣言から読む)。写し元が無ければ None。"
+  (if (is from-root None)
+      None
+      (next (gfor r from-root.env.repos :if (= r.name repo.name)
+                  (TreeSource :dir (.format "{}/{}" from-root.root r.name) :commit r.commit))
+            None)))
 
 
 (defk env-marker->json [marker]
@@ -116,7 +131,8 @@
   (val volume marker.volume)
   {"format" ENV-MARKER-FORMAT "key" marker.key "platform" marker.platform "env" declared
    "stages" (lfor s marker.stages {"name" s.name "seconds" (round s.seconds 3) "files" s.files
-                                   "parts" (lfor p s.parts {"name" p.name "how" p.how "seconds" (round p.seconds 3)})})
+                                   "parts" (lfor p s.parts {"name" p.name "how" p.how "seconds" (round p.seconds 3)
+                                                            "copied" p.copied "removed" p.removed "replaced" p.replaced})})
    "downloaded" marker.downloaded "built" marker.built
    "interpreter" marker.interpreter "childProtocol" marker.child-protocol
    "bytecode" bytecode
@@ -166,7 +182,8 @@
                    (.format "{}={:.3f}s{}{}" s.name s.seconds
                             (if (is s.files None) "" (.format "/{}files" s.files))
                             (if s.parts
-                                (.format "({})" (.join "," (gfor p s.parts (.format "{}:{}={:.3f}s" p.name p.how p.seconds))))
+                                (.format "({})" (.join "," (gfor p s.parts (.format "{}:{}={:.3f}s[写{}・消{}・置{}]" p.name p.how p.seconds
+                                                                                    p.copied p.removed p.replaced))))
                                 ""))))
   (.format "計時: 起動→最初の処理ステージ {} 秒・disk {}・処理ステージ {}"
            (if (is startup None) "-" (.format "{:.3f}" startup))
@@ -226,17 +243,23 @@
 
 (defk stage-trees [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
-  "repo ごとのツリーを root の下に兄弟で並べる(同じ commit のツリーが既にあれば複製で済ませる)。repo ごとの秒と置き方(写し・展開)を
-   区切りとして印へ渡す(#3676)。"
+  "repo ごとのツリーを root の下に兄弟で並べる(元の鍵が同じ完成済みの root が在れば、その木を hardlink で写して変わった path だけ新しく
+   置く — 無ければ mirror から展開する)。repo ごとの秒と置き方(写し・展開)と file の数の内訳(写した・消した・置き直した)を区切りとして
+   印へ渡し、この処理ステージが root に書いた file の数は新しく置いた数の合計(hardlink は書かない・#3677)。写し元を渡したのに展開した
+   木は、その理由を記録に残す。"
   (val mirrors (dfor m state.mirrors m.name m.mirror))
+  (<- from-root (| KnownRoot None) (copy-root request))
   (var parts #())
   (for [repo request.env.repos]
-    (<- reuse (reuse-tree request.known repo))
+    (<- source (| TreeSource None) (tree-source from-root repo))
     (<- started float (GetMonotonic))
-    (<- (MaterializeTree (get mirrors repo.name) repo.commit (.format "{}/{}" request.root repo.name) reuse))
+    (<- placed TreePlaced (MaterializeTree (get mirrors repo.name) repo.commit (.format "{}/{}" request.root repo.name) source))
     (<- ended float (GetMonotonic))
-    (:= parts (+ parts #((StagePart :name repo.name :how (if (is reuse None) TREE-EXPAND TREE-COPY) :seconds (- ended started))))))
-  (replace state :parts parts))
+    (when placed.reason
+      (<- (PrepareNote (.format "repo {} の木を写し元 {} から写せず展開した: {}" repo.name source.dir placed.reason))))
+    (:= parts (+ parts #((StagePart :name repo.name :how placed.how :seconds (- ended started)
+                                    :copied placed.copied :removed placed.removed :replaced placed.replaced)))))
+  (replace state :parts parts :written (sum (gfor p parts p.replaced))))
 
 
 (defk stage-lock [request state]

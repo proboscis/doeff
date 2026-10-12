@@ -1,5 +1,5 @@
 ;;; 実行環境の準備の速い模擬の世界(2026-09-27)— 翻訳 env-translation(本番と同じ 1 つ)の下で、土台の偽物だけが答える:
-;;;   子 process    doeff の scripted-process-handler に渡す台本 git・tar・cp・uv(この module の ScriptedCommand)
+;;;   子 process    doeff の scripted-process-handler に渡す台本 git(clone・cat-file・config・fetch・archive・diff・ls-tree)・tar・cp・uv(この module の ScriptedCommand)
 ;;;   file system  doeff の memory-file-handler(置き場の中身と空き)
 ;;;   時計          呼び手が外側に置く仮想の時計(uv の sync と native の build は台本の中で眠る)
 ;;; 準備の判断(env_prepare の prepare-env)も翻訳も本物のまま走る。業務の要求に直に答える偽物は持たない。
@@ -21,7 +21,7 @@
 ;;; --frozen は入れる行の先にだけ届こうとする — 届かない先(unreachable)なら sync が終わる。
 ;;;
 ;;; 世界の移ろう物は全部 memory の置き場の /world の下の file に置く(台本は状態を持たない):
-;;;   log.json        clone・fetch・展開・複製・sync・download・build・bytecode の焼きの呼びの回数(read-world-log で読む)
+;;;   log.json        clone・fetch・展開・差(diff)・複製(cp の呼び)・sync・download・build・bytecode の焼きの呼びの回数(read-world-log で読む)
 ;;;   notes.log       準備の記録の行(設定 runtime-env.notes)
 ;;;   uv-cache.json   取りに行った package の名(同じ lock の 2 回目は download 0)
 ;;;   uv-failure.json 今の uv の失敗(set-uv-failure で差し替える)
@@ -44,7 +44,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText
-                                         AppendText MakeDirectory WalkTree CopyTree])
+                                         AppendText MakeDirectory WalkTree])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
@@ -71,7 +71,7 @@
 (val GIT-FATAL 128)
 (val BAD-USAGE 129)
 (val UNREACHABLE-TEXT "fatal: Could not read from remote repository.\n")
-(val LOG-FIELDS #("clones" "fetches" "archives" "copies" "syncs" "downloads" "builds" "compiles" "stored"))
+(val LOG-FIELDS #("clones" "fetches" "archives" "diffs" "expanded" "copies" "syncs" "downloads" "builds" "compiles" "stored"))
 ;; 模擬の焼く道具の保存先(source の中身で引く — 本物の code_store の代役・木の相対 path と中身の組を印の file の名にする)。
 (val CODE-STORE-PATH "/world/code-store")
 
@@ -139,13 +139,17 @@
 
 
 (defrecord EnvWorldLog
-  "世界に起きた事の回数(筋書きの確かめに使う)。compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
+  "世界に起きた事の回数(筋書きの確かめに使う)。archives = git archive の呼び・diffs = git diff の呼び・expanded = tar が root の下へ書いた
+   file の数(木を mirror から置いた file の数 — 写した file は含まない)・copies = cp の呼び・compiles = bytecode の焼きの子 process を起こした回数(全部の木を 1 回で焼く — 木の数
    ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・stored = 保存先の
    code から書いた .pyc の数(木ごとに足す・#3858)・entries = 最後の bytecode の焼く範囲の入口・rebuilt = 木ごとに焼いた source の
-   相対 path(#(木 path の tuple) の列・焼いた順)・notes = 準備の記録の行。"
+   相対 path(#(木 path の tuple) の列・焼いた順)・diffed = git diff で読んだ 2 つの commit(#(旧 新) の列・読んだ順 — どの root を写し元に
+   選んだかを commit で確かめる)・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
   (setv #^ int archives 0)
+  (setv #^ int diffs 0)
+  (setv #^ int expanded 0)
   (setv #^ int copies 0)
   (setv #^ int syncs 0)
   (setv #^ int downloads 0)
@@ -155,6 +159,7 @@
   (setv #^ tuple entries #())
   (setv #^ tuple compiled-trees #())
   (setv #^ tuple rebuilt #())
+  (setv #^ tuple diffed #())
   (setv #^ tuple notes #()))
 
 
@@ -257,7 +262,7 @@
   (for [#(k v) (.items changes)]
     (cond
       (in k LOG-FIELDS) (setv (get log k) (+ (.get log k 0) v))
-      (in k #("compiled-trees" "rebuilt")) (setv (get log k) (+ (.get log k []) [v]))
+      (in k #("compiled-trees" "rebuilt" "diffed")) (setv (get log k) (+ (.get log k []) [v]))
       True (setv (get log k) v)))
   (<- (write-json LOG-PATH log))
   None)
@@ -362,19 +367,69 @@
 
 (defk git-archive [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
-  "git archive -o <archive> <sha> に答えるため(tar の台本が読む形 — path → 中身の JSON — で commit の木を書く)。"
+  "git archive --format=tar -o <archive> <sha> [-- <path>…] に答えるため(tar の台本が読む形 — path → 中身の JSON — で commit の木を書く。
+   path が在れば、その path の file だけ)。"
   (<- archive str (required-option-of args "-o"))
-  (<- commit (| WorldCommit None) (commit-of world (get args -1)))
+  (val sha (get args (+ (.index args "-o") 2)))
+  (val wanted (if (in "--" args) (frozenset (cut args (+ (.index args "--") 1) None)) None))
+  (<- commit (| WorldCommit None) (commit-of world sha))
   (if (is commit None)
       (ProcessOutcome :stdout "" :stderr "fatal: not a valid object name\n" :exit-code GIT-FATAL)
-      (do (<- (write-json archive (dfor f commit.files f.path f.text)))
+      (do (<- (write-json archive (dfor f commit.files :if (or (is wanted None) (in f.path wanted)) f.path f.text)))
           (<- (bump {"archives" 1}))
           (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
 
 
+(defk mirror-commit [world argv sha]
+  {:pre [(: world EnvWorld) (: argv tuple) (: sha str)] :post [(: % (| WorldCommit None))]}
+  "mirror(git -C の dir)が取っている commit sha の木(mirror に取っていない commit は None — 本物の git は bad object で終わる)。"
+  (<- mirror str (required-option-of argv "-C"))
+  (<- fetched str (read-or-empty (posixpath.join mirror "fetched")))
+  (if (in sha (.splitlines fetched))
+      (do (<- commit (| WorldCommit None) (commit-of world sha))
+          commit)
+      None))
+
+
+(defk nul-joined [words]
+  {:pre [(: words tuple)] :post [(: % str)]}
+  "git の -z の出力の形(語ごとに NUL を添える)にするため。"
+  (.join "" (gfor w words (+ w "\0"))))
+
+
+(defk git-diff [world argv args]
+  {:pre [(: world EnvWorld) (: argv tuple) (: args tuple)] :post [(: % ProcessOutcome)]}
+  "git -C <mirror> diff --name-status --no-renames -z <old> <new> に答えるため(2 つの commit の木の差 — 増えた A・変わった M・消えた D を
+   path の順に・どちらかの commit が mirror に無ければ bad object で終わる)。"
+  (<- old (| WorldCommit None) (mirror-commit world argv (get args -2)))
+  (<- new (| WorldCommit None) (mirror-commit world argv (get args -1)))
+  (if (or (is old None) (is new None))
+      (ProcessOutcome :stdout "" :stderr "fatal: bad object\n" :exit-code GIT-FATAL)
+      (do (val before (dfor f old.files f.path f.text))
+          (val after (dfor f new.files f.path f.text))
+          (val lines (tuple (gfor p (sorted (| (set before) (set after)))
+                                  :setv status (cond (not-in p before) "A" (not-in p after) "D" (!= (get before p) (get after p)) "M" True None)
+                                  :if (is-not status None)
+                                  w #(status p)
+                                  w)))
+          (<- (bump {"diffs" 1 "diffed" [old.sha new.sha]}))
+          (<- text str (nul-joined lines))
+          (ProcessOutcome :stdout text :stderr "" :exit-code 0))))
+
+
+(defk git-ls-tree [world argv args]
+  {:pre [(: world EnvWorld) (: argv tuple) (: args tuple)] :post [(: % ProcessOutcome)]}
+  "git -C <mirror> ls-tree -r -z --name-only <sha> に答えるため(commit の追跡 path の全部 — path の順)。"
+  (<- commit (| WorldCommit None) (mirror-commit world argv (get args -1)))
+  (if (is commit None)
+      (ProcessOutcome :stdout "" :stderr "fatal: Not a valid object name\n" :exit-code GIT-FATAL)
+      (do (<- text str (nul-joined (tuple (sorted (gfor f commit.files f.path)))))
+          (ProcessOutcome :stdout text :stderr "" :exit-code 0))))
+
+
 (defk git-script [world commands request]
   {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive)に世界から答える台本。"
+  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive・diff・ls-tree)に世界から答える台本。"
   (val argv (tuple request.argv))
   (val args (if (in "-C" argv) (cut argv 3 None) (cut argv 1 None)))
   (<- answer ProcessOutcome
@@ -384,6 +439,8 @@
         "config" (git-config argv)
         "fetch" (git-fetch world argv args)
         "archive" (git-archive world args)
+        "diff" (git-diff world argv args)
+        "ls-tree" (git-ls-tree world argv args)
         _ (ProcessOutcome :stdout "" :stderr (.format "usage: git の台本が知らない形: {}\n" argv) :exit-code BAD-USAGE)))
   answer)
 
@@ -392,26 +449,37 @@
 
 (defk tar-script [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "tar -xf <archive> -C <dest> に答える台本(git の台本が書いた archive の中身を dest の下へ置く)。"
+  "tar -xf <archive> -C <dest> に答える台本(git の台本が書いた archive の中身を dest の下へ置く — 書いた file の数は
+   log の expanded: 翻訳が展開した file の数の、台本側の数え)。"
   (val argv (tuple request.argv))
   (<- archive str (required-option-of argv "-xf"))
   (<- dest str (required-option-of argv "-C"))
   (<- tree dict (read-json archive {}))
   (for [#(path text) (.items tree)]
     (<- (write-file (posixpath.join dest path) text)))
+  (<- (bump {"expanded" (len tree)}))
   (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
 
 
 (defk cp-script [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "cp -al <source>/. <dest> に答える台本(置き場の中で木を写す)。"
+  "cp -al --parents -t <dest> -- <path>… に答える台本(命令の cwd の木の path を、dest の同じ相対 path へ写す — 本物の hardlink は memory の
+   置き場に無いので中身を写す。cwd に無い path は本物の cp と同じく 1 で終わる)。呼びの数は log の copies。"
   (val argv (tuple request.argv))
-  (val source (.removesuffix (get argv -2) "/."))
-  (<- copied (CopyTree source (get argv -1)))
-  (if (isinstance copied FileFailed)
-      (ProcessOutcome :stdout "" :stderr (.format "cp: {}\n" copied.detail) :exit-code 1)
-      (do (<- (bump {"copies" 1}))
-          (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
+  (when (not (and (>= (len argv) 6) (= (cut argv 0 4) #("cp" "-al" "--parents" "-t")) (= (get argv 5) "--") (is-not request.cwd None)))
+    (return (ProcessOutcome :stdout "" :stderr (.format "usage: cp の台本が知らない形: {}\n" argv) :exit-code BAD-USAGE)))
+  (val dest (get argv 4))
+  (var missing None)
+  (for [path (cut argv 6 None)]
+    (when (is missing None)
+      (<- text (| str FileFailed) (ReadText (posixpath.join request.cwd path)))
+      (if (isinstance text FileFailed)
+          (:= missing path)
+          (do (<- (write-file (posixpath.join dest path) text))))))
+  (<- (bump {"copies" 1}))
+  (if (is missing None)
+      (ProcessOutcome :stdout "" :stderr "" :exit-code 0)
+      (ProcessOutcome :stdout "" :stderr (.format "cp: cannot stat '{}': No such file or directory\n" missing) :exit-code 1)))
 
 
 ;; --- uv -----------------------------------------------------------------------------------
@@ -762,6 +830,7 @@
                :entries (tuple (.get log "entries" []))
                :compiled-trees (tuple (gfor #(tree roots) (.get log "compiled-trees" []) #(tree (tuple roots))))
                :rebuilt (tuple (gfor #(tree paths) (.get log "rebuilt" []) #(tree (tuple paths))))
+               :diffed (tuple (gfor #(old new) (.get log "diffed" []) #(old new)))
                :notes (tuple (gfor line (.splitlines notes) :if line (.removeprefix line "env: ")))))
 
 
