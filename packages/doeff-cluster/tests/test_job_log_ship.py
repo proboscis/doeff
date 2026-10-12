@@ -11,6 +11,8 @@ shim を起こす。外の世界(送り先)の代わりを渡す検は、送り�
 - 溜めが溢れても書き手は待たず、溢れた行は捨てて数える(届いた行の通し番号の飛びが捨てた行)
 - 送り先の値が使えなければ送らず、理由を 1 行 log に書く(job はそのまま走る)
 - 送り先の環境変数は、worker の環境から実行環境の job と待ちの子へ継ぐ許可表に在る
+- worker の process 自身の行(card ki-35923a5895b2)は job の名 worker/<worker の名>・試み 0・世代 boot で送り、捕まえない例外の
+  traceback も file と送り先の両方に届く。送り先が無い・stdout と stderr が別の file の時は出力の向きを替えない
 """
 
 import json
@@ -47,6 +49,7 @@ from doeff_cluster.worker.entry.line_stamp import (
     cut_lines,
     job_log_plan,
     logs_body,
+    worker_log_plan,
 )
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "program"}
@@ -156,6 +159,28 @@ def test_an_unusable_value_refuses_shipping_by_name_without_the_value(changed: d
     assert named in plan.reason, plan.reason
     assert "secret" not in plan.reason, plan.reason
     assert "collector" not in plan.reason, plan.reason
+
+
+def test_the_worker_process_names_itself_and_ignores_a_job_context_in_its_environ() -> None:
+    """worker の process 自身の行は job の名 worker/<worker の名>・試み 0・世代 = 渡した boot で名乗る。worker の環境に job の文脈の
+    名が在っても読まない(送り先の基の URL と配備が足す属性だけを読む)。送り先が無ければ送らない。"""
+    environ = {
+        **CONTEXT,
+        JOB_LOG_OTLP_VAR: "http://collector:4318",
+        JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal",
+    }
+    assert worker_log_plan(environ, "zeus-native", "b0") == JobLogTarget(
+        endpoint="http://collector:4318/v1/logs",
+        resource=(
+            Attribute("owner.tenant", "personal"),
+            Attribute("service.name", "doeff.job-log"),
+            Attribute("doeff.worker", "zeus-native"),
+            Attribute("doeff.job", "worker/zeus-native"),
+            Attribute("doeff.attempt", "0"),
+            Attribute("doeff.instance", "b0"),
+        ),
+    )
+    assert worker_log_plan(CONTEXT, "zeus-native", "b0") == JobLogOff()
 
 
 def test_the_body_is_otlp_logs_json_with_one_record_per_line() -> None:
@@ -625,3 +650,81 @@ def test_a_job_forked_from_the_warm_child_ships_its_lines(tmp_path: Path, collec
             warm.kill()
         warm.wait(timeout=10)
         shutil.rmtree(short, ignore_errors=True)
+
+
+# --- worker の process 自身の行(card ki-35923a5895b2 — 機体の systemd・launchd と同じ持ち方の本物の process)-----------------------
+
+WORKER_PROCESS = """
+import os, sys
+from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+print("worker: 起動します boot=b0", file=sys.stderr, flush=True)
+os.write(1, b"worker: heartbeat \\xe3\\x81\\xae gap\\n")
+raise RuntimeError("worker-crashed-at-the-end")
+"""
+
+
+@dataclass(frozen=True)
+class WorkerRan:
+    """worker の代わりの process の 1 回: code = 終了コード・out と err = stdout と stderr の file の中身(同じ file なら同じ)。"""
+
+    code: int
+    out: bytes
+    err: bytes
+
+
+def worker_run(tmp: Path, env: dict[str, str], same_file: bool) -> WorkerRan:
+    """worker の入口と同じ呼び方で自分の行を差し替える python の 1 本を、systemd の StandardOutput=append: と StandardError=append: の
+    持ち方(同じ path を 2 度開く — same_file が偽なら別の 2 つの file)で走らせるため。env = 検の process の環境に足す環境変数。"""
+    out_path = tmp / "worker.log"
+    err_path = out_path if same_file else tmp / "worker.err.log"
+    argv = ["env", *(f"{name}={value}" for name, value in env.items()), sys.executable, "-B", "-c", WORKER_PROCESS]
+    with open(out_path, "ab") as out, open(err_path, "ab") as err:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+    code = process.wait(timeout=END_LIMIT_SECONDS)
+    return WorkerRan(code=code, out=out_path.read_bytes(), err=err_path.read_bytes())
+
+
+def test_the_worker_process_ships_its_own_lines_and_its_crash_traceback(tmp_path: Path, collector: Collector) -> None:
+    """送り先が在り、stdout と stderr が同じ file の worker は、自分の行を刻つきで file へ書き、同じ行を job の名 worker/<名>・試み 0・
+    世代 boot で送る。捕まえない例外で落ちても、traceback の行は file と送り先の両方に在る(書き手の終わりは excepthook の後)。"""
+    env = {JOB_LOG_OTLP_VAR: collector.base(), JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal"}
+    ran = worker_run(tmp_path, env, same_file=True)
+    assert ran.code == 1, ran.out
+    lines = file_lines(ran.out)
+    bodies = [x.body for x in lines]
+    assert bodies[:3] == ["worker: 起動します boot=b0".encode(), "worker: heartbeat の gap".encode(), b"Traceback (most recent call last):"]
+    assert bodies[-1] == b"RuntimeError: worker-crashed-at-the-end", bodies
+    records = received_until(collector, len(lines))
+    assert [r.body for r in records] == [x.body.decode() for x in lines]
+    assert [r.at_ns // 1_000_000 for r in records] == [x.at_ms for x in lines]
+    assert {r.resource for r in records} == {
+        (
+            ("owner.tenant", "personal"),
+            ("service.name", "doeff.job-log"),
+            ("doeff.worker", "zeus-native"),
+            ("doeff.job", "worker/zeus-native"),
+            ("doeff.attempt", "0"),
+            ("doeff.instance", "b0"),
+        )
+    }
+
+
+def test_a_worker_without_the_destination_keeps_its_output_as_it_is(tmp_path: Path, collector: Collector) -> None:
+    """送り先が無い worker(Pod の worker の形)は、出力の向きを替えない — 行は刻を付けずにそのまま file に在り、何も送らない。"""
+    ran = worker_run(tmp_path, {}, same_file=True)
+    assert ran.code == 1, ran.out
+    assert ran.out.startswith("worker: 起動します boot=b0\nworker: heartbeat の gap\nTraceback".encode()), ran.out
+    assert collector.records() == []
+
+
+def test_a_worker_whose_stdout_and_stderr_are_two_files_keeps_them_and_names_why(tmp_path: Path, collector: Collector) -> None:
+    """送り先が在っても stdout と stderr が別の file なら、向きを替えずに(刻を付けない・2 つの file のまま)送らない訳を 1 行 stderr に
+    書き、worker はそのまま走る。"""
+    ran = worker_run(tmp_path, {JOB_LOG_OTLP_VAR: collector.base()}, same_file=False)
+    assert ran.code == 1, ran.err
+    assert ran.out == "worker: heartbeat の gap\n".encode(), ran.out
+    assert ran.err.startswith(
+        "line_stamp: worker の行を送らない — stdout と stderr が同じ file でない\nworker: 起動します boot=b0\nTraceback".encode()
+    ), ran.err
+    assert collector.records() == []
