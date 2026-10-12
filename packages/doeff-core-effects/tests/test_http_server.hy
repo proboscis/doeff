@@ -7,7 +7,8 @@
 ;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
 ;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)・
 ;;;     答え(HttpRespond)・宣言の小さい本文の読み(HttpReadBody)・列に既に在る到着(HttpNextRequest)が共有の event loop へ入らない
-;;;     (#3688 の子 (3) の 3b・3c と案 1)・ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)
+;;;     (#3688 の子 (3) の 3b・3c と案 1)・ws の文字の 1 通の送り(WsSendText)も共有の event loop へ入らず、撃った順に届く
+;;;     (card ki-bbf782b2ab4b)・ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)
 ;;;     (aiohttp の無い venv では skip)。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
@@ -31,7 +32,7 @@
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpServerClosed HttpListen HttpNextRequest
                                                 HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
-                                                ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText
+                                                ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText WsClose
                                                 HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed
                                                 WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyFailed HttpBodyOutcome ScriptedBody
                                                 WS-CUT-REASON HttpProbe HttpProbeAnswer HttpStopListening WsTextSent])
@@ -726,6 +727,74 @@
   (assert (= done "returned"))
   (assert (in "札 no-such への命令 HttpRespond" err) err)
   (assert (not-in "Traceback" err) err))
+
+
+;; --- ws の送りは待ち受けの loop へ積むだけ(card ki-bbf782b2ab4b)------------------------------------------------------------------
+;; 直す前は WsSendText 1 回ごとに Await 1 回(共有の loop → 待ち受けの loop → 戻りの往復)を待ち、同じ通を接続の数だけ送る呼び手の
+;; 1 周期が送りの数に比例して伸びた(画面の job・本番と同じ組で送り 1 回 1.32 ms → 0.45 ms)。
+
+(val SENT-TEXTS 5)
+(val SENT-CLOSE-CODE 4001)
+
+
+(defk send-awaits [box]
+  {:pre [(: box queue.Queue)] :post [(: % int)] :tags {:context "http-server-test" :role "program"}}
+  "port 0 で開いて結んだ宛先を box へ置き、ws の要求 1 つを上げ、文字の 1 通を SENT-TEXTS 回送る間に共有の event loop へ入った回数を
+   返すため(送りの直後に閉じを撃つ — 積んだ送りが閉じより先に渡ることを相手の側で確かめる)。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (.put box bound)
+  (<- arrived HttpRequestArrived (HttpNextRequest))
+  (<- (WsAccept :ticket arrived.ticket))
+  (<- before int (ReadAwaits))
+  (for [index (range SENT-TEXTS)]
+    (<- (WsSendText :ticket arrived.ticket :text (+ "t-" (str index)))))
+  (<- after int (ReadAwaits))
+  (<- (WsClose :ticket arrived.ticket :code SENT-CLOSE-CODE :reason "送り終えた"))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 2.0))
+  (- after before))
+
+
+(deff hear-until-closed [box answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+  {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
+   :tags {:context "http-server-test" :role "foundation"}}
+  "待ち受けが開いたら ws で繋ぎ、閉じの frame まで受けた文字の 1 通の列と閉じの状態符を answers へ置くため(失敗なら例外を置く)。"
+  (import aiohttp)
+  (defn :async #^ tuple heard [#^ HttpAddress bound]
+    "ws で繋ぎ、送りの数 + 閉じの 1 つの frame を受けて、文字の 1 通の列(受けた順)と、文字でない最初の frame の中身(閉じの状態符)を
+     答えるため(閉じが送りを追い越せば、文字の列が欠けて状態符が先に来る)。"
+    (with [:async session (aiohttp.ClientSession)]
+      (with [:async ws (.ws-connect session (.format "http://127.0.0.1:{}/ws" bound.port))]
+        (setv frames (lfor _ (range (+ SENT-TEXTS 1)) (await (.receive ws :timeout HOLD-SECONDS))))
+        #((tuple (gfor frame frames :if (= frame.type aiohttp.WSMsgType.TEXT) frame.data))
+          (next (gfor frame frames :if (!= frame.type aiohttp.WSMsgType.TEXT) frame.data) None)))))
+  (try
+    (.put answers (asyncio.run (heard (.get box :timeout HOLD-SECONDS))))
+    (except [error Exception]
+      (.put answers error)))
+  None)
+
+
+(defk sent-awaits []
+  {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で send-awaits を走らせ、#(共有の loop へ入った回数 相手が受けた文字の 1 通の列 閉じの状態符) を返すため(aiohttp の
+   無い venv では skip)。"
+  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (val box (queue.Queue))
+  (val answers (queue.Queue))
+  (.start (threading.Thread :target hear-until-closed :args #(box answers) :daemon True))
+  (<- entered int (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (send-awaits box)))
+  (val got (.get answers :timeout HOLD-SECONDS))
+  (when (isinstance got Exception)
+    (raise got))
+  #(entered #* got))
+
+
+(deftest test-the-aiohttp-server-queues-ws-texts-on-the-edge-without-a-round-trip
+  ;; 文字の 1 通の送り(WsSendText)は待ち受けの loop へ積むだけで、共有の event loop へ入らない(直す前は送り 1 回ごとに Await 1 回 = 5 回)。
+  ;; 相手は撃った順に全部を受け、その後に撃った閉じ(WsClose — across で渡る)は送りの後に届く(積んだ送りを追い越さない)。
+  (<- got tuple (sent-awaits))
+  (assert (= got #(0 (tuple (gfor index (range SENT-TEXTS) (+ "t-" (str index)))) SENT-CLOSE-CODE)) got))
 
 
 ;; --- 宣言の小さい本文は待ち受けの loop が先に読む(agora-redesign #3688 の子 (3) の 3c)-----------------------------------------
