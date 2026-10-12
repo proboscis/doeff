@@ -33,6 +33,9 @@ doeff-indexer = { path = "../doeff-indexer", default-features = false }
 # 意味の規則(DOEFF201・202)で Jev(Vercel AI Gateway)へ問う HTTP の口(--semantic の時だけ使う)。
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 sha2 = "0.10"
+# 事実の cache の置き場が、置く前に値の綴りへ根の絶対 path が入っていないかを探す(SIMD の部分列の探索 — 事実 1 つ 64KB 前後を数千回)。
+# regex の依存で Cargo.lock に既に在る(新しい crate を足さない)。
+memchr = "2"
 # 設定の知らない鍵を、止めずに path つきで集める(struct の定義が知っている鍵の唯一の正本 — 鍵の表を手で持たない・agora-redesign #848)。
 serde_ignored = "0.1"
 # repo 全体の Hy の索引の file ごとの cache を、欄の名前を持たない binary の形で置く(JSON では 147MB・読みに 1.2 秒 — agora-redesign #1364)。

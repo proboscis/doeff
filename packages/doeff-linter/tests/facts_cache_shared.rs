@@ -252,3 +252,78 @@ fn module_dependencies_are_shared_between_checkouts_too() {
     assert_eq!(cached, affected(second.path(), None));
     assert!(cached.contains("tests/test_mod0.hy"), "検の file に届いていない: {cached}");
 }
+
+// ── 複数の作業木が事実を分け合う時の、事実の寿命(設計検証 lt-3TF90EJ6BTXWY5VWVS7GRE1CGW の盲検 B)─────────────────────────────
+// 事実は根をまたいで分け合うので、1 つの根の表だけからは「もう要らない」と決められない。引く手順が「この根はもう読まない」と事実を
+// 消すと、提示の検査(答えの比べ・1 つの作業木の書き換え)は全部通るのに、別の作業木が使う事実が消えて書き直しになる。消せるのは片づけ
+// (上限・古い順)だけ。
+
+/// 同じ commit の作業木 A・B を走らせた後、A で 1 file を書き換えて走らせる。B は何も変えずにもう一度走る。A の実行は B が使う事実を
+/// 消さず、B の 2 回目は事実を 1 つも書かない。
+#[test]
+fn editing_in_one_tree_does_not_remove_facts_another_tree_uses() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let (a, b) = (tempfile::TempDir::new().unwrap(), tempfile::TempDir::new().unwrap());
+    checkout(a.path());
+    checkout(b.path());
+    lint(a.path(), Some(cache.path()));
+    lint(b.path(), Some(cache.path()));
+    let facts_before = facts(cache.path());
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let edited = a.path().join("app/core/mod3.hy");
+    let mut text = std::fs::read_to_string(&edited).unwrap();
+    text.push_str("(defn added [x] (+ x 1))\n");
+    std::fs::write(&edited, text).unwrap();
+    lint(a.path(), Some(cache.path()));
+    let facts_after_a = facts(cache.path());
+    let removed: Vec<&PathBuf> = facts_before.keys().filter(|path| !facts_after_a.contains_key(*path)).collect();
+    assert!(removed.is_empty(), "A の実行が、B も使う事実 {} 個を消した: {:?}", removed.len(), removed);
+
+    let after_a = snapshot(cache.path());
+    let cached_b = lint(b.path(), Some(cache.path()));
+    assert_eq!(cached_b, lint(b.path(), None), "B の答えが cache を使わない実行と違う");
+    let rewritten = written_facts_since(&after_a, cache.path());
+    assert_eq!(rewritten, 0, "変えていない作業木 B の 2 回目が事実を {rewritten} byte 書き直した");
+}
+
+/// 作業木 A が別の commit へ移って走った後に、元の commit の新しい作業木 C が走る。C が新しく書く byte は A の 1 本目の 10% 未満
+/// (A が前の commit の事実を消していない)。
+#[test]
+fn a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let a = tempfile::TempDir::new().unwrap();
+    checkout(a.path());
+    lint(a.path(), Some(cache.path()));
+    let written_first = total(&snapshot(cache.path()));
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    for i in 0..MODULES {
+        let path = a.path().join(format!("app/core/mod{i}.hy"));
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str(&format!("(defn moved-{i} [] {i})\n"));
+        std::fs::write(&path, text).unwrap();
+    }
+    lint(a.path(), Some(cache.path()));
+    let after_move = snapshot(cache.path());
+
+    let c = tempfile::TempDir::new().unwrap();
+    checkout(c.path());
+    let cached_c = lint(c.path(), Some(cache.path()));
+    let written_c = written_since(&after_move, cache.path());
+    assert!(written_c * 10 < written_first, "元の commit の新しい作業木 C が書いた byte {written_c} が、A の 1 本目 {written_first} の 10% 以上");
+    assert_eq!(cached_c, lint(c.path(), None), "C の答えが cache を使わない実行と違う");
+}
+
+/// 置き場の事実 1 つずつ(`objects/` の下で、使った印 `used` と一時 file を除く)。
+fn facts(cache: &Path) -> HashMap<PathBuf, (u64, SystemTime)> {
+    snapshot(&cache.join("objects"))
+        .into_iter()
+        .filter(|(path, _)| !path.file_name().and_then(|n| n.to_str()).is_some_and(|name| name == "used" || name.ends_with(".tmp")))
+        .collect()
+}
+
+/// before の後に `objects/` の下へ新しく書かれた事実の byte。
+fn written_facts_since(before: &HashMap<PathBuf, (u64, SystemTime)>, cache: &Path) -> u64 {
+    facts(cache).iter().filter(|(path, stamp)| before.get(*path) != Some(stamp)).map(|(_, (len, _))| len).sum()
+}

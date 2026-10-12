@@ -12,10 +12,15 @@
 //! - 根ごとの表(`<根の dir>/<種類>.<形>.d/<塊>`): file の path → 大きさ・更新時刻と、その時の事実の鍵。大きさと更新時刻が前と
 //!   同じなら中身を読まずに前の鍵で事実を引く(早い判じ)。違えば中身の hash から鍵を作り直し、置き場に在ればそれを読む。
 //!
+//! file の分け方(責務ごと — 設計検証 lt-3TF90EJ6BTXWY5VWVS7GRE1CGW): この file = 公開の入口・file 1 つを引く手順・根ごとの表 /
+//! `store.rs` = 事実の置き場(配置・鍵・符号化・更新時刻・事実の path を作れるのはここだけ)/ `sweep.rs` = 置き場の寿命(上限・古い順・消えた根)。
+//! 事実を消せるのは `sweep.rs` だけ(引く手順は消さない — 事実は根をまたいで分け合うので、1 つの根の表からは「要らない」と決められない)。
+//!
 //! 鍵の外に事実を動かす物は無いこと(呼び手が保つ): 事実は file の中身・`rel`・呼び手が渡す鍵(`per_file_keyed`)だけで決まり、
 //! 根の絶対 path や設定を読まない。根の絶対 path を値に持つ種類(Hy の索引・signature の事実)は、置く値に path を入れず(`rel`
 //! 相当か空)、読んだ後で呼び手が `bind` で今の根の path を付ける — 置き場に作業木の path が残ると、別の作業木が読んだ事実が
-//! 他の作業木の file を指す。
+//! 他の作業木の file を指す。この約束は呼び手の記憶に頼らず、置く所が見張る(`store::LeakGuard` — 値に今の根の絶対 path が入っていたら
+//! 置かずに作り直す・1 度だけ stderr へ知らせる)。
 //!
 //! 全体の印: linter 自身の binary の大きさと更新時刻・版・事実の種類。linter が組み直されれば鍵が変わり、全部を作り直す
 //! (事実の集め方が変わりうるため)。古い印の事実は読まれないまま上限の片づけで消える。
@@ -42,28 +47,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
+
+mod store;
+mod sweep;
+
+use store::{object_key, read_object, write_object, LeakGuard, ObjectKey, OBJECTS_DIR};
+use sweep::{note_object_bytes, tend_roots, USED_RECORD};
 
 const NO_CACHE_ENV: &str = "DOEFF_LINTER_NO_CACHE";
 const DIR_ENV: &str = "DOEFF_LINTER_CACHE_DIR";
 /// 種類ごとの表の塊の数(頭の註)— 1 file の変更で書き直すのは約 1/SHARDS、読みで開くのは種類ごとに SHARDS 個。
 const SHARDS: usize = 16;
-
-/// 根をまたいで分け合う事実の置き場の dir の名(置き場の根の直下)。
-const OBJECTS_DIR: &str = "objects";
-/// 事実を読んだ時、最後に使われた時刻(file の更新時刻)がこの秒より古ければ今に更新する — 上限を超えた時に、よく読まれる事実
-/// (どの作業木も使う main の file)を古い順の先頭にしないため。事実の読みのたびには書かない。
-const OBJECT_TOUCH_SECONDS: u64 = 6 * 3600;
-/// 書きかけの一時 file がこの秒より古ければ、打ち切られた実行の残りとして片づけで消す。
-const OBJECT_TMP_STALE_SECONDS: u64 = 3600;
-/// 上限を数える時、事実 1 つの大きさの下限(byte)— 空に近い事実も disk では 1 block を使う。
-const OBJECT_MIN_BYTES: u64 = 4096;
-/// 1 つの実行が新しく置いた事実の合計がこの byte を越えたら、番の間隔に依らず上限を確かめる(linter の組み直しの後の最初の
-/// 実行は、事実を全部置き直す — 約 200MB)。
-const GROWTH_CHECK_BYTES: u64 = 32 * 1024 * 1024;
 
 /// file の根からの path が載る塊(FNV-1a — 実行と build をまたいで同じ答え)。
 fn shard_of(rel: &str) -> usize {
@@ -93,9 +89,6 @@ fn stamp_of(path: &Path) -> Option<Stamp> {
     let mtime_ns = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
     Some(Stamp { len: meta.len(), mtime_ns })
 }
-
-/// 事実 1 つの置き場の鍵(中身から決まる hash の頭 16 byte)。
-type ObjectKey = [u8; 16];
 
 /// 根ごとの表の 1 行。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +139,8 @@ impl Format {
 struct Place {
     index: PathBuf,
     objects: PathBuf,
+    /// 根の絶対 path を持つ値を置かない見張り(`store::LeakGuard`)。
+    guard: LeakGuard,
 }
 
 /// 置き場の根(頭の註 — `$DOEFF_LINTER_CACHE_DIR`・`$XDG_CACHE_HOME/doeff-linter`・`~/.cache/doeff-linter` の順)。
@@ -172,71 +167,7 @@ fn place(root: &Path, kind: &str, format: Format) -> Option<Place> {
     let root_dir = base.join(format!("{:016x}", hasher.finish()));
     crate::timing::timed("facts-cache.roots", || tend_roots(&base, &root_dir, root));
     let name = format!("{kind}.{}", format.extension());
-    Some(Place { index: root_dir.join(&name), objects: base.join(OBJECTS_DIR).join(name) })
-}
-
-/// 根の dir の中の、その dir を作った根の path の記録(agora-redesign #1903)。
-const ROOT_RECORD: &str = "root.path";
-/// 置き場の、前に片づけの走査をした時刻(UNIX 秒)の記録。
-const SWEEP_RECORD: &str = ".swept";
-/// 片づけの走査の間隔(秒)— linter は file を書くたびに hook から走るので、毎回は走査しない。
-const SWEEP_INTERVAL_SECONDS: u64 = 3600;
-
-/// この実行の置き場の根と根の dir(上限の片づけを後から呼ぶ時に要る — `note_object_bytes`)。
-static TENDED_AT: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
-
-/// 根の dir は根の path の hash で決まるので、作業木や品質検査の一時の写しのように消えた根の dir は、誰も読まないまま残り続けた
-/// (zeus で 4136 dir・21.6G — agora-redesign #1903)。書く側の 1 点で、根の dir に根の path を記録し、間隔を空けて置き場を走査して、
-/// 記録した根がもう無い dir を消す。記録の無い dir(この仕組みより前に作られた dir)は消さない — 消してよいかは別に決める(#1472)。
-/// 時間だけを理由には消さない。消しても答えは変わらない(読めない塊は作り直す — 頭の註)。1 つの実行で 1 度だけ行う。
-fn tend_roots(base: &Path, root_dir: &Path, root: &Path) {
-    static TENDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    TENDED.get_or_init(|| {
-        // この実行が根の dir を新しく作るか(置き場の全体が増える時 — 根の表の約 2MB。前の形では作業木 1 つで約 176MB)。増える時は
-        // 上限の片づけの番の間隔に依らず、その場で根の dir の上限を確かめる(sweep_over_cap_when_due)。
-        let grows = !root_dir.join(ROOT_RECORD).exists();
-        record_root(root_dir, root);
-        mark_used(root_dir);
-        // 事実の置き場も、根の dir と同じに使った印を付ける(置き場を知らない古い版の linter は、置き場の根の直下の dir を全部、根の dir
-        // として最後に使われた時刻の古い順に消すので、印が古いと事実の置き場ごと消される)。
-        mark_used(&base.join(OBJECTS_DIR));
-        let _ = TENDED_AT.set((base.to_path_buf(), root_dir.to_path_buf()));
-        // 時計が 1970 年より前を指す機体では間隔を測れないので走査しない
-        if let Ok(now) = std::time::SystemTime::now().duration_since(UNIX_EPOCH) {
-            sweep_vanished_roots(base, now.as_secs());
-            let growth = if grows { Growth::Roots } else { Growth::None };
-            sweep_over_cap_when_due(base, root_dir, cache_cap_bytes(), now.as_secs(), growth);
-        }
-    });
-}
-
-/// この実行が新しく置いた事実の byte を数え、合計が GROWTH_CHECK_BYTES を越えた時に 1 度だけ、事実の置き場を含めて上限を確かめる。
-fn note_object_bytes(written: u64) {
-    static TOTAL: AtomicU64 = AtomicU64::new(0);
-    static CHECKED: AtomicBool = AtomicBool::new(false);
-    if written == 0 || TOTAL.fetch_add(written, Ordering::Relaxed) + written < GROWTH_CHECK_BYTES || CHECKED.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    let (Some((base, root_dir)), Ok(now)) = (TENDED_AT.get(), SystemTime::now().duration_since(UNIX_EPOCH)) else { return };
-    sweep_over_cap_when_due(base, root_dir, cache_cap_bytes(), now.as_secs(), Growth::Objects);
-}
-
-/// 根の dir の、最後に使われた時刻の印(中身は空 — file の更新時刻が印)。上限を超えた時に古い順を決める(agora-redesign #2725)。
-const USED_RECORD: &str = "used";
-/// 置き場の全体の上限を変える環境変数(byte)。
-const CAP_ENV: &str = "DOEFF_LINTER_CACHE_MAX_BYTES";
-/// 置き場の全体の上限の既定(4 GiB)— 前の形では作業木 1 つの根の dir が約 176MB(2026-10-10 の zeus の実測 — 大半は repo 全体の Hy の索引
-/// hy-index.bin.d の 156MB)で、約 23 の根を持てた。前の既定 10 GiB(根 1 つ 65MB の見積もり)では zeus に 7.9G 溜まり、worker の
-/// disk が新しい版の準備の下限を割った(agora の card acp:kanban-issue:ki-f3bbb3ca4667)。消した根は次の実行で作り直す(答えは変わらない)。
-/// 戻し方 = この値を戻す(環境変数 CAP_ENV でも機体ごとに変えられる)。
-const DEFAULT_CAP_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-/// 上限を越えても消さない「使っている根」の長さ(秒)— この秒の内に使われた dir(並走する実行が使っている根)。前は番の間隔と同じ
-/// 1 時間で、作業の多い時はほぼ全部の根が守られて上限の内へ戻せなかった(ki-f3bbb3ca4667)。
-const IN_USE_SECONDS: u64 = 600;
-
-/// 置き場の全体の上限(環境変数が読めない値なら既定)。
-fn cache_cap_bytes() -> u64 {
-    std::env::var(CAP_ENV).ok().and_then(|text| text.trim().parse::<u64>().ok()).unwrap_or(DEFAULT_CAP_BYTES)
+    Some(Place { index: root_dir.join(&name), objects: base.join(OBJECTS_DIR).join(name), guard: LeakGuard::of(root) })
 }
 
 /// この実行が根の dir を使った印を付ける(1 つの実行で 1 度)。commit の hook の HEAD の木の結果の dir も、読み書きのたびにこれで
@@ -245,271 +176,6 @@ pub fn mark_used(root_dir: &Path) {
     if std::fs::create_dir_all(root_dir).is_ok() {
         let _ = std::fs::write(root_dir.join(USED_RECORD), b"");
     }
-}
-
-/// 根の dir の中の file の大きさの合計(byte — 根の dir の直下と `<種類>.<形>.d/` の塊)。
-fn dir_bytes(dir: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
-    entries
-        .flatten()
-        .map(|entry| match entry.metadata() {
-            Ok(meta) if meta.is_dir() => dir_bytes(&entry.path()),
-            Ok(meta) => meta.len(),
-            Err(_) => 0,
-        })
-        .sum()
-}
-
-/// 根の dir の、最後に使われた時刻(UNIX 秒)— 印 `used` の更新時刻。印の無い dir(この仕組みより前に作られた dir)は dir の更新時刻。
-fn last_used(dir: &Path) -> u64 {
-    std::fs::metadata(dir.join(USED_RECORD))
-        .or_else(|_| std::fs::metadata(dir))
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs())
-}
-
-/// 上限の片づけの、前に終えた時刻(UNIX 秒)の記録。根が消えた dir の片づけの記録 `.swept` とは分ける — `.swept` は上限の片づけを
-/// 持たない古い版の linter も書くので、それと番を分け合うと、古い版が番を取った間は上限の片づけが走らない(zeus の 2026-10-02 12:50 の
-/// 走査で 63G のまま 0 件 — agora-redesign #2725)。
-const CAP_SWEEP_RECORD: &str = ".swept-cap";
-/// 上限の片づけの最中の印(中身は空)。並走する実行が同じ片づけを重ねないため。打ち切られた実行が残した印は、この秒を過ぎたら無いものとする。
-const CAP_SWEEP_LOCK: &str = ".swept-cap.lock";
-const CAP_SWEEP_LOCK_STALE_SECONDS: u64 = 600;
-
-/// 置き場が増えた事の知らせ方(sweep_over_cap_when_due)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Growth {
-    /// 増えていない — 番の間隔が過ぎた時だけ片づける。
-    None,
-    /// この実行が根の dir を新しく作った — 番の間隔に依らず、根の dir だけで上限を確かめる(事実の置き場は歩かない — 作業木が
-    /// 増えるたびに事実を 1 つずつ数えるのは重い)。
-    Roots,
-    /// この実行が新しい事実を多く置いた(linter の組み直しの後) — 番の間隔に依らず、事実の置き場も含めて確かめる。
-    Objects,
-}
-
-/// 前に上限の片づけを終えてから間隔が過ぎているか、置き場の全体が増えた(growth — 頭の註)なら、上限の片づけをする。
-/// 終えた時刻は、事実の置き場も含めた片づけが終わってから書く — commit の hook の秒の上限などで打ち切られた実行は記録を書かないので、
-/// 次の実行がやり直す(番だけ取って終わる形を作らない)。増える時に確かめないと、番の間隔の内に作業木が増えた分だけ上限を越えたままに
-/// なる(zeus の 7.9G — ki-f3bbb3ca4667)。並走する実行の片づけの最中は、増える時も重ねない。
-fn sweep_over_cap_when_due(base: &Path, root_dir: &Path, cap: u64, now: u64, growth: Growth) {
-    let stamp = base.join(CAP_SWEEP_RECORD);
-    let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
-    let due = !last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS);
-    if !due && growth == Growth::None {
-        return;
-    }
-    let lock = base.join(CAP_SWEEP_LOCK);
-    let held_by_other = std::fs::metadata(&lock)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .is_some_and(|at| now.saturating_sub(at.as_secs()) < CAP_SWEEP_LOCK_STALE_SECONDS);
-    if held_by_other || std::fs::create_dir_all(base).is_err() || std::fs::write(&lock, b"").is_err() {
-        return;
-    }
-    let with_objects = due || growth == Growth::Objects;
-    sweep_over_cap(base, root_dir, cap, now, with_objects);
-    if with_objects {
-        let _ = std::fs::write(&stamp, now.to_string());
-    }
-    let _ = std::fs::remove_file(&lock);
-}
-
-/// 事実の置き場の file(事実 1 つ = 1 file)を、(最後に使われた時刻・数える大きさ・path)で並べる。打ち切られた実行が残した古い
-/// 一時 file はここで消す。
-fn object_files(objects: &Path, now: u64) -> Vec<(u64, u64, PathBuf)> {
-    let fans: Vec<PathBuf> = std::fs::read_dir(objects)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|kind| kind.file_type().is_ok_and(|t| t.is_dir()))
-        .flat_map(|kind| std::fs::read_dir(kind.path()).into_iter().flatten().flatten().collect::<Vec<_>>())
-        .filter(|fan| fan.file_type().is_ok_and(|t| t.is_dir()))
-        .map(|fan| fan.path())
-        .collect();
-    fans.par_iter()
-        .flat_map_iter(|fan| {
-            std::fs::read_dir(fan).into_iter().flatten().flatten().filter_map(move |entry| {
-                let meta = entry.metadata().ok().filter(|meta| meta.is_file())?;
-                let modified = meta.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-                let path = entry.path();
-                let temporary = entry.file_name().to_str().is_some_and(|name| name.starts_with('.') && name.ends_with(".tmp"));
-                if temporary {
-                    if now.saturating_sub(modified) >= OBJECT_TMP_STALE_SECONDS {
-                        let _ = std::fs::remove_file(&path);
-                    }
-                    return None;
-                }
-                Some((modified, meta.len().max(OBJECT_MIN_BYTES), path))
-            })
-        })
-        .collect()
-}
-
-/// 置き場の全体が上限 cap を超えていれば、最後に使われた時刻の古い dir から消して上限の内へ戻し、それでも超えていれば事実を
-/// 最後に使われた時刻の古い順に消す(agora-redesign #2725)。根が在り続ける作業木の dir は sweep_vanished_roots では消えず、根の数だけ
-/// 増え続けた(zeus で 62G・1 時間に約 4G)。この実行の根の dir と、IN_USE_SECONDS の内に使われた dir・事実(並走する実行が使っている
-/// 根)は消さない — 上限を一時に超えても、使っている根を消して作り直させない。消しても答えは変わらない(読めない塊や事実は作り直す —
-/// 頭の註)。`with_objects` が偽なら事実の置き場は数えない(根の dir だけで確かめる — 置き場の事実は数が多く、歩くのが重い)。
-fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64, with_objects: bool) {
-    let Ok(entries) = std::fs::read_dir(base) else { return };
-    let mut dirs: Vec<(u64, u64, PathBuf)> = entries
-        .flatten()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()) && entry.file_name() != OBJECTS_DIR)
-        .map(|entry| {
-            let dir = entry.path();
-            (last_used(&dir), dir_bytes(&dir), dir)
-        })
-        .collect();
-    let mut objects = if with_objects { object_files(&base.join(OBJECTS_DIR), now) } else { Vec::new() };
-    let mut total: u64 = dirs.iter().map(|(_, bytes, _)| bytes).sum::<u64>() + objects.iter().map(|(_, bytes, _)| bytes).sum::<u64>();
-    if total <= cap {
-        return;
-    }
-    dirs.sort_by_key(|(used, _, _)| *used);
-    for (used, bytes, dir) in dirs {
-        if total <= cap {
-            break;
-        }
-        if dir == root_dir || now.saturating_sub(used) < IN_USE_SECONDS {
-            continue;
-        }
-        // 消せなければ次の走査でもう一度試す(答えには関わらない)
-        if std::fs::remove_dir_all(&dir).is_ok() {
-            total = total.saturating_sub(bytes);
-        }
-    }
-    objects.sort_by_key(|(used, _, _)| *used);
-    for (used, bytes, path) in objects {
-        if total <= cap {
-            break;
-        }
-        if now.saturating_sub(used) < IN_USE_SECONDS {
-            continue;
-        }
-        if std::fs::remove_file(&path).is_ok() {
-            total = total.saturating_sub(bytes);
-        }
-    }
-}
-
-/// 根の dir に根の絶対 path を記録する(同じ記録が既に在れば書かない)。
-fn record_root(root_dir: &Path, root: &Path) {
-    let Ok(absolute) = std::fs::canonicalize(root) else { return };
-    let Some(text) = absolute.to_str() else { return };
-    let record = root_dir.join(ROOT_RECORD);
-    if std::fs::read_to_string(&record).is_ok_and(|known| known == text) {
-        return;
-    }
-    if std::fs::create_dir_all(root_dir).is_err() {
-        return;
-    }
-    let tmp = root_dir.join(format!(".{ROOT_RECORD}.{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, &record).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-}
-
-/// 前の走査から間隔が過ぎていれば、置き場の根の dir のうち、記録した根の path が無い(NotFound)dir を消す。記録の無い dir・記録を
-/// 読めない dir・根の有無を確かめられない dir は残す。時刻の記録を先に書き換えるので、並走する実行は同じ間隔の中で重ねて走査しない。
-/// 上限の片づけは別の記録で番を数える(sweep_over_cap_when_due)。
-fn sweep_vanished_roots(base: &Path, now: u64) {
-    let stamp = base.join(SWEEP_RECORD);
-    let last = std::fs::read_to_string(&stamp).ok().and_then(|text| text.trim().parse::<u64>().ok());
-    if last.is_some_and(|last| now.saturating_sub(last) < SWEEP_INTERVAL_SECONDS) {
-        return;
-    }
-    if std::fs::create_dir_all(base).is_err() || std::fs::write(&stamp, now.to_string()).is_err() {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(base) else { return };
-    for entry in entries.flatten() {
-        let dir = entry.path();
-        let Ok(recorded) = std::fs::read_to_string(dir.join(ROOT_RECORD)) else { continue };
-        let vanished = matches!(std::fs::symlink_metadata(&recorded), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
-        if vanished {
-            // 消せなければ次の走査でもう一度試す(答えには関わらない)
-            let _ = std::fs::remove_dir_all(&dir);
-        }
-    }
-}
-
-/// 鍵の材料(それぞれの長さを前に付けて続ける — 材料の切れ目が違えば鍵も違う)から、事実の置き場の鍵を作る。
-fn object_key(parts: &[&[u8]]) -> ObjectKey {
-    let mut hasher = Sha256::new();
-    for part in parts {
-        hasher.update((part.len() as u64).to_le_bytes());
-        hasher.update(part);
-    }
-    let digest = hasher.finalize();
-    let mut key = [0u8; 16];
-    key.copy_from_slice(&digest[..16]);
-    key
-}
-
-/// 事実 1 つの file の path(`<置き場>/<hash の頭 2 字>/<残り>` — 1 つの dir に file を集めすぎない)。
-fn object_path(objects: &Path, key: &ObjectKey) -> PathBuf {
-    let name: String = key.iter().map(|byte| format!("{byte:02x}")).collect();
-    objects.join(&name[..2]).join(&name[2..])
-}
-
-fn encode_value<T: Serialize>(value: &T, format: Format) -> Option<Vec<u8>> {
-    match format {
-        Format::Json => serde_json::to_vec(value).ok(),
-        Format::Compact => bincode::serialize(value).ok(),
-    }
-}
-
-fn decode_value<T: DeserializeOwned>(bytes: &[u8], format: Format) -> Option<T> {
-    match format {
-        Format::Json => serde_json::from_slice(bytes).ok(),
-        Format::Compact => bincode::deserialize(bytes).ok(),
-    }
-}
-
-/// 事実を読む(無い・壊れた・形の違う事実は None — 呼び手が作り直す)。最後に使われた時刻が OBJECT_TOUCH_SECONDS より古ければ今にする。
-fn read_object<T: DeserializeOwned>(objects: &Path, key: &ObjectKey, format: Format) -> Option<T> {
-    let path = object_path(objects, key);
-    let mut file = std::fs::File::open(&path).ok()?;
-    let meta = file.metadata().ok()?;
-    let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
-    file.read_to_end(&mut bytes).ok()?;
-    let value = decode_value(&bytes, format)?;
-    let stale = meta
-        .modified()
-        .ok()
-        .and_then(|at| SystemTime::now().duration_since(at).ok())
-        .is_some_and(|age| age.as_secs() >= OBJECT_TOUCH_SECONDS);
-    if stale {
-        // 印を付けられなくても答えには関わらない(古い順が少しずれるだけ)
-        let _ = file.set_modified(SystemTime::now()).or_else(|_| {
-            std::fs::File::options().write(true).open(&path).and_then(|writable| writable.set_modified(SystemTime::now()))
-        });
-    }
-    Some(value)
-}
-
-/// 事実を置く(一時 file から rename)。置いた byte を返す(置けなければ 0)。
-fn write_object<T: Serialize>(objects: &Path, key: &ObjectKey, value: &T, format: Format) -> u64 {
-    let path = object_path(objects, key);
-    let Some(dir) = path.parent() else { return 0 };
-    if std::fs::create_dir_all(dir).is_err() {
-        return 0;
-    }
-    let Some(bytes) = encode_value(value, format) else { return 0 };
-    let tmp = dir.join(format!(".{}.{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("object"), std::process::id()));
-    if std::fs::write(&tmp, &bytes).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return 0;
-    }
-    if std::fs::rename(&tmp, &path).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return 0;
-    }
-    bytes.len() as u64
 }
 
 fn read_index_shard(file: &Path, identity: &str) -> Vec<Row> {
@@ -601,7 +267,7 @@ where
         return value;
     }
     let value = compute();
-    let written = crate::timing::timed("facts-cache.save", || write_object(&place.objects, &object, &value, Format::Compact));
+    let written = crate::timing::timed("facts-cache.save", || write_object(&place.objects, &object, &value, Format::Compact, &place.guard));
     note_object_bytes(written);
     value
 }
@@ -650,7 +316,7 @@ where
             if stamp_of(path) != Some(stamp) {
                 return Resolved { value, row: None, changed: cached.is_some(), written: 0 };
             }
-            let written = value.as_ref().map_or(0, |value| write_object(&place.objects, &key, value, format));
+            let written = value.as_ref().map_or(0, |value| write_object(&place.objects, &key, value, format, &place.guard));
             (value, written)
         }
     };
@@ -710,15 +376,18 @@ where
     files.par_iter().zip(resolved.into_par_iter()).filter_map(|((rel, path), one)| bound(rel, path, one.value)).collect()
 }
 
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::SystemTime;
 
     /// 根 `root` の表と、根をまたいで分け合う事実の置き場(`dir/objects` — 種類は `kind`)。
     fn place_of(dir: &Path, root: &str, format: Format) -> Place {
         let name = format!("kind.{}", format.extension());
-        Place { index: dir.join(root).join(&name), objects: dir.join(OBJECTS_DIR).join(name) }
+        Place { index: dir.join(root).join(&name), objects: dir.join(OBJECTS_DIR).join(name), guard: LeakGuard::of(dir) }
     }
 
     fn run(place: &Place, identity: &str, files: &[(String, PathBuf)], calls: &AtomicUsize, format: Format) -> Vec<String> {
@@ -949,6 +618,32 @@ mod tests {
         assert!(!stored.windows(dir_text.len()).any(|w| w == dir_text.as_bytes()), "置き場に根の絶対 path が残った");
     }
 
+    /// 新しい種類が bind を忘れて、根の絶対 path を持つ値をそのまま返しても、置き場には置かれない(置き場に作業木の path が残らない)。
+    /// 答えは作り直した値のままで、毎回作り直す。呼び手の検が通る種類にだけ頼らず、置く所が見張る(設計検証の盲検 B の候補)。
+    #[test]
+    fn a_kind_that_forgot_to_unbind_the_root_path_is_computed_each_time_and_never_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = root.join("a.hy");
+        std::fs::write(&path, "(defk a [])").unwrap();
+        let files = vec![("a.hy".to_string(), path.clone())];
+        let mut cache = place_of(&root.join("cache"), "root-one", Format::Compact);
+        cache.guard = LeakGuard::of(&root);
+        let calls = AtomicUsize::new(0);
+        let leaking = |_rel: &str, path: &Path| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some(path.to_string_lossy().into_owned())
+        };
+        let before = store::LEAKED.load(Ordering::Relaxed);
+        for _ in 0..2 {
+            let found = per_file_at(Some(&cache), "v1", &files, leaking, no_bind, Format::Compact);
+            assert_eq!(found, vec![path.to_string_lossy().into_owned()], "答えが作り直した値と違う");
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "根の path を持つ値を置いて、2 回目に作り直さなかった");
+        assert!(store::LEAKED.load(Ordering::Relaxed) >= before + 2);
+        assert_eq!(bytes_under(&cache.objects), 0, "根の path を持つ値が置き場に置かれた");
+    }
+
     /// 中身を読んでから事実を作るまでの間に file が変わったら、事実を置かず表にも覚えない(次の実行が引き直す)。
     #[test]
     fn a_file_changed_while_its_fact_is_made_is_not_remembered() {
@@ -988,11 +683,11 @@ mod tests {
         let calls = AtomicUsize::new(0);
         run(&cache, "v1", &files, &calls, Format::Json);
         let fact = walkdir::WalkDir::new(&cache.objects).into_iter().filter_map(Result::ok).find(|e| e.file_type().is_file()).unwrap().into_path();
-        let old = SystemTime::now() - std::time::Duration::from_secs(2 * OBJECT_TOUCH_SECONDS);
+        let old = SystemTime::now() - std::time::Duration::from_secs(2 * store::OBJECT_TOUCH_SECONDS);
         set_mtime(&fact, old);
         run(&cache, "v1", &files, &calls, Format::Json);
         let age = SystemTime::now().duration_since(std::fs::metadata(&fact).unwrap().modified().unwrap()).unwrap();
-        assert!(age.as_secs() < OBJECT_TOUCH_SECONDS, "読んだ事実の最後に使われた時刻が古いまま: {age:?}");
+        assert!(age.as_secs() < store::OBJECT_TOUCH_SECONDS, "読んだ事実の最後に使われた時刻が古いまま: {age:?}");
         assert_eq!(calls.load(Ordering::SeqCst), 1, "読んだだけで作り直した");
     }
 }
