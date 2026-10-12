@@ -1,0 +1,332 @@
+{
+ "version": 1,
+ "task_id": "lt-Y7VTRKY83EG2YC69W8M8EJ0BP1",
+ "base_revision": "74873132fec84dd240b4965e96a00d5cca72e6c4",
+ "author": {
+  "conversation_id": "c-3GC5KK1RCJZ1KSYMK979DBMENB",
+  "model": "claude-opus-5-5",
+  "effort": "未観測(会話の起動の設定を読めない — 自己申告できない)"
+ },
+ "requirements": "card ki-0ff168f4eaf5 の受入: c18579d29 上限を置く案と置かない案を、doeff・agora-controllers・merge-queue の解決と版上げの手順への影響で比べ、card に書く / cf9c6c9b8 比べから案を 1 つ選び、選んだ案を main へマージするか、置かない訳を card に書く。背景: doeff-hy の宣言 hy>=1.2.0 に上限が無く、他の repo の lock での Hy の版上げが doeff の検(ADR-DOE-HY-008 R4)に入らない",
+ "design": {
+  "path": "design.md",
+  "sha256": "f0b5cca5a31b2a45bb63aa1db17d2242bcb79dc4bf0eb84c756507c37e75b884"
+ },
+ "modules": [
+  {
+   "id": "M-cap",
+   "responsibility": "doeff-hy が環境に入れてよい Hy の範囲を宣言する(packages/doeff-hy/pyproject.toml の dependencies の hy の行)",
+   "owns": "Hy の上限(= M-lock の版ちょうど・条件なし)。下限は書いてあるが持ち主の規則は無い(card ki-96ca6c49fffd)",
+   "hides": "なし — 宣言は公開の metadata",
+   "interface": "PEP 508 の requirement `hy>=1.2.0,<=1.3.1`(uv の解決が読む)",
+   "effects": "なし、静的な metadata で、他の repo の uv の解決にだけ効く",
+   "lifetime": "doeff の commit ごと",
+   "invariants": "上限 = uv.lock の hy の版ちょうど・marker なし・上限は doeff-hy の 1 か所だけ"
+  },
+  {
+   "id": "M-lock",
+   "responsibility": "doeff が検で確かめる Hy の版を 1 つに決める(doeff の uv.lock の hy の行)",
+   "owns": "確かめる Hy の版(1.3.1)",
+   "hides": "なし — lock は公開の file",
+   "interface": "uv.lock の [[package]] name = \"hy\" の version と source",
+   "effects": "なし、静的な file",
+   "lifetime": "doeff の commit ごと",
+   "invariants": "registry から入れる hy の行が 1 つだけ(R3・locked-hy-version)"
+  },
+  {
+   "id": "M-check",
+   "responsibility": "上限と lock の一致・上限の在りか・hy.* の名の照合を判じる(docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy の R4・R6)",
+   "owns": "判定の規則(hy-cap-violations・hy-caps-outside-doeff-hy・missing-on-pypi-hy)",
+   "hides": "走査の絞り込み・使い捨ての環境の作り方・pyproject.toml の読み方",
+   "interface": "deftest test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version・test-adr-doe-hy-008-imports-exist-in-pypi-hy・反例の deftest",
+   "effects": "file の読み。R4 だけ uv の使い捨ての環境の子 process",
+   "lifetime": "検の 1 回の実行",
+   "invariants": "上限・lock・名の照合が同じ版を指す・上限の定義元は 1 つ"
+  },
+  {
+   "id": "M-select",
+   "responsibility": "変えた path から登記の前に走らせる検を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]]・scripts/run_changed_tests.py)",
+   "owns": "path の接頭辞 → 検の対応",
+   "hides": "選び方の実装(逆依存・時間の枠)",
+   "interface": "make test-changed",
+   "effects": "子 process で pytest を起こす",
+   "lifetime": "登記の前の 1 回",
+   "invariants": "uv.lock か packages/doeff-hy/pyproject.toml を変えた便は R6 を選び、uv.lock を変えた便は R4 も選ぶ"
+  },
+  {
+   "id": "M-consumer",
+   "responsibility": "他の repo が自分の環境の Hy を決める(agora-controllers・custody・merge-queue・code-quality・agent-commons・dotfiles agentcli の pyproject.toml と uv.lock)",
+   "owns": "自分の Hy の宣言・lock の版・doeff の版(doeff-min-commit・git の rev)",
+   "hides": "doeff の検の中身",
+   "interface": "自分の uv.lock",
+   "effects": "なし、静的な宣言と lock",
+   "lifetime": "各 repo の commit ごと",
+   "invariants": "lock の Hy は M-cap の範囲の内(uv の解決が守る)"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "hardware",
+   "applicability": "applicable",
+   "change": "消費者(agora-controllers)が Python の新しい版へ移るため、doeff の lock より新しい Hy を入れたい",
+   "claim": "消費者だけでは入れられず、uv が doeff-hy の上限を名指して解決を止める。入れる道は doeff の 1 commit(M-lock と M-cap)→ 消費者の doeff の版と lock の更新",
+   "expected_scope": "doeff: M-lock・M-cap の 1 commit。消費者: M-consumer(doeff の版・lock)",
+   "actual_scope": "条件なしの上限では予想どおり(上限より新しい hy を求めると uv が doeff-hy==0.1.0 depends on hy>=1.2.0,<=1.3.0 を名指して止まる)。盲検 B: 上限の行に marker を付けると直す前の R6 を通り、3.15 の環境では上限が消える",
+   "changed_modules": [
+    "M-lock",
+    "M-cap",
+    "M-consumer"
+   ],
+   "unchanged_modules": [
+    "M-check",
+    "M-select"
+   ],
+   "reason": "上限の行の条件(marker)を判定が読んでいなかった — 上限が効く環境の範囲という M-cap の知識を M-check が縛っていなかった(漏洩ではなく検の穴)",
+   "revision": "d10bb940e: hy-cap-violations が marker の付いた行を赤にする。直した後に marker の木で R6 failed を確かめた"
+  },
+  {
+   "id": "S2",
+   "axis": "storage",
+   "applicability": "excluded",
+   "reason": "doeff-hy は git と path でしか配らず、package の index に置く予定は無い。index で版を複数配ると、上限の無い旧版への後戻りが起きうるので、その時はこの設計の前提から測り直す"
+  },
+  {
+   "id": "S3",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "Hy の修正版(1.3.2)が importer など Hy の内部の振る舞いを直す",
+   "claim": "修正版は doeff が lock と上限を上げる commit まで、どの消費者にも入らない。doeff が上げる便は M-lock と M-cap を同じ commit で変え、M-select が R4 と R6 を選ぶ。上限だけ・lock だけを上げた便は R6 が赤",
+   "expected_scope": "M-lock・M-cap の 1 commit",
+   "actual_scope": "上限の側は予想どおり(上限だけ・小版の上限・lock だけは赤、揃えた木は緑・契約の表が R4・R6 を選ぶ)。盲検 A: 上げる便が当て物を外すなら下限も上げる必要があり、M-cap の下限・M-consumer(hy==1.3.0 の宣言と lock)・下限を縛るなら M-check も変わる。盲検 B: doeff-domain に上限を写しても直す前の R6 は通した",
+   "changed_modules": [
+    "M-lock",
+    "M-cap",
+    "M-check"
+   ],
+   "unchanged_modules": [
+    "M-select",
+    "M-consumer"
+   ],
+   "reason": "A は知識の漏洩: 「doeff-hy が正しく動く最古の Hy」は当て物の中身だけで決まるのに持ち主も検も無い。B の写しは「上限は 1 か所」の不変条件を検が縛っていなかった穴。M-check の変更は B の直し",
+   "revision": "B: d10bb940e で doeff-hy の外の上から縛る hy の宣言を赤にし、写しの木で R6 failed を確かめた。A: ここでは直さない — 検で確かめられる下限は lock の版ちょうどだけだが、code-quality は Hy の投影のために hy 1.3.0 ちょうどを要求し dotfiles agentcli・merge-queue もそれに揃えているので、下限を上げると 3 つが解けなくなる。依頼者が切った card ki-96ca6c49fffd へ実測(当て物なしで Hy 1.3.0・1.3.1 が止まる)を渡した"
+  },
+  {
+   "id": "S4",
+   "axis": "distribution",
+   "applicability": "applicable",
+   "change": "兄弟の path で doeff を引く消費者(agora-controllers・custody)が doeff-min-commit を上限の入った版より後へ上げる",
+   "claim": "消費者の変更は doeff-min-commit と uv.lock の doeff-hy の requires-dist の 1 行だけで、Hy の版は変わらない。lock を更新しない便は uv lock --check が赤",
+   "expected_scope": "M-consumer(pyproject の 1 行・uv.lock の 1 行)",
+   "actual_scope": "予想どおり: 更新しない便は uv lock --check rc=1、uv lock の差分は requires-dist の 1 行、Hy は 1.3.1 のまま(最小の消費者で測った)",
+   "changed_modules": [
+    "M-consumer"
+   ],
+   "unchanged_modules": [
+    "M-cap",
+    "M-lock",
+    "M-check",
+    "M-select"
+   ],
+   "reason": "doeff-hy の依存の metadata を消費者の lock が写して持つ uv の仕組み — 意図した配線(agora-redesign #768 の既存の決まり)",
+   "revision": "不要 — 予測どおり"
+  },
+  {
+   "id": "S5",
+   "axis": "concurrency",
+   "applicability": "applicable",
+   "change": "2 つの便が並んで着地する(片方が Hy の lock を変え、もう片方が doeff-hy の依存の宣言を変える)",
+   "claim": "合わせた木で上限と lock が食い違えば、R6 がその木で赤になる(判定は木 1 つの中身だけを読む)",
+   "expected_scope": "なし(検出だけ)",
+   "actual_scope": "予想どおり: lock だけを 1.3.0 にした合わせ目は R6 failed、上限も 1.3.0 に揃えた合わせ目は passed",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "M-cap",
+    "M-lock",
+    "M-check",
+    "M-select",
+    "M-consumer"
+   ],
+   "reason": "判定が木 1 つの中身だけを読むので、合わせ目の食い違いも同じ規則で見える。着地の門は検を走らせないので、走るのは日次の全体の回か次の便の test-changed",
+   "revision": "不要 — 予測どおり"
+  },
+  {
+   "id": "S6",
+   "axis": "simulation",
+   "applicability": "excluded",
+   "reason": "上限は解決の時の静的な metadata で、実行の時の振る舞い・時刻・順序を持たない"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C-S1-P",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "上限 <=1.3.1 のまま、消費者が hy>=1.3.1 を求めると解けて hy 1.3.1 を固定する",
+   "observation": "uv lock rc=0・lock の hy 1.3.1",
+   "evidence": {
+    "path": "evidence/S1-S4-consumer-resolution.log.txt",
+    "sha256": "9196f03b21842d5f2e442cca1f6d4ee123cfee5547064de2a59097138aa6f3f1"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S1-N",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "確かめた版を 1.3.0 と見立てた上限 <=1.3.0 で、消費者が新しい hy>=1.3.1 を求めると uv が doeff-hy を名指して止まる",
+   "observation": "uv lock rc=1・Because only doeff-hy==0.1.0 is available and doeff-hy==0.1.0 depends on hy>=1.2.0,<=1.3.0",
+   "evidence": {
+    "path": "evidence/S1-S4-consumer-resolution.log.txt",
+    "sha256": "9196f03b21842d5f2e442cca1f6d4ee123cfee5547064de2a59097138aa6f3f1"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S1-N-marker",
+   "scenarios": [
+    "S1",
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "上限の行に `; python_version < '3.15'` を付けた木で R6 が赤(直す前の木では passed — before-fix-B-marker-B-domain-A-lower.log.txt)",
+   "observation": "d10bb940e の写しで 1 failed「hy の上限の行に条件(marker)が付いている」",
+   "evidence": {
+    "path": "evidence/after-fix-real-B-marker-B-domain.log.txt",
+    "sha256": "99b6bc2802ca7eb448f7ba82584b133cfc408d2419f6ff5ec1cc1658e17aa958"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S3-P",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "上限と lock が揃った実物の木で R6 が緑",
+   "observation": "d10bb940e の写し(書き換えなし)で 1 passed",
+   "evidence": {
+    "path": "evidence/after-fix-real-B-marker-B-domain.log.txt",
+    "sha256": "99b6bc2802ca7eb448f7ba82584b133cfc408d2419f6ff5ec1cc1658e17aa958"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S3-P-judgments",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "反例の検・ADR の契約の検・R4 が直した後の木で緑",
+   "observation": "3 passed(judgments・adr_contract・imports_exist_in_pypi_hy)",
+   "evidence": {
+    "path": "evidence/P-judgments-contract-R4-after-fix.log.txt",
+    "sha256": "daeb98788ff7ed898f5a136e2f94096afff084732a1b0acb4f1b7a600e98c046"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S3-P-select",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "契約の表が packages/doeff-hy/pyproject.toml の変更で R6 を、uv.lock の変更で R4 と R6 を選ぶ",
+   "observation": "read_contract_table の行の検: doeff-hy の pyproject → test_hy_stubs・R6、uv.lock → R4・R6",
+   "evidence": {
+    "path": "evidence/M-select-contract-table.log.txt",
+    "sha256": "17a2f006dd090e4fe56538b7b34dc27b44eadf2a820639a8be54e7c7de020f3d"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S3-N",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "上限だけを <=1.3.2 へ上げた木・小版の上限 <1.4 の木で R6 が赤",
+   "observation": "どちらも 1 failed「hy の上限が uv.lock の版ちょうど(<=1.3.1)でない」・rc=1",
+   "evidence": {
+    "path": "evidence/after-fix-S3-S5-mutants.log.txt",
+    "sha256": "bc9ab46aab036fb89ccec1c16c8180dca26e27e1656d87bdc854f290e28cbb94"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S3-N-copy",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "doeff-domain に上限を写した木で R6 が赤(直す前の木では passed)",
+   "observation": "1 failed「packages/doeff-domain/pyproject.toml: hy>=1.2.0,<=1.3.1 — hy の上限は packages/doeff-hy/pyproject.toml の 1 か所だけに置く」",
+   "evidence": {
+    "path": "evidence/after-fix-real-B-marker-B-domain.log.txt",
+    "sha256": "99b6bc2802ca7eb448f7ba82584b133cfc408d2419f6ff5ec1cc1658e17aa958"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S4-P",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "上限の入った doeff-hy へ消費者が uv lock すると、差分は requires-dist の 1 行で Hy は 1.3.1 のまま、その後の check は緑",
+   "observation": "diff 134c134 の 1 行・lock の hy 1.3.1・uv lock --check rc=0",
+   "evidence": {
+    "path": "evidence/S1-S4-consumer-resolution.log.txt",
+    "sha256": "9196f03b21842d5f2e442cca1f6d4ee123cfee5547064de2a59097138aa6f3f1"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S4-N",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "lock を更新しない消費者は uv lock --check が赤",
+   "observation": "error: The lockfile at `uv.lock` needs to be updated・rc=1",
+   "evidence": {
+    "path": "evidence/S1-S4-consumer-resolution.log.txt",
+    "sha256": "9196f03b21842d5f2e442cca1f6d4ee123cfee5547064de2a59097138aa6f3f1"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S5-P",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "positive",
+   "expectation": "lock の hy を 1.3.0 にし上限も <=1.3.0 に揃えた合わせ目で R6 が緑",
+   "observation": "1 passed・rc=0",
+   "evidence": {
+    "path": "evidence/after-fix-S3-S5-mutants.log.txt",
+    "sha256": "bc9ab46aab036fb89ccec1c16c8180dca26e27e1656d87bdc854f290e28cbb94"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C-S5-N",
+   "scenarios": [
+    "S5"
+   ],
+   "control": "negative",
+   "expectation": "lock の hy だけを 1.3.0 にした合わせ目(上限 <=1.3.1 のまま)で R6 が赤",
+   "observation": "1 failed「hy の上限が uv.lock の版ちょうど(<=1.3.0)でない」・rc=1",
+   "evidence": {
+    "path": "evidence/after-fix-S3-S5-mutants.log.txt",
+    "sha256": "bc9ab46aab036fb89ccec1c16c8180dca26e27e1656d87bdc854f290e28cbb94"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

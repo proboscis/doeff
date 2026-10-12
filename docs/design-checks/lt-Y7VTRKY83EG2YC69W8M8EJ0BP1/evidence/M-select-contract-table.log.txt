@@ -1,0 +1,6 @@
+# HEAD d10bb940eb6459f4a0f5843404f28947f8bf0b67
+$ uv run --no-project python -I -c '<scripts/run_changed_tests.py の read_contract_table で、変えた path を覆う行の検を挙げる>'
+packages/doeff-hy/pyproject.toml → ['packages/doeff-hy/tests/test_hy_stubs.py', 'docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version']
+uv.lock → ['docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_imports_exist_in_pypi_hy', 'docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version']
+packages/doeff-domain/pyproject.toml → ['packages/doeff-domain/tests/test_domain_dogfood.py', 'docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green']
+rc=0

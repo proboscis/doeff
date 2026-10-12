@@ -1,0 +1,11 @@
+import inspect, sys, time
+import hy  # hy.compat.rewriting_unparse を ast.unparse へ当てる
+from annotationlib import Format
+from collections.abc import Callable
+if sys.argv[1:] == ["patched"]:
+    from doeff_hy.ast_unparse import install
+    print("install:", install())
+class Widget: ...
+def f(x: Callable[[int], Widget]): ...
+t = time.monotonic()
+print(inspect.signature(f, annotation_format=Format.STRING), f"{time.monotonic() - t:.3f}s", "hy", hy.__version__, sys.version.split()[0])

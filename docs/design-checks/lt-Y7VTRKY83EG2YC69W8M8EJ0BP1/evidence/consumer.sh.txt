@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# 使い方: consumer.sh <作業木> — doeff の追跡された file を一時 dir へ写し、doeff-hy を path で引く最小の消費者で uv の解決を測る。
+set -u
+W=$1
+T=$(mktemp -d)
+echo "# 作業木 ${W}・HEAD $(git -C "${W}" rev-parse HEAD)・写し ${T}"
+mkdir -p "$T/doeff" "$T/consumer" && (cd "$W" && git ls-files -z | xargs -0 cp --parents -t "$T/doeff/")
+P="$T/doeff/packages/doeff-hy/pyproject.toml"
+cap() { sed -i "s|^    \"hy[^\"]*\",\$|    \"$1\",|" "$P"; echo "doeff-hy の宣言: $(grep -n '^    "hy' "$P")"; }
+consumer() { cat > "$T/consumer/pyproject.toml" <<TOML
+[project]
+name = "hyub-consumer"
+version = "0"
+requires-python = ">=3.14"
+dependencies = ["doeff-hy", "$1"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+doeff = { path = "$T/doeff", editable = true }
+doeff-hy = { path = "$T/doeff/packages/doeff-hy", editable = true }
+doeff-core-effects = { path = "$T/doeff/packages/doeff-core-effects", editable = true }
+doeff-hy-pytest = { path = "$T/doeff/packages/doeff-hy-pytest", editable = true }
+doeff-vm = { path = "$T/doeff/packages/doeff-vm", editable = true }
+doeff-traverse = { path = "$T/doeff/packages/doeff-traverse", editable = true }
+doeff-time = { path = "$T/doeff/packages/doeff-time", editable = true }
+doeff-events = { path = "$T/doeff/packages/doeff-events", editable = true }
+TOML
+echo "消費者の宣言: $1"; }
+locked() { echo "lock の hy: $(sed -n '/^name = "hy"$/{n;p}' "$T/consumer/uv.lock")"; }
+run() { echo "\$ $*"; (cd "$T/consumer" && "$@" 2>&1); echo "rc=$?"; }
+echo; echo "=== S1-P: 上限 <=1.3.1(作業木のまま)・消費者が hy>=1.3.1 を求める"
+cap "hy>=1.2.0,<=1.3.1"; consumer "hy>=1.3.1"; run uv lock; locked
+echo; echo "=== S1-N: 確かめた版を 1.3.0 と見立て、上限 <=1.3.0・消費者が新しい hy>=1.3.1 を求める"
+cap "hy>=1.2.0,<=1.3.0"; rm -f "$T/consumer/uv.lock"; run uv lock
+echo; echo "=== S4 の前: 上限なし(基底 74873132f の宣言 hy>=1.2.0)で消費者(hy>=1.0)が lock する"
+cap "hy>=1.2.0"; consumer "hy>=1.0"; rm -f "$T/consumer/uv.lock"; run uv lock; locked; cp "$T/consumer/uv.lock" "$T/before.lock"
+echo; echo "=== S4-N: doeff を上限の入った版へ上げ、lock を更新しない"
+cap "hy>=1.2.0,<=1.3.1"; run uv lock --check
+echo; echo "=== S4-P: uv lock で更新する — 差分と Hy の版"
+run uv lock; locked; echo "\$ diff before.lock uv.lock"; diff "$T/before.lock" "$T/consumer/uv.lock"; echo "diff rc=$?"; run uv lock --check

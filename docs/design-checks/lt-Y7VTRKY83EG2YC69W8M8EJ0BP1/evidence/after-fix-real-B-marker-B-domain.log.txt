@@ -1,0 +1,107 @@
+# 作業木 /work/toolset/worktrees/doeff-wt-hyub-dc・HEAD d10bb940eb6459f4a0f5843404f28947f8bf0b67・写し /tmp/tmp.nT6c40xsO9
+
+=== 案 real
+packages/doeff-hy/pyproject.toml:16:    "hy>=1.2.0,<=1.3.1",
+packages/doeff-domain/pyproject.toml:13:    "hy>=1.2.0",
+version = "1.3.1"
+$ (cd /work/toolset/worktrees/doeff-wt-hyub-dc && uv run --frozen bash -c 'cd /tmp/tmp.nT6c40xsO9/real && pytest docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version -q')
+check-slot: 枠 7 を取った(待ち 59 秒)— pytest real (c-3GC5KK1RCJZ1KSYMK979DBMENB)
+deadline scale x3.2 (load per usable CPU) — per test 192s, watchdog 288s
+test-admission: focused — 1 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 1 file
+  import: docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy — 記録なし(この内容の file は収集で import したことが無い)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000000 秒・依存変更で再作成 0 file
+.                                                                        [100%]
+../../../work/toolset/worktrees/doeff-wt-hyub-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+1 passed, 1 warning in 11.68s
+rc=0
+
+=== 案 marker
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+packages/doeff-hy/pyproject.toml:16:    "hy>=1.2.0,<=1.3.1; python_version < '3.15'",
+packages/doeff-domain/pyproject.toml:13:    "hy>=1.2.0",
+version = "1.3.1"
+$ (cd /work/toolset/worktrees/doeff-wt-hyub-dc && uv run --frozen bash -c 'cd /tmp/tmp.nT6c40xsO9/marker && pytest docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version -q')
+check-slot: 枠 4 を取った(待ち 61 秒)— pytest marker (c-3GC5KK1RCJZ1KSYMK979DBMENB)
+deadline scale x3.0 (load per usable CPU) — per test 180s, watchdog 270s
+test-admission: focused — 1 件(変更箇所の検証)
+doeff-adr: 記録から収集 1 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000012 秒・依存変更で再作成 0 file
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version __________
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x24c7d8627c0>
+    (deftest test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version
+>     (val repo-root (. (Path __file__) parent parent parent))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:416: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/adr/conftest.py:23: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+    (val repo-root (. (Path __file__) parent parent parent))
+    (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+    (val violations (+ (run (hy-cap-violations (run (doeff-hy-requirements repo-root)) hy-version))
+                       (run (hy-caps-outside-doeff-hy (run (hy-declarations-outside-doeff-hy repo-root))))))
+>   (assert (= violations [])
+              ^^^^^^^^^^^
+E   AssertionError: Hy の上限が R6 に反する(ADR-DOE-HY-008 R6 — 上限は packages/doeff-hy/pyproject.toml の 1 か所に、条件なしで uv.lock の版 1.3.1 ちょうどに置き、Hy を上げる便は上限と uv.lock を同じ commit で上げる): ['hy の上限の行に条件(marker)が付いている — 条件の外の環境では上限が効かない: hy<=1.3.1,>=1.2.0; python_version < "3.15"']
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:420: AssertionError
+----------------------------- Captured stderr call -----------------------------
+doeff Traceback (most recent call last):
+  _hy_anon_61()  docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:420
+    (assert (= violations [])
+AssertionError: Hy の上限が R6 に反する(ADR-DOE-HY-008 R6 — 上限は packages/doeff-hy/pyproject.toml の 1 か所に、条件なしで uv.lock の版 1.3.1 ちょうどに置き、Hy を上げる便は上限と uv.lock を同じ commit で上げる): ['hy の上限の行に条件(marker)が付いている — 条件の外の環境では上限が効かない: hy<=1.3.1,>=1.2.0; python_version < "3.15"']
+../../../work/toolset/worktrees/doeff-wt-hyub-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+=========================== short test summary info ============================
+FAILED docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version
+1 failed, 1 warning in 1.40s
+rc=0
+
+=== 案 domain-copy
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+packages/doeff-hy/pyproject.toml:16:    "hy>=1.2.0,<=1.3.1",
+packages/doeff-domain/pyproject.toml:13:    "hy>=1.2.0,<=1.3.1",
+version = "1.3.1"
+$ (cd /work/toolset/worktrees/doeff-wt-hyub-dc && uv run --frozen bash -c 'cd /tmp/tmp.nT6c40xsO9/domain-copy && pytest docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version -q')
+check-slot: 枠 3 を取った(待ち 31 秒)— pytest domain-copy (c-3GC5KK1RCJZ1KSYMK979DBMENB)
+deadline scale x3.2 (load per usable CPU) — per test 191s, watchdog 286s
+test-admission: focused — 1 件(変更箇所の検証)
+doeff-adr: 記録から収集 1 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000012 秒・依存変更で再作成 0 file
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version __________
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x3aedbcd27c0>
+    (deftest test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version
+>     (val repo-root (. (Path __file__) parent parent parent))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:416: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/adr/conftest.py:23: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+    (val repo-root (. (Path __file__) parent parent parent))
+    (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+    (val violations (+ (run (hy-cap-violations (run (doeff-hy-requirements repo-root)) hy-version))
+                       (run (hy-caps-outside-doeff-hy (run (hy-declarations-outside-doeff-hy repo-root))))))
+>   (assert (= violations [])
+              ^^^^^^^^^^^
+E   AssertionError: Hy の上限が R6 に反する(ADR-DOE-HY-008 R6 — 上限は packages/doeff-hy/pyproject.toml の 1 か所に、条件なしで uv.lock の版 1.3.1 ちょうどに置き、Hy を上げる便は上限と uv.lock を同じ commit で上げる): ['packages/doeff-domain/pyproject.toml: hy>=1.2.0,<=1.3.1 — hy の上限は packages/doeff-hy/pyproject.toml の 1 か所だけに置く']
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:420: AssertionError
+----------------------------- Captured stderr call -----------------------------
+doeff Traceback (most recent call last):
+  _hy_anon_61()  docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:420
+    (assert (= violations [])
+AssertionError: Hy の上限が R6 に反する(ADR-DOE-HY-008 R6 — 上限は packages/doeff-hy/pyproject.toml の 1 か所に、条件なしで uv.lock の版 1.3.1 ちょうどに置き、Hy を上げる便は上限と uv.lock を同じ commit で上げる): ['packages/doeff-domain/pyproject.toml: hy>=1.2.0,<=1.3.1 — hy の上限は packages/doeff-hy/pyproject.toml の 1 か所だけに置く']
+../../../work/toolset/worktrees/doeff-wt-hyub-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+=========================== short test summary info ============================
+FAILED docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version
+1 failed, 1 warning in 5.44s
+rc=0
