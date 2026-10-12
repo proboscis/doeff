@@ -452,6 +452,44 @@ def test_coordinator_is_one_deployment_on_atlas(rendered: list[Manifest]) -> Non
     assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
 
 
+def _prepare_jobs(rendered: list[Manifest]) -> list[Manifest]:
+    return [doc for doc in rendered if doc["kind"] == "Job" and _role(doc) == "prepare"]
+
+
+def test_coordinator_root_is_prepared_by_one_job_beside_it(rendered: list[Manifest]) -> None:
+    """coordinator の上げ先の root を組む Job は 1 つで、coordinator と同じ node・同じ hostPath を同じ /work に mount し、記録の
+    /work/coord は mount せず、資格を持たない(ADR-DOE-CLUSTER-003 R1・R3 — 版の一致は ADR の検)。"""
+    jobs = _prepare_jobs(rendered)
+    assert len(jobs) == 1, f"上げ先の root を組む Job はちょうど 1 つ: {[d['metadata'] for d in jobs]!r}"
+    (job,) = jobs
+    (coordinator,) = _deployments(rendered, "coordinator")
+    assert _node(job) == _node(coordinator) == "atlas"
+    assert _mapping(_volume(job, "work")["hostPath"], "hostPath")["path"] == _mapping(
+        _volume(coordinator, "work")["hostPath"], "hostPath"
+    )["path"]
+    mounts = [_mapping(m, "volumeMount")["mountPath"] for m in _sequence(_container(job)["volumeMounts"], "volumeMounts")]
+    assert mounts == ["/work"], f"組む Job は /work だけを mount する(記録の /work/coord は mount しない): {mounts!r}"
+    assert _env_value(job, "WORK_DIR")["value"] == _env_value(coordinator, "WORK_DIR")["value"] == "/work"
+    pod = _pod_spec(job)
+    assert pod["automountServiceAccountToken"] is False
+    assert pod["restartPolicy"] == "Never"
+    assert "envFrom" not in _container(job), "組む Job は上に載る系の ConfigMap を読まない"
+
+
+def test_coordinator_prepare_job_is_not_removed_by_ttl(rendered: list[Manifest]) -> None:
+    """組む Job は ttlSecondsAfterFinished を持たない — TTL が終わった Job を消すと、Flux が次の照合で作り直して組み直しの Pod を
+    起こし続ける。古い版の Job は名の版が変わって宣言から外れた時に Flux の prune が消す(ADR-DOE-CLUSTER-003 R2)。"""
+    (job,) = _prepare_jobs(rendered)
+    assert "ttlSecondsAfterFinished" not in _mapping(job["spec"], "Job の spec")
+
+
+def test_coordinator_prepare_builds_alone_with_only_the_job() -> None:
+    """組む Job の dir は、その dir だけで組み立てられ、Job 1 つだけを持つ — Flux は coordinator/ と別の Kustomization で当て、
+    coordinator/ の Kustomization がその終わりを待つ(ADR-DOE-CLUSTER-003 R2)。"""
+    built = _build(K8S / "coordinator-prepare")
+    assert [(doc["kind"], _role(doc)) for doc in built] == [("Job", "prepare")]
+
+
 # 版の向き(card ki-76a269c31615): どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)でなければならない。
 # coordinator は古い worker を受けられるが、古い coordinator は新しい worker を受けられるとは限らない — 10-11 02:21〜02:37 に zeus の
 # worker を 44778ca69 へ上げた宣言(ad90f71c5)が coordinator の e247ea66d より先に main へ入り、新しい worker が登録できずに zeus が

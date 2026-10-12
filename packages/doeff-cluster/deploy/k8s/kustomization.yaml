@@ -1,9 +1,11 @@
-# doeff-cluster の k8s の宣言 — coordinator 1 つ(coordinator/)と、機体ごとの worker 1 つ(workers/ = worker の ServiceAccount と機体の dir
+# doeff-cluster の k8s の宣言 — coordinator 1 つ(coordinator/)と、その版上げの前に上げ先の root を組む Job(coordinator-prepare/)と、機体ごとの worker 1 つ(workers/ = worker の ServiceAccount と機体の dir
 # nodes/<Node の名>/ — 機体の dir は雛形 worker/ に機体の差を足す)。この dir は全部を組み立てる(kubectl kustomize で確かめる時の入口)。
 # Flux は coordinator/ と workers/ を別々の Kustomization で当てる — 上に載る系が今の宣言から引き継ぐ時期を組ごとに決められるように。
+# coordinator-prepare/ も別の Kustomization で当て、coordinator/ の Kustomization はその終わりを待つ(dependsOn — 訳は coordinator-prepare/ の頭の註)。
 # Namespace・Secret の中身・上に載る系の値の ConfigMap・job が要る権限は、上に載る系の repo が持つ(名と形は各 file の頭の註)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - coordinator
+  - coordinator-prepare
   - workers

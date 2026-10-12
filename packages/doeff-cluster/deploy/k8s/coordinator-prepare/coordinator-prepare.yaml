@@ -1,0 +1,71 @@
+# coordinator の上げ先の版(doeff の commit)の自己起動の root を、coordinator の Pod の外で、同じ node(atlas)の同じ dir に先に組む Job
+# (ADR-DOE-CLUSTER-003・card ki-5808173477cf)。
+#
+# なぜ: coordinator の Deployment は Recreate(状態の file を 2 つが同時に書かない)なので、版上げは古い Pod を止めてから新しい Pod が
+#   root を組む。組む間(bytecode の焼きが大半)は全部の worker が coordinator に届かない — 10-12 12:39 JST は 141.1 秒(うち bytecode 111 秒)、
+#   14:43 JST は 105.2 秒(うち 79 秒)。焼き直す数は変わった file の 4〜8 倍になる: doeff-hy の記録・鍵の印の上げと、ほぼ全部の module が
+#   使う macro(defk・deff)の変更が、中身の変わらない Hy の file の保存先の entry を全部外す(外れ方は正しい — 照らしを緩めない)。
+#   前は DaemonSet coordinator-root-prepare(上に載る系の repo・2026-10-09)が上げ先の版を先に組んでいたが、coordinator の宣言をこの
+#   repo へ移した 2026-10-10 に代わり無しで外れた。
+#
+# 動き方: Flux の Kustomization(この dir)が wait で Job の終わりを待ち、coordinator/ の Kustomization は dependsOn でこの Kustomization が
+#   同じ revision で Ready になるまで当たらない — 版上げの commit を Flux が当てると、先にこの Job が上げ先の root を組み(印 .doeff-boot-ready)、
+#   組み終えてから Deployment coordinator が入れ替わる。新しい Pod の boot.sh は印を見て「準備済み」で秒で起動する。組めなければ Job が
+#   失敗し、coordinator は古い版のまま動き続ける(組めない root で止まらない)。
+#
+# 版: WORKER_DOEFF_COMMIT と Job の名の末尾(commit の頭 12 字)は coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT と同じ(版上げの commit が
+#   3 か所を一緒に変える — tests/test_k8s_declarations.py と ADR-DOE-CLUSTER-003 の検が違いを断る)。名に版を入れるので、Job の template を
+#   変えずに版ごとに新しい Job になり、古い版の Job は宣言から外れた時に Flux の prune が消す(組んだ root と bytecode の保存先は hostPath に残る)。
+#   ttlSecondsAfterFinished は置かない — 終わった Job を TTL が消すと、Flux が次の照合で宣言どおり作り直して組み直しの Pod を起こし続ける。
+#
+# root は coordinator と同じ絶対 path(/work)で組む: venv の python の symlink・scripts の shebang・editable の .pth は組んだ時の絶対 path を
+#   持つので、別の path で組んだ root は coordinator の Pod で起動できない。hostPath も同じ /var/lib/agent-worker-coord。coordinator の記録
+#   (/work/coord の volume coord-wal)は mount しない。
+# 資格は持たない: ServiceAccount の token を mount せず、Secret・ConfigMap を使わない(doeff の repo は public — boot.sh が clone する)。
+# 資源: coordinator と同じ上限(CPU 2・memory 4Gi)。自分の cgroup で組むので、走っている coordinator の CPU を食わない(10-09 に coordinator の
+#   Pod の中で組んで、絞りの見張りに止められた)。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: coordinator-prepare-a1d17b0dd304
+  namespace: agent-worker
+  labels: { app: agent-worker-coordinator-prepare }
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels: { app: agent-worker-coordinator-prepare }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # coordinator の node(Deployment coordinator の nodeSelector と同じ値 — tests/test_k8s_declarations.py が確かめる)。
+      nodeSelector: { kubernetes.io/hostname: atlas }
+      securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true, fsGroup: 1000 }
+      initContainers:
+        # hostPath を新しく作った時は root の持ち物なので、uid 1000 へ渡す(coordinator の own-state と同じ)。
+        - name: own-work
+          image: zeus:5000/doeff-cluster-base:in-52341c8f2d15
+          command: ["chown", "1000:1000", "/work"]
+          securityContext: { runAsUser: 0, runAsNonRoot: false }
+          volumeMounts:
+            - { mountPath: /work, name: work }
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
+      containers:
+        - name: prepare
+          image: zeus:5000/doeff-cluster-base:in-52341c8f2d15
+          env:
+            # boot.sh の役 prepare: 上げ先の root を展開して組み(bytecode の焼きまで)、root の path を出して終わる。組み済みなら秒で終わる。
+            # 焼けなければ完成の印を置かずに非 0 で終わる(Job の失敗 — coordinator は当たらない)。
+            - { name: ROLE, value: prepare }
+            - { name: WORK_DIR, value: /work }
+            - { name: WORKER_DOEFF_COMMIT, value: a1d17b0dd3047d1111f442e5a1ba4348ea3eab05 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { mountPath: /work, name: work }
+          resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { cpu: "2", memory: 4Gi } }
+      volumes:
+        - { name: work, hostPath: { path: /var/lib/agent-worker-coord, type: DirectoryOrCreate } }

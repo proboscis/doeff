@@ -1,0 +1,7 @@
+# coordinator の版上げの前に、上げ先の版の自己起動の root を組む Job 1 つ(coordinator-prepare.yaml — 訳と動き方はその頭の註・
+# docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy)。Flux はこの dir を coordinator/ と別の
+# Kustomization で当て、Job が終わる(wait)まで coordinator/ を当てない(dependsOn)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - coordinator-prepare.yaml
