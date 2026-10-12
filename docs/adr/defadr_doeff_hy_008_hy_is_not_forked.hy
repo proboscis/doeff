@@ -24,6 +24,8 @@
 (import tomllib)
 (import datetime [date])
 (import pathlib [Path])
+(import packaging.requirements [Requirement])
+(import packaging.utils [canonicalize-name])
 (import hy)
 (import pytest)
 
@@ -46,6 +48,10 @@
 
 ;; 照合に使う PyPI の Hy の版は、uv.lock の hy の行から読む(locked-hy-version)— 写しの定数を置かない。前は "hy==1.3.1" の
 ;; 定数で、uv.lock の Hy を上げても照合は 1.3.1 のままだった(新しい版で消えた hy.scoping の名を見逃す — card ki-a05a752e7545)。
+
+;; Hy の上限(R6)を置く 1 か所 — doeff-hy の依存の宣言。上限の版は uv.lock の hy の版ちょうど(`<=<版>`)で、写しの定数を置かず
+;; 検が uv.lock と突き合わせる(card ki-0ff168f4eaf5)。
+(val HY-CAP-DECLARATION "packages/doeff-hy/pyproject.toml")
 
 ;; 依存の宣言の中のフォークの指し方(github.com/proboscis/hy の後が区切り — proboscis/hyper などは当てない)。
 (val FORK-URL-PATTERN (re.compile r"github\.com/proboscis/hy(?:\.git|[?#/\"'\s]|$)"))
@@ -96,6 +102,26 @@
      (if (and (not mentions) (is-not FORK-PIN None))
          ["依存の宣言にフォークの固定がもう無い — FORK-PIN を None にし、期限つきの例外を閉じる"]
          [])))
+
+(defk hy-cap-violations [requirements hy-version]
+  {:pre [(: requirements list) (: hy-version str)]
+   :post [(: % list)]
+   :tags {:context "doeff-hy-adr" :role "judgment"}}
+  "doeff-hy の依存の宣言(PEP 508 の字の列)の hy の行が、上限を uv.lock の版ちょうど(`<=<版>`)に置いていない訳を挙げる — R6 の判定。
+   上限が無い・uv.lock の版と違う上限(小版の上限 `<1.4` のように、確かめていない修正版を通す物を含む)・uv.lock の版を通さない宣言は赤。"
+  (val rows (lfor text requirements
+                  :setv requirement (Requirement text)
+                  :if (= (canonicalize-name requirement.name) "hy")
+                  requirement))
+  (val cap f"<={hy-version}")
+  (if (!= (len rows) 1)
+      [f"doeff-hy の依存の宣言の hy の行が 1 つでない({(len rows)} 行)— 上限を置く行を決められない"]
+      (lfor #(broken message) [#((not-in cap (lfor spec (. (get rows 0) specifier) (str spec)))
+                                  f"hy の上限が uv.lock の版ちょうど({cap})でない: {(get rows 0)}")
+                                #((not (.contains (. (get rows 0) specifier) hy-version :prereleases True))
+                                  f"hy の宣言が uv.lock の版 {hy-version} を通さない: {(get rows 0)}")]
+            :if broken
+            message)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -226,6 +252,13 @@
           (+ "uv.lock の hy が index から入れる版でない(" (str source) ")— R3 のとおりフォークを指さない"))
   (get (get rows 0) "version"))
 
+(defk doeff-hy-requirements [repo-root]
+  {:pre [(: repo-root Path)]
+   :post [(: % list)]
+   :tags {:context "doeff-hy-adr" :role "foundation"}}
+  "doeff-hy の依存の宣言([project] の dependencies — PEP 508 の字の列)を読む — R6 の上限の在りか。"
+  (get (tomllib.loads (.read-text (/ repo-root HY-CAP-DECLARATION) :encoding "utf-8")) "project" "dependencies"))
+
 (defk missing-on-pypi-hy [imports hy-version]
   {:pre [(: imports list) (: hy-version str)]
    :post [(: % list)]
@@ -262,7 +295,7 @@
 
 
 (defadr ADR-DOE-HY-008
-  :title "Hy はフォークしない・手を入れない。Hy の振る舞いで回避が要る所は doeff の側に置く。依存の宣言に proboscis/hy を書かず、PyPI の Hy に無い名前を hy.* から import しない(フォークの固定は #1293 で消した)"
+  :title "Hy はフォークしない・手を入れない。Hy の振る舞いで回避が要る所は doeff の側に置く。依存の宣言に proboscis/hy を書かず、PyPI の Hy に無い名前を hy.* から import しない(フォークの固定は #1293 で消した)。doeff-hy の Hy の上限は doeff が確かめた uv.lock の版ちょうど"
   :status "accepted"
   :scope ["pyproject.toml"
           "uv.lock"
@@ -283,18 +316,24 @@
        :evidence "この ADR の scan-hy-imports と missing-on-pypi-hy の出力")
      (fact
        "2026-10-12 の実測: R4 の検は Hy の source の `(import hy.X [...])` を 1 つも数えていなかった — Hy 1.3.1 の reader は `hy.scoping` を式 `(. hy scoping)` に読み、import-form-names は記号だけを見ていた。macros.hy が Hy の公開の API に無い hy.scoping から import する 3 つの名(nearest-python-scope・is-function-scope・ScopeGlobal)は照合から漏れていた。照合の版も写しの定数 \"hy==1.3.1\" で、uv.lock の Hy を上げても照合は 1.3.1 のままだった。どちらも、Hy の版上げで消えた名を検が見逃し、macros.hy の読み込みが ImportError で落ちて doeff-hy を使う全部が止まる形。"
-       :evidence "card ki-a05a752e7545(依頼 lt-F5NK46AEW2SMXPY8QKS6APWHD4)— 直す前の scan-hy-imports の 70 件に hy.scoping が 0 件")]
+       :evidence "card ki-a05a752e7545(依頼 lt-F5NK46AEW2SMXPY8QKS6APWHD4)— 直す前の scan-hy-imports の 70 件に hy.scoping が 0 件")
+     (fact
+       "2026-10-12 の実測: doeff-hy の Hy の宣言は hy>=1.2.0 で上限が無かった。doeff-hy を使う他の repo の Hy の宣言は hy>=1.0(agora-controllers の controllers/kanban ほか)・hy>=1.3(agora-controllers の根・custody の custody-scripted)・hy==1.3.0(merge-queue・code-quality)・hy>=1.2.0(agent-commons・dotfiles の agentcli)で、lock は 1.3.1(agora-controllers・custody・agent-commons)と 1.3.0(merge-queue の deploy/ledger/runtime・code-quality)。どの repo も自分の lock だけで Hy を上げられ、その版は doeff の検(R4 は doeff の uv.lock の版で測る)を通らない。Hy は 1.0.0 から semver だが、doeff-hy が依る hy.scoping などは公開の API の外で、修正版 1.3.1 も Hy の importer を直した(ZIP の中の Python の import の退行)。doeff が hy.* から import する 131 の名は 1.0.0〜1.3.1 のどの版にも在った。"
+       :evidence "card ki-0ff168f4eaf5(依頼 lt-Y7VTRKY83EG2YC69W8M8EJ0BP1)— 各 repo の origin/main の pyproject.toml と uv.lock・PyPI の Hy 1.3.1 の NEWS.rst・scan-hy-imports と missing-on-pypi-hy を 1.0.0〜1.3.1 で撃った出力")]
   :context
     [(interpretation
        "doeff が Hy の外から同じ正しさを出せるなら、フォークの維持(本家の更新のたびの衝突・2 repo の固定の同時の上げ)は払う理由が無い。回避は doeff の持ち物になり、doeff の検査で守れる。")
      (interpretation
-       "「Hy に手を入れない」の測り方は 2 つ: 依存の宣言がフォークを指さない(入れる物が本家)・doeff の code が本家に無い名前を使わない(本家に戻しても import が落ちない)。Hy の内部の名前を読む回避(module の名前空間の _hy_macros を読む・hy.importer._could_be_hy_src を差し替える)は、本家にも在る名前だけを使う限りこの 2 つに反しない。")]
+       "「Hy に手を入れない」の測り方は 2 つ: 依存の宣言がフォークを指さない(入れる物が本家)・doeff の code が本家に無い名前を使わない(本家に戻しても import が落ちない)。Hy の内部の名前を読む回避(module の名前空間の _hy_macros を読む・hy.importer._could_be_hy_src を差し替える)は、本家にも在る名前だけを使う限りこの 2 つに反しない。")
+     (interpretation
+       "doeff の検が確かめる Hy は uv.lock の版 1 つだけなので、doeff-hy が通してよい Hy もその版まで。上限は doeff-hy の metadata の 1 か所で、uv の解決が doeff-hy を使う全部の repo で守る。上限を置かずに他の repo の側で R4 と同じ検を撃つ形は、検の写しが repo の数だけ増え、doeff の他の検(macro の展開・bytecode の包み・ast_unparse の当て物)を通らない。上限を小版(<1.4)で置く形は確かめていない修正版を通し、== で 1 つの版に固定する形は hy==1.3.0 を宣言する merge-queue・code-quality が doeff の rev を上げた時に解けない。")]
   :decision
     [(rule R1 "Hy には一切手を入れない。proboscis/hy に commit を足さない。最終形は PyPI の Hy。")
      (rule R2 "Hy の振る舞いで回避が要る所は doeff の側に置く: テストの索引(#1291)・macro の変更で古い bytecode を使わない判定(#1292 — doeff_hy_bytecode_guard が Python 標準の SourceFileLoader を包む)・require の高速化(#1293)。")
      (rule R3 "doeff と agora-controllers の依存の宣言(pyproject.toml・uv.lock)に proboscis/hy を書かない。例外は 0(rev adbe989a の固定を 2026-09-29 まで例外にしていた — #1293 で消した)。doeff の検査は doeff の木を読む — agora-controllers の宣言は agora-controllers の側の検査が守る。")
      (rule R4 "doeff の code は PyPI の Hy(uv.lock が固定する版)に無い名前を hy.* から import しない。照合の版は検が uv.lock から読み、uv.lock の変更で `make test-changed` がこの検を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])— Hy を上げる変更は、新しい版に名が在る事を登記の前に確かめる。例外の台帳(FORK-ONLY-IMPORT-EXCEPTIONS)は空(#1291 が c6783e8e2 で消した)。足すなら期限は R3 と同じ。")
-     (rule R5 "例外の台帳は、原因が消えたら同じ commit で削る(フォークの固定を消す便は FORK-PIN を、import を消す便は FORK-ONLY-IMPORT-EXCEPTIONS の行を)。原因の消えた例外が台帳に残れば赤。")]
+     (rule R5 "例外の台帳は、原因が消えたら同じ commit で削る(フォークの固定を消す便は FORK-PIN を、import を消す便は FORK-ONLY-IMPORT-EXCEPTIONS の行を)。原因の消えた例外が台帳に残れば赤。")
+     (rule R6 "doeff-hy の Hy の依存の宣言の上限は、doeff の uv.lock の hy の版ちょうど(`<=<版>`)にする — doeff-hy を使う他の repo(agora-controllers・custody・merge-queue・code-quality・agent-commons・dotfiles)が自分の lock で上げられる Hy を、doeff の検が確かめた版までに留める(上限は他の repo の uv の解決にも効く)。上限は doeff-hy の 1 か所だけに置く(Hy を使う doeff の package は doeff-domain を除き doeff-hy を引き、uv は 1 つの環境に Hy を 1 つしか入れない)。Hy を上げる便は doeff の uv.lock と上限を同じ commit で上げ(上限の file か uv.lock の変更で `make test-changed` がこの検と R4 の検を選ぶ)、他の repo はその commit を含む doeff へ版(doeff-min-commit・git の rev)を上げてから自分の lock の Hy を上げる。")]
   :laws
     [(law dependency-declarations-name-no-hy-fork
        :statement "for_all line in (pyproject.toml ∪ uv.lock) of doeff and agora-controllers: names(line, github.com/proboscis/hy) => (FORK-PIN is not None and rev(line) == FORK-PIN and today <= FORK-EXCEPTIONS-EXPIRE)"
@@ -306,7 +345,13 @@
        :counterexamples
          [(counterexample "from hy.importer import read_valid_records を新しい file に足す — PyPI の Hy に戻すと import が落ちる")
           (counterexample "(import hy.importer [add-compile-record]) を Hy の source に足す")
-          (counterexample "uv.lock の hy を、hy.scoping の nearest-python-scope が無い版へ上げる — macros.hy の読み込みが ImportError で落ちる(card ki-a05a752e7545)")])]
+          (counterexample "uv.lock の hy を、hy.scoping の nearest-python-scope が無い版へ上げる — macros.hy の読み込みが ImportError で落ちる(card ki-a05a752e7545)")])
+     (law doeff-hy-caps-hy-at-the-locked-version
+       :statement "for the single hy requirement r in dependencies(packages/doeff-hy/pyproject.toml): ('<=' + version(uv.lock, hy)) in specifiers(r) and version(uv.lock, hy) satisfies r"
+       :counterexamples
+         [(counterexample "doeff-hy の宣言が hy>=1.2.0 のまま(上限なし)— agora-controllers が自分の lock で `uv lock --upgrade-package hy` を撃つと、doeff の検を通っていない版が入る(card ki-0ff168f4eaf5)")
+          (counterexample "上限を <1.4 にする — doeff が確かめていない修正版 1.3.2 を他の repo の lock に通す(修正版 1.3.1 も Hy の importer を直した)")
+          (counterexample "上限を <=1.4.0 へ上げ、uv.lock の hy を 1.3.1 のまま置く — R4 の検は 1.3.1 でしか測らず、他の repo は 1.4.0 を入れられる")])]
   :enforcement
     [(deftest test-adr-doe-hy-008-dependency-declarations-name-no-hy-fork
        (val repo-root (. (Path __file__) parent parent parent))
@@ -331,6 +376,13 @@
        (val missing (run (missing-on-pypi-hy (run (scan-hy-imports repo-root)) hy-version)))
        (val stale (run (stale-exceptions missing mentions)))
        (assert (= stale []) (+ "原因の消えた例外が台帳に残っている(ADR-DOE-HY-008 R5): " (str stale))))
+     (deftest test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version
+       (val repo-root (. (Path __file__) parent parent parent))
+       (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+       (val violations (run (hy-cap-violations (run (doeff-hy-requirements repo-root)) hy-version)))
+       (assert (= violations [])
+               (+ "doeff-hy の Hy の上限が uv.lock の版 " hy-version " ちょうどでない(ADR-DOE-HY-008 R6 — Hy を上げる便は "
+                  HY-CAP-DECLARATION " の上限と uv.lock を同じ commit で上げる): " (str violations))))
      (deftest test-adr-doe-hy-008-judgments-reject-the-counterexamples
        ;; 反例: 別の rev・期限の後・台帳に無い import は赤、台帳に在り期限の内の import は緑。
        (val before (date 2026 9 30))
@@ -365,5 +417,11 @@
        (assert (= (run (locked-hy-version lock-text)) "1.4.0"))
        (with [(pytest.raises AssertionError :match "index から入れる版でない")]
          (run (locked-hy-version (.replace lock-text "registry = \"https://pypi.org/simple\""
-                                           "git = \"https://github.com/proboscis/hy.git?rev=adbe989a\"")))))]
+                                           "git = \"https://github.com/proboscis/hy.git?rev=adbe989a\""))))
+       ;; 反例(card ki-0ff168f4eaf5): 上限なし・小版の上限(<1.4)・uv.lock と違う上限・hy の行の無い宣言は赤、uv.lock の版ちょうどの上限は緑。
+       (assert (= (run (hy-cap-violations ["doeff>=0.2.0" "hy>=1.2.0,<=1.3.1"] "1.3.1")) []))
+       (assert (= (len (run (hy-cap-violations ["hy>=1.2.0"] "1.3.1"))) 1))
+       (assert (= (len (run (hy-cap-violations ["hy>=1.2.0,<1.4"] "1.3.1"))) 1))
+       (assert (= (len (run (hy-cap-violations ["hy>=1.2.0,<=1.3.1"] "1.4.0"))) 2))
+       (assert (= (len (run (hy-cap-violations ["pydantic>=2.11"] "1.3.1"))) 1)))]
   :plans ["docs/design/hy-fresh-bytecode/artifacts/v1/design.md"])
