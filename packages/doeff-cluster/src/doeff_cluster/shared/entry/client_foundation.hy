@@ -15,12 +15,18 @@
 (require doeff-hy.macros [defk <- val])
 (import doeff [Program EffectBase with-handlers])
 (import doeff_cluster.shared.entry.cluster_foundation [coordinator-route-options])
+(import types [MappingProxyType])
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
 (import doeff_cluster.shared.protocol.detached [detached-cluster DetachedSender])
+
+
+;; 手元の道具が版の識別(process-versions)へ渡す environ — env の root の外の呼び手として名乗るので空(envKey を名乗らない)。
+;; 書き換えられない写像なので、呼びごとに作らず 1 つを使い回す。
+(val _OUTSIDE-ENV-ENVIRON (MappingProxyType {}))
 
 
 (defk with-detached-client [coordinator revision runtime-env body]
@@ -32,10 +38,10 @@
   (<- now int (now-epoch-ms))
   (<- route CoordinatorRoute (route-of coordinator now))
   ;; 版の識別: 宿の契約の versions-key を読む cluster の job と違い、手元の道具は宿を持たないので、この process の入っている版から作る。
-  ;; 手元の道具は env の root の外の呼び手として名乗る(空の environ — process-versions の註)。送り手が env の root の中に居ても
+  ;; 手元の道具は env の root の外の呼び手として名乗る(空の environ _OUTSIDE-ENV-ENVIRON — process-versions の註)。送り手が env の root の中に居ても
   ;; (環境変数 DOEFF_RUNTIME_ENV_KEY を持つ)その鍵を名乗ると、受け側は名乗りの runtime-env の鍵と比べて「版が違うので Program を
   ;; 解かない」で断る(2026-10-10 — 使い手の宣言の道具が別の commit の runtime-env を名乗って送った task が断られた)。
-  (<- versions (get dict #(str str)) (process-versions {}))
+  (<- versions (get dict #(str str)) (process-versions _OUTSIDE-ENV-ENVIRON))
   (val sender (DetachedSender :revision revision :versions versions :runtime-env runtime-env
                               :deadline-seconds IDEMPOTENT-DEADLINE-SECONDS))
   (<- answer (with-handlers [(detached-cluster (RouteCell route) options sender)] body))
