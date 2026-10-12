@@ -16,6 +16,20 @@ class Redeclare(_doeff_effect_base[tuple[str, ...]]):
     system: System
     environ: dict[str, dict[str, str]] | None = None
 
+@dataclass(frozen=True, kw_only=True)
+class ServiceRestarted:
+    name: str
+    mark: str
+
+@dataclass(frozen=True, kw_only=True)
+class RestartRefused:
+    name: str
+    reason: str
+
+@_doeff_dataclass(frozen=True)
+class RestartService(_doeff_effect_base[ServiceRestarted | RestartRefused]):
+    name: str
+
 @_doeff_dataclass(frozen=True)
 class ReadinessOf(_doeff_effect_base[ServiceReadiness]):
     name: str

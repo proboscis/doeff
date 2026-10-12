@@ -35,7 +35,9 @@ from doeff_core_effects.scheduler import Future as Future
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.scheduler import Race as Race
 from doeff_core_effects.stop_signal_effects import AwaitStop as AwaitStop
+from doeff_core_effects.stop_signal_effects import StopBell as StopBell
 from doeff_core_effects.stop_signal_effects import StopRequested as StopRequested
+from doeff_core_effects.world_phases import mark_world_phase as mark_world_phase
 from doeff_events import ArmedTimer as ArmedTimer
 from doeff_events import ArmedTimers as ArmedTimers
 from doeff_events import ArmedTimersEffect as ArmedTimersEffect
@@ -99,6 +101,8 @@ from doeff_cluster.shared.protocol.declaration_requests import reread_after_conf
 from doeff_cluster.shared.protocol.declaration_requests import needed_programs as needed_programs
 from doeff_cluster.shared.protocol.declaration_requests import body_of as service_body_of
 from doeff_cluster.shared.protocol.declaration_requests import group_limit_write as group_limit_write
+from doeff_cluster.shared.protocol.declaration_requests import RestartPlan as RestartPlan
+from doeff_cluster.shared.protocol.declaration_requests import restart_read as restart_read
 from doeff_cluster.shared.protocol.detached import detached_path as detached_path
 from doeff_cluster.shared.protocol.detached import detached_submit_body as detached_submit_body
 from doeff_cluster.shared.protocol.detached import detached_refusal as detached_refusal
@@ -212,6 +216,9 @@ from doeff_cluster.shared.intent.service_model import System as System
 from doeff_cluster.shared.intent.service_model import Declaration as Declaration
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
 from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
+from doeff_cluster.shared.intent.cluster_control import RestartService as RestartService
+from doeff_cluster.shared.intent.cluster_control import ServiceRestarted as ServiceRestarted
+from doeff_cluster.shared.intent.cluster_control import RestartRefused as RestartRefused
 from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
 from doeff_cluster.shared.intent.cluster_control import Crash as Crash
 from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
@@ -286,8 +293,6 @@ from doeff_cluster.worker.intent.worker_model import HandoffAbandoned as Handoff
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
 from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 NO_STATE_FILE: str
 SIM_URL: str
 SIM_START_MS: int
@@ -298,6 +303,7 @@ TASK_LEASE_SECONDS: float
 DETACHED_POLL_SECONDS: float
 QUEUE_WAIT_SECONDS: float
 WORKER_WAIT_SECONDS: float
+SETTLED_PRIORITY: int
 DRAIN_TTL_SECONDS: float
 REPORT_KINDS: tuple[str, ...]
 TERM_REASON: str
@@ -1143,6 +1149,15 @@ def first_beats_missing(names: tuple) -> _Program[bool, object]:
 def await_workers(names: tuple) -> _Program[None, object]:
     ...
 
+def placed_jobs(declaration: Declaration) -> _Program[tuple, object]:
+    ...
+
+def mark_settled_up() -> _Program[None, object]:
+    ...
+
+def world_up_watch(jobs: tuple) -> _Program[None, object]:
+    ...
+
 def apply_declaration(link: SimLink, declaration: Declaration) -> _Program[tuple, object]:
     ...
 
@@ -1153,6 +1168,9 @@ def sim_service_written(link: SimLink, read: ServiceRead) -> _Program[tuple, obj
     ...
 
 def sim_service_written_rereading(link: SimLink, read: ServiceRead) -> _Program[tuple, object]:
+    ...
+
+def sim_service_restarted(link: SimLink, name: str) -> _Program[ServiceRestarted | RestartRefused, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)

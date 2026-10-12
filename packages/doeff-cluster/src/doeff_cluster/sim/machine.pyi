@@ -41,6 +41,7 @@ from doeff_time import Delay as Delay
 from doeff_time import async_time_handler as async_time_handler
 from doeff_cluster.foundation.process_versions import this_process_versions as this_process_versions
 from doeff_cluster.shared.entry.declare import apply_declaration as apply_declaration
+from doeff_cluster.shared.entry.declare import restart_service as restart_service
 from doeff_cluster.shared.entry.service_build import system_declaration as system_declaration
 from doeff_cluster.shared.intent.protocol import PlainText as PlainText
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
@@ -51,6 +52,9 @@ from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
 from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
 from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
 from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
+from doeff_cluster.shared.intent.cluster_control import RestartService as RestartService
+from doeff_cluster.shared.intent.cluster_control import ServiceRestarted as ServiceRestarted
+from doeff_cluster.shared.intent.cluster_control import RestartRefused as RestartRefused
 from doeff_cluster.shared.intent.cluster_control import Crash as Crash
 from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
 from doeff_cluster.shared.intent.cluster_control import ServiceFailed as ServiceFailed
@@ -67,8 +71,6 @@ from doeff_cluster.shared.protocol.coordinator_reads import WAIT_PROBE_SECONDS a
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_read as readiness_read
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_awaited as readiness_awaited
 from doeff_cluster.shared.protocol.coordinator_reads import state_of as state_of
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 BOOT_SCRIPT: str
 PROBE_SECONDS: float
 MACHINE_ACTOR: str

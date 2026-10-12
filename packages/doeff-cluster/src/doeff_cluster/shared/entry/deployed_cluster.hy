@@ -12,6 +12,8 @@
 ;;;   Redeclare 系 環境            宣言の部品 system-declaration と apply-declaration で、配備の coordinator へ宣言を書く(版 = target の
 ;;;                              revision・実行環境 = target の runtime-env・版の識別 = target の versions-read の答え・送り手 = target の actor —
 ;;;                              手元の 1 台と同じ組み立て・台数は各 job の :replicas が行に載る)。答え = 宣言した Service の名。
+;;;   RestartService 名           宣言を替えずに Service 1 つを重ねて起こし直す(spec の環境変数 RESTART_MARK を 1 つ進めて書く — 宣言の部品 declare の
+;;;                              restart-service・送り手 = target の actor)。答え = ServiceRestarted か、書かなかった理由つきの RestartRefused。
 ;;;   ReadinessOf 名              GET /resources/Service/<名> の status の ready(無ければ Missing)。
 ;;;   AwaitReadiness 名 状態 秒    同じ読みを WAIT-PROBE-SECONDS ごとにして、状態になるか秒を過ぎるまで待つ(過ぎたら ReadinessWaitExpired・
 ;;;                              担い手が落ちたと分かれば期限を待たずに ServiceFailed)。
@@ -32,11 +34,12 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.foundation.process_versions [this-process-versions])
-(import doeff_cluster.shared.entry.declare [apply-declaration])
+(import doeff_cluster.shared.entry.declare [apply-declaration restart-service])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ServiceFailed ReadinessOf ReadinessWaitExpired AwaitReadiness
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired Redeclare
+                                                     RestartService ServiceRestarted RestartRefused
                                                      Crash KillWorker StopWorker StopCoordinator CrashCoordinator])
 (import doeff_cluster.shared.protocol.coordinator_reads [readiness-read readiness-awaited job-process-awaited])
 
@@ -81,6 +84,9 @@
     (when (not placed)
       (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))
     (resume (tuple (lfor row declaration.rows (get row "name")))))
+  (RestartService [name]
+    (<- restarted (| ServiceRestarted RestartRefused) (restart-service target.url target.actor name))
+    (resume restarted))
   (Crash [name]
     (raise (DeployedCannotAnswer (+ "Crash(" name ")— 配備の cluster では job を落とさない(sim と手元の 1 台だけが答える)"))))
   (KillWorker [name]

@@ -13,6 +13,10 @@ from doeff_cluster.shared.protocol.declaration_requests import reread_after_conf
 from doeff_cluster.shared.protocol.declaration_requests import needed_programs as needed_programs
 from doeff_cluster.shared.protocol.declaration_requests import body_of as body_of
 from doeff_cluster.shared.protocol.declaration_requests import group_limit_write as group_limit_write
+from doeff_cluster.shared.protocol.declaration_requests import RestartPlan as RestartPlan
+from doeff_cluster.shared.protocol.declaration_requests import restart_read as restart_read
+from doeff_cluster.shared.intent.cluster_control import ServiceRestarted as ServiceRestarted
+from doeff_cluster.shared.intent.cluster_control import RestartRefused as RestartRefused
 from doeff_cluster.shared.intent.service_model import Declaration as Declaration
 from doeff_cluster.shared.intent.detached_model import GroupLimit as GroupLimit
 DECLARE_REPLY_SECONDS: float
@@ -33,6 +37,9 @@ def service_written_rereading(base: str, actor: str, read: ServiceRead) -> _Prog
     ...
 
 def group_limit_written(base: str, actor: str, limit: GroupLimit) -> _Program[bool, object]:
+    ...
+
+def restart_service(url: str, actor: str, name: str) -> _Program[ServiceRestarted | RestartRefused, object]:
     ...
 
 def apply_declaration(url: str, declaration: Declaration, actor: str) -> _Program[bool, object]:

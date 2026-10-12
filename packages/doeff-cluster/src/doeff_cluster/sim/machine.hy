@@ -24,6 +24,7 @@
 ;;;                              (配備と同じ CODE_REPO_URL — 版の木)からその版で取り出す(#3040)。LocalMachine に実行環境
 ;;;                              (runtime-env)が在れば宣言に載せ、worker は配備と同じ鍵の表(WORKER_REPOS)の道でその repo を取り込み、
 ;;;                              root を用意して job を動かす(#3042 — 入口の検めを通る本番の土台の job はこの道でだけ起きる)。
+;;;   RestartService 名           宣言を替えずに Service 1 つを重ねて起こし直す(配備の handler と同じ restart-service — spec の環境変数 RESTART_MARK を進める)。
 ;;;   Crash 名                   worker が動かしている job の process を group ごと SIGKILL で落とす(答え = 落とした数)。worker は 0 以外の
 ;;;                              終わりとして本物の判断で起こし直す(sim の Crash は exit 1・ここは signal の終わり — worker の数え方は同じ)。
 ;;;   CutWorker・StallWorker・FailRoute は答えない — MachineCannotAnswer で、その effect の名と訳を出して止める(網を切る・固める・5xx を
@@ -55,12 +56,12 @@
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster.foundation.process_versions [this-process-versions])
-(import doeff_cluster.shared.entry.declare [apply-declaration])
+(import doeff_cluster.shared.entry.declare [apply-declaration restart-service])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
-                                                     CrashCoordinator Redeclare Crash AwaitReadiness ServiceFailed ReadinessWaitExpired
+                                                     CrashCoordinator Redeclare RestartService ServiceRestarted RestartRefused Crash AwaitReadiness ServiceFailed ReadinessWaitExpired
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 (import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 
@@ -389,6 +390,9 @@
     (when (not placed)
       (raise (RuntimeError (+ "宣言を書けない(上の slog の行に返事)— " (.join "・" (lfor row declaration.rows (get row "name")))))))
     (resume (tuple (lfor row declaration.rows (get row "name")))))
+  (RestartService [name]
+    (<- restarted (| ServiceRestarted RestartRefused) (restart-service url MACHINE-ACTOR name))
+    (resume restarted))
   (Crash [name]
     (<- state (| dict None) (state-of url))
     (when (is state None)

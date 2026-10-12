@@ -3,6 +3,7 @@
 ;;;
 ;;;   (<- names (Redeclare system))            ; 系を宣言し直す(台数は job の :replicas — 答え = 宣言した Service の名の tuple)
 ;;;   (<- names (Redeclare system :environ {"tally" {"STEP" "3"}}))  ; その宣言し直しの job ごとの environ の上書きつき(#3131)
+;;;   (<- r (RestartService "tally"))          ; 版を替えずに重ねて起こし直す(handoff の job — 答え = ServiceRestarted か RestartRefused)
 ;;;   (<- ready (ReadinessOf "tally"))         ; coordinator が数えている Service の準備の状態(ServiceReadiness)
 ;;;   (<- n (Crash "tally"))                   ; job の動いている process を全部 exit 1 で落とす(答え = 落とした数)
 ;;;   (<- r (AwaitReadiness "tally" "Ready" 60.0))      ; 準備の状態が Ready になるまで待つ(期限つき — 過ぎたら ReadinessWaitExpired・
@@ -46,6 +47,29 @@
    答え = 宣言した Service の名の tuple。"
   {:fields [(: system System) (: environ (| (get dict #(str (get dict #(str str)))) None) None)]
    :answer (get tuple #(str ...))
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defrecord ServiceRestarted
+  "RestartService の答え(起こし直しを書いた): name = Service の名・mark = 書いた印(Service の spec の環境変数 RESTART_MARK の値 — 起こし直すたびに
+   1 ずつ増える。宣言し直すと印は消える)。"
+  (#^ str name)
+  (#^ str mark))
+
+(defrecord RestartRefused
+  "RestartService の答え(起こし直しを書かなかった): name = Service の名・reason = 重ねて起こし直せない理由の 1 行(Service が無い・台数 0 の取り下げ・
+   入れ替えの形が handoff でない)。何も書いていない。"
+  (#^ str name)
+  (#^ str reason))
+
+(defeffect RestartService
+  "Service name を、版を替えずに重ねて起こし直す(手で起こし直す時の「止めてから起こす」replicas 1→0→1 の替わり — 受ける相手の居ない間を作らない)。
+   Service の spec の環境変数 RESTART_MARK を 1 つ進めて書く — 子の環境変数は spec の指紋(spec-hash)に入るので、入れ替えの形が handoff の job は
+   新の process を旧と並べて起こし、新が Ready と数えられた後に旧を止める(版を替える入れ替えと同じ道)。印以外の spec(版・引数・台数・所有者・
+   readiness)は読んだまま書く。入れ替えの形が recreate の job・台数 0 の job・無い Service には書かず RestartRefused を返す(recreate は重ねる道が無く、
+   印を書くと止めてから起こすうえに次の宣言し直しでもう 1 度起こし直される)。印は次の宣言し直しで宣言の値へ戻る(handoff の job はその時も重なる)。
+   答え = ServiceRestarted か RestartRefused。"
+  {:fields [(: name str)]
+   :answer (| ServiceRestarted RestartRefused)
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ReadinessOf
