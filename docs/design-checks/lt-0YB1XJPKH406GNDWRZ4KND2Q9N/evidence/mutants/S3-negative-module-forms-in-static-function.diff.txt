@@ -1,0 +1,12 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index d26d01af0..220f8b062 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -676,7 +676,6 @@ defk {name}: :post type annotation cannot be an empty string.
+      関数の局所の名になる。"
+   (cond
+     (_in-function-body? compiler) `(setv ~name ((fn [] ~@forms ~name)))
+-    (_function-scope? compiler) `(do ~@forms)
+     True `(do ~@forms ~@module-forms)))
+ 
+ (defn _function-scope? [compiler]

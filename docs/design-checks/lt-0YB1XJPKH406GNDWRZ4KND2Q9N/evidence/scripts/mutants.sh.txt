@@ -1,0 +1,49 @@
+#!/bin/bash
+# 設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の変異の実験: 変異の差分を当て、名指した検だけを撃ち、外す。
+# 使い方: bash mutants.sh <作業木> <記録の dir> <実験の名…>
+W=$1; R=$2; shift 2
+M=$R/evidence/mutants
+probe=$R/blind/a-files/probe_records.py.txt
+run() {  # $1 = 名, $2 = pytest の -k(空なら file の全部), $3… = 当てる差分
+  name=$1; k=$2; shift 2
+  out=$R/evidence/runs/$name.txt
+  {
+    echo "# 実験 $name・刻 $(date -u +%FT%TZ)・作業木 $W・HEAD $(git -C "$W" rev-parse HEAD)"
+    for d in "$@"; do echo "\$ git apply $(basename "$d")"; git -C "$W" apply "$d" || { echo "apply 失敗"; return 1; }; done
+    echo "\$ git diff --stat"; git -C "$W" diff --stat -- packages tests
+    if [ -n "$k" ]; then
+      echo "\$ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -k \"$k\""
+      (cd "$W" && timeout 540 uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -k "$k" -rfE > /tmp/lt0YB1-pytest.out 2>&1; echo "pytest の exit=$?")
+      grep -v check-slot /tmp/lt0YB1-pytest.out | grep -E "^(FAILED|ERROR)|passed|failed|^E  " | head -40
+    else
+      echo "\$ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore"
+      (cd "$W" && timeout 540 uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -rfE > /tmp/lt0YB1-pytest.out 2>&1; echo "pytest の exit=$?")
+      grep -v check-slot /tmp/lt0YB1-pytest.out | grep -E "^(FAILED|ERROR)|passed|failed|^E  " | head -40
+    fi
+    if grep -q defbench <(git -C "$W" diff -- packages); then
+      cp "$probe" /tmp/lt0YB1-probe_records.py
+      echo "\$ uv run --frozen python probe_records.py(盲検 A の script・a-files/probe_records.py.txt)"
+      (cd "$W" && timeout 120 uv run --frozen python /tmp/lt0YB1-probe_records.py 2>&1 | grep -v "記録の 1 件目")
+    fi
+    for d in $(printf '%s\n' "$@" | tac); do git -C "$W" apply -R "$d"; done
+    echo "\$ git status --short -- packages tests(外した後)"; git -C "$W" status --short -- packages tests
+  } > "$out" 2>&1
+  echo "== $name"; tail -12 "$out"
+}
+mkdir -p $R/evidence/runs
+for e in "$@"; do
+  case $e in
+    S1-positive) run S1-positive "" $M/S1-positive-new-import-in-defeffect-form.diff.txt ;;
+    S1-negative) run S1-negative "defeffect" $M/S1-negative-new-import-outside-scoped-definition.diff.txt ;;
+    S2-positive) run S2-positive "" $M/S2-positive-defbench-module-forms.diff.txt ;;
+    S2-negative-record) run S2-negative-record "defbench" $M/S2-negative-defbench-record-in-forms.diff.txt ;;
+    S2-negative-sample) run S2-negative-sample "every_definition" $M/S2-negative-defbench-without-sample.diff.txt ;;
+    S3-positive) run S3-positive "static_view or not_wrapped" ;;
+    S3-positive-change) run S3-positive-change "" $M/S3-positive-static-answer-form-changed.diff.txt ;;
+    S3-negative) run S3-negative "static_view" $M/S3-negative-module-forms-in-static-function.diff.txt ;;
+    S4-positive) run S4-positive "state_unchanged" ;;
+    S4-negative) run S4-negative "state_unchanged" $M/S4-negative-blind-B-effect-index.diff.txt ;;
+    S5-positive) run S5-positive "" $M/S5-positive-records-storage-renamed.diff.txt ;;
+    S5-negative) run S5-negative "defbench" $M/S5-positive-records-storage-renamed.diff.txt $M/S2-negative-defbench-record-in-forms.diff.txt ;;
+  esac
+done
