@@ -1,0 +1,25 @@
+"""class の本体の defhandler を、実行時の展開と型検査のための展開(static_view)で Python の文に落とし、節の isinstance が
+読む Transfer がどこで束ねられるかを見る(pyright は走らせない)。"""
+import sys, ast
+import doeff_hy  # noqa
+import hy
+from hy.compiler import hy_compile
+from doeff_hy.static_view import static_view
+SRC = """
+(require doeff-hy.handle [defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Transfer [EffectBase] #^ int amount)
+(defclass FakeBank [] (defhandler bank (Transfer [amount] (resume (+ amount 100)))))
+"""
+def unparse(label):
+    import types
+    mod = types.ModuleType("static_probe"); sys.modules["static_probe"] = mod
+    tree = hy_compile(hy.read_many(SRC), mod)
+    text = ast.unparse(tree)
+    lines = [l for l in text.splitlines() if "import" in l and ("Transfer" in l or "Pass" in l or "WithHandler" in l) or "isinstance(effect" in l or "effect:" in l]
+    print(f"--- {label}")
+    for l in lines: print("   ", l.strip()[:160])
+unparse("実行時の展開")
+with static_view():
+    unparse("型検査のための展開")

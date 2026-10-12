@@ -1,0 +1,12 @@
+import sys; sys.path.insert(0, "/tmp/blind-a-ki-edab")
+from harness import load, go
+import traceback
+src = """
+(defclass C []
+  (setv programs (lfor i [1 2] (handle (Bump i) (Bump [n] (resume (+ n 100)))))))
+"""
+try:
+    m = load(src)
+    print([go(p) for p in m.C.programs])
+except Exception:
+    traceback.print_exc()
