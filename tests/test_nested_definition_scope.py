@@ -1,12 +1,14 @@
-"""関数の本体の中に入れ子で書いた defk・defp・deftest・defmcp-tool が、外の関数に局所の名を作らない事の検
-(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b)。
+"""関数の本体の中に入れ子で書いた defk・defp・deftest・defmcp-tool・defeffect・deff が、外の関数に局所の名を作らない事の検
+(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff は card ki-93395c51de1e)。
 
 defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助
 (と `doeff_hy`・`pytest`・`_doeff_QuotedForms`)を import する。関数の本体の中でそれを import すると、名が関数全体の
 局所の名になり、同じ関数で先に読む traverse / for/do の `_doeff_do`、本体の文の guard の `_guard_statement_value`、
 最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は card ki-c67428538aec・
 tests/test_fnk_do_bang_scope.py)。defmcp-tool も展開の頭で `_doeff_do`・`McpToolDef`・`McpParamSchema` を import する。
-module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。
+defeffect は `_doeff_effect_base`・`_doeff_dataclass`・`_doeff_ClassVar` などを、deff は宣言の `doeff_hy` を import する。
+module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。defhandler は tests/test_handle_scope.py
+(card ki-907f779b3290)が検め、ここでは card ki-93395c51de1e の再現の手順の形だけを置く。
 
 包む `_scoped-definition` の呼び手が負う事も検める(設計検証 lt-ZE5XJCF7YRE6ES4S8QDQASD1FF の失敗例): 関数の中の定義は
 外の関数を呼ぶたびに評価されるので module の globals に記録を積まない事、class の本体の定義の関数が読む補助は
@@ -39,12 +41,22 @@ _SCOPE_LEAKING_NAMES = frozenset(
         "pytest",
         "McpToolDef",
         "McpParamSchema",
+        "_doeff_dataclass",
+        "_doeff_ClassVar",
+        "_doeff_cast",
+        "_doeff_object",
+        "doeff_core_effects",
+        "WithHandler",
+        "Resume",
+        "Transfer",
+        "Pass",
+        "_doeff_check_clause_endings_once",
     }
 )
 
 # module の段の defk が 1 つ在る(書き手の module の普通の形)— 入れ子の外の関数が先に読む補助は module の globals に在る
 _HEADER = """
-(require doeff-hy.macros [defk defp deftest defmcp-tool <- traverse for/do])
+(require doeff-hy.macros [defk defp deftest defmcp-tool defeffect deff defhandler <- traverse for/do])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (defk _module-level [] {:pre [] :post [(: % int)]} 0)
 """
@@ -193,6 +205,65 @@ _CASES = {
         _run_defk([1, 2, 3]),
         4,
     ),
+    # 素の defn の for/do の `_doeff_do` の読みの後に、入れ子の defhandler の import が来る(card ki-93395c51de1e の再現の手順 —
+    # 直しは card ki-907f779b3290)
+    "defhandler-in-defn-after-for-do": (
+        """
+        (defn subject [items]
+          (setv p (for/do (<- x (From items)) (* x 2)))
+          (defhandler inner (Ask [k] (resume 1)))
+          p)
+        """,
+        _collection_values,
+        [2, 4, 6],
+    ),
+    # 走らない枝の入れ子の defeffect の後に、外の最後の値の guard(_doeff_effect_base)を読む(card ki-93395c51de1e の再現の手順)
+    "defeffect-in-untaken-branch": (
+        """
+        (defk subject [x]
+          {:pre [(: x int)] :post [(: % int)]}
+          (abs x)
+          (when (> x 100)
+            (defeffect Inner "Inner." {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}}))
+          x)
+        """,
+        _run_defk(5),
+        5,
+    ),
+    "defeffect-in-defn-after-for-do": (
+        """
+        (defn subject [items]
+          (setv p (for/do (<- x (From items)) (* x 2)))
+          (defeffect Inner {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}})
+          p)
+        """,
+        _collection_values,
+        [2, 4, 6],
+    ),
+    # 包んだ defeffect の型を外の defk が作る — :pre(__post_init__)・答えの分け方(doeff_core_effects の import)・凍結の仕上げ
+    "defeffect-in-defk-builds-instance": (
+        """
+        (defk subject [x]
+          {:pre [(: x int)] :post [(: % int)]}
+          (abs x)
+          (defeffect Inner {:fields [(: n int)] :pre [(> n 0)] :answer (| int str) :absent [str]
+                            :tags {:context "t" :role "intent"}})
+          (+ (. (Inner x) n) (len (. Inner __doeff_outcomes__ absent))))
+        """,
+        _run_defk(5),
+        6,
+    ),
+    # 外の関数が module の段の doeff_hy を読んだ後に、入れ子の deff の宣言の import(doeff_hy)が来る
+    "deff-after-module-doeff-hy-read": (
+        """
+        (defn subject [x]
+          (setv owner (. doeff_hy __name__))
+          (deff inner [y] {:pre [(: y int)] :post [(: % int)]} (+ y 1))
+          #(owner (inner x)))
+        """,
+        lambda mod: mod.subject(5),
+        ("doeff_hy", 6),
+    ),
     # 関数の中の class の本体の defk は class の段の展開のまま(method は module の globals の補助を読む)
     "defk-in-class-in-defn": (
         """
@@ -236,17 +307,13 @@ def _module_globals_view(mod: types.ModuleType) -> dict[str, tuple[int, int | No
     }
 
 
-@pytest.mark.parametrize(
-    ("source", "call", "expected"),
-    [case for name, case in _CASES.items() if "deftest" not in name],
-    ids=[name for name in _CASES if "deftest" not in name],
-)
+@pytest.mark.parametrize(("source", "call", "expected"), _CASES.values(), ids=_CASES.keys())
 def test_nested_definition_leaves_module_globals_unchanged(
     source: str, call: Callable[[types.ModuleType], object], expected: object
 ) -> None:
     """関数の中の定義は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは呼ぶたびに
-    評価されるので、記録を積む文を置くと呼んだ回数だけ積み増す(`_scoped-definition` の呼び手の負う事)。
-    deftest は呼ぶたびに pytest の item の記録を積む今の形があるので外す(card ki-93395c51de1e)。"""
+    評価されるので、記録を積む文を置くと呼んだ回数だけ積み増す(`_scoped-definition` の呼び手の負う事)。関数の中の
+    deftest は pytest の item の記録(`__doeff_pytest_items__`)を積まない(card ki-93395c51de1e)。"""
     mod = _eval_module(source)
     before = _module_globals_view(mod)
     call(mod)
@@ -294,6 +361,8 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
         (defp program {:post [(: % int)]} 1)
         (deftest test-top (assert True))
         (defmcp-tool top-tool "Top" [{:name "y" :type "integer" :description "y"}] y)
+        (defeffect TopEffect {:fields [(: n int)] :answer int :tags {:context "t" :role "intent"}})
+        (deff top-helper [y] {:pre [(: y int)] :post [(: % int)]} y)
         (defclass Base [] (defn m [self y] y))
         (defclass Child [Base]
           (defk m [self y] {:pre [(: self Child) (: y int)] :post [(: % int)]} (+ 1 (.m (super) y))))
@@ -303,6 +372,11 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     assert mod.test_top.__qualname__ == "test_top"
     assert mod._top_tool_mcp_handler.__qualname__ == "_top_tool_mcp_handler"
     assert mod.top_tool.handler is mod._top_tool_mcp_handler
+    assert mod.TopEffect.__qualname__ == "TopEffect"
+    assert repr(mod.TopEffect(1)) == "TopEffect(n=1)"
+    assert mod.top_helper.__qualname__ == "top_helper"
+    # module の段の deftest は今までどおり pytest の item を記録する(関数の中の deftest だけが記録しない)
+    assert any('"test_top"' in text for text in mod.__doeff_pytest_items__)
     assert mod.Child.m.__qualname__ == "Child.m"
     assert _run(mod.Child().m(2)) == 3
     assert _run(mod.program) == 1
