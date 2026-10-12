@@ -7,7 +7,7 @@
 ;;;   効く値が送り手と送った順で割れた。送り手の名乗る欄の集合と、数えの関数が受ける物を契約の検で固定する。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import dataclasses [fields])
+(import dataclasses [fields replace])
 (import inspect)
 (import doeff [with-handlers])
 (import doeff_events [MemoryBroker])
@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task group-limit-spec GROUP-LIMIT-KEYS])
 (import doeff_cluster.shared.entry.service_build [system-of system-declaration])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody ResourceBody])
 (import doeff_cluster.coordinator.core.resource_policy [create-resource update-resource stamp Refused])
 (import doeff_cluster.coordinator.core.cluster_policy [resource-version-of])
@@ -128,16 +128,16 @@
   (assert (= summary {"limit" 1 "system" "alpha" "held" 1 "phases" ["assigned" "queued" "queued"]}) summary))
 
 
-(defhandler group-only-coordinator [#^ dict world]
-  ;; coordinator の代役(本番の declare の検): GroupLimit は無い(GET 404)・作り(POST)は 201 で、送られた本文を world の "posts" の組に
-  ;; 足す。他の要求は来ない筈。引数に残す理由: 代役の外の世界の記録は検ごとに作る値で、業務の設定ではない。
+(defhandler group-only-coordinator [#^ dict world #^ int post-status]
+  ;; coordinator の代役(本番の declare の検): GroupLimit は無い(GET 404)・作り(POST)は post-status で答え、送られた本文を world の
+  ;; "posts" の組に足す。他の要求は来ない筈。引数に残す理由: 代役の外の世界の記録と答えの番号は検ごとに作る値で、業務の設定ではない。
   (HttpRequest [method url body]
     (cond
       (and (= method "GET") (in "/resources/GroupLimit/" url))
         (resume (HttpResponse 404 {} b"" "" url 0.0))
       (and (= method "POST") (.endswith url "/resources/GroupLimit"))
         (do (setv (get world "posts") (+ (get world "posts") #(body)))
-            (resume (HttpResponse 201 {} b"" "" url 0.0)))
+            (resume (HttpResponse post-status {} b"" "" url 0.0)))
       True (raise (AssertionError (.format "思わない要求: {} {}" method url))))))
 
 
@@ -145,10 +145,22 @@
   ;; 盲検 A の観測 5: job の無い宣言(組の上限だけ)を本番の apply-declaration で書く — 以前は rows[0] を読んで IndexError(sim は通った)。
   (val world {"posts" #()})
   (val declaration (system-declaration ALPHA "rev" :versions {"python" "3"}))
-  (<- ok bool (with-handlers [slog-discard-handler (group-only-coordinator world)]
+  (<- ok bool (with-handlers [slog-discard-handler (group-only-coordinator world 201)]
                 (apply-declaration "http://coordinator.test" declaration "c-test")))
   (assert ok)
   (assert (= (get world "posts") #({"name" "llm" "spec" {"scope" "cluster" "limit" 1 "system" "alpha"}})) world))
+
+
+(deftest test-the-production-declare-stops-at-the-first-refused-group-like-the-sim
+  ;; 本番の宣言の書きは、組の上限の書きが 1 つ断られたら(例 別の系の組で 409)残りの組を書かずに偽 — sim の宣言の書きと同じ所で止まる
+  ;; (以前は残りの組を書き続けてから偽を返し、sim は最初で止まった — 設計のレビューの指摘 1-d)。
+  (val world {"posts" #()})
+  (val two (system-of "alpha" #() :task-limits #((GroupLimit :group "llm" :scope "cluster" :limit 1)
+                                                 (GroupLimit :group "own" :scope "worker" :limit 2))))
+  (<- ok bool (with-handlers [slog-discard-handler (group-only-coordinator world 409)]
+                (apply-declaration "http://coordinator.test" (system-declaration two "rev" :versions {"python" "3"}) "c-test")))
+  (assert (not ok))
+  (assert (= (tuple (gfor b (get world "posts") (get b "name"))) #("llm")) world))
 
 
 (deftest test-the-sender-facing-fields-and-the-counting-inputs-are-pinned
@@ -164,15 +176,32 @@
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
                "retain_seconds" "priority" "limits" "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
-  ;; 数えの関数は task の行を受けず、組の名乗り(TaskLimit の tuple)と系の宣言の表だけを受ける。
-  (assert (= (list (. (inspect.signature cluster_policy.hold-limits) parameters)) ["held" "limits" "worker" "groups"])
-          (inspect.signature cluster_policy.hold-limits))
-  (assert (= (list (. (inspect.signature cluster_policy.limits-misfit) parameters)) ["limits" "worker" "held" "groups"])
-          (inspect.signature cluster_policy.limits-misfit)))
+  ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・
+  ;; 置いている数・系の宣言の表だけを受ける。task の行を読むのは、置いている task の名乗りを射影する placed-claims と place-tasks の
+  ;; 呼びだけ(既に在る送り手の欄 — environ など — を数えに読ませない。設計のレビューの指摘 2-a)。
+  (for [#(f params) [#(cluster_policy.hold-limits ["held" "limits" "worker" "groups"])
+                     #(cluster_policy.limits-misfit ["limits" "worker" "held" "groups"])
+                     #(cluster_policy.limit-holdings ["claims" "groups"])
+                     #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups"])
+                     #(cluster_policy.placed-claims ["tasks"])]]
+    (assert (= (list (. (inspect.signature f) parameters)) params) #(f.__name__ (inspect.signature f)))))
+
+
+(deftest test-the-placed-claims-are-one-per-placed-task-whatever-else-the-sender-sent
+  ;; 置いている task の名乗りの射影は、置いている task 1 本につき #(名乗った組 置いた worker) を 1 つだけ返し、送り手の他の欄(environ・
+  ;; 名・key・優先)を変えても同じ(1 本は升ごとに 1 — 送り手の値で重さを変えない)。待っている task は数えない。
+  (val claims #((TaskLimit :group "llm")))
+  (val plain (TaskRecord "t1" "check" "sha" "rev" #() #("local") 15000 20000 0 :detached True :key "k1" :limits claims
+                         :phase "assigned" :worker "w1"))
+  (val loud (replace plain :id "t2" :name "heavy" :key "k2" :priority 7
+                           :environ #(#("SLOTS" "4") #("WEIGHT" "9"))))
+  (val waiting (replace plain :id "t3" :key "k3" :phase "queued" :worker None))
+  (<- answer tuple (cluster_policy.placed-claims {"t1" plain "t2" loud "t3" waiting}))
+  (assert (= (sorted answer :key repr) [#(claims "w1") #(claims "w1")]) answer))
 
 
 (deftest test-the-defsystem-form-reads-the-same-scopes-and-keys-as-the-rule
   ;; 盲検 A の付随の所見: defsystem の形の読み(doeff-hy — doeff-cluster を import できない)は範囲の名と欄の集合を自前で持つ。規則
   ;; (detached_rules)と食い違えば赤にする(系の名 system は系の構成子が付ける欄で、書き手は書かない)。
   (assert (= (frozenset system_form.LIMIT-SCOPES) TASK-LIMIT-SCOPES) system_form.LIMIT-SCOPES)
-  (assert (= (| (frozenset system_form.LIMIT-KEYS) #{"system"}) GROUP-LIMIT-KEYS) system_form.LIMIT-KEYS))
+  (assert (= (frozenset system_form.LIMIT-KEYS) (- GROUP-LIMIT-KEYS #{"system"})) system_form.LIMIT-KEYS))
