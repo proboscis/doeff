@@ -8,6 +8,4 @@ from doeff_core_effects.stack_dump_effects import StackDumpLedger as StackDumpLe
 from doeff_core_effects.stack_dump_effects import stack_dumps_at as stack_dumps_at
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 memory_stack_dump_handler: _Handler

@@ -55,8 +55,6 @@ from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 CLOSED_REASON: str
 EMPTY_REPORT: WsSendReport
 

@@ -5,8 +5,6 @@ from doeff_hy.static_types import Handler as _Handler
 from doeff_core_effects.random_effects import RandomBytes as RandomBytes
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 
 def seeded_bytes(seed: int, call: int, count: int) -> _Program[bytes, object]:
     ...
