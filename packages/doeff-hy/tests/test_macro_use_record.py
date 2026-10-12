@@ -857,8 +857,8 @@ from doeff_hy_bytecode_guard import loader_hooks, macro_use, record_from_json, r
 from doeff_hy_bytecode_guard import records, source_to_code_as_import
 def digest(spec):
     module, name = spec.split(":")
-    key = macro_use.UsedMacroKey("_hy_macros", module, hy.mangle(name))
-    macro = vars(importlib.import_module(module))["_hy_macros"][key.name]
+    key = macro_use.UsedMacroKey(records.MACRO_TABLE, module, hy.mangle(name))
+    macro = vars(importlib.import_module(module))[records.MACRO_TABLE][key.name]
     return macro_use.macro_digest(key, macro, loader_hooks.file_sha256).digest
 answer = {"doeff_hy": doeff_hy.__file__}
 if mode == "digests":
