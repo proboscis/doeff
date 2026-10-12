@@ -109,6 +109,9 @@ EXCLUDED: dict[str, str] = {
         "使えるかが未測定で、母集団へ入れるかは card acp:kanban-issue:ki-2832a04913cc が決める"
     ),
     "docs/design/": "設計の検証の模型と実験(その時点の記録で、日次の母集団ではない)",
+    "docs/design-checks/": (
+        "設計検証の記録の証拠(盲検の再現・直した版の検の写し。その時点の記録で、日次の母集団ではない)"
+    ),
     "ide-plugins/pycharm/test_program_detection.py": (
         "PyCharm plugin の検出の検体(テスト関数を持たない)"
     ),
