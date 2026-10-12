@@ -1,0 +1,71 @@
+# 盲検 B の patch を当てた形・提示した検査
+# 版: c8fd2c26a54af6b8cf976007c5f4e1751f71f4e4・刻: 2026-10-12T09:59:47+00:00
+# 差分(作業木 vs HEAD):
+ packages/doeff-hy/src/doeff_hy/check_slot.py   | 17 ++++++++++++++++-
+ packages/doeff-hy/src/doeff_hy/static_check.py |  3 ++-
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+#   diff --git a/packages/doeff-hy/src/doeff_hy/check_slot.py b/packages/doeff-hy/src/doeff_hy/check_slot.py
+#   index 6db4dfc16..130127788 100644
+#   --- a/packages/doeff-hy/src/doeff_hy/check_slot.py
+#   +++ b/packages/doeff-hy/src/doeff_hy/check_slot.py
+#   @@ -49,8 +49,16 @@ CANON_CALLS = ("read_policy", "take")
+#    CANON_ERRORS = ("PolicyUnreadable", "SlotWaitExpired")
+#    
+#    
+#   +class SlotPolicy(Protocol):
+#   +    """取った枠の宣言のうち、1 枠の中で並べてよい process の数(宣言の processesPerSlot・dotfiles 142108b9f・card ki-f8107ed7ccc8)。"""
+#   +
+#   +    processes_per_slot: int
+#   +
+#   +
+#    class Holding(Protocol):
+#   -    """正本の take が返す持ち物(正本の Holding)— 解く口だけを読む。"""
+#   +    """正本の take が返す持ち物(正本の Holding)— 解く口と、取った枠の宣言を読む。"""
+#   +
+#   +    policy: SlotPolicy
+#    
+#        def release(self) -> None: ...
+#    
+#   @@ -66,6 +74,13 @@ class SlotHeld:
+#            if self.holding is not None:
+#                self.holding.release()
+#    
+#   +    def width(self, wanted: int) -> int:
+#   +        """枠の中で並べてよい子の process の数 — wanted を、取った枠の宣言の processesPerSlot までに絞る(素通しでは wanted)。
+#   +        正本の命令の包み(run)が子の env に置く並走の数を、take で直に枠を取る入口(doeff-hy-check の展開の子)でも守る。"""
+#   +        if self.holding is None:
+#   +            return wanted
+#   +        return max(1, min(wanted, self.holding.policy.processes_per_slot))
+#   +
+#    
+#    @dataclass(frozen=True)
+#    class SlotExpired:
+#   diff --git a/packages/doeff-hy/src/doeff_hy/static_check.py b/packages/doeff-hy/src/doeff_hy/static_check.py
+#   index 2e34d0b27..36b55d269 100644
+#   --- a/packages/doeff-hy/src/doeff_hy/static_check.py
+#   +++ b/packages/doeff-hy/src/doeff_hy/static_check.py
+#   @@ -1208,7 +1208,8 @@ def main(argv: list[str] | None = None) -> int:
+#        try:
+#            cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
+#            threads = pyright_threads(pyright_threads_setting())  # 展開の前に判じる(誤った値で展開の秒を払わない)
+#   -        closure = project_closure(root, roots, report, cache_dir, expander_limit(expanders_setting()))
+#   +        # 展開の子は枠の中で走る — 宣言の 1 枠の並走の数(processesPerSlot)を越えて起こさない(card ki-f8107ed7ccc8)。
+#   +        closure = project_closure(root, roots, report, cache_dir, slot.width(expander_limit(expanders_setting())))
+#            checked = run_pyright(
+#                root, settings, closure.projections, report, args.pyright, args.python, threads
+#            )
+$ uv run pytest packages/doeff-hy/tests/test_static_cache.py::test_doeff_hy_sources_do_not_read_their_place packages/doeff-hy/tests/test_static_check_slot.py -q
+
+deadline scale x1.4 (load per usable CPU) — per test 85s, watchdog 126s
+
+test-admission: focused — 8 件(変更箇所の検証)
+........                                                                 [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-2320-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+8 passed, 1 warning in 5.75s
+rc=0
