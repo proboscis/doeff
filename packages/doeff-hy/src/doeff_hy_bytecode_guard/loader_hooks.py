@@ -404,12 +404,23 @@ def _checking_get_code(previous: GetCode):
             # Python が source と突き合わせない .pyc(PEP 552 の unchecked-hash — image の組み立てが焼く形)は、
             # Python が source の変更を信じないのと同じく、macro の変更も信じない(組み立ての中で焼き直す前提)。
             return code
-        with _expansion_recording(self, path):
-            recompiled = _recompile(self, path, header)
-        _to_shared_store(fullname, path, _compiled_source(path), recompiled)
-        return recompiled
+        return _replacing_stale_pyc(self, fullname, path, header)
 
     return get_code
+
+
+def _replacing_stale_pyc(
+    self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
+) -> CodeType:
+    """記録が古い .pyc の代わりの code — 保存先に今の環境の macro で合う entry が在ればそれを使い(compile せず、.pyc を書き直す)、
+    無ければ compile し直して保存先へ足す(card ki-11a90ffff495)。"""
+    stored = _from_shared_store_over_stale_pyc(self, fullname, path, header)
+    if stored is not None:
+        return stored
+    with _expansion_recording(self, path):
+        recompiled = _recompile(self, path, header)
+    _to_shared_store(fullname, path, _compiled_source(path), recompiled)
+    return recompiled
 
 
 def _remember_record(path: str, code: CodeType | None) -> None:
@@ -494,6 +505,45 @@ def _from_shared_store(
         or int.from_bytes(header[4:8], "little") & records.FLAG_HASH_BASED
     ):
         return None  # 作業木の .pyc が使える(か hash の方式 — Python 自身の判定に任せる)
+    return _stored_code(self, fullname, path, mtime=mtime, size=size, previous_header=None)
+
+
+def _from_shared_store_over_stale_pyc(
+    self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
+) -> CodeType | None:
+    """作業木の .pyc は source に合うが、記録が今の環境の macro に合わない時(兄弟の doeff を替えた後に使い回す木)に、compile し直す前に
+    保存先を引く(当たらなければ None で、呼び手が今どおり compile して足す)— 保存先に今の環境で合う entry が在るのに、.pyc が在るという
+    だけで引かずに木の Hy の module を全部 compile し直していた(card ki-11a90ffff495)。照らしは :func:`_from_shared_store` と同じ。
+    作業木の .pyc は読んだ .pyc と同じ方式(timestamp か hash)で書き直す。"""
+    from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
+
+    if code_store.store_dir() is None:
+        return None
+    try:
+        stats = self.path_stats(path)
+    except OSError:
+        return None
+    return _stored_code(
+        self, fullname, path, mtime=int(stats["mtime"]), size=int(stats["size"]), previous_header=header
+    )
+
+
+def _stored_code(
+    self: importlib.machinery.SourceFileLoader,
+    fullname: str,
+    path: str,
+    *,
+    mtime: int,
+    size: int,
+    previous_header: bytes | None,
+) -> CodeType | None:
+    """保存先の鍵の entry のうち、記録が今の環境の macro に合う物を使う(無ければ None)。code の file 名を今の source の path に直し、
+    作業木の .pyc を previous_header の方式(None なら標準の timestamp)で書く(bytecode を書かない設定では書かない)。"""
+    from doeff_hy_bytecode_guard import code_store, records  # 保存先を使う時だけ読む
+
+    store = code_store.store_dir()
+    if store is None:
+        return None
     try:
         source = self.get_data(path)
     except OSError:
@@ -507,7 +557,7 @@ def _from_shared_store(
     if not sys.dont_write_bytecode:
         import contextlib
 
-        data = records.pyc_bytes(code, source=source, mtime=mtime, size=size, previous_header=None)
+        data = records.pyc_bytes(code, source=source, mtime=mtime, size=size, previous_header=previous_header)
         with contextlib.suppress(OSError):
             self.set_data(importlib.util.cache_from_source(path), data)
     return code
