@@ -8,8 +8,6 @@ from doeff_cluster.shared.protocol.coordinator_route import RouteCell as RouteCe
 from doeff_cluster.shared.protocol.coordinator_route import RouteOptions as RouteOptions
 from doeff_cluster.shared.protocol.service_report import ServiceReport as ServiceReport
 from doeff_cluster.shared.protocol.service_report import sent_report as sent_report
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 class ReadinessLog:
     claims: tuple[ReadinessClaim, ...]

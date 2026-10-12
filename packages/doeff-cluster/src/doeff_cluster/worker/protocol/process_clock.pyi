@@ -6,8 +6,6 @@ from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.worker.intent.worker_model import ProcessStartedMs as ProcessStartedMs
 from doeff_cluster.worker.core.boot_timing import process_start_ms as process_start_ms
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def process_clock(ticks: int) -> _Handler:
     ...

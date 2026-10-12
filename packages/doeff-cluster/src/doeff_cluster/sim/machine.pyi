@@ -67,8 +67,6 @@ from doeff_cluster.shared.protocol.coordinator_reads import WAIT_PROBE_SECONDS a
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_read as readiness_read
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_awaited as readiness_awaited
 from doeff_cluster.shared.protocol.coordinator_reads import state_of as state_of
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 BOOT_SCRIPT: str
 PROBE_SECONDS: float
 MACHINE_ACTOR: str

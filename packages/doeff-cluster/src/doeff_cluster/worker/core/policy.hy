@@ -535,8 +535,9 @@
   actions)
 
 (defk plan [now desired world records policy [warm #()] [absent (Undeclared)]]
-  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy) (: warm tuple) (: absent StopReason)] :post [(: % tuple)]
-   :tags {:context "worker" :role "judgment"}}
+  {:pre [(: now int) (: desired (get tuple #(JobSpec ...))) (: world WorldView) (: records (get dict #(str JobRecord))) (: policy WorkerPolicy)
+         (: warm (get tuple #(WarmLaunch ...))) (: absent StopReason)]
+   :post [(: % (get tuple #(Action ...)))] :tags {:context "worker" :role "judgment"}}
   "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 待ちの子の起こしと止め(#3646)→ 検めの
    記録の片づけ。掃除の係への固定の集合は最後に読めた宣言で判じる sweep-actions(#3731 — この拍の列は宣言を読めていない拍と読んだ空の
    宣言を分けない)。job ごとの判断 plan-job は名ごとに sequence で順に走らせる(最初の失敗で止まる — 黙って落とさない)。
@@ -595,7 +596,8 @@
     True record))
 
 (defk records-after [now records actions [policy (WorkerPolicy)]]
-  {:pre [(: now int) (: records dict) (: actions tuple) (: policy WorkerPolicy)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
+  {:pre [(: now int) (: records (get dict #(str JobRecord))) (: actions (get tuple #(Action ...))) (: policy WorkerPolicy)]
+   :post [(: % (get dict #(str JobRecord)))] :tags {:context "worker" :role "judgment"}}
   "撃った action を job ごとの記憶(起こした回数・止め始め・終わり方)に数えた後の記憶を求めるため。1 つずつの数えは record-after
    (効果を出さない純粋な畳み: 同じ job の action が続けば前の数えの答えを次が読むので、互いに独立な Program の列を順に走らせる
    sequence の形ではなく、素の関数のまま — #2812)。"
@@ -779,8 +781,8 @@
       :probe probing))
 
 (defk statuses [now desired world records policy]
-  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]
-   :tags {:context "worker" :role "judgment"}}
+  {:pre [(: now int) (: desired (get tuple #(JobSpec ...))) (: world WorldView) (: records (get dict #(str JobRecord))) (: policy WorkerPolicy)]
+   :post [(: % (get tuple #(JobStatus ...)))] :tags {:context "worker" :role "judgment"}}
   "worker の状態の報告(job ごとの JobStatus の列)を作るため。job ごとの報告 job-status を名ごとに sequence で順に走らせる。"
   (<- names tuple (job-names desired world))
   (<- reported tuple (sequence (gfor name names (job-status now desired world records policy name))))
