@@ -22,6 +22,7 @@ module の段に他の定義が無くても届く事(型を建てる定義は入
 """
 
 import ast
+import symtable
 import sys
 import types
 from collections.abc import Callable
@@ -684,36 +685,28 @@ def test_class_body_type_definition_runs_without_module_doeff_hy(
     assert not [name for name in vars(mod.Outer) if "publish" in name]
 
 
-# 型検査の投影で、定義が展開の import を置いてよい名でない所(外の関数・外の class の本体の局所の名)— 根の module の名。
-# 書き手がその名を module の段で読むので、定義の import が局所の名にすると pyright は module の段の名を未束縛と読む。
+# 型検査の投影の検が使う header — 全定義の macro を require し、書き手の module が `doeff_hy` を import している形(外の関数が
+# module の段の `doeff_hy` を読む)にする。
+_PROJECTION_HEADER = """
+(require doeff-hy.macros [defk deff defp defpp deftest defmcp-tool defeffect defhandler defsystem defpipeline
+                          <- traverse for/do])
+(require doeff-hy.record [defrecord defwire defenum])
+(require doeff-hy.conductor [defworkflow defphase agent!])
+(import dataclasses [dataclass])
+(import enum [StrEnum])
+(import doeff_hy)
+"""
+
+# macro が展開の import に付ける別名の頭(static_view.SYNTHESIZED_ALIAS_PREFIXES)と、根の module の名 — 入れ子の scope がこれらの名を
+# 読むなら、module の段で束ねられていなければ pyright は未定義と読む(module の段の名だけが、入れ子の scope から引ける)。
+_PROJECTION_MACRO_NAME_PREFIXES = ("_doeff_", "_conductor_")
 _PROJECTION_ROOT_NAMES = frozenset({"doeff_hy", "doeff_core_effects", "doeff_cluster"})
-
-# 展開が `doeff_hy.<部分の module>.…` の綴りで読む、doeff_hy の部分の module(module の段の `import doeff_hy.<名>` が要る)
-_PROJECTION_SUBMODULES = frozenset({"declarations", "record", "record_runtime", "wire"})
-
-_STATIC_NESTED_SAMPLES = {
-    "defrecord-with-header": (
-        '(defrecord Span {:tags {:context "t" :role "type"} :check [(>= start 0)]} #^ int start)'
-    ),
-    "defwire": "(defwire Span {:names :camel :check [(>= start-at 0)]} #^ int start-at)",
-    "defeffect": (
-        "(defeffect Inner {:fields [(: x int)] :pre [(> x 0)] :answer (| int str) :absent [str] "
-        ':tags {:context "t" :role "intent"}})'
-    ),
-    "deff": "(deff inner [y] {:pre [(: y int)] :post [(: % int)]} (+ y 1))",
-}
 
 
 def _projection_of(tmp_path: Path, body: str) -> ast.Module:
     """書き手の module(`doeff_hy` を import し、定義の macro を require する)に body を書いた型検査の投影の AST。"""
     source = tmp_path / "nested_static.hy"
-    source.write_text(
-        "(require doeff-hy.macros [deff defeffect])\n"
-        "(require doeff-hy.record [defrecord defwire])\n"
-        "(import dataclasses [dataclass])\n"
-        "(import doeff_hy)\n" + body + "\n",
-        encoding="utf-8",
-    )
+    source.write_text(_PROJECTION_HEADER + body + "\n", encoding="utf-8")
     projection = project(tmp_path, [tmp_path], source)
     assert isinstance(projection, Projection)
     return ast.parse(projection.text)
@@ -729,59 +722,74 @@ def _bound_by_imports(scope: ast.AST) -> set[str]:
     }
 
 
-def _submodules_read(scope: ast.AST) -> set[str]:
-    """scope が `doeff_hy.<部分の module>` の綴りで読む部分の module の名。"""
+def _module_level_names(tree: ast.Module) -> set[str]:
+    """module の段で束ねられた名(import・代入・定義)。"""
+    table = symtable.symtable(ast.unparse(tree), "projection", "exec")
     return {
-        node.attr
-        for node in ast.walk(scope)
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "doeff_hy"
-        and node.attr in _PROJECTION_SUBMODULES
+        symbol.get_name()
+        for symbol in table.get_symbols()
+        if symbol.is_imported() or symbol.is_assigned() or symbol.is_namespace()
     }
 
 
-def _module_level_imports(tree: ast.Module) -> set[str]:
-    """module の段の `import a.b.c` が束ねる綴り(`a.b.c`)。"""
-    return {
-        alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
+def _macro_names_read_from_module(tree: ast.Module) -> set[str]:
+    """入れ子の scope(関数・class の本体と、その中の関数・class)が module の段の名として読む、macro の別名と根の module の名。
+    名の引きは Python の規則(symtable) — class の本体の名は入れ子の scope から引けず、関数の局所の名は閉包として引ける。"""
+    found: set[str] = set()
+
+    def walk(table: symtable.SymbolTable) -> None:
+        for symbol in table.get_symbols():
+            name = symbol.get_name()
+            macro_name = (
+                name.startswith(_PROJECTION_MACRO_NAME_PREFIXES) or name in _PROJECTION_ROOT_NAMES
+            )
+            if macro_name and symbol.is_referenced() and symbol.is_global():
+                found.add(name)
+        for child in table.get_children():
+            walk(child)
+
+    walk(symtable.symtable(ast.unparse(tree), "projection", "exec"))
+    return found
+
+
+_STATIC_SCOPES_SOURCE = "(defn subject [] {source} None)\n(defclass Outer [] {source})"
+
+
+@pytest.mark.parametrize(
+    ("source", "defined"), _DEFINITION_SAMPLES.values(), ids=_DEFINITION_SAMPLES.keys()
+)
+def test_static_projection_of_nested_definition_leaves_no_import_in_its_scope(
+    tmp_path: Path, source: str, defined: frozenset[str]
+) -> None:
+    """型検査の投影(doeff-hy-check が pyright に読ませる Python)で、関数の本体と class の本体に書いた定義の展開は、import を
+    1 つもその scope に残さない — 名に依らず(macro が新しい補助を import しても捕まえる)。関数の中の import は外の関数全体の
+    局所の名で、外の関数が先に module の段の `doeff_hy` を読むと pyright は未束縛と読み、class の本体の import は入れ子の型の本体と
+    method から引けない(card ki-8a17293bc3e5 の残り・設計検証 lt-JGXTY7ES6816GHSNAABAQYJE15 の盲検 A・B の失敗例)。
+    macro 合成の import は、投影の後処理 `static_check.with_module_level_imports` が module の段へ移す。"""
+    tree = _projection_of(tmp_path, _STATIC_SCOPES_SOURCE.format(source=source))
+    scopes = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.ClassDef) and node.name in {"subject", "Outer"}
+    }
+    assert {name: _bound_by_imports(scope) for name, scope in scopes.items()} == {
+        "subject": set(),
+        "Outer": set(),
     }
 
 
 @pytest.mark.parametrize(
-    "definition", _STATIC_NESTED_SAMPLES.values(), ids=_STATIC_NESTED_SAMPLES.keys()
+    ("source", "defined"), _DEFINITION_SAMPLES.values(), ids=_DEFINITION_SAMPLES.keys()
 )
-def test_static_projection_of_function_definition_binds_no_module_name(
-    tmp_path: Path, definition: str
+def test_static_projection_nested_scopes_read_macro_names_bound_at_module_level(
+    tmp_path: Path, source: str, defined: frozenset[str]
 ) -> None:
-    """型検査の投影(doeff-hy-check が pyright に読ませる Python)で、関数の中の定義は展開の import が束ねる根の module の名
-    (`doeff_hy` ほか)を外の関数の局所の名にしない — 局所にすると、外の関数が先に module の段の `doeff_hy` を読む形を、
-    pyright が未束縛と読む(card ki-8a17293bc3e5 の残り)。定義が読む部分の module(`doeff_hy.record` など)の import は
-    module の段に置き、読む名は module の段の名として解ける。"""
-    tree = _projection_of(
-        tmp_path, f"(defn subject [] (setv owner (. doeff_hy __name__)) {definition} owner)"
-    )
-    subject = next(
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "subject"
-    )
-    assert _PROJECTION_ROOT_NAMES.isdisjoint(_bound_by_imports(subject))
-    assert {f"doeff_hy.{name}" for name in _submodules_read(subject)} <= _module_level_imports(tree)
-
-
-@pytest.mark.parametrize(
-    "definition", _STATIC_NESTED_SAMPLES.values(), ids=_STATIC_NESTED_SAMPLES.keys()
-)
-def test_static_projection_of_class_body_definition_binds_no_module_name(
-    tmp_path: Path, definition: str
-) -> None:
-    """class の本体に直に書いた定義の投影も同じ — class の本体の import は外の class の属性で、pyright は入れ子の型の本体と
-    method の名を module の段から引く(Python と同じ)。定義が読む名は module の段の import で解ける。"""
-    tree = _projection_of(tmp_path, f"(defclass Outer [] {definition})")
-    outer = next(
-        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Outer"
-    )
-    assert _PROJECTION_ROOT_NAMES.isdisjoint(_bound_by_imports(outer))
-    assert {f"doeff_hy.{name}" for name in _submodules_read(outer)} <= _module_level_imports(tree)
+    """投影の入れ子の scope(定義した型の本体・method・注記)が module の段の名として読む、macro の別名(`_doeff_ClassVar` ほか)と
+    根の module の名は、どれも module の段で束ねられている — 束ねられていなければ pyright は未定義と読む(盲検 A の失敗例:
+    class の本体の定義の `from typing import ClassVar as _doeff_ClassVar` が外の class に残り、入れ子の `Span` が読めなかった)。
+    関数の中の定義も同じ検体で検める(関数の局所の名なら閉包として読めるが、module の段へ移した後も同じに読める事を確かめる)。"""
+    tree = _projection_of(tmp_path, _STATIC_SCOPES_SOURCE.format(source=source))
+    assert _macro_names_read_from_module(tree) <= _module_level_names(tree)
 
 
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:

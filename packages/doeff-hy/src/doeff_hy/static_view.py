@@ -177,6 +177,13 @@ DEFSYSTEM_IMPORTS: tuple[str, ...] = (DEFSYSTEM_MODEL_MODULE, DEFSYSTEM_BUILD_MO
 #: 物を module の段へ移す綴り。展開の綴りとの一致は tests/test_nested_definition_scope.py が関数の中の defeffect の投影で検める。
 DEFEFFECT_OUTCOMES_MODULE: str = "doeff_core_effects.outcomes"
 
+#: macro が展開の import に付ける別名の頭(例: `from typing import ClassVar as _doeff_ClassVar`・conductor の
+#: `from doeff_conductor.dsl import defworkflow as _conductor_defworkflow`)。書き手の名と 1 つの名を分け合わないために付ける約束
+#: (Hy の綴りは `_doeff-`・`_conductor-`)で、型検査のための展開の掃除は、この頭の別名だけを束ねる import を macro 合成の物として
+#: 扱う(関数・class の本体の中の物を module の段へ移す)。別名の頭を増やす macro は、ここへ足す — 足さない macro は、
+#: tests/test_nested_definition_scope.py の投影の検(本体に import を 1 つも残さない)が赤にする。
+SYNTHESIZED_ALIAS_PREFIXES: tuple[str, ...] = ("_doeff_", "_conductor_")
+
 
 def static_view_enabled() -> bool:
     return _STATIC_VIEW.get()

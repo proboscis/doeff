@@ -92,6 +92,7 @@ from doeff_hy.static_view import (
     DEFEFFECT_OUTCOMES_MODULE,
     DEFSYSTEM_IMPORTS,
     STATIC_HELPER_IMPORTS,
+    SYNTHESIZED_ALIAS_PREFIXES,
     collect_findings,
     static_view,
 )
@@ -380,7 +381,9 @@ def _synthesized_import(statement: ast.stmt) -> bool:
     """macro が定義ごとに合成する import の文か(利用者の重複の import は赤のまま残すため、重ねを 1 つにするのはこれだけ):
     doeff-hy 自身の module の import と、defsystem が系ごとに出す別名の無い `import <module>`(static_view.DEFSYSTEM_IMPORTS —
     展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)と、defeffect が
-    答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)。"""
+    答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)と、macro が別名の頭
+    `_doeff_`・`_conductor_`(static_view.SYNTHESIZED_ALIAS_PREFIXES)で束ねる import(`from typing import ClassVar as _doeff_ClassVar` など —
+    module の綴りを表に持たずに見分けられる)。"""
     match statement:
         case ast.Import(names=names):
             return all(
@@ -389,12 +392,19 @@ def _synthesized_import(statement: ast.stmt) -> bool:
                     alias.name in (*DEFSYSTEM_IMPORTS, DEFEFFECT_OUTCOMES_MODULE)
                     and alias.asname is None
                 )
+                or _synthesized_alias(alias)
                 for alias in names
             )
-        case ast.ImportFrom(module=str(module), level=0):
-            return _doeff_hy_module(module)
+        case ast.ImportFrom(module=str(module), level=0, names=names):
+            return _doeff_hy_module(module) or all(_synthesized_alias(alias) for alias in names)
         case _:
             return False
+
+
+def _synthesized_alias(alias: ast.alias) -> bool:
+    """import の 1 つの名が、macro が付ける別名の頭(static_view.SYNTHESIZED_ALIAS_PREFIXES)で束ねられているか(書き手の名と
+    分け合わない約束 — 書き手の import はこの頭を使わないので、見分けに綴りの表が要らない)。"""
+    return alias.asname is not None and alias.asname.startswith(SYNTHESIZED_ALIAS_PREFIXES)
 
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
