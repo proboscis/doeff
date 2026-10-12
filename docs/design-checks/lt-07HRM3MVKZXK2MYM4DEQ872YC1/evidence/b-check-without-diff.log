@@ -1,0 +1,76 @@
+== 版 a4abf5218a8a7281294f84da28ccc74be059dae0・盲検 B の差分なし(記録の印 7 の直しあり)・作業木の差分:  2 files changed, 76 insertions(+), 2 deletions(-)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 3830491 tsc /home/ubuntu/.worktrees/agora-wt-letter-refresh/packages/webapp (c-N5484JHSSDTJ6SMGEMB7M1MCDM)、pid 3852613 doeff-hy-check agora-controllers-wt-ki-4452 (c-FGVFZMA7XSKMDVQSTST2WXDKF9)、pid 3838959 pytest agora-controllers-wt-ki2058 (c-P9DA99G79E5P58BFMVXZ0VB9DB)、pid 3790494 code-quality doeff-wt-check-slot-ppslot (c-SQS959YA65XXSFFDZQ9XXSFKEG)、pid 3785158 pytest doeff-wt-ki-6af9 (c-0AF6XHHJ14AE2BTRFAN3PDESZN)、pid 3840111 doeff-hy-check agora-controllers-wt-ki-4452 (c-FGVFZMA7XSKMDVQSTST2WXDKF9)、pid 3776486 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3787870 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)・待つのは pytest doeff-wt-lt07hr-dc (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 3830491 tsc /home/ubuntu/.worktrees/agora-wt-letter-refresh/packages/webapp (c-N5484JHSSDTJ6SMGEMB7M1MCDM)、pid 3852613 doeff-hy-check agora-controllers-wt-ki-4452 (c-FGVFZMA7XSKMDVQSTST2WXDKF9)、pid 3838959 pytest agora-controllers-wt-ki2058 (c-P9DA99G79E5P58BFMVXZ0VB9DB)、pid 3787904 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)、pid 3785158 pytest doeff-wt-ki-6af9 (c-0AF6XHHJ14AE2BTRFAN3PDESZN)、pid 3841608 pytest doeff-wt-ki-b7c4 (c-N8D3D11TB04Y5BH5AE1NRMH2ZD)、pid 3776486 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3787870 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)・待つのは pytest doeff-wt-lt07hr-dc (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 3830491 tsc /home/ubuntu/.worktrees/agora-wt-letter-refresh/packages/webapp (c-N5484JHSSDTJ6SMGEMB7M1MCDM)、pid 3852613 doeff-hy-check agora-controllers-wt-ki-4452 (c-FGVFZMA7XSKMDVQSTST2WXDKF9)、pid 3838959 pytest agora-controllers-wt-ki2058 (c-P9DA99G79E5P58BFMVXZ0VB9DB)、pid 3787904 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)、pid 3785158 pytest doeff-wt-ki-6af9 (c-0AF6XHHJ14AE2BTRFAN3PDESZN)、pid 3841608 pytest doeff-wt-ki-b7c4 (c-N8D3D11TB04Y5BH5AE1NRMH2ZD)、pid 3776486 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3787870 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)・待つのは pytest doeff-wt-lt07hr-dc (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 30 秒 / 上限 1200 秒・保持 pid 3835219 pytest agora-controllers-wt-selectable-now (c-XST5SXDKJSRBVCDDB0B3WP94T1)、pid 3859005 code-quality dotfiles-precommit-index.b0EACh (c-SQS959YA65XXSFFDZQ9XXSFKEG)、pid 3838959 pytest agora-controllers-wt-ki2058 (c-P9DA99G79E5P58BFMVXZ0VB9DB)、pid 3855487 pytest wsq4-s23 (c-28KC8M76KPEMENW8MEPN7AWC8H)、pid 3785158 pytest doeff-wt-ki-6af9 (c-0AF6XHHJ14AE2BTRFAN3PDESZN)、pid 3841608 pytest doeff-wt-ki-b7c4 (c-N8D3D11TB04Y5BH5AE1NRMH2ZD)、pid 3776486 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3787870 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)・待つのは pytest doeff-wt-lt07hr-dc (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 40 秒 / 上限 1200 秒・保持 pid 3854933 doeff-hy-check agora-controllers-wt-ki-4452 (c-FGVFZMA7XSKMDVQSTST2WXDKF9)、pid 3859005 code-quality dotfiles-precommit-index.b0EACh (c-SQS959YA65XXSFFDZQ9XXSFKEG)、pid 3838959 pytest agora-controllers-wt-ki2058 (c-P9DA99G79E5P58BFMVXZ0VB9DB)、pid 3864242 pytest agora-controllers-wt-selectable-now (c-XST5SXDKJSRBVCDDB0B3WP94T1)、pid 3785158 pytest doeff-wt-ki-6af9 (c-0AF6XHHJ14AE2BTRFAN3PDESZN)、pid 3812664 pytest agora-controllers (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3776486 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3787870 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)・待つのは pytest doeff-wt-lt07hr-dc (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 枠 5 を取った(待ち 47 秒)— pytest doeff-wt-lt07hr-dc (c-23BFZS4N25RQD7J19THT3D8NCA)
+
+deadline scale x1.8 (load per usable CPU) — per test 106s, watchdog 158s
+
+test-admission: focused — 5 件(変更箇所の検証)
+.....                                                                    [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-lt07hr-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+5 passed, 84 deselected, 1 warning in 18.11s
+rc=0
+-- demo_b.py nested(盲検 B の demo の写し)
+GIL: False  Hy: 1.3.1
+A(関数の中の require なし)の記録の macro: [('<pkg>.b', 'wrap')]
+A の記録の全部 require の提供元: [('<pkg>.b', '')]
+A が使わない <pkg>.m の answer を替えた後、A の記録は今に合うか: True
+rc=0
+-- demo_b.py threads(盲検 B の demo の写し)
+GIL: False  Hy: 1.3.1
+local(関数の中の require あり)の記録の macro: [('<pkg>.m', 'answer')]
+quiet(macro なし)の記録の macro: []
+両方の展開が終わった後の HyASTCompiler.new_local_state: doeff_hy_bytecode_guard.macro_use _watch_local_tables.<locals>.new_local_state ['function']
+local が使った <pkg>.m の answer を替えた後、local の記録は今に合うか: False
+rc=0

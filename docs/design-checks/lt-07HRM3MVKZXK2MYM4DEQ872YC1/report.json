@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "task_id": "lt-07HRM3MVKZXK2MYM4DEQ872YC1",
+  "base_revision": "a4abf5218a8a7281294f84da28ccc74be059dae0",
+  "author": {
+    "conversation_id": "c-23BFZS4N25RQD7J19THT3D8NCA",
+    "model": "claude-opus-5-5",
+    "effort": "既定(この会話の起動の設定・自己申告)"
+  },
+  "requirements": "依頼 lt-07HRM3MVKZXK2MYM4DEQ872YC1: doeff-hy の bytecode の包みが関数の中の require で入れた macro を記録せず、macro を変えても古い展開のまま走る(Hy 1.3.1 で 11 → 11 → 11)。関数の中の require で入れた macro も記録し、macro の変更で使う側を展開し直す。",
+  "design": {
+    "path": "design.md",
+    "sha256": "1e8670dde8fd6fd54c2a7e074e05ade7cb4efe6fc529d4928b00d91ce3d66ebd"
+  },
+  "modules": [
+    {
+      "id": "guard-recording",
+      "responsibility": "展開が使った macro を拾い記録を作る(macro_use.py の RecordingTable・MacroRecording・_watch_local_tables・_whole_requires)",
+      "owns": "Hy が module の表と局所の表を引く口・局所の状態を開く口 HyASTCompiler.new_local_state の包み・実行された code の拾い",
+      "hides": "表の差し替えと戻し・局所の表の覚え方(compiler.module の記録の表へ足す)・code の絞り",
+      "interface": "MacroRecording(module, hy_version, sha256_of) の with の中が展開 → record(source) -> MacroRecord",
+      "effects": "展開の間だけ module の名前空間の表を差し替える・process で 1 度だけ Hy の compiler の class の口を包む(lock の下)・sys.monitoring で実行の始まった code を拾う",
+      "lifetime": "表は with の出口で普通の dict に戻す。口の包みは process の間残る(compiler.module の表が RecordingTable の時だけ覚える)",
+      "invariants": "局所の表は compile している module の記録の表にだけ入る。記録に入る局所の macro は他の module の、展開で実行された macro"
+    },
+    {
+      "id": "records-names",
+      "responsibility": "Hy の内部の名と鍵・記録の印の定義元(records.py)",
+      "owns": "MACRO_TABLE・READER_TABLE・LOCAL_MACRO_TABLE の字・RECORD_TAG(記録が覆う範囲の世代)",
+      "hides": "なし(定数の定義元 — 隠す物を持たない)",
+      "interface": "定数",
+      "effects": "なし、定数だけで実行の作用を持たない",
+      "lifetime": "なし、process の状態を持たない",
+      "invariants": "記録の覆う範囲が変われば RECORD_TAG を上げる(印の違う記録は記録なしと同じに扱われる)"
+    },
+    {
+      "id": "guard-hooks",
+      "responsibility": "SourceFileLoader の口を包む(loader_hooks.py)",
+      "owns": "口の包み方・compile の口",
+      "hides": "記録の作り方(macro_use に任せる)",
+      "interface": "install・source_to_code_as_import・macro_recording",
+      "effects": "process の SourceFileLoader の口を書き換える・.pyc と共有の置き場を読み書きする",
+      "lifetime": "process の間(起動の .pth で入れる)",
+      "invariants": "記録の中身を見分けず、macro_use の記録と照らしだけを使う"
+    },
+    {
+      "id": "guard-check",
+      "responsibility": "包みを uv.lock の版の Hy で動かして測る(test_bytecode_guard.py)",
+      "owns": "見本・使い捨ての環境",
+      "hides": "なし(検 — 他から使われない)",
+      "interface": "pytest の検(uv.lock の変更で選ばれる)",
+      "effects": "一時の dir と uv の使い捨ての環境を作る",
+      "lifetime": "検 1 本の間",
+      "invariants": "Hy の版は uv.lock から読む"
+    },
+    {
+      "id": "guard-detail-tests",
+      "responsibility": "記録の細部を venv の Hy で測る(test_macro_use_record.py)",
+      "owns": "見本",
+      "hides": "なし(検 — 他から使われない)",
+      "interface": "pytest の検",
+      "effects": "一時の dir に package を置き sys.path と sys.modules を触る(検の後に戻す)",
+      "lifetime": "検 1 本の間",
+      "invariants": "見本の名は検ごとに違う package"
+    },
+    {
+      "id": "adr-record",
+      "responsibility": "ADR-DOE-HY-008 の R7 の文",
+      "owns": "どの検が包みの依りを測るか",
+      "hides": "なし(設計記録)",
+      "interface": "設計記録",
+      "effects": "なし、文書",
+      "lifetime": "なし、文書",
+      "invariants": "包みの Hy の内部への依りを列挙する"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "Hy を上げ、局所の状態を new_local_state を通さずに開く・局所の表の鍵を替える",
+      "claim": "guard-check の使い捨ての環境の検が uv.lock の変更で選ばれて赤になり、直すのは guard-recording と records-names だけ(design-pre-blind.md の S1)",
+      "expected_scope": "guard-recording・records-names",
+      "actual_scope": "代役の Hy(局所の状態を口を通さずに開く)で guard-check の検が赤(before-hy・after-hy)。直す場所は _watch_local_tables と LOCAL_MACRO_TABLE に限られる",
+      "changed_modules": [
+        "guard-recording",
+        "records-names"
+      ],
+      "unchanged_modules": [
+        "guard-hooks",
+        "guard-check",
+        "guard-detail-tests",
+        "adr-record"
+      ],
+      "reason": "Hy の内部の口と鍵の知識は guard-recording と records-names だけが持つ(正当な依りの局所化)",
+      "revision": "不要 — 予想どおり(s1-variant-*.log)"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "他の module の macro が局所の表へ入る道が増える(入れ子の関数・関数の中の全部の require・class の本体・内包)",
+      "claim": "局所の表は局所の状態を開く口 1 か所で覚えるので、入り方が増えても記録は変えずに拾う(design-pre-blind.md の S2)",
+      "expected_scope": "なし(検を足すだけ)",
+      "actual_scope": "入れ子の関数・関数の中の全部の require で記録に入り、使わない macro の変更では冷えない。guard-recording は変えていない",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "guard-recording",
+        "records-names",
+        "guard-hooks",
+        "guard-check",
+        "guard-detail-tests",
+        "adr-record"
+      ],
+      "reason": "入り方は全部 compiler.local_state → new_local_state を通る(Hy 1.3.1 の result_macros の fn・defn・defclass・内包)",
+      "revision": "不要"
+    },
+    {
+      "id": "S3",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "free-threaded の Python で、別々の module の展開が thread で並ぶ・展開の中で別の module が compile される",
+      "claim": "口の包みは process で 1 度だけ lock の下で入れ、局所の表は展開している module の記録の表にだけ覚えるので、別の module の展開は互いの記録に混ざらない(前提: 同じ module の import は直列)(design-pre-blind.md の S3)",
+      "expected_scope": "なし",
+      "actual_scope": "今の形では混ざらず漏れない。盲検 B の形(包みを展開ごとに入れて外す)は提示した検を全部通り、入れ子で混ざり thread で漏れた — guard-detail-tests に検 2 本を足した",
+      "changed_modules": [
+        "guard-detail-tests"
+      ],
+      "unchanged_modules": [
+        "guard-recording",
+        "records-names",
+        "guard-hooks",
+        "guard-check",
+        "adr-record"
+      ],
+      "reason": "主張は今の code で成立。不足は強制(検)の側で、局所の表の持ち主の判断を compiler.module から外す実装を拒む検が無かった",
+      "revision": "検 test_a_local_macro_of_a_module_compiled_inside_another_expansion_stays_out_of_its_record・test_a_local_require_expanded_while_another_expansion_ends_on_another_thread_is_recorded を足し、盲検 B の差分で赤・差分なしで緑を確かめた(b-check-*.log)"
+    },
+    {
+      "id": "S4",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "直した包みを worker・作業木へ配る(共有の置き場と .pyc は直す前の包みが作った記録を持つ)",
+      "claim": "記録の形(RECORD_TAG)を変えず、関数の中の require を持たない module の記録は直す前と同じなので、配っても作り直しは起きない(design-pre-blind.md の S4)",
+      "expected_scope": "なし(RECORD_TAG を上げない)",
+      "actual_scope": "盲検 A: 直す前の記録(局所の macro の行が無い)を直した包みが今に合うと判じ、macro を変えても古い展開(11)。records-names の RECORD_TAG を 7 へ上げて直した",
+      "changed_modules": [
+        "records-names"
+      ],
+      "unchanged_modules": [
+        "guard-recording",
+        "guard-hooks",
+        "guard-check",
+        "guard-detail-tests",
+        "adr-record"
+      ],
+      "reason": "正当な契約の変更: 記録の覆う範囲が変わった時は印を上げる(records-names の持つ知識)。予想に入れていなかった — 知識の漏れではなく、設計者の予想の誤り",
+      "revision": "RECORD_TAG = doeff-hy/macro-dependencies/7(records.py の注釈に 7 の訳)。直す前の実物の包み 5454330f5 の記録で再現し(repro-a-real-before.log: 11)、印 7 で 12(repro-a-real-after.log)"
+    },
+    {
+      "id": "X-hardware",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "包みは source と Hy の compiler だけを読み、機体に依らない"
+    },
+    {
+      "id": "X-simulation",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "決定的な模擬の対象の振る舞いを持たない(検そのものが Hy の版上げの模擬 — 代役の wheel)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "替えない Hy 1.3.1(find-links の base)で関数の中の require の検 3 本が緑",
+      "observation": "3 passed・rc 0",
+      "evidence": {
+        "path": "evidence/s1-variant-base.log",
+        "sha256": "f3720a4b00d3036149aee0d38fcc36bff47b5f657c3cd8c0963d270989ae12d7"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "局所の状態を new_local_state を通さずに開く代役の Hy で、包みを入れた 2 本が「古い展開のまま」で赤",
+      "observation": "2 failed(before-hy-12・after-hy-12)・1 passed(none-11)・rc 1",
+      "evidence": {
+        "path": "evidence/s1-variant-localstate.log",
+        "sha256": "921f8b76fe27353a311d362f803d8936aca49b358cfafa0d7c25b561ef6e6860"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "印 7 の版で local の 3 本と盲検 B の検 2 本が緑。demo の nested で外の記録に内の局所の macro が混ざらず、threads で local の記録に answer が入る",
+      "observation": "5 passed・nested は [(<pkg>.b, wrap)]・threads は [(<pkg>.m, answer)] で macro を替えると古い(False)",
+      "evidence": {
+        "path": "evidence/b-check-without-diff.log",
+        "sha256": "b17e3019ccb5b0fc14076e1e4e4219f7849d44bd65924d31662df814f8e13f3f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "包みの直しを外した版で、関数の中の require の検が古い展開(11 == 12 の失敗)と空の記録で赤",
+      "observation": "4 failed・2 passed・rc 1",
+      "evidence": {
+        "path": "evidence/before-fix.log",
+        "sha256": "eba0de631521af6b6b38fa3883c64988ef94a3e9b5c2e121c86179504edc77d9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分(包みを展開ごとに入れて外す)を当てた版で、足した検 2 本が赤",
+      "observation": "2 failed(入れ子・thread)・3 passed・rc 1。demo の nested で外の記録に (<pkg>.m, answer) が混ざり、threads で local の記録が空・今に合う(True)",
+      "evidence": {
+        "path": "evidence/b-check-with-diff.log",
+        "sha256": "4421a209f3ee44f51f2f38bf965a66d127cd4665ed9f11b650c834b775b0d976"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "直す前の実物の包み(5454330f5・印 6)の .pyc と置き場の entry を、印 7 の包みが記録なしと同じに扱い、macro を 12 へ変えた後の値が 12",
+      "observation": ".pyc の道 12・12、置き場の道 12(新しい entry を足した)・rc 0",
+      "evidence": {
+        "path": "evidence/repro-a-real-after.log",
+        "sha256": "0009830f69521cc5dd5d3a95284e087b1ed8ed21a9d9b6b5439bee82fa124359"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "印 7 の版で、記録の世代をまたぐ置き場の検を含む test_bytecode_guard.py と test_code_store_entries.py が緑",
+      "observation": "48 passed・rc 0",
+      "evidence": {
+        "path": "evidence/final-guard-tag7.log",
+        "sha256": "9ed6844f9033bc04925d17ccaeaa03126c42dda88a77c8d231534620554fcf93"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "直す前(印 6 の基準版 a4abf5218)では、盲検 A の失敗例が成立する(macro を 12 へ変えても 11)— 失敗例が実在した事の確かめ",
+      "observation": ".pyc の道 11・11、置き場の道 11・rc 0",
+      "evidence": {
+        "path": "evidence/repro-a-real-before.log",
+        "sha256": "44ca4c3c330a27233077c746540b596e1b1a9cae572390e6e677ce9021a9e09f"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "印 7 の版で、前の印の記録を扱う検を含む test_gensym_canonical.py が緑",
+      "observation": "8 passed・rc 0",
+      "evidence": {
+        "path": "evidence/final-gensym-tag7.log",
+        "sha256": "fa5ab380eb6f5b2b65605a6767301c9b336a8b1eecf24436f3385ce7460ac33b"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

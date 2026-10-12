@@ -1827,3 +1827,73 @@ def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
         or (isinstance(node, ast.alias) and node.name == "ENVIRONMENT_READ")
     )
     assert not uses, f"records.py・macro_use.py の外で印 ENVIRONMENT_READ を読む — 印の判断は照らし(macro_use)が持つ: {uses}"
+
+
+# ---- 関数の中の require の局所の表は、展開している module の記録にだけ入る(設計検証 lt-07HRM3MVKZXK2MYM4DEQ872YC1 の盲検 B) ----
+
+
+def _expand_on_its_own(name: str, source: str, filename: str, entered, before) -> records.MacroRecord:
+    """解析器の展開(macro_recording の中で hy_compile)と同じ形で source を展開し、記録を返す — entered は展開の囲みに入った知らせ、
+    before は compile の前の待ち(thread の順を決めるため)。"""
+    import types
+
+    import hy
+    import hy.compiler
+    from doeff_hy_bytecode_guard import macro_recording
+
+    scratch = types.ModuleType(name)
+    scratch.__file__ = filename
+    with macro_recording(scratch) as recording:
+        entered()
+        before()
+        hy.compiler.hy_compile(hy.read_many(source, filename=filename), scratch, filename=filename, source=source)
+    return recording.record(source)
+
+
+def test_a_local_macro_of_a_module_compiled_inside_another_expansion_stays_out_of_its_record(tree: Tree) -> None:
+    # 盲検 B: 局所の表を覚える口を展開の with の間だけ包む形(閉包で記録の表を持つ)は、外の展開の中で compile された module の
+    # 局所の表を外の記録へ入れ、外の使い手が使わない macro の変更で冷えた。局所の表は compile している module の記録にだけ入る。
+    (tree.directory / "inner.hy").write_text(
+        f"(defmacro wrap [x] x)\n(defn f []\n  (require {tree.package}.macros [used])\n  (used))\n", encoding="utf-8"
+    )
+    (tree.directory / "outer.hy").write_text(
+        f"(require {tree.package}.inner [wrap])\n(setv value (wrap 1))\n", encoding="utf-8"
+    )
+    record = tree.record("outer")
+    assert [(used.module, used.name) for used in record.macros] == [(f"{tree.package}.inner", "wrap")], record.macros
+    _replace(tree.macros, "(+ (helper 1) consts.OFFSET)", "(+ (helper 20) consts.OFFSET)")
+    assert tree.is_current(record), "外の使い手が使わない、入れ子に compile された module の局所の macro を替えただけで古いと判じた"
+
+
+def test_a_local_require_expanded_while_another_expansion_ends_on_another_thread_is_recorded(tree: Tree) -> None:
+    # 盲検 B: 包みを展開ごとに入れて外す形では、先に始まった別の module の展開が後の展開の途中で終わると、後の展開の局所の表を
+    # 覚える包みまで外し、関数の中の require の macro が記録から漏れた(free-threaded の Python で解析器の展開が並ぶ形)。
+    import threading
+
+    quiet_entered, local_entered, quiet_exited = threading.Event(), threading.Event(), threading.Event()
+    made: dict[str, records.MacroRecord] = {}
+    local = f"(defn f []\n  (require {tree.package}.macros [used])\n  (used))\n(setv value (f))\n"
+
+    def run_quiet() -> None:
+        try:
+            made["quiet"] = _expand_on_its_own(
+                f"{tree.package}.quiet", "(setv value 1)\n", str(tree.directory / "quiet.hy"),
+                quiet_entered.set, lambda: local_entered.wait(10),
+            )
+        finally:
+            quiet_exited.set()
+
+    def run_local() -> None:
+        quiet_entered.wait(10)
+        made["local"] = _expand_on_its_own(
+            f"{tree.package}.local_thread", local, str(tree.directory / "local_thread.hy"),
+            local_entered.set, lambda: quiet_exited.wait(10),
+        )
+
+    workers = [threading.Thread(target=run_quiet), threading.Thread(target=run_local)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(60)
+    assert [used.name for used in made["local"].macros] == ["used"], made["local"].macros
+    assert made["quiet"].macros == (), made["quiet"].macros

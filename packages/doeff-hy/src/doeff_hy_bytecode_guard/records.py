@@ -2,7 +2,7 @@
 
 記録は Hy の module の code object の定数の末尾に 1 つ置く組:
 
-    ("doeff-hy/macro-dependencies/6", <Hy の版>,
+    ("doeff-hy/macro-dependencies/7", <Hy の版>,
      ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None か印>, <覆った code の印>), ...),   # 展開が使った macro
      (<引いて無かった名>, ...),                                                  # 表に無かった名(後から同じ名の macro が足されたら古い)
      (<表に macro を入れた提供元の module 名>, ...),
@@ -50,10 +50,14 @@ from typing import TypeVar
 #: 実行された関数と絞らない関数(束縛の文の先・関数の中身を値として読む code の閉包)に絞った形(agora-redesign #3769 の子 —
 #: defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手 1,197 本が作り直された)。5 の記録は行の形が
 #: 違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
+#: 7 = 関数の中の require で入れた macro(compiler の局所の表から引かれた macro)も使った macro に入れる記録(依頼
+#: lt-07HRM3MVKZXK2MYM4DEQ872YC1)。行の形は 6 と同じだが、6 の記録は局所の macro を覆わない — 照らしは記録に在る行しか照らさない
+#: ので、6 の記録の .pyc と置き場の entry は、局所の macro を変えても今に合うと判じられ続けた(設計検証の盲検 A)。覆う範囲の違う
+#: 世代を記録の印で分け、6 の記録は記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
 #: 保存先の鍵の印 3(card ki-6828e9af04b4)からは、記録の違う code は同じ鍵の dir に別の entry として並ぶ(上書きしない — 記録の指紋が
 #: entry の名)。だから記録の印を上げた後の古い世代の entry は上書きされずに残り、使われなければ鍵の entry の数の上限か掃除の 7 日で消える
 #: (鍵の印を上げない理由は、鍵の印を上げると記録に依らない entry まで全部当たらなくなる事に変わる)。
-RECORD_TAG = "doeff-hy/macro-dependencies/6"
+RECORD_TAG = "doeff-hy/macro-dependencies/7"
 
 #: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。名と、Hy の展開が表を ``名 in 表`` と
 #: ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は Hy の内部の形で、uv.lock の版の Hy で

@@ -31,6 +31,8 @@ module の表(`_hy_macros`)より先に引く。関数の中の require はこ�
 
 記録の印(`records.RECORD_TAG`)は上げない。doeff・agora-controllers・agora の source に関数の中の require は無く(`git grep` で
 文字列の中の 2 か所だけ)、今の .pyc の記録は直した後も同じなので、全部の module を 1 度作り直させる費用に見合わない。
+→ **この判断は後の設計検証(design.md・盲検 A)で覆した**: 直す前の包みが作った記録は局所の macro の行を持たず、照らしは記録に
+在る行しか照らさないので、直した包みを配った後も macro の変更を見逃す(repro-a-real-before.log)。記録の印を 7 へ上げた。
 
 ## 測った事(evidence/)
 
