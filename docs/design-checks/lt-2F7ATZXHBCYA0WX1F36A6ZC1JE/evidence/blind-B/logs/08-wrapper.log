@@ -1,0 +1,7 @@
+-- 呼び手(この Bash の命令)の今: nice=10 / pid 560035's current scheduling policy: SCHED_IDLE
+-- CLAUDE_PROJECT_DIR 無し
+nice=19
+pid 560045's current scheduling policy: SCHED_IDLE
+-- CLAUDE_PROJECT_DIR=/work 在り
+nice=10
+pid 560051's current scheduling policy: SCHED_IDLE

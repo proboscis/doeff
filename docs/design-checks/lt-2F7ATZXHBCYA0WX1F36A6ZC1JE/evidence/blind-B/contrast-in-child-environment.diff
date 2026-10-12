@@ -1,0 +1,22 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy b/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
+index b5a4d4891..1290686a9 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
+@@ -12,6 +12,7 @@
+ (import doeff_core_effects.process_effects [EnvEntry EnvMode])
+ (import doeff_cluster.shared.core.run_context_rules [process-context-environ])
+ (import doeff_cluster.shared.intent.job_model [JobSpec])
++(import doeff_cluster.shared.intent.runtime_env_model [EnvVar])
+ (import doeff_cluster.worker.intent.worker_model [CodeLayout])
+ 
+ 
+@@ -35,7 +36,8 @@
+    :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
+   "実行環境の job の子の環境変数を組むため: base(worker の環境)のうち許可表の物と LC_* だけ → worker の文脈(extra)→ 宣言の env-vars(declared)
+    → worker が組む DOEFF_*(worker)の順に重ねる。PYTHONPATH は置かない(import の解け先は root の venv と .pth だけ)。"
+-  (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v)
++  (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))
++                                        (is (EnvVar.environ-refusal {k v}) None)) k v)
+      extra declared worker))
+ 
+ 

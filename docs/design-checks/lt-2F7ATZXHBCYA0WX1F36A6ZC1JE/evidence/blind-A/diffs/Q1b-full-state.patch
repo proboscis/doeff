@@ -1,0 +1,47 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy b/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy
+index 2a912377e..7d5d51162 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy
+@@ -39,6 +39,9 @@
+ ;; 子の環境変数のうち、宣言で置けない物(worker が組む・interpreter と uv の挙動を変える)。
+ (val RESERVED-ENV-PREFIXES #("PYTHON" "HY_" "UV_" "LD_" "DOEFF_"))
+ (val RESERVED-ENV-NAMES (frozenset #("PATH" "HOME" "VIRTUAL_ENV")))
++;; 宣言で置けない hook の印(Claude Code が hook・MCP の起動にだけ置く名。上に載る系の Bash の包みがこの名の有無で hook と Bash の道具の
++;; 命令を見分ける — 宣言の env にこの名が在ると、子の CLI の Bash の命令の下げと流しが黙って外れる・card ki-222003f40484)。
++(val HOOK-MARKER-ENV-NAMES (frozenset #((+ "CLAUDE_" "PROJECT_DIR"))))
+ ;; 子の環境変数のうち、値が秘密の中身になる名の末尾(宣言の行・task の行・詰めた Program は coordinator の状態に残るので置けない —
+ ;; 秘密は置き場を名指す名(末尾 PATH-ENV-SUFFIXES — 値は file や dir の path)で運ぶ)。service の :environ・実行環境の env-vars・
+ ;; task の :environ が同じ規則 1 つ(EnvVar)で断る(2026-09-28)。
+@@ -169,6 +172,8 @@
+       (raise (RuntimeEnvInvalid InvalidKind.INVALID-NAME (.format "環境変数の名は英大文字・数字・_: {!r}" self.name))))
+     (when (or (in self.name RESERVED-ENV-NAMES) (.startswith self.name RESERVED-ENV-PREFIXES))
+       (raise (RuntimeEnvInvalid InvalidKind.RESERVED-ENV-VAR (.format "worker が組む環境変数は宣言で置けない: {}" self.name))))
++    (when (in self.name HOOK-MARKER-ENV-NAMES)
++      (raise (RuntimeEnvInvalid InvalidKind.RESERVED-ENV-VAR (.format "hook の印の環境変数は宣言で置けない: {}" self.name))))
+     (when (and (.endswith self.name SECRET-ENV-SUFFIXES) (not (.endswith self.name PATH-ENV-SUFFIXES)))
+       (raise (RuntimeEnvInvalid InvalidKind.SECRET-ENV-VAR
+                 (.format "秘密の中身を名指す環境変数は置けない(宣言と task は coordinator の状態に残る — 秘密は file の path の名 {} で運ぶ): {}"
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.pyi b/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.pyi
+index 383edd250..b7bb1f0ff 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.pyi
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.pyi
+@@ -28,6 +28,7 @@ SHA256_PATTERN: re.Pattern[str]
+ ENV_VAR_PATTERN: re.Pattern[str]
+ RESERVED_ENV_PREFIXES: tuple[str, ...]
+ RESERVED_ENV_NAMES: frozenset[str]
++HOOK_MARKER_ENV_NAMES: frozenset[str]
+ SECRET_ENV_SUFFIXES: tuple[str, ...]
+ PATH_ENV_SUFFIXES: tuple[str, ...]
+ 
+diff --git a/packages/doeff-cluster/tests/test_env_prepare.hy b/packages/doeff-cluster/tests/test_env_prepare.hy
+index d75725646..31aeecd29 100644
+--- a/packages/doeff-cluster/tests/test_env_prepare.hy
++++ b/packages/doeff-cluster/tests/test_env_prepare.hy
+@@ -87,6 +87,7 @@
+          #(InvalidKind.BAD-SHA256 (fn [] (PythonProject :repo "app" :path "." :lock-sha256 "x" :python "3.14")))
+          #(InvalidKind.RESERVED-ENV-VAR (fn [] (EnvVar :name "PYTHONPATH" :value "/x")))
+          #(InvalidKind.RESERVED-ENV-VAR (fn [] (EnvVar :name "DOEFF_RUNTIME_ENV" :value "{}")))
++         #(InvalidKind.RESERVED-ENV-VAR (fn [] (EnvVar :name "CLAUDE_PROJECT_DIR" :value "/work")))
+          #(InvalidKind.EMPTY (fn [] (RuntimeEnv :repos #() :project project :import-roots #("app/."))))]]
+     (with [caught (pytest.raises RuntimeEnvInvalid)] (make))
+     (assert (= caught.value.kind kind) (.format "{} のはずが {}" kind caught.value.kind))))
