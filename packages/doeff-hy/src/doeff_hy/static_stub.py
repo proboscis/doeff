@@ -9,7 +9,8 @@ defrecord の欄の `#^` を Python の注記にした module の木を返す。
   Incomplete)。effect の位置は object(Program は答えと effect の両方で共変 — doeff-records・doeff-cluster の手の .pyi と同じ)。
 - defhandler(答え手を被せる関数を返す関数)→ `def 名(引数) -> _Handler: ...`(doeff_hy.static_types.Handler)。
 - 普通の関数(deff・defn)→ 注記のまま本体を `...` に。注記の無い引数・答えは Incomplete。
-- class → 飾り・基底・欄の注記・method の形のまま。欄と引数の既定値は literal なら残し、式なら `...`。
+- class → 飾り・基底・欄の注記・method の形のまま。欄と引数の既定値は literal なら残し、式なら `...`。defeffect の `:tp [T]` は
+  class の型の引数(`class E[T](…)`)として運び、基底の答えの型が T を読む(#2939)。
 - 定数 → 注記があればそれ・literal / literal の組・辞書はその型・型の和(`A | B`)と TypeVar は形のまま。型を出せない
   値は Incomplete(typeshed の「型がまだ無い」印)にし、StubText.incomplete に名を残す。
 - import → `from m import X as X` の形で公開し直す(実行時の module は import した名を属性に持ち、使い手はそれを引く —
@@ -557,12 +558,14 @@ def _init_attributes(node: ast.ClassDef, declared: frozenset[str]) -> list[ast.s
 
 
 def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.ClassDef:
-    """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。type_vars = module の型の引数の名(答えの型を読むため)。"""
+    """class 1 つの宣言(飾り・基底・欄・method の形を残し、本体の式は外す)。type_vars = module の型の引数の名(答えの型を読むため)。
+    class 自身の型の引数(defeffect の :tp — 型検査の展開の `class E[T](…)`)も宣言へ運び、答えの型は自身の型の引数も型と読む(#2939)。"""
     members = [member for statement in _with_defaults(node.body) if (member := _member(statement)) is not None]
     declared = frozenset(name for member in members if (name := _member_name(member)) is not None)
     body = [*_init_attributes(node, declared), *members]
+    readable = type_vars | {parameter.name for parameter in node.type_params}
     answer = next(
-        (found for statement in node.body if (found := _declared_answer(statement, type_vars)) is not None), None
+        (found for statement in node.body if (found := _declared_answer(statement, readable)) is not None), None
     )
     return ast.ClassDef(
         name=node.name,
@@ -570,7 +573,7 @@ def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.C
         keywords=node.keywords,
         body=body or [ast.Expr(value=ast.Constant(value=...))],
         decorator_list=[d for d in node.decorator_list if not _reads_hidden(d)],
-        type_params=[],
+        type_params=list(node.type_params),
     )
 
 

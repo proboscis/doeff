@@ -33,7 +33,8 @@
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
 (import doeff [DoExpr EffectBase])
 (import doeff.mcp [mcp-param-annotation mcp-json-type-names])
-(import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
+(import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value
+                               type-param-symbols])
 (import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
 (import doeff-hy.expansion-names [alias-symbol])
@@ -374,20 +375,9 @@ defk {name}: :post must include a return type check (: % Type).
 (defn _type-params [body where]
   "契約の辞書の `:tp [T …]` を記号の list で返す(無ければ空)。答えが引数の型で決まる関数(本体の答えをそのまま返す包みなど)の型を、
    実行時に確かめられない総称のまま型検査と .pyi へ渡すため(agora-redesign #2893)。名の並びでない値・重なる名は SyntaxError。"
-  (setv contract (get (_find-contract body) 0)
-        value None)
-  (when (is-not contract None)
-    (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
-      (when (= (str k) ":tp")
-        (setv value v))))
-  (cond
-    (is value None) []
-    (and (isinstance value hy.models.List) (> (len value) 0)
-         (all (gfor p value (isinstance p hy.models.Symbol)))
-         (= (len (sfor p value (str p))) (len value)))
-      (list value)
-    True
-      (raise (SyntaxError (.format "{}: :tp は型の引数の名の並び(例 `:tp [T]`・重ならない名)— 受けたのは {}" where (hy.repr value))))))
+  (setv contract (get (_find-contract body) 0))
+  ;; 形の検めは defeffect の :tp と分け合う(declarations.hy の type-param-symbols)。
+  (type-param-symbols (when (is-not contract None) (declared-value contract ":tp")) where))
 
 (defn _object-for [names form]
   "型の式 form の中の names(型の引数の名)を object に写す(入れ子の式・組・和の中も)— 実行時の isinstance に型の引数を渡さないため。"
@@ -1054,6 +1044,11 @@ defk {name}: :post type annotation cannot be an empty string.
    effect was performed (under the handlers there — SqlTransaction's program). It sets
    __doeff_runs_carried__ (read by doeff_core_effects.effects.runs_carried_of; a closure
    check reads those Programs as run at the performing site — agora-redesign #1456).
+
+   :tp [T] names the type parameters the answer and the fields read (the same form as defk / deff's :tp). The type-check
+   expansion writes `class SqlTransaction[T](…)` (PEP 695), so a field `(: program (of Program T object))` and
+   :answer (| T SqlFailed SqlUnreachable) are generic in T; the runtime expansion writes no type parameter and reads T from
+   the module (`(val T (TypeVar \"T\"))`) — agora-redesign #2939.
 
    関数の本体の中に書くと、補助の import(_doeff-dataclass・_doeff-effect-base など)と class をすぐ呼ぶ関数に入れて
    <name> だけを束ねる(_scoped-definition — card ki-93395c51de1e)。"

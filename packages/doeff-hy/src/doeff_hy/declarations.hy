@@ -180,7 +180,9 @@
 ;; :absent / :failure / :value は答えの型の分け方(ADR-DOE-CORE-EFFECTS-003 R5 — どれも任意・:answer の union の要素の list)。
 ;; :runs-carried は、答え手が effect を出した所(その所の handler の下)で走らせる Program の欄の名の list(agora-redesign #1456 —
 ;; doeff_core_effects.effects の runs-carried-of が読む)。
-(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value" ":runs-carried"))
+;; :tp は型の引数(`:tp [T]` — defk・deff の :tp と同じ形・型検査の展開で class を PEP 695 の `class E[T]` にし、:answer と欄の型が T を読む。
+;; 実行時の展開には型の引数を出さない — T は module の `(val T (TypeVar "T"))` で読む。agora-redesign #2939)。
+(setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value" ":runs-carried" ":tp"))
 ;; 答えの分け方の鍵。<- は :absent の答えを Absent に、:failure の答えを Raise(答え) に変えて呼び手のスコープで出す。
 ;; :value は業務で普通に扱う答え(失敗と宣言しない印)、どれにも書かない要素は成功。
 (setv OUTCOME-KEYS #(":absent" ":failure" ":value"))
@@ -241,6 +243,19 @@
   #(out names))
 
 
+(defn type-param-symbols [form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defk・deff の契約の :tp も読む — macros.hy の _type-params)
+  "契約の辞書の `:tp [T …]` の値の form(無ければ None)を、型の引数の記号の list にするため(書かなければ空)。形は重ならない記号の
+   空でない list だけ — 名の並びでない値・重なる名は SyntaxError(defk・deff・defeffect の :tp が同じ規則で断る・agora-redesign #2893 / #2939)。"
+  (cond
+    (is form None) []
+    (and (isinstance form List) (> (len form) 0)
+         (all (gfor p form (isinstance p Symbol)))
+         (= (len (sfor p form (str p))) (len form)))
+      (list form)
+    True
+      (raise (SyntaxError (.format "{}: :tp は型の引数の名の並び(例 `:tp [T]`・重ならない名)— 受けたのは {}" where (hy.repr form))))))
+
+
 (defn runs-carried-names [form names #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の :runs-carried を検め、答え手が effect を出した所で走らせる Program の欄の名(Python の属性の名)の整列した list に
    するため(書かなければ空)。形は :fields の欄の名の list だけ — 無い欄の名は展開の時に断る。"
@@ -298,6 +313,7 @@
                      #(~@(get outcome-types ":value"))))]
         []))
   (setv runs-carried (runs-carried-names (declared-value contract ":runs-carried") names where))
+  (setv type-params (type-param-symbols (declared-value contract ":tp") where))
   ;; :pre が参照する欄だけを束縛する(defrecord の :check と同じ形)。全部の欄を束縛すると、:pre が使わない欄が型検査の展開で
   ;; 未使用の変数(reportUnusedVariable)の赤になり、書き手は直せない(agora-redesign #4196)。`value.x` のような dotted の記号は
   ;; 頭の名で読む。
@@ -382,9 +398,12 @@
      ;; 引くので、型検査の投影は表の綴りのこの import を module の段へ移す(static_check._synthesized_import)。
      ~(import-form ["ClassVar" "cast"])
      ~@(if written [`(import doeff_hy.record_runtime) `(import builtins [object :as _doeff-object])] [])
+     ;; 型の引数(:tp)は型検査の展開だけに置く(`class E[T](…)` — PEP 695 の綴りを実行時の code に出さない。requires-python 3.10 の
+     ;; 環境でも定義が読める・class の __type_params__ は空)。実行時の答えと欄の型の T は module の TypeVar を読む(#2939)。
      (defclass [~(if written
                      `(_doeff-dataclass :init False :repr False :eq False)
                      `(_doeff-dataclass :frozen True))]
+       ~@(if (and type-params (static-view-enabled)) [':tp (hy.models.List type-params)] [])
        ~name [_doeff-effect-base]
        ~@(if (is docstring None) [] [docstring])
        (setv #^ (get _doeff-ClassVar object) __doeff-answer__ ~(answer-value-form answer))

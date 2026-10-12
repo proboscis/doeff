@@ -5,6 +5,8 @@ defk・deftest・defhandler の節の本体を、macro の展開の時に 1 度�
 - 宣言の形を読む: `(val x 式)`・`(var x 式)`・`(lazy val x 式)`・`(lazy var x 式)`・
   `(session val x 式)`・`(session var x 式)`。式は `!(f)` と書いてよい(Hy の reader は
   `!(f)` を `!` と `(f)` の 2 つに読むので、宣言の中の `! 式` の 2 つ組を `(! 式)` に畳む)。
+  値の型が式から決まらない時(空の dict など)は、val と var だけが `(val #^ 型 x 式)` の型の注記を受ける
+  (`名前: 型 = 式` の代入に書き換える — agora-redesign #2939)。
 - 書き換えの形 `(:= x 新しい値)` を、宣言の種類に合わせて展開する。
 - lazy val / lazy var の参照(裸の名前)を「初回なら評価して覚える」式に書き換える。
 - 束縛の誤り(新しい構文の名前の束縛し直し・lazy の名前の影・yield できない所での lazy の参照・
@@ -82,6 +84,17 @@ class Declaration:
     mutability: Mutability
     init: Object
     form: Expression
+    #: `(val #^ 型 名前 式)` の型(`(annotate 名前 型)` の型の式)。無ければ None — 値の型は式から決まる。
+    annotation: Object | None = None
+
+    @property
+    def target(self) -> Object:
+        """setv の左辺: 名前 1 つ、型の注記があれば `(annotate 名前 型)`(Hy の `(setv #^ 型 名前 式)` と同じ — 位置は書いた名前の位置)。"""
+        if self.annotation is None:
+            return self.symbol
+        annotated = Expression([Symbol("annotate"), self.symbol, self.annotation])
+        annotated.replace(self.symbol, recursive=False)
+        return annotated
 
     @property
     def spelled(self) -> str:
@@ -205,7 +218,7 @@ def is_new_lazy_form(form: Object) -> bool:
         and _head(form) in _TIMINGS
         and isinstance(form[1], Symbol)
         and str(form[1]) in _KINDS
-        and isinstance(form[2], Symbol)
+        and (isinstance(form[2], Symbol) or _annotated_name(form[2]) is not None)
     )
 
 
@@ -228,16 +241,31 @@ def parse_declaration(form: Object) -> Declaration | None:
         spelled = f"{head} {form[1]}"
     else:
         return None
-    if len(rest) < 2 or not isinstance(rest[0], Symbol) or str(rest[0]) in {"!", "val", "var"}:
+    annotated = _annotated_name(rest[0]) if rest else None
+    name_symbol = annotated[0] if annotated is not None else (rest[0] if rest else None)
+    if len(rest) < 2 or not isinstance(name_symbol, Symbol) or str(name_symbol) in {"!", "val", "var"}:
         raise SyntaxError(
             f"({spelled} …) (line {_line(form)}): 名前と式が要ります — {_source(form)}\n\n"
             f"  ({spelled} 名前 式)\n"
             f"  ({spelled} 名前 !(効果の式))"
         )
-    name_symbol = rest[0]
-    assert isinstance(name_symbol, Symbol)
+    if annotated is not None and timing is not Timing.EAGER:
+        raise SyntaxError(
+            f"({spelled} …) (line {_line(form)}): 型の注記 `#^ 型 名前` は (val …) と (var …) だけが受けます"
+            f"(lazy・session の値の型は式から決まります) — {_source(form)}"
+        )
     init = _join_bang(rest[1:], form, f"({spelled} {name_symbol} …)")
-    return Declaration(str(name_symbol), name_symbol, timing, mutability, init, form)
+    return Declaration(
+        str(name_symbol), name_symbol, timing, mutability, init, form, annotated[1] if annotated is not None else None
+    )
+
+
+def _annotated_name(target: Object) -> tuple[Symbol, Object] | None:
+    """宣言の名前の位置の `#^ 型 名前`(= `(annotate 名前 型)`)の名前と型。注記つきの名前でなければ None
+    (module の値の型を式から決められない時 — 空の dict など — に、書き手が型を書く口・agora-redesign #2939)。"""
+    if isinstance(target, Expression) and len(target) == 3 and _head(target) == "annotate" and isinstance(target[1], Symbol):
+        return target[1], target[2]
+    return None
 
 
 @dataclass(frozen=True)
@@ -500,7 +528,7 @@ class _Walker:
         init, state = self.walk(declaration.init, where, state)
         self.declared[name] = declaration
         self.ever_bound.add(name)
-        return _Walked(self._located(Expression([Symbol("setv"), declaration.symbol, init]), form), state | {name})
+        return _Walked(self._located(Expression([Symbol("setv"), declaration.target, init]), form), state | {name})
 
     def _cell(self, name: str) -> Symbol:
         """lazy の名前の入れ物(LazyCell)を持つ局所変数の名前。"""
@@ -1199,7 +1227,7 @@ def module_declaration(bindings: ModuleBindings, form: Expression, static: bool)
             where + f"`{name}` は ({first.spelled} {name} …) で宣言済みです。同じ名前をもう一度束縛できません。\n"
         )
     bindings.declared[name] = declaration
-    setv = Expression([Symbol("setv"), declaration.symbol, declaration.init])
+    setv = Expression([Symbol("setv"), declaration.target, declaration.init])
     if declaration.timing is Timing.EAGER or static:
         setv.replace(form, recursive=False)
         return setv
