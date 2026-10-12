@@ -28,8 +28,10 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
    `make test-packages` が package ごとに session を分けるのと同じ理由で、`tests/` に `__init__.py` と `conftest.py` を
    持つ package の検を 1 つの session に混ぜると `tests.conftest` の名がぶつかり(ImportPathMismatchError)、pytest が
    1 本も走らせずに止まる(agora-redesign #2682 — #2658 の標本で 12 commit 中 6 本)。順は組(契約の組 → 変えた検 →
-   逆依存)ごとに session で束ね、隣り合う同じ session の束は 1 つの process にする。束を順に走らせ、合計の壁時計の上限
-   (既定 60 秒)の残りを次の束に渡す — 番が来なかった束の検は「未測」と名指す。
+   逆依存)ごとに session で束ね、隣り合う同じ session の束は 1 つの process にする。束を順に走らせ、合計の上限
+   (既定 60 秒)の残りを次の束に渡す — 番が来なかった束の検は「未測」と名指す。上限は pytest の configure の間(root の
+   conftest が機体の検の枠を取る — 埋まっていれば待つ)を数えず、数えなかった秒は要約に別の行で出す(枠の正本の
+   hold_check_slot の「待ちを変更箇所の検証の 60 秒に数えない」約束・card ki-55970a1649be)。拍は ReportPlugin が pipe へ書く。
 
 出力は 走った(緑)・赤・未測 の 3 つ。終わらなかった file・集めた検が 0 本の file・venv の無い作業木は「未測」と
 名指し、赤と分ける。rc は 赤が在れば 1・表や入力が読めなければ 2・それ以外 0(未測は登記を止めない — 名指すだけ)。
@@ -54,8 +56,6 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from enum import Enum
 from itertools import groupby
@@ -673,11 +673,30 @@ class CollectError:
     nodeid: str
 
 
-Event = Collected | ItemReport | CollectError
+@dataclass(frozen=True)
+class Configuring:
+    """pytest の main が configure に入る拍 — root の conftest が機体の検の枠を取る(埋まっていれば待つ)のは、この拍と
+    SessionStarted の間(conftest.py の pytest_configure)。"""
+
+
+@dataclass(frozen=True)
+class SessionStarted:
+    """configure の全部が終わり、session が始まった拍(収集の前)。"""
+
+
+Event = Collected | ItemReport | CollectError | Configuring | SessionStarted
 
 
 def _parse_event(line: str) -> Event:
-    match json.loads(line):
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise StopError(f"pytest の結末の行が JSON でない: {line[:200]!r}") from exc
+    match payload:
+        case {"kind": "configuring"}:
+            return Configuring()
+        case {"kind": "session_started"}:
+            return SessionStarted()
         case {"kind": "collected", "nodeids": list() as nodeids}:
             return Collected(nodeids=tuple(str(n) for n in nodeids))
         case {
@@ -720,6 +739,16 @@ class ReportPlugin:
         """結末 1 つを pipe へ書く(入口の側の `_parse_event` が読む形)。"""
         os.write(self.report_fd, (json.dumps(payload, ensure_ascii=False) + "\n").encode())
 
+    def pytest_cmdline_main(self, config: object) -> None:
+        """configure に入る拍を残す — ここから session が始まるまで(機体の検の枠の待ち)を、入口は上限に数えない。
+        命令行の口は後に登録した plugin ほど先に呼ばれ、configure と session を起こす pytest の main の口はこの plugin
+        より先に登録された組み込みなので、この拍は configure の前に来る(None を返して main へ渡す)。"""
+        self._write_event({"kind": "configuring"})
+
+    def pytest_sessionstart(self, session: _Session) -> None:
+        """session が始まった拍を残す — 入口はここから上限の残りを数え直す。"""
+        self._write_event({"kind": "session_started"})
+
     def pytest_collection_finish(self, session: _Session) -> None:
         """どの検を集めたか(-m で外した後)を残す — 終わらなかった検を名指すための母数。"""
         self._write_event({"kind": "collected", "nodeids": [item.nodeid for item in session.items]})
@@ -761,10 +790,13 @@ class TargetResult:
 
 @dataclass(frozen=True)
 class PytestRun:
+    """走った束 1 つ — seconds = 上限に数えた秒・waited = 数えなかった configure の間の秒(機体の検の枠の待ち)。"""
+
     events: tuple[Event, ...]
     returncode: int | None
     timed_out: bool
     seconds: float
+    waited: float
 
 
 @dataclass(frozen=True)
@@ -815,11 +847,15 @@ def _classify_run(target: Target, run: PytestRun, budget: float) -> TargetResult
     if collect_errors:
         return TargetResult(target, Verdict.RED, "集める時に落ちた")
     if collected is None:
-        reason = (
-            f"上限 {budget:g} 秒の内に集め終わらなかった"
-            if run.timed_out
-            else f"pytest が集める前に止まった(rc {run.returncode})"
-        )
+        if run.timed_out:
+            reason = f"上限 {budget:g} 秒の内に集め終わらなかった"
+        elif not any(isinstance(e, SessionStarted) for e in run.events):
+            reason = (
+                f"pytest が session を始める前に止まった(rc {run.returncode} — 機体の検の枠の待ちが上限を"
+                "越えたか、configure の誤り・上の出力を読む)"
+            )
+        else:
+            reason = f"pytest が集める前に止まった(rc {run.returncode})"
         return TargetResult(target, Verdict.UNMEASURED, reason)
     items = tuple(n for n in collected.nodeids if _belongs(n, target.arg))
     if not items:
@@ -846,10 +882,125 @@ def _classify_run(target: Target, run: PytestRun, budget: float) -> TargetResult
     return TargetResult(target, Verdict.GREEN, f"{len(items)} 本")
 
 
-def _read_pipe(fd: int, into: Future[str]) -> None:
-    """pipe の読み口を書き手が全員閉じるまで読む(pytest の plugin が書く結末の行の全部)。"""
-    with os.fdopen(fd, "r", encoding="utf-8") as fh:
-        into.set_result(fh.read())
+@dataclass(frozen=True)
+class ChildClock:
+    """pytest の process 1 つの拍(入口の monotonic の秒)— 上限に数える秒と、数えない configure の間の秒を分けるため。
+
+    spawned = 起こした拍・configuring = configure に入った拍・started = session が始まった拍(来ていなければ None)。
+    configure の間は root の conftest が機体の検の枠を取る(埋まっていれば待つ)ので数えない — 枠の正本の hold_check_slot は
+    「待ちを変更箇所の検証の 60 秒に数えない」と約束している(card ki-55970a1649be)。起こしてから configure まで(uv・python・
+    conftest の import)と session が始まってからは今までどおり数える(止まったままの子も上限で切るため)。"""
+
+    spawned: float
+    configuring: float | None
+    started: float | None
+
+    def mark(self, event: Event, at: float) -> ChildClock:
+        """受けた結末の行が configure か session の拍なら、その時刻を記した時計を返す(他の行は時計を変えない)。"""
+        match event:
+            case Configuring() if self.configuring is None:
+                return ChildClock(spawned=self.spawned, configuring=at, started=self.started)
+            case SessionStarted() if self.started is None:
+                return ChildClock(spawned=self.spawned, configuring=self.configuring, started=at)
+            case _:
+                return self
+
+    @property
+    def paused(self) -> bool:
+        """configure の間か(上限の時計が止まっている)。"""
+        return self.configuring is not None and self.started is None
+
+    def counted(self, now: float) -> float:
+        """上限に数える秒 — 起こしてから configure までと、session が始まってから now まで。"""
+        if self.configuring is None:
+            return now - self.spawned
+        if self.started is None:
+            return self.configuring - self.spawned
+        return (self.configuring - self.spawned) + (now - self.started)
+
+    def waited(self, now: float) -> float:
+        """上限に数えない秒 — configure の間(機体の検の枠の待ちを含む)。"""
+        if self.configuring is None:
+            return 0.0
+        return (now if self.started is None else self.started) - self.configuring
+
+
+@dataclass(frozen=True)
+class Drained:
+    """pipe を読み終えた子の結末 — 結末の行の全部と、拍を記し終えた時計。"""
+
+    events: tuple[Event, ...]
+    clock: ChildClock
+
+
+class _ChildProgress:
+    """pytest の process 1 つの進み — pipe の読み手(結末の行と拍)と process の待ち手(終わり)の 2 つの thread が書き、
+    入口の thread が上限に数える秒を数えて待つ(拍の時刻は行を受けた入口の側の monotonic)。"""
+
+    def __init__(self, clock: ChildClock) -> None:
+        self._changed = threading.Condition()
+        self._clock = clock
+        self._events: tuple[Event, ...] = ()
+        self._unreadable: StopError | None = None
+        self._exited = False
+        self._drained = False
+
+    def read(self, fd: int) -> None:
+        """読み手の thread の本体: pipe の読み口を書き手が全員閉じるまで 1 行ずつ読む(plugin が書く結末の行の全部)。
+        読めない行は最初の 1 つを覚えて読み続ける(読むのを止めると、書き手の子が詰まった pipe で止まる)。"""
+        with os.fdopen(fd, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    self._receive(line, time.monotonic())
+        with self._changed:
+            self._drained = True
+            self._changed.notify_all()
+
+    def _receive(self, line: str, at: float) -> None:
+        """結末の行 1 つを受け、拍なら時計に記して待ち手を起こす。"""
+        try:
+            event = _parse_event(line)
+        except StopError as exc:
+            with self._changed:
+                self._unreadable = self._unreadable or exc
+            return
+        with self._changed:
+            self._events = (*self._events, event)
+            self._clock = self._clock.mark(event, at)
+            self._changed.notify_all()
+
+    def watch(self, proc: subprocess.Popen[bytes]) -> None:
+        """待ち手の thread の本体: process の終わりを待ち、入口の thread を起こす。"""
+        proc.wait()
+        with self._changed:
+            self._exited = True
+            self._changed.notify_all()
+
+    def wait_within(self, budget: float) -> bool:
+        """process が終わるまで待つ — 上限に数える秒が budget に達したら False(呼び手が打ち切る)。configure の間は数えない
+        ので時間を切らずに待つ(枠の待ちは枠の正本の上限が限り、越えれば pytest が未実行を名乗って終わる)。"""
+        with self._changed:
+            while not self._exited:
+                if self._clock.paused:
+                    self._changed.wait()
+                    continue
+                left = budget - self._clock.counted(time.monotonic())
+                if left <= 0:
+                    return False
+                self._changed.wait(left)
+            return True
+
+    def drain(self, grace: float) -> Drained:
+        """process が終わった後、pipe を読み終えるのを grace 秒まで待って結末を返す — 読み終えない(検が group の外へ逃がした
+        子が書き口を持つ)・読めない行が在った時は止める。"""
+        with self._changed:
+            if not self._changed.wait_for(lambda: self._drained, timeout=grace):
+                raise StopError(
+                    "pytest が終わった後も結末の pipe を持つ process が残っている(検が group の外へ逃がした子)"
+                )
+            if self._unreadable is not None:
+                raise self._unreadable
+            return Drained(events=self._events, clock=self._clock)
 
 
 def _stop_group(proc: subprocess.Popen[bytes]) -> None:
@@ -933,8 +1084,8 @@ def project_environment(repo: Path, environment: RunEnvironment) -> Path:
 def run_pytest(
     repo: Path, targets: tuple[Target, ...], budget: float, environment: RunEnvironment
 ) -> PytestRun:
-    """1 回の pytest を作業木の uv の環境で壁時計の上限つきで走らせ、plugin が pipe へ書いた結末を受け取る
-    (file には残さない)。pipe の書き口の番号は子の命令行で渡す。"""
+    """1 回の pytest を作業木の uv の環境で上限つきで走らせ、plugin が pipe へ書いた結末を受け取る(file には残さない)。
+    上限(budget)は configure の間(機体の検の枠の待ち)を除いて数える — ChildClock。pipe の書き口の番号は子の命令行で渡す。"""
     read_fd, write_fd = os.pipe()
     env = {entry.name: entry.value for entry in environment.child}
     command = [
@@ -953,47 +1104,44 @@ def run_pytest(
         "--continue-on-collection-errors",
         *(t.arg for t in targets),
     ]
-    received: Future[str] = Future()
-    threading.Thread(target=_read_pipe, args=(read_fd, received), daemon=True).start()
-    started = time.monotonic()
+    progress = _ChildProgress(ChildClock(spawned=time.monotonic(), configuring=None, started=None))
+    threading.Thread(target=progress.read, args=(read_fd,), daemon=True).start()
     proc = subprocess.Popen(
         command, cwd=repo, env=env, start_new_session=True, pass_fds=(write_fd,)
     )
     os.close(write_fd)
-    try:
-        returncode: int | None = proc.wait(timeout=budget)
-        timed_out = False
-    except subprocess.TimeoutExpired:
+    threading.Thread(target=progress.watch, args=(proc,), daemon=True).start()
+    timed_out = not progress.wait_within(budget)
+    if timed_out:
         _stop_group(proc)
-        returncode, timed_out = None, True
-    seconds = time.monotonic() - started
-    try:
-        text = received.result(timeout=KILL_GRACE_SECONDS)
-    except FutureTimeout as exc:
-        raise StopError(
-            "pytest が終わった後も結末の pipe を持つ process が残っている(検が group の外へ逃がした子)"
-        ) from exc
-    events = tuple(_parse_event(line) for line in text.splitlines() if line.strip())
+    ended = time.monotonic()
+    returncode = None if timed_out else proc.returncode
+    drained = progress.drain(KILL_GRACE_SECONDS)
+    events = drained.events
     if not timed_out and (returncode in PYTEST_TOOL_FAILURES or not events):
         raise StopError(
             f"pytest が rc {returncode} で、検の結末を{'返さずに' if not events else ''}止まった"
             "(uv・conftest・命令行の誤り)— 上の出力を読む"
         )
-    return PytestRun(events=events, returncode=returncode, timed_out=timed_out, seconds=seconds)
+    return PytestRun(
+        events=events,
+        returncode=returncode,
+        timed_out=timed_out,
+        seconds=drained.clock.counted(ended),
+        waited=drained.clock.waited(ended),
+    )
 
 
 def _run_batch(
     repo: Path,
     index: int,
     batches: tuple[Batch, ...],
-    budget: float,
-    started: float,
+    remaining: float,
     environment: RunEnvironment,
 ) -> BatchOutcome:
     """束 1 つを、合計の上限の残りを上限にして 1 つの pytest の process で走らせる — 残りが無ければ起こさない
     (前の束が使い切った分を後ろの束の「未測」として名指すため)。"""
     batch = batches[index]
-    remaining = budget - (time.monotonic() - started)
     if remaining <= 0:
         return BatchOutcome(batch=batch, run=NotReached())
     print(
@@ -1007,12 +1155,30 @@ def _run_batch(
 def run_batches(
     repo: Path, batches: tuple[Batch, ...], budget: float, environment: RunEnvironment
 ) -> tuple[BatchOutcome, ...]:
-    """束を並びの順に 1 つずつ走らせ、合計の壁時計の上限(budget)を束どうしで分け合う — 契約の組の束がいつも先に走る。
-    tuple は束を順に評価するので、各束は前の束が使った時間を引いた残りを受け取る。"""
-    started = time.monotonic()
-    return tuple(
-        _run_batch(repo, index, batches, budget, started, environment)
-        for index in range(len(batches))
+    """束を並びの順に 1 つずつ走らせ、合計の上限(budget)を束どうしで分け合う — 契約の組の束がいつも先に走る。
+    各束は、前の束が上限に数えた秒(configure の間 = 機体の検の枠の待ちを除く — ChildClock)を引いた残りを受け取る。"""
+    outcomes: tuple[BatchOutcome, ...] = ()
+    for index in range(len(batches)):
+        remaining = budget - _counted_seconds(outcomes)
+        outcomes = (*outcomes, _run_batch(repo, index, batches, remaining, environment))
+    return outcomes
+
+
+def _counted_seconds(outcomes: tuple[BatchOutcome, ...]) -> float:
+    """走った束が上限に数えた秒の合計(番の来なかった束は 0)— 束どうしで分け合う上限の使った分と、要約の所要。"""
+    return sum(o.run.seconds for o in outcomes if isinstance(o.run, PytestRun))
+
+
+def _print_waits(outcomes: tuple[BatchOutcome, ...]) -> None:
+    """上限に数えなかった configure の間(機体の検の枠の待ち)の秒を、所要とは別の行で名指す — 待った秒を黙って消さない。"""
+    total = sum(o.run.waited for o in outcomes if isinstance(o.run, PytestRun))
+    per_session = "・".join(
+        f"session {o.batch.session} {o.run.waited:.1f} 秒"
+        for o in outcomes
+        if isinstance(o.run, PytestRun)
+    )
+    print(
+        f"上限に数えなかった configure の間(機体の検の枠の待ちを含む): 計 {total:.1f} 秒({per_session})"
     )
 
 
@@ -1174,12 +1340,12 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
     results = tuple(
         classify(t, outcome.run, args.budget) for outcome in outcomes for t in outcome.batch.targets
     )
-    seconds = sum(o.run.seconds for o in outcomes if isinstance(o.run, PytestRun))
-    _print_summary(results, seconds, args.budget, reverse)
+    _print_summary(results, _counted_seconds(outcomes), args.budget, reverse)
     print(
         f"pytest の process: {sum(1 for o in outcomes if isinstance(o.run, PytestRun))}/{len(outcomes)} 本が走った"
         f"(session: {', '.join(o.batch.session for o in outcomes)})"
     )
+    _print_waits(outcomes)
     return Finished(rc=1 if any(r.verdict is Verdict.RED for r in results) else 0, results=results)
 
 
