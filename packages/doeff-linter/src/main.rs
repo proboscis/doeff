@@ -44,6 +44,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
     - Rule IDs are case-insensitive (doeff001 = DOEFF001)
     - File-level noqa must appear before any code (comments/docstrings allowed before it)
 
+EXIT CODES(重い mode の既定・editor-json の repo 全体):
+  0 = error なし / 1 = error あり / 2 = 引数・設定の誤り
+  75 = 未実行 — 機体の検の枠の待ちが上限を越え、lint をせずに終わった(撃ち直せる・赤でも緑でもない — check_slot.rs)
+
 EXAMPLES:
   doeff-linter .                         Lint current directory
   doeff-linter --enable DOEFF001         Enable only specific rule

@@ -82,33 +82,49 @@ fn finish(mut child: Child, what: &str) -> std::process::ExitStatus {
     }
 }
 
-#[test]
-fn a_linter_beyond_the_slots_waits_names_the_holder_and_runs_when_one_frees() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let home = tmp.path().join("home");
+/// 正本の写しと、K = 1・置き場 = 一時の dir・待ちの上限 = wait_s の宣言を置いた HOME と、その正本と枠 0 の file。
+fn canon_home(root: &Path, wait_s: u64) -> (PathBuf, PathBuf, PathBuf) {
+    let home = root.join("home");
     let tests_dir = home.join("dotfiles/agent/tests");
     fs::create_dir_all(&tests_dir).unwrap();
     let canon = tests_dir.join("machine_check_slots.py");
     fs::copy(real_canon(), &canon).unwrap();
-    let slots = tmp.path().join("slots");
-    let declaration = serde_json::json!({"slots": 1, "dir": slots.to_string_lossy(), "waitLimitSeconds": 60});
+    let slots = root.join("slots");
+    let declaration = serde_json::json!({"slots": 1, "dir": slots.to_string_lossy(), "waitLimitSeconds": wait_s});
     fs::write(tests_dir.join("machine_check_slots.json"), declaration.to_string()).unwrap();
-    let repo = small_repo(tmp.path());
+    (home, canon, slots.join("slot-0.lock"))
+}
 
-    // 保持者 = 正本の包みで枠を 1 本取り、stdin を閉じるまで持つ命令。
+/// 保持者 = 正本の包みで枠を 1 本取り、stdin を閉じるまで持つ命令(枠を取ったのを見てから返す)。
+fn holding(home: &Path, canon: &Path, slot: &Path) -> Child {
     let python = python();
-    let mut holder = Command::new(&python)
-        .arg(&canon)
+    let holder = Command::new(&python)
+        .arg(canon)
         .args(["run", "--label", "long-check", "--"])
         .arg(&python)
         .args(["-c", "import sys; sys.stdin.read()"])
-        .env("HOME", &home)
+        .env("HOME", home)
         .env_remove("AGORA_CONVERSATION_ID")
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
-    let slot = slots.join("slot-0.lock");
-    wait_until("保持者が枠を取らない", || read(&slot).starts_with("pid "));
+    wait_until("保持者が枠を取らない", || read(slot).starts_with("pid "));
+    holder
+}
+
+/// 正本が枠を持つ process の子へ継ぐ内部の印(env の名)— 正本の source の `HOLDER_ENV = "…"` から読む(この検に名を写さない)。
+fn canon_holder_env() -> String {
+    let text = read(&real_canon());
+    let line = text.lines().find(|line| line.starts_with("HOLDER_ENV = ")).expect("正本に HOLDER_ENV の行が無い");
+    line.split('"').nth(1).expect("HOLDER_ENV の値").to_string()
+}
+
+#[test]
+fn a_linter_beyond_the_slots_waits_names_the_holder_and_runs_when_one_frees() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (home, canon, slot) = canon_home(tmp.path(), 60);
+    let repo = small_repo(tmp.path());
+    let mut holder = holding(&home, &canon, &slot);
 
     let err_path = tmp.path().join("linter.err");
     let mut linter = linter_under(&home, &repo)
@@ -137,6 +153,30 @@ fn a_linter_beyond_the_slots_waits_names_the_holder_and_runs_when_one_frees() {
     assert!(stdout.contains("DOEFF016"), "{stdout}");
     assert!(err.contains("を取った") && err.contains("— doeff-linter lint repo"), "{err}");
     assert_eq!(read(&slot), "", "linter が終わっても枠の名乗りが残った");
+}
+
+#[test]
+fn a_stale_holder_marker_does_not_let_the_linter_skip_a_full_slot_and_the_expiry_exits_75() {
+    // 入れ子かどうか(祖先が枠を持つか)は正本だけが判じる — 正本の内部の印(env)を継いだだけの linter は、印の指す pid が
+    // 枠を持っていなければ内側ではない(保持者が退いた後に残った子・背景の子 — 盲検 B・設計検証 lt-2QBB34XF77DRT3V3THV7T67D3P)。
+    // 枠が埋まったままなら待ちの上限で lint をせずに終わり、linter の公開の終了コード 75(未実行)を返す。
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (home, canon, slot) = canon_home(tmp.path(), 2);
+    let repo = small_repo(tmp.path());
+    let mut holder = holding(&home, &canon, &slot);
+    let output = linter_under(&home, &repo)
+        .args(["--no-log", "."])
+        .env(canon_holder_env(), std::process::id().to_string())
+        .env_remove("AGORA_CONVERSATION_ID")
+        .output()
+        .unwrap();
+    holder.stdin.take().unwrap().write_all(b"").unwrap();
+    assert!(finish(holder, "保持者").success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(75), "印を継いだだけの linter が枠の外で走った: {stdout}\n{err}");
+    assert!(!stdout.contains("DOEFF016"), "未実行のはずが lint した: {stdout}");
+    assert!(err.contains("埋まっているので待つ") && err.contains("doeff-linter lint repo は未実行"), "{err}");
 }
 
 /// 偽の正本 — 引数と再入の印を 1 行ずつ記し、`--` の後の命令を exec する(枠は取らない)。
@@ -237,7 +277,9 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 #[test]
 fn the_linter_keeps_no_copy_of_the_slot_values() {
     // 値の持ち主は正本の隣の宣言 1 つ(K・置き場・待ちの上限)。linter の code はその値も宣言の file の名も綴らない —
-    // 綴るのは正本の在処(HOME からの相対)だけ。
+    // 綴るのは正本の在処(HOME からの相対)だけ。正本の内部の印(枠を持つ process の子へ継ぐ env の名)も綴らない —
+    // 入れ子の判定を linter に写さない(盲検 B・設計検証 lt-2QBB34XF77DRT3V3THV7T67D3P)。
+    let holder_env = canon_holder_env();
     let declaration_path = real_canon().with_file_name("machine_check_slots.json");
     let declaration: serde_json::Value = serde_json::from_str(&read(&declaration_path)).unwrap();
     let dir = declaration["dir"].as_str().expect("宣言の dir");
@@ -250,7 +292,7 @@ fn the_linter_keeps_no_copy_of_the_slot_values() {
         .iter()
         .flat_map(|path| {
             let code = code_of(path);
-            let named = [dir, "machine_check_slots.json", "waitLimitSeconds", "slot-"]
+            let named = [dir, "machine_check_slots.json", "waitLimitSeconds", "slot-", holder_env.as_str()]
                 .into_iter()
                 .filter(|word| code.contains(word))
                 .map(|word| format!("{}: {word}", path.display()))

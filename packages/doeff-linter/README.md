@@ -178,7 +178,11 @@ reconciling = ["DOEFF104"]                                     # 照合中の規
 - 鍵: `<repo の根からの path>::<law の名、無ければ規則の ID>[::<細目>]`(細目 = import の先・`definitions`・role など)。
 - 重さ: 新しい破れは error、登録簿に載った破れは warning(`registered: true`)、照合中の規則は info。DOEFF106 の弱い証拠
   (method 名だけで見つけた物)は warning、DOEFF107 は常に info。
-- 終了コード: 0 = error なし、1 = error あり、2 = 引数・設定の誤り(設定の名前の食い違いは黙って捨てない)。
+- 終了コード: 0 = error なし、1 = error あり、2 = 引数・設定の誤り(設定の名前の食い違いは黙って捨てない)、75 = 未実行
+  (機体の検の枠の待ちが上限を越え、lint を 1 つもせずに終わった — 撃ち直せる・赤でも緑でもない)。75 は重い mode(既定の実行・
+  editor-json の repo 全体・`--hook`・`--commit-hook`)だけが返す — 起動の時に HOME の下の正本
+  `dotfiles/agent/tests/machine_check_slots.py` の命令の包み `run` へ自分を渡して枠を取り、その包みの上限の終了コードがそのまま
+  linter の終了コードになる(`src/check_slot.rs`・card ki-ce35bf38508d)。終了コードで判じる呼び手は 75 を未実行と読む。
 - 説明: 層の規則の違反は「これは何か(subject)」「なぜ違反か(reason)」「law の文」を持ち、editor-json の `explanation`・text の
   出力・agent の hook の文に出ます。各 module の `layer_reason` は層を何で決めたか(path の置き場所・タグとの食い違い)です。
 - `noqa` の註は Python の文ごとの規則だけに効きます。層の規則の既知の破れは登録簿に鍵を置きます。
