@@ -1,0 +1,62 @@
+== 版 5454330f5ce1df5166b92c7312e20f1d587c3792+作業木の差分・Hy の変種 base(UV_FIND_LINKS・UV_NO_INDEX=1・UV_NO_CACHE=1)・関数の中の require の検だけ
+b3c3a3902a3200bf3d111ebd68df404a21b86a7edcf33d86761cac66165d4e96
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 2985159 code-quality dotfiles-precommit-index.OT1kfK (c-Z1Q7B60ABENRV4CJ9GV7QY14V5)、pid 2972244 doeff-linter lint tree (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2983031 pytest agora-controllers-wt-ki-35d1-mut2 (c-P1D3F30RV0SHJXPH6DH605RK3A)、pid 2907951 pytest agora-controllers-wt-waitnote-vocab (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 2911287 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 2915182 pytest agora-controllers (c-NM47RDG011Q0AG8DS4F117PXDD)、pid 2977054 pytest doeff-wt-ki-1618-fix1 (c-MPWEY1GKS4FAWWR2JS2EDG5SAS)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 2992293 pytest code-quality-wt-ki-04f9-base (c-JXJNP2JY8W9E5KWAKTV8YMDG2B)、pid 2972244 doeff-linter lint tree (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2983031 pytest agora-controllers-wt-ki-35d1-mut2 (c-P1D3F30RV0SHJXPH6DH605RK3A)、pid 2907951 pytest agora-controllers-wt-waitnote-vocab (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 2911287 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 2915182 pytest agora-controllers (c-NM47RDG011Q0AG8DS4F117PXDD)、pid 2991545 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 2992293 pytest code-quality-wt-ki-04f9-base (c-JXJNP2JY8W9E5KWAKTV8YMDG2B)、pid 2972244 doeff-linter lint tree (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2983031 pytest agora-controllers-wt-ki-35d1-mut2 (c-P1D3F30RV0SHJXPH6DH605RK3A)、pid 2907951 pytest agora-controllers-wt-waitnote-vocab (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 2911287 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 2978895 pytest agora-controllers-wt-cs-account-log-check (c-JNZQRZ5XAR0M05CMJ1RSDR0D0M)、pid 2991545 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 枠 7 を取った(待ち 27 秒)— pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+
+deadline scale x1.5 (load per usable CPU) — per test 90s, watchdog 135s
+
+test-admission: focused — 2 件(変更箇所の検証)
+..                                                                       [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-local-require/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 28 deselected, 1 warning in 6.63s
+rc=0
