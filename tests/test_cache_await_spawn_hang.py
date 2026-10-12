@@ -20,11 +20,11 @@ from doeff import Await, Gather, Spawn, do
 from tests._run_helpers import run_with_defaults
 
 
-# The fake work holds its results until the program has spawned every task, so all ``total`` awaits are in
-# flight at once before the first one completes (the scale this guard is about). A result that comes at once
-# would let each task finish before the next is spawned, so the scheduler would never hold more than a few
-# outstanding completions; ``asyncio.sleep(0.01)`` only got that order from the wall clock. The gate starts open, so
-# a program that does not hold it gets its results at once.
+# The fake work holds its results until the program has spawned every task, so the scheduler faces all ``total``
+# completions at once (the scale this guard is about) instead of taking them one by one while tasks are still being
+# spawned. A result completed by ``call_soon`` arrives at once and does not keep them waiting together: a scheduler
+# that drops completions once many are queued still passes it (measured), so the order is named here with a gate
+# rather than left to a delay. The gate starts open, so a program that does not hold it gets its results at once.
 _RESULT_GATE = asyncio.Event()
 _RESULT_GATE.set()
 
