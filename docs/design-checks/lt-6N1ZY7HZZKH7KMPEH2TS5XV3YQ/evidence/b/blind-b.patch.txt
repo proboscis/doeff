@@ -1,0 +1,60 @@
+--- a/packages/doeff-cluster/src/doeff_cluster/worker/core/env_rules.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/worker/core/env_rules.hy
+@@ -8,4 +8,5 @@
+ (import json)
+ (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+ (import doeff_cluster.worker.core.env_upkeep [PrepareLimits])
++(import doeff_cluster.worker.core.bake_plan [BAKE-JOBS-CEILING])
+ 
+@@ -36,4 +37,16 @@
+   launched)
+ 
+ 
++(defk launch-compile-jobs [requested warm running]
++  {:pre [(: requested (| int None)) (: warm bool) (: running int)] :post [(: % (| int None))]
++   :tags {:context "worker" :role "judgment"}}
++  "起こす準備 1 本の焼きの並べる数を決めるため(requested = 頼みの数 — None = 道具の既定・running = 今走っている準備の数)。先読みを
++   走っている準備の横で起こす時は、天井 BAKE-JOBS-CEILING を走っている本数と自分とで分けた数で焼く — 先読みは job の準備に CPU を
++   譲る(launch-order が同時の枠の 1 つを job に残すのと同じ向き・zeus で job の準備と先読みが並ぶと焼きの process が 8 + 8 本並ぶ)。
++   頼みが数を持つ時・job の準備・ひとりで走る先読みは頼みのまま。"
++  (if (and warm (is requested None) (> running 0))
++      (max 1 (// BAKE-JOBS-CEILING (+ running 1)))
++      requested))
++
++
+ (defk prepare-request [declared name platform root known min-free-bytes compile-jobs]
+--- a/packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy
+@@ -56,3 +56,3 @@
+ (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
+-                                             overdue-failure root-project declared-project])
++                                             overdue-failure root-project declared-project launch-compile-jobs])
+ (import doeff_cluster.worker.protocol.heartbeat [env-report])
+@@ -645,5 +645,7 @@
+   (for [key order]
+     (val entry (get left key))
+     (:= left (dfor #(k v) (.items left) :if (!= k key) k v))
+-    (<- started PendingEnv (launch-prepare settings key entry.runtime-env entry.compile-jobs entry.warm))
++    ;; 走っている準備の横で起こす先読みは、焼きの並べる数を絞る(launch-compile-jobs)。
++    (<- jobs (| int None) (launch-compile-jobs entry.compile-jobs entry.warm (len running)))
++    (<- started PendingEnv (launch-prepare settings key entry.runtime-env jobs entry.warm))
+     (:= running (| running {key started})))
+--- a/packages/doeff-cluster/tests/test_env_warm.hy
++++ b/packages/doeff-cluster/tests/test_env_warm.hy
+@@ -49,2 +49,3 @@
+ (import doeff_cluster.worker.core.bake_plan [BAKE-JOBS-CEILING cpu-limit-of])
++(import doeff_cluster.worker.core.env_rules [launch-compile-jobs])
+ (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+@@ -538,4 +539,12 @@
+   (assert (= (! (cpu-limit-of "800000 100000\n" 16)) 8) "atlas の上限 8 は今の並列数のまま"))
+ 
+ 
++(deftest test-a-warm-preparation-beside-a-running-one-bakes-with-a-share-of-the-ceiling
++  ;; zeus で job の準備と先読みが並ぶと、焼きの process が 8 + 8 本並ぶ。走っている準備の横の先読みは天井を分ける。
++  (assert (= (! (launch-compile-jobs None True 1)) (// BAKE-JOBS-CEILING 2)) "走っている準備 1 本の横の先読みは天井を 2 本で分ける")
++  (assert (is (! (launch-compile-jobs None True 0)) None) "ひとりで走る先読みは道具の既定")
++  (assert (is (! (launch-compile-jobs None False 1)) None) "job の準備は道具の既定")
++  (assert (= (! (launch-compile-jobs 2 True 1)) 2) "方策が数を載せた頼みはそのまま"))
++
++
+ (deftest test-bytecode-entries-travel-in-the-declaration-but-not-in-the-key
