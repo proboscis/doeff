@@ -6,6 +6,7 @@
 (require doeff-hy.macros [deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import collections.abc [Callable])
+(import dataclasses [replace])
 (import importlib)
 (import doeff [DoExpr Program run])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
@@ -50,7 +51,8 @@
 (deff system-of [#^ str name #^ tuple jobs * #^ tuple [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
   {:pre [(: name str) (: jobs tuple) (: task-limits tuple)] :post [(: % System)] :tags {:context "doeff-cluster" :role "main"}}
   "job の組と組の同時数の上限を系にする(job の名の重なり・組の名の重なり・受けられない上限は断る — 上限の規則は coordinator の
-   受け口と同じ group-limit-refusal)。"
+   受け口と同じ group-limit-refusal)。組の上限には宣言する系の名 name を付ける(GroupLimit の system — 別の系の名の付いた上限は断る。
+   coordinator は別の系が宣言した組の書き直しを断る)。"
   (setv names (lfor j jobs j.name))
   (for [n names]
     (when (> (.count names n) 1)
@@ -58,14 +60,18 @@
   (for [l task-limits]
     (when (not (isinstance l GroupLimit))
       (raise (TypeError (.format "系 {} の :task-limits は GroupLimit の tuple: {!r}" name l))))
+    (when (not-in l.system #("" name))
+      (raise (ValueError (.format "系 {} の :task-limits の組 {} に別の系 {} の名が付いている(組を宣言する系は 1 つ)" name l.group l.system)))))
+  (setv named (tuple (gfor l task-limits (replace l :system name))))
+  (for [l named]
     (setv refusal (group-limit-refusal l.group (group-limit-spec l)))
     (when (is-not refusal None)
       (raise (ValueError (.format "系 {} の :task-limits: {}" name refusal)))))
-  (setv groups (lfor l task-limits l.group))
+  (setv groups (lfor l named l.group))
   (for [g groups]
     (when (> (.count groups g) 1)
       (raise (ValueError (.format "系 {} の :task-limits に組 {} が 2 つある" name g)))))
-  (System :name name :jobs jobs :task-limits task-limits))
+  (System :name name :jobs jobs :task-limits named))
 
 
 (deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions]  ; defk にできない: declare の CLI が呼ぶ

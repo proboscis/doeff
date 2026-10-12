@@ -907,17 +907,19 @@
   (var held {})
   (for [t (.values tasks)]
     (when (in t.phase PLACED-PHASES)
-      (<- more dict (hold-limits held t t.worker groups))
+      (<- more dict (hold-limits held t.limits t.worker groups))
       (:= held more)))
   held)
 
 
-(defk hold-limits [held task worker groups]
-  {:pre [(: held dict) (: task TaskRecord) (: worker (| str None)) (: groups Table)] :post [(: % dict)]
+(defk hold-limits [held limits worker groups]
+  {:pre [(: held dict) (: limits tuple) (: worker (| str None)) (: groups Table)] :post [(: % dict)]
    :tags {:context "coordinator" :role "judgment"}}
-  "task 1 本を worker に置いた後の組の升ごとの数を知るため(held を変えずに新しい dict を返す — 宣言に無い組の名乗りは数えない)。"
+  "task 1 本(名乗った組 limits — TaskLimit の tuple)を worker に置いた後の組の升ごとの数を知るため(held を変えずに新しい dict を返す —
+   宣言に無い組の名乗りは数えない)。1 本は升ごとに 1 と数える。task の行を受けないのは、送り手の名乗る他の欄(重さなど)を数えに入れさせない
+   ため(値の持ち主は系の宣言だけ — 設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 B。引数は test_group_limits_owner が固定する)。"
   (var after (dict held))
-  (for [l task.limits :setv declared (.row groups l.group) :if (is-not declared None)]
+  (for [l limits :setv declared (.row groups l.group) :if (is-not declared None)]
     (<- slot tuple (limit-slot l declared worker))
     (:= after (| after {slot (+ (.get after slot 0) 1)})))
   after)
@@ -931,19 +933,32 @@
    どれかが宣言に無い → TASK-UNDECLARED・空きが無い → TASK-NO-ROOM・名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
    負の優先の task で、空きが worker の task-reserve 以下(置けば予約を食う)→ TASK-RESERVED(2026-10-11)。比べる値は宣言の値で、task の
    名乗りに値は無い(card ki-b0e8028c8c8d)。"
+  (<- by-limits (| TaskUnplacedKind None) (limits-misfit task.limits worker.name held groups))
+  (cond
+    (= by-limits TaskUnplacedKind.TASK-UNDECLARED) by-limits
+    (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
+    by-limits by-limits
+    (and (< task.priority 0) (<= room worker.task-reserve)) TaskUnplacedKind.TASK-RESERVED
+    True None))
+
+
+(defk limits-misfit [limits worker held groups]
+  {:pre [(: limits tuple) (: worker str) (: held dict) (: groups Table)] :post [(: % (| TaskUnplacedKind None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "task の名乗った組 limits(TaskLimit の tuple)が、worker に置くのを止めるかを知るため(None = 止めない): どれかが宣言に無い →
+   TASK-UNDECLARED・どれかの升の置いている数(held)が宣言の値に達している → TASK-LIMITED。比べるのは宣言の値と置いている本数だけで、
+   task の行を受けない(送り手の名乗る他の欄を数えに入れさせない — 盲検 B。引数は test_group_limits_owner が固定する)。"
   (var undeclared False)
   (var full False)
-  (for [l task.limits]
+  (for [l limits]
     (val declared (.row groups l.group))
     (if (is declared None)
         (:= undeclared True)
-        (do (<- slot tuple (limit-slot l declared worker.name))
+        (do (<- slot tuple (limit-slot l declared worker))
             (when (>= (.get held slot 0) declared.limit) (:= full True)))))
   (cond
     undeclared TaskUnplacedKind.TASK-UNDECLARED
-    (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
     full TaskUnplacedKind.TASK-LIMITED
-    (and (< task.priority 0) (<= room worker.task-reserve)) TaskUnplacedKind.TASK-RESERVED
     True None))
 
 
@@ -1109,7 +1124,7 @@
                                  "preparing" "assigned")
                        used (get load chosen.name)
                        (get load chosen.name) (replace used :tasks (+ used.tasks 1)))
-                 (<- after-hold dict (hold-limits held task chosen.name state.group-limits))
+                 (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。
                  (setv (get tasks id) (if task.detached

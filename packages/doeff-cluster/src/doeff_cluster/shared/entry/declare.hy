@@ -135,7 +135,8 @@
       (:= limits-written False)))
   (when (not limits-written)
     (return False))
-  (val versions (get (get (get declaration.rows 0) "run") "versions"))
+  ;; job の無い宣言(組の上限だけ)は Program を置かないので、版の識別を読まない(以前は rows[0] を読んで IndexError — 盲検 A の観測 5)。
+  (val versions (if declaration.rows (get (get (get declaration.rows 0) "run") "versions") {}))
   (var reads #())
   (for [row declaration.rows]
     (<- read ServiceRead (service-read-at base actor (get row "name") row))
