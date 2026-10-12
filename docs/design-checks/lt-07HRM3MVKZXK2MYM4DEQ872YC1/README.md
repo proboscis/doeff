@@ -20,7 +20,10 @@ module の表(`_hy_macros`)より先に引く。関数の中の require はこ�
   包み、開いた局所の macro の表を、展開している module の `RecordingTable.local_tables` に覚えさせる。局所の表は dict のまま覚える
   (Hy の require は局所の表を `type(target) is dict` で見分けるので、引いた名を覚える表に替えられない)。
 - `MacroRecording.record`: 局所の表の中の他の module の macro のうち、展開で実行された macro(`called_code` が拾った code)だけを、
-  使った macro に入れる(拾えない環境では局所の表の全部)。関数の中で `*` を require しても、使っていない macro の変更では冷えない。
+  使った macro に入れる(拾えない環境では局所の表の全部)。関数の中で `*` を require しても、展開で実行されない macro の変更では
+  冷えない。ただし「実行された」は引いた名より広い — 提供元が自分の macro を module の直下で呼ぶと、その macro は提供元の import の
+  間に実行されて記録に入り、その変更でも使う側が作り直される(module の直下の `*` の require では入らない。多く入れても古いと
+  判じやすくなるだけで、今の repo に関数の中の require は無いので費用は 0 — 盲検でない構成のレビューの所見)。
 - `_whole_requires`: 局所の表も読む。関数の中で全部を require した使い手が呼ぶ関数と同じ名の macro が提供元に足されると、古いと判じる。
 - Hy の内部の形(口の名と鍵 `records.LOCAL_MACRO_TABLE`)への依りは、包みの検が使い捨ての環境(uv.lock の版の Hy)で振る舞いとして
   測る(ADR-DOE-HY-008 の R7 に書き足した)。盲検 B の失敗例(検を同じ process に置くと、局所の状態の開き方を替えた Hy でも緑)は、
@@ -42,3 +45,12 @@ module の表(`_hy_macros`)より先に引く。関数の中の require はこ�
 | final-adr.log | ADR-DOE-HY-008 の検 | 8 passed |
 
 測っていない事: repo 全体の検・型検査(全体の回で測る)。
+
+## 構成のレビュー(設計に関わっていない subagent・Fable 5.1)
+
+直すべき指摘は無し(入れ子の関数・fn・class・内包・局所の defmacro・eval-when-compile の中の require が記録に入る事を実測)。採った物:
+records.LOCAL_MACRO_TABLE の注釈の精度(鍵が替わると黙らず落ちる)・上の「実行された」の条件・検に after-hy を足す
+(evidence/final-guard-local.log — 3 passed)。採らない物: 局所の `*` の require の余計な記録の削り(削ると漏れの側に倒れ、今の
+repo に該当 0)・同じ module の記録の表を 2 つの thread が同時に足す競合(同じ module の import は import の lock で直列で、起きるのは
+import と解析器の展開が同じ module に重なる時だけ — 落ちても多くの場合は次の展開で拾い直す)・同じ関数の中で同じ名を別の macro に
+付け替える形の漏れ(module の直下と同じ既存の限界)。
