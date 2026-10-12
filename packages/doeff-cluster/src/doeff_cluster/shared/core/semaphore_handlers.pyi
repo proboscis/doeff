@@ -10,6 +10,7 @@ from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
 from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
 from doeff_core_effects.scheduler import Spawn as Spawn
 from doeff_core_effects.scheduler import Cancel as Cancel
+from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_time import Delay as Delay
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.intent.semaphore_model import CreateNamedSemaphore as CreateNamedSemaphore
@@ -68,6 +69,9 @@ class SemaphoreSession:
         ...
 
 def acquire_lease(session: SemaphoreSession, semaphore: ClusterSemaphore) -> _Program[str, object]:
+    ...
+
+def claim_withdrawn(semaphore: ClusterSemaphore, token: str) -> _Program[None, object]:
     ...
 
 def renew_lease(session: SemaphoreSession, semaphore: ClusterSemaphore, token: str) -> _Program[None, object]:
