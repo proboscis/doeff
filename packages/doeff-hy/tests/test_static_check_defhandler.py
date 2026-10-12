@@ -174,13 +174,17 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
         " -> _doeff_HandledScope[_doeff_HandledAnswer]:"
     ) in static
     assert "doeff_hy.clause_endings" not in static
-    assert "from doeff import Pass" in static
-    assert "Resume, Transfer" not in static
+    assert "from doeff import Pass as _doeff_Pass" in static
+    assert "Resume as" not in static
+    assert "Transfer as" not in static
     # (! e) は <- と同じ _doeff_perform(yield の値は注記の無い generator では Unknown)
     assert "_doeff_perform(Tick(start)) + _doeff_perform(counting(Tick(2)))" in static
     # 実行時の展開: 注記なし・effect は節の型で注記(VM の絞り込み)・Resume / Transfer と clause_endings を import
     assert "def __doeff_handler_fn__(__doeff_body__):" in runtime, runtime
-    assert "from doeff import Resume, Transfer, Pass" in runtime
+    assert (
+        "from doeff import Resume as _doeff_Resume, Transfer as _doeff_Transfer, Pass as _doeff_Pass"
+        in runtime
+    )
     assert "from doeff_hy.clause_endings import check_clause_endings_once" in runtime
     assert "from doeff_hy.clause_endings import fell_through" in runtime
     for name in ("_doeff_Continuation", "_doeff_ClauseRun", "_doeff_HandlerBody", "_doeff_perform"):
@@ -214,3 +218,68 @@ def test_every_handler_name_is_declared_in_the_stub() -> None:
         | {node.name for node in body if isinstance(node, ast.FunctionDef)}
     )
     assert [name for name in static_view.HANDLER_STATIC_NAMES if name not in declared] == []
+
+
+# 書き手が、展開の読む名(Transfer・Pass・Put)を自分の effect の名にした module(card ki-16180480129e)。前は型検査のための展開が
+# `Pass` を素の名で import し、書き手の `Pass` の effect と 1 つの名を分け合っていた。展開は `_doeff_` の頭の別名だけを読む。
+NAMED_EFFECTS = """\
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Transfer [(get EffectBase int)]
+  #^ int amount)
+
+(defclass [(dataclass :frozen True)] Pass [(get EffectBase int)]
+  #^ int reason)
+
+(defclass [(dataclass :frozen True)] Put [(get EffectBase int)]
+  #^ str key)
+"""
+
+NAMED_PROBE = """\
+(require doeff-hy.macros [defk defhandler <- val])
+(import probe_effects [Transfer Pass Put])
+
+(defhandler ledger
+  (session var posted 0)
+  (Transfer [amount]
+    (:= posted (+ posted amount))
+    (resume posted))
+  (Pass [reason]
+    :when (> reason 0)
+    (transfer reason))
+  (Put [key]
+    (reperform effect)))
+
+(defk post-twice [amount]
+  {:pre [(: amount int)] :post [(: % int)]}
+  (<- first int (ledger (Transfer amount)))
+  (<- second int (ledger (Pass first)))
+  second)
+"""
+
+
+@needs_pyright
+def test_writer_effects_named_like_the_expansion_names_are_not_an_error(tmp_path: Path) -> None:
+    from doeff_hy.static_check import main
+
+    (tmp_path / "probe_effects.hy").write_text(NAMED_EFFECTS, encoding="utf-8")
+    (tmp_path / "probe.hy").write_text(NAMED_PROBE, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(tmp_path), "--json", "--no-cache", "--strict", str(tmp_path / "probe.hy")])
+    printed = out.getvalue()
+    found: list[dict[str, object]] = json.loads(printed) if printed.strip() else []
+    assert [d for d in found if d["severity"] == "error"] == []
+
+
+def test_static_expansion_reads_only_aliases_of_the_expansion_names() -> None:
+    """型検査のための展開は、書き手の Transfer・Pass・Put の effect と 1 つの名を分け合わない — 読む名は `_doeff_` の別名。"""
+    from doeff_hy.static_view import static_view
+
+    with static_view():
+        static = _expand(NAMED_PROBE)
+    assert "_doeff_Pass(effect, k)" in static, static
+    assert "_doeff_WithHandler(" in static, static
+    assert "_doeff_Put(" in static, static
+    assert "from doeff import Pass as _doeff_Pass" in static, static

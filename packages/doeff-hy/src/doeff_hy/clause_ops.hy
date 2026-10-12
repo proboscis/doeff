@@ -8,8 +8,9 @@
 ;;;   returns       続きが終わると節へ戻るか(resume)— 戻る操作の書き換えの後に、handle.hy が「再開した」の印を立てる
 ;;;                 (実行の時の検め。印の名は handle.hy だけが知り、行の rewrite は知らない)
 ;;;   tail          節の末尾の位置で替える操作の名(resume → transfer — handler の frame を残さない)。None は替えない
-;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名
-;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名
+;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名(別名 `_doeff_<名>` で束ねる — 書き手の同じ名の effect を
+;;;                 隠さない・doeff_hy/expansion_names.py。rewrite が読む綴りも alias-symbol で同じ別名を引く)
+;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名(同じく別名)
 ;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
 ;;;
 ;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
@@ -35,6 +36,7 @@
 (import enum [StrEnum])
 (import hy.models [Expression Symbol])
 (import doeff-hy.static-view [static-view-enabled])
+(import doeff-hy.expansion-names [alias-symbol import-form])
 
 
 (defclass Ending [StrEnum]
@@ -67,18 +69,18 @@
    `(isinstance effect EffectType)` で絞られている)。"
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
-      `(yield (do (import doeff [typed-resume])
-                  (typed-resume effect k ~value)))
-      `(yield (Resume k ~value))))
+      `(yield (do ~(import-form ["typed_resume"])
+                  (~(alias-symbol "typed_resume") effect k ~value)))
+      `(yield (~(alias-symbol "Resume") k ~value))))
 
 
 (defn _transfer [args recur]
   "(transfer 値) → 続きを値で再開し、handler を外す(末尾の呼び)。型検査のための展開は core の typed-transfer。"
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
-      `(yield (do (import doeff [typed-transfer])
-                  (typed-transfer effect k ~value)))
-      `(yield (Transfer k ~value))))
+      `(yield (do ~(import-form ["typed_transfer"])
+                  (~(alias-symbol "typed_transfer") effect k ~value)))
+      `(yield (~(alias-symbol "Transfer") k ~value))))
 
 
 (defn _finish [args recur]
@@ -88,7 +90,7 @@
 
 (defn _reperform [args recur]
   "(reperform effect) → effect と続きを外の handler へ渡す(OCaml 5 の reperform)。"
-  `(yield (Pass ~(recur (get args 0)) k)))
+  `(yield (~(alias-symbol "Pass") ~(recur (get args 0)) k)))
 
 
 (defn _pass [args recur]
@@ -97,7 +99,7 @@
   (warnings.warn
     "(pass) is deprecated in defhandler — use (reperform effect) instead"
     DeprecationWarning)
-  '(yield (Pass effect k)))
+  `(yield (~(alias-symbol "Pass") effect k)))
 
 
 ;; 節の操作の表。行の順は handler の頭の import の名の順(node-names)。表を引くのはこの module の関数だけ(呼び手は名で表を

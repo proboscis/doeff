@@ -45,6 +45,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from doeff_hy.binding_forms import Finding
+from doeff_hy.expansion_names import alias, import_source
 
 # 型検査のための展開の印は bytecode の包みが持つ — 包みの compile の口が、この展開で作った実行できない code に macro の依存の
 # 記録を付けず、.pyc と共有の code の置き場から普通の import へ渡らないようにするため(doeff_hy_bytecode_guard/expansion.py)。
@@ -90,7 +91,7 @@ DEFTEST_FIXTURE_TYPES: tuple[FixtureType, ...] = (
 
 def deftest_annotation_name(type_name: str) -> str:
     """static_types の型の名を、展開の中で使う名(module の頭の import の別名)にする。"""
-    return f"_doeff_{type_name}"
+    return alias(type_name)
 
 
 def deftest_fixture_annotation(fixture: str) -> str:
@@ -125,11 +126,10 @@ TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
 #: - `session_key`: session val / session var の初期化のキーを作る(handle.hy の `_build-lazy-init-forms` — 旧い lazy は使わない)。
 #: handler ごとに import を出すと、:= も set! も無い handler の module で Put / Some が strict の「import が使われていない」の赤に
 #: なり、書き手は直せなかった(agora-controllers の日次 2026-10-11 16:00 の 7 file・14 件)。module の頭の補助の import に載せ、
-#: 読む時だけ置く。名に `_doeff_` を付けるのは、書き手の書いた Put / Some の import と 1 つの名を分け合わないため。
+#: 読む時だけ置く。名に `_doeff_` を付けるのは、書き手の書いた Put / Some の import と 1 つの名を分け合わないため — 実行時の
+#: 展開も同じ別名を引く(expansion_names.py が別名の綴りと import の唯一の定義元)。
 SESSION_STATIC_IMPORTS: str = (
-    "from doeff import Some as _doeff_Some\n"
-    "from doeff_core_effects.effects import Put as _doeff_Put\n"
-    "from doeff_hy.session import session_key as _doeff_session_key\n"
+    import_source(("Some", "Put")) + "from doeff_hy.session import session_key as _doeff_session_key\n"
 )
 
 #: defmcp-tool の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く(macros.hy の defmcp-tool)。

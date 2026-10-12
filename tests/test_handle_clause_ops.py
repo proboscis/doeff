@@ -27,6 +27,7 @@ import hy
 import pytest
 from doeff_hy import clause_endings, clause_ops, handle
 from doeff_hy.clause_ops import ClauseOp, Ending
+from doeff_hy.expansion_names import alias, alias_symbol
 from doeff_hy.static_view import static_view
 from hy.models import Expression, Object, Sequence, String, Symbol
 
@@ -103,7 +104,10 @@ def _read_names(tree: ast.Module) -> frozenset[str]:
 def _rewrite_throw(args: list[Object], recur: Callable[[Object], Object]) -> Object:
     """(throw 例外) → 続きへ例外を投げて handler を外す(末尾)— 盲検 A が足した操作と同じ形。"""
     return Expression(
-        [Symbol("yield"), Expression([Symbol("TransferThrow"), Symbol("k"), recur(args[0])])]
+        [
+            Symbol("yield"),
+            Expression([alias_symbol("TransferThrow"), Symbol("k"), recur(args[0])]),
+        ]
     )
 
 
@@ -169,7 +173,8 @@ def test_added_resuming_operation_is_refused_for_an_aliased_raise_when_handle_is
 
 
 def test_added_operation_node_is_imported_in_both_expansions(throw_op: ClauseOp) -> None:
-    """型検査のための展開も、表の static-nodes の node を import してから読む(前は TransferThrow を import せずに読んだ)。"""
+    """型検査のための展開も、表の static-nodes の node を import してから読む(前は TransferThrow を import せずに読んだ)。
+    読む名は `_doeff_` の別名で、書き手の同じ名を隠さない(card ki-16180480129e)。"""
     source = """
     (defk subject [] {:pre [] :post [(: % int)]}
       (<- r (handle (guarded 1) (Bump [n] (throw (ValueError "boom")))))
@@ -177,14 +182,18 @@ def test_added_operation_node_is_imported_in_both_expansions(throw_op: ClauseOp)
     """
     for static in (False, True):
         tree = _expand(source, static=static)
-        assert "TransferThrow" in _read_names(tree)
+        assert alias("TransferThrow") in _read_names(tree)
+        assert "TransferThrow" not in _read_names(tree)
         assert "TransferThrow" in _doeff_imports(tree)
 
 
 def _rewrite_resume_throw(args: list[Object], recur: Callable[[Object], Object]) -> Object:
     """(throw 例外) → 続きへ例外を投げ、続きが終わると節へ戻る(handler は残る)— resume と同じ扱い(盲検 A の要求)。"""
     return Expression(
-        [Symbol("yield"), Expression([Symbol("ResumeThrow"), Symbol("k"), recur(args[0])])]
+        [
+            Symbol("yield"),
+            Expression([alias_symbol("ResumeThrow"), Symbol("k"), recur(args[0])]),
+        ]
     )
 
 
@@ -248,10 +257,10 @@ def test_added_operation_with_a_tail_is_replaced_at_the_tail(resume_throw_ops: N
     for static in (False, True):
         tail_names = _read_names(_expand(tail, static=static))
         inner_names = _read_names(_expand(inner, static=static))
-        assert "TransferThrow" in tail_names
-        assert "ResumeThrow" not in tail_names
-        assert "ResumeThrow" in inner_names
-        assert "TransferThrow" not in inner_names
+        assert alias("TransferThrow") in tail_names
+        assert alias("ResumeThrow") not in tail_names
+        assert alias("ResumeThrow") in inner_names
+        assert alias("TransferThrow") not in inner_names
     assert run(_eval_module(tail).subject()) == -1
     assert "Raise の節は throw できない" in _expansion_refusal(
         '(setv h (handle (raises) (Raise [reason] (throw (ValueError "into-k")))))'
