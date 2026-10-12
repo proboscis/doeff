@@ -42,7 +42,10 @@
 ;;;                 1 通の上限 ws-max-bytes を持つ)と、送りの箱 + 書き手の task(WsSendText / WsClose は箱へ積むだけで待たない — 遅い 1 接続が
 ;;;                 他の接続と本体を塞がない)を立てる。箱の溜まりが ws-send-max-bytes を超える 1 通が来たら、その接続をその場で切る(箱を捨てる・
 ;;;                 transport を落とす)。閉じた接続への送りは黙って捨てる。出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed)は要求と
-;;;                 同じ列へ並べ、受けた拍の単調時計を received-at に載せる
+;;;                 同じ列へ並べ、受けた拍の単調時計を received-at に載せる。WsSendText の節は、箱へ積む仕事を待ち受けの loop へ積むだけで
+;;;                 戻る(共有の loop を経ず、往復を待たない — 応答の送出と同じ形・card ki-bbf782b2ab4b: 同じ通を接続の数だけ送る呼び手の
+;;;                 1 周期が、送り 1 回ごとの往復の待ちで送りの数に比例して伸びていた)。積んだ順に渡るので、同じ札への送りは撃った順に
+;;;                 箱へ入り、後から撃った閉じ(WsClose)・勘定の読み(TakeWsSendReport)・待ち受けの閉じ(HttpShutdown)より先に渡る
 ;;;   閉じ          HttpShutdown で新しい要求を受けず、開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、
 ;;;                 残った接続は落として待ち受けを畳む。以後の HttpNextRequest は HttpServerClosed
 ;;;   送りの勘定    積んだ・流した・捨てた byte と流すまでの所要を数え、TakeWsSendReport で渡して 0 に戻す(消費者の計器の材料)
@@ -516,8 +519,15 @@
     (.set peer.wake)
     None)
 
-  (defn :async #^ None send-text [self #^ str ticket #^ str text]
-    "札の接続の箱へ文字の 1 通を積むため(待たない)。閉じた・知らない札は捨てる。溜まりが上限を超える 1 通なら接続をその場で切る。"
+  (defn #^ None post-text [self #^ str ticket #^ str text]
+    "本体の送りを待ち受けの loop へ積むだけで戻るため(共有の loop を経ず、往復を待たない — 頭の註の ws の終端)。待ち受けの loop は積まれた順に
+     回すので、同じ札への送りは撃った順に箱へ入り、後から撃った across の coroutine(閉じ・勘定の読み・待ち受けの閉じ)より先に渡る。"
+    (.call-soon-threadsafe (self.edge-loop) self.send-text ticket text)
+    None)
+
+  (defn #^ None send-text [self #^ str ticket #^ str text]
+    "札の接続の箱へ文字の 1 通を積むため(待たない — 待ち受けの loop の上で呼ぶ)。閉じた・知らない札は捨てる。溜まりが上限を超える 1 通なら
+     接続をその場で切る。"
     (setv peer (.get self.peers ticket))
     (when (or (is peer None) peer.closed)
       (return None))
@@ -779,7 +789,8 @@
     (<- (Await (.across edge (.settle edge ticket effect))))
     (resume None))
   (WsSendText [ticket text]
-    (<- (Await (.across edge (.send-text edge ticket text))))
+    ;; 送りは待ち受けの loop へ積むだけ(共有の loop を経ない — 頭の註の ws の終端)。
+    (.post-text edge ticket text)
     (resume None))
   (WsClose [ticket code reason]
     (<- (Await (.across edge (.close-ws edge ticket code reason))))

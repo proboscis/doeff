@@ -209,6 +209,9 @@ class WebEdge:
     def seal(self, peer: WsPeer, unsent: int) -> None:
         ...
 
+    def post_text(self, ticket: str, text: str) -> None:
+        ...
+
     def send_text(self, ticket: str, text: str) -> None:
         ...
 
