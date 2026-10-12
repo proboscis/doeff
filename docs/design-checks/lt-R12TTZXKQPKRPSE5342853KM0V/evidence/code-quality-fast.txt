@@ -1,0 +1,30 @@
+# 命令: sh ~/dotfiles/agent/venv-run.sh ~/dotfiles/agentcli code-quality --repo <作業木> --scope changed --base 7cf74b0e7
+# 結果: passed(fast 段・型検査は未実行)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 1485111 node-test agora-wt-node-test-processes-env (c-P2P3QCJVP690BJEV217TVF6P8S)、pid 1465752 pytest code-quality-wt-ki-04f9 (c-JXJNP2JY8W9E5KWAKTV8YMDG2B)、pid 1475561 pytest agora-controllers-wt-wait-vocab (c-VKV0YTC5TGT2KC3K8MGH4309EQ)、pid 1480538 pytest doeff-wt-bytecode-guard-internals (c-PX52E1C685SM9V7R2V7NRZFVXD)、pid 1478115 code-quality agora-wt-daily-1012-1200 (c-EJHDQZ8J1D3ABD979RSTWTAHV7)、pid 1464709 pytest doeff-wt-inv-fence-nap (c-NM47RDG011Q0AG8DS4F117PXDD)、pid 1392545 node-test agora-wt-wow-c7c/packages/webapp (c-Z89GZ6VK0GC802JFMSA27FJG6H)、pid 1477461 pytest agora-wt-dc-daily-1012 (c-CK5ZRQAGSH7DHHR709M4KTWDBK)・待つのは code-quality doeff-wt-ki-d153 (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 1486048 doeff-linter lint agora-controllers-wt-ki-de5d (c-BX737K2RN0DDHKV010H3XMM0VV)、pid 1465752 pytest code-quality-wt-ki-04f9 (c-JXJNP2JY8W9E5KWAKTV8YMDG2B)、pid 1475561 pytest agora-controllers-wt-wait-vocab (c-VKV0YTC5TGT2KC3K8MGH4309EQ)、pid 1480538 pytest doeff-wt-bytecode-guard-internals (c-PX52E1C685SM9V7R2V7NRZFVXD)、pid 1478115 code-quality agora-wt-daily-1012-1200 (c-EJHDQZ8J1D3ABD979RSTWTAHV7)、pid 1471974 code-quality blind-b-fx1-snap-cq (c-FHZ4PP6TYZX8CBHJRPZ34FHR0Y)、pid 1392545 node-test agora-wt-wow-c7c/packages/webapp (c-Z89GZ6VK0GC802JFMSA27FJG6H)、pid 1487184 pytest agora-controllers-wt-ki-38b1 (c-JHSTE3VTTHB3YARW9M21BCJW0Y)・待つのは code-quality doeff-wt-ki-d153 (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 1486048 doeff-linter lint agora-controllers-wt-ki-de5d (c-BX737K2RN0DDHKV010H3XMM0VV)、pid 1465752 pytest code-quality-wt-ki-04f9 (c-JXJNP2JY8W9E5KWAKTV8YMDG2B)、pid 1475561 pytest agora-controllers-wt-wait-vocab (c-VKV0YTC5TGT2KC3K8MGH4309EQ)、pid 1475393 doeff-linter --commit-hook agora-controllers-wt-ki-4df9 (c-JEVB5SSKW0BNDGBCESW853T8S3)、pid 1478115 code-quality agora-wt-daily-1012-1200 (c-EJHDQZ8J1D3ABD979RSTWTAHV7)、pid 1471974 code-quality blind-b-fx1-snap-cq (c-FHZ4PP6TYZX8CBHJRPZ34FHR0Y)、pid 1392545 node-test agora-wt-wow-c7c/packages/webapp (c-Z89GZ6VK0GC802JFMSA27FJG6H)、pid 1487184 pytest agora-controllers-wt-ki-38b1 (c-JHSTE3VTTHB3YARW9M21BCJW0Y)・待つのは code-quality doeff-wt-ki-d153 (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 枠 6 を取った(待ち 27 秒)— code-quality doeff-wt-ki-d153 (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+code-quality: passed (scope=changed・型検査は未実行(fast の段))
+code-quality-base: {'revision': '7cf74b0e7dd827edb88f25b02e51d312a623c03f', 'repo': '/work/toolset/worktrees/doeff-wt-ki-d153'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: docs/design/seat-home-common-instructions-AJ8C0B/model/architecture.hy: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-linter/tests/rule_population.rs: 変更ソースは typed:true が必要。既存 legacy の型無効で免除しない(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: tests/test_daily_test_population.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: tests/test_sealed_records_are_named.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-timing: prepare 46.462s inventory=2857 scoped=879 sources=6 changed=14 selected=4
+code-quality-timing: node-toolchain 0.0s status=checkout path=/work/toolset/worktrees/doeff-wt-ki-d153
+code-quality-timing: verdict-lookup 0.012s hit=False key=26b6b1c36684
+code-quality-timing: candidate.sources 0.749s sources=6 selected=8 analyzed={'hy': 2, 'rust': 1} by_language={'hy': 0.73, 'rust': 0.02} cache_hits=2 cache_misses=0
+code-quality-timing: candidate.closure 0.0s affected=8 languages={'?': 4, 'hy': 1, 'python': 2, 'rust': 1} touched_languages=['rust']
+code-quality-timing: base.workspace 3.973s paths=6267
+code-quality-timing: base.read 0.366s inventory=2861 sources=6
+code-quality-timing: base.sources 0.058s sources=6 selected=8 analyzed={'hy': 2, 'rust': 1} by_language={'hy': 0.04, 'rust': 0.02} cache_hits=2 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=8 languages={'hy': 1, 'python': 6, 'rust': 1} touched_languages=['hy', 'python', 'rust']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.038s modules=279 paths=2861
+code-quality-timing: base.policy 0.002s dependencies=23 findings=0
+code-quality-timing: observe-baseline 4.728s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.035s
+code-quality-coverage: partial / 対象 879 / 全体 2857 / 未導入 {'hy': 344, 'javascript': 13, 'lua': 17, 'python': 1340, 'rust': 88, 'shell': 53, 'typescript': 123} / typed:true だが include に無い 27(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 556 件（自動増加しない）
