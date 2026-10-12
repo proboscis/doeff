@@ -7,6 +7,7 @@
 ;;; 走りの 1.02 倍)を越える。宣言との比べと文は plugin の側の検が確かめる。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
+(import collections.abc [Callable])
 (import dataclasses [dataclass field])  ; defrecord の展開が名指す
 (import math)
 (import doeff_events [MemoryBroker])
@@ -40,7 +41,7 @@
 
 
 (defk measured-world [system]
-  {:pre [(: system "defsystem の関数")] :post [(: % WorldSplit)] :tags {:context "doeff-cluster-test" :role "program"}}
+  {:pre [(: system Callable)] :post [(: % WorldSplit)] :tags {:context "doeff-cluster-test" :role "program"}}
   "系を 10 秒の筋書きで 1 回回し、その世界の歩数を印で分けた値を得るため(印の記録は検の中で開け閉めする — doeff の検は歩数の上限の
    plugin を開かない)。"
   (open-phase-log)
