@@ -37,6 +37,8 @@ from hy.models import (
     Tuple,
 )
 
+from doeff_hy.expansion_names import alias_symbol
+
 # ---------------------------------------------------------------------------
 # 型
 # ---------------------------------------------------------------------------
@@ -609,10 +611,11 @@ class _Walker:
                     f"(session val {name} …) は書き換えられません。書き換えるなら (session var {name} …) で宣言してください。",
                 )
             key = Symbol(f"_lazy_{name}_key")
-            # 型検査のための展開では、doeff-hy-check が module の頭で読む時だけ置く補助の名で引く
-            # (static_view.SESSION_STATIC_IMPORTS)。実行時は defhandler が出す import の Put / Some。
-            put = Symbol("_doeff_Put" if self.static else "Put")
-            some = Symbol("_doeff_Some" if self.static else "Some")
+            # どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — expansion_names.py)。
+            # 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く
+            # (static_view.SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
+            put = alias_symbol("Put")
+            some = alias_symbol("Some")
             return _Walked(
                 self._located(
                     Expression(
