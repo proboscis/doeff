@@ -20,12 +20,14 @@ shim を起こす。外の世界(送り先)の代わりを渡す検は、送り�
 import json
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,6 +41,8 @@ from doeff_cluster.worker.entry.line_stamp import (
     JOB_LOG_ATTRIBUTES_VAR,
     JOB_LOG_ENV_NAMES,
     JOB_LOG_OTLP_VAR,
+    POD_NAME_VAR,
+    POD_NAMESPACE_VAR,
     Attribute,
     CutLines,
     JobLogOff,
@@ -48,6 +52,7 @@ from doeff_cluster.worker.entry.line_stamp import (
     OpenLine,
     QueuedLine,
     ShipLimits,
+    coordinator_log_plan,
     cut_lines,
     job_log_plan,
     logs_body,
@@ -778,3 +783,100 @@ def test_a_flooding_worker_does_not_wait_for_a_silent_destination(tmp_path: Path
     assert ran.code == 0, ran.out[-500:]
     assert ran.out.count(b"worker: burst line ") == 40_000
     assert ran.seconds < 10.0, ran.seconds
+
+
+# --- coordinator の process 自身の行(card ki-0b0ab40048b9 — Pod の log は Pod の入れ替えで消える)--------------------------------------
+
+POD = {POD_NAME_VAR: "coordinator-5f-abc", POD_NAMESPACE_VAR: "lab-ns"}
+
+
+def test_the_coordinator_names_itself_after_its_pod() -> None:
+    """coordinator の process 自身の行は job の名 coordinator/<Pod の namespace>(Pod が入れ替わっても同じ名で読む)・名乗り = Pod の名・
+    試み 0・世代 = 渡した起動の刻で名乗る。送り先が無ければ送らない。送り先が在るのに Pod の名乗りが欠ければ、欠けた名を挙げて送らない。"""
+    environ = {**CONTEXT, **POD, JOB_LOG_OTLP_VAR: "http://collector:4318", JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal"}
+    assert coordinator_log_plan(environ, "1791234567891") == JobLogTarget(
+        endpoint="http://collector:4318/v1/logs",
+        resource=(
+            Attribute("owner.tenant", "personal"),
+            Attribute("service.name", "doeff.job-log"),
+            Attribute("doeff.worker", "coordinator-5f-abc"),
+            Attribute("doeff.job", "coordinator/lab-ns"),
+            Attribute("doeff.attempt", "0"),
+            Attribute("doeff.instance", "1791234567891"),
+        ),
+    )
+    assert coordinator_log_plan(POD, "1") == JobLogOff()
+    assert coordinator_log_plan({}, "1") == JobLogOff()
+    assert coordinator_log_plan({JOB_LOG_OTLP_VAR: "http://collector:4318", POD_NAMESPACE_VAR: "lab-ns"}, "1") == JobLogRefused(
+        "coordinator の名乗りの環境変数が無い: POD_NAME"
+    )
+
+
+@dataclass(frozen=True)
+class CoordinatorRan:
+    """本物の coordinator の入口の 1 回: code = 終了コード・out と err = stdout と stderr の file の中身(別の 2 つの file)。"""
+
+    code: int
+    out: bytes
+    err: bytes
+
+
+def coordinator_run(tmp: Path, env: dict[str, str]) -> CoordinatorRan:
+    """本物の coordinator の入口(boot.sh と同じ `hy -m doeff_cluster.coordinator.entry.main`)を、k8s の container と同じく stdout と
+    stderr を別の 2 つの先へ向けて起こし、受け始めたら止めの合図(SIGTERM — Pod の止めと同じ)を送って終わらせるため。env = 足す環境変数。"""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    hy_command = str(Path(sys.executable).parent / "hy")
+    argv = ["env", *(f"{name}={value}" for name, value in env.items()), hy_command, "-m", "doeff_cluster.coordinator.entry.main",
+            "--state-file", str(tmp / "coord" / "state.json"), "--port", str(port), "--notice-broker", "memory"]
+    (tmp / "coord").mkdir()
+    out_path, err_path = tmp / "coordinator.out", tmp / "coordinator.err"
+    with open(out_path, "ab") as out, open(err_path, "ab") as err:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, cwd=str(tmp))
+    try:
+        deadline = time.monotonic() + 90.0
+        while True:
+            assert process.poll() is None, err_path.read_bytes()[-2000:] + out_path.read_bytes()[-2000:]
+            assert time.monotonic() < deadline, "coordinator が 90 秒で答えなかった"
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/livez", timeout=1.0):
+                    break
+            except OSError:
+                time.sleep(0.1)
+        process.send_signal(signal.SIGTERM)
+        code = process.wait(timeout=END_LIMIT_SECONDS)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+    return CoordinatorRan(code=code, out=out_path.read_bytes(), err=err_path.read_bytes())
+
+
+def test_the_coordinator_ships_its_own_lines_from_two_pipes_until_it_stops(tmp_path: Path, collector: Collector) -> None:
+    """送り先と Pod の名乗りが在る coordinator は、stdout と stderr が別の先(k8s の container の 2 本の pipe)でも 2 つを 1 本にまとめ、
+    自分の行(受け始めの行から止まりの行まで)を刻つきで stdout へ書き、同じ行を job の名 coordinator/<namespace>・名乗り Pod の名で
+    送る。止まりの行も送ってから終わる(書き手の終わりは process の終わり)。"""
+    env = {JOB_LOG_OTLP_VAR: collector.base(), JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal", **POD}
+    ran = coordinator_run(tmp_path, env)
+    assert ran.code == 0, ran.err[-2000:]
+    lines = file_lines(ran.out)
+    bodies = [x.body for x in lines]
+    assert any(b.startswith(b"coordinator: :") and "で受けます".encode() in b for b in bodies), bodies
+    assert bodies[-1] == "coordinator: 止まりました".encode(), bodies
+    assert "で受けます".encode() not in ran.err, ran.err
+    records = received_until(collector, len(lines))
+    assert [r.body for r in records] == [x.body.decode() for x in lines]
+    assert {dict(r.resource)["doeff.job"] for r in records} == {"coordinator/lab-ns"}
+    assert {dict(r.resource)["doeff.worker"] for r in records} == {"coordinator-5f-abc"}
+    assert {dict(r.resource)["doeff.attempt"] for r in records} == {"0"}
+
+
+def test_a_coordinator_without_the_destination_keeps_its_two_streams(tmp_path: Path, collector: Collector) -> None:
+    """送り先が無い coordinator(手元の process・送り先を置かない宣言)は、出力の向きを替えない — 行は刻を付けずに stderr のまま在り、
+    何も送らない。"""
+    ran = coordinator_run(tmp_path, dict(POD))
+    assert ran.code == 0, ran.err[-2000:]
+    assert ran.err.endswith("coordinator: 止まりました\n".encode()), ran.err[-500:]
+    assert STAMP.match(ran.err) is None, ran.err[:200]
+    assert collector.records() == []

@@ -34,6 +34,8 @@
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
 (import doeff_events [MemoryBroker])
+;; 自分の行の送り(card ki-0b0ab40048b9 — worker の process 自身の行と同じ部品)。
+(import doeff_cluster.worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES coordinator-log-plan process-lines])
 
 
 
@@ -132,6 +134,14 @@
   (replace state :running-commit commit))
 
 
+(defk log-environment []
+  {:pre [] :post [(: % dict)] :tags {:context "coordinator" :role "main"}}
+  "自分の行の送り先と Pod の名乗り(line_stamp の COORDINATOR-LOG-ENV-NAMES)を、起動の時に 1 度、自分の環境変数から在る分だけ読むため
+   (答え手は入口が被せる — 本番は subprocess-handler)。答え = 名から値への dict(無い・空の名は入れない)。"
+  (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment COORDINATOR-LOG-ENV-NAMES))
+  (dfor e found :if e.value e.name e.value))
+
+
 (defk state-on-start [state-file store]
   {:pre [(: state-file str) (: store DurableStore)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "main"}}
   "起動の時刻を時計の effect で読み、その時刻で置き場から状態を読み直し、この process が走っている doeff の版を載せるため(時計と
@@ -148,6 +158,13 @@
 (deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster.coordinator.entry.main` の __main__ と boot.sh が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "coordinator" :role "main"}}
   "coordinator の process の入口: 起動の引数から置き場と受け口を組み立て、置き場から状態を読み直して、本番の handler の組の上で調停ループを回すため。"
+  ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(card ki-0b0ab40048b9 — Pod の log は
+  ;; 版上げの Pod の入れ替えで消え、worker が届かなかった窓の coordinator の行を後から読めなかった)。job の名 coordinator/<Pod の
+  ;; namespace>・名乗り Pod の名・世代 = 起動の刻。送り先が無ければ今のまま。Pod の stdout と stderr は 2 本の pipe なので 1 本に
+  ;; まとめて(merged)以後の行を stdout へ刻つきで書く。引数の断りと捕まえない例外の traceback も送る(終わりは process の終わり)。
+  (process-lines (coordinator-log-plan (run (with_handlers [subprocess-handler] (log-environment)))
+                                       (str (run (with_handlers [(sync-time-handler)] (now-epoch-ms)))))
+                 :merged True)
   (setv parser (argparse.ArgumentParser :description "doeff worker の coordinator(実験)"))
   (.add-argument parser "--state-file" :required True)
   (.add-argument parser "--port" :type int :default 8080)
