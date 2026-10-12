@@ -1,0 +1,11 @@
+# 版: c02f340388eea6ddcda09b5d7edc86356a2eb3bb(doeff-wt-dc-ln19)・刻 2026-10-12 00:52:50 UTC
+# command: (cd /home/ubuntu/.worktrees/doeff-wt-dc-ln19 && uv run python -I /tmp/mcp-scripts/a_repro.py /tmp/ln19-ev/a-FIX 2 64 65 70)
+module N=2: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+class N=2: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+module N=64: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+class N=64: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+module N=65: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+class N=65: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+module N=70: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+class N=70: 投影の 'from doeff.mcp import' の文 = 1 / 赤 = ['reportReturnType']
+# rc=0

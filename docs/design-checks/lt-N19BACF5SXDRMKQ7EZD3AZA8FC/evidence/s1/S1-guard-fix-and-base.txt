@@ -1,0 +1,39 @@
+# 版: c02f340388eea6ddcda09b5d7edc86356a2eb3bb(doeff-wt-dc-ln19)・刻 2026-10-12 00:54:13 UTC
+## S1 の差分(macros.hy)
++       ~@(lfor f (cut expanded-forms 0 -1) (_wrap-statement-guard f (str name)))
++       ~@(cut expanded-forms -1 None))
++     `(_install-guard-globals ~handler-name)
+## command: uv run python -I /tmp/ln19-blind-b/s1_guard_probe.py(tool だけの module・文の位置に捨てた (Pure 1))
+RuntimeError: t (line 1): statement-position expression evaluated to an unperformed Pure — a bare Program/EffectBase in statement position never runs. Fix: bind it 
+## command: uv run pytest tests/public_api/test_mcp_tool_macro.py -q
+8 passed in 2.74s
+## command: uv run pytest tests/test_nested_definition_scope.py -q
+32 passed in 2.18s
+## command: uv run pytest packages/doeff-hy/tests/test_static_check.py -k mcp -q
+3 passed, 18 deselected in 4.66s
+## command: uv run pytest packages/doeff-hy/tests/test_helper_imports_table.py -q
+18 passed in 0.95s
+# 戻した後の git status: []
+# 版: dadb899700fb94f49904af5f26f4d8deae9a847b(doeff-dc-base-dadb899)・刻 2026-10-12 00:54:28 UTC
+## S1 の差分(macros.hy)
++       ~@(lfor f (cut expanded-forms 0 -1) (_wrap-statement-guard f (str name)))
++       ~@(cut expanded-forms -1 None))
++     `(_install-guard-globals ~handler-name)
+## command: uv run python -I /tmp/ln19-blind-b/s1_guard_probe.py(tool だけの module・文の位置に捨てた (Pure 1))
+NameError: name '_install_guard_globals' is not defined
+## command: uv run pytest tests/public_api/test_mcp_tool_macro.py -q
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_basic_expansion
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_params_schema
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_handler_returns_expand
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_handler_executes_via_run
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_handler_with_bind
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_input_schema_from_macro
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_param_names_match_handler_signature
+7 failed, 1 passed in 3.35s
+## command: uv run pytest tests/test_nested_definition_scope.py -q
+FAILED tests/test_nested_definition_scope.py::test_class_body_definition_runs_without_module_definitions[defmcp-tool]
+1 failed, 31 passed in 2.23s
+## command: uv run pytest packages/doeff-hy/tests/test_static_check.py -k mcp -q
+## command: uv run pytest packages/doeff-hy/tests/test_helper_imports_table.py -q
+(この版に file が無い)
+# 戻した後の git status: []

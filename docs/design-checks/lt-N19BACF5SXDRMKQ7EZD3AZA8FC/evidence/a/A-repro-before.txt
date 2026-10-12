@@ -1,0 +1,11 @@
+# 版: d4c8d7ce999c8536cddf7349855d2a3deece43db(doeff-blind-d4c8d7ce9)・刻 2026-10-12 00:52:33 UTC
+# command: (cd /home/ubuntu/.worktrees/doeff-blind-d4c8d7ce9 && uv run python -I /tmp/mcp-scripts/a_repro.py /tmp/ln19-ev/a-IMPL 2 64 65 70)
+module N=2: 投影の 'from doeff.mcp import' の文 = 2 / 赤 = ['reportReturnType']
+class N=2: 投影の 'from doeff.mcp import' の文 = 2 / 赤 = ['reportReturnType']
+module N=64: 投影の 'from doeff.mcp import' の文 = 64 / 赤 = ['reportReturnType']
+class N=64: 投影の 'from doeff.mcp import' の文 = 64 / 赤 = ['reportReturnType']
+module N=65: 投影の 'from doeff.mcp import' の文 = 65 / 赤 = []
+class N=65: 投影の 'from doeff.mcp import' の文 = 65 / 赤 = []
+module N=70: 投影の 'from doeff.mcp import' の文 = 70 / 赤 = []
+class N=70: 投影の 'from doeff.mcp import' の文 = 70 / 赤 = []
+# rc=0

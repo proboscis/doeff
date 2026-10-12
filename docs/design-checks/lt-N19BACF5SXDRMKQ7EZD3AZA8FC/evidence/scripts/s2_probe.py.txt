@@ -1,0 +1,58 @@
+"""S2 の模擬: 型検査の投影で module の頭の `_doeff_do` の型の出所を、core の do と別の型(probe_static_do.do — 答えを
+StaticProgram[T] と宣言する)に替え(M2 の STATIC_HELPER_IMPORTS だけを差し替える)、tool の handler と後ろの defk が
+どちらもその型で包まれるかを pyright の reveal_type で見る。
+使い方: uv run python -I s2_probe.py <置き場の dir>"""
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import doeff_hy.static_check as static_check
+
+PROBE = '''from collections.abc import Callable
+from typing import Generic, ParamSpec, TypeVar
+
+P = ParamSpec("P")
+T = TypeVar("T")
+
+
+class StaticProgram(Generic[T]): ...
+
+
+def do(fn: Callable[P, T], /) -> Callable[P, StaticProgram[T]]: ...
+'''
+SOURCE = """(require doeff-hy.macros [defk defmcp-tool <-])
+(import doeff [Pure])
+(defmcp-tool echo "Echo" [{:name "text" :type "string" :description "text"}] (<- r (Pure text)) r)
+(defclass Box []
+  (defmcp-tool in-class "Echo" [{:name "text" :type "string" :description "text"}] text))
+(defk double [x] {:pre [(: x int)] :post [(: % int)]} (* x 2))
+"""
+root = Path(sys.argv[1])
+root.mkdir(parents=True, exist_ok=True)
+(root / "tools.hy").write_text(SOURCE, encoding="utf-8")
+original = static_check.STATIC_HELPER_IMPORTS
+head = "from doeff_hy.static_types import do as _doeff_do, "
+assert original.count(head) == 1, original
+static_check.STATIC_HELPER_IMPORTS = original.replace(
+    head, "from probe_static_do import do as _doeff_do\nfrom doeff_hy.static_types import "
+)
+try:
+    projection = static_check.project(root, [root], root / "tools.hy")
+finally:
+    static_check.STATIC_HELPER_IMPORTS = original
+assert isinstance(projection, static_check.Projection), projection
+(root / "probe_static_do.py").write_text(PROBE, encoding="utf-8")
+(root / "tools.py").write_text(
+    projection.text
+    + "\nreveal_type(_echo_mcp_handler)\nreveal_type(Box._in_class_mcp_handler)\nreveal_type(double)\n",
+    encoding="utf-8",
+)
+(root / "pyrightconfig.json").write_text('{"typeCheckingMode": "basic"}\n', encoding="utf-8")
+print("投影の `_doeff_do` を束ねる import:")
+print("\n".join(line for line in projection.text.splitlines() if "_doeff_do" in line and "import" in line))
+run = subprocess.run(
+    [shutil.which("pyright"), "--pythonpath", sys.executable, "tools.py"],
+    cwd=root, capture_output=True, text=True, check=False,
+)
+print("\n".join(line.strip() for line in run.stdout.splitlines() if "Type of" in line))

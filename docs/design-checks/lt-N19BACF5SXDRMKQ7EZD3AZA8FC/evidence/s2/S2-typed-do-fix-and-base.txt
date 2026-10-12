@@ -1,0 +1,18 @@
+# 版: c02f340388eea6ddcda09b5d7edc86356a2eb3bb(doeff-wt-dc-ln19)・刻 2026-10-12 00:54:38 UTC
+## command: (cd /home/ubuntu/.worktrees/doeff-wt-dc-ln19 && uv run python -I /tmp/mcp-scripts/s2_probe.py /tmp/ln19-ev/s2-doeff-wt-dc-ln19)
+投影の `_doeff_do` を束ねる import:
+from probe_static_do import do as _doeff_do
+/tmp/ln19-ev/s2-doeff-wt-dc-ln19/tools.py:29:13 - information: Type of "_echo_mcp_handler" is "(text: Unknown) -> StaticProgram[Unknown]"
+/tmp/ln19-ev/s2-doeff-wt-dc-ln19/tools.py:30:13 - information: Type of "Box._in_class_mcp_handler" is "(text: Box) -> StaticProgram[Box]"
+/tmp/ln19-ev/s2-doeff-wt-dc-ln19/tools.py:31:13 - information: Type of "double" is "(x: int) -> StaticProgram[int]"
+# rc=0
+# 版: dadb899700fb94f49904af5f26f4d8deae9a847b(doeff-dc-base-dadb899)・刻 2026-10-12 00:54:43 UTC
+## command: (cd /home/ubuntu/.worktrees/doeff-dc-base-dadb899 && uv run python -I /tmp/mcp-scripts/s2_probe.py /tmp/ln19-ev/s2-doeff-dc-base-dadb899)
+投影の `_doeff_do` を束ねる import:
+from probe_static_do import do as _doeff_do
+from doeff.do import do as _doeff_do
+    from doeff.do import do as _doeff_do
+/tmp/ln19-ev/s2-doeff-dc-base-dadb899/tools.py:32:13 - information: Type of "_echo_mcp_handler" is "(text: Unknown) -> Expand[Unknown, Unknown]"
+/tmp/ln19-ev/s2-doeff-dc-base-dadb899/tools.py:33:13 - information: Type of "Box._in_class_mcp_handler" is "(text: Box) -> Expand[Box, Never]"
+/tmp/ln19-ev/s2-doeff-dc-base-dadb899/tools.py:34:13 - information: Type of "double" is "(x: int) -> Expand[int, Never]"
+# rc=0
