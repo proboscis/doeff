@@ -17,8 +17,8 @@
 - defhandler / handle の関数(agora-redesign #2279 — handle.hy): 節を回す関数の引数 `effect: object`
   (節の `isinstance` が型を絞る)・`k: Continuation`・答え `ClauseRun`、handler を被せる関数の
   本文 `HandlerBody[HandledAnswer]` → `HandledScope[HandledAnswer]`、節の終わり方の検めは型付きの
-  static_types の名(HANDLER_STATIC_NAMES)から引く。`from doeff import Pass` だけを出す(Resume / Transfer は
-  typed_resume / typed_transfer が代わるので使わない)
+  static_types の名(HANDLER_STATIC_NAMES)から引く。doeff の node は節の操作の表(clause_ops.hy)の static-nodes と
+  handler 自身の Pass だけを import する(Resume / Transfer は typed_resume / typed_transfer が代わるので使わない)
 - deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
   `_doeff_pytest`(agora-redesign #2214 — 実行時の展開は注記なしで interpreter の答えを返す)
 - defk の返り値: `:post` の `(: % T)` の T を注記する(agora-redesign #2308 — この展開の defk は yield の無い
