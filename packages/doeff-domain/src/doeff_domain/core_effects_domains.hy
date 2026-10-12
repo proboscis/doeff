@@ -61,7 +61,7 @@
 (import doeff_core_effects.rooted-file [rooted-file-handler])
 (import doeff_core_effects.http-server-effects [HttpListen HttpNextRequest HttpReadBody
                                                 HttpRespond HttpForward
-                                                HttpShutdown HttpStopListening WsAccept WsSendText
+                                                HttpShutdown HttpStopListening WsAccept WsSendText WsSendTextEach
                                                 WsForward WsClose
                                                 TakeWsSendReport
                                                 AppendHttpScript ReadHttpServed])
@@ -284,7 +284,7 @@
 (defdomain doeff-http-server
   :title "HTTP server 語彙 — HTTP と WebSocket の待ち受け"
   :effects [HttpListen HttpNextRequest HttpReadBody HttpRespond HttpForward HttpShutdown HttpStopListening
-            WsAccept WsSendText WsForward WsClose TakeWsSendReport
+            WsAccept WsSendText WsSendTextEach WsForward WsClose TakeWsSendReport
             AppendHttpScript ReadHttpServed]
   :handlers [aiohttp-http-server scripted-http-server]
   :adrs ["ADR-DOE-DOMAIN-001"]

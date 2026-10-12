@@ -21,6 +21,9 @@
 ;;; WsAccept で上げた接続へは次の 2 つを何度でも撃てる(どちらも撃つだけで待たない — 答え手が接続ごとの送りの箱に積み、書くのは答え手の側):
 ;;;   WsSendText       文字の 1 通を送る。閉じた・知らない札への送りは黙って捨てる。箱の溜まりが HttpListen の ws-send-max-bytes を超える
 ;;;                    接続(読まない相手)はその場で切る(箱の中身を捨て、出来事 WsClosed の理由に名乗る)。答え = None
+;;;   WsSendTextEach   札の列の接続へ、同じ文字の 1 通ずつを送る(1 回の求め — 札ごとに WsSendText を撃つのと同じ決め: 札の順に、閉じた・知らない札は
+;;;                    黙って捨て、箱の溜まりが上限を超える接続はその場で切る。本物の答え手は 1 回の積みで全部の札の箱へ入れる。同じ通を
+;;;                    接続の数だけ送る消費者の、送り 1 回ごとの固定費を通 1 つにつき 1 回にするため — agora-controllers ki-3dbe3dd46994)。答え = None
 ;;;   WsClose          状態符と理由で閉じる(箱に積んだ 1 通を流し切ってから close を送る)。答え = None
 ;;; 待ち受けの全体へは:
 ;;;   HttpStopListening 待ち受けだけを閉じる — 新しい接続を受けない(port を共有する別の待ち受けが在れば、新しい接続はそちらへ行く)。
@@ -269,6 +272,12 @@
 (defclass [(dataclass :frozen True)] WsSendText [(get EffectBase None)]
   "ws に上げた札の接続へ文字の 1 通を送る(頭の註)。"
   (#^ str ticket)
+  (#^ str text))
+
+
+(defclass [(dataclass :frozen True)] WsSendTextEach [(get EffectBase None)]
+  "ws に上げた札の列の接続へ、同じ文字の 1 通ずつを 1 回の求めで送る(頭の註)。"
+  (#^ (get tuple #(str ...)) tickets)
   (#^ str text))
 
 

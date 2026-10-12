@@ -67,7 +67,7 @@
 (import aiohttp [web WSMsgType])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpEvent HttpHeader HttpRequestArrived HttpListen
-                                                HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose HttpShutdown HttpStopListening
+                                                HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose HttpShutdown HttpStopListening
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
@@ -525,6 +525,17 @@
     (.call-soon-threadsafe (self.edge-loop) self.send-text ticket text)
     None)
 
+  (defn #^ None post-text-each [self #^ (get tuple #(str ...)) tickets #^ str text]
+    "同じ文字の 1 通を札の列の接続へ送る仕事を、待ち受けの loop へ 1 回だけ積むため(札の順に send-text と同じ決めで箱へ入る)。"
+    (.call-soon-threadsafe (self.edge-loop) self.send-text-each tickets text)
+    None)
+
+  (defn #^ None send-text-each [self #^ (get tuple #(str ...)) tickets #^ str text]
+    "札の列の箱へ同じ文字の 1 通を積むため(待たない — 待ち受けの loop の上で呼ぶ)。札ごとの決めは send-text と同じ。"
+    (for [ticket tickets]
+      (self.send-text ticket text))
+    None)
+
   (defn #^ None send-text [self #^ str ticket #^ str text]
     "札の接続の箱へ文字の 1 通を積むため(待たない — 待ち受けの loop の上で呼ぶ)。閉じた・知らない札は捨てる。溜まりが上限を超える 1 通なら
      接続をその場で切る。"
@@ -791,6 +802,10 @@
   (WsSendText [ticket text]
     ;; 送りは待ち受けの loop へ積むだけ(共有の loop を経ない — 頭の註の ws の終端)。
     (.post-text edge ticket text)
+    (resume None))
+  (WsSendTextEach [tickets text]
+    ;; 札の列の送りも待ち受けの loop へ 1 回積むだけ(札ごとの積みは send-text と同じ)。
+    (.post-text-each edge tickets text)
     (resume None))
   (WsClose [ticket code reason]
     (<- (Await (.across edge (.close-ws edge ticket code reason))))

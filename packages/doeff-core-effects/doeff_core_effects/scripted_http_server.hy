@@ -36,7 +36,7 @@
 (val MODULE-TAGS {:context "http-server" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
-(import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsClose
+(import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose
                                                 HttpShutdown HttpStopListening TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
@@ -297,6 +297,32 @@
             (:= tally flushed)
             (:= served (+ served #((WsTextSent :ticket ticket :text text))))
             (resume None))))
+  (WsSendTextEach [tickets text]
+    ;; 札の順に WsSendText と同じ決め(契約テストが両方の答え手で同じ列を比べる)。
+    (val size (len (.encode text "utf-8")))
+    (for [ticket tickets]
+      (val held (.get backlog ticket 0))
+      (<- overflows bool (send-overflows held size limit))
+      (cond
+        (not-in ticket opened) None
+        overflows
+          (do (<- cut-tally WsSendReport (tally-dropped tally held True))
+              (:= tally cut-tally)
+              (<- rest dict (without-ticket backlog ticket))
+              (:= backlog rest)
+              (:= opened (- opened #{ticket}))
+              (<- frame WsCloseFrame (closing-of WS-CUT-REASON None None None))
+              (:= pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending)))
+        (in ticket script.stalled)
+          (do (<- queued WsSendReport (tally-queued tally size))
+              (:= tally queued)
+              (:= backlog (| backlog {ticket (+ held size)})))
+        True
+          (do (<- queued WsSendReport (tally-queued tally size))
+              (<- flushed WsSendReport (tally-flushed queued size))
+              (:= tally flushed)
+              (:= served (+ served #((WsTextSent :ticket ticket :text text)))))))
+    (resume None))
   (WsClose [ticket code reason]
     (when (in ticket opened)
       (:= served (+ served #((WsCloseSent :ticket ticket :code code :reason reason))))

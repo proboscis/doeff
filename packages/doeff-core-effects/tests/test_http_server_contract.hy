@@ -23,7 +23,7 @@
 (import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead
                                                 HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody
                                                 HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport
-                                                WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText
+                                                WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach
                                                 WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
@@ -135,6 +135,11 @@
   (match event
     (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "さようなら"))
     (WsTextArrived :ticket t :text "big") (<- (WsSendText :ticket t :text (* "x" (* 2 SEND-LIMIT))))
+    ;; "each" = 1 通・札の列(この札と知らない札)・1 通の順に送る。"each-big" = 札の列で上限の 2 倍の 1 通を送る。
+    (WsTextArrived :ticket t :text "each") (do (<- (WsSendText :ticket t :text "a"))
+                                               (<- (WsSendTextEach :tickets #(t "ghost") :text "b"))
+                                               (<- (WsSendText :ticket t :text "c")))
+    (WsTextArrived :ticket t :text "each-big") (<- (WsSendTextEach :tickets #("ghost" t) :text (* "x" (* 2 SEND-LIMIT))))
     (WsTextArrived :text "stop") (<- (HttpShutdown :reason SHUTDOWN-REASON :drain-seconds 2.0))
     (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ "echo:" text)))
     (WsBinaryArrived :ticket t) (<- (WsClose :ticket t :code 1003 :reason "text だけ"))
@@ -258,6 +263,26 @@
               served.report.cuts (len served.report.flush-seconds)]
              [1 7 7 0 0 1])
           served.report))
+
+
+(deftest test-a-send-to-a-list-of-tickets-keeps-the-order-and-drops-unknown-tickets
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  (<- served Served (serve #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("each") :replies 3 :leave #(4002 "相手が去る")))))
+  (val answer (get served.answers 0))
+  (assert (= answer.texts #("a" "b" "c")) answer)
+  (assert (= [served.report.queued-frames served.report.queued-bytes served.report.flushed-bytes served.report.dropped-bytes
+              served.report.cuts]
+             [3 3 3 0 0])
+          served.report))
+
+
+(deftest test-an-oversized-send-to-a-list-of-tickets-cuts-the-connection
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  (<- served Served (serve #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("each-big")))))
+  (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1") #("text" "1" "each-big") #("closed" "1" 1006 WS-CUT-REASON))
+                              CLOSED))
+          served.events)
+  (assert (= [served.report.queued-bytes served.report.cuts] [0 1]) served.report))
 
 
 (deftest test-a-peer-close-and-a-binary-close-name-their-code

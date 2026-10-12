@@ -158,6 +158,11 @@ class WsSendText(EffectBase[None]):
     text: str
 
 @dataclass(frozen=True)
+class WsSendTextEach(EffectBase[None]):
+    tickets: tuple[str, ...]
+    text: str
+
+@dataclass(frozen=True)
 class WsClose(EffectBase[None]):
     ticket: str
     code: int
