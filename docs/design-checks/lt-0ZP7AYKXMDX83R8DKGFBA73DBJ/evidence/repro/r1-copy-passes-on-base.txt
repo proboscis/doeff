@@ -1,0 +1,12 @@
+# 直す前の版で、展開を文字列で写して印字する例 ex04_zz_shows_expansion.hy(ex04_simple.hy の写し + 末尾の 1 行の print)が例の検を全部通る事の再現
+# 版: fe951a108277a99761b2c888958b827d4eebfc82(origin/main・作業の基)・作業木 /home/ubuntu/.worktrees/doeff-wt-base-ki-fe7a・2026-10-12T03:29:06Z
+# 例の末尾の 1 行: (print "traverse の展開: (_doeff_traverse_Traverse (_doeff_do (fn [x] (do (setv y (yield (open_bind (double x)))) y))) items)")
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -rA -q -k "zz or unplaceable"
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_zz_shows_expansion.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex04_zz_shows_expansion.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_zz_shows_expansion.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_example_uses_only_doeff_hy_macros[ex04_zz_shows_expansion.hy]
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_nothing_unplaceable
+PASSED packages/doeff-traverse/tests/test_examples_run.py::test_unplaceable_table_catches_its_samples
+6 passed, 48 deselected, 1 warning in 16.30s
+exit=0
