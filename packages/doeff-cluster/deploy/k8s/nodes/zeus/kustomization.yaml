@@ -15,6 +15,9 @@ patches:
   # 世代ごとの状態の dir と drain の上限(JSON patch — 版の行より前に当てる)。
   - path: generation.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+  # token の期限(JSON patch — 旧い Pod が猶予の間 Terminating のまま走っても token が切れない長さ)。
+  - path: token-lifetime.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
   # 版の行(JSON patch — 雛形の env の決まった場所へ足す)。
   - path: version.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }

@@ -246,6 +246,35 @@ def test_zeus_worker_starts_the_new_generation_before_stopping_the_old(zeus_work
     assert isinstance(grace, int) and grace > drain + STOP_GRACE_SECONDS
 
 
+# kubelet は止めている途中(Terminating)の Pod の投影の volume を更新しない(desired_state_of_world_populator の findAndAddNewPods が
+# 止める途中の Pod を飛ばす)ので、猶予の間は止め始めた時に file に在る token のまま。token は期限が来ると kubectl が Unauthorized になる
+# (2026-10-12 15:33 JST 以降の zeus の旧い Pod・card ki-916968e7f898)。kubelet は token の年齢が 24 時間を越えるか、残りが期限の 20% を
+# 切ると更新する(token_manager の requiresRefresh)ので、止め始めた時に file に在る token の残りは最悪でも max(期限 - 24 時間, 期限の 20%)。
+KUBELET_TOKEN_MAX_AGE_SECONDS = 24 * 60 * 60
+
+
+def test_worker_token_outlasts_the_termination_grace_period(worker: Manifest) -> None:
+    """止め始めた時に file に在る token の残りの最悪が、猶予を越える(猶予の間も、会話が kubectl で cluster を読める)。"""
+    mount = _mount_at(worker, TOKEN_DIR)
+    sources = _sequence(
+        _mapping(_volume(worker, str(mount["name"]))["projected"], "projected")["sources"], "sources"
+    )
+    tokens = [
+        _mapping(_mapping(source, "source")["serviceAccountToken"], "serviceAccountToken")
+        for source in sources
+        if "serviceAccountToken" in _mapping(source, "source")
+    ]
+    assert len(tokens) == 1, f"serviceAccountToken がちょうど 1 つ無い: {tokens!r}"
+    lifetime = tokens[0]["expirationSeconds"]
+    grace = _pod_spec(worker)["terminationGracePeriodSeconds"]
+    assert isinstance(lifetime, int) and isinstance(grace, int)
+    left_at_worst = max(lifetime - KUBELET_TOKEN_MAX_AGE_SECONDS, lifetime * 20 // 100)
+    assert left_at_worst > grace, (
+        f"止め始めた時の token の残りの最悪 {left_at_worst} 秒 が猶予 {grace} 秒 以下 — 猶予の途中で token が切れる"
+        f"(期限 {lifetime} 秒)。期限を {min(grace + KUBELET_TOKEN_MAX_AGE_SECONDS, grace * 5) + 1} 秒以上にする"
+    )
+
+
 @pytest.mark.parametrize("node", NODES)
 def test_worker_with_generation_dirs_runs_a_boot_script_that_knows_them(rendered: list[Manifest], node: str) -> None:
     """世代の dir を置く worker の版は、boot.sh が世代の dir を知る版(GENERATION_DIRS_SINCE)かその子孫。置かない worker は Recreate
