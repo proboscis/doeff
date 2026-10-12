@@ -348,6 +348,55 @@ impl KeyedFacts {
     }
 }
 
+/// disk の file 1 つの事実(位置の path は空 — cache は作業木の絶対 path を置かず、読んだ後で今の根の path を付ける)。`(def` を持たない file は無い。
+fn disk_facts(rel: &str, path: &Path) -> Option<KeyedFacts> {
+    let source = std::fs::read_to_string(path).ok()?;
+    source.contains("(def").then(|| {
+        let mut keyed = KeyedFacts::of(rel, file_facts(Path::new(""), rel, &source));
+        keyed.facts.set_path("");
+        keyed
+    })
+}
+
+impl TypeSyntax {
+    /// 型の式の中の、module まで含めた名の全部(和・適用の中も)。
+    fn collect_qualified<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            TypeSyntax::Name { qualified, .. } => out.push(qualified),
+            TypeSyntax::Union(members) => members.iter().for_each(|member| member.collect_qualified(out)),
+            TypeSyntax::Apply(head, args) => {
+                head.collect_qualified(out);
+                args.iter().for_each(|arg| arg.collect_qualified(out));
+            }
+            TypeSyntax::Unknown(_) => {}
+        }
+    }
+}
+
+impl FileFacts {
+    /// この file の事実が名指す名(撃った呼びの頭・答えの型・effect の答えと Absent と失敗の型)の module のうち、repo に在る物 — 表がこの file から先へ
+    /// 引く名の module(1 file の実行が、届く module を閉じるまで読むための材料)。欄を全部名指して分解するので、名を持つ欄を足すとここが compile できなくなる。
+    fn referenced_modules(&self, known: &super::hy_files::ModuleFiles) -> BTreeSet<String> {
+        let FileFacts { types: _, effects, definitions } = self;
+        let mut names: Vec<&str> = Vec::new();
+        for (_, EffectFacts { location: _, answer, absent, failure }) in effects {
+            answer.iter().chain(absent).chain(failure).for_each(|syntax| syntax.collect_qualified(&mut names));
+        }
+        for (_, DefinitionFacts { kind: _, location: _, answer, sites }) in definitions {
+            answer.iter().for_each(|syntax| syntax.collect_qualified(&mut names));
+            for Site { callee, absent_as_raise, absent_handled: _, raise_handled: _, head: _ } in sites {
+                names.push(callee);
+                absent_as_raise.iter().for_each(|syntax| syntax.collect_qualified(&mut names));
+            }
+        }
+        let mut modules = BTreeSet::new();
+        for name in names {
+            modules.extend(name.rmatch_indices('.').map(|(at, _)| &name[..at]).filter(|module| known.contains(module)).map(str::to_string));
+        }
+        modules
+    }
+}
+
 /// 型の名として定義を持つ頭。
 const TYPE_HEADS: &[&str] = &[
     "defrecord",
@@ -374,20 +423,9 @@ impl World {
         // 位置の path は作業木の絶対 path なので、置く値は path を空にし、読んだ後で今の根の path を付ける — 作業木をまたいで同じ中身の
         // file の事実を分け合うため(card ki-9743c30d49bc)。
         let mut facts: Vec<KeyedFacts> = crate::timing::timed("effect-world.facts", || {
-            super::facts_cache::per_file_compact_bound(
-                root,
-                "signature-facts",
-                &on_disk,
-                |rel, path| {
-                    let source = std::fs::read_to_string(path).ok()?;
-                    source.contains("(def").then(|| {
-                        let mut keyed = KeyedFacts::of(rel, file_facts(Path::new(""), rel, &source));
-                        keyed.facts.set_path("");
-                        keyed
-                    })
-                },
-                |keyed, rel, _path| keyed.facts.set_path(&root.join(rel).to_string_lossy()),
-            )
+            super::facts_cache::per_file_compact_bound(root, "signature-facts", &on_disk, disk_facts, |keyed, rel, _path| {
+                keyed.facts.set_path(&root.join(rel).to_string_lossy())
+            })
         });
         if let Some((rel, source)) = overlay {
             facts.push(KeyedFacts::of(rel, file_facts(root, rel, source)));
@@ -408,6 +446,45 @@ impl World {
                 std::mem::take(&mut world.summaries)
             })
         });
+        world
+    }
+
+    /// 1 file の実行(書き込み直後の hook・エディタ)の表 — repo の全部でなく、書いた file(`source` = 保存前の中身)と、そこから届く module の file だけから作る。
+    ///
+    /// 表は module まで含めた名で引かれ(`types`・`effects`・`definitions`・`summaries` のどれも `get` と `contains_key` だけ — 走査は無い)、引く名は書いた file の
+    /// 中の記号を解いた名か、届いた file の事実が持つ名(撃った呼びの頭・型の名)。なので、書いた file が名指す module から始め、事実が名指す module を足して
+    /// 閉じるまで読めば、repo 全体から作った表と、書いた file から引ける範囲で同じ答えになる(推論も、呼びで届く defk の先だけで決まる)。
+    /// 届く module の事実は全体の実行と同じ置き場から中身の hash で引く(`per_file_compact_named_bound` — repo 全体の表は読まない)。
+    pub fn build_for_file(root: &Path, rel: &str, source: &str) -> World {
+        let known = super::hy_files::by_module(root);
+        let own = KeyedFacts::of(rel, file_facts(root, rel, source));
+        let mut wanted = super::named_modules::of_file(&known, rel, source);
+        wanted.extend(own.facts.referenced_modules(&known));
+        let mut facts = vec![own];
+        let mut loaded: BTreeSet<String> = BTreeSet::new();
+        crate::timing::timed("effect-world.facts", || loop {
+            let next: BTreeSet<String> = wanted.difference(&loaded).cloned().collect();
+            if next.is_empty() {
+                break;
+            }
+            loaded.extend(next.iter().cloned());
+            let files = super::named_modules::files_of(&known, &next, Some(rel));
+            let batch = super::facts_cache::per_file_compact_named_bound(root, "signature-facts", &files, disk_facts, |keyed, rel, _path| {
+                keyed.facts.set_path(&root.join(rel).to_string_lossy())
+            });
+            for keyed in &batch {
+                wanted.extend(keyed.facts.referenced_modules(&known));
+            }
+            facts.extend(batch);
+        });
+        let mut world = World::default();
+        for KeyedFacts { facts: file, .. } in facts {
+            world.types.extend(file.types);
+            world.effects.extend(file.effects);
+            world.definitions.extend(file.definitions);
+        }
+        // 届く defk だけの小さな表なので、不動点は cache に置かず毎回回す(全体の実行の `signature-summaries` は repo 全体の指紋で引く物 — 1 file ごとに別の鍵になる)。
+        crate::timing::timed("effect-world.infer", || world.infer());
         world
     }
 
@@ -2040,7 +2117,13 @@ mod tests {
         }
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
-        read_file(&world, &root, target, source, |_, _, heads| heads)
+        let heads = read_file(&world, &root, target, source, |_, _, heads| heads);
+        // 1 file の実行は、書いた file が名指す module の file だけから表を作る(`build_for_file`)。repo 全体から作った表と、書いた file の見出しと束縛が同じ
+        // (引く名は書いた file の記号を解いた名か、届いた file の事実が持つ名だけ — 推論の結果も同じ)。
+        let named = World::build_for_file(&root, target, source);
+        let named_heads = read_file(&named, &root, target, source, |_, _, heads| heads);
+        assert_eq!(named_heads, heads, "build_for_file の表が build の表と違う({target})");
+        heads
     }
 
     fn name_of(t: &TypeRef) -> String {
@@ -2072,6 +2155,35 @@ mod tests {
   "行を書く"
   {:fields [(: row Row)] :answer bool :tags {:context "demo" :role "intent"}})
 "#;
+
+    /// 推論は呼びで届く defk の先まで追う(a → b → c と撃ち、c が effect を撃つ)。1 file の実行の表(`build_for_file`)も、届く module を閉じるまで読むので、
+    /// 書いた file の見出しは repo 全体の表と同じ(`read` が両方を作って比べる)。届かない module(z)の定義は表に無い。
+    #[test]
+    fn inference_follows_calls_through_the_modules_a_file_reaches() {
+        let fx = r#"
+(defrecord Row "行" (#^ str id))
+(defeffect Ping "叩く" {:fields [(: n int)] :answer Row :tags {:context "demo" :role "intent"}})
+"#;
+        let leaf = "(import intent.fx [Ping])\n(defk leaf [] {:tags {:context \"demo\" :role \"judgment\"}} (<- x (Ping 1)) x)\n";
+        let mid = "(import core.leaf [leaf])\n(defk mid [] {:tags {:context \"demo\" :role \"judgment\"}} (<- r (leaf)) r)\n";
+        let top = "(import core.mid [mid])\n(defk top [] {:tags {:context \"demo\" :role \"judgment\"}} (<- r (mid)) r)\n";
+        let stray = "(import intent.fx [Ping])\n(defk stray [] {:tags {:context \"demo\" :role \"judgment\"}} (<- x (Ping 2)) x)\n";
+        let files = [("intent/fx.hy", fx), ("core/leaf.hy", leaf), ("core/mid.hy", mid), ("core/top.hy", top), ("core/stray.hy", stray)];
+        let got = read(&files, "core/top.hy");
+        let names: Vec<&str> = got.signatures[0].effects.inferred.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["Ping"], "top は mid を通って leaf の Ping を撃つ");
+        assert!(got.signatures[0].effects.inferred[0].definition.is_some(), "届いた effect は定義の位置まで解ける");
+        // 1 file の実行の表は、届かない module(core/stray)の定義を持たない。
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for (rel, text) in files {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let named = World::build_for_file(&root, "core/top.hy", top);
+        assert!(named.definitions.contains_key("core.leaf.leaf") && !named.definitions.contains_key("core.stray.stray"));
+    }
 
     #[test]
     fn pure_defk_signature_reads_pre_post_and_tags() {
@@ -2370,7 +2482,11 @@ mod tests {
         }
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
-        effect_mismatches(&world, target, source)
+        let mismatches = effect_mismatches(&world, target, source);
+        // 1 file の実行の表(書いた file が名指す module の file だけ)でも食い違いは同じ。
+        let named = World::build_for_file(&root, target, source);
+        assert_eq!(effect_mismatches(&named, target, source), mismatches, "{target}");
+        mismatches
     }
 
     #[test]
