@@ -36,6 +36,7 @@ pub mod world_catalog;
 pub mod test_forms;
 pub mod single_point_vocabulary;
 pub mod spelling_scope;
+pub mod bound_names;
 pub mod confined_spellings;
 pub mod counted_spellings;
 pub mod effect_census;
