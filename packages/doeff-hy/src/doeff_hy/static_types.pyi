@@ -21,7 +21,7 @@
 
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Protocol, TypeAlias, TypeVar
+from typing import Any, ParamSpec, Protocol, TypeAlias, TypeVar
 
 import pytest
 from doeff_vm import K, WithHandler
@@ -112,3 +112,20 @@ def check_clause_endings_once(
     data: Callable[..., object], handler: str, specs: Callable[[], Sequence[_ClauseEnding]], /
 ) -> None: ...
 def fell_through(handler: str, effect_label: str, /) -> RuntimeError: ...
+
+# 総称の effect の節の型(card ki-fede97890f70)。節の effect は `object` で受け、節の `isinstance` が絞る。pyright は
+# 総称 class の絞りの型引数を Unknown にする(`Race[Unknown]`・`Spawn[Unknown, Unknown]` — 絞る元の型を `EffectBase[Any]` にしても
+# 基底から解ける型引数だけが埋まり、`Spawn` の `_E` のように基底に無い型引数は Unknown のまま。型変数の既定値は isinstance の
+# 絞りでは使われない)ので、欄の読みと `typed_resume` / `typed_transfer` の引数が一部 Unknown の赤になる。
+# 型引数の数を展開の時に知る手は無い(macro は import した名の class を引けない)ため、構成子の呼びで型引数を解く:
+# `any_specialized(Race, *any_args, **any_kwargs)` は構成子の引数がすべて Any なので、構成子の型引数をすべて Any で解いた
+# 型(`Race[Any]`・`Spawn[Any, Any]`、総称でない class はその class)になる。この呼びは走らせない(型検査のための展開は
+# pyright が読むだけ)ので、effect を作る振る舞いは要らず、型だけが答え。
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+def any_specialized(factory: Callable[_P, _R], /, *args: _P.args, **kwargs: _P.kwargs) -> _R: ...
+
+#: `any_specialized` の構成子の引数(位置・名前つきのどちらも、数も型も問わない Any)。
+any_args: tuple[Any, ...]
+any_kwargs: dict[str, Any]

@@ -19,6 +19,10 @@
   本文 `HandlerBody[HandledAnswer]` → `HandledScope[HandledAnswer]`、節の終わり方の検めは型付きの
   static_types の名(HANDLER_STATIC_NAMES)から引く。doeff の node は節の操作の表(clause_ops.hy)の static-nodes と
   handler 自身の Pass だけを import する(Resume / Transfer は typed_resume / typed_transfer が代わるので使わない)
+- defhandler / handle の節の effect(card ki-fede97890f70 — handle.hy の `_effect-form-binding`): 節が欄を束ねるか typed_resume /
+  typed_transfer で effect を読む時、`isinstance` で絞った後の `_doeff_effect` を `any_specialized(EffectType, *any_args,
+  **any_kwargs)` に束ね直す。pyright は総称 class の絞りの型引数を Unknown にする(`Race[Unknown]`)が、構成子の呼びは型引数を
+  すべて Any で解く(`Race[Any]`)ので、欄の型は effect の定義の型(`tuple[Task[Any] | Future[Any], ...]`)になり、Unknown の赤が出ない
 - deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
   `_doeff_pytest`(agora-redesign #2214 — 実行時の展開は注記なしで interpreter の答えを返す)
 - defk の返り値: `:post` の `(: % T)` の T を注記する(agora-redesign #2308 — この展開の defk は yield の無い
@@ -106,12 +110,18 @@ def deftest_fixture_annotation(fixture: str) -> str:
 #:   被せた結果 `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ型変数)。
 #: - 関数: 節の終わり方の検め(clause_endings.hy の check-clause-endings・check-clause-endings-once・fell-through)。
 #:   実体は .hy なので pyright から型が見えない — 実行時の展開は今までどおり clause_endings から import する。
+#: - 総称の effect の節: 構成子の呼びで型引数をすべて Any に解く `any_specialized` と、その呼びの引数 `any_args`・`any_kwargs`
+#:   (card ki-fede97890f70 — 節の `isinstance` の絞りは総称 class の型引数を Unknown にし、欄の読みと typed_resume の引数が
+#:   一部 Unknown の赤になる。handle.hy の `_effect-form-binding`)。
 HANDLER_STATIC_NAMES: tuple[str, ...] = (
     "ClauseRun",
     "Continuation",
     "HandledAnswer",
     "HandledScope",
     "HandlerBody",
+    "any_args",
+    "any_kwargs",
+    "any_specialized",
     "check_clause_endings",
     "check_clause_endings_once",
     "fell_through",
