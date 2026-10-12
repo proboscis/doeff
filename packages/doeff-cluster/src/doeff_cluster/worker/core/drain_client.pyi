@@ -12,13 +12,13 @@ DRAIN_TTL_MARGIN_SECONDS: float
 def worker_path(name: str) -> str:
     ...
 
-def drain_outcome(answer: dict, elapsed: float, deadline: float) -> str | None:
+def drain_outcome(answer: dict[str, object], elapsed: float, deadline: float) -> str | None:
     ...
 
-def await_drained(name: str, deadline: float, interval: float, own_boot: str | None=None) -> _Program[dict, object]:
+def await_drained(name: str, deadline: float, interval: float, own_boot: str | None=None) -> _Program[dict[str, object], object]:
     ...
 
-def ready_of(answer: dict, own_boot: str | None) -> bool:
+def ready_of(answer: dict[str, object], own_boot: str | None) -> bool:
     ...
 
 def worker_ready(name: str, own_boot: str | None) -> _Program[bool, object]:

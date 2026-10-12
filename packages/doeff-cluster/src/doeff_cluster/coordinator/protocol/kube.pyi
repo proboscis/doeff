@@ -27,8 +27,6 @@ from doeff_cluster.coordinator.intent.kube_model import AnnotateDeployment as An
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
 from doeff_cluster.coordinator.intent.kube_model import FollowDeployments as FollowDeployments
 from doeff_cluster.coordinator.intent.kube_model import FollowNodes as FollowNodes
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def deployment_view(body: Mapping[str, object]) -> _Program[dict[str, object], object]:
     ...

@@ -13,8 +13,6 @@ from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
 from doeff_core_effects.http_handlers import http_client_factory as http_client_factory
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 SERVICE_ACCOUNT_CA_PATH: str
 CLUSTER_API: str
 CA_MISSING: str

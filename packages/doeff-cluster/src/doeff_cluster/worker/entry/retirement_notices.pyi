@@ -9,6 +9,4 @@ from doeff_cluster.worker.intent.worker_model import HandoffAbandoned as Handoff
 from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
 from doeff_cluster.worker.protocol.process_host import stop_reason_word as stop_reason_word
 from doeff_cluster.worker.protocol.process_host import retirement_of_word as retirement_of_word
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 pipe_retirement_notices: _Handler

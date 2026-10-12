@@ -25,7 +25,7 @@
 
 
 
-(defn #^ (| str None) drain-outcome [#^ dict answer #^ float elapsed #^ float deadline]
+(defn #^ (| str None) drain-outcome [#^ (get dict #(str object)) answer #^ float elapsed #^ float deadline]
   "純粋: 頼んだ答えと経過の秒から、待つのを終えるか。終えるなら結末の名(drained | unknown-worker | refused | timeout)、
    待ち続けるなら None。届かない・coordinator が 5xx の間は上限まで頼み直す(coordinator の作り直しの間も待つ)。"
   (setv status (.get answer "status") body (or (.get answer "body") {}))
@@ -40,7 +40,7 @@
 
 
 (defk await-drained [name deadline interval [own-boot None]]
-  {:pre [(: name str) (: deadline float) (: interval float) (: own-boot (| str None))] :post [(: % dict)]}
+  {:pre [(: name str) (: deadline float) (: interval float) (: own-boot (| str None))] :post [(: % (get dict #(str object)))]}
   ;; 結果 = {"outcome" 結末 "elapsed" 秒 "last" 最後の答え}。
   ;; own-boot = この Pod の worker の process の世代(ready-of と同じ file)。頼みに載せると、同じ名の新しい Pod の worker が名乗った
   ;; 後の頼み(退いた世代の頼み)は新しい世代に drain を付けず、この世代に置いた task が終わるのを待つ答えになる(2026-09-27)。
@@ -55,7 +55,7 @@
     (<- (Delay interval))))
 
 
-(defn #^ bool ready-of [#^ dict answer #^ (| str None) own-boot]
+(defn #^ bool ready-of [#^ (get dict #(str object)) answer #^ (| str None) own-boot]
   "純粋: GET /workers/<名> の答え → この Pod の worker が Ready か。届かない・知らない worker は Ready でない。
    own-boot = この Pod の worker の process の世代(worker が起動の時に Pod の中の file へ書く)。coordinator の見る世代がそれと違えば
    Ready でない — worker の名は node の名なので、同じ node の前の Pod(preStop で drain 中)の heartbeat と見分けがつかない
