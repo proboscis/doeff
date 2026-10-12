@@ -31,7 +31,9 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 印字すると答えを変えない macro の変更で例が赤になるので、展開の引き出し(hy.macroexpand)も断る。引き出さずに展開を
 文字列で写して印字する例は、macro が変わっても赤にならずに古い展開を教える — 写しは展開の形の印(Hy・doeff-hy の隠す名と、
 展開が module を引く __import__)を持つので、期待の出力に置かせない。例が使う doeff-hy の macro の展開がどれもその印を持つ
-事も、展開して確かめる(card ki-fe7a2e60fdfb)。
+事も、使い所を 1 つずつ文脈の外で展開して確かめる — 印の無い展開の macro(val など)は UNMARKED_EXPANSIONS に理由つきで
+置き、文脈の外で展開を断る入れ子の使い所は、引き出して写せる形が無いので数えない(card ki-fe7a2e60fdfb・設計検証
+lt-0ZP7AYKXMDX83R8DKGFBA73DBJ)。
 """
 
 import difflib
@@ -49,6 +51,7 @@ from pathlib import Path
 import hy
 import pytest
 from doeff_hy.static_stub import hidden_name
+from hy.errors import HyMacroExpansionError
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 # 走る例の標準出力の期待(<例の stem>.txt)。例の印字を変えたら、例と一緒に書き直す。
@@ -75,6 +78,11 @@ BROKEN: dict[str, str] = {}
 NO_CASES: dict[str, str] = {
     "ex01_basic_fail.hy": "Fail の効果を Traverse の外で見せる例 — 失敗は 3 つの戦略の結果として出力に出る",
 }
+
+# 例が使う doeff-hy の macro のうち、展開に展開の形の印を持たない物(macro の名 → 理由)。その macro の展開を写した印字は期待の
+# 出力の検が見分けないので、例が初めて使う時に理由つきで置く(例: val — 1 段の展開は利用者の書く setv と同じ形で、隠す中身を
+# 持たない)。印を持つようになった・例が使わなくなった macro の行は外す。
+UNMARKED_EXPANSIONS: dict[str, str] = {}
 
 # 期待の出力の印の字。印の種類は置く所で決まり、種類ごとに呑める物が決まっている:
 #   - 行が ANY だけの行は、traceback の frame の行を 1 行以上呑む(_frame_violations) — 件の結果の行は呑めない。
@@ -454,9 +462,54 @@ def _doeff_hy_macro_names(form: hy.models.Expression) -> frozenset[str]:
     )
 
 
-def _doeff_hy_expansions(source: str, filename: str) -> Iterator[tuple[str, object]]:
-    """source の doeff-hy の macro の使い所ごとの、`<行>: <macro>` と 1 段の展開。展開は source の doeff-hy の require
-    だけを評価した module の中でする(例を走らせない)。"""
+@dataclass(frozen=True)
+class MacroUse:
+    """source の中の doeff-hy の macro の使い所 1 つと、その文脈の外での 1 段の展開。"""
+
+    # 使い所の行
+    line: int
+    # macro の名(書いた綴り)
+    macro: str
+    # 別の doeff-hy の macro の使い所の中に在るか(在れば、外の macro が文脈の中で展開する)
+    nested: bool
+    # 展開の hy.repr か、文脈の外で展開できなかった誤り
+    expansion: str | HyMacroExpansionError
+
+    @property
+    def name(self) -> str:
+        return f"{self.line}: {self.macro}"
+
+
+def _uses_in(
+    form: object, macros: frozenset[str], nested: bool
+) -> Iterator[tuple[hy.models.Expression, bool]]:
+    """form の中の、macros の名を頭に持つ式と、それが別の使い所の中に在るか。"""
+    is_use = (
+        isinstance(form, hy.models.Expression)
+        and bool(form)
+        and isinstance(form[0], hy.models.Symbol)
+        and hy.mangle(str(form[0])) in macros
+    )
+    if is_use and isinstance(form, hy.models.Expression):
+        yield form, nested
+    if isinstance(form, hy.models.Sequence):
+        for child in form:
+            yield from _uses_in(child, macros, nested or is_use)
+
+
+def _expand_once(
+    form: hy.models.Expression, module: types.ModuleType
+) -> str | HyMacroExpansionError:
+    """form の 1 段の展開の hy.repr(macro が文脈の外での展開を断れば、その誤り)。"""
+    try:
+        return hy.repr(hy.macroexpand_1(form, module=module))
+    except HyMacroExpansionError as refused:
+        return refused
+
+
+def _doeff_hy_macro_uses(source: str, filename: str) -> list[MacroUse]:
+    """source の doeff-hy の macro の使い所と 1 段の展開。展開は、source の doeff-hy の require だけを評価した module の中で、
+    使い所を 1 つずつ文脈から切り離してする — 例を走らせず、利用者が `hy.macroexpand` で引き出して写せる形を見る。"""
     requires = [
         form
         for form in _forms(source, filename)
@@ -469,14 +522,36 @@ def _doeff_hy_expansions(source: str, filename: str) -> Iterator[tuple[str, obje
     for form in requires:
         if _doeff_hy_macro_names(form):
             hy.eval(form, module=module)
-    for form in _forms(source, filename):
-        if (
-            isinstance(form, hy.models.Expression)
-            and form
-            and isinstance(form[0], hy.models.Symbol)
-            and hy.mangle(str(form[0])) in macros
-        ):
-            yield f"{form.start_line}: {form[0]}", hy.macroexpand_1(form, module=module)
+    return [
+        MacroUse(form.start_line, str(form[0]), nested, _expand_once(form, module))
+        for top in hy.read_many(source, filename=filename)
+        for form, nested in _uses_in(top, macros, nested=False)
+    ]
+
+
+def _unexpanded(uses: list[MacroUse]) -> list[str]:
+    """いちばん外の使い所のうち、文脈の外で展開できない物。入れ子の使い所は外の macro が文脈の中で展開するので、文脈の
+    外で断られても数えない — 引き出して写せる形が無い。"""
+    return [
+        use.name
+        for use in uses
+        if not use.nested and isinstance(use.expansion, HyMacroExpansionError)
+    ]
+
+
+def _unmarked(uses: list[MacroUse]) -> list[MacroUse]:
+    """展開できた使い所のうち、展開に展開の形の印が無い物。"""
+    return [
+        use
+        for use in uses
+        if isinstance(use.expansion, str) and not _shows_expansion(use.expansion)
+    ]
+
+
+@functools.cache
+def _example_macro_uses(name: str) -> list[MacroUse]:
+    path = EXAMPLES / name
+    return _doeff_hy_macro_uses(path.read_text(encoding="utf-8"), str(path))
 
 
 @pytest.mark.parametrize("name", _runnable())
@@ -657,17 +732,62 @@ def test_expected_output_places_nothing_unplaceable() -> None:
 @pytest.mark.parametrize("name", _examples())
 def test_example_expansions_show_their_marks(name: str) -> None:
     """例が使う doeff-hy の macro の展開には、どれも展開の形の印が在る — 展開を写して印字すると、期待の出力の検が名指す。
-    印の無い展開を作る macro の写しは見分けられないので、その macro の展開に隠す名を持たせるか、印の種類を足す。"""
-    path = EXAMPLES / name
-    unmarked = [
-        use
-        for use, expansion in _doeff_hy_expansions(path.read_text(encoding="utf-8"), str(path))
-        if not _shows_expansion(hy.repr(expansion))
-    ]
+    印の無い展開を作る macro の写しは見分けられないので、その macro の展開に隠す名を持たせるか、印の種類を足すか、
+    UNMARKED_EXPANSIONS に理由つきで置く。いちばん外の使い所は文脈の外でも展開できる(できなければ確かめが空になる)。"""
+    uses = _example_macro_uses(name)
+    assert _unexpanded(uses) == [], (
+        f"{name} のいちばん外の doeff-hy の macro の使い所が、文脈の外で展開できない — 展開の形の印を確かめられない:"
+        f" {_unexpanded(uses)}"
+    )
+    unmarked = [use.name for use in _unmarked(uses) if use.macro not in UNMARKED_EXPANSIONS]
     assert unmarked == [], (
         f"{name} の doeff-hy の macro の展開に、展開の形の印({_EXPANSION_IMPORT} も隠す名も)が無い — 写して印字されても"
-        f"期待の出力の検が見分けない: {unmarked}"
+        f"期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで"
+        f"置く: {unmarked}"
     )
+
+
+def test_unmarked_table_names_unmarked_macros() -> None:
+    """UNMARKED_EXPANSIONS の行は、今の例が使い、展開に印の無い macro を名指す(印を持つようになった・使わなくなった
+    macro の行を残さない)。"""
+    unmarked = {use.macro for name in _examples() for use in _unmarked(_example_macro_uses(name))}
+    assert set(UNMARKED_EXPANSIONS) - unmarked == set(), (
+        "UNMARKED_EXPANSIONS の行が、今の例の印の無い展開を名指さない — 行を外す"
+    )
+
+
+def test_expansion_check_reads_uses_out_of_context() -> None:
+    """今の例の使い所はどれも印を持ち、文脈の外でも展開できるので、印の無い展開(val)・文脈の外で展開できない使い所を
+    拾い分ける事は、それを含む source で確かめる: いちばん外の展開できない使い所は名指し、入れ子の展開できない使い所は
+    数えない(外の macro が文脈の中で展開する — 盲検 A が挙げた、文脈の外の (<- …) を断る doeff-hy の変更の形)。展開を断る
+    使い所は、今の doeff-hy が断る書き損じの (<-) で作る(fnk は本体を開かずに包むので、外の fnk は展開できる)。"""
+    source = """
+(require doeff-hy.macros [defk <- val traverse fnk])
+(val inputs [1 2 3])
+(<-)
+(setv broken (fnk [] (<-)))
+(defk total [xs]
+  {:pre [(: xs list)] :post [(: % int)]}
+  (<- n (traverse (<- x (Iterate xs)) x))
+  n)
+"""
+    uses = _doeff_hy_macro_uses(source, "<inline>")
+    assert [use.name for use in uses] == [
+        "3: val",
+        "4: <-",
+        "5: fnk",
+        "5: <-",
+        "6: defk",
+        "8: <-",
+        "8: traverse",
+        "8: <-",
+    ]
+    assert _unexpanded(uses) == ["4: <-"]
+    assert [use.name for use in uses if isinstance(use.expansion, HyMacroExpansionError)] == [
+        "4: <-",
+        "5: <-",
+    ]
+    assert [use.name for use in _unmarked(uses)] == ["3: val"]
 
 
 def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: float) -> None:
@@ -677,9 +797,9 @@ def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: 
     example = EXAMPLES / "ex04_simple.hy"
     source = example.read_text(encoding="utf-8")
     copied = next(
-        hy.repr(expansion)
-        for use, expansion in _doeff_hy_expansions(source, str(example))
-        if use.endswith(": traverse")
+        use.expansion
+        for use in _doeff_hy_macro_uses(source, str(example))
+        if use.macro == "traverse" and isinstance(use.expansion, str)
     )
     script = tmp_path / "ex04_shows_expansion.hy"
     script.write_text(f"{source}(print {hy.repr(copied)})\n", encoding="utf-8")

@@ -1,0 +1,115 @@
+# 盲検 A の付けたりの再現(変異 M-A2): (<- …) が compiler を受け、module の直下(ScopeGlobal)なら展開の時に SyntaxError にする
+# 版: 6a7f25105e14b7c4dd52a76652edf078661eb46c(提案の版・直す前)・作業木 /home/ubuntu/.worktrees/doeff-wt-blind-a-ki-fe7a・2026-10-12T03:57:02Z
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index f57810bbf..a5f5744d7 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -1220,7 +1220,7 @@ defk {name}: {{:post [...]}} is required.
+ ;; <- — perform effect with optional type contract
+ ;; ---------------------------------------------------------------------------
+ 
+-(defmacro <- [#* args]
++(defmacro <- [_hy-compiler #* args]
+   "Perform an effect. Bind result if name given, optional type contract.
+    (<- x (Ask \"key\"))              → (setv x (yield (Ask \"key\")))
+    (<- x Type (Ask \"key\"))         → bind + isinstance assertion
+@@ -1228,6 +1228,8 @@ defk {name}: {{:post [...]}} is required.
+    The expansion is `_bind-yield` — the same definition point the body
+    expanders (do! / defp / deftest / for/do / defhandler) use, so a typed bind
+    carries the isinstance guarantee wherever it is written."
++  (when (and (is-not _hy-compiler None) (isinstance (. _hy-compiler scope) ScopeGlobal))
++    (raise (SyntaxError "(<- …) は module の直下に書けません(変異 M-A2)")))
+   (import doeff-hy.outcome-forms [bind-form :as _bind-form])
+   (locate-synthesized (_bind-form (hy.models.Expression ['<- #* args]))))
+ 
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf
+
+deadline scale x2.3 (load per usable CPU) — per test 136s, watchdog 203s
+
+test-admission: focused — 61 件(変更箇所の検証)
+................................s..............FFFFFFFFFFF...            [100%]
+=================================== FAILURES ===================================
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+E   SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+
+During handling of the above exception, another exception occurred:
+E   hy.errors.HyMacroExpansionError: expanding macro <-
+      SyntaxError: (<- …) は module の直下に書けません(変異 M-A2)
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/.venv/lib/python3.14t/site-packages/hy/macros.py:341: hy.errors.HyMacroExpansionError: expanding macro <-
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex01_basic_fail.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex02_traverse_pipeline.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex03_zip_multi_source.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex04_simple.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex04_traverse_macro.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex06_mediagen_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex07_proboscis_ema_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex08_tqdm_progress.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex09_for_do_when.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_printed_expansion_copy_is_named
+11 failed, 49 passed, 1 skipped, 1 warning in 28.45s
+exit=1

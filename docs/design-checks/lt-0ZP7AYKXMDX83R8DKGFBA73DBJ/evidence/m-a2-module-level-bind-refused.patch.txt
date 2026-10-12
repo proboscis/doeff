@@ -1,0 +1,22 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index f57810bbf..a5f5744d7 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -1220,7 +1220,7 @@ defk {name}: {{:post [...]}} is required.
+ ;; <- — perform effect with optional type contract
+ ;; ---------------------------------------------------------------------------
+ 
+-(defmacro <- [#* args]
++(defmacro <- [_hy-compiler #* args]
+   "Perform an effect. Bind result if name given, optional type contract.
+    (<- x (Ask \"key\"))              → (setv x (yield (Ask \"key\")))
+    (<- x Type (Ask \"key\"))         → bind + isinstance assertion
+@@ -1228,6 +1228,8 @@ defk {name}: {{:post [...]}} is required.
+    The expansion is `_bind-yield` — the same definition point the body
+    expanders (do! / defp / deftest / for/do / defhandler) use, so a typed bind
+    carries the isinstance guarantee wherever it is written."
++  (when (and (is-not _hy-compiler None) (isinstance (. _hy-compiler scope) ScopeGlobal))
++    (raise (SyntaxError "(<- …) は module の直下に書けません(変異 M-A2)")))
+   (import doeff-hy.outcome-forms [bind-form :as _bind-form])
+   (locate-synthesized (_bind-form (hy.models.Expression ['<- #* args]))))
+ 
