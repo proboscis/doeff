@@ -13,6 +13,8 @@ shim を起こす。外の世界(送り先)の代わりを渡す検は、送り�
 - 送り先の環境変数は、worker の環境から実行環境の job と待ちの子へ継ぐ許可表に在る
 - worker の process 自身の行(card ki-35923a5895b2)は job の名 worker/<worker の名>・試み 0・世代 boot で送り、捕まえない例外の
   traceback も file と送り先の両方に届く。送り先が無い・stdout と stderr が別の file の時は出力の向きを替えない
+- worker の差し替えは Python の流れだけで、fd 1・2 は元の file のまま — worker より長く生きる子孫の行も file に残る(設計検証
+  lt-8PQM3S5DDHCSJ92Q7X259K9HAW の盲検 A)。worker の道で溜めが溢れても worker の write は送りに待たされない(盲検 B)
 """
 
 import json
@@ -659,7 +661,7 @@ import os, sys
 from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
 process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
 print("worker: 起動します boot=b0", file=sys.stderr, flush=True)
-os.write(1, b"worker: heartbeat \\xe3\\x81\\xae gap\\n")
+print("worker: heartbeat の gap", flush=True)
 raise RuntimeError("worker-crashed-at-the-end")
 """
 
@@ -671,18 +673,22 @@ class WorkerRan:
     code: int
     out: bytes
     err: bytes
+    seconds: float
 
 
-def worker_run(tmp: Path, env: dict[str, str], same_file: bool) -> WorkerRan:
-    """worker の入口と同じ呼び方で自分の行を差し替える python の 1 本を、systemd の StandardOutput=append: と StandardError=append: の
-    持ち方(同じ path を 2 度開く — same_file が偽なら別の 2 つの file)で走らせるため。env = 検の process の環境に足す環境変数。"""
+def worker_run(tmp: Path, env: dict[str, str], same_file: bool, script: str = WORKER_PROCESS) -> WorkerRan:
+    """worker の入口と同じ呼び方で自分の行を差し替える python の 1 本(script)を、systemd の StandardOutput=append: と
+    StandardError=append: の持ち方(同じ path を 2 度開く — same_file が偽なら別の 2 つの file)で走らせるため。env = 検の process の
+    環境に足す環境変数。seconds = 起こしてから終わるまで。"""
     out_path = tmp / "worker.log"
     err_path = out_path if same_file else tmp / "worker.err.log"
-    argv = ["env", *(f"{name}={value}" for name, value in env.items()), sys.executable, "-B", "-c", WORKER_PROCESS]
+    argv = ["env", *(f"{name}={value}" for name, value in env.items()), sys.executable, "-B", "-c", script]
+    started = time.monotonic()
     with open(out_path, "ab") as out, open(err_path, "ab") as err:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
     code = process.wait(timeout=END_LIMIT_SECONDS)
-    return WorkerRan(code=code, out=out_path.read_bytes(), err=err_path.read_bytes())
+    seconds = time.monotonic() - started
+    return WorkerRan(code=code, out=out_path.read_bytes(), err=err_path.read_bytes(), seconds=seconds)
 
 
 def test_the_worker_process_ships_its_own_lines_and_its_crash_traceback(tmp_path: Path, collector: Collector) -> None:
@@ -728,3 +734,47 @@ def test_a_worker_whose_stdout_and_stderr_are_two_files_keeps_them_and_names_why
         "line_stamp: worker の行を送らない — stdout と stderr が同じ file でない\nworker: 起動します boot=b0\nTraceback".encode()
     ), ran.err
     assert collector.records() == []
+
+
+OUTLIVING_DESCENDANT = """
+import os, subprocess, sys
+from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+print("worker: 子を起こして終わる", file=sys.stderr, flush=True)
+# lifeline の見張りと同じ持ち方の子孫: 自分の session・stdout と stderr を指定しない(worker の fd 1・2 を継ぐ)・worker より長く生きる。
+subprocess.Popen(["sh", "-c", "sleep 0.5; echo descendant-after-the-worker >&2"], stdin=subprocess.DEVNULL, start_new_session=True)
+"""
+
+
+def test_a_descendant_that_outlives_the_worker_still_writes_to_the_file(tmp_path: Path, collector: Collector) -> None:
+    """worker が差し替えるのは Python の流れだけで、fd 1・2 は元の file のまま。worker より長く生きる子孫(lifeline の見張りと同じ持ち方)が
+    worker の終わった後に stderr へ書いた行も、刻なしで file に在る(読み手の居ない pipe へ行かない)。子孫の行は worker の行として送らない。"""
+    ran = worker_run(tmp_path, {JOB_LOG_OTLP_VAR: collector.base()}, same_file=True, script=OUTLIVING_DESCENDANT)
+    assert ran.code == 0, ran.out
+    log = tmp_path / "worker.log"
+    deadline = time.monotonic() + RECEIVE_LIMIT_SECONDS
+    while b"descendant-after-the-worker" not in log.read_bytes() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    lines = log.read_bytes().split(b"\n")
+    assert b"descendant-after-the-worker" in lines, lines
+    assert file_line(lines[0]).body == "worker: 子を起こして終わる".encode(), lines
+    assert [r.body for r in collector.records()] == ["worker: 子を起こして終わる"]
+
+
+FLOODING_WORKER = """
+import os, sys
+from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+for n in range(40_000):
+    print(f"worker: burst line {n:06d}")
+"""
+
+
+def test_a_flooding_worker_does_not_wait_for_a_silent_destination(tmp_path: Path, silent: Collector) -> None:
+    """worker の道(process_lines が作る書き手と送り手 — 本番の上限)で、答えない送り先の下で溜めの上限(1 万行)の 4 倍の行を書いても、
+    worker の write も終わりも送りに待たされない(溢れは捨てて数える)。file には全部の行が在る。待つ形にすると、塊ごとに待って
+    数十秒になる(設計検証 lt-8PQM3S5DDHCSJ92Q7X259K9HAW の盲検 B — 実測 27〜30 秒・待たない形は 1〜2 秒)。"""
+    ran = worker_run(tmp_path, {JOB_LOG_OTLP_VAR: silent.base()}, same_file=True, script=FLOODING_WORKER)
+    assert ran.code == 0, ran.out[-500:]
+    assert ran.out.count(b"worker: burst line ") == 40_000
+    assert ran.seconds < 10.0, ran.seconds
