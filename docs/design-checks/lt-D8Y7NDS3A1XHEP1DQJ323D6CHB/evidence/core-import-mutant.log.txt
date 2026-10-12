@@ -1,0 +1,8 @@
+対象: doeff dc3385b9a4bb105937d9dad6671545f7b34c80f2 + 作業木の直し + 変異(core の program.hy に line_stamp の import を 1 行足した — evidence/core-import-mutant.patch.txt)
+$ .venv/bin/semgrep --metrics=off --disable-version-check --config .semgrep.yaml --error packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy
+Ran 12 rules on 1 file: 1 finding.
+   ❯❯❱ doeff-cluster-coordinator-core-does-not-know-where-its-lines-go
+  coordinator/entry/main.hy だけが line_stamp の                                                                        
+          を 1 つに持ち、入口のための line_stamp の 許しが core にも効くので、core からの import をこの規則で断る。     
+           55┆ (import doeff_cluster.worker.entry.line_stamp [process-lines])
+rc=1
