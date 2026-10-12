@@ -5,6 +5,9 @@
 ;;;   name          節の中で書く頭の名
 ;;;   ending        節を終えた後に続きをどうするか(Ending)— effect の再開の宣言と照らす所(clause_endings.hy)
 ;;;   arity         書き換える形の引数の数(rewrite が None の操作は問わない)
+;;;   returns       続きが終わると節へ戻るか(resume)— 戻る操作の書き換えの後に、handle.hy が「再開した」の印を立てる
+;;;                 (実行の時の検め。印の名は handle.hy だけが知り、行の rewrite は知らない)
+;;;   tail          節の末尾の位置で替える操作の名(resume → transfer — handler の frame を残さない)。None は替えない
 ;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名
 ;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名
 ;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
@@ -12,8 +15,11 @@
 ;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
 ;;; 写しだった頃、新しい操作を _terminates と書き換えにだけ足すと、Raise の節のその操作を、展開・handle の評価・実行のどの検めも
 ;;; 止めなかった(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — (Raise [reason] (throw …)) で Raise の続きが走った)。
-;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換え)・_vm-imports(node の import)
+;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換えと戻る操作の印)・_tail-resume-to-transfer
+;;;                      (末尾の替え)・_vm-imports(node の import)
 ;;;   clause_endings.hy  ops-in / clause-ops(節が使う操作)・check-clause-by-name / check-clause-endings(ending ごとの照合)
+;;; doeff_hy のどの module も、表の外に操作の名を文字列か quote した記号で書かない(tests/test_handle_clause_ops.py が全 module を
+;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない・設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 B)。
 ;;;
 ;;; handle.hy が module の頭で import する(macros.hy が handle.hy を require する途中で読まれる)ので、doeff-hy.macros も
 ;;; doeff-hy.record も require しない — defrecord・deff・val を使わず、declarations.hy の DefinitionTags と同じ素の dataclass と
@@ -43,26 +49,22 @@
   (#^ str name)
   (#^ Ending ending)
   (#^ (| int None) arity)
+  (#^ bool returns)
+  (#^ (| str None) tail)
   (#^ (get tuple #(str ...)) nodes)
   (#^ (get tuple #(str ...)) static-nodes)
   (#^ (| Callable None) rewrite))
 
 
 (defn _resume [args recur]
-  "(resume 値) → 続きを値で再開する。型検査のための展開は core の typed-resume で、値を effect の答えの型(EffectBase[T] の T)と
-   突き合わせる(`effect` は節の `(isinstance effect EffectType)` で絞られている)。非末尾の resume は続きが終わると節へ戻る —
-   戻った後で「再開した」と記す(値の式や続きで出た例外を節が握りつぶして抜けた道は印が付かず、実行の時に誤りになる・
-   ADR-DOE-CORE-EFFECTS-003 R15)。"
+  "(resume 値) → 続きを値で再開する(続きが終わると節へ戻る — 行の returns。戻った後の印は handle.hy が立てる)。型検査のための
+   展開は core の typed-resume で、値を effect の答えの型(EffectBase[T] の T)と突き合わせる(`effect` は節の
+   `(isinstance effect EffectType)` で絞られている)。"
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
-      `(do (setv _doeff_resumed_value
-                 (yield (do (import doeff [typed-resume])
-                            (typed-resume effect k ~value))))
-           (setv _doeff_clause_resumed True)
-           _doeff_resumed_value)
-      `(do (setv _doeff_resumed_value (yield (Resume k ~value)))
-           (setv _doeff_clause_resumed True)
-           _doeff_resumed_value)))
+      `(yield (do (import doeff [typed-resume])
+                  (typed-resume effect k ~value)))
+      `(yield (Resume k ~value))))
 
 
 (defn _transfer [args recur]
@@ -96,17 +98,17 @@
 ;; 節の操作の表。行の順は handler の頭の import の名の順(node-names)。表を引くのはこの module の関数だけ(呼び手は名で表を
 ;; 写さない・引かない)。
 (setv CLAUSE-OPS
-  #((ClauseOp :name "resume" :ending Ending.RESUMES :arity 1
+  #((ClauseOp :name "resume" :ending Ending.RESUMES :arity 1 :returns True :tail "transfer"
               :nodes #("Resume") :static-nodes #() :rewrite _resume)
-    (ClauseOp :name "transfer" :ending Ending.RESUMES :arity 1
+    (ClauseOp :name "transfer" :ending Ending.RESUMES :arity 1 :returns False :tail None
               :nodes #("Transfer") :static-nodes #() :rewrite _transfer)
-    (ClauseOp :name "finish" :ending Ending.FINISHES :arity 1
+    (ClauseOp :name "finish" :ending Ending.FINISHES :arity 1 :returns False :tail None
               :nodes #() :static-nodes #() :rewrite _finish)
-    (ClauseOp :name "reperform" :ending Ending.FORWARDS :arity 1
+    (ClauseOp :name "reperform" :ending Ending.FORWARDS :arity 1 :returns False :tail None
               :nodes #("Pass") :static-nodes #("Pass") :rewrite _reperform)
-    (ClauseOp :name "pass" :ending Ending.FORWARDS :arity 0
+    (ClauseOp :name "pass" :ending Ending.FORWARDS :arity 0 :returns False :tail None
               :nodes #("Pass") :static-nodes #("Pass") :rewrite _pass)
-    (ClauseOp :name "raise" :ending Ending.RAISES :arity None
+    (ClauseOp :name "raise" :ending Ending.RAISES :arity None :returns False :tail None
               :nodes #() :static-nodes #() :rewrite None)))
 
 
