@@ -271,6 +271,14 @@ tests = [
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
 ]
 
+# doeff-hy を引かずに Hy を宣言する doeff-domain(ADR-DOE-DOMAIN-001 R1)は、doeff-hy の Hy の宣言と同じ版の指定を置く — 宣言を
+# 変えた便も、doeff-hy の宣言との突き合わせを払う(ADR-DOE-HY-008 R6・card ki-96ca6c49fffd)。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-domain/pyproject.toml"
+tests = [
+    "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
+]
+
 # macro の実行時の半分(`<-`・`!` の束ねの開き方 — doeff-hy の outcome_forms.hy「実行時の意味は doeff_core_effects.outcomes が持ち」)
 # の変更も、例の検を選ぶ。doeff-core-effects の他の file には払わせない(file の接頭辞)。上の行だけでは選ばれず、この file の変更で
 # 例 ex05・ex08 が赤になる形を設計検証の盲検 B が見つけた(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。

@@ -926,7 +926,7 @@ dogfood = [
 requires-dist = [
     { name = "doeff-core-effects", extras = ["http-server"], marker = "extra == 'dogfood'", editable = "packages/doeff-core-effects" },
     { name = "doeff-vm", editable = "packages/doeff-vm" },
-    { name = "hy", specifier = ">=1.2.0" },
+    { name = "hy", specifier = ">=1.3.0,<=1.3.1" },
 ]
 provides-extras = ["dogfood"]
 
@@ -1095,7 +1095,7 @@ requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
     { name = "doeff-hy-pytest", editable = "packages/doeff-hy-pytest" },
-    { name = "hy", specifier = ">=1.2.0,<=1.3.1" },
+    { name = "hy", specifier = ">=1.3.0,<=1.3.1" },
     { name = "pydantic", specifier = ">=2.11" },
 ]
 
