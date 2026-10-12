@@ -10,8 +10,6 @@ from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternal
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 @dataclass(frozen=True, kw_only=True)
 class MemoryLatestStore:

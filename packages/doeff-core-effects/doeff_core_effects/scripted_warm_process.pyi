@@ -21,8 +21,6 @@ from doeff_core_effects.warm_effects import warm_answer_late as warm_answer_late
 from doeff_core_effects.warm_effects import warm_lost as warm_lost
 from doeff_core_effects.warm_effects import warm_gone as warm_gone
 from doeff_core_effects.warm_effects import signal_number_of as signal_number_of
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 SCRIPTED_WARM_FIRST_PID: int
 SCRIPTED_WARM_FIRST_TICKS: int
 

@@ -395,3 +395,28 @@ def test_a_class_whose_init_places_the_fields_satisfies_a_protocol_of_fields(tmp
     done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
     found = json.loads(done.stdout) if done.stdout.strip() else []
     assert [f"{d['line']}: {d['rule']}: {d['message']}" for d in found if d["severity"] == "error"] == []
+
+
+EFFECT_FREE = """\
+(require doeff-hy.macros [defk])
+
+(defk copied [x]
+  {:pre [(: x int)] :post [(: % int)] :effects [] :tags {:context "probe" :role "judgment"}}
+  "何も出さない写しのため。"
+  (+ x 1))
+
+(defk asking [x]
+  {:pre [(: x int)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
+  "effect の宣言が無い定義のため。"
+  (+ x 1))
+"""
+
+
+def test_a_defk_declared_to_perform_no_effect_has_a_never_effect_position(tmp_path: Path) -> None:
+    # 失敗ケース(#2939): 手の .pyi は normalized_value を `Program[SqlValue, Never]` と書いていた(写しは effect を出さない)。道具は宣言
+    # `:effects []` を投影が残さず、effect の位置をいつも object にしていたので、手の主張が道具の出力から消えた。
+    lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, EFFECT_FREE)).text.splitlines()
+    assert "def copied(x: int) -> _Program[int, _Never]:" in lines
+    assert "from typing import Never as _Never" in lines
+    # 宣言の無い定義は今までどおり object(effect を出さないとは言わない)。
+    assert "def asking(x: int) -> _Program[int, object]:" in lines

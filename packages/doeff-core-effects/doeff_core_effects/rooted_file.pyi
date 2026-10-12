@@ -31,8 +31,6 @@ from doeff_core_effects.file_effects import MeasureTree as MeasureTree
 from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
 from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 PATH_EFFECTS: tuple[type, ...]
 MOVE_EFFECTS: tuple[type, ...]
 ANSWER: TypeAlias = FileFailed | PathStat | LockHeld | DiskUsage | str | bytes | tuple | int | None

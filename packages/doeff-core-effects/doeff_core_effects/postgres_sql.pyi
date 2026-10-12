@@ -49,8 +49,6 @@ from doeff_core_effects.sql_transaction import TransactionFlush as TransactionFl
 from doeff_core_effects.sql_transaction import run_in_transaction as run_in_transaction
 from doeff_core_effects.sql_transaction import run_in_batched_transaction as run_in_batched_transaction
 from doeff_core_effects.sql_transaction import stray_batch as stray_batch
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 DRIVER_CLASS_SQLSTATES: dict[str, str]
 UNREACHABLE_CLASSES: tuple[str, ...]
 UNREACHABLE_SQLSTATE_CLASS: str

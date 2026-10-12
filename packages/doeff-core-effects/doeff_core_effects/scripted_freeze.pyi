@@ -2,8 +2,6 @@
 
 from doeff_hy.static_types import Handler as _Handler
 from doeff_core_effects.heap_effects import CollectAndFreeze as CollectAndFreeze
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def scripted_freeze_handler(count: int) -> _Handler:
     ...

@@ -39,8 +39,6 @@ from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 LOCK_THREADS: ThreadPerCall
 TREE_THREADS: ThreadPerCall
 

@@ -23,8 +23,6 @@ from doeff_core_effects.sql_effects import checked_identifier as checked_identif
 from doeff_core_effects.sql_effects import checked_identifiers as checked_identifiers
 from doeff_core_effects.sql_effects import checked_rows as checked_rows
 from doeff_core_effects.sql_effects import normalized_rows as normalized_rows
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 CLICKHOUSE_TYPES: Incomplete
 CLICKHOUSE_COLUMN_TYPES: dict[SqlColumnType, str]
 ANSWER_FORMAT: str

@@ -11,8 +11,6 @@ from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.compute_effects import Compute as Compute
 from doeff_core_effects.inline_compute import computed as computed
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def settle(promise: ExternalPromise, future: Future) -> None:
     ...

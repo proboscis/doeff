@@ -17,8 +17,6 @@ from doeff_core_effects.os_warm_process import same_child_running as same_child_
 from doeff_core_effects.process_stat import ProcStat as ProcStat
 from doeff_core_effects.pidfd_exit import pidfd_of as pidfd_of
 from doeff_core_effects.kqueue_exit import kqueue_fd_of as kqueue_fd_of
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 EXIT_FD_OPENERS: Incomplete
 
 class ExitWaitUnavailable(RuntimeError):
