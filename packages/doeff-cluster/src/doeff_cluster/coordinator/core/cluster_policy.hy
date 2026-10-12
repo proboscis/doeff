@@ -900,15 +900,23 @@
   #(limit.group (if declared.per-part limit.part "") (if (= declared.scope "worker") worker None)))
 
 
-(defk limit-holdings [tasks groups]
-  {:pre [(: tasks dict) (: groups Table)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
-  "置いている(PLACED-PHASES の)task が名乗る組の升ごとの数(limit-slot → 数)を知るため — place-tasks はこの数から始め、置くたびに
-   足す(hold-limits)。groups = 組の名で引く、系が宣言した GroupLimit の表(宣言に無い組の名乗りは数えない)。"
+(defk placed-claims [tasks]
+  {:pre [(: tasks dict)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "置いている(PLACED-PHASES の)task の組の名乗りと置いた worker の組 #(limits worker) を、task 1 本につき 1 つ並べるため(組の上限の
+   数えが task の行から読むのはここだけ — 送り手の他の欄を数えに入れさせない。設計のレビューの指摘 2-a・引数と答えは
+   test_group_limits_owner が固定する)。"
+  (tuple (gfor t (.values tasks) :if (in t.phase PLACED-PHASES) #(t.limits t.worker))))
+
+
+(defk limit-holdings [claims groups]
+  {:pre [(: claims tuple) (: groups Table)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "置いている task の名乗り claims(placed-claims の答え — #(limits worker) の tuple)から組の升ごとの数(limit-slot → 数)を知るため —
+   place-tasks はこの数から始め、置くたびに足す(hold-limits)。groups = 組の名で引く、系が宣言した GroupLimit の表(宣言に無い組の
+   名乗りは数えない)。"
   (var held {})
-  (for [t (.values tasks)]
-    (when (in t.phase PLACED-PHASES)
-      (<- more dict (hold-limits held t.limits t.worker groups))
-      (:= held more)))
+  (for [#(limits worker) claims]
+    (<- more dict (hold-limits held limits worker groups))
+    (:= held more))
   held)
 
 
@@ -925,20 +933,22 @@
   after)
 
 
-(defk task-misfit [task worker room held groups]
-  {:pre [(: task TaskRecord) (: worker WorkerInfo) (: room int) (: held dict) (: groups Table)] :post [(: % (| TaskUnplacedKind None))]
+(defk task-misfit [limits priority worker room held groups]
+  {:pre [(: limits tuple) (: priority int) (: worker WorkerInfo) (: room int) (: held dict) (: groups Table)]
+   :post [(: % (| TaskUnplacedKind None))]
    :tags {:context "coordinator" :role "judgment"}}
-  "能力と版の合う worker 1 台に待っている task を今置けない理由を知るため(None = 置ける)。room = その worker の task の空き
-   (task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・groups = 系が宣言した GroupLimit の表。名乗った組の
+  "能力と版の合う worker 1 台に、待っている task(名乗った組 limits・優先 priority — task の行は受けない)を今置けない理由を知るため
+   (None = 置ける)。room = その worker の task の空き(task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・
+   groups = 系が宣言した GroupLimit の表。名乗った組の
    どれかが宣言に無い → TASK-UNDECLARED・空きが無い → TASK-NO-ROOM・名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
    負の優先の task で、空きが worker の task-reserve 以下(置けば予約を食う)→ TASK-RESERVED(2026-10-11)。比べる値は宣言の値で、task の
    名乗りに値は無い(card ki-b0e8028c8c8d)。"
-  (<- by-limits (| TaskUnplacedKind None) (limits-misfit task.limits worker.name held groups))
+  (<- by-limits (| TaskUnplacedKind None) (limits-misfit limits worker.name held groups))
   (cond
     (= by-limits TaskUnplacedKind.TASK-UNDECLARED) by-limits
     (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
     by-limits by-limits
-    (and (< task.priority 0) (<= room worker.task-reserve)) TaskUnplacedKind.TASK-RESERVED
+    (and (< priority 0) (<= room worker.task-reserve)) TaskUnplacedKind.TASK-RESERVED
     True None))
 
 
@@ -998,7 +1008,8 @@
   {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "GET /state の組の画面の列(組の名の順 — GroupLimitView)を作るため: 系が宣言した値と、置いている数の升(置き方 place-tasks と同じ数え
    limit-holdings)と、その組を名乗って待っている task の数。運用者が、値が宣言のとおりに効いているかを 1 か所で読む(card ki-b0e8028c8c8d)。"
-  (<- held dict (limit-holdings state.tasks state.group-limits))
+  (<- claims tuple (placed-claims state.tasks))
+  (<- held dict (limit-holdings claims state.group-limits))
   (val queued (lfor t (.values state.tasks) :if (= t.phase "queued") t))
   (tuple (gfor #(name declared) (sorted (.items state.group-limits) :key (fn [item] (get item 0)))
                (GroupLimitView :limit declared
@@ -1094,7 +1105,7 @@
   (setv load (load-of placed placements)
         draining (draining-workers state now))
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
-  (var held (! (limit-holdings tasks state.group-limits)))
+  (var held (! (limit-holdings (! (placed-claims tasks)) state.group-limits)))
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted tasks :key (fn [i] #((- (. (get tasks i) priority)) i)))]
     (setv task (get tasks id))
@@ -1109,7 +1120,7 @@
       (var misfits [])
       (for [w able-now]
         (<- room int (task-room-of w load))
-        (<- misfit (| TaskUnplacedKind None) (task-misfit task w room held state.group-limits))
+        (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits))
         (if (is misfit None)
             (:= roomy #(#* roomy w))
             (:= misfits [#* misfits misfit])))
