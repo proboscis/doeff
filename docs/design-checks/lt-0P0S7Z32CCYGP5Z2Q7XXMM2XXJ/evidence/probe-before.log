@@ -1,0 +1,3 @@
+# os_files = b32605d92(直す前)
+40 watches → getaddrinfo: timeout>3s
+60 watches → getaddrinfo: timeout>3s
