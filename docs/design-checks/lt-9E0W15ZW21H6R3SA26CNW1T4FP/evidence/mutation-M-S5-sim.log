@@ -1,0 +1,22 @@
+# 変異 M-S5-sim(シナリオ S5): sim の宣言の書きが組の上限を書かない(本番の declare と分かれる)
+# 刻: 2026-10-12T04:19:23Z
+# 狙いの検: 2 本 — すべて赤なら、この検はこの違反を捉える
+# 結果: すべて赤(捉えた) rc=1
+
+## 入れた変異
+--- a/packages/doeff-cluster/src/doeff_cluster/sim/local.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/sim/local.hy
+@@ -2563,3 +2563,3 @@
+    Service も含む)。"
+-  (for [limit declaration.limits]
++  (for [limit #()]
+     (val limit-path (+ "/resources/GroupLimit/" (url-quote limit.group :safe "")))
+
+## 検の出力
+packages/doeff-cluster/tests/test_group_limits_declared.hy::test_the_state_shows_each_group_declared_value_and_held_count_on_sim FAILED [ 50%]
+packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_second_system_declaring_a_group_is_refused_on_sim FAILED [100%]
+E   doeff_cluster.shared.intent.detached_model.DetachedRefused: 400: limits の組 probe は系の宣言に無い — 系の :task-limits に組の上限を書いて宣言してから送る(宣言の在る組: [])
+E   doeff_cluster.shared.intent.detached_model.DetachedRefused: 400: limits の組 llm は系の宣言に無い — 系の :task-limits に組の上限を書いて宣言してから送る(宣言の在る組: [])
+FAILED packages/doeff-cluster/tests/test_group_limits_declared.hy::test_the_state_shows_each_group_declared_value_and_held_count_on_sim
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_second_system_declaring_a_group_is_refused_on_sim
+========================= 2 failed, 1 warning in 2.08s =========================

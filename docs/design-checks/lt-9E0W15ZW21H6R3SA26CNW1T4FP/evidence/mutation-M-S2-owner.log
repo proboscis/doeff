@@ -1,0 +1,24 @@
+# 変異 M-S2-owner(シナリオ S2): 資源の口が持ち主の系を比べない(盲検 A の前の形)
+# 刻: 2026-10-12T04:19:52Z
+# 狙いの検: 2 本 — すべて赤なら、この検はこの違反を捉える
+# 結果: すべて赤(捉えた) rc=1
+
+## 入れた変異
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy
+@@ -916,3 +916,3 @@
+           ;; 変わった)。版の照合は読んでから書くまでの他人の書きしか止めないので、持ち主の系を別に比べる。
+-          (when (!= limit.system current.system)
++          (when False
+             (refuse 409 (.format "GroupLimit {} は系 {} が宣言した組 — 系 {} は書き直せない(組を宣言する系は 1 つ。持ち主を移すなら DELETE してから作る)"
+
+## 検の出力
+packages/doeff-cluster/tests/test_group_limits_owner.hy::test_a_group_declared_by_one_system_is_not_rewritten_by_another_system FAILED [ 50%]
+packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_second_system_declaring_a_group_is_refused_on_sim FAILED [100%]
+E   AssertionError: 別の系の書き直しを断らなかった
+/work/toolset/worktrees/doeff-wt-ki-b0e8-mut/packages/doeff-cluster/tests/test_group_limits_owner.hy:68: AssertionError: 別の系の書き直しを断らなかった
+E   AssertionError: None
+/work/toolset/worktrees/doeff-wt-ki-b0e8-mut/packages/doeff-cluster/tests/test_group_limits_owner.hy:126: AssertionError: None
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_a_group_declared_by_one_system_is_not_rewritten_by_another_system
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_second_system_declaring_a_group_is_refused_on_sim
+========================= 2 failed, 1 warning in 2.50s =========================

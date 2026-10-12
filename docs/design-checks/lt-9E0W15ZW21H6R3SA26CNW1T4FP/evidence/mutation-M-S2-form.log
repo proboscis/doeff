@@ -1,0 +1,20 @@
+# 変異 M-S2-form(シナリオ S2): defsystem の形の読みの範囲の名が規則と食い違う(写しだけを直した)
+# 刻: 2026-10-12T04:16:26Z
+# 狙いの検: 1 本 — すべて赤なら、この検はこの違反を捉える
+# 結果: すべて赤(捉えた) rc=1
+
+## 入れた変異
+--- a/packages/doeff-hy/src/doeff_hy/system_form.hy
++++ b/packages/doeff-hy/src/doeff_hy/system_form.hy
+@@ -41,3 +41,3 @@
+ (setv LIMIT-KEYS #("scope" "limit" "perPart"))
+-(setv LIMIT-SCOPES #("worker" "cluster"))
++(setv LIMIT-SCOPES #("worker" "cluster" "node"))
+ (setv UPDATE-FORMS #("recreate" "handoff"))
+
+## 検の出力
+packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_defsystem_form_reads_the_same_scopes_and_keys_as_the_rule FAILED [100%]
+E   AssertionError: ('worker', 'cluster', 'node')
+/work/toolset/worktrees/doeff-wt-ki-b0e8-mut/packages/doeff-cluster/tests/test_group_limits_owner.hy:177: AssertionError: ('worker', 'cluster', 'node')
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_defsystem_form_reads_the_same_scopes_and_keys_as_the_rule
+=================== 1 failed, 1 warning in 60.46s (0:01:00) ====================
