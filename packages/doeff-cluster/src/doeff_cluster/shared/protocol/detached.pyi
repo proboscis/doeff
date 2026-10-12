@@ -72,7 +72,7 @@ from doeff_cluster.shared.intent.detached_model import ServicesUnreachable as Se
 from doeff_cluster.shared.intent.detached_model import ServiceListWire as ServiceListWire
 from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
 from doeff_cluster.shared.intent.detached_model import DetachedTiming as DetachedTiming
-from doeff_cluster.shared.intent.detached_model import DetachedTimingWire as DetachedTimingWire
+from doeff_cluster.shared.intent.detached_model import StateTasksWire as StateTasksWire
 from doeff_cluster.shared.intent.detached_model import DetachedTimingAnswer as DetachedTimingAnswer
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import parse as parse
@@ -106,7 +106,10 @@ def submit_unreachable(reason: str) -> DetachedUnreachable:
 def awaited_answer(view: dict | None, reason: str, key: str, waited: float, timeout_seconds: float | int | None) -> DetachedAwaited | None:
     ...
 
-def detached_timing_of_view(key: str, view: dict | str) -> _Program[DetachedTimingAnswer, object]:
+def detached_timing_of_state(key: str, state: dict | str) -> _Program[DetachedTimingAnswer, object]:
+    ...
+
+def unknown_timing_confirmed(unknown: DetachedUnknown, view: dict | str) -> DetachedTimingAnswer:
     ...
 
 def runner_facts_of_view(workers: dict) -> tuple:
