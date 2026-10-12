@@ -1,0 +1,61 @@
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
+index 61b9bf6f2..1904444fa 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
+@@ -631,16 +631,43 @@ def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
+     return UnknownTest()
+ 
+ 
++@dataclass(frozen=True)
++class _GuardReading:
++    """A dispatcher's guards, read: the ``if`` of each guard that sends the effect on (by node —
++    not a clause) and, by the branch's node, the test under which it does (``Clause.passes``)."""
++
++    ifs: frozenset[int]
++    tests: Mapping[int, PassTest]
++
++
++_GUARD_READINGS: dict[int, tuple[FunctionNode, _GuardReading]] = {}
++
++
++def _guard_reading(node: FunctionNode, dispatch: _Dispatch, scope: _Scope) -> _GuardReading:
++    """The guards of ``node``, read once per def node like its branches (``_dispatch_of``): a
++    handler is read again wherever it is installed, and its guards never change — reading them
++    at every read ran ``_sent_on_guards`` and ``_pass_test`` once per install."""
++    cached = _GUARD_READINGS.get(id(node))
++    if cached is not None and cached[0] is node:
++        return cached[1]
++    sent = _sent_on_guards(dispatch, scope)
++    reading = _GuardReading(
++        ifs=frozenset(id(guard) for guard in sent.values()),
++        tests={at: _pass_test(guard.test, dispatch.param, scope) for at, guard in sent.items()},
++    )
++    _GUARD_READINGS[id(node)] = (node, reading)
++    return reading
++
++
+ def _read_clauses(
+     reader: _Reader, node: FunctionNode, scope: _Scope, filename: str, label: str
+ ) -> _ReadClauses:
+     dispatch = _dispatch_of(node)
+-    guards = _sent_on_guards(dispatch, scope)
+-    guard_ifs = {id(guard) for guard in guards.values()}
++    reading = _guard_reading(node, dispatch, scope)
+     clauses: list[Clause] = []
+     unresolved: list[Unresolved] = []
+     for branch in dispatch.branches:
+-        if id(branch.at) in guard_ifs:
++        if id(branch.at) in reading.ifs:
+             continue  # a guard's ``if`` sends the effect on: it is not a clause
+         location = Location(filename, getattr(branch.at, "lineno", 0))
+         named = _classes(branch.classes, scope)
+@@ -648,8 +675,7 @@ def _read_clauses(
+             Unresolved("handled class is not an importable effect class", text, location)
+             for text in named.missing
+         )
+-        guard = guards.get(id(branch.at))
+-        passes = None if guard is None else _pass_test(guard.test, dispatch.param, scope)
++        passes = reading.tests.get(id(branch.at))
+         # Read once per handled class, with the effect parameter bound to the effect of that
+         # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
+         # reaches the clause (``Clause.emits``).

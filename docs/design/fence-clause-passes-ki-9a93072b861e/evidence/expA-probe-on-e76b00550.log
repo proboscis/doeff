@@ -1,0 +1,4 @@
+LEAVES ['Nap'] unresolved ()
+HANDLER maintenance_gate Basis.CLAUSES
+  CLAUSE EffectBase passes= NotTest(part=AllTest(parts=(UnknownTest(), NotTest(part=ClassTest(classes=(<class 'fx_c2d79a3c.effects.Nap'>,), complete=True))))) emits= ['doeff_core_effects.effects.Get', 'doeff_core_effects.effects.Put', 'fx_c2d79a3c.effects.ReadFlag']
+1 passed, 1 warning in 1.90s

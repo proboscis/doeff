@@ -1,0 +1,61 @@
+"""盲検 B の失敗例の入力(返答の手順 2 をそのまま写した)。使い捨て: 検の dir に置いて走らせ、すぐ消す。"""
+
+import importlib
+
+import pytest
+from doeff_effect_analyzer.program_effects import analyze_program
+
+pytest.importorskip("hy")
+pytest.importorskip("doeff_hy")
+
+EFFECTS_PY = """\
+from dataclasses import dataclass
+
+from doeff_vm import EffectBase
+
+
+@dataclass(frozen=True)
+class Tick(EffectBase):
+    pass
+
+
+@dataclass(frozen=True)
+class Nap(EffectBase):
+    seconds: float
+
+
+@dataclass(frozen=True)
+class Zap(EffectBase):
+    pass
+"""
+
+PROGRAMS_HY = """\
+(require doeff-hy.macros [defk <-])
+(require doeff-hy.handle [handle])
+(import doeff [EffectBase])
+(import {pkg}.effects [Tick Nap Zap])
+(defk three [] {:pre [] :post [(: % int)]} (<- (Nap 1.0)) (<- (Tick)) (<- (Zap)) 1)
+(defk sandboxed [passable] {:pre [(: passable type)] :post [(: % int)]}
+  (<- r (handle (three) (EffectBase [] :when (not (isinstance effect passable)) (raise (ValueError "fenced")))))
+  r)
+(defk both [] {:pre [] :post [(: % int)]}
+  (<- a (sandboxed Nap)) (<- b (sandboxed Tick)) (+ a b))
+"""
+
+
+def _left(pkg, program, **bindings):
+    report = analyze_program(f"{pkg}.programs:{program}", bindings=bindings or None)
+    return {t.__name__ for t in report.effect_types}
+
+
+@pytest.mark.parametrize("first", ["Nap", "Tick"])
+def test_each_call_reads_its_own_guard(make_package, first):
+    pkg = make_package({"effects.py": EFFECTS_PY, "programs.hy": PROGRAMS_HY})
+    effects = importlib.import_module(f"{pkg}.effects")
+    for name in [first, "Tick" if first == "Nap" else "Nap"]:
+        assert _left(pkg, "sandboxed", passable=getattr(effects, name)) == {name}, name
+
+
+def test_one_program_two_calls(make_package):
+    pkg = make_package({"effects.py": EFFECTS_PY, "programs.hy": PROGRAMS_HY})
+    assert _left(pkg, "both") == {"Nap", "Tick"}
