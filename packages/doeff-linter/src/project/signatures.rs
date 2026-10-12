@@ -296,6 +296,23 @@ struct FileFacts {
     definitions: Vec<(String, DefinitionFacts)>,
 }
 
+impl FileFacts {
+    /// 事実が持つ位置の path(`Location::path`)を全部 `path` にする。cache は作業木の絶対 path を持たない形で置き、読んだ後で今の根の
+    /// path を付ける(facts_cache の頭の註)。欄を全部名指して分解するので、path を持つ欄を足すとここが compile できなくなる。
+    fn set_path(&mut self, path: &str) {
+        let FileFacts { types, effects, definitions } = self;
+        for (_, location) in types {
+            location.path = path.to_string();
+        }
+        for (_, EffectFacts { location, answer: _, absent: _, failure: _ }) in effects {
+            location.path = path.to_string();
+        }
+        for (_, DefinitionFacts { kind: _, location, answer: _, sites: _ }) in definitions {
+            location.path = path.to_string();
+        }
+    }
+}
+
 /// 1 file の事実と、その file の推論の材料の鍵(cache に一緒に置く)。
 #[derive(Clone, Serialize, Deserialize)]
 struct KeyedFacts {
@@ -352,12 +369,26 @@ impl World {
         // 書いた file(overlay)は disk でなく渡された中身から作るので、cache の母集団から外す。
         let on_disk: Vec<(String, std::path::PathBuf)> =
             files.into_iter().filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel)).collect();
-        // file ごとの事実はその file の中身だけで決まる(root は path の綴りにしか使わない)ので、変わった file だけ作り直す。
-        // 5MB 余りの事実を JSON で読むと 1 回に約 0.05 秒かかったので、欄の名前を持たない binary の形で置く(agora-redesign #1621)。
-        let mut facts: Vec<KeyedFacts> = crate::timing::timed("effect-world.facts", || super::facts_cache::per_file_compact(root, "signature-facts", &on_disk, |rel, path| {
-            let source = std::fs::read_to_string(path).ok()?;
-            source.contains("(def").then(|| KeyedFacts::of(rel, file_facts(root, rel, &source)))
-        }));
+        // file ごとの事実はその file の中身と根からの path だけで決まる(root は位置の path の綴りにしか使わない)ので、変わった file だけ
+        // 作り直す。5MB 余りの事実を JSON で読むと 1 回に約 0.05 秒かかったので、欄の名前を持たない binary の形で置く(agora-redesign #1621)。
+        // 位置の path は作業木の絶対 path なので、置く値は path を空にし、読んだ後で今の根の path を付ける — 作業木をまたいで同じ中身の
+        // file の事実を分け合うため(card ki-9743c30d49bc)。
+        let mut facts: Vec<KeyedFacts> = crate::timing::timed("effect-world.facts", || {
+            super::facts_cache::per_file_compact_bound(
+                root,
+                "signature-facts",
+                &on_disk,
+                |rel, path| {
+                    let source = std::fs::read_to_string(path).ok()?;
+                    source.contains("(def").then(|| {
+                        let mut keyed = KeyedFacts::of(rel, file_facts(Path::new(""), rel, &source));
+                        keyed.facts.set_path("");
+                        keyed
+                    })
+                },
+                |keyed, rel, _path| keyed.facts.set_path(&root.join(rel).to_string_lossy()),
+            )
+        });
         if let Some((rel, source)) = overlay {
             facts.push(KeyedFacts::of(rel, file_facts(root, rel, source)));
         }
