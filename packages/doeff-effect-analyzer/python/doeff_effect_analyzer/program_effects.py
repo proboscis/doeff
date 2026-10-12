@@ -67,7 +67,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeGuard, TypeVar
 
 from doeff_effect_analyzer import env_places
 from doeff_effect_analyzer.hy_expansion import (
@@ -1408,11 +1408,38 @@ class _Scope:
 
     def _local_value(self, name: str) -> Imported:
         """What a local the reader follows holds: an element of a sequence of Programs, a
-        field of the received effect, or a function defined in the body — else ``UNBOUND``."""
+        field of the received effect, or a function defined in the body (or returned by a
+        function the body calls at once) — else ``UNBOUND``."""
         if name in self.local_functions:
             return _LocalFunction(self.local_functions[name], self)
+        returned = self._returned_at_once(name)
+        if returned is not UNBOUND:
+            return returned
         element = self._local_element(name)
         return element if element is not UNBOUND else self._received_field(name)
+
+    def _returned_at_once(self, name: str) -> Imported:
+        """A local bound once to a call of a def of the body that takes nothing and only
+        returns at its end (``nested = _hy_anon_9()`` — Hy's ``((fn [] … nested))``):
+        the function that def returns — a def of its own body by name, or a lambda — read
+        in that def's scope.  doeff-hy writes a definition (``defk`` / ``deftest`` /
+        ``defhandler``) and a ``handle`` in a function body this way, so the helpers its
+        expansion imports stay local to the wrapper (card ki-964823cd7feb・ki-907f779b3290)."""
+        match self.local_values.get(name):
+            case ast.Call(func=ast.Name(id=callee), args=[], keywords=[]) if callee != name:
+                wrapper = self.local_functions.get(callee)
+            case _:
+                return UNBOUND
+        if not _returns_once_at_end(wrapper):
+            return UNBOUND
+        inner = _scope_of(wrapper, self.module, parent=self)
+        match wrapper.body[-1]:
+            case ast.Return(value=ast.Lambda() as returned):
+                return _LocalFunction(returned, inner)
+            case ast.Return(value=ast.Name(id=defined)) if defined in inner.local_functions:
+                return _LocalFunction(inner.local_functions[defined], inner)
+            case _:
+                return UNBOUND
 
     def _received_field(self, name: str) -> Imported:
         """A local holding a field of the received effect: bound once to
@@ -1464,6 +1491,24 @@ class _Scope:
         ):
             return _Instance(cls)
         return UNBOUND
+
+
+def _returns_once_at_end(node: FunctionNode | None) -> TypeGuard[ast.FunctionDef]:
+    """Whether ``node`` is a plain def that takes nothing, is not decorated, does not yield
+    and returns a value only by its last statement — what Hy compiles ``((fn [] … x))`` to."""
+    if not isinstance(node, ast.FunctionDef) or node.decorator_list or _is_generator(node):
+        return False
+    arguments = node.args
+    if arguments.posonlyargs or arguments.args or arguments.kwonlyargs:
+        return False
+    if arguments.vararg or arguments.kwarg:
+        return False
+    match node.body[-1]:
+        case ast.Return(value=ast.expr()) as last:
+            pass
+        case _:
+            return False
+    return not any(isinstance(n, ast.Return) and n is not last for n in _body_nodes(node))
 
 
 def _reads_itself(value: ast.expr, name: str) -> bool:
@@ -2283,12 +2328,26 @@ def _read_install(form: _InstallForm, scope: _Scope, filename: str) -> list[Hand
         case _InstallKind.STACK:
             return handler_effects.stack_of(form.handlers, scope, filename)
         case _InstallKind.RAW:
-            text = ast.unparse(form.handlers)
-            line = getattr(form.handlers, "lineno", 0)
+            handler = _bound_handler(form.handlers, scope)
+            text = ast.unparse(handler)
+            line = getattr(handler, "lineno", 0)
             label = text if len(text) <= _MAX_LABEL else f"inline handler at {filename}:{line}"
-            return [handler_effects.raw_handler_of(form.handlers, scope, filename, label)]
+            return [handler_effects.raw_handler_of(handler, scope, filename, label)]
         case _InstallKind.VALUE:
             return [handler_effects.element_of(form.handlers, scope, filename)]
+
+
+def _bound_handler(handler: ast.expr, scope: _Scope) -> ast.expr:
+    """``WithHandler(h, body)``'s ``h`` as written: a local the reader cannot resolve, bound
+    once (``__doeff_handler_data__ = _doeff_do(_hy_anon_17)`` — a ``handle`` in a function body
+    binds its dispatcher in the function it calls at once, card ki-907f779b3290), is read
+    through the expression it was bound to."""
+    if not isinstance(handler, ast.Name) or scope.resolve(handler) is not UNBOUND:
+        return handler
+    bound = scope.local_values.get(handler.id)
+    if bound is None or _reads_itself(bound, handler.id):
+        return handler
+    return bound
 
 
 @dataclass(frozen=True)

@@ -20,7 +20,7 @@ import shutil
 import sys
 import types
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -402,6 +402,14 @@ def functions_named(tree: ast.Module) -> list[tuple[str, ast.AST]]:
     ]
 
 
+def nested_in(qualnames: Iterable[str], outer: str, inner: str) -> str:
+    """The qualname of the def ``inner`` written in the body of ``outer``. doeff-hy writes a
+    definition in a function body inside a function it calls at once (card ki-964823cd7feb),
+    so the qualname has that function's name between the two."""
+    [qualname] = [q for q in qualnames if q.startswith(f"{outer}.") and q.endswith(f".{inner}")]
+    return qualname
+
+
 def a_new_process() -> None:
     """Forget everything derived in memory, as a new process starts."""
     pe._MODULE_CACHE.clear()
@@ -420,7 +428,8 @@ def test_a_cached_tree_finds_the_same_def_with_its_body_facts_without_walking(
     parameters decide between candidates)."""
     written = pe._compile_hy(DEFS, "/src/defs.hy", "defs").tree
     named = functions_named(written)
-    assert {qualname for qualname, _ in named} >= {"outer", "outer.inner"}
+    qualnames = {qualname for qualname, _ in named}
+    assert "outer" in qualnames and nested_in(qualnames, "outer", "inner")
     asked = []
     for qualname, node in named:
         for line in (node.lineno, node.lineno + 1):
@@ -461,10 +470,11 @@ def test_a_cached_tree_builds_only_the_definition_it_is_asked_for(cache_dir: Pat
     comes with it, as the same nodes); the whole tree is built only when asked for."""
     written = pe._compile_hy(TWO, "/src/two.hy", "two").tree
     named = dict(functions_named(written))
-    inside, outer = named["second_one.inside"], named["second_one"]
+    inside_name = nested_in(named, "second_one", "inside")
+    inside, outer = named[inside_name], named["second_one"]
     a_new_process()
     read = pe._compile_hy(TWO, "/src/two.hy", "two")
-    found_inside = read.find(function_at("second_one.inside", line=inside.lineno, params=pe._definition_params(inside)))
+    found_inside = read.find(function_at(inside_name, line=inside.lineno, params=pe._definition_params(inside)))
     assert found_inside is not None and ast.dump(found_inside) == ast.dump(inside)
     assert set(read._loaded) == {1}
     found_outer = read.find(function_at("second_one", line=outer.lineno, params=pe._definition_params(outer)))
