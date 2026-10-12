@@ -8,7 +8,7 @@
   test_wait_within.py's counterexample).
 """
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, FailPromise, Spawn
@@ -23,7 +23,14 @@ class _BrokenError(Exception):
     pass
 
 
-def _spawns_and_result(program: Any) -> tuple[int, Any]:
+class _Run(NamedTuple):
+    """What running a program on the virtual clock came to: the Spawn effects that reached the scheduler, and its answer."""
+
+    spawns: int
+    result: Any
+
+
+def _spawns_and_result(program: Any) -> _Run:
     """Run ``program`` on the virtual clock: the Spawn effects that reached the scheduler, and its answer."""
     spawns = 0
 
@@ -37,7 +44,7 @@ def _spawns_and_result(program: Any) -> tuple[int, Any]:
     result = run_with_handlers(
         _install_raw_handler(count_spawns)(sim_time_handler(start_time=sim_time(0.0))(program))
     )
-    return spawns, result
+    return _Run(spawns, result)
 
 
 def test_the_first_future_value_is_answered_at_the_time_it_completed() -> None:
@@ -50,7 +57,7 @@ def test_the_first_future_value_is_answered_at_the_time_it_completed() -> None:
         now = yield GetTime()
         return outcome, now
 
-    assert _spawns_and_result(_program())[1] == (
+    assert _spawns_and_result(_program()).result == (
         RaceOutcome(value="rung", timed_out=False),
         sim_time(2.0),
     )
@@ -64,7 +71,7 @@ def test_timed_out_is_answered_exactly_when_the_duration_passes_first() -> None:
         now = yield GetTime()
         return outcome, now
 
-    assert _spawns_and_result(_program())[1] == (
+    assert _spawns_and_result(_program()).result == (
         RaceOutcome(value=None, timed_out=True),
         sim_time(5.0),
     )

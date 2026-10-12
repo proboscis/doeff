@@ -22,6 +22,7 @@ import dataclasses
 import sys
 import types
 from collections.abc import Callable
+from typing import NamedTuple
 
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
@@ -92,42 +93,47 @@ _DEFHANDLER_PROGRAM = "(h ({N} 1))"
 _HOSTS = ("module", "defk", "defn", "class")
 
 
-def _expression_module(
-    host: str, expression: str
-) -> tuple[str, Callable[[types.ModuleType], object]]:
+class _HostedModule(NamedTuple):
+    """host に書いた Hy の source と、それを読み込んだ module から答えを出す Program を取る関数。"""
+
+    source: str
+    program: Callable[[types.ModuleType], object]
+
+
+def _expression_module(host: str, expression: str) -> _HostedModule:
     """handle の式 `expression` を host に書いた source と、答えを出す Program の取り方。"""
     match host:
         case "module":
-            return f"(setv program {expression})", lambda mod: mod.program
+            return _HostedModule(f"(setv program {expression})", lambda mod: mod.program)
         case "defk":
-            return (
+            return _HostedModule(
                 f"(defk subject [] {{:pre [] :post [(: % int)]}} (<- r {expression}) r)",
                 lambda mod: mod.subject(),
             )
         case "defn":
-            return f"(defn host [] {expression})", lambda mod: mod.host()
+            return _HostedModule(f"(defn host [] {expression})", lambda mod: mod.host())
         case "class":
-            return f"(defclass C [] (setv program {expression}))", lambda mod: mod.C.program
+            return _HostedModule(f"(defclass C [] (setv program {expression}))", lambda mod: mod.C.program)
         case _:
             raise AssertionError(host)
 
 
-def _defhandler_module(host: str, name: str) -> tuple[str, Callable[[types.ModuleType], object]]:
+def _defhandler_module(host: str, name: str) -> _HostedModule:
     """defhandler を host に書いた source と、答えを出す Program の取り方。"""
     definition = _DEFHANDLER.replace("{N}", name)
     program = _DEFHANDLER_PROGRAM.replace("{N}", name)
     match host:
         case "module":
-            return f"{definition}(setv program {program})", lambda mod: mod.program
+            return _HostedModule(f"{definition}(setv program {program})", lambda mod: mod.program)
         case "defk":
-            return (
+            return _HostedModule(
                 f"(defk subject [] {{:pre [] :post [(: % int)]}} {definition} (<- r {program}) r)",
                 lambda mod: mod.subject(),
             )
         case "defn":
-            return f"(defn host [] {definition} {program})", lambda mod: mod.host()
+            return _HostedModule(f"(defn host [] {definition} {program})", lambda mod: mod.host())
         case "class":
-            return f"(defclass C [] {definition})", lambda mod: mod.C.h(getattr(mod, name)(1))
+            return _HostedModule(f"(defclass C [] {definition})", lambda mod: mod.C.h(getattr(mod, name)(1)))
         case _:
             raise AssertionError(host)
 

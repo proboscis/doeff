@@ -35,6 +35,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
 from types import ModuleType
+from typing import NamedTuple
 
 import pytest
 
@@ -122,7 +123,14 @@ STARTUP_IN_THE_ENVIRONMENT = (
 )
 
 
-def _checkout_with_its_interpreter_environment(tmp_path: Path, started: float) -> tuple[Path, Path]:
+class _CheckoutWithEnvironment(NamedTuple):
+    """A checkout and the interpreter's environment (its .venv) inside it."""
+
+    checkout: Path
+    environment: Path
+
+
+def _checkout_with_its_interpreter_environment(tmp_path: Path, started: float) -> _CheckoutWithEnvironment:
     """A checkout whose .venv holds the interpreter's environment, with bytecode written during the run in both."""
     checkout = tmp_path / "checkout"
     environment = checkout / ".venv"
@@ -133,7 +141,7 @@ def _checkout_with_its_interpreter_environment(tmp_path: Path, started: float) -
         environment / "lib/python3.14/site-packages/pydantic/__pycache__/main.cpython-314.pyc",
         started + 1,
     )
-    return checkout, environment
+    return _CheckoutWithEnvironment(checkout, environment)
 
 
 def test_a_run_ending_names_the_bytecode_outside_the_interpreters_environment_and_the_startup_bytecode_in_it(
