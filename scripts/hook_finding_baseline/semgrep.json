@@ -3,7 +3,6 @@
     "doeff-no-sleep-in-tests": {
       "tests/effects/test_finally_semaphore_over_release.py": 1,
       "tests/effects/test_sync_await_spawn_gather_deadlock.py": 1,
-      "tests/test_await_http_memory.py": 1,
       "tests/test_cache_await_spawn_hang.py": 1
     }
   },
