@@ -67,8 +67,6 @@ from doeff_cluster.worker.core.warm_rules import WarmPlace as WarmPlace
 from doeff_cluster.worker.core.warm_rules import warm_place as warm_place
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 
 @dataclass(frozen=True, kw_only=True)
 class HostSettings:

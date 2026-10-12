@@ -59,8 +59,6 @@ from aiohttp.web_protocol import PayloadAccessError as PayloadAccessError
 from doeff import run as run
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 FILE_CHUNK_BYTES: int
 BODY_CHUNK_BYTES: int
 PREFETCH_BYTES: int

@@ -13,8 +13,6 @@ from doeff_core_effects.scheduler import Wait as Wait
 from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 BOARDS: Incomplete
 BOARDS_LOCK: Incomplete
 BELLS: Incomplete

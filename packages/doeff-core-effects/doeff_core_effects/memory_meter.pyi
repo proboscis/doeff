@@ -15,8 +15,6 @@ from doeff_core_effects.meter_effects import observed as observed
 from doeff_core_effects.meter_effects import observed_batch as observed_batch
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 
 def memory_meter_handler(settings: MeterSettings) -> _Handler:
     ...

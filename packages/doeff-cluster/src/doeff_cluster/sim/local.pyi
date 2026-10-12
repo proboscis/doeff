@@ -288,8 +288,6 @@ from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
 from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
 from doeff import Pass as Pass
 from doeff_vm import WithHandler as WithHandler
-from doeff import Some as Some
-from doeff_core_effects.effects import Put as Put
 NO_STATE_FILE: str
 SIM_URL: str
 SIM_START_MS: int
