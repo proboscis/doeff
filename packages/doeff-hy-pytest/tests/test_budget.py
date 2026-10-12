@@ -21,7 +21,14 @@ from doeff_hy_pytest.budget import (
     ImportTally,
     Measurement,
     OverBudget,
+    RATIO_FLOOR_STEPS,
+    RATIO_MIN_TESTS,
+    RATIO_NAME_CHARS,
+    RATIO_NAMED,
     StaleDeclaration,
+    StepCost,
+    StepCostRatios,
+    TooFewForRatios,
     StepDeclaration,
     RegisteredOverBudget,
     RegisteredWithinBudget,
@@ -44,7 +51,11 @@ from doeff_hy_pytest.budget import (
     load_registry,
     parse_marker_budgets,
     parse_positive_steps,
+    read_step_cost_line,
     registry_file_name,
+    step_cost_line,
+    step_cost_report,
+    step_cost_name,
     world_steps,
 )
 
@@ -1271,3 +1282,200 @@ def test_an_unknown_steps_counted_value_stops_the_run_by_name(pytester: pytest.P
     result = pytester.runpytest("-q")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(["*doeff_test_call_steps_counted は call か world-running: 'running'*"])
+
+
+# ── 検ごとの CPU 秒 ÷ 歩数の比(agora-redesign #2854・card ki-a4042e38352a)──────────────────────────
+# 報告だけの 1 行。床(RATIO_FLOOR_STEPS)を越える検の µs/歩 を session の中央値で割り、外れ(RATIO_OUTLIER_FACTOR 倍超・分の 1 未満)を
+# 名指す。判定・終わりの code・BudgetWarning は変えない。
+
+
+def _cost(name: str, micros_per_step: float, steps: int = 20_000) -> Measurement:
+    """歩数 steps・CPU 秒 = µs/歩 × steps の call の測り(鍵 = t.hy::name)。"""
+    return Measurement(
+        key=f"t.hy::{name}",
+        phase="call",
+        cpu_seconds=micros_per_step * steps / 1e6,
+        wall_seconds=1.0,
+        compile=CompileTally(0, 0.0, 0.0),
+        work=VmWork(steps, 0),
+    )
+
+
+def _even_costs(count: int, micros_per_step: float = 10.0) -> tuple[Measurement, ...]:
+    return tuple(_cost(f"test_{i:02d}", micros_per_step) for i in range(count))
+
+
+@pytest.mark.parametrize(
+    ("steps", "counted"),
+    [(RATIO_FLOOR_STEPS - 1, False), (RATIO_FLOOR_STEPS, True), (6, False)],
+)
+def test_the_floor_keeps_tests_with_few_steps_out_of_the_ratio(steps: int, counted: bool) -> None:
+    """床の境: 歩数が床未満の検は比に入れず数だけ出す — 歩数 6 の検の µs/歩 23 万が「最も高い」にも中央値にもならない。"""
+    report = step_cost_report((*_even_costs(RATIO_MIN_TESTS), _cost("test_edge", 230_000.0, steps)))
+    assert isinstance(report, StepCostRatios)
+    assert report.measured == RATIO_MIN_TESTS + counted
+    assert report.below_floor == (not counted)
+    assert (report.highest.name == "test_edge") is counted
+
+
+def test_the_median_is_the_base_of_every_ratio() -> None:
+    """中央値: 8, 10×6, 30 µs/歩 の 8 本 → 中央値 10・最も高い 30 µs/歩の検 ×3.0・倍率は中央値で割った値。"""
+    costs = (_cost("test_low", 8.0), *_even_costs(6), _cost("test_high", 30.0))
+    report = step_cost_report(costs)
+    assert isinstance(report, StepCostRatios)
+    assert report.median == pytest.approx(10.0)
+    assert report.highest.name == "test_high"
+    assert report.highest.ratio == pytest.approx(3.0)
+    assert report.highest.micros_per_step == pytest.approx(30.0)
+
+
+@pytest.mark.parametrize(
+    ("micros_per_step", "side"),
+    [(20.0, None), (20.5, "above"), (5.0, None), (4.9, "below")],
+)
+def test_outliers_are_beyond_twice_and_below_half_of_the_median(micros_per_step: float, side: str | None) -> None:
+    """外れの両側: 中央値 10 の session で、ちょうど 2 倍・ちょうど半分は外れでない・越えた側だけが外れ。"""
+    report = step_cost_report((*_even_costs(RATIO_MIN_TESTS), _cost("test_odd", micros_per_step)))
+    assert isinstance(report, StepCostRatios)
+    above = tuple(c.name for c in report.above)
+    below = tuple(c.name for c in report.below)
+    assert above == (("test_odd",) if side == "above" else ())
+    assert below == (("test_odd",) if side == "below" else ())
+
+
+def test_a_session_with_fewer_than_the_minimum_tests_over_the_floor_gives_no_ratio() -> None:
+    """床を越える検が RATIO_MIN_TESTS 本未満の session は比を出さない(中央値が意味を持たない)— 行は出る。"""
+    report = step_cost_report((*_even_costs(RATIO_MIN_TESTS - 1), _cost("test_tiny", 9.0, 50)))
+    assert report == TooFewForRatios(measured=RATIO_MIN_TESTS - 1, below_floor=1)
+    assert step_cost_line(report) == (
+        f"CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の {RATIO_MIN_TESTS - 1} 本(未満 1 本は出さない)"
+        f"・{RATIO_MIN_TESTS} 本未満なので比は出さない"
+    )
+
+
+def test_the_report_does_not_depend_on_the_order_of_the_tests() -> None:
+    """順序に依らない: 同じ測りを逆順・ずらした順に並べても、中央値・最も高い検・外れの並びが同じ(同じ倍率は名の順)。"""
+    costs = (
+        *_even_costs(RATIO_MIN_TESTS),
+        _cost("test_b", 40.0),
+        _cost("test_a", 40.0),
+        _cost("test_c", 2.0),
+        _cost("test_d", 2.0),
+    )
+    reports = {step_cost_report(order) for order in (costs, costs[::-1], costs[5:] + costs[:5])}
+    assert len(reports) == 1
+    (report,) = reports
+    assert isinstance(report, StepCostRatios)
+    assert report.highest.name == "test_a"
+    assert tuple(c.name for c in report.above) == ("test_a", "test_b")
+    assert tuple(c.name for c in report.below) == ("test_c", "test_d")
+
+
+def test_outliers_do_not_change_the_verdicts() -> None:
+    """外れが在っても判定の列は同じ: 同じ歩数で CPU 秒だけ 50 倍の検が混ざった測りと混ざらない測りを歩数で判じると、判定の種類の
+    列が同じ(比は判定に入らない)。"""
+    plain = (*_even_costs(RATIO_MIN_TESTS), _cost("test_odd", 10.0, 30_000))
+    odd = (*_even_costs(RATIO_MIN_TESTS), _cost("test_odd", 500.0, 30_000))
+    match (step_cost_report(plain), step_cost_report(odd)):
+        case (StepCostRatios(above=()), StepCostRatios(above=(StepCost(name="test_odd"),))):
+            pass
+        case reports:
+            raise AssertionError(f"外れの無い測りと 1 本在る測りにならない: {reports}")
+    kinds = [tuple(type(judge_steps(m, 25_000, {})) for m in run) for run in (plain, odd)]
+    assert kinds[0] == kinds[1]
+
+
+def test_the_line_names_three_outliers_per_side_and_counts_the_rest() -> None:
+    """名指しは片側 3 本(倍率の高い順)・残りは「ほか N」— 外れが 0 の時も中央値と最も高い検は出る。"""
+    many = (*_even_costs(10), *(_cost(f"test_slow_{i}", 30.0 + i) for i in range(5)))
+    line = step_cost_line(step_cost_report(many))
+    assert line == (
+        "CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 15 本(未満 0 本は出さない)・中央値 10.0"
+        "・最も高い test_slow_4 ×3.40・中央値の 2 倍超 5 本: test_slow_4 ×3.40・test_slow_3 ×3.30・test_slow_2 ×3.20・ほか 2"
+        "・2 分の 1 未満 0 本"
+    )
+    quiet = step_cost_line(step_cost_report(_even_costs(RATIO_MIN_TESTS)))
+    assert quiet == (
+        "CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 8 本(未満 0 本は出さない)・中央値 10.0"
+        "・最も高い test_00 ×1.00・中央値の 2 倍超 0 本・2 分の 1 未満 0 本"
+    )
+
+
+def test_the_name_is_the_last_part_of_the_node_id_without_separators() -> None:
+    """名指しの名は nodeid の最後の部分を 56 字まで・空白と ・ は _ に替える(読み戻しが名を割らない)。"""
+    assert step_cost_name("a/b.hy::test_x") == "test_x"
+    assert step_cost_name("a/b.hy::test_x[a b・c]") == "test_x[a_b_c]"
+    assert len(step_cost_name("a.hy::" + "x" * 80)) == RATIO_NAME_CHARS
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        pytest.param(_even_costs(RATIO_MIN_TESTS), id="no-outliers"),
+        pytest.param((*_even_costs(10), *(_cost(f"test_slow_{i}", 30.0 + i) for i in range(5))), id="many-above"),
+        pytest.param(
+            (*_even_costs(10), _cost("test_hot[a b]", 25.0), _cost("test_cold", 1.0), _cost("test_colder", 0.5)),
+            id="both-sides",
+        ),
+        pytest.param(_even_costs(3), id="too-few"),
+        pytest.param((), id="none"),
+    ],
+)
+def test_the_line_reads_back_to_the_report(costs: tuple[Measurement, ...]) -> None:
+    """整形 → 読み戻しの往復: 行の綴り(step_cost_line)を read_step_cost_line が読み戻し、数・中央値(小数 1 桁)・最も高い検・名指し
+    (片側 3 本・倍率は小数 2 桁)が報告の値と合う。前に飾りが付いても読む。綴りを変えて読みを直し忘れると赤。"""
+    report = step_cost_report(costs)
+    read = read_step_cost_line("  " + step_cost_line(report))
+    assert read is not None
+    assert (read.measured, read.below_floor) == (report.measured, report.below_floor)
+    match report:
+        case TooFewForRatios():
+            assert (read.median, read.highest, read.above, read.below) == (None, None, 0, 0)
+            assert read.above_named == read.below_named == ()
+        case StepCostRatios():
+            assert read.median == round(report.median, 1)
+            assert read.highest == (report.highest.name, round(report.highest.ratio, 2))
+            assert (read.above, read.below) == (len(report.above), len(report.below))
+            assert read.above_named == tuple((c.name, round(c.ratio, 2)) for c in report.above[:RATIO_NAMED])
+            assert read.below_named == tuple((c.name, round(c.ratio, 2)) for c in report.below[:RATIO_NAMED])
+    assert read_step_cost_line("歩数を測れた検 2 本・歩数の合計 10010(検ごとは -v)") is None
+
+
+RATIO_TESTS_INI = 'doeff_test_call_budget_steps = "25000"\n'
+
+
+def _ratio_tests(*, hot: bool) -> str:
+    """歩数 20,000 の検 8 本と 30,000 歩の検 1 本(上限 25,000 歩を越える — 報告のみの形で BudgetWarning)。hot なら 1 本目が CPU を
+    0.3 秒回す(中央値の 2 倍を大きく越える外れ)。"""
+    spin = "\n  (spin 0.3)" if hot else ""
+    tests = "".join(f"(deftest test-even-{i}\n  (fake_work.add 20000)\n  (assert True))\n" for i in range(1, 8))
+    return (
+        f"(require doeff-hy.macros [deftest])\n{SPIN}\n(import fake_work)\n"
+        f"(deftest test-hot\n  (fake_work.add 20000){spin}\n  (assert True))\n"
+        f"{tests}(deftest test-over\n  (fake_work.add 30000)\n  (assert True))\n"
+    )
+
+
+def test_an_outlier_changes_neither_the_outcomes_nor_the_exit_code_nor_the_warnings(pytester: pytest.Pytester) -> None:
+    """終わりの要約に比の 1 行が出る。外れの在る走りと無い走りで、検の合否・終わりの code・BudgetWarning の数が同じ(fail の形でも
+    比では赤にしない)。"""
+
+    def run(hot: bool, mode: str) -> tuple[object, ...]:
+        """1 回走らせ、比の行を確かめ、判定の列(合否の数・終わりの code・BudgetWarning の数)を返す。"""
+        _steps_project(
+            pytester,
+            RATIO_TESTS_INI + f'doeff_test_budget_mode = "{mode}"\n',
+            {"test_ratio": _ratio_tests(hot=hot)},
+        )
+        result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest.budget.BudgetWarning")
+        result.stdout.fnmatch_lines(["CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 9 本(未満 0 本は出さない)・中央値 *"])
+        named = "*・中央値の 2 倍超 1 本: test_hot ×*"
+        if hot:
+            result.stdout.fnmatch_lines([named])
+        else:
+            result.stdout.no_fnmatch_line(named)
+        counts = result.parseoutcomes()
+        return (result.ret, counts.get("passed"), counts.get("failed"), result.stdout.str().count("BudgetWarning"))
+
+    for mode in ("report", "fail"):
+        assert run(False, mode) == run(True, mode)
