@@ -17,12 +17,16 @@ session の境目(agora-redesign #2682): 入口は日次と同じ境目(repo の
 PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest の process で走らせる。`tests/` に `__init__.py` と `conftest.py` を持つ package を
 2 つ同時に選んでも止まらないこと(1 回の pytest では `tests.conftest` の名がぶつかり rc 2 で止まった)・合計の上限を束どうしで
 分け合い、番の来なかった束を未測と名指すこと・束の並びが契約の組を先に保つことを確かめる。
+
+機体の検の枠の待ち(card ki-55970a1649be): doeff の root の conftest は pytest_configure(収集の前)で機体の検の枠を取り、
+埋まっていれば待つ。入口は configure の間を上限に数えず、数えなかった秒を要約に別の行で出すことを確かめる。
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -489,6 +493,47 @@ def test_a_batch_left_without_budget_is_named_unmeasured(tmp_path: Path) -> None
     assert "pytest の process: 1/2 本が走った" in summary, summary
 
 
+#: 枠が埋まっている間の待ちの代役の秒 — 上限(8 秒)より長いので、待ちを上限に数える入口は束を集める前に必ず打ち切る。
+SLOT_WAIT_SECONDS = 10
+
+
+def _slot_wait_conftest(seconds: int) -> str:
+    """模型の root の conftest — doeff の root の conftest が機体の検の枠を取る拍(pytest_configure・収集の前)で、枠が
+    埋まっている間の待ちの代役として seconds 秒待つ。"""
+    return f"import time\n\n\ndef pytest_configure(config):\n    time.sleep({seconds})\n"
+
+
+def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path: Path) -> None:
+    """失敗ケース(card ki-55970a1649be — load 70 で枠の待ち 19 秒が root の束を打ち切った形): 枠が埋まっていて、root の
+    conftest の pytest_configure が上限(ここでは 8 秒)より長い 10 秒を待つ。待ちを上限に数える入口は束を集める前に打ち切り、
+    検を未測にした。入口は configure の間を数えないので、束は待ちの後に上限の残りで走り切って緑になり、数えなかった秒は
+    所要とは別の行に出る。"""
+    model = _make_model(
+        tmp_path,
+        (REPO_ROW,),
+        extra=(("conftest.py", _slot_wait_conftest(SLOT_WAIT_SECONDS)),),
+    )
+    (model.root / "README").write_text("changed\n", encoding="utf-8")
+    output = _run(model, "--budget", "8")
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "tests/test_ok.py — 1 本" in summary, summary
+    assert "未測: 0" in summary, summary
+    counted = re.search(r"所要 ([0-9.]+) 秒 / 上限 8 秒", summary)
+    assert counted is not None, summary
+    assert float(counted.group(1)) < 8, summary
+    waited = re.search(
+        re.escape("上限に数えなかった configure の間(機体の検の枠の待ちを含む): 計 ")
+        + r"([0-9.]+)"
+        + re.escape(" 秒(session . "),
+        summary,
+    )
+    assert waited is not None, summary
+    assert float(waited.group(1)) >= SLOT_WAIT_SECONDS, summary
+    counts = _counts(output)
+    assert " selected=1 ran=1 red=0 unmeasured=0 unmeasured_reverse=0 rc=0 " in counts, counts
+
+
 @pytest.fixture(scope="module")
 def runner() -> Iterator[ModuleType]:
     """入口の script を module として読む(dataclass は定義した module を sys.modules から引く — 検の間だけ置く)。"""
@@ -571,6 +616,24 @@ def test_the_session_roots_are_read_from_the_makefile(runner: ModuleType) -> Non
     roots = runner.read_session_roots(REPO_ROOT)
     assert roots.extra, "tests/ の外の根が 0 個 — Makefile の読みが壊れている"
     assert all((REPO_ROOT / root).is_dir() for root in roots.extra), roots
+
+
+def test_the_budget_clock_stops_between_configure_and_the_session_start(runner: ModuleType) -> None:
+    """上限の時計(card ki-55970a1649be): 起こしてから configure まで(uv・python・conftest の import)と session が始まって
+    からを数え、configure の間(機体の検の枠の待ち)は数えない — 待っている間は時計が止まっている。拍の行が 2 度来ても
+    最初の拍を使い、結末の行は時計を変えない。"""
+    spawned = runner.ChildClock(spawned=100.0, configuring=None, started=None)
+    assert (spawned.counted(102.0), spawned.waited(102.0), spawned.paused) == (2.0, 0.0, False)
+    configuring = spawned.mark(runner.Configuring(), 102.0)
+    assert (configuring.counted(130.0), configuring.waited(130.0), configuring.paused) == (
+        2.0,
+        28.0,
+        True,
+    )
+    started = configuring.mark(runner.SessionStarted(), 121.0)
+    assert (started.counted(130.0), started.waited(130.0), started.paused) == (11.0, 19.0, False)
+    assert started.mark(runner.Configuring(), 125.0) == started
+    assert started.mark(runner.Collected(nodeids=("tests/test_ok.py::test_ok",)), 125.0) == started
 
 
 def test_the_counts_split_every_selected_test_once(runner: ModuleType) -> None:
