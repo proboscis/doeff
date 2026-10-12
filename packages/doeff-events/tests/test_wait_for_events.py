@@ -11,12 +11,10 @@
   足すのは channel を読む(源の task を持つ)包みだけで、送るだけの包みは待ちを受けない(作業ボードの card ki-3724ab2e9a0f)。
 """
 
-import asyncio
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Spawn, Wait
+from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
 from doeff_events import (
     Drop,
     EventBus,
@@ -30,7 +28,7 @@ from doeff_events import (
     notice_events_handler,
     subscribed_event_handler,
 )
-from events_test_support import run_scheduled
+from events_test_support import Wakes, announce_listening, record_wakes, run_scheduled
 
 from doeff import EffectGenerator, Program, do
 
@@ -90,9 +88,11 @@ def _publish_all(events: tuple[object, ...]) -> EffectGenerator[None]:
 
 
 @do
-def _publish_later(events: tuple[object, ...]) -> EffectGenerator[None]:
-    """書き手: 受け手が待ちに入るまで外の時間を少し待ってから、``events`` を順に発する。"""
-    _ = yield Await(asyncio.sleep(0.01))
+def _publish_when_listening(
+    registered: Promise[object], events: tuple[object, ...]
+) -> EffectGenerator[None]:
+    """書き手: 受け手が待ちに入った(``announce_listening`` が ``registered`` を完了した)後で、``events`` を順に発する。"""
+    yield Wait(registered.future)
     yield _publish_all(events)
 
 
@@ -130,17 +130,24 @@ def test_wait_for_events_answers_the_one_signal_published_while_it_waits() -> No
     bus = EventBus()
     receiving = subscribed_event_handler(bus, "listener", (Rang,))
     sending = subscribed_event_handler(bus, "writer")
+    wakes = Wakes()
 
     @do
     def main() -> EffectGenerator[tuple[object, ...]]:
         """受け手が待っている間に書き手が 1 つ発する。"""
-        writer = yield Spawn(sending(_publish_later((Rang("a"),))))
-        answer: tuple[object, ...] = yield receiving(_wait_rang())
+        registered: Promise[object] = yield CreatePromise()
+        # 書き手を先に Spawn する: 受け手の待ちの後に発する順は、登録の出来事だけが決める。
+        writer = yield Spawn(
+            record_wakes(wakes)(sending(_publish_when_listening(registered, (Rang("a"),))))
+        )
+        answer: tuple[object, ...] = yield receiving(announce_listening(registered)(_wait_rang()))
         yield Wait(writer)
         return answer
 
     received = run_scheduled(main())
     assert received == (Rang("a"),), received
+    # 購読者の列は待つ前の合図も溜めるので、答えだけでは起こされたのか列から取ったのかが分からない: 発した 1 つが待っている受け手を起こした事を見る。
+    assert len(wakes.mut_promises) == 1, wakes.mut_promises
 
 
 def test_wait_for_events_outside_the_subscription_is_rejected_like_wait_for_event() -> None:
@@ -158,8 +165,10 @@ def test_the_handler_without_queues_answers_the_one_signal_as_a_tuple() -> None:
     @do
     def main() -> EffectGenerator[tuple[object, ...]]:
         """受け手が待っている間に 1 つ発する(列を持たない handler は待ち手にだけ渡す)。"""
-        writer = yield Spawn(_publish_later((Rang("a"),)))
-        answer: tuple[object, ...] = yield _wait_rang()
+        registered: Promise[object] = yield CreatePromise()
+        # 書き手を先に Spawn する: 受け手の待ちの後に発する順は、登録の出来事だけが決める。
+        writer = yield Spawn(_publish_when_listening(registered, (Rang("a"),)))
+        answer: tuple[object, ...] = yield announce_listening(registered)(_wait_rang())
         yield Wait(writer)
         return answer
 
