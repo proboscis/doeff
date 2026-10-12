@@ -1,0 +1,75 @@
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py
+index d28988836..48c1f8620 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py
+@@ -44,7 +44,7 @@ ExecModule = Callable[[importlib.machinery.SourceFileLoader, ModuleType], None]
+ #: 包んだかどうか(process に 1 つ)。包みは process の ``SourceFileLoader`` という 1 つの共有物を書き換えるので、
+ #: 持ち主はこの module 1 つ。
+ #: .pth(起動時の 1 thread)と ``import doeff_hy``(import の lock の中)からしか呼ばれないので lock は持たない。
+-_installation = {"installed": False, "dataclasses": False}
++_installation = {"installed": False, "dataclasses": False, "local_macros": False}
+ 
+ #: この thread で Hy の source を compile した回数(path ごと)— get_code が「今の呼び出しの中で compile したか」を
+ #: 前後の回数の差で知るため(get_code は入れ子になる — compile の中の require が別の module を import する)。
+@@ -126,9 +126,35 @@ def macro_recording(module: ModuleType) -> "MacroRecording":
+     使うための公開の口。``record`` の ``also`` は macro の外で展開の結果を変える値の在処(型検査の展開の後処理)。"""
+     from doeff_hy_bytecode_guard import macro_use  # 起動時に読まない
+ 
++    _remember_local_macro_tables()
+     return macro_use.MacroRecording(module, _hy_version(), file_sha256)
+ 
+ 
++def _remember_local_macro_tables() -> None:
++    """Hy の compiler が関数の中の局所の状態を開くたびに、その macro の表を展開する module の記録の表に覚えさせる(1 度だけ包む)—
++    関数の中の require で入れた macro を記録に入れるため。Hy の展開は局所の表を module の表より先に引くので、module の表を替える
++    だけでは記録から漏れ、macro を変えても使う側が古い展開のまま動いた。包みは process の共有物(Hy の compiler の class)を
++    書き換えるので、持ち主はこの module。"""
++    if _installation["local_macros"]:
++        return
++    from hy.compiler import HyASTCompiler  # Hy の source を compile する時だけ読む(起動時に Hy を読まない)
++
++    from doeff_hy_bytecode_guard import macro_use, records
++
++    previous = HyASTCompiler.new_local_state
++
++    def new_local_state(compiler: HyASTCompiler) -> None:
++        previous(compiler)
++        # 一番下の状態は compiler が module を置く前に開く(その表は module の表 — 記録の表が覆う)。
++        module = getattr(compiler, "module", None)
++        table = None if module is None else vars(module).get(records.MACRO_TABLE)
++        if isinstance(table, macro_use.RecordingTable):
++            table.local_tables = (*table.local_tables, compiler.local_state_stack[-1]["macros"])
++
++    HyASTCompiler.new_local_state = new_local_state
++    _installation["local_macros"] = True
++
++
+ def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
+     """名の並びに現れる Hy の gensym の名を、数えの小さい順に 1 から振り直す関数(他の名はそのまま返す)— code の木の正準化
+     (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy.static_check — agora-redesign #3869)にも当てる
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
+index bfc22997e..30b9bd303 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/macro_use.py
+@@ -128,6 +128,9 @@ class RecordingTable(dict[str, object]):
+         self.absent: set[str] = set()
+         #: この表を開いた記録(compile の口の包みが、表から記録を作るため)。
+         self.recording: MacroRecording | None = None
++        #: この module の展開の間に開いた局所の macro の表(関数の中の require・defmacro が macro を入れる表 — Hy の展開は module の
++        #: 表より先に引くので、ここに入った macro は module の表を通らない)。記録はその中の他の module の macro を全部入れる。
++        self.local_tables: tuple[dict[str, object], ...] = ()
+ 
+     def __getitem__(self, name: str) -> object:
+         """Hy の展開が macro を引く口 — 引かれた名を使った macro として覚える。"""
+@@ -208,6 +211,11 @@ class MacroRecording:
+             macro = table.get(used)
+             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
+                 found[_macro_key(MACRO_TABLE, macro)] = macro
++        # 関数の中の require で入った macro(局所の表 — module の表を通らないので used に入らない)。
++        for local in self.table.local_tables:
++            for macro in local.values():
++                if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
++                    found[_macro_key(MACRO_TABLE, macro)] = macro
+         readers = vars(self._module).get(READER_TABLE)
+         for macro in readers.values() if isinstance(readers, dict) else ():
+             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
