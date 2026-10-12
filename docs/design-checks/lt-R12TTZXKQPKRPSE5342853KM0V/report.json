@@ -343,7 +343,7 @@
       "observation": "git merge-tree rc 1・衝突",
       "evidence": {
         "path": "evidence/S4-concurrent-edits.txt",
-        "sha256": "0c325d1f40164e55f1402f0328347f2441bdcf4dbdc3ccb9f9755203bb9ea1af"
+        "sha256": "c310b7a0fd3a24aebda58f07b5ee0c3f928515cec14aefd97fcd544f6f182c7a"
       },
       "status": "passed"
     },
@@ -357,7 +357,7 @@
       "observation": "git merge-tree rc 0",
       "evidence": {
         "path": "evidence/S4-concurrent-edits.txt",
-        "sha256": "0c325d1f40164e55f1402f0328347f2441bdcf4dbdc3ccb9f9755203bb9ea1af"
+        "sha256": "c310b7a0fd3a24aebda58f07b5ee0c3f928515cec14aefd97fcd544f6f182c7a"
       },
       "status": "passed"
     }

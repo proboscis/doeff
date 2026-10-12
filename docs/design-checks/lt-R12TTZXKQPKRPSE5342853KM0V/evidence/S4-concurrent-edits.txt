@@ -1,15 +1,16 @@
 # S4 の失敗例: 2 つの会話が同じ除外の表(tests/test_daily_test_population.py の EXCLUDED)に 1 file の行を足した 2 つの版を、git merge-file で合わせる
+# (git の衝突の標識の行は、着地の門が行頭の標識を禁じるので 4 字下げて写した)
 # 基底 = 3682f28c8 の file・a と b は同じ位置(test_program_detection.py の行の前)に別の 1 行を足した版
 merge-file rc=1 (0 = 衝突なし・正の数 = 衝突の数)
 126:<<<<<<< /tmp/ki-d153/merge/a.py
 128:=======
 130:>>>>>>> /tmp/ki-d153/merge/b.py
     ),
-<<<<<<< /tmp/ki-d153/merge/a.py
+    <<<<<<< /tmp/ki-d153/merge/a.py
     "docs/design/lt-PIN-a/evidence/scripts/probe_test.py": "会話 a が足した改名できない測りの script",
-=======
+    =======
     "docs/design/lt-PIN-b/evidence/scripts/probe_test.py": "会話 b が足した改名できない測りの script",
->>>>>>> /tmp/ki-d153/merge/b.py
+    >>>>>>> /tmp/ki-d153/merge/b.py
     "ide-plugins/pycharm/test_program_detection.py": (
         "PyCharm plugin の検出の検体(テスト関数を持たない)"
     ),
