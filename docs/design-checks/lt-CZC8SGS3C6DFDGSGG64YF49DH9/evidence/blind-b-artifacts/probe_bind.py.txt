@@ -1,0 +1,94 @@
+"""class の本体の defhandler の節が `<-` で外へ出す形(と module の段の同じ形)を走らせる probe。"""
+import sys
+import traceback
+import types
+
+import doeff_hy  # noqa: F401
+import hy
+from doeff_core_effects import state
+from doeff_core_effects.scheduler import scheduled
+
+from doeff import run
+
+HEADER = """
+(require doeff-hy.handle [handle defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+(defclass [(dataclass :frozen True)] Scale [EffectBase] #^ int n)
+(defclass [(dataclass :frozen True)] Other [EffectBase] #^ int n)
+"""
+
+CASES = {
+    # class の本体: 節が <- で外の Scale を出す(宣言なし)
+    "class-no-decl": ("""
+(defclass C []
+  (defhandler h (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+  (defhandler outer (Scale [n] (resume n))))
+""", lambda m: m.C.outer(m.C.h(m.Bump(1)))),
+    # class の本体: 引数ありの形
+    "class-params-no-decl": ("""
+(defclass C []
+  (defhandler h [base] (Bump [n] (<- r (Scale n)) (resume (+ r base))))
+  (defhandler outer (Scale [n] (resume n))))
+""", lambda m: m.C.outer(m.C.h(100)(m.Bump(1)))),
+    # class の本体: :effects を宣言した形
+    "class-decl": ("""
+(defclass C []
+  (defhandler h {:effects [Scale]} (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+  (defhandler outer (Scale [n] (resume n))))
+""", lambda m: m.C.outer(m.C.h(m.Bump(1)))),
+    # module の段: 同じ形
+    "module-no-decl": ("""
+(defhandler h (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+(defhandler outer (Scale [n] (resume n)))
+""", lambda m: m.outer(m.h(m.Bump(1)))),
+    # module の段: 宣言の外の effect を出す(機能の確かめ — 直した後は TypeError の見込み)
+    "module-decl-violated": ("""
+(defhandler h {:effects [Other]} (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+(defhandler outer (Scale [n] (resume n)))
+""", lambda m: m.outer(m.h(m.Bump(1)))),
+    # module の段に同じ名 h の別の handler が在り、class の本体の h は宣言 [Scale] を守っている
+    "class-shadowed-by-module-h": ("""
+(defhandler h {:effects [Other]} (Other [n] (resume n)))
+(defclass C []
+  (defhandler h {:effects [Scale]} (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+  (defhandler outer (Scale [n] (resume n))))
+""", lambda m: m.C.outer(m.C.h(m.Bump(1)))),
+    # module の段の同じ名 h は [Scale] を宣言。class の本体の C.h は [Other] だけを宣言したのに Scale を外へ出す(宣言違反)
+    "class-violation-hidden-by-module-h": ("""
+(defhandler h {:effects [Scale]} (Other [n] (resume n)))
+(defclass C []
+  (defhandler h {:effects [Other]} (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+  (defhandler outer (Scale [n] (resume n))))
+""", lambda m: m.C.outer(m.C.h(m.Bump(1)))),
+    # 関数の本体(_scoped-definition で包む形)
+    "function-no-decl": ("""
+(defn make []
+  (defhandler h (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+  (defhandler outer (Scale [n] (resume n)))
+  #(h outer))
+""", lambda m: m.make()[1](m.make()[0](m.Bump(1)))),
+    # module の段の引数ありの形
+    "module-params-no-decl": ("""
+(defhandler h [base] (Bump [n] (<- r (Scale n)) (resume (+ r base))))
+(defhandler outer (Scale [n] (resume n)))
+""", lambda m: m.outer(m.h(100)(m.Bump(1)))),
+}
+
+
+def load(name: str, src: str) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    sys.modules[name] = mod
+    for form in hy.read_many(HEADER + src):
+        hy.eval(form, mod.__dict__, module=mod)
+    return mod
+
+
+for key, (src, program) in CASES.items():
+    try:
+        mod = load("probe_" + key.replace("-", "_"), src)
+        result = run(scheduled(state(initial={})(program(mod))))
+        print(f"{key}: {result!r}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"{key}: {type(exc).__name__}: {exc}")

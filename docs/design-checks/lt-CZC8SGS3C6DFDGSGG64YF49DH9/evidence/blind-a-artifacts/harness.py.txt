@@ -1,0 +1,28 @@
+"""使い捨ての確かめ: Hy の source を新しい module に読み込んで走らせる(tests/test_handle_scope.py の _eval_module と同じ形)。"""
+import sys, types, traceback
+import doeff_hy  # noqa: F401
+import hy
+from doeff import run
+from doeff_core_effects import state
+from doeff_core_effects.scheduler import scheduled
+
+HEADER = """
+(require doeff-hy.handle [handle defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+"""
+
+def load(code, name="probe", header=HEADER):
+    mod = types.ModuleType(name)
+    sys.modules[name] = mod
+    for form in hy.read_many(header + code):
+        hy.eval(form, mod.__dict__, module=mod)
+    return mod
+
+def go(program):
+    return run(scheduled(state(initial={})(program)))
+
+def show_expansion(code, header=HEADER):
+    import hy.compiler
+    print(hy.compiler.hy_eval)  # noqa

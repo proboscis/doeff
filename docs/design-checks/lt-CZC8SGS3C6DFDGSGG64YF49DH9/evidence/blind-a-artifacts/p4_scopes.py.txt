@@ -1,0 +1,27 @@
+"""同じ書き手の Transfer を、module の段・関数(defk)の本体・class の本体の handler の節で受ける — 置き場ごとの違い。"""
+import sys; sys.path.insert(0, "/tmp/blind-a-ki-edab")
+from harness import load, go
+BANK = """
+(require doeff-hy.macros [defk <-])
+(require doeff-hy.handle [handle defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Transfer [EffectBase] #^ int amount)
+"""
+CASES = {
+    "module-level-defhandler": ("(defhandler bank (Transfer [amount] (resume (+ amount 100))))",
+                                lambda m: m.bank(m.Transfer(5))),
+    "defk-body-handle": ("""
+(defk pay [] {:pre [] :post [(: % int)]}
+  (<- r (handle (Transfer 5) (Transfer [amount] (resume (+ amount 100)))))
+  r)""", lambda m: m.pay()),
+    "class-body-defhandler": ("(defclass FakeBank [] (defhandler bank (Transfer [amount] (resume (+ amount 100)))))",
+                              lambda m: m.FakeBank.bank(m.Transfer(5))),
+}
+for name, (src, prog) in CASES.items():
+    try:
+        m = load(src, name="scope_" + name.replace("-", "_"), header=BANK)
+        print(f"{name}: 定義の後の module の Transfer = {m.Transfer.__module__}.{m.Transfer.__qualname__}")
+        print(f"  結果 = {go(prog(m))!r}")
+    except Exception as e:
+        print(f"  例外 = {type(e).__name__}: {str(e).splitlines()[0][:200]}")

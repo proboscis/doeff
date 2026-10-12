@@ -1,0 +1,10 @@
+import sys
+from pathlib import Path
+
+from doeff_hy.static_check import project
+
+root = Path("/tmp/blind-b-ki-edab/static_case")
+result = project(root, [root], root / "static_probe.hy")
+out = Path(sys.argv[1])
+out.write_text(getattr(result, "text", repr(result)))
+print(type(result).__name__, len(getattr(result, "text", "")))
