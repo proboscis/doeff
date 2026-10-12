@@ -85,6 +85,8 @@ import gc
 import hashlib
 import importlib.machinery
 import itertools
+import re
+import statistics
 import sys
 import time
 import types
@@ -1357,6 +1359,182 @@ def pytest_runtest_makereport(
     return report
 
 
+# ── 検ごとの CPU 秒 ÷ 歩数(µs/歩)の比(agora-redesign #2854・card ki-a4042e38352a・設計 #2670 の §2)─────────────
+# 報告だけ(判定・終わりの code・BudgetWarning に入れない)。混んだ日は全部の検が同じ向きに揺れるので、絶対の値でなく、同じ
+# session の検どうしの比(session の中央値に対する倍率)で外れを見る。値の根(zeus 2026-10-12 の実測 — doeff の branch
+# wt/2854-cpu-per-step の docs/design-check/ki-a4042e38352a/): 歩数 10,000 以上の検は 9.7〜19.7 µs/歩に収まり、同じ走りの中の
+# 比は 5〜95 番目の百分位で 0.85〜1.14。歩数 100 未満の検は固定の費用だけの数(中央値 167・最大 23 万 µs/歩)なので比に入れない。
+# 倍率・床・最低本数は最初の 5 回の日次の行を読んで見直す(値を変えるのはこの 4 行)。
+# 比に入れる歩数の床(未満の検は数だけ出す)。
+RATIO_FLOOR_STEPS = 10_000
+# 床を越える検がこの本数未満の session は比を出さない(中央値が意味を持たない)。
+RATIO_MIN_TESTS = 8
+# 外れ = 中央値のこの倍を越える・この分の 1 を下回る検。
+RATIO_OUTLIER_FACTOR = 2.0
+# 外れを名指す本数(片側ごと — 残りは数だけ)。
+RATIO_NAMED = 3
+# 名指す検の名の字数の上限(1 行に収めるため)。
+RATIO_NAME_CHARS = 56
+# 比の 1 行の頭 — 日次の報告(agora-controllers の controllers/daily_verify/core/pytest_report.hy)がこの頭で行を探して読み戻す。
+# 綴りを変えたら read_step_cost_line と agora-controllers の読み(往復の検)を同じ変更で直す。
+RATIO_LINE_HEAD = "CPU 秒 ÷ 歩数(µs/歩): "
+
+
+@dataclass(frozen=True)
+class StepCost:
+    """検 1 本の CPU 秒 ÷ 歩数(µs/歩)と、その session の中央値に対する倍率。name = 名指しに使う短い名(step_cost_name)。"""
+
+    name: str
+    micros_per_step: float
+    ratio: float
+
+
+@dataclass(frozen=True)
+class StepCostRatios:
+    """session 1 本の比(床を越える検が RATIO_MIN_TESTS 本以上の時)。above = 中央値の RATIO_OUTLIER_FACTOR 倍を越える検(倍率の
+    高い順)・below = その分の 1 を下回る検(倍率の低い順)— どちらも全部を持ち、名指すのは整形で先頭の RATIO_NAMED 本。"""
+
+    measured: int
+    below_floor: int
+    median: float
+    highest: StepCost
+    above: tuple[StepCost, ...]
+    below: tuple[StepCost, ...]
+
+
+@dataclass(frozen=True)
+class TooFewForRatios:
+    """床を越える検が RATIO_MIN_TESTS 本未満で、比を出さない session。"""
+
+    measured: int
+    below_floor: int
+
+
+StepCostReport = StepCostRatios | TooFewForRatios
+
+
+def step_cost_name(key: str) -> str:
+    """名指しに使う検の短い名 — nodeid の最後の ``::`` の後を RATIO_NAME_CHARS 字まで。空白と ``・`` は ``_`` に替える(1 行の中の
+    区切りと取り違えて読み戻しが名を割らないため)。"""
+    name = key.rsplit("::", 1)[-1][:RATIO_NAME_CHARS]
+    return "".join("_" if char.isspace() or char == "・" else char for char in name)
+
+
+def step_cost_report(measurements: Iterable[Measurement]) -> StepCostReport:
+    """session 1 本の call の測り(歩数を測れた物)から、検ごとの CPU 秒 ÷ 歩数と中央値と外れを求めるため。分母は call の全部の歩数
+    (world-running で判じる検も — CPU 秒を世界の段ごとに分けられないので)。並び順に依らない(同じ値は名の順で決める)。"""
+    worked = tuple(m for m in measurements if m.phase == "call" and m.work is not None)
+    counted = tuple(m for m in worked if m.work is not None and m.work.steps >= RATIO_FLOOR_STEPS)
+    below_floor = len(worked) - len(counted)
+    if len(counted) < RATIO_MIN_TESTS:
+        return TooFewForRatios(measured=len(counted), below_floor=below_floor)
+    costs = tuple(
+        (step_cost_name(m.key), m.judged_cpu_seconds / m.work.steps * 1e6) for m in counted if m.work is not None
+    )
+    median = statistics.median(cost for _, cost in costs)
+    ranked = tuple(
+        sorted(
+            (StepCost(name, cost, cost / median) for name, cost in costs),
+            key=lambda c: (-c.ratio, c.name),
+        )
+    )
+    return StepCostRatios(
+        measured=len(counted),
+        below_floor=below_floor,
+        median=median,
+        highest=ranked[0],
+        above=tuple(c for c in ranked if c.ratio > RATIO_OUTLIER_FACTOR),
+        below=tuple(sorted((c for c in ranked if c.ratio < 1 / RATIO_OUTLIER_FACTOR), key=lambda c: (c.ratio, c.name))),
+    )
+
+
+def _named_costs(costs: tuple[StepCost, ...]) -> str:
+    """外れの片側を 1 行の中に綴るため(0 本なら空・先頭の RATIO_NAMED 本を名と倍率で・残りは数だけ)。"""
+    if not costs:
+        return ""
+    shown = "・".join(f"{c.name} ×{c.ratio:.2f}" for c in costs[:RATIO_NAMED])
+    rest = len(costs) - RATIO_NAMED
+    return f": {shown}" + (f"・ほか {rest}" if rest > 0 else "")
+
+
+def step_cost_line(report: StepCostReport) -> str:
+    """終わりの要約に出す比の 1 行(session ごと)。外れが 0 の時も中央値と最も高い検を出す(行が消えると「測れていない」と区別
+    できないため)。綴りの読み戻しは read_step_cost_line。"""
+    head = f"{RATIO_LINE_HEAD}歩数 {RATIO_FLOOR_STEPS} 以上の {report.measured} 本(未満 {report.below_floor} 本は出さない)"
+    match report:
+        case TooFewForRatios():
+            return f"{head}・{RATIO_MIN_TESTS} 本未満なので比は出さない"
+        case StepCostRatios():
+            return (
+                f"{head}・中央値 {report.median:.1f}・最も高い {report.highest.name} ×{report.highest.ratio:.2f}"
+                f"・中央値の {RATIO_OUTLIER_FACTOR:g} 倍超 {len(report.above)} 本{_named_costs(report.above)}"
+                f"・{RATIO_OUTLIER_FACTOR:g} 分の 1 未満 {len(report.below)} 本{_named_costs(report.below)}"
+            )
+
+
+@dataclass(frozen=True)
+class StepCostLineRead:
+    """比の 1 行から読み戻した値(整形で丸めた後の値 — 中央値は小数 1 桁・倍率は小数 2 桁・名指しは片側 RATIO_NAMED 本まで)。
+    比を出さない行は median・highest が None で、外れは 0。"""
+
+    measured: int
+    below_floor: int
+    median: float | None
+    highest: tuple[str, float] | None
+    above: int
+    above_named: tuple[tuple[str, float], ...]
+    below: int
+    below_named: tuple[tuple[str, float], ...]
+
+
+_NAMED_COST = r"[^\s・]+ ×\d+\.\d{2}"
+
+
+def _named_side_pattern(side: str) -> str:
+    """外れの片側の名指し(``: 名 ×倍率・…・ほか N`` — 0 本なら無い)の正規表現。"""
+    # f 文字列にしない — semgrep の Python の構文解析が rf の中の (?P<{…}> で崩れ、file 全体を測れなくなる。
+    return "(?:: (?P<" + side + "_names>" + _NAMED_COST + "(?:・" + _NAMED_COST + r")*)(?:・ほか \d+)?)?"
+
+
+STEP_COST_LINE_PATTERN = re.compile(
+    re.escape(RATIO_LINE_HEAD)
+    + r"歩数 \d+ 以上の (?P<measured>\d+) 本\(未満 (?P<below_floor>\d+) 本は出さない\)"
+    + r"(?:・\d+ 本未満なので比は出さない"
+    + r"|・中央値 (?P<median>\d+\.\d)・最も高い (?P<top>[^\s・]+) ×(?P<top_ratio>\d+\.\d{2})"
+    + r"・中央値の \S+ 倍超 (?P<above>\d+) 本"
+    + _named_side_pattern("above")
+    + r"・\S+ 分の 1 未満 (?P<below>\d+) 本"
+    + _named_side_pattern("below")
+    + r")$"
+)
+
+
+def _read_named(text: str | None) -> tuple[tuple[str, float], ...]:
+    """名指しの並び(``名 ×倍率・名 ×倍率``)を名と倍率の組に読むため。"""
+    if text is None:
+        return ()
+    return tuple((name, float(ratio)) for name, ratio in (part.rsplit(" ×", 1) for part in text.split("・")))
+
+
+def read_step_cost_line(line: str) -> StepCostLineRead | None:
+    """比の 1 行を読み戻すため(綴りの定義元は step_cost_line — 往復の検が食い違いを赤にする)。行の前に飾りが在ってもよい。
+    比の行でなければ None。"""
+    found = STEP_COST_LINE_PATTERN.search(line)
+    if found is None:
+        return None
+    median = found.group("median")
+    return StepCostLineRead(
+        measured=int(found.group("measured")),
+        below_floor=int(found.group("below_floor")),
+        median=float(median) if median is not None else None,
+        highest=(found.group("top"), float(found.group("top_ratio"))) if median is not None else None,
+        above=int(found.group("above") or 0),
+        above_named=_read_named(found.group("above_names")),
+        below=int(found.group("below") or 0),
+        below_named=_read_named(found.group("below_names")),
+    )
+
+
 def judging_line(budgets: Budgets) -> str:
     """終わりの一覧に、この走行の実行を何で判じたかを 1 行で書く(歩数の上限が在れば歩数・無ければ印ごとの秒だけ)。"""
     match budgets.call_steps:
@@ -1372,7 +1550,8 @@ def pytest_terminal_summary(
     terminalreporter: pytest.TerminalReporter, config: pytest.Config
 ) -> None:
     """終わりに、上限を超えた検・登録簿に載った超過・消せる登録を一覧にし、歩数を測れた検の合計(-v なら検ごと)を出す —
-    歩数の上限を決める材料にするため(#2852・#2853)。"""
+    歩数の上限を決める材料にするため(#2852・#2853)。歩数を測れた検が在れば、検ごとの CPU 秒 ÷ 歩数の比の 1 行
+    (step_cost_line — 報告だけ・判定に入れない・#2854)も出す。"""
     verdicts = config.stash.get(_VERDICTS_KEY, None)
     if not verdicts:
         return
@@ -1393,6 +1572,7 @@ def pytest_terminal_summary(
             f"歩数を測れた検 {len(worked)} 本・歩数の合計 {sum(m.work.steps for m in worked if m.work is not None)}"
             "(検ごとは -v)"
         )
+        terminalreporter.line(step_cost_line(step_cost_report(worked)))
         if config.get_verbosity() >= 1:
             for m in sorted(worked, key=lambda m: m.work.steps if m.work is not None else 0, reverse=True):
                 terminalreporter.line(f"  {m.key}: {_seconds_text(m)}")
