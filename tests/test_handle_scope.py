@@ -217,21 +217,63 @@ def test_host_function_gets_only_its_own_names(source: str, names: list[str]) ->
     ] == names
 
 
-def test_handle_checks_clause_endings_before_the_body() -> None:
-    """関数の中の handle も、節の終わり方の検めを本文の式より前に済ませる — 検めが落ちたら本文は評価されない
-    (すぐ呼ぶ関数を本文より先に呼ぶ。Python は呼ぶ関数の式を引数より先に評価する)。本文を先に評価すると
-    `body-evaluated` の AssertionError になる。検めの ClauseEndingError は TypeError の子(clause_endings.hy は .hy なので
-    型検査から引けず、基の型と文言で受ける)。"""
+_HALT = """
+(defclass [(dataclass :frozen True)] Halt [EffectBase]
+  (setv __doeff_resumption__ Resumption.NEVER))
+(defn body-evaluated [] (raise (AssertionError "本文が検めより先に評価された")))
+"""
+
+# 検めの ClauseEndingError は TypeError の子(clause_endings.hy は .hy なので型検査から引けず、基の型と文言で受ける)
+_HALT_RESUMED = r"Halt は再開しない effect\(Resumption\.NEVER\)"
+
+# 本文の形: 素の式と、Hy が本文の文の部分を本文の式より前の文へ出す形(`do` の前の文・let の束ね)
+_BODIES = {
+    "expression": "(body-evaluated)",
+    "statement-before-the-program": "(do (body-evaluated) (bump-n 1))",
+    "let-binding": "(let [x (body-evaluated)] (bump-n x))",
+}
+
+
+@pytest.mark.parametrize("body", _BODIES.values(), ids=_BODIES.keys())
+def test_handle_checks_clause_endings_before_the_body(body: str) -> None:
+    """関数の中の handle も、節の終わり方の検めを本文より前に済ませる — 検めが落ちたら本文は評価されない。本文を先に
+    評価すると `body-evaluated` の AssertionError になる(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — 被せる関数を
+    本文と同じ式の中で作ると、Hy が前へ出した本文の文の部分が検めより先に走った)。"""
+    mod = _eval_module(_HALT + f"(defn subject [] (abs 1) (handle {body} (Halt [] (resume 0))))")
+    with pytest.raises(TypeError, match=_HALT_RESUMED):
+        mod.subject()
+
+
+def test_handle_checks_clause_endings_before_the_body_performs_an_effect() -> None:
+    """defk の本体の handle の本文の `!` は、検めが落ちる時に外の effect を出さない — 出すと Bump の handler が無いので
+    UnhandledEffect になる。"""
     mod = _eval_module(
-        """
-        (defclass [(dataclass :frozen True)] Halt [EffectBase]
-          (setv __doeff_resumption__ Resumption.NEVER))
-        (defn body-evaluated [] (raise (AssertionError "本文が検めより先に評価された")))
-        (defn subject [] (abs 1) (handle (body-evaluated) (Halt [] (resume 0))))
+        _HALT
+        + """
+        (defk subject [] {:pre [] :post [(: % int)]}
+          (<- r (handle (let [x (! (bump-n 5))] (bump-n x)) (Halt [] (resume 0))))
+          r)
         """
     )
-    with pytest.raises(TypeError, match=r"Halt は再開しない effect\(Resumption\.NEVER\)"):
-        mod.subject()
+    with pytest.raises(TypeError, match=_HALT_RESUMED):
+        _run(mod.subject())
+
+
+def test_handle_checks_clause_endings_at_every_evaluation() -> None:
+    """節の effect の型は評価のたびに閉包から読むので、同じ handle を評価するたびに検める — 前の評価で通った型の記憶で
+    後の評価の検めを飛ばすと、再開しない effect を resume する handler が黙って作られる(設計検証
+    lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 B — 検めを書いた場所ごとに 1 回にする変更)。"""
+    mod = _eval_module(
+        _HALT
+        + """
+        (defclass [(dataclass :frozen True)] Ping [EffectBase])
+        (defn answer-with [etype value program] (handle program (etype [] (resume value))))
+        (defk uses-ping [] {:pre [] :post [(: % int)]} (<- x (Ping)) (+ x 1))
+        """
+    )
+    assert run(mod.answer_with(mod.Ping, 41, mod.uses_ping())) == 42
+    with pytest.raises(TypeError, match=_HALT_RESUMED):
+        mod.answer_with(mod.Halt, 0, mod.uses_ping())
 
 
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:
