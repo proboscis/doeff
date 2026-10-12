@@ -18,11 +18,11 @@ macro の表は doeff-hy の macros の module の `_hy_macros`(Hy の名 → �
 """
 
 import functools
-import importlib
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import doeff_hy.macros as doeff_hy_macros
 import hy
 
 # 展開を包む式の頭: doeff の公開の名を、名を束ねずに引く(例が import している名に依らない)。
@@ -62,9 +62,7 @@ def _mutated(
 
 
 def main(example: str, macros: list[str]) -> None:
-    table: dict[str, Callable[..., hy.models.Object]] = importlib.import_module(
-        "doeff_hy.macros"
-    )._hy_macros
+    table: dict[str, Callable[..., hy.models.Object]] = vars(doeff_hy_macros)["_hy_macros"]
     for name in macros:
         key = hy.mangle(name)
         if key not in table:
