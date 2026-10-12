@@ -31,6 +31,8 @@ from doeff_hy_pytest.budget import (
     Verdict,
     VmWork,
     WithinBudget,
+    WorldMark,
+    WorldSteps,
     call_budget_for,
     declare_step_budget,
     declared_steps_of,
@@ -43,6 +45,7 @@ from doeff_hy_pytest.budget import (
     parse_marker_budgets,
     parse_positive_steps,
     registry_file_name,
+    world_steps,
 )
 
 pytest_plugins = ["pytester"]
@@ -1191,3 +1194,58 @@ def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
     result = pytester.runpytest("-q")
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*宣言した歩数を超えた: test_over.hy::test_over*歩数 20000*宣言 歩数 12000*"])
+
+
+# ── 模擬の世界の走りの歩数だけで判じる(card ki-a27b195a3f92)────────────────────────────────────────
+# 世界の印(doeff_core_effects.world_phases — doeff-cluster の sim-main が残す)を、検の中から偽の歩数と並べて残す。
+
+
+def test_world_steps_splits_the_call_by_the_world_marks() -> None:
+    """call の歩数を印で分ける: 始まり→立ち上がりは起動・立ち上がり→止め始めは走り・止め始め→終わりは止め・その外は世界の外。
+    世界を 2 回回せば区間ごとに足す。立ち上がらなかった世界は止め始めまで起動・止め始めの後に届いた立ち上がりは区切らない。
+    印の無い検は None(call の全部で判じる)。"""
+    marks = (
+        WorldMark("begun", 100), WorldMark("up", 600), WorldMark("stopping", 700), WorldMark("ended", 1000),
+        WorldMark("begun", 1050), WorldMark("stopping", 1400), WorldMark("up", 1450), WorldMark("ended", 1500),
+    )
+    assert world_steps(marks, 0, 1600) == WorldSteps(
+        outside=100 + 50 + 100, starting=500 + 350, running=100, stopping=300 + 100, worlds=2, up=1
+    )
+    assert world_steps((), 0, 1600) is None
+
+
+WORLD_RUNS = """\
+(require doeff-hy.macros [deftest])
+(import fake_work)
+(import doeff_core_effects.world_phases [mark-world-phase])
+(defn world [starting running stopping]
+  (mark-world-phase "begun")
+  (fake_work.add starting)
+  (mark-world-phase "up")
+  (fake_work.add running)
+  (mark-world-phase "stopping")
+  (fake_work.add stopping)
+  (mark-world-phase "ended"))
+(deftest test-heavy-start-light-run
+  (world 50000 500 20000)
+  (assert True))
+(deftest test-light-start-heavy-run
+  (world 10 1500 10)
+  (assert True))
+(deftest test-no-world
+  (fake_work.add 1500)
+  (assert True))
+"""
+
+
+def test_a_world_test_is_judged_by_its_running_steps_and_reports_start_and_stop_apart(pytester: pytest.Pytester) -> None:
+    """既定 1000 歩: 起動 5 万・止め 2 万でも走り 500 歩の世界は緑・走り 1500 歩の世界は赤(文に走り・起動・止めを別の値で出す)。
+    世界を回さない検は今までどおり call の全部で判じる(1500 歩で赤)。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_worlds": WORLD_RUNS})
+    result = pytester.runpytest("-v")
+    result.assert_outcomes(passed=1, failed=2)
+    result.stdout.fnmatch_lines(
+        ["*test_worlds.hy::test_light_start_heavy_run*歩数 1520(世界の走り 1500・起動 10・止め 10・世界の外 0・世界 1 回のうち立ち上がり 1 回 — 判じるのは走り)*上限 歩数 1000*"]
+    )
+    result.stdout.fnmatch_lines(["*test_worlds.hy::test_no_world*歩数 1500・*上限 歩数 1000*"])
+    result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run:*歩数 70500(世界の走り 500・起動 50000・止め 20000*"])
