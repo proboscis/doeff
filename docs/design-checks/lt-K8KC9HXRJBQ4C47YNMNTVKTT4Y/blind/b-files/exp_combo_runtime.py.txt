@@ -1,0 +1,19 @@
+"""`:required False` と `:default` を同じ引数に書いた defmcp-tool を実行時に展開・評価する(既存の挙動の実測)。"""
+import sys
+import types
+
+import doeff_hy  # noqa: F401
+import hy
+import hy.macros
+
+src = sys.argv[1]
+mod = types.ModuleType("combo_subject")
+sys.modules["combo_subject"] = mod
+hy.macros.require("doeff_hy.macros", mod, assignments=[["defmcp-tool", "defmcp-tool"], ["<-", "<-"]])
+try:
+    for form in hy.read_many(open(src, encoding="utf-8").read()):
+        hy.eval(form, mod.__dict__, module=mod)
+    tool = mod.__dict__["t"]
+    print("OK", tool.params)
+except Exception as e:  # noqa: BLE001
+    print("FAIL", type(e).__name__, e)

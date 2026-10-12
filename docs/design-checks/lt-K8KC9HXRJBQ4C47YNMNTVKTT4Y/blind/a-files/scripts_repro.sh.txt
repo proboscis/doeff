@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# 盲検 A の実験の再現(写しの木 /tmp/ki973b-blind-a/tree だけを変える)。最後に写しを d8db309 の形へ戻す。
+set -u
+B=/tmp/ki973b-blind-a; T=$B/tree; S=$T/packages/doeff-hy/src/doeff_hy
+errors() { uv run python -c "import json,sys; [print('   ', d['line'], d['column'], d['rule'], d['message']) for d in json.load(sys.stdin) if d['severity']=='error']"; }
+check() { (cd $T && uv run doeff-hy-check --no-cache --root "$1" --strict --json "$2" | errors); }
+m8() { (cd $T && uv run python $B/scripts/run_m8.py "$@" 2>&1 | grep -v "^inputSchema"); }
+gate() { (cd $T && uv run pytest packages/doeff-hy/tests/test_helper_imports_table.py "packages/doeff-hy/tests/test_static_check.py::test_defmcp_tool_handler_params_carry_the_schema_types" tests/public_api/test_mcp_tool_macro.py -q 2>&1 | tail -1); }
+restore() { cp $B/orig/macros.hy $B/orig/static_view.py $B/orig/static_check.py $S/; }
+
+restore
+echo "== E0 d8db309 のまま: enum の本体を match で分ける tool"; check $B/e2 $B/e2/enum_tool.hy
+echo "== E1 d8db309 のまま: integer の引数の守り"; check $B/e1 $B/e1/int_guard.hy
+echo "== E1 M8 へ JSON の引数を渡す"; m8 $B/e1 int_guard double_qty '{"qty": 100}' '{"qty": "100"}' '{"qty": 2.5}'
+echo "== E2 M6 だけを変える(Literal)"; cp $B/patched_e2/macros.hy $S/; check $B/e2 $B/e2/enum_tool.hy
+echo "== E2 の時の 3 つの検"; gate
+echo "== E3 M6(_doeff_Literal)+ M7 の MCP_STATIC_IMPORTS"; cp $B/patched/macros.hy $B/patched/static_view.py $S/; check $B/e2 $B/e2/enum_tool.hy
+echo "== E3 の投影の頭"; (cd $T && uv run python $B/scripts/show_projection.py $B/e2 $B/e2/enum_tool.hy)
+echo "== E4 + static_check の刈り込みが文字の注記を読む"; cp $B/patched/static_check.py $S/; check $B/e2 $B/e2/enum_tool.hy
+echo "== E4 M8 へ JSON の引数を渡す"; m8 $B/e2 enum_tool place_order '{"side": "buy", "qty": 5}' '{"side": "BUY", "qty": 5}' '{"side": "short", "qty": 5}'
+echo "== E4 実行時の注記を評価する"; (cd $T && uv run python -c "
+import sys, typing; sys.path.insert(0, '$B/e2'); import doeff_hy, hy, enum_tool
+try: print(typing.get_type_hints(enum_tool.place_order.handler))
+except Exception as e: print('   get_type_hints:', type(e).__name__, e)")
+echo "== E4 の時の 3 つの検"; gate
+restore
