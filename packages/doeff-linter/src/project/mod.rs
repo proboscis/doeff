@@ -53,6 +53,7 @@ pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
 pub mod business_fakes;
+pub mod clause_ops;
 pub mod intent_coverage;
 pub mod python_env;
 pub mod paths;

@@ -26,6 +26,9 @@
 //! 終わりが自前の値を返す。この file の「tap」は forwards の在る節(観測・障害の注入 — 片方の枝でだけ出し直す節も含む)を指し、
 //! 偽物の判じ(DOEFF143・155・156・157・158)はそれを外す。反例の表の当たり(DOEFF143・157 の表の照らし・164・167)と DOEFF206 は
 //! answers の在る節に表の行を求める。
+//!
+//! 節の終わりを作る操作の名は、この file に書かない。名と終わり方の定義元は doeff-hy の表 `CLAUSE-OPS` 1 か所で、linter はそこから
+//! 書き出した `data/clause_ops.json`(`clause_ops::ClauseOps`)を読む(card ki-d3ef2a50cc04)。ここが持つのは終わり方ごとの判じ方だけ。
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -33,6 +36,7 @@ use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
 use regex::Regex;
 
 use super::architecture::BusinessFakes;
+use super::clause_ops::{self, ClauseOps};
 use super::paths::glob_matches;
 use super::names::hy_mangle;
 
@@ -140,8 +144,8 @@ impl ClauseShape {
     pub const ANSWERING: ClauseShape = ClauseShape { forwards: false, answers: true };
 }
 
-/// 節の本体(節の頭の後ろ・引数の並びの後ろの form の並び)の形。
-fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> ClauseShape {
+/// 節の本体(節の頭の後ろ・引数の並びの後ろの form の並び)の形。節の終わりを作る操作は表 `ops` の名・終わり方・引数の数で読む。
+fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &ClauseOps) -> ClauseShape {
     /// 受けた effect の名と、その別名(`(val 名 X)`・`(setv 名 X)` の X が effect か別名 — 本体の全部から集める)。
     fn aliases<'s>(source: &'s str, form: &Form, out: &mut Vec<&'s str>) -> bool {
         let Node::Seq { items, .. } = &form.node else { return false };
@@ -201,7 +205,7 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> Cla
         reissued: bool,
         endings: Vec<Ending<'s>>,
     }
-    /// `resume` / `transfer` の値の終わり — `(if 条件 A B)` は枝ごとの終わりに分ける。
+    /// 再開する操作の値の終わり — `(if 条件 A B)` は枝ごとの終わりに分ける。
     fn value_endings<'s>(source: &'s str, form: &Form, out: &mut Vec<Ending<'s>>) {
         match &form.node {
             Node::Symbol if text(source, form) == "None" => out.push(Ending::Nothing),
@@ -213,14 +217,15 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> Cla
             _ => out.push(Ending::Own),
         }
     }
-    fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> Option<bool>, walked: &mut Walked<'s>) {
+    fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> Option<bool>, ops: &ClauseOps, walked: &mut Walked<'s>) {
         let Node::Seq { delim, items } = &form.node else { return };
         if *delim == Delim::Paren {
             // `:=` は読みの上で記号でなく keyword の形なので、頭の綴りで見る。
             let word = head_symbol(source, items).or_else(|| items.first().map(|f| text(source, f)).filter(|t| *t == ":="));
-            match (word, items.as_slice()) {
+            let op = word.and_then(|word| ops.named(word));
+            match (word, op, items.as_slice()) {
                 // (<- 名 [型] 出し直し)・(<- 出し直し)
-                (Some("<-"), [_, .., last]) => {
+                (Some("<-"), _, [_, .., last]) => {
                     if let Some(chosen) = reissue(last) {
                         walked.reissued = true;
                         if items.len() >= 3 && matches!(items[1].node, Node::Symbol) {
@@ -228,7 +233,7 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> Cla
                         }
                     }
                 }
-                (Some(":=" | "setv" | "val"), [_, name, value]) if matches!(name.node, Node::Symbol) => {
+                (Some(":=" | "setv" | "val"), _, [_, name, value]) if matches!(name.node, Node::Symbol) => {
                     if matches!(value.node, Node::Symbol) {
                         walked.assigned.push((text(source, name), text(source, value)));
                     }
@@ -242,30 +247,40 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> Cla
                         }
                     }
                 }
-                (Some("resume" | "transfer"), [_, value]) => {
-                    value_endings(source, value, &mut walked.endings);
-                    return;
-                }
-                (Some("resume" | "transfer" | "finish"), _) => {
-                    walked.endings.push(Ending::Own);
-                    return;
-                }
-                (Some("reperform"), _) => {
-                    walked.endings.push(if items.len() == 2 && reissue(&items[1]).is_some() { Ending::Forward } else { Ending::Own });
-                    return;
-                }
-                (Some("pass"), [_]) => {
-                    walked.endings.push(Ending::Forward);
-                    return;
-                }
+                // 節の操作 — 名と終わり方と引数の数は表 `ops` から読み、終わり方ごとに判じる。
+                (_, Some(op), [_, args @ ..]) => match (op.ending, op.arity, args) {
+                    // 続きを値で再開する操作は、値 1 つなら値の中身で判じる。
+                    (clause_ops::Ending::Resumes, Some(1), [value]) => {
+                        value_endings(source, value, &mut walked.endings);
+                        return;
+                    }
+                    // 値の形が違う再開と、値で終える操作は自前の値。
+                    (clause_ops::Ending::Resumes | clause_ops::Ending::Finishes, _, _) => {
+                        walked.endings.push(Ending::Own);
+                        return;
+                    }
+                    // 引数の無い渡す操作は、受けた効果をそのまま渡す。引数つきなら終わりに数えず、中を読み続ける。
+                    (clause_ops::Ending::Forwards, Some(0), []) => {
+                        walked.endings.push(Ending::Forward);
+                        return;
+                    }
+                    (clause_ops::Ending::Forwards, Some(0), _) => {}
+                    // 受けた効果を引数に取る渡す操作は、出し直しの式を渡す時だけ渡す終わり(別の値なら自前)。
+                    (clause_ops::Ending::Forwards, _, _) => {
+                        walked.endings.push(if args.len() == 1 && reissue(&args[0]).is_some() { Ending::Forward } else { Ending::Own });
+                        return;
+                    }
+                    // 例外で抜ける操作は終わりに数えない(捕まえた例外を投げ直す観測と、自前の故障を区別できない)— 中を読み続ける。
+                    (clause_ops::Ending::Raises, _, _) => {}
+                },
                 _ => {}
             }
         }
-        items.iter().for_each(|item| walk(source, item, reissue, walked));
+        items.iter().for_each(|item| walk(source, item, reissue, ops, walked));
     }
     let reissue = |form: &Form| reissue(source, form, head, params, &effect_names);
     let mut walked = Walked::default();
-    body.iter().for_each(|form| walk(source, form, &reissue, &mut walked));
+    body.iter().for_each(|form| walk(source, form, &reissue, ops, &mut walked));
     // 束ねた名を入れ直した名も束ねた名に数える(`(:= answer closed)` など)。
     while let Some(grown) = walked.assigned.iter().find_map(|&(name, value)| {
         let known = |n: &str| walked.bound.iter().find(|(bound, _)| *bound == n).map(|&(_, chosen)| chosen);
@@ -292,9 +307,14 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str) -> Cla
 }
 
 /// file の defhandler の節ごとの形(鍵 = (handler の名, 節の頭の名))。同じ handler の同じ頭の節が 2 つ在れば、どちらの欄も OR で合わせる
-/// (どちらかが渡せば forwards・どちらかが答えれば answers)。
+/// (どちらかが渡せば forwards・どちらかが答えれば answers)。節の操作の表は同梱の物(`ClauseOps::bundled`)。
 pub fn clause_shapes_in(source: &str) -> HashMap<(String, String), ClauseShape> {
-    fn visit(source: &str, forms: &[Form], out: &mut HashMap<(String, String), ClauseShape>) {
+    clause_shapes_with(source, ClauseOps::bundled())
+}
+
+/// `clause_shapes_in` の、節の操作の表を渡す形(表に行を足すと判じが追従する事を検が確かめる)。
+pub fn clause_shapes_with(source: &str, ops: &ClauseOps) -> HashMap<(String, String), ClauseShape> {
+    fn visit(source: &str, forms: &[Form], ops: &ClauseOps, out: &mut HashMap<(String, String), ClauseShape>) {
         for form in forms {
             let Node::Seq { delim, items } = &form.node else { continue };
             if *delim == Delim::Paren && head_symbol(source, items) == Some("defhandler") && items.len() >= 2 {
@@ -304,17 +324,17 @@ pub fn clause_shapes_in(source: &str) -> HashMap<(String, String), ClauseShape> 
                     let Some(head) = head_symbol(source, parts) else { continue };
                     let Some(params) = parts.get(1).and_then(Form::bracket_items) else { continue };
                     let params: Vec<&str> = params.iter().map(|p| text(source, p)).collect();
-                    let shape = clause_shape(source, &params, &parts[2..], head);
+                    let shape = clause_shape(source, &params, &parts[2..], head, ops);
                     let merged = out.entry((handler.clone(), head.to_string())).or_insert(ClauseShape { forwards: false, answers: false });
                     merged.forwards |= shape.forwards;
                     merged.answers |= shape.answers;
                 }
             }
-            visit(source, items, out);
+            visit(source, items, ops, out);
         }
     }
     let mut out = HashMap::new();
-    visit(source, &read_forms(source), &mut out);
+    visit(source, &read_forms(source), ops, &mut out);
     out
 }
 
@@ -812,6 +832,77 @@ mod tests {
         assert_eq!(at("Trimmed"), both); // (resume (if 条件 A B)) の枝の 1 つが自前の値
         assert_eq!(at("Twice"), both); // 同じ頭の 2 つの節は欄ごとに OR
         assert_eq!(at("Own"), answers);
+    }
+
+    /// 節の判じが読む操作の名は、同梱の表の行から来る(card ki-d3ef2a50cc04): 表の行ごとに、終わり方どおりの節の形になる。表に行を足せば
+    /// この検が足した行も踏む。
+    #[test]
+    fn clause_shapes_follow_every_row_of_the_table() {
+        let table = ClauseOps::bundled();
+        for op in table.iter() {
+            let word = &op.name;
+            let args = |n: usize| vec!["0"; n].join(" ");
+            let shape_of = |body: String| {
+                let source = format!("(defhandler h (Probe [n] {}))", body);
+                let shape = clause_shapes_with(&source, table)[&("h".to_string(), "Probe".to_string())];
+                (shape.forwards, shape.answers)
+            };
+            // どの終わり方の操作も、受けた効果を渡す枝と並べて書く — 操作の終わりが自前の値なら答えも持つ。
+            let beside_forward = shape_of(format!("(if n (reperform effect) ({} {}))", word, args(op.arity.unwrap_or(1))));
+            match op.ending {
+                clause_ops::Ending::Resumes | clause_ops::Ending::Finishes => {
+                    assert_eq!(beside_forward, (true, true), "{} は節を自前の値で終える", word);
+                }
+                clause_ops::Ending::Raises => {
+                    assert_eq!(beside_forward, (true, false), "{} は終わりに数えない", word);
+                }
+                clause_ops::Ending::Forwards => {
+                    assert_eq!(beside_forward, (true, op.arity != Some(0)), "{} の引数が 0 でなければ、別の値を渡す終わりは自前", word);
+                    // 受けた効果をそのまま渡す書き方だけで書いた節は、答えを持たない。
+                    let alone = match op.arity {
+                        Some(0) => format!("({})", word),
+                        _ => format!("({} effect)", word),
+                    };
+                    assert_eq!(shape_of(alone), (true, false), "{} だけの節は渡すだけ", word);
+                }
+            }
+        }
+    }
+
+    /// 表に行を足すだけで判じが追従する(再現 — card ki-d3ef2a50cc04): 続きへ例外を投げる操作(再開する終わり方)の行を足すと、それまで
+    /// 終わりに数えなかった節が自前の値を持つ。判じの側には何も足さない。足す名は、本物の表に後から入る名と重ならない作り物。
+    #[test]
+    fn a_row_added_to_the_table_is_followed_by_the_judgement() {
+        let source = "(defhandler h (Probe [n] (if n (reperform effect) (inject-fault (ValueError n)))))";
+        let key = ("h".to_string(), "Probe".to_string());
+        let bundled = ClauseOps::bundled();
+        assert!(bundled.named("inject-fault").is_none(), "この検は、表に無い名の操作を足す");
+        // 表に無い名の操作は、節の終わりに数えない。
+        assert_eq!(clause_shapes_with(source, bundled)[&key], ClauseShape { forwards: true, answers: false });
+        // 同梱の file と同じ形の text に行を 1 つ足した表で、同じ節を判じ直す。
+        let mut file: serde_json::Value = serde_json::from_str(include_str!("../../data/clause_ops.json")).unwrap();
+        file["ops"].as_array_mut().unwrap().push(serde_json::json!({"name": "inject-fault", "ending": "resumes", "arity": 1}));
+        let extended = ClauseOps::parse(&file.to_string()).unwrap();
+        assert_eq!(clause_shapes_with(source, &extended)[&key], ClauseShape { forwards: true, answers: true });
+        // 行を足しても、元の表の操作の判じは変わらない。
+        assert_eq!(
+            clause_shapes_with("(defhandler h (Probe [n] (finish n)))", &extended)[&key],
+            ClauseShape { forwards: false, answers: true }
+        );
+    }
+
+    /// 節の判じが読む操作の名は、表の外のこの file に書かない — 表を介さずに名を足すと赤(card ki-d3ef2a50cc04)。書くのは文字列の literal
+    /// (`"名"`)で、検の module と註は数えない。
+    #[test]
+    fn clause_operation_names_are_not_written_outside_the_table() {
+        let source = include_str!("business_fakes.rs");
+        let code = &source[..source.find("#[cfg(test)]").expect("検の module の前までを読む")];
+        let written: Vec<&str> = ClauseOps::bundled()
+            .iter()
+            .map(|op| op.name.as_str())
+            .filter(|name| code.lines().filter(|line| !line.trim_start().starts_with("//")).any(|line| line.contains(&format!("\"{}\"", name))))
+            .collect();
+        assert!(written.is_empty(), "表の操作の名を literal で書いている: {:?}", written);
     }
 
     /// 片方の枝でだけ出し直す壊した handler(agora-redesign #3834 — kn-w37 の 7 件目の書き直す前の形)は、書き方が 3 つ在っても
