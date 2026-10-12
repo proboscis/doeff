@@ -615,10 +615,19 @@ def _sent_on_guards(dispatch: _Dispatch, scope: _Scope) -> dict[int, ast.If]:
     return sent
 
 
+def _names_effect(expr: ast.expr, param: str | None, scope: _Scope) -> bool:
+    """Whether ``expr`` is the effect parameter ``param``, or a local of ``scope`` that only ever
+    aliases it (doeff-hy gives the clause's effect to the writer as ``effect = _doeff_effect``)."""
+    if param is None or not isinstance(expr, ast.Name):
+        return False
+    return expr.id == param or scope.aliases(expr.id, param)
+
+
 def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
     """A guard's test (the case in which the clause sends the effect on) as a test on the class of
-    the effect that arrives: ``isinstance(effect, X)`` with ``not`` / ``and`` / ``or``; any other test
-    is decided only at run time (``UnknownTest``)."""
+    the effect that arrives: ``isinstance(effect, X)`` with ``not`` / ``and`` / ``or`` (``effect`` the
+    parameter or its alias ``effect = _doeff_effect`` — ``_names_effect``); any other test is decided
+    only at run time (``UnknownTest``)."""
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
         return NotTest(_pass_test(test.operand, param, scope))
     if isinstance(test, ast.BoolOp):
@@ -629,7 +638,7 @@ def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
         and isinstance(test.func, ast.Name)
         and test.func.id == "isinstance"
         and len(test.args) == 2
-        and _is_name(test.args[0], param)
+        and _names_effect(test.args[0], param, scope)
     ):
         named = _classes(test.args[1], scope)
         return ClassTest(tuple(named.found), complete=not named.missing)
