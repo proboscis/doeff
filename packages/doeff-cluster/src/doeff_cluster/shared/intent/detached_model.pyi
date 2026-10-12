@@ -18,6 +18,7 @@ class GroupLimit:
     scope: str
     limit: int
     per_part: bool = False
+    system: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class TaskLimit:
