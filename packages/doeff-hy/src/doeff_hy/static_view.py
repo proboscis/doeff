@@ -27,6 +27,8 @@
 - defhandler の session val / session var(agora-redesign #2293 — handle.hy の `_build-lazy-init-forms`): 名は初期化の値に
   束ねる(Get を使わない)。session var の書き換え(`:=`・旧い `set!`)の Put / Some と初期化のキーの session_key は
   `_doeff_<名>` で引き、module の頭の補助の import(SESSION_STATIC_IMPORTS)から取る
+- defmcp-tool(card ki-4848d81e0bc5): import を 1 つも出さない。handler の decorator は module の頭の `_doeff_do`、
+  tool の値の McpToolDef / McpParamSchema は `_doeff_<名>` で引き、module の頭の補助の import(MCP_STATIC_IMPORTS)から取る
 
 所見の受け渡し(ADR-DOE-HY-006): val / var の検査のうち展開を止めない物(setv の使用・同じ名前の
 束縛し直し・defhandler の旧い lazy-val / set!)は、macro が `report_findings` に渡す。doeff-hy-check が
@@ -130,13 +132,20 @@ SESSION_STATIC_IMPORTS: str = (
     "from doeff_hy.session import session_key as _doeff_session_key\n"
 )
 
+#: defmcp-tool の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く(macros.hy の defmcp-tool)。
+#: tool ごとに `from doeff.mcp import McpToolDef, McpParamSchema` を出していた頃は、doeff の module なので重ねの畳み
+#: (static_check.without_bookkeeping)にも掛からず、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、
+#: pyright が tool の値を Unknown にして、tool を使う側の型の誤りを黙って通していた(card ki-4848d81e0bc5 の設計検証の盲検 A)。
+#: 名に `_doeff_` を付けるのは、書き手の書いた McpToolDef の import と 1 つの名を分け合わないため。
+MCP_STATIC_IMPORTS: str = "from doeff.mcp import McpToolDef as _doeff_McpToolDef, McpParamSchema as _doeff_McpParamSchema\n"
+
 
 #: 型検査のための展開で、macro が参照する補助の名の import(module の頭に 1 度だけ — doeff-hy-check が置く)。
 #: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
 #: 宣言が積み上がる。pyright は 1 つの名の宣言が 64 を超えると型の推論をやめて Unknown にするので、defk を 65 個
 #: 持つ module では `_doeff_do` が Unknown になり、defk の呼びが Program ではなく :post の型に見えていた
 #: (doeff-cluster の local.hy の `(Spawn (defk の呼び))` 4 か所 — agora-redesign #1686)。静的な展開の macro は
-#: この import を出さない(macros.hy の `_helper-imports`・`_bind-yield`、handle.hy の `_do-import`)。
+#: この import を出さない(macros.hy の `_helper-imports`・`_bind-yield`・defmcp-tool、handle.hy の `_do-import`)。
 STATIC_HELPER_IMPORTS: str = (
     "from doeff_hy.static_types import do as _doeff_do, _doeff_perform"
     + "".join(
@@ -151,7 +160,7 @@ STATIC_HELPER_IMPORTS: str = (
     "from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, "
     "_doeff_check_program_return\n"
     # deftest の decorator(@pytest.mark.…)が引く pytest(deftest ごとの import が書き手の import と重ならないように)
-    "import pytest as _doeff_pytest\n" + SESSION_STATIC_IMPORTS
+    "import pytest as _doeff_pytest\n" + SESSION_STATIC_IMPORTS + MCP_STATIC_IMPORTS
 )
 
 #: defsystem の展開(system_form.hy の defsystem-form)が系ごとに出す doeff-cluster の module の import — 系の型(System・CallShape)の

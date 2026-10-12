@@ -264,14 +264,19 @@ def _many_mcp_tools(count: int, mistake: bool) -> str:
         f"  (<- last {'str' if mistake else 'int'} (step x))",
         "  (<- task Task (Spawn (step x)))",
         "  x)",
+        "",
+        # tool の値の型: McpToolDef の name は str。mistake なら int と注記する(型の食い違い)
+        f"(defn #^ {'int' if mistake else 'str'} last-tool-name [] (. tool-{count - 1} name))",
     ]
     return "\n".join(lines) + "\n"
 
 
-def test_defmcp_tool_reads_do_from_the_module_head(tmp_path: Path) -> None:
-    """型検査のための展開の defmcp-tool は、handler の decorator の `_doeff_do` を import せず、doeff-hy-check が module の
-    頭に 1 度だけ置く物を読む(macros.hy の `_helper-imports` — defk と同じ表)。module・class の本体・関数の本体のどこに
-    書いても、補助の名(`_` で始まる名)を import するのは頭の補助の import(static_view.STATIC_HELPER_IMPORTS)だけ。"""
+def test_defmcp_tool_imports_nothing_of_its_own_in_the_static_view(tmp_path: Path) -> None:
+    """型検査のための展開の defmcp-tool は import を 1 つも出さない — handler の decorator の `_doeff_do`(macros.hy の
+    `_helper-imports` — defk と同じ表)も、tool の値の McpToolDef / McpParamSchema(`_doeff_<名>`)も、doeff-hy-check が
+    module の頭に 1 度だけ置く補助の import(static_view.STATIC_HELPER_IMPORTS)から読む。module の直下に 2 つ・class の
+    本体・関数の本体のどこに書いても、展開の import の文は module の直下だけに在り、どの名も 1 度だけ宣言する(tool ごとに
+    import すると、tool を 65 個持つ module か class で宣言が 64 を超え、pyright がその名を Unknown にする)。"""
     import ast
 
     from doeff_hy.static_check import Projection, project
@@ -286,6 +291,7 @@ def test_defmcp_tool_reads_do_from_the_module_head(tmp_path: Path) -> None:
     source = (
         "(require doeff-hy.macros [defmcp-tool <-])\n(import doeff [Pure])\n\n"
         + tool.format(name="at-module")
+        + tool.format(name="also-at-module")
         + "\n(defclass Box []\n"
         + tool.format(name="in-class")
         + ")\n\n(defn outer []\n"
@@ -296,22 +302,13 @@ def test_defmcp_tool_reads_do_from_the_module_head(tmp_path: Path) -> None:
     projection = project(tmp_path, [tmp_path], tmp_path / "tools.hy")
     assert isinstance(projection, Projection), projection
     tree = ast.parse(projection.text)
-    head = [
-        statement
-        for statement in tree.body
-        if isinstance(statement, ast.ImportFrom)
-        and statement.module in {"doeff_hy.static_types", "doeff_hy.macros"}
-    ]
-    helper_imports = [
-        (node, alias.asname or alias.name)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-        if (alias.asname or alias.name).startswith("_")
-    ]
-    assert helper_imports, projection.text
-    assert all(node in head for node, _ in helper_imports), projection.text
-    assert [name for _, name in helper_imports].count("_doeff_do") == 1, projection.text
+    imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    assert [ast.unparse(node) for node in imports if node not in tree.body] == [], projection.text
+    bound = [alias.asname or alias.name for node in imports for alias in node.names]
+    assert sorted(bound) == sorted(set(bound)), projection.text
+    assert {"_doeff_do", "_doeff_McpToolDef", "_doeff_McpParamSchema"} <= set(bound), (
+        projection.text
+    )
 
 
 @needs_pyright
@@ -319,7 +316,9 @@ def test_defmcp_tool_reads_do_from_the_module_head(tmp_path: Path) -> None:
 def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mistake: bool) -> None:
     """反例: 型検査のための展開の defmcp-tool が tool ごとに `doeff.do` の `do` を `_doeff_do` へ import していた頃は、tool を
     65 個持つ module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、後ろの defk の呼びが Program ではなく :post の
-    型に見えた — `(Spawn (defk の呼び))` が reportArgumentType(#1686 の defk の反例と同じ訳)。"""
+    型に見えた — `(Spawn (defk の呼び))` が reportArgumentType(#1686 の defk の反例と同じ訳)。tool ごとに doeff.mcp の
+    McpToolDef を import していた頃は、同じ訳で tool の値が Unknown になり、tool の name の型の食い違い(reportReturnType)を
+    黙って通した(設計検証 lt-N19BACF5SXDRMKQ7EZD3AZA8FC の盲検 A)。"""
     import contextlib
     import io
 
@@ -333,7 +332,9 @@ def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mist
         (d["rule"], d["message"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"
     ]
     if mistake:
-        assert [rule for rule, _ in errors] == ["reportAssignmentType"], errors
+        assert sorted(rule for rule, _ in errors) == ["reportAssignmentType", "reportReturnType"], (
+            errors
+        )
     else:
         assert errors == [], errors
 
