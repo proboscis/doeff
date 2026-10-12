@@ -1,0 +1,19 @@
+# 盲検 B の付けたりの再現: module の直下で val を使う例(ex04_simple.hy の入力を (val inputs [1 2 3]) にした写し)
+# 版: 6a7f25105e14b7c4dd52a76652edf078661eb46c(提案の版・直す前)・作業木 /home/ubuntu/.worktrees/doeff-wt-blind-a-ki-fe7a・2026-10-12T04:00:20Z
+3c3
+< (require doeff-hy.macros [defk <- traverse])
+---
+> (require doeff-hy.macros [defk <- traverse val])
+30c30,31
+< (setv program (pipeline [1 2 3]))
+---
+> (val inputs [1 2 3])
+> (setv program (pipeline inputs))
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf -k ex10_val
+E   AssertionError: ex10_val_inputs.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない: ['30: val']
+/work/toolset/worktrees/doeff-wt-blind-a-ki-fe7a/packages/doeff-traverse/tests/test_examples_run.py:667: AssertionError: ex10_val_inputs.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない: ['30: val']
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex10_val_inputs.hy]
+1 failed, 4 passed, 61 deselected, 1 warning in 8.67s
+exit=1
+$ (val inputs [1 2 3]) の 1 段の展開
+'(setv inputs [1 2 3])

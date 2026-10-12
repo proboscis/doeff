@@ -1,0 +1,45 @@
+# 盲検 A の失敗例の再現: 隠す別名 _doeff_traverse_Traverse を macros.hy の中だけで _doeff_tv_Traverse へ改名する(S1(a))
+# 版: 6a7f25105e14b7c4dd52a76652edf078661eb46c(提案の版・直す前)・作業木 /home/ubuntu/.worktrees/doeff-wt-blind-a-ki-fe7a・2026-10-12T03:55:26Z
+$ sed -i "s/_doeff_traverse_Traverse/_doeff_tv_Traverse/g" packages/doeff-hy/src/doeff_hy/macros.hy
+ packages/doeff-hy/src/doeff_hy/macros.hy | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=no -rf
+
+deadline scale x2.3 (load per usable CPU) — per test 138s, watchdog 207s
+
+test-admission: focused — 61 件(変更箇所の検証)
+...FFFFFFF...FFFFFFF............s........................F...            [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_simple.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex04_traverse_macro.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex06_mediagen_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex07_proboscis_ema_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex08_tqdm_progress.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex09_for_do_when.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex04_simple.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex04_traverse_macro.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex06_mediagen_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex08_tqdm_progress.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex09_for_do_when.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_printed_expansion_copy_is_named
+15 failed, 45 passed, 1 skipped, 1 warning in 18.45s
+exit=1
+$ env TZ=UTC0 uv run python -m hy packages/doeff-traverse/examples/ex04_simple.hy
+    ^
+NameError: name '_doeff_tv_Traverse' is not defined
+exit=1
+$ grep -ln _doeff_traverse_Traverse packages/doeff-traverse/examples/*.hy
+packages/doeff-traverse/examples/ex05_parallel_timing.hy
+packages/doeff-traverse/examples/ex08_tqdm_progress.hy
+packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy
+packages/doeff-traverse/examples/ex04_simple.hy
+packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
+packages/doeff-traverse/examples/ex04_traverse_macro.hy
+packages/doeff-traverse/examples/ex09_for_do_when.hy
