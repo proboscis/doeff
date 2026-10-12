@@ -1,0 +1,25 @@
+# 失敗例の検(負の対照)— 対象の木 b94fa584ed1ad2b8e3a971ae03e81b9eda4127e4 の検 file を、写しの line_stamp.py へ PYTHONPATH で向けて走らせる
+## variant=before-fix test=test_a_descendant_that_outlives_the_worker_still_writes_to_the_file
+        assert ran.code == 0, ran.out
+>       assert b"descendant-after-the-worker" in lines, lines
+E       AssertionError: [b'2026-10-12T05:18:34.946+00:00 worker: \xe5\xad\x90\xe3\x82\x92\xe8\xb5\xb7\xe3\x81\x93\xe3\x81\x97\xe3\x81\xa6\xe7\xb5\x82\xe3\x82\x8f\xe3\x82\x8b', b'']
+E       assert b'descendant-after-the-worker' in [b'2026-10-12T05:18:34.946+00:00 worker: \xe5\xad\x90\xe3\x82\x92\xe8\xb5\xb7\xe3\x81\x93\xe3\x81\x97\xe3\x81\xa6\xe7\xb5\x82\xe3\x82\x8f\xe3\x82\x8b', b'']
+1 failed, 1 warning in 11.65s
+rc=1
+## variant=before-fix test=test_a_flooding_worker_does_not_wait_for_a_silent_destination
+1 passed, 1 warning in 1.85s
+rc=0
+## variant=b-on-fixed test=test_a_descendant_that_outlives_the_worker_still_writes_to_the_file
+1 passed, 1 warning in 1.80s
+rc=0
+## variant=b-on-fixed test=test_a_flooding_worker_does_not_wait_for_a_silent_destination
+        assert ran.code == 0, ran.out[-500:]
+        assert ran.out.count(b"worker: burst line ") == 40_000
+>       assert ran.seconds < 10.0, ran.seconds
+E       AssertionError: 27.33624144794885
+E       assert 27.33624144794885 < 10.0
+E        +  where 27.33624144794885 = WorkerRan(code=0, out=b'2026-10-12T05:19:16.963+00:00 worker: burst line 000000\n2026-10-12T05:19:16.963+00:00 worker:...00:00 worker: burst line 039998\n2026-10-12T05:19:41.462+00:00 worker: burst line 039999\n', seconds=27.33624144794885).seconds
+rc=1
+## 写しが読まれた事の確かめ
+before-fix /tmp/wpl-mut-G7xS/before-fix/doeff_cluster/worker/entry/line_stamp.py False False
+b-on-fixed /tmp/wpl-mut-G7xS/b-on-fixed/doeff_cluster/worker/entry/line_stamp.py True True

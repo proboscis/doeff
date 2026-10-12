@@ -1,0 +1,58 @@
+# 直した後(作業木 b94fa584ed1ad2b8e3a971ae03e81b9eda4127e4 + 未 commit の直し)・再現の dir /tmp/wpl-A2-Jt0l
+## E: 今の lifeline・送り先 on
+{
+ "case": "E",
+ "worker_exit": 0,
+ "lines": "StampedStreams",
+ "child_pgid": 1955049,
+ "guard_pid": 1955050,
+ "guard_fd2": "/tmp/wpl-A2-Jt0l/E/worker.log",
+ "worker_fd2_now": "/tmp/wpl-A2-Jt0l/E/worker.log",
+ "seconds_after_worker_end": 14.0,
+ "child_group_still_alive": false,
+ "guard_still_alive": false,
+ "lifeline_line_in_file": false
+}
+--- worker.log ---
+2026-10-12T05:19:55.429+00:00 worker: 起動します lines=StampedStreams
+2026-10-12T05:19:55.433+00:00 worker: 全 job を回収しました
+
+rc=0
+## C: 盲検 A の 1 行を足した lifeline・送り先 on
+{
+ "case": "C",
+ "worker_exit": 0,
+ "lines": "StampedStreams",
+ "child_pgid": 1958961,
+ "guard_pid": 1958965,
+ "guard_fd2": "/tmp/wpl-A2-Jt0l/C/worker.log",
+ "worker_fd2_now": "/tmp/wpl-A2-Jt0l/C/worker.log",
+ "seconds_after_worker_end": 4.1,
+ "child_group_still_alive": false,
+ "guard_still_alive": false,
+ "lifeline_line_in_file": true
+}
+--- worker.log ---
+2026-10-12T05:20:10.631+00:00 worker: 起動します lines=StampedStreams
+2026-10-12T05:20:10.645+00:00 worker: 全 job を回収しました
+lifeline: 起こした側が終わった — 1 の相手へ TERM を送った
+
+rc=0
+## D: 同じ・worker を SIGKILL
+{
+ "case": "D",
+ "worker_exit": -9,
+ "lines": "StampedStreams",
+ "child_pgid": 1960172,
+ "guard_pid": 1960173,
+ "guard_fd2": "/tmp/wpl-A2-Jt0l/D/worker.log",
+ "worker_fd2_now": "/tmp/wpl-A2-Jt0l/D/worker.log",
+ "seconds_after_worker_end": 4.0,
+ "child_group_still_alive": false,
+ "guard_still_alive": false,
+ "lifeline_line_in_file": true
+}
+--- worker.log ---
+lifeline: 起こした側が終わった — 1 の相手へ TERM を送った
+
+rc=0

@@ -1,0 +1,59 @@
+# 対象: doeff b94fa584ed1ad2b8e3a971ae03e81b9eda4127e4(line_stamp.py は 6c385dbb7 の形)・再現の dir /tmp/wpl-A-LuSr
+## E: 今の lifeline(行を足さない)・送り先 on・worker は正常に終わる
+{
+ "case": "E",
+ "worker_exit": 0,
+ "lines": "StampedLines",
+ "child_pgid": 1807586,
+ "guard_pid": 1807588,
+ "guard_fd2": "pipe:[1119144399]",
+ "worker_fd2_now": "pipe:[1119144399]",
+ "seconds_after_worker_end": 14.0,
+ "child_group_still_alive": false,
+ "guard_still_alive": false,
+ "lifeline_line_in_file": false
+}
+--- worker.log ---
+2026-10-12T05:08:47.556+00:00 worker: 起動します lines=StampedLines
+2026-10-12T05:08:47.562+00:00 worker: 全 job を回収しました
+
+rc=0
+## C: lifeline に盲検 A の 1 行(TERM の後に stderr へ書く)を足した写し・送り先 on
+{
+ "case": "C",
+ "worker_exit": 0,
+ "lines": "StampedLines",
+ "child_pgid": 1810409,
+ "guard_pid": 1810410,
+ "guard_fd2": "pipe:[1119169708]",
+ "worker_fd2_now": "pipe:[1119169708]",
+ "seconds_after_worker_end": 4.0,
+ "child_group_still_alive": true,
+ "guard_still_alive": false,
+ "lifeline_line_in_file": false
+}
+--- worker.log ---
+2026-10-12T05:09:02.002+00:00 worker: 起動します lines=StampedLines
+2026-10-12T05:09:02.923+00:00 worker: 全 job を回収しました
+
+rc=0
+## B: 同じ写し・送り先 off(差し替えない形)
+{
+ "case": "B",
+ "worker_exit": 0,
+ "lines": "RawLines",
+ "child_pgid": 1811317,
+ "guard_pid": 1811325,
+ "guard_fd2": "/tmp/wpl-A-LuSr/B/worker.log",
+ "worker_fd2_now": "/tmp/wpl-A-LuSr/B/worker.log",
+ "seconds_after_worker_end": 4.0,
+ "child_group_still_alive": false,
+ "guard_still_alive": false,
+ "lifeline_line_in_file": true
+}
+--- worker.log ---
+worker: 起動します lines=RawLines
+worker: 全 job を回収しました
+lifeline: 起こした側が終わった — 1 の相手へ TERM を送った
+
+rc=0
