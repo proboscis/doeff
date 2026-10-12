@@ -24,8 +24,8 @@
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise Wait])
-(import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_time [Delay GetMonotonic])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
@@ -464,10 +464,13 @@
   (<- (send-settled state))
   (val beating state.beating)
   (<- now-ms int (now-epoch-ms))
+  ;; 間の長さの計り用の単調な時計の読み(#3825 — at は遅れの行に書く壁の時計の刻・間は mono-ms の差で計る)。
+  (<- mono float (GetMonotonic))
   (<- done Promise (CreatePromise))
   (setv beating.in-flight done
         beating.started-at now-ms
-        beating.unread (+ beating.unread #((HeartbeatSent :at now-ms :worker state.name :lease-ms state.lease-ms))))
+        beating.unread (+ beating.unread #((HeartbeatSent :at now-ms :mono-ms (monotonic-ms-of mono) :worker state.name
+                                                         :lease-ms state.lease-ms))))
   (var beaten None)
   (try
     (<- answered (| DesiredJobs DesiredUnreadable) (beat state cell options))

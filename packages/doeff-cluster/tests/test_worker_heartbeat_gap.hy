@@ -20,8 +20,8 @@
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState DesiredJobs DesiredUnreadable HeartbeatSent
                                                  ReadDesired ObserveWorld EnvReport PublishStatus])
 (import doeff_cluster.worker.core.program [worker-tick TICK-LAG-LOG HEARTBEAT-GAP-LOG])
@@ -119,8 +119,9 @@
     (<- tick BeatTick (CurrentTickScript))
     (if tick.beats
         (do (<- at int (now-epoch-ms))
+            (<- mono float (GetMonotonic))
             (<- (Delay tick.reply-seconds))
-            (resume (DesiredJobs #() :sends #((HeartbeatSent :at at :worker WORKER :lease-ms LEASE-MS)))))
+            (resume (DesiredJobs #() :sends #((HeartbeatSent :at at :mono-ms (monotonic-ms-of mono) :worker WORKER :lease-ms LEASE-MS)))))
         (resume (DesiredJobs #()))))
   (ObserveWorld []
     (resume (WorldView #() #())))
@@ -213,4 +214,5 @@
   (assert (= (len later.sends) 1) later.sends)
   (val second (get later.sends 0))
   (assert (= second.lease-ms REPLY-LEASE-MS) second)
-  (assert (>= second.at first.at) #(first second)))
+  (assert (>= second.at first.at) #(first second))
+  (assert (>= second.mono-ms first.mono-ms) #(first second)))

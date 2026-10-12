@@ -18,6 +18,12 @@
   (+ EPOCH (* ms ONE-MS)))
 
 
+(defn #^ int monotonic-ms-of [#^ float seconds]
+  "単調な時計(GetMonotonic)の秒 → ミリ秒(四捨五入)。意味を持つのは 2 つの読みの差だけ(起点は handler の定め — 区間の長さの計り用で、
+   刻を他の process や記録と並べない)。"
+  (round (* seconds 1000)))
+
+
 (defk now-epoch-ms []
   {:pre [] :post [(: % int)]}
   ;; いまの時刻を epoch ミリ秒で。
