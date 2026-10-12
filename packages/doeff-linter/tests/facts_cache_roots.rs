@@ -37,6 +37,8 @@ fn run(root: &Path, cache: &Path) {
         .args(["--output-format", "editor-json", "--no-log"])
         .current_dir(root)
         .env_remove("DOEFF_LINTER_NO_CACHE")
+        // 機体の検の枠の再入の印 — この検は置き場の片づけを見るので、機体の枠(混んだ機体では数分待つ)を取らずに走らせる。
+        .env("DOEFF_LINTER_CHECK_SLOT", "1")
         .env("DOEFF_LINTER_CACHE_DIR", cache)
         .output()
         .unwrap();
@@ -112,6 +114,8 @@ fn run_with_cap(root: &Path, cache: &Path, cap: u64) {
         .args(["--output-format", "editor-json", "--no-log"])
         .current_dir(root)
         .env_remove("DOEFF_LINTER_NO_CACHE")
+        // 機体の検の枠の再入の印 — この検は置き場の片づけを見るので、機体の枠(混んだ機体では数分待つ)を取らずに走らせる。
+        .env("DOEFF_LINTER_CHECK_SLOT", "1")
         .env("DOEFF_LINTER_CACHE_DIR", cache)
         .env("DOEFF_LINTER_CACHE_MAX_BYTES", cap.to_string())
         .output()
@@ -268,4 +272,78 @@ fn a_dir_last_used_more_than_ten_minutes_ago_goes_over_the_cap() {
     run_with_cap(live.path(), cache.path(), 9000);
     assert!(!idle.exists(), "10 分より前に使われた dir は、上限を越えていれば消える");
     assert!(busy.join("hy-index.bin.d").join("00").is_file(), "10 分の内に使われた dir は残る");
+}
+
+// ── 作業木をまたいで分け合う事実の置き場 `objects`(card ki-9743c30d49bc)──────────────────────────────
+// 事実は 1 つずつの file で、根の dir ごとには消えない。全体が上限を超えたら、根の dir を先に(最後に使われた時刻の古い順)、それでも
+// 超えていれば事実を、最後に使われた時刻(file の更新時刻)の古い順に消す。間隔の内に使われた事実と、置き場の使った印は消さない。
+
+/// 事実の置き場に、bytes の大きさの事実を 1 つ置き、最後に使われた時刻を ago 秒前にする。
+fn stale_object(cache: &Path, name: &str, bytes: usize, ago: u64) -> PathBuf {
+    let path = cache.join("objects").join("hy-index.bin").join("ab").join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    stamped(&path, &"x".repeat(bytes), ago);
+    path
+}
+
+#[test]
+fn over_the_cap_the_least_recently_used_facts_go_first_until_within_the_cap() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let oldest = stale_object(cache.path(), "00000000000000000000000000a1", 10_000, 30 * 86400);
+    let older = stale_object(cache.path(), "00000000000000000000000000a2", 10_000, 20 * 86400);
+    let recent = stale_object(cache.path(), "00000000000000000000000000a3", 10_000, 10 * 86400);
+    run_with_cap(live.path(), cache.path(), 15_000);
+    assert!(!oldest.exists(), "上限を超えたら、最後に使われた時刻のいちばん古い事実から消える");
+    assert!(!older.exists(), "上限の内に戻るまで、次に古い事実も消える");
+    assert!(recent.is_file(), "上限の内に戻ったら、それより新しい事実は残る");
+    assert!(cache.path().join("objects").join("used").is_file(), "置き場の使った印は消えない(古い版の linter が置き場ごと消さない印)");
+}
+
+#[test]
+fn a_root_dir_goes_before_any_fact() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let kept_root = repo();
+    let live = repo();
+    // 根の dir(前の形の事実を持つ)は古い順で先に消え、それで上限の内に戻れば事実は残る。
+    let old_root = stale_root_dir(cache.path(), "00000000000000a1", kept_root.path(), 20_000, 30 * 86400);
+    let fact = stale_object(cache.path(), "00000000000000000000000000b1", 10_000, 25 * 86400);
+    run_with_cap(live.path(), cache.path(), 15_000);
+    assert!(!old_root.exists(), "根の dir が先に消える");
+    assert!(fact.is_file(), "根の dir を消して上限の内に戻れば、事実は残る");
+}
+
+#[test]
+fn a_fact_used_within_ten_minutes_stays_even_over_the_cap() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let busy = stale_object(cache.path(), "00000000000000000000000000c1", 10_000, 60);
+    let idle = stale_object(cache.path(), "00000000000000000000000000c2", 10_000, 20 * 60);
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(busy.is_file(), "10 分の内に使われた事実は上限を超えても残る(並走する実行が読んでいる)");
+    assert!(!idle.exists(), "10 分より前に使われた事実は、上限を越えていれば消える");
+}
+
+#[test]
+fn within_the_cap_no_fact_is_cleared() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let old = stale_object(cache.path(), "00000000000000000000000000d1", 100, 30 * 86400);
+    run_with_cap(live.path(), cache.path(), 1_000_000);
+    assert!(old.is_file(), "上限の内なら、古いだけの事実は消えない(時間だけを理由に消さない)");
+}
+
+#[test]
+fn a_temporary_fact_left_by_a_cut_off_run_is_cleared_once_stale() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let dir = cache.path().join("objects").join("hy-index.bin").join("ab");
+    std::fs::create_dir_all(&dir).unwrap();
+    let stale = dir.join(".00000000000000000000000000e1.123.tmp");
+    let fresh = dir.join(".00000000000000000000000000e2.124.tmp");
+    stamped(&stale, "half", 2 * 3600);
+    stamped(&fresh, "half", 60);
+    run_with_cap(live.path(), cache.path(), 1_000_000);
+    assert!(!stale.exists(), "1 時間より古い一時 file(打ち切られた実行の残り)は片づけで消える");
+    assert!(fresh.is_file(), "書いている最中かもしれない新しい一時 file は消さない");
 }

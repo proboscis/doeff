@@ -1132,14 +1132,26 @@ fn whole_hy_index(
 /// Hy の file の索引(生の副作用の注記の前)を、file ごとの cache(facts_cache の種類 "hy-index"・binary の形)を通して読むため
 /// (agora-redesign #1364 — 1 file の実行でも repo 全体の索引を組むので、変わった file だけ読み直す)。答えは cache の無い
 /// hy_index::index_file と同じ — cache の形が契約の JSON の形では運べない欄も持つ(hy_index::CachedHyFile)。欄の数が合わない
-/// 壊れた cache はその file を読み直す。鍵は facts_cache と同じ(file の大きさと更新時刻・linter の binary の印と版)で、file の path を
-/// 鍵の名にする。
+/// 壊れた cache はその file を読み直す。鍵は facts_cache と同じ(file の大きさと更新時刻・中身の hash・linter の binary の印と版)で、
+/// file の根からの path を鍵の名にする(根の下に無い file は絶対 path)。索引は file の絶対 path を持つので、置く値は path を空にし、
+/// 読んだ後で今の根の file の path を付ける — 作業木をまたいで同じ中身の file の索引を分け合うため(card ki-9743c30d49bc)。
 fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
-    let keyed: Vec<(String, PathBuf)> = paths.iter().map(|path| (path.to_string_lossy().into_owned(), path.clone())).collect();
-    facts_cache::per_file_compact(root, "hy-index", &keyed, |_key, path| Some(hy_index::CachedHyFile::of(hy_index::index_file(root, path))))
-        .into_iter()
-        .map(|cached| cached.into_file().unwrap_or_else(|broken| hy_index::index_file(root, Path::new(&broken.path))))
-        .collect()
+    let keyed: Vec<(String, PathBuf)> =
+        paths.iter().map(|path| (relative_path(root, path).unwrap_or_else(|| path.to_string_lossy().into_owned()), path.clone())).collect();
+    facts_cache::per_file_compact_bound(
+        root,
+        "hy-index",
+        &keyed,
+        |_key, path| {
+            let mut cached = hy_index::CachedHyFile::of(hy_index::index_file(root, path));
+            cached.set_path("");
+            Some(cached)
+        },
+        |cached, _key, path| cached.set_path(&path.to_string_lossy()),
+    )
+    .into_iter()
+    .map(|cached| cached.into_file().unwrap_or_else(|broken| hy_index::index_file(root, Path::new(&broken.path))))
+    .collect()
 }
 
 /// path の拡張子から言語を決める(Hy でも Python でもなければ None)。
