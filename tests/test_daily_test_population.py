@@ -275,27 +275,20 @@ exit $rc
 
 
 @dataclass(frozen=True)
-class _PackagesRound:
-    """偽の runner で回した本物の `make test-packages` の一巡 — 期待の集合の名前順で最初の package(first)だけを赤にした。"""
+class _MakeRound:
+    """偽の runner で回した本物の Makefile の `make test-packages` の一巡。"""
 
-    expected: list[str]
-    first: str
     calls: list[tuple[str, list[str]]]  # runner が呼ばれた順の (cwd, 引数)
     output: str
     exit_code: int
     timed_out: bool
 
 
-@pytest.fixture(scope="module")
-def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
-    """`make test-packages` の一巡を module で 1 回だけ回し、その記録を package の loop の検 2 本が共に読む。
+def _run_test_packages(repo: Path, tmp: Path, fail: Path, *overrides: str) -> _MakeRound:
+    """本物の Makefile の test-packages を repo で偽の runner に回す(fail の dir を受けた session だけ赤)。
 
-    検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す(card acp:kanban-issue:ki-e8f54a86b0a8)。
+    overrides は make の命令行の変数の上書き。runner と記録は tmp に置く。
     """
-    expected = _expected_packages(REPO_ROOT)
-    assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
-    first = expected[0]
-    tmp = tmp_path_factory.mktemp("packages-round")
     runner = tmp / "fake_runner.sh"
     runner.write_text(_FAKE_RUNNER, encoding="utf-8")
     record = tmp / "calls.tsv"
@@ -307,17 +300,17 @@ def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
                 argv=(
                     "make",
                     "-s",
+                    "-f",
+                    str(REPO_ROOT / "Makefile"),
                     "-C",
-                    str(REPO_ROOT),
+                    str(repo),
                     "test-packages",
                     f"PACKAGE_UV_RUN=sh {runner}",
+                    *overrides,
                 ),
                 env=(
                     EnvEntry(name="DOEFF_FAKE_RUNNER_RECORD", value=str(record)),
-                    EnvEntry(
-                        name="DOEFF_FAKE_RUNNER_FAIL",
-                        value=str(REPO_ROOT / "packages" / first / "tests"),
-                    ),
+                    EnvEntry(name="DOEFF_FAKE_RUNNER_FAIL", value=str(fail)),
                 ),
                 env_mode=EnvMode.EXTEND,
                 timeout=120.0,
@@ -325,9 +318,7 @@ def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
         )
     )
     lines = record.read_text(encoding="utf-8").splitlines() if record.exists() else []
-    return _PackagesRound(
-        expected=expected,
-        first=first,
+    return _MakeRound(
         calls=[(cwd, argv) for cwd, *argv in (line.split("\t") for line in lines)],
         output=proc.stdout + proc.stderr,
         exit_code=proc.exit_code,
@@ -335,13 +326,70 @@ def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
     )
 
 
+@dataclass(frozen=True)
+class _PackagesRound:
+    """この repo の一巡 — 期待の集合の名前順で最初の package(first)だけを赤にした。"""
+
+    expected: list[str]
+    first: str
+    made: _MakeRound
+
+
+@pytest.fixture(scope="module")
+def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
+    """この repo の `make test-packages` の一巡を module で 1 回だけ回し、その記録を package の loop の検 2 本が共に読む。
+
+    検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す(card acp:kanban-issue:ki-e8f54a86b0a8)。
+    この一巡には赤が在るので、「全部が緑なら rc 0」は模型の木の検
+    test_make_test_packages_is_green_when_every_package_is_green が見る。
+    """
+    expected = _expected_packages(REPO_ROOT)
+    assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
+    first = expected[0]
+    made = _run_test_packages(
+        REPO_ROOT,
+        tmp_path_factory.mktemp("packages-round"),
+        REPO_ROOT / "packages" / first / "tests",
+    )
+    return _PackagesRound(expected=expected, first=first, made=made)
+
+
+def test_make_test_packages_is_green_when_every_package_is_green(tmp_path: Path) -> None:
+    """模型の木(package a・b と package の tests/ の外の根 1 つ)で、どの session も緑なら rc 0 で失敗の package を名指さない。
+
+    この repo の一巡は最初の package を赤にするので、緑の終わり方(要約の行の if を `[ … ] && …` に書き換えると、緑の時に
+    recipe の最後の命令が 1 を返す)はこの検だけが見る — 一巡を 2 本で共有する前は、秒の flag の検が全部緑の一巡で rc 0 を見ていた。
+    """
+    for root in ("packages/a/tests", "packages/b/tests", "extra/sim"):
+        (tmp_path / root).mkdir(parents=True)
+        (tmp_path / root / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    made = _run_test_packages(
+        tmp_path, tmp_path, tmp_path / "no-such-tests", "PACKAGE_EXTRA_TEST_ROOTS=extra/sim"
+    )
+    output = made.output
+    assert not made.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
+    visited = sorted(
+        arg for _cwd, argv in made.calls for arg in argv if arg.endswith(("tests", "sim"))
+    )
+    assert visited == ["extra/sim", "packages/a/tests", "packages/b/tests"], (
+        f"模型の木の session を全部訪ねていない: {visited}\n{output[-2000:]}"
+    )
+    assert made.exit_code == 0, (
+        f"どの session も緑なのに make test-packages の rc が {made.exit_code}"
+        f" — 日次の段 packages が緑の日に赤になる — R8\n{output[-2000:]}"
+    )
+    assert _named_failed_packages(output) is None, (
+        f"どの session も緑なのに失敗の package を名指した: {_named_failed_packages(output)} — R8\n{output[-2000:]}"
+    )
+
+
 def test_make_test_packages_visits_every_package_after_a_red(
     packages_round: _PackagesRound,
 ) -> None:
     """期待の集合の名前順で最初の package だけを赤にしても、loop は全部を訪ねて最後に名指す。"""
-    first, calls, output = packages_round.first, packages_round.calls, packages_round.output
-    expected = packages_round.expected
-    assert not packages_round.timed_out, (
+    first, expected = packages_round.first, packages_round.expected
+    calls, output = packages_round.made.calls, packages_round.made.output
+    assert not packages_round.made.timed_out, (
         f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
     )
 
@@ -366,7 +414,7 @@ def test_make_test_packages_visits_every_package_after_a_red(
         f"make test-packages が package の tests/ の外の根 {missed_roots} を訪ねていない(最初の {first}"
         f" だけを赤にした)— その根の検は日次で 1 本も走らない — R8\n{output[-2000:]}"
     )
-    assert packages_round.exit_code != 0, (
+    assert packages_round.made.exit_code != 0, (
         f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
     )
     named = _named_failed_packages(output)
@@ -651,8 +699,8 @@ def test_make_test_packages_lists_every_slow_test(packages_round: _PackagesRound
     10 秒以上の検を上限なしで出す。偽の runner が受けた引数を見る(一巡は上の検と共に読む — 赤は最初の package だけで、
     loop が全部を訪ねる事は上の検が見る)。"""
     assert "make test-packages PACKAGE_UV_RUN=" in _stage_run("packages"), _stage_run("packages")
-    calls, output = packages_round.calls, packages_round.output
-    assert not packages_round.timed_out, (
+    calls, output = packages_round.made.calls, packages_round.made.output
+    assert not packages_round.made.timed_out, (
         f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
     )
     assert calls, f"make test-packages が runner を 1 度も呼ばなかった\n{output[-2000:]}"
