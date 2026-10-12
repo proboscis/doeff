@@ -55,7 +55,10 @@ from typing import TypeVar
 #: (鍵の印を上げない理由は、鍵の印を上げると記録に依らない entry まで全部当たらなくなる事に変わる)。
 RECORD_TAG = "doeff-hy/macro-dependencies/6"
 
-#: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。
+#: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。名と、Hy の展開が表を ``名 in 表`` と
+#: ``表[名]`` で引く事(macro_use.RecordingTable が引いた名を覚える前提)は Hy の内部の形で、uv.lock の版の PyPI の Hy で包みを
+#: 動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro と reader macro の変更の検 — uv.lock の変更で選ばれる)が測る
+#: (card ki-eafa369600cd)。名が替わるか表を ``.get`` で引くと、包みは使った macro を記録し損ねて古い展開を黙って使う。
 MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
 
@@ -316,6 +319,8 @@ GENSYM_NAME = re.compile(r"(_hy_gensym_.*_)([0-9]+)")
 #: Hy が束縛を改めた名(``HyASTCompiler.get_anon_var`` の ``_hy_<種>_<元の名>_<数>`` — let と except の束縛)。元の名が gensym の
 #: 名なら、その数えが名の中に埋まる(absent-as の let = ``_hy_let__hy_gensym_absent_token_<数え>_<数>``)。最後の <数> は compile
 #: 1 回ごとの数え(module の中で決まる)なので替えない。
+#: 2 つの形は Hy の内部の形で、uv.lock の版の PyPI の Hy で compile の口を動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の
+#: gensym の数えの検 — uv.lock の変更で選ばれる)が測る(card ki-eafa369600cd)。
 RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
 
 
