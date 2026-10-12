@@ -1,0 +1,8 @@
+# N4 の対照: 強める前の掃除の検(2377ad0cf の test_env_store.hy — 使った entry の在る鍵の dir の時刻が今)では、N4 を拒まない
+# 版 c1a73eeda258fcd3e44af226d25debeba706897d + N4-mutation.patch.txt + test_env_store.hy を 2377ad0cf の物に戻す
+ packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy | 2 +-
+ packages/doeff-cluster/tests/test_env_store.hy                        | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+$ uv run pytest -q packages/doeff-cluster/tests/test_env_store.hy -k sweep
+      1 2 passed, 3 deselected, 1 warning in 2.22s
+exit=0

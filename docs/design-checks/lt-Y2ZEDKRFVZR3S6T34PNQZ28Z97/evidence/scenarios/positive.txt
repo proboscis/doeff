@@ -1,0 +1,29 @@
+# 正常例(S1〜S4): 直した版 c1a73eeda258fcd3e44af226d25debeba706897d で、各シナリオの検を走らせる
+$ git diff --stat 27f354830 2377ad0cf -- packages/   # S1 の実際の範囲(除く順の変更)
+ .../src/doeff_hy_bytecode_guard/code_store.py      | 60 +++++++++++++-----
+ packages/doeff-hy/tests/test_bytecode_guard.py     | 41 +++++++++++-
+ packages/doeff-hy/tests/test_code_store_entries.py | 74 +++++++++++++++++++---
+ 3 files changed, 148 insertions(+), 27 deletions(-)
+$ uv run pytest -v packages/doeff-hy/tests/test_code_store_entries.py packages/doeff-hy/tests/test_bytecode_guard.py::test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round packages/doeff-hy/tests/test_bytecode_guard.py::test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries packages/doeff-cluster/tests/test_code_prepare_content_store.py::test_e_two_macro_versions_taking_turns_do_not_rebake_each_other packages/doeff-cluster/tests/test_env_store.hy docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_one_bytecode_store_entry
+packages/doeff-hy/tests/test_code_store_entries.py::test_writers_with_different_records_keep_their_own_entry_under_one_key PASSED [  5%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_the_same_record_from_another_tree_rewrites_its_one_entry PASSED [ 10%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_records_differing_only_in_a_bytes_or_float_field_keep_separate_entries PASSED [ 15%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_a_code_without_a_record_has_one_fixed_entry PASSED [ 20%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_only_the_entry_used_moves_its_time PASSED [ 25%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_entries_beyond_the_limit_go_least_recently_used_first PASSED [ 30%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_a_new_entry_waits_behind_the_entries_in_use_until_it_is_used PASSED [ 35%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_one_off_environments_do_not_push_out_an_entry_in_use PASSED [ 40%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_more_environments_than_the_limit_taking_turns_miss_only_the_excess PASSED [ 45%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_a_broken_entry_is_named_removed_and_the_next_entry_is_used PASSED [ 50%]
+packages/doeff-hy/tests/test_code_store_entries.py::test_a_key_without_entries_answers_none PASSED [ 55%]
+packages/doeff-hy/tests/test_bytecode_guard.py::test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round PASSED [ 60%]
+packages/doeff-hy/tests/test_bytecode_guard.py::test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries PASSED [ 65%]
+packages/doeff-cluster/tests/test_code_prepare_content_store.py::test_e_two_macro_versions_taking_turns_do_not_rebake_each_other PASSED [ 70%]
+packages/doeff-cluster/tests/test_env_store.hy::test_only_roots_with_a_marker_are_ready_and_named PASSED [ 75%]
+packages/doeff-cluster/tests/test_env_store.hy::test_the_heartbeat_carries_the_env_report_only_for_env_workers PASSED [ 80%]
+packages/doeff-cluster/tests/test_env_store.hy::test_a_root_marked_with_the_earlier_bytecode_counts_is_still_a_known_root PASSED [ 85%]
+packages/doeff-cluster/tests/test_env_store.hy::test_the_sweep_removes_store_entries_unused_for_seven_days PASSED [ 90%]
+packages/doeff-cluster/tests/test_env_store.hy::test_the_sweep_removes_unused_code_entries_in_key_dirs_and_the_dirs_left_unused PASSED [ 95%]
+docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_one_bytecode_store_entry PASSED [100%]
+================== 20 passed, 1 warning in 101.24s (0:01:41) ===================
+exit=0

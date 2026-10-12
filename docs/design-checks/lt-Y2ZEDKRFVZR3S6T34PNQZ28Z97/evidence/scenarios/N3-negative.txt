@@ -1,0 +1,10 @@
+# 失敗例 N3(S3): 盲検 B の差分(import の口が、今の版で読めない記録の entry を除く)を直した版に当てる — 記録の世代の違う書き手の検が拒むか
+# 版 c1a73eeda258fcd3e44af226d25debeba706897d + ../b/blind-b.patch.txt(--directory=packages/doeff-hy)
+ .../src/doeff_hy_bytecode_guard/loader_hooks.py        | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+$ uv run pytest -q packages/doeff-hy/tests/test_bytecode_guard.py::test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries
+      1 1 failed, 1 warning in 5.07s
+      1 E               AssertionError: ('this', 2)
+      1 E               assert 1 == 0
+      1 FAILED packages/doeff-hy/tests/test_bytecode_guard.py::test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries
+exit=1
