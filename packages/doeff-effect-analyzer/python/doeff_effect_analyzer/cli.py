@@ -140,7 +140,8 @@ def _handler(arguments: argparse.Namespace) -> int:
     print(f"{handler.name} ({handler.basis.value})")
     for clause in handler.clauses:
         emits = ", ".join(_short(n) for n in clause.emits.effect_names) or "-"
-        print(f"  {clause.handles.__name__} → performs {emits}")
+        guarded = " (the effects its guard fails go on outward)" if clause.passes is not None else ""
+        print(f"  {clause.handles.__name__} → performs {emits}{guarded}")
     for item in handler.unresolved:
         print(f"  unresolved at {item.location}: {item.reason}: {item.text}")
     return 0
