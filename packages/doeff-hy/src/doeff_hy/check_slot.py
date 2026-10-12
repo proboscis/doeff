@@ -137,7 +137,7 @@ def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
     if unfit:
         _named(
             out,
-            f"枠の正本 {module.__file__} の口が揃わない({'・'.join(unfit)})ので枠を取らずに走る",
+            f"枠の正本 {os.path.realpath(home / CANON_UNDER_HOME)} の口が揃わない({'・'.join(unfit)})ので枠を取らずに走る",
         )
         return SlotHeld(None)
     try:
