@@ -103,15 +103,15 @@ _NOT_WALKED = (
 
 # どの母集団にも属さない test 名の file の除外の表(path か、`/` で終わる dir の接頭辞 → 理由)。
 # 行を足す時は理由を書く。該当する file が 1 本も無い行は古い行として赤になる。
+# 設計検証の記録(docs/design-checks/)は行で外さない — 記録の中の検の写しは集め手の pattern に当たらない名
+# (`<名>.py.txt`)で置く。行で外すと、make test-changed の選び(名の規則だけを読む)が写しを検として走らせ、本物の
+# 検を記録の中にだけ置いても緑になる(設計検証 docs/design-checks/lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B)。
 EXCLUDED: dict[str, str] = {
     "packages/doeff-agents/conformance/": (
         "tmux / herdr の実 pane を使う黒箱の交代ゲート(実モデルは使わない)。日次の宿で tmux が"
         "使えるかが未測定で、母集団へ入れるかは card acp:kanban-issue:ki-2832a04913cc が決める"
     ),
     "docs/design/": "設計の検証の模型と実験(その時点の記録で、日次の母集団ではない)",
-    "docs/design-checks/": (
-        "設計検証の記録の証拠(盲検の再現・直した版の検の写し。その時点の記録で、日次の母集団ではない)"
-    ),
     "ide-plugins/pycharm/test_program_detection.py": (
         "PyCharm plugin の検出の検体(テスト関数を持たない)"
     ),
@@ -222,7 +222,8 @@ def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: lis
     assert not orphans, (
         f"日次のどの母集団にも除外の表にも無い検の file が {len(orphans)} 本: {orphans}"
         " — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、"
-        "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)"
+        "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)。"
+        "設計検証の記録(docs/design-checks/)の検の写しは、集め手の pattern に当たらない名(`<名>.py.txt`)に替える"
         "— ADR-DOE-ENFORCE-001 R8"
     )
 
@@ -442,6 +443,26 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
     declared = _population_roots(tmp_path, (f"PACKAGE_EXTRA_TEST_ROOTS={sim}",))
     assert sim in declared
     _assert_every_test_file_belongs_to_a_daily_population(tmp_path, declared)
+
+
+def test_test_named_copy_in_a_design_check_record_is_red_until_renamed(tmp_path: Path) -> None:
+    """失敗ケース: 設計検証の記録の中に検の名の写し(test_*.py)を置くと赤、集め手の pattern に当たらない名
+    (`.py.txt`)に替えると緑(設計検証 docs/design-checks/lt-9R40Q1PM496VA4HVD1FMXVYW8Z)。
+
+    docs/design-checks/ を除外の行で外した形(77e0eb3f9)では、写しは make test-changed の選びで検として走り(名に `.` を
+    含む写しは集める時に落ちて赤 1)、本物の検を記録の中にだけ置いても緑だった(盲検 A・B)。
+    """
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    copy = tmp_path / "docs" / "design-checks" / "lt-MODEL" / "evidence" / "scripts" / "test_scope.revision.py"
+    copy.parent.mkdir(parents=True)
+    copy.write_text("def test_scope():\n    pass\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match=re.escape(copy.relative_to(tmp_path).as_posix())):
+        _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
+    copy.rename(copy.with_name(f"{copy.name}.txt"))
+    _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
 
 
 def test_every_test_named_file_is_collected_by_some_collector() -> None:
