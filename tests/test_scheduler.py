@@ -14,6 +14,7 @@ from doeff_core_effects.scheduler import (
     CreateExternalPromise,
     CreatePromise,
     CreateSemaphore,
+    Discard,
     Gather,
     Race,
     Spawn,
@@ -2381,6 +2382,120 @@ class TestTerminalEntrySweep:
         assert cancelled == cycles
         # Without the settled sweep the tasks dict holds every cancelled child
         # (~3000 rows).
+        assert counts["tasks"] <= HANDLE_SWEEP_INTERVAL, counts
+        assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
+
+    @pytest.mark.parametrize("kill", [Cancel, Discard], ids=["cancel", "discard"])
+    def test_killing_never_started_tasks_does_not_grow_scheduler_state(self, kill):
+        """A task killed before it started is settled when pick_next skips its
+        start — that skip is the last read of its row (agora-redesign #3504)."""
+        from doeff_core_effects.scheduler import (
+            HANDLE_SWEEP_INTERVAL,
+            TaskCancelledError,
+            _SchedulerIntrospection,
+        )
+
+        cycles = 3000
+
+        @do
+        def never_started():
+            raise AssertionError("a task killed before its start must not run")
+
+        @do
+        def noop():
+            return None
+
+        @do
+        def body():
+            killed = 0
+            for _ in range(cycles):
+                t = yield Spawn(never_started(), priority=PRIORITY_IDLE)
+                yield kill(t)
+                # The barrier queues behind the killed task's start at the same
+                # priority, so waiting for it makes pick_next pass that start.
+                barrier = yield Spawn(noop(), priority=PRIORITY_IDLE)
+                yield Wait(barrier)
+                try:
+                    yield Wait(t)
+                except TaskCancelledError:
+                    killed += 1
+            counts = yield _SchedulerIntrospection()
+            return killed, counts
+
+        killed, counts = doeff_run(scheduled(body()))
+        assert killed == cycles
+        assert counts["tasks"] <= HANDLE_SWEEP_INTERVAL, counts
+
+    def test_discarding_started_tasks_does_not_grow_scheduler_state(self):
+        """Discard drops the continuation the scheduler held, so the task never
+        runs again and its row is settled (agora-redesign #3504)."""
+        from doeff_core_effects.scheduler import (
+            HANDLE_SWEEP_INTERVAL,
+            TaskCancelledError,
+            _SchedulerIntrospection,
+        )
+
+        cycles = 3000
+
+        @do
+        def parked(started, release):
+            yield CompletePromise(started, None)
+            yield Wait(release.future)
+
+        @do
+        def body():
+            discarded = 0
+            for _ in range(cycles):
+                started = yield CreatePromise()
+                release = yield CreatePromise()
+                t = yield Spawn(parked(started, release))
+                yield Wait(started.future)  # the child is now parked on release
+                yield Discard(t)
+                try:
+                    yield Wait(t)
+                except TaskCancelledError:
+                    discarded += 1
+                yield CompletePromise(release, None)
+            counts = yield _SchedulerIntrospection()
+            return discarded, counts
+
+        discarded, counts = doeff_run(scheduled(body()))
+        assert discarded == cycles
+        assert counts["tasks"] <= HANDLE_SWEEP_INTERVAL, counts
+        assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
+
+    def test_self_discarding_tasks_do_not_grow_scheduler_state(self):
+        """A task that Discards itself ends at that Discard; its row is settled
+        (agora-redesign #3504)."""
+        from doeff_core_effects.scheduler import (
+            HANDLE_SWEEP_INTERVAL,
+            TaskCancelledError,
+            _SchedulerIntrospection,
+        )
+
+        cycles = 3000
+
+        @do
+        def worker(own):
+            me = yield Wait(own.future)
+            yield Discard(me)
+
+        @do
+        def body():
+            discarded = 0
+            for _ in range(cycles):
+                own = yield CreatePromise()
+                t = yield Spawn(worker(own))
+                yield CompletePromise(own, t)
+                try:
+                    yield Wait(t)
+                except TaskCancelledError:
+                    discarded += 1
+            counts = yield _SchedulerIntrospection()
+            return discarded, counts
+
+        discarded, counts = doeff_run(scheduled(body()))
+        assert discarded == cycles
         assert counts["tasks"] <= HANDLE_SWEEP_INTERVAL, counts
         assert counts["promises"] <= HANDLE_SWEEP_INTERVAL, counts
 
