@@ -21,6 +21,7 @@ import ast
 import sys
 import types
 from collections.abc import Callable
+from pathlib import Path
 
 import doeff_hy.macros  # registers extensions(定義の macro の名も読む)
 import hy
@@ -28,10 +29,8 @@ import pytest
 from doeff_core_effects import try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_hy.pytest_items import module_record_texts
-from doeff_hy.static_view import static_view
+from doeff_hy.static_check import Projection, project
 from doeff_traverse.handlers import fail_handler, sequential
-from hy.compiler import hy_compile
-from hy.reader import read_many
 
 from doeff import run
 
@@ -330,7 +329,7 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
     "defpp": ("(defpp inner {:post [(: % int)]} (Pure 1))", frozenset({"inner"})),
     "deftest": ('(deftest test-inner {:marks ["slow"]} (assert True))', frozenset({"test_inner"})),
     "defeffect": (
-        '(defeffect Inner {:fields [(: x int)] :pre [(> x 0)] :answer (| int str) :absent [str] '
+        "(defeffect Inner {:fields [(: x int)] :pre [(> x 0)] :answer (| int str) :absent [str] "
         ':tags {:context "t" :role "intent"}})',
         frozenset({"Inner"}),
     ),
@@ -412,7 +411,9 @@ def _member_ids(value: object) -> tuple[int, ...] | None:
             return None
 
 
-def _module_state_view(mod: types.ModuleType) -> dict[tuple[str, str], tuple[int, tuple[int, ...] | None]]:
+def _module_state_view(
+    mod: types.ModuleType,
+) -> dict[tuple[str, str], tuple[int, tuple[int, ...] | None]]:
     """定義を書いた module と、読み込み済みの doeff の module(名の頭が doeff)の globals の (module, 名) ごとの
     (値の id, 入れ物の要素の id) — 外の関数を呼ぶたびに、どこかの module に名・記録・登録が増えたかを比べるため
     (定義を書いた module だけを見ると、doeff の module の索引への登録を見逃す — 設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 B)。"""
@@ -445,26 +446,35 @@ def test_definition_sample_leaves_module_state_unchanged(
     mod.subject()
     mod.subject()
     after = _module_state_view(mod)
-    assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == set()
+    assert {
+        key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
+    } == set()
 
 
-def _python_source(code: str, header: str) -> str:
-    """Hy の source を型検査のための展開で Python の source にする — 実行せずに展開の文を読むため。"""
-    mod = types.ModuleType("nested_definition_static")
-    with static_view():
-        node = hy_compile(read_many(header + code, filename="static.hy"), mod, filename="static.hy")
-    return ast.unparse(node)
-
-
-def test_static_view_records_only_module_level_deftest() -> None:
-    """型検査のための展開でも、pytest の item の記録の文は module の段の deftest だけが出す — 関数の中の deftest の
-    記録の文は、実行時に出さない文を型検査に見せ、その import が外の関数に `doeff_hy` の局所の名を作っていた
-    (設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 A)。"""
-    header = "(require doeff-hy.macros [deftest])\n"
-    nested = _python_source("(defn subject [] (deftest test-inner (assert True)) None)", header)
-    top = _python_source("(deftest test-top (assert True))", header)
-    assert "record_at_import" not in nested
-    assert "record_at_import" in top
+def test_static_projection_of_nested_deftest_has_no_item_record(tmp_path: Path) -> None:
+    """型検査のための投影(doeff-hy-check が pyright に読ませる Python)で、関数の中の deftest は pytest の item の記録の文と、
+    その import が作る `doeff_hy` の局所の名を外の関数に出さない — 実行時の展開は出さないので、投影も同じにする
+    (設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 A。module の段の記録は投影が記帳として外す)。"""
+    source = tmp_path / "nested_static.hy"
+    source.write_text(
+        "(require doeff-hy.macros [deftest])\n(defn subject [] (deftest test-inner (assert True)) None)\n",
+        encoding="utf-8",
+    )
+    projection = project(tmp_path, [tmp_path], source)
+    assert isinstance(projection, Projection)
+    subject = next(
+        node
+        for node in ast.parse(projection.text).body
+        if isinstance(node, ast.FunctionDef) and node.name == "subject"
+    )
+    imported = {
+        alias.asname or alias.name.split(".")[0]
+        for node in ast.walk(subject)
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
+    }
+    assert "record_at_import" not in ast.unparse(subject)
+    assert "doeff_hy" not in imported
 
 
 @pytest.mark.parametrize(

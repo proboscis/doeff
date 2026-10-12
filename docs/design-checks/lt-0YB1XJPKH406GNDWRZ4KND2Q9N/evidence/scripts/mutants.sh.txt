@@ -38,9 +38,9 @@ for e in "$@"; do
     S2-positive) run S2-positive "" $M/S2-positive-defbench-module-forms.diff.txt ;;
     S2-negative-record) run S2-negative-record "defbench" $M/S2-negative-defbench-record-in-forms.diff.txt ;;
     S2-negative-sample) run S2-negative-sample "every_definition" $M/S2-negative-defbench-without-sample.diff.txt ;;
-    S3-positive) run S3-positive "static_view or not_wrapped" ;;
+    S3-positive) run S3-positive "static_projection or not_wrapped" ;;
     S3-positive-change) run S3-positive-change "" $M/S3-positive-static-answer-form-changed.diff.txt ;;
-    S3-negative) run S3-negative "static_view" $M/S3-negative-module-forms-in-static-function.diff.txt ;;
+    S3-negative) run S3-negative "static_projection" $M/S3-negative-module-forms-in-static-function.diff.txt ;;
     S4-positive) run S4-positive "state_unchanged" ;;
     S4-negative) run S4-negative "state_unchanged" $M/S4-negative-blind-B-effect-index.diff.txt ;;
     S5-positive) run S5-positive "" $M/S5-positive-records-storage-renamed.diff.txt ;;
