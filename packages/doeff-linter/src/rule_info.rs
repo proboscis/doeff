@@ -26,8 +26,8 @@ pub fn get_rule_info(rule_id: &str) -> RuleInfo {
         },
         "DOEFF002" => RuleInfo {
             name: "Mutable Attribute Naming",
-            description: "An attribute assigned outside `__init__` / `__post_init__` / `__set_name__` (of any type, not only list, dict, set) doesn't follow the `mut_` / `_mut` naming convention.",
-            fix: "Prefix attributes assigned after initialization with `mut_` / `_mut`: `self._mut_missed = True` instead of `self.missed = True`.",
+            description: "An attribute assigned outside `__init__` / `__post_init__` / `__set_name__` (of any type, not only list, dict, set) doesn't follow the `mut_` / `_mut` naming convention. Only the class's own attributes count: what a base class outside the repo owns (Textual's `App.sub_title`) is not reported.",
+            fix: "Prefix attributes assigned after initialization with `mut_` / `_mut`: `self._mut_missed = True` instead of `self.missed = True`. An attribute a framework base class owns cannot be renamed: list it in `data/framework_attributes.json` (it is already not reported when `__init__` and the methods called from it do not set it).",
             label: "可変な属性名に _mut_ が無い",
         },
         "DOEFF003" => RuleInfo {

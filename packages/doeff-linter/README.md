@@ -70,7 +70,7 @@ skip_test_functions = true
 | Rule ID | Name | Description |
 |---------|------|-------------|
 | DOEFF001 | Builtin Shadowing | Functions should not shadow Python builtin names |
-| DOEFF002 | Mutable Attribute Naming | Mutable attributes must use `mut_` or `_mut` prefix |
+| DOEFF002 | Mutable Attribute Naming | Mutable attributes must use `mut_` or `_mut` prefix (class's own attributes only — what a base class outside the repo owns, e.g. Textual's `App.sub_title`, is not reported) |
 | DOEFF003 | Max Mutable Attributes | Limit the number of mutable attributes in a class |
 | DOEFF004 | No os.environ Access | Forbid direct access to environment variables |
 | DOEFF005 | No Setter Methods | Classes should not have setter methods |
