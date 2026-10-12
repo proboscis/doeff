@@ -24,7 +24,10 @@
 ;;; git の子の環境は env-mode EXTEND(親を継いで足す)で、足すのは git-environment の 2 つだけ。uv の子は EXTEND に env-drop UV-DROP(呼び手の
 ;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
 ;;; process の間の錠を持つ。mirror は URL ごと、native の wheel は package ごとに file の錠(AcquireLock)で排他にする(wheel の鍵と保存先は build の口の物)。
-;;; 展開は git archive と tar、同じ commit の root からの複製は cp -al(hardlink)の後に持ち越さない物(.venv・__pycache__・完成マーカー)を消す。
+;;; 木は、写し元(元の鍵が同じ完成済みの root の同じ repo の木)が在れば、その commit の追跡 file のうち新しい commit まで変わらない物だけを
+;;; cp -al(hardlink)で写し、変わった path の新しい中身を git archive と tar で置く — .venv・__pycache__・完成マーカーなど追跡
+;;; しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写し元が無い・写せない時は git archive と
+;;; tar で全部を展開する。
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
@@ -48,13 +51,13 @@
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster.worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster.worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
 (val MOUNT-TABLE "/proc/self/mountinfo")
-;; 展開の複製で持ち越さない dir の名(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。
-(val NOT-COPIED (frozenset #(".venv" "__pycache__")))
+;; git archive・cp の 1 回の命令に渡す path の数(命令の引数の長さの上限 — 数千 file の差でも収まる数ずつ分ける)。
+(val PATHS-PER-COMMAND 500)
 ;; uv の出力で「lock が古い」と「一時の失敗(network)」を見分ける語。
 (val LOCK-STALE-PATTERN (re.compile r"(?i)lockfile .*needs to be updated|lock file .*needs to be updated|--locked"))
 (val NETWORK-PATTERN (re.compile r"(?i)failed to fetch|error sending request|dns error|connection (?:refused|reset)|timed out|could not resolve|temporary failure|could not read from remote"))
@@ -352,47 +355,146 @@
             True FetchState.MISSING))))
 
 
-(defk not-carried [dest]
-  {:pre [(: dest str)] :post [(: % tuple)]}
-  "複製した木のうち持ち越さない物(.venv・__pycache__ の dir と、根の完成マーカー)の path を並べるため(外側の dir を先に・内側は外側と一緒に消える)。"
-  (<- listed (| tuple FileFailed) (WalkTree dest))
-  (<- entries tuple (settled listed "複製した木を読めない"))
-  (var out [])
-  (for [entry entries]
-    (val parts (.split entry.name "/"))
-    (val hit (or (and (= entry.kind PathKind.DIRECTORY) (in (get parts -1) NOT-COPIED))
-                 (= entry.name ENV-MARKER)))
-    (val inside (any (gfor i (range (- (len parts) 1)) (in (get parts i) NOT-COPIED))))
-    (when (and hit (not inside))
-      (.append out (posixpath.join dest entry.name))))
-  (tuple out))
+(defrecord PathChange
+  "2 つの commit の差の 1 path(git diff --name-status の 1 組)。status = A(増えた)・M(中身か mode が変わった)・D(消えた)・
+   T(種類が変わった — file が symlink になる等)のどれか(--no-renames なので名の変更は D と A)。path = repo の中の相対 path。"
+  (#^ str status)
+  (#^ str path))
 
 
-(defk materialize [mirror commit dest reuse]
-  {:pre [(: mirror str) (: commit str) (: dest str) (: reuse (| str None))] :post [(: % None)]}
-  "commit の木を dest に置くため(reuse = 同じ commit の木を持つ別の root の dir — hardlink で複製して持ち越さない物を消す・None = mirror から
-   git archive と tar で展開する)。"
-  (<- (MakeDirectory dest))
-  (if (is-not reuse None)
-      (do (<- copy-run ProcessOutcome (RunProcess :argv #("cp" "-al" (+ reuse "/.") dest)))
-          (<- copied CommandResult (outcome-result copy-run))
-          (when (!= copied.code 0)
-            (raise (RuntimeError (.format "{} を {} へ複製できない: {}" reuse dest copied.stderr))))
-          (<- extra tuple (not-carried dest))
-          (for [path extra]
-            (<- gone (| None FileFailed) (RemoveTree path))
-            (<- (settled gone "持ち越さない物を消せない"))))
-      (do (val archive (+ dest ".tar"))
-          (<- packed CommandResult (git #("-C" mirror "archive" "--format=tar" "-o" archive commit) None))
-          (when (!= packed.code 0)
-            (raise (RuntimeError (.format "git archive {} に失敗: {}" commit packed.stderr))))
-          (<- unpack-run ProcessOutcome (RunProcess :argv #("tar" "-xf" archive "-C" dest)))
-          (<- unpacked CommandResult (outcome-result unpack-run))
-          (when (!= unpacked.code 0)
-            (raise (RuntimeError (.format "{} を展開できない: {}" archive unpacked.stderr))))
-          (<- gone (| None FileFailed) (RemoveTree archive))
-          (<- (settled gone "展開の tar を消せない"))))
+(defrecord TreeDelta
+  "写し元の commit から新しい commit への木の差。tracked = 写し元の commit が追跡する path の全部・changes = PathChange の列。"
+  (#^ tuple tracked)
+  (#^ tuple changes))
+
+
+(defrecord CopyRefused
+  "写し元から木を写せない理由(写し元の commit が mirror に無い・差が読めない・写す命令の失敗)。呼び手は mirror から展開に戻す。"
+  (#^ str reason))
+
+
+(defk nul-words [text]
+  {:pre [(: text str)] :post [(: % tuple)]}
+  "git の -z の出力(NUL 区切り — path に空白や改行が在っても割れない)を語の列にするため(終わりの NUL の後の空は語に数えない)。"
+  (tuple (gfor w (.split text "\0") :if w w)))
+
+
+(defk tree-delta [mirror old new]
+  {:pre [(: mirror str) (: old str) (: new str)] :post [(: % (| TreeDelta CopyRefused))]}
+  "写し元の commit(old)から新しい commit(new)への木の差を mirror の git から読むため: 写し元の commit の追跡 path の全部(ls-tree)と、
+   変わった path(diff --name-status --no-renames)。old が mirror に無い・git の命令が失敗する・出力の形が違う時は、写せない理由を答える。"
+  (<- have CommandResult (git #("-C" mirror "cat-file" "-e" (+ old "^{commit}")) None))
+  (if (!= have.code 0)
+      (CopyRefused :reason (.format "写し元の commit {} が mirror に無い" old))
+      (do (<- diff CommandResult (git #("-C" mirror "diff" "--name-status" "--no-renames" "-z" old new) None))
+          (<- listed CommandResult (git #("-C" mirror "ls-tree" "-r" "-z" "--name-only" old) None))
+          (<- words tuple (nul-words diff.stdout))
+          (<- tracked tuple (nul-words listed.stdout))
+          (val pairs (tuple (gfor i (range 0 (- (len words) 1) 2) (PathChange :status (get words i) :path (get words (+ i 1))))))
+          (cond
+            (or (!= diff.code 0) (!= listed.code 0))
+            (do (<- detail str (tail-of (if (!= diff.code 0) diff listed)))
+                (CopyRefused :reason (.format "{} から {} への差を git が読めない: {}" old new detail)))
+            (or (= (% (len words) 2) 1) (not (all (gfor p pairs (in p.status #("A" "M" "D" "T"))))))
+            (CopyRefused :reason (.format "git diff の出力の形が違う: {}" (cut diff.stdout 0 DETAIL-CHARS)))
+            True (TreeDelta :tracked tracked :changes pairs)))))
+
+
+(defk link-unchanged [source dest paths]
+  {:pre [(: source str) (: dest str) (: paths tuple)] :post [(: % (| None CopyRefused))]}
+  "写し元の木 source の path(追跡 file で、新しい commit まで変わらない物)を hardlink で dest の同じ相対 path に置くため(cp -al --parents —
+   path は数百ずつ命令の引数に渡す)。追跡しない物(.venv・__pycache__・完成マーカー・焼いた印)は path に無いので写さない。変わる path は
+   渡されないので、dest にはその hardlink が無く、あとで新しい中身を書いても写し元の file には届かない。命令が失敗したら写せない理由を答える。"
+  (var refused None)
+  (for [start (range 0 (len paths) PATHS-PER-COMMAND)]
+    (when (is refused None)
+      (<- run ProcessOutcome (RunProcess :argv (+ #("cp" "-al" "--parents" "-t" dest "--") (cut paths start (+ start PATHS-PER-COMMAND)))
+                                         :cwd source))
+      (<- copied CommandResult (outcome-result run))
+      (when (!= copied.code 0)
+        (:= refused (CopyRefused :reason (.format "{} から {} へ hardlink で写せない: {}" source dest (tail-of copied)))))))
+  refused)
+
+
+(defk archive-into [mirror commit dest pathspec]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: pathspec tuple)] :post [(: % None)]}
+  "commit の木のうち pathspec の path(空なら木の全部)を git archive と tar で dest に新しい file として置くため。path は名のとおりに
+   読ませ(GIT_LITERAL_PATHSPECS — 名の中の * ? [ を glob と読むと、変わっていない別の file まで置き直す)、tar は既に在る file を
+   開いて書かず、消してから作る(tar の既定 — -U は dir まで消そうとして、中身の在る dir で失敗するので付けない)ので、hardlink の先を
+   その場で書き換えない。"
+  (val archive (+ dest ".tar"))
+  (val literal #((EnvEntry :name "GIT_LITERAL_PATHSPECS" :value "1")))
+  (<- packed CommandResult (git (+ #("-C" mirror "archive" "--format=tar" "-o" archive commit) (if pathspec (+ #("--") pathspec) #())) literal))
+  (when (!= packed.code 0)
+    (raise (RuntimeError (.format "git archive {} に失敗: {}" commit packed.stderr))))
+  (<- unpack-run ProcessOutcome (RunProcess :argv #("tar" "-xf" archive "-C" dest)))
+  (<- unpacked CommandResult (outcome-result unpack-run))
+  (when (!= unpacked.code 0)
+    (raise (RuntimeError (.format "{} を展開できない: {}" archive unpacked.stderr))))
+  (<- gone (| None FileFailed) (RemoveTree archive))
+  (<- (settled gone "展開の tar を消せない"))
   None)
+
+
+(defk place-paths [mirror commit dest paths]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: paths tuple)] :post [(: % None)]}
+  "commit の木のうち paths を、命令の引数の長さの内の数ずつ archive-into で dest に置くため。"
+  (for [start (range 0 (len paths) PATHS-PER-COMMAND)]
+    (<- (archive-into mirror commit dest (cut paths start (+ start PATHS-PER-COMMAND)))))
+  None)
+
+
+(defk files-under [dest]
+  {:pre [(: dest str)] :post [(: % int)]}
+  "dest の下の file(symlink を含む・dir は除く)の数を、置いた木の file の数として読むため。"
+  (<- listed (| tuple FileFailed) (WalkTree dest))
+  (<- entries tuple (settled listed "置いた木を読めない"))
+  (len (tuple (gfor e entries :if (!= e.kind PathKind.DIRECTORY) e))))
+
+
+(defk expanded-tree [mirror commit dest reason]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: reason str)] :post [(: % TreePlaced)]}
+  "commit の木の全部を mirror から dest へ展開するため(写し元が無い時と、写し元から写せなかった時 — その理由 reason は答えに載せる)。"
+  (<- (archive-into mirror commit dest #()))
+  (<- placed int (files-under dest))
+  (TreePlaced :how TREE-EXPAND :copied 0 :removed 0 :replaced placed :reason reason))
+
+
+(defk copied-tree [mirror commit dest source]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: source TreeSource)] :post [(: % (| TreePlaced CopyRefused))]}
+  "写し元の木から commit の木を作るため: 写し元の commit の追跡 file のうち commit までに変わらない物を hardlink で写し、変わった・
+   増えた path の新しい中身だけ mirror から置く(変わった path の旧い file は写さないので消す必要も、書き換える事も無い)。写せなければ
+   写せない理由を答え、呼び手が dest を空にして展開に戻す。"
+  (<- delta (| TreeDelta CopyRefused) (tree-delta mirror source.commit commit))
+  (match delta
+    (CopyRefused) delta
+    (TreeDelta :tracked tracked :changes changes)
+    (do (val gone (frozenset (gfor c changes :if (in c.status #("D" "M" "T")) c.path)))
+        (val kept (tuple (gfor p tracked :if (not-in p gone) p)))
+        (val fresh (tuple (gfor c changes :if (in c.status #("A" "M" "T")) c.path)))
+        (<- linked (| None CopyRefused) (link-unchanged source.dir dest kept))
+        (match linked
+          (CopyRefused) linked
+          _ (do (<- (place-paths mirror commit dest fresh))
+                (TreePlaced :how TREE-COPY :copied (len kept) :removed (- (len tracked) (len kept)) :replaced (len fresh)))))))
+
+
+(defk materialize [mirror commit dest source]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: source (| TreeSource None))] :post [(: % TreePlaced)]}
+  "commit の木を dest に置くため(source = 写し元の木 — 在れば hardlink で写して変わった path だけ新しく置き、無ければ・写せなければ mirror から
+   全部を展開する。写せなかった理由は答えの reason)。途中まで写した dest は、展開に戻す前に空にする。"
+  (<- (MakeDirectory dest))
+  (if (is source None)
+      (do (<- placed TreePlaced (expanded-tree mirror commit dest ""))
+          placed)
+      (do (<- tried (| TreePlaced CopyRefused) (copied-tree mirror commit dest source))
+          (match tried
+            (CopyRefused :reason reason)
+            (do (<- (remove-if-present dest))
+                (<- (MakeDirectory dest))
+                (<- placed TreePlaced (expanded-tree mirror commit dest reason))
+                placed)
+            _ tried))))
 
 
 (defk file-sha256 [path]
@@ -683,9 +785,9 @@
     (<- answer (| FetchState EnvFailure) (fetch-commit mirror commit repo-keys))
     (resume answer))
 
-  (MaterializeTree [mirror commit dest reuse]
-    (<- (materialize mirror commit dest reuse))
-    (resume None))
+  (MaterializeTree [mirror commit dest source]
+    (<- placed TreePlaced (materialize mirror commit dest source))
+    (resume placed))
 
   (FileSha256 [path]
     (<- digest (| str None) (file-sha256 path))
@@ -800,7 +902,10 @@
     ;; hyVersion = 完成マーカーの Hy の compiler の版(欄の無い前の印・文字でない値は None = 分からない — 引き継ぎ元にしない・#3706)。
     (val written (.get k "hyVersion"))
     (val hy-version (match written (str) written _ None))
-    (:= known (+ known #((KnownRoot :env known-env :root (get k "root") :made-ms (int (get k "madeMs")) :hy-version hy-version)))))
+    ;; platform = 完成マーカーの platform(欄の無い印・文字でない値は None = 分からない — 写し元にしない・#3677)。
+    (val platform (match (.get k "platform") (str) (.get k "platform") _ None))
+    (:= known (+ known #((KnownRoot :env known-env :root (get k "root") :platform platform :made-ms (int (get k "madeMs"))
+                                    :hy-version hy-version)))))
   ;; compileJobs = 焼く道具の並べる数(null = 道具の既定)。頼みは同じ worker の env-host が必ず書く(2026-10-08)— 無い・整数でない値は断る。
   (val written-jobs (get data "compileJobs"))
   (val compile-jobs (match written-jobs

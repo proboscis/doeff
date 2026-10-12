@@ -20,13 +20,14 @@
 (import doeff [Program with-handlers])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.protocol.env_translation [editable-dirs hy-dist-version])
-(import doeff_core_effects.file_effects [ListDirectory])
+(import doeff_core_effects.file_effects [ListDirectory WriteText RemoveTree])
+(import doeff_traverse.helpers [sequence])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
-(import doeff_cluster.shared.core.runtime_env_rules [env-key key-material runtime-env->json runtime-env-of-json])
+(import doeff_cluster.shared.core.runtime_env_rules [env-key source-key key-material runtime-env->json runtime-env-of-json])
 (import doeff_cluster.worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS
@@ -46,25 +47,42 @@
   result)
 
 
-(defk marker-hy-version [ready]
-  {:pre [(: ready EnvReady)] :post [(: % (| str None))]}
-  "完成した root の印に書いた Hy の compiler の版を読むため(worker の known-roots と同じく、次の準備の known へ印の値を渡す — #3706)。"
+(defk marker-field [ready name]
+  {:pre [(: ready EnvReady) (: name str)] :post [(: % (| str None))]}
+  "完成した root の印の最上位の欄 name を読むため(worker の known-roots と同じく、次の準備の known へ印の値を渡す)。"
   (<- files tuple (world-files ready.root))
   (val marker (json.loads (next (gfor f files :if (= f.path (.format "{}/{}" ready.root ENV-MARKER)) f.text))))
-  (get marker "hyVersion"))
+  (get marker name))
+
+
+(defk marker-hy-version [ready]
+  {:pre [(: ready EnvReady)] :post [(: % (| str None))]}
+  "完成した root の印に書いた Hy の compiler の版を読むため(#3706)。"
+  (<- version (| str None) (marker-field ready "hyVersion"))
+  version)
 
 
 (defk known-of [#* ready]
   {:pre [(: ready tuple)] :post [(: % tuple)]}
-  "完成した root の列 → 次の準備の known(どれも完成した root(EnvReady)であることを確かめてから読む・完成の時刻は列の順・Hy の版は
-   印から読む)。"
+  "完成した root の列 → 次の準備の known(どれも完成した root(EnvReady)であることを確かめてから読む・完成の時刻は列の順・platform と
+   Hy の版は印から読む)。"
   (for [r ready]
     (assert (isinstance r EnvReady) r))
   (var known #())
   (for [#(made r) (enumerate ready)]
     (<- hy-version (| str None) (marker-hy-version r))
-    (:= known (+ known #((KnownRoot :env r.env :root r.root :made-ms made :hy-version hy-version)))))
+    (<- platform (| str None) (marker-field r "platform"))
+    (:= known (+ known #((KnownRoot :env r.env :root r.root :platform platform :made-ms made :hy-version hy-version)))))
   known)
+
+
+(defk tree-parts [ready]
+  {:pre [(: ready EnvReady)] :post [(: % dict)]}
+  "完成した root の印の木の処理ステージの repo ごとの区切り(置き方と file の数の内訳)を、repo の名 → 区切りの dict で読むため。"
+  (<- files tuple (world-files ready.root))
+  (val marker (json.loads (next (gfor f files :if (= f.path (.format "{}/{}" ready.root ENV-MARKER)) f.text))))
+  (val tree (next (gfor s (get marker "stages") :if (= (get s "name") "tree") s)))
+  (dfor p (get tree "parts") (get p "name") p))
 
 
 ;; --- 宣言の型・キー ------------------------------------------------------------------------
@@ -391,7 +409,7 @@
 (defk commit-only-scenario []
   {:pre [] :post [(: % bool)]}
   "筋書き 2・4: project の repo の commit だけ変える(同じ lock)→ 新しい root・sync は増えるが download も build も 0・
-   変わらない repo のツリーは複製・中身の同じ source の bytecode は保存先から書く。"
+   木は前の root から写して変わった file だけ置く・中身の同じ source の bytecode は保存先から書く。"
   (<- first-env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- first EnvReady (prepare first-env #()))
   (<- before EnvWorldLog (read-world-log))
@@ -405,13 +423,14 @@
   (assert (!= second.root first.root) "新しい commit は新しい root")
   (assert (= #(second.downloaded second.built) #(0 0)))
   (assert (= (- after.syncs before.syncs) 1))
-  (assert (= (- after.copies before.copies) 1) "変わらない lib のツリーは前の root から複製")
-  (assert (= (- after.archives before.archives) 1) "変わった app のツリーだけ mirror から展開")
+  (assert (= (- after.copies before.copies) 2) "app も lib も前の root の木から写す(cp は repo ごとに 1 回)")
+  (assert (= (- after.diffs before.diffs) 2) "写す木ごとに、前の commit からの差を読む")
+  (assert (= (- after.expanded before.expanded) 1) "mirror から置いた file は、変わった app/__init__.py の 1 つだけ")
   (assert (> (- after.stored before.stored) 0) "中身の同じ source の bytecode は保存先から書く")
   (assert (< (- ended started) 60.0) "温い準備は冷たい秒を払わない")
   (<- files dict (files-under second.root))
   (assert (= (get files (.format "{}/app/app/__init__.py" second.root)) "V = 2\n"))
-  (assert (not (any (gfor p files (and (in "/.venv/wheels/" p) (in first.root p))))) "複製は元の root の venv を持ち越さない")
+  (assert (not (any (gfor p files (and (in "/.venv/wheels/" p) (in first.root p))))) "写しは元の root の venv を持ち越さない")
   True)
 
 
@@ -419,6 +438,283 @@
   (<- world EnvWorld (base-world))
   (<- ok bool (run-in-world world (commit-only-scenario)))
   (assert ok))
+
+
+;; --- 木を前の root から写す(#3677 — #3671 の子 2)-----------------------------------------------------------------
+;; 元の鍵(source-key)が同じ最新の完成済みの root の木を hardlink で写し、変わった path だけを mirror から置く。展開した file の数は、
+;; 変わった path の数(git diff --name-status)と同じ。直す前は repo 全体を git archive で展開した(同じ commit の木だけ写した)。
+
+(defk prepare-app [app lib known [lock LOCK] [roots #("app/." "app/vendor")]]
+  {:pre [(: app str) (: lib str) (: known tuple) (: lock str) (: roots tuple)] :post [(: % (| EnvReady EnvFailure))]}
+  "app と lib の commit の名から宣言を作って準備する(筋書きを短く書くため)。"
+  (<- env RuntimeEnv (env-of app lib lock roots))
+  (<- result (| EnvReady EnvFailure) (prepare env known))
+  result)
+
+
+(defk source-files [ready repo]
+  {:pre [(: ready EnvReady) (: repo str)] :post [(: % dict)]}
+  "完成した root の repo の木の source の file(相対 path → 中身)を読むため。venv・焼いた .pyc・焼いた印は木の source でないので除く。"
+  (val prefix (.format "{}/{}/" ready.root repo))
+  (<- files tuple (world-files prefix))
+  (dfor f files
+        :if (not (or (in "/.venv/" f.path) (in "/__pycache__/" f.path) (.endswith f.path ".doeff-code-ready.json")))
+        (cut f.path (len prefix) None) f.text))
+
+
+(defk commit-files [commit]
+  {:pre [(: commit WorldCommit)] :post [(: % dict)]}
+  "commit の木の file(相対 path → 中身)。"
+  (dfor f commit.files f.path f.text))
+
+
+(defk part-of [ready repo]
+  {:pre [(: ready EnvReady) (: repo str)] :post [(: % tuple)]}
+  "完成した root の印の、repo の木の区切りを #(置き方 写した 消した 置き直した) で読むため。"
+  (<- parts dict (tree-parts ready))
+  (val part (get parts repo))
+  #((get part "how") (get part "copied") (get part "removed") (get part "replaced")))
+
+
+(defk one-file-scenario []
+  {:pre [] :post [(: % bool)]}
+  "lock が同じで 1 file だけ変わった版の準備: 展開した file の数・置き直した file の数が、変わった path の数(git diff --name-status と同じ数)
+   だけで、できた木は新しい commit の木そのもの・前の root の木は前のまま。"
+  (<- a1 WorldCommit (app-commit "app-1" LOCK "V = 1\n"))
+  (<- a2 WorldCommit (app-commit "app-2" LOCK "V = 2\n"))
+  (<- before dict (commit-files a1))
+  (<- after dict (commit-files a2))
+  (val changed (frozenset (gfor p (| (set before) (set after)) :if (!= (.get before p) (.get after p)) p)))
+  (assert (= changed #{"app/__init__.py"}) changed)
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- cold EnvWorldLog (read-world-log))
+  (assert (= cold.expanded (+ (len before) 4)) "冷たい準備は両方の repo の file を全部置く(app は 5・lib は 4 file)")
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-2" "lib-1" known))
+  (assert (isinstance second EnvReady) second)
+  (<- warm EnvWorldLog (read-world-log))
+  (assert (= (- warm.expanded cold.expanded) (len changed)) "mirror から展開した file = 変わった path の数だけ")
+  (<- app-part tuple (part-of second "app"))
+  (assert (= app-part #("copy" (- (len before) (len changed)) (len changed) (len changed))) app-part)
+  (<- lib-part tuple (part-of second "lib"))
+  (assert (= lib-part #("copy" 4 0 0)) "変わらない lib は全部写して、置き直さない")
+  (<- tree dict (source-files second "app"))
+  (assert (= tree after) tree)
+  (<- earlier dict (source-files first "app"))
+  (assert (= earlier before) "写し元の root の木は前のまま")
+  True)
+
+
+(deftest test-a-one-file-change-places-only-that-file
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (one-file-scenario)))
+  (assert ok))
+
+
+(defk mixed-commit [label files]
+  {:pre [(: label str) (: files dict)] :post [(: % WorldCommit)]}
+  "app の commit 1 つ(pyproject・uv.lock・vendor/tool.py に files — 相対 path → 中身 — を足した木)。"
+  (<- sha str (sha-of label))
+  (val common {"pyproject.toml" "[project]\nname = \"app\"\n" "uv.lock" LOCK "vendor/tool.py" "X = 1\n"})
+  (WorldCommit :sha sha :files (tuple (gfor #(p t) (.items (| common files)) (WorldFile :path p :text t)))))
+
+
+(val MIXED-OLD {"app/__init__.py" "V = 1\n" "app/gone.py" "G\n" "app/keep.py" "K\n" "docs/old/readme.md" "R\n"})
+(val MIXED-NEW {"app/__init__.py" "V = 2\n" "app/keep.py" "K\n" "app/new.py" "N\n" "docs/new/readme.md" "R2\n"})
+
+
+(defk mixed-scenario []
+  {:pre [] :post [(: % bool)]}
+  "変わった・消えた・増えた path が混ざる版の準備: 消えた path は新しい木に残らず(dir ごと)、増えた path は在り、数の内訳は
+   持ち越した + 置き直した = 新しい木の file の数。"
+  (<- new WorldCommit (mixed-commit "app-mixed-2" MIXED-NEW))
+  (<- first (| EnvReady EnvFailure) (prepare-app "app-mixed-1" "lib-1" #()))
+  (assert (isinstance first EnvReady) first)
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-mixed-2" "lib-1" known))
+  (assert (isinstance second EnvReady) second)
+  ;; 旧い木 7 file のうち、変わった app/__init__.py と消えた 2 file(app/gone.py・docs/old/readme.md)は持ち越さない(3)。新しい中身を置くのは
+  ;; app/__init__.py・増えた app/new.py・docs/new/readme.md(3)。持ち越す 4 + 置き直す 3 = 新しい木の 7 file。
+  (<- app-part tuple (part-of second "app"))
+  (assert (= app-part #("copy" 4 3 3)) app-part)
+  (<- tree dict (source-files second "app"))
+  (<- expected dict (commit-files new))
+  (assert (= tree expected) tree)
+  (<- left tuple (world-files (.format "{}/app/docs/old" second.root)))
+  (assert (= left #()) "消えた path の dir も新しい木に残らない")
+  True)
+
+
+(deftest test-a-tree-copy-follows-added-deleted-and-changed-paths
+  (<- world EnvWorld (base-world))
+  (<- old WorldCommit (mixed-commit "app-mixed-1" MIXED-OLD))
+  (<- new WorldCommit (mixed-commit "app-mixed-2" MIXED-NEW))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes (if (= r.url APP-URL) (replace r :commits (+ r.commits #(old new))) r))))
+                            (mixed-scenario)))
+  (assert ok))
+
+
+(defk expanded-from-scratch [label env known]
+  {:pre [(: label str) (: env RuntimeEnv) (: known tuple)] :post [(: % None)]}
+  "env を known のもとで準備し、app と lib の木が両方とも mirror からの展開(写し元が無い)である事を確かめるため(label は失敗の名指し)。"
+  (<- ready (| EnvReady EnvFailure) (prepare env known))
+  (assert (isinstance ready EnvReady) #(label ready))
+  (<- app-part tuple (part-of ready "app"))
+  (<- lib-part tuple (part-of ready "lib"))
+  (assert (= #((get app-part 0) (get lib-part 0)) #("expand" "expand")) #(label app-part lib-part))
+  None)
+
+
+(defk ineligible-sources-scenario []
+  {:pre [] :post [(: % bool)]}
+  "元の鍵が違う root は木の写し元にしない(lock・import の根・platform が違う・platform を知らない印)— どれも全部を mirror から展開し、
+   写さない。"
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- known tuple (known-of first))
+  (<- before EnvWorldLog (read-world-log))
+  (<- lock-env RuntimeEnv (env-of "app-3" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (<- roots-env RuntimeEnv (env-of "app-2" "lib-1" LOCK #("app/.")))
+  (<- same-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- (expanded-from-scratch "lock" lock-env known))
+  (<- (expanded-from-scratch "import root" roots-env known))
+  (<- (expanded-from-scratch "platform" same-env (tuple (gfor k known (replace k :platform "linux-aarch64")))))
+  (<- (expanded-from-scratch "unknown platform" same-env (tuple (gfor k known (replace k :platform None)))))
+  (<- after EnvWorldLog (read-world-log))
+  (assert (= after.copies before.copies) "どれも写さない")
+  (assert (= after.diffs before.diffs) "写さないので差も読まない")
+  True)
+
+
+(deftest test-a-root-with-another-source-key-is-not-a-copy-source
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (ineligible-sources-scenario)))
+  (assert ok))
+
+
+(defk diffed-sources [known]
+  {:pre [(: known tuple)] :post [(: % frozenset)]}
+  "app-6 の準備が写し元として読んだ commit の組(旧 新)を求め、できた root を消すため(同じ版は準備済みの root を使うので、並びを替えて
+   やり直すために消す)。"
+  (<- before EnvWorldLog (read-world-log))
+  (<- third (prepare-app "app-6" "lib-1" known))
+  (assert (isinstance third EnvReady) third)
+  (<- after EnvWorldLog (read-world-log))
+  (<- (RemoveTree third.root))
+  (frozenset (cut after.diffed (len before.diffed) None)))
+
+
+(defk latest-source-scenario []
+  {:pre [] :post [(: % bool)]}
+  "元の鍵が同じ root が複数在れば、最も新しく完成した物を写し元にする(known の並びに依らない)。"
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- known-1 tuple (known-of first))
+  (<- second EnvReady (prepare-app "app-2" "lib-1" known-1))
+  (<- known tuple (known-of first second))
+  (<- app-2 str (sha-of "app-2"))
+  (<- app-6 str (sha-of "app-6"))
+  (<- lib-1 str (sha-of "lib-1"))
+  (val expected (frozenset #(#(app-2 app-6) #(lib-1 lib-1))))
+  (<- forward frozenset (diffed-sources known))
+  (assert (= forward expected) forward)
+  (<- backward frozenset (diffed-sources (tuple (reversed known))))
+  (assert (= backward expected) backward)
+  True)
+
+
+(deftest test-the-newest-root-with-the-same-source-key-is-the-copy-source
+  (<- world EnvWorld (base-world))
+  (<- six WorldCommit (app-commit "app-6" LOCK "V = 6\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes (if (= r.url APP-URL) (replace r :commits (+ r.commits #(six))) r))))
+                            (latest-source-scenario)))
+  (assert ok))
+
+
+(defk missing-old-commit-scenario []
+  {:pre [] :post [(: % bool)]}
+  "写し元の commit が mirror に無い(mirror を作り直した・古い commit を片づけた)時は、写さず全部を展開し、理由を記録に残す。木は新しい
+   commit の木そのもの。"
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- mirrors tuple (world-files "/state/mirrors/"))
+  (for [m mirrors :if (.endswith m.path "/fetched")]
+    (<- (WriteText m.path "")))
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-2" "lib-1" known))
+  (assert (isinstance second EnvReady) second)
+  (<- app-part tuple (part-of second "app"))
+  (<- lib-part tuple (part-of second "lib"))
+  (assert (= #((get app-part 0) (get lib-part 0)) #("expand" "copy")) "app の旧い commit は mirror に無い・lib は同じ commit を取り直すので写せる")
+  (<- a2 WorldCommit (app-commit "app-2" LOCK "V = 2\n"))
+  (<- tree dict (source-files second "app"))
+  (<- expected dict (commit-files a2))
+  (assert (= tree expected) tree)
+  (<- log EnvWorldLog (read-world-log))
+  (assert (any (gfor n log.notes (and (in "写し元の commit" n) (in "mirror に無い" n)))) log.notes)
+  True)
+
+
+(deftest test-a-missing-source-commit-falls-back-to-expanding
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (missing-old-commit-scenario)))
+  (assert ok))
+
+
+(defk broken-source-scenario []
+  {:pre [] :post [(: % bool)]}
+  "写し元の root の file が欠けていて cp が失敗する時は、途中まで写した木を空にして全部を展開に戻す(欠けた file の分も正しく置く)。"
+  (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
+  (<- (RemoveTree (.format "{}/app/vendor/tool.py" first.root)))
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-2" "lib-1" known))
+  (assert (isinstance second EnvReady) second)
+  (<- app-part tuple (part-of second "app"))
+  (<- lib-part tuple (part-of second "lib"))
+  (assert (= #((get app-part 0) (get lib-part 0)) #("expand" "copy")) "欠けていない lib は写す")
+  (<- a2 WorldCommit (app-commit "app-2" LOCK "V = 2\n"))
+  (<- tree dict (source-files second "app"))
+  (<- expected dict (commit-files a2))
+  (assert (= tree expected) tree)
+  (<- log EnvWorldLog (read-world-log))
+  (assert (any (gfor n log.notes (and (in "hardlink で写せない" n) (in "app" n)))) log.notes)
+  True)
+
+
+(deftest test-a-broken-copy-source-falls-back-to-expanding
+  (<- world EnvWorld (base-world))
+  (<- ok bool (run-in-world world (broken-source-scenario)))
+  (assert ok))
+
+
+(deftest test-the-source-key-is-the-env-key-without-the-commits
+  ;; 元の鍵は版(commit)が替わっても変わらず、lock・Python・platform・import の根・repo の正体・project・native の宣言で変わる。置き場の鍵
+  ;; env-key は commit で変わる(意味を変えない)。同じ repo の綴りの違い(https と scp の形)は同じ元の鍵になる(#3693)。
+  (<- base RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- newer RuntimeEnv (env-of "app-2" "lib-2" LOCK))
+  (<- k-base str (source-key base PLATFORM))
+  (<- k-newer str (source-key newer PLATFORM))
+  (assert (= k-base k-newer) "commit だけ違う宣言は同じ元の鍵")
+  (<- e-base str (env-key base PLATFORM))
+  (<- e-newer str (env-key newer PLATFORM))
+  (assert (!= e-base e-newer) "置き場の鍵は commit で変わる")
+  (<- e-lock RuntimeEnv (env-of "app-1" "lib-1" (+ LOCK "rich==13.9.4 top=rich\n")))
+  (<- e-roots RuntimeEnv (env-of "app-1" "lib-1" LOCK #("app/vendor" "app/.")))
+  (<- e-native RuntimeEnv (env-of "app-1" "lib-1" LOCK #("app/." "app/vendor") False))
+  (val others [e-lock e-roots e-native
+               (replace base :project (replace base.project :python "3.13"))
+               (replace base :project (replace base.project :groups #("dev")))
+               (replace base :repos #((replace (get base.repos 0) :url "file:///remotes/other.git") (get base.repos 1)))])
+  (<- different tuple (sequence (gfor env others (source-key env PLATFORM))))
+  (assert (not-in k-base different) different)
+  (assert (= (len (frozenset different)) (len different)) "変えた物ごとに別の元の鍵")
+  (<- k-arm str (source-key base "linux-aarch64"))
+  (assert (!= k-base k-arm))
+  (val https (replace base :repos #((replace (get base.repos 0) :url "https://github.com/Owner/App.git") (get base.repos 1))))
+  (val scp (replace base :repos #((replace (get base.repos 0) :url "git@GitHub.com:Owner/App") (get base.repos 1))))
+  (<- k-https str (source-key https PLATFORM))
+  (<- k-scp str (source-key scp PLATFORM))
+  (assert (= k-https k-scp) "綴りの違う同じ repo は同じ元の鍵")
+  (<- e-https str (env-key https PLATFORM))
+  (<- e-scp str (env-key scp PLATFORM))
+  (assert (!= e-https e-scp) "置き場の鍵は綴りも含む(意味を変えない)"))
 
 
 ;; 失敗ケース(#3858): bytecode は source の中身で引く保存先から書くので、完成済みの root を知らない準備(新しい worker・空の /work・
