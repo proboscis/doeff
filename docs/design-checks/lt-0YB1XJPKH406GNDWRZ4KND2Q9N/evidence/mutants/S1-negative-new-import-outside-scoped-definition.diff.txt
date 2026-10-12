@@ -1,0 +1,15 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index d26d01af0..569c53bd5 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -985,8 +985,8 @@ defk {name}: :post type annotation cannot be an empty string.
+   (for [check (or pre [])]
+     (when (and (_is-type-check check) (not-in (str (get check 1)) field-names))
+       (raise (SyntaxError (.format "{}: :pre の {} は欄ではない(欄 = {})" where (hy.repr check) (.join " " field-names))))))
+-  (locate-synthesized (_scoped-definition _hy-compiler name
+-    [(defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))])))
++  (locate-synthesized `(do (import json [dumps :as _doeff-new-helper]) ~(_scoped-definition _hy-compiler name
++    [(defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))]))))
+ 
+ 
+ ;; ---------------------------------------------------------------------------

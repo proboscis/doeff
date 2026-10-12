@@ -1,0 +1,15 @@
+# 実験 S1-negative・刻 2026-10-12T03:37:50Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+$ git apply S1-negative-new-import-outside-scoped-definition.diff.txt
+$ git diff --stat
+ packages/doeff-hy/src/doeff_hy/macros.hy | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+$ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -k "defeffect"
+pytest の exit=1
+E       AssertionError: assert {'Inner', '_doeff_new_helper'} == frozenset({'Inner'})
+E         
+E         Extra items in the left set:
+E         '_doeff_new_helper'
+E         Use -v to get more diff
+FAILED tests/test_nested_definition_scope.py::test_function_with_only_a_definition_binds_only_its_names[defeffect]
+1 failed, 10 passed, 64 deselected in 22.13s
+$ git status --short -- packages tests(外した後)

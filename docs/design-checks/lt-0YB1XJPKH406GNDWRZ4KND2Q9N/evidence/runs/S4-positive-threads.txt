@@ -1,0 +1,14 @@
+# 実験 S4-positive-threads・刻 2026-10-12T03:49:50Z・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+$ uv run --frozen python threads_state.py tests/test_nested_definition_scope.py(evidence/scripts/threads_state.py.txt)
+defk: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+deff: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defp: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defpp: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+deftest: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defeffect: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defmcp-tool: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defhandler: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defsystem: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+defpipeline: 8 thread × 5 回の呼びの後に変わった (module, 名) = []
+変わった検体の数 = 0
+exit=0

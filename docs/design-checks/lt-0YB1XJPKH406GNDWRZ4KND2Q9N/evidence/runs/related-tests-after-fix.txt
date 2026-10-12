@@ -1,0 +1,4 @@
+# 直した版の関わる検・刻 2026-10-12T03:52:21Z・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+$ uv run --frozen pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py packages/doeff-hy/tests/test_pytest_items.py packages/doeff-hy/tests/test_deftest_scans.py packages/doeff-hy/tests/test_static_check_deftest.py packages/doeff-hy/tests/test_defeffect_shape.py packages/doeff-hy/tests/test_declarations.py packages/doeff-hy/tests/test_system_static_types.py packages/doeff-adr/tests/test_pytest_item_records.py packages/doeff-cluster/tests/test_defsystem_form.hy -q -W ignore
+exit=0
+180 passed in 54.54s

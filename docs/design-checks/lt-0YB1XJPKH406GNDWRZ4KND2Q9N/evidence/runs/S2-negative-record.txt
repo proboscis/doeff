@@ -1,0 +1,22 @@
+# 実験 S2-negative-record・刻 2026-10-12T03:43:17Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+$ git apply S2-negative-defbench-record-in-forms.diff.txt
+$ git diff --stat
+ packages/doeff-hy/src/doeff_hy/macros.hy | 7 +++++++
+ tests/test_nested_definition_scope.py    | 3 ++-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+$ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -k "defbench"
+pytest の exit=1
+E       AssertionError: assert {('nested_def...est_items__')} == set()
+E         
+E         Extra items in the left set:
+E         ('nested_definition_scope', '__doeff_pytest_items__')
+E         Use -v to get more diff
+FAILED tests/test_nested_definition_scope.py::test_definition_sample_leaves_module_state_unchanged[defbench]
+1 failed, 1 passed, 75 deselected in 19.51s
+$ uv run --frozen python probe_records.py(盲検 A の script・a-files/probe_records.py.txt)
+DOEFF_BLIND_A_BENCH_GUARD = None
+[defbench-in-defn] 外の関数を 0,1,2,3 回呼んだ後の __doeff_pytest_items__ の件数: [0, 1, 2, 3]
+[defbench-in-defn] verify_records の problems(空ならキャッシュに保存できる): ['記録の test_bench_inner が module に無い']
+[deftest-in-defn] 外の関数を 0,1,2,3 回呼んだ後の __doeff_pytest_items__ の件数: [0, 0, 0, 0]
+[deftest-in-defn] verify_records の problems(空ならキャッシュに保存できる): []
+$ git status --short -- packages tests(外した後)
