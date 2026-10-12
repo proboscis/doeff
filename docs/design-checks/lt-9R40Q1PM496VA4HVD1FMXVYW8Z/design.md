@@ -10,6 +10,8 @@
 
 依頼は lt-9R40Q1PM496VA4HVD1FMXVYW8Z(class=investigate)、card は ki-c88db93c440a。完了の範囲は**実装完了まで**。
 
+記録の中の sha の読み方: 54a945270(盲検の前)・d3d3fa683(盲検の返答)・3fba07713(改め)は、測った時の branch wt/dc-9r40-daily-pop の commit。main の先端への載せ直しと着地の列の rebase で sha は変わる。中身は同じ題の commit で、main では題「日次の母集団の検: 設計検証の記録の dir を除外の行で外す形をやめ…」で引ける。
+
 ## 1. 全体の図(最初の直し ⇒ 改めた形)
 
 最初の直し(77e0eb3f9): 記録の dir を除外の行で外した。
