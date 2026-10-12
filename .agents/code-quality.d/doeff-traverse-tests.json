@@ -15,15 +15,7 @@
       "layer": "io",
       "name": "doeff-traverse-tests",
       "paths": [
-        "packages/doeff-traverse/tests/run_example_failing_a_case.py",
-        "packages/doeff-traverse/tests/test_examples_run.py",
-        "packages/doeff-traverse/tests/test_item_outcomes.py",
-        "packages/doeff-traverse/tests/test_memory_leak_multi_day.py",
-        "packages/doeff-traverse/tests/test_sequential_item_failures.py",
-        "packages/doeff-traverse/tests/test_sequential_reads_handlers_once.py",
-        "packages/doeff-traverse/tests/test_traverse_answer_types.py",
-        "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
-        "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py",
+        "packages/doeff-traverse/tests/*.py",
         "tests/effects/test_traverse.py"
       ],
       "public": [],
