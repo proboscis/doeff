@@ -109,7 +109,7 @@ docs/design-checks/lt-D4D7…/evidence/scripts/test_handle_scope.revision.py.txt
 
 ## 9. 未確認と引き継ぎ
 
-- 盲検のモデル: 1 番目の候補 gpt-6-astra はこの Pod に起こす手段が無く、試していない。2 番目の opus・xhigh で起こした。実際に動いたモデルの名は Agent tool の返りに出ないため、未確認(blind/launch.md)。
+- 盲検のモデル: 1 番目の候補 gpt-6-astra は試していない。2 番目の opus・xhigh(Agent tool)で起こした。訂正(着地の後): 最初は「この Pod に起こす手段が無い」と書いたが、agora の会話は codex の枝で gpt-6-astra のターンを走らせられる(card ki-f63f65c153b0・done)ので、`agora conv open --agent model=gpt-6-astra effort=low` で別の会話として起こせた見込みがある。Agent tool に無い事だけを見て判断し、その口を試さなかった。fallback の理由は「利用不可」ではなく「試していない」。実際に動いたモデルの名は Agent tool の返りに出ないため、未確認(blind/launch.md)。
 - c-a-after は機体の load 100 超の時に走り、選ばれた検は 60 秒の上限で 1 本も走らなかった(ran=0)。確かめたのは「記録の下の file が選ばれない事」で、他の検の緑ではない。改めた版の触った検は c-revision で直に走らせた。
 - doeff-linter はこの Pod の PATH に無く、uv の cache に在った 0.2.0(a40add2d9+dirty)を `--linter` で渡した。
 - 同じ形が残る所: `docs/design/` の行は今も残り、`docs/design/seat-home-common-instructions-AJ8C0B/model/test_*.py` の 4 本を外している。この 4 本にも盲検 A・B と同じ 2 つの穴(`make test-changed` の選びが検として選ぶ・本物の検を隠せる)がある。この依頼の要件(設計検証の記録)の外なので、ここでは直さず card acp:kanban-issue:ki-d153ab595504 に渡した(ki-c88db93c440a と relates-to)。
