@@ -1,0 +1,82 @@
+== 実験 S1-c: 版 4eec37a06c8a7a34b3398da4dc8e8f11c5d1b31f・uv.lock の hy を 1.3.2 へ・venv に代役 table-132(Hy 1.3.2)・包みの records.MACRO_TABLE だけを直した
+diff --git a/packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py b/packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py
+index f2d86b6f4..7bb34055f 100644
+--- a/packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py
++++ b/packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py
+@@ -60,7 +60,7 @@ RECORD_TAG = "doeff-hy/macro-dependencies/6"
+ #: 包みを動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro・reader macro の変更の検と、使う側の呼ぶ名の macro が
+ #: 足された時の検 — uv.lock の変更で選ばれる)が測る(card ki-eafa369600cd)。名が替わるか表を ``.get`` で引くと、包みは使った
+ #: macro を記録し損ねて古い展開を黙って使う。Hy の export が書く公開の macro の名の表(macro_use._exported が読む)も同じ検が測る。
+-MACRO_TABLE = "_hy_macros"
++MACRO_TABLE = "_hy_macro_table"
+ READER_TABLE = "_hy_reader_macros"
+ 
+ #: PEP 552 の .pyc の頭(magic 4 byte・flags 4 byte・mtime と size か source の hash の 8 byte)。
+diff --git a/uv.lock b/uv.lock
+index 157304416..151f8a31a 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1890,7 +1890,7 @@ wheels = [
+ 
+ [[package]]
+ name = "hy"
+-version = "1.3.1"
++version = "1.3.2"
+ source = { registry = "https://pypi.org/simple" }
+ dependencies = [
+     { name = "funcparserlib" },
+
+deadline scale x2.8 (load per usable CPU) — per test 167s, watchdog 251s
+
+test-admission: focused — 25 件(変更箇所の検証)
+.........................                                                [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-exp-eafa/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+25 passed, 1 warning in 74.39s (0:01:14)
+rc=0
