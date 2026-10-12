@@ -1,0 +1,24 @@
+===== s1 =====
+RuntimeError: t (line 1): statement-position expression evaluated to an unperformed Pure — a bare Program/EffectBase in statement position never runs. Fix: bind it 
+--- K1/K2
+3 passed, 18 deselected, 1 warning in 11.41s
+--- K3
+8 passed, 1 warning in 0.63s
+--- K4
+32 passed, 1 warning in 2.91s
+===== violation_s1 =====
+NameError: name '_install_guard_globals' is not defined
+--- K1/K2
+3 passed, 18 deselected, 1 warning in 12.53s
+--- K3
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_basic_expansion
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_params_schema
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_handler_returns_expand
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_handler_executes_via_run
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_handler_with_bind
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_input_schema_from_macro
+FAILED tests/public_api/test_mcp_tool_macro.py::TestDefmcpToolMacro::test_param_names_match_handler_signature
+7 failed, 1 passed, 1 warning in 0.84s
+--- K4
+FAILED tests/test_nested_definition_scope.py::test_class_body_definition_runs_without_module_definitions[defmcp-tool]
+1 failed, 31 passed, 1 warning in 2.79s

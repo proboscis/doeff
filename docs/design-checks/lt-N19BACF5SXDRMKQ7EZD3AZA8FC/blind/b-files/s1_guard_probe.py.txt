@@ -1,0 +1,16 @@
+"""S1 が効いているか: 文の位置に捨てた Program を guard が止めるか(module に defk の無い、tool だけの module)。"""
+import sys, types
+import doeff_hy  # noqa: F401
+import hy
+from doeff import run
+mod = types.ModuleType("ln19_s1_probe"); sys.modules["ln19_s1_probe"] = mod
+src = """(require doeff-hy.macros [defmcp-tool <-])
+(import doeff [Pure])
+(defmcp-tool t "d" [{:name "x" :type "string" :description "x"}] (Pure 1) x)"""
+try:
+    for form in hy.read_many(src):
+        hy.eval(form, mod.__dict__, module=mod)
+    run(mod.t.handler("hi"))
+    print("no error (guard not active)")
+except Exception as e:
+    print(type(e).__name__ + ":", str(e).splitlines()[0][:150])

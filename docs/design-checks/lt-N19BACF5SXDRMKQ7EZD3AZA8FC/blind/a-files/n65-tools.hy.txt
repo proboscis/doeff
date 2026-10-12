@@ -1,0 +1,394 @@
+(require doeff-hy.macros [defmcp-tool <-])
+(import doeff [Pure])
+
+(defmcp-tool tool-0
+  "tool 0"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-1
+  "tool 1"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-2
+  "tool 2"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-3
+  "tool 3"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-4
+  "tool 4"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-5
+  "tool 5"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-6
+  "tool 6"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-7
+  "tool 7"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-8
+  "tool 8"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-9
+  "tool 9"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-10
+  "tool 10"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-11
+  "tool 11"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-12
+  "tool 12"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-13
+  "tool 13"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-14
+  "tool 14"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-15
+  "tool 15"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-16
+  "tool 16"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-17
+  "tool 17"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-18
+  "tool 18"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-19
+  "tool 19"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-20
+  "tool 20"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-21
+  "tool 21"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-22
+  "tool 22"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-23
+  "tool 23"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-24
+  "tool 24"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-25
+  "tool 25"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-26
+  "tool 26"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-27
+  "tool 27"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-28
+  "tool 28"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-29
+  "tool 29"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-30
+  "tool 30"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-31
+  "tool 31"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-32
+  "tool 32"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-33
+  "tool 33"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-34
+  "tool 34"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-35
+  "tool 35"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-36
+  "tool 36"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-37
+  "tool 37"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-38
+  "tool 38"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-39
+  "tool 39"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-40
+  "tool 40"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-41
+  "tool 41"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-42
+  "tool 42"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-43
+  "tool 43"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-44
+  "tool 44"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-45
+  "tool 45"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-46
+  "tool 46"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-47
+  "tool 47"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-48
+  "tool 48"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-49
+  "tool 49"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-50
+  "tool 50"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-51
+  "tool 51"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-52
+  "tool 52"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-53
+  "tool 53"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-54
+  "tool 54"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-55
+  "tool 55"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-56
+  "tool 56"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-57
+  "tool 57"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-58
+  "tool 58"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-59
+  "tool 59"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-60
+  "tool 60"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-61
+  "tool 61"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-62
+  "tool 62"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-63
+  "tool 63"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defmcp-tool tool-64
+  "tool 64"
+  [{:name "text" :type "string" :description "text"}]
+  (<- r (Pure text))
+  r)
+
+(defn #^ int last-tool-name [] (. tool-64 name))

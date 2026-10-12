@@ -1,0 +1,65 @@
+"""最小の直しの試し(1 つの process の中で関数を差し替える・共有の source は変えない)。
+
+N=65 の検体(many_tools.py が作った n65/tools.hy)を、
+  (a) 実装の版のままの投影、
+  (b) static_check._synthesized_import を「doeff.mcp の import も macro が合成した物として畳む」に差し替えた投影
+の 2 つにし、それぞれを pyright(basic)に直にかけて、最後の defn の reportReturnType が出るかを見る。
+(b) は defsystem の直し(static_view.DEFSYSTEM_IMPORTS)と同じ型の直し — 型検査の後処理の側が defmcp-tool の固有の import の
+module の名を知る必要がある事を示す。
+
+使い方: uv run python -I patch_fold.py <many の dir>
+"""
+import ast
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import doeff_hy.static_check as static_check
+
+base = Path(sys.argv[1])
+source = base / "n65" / "tools.hy"
+original = static_check._synthesized_import
+
+
+def with_mcp(statement: ast.stmt) -> bool:
+    match statement:
+        case ast.ImportFrom(module="doeff.mcp", level=0):
+            return True
+        case _:
+            return original(statement)
+
+
+def projected(name: str) -> Path:
+    root = base / name
+    root.mkdir(parents=True, exist_ok=True)
+    projection = static_check.project(source.parent, [source.parent], source)
+    assert isinstance(projection, static_check.Projection), projection
+    (root / "tools.py").write_text(projection.text, encoding="utf-8")
+    (root / "pyrightconfig.json").write_text('{"typeCheckingMode": "basic"}\n', encoding="utf-8")
+    print(f"{name}: 'from doeff.mcp import' = {projection.text.count('from doeff.mcp import')} 文")
+    return root
+
+
+roots = [projected("fold-a-as-is")]
+static_check._synthesized_import = with_mcp
+try:
+    roots.append(projected("fold-b-patched"))
+finally:
+    static_check._synthesized_import = original
+
+pyright = shutil.which("pyright")
+assert pyright is not None
+for root in roots:
+    run = subprocess.run(
+        [pyright, "--outputjson", "--pythonpath", sys.executable, "tools.py"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    report = json.loads(run.stdout)
+    found = [
+        (d["range"]["start"]["line"] + 1, d.get("rule"), d["message"].splitlines()[0])
+        for d in report["generalDiagnostics"]
+        if d["severity"] == "error"
+    ]
+    print(f"{root.name}: pyright の赤 = {found}")

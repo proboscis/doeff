@@ -1,0 +1,19 @@
+"""S1(設計の変更シナリオ: defmcp-tool の handler の本体に defk と同じ文の guard を足す)を、設計の主張どおり
+M3 の本体の組み立てだけ(guard の wrap と `_install-guard-globals` の呼び)で macros.hy に当てる。"""
+import sys
+from pathlib import Path
+
+OLD = """     `(defn [_doeff_do] ~handler-name ~param-syms
+       ~@expanded-forms)
+     `(setv ~name
+       (McpToolDef"""
+NEW = """     `(defn [_doeff_do] ~handler-name ~param-syms
+       ~@(lfor f (cut expanded-forms 0 -1) (_wrap-statement-guard f (str name)))
+       ~@(cut expanded-forms -1 None))
+     `(_install-guard-globals ~handler-name)
+     `(setv ~name
+       (McpToolDef"""
+source, target = Path(sys.argv[1]), Path(sys.argv[2])
+text = source.read_text(encoding="utf-8")
+assert text.count(OLD) == 1, "defmcp-tool の handler の組み立てが 1 か所でない"
+target.write_text(text.replace(OLD, NEW), encoding="utf-8")

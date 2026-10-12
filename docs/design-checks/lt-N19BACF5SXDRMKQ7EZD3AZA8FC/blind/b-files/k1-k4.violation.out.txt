@@ -1,0 +1,11 @@
+### K1
+PASSED packages/doeff-hy/tests/test_static_check.py::test_defmcp_tool_reads_do_from_the_module_head
+1 passed, 20 deselected, 1 warning in 8.94s
+### K2
+PASSED packages/doeff-hy/tests/test_static_check.py::test_defk_calls_stay_programs_past_sixty_four_mcp_tools[False]
+PASSED packages/doeff-hy/tests/test_static_check.py::test_defk_calls_stay_programs_past_sixty_four_mcp_tools[True]
+2 passed, 19 deselected, 1 warning in 8.48s
+### K3
+8 passed, 1 warning in 0.59s
+### K4
+32 passed, 1 warning in 3.47s

@@ -1,0 +1,32 @@
+"""many_tools.py が作った検体(n64・n65)を strict の設定で doeff-hy-check にかけ、診断の rule ごとの数を比べる。
+
+使い方: uv run python -I strict_counts.py <many の dir> <N> [<N> ...]
+検体の dir に pyrightconfig.json(strict)を置く — 自分で作った /tmp/ln19-blind-a の下だけを触る。
+"""
+import collections
+import contextlib
+import io
+import json
+import shutil
+import sys
+from pathlib import Path
+
+from doeff_hy.static_check import main
+
+base = Path(sys.argv[1])
+for count in map(int, sys.argv[2:]):
+    source = base / f"n{count}" / "tools.hy"
+    root = base / f"strict-n{count}"
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy(source, root / "tools.hy")
+    (root / "pyrightconfig.json").write_text('{"typeCheckingMode": "strict"}\n', encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(root), "--json", str(root / "tools.hy")])
+    found = json.loads(out.getvalue())
+    rules = collections.Counter(d["rule"] for d in found)
+    last = [(d["line"], d["rule"], d["message"].splitlines()[0]) for d in found if d["line"] >= 6 * count + 4]
+    first_tool = sorted({(d["rule"], d["message"].splitlines()[0]) for d in found if 4 <= d["line"] <= 8})
+    print(f"N={count}: 診断 {len(found)} 件 {dict(sorted(rules.items()))}")
+    print(f"  最初の tool(4〜8 行)の診断の種類: {first_tool}")
+    print(f"  最後の defn の行の診断: {last}")

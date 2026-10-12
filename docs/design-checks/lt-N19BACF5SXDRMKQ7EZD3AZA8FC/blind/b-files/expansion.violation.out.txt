@@ -1,0 +1,59 @@
+=== runtime ===
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+from doeff.do import do as _doeff_do
+from doeff.mcp import McpToolDef, McpParamSchema
+
+@_doeff_do
+def _t_mcp_handler(x):
+    return x
+t = McpToolDef(name='t', description='d', params=tuple([McpParamSchema(name='x', type='string', description='x')]), handler=_t_mcp_handler)
+
+class Box:
+    from doeff.do import do as _doeff_do
+    from doeff.mcp import McpToolDef, McpParamSchema
+
+    @_doeff_do
+    def _in_class_mcp_handler(x):
+        return x
+    in_class = McpToolDef(name='in-class', description='d', params=tuple([McpParamSchema(name='x', type='string', description='x')]), handler=_in_class_mcp_handler)
+
+def outer():
+
+    def _hy_anon_1():
+        from doeff.do import do as _doeff_do
+        from doeff.mcp import McpToolDef, McpParamSchema
+
+        @_doeff_do
+        def _in_fn_mcp_handler(x):
+            return x
+        in_fn = McpToolDef(name='in-fn', description='d', params=tuple([McpParamSchema(name='x', type='string', description='x')]), handler=_in_fn_mcp_handler)
+        return in_fn
+    in_fn = _hy_anon_1()
+    return in_fn
+=== static ===
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+from doeff.mcp import McpToolDef, McpParamSchema
+
+@_doeff_do
+def _t_mcp_handler(x):
+    return x
+t = McpToolDef(name='t', description='d', params=tuple([McpParamSchema(name='x', type='string', description='x')]), handler=_t_mcp_handler)
+
+class Box:
+    from doeff.mcp import McpToolDef, McpParamSchema
+
+    @_doeff_do
+    def _in_class_mcp_handler(x):
+        return x
+    in_class = McpToolDef(name='in-class', description='d', params=tuple([McpParamSchema(name='x', type='string', description='x')]), handler=_in_class_mcp_handler)
+
+def outer():
+    from doeff.mcp import McpToolDef, McpParamSchema
+
+    @_doeff_do
+    def _in_fn_mcp_handler(x):
+        return x
+    in_fn = McpToolDef(name='in-fn', description='d', params=tuple([McpParamSchema(name='x', type='string', description='x')]), handler=_in_fn_mcp_handler)
+    return in_fn

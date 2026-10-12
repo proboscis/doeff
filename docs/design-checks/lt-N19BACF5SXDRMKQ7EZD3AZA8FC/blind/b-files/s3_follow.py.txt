@@ -1,0 +1,62 @@
+"""S3(実行時の `do` の出所を替える)を M1 の 1 か所(`_helper-imports`)だけで行い、defk と defmcp-tool が追従するかを見る。
+
+設計の主張(S3): 定義の macro(M3)の分は M1 の 1 か所で替わり、defmcp-tool に個別の編集は要らない。
+"""
+import sys
+import types
+
+sys.path.insert(0, "/tmp/ln19-blind-b/s3")
+
+import doeff_hy  # noqa: F401
+import doeff_hy.macros as macros
+import hy
+import ln19_alt_do
+from doeff_hy.static_view import static_view_enabled
+
+from doeff import run
+
+_ALT_HELPERS = (
+    "(do (import ln19_alt_do [do :as _doeff_do])"
+    " (import doeff [EffectBase :as _doeff_effect_base])"
+    " (import doeff-hy.macros [_install-guard-globals _guard-performed"
+    " _guard-statement-value _doeff-check-program-return]))"
+)
+
+
+def _alt_helper_imports():
+    """M1 だけを替えた `_helper-imports`(`doeff.do` → `ln19_alt_do`)。型検査のための展開では今までどおり何も出さない。"""
+    return hy.read("(do)") if static_view_enabled() else hy.read(_ALT_HELPERS)
+
+
+macros._helper_imports = _alt_helper_imports
+
+SOURCE = """
+(require doeff-hy.macros [defk defmcp-tool <-])
+(defk step [x] {:pre [(: x int)] :post [(: % int)]} (+ x 1))
+(defmcp-tool echo "Echo" [{:name "text" :type "string" :description "text"}] text)
+(defclass Tools []
+  (defmcp-tool in-class "Echo" [{:name "text" :type "string" :description "text"}] text))
+(defn outer []
+  (defmcp-tool in-fn "Echo" [{:name "text" :type "string" :description "text"}] text)
+  in-fn)
+"""
+
+mod = types.ModuleType("ln19_s3_subject")
+sys.modules["ln19_s3_subject"] = mod
+for form in hy.read_many(SOURCE):
+    hy.eval(form, mod.__dict__, module=mod)
+inner = mod.outer()
+
+print("macros file:", macros.__file__)
+print("SEEN by new do source:", ln19_alt_do.SEEN)
+print("defk step follows M1:", "step" in ln19_alt_do.SEEN)
+for label, qual in [
+    ("defmcp-tool (module)", "_echo_mcp_handler"),
+    ("defmcp-tool (class)", "Tools._in_class_mcp_handler"),
+    ("defmcp-tool (function)", "outer.<locals>._hy_anon_1.<locals>._in_fn_mcp_handler"),
+]:
+    print(f"{label} follows M1:", qual in ln19_alt_do.SEEN)
+# 実行時の契約の検(K3 と同じ見方)は、どちらでも通る — 追従しない事は動きの検に出ない
+print("run(echo.handler('hi')):", run(mod.echo.handler("hi")))
+print("run(Tools.in_class.handler('hi')):", run(mod.Tools.in_class.handler("hi")))
+print("run(outer().handler('hi')):", run(inner.handler("hi")))
