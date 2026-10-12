@@ -1,0 +1,59 @@
+;; 盲検 B の測り(一時の複製の中だけに置く — 共有の木には置かない)。
+;; 1 つの job-launch の答えで、冷えた道と待ちの子から分かれる道(頼みの env = plan.entry-env)を本物の process で起こし、
+;;   (1) S2 の利用者の目に見える振る舞い: 入口が見る UV が 2 つの道で同じか
+;;   (2) M-forked の契約: 分かれた子の入口が見る環境が、頼みの env(plan.entry-env)そのものか(足さない・引かない)
+;; を別々に判じる。
+(require doeff-hy.macros [deftest defk <- val])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import json)
+(import shutil)
+(import tempfile)
+(import functools [cache])
+(import doeff_cluster.worker.intent.worker_model [WarmLaunch StartWarmChild StopWarmChild StopStage])
+(import doeff_cluster.worker.core.launch [JobLaunch])
+(import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
+(import tests.test_task_venv_on_both_paths [REPO PACKAGE ENTRY KEY task-launch cold-path-env warm-child-readied forked-env
+                                            on-real-processes])
+
+
+(defk probe-paths [place warm-dir]
+  {:pre [(: place str) (: warm-dir str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "冷えた道と分かれる道の入口が見た環境と、頼みの env(plan.entry-env)を #(冷えた道 分かれる道 頼み) で返すため。"
+  (val out (+ place "/seen.json"))
+  (val boot (+ place "/boot/.venv/bin"))
+  (<- plan JobLaunch (task-launch out boot))
+  (<- cold dict (cold-path-env plan out (+ place "/cold.log")))
+  (<- (StartWarmChild KEY (WarmLaunch :root (str PACKAGE) :project (str REPO) :preload #(ENTRY))))
+  (<- (warm-child-readied KEY))
+  (<- warm-at WarmPlace (warm-place warm-dir KEY))
+  (<- warm dict (forked-env plan plan.entry-env warm-at.socket out (+ place "/forked")))
+  (<- (StopWarmChild KEY StopStage.TERM "検の終わり"))
+  #(cold warm (dfor e plan.entry-env e.name e.value)))
+
+
+(defn [cache] probe-seen []
+  (setv place (tempfile.mkdtemp :prefix "bb-" :dir "/tmp"))
+  (setv warm-dir (+ place "/warm"))
+  (try
+    (on-real-processes place warm-dir (probe-paths place warm-dir))
+    (finally
+      (shutil.rmtree place :ignore-errors True))))
+
+
+(deftest test-probe-s2-uv-is-seen-alike-on-both-paths
+  (val seen (probe-seen))
+  (val cold (get seen 0))
+  (val warm (get seen 1))
+  (print "PROBE cold UV =" (.get cold "UV") "UV_RUN_RECURSION_DEPTH =" (.get cold "UV_RUN_RECURSION_DEPTH"))
+  (print "PROBE warm UV =" (.get warm "UV") "UV_RUN_RECURSION_DEPTH =" (.get warm "UV_RUN_RECURSION_DEPTH"))
+  (assert (= (.get warm "UV") (.get cold "UV")) (.format "cold UV={!r} warm UV={!r}" (.get cold "UV") (.get warm "UV"))))
+
+
+(deftest test-probe-forked-env-is-exactly-the-request-env
+  (val seen (probe-seen))
+  (val warm (get seen 1))
+  (val entry (get seen 2))
+  (val extra (sorted (- (set warm) (set entry))))
+  (val missing (sorted (- (set entry) (set warm))))
+  (print "PROBE extra names in forked env =" extra "missing =" missing)
+  (assert (= warm entry) (.format "M-forked の契約: 頼みの env に無い名 {} / 頼みにあって落ちた名 {}" extra missing)))
