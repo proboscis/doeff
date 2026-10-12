@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "task_id": "lt-MPT2W9D40AMFNSEXSY5JPV780N",
+  "base_revision": "787554c3692cfe9bed8e1299442ab24afdd81523",
+  "author": {
+    "conversation_id": "c-4J8GWQ55ER3HK35P4XN7V8HPGW",
+    "model": "claude-opus-5-5",
+    "effort": "会話の既定(未確認)"
+  },
+  "requirements": "class の本体に直に書いた defrecord・defwire・defeffect の型で凍結の __setattr__/__delattr__ が FrozenInstanceError で断り、default-factory・init=False の欄の型を作れる。型検査の投影で、関数・class の本体の中の定義(defhandler と型を建てる定義)が読む `_doeff_` の別名の import を module の段に置く。module の段・関数の中の定義の実行時の振る舞いは変えない。実装は doeff main 8a759a421・4e46d0df1",
+  "design": {
+    "path": "design.md",
+    "sha256": "f59339c3dfa7b796f2a2dd48af6c4d51b02386f610e2cffcc187a1e75a21f547"
+  },
+  "modules": [
+    {
+      "id": "record-class-form",
+      "responsibility": "defrecord・defwire の型の関数(__init__・__repr__・__eq__・__hash__・凍結の __setattr__/__delattr__)を展開の時に書き、型の本体の import を組む(record.hy)",
+      "owns": "書く関数が定義した型を読む方法(__class__ の閉包と引数なしの super)",
+      "hides": "型がどこ(module・関数・class の本体)に書かれたか・別名の綴り(表から引く)",
+      "interface": "macro defrecord / defwire(Hy の form を返す)",
+      "effects": "なし — macro の展開の時の純粋な計算",
+      "lifetime": "なし — 状態を持たない",
+      "invariants": "書く関数は型の名を読まない。typing の別名の import は expansion_names.import_form から組む"
+    },
+    {
+      "id": "defeffect-form",
+      "responsibility": "defeffect の effect 型の関数と型の本体を書く(declarations.hy)",
+      "owns": "同上(__class__ と super)",
+      "hides": "型の書かれた場所・別名の綴り",
+      "interface": "defeffect-form(name docstring contract where pre-code)→ Hy の form",
+      "effects": "なし — 展開の時の純粋な計算",
+      "lifetime": "なし — 状態を持たない",
+      "invariants": "同上"
+    },
+    {
+      "id": "scoped-definition",
+      "responsibility": "定義の展開の文の並びを、書かれた所(module・関数・class の本体)に合わせて組む(macros.hy の _scoped-definition)",
+      "owns": "書かれた場所の判定と、包む・module の globals へ置くの選び",
+      "hides": "定義が書く関数の中身",
+      "interface": "_scoped-definition(compiler name forms module-forms nested-reads)",
+      "effects": "なし — 展開の時の純粋な計算(実行時に module の globals へ setdefault する文を出すのは展開の結果)",
+      "lifetime": "なし — 状態を持たない",
+      "invariants": "この変更では触らない"
+    },
+    {
+      "id": "expansion-names",
+      "responsibility": "展開が読む `_doeff_` の別名の綴り・置き場・import の唯一の定義元(閉じた表)",
+      "owns": "名 → 置き場・別名の表、is_alias_import の判定",
+      "hides": "なし — 純粋な表で隠す状態は無い(表そのものが公開の契約)",
+      "interface": "alias・alias_symbol・home・import_form・import_source・is_alias_import",
+      "effects": "なし — 純粋な関数",
+      "lifetime": "なし — 状態を持たない",
+      "invariants": "表に無い名は home が断り、is_alias_import は偽"
+    },
+    {
+      "id": "static-check-postprocess",
+      "responsibility": "型検査の投影の後処理で、macro の合成した import を関数・class の本体から module の段へ移す(static_check.py)",
+      "owns": "どの種類の import が合成か(doeff_hy の module・defsystem の module・defeffect の outcomes・表の別名)",
+      "hides": "別名の綴りの具体(expansion-names に問う)",
+      "interface": "with_module_level_imports(tree)・without_bookkeeping(tree)",
+      "effects": "なし — 投影の木をその場で替えるが、木はその展開だけの物",
+      "lifetime": "なし — 状態を持たない",
+      "invariants": "書き手の import は移さない"
+    },
+    {
+      "id": "handle-expansion",
+      "responsibility": "handle・defhandler の展開(節の関数・本文に被せる関数)(handle.hy)",
+      "owns": "使う node の名",
+      "hides": "綴り(expansion-names から引く)",
+      "interface": "macro handle / defhandler",
+      "effects": "なし — 展開の時の純粋な計算",
+      "lifetime": "なし — 状態を持たない",
+      "invariants": "この変更では触らない"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "handler・型を建てる定義の展開が、新しい名(VM の node や typing の名)を `_doeff_` の別名で読むようになる",
+      "claim": "綴りの表 expansion-names に名を足し、作り手が表から import を組むだけで、投影の後処理はその import を module の段へ移す(static-check-postprocess の判定は変えない)",
+      "expected_scope": "expansion-names・作り手(handle-expansion など)",
+      "actual_scope": "4e46d0df1 で表に ClassVar・cast を足した時、static_check の判定の code は変わらず(docstring の 1 行だけ)、import は module の段へ移った(green2.log・hc-class-body-types-after.log)。8a759a421 で static_check が表に問う配線を 1 度入れた",
+      "changed_modules": [
+        "expansion-names",
+        "handle-expansion",
+        "static-check-postprocess"
+      ],
+      "unchanged_modules": [
+        "scoped-definition"
+      ],
+      "reason": "static-check-postprocess の変更は 8a759a421 の 1 度の配線(表に問う)で、以後の名の追加では変わらない — 正当な配線。盲検 B が示した表の開き(home が知らない名を doeff と決める)は知識の漏れで、表を閉じて直した",
+      "revision": "4e46d0df1: 表を閉じ、is_alias_import は表の名だけを答える。test_is_alias_import_answers_only_the_table と bneg_check.py で再検証"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "defrecord / defeffect の展開が、型の本体や新しい関数で定義した型や別名を読む",
+      "claim": "書く関数は __class__ の閉包で型を読む形に揃っているので、class の本体の型でも動く。場所の扱いは scoped-definition に足さず、static-check-postprocess も変えない",
+      "expected_scope": "record-class-form・defeffect-form",
+      "actual_scope": "盲検 A: 型の本体が読む _doeff_ClassVar・_doeff_cast が class の本体の投影で未定義(4 件)。直しは expansion-names(表に typing の名)・defeffect-form・record-class-form(表から import を組む)と module 契約の断片",
+      "changed_modules": [
+        "record-class-form",
+        "defeffect-form",
+        "expansion-names"
+      ],
+      "unchanged_modules": [
+        "scoped-definition",
+        "static-check-postprocess",
+        "handle-expansion"
+      ],
+      "reason": "綴りの持ち主が作り手と表に割れていた知識の漏洩。表を唯一の持ち主にする配線替えで、static-check-postprocess の判定は変えずに済んだ",
+      "revision": "4e46d0df1: 作り手 3 か所の import を表の import-form から組む。失敗する検 9 件(e0ec39cec)→ 152 passed・doeff-hy-check error 4 → 0"
+    },
+    {
+      "id": "S3",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "macro の展開は機体に依らない純粋な計算"
+    },
+    {
+      "id": "S4",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "展開は状態を保存しない(.pyc の無効化は doeff_hy_bytecode_guard の持ち物で、この変更は触らない)"
+    },
+    {
+      "id": "S5",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "展開は 1 process の中の計算。投影の並列(ProcessPoolExecutor)は file ごとに独立で、後処理は純粋"
+    },
+    {
+      "id": "S6",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "共有の可変状態が無い(表は不変の dict)"
+    },
+    {
+      "id": "S7",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "決定的な純粋計算で、時刻・外の世界を読まない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の 787554c36 で、入れ子の defhandler の投影の検が node の別名の import の置き場を断る",
+      "observation": "7 failed(うち test_static_projection_of_nested_defhandler_reads_module_level_nodes 2 件)",
+      "evidence": {
+        "path": "red.log",
+        "sha256": "f902a0ea0041631a7044363f6cc1e2fc3de5c86369ede145454327b78ab47d1d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前、doeff-hy-check が class の本体の defhandler で未定義の名を出す",
+      "observation": "error 2 件(_doeff_Pass・_doeff_WithHandler)",
+      "evidence": {
+        "path": "hc-handler-before.txt",
+        "sha256": "5d62ea29a50e28872d1616b1215b227a9c86535889c4e3992227066c1d3350aa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "8a759a421 の直しの後、検の file 全体が通る",
+      "observation": "117 passed",
+      "evidence": {
+        "path": "fix2.log",
+        "sha256": "c74544df5783e5f385c893aa79a01fb44012f66feb8d12b3d946ed5d507b9e14"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "4e46d0df1 の後、doeff-hy-check が class の本体の defhandler・defeffect・defrecord(:check)・defwire と関数の中の defhandler で error を出さない",
+      "observation": "error 0 件・warning 1 件(reportSelfClsParameterName — 別件)",
+      "evidence": {
+        "path": "hc-class-body-types-after.log",
+        "sha256": "2ad83eefab50d5392f50d6b157b81118de12d2367885be7e23c2755abcafaa7b"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "8a759a421 の開いた表は、書き手の class の本体の `_doeff_do` の import を移す(盲検 B の指摘の実測)— 検体の確かめが断る",
+      "observation": "AssertionError: class の本体に残るのは ['_doeff_traverse_Traverse'] だけ",
+      "evidence": {
+        "path": "bneg-old.log",
+        "sha256": "7dbeeb6a88c2448e46f7c2ddbf0ceee43d72af8a59602c54c19ad300c5f52826"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "4e46d0df1 の閉じた表は、書き手の `_doeff_` の頭の import を class の本体に残す",
+      "observation": "['_doeff_do', '_doeff_traverse_Traverse'] が残る・OK",
+      "evidence": {
+        "path": "bneg.log",
+        "sha256": "8b2cb531e756df1fdcc805f251be7bc33dd39d83530132db03c5ce6a5c6286f2"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "直す前の 8b96344c7 で、class の本体の型の投影の typing の別名の検と閉じた表の検が断る",
+      "observation": "9 failed",
+      "evidence": {
+        "path": "red2.log",
+        "sha256": "0cb41b0eab119c5e8498426b5cbc54e72af520e6a1c0a7e72f58b25e72823bb4"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "直す前の 8a759a421 で、doeff-hy-check が class の本体の defeffect・defrecord(:check)・defwire で未定義の名を出す",
+      "observation": "error 4 件(_doeff_ClassVar・_doeff_cast)",
+      "evidence": {
+        "path": "hc-class-body-types-before.log",
+        "sha256": "76d0ea1a18785de78d0599a3455a15a088126cb374ec63b76550c0bdc7b4c930"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "4e46d0df1 の直しの後、tests/test_expansion_names.py と tests/test_nested_definition_scope.py が通る",
+      "observation": "152 passed",
+      "evidence": {
+        "path": "green2.log",
+        "sha256": "7d70cd645c0dfd260f5c4edc843b5bacd1ca9f7e8d022bac2e13388b53494f73"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "触った部品(record・defeffect・wire・declarations・defhandler の投影)の検が通る",
+      "observation": "64 passed",
+      "evidence": {
+        "path": "around2.log",
+        "sha256": "7bb4fcea90e2378e5cd438ea38a9abd7c54f9e088581f370178efd9c8994bce7"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

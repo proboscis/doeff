@@ -1,0 +1,275 @@
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 3032770 pytest agora-controllers-wt-ki-90e0 (c-6VNHNNDDWQMHZZGX6PE8GCWJJF)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3010208 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)、pid 3015583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 3032770 pytest agora-controllers-wt-ki-90e0 (c-6VNHNNDDWQMHZZGX6PE8GCWJJF)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3033619 pytest agora-controllers-wt-dc-h9cx-b (c-JHSTE3VTTHB3YARW9M21BCJW0Y)、pid 3015583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 3038208 pytest agora-controllers-wt-ki-aa51-dc (c-HCAEXBSXP48HQVQ4DPYX0EZZZN)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3037546 pytest agora-controllers-at-9c5f47f8b-wnv (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3036597 pytest agora-controllers-wt-ki-5edc-dc (c-Z9TH3YWZDE6TM5YCR236A86A8W)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 30 秒 / 上限 1200 秒・保持 pid 3038208 pytest agora-controllers-wt-ki-aa51-dc (c-HCAEXBSXP48HQVQ4DPYX0EZZZN)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3037546 pytest agora-controllers-at-9c5f47f8b-wnv (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3024720 pytest agora-controllers-wt-ki-1109-dc (c-TGADQ258P7F7A8H04WD38YSVCG)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 40 秒 / 上限 1200 秒・保持 pid 3041840 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3031040 code-quality dotfiles-precommit-index.f8b3JV (c-28KC8M76KPEMENW8MEPN7AWC8H)、pid 3041912 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 51 秒 / 上限 1200 秒・保持 pid 3042978 pytest agora-controllers-wt-ki-1109-dc (c-TGADQ258P7F7A8H04WD38YSVCG)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3031040 code-quality dotfiles-precommit-index.f8b3JV (c-28KC8M76KPEMENW8MEPN7AWC8H)、pid 3041912 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 61 秒 / 上限 1200 秒・保持 pid 3030059 code-quality doeff-wt-ki-1618-fix1 (c-MPWEY1GKS4FAWWR2JS2EDG5SAS)、pid 2996898 pytest agora-controllers-wt-kanban-move-column (c-A513MCWBWWDMBZ9JBT95Y0PD8X)、pid 3018749 pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)、pid 3023069 doeff-linter editor-json base (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 2983391 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3029249 pytest agora-controllers-wt-ki-35d1-mut2 (c-P1D3F30RV0SHJXPH6DH605RK3A)、pid 3041912 pytest agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+check-slot: 枠 3 を取った(待ち 63 秒)— pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)
+
+deadline scale x1.4 (load per usable CPU) — per test 86s, watchdog 129s
+
+test-admission: focused — 7 件(変更箇所の検証)
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_____ test_class_body_type_methods_read_their_own_class[defrecord-frozen] ______
+
+source = '(defclass Outer [] (defrecord Span #^ int start))'
+call = <function <lambda> at 0x55f93aa6e40>
+expected = ('FrozenInstanceError', 'FrozenInstanceError', 'FrozenInstanceError')
+
+    @pytest.mark.parametrize(
+        ("source", "call", "expected"),
+        _CLASS_BODY_TYPE_METHOD_CASES.values(),
+        ids=_CLASS_BODY_TYPE_METHOD_CASES.keys(),
+    )
+    def test_class_body_type_methods_read_their_own_class(
+        source: str, call: Callable[[types.ModuleType], object], expected: object
+    ) -> None:
+        """class の本体に直に書いた defrecord・defwire・defeffect の、展開が書いた method は、定義した型を名でなく `__class__` の
+        閉包で読む — 型の名は外の class の属性で method から引けず、凍結の __setattr__ が FrozenInstanceError の代わりに
+        NameError で落ち、default-factory・init を切った欄の型は作る時に NameError で落ちた。"""
+>       assert call(_eval_module(source, header=_TYPE_ONLY_HEADER)) == expected
+E       AssertionError: assert ('NameError',..., 'NameError') == ('FrozenInsta...nstanceError')
+E         
+E         At index 0 diff: 'NameError' != 'FrozenInstanceError'
+E         Use -v to get more diff
+
+tests/test_nested_definition_scope.py:753: AssertionError
+____ test_class_body_type_methods_read_their_own_class[defrecord-subclass] _____
+
+source = '(defclass Outer [] (defrecord Span #^ int start))\n(defclass Sub [Outer.Span])'
+call = <function <lambda> at 0x55f93aa6f00>
+expected = ('FrozenInstanceError', 'accepted')
+
+    @pytest.mark.parametrize(
+        ("source", "call", "expected"),
+        _CLASS_BODY_TYPE_METHOD_CASES.values(),
+        ids=_CLASS_BODY_TYPE_METHOD_CASES.keys(),
+    )
+    def test_class_body_type_methods_read_their_own_class(
+        source: str, call: Callable[[types.ModuleType], object], expected: object
+    ) -> None:
+        """class の本体に直に書いた defrecord・defwire・defeffect の、展開が書いた method は、定義した型を名でなく `__class__` の
+        閉包で読む — 型の名は外の class の属性で method から引けず、凍結の __setattr__ が FrozenInstanceError の代わりに
+        NameError で落ち、default-factory・init を切った欄の型は作る時に NameError で落ちた。"""
+>       assert call(_eval_module(source, header=_TYPE_ONLY_HEADER)) == expected
+E       AssertionError: assert ('NameError', 'NameError') == ('FrozenInsta...', 'accepted')
+E         
+E         At index 0 diff: 'NameError' != 'FrozenInstanceError'
+E         Use -v to get more diff
+
+tests/test_nested_definition_scope.py:753: AssertionError
+_ test_class_body_type_methods_read_their_own_class[defrecord-factory-and-no-init] _
+
+source = '(import dataclasses [field])\n(defclass Outer [] (defrecord Bag #^ int n (setv #^ list xs (field :default-factory list) #^ int k (field :default 7 :init False))))'
+call = <function <lambda> at 0x55f93aa6fc0>
+expected = 'Outer.Bag(n=1, xs=[], k=7)'
+
+    @pytest.mark.parametrize(
+        ("source", "call", "expected"),
+        _CLASS_BODY_TYPE_METHOD_CASES.values(),
+        ids=_CLASS_BODY_TYPE_METHOD_CASES.keys(),
+    )
+    def test_class_body_type_methods_read_their_own_class(
+        source: str, call: Callable[[types.ModuleType], object], expected: object
+    ) -> None:
+        """class の本体に直に書いた defrecord・defwire・defeffect の、展開が書いた method は、定義した型を名でなく `__class__` の
+        閉包で読む — 型の名は外の class の属性で method から引けず、凍結の __setattr__ が FrozenInstanceError の代わりに
+        NameError で落ち、default-factory・init を切った欄の型は作る時に NameError で落ちた。"""
+>       assert call(_eval_module(source, header=_TYPE_ONLY_HEADER)) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_nested_definition_scope.py:753: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_nested_definition_scope.py:723: in <lambda>
+    lambda mod: repr(mod.Outer.Bag(n=1)),
+                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+_hy_gensym_self_11 = <[AttributeError("'Bag' object has no attribute 'xs'") raised in repr()] Bag object at 0x55f9291fa90>
+n = 1, xs = <factory>
+
+>   ???
+E   NameError: name 'Bag' is not defined
+
+<string>:6: NameError
+______ test_class_body_type_methods_read_their_own_class[defwire-frozen] _______
+
+source = '(defclass Outer [] (defwire Span {:names :camel} #^ int start-at))'
+call = <function <lambda> at 0x55f93aa7080>, expected = 'FrozenInstanceError'
+
+    @pytest.mark.parametrize(
+        ("source", "call", "expected"),
+        _CLASS_BODY_TYPE_METHOD_CASES.values(),
+        ids=_CLASS_BODY_TYPE_METHOD_CASES.keys(),
+    )
+    def test_class_body_type_methods_read_their_own_class(
+        source: str, call: Callable[[types.ModuleType], object], expected: object
+    ) -> None:
+        """class の本体に直に書いた defrecord・defwire・defeffect の、展開が書いた method は、定義した型を名でなく `__class__` の
+        閉包で読む — 型の名は外の class の属性で method から引けず、凍結の __setattr__ が FrozenInstanceError の代わりに
+        NameError で落ち、default-factory・init を切った欄の型は作る時に NameError で落ちた。"""
+>       assert call(_eval_module(source, header=_TYPE_ONLY_HEADER)) == expected
+E       AssertionError: assert 'NameError' == 'FrozenInstanceError'
+E         
+E         - FrozenInstanceError
+E         + NameError
+
+tests/test_nested_definition_scope.py:753: AssertionError
+_____ test_class_body_type_methods_read_their_own_class[defeffect-frozen] ______
+
+source = '(defclass Outer [] (defeffect Inner {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}}))'
+call = <function <lambda> at 0x55f93aa7140>
+expected = ('FrozenInstanceError', 'FrozenInstanceError')
+
+    @pytest.mark.parametrize(
+        ("source", "call", "expected"),
+        _CLASS_BODY_TYPE_METHOD_CASES.values(),
+        ids=_CLASS_BODY_TYPE_METHOD_CASES.keys(),
+    )
+    def test_class_body_type_methods_read_their_own_class(
+        source: str, call: Callable[[types.ModuleType], object], expected: object
+    ) -> None:
+        """class の本体に直に書いた defrecord・defwire・defeffect の、展開が書いた method は、定義した型を名でなく `__class__` の
+        閉包で読む — 型の名は外の class の属性で method から引けず、凍結の __setattr__ が FrozenInstanceError の代わりに
+        NameError で落ち、default-factory・init を切った欄の型は作る時に NameError で落ちた。"""
+>       assert call(_eval_module(source, header=_TYPE_ONLY_HEADER)) == expected
+E       AssertionError: assert ('NameError', 'NameError') == ('FrozenInsta...nstanceError')
+E         
+E         At index 0 diff: 'NameError' != 'FrozenInstanceError'
+E         Use -v to get more diff
+
+tests/test_nested_definition_scope.py:753: AssertionError
+_ test_static_projection_of_nested_defhandler_reads_module_level_nodes[function] _
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-833/test_static_projection_of_nest0')
+body = '(defn subject [] (defhandler h (Ping [x] (resume x))) h)'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "(defn subject [] (defhandler h (Ping [x] (resume x))) h)",
+            "(defclass Outer [] (defhandler h (Ping [x] (resume x))))",
+        ],
+        ids=["function", "class-body"],
+    )
+    def test_static_projection_of_nested_defhandler_reads_module_level_nodes(
+        tmp_path: Path, body: str
+    ) -> None:
+        """型検査の投影で、関数・class の本体の中の defhandler が読む `_doeff_Pass`・`_doeff_WithHandler` の import は module の段に
+        置く — class の本体に残すと、節の関数と本文に被せる関数は名を module の段から引くので、pyright が
+        `"_doeff_Pass" is not defined` と読んだ。関数の中に残すと外の関数の局所の名になる(49a293f19 の投影の項と同じ形)。"""
+        tree = _projection_of(
+            tmp_path,
+            "(require doeff-hy.handle [defhandler])\n"
+            '(defeffect Ping {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}})\n'
+            + body,
+        )
+        scope = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef | ast.ClassDef) and node.name in {"subject", "Outer"}
+        )
+>       assert _HANDLER_NODE_ALIASES.isdisjoint(_bound_by_imports(scope))
+E       AssertionError: assert False
+E        +  where False = <built-in method isdisjoint of frozenset object at 0x55f938fa020>({'_doeff_Pass', '_doeff_WithHandler', '_doeff_typed_transfer'})
+E        +    where <built-in method isdisjoint of frozenset object at 0x55f938fa020> = frozenset({'_doeff_Pass', '_doeff_WithHandler'}).isdisjoint
+E        +    and   {'_doeff_Pass', '_doeff_WithHandler', '_doeff_typed_transfer'} = _bound_by_imports(FunctionDef(name='subject', args=arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[], kw_defaults=[], kwarg=...), ..., Return(value=Name(id='h', ctx=Load(...)))], decorator_list=[], returns=None, type_comment=None, type_params=[]))
+
+tests/test_nested_definition_scope.py:895: AssertionError
+_ test_static_projection_of_nested_defhandler_reads_module_level_nodes[class-body] _
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-833/test_static_projection_of_nest1')
+body = '(defclass Outer [] (defhandler h (Ping [x] (resume x))))'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "(defn subject [] (defhandler h (Ping [x] (resume x))) h)",
+            "(defclass Outer [] (defhandler h (Ping [x] (resume x))))",
+        ],
+        ids=["function", "class-body"],
+    )
+    def test_static_projection_of_nested_defhandler_reads_module_level_nodes(
+        tmp_path: Path, body: str
+    ) -> None:
+        """型検査の投影で、関数・class の本体の中の defhandler が読む `_doeff_Pass`・`_doeff_WithHandler` の import は module の段に
+        置く — class の本体に残すと、節の関数と本文に被せる関数は名を module の段から引くので、pyright が
+        `"_doeff_Pass" is not defined` と読んだ。関数の中に残すと外の関数の局所の名になる(49a293f19 の投影の項と同じ形)。"""
+        tree = _projection_of(
+            tmp_path,
+            "(require doeff-hy.handle [defhandler])\n"
+            '(defeffect Ping {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}})\n'
+            + body,
+        )
+        scope = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef | ast.ClassDef) and node.name in {"subject", "Outer"}
+        )
+>       assert _HANDLER_NODE_ALIASES.isdisjoint(_bound_by_imports(scope))
+E       AssertionError: assert False
+E        +  where False = <built-in method isdisjoint of frozenset object at 0x55f938fa020>({'_doeff_Pass', '_doeff_WithHandler', '_doeff_typed_transfer'})
+E        +    where <built-in method isdisjoint of frozenset object at 0x55f938fa020> = frozenset({'_doeff_Pass', '_doeff_WithHandler'}).isdisjoint
+E        +    and   {'_doeff_Pass', '_doeff_WithHandler', '_doeff_typed_transfer'} = _bound_by_imports(ClassDef(name='Outer', bases=[], keywords=[], body=[ImportFrom(module='doeff', names=[alias(name='Pass', asname='_doef...xpr(value=Call(func=Name(...), args=[Name(...), ..., Constant(...)], keywords=[]))], decorator_list=[], type_params=[]))
+
+tests/test_nested_definition_scope.py:895: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-class-body-name/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_methods_read_their_own_class[defrecord-frozen]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_methods_read_their_own_class[defrecord-subclass]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_methods_read_their_own_class[defrecord-factory-and-no-init]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_methods_read_their_own_class[defwire-frozen]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_methods_read_their_own_class[defeffect-frozen]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_defhandler_reads_module_level_nodes[function]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_defhandler_reads_module_level_nodes[class-body]
+7 failed, 110 deselected, 1 warning in 3.95s

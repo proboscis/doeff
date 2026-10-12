@@ -1,0 +1,3 @@
+    assert inside == ["_doeff_do", "_doeff_traverse_Traverse"], inside
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ['_doeff_traverse_Traverse']

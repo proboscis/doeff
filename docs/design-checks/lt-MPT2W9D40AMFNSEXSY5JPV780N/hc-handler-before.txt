@@ -1,0 +1,8 @@
+# doeff-hy-check を class の本体と関数の中の defhandler の検体(hc_cls_handler.hy・hc_fn_handler.hy)に当てた出力
+# 対象版: doeff 787554c36 の上の作業木(直す前 — 直しは 8a759a421)。命令:
+#   uv run doeff-hy-check /tmp/repro/hc/fn_case.hy /tmp/repro/hc/cls_case.hy --root /tmp/repro/hc
+# 会話の道具の出力から写した(check-slot の待ちの行は省いた)。
+2 個の .hy を検めた: 新しい error 2 件・基点に在る error 0 件・warning 1 件
+cls_case.hy:1:1 - warning: Instance methods should take a "self" parameter (reportSelfClsParameterName)
+cls_case.hy:1:1 - error: "_doeff_Pass" is not defined (reportUndefinedVariable)
+cls_case.hy:1:1 - error: "_doeff_WithHandler" is not defined (reportUndefinedVariable)

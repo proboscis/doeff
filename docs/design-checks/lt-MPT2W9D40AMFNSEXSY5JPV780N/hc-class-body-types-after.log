@@ -1,0 +1,2 @@
+4 個の .hy を検めた: 新しい error 0 件・基点に在る error 0 件・warning 1 件
+hc/cls_case.hy:5:18 - warning: Instance methods should take a "self" parameter (reportSelfClsParameterName)
