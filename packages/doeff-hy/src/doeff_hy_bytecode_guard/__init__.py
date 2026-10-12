@@ -46,7 +46,7 @@ from doeff_hy_bytecode_guard.loader_hooks import file_sha256 as file_sha256
 from doeff_hy_bytecode_guard.loader_hooks import gensym_renaming as gensym_renaming
 from doeff_hy_bytecode_guard.loader_hooks import install as install
 from doeff_hy_bytecode_guard.loader_hooks import installed as installed
-from doeff_hy_bytecode_guard.loader_hooks import macro_dependencies as macro_dependencies
+from doeff_hy_bytecode_guard.loader_hooks import loaded_record as loaded_record
 from doeff_hy_bytecode_guard.loader_hooks import macro_recording as macro_recording
 from doeff_hy_bytecode_guard.loader_hooks import record_fingerprint as record_fingerprint
 from doeff_hy_bytecode_guard.loader_hooks import record_from_json as record_from_json
@@ -60,6 +60,5 @@ from doeff_hy_bytecode_guard.loader_hooks import (
 TYPE_CHECKING = False  # typing と records を起動時に読まない — 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
-    # 記録の型(注記だけに使う公開の名 — 値は macro_recording・record_from_json が作る)。
-    from doeff_hy_bytecode_guard.records import MacroDependency as MacroDependency
+    # 記録の型(注記だけに使う公開の名 — 値は macro_recording・record_from_json・loaded_record が作る)。
     from doeff_hy_bytecode_guard.records import MacroRecord as MacroRecord
