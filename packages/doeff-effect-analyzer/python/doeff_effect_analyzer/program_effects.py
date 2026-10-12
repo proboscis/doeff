@@ -954,6 +954,13 @@ def _do_decorator() -> Any:
     return importlib.import_module("doeff.do").do
 
 
+def _passes_declaration() -> Any:
+    """``doeff_vm._effect_types.declare_passes(handler, source)`` — records which effects
+    the VM may skip the handler for and returns ``handler`` itself (``defhandler`` / ``handle``
+    write it around a fence-shaped dispatcher); read through to its first argument."""
+    return importlib.import_module("doeff_vm._effect_types").declare_passes
+
+
 # What a name in the code under analysis resolves to: any object its modules define
 # or import (a class, a function, a list of handler values …).  The reader's one
 # boundary with arbitrary user objects; each use checks the kind it needs
@@ -1421,10 +1428,14 @@ class _Scope:
     def _returned_at_once(self, name: str) -> Imported:
         """A local bound once to a call of a def of the body that takes nothing and only
         returns at its end (``nested = _hy_anon_9()`` — Hy's ``((fn [] … nested))``):
-        the function that def returns — a def of its own body by name, or a lambda — read
-        in that def's scope.  doeff-hy writes a definition (``defk`` / ``deftest`` /
-        ``defhandler``) and a ``handle`` in a function body this way, so the helpers its
-        expansion imports stay local to the wrapper (card ki-964823cd7feb・ki-907f779b3290)."""
+        the function that def returns — a def of its own body by name, a lambda, or a name
+        its own body binds the same way (a ``defhandler``: its builder is called at once
+        inside the definition's wrapper) — read in that def's scope, which is this scope's
+        child: the answer depends on this scope's bindings and is not kept beyond it.
+        doeff-hy writes a definition (``defk`` / ``deftest`` / ``defhandler``) and a
+        ``handle`` in a function body this way, so the helpers its expansion imports stay
+        local to the wrapper (card ki-964823cd7feb・ki-907f779b3290); any other shape (a
+        wrapper taking arguments, several returns, a name bound twice) is left unresolved."""
         match self.local_values.get(name):
             case ast.Call(func=ast.Name(id=callee), args=[], keywords=[]) if callee != name:
                 wrapper = self.local_functions.get(callee)
@@ -1438,6 +1449,10 @@ class _Scope:
                 return _LocalFunction(returned, inner)
             case ast.Return(value=ast.Name(id=defined)) if defined in inner.local_functions:
                 return _LocalFunction(inner.local_functions[defined], inner)
+            case ast.Return(value=ast.Name(id=defined)) if _calls_its_own_def(wrapper, defined):
+                # ``defhandler`` in a function body: its own builder is called at once inside
+                # the wrapper too — read one def further in (never back out: the def is the wrapper's own).
+                return inner._returned_at_once(defined)
             case _:
                 return UNBOUND
 
@@ -1509,6 +1524,16 @@ def _returns_once_at_end(node: FunctionNode | None) -> TypeGuard[ast.FunctionDef
         case _:
             return False
     return not any(isinstance(n, ast.Return) and n is not last for n in _body_nodes(node))
+
+
+def _calls_its_own_def(wrapper: ast.FunctionDef, name: str) -> bool:
+    """Whether ``wrapper`` binds ``name`` once, to a call of a def written in its own body."""
+    facts = _body_facts(wrapper)
+    match facts.values.get(name):
+        case ast.Call(func=ast.Name(id=callee), args=[], keywords=[]):
+            return callee in facts.local_functions
+        case _:
+            return False
 
 
 def _reads_itself(value: ast.expr, name: str) -> bool:
