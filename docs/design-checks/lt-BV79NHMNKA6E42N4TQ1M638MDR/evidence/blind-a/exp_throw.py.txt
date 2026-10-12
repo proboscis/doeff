@@ -1,0 +1,212 @@
+"""盲検 A の実験: resume と同じ形の (throw 例外) を表に 1 行足した時、何が追従し何が追従しないか。
+
+共有ソースは変えない。表への行の追加は tests/test_handle_clause_ops.py の fixture と同じく
+clause_ops.CLAUSE_OPS の差し替え(monkeypatch 相当)で行う。
+"""
+
+import ast
+import contextlib
+import gc
+import sys
+import types
+import warnings
+
+import doeff_hy  # noqa: F401  拡張を登録する
+import hy
+from doeff_hy import clause_ops
+from doeff_hy.clause_ops import ClauseOp, Ending
+from doeff_hy.static_view import static_view
+from hy.models import Expression, Symbol
+
+from doeff import run
+
+warnings.simplefilter("ignore", DeprecationWarning)
+
+HEADER = """
+(require doeff-hy.macros [defk <- handle])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(import doeff_core_effects.effects [Raise Absent])
+(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+"""
+
+
+def module(name):
+    """検ごとに globals を分けた新しい module を作るため。"""
+    mod = types.ModuleType(name)
+    sys.modules[name] = mod
+    return mod
+
+
+def eval_module(code, name="exp_throw_mod"):
+    """Hy の source を評価して、実行できる defk を得るため。"""
+    mod = module(name)
+    for form in hy.read_many(HEADER + code):
+        hy.eval(form, mod.__dict__, module=mod)
+    return mod
+
+
+def expand(code, *, static=False):
+    """評価せずに展開した Python の AST を得て、どの node を呼ぶかを読むため。"""
+    mod = module("exp_throw_expand")
+    view = static_view() if static else contextlib.nullcontext()
+    with view:
+        return hy.compiler.hy_compile(hy.read_many(HEADER + code), mod, filename="<exp>")
+
+
+def called_nodes(tree):
+    """展開が呼ぶ名のうち、続きを扱う node の名。"""
+    wanted = {"Resume", "Transfer", "ResumeThrow", "TransferThrow", "typed_resume", "typed_transfer", "Pass"}
+    return sorted(
+        {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in wanted
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# resume と同じ形の throw の行(非末尾は ResumeThrow で handler を残す)
+# ---------------------------------------------------------------------------
+
+
+def rewrite_throw_naive(args, recur):
+    """S1 の主張と検の fixture(_rewrite_throw)の形をそのまま ResumeThrow にした書き換え — 表の行の欄だけを見て書いた物。"""
+    return Expression([Symbol("yield"), Expression([Symbol("ResumeThrow"), Symbol("k"), recur(args[0])])])
+
+
+def rewrite_throw_flagged(args, recur):
+    """表の _resume を写した書き換え — handle.hy の実行時の検めの局所の名 _doeff_clause_resumed を知って立てる。"""
+    return Expression(
+        [
+            Symbol("do"),
+            Expression(
+                [
+                    Symbol("setv"),
+                    Symbol("_doeff_resumed_value"),
+                    Expression([Symbol("yield"), Expression([Symbol("ResumeThrow"), Symbol("k"), recur(args[0])])]),
+                ]
+            ),
+            Expression([Symbol("setv"), Symbol("_doeff_clause_resumed"), Symbol("True")]),
+            Symbol("_doeff_resumed_value"),
+        ]
+    )
+
+
+def throw_row(rewrite):
+    """resume と同じ形(Ending.RESUMES・引数 1)の throw の行を作るため。"""
+    return ClauseOp(
+        name="throw",
+        ending=Ending.RESUMES,
+        arity=1,
+        nodes=("ResumeThrow",),
+        static_nodes=("ResumeThrow",),
+        rewrite=rewrite,
+    )
+
+
+@contextlib.contextmanager
+def with_row(row):
+    """表に行を 1 つ足した間だけ実験するため(読み手は直さない)。"""
+    saved = clause_ops.CLAUSE_OPS
+    clause_ops.CLAUSE_OPS = (*saved, row)
+    try:
+        yield
+    finally:
+        clause_ops.CLAUSE_OPS = saved
+
+
+def section(title):
+    """出力の区切りを見分けるため。"""
+    print()
+    print("=" * 8, title)
+
+
+# ---------------------------------------------------------------------------
+# 0. 既存: 書いた (resume v) の展開は、末尾なら transfer の行が作る
+# ---------------------------------------------------------------------------
+section("0. 既存の resume の展開(末尾 / 非末尾 × 実行時 / 型検査)")
+TAIL_RESUME = "(setv h (handle (Bump 1) (Bump [n] (resume (+ n 1)))))"
+NONTAIL_RESUME = "(setv h (handle (Bump 1) (Bump [n] (setv r (resume (+ n 1))) (+ r 0))))"
+for label, src in (("末尾", TAIL_RESUME), ("非末尾", NONTAIL_RESUME)):
+    for static in (False, True):
+        print(f"  resume {label} static={static}: {called_nodes(expand(src, static=static))}")
+
+
+# ---------------------------------------------------------------------------
+# 1. 表に throw(ResumeThrow)を 1 行足す — 書き換えは S1 の形のまま
+# ---------------------------------------------------------------------------
+BODY = """
+(defk body [count] {:pre [(: count int)] :post [(: % int)]}
+  (setv caught 0)
+  (for [i (range count)]
+    (try (<- (Bump i)) (except [e ValueError] (setv caught (+ caught 1)))))
+  caught)
+"""
+
+section("1. throw の行(書き換えは S1 / 検の fixture の形 = 印を立てない)")
+with with_row(throw_row(rewrite_throw_naive)):
+    src_tail = "(setv h (handle (Bump 1) (Bump [n] (throw (ValueError \"x\")))))"
+    for static in (False, True):
+        print(f"  throw 末尾 static={static}: {called_nodes(expand(src_tail, static=static))}")
+    mod = eval_module(
+        BODY
+        + """
+(defk subject [] {:pre [] :post [(: % int)]}
+  (<- r (handle (body 1) (Bump [n] (throw (ValueError "x")))))
+  r)
+"""
+    )
+    try:
+        print("  run:", run(mod.subject()))
+    except BaseException as error:  # noqa: BLE001
+        print("  run raised:", type(error).__name__, str(error)[:200])
+
+
+# ---------------------------------------------------------------------------
+# 2. 書き換えに handle.hy の印を写すと走る — だが末尾の throw は TransferThrow にならず、handler の生成器が積もる
+# ---------------------------------------------------------------------------
+def live_generators():
+    """handler の生成器が積もるかを数で見るため。"""
+    gc.collect()
+    return sum(1 for o in gc.get_objects() if isinstance(o, types.GeneratorType) and o.gi_frame is not None)
+
+
+PROBE = {}
+
+
+def probe():
+    """本文の末(続きがすべて走りきる前)で生きた生成器の数を記すため。"""
+    PROBE["live"] = live_generators()
+    return 0
+
+
+section("2. throw の行(書き換えは _resume の印を写す)— 末尾の throw の生成器の数")
+with with_row(throw_row(rewrite_throw_flagged)):
+    for static in (False, True):
+        print(f"  throw 末尾 static={static}: {called_nodes(expand(src_tail, static=static))}")
+    for n_effects in (10, 100, 400):
+        results = {}
+        for label, clause in (
+            ("resume(末尾→Transfer)", "(Bump [n] (resume 0))"),
+            ("throw(末尾のまま ResumeThrow)", '(Bump [n] (throw (ValueError "x")))'),
+        ):
+            mod = eval_module(
+                f"""
+(import __main__ [probe])
+(defk body [count] {{:pre [(: count int)] :post [(: % int)]}}
+  (setv caught 0)
+  (for [i (range count)]
+    (try (<- (Bump i)) (except [e ValueError] (setv caught (+ caught 1)))))
+  (probe)
+  caught)
+(defk subject [count] {{:pre [(: count int)] :post [(: % int)]}}
+  (<- r (handle (body count) {clause}))
+  r)
+"""
+            )
+            base = live_generators()
+            answer = run(mod.subject(n_effects))
+            results[label] = (answer, PROBE["live"] - base)
+        print(f"  effect {n_effects} 回: " + " / ".join(f"{k}: 答え {a}・本文の末で生きた生成器の増え {d}" for k, (a, d) in results.items()))

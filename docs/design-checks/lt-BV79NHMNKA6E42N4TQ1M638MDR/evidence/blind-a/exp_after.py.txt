@@ -1,0 +1,62 @@
+"""作業木の表と handle.hy を直した後(throw・transfer-throw の行と末尾の対応)に、末尾の throw が handler を外すかを確かめるため。"""
+
+import gc
+import sys
+import types
+import warnings
+
+import doeff_hy  # noqa: F401  拡張を登録する
+import hy
+
+from doeff import run
+
+warnings.simplefilter("ignore", DeprecationWarning)
+PROBE = {}
+
+
+def live_generators():
+    """handler の生成器が積もるかを数で見るため。"""
+    gc.collect()
+    return sum(1 for o in gc.get_objects() if isinstance(o, types.GeneratorType) and o.gi_frame is not None)
+
+
+def probe():
+    """本文の末で生きた生成器の数を記すため。"""
+    PROBE["live"] = live_generators()
+    return 0
+
+
+def eval_module(code):
+    """Hy の source を評価して defk を得るため。"""
+    mod = types.ModuleType("exp_after_mod")
+    sys.modules[mod.__name__] = mod
+    for form in hy.read_many(code):
+        hy.eval(form, mod.__dict__, module=mod)
+    return mod
+
+
+SRC = """
+(require doeff-hy.macros [defk <- handle])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(import __main__ [probe])
+(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+(defk body [count] {:pre [(: count int)] :post [(: % int)]}
+  (setv caught 0)
+  (for [i (range count)]
+    (try (<- (Bump i)) (except [e ValueError] (setv caught (+ caught 1)))))
+  (probe)
+  caught)
+(defk tail-throw [count] {:pre [(: count int)] :post [(: % int)]}
+  (<- r (handle (body count) (Bump [n] (throw (ValueError "x")))))
+  r)
+(defk nontail-throw [count] {:pre [(: count int)] :post [(: % int)]}
+  (<- r (handle (body count) (Bump [n] (setv got (throw (ValueError "x"))) got)))
+  r)
+"""
+mod = eval_module(SRC)
+for name in ("tail_throw", "nontail_throw"):
+    for n in (10, 400):
+        base = live_generators()
+        answer = run(getattr(mod, name)(n))
+        print(f"{name} effect {n}: 答え {answer}・生きた生成器の増え {PROBE['live'] - base}")

@@ -1,0 +1,75 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/handle.hy b/packages/doeff-hy/src/doeff_hy/handle.hy
+index ce0bc3097..4fb3aa52e 100644
+--- a/packages/doeff-hy/src/doeff_hy/handle.hy
++++ b/packages/doeff-hy/src/doeff_hy/handle.hy
+@@ -339,6 +339,61 @@
+          " end its scope without resuming says so with (finish value) [ADR-DOE-CORE-EFFECTS-003 R15]")))))
+ 
+ 
++;; ---------------------------------------------------------------------------
++;; One-shot check — a clause uses its continuation k at most once on a path
++;; ---------------------------------------------------------------------------
++
++;; 続き k を使う操作(再開する・外の handler へ渡す)。k は 1 度しか使えない(one-shot)。
++(setv _K-USING-OPS #{"resume" "transfer" "reperform" "pass"})
++;; 続きが終わると節へ戻ってくる操作 — 値を捨てる文として書いた後で k をまた使うと one-shot に反する。
++;; (値を束ねる (<- r (resume x)) は後処理の形として展開を変えない — tests/test_tail_resume_tco.py)
++(setv _RETURNING-OPS #{"resume"})
++;; 節の歩みとして走らない form(_terminates と同じ)
++(setv _NOT-CLAUSE-STEPS #{"quote" "quasiquote" "fn" "fn/a" "defn" "defn/a" "lfor" "gfor" "dfor" "sfor"})
++
++(defn _uses-op? [form names]
++  "form の中に頭の名が names の式があるか(quote・入れ子の関数・内包の中は数えない)。"
++  (setv head (_head-name form))
++  (cond
++    (in head names) True
++    (in head _NOT-CLAUSE-STEPS) False
++    (isinstance form Sequence) (any (gfor f form (_uses-op? f names)))
++    True False))
++
++(defn _resume-statement? [form]
++  "form が値を捨てる (resume …) の文か(when / unless / if の枝に書いた文も)。"
++  (setv head (_head-name form))
++  (cond
++    (in head _RETURNING-OPS) True
++    (in head #{"when" "unless" "if"}) (any (gfor f (cut form 2 None) (_resume-statement? f)))
++    True False))
++
++(defn _check-one-shot [where forms]
++  "節の本体の列で、値を捨てる (resume …) の文より後の文が続き k をまた使う道を SyntaxError にする — 非末尾の resume は
++   続きが終わると節へ戻るが、k はもう使い切っている。実行の時は VM の内部の誤り(continuation already consumed)になり、
++   どの節の誤りかが分からなかった。do / when / unless / let / with の本体の列も同じに見る。"
++  (setv resumed None)
++  (for [f forms]
++    (when (and (is-not resumed None) (_uses-op? f _K-USING-OPS))
++      (raise (SyntaxError
++        (+ where ": 続き k を 2 度使う — " (.lstrip (hy.repr resumed) "'") " の後の " (.lstrip (hy.repr f) "'")
++           " がまた k を使う(k は 1 度しか再開・転送できない)。非末尾の resume の値で続ける道は (finish 値) で終える"
++           " [ADR-DOE-CORE-EFFECTS-003 R15]"))))
++    (when (_resume-statement? f)
++      (setv resumed f))
++    (_check-nested-one-shot where f)))
++
++(defn _check-nested-one-shot [where form]
++  "form の中の文の列(do / when / unless / let / with の本体)を _check-one-shot で見る。"
++  (setv head (_head-name form))
++  (cond
++    (in head _NOT-CLAUSE-STEPS) None
++    (= head "do") (_check-one-shot where (list (cut form 1 None)))
++    (in head #{"when" "unless" "let" "with"}) (_check-one-shot where (list (cut form 2 None)))
++    (isinstance form Sequence) (for [f form] (_check-nested-one-shot where f))
++    True None))
++
++
+ ;; ---------------------------------------------------------------------------
+ ;; TCO: tail-position (resume expr) → (transfer expr)
+ ;; ---------------------------------------------------------------------------
+@@ -510,6 +565,8 @@
+ 
+   ;; Termination check BEFORE rewriting (on original body)
+   (_check-clause-terminates (str etype) cbody)
++  ;; One-shot: a non-tail resume returns to the clause; nothing after it on the path may use k again
++  (_check-one-shot where cbody)
+ 
+   ;; The clause's ending against what the effect declares — by name at expansion (Raise / Absent,
+   ;; finish without a reason), by the effect type's declaration when the handler is defined.
