@@ -750,25 +750,28 @@
    Compile-time error if any clause branch lacks resume/transfer/finish/reperform; each clause's
    ending is checked against its effect's declared resumption when the handle form is evaluated.
 
-   関数の本体の中(defk の本体など)では、import・節の終わり方の検め・handler の組み立てを、すぐ呼ぶ引数なしの関数に
-   入れ、その関数が返す「本文に handler を被せる関数」を本文 body に当てる。関数の中で import した名は関数全体の局所の
-   名になるので、並べたままだと同じ本体で先に読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちた
-   (card ki-907f779b3290・tests/test_handle_scope.py)。本文は外の do の文脈に属する(`!` の yield は外の生成器の物)ので
-   すぐ呼ぶ関数の中に入れず、書いた場所で評価する。module と class の本体は今までどおり並べる(`_in-function-body?`)。
+   関数の本体の中(defk の本体など)と class の本体では、import・節の終わり方の検め・handler の組み立てを、すぐ呼ぶ
+   引数なしの関数に入れ、その関数が返す「本文に handler を被せる関数」を本文 body に当てる。関数の中で import した名は
+   関数全体の局所の名になるので、並べたままだと同じ本体で先に読む traverse / for/do の `_doeff_do` が UnboundLocalError
+   で落ちた(card ki-907f779b3290・tests/test_handle_scope.py)。class の本体で import した名は class の属性になり、節の
+   関数は名を引く時に class の段を飛ばすので、節の Transfer・Resume・Pass が NameError で落ちた(card ki-edab7c8fbb55)。
+   すぐ呼ぶ関数の中で import すれば、節の関数はその関数の閉包から名を読み、書いた場所の module の globals にも書き手の
+   同じ名にも依らない。本文は外の do の文脈に属する(`!` の yield は外の生成器の物)ので、すぐ呼ぶ関数の中に入れず、
+   書いた場所で評価する。module の段は今までどおり並べる(import は module の globals に置く)。
 
    被せる関数は、本文より前の文で一意の名(gensym)に束ねてから本文に当てる。Hy は本文の文の部分(`(do (f) prog)` の
    `(f)`・let の束ね・`!` の yield)を、それを含む式より前の文へ出す。すぐ呼ぶ関数を本文と同じ式の中で呼ぶと、本文の
    文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W
    の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。"
-  (import doeff-hy.macros [_module-names _in-function-body?])
+  (import doeff-hy.macros [_module-names _in-function-body? _in-class-body?])
   (setv specs [])
   (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
   (setv prelude [(_do-import)
                  (_vm-imports)
                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
                  `(_doeff-check-clause-endings "handle" [~@specs])])
-  (locate-synthesized (if (_in-function-body? _hy-compiler)
-      ;; gensym はこの枝だけで引く — module と class の本体の展開の一意の名の番号を前と同じに保つ
+  (locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler))
+      ;; gensym はこの枝だけで引く — module の段の展開の一意の名の番号を前と同じに保つ
       (let [install (hy.gensym "handle_install")]
         `(do
            (setv ~install ((fn []
@@ -878,7 +881,7 @@
   ;; Separate lazy defs from effect clauses
   (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses name))
 
-  (import doeff-hy.macros [_module-names _scoped-definition])
+  (import doeff-hy.macros [_module-names _scoped-definition _in-class-body?])
   (setv module-names (_module-names _hy-compiler))
   (setv specs [])
   (setv handler-expr
@@ -917,13 +920,20 @@
   ;; and installed with the Rust VM WithHandler node.
   ;; 関数の本体の中に書いた defhandler は、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition —
   ;; 外の関数で先に読む traverse / for/do の `_doeff_do` を未束縛にしない・card ki-907f779b3290)。
+  ;; class の本体では、import を handler を組む関数(引数の無い handler はすぐ呼ぶ関数・引数の在る handler は name の
+  ;; 関数そのもの)の中へ移す。class の本体の import は class の属性になり、組む関数・節の関数・本文に被せる関数は名を
+  ;; 引く時に class の段を飛ばすので、_doeff_do・Transfer などが NameError で落ちた(card ki-edab7c8fbb55)。中で
+  ;; import すれば、それらの関数は組む関数の局所と閉包から名を読む。name の定義は class の段に残す(`__qualname__`)。
+  (setv imports [(_do-import)
+                 (_vm-imports)
+                 (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
+                 lazy-imports]
+        #(outer-imports inner-imports) (if (_in-class-body? _hy-compiler) #([] imports) #(imports [])))
   (locate-synthesized (_scoped-definition _hy-compiler name (if (is params None)
-      [(_do-import)
-       (_vm-imports)
-       (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
-       lazy-imports
+      [#* outer-imports
        `(setv ~name
          ((fn []
+            ~@inner-imports
             (setv __doeff-handler-data__ ~handler-expr)
             (setv __doeff-clause-endings__ (fn [] [~@specs]))
             ~(_handler-fn-form endings-check)
@@ -935,11 +945,9 @@
        `(setattr ~name "__doeff_body__" ~quoted-body)
        `(setattr ~name "__doeff_name__" ~(str name))
        #* declared]
-      [(_do-import)
-       (_vm-imports)
-       (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
-       lazy-imports
+      [#* outer-imports
        `(defn ~name [~@params]
+         ~@inner-imports
          (setv __doeff-handler-data__ ~handler-expr)
          (setv __doeff-clause-endings__ (fn [] [~@specs]))
          ~(_handler-fn-form endings-check)

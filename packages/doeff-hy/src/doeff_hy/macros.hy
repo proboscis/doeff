@@ -35,7 +35,7 @@
 (import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
-(import hy.scoping [nearest-python-scope is-function-scope])
+(import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
 
 ;; Re-export handle macros so users only need one require line.
 ;; Without this, forgetting (require doeff-hy.handle [defhandler]) causes
@@ -666,7 +666,10 @@ defk {name}: :post type annotation cannot be an empty string.
      globals に記録を積む文を置かない(呼ぶたびに積み増す — tests/test_nested_definition_scope.py の
      test_nested_definition_leaves_module_globals_unchanged)。
    - class の本体では `forms` の import は class の属性になり、`forms` の中で定義した関数からは見えない。その関数が
-     名で読む補助は `_install-guard-globals` で関数の globals へ入れる(同 test_class_body_definition_runs_without_module_definitions)。
+     名で読む補助は、`_install-guard-globals` で関数の globals へ入れる(定義の関数そのものが補助を読む defk・deftest・
+     defmcp-tool — 同 test_class_body_definition_runs_without_module_definitions)か、関数を組む関数の中で import して
+     閉包から読ませる(defhandler — `_in-class-body?`・tests/test_handle_scope.py の
+     test_class_body_handle_clauses_read_their_operations)。
    - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
      関数の局所の名になる。"
   (if (_in-function-body? compiler)
@@ -682,6 +685,18 @@ defk {name}: :post type annotation cannot be an empty string.
    `_scoped-definition`・handle.hy の handle と、関数の中では pytest の item を記録しない deftest。"
   (and (not (_static-view?))
        (is-function-scope (nearest-python-scope (. compiler scope)))))
+
+(defn _in-class-body? [compiler]
+  "実行時の展開で、macro が class の本体に直に書かれたか — 書いた場所で import した名が class の属性になり、展開の中で
+   作る関数から見えない所か(関数の中の名の引きは class の段を飛ばす)。
+
+   展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope が class(defclass が作る、
+   関数でない ScopeFn)なら真。型検査のための展開は偽(展開を変えない — `_in-function-body?` と同じ)。読み手は handle.hy
+   の handle と defhandler(card ki-edab7c8fbb55)。"
+  (setv scope (nearest-python-scope (. compiler scope)))
+  (and (not (_static-view?))
+       (isinstance scope ScopeFn)
+       (not (is-function-scope scope))))
 
 (defn _quoted-forms [forms]
   "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。

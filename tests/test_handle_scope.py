@@ -7,16 +7,21 @@ ki-964823cd7feb と同じ形)。
 
 handle は、import・検め・handler の組み立てをすぐ呼ぶ関数に入れ、本文(第 1 引数)だけを書いた場所で評価する — 本文は
 外の do の文脈に属する(`!` の yield は外の生成器の物)。defhandler は defk と同じく `_scoped-definition` で名だけを
-外へ束ねる。module と class の本体は今までどおり並べる。
+外へ束ねる。module の段は今までどおり並べる。
+
+class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)は、import が class の属性になり、節の関数から
+見えなかった。handle は関数の中と同じくすぐ呼ぶ関数に入れ、defhandler は import を handler を組む関数の中へ移す
+(名の定義は class の段に残す)。
 """
 
 import sys
 import types
+from collections.abc import Callable
 
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import pytest
-from doeff_core_effects import try_handler
+from doeff_core_effects import state, try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.handlers import fail_handler, sequential
 
@@ -50,11 +55,11 @@ _HEADER = """
 """
 
 
-def _eval_module(code: str) -> types.ModuleType:
+def _eval_module(code: str, header: str = _HEADER) -> types.ModuleType:
     """Hy の source を新しい module に読み込む — 検ごとに module の globals を分けるため。"""
     mod = types.ModuleType("handle_scope")
     sys.modules["handle_scope"] = mod
-    for form in hy.read_many(_HEADER + code):
+    for form in hy.read_many(header + code):
         hy.eval(form, mod.__dict__, module=mod)
     return mod
 
@@ -277,7 +282,8 @@ def test_handle_checks_clause_endings_at_every_evaluation() -> None:
 
 
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:
-    """module と class の本体の handle・defhandler は包まない — 包むと `__qualname__`(pickle の名の引き)が変わる。"""
+    """module の段の handle・defhandler と、class の本体の defhandler の定義は包まない — 包むと `__qualname__`(pickle の
+    名の引き)が変わる。class の本体の defhandler は import だけを handler を組む関数の中へ移す(card ki-edab7c8fbb55)。"""
     mod = _eval_module(
         """
         (defhandler top-h [base] (Bump [n] (resume (+ n base))))
@@ -288,6 +294,105 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     assert mod.top_h.__qualname__ == "top_h"
     assert mod.Holder.inner_h.__qualname__ == "Holder.inner_h"
     assert run(mod.top_h(5)(mod.bump_n(1))) == 6
+    assert run(mod.Holder.inner_h(5)(mod.bump_n(1))) == 6
     assert run(mod.program) == 101
     # module の段の handle の import は今までどおり module の globals に置く
     assert "WithHandler" in vars(mod)
+
+
+# class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)。class の本体の import は class の属性になり、展開の
+# 中で作る関数(節の関数・handler を組む関数・本文に被せる関数)は名を引く時に class の段を飛ばすので見えない — 直す前は
+# handle の節の Transfer・Resume・Pass、defhandler の _doeff_do・_doeff_check_clause_endings_once が NameError だった。
+# module の段に defk・handle・defhandler が在ると、その import が module の globals に名を置いて穴を隠すので、class 1 つ
+# だけの module で読む(本文は effect そのもの)。
+_CLASS_ONLY_HEADER = """
+(require doeff-hy.handle [handle defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+"""
+
+_CLASS_BODY_CASES = {
+    # 末尾の resume は Transfer になる(_tail-resume-to-transfer)
+    "handle-transfer": (
+        "(defclass C [] (setv program (handle (Bump 1) (Bump [n] (resume (+ n 100))))))",
+        lambda mod: mod.C.program,
+    ),
+    # try の中の resume は Resume のまま
+    "handle-resume": (
+        """
+        (defclass C []
+          (setv program
+            (handle (Bump 1) (Bump [n] (try (resume (+ n 100)) (except [ValueError] (transfer 0)))))))
+        """,
+        lambda mod: mod.C.program,
+    ),
+    # :when の外れた節は Pass で外の handler へ渡す
+    "handle-when-guard-pass": (
+        """
+        (defclass C []
+          (setv program
+            (handle (handle (Bump 1) (Bump [n] :when (> n 5) (resume n))) (Bump [n] (resume (+ n 100))))))
+        """,
+        lambda mod: mod.C.program,
+    ),
+    "defhandler": (
+        "(defclass C [] (defhandler h (Bump [n] (resume (+ n 100)))))",
+        lambda mod: mod.C.h(mod.Bump(1)),
+    ),
+    "defhandler-with-params": (
+        "(defclass C [] (defhandler h [base] (Bump [n] (resume (+ n base)))))",
+        lambda mod: mod.C.h(100)(mod.Bump(1)),
+    ),
+    # session var の節は Get・Put・Some と session の鍵を読む
+    "defhandler-session-var": (
+        """
+        (defclass C []
+          (defhandler h (session var calls 99) (Bump [n] (:= calls (+ calls 1)) (resume (+ n calls)))))
+        """,
+        lambda mod: mod.C.h(mod.Bump(1)),
+    ),
+}
+
+
+def _run_with_state(program: object) -> object:
+    """class の本体の handle・defhandler の Program を走らせる — session var の Get・Put を state の handler が受ける。"""
+    return run(scheduled(state(initial={})(program)))
+
+
+@pytest.mark.parametrize(
+    ("source", "program"), _CLASS_BODY_CASES.values(), ids=_CLASS_BODY_CASES.keys()
+)
+def test_class_body_handle_clauses_read_their_operations(
+    source: str, program: Callable[[types.ModuleType], object]
+) -> None:
+    """class の本体に直に書いた handle・defhandler の節が Transfer・Resume・Pass を読んで走る — 直す前は NameError。"""
+    mod = _eval_module(source, header=_CLASS_ONLY_HEADER)
+    assert _run_with_state(program(mod)) == 101
+
+
+# 書き手の module が handle の展開と同じ名を別の物に束ねている形(例えば振込の effect の Transfer)
+_MODULE_OWN_NAMES = """
+(setv Transfer "書き手の Transfer" Resume "書き手の Resume" Pass "書き手の Pass")
+"""
+
+
+@pytest.mark.parametrize(
+    ("source", "program"), _CLASS_BODY_CASES.values(), ids=_CLASS_BODY_CASES.keys()
+)
+def test_class_body_handle_leaves_module_globals_alone(
+    source: str, program: Callable[[types.ModuleType], object]
+) -> None:
+    """class の本体の handle・defhandler は、節が読む名を module の globals に置かず、そこから読まない — 書き手の module の
+    同じ名(Transfer など)を変えず、節もそれに左右されない。補助を module の globals へ setdefault で入れる直し(defk の
+    `_install-guard-globals` の形)だと、書き手の Transfer が残って節がそれを読み、import で入れる直しだと書き手の名を
+    上書きする。"""
+    mod = _eval_module(_MODULE_OWN_NAMES + source, header=_CLASS_ONLY_HEADER)
+    bare = _eval_module(_MODULE_OWN_NAMES + "(defclass C [])", header=_CLASS_ONLY_HEADER)
+    assert _run_with_state(program(mod)) == 101
+    assert sorted(vars(mod)) == sorted(vars(bare))
+    assert (mod.Transfer, mod.Resume, mod.Pass) == (
+        "書き手の Transfer",
+        "書き手の Resume",
+        "書き手の Pass",
+    )
