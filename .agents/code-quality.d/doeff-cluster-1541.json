@@ -2112,7 +2112,8 @@
       "allow": [
         "doeff-cluster-job-model",
         "doeff-cluster-worker-model",
-        "doeff-cluster-run-context-rules"
+        "doeff-cluster-run-context-rules",
+        "doeff-cluster-runtime-env-model"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-launch",

@@ -1,0 +1,12 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy b/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
+index 145823646..bb7d6089f 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
+@@ -31,6 +31,7 @@
+ (setv CHILD-ENV-PREFIXES #("LC_"))
+ 
+ 
++(val EXTRA-CONTEXT {"CLAUDE_PROJECT_DIR" "/work"})
+ (defk child-environment [base extra declared worker]
+   {:pre [(: base (get dict #(str str))) (: extra (get dict #(str str))) (: declared (get dict #(str str))) (: worker (get dict #(str str)))]
+    :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
