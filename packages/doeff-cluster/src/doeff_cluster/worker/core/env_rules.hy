@@ -45,13 +45,26 @@
    "compileJobs" compile-jobs})
 
 
-(defk prepare-argv [hy-command tool request result state shared uv-cache repo-keys code-prepare uv progress]
+(defk lowered-priority-argv [platform]
+  {:pre [(: platform str)] :post [(: % tuple)]}
+  "準備の process の CPU の優先度を下げる命令の頭を組むため(platform = この worker の platform)。Linux は SCHED_IDLE(chrt --idle)と
+   nice 10、他(macOS の worker — chrt が無い)は nice 10 だけ。SCHED_IDLE は同じ Pod の service(SCHED_OTHER・nice 0)が起きた時に
+   必ず譲り、重みも 3 なので、焼きを何本並べても service の CPU の取り分が並べた本数で決まらない(card ki-757b489f8a14 —
+   nice 10 の焼き 31 本・20 core の窓で service の和の CPU の待ちが 59%、前後の窓は 15〜16%)。"
+  (if (.startswith platform "linux")
+      #("chrt" "--idle" "0" "nice" "-n" "10")
+      #("nice" "-n" "10")))
+
+
+(defk prepare-argv [hy-command tool request result state shared uv-cache repo-keys code-prepare uv progress platform]
   {:pre [(: hy-command str) (: tool str) (: request str) (: result str) (: state str) (: shared str) (: uv-cache str) (: repo-keys str)
-         (: code-prepare str) (: uv str) (: progress str)]
+         (: code-prepare str) (: uv str) (: progress str) (: platform str)]
    :post [(: % tuple)]}
-  "準備の process の起こし方(nice で優先度を下げる — 走っている手番の CPU を奪わない)を組むため。state = 世代ごとの state の dir・
-   shared = 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。"
-  #("nice" "-n" "10" hy-command "-m" tool "--request" request "--result" result "--state" state "--shared" shared "--uv-cache" uv-cache
+  "準備の process の起こし方(優先度を下げる — 走っている手番と service の CPU を奪わない・lowered-priority-argv)を組むため。
+   state = 世代ごとの state の dir・shared = 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)・platform = この worker の
+   platform。"
+  (<- lowered tuple (lowered-priority-argv platform))
+  #(#* lowered hy-command "-m" tool "--request" request "--result" result "--state" state "--shared" shared "--uv-cache" uv-cache
     "--repo-keys" repo-keys
     "--code-prepare" code-prepare "--uv" uv "--progress" progress))
 

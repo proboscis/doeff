@@ -240,7 +240,7 @@
   (<- (refreshed-repo-access settings))
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
                                settings.uv-cache settings.repo-keys
-                               settings.code-prepare settings.uv progress))
+                               settings.code-prepare settings.uv progress settings.platform))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
   (<- started (StartProcess :argv argv :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
