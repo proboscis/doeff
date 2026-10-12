@@ -1,0 +1,18 @@
+# 直した形・check_slot の検の全部
+# 版: c8fd2c26a54af6b8cf976007c5f4e1751f71f4e4・刻: 2026-10-12T09:59:12+00:00
+# 差分(作業木 vs HEAD):
+$ uv run pytest packages/doeff-hy/tests/test_static_check_slot.py -q
+
+deadline scale x1.5 (load per usable CPU) — per test 93s, watchdog 139s
+
+test-admission: focused — 7 件(変更箇所の検証)
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-2320-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+7 passed, 1 warning in 6.45s
+rc=0

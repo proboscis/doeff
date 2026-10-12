@@ -1,0 +1,60 @@
+# 変異: 名乗りを module.__file__ へ戻す
+# 版: c8fd2c26a54af6b8cf976007c5f4e1751f71f4e4・刻: 2026-10-12T09:57:45+00:00
+# 差分(作業木 vs HEAD):
+ packages/doeff-hy/src/doeff_hy/check_slot.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+#   diff --git a/packages/doeff-hy/src/doeff_hy/check_slot.py b/packages/doeff-hy/src/doeff_hy/check_slot.py
+#   index 6db4dfc16..066090d63 100644
+#   --- a/packages/doeff-hy/src/doeff_hy/check_slot.py
+#   +++ b/packages/doeff-hy/src/doeff_hy/check_slot.py
+#   @@ -137,7 +137,7 @@ def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
+#        if unfit:
+#            _named(
+#                out,
+#   -            f"枠の正本 {os.path.realpath(home / CANON_UNDER_HOME)} の口が揃わない({'・'.join(unfit)})ので枠を取らずに走る",
+#   +            f"枠の正本 {module.__file__} の口が揃わない({'・'.join(unfit)})ので枠を取らずに走る",
+#            )
+#            return SlotHeld(None)
+#        try:
+$ uv run pytest packages/doeff-hy/tests/test_static_cache.py::test_doeff_hy_sources_do_not_read_their_place -q
+
+deadline scale x1.8 (load per usable CPU) — per test 107s, watchdog 160s
+
+test-admission: focused — 1 件(変更箇所の検証)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________ test_doeff_hy_sources_do_not_read_their_place _________________
+
+    def test_doeff_hy_sources_do_not_read_their_place() -> None:
+        # 守り(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C): doeff_hy の macro と型検査の後処理は、自分の置き場から隣の file を読まない。
+        # 置き場から作った素の文字列の大域(HERE = os.path.dirname(__file__))を関数が読む形は、閉包の歩みが値(path)を入れるだけで path の
+        # 先の file の中身を覆わず、隣の file を替えても古い展開を引く(code か束縛の文が置き場を直に読む形は、歩みが照らせない印にする)。
+        package = Path(doeff_hy.__file__).parent
+        touching = sorted(
+            (path.relative_to(package).as_posix(), line)
+            for path in package.rglob("*")
+            if path.suffix in (".py", ".hy", ".pyi")
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if ("__file__" in line or "__cached__" in line) and not line.lstrip().startswith(("#", ";"))
+        )
+>       assert [row for row in touching if row not in PLACE_LINES] == [], (
+            "doeff_hy の source が module の置き場を読む(隣の file の中身は保存した展開の記録に入らない)"
+        )
+E       AssertionError: doeff_hy の source が module の置き場を読む(隣の file の中身は保存した展開の記録に入らない)
+E       assert [('check_slot...で枠を取らずに走る",')] == []
+E         
+E         Left contains one more item: ('check_slot.py', '            f"枠の正本 {module.__file__} の口が揃わない({\'・\'.join(unfit)})ので枠を取らずに走る",')
+E         Use -v to get more diff
+
+packages/doeff-hy/tests/test_static_cache.py:192: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-2320-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-hy/tests/test_static_cache.py::test_doeff_hy_sources_do_not_read_their_place
+1 failed, 1 warning in 0.58s
+rc=1
