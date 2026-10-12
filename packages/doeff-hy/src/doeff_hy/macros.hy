@@ -651,7 +651,7 @@ defk {name}: :post type annotation cannot be an empty string.
       '(. (__import__ "doeff.do" :fromlist #("do")) do)))
 
 (defn _scoped-definition [compiler name forms]
-  "名 `name` を定義する macro(defk・defp・deftest・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
 
    module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
    読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
@@ -679,7 +679,7 @@ defk {name}: :post type annotation cannot be an empty string.
    展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope(`hy.scoping` の
    nearest-python-scope)が関数なら真。module と class の本体は偽(import した名は module の globals か class の属性に
    なり、先の読みを壊さない)。型検査のための展開は偽(包まない — `_scoped-definition` の註)。読み手は
-   `_scoped-definition` と handle.hy の handle。"
+   `_scoped-definition`・handle.hy の handle と、関数の中では pytest の item を記録しない deftest。"
   (and (not (_static-view?))
        (is-function-scope (nearest-python-scope (. compiler scope)))))
 
@@ -921,7 +921,7 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; defeffect — an effect type (frozen dataclass on EffectBase) with its answer type and tags
 ;; ---------------------------------------------------------------------------
 
-(defmacro defeffect [name #* rest]
+(defmacro defeffect [_hy-compiler name #* rest]
   "Define an effect type: a frozen dataclass inheriting EffectBase (agora-redesign #800 —
    operator 2026-09-27 \"perhaps we want defeffect as well?\").
 
@@ -950,7 +950,10 @@ defk {name}: :post type annotation cannot be an empty string.
    :runs-carried [program] names the fields holding a Program the handler runs where the
    effect was performed (under the handlers there — SqlTransaction's program). It sets
    __doeff_runs_carried__ (read by doeff_core_effects.effects.runs_carried_of; a closure
-   check reads those Programs as run at the performing site — agora-redesign #1456)."
+   check reads those Programs as run at the performing site — agora-redesign #1456).
+
+   関数の本体の中に書くと、補助の import(_doeff-dataclass・_doeff-effect-base など)と class をすぐ呼ぶ関数に入れて
+   <name> だけを束ねる(_scoped-definition — card ki-93395c51de1e)。"
   (setv docstring None contract None forms (list rest))
   (when (and forms (isinstance (get forms 0) hy.models.String))
     (setv docstring (get forms 0) forms (cut forms 1 None)))
@@ -969,8 +972,8 @@ defk {name}: :post type annotation cannot be an empty string.
   (for [check (or pre [])]
     (when (and (_is-type-check check) (not-in (str (get check 1)) field-names))
       (raise (SyntaxError (.format "{}: :pre の {} は欄ではない(欄 = {})" where (hy.repr check) (.join " " field-names))))))
-  (locate-synthesized
-    (defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))))
+  (locate-synthesized (_scoped-definition _hy-compiler name
+    [(defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))])))
 
 
 ;; ---------------------------------------------------------------------------
@@ -987,7 +990,10 @@ defk {name}: :post type annotation cannot be an empty string.
 
    :pre and :post are REQUIRED.
    (: name Type) is shorthand for (isinstance name Type).
-   Arbitrary validation expressions are also allowed in the same list."
+   Arbitrary validation expressions are also allowed in the same list.
+
+   関数の本体の中に書くと、宣言の import(doeff_hy)と定義をすぐ呼ぶ関数に入れて name だけを束ねる
+   (_scoped-definition — card ki-93395c51de1e)。"
   (_warn-defk-in-hyp _hy-compiler "deff" name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body FUNCTION-CONTRACT-KEYS (+ "deff " (str name))))
   (when (is pre-checks None)
@@ -1021,9 +1027,9 @@ deff {name}: {{:post [...]}} is required.
 " :name name))))
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
-  (locate-synthesized
-    `(do ~(_build-fn-with-contracts [] name params pre-checks post-checks real-body (_type-params body (+ "deff " (str name))))
-         ~@(declaration-setters name (get (_find-contract body) 0) (+ "deff " (str name))))))
+  (locate-synthesized (_scoped-definition _hy-compiler name [
+    (_build-fn-with-contracts [] name params pre-checks post-checks real-body (_type-params body (+ "deff " (str name))))
+    #* (declaration-setters name (get (_find-contract body) 0) (+ "deff " (str name)))])))
 
 
 ;; ---------------------------------------------------------------------------
@@ -2133,8 +2139,12 @@ the effect in the enclosing do-context.
                     :reason ~(if (is-not skip-reason None) skip-reason
                                  (hy.models.String "skip condition met"))))))
 
-  ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211 / #1291 — 記録の式を展開に足す)
-  (setv item-record (_record-test-function name fn-params item-decorators))
+  ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211 / #1291 — 記録の式を展開に足す)。
+  ;; 関数の本体の中の deftest は記録しない: pytest が集めるのは module の段の関数だけで、記録の式は外の関数を呼ぶたびに
+  ;; module の __doeff_pytest_items__ へ積み増す(_scoped-definition の呼び手が負う事・card ki-93395c51de1e)。
+  (setv item-record (if (_in-function-body? _hy-compiler)
+                        '(do)
+                        (_record-test-function name fn-params item-decorators)))
 
   ;; Assemble the function definition with decorators
   (locate-synthesized (_scoped-definition _hy-compiler name
