@@ -122,5 +122,29 @@ def test_bindings_of_another_type_are_red_at_the_factory(tmp_path: Path) -> None
     assert [e for e in errors if "records_signal_handler" in e and "SignalTables" in e], errors
 
 
+# 鍵の綴りの 2 つ(使い手の repo の模擬の畳みと検の 3 file が import する)。引数と答えの鍵は文字列の tuple — 素の tuple では
+# .pyi が tuple[Unknown, ...] になり、使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た(#2892)。
+# unknown_in_users は「全く分からない」だけを数えるので、ここでは一部が分からない赤を別に数える。
+KEY_CODEC = """\
+(import doeff_records.admission [key-text key-from-text])
+
+(setv #^ str spelled (key-text #("jobs" "j-1")))
+(setv #^ (get tuple #(str ...)) restored (key-from-text spelled))
+(setv #^ str spelled-again (key-text WRONG))
+"""
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_the_key_codec_names_are_not_partially_unknown(tmp_path: Path) -> None:
+    assert strict_errors(tmp_path, KEY_CODEC.replace("WRONG", "restored")) == ()
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+def test_a_key_of_another_element_type_is_red_at_key_text(tmp_path: Path) -> None:
+    # 鍵の欄は文字列 — 整数の鍵を渡すと赤(引数の要素の型が使い手に届く)。
+    errors = strict_errors(tmp_path, KEY_CODEC.replace("WRONG", "#(1)"))
+    assert [e for e in errors if "reportArgumentType" in e and "tuple[str, ...]" in e and "key_text" in e], errors
+
+
 def test_generated_stubs_are_what_the_tool_makes() -> None:
     assert [f"{s.source.relative_to(SOURCE)}: {s.reason}" for s in stale_in(SOURCE)] == []
