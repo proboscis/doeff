@@ -1,0 +1,127 @@
+# 変異: 除外の表に dir の行 "docs/design/" を戻す。命令: uv run pytest tests/test_daily_test_population.py -k 'design_record or dir_row'
+# 結果: test_test_named_file_in_a_design_record_is_red_until_renamed と test_exclusion_table_has_no_dir_row_over_a_record_dir の 2 本が赤
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 2186598 focus-gate agora-controllers-wt-ordered-dict (c-WRS4M1Q6DSAKFMVQC0B5ZQG7C4)、pid 2184762 code-quality agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2105228 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2196996 focus-gate agora-controllers-wt-ordered-dict (c-WRS4M1Q6DSAKFMVQC0B5ZQG7C4)、pid 2083368 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 2195508 pytest agora-controllers (c-VKV0YTC5TGT2KC3K8MGH4309EQ)、pid 2196395 pytest agora-controllers-at-ki25c3-after (c-F62Z5HJH7EMGTH6Z83KVQYXN88)、pid 2183818 focus-gate agora-controllers-wt-ki-aa51 (c-HCAEXBSXP48HQVQ4DPYX0EZZZN)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 2186598 focus-gate agora-controllers-wt-ordered-dict (c-WRS4M1Q6DSAKFMVQC0B5ZQG7C4)、pid 2184762 code-quality agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2105228 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2196986 pytest doeff-wt-json-value-ids (c-37TS11YDQK50T5PS4GDDHF1VBE)、pid 2083368 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 2195508 pytest agora-controllers (c-VKV0YTC5TGT2KC3K8MGH4309EQ)、pid 2196395 pytest agora-controllers-at-ki25c3-after (c-F62Z5HJH7EMGTH6Z83KVQYXN88)、pid 2196614 pytest agora-controllers-wt-steps2 (c-QMRDX9RCE115HESA4KDVPP74ZM)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 2186598 focus-gate agora-controllers-wt-ordered-dict (c-WRS4M1Q6DSAKFMVQC0B5ZQG7C4)、pid 2184762 code-quality agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2105228 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2196986 pytest doeff-wt-json-value-ids (c-37TS11YDQK50T5PS4GDDHF1VBE)、pid 2083368 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 2195994 pytest dotfiles (c-FHZ4PP6TYZX8CBHJRPZ34FHR0Y)、pid 2202521 pytest agora-controllers-wt-steps2 (c-QMRDX9RCE115HESA4KDVPP74ZM)、pid 2199791 focus-gate agora-controllers-wt-ordered-dict (c-WRS4M1Q6DSAKFMVQC0B5ZQG7C4)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 30 秒 / 上限 1200 秒・保持 pid 2186598 focus-gate agora-controllers-wt-ordered-dict (c-WRS4M1Q6DSAKFMVQC0B5ZQG7C4)、pid 2184762 code-quality agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2105228 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2196986 pytest doeff-wt-json-value-ids (c-37TS11YDQK50T5PS4GDDHF1VBE)、pid 2083368 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 2195994 pytest dotfiles (c-FHZ4PP6TYZX8CBHJRPZ34FHR0Y)、pid 2202521 pytest agora-controllers-wt-steps2 (c-QMRDX9RCE115HESA4KDVPP74ZM)、pid 2203407 pytest doeff-wt-ki-b884-design-check (c-2AVPGRVP07N3MJ59B23MA57R43)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 40 秒 / 上限 1200 秒・保持 pid 2200924 pytest agora-controllers-wt-ki-aa51 (c-HCAEXBSXP48HQVQ4DPYX0EZZZN)、pid 2184762 code-quality agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2105228 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2196986 pytest doeff-wt-json-value-ids (c-37TS11YDQK50T5PS4GDDHF1VBE)、pid 2083368 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 2183732 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 2202521 pytest agora-controllers-wt-steps2 (c-QMRDX9RCE115HESA4KDVPP74ZM)、pid 2203841 pytest agora-controllers-wt-ki-0a98-co (c-D5M32RDXQ6YTYZMA0J4CQQ02E2)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 50 秒 / 上限 1200 秒・保持 pid 2200924 pytest agora-controllers-wt-ki-aa51 (c-HCAEXBSXP48HQVQ4DPYX0EZZZN)、pid 2184762 code-quality agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 2105228 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2196986 pytest doeff-wt-json-value-ids (c-37TS11YDQK50T5PS4GDDHF1VBE)、pid 2083368 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 2207627 pytest doeff-wt-bytecode-guard-internals (c-PX52E1C685SM9V7R2V7NRZFVXD)、pid 2202521 pytest agora-controllers-wt-steps2 (c-QMRDX9RCE115HESA4KDVPP74ZM)、pid 2203841 pytest agora-controllers-wt-ki-0a98-co (c-D5M32RDXQ6YTYZMA0J4CQQ02E2)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 枠 6 を取った(待ち 59 秒)— pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+
+deadline scale x1.1 (load per usable CPU) — per test 68s, watchdog 101s
+
+test-admission: focused — 2 件(変更箇所の検証)
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_test_named_file_in_a_design_record_is_red_until_renamed _________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-563/test_test_named_file_in_a_desi0')
+
+    def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path) -> None:
+        """失敗ケース: docs/design/ の記録の中に検の名の file(`test_*.py` の模型・`*_test.py` の測りの script)を置くと赤、集め手の
+        pattern に当たらない名(`.py.txt`)に替えると緑。除外の表に名指しの行がある file の隣に置いた新しい検も赤(card ki-d153ab595504)。
+    
+        docs/design/ を dir の行で外していた形では、seat-home の模型 4 本(`def test_*` を持たず `t_*` を __main__ から回す script)が
+        make test-changed の選びで検として集められ(0 本集まって「未測」)、本物の検を記録の中にだけ置いても日次が緑だった
+        (docs/design-checks/ の盲検 A・B と同じ 2 つの穴)。
+        """
+        (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+        named = next(Path(row) for row in EXCLUDED if row.startswith("docs/design/") and not row.endswith("/"))
+        candidates = (
+            *(
+                Path(record, "lt-MODEL", *tail)
+                for record in _record_dirs(REPO_ROOT)
+                for tail in (("model", "test_chain.py"), ("evidence", "scripts", "fork_test.py"))
+            ),
+            named.with_name("hidden_test.py"),
+        )
+        for path in (named, *candidates):
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text("def test_it():\n    pass\n", encoding="utf-8")
+    
+        with pytest.raises(AssertionError) as red:
+            _assert_every_test_file_belongs_to_a_daily_population(tmp_path, _population_roots(tmp_path))
+        message = str(red.value)
+        missing = [path.as_posix() for path in candidates if path.as_posix() not in message]
+>       assert not missing, f"母集団の外の検として名指されていない: {missing} — R8"
+E       AssertionError: 母集団の外の検として名指されていない: ['docs/design/lt-MODEL/model/test_chain.py', 'docs/design/lt-MODEL/evidence/scripts/fork_test.py', 'docs/design/worker-pod-cpu-share/artifacts/2026-10-12/evidence/scripts/hidden_test.py'] — R8
+E       assert not ['docs/design/lt-MODEL/model/test_chain.py', 'docs/design/lt-MODEL/evidence/scripts/fork_test.py', 'docs/design/worker-pod-cpu-share/artifacts/2026-10-12/evidence/scripts/hidden_test.py']
+
+tests/test_daily_test_population.py:623: AssertionError
+____________ test_exclusion_table_has_no_dir_row_over_a_record_dir _____________
+
+    def test_exclusion_table_has_no_dir_row_over_a_record_dir() -> None:
+        """除外の表に、設計の記録の dir を dir ごと覆う行(記録の dir・その親・その下の dir)が無い。
+    
+        dir の行の下に置いた本物の検は、母集団の検にも古い行の検にも見つからない(設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 B)。
+        記録の中で外せるのは、改名できない file の 1 file ごとの path の行だけ。
+        """
+        records = _record_dirs(REPO_ROOT)
+        assert records, "root の pyproject.toml の [tool.doeff] record-dirs が空 — 記録の dir を 1 点で宣言する"
+        covering = [
+            row
+            for row in EXCLUDED
+            if row.endswith("/") and any(record.startswith(row) or row.startswith(record) for record in records)
+        ]
+>       assert not covering, (
+            f"除外の表に設計の記録の dir を覆う dir の行がある: {covering} — 消し、中の検の名の file は `.py.txt` に替える"
+            "(改名できない file だけ 1 file ごとの path の行にする)— ADR-DOE-ENFORCE-001 R8"
+        )
+E       AssertionError: 除外の表に設計の記録の dir を覆う dir の行がある: ['docs/design/'] — 消し、中の検の名の file は `.py.txt` に替える(改名できない file だけ 1 file ごとの path の行にする)— ADR-DOE-ENFORCE-001 R8
+E       assert not ['docs/design/']
+
+tests/test_daily_test_population.py:710: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-d153-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_daily_test_population.py::test_test_named_file_in_a_design_record_is_red_until_renamed
+FAILED tests/test_daily_test_population.py::test_exclusion_table_has_no_dir_row_over_a_record_dir
+2 failed, 15 deselected, 1 warning in 1.97s

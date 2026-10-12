@@ -1,0 +1,366 @@
+{
+  "version": 1,
+  "task_id": "lt-R12TTZXKQPKRPSE5342853KM0V",
+  "base_revision": "3682f28c8b06bbd18f125619a85f35d88f337e21",
+  "author": {
+    "conversation_id": "c-XTNV6MJ5ZSQRP67WSF82JAKSQ6",
+    "model": "claude-sonnet-5-5",
+    "effort": "会話の起動の設定のまま(値はこの会話から読めない・自己申告)"
+  },
+  "requirements": [
+    "R1: doeff main の EXCLUDED に dir の行 docs/design/ が無いか、残すなら行の理由が make test-changed の選びと R8 の抜け道への答えを書いている",
+    "R2: seat-home の model/ の test_*.py 4 本が .py.txt への改名か母集団の根への登録のどちらかに決まり、tests/test_daily_test_population.py が緑",
+    "R3: 記録の中に検の名の file を置いても日次が赤にならない一方、本物の検を記録の dir にだけ置いても緑にならない(ADR-DOE-ENFORCE-001 R8 の役目を弱めない)"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "dd1b715a84e9a043368849a1cad355a62cb20420469b994678182409d0a53530"
+  },
+  "modules": [
+    {
+      "id": "M-name",
+      "responsibility": "「検の file」の名の規則(pytest の集め手と同じ値)",
+      "owns": "root の ini の python_files・doeff_hy_test_files・doeff-adr の既定の pattern",
+      "hides": "各 pattern の読み方",
+      "interface": "tests/test_daily_test_population.py の _test_file_patterns・_is_test_file と、scripts/run_changed_tests.py の collector_patterns・is_test_file(同じ ini の値を読む)",
+      "effects": "pyproject.toml を読む(書かない)",
+      "lifetime": "呼び出しごと。状態を持ち越さない",
+      "invariants": "population と選びは同じ ini の値から『検の名か』を判定する"
+    },
+    {
+      "id": "M-pop",
+      "responsibility": "日次の母集団の検: 検の名の file が母集団の根か理由つきの除外の行の下に在る事を確かめる(ADR-DOE-ENFORCE-001 R8)",
+      "owns": "母集団の根の読み・除外の表 EXCLUDED とその理由・記録の dir を覆う dir の行の禁止",
+      "hides": "木の歩き方(_NOT_WALKED)",
+      "interface": "tests/test_daily_test_population.py の pytest の検と EXCLUDED",
+      "effects": "file system を読む・Makefile の print-package-extra-test-roots を make で呼ぶ(書かない)",
+      "lifetime": "pytest の session ごと。状態を持ち越さない",
+      "invariants": "検の名の file は根か除外の行の下。除外の行は今の木の file を 1 本以上覆う。記録の dir を dir の行で覆わない"
+    },
+    {
+      "id": "M-select",
+      "responsibility": "変えた file から make test-changed が走らせる検を選ぶ(契約の組・変えた検・逆依存)",
+      "owns": "変えた検の選び・逆依存の答えの絞り・設計の記録の dir の下を検に数えない判定",
+      "hides": "doeff-linter の逆依存の問い方",
+      "interface": "scripts/run_changed_tests.py の is_test_file・collector_patterns・select_targets・extend_with_reverse",
+      "effects": "git・linter・pytest を子 process で呼ぶ(file には書かない)",
+      "lifetime": "1 回の実行。状態を持ち越さない",
+      "invariants": "record-dirs の下の file は名の規則に当たっても選ばない。それ以外は pytest の集め手と同じ名の規則で選ぶ"
+    },
+    {
+      "id": "M-records",
+      "responsibility": "設計の記録 dir(docs/design/<記録>/・docs/design-checks/<記録>/): その時点の証拠を置く",
+      "owns": "記録の中の模型・測りの script・検の写し",
+      "hides": "なし(記録は証拠そのもの)",
+      "interface": "検の名の file は `.py.txt` で置く。改名できない file だけ 1 file ごとの除外の行。dir の一覧は pyproject の [tool.doeff] record-dirs",
+      "effects": "なし(日次の母集団の外・着地の後は書き換えない)",
+      "lifetime": "着地の後は不変",
+      "invariants": "記録の中に集め手の pattern に当たる名の file を置かない(置けば母集団の検が赤)"
+    },
+    {
+      "id": "M-seal",
+      "responsibility": "hash で封をした記録の file を linter の規則から外す名指しが、封の表と一致する事",
+      "owns": "evidence/SHA256SUMS.txt の path と hash・architecture.hy の :files",
+      "hides": "なし",
+      "interface": "tests/test_sealed_records_are_named.py・packages/doeff-linter/tests/rule_population.rs",
+      "effects": "file を読む(書かない)",
+      "lifetime": "pytest・cargo test の実行ごと",
+      "invariants": "名指しの file は封の表に在り、hash が中身と一致する"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "新しい設計の記録が model/ や evidence/ に test_*.py の模型や再現の写しを置く",
+      "claim": "母集団の検が赤になり .py.txt を案内する。直すのは記録の file の名だけで、M-pop・M-select・M-seal は変えない",
+      "expected_scope": "M-records の新しい file の名だけ",
+      "actual_scope": "M-records の file の名だけ。封の表の検算は改名前後で同じ(19 行一致・元から不一致の 7 行も同じ)で、cargo test の rule_population は 12 passed",
+      "changed_modules": [
+        "M-records"
+      ],
+      "unchanged_modules": [
+        "M-name",
+        "M-pop",
+        "M-select",
+        "M-seal"
+      ],
+      "reason": "予測どおり(波及の差なし)",
+      "revision": "不要 — 予測と実測が一致した"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "閉じた記録が path と sha256 で名指す *_test.py(改名できない)の測りの script が、import する生きた module と共に新しい記録に入る",
+      "claim": "EXCLUDED に 1 file の path の行を 1 つ足すだけ。M-select・M-seal・M-name は変えない。行の隣の新しい検は赤のまま",
+      "expected_scope": "M-pop の表の 1 行だけ",
+      "actual_scope": "盲検 A の例で外れた: 除外の行だけでは、import 先の関数の改名で選びが記録の script を逆依存で選び『集める時に落ちた』赤 1・rc 1(実物の linter で再現)。解消には M-select の判定と記録の dir の 1 点の定義(pyproject)の改めが要った",
+      "changed_modules": [
+        "M-pop",
+        "M-select"
+      ],
+      "unchanged_modules": [
+        "M-name",
+        "M-seal",
+        "M-records"
+      ],
+      "reason": "知識の漏洩: 『この検の名の file は検ではない』が M-pop の EXCLUDED にしか無く、名の規則だけを読む M-select に届かなかった。契約の拡張ではなく、隠すはずの知識が一方にしか無かった事による",
+      "revision": "503856b64: pyproject に [tool.doeff] record-dirs(記録の dir の 1 点の定義)・run_changed_tests.py の is_test_file が record-dirs の下を検に数えない・population の側に記録の dir を覆う dir の行の禁止と記録の dir ごとの赤→緑の検・選びの側に新しい検。再検証は c-s2-after・c-s2-select-test・c-fix-real-select"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "本物の回帰の検を記録の dir にだけ置く(docs/design/<記録>/ の下の test_*.py)",
+      "claim": "母集団の検が赤になる(dir の行が無いので隠れない)。.py.txt に替えると赤は消えるが、その file は走らない — 走る検にしたいなら母集団の根へ置く",
+      "expected_scope": "変更なし(赤が出る)",
+      "actual_scope": "赤→緑を実測。dir の行を戻す変異で記録用の検と構造の検の 2 本が赤。盲検 B は .py.txt を glob で日次に走らせる shim の検という第 3 の道を示し、実物の木で再現した(shim は日次の形で走り、選びには入らない)。設計の契約に反する物ではなく、限界として記録(design.md §7)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "M-name",
+        "M-pop",
+        "M-select",
+        "M-records",
+        "M-seal"
+      ],
+      "reason": "予測どおり。盲検 B の shim は設計の外の第 3 の道で、責務の侵害ではない(契約の文言と趣旨の差は design.md §7 に記録)",
+      "revision": "不要 — 設計は変えない。限界を本文へ記録"
+    },
+    {
+      "id": "S4",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "2 つの会話が同時に別々の記録を足し、マージの列へ並べる",
+      "claim": ".py.txt の置き方なら共有の file を触らない。S2 の行だけが M-pop の表で衝突し得る(稀)",
+      "expected_scope": "M-records の各自の dir だけ",
+      "actual_scope": "実測: 同じ表に 2 つの行を足すと git merge-tree が衝突(rc 1)、別々の記録に .py.txt を足すと衝突なし(rc 0)。予測どおり",
+      "changed_modules": [
+        "M-records"
+      ],
+      "unchanged_modules": [
+        "M-pop"
+      ],
+      "reason": "予測どおり",
+      "revision": "不要"
+    },
+    {
+      "id": "S5",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "名の規則の検は file の名と中身を読むだけで、機体の資源に依らない(測りの script が sched_setattr を呼ぶのは記録の中身で、規則ではない)"
+    },
+    {
+      "id": "S6",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "日次は atlas の Pod の git の作業木・make test-changed は手元の作業木で走るが、どちらも同じ pyproject の値と同じ名の規則を読む。単一機体からクラスタへ移す要求は、この規則に無い"
+    },
+    {
+      "id": "S7",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "検は file の名・中身・make の出力を読む決定的な検で、時刻・乱数を持たない。模型の木(tmp)で見る検は既に決定的"
+    }
+  ],
+  "checks": [
+    {
+      "id": "c-s1-pos",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": ".py.txt に替えた記録の file は母集団の検に数えられず、検が緑",
+      "observation": "tests 3 本 33 passed(改名の branch)・code-quality fast passed",
+      "evidence": {
+        "path": "evidence/focused-tests-33-passed.txt",
+        "sha256": "f2ff606ebb4afc5a60122c17be746a2c893b5f5c46d095c25faae9bb2cfc5a09"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-seal",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "改名の前後で封の表の検算が同じ(19 行一致・元から不一致 7 行も同じ)で、4 本の hash は一致のまま",
+      "observation": "改名前後とも 19 OK・同じ 7 FAILED・model/test_* の 4 行は OK",
+      "evidence": {
+        "path": "evidence/seal-table-before-after.txt",
+        "sha256": "6dcec5f993101256d1e5aded298736ddbdb7d474bc9c3ba26f283bfffa6803cf"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-rust",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "architecture.hy の封の名指しを実機の linter が読み、規則の母集団が正しい",
+      "observation": "cargo test --test rule_population 12 passed",
+      "evidence": {
+        "path": "evidence/rust-rule-population-12-passed.txt",
+        "sha256": "ead9ec30ed4d39433b8cd2abb9bc17ec360960d3ea3777936de4ee6082250cce"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-neg",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "dir の行を戻すと記録の中の検の名の file が隠れ、赤になるはずの検が赤にならない(行の形の穴 B)",
+      "observation": "dir の行を戻した変異で、記録用の検が DID NOT RAISE で赤",
+      "evidence": {
+        "path": "evidence/mutation-row-back-red.txt",
+        "sha256": "e8b1210aded12fba7ba9984d5f16f016aaa90785f81a83881162d1e71f35fb87"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s2-before",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "修正前の選びで、記録の中の除外済みの *_test.py が逆依存(距離 1)で選ばれ、集める時に落ちた赤になる(盲検 A の失敗例の成立)",
+      "observation": "赤 1(集める時に落ちた)・rc 1・距離 1 で選ばれた(実物の doeff-linter 付き)",
+      "evidence": {
+        "path": "evidence/A-real-before-red.txt",
+        "sha256": "2296b87225e802ee3893e6ee3fa46fdfdb627ae6fe4a55fb42494ac90ed04691"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s2-after",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "修正後の選びで同じ変更が赤にならず、記録の script は選ばれない",
+      "observation": "赤 0・rc 0。linter の答え 3 本のうち記録の script が除かれ、足した検は 2 本",
+      "evidence": {
+        "path": "evidence/A-real-after-green.txt",
+        "sha256": "fe7f5e6aae7b8e03b3625dd9897117013bb3805dbaae2925ee364e783fb69ec1"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s2-select-test",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "記録の dir の宣言が無い対照では同じ file が選ばれて赤、宣言があれば選ばれない(選びの検の感度)",
+      "observation": "新しい検 2 件(宣言あり・対照)と母集団の側の検を含む 7 passed",
+      "evidence": {
+        "path": "evidence/fix-focused-7-passed.txt",
+        "sha256": "854d774e8db08a58c88be3f6f45e4e1de90793417566083c329ba060d9525783"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-fix-real-select",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "修正した道具で実物の選び(make test-changed 相当)が緑",
+      "observation": "3 file(17 + 15 + 26 本)・赤 0・未測 0・rc 0",
+      "evidence": {
+        "path": "evidence/fix-test-changed-green.txt",
+        "sha256": "ddd6c9e9b6b5e9674a4fd7847d52e983390a2f012ae512cb144193a16642e9e9"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s3-pos",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "検の名の file を記録の dir に置くと赤、.py.txt に替えると緑。名指しの行の隣の新しい検も赤",
+      "observation": "新しい検が通る(7 passed に含む)",
+      "evidence": {
+        "path": "evidence/fix-focused-7-passed.txt",
+        "sha256": "854d774e8db08a58c88be3f6f45e4e1de90793417566083c329ba060d9525783"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s3-neg",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "dir の行 docs/design/ を戻すと、記録用の検と構造の検の 2 本が赤になる",
+      "observation": "2 failed(test_test_named_file_in_a_design_record_is_red_until_renamed・test_exclusion_table_has_no_dir_row_over_a_record_dir)",
+      "evidence": {
+        "path": "evidence/mutation2-dir-row-red.txt",
+        "sha256": "5de22c4f2502a305158d59c8d20292614e2df9ec4a3a58680a780ef89ca662b3"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s3-b-shim",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の shim(.py.txt を glob で日次に走らせる)は、import 先を壊すと日次の形で赤になり、選びには入らない",
+      "observation": "shim を直に走らせると lt-NEWREC が FAILED(1 failed・3 passed・1 skipped)。選びの選んだ検に shim は無い",
+      "evidence": {
+        "path": "evidence/B-real-shim-direct.txt",
+        "sha256": "be08389ecc776b4d90f4c589e8e0308fa8d078b403051282b31be8cb7edc9843"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s3-b-select",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "同じ状態で選びを走らせると、shim は選ばれない(subprocess で走る検は import の辺を持たない)",
+      "observation": "選んだ検 5 本(契約の組 3・逆依存 2)に tests/test_design_record_models.py は無い。赤 1 は変異が母集団の検の import も壊した別の原因",
+      "evidence": {
+        "path": "evidence/B-real-select.txt",
+        "sha256": "ae22e8921448a2a10881ea01391e41b4001a6d5b7065516c4f8fda36cb043325"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s4-neg",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "2 つの会話が同じ表に行を足すと衝突する",
+      "observation": "git merge-tree rc 1・衝突",
+      "evidence": {
+        "path": "evidence/S4-concurrent-edits.txt",
+        "sha256": "0c325d1f40164e55f1402f0328347f2441bdcf4dbdc3ccb9f9755203bb9ea1af"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s4-pos",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "別々の記録に .py.txt を足す差分は衝突しない",
+      "observation": "git merge-tree rc 0",
+      "evidence": {
+        "path": "evidence/S4-concurrent-edits.txt",
+        "sha256": "0c325d1f40164e55f1402f0328347f2441bdcf4dbdc3ccb9f9755203bb9ea1af"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}

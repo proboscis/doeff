@@ -1,0 +1,18 @@
+# 盲検 A の失敗例を実物で再現した設定(使い捨ての作業木 = 3682f28c8 に 1 commit・push しない)
+# 起点 B0 = 787ee53fecd99362705265be57f2704d3dddeeda: 記録の中の改名できない測りの script を、除外の 1 file の行に載せた
+787ee53fe Proboscis REPRO base: 記録の中の *_test.py を除外の行に載せる(盲検 A の再現・使い捨て・push しない)
+
+ docs/design/lt-REPRO/evidence/skips_probe_test.py | 3 +++
+ tests/test_daily_test_population.py               | 1 +
+ 2 files changed, 4 insertions(+)
+
+## 足した script(docs/design/lt-REPRO/evidence/skips_probe_test.py)
+from doeff_adr.pytest_plugin import parse_hy_test_skips
+
+print(parse_hy_test_skips(()))
+
+## 通常のリファクタ = doeff_adr の関数 parse_hy_test_skips を使い手ごと改名(記録の script は直さない)
+sed -i 's/parse_hy_test_skips/parse_hy_test_skip_rows/g' packages/doeff-adr/src/doeff_adr/pytest_plugin.py tests/test_daily_test_population.py
+
+## 走らせた命令
+uv run --script scripts/run_changed_tests.py --base B0 --linter <doeff-linter の debug binary(cargo test --test rule_population で出来た物)> --budget 120
