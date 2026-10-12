@@ -240,10 +240,23 @@ tests = [
 
 # 例の検(下の doeff-traverse の行と同じ検)は、例が require する macro の持ち主の source(展開の中身)の変更でも選ぶ。
 # 接頭辞は src だけ — doeff-hy の検だけを変えた差分には払わせない(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。
+# doeff-effect-analyzer の検 3 本も、同じ展開の変更で選ぶ(card ki-f0192874690b)。analyzer の検は Hy の source に
+# `(require doeff-hy.macros [defhandler …])` を書いて本物の macro で展開してから読み、doeff-hy を import しないので、
+# 展開(handle・defhandler の節の局所名・節の操作の形)を変える commit を import の逆依存は選ばない。4f284efa9(節の effect・k を
+# _doeff_effect・_doeff_k の別名にした・card ki-6af9862aed32)はこのため、analyzer の検 12 本(test_program_effects.py の 2 本・
+# test_guarded_clauses.py の 10 本)と agora-controllers の閉じの検(*_closure)が赤のまま main に入り、日次で初めて出た(card ki-fbf5f1db72a7)。
+# 3 本は、今の main の doeff-hy(4f284efa9 を含む)と直す前の analyzer(2641decc8 の前)の組で赤、今の main の analyzer で緑
+# (2026-10-12 の測り): 節が受けた effect を出す形・それを別の関数へ渡す形(閉じの検が赤だった形)・`:when` の守りが effect を読む形。
+# 1 file ずつの壁時計(起動を含む・会話の Pod の load average 60 で)は test_program_effects.py の 2 本が 3.8〜5.2 秒・
+# test_guarded_clauses.py の 1 本(7 つの形の 1 つ)が 3.7〜4.4 秒。
+# 同じ接頭辞の行は 2 つ置けない(読み手が止まる)ので、上の例の検と同じ行に並べる。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-hy/src/doeff_hy/"
 tests = [
     "packages/doeff-traverse/tests/test_examples_run.py",
+    "packages/doeff-effect-analyzer/tests/python/test_program_effects.py::test_a_clause_that_performs_the_effect_it_received_emits_that_effect",
+    "packages/doeff-effect-analyzer/tests/python/test_program_effects.py::test_a_clause_that_hands_its_alias_of_the_received_effect_to_a_function_emits_it",
+    "packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_certainly_sends_on_leave_the_handler[through_fence-leaves0]",
 ]
 
 # doeff-linter が節の判じに読む節の操作の一覧(生成物)は、doeff-hy の表 CLAUSE-OPS の書き出しと 1 字も違わない(card ki-d3ef2a50cc04)。
