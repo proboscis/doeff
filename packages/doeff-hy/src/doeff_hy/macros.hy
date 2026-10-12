@@ -651,7 +651,7 @@ defk {name}: :post type annotation cannot be an empty string.
       '(. (__import__ "doeff.do" :fromlist #("do")) do)))
 
 (defn _scoped-definition [compiler name forms]
-  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
 
    module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
    読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
@@ -2179,7 +2179,7 @@ the effect in the enclosing do-context.
 ;; defsystem — doeff-cluster の系の宣言(ADR-DOE-CLUSTER-001・形の読みは system_form.hy)
 ;; ---------------------------------------------------------------------------
 
-(defmacro defsystem [name params #* body]
+(defmacro defsystem [_hy-compiler name params #* body]
   "系を宣言する: 土台を引数に受け、名前 → Program と約束の組(doeff_cluster.shared.intent.service_model.System)を返す関数を定義する。
 
    (defsystem agora-land [foundation]
@@ -2191,9 +2191,10 @@ the effect in the enclosing do-context.
    説明の文の後・job の行の前に :task-limits {\"<組>\" {\"scope\" \"worker\" \"limit\" 6}} を置くと、系が組の同時数の上限を宣言する
    (task は組の名だけを名乗る — 値の持ち主は系の宣言)。
    形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。
-   関数には静的な記述 __doeff_system__(名・引数・job ごとの関数の名と約束)が付く。"
+   関数には静的な記述 __doeff_system__(名・引数・job ごとの関数の名と約束)が付く。
+   関数の本体の中に書くと、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition — card ki-93395c51de1e)。"
   (import doeff-hy.system-form [defsystem-form])
-  (defsystem-form name params body))
+  (_scoped-definition _hy-compiler name [(defsystem-form name params body)]))
 
 ;; ---------------------------------------------------------------------------
 ;; defpipeline — named-stage pipeline composition
