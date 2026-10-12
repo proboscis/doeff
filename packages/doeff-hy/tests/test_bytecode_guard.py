@@ -4,8 +4,10 @@
 有効とされ、古い展開のまま動く。包みがあれば、使う側は新しい展開で動く。
 
 Hy は **PyPI の版**(fork ではない — 利用者の決定 2026-09-29「Hy には一切手を入れない」)を、この venv と切り離した
-使い捨ての環境(``uv run --no-project --isolated --with hy==1.3.1``)で使う。この venv の Hy は fork で、fork 自身の
-仕組み(.hydeps)が同じ赤を消してしまうので、ここでは包みの効き目を分けて測れない。
+使い捨ての環境(``uv run --no-project --isolated --with hy==<uv.lock の版>``)で使う。この venv は起動の時に .pth から
+包みを入れる(test_the_venv_installs_the_guard_at_startup_before_hy)ので、ここでは包みの無い形と分けて測れない。
+版は repo の根の uv.lock の hy の行から読む(ADR-DOE-HY-008 の locked-hy-version と同じ — card ki-df4cc0b38cda)。
+写しの定数だと、uv.lock の Hy を上げてもこの検は古い版のまま測る。
 """
 
 from __future__ import annotations
@@ -18,12 +20,15 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Buffer
+from functools import cache
 from pathlib import Path
 
 import pytest
+import tomllib
 from doeff_hy_bytecode_guard import records
 
-PYPI_HY = "hy==1.3.1"
+#: 測る Hy の版の定義元(repo の根の uv.lock)。
+LOCK = Path(__file__).resolve().parents[3] / "uv.lock"
 #: 包みの package の親(doeff-hy の src)— 使い捨ての環境へは path で渡す(doeff-hy 全体は入れない)。
 GUARD_ROOT = Path(__file__).resolve().parents[1] / "src"
 
@@ -36,6 +41,26 @@ _ENV_NOT_PASSED = (
     "PYTHONPYCACHEPREFIX",
     "PYTHONPATH",
 )
+
+
+@cache
+def _locked_hy_version() -> str:
+    """uv.lock の hy の行の版。hy の行が 1 つでない・index から入れる版でない(フォークの git など)時は、測る版を決められない
+    ので止める(ADR-DOE-HY-008 の locked-hy-version と同じ判定)。"""
+    rows = [
+        package
+        for package in tomllib.loads(LOCK.read_text(encoding="utf-8")).get("package", [])
+        if package.get("name") == "hy"
+    ]
+    assert len(rows) == 1, (
+        f"uv.lock の hy の行が 1 つでない({len(rows)} 行)— 測る Hy の版を決められない"
+    )
+    source = rows[0].get("source", {})
+    assert "registry" in source, (
+        f"uv.lock の hy が index から入れる版でない({source})— PyPI の Hy で測れない"
+    )
+    return rows[0]["version"]
+
 
 _LOADER = """\
 import sys
@@ -109,7 +134,7 @@ def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None) -> int:
             "--python",
             python,
             "--with",
-            PYPI_HY,
+            f"hy=={_locked_hy_version()}",
             "python",
             str(script),
         ],
@@ -121,7 +146,7 @@ def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None) -> int:
     )
     assert completed.returncode == 0, completed.stderr
     hy_version, value = completed.stdout.split()
-    assert hy_version == PYPI_HY.split("==")[1]
+    assert hy_version == _locked_hy_version()
     return int(value)
 
 
@@ -191,7 +216,7 @@ def test_the_record_lives_inside_a_standard_pyc(tmp_path: Path) -> None:
     assert data[:4] == importlib.util.MAGIC_NUMBER
     record = records.record_of(marshal.loads(data[records.PYC_HEADER_BYTES :]))
     assert record is not None
-    assert record.hy_version == PYPI_HY.split("==")[1]
+    assert record.hy_version == _locked_hy_version()
     # 記録は展開が使った macro(提供元の module 名・macro 名・digest)で、file の path を持たない。
     assert [(used.table, used.module, used.name) for used in record.macros] == [
         ("_hy_macros", "pkg.macros", "answer")
