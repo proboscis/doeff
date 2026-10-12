@@ -1,0 +1,35 @@
+"""定義の macro(defeffect・deff・deftest・defsystem)を module・class・関数の中に置き、実行時と型検査のための展開の
+Python の source を書き出す — 直す前と後の展開を 1 字ずつ比べるため。引数 = 出力の dir。
+使い方(作業木を cwd に・2 回撃って 2 回目を使う — 1 回目は bytecode の作り直しで gensym の番号がずれる):
+  uv run --frozen python expand_six.py <出力の dir>
+"""
+import ast, sys, types
+from contextlib import nullcontext
+from pathlib import Path
+import doeff_hy, hy
+from hy.compiler import hy_compile
+from hy.reader import read_many
+from doeff_hy.static_view import static_view
+
+HEADER = "(require doeff-hy.macros [defeffect deff deftest defsystem])\n"
+BODY = """
+(defeffect Plain "Plain." {:fields [(: x int) (: y str "d")] :answer int :tags {:context "t" :role "intent"}})
+(defeffect Checked {:fields [(: x int)] :pre [(> x 0)] :answer (| int str) :absent [str] :tags {:context "t" :role "intent"}})
+(defeffect Carry {:fields [(: program object)] :runs-carried [program] :answer int :tags {:context "t" :role "intent"}})
+(defeffect Empty {:answer int :tags {:context "t" :role "intent"}})
+(deff helper [y] {:pre [(: y int) (> y 0)] :post [(: % int)] :tags {:context "t" :role "intent"}} "doc" (+ y 1))
+(deff helper2 [y] {:pre [(: y int)] :post [(: % int)]} y)
+(deftest test-plain (assert True))
+(deftest test-marked {:marks ["slow"] :params {"n" [1 2]}} [n] (assert n))
+(defsystem lab [#^ object foundation] "lab" (j (fn [] None) :replicas 1))
+(defsystem lab2 [#^ object foundation] "lab2" :task-limits {"g" {"scope" "worker" "limit" 6}} (k (fn [] None) :needs #{"pg-network"} :replicas 0))
+"""
+SAMPLES = {"module": BODY, "class": "(defclass Holder []\n" + BODY + ")", "function": "(defn host []\n" + BODY + " None)"}
+out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
+for name, body in SAMPLES.items():
+    for static in (False, True):
+        src = HEADER + body
+        mod = types.ModuleType("snap"); sys.modules["snap"] = mod
+        with (static_view() if static else nullcontext()):
+            node = hy_compile(read_many(src, filename="snap.hy"), mod, filename="snap.hy", source=src)
+        (out / f"{name}-{'static' if static else 'runtime'}.py").write_text(ast.unparse(node))

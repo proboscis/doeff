@@ -1,0 +1,29 @@
+# 盲検 B の失敗例の設計者による再現(版 5ddb4e482 に B の差分 b-files/worktree.diff.txt を当てた木 /home/ubuntu/.worktrees/doeff-blind-b-lt0YB1)
+# 刻 2026-10-12T03:20:33Z
+$ git rev-parse HEAD
+5ddb4e482b4969d76ca0d4201bd90a6b3b382bd8
+$ git diff --stat
+ packages/doeff-hy/src/doeff_hy/declarations.hy | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+$ uv run --frozen pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py -q -W ignore
+Terminated
+exit=124
+
+$ uv run --frozen python /tmp/lt0YB1-blind-b/demo_violation.py
+[mode] EFFECT_INDEX が在る(変更あり) = True
+[1] 呼びの答え = 6, 6(期待 6)
+[1] 定義を書いた module の globals の眺め: 呼ぶ前 == 2 回呼んだ後 -> True
+[1] doeff_hy.declarations の索引の文脈 't' の要素の数: 呼ぶ前 0 -> 2 回呼んだ後 2
+[2] 定義 1 つだけの関数の局所の名 = ['Inner'] / 期待 ['Inner'] -> True
+[3] make-effect を 1000 回呼んだ後、gc の後も生きている呼びごとの Inner の型の数 = 1000
+[3] effects_in_context('per-call') の要素の数 = 1000・相異なる型の数 = 1000
+[3] 例: __qualname__ = 'make_effect.<locals>._hy_anon_3.<locals>.Inner'・__module__ = 'nested_definition_scope'
+[3] その名で module から引けるか: hasattr(mod3, 'Inner') = False
+exit=0
+
+# 上の pytest は 300 秒の timeout で止まった(exit 124 — 機体の検の枠の待ち)。同じ命令を上限 540 秒で撃ち直した: 刻 2026-10-12T03:25:48Z
+$ uv run --frozen pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py -q -W ignore
+.........................                                                [100%]
+97 passed in 26.55s
+exit=0

@@ -650,8 +650,12 @@ defk {name}: :post type annotation cannot be an empty string.
       '_doeff_do
       '(. (__import__ "doeff.do" :fromlist #("do")) do)))
 
-(defn _scoped-definition [compiler name forms]
+(defn _scoped-definition [compiler name forms [module-forms #()]]
   "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+   `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
+   module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
+   関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す(card ki-93395c51de1e・設計検証
+   lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 A)。どこで 1 度だけ走るかの判断はここだけが持ち、呼び手は文を渡すだけにする。
 
    module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
    読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
@@ -662,26 +666,35 @@ defk {name}: :post type annotation cannot be an empty string.
    `super()` が `__class__` を失うから。型検査のための展開は補助を import しないので包まない。
 
    呼び手(定義の macro)が `forms` に負う事 — 包むかどうかはここが決めるので、どの場所でも成り立つ形にする:
-   - 関数の中では `forms` は外の関数を呼ぶたびに評価される。`forms` は定義して `name` に束ねるだけにし、module の
-     globals に記録を積む文を置かない(呼ぶたびに積み増す — tests/test_nested_definition_scope.py の
-     test_nested_definition_leaves_module_globals_unchanged)。
+   - 関数の中では `forms` は外の関数を呼ぶたびに評価される。`forms` は定義して `name` に束ねるだけにし、どの module の
+     状態(定義を書いた module の globals も、doeff の module の索引や登録簿も)も変える文を置かない(呼ぶたびに積み増す —
+     tests/test_nested_definition_scope.py の test_definition_sample_leaves_module_state_unchanged・盲検 B)。module に
+     1 度だけ知らせる文は `module-forms` に渡す。
    - class の本体では `forms` の import は class の属性になり、`forms` の中で定義した関数からは見えない。その関数が
      名で読む補助は `_install-guard-globals` で関数の globals へ入れる(同 test_class_body_definition_runs_without_module_definitions)。
    - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
      関数の局所の名になる。"
-  (if (_in-function-body? compiler)
-      `(setv ~name ((fn [] ~@forms ~name)))
-      `(do ~@forms)))
+  (cond
+    (_in-function-body? compiler) `(setv ~name ((fn [] ~@forms ~name)))
+    (_function-scope? compiler) `(do ~@forms)
+    True `(do ~@forms ~@module-forms)))
+
+(defn _function-scope? [compiler]
+  "macro が関数の本体の中に書かれたか(実行時の展開でも型検査のための展開でも同じ答え)。
+
+   展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope(`hy.scoping` の
+   nearest-python-scope)が関数なら真。module と class の本体は偽。読み手は `_in-function-body?` と、関数の中では
+   `module-forms` を出さない `_scoped-definition`。"
+  (is-function-scope (nearest-python-scope (. compiler scope))))
 
 (defn _in-function-body? [compiler]
   "実行時の展開で、macro が関数の本体の中に書かれたか — 書いた場所で補助を import すると外の関数の局所の名を作る所か。
 
-   展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope(`hy.scoping` の
-   nearest-python-scope)が関数なら真。module と class の本体は偽(import した名は module の globals か class の属性に
-   なり、先の読みを壊さない)。型検査のための展開は偽(包まない — `_scoped-definition` の註)。読み手は
-   `_scoped-definition`・handle.hy の handle と、関数の中では pytest の item を記録しない deftest。"
+   `_function-scope?` が真で、型検査のための展開でない時に真。module と class の本体は偽(import した名は module の
+   globals か class の属性になり、先の読みを壊さない)。型検査のための展開は偽(包まない — `_scoped-definition` の註)。
+   読み手は `_scoped-definition` と handle.hy の handle。"
   (and (not (_static-view?))
-       (is-function-scope (nearest-python-scope (. compiler scope)))))
+       (_function-scope? compiler)))
 
 (defn _quoted-forms [forms]
   "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。
@@ -2140,11 +2153,9 @@ the effect in the enclosing do-context.
                                  (hy.models.String "skip condition met"))))))
 
   ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211 / #1291 — 記録の式を展開に足す)。
-  ;; 関数の本体の中の deftest は記録しない: pytest が集めるのは module の段の関数だけで、記録の式は外の関数を呼ぶたびに
-  ;; module の __doeff_pytest_items__ へ積み増す(_scoped-definition の呼び手が負う事・card ki-93395c51de1e)。
-  (setv item-record (if (_in-function-body? _hy-compiler)
-                        '(do)
-                        (_record-test-function name fn-params item-decorators)))
+  ;; module の段で 1 度だけ走る文なので _scoped-definition の module-forms に渡す(関数の本体の中の deftest は記録しない —
+  ;; pytest が集めるのは module の段の関数だけ・card ki-93395c51de1e)。
+  (setv item-record (_record-test-function name fn-params item-decorators))
 
   ;; Assemble the function definition with decorators
   (locate-synthesized (_scoped-definition _hy-compiler name
@@ -2152,12 +2163,11 @@ the effect in the enclosing do-context.
       [pytest-import
        (_helper-imports)
        `(defn [~@decorators] ~fn-name [~@fn-signature] ~fn-body)
-       `(_install-guard-globals ~name {"_doeff_do" _doeff_do})
-       item-record]
+       `(_install-guard-globals ~name {"_doeff_do" _doeff_do})]
       [(_helper-imports)
        `(defn ~fn-name [~@fn-signature] ~fn-body)
-       `(_install-guard-globals ~name {"_doeff_do" _doeff_do})
-       item-record]))))
+       `(_install-guard-globals ~name {"_doeff_do" _doeff_do})])
+    [item-record])))
 
 
 ;; ---------------------------------------------------------------------------
