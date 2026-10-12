@@ -16,12 +16,16 @@
 (import doeff [run])
 (import doeff-hy [light-stack])
 (import ast)
+(import builtins)
+(import collections)
+(import inspect)
 (import json)
 (import os)
 (import re)
 (import shutil)
 (import subprocess)
 (import sys)
+(import types)
 (import tomllib)
 (import datetime [date])
 (import pathlib [Path])
@@ -172,7 +176,8 @@
    :tags {:context "doeff-hy-adr" :role "judgment"}}
   "Hy の source の式の列から、macro が受ける compiler への依りを #(path 種類 対象 名) で挙げる — R7 の数え方:
    第 1 引数を `_hy-compiler` にした defmacro(Hy が compiler を渡す約束 — compiler-parameter)と、compiler の属性の読み
-   `(. compiler scope)`(`compiler.filename` も reader が同じ式に読む — compiler-attribute)。"
+   `(. compiler scope)`(`compiler.filename` も reader が同じ式に読む)と method 呼び `(._syntax-error compiler …)`
+   (reader が `((. None _syntax-error) compiler …)` に読む — 前は数えず、盲検 B の失敗例が検を緑のまま通した)— compiler-attribute。"
   (val found [])
   (var pending (list forms))
   (var form None)
@@ -193,33 +198,63 @@
                (isinstance (get form 1) hy.models.Symbol)
                (in (str (get form 1)) COMPILER-SYMBOLS)
                (isinstance (get form 2) hy.models.Symbol))
-      (.append found #(rel "compiler-attribute" "_hy_compiler" (hy.mangle (str (get form 2)))))))
+      (.append found #(rel "compiler-attribute" "_hy_compiler" (hy.mangle (str (get form 2))))))
+    (when (and (isinstance form hy.models.Expression)
+               (> (len form) 1)
+               (isinstance (get form 0) hy.models.Expression)
+               (= (len (get form 0)) 3)
+               (= (get (get form 0) 0) (hy.models.Symbol "."))
+               (= (get (get form 0) 1) (hy.models.Symbol "None"))
+               (isinstance (get (get form 0) 2) hy.models.Symbol)
+               (isinstance (get form 1) hy.models.Symbol)
+               (in (str (get form 1)) COMPILER-SYMBOLS))
+      (.append found #(rel "compiler-attribute" "_hy_compiler" (hy.mangle (str (get (get form 0) 2)))))))
   (sorted (set found)))
 
-(defk frame-only-use [use parents]
-  {:pre [(: use ast.Attribute) (: parents dict)]
+(defk row-read-gives-frame [use parents row]
+  {:pre [(: use ast.Attribute) (: parents dict) (: row tuple)]
    :post [(: % bool)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "`inspect.stack` の使い 1 つが、呼んだ結果の [n][0](frame だけ)を読む形か — light_stack の軽い版が返せるのはこの形だけ。"
+  "`inspect.stack` の使い 1 つ `inspect.stack(…)[n]<読み>` の読み(`[k]` か `.属性`)を light_stack が返す行 row に当てると frame が
+   返るか。行がどの読みに応えるかは light_stack の持ち物なので、判定は読みの字面(`[0]` など)を写しで持たず、実物の行に当てる
+   (前は `[n][0]` だけを通し、light_stack を `.frame` にも応える行へ直しても赤のままだった — 盲検 A の失敗例)。"
   (val call (.get parents (id use)))
-  (val row (.get parents (id call)))
-  (val frame (.get parents (id row)))
-  (and (isinstance call ast.Call) (is call.func use)
-       (isinstance row ast.Subscript) (is row.value call)
-       (isinstance frame ast.Subscript) (is frame.value row)
-       (isinstance frame.slice ast.Constant) (= frame.slice.value 0)))
+  (val index (.get parents (id call)))
+  (val reading (.get parents (id index)))
+  (val read
+    (cond (not (and (isinstance call ast.Call) (is call.func use)
+                    (isinstance index ast.Subscript) (is index.value call)))
+            None
+          (and (isinstance reading ast.Subscript) (is reading.value index)
+               (isinstance reading.slice ast.Constant) (isinstance reading.slice.value int))
+            (try (get row reading.slice.value)
+                 (except [#(IndexError KeyError TypeError)] None))
+          (and (isinstance reading ast.Attribute) (is reading.value index))
+            (if (hasattr row reading.attr) (getattr row reading.attr) None)
+          True
+            None))
+  (isinstance read types.FrameType))
 
-(defk stack-call-violations [rel module source]
-  {:pre [(: rel str) (: module str) (: source (| str None))]
+(defk stack-call-violations [rel module source row]
+  {:pre [(: rel str) (: module str) (: source (| str None)) (: row tuple)]
    :post [(: % list)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "light_stack が軽い版(frame を 1 要素目に持つ tuple の列)を返す Hy の module(source は新しい版の物・None = module が無い)の
-   `inspect.stack` の使い方を確かめる — R7 の判定。どの使いも `inspect.stack(…)[n][0]` で、1 つ以上在る事。別の読み
-   (`[n].frame`・`[n][3]`)は light_stack の下で AttributeError・IndexError になり、使いが 0 なら当て物が当たらない。"
-  (if (is source None)
+  "light_stack が軽い版を返す Hy の module(source は新しい版の物・None = module が無い)の `inspect.stack` の使い方を確かめる —
+   R7 の判定。row は light_stack がその module からの呼びに返す行の 1 つ(light-stack-sample-row)。どの使いも
+   `inspect.stack(…)[n]` の読みが row から frame を返し、使いが 1 つ以上在る事。読みが frame を返さなければ light_stack の下で
+   require が落ち、使いが 0 なら当て物が当たらない。Python として読めない source(Hy の言葉の module)は形を測れないので赤。"
+  (val parsed (if (is source None)
+                  None
+                  (try (ast.parse source)
+                       (except [SyntaxError] None))))
+  (cond
+    (is source None)
       [f"{rel}: light_stack が当てる module {module} が無い — _HY_CALLER_MODULES を見直す"]
+    (is parsed None)
+      [f"{rel}: light_stack が当てる module {module} の source を Python として読めない(Hy の言葉の module か)— inspect.stack の読み方を測れない"]
+    True
       (do
-        (val tree (ast.parse source))
+        (val tree parsed)
         (val parents (dfor node (ast.walk tree) child (ast.iter-child-nodes node) (id child) node))
         (val uses (lfor node (ast.walk tree)
                         :if (and (isinstance node ast.Attribute)
@@ -232,9 +267,9 @@
                        []
                        [f"{rel}: {module} が inspect.stack を使わない — light_stack の当て物が当たらない(_HY_CALLER_MODULES を見直す)"]))
         (for [use uses]
-          (<- frame-only (frame-only-use use parents))
-          (when (not frame-only)
-            (.append found f"{rel}: {module} の {use.lineno} 行の `{(.strip (get lines (- use.lineno 1)))}` は inspect.stack の [n][0](frame だけ)を読む形でない — light_stack の軽い版は frame 1 つの tuple を返す")))
+          (<- gives-frame (row-read-gives-frame use parents row))
+          (when (not gives-frame)
+            (.append found f"{rel}: {module} の {use.lineno} 行の `{(.strip (get lines (- use.lineno 1)))}` の読みは、light_stack が返す行({(. (type row) __name__)})から frame を返さない")))
         found)))
 
 (defk reliance-violations [missing hy-version compiler-failure]
@@ -494,6 +529,16 @@
                        #(light-stack-rel "light-stack" module "inspect.stack")))
   (sorted (set found)))
 
+(defk light-stack-sample-row [module]
+  {:pre [(: module str)]
+   :post [(: % tuple)]
+   :tags {:context "doeff-hy-adr" :role "foundation"}}
+  "doeff-hy の light_stack が、module からの inspect.stack の呼びに返す行の 1 つ目 — R7 の判定が Hy の読みを当てる実物
+   (行の形は light_stack の持ち物で、判定は写しを持たない)。light_stack は呼び手の大域の __name__ で軽い版へ渡すので、
+   __name__ を module にした大域で inspect.stack(0) を呼ぶ。差し替えを入れてから呼ぶ(doeff_hy の import が入れる物と同じ・2 度目は何もしない)。"
+  (light-stack.install)
+  (get (builtins.eval "inspect.stack(0)" {"__name__" module "inspect" inspect}) 0))
+
 (defk probe-reliances [reliances hy-version]
   {:pre [(: reliances list) (: hy-version str)]
    :post [(: % dict)]
@@ -580,7 +625,7 @@
      (interpretation
        "doeff の検が確かめる Hy は uv.lock の版 1 つだけなので、doeff-hy が通してよい Hy もその版まで。上限は doeff-hy の metadata の 1 か所で、uv の解決が doeff-hy を使う全部の repo で守る。上限を置かずに他の repo の側で R4 と同じ検を撃つ形は、検の写しが repo の数だけ増え、doeff の他の検(macro の展開・bytecode の包み・ast_unparse の当て物)を通らない。上限を小版(<1.4)で置く形は確かめていない修正版を通し、== で 1 つの版に固定する形は hy==1.3.0 を宣言する merge-queue・code-quality が doeff の rev を上げた時に解けない。")
      (interpretation
-       "import でない依りは、写しの台帳でなく source の形から数える(R7)— 台帳は依りを足す変更が書き忘れると黙って腐る。数える形は 3 つ: hy.* の名への代入(`hy.X.Y = …`)・第 1 引数を _hy-compiler にした defmacro と compiler の属性の読み(`(. compiler 名)`・`compiler.名`)・light_stack の _HY_CALLER_MODULES。別名で受けた module への代入や getattr の文字列の名は数えない。R6 の上限が他の repo の Hy を uv.lock の版までに留めるので、R7 が uv.lock の版で測れば他の repo の Hy にも効く。")]
+       "import でない依りは、写しの台帳でなく source の形から数える(R7)— 台帳は依りを足す変更が書き忘れると黙って腐る。数える形は 3 つ: hy.* の名への代入(`hy.X.Y = …`)・第 1 引数を _hy-compiler にした defmacro と compiler の属性の読み(`(. compiler 名)`・`compiler.名`・method 呼び `(.名 compiler …)`)・light_stack の _HY_CALLER_MODULES。light_stack の当て物は、Hy の inspect.stack の読みを light_stack が返す実物の行に当てて測る — 行がどの読みに応えるかは light_stack の持ち物で、判定に写しを置かない(盲検 A・B の失敗例で直した — docs/design-checks/lt-WPF4K5X5R2R5KSJ94PG76JHCWC)。別名で受けた module への代入や getattr の文字列の名は数えない。R6 の上限が他の repo の Hy を uv.lock の版までに留めるので、R7 が uv.lock の版で測れば他の repo の Hy にも効く。")]
   :decision
     [(rule R1 "Hy には一切手を入れない。proboscis/hy に commit を足さない。最終形は PyPI の Hy。")
      (rule R2 "Hy の振る舞いで回避が要る所は doeff の側に置く: テストの索引(#1291)・macro の変更で古い bytecode を使わない判定(#1292 — doeff_hy_bytecode_guard が Python 標準の SourceFileLoader を包む)・require の高速化(#1293)。")
@@ -588,7 +633,7 @@
      (rule R4 "doeff の code は PyPI の Hy(uv.lock が固定する版)に無い名前を hy.* から import しない。照合の版は検が uv.lock から読み、uv.lock の変更で `make test-changed` がこの検を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])— Hy を上げる変更は、新しい版に名が在る事を登記の前に確かめる。例外の台帳(FORK-ONLY-IMPORT-EXCEPTIONS)は空(#1291 が c6783e8e2 で消した)。足すなら期限は R3 と同じ。")
      (rule R5 "例外の台帳は、原因が消えたら同じ commit で削る(フォークの固定を消す便は FORK-PIN を、import を消す便は FORK-ONLY-IMPORT-EXCEPTIONS の行を)。原因の消えた例外が台帳に残れば赤。")
      (rule R6 "doeff-hy の Hy の依存の宣言の上限は、doeff の uv.lock の hy の版ちょうど(`<=<版>`)にする — doeff-hy を使う他の repo(agora-controllers・custody・merge-queue・code-quality・agent-commons・dotfiles)が自分の lock で上げられる Hy を、doeff の検が確かめた版までに留める(上限は他の repo の uv の解決にも効く)。上限は doeff-hy の 1 か所だけに置き(Hy を使う doeff の package は doeff-domain を除き doeff-hy を引き、uv は 1 つの環境に Hy を 1 つしか入れない — 他の pyproject.toml の hy の宣言は上から版を縛らない)、上限の行に条件(marker)を付けない(条件の外の環境で上限が効かなくなる)。Hy を上げる便は doeff の uv.lock と上限を同じ commit で上げ(上限の file か uv.lock の変更で `make test-changed` がこの検と R4 の検を選ぶ)、他の repo はその commit を含む doeff へ版(doeff-min-commit・git の rev)を上げてから自分の lock の Hy を上げる。")
-     (rule R7 "doeff の code が import でない形で依る Hy の内部 — 差し替える hy.* の名(hy.importer._could_be_hy_src)・macro の第 1 引数 _hy-compiler に Hy が compiler を渡す約束とその属性(scope・this・filename)・light_stack が軽い版を返す呼び出し(_HY_CALLER_MODULES の module の inspect.stack(…)[n][0])— も、PyPI の Hy(uv.lock が固定する版)に在る事を検が確かめる。R4 と同じく照合の版は uv.lock から読み、uv.lock の変更で `make test-changed` がこの検を選ぶ。依りは source の形から数え、写しの台帳を置かない。")]
+     (rule R7 "doeff の code が import でない形で依る Hy の内部 — 差し替える hy.* の名(hy.importer._could_be_hy_src)・macro の第 1 引数 _hy-compiler に Hy が compiler を渡す約束とその属性(scope・this・filename)・light_stack が軽い版を返す呼び出し(_HY_CALLER_MODULES の module の inspect.stack(…)[n] の読みが、light_stack の返す行から frame を返す)— も、PyPI の Hy(uv.lock が固定する版)に在る事を検が確かめる。R4 と同じく照合の版は uv.lock から読み、uv.lock の変更で `make test-changed` がこの検を選ぶ。依りは source の形から数え、写しの台帳を置かない。")]
   :laws
     [(law dependency-declarations-name-no-hy-fork
        :statement "for_all line in (pyproject.toml ∪ uv.lock) of doeff and agora-controllers: names(line, github.com/proboscis/hy) => (FORK-PIN is not None and rev(line) == FORK-PIN and today <= FORK-EXCEPTIONS-EXPIRE)"
@@ -614,7 +659,8 @@
        :counterexamples
          [(counterexample "uv.lock の hy を、hy.importer._could_be_hy_src の名を替えた版へ上げる — doeff_hy の代入は新しい属性を作るだけで、.hyk / .hyp を Python として読み SyntaxError(card ki-2fa4c02604b1)")
           (counterexample "uv.lock の hy を、compiler の scope が別の名になった版へ上げる — defk などの _in-function-body? が展開の時に AttributeError")
-          (counterexample "uv.lock の hy を、hy.macros が inspect.stack()[1].frame を読む版へ上げる — light_stack の 1 要素の tuple に .frame が無く、require が AttributeError")])]
+          (counterexample "uv.lock の hy を、hy.macros が inspect.stack()[1].frame を読む版へ上げる — light_stack の 1 要素の tuple に .frame が無く、require が AttributeError(light_stack の行を .frame にも応える形へ直せば緑 — 判定は実物の行に当てる)")
+          (counterexample "macro の補助が compiler の非公開の method を (._syntax-error compiler form message) で呼ぶ — method 呼びの形も compiler の属性として数えないと、Hy の版上げで名が消えても検は緑のまま(盲検 B)")])]
   :enforcement
     [(deftest test-adr-doe-hy-008-dependency-declarations-name-no-hy-fork
        (val repo-root (. (Path __file__) parent parent parent))
@@ -641,7 +687,8 @@
          (+ (run (reliance-violations (get probed "missing") hy-version (get probed "compiler-failure")))
             (sum (lfor #(rel kind module name) reliances
                        :if (= kind "light-stack")
-                       (run (stack-call-violations rel module (get (get probed "sources") module))))
+                       (run (stack-call-violations rel module (get (get probed "sources") module)
+                                                   (run (light-stack-sample-row module)))))
                  [])))
        (assert (= violations [])
                (+ "PyPI の Hy " hy-version "(uv.lock の版)に、doeff が import でない形で依る Hy の内部が無い"
@@ -665,7 +712,9 @@
        (val messages (run (reliance-violations (get probed "missing") hy-version None)))
        (assert (in "hy.importer._doeff_no_such_name" (get messages 0)) messages)
        (assert (in "doeff_no_such_attribute" (get messages 1)) messages)
-       (assert (= (run (stack-call-violations "l.py" "hy.macros" (get (get probed "sources") "hy.macros"))) []))
+       (assert (= (run (stack-call-violations "l.py" "hy.macros" (get (get probed "sources") "hy.macros")
+                                              (run (light-stack-sample-row "hy.macros"))))
+                  []))
        (assert (is (get (get probed "sources") "hy.doeff_no_such_module") None)))
      (deftest test-adr-doe-hy-008-exceptions-do-not-outlive-their-cause
        (val repo-root (. (Path __file__) parent parent parent))
@@ -728,13 +777,16 @@
                          "a.py" (ast.parse "import hy.importer\nhy.importer._could_be_hy_src = f\nx.y = 1\nhy = 2\ndef g():\n    hy.compat.rewriting_unparse = h\n")))
                   [#("a.py" "replaced" "hy.importer" "_could_be_hy_src")
                    #("a.py" "replaced" "hy.compat" "rewriting_unparse")]))
-       ;; compiler を受ける defmacro と compiler の属性の読み(点の付いた記号も reader が (. compiler 名) に読む)は数え、
-       ;; compiler でない物の属性・第 1 引数が compiler でない defmacro は数えない。
+       ;; compiler を受ける defmacro と compiler の属性の読み(点の付いた記号も reader が (. compiler 名) に読む)・method 呼び
+       ;; (._syntax-error compiler …)(盲検 B の失敗例)は数え、compiler でない物の属性と method 呼び・第 1 引数が compiler でない
+       ;; defmacro は数えない。
        (assert (= (run (hy-form-reliances
                          "m.hy" (list (hy.read-many (+ "(defmacro m [_hy-compiler x] (. _hy-compiler this))\n"
                                                        "(defn f [compiler] compiler.filename (isinstance (. compiler scope) X) (. other scope))\n"
+                                                       "(defn g [compiler form] (raise (._syntax-error compiler form \"m\")) (.append other compiler))\n"
                                                        "(defmacro n [x] x.y)\n")))))
-                  [#("m.hy" "compiler-attribute" "_hy_compiler" "filename")
+                  [#("m.hy" "compiler-attribute" "_hy_compiler" "_syntax_error")
+                   #("m.hy" "compiler-attribute" "_hy_compiler" "filename")
                    #("m.hy" "compiler-attribute" "_hy_compiler" "scope")
                    #("m.hy" "compiler-attribute" "_hy_compiler" "this")
                    #("m.hy" "compiler-parameter" "hy.macros.macroexpand" "_hy_compiler")]))
@@ -742,14 +794,26 @@
        (assert (not (.search HY-COMPILER-HINT "(defn f [my_hy_compiler_x])")))
        (assert (.search PY-HY-ASSIGN-HINT "hy.importer._could_be_hy_src = _could_be_hy_src"))
        (assert (not (.search PY-HY-ASSIGN-HINT "hy.importer._could_be_hy_src == f")))
-       ;; light_stack の当て物: [n][0] だけは緑、[n].frame・[n][3]・使い 0・module 無しは名を挙げて赤。
+       ;; light_stack の当て物: Hy の読みを light_stack が返す行に当てて frame が返れば緑。行の形は light_stack の持ち物 —
+       ;; frame 1 つの tuple の行なら [n][0] だけが緑で [n].frame・[n][3] は赤、.frame にも応える行なら [n].frame も緑
+       ;; (盲検 A の失敗例: 前は [n][0] を写しで持ち、行を直しても赤のままだった)。使い 0・module 無し・Hy の言葉の source は赤。
+       (val frame (sys._getframe))
+       (val tuple-row #(frame))
+       (val named-row ((collections.namedtuple "NamedRow" ["frame"]) frame))
        (val frame-only "import inspect\ndef f(n):\n    return inspect.stack(0)[n + 1][0]\n")
-       (assert (= (run (stack-call-violations "l.py" "hy.macros" frame-only)) []))
-       (val attribute-read (run (stack-call-violations "l.py" "hy.macros" (.replace frame-only "[n + 1][0]" "[n + 1].frame"))))
+       (val attribute-source (.replace frame-only "[n + 1][0]" "[n + 1].frame"))
+       (assert (= (run (stack-call-violations "l.py" "hy.macros" frame-only tuple-row)) []))
+       (val attribute-read (run (stack-call-violations "l.py" "hy.macros" attribute-source tuple-row)))
        (assert (and (= (len attribute-read) 1) (in "inspect.stack(0)[n + 1].frame" (get attribute-read 0))) attribute-read)
-       (assert (= (len (run (stack-call-violations "l.py" "hy.macros" (.replace frame-only "[n + 1][0]" "[n + 1][3]")))) 1))
-       (assert (in "inspect.stack を使わない" (get (run (stack-call-violations "l.py" "hy.macros" "def f():\n    pass\n")) 0)))
-       (assert (in "hy.macros が無い" (get (run (stack-call-violations "l.py" "hy.macros" None)) 0)))
+       (assert (= (len (run (stack-call-violations "l.py" "hy.macros" (.replace frame-only "[n + 1][0]" "[n + 1][3]") tuple-row))) 1))
+       (assert (= (run (stack-call-violations "l.py" "hy.macros" attribute-source named-row)) []))
+       (assert (= (run (stack-call-violations "l.py" "hy.macros" frame-only named-row)) []))
+       (assert (= (len (run (stack-call-violations "l.py" "hy.macros" "import inspect\nrows = inspect.stack()\n" tuple-row))) 1))
+       (assert (in "inspect.stack を使わない" (get (run (stack-call-violations "l.py" "hy.macros" "def f():\n    pass\n" tuple-row)) 0)))
+       (assert (in "hy.macros が無い" (get (run (stack-call-violations "l.py" "hy.macros" None tuple-row)) 0)))
+       (assert (in "Python として読めない" (get (run (stack-call-violations "l.py" "hy.core.util" "(get (.stack inspect) (+ n 1) 0)" tuple-row)) 0)))
+       ;; 判定に渡す行は doeff-hy の light_stack の実物(hy.compiler からの呼びに返す行)で、今の light_stack の行は [0] で frame を返す。
+       (assert (isinstance (get (run (light-stack-sample-row "hy.compiler")) 0) types.FrameType))
        (assert (in "scope" (get (run (reliance-violations [#("m.hy" "compiler-attribute" "_hy_compiler" "scope")] "9.9.9" None)) 0)))
        (val not-passed (run (reliance-violations [#("m.hy" "compiler-parameter" "hy.macros.macroexpand" "_hy_compiler")]
                                                  "0.27.0" "HyEvalError: 'NoneType' object has no attribute '__dict__'")))
