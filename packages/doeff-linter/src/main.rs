@@ -3,7 +3,7 @@
 use clap::Parser;
 use colored::*;
 use doeff_linter::{
-    collect_python_files_with_options, config,
+    check_slot, collect_python_files_with_options, config,
     editor::{self, EditorInput},
     lint_files_parallel, lint_source_at, one_path_per_file,
     logging::{LintLogEntry, LintLogger},
@@ -648,6 +648,17 @@ fn main() -> ExitCode {
         println!("{}", doeff_linter::config::rule_list_json());
         return ExitCode::SUCCESS;
     }
+
+    // 重い mode は、仕事の前に機体の検の枠を 1 つ取る(正本の命令の包みへ自分を exec で渡す — 渡せたら戻らない・card ki-ce35bf38508d)。
+    check_slot::enter(check_slot::weight(check_slot::Mode {
+        list_rules: args.list_rules,
+        split_rules: args.split_rules,
+        affected_tests: args.affected_tests.is_some(),
+        stdin: args.stdin,
+        hook: args.hook,
+        commit_hook: args.commit_hook,
+        editor_json: matches!(OutputFormat::parse(&args.output_format), OutputFormat::EditorJson),
+    }));
 
     if args.commit_hook || args.split_rules {
         return run_commit_hook(&args);

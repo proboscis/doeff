@@ -118,7 +118,9 @@
     "packages/doeff-linter/src/project/system_access.rs",
     "packages/doeff-linter/src/project/record_waits.rs",
     "packages/doeff-linter/src/project/timed_refetch.rs",
-    "packages/doeff-linter/tests/out_of_scope.rs"
+    "packages/doeff-linter/tests/out_of_scope.rs",
+    "packages/doeff-linter/src/check_slot.rs",
+    "packages/doeff-linter/tests/check_slot.rs"
   ],
   "modules": [
     {
@@ -132,6 +134,7 @@
       "paths": [
         "packages/doeff-linter/src/baseline.rs",
         "packages/doeff-linter/src/build_info.rs",
+        "packages/doeff-linter/src/check_slot.rs",
         "packages/doeff-linter/src/commit_hook.rs",
         "packages/doeff-linter/src/config.rs",
         "packages/doeff-linter/src/editor.rs",
@@ -150,6 +153,7 @@
       "public": [
         "packages/doeff-linter/src/baseline.rs",
         "packages/doeff-linter/src/build_info.rs",
+        "packages/doeff-linter/src/check_slot.rs",
         "packages/doeff-linter/src/commit_hook.rs",
         "packages/doeff-linter/src/config.rs",
         "packages/doeff-linter/src/editor.rs",
@@ -403,11 +407,13 @@
         "packages/doeff-linter/tests/semantic_lines.rs",
         "packages/doeff-linter/tests/semantic_proxy.rs",
         "packages/doeff-linter/tests/semantic_rules.rs",
-        "packages/doeff-linter/tests/out_of_scope.rs"
+        "packages/doeff-linter/tests/out_of_scope.rs",
+        "packages/doeff-linter/tests/check_slot.rs"
       ],
       "public": [
         "packages/doeff-linter/tests/build_commit.rs",
         "packages/doeff-linter/tests/build_git_environment.rs",
+        "packages/doeff-linter/tests/check_slot.rs",
         "packages/doeff-linter/tests/commit_hook.rs",
         "packages/doeff-linter/tests/facts_cache_roots.rs",
         "packages/doeff-linter/tests/hy_index_cache.rs",
