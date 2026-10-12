@@ -17,6 +17,7 @@ module と class の本体の展開は包まない(`__qualname__` と引数な�
 module の段に他の定義が無くても届く事。
 """
 
+import ast
 import sys
 import types
 from collections.abc import Callable
@@ -26,7 +27,11 @@ import hy
 import pytest
 from doeff_core_effects import try_handler
 from doeff_core_effects.scheduler import scheduled
+from doeff_hy.pytest_items import module_record_texts
+from doeff_hy.static_view import static_view
 from doeff_traverse.handlers import fail_handler, sequential
+from hy.compiler import hy_compile
+from hy.reader import read_many
 
 from doeff import run
 
@@ -396,6 +401,72 @@ def test_nested_definition_leaves_module_globals_unchanged(
     assert _module_globals_view(mod) == before
 
 
+def _member_ids(value: object) -> tuple[int, ...] | None:
+    """入れ物の要素(dict は鍵と値)の id の並び — 入れ物を替えずに中身を足す・差し替える登録を見分けるため。"""
+    match value:
+        case dict():
+            return tuple(id(part) for item in value.items() for part in item)
+        case list() | tuple() | set() | frozenset():
+            return tuple(id(member) for member in value)
+        case _:
+            return None
+
+
+def _module_state_view(mod: types.ModuleType) -> dict[tuple[str, str], tuple[int, tuple[int, ...] | None]]:
+    """定義を書いた module と、読み込み済みの doeff の module(名の頭が doeff)の globals の (module, 名) ごとの
+    (値の id, 入れ物の要素の id) — 外の関数を呼ぶたびに、どこかの module に名・記録・登録が増えたかを比べるため
+    (定義を書いた module だけを見ると、doeff の module の索引への登録を見逃す — 設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 B)。"""
+    modules = [mod] + [
+        module
+        for name, module in sorted(sys.modules.items())
+        if name.split(".")[0].startswith("doeff") and isinstance(module, types.ModuleType)
+    ]
+    return {
+        (module.__name__, name): (id(value), _member_ids(value))
+        for module in modules
+        for name, value in list(vars(module).items())
+    }
+
+
+@pytest.mark.parametrize(
+    ("source", "defined"), _DEFINITION_SAMPLES.values(), ids=_DEFINITION_SAMPLES.keys()
+)
+def test_definition_sample_leaves_module_state_unchanged(
+    source: str, defined: frozenset[str]
+) -> None:
+    """定義の macro の検体を関数の中に書くと、外の関数を何度呼んでも、定義を書いた module にも doeff の module にも
+    名・記録・登録を足さない — 包んだ文の並びは呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。
+    module に 1 度だけ知らせる文は `_scoped-definition` の module-forms に渡し、関数の中では出さない。検体で数えるので、
+    定義の macro を足すと検体と一緒にこの検も受ける(手で並べた _CASES に頼らない — 盲検 A)。初めの呼びは補助の module を
+    読み込み、親の package に名を足しうるので、比べるのは 2 回目と 3 回目の呼びの前後。"""
+    mod = _eval_module(f"(defn subject [] {source} None)")
+    mod.subject()
+    before = _module_state_view(mod)
+    mod.subject()
+    mod.subject()
+    after = _module_state_view(mod)
+    assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == set()
+
+
+def _python_source(code: str, header: str) -> str:
+    """Hy の source を型検査のための展開で Python の source にする — 実行せずに展開の文を読むため。"""
+    mod = types.ModuleType("nested_definition_static")
+    with static_view():
+        node = hy_compile(read_many(header + code, filename="static.hy"), mod, filename="static.hy")
+    return ast.unparse(node)
+
+
+def test_static_view_records_only_module_level_deftest() -> None:
+    """型検査のための展開でも、pytest の item の記録の文は module の段の deftest だけが出す — 関数の中の deftest の
+    記録の文は、実行時に出さない文を型検査に見せ、その import が外の関数に `doeff_hy` の局所の名を作っていた
+    (設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 A)。"""
+    header = "(require doeff-hy.macros [deftest])\n"
+    nested = _python_source("(defn subject [] (deftest test-inner (assert True)) None)", header)
+    top = _python_source("(deftest test-top (assert True))", header)
+    assert "record_at_import" not in nested
+    assert "record_at_import" in top
+
+
 @pytest.mark.parametrize(
     ("source", "call", "expected"),
     [
@@ -451,7 +522,7 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     assert repr(mod.TopEffect(1)) == "TopEffect(n=1)"
     assert mod.top_helper.__qualname__ == "top_helper"
     # module の段の deftest は今までどおり pytest の item を記録する(関数の中の deftest だけが記録しない)
-    assert any('"test_top"' in text for text in mod.__doeff_pytest_items__)
+    assert any('"test_top"' in text for text in module_record_texts(mod))
     assert mod.Child.m.__qualname__ == "Child.m"
     assert _run(mod.Child().m(2)) == 3
     assert _run(mod.program) == 1
