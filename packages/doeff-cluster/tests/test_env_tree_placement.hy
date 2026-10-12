@@ -16,7 +16,6 @@
 (import subprocess)
 (import pathlib [Path])
 (import doeff [with-handlers])
-(import doeff_traverse.helpers [sequence])
 (import doeff_core_effects.handlers [reader state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
@@ -75,8 +74,11 @@
   {:pre [(: root Path)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "木の姿(相対 path → entry-shape)。dir も入れる — 消えた path の空の dir が残っていないかも見るため。"
   (val paths (tuple (.rglob root "*")))
-  (<- shapes tuple (sequence (gfor p paths (entry-shape p))))
-  (dict (zip (gfor p paths (str (.relative-to p root))) shapes)))
+  (var seen {})
+  (for [p paths]
+    (<- shape tuple (entry-shape p))
+    (:= seen (| seen {(str (.relative-to p root)) shape})))
+  seen)
 
 
 (defk place [mirror commit dest source tmp]
