@@ -1,0 +1,5 @@
+26a27,30
+> fn slot_file(dir: &str, index: usize) -> String {
+>     format!("{dir}/slot-{index}.lock")
+> }
+> 

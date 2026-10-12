@@ -1,0 +1,35 @@
+test-admission: focused — 3 件(変更箇所の検証)
+own-tree-freshness: fresh — /work/toolset/worktrees/dotfiles-wt-ki-ce35-rc の走が集めた冊 1 に**止める冊は無い**(公開 origin/master=b7f29b3e1・作業樹 b7f29b3e1・公開との差の冊〔木の全体〕 0・この走が集めた冊のうち手元の改変で通した冊 0)
+F.F                                                                      [100%]
+=================================== FAILURES ===================================
+___________ test_the_stage_reads_a_slot_expiry_as_unexecuted_not_red ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2988/test_the_stage_reads_a_slot_ex0')
+
+    def test_the_stage_reads_a_slot_expiry_as_unexecuted_not_red(tmp_path: Path) -> None:
+        """失敗ケース: linter が枠の上限の終了(正本の EXPIRED_RC)で終わる → 処理ステージは local-timeout の未実行と未実行の終了コード
+        (緑とも赤とも数えない)。直す前は Linted(75) で、log の最後の行が「doeff-linter の終了 75」・段の終了 75(赤)だった。"""
+        answer = STAGE.judge(STAGE.Linter(path=fake_linter(tmp_path, SLOTS.EXPIRED_RC), pin="0" * 40), tmp_path)
+>       assert isinstance(answer, STAGE.Unexecuted), answer
+E       AssertionError: Linted(returncode=75)
+E       assert False
+E        +  where False = isinstance(Linted(returncode=75), <class 'dotfiles_doeff_linter_agentcli@/work/toolset/worktrees/dotfiles-wt-ki-ce35-rc/agent/tests/doeff_linter_agentcli.py.Unexecuted'>)
+E        +    where <class 'dotfiles_doeff_linter_agentcli@/work/toolset/worktrees/dotfiles-wt-ki-ce35-rc/agent/tests/doeff_linter_agentcli.py.Unexecuted'> = STAGE.Unexecuted
+
+agent/tests/test_doeff_linter_slot_expiry.py:36: AssertionError
+________ test_the_commit_hook_reads_the_canon_expiry_code_as_unexecuted ________
+
+    def test_the_commit_hook_reads_the_canon_expiry_code_as_unexecuted() -> None:
+        """commit の hook(shell)は正本を import できないので、枠の上限の終了コードを綴りで持つ — その綴りが正本の EXPIRED_RC と同じで、
+        その分岐が「新しい当たり(1)」の分岐より前で未実行(97)で止める事。"""
+        text = PRECOMMIT.read_text(encoding="utf-8")
+        expired = re.search(r'if \[ "\$agentcli_lint_rc" = (\d+) \]; then\n(?:.*\n){0,3}?\s*exit (\d+)', text)
+>       assert expired is not None, "commit の hook に linter の枠の上限の分岐が無い"
+E       AssertionError: commit の hook に linter の枠の上限の分岐が無い
+E       assert None is not None
+
+agent/tests/test_doeff_linter_slot_expiry.py:55: AssertionError
+=========================== short test summary info ============================
+FAILED agent/tests/test_doeff_linter_slot_expiry.py::test_the_stage_reads_a_slot_expiry_as_unexecuted_not_red
+FAILED agent/tests/test_doeff_linter_slot_expiry.py::test_the_commit_hook_reads_the_canon_expiry_code_as_unexecuted
+2 failed, 1 passed in 0.45s

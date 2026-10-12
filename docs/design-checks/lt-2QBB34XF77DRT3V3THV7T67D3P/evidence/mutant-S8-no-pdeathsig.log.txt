@@ -1,0 +1,53 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0 -- /home/ubuntu/dotfiles/agentcli/.venv/bin/python
+rootdir: /work/toolset/worktrees/dotfiles-wt-ki-ce35-mut
+configfile: pytest.ini
+plugins: xdist-3.8.0, timeout-2.4.0, anyio-4.14.2, doeff-hy-pytest-0.1.0, agentcli-0.1.0, doeff-adr-0.1.0
+collecting ... test-admission: focused — 1 件(変更箇所の検証)
+own-tree-freshness: fresh — /work/toolset/worktrees/dotfiles-wt-ki-ce35-mut の走が集めた冊 1 に**止める冊は無い**(公開 origin/master=f8a492096・作業樹 f8a492096・公開との差の冊〔木の全体〕 0・この走が集めた冊のうち手元の改変で通した冊 0)
+collected 1 item
+
+agent/tests/test_machine_check_slots.py::test_a_command_dies_with_its_killed_wrapper FAILED [100%]
+
+=================================== FAILURES ===================================
+_________________ test_a_command_dies_with_its_killed_wrapper __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2993/test_a_command_dies_with_its_k0')
+
+    @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="親の死の信号(prctl PR_SET_PDEATHSIG)は Linux だけ")
+    def test_a_command_dies_with_its_killed_wrapper(tmp_path: Path) -> None:
+        """包みが SIGKILL で殺されたら(呼び手の subprocess の時間切れ)、命令も死に、枠の外で走り続けない(card ki-ce35bf38508d)。"""
+        policy = place_canon(tmp_path / "tests", 1)
+        canon = tmp_path / "tests" / "machine_check_slots.py"
+        pid_file = tmp_path / "command.pid"
+        command = [sys.executable, "-c",
+                   "import os, time; open(%r, 'w').write(str(os.getpid())); time.sleep(60)" % str(pid_file)]
+        wrapper = subprocess.Popen(wrapped(canon, "killed", command), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   env=child_env())
+        try:
+            wait_until(lambda: pid_file.exists() and pid_file.read_text(encoding="utf-8").strip() != "", "命令が起きない")
+            command_pid = int(pid_file.read_text(encoding="utf-8"))
+            wrapper.kill()
+            wrapper.wait(timeout=DONE_S)
+>           wait_until(lambda: not alive(command_pid), "包みが死んだ後も命令が走り続けている")
+
+agent/tests/test_machine_check_slots.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+predicate = <function test_a_command_dies_with_its_killed_wrapper.<locals>.<lambda> at 0x7f2b10139010>
+what = '包みが死んだ後も命令が走り続けている', limit_s = 30
+
+    def wait_until(predicate, what: str, limit_s: float = DONE_S) -> None:
+        # ポーリングの訳: 別の process が flock を取った事を知らせる口は無い(検体の外の観測)— 50 ms ごとに lock を試して読む。
+        deadline = time.monotonic() + limit_s
+        while not predicate():
+>           assert time.monotonic() < deadline, what
+E           AssertionError: 包みが死んだ後も命令が走り続けている
+E           assert 848041.354479566 < 848041.351984934
+E            +  where 848041.354479566 = <built-in function monotonic>()
+E            +    where <built-in function monotonic> = time.monotonic
+
+agent/tests/test_machine_check_slots.py:73: AssertionError
+=========================== short test summary info ============================
+FAILED agent/tests/test_machine_check_slots.py::test_a_command_dies_with_its_killed_wrapper
+============================== 1 failed in 30.58s ==============================

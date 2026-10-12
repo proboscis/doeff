@@ -1,0 +1,38 @@
+#!/bin/sh
+# S5 の実物の確かめ(設計検証 lt-2QBB34XF77DRT3V3THV7T67D3P): 枠 K = 1(待ちの上限 5 秒)の一時の HOME で、門を持つ linter の
+# `--commit-hook` を撃つ。親が唯一の枠を取り、子の linter(editor-json を 2 回)は再入の印で正本を通らず、待たずに終わる事。
+set -u
+LINTER=/home/ubuntu/.cache/doeff-linter-snapshots/86ecd134449adb6d33e3a2ce348c9bc01d96ba02/doeff-linter
+T=$(mktemp -d -p /home/ubuntu/ki-ce35-IcfP nested-XXXX)
+mkdir -p "$T/home/dotfiles/agent/tests" "$T/repo/app"
+git -C /home/ubuntu/dotfiles show f8a49209:agent/tests/machine_check_slots.py > "$T/home/dotfiles/agent/tests/real_slots.py"
+# 正本の手前の記録の層 — 呼ばれた引数と再入の印を 1 行記し、同じ dir の本物の正本(real_slots.py)へ exec で渡す(宣言はその隣)。
+cat > "$T/home/dotfiles/agent/tests/machine_check_slots.py" <<'PY'
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "calls.jsonl"), "a") as log:
+    log.write(json.dumps({"pid": os.getpid(), "argv": sys.argv[1:4], "gated": os.environ.get("DOEFF_LINTER_CHECK_SLOT")}) + "\n")
+os.execv(sys.executable, [sys.executable, os.path.join(here, "real_slots.py"), *sys.argv[1:]])
+PY
+ln -s machine_check_slots.json "$T/home/dotfiles/agent/tests/real_slots.json"
+printf '{"slots": 1, "dir": "%s/slots", "waitLimitSeconds": 5}\n' "$T" > "$T/home/dotfiles/agent/tests/machine_check_slots.json"
+cd "$T/repo" || exit 2
+printf '[tool.doeff-linter]\nenable = ["DOEFF016"]\n\n[tool.doeff-linter.commit_hook]\ntimeout_s = 120\n' > pyproject.toml
+printf 'import os\n' > app/tool.py
+git init -q . && git add -A && git -c commit.gpgsign=false commit -q -m base --no-verify
+printf 'import os\nimport sys\n' > app/tool.py
+git add app/tool.py
+started=$(date +%s)
+HOME="$T/home" "$LINTER" --commit-hook > "$T/out.txt" 2> "$T/err.txt"
+rc=$?
+echo "commit-hook の終了 $rc・所要 $(( $(date +%s) - started )) 秒"
+echo "--- stderr の枠の名乗り(待ちが在れば「待つ」の行が出る)"
+grep -E "check-slot:|機体の検の枠" "$T/err.txt" || echo "(枠の名乗り無し — 待っていない)"
+echo "--- stderr の末尾"
+tail -3 "$T/err.txt"
+echo "--- 正本を通った回数と引数の頭"
+wc -l < "$T/home/dotfiles/agent/tests/calls.jsonl"
+cat "$T/home/dotfiles/agent/tests/calls.jsonl"
+echo "--- 枠 0 の file(取った後に解けば空)"
+ls -la "$T/slots/" 2>&1 | tail -2
+echo "一時の dir: $T"

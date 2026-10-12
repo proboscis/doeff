@@ -1,0 +1,12 @@
+26a27,33
+> /// 保持者の印 — 正本(machine_check_slots.py の HOLDER_ENV)が、枠を持つ process の子へ継ぐ env。値は保持者の pid。
+> pub const HOLDER_ENV: &str = "AI_CHECK_SLOT_HOLDER";
+> /// 枠を持つ process の内側か(保持者の印が在るか)— 内側なら正本は 2 つ目を取らないので、包みへ渡さずに走る。
+> fn inside_holder() -> bool {
+>     std::env::var_os(HOLDER_ENV).is_some_and(|pid| !pid.is_empty())
+> }
+> 
+134c141
+<     if std::env::var_os(GATED_ENV).is_some() {
+---
+>     if std::env::var_os(GATED_ENV).is_some() || inside_holder() {

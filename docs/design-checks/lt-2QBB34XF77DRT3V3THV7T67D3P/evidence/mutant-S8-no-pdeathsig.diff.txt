@@ -1,0 +1,13 @@
+diff --git a/agent/tests/machine_check_slots.py b/agent/tests/machine_check_slots.py
+index a32e736e3..4102199d3 100644
+--- a/agent/tests/machine_check_slots.py
++++ b/agent/tests/machine_check_slots.py
+@@ -401,7 +401,7 @@ def run_held(command: Sequence[str], holding: Optional[Holding], environ: Mutabl
+     out.flush()
+     try:
+         try:
+-            child = subprocess.Popen(list(command), env=child_env, preexec_fn=die_with_wrapper())
++            child = subprocess.Popen(list(command), env=child_env, preexec_fn=None)
+         except OSError as exc:
+             out.write("%s 命令 %s を起こせない(%s)\n" % (MARK, command[0], exc))
+             return 127

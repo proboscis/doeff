@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0 -- /home/ubuntu/dotfiles/agentcli/.venv/bin/python
+rootdir: /work/toolset/worktrees/dotfiles-wt-ki-ce35-mut
+configfile: pytest.ini
+plugins: xdist-3.8.0, timeout-2.4.0, anyio-4.14.2, doeff-hy-pytest-0.1.0, agentcli-0.1.0, doeff-adr-0.1.0
+collecting ... test-admission: focused — 4 件(変更箇所の検証)
+own-tree-freshness: fresh — /work/toolset/worktrees/dotfiles-wt-ki-ce35-mut の走が集めた冊 1 に**止める冊は無い**(公開 origin/master=f8a492096・作業樹 f8a492096・公開との差の冊〔木の全体〕 0・この走が集めた冊のうち手元の改変で通した冊 0)
+collected 4 items
+
+agent/tests/test_machine_check_slots.py::test_a_command_dies_with_its_killed_wrapper PASSED [ 25%]
+agent/tests/test_machine_check_slots.py::test_a_check_inside_a_held_slot_does_not_take_a_second PASSED [ 50%]
+agent/tests/test_machine_check_slots.py::test_a_child_with_a_scrubbed_env_is_still_inside PASSED [ 75%]
+agent/tests/test_machine_check_slots.py::test_a_stale_marker_or_a_dead_holder_does_not_count_as_inside PASSED [100%]
+
+============================== 4 passed in 1.46s ===============================

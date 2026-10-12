@@ -1,0 +1,15 @@
+linter: doeff-linter 0.2.0 (doeff 86ecd134449adb6d33e3a2ce348c9bc01d96ba02)
+保持者: pid 2863155 long-check (c-H600A0RRJ4BXT8053GRH15X3WP)
+== 段の版 f333bd2f
+check-slot: 機体の検の枠(1 本)が埋まっているので待つ — 待ち 0 秒 / 上限 2 秒・保持 pid 2863155 long-check (c-H600A0RRJ4BXT8053GRH15X3WP)・待つのは doeff-linter lint a-H600A0RRJ4YC549GKWZNK3XSVW (c-H600A0RRJ4BXT8053GRH15X3WP)
+check-slot: 機体の検の枠(1 本)の待ちが上限 2 秒を越えた(待ち 2 秒・保持 pid 2863155 long-check (c-H600A0RRJ4BXT8053GRH15X3WP))— doeff-linter lint a-H600A0RRJ4YC549GKWZNK3XSVW (c-H600A0RRJ4BXT8053GRH15X3WP) は未実行
+答え: Linted(returncode=75)
+報告: doeff-linter-agentcli: agentcli/src への doeff-linter の終了 75(0 = 当たり無し・1 = 当たり在り)
+段の終了コード: 75
+== 段の版 f8a49209
+check-slot: 機体の検の枠(1 本)が埋まっているので待つ — 待ち 0 秒 / 上限 2 秒・保持 pid 2863155 long-check (c-H600A0RRJ4BXT8053GRH15X3WP)・待つのは doeff-linter lint a-H600A0RRJ4YC549GKWZNK3XSVW (c-H600A0RRJ4BXT8053GRH15X3WP)
+check-slot: 機体の検の枠(1 本)の待ちが上限 2 秒を越えた(待ち 2 秒・保持 pid 2863155 long-check (c-H600A0RRJ4BXT8053GRH15X3WP))— doeff-linter lint a-H600A0RRJ4YC549GKWZNK3XSVW (c-H600A0RRJ4BXT8053GRH15X3WP) は未実行
+答え: Unexecuted(kind='local-timeout', reason='機体の検の枠の待ちが上限を越え、doeff-linter が lint をせずに終わった(終了 75・保持者は上の check-slot: の行)— agentcli の層の規則を測っていない(空いた拍に撃ち直す)')
+報告: check-unexecuted: kind=local-timeout layer=machine reason="機体の検の枠の待ちが上限を越え、doeff-linter が lint をせずに終わった(終了 75・保持者は上の check-slot: の行)— agentcli の層の規則を測っていない(空いた拍に撃ち直す)"
+段の終了コード: 97
+一時の dir: /home/ubuntu/ki-ce35-IcfP/repro-A-mDbX

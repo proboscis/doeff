@@ -1,0 +1,4 @@
+58c58
+<     if mode.list_rules || mode.split_rules || mode.affected_tests || mode.stdin {
+---
+>     if mode.list_rules || mode.split_rules || mode.affected_tests || mode.stdin || mode.editor_json {

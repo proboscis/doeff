@@ -1,0 +1,11 @@
+commit-hook の終了 0・所要 1 秒
+--- stderr の枠の名乗り(待ちが在れば「待つ」の行が出る)
+(枠の名乗り無し — 待っていない)
+--- stderr の末尾
+--- 正本を通った回数と引数の頭
+1
+{"pid": 2902814, "argv": ["run", "--label", "doeff-linter --commit-hook repo"], "gated": "1"}
+--- 枠 0 の file(取った後に解けば空)
+drwx------ 5 ubuntu ubuntu 4096 Oct 12 01:13 ..
+-rw-r--r-- 1 ubuntu ubuntu    0 Oct 12 01:13 slot-0.lock
+一時の dir: /home/ubuntu/ki-ce35-IcfP/nested-ydyz

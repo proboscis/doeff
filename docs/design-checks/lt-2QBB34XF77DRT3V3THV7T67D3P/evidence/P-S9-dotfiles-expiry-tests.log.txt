@@ -1,0 +1,4 @@
+test-admission: focused — 3 件(変更箇所の検証)
+own-tree-freshness: fresh — /work/toolset/worktrees/dotfiles-wt-ki-ce35-rc の走が集めた冊 1 に**止める冊は無い**(公開 origin/master=b7f29b3e1・作業樹 b7f29b3e1・公開との差の冊〔木の全体〕 0・この走が集めた冊のうち手元の改変で通した冊 0)
+...                                                                      [100%]
+3 passed in 0.88s

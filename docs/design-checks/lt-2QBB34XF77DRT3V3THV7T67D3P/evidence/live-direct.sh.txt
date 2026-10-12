@@ -1,0 +1,24 @@
+#!/bin/sh
+# 会話の直の道の実地の確かめ(card ki-ce35bf38508d): 門を持つ断面の linter を本物の HOME で repo 全体に撃ち、走っている間に
+# 正本の holders で保持者の名乗りを読む。linter の終了コードと、枠を待った・取った名乗り(stderr)を出す。
+set -u
+LINTER=/home/ubuntu/.cache/doeff-linter-snapshots/86ecd134449adb6d33e3a2ce348c9bc01d96ba02/doeff-linter
+OUT=/home/ubuntu/ki-ce35-IcfP/live
+mkdir -p "$OUT"
+cd /home/ubuntu/.worktrees/agora-controllers-wt-ki-ce35 || exit 2
+"$LINTER" --version
+"$LINTER" --no-log --output-format json > "$OUT/lint.json" 2> "$OUT/lint.err" &
+pid=$!
+i=0
+while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 600 ]; do
+  uv run --no-project python /home/ubuntu/dotfiles/agent/tests/machine_check_slots.py holders > "$OUT/holders.$i.json"
+  if grep -q "doeff-linter lint" "$OUT/holders.$i.json"; then
+    echo "保持者に載った(読み $i 回目): $(grep -o '{[^{}]*doeff-linter lint[^{}]*}' "$OUT/holders.$i.json")"
+    break
+  fi
+  i=$((i + 1))
+  sleep 0.5
+done
+wait "$pid"
+echo "linter の終了 $?"
+grep -E "check-slot|機体の検の枠" "$OUT/lint.err" | cut -c1-300
