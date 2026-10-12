@@ -4,9 +4,11 @@
 ;;;   generation も)、送り手・時刻・前後の版を出来事の記録へ足す。変化を起こした経路(API・heartbeat・調停・Rollout)を問わず
 ;;;   ここ 1 か所で付くので、版の付け忘れ・記録の漏れが起きない。
 ;;; - 書きの口: Service・Rollout・GroupLimit は資源 1 つずつの compare-and-set(PUT は resourceVersion 必須・古ければ 409)。
-;;;   GroupLimit(2026-10-12・card ki-b0e8028c8c8d)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart? system})。
+;;;   GroupLimit(2026-10-12・card ki-b0e8028c8c8d)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart? system?})。
 ;;;   宣言の道具が書き、置き方はこの値で数える。spec の形は系の構成子と同じ規則(detached_rules.group-limit-refusal)で検める。
-;;;   system = 組を宣言した系の名で、別の系からの書き直しは 409 で断る(組を宣言する系は 1 つ)。
+;;;   system = 組を宣言した系の名で、別の系からの書き直しは 409 で断る(組を宣言する系は 1 つ)。system は X-Actor と同じ信頼の水準の
+;;;   名乗りで(照らす系の名簿は無い)、別の名の系が組を写した時(盲検 A)を止める物 — 同じ名を名乗る 2 つの宣言は区別しない。
+;;;   system の無い組は持ち主の無い組で、最初に書き直した系が持つ。消す(DELETE)は持ち主を照らさない(宣言の道具は消さない)。
 ;;;   一覧の丸ごとの上書きはしない。所有者(owner)は誰が宣言したかの記録で、書き・消しを断る照合には使わない(名乗りの X-Actor は
 ;;;   確かめないので守りにならない — 2026-10-05 に照合して断る分岐を外した)。force は進行中の Rollout が扱う資源を消す時だけに効く。
 ;;; - readiness: Service が Ready か(service-readiness)。process の生存(worker の報告の running)と、宣言が readiness を
@@ -913,8 +915,9 @@
           (when (is current None) (refuse 404 (+ "無い GroupLimit: " name)))
           (setv limit (checked-group-limit name body.spec))
           ;; 組を宣言する系は 1 つ(設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 A — 別の系の宣言が黙って値を書き直し、宣言の順で同時数が
-          ;; 変わった)。版の照合は読んでから書くまでの他人の書きしか止めないので、持ち主の系を別に比べる。
-          (when (!= limit.system current.system)
+          ;; 変わった)。版の照合は読んでから書くまでの他人の書きしか止めないので、持ち主の系を別に比べる。持ち主の無い組(system の無い
+          ;; spec — 74ebb50b6 の宣言の道具が書いた組)は、最初に書き直した系が持つ。
+          (when (and current.system (!= limit.system current.system))
             (refuse 409 (.format "GroupLimit {} は系 {} が宣言した組 — 系 {} は書き直せない(組を宣言する系は 1 つ。持ち主を移すなら DELETE してから作る)"
                                  name current.system limit.system)))
           (check-version state key body.resource-version)

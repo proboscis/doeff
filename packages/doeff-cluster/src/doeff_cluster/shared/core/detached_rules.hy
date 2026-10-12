@@ -74,33 +74,35 @@
 (deff group-limit-refusal [#^ (| dict list tuple str int float bool None) name #^ (| dict list tuple str int float bool None) spec]  ; defk にできない: 系の構成子(module の読み込みの時)・coordinator の受け口と保存の読み直し(Program の外)が呼ぶ純粋な判断
   {:pre [(: name (| dict list tuple str int float bool None)) (: spec (| dict list tuple str int float bool None))] :post [(: % (| str None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "系が宣言する組の上限 1 つ(name = 組の名・spec = JSON の object {scope limit perPart? system})が受けられない理由(受けられれば None)。
+  "系が宣言する組の上限 1 つ(name = 組の名・spec = JSON の object {scope limit perPart? system?})が受けられない理由(受けられれば None)。
    系の構成子(service_build.system-of)・coordinator の資源の口(GroupLimit の作り・書き直し)・保存の読み直しが同じ規則で読む。
-   system = 組を宣言した系の名(持ち主の無い組を作らせない — 資源の口が別の系の書き直しを断る鍵)。"
+   system = 組を宣言した系の名(資源の口が別の系の書き直しを断る鍵)。無い組は持ち主の無い組(系の構成子は必ず付ける — 無いのは
+   74ebb50b6 の宣言の道具が書いた組と、運用者が資源の口に直に作った組)。"
   (cond
     (not (and (isinstance name str) name (not-in "/" name))) (.format "組の名は「/」を含まない空でない文字列: {!r}" name)
-    (not (isinstance spec dict)) (.format "組 {} の上限は {{scope limit perPart? system}} の object: {!r}" name spec)
+    (not (isinstance spec dict)) (.format "組 {} の上限は {{scope limit perPart? system?}} の object: {!r}" name spec)
     (- (set spec) GROUP-LIMIT-KEYS) (.format "組 {} の上限の知らない欄: {}" name (sorted (- (set spec) GROUP-LIMIT-KEYS)))
     (not-in (.get spec "scope") TASK-LIMIT-SCOPES)
       (.format "組 {} の scope は {} のどれか: {!r}" name (sorted TASK-LIMIT-SCOPES) (.get spec "scope"))
     (not (and (isinstance (.get spec "limit") int) (not (isinstance (.get spec "limit") bool)) (>= (.get spec "limit") 1)))
       (.format "組 {} の limit は 1 以上の整数: {!r}" name (.get spec "limit"))
     (not (isinstance (.get spec "perPart" False) bool)) (.format "組 {} の perPart は真偽値: {!r}" name (.get spec "perPart"))
-    (not (and (isinstance (.get spec "system") str) (.get spec "system")))
-      (.format "組 {} の system(組を宣言した系の名)は空でない文字列: {!r}" name (.get spec "system"))
+    (and (in "system" spec) (not (and (isinstance (get spec "system") str) (get spec "system"))))
+      (.format "組 {} の system(組を宣言した系の名)は空でない文字列(持ち主の無い組は欄を置かない): {!r}" name (get spec "system"))
     True None))
 
 
 (deff group-limit-of [#^ str name #^ dict spec]  ; defk にできない: 系の構成子と coordinator の受け口・保存の読み直し(Program の外)が呼ぶ純粋な読み
   {:pre [(: name str) (: spec dict)] :post [(: % GroupLimit)] :tags {:context "doeff-cluster" :role "judgment"}}
   "受けられる組の上限(group-limit-refusal が None の名と spec)→ GroupLimit。"
-  (GroupLimit :group name :scope (get spec "scope") :limit (get spec "limit") :per-part (.get spec "perPart" False) :system (get spec "system")))
+  (GroupLimit :group name :scope (get spec "scope") :limit (get spec "limit") :per-part (.get spec "perPart" False) :system (.get spec "system" "")))
 
 
 (deff group-limit-spec [#^ GroupLimit limit]  ; defk にできない: 宣言の行の組み立て(module の外の CLI)と coordinator の資源の行・保存の綴り(Program の外)が呼ぶ純粋な綴り
   {:pre [(: limit GroupLimit)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "GroupLimit → 資源 GroupLimit の spec の JSON の形(group-limit-of の逆 — 区分ごとに数えない組は perPart の欄を置かない)。"
-  (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {}) {"system" limit.system}))
+  "GroupLimit → 資源 GroupLimit の spec の JSON の形(group-limit-of の逆 — 区分ごとに数えない組は perPart の欄を、持ち主の無い組は
+   system の欄を置かない)。"
+  (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {}) (if limit.system {"system" limit.system} {})))
 
 
 (deff task-placing-json [#^ int priority #^ tuple limits]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り

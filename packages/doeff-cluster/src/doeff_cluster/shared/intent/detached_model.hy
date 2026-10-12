@@ -40,7 +40,7 @@
    この値で数える組か(偽の組は区分を名乗る task を断る — 区分で上限を逃れさせない)。系の宣言(service_model の System の task-limits)に
    書き、coordinator は資源 GroupLimit として持つ。置き方(coordinator の cluster_policy.place-tasks)はこの値で数え、上限に達した組の
    task は失敗にせず queued のまま待つ。system = 組を宣言した系の名(系の構成子 service_build.system-of が付ける — 書き手は書かない。
-   1 つの組を宣言する系は 1 つで、coordinator の資源の口は別の系の書き直しを断る。2 つの系が同じ組を違う値で宣言すると、後に宣言した系の
+   空 = 持ち主の無い組 — 最初に宣言し直した系が持つ。1 つの組を宣言する系は 1 つで、coordinator の資源の口は別の系の書き直しを断る。2 つの系が同じ組を違う値で宣言すると、後に宣言した系の
    値が黙って勝ち、宣言の順で同時数が変わった — 設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 A)。形の検めは
    doeff_cluster.shared.core.detached_rules の group-limit-refusal。"
   {:tags {:context "doeff-cluster" :role "intent"}}
