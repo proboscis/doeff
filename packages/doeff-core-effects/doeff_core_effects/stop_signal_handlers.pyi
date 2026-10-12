@@ -6,6 +6,7 @@ import signal as signal
 import types as types
 from doeff_core_effects.stop_signal_effects import AwaitStop as AwaitStop
 from doeff_core_effects.stop_signal_effects import RaiseStop as RaiseStop
+from doeff_core_effects.stop_signal_effects import StopBell as StopBell
 from doeff_core_effects.stop_signal_effects import StopRequested as StopRequested
 from doeff_core_effects.scheduler import CompletePromise as CompletePromise
 from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise

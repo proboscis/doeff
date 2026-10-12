@@ -7,6 +7,9 @@ from doeff_time.effects.time import GetMonotonic as GetMonotonic
 from doeff_time.effects.time import GetMonotonicEffect as GetMonotonicEffect
 from doeff_time.effects.time import GetTime as GetTime
 from doeff_time.effects.time import GetTimeEffect as GetTimeEffect
+from doeff_time.effects.time import RaceOutcome as RaceOutcome
+from doeff_time.effects.time import RaceWithin as RaceWithin
+from doeff_time.effects.time import RaceWithinEffect as RaceWithinEffect
 from doeff_time.effects.time import ScheduleAt as ScheduleAt
 from doeff_time.effects.time import ScheduleAtEffect as ScheduleAtEffect
 from doeff_time.effects.time import SetTime as SetTime

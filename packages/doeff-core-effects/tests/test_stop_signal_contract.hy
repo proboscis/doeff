@@ -13,7 +13,7 @@
 (import pytest)
 (import doeff [run with_handlers])
 (import doeff_vm [UnhandledEffect])
-(import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
+(import doeff_core_effects.stop_signal_effects [AwaitStop StopBell StopRequested])
 (import doeff_core_effects.scheduler [Cancel Race Spawn Wait])
 (import stop_contract_handlers [SendStop StopHandlerUnderTest signal-reason])
 
@@ -118,3 +118,35 @@
   (<- wanted str (signal-reason signal.SIGTERM))
   (assert (= asked wanted) (.format "打ち切りの後の StopRequested が {!r}" asked))
   (assert (= later wanted) (.format "打ち切りの後の AwaitStop が {!r}" later)))
+
+
+(deftest test-the-stop-bell-is-one-future-a-lost-race-leaves-ringable
+  {:interpreters ["os-signal" "scripted"]}
+  ;; 静かな loop の何周か: 毎周 同じ呼び鈴を自分の待ちと競わせ、自分の待ちが先に済む(呼び鈴は task でないので、取り消す物が無い)。
+  ;; 後の止めは、その同じ呼び鈴を鳴らす。
+  (<- (StopRequested))
+  (<- bell (StopBell))
+  (<- other (Spawn (quiet-then "changed")))
+  (<- first (Race bell other))
+  (<- again (StopBell))
+  (<- second-other (Spawn (quiet-then "changed again")))
+  (<- second (Race again second-other))
+  (assert (= #(first second) #("changed" "changed again")) #(first second))
+  (assert (= again.promise-id bell.promise-id) (.format "同じ session の StopBell が別の Future: {!r} {!r}" bell again))
+  (<- (SendStop signal.SIGTERM))
+  (<- (Wait bell))
+  (<- asked (| str None) (StopRequested))
+  (<- wanted str (signal-reason signal.SIGTERM))
+  (assert (= asked wanted) (.format "呼び鈴が鳴った後の StopRequested が {!r}" asked)))
+
+
+(deftest test-the-stop-bell-after-a-stop-has-rung
+  {:interpreters ["os-signal" "scripted"]}
+  (<- (StopRequested))
+  (<- (SendStop signal.SIGINT))
+  (<- bell (StopBell))
+  (<- other (Spawn (quiet-then "changed")))
+  (<- first (Race bell other))
+  (assert (!= first "changed") (.format "止めの後の StopBell が満ちていない(競わせの答え {!r})" first))
+  (<- (Wait other))
+  None)
