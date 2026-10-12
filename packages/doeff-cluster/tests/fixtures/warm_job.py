@@ -1,4 +1,5 @@
 """検の入口(tests/test_warm_child.py): 待ちの子から分かれた子が、読み込み済みの module として同じ process の中で走らせる小さな main。
+冷えた道(shim の下の uv run … hy -m)でも同じ main を走らせる(tests/test_task_venv_on_both_paths.hy — 2 つの道の入口の見え方を比べる)。
 引数で振る舞いを選ぶ:
   exit <code>                                   — その終了コードで終わる
   inspect <出力の path> [<関所の socket> [<印の path>]]
@@ -114,3 +115,7 @@ def main() -> None:
         case other:
             print(f"warm_job: 知らない引数 {other}", file=sys.stderr, flush=True)
             sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
