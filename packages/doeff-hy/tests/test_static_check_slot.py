@@ -8,8 +8,13 @@ ki-26ebd3f636e0・親 ki-aabe38bf85ef)。
 置く — 機体の本物の枠を埋めず、本物の保持者に待たされない。枠を持つ別の process は正本の命令の包み run。doeff-hy-check は本物の
 入口(`python -m doeff_hy.static_check`)を子の process で撃ち、偽にするのは pyright だけ(撃たれた事を file に記す)。正本の無い宿
 (doeff だけを clone した機体)では skip。
+
+M-slot(doeff_hy.check_slot)と正本の間の契約は、口だけを持つ正本(INTERFACE_ONLY_CANON)で確かめる — 方策は中を読まずに take へ
+渡す・正本はどの名の環境変数も読める・正本の take の中の失敗は名乗って素通し(設計検証 lt-TH2ZXPJ9QPXBB8EV6SNEWN1N89 の盲検 A・B)。
 """
 
+import ast
+import inspect
 import io
 import json
 import shlex
@@ -20,11 +25,46 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from doeff_hy import check_slot
 from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, SlotHeld, take_slot
 from doeff_hy.env_places import cache_home
 
 #: 機体の正本(検の process の home の下 — 検体の home へ写す元)。
 CANON = Path.home() / CANON_UNDER_HOME
+#: 正本が読む環境変数の名の見本(doeff が知らない名 — 正本がどの名を読んでも答えが届く事を確かめる)。
+PROBE_NAME = "DOEFF_HY_CHECK_SLOT_PROBE"
+#: 口だけを持つ正本(検体の home の正本の置き場に置く)。read_policy は印の object を返し、take は受けた方策が印そのものか・
+#: 環境変数 PROBE_NAME の読みの答え・名乗りを持ち物に記して返す。__FAIL__ の行は take の中の失敗の差し込み口。
+INTERFACE_ONLY_CANON = f"""
+POLICY = object()
+
+
+class PolicyUnreadable(Exception):
+    pass
+
+
+class SlotWaitExpired(Exception):
+    pass
+
+
+class Seen:
+    def __init__(self, same, probe, label):
+        self.same = same
+        self.probe = probe
+        self.label = label
+
+    def release(self):
+        pass
+
+
+def read_policy():
+    return POLICY
+
+
+def take(policy, label, environ, out):
+    __FAIL__
+    return Seen(policy is POLICY, environ.get("{PROBE_NAME}"), label)
+"""
 
 
 @dataclass(frozen=True)
@@ -195,3 +235,58 @@ def test_a_host_without_the_canon_takes_no_slot_and_says_nothing(tmp_path: Path)
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert held == SlotHeld(None)
     assert out.getvalue() == ""
+
+
+def _interface_canon(home: Path, fail: str) -> None:
+    target = home / CANON_UNDER_HOME
+    target.parent.mkdir(parents=True)
+    target.write_text(INTERFACE_ONLY_CANON.replace("__FAIL__", fail), encoding="utf-8")
+
+
+def test_the_declared_policy_and_any_environment_name_reach_the_canon_take(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 方策は正本の read_policy の答えのまま take へ届き(値を縮める・作り直す口が在れば別の物になる)、正本は doeff が知らない名の
+    # 環境変数も読める。盲検 A の反例: 正本へ渡す env を保持者の印 1 つの写しに絞っていたので、正本が会話の id を読むようになると
+    # doeff-hy-check だけが黙って会話ごとの数えの外で走った。
+    _interface_canon(tmp_path / "home", "pass")
+    monkeypatch.setenv(PROBE_NAME, "seen-by-the-canon")
+    out = io.StringIO()
+    held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
+    assert isinstance(held, SlotHeld), out.getvalue()
+    assert held.holding is not None, out.getvalue()
+    seen = held.holding
+    assert vars(seen) == {
+        "same": True,
+        "probe": "seen-by-the-canon",
+        "label": "doeff-hy-check repo",
+    }
+    assert out.getvalue() == ""
+
+
+def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) -> None:
+    # 正本の take の中の失敗(置き場を作れない OSError など)は 1 行名乗って素通し — traceback のまま抜けると main の終了 1(新しい赤)
+    # と区別できない(盲検 A の副次の実測: 作れない置き場で exit 1・stdout 空)。
+    _interface_canon(tmp_path / "home", "raise OSError('置き場を作れない')")
+    out = io.StringIO()
+    held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
+    assert held == SlotHeld(None)
+    assert out.getvalue().startswith(
+        f"{MARK} 枠の正本の take が落ちたので枠を取らずに走る(OSError"
+    ), out.getvalue()
+
+
+def test_the_canon_policy_goes_straight_into_take() -> None:
+    # 方策(read_policy の答え)は中を読まずに take の 1 つ目の引数へそのまま渡す — 名に束ねて読む・包んで作り直す形を断る。盲検 B の
+    # 反例: 環境変数で待ちの上限を縮める口(policy を名に束ね dataclasses.replace で作り直す)が、枠の検・doeff-linter・ruff・
+    # code-quality を全部通り、値の持ち主(正本の宣言)と方策の欄の名を doeff へ移した。
+    tree = ast.parse(inspect.getsource(check_slot))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    straight = {id(call.args[0]) for call in calls if call.func.attr == "take" and call.args}
+    asked = [call for call in calls if call.func.attr == "read_policy"]
+    assert asked, "check_slot が正本の read_policy を呼んでいない(方策を自分で作っている)"
+    assert all(id(call) in straight for call in asked), [ast.unparse(call) for call in asked]
