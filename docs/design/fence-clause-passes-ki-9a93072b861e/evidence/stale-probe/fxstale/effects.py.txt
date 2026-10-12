@@ -1,0 +1,13 @@
+from dataclasses import dataclass
+
+from doeff_vm import EffectBase
+
+
+@dataclass(frozen=True)
+class Nap(EffectBase):
+    seconds: float
+
+
+@dataclass(frozen=True)
+class ReadFlag(EffectBase):
+    name: str

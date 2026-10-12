@@ -1,0 +1,5 @@
+# 構造の検 — 報告 JSON(version 1)を agentcli.ai.entry.design_check_runtime.verify_report で確かめた
+# (ai route design-check は 2026-10-07 に退役。Stop hook と完了登録が呼ぶ検査関数を直に呼んだ)
+# verify_report(Path('docs/design/fence-clause-passes-ki-9a93072b861e/report.json'), 'lt-XNEJ6RS2KTXW2VWP165DW6FEMD')
+PROBLEMS: []
+OK

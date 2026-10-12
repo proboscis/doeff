@@ -14,11 +14,14 @@ the effects it performs (followed through Program calls) are what the clause
 emits outward.
 
 A clause with a guard (``:when``) answers only the effects its guard lets in: doeff-hy writes the
-guard as ``if not guard: yield Pass(effect, k)`` at the head of the clause, and an effect that fails
-it goes on outward as it arrived.  The guard is read as a test on the class of the arriving effect
+guard as ``if not guard: yield Pass(effect, k)`` in the clause, and an effect that fails it goes on
+outward as it arrived.  The guard is read as a test on the class of the arriving effect
 (``Clause.passes`` — ``isinstance`` / ``not`` / ``and`` / ``or``).  An effect the guard certainly
 sends on is not answered by the clause; a guard that tests anything else (a field, a call) is decided
 only at run time, and the clause is taken to answer the effect — as for a clause without a guard.
+What the clause does ahead of its guard — doeff-hy takes the session values the guard reads there,
+with their ``Get`` / initialisation / ``Put`` — is run for an effect it sends on too, and leaves with
+it (``Clause.before_guard``).
 
 ``analyze_handler`` accepts a handler factory (``(defhandler h [args] ...)``,
 ``def reader(env): ...``), a clause function, or a handler value made by
@@ -558,10 +561,12 @@ def _guards_in(everything: Iterable[ast.AST], param: str | None) -> dict[int, as
     """The ``if`` that may be the guard of each ``if isinstance(effect, T):`` branch, by the branch's
     node.
 
-    A clause with ``:when`` is written by doeff-hy as ``if isinstance(effect, T): <fields>; if not
-    guard: yield Pass(effect, k) else: <clause>`` — the guard is the ``if`` among the branch's own
-    statements whose only act is to yield a call on the effect.  Whether that call is ``Pass`` is
-    asked of the names (``_sent_on_guards``): the macro writes ``Pass`` under an alias."""
+    A clause with ``:when`` is written by doeff-hy as ``if isinstance(effect, T): <fields>; <the
+    session values the guard reads, taken>; if not guard: yield Pass(effect, k) else: <clause>`` —
+    the guard is the ``if`` among the branch's own statements whose only act is to yield a call on
+    the effect; what stands ahead of it is run for the effect it sends on too (``_ahead_of``).
+    Whether that call is ``Pass`` is asked of the names (``_sent_on_guards``): the macro writes
+    ``Pass`` under an alias."""
     found: dict[int, ast.If] = {}
     for child in everything:
         if not isinstance(child, ast.If):
@@ -631,6 +636,14 @@ def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
     return UnknownTest()
 
 
+def _ahead_of(branch: _Branch, guard: ast.If) -> tuple[ast.AST, ...]:
+    """The nodes of ``branch`` that run before its ``guard`` can send the effect on: the statements
+    ahead of the guard's ``if`` in the branch's suite (doeff-hy takes the session values the guard
+    reads there — their ``Get`` / ``Put`` and initialisation — before it tests the guard)."""
+    suite = branch.at.body if isinstance(branch.at, ast.If) else []
+    return tuple(_region(suite[: suite.index(guard)])) if guard in suite else ()
+
+
 def _read_clauses(
     reader: _Reader, node: FunctionNode, scope: _Scope, filename: str, label: str
 ) -> _ReadClauses:
@@ -650,6 +663,7 @@ def _read_clauses(
         )
         guard = guards.get(id(branch.at))
         passes = None if guard is None else _pass_test(guard.test, dispatch.param, scope)
+        ahead = () if guard is None else _ahead_of(branch, guard)
         # Read once per handled class, with the effect parameter bound to the effect of that
         # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
         # reaches the clause (``Clause.emits``).
@@ -665,6 +679,17 @@ def _read_clauses(
                 ),
                 location=location,
                 passes=passes,
+                before_guard=(
+                    _emits_read_later(
+                        reader,
+                        ahead,
+                        _received_in(scope, dispatch.param, cls),
+                        filename,
+                        f"{label} clause before its guard",
+                    )
+                    if ahead
+                    else None
+                ),
             )
             for cls in named.found
         )

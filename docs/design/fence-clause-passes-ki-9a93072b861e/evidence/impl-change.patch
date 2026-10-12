@@ -1,0 +1,569 @@
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/cli.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/cli.py
+index bcbcc70c2..2f3363c7e 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/cli.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/cli.py
+@@ -140,7 +140,8 @@ def _handler(arguments: argparse.Namespace) -> int:
+     print(f"{handler.name} ({handler.basis.value})")
+     for clause in handler.clauses:
+         emits = ", ".join(_short(n) for n in clause.emits.effect_names) or "-"
+-        print(f"  {clause.handles.__name__} → performs {emits}")
++        guarded = " (the effects its guard fails go on outward)" if clause.passes is not None else ""
++        print(f"  {clause.handles.__name__} → performs {emits}{guarded}")
+     for item in handler.unresolved:
+         print(f"  unresolved at {item.location}: {item.reason}: {item.text}")
+     return 0
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
+index 5f3e247a4..61b9bf6f2 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/handler_effects.py
+@@ -13,6 +13,13 @@ understood too).  The branch taken when the test holds is the clause for ``T``;
+ the effects it performs (followed through Program calls) are what the clause
+ emits outward.
+ 
++A clause with a guard (``:when``) answers only the effects its guard lets in: doeff-hy writes the
++guard as ``if not guard: yield Pass(effect, k)`` at the head of the clause, and an effect that fails
++it goes on outward as it arrived.  The guard is read as a test on the class of the arriving effect
++(``Clause.passes`` — ``isinstance`` / ``not`` / ``and`` / ``or``).  An effect the guard certainly
++sends on is not answered by the clause; a guard that tests anything else (a field, a call) is decided
++only at run time, and the clause is taken to answer the effect — as for a clause without a guard.
++
+ ``analyze_handler`` accepts a handler factory (``(defhandler h [args] ...)``,
+ ``def reader(env): ...``), a clause function, or a handler value made by
+ ``defhandler`` / ``doeff.handler`` (``__doeff_handler_data__``).  A factory that
+@@ -43,6 +50,7 @@ import ast
+ import contextvars
+ import dataclasses
+ import functools
++import importlib
+ from collections import deque
+ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+ from dataclasses import dataclass
+@@ -51,17 +59,23 @@ from typing import Any
+ 
+ from doeff_effect_analyzer.program_effects import (
+     UNBOUND,
++    AllTest,
++    AnyTest,
+     Basis,
+     Binding,
++    ClassTest,
+     Clause,
+     EffectUse,
+     Escape,
+     FunctionNode,
+     HandlerEffects,
+     Location,
++    NotTest,
++    PassTest,
+     ProgramEffects,
+     ReceivedEffect,
+     Residual,
++    UnknownTest,
+     Unresolved,
+     _bind_expression,
+     _body_nodes,
+@@ -495,11 +509,16 @@ def _clauses_in(
+ @dataclass(frozen=True)
+ class _Branch:
+     """A branch of a dispatcher, taken when the effect is of the classes ``classes`` names: the
+-    node that tests it (``at``) and the nodes it runs (``region``)."""
++    node that tests it (``at``) and the nodes it runs (``region``).
++
++    ``guard`` = the ``if`` among the branch's own statements that may be its guard (``:when``) — it
++    does nothing but yield a call on the effect (``_guards_in``); None for a branch without one.
++    Whether the call is a ``Pass`` is decided where the names are known (``_sent_on_guards``)."""
+ 
+     at: ast.AST
+     classes: ast.expr
+     region: tuple[ast.AST, ...]
++    guard: ast.If | None = None
+ 
+ 
+ @dataclass(frozen=True)
+@@ -522,10 +541,11 @@ def _dispatch_of(node: FunctionNode) -> _Dispatch:
+         return cached[1]
+     param = _effect_param(node)
+     everything = list(_body_nodes(node))
++    guards = _guards_in(everything, param)
+     dispatch = _Dispatch(
+         param,
+         tuple(
+-            _Branch(child, classes, tuple(region))
++            _Branch(child, classes, tuple(region), guards.get(id(child)))
+             for child in everything
+             for classes, region in _branches(child, param, everything)
+         ),
+@@ -534,19 +554,102 @@ def _dispatch_of(node: FunctionNode) -> _Dispatch:
+     return dispatch
+ 
+ 
++def _guards_in(everything: Iterable[ast.AST], param: str | None) -> dict[int, ast.If]:
++    """The ``if`` that may be the guard of each ``if isinstance(effect, T):`` branch, by the branch's
++    node.
++
++    A clause with ``:when`` is written by doeff-hy as ``if isinstance(effect, T): <fields>; if not
++    guard: yield Pass(effect, k) else: <clause>`` — the guard is the ``if`` among the branch's own
++    statements whose only act is to yield a call on the effect.  Whether that call is ``Pass`` is
++    asked of the names (``_sent_on_guards``): the macro writes ``Pass`` under an alias."""
++    found: dict[int, ast.If] = {}
++    for child in everything:
++        if not isinstance(child, ast.If):
++            continue
++        target = _isinstance_target(child.test, param)
++        if target is None or target.negated:
++            continue
++        for statement in child.body:
++            if isinstance(statement, ast.If) and _yielded_call_on(statement.body, param) is not None:
++                found[id(child)] = statement
++                break
++    return found
++
++
++def _yielded_call_on(statements: Sequence[ast.stmt], param: str | None) -> ast.Call | None:
++    """The call in ``statements`` when they are only ``yield <call>(<the effect>, …)`` (assigned,
++    returned or bare), else None."""
++    if len(statements) != 1:
++        return None
++    value = getattr(statements[0], "value", None)
++    if isinstance(value, ast.Yield):
++        value = value.value
++    if isinstance(value, ast.Call) and value.args and _is_name(value.args[0], param):
++        return value
++    return None
++
++
++def _pass_class() -> type:
++    """``doeff_vm.Pass``: the control value that sends the effect a clause received on to the
++    handlers outside."""
++    return importlib.import_module("doeff_vm").Pass
++
++
++def _sent_on_guards(dispatch: _Dispatch, scope: _Scope) -> dict[int, ast.If]:
++    """The guard of each branch of ``dispatch`` whose guard yields ``Pass`` — the name read in
++    ``scope`` (``Pass``, or the alias doeff-hy imports it as), by the branch's node.  The ``if`` of
++    such a guard sends the effect outward: it is not a branch of the dispatcher."""
++    sends_on = _pass_class()
++    sent: dict[int, ast.If] = {}
++    for branch in dispatch.branches:
++        if branch.guard is None:
++            continue
++        call = _yielded_call_on(branch.guard.body, dispatch.param)
++        if call is not None and scope.resolve(call.func) is sends_on:
++            sent[id(branch.at)] = branch.guard
++    return sent
++
++
++def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
++    """A guard's test (the case in which the clause sends the effect on) as a test on the class of
++    the effect that arrives: ``isinstance(effect, X)`` with ``not`` / ``and`` / ``or``; any other test
++    is decided only at run time (``UnknownTest``)."""
++    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
++        return NotTest(_pass_test(test.operand, param, scope))
++    if isinstance(test, ast.BoolOp):
++        parts = tuple(_pass_test(value, param, scope) for value in test.values)
++        return AllTest(parts) if isinstance(test.op, ast.And) else AnyTest(parts)
++    if (
++        isinstance(test, ast.Call)
++        and isinstance(test.func, ast.Name)
++        and test.func.id == "isinstance"
++        and len(test.args) == 2
++        and _is_name(test.args[0], param)
++    ):
++        named = _classes(test.args[1], scope)
++        return ClassTest(tuple(named.found), complete=not named.missing)
++    return UnknownTest()
++
++
+ def _read_clauses(
+     reader: _Reader, node: FunctionNode, scope: _Scope, filename: str, label: str
+ ) -> _ReadClauses:
+     dispatch = _dispatch_of(node)
++    guards = _sent_on_guards(dispatch, scope)
++    guard_ifs = {id(guard) for guard in guards.values()}
+     clauses: list[Clause] = []
+     unresolved: list[Unresolved] = []
+     for branch in dispatch.branches:
++        if id(branch.at) in guard_ifs:
++            continue  # a guard's ``if`` sends the effect on: it is not a clause
+         location = Location(filename, getattr(branch.at, "lineno", 0))
+         named = _classes(branch.classes, scope)
+         unresolved.extend(
+             Unresolved("handled class is not an importable effect class", text, location)
+             for text in named.missing
+         )
++        guard = guards.get(id(branch.at))
++        passes = None if guard is None else _pass_test(guard.test, dispatch.param, scope)
+         # Read once per handled class, with the effect parameter bound to the effect of that
+         # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
+         # reaches the clause (``Clause.emits``).
+@@ -561,6 +664,7 @@ def _read_clauses(
+                     f"{label} clause",
+                 ),
+                 location=location,
++                passes=passes,
+             )
+             for cls in named.found
+         )
+diff --git a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
+index 26fa35a17..ebf89045f 100644
+--- a/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
++++ b/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py
+@@ -171,18 +171,100 @@ class _ClauseEmits:
+         clause.__dict__[self._held] = value
+ 
+ 
++@dataclass(frozen=True)
++class ClassTest:
++    """``isinstance(effect, X)``: ``classes`` are the classes ``X`` names; ``complete`` is False when
++    ``X`` names a class the reader could not find (the test then never decides against an effect)."""
++
++    classes: tuple[type, ...]
++    complete: bool = True
++
++    def holds_for(self, arrived: type) -> bool | None:
++        if any(issubclass(arrived, cls) for cls in self.classes):
++            return True
++        # An effect of a class above a named one may be an instance of the named one.
++        if not self.complete or any(issubclass(cls, arrived) for cls in self.classes):
++            return None
++        return False
++
++
++@dataclass(frozen=True)
++class NotTest:
++    part: "PassTest"
++
++    def holds_for(self, arrived: type) -> bool | None:
++        held = self.part.holds_for(arrived)
++        return None if held is None else not held
++
++
++@dataclass(frozen=True)
++class AllTest:
++    """``a and b …``: false when any part is false, true when all are, otherwise not known."""
++
++    parts: tuple["PassTest", ...]
++
++    def holds_for(self, arrived: type) -> bool | None:
++        verdicts = [part.holds_for(arrived) for part in self.parts]
++        if False in verdicts:
++            return False
++        return None if None in verdicts else True
++
++
++@dataclass(frozen=True)
++class AnyTest:
++    """``a or b …``: true when any part is true, false when all are false, otherwise not known."""
++
++    parts: tuple["PassTest", ...]
++
++    def holds_for(self, arrived: type) -> bool | None:
++        verdicts = [part.holds_for(arrived) for part in self.parts]
++        if True in verdicts:
++            return True
++        return None if None in verdicts else False
++
++
++@dataclass(frozen=True)
++class UnknownTest:
++    """A test that is not about the class of the effect (a field, a call): decided only at run time."""
++
++    def holds_for(self, arrived: type) -> bool | None:
++        return None
++
++
++PassTest = ClassTest | NotTest | AllTest | AnyTest | UnknownTest
++
++
+ @dataclass(frozen=True)
+ class Clause:
+     """One effect class a handler answers (``handles``), and what the clause performs when it
+-    answers (``emits`` — see ``_ClauseEmits``)."""
++    answers (``emits`` — see ``_ClauseEmits``).
++
++    ``passes`` = the test, from the clause's guard (``:when``), under which the clause sends the
++    effect on to the handlers outside without running (doeff-hy writes ``if not guard: yield
++    Pass(effect, k)``); None for a clause without a guard.  It is asked per arriving class
++    (``passes_on``).
++    """
+ 
+     handles: type
+     emits: _ClauseEmits = _ClauseEmits()
+     location: Location
++    passes: PassTest | None = None
++
++    def passes_on(self, arrived: type) -> bool:
++        """Whether an effect of class ``arrived`` that reached this clause goes on outward without
++        the clause running — when the guard sends every such effect on.  A guard that tests more
++        than the class (a field, a call) may let the effect in: the clause is then taken to answer
++        it, as it is for a clause without a guard."""
++        return self.passes is not None and self.passes.holds_for(arrived) is True
+ 
+     def __getstate__(self) -> dict[str, Any]:
+         """A pickled clause holds its emits read (the function that reads them does not pickle)."""
+-        return {"handles": self.handles, "_emits": self.emits, "location": self.location}
++        return {
++            "handles": self.handles,
++            "_emits": self.emits,
++            "location": self.location,
++            "passes": self.passes,
++        }
+ 
+ 
+ @dataclass(frozen=True)
+@@ -406,7 +488,9 @@ def pass_through(
+ 
+     A handled effect is replaced by the effects its clause performs (they go to
+     the handlers outside it); a clause keyed on a parent class also handles its
+-    subclasses (``isinstance`` semantics).  What a handler performs itself around the
++    subclasses (``isinstance`` semantics).  A clause whose guard (``:when``) sends the
++    effect on (``Clause.passes``) does not answer it: the effect leaves as it arrived.  What a
++    handler performs itself around the
+     body (``HandlerEffects.performs``) leaves it the same way, toward the handlers
+     outside it.  A handler that could not be read
+     handles nothing here and is named in ``unknown_handlers``.  The result has one
+@@ -424,7 +508,7 @@ def pass_through(
+         emitted: dict[type, Escape] = {}
+         for effect in list(pending):
+             clause = next((c for c in handler.clauses if issubclass(effect, c.handles)), None)
+-            if clause is None:
++            if clause is None or clause.passes_on(effect):
+                 continue
+             del pending[effect]
+             performed = clause.emits.residual_with(include)
+diff --git a/packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py b/packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py
+new file mode 100644
+index 000000000..1c57d443d
+--- /dev/null
++++ b/packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py
+@@ -0,0 +1,230 @@
++"""A clause guarded by ``:when`` answers only the effects its guard lets in; the rest go outward.
++
++``(EffectBase [] :when (not (isinstance effect Nap)) …)`` — the fence shape — expands to
++``if isinstance(effect, EffectBase): if not guard: yield Pass(effect, k) else: <body>``: a ``Nap``
++reaches the clause and is passed on, so it leaves the handler.  The reader took the clause for
++every effect it names and never looked at its guard, so a ``Nap`` that crossed a fence was read as
++answered by it and the Program's residual was empty (card ki-9a93072b861e; found by the design
++check of card ki-1201d06f6324).  The guard is read per effect that arrives: a class test decides
++(``isinstance`` / ``not`` / ``and`` / ``or``) and the effect it certainly sends on leaves the
++handler.  A guard that tests anything else (a field of the effect, a call) is decided only at run
++time: the clause is taken to answer the effect, as a clause without a guard does — most guards in an
++application are of that kind (``(Ask [key] :when (= key …))``), and reading each as "may pass" would
++report a gap for every such handler.
++"""
++
++import pytest
++from doeff_effect_analyzer.handler_effects import analyze_handler, check_coverage
++from doeff_effect_analyzer.program_effects import Basis, analyze_program
++
++pytest.importorskip("hy")
++pytest.importorskip("doeff_hy")
++
++EFFECTS_PY = """\
++from dataclasses import dataclass
++
++from doeff_vm import EffectBase
++
++
++@dataclass(frozen=True)
++class Tick(EffectBase):
++    pass
++
++
++@dataclass(frozen=True)
++class Nap(EffectBase):
++    seconds: float
++
++
++@dataclass(frozen=True)
++class Zap(EffectBase):
++    pass
++"""
++
++PROGRAMS_HY = """\
++(require doeff-hy.macros [defk <-])
++(require doeff-hy.handle [handle defhandler with-handler])
++(import doeff [EffectBase])
++(import {pkg}.effects [Tick Nap Zap])
++
++(defk three [] {:pre [] :post [(: % int)]} (<- (Nap 1.0)) (<- (Tick)) (<- (Zap)) 1)
++
++;; the fence: Nap passes, everything else is refused
++(defhandler fence-nap
++  (EffectBase [] :when (not (isinstance effect Nap)) (raise (ValueError "fenced"))))
++(defk through-fence [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [fence-nap] (three)))
++  r)
++
++;; the fence written inline in a body
++(defk through-inline-fence [] {:pre [] :post [(: % int)]}
++  (<- r (handle (three) (EffectBase [] :when (not (isinstance effect Nap)) (raise (ValueError "fenced")))))
++  r)
++
++;; the fence with an earlier clause, and what it passes named by a module constant
++(setv PASSABLE Nap)
++(defhandler fence-after-tick
++  (Tick [] (resume None))
++  (EffectBase [] :when (not (isinstance effect PASSABLE)) (raise (ValueError "fenced"))))
++(defk through-fence-after-tick [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [fence-after-tick] (three)))
++  r)
++
++;; what it passes given as an argument of the factory: the argument is not bound when the clauses
++;; are read, so the guard is not known
++(defhandler fence-of [passable]
++  (Tick [] (resume None))
++  (EffectBase [] :when (not (isinstance effect passable)) (raise (ValueError "fenced"))))
++(defk through-fence-of [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [(fence-of Nap)] (three)))
++  r)
++
++;; a tuple of classes passes
++(defhandler fence-pair
++  (EffectBase [] :when (not (isinstance effect #(Nap Zap))) (raise (ValueError "fenced"))))
++(defk through-fence-pair [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [fence-pair] (three)))
++  r)
++
++;; the guard lets only Tick in: Nap and Zap are passed on
++(defhandler only-tick
++  (EffectBase [] :when (isinstance effect Tick) (resume None)))
++(defk through-only-tick [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [only-tick] (three)))
++  r)
++
++;; a compound guard: Tick passes for sure, a Nap passes when its seconds are positive, Zap is refused
++(defhandler fence-compound
++  (EffectBase []
++    :when (not (or (isinstance effect Tick) (and (isinstance effect Nap) (> effect.seconds 0))))
++    (raise (ValueError "fenced"))))
++(defk through-fence-compound [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [fence-compound] (three)))
++  r)
++
++;; a guard that is not a class test: Nap may pass, may be answered
++(defhandler long-naps
++  (Nap [seconds] :when (> seconds 0) (resume None)))
++(defk through-long-naps [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [long-naps] (three)))
++  r)
++
++;; no guard: the catch-all answers everything
++(defhandler answers-all
++  (EffectBase [] (resume None)))
++(defk through-answers-all [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [answers-all] (three)))
++  r)
++
++;; no guard, one class: the others go outward
++(defhandler answers-tick
++  (Tick [] (resume None)))
++(defk through-answers-tick [] {:pre [] :post [(: % int)]}
++  (<- r (with-handler [answers-tick] (three)))
++  r)
++"""
++
++
++@pytest.fixture
++def pkg(make_package) -> str:
++    return make_package({"effects.py": EFFECTS_PY, "programs.hy": PROGRAMS_HY})
++
++
++def _left_of(pkg: str, module: str, program: str) -> set[str]:
++    """The effect classes that leave ``program`` of ``module`` (a Program under a handler)."""
++    report = analyze_program(f"{pkg}.{module}:{program}")
++    assert report.unresolved == ()
++    return {t.__name__ for t in report.effect_types}
++
++
++def _left(pkg: str, program: str) -> set[str]:
++    return _left_of(pkg, "programs", program)
++
++
++@pytest.mark.parametrize(
++    ("program", "leaves"),
++    [
++        ("through_fence", {"Nap"}),
++        ("through_inline_fence", {"Nap"}),
++        ("through_fence_after_tick", {"Nap"}),
++        ("through_fence_pair", {"Nap", "Zap"}),
++        ("through_only_tick", {"Nap", "Zap"}),
++        ("through_answers_all", set()),
++        ("through_answers_tick", {"Nap", "Zap"}),
++    ],
++)
++def test_the_effects_a_guard_certainly_sends_on_leave_the_handler(
++    pkg: str, program: str, leaves: set[str]
++) -> None:
++    assert _left(pkg, program) == leaves
++
++
++@pytest.mark.parametrize(
++    ("program", "leaves"),
++    [
++        # Tick is certainly passed; a Nap passes only when its seconds are positive, which the class
++        # does not tell, so the clause is taken to answer it.
++        ("through_fence_compound", {"Tick"}),
++        # The argument of the factory is not bound when its clauses are read: the guard is not known.
++        ("through_fence_of", set()),
++        # The guard tests a field: the clause is taken to answer every Nap it can receive.
++        ("through_long_naps", {"Tick", "Zap"}),
++    ],
++)
++def test_a_guard_the_class_does_not_decide_is_taken_to_let_the_effect_in(
++    pkg: str, program: str, leaves: set[str]
++) -> None:
++    assert _left(pkg, program) == leaves
++
++
++def test_a_fence_is_read_by_its_clauses_and_leaves_a_gap_for_what_it_passes(pkg: str) -> None:
++    import importlib
++
++    programs = importlib.import_module(f"{pkg}.programs")
++    fence = analyze_handler(programs.fence_nap, name="fence-nap")
++    assert fence.basis is Basis.CLAUSES
++    assert [clause.handles.__name__ for clause in fence.clauses] == ["EffectBase"]
++    program = analyze_program(f"{pkg}.programs:three")
++    coverage = check_coverage(program, [fence])
++    assert [gap.effect.__name__ for gap in coverage.gaps] == ["Nap"]
++    assert not coverage.complete
++
++
++# A hand-written dispatcher whose guard sends the effect on with ``Pass`` imported under another
++# name: the control value is told by what the name is, not by how it is spelt (doeff-hy writes it
++# as ``_doeff_Pass``; the first reading matched the spelling ``Pass`` and lost every fence when the
++# macro began to alias it).
++ALIASED_PASS_PY = """\
++from doeff import Pass as send_on
++from doeff import do
++from doeff.program import with_handlers
++from doeff_vm import EffectBase
++
++from {pkg}.effects import Nap, Tick, Zap
++
++
++def fence_py(effect, k):
++    if isinstance(effect, EffectBase):
++        if isinstance(effect, Nap):
++            return (yield send_on(effect, k))
++        raise ValueError("fenced")
++    return (yield send_on(effect, k))
++
++
++@do
++def three_py():
++    yield Nap(1.0)
++    yield Tick()
++    yield Zap()
++    return 1
++
++
++@do
++def through_fence_py():
++    return (yield with_handlers([fence_py], three_py()))
++"""
++
++
++def test_a_guard_sends_the_effect_on_with_pass_under_any_name(make_package) -> None:
++    pkg = make_package({"effects.py": EFFECTS_PY, "programs_py.py": ALIASED_PASS_PY})
++    assert _left_of(pkg, "programs_py", "through_fence_py") == {"Nap"}

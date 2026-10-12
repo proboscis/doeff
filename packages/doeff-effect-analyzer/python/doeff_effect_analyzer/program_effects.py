@@ -240,22 +240,36 @@ class Clause:
     answers (``emits`` — see ``_ClauseEmits``).
 
     ``passes`` = the test, from the clause's guard (``:when``), under which the clause sends the
-    effect on to the handlers outside without running (doeff-hy writes ``if not guard: yield
-    Pass(effect, k)``); None for a clause without a guard.  It is asked per arriving class
-    (``passes_on``).
+    effect on to the handlers outside instead of answering it (doeff-hy writes ``if not guard:
+    yield Pass(effect, k)``); None for a clause without a guard.  It is asked per arriving class
+    (``passes_on``).  What the clause performs *before* it sends an effect on — the session values
+    its guard reads are taken first, with their ``Get`` / ``Put`` and initialisation — is
+    ``before_guard`` (``performed_before_guard``); an effect sent on leaves, and so do those.
     """
 
     handles: type
     emits: _ClauseEmits = _ClauseEmits()
     location: Location
     passes: PassTest | None = None
+    before_guard: "ProgramEffects | Callable[[], ProgramEffects] | None" = None
 
     def passes_on(self, arrived: type) -> bool:
-        """Whether an effect of class ``arrived`` that reached this clause goes on outward without
-        the clause running — when the guard sends every such effect on.  A guard that tests more
+        """Whether an effect of class ``arrived`` that reached this clause goes on outward instead
+        of being answered — when the guard sends every such effect on.  A guard that tests more
         than the class (a field, a call) may let the effect in: the clause is then taken to answer
         it, as it is for a clause without a guard."""
         return self.passes is not None and self.passes.holds_for(arrived) is True
+
+    def performed_before_guard(self) -> "ProgramEffects":
+        """What the clause performs before its guard, read the first time it is asked for and kept
+        (like ``emits``); nothing for a clause without a guard or with nothing ahead of it."""
+        held = self.before_guard
+        if held is None:
+            return ProgramEffects(target="before the guard")
+        if not isinstance(held, ProgramEffects):
+            held = held()
+            self.__dict__["before_guard"] = held
+        return held
 
     def __getstate__(self) -> dict[str, Any]:
         """A pickled clause holds its emits read (the function that reads them does not pickle)."""
@@ -264,6 +278,7 @@ class Clause:
             "_emits": self.emits,
             "location": self.location,
             "passes": self.passes,
+            "before_guard": self.performed_before_guard() if self.passes is not None else None,
         }
 
 
@@ -489,7 +504,8 @@ def pass_through(
     A handled effect is replaced by the effects its clause performs (they go to
     the handlers outside it); a clause keyed on a parent class also handles its
     subclasses (``isinstance`` semantics).  A clause whose guard (``:when``) sends the
-    effect on (``Clause.passes``) does not answer it: the effect leaves as it arrived.  What a
+    effect on (``Clause.passes``) does not answer it: the effect leaves as it arrived, together
+    with what the clause performs before its guard (``Clause.before_guard``).  What a
     handler performs itself around the
     body (``HandlerEffects.performs``) leaves it the same way, toward the handlers
     outside it.  A handler that could not be read
@@ -508,10 +524,16 @@ def pass_through(
         emitted: dict[type, Escape] = {}
         for effect in list(pending):
             clause = next((c for c in handler.clauses if issubclass(effect, c.handles)), None)
-            if clause is None or clause.passes_on(effect):
+            if clause is None:
                 continue
-            del pending[effect]
-            performed = clause.emits.residual_with(include)
+            sent_on = clause.passes_on(effect)
+            if not sent_on:
+                del pending[effect]
+            # An effect the guard sends on leaves as it arrived; what the clause did before
+            # sending it on (taking the session values its guard reads) leaves with it.
+            performed = (
+                clause.performed_before_guard() if sent_on else clause.emits
+            ).residual_with(include)
             unknown.extend(performed.unknown_handlers)
             unresolved.extend(
                 replace(item, via=(handler.name, *item.via)) for item in performed.unresolved

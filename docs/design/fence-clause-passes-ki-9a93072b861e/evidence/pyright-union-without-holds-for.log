@@ -1,0 +1,23 @@
+## 変更前(BrokenTest なし・e76b00550 + 修正)の pyright: 7 件の既存
+## BrokenTest を和に足した版:
+program_effects.py:196:26 - error: Cannot access attribute "holds_for" for class "BrokenTest"
+program_effects.py:207:26 - error: Cannot access attribute "holds_for" for class "BrokenTest"
+program_effects.py:220:26 - error: Cannot access attribute "holds_for" for class "BrokenTest"
+program_effects.py:257:5 - error: Fields without default values cannot appear after fields with default values (reportGeneralTypeIssues)
+program_effects.py:266:56 - error: Cannot access attribute "holds_for" for class "BrokenTest"
+program_effects.py:2206:80 - error: Argument of type "expr | Lambda" cannot be assigned to parameter "node" of type "FunctionNode" in function "__init__"
+program_effects.py:2816:32 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "FunctionType" in function "__init__"
+program_effects.py:2819:47 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "FunctionType" in function "facts"
+program_effects.py:3021:38 - error: Type "list[AST]" is not assignable to declared type "list[FunctionNode]" (reportAssignmentType)
+program_effects.py:3233:33 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "FunctionType" in function "__init__"
+program_effects.py:3239:30 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "FunctionType" in function "facts"
+11 errors, 0 warnings, 0 informations
+## 戻した版(基準)
+program_effects.py:252:5 - error: Fields without default values cannot appear after fields with default values (reportGe
+program_effects.py:2201:80 - error: Argument of type "expr | Lambda" cannot be assigned to parameter "node" of type "Fun
+program_effects.py:2811:32 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "Fu
+program_effects.py:2814:47 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "Fu
+program_effects.py:3016:38 - error: Type "list[AST]" is not assignable to declared type "list[FunctionNode]" (reportAssi
+program_effects.py:3228:33 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "Fu
+program_effects.py:3234:30 - error: Argument of type "MethodType" cannot be assigned to parameter "function" of type "Fu
+7 errors, 0 warnings, 0 informations

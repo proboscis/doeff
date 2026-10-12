@@ -1,0 +1,13 @@
+(require doeff-hy.macros [defk <-])
+(require doeff-hy.handle [defhandler with-handler])
+(import doeff [EffectBase])
+(import fxstale.effects [Nap ReadFlag])
+(defk nap-only [] {:pre [] :post [(: % int)]} (<- (Nap 1.0)) 1)
+(defhandler maintenance-gate
+  (session val closed (! (ReadFlag "maintenance")))
+  (EffectBase []
+    :when (and closed (not (isinstance effect Nap)))
+    (raise (ValueError "closed for maintenance"))))
+(defk through-gate [] {:pre [] :post [(: % int)]}
+  (<- r (with-handler [maintenance-gate] (nap-only)))
+  r)

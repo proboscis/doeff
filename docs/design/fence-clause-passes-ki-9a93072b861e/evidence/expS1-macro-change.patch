@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/expansion_names.py b/packages/doeff-hy/src/doeff_hy/expansion_names.py
+index 35d90a7a8..4f9f5527c 100644
+--- a/packages/doeff-hy/src/doeff_hy/expansion_names.py
++++ b/packages/doeff-hy/src/doeff_hy/expansion_names.py
+@@ -22,7 +22,7 @@ import hy
+ from hy.models import Expression, Keyword, List, Object, Symbol
+ 
+ #: 別名の頭。型検査のための展開が引く補助の名(static_view.deftest_annotation_name)と同じ。
+-PREFIX = "_doeff_"
++PREFIX = "_dx_"
+ 
+ #: 名の置き場の module。ここに無い名は doeff から import する(節の操作の node は表 clause_ops.hy の nodes が名を持つ)。
+ _DOEFF = "doeff"
