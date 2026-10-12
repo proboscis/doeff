@@ -1,7 +1,8 @@
 ;;; defhandler / handle の節の終わり方(ADR-DOE-CORE-EFFECTS-003 R15)— 終わる節 (finish 値) と、再開の書き忘れを
 ;;; 3 つの時点で止める検め。
 ;;;
-;;;   展開の時   節のすべての道が resume・transfer・finish・reperform・raise のどれかで終わる(handle.hy の _terminates)。
+;;;   展開の時   節のすべての道が節の操作(resume・transfer・finish・reperform・raise — 名と性質は clause_ops.hy の表)の
+;;;              どれかで終わる(handle.hy の _terminates)。
 ;;;              節が名指す effect の名が Raise / Absent なら、resume・transfer を断る。ほかの effect を finish で打ち切る節は
 ;;;              理由 (:finish-reason "…") が要る。
 ;;;   定義の時   handler を作る式を評価した時に、節の effect の型が宣言する再開の扱い(__doeff_resumption__ —
@@ -20,12 +21,12 @@
 (import hy)
 (import hy.models [Expression Symbol Keyword String Sequence Object Tuple])
 (import doeff_core_effects.effects [Resumption resumption-of])
+;; 節を終える操作とその終わり方(続きを再開する・打ち切る …)は clause_ops.hy の表から引く — ここに名の一覧を写さない
+;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた — card ki-b4c015d8ba1f)。resume は非末尾なら節へ戻るので、
+;; 実行の時の検めが見る。
+(import doeff-hy.clause-ops [Ending clause-op ops-ending])
 
 
-;; 節を終える操作(resume は非末尾なら節へ戻るので、実行の時の検めが見る)。
-(setv ENDING-OPS #{"resume" "transfer" "finish" "reperform" "pass" "raise"})
-;; 続きを再開する操作。
-(setv RESUMING-OPS #{"resume" "transfer"})
 ;; 名前で分かる effect(展開の時に断れる物)と、その再開の扱い。
 (setv NAMED-RESUMPTION {"Raise" Resumption.NEVER "Absent" Resumption.ABSENT-AS-ONLY})
 
@@ -128,7 +129,7 @@
                (str (get node 0)))]
     (match node
       (Expression) :if (in head #{"quote" "quasiquote"}) (frozenset)
-      (Expression) :if (in head ENDING-OPS) (| (frozenset [head]) #* (gfor child node (ops-in child)))
+      (Expression) :if (is-not (clause-op node) None) (| (frozenset [head]) #* (gfor child node (ops-in child)))
       (Sequence) (| (frozenset) #* (gfor child node (ops-in child)))
       _ (frozenset))))
 
@@ -153,9 +154,10 @@
    :tags {:context "doeff-hy-handler" :role "foundation"}}
   "展開の時に分かる違反を SyntaxError にするため: Raise の節の resume / transfer(失敗したのに成功したかのように続く)、
    Absent の節の resume / transfer(再開してよいのは absent-as だけ)、ほかの effect を理由なしに finish で打ち切る節、
-   finish の無い節の :finish-reason。"
+   finish の無い節の :finish-reason。再開する操作・打ち切る操作は clause_ops.hy の表の終わり方(Ending)で決める。"
   (let [named (.get NAMED-RESUMPTION (effect-name etype))
-        resumes (& ops RESUMING-OPS)]
+        resumes (ops-ending ops Ending.RESUMES)
+        finishes (ops-ending ops Ending.FINISHES)]
     (when (and (= named Resumption.NEVER) resumes)
       (raise (SyntaxError (+ where ": Raise の節は " (.join "/" (sorted resumes)) " できない — Raise は誰も再開しない"
                              "(失敗したのに成功したかのように続くため)。(finish 値) でスコープを終えるか (reperform effect) で外へ渡す"
@@ -164,10 +166,10 @@
       (raise (SyntaxError (+ where ": Absent の節は " (.join "/" (sorted resumes)) " できない — Absent を再開できるのは"
                              " absent-as だけ。(finish 値) でスコープを終えるか (reperform effect) で外へ渡す"
                              " [ADR-DOE-CORE-EFFECTS-003 R8・R15]"))))
-    (when (and (is named None) (in "finish" ops) (is options.finish-reason None))
+    (when (and (is named None) finishes (is options.finish-reason None))
       (raise (SyntaxError (+ where ": 普通の effect の節を (finish …) で打ち切るには、節に :finish-reason \"理由\" を書く"
                              "(時間切れで処理全体を止める等 — 再開の書き忘れと見分けるため) [ADR-DOE-CORE-EFFECTS-003 R15]"))))
-    (when (and (is-not options.finish-reason None) (not-in "finish" ops))
+    (when (and (is-not options.finish-reason None) (not finishes))
       (raise (SyntaxError (+ where ": :finish-reason を書いたが節に (finish …) が無い"))))
     None))
 
@@ -191,7 +193,7 @@
                   (UnionType) (list (get-args etype))
                   _ :if (is (get-origin etype) Union) (list (get-args etype))
                   _ [])
-          resumes (& (set ops) RESUMING-OPS)]
+          resumes (ops-ending ops Ending.RESUMES)]
       (for [effect-type types]
         (let [declared (resumption-of effect-type)
               where (+ handler " の節 " effect-type.__name__)]
@@ -202,7 +204,7 @@
             Resumption.ABSENT-AS-ONLY :if resumes
               (raise (ClauseEndingError (+ where ": " effect-type.__name__ " を再開できるのは absent-as だけなのに節が "
                                            (.join "/" (sorted resumes)) " する [ADR-DOE-CORE-EFFECTS-003 R8・R15]")))
-            Resumption.REQUIRED :if (and (in "finish" ops) (not has-reason))
+            Resumption.REQUIRED :if (and (ops-ending ops Ending.FINISHES) (not has-reason))
               (raise (ClauseEndingError (+ where ": 再開する effect を (finish …) で打ち切るのに :finish-reason が無い"
                                            " [ADR-DOE-CORE-EFFECTS-003 R15]")))
             _ None)))))

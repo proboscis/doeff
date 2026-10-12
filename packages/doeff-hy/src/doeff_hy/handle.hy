@@ -47,6 +47,7 @@
 (import doeff-hy.declarations [DECLARATION-KEYS refuse-unknown-keys declaration-setters])
 (import hy.models [Dict])
 (import doeff-hy.static-view [static-view-enabled report-findings])
+(import doeff-hy.clause-ops [clause-op node-names])
 (import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
                                 legacy-session-finding legacy-session-message])
 
@@ -72,14 +73,13 @@
 
 
 (defn _vm-imports []
-  "handler の展開が使う doeff の node の import。型検査のための展開の resume / transfer は typed-resume /
-   typed-transfer になり Resume / Transfer を使わないので、Pass と WithHandler だけを出す(使わない import は strict の
+  "handler の展開が使う doeff の node の import — 節の操作の node(clause_ops.hy の表の nodes / static-nodes)と、handler 自身が
+   使う Pass(番の外れた effect とどの節にも当たらない effect を外へ渡す)と WithHandler。型検査のための展開の resume / transfer は
+   typed-resume / typed-transfer になり Resume / Transfer を使わないので、表の static-nodes に載せない(使わない import は strict の
    赤 — agora-redesign #2279)。"
-  (if (static-view-enabled)
-      '(do (import doeff [Pass])
-           (import doeff_vm [WithHandler]))
-      '(do (import doeff [Resume Transfer Pass])
-           (import doeff_vm [WithHandler]))))
+  (setv names (dict.fromkeys (+ (node-names (static-view-enabled)) ["Pass"])))
+  `(do (import doeff [~@(lfor name names (Symbol name))])
+       (import doeff_vm [WithHandler])))
 
 
 (defn _handler-fn-form [endings-check]
@@ -272,14 +272,14 @@
     (_sym-name (get form 0))))
 
 (defn _terminates [form]
-  "Check if a single form always reaches resume/transfer/finish/reperform/raise — on every path
-   (each if / cond / match / try branch; when / unless / and / or / loops never guarantee it)."
+  "Check if a single form always reaches a clause operation (resume/transfer/finish/reperform/raise — the table in
+   clause_ops.hy) — on every path (each if / cond / match / try branch; when / unless / and / or / loops never guarantee it)."
   (setv head (_head-name form))
   (cond
     (is head None) False
 
-    ;; Direct terminals
-    (in head ["resume" "transfer" "finish" "pass" "reperform" "raise"]) True
+    ;; Direct terminals — every clause operation ends the clause
+    (is-not (clause-op form) None) True
 
     ;; (if test then else) — both branches must terminate
     (= head "if")
@@ -430,61 +430,22 @@
 ;; ---------------------------------------------------------------------------
 
 (defn _rewrite-ops [form]
-  "Recursively rewrite resume/transfer/finish/pass/reperform in handler clause body.
+  "Recursively rewrite the clause operations in a handler clause body with the table's rewrites (clause_ops.hy):
    (resume expr)      → (yield (Resume k expr))  — and marks the clause as resumed
    (transfer expr)    → (yield (Transfer k expr))
    (finish expr)      → (return expr)  — drop the continuation, the handled scope answers expr
    (reperform effect) → (yield (Pass effect k))     — OCaml 5 aligned
-   (pass)             → (yield (Pass effect k))      — deprecated, use reperform"
+   (pass)             → (yield (Pass effect k))      — deprecated, use reperform
+   Only a form whose argument count matches the operation's arity is rewritten; raise (no rewrite) and every
+   other form are walked into."
   (cond
     (not (isinstance form Expression)) form
     (= (len form) 0) form
     True
-      (let [head (get form 0)
-            hname (_sym-name head)]
-        (cond
-          ;; 型検査のための展開(doeff_hy/static_view.py): core の typed_resume / typed_transfer
-          ;; で、答えの値を effect の答えの型(EffectBase[T] の T)と突き合わせる。`effect` は
-          ;; 節の `(isinstance effect EffectType)` で絞られている。実行時の展開は Resume / Transfer。
-          ;; 非末尾の resume は続きが終わると節へ戻る — 戻った後で「再開した」と記す(値の式や続きで出た例外を節が
-          ;; 握りつぶして抜けた道は印が付かず、実行の時に誤りになる・ADR-DOE-CORE-EFFECTS-003 R15)。
-          (and (= hname "resume") (= (len form) 2) (static-view-enabled))
-            `(do (setv _doeff_resumed_value
-                       (yield (do (import doeff [typed-resume])
-                                  (typed-resume effect k ~(_rewrite-ops (get form 1))))))
-                 (setv _doeff_clause_resumed True)
-                 _doeff_resumed_value)
-
-          (and (= hname "transfer") (= (len form) 2) (static-view-enabled))
-            `(yield (do (import doeff [typed-transfer])
-                        (typed-transfer effect k ~(_rewrite-ops (get form 1)))))
-
-          (and (= hname "resume") (= (len form) 2))
-            `(do (setv _doeff_resumed_value (yield (Resume k ~(_rewrite-ops (get form 1)))))
-                 (setv _doeff_clause_resumed True)
-                 _doeff_resumed_value)
-
-          ;; (finish value) — 続きを捨て、handler を置いたスコープの答えを value にする(再開しない終わり方)。
-          (and (= hname "finish") (= (len form) 2))
-            `(return ~(_rewrite-ops (get form 1)))
-
-          (and (= hname "transfer") (= (len form) 2))
-            `(yield (Transfer k ~(_rewrite-ops (get form 1))))
-
-          ;; (reperform expr) — OCaml 5 aligned forwarding
-          (and (= hname "reperform") (= (len form) 2))
-            `(yield (Pass ~(_rewrite-ops (get form 1)) k))
-
-          ;; (pass) — deprecated, use (reperform effect) instead
-          (and (= hname "pass") (= (len form) 1))
-            (do
-              (import warnings)
-              (warnings.warn
-                "(pass) is deprecated in defhandler — use (reperform effect) instead"
-                DeprecationWarning)
-              '(yield (Pass effect k)))
-
-          True
+      (let [op (clause-op form)
+            args (list (cut form 1 None))]
+        (if (and (is-not op None) (is-not op.rewrite None) (= (len args) op.arity))
+            (op.rewrite args _rewrite-ops)
             (Expression (lfor f form (_rewrite-ops f)))))))
 
 
