@@ -1,0 +1,16 @@
+# 版: 7808046bed21e59bb34441e0e9d3972c55a8713c(直した版を載せ直した版)・刻 2026-10-12 01:03:18 UTC
+# 盲検 B が未測として挙げた変種: defmcp-tool の handler の decorator を表の `_doeff_do` ではなく fnk 用の `_do-reference` にする(import は表のまま)。当てて走らせ、控えから戻す
+-     `(defn [_doeff_do] ~handler-name ~param-syms
++     `(defn [~(_do-reference)] ~handler-name ~param-syms
+## command: uv run pytest packages/doeff-hy/tests/test_helper_imports_table.py -q
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-module]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-class]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-function]
+3 failed, 15 passed in 6.41s
+## command: uv run pytest packages/doeff-hy/tests/test_static_check.py -k mcp -q
+3 passed, 18 deselected in 5.47s
+## command: uv run pytest tests/public_api/test_mcp_tool_macro.py -q
+8 passed in 0.39s
+## command: uv run pytest tests/test_nested_definition_scope.py -q
+32 passed in 3.23s
+# 戻した後の git status: []
