@@ -37,6 +37,7 @@ from doeff_core_effects import try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_hy.pytest_items import module_record_texts
 from doeff_hy.static_check import Projection, project
+from doeff_hy_bytecode_guard.records import MACRO_TABLE
 from doeff_traverse.handlers import fail_handler, sequential
 
 from doeff import run
@@ -445,7 +446,7 @@ def _conductor_macro_names() -> set[str]:
     同じに Hy の require で読む(この検の module 契約が許す依存の外)。"""
     reader = types.ModuleType("conductor_macro_names")
     hy.eval(hy.read("(require doeff-hy.conductor *)"), reader.__dict__, module=reader)
-    return {hy.unmangle(name) for name in vars(reader)["_hy_macros"]}
+    return {hy.unmangle(name) for name in vars(reader)[MACRO_TABLE]}
 
 
 def _exported_definition_macros() -> set[str]:
@@ -454,7 +455,7 @@ def _exported_definition_macros() -> set[str]:
     named = {
         hy.unmangle(name)
         for module in (doeff_hy.macros, doeff_hy.record)
-        for name in vars(module)["_hy_macros"]
+        for name in vars(module)[MACRO_TABLE]
     } | _conductor_macro_names()
     return {name for name in named if name.startswith("def") and name not in _NOT_DEFINITION_MACROS}
 
