@@ -171,6 +171,11 @@ module の段か外の関数に在る(class の段の名は節の関数から前
 | C9 | S4 | 正常 | 直す前に compile した .pyc を直した版が compile し直して走る | pyc の sha256 が変わり main => (101, 101) | evidence/s4-storage.txt(段 1・段 2) |
 | C10 | S4 | 失敗 | 古い .pyc の code をそのまま走らせると直す前の失敗のまま(guard が要る事) | main !! NameError `_doeff_do` | evidence/s4-storage.txt(段 3) |
 
+載せ直した版: 記録を main へ入れる前に origin/main cd305fbd0 へ載せ直した。08ddfc707 の後に handle.hy・macros.hy へ節の操作の名の表
+clause_ops.hy(10addc647・card ki-b4c015d8ba1f)と `_scoped-definition` の module-forms(0dfa6f81f・192e6eacb)が入ったが、名は
+今も `_vm-imports` を通り、class の本体の枝は変わっていない。載せ直した版(deead4081)で最終の検は 57 passed
+(evidence/guard-on-rebased.txt)。C1〜C10 の実験は 08ddfc707 の上で行った。
+
 検の file の版: C1・C8(直した後)は最終の版。C3〜C6・C8(直す前)は S3 の直しの前の版 evidence/tests/test_handle_scope.guard-v1.py.txt
 (差は module の段の handle の 1 か所だけで、C3〜C6 の結果に関わらない)。C2 は最終の版。
 
