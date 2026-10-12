@@ -13,16 +13,22 @@ from doeff_core_effects.scheduler import Wait as WaitTask
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
+from doeff_time._internals.deadline import DEADLINE_PASSED
 from doeff_time.effects import (
     DelayEffect,
     GetMonotonicEffect,
     GetTimeEffect,
+    RaceWithinEffect,
     ScheduleAtEffect,
     WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
 )
-from doeff_time.handlers._wall_ticks import timed_wait_answer, timed_wait_seconds
+from doeff_time.handlers._wall_ticks import (
+    timed_wait_answer,
+    timed_wait_futures,
+    timed_wait_seconds,
+)
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -62,22 +68,22 @@ class SyncTimeRuntime:
             return (yield Transfer(k, self._now()))
         if isinstance(effect, GetMonotonicEffect):
             return (yield Transfer(k, float(self._monotonic())))
-        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect)):
+        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
             # The deadline is an external promise a wall-clock timer completes (the scheduler knows
-            # when it wakes — #765), raced against the future; the timer is stopped afterwards.
+            # when it wakes — #765), raced against the future(s); the timer is stopped afterwards.
             # WaitTicks' deadline is its last tick (agora-redesign #3066).
             started = float(self._monotonic())
             seconds = timed_wait_seconds(effect)
             deadline = yield CreateExternalPromise(deadline=time.monotonic() + seconds)
 
             def _deadline_passed():
-                deadline.complete(None)
+                deadline.complete(DEADLINE_PASSED)
 
             timer = threading.Timer(seconds, _deadline_passed)
             timer.daemon = True
             timer.start()
             try:
-                first = yield Race(effect.future, deadline.future, priority=PRIORITY_IDLE if effect.park else None)
+                first = yield Race(*timed_wait_futures(effect), deadline.future, priority=PRIORITY_IDLE if effect.park else None)
             finally:
                 timer.cancel()
             return (yield Transfer(k, timed_wait_answer(effect, first, float(self._monotonic()) - started)))

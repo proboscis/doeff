@@ -4,6 +4,9 @@
 ;; 起きる物ごとに task を立てて競わせ、負けた方を取り消していた — 呼び鈴(Future)1 つにつき task 1 つ。模擬の世界の日次の検証では
 ;; この分が 1 周 約 112 歩・仮想の 1 日で 4 万歩を越えた。今は呼び鈴を task を立てずに Race へそのまま渡す。
 ;;   呼び鈴 1 つを持つ偽の宿で、静かな周 1 回の doeff-vm の歩が QUIET-TICK-STEPS 以下(直す前は 248 歩・直した後は 202 歩)。
+;; 期限まで眠る task と止めの合図を待つ task も周ごとに 2 つ立てて取り消していた(仕事の無い worker 1 台が 2.5 秒ごとに払う —
+;; 依頼 lt-EME2B8NTMC9Q5RRCQY5N3YWTVB)。今は期限を時計の答え手の RaceWithin が持ち、止めの合図は答え手が session で 1 つ持つ呼び鈴
+;; (StopBell)を競わせる: 202 歩 → 114 歩。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_vm.doeff_vm [vm-work-counts])
@@ -14,8 +17,8 @@
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.test_worker_wakes [quiet-host TickLog do-ticks])
 
-;; 静かな周 1 回の歩の上限(直した後の 202 歩に 1 割足らずの余白 — 呼び鈴に task を立てる形の 248 歩は越える)。
-(val QUIET-TICK-STEPS 220)
+;; 静かな周 1 回の歩の上限(直した後の 114 歩に 1 割足らずの余白 — 期限と止めの合図に周ごとに task を立てる形の 202 歩は越える)。
+(val QUIET-TICK-STEPS 125)
 (val QUIET-MS 60000)
 
 

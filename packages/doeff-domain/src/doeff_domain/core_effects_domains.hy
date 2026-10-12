@@ -98,7 +98,7 @@
 (import doeff_core_effects.compute-effects [Compute])
 (import doeff_core_effects.thread-pool-compute [thread-pool-compute-handler])
 (import doeff_core_effects.inline-compute [inline-compute-handler])
-(import doeff_core_effects.stop-signal-effects [StopRequested AwaitStop RaiseStop])
+(import doeff_core_effects.stop-signal-effects [StopRequested AwaitStop StopBell RaiseStop])
 (import doeff_core_effects.stop-signal-handlers [os-signal-stop-handler
                                                  scripted-stop-handler])
 (import doeff_core_effects.heap-effects [CollectAndFreeze])
@@ -352,10 +352,10 @@
 
 (defdomain doeff-stop-signal
   :title "Stop signal 語彙 — process の停止の求め"
-  :effects [StopRequested AwaitStop RaiseStop]
+  :effects [StopRequested AwaitStop StopBell RaiseStop]
   :handlers [os-signal-stop-handler scripted-stop-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-signal-stop-handler は本物の SIGINT / SIGTERM を StopRequested で読み、AwaitStop で停止まで待つ。RaiseStop で停止を起こすのは I/O なしの scripted-stop-handler だけ。")
+  :docs "os-signal-stop-handler は本物の SIGINT / SIGTERM を StopRequested で読み、AwaitStop で停止まで待ち、StopBell で停止で満ちる Future(session で 1 つ)を渡す。RaiseStop で停止を起こすのは I/O なしの scripted-stop-handler だけ。")
 
 
 (defdomain doeff-heap
