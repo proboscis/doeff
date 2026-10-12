@@ -1,0 +1,561 @@
+== 実験 S1-a: 版 4eec37a06c8a7a34b3398da4dc8e8f11c5d1b31f・uv.lock の hy を 1.3.2 へ(表の名を替えた代役 table-132)・venv は sync していない(Hy 1.3.1)・包みは直していない
+ uv.lock | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+a2cb04777e87514acfa2b35182bd208bd0488030e22f3774defaaddce708393f  /work/agent-workspaces/a-PX52E1C685CV4A7JJJC2F3A6GD/scratch/wheels/table-132/funcparserlib-1.0.1-py3-none-any.whl
+e2186305932adbd49ea532bec40f8228020c87677d1337dc6ee0e3d325d0dff0  /work/agent-workspaces/a-PX52E1C685CV4A7JJJC2F3A6GD/scratch/wheels/table-132/hy-1.3.2-py3-none-any.whl
+
+deadline scale x1.7 (load per usable CPU) — per test 102s, watchdog 153s
+
+test-admission: focused — 25 件(変更箇所の検証)
+EEEEEEEEEEEEEEEEEEEEEEEEE                                                [100%]
+==================================== ERRORS ====================================
+_________ ERROR at setup of test_pypi_hy_alone_keeps_the_old_expansion _________
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_macro_change_recompiles_the_user_on_pypi_hy[before-hy] _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_macro_change_recompiles_the_user_on_pypi_hy[after-hy] _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_change_of_the_helper_a_macro_calls_recompiles_the_user _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_change_of_the_helper_a_macro_imports_inside_its_body_recompiles_the_user _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_reader_macro_change_recompiles_the_user_on_pypi_hy[none-10] _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_reader_macro_change_recompiles_the_user_on_pypi_hy[before-hy-15] _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_new_macro_named_like_a_function_the_user_calls_recompiles_the_user_on_pypi_hy[all] _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_new_macro_named_like_a_function_the_user_calls_recompiles_the_user_on_pypi_hy[exported] _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_the_code_does_not_depend_on_how_many_gensyms_the_process_made_on_pypi_hy _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+________ ERROR at setup of test_the_record_lives_inside_a_standard_pyc _________
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+___ ERROR at setup of test_a_checked_hash_pyc_is_recompiled_in_the_same_form ___
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_an_unchecked_hash_pyc_is_trusted_like_python_trusts_it _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_new_tree_with_the_same_sources_reuses_the_code_without_expanding _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expansion _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_macro _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_code_under_the_new_key _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_named_store_is_filled_even_when_bytecode_is_not_written _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_the_default_store_is_not_filled_when_bytecode_is_not_written _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+___ ERROR at setup of test_the_venv_installs_the_guard_at_startup_before_hy ____
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_normal_import _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_expansion_used _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+_ ERROR at setup of test_a_hy_module_read_from_a_current_pyc_does_not_look_up_the_expansion_module _
+
+    @pytest.fixture(autouse=True)
+    def _venv_hy_is_the_locked_version() -> None:
+        """この file の検は uv.lock の版の Hy で包みを測る — 同じ process の検が測る venv の Hy も、その版である事を先に確かめる。"""
+        import hy
+    
+>       assert hy.__version__ == _locked_hy_version(), (
+            f"venv の Hy {hy.__version__} が uv.lock の版 {_locked_hy_version()} でない — 同じ process の検が uv.lock の版を"
+            " 測らないので、`make sync` してから測る"
+        )
+E       AssertionError: venv の Hy 1.3.1 が uv.lock の版 1.3.2 でない — 同じ process の検が uv.lock の版を 測らないので、`make sync` してから測る
+E       assert '1.3.1' == '1.3.2'
+E         
+E         - 1.3.2
+E         ?     ^
+E         + 1.3.1
+E         ?     ^
+
+packages/doeff-hy/tests/test_bytecode_guard.py:77: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-exp-eafa/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 warning, 25 errors in 3.32s
+rc=1

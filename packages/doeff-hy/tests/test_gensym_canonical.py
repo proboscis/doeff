@@ -16,7 +16,6 @@ import ast
 import importlib.machinery
 import importlib.util
 import json
-import re
 import subprocess
 import sys
 import threading
@@ -153,6 +152,7 @@ root, first, target = sys.argv[1], sys.argv[2], sys.argv[3]
 sys.path.insert(0, root)
 import doeff_hy
 from doeff import run
+from doeff_hy_bytecode_guard import records
 
 package = os.path.join(root, "{PACKAGE}")
 had_pyc = sorted(
@@ -187,15 +187,11 @@ def texts(code):
 
 generated = sorted({{
     text for text in texts(codes[target])
-    if "_hy_gensym_" in text or re.fullmatch(r"_lazy_.+_(cached|val)_[0-9]+", text)
-}})
+    if records.gensym_renames([text]) or re.fullmatch(r"_lazy_.+_(cached|val)_[0-9]+", text)
+}} | set(records.unread_gensym_texts(codes[target])))
 value = run(module.job(1)) if hasattr(module, "job") else None
 print(json.dumps({{"names": generated, "value": value, "had_pyc": had_pyc}}))
 """
-
-#: Hy の gensym の名(``_hy_gensym_<base>_<数え>``)と、Hy が改めた束縛の名に埋まった物(``_hy_<種>_<gensym の名>_<数>``)。
-_GENSYM = re.compile(r"(_hy_gensym_.*_)([0-9]+)")
-_RENAMED = re.compile(r"_hy_[a-z]+_(_hy_gensym_.*)_[0-9]+")
 
 
 @pytest.fixture(scope="module")
@@ -280,19 +276,19 @@ def _texts(code: CodeType) -> Iterator[str]:
 
 
 def _gensym_names(code: CodeType) -> list[str]:
-    """code の木の gensym の名(Hy が改めた束縛の名に埋まった物は、埋まった gensym の名)を並べる。"""
-    found = set()
-    for text in _texts(code):
-        renamed = _RENAMED.fullmatch(text)
-        name = renamed.group(1) if renamed is not None else text
-        if _GENSYM.fullmatch(name):
-            found.add(name)
-    return sorted(found)
+    """code の木の gensym の名(Hy が改めた束縛の名に埋まった物は、埋まった gensym の名)を並べる — 名の形は正準化の持ち物
+    (records の GENSYM_NAME・RENAMED_BINDING)で読み、この file に写さない(Hy が形を替えた便が直すのは records だけ — 設計検証
+    lt-JYZ9N64ZE70GCBXPP33QDG3WF7)。"""
+    return sorted(records.gensym_renames(_texts(code)))
 
 
 def _numbers(code: CodeType) -> list[int]:
-    """code の木の gensym の名の番号(小さい順)。"""
-    return sorted(int(match.group(2)) for name in _gensym_names(code) if (match := _GENSYM.fullmatch(name)))
+    """code の木の gensym の名の番号(小さい順 — records.GENSYM_NAME の 2 つ目の組が数え)。"""
+    return sorted(
+        int(match.group(2))
+        for name in _gensym_names(code)
+        if (match := records.GENSYM_NAME.fullmatch(name))
+    )
 
 
 def _compile(root: Path, module: str) -> CodeType:
@@ -325,8 +321,12 @@ def test_a_module_gets_the_same_names_whether_another_module_was_compiled_first(
     assert after_other["names"] == alone["names"]
     names = alone["names"]
     assert isinstance(names, list)
-    assert any(name.startswith("_hy_let__hy_gensym_absent_token_") for name in names), names
-    assert any(name.startswith("_hy_gensym_lazy_client_") for name in names), names
+    assert any(
+        records.RENAMED_BINDING.fullmatch(name) and "absent_token" in name for name in names
+    ), names
+    assert any(records.GENSYM_NAME.fullmatch(name) and "lazy_client" in name for name in names), (
+        names
+    )
     assert alone["value"] == after_other["value"] == 10
 
 
@@ -377,7 +377,11 @@ def test_compiles_on_two_threads_at_once_keep_every_name_apart_and_the_same(prob
     assert set(modules) <= set(results)
     first = results[modules[0]]
     for module in modules:
-        bound = [name for name in results[module] if name.startswith("_hy_gensym_bound_")]
+        bound = [
+            name
+            for name in results[module]
+            if (match := records.GENSYM_NAME.fullmatch(name)) and "bound" in match.group(1)
+        ]
         assert len(bound) == binds, (module, len(bound))
         assert results[module] == first, module
 
@@ -454,7 +458,7 @@ def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalis
     for base, mangled in (("bound", "bound"), ("el-begin", "el_begin"), ("", "")):
         name = str(hy.gensym(base))
         match = records.GENSYM_NAME.fullmatch(name)
-        assert match is not None and match.group(1) == f"_hy_gensym_{mangled}_", name
+        assert match is not None and mangled in match.group(1), name
     token = hy.gensym("token")
     tree = Expression(
         [
@@ -469,7 +473,7 @@ def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalis
     renamed = [
         node.id
         for node in ast.walk(compiled)
-        if isinstance(node, ast.Name) and node.id.startswith("_hy_let_")
+        if isinstance(node, ast.Name) and str(token) in node.id and node.id != str(token)
     ]
     assert renamed, ast.dump(compiled)
     for name in renamed:
@@ -480,6 +484,9 @@ def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalis
 def test_no_gensym_name_is_left_where_the_canonicalisation_cannot_read_it(probe_root: Path) -> None:
     """gensym を使う doeff-hy の macro を全部通る module の compile の後、gensym の名を含むのに正準化が読めない名・文字列の定数が
     1 つも無い(文の中に埋まった名などが現れると、その番号は compile の順で変わる)。読めない物を見分けられることも確かめる。"""
+    import hy
+
     assert records.unread_gensym_texts(_compile(probe_root, "everything")) == ()
-    leftover = compile("message = 'bad _hy_gensym_x_5 here'\n", "<leftover>", "exec")
-    assert records.unread_gensym_texts(leftover) == ("bad _hy_gensym_x_5 here",)
+    message = f"bad {hy.gensym('x')} here"
+    leftover = compile(f"message = {message!r}\n", "<leftover>", "exec")
+    assert records.unread_gensym_texts(leftover) == (message,)

@@ -1,0 +1,145 @@
+== 実験 S2-d: 版 4eec37a06c8a7a34b3398da4dc8e8f11c5d1b31f・S2-c と同じ状態(代役 anon-132 を venv に入れ・records.RENAMED_BINDING を直した)で、venv の Hy で正準化を測る test_gensym_canonical.py
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 1660150 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1660162 focus-gate agora-controllers-wt-ki-4df9 (c-JEVB5SSKW0BNDGBCESW853T8S3)、pid 1660153 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1653354 pytest agora-wt-dc-daily-1012 (c-CK5ZRQAGSH7DHHR709M4KTWDBK)、pid 1660155 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1664524 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1656464 code-quality dotfiles-precommit-index.N9soop (c-FHZ4PP6TYZX8CBHJRPZ34FHR0Y)、pid 1662801 pytest agora-controllers-at-ki25c3-before (c-F62Z5HJH7EMGTH6Z83KVQYXN88)・待つのは pytest doeff-wt-exp-eafa (c-PX52E1C685SM9V7R2V7NRZFVXD)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 1660150 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1660162 focus-gate agora-controllers-wt-ki-4df9 (c-JEVB5SSKW0BNDGBCESW853T8S3)、pid 1660153 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1653354 pytest agora-wt-dc-daily-1012 (c-CK5ZRQAGSH7DHHR709M4KTWDBK)、pid 1660155 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1664524 focus-gate agora-controllers-wt-startup-listed-facts (c-ASX7507XVJ1H45ZEG4A5HCEGHJ)、pid 1667749 doeff-linter --commit-hook agora-controllers-wt-ki-0c96-accept (c-1DZFR94BER66GGCBRWXM2NF7N5)、pid 1662801 pytest agora-controllers-at-ki25c3-before (c-F62Z5HJH7EMGTH6Z83KVQYXN88)・待つのは pytest doeff-wt-exp-eafa (c-PX52E1C685SM9V7R2V7NRZFVXD)
+check-slot: 枠 0 を取った(待ち 19 秒)— pytest doeff-wt-exp-eafa (c-PX52E1C685SM9V7R2V7NRZFVXD)
+
+deadline scale x1.8 (load per usable CPU) — per test 107s, watchdog 161s
+
+test-admission: focused — 8 件(変更箇所の検証)
+F...F.F.                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_a_module_gets_the_same_names_whether_another_module_was_compiled_first __
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_a_module_gets_the_same_na0')
+pycache = PosixPath('/tmp/pytest-of-ubuntu/pytest-414/gensym-pycache0')
+
+    def test_a_module_gets_the_same_names_whether_another_module_was_compiled_first(
+        tmp_path: Path, pycache: Path
+    ) -> None:
+        """失敗ケース (a)(d): 同じ module を「別の module を先に compile した process」と「単独の process」で compile して、生成名
+        (absent-as の let に埋まった名と defhandler の session val の一時の名を含む)が同じ。直す前は数えの続きの番号になり、名が違った。"""
+        after_other = _child(
+            _probe(tmp_path / "after"), [f"{PACKAGE}.other"], f"{PACKAGE}.everything", pycache
+        )
+        alone = _child(_probe(tmp_path / "alone"), [], f"{PACKAGE}.everything", pycache)
+        assert after_other["had_pyc"] == alone["had_pyc"] == [], "見本の .pyc が先に在った(今の compile を測れていない)"
+        assert after_other["names"] == alone["names"]
+        names = alone["names"]
+        assert isinstance(names, list)
+>       assert any(name.startswith("_hy_let__hy_gensym_absent_token_") for name in names), names
+E       AssertionError: ['_hy_exc10__hy_gensym_error_13', '_hy_gensym_arg_10', '_hy_gensym_arg_11', '_hy_gensym_arg_17', '_hy_gensym_arg_18', '_hy_gensym_bound_16', ...]
+E       assert False
+E        +  where False = any(<generator object test_a_module_gets_the_same_names_whether_another_module_was_compiled_first.<locals>.<genexpr> at 0x4b05b081180>)
+
+packages/doeff-hy/tests/test_gensym_canonical.py:328: AssertionError
+_ test_the_image_build_compile_and_the_prebuild_compile_number_gensyms_from_one _
+
+probe_root = PosixPath('/tmp/pytest-of-ubuntu/pytest-414/test_the_image_build_compile_a0/probe')
+
+    def test_the_image_build_compile_and_the_prebuild_compile_number_gensyms_from_one(
+        probe_root: Path,
+    ) -> None:
+        """image の組み立て(agora-controllers の deploy/bytecode.py — ``SourceFileLoader(...).source_to_code`` を直に呼ぶ)と、前もって
+        bytecode を作る道具(source_to_code_as_import)の compile も同じ口を通り、gensym の番号が 1 から隙間なく並ぶ(この process の
+        数えはもう大きい)。直す前は、どちらも process の数えの続きの番号だった。"""
+        path = probe_root / PACKAGE / "everything.hy"
+        direct = importlib.machinery.SourceFileLoader(f"{PACKAGE}.everything", str(path)).source_to_code(
+            path.read_bytes(), str(path)
+        )
+        prebuilt = _compile(probe_root, "everything")
+>       assert _numbers(direct) == list(range(1, len(_numbers(direct)) + 1)), _gensym_names(direct)
+E       AssertionError: ['_hy_gensym_arg_10', '_hy_gensym_arg_11', '_hy_gensym_arg_17', '_hy_gensym_arg_18', '_hy_gensym_bound_16', '_hy_gensym_bound_20', ...]
+E       assert [1, 2, 3, 4, 5, 6, ...] == [1, 2, 3, 4, 5, 6, ...]
+E         
+E         At index 12 diff: 15 != 13
+E         Use -v to get more diff
+
+packages/doeff-hy/tests/test_gensym_canonical.py:434: AssertionError
+_ test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalisation_reads _
+
+    def test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalisation_reads() -> None:
+        """Hy の gensym の名の形(``_hy_gensym_<mangle した base>_<数え>``)と、let が改めた束縛の名の形(``_hy_let_<元の名>_<数>``)が、
+        正準化の読む形のまま。Hy を上げて形が変わると、正準化が名を読めずに黙って揺れが戻るので、ここで落とす。"""
+        import hy
+        from hy.compiler import hy_compile
+        from hy.models import Expression, Integer, List, Symbol
+    
+        for base, mangled in (("bound", "bound"), ("el-begin", "el_begin"), ("", "")):
+            name = str(hy.gensym(base))
+            match = records.GENSYM_NAME.fullmatch(name)
+            assert match is not None and match.group(1) == f"_hy_gensym_{mangled}_", name
+        token = hy.gensym("token")
+        tree = Expression(
+            [
+                Symbol("defn"),
+                Symbol("f"),
+                List([]),
+                Expression([Symbol("let"), List([token, Integer(1)]), token]),
+            ]
+        )
+        compiled = hy_compile(tree, types.ModuleType("gsshape"))
+        assert isinstance(compiled, ast.Module)  # get_expr を渡さない時の答えは module だけ
+        renamed = [
+            node.id
+            for node in ast.walk(compiled)
+            if isinstance(node, ast.Name) and node.id.startswith("_hy_let_")
+        ]
+>       assert renamed, ast.dump(compiled)
+E       AssertionError: Module(body=[Import(names=[alias(name='hy')]), FunctionDef(name='f', args=arguments(), body=[Assign(targets=[Name(id='_hy_let1__hy_gensym_token_808', ctx=Store())], value=Constant(value=1)), Return(value=Name(id='_hy_let1__hy_gensym_token_808', ctx=Load()))])])
+E       assert []
+
+packages/doeff-hy/tests/test_gensym_canonical.py:474: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-exp-eafa/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-hy/tests/test_gensym_canonical.py::test_a_module_gets_the_same_names_whether_another_module_was_compiled_first
+FAILED packages/doeff-hy/tests/test_gensym_canonical.py::test_the_image_build_compile_and_the_prebuild_compile_number_gensyms_from_one
+FAILED packages/doeff-hy/tests/test_gensym_canonical.py::test_hy_gensym_names_and_hy_renamed_bindings_have_the_shapes_the_canonicalisation_reads
+3 failed, 5 passed, 1 warning in 28.77s
+rc=1
