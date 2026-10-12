@@ -50,7 +50,11 @@
       (raise (SyntaxError "<- target must be a symbol or a destructuring list"))))
 
 
-(defmacro defworkflow [name #* forms]
+;; 関数の本体の中に書いた defworkflow は、import(と本体の phase・agent! などが出す import)と定義をすぐ呼ぶ関数に入れて
+;; name だけを束ねる — doeff_hy.macros の _scoped-definition(定義の macro が全部通る 1 か所)。並べたままだと import した
+;; `_conductor_defworkflow` が外の関数全体の局所の名になり、外の関数が先に読む module の段の同じ名が UnboundLocalError で落ちた。
+(defmacro defworkflow [_hy-compiler name #* forms]
+  (import doeff_hy.macros [_scoped-definition])
   (setv #(options body) (_parse-leading-options forms #{":params" ":roles" ":budget"}))
   (when (not (in ":params" options))
     (raise (SyntaxError "defworkflow requires :params")))
@@ -59,14 +63,14 @@
   (setv params (get options ":params")
         roles (get options ":roles")
         budget (if (in ":budget" options) (get options ":budget") None))
-  `(do
-     (import doeff_conductor.dsl [defworkflow :as _conductor_defworkflow])
-     (setv ~name
-       (_conductor_defworkflow ~(str name)
-         :params ~params
-         :roles ~roles
-         :budget ~budget
-         :body [~@body]))))
+  (_scoped-definition _hy-compiler name
+    [`(import doeff_conductor.dsl [defworkflow :as _conductor_defworkflow])
+     `(setv ~name
+        (_conductor_defworkflow ~(str name)
+          :params ~params
+          :roles ~roles
+          :budget ~budget
+          :body [~@body]))]))
 
 
 (defmacro defphase [name #* forms]
