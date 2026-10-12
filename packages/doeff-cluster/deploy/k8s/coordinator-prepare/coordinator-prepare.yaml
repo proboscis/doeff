@@ -27,7 +27,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: coordinator-prepare-a1d17b0dd304
+  name: coordinator-prepare-3fcba1939bd7
   namespace: agent-worker
   labels: { app: agent-worker-coordinator-prepare }
 spec:
@@ -60,7 +60,7 @@ spec:
             # 焼けなければ完成の印を置かずに非 0 で終わる(Job の失敗 — coordinator は当たらない)。
             - { name: ROLE, value: prepare }
             - { name: WORK_DIR, value: /work }
-            - { name: WORKER_DOEFF_COMMIT, value: a1d17b0dd3047d1111f442e5a1ba4348ea3eab05 }
+            - { name: WORKER_DOEFF_COMMIT, value: 3fcba1939bd7e731dc47811aa4c305fe40bdeed7 }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }

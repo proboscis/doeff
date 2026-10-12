@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import tomllib
 import warnings
 from pathlib import Path
 
@@ -25,6 +26,15 @@ ARCHIVAL_DOC_DIRS = {
 ARCHIVAL_DOC_FILES = {
     Path("docs/MILESTONES.md"),
 }
+
+
+def _record_doc_dirs() -> set[Path]:
+    """The design-record trees pyproject declares (``[tool.doeff] record-dirs``): blind-review returns
+    and evidence copied verbatim — records, not reader-facing prose, so one home names them."""
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return {Path(directory.rstrip("/")) for directory in pyproject["tool"]["doeff"]["record-dirs"]}
+
+
 BANNED_PROMOTION = re.compile(
     r"\b(prefer|preferred|composed explicitly|installed with|current-doc|"
     r"reader-facing docs now use)\b.*\bWithHandler\b",
@@ -37,11 +47,12 @@ def _current_doc_paths() -> list[Path]:
     docs.extend(sorted((REPO_ROOT / "docs").rglob("*.md")))
     docs.extend(sorted((REPO_ROOT / "examples").glob("*.py")))
     current_docs: list[Path] = []
+    archival_dirs = ARCHIVAL_DOC_DIRS | _record_doc_dirs()
     for path in docs:
         rel = path.relative_to(REPO_ROOT)
         if rel in ARCHIVAL_DOC_FILES:
             continue
-        if any(rel.is_relative_to(archival) for archival in ARCHIVAL_DOC_DIRS):
+        if any(rel.is_relative_to(archival) for archival in archival_dirs):
             continue
         current_docs.append(path)
     return current_docs
