@@ -183,6 +183,14 @@ exclude = ["fixtures"]
 [tool.doeff-linter.definitions]
 paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effects/doeff_core_effects", "packages/doeff-hy/src/doeff_hy"]
 
+# 設計の記録の dir(その時点の証拠 — 模型・測りの script・検の写しを置く。検の名の file が在っても検ではない)。定義はこの 1 点で、
+# 読み手は 2 つ: make test-changed の選び(scripts/run_changed_tests.py の collector_patterns)は、この下の file を名の規則に当たっても
+# 検として選ばない / 日次の母集団の検(tests/test_daily_test_population.py)は逆に、この下の検の名の file を赤にして `.py.txt` への
+# 改名を求める(除外の行で dir ごと外すと、本物の検を記録にだけ置いても緑になる — 設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B)。
+# dir は `/` で終える。新しい種類の記録の dir を作る時は、ここへ足す。
+[tool.doeff]
+record-dirs = ["docs/design/", "docs/design-checks/"]
+
 # 契約の検の固定の組(agora-redesign #2605): 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
 # 接頭辞に当たる行の検を、変えた検の file より先に必ず走らせる。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で
 # 持つか木を歩くので、import の逆依存では選べない(t135 の 5 commit は、これが無いと登記の前に赤にならなかった)。
