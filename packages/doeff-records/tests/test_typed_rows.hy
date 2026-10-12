@@ -59,7 +59,7 @@
 
 
 (deftest test-a-row-type-builds-its-adapter-at-the-first-mapping-and-keeps-it [monkeypatch]
-  ;; 表の行の型は使い手の module の読み込みの時に作られる(agora-controllers の画面の検で 29 表)。作る時に TypeAdapter を組むと、
+  ;; 表の行の型は使い手の module の読み込みの時に作られる(使い手の画面の検で 29 表)。作る時に TypeAdapter を組むと、
   ;; 検が写さない表の分まで読み込みの固定費に載る(ki-dd5358f7eb46)。作る時は組まず、最初の写しで 1 度だけ組んで覚える。
   (val spy (Mock :wraps typed.TypeAdapter))
   (monkeypatch.setattr typed "TypeAdapter" spy)
