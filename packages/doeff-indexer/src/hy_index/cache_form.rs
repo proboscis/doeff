@@ -66,6 +66,12 @@ impl CachedHyFile {
         CachedHyFile { file, references, calls, definition_checks }
     }
 
+    /// 索引の file の path(`HyFileIndex::path` — 根の絶対 path を含む綴り)だけを置き換える。cache は作業木をまたいで分け合うので、
+    /// 置く時は空の path で置き、読んだ後に今の根の file の path を付ける(path 以外の欄は file の中身と根からの path だけで決まる)。
+    pub fn set_path(&mut self, path: &str) {
+        self.file.path = path.to_string();
+    }
+
     /// cache の形から索引に戻す。欄の数が合わなければ(壊れた cache)読み直す file の path を返す。
     pub fn into_file(self) -> Result<HyFileIndex, CachedHyFileMismatch> {
         let CachedHyFile { mut file, references, calls, definition_checks } = self;
