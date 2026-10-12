@@ -125,7 +125,12 @@ spec:
             # coordinatorCommit がこの版を含むまで断る)。この版は、保存に残った旧い形の行(上限の値と範囲を名乗る limits)のうち
             # 終わっていない行を failed にするので、入れ替えは組を名乗る task が queued・走っていない刻に当てる。前の版 fb32909f3(L2067)は
             # 74ebb50b6 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 74ebb50b6c3c5de9a652088d11e16371d954abb1 }
+            # 475ee1e5d = 組の上限を宣言する系を 1 つに保ち、system の無い GroupLimit を持ち主の無い組として受け、系を繋ぐ時に system-of の
+            # 名を保つ版(card ki-b0e8028c8c8d・L2184・L2189 fdf1fbe47 — 上に載る系の doeff の版を上げる前にこの版が要る)に、機体の worker が
+            # 自分の行を job の log へ送る worker の入口の差(card ki-35923a5895b2・L2173・L2193)を足した版。coordinator の code の差は
+            # ki-b0e8 の分だけで、機体の worker(zeus-native・mac-native)を 475ee1e5d へ上げるために、ki-b0e8 の入れ替えと 1 回に合わせる
+            # (配り役の指示 2026-10-12 14:39 JST)。前の版 74ebb50b6(L2139)は 475ee1e5d の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 475ee1e5d7d5894f6ba4c73907be57b057ea70e9 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
