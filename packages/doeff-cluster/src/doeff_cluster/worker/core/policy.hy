@@ -26,6 +26,7 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff [run])
+(import doeff_traverse.helpers [sequence])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
   Outcome JobRecord WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
@@ -347,19 +348,21 @@
    在ればそれ、無ければ worker の既定 policy.retired-limit(#4072 の D-3 の改め)。"
   (if (is want.retired-limit None) policy.retired-limit want.retired-limit))
 
-(defn #^ tuple plan-job [#^ int now #^ str name #^ tuple desired #^ WorldView world
-                         #^ JobRecord record #^ WorkerPolicy policy #^ StopReason absent]
-  "job 1 つの action(absent = 宣言に無い job を止める訳 — 宣言から外れた・途絶で絞った・worker の停止。#3713)。"
-  (setv want (desired-of desired name)
-        process (process-of world name)
-        ;; 入れ替えの諦め(2026-09-26 — coordinator の handoff_policy が期限で決め、heartbeat の返事で運ぶ)。
-        abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
-        ;; 世代をまたぐ入れ替え(AL-D2): 同じ名の worker の新しい世代の process が Ready — この(退いた)世代は退かせるだけで起こさない。
-        superseded (and (is-not want None) want.handoff (is-not want.superseded-by None)))
+(defk plan-job [now name desired world record policy absent]
+  {:pre [(: now int) (: name str) (: desired tuple) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: absent StopReason)]
+   :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "job 1 つの action(absent = 宣言に無い job を止める訳 — 宣言から外れた・途絶で絞った・worker の停止。#3713)。plan が名ごとに
+   sequence で呼ぶ。"
+  (val want (desired-of desired name))
+  (val process (process-of world name))
+  ;; 入れ替えの諦め(2026-09-26 — coordinator の handoff_policy が期限で決め、heartbeat の返事で運ぶ)。
+  (val abandoned (and (is-not want None) want.handoff want.handoff-abandoned))
+  ;; 世代をまたぐ入れ替え(AL-D2): 同じ名の worker の新しい世代の process が Ready — この(退いた)世代は退かせるだけで起こさない。
+  (val superseded (and (is-not want None) want.handoff (is-not want.superseded-by None)))
   (cond
     ;; 諦めた入れ替えの新・新しい世代へ移った job は起こし直さない(退いた旧が動き続ける)。宣言が変われば諦めは解け、次の拍で起こす。
     ;; 止まりの始まった Pod の handoff の job も起こさない(印の有無に依らない — start-step の頭・AL-D2p)。
-    (is process None) (if (or (is want None) abandoned superseded) #() (. (run (start-step now want world record policy)) actions))
+    (is process None) (if (or (is want None) abandoned superseded) #() (. (! (start-step now want world record policy)) actions))
     (is-not process.exit-code None)
       (+ #((ReapJob name process.pid
              (if (is record.stopping None) Outcome.EXITED Outcome.STOPPED) process.exit-code))
@@ -391,8 +394,8 @@
       (handoff-actions now want process world policy)
     ;; spec が変わった recreate の job: 旧を動かしたまま新しい版の準備と入口の検めを進め、両方が済んでから旧を止める(2026-10-08 —
     ;; 新旧の本体を同時に動かさない・判断は replace-step)。
-    (and (is-not want None) (run (recreating? want process record)))
-      (. (run (replace-step now want process world record policy)) actions)
+    (and (is-not want None) (! (recreating? want process record)))
+      (. (! (replace-step now want process world record policy)) actions)
     ;; 宣言から消えた job・止め始めた process・宣言の変わった task → すぐ止める(止め始めた process は止め終える)。
     True (stop-actions now process record policy (if (is want None) absent (SpecChanged)))))
 
@@ -536,12 +539,11 @@
    :tags {:context "worker" :role "judgment"}}
   "worker の 1 拍で撃つ action を決めるため: job ごとの action → 温める表の準備(job より後)→ 待ちの子の起こしと止め(#3646)→ 検めの
    記録の片づけ。掃除の係への固定の集合は最後に読めた宣言で判じる sweep-actions(#3731 — この拍の列は宣言を読めていない拍と読んだ空の
-   宣言を分けない)。job ごとの判断 plan-job は列の中で要素ごとに呼ぶので素の関数のまま(列を順に走らせる道具
-   #2812 を待つ)。absent = 宣言に無い job を止める訳(既定 = 宣言から外れた・拍の Program が途絶の絞りと worker の停止を渡す — #3713)。"
+   宣言を分けない)。job ごとの判断 plan-job は名ごとに sequence で順に走らせる(最初の失敗で止まる — 黙って落とさない)。
+   absent = 宣言に無い job を止める訳(既定 = 宣言から外れた・拍の Program が途絶の絞りと worker の停止を渡す — #3713)。"
   (<- names tuple (job-names desired world))
-  (val jobs (tuple (gfor name names
-                         action (plan-job now name desired world (.get records name (JobRecord name)) policy absent)
-                         action)))
+  (<- per-job tuple (sequence (gfor name names (plan-job now name desired world (.get records name (JobRecord name)) policy absent))))
+  (val jobs (tuple (gfor actions per-job action actions action)))
   (<- warming tuple (warm-actions now warm world jobs policy))
   (<- children tuple (warm-child-actions now desired world warm policy))
   (<- forgetting tuple (forget-probe-actions desired world))
@@ -559,14 +561,14 @@
    うちに揃う宿(模擬の prepare-seconds = 0・起こした刻に準備済みの模擬の待ちの子・cache に完成品の在る版)で、最初の task の起動が拍
    1 つ遅れる形をやめる。揃っていなければ空(今までどおり後の拍で揃いを観測してから起こす)。records = 拍の action を数えた後の記憶・
    absent = plan と同じ止める訳。"
-  (val jobs (tuple (gfor spec desired
-                         :if (and (is-not (ready-path (code-of after (code-key spec))) None)
-                                  (or (is (ready-path (code-of before (code-key spec))) None)
-                                      (and (forks-from-warm-child spec)
-                                           (not (warm-child-ready (warm-child-of before (warm-key-of spec))))
-                                           (warm-child-ready (warm-child-of after (warm-key-of spec))))))
-                         action (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy absent)
-                         action)))
+  (<- per-job tuple (sequence (gfor spec desired
+                                    :if (and (is-not (ready-path (code-of after (code-key spec))) None)
+                                             (or (is (ready-path (code-of before (code-key spec))) None)
+                                                 (and (forks-from-warm-child spec)
+                                                      (not (warm-child-ready (warm-child-of before (warm-key-of spec))))
+                                                      (warm-child-ready (warm-child-of after (warm-key-of spec))))))
+                                    (plan-job now spec.name desired after (.get records spec.name (JobRecord spec.name)) policy absent))))
+  (val jobs (tuple (gfor actions per-job action actions action)))
   (<- children tuple (warm-child-actions now desired after warm policy))
   (+ jobs (tuple (gfor action children
                        :if (and (isinstance action StartWarmChild) (is (ready-path (code-of before action.key)) None))
@@ -595,7 +597,8 @@
 (defk records-after [now records actions [policy (WorkerPolicy)]]
   {:pre [(: now int) (: records dict) (: actions tuple) (: policy WorkerPolicy)] :post [(: % dict)] :tags {:context "worker" :role "judgment"}}
   "撃った action を job ごとの記憶(起こした回数・止め始め・終わり方)に数えた後の記憶を求めるため。1 つずつの数えは record-after
-   (列の中で要素ごとに呼ぶので素の関数のまま — 列を順に走らせる道具 #2812 を待つ)。"
+   (効果を出さない純粋な畳み: 同じ job の action が続けば前の数えの答えを次が読むので、互いに独立な Program の列を順に走らせる
+   sequence の形ではなく、素の関数のまま — #2812)。"
   (var result (dict records))
   (for [action actions]
     (val name (match action
@@ -701,32 +704,29 @@
             (.format "待ちの子の準備中 — 前の待ちの子を止めている: {}" view.detail)
           True "待ちの子の準備中"))))
 
-(defk statuses [now desired world records policy]
-  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]
+(defk job-status [now desired world records policy name]
+  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy) (: name str)] :post [(: % JobStatus)]
    :tags {:context "worker" :role "judgment"}}
-  "worker の状態の報告(job ごとの JobStatus の列)を作るため。job ごとの判断(phase-of・probe-status ほか)は列の中で要素ごとに呼ぶので
-   素の関数のまま(列を順に走らせる道具 #2812 を待つ)。"
-  (<- names tuple (job-names desired world))
-  (tuple (gfor name names
-    :setv want (desired-of desired name)
-    :setv process (process-of world name)
-    :setv record (.get records name (JobRecord name))
-    :setv code (if (is want None) None (code-of world (code-key want)))
-    :setv probe (if (is want None) None (probe-failure world want))
-    :setv probing (if (is want None) None (probe-status now world want))
-    :setv handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None))
-    :setv abandoned (and (is-not want None) want.handoff want.handoff-abandoned)
-    ;; 版を据え置いている(#3684 — drain 中で、新しい版を受けずに旧い版を動かしている — plan-job の据え置きと同じ形)。
-    :setv held (and (is-not process None) (is-not want None) want.hold-version (!= process.spec want) (is record.stopping None))
-    ;; recreate の job の旧い版を動かしたまま、新しい版を準備・検めしている(2026-10-08 — plan-job の止めの枝と同じ述語)。
-    :setv replacing (run (recreating? want process record))
-    :setv warm-wait (warm-wait-detail world want process record)
-    :setv refused (refused-warm-child world want process record policy)
-    ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
-    ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
-    :setv stable (and (is-not process None) (is-not record.last-start-ms None)
-                      (>= (- now record.last-start-ms) policy.stable-run-ms))
-    (JobStatus name (phase-of now want process world record policy)
+  "job 1 つの状態の報告 JobStatus を作るため(statuses が名ごとに sequence で呼ぶ)。判断(phase-of・probe-status ほか)は同じ拍の観測から導く。"
+  (val want (desired-of desired name))
+  (val process (process-of world name))
+  (val record (.get records name (JobRecord name)))
+  (val code (if (is want None) None (code-of world (code-key want))))
+  (val probe (if (is want None) None (probe-failure world want)))
+  (val probing (if (is want None) None (probe-status now world want)))
+  (val handing-off (and (is-not process None) (is-not want None) want.handoff (!= process.spec want) (is record.stopping None)))
+  (val abandoned (and (is-not want None) want.handoff want.handoff-abandoned))
+  ;; 版を据え置いている(#3684 — drain 中で、新しい版を受けずに旧い版を動かしている — plan-job の据え置きと同じ形)。
+  (val held (and (is-not process None) (is-not want None) want.hold-version (!= process.spec want) (is record.stopping None)))
+  ;; recreate の job の旧い版を動かしたまま、新しい版を準備・検めしている(2026-10-08 — plan-job の止めの枝と同じ述語)。
+  (<- replacing bool (recreating? want process record))
+  (val warm-wait (warm-wait-detail world want process record))
+  (val refused (refused-warm-child world want process record policy))
+  ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
+  ;; 同じ境 — 拍ごとに組む報告から導くので、記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。
+  (val stable (and (is-not process None) (is-not record.last-start-ms None)
+                   (>= (- now record.last-start-ms) policy.stable-run-ms)))
+  (JobStatus name (phase-of now want process world record policy)
       (if (is want None) None want.revision)
       (if (is process None) None process.spec.revision)
       (if (is process None) None process.pid)
@@ -776,4 +776,12 @@
                      (is-not refused None) (warm-refusal-failure refused)
                      True None)
       ;; 宣言の spec の入口の検めの姿(走っている・待っている・失敗した間 — 入れ替えで旧が動いている行も)。
-      :probe probing))))
+      :probe probing))
+
+(defk statuses [now desired world records policy]
+  {:pre [(: now int) (: desired tuple) (: world WorldView) (: records dict) (: policy WorkerPolicy)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "worker の状態の報告(job ごとの JobStatus の列)を作るため。job ごとの報告 job-status を名ごとに sequence で順に走らせる。"
+  (<- names tuple (job-names desired world))
+  (<- reported tuple (sequence (gfor name names (job-status now desired world records policy name))))
+  reported)

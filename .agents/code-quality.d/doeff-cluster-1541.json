@@ -1664,7 +1664,8 @@
         "doeff-cluster-runtime-env-model",
         "doeff-cluster-worker-model",
         "doeff-cluster-worker-rules",
-        "doeff-cluster-worker-warm-rules"
+        "doeff-cluster-worker-warm-rules",
+        "doeff-traverse-effects"
       ],
       "layer": "pure",
       "name": "doeff-cluster-worker-policy",
