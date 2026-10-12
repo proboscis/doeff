@@ -38,14 +38,13 @@
 
 
 (deftest test-system-of-names-the-declaring-system-on-its-limits
-  ;; 系の構成子は組の上限に宣言する系の名を付ける(資源 GroupLimit の spec の system に載る)。別の系の名の付いた上限は断る。
+  ;; 系の構成子は組の上限に宣言する系の名を付ける(資源 GroupLimit の spec の system に載る)。既に名の付いた上限(作った系の値を繋ぐ
+  ;; 時 — 上に載る系の宣言の道具は 1 度に宣言する系を名 "a+b" の 1 つの系に繋ぐ)は、作った系の名を保つ。繋いだ名で付け直すと、同じ系を
+  ;; 別の組み合わせで宣言するたびに持ち主が "a+b" と "a" の間で揺れ、資源の口が 409 で断る(以前は名の違いを断り、繋ぐ宣言が止まった)。
   (assert (= (. (get ALPHA.task-limits 0) system) "alpha") ALPHA.task-limits)
   (assert (= (group-limit-spec (get ALPHA.task-limits 0)) {"scope" "cluster" "limit" 1 "system" "alpha"}) ALPHA.task-limits)
-  (try
-    (system-of "alpha" #() :task-limits #((GroupLimit :group "llm" :scope "cluster" :limit 1 :system "beta")))
-    (raise (AssertionError "別の系の名の付いた上限を断らなかった"))
-    (except [error ValueError]
-      (assert (in "beta" (str error)) (str error)))))
+  (val joined (system-of "alpha+gamma" #() :task-limits (+ ALPHA.task-limits #((GroupLimit :group "gpu" :scope "worker" :limit 2)))))
+  (assert (= (tuple (gfor l joined.task-limits #(l.group l.system))) #(#("llm" "alpha") #("gpu" "alpha+gamma"))) joined.task-limits))
 
 
 (defk declared [system-limits]

@@ -10,7 +10,7 @@
  "requirements": "doeff-cluster の coordinator が組ごとの同時数の上限を系の宣言から持ち、送り手の値を読まない(card ki-b0e8028c8c8d・#ki-d940 の子 A)。R1 組ごとの上限の値と数える範囲は系の宣言(System の task-limits)1 つが持ち、宣言の保存と受け口で値を検める(1 以上の整数・範囲の名)。R2 task の上限の名乗り(TaskLimit)は組の名だけで、値と範囲を名乗らない。移行のための読み分けは書かない。R3 置き方(task-misfit・hold-limits)は宣言の値で数え、宣言に無い組を名乗る task は受け口で断る(受入の条 cb0a9c75f)。R4 /state に組ごとの宣言の値と置いている数を出す(受入の条 c7e6872fe)。R5 呼び手ごとの予算も送り手が値を送らずに持てる(親の決め R7 との両立・依頼元の可)。盲検 A の後、R1 の「系の宣言 1 つ」を「1 つの組の値を持つ系は 1 つ」と読む事を明らかにした(要件を足したのではない)。完了の範囲は実装完了まで(配備と上に載る系の側は範囲外)。",
  "design": {
   "path": "design.md",
-  "sha256": "23007452be2686eb610a22216cfb395c91586b7c85ca009a1f6af5ea813b82b4"
+  "sha256": "19621971b37b5246811e85ef9ebda055f9bc071e36febb540219156a41d7fad5"
  },
  "modules": [
   {
@@ -127,7 +127,7 @@
     "sender"
    ],
    "reason": "直す前の往復は共同の不変条件(組を宣言する系は 1 つ)の欠け。資源 GroupLimit に持ち主の欄を足したのは意図した公開契約の拡張",
-   "revision": "A1・A1b を入れ、別の系の書き直しが 409 になる事(純粋な資源の口・sim)と、持ち主を比べない変異・形の読みの写しの変異が検で赤になる事を確かめた"
+   "revision": "A1・A1b を入れ、別の系の書き直しが 409 になる事(純粋な資源の口・sim)と、持ち主を比べない変異・形の読みの写しの変異が検で赤になる事を確かめた。着地の後、上に載る系の宣言の道具が系を繋ぐ時に system-of が断る事を見つけ、付いた名を保つ形に直した(§10)"
   },
   {
    "id": "S3",
@@ -211,7 +211,7 @@
    "observation": "最終の版で test_two_senders_naming_one_group_are_counted_by_the_one_declared_value・test_the_placed_claims_are_one_per_placed_task_whatever_else_the_sender_sent・test_the_sender_facing_fields_and_the_counting_inputs_are_pinned が PASSED(関係の検 56 passed・rc 0)",
    "evidence": {
     "path": "evidence/fix-green.log",
-    "sha256": "c812fefa09ee4291039a11383272870f4570cbdb238f664a7b9bf3b894f9553b"
+    "sha256": "0573d8da0dbc87428559fe543da83a46a934b748c50c98391ff39506528f9b7b"
    },
    "status": "passed"
   },
@@ -268,7 +268,7 @@
    "observation": "test_a_group_declared_by_one_system_is_not_rewritten_by_another_system(alpha 自身の limit 2 の書き直し)・test_two_senders_…(宣言 1 → 2 で 2 本目が置かれる)・test_an_ownerless_group_is_claimed_by_the_first_system_that_declares_it が PASSED",
    "evidence": {
     "path": "evidence/fix-green.log",
-    "sha256": "c812fefa09ee4291039a11383272870f4570cbdb238f664a7b9bf3b894f9553b"
+    "sha256": "0573d8da0dbc87428559fe543da83a46a934b748c50c98391ff39506528f9b7b"
    },
    "status": "passed"
   },
@@ -340,7 +340,7 @@
    "observation": "test_a_declared_group_and_its_system_survive_the_state_file_and_the_durable_keys・test_an_ownerless_group_is_claimed_by_the_first_system_that_declares_it が PASSED",
    "evidence": {
     "path": "evidence/fix-green.log",
-    "sha256": "c812fefa09ee4291039a11383272870f4570cbdb238f664a7b9bf3b894f9553b"
+    "sha256": "0573d8da0dbc87428559fe543da83a46a934b748c50c98391ff39506528f9b7b"
    },
    "status": "passed"
   },
@@ -382,7 +382,7 @@
    "observation": "test_the_same_tasks_sent_in_either_order_place_the_declared_number_in_one_tick・test_two_senders_… が PASSED",
    "evidence": {
     "path": "evidence/fix-green.log",
-    "sha256": "c812fefa09ee4291039a11383272870f4570cbdb238f664a7b9bf3b894f9553b"
+    "sha256": "0573d8da0dbc87428559fe543da83a46a934b748c50c98391ff39506528f9b7b"
    },
    "status": "passed"
   },
@@ -424,7 +424,7 @@
    "observation": "test_the_state_shows_each_group_declared_value_and_held_count_on_sim・test_the_second_system_declaring_a_group_is_refused_on_sim・test_the_production_declare_writes_the_limits_of_a_declaration_without_jobs・test_the_production_declare_stops_at_the_first_refused_group_like_the_sim が PASSED",
    "evidence": {
     "path": "evidence/fix-green.log",
-    "sha256": "c812fefa09ee4291039a11383272870f4570cbdb238f664a7b9bf3b894f9553b"
+    "sha256": "0573d8da0dbc87428559fe543da83a46a934b748c50c98391ff39506528f9b7b"
    },
    "status": "passed"
   },
@@ -469,6 +469,34 @@
    "evidence": {
     "path": "evidence/review-red-before-fix.log",
     "sha256": "31dd478aef12a1635f33eca7459c29c81eb9be32410ef1f4e7e918d7b2d0ead9"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "c-s2-pos-joined",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "宣言の道具が系を繋ぐ(名「alpha+gamma」)時、system-of は作った系の名の付いた組を作った系の名のまま保ち、名の無い組にだけ繋いだ名を付ける(持ち主が繋ぎ方で揺れない)",
+   "observation": "test_system_of_names_the_declaring_system_on_its_limits が PASSED(§10 の直しの後・関係の検 56 passed)",
+   "evidence": {
+    "path": "evidence/fix-green.log",
+    "sha256": "0573d8da0dbc87428559fe543da83a46a934b748c50c98391ff39506528f9b7b"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "c-s2-neg-joined",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "L2184 の system-of は繋いだ系の宣言を『別の系の名』で断る — 書き換えた検がそれを捉える",
+   "observation": "直す前の版(main bb5cd42c7)で test_system_of_names_the_declaring_system_on_its_limits が『系 alpha+gamma の :task-limits の組 llm に別の系 alpha の名が付いている』で FAILED",
+   "evidence": {
+    "path": "evidence/keep-owner-red-before-fix.log",
+    "sha256": "75527b652c083c82b4727fe4732ec59e5fe8ae338fc981259b3d170081b7cf64"
    },
    "status": "passed"
   }
