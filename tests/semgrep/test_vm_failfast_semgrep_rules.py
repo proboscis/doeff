@@ -298,6 +298,45 @@ def test_report_tables_are_read_only_by_their_owners_in_the_tree() -> None:
     assert readers == []
 
 
+def test_silence_anchor_rule_detects_reads_outside_the_one_measure() -> None:
+    # card ki-069f4a5c07f7: the worker's fence against a lost coordinator measured
+    # silence by the wall-clock difference alone, so a wall clock stepped back
+    # during the cut delayed the self-stop past the coordinator's reassignment.
+    # The anchors are read only as the 3rd and 4th argument of
+    # heartbeat_rules.silent-ms (same owner, wall then monotonic) and written as a pair.
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/"
+        "silence_anchor_read_outside_measure_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(
+        results, "doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure"
+    ) == {9, 13, 17, 20, 23, 26, 29, 32, 35}
+
+
+def test_silence_anchors_are_read_only_by_the_one_measure_in_the_tree() -> None:
+    # The same rule over the real package: the production link and the sim host
+    # hand their anchors to silent-ms and write them as a pair.
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src",
+        cwd=REPO_ROOT,
+    )
+
+    readers = sorted(
+        f"{result['path']}:{cast(dict[str, int], result['start'])['line']}"
+        for result in results
+        if _has_rule(
+            {str(result["check_id"])},
+            "doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure",
+        )
+    )
+    assert readers == []
+
+
 def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:
     # Design check 2026-09-26 (agora-redesign#639 request H, blind B): the
     # herdr substrate picking "the first non-idle-shell process" passed every

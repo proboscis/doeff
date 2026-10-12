@@ -330,6 +330,36 @@ rules:
         - "**/doeff_cluster/coordinator/core/resource_policy.hy"
         - "**/doeff_cluster/coordinator/core/metrics_policy.hy"
 
+  - id: doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      worker の沈黙の起点(最後に届いた返事の刻の対 last-ok-ms・last-ok-mono-ms と、前の heartbeat の送りの始めの対 started-at・
+      started-mono-ms)は、対で書き、沈黙の計り worker/core/heartbeat_rules.hy の silent-ms の起点の引数(3 番目 = 壁の時計の刻・
+      4 番目 = 同じ持ち主の単調な時計の読み)としてだけ読む。起点を直に引く((- now state.last-ok-ms))・名に写して持ち出す・期限
+      (worker_due の beat-due・fence-due)へ生のまま渡す・対の片方だけを書く・2 つの引数を入れ替える、のどれも、途絶の柵と heartbeat
+      の送りを壁の時計の差だけ(か単調な時計の差だけ)で判じる道を作る — 途絶の最中に機体の壁の時計が戻ると、戻った分だけ自己停止が
+      遅れ、coordinator の移し替えの後まで job を動かす(条 C4・C2 の破り・card ki-069f4a5c07f7)。沈黙の長さが要るなら silent-ms の
+      答えを使い、壁の時計の枠の刻が要るなら「今の壁の時計 − silent-ms の答え」で写す。起点を書くのは、壁の時計と単調な時計を同じ所で
+      読んだ直後の 1 つの setv(か 1 つの record の作り)にする。
+    patterns:
+      - pattern-either:
+          - pattern-regex: '\.(?:last-ok-ms|last-ok-mono-ms|started-at|started-mono-ms)(?![\w-])'
+          - pattern-regex: '(?<![\w-]):(?:last-ok-ms|last-ok-mono-ms)(?![\w-])'
+          - pattern-regex: '\(\.\s+[\w.-]+\s+(?:last-ok-ms|last-ok-mono-ms|started-at|started-mono-ms)(?![\w-])'
+      # 読み: silent-ms の起点の引数(3・4 番目)に、同じ持ち主の対をこの順で渡す。
+      - pattern-not-regex: '\(silent-ms\s+[^\s()]+\s+(?:\([^()]*\)|[^\s()]+)\s+([\w-]+)\.(?:last-ok-ms\s+\1\.last-ok-mono-ms|started-at\s+\1\.started-mono-ms)\s*\)'
+      # 書き: 同じ持ち主の対を 1 つの setv の隣り合う 2 組で書く。
+      - pattern-not-regex: '([\w-]+)\.(?:last-ok-ms\s+(?:\([^()]*\)|[^\s()]+)\s+\1\.last-ok-mono-ms|started-at\s+(?:\([^()]*\)|[^\s()]+)\s+\1\.started-mono-ms)\s+(?:\([^()]*\)|[^\s()]+)'
+      # 書き(record の作り・replace): 鍵の対を隣り合う 2 組で渡す。
+      - pattern-not-regex: '(?<![\w-]):last-ok-ms\s+(?:\([^()]*\)|[^\s()]+)\s+:last-ok-mono-ms\s+(?:\([^()]*\)|[^\s()]+)'
+      # 在るかどうかの問い(まだ 1 度も送っていない)は長さを作らない。
+      - pattern-not-regex: '\(is-not\s+[\w-]+\.started-at\s+None\)'
+    paths:
+      include:
+        - "**/doeff_cluster/**/*.hy"
+
   - id: doeff-packages-have-no-application-vocabulary
     languages:
       - generic
