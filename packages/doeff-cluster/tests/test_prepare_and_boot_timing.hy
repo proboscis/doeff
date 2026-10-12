@@ -34,8 +34,8 @@
 (import doeff_cluster.worker.intent.worker_model [BootMarks])
 (import doeff_cluster.worker.core.boot_timing [read-boot-marks boot-stamps stamps-out-of-order BOOT-STARTED-VAR BOOT-EXEC-VAR])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
-(import doeff_cluster.sim.env_world [env-world EnvWorld read-world-log world-files])
-(import tests.env_fixtures [LOCK env-of base-world])
+(import doeff_cluster.sim.env_world [env-world EnvWorld WorldCommit read-world-log world-files])
+(import tests.env_fixtures [LOCK env-of base-world app-commit lib-commit])
 (import tests.link_rig [LinkRig])
 
 (val PLATFORM "linux-x86_64")
@@ -81,10 +81,16 @@
   (assert (= (get files "roots") 1) files)
   (assert (= (get files "bytecode") (+ (get baked "rebuilt") (get baked "stored"))) #(files baked))
   (assert (> (get files "bytecode") 0) files)
-  (assert (all (gfor n ["disk" "mirror" "tree" "lock" "native" "sync" "wheels" "probe"] (is (get files n) None))) files)
-  ;; 木の処理ステージの repo ごとの秒と置き方(冷たい準備は両方とも展開)。
+  (assert (all (gfor n ["disk" "mirror" "lock" "native" "sync" "wheels" "probe"] (is (get files n) None))) files)
+  ;; 木の処理ステージの repo ごとの秒と置き方(冷たい準備は両方とも展開)と、書いた file の数(木の file の全部 — #3677)。
+  (<- app-1 WorldCommit (app-commit "app-1" LOCK "V = 1\n"))
+  (<- lib-1 WorldCommit (lib-commit "lib-1" "fn a() {}\n"))
   (val tree (next (gfor s stages :if (= (get s "name") "tree") s)))
   (assert (= (lfor p (get tree "parts") #((get p "name") (get p "how"))) [#("app" "expand") #("lib" "expand")]) tree)
+  (assert (= (get files "tree") (+ (len app-1.files) (len lib-1.files))) #(files tree))
+  (assert (= (lfor p (get tree "parts") #((get p "copied") (get p "removed") (get p "replaced")))
+             [#(0 0 (len app-1.files)) #(0 0 (len lib-1.files))])
+          tree)
   (assert (<= (sum (gfor p (get tree "parts") (get p "seconds"))) (+ (get tree "seconds") 0.01)) tree)
   ;; 処理ステージの秒の和 = 準備の全体の秒(印の秒は 3 桁に丸める — 10 の処理ステージで 0.01 秒まで)。
   (val total (- ended started))
@@ -101,14 +107,19 @@
   (assert (in "disk ext4 /dev/nvme0n1p2 (/state)" (get lines 0)) lines)
   (assert (in "tree=" (get lines 0)) lines)
   (assert (in "app:expand=" (get lines 0)) lines)
-  ;; 温い準備: 変わらない lib の木は前の root から写す。
+  ;; 温い準備: 前の root の木から写し、変わった app/__init__.py だけ置き直す(lib は変わらないので置き直さない)。
   (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
-  (<- second (prepare-launched second-env #((KnownRoot :env ready.env :root ready.root :made-ms 0 :hy-version (get marker "hyVersion")))
+  (<- second (prepare-launched second-env #((KnownRoot :env ready.env :root ready.root :platform (get marker "platform") :made-ms 0
+                                       :hy-version (get marker "hyVersion")))
                                (- now LAUNCH-LEAD-MS)))
   (assert (isinstance second EnvReady) second)
   (<- again dict (marker-of second))
   (val warm-tree (next (gfor s (get again "stages") :if (= (get s "name") "tree") s)))
-  (assert (= (lfor p (get warm-tree "parts") #((get p "name") (get p "how"))) [#("app" "expand") #("lib" "copy")]) warm-tree)
+  (assert (= (lfor p (get warm-tree "parts") #((get p "name") (get p "how"))) [#("app" "copy") #("lib" "copy")]) warm-tree)
+  (assert (= (lfor p (get warm-tree "parts") #((get p "copied") (get p "removed") (get p "replaced")))
+             [#(4 1 1) #((len lib-1.files) 0 0)])
+          warm-tree)
+  (assert (= (get (next (gfor s (get again "stages") :if (= (get s "name") "tree") s)) "files") 1) warm-tree)
   True)
 
 
