@@ -1,0 +1,11 @@
+# zeus の worker の token の期限(JSON patch — 雛形の volume の決まった場所を確かめて改める)。旧い Pod は入れ替えの後、最長 terminationGracePeriodSeconds
+# (22020 秒)Terminating のまま走る。kubelet は止めている途中の Pod の投影の volume を更新しないので、止め始めた時に file に在る token
+# (雛形の期限 3600 秒)は 1 時間以内に切れ、旧い Pod の上の会話は猶予の残りの間 kubectl が Unauthorized になる(2026-10-12 15:13 JST の入れ替え・
+# 15:33 JST から・card ki-916968e7f898)。
+# kubelet は token の年齢が 24 時間を越えるか残りが期限の 20% を切ると更新するので、止め始めた時の残りは最悪でも max(期限 - 24 時間, 期限の 20%)。
+# 期限 129600 秒(36 時間)なら最悪でも 43200 秒(12 時間)残り、猶予 22020 秒を越える(test_worker_token_outlasts_the_termination_grace_period)。
+# token は Pod に結んでいる(apiserver は Pod が消えた token を無効にする)ので、期限を延ばしても Pod が消えた後に使える窓は伸びない。
+# 他の機体の猶予は 120 秒なので雛形の 3600 秒のまま。雛形の volume の並びが変わったか、node.yaml より後に当てると、test の操作が組み立てを止める。
+- { op: test, path: /spec/template/spec/volumes/4/name, value: account-token }
+- { op: test, path: /spec/template/spec/volumes/4/projected/sources/0/serviceAccountToken/path, value: token }
+- { op: replace, path: /spec/template/spec/volumes/4/projected/sources/0/serviceAccountToken/expirationSeconds, value: 129600 }

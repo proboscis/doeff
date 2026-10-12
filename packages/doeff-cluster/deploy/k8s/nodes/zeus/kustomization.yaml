@@ -12,6 +12,10 @@ labels:
   - pairs: { doeff.dev/node: zeus }
     includeSelectors: true
 patches:
+  # token の期限(JSON patch — 旧い Pod が猶予の間 Terminating のまま走っても token が切れない長さ)。node.yaml の前に置く: node.yaml の
+  # 組み込みは雛形の work の後ろに zeus の volume を挟み、account-token の位置が雛形の 4 番目からずれる。
+  - path: token-lifetime.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
   - path: node.yaml
   # drain の上限(JSON patch — 雛形の env の決まった場所を確かめて改める)。
   - path: generation.yaml
