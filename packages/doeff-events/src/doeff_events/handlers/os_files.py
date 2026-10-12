@@ -7,10 +7,15 @@ it; the library is imported when a watch is started.
 - ``WatchFiles`` starts the library's notifier on the directory at once, so a change made after the answer is
   kept by the notifier until the next wait takes it (none is lost between two waits).
 - ``NextFileChanges`` is one ``Await`` (it needs ``await_handler`` outside, inside ``scheduled``): the notifier's
-  blocking wait runs in a worker thread and holds no scheduler task busy. The wait ends when the operating system
-  reports a change under the directory; a quiet stretch of the notifier's own time limit only waits again (the
-  program is never woken to look). Changes reported together within ``DEBOUNCE_MS`` come as one answer, sorted by
-  path, each path once.
+  blocking wait runs in a thread of the wait's own (a daemon thread, started when the wait is awaited and ended with
+  it) and holds no scheduler task busy. It does not run in the event loop's default executor (``asyncio.to_thread``):
+  a wait holds its thread for as long as the files stay quiet, and that executor is shared with the loop's name
+  lookups (``loop.getaddrinfo`` — an HTTP client's new connection); a turn-host with more turns than its 32 threads
+  queued every new connection behind the waits until it timed out (agora-redesign card ki-fe848da94d24, 2026-10-12).
+  When the awaiting task is cancelled, the thread stops after the notifier's current wait. The wait ends when the
+  operating system reports a change under the directory; a quiet stretch of the notifier's own time limit only waits
+  again (the program is never woken to look). Changes reported together within ``DEBOUNCE_MS`` come as one answer,
+  sorted by path, each path once.
 - ``CloseFileWatch`` sets the notifier's stop flag (a wait in progress ends) and closes it — at once when no wait is
   inside the notifier, otherwise when the last wait leaves it. The library's notifier must never be closed while a
   wait is inside it: its close takes the notifier mutably and its wait borrows it between steps, and on a Python
@@ -125,10 +130,54 @@ def _changes_of(raw: object) -> FilesChanged | None:
     return FilesChanged(tuple(sorted({str(path) for _change, path in raw})))
 
 
+def _wait_in_thread(
+    kept: _Notifier,
+    loop: asyncio.AbstractEventLoop,
+    answer: "asyncio.Future[FilesChanged]",
+    abandoned: threading.Event,
+) -> None:
+    """The body of one wait's own thread: wait on the notifier until it reports changes (a timeout of the notifier
+    only waits again) and hand them to ``answer`` on the event loop. Stops waiting once nobody awaits the answer
+    any more (``abandoned`` — the awaiting task was cancelled) or the loop is closed."""
+    try:
+        while not abandoned.is_set() and not loop.is_closed():
+            changes = _changes_of(kept.wait_once())
+            if changes is not None:
+                _settle(loop, answer, changes)
+                return
+    except Exception as error:
+        # Handed to the awaiting task and raised there, as a failed wait always was.
+        _settle(loop, answer, error)
+
+
+def _settle(
+    loop: asyncio.AbstractEventLoop,
+    answer: "asyncio.Future[FilesChanged]",
+    result: FilesChanged | Exception,
+) -> None:
+    """Hand a wait's result to ``answer`` from its own thread (on the loop's thread — a future is not thread-safe);
+    nothing when the answer was cancelled meanwhile or the loop is gone."""
+
+    def settle() -> None:
+        """Settle the answer once, on the loop's thread."""
+        if answer.done():
+            return
+        if isinstance(result, Exception):
+            answer.set_exception(result)
+        else:
+            answer.set_result(result)
+
+    try:
+        loop.call_soon_threadsafe(settle)
+    except RuntimeError:
+        # The loop was closed after the wait began: nobody is left to read the answer.
+        return
+
+
 @final
 class _NextChanges:
-    """The awaitable handed to ``Await``: the notifier's blocking waits run in a worker thread, made only when it
-    is awaited (a dropped effect leaves nothing behind)."""
+    """The awaitable handed to ``Await``: the notifier's blocking waits run in a thread of the wait's own, made only
+    when it is awaited (a dropped effect leaves nothing behind)."""
 
     __slots__ = ("_kept",)
 
@@ -137,13 +186,18 @@ class _NextChanges:
         self._kept = kept
 
     async def _wait(self) -> FilesChanged:
-        """Wait until the notifier reports changes (a timeout of the notifier only waits again)."""
-        kept = self._kept
-        while True:
-            raw = await asyncio.to_thread(kept.wait_once)
-            changes = _changes_of(raw)
-            if changes is not None:
-                return changes
+        """Wait until the notifier reports changes, in a thread of this wait's own (module docstring)."""
+        loop = asyncio.get_running_loop()
+        answer: asyncio.Future[FilesChanged] = loop.create_future()
+        abandoned = threading.Event()
+        answer.add_done_callback(lambda _done: abandoned.set())
+        threading.Thread(
+            target=_wait_in_thread,
+            args=(self._kept, loop, answer, abandoned),
+            name="doeff-file-watch",
+            daemon=True,
+        ).start()
+        return await answer
 
     def __await__(self) -> "Generator[object, None, FilesChanged]":
         """Run the wait when awaited."""

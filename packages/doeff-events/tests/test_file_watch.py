@@ -270,6 +270,157 @@ def test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_p
         assert run_scheduled(os_file_watch_handler()(program(after))) == FilesChanged(()), round_
 
 
+def test_os_watch_waits_leave_the_default_executor_free(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    """Waits on more watches than the event loop's default executor has threads all enter their notifiers, and a job
+    sent to that executor still runs at once. An HTTP client's new connection resolves its name there
+    (``loop.getaddrinfo``); when every wait held one of its threads, a turn-host with more turns than the 32 threads
+    timed out its connections to the custody service and the screen's drafts (agora-redesign card ki-fe848da94d24)."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    import watchfiles._rust_notify
+    from doeff_core_effects.effects import Await
+    from doeff_core_effects.scheduler import Spawn, Wait
+
+    monkeypatch.setattr(watchfiles._rust_notify, "RustNotify", _OverlapNotifier)
+    monkeypatch.setattr(_OverlapNotifier, "instances", ())
+    threads = 2
+    waits = threads + 2
+    small = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="small-default")
+    # Looks for the waits from outside the default executor (that one may be full — what the test looks for).
+    lookout = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lookout")
+
+    async def use_small_executor() -> None:
+        asyncio.get_running_loop().set_default_executor(small)
+
+    async def restore_default_executor() -> None:
+        # The loop is shared by the whole process (await_handler): give it back an executor like asyncio's own default.
+        asyncio.get_running_loop().set_default_executor(
+            ThreadPoolExecutor(thread_name_prefix="asyncio")
+        )
+        small.shutdown(wait=False)
+        lookout.shutdown(wait=False)
+
+    async def look_while_waiting() -> "tuple[int, bool]":
+        loop = asyncio.get_running_loop()
+        entered = await loop.run_in_executor(
+            lookout, lambda: sum(n.inside.wait(2.0) for n in _OverlapNotifier.instances)
+        )
+        try:
+            ran = await asyncio.wait_for(loop.run_in_executor(None, lambda: True), 1.0)
+        except TimeoutError:
+            ran = False
+        return entered, ran
+
+    @do
+    def waiter(watch: FileWatch) -> "EffectGenerator[object]":
+        return (yield NextFileChanges(watch))
+
+    @do
+    def program() -> "EffectGenerator[object]":
+        yield Await(use_small_executor())
+        try:
+            watches = []
+            for index in range(waits):
+                directory = tmp_path / f"stream-{index}"
+                directory.mkdir()
+                watch = yield WatchFiles(str(directory))
+                assert isinstance(watch, FileWatch), watch
+                watches.append(watch)
+            tasks = []
+            for watch in watches:
+                tasks.append((yield Spawn(waiter(watch))))
+            seen = yield Await(look_while_waiting())
+            for watch in watches:
+                yield CloseFileWatch(watch)
+            answers = []
+            for task in tasks:
+                answers.append((yield Wait(task)))
+            return seen, answers
+        finally:
+            yield Await(restore_default_executor())
+
+    seen, answers = run_scheduled(os_file_watch_handler()(program()))
+    assert seen == (waits, True), seen
+    assert answers == [FilesChanged(())] * waits, answers
+
+
+class _QuietNotifier:
+    """A stand-in for the library's notifier over files that never change: each wait ends at a short limit of its own
+    with ``"timeout"``, and it keeps the threads its waits ran in (``waited_again`` once it was waited on 3 times)."""
+
+    instances: "tuple[_QuietNotifier, ...]" = ()
+
+    def __init__(self, *_args: object) -> None:
+        import threading
+
+        self.threads: tuple[threading.Thread, ...] = ()
+        self.waited_again = threading.Event()
+        _QuietNotifier.instances = (*_QuietNotifier.instances, self)
+
+    def watch(
+        self, _debounce_ms: int, _step_ms: int, _timeout_ms: int, stop_event: "threading.Event"
+    ) -> object:
+        import threading
+
+        self.threads = (*self.threads, threading.current_thread())
+        if len(self.threads) >= 3:
+            self.waited_again.set()
+        stop_event.wait(0.02)
+        return "stop" if stop_event.is_set() else "timeout"
+
+    def close(self) -> None:
+        pass
+
+
+def test_os_watch_cancelled_wait_leaves_no_thread_behind(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    """A wait whose task is cancelled stops waiting on the notifier after its current wait (its thread ends while the
+    watch stays open) instead of waiting again for ever."""
+    import asyncio
+    import contextlib
+
+    import watchfiles._rust_notify
+    from doeff_core_effects.effects import Await
+    from doeff_core_effects.scheduler import Cancel, Spawn, TaskCancelledError, Wait
+
+    monkeypatch.setattr(watchfiles._rust_notify, "RustNotify", _QuietNotifier)
+    monkeypatch.setattr(_QuietNotifier, "instances", ())
+
+    async def thread_ended(notifier: _QuietNotifier) -> bool:
+        def join() -> bool:
+            for thread in set(notifier.threads):
+                thread.join(2.0)
+            return not any(thread.is_alive() for thread in notifier.threads)
+
+        return await asyncio.to_thread(join)
+
+    @do
+    def waiter(watch: FileWatch) -> "EffectGenerator[object]":
+        return (yield NextFileChanges(watch))
+
+    @do
+    def program() -> "EffectGenerator[object]":
+        watch = yield WatchFiles(str(tmp_path))
+        notifier = _QuietNotifier.instances[0]
+        task = yield Spawn(waiter(watch))
+        # A few quiet stretches first: the wait waits on the notifier again after each.
+        waited_again = yield Await(asyncio.to_thread(notifier.waited_again.wait, 5.0))
+        assert waited_again, "the wait did not wait on the notifier again"
+        yield Cancel(task)
+        with contextlib.suppress(TaskCancelledError):
+            yield Wait(task)
+        ended = yield Await(thread_ended(notifier))
+        yield CloseFileWatch(watch)
+        return ended, len(set(notifier.threads))
+
+    # One thread for the whole wait, ended after the cancel.
+    assert run_scheduled(os_file_watch_handler()(program())) == (True, 1)
+
+
 def test_os_watch_refuses_a_missing_directory(tmp_path: Path) -> None:
     @do
     def program() -> "EffectGenerator[object]":
