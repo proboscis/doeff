@@ -12,6 +12,7 @@ ROOTS_PTH: str
 class KnownRoot:
     env: RuntimeEnv
     root: str
+    platform: str | None
     made_ms: int
     hy_version: str | None
 
@@ -31,8 +32,24 @@ class StagePart:
     name: str
     how: str
     seconds: float
+    copied: int
+    removed: int
+    replaced: int
 TREE_COPY: str
 TREE_EXPAND: str
+
+@dataclass(frozen=True, kw_only=True)
+class TreeSource:
+    dir: str
+    commit: str
+
+@dataclass(frozen=True, kw_only=True)
+class TreePlaced:
+    how: str
+    copied: int
+    removed: int
+    replaced: int
+    reason: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class StageTime:
@@ -171,7 +188,7 @@ class MaterializeTree(EffectBase):
     mirror: str
     commit: str
     dest: str
-    reuse: str | None
+    source: TreeSource | None
 
 @dataclass(frozen=True)
 class EnsureNativeWheel(EffectBase):

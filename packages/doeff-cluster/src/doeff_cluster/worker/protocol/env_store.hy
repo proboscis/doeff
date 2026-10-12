@@ -181,10 +181,11 @@
 
 (defk known-roots [settings]
   {:pre [(: settings EnvSettings)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
-  "完成した root の列(展開の複製と bytecode の引き継ぎの元)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path \"madeMs\" 完成の時刻
-   \"hyVersion\" マーカーの Hy の compiler の版} で返すため。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み — 引き継ぎ元を
-   新しい物から選ぶ・#3515 の B)。マーカーを読めても時刻を読めない root(読む間に掃除で消えた)は完成した root に数えない。Hy の版は
-   引き継ぎ元の候補の比べにだけ使い(#3706)、完成した root に数えるかには使わない — 欄の無い前の印の root は null で列に入る。"
+  "完成した root の列(木を写す元の候補)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path \"platform\" マーカーの platform \"madeMs\" 完成の時刻
+   \"hyVersion\" マーカーの Hy の compiler の版} で返すため。写し元は元の鍵(宣言と platform)が同じ root のうち、完成の時刻が最も新しい物
+   (#3677)。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み)。マーカーを読めても時刻を読めない root(読む間に掃除で
+   消えた)は完成した root に数えない。Hy の版は報告の値で(#3706)、完成した root に数えるかには使わない — 欄の無い前の印の root は null で
+   列に入る。"
   (<- names tuple (root-dirs settings))
   (<- roots str (roots-dir settings))
   (var known #())
@@ -193,7 +194,8 @@
     (<- marker (read-marker root))
     (<- made (| int None) (modified-ms (+ root "/" ENV-MARKER)))
     (when (and (is-not marker None) (is-not made None))
-      (:= known (+ known #({"env" (get marker "env") "root" root "madeMs" made "hyVersion" (.get marker "hyVersion")})))))
+      (:= known (+ known #({"env" (get marker "env") "root" root "platform" (.get marker "platform") "madeMs" made
+                            "hyVersion" (.get marker "hyVersion")})))))
   known)
 
 

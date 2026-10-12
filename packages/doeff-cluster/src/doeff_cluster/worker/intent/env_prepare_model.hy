@@ -15,12 +15,13 @@
 ;; --- 要求と答え ---------------------------------------------------------------------------
 
 (defrecord KnownRoot
-  "worker が既に完成させた root(展開の複製と bytecode の引き継ぎの元の候補)。made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 —
-   bytecode の引き継ぎ元を、近い版の root が無い時に最も新しく完成した root から選ぶため・#3515 の B)・hy-version = 完成マーカーに
-   書いた、その root の venv の Hy の compiler の版(Hy の .pyc は compiler の版が同じ時だけ引き継げる — 欄の無い前の印の root と、
-   venv に Hy の無い root は None = 分からない・引き継ぎ元にしない — #3706)。"
+  "worker が既に完成させた root(木を写す元の候補)。platform = 完成マーカーに書いた、その root の platform(元の鍵の材料 — 準備の要求の
+   platform と比べる。欄の無い印の root は None = 分からない・写し元にしない)・made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 — 元の鍵が同じ root のうち最も新しく完成した物を写し元に選ぶため・
+   #3677)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
+   None = 分からない — #3706)。"
   (#^ RuntimeEnv env)
   (#^ str root)
+  (#^ (| str None) platform)
   (#^ int made-ms)
   (#^ (| str None) hy-version))
 
@@ -41,15 +42,39 @@
 
 
 (defrecord StagePart
-  "処理ステージの中の 1 区切りの秒(#3676 — 木の処理ステージの repo ごと)。name = repo の名・how = 置き方(TREE-COPY = 同じ commit の
-   別の root からの写し・TREE-EXPAND = mirror からの展開)・seconds = 経過の秒。"
+  "処理ステージの中の 1 区切りの秒と数(#3676 — 木の処理ステージの repo ごと)。name = repo の名・how = 置き方(TREE-COPY = 元の鍵が同じ
+   別の root からの写し・TREE-EXPAND = mirror からの展開)・seconds = 経過の秒・copied・removed・replaced = 木の file の数の内訳
+   (TreePlaced と同じ意味・#3677)。"
   (#^ str name)
   (#^ str how)
-  (#^ float seconds))
+  (#^ float seconds)
+  (#^ int copied)
+  (#^ int removed)
+  (#^ int replaced))
 
 
 (val TREE-COPY "copy")
 (val TREE-EXPAND "expand")
+
+
+(defrecord TreeSource
+  "木を写す元(元の鍵が同じ完成済みの root の中の、同じ repo の木)。dir = その木の dir・commit = その木が置いた commit(完成済みの
+   root の宣言から読む)。"
+  (#^ str dir)
+  (#^ str commit))
+
+
+(defrecord TreePlaced
+  "木 1 つを置いた結果。how = 置き方(TREE-COPY = 写し元の木を hardlink で写し、変わった path だけ新しく置いた・TREE-EXPAND = mirror から
+   全部展開した — 写し元が在っても、写し元の commit が mirror に無い・差が読めない・写せない時は展開し、その理由を reason に書く)・
+   copied = 写し元から hardlink で写して持ち越した file の数・removed = 写し元の木の file のうち、新しい木へ持ち越さなかった数(変わった・
+   消えた path の旧い file — 写さないので、写し元の file はその場で書き換わらない)・replaced = 新しい中身を置いた file の数(変わった・
+   増えた path。展開は木の file の全部)。持ち越した後の木の file の数 = copied + replaced(展開は replaced だけ)。"
+  (#^ str how)
+  (#^ int copied)
+  (#^ int removed)
+  (#^ int replaced)
+  (setv #^ str reason ""))
 
 
 (defrecord StageTime
@@ -225,12 +250,13 @@
 
 
 (defclass [(dataclass :frozen True)] MaterializeTree [EffectBase]
-  "commit のツリーを dest に置く。reuse = 同じ commit のツリーを持つ別の root の dir(複製する・.venv・完成マーカー・__pycache__ を除く)
-   か None(mirror から展開する)。答え = None。"
+  "commit のツリーを dest に置く。source = 写し元の木(TreeSource)か None(mirror から展開する)。source が在れば、その commit の追跡 file の
+   うち commit までに変わらない物だけを hardlink で写し(.venv・__pycache__・完成マーカーなど追跡しない物は写さない)、変わった path の
+   新しい中身を mirror から置く(写し元の file はその場で書き換えない)。写せなければ展開に戻す。答え = TreePlaced。"
   (#^ str mirror)
   (#^ str commit)
   (#^ str dest)
-  (#^ (| str None) reuse))
+  (#^ (| TreeSource None) source))
 
 
 

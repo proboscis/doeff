@@ -1,10 +1,12 @@
-;;; 実行環境の宣言(runtime env)の純粋な判断: キー(env-key)・JSON の往復(runtime-env->json・runtime-env-of-json)・
-;;; 準備の失敗の値(env-failure)・子の環境変数の組の検め(child-environ-refusal)・repo の url の正体(url-location)。
+;;; 実行環境の宣言(runtime env)の純粋な判断: キー(env-key)・元の鍵(source-key — commit が替わっても変わらない環境の同一性)・
+;;; JSON の往復(runtime-env->json・runtime-env-of-json)・準備の失敗の値(env-failure)・子の環境変数の組の検め(child-environ-refusal)・
+;;; repo の url の正体(url-location)。
 ;;; 型と定数は doeff_cluster.shared.intent.runtime_env_model。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import hashlib)
 (import json)
+(import doeff_traverse.helpers [sequence])
 (import doeff_cluster.shared.core.native_wheel [ENV-KEY-LENGTH])
 (import doeff_cluster.shared.intent.runtime_env_model [RUNTIME-ENV-FORMAT InvalidKind RuntimeEnvInvalid RepoCheckout
                                                        LocalPath RemoteRepo RepoLocation
@@ -65,12 +67,54 @@
    "importRoots" (list env.import-roots)})
 
 
+(defk material-digest [material]
+  {:pre [(: material dict)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
+  "鍵の材料を正規化した JSON の sha256 の頭 24 桁にするため(env-key と source-key が同じ綴りで digest を作る)。"
+  (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
+  (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
+
+
 (defk env-key [env platform]
   {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
   "env のキー(定義点はここ 1 つ)= 正規化した JSON の sha256 の頭 24 桁。"
   (<- material dict (key-material env platform))
-  (val text (json.dumps material :sort-keys True :separators #("," ":") :ensure-ascii False))
-  (cut (.hexdigest (hashlib.sha256 (.encode text "utf-8"))) 0 ENV-KEY-LENGTH))
+  (<- key str (material-digest material))
+  key)
+
+
+(defk location-material [location]
+  {:pre [(: location RepoLocation)] :post [(: % dict)]}
+  "repo の正体(url-location の答え)を鍵の材料の JSON の値にするため。"
+  (match location
+    (LocalPath :path path) {"local" path}
+    (RemoteRepo :host host :owner owner :name name) {"host" host "owner" owner "name" name}))
+
+
+(defk repo-source-material [repo]
+  {:pre [(: repo RepoCheckout)] :post [(: % dict)]}
+  "宣言の repo 1 つの元の鍵の材料(名と url の正体 — commit は入れない)を作るため。"
+  (<- location RepoLocation (url-location repo.url))
+  (<- located dict (location-material location))
+  {"name" repo.name "location" located})
+
+
+(defk source-key-material [env platform]
+  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % dict)]}
+  "元の鍵の材料 = env-key の材料から commit を外した物(repo の名と url の正体・platform・project の lock の sha256・Python・組・native の
+   宣言・import の根)。repo の url は綴りでなく正体(url-location)で入れるので、同じ repo を https と git@ で宣言した root が同じ元の鍵になる
+   (#3693)。Rust の指紋(自前の native-key)は入れない — wheel は build の口が source の中身で引くようになり、worker は持たない(#3860)。"
+  (<- material dict (key-material env platform))
+  (<- repos tuple (sequence (gfor r env.repos (repo-source-material r))))
+  (| material {"repos" (list repos)}))
+
+
+(defk source-key [env platform]
+  {:pre [(: env RuntimeEnv) (: platform str)] :post [(: % str) (= (len %) ENV-KEY-LENGTH)]}
+  "元の鍵(定義点はここ 1 つ)= 版(commit)が替わっても変わらない環境の同一性。同じ元の鍵の完成済みの root は、木を hardlink で写す元に
+   なる(置き場の鍵 env-key は commit を含み、置き先の選び・入口の検査・先の組みが版の名として読むので意味を変えない・#3677)。"
+  (<- material dict (source-key-material env platform))
+  (<- key str (material-digest material))
+  key)
 
 
 (defk runtime-env->json [env]
