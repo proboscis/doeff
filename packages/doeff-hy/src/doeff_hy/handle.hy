@@ -239,6 +239,29 @@
     True [`(setv (annotate ~written ~(Symbol row.declared)) ~(Symbol row.internal))
           `(setv _ ~written)]))
 
+(defn _effect-form-binding [etype fields rewritten]
+  "型検査のための展開で、節の `isinstance` が絞った `_doeff_effect` を、effect の型の型引数をすべて Any で解いた型に束ね直す形の list
+   (実行時の展開と、束ね直す要らない節は空 — card ki-fede97890f70)。
+
+   pyright は総称 class の絞りの型引数を Unknown にする(`isinstance(object の値, Race)` は `Race[Unknown]`)。節の欄の束ね
+   (`tasks = _doeff_effect.tasks`)も typed_resume / typed_transfer の effect の引数も一部 Unknown の赤になり、書き手は直せない
+   (`(Race [tasks] …)`・`(Spawn [program] …)` — 欄の名は effect の定義で決まり、赤は展開が作る名と呼びの物)。絞る元の型を
+   `EffectBase[Any]` にすると基底から解ける型引数だけが埋まり、`Spawn` の `_E` のように基底に無い型引数は Unknown のままで、
+   型変数の既定値は isinstance の絞りでは使われない。型引数の数は展開の時に知れない(macro は import した名の class を引けない)ので、
+   構成子の呼び `_doeff_any_specialized(Race, *_doeff_any_args, **_doeff_any_kwargs)` で型を作る(doeff_hy/static_types.pyi)。構成子の
+   引数がすべて Any なので、型引数がすべて Any で解かれ、欄の型は effect の定義の型のまま(`tuple[Task[Any] | Future[Any], ...]`)、
+   総称でない class は絞りと同じ型になる。型検査のための展開は走らせず pyright が読むだけなので、呼びの値は要らない。
+
+   束ね直すのは節が effect を読む時だけ: 欄を束ねるか、書き換えた本体が `_doeff_effect` を読む(typed_resume / typed_transfer・
+   `(pass)`)。何も読まない節(`(Spawn [] (reperform effect))`)には何も足さない。head が名でない節(`#(A B)`・`(| A B)`)は構成子として
+   呼べないので束ね直さない。"
+  (if (and (static-view-enabled)
+           (isinstance etype Symbol)
+           (or (> (len fields) 0)
+               (any (gfor form rewritten (_references-symbol form (str (effect-symbol)))))))
+      [`(setv ~(effect-symbol) (_doeff_any_specialized ~etype #* _doeff_any_args #** _doeff_any_kwargs))]
+      []))
+
 (defn _clause-test [etype aliases]
   "節の判定 — 受けた effect が節の effect の型か。型検査のための展開で、絞る名(row.narrowed)を書き手が使う節は、判定の中で
    書き手の名を束ねる(`isinstance((effect := _doeff_effect), T)` — 絞る前の値を束ねるので、絞った型が一部 Unknown でも代入の赤が
@@ -656,6 +679,9 @@
   ;; Rewrite resume/transfer/finish/pass (lazy-prefix is already in yield IR,
   ;; but _rewrite-ops only touches the clause operations — safe to pass through)
   (setv rewritten (+ lazy-prefix (lfor form cbody (_rewrite-ops form))))
+
+  ;; 総称の effect の節: 絞った `_doeff_effect` の型引数が Unknown にならないよう、欄の束ねより前に束ね直す(型検査のための展開だけ)。
+  (setv bindings (+ (_effect-form-binding etype fields rewritten) bindings))
 
   ;; A clause that leaves without resume / finish (transfer / reperform / raise never return) is an
   ;; error at run time — the VM would otherwise end the handled scope silently with the clause's value

@@ -391,3 +391,103 @@ def test_static_expansion_binds_the_writers_effect_and_k_only_where_the_clause_w
     # 欄 k の節は、欄を `k` に束ねる(続きを上書きしない)— `_doeff_k` を読む Pass は残る
     assert "k = _doeff_effect.k" in static, static
     assert "_doeff_Pass(_doeff_effect, _doeff_k)" in static, static
+
+
+# 総称の effect(Spawn[_T, _E]・Race[_T]・Wait[_T])を head にした節(card ki-fede97890f70)。pyright は節の `isinstance` が
+# `object` の effect を絞る型の型引数を Unknown にする(`Race[Unknown]`・`Spawn[Unknown, Unknown]`)ので、前は欄の束ね
+# (`tasks = _doeff_effect.tasks`)と typed_resume / typed_transfer の effect の引数が一部 Unknown の赤になり、書き手は直せなかった
+# (agora-controllers の agora_sim の検 2 file・9 件 — 欄の名は effect の定義で決まる)。展開は節の effect を構成子の呼びで束ね直し、
+# 型引数を Any で解く(`Race[Any]`)ので、欄の型は effect の定義の型のままになる。
+GENERIC_PROBE = """\
+(require doeff-hy.macros [defk defhandler <- val])
+(import doeff_core_effects.scheduler [Spawn Race Wait Task])
+
+(defn takes-int [#^ int n]
+  n)
+
+(defhandler reads-generic-fields [#^ (get Task int) made]
+  {:tags {:context "probe" :role "protocol"}}
+  (Spawn [program]
+    {SPAWN_USE}
+    (resume {SPAWN_ANSWER}))
+  (Race [tasks]
+    {RACE_USE}
+    (<- first object (Wait (get tasks 0)))
+    (resume first))
+  (Wait [task]
+    (resume (takes-int (len (repr task))))))
+
+(defhandler race-answers-at-once
+  (Race []
+    (resume "")))
+
+(defhandler spawn-is-only-counted [#^ (get list int) seen]
+  (Spawn []
+    (.append seen 1)
+    (reperform effect)))
+"""
+
+GENERIC_BASE = {
+    "SPAWN_USE": "(takes-int (len (repr program)))",
+    "SPAWN_ANSWER": "made",
+    "RACE_USE": "(takes-int (len tasks))",
+}
+
+
+def _generic(change: dict[str, str]) -> str:
+    text = GENERIC_PROBE
+    for key, value in (GENERIC_BASE | change).items():
+        text = text.replace("{" + key + "}", value)
+    return text
+
+
+def _errors_at(errors: list[dict[str, object]], line: int) -> list[dict[str, object]]:
+    return [d for d in errors if d["line"] == line]
+
+
+@needs_pyright
+def test_generic_effect_clauses_have_no_unknown_type_error(tmp_path: Path) -> None:
+    # 欄(program・tasks・task)を束ねる節、欄を持たず resume だけの節、何も読まない節のどれも赤が 0 件。
+    assert _check(tmp_path, _generic({})) == []
+
+
+@needs_pyright
+def test_generic_effect_field_keeps_the_type_of_its_definition(tmp_path: Path) -> None:
+    # 欄は Any に逃げない: Race の tasks は定義の型 `tuple[Task[Any] | Future[Any], ...]`、Spawn の program は `Program[Any, Any]`
+    # なので、int の引数へ渡せば赤(型引数だけが Any で、入れ物の形は残る)。
+    race = _generic({"RACE_USE": "(takes-int tasks)"})
+    race_errors = _errors_at(_check(tmp_path, race), _line_of(race, "(takes-int tasks)"))
+    assert [d["rule"] for d in race_errors] == ["reportArgumentType"], race_errors
+    assert "Task[Any] | Future[Any]" in str(race_errors[0]["message"]), race_errors
+
+    spawn = _generic({"SPAWN_USE": "(takes-int program)"})
+    spawn_errors = _errors_at(_check(tmp_path, spawn), _line_of(spawn, "(takes-int program)"))
+    assert [d["rule"] for d in spawn_errors] == ["reportArgumentType"], spawn_errors
+    assert "Program[Any, Any]" in str(spawn_errors[0]["message"]), spawn_errors
+
+
+@needs_pyright
+def test_wrong_answer_to_a_generic_effect_is_still_caught(tmp_path: Path) -> None:
+    # Spawn は Task で答える effect(`EffectBase[Task[_T]]`)— 節が Task で再開すれば赤は 0 件(test_generic_effect_clauses_have_no_
+    # unknown_type_error)、int で再開すれば typed_transfer の引数の型違い(末尾の resume は transfer に替わる)。
+    text = _generic({"SPAWN_ANSWER": "1"})
+    errors = _errors_at(_check(tmp_path, text), _line_of(text, "(resume 1)"))
+    assert [d["rule"] for d in errors] == ["reportArgumentType"], errors
+
+
+def test_static_expansion_rebinds_the_effect_only_where_the_clause_reads_it() -> None:
+    """節が欄を束ねるか typed_resume で effect を読む時だけ、絞った `_doeff_effect` を型引数がすべて Any の型に束ね直す。
+    何も読まない節と実行時の展開は変わらない。"""
+    from doeff_hy.static_view import static_view
+
+    runtime = _expand(_generic({}))
+    with static_view():
+        static = _expand(_generic({}))
+    rebind = "_doeff_effect = _doeff_any_specialized({}, *_doeff_any_args, **_doeff_any_kwargs)"
+    for effect in ("Spawn", "Race", "Wait"):
+        assert rebind.format(effect) in static, static
+    # 欄を持たず resume だけの節(typed_resume が effect を読む)も束ね直す。何も読まない `(Spawn [] … (reperform effect))` は束ね直さない
+    assert static.count("_doeff_any_specialized(") == 4, static
+    assert "any_specialized" not in runtime, runtime
+    # 束ね直しは欄の束ねより前(欄が定義の型で読まれる)
+    assert static.index(rebind.format("Race")) < static.index("tasks = _doeff_effect.tasks"), static
