@@ -5,6 +5,8 @@
   "implementation_revision": "0e366de997b251b85145c7489cf46a108fc45f36",
   "blind_revision": "5ddb4e482b4969d76ca0d4201bd90a6b3b382bd8",
   "fix_revision": "063a760575430d3a5296f26a7630c4508e7b33c4",
+  "fix_revision_rebased": "71a93fd64c5bed8240d27f952049df9e33905b1c",
+  "experiment_revision": "912bec3bc4720ceeb4377052acdf29f3bb2b3696",
   "author": {
     "conversation_id": "a-6313YGCZRXDKHYHVKQDKJXG1EG(依頼 lt-0YB1XJPKH406GNDWRZ4KND2Q9N を受けた会話)",
     "model": "claude-opus-5-5",
@@ -19,7 +21,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "e8718d94003bfd022a1de5ec8d91b7d7b35593802d6ddf931b86878a37c24350"
+    "sha256": "e3a3d3d2e17aa1e5d6d81398af532c693a8d03bd5f8779c88f5151afdc46e3b8"
   },
   "pre_blind_design": {
     "path": "design-before-blind.md",
@@ -194,11 +196,11 @@
     },
     {
       "path": "evidence/scripts/make_report.py.txt",
-      "sha256": "e0c78532619c5256fa17d767aeaadb196d324282d091b8e77fe862c5f1877b83"
+      "sha256": "ff0851b2acf4d27ea8a9497c0af3ceecbaf4a7d285bf349500dad4aea08f1c97"
     },
     {
       "path": "evidence/scripts/mutants.sh.txt",
-      "sha256": "82a34c3aa53cf355141fac80058c1dfb994ab08ac3222d80a3464a0431fec5e9"
+      "sha256": "9b8322e85eff953e86118261bf2ad0d14aba5993e3eb04d74067e92a1ca26a5d"
     },
     {
       "path": "evidence/scripts/threads_state.py.txt",
@@ -411,7 +413,7 @@
       "observation": "declarations.hy の 1 行・75 passed",
       "evidence": {
         "path": "evidence/runs/S1-positive.txt",
-        "sha256": "df1704ff491f9b5ad438826a78c37aac27ab69d3451e8a5e31100f4ad04852e9"
+        "sha256": "61645e7e6fce11352927232b4bb10d0439810757ae5cb89c631f186db2f65f6e"
       },
       "status": "passed"
     },
@@ -425,7 +427,7 @@
       "observation": "`{'Inner', '_doeff_new_helper'}` で 1 failed(test_function_with_only_a_definition_binds_only_its_names[defeffect])・名の表の検 10 passed",
       "evidence": {
         "path": "evidence/runs/S1-negative.txt",
-        "sha256": "4ac89a2b58675925809aaf82429d8060cb9a1e5eb7b73e954357524828b7aae7"
+        "sha256": "db512cba0fc2f1f1c107314f1fa7212e265ceb42dc473762eadf5c26112bdbde"
       },
       "status": "passed"
     },
@@ -439,7 +441,7 @@
       "observation": "77 passed・記録の件数 [0, 0, 0, 0]・verify_records の problems []",
       "evidence": {
         "path": "evidence/runs/S2-positive.txt",
-        "sha256": "488917c7b02e4feec1c9f0dea46f095f57c35cbad048ab84c0ec187e1d8ce86e"
+        "sha256": "4f6f4e584e08f76751b9afdce9b896d1902a624c58df64adea0a4c8d2585db24"
       },
       "status": "passed"
     },
@@ -453,7 +455,7 @@
       "observation": "`('nested_definition_scope', '__doeff_pytest_items__')` で 1 failed・記録 [0, 1, 2, 3]",
       "evidence": {
         "path": "evidence/runs/S2-negative-record.txt",
-        "sha256": "56adeb272afab158c0d2970b61ccc75cefb4332ae3c5232dec1a485e67d99970"
+        "sha256": "5095753107a5b00585693b6e8a27111b109d3e1f760011de49c6cd039d78ef80"
       },
       "status": "passed"
     },
@@ -467,7 +469,7 @@
       "observation": "`'defbench'` の余りで 1 failed(test_every_definition_macro_has_a_nested_sample)",
       "evidence": {
         "path": "evidence/runs/S2-negative-sample.txt",
-        "sha256": "631a1f061ae3248c92da8c785abb18011ae4213e4a774bf0cec598affdf8341e"
+        "sha256": "7b00c2f9c0859e2056f1a5c1cd8892ca0ea3651122ea534f8682ecb29a122e22"
       },
       "status": "passed"
     },
@@ -481,7 +483,7 @@
       "observation": "4 つが 1 字も同じ・function-static の差は record_at_import の 2 組",
       "evidence": {
         "path": "evidence/expansion/six-expansions.txt",
-        "sha256": "f6374a3d2f989f5f9787250028901b8b64fa4ad59d8394d268c5b12cfea0993a"
+        "sha256": "c0cf09c4e7c41a5861af4dd98da3a298a367294d58ef51e8ea4a427a8dccaedf"
       },
       "status": "passed"
     },
@@ -495,7 +497,7 @@
       "observation": "declarations.hy のみ・75 passed",
       "evidence": {
         "path": "evidence/runs/S3-positive-change.txt",
-        "sha256": "3a339eaf9ef899bade9efaa9547d3797a84b2d2a0e911eff0ae9ebd1d448025c"
+        "sha256": "4b5ec7c6cf7d111754c77b7a6bf4d1dc82f85591c51a9dbf20d6730ed2f6b02f"
       },
       "status": "passed"
     },
@@ -509,7 +511,7 @@
       "observation": "2 passed",
       "evidence": {
         "path": "evidence/runs/S3-positive.txt",
-        "sha256": "91a5657f8eb1fc174e7be5be55dfa749a31975d9b6da9d22764ea3709d6da957"
+        "sha256": "50757bb040a0eb8724e69dfe5659c5980a120a2a5d9ca7fe8c5fd08f0a129c65"
       },
       "status": "passed"
     },
@@ -520,10 +522,10 @@
       ],
       "control": "negative",
       "expectation": "関数の中で型検査の展開に module-forms を出す変異を、型検査の記録の検が赤にする",
-      "observation": "関数の中に record_at_import が在り 1 failed(test_static_view_records_only_module_level_deftest)",
+      "observation": "投影の関数 subject の中に record_at_import が在り 1 failed(test_static_projection_of_nested_deftest_has_no_item_record)",
       "evidence": {
         "path": "evidence/runs/S3-negative.txt",
-        "sha256": "216d436324772d8df2b69a27152edabf4d9994b8878e37e4e1a285f4162309e8"
+        "sha256": "063919635bf7db7715eb2715a02efe44eb3a94a9d2ab2290402da5464e4bccca"
       },
       "status": "passed"
     },
@@ -537,7 +539,7 @@
       "observation": "10 passed",
       "evidence": {
         "path": "evidence/runs/S4-positive.txt",
-        "sha256": "d7348f83d230bc8cd39b94ef5f014f4e817a63b92d8376ce1aff9aeb765e9ea2"
+        "sha256": "7603aaa3faee531c54bc7e353582a253a58a7a485d0dca4d598ead960d6241e1"
       },
       "status": "passed"
     },
@@ -551,7 +553,7 @@
       "observation": "変わった検体 0",
       "evidence": {
         "path": "evidence/runs/S4-positive-threads.txt",
-        "sha256": "a53fd7114cbad8d7467c97c5ed3e28d3f1a8981a971e5a15264eb2af73eb302a"
+        "sha256": "7ec228c27cf5e204d771a0265dce1b15e4738117095cbdd1eb041019c7d5d92a"
       },
       "status": "passed"
     },
@@ -565,7 +567,7 @@
       "observation": "`('doeff_hy.declarations', 'EFFECT_INDEX')` で 1 failed(test_definition_sample_leaves_module_state_unchanged[defeffect])",
       "evidence": {
         "path": "evidence/runs/S4-negative.txt",
-        "sha256": "b44be461fc8fd33dbb3ff50b2b5703690d204ce300f7b114b799bfa279da6466"
+        "sha256": "f8026f487ab348835f1fcf334f8bab91826656db70489c4f9f43394e8f8ab6a4"
       },
       "status": "passed"
     },
@@ -579,7 +581,7 @@
       "observation": "pytest_items.py のみ・75 passed",
       "evidence": {
         "path": "evidence/runs/S5-positive.txt",
-        "sha256": "a46e3dd4413491c628e4c3d8f21512595c20e0baebf0e567a0f58b982a78aae9"
+        "sha256": "b45064826fa063a6989b930b90a74361be25519f99b2780f1a189269f8d42b46"
       },
       "status": "passed"
     },
@@ -593,7 +595,7 @@
       "observation": "7 passed",
       "evidence": {
         "path": "evidence/runs/S5-positive-adr.txt",
-        "sha256": "5eb46756794a7f5bf6c5ecb54ecf130b3f67e8db2f17f15ae52f7d84edabaeb8"
+        "sha256": "904387c5a5360f0e73d2aa363c193ff713a6d5854370ff5517bc7c865be42449"
       },
       "status": "passed"
     },
@@ -607,7 +609,7 @@
       "observation": "`('nested_definition_scope', '__doeff_pytest_records__')` で 1 failed",
       "evidence": {
         "path": "evidence/runs/S5-negative.txt",
-        "sha256": "e428b5955013a1e7eae6fb1696f2e3ee2132fc77e0b34f107d2c1afc282c850c"
+        "sha256": "244a33a1afbd4694b3a30f6986c4a74cdb0c6ad2acc77c52b6c55296dbf0aee4"
       },
       "status": "passed"
     },
@@ -618,11 +620,11 @@
         "S4"
       ],
       "control": "positive",
-      "expectation": "直した版 063a76057 で変えた所に関わる検(nested・handle・pytest_items・deftest の scans・型検査の deftest・defeffect の形・宣言・系の型・doeff-adr の記録・defsystem の形)が緑",
-      "observation": "180 passed",
+      "expectation": "直した版 912bec3bc(main 4973b9975 の上)で変えた所に関わる検(nested・handle・pytest_items・deftest の scans・型検査の deftest・defeffect の形・宣言・系の型・doeff-adr の記録・defsystem の形)が緑",
+      "observation": "192 passed",
       "evidence": {
         "path": "evidence/runs/related-tests-after-fix.txt",
-        "sha256": "5871c6a7809179088dee1743aa47ef82ed5dc506e2eb19805f77fcccad2e8abc"
+        "sha256": "1c5dabb5abf27a5a3de4bf492d8a0c3f0e1e603fac7f6f9ba191c66c050ae2f2"
       },
       "status": "passed"
     }

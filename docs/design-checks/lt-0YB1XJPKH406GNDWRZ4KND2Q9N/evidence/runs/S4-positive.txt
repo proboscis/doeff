@@ -1,6 +1,6 @@
-# 実験 S4-positive・刻 2026-10-12T03:47:29Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+# 実験 S4-positive・刻 2026-10-12T04:15:49Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 912bec3bc4720ceeb4377052acdf29f3bb2b3696
 $ git diff --stat
 $ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -k "state_unchanged"
 pytest の exit=0
-10 passed, 65 deselected in 19.39s
+10 passed, 65 deselected in 20.02s
 $ git status --short -- packages tests(外した後)
