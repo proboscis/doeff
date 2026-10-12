@@ -28,6 +28,7 @@ import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 from doeff_hy_bytecode_guard.records import EXPORT_NAMES, MACRO_TABLE, READER_TABLE
 
@@ -67,15 +68,22 @@ def _is_spelling(text: str) -> bool:
     return not any(char.isspace() for char in text) and HY_NAME.search(text) is not None
 
 
-def _python_spelling(node: ast.AST) -> tuple[int, str] | None:
+class _Spelling(NamedTuple):
+    """Hy の内部の名の綴り 1 つの在りか: 行と綴り。"""
+
+    line: int
+    text: str
+
+
+def _python_spelling(node: ast.AST) -> _Spelling | None:
     """木の節 1 つが読む Hy の内部の名の綴り(行・綴り — 文字列の定数・bytes・表の名の名前・属性・import する名)。無ければ None。"""
     match node:
         case ast.Constant(value=str() as text) as found if _is_spelling(text):
-            return found.lineno, text
+            return _Spelling(found.lineno, text)
         case ast.Constant(value=bytes() as raw) as found if _is_spelling(raw.decode("latin-1")):
-            return found.lineno, raw.decode("latin-1")
+            return _Spelling(found.lineno, raw.decode("latin-1"))
         case (ast.Attribute(attr=name) | ast.Name(id=name) | ast.alias(name=name)) as found if name in TABLE_NAMES:
-            return found.lineno, name
+            return _Spelling(found.lineno, name)
         case _:
             return None
 

@@ -439,15 +439,15 @@ class _WithoutNestedImports(ast.NodeTransformer):
     本体は `pass` にする。"""
 
     def __init__(self) -> None:
-        self._depth = 0
+        self._mut_depth = 0
 
     def _scope(self, node: ast.AST) -> ast.AST:
         """関数・class の本体の中を読む間だけ深さを 1 つ増やす(その中の import が外す対象 — module の段の物は外さない)。"""
-        self._depth += 1
+        self._mut_depth += 1
         try:
             return self.generic_visit(node)
         finally:
-            self._depth -= 1
+            self._mut_depth -= 1
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
         """関数の本体の中を読む(`_scope`)。"""
@@ -463,11 +463,11 @@ class _WithoutNestedImports(ast.NodeTransformer):
 
     def visit_Import(self, node: ast.Import) -> ast.Import | None:
         """関数・class の本体の中の macro 合成の `import` は外す(`_nested_imports` が module の段へ集めた物)。"""
-        return None if self._depth and _synthesized_import(node) else node
+        return None if self._mut_depth and _synthesized_import(node) else node
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom | None:
         """関数・class の本体の中の macro 合成の `from … import` は外す(`visit_Import` と同じ)。"""
-        return None if self._depth and _synthesized_import(node) else node
+        return None if self._mut_depth and _synthesized_import(node) else node
 
     def generic_visit(self, node: ast.AST) -> ast.AST:
         """子を読み、import を外して本体が空になった node には `pass` を置く。"""

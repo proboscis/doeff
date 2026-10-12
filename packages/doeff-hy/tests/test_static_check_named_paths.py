@@ -13,6 +13,7 @@ import io
 import json
 import shutil
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -30,7 +31,15 @@ BINDINGS = """(require doeff-hy.macros [defk <-])
 """
 
 
-def _checked(argv: list[str]) -> tuple[int, list[tuple[str, str, int]], str]:
+class _Checked(NamedTuple):
+    """main を 1 度走らせた結果: 終わりの code・所見(規則・重さ・行)・stderr。"""
+
+    code: int
+    found: list[tuple[str, str, int]]
+    err: str
+
+
+def _checked(argv: list[str]) -> _Checked:
     """main を 1 度走らせ、終わりの code・所見(規則・重さ・行)・stderr を返すため。"""
     from doeff_hy.static_check import main
 
@@ -38,7 +47,7 @@ def _checked(argv: list[str]) -> tuple[int, list[tuple[str, str, int]], str]:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = main(argv)
     found = sorted((d["rule"], d["severity"], d["line"]) for d in json.loads(out.getvalue() or "[]"))
-    return code, found, err.getvalue()
+    return _Checked(code, found, err.getvalue())
 
 
 @needs_pyright
@@ -51,8 +60,8 @@ def test_a_relative_path_under_a_symlinked_root_gives_the_same_findings(tmp_path
     monkeypatch.chdir(linked)  # os.getcwd() は辿った先(real)を返す — 根は symlink の綴り(linked)のまま渡す
     absolute = _checked(["--root", str(linked), "--json", "--no-cache", str(linked / "bindings.hy")])
     relative = _checked(["--root", str(linked), "--json", "--no-cache", "bindings.hy"])
-    assert ("doeff-hy-rebind", "error", 6) in absolute[1], absolute
-    assert relative[:2] == absolute[:2], (relative, absolute)
+    assert ("doeff-hy-rebind", "error", 6) in absolute.found, absolute
+    assert (relative.code, relative.found) == (absolute.code, absolute.found), (relative, absolute)
 
 
 def test_a_named_path_outside_the_root_is_refused_not_dropped(tmp_path: Path) -> None:

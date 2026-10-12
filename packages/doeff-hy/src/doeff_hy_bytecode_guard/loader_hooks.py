@@ -215,7 +215,7 @@ class _PlacedExpansion:
         self._loader = loader
         self._path = path
         self._present = sys.modules.get(loader.name)
-        self._recording: MacroRecording | None = None  # 関数の中の注釈は実行時に評価されない(MacroRecording は型検査の時だけ import する)
+        self._mut_recording: MacroRecording | None = None  # 関数の中の注釈は実行時に評価されない(MacroRecording は型検査の時だけ import する)
 
     def __enter__(self) -> "MacroRecording":
         loader, path = self._loader, self._path
@@ -225,16 +225,16 @@ class _PlacedExpansion:
         module = importlib.util.module_from_spec(spec)
         sys.modules[loader.name] = module
         try:
-            self._recording = macro_recording(_expansion_or(loader, path, module)).__enter__()
+            self._mut_recording = macro_recording(_expansion_or(loader, path, module)).__enter__()
         except BaseException:
             self._restore()
             raise
-        return self._recording
+        return self._mut_recording
 
     def __exit__(self, *exc_info: object) -> None:
         try:
-            if self._recording is not None:
-                self._recording.__exit__(*exc_info)
+            if self._mut_recording is not None:
+                self._mut_recording.__exit__(*exc_info)
         finally:
             self._restore()
 

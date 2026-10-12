@@ -813,7 +813,15 @@ def _written_since(path: Path, since: float) -> bool:
     return False
 
 
-def _list_directory(directory: Path, since: float) -> tuple[list[Path], list[Path]]:
+@dataclass(frozen=True)
+class _Listing:
+    """What one directory holds for the walk: its subdirectories and its bytecode files written since."""
+
+    directories: list[Path]
+    files: list[Path]
+
+
+def _list_directory(directory: Path, since: float) -> _Listing:
     """The subdirectories of ``directory`` (``.git`` left out) and its bytecode files written at ``since`` or later.
 
     A directory that cannot be listed (removed meanwhile, not readable) has none, as in ``os.walk``.
@@ -823,14 +831,14 @@ def _list_directory(directory: Path, since: float) -> tuple[list[Path], list[Pat
         with os.scandir(directory) as scanned:
             entries = list(scanned)
     except OSError:
-        return [], []
-    return (
-        [
+        return _Listing(directories=[], files=[])
+    return _Listing(
+        directories=[
             Path(entry.path)
             for entry in entries
             if entry.is_dir(follow_symlinks=False) and entry.name != ".git"
         ],
-        [
+        files=[
             Path(entry.path)
             for entry in entries
             if entry.name.endswith(".pyc")
@@ -868,11 +876,11 @@ def _walk_for_bytecode(
     while queued:
         finished, queued = wait(queued, return_when=FIRST_COMPLETED)
         for listing in finished:
-            directories, files = listing.result()
-            yield from files
+            found = listing.result()
+            yield from found.files
             queued |= {
                 pool.submit(_list_directory, directory, since)
-                for directory in directories
+                for directory in found.directories
                 if directory not in skip
             }
 

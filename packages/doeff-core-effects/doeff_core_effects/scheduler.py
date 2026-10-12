@@ -33,7 +33,7 @@ import weakref
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar
 
 from doeff_vm import Callable as _VmCallable
 from doeff_vm import EffectBase, Err, K, Ok, TailEval
@@ -104,6 +104,36 @@ _UNTRACKED_WAKE = ("untracked", None)
 # Claimed external-wait placeholders are taken out of the ready heap once there
 # are at least this many and they are more than half of it.
 _CLAIMED_MARKS_COMPACT_MIN = 64
+
+
+class _ReadyItem(NamedTuple):
+    """One item of the ready heap. The heap orders by ``(neg_priority, seq)``: a higher priority is served first and the
+    insertion order breaks a tie (``seq`` is unique, so ``entry`` is never compared)."""
+
+    neg_priority: int
+    seq: int
+    entry: tuple[object, ...]
+
+
+class _ClaimMark:
+    """The claim on one external-wait registration (#490/#505): the waiters side owns the one resume, and the paired
+    ready-heap placeholder drops itself once claimed. ``mut_in_ready`` tells whether that placeholder still sits in
+    the heap, so a claim knows it leaves a dead one there. Both fields only move through the methods."""
+
+    __slots__ = ("mut_claimed", "mut_in_ready")
+
+    def __init__(self) -> None:
+        self.mut_claimed = False
+        self.mut_in_ready = False
+
+    def take(self) -> None:
+        """Mark the registration claimed."""
+        self.mut_claimed = True
+
+    def place(self, in_ready: bool) -> None:
+        """Record whether the placeholder sits in the ready heap."""
+        self.mut_in_ready = in_ready
+
 
 # 測りの口(agora-redesign #3861・#3855)。sink を据えると、Python の scheduler が出来事ごとに dict を 1 つ渡す。
 # sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない。
@@ -1133,7 +1163,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     promises = {}        # pid → {status, result}
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
     waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
-    ready = []           # heapq: (-priority, seq, entry)
+    ready = []           # heapq of _ReadyItem: (-priority, seq, entry)
     # 待ち手の表と走れる列の索引(card ki-1294af4fa525)。走っている手番ごとに待つ task が居るので、Cancel が待ち手の表を、
     # 外の待ちの印が走れる列を毎回なめると、1 回の WaitWithin の仕事が待つ task の数で増えた。索引は waiters・ready を
     # 書き換える入口(park_waiter・unpark_*・keep_waiters・ready_push・ready_pop・ready_remove_at・drop_claimed_marks)だけが保つ。
@@ -1297,7 +1327,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         seq = insertion_seq[0]
         insertion_seq[0] += 1
         if _trace_sink is None:
-            ready_push((-priority, seq, entry))
+            ready_push(_ReadyItem(-priority, seq, entry))
             return
         # 起こされ方は並べる前に覚える(ready_push がその起こされ方で数える)。
         wake_of_seq[seq] = (
@@ -1305,7 +1335,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             else wake if wake is not None
             else wake_context[0]
         )
-        ready_push((-priority, seq, entry))
+        ready_push(_ReadyItem(-priority, seq, entry))
         trace_enqueued(entry, priority, seq)
 
     def trace_enqueued(entry: tuple[object, ...], priority: int, seq: int) -> None:
@@ -1334,7 +1364,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             ready=len(ready), ahead=sum(ahead_by_wake.values()), ahead_by_wake=ahead_by_wake,
         )
 
-    def ready_push(heap_item: tuple[int, int, tuple[object, ...]]) -> None:
+    def ready_push(heap_item: _ReadyItem) -> None:
         """Push onto the ready heap — the one way in, so the counts stay in step (card ki-1294af4fa525)."""
         entry = heap_item[2]
         if entry[0] in _CONTINUATION_ENTRY_KINDS:
@@ -1353,21 +1383,21 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
             count_ready(heap_item, 1)
 
-    def ready_pop() -> tuple[int, int, tuple[object, ...]]:
+    def ready_pop() -> _ReadyItem:
         """Pop the first ready entry (and uncount it)."""
         heap_item = heapq.heappop(ready)
         if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
             count_ready(heap_item, -1)
         return heap_item
 
-    def ready_remove_at(index: int) -> tuple[int, int, tuple[object, ...]]:
+    def ready_remove_at(index: int) -> _ReadyItem:
         """Take the ready entry at heap position ``index`` out (and uncount it)."""
         heap_item = ready.pop(index)
         heapq.heapify(ready)
         count_ready(heap_item, -1)
         return heap_item
 
-    def count_ready(heap_item: tuple[int, int, tuple[object, ...]], delta: int) -> None:
+    def count_ready(heap_item: _ReadyItem, delta: int) -> None:
         """Keep the counts in step with an entry entering (+1) or leaving (-1) the ready heap.
 
         The trace's per-wake counts are kept while a sink is installed. A
@@ -1383,9 +1413,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             wakes[wake_of_seq.get(seq, _UNTRACKED_WAKE)[0]] += delta
         if entry[0] == "wait_external":
             # Whether the placeholder sits in the heap, so a claim knows it leaves a dead one there.
-            cell = entry[4]
-            cell[1] = delta > 0
-            if cell[0]:
+            mark = entry[4]
+            mark.place(delta > 0)
+            if mark.mut_claimed:
                 claimed_marks_in_ready[0] += delta
             return
         if neg < -PRIORITY_EXTERNAL_WAIT or entry[0] not in _RUNNABLE_ENTRY_KINDS:
@@ -1413,7 +1443,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         if row is None or not row.get("daemon", False):
             live_ready_count[1] += delta
 
-    def claim(cell: list[bool]) -> None:
+    def claim(mark: _ClaimMark) -> None:
         """Claim an external-wait registration: the waiters side owns its one resume and the paired ready placeholder
         drops itself (#490/#505).
 
@@ -1423,10 +1453,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         (card ki-1294af4fa525). Once there are many and they are most of the
         heap, they are taken out together.
         """
-        if cell[0]:
+        if mark.mut_claimed:
             return
-        cell[0] = True
-        if cell[1]:
+        mark.take()
+        if mark.mut_in_ready:
             claimed_marks_in_ready[0] += 1
             if (
                 claimed_marks_in_ready[0] >= _CLAIMED_MARKS_COMPACT_MIN
@@ -1436,7 +1466,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     def drop_claimed_marks() -> None:
         """Take every claimed placeholder out of the ready heap at once (pick_next would only pop and skip each)."""
-        ready[:] = [item for item in ready if not (item[2][0] == "wait_external" and item[2][4][0])]
+        ready[:] = [item for item in ready if not (item.entry[0] == "wait_external" and item.entry[4].mut_claimed)]
         heapq.heapify(ready)
         claimed_marks_in_ready[0] = 0
         # The trace's per-wake counts no longer match the heap: counted again when next needed.
@@ -1464,7 +1494,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         ]
         recounted_live = [len(live_entries), sum(not is_daemon(entry[1]) for entry in live_entries)]
         recounted_marks = sum(
-            entry[4][0] for _neg, _seq, entry in ready if entry[0] == _PLACEHOLDER_ENTRY_KIND
+            entry[4].mut_claimed for _neg, _seq, entry in ready if entry[0] == _PLACEHOLDER_ENTRY_KIND
         )
         drifts = [
             name for name, held, recounted in (
@@ -2160,7 +2190,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         # resumes the continuation; once claimed it is simply
                         # dropped.
                         _, owner_tid, _cont, _wk, claimed = entry
-                        if claimed[0] or is_owner_cancelled(owner_tid):
+                        if claimed.mut_claimed or is_owner_cancelled(owner_tid):
                             continue
                         if has_live_ready_entry(include_daemons=False):
                             # Real (non-daemon) work is runnable below this
@@ -2188,7 +2218,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         # Not yet resolved — block for one completion, drain rest
                         _drain_one_external()
                         drain()
-                        if not claimed[0]:
+                        if not claimed.mut_claimed:
                             enqueue(entry, PRIORITY_EXTERNAL_WAIT)
                         continue
                 blocked_semaphore_waiters = live_semaphore_waiters()
@@ -2270,7 +2300,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         claimed = None
         kind, wid = wk
         if kind == "promise" and promises[wid].get("external") and not park:
-            claimed = [False, False]  # [claimed, its placeholder is in the ready heap]
+            claimed = _ClaimMark()
             enqueue(
                 ("wait_external", owner_tid, None, wk, claimed),
                 PRIORITY_EXTERNAL_WAIT,
@@ -2594,7 +2624,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                         # placeholder only blocks the clock driver and drives
                         # the blocking drain; `claimed` marks that the waiters
                         # side owns the (one-shot) resume.
-                        claimed = [False, False]  # [claimed, its placeholder is in the ready heap]
+                        claimed = _ClaimMark()
                         park_waiter(
                             wk, ("wait_external", current_tid, k, claimed, effect.priority)
                         )

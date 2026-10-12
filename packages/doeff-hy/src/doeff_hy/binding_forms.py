@@ -242,7 +242,7 @@ def parse_declaration(form: Object) -> Declaration | None:
     else:
         return None
     annotated = _annotated_name(rest[0]) if rest else None
-    name_symbol = annotated[0] if annotated is not None else (rest[0] if rest else None)
+    name_symbol = annotated.name if annotated is not None else (rest[0] if rest else None)
     if len(rest) < 2 or not isinstance(name_symbol, Symbol) or str(name_symbol) in {"!", "val", "var"}:
         raise SyntaxError(
             f"({spelled} …) (line {_line(form)}): 名前と式が要ります — {_source(form)}\n\n"
@@ -256,15 +256,22 @@ def parse_declaration(form: Object) -> Declaration | None:
         )
     init = _join_bang(rest[1:], form, f"({spelled} {name_symbol} …)")
     return Declaration(
-        str(name_symbol), name_symbol, timing, mutability, init, form, annotated[1] if annotated is not None else None
+        str(name_symbol), name_symbol, timing, mutability, init, form, annotated.annotation if annotated is not None else None
     )
 
 
-def _annotated_name(target: Object) -> tuple[Symbol, Object] | None:
+class _AnnotatedName(NamedTuple):
+    """宣言の名前の位置の `#^ 型 名前` の読み: 名前と、書き手が書いた型。"""
+
+    name: Symbol
+    annotation: Object
+
+
+def _annotated_name(target: Object) -> _AnnotatedName | None:
     """宣言の名前の位置の `#^ 型 名前`(= `(annotate 名前 型)`)の名前と型。注記つきの名前でなければ None
     (module の値の型を式から決められない時 — 空の dict など — に、書き手が型を書く口・agora-redesign #2939)。"""
     if isinstance(target, Expression) and len(target) == 3 and _head(target) == "annotate" and isinstance(target[1], Symbol):
-        return target[1], target[2]
+        return _AnnotatedName(name=target[1], annotation=target[2])
     return None
 
 
