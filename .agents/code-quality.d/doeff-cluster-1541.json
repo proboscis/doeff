@@ -2617,7 +2617,8 @@
         "doeff-hy-wire",
         "doeff-cluster-detached-model",
         "doeff-cluster-detached-rules",
-        "doeff-hy-table"
+        "doeff-hy-table",
+        "doeff-traverse-effects"
       ],
       "layer": "pure",
       "name": "doeff-cluster-state-json",

@@ -780,6 +780,7 @@ dependencies = [
     { name = "doeff-events", extra = ["redis"] },
     { name = "doeff-hy" },
     { name = "doeff-time" },
+    { name = "doeff-traverse" },
     { name = "httpx" },
     { name = "hy" },
 ]
@@ -792,6 +793,7 @@ requires-dist = [
     { name = "doeff-events", extras = ["redis"], editable = "packages/doeff-events" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-time", editable = "packages/doeff-time" },
+    { name = "doeff-traverse", editable = "packages/doeff-traverse" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "hy", specifier = ">=1.3" },
 ]
