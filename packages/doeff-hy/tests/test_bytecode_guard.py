@@ -1003,7 +1003,7 @@ def _write_internal_names_package(package: Path) -> None:
     package.mkdir()
     (package / "__init__.py").write_text("")
     (package / "provider.hy").write_text(
-        "(export :macros [answer _visible])\n"
+        "(export :macros [answer _visible undefined])\n"
         "(defmacro answer [] 1)\n"
         "(defmacro hidden [] 2)\n"
         "(defmacro _visible [] 3)\n"
@@ -1069,8 +1069,9 @@ def test_records_reads_the_macro_tables_and_the_exported_names_the_way_hy_does(
 _TEMPORARIES_SOURCE = """\
 (defn f [a]
   (setv x (match a 1 "one" _ "other"))
-  (let [first 1 second 2] (+ first second))
+  (let [first 1 second 2 x1 3] (+ first second x1))
   (try (g) (except [e Exception] e))
+  (try (g) (except [e2 Exception] e2))
   x)
 """
 #: 同じ source の前に let を 1 つ足した物 — 後ろの一時の名の番号がずれる(定義を足すだけで起きる)。
@@ -1118,7 +1119,9 @@ def test_the_temporaries_hy_names_have_the_shape_records_folds() -> None:
         "_hy_exc_e_#",
         "_hy_let_first_#",
         "_hy_let_second_#",
-    }, f"Hy の振った一時の名が、畳める形でない: {sorted(plain)}"
+        "_hy_let_x1_#",
+        "_hy_exc_e2_#",
+    }, f"Hy の振った一時の名が、畳める形でない(元の名が数字で終わる名も): {sorted(plain)}"
     assert {folded[name] for name in shifted} == {folded[name] for name in plain}
     assert {comparable_message(f"x is {name}") for name in plain} == {
         comparable_message(f"x is {name}") for name in shifted

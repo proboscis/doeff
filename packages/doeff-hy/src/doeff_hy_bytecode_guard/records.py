@@ -343,14 +343,14 @@ def macro_tables(namespace: Mapping[str, object]) -> tuple[dict[str, object], ..
 
 
 def exported_macro_names(namespace: Mapping[str, object]) -> frozenset[str]:
-    """提供元の名前空間が、Hy の ``(require 提供元 *)`` で使い手の表へ入れる macro の名 — Hy の export が書いた名の表
-    (:data:`EXPORT_NAMES`)が在ればその名、無ければ macro の表(:data:`MACRO_TABLE`)の ``_`` で始まらない名(Hy 1.3.1 の
-    ``hy.macros.require`` の ``source_exports`` と同じ読み)。"""
+    """提供元の名前空間が、Hy の ``(require 提供元 *)`` で使い手の表へ入れる macro の名 — macro の表(:data:`MACRO_TABLE`)の名のうち、
+    Hy の export が書いた名の表(:data:`EXPORT_NAMES`)が在ればその表に在る名、無ければ ``_`` で始まらない名(Hy 1.3.1 の
+    ``hy.macros.require`` の ``source_exports`` と同じ読み。export に表の無い名が在っても、Hy は表に在る名だけを入れる)。"""
     entries = namespace.get(MACRO_TABLE)
-    names = tuple(entries) if isinstance(entries, dict) else ()
+    names = frozenset(entries) if isinstance(entries, dict) else frozenset[str]()
     exports = namespace.get(EXPORT_NAMES)
     if isinstance(exports, (list, tuple)):
-        return frozenset(str(name) for name in exports)
+        return frozenset(str(name) for name in exports) & names
     return frozenset(name for name in names if not name.startswith("_"))
 
 
@@ -368,10 +368,11 @@ RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
 
 #: Hy が一時の名と let・except の束縛の名に振る形(``HyASTCompiler.get_anon_var`` = ``_hy_<種>[_<元の名>]_<数え>`` — match や if を値に
 #: 使った時の ``_hy_anon_<数え>``・let の ``_hy_let_<元の名>_<数え>``)。最後の <数え> は compile 1 回の中の通し番号で、定義を 1 つ
-#: 足すだけで後ろの名の番号がずれる。第 1 の組が番号を除いた名。元の名に gensym の名が入った束縛(:data:`RENAMED_BINDING`)は
-#: 末尾の番号に ``\b`` が付かないので当たらない — gensym の名の振り直し(:func:`renamed`)の持ち場。形は uv.lock の版の Hy の module を
+#: 足すだけで後ろの名の番号がずれる。第 1 の組が番号を除いた名(元の名が ``x1``・``x_1`` のように数字で終わる名も、最後の
+#: ``_<数え>`` だけを番号とする — 非貪欲な先頭と末尾の ``\b``)。元の名に gensym の名が入った束縛(:data:`RENAMED_BINDING`)は
+#: 末尾の数えだけを畳み、埋まった gensym の数えは gensym の名の振り直し(:func:`renamed`)の持ち場。形は uv.lock の版の Hy の module を
 #: compile して名を集める検(test_bytecode_guard.py の test_the_temporaries_hy_names_…)が測る(card ki-ffe72a1fb7d7)。
-ANON_VAR_NAME = re.compile(r"\b(" + re.escape(GENERATED_NAME_PREFIX) + r"[A-Za-z0-9_]*?[A-Za-z])_[0-9]+\b")
+ANON_VAR_NAME = re.compile(r"\b(" + re.escape(GENERATED_NAME_PREFIX) + r"[A-Za-z0-9_]*?)_[0-9]+\b")
 
 
 def canonical_gensyms(code: CodeType) -> CodeType:
