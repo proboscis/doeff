@@ -276,7 +276,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(found.into_iter().map(|found| {
                         let (message, detail) = match &found.problem {
                             confined_spellings::ConfinedProblem::Outside { count } => (
-                                format!("{} — 綴りの群 {} を書いてよい file の外に {} か所", found.rel, found.group, count),
+                                match &found.first {
+                                    Some(first) => format!("{} — 綴りの群 {} を書いてよい file の外に {} か所(最初の当たり {})", found.rel, found.group, count, first),
+                                    None => format!("{} — 綴りの群 {} を書いてよい file の外に {} か所", found.rel, found.group, count),
+                                },
                                 found.group.clone(),
                             ),
                             confined_spellings::ConfinedProblem::Missing => (
@@ -291,7 +294,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             message,
                             detail: Some(detail),
                             base: Severity::Error,
-                            explain: Explain::ConfinedSpelling { group: found.group, why: found.why, problem: found.problem },
+                            explain: Explain::ConfinedSpelling { group: found.group, why: found.why, problem: found.problem, bound: found.bound },
                             range: found.range,
                             rel: found.rel,
                         }

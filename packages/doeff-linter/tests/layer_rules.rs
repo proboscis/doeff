@@ -4479,6 +4479,109 @@ fn confined_spelling_requires_patterns_files_and_why() {
     assert!(all.contains("confined-spelling b の正規表現 ( を読めない"), "{}", all);
 }
 
+/// 群の綴りに結んだ名も群の綴り(:names-bound-in — agora-controllers の群 web-push-private-key が秘密キーの参照の名を正規表現の写しで
+/// 持ち、キーの入れ替えの旧いキーの参照の名を他の file で読んでも赤にならなかった・設計検証 lt-T1R7826ZQ8C78H02ZGKEASNRF0 の盲検 A)。
+/// 失敗ケース: 宣言の :environ に足した新しい参照の名を core が文字列で読む・翻訳の val の名で読む・Python が mangle した名で読む・
+/// 翻訳が参照の名を並べた列の名で読むと、architecture.hy を書き換えずに赤。名を写しで持つ群(bill-key-copied)は同じ 4 つを通す。
+/// 群の綴りに当たらない値に結んだ名と、関数の中の束縛の名は数えない。
+#[test]
+fn a_name_bound_to_a_confined_spelling_is_confined_too() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "app/billing/entry/system.hy",
+            "(defsystem billing-system [foundation]\n  \"請求の系\"\n  (billing (billing-job foundation) :needs #{\"zeus\"} :replicas 1\n    \
+             :environ {\"BILL_KEY_REF\" \"secret:ns/bill-vapid/private_key\"\n              \
+             \"BILL_PREVIOUS_KEY_REF\" \"secret:ns/bill-vapid/previous_private_key\"\n              \
+             \"BILL_CONTACT\" \"https://example.org\"}))\n"
+                .to_string(),
+        ),
+        (
+            "app/billing/protocol/keys.hy",
+            "(val BILL-KEY-REF-ENV \"BILL_KEY_REF\")\n(val BILL-PREVIOUS-KEY-REF-ENV \"BILL_PREVIOUS_KEY_REF\")\n\
+             (val BILL-KEY-REFS #(BILL-KEY-REF-ENV BILL-PREVIOUS-KEY-REF-ENV))\n\
+             (val CONTACT-ENV \"BILL_CONTACT\")\n(defk read-key [] (val ref \"BILL_KEY_REF\") (supplied-setting BILL-KEY-REF-ENV))\n"
+                .to_string(),
+        ),
+        (
+            "app/billing/core/by_list.hy",
+            "(import app.billing.protocol.keys [BILL-KEY-REFS])\n(defk read-all [] (lfor r BILL-KEY-REFS (supplied-setting r)))\n".to_string(),
+        ),
+        ("app/billing/core/previous.hy", "(defk read-previous [] (supplied-setting \"BILL_PREVIOUS_KEY_REF\"))\n".to_string()),
+        (
+            "app/billing/core/by_name.hy",
+            "(import app.billing.protocol.keys [BILL-PREVIOUS-KEY-REF-ENV])\n(defk read-previous [] (supplied-setting BILL-PREVIOUS-KEY-REF-ENV))\n"
+                .to_string(),
+        ),
+        ("app/billing/core/by_python.py", "from app.billing.protocol.keys import BILL_KEY_REF_ENV\n".to_string()),
+        (
+            "app/billing/core/contact.hy",
+            "(defk contact [] (supplied-setting \"BILL_CONTACT\"))\n(defk doc [] \"BILL_KEY_REFERENCE は別の名\")\n(defk mine [ref] ref)\n".to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF148\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :confined-spellings [(confined-spelling \"bill-key\" :patterns [r\"bill-vapid\"] \
+         :names-bound-in [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :files [\"app/billing/**\"] \
+         :except [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :why \"秘密キーを読むのは keys.hy だけ\") \
+         (confined-spelling \"bill-key-copied\" :patterns [r\"bill-vapid\" r\"\\bBILL_KEY_REF\\b\" r\"\\bBILL-KEY-REF-ENV\\b\"] \
+         :files [\"app/billing/**\"] :except [\"app/billing/entry/system.hy\" \"app/billing/protocol/keys.hy\"] :why \"写し\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF148"),
+        vec![
+            "app/billing/core/by_list.hy::DOEFF148::bill-key",
+            "app/billing/core/by_name.hy::DOEFF148::bill-key",
+            "app/billing/core/by_python.py::DOEFF148::bill-key",
+            "app/billing/core/previous.hy::DOEFF148::bill-key",
+        ],
+        "{}",
+        report
+    );
+    let hit = violation(&report, "app/billing/core/by_name.hy::DOEFF148::bill-key");
+    let message = hit["message"].as_str().unwrap();
+    assert!(message.contains("2 か所(最初の当たり BILL-PREVIOUS-KEY-REF-ENV)"), "{}", message);
+    let reason = hit["explanation"]["reason"].as_str().unwrap();
+    assert!(reason.contains("導いた名: BILL_KEY_REF・BILL_PREVIOUS_KEY_REF・BILL-KEY-REF-ENV・BILL-PREVIOUS-KEY-REF-ENV・BILL-KEY-REFS"), "{}", reason);
+}
+
+/// :names-bound-in の file は、群の綴りを書いてよい(:except に当たる)読める Hy の file で、file ごとに群の綴りに当たる値に結んだ名を
+/// 1 つ以上持つ(定数を関数の中へ移した file の名が黙って群から落ちない — 盲検の後の見直し)。外れれば位置つきの読み取りの誤り。
+#[test]
+fn names_bound_in_must_be_hy_files_the_group_lets_write() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/other.hy", "(val OTHER \"bill-vapid\")\n".to_string()),
+        ("app/billing/protocol/keyed.hy", "(val KEY-REF \"secret:ns/bill-vapid/k\")\n".to_string()),
+        ("app/billing/protocol/plain.hy", "(val CONTACT-ENV \"BILL_CONTACT\")\n(defk read [] (val moved \"secret:ns/bill-vapid/k\") moved)\n".to_string()),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF148\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :confined-spellings [(confined-spelling \"a\" :patterns [r\"bill-vapid\"] \
+         :names-bound-in [\"app/billing/core/other.hy\" \"app/billing/protocol/gone.hy\" \"/abs.hy\"] :files [\"app/billing/**\"] \
+         :except [\"app/billing/protocol/*.hy\"] :why \"y\") \
+         (confined-spelling \"b\" :patterns [r\"bill-vapid\"] :names-bound-in [\"app/billing/protocol/keyed.hy\" \"app/billing/protocol/plain.hy\"] \
+         :files [\"app/billing/**\"] :except [\"app/billing/protocol/*.hy\"] :why \"y\") \
+         (confined-spelling \"c\" :patterns [r\"bill-vapid\"] :names-bound-in [] :files [\"app/billing/**\"] :except [\"app/billing/protocol/*.hy\"] :why \"y\")]",
+    );
+    std::fs::write(&arch_path, text).unwrap();
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log"], None);
+    let all = format!("{}{}", stdout, stderr);
+    assert_ne!(code, 0, "{}", all);
+    assert!(all.contains("confined-spelling a の :names-bound-in の app/billing/core/other.hy は :except に当たらない"), "{}", all);
+    assert!(all.contains("confined-spelling a の :names-bound-in の app/billing/protocol/gone.hy を読めない"), "{}", all);
+    assert!(all.contains("confined-spelling a の :names-bound-in の /abs.hy は repo の根からの Hy の file の path"), "{}", all);
+    assert!(all.contains("confined-spelling b の :names-bound-in の app/billing/protocol/plain.hy に、群の綴りに当たる値に結んだ名が 1 つも無い"), "{}", all);
+    assert!(!all.contains("confined-spelling b の :names-bound-in の app/billing/protocol/keyed.hy"), "{}", all);
+    assert!(all.contains("confined-spelling c の :names-bound-in が空"), "{}", all);
+}
+
 /// agora-redesign #1373・#1437(DOEFF161): :counted-spellings の当たりの数が :count / :at-least に合わなければ 1 件、critical で出す。
 /// :within は名指した定義ごとに数え、無い定義は missing。Hy の註は数えず、yaml は拡張子を問わずそのまま読む。
 #[test]

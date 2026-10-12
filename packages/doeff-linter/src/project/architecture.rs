@@ -583,15 +583,21 @@ pub struct VocabularyScope {
 /// `(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…")` — DOEFF148・agora-redesign #1373・#1436)。
 /// :files と :except は repo の根からの path の glob。:except の file だけがこの綴りを書ける(空なら :files のどこにも書かない)。
 /// 註を落とした本文を読み、文字列の中は数える(DOEFF146 は文字列を数えない — 外の口の動詞や route の綴りは文字列に在る)。
+/// `:names-bound-in [<repo の根からの path> …]` を書けば、その Hy の file で群の綴りに当たる値に結んだ名(宣言の `:environ` の組の名・
+/// 最上位の `(val 名 値)` の名)も群の綴りにする(名を正規表現の写しで持たず、定義元から導く — confined_spellings::names_bound_to)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConfinedSpelling {
     /// 群の名(登録簿の鍵の細目)。
     pub name: String,
-    /// 本文に当てる正規表現(読めることは読む時に確かめる)。
+    /// 本文に当てる正規表現(読めることは読む時に確かめる)。:names-bound-in から導いた名の綴りも入る(書いた物の後ろ)。
     pub patterns: Vec<String>,
     pub files: Vec<String>,
     /// この綴りを書いてよい file(空 = :files のどこにも書かない)。
     pub except: Vec<String>,
+    /// 群の綴りに結んだ名を読む file(repo の根からの path — 空 = 導かない)。
+    pub names_bound_in: Vec<String>,
+    /// :names-bound-in から導いた名(導いた順)。
+    pub bound_names: Vec<String>,
     /// なぜこの file だけか(知らせの文に入れる)。
     pub why: String,
     /// architecture.hy の中の位置(:files に当たる file が無い時の当たりの位置)。
@@ -1716,10 +1722,10 @@ impl<'a> Parser<'a> {
         contracts
     }
 
-    /// `[(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…") …]` を読む(:patterns・:files・:why は要る —
-    /// :except は書かなくてよい = :files のどこにも書かない綴り)。
+    /// `[(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :names-bound-in [..] :why "…") …]` を読む(:patterns・:files・
+    /// :why は要る — :except は書かなくてよい = :files のどこにも書かない綴り・:names-bound-in は書かなくてよい = 名を導かない)。
     fn confined_spellings(&mut self, value: &Form) -> Vec<ConfinedSpelling> {
-        let shape = "(confined-spelling \"名\" :patterns [r\"…\"] :files [..] :except [..] :why \"…\")";
+        let shape = "(confined-spelling \"名\" :patterns [r\"…\"] :files [..] :except [..] :names-bound-in [..]? :why \"…\")";
         let Some(entries) = self.bracket(value) else {
             self.problem(value, &format!(":confined-spellings は {} の列", shape));
             return Vec::new();
@@ -1733,7 +1739,17 @@ impl<'a> Parser<'a> {
             };
             let parts = parts.unwrap_or_default();
             let range = self.lines.range(head.span.start, head.span.end);
-            let mut group = ConfinedSpelling { name, patterns: Vec::new(), files: Vec::new(), except: Vec::new(), why: String::new(), range };
+            let mut group = ConfinedSpelling {
+                name,
+                patterns: Vec::new(),
+                files: Vec::new(),
+                except: Vec::new(),
+                names_bound_in: Vec::new(),
+                bound_names: Vec::new(),
+                why: String::new(),
+                range,
+            };
+            let mut bound_in: Option<&Form> = None;
             let rest: Vec<&Form> = parts.iter().skip(2).copied().collect();
             for (key, field) in self.pairs(&rest) {
                 match self.text(key) {
@@ -1751,12 +1767,15 @@ impl<'a> Parser<'a> {
                     },
                     ":files" => group.files = self.path_globs(field, ":files"),
                     ":except" => group.except = self.path_globs(field, ":except"),
+                    ":names-bound-in" => bound_in = Some(field),
                     ":why" => group.why = self.required_string(field, ":why").unwrap_or_default(),
                     _ => self.unknown_key(key, "confined-spelling"),
                 }
             }
             if group.patterns.is_empty() {
                 self.problem(entry, &format!("confined-spelling {} に :patterns が無い", group.name));
+            } else if let Some(field) = bound_in {
+                self.names_bound_in(field, &mut group);
             }
             if group.files.is_empty() {
                 self.problem(entry, &format!("confined-spelling {} に :files が無い(探す file の無い群は置かない)", group.name));
@@ -1771,6 +1790,60 @@ impl<'a> Parser<'a> {
             out.push(group);
         }
         out
+    }
+
+    /// 群 group の `:names-bound-in [<repo の根からの path> …]` の Hy の file を読み、群の綴りに当たる値に結んだ名を group の綴りに足す
+    /// (confined_spellings::names_bound_to — 足した名に当たる値に結んだ名も、増えなくなるまで足す)。名を結ぶ file は群の綴りを書いてよい
+    /// file(:except に当たる)でなければならない — 外の file の結びはそれ自身が当たりになる。根の外の path・:except の外・読めない・
+    /// 括弧の閉じない file と、名を 1 つも導けない file は、黙って写しの無い群にせず位置つきの宣言の誤りにする(:contract-files の file
+    /// ごとの「綴りが 1 つも無い」と同じ — 定数を関数の中へ移す・結びの形を変えると、その file の名が黙って群から落ちるため。
+    /// architecture.hy を読む時に読む)。
+    fn names_bound_in(&mut self, value: &Form, group: &mut ConfinedSpelling) {
+        let Some(items) = self.bracket(value) else {
+            self.problem(value, &format!("confined-spelling {} の :names-bound-in は [\"<repo の根からの path>\" …] の列", group.name));
+            return;
+        };
+        if items.is_empty() {
+            self.problem(value, &format!("confined-spelling {} の :names-bound-in が空(書かないか、名を結ぶ file を挙げる)", group.name));
+        }
+        let mut bindings = Vec::new();
+        let mut read: Vec<(&Form, String)> = Vec::new();
+        for item in items {
+            let Some(rel) = self.name(item) else {
+                self.problem(item, &format!("confined-spelling {} の :names-bound-in の要素は path の文字列", group.name));
+                continue;
+            };
+            if rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|p| p == "..") || !rel.ends_with(".hy") {
+                self.problem(item, &format!("confined-spelling {} の :names-bound-in の {} は repo の根からの Hy の file の path(/ で始めない・.. を含まない・.hy)", group.name, rel));
+                continue;
+            }
+            if !group.except.iter().any(|glob| super::paths::glob_matches(glob, &rel)) {
+                self.problem(item, &format!("confined-spelling {} の :names-bound-in の {} は :except に当たらない(名を結ぶ file は綴りを書いてよい file)", group.name, rel));
+                continue;
+            }
+            let path = self.root.join(&rel);
+            match std::fs::read_to_string(&path) {
+                Ok(source) => match super::confined_spellings::bindings_of(&rel, &source) {
+                    Some(found) => {
+                        bindings.extend(found);
+                        read.push((item, rel.clone()));
+                    }
+                    None => self.problem(item, &format!("confined-spelling {} の :names-bound-in の {} に括弧か文字列が閉じていない所がある", group.name, rel)),
+                },
+                Err(error) => self.problem(item, &format!("confined-spelling {} の :names-bound-in の {} を読めない({}): {}", group.name, rel, path.display(), error)),
+            }
+            group.names_bound_in.push(rel);
+        }
+        let derived = super::confined_spellings::names_bound_to(&group.patterns, &bindings);
+        for (item, rel) in read {
+            if !derived.iter().any(|name| name.origin == rel) {
+                self.problem(item, &format!("confined-spelling {} の :names-bound-in の {} に、群の綴りに当たる値に結んだ名が 1 つも無い", group.name, rel));
+            }
+        }
+        for name in derived {
+            group.patterns.extend(name.patterns.iter().cloned());
+            group.bound_names.push(name.name);
+        }
     }
 
     /// `[(effect-census "名" :files [..] :effects [..] :base "EffectBase" :why "…") …]` を読む(:files・:effects・:why は要る —
