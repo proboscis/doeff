@@ -1,0 +1,24 @@
+diff --git a/packages/doeff-traverse/tests/run_example_failing_a_case.py b/packages/doeff-traverse/tests/run_example_failing_a_case.py
+index 91ab0256f..05be528ef 100644
+--- a/packages/doeff-traverse/tests/run_example_failing_a_case.py
++++ b/packages/doeff-traverse/tests/run_example_failing_a_case.py
+@@ -19,7 +19,7 @@ from collections.abc import Callable, Generator, Iterable
+ from types import CodeType
+ from typing import Any, Never, TypeVar
+ 
+-from doeff_traverse.effects import Traverse
++from doeff_traverse.effects import Fail, Traverse
+ 
+ import doeff
+ from doeff import Program, do
+@@ -45,8 +45,8 @@ class InjectedCaseError(Exception):
+ @do
+ def _failing_case(value: object) -> Generator[object, object, Never]:
+     """件の中で失敗する Program(走り始めてすぐ上げる — yield は generator にするためだけに在る)。"""
+-    raise InjectedCaseError(f"injected into the case of {value!r}")
+-    yield
++    yield Fail(InjectedCaseError(f"injected into the case of {value!r}"))
++    raise AssertionError("unreachable: the Fail handler resumed the injected failure")
+ 
+ 
+ def _first_case_fails(

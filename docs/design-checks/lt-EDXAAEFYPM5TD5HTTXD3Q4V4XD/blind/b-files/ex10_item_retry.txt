@@ -1,0 +1,17 @@
+=== without retry (sequential) ===
+  [0] AAPL OK after 1 attempt(s): 150.0
+  [1] MSFT FAILED after 1 attempt(s): connection reset: MSFT
+  [2] NFLX FAILED after 1 attempt(s): 'delisted: NFLX'
+  [3] GOOGL OK after 1 attempt(s): 2800.0
+
+=== retry 3 (sequential) ===
+  [0] AAPL OK after 1 attempt(s): 150.0
+  [1] MSFT OK after 3 attempt(s): 300.0
+  [2] NFLX FAILED after 3 attempt(s): 'delisted: NFLX'
+  [3] GOOGL OK after 1 attempt(s): 2800.0
+
+=== retry 3 (parallel 4) ===
+  [0] AAPL OK after 1 attempt(s): 150.0
+  [1] MSFT OK after 3 attempt(s): 300.0
+  [2] NFLX FAILED after 3 attempt(s): 'delisted: NFLX'
+  [3] GOOGL OK after 1 attempt(s): 2800.0
