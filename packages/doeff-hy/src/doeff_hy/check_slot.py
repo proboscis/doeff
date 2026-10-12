@@ -13,8 +13,12 @@ machine_check_slots.json の 1 つが持つ)。この module は値を持たず�
   - 正本・宣言を読めない時と、正本の口が揃わない時・正本の take が中で落ちた時(正本は dotfiles の先端を追い、doeff は使い手の
     pin で固定される)は 1 行名乗って素通し — 枠の壊れで検を走らせなくしない(正本の pytest の受付と同じ)。正本の中の失敗を
     traceback のまま抜けさせると、main の終了 1(= 新しい赤)と区別できない(card ki-26ebd3f636e0 の盲検 A の副次の実測)。
-  - 方策(read_policy の答え)は中を読まずに take の 1 つ目の引数へそのまま渡す — 待ちの上限を縮める・延ばす・作り直す判断と、
-    方策の欄の名をここに置かない(盲検 B の反例。形は tests/test_static_check_slot.py の AST の検が守る)。
+  - 方策(read_policy の答え)と持ち物(take の答え)は開かない — 正本の公開の口(take・process_width)へそのまま渡すだけで、
+    欄の名を読まず、作り直さず、別の名へ写さない(待ちの上限を縮める・延ばす判断と、方策の欄の名をここに置かない)。持ち物は解く口
+    (release)だけを SlotHeld に預ける。形は tests/test_check_slot_opacity.py の AST の検が守る(入る向きも出る向きも)。
+  - 1 枠の中で並べてよい process の数は、正本の公開の口 process_width に方策・持ち物・環境を渡して受ける(SlotHeld.width)。入れ子の
+    規則(祖先の枠の内側は外側が配った幅を残す)も env の名も正本の中にあり、ここへ写さない。口が無い正本(古い dotfiles)では
+    枠は取り、幅は None — 呼び手(static_check)が宣言の無い機体の既定で走る(1 行名乗る)。幅の口が落ちた時も取った枠は持ち続ける。
   - 枠を持つ process の子孫(pytest の検が呼ぶ main・gate が起こす doeff-hy-check)は 2 つ目を取らない。判定は正本の take
     (/proc の祖先の列・/proc の無い機体では正本の HOLDER_ENV の印)。
   - 待ちは正本が黙らずに名乗る(`check-slot: … 待つ — 待ち N 秒 / 上限 … 保持 pid …`)。上限を越えたら SlotExpired — main は展開も
@@ -30,10 +34,11 @@ env で正本の path や値を替える口は作らない(口が在ると、替
 import importlib.util
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Protocol, TextIO
+from typing import TextIO
 
 from doeff_hy.env_places import EnvironmentByName
 
@@ -44,27 +49,26 @@ CANON_UNDER_HOME = Path("dotfiles", "agent", "tests", "machine_check_slots.py")
 MODULE_KEY_PREFIX = "ai_machine_check_slots@"
 #: 名乗りの行の頭(正本の MARK と同じ)。
 MARK = "check-slot:"
-#: 正本の公開の口のうち、この module が呼ぶ関数と捕まえる例外の名(揃わない正本 — dotfiles の先端で口が変わった — は素通し)。
+#: 正本の公開の口のうち、揃わなければ枠を取らずに素通しにする関数(必須)・無くても枠は取る関数(任意 — 無い正本では幅が届かない)・
+#: 捕まえる例外の名。この module が正本から読んでよい名はこの 3 つの組だけ(tests/test_check_slot_opacity.py が守る)。
 CANON_CALLS = ("read_policy", "take")
+CANON_OPTIONAL_CALLS = ("process_width",)
 CANON_ERRORS = ("PolicyUnreadable", "SlotWaitExpired")
-
-
-class Holding(Protocol):
-    """正本の take が返す持ち物(正本の Holding)— 解く口だけを読む。"""
-
-    def release(self) -> None: ...
 
 
 @dataclass(frozen=True)
 class SlotHeld:
-    """検を走らせてよい。holding = 取った枠・素通し(正本が無い・読めない・祖先が持つ)では None。"""
+    """検を走らせてよい。let_go = 取った枠を解く口(素通し・祖先が持つ時は None)・width = 正本が答えた 1 枠の中で並べてよい
+    process の数(正本の口が無い・落ちた・素通しでは None — 呼び手が宣言の無い機体の既定で走る)。
+    正本の持ち物そのものは預からない — 解く口だけ(持ち物の中身は take_slot の中で閉じる)。"""
 
-    holding: Holding | None
+    let_go: Callable[[], None] | None = None
+    width: int | None = None
 
     def release(self) -> None:
         """取った枠を解く(素通しでは何もしない・2 度目も何もしない — 正本の release が 2 度目を無視する)。"""
-        if self.holding is not None:
-            self.holding.release()
+        if self.let_go is not None:
+            self.let_go()
 
 
 @dataclass(frozen=True)
@@ -126,28 +130,61 @@ def _error_class(value: object) -> bool:
     return isinstance(value, type) and issubclass(value, BaseException)
 
 
+def absent_optional(module: ModuleType) -> list[str]:
+    """正本の任意の口のうち、呼べない物(純粋)。空 = 全部在る。無くても枠は取る。"""
+    found = vars(module)
+    return [name for name in CANON_OPTIONAL_CALLS if not callable(found.get(name))]
+
+
 def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
     """同じ機体で走る検と共有する枠を 1 つ取る(埋まっていれば正本が保持者を名乗って待つ)。home = 正本を探す宿の home・
-    label = 保持者の名乗り・out = 名乗りの行の行き先。方策は正本の read_policy の答えを中を読まずに take へ渡す — 待ちの上限を
-    縮める・延ばす判断をここに置かない。答え = SlotHeld(release を呼ぶまで枠を持つ)か、待ちの上限を越えた SlotExpired。"""
+    label = 保持者の名乗り・out = 名乗りの行の行き先。方策と持ち物は正本の口へそのまま渡し、中を開かない。答え = SlotHeld
+    (release を呼ぶまで枠を持つ・width = 正本が答えた並走の数)か、待ちの上限を越えた SlotExpired。"""
     module = canon_module(home, out)
     if module is None:
-        return SlotHeld(None)
+        return SlotHeld()
     unfit = unfit_names(module)
     if unfit:
         _named(
             out,
             f"枠の正本 {os.path.realpath(home / CANON_UNDER_HOME)} の口が揃わない({'・'.join(unfit)})ので枠を取らずに走る",
         )
-        return SlotHeld(None)
+        return SlotHeld()
+    environ = EnvironmentByName()
     try:
-        return SlotHeld(module.take(module.read_policy(), label, EnvironmentByName(), out))
+        policy = module.read_policy()
+        holding = module.take(policy, label, environ, out)
     except module.PolicyUnreadable as error:
         _named(out, f"宣言を読めないので枠を取らずに走る — {error}")
+        return SlotHeld()
     except module.SlotWaitExpired as error:
         return SlotExpired(str(error))
     except Exception as error:  # 正本(別の repo の先端の code)の中の失敗・呼び方の食い違い — 名乗って素通し(頭の註)
         _named(
             out, f"枠の正本の take が落ちたので枠を取らずに走る({type(error).__name__}: {error})"
         )
-    return SlotHeld(None)
+        return SlotHeld()
+    let_go = None if holding is None else holding.release
+    width = None
+    absent = absent_optional(module)
+    if absent:
+        _named(out, f"枠の正本に並走の数の口({'・'.join(absent)})が無いので、並走の数は宣言の無い機体の既定で走る")
+    else:
+        try:  # 幅の口が落ちても、取った枠は持ち続ける(let_go は上で預けた)— take の失敗と同じ囲いに入れない
+            width = module.process_width(policy, holding, environ)
+        except Exception as error:
+            _named(
+                out,
+                f"枠の正本の process_width が落ちたので、並走の数は宣言の無い機体の既定で走る({type(error).__name__}: {error})",
+            )
+    return SlotHeld(let_go, _positive(width, out))
+
+
+def _positive(width: object, out: TextIO) -> int | None:
+    """正本が答えた並走の数を、正の整数なら通し、それ以外は 1 行名乗って None にする(口の形の確かめで、数の判断ではない)。"""
+    if width is None:
+        return None
+    if isinstance(width, int) and not isinstance(width, bool) and width >= 1:
+        return width
+    _named(out, f"枠の正本の process_width の答えが正の整数でない({width!r})ので、並走の数は宣言の無い機体の既定で走る")
+    return None
