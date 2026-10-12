@@ -1,0 +1,19 @@
+N1-ignore-the-canon-width rc 1 ['FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py::test_the_canon_width_is_asked_with_the_same_opaque_values_and_reaches_the_caller', '1 failed, 5 passed, 1 warning in 6.48s']
+N2-ask-as-if-nested rc 1 ['FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py::test_the_canon_width_is_asked_with_the_same_opaque_values_and_reaches_the_caller', '1 failed, 5 passed, 1 warning in 19.37s']
+N3-width-mouth-required rc 1 ['FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py::test_a_canon_without_the_width_mouth_still_holds_the_slot_and_says_so', '1 failed, 6 passed, 1 warning in 5.51s']
+N4-width-inside-the-take-try rc 1 ['FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py::test_the_canon_width_is_asked_with_the_same_opaque_values_and_reaches_the_caller', '1 failed, 5 passed, 1 warning in 15.99s']
+N5-expander-limit-ignores-the-width rc 1 ['FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_parallel.py::test_the_expander_limit_is_the_slot_width_and_defaults_to_four_when_none_reaches', '1 failed, 5 passed, 1 warning in 13.76s']
+N6-pyright-threads-above-the-width rc 1 ['FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_pyright_threads.py::test_the_thread_count_never_exceeds_the_width_the_slot_canon_answered', '1 failed, 1 passed, 1 warning in 0.57s']
+== N2b-ask-as-if-nested(real canon, stale env) rc 1
+E   AssertionError: {'env': '1', 'width': 1}
+/work/toolset/worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py:431: AssertionError: {'env': '1', 'width': 1}
+E   AssertionError: {'env': '1', 'width': 1}
+/work/toolset/worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py:431: AssertionError: {'env': '1', 'width': 1}
+FAILED packages/doeff-hy/tests/test_static_check_slot.py::test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_inside_the_wrapper[2]
+FAILED packages/doeff-hy/tests/test_static_check_slot.py::test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_inside_the_wrapper[3]
+2 failed, 1 passed, 15 deselected, 1 warning in 3.99s
+== N4b-width-inside-the-take-try(raising width mouth) rc 1
+E   AssertionError: (SlotHeld(let_go=None, width=None), 'check-slot: 枠の正本の take が落ちたので枠を取らずに走る(ZeroDivisionError: division by zero)
+/work/toolset/worktrees/doeff-wt-check-slot-ppslot/packages/doeff-hy/tests/test_static_check_slot.py:339: AssertionError: (SlotHeld(let_go=None, width=None), 'check-slot: 枠の正本の take が落ちたので枠を取らずに走る(ZeroDivisionError: division by zero)
+FAILED packages/doeff-hy/tests/test_static_check_slot.py::test_a_failing_width_mouth_keeps_the_slot_that_was_taken
+1 failed, 17 deselected, 1 warning in 0.57s

@@ -1,0 +1,33 @@
+== agent-commons @ origin/main (ea8c409 2026-10-12)
+== agent-hooks @ origin/main (a79fcfc 2026-10-12)
+== agora @ origin/main (828a7f57e 2026-10-12)
+== agora-controllers @ origin/main (5aaf18d4b 2026-10-12)
+origin/main:scripts/hy_type_check.hy:59:;;;   展開の子の process の数の上限は doeff-hy-check の側(doeff L2016 — 8 → 4・環境変数 DOEFF_HY_CHECK_EXPAN
+== baby-prep @ origin/main (108ed92 2026-10-12)
+== code-quality @ origin/main (b53aa08 2026-10-12)
+== custody @ origin/main (9658617 2026-10-11)
+== doeff @ origin/main (1a869eb9d 2026-10-12)
+origin/main:packages/doeff-hy/src/doeff_hy/env_places.py:14:EXPANDERS_ENV = "DOEFF_HY_CHECK_EXPANDERS"
+origin/main:packages/doeff-hy/src/doeff_hy/env_places.py:35:def expanders_setting() -> str | None:
+origin/main:packages/doeff-hy/src/doeff_hy/env_places.py:36:    """$DOEFF_HY_CHECK_EXPANDERS の素の値(doeff-hy-check の依存の展開の子の数の上限)— 無�
+origin/main:packages/doeff-hy/src/doeff_hy/env_places.py:39:    return _read(EXPANDERS_ENV) or None
+origin/main:packages/doeff-hy/src/doeff_hy/static_check.py:67:    EXPANDERS_ENV,
+origin/main:packages/doeff-hy/src/doeff_hy/static_check.py:70:    expanders_setting,
+origin/main:packages/doeff-hy/src/doeff_hy/static_check.py:801:#: 1 本の速さより、同じ機体で並ぶ検査の合計を抑える。機体ごとに替える時は
+origin/main:packages/doeff-hy/src/doeff_hy/static_check.py:807:    """展開の子の数の上限を決める(configured = 環境変数 EXPANDERS_ENV の値・無けれ�
+== dotfiles @ origin/master (6402b97f2 2026-10-12)
+origin/master:agent/tests/machine_check_slots.py:28:包みは、外側の入口が子へ配った宣言以下の値を残す — width_for_child)。中で file を並べ�
+origin/master:agent/tests/machine_check_slots.py:449:def width_for_child(policy: Policy, nested: bool, inherited: Optional[str]) -> str:
+origin/master:agent/tests/machine_check_slots.py:473:    (width_for_child)。宣言を読めない時は置かない(入口は従来どおりに走る)。
+origin/master:agent/tests/machine_check_slots.py:482:        child_env[PROCESSES_ENV] = width_for_child(declared, holding is None, environ.get(PROCESSES_ENV))
+origin/master:agent/tests/test_machine_check_slots.py:539:    assert [slots.width_for_child(policy, True, given) for given in ("1", "2", "3", "0", "x", "", None)] \
+origin/master:agent/tests/test_machine_check_slots.py:541:    assert slots.width_for_child(policy, False, "1") == "2", "枠を取った包みは呼び手の値を上書�
+== jevstd @ origin/main (490061f 2026-10-12)
+== merge-queue @ origin/main (fd7a934 2026-10-12)
+== vscode-semantic-highlighting @ origin/main (202b0a0 2025-12-17)
+agent-commons last-fetched-head: ea8c409 2026-10-12
+agent-hooks last-fetched-head: a79fcfc 2026-10-12
+baby-prep last-fetched-head: 108ed92 2026-10-12
+custody last-fetched-head: 9658617 2026-10-11
+jevstd last-fetched-head: 490061f 2026-10-12
+merge-queue last-fetched-head: fd7a934 2026-10-12

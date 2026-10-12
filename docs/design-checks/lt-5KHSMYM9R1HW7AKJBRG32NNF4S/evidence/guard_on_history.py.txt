@@ -1,0 +1,51 @@
+"""新しい守りの関数を、過去の実装と盲検の差分に当てる(読むだけ・共有の木を変えない)。"""
+import importlib.util, subprocess, sys, tempfile
+from pathlib import Path
+
+TREE = Path("/home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot")
+PKG = "packages/doeff-hy/src/doeff_hy"
+spec = importlib.util.spec_from_file_location("opacity", TREE / "packages/doeff-hy/tests/test_check_slot_opacity.py")
+guard = importlib.util.module_from_spec(spec); sys.modules["opacity"] = guard; spec.loader.exec_module(guard)
+
+def git_show(rev, path):
+    return subprocess.run(["git", "-C", str(TREE), "show", f"{rev}:{path}"], capture_output=True, text=True, check=True).stdout
+
+def report(title, source, with_default=False):
+    opened = guard.opened_uses(source)
+    owned = guard.canon_owned_names(source)
+    print(f"## {title}\n  opened_uses({len(opened)}): {opened[:4]}\n  canon_owned_names({len(owned)}): {owned[:4]}")
+    if with_default:
+        print(f"  default_limit_uses: {guard.default_limit_uses(source)}")
+
+# G0: 試作の今
+report("G0 試作の check_slot.py(期待: 0・0)", (TREE / PKG / "check_slot.py").read_text(encoding="utf-8"))
+# G1: 基準 main の check_slot.py
+old = git_show("a4abf5218", f"{PKG}/check_slot.py")
+report("G1 基準 main a4abf5218 の check_slot.py(旧い形 — 持ち物を SlotHeld に預ける)", old)
+
+# G2: 先行の設計検証 lt-W8F3HD41FWBR4PS26EDSEJDJMT の盲検 B の差分(take の答えから processes_per_slot を読む)を基準へ当てる
+patch = (TREE.parent / "doeff-wt-ppslot-docs" / "docs/design-checks/lt-W8F3HD41FWBR4PS26EDSEJDJMT/evidence/blind-B-violation.patch.txt").read_text(encoding="utf-8")
+with tempfile.TemporaryDirectory() as tmp:
+    for name in ("check_slot.py", "static_check.py"):
+        target = Path(tmp) / PKG / name; target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(git_show("c8fd2c26a", f"{PKG}/{name}"), encoding="utf-8")
+    applied = subprocess.run(["patch", "-p1", "-d", tmp], input=patch, capture_output=True, text=True)
+    print("patch rc", applied.returncode, applied.stdout.strip().splitlines()[-2:])
+    for name in ("check_slot.py", "static_check.py"):
+        report(f"G2 先行の盲検 B の差分を当てた {name}", (Path(tmp) / PKG / name).read_text(encoding="utf-8"))
+
+# G3: 先行の盲検 A の「方策を不透明に渡す」形(正本に存在しない width_for_child を呼ぶ)を、試作の骨へ当てた形
+source = (TREE / PKG / "check_slot.py").read_text(encoding="utf-8")
+r1 = source.replace("width = module.process_width(policy, holding, environ)", "width = int(module.width_for_child(policy, holding is None, environ.get(module.PROCESSES_ENV)))")
+report("G3 先行の盲検 A の形(width_for_child・PROCESSES_ENV を引く)", r1)
+
+# G4: 今回の盲検 B の差分(型の宣言の一致の検が既定の数で pool を使う)を、試作の今へ当てる
+patch_b = (TREE.parent / "doeff-wt-ppslot-docs" / "docs/design-checks/lt-5KHSMYM9R1HW7AKJBRG32NNF4S/evidence/blind-B-violation.patch.txt").read_text(encoding="utf-8")
+with tempfile.TemporaryDirectory() as tmp:
+    for name in ("static_check.py", "static_stub.py"):
+        target = Path(tmp) / PKG / name; target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((TREE / PKG / name).read_text(encoding="utf-8"), encoding="utf-8")
+    applied = subprocess.run(["patch", "-p1", "-d", tmp], input=patch_b, capture_output=True, text=True)
+    print("patch rc", applied.returncode, applied.stdout.strip().splitlines()[-2:], applied.stderr.strip()[:200])
+    for name in ("static_check.py", "static_stub.py"):
+        print(f"## G4 今回の盲検 B の差分を当てた {name}: default_limit_uses =", guard.default_limit_uses((Path(tmp) / PKG / name).read_text(encoding="utf-8")))

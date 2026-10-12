@@ -1,0 +1,39 @@
+"""試作の M-slot / main に変異を 1 つずつ当て、対応する検が意図した理由で赤になる事を記録する(終わるごとに元へ戻す)。"""
+import subprocess
+import sys
+from pathlib import Path
+
+TREE = Path("/home/ubuntu/.worktrees/doeff-wt-check-slot-ppslot")
+SRC = TREE / "packages/doeff-hy/src/doeff_hy"
+TESTS = TREE / "packages/doeff-hy/tests"
+ENV = {"HOME": "/tmp/ppslot-home", "XDG_CACHE_HOME": "/home/ubuntu/.cache"}
+
+MUTANTS = [
+    ("N1-ignore-the-canon-width", "check_slot.py", "return SlotHeld(let_go, _positive(width, out))", "return SlotHeld(let_go, None)", "test_static_check_slot.py"),
+    ("N2-ask-as-if-nested", "check_slot.py", "width = module.process_width(policy, holding, environ)", "width = module.process_width(policy, None, environ)", "test_static_check_slot.py"),
+    ("N3-width-mouth-required", "check_slot.py", 'CANON_CALLS = ("read_policy", "take")', 'CANON_CALLS = ("read_policy", "take", "process_width")', "test_static_check_slot.py"),
+    ("N4-width-inside-the-take-try", "check_slot.py", "        holding = module.take(policy, label, environ, out)\n    except module.PolicyUnreadable", "        holding = module.take(policy, label, environ, out)\n        module.process_width(policy, holding, environ)\n    except module.PolicyUnreadable", "test_static_check_slot.py"),
+    ("N5-expander-limit-ignores-the-width", "static_check.py", "return EXPANDER_LIMIT if declared is None else declared", "return EXPANDER_LIMIT", "test_static_check_parallel.py"),
+    ("N6-pyright-threads-above-the-width", "static_check.py", "return wanted if declared is None else min(wanted, declared)", "return wanted", "test_static_check_pyright_threads.py"),
+]
+
+name_filter = sys.argv[1:]
+for name, source, before, after, tests in MUTANTS:
+    if name_filter and name not in name_filter:
+        continue
+    path = SRC / source
+    original = path.read_text(encoding="utf-8")
+    assert before in original, f"{name}: 変異の前の行が無い"
+    path.write_text(original.replace(before, after, 1), encoding="utf-8")
+    try:
+        done = subprocess.run(
+            ["uv", "run", "pytest", str(TESTS / tests), "-q", "-x", "--tb=short"],
+            cwd=TREE, env={**__import__("os").environ, **ENV}, capture_output=True, text=True, timeout=590, check=False,
+        )
+        lines = [l for l in done.stdout.splitlines() if l.startswith(("FAILED", "E  ", "E   ")) or " passed" in l or " failed" in l]
+        Path(f"/tmp/ppslot-inv/logs/{name}.log").write_text(
+            f"# 変異 {name}: {source} の「{before}」→「{after}」\n# 検: {tests}\n# 終了コード {done.returncode}\n" + "\n".join(lines) + "\n\n----- 全文 -----\n" + done.stdout[-6000:],
+            encoding="utf-8")
+        print(name, "rc", done.returncode, [l for l in lines if l.startswith("FAILED") or " passed" in l or " failed" in l][:3])
+    finally:
+        path.write_text(original, encoding="utf-8")

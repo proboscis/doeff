@@ -177,7 +177,7 @@ index 88b5768bb..644dbf59d 100644
  
  
 diff --git a/packages/doeff-hy/src/doeff_hy/static_check.py b/packages/doeff-hy/src/doeff_hy/static_check.py
-index 2b335359b..1e09fa928 100644
+index 2b335359b..367581713 100644
 --- a/packages/doeff-hy/src/doeff_hy/static_check.py
 +++ b/packages/doeff-hy/src/doeff_hy/static_check.py
 @@ -64,10 +64,8 @@ from hy.models import Object
@@ -224,7 +224,25 @@ index 2b335359b..1e09fa928 100644
  
  
  class ExpansionWorkerLostError(RuntimeError):
-@@ -1066,15 +1059,17 @@ def python_without_bytecode(directory: Path, python: str) -> Path:
+@@ -913,13 +906,14 @@ def project_closure(
+     root: Path,
+     roots: list[Path],
+     targets: list[Path],
+-    cache_dir: Path | None = None,
+-    limit: int = EXPANDER_LIMIT,
++    cache_dir: Path | None,
++    limit: int,
+ ) -> Closure:
+     """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。
+ 
+     import を段ごとに辿る(agora-redesign #3869): 段の中の file は互いの展開を使わないので、保存から引ける file は親で引き、
+-    引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に)。"""
++    引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に・既定は無い —
++    呼び手が expander_limit(枠の正本が答えた数)で決める)。"""
+     projections: dict[Path, Projection] = {}
+     failures: list[CompileFailure] = []
+     seen: set[Path] = set(targets)
+@@ -1066,15 +1060,17 @@ def python_without_bytecode(directory: Path, python: str) -> Path:
  PYRIGHT_THREADS = 1
  
  
@@ -250,7 +268,7 @@ index 2b335359b..1e09fa928 100644
  
  
  def run_pyright(
-@@ -1312,8 +1307,8 @@ def main(argv: list[str] | None = None) -> int:
+@@ -1312,8 +1308,8 @@ def main(argv: list[str] | None = None) -> int:
          return 2
      try:
          cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
@@ -263,10 +281,10 @@ index 2b335359b..1e09fa928 100644
          )
 diff --git a/packages/doeff-hy/tests/test_check_slot_opacity.py b/packages/doeff-hy/tests/test_check_slot_opacity.py
 new file mode 100644
-index 000000000..a48362263
+index 000000000..291f923cb
 --- /dev/null
 +++ b/packages/doeff-hy/tests/test_check_slot_opacity.py
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,473 @@
 +"""doeff_hy.check_slot(M-slot)が、機体の検の枠の正本の方策と持ち物を開かない形の機械の検(設計検証 lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。
 +
 +守る知識: 正本の方策の中身(欄の名・値)・入れ子の時の幅の規則・env の名は正本の持ち物で、M-slot は知らない。M-slot が正本から
@@ -284,8 +302,11 @@ index 000000000..a48362263
 +  4. 自分の束縛 — `policy = module.read_policy()`(単純な名への 1 回の代入。別の名への写し・属性や添字への代入は開く道なので断る)。
 +さらに、この module が正本の module から読んでよい名は宣言した口と例外だけ(`module.Policy`・`module.PROCESSES_ENV` などを断る)。
 +正本の持ち物の名(宣言の鍵・env の名・旧い幅の関数)は doeff_hy のどの source にも現れない。
++並走の数を使う側: 宣言が届かない機体の既定 EXPANDER_LIMIT は、expander_limit(宣言の数)の中でだけ読む — 別の入口(展開の子の pool を
++使う新しい道具)が既定を直に引数の既定や定数として使うと、枠を取らずに宣言と無関係な数で子を起こす。
 +
-+限界(表現できない物): 規則の組(OPENED・MOUTHS)を書き換えれば通る — だが組はこの file の固定で、変えるのは意図した契約の変更。
++限界(表現できない物): 新しい入口が pool を使うのに枠を取らない(expander_limit に渡す数が無いので書き手が気づく — 検は取り忘れ自体は見ない)。
++規則の組(OPENED・MOUTHS)を書き換えれば通る — だが組はこの file の固定で、変えるのは意図した契約の変更。
 +SlotHeld.let_go を static_check 側で開く道(`slot.let_go.__self__`)と、process_width の答えを使わずに幅を自前で決める形は、この
 +検は見ない(後者は幅の持ち主が 2 つになる — 設計の限界として design.md に記した)。
 +"""
@@ -475,12 +496,36 @@ index 000000000..a48362263
 +                    yield node.lineno, owned
 +
 +
++def default_limit_uses(source: str) -> list[str]:
++    """既定の展開の子の数 EXPANDER_LIMIT を読む場所(行と、囲む関数の名)。定義(module の段の代入)は数えない。"""
++    tree = ast.parse(source)
++    parents = _parents(tree)
++
++    def enclosing(node: ast.AST) -> str:
++        cursor: ast.AST | None = parents.get(node)
++        while cursor is not None and not isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)):
++            cursor = parents.get(cursor)
++        return "<module>" if cursor is None else cursor.name
++
++    reads = (
++        node
++        for node in ast.walk(tree)
++        if (isinstance(node, ast.Name) and node.id == "EXPANDER_LIMIT" and isinstance(node.ctx, ast.Load))
++        or (isinstance(node, ast.Attribute) and node.attr == "EXPANDER_LIMIT")
++        or (isinstance(node, ast.alias) and node.name.rpartition(".")[2] == "EXPANDER_LIMIT")
++    )
++    return [f"{getattr(node, 'lineno', 0)}: {enclosing(node)}" for node in reads]
++
++
 +def canon_owned_names(source: str) -> list[str]:
 +    """正本が持つ名が code に現れる行(空 = 現れない)。"""
 +    return [f"{line}: {name}" for line, name in _identifiers_and_strings(source) if name in CANON_OWNED]
 +
 +
 +# ─────────────────────────────── 実物
++
++#: 既定の展開の子の数を読んでよい場所(static_check.py の関数 expander_limit だけ)。
++DEFAULT_LIMIT_READERS = {"static_check.py": ["expander_limit"]}
 +
 +def test_the_mouths_this_module_declares_are_the_ones_this_guard_allows() -> None:
 +    """宣言した口の組は、この検の固定の組と同じ — 口を足す・替えるのは意図した契約の変更で、この file の組と一緒に変える。"""
@@ -490,6 +535,17 @@ index 000000000..a48362263
 +
 +def test_check_slot_opens_neither_the_canon_policy_nor_what_take_returns() -> None:
 +    assert opened_uses(SOURCE) == []
++
++
++def test_the_default_child_count_is_read_only_where_the_slot_width_may_be_missing() -> None:
++    """宣言が届かない機体の既定 EXPANDER_LIMIT は、expander_limit(宣言の数)の中でだけ読まれる — 関数の引数の既定・別の道具の
++    定数・直の import は、宣言と無関係な数で展開の子を起こす 2 つ目の持ち主になる。"""
++    found = {
++        path.name: [hit.partition(": ")[2] for hit in default_limit_uses(path.read_text(encoding="utf-8"))]
++        for path in sorted(PACKAGE.rglob("*.py"))
++    }
++    readers = {name: functions for name, functions in found.items() if functions}
++    assert readers == DEFAULT_LIMIT_READERS, readers
 +
 +
 +def test_no_doeff_hy_source_names_what_the_canon_owns() -> None:
@@ -680,6 +736,28 @@ index 000000000..a48362263
 +def test_the_name_guard_lets_prose_talk_about_the_canon() -> None:
 +    prose = '"""正本の processesPerSlot と AI_CHECK_SLOT_PROCESSES の話(docstring)。"""\n# processes_per_slot の話(コメント)\nx = 1\n'
 +    assert canon_owned_names(prose) == []
++
++
++@pytest.mark.parametrize(
++    ("written", "reader"),
++    [
++        # 別の道具(型の宣言の一致の検)が展開の子の pool を使う実装 — 引数の既定として既定の数を読む。
++        (
++            "def project_each(root, roots, sources, limit: int = EXPANDER_LIMIT):\n    return _Expanders(limit)\n",
++            "project_each",
++        ),
++        ("from doeff_hy.static_check import EXPANDER_LIMIT\n", "<module>"),
++        ("def stale(root):\n    return _Expanders(static_check.EXPANDER_LIMIT)\n", "stale"),
++        ("def stale(root):\n    return _Expanders(EXPANDER_LIMIT)\n", "stale"),
++    ],
++)
++def test_the_default_child_count_guard_catches_a_second_reader(written: str, reader: str) -> None:
++    assert [hit.partition(": ")[2] for hit in default_limit_uses(written)] == [reader], written
++
++
++def test_the_default_child_count_guard_accepts_the_one_reader_and_the_definition() -> None:
++    allowed = "EXPANDER_LIMIT = 4\n\n\ndef expander_limit(declared):\n    return EXPANDER_LIMIT if declared is None else declared\n"
++    assert [hit.partition(": ")[2] for hit in default_limit_uses(allowed)] == ["expander_limit"]
 diff --git a/packages/doeff-hy/tests/test_env_places_read.py b/packages/doeff-hy/tests/test_env_places_read.py
 index 28a8eb5a7..ede00d8e7 100644
 --- a/packages/doeff-hy/tests/test_env_places_read.py
@@ -863,7 +941,7 @@ index da5999210..40d1c76aa 100644
      assert static_check.main(["--root", str(tmp_path), "--no-cache"]) == 2
      assert "DOEFF_HY_CHECK_PYRIGHT_THREADS" in capsys.readouterr().err
 diff --git a/packages/doeff-hy/tests/test_static_check_slot.py b/packages/doeff-hy/tests/test_static_check_slot.py
-index e0927dbd8..334738f49 100644
+index e0927dbd8..d4b350da6 100644
 --- a/packages/doeff-hy/tests/test_static_check_slot.py
 +++ b/packages/doeff-hy/tests/test_static_check_slot.py
 @@ -9,24 +9,25 @@ ki-26ebd3f636e0・親 ki-aabe38bf85ef)。
@@ -894,7 +972,7 @@ index e0927dbd8..334738f49 100644
  import pytest
 -from doeff_hy import check_slot
 -from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, SlotHeld, take_slot
-+from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, take_slot
++from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, canon_module, take_slot
  from doeff_hy.env_places import cache_home
  
  #: 機体の正本(検の process の home の下 — 検体の home へ写す元)。
@@ -1064,7 +1142,7 @@ index e0927dbd8..334738f49 100644
  
  
  def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) -> None:
-@@ -279,23 +358,58 @@ def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) ->
+@@ -279,23 +358,93 @@ def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) ->
      _interface_canon(tmp_path / "home", "raise OSError('置き場を作れない')")
      out = io.StringIO()
      held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
@@ -1084,14 +1162,24 @@ index e0927dbd8..334738f49 100644
 -        node
 -        for node in ast.walk(tree)
 -        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-+def _width_probe(scene: Scene, *, hand_down: str | None = None, wrapped: bool = True) -> subprocess.CompletedProcess[str]:
-+    """枠の取り手(doeff の take_slot)が答えた幅を stdout に出す子を、正本の命令の包みの中(wrapped)か直に撃つ。
-+    hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検)。"""
++def _width_probe(
++    scene: Scene,
++    env_name: str,
++    *,
++    hand_down: str | None = None,
++    wrapped: bool = True,
++    stale: str | None = None,
++) -> dict[str, object]:
++    """枠の取り手(doeff の take_slot)が答えた幅と、その子が見た幅の env の値を JSON で受ける。子を正本の命令の包みの中
++    (wrapped)か直に撃つ。hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検 — 配る口は正本の
++    公開の定数 env_name)。"""
 +    show = [
 +        sys.executable,
 +        "-c",
-+        "import sys; from pathlib import Path; from doeff_hy.check_slot import take_slot;"
-+        " held = take_slot(Path.home(), 'width-probe', sys.stderr); print(held.width); held.release()",
++        "import json, os, sys; from pathlib import Path; from doeff_hy.check_slot import take_slot;"
++        " held = take_slot(Path.home(), 'width-probe', sys.stderr);"
++        " print(json.dumps({'env': os.environ.get(sys.argv[1]), 'width': held.width})); held.release()",
++        env_name,
      ]
 -    straight = {id(call.args[0]) for call in calls if call.func.attr == "take" and call.args}
 -    asked = [call for call in calls if call.func.attr == "read_policy"]
@@ -1104,36 +1192,61 @@ index e0927dbd8..334738f49 100644
 +        relay = [
 +            sys.executable,
 +            "-c",
-+            "import os, subprocess, sys; env = dict(os.environ, AI_CHECK_SLOT_PROCESSES=sys.argv[1]);"
-+            " sys.exit(subprocess.run(sys.argv[2:], env=env).returncode)",
++            "import os, subprocess, sys; env = dict(os.environ, **{sys.argv[1]: sys.argv[2]});"
++            " sys.exit(subprocess.run(sys.argv[3:], env=env).returncode)",
++            env_name,
 +            hand_down,
 +            *command,
 +        ]
 +        command = [sys.executable, str(scene.canon), "run", "--label", "outer", "--", *relay]
-+    return subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
++    environ = None if stale is None else {**os.environ, env_name: stale}  # 呼び手の前の値(枠を取った入口は上書きされる)
++    done = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False, env=environ)
++    assert done.returncode == 0, done.stderr
++    answer: dict[str, object] = json.loads(done.stdout.strip().splitlines()[-1])
++    return answer
 +
 +
++def _canon_answer(scene: Scene, env_name: str, seen_env: object) -> int:
++    """同じ口を正本の module で直に引いた答え(包みの中の入口 = 持ち物が None・子が見た env の値)— 期待の値を doeff の検に
++    書かず、正本の規則の座に問う(規則や env の名が替わっても、doeff の検は正本の答えとの一致だけを見る)。"""
++    module = canon_module(scene.home, io.StringIO())
++    assert module is not None
++    environ = {} if seen_env is None else {env_name: str(seen_env)}
++    return int(module.process_width(module.read_policy(), None, environ))
++
++
++@pytest.mark.parametrize("processes", [1, 2, 3])
 +def test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_inside_the_wrapper(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, processes: int
 +) -> None:
-+    # 実物の正本: 枠を自分で取る直の入口は宣言の数(2)。命令の包みの中(祖先が枠を持つ — take は None)の入口も、包みが子へ配った
-+    # 宣言の数(2)を受ける。盲検 B の再現 (b): 直前の形は、包みの中で持ち物が None になるので doeff が自分の既定 4 へ落ちた。
-+    scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
-+    if "def process_width" not in CANON.read_text(encoding="utf-8"):
++    # 実物の正本: 枠を自分で取る直の入口は宣言の数(契約: 枠を取った入口は宣言の値)。命令の包みの中(祖先が枠を持つ — take は None)
++    # の入口は、包みが子へ配った値を受けた正本の口の答えと同じ数(期待は正本に問う)で、宣言を越えない。宣言の数を替えるだけで
++    # 従う(コードは変わらない)。
++    scene = _scene(tmp_path, monkeypatch, 60.0, processes=processes)
++    module = canon_module(scene.home, io.StringIO())
++    if module is None or not callable(vars(module).get("process_width")):
 +        pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
-+    direct = _width_probe(scene, wrapped=False)
-+    assert direct.returncode == 0 and direct.stdout.strip() == "2", direct.stderr
-+    inside = _width_probe(scene)
-+    assert inside.returncode == 0 and inside.stdout.strip() == "2", inside.stderr
++    name = module.PROCESSES_ENV
++    direct = _width_probe(scene, name, wrapped=False)
++    assert direct["width"] == processes, direct
++    stale = _width_probe(scene, name, wrapped=False, stale="1")  # 呼び手の前の値は枠の外の値 — 自分で枠を取った入口は宣言の数
++    assert stale["width"] == processes, stale
++    inside = _width_probe(scene, name)
++    assert inside["width"] == _canon_answer(scene, name, inside["env"]), inside
++    assert isinstance(inside["width"], int) and inside["width"] <= processes, inside
 +
 +
 +def test_a_check_inside_the_wrapper_keeps_the_smaller_width_the_outer_entry_handed_down(
 +    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 +) -> None:
-+    # 外側の入口が子へ配った残りの幅(1)は、内側の入口が宣言(2)へ戻さない — 木全体の並走 ≤ 宣言。規則は正本の中にあり、
-+    # doeff は答えをそのまま使う。
++    # 外側の入口が子へ配った残りの幅(1)は、内側の入口が宣言(2)へ戻さない — 木全体の並走 ≤ 宣言(契約: 配った値以下)。内側の入口が
++    # 受ける数は、子が見た値を受けた正本の口の答えと同じで、配られた数を越えない。規則そのものの値は正本の検が持つ。
 +    scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
-+    if "def process_width" not in CANON.read_text(encoding="utf-8"):
++    module = canon_module(scene.home, io.StringIO())
++    if module is None or not callable(vars(module).get("process_width")):
 +        pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
-+    done = _width_probe(scene, hand_down="1")
-+    assert done.returncode == 0 and done.stdout.strip() == "1", done.stderr
++    name = module.PROCESSES_ENV
++    done = _width_probe(scene, name, hand_down="1")
++    assert done["env"] is not None, "外側の入口が配った数が子へ届いていない"
++    assert done["width"] == _canon_answer(scene, name, done["env"]), done
++    assert isinstance(done["width"], int) and done["width"] <= 1, done

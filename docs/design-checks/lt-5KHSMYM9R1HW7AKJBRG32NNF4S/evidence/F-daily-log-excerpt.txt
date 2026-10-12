@@ -1,0 +1,8 @@
+186:  $ UV_CACHE_DIR="${UV_CACHE_DIR:-$HOME/.cache/uv-lanes/gates}" uv run --no-project python $HOME/dotfiles/agent/tests/machine_check_slots.py run --label doeff-lint-whole -- uv run --frozen --project . hy scripts/land_lint_gate.hy --whole-repo --report-out
+192:  [doeff-lint-whole] 所要 46.9 秒
+20655:  [hy-type-trend] 所要 2523.6 秒
+36210:{"verify": "measured", "partition": "agora-controllers", "outcome": "red", "sha": "6aab77d6d61037a175382ddcff7ae091fd8c8a60", "unexecuted": [], "unexecuted_count": 0, "unexecuted_kinds": {}, "stable": null, "note": "ai land verify: 記帳完了(outcome=red・カバレッジ=完全 — 未実行のレイヤー 0)", "refusal
+"name": "hy-type-trend", "outcome": "red", "seconds": 2524
+  $ UV_CACHE_DIR="${UV_CACHE_DIR:-$HOME/.cache/uv-lanes/gates}" uv sync --frozen
+warning: `VIRTUAL_ENV=/work/state/jobs/task_t2885/home/.local/share/daily-verify/verifier/deploy/ledger/runtime/.venv` does not match the project environment path `.venv` and will be ignored; use `--a
+Using CPython 3.14.3+freethreaded

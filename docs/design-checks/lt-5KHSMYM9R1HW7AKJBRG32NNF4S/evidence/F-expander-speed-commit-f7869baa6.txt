@@ -1,0 +1,29 @@
+commit f7869baa6b4b594e5366f935c25d9ae9f27283ff
+doeff-hy-check: 保存から引けない依存の展開を、import の段ごとに子の process で並べる(agora-redesign #3869 の (b))
+
+検める file が import する .hy を 1 本の thread で 1 file ずつ展開していた。import の段の中の file は互いの展開を使わない
+(agora-controllers の 3 file で段は 5〜7 つ・最も広い段は 126 file)ので、project_closure を段ごとに回し:
+- 段の中で保存から引ける file は親で引く。引けない file が 2 つ以上の段だけ、子の process の pool(forkserver・数 =
+  min(EXPANDER_LIMIT 8, この process が使える CPU の数))に渡す。1 つなら親で展開する。
+- pool は初めて要る時に起こし、1 回の実行の中で段をまたいで使い回す。全部引ける実行では起こさない。
+- 保存への書きは親の 1 か所(_kept)。子は書かない。
+- 子が答えを返さずに落ちたら、答えの無い file を名指す ExpansionWorkerLostError(RuntimeError の下 — main は exit 2)。
+展開の文の gensym の名は前の commit で file の中の順に振り直してあるので、並べても直列と同じ文になる。
+
+前後の数(zeus・agora-controllers 94f438161 の 3 file・doeff-hy-check を gate と同じ引数で・秒・直す前 = main の doeff-hy):
+- 保存が空の時(交互に 2 回ずつ): intake_router 17.2・38.2 → 16.4・19.6 / system 31.8・28.2 → 16.8・18.1 /
+  test_emulated_policy_birth 81.0・70.0 → 25.0・(56.6)・23.8・22.2(括弧は 1 回だけの外れ)。
+- 展開だけ(pyright を含まない・同じ版で並べる数の上限だけを替える): test_emulated_policy_birth 上限 1 = 55.8・55.9 /
+  上限 8 = 17.6・18.4。
+- 保存が効く時: 直す前 3.6・13.3 / 5.4・5.8 / 7.5・6.8 → 直した後 3.8・3.9 / 6.8・3.9 / 9.9・7.0(load 10〜28 の揺れの中で並ぶ)。
+
+失敗ケース: packages/doeff-hy/tests/test_static_check_parallel.py — 並べた結果(展開の文・位置の対応・所見・失敗の一覧)が
+直列と同じ・展開に失敗する file が在っても同じ段の他の file の結果が揃う・子が落ちたら file を名指して止まる・全部引ける
+実行では pool を起こさない(直す前は、並べる数の引数と落ちた子を名指す例外が無く 4 本とも赤)。
+
+確かめ: pytest packages/doeff-hy/tests/test_static_check_parallel.py test_static_cache.py test_static_check_baseline.py
+test_static_check_sibling_imports.py test_static_check.py(48 passed)・code-quality --scope changed(passed)。
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Refs: proboscis/agora-redesign#3869
+
