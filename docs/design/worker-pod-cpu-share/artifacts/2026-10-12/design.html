@@ -1,0 +1,347 @@
+<!doctype html>
+<!--
+  議論のページの雛形 = agora の部品の組の資料の殻(契約の版 1 — card acp:kanban-issue:ki-722e1b0f0376・殻の形の定義元は agora の
+  packages/kit/src/doc.tsx の頭の註・card ki-9cef9cba40fe)。見た目(色・字体・明暗・表・見出し)は全部 /libs/kit/kit.css と kit.js が持ち、
+  この雛形は書かない。body の印には build_page.py が本文の markdown の要素と図の template を入れる。
+  図の SVG の色は部品の組の色の変数で当てる(hex を直に書かない — 明るい表示でも暗い表示でも読める):
+    文字 var(--kit-text) / var(--kit-text-body) / var(--kit-text-muted) / var(--kit-text-faint)
+    色   var(--kit-violet) / var(--kit-teal) / var(--kit-teal-bright)
+    面   var(--kit-row) / var(--kit-row-on) / var(--kit-surface)   線 var(--kit-row-edge) / var(--kit-surface-edge)
+  描くのは agora の画面の中(/libs/kit/ に届く所)だけ。file を落として手元で開くと部品の組に届かず本文が出ない。
+-->
+<html lang="ja" data-kit-contract="1">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>worker の Pod の中の service と会話の CPU の分け方</title>
+<link rel="stylesheet" href="/libs/kit/kit.css">
+<script src="/libs/kit/kit.js"></script>
+</head>
+<body>
+<script type="text/markdown" data-kit-doc>
+# worker の Pod の中の service と会話の CPU の分け方
+2026-10-12 ・ card ki-757b489f8a14(設計の card)で比べた案・選んだ形・測りを 1 ページにまとめる
+
+## この文書は何か
+
+### 何の話か
+zeus の worker の Pod の中では、動き続ける service(turn-host・agora-records・agora-record ほか)と、会話の claude の本体と、会話が走らせる命令が、1 つの cgroup を分け合っている。機体が満ちた刻(load 100 以上)に、service は CPU を 58〜82% の割合で待ち、手番と記録の道が遅れていた。この card は、service の CPU の取り分が会話の仕事の本数で決まらない形を、doeff-cluster の worker の中で決める設計の card。このページは、比べた案・選んだ形・その根拠の測りを、card を読まずに分かる形で置く。
+
+### ここまでにしたこと
+1. Pod の中の thread を scheduling の類(service・会話の本体・束の仕事・SCHED_IDLE)ごとに分け、20 秒の窓で CPU の待ちを測った(67 窓と個別の窓)。
+2. 機体の cgroup(Pod の外)の CPU と PSI を node-exporter の Pod から読んだ。
+3. 候補 3 つ(子の cgroup・claude の nice・短い slice)のうち試せる物を試した(短い slice は本物の service に掛けて外す A/B)。
+4. 束の仕事(実行環境の準備と long-command の命令)を SCHED_IDLE にする変更を main に入れた(doeff 811234f1・agora-controllers c429237c)。
+
+### 今どこにいるか
+案の比較と選択・2 つの変更の着地・long-command の分の配備の頼み(列の r243)まで終わった。準備の分は次の worker の版上げで効き、入れた後の満ちた刻の測り(受入の条 2)はまだ。
+
+### 決めてほしいこと
+| 決めること | 選択肢 | 推奨と理由 |
+|---|---|---|
+| 受入の条 2 の「入れた後」の測り方 | A: 案 4 が効いた後の満ちた刻で 1 回測る / B: Pod の外の上限(card ki-28d9)の前と後も同じ列で測る | B ★ — 主因が Pod の外なので、混ぜると案 4 の効きが読めない |
+| 機体の build の段の抑え方(card ki-28d9 の判断) | 重み(今 20)のまま / CPUQuota で上限を掛ける | 上限 ★ — 重み 20 のまま 10〜11 core を取り、Pod の service を待たせた |
+
+### 読む順番
+結論 → 図 1 → 比べた案 → 図 2 → 測り → まだ分かっていないこと
+
+## 結論
+- 束の仕事(会話の Bash の命令・long-command の命令・実行環境の準備)を SCHED_IDLE に揃えた。service の取り分は束を何本並べても変わらない。
+- 満ちた刻の service の待ちの主因は Pod の外の CPU を食う群で、cgroup の重みでは止まらない。上限で抑える(card ki-28d9・ki-11b9)。
+- 子の cgroup・claude の nice・短い slice は採らない(効きが小さいか揺れの内で、worker の作り直しや会話の速さの決定に当たる)。
+
+## 語の説明
+- **service** = worker の Pod の中で動き続ける job(turn-host・記録・画面ほか)
+- **束の仕事** = 終わりまで走れば良い計算(テスト・型の検査・bytecode の焼き)
+- **SCHED_IDLE** = Linux の一番低い scheduling の類。ふつうの類の thread が起きると必ず譲り、重みも 3 しかない
+- **CPU の待ち** = 走れるのに CPU を待った時間 ÷(走った時間 + 待った時間)。thread ごとの /proc の schedstat の差から出す
+- **PSI** = cgroup の中の仕事が 1 つ以上 CPU を待っていた時間の割合(cpu.pressure の some)
+- **重みと上限** = 重み(cpu.weight)は兄弟の cgroup の間の取り分の比、上限(cpu.max)は使える core の数そのもの
+
+## 構成 — 今と目標
+目標で変えたのは、Pod の中の束の仕事 2 つ(long-command の命令・実行環境の準備)の類だけ。service と会話の本体は今のまま。Pod の外の群は別の card で上限を掛ける。
+
+```図 fig-1
+題: zeus の CPU の分け方(左 = 今・右 = 目標)。変えたのは Pod の中の束の仕事 2 つの類だけ
+見せること: 機体の cgroup の木の上に、worker の Pod の中の 5 つの仕事の類を並べ、今と目標で何が変わるかを見せる
+使う数字: 機体 36 core / 機体の根の兄弟 = kubepods.slice 重み 1407・system.slice 重み 1000・user.slice 重み 100(上限 16 core)・imagebuild.slice 重み 20(BuildKit の build の段・満ちた刻に 10〜11 core) / kubepods.slice の下に worker の Pod doeff-worker-zeus(重み 157・1 つの cgroup)/ Pod の中の 5 つ: service(SCHED_OTHER・nice 0・今のまま)・会話の claude の本体と hook(SCHED_OTHER・nice 0・今のまま)・会話の Bash の命令(SCHED_IDLE・ki-bb74 で済み)・long-command の命令(今 SCHED_OTHER nice 10 → 目標 SCHED_IDLE)・実行環境の準備と焼き(今 SCHED_OTHER nice 10・最大 31 本 → 目標 SCHED_IDLE)/ Pod の外の 2 つに「上限を掛ける(card ki-28d9・ki-11b9)」の札
+形: 左右 2 枚の同じ配置の図。上に機体の根、その下に 4 つの slice の箱を横に並べ、kubepods.slice の箱の中に worker の Pod の箱、その中に 5 つの類の箱を縦に並べる。右の図では変わる 2 つの箱だけ色を変え、imagebuild.slice と user.slice に上限の札を付ける
+```
+
+*図 1 ・ zeus の CPU の分け方(左 = 今・右 = 目標)。変えたのは Pod の中の束の仕事 2 つの類だけ*
+
+## 比べた案
+| 案 | 要る物 | 効き(測った・読んだ) | 判定 |
+|---|---|---|---|
+| 1 子の cgroup(service と会話を別の子に入れ、重みを付ける) | cgroup を書ける容器(zeus の containerd 2.0.5 では特権なしだと読むだけ・2.1 の cgroup_writable か privileged が要る)・root の起動の段・worker の雛形の変更と Pod の作り直し・doeff-cluster の job に類の欄 | Pod の中の重みのうち service の分は 0.58〜0.82 で、service の待ちとの相関は −0.13(67 窓)。Pod の外の群には効かない | 採らない — worker の雛形は「very static」、版上げで worker の Pod を作り直さない決まりがある |
+| 2 会話の claude の本体の nice を上げる | 本体を起こす所 1 か所(特権は要らない) | 本体の走れる本数は 0.6〜3.7(平均 1.6)。下げた process は戻せない | 採らない — 利用者の決定「zeus は会話の速さを一番にする」に当たる |
+| 3 service に短い slice(EEVDF の custom slice) | sched_setattr(特権なしで掛かり、0 で戻ると確かめた) | 本物の service に掛けて外す A/B で 28.2% → 22.0%・15.9% → 15.6%・ABBA 8 窓で差なし。probe でも差なし | 採らない — 効きが揺れの内 |
+| **4 束の仕事を SCHED_IDLE にする** | 命令の頭(chrt)2 か所 | 準備の焼き 31.5 本・19.7 core の窓だけ service の待ちが 59%、前後の窓は 15〜16% | **採った** — 会話の Bash の命令と同じ類で筋が通る |
+| (外した)別の Pod・役ごとの worker | — | — | 利用者の決定「agora は doeff-cluster の上だけで動く・専用の Pod を持たない」 |
+
+## 測り — 満ちた刻の待ちの主因は Pod の外
+Pod の外が 8 core 以上を使った窓と、それ未満の窓で、service の待ちの平均が 3 倍違った。Pod の中の重みの分け方とは相関が無かった。
+
+```図 fig-2
+題: service の和の CPU の待ち(平均)を、窓の条件ごとに比べる
+見せること: Pod の外の CPU が多い窓ほど service が待つこと、Pod の中の束の山でも上がること
+使う数字: Pod の外 8 core 未満の窓(17 窓)= 6% / Pod の外 8 core 以上の窓(50 窓)= 19% / 準備の焼きの山の窓(1 窓・nice 10 が 31.5 本)= 59% / この card の所見(load 103〜141)= agora-record 58〜82%
+形: 横棒 4 本。長さが % に比例。4 本目は 58〜82% の範囲を幅で描く
+```
+
+*図 2 ・ service の和の CPU の待ち(平均)を、窓の条件ごとに比べる*
+
+| 測り | 窓 | 値 |
+|---|---|---|
+| Pod の外と service の待ち | 14:35〜14:58 JST・20 秒 × 67 | 外 8 core 以上: 平均 19%(agora-record 40〜75%)/ 8 core 未満: 平均 6%。相関: 外の core +0.78・会話の本体の本数 +0.53・Pod の中の重みの service の分 −0.13 |
+| 重み 20 の Pod の外の群 | 14:47〜14:48 JST・15 秒 × 3 | imagebuild.slice 10.0〜11.1 core・PSI 2.2〜5.4% / worker の Pod 16.7〜18.3 core・PSI 11.3〜18.2% |
+| Pod の中の束の山 | 14:28 JST・20 秒 | nice 10 の焼き 31.5 本・19.7 core。service の和 59%(turn-host 58%・agora-records 77%・agora-record 89%)。前後の窓は 15〜16% |
+| 準備の刻と所見の窓 | 11:03〜11:51 JST | 準備の終わりが 9 回。この card の所見の窓(11:16〜11:26)と重なる |
+| 重みと待ち(自分の probe) | load 88〜92 | nice 10: 43%・21% / nice 19: 51%・22% / SCHED_IDLE: 69%・42% |
+| 起きた時の押しのけ | 1 つの CPU に固定・load 42〜56 | nice 10 の probe は nice 19 や SCHED_IDLE の回り続ける相手を 10〜40 μs で押しのけた |
+
+## 既存の決定との突き合わせ
+- 専用の worker の Pod を持たない(agora の webapp の ADR・2026-10-09 の利用者の決定)— Pod を足していない。
+- doeff-cluster の job の入口は handler を足さない・service と task は同じ API(ADR-DOE-CLUSTER-001 の R2・R3)— 入口と API に触れていない。変えたのは準備の process と long-command の命令の起こし方だけ。
+- 版上げで worker の Pod を作り直さない(agora の defadr_0010 の law)— 準備の変更は次の worker の版上げに乗せ、作り直しは頼まない。long-command の変更は会話の宣言し直しで乗る。
+
+## 入れた物と効く時
+| 変更 | 着地 | 効く時 |
+|---|---|---|
+| 実行環境の準備を Linux では `chrt --idle 0 nice -n 10` で起こす(macOS の worker は nice だけ) | doeff L2195・811234f1 | zeus の worker がこの版以降の doeff で起きた後(14:29 JST から入れ替わっている worker はこの前の版) |
+| long-command の命令を同じ形で起こす | agora-controllers L6406・c429237c | 配備の列 r243(turn-host 3 つと道具の配り)の後 |
+
+## まだ分かっていないこと
+- 重み 20 の群がなぜ重み 1407 の kubepods より先に CPU を取れるのか。CPU ごとに重みを配る仕組みで、SCHED_IDLE の多い kubepods の重みが薄い CPU を外の群が取るという読みは、kernel の trace が無く確かめていない。
+- 案 4 の満ちた刻での効き。準備の山と満ちた刻が重なる回を、入れた後に待って測る。
+- 会話の本体の本数との相関 +0.53 は、機体の混みと一緒に動く分を含む。会話の本体を下げる案 2 を考え直すのは、外の上限が入った後も、外が 8 core 未満の窓で service が待つと分かった時。
+</script>
+<template data-kit-figure="fig-1"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 572" role="img" aria-label="zeus の CPU の分け方。左が今、右が目標。変えたのは worker の Pod の中の束の仕事 2 つ(long-command の命令・実行環境の準備と焼き)を SCHED_IDLE にすることだけ。Pod の外の user.slice と imagebuild.slice には上限を掛ける">
+  <!-- 左右の仕切り -->
+  <line x1="500" y1="6" x2="500" y2="522" stroke="var(--kit-row-edge)" stroke-width="1" stroke-dasharray="4 4"/>
+
+  <!-- ===================== 左 = 今 ===================== -->
+  <g>
+    <text x="0" y="20" font-size="15" font-weight="700" fill="var(--kit-text)">今</text>
+
+    <!-- 機体の根 -->
+    <rect x="112" y="34" width="260" height="32" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="242" y="55" font-size="14" font-weight="600" text-anchor="middle" fill="var(--kit-text)">zeus の機体の根(36 core)</text>
+
+    <!-- 木の線 -->
+    <g stroke="var(--kit-text-faint)" stroke-width="1.5" fill="none">
+      <path d="M242 66 V80"/>
+      <path d="M145 80 H299"/>
+      <path d="M145 80 V94"/>
+      <path d="M299 80 V249"/>
+      <path d="M299 117 H308"/>
+      <path d="M299 173 H308"/>
+      <path d="M299 249 H308"/>
+    </g>
+
+    <!-- kubepods.slice -->
+    <rect x="0" y="94" width="290" height="424" rx="8" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="12" y="114" font-size="14" font-weight="600" fill="var(--kit-text)">kubepods.slice</text>
+    <text x="278" y="114" font-size="13" text-anchor="end" fill="var(--kit-text-muted)">重み 1407</text>
+
+    <!-- worker の Pod -->
+    <rect x="10" y="126" width="270" height="382" rx="6" fill="var(--kit-row)" stroke="var(--kit-row-edge)" stroke-width="1.5"/>
+    <text x="22" y="146" font-size="13.5" font-weight="600" fill="var(--kit-text)">worker の Pod doeff-worker-zeus</text>
+    <text x="22" y="164" font-size="12.5" fill="var(--kit-text-muted)">重み 157・1 つの cgroup</text>
+
+    <!-- 5 つの類 -->
+    <rect x="20" y="176" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="198" font-size="14" font-weight="600" fill="var(--kit-text)">service</text>
+    <text x="32" y="221" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+
+    <rect x="20" y="242" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="264" font-size="14" font-weight="600" fill="var(--kit-text)">会話の claude の本体と hook</text>
+    <text x="32" y="287" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+
+    <rect x="20" y="308" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="330" font-size="14" font-weight="600" fill="var(--kit-text)">会話の Bash の命令</text>
+    <text x="32" y="353" font-size="13" fill="var(--kit-text-muted)">SCHED_IDLE</text>
+    <rect x="156" y="339" width="104" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="208" y="353" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">ki-bb74 で済み</text>
+
+    <rect x="20" y="374" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="396" font-size="14" font-weight="600" fill="var(--kit-text)">long-command の命令</text>
+    <text x="32" y="419" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 10</text>
+
+    <rect x="20" y="440" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="462" font-size="14" font-weight="600" fill="var(--kit-text)">実行環境の準備と焼き</text>
+    <text x="32" y="485" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 10</text>
+    <rect x="194" y="471" width="68" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="228" y="485" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">最大 31 本</text>
+
+    <!-- Pod の外の slice -->
+    <rect x="308" y="94" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="113" font-size="14" font-weight="600" fill="var(--kit-text)">system.slice</text>
+    <text x="320" y="131" font-size="13" fill="var(--kit-text-muted)">重み 1000</text>
+
+    <rect x="308" y="150" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="169" font-size="14" font-weight="600" fill="var(--kit-text)">user.slice</text>
+    <text x="320" y="187" font-size="13" fill="var(--kit-text-muted)">重み 100・上限 16 core</text>
+
+    <rect x="308" y="206" width="177" height="86" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="225" font-size="14" font-weight="600" fill="var(--kit-text)">imagebuild.slice</text>
+    <text x="320" y="243" font-size="13" fill="var(--kit-text-muted)">重み 20</text>
+    <text x="320" y="262" font-size="12.5" fill="var(--kit-text-muted)">BuildKit の build の段</text>
+    <text x="320" y="280" font-size="12.5" font-weight="600" fill="var(--kit-text-body)">満ちた刻に 10〜11 core</text>
+  </g>
+
+  <!-- ===================== 右 = 目標 ===================== -->
+  <g transform="translate(515 0)">
+    <text x="0" y="20" font-size="15" font-weight="700" fill="var(--kit-text)">目標</text>
+
+    <!-- 機体の根 -->
+    <rect x="112" y="34" width="260" height="32" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="242" y="55" font-size="14" font-weight="600" text-anchor="middle" fill="var(--kit-text)">zeus の機体の根(36 core)</text>
+
+    <!-- 木の線 -->
+    <g stroke="var(--kit-text-faint)" stroke-width="1.5" fill="none">
+      <path d="M242 66 V80"/>
+      <path d="M145 80 H299"/>
+      <path d="M145 80 V94"/>
+      <path d="M299 80 V249"/>
+      <path d="M299 117 H308"/>
+      <path d="M299 173 H308"/>
+      <path d="M299 249 H308"/>
+    </g>
+
+    <!-- kubepods.slice -->
+    <rect x="0" y="94" width="290" height="424" rx="8" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="12" y="114" font-size="14" font-weight="600" fill="var(--kit-text)">kubepods.slice</text>
+    <text x="278" y="114" font-size="13" text-anchor="end" fill="var(--kit-text-muted)">重み 1407</text>
+
+    <!-- worker の Pod -->
+    <rect x="10" y="126" width="270" height="382" rx="6" fill="var(--kit-row)" stroke="var(--kit-row-edge)" stroke-width="1.5"/>
+    <text x="22" y="146" font-size="13.5" font-weight="600" fill="var(--kit-text)">worker の Pod doeff-worker-zeus</text>
+    <text x="22" y="164" font-size="12.5" fill="var(--kit-text-muted)">重み 157・1 つの cgroup</text>
+
+    <!-- 5 つの類 -->
+    <rect x="20" y="176" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="198" font-size="14" font-weight="600" fill="var(--kit-text)">service</text>
+    <text x="32" y="221" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+    <rect x="196" y="207" width="64" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="228" y="221" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">今のまま</text>
+
+    <rect x="20" y="242" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="264" font-size="14" font-weight="600" fill="var(--kit-text)">会話の claude の本体と hook</text>
+    <text x="32" y="287" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+    <rect x="196" y="273" width="64" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="228" y="287" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">今のまま</text>
+
+    <rect x="20" y="308" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="330" font-size="14" font-weight="600" fill="var(--kit-text)">会話の Bash の命令</text>
+    <text x="32" y="353" font-size="13" fill="var(--kit-text-muted)">SCHED_IDLE</text>
+    <rect x="156" y="339" width="104" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="208" y="353" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">ki-bb74 で済み</text>
+
+    <!-- 変える 2 つ -->
+    <rect x="20" y="374" width="250" height="58" rx="5" fill="var(--kit-row-on)" stroke="var(--kit-violet)" stroke-width="2.5"/>
+    <text x="32" y="396" font-size="14" font-weight="600" fill="var(--kit-text)">long-command の命令</text>
+    <text x="32" y="419" font-size="13.5" font-weight="700" fill="var(--kit-violet)">SCHED_IDLE</text>
+    <rect x="204" y="405" width="56" height="20" rx="10" fill="none" stroke="var(--kit-violet)" stroke-width="1.5"/>
+    <text x="232" y="419" font-size="12" font-weight="600" text-anchor="middle" fill="var(--kit-violet)">変えた</text>
+
+    <rect x="20" y="440" width="250" height="58" rx="5" fill="var(--kit-row-on)" stroke="var(--kit-violet)" stroke-width="2.5"/>
+    <text x="32" y="462" font-size="14" font-weight="600" fill="var(--kit-text)">実行環境の準備と焼き</text>
+    <text x="32" y="485" font-size="13.5" font-weight="700" fill="var(--kit-violet)">SCHED_IDLE</text>
+    <rect x="130" y="471" width="68" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="164" y="485" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">最大 31 本</text>
+    <rect x="204" y="471" width="56" height="20" rx="10" fill="none" stroke="var(--kit-violet)" stroke-width="1.5"/>
+    <text x="232" y="485" font-size="12" font-weight="600" text-anchor="middle" fill="var(--kit-violet)">変えた</text>
+
+    <!-- Pod の外の slice -->
+    <rect x="308" y="94" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="113" font-size="14" font-weight="600" fill="var(--kit-text)">system.slice</text>
+    <text x="320" y="131" font-size="13" fill="var(--kit-text-muted)">重み 1000</text>
+
+    <rect x="308" y="150" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="320" y="169" font-size="14" font-weight="600" fill="var(--kit-text)">user.slice</text>
+    <text x="320" y="187" font-size="13" fill="var(--kit-text-muted)">重み 100・上限 16 core</text>
+
+    <rect x="308" y="206" width="177" height="86" rx="6" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="320" y="225" font-size="14" font-weight="600" fill="var(--kit-text)">imagebuild.slice</text>
+    <text x="320" y="243" font-size="13" fill="var(--kit-text-muted)">重み 20</text>
+    <text x="320" y="262" font-size="12.5" fill="var(--kit-text-muted)">BuildKit の build の段</text>
+    <text x="320" y="280" font-size="12.5" font-weight="600" fill="var(--kit-text-body)">満ちた刻に 10〜11 core</text>
+
+    <!-- 上限の札 -->
+    <path d="M396 292 V304" stroke="var(--kit-teal)" stroke-width="2" fill="none"/>
+    <rect x="308" y="304" width="177" height="48" rx="6" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2"/>
+    <text x="396" y="324" font-size="14" font-weight="700" text-anchor="middle" fill="var(--kit-teal)">2 つに上限を掛ける</text>
+    <text x="396" y="342" font-size="12.5" text-anchor="middle" fill="var(--kit-text-muted)">card ki-28d9・ki-11b9</text>
+  </g>
+
+  <!-- 凡例 -->
+  <g>
+    <rect x="0" y="542" width="28" height="18" rx="4" fill="var(--kit-row-on)" stroke="var(--kit-violet)" stroke-width="2.5"/>
+    <text x="38" y="556" font-size="13" fill="var(--kit-text-body)">目標で変えた 2 つ(束の仕事を SCHED_IDLE に)</text>
+    <rect x="515" y="542" width="28" height="18" rx="4" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="553" y="556" font-size="13" fill="var(--kit-text-body)">上限を掛ける Pod の外の群(別の card)</text>
+  </g>
+</svg></template>
+<template data-kit-figure="fig-2"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" role="img" aria-label="service の和の CPU の待ち(平均)。Pod の外 8 core 未満の窓 6%、8 core 以上の窓 19%、準備の焼きの山の窓 59%、この card の所見の agora-record 58〜82%">
+  <!-- 目盛りの線 -->
+  <g stroke="var(--kit-row-edge)" stroke-width="1">
+    <line x1="470" y1="14" x2="470" y2="240"/>
+    <line x1="610" y1="14" x2="610" y2="240"/>
+    <line x1="750" y1="14" x2="750" y2="240"/>
+    <line x1="890" y1="14" x2="890" y2="240"/>
+  </g>
+  <line x1="330" y1="14" x2="330" y2="240" stroke="var(--kit-text-faint)" stroke-width="1.5"/>
+  <g font-size="12" fill="var(--kit-text-muted)" text-anchor="middle">
+    <text x="330" y="258">0%</text>
+    <text x="470" y="258">25%</text>
+    <text x="610" y="258">50%</text>
+    <text x="750" y="258">75%</text>
+    <text x="890" y="258">100%</text>
+  </g>
+  <text x="890" y="280" font-size="12.5" text-anchor="end" fill="var(--kit-text-muted)">CPU の待ち</text>
+
+  <!-- 行の名 -->
+  <g text-anchor="end">
+    <text x="314" y="39" font-size="14" font-weight="600" fill="var(--kit-text)">Pod の外 8 core 未満の窓</text>
+    <text x="314" y="57" font-size="12.5" fill="var(--kit-text-muted)">17 窓</text>
+
+    <text x="314" y="97" font-size="14" font-weight="600" fill="var(--kit-text)">Pod の外 8 core 以上の窓</text>
+    <text x="314" y="115" font-size="12.5" fill="var(--kit-text-muted)">50 窓</text>
+
+    <text x="314" y="155" font-size="14" font-weight="600" fill="var(--kit-text)">準備の焼きの山の窓</text>
+    <text x="314" y="173" font-size="12.5" fill="var(--kit-text-muted)">1 窓・nice 10 が 31.5 本</text>
+
+    <text x="314" y="213" font-size="14" font-weight="600" fill="var(--kit-text)">この card の所見</text>
+    <text x="314" y="231" font-size="12.5" fill="var(--kit-text-muted)">load 103〜141・agora-record</text>
+  </g>
+
+  <!-- 棒(service の和の平均) -->
+  <rect x="330" y="28" width="33.6" height="28" rx="3" fill="var(--kit-violet)"/>
+  <rect x="330" y="86" width="106.4" height="28" rx="3" fill="var(--kit-violet)"/>
+  <rect x="330" y="144" width="330.4" height="28" rx="3" fill="var(--kit-violet)"/>
+
+  <!-- 範囲(agora-record 58〜82%) -->
+  <line x1="330" y1="216" x2="654.8" y2="216" stroke="var(--kit-row-edge)" stroke-width="1.5" stroke-dasharray="3 4"/>
+  <rect x="654.8" y="202" width="134.4" height="28" rx="3" fill="var(--kit-teal)"/>
+
+  <!-- 値 -->
+  <g font-size="14" font-weight="700" fill="var(--kit-text)">
+    <text x="371.6" y="47">6%</text>
+    <text x="444.4" y="105">19%</text>
+    <text x="668.4" y="163">59%</text>
+    <text x="797.2" y="221">58〜82%</text>
+  </g>
+
+  <!-- 3 倍の括り -->
+  <path d="M492 42 H502 V100 H492" stroke="var(--kit-text-muted)" stroke-width="1.5" fill="none"/>
+  <text x="510" y="76" font-size="13.5" font-weight="600" fill="var(--kit-text-body)">3 倍</text>
+
+  <!-- 凡例 -->
+  <rect x="0" y="270" width="16" height="12" rx="2" fill="var(--kit-violet)"/>
+  <text x="22" y="281" font-size="12.5" fill="var(--kit-text-body)">service の和(平均)</text>
+  <rect x="170" y="270" width="16" height="12" rx="2" fill="var(--kit-teal)"/>
+  <text x="192" y="281" font-size="12.5" fill="var(--kit-text-body)">agora-record(範囲)</text>
+</svg></template>
+</body>
+</html>

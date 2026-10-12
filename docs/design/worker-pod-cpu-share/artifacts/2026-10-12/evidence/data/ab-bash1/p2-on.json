@@ -1,0 +1,587 @@
+{
+ "at_utc": "2026-10-12T05:14:25Z",
+ "window_s": 31.3,
+ "loadavg_before": [
+  "86.17",
+  "79.15",
+  "70.08"
+ ],
+ "loadavg_after": [
+  "80.72",
+  "78.61",
+  "70.24"
+ ],
+ "pod_cpu_cores": 20.37,
+ "bash_child_policies": {
+  "SCHED_IDLE": 190
+ },
+ "rows": [
+  {
+   "group": "会話の Bash の子",
+   "cpu_s": 198.4,
+   "wait_s": 99.1,
+   "wait_ratio": 0.333,
+   "threads": 400
+  },
+  {
+   "group": "その他",
+   "cpu_s": 67.9,
+   "wait_s": 26.6,
+   "wait_ratio": 0.282,
+   "threads": 490
+  },
+  {
+   "group": "turn-host-zeus",
+   "cpu_s": 40.7,
+   "wait_s": 8.9,
+   "wait_ratio": 0.179,
+   "threads": 368
+  },
+  {
+   "group": "会話の claude の本体",
+   "cpu_s": 23.1,
+   "wait_s": 26.1,
+   "wait_ratio": 0.53,
+   "threads": 1179
+  },
+  {
+   "group": "agora-records-twin",
+   "cpu_s": 32.9,
+   "wait_s": 10.0,
+   "wait_ratio": 0.233,
+   "threads": 22
+  },
+  {
+   "group": "agora-screen",
+   "cpu_s": 36.5,
+   "wait_s": 3.2,
+   "wait_ratio": 0.08,
+   "threads": 39
+  },
+  {
+   "group": "hook・MCP",
+   "cpu_s": 0.1,
+   "wait_s": 21.1,
+   "wait_ratio": 0.997,
+   "threads": 132
+  },
+  {
+   "group": "agora-messaging",
+   "cpu_s": 13.7,
+   "wait_s": 3.4,
+   "wait_ratio": 0.197,
+   "threads": 16
+  },
+  {
+   "group": "deliver",
+   "cpu_s": 10.8,
+   "wait_s": 1.6,
+   "wait_ratio": 0.131,
+   "threads": 8
+  },
+  {
+   "group": "kanban-writes",
+   "cpu_s": 11.7,
+   "wait_s": 0.5,
+   "wait_ratio": 0.042,
+   "threads": 20
+  },
+  {
+   "group": "agora-records",
+   "cpu_s": 5.4,
+   "wait_s": 2.4,
+   "wait_ratio": 0.303,
+   "threads": 22
+  },
+  {
+   "group": "turn-dispatcher",
+   "cpu_s": 5.9,
+   "wait_s": 0.2,
+   "wait_ratio": 0.028,
+   "threads": 9
+  },
+  {
+   "group": "agora-kanban",
+   "cpu_s": 5.5,
+   "wait_s": 0.2,
+   "wait_ratio": 0.033,
+   "threads": 12
+  },
+  {
+   "group": "merge-queue-controller",
+   "cpu_s": 4.5,
+   "wait_s": 0.1,
+   "wait_ratio": 0.03,
+   "threads": 8
+  },
+  {
+   "group": "agora-custody",
+   "cpu_s": 2.5,
+   "wait_s": 0.2,
+   "wait_ratio": 0.082,
+   "threads": 10
+  },
+  {
+   "group": "agora-record",
+   "cpu_s": 1.0,
+   "wait_s": 0.8,
+   "wait_ratio": 0.431,
+   "threads": 13
+  },
+  {
+   "group": "merge-queue-ledger",
+   "cpu_s": 0.9,
+   "wait_s": 0.5,
+   "wait_ratio": 0.357,
+   "threads": 19
+  },
+  {
+   "group": "merge-queue-land",
+   "cpu_s": 0.6,
+   "wait_s": 0.3,
+   "wait_ratio": 0.343,
+   "threads": 12
+  },
+  {
+   "group": "long-command の task",
+   "cpu_s": 0.1,
+   "wait_s": 0.5,
+   "wait_ratio": 0.87,
+   "threads": 18
+  },
+  {
+   "group": "agent-toolset-sync",
+   "cpu_s": 0.3,
+   "wait_s": 0.2,
+   "wait_ratio": 0.307,
+   "threads": 9
+  },
+  {
+   "group": "agora-webapp",
+   "cpu_s": 0.3,
+   "wait_s": 0.1,
+   "wait_ratio": 0.321,
+   "threads": 10
+  },
+  {
+   "group": "turn-answer",
+   "cpu_s": 0.3,
+   "wait_s": 0.0,
+   "wait_ratio": 0.101,
+   "threads": 9
+  },
+  {
+   "group": "route",
+   "cpu_s": 0.2,
+   "wait_s": 0.1,
+   "wait_ratio": 0.324,
+   "threads": 10
+  },
+  {
+   "group": "turn-attend",
+   "cpu_s": 0.3,
+   "wait_s": 0.0,
+   "wait_ratio": 0.122,
+   "threads": 9
+  },
+  {
+   "group": "conversation-inputs",
+   "cpu_s": 0.2,
+   "wait_s": 0.1,
+   "wait_ratio": 0.366,
+   "threads": 15
+  },
+  {
+   "group": "agora-voice",
+   "cpu_s": 0.1,
+   "wait_s": 0.0,
+   "wait_ratio": 0.37,
+   "threads": 10
+  },
+  {
+   "group": "node-boot-facts-zeus",
+   "cpu_s": 0.1,
+   "wait_s": 0.0,
+   "wait_ratio": 0.027,
+   "threads": 10
+  },
+  {
+   "group": "turn-agent-keeper",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "wait_ratio": 0.24,
+   "threads": 9
+  },
+  {
+   "group": "daily-log-reads",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "wait_ratio": 0.236,
+   "threads": 9
+  },
+  {
+   "group": "agora-artifact-store",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "wait_ratio": 0.011,
+   "threads": 9
+  },
+  {
+   "group": "daily-verify",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "wait_ratio": 0.146,
+   "threads": 7
+  }
+ ],
+ "detail": [
+  {
+   "key": "会話の Bash の子/SCHED_IDLE/10",
+   "cpu_s": 198.44,
+   "wait_s": 99.11,
+   "threads": 400
+  },
+  {
+   "key": "turn-host-zeus/SCHED_OTHER/0",
+   "cpu_s": 40.66,
+   "wait_s": 8.88,
+   "threads": 368
+  },
+  {
+   "key": "会話の claude の本体/SCHED_OTHER/0",
+   "cpu_s": 23.13,
+   "wait_s": 26.11,
+   "threads": 1179
+  },
+  {
+   "key": "agora-records-twin/SCHED_OTHER/0",
+   "cpu_s": 32.92,
+   "wait_s": 9.99,
+   "threads": 22
+  },
+  {
+   "key": "agora-screen/SCHED_OTHER/0",
+   "cpu_s": 36.52,
+   "wait_s": 3.19,
+   "threads": 39
+  },
+  {
+   "key": "その他:python/SCHED_IDLE/10",
+   "cpu_s": 24.63,
+   "wait_s": 5.92,
+   "threads": 1
+  },
+  {
+   "key": "その他:pytest/SCHED_OTHER/10",
+   "cpu_s": 29.13,
+   "wait_s": 1.26,
+   "threads": 1
+  },
+  {
+   "key": "hook・MCP:tee/SCHED_IDLE/0",
+   "cpu_s": 0.02,
+   "wait_s": 21.1,
+   "threads": 66
+  },
+  {
+   "key": "agora-messaging/SCHED_OTHER/0",
+   "cpu_s": 13.67,
+   "wait_s": 3.36,
+   "threads": 16
+  },
+  {
+   "key": "その他:MainThread/SCHED_IDLE/10",
+   "cpu_s": 4.53,
+   "wait_s": 9.3,
+   "threads": 212
+  },
+  {
+   "key": "deliver/SCHED_OTHER/0",
+   "cpu_s": 10.78,
+   "wait_s": 1.62,
+   "threads": 8
+  },
+  {
+   "key": "kanban-writes/SCHED_OTHER/0",
+   "cpu_s": 11.7,
+   "wait_s": 0.51,
+   "threads": 20
+  },
+  {
+   "key": "その他:esbuild/SCHED_IDLE/10",
+   "cpu_s": 2.63,
+   "wait_s": 8.47,
+   "threads": 189
+  },
+  {
+   "key": "agora-records/SCHED_OTHER/0",
+   "cpu_s": 5.43,
+   "wait_s": 2.36,
+   "threads": 22
+  },
+  {
+   "key": "turn-dispatcher/SCHED_OTHER/0",
+   "cpu_s": 5.94,
+   "wait_s": 0.17,
+   "threads": 9
+  },
+  {
+   "key": "agora-kanban/SCHED_OTHER/0",
+   "cpu_s": 5.46,
+   "wait_s": 0.19,
+   "threads": 12
+  },
+  {
+   "key": "merge-queue-controller/SCHED_OTHER/0",
+   "cpu_s": 4.49,
+   "wait_s": 0.14,
+   "threads": 8
+  },
+  {
+   "key": "その他:git/SCHED_OTHER/0",
+   "cpu_s": 2.37,
+   "wait_s": 0.6,
+   "threads": 1
+  },
+  {
+   "key": "その他:python/SCHED_OTHER/0",
+   "cpu_s": 2.46,
+   "wait_s": 0.3,
+   "threads": 5
+  },
+  {
+   "key": "agora-custody/SCHED_OTHER/0",
+   "cpu_s": 2.53,
+   "wait_s": 0.22,
+   "threads": 10
+  },
+  {
+   "key": "agora-record/SCHED_OTHER/0",
+   "cpu_s": 1.01,
+   "wait_s": 0.77,
+   "threads": 13
+  },
+  {
+   "key": "その他:hy/SCHED_OTHER/0",
+   "cpu_s": 1.37,
+   "wait_s": 0.35,
+   "threads": 18
+  },
+  {
+   "key": "merge-queue-ledger/SCHED_OTHER/0",
+   "cpu_s": 0.89,
+   "wait_s": 0.49,
+   "threads": 19
+  },
+  {
+   "key": "その他:python3/SCHED_OTHER/0",
+   "cpu_s": 0.66,
+   "wait_s": 0.27,
+   "threads": 2
+  },
+  {
+   "key": "merge-queue-land/SCHED_OTHER/0",
+   "cpu_s": 0.57,
+   "wait_s": 0.3,
+   "threads": 12
+  },
+  {
+   "key": "long-command の task/SCHED_OTHER/0",
+   "cpu_s": 0.07,
+   "wait_s": 0.46,
+   "threads": 18
+  },
+  {
+   "key": "agent-toolset-sync/SCHED_OTHER/0",
+   "cpu_s": 0.34,
+   "wait_s": 0.15,
+   "threads": 9
+  },
+  {
+   "key": "agora-webapp/SCHED_OTHER/0",
+   "cpu_s": 0.3,
+   "wait_s": 0.14,
+   "threads": 10
+  },
+  {
+   "key": "turn-answer/SCHED_OTHER/0",
+   "cpu_s": 0.34,
+   "wait_s": 0.04,
+   "threads": 9
+  },
+  {
+   "key": "route/SCHED_OTHER/0",
+   "cpu_s": 0.24,
+   "wait_s": 0.12,
+   "threads": 10
+  },
+  {
+   "key": "turn-attend/SCHED_OTHER/0",
+   "cpu_s": 0.31,
+   "wait_s": 0.04,
+   "threads": 9
+  },
+  {
+   "key": "conversation-inputs/SCHED_OTHER/0",
+   "cpu_s": 0.18,
+   "wait_s": 0.1,
+   "threads": 15
+  },
+  {
+   "key": "その他:ssh/SCHED_OTHER/0",
+   "cpu_s": 0.06,
+   "wait_s": 0.12,
+   "threads": 16
+  },
+  {
+   "key": "agora-voice/SCHED_OTHER/0",
+   "cpu_s": 0.06,
+   "wait_s": 0.03,
+   "threads": 10
+  },
+  {
+   "key": "node-boot-facts-zeus/SCHED_OTHER/0",
+   "cpu_s": 0.05,
+   "wait_s": 0.0,
+   "threads": 10
+  },
+  {
+   "key": "その他:exp_run.sh/SCHED_OTHER/10",
+   "cpu_s": 0.02,
+   "wait_s": 0.02,
+   "threads": 1
+  },
+  {
+   "key": "hook・MCP:tool-stream-she/SCHED_IDLE/0",
+   "cpu_s": 0.04,
+   "wait_s": 0.01,
+   "threads": 66
+  },
+  {
+   "key": "turn-agent-keeper/SCHED_OTHER/0",
+   "cpu_s": 0.01,
+   "wait_s": 0.0,
+   "threads": 9
+  },
+  {
+   "key": "その他:ab_run.sh/SCHED_OTHER/10",
+   "cpu_s": 0.01,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:tini/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:sleep/SCHED_OTHER/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 2
+  },
+  {
+   "key": "その他:bash/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 3
+  },
+  {
+   "key": "その他:sleep/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:python3/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 5
+  },
+  {
+   "key": "その他:npm run dev --p/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 11
+  },
+  {
+   "key": "daily-log-reads/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 9
+  },
+  {
+   "key": "agora-artifact-store/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 9
+  },
+  {
+   "key": "daily-verify/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 7
+  },
+  {
+   "key": "その他:python3.14t/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:ls/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:uv/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 8
+  },
+  {
+   "key": "その他:timeout/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 2
+  },
+  {
+   "key": "その他:uv/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 2
+  },
+  {
+   "key": "その他:sh/SCHED_OTHER/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:uv/SCHED_OTHER/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 2
+  },
+  {
+   "key": "その他:sh/SCHED_IDLE/10",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:sh/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  },
+  {
+   "key": "その他:grep/SCHED_OTHER/0",
+   "cpu_s": 0.0,
+   "wait_s": 0.0,
+   "threads": 1
+  }
+ ]
+}

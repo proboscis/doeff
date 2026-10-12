@@ -1,0 +1,51 @@
+2026-10-12T05:12:50Z 窓 31.3 秒・load 82.74 76.79 68.45 → 80.88 77.07 68.86・Pod の CPU 19.95 core・Bash の子の policy {'SCHED_IDLE': 163}
+群                               CPU 秒      待ち秒    待ちの割合  thread
+会話の Bash の子                     211.9    167.1      44%     302
+会話の claude の本体                   43.5     70.0      62%    1182
+turn-host-zeus                   37.6     20.8      36%     371
+その他                              32.8     24.0      42%     412
+agora-records-twin               28.0     16.5      37%      22
+agora-screen                     33.6      5.4      14%      39
+deliver                          12.8      2.4      16%       8
+kanban-writes                    11.3      1.6      12%      20
+agora-messaging                   8.9      3.4      28%      16
+agora-records                     5.6      5.4      49%      22
+turn-dispatcher                   4.3      0.4       9%       9
+agora-record                      1.8      2.6      60%      13
+merge-queue-controller            3.1      0.3       8%       9
+daily-log-reads                   0.6      1.1      65%       9
+turn-attend                       0.2      1.0      83%       9
+merge-queue-ledger                0.4      0.5      55%      19
+route                             0.4      0.4      52%      10
+long-command の task               0.1      0.4      73%      24
+agora-webapp                      0.3      0.2      44%      10
+--- 細目(群/policy/nice・その他と hook は comm ごと)— 走れる本数の平均 = (CPU + 待ち) ÷ 窓
+会話の Bash の子/SCHED_IDLE/10                        cpu  211.87 wait  167.13 ratio  44% runnable 12.10
+会話の claude の本体/SCHED_OTHER/0                     cpu   43.45 wait    70.0 ratio  62% runnable  3.62
+turn-host-zeus/SCHED_OTHER/0                     cpu   37.62 wait    20.8 ratio  36% runnable  1.87
+agora-records-twin/SCHED_OTHER/0                 cpu   27.96 wait   16.49 ratio  37% runnable  1.42
+agora-screen/SCHED_OTHER/0                       cpu    33.6 wait    5.42 ratio  14% runnable  1.25
+その他:python/SCHED_IDLE/10                         cpu   21.33 wait    8.54 ratio  29% runnable  0.95
+deliver/SCHED_OTHER/0                            cpu   12.75 wait    2.37 ratio  16% runnable  0.48
+kanban-writes/SCHED_OTHER/0                      cpu   11.29 wait    1.58 ratio  12% runnable  0.41
+agora-messaging/SCHED_OTHER/0                    cpu    8.95 wait    3.41 ratio  28% runnable  0.39
+agora-records/SCHED_OTHER/0                      cpu    5.56 wait    5.43 ratio  49% runnable  0.35
+その他:esbuild/SCHED_IDLE/10                        cpu    0.22 wait     9.1 ratio  98% runnable  0.30
+その他:python/SCHED_OTHER/0                         cpu    5.75 wait    0.79 ratio  12% runnable  0.21
+turn-dispatcher/SCHED_OTHER/0                    cpu     4.3 wait    0.43 ratio   9% runnable  0.15
+agora-record/SCHED_OTHER/0                       cpu    1.78 wait    2.61 ratio  59% runnable  0.14
+その他:MainThread/SCHED_IDLE/10                     cpu     0.1 wait    3.54 ratio  97% runnable  0.12
+merge-queue-controller/SCHED_OTHER/0             cpu    3.09 wait    0.25 ratio   7% runnable  0.11
+その他:hy/SCHED_OTHER/0                             cpu    2.38 wait    0.92 ratio  28% runnable  0.11
+その他:python3/SCHED_OTHER/0                        cpu    1.61 wait     0.6 ratio  27% runnable  0.07
+daily-log-reads/SCHED_OTHER/0                    cpu    0.58 wait    1.07 ratio  65% runnable  0.05
+turn-attend/SCHED_OTHER/0                        cpu    0.21 wait    1.02 ratio  83% runnable  0.04
+その他:pytest/SCHED_OTHER/10                        cpu    0.79 wait    0.28 ratio  26% runnable  0.03
+merge-queue-ledger/SCHED_OTHER/0                 cpu    0.37 wait    0.45 ratio  55% runnable  0.03
+route/SCHED_OTHER/0                              cpu    0.36 wait     0.4 ratio  53% runnable  0.02
+その他:code-quality/SCHED_OTHER/10                  cpu    0.58 wait    0.07 ratio  11% runnable  0.02
+long-command の task/SCHED_OTHER/0                cpu    0.14 wait    0.38 ratio  73% runnable  0.02
+agora-webapp/SCHED_OTHER/0                       cpu    0.25 wait    0.19 ratio  43% runnable  0.01
+agent-toolset-sync/SCHED_OTHER/0                 cpu    0.24 wait    0.19 ratio  44% runnable  0.01
+turn-answer/SCHED_OTHER/0                        cpu    0.22 wait    0.19 ratio  46% runnable  0.01
+conversation-inputs/SCHED_OTHER/0                cpu    0.17 wait    0.22 ratio  56% runnable  0.01

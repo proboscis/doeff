@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 572" role="img" aria-label="zeus の CPU の分け方。左が今、右が目標。変えたのは worker の Pod の中の束の仕事 2 つ(long-command の命令・実行環境の準備と焼き)を SCHED_IDLE にすることだけ。Pod の外の user.slice と imagebuild.slice には上限を掛ける">
+  <!-- 左右の仕切り -->
+  <line x1="500" y1="6" x2="500" y2="522" stroke="var(--kit-row-edge)" stroke-width="1" stroke-dasharray="4 4"/>
+
+  <!-- ===================== 左 = 今 ===================== -->
+  <g>
+    <text x="0" y="20" font-size="15" font-weight="700" fill="var(--kit-text)">今</text>
+
+    <!-- 機体の根 -->
+    <rect x="112" y="34" width="260" height="32" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="242" y="55" font-size="14" font-weight="600" text-anchor="middle" fill="var(--kit-text)">zeus の機体の根(36 core)</text>
+
+    <!-- 木の線 -->
+    <g stroke="var(--kit-text-faint)" stroke-width="1.5" fill="none">
+      <path d="M242 66 V80"/>
+      <path d="M145 80 H299"/>
+      <path d="M145 80 V94"/>
+      <path d="M299 80 V249"/>
+      <path d="M299 117 H308"/>
+      <path d="M299 173 H308"/>
+      <path d="M299 249 H308"/>
+    </g>
+
+    <!-- kubepods.slice -->
+    <rect x="0" y="94" width="290" height="424" rx="8" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="12" y="114" font-size="14" font-weight="600" fill="var(--kit-text)">kubepods.slice</text>
+    <text x="278" y="114" font-size="13" text-anchor="end" fill="var(--kit-text-muted)">重み 1407</text>
+
+    <!-- worker の Pod -->
+    <rect x="10" y="126" width="270" height="382" rx="6" fill="var(--kit-row)" stroke="var(--kit-row-edge)" stroke-width="1.5"/>
+    <text x="22" y="146" font-size="13.5" font-weight="600" fill="var(--kit-text)">worker の Pod doeff-worker-zeus</text>
+    <text x="22" y="164" font-size="12.5" fill="var(--kit-text-muted)">重み 157・1 つの cgroup</text>
+
+    <!-- 5 つの類 -->
+    <rect x="20" y="176" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="198" font-size="14" font-weight="600" fill="var(--kit-text)">service</text>
+    <text x="32" y="221" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+
+    <rect x="20" y="242" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="264" font-size="14" font-weight="600" fill="var(--kit-text)">会話の claude の本体と hook</text>
+    <text x="32" y="287" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+
+    <rect x="20" y="308" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="330" font-size="14" font-weight="600" fill="var(--kit-text)">会話の Bash の命令</text>
+    <text x="32" y="353" font-size="13" fill="var(--kit-text-muted)">SCHED_IDLE</text>
+    <rect x="156" y="339" width="104" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="208" y="353" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">ki-bb74 で済み</text>
+
+    <rect x="20" y="374" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="396" font-size="14" font-weight="600" fill="var(--kit-text)">long-command の命令</text>
+    <text x="32" y="419" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 10</text>
+
+    <rect x="20" y="440" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="462" font-size="14" font-weight="600" fill="var(--kit-text)">実行環境の準備と焼き</text>
+    <text x="32" y="485" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 10</text>
+    <rect x="194" y="471" width="68" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="228" y="485" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">最大 31 本</text>
+
+    <!-- Pod の外の slice -->
+    <rect x="308" y="94" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="113" font-size="14" font-weight="600" fill="var(--kit-text)">system.slice</text>
+    <text x="320" y="131" font-size="13" fill="var(--kit-text-muted)">重み 1000</text>
+
+    <rect x="308" y="150" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="169" font-size="14" font-weight="600" fill="var(--kit-text)">user.slice</text>
+    <text x="320" y="187" font-size="13" fill="var(--kit-text-muted)">重み 100・上限 16 core</text>
+
+    <rect x="308" y="206" width="177" height="86" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="225" font-size="14" font-weight="600" fill="var(--kit-text)">imagebuild.slice</text>
+    <text x="320" y="243" font-size="13" fill="var(--kit-text-muted)">重み 20</text>
+    <text x="320" y="262" font-size="12.5" fill="var(--kit-text-muted)">BuildKit の build の段</text>
+    <text x="320" y="280" font-size="12.5" font-weight="600" fill="var(--kit-text-body)">満ちた刻に 10〜11 core</text>
+  </g>
+
+  <!-- ===================== 右 = 目標 ===================== -->
+  <g transform="translate(515 0)">
+    <text x="0" y="20" font-size="15" font-weight="700" fill="var(--kit-text)">目標</text>
+
+    <!-- 機体の根 -->
+    <rect x="112" y="34" width="260" height="32" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="242" y="55" font-size="14" font-weight="600" text-anchor="middle" fill="var(--kit-text)">zeus の機体の根(36 core)</text>
+
+    <!-- 木の線 -->
+    <g stroke="var(--kit-text-faint)" stroke-width="1.5" fill="none">
+      <path d="M242 66 V80"/>
+      <path d="M145 80 H299"/>
+      <path d="M145 80 V94"/>
+      <path d="M299 80 V249"/>
+      <path d="M299 117 H308"/>
+      <path d="M299 173 H308"/>
+      <path d="M299 249 H308"/>
+    </g>
+
+    <!-- kubepods.slice -->
+    <rect x="0" y="94" width="290" height="424" rx="8" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="12" y="114" font-size="14" font-weight="600" fill="var(--kit-text)">kubepods.slice</text>
+    <text x="278" y="114" font-size="13" text-anchor="end" fill="var(--kit-text-muted)">重み 1407</text>
+
+    <!-- worker の Pod -->
+    <rect x="10" y="126" width="270" height="382" rx="6" fill="var(--kit-row)" stroke="var(--kit-row-edge)" stroke-width="1.5"/>
+    <text x="22" y="146" font-size="13.5" font-weight="600" fill="var(--kit-text)">worker の Pod doeff-worker-zeus</text>
+    <text x="22" y="164" font-size="12.5" fill="var(--kit-text-muted)">重み 157・1 つの cgroup</text>
+
+    <!-- 5 つの類 -->
+    <rect x="20" y="176" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="198" font-size="14" font-weight="600" fill="var(--kit-text)">service</text>
+    <text x="32" y="221" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+    <rect x="196" y="207" width="64" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="228" y="221" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">今のまま</text>
+
+    <rect x="20" y="242" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="264" font-size="14" font-weight="600" fill="var(--kit-text)">会話の claude の本体と hook</text>
+    <text x="32" y="287" font-size="13" fill="var(--kit-text-muted)">SCHED_OTHER・nice 0</text>
+    <rect x="196" y="273" width="64" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="228" y="287" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">今のまま</text>
+
+    <rect x="20" y="308" width="250" height="58" rx="5" fill="var(--kit-surface)" stroke="var(--kit-row-edge)"/>
+    <text x="32" y="330" font-size="14" font-weight="600" fill="var(--kit-text)">会話の Bash の命令</text>
+    <text x="32" y="353" font-size="13" fill="var(--kit-text-muted)">SCHED_IDLE</text>
+    <rect x="156" y="339" width="104" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="208" y="353" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">ki-bb74 で済み</text>
+
+    <!-- 変える 2 つ -->
+    <rect x="20" y="374" width="250" height="58" rx="5" fill="var(--kit-row-on)" stroke="var(--kit-violet)" stroke-width="2.5"/>
+    <text x="32" y="396" font-size="14" font-weight="600" fill="var(--kit-text)">long-command の命令</text>
+    <text x="32" y="419" font-size="13.5" font-weight="700" fill="var(--kit-violet)">SCHED_IDLE</text>
+    <rect x="204" y="405" width="56" height="20" rx="10" fill="none" stroke="var(--kit-violet)" stroke-width="1.5"/>
+    <text x="232" y="419" font-size="12" font-weight="600" text-anchor="middle" fill="var(--kit-violet)">変えた</text>
+
+    <rect x="20" y="440" width="250" height="58" rx="5" fill="var(--kit-row-on)" stroke="var(--kit-violet)" stroke-width="2.5"/>
+    <text x="32" y="462" font-size="14" font-weight="600" fill="var(--kit-text)">実行環境の準備と焼き</text>
+    <text x="32" y="485" font-size="13.5" font-weight="700" fill="var(--kit-violet)">SCHED_IDLE</text>
+    <rect x="130" y="471" width="68" height="20" rx="10" fill="none" stroke="var(--kit-row-edge)"/>
+    <text x="164" y="485" font-size="12" text-anchor="middle" fill="var(--kit-text-muted)">最大 31 本</text>
+    <rect x="204" y="471" width="56" height="20" rx="10" fill="none" stroke="var(--kit-violet)" stroke-width="1.5"/>
+    <text x="232" y="485" font-size="12" font-weight="600" text-anchor="middle" fill="var(--kit-violet)">変えた</text>
+
+    <!-- Pod の外の slice -->
+    <rect x="308" y="94" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-surface-edge)" stroke-width="1.5"/>
+    <text x="320" y="113" font-size="14" font-weight="600" fill="var(--kit-text)">system.slice</text>
+    <text x="320" y="131" font-size="13" fill="var(--kit-text-muted)">重み 1000</text>
+
+    <rect x="308" y="150" width="177" height="46" rx="6" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="320" y="169" font-size="14" font-weight="600" fill="var(--kit-text)">user.slice</text>
+    <text x="320" y="187" font-size="13" fill="var(--kit-text-muted)">重み 100・上限 16 core</text>
+
+    <rect x="308" y="206" width="177" height="86" rx="6" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="320" y="225" font-size="14" font-weight="600" fill="var(--kit-text)">imagebuild.slice</text>
+    <text x="320" y="243" font-size="13" fill="var(--kit-text-muted)">重み 20</text>
+    <text x="320" y="262" font-size="12.5" fill="var(--kit-text-muted)">BuildKit の build の段</text>
+    <text x="320" y="280" font-size="12.5" font-weight="600" fill="var(--kit-text-body)">満ちた刻に 10〜11 core</text>
+
+    <!-- 上限の札 -->
+    <path d="M396 292 V304" stroke="var(--kit-teal)" stroke-width="2" fill="none"/>
+    <rect x="308" y="304" width="177" height="48" rx="6" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2"/>
+    <text x="396" y="324" font-size="14" font-weight="700" text-anchor="middle" fill="var(--kit-teal)">2 つに上限を掛ける</text>
+    <text x="396" y="342" font-size="12.5" text-anchor="middle" fill="var(--kit-text-muted)">card ki-28d9・ki-11b9</text>
+  </g>
+
+  <!-- 凡例 -->
+  <g>
+    <rect x="0" y="542" width="28" height="18" rx="4" fill="var(--kit-row-on)" stroke="var(--kit-violet)" stroke-width="2.5"/>
+    <text x="38" y="556" font-size="13" fill="var(--kit-text-body)">目標で変えた 2 つ(束の仕事を SCHED_IDLE に)</text>
+    <rect x="515" y="542" width="28" height="18" rx="4" fill="var(--kit-surface)" stroke="var(--kit-teal)" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="553" y="556" font-size="13" fill="var(--kit-text-body)">上限を掛ける Pod の外の群(別の card)</text>
+  </g>
+</svg>
