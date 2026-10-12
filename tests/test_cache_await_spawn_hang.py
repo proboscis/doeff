@@ -20,8 +20,25 @@ from doeff import Await, Gather, Spawn, do
 from tests._run_helpers import run_with_defaults
 
 
+# The fake work holds its results until the program has spawned every task, so all ``total`` awaits are in
+# flight at once before the first one completes (the scale this guard is about). A result that comes at once
+# would let each task finish before the next is spawned, so the scheduler would never hold more than a few
+# outstanding completions; ``asyncio.sleep(0.01)`` only got that order from the wall clock. The gate starts open, so
+# a program that does not hold it gets its results at once.
+_RESULT_GATE = asyncio.Event()
+_RESULT_GATE.set()
+
+
+async def _hold_results() -> None:
+    _RESULT_GATE.clear()
+
+
+async def _release_results() -> None:
+    _RESULT_GATE.set()
+
+
 async def _fake_work(index: int) -> str:
-    await asyncio.sleep(0.01)
+    await _RESULT_GATE.wait()
     return f"done-{index}"
 
 
@@ -34,10 +51,12 @@ def _cached_task(index: int) -> Any:
 
 @do
 def _spawn_gather_n(factory: Callable[[int], Any], total: int) -> Any:
+    yield Await(_hold_results())
     tasks: list[Any] = []
     for index in range(total):
         task: Any = yield Spawn(factory(index))
         tasks.append(task)
+    yield Await(_release_results())
     return list((yield Gather(*tasks)))
 
 
