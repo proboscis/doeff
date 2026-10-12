@@ -18,7 +18,8 @@
 | 基準版(変更の前) | `a2254d66cfc52f9fa9c3b4829bff2d76191bccb3` |
 | 実装の版(着地済み・L2136) | `3293bc4cc357ec9f6ed02e07d4facf75de0ae882` |
 | 盲検の前の主張と入力 | commit 9d1e02a36(branch `wt/design-check-item-outcome`) |
-| 盲検の後の直し | commit 22d78239f(受け手は渡す・契約の誤り)・3f82ca1b5(入れ子の契約の誤りを件の失敗にしない)— この記録と同じ branch で着地する |
+| 盲検の後の直し | commit 22d78239f(受け手は渡す・契約の誤り)・3f82ca1b5(入れ子の契約の誤りを件の失敗にしない)— 証拠 C1〜C7 はこの版(branch `wt/design-check-item-outcome`)で取った |
+| 載せ直した版 | origin/main 2bf226a96 の上へ載せ直し、直しは 006b9099a・b13d825cb(branch `wt/design-check-item-outcome-r2`・この記録と同じ branch で着地する)。載せ直しの後に関わる検を走らせ直した(C8) |
 | 順 | 実装と着地が先。設計検証は完了の検査に求められて後から行った |
 
 ## 要件(固定)
@@ -100,8 +101,9 @@ import の向き・万能の service・生の dict: 受け手の公開の形は 
 | C5 | S3 | 正常例 | `evidence/s3/C5-recording-consumers.txt`(6 passed) |
 | C6 | S3 | 失敗例 | `evidence/s3/C6-unnamed-recorder-gets-nothing.txt`(12 passed) |
 | C7 | S1・S2・S3 | 失敗例 | `evidence/mutations-after-fix.txt`(変異 6 つがどれも赤: N1 答えを確かめない・N2 投げを飲む・N3 progress_bars が答える・N4/N6 入れ子で飲む・N5 外へ出す) |
+| C8 | S1・S2・S3 | 正常例 | `evidence/gate/C8-related-tests-after-rebase.txt`(載せ直した版 f72c5d4df で 171 passed・1 skipped・rc 0) |
 
-関わる検の組(`packages/doeff-traverse/tests` 全部・`tests/test_for_do_runtime.py`・`tests/effects/test_traverse.py`・`test_carried_builders.py`)は直した後に 168 passed・1 skipped、pyright は変えた file で 0 件。
+関わる検の組(`packages/doeff-traverse/tests` 全部・`tests/test_for_do_runtime.py`・`tests/effects/test_traverse.py`・`test_carried_builders.py`)は直した後に 168 passed・1 skipped、載せ直した後に 171 passed・1 skipped(C8)。pyright は変えた 4 file(`effects.py`・`handlers.py`・`__init__.py`・`test_item_outcomes.py`)で 0 件(載せ直した版で測り直した)。変えた範囲の品質検査(code-quality・scope changed・基点 2bf226a96)は passed — 速い段で型検査を含まず、doeff-traverse の file は継続検査の対象に未導入(この変更の前から)。
 
 ## 未確認事項
 
