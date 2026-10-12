@@ -7,7 +7,10 @@ bodies, fixtures, and the subprocesses they start.
 A test can still give a subprocess a bytecode directory of its own inside the checkout, which
 the settings do not see; the land tool keeps a checkout's ignored files from one candidate to
 the next, so that bytecode would be read by later runs.  The run therefore fails at its end
-when bytecode files were written under the checkout during it (agora-redesign#639).
+when bytecode files were written under the checkout during it (agora-redesign#639).  The one
+directory it does not walk is the environment of the interpreter running the tests (the .venv:
+13,000 files, 9-34 s to list on a loaded machine, card ki-16954373dfe0); inside it, the bytecode
+of the modules a start of the interpreter imports is still looked at, file by file.
 
 A test whose subprocesses need bytecode asks for the ``subprocess_bytecode`` fixture: its
 subprocesses write and reuse bytecode in one directory of the run under pytest's temporary
@@ -28,6 +31,8 @@ import py_compile
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 from types import ModuleType
 
@@ -110,6 +115,80 @@ def test_bytecode_written_during_the_run_is_named_and_older_bytecode_is_not(
     written = _root_conftest().bytecode_written_since(tmp_path, started)
 
     assert written == ["pkg/__pycache__/new.cpython-314.pyc"]
+
+
+STARTUP_IN_THE_ENVIRONMENT = (
+    ".venv/lib/python3.14/site-packages/__pycache__/_virtualenv.cpython-314.pyc"
+)
+
+
+def _checkout_with_its_interpreter_environment(tmp_path: Path, started: float) -> tuple[Path, Path]:
+    """A checkout whose .venv holds the interpreter's environment, with bytecode written during the run in both."""
+    checkout = tmp_path / "checkout"
+    environment = checkout / ".venv"
+    _file_with_mtime(checkout / "pkg/__pycache__/new.cpython-314.pyc", started + 1)
+    _file_with_mtime(checkout / "pkg/__pycache__/old.cpython-314.pyc", started - 60)
+    _file_with_mtime(checkout / STARTUP_IN_THE_ENVIRONMENT, started + 1)
+    _file_with_mtime(
+        environment / "lib/python3.14/site-packages/pydantic/__pycache__/main.cpython-314.pyc",
+        started + 1,
+    )
+    return checkout, environment
+
+
+def test_a_run_ending_names_the_bytecode_outside_the_interpreters_environment_and_the_startup_bytecode_in_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = 1_000_000.0
+    checkout, environment = _checkout_with_its_interpreter_environment(tmp_path, started)
+    monkeypatch.setattr(sys, "prefix", str(environment))
+
+    written = _root_conftest().bytecode_left_by_the_run(
+        checkout, started, startup=[checkout / STARTUP_IN_THE_ENVIRONMENT]
+    )
+
+    # The installed packages of the environment (pydantic) are not looked at; the modules a start of
+    # the interpreter imports are, wherever they are (cf. the six writers of card ki-23c3280da1a5).
+    assert written == [STARTUP_IN_THE_ENVIRONMENT, "pkg/__pycache__/new.cpython-314.pyc"]
+
+
+def test_a_run_ending_does_not_walk_the_interpreters_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The walk of a .venv (13,000 files in 2,000 directories) took 5-9 s at the end of a run on a loaded
+    # machine, every run (card ki-16954373dfe0): what is not looked at must not be listed either.
+    started = 1_000_000.0
+    checkout, environment = _checkout_with_its_interpreter_environment(tmp_path, started)
+    monkeypatch.setattr(sys, "prefix", str(environment))
+    list_directory = os.scandir
+
+    def scandir_refusing_the_environment(
+        path: str | os.PathLike[str],
+    ) -> AbstractContextManager[Iterator[os.DirEntry[str]]]:
+        assert not os.fspath(path).startswith(str(environment)), (
+            f"listed {path}, inside the environment"
+        )
+        return list_directory(path)
+
+    monkeypatch.setattr(os, "scandir", scandir_refusing_the_environment)
+
+    written = _root_conftest().bytecode_left_by_the_run(checkout, started, startup=[])
+
+    assert written == ["pkg/__pycache__/new.cpython-314.pyc"], (
+        "the checkout outside the environment was walked"
+    )
+
+
+def test_a_run_ending_walks_everything_when_the_environment_is_the_checkout_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = 1_000_000.0
+    checkout, _ = _checkout_with_its_interpreter_environment(tmp_path, started)
+    monkeypatch.setattr(sys, "prefix", str(checkout))
+
+    written = _root_conftest().bytecode_left_by_the_run(checkout, started, startup=[])
+
+    assert "pkg/__pycache__/new.cpython-314.pyc" in written
 
 
 SUBPROCESS_WITH_ITS_BYTECODE_IN_THE_CHECKOUT = """
