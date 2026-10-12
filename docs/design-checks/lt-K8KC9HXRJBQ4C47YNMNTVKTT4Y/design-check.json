@@ -1,0 +1,456 @@
+{
+ "version": 1,
+ "task_id": "lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y",
+ "base_revision": "d8db309f31b816f539dd226ba1fdab5b3a37f44d",
+ "fix_revisions": [
+  "6f439141223231fd40ba86a7640f3548409c7a6d",
+  "e5b63f5e7a3a9863b0cebd71c9c075519c305694"
+ ],
+ "author": {
+  "conversation_id": "c-C6Y3R3B4HY66EA0NPFKYQ6F493(依頼 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y を受けた会話)",
+  "model": "claude-opus-5-5",
+  "effort": "未確認(会話の起動の設定に従う・自己申告では読めない)"
+ },
+ "requirements": "card ki-973b4e44d7bc の受入の条 c99aedbcf(defmcp-tool の型検査のための展開で handler の引数に schema の型の注記が付き、strict で tool 1 つの赤が 0 件になる検が doeff main で緑)と ca9a5d5a2(実行時の do の import の決めが補助の表 1 か所になり、表を差し替えると 4 つの macro が追従する検が緑)",
+ "design": {
+  "path": "design.md",
+  "sha256": "de8b736cbfda9d909cb6de2f13773ecb85ba9086e770af683409f9d39b3c8430"
+ },
+ "pre_blind_design": {
+  "path": "design-before-blind.md",
+  "sha256": "d91e5225ebefb3b4e8ddcc9e124c0f07c09a906e21c2df9702fe4442112f5bde"
+ },
+ "blind": {
+  "meta": {
+   "path": "blind/blind-meta.md",
+   "sha256": "85e0b0aa2dc5b1bc56cafe3cc3f06a1befe0f68eb4a07ae54eb49dd98e051ef2"
+  },
+  "common": {
+   "path": "blind/blind-common.md",
+   "sha256": "472750fba05ac3c212710bd1a17eb58789908beff911d9ebfe76b78e2db247d1"
+  },
+  "a_input": {
+   "path": "blind/blind-a-input.md",
+   "sha256": "6c426d17faf828d72ad6c329ba8b030403a67c7069674ffabcd929b7f243b326"
+  },
+  "b_input": {
+   "path": "blind/blind-b-input.md",
+   "sha256": "9bcb284f67ed5295c37eb6ad1982e648bae83c272ef7752949fd851458282a59"
+  },
+  "a_return": {
+   "path": "blind/blind-a-return.md",
+   "sha256": "a551c49027d7b12e87bd28f493a286ef552c319e389869d0ae14eb2f38c31090"
+  },
+  "b_return": {
+   "path": "blind/blind-b-return.md",
+   "sha256": "d8033fa8d54dcfba130ec53303b00085eda75f9fc099cc0435ec182ce3a7c6b2"
+  }
+ },
+ "blind_reproduction": {
+  "a": {
+   "path": "evidence/a/m8-before-d8db309.txt",
+   "sha256": "825541338d972dd093ddfab1cae2694e464f8a8955829af958cee8145c1cd5e5"
+  },
+  "b": {
+   "path": "evidence/b/second-table-d8db309.txt",
+   "sha256": "03caa11a513d6a43d9689f5e7b898ff53a1af28f2f743149db39c0906f9fadf1"
+  }
+ },
+ "scripts": {
+  "dc_combo.hy.txt": {
+   "path": "evidence/scripts/dc_combo.hy.txt",
+   "sha256": "de54394ae1b7304da4f2215f40fbec39112b73a32a6a54fa6777aa2dec3364dd"
+  },
+  "dc_tools.hy.txt": {
+   "path": "evidence/scripts/dc_tools.hy.txt",
+   "sha256": "f76fbbcb7f03da07ddc0cf51bc60e56a7a2b968081195d91f8742d0aab62929b"
+  },
+  "mutations.py.txt": {
+   "path": "evidence/scripts/mutations.py.txt",
+   "sha256": "755baf56c689dde0b0f4f2dbbce375de4fbc3ed75ee50c0761a809a535ac903f"
+  },
+  "repro.sh.txt": {
+   "path": "evidence/scripts/repro.sh.txt",
+   "sha256": "516a60ce2934f86625577146c6a04a6710478cf433fe7d2eb540ddacdd478243"
+  },
+  "run_m8.py.txt": {
+   "path": "evidence/scripts/run_m8.py.txt",
+   "sha256": "8061f9a86672fd09b84b0bd71539463888b99ee3ee602c0dd8bdd665f010b323"
+  },
+  "s4_new_macro.py.txt": {
+   "path": "evidence/scripts/s4_new_macro.py.txt",
+   "sha256": "cbc46f8bccb6843a9f49d00945f19b52200e8cc0e09c18dbbdef602c92a94556"
+  },
+  "strict_tools.hy.txt": {
+   "path": "evidence/scripts/strict_tools.hy.txt",
+   "sha256": "78c0f5708a0fd93c2bc92cff676e1f4acf06cb7b931ab4c161e8a0becb3fda26"
+  }
+ },
+ "modules": [
+  {
+   "id": "M1",
+   "responsibility": "実行時の展開が引く do の置き場(macros.hy の RuntimeDo・_runtime-do・_runtime-do-import)",
+   "owns": "do の module の名と、その module の中の名(Python の綴りの文字 \"doeff.do\"・\"do\")",
+   "hides": "置き場を M2〜M5 から隠す — M2〜M5 は置き場の文字を持たない",
+   "interface": "(_runtime-do) → RuntimeDo(module: str, name: str)、(_runtime-do-import alias) → (import <module> [<name> :as <alias>])",
+   "effects": "なし、展開の時の純関数",
+   "lifetime": "なし、呼ぶたびに値を返す",
+   "invariants": "実行時の展開で do を引く所は、すべてこの値から綴りを作る。module は点を含んでよい(Hy は点を含む記号を式に読むので文字で持つ)"
+  },
+  {
+   "id": "M2",
+   "responsibility": "定義の macro(defk・defp・deftest・defmcp-tool)の補助の import の表(macros.hy の _helper-imports)",
+   "owns": "補助の出所。do の行は M1 から",
+   "hides": "補助の出所を定義の macro から隠す",
+   "interface": "(_helper-imports) → (do …) の form",
+   "effects": "なし、純関数(_static-view? を読むだけ)",
+   "lifetime": "なし",
+   "invariants": "型検査のための展開では空の (do)。実行時は do の行を (_runtime-do-import '_doeff_do) で作る"
+  },
+  {
+   "id": "M3",
+   "responsibility": "defhandler・handle の _doeff_do の import(handle.hy の _do-import)",
+   "owns": "handler の本体を包む名 _doeff-do",
+   "hides": "do の置き場を持たない(M1 から引く)",
+   "interface": "(_do-import) → import の form",
+   "effects": "なし、純関数",
+   "lifetime": "なし",
+   "invariants": "型検査のための展開では空。実行時は (_runtime-do-import '_doeff-do)"
+  },
+  {
+   "id": "M4",
+   "responsibility": "fnk の lambda が呼ばれた時に do を引く式(macros.hy の _do-reference)",
+   "owns": "書いた場所の scope に名を束ねない引き方(__import__)",
+   "hides": "do の置き場を持たない(M1 から引く)",
+   "interface": "(_do-reference) → 式の form",
+   "effects": "なし、純関数",
+   "lifetime": "なし",
+   "invariants": "実行時は (. (__import__ <module> :fromlist #(<name>)) <name>)。型検査のための展開では _doeff_do"
+  },
+  {
+   "id": "M5",
+   "responsibility": "validate と契約の check の _doeff_validation_do(macros.hy の _validation-imports)",
+   "owns": "局所の名がぶつからない別名 _doeff_validation_do",
+   "hides": "実行時の do の置き場を持たない(M1 から引く)",
+   "interface": "(_validation-imports) → import の form",
+   "effects": "なし、純関数",
+   "lifetime": "なし",
+   "invariants": "実行時は (_runtime-do-import '_doeff_validation_do)。型検査のための展開の doeff-hy.static-types の do は実行時の決めの外"
+  },
+  {
+   "id": "M6",
+   "responsibility": "MCP の引数の schema から handler の引数と McpParamSchema の式を作る(macros.hy の _mcp-param-field・_mcp-param-schema・_mcp-handler-param・defmcp-tool)",
+   "owns": "Hy の dict の literal の欄の読み方、注記を付ける形、必須かどうかの字面の決め(:required が True の字面でない・既定値が None なら必須でない)",
+   "hides": "JSON の型の意味は持たない(M10 から引く)。書き手から注記の付け方を隠す",
+   "interface": "(_mcp-handler-param tool p) → (annotate <名> \"<型>\")、(_mcp-param-schema schema p) → McpParamSchema の式。知らない :type は SyntaxError",
+   "effects": "なし、展開の時の純関数(誤りは SyntaxError)",
+   "lifetime": "なし",
+   "invariants": "注記は文字の注記で実行の時は評価しない。型検査のための展開と実行時の展開で同じ注記。McpParamSchema には書かれた欄だけを 1 度ずつ渡す"
+  },
+  {
+   "id": "M7",
+   "responsibility": "型検査のための展開の補助(static_view.py の STATIC_HELPER_IMPORTS・MCP_STATIC_IMPORTS と static_check.py の投影の頭の import の刈り込み)",
+   "owns": "型付きの do と _doeff_McpToolDef / _doeff_McpParamSchema を module の頭に 1 度だけ置く事、使われない import を刈る事",
+   "hides": "型検査の側の出所を macro から隠す",
+   "interface": "doeff-hy-check が投影の頭に足す文字",
+   "effects": "なし(投影の文字を作るだけ)",
+   "lifetime": "なし",
+   "invariants": "型検査のための展開の macro は do を import しない(M5 の型検査の枝を除く)。刈り込みは ast.Name の参照だけを数える(文字の注記の中は読まない)"
+  },
+  {
+   "id": "M8",
+   "responsibility": "MCP の tool の server が handler を呼ぶ(doeff_agents/handlers/mcp_server_loop.hy の _tool-result-with-stack)",
+   "owns": "tool の要求 1 つの処理の順(tool を引く → 引数を検める → handler を呼ぶ → handler の束を被せる)",
+   "hides": "引数の取り出し方を tool の書き手から隠す",
+   "interface": "(_tool-result-with-stack server full-stack req) → #(\"tool\" ok 値)",
+   "effects": "tool の Program を走らせる(この変更では、断る時に handler を呼ばない事だけを足した)",
+   "lifetime": "tool の要求 1 つの間",
+   "invariants": "handler に渡す値は M10 の decode_arguments が通した物だけ。断る訳があれば #(\"tool\" False 訳)"
+  },
+  {
+   "id": "M9",
+   "responsibility": "表の検(packages/doeff-hy/tests/test_helper_imports_table.py)",
+   "owns": "M1 を差し替えた時に一覧の 8 macro が従う事の確かめ方",
+   "hides": "なし、検",
+   "interface": "pytest の検",
+   "effects": "tmp の dir に検の module を置く(検の中だけ)",
+   "lifetime": "検 1 つの間",
+   "invariants": "一覧 _DEFINITIONS の macro × module・class・関数の本体で、展開が do を引く所が差し替えた置き場だけになり、その do が実際に包む"
+  },
+  {
+   "id": "M10",
+   "responsibility": "MCP の引数の JSON の型の意味の表と値の検め(doeff/mcp.py の McpJsonType・MCP_JSON_TYPES・mcp_param_annotation・McpParamSchema.decode・McpToolDef.decode_arguments)",
+   "owns": "JSON の型 → 注記の文字・受ける Python の型(bool は int の仲間にしない)・number の整数を float にするか。送られない引数の扱い(既定値 / 必須なら断る / None)と enum の検め",
+   "hides": "JSON の型の意味を M6 と M8 から隠す",
+   "interface": "mcp_param_annotation(type_name, required) → str | None、McpToolDef.decode_arguments(arguments) → McpArguments(values, problems)、McpParamSchema は表に無い型を ValueError で断る",
+   "effects": "なし、純関数",
+   "lifetime": "なし",
+   "invariants": "注記と server の検めは同じ行から決まる。表は呼ぶたびに module の global を読む(差し替えに従う)"
+  },
+  {
+   "id": "M11",
+   "responsibility": "MCP の型の表の検(tests/test_mcp_json_type_table.py)",
+   "owns": "M10 を差し替えた時に M6 と M8 が両方従う事の確かめ方",
+   "hides": "なし、検",
+   "interface": "pytest の検",
+   "effects": "検の中で McpToolServer を port 0 で作って閉じる",
+   "lifetime": "検 1 つの間",
+   "invariants": "本物の表・差し替えた表の両方で、注記(展開)と本物の _tool-result-with-stack の答えが表の行に従う。表に無い型は展開と組み立ての両方が断る"
+  },
+  {
+   "id": "M12",
+   "responsibility": "do の綴りの検(packages/doeff-hy/tests/test_runtime_do_spelling.py)",
+   "owns": "doeff_hy の .hy の form で doeff.do を綴る所の数え方",
+   "hides": "なし、検",
+   "interface": "pytest の検",
+   "effects": "なし(file を読むだけ)",
+   "lifetime": "検 1 つの間",
+   "invariants": "\"doeff.do\" の文字と doeff.do の import は (\"macros.hy\", \"_runtime-do\", \"文字\") の 1 つだけ"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "実行時の do の置き場を替える(doeff が do を別の module へ移す、または doeff.do.do を包む別の do を使う)",
+   "claim": "(盲検の前・design-before-blind.md の S1)M1 の RuntimeDo の 2 つの文字だけを変えれば、M2〜M5 の展開(8 macro)が全部新しい置き場を引く。M6・M7・M8 は変わらない。前提: 新しい do は今の do と同じ呼び形で、from m import n と __import__(m, fromlist=(n,)).n の両方で引ける(m は点を含んでよい)",
+   "expected_scope": "変わる: M1。変わらない: M2〜M9",
+   "actual_scope": "置き場を点を含む module(doeff_hy_table_probe.table)へ差し替えると、8 macro の展開が差し替えた置き場だけを引き、実際に包む(M9 は 6f4391412 で緑・evidence/fix/related-tests-6f43914.txt)。M3・M4・M5 を直の綴りへ戻すと 12・6・5 件落ちる(evidence/fix/mutations-6f43914.txt)。盲検 A・B は S1 を崩す例を出さなかった",
+   "changed_modules": [
+    "M1"
+   ],
+   "unchanged_modules": [
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9"
+   ],
+   "reason": "主張どおり M1 の中で閉じた。知識の漏洩は無い",
+   "revision": "S1 の範囲の直しは不要(根拠: 差し替えの検と変異)。S4 のために M12 を足し、一覧の外の macro が綴る形も断るようにした"
+  },
+  {
+   "id": "S2",
+   "axis": "simulation",
+   "applicability": "applicable",
+   "change": "決定的な再生・記録のため、検や模擬の間だけ実行時の do を記録つきの do に差し替える",
+   "claim": "(盲検の前・S2)module の global _runtime_do を差し替えるだけで、差し替えの後に展開する 8 macro の全部がその do を引き、その do が実際に関数を包む。M2〜M5 は変わらない。前提: 差し替えは展開の前",
+   "expected_scope": "変わる: なし(M1 の値を差し替えるだけ)。変わらない: M1〜M9 の code",
+   "actual_scope": "M9 の差し替えた do(包んだ関数を WRAPPED に積む記録つきの do)が、8 macro × 3 か所(validate を class の本体に直に置く組を除く)で実際に包む(6f4391412 で緑)。変異は S1 と同じ",
+   "changed_modules": [
+    "M1"
+   ],
+   "unchanged_modules": [
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9"
+   ],
+   "reason": "差し替える値は M1 の 1 つで、他の展開は M1 を読むだけ。code の変更は要らない(changed_modules の M1 は値の差し替えの所)",
+   "revision": "不要(根拠: M9 の実行の検と変異)"
+  },
+  {
+   "id": "S3",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "MCP の引数の型の写しを足す・変える(新しい JSON Schema の型、:enum つきの string を Literal にする等)",
+   "claim": "(盲検の前・S3)M6 の _mcp-handler-param の match の表だけが変わる。strict の型検査は、写した型と本体の使い方の食い違いを赤にする。前提: 新しい型は文字の注記で書ける Python の型で、M7 の module の頭の import を要しない",
+   "expected_scope": "変わる: M6。変わらない: M1〜M5・M7・M8・M9",
+   "actual_scope": "崩れた。盲検 A: M6 の注記は handler に届く値の型を約束するのに、M8 は値を検めずに渡す(d8db309f3 で int の引数に \"100\" → '100100'、enum の外の値も通る、省いた必須の引数に None — evidence/a/m8-before-d8db309.txt)。盲検 B: M8 に検めを足すと JSON の型 → Python の型の写しが 2 つになり、正しい JSON の整数を number として断る退行を 3 つの検が全部通す(evidence/b/second-table-d8db309.txt)。Literal は M7 の import と刈り込みの変更を要する(前提の外・盲検 A)。直した後(6f4391412): 表を M10 へ移し、M6 と M8 がそこから読む。型を足す変更は M10 の表の行だけで、M11 の probe-type で注記と server の両方が従う",
+   "changed_modules": [
+    "M6",
+    "M8",
+    "M10"
+   ],
+   "unchanged_modules": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M7",
+    "M9",
+    "M11",
+    "M12"
+   ],
+   "reason": "知識の漏洩: 「handler に届く値が schema の型・enum・必須に従う」の持ち主がいなかった(M6 は注記で約束し、M8 は検めない)。M8 に足すと M6 の写しの表が 2 つ目の定義元になる。表を M10 に置いて、両方が読む形にした",
+   "revision": "6f4391412(L2197): M10 を足し、M6 は mcp-param-annotation から注記を引き、M8 は decode_arguments で検めて断る。:default の組の定義の誤りと、既定値を当てない誤りも直した。M11 と decode の検を足した。再検証: 再現は全部断るか正しい値で動く(evidence/fix/m8-after-fix-6f43914.txt)、変異 3 つ(写しの表・M6 の match・M8 が検めない)で 1・1・2 件落ちる(evidence/fix/mutations-6f43914.txt)"
+  },
+  {
+   "id": "S4",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "実行時の do を引く新しい macro を足す",
+   "claim": "(盲検の前・S4)新しい macro が M1 か M2 を通して do を引けば M1〜M8 は変わらず、変わるのは新しい macro と M9 の一覧。強制の限界: M9 の一覧に足さない macro が doeff.do を自分で綴っても M9 は見ない",
+   "expected_scope": "変わる: M9(一覧)と新しい macro。変わらない: M1〜M8",
+   "actual_scope": "盲検は S4 を攻めなかった。設計者の実験(evidence/s4/s4-new-macro.txt): _runtime-do-import を通す新しい macro は差し替えに従う(M1〜M8 は変わらない)。doeff.do を自分で綴る新しい macro を M9 は見ない(申告どおりの限界)。M12 を足した後は、綴る新しい macro を M12 が名を出して断る",
+   "changed_modules": [
+    "M12"
+   ],
+   "unchanged_modules": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11"
+   ],
+   "reason": "一覧に頼る強制の限界(盲検の前に申告)で、知識の漏洩ではない。新しい macro の書き手が M1 を通さない形を機械で断る所が無かった",
+   "revision": "e5b63f5e7(L2199): M12 を足した。直す前の版 21c737842 の .hy に当てると card が名指した 4 か所を数え、入った版では _runtime-do の 1 つだけ(evidence/s4/spelling-check.txt)"
+  },
+  {
+   "id": "S5",
+   "axis": "storage",
+   "applicability": "excluded",
+   "reason": "展開は保存を持たない。展開した code の .pyc と共有の code の置き場(DOEFF_HY_CODE_STORE)は macro の提供元を依存として記録するので(doeff_hy_bytecode_guard)、M1・M10 を変えると次の import が展開し直す"
+  },
+  {
+   "id": "S6",
+   "axis": "hardware",
+   "applicability": "excluded",
+   "reason": "展開と引数の検めは純関数で、機体の資源に触れない"
+  },
+  {
+   "id": "S7",
+   "axis": "distribution",
+   "applicability": "excluded",
+   "reason": "tool の引数は今も agent の process から JSON で届く(M8)。機体を跨いでも値の形は JSON を解いた物で、M10 の表は変わらない。展開は compile する process の中で閉じる"
+  },
+  {
+   "id": "S8",
+   "axis": "concurrency",
+   "applicability": "excluded",
+   "reason": "M1・M10 は frozen の値を返す純関数で、共有の可変の状態を持たない。差し替え(S2・M11)は検の中の monkeypatch だけ。M8 の検めは要求 1 つの中で閉じる"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C1",
+   "scenarios": [
+    "S1",
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "M1 を点を含む置き場(記録つきの do)へ差し替えると、8 macro × module・class・関数の本体で、展開が do を引く所が差し替えた置き場だけになり、その do が実際に包む",
+   "observation": "6f4391412 で test_helper_imports_table.py を含む関わる検 339 passed",
+   "evidence": {
+    "path": "evidence/fix/related-tests-6f43914.txt",
+    "sha256": "71f0c3f95196be2334819dec9eced1998348a561a664d5db821f3e42f06ed883"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C2",
+   "scenarios": [
+    "S1",
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "M3・M4・M5 を doeff.do の直の綴りへ戻す、または M1 の値を記号から綴ると、M9 が落ちる",
+   "observation": "M3 12 failed・M4 6 failed・M5 5 failed・記号から綴る 6 failed。戻した後の git status は空",
+   "evidence": {
+    "path": "evidence/fix/mutations-6f43914.txt",
+    "sha256": "627f4eea42b0b1a6045519be1f7ccc3554a0d7762f70906123ef7b188a533998"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C3",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "defmcp-tool の handler の引数が schema の型の注記を持ち、strict で書き手の直せない赤が出ない。正しい値は server を通る",
+   "observation": "検体(引数 3 つの tool)の strict の赤: 21c737842 で 8 件 → 6f4391412 で 0 件。test_defmcp_tool_handler_params_carry_the_schema_types[False] と [True] が PASSED",
+   "evidence": {
+    "path": "evidence/annotation/strict-before-after.txt",
+    "sha256": "08ec7d81de299a2e248014228e1d15b8c93b1b04ead9bc6dc2a0ae0ab08aeb2c"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C4",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "server は注記の型に合わない値・enum の外の値・省いた必須の引数を、handler を呼ばずに断る(d8db309f3 では通していた)",
+   "observation": "6f4391412 で本物の _tool-result-with-stack に通す: {\"qty\": \"100\"}・{}・{\"price\": true}・{\"side\": \"short\"} は ('tool', False, 訳)。{\"price\": 2} は 4.0、:default は当たり、:default と :required False の組も定義できる",
+   "evidence": {
+    "path": "evidence/fix/m8-after-fix-6f43914.txt",
+    "sha256": "ef8341df8c146db990ef6a848dca8c7a77aaf84aa00514dbc1ef2ffe579dfbd4"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C5",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "server の検めが写しの表を引く(盲検 B の形)・M6 が自分の match を持つ・M8 が検めずに渡す、のどれでも M11 が落ちる",
+   "observation": "写しの表 1 failed・M6 の match 1 failed・M8 が検めない 2 failed(test_mcp_json_type_table.py)",
+   "evidence": {
+    "path": "evidence/fix/mutations-6f43914.txt",
+    "sha256": "627f4eea42b0b1a6045519be1f7ccc3554a0d7762f70906123ef7b188a533998"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C6",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "M10 の表に型を足し・行を替えると、M6 の注記と M8 の検めが両方その行に従う(型を足す変更が M10 だけで済む)",
+   "observation": "test_mcp_json_type_table.py の test_annotation_and_server_follow_the_swapped_table(integer を str に替え probe-type を足した表)を含む関わる検が 6f4391412 で 339 passed",
+   "evidence": {
+    "path": "evidence/fix/related-tests-6f43914.txt",
+    "sha256": "71f0c3f95196be2334819dec9eced1998348a561a664d5db821f3e42f06ed883"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C7",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "_runtime-do-import を通す新しい macro を足すと、綴りの検は通り、M1 を差し替えると新しい macro の import も差し替えた置き場を指す",
+   "observation": "綴りの検 1 passed。差し替えた置き場の下の展開の import: from doeff_hy_table_probe.table import do as _probe_do",
+   "evidence": {
+    "path": "evidence/s4/s4-new-macro.txt",
+    "sha256": "37e75971ed9739f12c5abd5eb04f0ae3264f1ffecf3df87aed7500bf35716c68"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C8",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "doeff.do を自分で綴る新しい macro・直す前の 4 か所の綴りを、綴りの検が名を出して断る",
+   "observation": "e5b63f5e7 で綴りの検 PASSED。直す前の版 21c737842 の .hy には handle.hy の _do-import・_helper-imports・_do-reference・_validation-imports の 4 か所を数える。綴る新しい macro を足すと ('macros.hy', 'probe-new-macro', 'import') を出して 1 failed(evidence/s4/s4-new-macro.txt)",
+   "evidence": {
+    "path": "evidence/s4/spelling-check.txt",
+    "sha256": "cc05a429e418268529b1e80f085df78c8df7270aa3171daf12f371f69fba71bf"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

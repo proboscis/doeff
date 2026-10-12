@@ -1,0 +1,115 @@
+"""設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の変異: 1 つずつ当てて検を走らせ、落ちた検を出し、file を元へ戻す。
+
+使い方(doeff の作業木の根で): uv run --no-project python mutations.py <作業木>
+変異は「直した形を、直す前の形か盲検 B の形へ戻す」物。どれも検が落ちれば、その検が形を守っている。
+"""
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Mutation:
+    name: str
+    path: str
+    old: str
+    new: str
+    tests: tuple[str, ...]
+
+
+TABLE_TESTS = ("packages/doeff-hy/tests/test_helper_imports_table.py",)
+MCP_TESTS = (
+    "tests/test_mcp_json_type_table.py",
+    "tests/public_api/test_mcp_tool_def.py",
+    "tests/public_api/test_mcp_tool_macro.py",
+)
+MUTATIONS = (
+    Mutation(
+        "M3: handle.hy の _do-import が doeff.do を直に綴る(直す前の形)",
+        "packages/doeff-hy/src/doeff_hy/handle.hy",
+        "        (_runtime-do-import '_doeff-do))))",
+        "        `(import doeff.do [do :as _doeff-do]))))",
+        TABLE_TESTS,
+    ),
+    Mutation(
+        "M4: fnk の _do-reference が doeff.do を直に綴る(直す前の形)",
+        "packages/doeff-hy/src/doeff_hy/macros.hy",
+        "        `(. (__import__ ~(. source module) :fromlist #(~(. source name)))",
+        "        `(. (__import__ \"doeff.do\" :fromlist #(\"do\"))",
+        TABLE_TESTS,
+    ),
+    Mutation(
+        "M5: _validation-imports が doeff.do を直に綴る(直す前の形)",
+        "packages/doeff-hy/src/doeff_hy/macros.hy",
+        "      `(do ~(_runtime-do-import '_doeff_validation_do)",
+        "      `(do (import doeff.do [do :as _doeff_validation_do])",
+        TABLE_TESTS,
+    ),
+    Mutation(
+        "M1 の値を記号から綴る(途中の版の誤り — Hy は doeff.do を式に読む)",
+        "packages/doeff-hy/src/doeff_hy/macros.hy",
+        "        `(. (__import__ ~(. source module) :fromlist",
+        "        `(. (__import__ ~(str (hy.read (. source module))) :fromlist",
+        TABLE_TESTS,
+    ),
+    Mutation(
+        "M8 の検めが import の時に写した表を引く(盲検 B の形)",
+        "doeff/mcp.py",
+        "        json_type = mcp_json_type(self.type)\n        if json_type is None or not json_type.admits(value):",
+        "        json_type = {t.name: t for t in _HAND_TABLE}.get(self.type)\n        if json_type is None or not json_type.admits(value):",
+        MCP_TESTS,
+    ),
+    Mutation(
+        "M6 の注記が自分の match の表を持つ(d8db309f3 の形)",
+        "packages/doeff-hy/src/doeff_hy/macros.hy",
+        "        annotation (mcp-param-annotation (str ptype)",
+        "        annotation ((fn [t r] (let [b (match t \"string\" \"str\" \"integer\" \"int\" \"number\" \"float\""
+        " \"boolean\" \"bool\" \"array\" \"list[object]\" \"object\" \"dict[str, object]\" _ None)]"
+        " (if (or (is b None) r) b (+ b \" | None\")))) (str ptype)",
+        MCP_TESTS,
+    ),
+    Mutation(
+        "M8 が検めずに渡す(d8db309f3 の形)",
+        "packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy",
+        "  (when decoded.problems\n    (return #(\"tool\" False (.join \"; \" decoded.problems))))\n"
+        "  (setv program (tool.handler #* decoded.values))",
+        "  (setv program (tool.handler #* (lfor name (.param-names tool) (.get req.arguments name))))",
+        MCP_TESTS,
+    ),
+)
+
+
+def main(tree: Path) -> None:
+    head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+    print(f"# 版 {head.stdout.strip()}")
+    for mutation in MUTATIONS:
+        path = tree / mutation.path
+        original = path.read_text(encoding="utf-8")
+        if original.count(mutation.old) != 1:
+            print(f"## {mutation.name}\n  当てられない(元の綴りが 1 か所でない)")
+            continue
+        mutated = original.replace(mutation.old, mutation.new)
+        if mutation.path == "doeff/mcp.py":
+            mutated = mutated.replace(
+                "def mcp_json_type(name: str)",
+                "_HAND_TABLE = MCP_JSON_TYPES  # 写しの表(import の時に写す)\n\n\ndef mcp_json_type(name: str)",
+            )
+        path.write_text(mutated, encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["uv", "run", "pytest", *mutation.tests, "-q", "-p", "no:randomly"],
+                cwd=tree, capture_output=True, text=True, timeout=500,
+            )
+        finally:
+            path.write_text(original, encoding="utf-8")
+        lines = [line for line in result.stdout.splitlines() if line.startswith("FAILED") or " passed" in line or " failed" in line]
+        print(f"## {mutation.name}\n  file: {mutation.path}\n  検: {' '.join(mutation.tests)}\n  rc={result.returncode}")
+        for line in lines:
+            print(f"  {line}")
+    status = subprocess.run(["git", "-C", str(tree), "status", "--short"], capture_output=True, text=True, check=True)
+    print(f"# 戻した後の git status --short: {status.stdout.strip() or '(空)'}")
+
+
+if __name__ == "__main__":
+    main(Path(sys.argv[1]))

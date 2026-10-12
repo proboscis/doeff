@@ -1,0 +1,8 @@
+# 版 e5b63f5e7a3a9863b0cebd71c9c075519c305694(main に入った e5b63f5e7)— 綴りの検
+PASSED packages/doeff-hy/tests/test_runtime_do_spelling.py::test_runtime_do_is_spelled_only_in_the_table_row
+1 passed, 1 warning in 4.08s
+# 同じ検の数え方を、直す前の版 21c737842ff6ed50609005bee33f63f18c4870f1 の doeff_hy の .hy に当てる
+  ('handle.hy', '_do-import', 'import')
+  ('macros.hy', '_helper-imports', 'import')
+  ('macros.hy', '_do-reference', '文字')
+  ('macros.hy', '_validation-imports', 'import')

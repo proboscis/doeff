@@ -1,0 +1,34 @@
+"""M8(mcp_server_loop の `_tool-result-with-stack`)を本物のまま呼び、tool の答え #("tool" ok 値) を出す(盲検 B の run_tool_via_m8.py と同じ呼び方)。
+
+使い方: uv run python run_m8.py <検体の dir> <module 名> <tool の値の名> '<JSON の arguments>' …
+"""
+import importlib
+import json
+import sys
+import threading
+
+import doeff_hy  # noqa: F401 — .hy の import を有効にする
+
+samples, module_name, attr, *cases = sys.argv[1:]
+sys.path.insert(0, samples)
+
+from doeff_agents.handlers.mcp_server_loop import _tool_result_with_stack
+from doeff_agents.mcp_server import McpToolRequest, McpToolServer
+
+from doeff import run
+
+try:
+    tool = getattr(importlib.import_module(module_name), attr)
+except Exception as error:  # 定義の時の誤り(:default の組み合わせ)を出す
+    print(f"{module_name}.{attr}: 定義の時に {type(error).__name__}: {error}")
+    sys.exit(0)
+server = McpToolServer((tool,), port=0)
+try:
+    for arguments_json in cases:
+        req = McpToolRequest(tool_name=tool.name, arguments=json.loads(arguments_json), event=threading.Event(), holder=[])
+        try:
+            print(f"{tool.name} {arguments_json} -> {run(_tool_result_with_stack(server, [], req))}")
+        except Exception as error:
+            print(f"{tool.name} {arguments_json} -> 外へ抜けた {type(error).__name__}: {error}")
+finally:
+    server.server_close()

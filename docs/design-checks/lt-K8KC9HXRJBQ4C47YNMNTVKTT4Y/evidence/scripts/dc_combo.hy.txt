@@ -1,0 +1,2 @@
+(require doeff-hy.macros [defmcp-tool])
+(defmcp-tool combo-tool "combo" [{:name "limit" :type "integer" :description "l" :required False :default 10}] limit)

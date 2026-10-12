@@ -1,0 +1,16 @@
+## 版 21c737842ff6ed50609005bee33f63f18c4870f1 — doeff-hy-check --strict(検体 scripts/strict_tools.hy.txt: defk 1 つ・引数 3 つの defmcp-tool 1 つ)
+  赤 8 件
+   reportUnknownParameterType 8 Type of parameter "name" is unknown
+   reportMissingParameterType 8 Type annotation is missing for parameter "name"
+   reportUnknownParameterType 8 Type of parameter "times" is unknown
+   reportMissingParameterType 8 Type annotation is missing for parameter "times"
+   reportUnknownParameterType 8 Type of parameter "loud" is unknown
+   reportMissingParameterType 8 Type annotation is missing for parameter "loud"
+   reportUnknownArgumentType 13 Argument type is unknown
+   reportUnknownArgumentType 13 Argument type is unknown
+## 版 6f439141223231fd40ba86a7640f3548409c7a6d — doeff-hy-check --strict(検体 scripts/strict_tools.hy.txt: defk 1 つ・引数 3 つの defmcp-tool 1 つ)
+  赤 0 件
+## 型検査の検(版 6f4391412)
+PASSED packages/doeff-hy/tests/test_static_check.py::test_defmcp_tool_handler_params_carry_the_schema_types[False]
+PASSED packages/doeff-hy/tests/test_static_check.py::test_defmcp_tool_handler_params_carry_the_schema_types[True]
+2 passed, 1 warning in 3.68s

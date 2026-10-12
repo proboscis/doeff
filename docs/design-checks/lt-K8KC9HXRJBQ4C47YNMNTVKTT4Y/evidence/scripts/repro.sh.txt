@@ -1,0 +1,11 @@
+#!/bin/sh
+# 使い方: sh repro.sh <doeff の作業木>  — 盲検 A・B の失敗例(M6 の注記と M8 の渡す値の食い違い・:default)を本物の M8 で再現する
+set -u
+WT=$1; HERE=$(cd "$(dirname "$0")" && pwd); S=$HERE/samples
+echo "# 版 $(git -C "$WT" rev-parse HEAD)"
+cd "$WT"
+uv run python "$HERE/run_m8.py" "$S" dc_tools double_tool '{"qty": 21}' '{"qty": "100"}' '{}'
+uv run python "$HERE/run_m8.py" "$S" dc_tools price_tool '{"price": 2.5}' '{"price": 2}' '{"price": true}'
+uv run python "$HERE/run_m8.py" "$S" dc_tools side_tool '{"side": "buy"}' '{"side": "short"}'
+uv run python "$HERE/run_m8.py" "$S" dc_tools default_tool '{"limit": 3}' '{}'
+uv run python "$HERE/run_m8.py" "$S" dc_combo combo_tool '{}'
