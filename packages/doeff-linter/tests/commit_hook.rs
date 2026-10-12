@@ -500,6 +500,141 @@ fn a_zero_timeout_measures_to_the_end() {
     assert!(!stderr.contains("測れなかった"), "{}", stderr);
 }
 
+/// hook を repo の外の dir(cwd)から `--root <root>` で走らせ、(終了コード・stderr)を返す(置き場は hook() と同じく repo の .git の下)。
+fn hook_from(cwd: &Path, root: &Path, extra: &[&str]) -> (i32, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .arg("--commit-hook")
+        .arg("--root")
+        .arg(root)
+        .args(extra)
+        .current_dir(cwd)
+        .env("DOEFF_LINTER_CACHE_DIR", root.join(".git").join("doeff-linter-cache"))
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).into_owned())
+}
+
+/// 報告の file を読む。
+fn read_report(path: &Path) -> Value {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("報告 {} が無い: {}", path.display(), e));
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("報告が JSON でない({}): {}", e, text))
+}
+
+/// 測りの判じた規則の ID。
+fn judged_rules(measurement: &Value) -> Vec<&str> {
+    measurement["judged_rules"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect()
+}
+
+/// card ki-b9eeeea338b6(設計の記録 project-health-ide の指摘 2): `--report-out` は、hook の 2 回の測り(HEAD の版・stage した path)を
+/// 1 つの JSON に書く — 測りごとに測った対象(HEAD・stage)・測った path の列・editor-json の違反の形の違反・判じた規則。直す commit
+/// (HEAD の版の DOEFF016 を stage で消す)は、HEAD の測りに当たりが 1 件(path は HEAD の木でなく作業木の根の下へ付け替えた後)・stage の
+/// 測りに 0 件 — 会話の頁が「減らした」を読む材料。repo 全体が要る規則(DOEFF163)は hook が当てないので、判じた規則にも載らない。
+#[test]
+fn the_report_out_writes_the_head_and_the_stage_measurements() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "app/queue/tool.py", "from . import main\n");
+    git(root, &["add", "app/queue/tool.py"]);
+    git(root, &["commit", "-q", "-m", "相対 import の在る HEAD"]);
+    write(root, "app/queue/tool.py", "import os\n");
+    git(root, &["add", "app/queue/tool.py"]);
+    let out = tempfile::TempDir::new().unwrap();
+    let file = out.path().join("report.json");
+    let (code, stderr) = hook(root, &["--report-out", file.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    let report = read_report(&file);
+    let canonical = root.canonicalize().unwrap();
+    assert_eq!(report["root"], canonical.to_string_lossy().as_ref());
+    assert_eq!(report["code"], 0);
+    let measurements = report["measurements"].as_array().unwrap();
+    let targets: Vec<&str> = measurements.iter().map(|m| m["target"].as_str().unwrap()).collect();
+    assert_eq!(targets, vec!["HEAD", "stage"], "{}", report);
+    for measurement in measurements {
+        assert_eq!(measurement["paths"], serde_json::json!(["app/queue/tool.py"]), "{}", measurement);
+        let judged = judged_rules(measurement);
+        assert!(judged.contains(&"DOEFF016") && !judged.contains(&"DOEFF163"), "{:?}", judged);
+    }
+    let head = measurements[0]["violations"].as_array().unwrap();
+    assert_eq!(head.len(), 1, "{}", report);
+    assert_eq!(head[0]["rule"], "DOEFF016");
+    assert_eq!(head[0]["path"], canonical.join("app/queue/tool.py").to_string_lossy().as_ref());
+    for field in ["severity", "base_severity", "level", "standing", "range", "message", "source"] {
+        assert!(head[0].get(field).is_some(), "editor-json の違反の欄 {} が無い: {}", field, head[0]);
+    }
+    assert_eq!(measurements[1]["violations"], serde_json::json!([]), "{}", report);
+}
+
+/// card ki-b9eeeea338b6: `--report-out` の無い hook は報告をどこにも書かない(今の dir は空のまま・作業木に新しい file が無い)。同じ
+/// commit に `--report-out` を足しても、止める判定・終了コード・stderr の文は 1 字も変わらず、相対の path は今の dir から書く。
+#[test]
+fn without_report_out_the_hook_writes_no_report_and_its_stderr_is_unchanged() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "app/queue/tool.py", "from . import main\n");
+    git(root, &["add", "app/queue/tool.py"]);
+    let cwd = tempfile::TempDir::new().unwrap();
+    let (code, plain) = hook_from(cwd.path(), root, &[]);
+    assert_eq!(code, 1, "{}", plain);
+    assert!(plain.contains("doeff-linter commit-hook: stage した file の破れ: app/queue/tool.py:1: DOEFF016"), "{}", plain);
+    assert_eq!(std::fs::read_dir(cwd.path()).unwrap().count(), 0, "引数の無い hook が今の dir に file を書いた");
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&status.stdout), "M  app/queue/tool.py\n", "引数の無い hook が作業木に file を書いた");
+
+    let (code, with_report) = hook_from(cwd.path(), root, &["--report-out", "report.json"]);
+    assert_eq!(code, 1, "{}", with_report);
+    assert_eq!(with_report, plain, "報告の出口が stderr の文を変えた");
+    let report = read_report(&cwd.path().join("report.json"));
+    assert_eq!(report["code"], 1);
+    let stage = &report["measurements"][1];
+    assert_eq!(stage["target"], "stage");
+    let rules: Vec<&str> = stage["violations"].as_array().unwrap().iter().map(|v| v["rule"].as_str().unwrap()).collect();
+    assert_eq!(rules, vec!["DOEFF016"], "{}", report);
+}
+
+/// 何も stage していない commit も `--report-out` の報告を書く — 子を撃たないので、HEAD・stage の測りはどちらも path・違反・判じた規則が空。
+#[test]
+fn nothing_staged_writes_two_empty_measurements() {
+    let dir = baseline_repo();
+    let out = tempfile::TempDir::new().unwrap();
+    let file = out.path().join("report.json");
+    let (code, stderr) = hook(dir.path(), &["--report-out", file.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(stderr.is_empty(), "{}", stderr);
+    let empty = |target: &str| serde_json::json!({ "target": target, "paths": [], "violations": [], "judged_rules": [] });
+    assert_eq!(read_report(&file)["measurements"], serde_json::json!([empty("HEAD"), empty("stage")]));
+}
+
+/// `--report-out` は `--commit-hook` の時だけ — 他の実行(と門の口 `--split-rules`)では引数の誤り(終了コード 2)で、何も書かない。
+#[test]
+fn report_out_outside_the_commit_hook_is_an_argument_error() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    for extra in [vec!["--output-format", "editor-json"], vec!["--commit-hook", "--split-rules"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+            .args(&extra)
+            .args(["--no-log", "--report-out", "report.json"])
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{:?}: {}", extra, stderr);
+        assert!(stderr.contains("--report-out は --commit-hook の時だけ使える"), "{}", stderr);
+        assert!(!root.join("report.json").exists(), "{:?}", extra);
+    }
+}
+
 /// 打ち切って止めた時の行の後ろ 2 行の頭(agora-redesign #3834・cisco-c8 の可 2026-10-07)。
 const RERUN_COMMAND: &str = "上限なしで同じ比べをやり直す命令: ";
 const RERUN_GUIDE: &str = "この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない";

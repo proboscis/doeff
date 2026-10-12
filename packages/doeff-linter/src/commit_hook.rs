@@ -35,8 +35,15 @@
 //! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の版を測る 1 回にも事実の cache が効く・
 //! agora-redesign #3858)。
 //! 純粋な部分(規則の分け・識別子の差・止める当たりの選び・測れなかった比べの文・上限なしの命令)は関数に分けて、単体のテストで確かめる。
+//!
+//! 報告の出口(引数 `--report-out <file>`・card ki-b9eeeea338b6): 2 回の測り(HEAD の版・stage した path)を、それぞれ測った path の列・
+//! 違反(editor-json の違反の形のまま — HEAD の版は先端の根の path へ付け替えた後)・判じた規則の ID で 1 つの JSON に書く(report_of)。
+//! 会話の commit の hook がこの報告を会話 id つきで記録へ送り、会話が増やした・減らした違反を commit ごとに読む材料にする
+//! (設計の記録 project-health-ide の指摘 2)。止める判定・終了コード・stderr の文は引数の無い時と同じで、書けない時も終了コードは
+//! 変えない(stderr に 1 行 — 診断の記録は commit を止めない)。
 
 use crate::config::{CommitHookSection, Config};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -304,12 +311,14 @@ impl CommitHookOptions {
     }
 }
 
-/// 子の linter を撃つ木。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 子の linter を撃つ木。報告(report_of)の測った対象の綴りは `HEAD`・`stage`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Side {
     /// HEAD の木(事実の cache の根の commit-hook-tree/<repo を表す名>/tree に置いた基点 — head_tree)。
+    #[serde(rename = "HEAD")]
     Head,
-    /// 先端の木(git の作業木そのもの)。
+    /// 先端の木(git の作業木そのもの — stage した path を測る)。
+    #[serde(rename = "stage")]
     Tip,
 }
 
@@ -979,18 +988,68 @@ fn empty_report() -> Value {
     serde_json::json!({ "violations": [] })
 }
 
-/// hook の 1 回の判じ — 終了コードと、出す行(行の頭の `doeff-linter commit-hook: ` を除く)。
+/// 子の linter 1 回の測り — 報告の出口(--report-out)に書く 1 件。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Measurement {
+    /// 測った対象(`HEAD` = HEAD の版・`stage` = stage した path)。
+    pub target: Side,
+    /// 子の linter に渡した path(根からの相対)。空なら子を撃っていない(HEAD の版に無い file だけ・最初の commit・stage が空)。
+    pub paths: Vec<String>,
+    /// 違反(子の linter の editor-json の違反の形のまま)。
+    pub violations: Vec<Value>,
+    /// 判じた規則の ID(子の linter の editor-json の judged_rules)。
+    pub judged_rules: Vec<String>,
+}
+
+impl Measurement {
+    /// 純粋: 子の linter の報告(editor-json)から測りを作る(報告の違反は移す — 写さない)。
+    pub fn of(target: Side, paths: Vec<String>, mut report: Value) -> Measurement {
+        let violations = match report.get_mut("violations").map(Value::take) {
+            Some(Value::Array(list)) => list,
+            _ => Vec::new(),
+        };
+        let judged_rules = report["judged_rules"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        Measurement { target, paths, violations, judged_rules }
+    }
+
+    /// 子を撃っていない測り(path・違反・判じた規則が空)。
+    fn none(target: Side) -> Measurement {
+        Measurement::of(target, Vec::new(), empty_report())
+    }
+}
+
+/// 純粋: 報告の出口に書く JSON — 先端の根(違反の path の根)・hook の終了コード・測りの列。測りは判じ終えた時は HEAD・stage の 2 件、
+/// 上限で打ち切った時と測れなかった時は空(終了コード 1・2 — 判じていない)。
+pub fn report_of(root: &Path, assessment: &Assessment) -> Value {
+    serde_json::json!({ "root": root.to_string_lossy(), "code": assessment.code, "measurements": assessment.measurements })
+}
+
+/// hook の 1 回の判じ — 終了コードと、出す行(行の頭の `doeff-linter commit-hook: ` を除く)と、測り(報告の出口に書く)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assessment {
     pub code: u8,
     pub lines: Vec<String>,
+    pub measurements: Vec<Measurement>,
+}
+
+/// 判じ終えた 1 回 — 止める物と、HEAD の版・stage した path の 2 つの測り。
+struct Judged {
+    blocking: Blocking,
+    measurements: Vec<Measurement>,
+}
+
+impl Judged {
+    /// 子を撃たずに判じ終えた 1 回(stage が空・当てる規則が無い・linter が読む path が無い)。
+    fn unmeasured() -> Judged {
+        Judged { blocking: Blocking::default(), measurements: vec![Measurement::none(Side::Head), Measurement::none(Side::Tip)] }
+    }
 }
 
 /// hook の判じ(印字しない)。終了コード 0 = 通す・1 = 止める(上限で打ち切って測れなかった時を含む — 上限なしの命令を添える)・
 /// 2 = git・linter が動かなかった。
 pub fn assess(options: &CommitHookOptions) -> Assessment {
     match judge(options) {
-        Ok(blocking) => {
+        Ok(Judged { blocking, measurements }) => {
             let code = u8::from(
                 !(blocking.staged.is_empty()
                     && blocking.fresh_critical.is_empty()
@@ -1005,18 +1064,25 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
                 .chain(already_on_head_lines(&blocking))
                 .chain(blocking.out_of_scope.iter().map(|path| format!("対象の外(linter が歩く範囲の外 — 層の規則はこの file を測っていない): {}", path)))
                 .collect();
-            Assessment { code, lines }
+            Assessment { code, lines, measurements }
         }
-        Err(Stop::TimedOut(unmeasured)) => Assessment { code: 1, lines: cut_lines(options, &unmeasured) },
-        Err(Stop::Failed(reason)) => Assessment { code: 2, lines: vec![reason] },
+        Err(Stop::TimedOut(unmeasured)) => Assessment { code: 1, lines: cut_lines(options, &unmeasured), measurements: Vec::new() },
+        Err(Stop::Failed(reason)) => Assessment { code: 2, lines: vec![reason], measurements: Vec::new() },
     }
 }
 
-/// hook の本体 — 判じ(assess)の行を stderr に出し、終了コードを返す。
-pub fn run(options: &CommitHookOptions) -> u8 {
+/// hook の本体 — 判じ(assess)の行を stderr に出し、報告の出口(report_out)が在れば報告(report_of)を書き、終了コードを返す。
+/// 報告を書けない時は stderr に 1 行足し、終了コードは変えない(診断の記録は commit を止めない)。
+pub fn run(options: &CommitHookOptions, report_out: Option<&Path>) -> u8 {
     let assessment = assess(options);
     for line in &assessment.lines {
         eprintln!("{}{}", PREFIX, line);
+    }
+    if let Some(path) = report_out {
+        let root = options.root.canonicalize().unwrap_or_else(|_| options.root.clone());
+        if let Err(error) = std::fs::write(path, report_of(&root, &assessment).to_string()) {
+            eprintln!("{}報告 {} を書けない(終了コードは変えない): {}", PREFIX, path.display(), error);
+        }
     }
     assessment.code
 }
@@ -1034,20 +1100,20 @@ fn already_on_head_lines(blocking: &Blocking) -> Vec<String> {
     hits.into_iter().chain(guide).collect()
 }
 
-fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
+fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     let root = &options.root;
     let staged = staged_paths(root).map_err(Stop::Failed)?;
-    let mut blocking = Blocking::default();
     if staged.is_empty() {
-        return Ok(blocking);
+        return Ok(Judged::unmeasured());
     }
     // file 1 つで決まる規則だけを stage した path に当てる — repo 全体が要る規則と、宣言の file を変えた commit の stage していない
     // file の当たりは repo 全体の検証が見る(card ki-7da14032cf9c・頭の註)。
     let quick = split_rules(&options.enabled).quick;
     let paths = linted_paths(&staged, |p| root.join(p).exists());
     if quick.is_empty() || paths.is_empty() {
-        return Ok(blocking);
+        return Ok(Judged::unmeasured());
     }
+    let mut blocking = Blocking::default();
     let scratch = Scratch::create().map_err(Stop::Failed)?;
     // HEAD の木は事実の cache の根の commit-hook-tree/<repo を表す名>/tree に repo ごとに 1 つ置き、差分で進める(head_tree・#3858)。
     // 木の lock はこの関数を抜けるまで(子の linter が木を測り終えるまで)持つ。cache を使わない実行(DOEFF_LINTER_NO_CACHE)は、
@@ -1102,7 +1168,8 @@ fn judge(options: &CommitHookOptions) -> Result<Blocking, Stop> {
         split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
     blocking.grown_warnings = grown_major_warnings(&base, &tip);
     blocking.out_of_scope = out_of_scope_of(&tip);
-    Ok(blocking)
+    let measurements = vec![Measurement::of(Side::Head, head_paths, base), Measurement::of(Side::Tip, paths, tip)];
+    Ok(Judged { blocking, measurements })
 }
 
 #[cfg(test)]
@@ -1236,6 +1303,31 @@ mod tests {
         assert!(grown_major_warnings(&head, &others).is_empty());
         // HEAD に版が無い(新しい file だけ)なら、基点は 0。
         assert_eq!(grown_major_warnings(&json!({ "violations": [] }), &fewer), ids(&["DOEFF113 0 → 1"]));
+    }
+
+    /// card ki-b9eeeea338b6: 報告の測りは、子の linter の editor-json の違反を形のまま移し、判じた規則の ID と渡した path の列を添える。
+    /// 報告は根・終了コード・測りの列で、測った対象は `HEAD`・`stage` と綴る。子を撃っていない測り(欄の無い報告)は違反も規則も空。
+    #[test]
+    fn commit_hook_report_carries_each_measurement_in_the_editor_json_shape() {
+        let hit = v("k-error", "error", "major");
+        let tip = json!({ "root": "/r", "violations": [hit.clone()], "judged_rules": ["DOEFF016", "NOQA001"], "new_critical": [] });
+        let stage = Measurement::of(Side::Tip, ids(&["a.hy"]), tip);
+        assert_eq!(stage.violations, vec![hit.clone()]);
+        assert_eq!(stage.judged_rules, ids(&["DOEFF016", "NOQA001"]));
+        let head = Measurement::none(Side::Head);
+        assert!(head.paths.is_empty() && head.violations.is_empty() && head.judged_rules.is_empty(), "{:?}", head);
+
+        let assessment = Assessment { code: 1, lines: ids(&["x"]), measurements: vec![head, stage] };
+        assert_eq!(
+            report_of(Path::new("/r"), &assessment),
+            json!({ "root": "/r", "code": 1, "measurements": [
+                { "target": "HEAD", "paths": [], "violations": [], "judged_rules": [] },
+                { "target": "stage", "paths": ["a.hy"], "violations": [hit], "judged_rules": ["DOEFF016", "NOQA001"] },
+            ]})
+        );
+        // 打ち切った・測れなかった 1 回は測りが空(終了コードが判じていない事を名乗る)。
+        let cut = Assessment { code: 1, lines: Vec::new(), measurements: Vec::new() };
+        assert_eq!(report_of(Path::new("/r"), &cut)["measurements"], json!([]));
     }
 
     #[test]
