@@ -1,0 +1,21 @@
+code-quality: passed (scope=changed・型検査は未実行(fast の段))
+code-quality-base: {'revision': '6a7f25105e14b7c4dd52a76652edf078661eb46c', 'repo': '/work/toolset/worktrees/doeff-wt-blind-b-ki-fe7a'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-untracked: 1 件の source が追跡外のため母集団に入っていない(git add -N で名乗らせる): packages/doeff-traverse/examples/ex10_built_then_run.hy
+code-quality-timing: prepare 6.152s inventory=2805 scoped=876 sources=3 changed=2 selected=1
+code-quality-timing: node-toolchain 0.0s status=checkout path=/work/toolset/worktrees/doeff-wt-blind-b-ki-fe7a
+code-quality-timing: verdict-lookup 0.0s hit=False key=3b6ce5286970
+code-quality-timing: candidate.sources 2.991s sources=3 selected=1 analyzed={'hy': 3} by_language={'hy': 2.99} cache_hits=0 cache_misses=3
+code-quality-timing: candidate.closure 0.0s affected=1 languages={'hy': 1} touched_languages=['hy']
+code-quality-timing: base.workspace 28.02s paths=5603
+code-quality-timing: base.read 3.78s inventory=2804 sources=2
+code-quality-timing: base.sources 0.044s sources=2 selected=1 analyzed={'hy': 2} by_language={'hy': 0.04} cache_hits=2 cache_misses=0
+code-quality-timing: base.closure 0.0s affected=1 languages={'?': 1} touched_languages=[]
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.035s modules=278 paths=2804
+code-quality-timing: base.policy 0.001s dependencies=10 findings=0
+code-quality-timing: observe-baseline 32.181s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.035s
+code-quality-coverage: partial / 対象 876 / 全体 2805 / 未導入 {'hy': 342, 'javascript': 12, 'lua': 17, 'python': 1311, 'rust': 88, 'shell': 36, 'typescript': 123} / typed:true だが include に無い 27(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 556 件（自動増加しない）
