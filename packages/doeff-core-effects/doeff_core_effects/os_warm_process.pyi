@@ -30,8 +30,6 @@ from doeff_core_effects.warm_effects import warm_lost as warm_lost
 from doeff_core_effects.warm_effects import warm_gone as warm_gone
 from doeff_core_effects.warm_effects import warm_exit_answer as warm_exit_answer
 from doeff_core_effects.warm_effects import signal_number_of as signal_number_of
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 PROC_ROOT: str
 ANSWER_LIMIT: int
 

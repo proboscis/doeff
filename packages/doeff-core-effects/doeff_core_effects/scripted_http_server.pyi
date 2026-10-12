@@ -53,8 +53,6 @@ from doeff_core_effects.http_server_effects import WsBinaryArrived as WsBinaryAr
 from doeff_core_effects.http_server_effects import HttpHeader as HttpHeader
 from doeff_core_effects.file_effects import ReadBytes as ReadBytes
 from doeff_core_effects.file_effects import FileFailed as FileFailed
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 CLOSED_REASON: str
 EMPTY_REPORT: WsSendReport
 

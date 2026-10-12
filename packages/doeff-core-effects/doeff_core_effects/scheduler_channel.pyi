@@ -9,8 +9,6 @@ from doeff_core_effects.channel_effects import Channel as Channel
 from doeff_core_effects.channel_effects import CreateChannel as CreateChannel
 from doeff_core_effects.channel_effects import PutChannel as PutChannel
 from doeff_core_effects.channel_effects import TakeChannel as TakeChannel
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def woken(promises: tuple) -> _Program[None, object]:
     ...

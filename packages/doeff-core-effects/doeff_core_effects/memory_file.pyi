@@ -46,8 +46,6 @@ from doeff_core_effects.file_effects import SourceNotCompiled as SourceNotCompil
 from doeff_core_effects.python_bytecode import compiled_pyc as compiled_pyc
 from doeff_core_effects.python_bytecode import kept_pyc as kept_pyc
 from doeff_core_effects.python_bytecode import pyc_path as pyc_path
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 ROOT: str
 NO_ENTRY: str
 NOT_DIRECTORY: str

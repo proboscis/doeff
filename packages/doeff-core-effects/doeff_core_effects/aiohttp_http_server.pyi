@@ -57,8 +57,6 @@ from doeff_core_effects.http_server_effects import probe_for as probe_for
 from doeff_core_effects.http_server_effects import probe_answer as probe_answer
 from aiohttp.web_protocol import PayloadAccessError as PayloadAccessError
 from doeff import run as run
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 FILE_CHUNK_BYTES: int
 BODY_CHUNK_BYTES: int
 PREFETCH_BYTES: int

@@ -6,6 +6,4 @@ from doeff_core_effects.stack_dump_effects import DisarmStackDump as DisarmStack
 from doeff_core_effects.stack_dump_effects import ReadStackDumps as ReadStackDumps
 from doeff_core_effects.stack_dump_effects import StackDumpLedger as StackDumpLedger
 from doeff_core_effects.stack_dump_effects import stack_dumps_at as stack_dumps_at
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 memory_stack_dump_handler: _Handler

@@ -25,8 +25,6 @@ from doeff_core_effects.ws_client_effects import WsSent as WsSent
 from doeff_core_effects.ws_client_effects import link_name as link_name
 from doeff_core_effects.ws_client_effects import closed_answer as closed_answer
 from doeff_core_effects.ws_client_effects import closing_links as closing_links
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 CONNECT_SECONDS: float
 HANDSHAKE_SECONDS: float
 CLOSE_SECONDS: float

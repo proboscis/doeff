@@ -1,10 +1,12 @@
+(require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord defenum])
+(import collections.abc [Mapping])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff_vm [EffectBase])
 
 
-(setv _HTTP-METHODS (frozenset ["GET" "POST" "PUT" "PATCH" "DELETE" "HEAD" "OPTIONS"]))
+(val _HTTP-METHODS (frozenset ["GET" "POST" "PUT" "PATCH" "DELETE" "HEAD" "OPTIONS"]))
 
 
 (defclass HttpRequest [EffectBase]
@@ -21,11 +23,21 @@
 
    connect-timeout-seconds = a shorter limit for making the connection only (None = timeout-seconds covers every phase). A caller that
    can send the request elsewhere when no connection was made (CONNECT-FAILED) sets it short, so an address that drops the handshake
-   is given up quickly while a slow answer still has timeout-seconds (#2337)."
+   is given up quickly while a slow answer still has timeout-seconds (#2337).
 
-  (defn __init__ [self method url * [headers None] [params None] [body None]
-                  [timeout-seconds 30.0] [max-retries 3] [follow-redirects True] [failures-as-values False]
-                  [log-each-request False] [connect-timeout-seconds None]]
+   params and body are handed to the outside HTTP as they are (a query mapping; bytes / str sent as they are; a mapping sent as JSON),
+   so their values are any value the outside accepts: the boundary type is `Mapping[str, object]` — covariant in the value, so
+   a caller's `dict[str, str]` or `dict[str, Any]` is accepted (`dict[str, object]` is invariant and was not; `Any` is a type escape).
+   A mapping that is not a dict is kept as a dict (the handlers and the fixture key read a dict; a dict is kept as it is) —
+   agora-redesign #2939."
+
+  (defn #^ None __init__ [self #^ str method #^ str url *
+                          #^ (| (get dict #(str str)) None) [headers None]
+                          #^ (| (get Mapping #(str object)) None) [params None]
+                          #^ (| bytes str (get Mapping #(str object)) None) [body None]
+                          #^ float [timeout-seconds 30.0] #^ int [max-retries 3] #^ bool [follow-redirects True]
+                          #^ bool [failures-as-values False] #^ bool [log-each-request False]
+                          #^ (| float None) [connect-timeout-seconds None]]
     (.__init__ (super))
     (setv normalized-method (.upper method))
     (when (not-in normalized-method _HTTP-METHODS)
@@ -33,11 +45,13 @@
     (when (< max-retries 0)
       (raise (ValueError (+ "max_retries must be non-negative: "
                             (repr max-retries)))))
-    (setv self.method normalized-method
+    (setv #^ str self.method normalized-method
           self.url url
           self.headers headers
-          self.params params
-          self.body body
+          #^ (| (get dict #(str object)) None) self.params
+          (if (isinstance params Mapping) (if (isinstance params dict) params (dict params)) params)
+          #^ (| bytes str (get dict #(str object)) None) self.body
+          (if (isinstance body Mapping) (if (isinstance body dict) body (dict body)) body)
           self.timeout-seconds timeout-seconds
           self.max-retries max-retries
           self.follow-redirects follow-redirects

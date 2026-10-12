@@ -13,8 +13,6 @@ from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternal
 from doeff_core_effects.scheduler import CreatePromise as CreatePromise
 from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects.scheduler import Wait as Wait
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 STOP_SIGNALS: tuple[signal.Signals, ...]
 
 class StopBox:

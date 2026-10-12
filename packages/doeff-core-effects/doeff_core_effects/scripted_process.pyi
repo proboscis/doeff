@@ -42,8 +42,6 @@ from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects.file_effects import AppendText as AppendText
 from doeff_core_effects.file_effects import FileFailed as FileFailed
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 @dataclass(frozen=True, kw_only=True)
 class ScriptedCommand:

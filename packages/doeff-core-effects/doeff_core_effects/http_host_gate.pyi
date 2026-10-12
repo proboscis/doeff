@@ -5,8 +5,6 @@ from urllib.parse import urlsplit as urlsplit
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 class HostNotAllowed(ConnectionError):
     url: str

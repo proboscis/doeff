@@ -280,7 +280,8 @@ def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
     doeff_hy.declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めた文にするため(それ以外は None)。
     宣言 :effects にだけ出る効果の名(handler の節が下請けの関数を通して出す効果)を、型検査の中で読まれた名に残す —
     記帳ごと外すと、その名の import が strict の reportUnusedImport の赤になり、書き手は直せない(import を消すと実行の時に
-    :effects の宣言が名を解けない — agora-redesign #3871 の後)。"""
+    :effects の宣言が名を解けない — agora-redesign #3871 の後)。空の宣言 `:effects []`(effect を出さない)も `()` で残す:
+    道具 static_stub が .pyi の答えの Program の effect の位置を Never にする(読まれる名は無い・agora-redesign #2939)。"""
     match statement:
         case ast.Expr(
             value=ast.Call(
@@ -291,7 +292,7 @@ def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
                     ast.Call(args=[_, ast.Call(func=ast.Name(id="tuple"), args=[ast.List(elts=names)])]),
                 ],
             )
-        ) if names:
+        ):
             reads = ast.Expr(
                 value=ast.Call(
                     func=ast.Name(id="setattr", ctx=ast.Load()),

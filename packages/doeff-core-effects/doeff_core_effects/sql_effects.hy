@@ -63,20 +63,25 @@
 (import uuid [UUID])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
-(import typing [TypeVar])
+(import collections.abc [Sequence])
+(import typing [TypeGuard TypeVar])
 (import doeff [Program])
 (import doeff_core_effects.scheduler [ExternalPromise])
 
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 
-;; SqlTransaction の答えの program の答えの型(program ごとに違う)。
+;; SqlTransaction の答えの program の答えの型(program ごとに違う)。実行時の欄と答えの型が読む TypeVar で、型検査の展開は
+;; SqlTransaction の :tp [T] が class の型の引数 T を立てる(#2939)。
 (val T (TypeVar "T"))
 
-;; 引数と行の値の閉じた集合(bool は int の下位の型なので先に並べる)。
-(val SQL-VALUE-TYPES #(bool int float str bytes (type None)))
+;; 型の注記 `#^ 型 名前` を書く定数(#2939): 式から型が決まらない値(空の dict・正規表現の compile の結果・型の組)。注記が無いと、型の宣言
+;; (.pyi)の定数が Incomplete になり、使う側の式の型が「一部が分からない」になる。実行時の値は注記に関わらず式の値。
+;; 引数と行の値の閉じた集合(bool は int の下位の型なので先に並べる)。型の組の注記は `tuple[type, ...]` — 実行時の isinstance に渡す組で、
+;; 静的には中身を決めない(中身を決めると、閉じた集合の値への isinstance の検めが「いつも真」の赤になる)。
+(val #^ (get tuple #(type ...)) SQL-VALUE-TYPES #(bool int float str bytes (type None)))
 ;; 値の型そのもの(subclass を含まない)が閉じた集合の型である印 — normalized-rows が呼びを省く判定に使う(enum の値のような subclass は
 ;; normalized-value の match へ回す)。
-(val PLAIN-VALUE-TYPES (frozenset SQL-VALUE-TYPES))
+(val #^ (get frozenset type) PLAIN-VALUE-TYPES (frozenset SQL-VALUE-TYPES))
 
 ;; 同じ閉じた集合の型の別名(呼び手が注記に使う名 — 型の宣言 sql_effects.pyi の SqlValue と同じ物)。
 (val SqlValue (| int float str bytes bool None))
@@ -85,11 +90,12 @@
 (val DriverValue (| int float str bytes bool None memoryview bytearray Decimal datetime.date datetime.time UUID))
 
 ;; 中立の記法の字句: 文字列の literal・引用した名・注釈・$$ の本文・`::` はそのまま文、`:name` は引数、他は 1 字ずつ文。
-(val TOKEN (re.compile r"(?P<text>'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*.*?\*/|\$\$.*?\$\$|::)|:(?P<name>[A-Za-z_][A-Za-z0-9_]*)|(?P<plain>[^'\"\-/:$]+|.)"
-                       re.DOTALL))
+(val #^ (get re.Pattern str) TOKEN
+  (re.compile r"(?P<text>'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*.*?\*/|\$\$.*?\$\$|::)|:(?P<name>[A-Za-z_][A-Za-z0-9_]*)|(?P<plain>[^'\"\-/:$]+|.)"
+              re.DOTALL))
 
 ;; 表・欄・索引の名(DDL に描く名は引用しないので、この形だけを受ける)。
-(val IDENTIFIER (re.compile r"[A-Za-z_][A-Za-z0-9_]*"))
+(val #^ (get re.Pattern str) IDENTIFIER (re.compile r"[A-Za-z_][A-Za-z0-9_]*"))
 
 
 ;; --- 値 ---------------------------------------------------------------------------------------------------------------------
@@ -97,13 +103,13 @@
 (defrecord SqlParam
   "文の引数 1 つ(name = 文の `:name` の名・value = SqlValue の閉じた集合の値)。"
   (#^ str name)
-  (#^ (| int float str bytes bool None) value))
+  (#^ SqlValue value))
 
 
 (defrecord SqlRows
   "問い合わせの答え。rows = 行の tuple(行 = 欄の値の tuple・値は SqlValue へ正規化済み)・rowcount = engine が数えた行の数
    (行を返す文は返した行の数・書く文は変えた行の数。ClickHouse の HTTP の問い合わせは数えないので None)。"
-  (#^ (get tuple #((get tuple #((| int float str bytes bool None) ...)) ...)) rows)
+  (#^ (get tuple #((get tuple #(SqlValue ...)) ...)) rows)
   (#^ (| int None) rowcount))
 
 
@@ -167,7 +173,7 @@
 (defeffect SqlInsertRows
   "表 table の欄 columns へ行 rows をまとめて入れる(頭の註)。rows の各行は columns と同じ長さの SqlValue の tuple(答え手が検める)。"
   {:fields [(: database str) (: table str) (: columns (get tuple #(str ...)))
-            (: rows (get tuple #((get tuple #((| int float str bytes bool None) ...)) ...)))]
+            (: rows (get tuple #((get tuple #(SqlValue ...)) ...)))]
    :pre [(: database str) (: table str) (: columns tuple) (: rows tuple) (all (gfor row rows (isinstance row tuple)))]
    :answer (| SqlRows SqlFailed SqlUnreachable)
    :tags {:context "sql" :role "foundation"}})
@@ -176,7 +182,8 @@
 (defeffect SqlTransaction
   "program を 1 つの transaction の中で走らせる(頭の註の約束 3 つ)。答え = program の答え(commit した後)| SqlFailed | SqlUnreachable。
    batched = 文の流し方の宣言(既定 False = 文 1 つを 1 回ずつ・True = 往復をまとめる — 頭の註)。"
-  {:fields [(: database str) (: program Program) (: lock-key (| str None) None) (: batched bool False)]
+  {:tp [T]
+   :fields [(: database str) (: program (get Program #(T object))) (: lock-key (| str None) None) (: batched bool False)]
    :pre [(: database str) (: program Program) (: lock-key (| str None)) (: batched bool)]
    :answer (| T SqlFailed SqlUnreachable)
    :runs-carried [program]
@@ -222,22 +229,22 @@
    SqlDropNotice で外す。"
   {:fields [(: database str) (: channel str) (: topics (| (get tuple #(str ...)) None))]
    :pre [(: database str) (: channel str) (: topics (| tuple None))]
-   :answer (| ExternalPromise SqlUnreachable)
+   :answer (| (get ExternalPromise bool) SqlUnreachable)
    :tags {:context "sql" :role "foundation"}})
 
 
 (defeffect SqlDropNotice
   "SqlHangNotice で掛けて鳴らなかった呼び鈴 bell を外す(鳴った後でも何もせずに答える)。"
-  {:fields [(: database str) (: channel str) (: bell ExternalPromise)]
+  {:fields [(: database str) (: channel str) (: bell (get ExternalPromise bool))]
    :pre [(: database str) (: channel str) (: bell ExternalPromise)]
-   :answer (type None)
+   :answer None
    :tags {:context "sql" :role "foundation"}})
 
 
 (defeffect SetSqlOutage
   "I/O なしの置き場の口(sqlite-sql-handler だけが答える): down = True の間、database への effect は全部 SqlUnreachable で答える。"
   {:fields [(: database str) (: down bool)]
-   :answer (type None)
+   :answer None
    :tags {:context "sql" :role "foundation"}})
 
 
@@ -258,18 +265,18 @@
 ;; 文が限りなく増えても memory は増えない — 止めた後は毎回割る)。dict の get / 代入は 1 つずつ不可分なので、thread が重なっても同じ文を
 ;; 2 度割るだけで食い違わない(agora-redesign #2423 — SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
 (val SPLIT-MEMO-LIMIT 4096)
-(val SPLIT-MEMO {})
+(val #^ (get dict #(str (get tuple #((| SqlText SqlPlaceholder) ...)))) SPLIT-MEMO {})
 
 
 (defk split-statement [statement]
-  {:pre [(: statement str)] :post [(: % tuple)]
+  {:pre [(: statement str)] :post [(: % (get tuple #((| SqlText SqlPlaceholder) ...)))]
    :tags {:context "sql" :role "foundation"}}
   "中立の記法の文を、文の部分(SqlText)と引数(SqlPlaceholder)の並びに割るため(文字列の literal・引用した名・注釈・`::` は文の部分)。
    同じ文の 2 度目からは覚えた並びを返す(SPLIT-MEMO の註)。"
   (val remembered (.get SPLIT-MEMO statement))
   (when (is-not remembered None)
     (return remembered))
-  (var parts #())
+  (var #^ (get tuple #((| SqlText SqlPlaceholder) ...)) parts #())
   (var pending "")
   (for [found (.finditer TOKEN statement)]
     (val name (.group found "name"))
@@ -285,7 +292,7 @@
 
 
 (defk checked-params [parts params]
-  {:pre [(: parts tuple) (: params tuple)] :post [(: % None)]
+  {:pre [(: parts (get tuple #((| SqlText SqlPlaceholder) ...))) (: params (get tuple #(SqlParam ...)))] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
   "文の引数の名と params の名が過不足なく一致し、値が閉じた集合に入ることを確かめるため(食い違いは呼び手の誤り — ValueError / TypeError)。"
   (val given (lfor p params p.name))
@@ -301,7 +308,7 @@
 
 
 (defk param-value [params name]
-  {:pre [(: params tuple) (: name str)] :post [(: % (| int float str bytes bool None))]
+  {:pre [(: params (get tuple #(SqlParam ...))) (: name str)] :post [(: % SqlValue)]
    :tags {:context "sql" :role "foundation"}}
   "params から名 name の値を引くため(checked-params の後に呼ぶ)。"
   (next (gfor p params :if (= p.name name) p.value)))
@@ -317,17 +324,17 @@
 
 
 (defk checked-identifiers [names]
-  {:pre [(: names tuple)] :post [(: % tuple)]
+  {:pre [(: names (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]
    :tags {:context "sql" :role "foundation"}}
   "名の並び(欄・主鍵・索引の欄)の全部を checked-identifier で確かめ、書いた順の tuple で返すため(最初の外れで ValueError)。"
-  (var checked [])
+  (var #^ (get list str) checked [])
   (for [name names]
     (.append checked (! (checked-identifier name))))
   (tuple checked))
 
 
 (defk checked-rows [columns rows]
-  {:pre [(: columns tuple) (: rows tuple)] :post [(: % None)]
+  {:pre [(: columns (get tuple #(str ...))) (: rows (get tuple #((get tuple #(SqlValue ...)) ...)))] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
   "SqlInsertRows の行が欄の数と同じ長さで、値が閉じた集合に入ることを確かめるため。"
   (for [row rows]
@@ -342,9 +349,11 @@
 ;; --- 行の値の正規化 --------------------------------------------------------------------------------------------------------
 
 (defk normalized-value [value]
-  {:pre [(: value DriverValue)] :post [(: % (| int float str bytes bool None))]
+  {:pre [(: value DriverValue)] :post [(: % SqlValue)]
+   :effects []
    :tags {:context "sql" :role "foundation"}}
-  "写す決まりの在る driver の値(DriverValue)を閉じた集合 SqlValue へ写すため。写し方の決まっていない型を黙って str にしない —
+  "写す決まりの在る driver の値(DriverValue)を閉じた集合 SqlValue へ写すため。写しは effect を出さない(:effects [] — 型の宣言の
+   答えの Program は effect の位置が Never)。写し方の決まっていない型を黙って str にしない —
    その型の値は driver の行を受ける normalized-rows が TypeError で断る(driver の値の型を検める 1 点)。"
   (match value
     (| (bool) (int) (float) (str) (bytes) None) value
@@ -354,19 +363,39 @@
     (UUID) (str value)))
 
 
+;; --- 実行時の検めと静的な型の境目 ----------------------------------------------------------------------------------------------
+;; driver の値は driver ごとに型が違い、型検査には object に見える。値の型を実行時に検めた結果を、検めた値の静的な型として伝える述語を
+;; ここに 2 つ置く(型の逃げの cast を使わず、検めと型の対応を 1 点ずつに閉じる・#2939)。
+
+;; defk にできない: 型の絞り込み(TypeGuard)を与える述語 — Program を返すと、真偽にも型の絞りにもならない
+(defn #^ (get TypeGuard DriverValue) is-driver-value [#^ object value]
+  "driver の値が、閉じた集合へ写す決まりの在る型(DriverValue)かを検めるため。真なら値は DriverValue と型検査に伝わる
+   (isinstance の絞りは総称の memoryview を型の分からない型にして、写す関数へ渡す所が赤になる)。"
+  (isinstance value DriverValue))
+
+
+;; defk にできない: 型の絞り込み(TypeGuard)を与える述語 — Program を返すと、真偽にも型の絞りにもならない
+(defn #^ (get TypeGuard (get Sequence (get Sequence SqlValue))) is-plain-rows
+  [#^ (| (get list (get tuple #(object ...))) (get tuple #((get tuple #(object ...)) ...))) rows]
+  "driver の行の列の全部の値の型が、閉じた集合の型そのもの(PLAIN-VALUE-TYPES)かを検めるため。真なら行の列は SqlValue の列の列と
+   型検査に伝わる — 実行時の検めと静的な型の境目はこの 1 点だけ(値の型を 1 つずつ検めた結果が型の証明になる・#2939)。"
+  (all (gfor row rows (all (gfor value row (in (type value) PLAIN-VALUE-TYPES))))))
+
+
 (defk normalized-rows [rows]
-  {:pre [(: rows #(list tuple))] :post [(: % tuple)]
+  {:pre [(: rows (| (get list (get tuple #(object ...))) (get tuple #((get tuple #(object ...)) ...))))]
+   :post [(: % (get tuple #((get tuple #(SqlValue ...)) ...)))]
    :tags {:context "sql" :role "foundation"}}
   "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。全部の値の型が閉じた集合の型そのもの
    (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形・agora-redesign #2423)。
    値の型は driver ごとに違う — 写す決まりの無い型(DriverValue の外)はここで TypeError(driver の値の型を検める 1 点)。"
-  (when (all (gfor row rows (all (gfor value row (in (type value) PLAIN-VALUE-TYPES)))))
+  (when (is-plain-rows rows)
     (return (tuple (gfor row rows (tuple row)))))
-  (var normalized [])
+  (var #^ (get list (get tuple #(SqlValue ...))) normalized [])
   (for [row rows]
-    (var values [])
+    (var #^ (get list SqlValue) values [])
     (for [value row]
-      (when (not (isinstance value DriverValue))
+      (when (not (is-driver-value value))
         (raise (TypeError (.format "driver の値の型 {} を SqlValue へ写す決まりが無い" (. (type value) __name__)))))
       (.append values (! (normalized-value value))))
     (.append normalized (tuple values)))
