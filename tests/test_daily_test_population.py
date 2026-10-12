@@ -108,8 +108,10 @@ _NOT_WALKED = (
 # 検を記録の中にだけ置いても緑になる(設計検証 docs/design-checks/lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B — docs/design/ の
 # 行も同じ形で、seat-home の模型 4 本は 2026-10-12 に .py.txt へ替えて外した・card ki-d153ab595504)。
 # 記録の中の行は、hash で封をした閉じた記録が名指して改名できない file だけを、1 file ごとの path で書く(dir の行と違い、
-# 新しい検を隠せない)。残る穴は make test-changed の選び 1 つ: その file を変えると、選びが検として集める(module の先頭が走り、
-# 0 本集まって「未測」になる — 赤にはならない)。
+# 新しい検を隠せない — dir の行は test_exclusion_table_has_no_dir_row_over_a_record_dir が禁じる)。記録の dir は root の
+# pyproject.toml の `[tool.doeff] record-dirs` の 1 点で、make test-changed の選び(scripts/run_changed_tests.py)もこの下の file を
+# 検として選ばない。選びが記録の中の file を選ぶと、その file が import する module の変更で「集める時に落ちた」赤になった
+# (設計検証 lt-R12TTZXKQPKRPSE5342853KM0V の盲検 A・実測)。
 EXCLUDED: dict[str, str] = {
     "packages/doeff-agents/conformance/": (
         "tmux / herdr の実 pane を使う黒箱の交代ゲート(実モデルは使わない)。日次の宿で tmux が"
@@ -189,6 +191,12 @@ def _root_testpaths(repo: Path) -> list[str]:
     return list(_root_ini(repo)["testpaths"])
 
 
+def _record_dirs(repo: Path) -> list[str]:
+    """設計の記録の dir — 定義は root の pyproject.toml の `[tool.doeff] record-dirs` の 1 点(make test-changed の選びも同じ値を読む)。"""
+    config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    return list(config["tool"]["doeff"]["record-dirs"])
+
+
 def _package_extra_test_roots(repo: Path, overrides: tuple[str, ...] = ()) -> list[str]:
     """`make test-packages` が package の tests/ の外で走らせる根 — 定義は Makefile の PACKAGE_EXTRA_TEST_ROOTS の 1 点。
 
@@ -234,7 +242,8 @@ def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: lis
         f"日次のどの母集団にも除外の表にも無い検の file が {len(orphans)} 本: {orphans}"
         " — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、"
         "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)。"
-        "設計の記録(docs/design/・docs/design-checks/)の中の検の写し・模型は、集め手の pattern に当たらない名(`<名>.py.txt`)に替える"
+        "設計の記録(root の pyproject.toml の `[tool.doeff] record-dirs` — docs/design/・docs/design-checks/)の中の検の写し・模型は、"
+        "集め手の pattern に当たらない名(元の名に `.txt` を足す: `test_x.py` → `test_x.py.txt`・`test_x.hy` → `test_x.hy.txt`)に替える"
         "— ADR-DOE-ENFORCE-001 R8"
     )
 
@@ -595,8 +604,11 @@ def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path)
     (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
     named = next(Path(row) for row in EXCLUDED if row.startswith("docs/design/") and not row.endswith("/"))
     candidates = (
-        Path("docs/design/lt-MODEL/model/test_chain.py"),
-        Path("docs/design/lt-MODEL/evidence/scripts/fork_test.py"),
+        *(
+            Path(record, "lt-MODEL", *tail)
+            for record in _record_dirs(REPO_ROOT)
+            for tail in (("model", "test_chain.py"), ("evidence", "scripts", "fork_test.py"))
+        ),
         named.with_name("hidden_test.py"),
     )
     for path in (named, *candidates):
@@ -678,6 +690,25 @@ def test_no_conftest_copies_the_hy_test_collector() -> None:
     assert not copies, (
         f"Hy の検の file を自前で集める conftest.py: {copies} — 集める条件は root の ini の doeff_hy_test_files へ"
         " — ADR-DOE-ENFORCE-001 R8"
+    )
+
+
+def test_exclusion_table_has_no_dir_row_over_a_record_dir() -> None:
+    """除外の表に、設計の記録の dir を dir ごと覆う行(記録の dir・その親・その下の dir)が無い。
+
+    dir の行の下に置いた本物の検は、母集団の検にも古い行の検にも見つからない(設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 B)。
+    記録の中で外せるのは、改名できない file の 1 file ごとの path の行だけ。
+    """
+    records = _record_dirs(REPO_ROOT)
+    assert records, "root の pyproject.toml の [tool.doeff] record-dirs が空 — 記録の dir を 1 点で宣言する"
+    covering = [
+        row
+        for row in EXCLUDED
+        if row.endswith("/") and any(record.startswith(row) or row.startswith(record) for record in records)
+    ]
+    assert not covering, (
+        f"除外の表に設計の記録の dir を覆う dir の行がある: {covering} — 消し、中の検の名の file は `.py.txt` に替える"
+        "(改名できない file だけ 1 file ごとの path の行にする)— ADR-DOE-ENFORCE-001 R8"
     )
 
 

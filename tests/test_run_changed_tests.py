@@ -104,14 +104,19 @@ def _uv_dir(kind: str) -> str:
     return proc.stdout.strip()
 
 
-def _pyproject(rows: tuple[Row, ...]) -> str:
-    """模型の pyproject.toml — pytest の rootdir の印と契約の検の表だけ。"""
+def _pyproject(rows: tuple[Row, ...], record_dirs: tuple[str, ...] = ()) -> str:
+    """模型の pyproject.toml — pytest の rootdir の印と、契約の検の表と、設計の記録の dir(`[tool.doeff] record-dirs`)だけ。"""
     table = "".join(
         f'\n[[tool.doeff.contract-tests]]\nprefix = "{row.prefix}"\n'
         f"tests = [{', '.join(f'{t!r}' for t in row.tests)}]\n".replace("'", '"')
         for row in rows
     )
-    return '[tool.pytest.ini_options]\nmarkers = ["e2e: model marker"]\n' + table
+    records = (
+        f"\n[tool.doeff]\nrecord-dirs = [{', '.join(json.dumps(d) for d in record_dirs)}]\n"
+        if record_dirs
+        else ""
+    )
+    return '[tool.pytest.ini_options]\nmarkers = ["e2e: model marker"]\n' + records + table
 
 
 def _fake_linter(place: Path, answer: str, returncode: int = 0) -> Path:
@@ -133,11 +138,15 @@ def _fake_linter(place: Path, answer: str, returncode: int = 0) -> Path:
 
 
 def _make_model(
-    tmp_path: Path, rows: tuple[Row, ...], extra: tuple[tuple[str, str], ...] = ()
+    tmp_path: Path,
+    rows: tuple[Row, ...],
+    extra: tuple[tuple[str, str], ...] = (),
+    record_dirs: tuple[str, ...] = (),
 ) -> Model:
     """本物の契約の検と core-effects の .hy / .pyi を写した模型の repo を作り、1 つ目の commit を分岐点にする。
 
     extra = 分岐点に含める file(根からの path と中身)。逆依存の代役は空の答えを返す物を repo の外に置く。
+    record_dirs = 模型の pyproject の設計の記録の dir。
     """
     root = tmp_path / "repo"
     root.mkdir()
@@ -158,7 +167,7 @@ def _make_model(
     for rel, text in extra:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    (root / "pyproject.toml").write_text(_pyproject(rows), encoding="utf-8")
+    (root / "pyproject.toml").write_text(_pyproject(rows, record_dirs), encoding="utf-8")
     _git(root, "init", "-q", "-b", "main")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "base")
@@ -418,6 +427,43 @@ def test_reverse_dependents_follow_the_contract_set_and_the_changed_test_by_dist
     patterns = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--test-pattern"]
     assert patterns[:2] == ["test_*.py", "*_test.py"], argv
     assert "docs/adr/defadr_*.hy" in patterns, argv
+
+
+@pytest.mark.parametrize(
+    ("record_dirs", "selected"),
+    [(("docs/design/",), False), ((), True)],
+    ids=["記録の dir を宣言した", "宣言が無い(対照)"],
+)
+def test_a_test_named_file_under_a_record_dir_is_selected_neither_as_changed_nor_by_reverse_dependency(
+    tmp_path: Path, record_dirs: tuple[str, ...], selected: bool
+) -> None:
+    """失敗ケース: 設計の記録の dir(pyproject の `[tool.doeff] record-dirs`)の下の検の名の file は、変えても・逆依存の答えに載っても選ばない。
+    宣言が無い対照では同じ file が選ばれ、集める時に落ちて赤になる(記録の中の改名できない測りの script が、import 先の変更で
+    赤になった — 設計検証 lt-R12TTZXKQPKRPSE5342853KM0V の盲検 A)。記録の外の検の名の file は、宣言の有無によらず今までどおり選ぶ。"""
+    record = "docs/design/lt-REC/evidence/probe_test.py"
+    model = _make_model(
+        tmp_path,
+        (REPO_ROW,),
+        extra=((record, "raise RuntimeError('collect fails')\n"), ("tests/test_outside.py", PASSING)),
+        record_dirs=record_dirs,
+    )
+    (model.root / record).write_text("raise RuntimeError('collect fails')\n# changed\n", encoding="utf-8")
+    (model.root / "tests" / "test_changed.py").write_text(PASSING, encoding="utf-8")
+    answer = {
+        "tests": [_affected(record, 1), _affected("tests/test_outside.py", 1)],
+        "hubs": [],
+        "not_modules": [],
+        "unreadable": [],
+        "files_read": 4,
+        "max_dependents": 40,
+    }
+    linter = _fake_linter(tmp_path / "linter-answer", json.dumps(answer))
+    output = _run(model, linter=linter)
+    summary = _summary(output)
+    assert ("probe_test.py" in summary) is selected, summary
+    assert (output.returncode == 1) is selected, output.text[-3000:]
+    assert "tests/test_outside.py — 1 本(逆依存" in summary, summary
+    assert "tests/test_changed.py — 1 本(変えた検" in summary, summary
 
 
 @pytest.mark.parametrize(

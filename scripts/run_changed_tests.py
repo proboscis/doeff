@@ -17,7 +17,8 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
    「組の要らない理由」(`reason` の行)のどちらかを持つ。どちらも無い package は `table_gaps` が名指し、日次と表の
    repo 全体の行で走る検(tests/test_contract_table_follows_packages.py)が赤にする(agora-redesign #2658)。
 3. 変えた検の file そのもの(検の file かは pytest の集め手と同じ名の規則 — root の ini の python_files・
-   doeff_hy_test_files・doeff_adr_hy_files と doeff-adr の DEFAULT_FILE_PATTERNS)。
+   doeff_hy_test_files・doeff_adr_hy_files と doeff-adr の DEFAULT_FILE_PATTERNS)。ただし root の pyproject.toml の
+   `[tool.doeff] record-dirs`(設計の記録の dir)の下は、名の規則に当たっても検に数えない(3 も 4 の答えの絞りも)。
 4. 逆依存の検 = 変えた file を直接・間接に import(Hy は require も)する検の file を、doeff-linter の
    `--affected-tests`(2 便目)に問い、距離の近い順(同じ距離は path の順)で後ろに足す。検の file の名の規則は 3 と
    同じ値を `--test-pattern` で渡し、答えも 3 と同じ判定で絞る。直接の使い手が多すぎる module(`doeff-hy.macros`・
@@ -306,9 +307,14 @@ def table_gaps(table: ContractTable, units: PackageUnits) -> TableGaps:
 
 @dataclass(frozen=True)
 class TestFilePatterns:
-    """検の file の名の規則の列(pytest の集め手と同じ値 — 逆依存を問う linter にも同じ値を渡す)。"""
+    """検の file の名の規則の列(pytest の集め手と同じ値 — 逆依存を問う linter にも同じ値を渡す)。
+
+    record_dirs = 設計の記録の dir(root の pyproject.toml の `[tool.doeff] record-dirs`)。記録はその時点の証拠で、検の名の file が
+    在っても検ではない — この下の file は、名の規則に当たっても検として選ばない(日次の母集団の検は逆に、この下の検の名の
+    file を赤にして `.py.txt` への改名を求める)。linter へは渡さず、答えを絞る側で使う。"""
 
     globs: tuple[str, ...]
+    record_dirs: tuple[str, ...] = ()
 
 
 def _adr_default_patterns(repo: Path) -> TestFilePatterns:
@@ -348,8 +354,19 @@ def _ini_strings(ini: dict[str, object], key: str, default: tuple[str, ...]) -> 
             raise StopError(f"[tool.pytest.ini_options] の {key} が文字列の列でない: {other!r}")
 
 
+def _record_dirs(config: dict[str, object]) -> tuple[str, ...]:
+    """root の pyproject.toml の `[tool.doeff] record-dirs`(dir は `/` で終える・無ければ空)。形が違えば既定に倒さず止める。"""
+    tool = config.get("tool", {})
+    raw = tool.get("doeff", {}).get("record-dirs", []) if isinstance(tool, dict) else []
+    match raw:
+        case list() if all(isinstance(d, str) and d.endswith("/") for d in raw):
+            return tuple(raw)
+        case other:
+            raise StopError(f"[tool.doeff] の record-dirs が `/` で終わる dir の文字列の列でない: {other!r}")
+
+
 def collector_patterns(repo: Path) -> TestFilePatterns:
-    """pytest が集める 3 つの経路の名の規則(Python・Hy の検・executable ADR)。"""
+    """pytest が集める 3 つの経路の名の規則(Python・Hy の検・executable ADR)と、検を置かない設計の記録の dir。"""
     config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
     ini = config.get("tool", {}).get("pytest", {}).get("ini_options", {})
     parts = (
@@ -358,14 +375,20 @@ def collector_patterns(repo: Path) -> TestFilePatterns:
         _adr_default_patterns(repo),
         _ini_strings(ini, "doeff_adr_hy_files", ()),
     )
-    return TestFilePatterns(globs=tuple(glob for part in parts for glob in part.globs))
+    return TestFilePatterns(
+        globs=tuple(glob for part in parts for glob in part.globs), record_dirs=_record_dirs(config)
+    )
 
 
 def is_test_file(path: str, patterns: TestFilePatterns) -> bool:
-    """pytest の照合と同じ: `/` を含まない pattern は file の名に、含む pattern は repo の根からの path に当てる。"""
+    """pytest の照合と同じ: `/` を含まない pattern は file の名に、含む pattern は repo の根からの path に当てる。
+    設計の記録の dir の下は、名の規則に当たっても検ではない(記録の中の改名できない測りの script が、import 先の変更で選ばれ
+    「集める時に落ちた」赤になった — 設計検証 lt-R12TTZXKQPKRPSE5342853KM0V の盲検 A)。"""
     name = path.rsplit("/", 1)[-1]
-    return "fixtures" not in path.split("/") and any(
-        fnmatch.fnmatchcase(path if "/" in p else name, p) for p in patterns.globs
+    return (
+        "fixtures" not in path.split("/")
+        and not path.startswith(patterns.record_dirs)
+        and any(fnmatch.fnmatchcase(path if "/" in p else name, p) for p in patterns.globs)
     )
 
 
