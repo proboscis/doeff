@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# 使い方: repro.sh <作業木> <案の名>…  — 作業木の追跡された file を一時 dir へ写し、案ごとに 1 つの書き換えを当てて、
+# 実物の検 R6(と反例の検)を作業木の venv で 1 本ずつ走らせる。共有の作業木は書き換えない。
+set -u
+W=$1; shift
+T=$(mktemp -d)
+ADR=docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+R6=test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version
+echo "# 作業木 ${W}・HEAD $(git -C "${W}" rev-parse HEAD)・写し ${T}"
+mkdir -p "$T/base" && (cd "$W" && git ls-files -z | xargs -0 cp --parents -t "$T/base/")
+edit() {  # 案ごとの書き換え(dir の中で)
+  case $1 in
+    real) : ;;
+    marker) sed -i "s|\"hy>=1.2.0,<=1.3.1\",|\"hy>=1.2.0,<=1.3.1; python_version < '3.15'\",|" packages/doeff-hy/pyproject.toml ;;
+    domain-copy) sed -i 's|^    "hy>=1.2.0",$|    "hy>=1.2.0,<=1.3.1",|' packages/doeff-domain/pyproject.toml ;;
+    lower-0.1) sed -i 's|"hy>=1.2.0,<=1.3.1"|"hy>=0.1,<=1.3.1"|' packages/doeff-hy/pyproject.toml ;;
+    cap-only-raised) sed -i 's|"hy>=1.2.0,<=1.3.1"|"hy>=1.2.0,<=1.3.2"|' packages/doeff-hy/pyproject.toml ;;
+    minor-cap) sed -i 's|"hy>=1.2.0,<=1.3.1"|"hy>=1.2.0,<1.4"|' packages/doeff-hy/pyproject.toml ;;
+    lock-only-lowered) sed -i '/^name = "hy"$/{n;s/^version = "1.3.1"$/version = "1.3.0"/}' uv.lock ;;
+    merged-consistent) sed -i '/^name = "hy"$/{n;s/^version = "1.3.1"$/version = "1.3.0"/}' uv.lock
+                       sed -i 's|"hy>=1.2.0,<=1.3.1"|"hy>=1.2.0,<=1.3.0"|' packages/doeff-hy/pyproject.toml ;;
+    *) echo "知らない案 $1"; exit 2 ;;
+  esac
+}
+for c in "$@"; do
+  echo; echo "=== 案 $c"
+  cp -a "$T/base" "$T/$c"
+  (cd "$T/$c" && edit "$c" && git -C "$W" diff --no-index --stat "$T/base" "$T/$c" | tail -1
+   grep -n '"hy' packages/doeff-hy/pyproject.toml packages/doeff-domain/pyproject.toml | grep -v '#'
+   sed -n '/^name = "hy"$/{n;p}' uv.lock)
+  echo "\$ (cd $W && uv run --frozen bash -c 'cd $T/$c && pytest $ADR::$R6 -q')"
+  (cd "$W" && set -o pipefail && uv run --frozen bash -c "cd '$T/$c' && pytest '$ADR::$R6' -q -p no:cacheprovider" 2>&1 \
+     | grep -vE 'check-slot: 機体|^\s+- docs/adr/|PytestWarning|warnings.warn|Add their directories|Docs: https|^\s*$|warnings summary')
+  echo "rc=${PIPESTATUS[0]}"
+done
