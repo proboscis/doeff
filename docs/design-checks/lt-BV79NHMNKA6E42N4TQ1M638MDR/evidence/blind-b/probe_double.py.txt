@@ -1,0 +1,27 @@
+import sys, types
+import doeff_hy, hy
+from doeff import run
+
+HEADER = """
+(require doeff-hy.macros [defk <- handle])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+(defk guarded [n] {:pre [(: n int)] :post [(: % int)]}
+  (do (<- y (Bump n)) y))
+"""
+def ev(code):
+    mod = types.ModuleType("probe_mod"); sys.modules["probe_mod"] = mod
+    for f in hy.read_many(HEADER + code):
+        hy.eval(f, mod.__dict__, module=mod)
+    return mod
+
+mod = ev("""
+(defk subject [] {:pre [] :post [(: % int)]}
+  (<- r (handle (guarded 1) (Bump [n] (do (resume 10) (resume 20)))))
+  r)
+""")
+try:
+    print("double resume ->", run(mod.subject()))
+except BaseException as e:
+    print("double resume raised:", type(e).__name__, str(e)[:300])
