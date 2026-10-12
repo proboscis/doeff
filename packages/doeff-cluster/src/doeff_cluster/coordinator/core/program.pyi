@@ -4,11 +4,10 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
-from datetime import datetime as datetime
-from doeff_time import GetTime as GetTime
-from doeff_time import epoch_ms_of as epoch_ms_of
+from doeff_time import GetMonotonic as GetMonotonic
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.core.clock import datetime_of_epoch_ms as datetime_of_epoch_ms
+from doeff_cluster.shared.core.clock import monotonic_ms_of as monotonic_ms_of
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster.shared.intent.protocol import Reply as Reply

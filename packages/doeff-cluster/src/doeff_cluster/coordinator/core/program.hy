@@ -38,9 +38,8 @@
 (val MODULE-TAGS {:context "coordinator" :role "program"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import dataclasses [replace])
-(import datetime [datetime])
-(import doeff_time [GetTime epoch-ms-of])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_time [GetMonotonic])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
                                                        DeploymentUnreadable NodeLabelsUnreadable])
@@ -68,15 +67,18 @@
 ;; coordinator の log には遅れの行が無く、遅れが coordinator の側か網かを分けられなかった。
 (val HEARTBEAT-LAG-LOG "coordinator: heartbeat の返事の遅れ")
 (val HEARTBEAT-LAG-MS 5000)
-;; 区間の名: Inbox = 受付の箱に並んでから取られるまで(前の歩でループが止まっていた待ち — 受付の箱が測る)・Respond = 歩の頭の調停と、
-;; まとまりの要求全部の判断・Rollout = Rollout の歩(k8s の台数の書きを含む — 走らなかった歩は 0)・SaveState = 生存の印と保存(fsync)・
-;; Reply = 返事を置くまで。時刻は heartbeat の在る歩でだけ、要求の判断の後・Rollout の後(走った時)・保存の後・返事の後に読む
-;; (歩の頭の読みは判断の now を兼ねる)。計りだけの読みは GetTime を直に出す(worker の拍の遅れの計りと同じ)。
+;; 区間の名: Inbox = 受付の箱に並んでから取られるまで(前の歩でループが止まっていた待ち — 受付の箱が単調な時計で測る)・Respond = 歩の頭の
+;; 調停と、まとまりの要求全部の判断・Rollout = Rollout の歩(k8s の台数の書きを含む — 走らなかった歩は 0)・SaveState = 生存の印と
+;; 保存(fsync)・Reply = 返事を置くまで。区間の長さは単調な時計(GetMonotonic)の差で計る(card ki-3d02b3888acb — 壁の時計は NTP などで
+;; 戻る・進むので、差が負や偽の長さになり、遅れの行が出ない・いちばん長い区間と別の区間を名指す・速い歩を遅いと名指す。worker の拍の
+;; 遅れの計り #3825 と同じ)。壁の時計は歩の判断の now と、行を出す時の at だけ。単調な時計は要求を取った歩の頭と、heartbeat の在る歩でだけ
+;; 要求の判断の後・Rollout の後(走った時)・保存の後・返事の後に読む(要求の無い歩は読まない)。計りだけの読みは GetMonotonic を直に出す
+;; (worker の拍の遅れの計りと同じ)。
 
 
 (defrecord StepMarks
-  "heartbeat の在る歩 1 つで読んだ時刻(epoch ms): taken = 要求を取った刻(歩の判断の now)・judged = 要求の判断の後・rolled = Rollout の
-   歩の後(走らなければ judged)・saved = 保存の後・replied = 返事を置き終えた後。"
+  "要求を取った歩で読んだ単調な時計の読み(ms — 差だけが意味を持つ。起点は handler の定めで、刻を他と並べない): taken = 要求を取った刻
+   (歩の頭)・judged = 要求の判断の後・rolled = Rollout の歩の後(走らなければ judged)・saved = 保存の後・replied = 返事を置き終えた後。"
   (#^ int taken)
   (#^ int judged)
   (#^ int rolled)
@@ -106,7 +108,7 @@
 
 (defk heartbeat-lag [marks queued-ms]
   {:pre [(: marks StepMarks) (: queued-ms int)] :post [(: % HeartbeatLag)] :tags {:context "coordinator" :role "judgment"}}
-  "歩で読んだ時刻と、その heartbeat が受付の箱に並んだ ms から、遅れの行の欄(経過と、いちばん長い区間の名と長さ)を導くため。
+  "歩で読んだ単調な時計の読みと、その heartbeat が受付の箱に並んだ ms から、遅れの行の欄(経過と、いちばん長い区間の名と長さ)を導くため。
    長さが並んだら先の区間を名指す。"
   (val spans #((LagSpan :name "Inbox" :ms queued-ms)
                (LagSpan :name "Respond" :ms (- marks.judged marks.taken))
@@ -119,11 +121,11 @@
 
 (defk lap-ms [measuring]
   {:pre [(: measuring bool)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
-  "heartbeat の在る歩でだけ、区間の切れ目の時刻(epoch ms)を読むため。measuring が偽なら時刻を読まずに 0(heartbeat の無い歩に
-   時刻の effect を足さない)。"
+  "要求を取った歩でだけ、区間の切れ目の単調な時計の読み(ms)を読むため。measuring が偽なら時刻を読まずに 0(要求の無い歩・heartbeat の
+   無い歩に時刻の effect を足さない)。"
   (if measuring
-      (do (<- at datetime (GetTime))
-          (epoch-ms-of at))
+      (do (<- at float (GetMonotonic))
+          (monotonic-ms-of at))
       0))
 
 
@@ -131,12 +133,14 @@
   {:pre [(: heard tuple) (: marks StepMarks)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
   "歩で返事を置いた heartbeat のうち、受付の箱に並んでから返事を置き終えるまでが HEARTBEAT-LAG-MS を越えた物ごとに、時刻(ISO)・
    worker の名・かかった ms・いちばん長い区間の名を 1 行で log に出すため(遅れが coordinator の側か網かを分ける材料)。
-   heard = HeardBeat の tuple。答え = 出した行の数。"
+   heard = HeardBeat の tuple。答え = 出した行の数。区間は単調な時計の読みの差で計り、行の時刻 at だけは、他の log と並べる壁の時計を
+   行を出す時に読む(返事を置き終えた直後 — 行が出ない歩に壁の時計の読みを足さない)。"
   (var noted 0)
   (for [beat heard]
     (when (> (+ beat.queued-ms (- marks.replied marks.taken)) HEARTBEAT-LAG-MS)
       (<- lag HeartbeatLag (heartbeat-lag marks beat.queued-ms))
-      (<- (slog HEARTBEAT-LAG-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms marks.replied)) :worker beat.worker
+      (<- wall int (now-epoch-ms))
+      (<- (slog HEARTBEAT-LAG-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms wall)) :worker beat.worker
                 :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms))
       (:= noted (+ noted 1))))
   noted)
@@ -291,6 +295,9 @@
   ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
   (<- batch list (NextRequests wait))
   (<- now int (now-epoch-ms))
+  ;; 返事の遅れの計りの起点: 要求を取った歩でだけ単調な時計を読む(区間は単調な時計の差で計る — HEARTBEAT-LAG-MS の註)。壁の時計の読みは
+  ;; 判断の now の 1 つだけ。
+  (<- taken-ms int (lap-ms (bool batch)))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎歩調停する(2026-09-25)。
   ;; 以前は要求の無い歩だけだったので、読みの要求(GET)が続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
@@ -312,7 +319,7 @@
             (val sender (get answered 3))
             (when (is-not sender None)
               (:= heard (+ heard #((HeardBeat :worker sender :queued-ms request.queued-ms))))))))
-  ;; 返事の遅れの計り: heartbeat の在る歩でだけ区間の切れ目の時刻を読む(区間の名は HEARTBEAT-LAG-MS の註)。
+  ;; 返事の遅れの計り: heartbeat の在る歩でだけ区間の切れ目の単調な時計の読みを読む(区間の名は HEARTBEAT-LAG-MS の註)。
   (val measuring (bool heard))
   (<- judged-ms int (lap-ms measuring))
   (<- ticked ClusterState (rollout-tick next timing naming now))
@@ -328,7 +335,7 @@
     (<- (Reply request status body)))
   (when measuring
     (<- replied-ms int (lap-ms measuring))
-    (<- (note-heartbeat-lags heard (StepMarks :taken now :judged judged-ms :rolled rolled-ms :saved saved-ms :replied replied-ms))))
+    (<- (note-heartbeat-lags heard (StepMarks :taken taken-ms :judged judged-ms :rolled rolled-ms :saved saved-ms :replied replied-ms))))
   ;; 待ちへの返事は永続化の後(返した版の変化は coordinator が落ちても消えない — group commit と同じ)。
   (var kept #())
   (for [watcher waiting]
