@@ -33,6 +33,7 @@ import os
 import shutil
 import subprocess
 import sys
+import types
 from collections.abc import Buffer
 from functools import cache
 from pathlib import Path
@@ -848,3 +849,115 @@ def test_a_hy_module_read_from_a_current_pyc_does_not_look_up_the_expansion_modu
     finally:
         for loaded in ("pycpkg.user", "pycpkg.macros", "pycpkg"):
             sys.modules.pop(loaded, None)
+
+
+#: ``hy <script>``(runpy.run_path)と ``hy -m``(runpy.run_module)が呼ぶ入口 — hy の命令は引数を渡してこの関数を呼ぶだけ。
+_RUN_BY_HY_COMMAND = "from hy.cmdline import cmdline_handler\ncmdline_handler({argv!r})\n"
+
+
+def _write_scripts(root: Path) -> Path:
+    """_write_counting_package の使う側に、同じ中身の script を 2 つ足す: ``runscript.hy``(root の直下 — path で撃つ)と
+    ``pkg/tool.hy``(``hy -m pkg.tool`` で撃つ)。どちらも macro を 1 回展開して値を print する。返すのは path で撃つ script。"""
+    _write_counting_package(root, 1)
+    body = "(require pkg.macros [answer])\n(print (answer))\n"
+    (root / "pkg" / "tool.hy").write_text(body)
+    script = root / "runscript.hy"
+    script.write_text(body)
+    return script
+
+
+def _hy_command(script: Path, by: str) -> str:
+    """script を撃つ形(by = "path": ``hy <path>``・"module": ``hy -m pkg.tool``)の確かめの文。"""
+    argv = ["hy", str(script)] if by == "path" else ["hy", "-m", "pkg.tool"]
+    return _RUN_BY_HY_COMMAND.format(argv=argv)
+
+
+def _script_pyc(root: Path, by: str) -> Path:
+    """_write_scripts の script の .pyc(by = "path" は root の直下・"module" は pkg の下)。"""
+    cache, stem = (root, "runscript") if by == "path" else (root / "pkg", "tool")
+    [pyc] = (cache / "__pycache__").glob(f"{stem}.*.pyc")
+    return pyc
+
+
+@pytest.mark.parametrize("by", ["path", "module"])
+def test_a_script_run_by_the_hy_command_is_not_expanded_again_by_the_next_run(tmp_path: Path, by: str) -> None:
+    """``hy <script>`` と ``hy -m`` は import を通らず、runpy が読みの口の get_code を module を ``sys.modules`` に置く前に呼ぶ。
+    Hy は仮の module で compile して直後に消すので、記録が付かず、その .pyc は次の読みで必ず古い物として compile し直され、
+    保存先にも入らなかった(gate の script で 2 度目以降も CPU 約 13 秒・``hy <script>`` も ``hy -m`` も同じ — card ki-b519bddda25b)。
+    module を置いた中で compile すれば、script も import した module と同じく記録つきの .pyc になり、2 度目は展開しない。
+    macro が変わった時は今までどおり展開し直す(記録の照らしが効く)。"""
+    script = _write_scripts(tmp_path)
+    command = _hy_command(script, by)
+    for _ in range(3):
+        assert _probe_on_pypi_hy(tmp_path, "before-hy", command).strip() == "11"
+        assert _expansions(tmp_path) == 1, "2 度目以降の撃ちが script の macro を展開し直した"
+    record = records.record_of(marshal.loads(_script_pyc(tmp_path, by).read_bytes()[records.PYC_HEADER_BYTES :]))
+    assert record is not None, "script の .pyc に記録が付かない"
+    assert [(used.module, used.name) for used in record.macros] == [("pkg.macros", "answer")]
+    _edit(tmp_path / "pkg" / "macros.hy", _counting_macros(2))
+    assert _probe_on_pypi_hy(tmp_path, "before-hy", command).strip() == "12", "macro の変更の後も古い展開で動いた"
+    assert _expansions(tmp_path) == 2
+
+
+@pytest.mark.parametrize("by", ["path", "module"])
+def test_a_script_run_in_a_new_tree_takes_the_stores_code_without_expanding(tmp_path: Path, by: str) -> None:
+    """新しい作業木(同じ中身・別の絶対 path・.pyc なし)で同じ script を撃つと、別の木で撃った時に足された保存先の code を使い、
+    展開し直さない(``hy <script>`` の保存先の鍵の名は file の名 ``runscript``・``hy -m pkg.tool`` は ``pkg.tool``)。"""
+    store = tmp_path / "store"
+    first, second = tmp_path / "first", tmp_path / "second"
+    for root in (first, second):
+        root.mkdir()
+    scripts = {root: _write_scripts(root) for root in (first, second)}
+    assert _probe_on_pypi_hy(first, "before-hy", _hy_command(scripts[first], by), store).strip() == "11"
+    assert _expansions(first) == 1
+    assert _probe_on_pypi_hy(second, "before-hy", _hy_command(scripts[second], by), store).strip() == "11"
+    assert _expansions(second) == 0
+
+
+def test_a_read_outside_import_gets_its_module_only_while_it_compiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """runpy が呼ぶ形(loader を作り、module を置かずに get_code を直に呼ぶ)で compile した Hy の code は、使った macro の記録を
+    持ち、保存先に入る。置いた module は読みの後に残らない(``sys.modules`` を汚さない)。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import code_store
+
+    store = tmp_path / "store"
+    monkeypatch.setenv(code_store.STORE_ENV, str(store))
+    package = tmp_path / "outsidepkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "macros.hy").write_text("(defmacro answer [] 11)\n")
+    source = tmp_path / "outsidescript.hy"
+    source.write_text("(require outsidepkg.macros [answer])\n(setv value (answer))\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    name = "outsidescript"
+    try:
+        loader = importlib.machinery.SourceFileLoader(name, str(source))
+        code = loader.get_code(name)
+        assert code is not None
+        record = records.record_of(code)
+        assert record is not None, "import の外で読んだ Hy の code に記録が付かない"
+        assert [(used.module, used.name) for used in record.macros] == [("outsidepkg.macros", "answer")]
+        assert name not in sys.modules, "読みの後に置いた module が残った"
+        assert len(_stored_entries(store, name, source, source.read_bytes())) == 1
+    finally:
+        for loaded in (name, "outsidepkg.macros", "outsidepkg"):
+            sys.modules.pop(loaded, None)
+
+
+def test_a_read_outside_import_does_not_replace_another_files_module_of_the_same_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """script の名が、別の file から読み込み済みの module の名と同じ(``hy json.hy``)時は、その module を置き換えない —
+    compile の間も、使い手の展開が import する同じ名の module は元のまま(記録は足さない — 今までどおり)。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import loader_hooks
+
+    source = tmp_path / "clashing.hy"
+    source.write_text("(setv value 1)\n")
+    other = types.ModuleType("clashing")
+    other.__file__ = str(tmp_path / "elsewhere" / "clashing.py")
+    monkeypatch.setitem(sys.modules, "clashing", other)
+    loader = importlib.machinery.SourceFileLoader("clashing", str(source))
+    with loader_hooks._expansion_recording(loader, str(source)):
+        assert sys.modules["clashing"] is other
+    assert sys.modules["clashing"] is other
