@@ -1,0 +1,19 @@
+{
+  "modules": [
+    {
+      "allow": [],
+      "layer": "domain",
+      "name": "doeff-traverse-collection",
+      "paths": [
+        "packages/doeff-traverse/doeff_traverse/collection.py",
+        "packages/doeff-traverse/doeff_traverse/collection.pyi"
+      ],
+      "public": [
+        "packages/doeff-traverse/doeff_traverse/collection.py",
+        "packages/doeff-traverse/doeff_traverse/collection.pyi"
+      ],
+      "responsibility": "Traverse の件の入れ物の値 — 件ごとの結果(値・失敗・飛ばし)と、件が通った段の履歴の記録(HistoryEntry)を持つ Collection と ItemResult(I/O も判断も持たない)。",
+      "typed": true
+    }
+  ]
+}

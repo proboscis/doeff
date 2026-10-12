@@ -1,0 +1,33 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-core-effects-effects",
+        "doeff-core-effects-handlers",
+        "doeff-core-effects-runtime",
+        "doeff-hy-static-types",
+        "doeff-traverse-collection",
+        "doeff-traverse-effects",
+        "doeff-traverse-handlers",
+        "doeff-traverse-package"
+      ],
+      "layer": "io",
+      "name": "doeff-traverse-examples",
+      "paths": [
+        "packages/doeff-traverse/examples/ex01_basic_fail.hy",
+        "packages/doeff-traverse/examples/ex02_traverse_pipeline.hy",
+        "packages/doeff-traverse/examples/ex03_zip_multi_source.hy",
+        "packages/doeff-traverse/examples/ex04_simple.hy",
+        "packages/doeff-traverse/examples/ex04_traverse_macro.hy",
+        "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
+        "packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy",
+        "packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy",
+        "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
+        "packages/doeff-traverse/examples/ex09_for_do_when.hy"
+      ],
+      "public": [],
+      "responsibility": "doeff-traverse の例 — script として走らせる読み物(Traverse の流れ・Zip・for/do・進みの表示)。検 test_examples_run.py が期待の出力と比べる。for/do の macro の展開が doeff_hy/static_types.py を import するので、その依存を許す。",
+      "typed": true
+    }
+  ]
+}

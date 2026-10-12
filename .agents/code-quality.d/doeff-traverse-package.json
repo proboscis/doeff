@@ -1,0 +1,21 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-traverse-collection",
+        "doeff-traverse-effects",
+        "doeff-traverse-handlers"
+      ],
+      "layer": "io",
+      "name": "doeff-traverse-package",
+      "paths": [
+        "packages/doeff-traverse/doeff_traverse/__init__.py"
+      ],
+      "public": [
+        "packages/doeff-traverse/doeff_traverse/__init__.py"
+      ],
+      "responsibility": "doeff-traverse の package の入口 — 値・effect・handler・補助を名で並べ直して公開する(判断を持たない)。",
+      "typed": true
+    }
+  ]
+}

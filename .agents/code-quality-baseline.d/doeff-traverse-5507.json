@@ -1,0 +1,964 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "exec"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
+      "reason": "registered-with-legacy",
+      "rule": "dynamic-boundary",
+      "subject": "exec"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex04_simple.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex04_traverse_macro.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex09_for_do_when.hy",
+      "reason": "registered-with-legacy",
+      "rule": "private-symbol",
+      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[attr-defined] — @do の functools.wraps が置く欄"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py",
+      "reason": "registered-with-legacy",
+      "rule": "type-suppression",
+      "subject": "# type: ignore[attr-defined] — doeff.program.handler が置く欄(型の無い欄)"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 5,
+      "path": "packages/doeff-traverse/doeff_traverse/effects.pyi",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-traverse/tests/run_example_failing_a_case.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_answer_types.py",
+      "reason": "registered-with-legacy",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__iter__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__len__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/collection.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "from_iterable"
+    },
+    {
+      "count": 9,
+      "path": "packages/doeff-traverse/doeff_traverse/effects.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "attempt"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "handler"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "parallel"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "parallel_fail_fast"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "progress_bars"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_item"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/handlers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "sequential"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/doeff_traverse/helpers.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "try_call"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex01_basic_fail.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "parse_score"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex01_basic_fail.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_fail_fast"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex01_basic_fail.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_normalize"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex01_basic_fail.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_replace_zero"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex02_traverse_pipeline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "extract_feature"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex02_traverse_pipeline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "normalize_value"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex02_traverse_pipeline.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex03_zip_multi_source.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "compute_embedding"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex03_zip_multi_source.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "generate_summary"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex03_zip_multi_source.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_it"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex03_zip_multi_source.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "score_pair"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex04_traverse_macro.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "extract_feature"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex04_traverse_macro.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "normalize_value"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex04_traverse_macro.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "timed_run"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 2,
+      "path": "packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__repr__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 3,
+      "path": "packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "__init__"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "tqdm_progress"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/examples/ex09_for_do_when.hy",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_item_outcomes.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "answers"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_item_outcomes.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "any_effect"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_item_outcomes.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "passes"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_item_outcomes.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "ran"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_item_outcomes.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "watch"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_memory_leak_multi_day.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_multi_day_traverse_30_days"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_memory_leak_multi_day.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_multi_day_traverse_60_days_stress"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_memory_leak_multi_day.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_multi_day_traverse_memory_constant"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_sequential_item_failures.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "program"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_sequential_reads_handlers_once.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "answer"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_sequential_reads_handlers_once.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "body"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_sequential_reads_handlers_once.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "plus_ask"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_answer_types.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "body"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_answer_types.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "step"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_100_catching_handlers"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_100_deep_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_100_items"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_100_waituntil_with_sim_time"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_100_with_sim_time"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_catching_handlers"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_deep_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_items"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_multi_effect"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_multi_effect_deep_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_multi_effect_with_sim_time"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_very_deep_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_waituntil_with_sim_time"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_with_sim_time"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_300_with_state"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_500_catching_handlers"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_500_items"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_500_multi_effect_deep_stack"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_50_items"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_50_with_sim_time"
+    },
+    {
+      "count": 3,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "add"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "compute"
+    },
+    {
+      "count": 2,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "double"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "fail_on_2"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "fetch_price"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "filter_even"
+    },
+    {
+      "count": 12,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "process"
+    },
+    {
+      "count": 36,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "program"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "run_with"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "step1"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "step2"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_fail_continues_after_resume"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_fail_inside_traverse_with_normalize"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_fail_unhandled_raises"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_fail_with_normalize_resumes_none"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_full_pipeline"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_inspect_shows_history"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_reduce_skips_failed"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_reduce_sum"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_skip_does_not_interact_with_fail_handler"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_skip_filters_items"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_skip_preserves_original_value"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_skip_with_chained_traverse"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_sort_ascending"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_sort_by_key"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_sort_descending"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_sort_then_take"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_sort_with_failed_items"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_take_more_than_available"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_take_n"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_take_with_failed_items"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_take_zero"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_chained"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_empty"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_item_failure_isolated"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_simple"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_traverse_with_effect"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_try_call_failure_continues"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_try_call_failure_normalized"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_try_call_failure_unhandled"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_try_call_success"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_zip_failure_union"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_zip_of_derived_collection_keeps_each_step_once"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_zip_of_derived_failed_item_keeps_each_step_once"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_zip_of_independent_collections_keeps_both_steps"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_zip_of_siblings_keeps_shared_ancestor_once"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "test_zip_simple"
+    },
+    {
+      "count": 1,
+      "path": "tests/effects/test_traverse.py",
+      "reason": "registered-with-legacy",
+      "rule": "untyped-boundary",
+      "subject": "with_stats"
+    }
+  ],
+  "version": 1
+}

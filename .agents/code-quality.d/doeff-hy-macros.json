@@ -1,0 +1,24 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-hy-binding-forms",
+        "doeff-hy-declarations",
+        "doeff-hy-static-check",
+        "pytest-item-records"
+      ],
+      "layer": "io",
+      "name": "doeff-hy-macros",
+      "paths": [
+        "packages/doeff-hy/src/doeff_hy/macros.hy",
+        "packages/doeff-hy/src/doeff_hy/macros.pyi"
+      ],
+      "public": [
+        "packages/doeff-hy/src/doeff_hy/macros.hy",
+        "packages/doeff-hy/src/doeff_hy/macros.pyi"
+      ],
+      "responsibility": "doeff-hy の標準の macro(do!・defk・deff・fnk・<-・defp・deftest・defhandler・traverse・for/do・defmcp-tool ほか)の定義 — 展開の時に契約の鍵を検め、Program を組む形へ写す。実行時の補助(guard の globals への据え付け)も持つ。",
+      "typed": false
+    }
+  ]
+}
