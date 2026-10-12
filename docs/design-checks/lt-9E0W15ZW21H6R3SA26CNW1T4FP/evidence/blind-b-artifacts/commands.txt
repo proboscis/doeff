@@ -1,0 +1,19 @@
+# 盲検 B2 の実験で走らせた命令(木の根 = /home/ubuntu/.worktrees/doeff-wt-blind-b2-ki-b0e8・doeff 74ebb50b6 の detached)
+# 00/01: 変更の前の提示の pytest(00 は初回の Hy の組み立てが 233 秒の期限を越えて 6 errors — 環境の遅さ。01 の再実行で 24 passed)
+uv run pytest packages/doeff-cluster/tests/test_group_limits_declared.hy packages/doeff-cluster/tests/test_task_priority_limits.hy packages/doeff-cluster/tests/test_defsystem_form.hy -q
+# 差分 = slots-implementation.patch(git apply で当たる)
+# 10: 変更の後の提示の pytest → 24 passed
+uv run pytest packages/doeff-cluster/tests/test_group_limits_declared.hy packages/doeff-cluster/tests/test_task_priority_limits.hy packages/doeff-cluster/tests/test_defsystem_form.hy -q
+# 11/12: 責務違反の検(自分で足した file)→ 3 passed / 4 passed(sim の 1 本を足した後)
+uv run pytest packages/doeff-cluster/tests/test_blind_b2_slots_owner.hy -q
+# 20: semgrep(変えた 13 file)→ 0 findings・exit 0
+uv run semgrep --metrics=off --disable-version-check --config .semgrep.yaml $(cat blind-artifacts/changed-files.txt) --error
+# 30/31: doeff-linter の包み → 変更の前(31)も後(30)も exit 1・同じ 1 行(DOEFF172 cluster_policy.hy 基点 31 → 今 32 — blind-b-checks.md の注の既存の越え)
+sh scripts/lint-doeff-cluster.sh $(cat blind-artifacts/changed-files.txt)
+# 32/33: 同じ linter の binary を直に(.hy 9 file + architecture.hy)→ 前後とも 70 warning・0 error、鍵の集合の diff は空(36)
+#   /home/ubuntu/.cache/doeff-linter-snapshots/2de2bbe4d93862069b1e9d501cacc10616ec3ca7/doeff-linter --no-log <file…> architecture.hy(packages/doeff-cluster で)
+# 40: code-quality fast(13 file 一度に)→ incomplete(fast の段の 60 秒の上限を越えた・検査は未実行)
+# 41/42/43: code-quality fast を 3 組に分けて(2 + 9 + 2 file)→ どれも status passed・findings []
+code-quality --repo "$PWD" --scope changed --base HEAD --paths-file blind-artifacts/changed-paths-imports.json --format json
+uv run --no-sync --project /home/ubuntu/repos/code-quality code-quality --repo "$PWD" --scope changed --base HEAD --paths-file blind-artifacts/changed-paths-rest.json --format json
+uv run --no-sync --project /home/ubuntu/repos/code-quality code-quality --repo "$PWD" --scope changed --base HEAD --paths-file blind-artifacts/changed-paths-senders.json --format json

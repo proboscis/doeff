@@ -1,0 +1,338 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy
+index c3b355f21..5b751408f 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy
+@@ -15,7 +15,7 @@
+ (import doeff_cluster.shared.intent.job_model [JobSpec])
+ (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
+ (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
+-(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
++(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-slots-refusal])
+ (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
+ (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun])
+ (import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
+@@ -915,11 +915,12 @@
+ (defk hold-limits [held task worker groups]
+   {:pre [(: held dict) (: task TaskRecord) (: worker (| str None)) (: groups Table)] :post [(: % dict)]
+    :tags {:context "coordinator" :role "judgment"}}
+-  "task 1 本を worker に置いた後の組の升ごとの数を知るため(held を変えずに新しい dict を返す — 宣言に無い組の名乗りは数えない)。"
++  "task 1 本を worker に置いた後の組の升ごとの数を知るため(held を変えずに新しい dict を返す — 宣言に無い組の名乗りは数えない)。
++   task は名乗った枠の数(slots — 既定 1)だけ升を使う。"
+   (var after (dict held))
+   (for [l task.limits :setv declared (.row groups l.group) :if (is-not declared None)]
+     (<- slot tuple (limit-slot l declared worker))
+-    (:= after (| after {slot (+ (.get after slot 0) 1)})))
++    (:= after (| after {slot (+ (.get after slot 0) task.slots)})))
+   after)
+ 
+ 
+@@ -938,7 +939,8 @@
+     (if (is declared None)
+         (:= undeclared True)
+         (do (<- slot tuple (limit-slot l declared worker.name))
+-            (when (>= (.get held slot 0) declared.limit) (:= full True)))))
++            ;; 置けば升が task の枠の数(slots)だけ増える — 宣言の値を越えるなら置かない(既定 1 枠なら今までどおり「達していれば待つ」)。
++            (when (> (+ (.get held slot 0) task.slots) declared.limit) (:= full True)))))
+   (cond
+     undeclared TaskUnplacedKind.TASK-UNDECLARED
+     (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
+@@ -979,6 +981,17 @@
+         None))
+ 
+ 
++(defk slots-over-declared-refusal [groups value slots]
++  {:pre [(: groups Table) (: value (| list None)) (: slots int)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
++  "受け口が、task の枠の数(slots — task-slots-refusal で検めた値)が名乗った組の宣言の値を越える(いつまでも置けない)task を断る理由を
++   知るため(None = 受ける)。宣言に無い組は limits-undeclared-refusal が先に断る。"
++  (next (gfor l (task-limits-of value)
++              :setv declared (.row groups l.group)
++              :if (and (is-not declared None) (> slots declared.limit))
++              (.format "slots {} は組 {} の宣言の値 {} を越える — この task はいつまでも置けない" slots l.group declared.limit))
++        None))
++
++
+ (defk group-limit-views [state]
+   {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+   "GET /state の組の画面の列(組の名の順 — GroupLimitView)を作るため: 系が宣言した値と、置いている数の升(置き方 place-tasks と同じ数え
+@@ -1966,7 +1979,9 @@
+   "POST /tasks: 呼び手の問い合わせに寿命を縛られた task の行を作る。本文は置き場に置いた Program の sha を運ぶ(task-body-refusal)。"
+   (setv refusal (or (format-version-refusal body.format) (runtime-env-value-refusal body.runtime-env) (task-body-refusal state body)
+                     (task-priority-refusal body.priority) (task-limits-refusal body.limits)
+-                    (! (limits-undeclared-refusal state.group-limits body.limits))))
++                    (! (limits-undeclared-refusal state.group-limits body.limits))
++                    (task-slots-refusal body.slots)
++                    (! (slots-over-declared-refusal state.group-limits body.limits (or body.slots 1)))))
+   (when refusal (return #(state 400 (ErrorReply :message refusal))))
+   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。
+   (setv lease-value (if (is body.lease-seconds None) 15.0 body.lease-seconds))
+@@ -1987,7 +2002,7 @@
+                          lease-ms (+ now lease-ms) now
+                          :runtime-env body.runtime-env
+                          :environ (environ-pairs (or body.environ {}))
+-                         :priority (or body.priority 0) :limits (task-limits-of body.limits)))
++                         :priority (or body.priority 0) :limits (task-limits-of body.limits) :slots (or body.slots 1)))
+   #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
+ 
+ 
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.pyi b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.pyi
+index bd3a5cb8e..3f0b38253 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.pyi
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.pyi
+@@ -15,6 +15,7 @@ from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pair
+ from doeff_cluster.shared.core.detached_rules import task_priority_refusal as task_priority_refusal
+ from doeff_cluster.shared.core.detached_rules import task_limits_refusal as task_limits_refusal
+ from doeff_cluster.shared.core.detached_rules import task_limits_of as task_limits_of
++from doeff_cluster.shared.core.detached_rules import task_slots_refusal as task_slots_refusal
+ from doeff_cluster.coordinator.intent.cluster_model import ClusterJob as ClusterJob
+ from doeff_cluster.coordinator.intent.cluster_model import ErrorReply as ErrorReply
+ from doeff_cluster.coordinator.intent.cluster_model import TaskAccepted as TaskAccepted
+@@ -314,6 +315,9 @@ def misfit_reason(kinds: list) -> _Program[TaskUnplacedKind, object]:
+ def limits_undeclared_refusal(groups: Table, value: list | None) -> _Program[str | None, object]:
+     ...
+ 
++def slots_over_declared_refusal(groups: Table, value: list | None, slots: int) -> _Program[str | None, object]:
++    ...
++
+ def group_limit_views(state: ClusterState) -> _Program[tuple, object]:
+     ...
+ DETACHED_TERMINAL: tuple[str, ...]
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy
+index 7b76a4968..6152c0745 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy
+@@ -17,12 +17,12 @@
+ (import doeff_cluster.shared.intent.protocol [ClusterTiming])
+ (import doeff [run])
+ (import doeff_cluster.shared.core.capabilities [environ-pairs])
+-(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
++(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-slots-refusal])
+ (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
+ (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
+ (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
+ (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
+-                                                     limits-undeclared-refusal])
++                                                     limits-undeclared-refusal slots-over-declared-refusal])
+ (import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
+ 
+ (setv DETACHED-MAX-LEASE-SECONDS 3600)
+@@ -74,7 +74,10 @@
+                     (task-priority-refusal body.priority)
+                     (task-limits-refusal body.limits)
+                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ — card ki-b0e8028c8c8d)。
+-                    (run (limits-undeclared-refusal state.group-limits body.limits))))
++                    (run (limits-undeclared-refusal state.group-limits body.limits))
++                    ;; 枠の数(slots)は 1 以上の整数で、名乗った組の宣言の値を越えない(越えればいつまでも置けない)。
++                    (task-slots-refusal body.slots)
++                    (run (slots-over-declared-refusal state.group-limits body.limits (or body.slots 1)))))
+   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
+   (setv needs (needs-named body.needs body.requires "切り離した task の needs")
+         environ (environ-pairs (or body.environ {}))
+@@ -100,7 +103,7 @@
+                          needs lease-ms (+ now lease-ms) now
+                          :detached True :key key :retain-ms (int (* 1000 retain))
+                          :runtime-env body.runtime-env :environ environ
+-                         :priority (or body.priority 0) :limits (task-limits-of body.limits)))
++                         :priority (or body.priority 0) :limits (task-limits-of body.limits) :slots (or body.slots 1)))
+   (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
+          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
+ 
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy
+index 1a30d0dce..595b15076 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy
+@@ -1009,7 +1009,9 @@
+   ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 名乗った同時数の上限の組(TaskLimit の tuple — 値と範囲は系の宣言の
+   ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
+   (setv #^ int priority 0)
+-  (setv #^ (get tuple #(TaskLimit ...)) limits #()))
++  (setv #^ (get tuple #(TaskLimit ...)) limits #())
++  ;; slots = 名乗った組の枠を何本分使うか(既定 1 — 重い task は 2 本分などと名乗る・Airflow の pool_slots)。欄の無い旧い行は 1 で読む。
++  (setv #^ int slots 1))
+ 
+ 
+ ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.pyi b/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.pyi
+index 77a549857..737a70907 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.pyi
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.pyi
+@@ -673,6 +673,7 @@ class TaskRecord:
+     environ: tuple[tuple[str, str], ...] = ...
+     priority: int = 0
+     limits: tuple[TaskLimit, ...] = ...
++    slots: int = 1
+ PLACED_PHASES: frozenset[str]
+ ENDED_PHASES: frozenset[str]
+ 
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy
+index 41ce3311f..60acb0e19 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy
+@@ -249,6 +249,8 @@
+   ;; 置き方の名乗り(2026-10-11): priority = 置く順の優先(整数・None = 0)・limits = 同時数の上限の列(None = 無し)。形は判断が読む。
+   (setv #^ object priority None)
+   (setv #^ object limits None)
++  ;; slots = 名乗った組の枠を何本分使うか(1 以上の整数・None = 1 — Airflow の pool_slots)。形は判断が読む。
++  (setv #^ object slots None)
+   (setv #^ object format 1))
+ 
+ 
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy
+index cb16a723f..ad9d6ab3d 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy
+@@ -99,7 +99,9 @@
+               ;; 置き方の名乗り(2026-10-11)の欄の無い旧い行は優先 0・上限なし(足した欄)。旧い形の limits の行は組を名乗らない
+               ;; (まだ終わっていなければ上の failure で failed — 置かない行は数えない)。
+               :priority (stored-int data "priority" 0)
+-              :limits (if old-limits #() (stored-limits data))))
++              :limits (if old-limits #() (stored-limits data))
++              ;; 組の枠の数(足した欄 — 欄の無い旧い行は 1 枠)。
++              :slots (stored-int data "slots" 1)))
+ 
+ 
+ ;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy b/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy
+index 593eb5e4d..ec49c27fa 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy
+@@ -19,6 +19,15 @@
+       (.format "priority は整数(大きいほど先に置く・負 = 背景の仕事): {!r}" value)))
+ 
+ 
++(deff task-slots-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)が呼ぶ純粋な判断
++  {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
++  "task の本文の欄 slots(名乗った組の枠を何本分使うか — Airflow の pool_slots)が受けられない理由(None = 欄が無い・1 以上の整数)。
++   真偽値は整数として受けない。"
++  (if (or (is value None) (and (isinstance value int) (not (isinstance value bool)) (>= value 1)))
++      None
++      (.format "slots は 1 以上の整数(名乗った組の枠を何本分使うか): {!r}" value)))
++
++
+ (val TASK-LIMIT-KEYS (frozenset #("group" "part")))
+ 
+ 
+@@ -100,17 +109,18 @@
+   (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {})))
+ 
+ 
+-(deff task-placing-json [#^ int priority #^ tuple limits]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+-  {:pre [(: priority int) (: limits tuple)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+-  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なしの欄は置かない — 旧い coordinator は知らない欄を捨てる)。"
++(deff task-placing-json [#^ int priority #^ tuple limits #^ int [slots 1]]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
++  {:pre [(: priority int) (: limits tuple) (: slots int)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
++  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・1 枠の欄は置かない — 旧い coordinator は知らない欄を捨てる)。"
+   (| (if priority {"priority" priority} {})
+-     (if limits {"limits" (task-limits-json limits)} {})))
++     (if limits {"limits" (task-limits-json limits)} {})
++     (if (!= slots 1) {"slots" slots} {})))
+ 
+ 
+ (defk submit-detached-task [program key * [needs (frozenset)] [name ""] [lease-seconds DETACHED-DEFAULT-LEASE-SECONDS]
+-                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()]]
++                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [slots 1]]
+   {:pre [(: program Program) (: key str) (: needs (| frozenset tuple list set dict str None)) (: name str) (: lease-seconds float)
+-         (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) dict)) (: priority int) (: limits tuple)]
++         (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) dict)) (: priority int) (: limits tuple) (: slots int)]
+    :post [(: % DetachedSubmitAnswer)]
+    :tags {:context "doeff-cluster" :role "judgment"}}
+   "SubmitDetached の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
+@@ -122,11 +132,12 @@
+   (when problem (raise (TypeError (+ "SubmitDetached.needs: " problem))))
+   ;; 置き方の名乗り(優先・同時数の上限)は coordinator の受け口と同じ規則で、送る前に断る(2026-10-11)。
+   (val placing (or (task-priority-refusal priority)
++                   (task-slots-refusal slots)
+                    (if (all (gfor l limits (isinstance l TaskLimit)))
+                        (task-limits-refusal (task-limits-json limits))
+                        (.format "limits は TaskLimit の tuple: {!r}" limits))))
+   (when placing (raise (TypeError (+ "SubmitDetached: " placing))))
+   (<- answer DetachedSubmitAnswer
+       (SubmitDetached program key :needs needs :name name :lease-seconds lease-seconds :retain-seconds retain-seconds :environ environ
+-                      :priority priority :limits limits))
++                      :priority priority :limits limits :slots slots))
+   answer)
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.pyi b/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.pyi
+index d27e1ac49..7404479f4 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.pyi
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.pyi
+@@ -25,6 +25,7 @@ def submit_detached_task(
+     environ: tuple[EnvVar, ...] = ...,
+     priority: int = ...,
+     limits: tuple[TaskLimit, ...] = ...,
++    slots: int = ...,
+ ) -> Program[DetachedSubmitAnswer, Any]: ...
+ 
+ type JsonValue = dict[str, object] | list[object] | tuple[object, ...] | str | int | float | bool | None
+@@ -35,7 +36,8 @@ def task_limits_refusal(value: JsonValue) -> str | None: ...
+ def task_limits_of(value: JsonValue) -> tuple[TaskLimit, ...]: ...
+ def task_limit_json(limit: TaskLimit) -> dict[str, object]: ...
+ def task_limits_json(limits: tuple[TaskLimit, ...]) -> list[dict[str, object]]: ...
+-def task_placing_json(priority: int, limits: tuple[TaskLimit, ...]) -> dict[str, object]: ...
++def task_slots_refusal(value: JsonValue) -> str | None: ...
++def task_placing_json(priority: int, limits: tuple[TaskLimit, ...], slots: int = ...) -> dict[str, object]: ...
+ def group_limit_refusal(name: JsonValue, spec: JsonValue) -> str | None: ...
+ def group_limit_of(name: str, spec: dict[str, object]) -> GroupLimit: ...
+ def group_limit_spec(limit: GroupLimit) -> dict[str, object]: ...
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy b/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy
+index 50392ab38..d2d562622 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy
+@@ -76,6 +76,9 @@
+   ;; 形の検めは構築関数。
+   (setv #^ int priority 0)
+   (setv #^ (get tuple #(TaskLimit ...)) limits #())
++  ;; 名乗った組の枠を何本分使うか(Airflow の pool_slots と同じ — 重い task は 2 本分などと名乗る。既定 1 = 今までどおり 1 本で 1 枠)。
++  ;; 形の検めは構築関数(detached_rules.task-slots-refusal)。
++  (setv #^ int slots 1)
+   (defn #^ None __post-init__ [self]
+     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
+      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.pyi b/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.pyi
+index 83ce27742..c9df4a7f5 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.pyi
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.pyi
+@@ -35,6 +35,7 @@ class SubmitDetached(EffectBase):
+     environ: tuple[EnvVar, ...] = ...
+     priority: int = 0
+     limits: tuple[TaskLimit, ...] = ...
++    slots: int = 1
+ 
+     def __post_init__(self) -> None:
+         ...
+diff --git a/packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy b/packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy
+index 15b26965a..9eec790cd 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy
+@@ -509,13 +509,13 @@
+ ;; 持っていた DetachedClient を替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す
+ ;; 入れ物(RouteCell)。出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
+ (defhandler detached-cluster [#^ RouteCell cell #^ RouteOptions options #^ DetachedSender sender #^ float [poll-seconds 1.0]]
+-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits]
++  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits slots]
+     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
+     (setv blob (encode-program program))
+     ;; effect の EnvVar の tuple を、coordinator への本文の形(名 → 値の object)へ綴る(#2179)。
+     (<- environ-body dict (env-mapping environ))
+     (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body
+-                                      (task-placing-json priority limits)))
++                                      (task-placing-json priority limits slots)))
+     (resume submitted))
+   (AwaitDetached [key timeout-seconds]
+     (<- outcome (await-cluster cell options sender key timeout-seconds poll-seconds))
+diff --git a/packages/doeff-cluster/src/doeff_cluster/sim/local.hy b/packages/doeff-cluster/src/doeff_cluster/sim/local.hy
+index b9b7fe6a5..6f055b04a 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/sim/local.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/sim/local.hy
+@@ -1675,11 +1675,11 @@
+   (RemoteJob [program needs name environ]
+     (<- outcome (remote-outcome link program needs name environ))
+     (resume (settled-value outcome)))
+-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits]
++  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits slots]
+     ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
+     (<- environ-body dict (env-mapping environ))
+     (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
+-                                   (task-placing-json priority limits)))
++                                   (task-placing-json priority limits slots)))
+     (resume submitted))
+   (AwaitDetached [key timeout-seconds]
+     (<- awaited (await-detached link key timeout-seconds))
