@@ -526,10 +526,17 @@ class _Branch:
 
 @dataclass(frozen=True)
 class _Dispatch:
-    """What a dispatcher's def dispatches on: its effect parameter and its branches."""
+    """What a dispatcher's def dispatches on: its effect parameter, the names a clause binds to it
+    (``aliases``) and its branches."""
 
     param: str | None
     branches: tuple[_Branch, ...]
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Every name that holds the effect that arrived: the parameter and its aliases."""
+        return (() if self.param is None else (self.param,)) + self.aliases
 
 
 _DISPATCHES: dict[int, tuple[FunctionNode, _Dispatch]] = {}
@@ -552,9 +559,29 @@ def _dispatch_of(node: FunctionNode) -> _Dispatch:
             for child in everything
             for classes, region in _branches(child, param, everything)
         ),
+        _effect_aliases(everything, param),
     )
     _DISPATCHES[id(node)] = (node, dispatch)
     return dispatch
+
+
+def _effect_aliases(everything: Iterable[ast.AST], param: str | None) -> tuple[str, ...]:
+    """The names bound to the effect parameter by ``name = param`` — doeff-hy binds ``effect`` (and
+    ``k``) for a clause whose body or guard names them, while the dispatcher's own parameter is
+    ``_doeff_effect``, so a guard and a body read ``effect`` for the effect that arrived."""
+    if param is None:
+        return ()
+    return tuple(
+        sorted(
+            {
+                target.id
+                for child in everything
+                if isinstance(child, ast.Assign) and _is_name(child.value, param)
+                for target in child.targets
+                if isinstance(target, ast.Name)
+            }
+        )
+    )
 
 
 def _guards_in(everything: Iterable[ast.AST], param: str | None) -> dict[int, ast.If]:
@@ -615,21 +642,23 @@ def _sent_on_guards(dispatch: _Dispatch, scope: _Scope) -> dict[int, ast.If]:
     return sent
 
 
-def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
+def _pass_test(test: ast.expr, names: Sequence[str], scope: _Scope) -> PassTest:
     """A guard's test (the case in which the clause sends the effect on) as a test on the class of
-    the effect that arrives: ``isinstance(effect, X)`` with ``not`` / ``and`` / ``or``; any other test
-    is decided only at run time (``UnknownTest``)."""
+    the effect that arrives: ``isinstance(effect, X)`` with ``not`` / ``and`` / ``or``, ``effect``
+    being any of ``names`` (the parameter or its alias); any other test is decided only at run time
+    (``UnknownTest``)."""
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        return NotTest(_pass_test(test.operand, param, scope))
+        return NotTest(_pass_test(test.operand, names, scope))
     if isinstance(test, ast.BoolOp):
-        parts = tuple(_pass_test(value, param, scope) for value in test.values)
+        parts = tuple(_pass_test(value, names, scope) for value in test.values)
         return AllTest(parts) if isinstance(test.op, ast.And) else AnyTest(parts)
     if (
         isinstance(test, ast.Call)
         and isinstance(test.func, ast.Name)
         and test.func.id == "isinstance"
         and len(test.args) == 2
-        and _is_name(test.args[0], param)
+        and isinstance(test.args[0], ast.Name)
+        and test.args[0].id in names
     ):
         named = _classes(test.args[1], scope)
         return ClassTest(tuple(named.found), complete=not named.missing)
@@ -662,7 +691,7 @@ def _read_clauses(
             for text in named.missing
         )
         guard = guards.get(id(branch.at))
-        passes = None if guard is None else _pass_test(guard.test, dispatch.param, scope)
+        passes = None if guard is None else _pass_test(guard.test, dispatch.names, scope)
         ahead = () if guard is None else _ahead_of(branch, guard)
         # Read once per handled class, with the effect parameter bound to the effect of that
         # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
@@ -673,7 +702,7 @@ def _read_clauses(
                 emits=_emits_read_later(
                     reader,
                     branch.region,
-                    _received_in(scope, dispatch.param, cls),
+                    _received_in(scope, dispatch.names, cls),
                     filename,
                     f"{label} clause",
                 ),
@@ -683,7 +712,7 @@ def _read_clauses(
                     _emits_read_later(
                         reader,
                         ahead,
-                        _received_in(scope, dispatch.param, cls),
+                        _received_in(scope, dispatch.names, cls),
                         filename,
                         f"{label} clause before its guard",
                     )
@@ -722,11 +751,11 @@ def _emits_read_later(
     return read
 
 
-def _received_in(scope: _Scope, param: str | None, cls: type) -> _Scope:
-    """``scope`` with the clause's effect parameter bound to the effect it received."""
-    if param is None:
+def _received_in(scope: _Scope, names: Sequence[str], cls: type) -> _Scope:
+    """``scope`` with the clause's effect parameter (and its aliases) bound to the effect it received."""
+    if not names:
         return scope
-    received = _Bound((Binding(param, ReceivedEffect(cls)),))
+    received = _Bound(tuple(Binding(name, ReceivedEffect(cls)) for name in names))
     return dataclasses.replace(scope, bound=scope.bound.plus(received))
 
 
