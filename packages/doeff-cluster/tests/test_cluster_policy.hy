@@ -7,7 +7,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
@@ -104,10 +104,12 @@
   ;; 止め終えた報告の後で k3s へ置く(同じ job を 2 つ動かさない)。
   (setv state (ClusterState #((! (job "placer"))) {"mac" (! (mac "mac")) "atlas" (! (pod "atlas"))}
                             {"placer" (Placement "placer" "mac" 2 0)}
-                            :statuses {"mac" (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "placer" :phase "running")))}))
+                            :observations (! (reports-observed {"mac" (WorkerReport :at 0 :endpoint None
+                                                                                    :jobs #((StatusRow :name "placer" :phase "running")))}))))
   (assert (= (! (place-jobs 1000 state T)) {}))
   (assert (= (get (unplaced-jobs 1000 (replace state :placements {}) T) "placer") "前の担い手が止め終えるのを待っている"))
-  (setv stopped (replace state :placements {} :statuses {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))
+  (setv stopped (replace state :placements {}
+                               :observations (! (reports-observed {"mac" (WorkerReport :at 1500 :endpoint None :jobs #())}))))
   (assert (= (. (get (! (place-jobs 2000 stopped T)) "placer") worker) "atlas")))
 
 (defk task [id needs]
@@ -663,8 +665,8 @@
 (defk exit-of [state name]
   {:pre [(: state ClusterState) (: name str)] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "atlas の最新の報告の行 name の last-exit-at-ms を読むため(行が無ければ赤)。"
-  (val rows (lfor r (. (get state.statuses "atlas") jobs) :if (= r.name name) r))
-  (assert (= (len rows) 1) #(name (. (get state.statuses "atlas") jobs)))
+  (val rows (lfor r (. (.row state.observations.statuses "atlas") jobs) :if (= r.name name) r))
+  (assert (= (len rows) 1) #(name (. (.row state.observations.statuses "atlas") jobs)))
   (. (get rows 0) last-exit-at-ms))
 
 (defk declared-w []
@@ -677,9 +679,9 @@
   (val first (! (generation-beat (! (declared-w)) "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-1 10))))
   (assert (is (! (exit-of first "w")) None))
   (val second (! (generation-beat first "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 10))))
-  (assert (= (! (exit-of second "w")) BOOT-2) (. (get second.statuses "atlas") jobs))
+  (assert (= (! (exit-of second "w")) BOOT-2) (. (.row second.observations.statuses "atlas") jobs))
   ;; 見せる形(GET /state の statuses と Service の status.process)も同じ刻。
-  (assert (= (get (status-row-to-json (get (. (get second.statuses "atlas") jobs) 0)) "lastExitAtMs") BOOT-2))
+  (assert (= (get (status-row-to-json (get (. (.row second.observations.statuses "atlas") jobs) 0)) "lastExitAtMs") BOOT-2))
   ;; 新しい世代が自分で報告した終わりが起動の刻より後なら、その刻(大きい方)。
   (val later (! (generation-beat first "b2" BOOT-2 [{"name" "w" "phase" "backoff" "lastExitAtMs" (+ BOOT-2 500)}] (+ BOOT-2 600))))
   (assert (= (! (exit-of later "w")) (+ BOOT-2 500))))
@@ -690,9 +692,9 @@
                                                                 {"name" "task/t1" "phase" "running" "pid" 101}]
                                  (+ BOOT-1 10))))
   (val reborn (! (generation-beat first "b2" BOOT-2 [] (+ BOOT-2 10))))
-  (assert (= (. (get reborn.statuses "atlas") jobs) #()))
+  (assert (= (. (.row reborn.observations.statuses "atlas") jobs) #()))
   (val again (! (generation-beat reborn "b2" BOOT-2 [{"name" "w" "phase" "starting"}] (+ BOOT-2 20))))
-  (assert (= (! (exit-of again "w")) BOOT-2) (. (get again.statuses "atlas") jobs))
+  (assert (= (! (exit-of again "w")) BOOT-2) (. (.row again.observations.statuses "atlas") jobs))
   ;; 持ち続けるのは宣言の在る job の名だけ(task や退いた行の名を世代ごとに溜めない)。2 世代目はまだ w の process を持たない。
   (assert (= (. (get reborn.workers "atlas") known-exits) #((KnownExit :job "w" :at-ms BOOT-2 :has-process False)))
           (get reborn.workers "atlas")))
@@ -731,12 +733,12 @@
   (assert (= (! (exit-of crashed "w")) (+ BOOT-2 900)))
   ;; 退いた世代(1 世代目がまだ送る heartbeat — OLDER)の行が終わりの刻を載せなければ、job の行に触らない。
   (val stale (! (generation-beat crashed "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100}] (+ BOOT-2 960))))
-  (assert (= (get stale.statuses "atlas") (get crashed.statuses "atlas"))))
+  (assert (= (.row stale.observations.statuses "atlas") (.row crashed.observations.statuses "atlas"))))
 
 
 
 ;; --- 最後に終わったと知れた刻を coordinator の作り直しの後も保つ(#3672 の続き)------------------------------------------
-;; 状態の報告(ClusterState.statuses)は保存しない。機体が丸ごと死に、同じ機体の coordinator も一緒に作り直されると、前の世代で process を
+;; 状態の報告(ClusterObservations.statuses)は保存しない。機体が丸ごと死に、同じ機体の coordinator も一緒に作り直されると、前の世代で process を
 ;; 持っていた job と進めた刻を報告ごと失い、刻は進まず・None へ戻った。worker/<名> の保存の行の knownExits(job の名・知れた刻・今の世代の
 ;; 報告で process を持つか)から読み戻し、作り直しの後に来る新しい世代の heartbeat でも数える。
 (import json)
@@ -760,7 +762,7 @@
   {:pre [(: again ClusterState)] :post [(: % (| int None))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "作り直した coordinator の状態 again に、2 世代目(起動の刻 BOOT-2)の最初の heartbeat(行なし)と、w を pid の無い行(process を起こす前)で
    載せた次の heartbeat を送った後の、w の刻を読むため。"
-  (assert (= again.statuses {}) again.statuses)
+  (assert (= (.size again.observations.statuses) 0) again.observations.statuses)
   (assert (= (lfor j again.jobs j.spec.name) ["w"]) again.refused)
   (val reborn (! (generation-beat again "b2" BOOT-2 [] (+ BOOT-2 10))))
   (! (exit-of (! (generation-beat reborn "b2" BOOT-2 [{"name" "w" "phase" "preparing"}] (+ BOOT-2 20))) "w")))
@@ -800,7 +802,7 @@
   (val still (! (generation-beat second "b1" BOOT-1 [{"name" "w" "phase" "running" "pid" 100 "lastExitAtMs" (- BOOT-2 5)}] (+ BOOT-2 100))))
   (assert (= (! (exit-of still "w")) BOOT-2))
   (val ended (! (generation-beat still "b1" BOOT-1 [{"name" "w" "phase" "stopped" "lastExitAtMs" (+ BOOT-2 300)}] (+ BOOT-2 310))))
-  (assert (= (! (exit-of ended "w")) (+ BOOT-2 300)) (. (get ended.statuses "atlas") jobs))
+  (assert (= (! (exit-of ended "w")) (+ BOOT-2 300)) (. (.row ended.observations.statuses "atlas") jobs))
   ;; 退いた世代は名乗りとして受けない(今の世代は b2 のまま)。2 世代目の続く heartbeat(刻を載せない行)でも戻さない。
   (assert (= (. (get ended.workers "atlas") boot) "b2"))
   (val after (! (generation-beat ended "b2" BOOT-2 [{"name" "w" "phase" "running" "pid" 200}] (+ BOOT-2 320))))
@@ -851,7 +853,7 @@
   (for [state [from-old from-new]]
     (val after (get state.placements "w"))
     (assert (= #(after.worker after.generation) #(before.worker before.generation)) #(before after))
-    (assert (= (lfor r (. (get state.statuses "atlas") jobs) #(r.name r.pid)) [#("w" 100)]) (. (get state.statuses "atlas") jobs)))
+    (assert (= (lfor r (. (.row state.observations.statuses "atlas") jobs) #(r.name r.pid)) [#("w" 100)]) (. (.row state.observations.statuses "atlas") jobs)))
   (assert (= (jobs-for from-old "atlas") (jobs-for from-new "atlas")) #((jobs-for from-new "atlas") (jobs-for from-old "atlas"))))
 
 (defk beat-without-rewrite [state row now]
