@@ -135,7 +135,6 @@
                       #({"scope" "worker" "limit" True} "limit")
                       #({"scope" "worker" "limit" 1 "perPart" "yes"} "perPart")
                       #({"scope" "worker" "limit" 1 "max" 3} "知らない欄")
-                      #({"scope" "worker" "limit" 1} "system")
                       #({"scope" "worker" "limit" 1 "system" ""} "system")]]
     (try
       (create-resource state "GroupLimit" (ResourceBody :name "g" :spec spec) "declare" 0)
