@@ -16,7 +16,9 @@ lt-CZC8SGS3C6DFDGSGG64YF49DH9 の盲検 A)。
 """
 
 import ast
+import builtins
 import contextlib
+import dataclasses
 import sys
 import types
 from collections.abc import Callable
@@ -233,3 +235,191 @@ def test_expansion_neither_reads_nor_binds_a_bare_expansion_name(source: str, st
         for alias in node.names
     }
     assert (read | bound) & watched == set()
+
+
+# ---------------------------------------------------------------------------
+# 位置 — 型検査のための展開の import の行は、利用者の handler の行(1 行目へ引き寄せない)
+# ---------------------------------------------------------------------------
+
+_PADDING = "\n" * 24
+
+
+def test_static_expansion_imports_keep_the_handlers_line() -> None:
+    """型検査のための展開が handler ごとに出す `_doeff_` の別名の import は、利用者の handler の行に置かれる。reader が作る model を
+    import に混ぜると、位置を付ける macro が囲む式の範囲を 1 行目へ引き、診断(未使用の import・未定義の名)が 1:1 になる
+    (基準版 dc3385b9a は handler の行 — 設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A の実測)。"""
+    mod = types.ModuleType("handle_writer_names_position")
+    sys.modules[mod.__name__] = mod
+    source = _PADDING + _EXPANSION_HEADER + _EXPANSION_SOURCES["module-defhandler"]
+    with static_view():
+        tree = hy.compiler.hy_compile(hy.read_many(source), mod, filename="<position>")
+    first_user_line = len(_PADDING) + 1
+    aliased = {
+        alias.asname: node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.asname is not None and alias.asname.startswith("_doeff_")
+    }
+    assert aliased, "展開が別名の import を出していない"
+    assert {name: line for name, line in aliased.items() if line < first_user_line} == {}
+
+
+# ---------------------------------------------------------------------------
+# 展開の構造(一般の形)— 名の一覧に依らない。展開が読む・束ねる名は、書き手の物か展開の物(`_doeff_` の頭)のどちらか
+# ---------------------------------------------------------------------------
+
+# 展開が module に置く名のうち `_doeff` / `_hy` の頭でない物: Hy の compiler が module ごとに置く `hy` と、定義の宣言の記帳
+# (declarations.hy)が import する doeff_hy の module、defk の本体の展開が束ねる補助(macros.hy の `_helper-imports` —
+# handle・defhandler の物ではない)。書き手が同じ名を使う事は無いとして、名指しで許す(ここに無い素の名は赤)。
+_EXPANSION_OWNED_PLAIN = frozenset(
+    {"hy", "doeff_hy", "_install_guard_globals", "_guard_performed", "_guard_statement_value"}
+)
+
+
+def _expansion_owned(name: str) -> bool:
+    """展開が自分の物として置く名か(`_doeff` の頭・Hy の gensym の `_hy` の頭・dunder・許した 2 つ)。"""
+    return name.startswith(("_doeff", "_hy", "__")) or name in _EXPANSION_OWNED_PLAIN
+
+
+def _bound_names(tree: ast.AST) -> frozenset[str]:
+    """木の中で束縛される名(代入・引数・def / class・import・except の as・global の宣言)。"""
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        match node:
+            case ast.Name(id=name, ctx=ast.Store() | ast.Del()):
+                bound.add(name)
+            case ast.arg(arg=name):
+                bound.add(name)
+            case (
+                ast.FunctionDef(name=name)
+                | ast.AsyncFunctionDef(name=name)
+                | ast.ClassDef(name=name)
+            ):
+                bound.add(name)
+            case ast.Import(names=aliases) | ast.ImportFrom(names=aliases):
+                bound.update(alias.asname or alias.name.split(".")[0] for alias in aliases)
+            case ast.ExceptHandler(name=str(name)):
+                bound.add(name)
+            case ast.Global(names=names) | ast.Nonlocal(names=names):
+                bound.update(names)
+    return frozenset(bound)
+
+
+def _import_bound_names(tree: ast.AST) -> frozenset[str]:
+    """木の中の import が束ねる名。"""
+    return frozenset(
+        alias.asname or alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
+    )
+
+
+def _written_symbols(source: str) -> frozenset[str]:
+    """source に書き手が書いた Symbol(Python の綴り)。dotted な綴りは頭の名も入れる。"""
+    names: set[str] = set()
+
+    def walk(form: object) -> None:
+        if isinstance(form, hy.models.Symbol):
+            names.update(hy.mangle(part) for part in str(form).split(".") if part)
+        elif isinstance(form, hy.models.Sequence):
+            for item in form:
+                walk(item)
+
+    for form in hy.read_many(source):
+        walk(form)
+    return frozenset(names)
+
+
+def _unowned_reads(tree: ast.Module, source: str) -> frozenset[str]:
+    """展開の木が読む名のうち、木の中で束縛されず・組み込みでなく・書き手が書いてもおらず・展開の物でもない名。書き手の名前空間と
+    1 つの名を分け合う綴り(素の名)はここに出る。"""
+    reads = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    return frozenset(
+        name
+        for name in reads - _bound_names(tree) - _written_symbols(source)
+        if not hasattr(builtins, name) and not _expansion_owned(name)
+    )
+
+
+def _unowned_imports(tree: ast.Module, header_tree: ast.Module) -> frozenset[str]:
+    """展開の木の import が束ねる名のうち、書き手の header の import でなく・展開の物でもない名。"""
+    return frozenset(
+        name
+        for name in _import_bound_names(tree) - _import_bound_names(header_tree)
+        if not _expansion_owned(name)
+    )
+
+
+@pytest.mark.parametrize("static", [False, True], ids=["runtime", "static"])
+@pytest.mark.parametrize("source", _EXPANSION_SOURCES.values(), ids=_EXPANSION_SOURCES.keys())
+def test_expansion_reads_and_binds_only_written_or_expansion_owned_names(
+    source: str, static: bool
+) -> None:
+    """名の一覧に依らない形: 展開が読む名は書き手の物か展開の物(`_doeff_` の頭)、束ねる名は展開の物だけ。展開が新しい名(表の行が足す
+    node など)を素の綴りで読めば、監視する名の一覧に載っていなくても赤になる(設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A・B が
+    指した、手で写した名の一覧の穴)。"""
+    tree = _expand(source, static=static)
+    header_tree = _expand("", static=static)
+    assert _unowned_reads(tree, _EXPANSION_HEADER + source) == frozenset()
+    assert _unowned_imports(tree, header_tree) == frozenset()
+
+
+def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """表の行の書き換えが新しい node を素の Symbol で読む変異(`ResumeBare`)— 9 つの名の一覧は拾えず(一覧に無い名)、一般の形が拾う。"""
+    from doeff_hy import clause_ops
+
+    def bare_rewrite(
+        args: list[hy.models.Object], recur: Callable[[hy.models.Object], hy.models.Object]
+    ) -> hy.models.Object:
+        return hy.models.Expression(
+            [
+                hy.models.Symbol("yield"),
+                hy.models.Expression(
+                    [hy.models.Symbol("ResumeBare"), hy.models.Symbol("k"), recur(args[0])]
+                ),
+            ]
+        )
+
+    resume = clause_ops.named_op("resume")
+    assert resume is not None
+    mutant = dataclasses.replace(resume, nodes=("ResumeBare",), rewrite=bare_rewrite)
+    monkeypatch.setattr(
+        clause_ops,
+        "CLAUSE_OPS",
+        tuple(mutant if op.name == "resume" else op for op in clause_ops.CLAUSE_OPS),
+    )
+    source = "(setv program (handle (Bump 1) (Bump [n] (setv answer (resume n)) answer)))"
+    tree = _expand(source, static=False)
+    watched = {*_NAMES, *_STATIC_ONLY_NAMES}
+    list_based = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    } & watched
+    assert list_based == set()
+    assert _unowned_reads(tree, _EXPANSION_HEADER + source) == frozenset({"ResumeBare"})
+
+
+def test_names_the_module_level_expansion_adds_are_written_or_expansion_owned() -> None:
+    """module の段の handle・defhandler(session var を含む)が module の globals に足す名は、書き手が書いた名か展開の物だけ
+    (R2 の一般の形 — 素の 7 つの名だけを見る検の外の名も)。"""
+    source = _expression_module("module", _EXPRESSIONS["pass"].replace("{N}", "Other"))[
+        0
+    ] + _DEFHANDLER.replace("{N}", "Other")
+    mod = _eval_module(_HEADER, source)
+    bare = _eval_module(_HEADER)
+    added = frozenset(vars(mod)) - frozenset(vars(bare))
+    unowned = {
+        name
+        for name in added
+        if not _expansion_owned(name) and name not in _written_symbols(source)
+    }
+    assert unowned == set()

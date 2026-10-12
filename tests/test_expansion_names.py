@@ -133,3 +133,30 @@ def test_no_source_spells_an_expansion_name_bare() -> None:
         )
     }
     assert spelled == {}
+
+
+# ---------------------------------------------------------------------------
+# 位置 — 展開が作る model は、利用者の式の位置を引き寄せない
+# ---------------------------------------------------------------------------
+
+
+def _positioned_models(form: object) -> list[object]:
+    """form の中の、位置(reader が付ける `_start_line`)を持つ model。"""
+    found: list[object] = [form] if hasattr(form, "_start_line") else []
+    if isinstance(form, Sequence):
+        for child in form:
+            found.extend(_positioned_models(child))
+    return found
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["Pass"], ["WithHandler"], ["Put", "Get"], ["Pass", "Put", "WithHandler", "Some"]],
+    ids=["doeff", "doeff_vm", "dotted-module", "all-homes"],
+)
+def test_import_form_builds_no_positioned_model(names: list[str]) -> None:
+    """`import_form` が返す model は位置を持たない。reader が作る model(`hy.read("doeff.do")` など)は 1 行目 1 列目の位置を
+    持ち、位置を付ける macro(locate-synthesized)が利用者の式の位置と取り違えて、囲む式の範囲を 1 行目へ引く — 型検査の
+    診断(未使用の import・未定義の名)の行が、handler の行でなく 1:1 になった(設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A の
+    実測で見つけた、card ki-16180480129e の直しの退行)。"""
+    assert _positioned_models(expansion_names.import_form(names)) == []
