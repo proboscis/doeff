@@ -6,9 +6,10 @@
 ;;;       [--store <保存先の dir>] [--path <dir> …] < 焼く物の行
 ;;;
 ;;; 標準入力 = 焼く物 1 つ 1 行の `<木の path>\t<相対 path>\t<module 名>`(この順に pool へ渡す)。
-;;; 1 つの用意(bake-one): source の中身で保存先(doeff-hy の code_store — 版・作業木をまたいで中身で引く入口の 1 つ)を引き、当たった code が
-;;; 今の source と今の環境の macro に合えば(doeff-hy の bytecode-is-current — Hy の source は記録の macro の提供元を今の import の路で引き
-;;; 直して照らす)その code から .pyc を書く(stored)。当たらない・合わない物は焼いて .pyc を書き、code を保存先へ足す(rebuilt)。
+;;; 1 つの用意(bake-one): source の中身で保存先(doeff-hy の code_store — 版・作業木をまたいで中身で引く入口の 1 つ)を引き、鍵に並ぶ macro の
+;;; 環境ごとの code のうち今の source と今の環境の macro に合う物が在れば(doeff-hy の bytecode-is-current — Hy の source は記録の macro の
+;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を書く(stored)。無い・合わない物は焼いて .pyc を書き、今の環境の code を
+;;; 鍵に足す(rebuilt — 他の環境の code は上書きしない)。
 ;;; 木に既に在る .pyc(同じ commit の木を hardlink で写した root)が今の source と macro に合う物は、pool へ渡さずに残す(reused)。
 ;;; 標準出力 = 1 つ 1 行で、焼けなかった物は `failed\t<木の path>\t<相対 path>\t<理由>`(理由の tab と改行は空白)、保存先の code から書いた
 ;;; 物は `stored\t<木の path>\t<相対 path>`、焼かずに残した物は `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由は
@@ -25,6 +26,7 @@
 (import argparse)
 (import importlib.machinery)
 (import importlib.util)
+(import marshal)
 (import multiprocessing)
 (import os)
 (import posixpath)
@@ -89,30 +91,29 @@
 (defn #^ tuple bake-one [#^ (| str None) store #^ str tree #^ str rel #^ str name]  ; defk にできない: process の pool の子が素の関数として呼ぶ
   "焼く物 1 つを用意し、#(結果 理由) を返すため。結果 = \"stored\"(保存先の code から .pyc を書いた)・\"rebuilt\"(焼いて .pyc を書き、
    code を保存先へ足した — 足せなかった時は理由)・\"failed\"(焼けない・読めない — 理由)。store = 保存先の dir(None = 引かず足さない)。
-   保存先の code は今の source の hash と今の環境の macro に合う時だけ使う(合わなければ焼き直して同じ鍵の entry を書き直す)。"
+   保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-code)。今の source の hash と
+   今の環境の macro に合う entry だけを使い、無ければ焼き直して今の環境の entry を鍵に足す(他の環境の entry は上書きしない — card
+   ki-6828e9af04b4: 鍵 1 つに entry 1 つの形では、版の違う書き手と同じ鍵を交互に上書きし、同じ版の準備でも 1 回に 100〜600 本を
+   焼き直した)。"
   (setv source (posixpath.join tree rel))
   (try
     (with [f (open source "rb")] (setv data (.read f)))
     (except [error OSError]
       (return #("failed" (str error)))))   ; 読めない source の文は file の効果の断りと同じ形(OSError の文)
   (setv code-store (get sys.modules STORE-MODULE-NAME))
-  (setv entry (if (is store None)
-                  None
-                  (.entry-path code-store store
-                               (.code-key code-store source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize)
-                               code-store.CODE-SUFFIX)))
-  (when (is-not entry None)
-    (setv code (.stored-code code-store entry))
+  (setv key (if (is store None)
+                None
+                (.code-key code-store source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize)))
+  (when (is-not key None)
+    (setv code (.current-code code-store store key (fn [c] (bytecode-is-current source (run (checked-hash-pyc c data)) data))))
     (when (is-not code None)
-      (setv pyc (run (checked-hash-pyc code data)))
-      (when (bytecode-is-current source pyc data)
-        (write-pyc source pyc)
-        (return #("stored" "")))))
+      (write-pyc source (run (checked-hash-pyc code data)))
+      (return #("stored" ""))))
   (setv compiled (run (compiled-pyc rel name source data)))
   (when (isinstance compiled SourceNotCompiled)
     (return #("failed" compiled.reason)))
   (write-pyc source compiled)
-  (setv problem (if (is entry None) None (.write-entry code-store entry (cut compiled PYC-HEAD-BYTES None))))
+  (setv problem (if (is key None) None (.add-code code-store store key (marshal.loads (cut compiled PYC-HEAD-BYTES None)))))
   #("rebuilt" (or problem "")))
 
 
