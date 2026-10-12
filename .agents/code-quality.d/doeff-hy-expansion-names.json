@@ -27,7 +27,7 @@
       "public": [
         "packages/doeff-hy/src/doeff_hy/expansion_names.py"
       ],
-      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)の `_doeff_` の別名の綴りと import の唯一の定義元 — 書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・static_view.py が引く純粋な表",
+      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)の `_doeff_` の別名の綴りと import の唯一の定義元 — 書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。節を回す関数の局所名 `_doeff_effect`・`_doeff_k` の綴りと、書き手が節に書いた `effect`・`k` を節の effect・続きとして読ませる名の表(WRITER_VISIBLE)も持つ — 書き手の節の欄・session の名と分け合わない(card ki-6af9862aed32)。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・static_view.py が引く純粋な表",
       "typed": false
     }
   ]

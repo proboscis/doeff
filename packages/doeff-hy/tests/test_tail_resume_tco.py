@@ -10,6 +10,7 @@ Test levels:
 
 import doeff_hy  # noqa: F401 — registers macros/extensions
 import hy  # noqa: F401 - activates Hy reader for macro tests
+from doeff_hy.expansion_names import alias
 from doeff_hy.handle import _build_clause
 from hy.models import Expression, Keyword, Symbol
 from hy.models import List as HyList
@@ -59,8 +60,8 @@ class TestTailResumeTCO:
             _expr(_sym("resume"), _sym("None")),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
-        assert not _body_contains(body, "Resume"), f"unexpected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
+        assert not _body_contains(body, alias("Resume")), f"unexpected Resume in: {body}"
 
     def test_if_both_branches_tail_resume(self):
         """(MyEffect [x] (if (pred x) (resume a) (resume b))) → both Transfer"""
@@ -73,8 +74,8 @@ class TestTailResumeTCO:
             ),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
-        assert not _body_contains(body, "Resume"), f"unexpected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
+        assert not _body_contains(body, alias("Resume")), f"unexpected Resume in: {body}"
 
     def test_cond_all_branches_tail_resume(self):
         """(MyEffect [x] (cond (p1 x) (resume a) True (resume b))) → both Transfer
@@ -90,8 +91,8 @@ class TestTailResumeTCO:
             ),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
-        assert not _body_contains(body, "Resume"), f"unexpected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
+        assert not _body_contains(body, alias("Resume")), f"unexpected Resume in: {body}"
 
     def test_match_all_cases_tail_resume(self):
         """(MyEffect [x] (match x (int) (resume a) _ (resume b))) → both Transfer (agora-redesign #3530)"""
@@ -104,8 +105,8 @@ class TestTailResumeTCO:
             ),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
-        assert not _body_contains(body, "Resume"), f"unexpected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
+        assert not _body_contains(body, alias("Resume")), f"unexpected Resume in: {body}"
 
     def test_match_arm_with_guard_tail_resume(self):
         """An arm's :if guard is kept as written — only its body is rewritten.
@@ -121,8 +122,8 @@ class TestTailResumeTCO:
             ),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
-        assert not _body_contains(body, "Resume"), f"unexpected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
+        assert not _body_contains(body, alias("Resume")), f"unexpected Resume in: {body}"
         assert _body_contains(body, "pos?"), f"the guard must stay: {body}"
 
     def test_explicit_transfer_unchanged(self):
@@ -132,8 +133,8 @@ class TestTailResumeTCO:
             _expr(_sym("transfer"), _sym("None")),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Transfer")
-        assert not _body_contains(body, "Resume")
+        assert _body_contains(body, alias("Transfer"))
+        assert not _body_contains(body, alias("Resume"))
 
 
 class TestNonTailResumePreserved:
@@ -148,8 +149,8 @@ class TestNonTailResumePreserved:
         )
         _etype, body = _build_clause(clause)
         # Must have BOTH: Resume (for the bind) and Transfer (for the tail)
-        assert _body_contains(body, "Resume"), f"expected Resume in: {body}"
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
+        assert _body_contains(body, alias("Resume")), f"expected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
 
     def test_resume_inside_try_not_optimized(self):
         """(try (resume x) (except ...)) → Resume preserved (need frame for except)"""
@@ -164,7 +165,7 @@ class TestNonTailResumePreserved:
         )
         _etype, body = _build_clause(clause)
         # Inside try → Resume must be preserved
-        assert _body_contains(body, "Resume"), f"expected Resume in: {body}"
+        assert _body_contains(body, alias("Resume")), f"expected Resume in: {body}"
 
     def test_match_not_at_the_end_keeps_resume(self):
         """A match that is not the clause's last form is not in tail position: its resume stays."""
@@ -177,8 +178,8 @@ class TestNonTailResumePreserved:
             _expr(_sym("transfer"), _sym("r")),
         )
         _etype, body = _build_clause(clause)
-        assert _body_contains(body, "Resume"), f"expected Resume in: {body}"
-        assert _body_contains(body, "Transfer"), f"expected Transfer in: {body}"
+        assert _body_contains(body, alias("Resume")), f"expected Resume in: {body}"
+        assert _body_contains(body, alias("Transfer")), f"expected Transfer in: {body}"
 
 
 # ---------------------------------------------------------------------------

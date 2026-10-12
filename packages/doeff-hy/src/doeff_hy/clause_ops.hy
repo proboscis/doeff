@@ -43,7 +43,7 @@
 (import enum [StrEnum])
 (import hy.models [Expression Symbol])
 (import doeff-hy.static-view [static-view-enabled])
-(import doeff-hy.expansion-names [alias-symbol import-form])
+(import doeff-hy.expansion-names [alias-symbol import-form effect-symbol continuation-symbol])
 
 
 (defclass Ending [StrEnum]
@@ -72,13 +72,14 @@
 
 (defn _resume [args recur]
   "(resume 値) → 続きを値で再開する(続きが終わると節へ戻る — 行の returns。戻った後の印は handle.hy が立てる)。型検査のための
-   展開は core の typed-resume で、値を effect の答えの型(EffectBase[T] の T)と突き合わせる(`effect` は節の
-   `(isinstance effect EffectType)` で絞られている)。"
+   展開は core の typed-resume で、値を effect の答えの型(EffectBase[T] の T)と突き合わせる(節の effect は節の
+   `(isinstance _doeff_effect EffectType)` で絞られている)。節の effect・続きは `_doeff_effect`・`_doeff_k` — 書き手の欄の名と
+   分け合わない(expansion_names.py)。"
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
       `(yield (do ~(import-form ["typed_resume"])
-                  (~(alias-symbol "typed_resume") effect k ~value)))
-      `(yield (~(alias-symbol "Resume") k ~value))))
+                  (~(alias-symbol "typed_resume") ~(effect-symbol) ~(continuation-symbol) ~value)))
+      `(yield (~(alias-symbol "Resume") ~(continuation-symbol) ~value))))
 
 
 (defn _transfer [args recur]
@@ -86,8 +87,8 @@
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
       `(yield (do ~(import-form ["typed_transfer"])
-                  (~(alias-symbol "typed_transfer") effect k ~value)))
-      `(yield (~(alias-symbol "Transfer") k ~value))))
+                  (~(alias-symbol "typed_transfer") ~(effect-symbol) ~(continuation-symbol) ~value)))
+      `(yield (~(alias-symbol "Transfer") ~(continuation-symbol) ~value))))
 
 
 (defn _finish [args recur]
@@ -96,8 +97,9 @@
 
 
 (defn _reperform [args recur]
-  "(reperform effect) → effect と続きを外の handler へ渡す(OCaml 5 の reperform)。"
-  `(yield (~(alias-symbol "Pass") ~(recur (get args 0)) k)))
+  "(reperform effect) → effect と続きを外の handler へ渡す(OCaml 5 の reperform)。渡す effect は書き手の式(欄の名が `effect` なら
+   欄の値 — 受けた effect を渡すなら `(pass)`)で、続きは節の続き `_doeff_k`。"
+  `(yield (~(alias-symbol "Pass") ~(recur (get args 0)) ~(continuation-symbol))))
 
 
 (defn _pass [args recur]
@@ -106,7 +108,7 @@
   (warnings.warn
     "(pass) is deprecated in defhandler — use (reperform effect) instead"
     DeprecationWarning)
-  `(yield (~(alias-symbol "Pass") effect k)))
+  `(yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol))))
 
 
 ;; 節の操作の表。行の順は handler の頭の import の名の順(node-names)。表を引くのはこの module の関数だけ(呼び手は名で表を

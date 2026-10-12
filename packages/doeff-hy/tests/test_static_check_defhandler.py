@@ -168,7 +168,9 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
     with static_view():
         static = _expand(_render({}))
     # 型検査のための展開: 節を回す関数・本文を受ける関数に注記、節の終わり方の検めは module の頭の型付きの名
-    assert "(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:" in static, static
+    assert (
+        "(_doeff_effect: object, _doeff_k: _doeff_Continuation) -> _doeff_ClauseRun:" in static
+    ), static
     assert (
         "def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer])"
         " -> _doeff_HandledScope[_doeff_HandledAnswer]:"
@@ -190,9 +192,9 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
     for name in ("_doeff_Continuation", "_doeff_ClauseRun", "_doeff_HandlerBody", "_doeff_perform"):
         assert name not in runtime
     # 欄の束ねの「読んだ」印(_ = 欄)は型検査のための展開だけ(agora-redesign #2514)
-    assert "right = effect.right\n" in static, static
+    assert "right = _doeff_effect.right\n" in static, static
     assert "_ = right\n" in static, static
-    assert "right = effect.right\n" in runtime, runtime
+    assert "right = _doeff_effect.right\n" in runtime, runtime
     assert "_ = right" not in runtime, runtime
 
 
@@ -267,7 +269,16 @@ def test_writer_effects_named_like_the_expansion_names_are_not_an_error(tmp_path
     (tmp_path / "probe.hy").write_text(NAMED_PROBE, encoding="utf-8")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        main(["--root", str(tmp_path), "--json", "--no-cache", "--strict", str(tmp_path / "probe.hy")])
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "--json",
+                "--no-cache",
+                "--strict",
+                str(tmp_path / "probe.hy"),
+            ]
+        )
     printed = out.getvalue()
     found: list[dict[str, object]] = json.loads(printed) if printed.strip() else []
     assert [d for d in found if d["severity"] == "error"] == []
@@ -279,7 +290,104 @@ def test_static_expansion_reads_only_aliases_of_the_expansion_names() -> None:
 
     with static_view():
         static = _expand(NAMED_PROBE)
-    assert "_doeff_Pass(effect, k)" in static, static
+    assert "_doeff_Pass(_doeff_effect, _doeff_k)" in static, static
     assert "_doeff_WithHandler(" in static, static
     assert "_doeff_Put(" in static, static
     assert "from doeff import Pass as _doeff_Pass" in static, static
+
+
+# 書き手が、節の欄を展開の局所名と同じ `k`・`effect` にした module(card ki-6af9862aed32)。前は節を回す関数の引数 `effect`・`k` を
+# 欄の束ねが上書きし、続きの型 `Continuation` の `k` に `int` を代入する赤が出た。展開の局所名は `_doeff_effect`・`_doeff_k` で、
+# 書き手が `effect`・`k` と書いた節だけが、同じ名を節の effect・続きとして読める。
+FIELD_NAMED_EFFECTS = """\
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Kv [(get EffectBase int)]
+  #^ int k
+  #^ int v)
+
+(defclass [(dataclass :frozen True)] Note [(get EffectBase int)]
+  #^ int effect
+  #^ int extra)
+
+(defclass [(dataclass :frozen True)] Bump [(get EffectBase int)]
+  #^ int n)
+"""
+
+FIELD_NAMED_PROBE = """\
+(require doeff-hy.macros [defk defhandler <- val])
+(import doeff [EffectBase])
+(import probe_effects [Kv Note Bump])
+
+(defhandler keyed
+  (Kv [k v]
+    :when (> k 5)
+    (resume (+ k v)))
+  (Note [effect extra]
+    (resume (+ effect extra))))
+
+(defhandler fence
+  (EffectBase []
+    :when (not (isinstance effect Kv))
+    (reperform effect))
+  (Kv [k v]
+    (resume (+ k v))))
+
+(defhandler reads-its-effect
+  (Bump [n]
+    (resume (+ n effect.n)))
+  (Note [extra]
+    (resume (+ extra (sum (lfor k [1 2 3] k))))))
+
+(defk use-keyed [start]
+  {:pre [(: start int)] :post [(: % int)]}
+  (<- first int (keyed (Kv start 1)))
+  (<- second int (fence (keyed (Note start 2))))
+  (+ first second))
+"""
+
+
+@needs_pyright
+def test_clause_fields_named_k_and_effect_are_not_an_error(tmp_path: Path) -> None:
+    from doeff_hy.static_check import main
+
+    (tmp_path / "probe_effects.hy").write_text(FIELD_NAMED_EFFECTS, encoding="utf-8")
+    (tmp_path / "probe.hy").write_text(FIELD_NAMED_PROBE, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "--json",
+                "--no-cache",
+                "--strict",
+                str(tmp_path / "probe.hy"),
+            ]
+        )
+    printed = out.getvalue()
+    found: list[dict[str, object]] = json.loads(printed) if printed.strip() else []
+    assert [d for d in found if d["severity"] == "error"] == []
+
+
+def test_static_expansion_binds_the_writers_effect_and_k_only_where_the_clause_writes_them() -> (
+    None
+):
+    """書き手が `effect`・`k` を書かない節は、型検査のための展開でも素の名を束ねない。書いた節だけが、判定の中で `effect` を束ね
+    (絞った型のまま読める)、`k` を宣言して読む。欄の名が同じ名の節は束ねず、欄が優先する。"""
+    from doeff_hy.static_view import static_view
+
+    with static_view():
+        static = _expand(
+            FIELD_NAMED_EFFECTS
+            + FIELD_NAMED_PROBE.replace("(import probe_effects [Kv Note Bump])", "")
+        )
+    assert (
+        "isinstance((effect := _doeff_effect), EffectBase) and isinstance(_doeff_effect, EffectBase)"
+        in static
+    ), static
+    assert "k: _doeff_Continuation = _doeff_k" in static, static
+    # 欄 k の節は、欄を `k` に束ねる(続きを上書きしない)— `_doeff_k` を読む Pass は残る
+    assert "k = _doeff_effect.k" in static, static
+    assert "_doeff_Pass(_doeff_effect, _doeff_k)" in static, static

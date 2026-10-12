@@ -48,7 +48,7 @@
 (import hy.models [Dict])
 (import doeff-hy.static-view [static-view-enabled report-findings])
 (import doeff-hy.clause-ops [clause-op node-names])
-(import doeff-hy.expansion-names [alias-symbol import-form])
+(import doeff-hy.expansion-names [alias-symbol import-form effect-symbol continuation-symbol WRITER-VISIBLE])
 (import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
                                 legacy-session-finding legacy-session-message])
 
@@ -199,6 +199,55 @@
     (isinstance form Sequence)
       (any (gfor f form (_references-symbol f sym-name)))
     True False))
+
+(defn _names-symbol [form sym-name]
+  "Check if form's AST contains the Symbol sym-name, or a dotted Symbol headed by it (`effect.amount`).
+   Same traversal as _references-symbol."
+  (cond
+    (isinstance form Symbol) (or (= (str form) sym-name) (.startswith (str form) (+ sym-name ".")))
+    (isinstance form Sequence)
+      (any (gfor f form (_names-symbol f sym-name)))
+    True False))
+
+(defn _clause-aliases [clause lazy-defs]
+  "書き手が節の本体・番に書いた `effect`・`k`(expansion_names.py の WRITER-VISIBLE の行)のうち、この節が束ねる物の行の list。
+
+   展開は節を回す関数の引数と節の操作を `_doeff_effect`・`_doeff_k` で束ねて読むので、素の `effect`・`k` は書き手の名前空間のまま。
+   書き手が `(reperform effect)`・`:when (isinstance effect X)` のように書いた節だけが、その名を節の effect・続きとして読める
+   (`_alias-forms` の束ね・型検査のための展開では `_clause-test` の判定の中の束ね)。節の欄・session の名が同じ名なら束ねない —
+   書き手が欄・session で決めた名が優先する。点つきの記号(`effect.amount`)も名を使うと数える。名が本体の中の局所の束ね
+   (`(lfor k …)`)にだけ現れても数える — 余分な束ねは害が無い(型検査のための展開は束ねた名を読む)。"
+  (import doeff-hy.clause-endings [parse-clause-options])
+  (setv options (parse-clause-options (list (cut clause 2 None)) "handle clause"))
+  (setv taken (+ (lfor f (get clause 1) (str f))
+                 (lfor #(lname _ _mut _legacy) (or lazy-defs []) (str lname))))
+  (setv written-forms (+ (if (is (. options guard) None) [] [(. options guard)]) (. options body)))
+  (lfor row WRITER-VISIBLE
+        :if (and (not-in row.written taken)
+                 (any (gfor form written-forms (_names-symbol form row.written))))
+        row))
+
+(defn _alias-forms [row]
+  "節の本体の頭に置く、書き手の名 row.written の束ね。実行時の展開は `(setv effect _doeff_effect)`。型検査のための展開は、
+   名に型を宣言し(`k: _doeff_Continuation`)、束ねた名を読む(`_ = k` — 書き手が使わない名は reportUnusedVariable の赤になる。
+   欄の束ねの `_ = field` と同じ)。節の `isinstance` が絞る effect は代入でなく `_clause-test` の判定の中で束ね(絞った総称型を
+   代入すると reportUnknownVariableType の赤になる)、ここでは読むだけ(`assert effect`。絞った型が一部 Unknown でも赤にならない)。"
+  (setv written (Symbol row.written))
+  (cond
+    (not (static-view-enabled)) [`(setv ~written ~(Symbol row.internal))]
+    row.narrowed [`(assert ~written)]
+    True [`(setv (annotate ~written ~(Symbol row.declared)) ~(Symbol row.internal))
+          `(setv _ ~written)]))
+
+(defn _clause-test [etype aliases]
+  "節の判定 — 受けた effect が節の effect の型か。型検査のための展開で、絞る名(row.narrowed)を書き手が使う節は、判定の中で
+   書き手の名を束ねる(`isinstance((effect := _doeff_effect), T)` — 絞る前の値を束ねるので、絞った型が一部 Unknown でも代入の赤が
+   出ない)。判定の後に `_doeff_effect` も絞る(続く `typed_resume` が節の effect の型を読む)。"
+  (setv narrowed (lfor row aliases :if row.narrowed row))
+  (if (and (static-view-enabled) narrowed)
+      `(and (isinstance (setx ~(Symbol (. (get narrowed 0) written)) ~(effect-symbol)) ~etype)
+            (isinstance ~(effect-symbol) ~etype))
+      `(isinstance ~(effect-symbol) ~etype)))
 
 (defn _build-lazy-init-forms [handler-name lazy-name lazy-body [legacy? True]]
   "Build the yield-based lazy init code for one lazy def.
@@ -437,11 +486,13 @@
 
 (defn _rewrite-ops [form]
   "Recursively rewrite the clause operations in a handler clause body with the table's rewrites (clause_ops.hy):
-   (resume expr)      → (yield (Resume k expr))  — and marks the clause as resumed
-   (transfer expr)    → (yield (Transfer k expr))
+   (resume expr)      → (yield (Resume _doeff_k expr))  — and marks the clause as resumed
+   (transfer expr)    → (yield (Transfer _doeff_k expr))
    (finish expr)      → (return expr)  — drop the continuation, the handled scope answers expr
-   (reperform effect) → (yield (Pass effect k))     — OCaml 5 aligned
-   (pass)             → (yield (Pass effect k))      — deprecated, use reperform
+   (reperform effect) → (yield (Pass effect _doeff_k))     — OCaml 5 aligned
+   (pass)             → (yield (Pass _doeff_effect _doeff_k))      — deprecated, use reperform
+   (the clause's effect and continuation are `_doeff_effect` / `_doeff_k` — expansion_names.py — so a clause field named
+   `k` or `effect` does not overwrite them; the Resume / Transfer / Pass above are the `_doeff_` aliases too)
    Only a form whose argument count matches the operation's arity is rewritten; raise (no rewrite) and every
    other form are walked into."
   (cond
@@ -539,7 +590,8 @@
   (setv cbody (_tco-seq cbody))
 
   ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)。節の欄・effect・k と
-  ;; handler の直下のセッションの名前は、本体の前から束縛されている名前。
+  ;; handler の直下のセッションの名前は、本体の前から束縛されている名前(effect・k は書き手が本体・番に書いた時だけ
+  ;; 展開が束ねる予約された名 — _clause-aliases)。
   (import doeff-hy.macros [_rewrite-bindings])
   (setv cbody
     (_rewrite-bindings cbody
@@ -582,19 +634,24 @@
           (.extend lazy-prefix
             (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
-  ;; Field bindings: (setv field (. effect field))
+  ;; Field bindings: (setv field (. _doeff_effect field))
   ;; 型検査のための展開(doeff_hy/static_view.py — 走らせず pyright が読むだけ・agora-redesign #2514)では、束ねの直後に
   ;; `_ = field` を置いて名を「読んだ」ことにする。欄の名で束ねるので、本体が使わない欄(例 `[stored mark]` の mark)は
   ;; reportUnusedVariable の赤になり、書き手は名を変えられない(`_` で始めると欄に当たらない)。本体が名を参照するかを
   ;; 記号の走査で決めると `stored.version` のような点つきの記号や macro が作る参照を取り逃がすので、全部の欄に置く。
-  ;; 欄の名の綴りの誤りは `(. effect field)` の属性の読みで今までどおり赤になる。実行時の展開は変えない。
+  ;; 欄の名の綴りの誤りは `(. _doeff_effect field)` の属性の読みで今までどおり赤になる。実行時の展開は変えない。
+  ;; 欄は節の effect を `_doeff_effect` から読む: 欄の名が `effect`・`k` でも、受けた effect と続きを上書きしない
+  ;; (card ki-6af9862aed32)。書き手が本体・番に書いた `effect`・`k` の束ねは、欄の束ねより前に置く(欄が同じ名なら束ねず、欄が優先)。
   (setv bindings
-    (lfor f fields
-          form (if (static-view-enabled)
-                   [`(setv ~f (. effect ~(Symbol (str f))))
-                    `(setv _ ~f)]
-                   [`(setv ~f (. effect ~(Symbol (str f))))])
-      form))
+    (+ (lfor row (_clause-aliases clause lazy-defs)
+             form (_alias-forms row)
+         form)
+       (lfor f fields
+             form (if (static-view-enabled)
+                      [`(setv ~f (. ~(effect-symbol) ~(Symbol (str f))))
+                       `(setv _ ~f)]
+                      [`(setv ~f (. ~(effect-symbol) ~(Symbol (str f))))])
+         form)))
 
   ;; Rewrite resume/transfer/finish/pass (lazy-prefix is already in yield IR,
   ;; but _rewrite-ops only touches the clause operations — safe to pass through)
@@ -619,7 +676,7 @@
         `(do ~@bindings
              ~@guard-prefix
              (if (not ~guard)
-                 (yield (~(alias-symbol "Pass") effect k))
+                 (yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol)))
                  ~checked))))
 
   #(etype full-body))
@@ -639,20 +696,23 @@
                                        :handler-name handler-name
                                        :module-names module-names
                                        :specs specs))
-    (.append cond-forms `(isinstance effect ~etype))
+    (.append cond-forms (_clause-test etype (_clause-aliases clause lazy-defs)))
     (.append cond-forms body))
 
   ;; Default: pass unmatched
   (.append cond-forms 'True)
-  (.append cond-forms `(yield (~(alias-symbol "Pass") effect k)))
+  (.append cond-forms `(yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol))))
 
   ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
   ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/static_types.pyi)。
   ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
   (setv dispatcher
     (if (static-view-enabled)
-        `(_doeff-do (fn #^ _doeff_ClauseRun [#^ object effect #^ _doeff_Continuation k] (cond ~@cond-forms)))
-        `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) k] (cond ~@cond-forms)))))
+        `(_doeff-do (fn #^ _doeff_ClauseRun [(annotate ~(effect-symbol) object)
+                                             (annotate ~(continuation-symbol) _doeff_Continuation)]
+                      (cond ~@cond-forms)))
+        `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) ~(continuation-symbol)]
+                      (cond ~@cond-forms)))))
   (setv passed (_passed-effects-source clauses (_session-names (or lazy-defs []))))
   (if (is passed None)
       dispatcher
@@ -703,9 +763,9 @@
    never an import error. No clauses → no annotation."
   (import sys)
   (cond
-    (not etypes) ['effect]
-    (>= sys.version-info #(3 14)) [`(annotate effect ~(if (= (len etypes) 1) (get etypes 0) `(| ~@etypes)))]
-    True [`(annotate effect ~(.join " | " (lfor t etypes (.join "." (map hy.mangle (.split (str t) "."))))))]))
+    (not etypes) [(effect-symbol)]
+    (>= sys.version-info #(3 14)) [`(annotate ~(effect-symbol) ~(if (= (len etypes) 1) (get etypes 0) `(| ~@etypes)))]
+    True [`(annotate ~(effect-symbol) ~(.join " | " (lfor t etypes (.join "." (map hy.mangle (.split (str t) "."))))))]))
 
 
 ;; ---------------------------------------------------------------------------
