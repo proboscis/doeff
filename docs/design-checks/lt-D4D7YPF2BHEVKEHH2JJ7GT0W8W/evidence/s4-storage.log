@@ -1,0 +1,52 @@
+# S4 の検(保存先 = 一時の dir /tmp/d4d7-s4.WyulJW・PYTHONPYCACHEPREFIX=/tmp/d4d7-s4.WyulJW/pyc・DOEFF_HY_CODE_STORE=/tmp/d4d7-s4.WyulJW/store)
+# 時刻: 2026-10-12T00:17:20Z
+# 利用者の module: /tmp/d4d7-s4.WyulJW/src/d4d7_s4_consumer.hy sha256 0ef1eee2f6ff6523269a002b24f6fcac7e5f39a266b83f53aae8be2ca24aaeae
+
+## 段 1: 直す前の handle.hy(a2254d66c・sha256 4ba41652bee7c4abf295b16be98da10272fc3e3c2805cdfa15346a4d5e7b6d8e)で import して走らせる — 作業木 /home/ubuntu/.worktrees/doeff-at-a2254d66c(HEAD a2254d66cfc52f9fa9c3b4829bff2d76191bccb3)
+# 命令: PYTHONPYCACHEPREFIX=/tmp/d4d7-s4.WyulJW/pyc DOEFF_HY_CODE_STORE=/tmp/d4d7-s4.WyulJW/store uv run python /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/s4_driver.py import /tmp/d4d7-s4.WyulJW/src
+
+doeff Traceback (most recent call last):
+
+  subject()  /tmp/d4d7-s4.WyulJW/src/d4d7_s4_consumer.hy:15
+    (<- coll (traverse (<- x (Iterate items)) (* x 2)))
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+pyc /tmp/d4d7-s4.WyulJW/pyc/tmp/d4d7-s4.WyulJW/src/d4d7_s4_consumer.cpython-314.pyc
+pyc sha256 before None
+pyc sha256 after  e90969e2d79e4c18ea02b10d463cb520ab5968319ee6dbf4a009e5d37eb70806
+main !! UnboundLocalError cannot access local variable '_doeff_do' where it is not associated with a value
+# 終了の状態: 0
+# 段 1 の .pyc を /tmp/d4d7-s4.WyulJW/stale.pyc へ写した(sha256 e90969e2d79e4c18ea02b10d463cb520ab5968319ee6dbf4a009e5d37eb70806)
+
+## 段 2: 改訂の handle.hy(sha256 192f4b06d5f0b4932d02cc549c4d6811a0ce9c91712f34094eecf4378a909e90)で同じ保存先から import して走らせる — 作業木 /home/ubuntu/.worktrees/doeff-wt-handle-order(HEAD 358cd825719ca6c4dd9fdf5506f93514ef0816e2)。利用者の module は段 1 から変えていない
+# 命令: PYTHONPYCACHEPREFIX=/tmp/d4d7-s4.WyulJW/pyc DOEFF_HY_CODE_STORE=/tmp/d4d7-s4.WyulJW/store uv run python /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/s4_driver.py import /tmp/d4d7-s4.WyulJW/src
+pyc /tmp/d4d7-s4.WyulJW/pyc/tmp/d4d7-s4.WyulJW/src/d4d7_s4_consumer.cpython-314.pyc
+pyc sha256 before e90969e2d79e4c18ea02b10d463cb520ab5968319ee6dbf4a009e5d37eb70806
+pyc sha256 after  21851770f4e12bc356b165ca170962a3effb7e057df5b29aecdbb42b06507d7d
+main => 112
+# 終了の状態: 0
+
+## 段 3(負): 段 1 の .pyc の code を照らさずにそのまま走らせる — 作業木 /home/ubuntu/.worktrees/doeff-wt-handle-order
+# 命令: uv run python /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/s4_driver.py stale /tmp/d4d7-s4.WyulJW/src /tmp/d4d7-s4.WyulJW/stale.pyc
+
+doeff Traceback (most recent call last):
+
+  subject()  /tmp/d4d7-s4.WyulJW/src/d4d7_s4_consumer.hy:15
+    (<- coll (traverse (<- x (Iterate items)) (* x 2)))
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+stale pyc /tmp/d4d7-s4.WyulJW/stale.pyc sha256 e90969e2d79e4c18ea02b10d463cb520ab5968319ee6dbf4a009e5d37eb70806
+main !! UnboundLocalError cannot access local variable '_doeff_do' where it is not associated with a value
+# 終了の状態: 0

@@ -1,0 +1,164 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-at-2bf226a96(HEAD 2bf226a96ed1a2abb3e66dbaf1c5119a4e61098c)
+# 作業木の未 commit の変更:  M tests/test_handle_scope.py 
+# 命令: timeout 300 uv run pytest -q -p no:cacheprovider tests/test_handle_scope.py
+# 時刻: 2026-10-12T00:12:59Z
+
+
+deadline scale x1.5 (load per usable CPU) — per test 90s, watchdog 135s
+
+test-admission: focused — 33 件(変更箇所の検証)
+............................FFF..                                        [100%]
+=================================== FAILURES ===================================
+_ test_handle_checks_clause_endings_before_the_body[statement-before-the-program] _
+
+body = '(do (body-evaluated) (bump-n 1))'
+
+    @pytest.mark.parametrize("body", _BODIES.values(), ids=_BODIES.keys())
+    def test_handle_checks_clause_endings_before_the_body(body: str) -> None:
+        """関数の中の handle も、節の終わり方の検めを本文より前に済ませる — 検めが落ちたら本文は評価されない。本文を先に
+        評価すると `body-evaluated` の AssertionError になる(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — 被せる関数を
+        本文と同じ式の中で作ると、Hy が前へ出した本文の文の部分が検めより先に走った)。"""
+        mod = _eval_module(_HALT + f"(defn subject [] (abs 1) (handle {body} (Halt [] (resume 0))))")
+        with pytest.raises(TypeError, match=_HALT_RESUMED):
+>           mod.subject()
+
+tests/test_handle_scope.py:244: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:13: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   AssertionError: 本文が検めより先に評価された
+
+<string>:12: AssertionError
+________ test_handle_checks_clause_endings_before_the_body[let-binding] ________
+
+body = '(let [x (body-evaluated)] (bump-n x))'
+
+    @pytest.mark.parametrize("body", _BODIES.values(), ids=_BODIES.keys())
+    def test_handle_checks_clause_endings_before_the_body(body: str) -> None:
+        """関数の中の handle も、節の終わり方の検めを本文より前に済ませる — 検めが落ちたら本文は評価されない。本文を先に
+        評価すると `body-evaluated` の AssertionError になる(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — 被せる関数を
+        本文と同じ式の中で作ると、Hy が前へ出した本文の文の部分が検めより先に走った)。"""
+        mod = _eval_module(_HALT + f"(defn subject [] (abs 1) (handle {body} (Halt [] (resume 0))))")
+        with pytest.raises(TypeError, match=_HALT_RESUMED):
+>           mod.subject()
+
+tests/test_handle_scope.py:244: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:13: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   AssertionError: 本文が検めより先に評価された
+
+<string>:12: AssertionError
+_____ test_handle_checks_clause_endings_before_the_body_performs_an_effect _____
+
+    def test_handle_checks_clause_endings_before_the_body_performs_an_effect() -> None:
+        """defk の本体の handle の本文の `!` は、検めが落ちる時に外の effect を出さない — 出すと Bump の handler が無いので
+        UnhandledEffect になる。"""
+        mod = _eval_module(
+            _HALT
+            + """
+            (defk subject [] {:pre [] :post [(: % int)]}
+              (<- r (handle (let [x (! (bump-n 5))] (bump-n x)) (Halt [] (resume 0))))
+              r)
+            """
+        )
+        with pytest.raises(TypeError, match=_HALT_RESUMED):
+>           _run(mod.subject())
+
+tests/test_handle_scope.py:259: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1932: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+<string>:15: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+n = 5
+
+>   ???
+E   doeff_vm.UnhandledEffect: no handler found for effect: Bump (Bump(n=5))
+E     handlers in scope (innermost→outermost): sequential → _fail_handler → _try_handler → _scheduled_python
+
+<string>:8: UnhandledEffect
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:15
+  bump_n()  <string>:8
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnhandledEffect: no handler found for effect: Bump (Bump(n=5))
+  handlers in scope (innermost→outermost): sequential → _fail_handler → _try_handler → _scheduled_python
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-at-2bf226a96/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_handle_scope.py::test_handle_checks_clause_endings_before_the_body[statement-before-the-program]
+FAILED tests/test_handle_scope.py::test_handle_checks_clause_endings_before_the_body[let-binding]
+FAILED tests/test_handle_scope.py::test_handle_checks_clause_endings_before_the_body_performs_an_effect
+3 failed, 30 passed, 1 warning in 4.60s
+# 終了の状態: 1

@@ -1,0 +1,41 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/handle.hy b/packages/doeff-hy/src/doeff_hy/handle.hy
+index 5f218c81b..afd16e4e7 100644
+--- a/packages/doeff-hy/src/doeff_hy/handle.hy
++++ b/packages/doeff-hy/src/doeff_hy/handle.hy
+@@ -78,7 +78,7 @@
+   (if (static-view-enabled)
+       '(do (import doeff [Pass])
+            (import doeff_vm [WithHandler]))
+-      '(do (import doeff [Resume Transfer Pass])
++      '(do (import doeff [Resume Transfer Pass TransferThrow])
+            (import doeff_vm [WithHandler]))))
+ 
+ 
+@@ -279,7 +279,7 @@
+     (is head None) False
+ 
+     ;; Direct terminals
+-    (in head ["resume" "transfer" "finish" "pass" "reperform" "raise"]) True
++    (in head ["resume" "transfer" "finish" "pass" "reperform" "raise" "throw"]) True
+ 
+     ;; (if test then else) — both branches must terminate
+     (= head "if")
+@@ -471,6 +471,10 @@
+           (and (= hname "transfer") (= (len form) 2))
+             `(yield (Transfer k ~(_rewrite-ops (get form 1))))
+ 
++          ;; (throw exc) — 続きへ例外を投げる(末尾・S2 の試し)
++          (and (= hname "throw") (= (len form) 2))
++            `(yield (TransferThrow k ~(_rewrite-ops (get form 1))))
++
+           ;; (reperform expr) — OCaml 5 aligned forwarding
+           (and (= hname "reperform") (= (len form) 2))
+             `(yield (Pass ~(_rewrite-ops (get form 1)) k))
+@@ -770,6 +774,7 @@
+   (setv install (hy.gensym "handle_install"))
+   (locate-synthesized (if (_in-function-body? _hy-compiler)
+       `(do
++         (import doeff [TransferThrow])
+          (setv ~install ((fn []
+                            ~@prelude
+                            (setv __doeff-handler-data__ ~h-expr)

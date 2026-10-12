@@ -1,0 +1,47 @@
+## 作業木 /home/ubuntu/.worktrees/doeff-at-a2254d66c(HEAD a2254d66cfc52f9fa9c3b4829bff2d76191bccb3)
+# 命令: cd /home/ubuntu/.worktrees/doeff-at-a2254d66c && uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/r3_order.py
+# 時刻: 2026-10-12T00:10:15Z
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+  check_clause_endings()  packages/doeff-hy/src/doeff_hy/clause_endings.hy:200
+    (raise (ClauseEndingError (+ where ": " effect-type.__name__ " は再開しない effect(Resumption.NEVER)なのに節が "
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+ClauseEndingError: handle の節 Halt: Halt は再開しない effect(Resumption.NEVER)なのに節が resume する [ADR-DOE-CORE-EFFECTS-003 R15]
+
+defn/expression: 検めが先(TypeError: handle の節 Halt: Halt は再開しない effect(Resumption.NEVER)なのに節が re)
+defn/statement-before-the-program: 検めが先(TypeError: handle の節 Halt: Halt は再開しない effect(Resumption.NEVER)なのに節が re)
+defn/let-binding: 検めが先(TypeError: handle の節 Halt: Halt は再開しない effect(Resumption.NEVER)なのに節が re)
+defk/let-bang(本文の ! が外の Bump を出す・Bump の handler は無い): 検めが先(TypeError: handle の節 Halt: Halt は再開しない effect(Resumption.NEVER)なのに節が re)
+# 終了の状態: 0
+
+## 作業木 /home/ubuntu/.worktrees/doeff-at-2bf226a96(HEAD 2bf226a96ed1a2abb3e66dbaf1c5119a4e61098c)
+# 命令: cd /home/ubuntu/.worktrees/doeff-at-2bf226a96 && uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/r3_order.py
+# 時刻: 2026-10-12T00:10:18Z
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+  bump_n()  <string>:8
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnhandledEffect: no handler found for effect: Bump (Bump(n=5))
+  handlers in scope (innermost→outermost): sequential → _fail_handler → _try_handler → _scheduled_python
+
+defn/expression: 検めが先(TypeError: handle の節 Halt: Halt は再開しない effect(Resumption.NEVER)なのに節が re)
+defn/statement-before-the-program: 本文が先(AssertionError: 本文が検めより先に評価された)
+defn/let-binding: 本文が先(AssertionError: 本文が検めより先に評価された)
+defk/let-bang(本文の ! が外の Bump を出す・Bump の handler は無い): 本文が先(UnhandledEffect: no handler found for effect: Bump (Bump(n=5))
+  handlers in )
+# 終了の状態: 0
+

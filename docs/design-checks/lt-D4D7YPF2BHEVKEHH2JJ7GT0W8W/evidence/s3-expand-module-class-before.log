@@ -1,0 +1,603 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-at-a2254d66c(HEAD a2254d66cfc52f9fa9c3b4829bff2d76191bccb3)
+# 作業木の未 commit の変更: 
+# 命令: timeout 280 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/expand_module_class.py
+# 時刻: 2026-10-12T00:15:02Z
+
+=== runtime ===
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='expand_target', assignments=[['defk', 'defk'], ['do!', 'do!'], ['<-', '<-'], ['handle', 'handle'], ['defhandler', 'defhandler']], prefix='')
+from dataclasses import dataclass
+from doeff import EffectBase
+
+@dataclass(frozen=True)
+class Bump(EffectBase):
+    n: int
+from doeff.do import do as _doeff_do
+from doeff import Resume, Transfer, Pass
+from doeff_vm import WithHandler
+from doeff_hy.clause_endings import check_clause_endings_once as _doeff_check_clause_endings_once
+
+def _hy_anon_4():
+
+    def _hy_anon_3(effect: Bump, k):
+        if isinstance(effect, Bump):
+            n = effect.n
+            _doeff_clause_resumed = False
+            _doeff_clause_value = (yield Transfer(k, n + 1))
+            if _doeff_clause_resumed:
+                _hy_anon_1 = _doeff_clause_value
+            else:
+                from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                raise _doeff_fell_through('plain-h', 'Bump')
+                _hy_anon_1 = None
+            _hy_anon_2 = _hy_anon_1
+        else:
+            _hy_anon_2 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_2
+    __doeff_handler_data__ = _doeff_do(_hy_anon_3)
+    __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__):
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'plain-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', 'doc')
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    return __doeff_handler_fn__
+plain_h = _hy_anon_4()
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(plain_h, '__doeff_body__', _doeff_QuotedForms("'[(Bump [n] (resume (+ n 1)))]"))
+setattr(plain_h, '__doeff_name__', 'plain-h')
+import doeff_hy.declarations
+setattr(plain_h, '__doeff_effects__', doeff_hy.declarations.effect_types('defhandler plain-h', tuple([Bump])))
+setattr(plain_h, '__doeff_tags__', None)
+setattr(plain_h, '__doeff_needs__', None)
+from doeff.do import do as _doeff_do
+from doeff import Resume, Transfer, Pass
+from doeff_vm import WithHandler
+from doeff_hy.clause_endings import check_clause_endings_once as _doeff_check_clause_endings_once
+
+def param_h(base):
+
+    def _hy_anon_8(effect: Bump, k):
+        if isinstance(effect, Bump):
+            n = effect.n
+            if not n > 0:
+                _hy_anon_6 = (yield Pass(effect, k))
+            else:
+                _doeff_clause_resumed = False
+                _doeff_clause_value = (yield Transfer(k, n + base))
+                if _doeff_clause_resumed:
+                    _hy_anon_5 = _doeff_clause_value
+                else:
+                    from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                    raise _doeff_fell_through('param-h', 'Bump')
+                    _hy_anon_5 = None
+                _hy_anon_6 = _hy_anon_5
+            _hy_anon_7 = _hy_anon_6
+        else:
+            _hy_anon_7 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_7
+    __doeff_handler_data__ = _doeff_do(_hy_anon_8)
+    __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__):
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'param-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', None)
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    setattr(__doeff_handler_fn__, '__doeff_name__', 'param-h')
+    return __doeff_handler_fn__
+setattr(param_h, '__doc__', None)
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(param_h, '__doeff_body__', _doeff_QuotedForms("'[(Bump [n] :when (> n 0) (resume (+ n base)))]"))
+setattr(param_h, '__doeff_name__', 'param-h')
+import doeff_hy.declarations
+setattr(param_h, '__doeff_effects__', None)
+setattr(param_h, '__doeff_tags__', None)
+setattr(param_h, '__doeff_needs__', None)
+from doeff.do import do as _doeff_do
+from doeff import Resume, Transfer, Pass
+from doeff_vm import WithHandler
+from doeff_hy.clause_endings import check_clause_endings_once as _doeff_check_clause_endings_once
+from doeff import Some
+from doeff_core_effects.effects import Get, Put
+from doeff_hy.session import session_key as _doeff_session_key
+
+def _hy_anon_13():
+
+    def _hy_anon_12(effect: Bump, k):
+        if isinstance(effect, Bump):
+            n = effect.n
+            _doeff_clause_resumed = False
+            _lazy_calls_key = _doeff_session_key(__name__, 'lazy-h', 'calls')
+            _hy_gensym_lazy_calls_cached_1 = (yield Get(_lazy_calls_key))
+            if isinstance(_hy_gensym_lazy_calls_cached_1, Some):
+                calls = _hy_gensym_lazy_calls_cached_1.value
+                _hy_anon_9 = None
+            else:
+                _hy_gensym_lazy_calls_val_2 = 0
+                yield Put(_lazy_calls_key, Some(_hy_gensym_lazy_calls_val_2))
+                calls = _hy_gensym_lazy_calls_val_2
+                _hy_anon_9 = None
+            calls = calls + 1
+            yield Put(_lazy_calls_key, Some(calls))
+            _doeff_clause_value = (yield Transfer(k, calls))
+            if _doeff_clause_resumed:
+                _hy_anon_10 = _doeff_clause_value
+            else:
+                from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                raise _doeff_fell_through('lazy-h', 'Bump')
+                _hy_anon_10 = None
+            _hy_anon_11 = _hy_anon_10
+        else:
+            _hy_anon_11 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_11
+    __doeff_handler_data__ = _doeff_do(_hy_anon_12)
+    __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__):
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'lazy-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', None)
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    return __doeff_handler_fn__
+lazy_h = _hy_anon_13()
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(lazy_h, '__doeff_body__', _doeff_QuotedForms("'[(session var calls 0) (Bump [n] (:= calls (+ calls 1)) (resume calls))]"))
+setattr(lazy_h, '__doeff_name__', 'lazy-h')
+import doeff_hy.declarations
+setattr(lazy_h, '__doeff_effects__', None)
+setattr(lazy_h, '__doeff_tags__', None)
+setattr(lazy_h, '__doeff_needs__', None)
+from doeff.do import do as _doeff_do
+from doeff import Resume, Transfer, Pass
+from doeff_vm import WithHandler
+from doeff_hy.clause_endings import check_clause_endings_once as _doeff_check_clause_endings_once
+
+def _hy_anon_18():
+    from doeff_vm._effect_types import declare_passes as _doeff_declare_passes
+
+    def _hy_anon_17(effect: EffectBase, k):
+        if isinstance(effect, EffectBase):
+            if not not isinstance(effect, Bump):
+                _hy_anon_15 = (yield Pass(effect, k))
+            else:
+                _doeff_clause_resumed = False
+                _doeff_clause_value = (yield Transfer(k, 0))
+                if _doeff_clause_resumed:
+                    _hy_anon_14 = _doeff_clause_value
+                else:
+                    from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                    raise _doeff_fell_through('fence-h', 'EffectBase')
+                    _hy_anon_14 = None
+                _hy_anon_15 = _hy_anon_14
+            _hy_anon_16 = _hy_anon_15
+        else:
+            _hy_anon_16 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_16
+    __doeff_handler_data__ = _doeff_declare_passes(_doeff_do(_hy_anon_17), lambda: (Bump, ()))
+    __doeff_clause_endings__ = lambda: [(EffectBase, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__):
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'fence-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', None)
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    return __doeff_handler_fn__
+fence_h = _hy_anon_18()
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(fence_h, '__doeff_body__', _doeff_QuotedForms("'[(EffectBase [] :when (not (isinstance effect Bump)) (resume 0))]"))
+setattr(fence_h, '__doeff_name__', 'fence-h')
+import doeff_hy.declarations
+setattr(fence_h, '__doeff_effects__', None)
+setattr(fence_h, '__doeff_tags__', None)
+setattr(fence_h, '__doeff_needs__', None)
+
+class Holder:
+    from doeff.do import do as _doeff_do
+    from doeff import Resume, Transfer, Pass
+    from doeff_vm import WithHandler
+    from doeff_hy.clause_endings import check_clause_endings_once as _doeff_check_clause_endings_once
+
+    def inner_h(base):
+
+        def _hy_anon_21(effect: Bump, k):
+            if isinstance(effect, Bump):
+                n = effect.n
+                _doeff_clause_resumed = False
+                _doeff_clause_value = (yield Transfer(k, n + base))
+                if _doeff_clause_resumed:
+                    _hy_anon_19 = _doeff_clause_value
+                else:
+                    from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                    raise _doeff_fell_through('inner-h', 'Bump')
+                    _hy_anon_19 = None
+                _hy_anon_20 = _hy_anon_19
+            else:
+                _hy_anon_20 = (yield Pass(effect, k)) if True else None
+            return _hy_anon_20
+        __doeff_handler_data__ = _doeff_do(_hy_anon_21)
+        __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+        def __doeff_handler_fn__(__doeff_body__):
+            _doeff_check_clause_endings_once(__doeff_handler_data__, 'inner-h', __doeff_clause_endings__)
+            return WithHandler(__doeff_handler_data__, __doeff_body__)
+        setattr(__doeff_handler_fn__, '__doc__', None)
+        setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+        setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+        setattr(__doeff_handler_fn__, '__doeff_name__', 'inner-h')
+        return __doeff_handler_fn__
+    setattr(inner_h, '__doc__', None)
+    from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+    setattr(inner_h, '__doeff_body__', _doeff_QuotedForms("'[(Bump [n] (resume (+ n base)))]"))
+    setattr(inner_h, '__doeff_name__', 'inner-h')
+    import doeff_hy.declarations
+    setattr(inner_h, '__doeff_effects__', None)
+    setattr(inner_h, '__doeff_tags__', None)
+    setattr(inner_h, '__doeff_needs__', None)
+    from doeff.do import do as _doeff_do
+    from doeff import Resume, Transfer, Pass
+    from doeff_vm import WithHandler
+    from doeff_hy.clause_endings import check_clause_endings as _doeff_check_clause_endings
+    _doeff_check_clause_endings('handle', [(Bump, ('resume',), False)])
+
+    def _hy_anon_24(effect: Bump, k):
+        if isinstance(effect, Bump):
+            n = effect.n
+            _doeff_clause_resumed = False
+            _doeff_clause_value = (yield Transfer(k, n))
+            if _doeff_clause_resumed:
+                _hy_anon_22 = _doeff_clause_value
+            else:
+                from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                raise _doeff_fell_through('handle', 'Bump')
+                _hy_anon_22 = None
+            _hy_anon_23 = _hy_anon_22
+        else:
+            _hy_anon_23 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_23
+
+    def _hy_anon_26():
+        from doeff.do import do as _doeff_do
+        from doeff import EffectBase as _doeff_effect_base
+        from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+
+        def _hy_anon_25():
+            _contract_result = 1
+            _guard_performed(_contract_result, 'do!') if isinstance(_contract_result, _doeff_effect_base) else None
+            return _contract_result
+        return _install_guard_globals(_doeff_do(_hy_anon_25))()
+    prog = WithHandler(_doeff_do(_hy_anon_24), _hy_anon_26())
+from doeff.do import do as _doeff_do
+from doeff import Resume, Transfer, Pass
+from doeff_vm import WithHandler
+from doeff_hy.clause_endings import check_clause_endings as _doeff_check_clause_endings
+_doeff_check_clause_endings('handle', [(Bump, ('resume',), False), (EffectBase, ('reperform',), False)])
+
+def _hy_anon_31(effect: Bump | EffectBase, k):
+    if isinstance(effect, Bump):
+        n = effect.n
+        _doeff_clause_resumed = False
+        _doeff_clause_value = (yield Transfer(k, n + 100))
+        if _doeff_clause_resumed:
+            _hy_anon_27 = _doeff_clause_value
+        else:
+            from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+            raise _doeff_fell_through('handle', 'Bump')
+            _hy_anon_27 = None
+        _hy_anon_30 = _hy_anon_27
+    else:
+        if isinstance(effect, EffectBase):
+            _doeff_clause_resumed = False
+            _doeff_clause_value = (yield Pass(effect, k))
+            if _doeff_clause_resumed:
+                _hy_anon_28 = _doeff_clause_value
+            else:
+                from doeff_hy.clause_endings import fell_through as _doeff_fell_through
+                raise _doeff_fell_through('handle', 'EffectBase')
+                _hy_anon_28 = None
+            _hy_anon_29 = _hy_anon_28
+        else:
+            _hy_anon_29 = (yield Pass(effect, k)) if True else None
+        _hy_anon_30 = _hy_anon_29
+    return _hy_anon_30
+
+def _hy_anon_33():
+    from doeff.do import do as _doeff_do
+    from doeff import EffectBase as _doeff_effect_base
+    from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+
+    def _hy_anon_32():
+        _contract_result = 1
+        _guard_performed(_contract_result, 'do!') if isinstance(_contract_result, _doeff_effect_base) else None
+        return _contract_result
+    return _install_guard_globals(_doeff_do(_hy_anon_32))()
+program = WithHandler(_doeff_do(_hy_anon_31), _hy_anon_33())
+=== static ===
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='expand_target', assignments=[['defk', 'defk'], ['do!', 'do!'], ['<-', '<-'], ['handle', 'handle'], ['defhandler', 'defhandler']], prefix='')
+from dataclasses import dataclass
+from doeff import EffectBase
+
+@dataclass(frozen=True)
+class Bump(EffectBase):
+    n: int
+from doeff import Pass
+from doeff_vm import WithHandler
+
+def _hy_anon_4():
+
+    def _hy_anon_3(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+        if isinstance(effect, Bump):
+            n = effect.n
+            _ = n
+            _doeff_clause_resumed = False
+            from doeff import typed_transfer
+            _doeff_clause_value = (yield typed_transfer(effect, k, n + 1))
+            if _doeff_clause_resumed:
+                _hy_anon_1 = _doeff_clause_value
+            else:
+                raise _doeff_fell_through('plain-h', 'Bump')
+                _hy_anon_1 = None
+            _hy_anon_2 = _hy_anon_1
+        else:
+            _hy_anon_2 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_2
+    __doeff_handler_data__ = _doeff_do(_hy_anon_3)
+    __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]:
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'plain-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', 'doc')
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    return __doeff_handler_fn__
+plain_h = _hy_anon_4()
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(plain_h, '__doeff_body__', _doeff_QuotedForms("'[(Bump [n] (resume (+ n 1)))]"))
+setattr(plain_h, '__doeff_name__', 'plain-h')
+import doeff_hy.declarations
+setattr(plain_h, '__doeff_effects__', doeff_hy.declarations.effect_types('defhandler plain-h', tuple([Bump])))
+setattr(plain_h, '__doeff_tags__', None)
+setattr(plain_h, '__doeff_needs__', None)
+from doeff import Pass
+from doeff_vm import WithHandler
+
+def param_h(base):
+
+    def _hy_anon_8(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+        if isinstance(effect, Bump):
+            n = effect.n
+            _ = n
+            if not n > 0:
+                _hy_anon_6 = (yield Pass(effect, k))
+            else:
+                _doeff_clause_resumed = False
+                from doeff import typed_transfer
+                _doeff_clause_value = (yield typed_transfer(effect, k, n + base))
+                if _doeff_clause_resumed:
+                    _hy_anon_5 = _doeff_clause_value
+                else:
+                    raise _doeff_fell_through('param-h', 'Bump')
+                    _hy_anon_5 = None
+                _hy_anon_6 = _hy_anon_5
+            _hy_anon_7 = _hy_anon_6
+        else:
+            _hy_anon_7 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_7
+    __doeff_handler_data__ = _doeff_do(_hy_anon_8)
+    __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]:
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'param-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', None)
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    setattr(__doeff_handler_fn__, '__doeff_name__', 'param-h')
+    return __doeff_handler_fn__
+setattr(param_h, '__doc__', None)
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(param_h, '__doeff_body__', _doeff_QuotedForms("'[(Bump [n] :when (> n 0) (resume (+ n base)))]"))
+setattr(param_h, '__doeff_name__', 'param-h')
+import doeff_hy.declarations
+setattr(param_h, '__doeff_effects__', None)
+setattr(param_h, '__doeff_tags__', None)
+setattr(param_h, '__doeff_needs__', None)
+from doeff import Pass
+from doeff_vm import WithHandler
+
+def _hy_anon_12():
+
+    def _hy_anon_11(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+        if isinstance(effect, Bump):
+            n = effect.n
+            _ = n
+            _doeff_clause_resumed = False
+            _lazy_calls_key = _doeff_session_key(__name__, 'lazy-h', 'calls')
+            _hy_gensym_lazy_calls_val_4 = 0
+            calls = _hy_gensym_lazy_calls_val_4
+            calls = calls + 1
+            yield _doeff_Put(_lazy_calls_key, _doeff_Some(calls))
+            from doeff import typed_transfer
+            _doeff_clause_value = (yield typed_transfer(effect, k, calls))
+            if _doeff_clause_resumed:
+                _hy_anon_9 = _doeff_clause_value
+            else:
+                raise _doeff_fell_through('lazy-h', 'Bump')
+                _hy_anon_9 = None
+            _hy_anon_10 = _hy_anon_9
+        else:
+            _hy_anon_10 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_10
+    __doeff_handler_data__ = _doeff_do(_hy_anon_11)
+    __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]:
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'lazy-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', None)
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    return __doeff_handler_fn__
+lazy_h = _hy_anon_12()
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(lazy_h, '__doeff_body__', _doeff_QuotedForms("'[(session var calls 0) (Bump [n] (:= calls (+ calls 1)) (resume calls))]"))
+setattr(lazy_h, '__doeff_name__', 'lazy-h')
+import doeff_hy.declarations
+setattr(lazy_h, '__doeff_effects__', None)
+setattr(lazy_h, '__doeff_tags__', None)
+setattr(lazy_h, '__doeff_needs__', None)
+from doeff import Pass
+from doeff_vm import WithHandler
+
+def _hy_anon_17():
+    from doeff_vm._effect_types import declare_passes as _doeff_declare_passes
+
+    def _hy_anon_16(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+        if isinstance(effect, EffectBase):
+            if not not isinstance(effect, Bump):
+                _hy_anon_14 = (yield Pass(effect, k))
+            else:
+                _doeff_clause_resumed = False
+                from doeff import typed_transfer
+                _doeff_clause_value = (yield typed_transfer(effect, k, 0))
+                if _doeff_clause_resumed:
+                    _hy_anon_13 = _doeff_clause_value
+                else:
+                    raise _doeff_fell_through('fence-h', 'EffectBase')
+                    _hy_anon_13 = None
+                _hy_anon_14 = _hy_anon_13
+            _hy_anon_15 = _hy_anon_14
+        else:
+            _hy_anon_15 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_15
+    __doeff_handler_data__ = _doeff_declare_passes(_doeff_do(_hy_anon_16), lambda: (Bump, ()))
+    __doeff_clause_endings__ = lambda: [(EffectBase, ('resume',), False)]
+
+    def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]:
+        _doeff_check_clause_endings_once(__doeff_handler_data__, 'fence-h', __doeff_clause_endings__)
+        return WithHandler(__doeff_handler_data__, __doeff_body__)
+    setattr(__doeff_handler_fn__, '__doc__', None)
+    setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+    setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+    return __doeff_handler_fn__
+fence_h = _hy_anon_17()
+from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+setattr(fence_h, '__doeff_body__', _doeff_QuotedForms("'[(EffectBase [] :when (not (isinstance effect Bump)) (resume 0))]"))
+setattr(fence_h, '__doeff_name__', 'fence-h')
+import doeff_hy.declarations
+setattr(fence_h, '__doeff_effects__', None)
+setattr(fence_h, '__doeff_tags__', None)
+setattr(fence_h, '__doeff_needs__', None)
+
+class Holder:
+    from doeff import Pass
+    from doeff_vm import WithHandler
+
+    def inner_h(base):
+
+        def _hy_anon_20(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+            if isinstance(effect, Bump):
+                n = effect.n
+                _ = n
+                _doeff_clause_resumed = False
+                from doeff import typed_transfer
+                _doeff_clause_value = (yield typed_transfer(effect, k, n + base))
+                if _doeff_clause_resumed:
+                    _hy_anon_18 = _doeff_clause_value
+                else:
+                    raise _doeff_fell_through('inner-h', 'Bump')
+                    _hy_anon_18 = None
+                _hy_anon_19 = _hy_anon_18
+            else:
+                _hy_anon_19 = (yield Pass(effect, k)) if True else None
+            return _hy_anon_19
+        __doeff_handler_data__ = _doeff_do(_hy_anon_20)
+        __doeff_clause_endings__ = lambda: [(Bump, ('resume',), False)]
+
+        def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]:
+            _doeff_check_clause_endings_once(__doeff_handler_data__, 'inner-h', __doeff_clause_endings__)
+            return WithHandler(__doeff_handler_data__, __doeff_body__)
+        setattr(__doeff_handler_fn__, '__doc__', None)
+        setattr(__doeff_handler_fn__, '_doeff_is_handler_fn', True)
+        setattr(__doeff_handler_fn__, '__doeff_handler_data__', __doeff_handler_data__)
+        setattr(__doeff_handler_fn__, '__doeff_name__', 'inner-h')
+        return __doeff_handler_fn__
+    setattr(inner_h, '__doc__', None)
+    from doeff_hy.quoted_forms import QuotedForms as _doeff_QuotedForms
+    setattr(inner_h, '__doeff_body__', _doeff_QuotedForms("'[(Bump [n] (resume (+ n base)))]"))
+    setattr(inner_h, '__doeff_name__', 'inner-h')
+    import doeff_hy.declarations
+    setattr(inner_h, '__doeff_effects__', None)
+    setattr(inner_h, '__doeff_tags__', None)
+    setattr(inner_h, '__doeff_needs__', None)
+    from doeff import Pass
+    from doeff_vm import WithHandler
+    _doeff_check_clause_endings('handle', [(Bump, ('resume',), False)])
+
+    def _hy_anon_23(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+        if isinstance(effect, Bump):
+            n = effect.n
+            _ = n
+            _doeff_clause_resumed = False
+            from doeff import typed_transfer
+            _doeff_clause_value = (yield typed_transfer(effect, k, n))
+            if _doeff_clause_resumed:
+                _hy_anon_21 = _doeff_clause_value
+            else:
+                raise _doeff_fell_through('handle', 'Bump')
+                _hy_anon_21 = None
+            _hy_anon_22 = _hy_anon_21
+        else:
+            _hy_anon_22 = (yield Pass(effect, k)) if True else None
+        return _hy_anon_22
+
+    def _hy_anon_24():
+        _contract_result = 1
+        _guard_performed(_contract_result, 'do!')
+        return _contract_result
+    prog = WithHandler(_doeff_do(_hy_anon_23), _install_guard_globals(_doeff_do(_hy_anon_24))())
+from doeff import Pass
+from doeff_vm import WithHandler
+_doeff_check_clause_endings('handle', [(Bump, ('resume',), False), (EffectBase, ('reperform',), False)])
+
+def _hy_anon_29(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun:
+    if isinstance(effect, Bump):
+        n = effect.n
+        _ = n
+        _doeff_clause_resumed = False
+        from doeff import typed_transfer
+        _doeff_clause_value = (yield typed_transfer(effect, k, n + 100))
+        if _doeff_clause_resumed:
+            _hy_anon_25 = _doeff_clause_value
+        else:
+            raise _doeff_fell_through('handle', 'Bump')
+            _hy_anon_25 = None
+        _hy_anon_28 = _hy_anon_25
+    else:
+        if isinstance(effect, EffectBase):
+            _doeff_clause_resumed = False
+            _doeff_clause_value = (yield Pass(effect, k))
+            if _doeff_clause_resumed:
+                _hy_anon_26 = _doeff_clause_value
+            else:
+                raise _doeff_fell_through('handle', 'EffectBase')
+                _hy_anon_26 = None
+            _hy_anon_27 = _hy_anon_26
+        else:
+            _hy_anon_27 = (yield Pass(effect, k)) if True else None
+        _hy_anon_28 = _hy_anon_27
+    return _hy_anon_28
+
+def _hy_anon_30():
+    _contract_result = 1
+    _guard_performed(_contract_result, 'do!')
+    return _contract_result
+program = WithHandler(_doeff_do(_hy_anon_29), _install_guard_globals(_doeff_do(_hy_anon_30))())
+# 終了の状態: 0

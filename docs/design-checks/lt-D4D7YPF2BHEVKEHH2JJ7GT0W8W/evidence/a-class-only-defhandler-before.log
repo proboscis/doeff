@@ -1,0 +1,7 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-at-a2254d66c(HEAD a2254d66cfc52f9fa9c3b4829bff2d76191bccb3)
+# 作業木の未 commit の変更: 
+# 命令: timeout 200 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/class_only_defhandler.py
+# 時刻: 2026-10-12T00:17:59Z
+
+NameError: name '_doeff_do' is not defined
+# 終了の状態: 0

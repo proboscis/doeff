@@ -1,0 +1,8 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-wt-blind-a-d4d7(HEAD 681fc8de15097b5c8555e41915352925beabd59e)
+# 作業木の未 commit の変更:  M packages/doeff-hy/src/doeff_hy/handle.hy ?? BLIND_INPUT.md 
+# 命令: timeout 300 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/s2_throw.py
+# 時刻: 2026-10-12T00:14:07Z
+
+throw-after-traverse: 答え -1・外の関数の局所(_hy_ の外)['items', '_doeff_runtime_class', 'coll', 'r', '_contract_result']
+raise-clause-throws: 答え 42・外の関数の局所(_hy_ の外)['items', '_doeff_runtime_class', 'r', '_contract_result']
+# 終了の状態: 0

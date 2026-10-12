@@ -1,0 +1,1031 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-at-a2254d66c(HEAD a2254d66cfc52f9fa9c3b4829bff2d76191bccb3)
+# 作業木の未 commit の変更: ?? tests/test_handle_scope.py 
+# 命令: timeout 300 uv run pytest -q -p no:cacheprovider tests/test_handle_scope.py
+# 時刻: 2026-10-12T00:12:49Z
+
+
+deadline scale x1.6 (load per usable CPU) — per test 94s, watchdog 141s
+
+test-admission: focused — 33 件(変更箇所の検証)
+FFFFFFFFFFFFFFFFFFFFFFFFFFF......                                        [100%]
+=================================== FAILURES ===================================
+___________ test_handle_inside_function_runs[handle-after-traverse] ____________
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...items)) (* x 2)))\n          (<- r (handle (bump-n (sum coll)) (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 112
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+______ test_handle_inside_function_runs[handle-body-bang-after-traverse] _______
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<... x 2)))\n          (<- r (handle (bump-n (! (do! (len coll)))) (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+___ test_handle_inside_function_runs[handle-in-untaken-branch-then-traverse] ___
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (when (> (len items) ...Bump [n] (resume n))))\n          (<- coll (traverse (<- x (Iterate items)) (* x 2)))\n          (sum coll))\n        '
+expected = 12
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:13: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:13
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+______ test_handle_inside_function_runs[handle-clause-reads-outer-names] _______
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<... (Bump [n] (resume (+ n base step)))))\n            (setv step 70)\n            (<- r prog)\n            r))\n        '
+expected = 1082
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+________ test_handle_inside_function_runs[nested-handle-after-traverse] ________
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...coll)) (Bump [n] :when (> n 5) (resume n)))\n                  (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+________ test_handle_inside_function_runs[handle-in-defn-after-for-do] _________
+
+source = '\n        (defn make [items]\n          (setv p (for/do (<- x (From items)) (* x 2)))\n          (handle (bump-n (len...ct [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- r (make items))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+<string>:15: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:11: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:15
+  make()  <string>:11
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_____ test_handle_inside_function_runs[defhandler-in-defk-after-traverse] ______
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...efhandler bump-h (Bump [n] (resume (+ n 100))))\n          (<- r (bump-h (bump-n (sum coll))))\n          r)\n        '
+expected = 112
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_runs[defhandler-with-params-in-defn-after-for-do] _
+
+source = '\n        (defn make [items]\n          (setv p (for/do (<- x (From items)) (* x 2)))\n          (defhandler bump-h [...:pre [(: items list)] :post [(: % int)]}\n          (<- r ((make items) (bump-n (len items))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_runs(source: str, expected: object) -> None:
+>       assert _run(_eval_module(source).subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+<string>:16: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:11: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:16
+  make()  <string>:11
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+______ test_outer_function_binds_no_handle_import[handle-after-traverse] _______
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...items)) (* x 2)))\n          (<- r (handle (bump-n (sum coll)) (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 112
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_24', 'coll', ...) + ('Pass', 'Transfer')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_24', 'coll', ...) = <code object subject at 0x40545ec4800, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer') = <code object subject at 0x40545ec4800, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+_ test_outer_function_binds_no_handle_import[handle-body-bang-after-traverse] __
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<... x 2)))\n          (<- r (handle (bump-n (! (do! (len coll)))) (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_27', 'Resume', ...) + ('Pass', 'Transfer', 'coll')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_27', 'Resume', ...) = <code object subject at 0x40545ecf600, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer', 'coll') = <code object subject at 0x40545ecf600, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+_ test_outer_function_binds_no_handle_import[handle-in-untaken-branch-then-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (when (> (len items) ...Bump [n] (resume n))))\n          (<- coll (traverse (<- x (Iterate items)) (* x 2)))\n          (sum coll))\n        '
+expected = 12
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', 'Resume', 'WithHandler', ...) + ('Pass', 'Transfer')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', 'Resume', 'WithHandler', ...) = <code object subject at 0x40545ecb400, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer') = <code object subject at 0x40545ecb400, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+_ test_outer_function_binds_no_handle_import[handle-clause-reads-outer-names] __
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<... (Bump [n] (resume (+ n base step)))))\n            (setv step 70)\n            (<- r prog)\n            r))\n        '
+expected = 1082
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_33', 'coll', ...) + ('Pass', 'Transfer', '_hy_let_base_2', 'step')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_33', 'coll', ...) = <code object subject at 0x405468f7200, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer', '_hy_let_base_2', 'step') = <code object subject at 0x405468f7200, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+___ test_outer_function_binds_no_handle_import[nested-handle-after-traverse] ___
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...coll)) (Bump [n] :when (> n 5) (resume n)))\n                  (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_36', 'coll', ...) + ('Pass', 'Transfer')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_hy_anon_1', '_doeff_runtime_class', '_doeff_do', '_hy_gensym_bound_36', 'coll', ...) = <code object subject at 0x40547cd0000, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer') = <code object subject at 0x40547cd0000, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+___ test_outer_function_binds_no_handle_import[handle-in-defn-after-for-do] ____
+
+source = '\n        (defn make [items]\n          (setv p (for/do (<- x (From items)) (* x 2)))\n          (handle (bump-n (len...ct [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- r (make items))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_doeff_do', 'p', 'Resume', 'WithHandler', '_doeff_check_clause_endings', ...) + ('Pass', 'Transfer')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_doeff_do', 'p', 'Resume', 'WithHandler', '_doeff_check_clause_endings', ...) = <code object make at 0x405473ef000, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer') = <code object make at 0x405473ef000, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+_ test_outer_function_binds_no_handle_import[defhandler-in-defk-after-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...efhandler bump-h (Bump [n] (resume (+ n 100))))\n          (<- r (bump-h (bump-n (sum coll))))\n          r)\n        '
+expected = 112
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', '_hy_anon_1', '_doeff_runtime_class', '_hy_gensym_bound_41', 'coll', 'Resume', ...) + ('Pass', 'Transfer', 'WithHandler', '_doeff_check_clause_endings_once', '_doeff_do')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', '_hy_anon_1', '_doeff_runtime_class', '_hy_gensym_bound_41', 'coll', 'Resume', ...) = <code object subject at 0x40547cd0600, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer', 'WithHandler', '_doeff_check_clause_endings_once', '_doeff_do') = <code object subject at 0x40547cd0600, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+_ test_outer_function_binds_no_handle_import[defhandler-with-params-in-defn-after-for-do] _
+
+source = '\n        (defn make [items]\n          (setv p (for/do (<- x (From items)) (* x 2)))\n          (defhandler bump-h [...:pre [(: items list)] :post [(: % int)]}\n          (<- r ((make items) (bump-n (len items))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_outer_function_binds_no_handle_import(source: str, expected: object) -> None:
+        """handle・defhandler が import する名は、外の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+        mod = _eval_module(source)
+        for outer in (mod.subject, getattr(mod, "make", mod.subject)):
+            code = getattr(outer, "__doeff_generator_function__", outer).__code__
+>           assert _HANDLE_IMPORT_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
+E           assert False
+E            +  where False = <built-in method isdisjoint of frozenset object at 0x40547201880>((('items', 'p', 'Resume', 'bump_h', '_doeff_QuotedForms', 'doeff_hy') + ('Pass', 'Transfer', 'WithHandler', '_doeff_check_clause_endings_once', '_doeff_do')))
+E            +    where <built-in method isdisjoint of frozenset object at 0x40547201880> = frozenset({'Pass', 'Resume', 'Transfer', 'WithHandler', '_doeff_check_clause_endings', '_doeff_check_clause_endings_once', ...}).isdisjoint
+E            +    and   ('items', 'p', 'Resume', 'bump_h', '_doeff_QuotedForms', 'doeff_hy') = <code object make at 0x40546dab900, file "<string>", line 10>.co_varnames
+E            +    and   ('Pass', 'Transfer', 'WithHandler', '_doeff_check_clause_endings_once', '_doeff_do') = <code object make at 0x40546dab900, file "<string>", line 10>.co_cellvars
+
+tests/test_handle_scope.py:179: AssertionError
+_ test_handle_inside_function_leaves_module_globals_unchanged[handle-after-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...items)) (* x 2)))\n          (<- r (handle (bump-n (sum coll)) (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 112
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[handle-body-bang-after-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<... x 2)))\n          (<- r (handle (bump-n (! (do! (len coll)))) (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[handle-in-untaken-branch-then-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (when (> (len items) ...Bump [n] (resume n))))\n          (<- coll (traverse (<- x (Iterate items)) (* x 2)))\n          (sum coll))\n        '
+expected = 12
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:13: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:13
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[handle-clause-reads-outer-names] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<... (Bump [n] (resume (+ n base step)))))\n            (setv step 70)\n            (<- r prog)\n            r))\n        '
+expected = 1082
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[nested-handle-after-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...coll)) (Bump [n] :when (> n 5) (resume n)))\n                  (Bump [n] (resume (+ n 100)))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[handle-in-defn-after-for-do] _
+
+source = '\n        (defn make [items]\n          (setv p (for/do (<- x (From items)) (* x 2)))\n          (handle (bump-n (len...ct [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- r (make items))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+<string>:15: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:11: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:15
+  make()  <string>:11
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[defhandler-in-defk-after-traverse] _
+
+source = '\n        (defk subject [items]\n          {:pre [(: items list)] :post [(: % int)]}\n          (<- coll (traverse (<...efhandler bump-h (Bump [n] (resume (+ n 100))))\n          (<- r (bump-h (bump-n (sum coll))))\n          r)\n        '
+expected = 112
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:12: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:12
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+_ test_handle_inside_function_leaves_module_globals_unchanged[defhandler-with-params-in-defn-after-for-do] _
+
+source = '\n        (defn make [items]\n          (setv p (for/do (<- x (From items)) (* x 2)))\n          (defhandler bump-h [...:pre [(: items list)] :post [(: % int)]}\n          (<- r ((make items) (bump-n (len items))))\n          r)\n        '
+expected = 103
+
+    @pytest.mark.parametrize(("source", "expected"), _CASES.values(), ids=_CASES.keys())
+    def test_handle_inside_function_leaves_module_globals_unchanged(
+        source: str, expected: object
+    ) -> None:
+        """関数の中の handle・defhandler は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは
+        呼ぶたびに評価される(`_scoped-definition` の呼び手の負う事)。"""
+        mod = _eval_module(source)
+        before = _module_globals_view(mod)
+>       assert _run(mod.subject([1, 2, 3])) == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_handle_scope.py:198: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_handle_scope.py:64: in _run
+    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1826: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+<string>:16: in subject
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+items = [1, 2, 3]
+
+>   ???
+E   UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+<string>:11: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:16
+  make()  <string>:11
+    handlers:
+      sequential ↗
+      _fail_handler ↗
+      _try_handler ↗
+      _scheduled_python ↗
+
+UnboundLocalError: cannot access local variable '_doeff_do' where it is not associated with a value
+
+______________ test_host_function_gets_only_its_own_names[handle] ______________
+
+source = '(defn host [] (handle (bump-n 1) (Bump [n] (resume (+ n 1)))))'
+names = []
+
+    @pytest.mark.parametrize(("source", "names"), _HOSTS.values(), ids=_HOSTS.keys())
+    def test_host_function_gets_only_its_own_names(source: str, names: list[str]) -> None:
+        """handle・defhandler だけを書いた関数は、Hy が作る一意の名(`_hy_` の頭 — 展開の中の関数の名)と定義した名の外に、
+        局所の名も閉包の cell も持たない(import する名の一覧に依らない検)。"""
+        code = _eval_module(source).host.__code__
+>       assert [
+            name for name in code.co_varnames + code.co_cellvars if not name.startswith("_hy_")
+        ] == names
+E       AssertionError: assert ['_doeff_do',...', 'Transfer'] == []
+E         
+E         Left contains 6 more items, first extra item: '_doeff_do'
+E         Use -v to get more diff
+
+tests/test_handle_scope.py:215: AssertionError
+____________ test_host_function_gets_only_its_own_names[defhandler] ____________
+
+source = '(defn host [] (defhandler h (Bump [n] (resume n))) h)', names = ['h']
+
+    @pytest.mark.parametrize(("source", "names"), _HOSTS.values(), ids=_HOSTS.keys())
+    def test_host_function_gets_only_its_own_names(source: str, names: list[str]) -> None:
+        """handle・defhandler だけを書いた関数は、Hy が作る一意の名(`_hy_` の頭 — 展開の中の関数の名)と定義した名の外に、
+        局所の名も閉包の cell も持たない(import する名の一覧に依らない検)。"""
+        code = _eval_module(source).host.__code__
+>       assert [
+            name for name in code.co_varnames + code.co_cellvars if not name.startswith("_hy_")
+        ] == names
+E       AssertionError: assert ['Resume', 'h...ransfer', ...] == ['h']
+E         
+E         At index 0 diff: 'Resume' != 'h'
+E         Left contains 8 more items, first extra item: 'h'
+E         Use -v to get more diff
+
+tests/test_handle_scope.py:215: AssertionError
+______ test_host_function_gets_only_its_own_names[defhandler-with-params] ______
+
+source = '(defn host [] (defhandler h [b] (Bump [n] (resume b))) h)'
+names = ['h']
+
+    @pytest.mark.parametrize(("source", "names"), _HOSTS.values(), ids=_HOSTS.keys())
+    def test_host_function_gets_only_its_own_names(source: str, names: list[str]) -> None:
+        """handle・defhandler だけを書いた関数は、Hy が作る一意の名(`_hy_` の頭 — 展開の中の関数の名)と定義した名の外に、
+        局所の名も閉包の cell も持たない(import する名の一覧に依らない検)。"""
+        code = _eval_module(source).host.__code__
+>       assert [
+            name for name in code.co_varnames + code.co_cellvars if not name.startswith("_hy_")
+        ] == names
+E       AssertionError: assert ['Resume', 'h...ransfer', ...] == ['h']
+E         
+E         At index 0 diff: 'Resume' != 'h'
+E         Left contains 8 more items, first extra item: 'h'
+E         Use -v to get more diff
+
+tests/test_handle_scope.py:215: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-at-a2254d66c/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[handle-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[handle-body-bang-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[handle-in-untaken-branch-then-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[handle-clause-reads-outer-names]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[nested-handle-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[handle-in-defn-after-for-do]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[defhandler-in-defk-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_runs[defhandler-with-params-in-defn-after-for-do]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[handle-after-traverse]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[handle-body-bang-after-traverse]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[handle-in-untaken-branch-then-traverse]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[handle-clause-reads-outer-names]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[nested-handle-after-traverse]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[handle-in-defn-after-for-do]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[defhandler-in-defk-after-traverse]
+FAILED tests/test_handle_scope.py::test_outer_function_binds_no_handle_import[defhandler-with-params-in-defn-after-for-do]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[handle-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[handle-body-bang-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[handle-in-untaken-branch-then-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[handle-clause-reads-outer-names]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[nested-handle-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[handle-in-defn-after-for-do]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[defhandler-in-defk-after-traverse]
+FAILED tests/test_handle_scope.py::test_handle_inside_function_leaves_module_globals_unchanged[defhandler-with-params-in-defn-after-for-do]
+FAILED tests/test_handle_scope.py::test_host_function_gets_only_its_own_names[handle]
+FAILED tests/test_handle_scope.py::test_host_function_gets_only_its_own_names[defhandler]
+FAILED tests/test_handle_scope.py::test_host_function_gets_only_its_own_names[defhandler-with-params]
+27 failed, 6 passed, 1 warning in 6.34s
+# 終了の状態: 1

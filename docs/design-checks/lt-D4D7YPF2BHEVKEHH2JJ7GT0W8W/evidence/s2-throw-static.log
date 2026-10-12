@@ -1,0 +1,8 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-wt-blind-a-d4d7(HEAD 358cd825719ca6c4dd9fdf5506f93514ef0816e2)
+# 作業木の未 commit の変更:  M packages/doeff-hy/src/doeff_hy/handle.hy ?? BLIND_INPUT.md 
+# 命令: timeout 200 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/s2_throw_static.py
+# 時刻: 2026-10-12T00:20:34Z
+
+TransferThrow を読む行: ["_doeff_clause_value = (yield TransferThrow(k, ValueError('boom')))"]
+TransferThrow の import: []
+# 終了の状態: 0

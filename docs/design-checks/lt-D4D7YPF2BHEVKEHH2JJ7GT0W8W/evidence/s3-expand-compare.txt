@@ -1,0 +1,9 @@
+# S3 の比べ(展開を Python の source にした出力の本体を比べる)
+# 時刻: 2026-10-12T00:24:04Z
+8cf87a706a6d5bce7b92de9a13b26135266df3ea2662247a0b896940ae8495b8  s3-expand-module-class-before.log
+f4f076860cb9fd5df83146a5bedcdf9becc7769571f3e2f4ce936718175e58cc  s3-expand-module-class-landed.log
+7b3f13c5a7f8a763846712fe5bf4cd0fdb19529db803dafa81168489ab71c2c8  s3-expand-in-function-static-before.log
+506471b6a60e44c0df58f6cf32c0e2d2b0c288318914ea354871a21897250391  s3-expand-in-function-static-landed.log
+module・class の段(実行時と型検査): 一致 27577 byte
+関数の中の型検査のための展開(新しい process で型検査の展開だけ): 一致 16082 byte・typed_resume / typed_transfer の行 16
+# 比べ方: 各 log の '=== runtime' または '=== static ===' から '# 終了の状態' の前までを cmp で比べた。before = a2254d66c・landed = main f4d94cfc2
