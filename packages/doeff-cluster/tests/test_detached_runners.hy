@@ -25,10 +25,10 @@
 (import os)
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable
+(import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedUnknown
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json])
+(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json detached-timing-of-view])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
@@ -591,6 +591,94 @@
     {:pre [] :post [(: % bool)]}
     (<- services (ReadServices))
     (assert (isinstance services ServicesUnreachable) services)
+    True)
+  (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http (httpx.MockTransport cut-off))
+                                   (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r" :deadline-seconds 0.2) :poll-seconds POLL)]
+                                  (scenario)))
+  (assert ok))
+
+
+;; --- task の時刻(ReadDetachedTiming — card ki-f3edfdaf9599): 「ある刻に task が始まっていたか」を、読んだ今の phase でなく刻で決めるための読み -----
+
+;; GET /detached/<key> の返事(置かれて走っている task の行 — 時刻は epoch ミリ秒)。
+(val TIMED-VIEW {"key" "k" "task" "t1" "phase" "assigned" "detail" "" "result" None "worker" "a" "failureKind" "" "retryable" False
+                 "submittedMs" 1000 "startedMs" 2500 "finishedMs" None})
+
+(deftest test-a-tasks-times-are-read-from-the-detached-view
+  ;; 置かれた task は始まりの刻を持つ・待つ task は始まりも終わりも None・終わった task は 3 つとも持つ(終わった task の始まりの刻が読める事が、
+  ;; AwaitDetached の答え〔DetachedSucceeded など〕に無い物)。行の無い key は DetachedUnknown。
+  (<- placed (detached-timing-of-view "k" TIMED-VIEW))
+  (assert (= placed (DetachedTiming :key "k" :phase "assigned" :submitted-ms 1000 :started-ms 2500 :finished-ms None)) placed)
+  (<- waiting (detached-timing-of-view "k" (| TIMED-VIEW {"phase" "queued" "worker" None "startedMs" None})))
+  (assert (= waiting (DetachedTiming :key "k" :phase "queued" :submitted-ms 1000 :started-ms None :finished-ms None)) waiting)
+  (<- ended (detached-timing-of-view "k" (| TIMED-VIEW {"phase" "finished" "result" "blob" "finishedMs" 9000})))
+  (assert (= ended (DetachedTiming :key "k" :phase "finished" :submitted-ms 1000 :started-ms 2500 :finished-ms 9000)) ended)
+  (<- unknown (detached-timing-of-view "k" {"key" "k" "phase" "unknown"}))
+  (assert (= unknown (DetachedUnknown :key "k")) unknown))
+
+
+(deftest test-an-unreachable-or-warming-read-is-not-a-task-time
+  ;; 届かなかった読み(理由の文)と、起きた直後の coordinator の「まだ分からない」(phase warming)は DetachedUnreachable — task が無いとも
+  ;; 始まっていないとも読まない。
+  (<- cut (detached-timing-of-view "k" "connection refused"))
+  (assert (and (isinstance cut DetachedUnreachable) (in "connection refused" cut.detail)) cut)
+  (<- warming (detached-timing-of-view "k" {"key" "k" "phase" "warming" "error" "起きた直後"}))
+  (assert (and (isinstance warming DetachedUnreachable) (in "起きた直後" warming.detail)) warming))
+
+
+(deftest test-a-view-without-the-time-fields-is-unreachable-and-never-an-unstarted-task
+  ;; 失敗ケース: 時刻を載せない旧い coordinator の返事(欄が無い)を、「まだ始まっていない」(startedMs が None)と読むと、呼び手は始まった
+  ;; task を始まっていないと取り違える。欄が無いのは DetachedUnreachable で、合わない欄を名指す。startedMs だけが欠けた返事も同じ。
+  (val old (dfor #(k v) (.items TIMED-VIEW) :if (not-in k #("submittedMs" "startedMs" "finishedMs")) k v))
+  (<- without-all (detached-timing-of-view "k" old))
+  (assert (isinstance without-all DetachedUnreachable) without-all)
+  (assert (all (gfor name #("submittedMs" "startedMs" "finishedMs") (in name without-all.detail))) without-all.detail)
+  (val without-started (dfor #(k v) (.items TIMED-VIEW) :if (!= k "startedMs") k v))
+  (<- partial (detached-timing-of-view "k" without-started))
+  (assert (and (isinstance partial DetachedUnreachable) (in "startedMs" partial.detail)) partial))
+
+
+(defk timing-follows-the-task []
+  {:pre [] :post [(: % bool)]}
+  ;; a を drain して x-tool の task を積むと置かれずに待ち(始まりも終わりも無い)、a が戻って終わると積まれた刻 ≤ 始まった刻 < 終わった刻に
+  ;; なる — 始まった刻は待った長さ(a が戻るまで)だけ積まれた刻より後で、積まれた刻は待つ間も変わらない。知らない key は DetachedUnknown
+  ;; (coordinator が起きた直後の猶予 lease-ms が過ぎてから読む — 猶予の内は行の無い key を知らないと言えず、DetachedUnreachable)。
+  (<- asked dict (DrainWorker "a"))
+  (assert (= (get asked "status") 200) asked)
+  (<- (Delay POLL))
+  (<- (submit-detached-task (slow-add SLOW 5) :key "k-timed" :needs ON-X :lease-seconds LEASE))
+  (<- (Delay (* 4 POLL)))
+  (<- waiting (ReadDetachedTiming "k-timed"))
+  (assert (and (isinstance waiting DetachedTiming) (= waiting.phase "queued") (is waiting.started-ms None) (is waiting.finished-ms None)) waiting)
+  (<- (StopWorker "a"))
+  (<- started bool (StartWorker "a"))
+  (assert started)
+  (<- done (AwaitDetached "k-timed"))
+  (assert (= done (DetachedSucceeded 105)) done)
+  (<- ended (ReadDetachedTiming "k-timed"))
+  (assert (and (isinstance ended DetachedTiming) (= ended.phase "finished")) ended)
+  (assert (= ended.submitted-ms waiting.submitted-ms) #(waiting ended))
+  (assert (>= ended.started-ms (+ waiting.submitted-ms (* 4 POLL 1000))) #(waiting ended))
+  (assert (>= ended.finished-ms (+ ended.started-ms (* SLOW 1000))) ended)
+  (<- (Delay AFTER-LEASE))
+  (<- never (ReadDetachedTiming "k-never"))
+  (assert (= never (DetachedUnknown :key "k-never")) never)
+  True)
+
+(deftest test-both-rigs-read-a-tasks-times-from-queued-to-finished [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (timing-follows-the-task)))
+  (assert ok))
+
+
+(deftest test-the-real-client-answers-an-unreachable-task-time-as-a-value
+  ;; coordinator に届かない時刻の読みは DetachedUnreachable(task の生死は分からない — 呼び手は始まっていないとも始まったとも読まない)。
+  (defk scenario []
+    {:pre [] :post [(: % bool)]}
+    (<- timing (ReadDetachedTiming "k-cut-timing"))
+    (assert (isinstance timing DetachedUnreachable) timing)
     True)
   (<- ok bool (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http (httpx.MockTransport cut-off))
                                    (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r" :deadline-seconds 0.2) :poll-seconds POLL)]

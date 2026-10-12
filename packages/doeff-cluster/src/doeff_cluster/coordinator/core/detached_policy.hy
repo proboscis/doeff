@@ -123,7 +123,8 @@
   (if (is task None)
       (DetachedUnknown :key key)
       (DetachedProgress :key key :id task.id :phase task.phase :detail task.detail :result task.result :worker task.worker
-                        :failure-kind task.failure-kind :retryable task.retryable)))
+                        :failure-kind task.failure-kind :retryable task.retryable
+                        :submitted-ms task.submitted-ms :started-ms task.started-ms :finished-ms task.finished-ms)))
 
 
 (defn #^ Reply cancel-detached [#^ ClusterState state #^ str key #^ int now]

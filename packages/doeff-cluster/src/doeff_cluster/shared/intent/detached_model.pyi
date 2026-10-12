@@ -207,6 +207,26 @@ class DetachedUnreachable:
 DetachedAwaited: TypeAlias = DetachedOutcome | DetachedPending | DetachedUnreachable
 DetachedSubmitAnswer: TypeAlias = DetachedSubmitted | DetachedUnreachable
 
+@dataclass(frozen=True, kw_only=True)
+class DetachedTimingWire:
+    phase: str
+    submitted_ms: int
+    started_ms: int | None
+    finished_ms: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedTiming:
+    key: str
+    phase: str
+    submitted_ms: int
+    started_ms: int | None
+    finished_ms: int | None
+DetachedTimingAnswer: TypeAlias = DetachedTiming | DetachedUnknown | DetachedUnreachable
+
+@_doeff_dataclass(frozen=True)
+class ReadDetachedTiming(_doeff_effect_base[DetachedTimingAnswer]):
+    key: str
+
 class DetachedRefused(Exception):
     status: int
     message: str

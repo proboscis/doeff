@@ -604,6 +604,9 @@ class DetachedProgress:
     worker: str | None
     failure_kind: str
     retryable: bool
+    submitted_ms: int
+    started_ms: int | None
+    finished_ms: int | None
 
 @dataclass(frozen=True, kw_only=True)
 class DetachedUnknown:

@@ -36,7 +36,7 @@
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台の os-environ-reader と同じ答え方の host_contract.environ-table-reader を子の spec.environ の上に並べる:
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
-;;;     LeaseOp・AwaitLeaseFree・RemoteJob・SubmitDetached / AwaitDetached / CancelDetached / ReleaseDetached / ReadRunners / ReadServices / AwaitRunnersChange・WarmRuntimeEnv /
+;;;     LeaseOp・AwaitLeaseFree・RemoteJob・SubmitDetached / AwaitDetached / ReadDetachedTiming / CancelDetached / ReleaseDetached / ReadRunners / ReadServices / AwaitRunnersChange・WarmRuntimeEnv /
 ;;;     ReadWarmState。
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(service_report.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
@@ -179,12 +179,14 @@
                                                              body-of :as service-body-of group-limit-write RestartPlan restart-read])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
-                   warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable])
+                   warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
+                   detached-timing-of-view])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.core.detached_rules [task-placing-json])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
-                         AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable])
+                         AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
+                         ReadDetachedTiming DetachedTimingAnswer])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
@@ -1380,6 +1382,18 @@
   answer)
 
 
+(defk read-detached-timing [link key]
+  {:pre [(: link SimLink) (: key str)] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedTiming を本番の detached.detached-timing-read と同じく GET /detached/<key> の 1 回の読みから答えるため(届かなければ理由の文・
+   503 = 起きた直後の warming は本文 — 答えの判断は本番と同じ detached.detached-timing-of-view)。"
+  (<- read tuple (send-resent link "GET" (detached-path key "") {} None))
+  (val view (cond (is (get read 0) None) (unreached-reason read)
+                  (= (get read 0) 503) (object-body (get read 1) "task を読めない")
+                  True (refused-or-object read "task を読めない")))
+  (<- timing DetachedTimingAnswer (detached-timing-of-view key view))
+  timing)
+
+
 (defk ended-task-keys [writes]
   {:pre [(: writes tuple)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
   "coordinator の 1 回の Persist の書き(TableWrite の組)から、終わりの phase(cluster_model.ENDED-PHASES)を書いた切り離した task の
@@ -1688,6 +1702,9 @@
   (AwaitDetached [key timeout-seconds]
     (<- awaited (await-detached link key timeout-seconds))
     (resume awaited))
+  (ReadDetachedTiming [key]
+    (<- timing DetachedTimingAnswer (read-detached-timing link key))
+    (resume timing))
   (CancelDetached [key]
     (<- answer tuple (send-resent link "POST" (detached-path key "/cancel") {} None))
     (resume (get (refused-or-object answer "取り消せない") "cancelled")))

@@ -888,7 +888,9 @@
 
 
 (defrecord DetachedProgress
-  "GET /detached/<key> の答え(detached_policy.detached-view): いまの様子 — key・id・phase・detail・result・worker・failure-kind・retryable。"
+  "GET /detached/<key> の答え(detached_policy.detached-view): いまの様子 — key・id・phase・detail・result・worker・failure-kind・retryable と、
+   task の行の時刻(epoch ミリ秒): submitted-ms = 積まれた刻・started-ms = worker に置かれた刻(待ちの間と、置き直しで待ちへ戻った間は None)・
+   finished-ms = 終わった刻(終わるまで None)。呼び手が「その刻に task が始まっていたか」を後から読めるように載せる(card ki-f3edfdaf9599)。"
   (#^ str key)
   (#^ str id)
   (#^ str phase)
@@ -896,7 +898,10 @@
   (#^ (| str None) result)
   (#^ (| str None) worker)
   (#^ str failure-kind)
-  (#^ bool retryable))
+  (#^ bool retryable)
+  (#^ int submitted-ms)
+  (#^ (| int None) started-ms)
+  (#^ (| int None) finished-ms))
 
 
 (defrecord DetachedUnknown

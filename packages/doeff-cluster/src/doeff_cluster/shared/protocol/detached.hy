@@ -11,6 +11,8 @@
 ;;;     DetachedUnrunnable(coordinator の place-tasks)
 ;;;   - 担い手の名簿(ReadRunners)= coordinator の名簿の生存と drain
 ;;;   - Service の一覧(ReadServices)= coordinator の Service の宣言の台数と、置き先の担い手が報告した落ちた事実(#3479)
+;;;   - task の時刻(ReadDetachedTiming)= 積まれた刻・worker に置かれた刻・終わった刻(epoch ミリ秒)。終わったかどうかを待たず、「ある刻に始まって
+;;;     いたか」を読んだ今の phase でなく刻で決める呼び手のための読み(card ki-f3edfdaf9599)
 ;;;
 ;;; 2026-09-28: 同じ VM の scheduler の task で走らせる模擬(detached-local・置き場 DetachedLocalStore・模擬の担い手)を消した。呼び手の
 ;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
@@ -42,7 +44,8 @@
                          RunnerFact RunnersUnreachable OPEN-PHASES DetachedOutcome DetachedSucceeded DetachedFailed DetachedLost
                          DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
-                         ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire])
+                         ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire
+                         ReadDetachedTiming DetachedTiming DetachedTimingWire DetachedTimingAnswer])
 (import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
@@ -146,6 +149,28 @@
           (and (is-not timeout-seconds None) (>= waited timeout-seconds))
             (DetachedPending key (get view "phase") :runner (or (.get view "worker") ""))
           True None))))
+
+
+(defk detached-timing-of-view [key view]
+  {:pre [(: key str) (: view (| dict str))] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedTiming の答えを決めるため(本番の client と sim の宿が同じ判断): view = GET /detached/<key> の読み(detached-view の答え —
+   本文の JSON の object か、届かなかった理由の文)。届かない読みと、起きた直後の coordinator の「まだ分からない」(phase warming)は
+   DetachedUnreachable(task の死とみなさない)・行の無い key は DetachedUnknown・それ以外は本文を DetachedTimingWire に解いた
+   DetachedTiming。時刻の欄の無い返事(旧い coordinator)も DetachedUnreachable で、欄が無いのを「まだ始まっていない」と読み違えない。"
+  (when (isinstance view str)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" view))))
+  (val phase (.get view "phase"))
+  (when (= phase "unknown")
+    (return (DetachedUnknown :key key)))
+  (when (= phase WARMING-PHASE)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" (.get view "error" "")))))
+  (<- wire (| DetachedTimingWire Malformed) (parse DetachedTimingWire view))
+  (match wire
+    (Malformed :fields fields)
+      (DetachedUnreachable :detail (.format "coordinator の返事に task の時刻が無い(旧い版か形の違う返事): {}"
+                                            (.join "・" (gfor f fields (+ f.field " " f.reason)))))
+    _ (DetachedTiming :key key :phase wire.phase :submitted-ms wire.submitted-ms
+                      :started-ms wire.started-ms :finished-ms wire.finished-ms)))
 
 
 (deff runner-facts-of-view [#^ dict workers]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
@@ -380,6 +405,16 @@
           view)))
 
 
+(defk detached-timing-read [cell options sender key]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str)] :post [(: % DetachedTimingAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "切り離した task 1 つの行の時刻を読むため(ReadDetachedTiming の本番の答え — 待たずに GET /detached/<key> を 1 回読み、
+   detached-timing-of-view で答えにする)。"
+  (<- view (detached-view cell options sender key))
+  (<- timing DetachedTimingAnswer (detached-timing-of-view key view))
+  timing)
+
+
 (defk detached-flag [cell options sender method suffix key field]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: method str) (: suffix str) (: key str) (: field str)]
    :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
@@ -526,6 +561,9 @@
   (ReleaseDetached [key]
     (<- released bool (detached-flag cell options sender "DELETE" "" key "released"))
     (resume released))
+  (ReadDetachedTiming [key]
+    (<- timing (detached-timing-read cell options sender key))
+    (resume timing))
   (ReadRunners []
     (<- runners (runners-read cell options sender))
     (resume runners))

@@ -70,6 +70,10 @@ from doeff_cluster.shared.intent.detached_model import ReadServices as ReadServi
 from doeff_cluster.shared.intent.detached_model import ServiceFact as ServiceFact
 from doeff_cluster.shared.intent.detached_model import ServicesUnreachable as ServicesUnreachable
 from doeff_cluster.shared.intent.detached_model import ServiceListWire as ServiceListWire
+from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
+from doeff_cluster.shared.intent.detached_model import DetachedTiming as DetachedTiming
+from doeff_cluster.shared.intent.detached_model import DetachedTimingWire as DetachedTimingWire
+from doeff_cluster.shared.intent.detached_model import DetachedTimingAnswer as DetachedTimingAnswer
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
@@ -100,6 +104,9 @@ def submit_unreachable(reason: str) -> DetachedUnreachable:
     ...
 
 def awaited_answer(view: dict | None, reason: str, key: str, waited: float, timeout_seconds: float | int | None) -> DetachedAwaited | None:
+    ...
+
+def detached_timing_of_view(key: str, view: dict | str) -> _Program[DetachedTimingAnswer, object]:
     ...
 
 def runner_facts_of_view(workers: dict) -> tuple:
@@ -165,6 +172,9 @@ def detached_submitted(cell: RouteCell, options: RouteOptions, sender: DetachedS
     ...
 
 def detached_view(cell: RouteCell, options: RouteOptions, sender: DetachedSender, key: str) -> _Program[dict | str, object]:
+    ...
+
+def detached_timing_read(cell: RouteCell, options: RouteOptions, sender: DetachedSender, key: str) -> _Program[DetachedTimingAnswer, object]:
     ...
 
 def detached_flag(cell: RouteCell, options: RouteOptions, sender: DetachedSender, method: str, suffix: str, key: str, field: str) -> _Program[bool, object]:
