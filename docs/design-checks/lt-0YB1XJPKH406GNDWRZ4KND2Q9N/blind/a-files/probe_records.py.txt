@@ -1,0 +1,63 @@
+"""盲検 A の実験: 関数の中に書いた pytest の item を作る定義の macro が、外の関数を呼ぶたびに
+module の __doeff_pytest_items__ に記録を積むか、doeff-adr の verify_records がどう読むかを測る。
+
+使い方(作業木を cwd に): uv run --frozen python /tmp/lt0YB1-blind-a/probe_records.py
+DOEFF_BLIND_A_BENCH_GUARD=1 を付けると defbench が deftest と同じ決め(関数の中では記録しない)を写した V2 になる。
+"""
+
+import os
+import sys
+import types
+
+import doeff_hy.macros  # noqa: F401  (macro の登録)
+import hy
+from doeff_adr.lazy_collection import verify_records
+
+HEADER = "(require doeff-hy.macros [defbench deftest defk <-])\n"
+
+SOURCES = {
+    # 新しい macro(defbench)— 関数の中に書き、外の関数を実行の時に呼ぶ
+    "defbench-in-defn": """
+(defn run-bench-of [n]
+  (defbench test-bench-inner (sum (range n)))
+  (test-bench-inner (fn [f] (f))))
+""",
+    # 比べる相手: 今の deftest(決めを自分で持つ)— 同じ形
+    "deftest-in-defn": """
+(defn run-test-of [n]
+  (deftest test-inner (assert (>= n 0)))
+  test-inner)
+""",
+}
+
+
+def load(name: str, code: str) -> types.ModuleType:
+    mod = types.ModuleType(f"blind_a_{name.replace('-', '_')}")
+    mod.__file__ = f"/tmp/lt0YB1-blind-a/{name}.hy"
+    sys.modules[mod.__name__] = mod
+    for form in hy.read_many(HEADER + code):
+        hy.eval(form, mod.__dict__, module=mod)
+    return mod
+
+
+def records(mod: types.ModuleType) -> list[str]:
+    return list(vars(mod).get("__doeff_pytest_items__", []))
+
+
+def main() -> None:
+    print("DOEFF_BLIND_A_BENCH_GUARD =", os.environ.get("DOEFF_BLIND_A_BENCH_GUARD"))
+    for name, code in SOURCES.items():
+        mod = load(name, code)
+        outer = mod.run_bench_of if hasattr(mod, "run_bench_of") else mod.run_test_of
+        counts = [len(records(mod))]
+        for n in (10, 20, 30):
+            outer(n)
+            counts.append(len(records(mod)))
+        print(f"[{name}] 外の関数を 0,1,2,3 回呼んだ後の __doeff_pytest_items__ の件数: {counts}")
+        if records(mod):
+            print(f"[{name}]   記録の 1 件目: {records(mod)[0]}")
+        verified = verify_records(mod, lambda attr: attr.startswith("test"))
+        print(f"[{name}] verify_records の problems(空ならキャッシュに保存できる): {verified.problems}")
+
+
+main()
