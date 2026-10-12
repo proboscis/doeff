@@ -39,6 +39,12 @@
 ;; 子の環境変数のうち、宣言で置けない物(worker が組む・interpreter と uv の挙動を変える)。
 (val RESERVED-ENV-PREFIXES #("PYTHON" "HY_" "UV_" "LD_" "DOEFF_"))
 (val RESERVED-ENV-NAMES (frozenset #("PATH" "HOME" "VIRTUAL_ENV")))
+;; 子の環境変数のうち、worker がどの層(worker の環境・--pass-env・宣言・worker が組む値)から来ても job の子へ置かない名。Claude Code は
+;; hook と MCP の server を起こす時だけ CLAUDE_PROJECT_DIR を置き、Bash の道具の命令には置かない。上に載る系の Bash の包み(ConfigMap
+;; worker-shell)はこの名の有無で両者を見分け、無い時だけ命令を下げて(SCHED_IDLE・nice)出力を流すので、job の子(その下で走る CLI)の
+;; 環境に在ると Bash の道具の命令が hook と見なされ、下げと流しが黙って外れる(card ki-222003f40484)。doeff-cluster の中で名を綴るのは
+;; この 1 か所(tests/test_worker_pass_env.hy が、ほかの src と deploy/ が綴らない事を見る)。
+(val WITHHELD-ENV-NAMES (frozenset #("CLAUDE_PROJECT_DIR")))
 ;; 子の環境変数のうち、値が秘密の中身になる名の末尾(宣言の行・task の行・詰めた Program は coordinator の状態に残るので置けない —
 ;; 秘密は置き場を名指す名(末尾 PATH-ENV-SUFFIXES — 値は file や dir の path)で運ぶ)。service の :environ・実行環境の env-vars・
 ;; task の :environ が同じ規則 1 つ(EnvVar)で断る(2026-09-28)。
