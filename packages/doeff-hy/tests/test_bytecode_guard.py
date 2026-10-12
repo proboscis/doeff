@@ -17,6 +17,13 @@ R7 の母集団の外): module の macro の表の名(``records.MACRO_TABLE``)�
 gensym と let が改めた束縛の名の形(compile の口の正準化が読む — gensym の数えの検)。どれかが替わると、包みは使った macro を
 記録し損ねて古い展開を黙って使うか、code が compile の順で揺れる。
 
+Hy の内部の名の定義元は ``records`` の 1 か所(``MACRO_TABLE``・``READER_TABLE``・``EXPORT_NAMES``・``GENERATED_NAME_PREFIX``・
+``ANON_VAR_NAME``)で、包みの外の使い手(doeff_effect_analyzer.result_cache の解析の鍵・doeff_hy.static_baseline の基点の鍵・
+macro_use の全部の require の判定 — card ki-ffe72a1fb7d7)もそこから引く。この file の末尾の 2 本が、records の読みを実物の Hy の
+module に当てる: 表と export の名の読みは Hy 自身の ``(require 提供元 *)`` の振る舞いと一致し、Hy が一時の名に振る形は
+``fold_anon_var_numbers`` が畳める形のまま。Hy が名を替えるとここが赤になる。字が records の外へ写される事は
+test_hy_internal_names_have_one_home.py の走査が赤にする。
+
 同じ process で包みを動かす検(置き場・口の包み・型検査の展開)は venv の Hy を測る。venv の Hy が uv.lock の版でない作業木(Hy を
 上げて sync していない)では、どの検も uv.lock の版を測らずに緑になりうるので、file の全部の検が先に版の一致を確かめる
 (:func:`_venv_hy_is_the_locked_version` — 設計検証 lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の盲検 A・B)。PyPI の版の中身は版ごとに変わらない
@@ -983,3 +990,137 @@ def test_a_read_outside_import_does_not_replace_another_files_module_of_the_same
     with loader_hooks._expansion_recording(loader, str(source)):
         assert sys.modules["clashing"] is other
     assert sys.modules["clashing"] is other
+
+
+#: Hy の ``(require 提供元 *)`` が使い手の表へ入れた名かを、表の名を読まずに確かめる値 — 使い手が同じ名の関数を持ち、呼ぶと
+#: macro の展開なら macro の値、入らなかった名なら関数のこの答えになる(macro は同じ名の関数より先に引かれる)。
+_PLAIN_FUNCTION = "plain function"
+
+
+def _write_internal_names_package(package: Path) -> None:
+    """Hy の表の名と export の名の表を、Hy 自身の振る舞いで確かめる package: 提供元 2 つ(export で公開を絞る provider・絞らない
+    plain)と、全部を require する使い手 2 つ・reader macro を require する使い手 1 つ。"""
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "provider.hy").write_text(
+        "(export :macros [answer _visible])\n"
+        "(defmacro answer [] 1)\n"
+        "(defmacro hidden [] 2)\n"
+        "(defmacro _visible [] 3)\n"
+        "(defreader twice (setv x (.parse-one-form &reader)) `(* 2 ~x))\n"
+    )
+    (package / "plain.hy").write_text("(defmacro answer [] 1)\n(defmacro _private [] 2)\n")
+    (package / "user_all.hy").write_text(
+        f"(require {package.name}.provider *)\n"
+        f'(defn hidden [] "{_PLAIN_FUNCTION}")\n'
+        '(setv seen {"answer" (answer) "_visible" (_visible) "hidden" (hidden)})\n'
+    )
+    (package / "user_plain.hy").write_text(
+        f"(require {package.name}.plain *)\n"
+        f'(defn _private [] "{_PLAIN_FUNCTION}")\n'
+        '(setv seen {"answer" (answer) "_private" (_private)})\n'
+    )
+    (package / "user_reader.hy").write_text(
+        f"(require {package.name}.provider :readers [twice])\n(setv value #twice 5)\n"
+    )
+
+
+def test_records_reads_the_macro_tables_and_the_exported_names_the_way_hy_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hy が module に置く macro の表(普通の macro・reader macro)と、``(require 提供元 *)`` が入れる名の読みは、定義元
+    (``records.macro_tables``・``records.exported_macro_names``)が実物の Hy の module で Hy 自身の振る舞いと一致する —
+    表の名(``MACRO_TABLE``・``READER_TABLE``)と export の名の表(``EXPORT_NAMES``)の字は records の 1 か所なので、Hy が名を
+    替えるとここが赤になる(card ki-ffe72a1fb7d7 — result_cache・macro_use・包みの検が読む名の定義元)。入る名の側は表の名を
+    読まず、使い手が同じ名の関数を持つ形(macro が先に引かれる)で測る。"""
+    import hy  # noqa: F401 — Hy の source を compile する口を載せる
+    from doeff_hy_bytecode_guard import code_store
+
+    monkeypatch.setenv(code_store.STORE_ENV, str(tmp_path / "store"))
+    name = "internalnamespkg"
+    _write_internal_names_package(tmp_path / name)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    modules = ("provider", "plain", "user_all", "user_plain", "user_reader")
+    try:
+        loaded = {each: importlib.import_module(f"{name}.{each}") for each in modules}
+
+        def tables(module: object) -> list[list[str]]:
+            return [sorted(table) for table in records.macro_tables(vars(module))]
+
+        def macros_entered(user: object) -> frozenset[str]:
+            """使い手の ``seen`` のうち、macro の展開になった名(関数の答えでない値)。"""
+            return frozenset(key for key, value in vars(user)["seen"].items() if value != _PLAIN_FUNCTION)
+
+        assert macros_entered(loaded["user_all"]) == {"answer", "_visible"}, "export が絞った名だけ入る"
+        assert records.exported_macro_names(vars(loaded["provider"])) == macros_entered(loaded["user_all"])
+        assert macros_entered(loaded["user_plain"]) == {"answer"}, "export が無ければ _ で始まらない名が入る"
+        assert records.exported_macro_names(vars(loaded["plain"])) == macros_entered(loaded["user_plain"])
+        assert tables(loaded["provider"]) == [["_visible", "answer", "hidden"], ["twice"]]
+        assert tables(loaded["user_all"]) == [["_visible", "answer"], []]
+        assert [each for table in tables(loaded["user_reader"]) for each in table] == ["twice"]
+        assert vars(loaded["user_reader"])["value"] == 10
+    finally:
+        for each in (*(f"{name}.{each}" for each in modules), name):
+            sys.modules.pop(each, None)
+
+
+#: Hy が一時の名を振る 3 つの形を 1 つずつ含む source — match を値に使う(``_hy_anon_<数え>``)・let(``_hy_let_<元の名>_<数え>``)・
+#: except の束縛(``_hy_exc_<元の名>_<数え>``)。
+_TEMPORARIES_SOURCE = """\
+(defn f [a]
+  (setv x (match a 1 "one" _ "other"))
+  (let [first 1 second 2] (+ first second))
+  (try (g) (except [e Exception] e))
+  x)
+"""
+#: 同じ source の前に let を 1 つ足した物 — 後ろの一時の名の番号がずれる(定義を足すだけで起きる)。
+_TEMPORARIES_SHIFTED = "(defn shifted [] (let [first 1] first))\n" + _TEMPORARIES_SOURCE
+
+
+def _hy_temporaries(source: str) -> frozenset[str]:
+    """source を Hy で compile した木の名のうち、source の綴りに無い物 — Hy が振った一時の名(名の先頭は読まない: Hy が先頭を
+    替えても、替わった名を集める)。"""
+    import ast
+    import re
+    import types
+
+    import hy
+    import hy.compiler
+
+    module = types.ModuleType("internal_names_probe")
+    module.__file__ = "internal_names_probe.hy"
+    tree = hy.compiler.hy_compile(
+        hy.read_many(source, filename=module.__file__), module, filename=module.__file__, source=source
+    )
+    written = frozenset(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", source))
+    named: set[str] = set()
+    for node in ast.walk(tree):
+        match node:
+            case ast.Name(id=name) | ast.arg(arg=name) | ast.FunctionDef(name=name) | ast.ExceptHandler(name=str(name)):
+                named.add(name)
+    return frozenset(named) - written
+
+
+def test_the_temporaries_hy_names_have_the_shape_records_folds() -> None:
+    """Hy が一時の名(match を値に使った ``_hy_anon_<数え>``・let の ``_hy_let_<元の名>_<数え>``・except の
+    ``_hy_exc_<元の名>_<数え>``)に振る形は、定義元 ``records.ANON_VAR_NAME`` が読む形のまま — 数えを畳んだ名は、定義を足して番号が
+    ずれても同じ(doeff-hy-check の基点が、同じ赤を番号の違いで新しい赤と数えない)。Hy が名の形を替えると、畳めない名が出て
+    ここが赤になる(card ki-ffe72a1fb7d7 — 形は records の 1 か所。doeff_hy.static_baseline・static_stub は字を持たない)。"""
+    from doeff_hy.static_baseline import comparable_message
+    from doeff_hy.static_stub import hidden_name
+
+    plain = _hy_temporaries(_TEMPORARIES_SOURCE)
+    shifted = _hy_temporaries(_TEMPORARIES_SHIFTED)
+    assert plain != shifted, "番号がずれていない — この検が番号のずれを測れていない"
+    folded = {name: records.fold_anon_var_numbers(name, "#") for name in plain | shifted}
+    assert {folded[name] for name in plain} == {
+        "_hy_anon_#",
+        "_hy_exc_e_#",
+        "_hy_let_first_#",
+        "_hy_let_second_#",
+    }, f"Hy の振った一時の名が、畳める形でない: {sorted(plain)}"
+    assert {folded[name] for name in shifted} == {folded[name] for name in plain}
+    assert {comparable_message(f"x is {name}") for name in plain} == {
+        comparable_message(f"x is {name}") for name in shifted
+    } == {f"x is {each}" for each in set(folded.values())}, "基点の鍵が、一時の名の番号に依っている"
+    assert all(hidden_name(name) for name in plain | shifted), "型の面が、Hy の振った一時の名を隠さない"

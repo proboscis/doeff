@@ -496,3 +496,24 @@ def test_a_changed_macro_of_a_read_hy_module_analyzes_again(cache_dir: Path, mod
     macros.write_text("(defmacro answer [] 2)\n", encoding="utf-8")
     rc.cached_result(IDENTITY, analysis)
     assert analysis.runs == 2
+
+
+def test_a_changed_reader_macro_of_a_read_hy_module_analyzes_again(cache_dir: Path, modules: Path) -> None:
+    """A Hy module's values are built by the reader macros it requires too (Hy keeps them in a table of
+    their own): their module is in the key. The names of Hy's macro tables are read from the one home
+    of Hy's internal names (``doeff_hy_bytecode_guard.records``); this and the test above measure that
+    the key follows both tables of the Hy that uv.lock pins (card ki-ffe72a1fb7d7 — they are selected
+    by a change of uv.lock, with packages/doeff-hy/tests/test_bytecode_guard.py)."""
+    import hy  # noqa: F401 - registers the .hy import hook
+
+    readers = modules / "result_key_readers.hy"
+    readers.write_text("(defreader twice (setv x (.parse-one-form &reader)) `(* 2 ~x))\n", encoding="utf-8")
+    (modules / "result_key_reader_job.hy").write_text(
+        "(require result_key_readers :readers [twice])\n(defn job [] #twice 5)\n", encoding="utf-8"
+    )
+    importlib.import_module("result_key_reader_job")
+    analysis = Counting("result_key_reader_job")
+    rc.cached_result(IDENTITY, analysis)
+    readers.write_text("(defreader twice (setv x (.parse-one-form &reader)) `(* 3 ~x))\n", encoding="utf-8")
+    rc.cached_result(IDENTITY, analysis)
+    assert analysis.runs == 2

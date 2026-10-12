@@ -117,6 +117,7 @@ from doeff_hy_bytecode_guard.records import (
     UsedValue,
     ValueReference,
     WholeRequire,
+    exported_macro_names,
 )
 
 Sha256Of = Callable[[str], "str | None"]
@@ -429,15 +430,9 @@ def _whole_requires(tables: Iterable[dict[str, object]], module_name: str) -> tu
 
 
 def _exported(module_name: str) -> frozenset[str]:
-    """提供元の公開の macro の名(Hy の require の ``*`` が入れる名)。"""
+    """提供元の公開の macro の名(Hy の require の ``*`` が入れる名 — 名の読みは :func:`records.exported_macro_names`)。"""
     module = sys.modules.get(module_name)
-    namespace = {} if module is None else vars(module)
-    entries = namespace.get(MACRO_TABLE)
-    names = tuple(entries) if isinstance(entries, dict) else ()
-    exports = namespace.get("_hy_export_macros")
-    if isinstance(exports, (list, tuple)):
-        return frozenset(str(name) for name in exports)
-    return frozenset(name for name in names if not name.startswith("_"))
+    return exported_macro_names({} if module is None else vars(module))
 
 
 @dataclass(frozen=True)

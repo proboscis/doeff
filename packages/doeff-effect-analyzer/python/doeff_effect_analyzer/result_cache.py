@@ -59,7 +59,9 @@ test-time budget subtracts it.
 
 import contextlib
 import dis
+import functools
 import hashlib
+import importlib.util
 import itertools
 import os
 import pickle
@@ -390,13 +392,25 @@ def _module_namespace(module: object) -> Mapping[str, object]:
 def _namespace_values(namespace: Mapping[str, object]) -> tuple[object, ...]:
     """The values a module's namespace holds, with the macros a Hy module required (Hy keeps them in
     a dict of its own, not as names)."""
-    macros = tuple(
-        macro
-        for table in ("_hy_macros", "_hy_reader_macros")
-        if isinstance(found := namespace.get(table), dict)
-        for macro in found.values()
-    )
+    macros = tuple(macro for table in _macro_tables(namespace) for macro in table.values())
     return (*tuple(namespace.values()), *macros)
+
+
+@functools.cache
+def _has_hy_records() -> bool:
+    """Whether doeff-hy is installed here (looked up without importing it)."""
+    return importlib.util.find_spec("doeff_hy_bytecode_guard") is not None
+
+
+def _macro_tables(namespace: Mapping[str, object]) -> tuple[dict[str, object], ...]:
+    """The macro tables Hy put in a module's namespace, named by the one home of the names Hy gives
+    them (``doeff_hy_bytecode_guard.records``). Analyzing a Hy module needs doeff-hy, so a process
+    without it has no Hy module here and no tables."""
+    if not _has_hy_records():
+        return ()
+    from doeff_hy_bytecode_guard.records import macro_tables
+
+    return macro_tables(namespace)
 
 
 def _value_modules(value: object, owner: str, own_names: frozenset[str], loaded: _Loaded) -> frozenset[str]:

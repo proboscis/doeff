@@ -31,6 +31,8 @@ from dataclasses import dataclass, replace
 from functools import reduce
 from pathlib import Path
 
+from doeff_hy_bytecode_guard.records import GENERATED_NAME_PREFIX
+
 from doeff_hy.static_check import CompileFailure, hy_files, import_roots, project, pyright_settings
 
 #: 道具が作った .pyi の 1 行目の頭(一致の検と --write が、手で書いた .pyi と見分ける印)。
@@ -48,7 +50,7 @@ _METHOD_DECORATORS = frozenset({"staticmethod", "classmethod", "property", "over
 _DO_DECORATORS = frozenset({"_doeff_do", "do"})
 #: module の直下の名のうち型の面に出さない物(module の印・Hy の gensym・macro の記帳)。
 _HIDDEN_NAMES = frozenset({"MODULE_TAGS"})
-_HIDDEN_PREFIXES = ("_hy_", "__doeff_", "_doeff_")
+_HIDDEN_PREFIXES = (GENERATED_NAME_PREFIX, "__doeff_", "_doeff_")
 #: 答えが str の str の method(定数の値が `X.format(...)` のように作られる時に型を読むため)。
 _STR_METHODS = frozenset({"format", "join", "strip", "lower", "upper", "replace", "removeprefix", "removesuffix"})
 #: 答えが常に None の特別な method(注記が無くても None と読む)。

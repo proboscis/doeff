@@ -59,13 +59,20 @@ from typing import TypeVar
 #: (鍵の印を上げない理由は、鍵の印を上げると記録に依らない entry まで全部当たらなくなる事に変わる)。
 RECORD_TAG = "doeff-hy/macro-dependencies/7"
 
-#: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。名と、Hy の展開が表を ``名 in 表`` と
-#: ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は Hy の内部の形で、uv.lock の版の Hy で
-#: 包みを動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro・reader macro の変更の検と、使う側の呼ぶ名の macro が
-#: 足された時の検 — uv.lock の変更で選ばれる)が測る(card ki-eafa369600cd)。名が替わるか表を ``.get`` で引くと、包みは使った
-#: macro を記録し損ねて古い展開を黙って使う。Hy の export が書く公開の macro の名の表(macro_use._exported が読む)も同じ検が測る。
+#: Hy が module の名前空間に置く辞書の名(普通の macro の表・reader macro の表・Hy の export が書く公開の macro の名の表)と、
+#: Hy が振る名の先頭。Hy の内部の名の定義元はこの module の 1 か所で、使い手(macro_use・doeff_effect_analyzer.result_cache・
+#: doeff_hy.static_baseline・doeff_hy.static_stub)は名の字を持たず、この下の定数と関数(:func:`macro_tables`・
+#: :func:`exported_macro_names`・:func:`fold_anon_var_numbers`)で引く(card ki-ffe72a1fb7d7)— Hy が名を替えた時に直す所を 1 つにし、
+#: 名の字を他の file へ写す変更は packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py の走査が赤にする。
+#: 名と、Hy の展開が表を ``名 in 表`` と ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は
+#: Hy の内部の形で、uv.lock の版の Hy で測る検が測る — 包みを動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro・
+#: reader macro の変更の検と、使う側の呼ぶ名の macro が足された時の検)と、この下の関数を実物の Hy の module に当てる検
+#: (同じ file の test_records_reads_…・test_the_temporaries_hy_names_…)で、どちらも uv.lock の変更で選ばれる(card ki-eafa369600cd)。
+#: 名が替わるか表を ``.get`` で引くと、包みは使った macro を記録し損ねて古い展開を黙って使う。
 MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
+EXPORT_NAMES = "_hy_export_macros"
+GENERATED_NAME_PREFIX = "_hy_"
 
 #: Hy の compiler が関数の本体などで開く局所の状態(``HyASTCompiler.new_local_state`` が ``local_state_stack`` に積む dict)の中の
 #: macro の表の鍵。関数の中の require と defmacro はこの表へ macro を入れ、Hy の展開は module の表より先にこの表を引くので、
@@ -324,6 +331,29 @@ def with_record(code: CodeType, record: MacroRecord) -> CodeType:
     )
 
 
+def macro_tables(namespace: Mapping[str, object]) -> tuple[dict[str, object], ...]:
+    """module の名前空間に Hy が置いた macro の表 — 普通の macro の表(:data:`MACRO_TABLE`)・reader macro の表(:data:`READER_TABLE`)の
+    順に、名前空間に在って dict の物だけ(Hy の module でなければ空の組)。名前空間は ``vars(module)``: 表は属性でなく名前空間の
+    名で読む(module の代わりに ``sys.modules`` に置かれた object が属性を計算しても、その code を走らせない)。"""
+    return tuple(
+        table
+        for name in (MACRO_TABLE, READER_TABLE)
+        if isinstance(table := namespace.get(name), dict)
+    )
+
+
+def exported_macro_names(namespace: Mapping[str, object]) -> frozenset[str]:
+    """提供元の名前空間が、Hy の ``(require 提供元 *)`` で使い手の表へ入れる macro の名 — Hy の export が書いた名の表
+    (:data:`EXPORT_NAMES`)が在ればその名、無ければ macro の表(:data:`MACRO_TABLE`)の ``_`` で始まらない名(Hy 1.3.1 の
+    ``hy.macros.require`` の ``source_exports`` と同じ読み)。"""
+    entries = namespace.get(MACRO_TABLE)
+    names = tuple(entries) if isinstance(entries, dict) else ()
+    exports = namespace.get(EXPORT_NAMES)
+    if isinstance(exports, (list, tuple)):
+        return frozenset(str(name) for name in exports)
+    return frozenset(name for name in names if not name.startswith("_"))
+
+
 #: Hy の gensym の名の形(Hy 1.3.1 の ``hy.core.util.gensym`` = ``_hy_gensym_<mangle した base>_<数え>``)。数えは process に 1 つで、
 #: gensym を呼ぶたびに進む — 同じ source でも、先に何を compile したか(別の module・require 先の .pyc の有無・別の thread)で
 #: 番号が変わる。名の最後の数字が数え。
@@ -335,6 +365,13 @@ GENSYM_NAME = re.compile(r"(_hy_gensym_.*_)([0-9]+)")
 #: 2 つの形は Hy の内部の形で、uv.lock の版の PyPI の Hy で compile の口を動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の
 #: gensym の数えの検 — uv.lock の変更で選ばれる)が測る(card ki-eafa369600cd)。
 RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
+
+#: Hy が一時の名と let・except の束縛の名に振る形(``HyASTCompiler.get_anon_var`` = ``_hy_<種>[_<元の名>]_<数え>`` — match や if を値に
+#: 使った時の ``_hy_anon_<数え>``・let の ``_hy_let_<元の名>_<数え>``)。最後の <数え> は compile 1 回の中の通し番号で、定義を 1 つ
+#: 足すだけで後ろの名の番号がずれる。第 1 の組が番号を除いた名。元の名に gensym の名が入った束縛(:data:`RENAMED_BINDING`)は
+#: 末尾の番号に ``\b`` が付かないので当たらない — gensym の名の振り直し(:func:`renamed`)の持ち場。形は uv.lock の版の Hy の module を
+#: compile して名を集める検(test_bytecode_guard.py の test_the_temporaries_hy_names_…)が測る(card ki-ffe72a1fb7d7)。
+ANON_VAR_NAME = re.compile(r"\b(" + re.escape(GENERATED_NAME_PREFIX) + r"[A-Za-z0-9_]*?[A-Za-z])_[0-9]+\b")
 
 
 def canonical_gensyms(code: CodeType) -> CodeType:
@@ -417,6 +454,12 @@ def renamed(text: str, names: Mapping[str, str]) -> str:
     if binding is None:
         return text
     return binding.group(1) + renamed(binding.group(2), names) + binding.group(3)
+
+
+def fold_anon_var_numbers(text: str, mark: str) -> str:
+    """text の中の Hy が振った一時の名(:data:`ANON_VAR_NAME`)の番号を mark に替える(``_hy_anon_44`` → ``_hy_anon_#``)— 番号は
+    compile の順で決まるので、同じ名の文言を番号の違いで別の物と数えないため(doeff_hy.static_baseline)。"""
+    return ANON_VAR_NAME.sub(lambda found: f"{found.group(1)}_{mark}", text)
 
 
 def _rewritten(code: CodeType, names: Mapping[str, str]) -> CodeType:

@@ -262,13 +262,20 @@ tests = [
 # (card ki-eafa369600cd — R7 の母集団の外)。同じ process の検は venv の Hy を測るので、file の検は venv の Hy が uv.lock の版である
 # 事を先に確かめる(Hy を上げて sync していなければ赤)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
 # tests/test_contract_table_follows_packages.py が source から数えて確かめる。
+# Hy の内部の名(module の macro の表・reader macro の表・export の名の表・Hy が一時の名に振る形)の定義元は
+# doeff_hy_bytecode_guard.records の 1 か所で、使い手の 3 か所(doeff_effect_analyzer.result_cache の解析の鍵・doeff_hy.static_baseline
+# の基点の鍵・macro_use の全部の require の判定)はそれを引く(card ki-ffe72a1fb7d7)。records の読みを実物の Hy の module に当てる検
+# (test_bytecode_guard.py の test_records_reads_… と test_the_temporaries_hy_names_…)と、鍵が両方の表に従う事を測る analyzer の
+# 2 本が、この行で選ばれる(analyzer の 2 本の版の一致は同じ行の test_bytecode_guard.py の先頭の確かめが持つ)。
 [[tool.doeff.contract-tests]]
 prefix = "uv.lock"
 tests = [
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_imports_exist_in_pypi_hy",  # 9.7 秒
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy",  # 5.5 秒
-    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 23.2 秒(28 本・load 44 の下・枠の待ちを除く)
+    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 42.1 秒(30 本・load 約 1.6 の下・枠の待ちを除く — 2026-10-12 の測り・前は 28 本で 23.2 秒・足した 2 本は 4 秒)
+    "packages/doeff-effect-analyzer/tests/python/test_result_cache.py::test_a_changed_macro_of_a_read_hy_module_analyzes_again",  # 1.9 秒(2 本)
+    "packages/doeff-effect-analyzer/tests/python/test_result_cache.py::test_a_changed_reader_macro_of_a_read_hy_module_analyzes_again",
 ]
 
 # doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version — commit の hook の semgrep・pre-commit と、
@@ -392,6 +399,7 @@ prefix = ""
 tests = [
     "tests/test_daily_test_population.py",  # 7.5 秒 — 検の file の置き場と集め手(日次の母集団)
     "tests/test_contract_table_follows_packages.py",  # 1.3 秒 — この表と package の増減のずれ(agora-redesign #2658)
+    "packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py",  # 1.3 秒 — Hy の内部の名の綴りは records の外に 0 件(card ki-ffe72a1fb7d7・木を歩くので逆依存では選べない)
 ]
 
 # ── 契約の組の要らない package(agora-redesign #2658 — 2026-10-02 に中身を読んで決めた 23 package)。
