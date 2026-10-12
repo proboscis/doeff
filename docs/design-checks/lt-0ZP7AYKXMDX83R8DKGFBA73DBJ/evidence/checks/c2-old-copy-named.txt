@@ -1,0 +1,20 @@
+# 確かめ c2 — 古い展開の形(外した ex04_debug2 が「macro が作る形」として写した形)を印字する例も名指す(S2(b) の失敗例)
+# 版: c98c93b2b1f5b2ef5f90d8001077b5dd5ffebb0e・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:08:37Z
+# 足した例 ex04_zz_old_copy.hy の末尾の行: (print "macro が作る形: (fn [x] (_doeff_do (fn [] (yield (double x)))))")
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf -k zz or unplaceable
+....F..                                                                  [100%]
+=================================== FAILURES ===================================
+E   AssertionError: 期待の出力に置かない物が在る — その所を印にする(展開の形の印なら、例は展開を印字しない): {'ex04_zz_old_copy.txt': ['展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)']}
+    assert {'ex04_zz_old...__import__)']} == {}
+      
+      Left contains 1 more item:
+      {'ex04_zz_old_copy.txt': ['展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)']}
+      Use -v to get more diff
+/work/toolset/worktrees/doeff-wt-check-ki-fe7a/packages/doeff-traverse/tests/test_examples_run.py:727: AssertionError: 期待の出力に置かない物が在る — その所を印にする(展開の形の印なら、例は展開を印字しない): {'ex04_zz_old_copy.txt': ['展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)']}
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_nothing_unplaceable
+1 failed, 6 passed, 61 deselected, 1 warning in 2.60s
+exit=1
