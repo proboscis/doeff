@@ -1,0 +1,6 @@
+[mode] EFFECT_INDEX が在る(変更あり) = False
+[1] 呼びの答え = 6, 6(期待 6)
+[1] 定義を書いた module の globals の眺め: 呼ぶ前 == 2 回呼んだ後 -> True
+[1] doeff_hy.declarations の索引の文脈 't' の要素の数: 呼ぶ前 -1 -> 2 回呼んだ後 -1
+[2] 定義 1 つだけの関数の局所の名 = ['Inner'] / 期待 ['Inner'] -> True
+[3] make-effect を 1000 回呼んだ後、gc の後も生きている呼びごとの Inner の型の数 = 0

@@ -1,0 +1,56 @@
+== 実行時の展開: make_tests の本体に record_at_import が在る: False
+== 実行時の展開: module の直下に record_at_import が在る: True
+== 実行時の展開: make_tests の局所の名(_hy_ の頭を除く): ['n', 'owner', 'test_bench_inner', 'test_inner']
+== 実行時の展開: doeff_hy は make_tests の局所か: False
+---- make_tests ----
+def make_tests(n):
+    owner = doeff_hy.__name__
+
+    def _hy_anon_2():
+        from doeff.do import do as _doeff_do
+        from doeff import EffectBase as _doeff_effect_base
+        from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+
+        def test_inner(doeff_interpreter):
+
+            def _hy_anon_1():
+                assert n >= 0
+            return doeff_interpreter(_doeff_do(_hy_anon_1)())
+        _install_guard_globals(test_inner, {'_doeff_do': _doeff_do})
+        return test_inner
+    test_inner = _hy_anon_2()
+
+    def _hy_anon_3():
+        import pytest
+
+        @pytest.mark.benchmark
+        def test_bench_inner(benchmark):
+            return benchmark(lambda: sum(range(n)))
+        return test_bench_inner
+    test_bench_inner = _hy_anon_3()
+    return (owner, test_inner, test_bench_inner)
+== 型検査のための展開: make_tests の本体に record_at_import が在る: True
+== 型検査のための展開: module の直下に record_at_import が在る: False
+== 型検査のための展開: make_tests の局所の名(_hy_ の頭を除く): ['doeff_hy', 'n', 'owner', 'pytest', 'test_bench_inner', 'test_inner']
+== 型検査のための展開: doeff_hy は make_tests の局所か: True
+---- make_tests ----
+def make_tests(n):
+    owner = doeff_hy.__name__
+
+    def test_inner(doeff_interpreter: _doeff_DeftestInterpreter) -> None:
+
+        def _hy_anon_1():
+            assert n >= 0
+        doeff_interpreter(_doeff_do(_hy_anon_1)())
+        return None
+    _install_guard_globals(test_inner, {'_doeff_do': _doeff_do})
+    import doeff_hy.pytest_items
+    doeff_hy.pytest_items.record_at_import(globals(), '{"args": ["doeff_interpreter"], "decorators": [], "function": "test_inner"}')
+    import pytest
+
+    @pytest.mark.benchmark
+    def test_bench_inner(benchmark):
+        return benchmark(lambda: sum(range(n)))
+    import doeff_hy.pytest_items
+    doeff_hy.pytest_items.record_at_import(globals(), '{"args": ["benchmark"], "decorators": [{"mark": "benchmark"}], "function": "test_bench_inner"}')
+    return (owner, test_inner, test_bench_inner)
