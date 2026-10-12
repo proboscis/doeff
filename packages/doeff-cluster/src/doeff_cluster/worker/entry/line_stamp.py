@@ -37,11 +37,18 @@ OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(�
 - 送り先の値が使えない(URL の形・属性の並べ方・job の文脈の欠け)時は送らず、理由を 1 行 log に書く(job はそのまま走る)。
 
 worker の process 自身の行(card ki-35923a5895b2 — 機体の上で直に動く worker(zeus-native・mac-native)の log は systemd・launchd の
-出力先の file にしか無く、会話から読めなかった): worker の入口(worker/entry/main)も同じ部品で、自分の stdout と stderr を刻つきの
-書き手へ差し替えて送る(process_lines)。job の文脈は worker が自分で置く(worker_log_plan — job の名 worker/<worker の名>・試み 0・
-世代 = worker の boot)。差し替えるのは送り先が使えて、stdout と stderr が同じ file を指す時だけ(機体の形 — 送り先の無い Pod の
-worker は今のまま)。書き手の終わりは process の終わり(atexit)で、捕まえない例外の traceback(excepthook が atexit より前に書く)も
-file へ書いて送ってから止める。
+出力先の file にしか無く、会話から読めなかった): worker の入口(worker/entry/main)も同じ刻の付け方と送り手で、自分の Python の
+出力(sys.stdout と sys.stderr)を刻つきの書き手へ差し替えて送る(process_lines・stamped_streams)。job の文脈は worker が自分で
+置く(worker_log_plan — job の名 worker/<worker の名>・試み 0・世代 = worker の boot)。差し替えるのは送り先が使えて、stdout と
+stderr が同じ file を指す時だけ(機体の形 — 送り先の無い Pod の worker は今のまま)。
+- fd 1・2 は替えない(job の shim と違う所): worker の子孫(lifeline の見張りのように worker より長く生きる子)は fd 2 を継ぐので、
+  fd を pipe にすると、worker が終わった後の子孫の書きは読み手の居ない pipe へ行き、行が消えて子孫が止まる(設計検証
+  lt-8PQM3S5DDHCSJ92Q7X259K9HAW の盲検 A)。替えるのは Python の流れの物だけで、子孫と、fd へ直に書く物(Rust の panic など)は
+  元の file へ刻なしで書く(送らない)。
+- 書き手は送りに待たされない(job と同じ — 溢れは捨てて数える)。worker の道で溜めが満ちても worker の write が止まらない事は
+  tests/test_job_log_ship.py の検が見張る(盲検 B)。
+- 書き手の終わりは process の終わり(atexit)で、捕まえない例外の traceback(excepthook が atexit より前に sys.stderr へ書く)も
+  file へ書いて送ってから止める。
 """
 
 import atexit
@@ -56,7 +63,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import accumulate, islice
 from json import dumps
-from typing import Protocol
+from typing import Protocol, TextIO
 from urllib.parse import urlsplit
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の shim.py と同じ。
@@ -84,6 +91,8 @@ LOGS_PATH = "/v1/logs"
 # 宣言の job の名と重ならない)と試みの番号(job の試みは 1 から数える — worker の process は job の試みでない)。
 WORKER_PROCESS_JOB_PREFIX = "worker/"
 WORKER_PROCESS_ATTEMPT = "0"
+# worker_log_plan が worker の環境から読む名(worker の入口はこの組だけを読んで渡す — 名を 2 か所に並べない)。
+WORKER_LOG_ENV_NAMES = (JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR)
 
 
 def stamp_of(seconds: float) -> bytes:
@@ -235,10 +244,11 @@ def job_log_plan(environ: Mapping[str, str]) -> JobLogPlan:
 
 
 def worker_log_plan(environ: Mapping[str, str], worker: str, instance: str) -> JobLogPlan:
-    """worker の process 自身の行の送り先を決めるため(頭の註の「worker の process 自身の行」)。environ = worker の環境(送り先の基の
-    URL と配備が足す属性の 2 つだけを読む — job の文脈の名は読まない)・worker = 名乗る worker の名・instance = この process の世代
-    (boot)。job の文脈は worker が置く: job の名 worker/<worker の名>・試み 0・世代 instance。決め方は job の子と同じ job_log_plan。"""
-    shipping = {name: environ[name] for name in (JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR) if name in environ}
+    """worker の process 自身の行の送り先を決めるため(頭の註の「worker の process 自身の行」)。environ = worker の環境(読むのは
+    WORKER_LOG_ENV_NAMES — 送り先の基の URL と配備が足す属性だけ・job の文脈の名は読まない)・worker = 名乗る worker の名・instance =
+    この process の世代(boot)。job の文脈は worker が置く: job の名 worker/<worker の名>・試み 0・世代 instance。決め方は job の子と
+    同じ job_log_plan。"""
+    shipping = {name: environ[name] for name in WORKER_LOG_ENV_NAMES if name in environ}
     context = {
         WORKER_NAME_VAR: worker,
         WORKER_JOB_VAR: WORKER_PROCESS_JOB_PREFIX + worker,
@@ -657,14 +667,84 @@ def stamped_lines(plan: JobLogPlan) -> StampedLines:
     return StampedLines(WriterEnds(source=source, target=target, stop_read=stop_read, stop_write=stop_write), shipping)
 
 
-def process_lines(plan: JobLogPlan) -> OutputLines:
-    """worker の process 自身の stdout と stderr を、送り先が使えて 2 つが同じ file を指す時だけ刻つきの書き手(送り手つき)へ差し替えて
-    動かし始め、終わり(end)を process の終わり(atexit)に置くため(頭の註の「worker の process 自身の行」)。plan = worker_log_plan の
-    答え。それ以外は何も替えない(RawLines)— 送り先の値が使えない時と、送り先は在るが stdout と stderr が別の file の時は、理由を
-    1 行 stderr に書く(worker はそのまま走る)。"""
+@dataclass(frozen=True)
+class Streams:
+    """この process の Python の出力の流れの組(差し替える前の物 — 終わりに戻す)。"""
+
+    stdout: TextIO
+    stderr: TextIO
+
+
+class StampedStreams:
+    """worker の process 自身の Python の出力(sys.stdout と sys.stderr)に刻を付ける書き手(頭の註の「worker の process 自身の行」)。
+    作るのは stamped_streams(2 つの流れを pipe の書き口の流れへ差し替えた後)。fd 1・2 は元の file のまま — 子孫は元の file を継ぐ。"""
+
+    def __init__(self, ends: WriterEnds, sink: int, shipping: Shipping, originals: Streams) -> None:
+        """書き手の fd・pipe の書き口(sink — 差し替えの流れが書く fd)・行の送り手・元の 2 つの流れを持ち、thread をまだ起こしていない
+        状態で始めるため。"""
+        self.ends = ends
+        self.sink = sink
+        self.shipping = shipping
+        self.originals = originals
+        self._mut_thread: threading.Thread | None = None
+
+    def begin(self) -> None:
+        """書き手の thread と送りの thread を起こすため(1 度 — 2 度目は何もしない)。"""
+        if self._mut_thread is None:
+            self.shipping.begin()
+            self._mut_thread = threading.Thread(target=pumped, args=(self.ends, self.shipping), name="line-stamp", daemon=True)
+            self._mut_thread.start()
+
+    def end(self) -> None:
+        """2 つの流れを元へ戻し(以後の Python の出力は file へ直に行く)、pipe の書き口の fd を元の file へ付け替え(差し替えの流れを
+        持ち続ける書き手の書きも file へ行く — pipe は書き口が無くなり EOF になる)、pipe に残った分を読み切らせてから thread を止め、
+        残りの行を送りの上限の内で送らせてから、書き手の fd を閉じるため(file の書きが先 — 送りの遅れで file を欠かない)。"""
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.stdout = self.originals.stdout
+        sys.stderr = self.originals.stderr
+        os.dup2(self.ends.target, self.sink)
+        self.begin()
+        os.write(self.ends.stop_write, b"\0")
+        if self._mut_thread is not None:
+            self._mut_thread.join()
+        self.shipping.end()
+        for descriptor in (self.ends.source, self.ends.target, self.ends.stop_read, self.ends.stop_write):
+            os.close(descriptor)
+
+
+ProcessLines = RawLines | StampedStreams
+
+
+def stamped_streams(plan: JobLogPlan) -> StampedStreams:
+    """この process の sys.stdout と sys.stderr(fd 1・2 が同じ log の file)を、1 本の pipe の書き口へ書く 1 つの流れへ差し替え、その
+    pipe を読んで刻を付ける書き手を作るため(thread は begin で起こす)。fd 1・2 は替えない(頭の註 — 子孫は元の file を継ぐ)。pipe の
+    fd は継がれない(os.pipe の既定)。流れは行ごとに書き出し、書けない字は元の stderr と同じく backslashreplace にする。stdout と
+    stderr が別の file なら断る。"""
+    if not same_file(1, 2):
+        raise ValueError("刻を付ける log は stdout と stderr が同じ file の時だけ(機体の worker の log の形)")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    target = os.dup(1)
+    source, sink = os.pipe()
+    stop_read, stop_write = os.pipe()
+    originals = Streams(stdout=sys.stdout, stderr=sys.stderr)
+    # 流れは process の終わりまで閉じない(end の後も、流れを持ち続けた書き手の書きは付け替えた sink の先 = 元の file へ行く)。
+    stream = os.fdopen(sink, "w", buffering=1, encoding=sys.stderr.encoding or "utf-8", errors="backslashreplace", closefd=False)
+    sys.stdout = stream
+    sys.stderr = stream
+    ends = WriterEnds(source=source, target=target, stop_read=stop_read, stop_write=stop_write)
+    return StampedStreams(ends, sink, shipping_of(plan), originals)
+
+
+def process_lines(plan: JobLogPlan) -> ProcessLines:
+    """worker の process 自身の Python の出力を、送り先が使えて stdout と stderr が同じ file を指す時だけ刻つきの書き手(送り手つき)へ
+    差し替えて動かし始め、終わり(end)を process の終わり(atexit)に置くため(頭の註の「worker の process 自身の行」)。plan =
+    worker_log_plan の答え。それ以外は何も替えない(RawLines)— 送り先の値が使えない時と、送り先は在るが stdout と stderr が別の
+    file の時は、理由を 1 行 stderr に書く(worker はそのまま走る)。"""
     match plan:
         case JobLogTarget() if same_file(1, 2):
-            lines = stamped_lines(plan)
+            lines = stamped_streams(plan)
             lines.begin()
             atexit.register(lines.end)
             return lines
