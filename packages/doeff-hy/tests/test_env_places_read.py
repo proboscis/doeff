@@ -19,6 +19,7 @@ PROBE: str = (
     "print(env_places.check_cache_setting())\n"
     "print(env_places.cache_home())\n"
     "print(env_places.expanders_setting())\n"
+    "print(env_places.pyright_threads_setting())\n"
     "print('doeff_core_effects.os_process' in sys.modules)\n"
 )
 
@@ -55,3 +56,16 @@ def test_the_expander_limit_setting_follows_the_environment(
     monkeypatch.setenv("DOEFF_HY_CHECK_EXPANDERS", "")
     unset = probe()
     assert unset[2] == "None", unset
+
+
+def test_the_pyright_threads_setting_follows_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pyright の thread の数の素の値も、doeff-hy-check の入口が os.environ を直に読まずにこの module から受ける(展開の子の数の
+    上限と同じ — card ki-1475765a3f18)。値の判じ(1 以上の整数か)は呼び手の pyright_threads。"""
+    monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "2")
+    named = probe()
+    assert named[3] == "2", named
+    monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "")
+    unset = probe()
+    assert unset[3] == "None", unset
