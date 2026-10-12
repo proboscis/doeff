@@ -82,7 +82,8 @@ fn finish(mut child: Child, what: &str) -> std::process::ExitStatus {
     }
 }
 
-/// 正本の写しと、K = 1・置き場 = 一時の dir・待ちの上限 = wait_s の宣言を置いた HOME と、その正本と枠 0 の file。
+/// 正本の写しと、K = 1・1 枠の process の数 1・置き場 = 一時の dir・待ちの上限 = wait_s の宣言を置いた HOME と、その正本と
+/// 枠 0 の file。宣言の鍵は正本が要る物を全部書く(processesPerSlot が無いと、正本は宣言を読めずに枠を取らずに走る)。
 fn canon_home(root: &Path, wait_s: u64) -> (PathBuf, PathBuf, PathBuf) {
     let home = root.join("home");
     let tests_dir = home.join("dotfiles/agent/tests");
@@ -90,7 +91,8 @@ fn canon_home(root: &Path, wait_s: u64) -> (PathBuf, PathBuf, PathBuf) {
     let canon = tests_dir.join("machine_check_slots.py");
     fs::copy(real_canon(), &canon).unwrap();
     let slots = root.join("slots");
-    let declaration = serde_json::json!({"slots": 1, "dir": slots.to_string_lossy(), "waitLimitSeconds": wait_s});
+    let declaration =
+        serde_json::json!({"slots": 1, "processesPerSlot": 1, "dir": slots.to_string_lossy(), "waitLimitSeconds": wait_s});
     fs::write(tests_dir.join("machine_check_slots.json"), declaration.to_string()).unwrap();
     (home, canon, slots.join("slot-0.lock"))
 }
@@ -241,6 +243,51 @@ fn cheap_and_caller_bounded_modes_do_not_go_through_the_canon() {
     stdin_run.stdin.take().unwrap().write_all(b"import os\n").unwrap();
     assert!(stdin_run.wait_with_output().unwrap().status.code().is_some());
     assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "軽い mode が正本を通った");
+}
+
+/// small_repo を git の木にし、pyproject.toml だけを基点に commit して、当たり(DOEFF016)を持つ tool.py を stage する。
+fn stage_in_git(repo: &Path) {
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(["-c", "user.name=check-slot-test", "-c", "user.email=check-slot-test@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(repo)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "pyproject.toml"]);
+    git(&["commit", "-q", "-m", "基点"]);
+    git(&["add", "tool.py"]);
+}
+
+/// 利用者 2026-10-12 22:57 JST "pre-commit check is not tests so it shouldn't be blocked by other tests": commit の hook
+/// (`--commit-hook`)は stage した file に file 1 つで決まる規則を当てる短い止める検査で、自分の CPU 秒の上限(timeout_s)を持つ。
+/// 親も、親が stage した path に撃つ子の linter(editor-json)も正本を通らない — 枠の待ちで commit が止まらない。
+/// 子が走った事は、stage した tool.py の当たり(DOEFF016)で止まる事で見る。
+#[test]
+fn the_commit_hook_and_its_child_linters_do_not_go_through_the_canon() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (home, log) = fake_home(tmp.path());
+    let repo = small_repo(tmp.path());
+    stage_in_git(&repo);
+    let output = linter_under(&home, &repo)
+        .arg("--commit-hook")
+        .env("DOEFF_LINTER_CACHE_DIR", tmp.path().join("cache"))
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stage した tool.py の当たり(DOEFF016)で止まるはず: {err}");
+    assert!(err.contains("stage した file の破れ: tool.py:1: DOEFF016"), "{err}");
+    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "commit の hook(親か子の linter)が正本を通った");
 }
 
 #[test]
