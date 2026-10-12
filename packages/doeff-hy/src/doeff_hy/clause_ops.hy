@@ -26,6 +26,13 @@
 ;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない・設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 B)。
 ;;; doeff-linter の側も同じ — business_fakes.rs は操作の名を literal で書かない(その file の検が拾う)。
 ;;;
+;;; 行を足す前に(操作の名は節の本体の頭の名として予約される): 書き手が同じ名の関数を節の本体(入れ子の fn の中も)で呼んでいると、
+;;; 行を足した瞬間にその呼びが操作へ黙って書き換わる(`throw` の行を足すと、書き手の関数 `throw` の呼びが ResumeThrow になり、
+;;; 検めの関数が generator になって検めごと消えた — 設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 B)。node の名の衝突は
+;;; expansion_names.py の別名が防ぐが、操作の名はこの機構の外 — 機械の検では止められない(足す前の呼びと足した後の呼びを source から見分けられない)ので、
+;;; 足す前に agora・agora-controllers・doeff・dotfiles の origin/main の節の本体で、その名を頭にした呼びを引く(0 件を確かめてから足す)。
+;;; 足す行は packages/doeff-linter/data/clause_ops.json の書き直し(scripts/export_clause_ops.py --write)も要る。
+;;;
 ;;; handle.hy が module の頭で import する(macros.hy が handle.hy を require する途中で読まれる)ので、doeff-hy.macros も
 ;;; doeff-hy.record も require しない — defrecord・deff・val を使わず、declarations.hy の DefinitionTags と同じ素の dataclass と
 ;;; module の直下の setv にする。

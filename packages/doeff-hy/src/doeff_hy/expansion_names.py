@@ -18,7 +18,6 @@ effect が外の handler へ黙って抜け、module の段では展開の impor
 
 from collections.abc import Iterable
 
-import hy
 from hy.models import Expression, Keyword, List, Object, Symbol
 
 #: 別名の頭。型検査のための展開が引く補助の名(static_view.deftest_annotation_name)と同じ。
@@ -58,14 +57,25 @@ def _by_home(names: Iterable[str]) -> dict[str, tuple[str, ...]]:
     }
 
 
+def _module_model(module: str) -> Object:
+    """module の名の model。点を含む名は、Hy が読む式の形(`(. a b)`)で組む — 文字 1 つの Symbol にすると名が崩れる。
+    reader(`hy.read`)を通さない: reader が作る model は 1 行目 1 列目の位置を持ち、位置を付ける macro(`locate-synthesized`)が
+    利用者の式の位置と取り違えて、囲む式の範囲を 1 行目へ引く。型検査の診断(未使用の import・未定義の名)の行が、handler の行でなく
+    1:1 になった(設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A の実測)。ここが作る model は位置を持たない。"""
+    parts = module.split(".")
+    if len(parts) == 1:
+        return Symbol(module)
+    return Expression([Symbol("."), *(Symbol(part) for part in parts)])
+
+
 def import_form(names: Iterable[str]) -> Expression:
     """names を別名で束ねる Hy の import(置き場ごとの `(import 置き場 [名 :as 別名 …])` を並べた `(do …)`)。名が無ければ
-    `(do)`。点を含む module の名は、Hy が読む式の形(`(. a b)`)で渡す — 文字から Symbol を作ると名が崩れる。"""
+    `(do)`。作る model は位置を持たない(`_module_model` の註)。"""
     statements: list[Object] = [
         Expression(
             [
                 Symbol("import"),
-                hy.read(module),
+                _module_model(module),
                 List(
                     [
                         part
