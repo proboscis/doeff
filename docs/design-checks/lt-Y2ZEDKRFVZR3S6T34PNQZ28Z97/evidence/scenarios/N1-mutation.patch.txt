@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy b/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy
+index 48c681555..4fd673d1c 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy
+@@ -113,7 +113,7 @@
+   (when (isinstance compiled SourceNotCompiled)
+     (return #("failed" compiled.reason)))
+   (write-pyc source compiled)
+-  (setv problem (if (is key None) None (.add-code code-store store key (marshal.loads (cut compiled PYC-HEAD-BYTES None)))))
++  (setv problem (if (is key None) None (.write-entry code-store (posixpath.join store (cut key 0 2) (+ (cut key 2 None) ".code")) (cut compiled PYC-HEAD-BYTES None))))
+   #("rebuilt" (or problem "")))
+ 
+ 

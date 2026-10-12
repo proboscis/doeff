@@ -1,0 +1,402 @@
+{
+  "version": 1,
+  "task_id": "lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97",
+  "base_revision": "94287ee5646ae0ffbd790dcc47c9760f0de24a23",
+  "implementation_revision": "27f35483076413668aa7b2ca32949b170a0987b4",
+  "fix_revisions": [
+    "2377ad0cfa0df8166f5c35f1ee027de704549427",
+    "c1a73eeda258fcd3e44af226d25debeba706897d"
+  ],
+  "author": {
+    "conversation_id": "c-C2HCCSNSQKN5E5JTMZ2M5AWJRH(member m-J446TQE2D277P75DBDG5Q31QBG)",
+    "model": "claude-opus-5-5",
+    "effort": "未確認(会話の起動の設定に従う・自己申告では読めない)"
+  },
+  "requirements": [
+    "R1(card ki-6828e9af04b4 の受入 c39df0971 の前半): 保存先の鍵 1 つを、macro の環境(doeff の版・記録の形の印)の違う書き手が交互に上書きしない形が doeff の main に在る",
+    "R2(同 c39df0971 の後半): 版の違う 2 つの書き手が同じ source を交互に読み書きしても、焼き直しが 2 回目から起きない事を確かめる検が在る",
+    "R3(card 本文の案 2): worker の掃除(env_store の sweep-leftovers)が新しい並びの file も消せる",
+    "範囲の外: card の受入 c05aec7db(worker の入れ替えの後の 1 時間の焼き直しの本数と bytecode の段の秒)— worker の次の版上げの後に測る"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "14dd77b1e0b507491819b69c3e051d9b069a7462d9dc6097d5a3f38ac00c5b85"
+  },
+  "pre_blind_design": {
+    "path": "design-before-blind.md",
+    "sha256": "f3c6df9d6e7670984b607a18e4bb5e75b73e435c513051b5135064f1de1c3a96"
+  },
+  "blind": {
+    "meta": {
+      "path": "blind/blind-meta.md",
+      "sha256": "f4028ae052fadb81185e089752366841928bd30599920bf0d62b02f8bfff3e0f"
+    },
+    "a": {
+      "input": [
+        {
+          "path": "blind/blind-common.md",
+          "sha256": "0180702d6fd5ba06b1bd7c10ffc028e6800dfc4cf548c015ef1bfc3a8cdb066f"
+        },
+        {
+          "path": "blind/blind-a-input.md",
+          "sha256": "85939a89ce68272c7bd0236000c97c5f8bf2b19b1c8cc96eaed47fbd881e7dc3"
+        },
+        {
+          "path": "design-before-blind.md",
+          "sha256": "f3c6df9d6e7670984b607a18e4bb5e75b73e435c513051b5135064f1de1c3a96"
+        }
+      ],
+      "return": {
+        "path": "blind/blind-a-return.md",
+        "sha256": "89efce856e158e36bd5dbcfb5a81e777b8dfd112c546d1faac8760cfd9344e1a"
+      },
+      "experiment_files": [
+        {
+          "path": "evidence/a/probe_cap.py.txt",
+          "sha256": "4791da6d575265f91b286e2ccfdb5a75cd7549184b968eb0c3d6f17e6b6498ea"
+        }
+      ]
+    },
+    "b": {
+      "input": [
+        {
+          "path": "blind/blind-common.md",
+          "sha256": "0180702d6fd5ba06b1bd7c10ffc028e6800dfc4cf548c015ef1bfc3a8cdb066f"
+        },
+        {
+          "path": "blind/blind-b-input.md",
+          "sha256": "fcd27d78051a6ea30df1802520b0426739a30c0771c38f21be8967573055fbee"
+        },
+        {
+          "path": "design-before-blind.md",
+          "sha256": "f3c6df9d6e7670984b607a18e4bb5e75b73e435c513051b5135064f1de1c3a96"
+        }
+      ],
+      "return": {
+        "path": "blind/blind-b-return.md",
+        "sha256": "af41ec5ae2b162b39498f244e45c5d969d202375f9984c8b6d497c9493826a38"
+      },
+      "experiment_files": [
+        {
+          "path": "evidence/b/blind-b.patch.txt",
+          "sha256": "8042143e68e2a5eb6388740b630b5fd00b2c1f69cf92e8ea5c434468badf644d"
+        },
+        {
+          "path": "evidence/b/blind-b-driver.py.txt",
+          "sha256": "e33efe83c38cb1bfca43a720f4a04058ca6240a7f6bd37ad33fba0112f2e44c7"
+        }
+      ]
+    }
+  },
+  "blind_reproduction": {
+    "a": [
+      {
+        "path": "evidence/a/A-repro-before-fix.txt",
+        "sha256": "56aa7c32e862b07436f81c4cc2f530ba5931c29e6d1decbab06327fa0b709d4d"
+      },
+      {
+        "path": "evidence/a/A-repro-after-fix.txt",
+        "sha256": "33bd4f637d559e48a65730baa5af376b69b0ca7fa2aae5d5ca8943953d24aa23"
+      },
+      {
+        "path": "evidence/a/A-new-tests-on-the-landed-version.txt",
+        "sha256": "ae964dd59868fcbfd897e0bab006a21e9264ba8b14f7afa696e3dab4045a9f09"
+      }
+    ],
+    "b": [
+      {
+        "path": "evidence/b/B-presented-checks-with-patch.txt",
+        "sha256": "9fd9225940ae240c2bdb0fe4dea47384629c9a9bb29486a46e3a17eec52af001"
+      },
+      {
+        "path": "evidence/b/B-new-check-with-patch.txt",
+        "sha256": "1cc9008d647bfa298a2847a219a0224282ccf4456b8e1afab08ffa9c9df349b8"
+      },
+      {
+        "path": "evidence/b/B-new-check-without-patch.txt",
+        "sha256": "3f9ab9f1517f4017df98df7290fd6508144c3f6c32949c45d71baf41a729df86"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "source の code を中身で引き・足す保存先の入口(packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py)",
+      "owns": "保存先の dir の解き方・鍵(code_key)・並び <鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code・指紋(code_fingerprint)・照らす順・使った印・足した entry の置き場所・上限(CODE_ENTRIES_PER_KEY 16)と除く順・一時の file からの置き換え・壊れた entry の名指しと除き",
+      "hides": "並び・指紋の作り方・上限・除く順・時刻の扱い(呼び手は current_code と add_code を呼ぶだけ)",
+      "interface": "current_code(store, key, is_current: Callable[[CodeType], bool]) -> CodeType | None・add_code(store, key, code) -> str | None(書けない理由)・code_entries(store, key) -> tuple[str, ...]・code_key(...) -> str",
+      "effects": "保存先の file の読み・書き・時刻・除き(標準 library の os を直に — worker の道具が root の python へ path で読むので標準 library だけ・ADR-DOE-BUILD-002)",
+      "lifetime": "なし — 状態を持たない。entry は上限か掃除で消える",
+      "invariants": "足した後、鍵 1 つの entry ≤ 上限・記録の同じ code は同じ名・照らして使った entry だけ時刻が進む・足した entry は使われるまで鍵の他の entry より後ろ(今から 1 日より前には置かない)・書きかけを読ませない"
+    },
+    {
+      "id": "M2",
+      "responsibility": "macro の記録の形と、記録が今の環境に合うかの判断(records.py・macro_use.py・loader_hooks.record_is_current_here・bytecode_is_current)",
+      "owns": "記録の欄(RECORD_TAG・使った macro と digest・files)・digest の作り方・照らし",
+      "hides": "記録の欄の意味(M1 は末尾の定数を丸ごと指紋にするだけ)",
+      "interface": "records.record_of(code)・record_is_current_here(record)・bytecode_is_current(path, pyc, source)",
+      "effects": "記録が名指す module の import・file の sha256 の読み",
+      "lifetime": "process の中の digest の覚え",
+      "invariants": "今の版で読めない記録は「今の環境に合わない」だけで、他の版の書き手の entry として残す(除かない)"
+    },
+    {
+      "id": "M3",
+      "responsibility": "Python の import の口(loader_hooks._from_shared_store・_to_shared_store・_store_key)",
+      "owns": "いつ保存先を引くか(作業木の .pyc が使えない時)・compile した code を足すか(記録が在る時)",
+      "hides": "import の口の包み方",
+      "interface": "importlib の SourceFileLoader.get_code の包み",
+      "effects": "source の読み・作業木の .pyc の書き・M1 の呼び",
+      "lifetime": "import 1 回",
+      "invariants": "鍵は compile した bytes から作る(#2799)・保存先の entry は M1 を通してだけ読み書きする"
+    },
+    {
+      "id": "M4",
+      "responsibility": "worker の bytecode の焼きの道具(packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy の bake-one)",
+      "owns": "焼く物 1 つを 木の .pyc → 保存先 → 焼く の順に用意する",
+      "hides": "pool の起こし方",
+      "interface": "標準入力の行・標準出力の stored/failed/reused/unstored の行",
+      "effects": "source の読み・.pyc の書き・pool の子 process・M1 の呼び",
+      "lifetime": "道具の 1 回の起動(pool は with の終わりで回収)",
+      "invariants": "照らしは root の版の M2(bytecode-is-current)・引きと足しは worker の版の M1(path で読む)"
+    },
+    {
+      "id": "M5",
+      "responsibility": "worker の掃除の保存先の選び(env_store.hy の unused-store-names・unused-store-entries・sweep-leftovers と env_upkeep.CODE-STORE-UNUSED-SECONDS)",
+      "owns": "保存先の何を消すか(7 日動いていない file と、自分も下の物も全部 7 日動いていない dir)",
+      "hides": "7 日・dir ごと消す決め",
+      "interface": "unused-store-names(entries, now-ms) -> tuple[str](StatTree の答え → 消す相対の名・純粋)",
+      "effects": "StatTree・RemoveTree(effect — 答え手は os-file-handler と offloaded-tree-handler)",
+      "lifetime": "掃除 1 回",
+      "invariants": "並びを知らない(木の時刻だけで決める)・使った entry の在る dir と新しい dir は消さない"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "鍵 1 つの entry の上限や除く順・指紋の作り方を変える(実際に、盲検 A を受けて足した entry の置き場所 = 除く順を変えた)",
+      "claim": "並び・指紋・上限・除く順は M1 だけが持つ。M3・M4 は current_code/add_code を呼ぶだけで、M5 は並びを知らない。変えるのは code_store.py と M1 の検だけで、公開契約は変わらない",
+      "expected_scope": "code_store.py・tests/test_code_store_entries.py",
+      "actual_scope": "code_store.py と検の 2 file(test_code_store_entries.py・世代の検を足した test_bytecode_guard.py)と ADR R2b の本文(git diff --stat 27f354830 2377ad0cf -- packages/)。M2〜M5 と公開契約は変わらない。失敗例 N1(準備の道具が並びを自分で綴る)は ADR の法が拒んだ",
+      "changed_modules": [
+        "M1"
+      ],
+      "unchanged_modules": [
+        "M2",
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "reason": "予想どおり。ADR R2b の本文が上限の値と除く順を文で持つので、値を変えると本文も変える(決まりの記録で、知識の漏れではない)",
+      "revision": "不要 — 主張は実際の変更(除く順)で確かめた"
+    },
+    {
+      "id": "S2",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "macro の環境の違う書き手が 3 つ以上(準備・doeff の版の違う作業木・macro を直している作業木の検)同時に同じ鍵を読み書きする",
+      "claim": "書き手は自分の照らしを渡して current_code を呼び、焼いたら add_code を呼ぶだけで、他の環境の entry を上書きしない。新しい書き手はその module と配線だけが変わり、M1・M2 は変わらない",
+      "expected_scope": "新しい書き手の module だけ",
+      "actual_scope": "盲検 A: 使い続ける環境が上限 16 を越えると全部が外れる崖・一度きりの環境 14 個で準備の entry が押し出される(着地した版で再現)。直すのに M1(足した entry の置き場所)を変えた。M2〜M5 は変わらない",
+      "changed_modules": [
+        "M1"
+      ],
+      "unchanged_modules": [
+        "M2",
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "reason": "主張は「使い続ける環境の数 ≤ 上限」を黙って前提にしていた。足した entry を頭に置く除く順が、一度きりの環境の数まで上限に数えさせていた(M3 の足し方の性質が M1 の除く順に響いた)",
+      "revision": "M1 の中だけで直した: 足した entry を使われるまで鍵の他の entry より後ろに置く。直した後は 17 の環境で毎巡 2 本・32 で 17 本(越えた分 + 1)・一度きり 40 個でも準備の代役は外れない。単体の検 3 件を足し、着地した版で赤・直した版で緑を確かめた"
+    },
+    {
+      "id": "S3",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "記録の形を変える(RECORD_TAG を次の世代へ上げ、欄を足す)",
+      "claim": "記録の欄の意味は M2 だけが持つ。M1 は末尾の定数を丸ごと指紋にするので、足す欄が文字列・bytes・整数・浮動小数・None とその組の入れ子なら M1 は変わらない。root と worker の版が違っても効く",
+      "expected_scope": "records.py・macro_use.py と M2 の検",
+      "actual_scope": "印の文字列だけを上げた書き手の代役で、M1 を変えずに 2 巡目から展開し直さない事を確かめた。盲検 B: M3 が「読めない記録の entry」を除く差分は提示した検 22 件を全部通り、印の違う書き手が互いの entry を消し合う(着地した版で再現)",
+      "changed_modules": [
+        "M2"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "reason": "主張(M1 の作り)は成り立つ。主張を守る検が無かった(提示した検は書き手の doeff-hy が 1 つだけ)",
+      "revision": "記録の世代の違う書き手が交互に読む検を足した(B の差分で赤・なしで緑)。ADR R2b に「読めない記録の entry も除かない」を書いた"
+    },
+    {
+      "id": "S4",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "掃除の決まりを変える(日数を変える・保存先に別の種類の entry の並びを足す)",
+      "claim": "日数は CODE-STORE-UNUSED-SECONDS の 1 行(M5)。M5 は並びを知らず木の時刻だけで決めるので、M1 の並びを変えても M5 は変わらず、M5 の日数を変えても M1 は変わらない",
+      "expected_scope": "env_upkeep.hy の 1 行(日数)か code_store.py(並び)",
+      "actual_scope": "S1 の除く順の変更で M5 は変わらなかった。日数の変更は ADR の検 (val CODE-STORE-UNUSED-SECONDS WHEEL-UNUSED-SECONDS) にも当たる(盲検 A の指摘 — R5 の決まりの意図した変更)。失敗例 N4(dir を自分の時刻だけで判じる)は、前の掃除の検では拒まれなかった",
+      "changed_modules": [
+        "M5"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4"
+      ],
+      "reason": "日数は R5 の決まり(wheel と同じ 7 日)なので ADR の本文と検も変わる — 予想が狭かった(漏れではない)。掃除の検は「使った entry の在る dir の時刻は古い」本番の形を持っていなかった",
+      "revision": "掃除の検の使った entry の在る鍵の dir の時刻を 7 日前に置いた(c1a73eeda)。N4 を拒む事を確かめた"
+    },
+    {
+      "id": "S5",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "保存先は worker の機体の disk の dir(env DOEFF_HY_CODE_STORE)で、判断は CPU の数・機体の形に依らない"
+    },
+    {
+      "id": "S6",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "保存先は機体ごと(worker の state の下)で、機体をまたいで分け合わない。機体をまたぐ保存先は要件に無く、作るなら M1 の effect を替える別の設計になる"
+    },
+    {
+      "id": "S7",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "保存先は速さのための cache で、doeff-cluster の模擬の世界(sim/env_world.hy)は保存先を中身の印の file の代役で持ち、entry の並びを写さない。M5 の判断は純粋で、検は tmp の dir で確かめている"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "除く順を変えた版(c1a73eeda)で、変わった file が code_store.py と検だけで、保存先の検・世代の検・準備の道具の test_e・掃除の検・ADR の法が通る",
+      "observation": "変わった file 3 つ(code_store.py・test_bytecode_guard.py・test_code_store_entries.py)・20 passed・exit 0",
+      "evidence": {
+        "path": "evidence/scenarios/positive.txt",
+        "sha256": "7cdc1e8fb4353ea1f6570bdddd12c9e0b5b2e19fb88e0a7ca421d149ea9e6f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "準備の道具が並びを自分で綴り鍵 1 つに entry 1 つで書く差分(N1)を、ADR の法 one-bytecode-store-entry が「2 つ目の保存先」として拒む",
+      "observation": "AssertionError: bytecode の 2 つ目の保存先(ADR-DOE-BUILD-002 R1)— bytecode_pool.hy を名指し・1 failed・exit 1",
+      "evidence": {
+        "path": "evidence/scenarios/N1-negative.txt",
+        "sha256": "5e311a41724142d9aca442c33fd030b7105c9d303c8bcc65e58e8f6e8c427af5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "直した code_store.py で、上限を越える数の環境が順に読んでも崖にならず、一度きりの環境が準備の代役を押し出さない",
+      "observation": "17 の環境で 2 巡目から毎巡 2 本・20 で 5 本・32 で 17 本・一度きり 5〜40 個で準備の代役の外れ 0/3",
+      "evidence": {
+        "path": "evidence/a/A-repro-after-fix.txt",
+        "sha256": "33bd4f637d559e48a65730baa5af376b69b0ca7fa2aae5d5ca8943953d24aa23"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "指紋をどの環境でも同じ名にする差分(N2 — 鍵 1 つに entry 1 つの直す前の形)を、交互に読む 3 本の検が拒む",
+      "observation": "test_writers_with_different_records…(1 == 2)・test_two_macro_versions…(('one', 2))・test_e…(('one', 2, ['use/user.hy']))の 3 failed・exit 1",
+      "evidence": {
+        "path": "evidence/scenarios/N2-negative.txt",
+        "sha256": "4e53d7b948bf5b609e2b2bd3690a0c74f4368d8739e4501fdc43ef922b86737b"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "足した entry を頭に置く着地した版(27f35483)の code_store.py を、盲検 A を受けて足した単体の検 3 件が拒む",
+      "observation": "test_a_new_entry_waits_behind…・test_one_off_environments…・test_more_environments_than_the_limit… の 3 failed・ほか 8 passed・exit 1",
+      "evidence": {
+        "path": "evidence/a/A-new-tests-on-the-landed-version.txt",
+        "sha256": "ae964dd59868fcbfd897e0bab006a21e9264ba8b14f7afa696e3dab4045a9f09"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、RECORD_TAG だけを次の世代へ上げた書き手と交互に読む検が、M1 を変えずに通る",
+      "observation": "test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries PASSED(20 passed の内)",
+      "evidence": {
+        "path": "evidence/scenarios/positive.txt",
+        "sha256": "7cdc1e8fb4353ea1f6570bdddd12c9e0b5b2e19fb88e0a7ca421d149ea9e6f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分(import の口が読めない記録の entry を除く)を直した版に当てると、世代の違う書き手の検が拒む",
+      "observation": "AssertionError: ('this', 2)・assert 1 == 0・1 failed・exit 1",
+      "evidence": {
+        "path": "evidence/scenarios/N3-negative.txt",
+        "sha256": "9f1ad11a68a27e2cc4080cb31ad910d199a715be2ad70691a1186c772cf268b8"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "直した版で掃除の検(使った entry の在る鍵の dir の時刻も 7 日前)と前からの掃除の検が通る",
+      "observation": "test_env_store.hy の 5 件 PASSED(20 passed の内)",
+      "evidence": {
+        "path": "evidence/scenarios/positive.txt",
+        "sha256": "7cdc1e8fb4353ea1f6570bdddd12c9e0b5b2e19fb88e0a7ca421d149ea9e6f0c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "掃除が dir を自分の時刻だけで判じる差分(N4)を、強めた掃除の検が「使った entry を消した」として拒む",
+      "observation": "AssertionError: 使った entry を消した・1 failed 1 passed・exit 1(強める前の検では 2 passed — evidence/scenarios/N4-against-the-earlier-test.txt)",
+      "evidence": {
+        "path": "evidence/scenarios/N4-negative.txt",
+        "sha256": "1d18c238a14eabbd19cb1746b46c02135746450ae629a163bae4d159049dcc90"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
