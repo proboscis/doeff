@@ -41,14 +41,18 @@ doeff_hy_bytecode_guard
 
 実装完了まで。branch `wt/hy-bytecode-guard-internals`(基準版 = 分かれ目の origin/main d406b28914b20875e8b452c0b384adf8a0390ea7):
 
-| commit | 中身 |
-| --- | --- |
-| 0de52de26 | 盲検の前の実装 — reader macro の変更の検・gensym の数えの検・検の補助 `_probe_on_pypi_hy`・records・ADR・表の注釈 |
-| a63514a27 | 盲検の前の主張(evidence/design-pre-blind.md)と直す前の失敗ケースの log |
-| 4eec37a06 | 盲検 A・B を受けた直し — venv の Hy の版の fixture・表に無かった名と export の検・表の名の写しを records.MACRO_TABLE へ |
-| 1c9f4699a | 実験 S2 で見つけた漏れの直し — test_gensym_canonical.py の名の形の写しを records へ |
+| commit(測った版・branch wt/hy-bytecode-guard-internals) | 着地に出した版(branch wt/hy-bytecode-guard-internals-r2) | 中身 |
+| --- | --- | --- |
+| 0de52de26 | b693c76b7 | 盲検の前の実装 — reader macro の変更の検・gensym の数えの検・検の補助 `_probe_on_pypi_hy`・records・ADR・表の注釈 |
+| a63514a27 | f3cf805f3 | 盲検の前の主張(evidence/design-pre-blind.md)と直す前の失敗ケースの log |
+| 4eec37a06 | 1f4e7c007 | 盲検 A・B を受けた直し — venv の Hy の版の fixture・表に無かった名と export の検・表の名の写しを records.MACRO_TABLE へ |
+| 1c9f4699a | 280f0251e | 実験 S2 で見つけた漏れの直し — test_gensym_canonical.py の名の形の写しを records へ |
+| ef3bb4e9c | d13b0c465 | この記録 |
 
-main への着地は、この記録を置いた後に `ai land request` で行う。受入の条の「doeff main で確かめる」は着地の後に main の版で測る。
+着地の処理は branch を commit ごとに rebase で並べ直すので、origin/main(1410ce508 — ADR-DOE-HY-008 の R6 を変えた 6533804cf を含む)の
+上へ同じ 5 commit を載せ直した branch を出した。載せ直しで変わったのは ADR-DOE-HY-008 の衝突の解き方(事実の節は main の事実と
+この便の事実を両方残し、R6 は main の文・R7 はこの便の書き足し)だけで、検と包みの code は同じ。載せ直した版でも触った検を
+走らせた(final-checks-r2.log)。log の頭の版は測った時の版(左の列)。受入の条の「doeff main で確かめる」は着地の後に main の版で測る。
 
 ## 要件(固定)
 

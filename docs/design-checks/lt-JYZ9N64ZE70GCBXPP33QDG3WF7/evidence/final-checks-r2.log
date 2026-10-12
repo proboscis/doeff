@@ -1,0 +1,11 @@
+== 載せ直した版の確かめ: 版 d13b0c465886d59d845fe750637100f68c2fe8fd(+ 表の注釈と design.md の未 commit の変更)・origin/main 1410ce508 の上・本物の PyPI の Hy 1.3.1
+-- packages/doeff-hy/tests/test_bytecode_guard.py
+28 passed, 1 warning in 23.77s
+-- packages/doeff-hy/tests/test_gensym_canonical.py
+8 passed, 1 warning in 24.59s
+-- packages/doeff-hy/tests/test_macro_use_record.py::test_the_digest_of_deff_does_not_depend_on_computing_defrecord_and_defwire_first
+1 passed, 1 warning in 17.91s
+-- docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+8 passed, 1 warning in 36.17s
+-- tests/test_contract_table_follows_packages.py
+15 passed, 1 warning in 2.17s
