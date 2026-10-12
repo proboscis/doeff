@@ -130,6 +130,7 @@
     "doeff-cancel-must-be-effectful",
     "doeff-classify-effect-must-lift-to-perform",
     "doeff-claude-code-lent-credential-not-in-child-env",
+    "doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers",
     "doeff-cluster-coordinator-core-does-not-know-where-its-lines-go",
     "doeff-cluster-program-arguments-are-built-in-one-place",
     "doeff-cluster-report-tables-are-read-by-their-owner",

@@ -163,8 +163,9 @@ def body():
     yield StopRequested()
     print('ready', flush=True)
     started = time.monotonic()
-    due = DueAt(at=int(time.time() * 1000) + 60000)
-    yield AwaitNextTick(WorkerPolicy(), None, WakeSet(due=due, bells=(), exits=()))
+    began = int(time.time() * 1000)
+    due = DueAt(at=began + 60000)
+    yield AwaitNextTick(WorkerPolicy(), None, WakeSet(due=due, bells=(), exits=()), began, round(time.monotonic() * 1000))
     reason = yield StopRequested()
     print(f'{reason} {time.monotonic() - started:.3f}', flush=True)
 

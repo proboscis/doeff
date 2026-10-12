@@ -458,6 +458,8 @@ class AwaitNextTick(EffectBase[None]):
     policy: WorkerPolicy
     changed: Future[bool] | None
     wakes: WakeSet
+    began: int
+    began_mono_ms: int
     stopping: bool = False
 
 @dataclass(frozen=True)

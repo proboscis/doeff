@@ -1,5 +1,5 @@
 ;;; 検体(違反をわざと書いた file): worker の沈黙の起点(last-ok の対・送りの始めの対)を、沈黙の計り silent-ms の外で読む・片方だけ書く。
-;;; doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure が 9・13・17・20・23・26・29・32・35 行目で発火し、38〜49 行目では
+;;; doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure が 9・13・17・20・23・26・29・32・35・38・41 行目で発火し、44〜55 行目では
 ;;; 発火しない。
 (import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.worker_due [fence-due])
@@ -33,6 +33,12 @@
 
 (defn attribute-form [state now-ms]
   (- now-ms (. state last-ok-ms)))
+
+(defn anchor-as-the-now-reading [state now-ms]
+  (silent-ms now-ms state.last-ok-mono-ms state.last-ok-ms state.last-ok-mono-ms))
+
+(defn pair-shifted-forward-from-itself [state grace]
+  (setv state.last-ok-ms (+ state.last-ok-ms grace) state.last-ok-mono-ms (+ state.last-ok-mono-ms grace)))
 
 
 (defn measured-in-the-one-place [state beating now-ms now-mono-ms]
