@@ -1,0 +1,203 @@
+    self._performed_passed(argument, facts)
+../../doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632: in _performed_passed
+    self._performed_passed(argument, facts)
+../../doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632: in _performed_passed
+    self._performed_passed(argument, facts)
+../../doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632: in _performed_passed
+    self._performed_passed(argument, facts)
+../../doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632: in _performed_passed
+    self._performed_passed(argument, facts)
+../../doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632: in _performed_passed
+    self._performed_passed(argument, facts)
+../../doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632: in _performed_passed
+E                 (<- failed (| str None) (PostQuestionWaiver waiver))
+E                 (<- (slog (+ LOG-LABEL ": 問いの見送り — " question.id " を " question.sender " へ" (if (is failed None) "" (+ "(出せない — " failed ")")))
+E                 (when (is failed None)
+    self._performed_passed(argument, facts)
+  _performed_passed()  /work/toolset/worktrees/doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632
+    self._performed_passed(argument, facts)
+  _performed_passed()  /work/toolset/worktrees/doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632
+    self._performed_passed(argument, facts)
+  _performed_passed()  /work/toolset/worktrees/doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632
+    self._performed_passed(argument, facts)
+  _performed_passed()  /work/toolset/worktrees/doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632
+    self._performed_passed(argument, facts)
+  _performed_passed()  /work/toolset/worktrees/doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632
+    self._performed_passed(argument, facts)
+  _performed_passed()  /work/toolset/worktrees/doeff-wt-2854-cpu-per-step/packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py:2632
+      (<- failed (| str None) (PostQuestionWaiver waiver))
+      (<- (slog (+ LOG-LABEL ": 問いの見送り — " question.id " を " question.sender " へ" (if (is failed None) "" (+ "(出せない — " failed ")")))
+      (when (is failed None)
+    - controllers/agora_sim/tests/test_cli_failed_detail_on_turn_world.hy
+    - controllers/scheduling/tests/test_input_failed_rows.hy
+    - controllers/scheduling/tests/test_passed_over_on_record.hy
+    - controllers/screen/tests/test_failed_requests.hy
+PYCALLS-TOOL 4 toggle=True toggles=330 toggle_seconds=0.013
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_an_empty_config_requires_no_summary_and_declares_no_goal CALL=84824 steps=6 cpu=0.1184
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_malformed_summary_section_stops_the_start CALL=1501 steps=23 cpu=0.0023
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_the_board_limits_come_from_the_contract CALL=559 steps=6 cpu=0.0028
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_contract_without_the_max_length_stops_the_start CALL=773 steps=22 cpu=0.0062
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_goal_section_reads_to_the_same_rule CALL=1028 steps=6 cpu=0.0012
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_malformed_goal_section_stops_the_start CALL=2033 steps=31 cpu=0.0035
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_declared_home_namespace_is_read_verbatim CALL=783 steps=6 cpu=0.0016
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_no_declaration_of_the_home_namespace_reads_as_none CALL=843 steps=6 cpu=0.0016
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_malformed_board_section_stops_the_start CALL=1508 steps=27 cpu=0.0021
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_the_checked_in_kanban_config_declares_agora_redesign_as_the_home_namespace CALL=5973 steps=6 cpu=0.0045
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_the_shipped_board_lets_no_request_chain_decide_a_column CALL=5277 steps=6 cpu=0.0037
+PYCALLS controllers/kanban/tests/test_board_config.hy::test_a_malformed_columns_section_stops_the_start CALL=2710 steps=46 cpu=0.0034
+PYCALLS controllers/kanban/tests/test_board_result_spelling.hy::test_each_board_result_is_spelled_with_its_wire_names CALL=5075 steps=44 cpu=0.0044
+PYCALLS controllers/kanban/tests/test_board_result_spelling.hy::test_the_settlement_carries_the_spelled_result_under_the_board_translations CALL=1062 steps=71 cpu=0.0009
+PYCALLS controllers/kanban/tests/test_board_result_spelling.hy::test_the_core_request_has_no_answer_without_the_board_translation CALL=555 steps=16 cpu=0.0010
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_mark_round_trips_through_minting_judging_and_stripping CALL=452 steps=6 cpu=0.0007
+PYCALLS controllers/kanban/tests/test_body.hy::test_a_line_without_the_mark_is_never_a_version CALL=538 steps=6 cpu=0.0007
+PYCALLS controllers/kanban/tests/test_body.hy::test_a_card_without_versions_reads_the_birth_body CALL=4878 steps=6 cpu=0.0038
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_legacy_fold_walks_exactly_the_five_contract_keys_in_order CALL=403 steps=6 cpu=0.0004
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_projection_is_the_last_marked_line_by_position CALL=906 steps=6 cpu=0.0010
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_answer_does_not_depend_on_the_order_of_supply CALL=703 steps=6 cpu=0.0012
+PYCALLS controllers/kanban/tests/test_body.hy::test_two_versions_at_the_same_instant_are_broken_by_the_row_key CALL=703 steps=6 cpu=0.0011
+PYCALLS controllers/kanban/tests/test_body.hy::test_a_version_beats_a_legacy_birth_body CALL=525 steps=6 cpu=0.0006
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_birth_body_shape_is_chosen_by_the_declared_types CALL=1276 steps=6 cpu=0.0020
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_last_version_is_found_beyond_any_tail_window CALL=1729 steps=6 cpu=0.0022
+PYCALLS controllers/kanban/tests/test_body.hy::test_the_projection_answers_exactly_the_declared_fields CALL=490 steps=6 cpu=0.0007
+PYCALLS controllers/kanban/tests/test_human_accept_satisfies_criteria.hy::test_a_human_accept_declares_and_checks_a_criterion_on_a_card_without_criteria CALL=615 steps=6 cpu=0.0008
+PYCALLS controllers/kanban/tests/test_human_accept_satisfies_criteria.hy::test_a_human_accept_checks_the_unmet_criteria_and_keeps_the_met_ones CALL=568 steps=6 cpu=0.0006
+PYCALLS controllers/kanban/tests/test_human_accept_satisfies_criteria.hy::test_a_human_accept_on_an_accepted_card_with_met_criteria_writes_nothing CALL=521 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_human_accept_satisfies_criteria.hy::test_a_machine_ack_does_not_touch_the_criteria CALL=494 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_identities.hy::test_identities_match_the_vocabulary CALL=67838 steps=6 cpu=0.1749
+PYCALLS controllers/kanban/tests/test_identities.hy::test_kind_writers_come_from_the_identities CALL=53258 steps=6 cpu=0.0886
+PYCALLS controllers/kanban/tests/test_identities.hy::test_intent_writes_as_is_the_materializing_principal CALL=56823 steps=6 cpu=0.0934
+PYCALLS controllers/kanban/tests/test_identities.hy::test_module_contracts_copy_the_identities CALL=201473 steps=6 cpu=0.1663
+PYCALLS controllers/kanban/tests/test_identities.hy::test_valves_open_exactly_the_permitted_arms CALL=48190 steps=6 cpu=0.1145
+PYCALLS controllers/kanban/tests/test_identities.hy::test_each_operator_is_one_decision_module CALL=57432 steps=6 cpu=0.1047
+PYCALLS controllers/kanban/tests/test_identities.hy::test_retired_operators_stay_retired CALL=47983 steps=6 cpu=0.1000
+PYCALLS controllers/kanban/tests/test_identities.hy::test_foreign_writes_are_listed_by_the_other_contract CALL=99560 steps=6 cpu=0.1232
+PYCALLS controllers/kanban/tests/test_identities.hy::test_column_table_matches_the_contract CALL=64678 steps=6 cpu=0.1175
+PYCALLS controllers/kanban/tests/test_identities.hy::test_issue_fields_and_human_tags_match_the_contract CALL=56317 steps=6 cpu=0.1156
+PYCALLS controllers/kanban/tests/test_identities.hy::test_body_summary_move_and_thread_copies_match_the_contract CALL=109591 steps=6 cpu=0.1548
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_the_intent_names_and_the_criterion_spelling_match_the_board_vocabulary CALL=403 steps=11 cpu=0.0004
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_every_board_name_reads_its_declared_type CALL=37587 steps=6 cpu=0.0292
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_a_payload_whose_json_shape_differs_is_malformed_with_the_field CALL=2839 steps=6 cpu=0.0044
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_unknown_fields_are_read_away_and_wire_names_map_to_the_fields CALL=1327 steps=6 cpu=0.0017
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_named_keys_read_the_same_fields_as_the_old_target_table CALL=2500 steps=6 cpu=0.0028
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_the_card_body_shape_is_chosen_by_the_declared_types CALL=1292 steps=6 cpu=0.0014
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_criteria_drop_malformed_items_and_fill_the_optional_fields CALL=6356 steps=6 cpu=0.0047
+PYCALLS controllers/kanban/tests/test_kanban_board_payloads.hy::test_rows_carry_the_landed_instant_and_the_milestone_and_human_ack_fields_without_inventing_values CALL=5132 steps=6 cpu=0.0042
+PYCALLS controllers/kanban/tests/test_kanban_judgment_lookups.hy::test_a_criterion_id_not_in_the_row_answers_none CALL=401 steps=6 cpu=0.0004
+PYCALLS controllers/kanban/tests/test_kanban_judgment_lookups.hy::test_merging_an_unknown_criterion_id_is_refused_and_a_known_one_carries_its_mark CALL=457 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_kanban_judgment_lookups.hy::test_folding_keeps_the_held_request_drops_settled_and_stale_ones CALL=547 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_kanban_judgment_lookups.hy::test_a_writer_without_a_band_is_not_named_for_that_band CALL=463 steps=6 cpu=0.0004
+PYCALLS controllers/kanban/tests/test_kanban_judgment_lookups.hy::test_a_request_aiming_at_a_key_taken_earlier_is_held CALL=488 steps=6 cpu=0.0004
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_tag_spelling_shapes_are_refused_where_the_request_is_read CALL=3569 steps=6 cpu=0.0027
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_tag_families_are_judged_in_core CALL=548 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_say_shapes_are_refused_where_the_request_is_read CALL=2690 steps=6 cpu=0.0021
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_say_writers_and_the_origin_instant_are_judged_in_core CALL=1423 steps=6 cpu=0.0014
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_relate_shapes_are_refused_where_the_request_is_read CALL=1132 steps=6 cpu=0.0010
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_relate_writers_rows_and_cycles_are_judged_in_core CALL=1439 steps=6 cpu=0.0018
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_a_request_that_breaks_a_shape_and_a_judgment_gets_the_shape_refusal CALL=1829 steps=6 cpu=0.0018
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_new_fields_and_the_naming_are_read_where_the_request_is_read CALL=2250 steps=6 cpu=0.0081
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_new_writers_are_judged_on_the_read_naming_in_core CALL=2101 steps=6 cpu=0.0025
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_new_tags_count_origin_and_milestone_shapes_are_read_where_the_request_is_read CALL=2835 steps=6 cpu=0.0022
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_unique_tags_keeps_the_first_of_each_in_the_input_order CALL=401 steps=6 cpu=0.0006
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_the_parent_chain_follows_relations_without_an_index CALL=543 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_the_tag_list_of_the_old_shape_is_refused_at_the_door CALL=404 steps=6 cpu=0.0004
+PYCALLS controllers/kanban/tests/test_kanban_request_shapes.hy::test_a_conversation_naming_is_no_longer_read CALL=385 steps=6 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_every_kind_table_copies_its_contract_fields_and_states CALL=1745 steps=6 cpu=0.0130
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_the_row_fields_do_not_collide_with_any_contract_field CALL=1422 steps=6 cpu=0.0121
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_every_kind_becomes_a_valid_table_keyed_by_the_row_id CALL=154072 steps=6 cpu=0.0746
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_the_board_owns_its_eight_tables_and_the_screen_reads_the_same_declarations CALL=90732 steps=6 cpu=0.0504
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_axis_objects_rebuild_the_contract_axes_with_their_original_names CALL=435 steps=6 cpu=0.0012
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_an_axis_outside_the_contract_is_refused_by_the_protocol CALL=408 steps=6 cpu=0.0006
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_an_open_contract_axis_carries_its_rest_in_one_field_and_the_closed_ones_do_not CALL=1943 steps=6 cpu=0.0112
+PYCALLS controllers/kanban/tests/test_kinds.hy::test_the_row_type_of_a_declared_table_lists_the_table_fields_in_order_and_its_writes_name_row_fields CALL=725 steps=6 cpu=0.0006
+PYCALLS controllers/kanban/tests/test_records_gaps.hy::test_every_read_table_is_served CALL=5955 steps=6 cpu=0.0027
+PYCALLS controllers/kanban/tests/test_records_gaps.hy::test_taking_a_read_table_back_out_of_the_served_schema_is_red CALL=11030 steps=6 cpu=0.0043
+PYCALLS controllers/kanban/tests/test_records_gaps.hy::test_a_kept_field_the_declaration_does_not_have_is_red CALL=11670 steps=6 cpu=0.0051
+PYCALLS controllers/kanban/tests/test_records_gaps.hy::test_a_stream_a_field_or_a_selection_the_schema_does_not_serve_is_red CALL=10763 steps=6 cpu=0.0044
+PYCALLS controllers/kanban/tests/test_records_gaps.hy::test_the_read_declarations_name_what_the_translations_read CALL=397 steps=16 cpu=0.0005
+PYCALLS controllers/kanban/tests/test_semgrep_fixtures.hy::test_every_rule_stops_its_bad_fixture_and_passes_its_ok_fixture CALL=27700 steps=23 cpu=0.0297
+PYCALLS controllers/kanban/tests/test_startup_folds_are_linear.hy::test_folding_the_read_requests_is_linear CALL=1290147 steps=6 cpu=2.2198
+PYCALLS controllers/kanban/tests/test_startup_folds_are_linear.hy::test_reading_a_page_into_board_intents_is_linear CALL=2985961 steps=94075 cpu=2.0513
+PYCALLS controllers/kanban/tests/test_watch_counts_home_open_cards.hy::test_a_card_triaged_counts_only_open_home_cards_outside_the_done_column CALL=3423 steps=6 cpu=0.0042
+PYCALLS controllers/kanban/tests/test_watch_counts_home_open_cards.hy::test_b_priority_follows_goal_names_only_home_cards CALL=2809 steps=6 cpu=0.0019
+PYCALLS controllers/kanban/tests/test_watch_counts_home_open_cards.hy::test_c_an_undeclared_home_namespace_is_unknown_not_green CALL=817 steps=6 cpu=0.0006
+PYCALLS controllers/kanban/tests/test_watch_owner_is_the_listed_owner.hy::test_the_watch_asks_for_the_owner_the_list_shows CALL=20362 steps=132 cpu=0.0096
+PYCALLS controllers/kanban/tests/test_watch_owner_is_the_listed_owner.hy::test_the_watch_aligns_the_owners_the_list_shows CALL=21911 steps=132 cpu=0.0106
+PYCALLS controllers/card_scheduler/tests/test_account_log_line.hy::test_spent_accounts_carry_why_and_the_moment_they_come_back CALL=983 steps=3 cpu=0.0011
+PYCALLS controllers/card_scheduler/tests/test_account_log_line.hy::test_account_line_lists_each_spent_and_open_account CALL=1010 steps=3 cpu=0.0010
+PYCALLS controllers/card_scheduler/tests/test_account_log_line.hy::test_an_account_with_stale_usage_is_spent_as_the_gate_reads_it CALL=390 steps=3 cpu=0.0004
+PYCALLS controllers/card_scheduler/tests/test_account_log_line.hy::test_spent_why_and_back_at_do_not_move_the_decision CALL=10143 steps=3 cpu=0.0053
+PYCALLS controllers/card_scheduler/tests/test_account_log_line.hy::test_a_placeable_account_carries_no_spent_why CALL=235 steps=5 cpu=0.0004
+PYCALLS controllers/card_scheduler/tests/test_facts_moved.hy::test_a_a_signal_before_the_next_read_arms_one_settle_deadline_at_that_moment CALL=506 steps=23 cpu=0.0006
+PYCALLS controllers/card_scheduler/tests/test_facts_moved.hy::test_b_signals_while_the_settle_deadline_is_armed_change_nothing CALL=444 steps=9 cpu=0.0005
+PYCALLS controllers/card_scheduler/tests/test_own_bindings_on_the_ceiling.hy::test_a_own_bindings_whose_turn_stopped_leave_the_ceiling_open CALL=7047 steps=3 cpu=0.0069
+PYCALLS controllers/card_scheduler/tests/test_own_bindings_on_the_ceiling.hy::test_b_just_dispatched_and_working_bindings_hold_their_seats CALL=794 steps=3 cpu=0.0006
+PYCALLS controllers/card_scheduler/tests/test_own_bindings_on_the_ceiling.hy::test_c_no_turn_since_the_binding_reads_as_starting CALL=523 steps=3 cpu=0.0003
+PYCALLS controllers/card_scheduler/tests/test_ready_reads_dispatch_state.hy::test_ready_cards_are_the_cards_the_shared_predicate_calls_ready CALL=1073 steps=3 cpu=0.0007
+PYCALLS controllers/card_scheduler/tests/test_ready_reads_dispatch_state.hy::test_the_decision_files_do_not_spell_the_dispatch_expression CALL=1163 steps=5 cpu=0.0014
+PYCALLS controllers/card_scheduler/tests/test_ready_reads_dispatch_state.hy::test_the_board_rows_and_the_scheduler_call_the_same_cards_ready CALL=79276 steps=719 cpu=0.0538
+PYCALLS controllers/card_scheduler/tests/test_requester_by.hy::test_a_conversation_requester_is_named_by_its_messaging_name CALL=399 steps=3 cpu=0.0003
+PYCALLS controllers/card_scheduler/tests/test_requester_by.hy::test_a_messaging_requester_keeps_its_name CALL=193 steps=3 cpu=0.0002
+PYCALLS controllers/card_scheduler/tests/test_room_openings.hy::test_running_turns_take_the_room_the_gate_would_refuse CALL=609 steps=3 cpu=0.0004
+PYCALLS controllers/card_scheduler/tests/test_room_openings.hy::test_all_room_open_when_no_turn_runs CALL=632 steps=3 cpu=0.0004
+PYCALLS controllers/card_scheduler/tests/test_room_openings.hy::test_waiting_conversations_take_the_room_before_new_cards CALL=716 steps=3 cpu=0.0006
+PYCALLS controllers/card_scheduler/tests/test_scenes.hy::test_weighted_wait_orders_by_weight_times_wait CALL=1160 steps=3 cpu=0.0009
+PYCALLS controllers/card_scheduler/tests/test_scenes.hy::test_dependency_done_or_reported_counts_as_finished CALL=993 steps=3 cpu=0.0006
+PYCALLS controllers/card_scheduler/tests/test_scenes.hy::test_blocked_head_is_backfilled_and_nothing_is_held CALL=1558 steps=3 cpu=0.0009
+PYCALLS controllers/card_scheduler/tests/test_scenes.hy::test_closed_room_waits_and_open_room_dispatches CALL=2421 steps=3 cpu=0.0012
+PYCALLS controllers/card_scheduler/tests/test_scenes.hy::test_let_go_card_is_nudged_then_returned_then_held CALL=1724 steps=3 cpu=0.0010
+PYCALLS controllers/card_scheduler/tests/test_strategies.hy::test_reserve_high_keeps_room_for_p0_p1 CALL=784 steps=3 cpu=0.0006
+PYCALLS controllers/card_scheduler/tests/test_strategies.hy::test_strict_backfill_orders_by_priority_then_age CALL=416 steps=3 cpu=0.0003
+PYCALLS controllers/card_scheduler/tests/test_strategies.hy::test_wfq_splits_picks_by_weight CALL=13799 steps=3 cpu=0.0071
+PYCALLS controllers/card_scheduler/tests/test_strategies.hy::test_fifo_ignores_priority CALL=368 steps=3 cpu=0.0003
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_the_cutoff_leaves_the_reserve_before_the_next_beat CALL=201 steps=3 cpu=0.0003
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_a_stage_takes_an_equal_share_of_the_window_left CALL=223 steps=3 cpu=0.0003
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_the_sweep_reaches_every_key_in_turn CALL=288 steps=3 cpu=0.0003
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_a_sweep_done_in_one_cycle_leaves_no_carry CALL=227 steps=3 cpu=0.0002
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_the_beat_and_the_stop_win_over_the_waiver CALL=258 steps=3 cpu=0.0003
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_a_batch_of_endings_runs_the_waiver_once CALL=310 steps=3 cpu=0.0002
+PYCALLS controllers/patrol/tests/test_patrol_cadence_judgment.hy::test_reported_stalls_of_unjudged_cards_are_carried CALL=189 steps=3 cpu=0.0002
+PYCALLS controllers/patrol/tests/test_patrol_closure.hy::test_the_patrol_job_is_closed_under_its_declared_production_foundation CALL=42502746 steps=7 cpu=37.5574
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_the_kind_follows_the_sending_rules CALL=235 steps=3 cpu=0.0005
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_only_unreported_marks_are_new CALL=247 steps=3 cpu=0.0006
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_the_hourly_note_resets_the_reported_marks CALL=224 steps=3 cpu=0.0005
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_the_body_names_the_reds_on_the_first_line CALL=242 steps=3 cpu=0.0006
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_the_owner_is_the_api_owner_field_but_the_dispatcher CALL=252 steps=3 cpu=0.0005
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_the_owners_remark_under_its_messaging_name_is_its_own CALL=1534 steps=39 cpu=0.0029
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_the_stall_word_follows_the_reasons CALL=2560 steps=48 cpu=0.0025
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_a_closed_card_and_a_fresh_owner_are_not_stalled CALL=272 steps=3 cpu=0.0003
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_a_reported_stall_is_not_reported_again CALL=737 steps=12 cpu=0.0012
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_a_stall_gives_the_same_note_in_any_cycle_and_any_process CALL=861 steps=30 cpu=0.0012
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_an_owner_waiting_on_the_users_answer_is_not_stalled CALL=720 steps=12 cpu=0.0011
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_a_kustomization_being_applied_is_red_only_after_the_limit CALL=284 steps=3 cpu=0.0005
+PYCALLS controllers/patrol/tests/test_patrol_judgment.hy::test_a_volume_at_eighty_percent_is_red CALL=295 steps=3 cpu=0.0006
+PYCALLS controllers/patrol/tests/test_patrol_owner_reads_the_listed_dispatcher.hy::test_the_judgment_modules_name_no_dispatcher_but_the_listed_field CALL=593795 steps=3 cpu=0.4552
+PYCALLS controllers/patrol/tests/test_patrol_owner_reads_the_listed_dispatcher.hy::test_the_owner_is_judged_by_the_listed_field_not_by_the_spelling CALL=440 steps=3 cpu=0.0006
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_every_periodic_knob_and_conversation_destination_is_on_the_registry CALL=19854 steps=3 cpu=0.0272
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_every_patrol_sits_beside_the_declaration_of_its_job CALL=16186 steps=3 cpu=0.0217
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_the_registry_file_is_generated_from_the_definitions CALL=242 steps=3 cpu=0.0012
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_every_registry_row_names_a_declared_knob_and_is_complete CALL=16823 steps=3 cpu=0.0220
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_a_new_periodic_job_off_the_registry_is_named CALL=232 steps=3 cpu=0.0005
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_a_conversation_destination_needs_an_agent_row CALL=233 steps=3 cpu=0.0004
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_a_row_whose_knob_left_the_declarations_is_stale CALL=239 steps=3 cpu=0.0004
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_every_running_check_of_the_patrol_is_on_the_check_table CALL=390 steps=3 cpu=0.0006
+PYCALLS controllers/patrol/tests/test_patrol_registry.hy::test_a_new_check_off_the_table_and_a_stale_row_are_named CALL=246 steps=3 cpu=0.0004
+PYCALLS controllers/artifact_store/tests/test_artifact_store_closure.hy::test_the_artifact_store_process_is_closed_under_its_production_foundation CALL=24214 steps=6 cpu=0.2187
+PYCALLS controllers/artifact_store/tests/test_artifact_store_closure.hy::test_a_foundation_without_the_common_outer_leaves_the_log_open CALL=13920 steps=6 cpu=0.0346
+PYCALLS controllers/artifact_store/tests/test_artifact_store_closure.hy::test_the_artifact_store_job_is_closed_under_the_host_job_foundation CALL=16409 steps=6 cpu=0.0376
+PYCALLS controllers/artifact_store/tests/test_artifact_store_closure.hy::test_the_artifact_store_job_under_a_foundation_without_the_host_leaves_the_settings_open CALL=13982 steps=6 cpu=0.0295
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_id_vocabulary_is_a_flat_html_file_name CALL=653 steps=6 cpu=0.0010
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_author_spelling_is_a_conversation_id CALL=453 steps=6 cpu=0.0007
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_author_verdict_reads_only_the_body_author CALL=431 steps=6 cpu=0.0007
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_withdraw_gate_lets_only_the_recorded_author_or_force CALL=512 steps=6 cpu=0.0008
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_withdraw_plan_withdraws_only_the_version_that_was_judged CALL=441 steps=6 cpu=0.0007
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_put_plan_keeps_the_birth_and_an_undeclared_delivery_keeps_the_prior_author CALL=443 steps=6 cpu=0.0008
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_restore_gate_restores_only_a_removed_body_onto_an_empty_id CALL=498 steps=6 cpu=0.0009
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_content_fingerprint_comes_from_the_same_bytes CALL=417 steps=6 cpu=0.0008
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_unreadable_is_never_folded_into_absent_or_refused CALL=622 steps=6 cpu=0.0027
+PYCALLS controllers/artifact_store/tests/test_artifact_store_core.hy::test_the_request_rules_refuse_in_the_agora_1_order CALL=1135 steps=6 cpu=0.0018
+PYCALLS controllers/artifact_store/tests/test_artifact_store_probe_allocations.hy::test_probes_alone_do_not_grow_the_allocations_of_the_entry_program CALL=248317 steps=49104 cpu=1.4592
+PYCALLS controllers/artifact_store/tests/test_artifact_store_probe_allocations.hy::test_a_handler_that_keeps_every_answer_is_named_by_the_allocation_check CALL=257296 steps=53311 cpu=1.1874
+PYCALLS controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line CALL=2116409 steps=170859 cpu=3.8269
+PYCALLS-TOTAL CALL=51705312
+============= 1 failed, 164 passed, 1 warning in 84.09s (0:01:24) ==============
+変更箇所の検証が時間上限 60 秒に達したため中断しました。 ⚠ 直上の集計行はこの走行の結末ではない — 収集した 165 本を走り切っていない(集計の passed は打ち切りまでの部分計・failed 0 は「1 本も落ちなかった」ではない)

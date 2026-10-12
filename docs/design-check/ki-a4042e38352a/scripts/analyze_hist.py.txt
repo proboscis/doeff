@@ -1,0 +1,44 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+import json, statistics as st, sys, collections
+rows = json.load(open(sys.argv[1]))
+def q(xs, p):
+    xs = sorted(xs); i = (len(xs) - 1) * p; lo = int(i); hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (i - lo)
+for r in rows:
+    r["us"] = r["cpu"] / max(r["steps"], 1) * 1e6
+print("全観測", len(rows))
+for floor in (0, 1000, 10000, 50000, 100000):
+    sel = [r for r in rows if r["steps"] >= floor]
+    us = [r["us"] for r in sel]
+    if len(us) < 5: continue
+    print(f"steps>={floor:>6}: n={len(us):4d}  中央値 {st.median(us):6.1f} µs/歩  p10 {q(us,.1):6.1f}  p90 {q(us,.9):6.1f}  p99 {q(us,.99):7.1f}  max {max(us):8.1f}")
+# 1 つの log(= 1 回の走行)の中の分布: run ごとに中央値で割る
+byrun = collections.defaultdict(list)
+for r in rows: byrun[r["src"]].append(r)
+print("\n走行ごとの中央値(歩数>=10000 の検が 8 本以上の走行)")
+rel_all = []
+for src, rs in sorted(byrun.items()):
+    big = [r for r in rs if r["steps"] >= 10000]
+    if len(big) < 8: continue
+    med = st.median(r["us"] for r in big)
+    rel = [r["us"] / med for r in big]
+    rel_all += rel
+    print(f"  n={len(big):3d} 中央値 {med:6.1f} µs/歩  相対 p5 {q(rel,.05):.2f} p95 {q(rel,.95):.2f} max {max(rel):.2f} min {min(rel):.2f}  {src[-60:]}")
+print("\n走行内の相対値(検の比/その走行の中央値)の全体: n=", len(rel_all))
+for p in (.01, .05, .25, .5, .75, .95, .99):
+    print(f"  p{int(p*100):02d} {q(rel_all,p):.2f}")
+for k in (1.5, 2, 3):
+    hi = sum(1 for x in rel_all if x > k); lo = sum(1 for x in rel_all if x < 1/k)
+    print(f"  中央値の {k} 倍超 {hi} 本({hi/len(rel_all):.1%})・1/{k} 未満 {lo} 本({lo/len(rel_all):.1%})")
+# 同じ検が複数の走行に出る時の揺れ(歩数>=10000)
+bytest = collections.defaultdict(list)
+for r in rows:
+    if r["steps"] >= 10000: bytest[r["test"]].append(r)
+spreads = []
+for t, rs in bytest.items():
+    if len(rs) >= 2:
+        us = [r["us"] for r in rs]; spreads.append(max(us) / min(us))
+        # 歩数が同じ観測(同じ版)だけに絞ると別の機体・負荷の差
+print("\n同じ検を複数の走行で測った組:", len(spreads), "検  最大/最小の比 p50 %.2f p90 %.2f max %.2f" % (q(spreads,.5), q(spreads,.9), max(spreads)))

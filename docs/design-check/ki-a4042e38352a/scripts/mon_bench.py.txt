@@ -1,0 +1,72 @@
+import cProfile, sys, time, sysconfig
+
+def leaf(x):
+    return x + 1
+
+def mid(x):
+    return leaf(x) + leaf(x + 1)
+
+def work(n):
+    t = 0
+    for i in range(n):
+        t += mid(i)
+    return t
+
+def timed(label, f, n):
+    best = None
+    for _ in range(3):
+        t0 = time.process_time(); f(n); dt = time.process_time() - t0
+        best = dt if best is None else min(best, dt)
+    print(f"{label:28s} {best:.3f}s")
+    return best
+
+N = 300_000
+print("python", sys.version.split()[0], "free-threaded build:", bool(sysconfig.get_config_var("Py_GIL_DISABLED")))
+base = timed("baseline", work, N)
+
+# sys.monitoring: PY_START の数え (Python の関数の入りだけ)
+mon = sys.monitoring
+TOOL = mon.PROFILER_ID
+counter = [0]
+def on_start(code, offset):
+    counter[0] += 1
+def run_mon_start(n):
+    mon.use_tool_id(TOOL, "bench")
+    mon.register_callback(TOOL, mon.events.PY_START, on_start)
+    mon.set_events(TOOL, mon.events.PY_START)
+    try:
+        return work(n)
+    finally:
+        mon.set_events(TOOL, 0)
+        mon.register_callback(TOOL, mon.events.PY_START, None)
+        mon.free_tool_id(TOOL)
+counter[0] = 0
+t_start = timed("monitoring PY_START", run_mon_start, N)
+print("  counted per run:", counter[0] // 3, "(expected", N * 3 + 1, ")")
+
+# sys.monitoring: CALL (C の関数の呼びも含む)
+def on_call(code, offset, callable_, arg0):
+    counter[0] += 1
+def run_mon_call(n):
+    mon.use_tool_id(TOOL, "bench")
+    mon.register_callback(TOOL, mon.events.CALL, on_call)
+    mon.set_events(TOOL, mon.events.CALL)
+    try:
+        return work(n)
+    finally:
+        mon.set_events(TOOL, 0)
+        mon.register_callback(TOOL, mon.events.CALL, None)
+        mon.free_tool_id(TOOL)
+counter[0] = 0
+t_call = timed("monitoring CALL", run_mon_call, N)
+print("  counted per run:", counter[0] // 3)
+
+def run_cprofile(n):
+    pr = cProfile.Profile()
+    pr.enable()
+    try:
+        return work(n)
+    finally:
+        pr.disable()
+t_cp = timed("cProfile", run_cprofile, N)
+print(f"ratio  PY_START x{t_start/base:.2f}  CALL x{t_call/base:.2f}  cProfile x{t_cp/base:.2f}")

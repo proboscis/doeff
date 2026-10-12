@@ -1,0 +1,19 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+import re, sys, statistics as st
+rows = []
+for line in open(sys.argv[1], errors="replace"):
+    m = re.match(r"PYCALLS (\S+) (.*?) steps=(\d+) cpu=([0-9.]+)", line)
+    if m:
+        ev = dict(kv.split("=") for kv in m.group(2).split())
+        rows.append((m.group(1), {k: int(v) for k, v in ev.items()}, int(m.group(3)), float(m.group(4))))
+print("tests", len(rows))
+ev0 = next(iter(rows[0][1]))
+tot = sum(r[1][ev0] for r in rows); steps = sum(r[2] for r in rows)
+print(f"合計 {ev0}={tot:,}  steps={steps:,}  → 1 歩あたり {tot/max(steps,1):.1f}")
+print("上位 8 本(事象の数順):")
+for k, ev, s, cpu in sorted(rows, key=lambda r: -r[1][ev0])[:8]:
+    print(f"  {ev[ev0]:>11,} {ev0}  steps={s:>7,}  cpu={cpu:6.3f}  {ev[ev0]/max(s,1):8.1f}/歩  {k[-85:]}")
+small = [r for r in rows if r[2] < 100]
+print("歩数 100 未満の検:", len(small), "本  事象の数の中央値", st.median(r[1][ev0] for r in small), " 最大", max(r[1][ev0] for r in small))

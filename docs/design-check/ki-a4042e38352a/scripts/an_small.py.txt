@@ -1,0 +1,19 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+import json, statistics as st, sys
+rows = json.load(open(sys.argv[1]))
+for r in rows: r["us"] = r["cpu"] / max(r["steps"], 1) * 1e6
+def q(xs, p):
+    xs = sorted(xs); i = (len(xs) - 1) * p; lo = int(i); hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (i - lo)
+bands = [(0,100),(100,1000),(1000,3000),(3000,10000),(10000,30000),(30000,10**9)]
+print("band(steps)        n    µs/歩 p5   p50    p95   max     CPU秒の中央値")
+for lo, hi in bands:
+    xs = [r["us"] for r in rows if lo <= r["steps"] < hi]
+    cs = [r["cpu"] for r in rows if lo <= r["steps"] < hi]
+    if len(xs) < 2: print(f"{lo:>6}-{hi if hi<10**9 else '':>6} n={len(xs)}"); continue
+    print(f"{lo:>6}-{hi if hi<10**9 else '∞':>6} {len(xs):4d}   {q(xs,.05):8.1f} {q(xs,.5):8.1f} {q(xs,.95):8.1f} {max(xs):9.1f}   {st.median(cs):.3f}")
+big = sorted([r for r in rows if r["steps"] >= 3000], key=lambda r: -r["steps"])
+print("\n歩数>=3000 の検:")
+for r in big: print("  %8d 歩  CPU %.3f  %.1f µs/歩  %s" % (r["steps"], r["cpu"], r["us"], r["test"][-80:]))

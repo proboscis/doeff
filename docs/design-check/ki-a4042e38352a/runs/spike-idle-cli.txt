@@ -1,0 +1,30 @@
+== events=[] load=36.61 54.19 59.90 13:07:22
+  controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line: 壁の時計 2.435 秒・CPU 2.250 秒
+========================= 1 passed, 1 warning in 5.81s =========================
+== events=[PY_START] load=34.36 48.38 57.20 13:09:10
+  controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line: 壁の時計 2.217 秒・CPU 2.108 秒
+PYCALLS-OWNERS 0=None 1=None 2=None 3=doeff-hy-called-code 4=None 5=None chosen=0
+PYCALLS controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line PY_START=678585 steps=170859 cpu=2.2401
+PYCALLS-TOTAL PY_START=1837196
+========================= 1 passed, 1 warning in 6.27s =========================
+== events=[PY_START] load=37.65 46.47 55.71 13:10:45
+  controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line: 壁の時計 2.989 秒・CPU 2.518 秒
+PYCALLS-OWNERS 0=None 1=None 2=None 3=doeff-hy-called-code 4=None 5=None chosen=0
+PYCALLS controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line PY_START=678585 steps=170859 cpu=2.6519
+PYCALLS-TOTAL PY_START=1837112
+========================= 1 passed, 1 warning in 6.52s =========================
+== events=[CALL] load=45.33 47.39 55.72 13:11:15
+  controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line: 壁の時計 4.215 秒・CPU 3.458 秒
+PYCALLS-OWNERS 0=None 1=None 2=None 3=doeff-hy-called-code 4=None 5=None chosen=0
+PYCALLS controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line CALL=2125251 steps=170859 cpu=3.5997
+PYCALLS-TOTAL CALL=5198289
+========================= 1 passed, 1 warning in 8.87s =========================
+== events=[PY_START,PY_RESUME,CALL] load=45.83 47.41 55.59 13:11:29
+  controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line: 壁の時計 3.667 秒・CPU 3.392 秒
+PYCALLS-OWNERS 0=None 1=None 2=None 3=doeff-hy-called-code 4=None 5=None chosen=0
+PYCALLS controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line PY_START=678585 PY_RESUME=138905 CALL=2125253 steps=170859 cpu=3.5659
+PYCALLS-TOTAL PY_START=1837241 PY_RESUME=389631 CALL=5198349
+========================= 1 passed, 1 warning in 9.47s =========================
+== events=[] load=43.54 46.55 54.91 13:12:12
+  controllers/agora_sim/tests/test_idle_cli_releases_at_the_refresh_line.hy::test_an_idle_cli_returns_its_lease_instead_of_extending_past_the_refresh_line: 壁の時計 2.312 秒・CPU 2.139 秒
+========================= 1 passed, 1 warning in 5.47s =========================

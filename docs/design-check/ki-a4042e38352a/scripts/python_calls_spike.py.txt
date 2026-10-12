@@ -1,0 +1,98 @@
+"""SPIKE(測りの実験・着地しない): 検 1 本の call の間の Python の呼び出しを sys.monitoring で数える。
+
+agora-redesign #2854 の調べ用。環境変数 SPIKE_PYCALL_EVENTS(`,` 区切り: PY_START・PY_RESUME・CALL)に挙げた事象だけを数える。
+SPIKE_PYCALL_TOGGLE=1 なら call の間だけ事象を入れ、外す(収集・setup・teardown を巻き込まない形)。
+検ごとの数と CPU 秒と歩数を終わりに `PYCALLS` の行で出す。何も挙げなければ何もしない。
+"""
+
+import os
+import sys
+import time
+from collections.abc import Generator
+
+import pytest
+
+_EVENT_NAMES = tuple(name for name in os.environ.get("SPIKE_PYCALL_EVENTS", "").split(",") if name)
+_TOGGLE = os.environ.get("SPIKE_PYCALL_TOGGLE") == "1"
+_STATE = {"tool": -1, "mask": 0, "toggle_seconds": 0.0, "toggles": 0}
+_RESULTS: list[str] = []
+_COUNTS: dict[str, list[int]] = {name: [0] for name in _EVENT_NAMES}
+
+
+def _install() -> None:
+    mon = sys.monitoring
+    tool = next(i for i in (4, 3, 5) if mon.get_tool(i) is None)
+    mon.use_tool_id(tool, "spike-pycalls")
+    mask = 0
+    for name in _EVENT_NAMES:
+        cell = _COUNTS[name]
+        event = getattr(mon.events, name)
+        if name in ("PY_START", "PY_RESUME"):
+
+            def callback(code: object, offset: int, cell: list[int] = cell) -> None:
+                cell[0] += 1
+
+        else:
+
+            def callback(code: object, offset: int, callable_: object, arg0: object, cell: list[int] = cell) -> None:
+                cell[0] += 1
+
+        mon.register_callback(tool, event, callback)
+        mask |= event
+    _STATE["tool"] = tool
+    _STATE["mask"] = mask
+    if not _TOGGLE:
+        mon.set_events(tool, mask)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if _EVENT_NAMES:
+        _install()
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if _EVENT_NAMES:
+        sys.monitoring.set_events(_STATE["tool"], 0)
+        sys.monitoring.free_tool_id(_STATE["tool"])
+
+
+def _steps() -> int:
+    import doeff_vm.doeff_vm as ext
+
+    return ext.vm_work_counts()[0]
+
+
+def _set(mask: int) -> None:
+    started = time.perf_counter()
+    sys.monitoring.set_events(_STATE["tool"], mask)
+    _STATE["toggle_seconds"] += time.perf_counter() - started
+    _STATE["toggles"] += 1
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    if not _EVENT_NAMES:
+        return (yield)
+    before = {name: cell[0] for name, cell in _COUNTS.items()}
+    steps_before = _steps()
+    if _TOGGLE:
+        _set(_STATE["mask"])
+    cpu_started = time.process_time()
+    try:
+        return (yield)
+    finally:
+        cpu = time.process_time() - cpu_started
+        if _TOGGLE:
+            _set(0)
+        counts = " ".join(f"{name}={_COUNTS[name][0] - before[name]}" for name in _EVENT_NAMES)
+        _RESULTS.append(f"PYCALLS {item.nodeid} {counts} steps={_steps() - steps_before} cpu={cpu:.4f}")
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    if not _EVENT_NAMES:
+        return
+    terminalreporter.section("SPIKE python calls")
+    terminalreporter.line(f"PYCALLS-TOOL {_STATE['tool']} toggle={_TOGGLE} toggles={_STATE['toggles']} toggle_seconds={_STATE['toggle_seconds']:.3f}")
+    for line in _RESULTS:
+        terminalreporter.line(line)
+    terminalreporter.line("PYCALLS-TOTAL " + " ".join(f"{name}={cell[0]}" for name, cell in _COUNTS.items()))

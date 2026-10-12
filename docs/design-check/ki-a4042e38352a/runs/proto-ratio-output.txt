@@ -1,0 +1,8 @@
+[/design-check/ki-f286a94c788b/runs/tip-after.txt]
+  CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 10 本(未満 4 本は出さない)・中央値 8.1・最も高い test_the_turn_start_line_carries_arrival_pickup_and_the_ ×2.68・中央値の 2 倍超 1 本: test_the_turn_start_line_carries_arrival_pickup_and_the_ ×2.68・2 分の 1 未満 0 本
+[s/concurrency-neg-override-hides-and-law-red.txt]
+  CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 11 本(未満 6 本は出さない)・中央値 15.5・最も高い test_a_guaranteed_turn_goes_over_the_account_slots_and_t ×1.16・中央値の 2 倍超 0 本・2 分の 1 未満 0 本
+[checks/concurrency-pos-fix-reaches-the-world.txt]
+  CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 21 本(未満 9 本は出さない)・中央値 15.3・最も高い test_ti7_counterexample_is_red ×1.20・中央値の 2 倍超 0 本・2 分の 1 未満 0 本
+[vidence/blind/B-logs/pytest-emulated-red.log.txt]
+  CPU 秒 ÷ 歩数(µs/歩): 歩数 10000 以上の 31 本(未満 0 本は出さない)・中央値 14.1・最も高い test_a_start_more_than_an_hour_after_the_slot_skips_that ×1.15・中央値の 2 倍超 0 本・2 分の 1 未満 0 本

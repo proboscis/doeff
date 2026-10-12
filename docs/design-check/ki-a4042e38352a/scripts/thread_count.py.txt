@@ -1,0 +1,28 @@
+# /// script
+# requires-python = ">=3.14"
+# ///
+"""free-threaded の Python で、sys.monitoring の callback の整数の加算が複数 thread で数を落とすか。"""
+import sys, threading, itertools, sysconfig
+print("GIL disabled build:", bool(sysconfig.get_config_var("Py_GIL_DISABLED")), "gil enabled now:", getattr(sys, "_is_gil_enabled", lambda: True)())
+mon = sys.monitoring
+TOOL = 4
+mon.use_tool_id(TOOL, "t")
+cell = [0]
+atomic = itertools.count()
+def cb_plain(code, off, callable_, arg0): cell[0] += 1
+def cb_next(code, off, callable_, arg0): next(atomic)
+def f(x): return x
+def work(n):
+    for i in range(n): f(i)
+N, T = 200_000, 4
+for label, cb in (("plain +=", cb_plain), ("itertools.count next()", cb_next)):
+    cell[0] = 0; atomic = itertools.count(); 
+    mon.register_callback(TOOL, mon.events.CALL, cb)
+    mon.set_events(TOOL, mon.events.CALL)
+    ts = [threading.Thread(target=work, args=(N,)) for _ in range(T)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    mon.set_events(TOOL, 0)
+    got = cell[0] if cb is cb_plain else next(atomic)
+    # CALL は work 内の f(i) の 1 回 + range(...) の 1 回 + Thread の内部呼びを含む → f(i) の分 T*N 以上
+    print(f"{label:24s} 数えた {got:>10,}  下限 T*N = {T*N:,}  (下限を割れば落とした)")
+mon.free_tool_id(TOOL)

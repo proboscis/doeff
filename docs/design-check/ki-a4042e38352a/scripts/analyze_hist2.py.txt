@@ -1,0 +1,33 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+import json, statistics as st, collections
+rows = json.load(open("data/hist-ac.json"))
+for r in rows: r["us"] = r["cpu"] / max(r["steps"], 1) * 1e6
+byrun = collections.defaultdict(list)
+for r in rows: byrun[r["src"]].append(r)
+def q(xs, p):
+    xs = sorted(xs); i = (len(xs) - 1) * p; lo = int(i); hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (i - lo)
+# 走行の基準 = その走行の steps>=50000 の検の中央値(基準が取れる走行だけ)
+print("基準 = 走行内の歩数>=50000 の検の µs/歩の中央値(5 本以上ある走行)")
+bands = [(100,1000),(1000,3000),(3000,10000),(10000,30000),(30000,10**9)]
+rel = {b: [] for b in bands}
+named = []
+for src, rs in byrun.items():
+    base = [r["us"] for r in rs if r["steps"] >= 50000]
+    if len(base) < 5: continue
+    m = st.median(base)
+    for r in rs:
+        for b in bands:
+            if b[0] <= r["steps"] < b[1]:
+                rel[b].append(r["us"] / m)
+        if r["steps"] >= 10000 and (r["us"]/m > 1.3 or r["us"]/m < 0.7):
+            named.append((r["us"]/m, r["steps"], r["test"].split("/")[-1][:90], src[-40:]))
+print("走行数", sum(1 for rs in byrun.values() if len([r for r in rs if r['steps']>=50000])>=5))
+for b in bands:
+    xs = rel[b]
+    if len(xs) < 3: print(b, "n=", len(xs)); continue
+    print(f"歩数 {b[0]:>6}〜{b[1] if b[1]<10**9 else '':>6}: n={len(xs):3d}  相対 p5 {q(xs,.05):6.2f} 中央 {q(xs,.5):6.2f} p95 {q(xs,.95):7.2f} max {max(xs):8.2f}")
+print("\n基準の 1.3 倍超 / 0.7 倍未満の検(歩数>=10000):")
+for x in sorted(named, reverse=True): print("  x%.2f  steps=%d  %s  [%s]" % x)

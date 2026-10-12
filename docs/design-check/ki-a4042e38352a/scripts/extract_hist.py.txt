@@ -1,0 +1,19 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""git の過去の log から、検ごとの (壁の時計, CPU 秒, 歩数) の観測を全部取り出す(引数: repo の path, 版)。"""
+import re, subprocess, sys, json
+repo, rev = sys.argv[1], sys.argv[2]
+files = subprocess.run(["git", "-C", repo, "grep", "-l", "-E", r"CPU [0-9.]+ 秒.*歩数 [0-9]+", rev, "--", "."],
+                       capture_output=True, text=True).stdout.split()
+pat = re.compile(r"(\S+\.hy::\S+): 壁の時計 ([0-9.]+) 秒・CPU ([0-9.]+) 秒.*?歩数 (\d+)")
+rows = []
+for f in files:
+    path = f.split(":", 1)[1]
+    txt = subprocess.run(["git", "-C", repo, "show", f], capture_output=True, text=True).stdout
+    for line in txt.splitlines():
+        m = pat.search(line)
+        if m:
+            rows.append({"src": path, "test": m.group(1), "wall": float(m.group(2)), "cpu": float(m.group(3)), "steps": int(m.group(4))})
+json.dump(rows, open(sys.argv[3], "w"))
+print(len(files), "files", len(rows), "observations", len({r['test'] for r in rows}), "tests")

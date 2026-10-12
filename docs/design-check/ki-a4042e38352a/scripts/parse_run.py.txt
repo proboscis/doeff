@@ -1,0 +1,15 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""-v の予算の節の行から (検, 壁, CPU, 歩数, handler) を取り出す。引数: log... → json"""
+import re, sys, json
+pat = re.compile(r"^  (\S+\.hy::\S+): 壁の時計 ([0-9.]+) 秒・CPU ([0-9.]+) 秒.*?歩数 (\d+).*?handler の呼び出し (\d+) 回")
+out = []
+for path in sys.argv[2:]:
+    for line in open(path, errors="replace"):
+        m = pat.match(line)
+        if m:
+            out.append({"src": path, "test": m.group(1), "wall": float(m.group(2)), "cpu": float(m.group(3)),
+                        "steps": int(m.group(4)), "handler": int(m.group(5))})
+json.dump(out, open(sys.argv[1], "w"))
+print(len(out), "observations")

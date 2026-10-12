@@ -1,0 +1,35 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""検ごとの CPU 秒 ÷ 歩数の 1 行の試作(着地しない)— 床・中央値・外れの規則を実測のデータに当て、依頼書の例の出力を作る。"""
+import json, statistics as st, sys, collections
+
+FLOOR_STEPS = 10_000
+MIN_MEASURED = 8
+FACTOR = 2.0
+NAMED = 3
+
+def short(k): return k.split("::")[-1][:56]
+
+def line(rows):
+    big = [r for r in rows if r["steps"] >= FLOOR_STEPS]
+    small = len(rows) - len(big)
+    if len(big) < MIN_MEASURED:
+        return f"CPU 秒 ÷ 歩数(µs/歩): 歩数 {FLOOR_STEPS} 以上の検が {len(big)} 本({MIN_MEASURED} 本未満)— 比は出さない"
+    us = {r["test"]: r["cpu"] / r["steps"] * 1e6 for r in big}
+    med = st.median(us.values())
+    top_k, top_v = max(us.items(), key=lambda kv: kv[1])
+    hi = sorted(((v / med, k) for k, v in us.items() if v > med * FACTOR), reverse=True)
+    lo = sorted(((v / med, k) for k, v in us.items() if v < med / FACTOR))
+    def names(xs): return "・".join(f"{short(k)} ×{x:.2f}" for x, k in xs[:NAMED]) + (f"・ほか {len(xs)-NAMED}" if len(xs) > NAMED else "")
+    return (f"CPU 秒 ÷ 歩数(µs/歩): 歩数 {FLOOR_STEPS} 以上の {len(big)} 本(未満 {small} 本は出さない)・中央値 {med:.1f}"
+            f"・最も高い {short(top_k)} ×{top_v/med:.2f}"
+            f"・中央値の {FACTOR:g} 倍超 {len(hi)} 本" + (f": {names(hi)}" if hi else "")
+            + f"・{FACTOR:g} 分の 1 未満 {len(lo)} 本" + (f": {names(lo)}" if lo else ""))
+
+rows = json.load(open(sys.argv[1]))
+by = collections.defaultdict(list)
+for r in rows: by[r["src"]].append(r)
+for src, rs in sorted(by.items()):
+    if sum(1 for r in rs if r["steps"] >= FLOOR_STEPS) >= MIN_MEASURED:
+        print(f"[{src[-48:]}]\n  {line(rs)}")
