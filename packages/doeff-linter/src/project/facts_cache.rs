@@ -229,6 +229,93 @@ where
 
 fn no_bind<T>(_value: &mut T, _rel: &str, _path: &Path) {}
 
+/// 事実を引く範囲 — repo 全体の file を表で引く(全体の実行)か、少数の file を中身の hash で引く(1 file の実行 — `per_file_named`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    Whole,
+    Named,
+}
+
+/// `reach` に応じて `per_file_keyed`(全体)か `per_file_named`(名指し)で引く — 呼び手が事実の作り方を 1 つだけ持つため。
+pub fn per_file_in<T, F>(reach: Reach, root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+{
+    match reach {
+        Reach::Whole => per_file_keyed(root, kind, key, files, compute),
+        Reach::Named => per_file_named(root, kind, key, files, compute),
+    }
+}
+
+/// `per_file_keyed` と同じ事実を、**少数の file だけ**表を通らずに引く(1 file の実行が、書いた file の名指す file だけを読む形)。
+/// repo 全体の表(根ごとの塊 16 個・file ごとの更新時刻の比べ)は読まず書かず、file の中身の hash で事実を引く(置き場の事実は
+/// `per_file_keyed` と同じ鍵 — 全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む)。表に行を足さないので、次の全体の
+/// 実行はこの file を表に載せ直す(答えは変わらない)。`files` の順に、集める物が無い file を除いて返す。
+pub fn per_file_named<T, F>(root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+{
+    per_file_named_at(place(root, kind, Format::Json).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, no_bind, Format::Json)
+}
+
+/// `per_file_named` の binary の形で、根の絶対 path を持つ種類のため(`per_file_compact_bound` と同じ約束 — `compute` は path を持たない事実を返し、
+/// 返す前に `bind` で今の根の path を付ける)。
+pub fn per_file_compact_named_bound<T, F, B>(root: &Path, kind: &str, files: &[(String, PathBuf)], compute: F, bind: B) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+    B: Fn(&mut T, &str, &Path) + Sync,
+{
+    per_file_named_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/", identity(kind)), files, compute, bind, Format::Compact)
+}
+
+/// file 1 つの事実を中身の hash から引く(`resolve` の、表の行を使わない半分)。置き場に在ればそれを読み、無ければ `compute` で作って置く。
+/// 中身を読んでから作るまでの間に file が変わっていたら、鍵と事実が食い違うので置かない(答えはその時の file のまま)。
+fn resolve_by_content<T, F>(place: &Place, identity: &str, rel: &str, path: &Path, compute: &F, format: Format) -> (Option<T>, u64)
+where
+    T: Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T>,
+{
+    let Some(stamp) = stamp_of(path) else { return (None, 0) };
+    let Ok(bytes) = std::fs::read(path) else { return (compute(rel, path), 0) };
+    let digest = Sha256::digest(&bytes);
+    drop(bytes);
+    let key = object_key(&[identity.as_bytes(), rel.as_bytes(), digest.as_slice()]);
+    if let Some(value) = read_object::<T>(&place.objects, &key, format) {
+        return (Some(value), 0);
+    }
+    let value = compute(rel, path);
+    if stamp_of(path) != Some(stamp) {
+        return (value, 0);
+    }
+    let written = value.as_ref().map_or(0, |value| write_object(&place.objects, &key, value, format, &place.guard));
+    (value, written)
+}
+
+/// `per_file_named` の本体 — cache の置き場と印と形を受ける(置き場が None = cache を使わない)。
+fn per_file_named_at<T, F, B>(place: Option<&Place>, identity: &str, files: &[(String, PathBuf)], compute: F, bind: B, format: Format) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+    B: Fn(&mut T, &str, &Path) + Sync,
+{
+    let bound = |rel: &str, path: &Path, value: Option<T>| {
+        value.map(|mut value| {
+            bind(&mut value, rel, path);
+            value
+        })
+    };
+    let Some(place) = place else {
+        return files.par_iter().filter_map(|(rel, path)| bound(rel, path, compute(rel, path))).collect();
+    };
+    let resolved: Vec<(Option<T>, u64)> =
+        crate::timing::timed("facts-cache.named", || files.par_iter().map(|(rel, path)| resolve_by_content(place, identity, rel, path, &compute, format)).collect());
+    note_object_bytes(resolved.iter().map(|(_, written)| *written).sum());
+    files.iter().zip(resolved).filter_map(|((rel, path), (value, _))| bound(rel, path, value)).collect()
+}
+
 /// 1 つの値を、呼び手が材料から作った鍵 `key` で覚える(file ごとではなく、repo 全体の事実から導いた値 — 例: effect の推論の不動点)。
 /// 置いた値の鍵が `key` と同じなら読み、違えば(無い・壊れた・linter が組み直された時も)`compute` で作って置く。答えは変えない —
 /// 鍵が材料を漏れなく覆うことは呼び手が保つ。値は根をまたいで分け合う(根の絶対 path を持たない値だけ)。形は binary(bincode)。

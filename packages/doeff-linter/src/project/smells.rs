@@ -88,6 +88,24 @@ impl Scope<'_> {
     }
 }
 
+/// 名が失敗の型かを引ける物 — repo 全体から集めた集合(`FailureTypes`)か、引かれた時に作る集合(`Deferred<FailureTypes>`・1 file の実行)。
+pub trait FailureLookup {
+    /// module まで含めた名が失敗の型か。
+    fn is_failure(&self, qualified: &str) -> bool;
+}
+
+impl FailureLookup for FailureTypes {
+    fn is_failure(&self, qualified: &str) -> bool {
+        self.contains(qualified)
+    }
+}
+
+impl FailureLookup for super::deferred::Deferred<'_, FailureTypes> {
+    fn is_failure(&self, qualified: &str) -> bool {
+        self.get().contains(qualified)
+    }
+}
+
 impl FailureTypes {
     /// module まで含めた名の列から作る(検のため)。
     pub fn of(names: &[&str]) -> Self {
@@ -149,7 +167,7 @@ pub fn failure_types_in(source: &str, scope: Scope<'_>) -> FailureTypes {
 }
 
 /// 1 つの source の臭いを全部拾う。`shape_checks` は DOEFF121 を当てるか(判断の層の file だけ)。scope は match の腕の型を解くため。
-pub fn smells_in(source: &str, scope: Scope<'_>, failure: &FailureTypes, shape_checks: bool) -> Vec<Smell> {
+pub fn smells_in(source: &str, scope: Scope<'_>, failure: &dyn FailureLookup, shape_checks: bool) -> Vec<Smell> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     let hy = Hy { src: source };
@@ -219,7 +237,7 @@ const BINDING_HEADS: &[&str] = &["val", "var", "setv", "setx", ":=", "<-"];
 
 /// DOEFF122 の材料 — 失敗の型の集合と、型の綴りを解く scope。
 struct Judge<'a> {
-    failure: &'a FailureTypes,
+    failure: &'a dyn FailureLookup,
     scope: Scope<'a>,
 }
 
@@ -440,9 +458,8 @@ impl<'a> Hy<'a> {
             index += 1;
             let Some(pattern_items) = live(pattern) else { continue };
             let Some(type_name) = pattern_items.first().and_then(|h| self.symbol(h)) else { continue };
-            if !judge.failure.contains(&judge.scope.qualify(type_name)) {
-                continue;
-            }
+            // 失敗の型かの問いは、腕が受けた値を返すだけの形と分かってから最後に引く(失敗の型の集合は repo 全体の宣言から集める — 1 file の実行は
+            // 引かれた時だけ集める。腕の形が先に外れる大半の腕は、集合を引かない)。
             // pattern の中で束ねた名も受けた値の一部。
             for part in &pattern_items[1..] {
                 self.each(part, &mut |f| {
@@ -470,7 +487,7 @@ impl<'a> Hy<'a> {
                     }
                 }
             }
-            if self.refers(value, &bound) {
+            if self.refers(value, &bound) && judge.failure.is_failure(&judge.scope.qualify(type_name)) {
                 out.push(Smell {
                     definition: name.to_string(),
                     span: span_of(pattern),

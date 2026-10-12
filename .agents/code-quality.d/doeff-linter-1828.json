@@ -28,6 +28,7 @@
     "packages/doeff-linter/src/project/confined_spellings.rs",
     "packages/doeff-linter/src/project/contract_breach.rs",
     "packages/doeff-linter/src/project/counted_spellings.rs",
+    "packages/doeff-linter/src/project/deferred.rs",
     "packages/doeff-linter/src/project/defn_to_defk.rs",
     "packages/doeff-linter/src/project/effect_census.rs",
     "packages/doeff-linter/src/project/env_branch.rs",
@@ -44,6 +45,9 @@
     "packages/doeff-linter/src/project/invariants.rs",
     "packages/doeff-linter/src/project/match_field_names.rs",
     "packages/doeff-linter/src/project/mod.rs",
+    "packages/doeff-linter/src/project/module_index.rs",
+    "packages/doeff-linter/src/project/module_probe.rs",
+    "packages/doeff-linter/src/project/named_modules.rs",
     "packages/doeff-linter/src/project/names.rs",
     "packages/doeff-linter/src/project/notice.rs",
     "packages/doeff-linter/src/project/notice_findings.rs",
@@ -126,7 +130,8 @@
     "packages/doeff-linter/src/project/timed_refetch.rs",
     "packages/doeff-linter/tests/out_of_scope.rs",
     "packages/doeff-linter/src/check_slot.rs",
-    "packages/doeff-linter/tests/check_slot.rs"
+    "packages/doeff-linter/tests/check_slot.rs",
+    "packages/doeff-linter/tests/single_file_reads.rs"
   ],
   "modules": [
     {
@@ -203,6 +208,7 @@
         "packages/doeff-linter/src/project/confined_spellings.rs",
         "packages/doeff-linter/src/project/contract_breach.rs",
         "packages/doeff-linter/src/project/counted_spellings.rs",
+        "packages/doeff-linter/src/project/deferred.rs",
         "packages/doeff-linter/src/project/defn_to_defk.rs",
         "packages/doeff-linter/src/project/effect_census.rs",
         "packages/doeff-linter/src/project/env_branch.rs",
@@ -219,6 +225,9 @@
         "packages/doeff-linter/src/project/invariants.rs",
         "packages/doeff-linter/src/project/match_field_names.rs",
         "packages/doeff-linter/src/project/mod.rs",
+        "packages/doeff-linter/src/project/module_index.rs",
+        "packages/doeff-linter/src/project/module_probe.rs",
+        "packages/doeff-linter/src/project/named_modules.rs",
         "packages/doeff-linter/src/project/names.rs",
         "packages/doeff-linter/src/project/notice.rs",
         "packages/doeff-linter/src/project/notice_findings.rs",
@@ -423,7 +432,8 @@
         "packages/doeff-linter/tests/semantic_proxy.rs",
         "packages/doeff-linter/tests/semantic_rules.rs",
         "packages/doeff-linter/tests/out_of_scope.rs",
-        "packages/doeff-linter/tests/check_slot.rs"
+        "packages/doeff-linter/tests/check_slot.rs",
+        "packages/doeff-linter/tests/single_file_reads.rs"
       ],
       "public": [
         "packages/doeff-linter/tests/build_commit.rs",

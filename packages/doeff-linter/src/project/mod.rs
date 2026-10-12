@@ -11,8 +11,12 @@ pub mod architecture;
 pub mod explain;
 pub mod facts_cache;
 pub mod facts;
+pub mod deferred;
 pub mod hy_files;
 pub mod macro_reach;
+mod module_index;
+pub mod module_probe;
+pub mod named_modules;
 pub mod names;
 pub mod param_calls;
 pub mod registry;
@@ -94,7 +98,11 @@ use paths::segments_match;
 use spans::innermost_definition;
 use law::LawSpec;
 use layers::{LayerId, LayerSettings};
+use module_index::{ModuleIndex, Roads};
 use settings::{EnvironmentSettings, ProjectSettings};
+
+/// module の綴り → 置き場 の索引(import の先を層と service へ解くため)。
+type SiteIndex<'a> = ModuleIndex<'a, ModuleSite>;
 
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
 pub enum Target<'a> {
@@ -469,7 +477,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             let hy = &indexes;
             let effect_world = crate::timing::timed("effect-world", || effect_world_for(root, settings, enabled, None));
             if let Some(layers) = &settings.layers {
-                let index = module_index(&layer_files);
+                let index = SiteIndex::whole(layer_files.iter().map(|f| (f.module.clone(), f.site.clone())));
                 let judged: Vec<LayerJudgement> = crate::timing::timed("layer-judge", || layer_files
                     .par_iter()
                     .filter(|file| in_scope(&file.file.path, scope))
@@ -652,7 +660,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .map(|source| {
                                     let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
                                     found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
-                                    found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks, &program_params, &program_fields));
+                                    // defk が 1 つも無い repo は、素の呼びも引数の呼びも当たらない(集合が空 — 1 file の実行は名指す module だけの集合なので、
+                                    // 空でも他の module に defk が在りうる。ここで外すのは全体の実行だけ)。
+                                    if !defks.is_empty() {
+                                        found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks, &program_params, &program_fields));
+                                    }
                                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                                         found.extend(judge_effect_mismatches(file, &source, definitions, effect_world.as_ref()));
                                     }
@@ -750,9 +762,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
                 if let Some((site, language)) = classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)) {
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
-                    let mut layer_files = crate::timing::timed("layer-files", || collect_layer_files(root, layers));
-                    layer_files.push(file.clone());
-                    let index = module_index(&layer_files);
+                    // import の先は、書いた file が引く module だけを判じる(全部の層の module を並べて、置き場の外の file は中身から層を推す表は作らない)。
+                    let index = named_site_index(root, layers, &file);
                     let judged = judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref());
                     drafts.extend(judged.drafts);
                     if let (Some(translation), Some(world)) = (&settings.translation, &effect_world) {
@@ -792,11 +803,23 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     let mut found = judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref());
-                    let failure = crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags));
+                    // repo の事実は、書いた file が名指す module の file だけから作る(defk の名・record の欄 — module まで含めた名で引かれ、
+                    // 引く名は書いた file の記号を解いた名)。逆向きの依存(失敗の型 = 別の file の defeffect が宣言する・引数に渡された Program =
+                    // 別の file の呼び手が渡す)は、引かれた時だけ repo 全体から作る(`Deferred` — 引かれない file は読まない)。
+                    let named_files = if enabled.contains(&ProjectRule::DefkCalledBare) {
+                        let known = hy_files::by_module(root);
+                        named_modules::files_of(&known, &named_modules::of_file(&known, &file.rel, source), None)
+                    } else {
+                        Vec::new()
+                    };
+                    let failure = deferred::Deferred::new(|| crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags)));
                     found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
-                    let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
-                    let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
-                    let program_fields = crate::timing::timed("program-fields", || program_fields_for(root, enabled));
+                    let defks = crate::timing::timed("defk-names", || defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
+                    let program_params = deferred::Deferred::new(|| {
+                        let all_defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
+                        crate::timing::timed("program-params", || program_params_for(root, enabled, &all_defks))
+                    });
+                    let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     found.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         found.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
@@ -850,7 +873,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             }
             if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
                 if enabled.contains(&ProjectRule::HandlerArgumentHoldsState) && handler_arguments::in_population(rel, decl) {
-                    let classes = crate::timing::timed("handler-argument-classes", || handler_arguments::class_index(root, Some((rel.as_str(), source))));
+                    // class の frozen は名で引かれ、同じ名が frozen でない class が repo のどこかに在れば frozen でない(名指さない file の宣言が答えを変える)ので、
+                    // 型で判じる引数が在って引かれた時だけ repo 全体から作る(索引は Hy と Python の全 file — 3000 の事実)。
+                    let classes = deferred::Deferred::new(|| crate::timing::timed("handler-argument-classes", || handler_arguments::class_index(root, Some((rel.as_str(), source)))));
                     drafts.extend(judge_handler_arguments(root, rel, source, decl, &classes));
                 }
             }
@@ -1261,14 +1286,32 @@ fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
     out
 }
 
+/// 1 file の実行の module の置き場の索引 — `collect_layer_files` と同じ手順(置き場の宣言の下は path で決める・宣言の外で infer_root の下は中身から推す)を、
+/// 引かれた module の file だけに当てる。書いた file(`own`)は保存前の中身で判じた置き場で、自分の module について他の file を上書きする。
+fn named_site_index<'a>(root: &'a Path, layers: &'a LayerSettings, own: &LayerFile) -> SiteIndex<'a> {
+    let bases: BTreeSet<String> = layers.layers.iter().flat_map(|layer| layer.places.iter().map(|place| place.base())).collect();
+    SiteIndex::named(
+        root,
+        bases.into_iter().collect(),
+        layers.infer_root.clone(),
+        (own.module.clone(), own.site.clone()),
+        Box::new(move |rel: &str, path: &Path, roads: Roads| {
+            let by_path = roads.in_bases.then(|| classify_layer_file(rel, layers)).flatten().map(|(site, _)| site);
+            let site = match by_path {
+                Some(site) => Some(site),
+                None if roads.in_infer_root => {
+                    std::fs::read_to_string(path).ok().and_then(|source| infer_layer_site(rel, &source, layers)).map(|(site, _)| site)
+                }
+                None => None,
+            };
+            site.map(|site| (site.layer, site))
+        }),
+    )
+}
+
 /// dir の下の file を全部集める(読めない枝は飛ばす・symlink は辿らない)。
 fn walk_files(dir: &Path) -> Vec<PathBuf> {
     WalkDir::new(dir).follow_links(false).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file()).map(|e| e.into_path()).collect()
-}
-
-/// module の綴り → 置き場 の索引(import の先を層と service へ解くため)。
-fn module_index(files: &[LayerFile]) -> HashMap<String, ModuleSite> {
-    files.iter().map(|f| (f.module.clone(), f.site.clone())).collect()
 }
 
 /// 層の module 1 つを判じた結果(違反の下書き・地図の 1 行・読めなかった理由・別の service を読んだ組)。
@@ -1288,7 +1331,7 @@ fn judge_layer_file(
     layers: &LayerSettings,
     settings: &ProjectSettings,
     enabled: &BTreeSet<ProjectRule>,
-    index: &HashMap<String, ModuleSite>,
+    index: &SiteIndex<'_>,
     hy_file: Option<&HyFileIndex>,
 ) -> LayerJudgement {
     let facts = read_facts(file.file.language, source, &file.module, &layers.tags);
@@ -1668,13 +1711,13 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF101 が破れと判じる import の先か — 母集団の module で、この file 自身でなく、層の許した層の外。
     /// DOEFF116 は同じ import を二重に数えないため、これが真の import を判じない(層の向きの直しが先 — #1799)。
-    fn breaks_direction(&self, target: &str, index: &HashMap<String, ModuleSite>) -> bool {
+    fn breaks_direction(&self, target: &str, index: &SiteIndex<'_>) -> bool {
         let Some(allowed) = &self.layers.layers[self.layer.0].allowed else { return false };
         resolve_target(target, index).is_some_and(|(owner, site)| owner != self.file.module && !allowed.contains(&site.layer))
     }
 
     /// DOEFF101: import の先が母集団の module(かその中の名)で、許された層の外なら破れ。
-    fn import_direction(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>) -> Vec<Draft> {
+    fn import_direction(&self, facts: &ModuleFacts, index: &SiteIndex<'_>) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         let Some(allowed) = &spec.allowed else { return Vec::new() };
         let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();
@@ -1716,7 +1759,7 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF109: service の境界 — この file(service A の守る層)が、別の service B の守る層の module を読んだら破れ。
     /// B の開いた層(intent など)と共有の置き場と例外は読んでよい。service を持たない置き場(層が先の形)は判じない。
-    fn service_boundary(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>, services: &settings::ServiceSettings) -> Vec<Draft> {
+    fn service_boundary(&self, facts: &ModuleFacts, index: &SiteIndex<'_>, services: &settings::ServiceSettings) -> Vec<Draft> {
         let Some(own) = self.placement.service.as_deref() else { return Vec::new() };
         if !services.guarded.contains(&self.layer) || services.shared.contains(own) {
             return Vec::new();
@@ -1771,7 +1814,7 @@ impl<'a> LayerJudge<'a> {
     fn service_dependencies(
         &self,
         facts: &ModuleFacts,
-        index: &HashMap<String, ModuleSite>,
+        index: &SiteIndex<'_>,
         architecture: &architecture::Architecture,
         judge: bool,
         direction_judged: bool,
@@ -1849,7 +1892,7 @@ impl<'a> LayerJudge<'a> {
     /// root の下の層の置き場の外の module を import する。読む先は import の綴りから file を引いて決める(その file か親の module が
     /// root の下に在り、層の索引に無く、package の印でない物)— 渡された file の import と置き場だけで判じ、repo 全体の索引は読まない。
     /// 同じ module を何度読んでも 1 件(最初の import の所)。
-    fn placed_dependencies(&self, facts: &ModuleFacts, index: &HashMap<String, ModuleSite>, architecture: &architecture::Architecture) -> Vec<Draft> {
+    fn placed_dependencies(&self, facts: &ModuleFacts, index: &SiteIndex<'_>, architecture: &architecture::Architecture) -> Vec<Draft> {
         if self.placement.service.is_none() || !architecture.placed_dependencies.iter().any(|l| l == self.layer_name(self.placement.layer)) {
             return Vec::new();
         }
@@ -2127,7 +2170,7 @@ fn definition_label(definition: &Definition) -> String {
 }
 
 /// import の先を母集団の module へ解く(module そのもの、または `module.名`)。母集団の外なら None。
-fn resolve_target<'i, 'x>(target: &'i str, index: &'x HashMap<String, ModuleSite>) -> Option<(&'i str, &'x ModuleSite)> {
+fn resolve_target<'i>(target: &'i str, index: &SiteIndex<'_>) -> Option<(&'i str, ModuleSite)> {
     if let Some(site) = index.get(target) {
         return Some((target, site));
     }
@@ -4648,10 +4691,7 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &lay
     }
     // file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋を印に含めて file ごとに覚え、
     // 変わった file だけ読み直す(#1033)。集合の和なので、束ねる順は答えを変えない。
-    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
-        .into_iter()
-        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
-        .collect();
+    let files = hy_rel_files(root);
     let key = {
         use sha2::{Digest, Sha256};
         format!("{:x}", Sha256::digest(format!("{reading:?}").as_bytes()))
@@ -4707,17 +4747,24 @@ fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
 /// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、
 /// 最上位の defk の名を module まで含めた名にする。読めない file は飛ばす。
 fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::DefkNames {
+    defk_names_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
+}
+
+/// repo の Hy の file(根からの path と絶対 path — 歩いた順)。
+fn hy_rel_files(root: &Path) -> Vec<(String, PathBuf)> {
+    hy_files::collect(root).into_iter().filter_map(|path| relative_path(root, &path).map(|rel| (rel, path))).collect()
+}
+
+/// `defk_names_for` の本体 — 集める file(`files`)と引き方(`reach`)を受ける。1 file の実行は書いた file が名指す module の file だけを渡す
+/// (defk の集合は module まで含めた名で引かれ、引く名は書いた file の記号を解いた名 — その module の file だけで答えが同じ)。
+fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: facts_cache::Reach, files: &[(String, PathBuf)]) -> bare_calls::DefkNames {
     let mut all = bare_calls::DefkNames::default();
     if !enabled.contains(&ProjectRule::DefkCalledBare) {
         return all;
     }
     // file ごとの defk の名はその file の中身だけで決まるので、変わった file だけ読み直す(保存ごとの 1 file の実行でも
     // repo 全体の名が要るため — #1025)。
-    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
-        .into_iter()
-        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
-        .collect();
-    let found: Vec<bare_calls::DefkNames> = facts_cache::per_file(root, "defk-names", &files, |rel, path| {
+    let found: Vec<bare_calls::DefkNames> = facts_cache::per_file_in(reach, root, "defk-names", "", files, |rel, path| {
         let source = std::fs::read_to_string(path).ok()?;
         source.contains("(defk").then(|| bare_calls::defk_names_in(&source, &module_of(rel)))
     });
@@ -4731,15 +4778,16 @@ fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::D
 /// 有効な時だけ — 無ければ空)。`(defrecord` の綴りを含む file だけを読む。defk の名と同じく file ごとに覚え、変わった file だけ読み直す
 /// (agora-redesign #2877)。
 fn program_fields_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::ProgramFields {
+    program_fields_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
+}
+
+/// `program_fields_for` の本体 — 集める file と引き方を受ける(`defk_names_over` と同じ。record の型は module まで含めた名で引かれる)。
+fn program_fields_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: facts_cache::Reach, files: &[(String, PathBuf)]) -> bare_calls::ProgramFields {
     let mut all = bare_calls::ProgramFields::default();
     if !enabled.contains(&ProjectRule::DefkCalledBare) {
         return all;
     }
-    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
-        .into_iter()
-        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
-        .collect();
-    let found: Vec<bare_calls::ProgramFields> = facts_cache::per_file(root, "program-fields", &files, |rel, path| {
+    let found: Vec<bare_calls::ProgramFields> = facts_cache::per_file_in(reach, root, "program-fields", "", files, |rel, path| {
         let source = std::fs::read_to_string(path).ok()?;
         source.contains("(defrecord").then(|| bare_calls::program_fields_in(&source, &module_of(rel))).filter(|f| !f.is_empty())
     });
@@ -4755,11 +4803,15 @@ fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<
     let definitions = settings.definitions.is_some() && enabled.contains(&ProjectRule::EffectsDisagreeWithInference);
     let translation = settings.translation.is_some() && settings.layers.is_some() && enabled.contains(&ProjectRule::TranslationEmitsIntent);
     let lower_layer = settings.translation.is_some() && settings.layers.is_some() && lower_layer_decl(settings).is_some() && enabled.contains(&ProjectRule::LowerLayerInDomain);
-    (definitions || translation || lower_layer).then(|| signatures::World::build(root, overlay))
+    // 1 file の実行(overlay = 保存前の中身)は、書いた file が名指す module の file だけで表を作る(`World::build_for_file`)。
+    (definitions || translation || lower_layer).then(|| match overlay {
+        Some((rel, source)) => signatures::World::build_for_file(root, rel, source),
+        None => signatures::World::build(root, None),
+    })
 }
 
 /// DOEFF142: 1 file の defhandler の引数の当たり → 下書き(critical — 責務の境界)。
-fn judge_handler_arguments(root: &Path, rel: &str, source: &str, decl: &architecture::HandlerArguments, classes: &handler_arguments::ClassIndex) -> Vec<Draft> {
+fn judge_handler_arguments(root: &Path, rel: &str, source: &str, decl: &architecture::HandlerArguments, classes: &dyn handler_arguments::ClassLookup) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     handler_arguments::findings_in(source, decl, classes)
         .into_iter()
@@ -4793,7 +4845,7 @@ fn judge_translation_intents(
     source: &str,
     layers: &LayerSettings,
     translation: &settings::TranslationSettings,
-    index: &HashMap<String, ModuleSite>,
+    index: &SiteIndex<'_>,
     world: &signatures::World,
 ) -> Vec<Draft> {
     let intent_layer_of = |qualified: &str| -> Option<LayerId> {
@@ -4962,11 +5014,11 @@ fn judge_bare_calls(
     definitions: &settings::DefinitionSettings,
     enabled: &BTreeSet<ProjectRule>,
     defks: &bare_calls::DefkNames,
-    program_params: &param_calls::ProgramParams,
+    program_params: &dyn param_calls::ProgramParamsLookup,
     program_fields: &bare_calls::ProgramFields,
 ) -> Vec<Draft> {
     let in_population = is_definition_file(&file.rel, definitions) || is_test_file(&file.rel, definitions);
-    if !enabled.contains(&ProjectRule::DefkCalledBare) || !in_population || defks.is_empty() {
+    if !enabled.contains(&ProjectRule::DefkCalledBare) || !in_population {
         return Vec::new();
     }
     let lines = LineIndex::new(source);
@@ -5018,10 +5070,7 @@ fn program_params_for(
     }
     // file ごとの結果は、その file の中身と repo 全体の defk の名(defks)で決まる。defks の指紋を印に含めて file ごとに覚え、
     // defks が変わらない間は変わった file だけ解析し直す(defks が変われば全部を作り直す・#1026)。
-    let files: Vec<(String, PathBuf)> = hy_files::collect(root)
-        .into_iter()
-        .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
-        .collect();
+    let files = hy_rel_files(root);
     let found: Vec<param_calls::ProgramParams> =
         facts_cache::per_file_keyed(root, "program-params", &defks.digest(), &files, |rel, path| {
             let source = std::fs::read_to_string(path).ok()?;
@@ -5050,7 +5099,7 @@ fn judge_smells(
     settings: &ProjectSettings,
     definitions: &settings::DefinitionSettings,
     enabled: &BTreeSet<ProjectRule>,
-    failure: &smells::FailureTypes,
+    failure: &dyn smells::FailureLookup,
 ) -> Vec<Draft> {
     if !is_definition_file(&file.rel, definitions) || !enabled.iter().any(|rule| rule.is_smell()) {
         return Vec::new();

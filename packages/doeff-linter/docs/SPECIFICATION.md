@@ -399,7 +399,26 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
 - 全体の実行は、DOEFF107 が有効なら repo の根の Hy の全部を hy-index で索引する(経由の証拠が file をまたぐため)。
   無効なら判じる file だけを索引する。
 - `--stdin` の 1 file の実行は、層の dir の file の一覧(読まない)と、その 1 file の解析だけで判じる。経由の証拠は出さない。
+- `--stdin` の 1 file の実行が読む repo の範囲は、**書いた file が名指す module の file だけ**(card ki-a9959efd9cf6 の残り — 混んだ Pod で repo の
+  Hy の file を全部読むと 2〜7 秒かかり、書いた後の助言の hook の期限 4 秒で切れた)。表は module まで含めた名で引かれ、引く名は書いた file の記号を
+  import の束縛と module で解いた名(`smells::Scope::qualify`)か、届いた file の事実が持つ名なので、書いた file が名指す module から始めて閉じるまで読めば、
+  repo 全体を読んだ時と答えが同じ。
+  - effect と型と defk の推論の表(DOEFF127・130・174 と見出しと束縛と置き換えと本体): `World::build_for_file` — 名指す module から始め、事実が名指す module(撃つ呼び・型・
+    effect の答えと失敗)を足して閉じるまで読む。推論は届く defk の先だけで決まるので cache には置かず毎回回す。
+  - defk の名と record の欄(DOEFF126): 名指す module の file だけから作る。
+  - 層の module の置き場の索引(import の先を引く DOEFF101・109・130 など): 引かれた module の file だけを判じる(`module_index.rs`)。置き場の外の
+    module の層をタグの role から推す時の中身の読みも、引かれた module だけ。
+  - module の綴りから file を探すのは tree を歩かず、path の段ごとに探る(`module_probe.rs` — 冷えた作業木の dir の読みを避ける)。
+  - 名指す file だけでは答えが変わる 3 つ(失敗の型 = 別の file の defeffect の `:failure` が宣言する・引数に渡された Program = 別の file の呼び手が渡す・class の frozen =
+    同じ名が repo のどこかに在るか)は、**引かれた時だけ** repo 全体から作る(`deferred.rs`)。引かれる形の判定を先に済ませ(腕が受けた値を返すだけの形・引数を素で
+    呼ぶ定義・型で判じる handler の引数)、大半の file は引かない(agora-controllers の 120 file の標本で約 5%)。
+  - 1 file の実行は事実の根ごとの表を読まず書かない(中身の hash で事実を引く — 全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む)。
+  - 検: `tests/single_file_reads.rs`(答えが全体の実行と同じ・名指さない module の事実を置かない・全体の表を通らない)と、`signatures.rs`・`call_view.rs`・`body_view.rs` の
+    検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。
 - 実測(agora-controllers の本線・2026-09-27): 全体 約 1.1 秒・1 file 10 ミリ秒未満。
+- 実測(agora-controllers の本線 Hy 2900 file・2026-10-12・Pod の load 70〜100・同じ負荷で旧新を交互に): 1 file の実行の open 12,077 → 約 600、opendir 2,837 → 5〜9、
+  stat 39,472 → 約 2,000。温まった実時間の中央値 0.40 → 0.18 秒(CPU 0.58 → 0.20 秒)・新しい作業木の最初の 1 回 CPU 5.1 → 0.1 秒。残る open の大半は登録簿の
+  1 鍵 1 file(約 450 file — `scripts/doeff_lint/SMELL-BREACHES`)。
 
 ## 7. 既存の判定との照合
 
