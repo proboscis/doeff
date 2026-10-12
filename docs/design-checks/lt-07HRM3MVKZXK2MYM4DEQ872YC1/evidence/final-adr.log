@@ -1,0 +1,70 @@
+== 版 5454330f5ce1df5166b92c7312e20f1d587c3792+作業木の差分・ADR-DOE-HY-008 の検
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3088733 pytest doeff-wt-ki-b7c4 (c-N8D3D11TB04Y5BH5AE1NRMH2ZD)、pid 3112414 pytest agora-controllers-wt-ki-4a5a (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3105062 pytest dotfiles-wt-scope-set (c-4X6B7HYKXBGFD9QT6H4Q8AZ248)、pid 3103344 code-quality agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3088733 pytest doeff-wt-ki-b7c4 (c-N8D3D11TB04Y5BH5AE1NRMH2ZD)、pid 3116640 pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3105062 pytest dotfiles-wt-scope-set (c-4X6B7HYKXBGFD9QT6H4Q8AZ248)、pid 3103344 code-quality agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3114585 pytest agora-controllers-wt-ki-aa51-probe (c-HCAEXBSXP48HQVQ4DPYX0EZZZN)、pid 3116640 pytest doeff-wt-class-body-name (c-4J8GWQ55ER3HK35P4XN7V8HPGW)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3105062 pytest dotfiles-wt-scope-set (c-4X6B7HYKXBGFD9QT6H4Q8AZ248)、pid 3103344 code-quality agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 30 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3105062 pytest dotfiles-wt-scope-set (c-4X6B7HYKXBGFD9QT6H4Q8AZ248)、pid 3103344 code-quality agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 40 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3027257 pytest doeff-wt-hycache-ki-b519 (c-65N0TKHFHY0BDZRPMPZ0761A7B)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3121583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3103344 code-quality agora-controllers-wt-zodcheck-gate (c-QMG9F2YD637XRR2H6JQB1EJ48G)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 50 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3093300 pytest agora-controllers-wt-red1012 (c-2W0XJCBJNBD4P4YHGEKQ4ED5A0)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3121583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3120744 pytest doeff-wt-ki-1618-ev (c-MPWEY1GKS4FAWWR2JS2EDG5SAS)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 60 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3115830 pytest code-quality-wt-daily (c-W3PA6R28F4TCWJHEY1CSVR6RPW)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3121583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3120744 pytest doeff-wt-ki-1618-ev (c-MPWEY1GKS4FAWWR2JS2EDG5SAS)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 70 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3115830 pytest code-quality-wt-daily (c-W3PA6R28F4TCWJHEY1CSVR6RPW)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3121583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3120744 pytest doeff-wt-ki-1618-ev (c-MPWEY1GKS4FAWWR2JS2EDG5SAS)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 80 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3115830 pytest code-quality-wt-daily (c-W3PA6R28F4TCWJHEY1CSVR6RPW)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3121583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3120744 pytest doeff-wt-ki-1618-ev (c-MPWEY1GKS4FAWWR2JS2EDG5SAS)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 90 秒 / 上限 1200 秒・保持 pid 3067682 pytest agora-controllers-wt-wnv-mut (c-F63PFMQV354PB1XEZ6VTB0P4WN)、pid 3121629 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3121571 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3093733 pytest doeff-wt-ki-2320 (c-Q4J090JDNZCZCWE6Q0X2D7M97X)、pid 3115830 pytest code-quality-wt-daily (c-W3PA6R28F4TCWJHEY1CSVR6RPW)、pid 3047056 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3121583 pytest agora-controllers (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 3136342 pytest adr (c-KB0XX7Y7ZHR26KDN10ZRAT2RAQ)・待つのは pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+check-slot: 枠 7 を取った(待ち 91 秒)— pytest doeff-wt-local-require (c-23BFZS4N25RQD7J19THT3D8NCA)
+
+deadline scale x1.3 (load per usable CPU) — per test 77s, watchdog 115s
+
+test-admission: focused — 8 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 1 file
+  import: docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy — 記録なし(この内容の file は収集で import したことが無い)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000000 秒・依存変更で再作成 0 file
+........                                                                 [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-local-require/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+8 passed, 1 warning in 34.58s
+rc=0

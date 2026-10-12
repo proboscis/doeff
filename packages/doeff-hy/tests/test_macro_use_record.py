@@ -126,7 +126,8 @@ LATER = 1
 """
 
 #: 使う側の module(名 → source)。user = used だけを名指して require する・shadowed = macro の module の全部を require し、
-#: 自分の関数 shadow を呼ぶ(後から macro の module に同じ名の macro が足されると、展開が変わる)。
+#: 自分の関数 shadow を呼ぶ(後から macro の module に同じ名の macro が足されると、展開が変わる)・local = shadowed と同じ形を
+#: 関数の中の require で書き、macro を入れ子の関数で使う(Hy の展開は関数の中の局所の macro の表を module の表より先に引く)。
 USERS = {
     "user": "(require {pkg}.macros [used])\n(setv value (used))\n",
     "reader": "(require {pkg}.macros [reads])\n(setv value (reads))\n",
@@ -140,6 +141,8 @@ USERS = {
     "moder": "(require {pkg}.macros [mode])\n(setv value (mode))\n",
     "documenter": "(require {pkg}.macros [documented])\n(setv value (documented))\n",
     "datareader": "(require {pkg}.macros [reads-data])\n(setv value (reads-data))\n",
+    "local": "(defn run []\n  (require {pkg}.macros *)\n  (defn shadow [x] x)\n  (defn inner [] (shadow (used)))\n  (inner))\n"
+    "(setv value (run))\n",
 }
 
 
@@ -286,6 +289,20 @@ def test_a_new_macro_named_like_a_called_function_is_stale(tree: Tree) -> None:
     assert not tree.is_current(record), "使い手の呼ぶ名の macro が足されたのに古いと判じない"
 
 
+def test_a_changed_body_of_a_macro_required_inside_a_function_is_stale(tree: Tree) -> None:
+    # 直す前は赤: 関数の中の require の macro は局所の表から引かれ、module の表を通らないので記録に無かった。
+    record = tree.record("local")
+    _replace(tree.macros, "(+ (helper 1) consts.OFFSET)", "(+ (helper 20) consts.OFFSET)")
+    assert not tree.is_current(record), "関数の中の require で使った macro の本体を替えたのに古いと判じない"
+
+
+def test_a_new_macro_named_like_a_function_called_under_a_local_require_is_stale(tree: Tree) -> None:
+    # 関数の中で全部を require する使い手も、呼ぶ関数と同じ名の macro が足されると展開が変わる。
+    record = tree.record("local")
+    _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 100)\n(defmacro shadow [x] 0)")
+    assert not tree.is_current(record), "関数の中の require の使い手の呼ぶ名の macro が足されたのに古いと判じない"
+
+
 # ---- 冷えなくてよい時 --------------------------------------------------------------------------------------------
 
 
@@ -294,6 +311,14 @@ def test_a_changed_unused_macro_keeps_the_record_current(tree: Tree) -> None:
     record = tree.record("user")
     _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
     assert tree.is_current(record), "使っていない macro を替えただけで古いと判じた"
+
+
+def test_a_changed_unused_macro_under_a_local_require_keeps_the_record_current(tree: Tree) -> None:
+    # 関数の中で全部を require しても、記録に入るのは展開が使った macro だけ。
+    record = tree.record("local")
+    assert [used.name for used in record.macros] == ["used"], record.macros
+    _replace(tree.macros, "(defmacro unused [] 100)", "(defmacro unused [] 1000)")
+    assert tree.is_current(record), "関数の中の require の使い手で、使っていない macro を替えただけで古いと判じた"
 
 
 def test_a_line_shift_of_the_macro_module_keeps_the_record_current(tree: Tree) -> None:
