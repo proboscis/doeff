@@ -48,8 +48,8 @@ def _age(path: str, seconds: float) -> None:
 
 
 def _record_in(path: str) -> object:
-    """entry の code の末尾の組(記録の代役)— 読めない entry は検の赤。"""
-    code = code_store.stored_code(path)
+    """entry の code の末尾の組(記録の代役)— 読めない entry は検の赤。検の読みは使った印を付けない(時刻を動かさない)。"""
+    code = code_store.stored_code(path, touch=False)
     assert code is not None, f"entry を code として読めない: {path}"
     return code.co_consts[-1]
 
@@ -109,15 +109,35 @@ def test_only_the_entry_used_moves_its_time(tmp_path: Path) -> None:
     assert code_store.code_entries(store, key)[0] == used, "使った entry が新しい順の頭に来ない"
 
 
+def _records(count: int) -> list[tuple[object, ...]]:
+    """記録の形の組 count 個(どれも違う — macro の環境の違う書き手 count 人)。"""
+    return [(*RECORD_SIX[:3], (f"absent-{index}",), (), (), ()) for index in range(count)]
+
+
+def _entry_of(store: str, key: str, record: object) -> str:
+    """鍵の entry のうち、記録 record の物の path。"""
+    [path] = [path for path in code_store.code_entries(store, key) if _record_in(path) == record]
+    return path
+
+
+def _read(store: str, key: str, record: object) -> bool:
+    """記録 record の環境の読み 1 回(import の口と準備の道具と同じ順 — 照らして当たれば使い、外れたら足す)。答え = 当たったか。"""
+    if code_store.current_code(store, key, _is(record)) is not None:
+        return True
+    code_store.add_code(store, key, _code(record))
+    return False
+
+
 def test_entries_beyond_the_limit_go_least_recently_used_first(tmp_path: Path) -> None:
-    """鍵の entry が上限を越えたら、使った時刻の古い物から除く。使い続けている書き手の entry は残る。"""
+    """鍵の entry が上限を越えたら、今足した entry を残して、時刻の古い物から除く。使い続けている書き手の entry は残る。"""
     store, key = str(tmp_path), _key()
-    records = [(*RECORD_SIX[:3], (f"absent-{index}",), (), (), ()) for index in range(code_store.CODE_ENTRIES_PER_KEY + 1)]
-    for index, record in enumerate(records[:-1]):
+    records = _records(code_store.CODE_ENTRIES_PER_KEY + 1)
+    for record in records[:-1]:
         code_store.add_code(store, key, _code(record))
-        _age(code_store.code_entries(store, key)[0], 1000 - index)
-    # 一番古く足した記録の書き手が使い続けている — その entry は新しい順の頭へ来る。
-    assert code_store.current_code(store, key, _is(records[0])) is not None
+    # 使った時刻を名指しで置く: records[1] がいちばん前に使われ、records[0] がいちばん新しく使われた(使い続けている書き手)。
+    for index, record in enumerate(records[1:-1], start=1):
+        _age(_entry_of(store, key, record), 100 * (code_store.CODE_ENTRIES_PER_KEY + 1 - index))
+    _age(_entry_of(store, key, records[0]), 10)
     code_store.add_code(store, key, _code(records[-1]))
     kept = code_store.code_entries(store, key)
     assert len(kept) == code_store.CODE_ENTRIES_PER_KEY
@@ -125,6 +145,44 @@ def test_entries_beyond_the_limit_go_least_recently_used_first(tmp_path: Path) -
     assert records[0] in held, "使い続けている書き手の entry を除いた"
     assert records[-1] in held, "今足した entry を除いた"
     assert records[1] not in held, "使っていない一番古い entry が残った"
+
+
+def test_a_new_entry_waits_behind_the_entries_in_use_until_it_is_used(tmp_path: Path) -> None:
+    """足したばかりの entry は、鍵の他の entry より後ろに並び(時刻が前)、照らして使われた時に頭へ出る — 一度きりの環境の entry が
+    使い続けている書き手の entry の前に並ばない(設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 A)。"""
+    store, key = str(tmp_path), _key()
+    code_store.add_code(store, key, _code(RECORD_FIVE))
+    _age(_entry_of(store, key, RECORD_FIVE), 50)
+    code_store.add_code(store, key, _code(RECORD_SIX))
+    five, six = _entry_of(store, key, RECORD_FIVE), _entry_of(store, key, RECORD_SIX)
+    assert code_store.code_entries(store, key) == (five, six)
+    assert os.stat(six).st_mtime < os.stat(five).st_mtime
+    assert code_store.current_code(store, key, _is(RECORD_SIX)) is not None
+    assert code_store.code_entries(store, key)[0] == six, "使った entry が頭に出ない"
+
+
+def test_one_off_environments_do_not_push_out_an_entry_in_use(tmp_path: Path) -> None:
+    """上限の何倍もの一度きりの環境(macro を直している作業木の検 — 毎回新しい記録)が足しても、間に使われ続けている書き手(実行環境の
+    準備)の entry は残り、その書き手の読みは当たり続ける。直す前は、上限の数の一度きりの環境が足すと準備の entry を押し出した
+    (盲検 A の 4(a))。"""
+    store, key = str(tmp_path), _key()
+    prep, *one_offs = _records(1 + 3 * code_store.CODE_ENTRIES_PER_KEY)
+    assert not _read(store, key, prep)
+    for start in range(0, len(one_offs), code_store.CODE_ENTRIES_PER_KEY):
+        for record in one_offs[start : start + code_store.CODE_ENTRIES_PER_KEY]:
+            assert not _read(store, key, record)
+        assert _read(store, key, prep), "使い続けている書き手の entry を一度きりの環境が押し出した"
+    assert len(code_store.code_entries(store, key)) <= code_store.CODE_ENTRIES_PER_KEY
+
+
+def test_more_environments_than_the_limit_taking_turns_miss_only_the_excess(tmp_path: Path) -> None:
+    """上限より 1 つ多い環境が同じ鍵を順に読み続けても、2 巡目から外れるのは上限を越えた分だけ(全部が外れる崖にならない)。直す前は
+    上限 + 1 の環境で毎巡全部が外れた(盲検 A の 4(a))。"""
+    store, key = str(tmp_path), _key()
+    records = _records(code_store.CODE_ENTRIES_PER_KEY + 1)
+    misses = [sum(0 if _read(store, key, record) else 1 for record in records) for _ in range(4)]
+    assert misses[0] == len(records)
+    assert all(miss <= 2 for miss in misses[1:]), misses
 
 
 def test_a_broken_entry_is_named_removed_and_the_next_entry_is_used(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

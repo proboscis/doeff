@@ -111,13 +111,14 @@ def _edit(path: Path, text: str) -> None:
     os.utime(path, ns=(later, later))
 
 
-def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None) -> int:
+def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None, guard_root: Path = GUARD_ROOT) -> int:
     """PyPI の Hy の使い捨ての環境で pkg.user を import し、展開された値を返す。共有の code の置き場は既定で root の下
-    (検どうしで混ざらない)— 作業木をまたぐ検は同じ store を渡す。"""
+    (検どうしで混ざらない)— 作業木をまたぐ検は同じ store を渡す。guard_root = 包みの package の親(既定はこの checkout の doeff-hy の
+    src — 版の違う包みの代役を渡す検がある)。"""
     uv = shutil.which("uv")
     assert uv is not None, "uv が PATH に無い — PyPI の Hy の使い捨ての環境を作れない"
     script = root / f"load_{guard}.py"
-    script.write_text(_LOADER.format(root=str(root), guard=guard, guard_root=str(GUARD_ROOT)))
+    script.write_text(_LOADER.format(root=str(root), guard=guard, guard_root=str(guard_root)))
     # 子はこの process の環境を継ぐ — _ENV_NOT_PASSED の名だけ外し(`env -u`)、共有の code の置き場を足す。
     unset = [flag for name in _ENV_NOT_PASSED for flag in ("-u", name)]
     code_store = store if store is not None else root / "code-store"
@@ -334,6 +335,40 @@ def test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_se
             root.mkdir()
             _write_counting_package(root, add)
             assert _run_on_pypi_hy(root, "before-hy", store) == 10 + add
+            assert _expansions(root) == (1 if turn == 1 else 0), (name, turn)
+
+
+def _guard_of_the_next_record_generation(tmp_path: Path) -> Path:
+    """この checkout の包みの写しで、記録の印(RECORD_TAG)だけを次の世代へ上げた物の親の dir — doeff-hy の版の違う書き手の代役(記録の
+    形の世代が違う書き手どうしは、互いの entry の記録を読めない)。"""
+    root = tmp_path / "guard-next-generation"
+    shutil.copytree(
+        GUARD_ROOT / "doeff_hy_bytecode_guard",
+        root / "doeff_hy_bytecode_guard",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    records_file = root / "doeff_hy_bytecode_guard" / "records.py"
+    current = f'RECORD_TAG = "{records.RECORD_TAG}"'
+    text = records_file.read_text(encoding="utf-8")
+    assert text.count(current) == 1, "記録の印の行が records.py に 1 つでない — 次の世代の代役を作れない"
+    prefix, number = records.RECORD_TAG.rsplit("/", 1)
+    records_file.write_text(text.replace(current, f'RECORD_TAG = "{prefix}/{int(number) + 1}"'), encoding="utf-8")
+    return root
+
+
+def test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries(tmp_path: Path) -> None:
+    """記録の印(RECORD_TAG)の違う 2 つの書き手(doeff-hy の版の違う作業木と実行環境の準備の代役 — 互いの entry の記録を読めない)が、
+    同じ置き場で新しい木を交互に読む。読めない世代の entry を読み手が「古い」として除くと、互いの entry を消し合って毎回展開し直す
+    (設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 B — 2 つの書き手の doeff-hy が同じ検では見分けられない)。鍵 1 つに環境ごとの entry を
+    持つ並びでは、どちらも 2 巡目から展開し直さない。"""
+    store = tmp_path / "store"
+    writers = (("this", GUARD_ROOT), ("next", _guard_of_the_next_record_generation(tmp_path)))
+    for turn in (1, 2, 3):
+        for name, guard_root in writers:
+            root = tmp_path / f"{name}-{turn}"
+            root.mkdir()
+            _write_counting_package(root, 1)
+            assert _run_on_pypi_hy(root, "before-hy", store, guard_root) == 11
             assert _expansions(root) == (1 if turn == 1 else 0), (name, turn)
 
 
