@@ -1,0 +1,127 @@
+;;; 盲検 A の実験(共有の file ではない・実験の木だけ): 同じ組 llm を、2 つの系(defsystem)の送り手が名乗る時の値の持ち主。
+;;;
+;;; 変更要求: 系 alpha が宣言した組 llm(cluster 全体で 1 本)を、別に宣言する系 beta の job の送り手も名乗る。beta は自分の sim と
+;;; 初回の配備(alpha より先に宣言される時)で断られないように、組 llm を自分の :task-limits にも書く(値は beta の書き手の判断で 3)。
+;;; 観測: (1) どの module も 2 つ目の持ち主を断らない (2) 資源 GroupLimit の値は後に宣言した系の値になる (3) 置ける本数は宣言の順で変わる
+;;; (4) beta が組を写さなければ beta の sim で beta の送り手が断られる (5) 組だけを持つ宣言(job の無い系)は本番の declare で落ちる。
+(require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import hy)
+(import json)
+(import doeff [with-handlers])
+(import doeff_events [MemoryBroker])
+(import doeff_time [Delay])
+(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit DetachedRefused])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task group-limit-spec])
+(import doeff_cluster.shared.entry.service_build [system-of system-declaration])
+(import doeff_cluster.shared.entry.declare [apply-declaration])
+(import doeff_cluster.shared.protocol.declaration_requests [group-limit-write])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator Redeclare])
+(import tests.detached_rig [slow-add RIG-PROVIDES])
+
+(val LOCAL (frozenset RIG-PROVIDES))
+(val ALPHA (system-of "alpha" #() :task-limits #((GroupLimit :group "llm" :scope "cluster" :limit 1))))
+(val BETA (system-of "beta" #() :task-limits #((GroupLimit :group "llm" :scope "cluster" :limit 3))))
+(val BETA-BARE (system-of "beta" #()))
+
+
+(import doeff_cluster.shared.intent.service_model [System])
+
+(defk shared-group-scenario [second]
+  {:pre [(: second System)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "最初の宣言(sim-cluster の系)の後に second の系を宣言し直し(Redeclare — 本番と同じ group-limit-write の判断)、組 llm を名乗る長い
+   task を 3 本出して 5 秒(仮想)後の GET /state を返す。"
+  (<- _names tuple (Redeclare second))
+  (for [i (range 3)]
+    (<- (submit-detached-task (slow-add 30.0 i) :needs LOCAL :key (.format "llm-{}" i) :lease-seconds 5.0
+                              :limits #((TaskLimit :group "llm")))))
+  (<- (Delay 5.0))
+  (<- state dict (ReadCoordinator "/state"))
+  state)
+
+
+(defk llm-summary [state]
+  {:pre [(: state dict)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "GET /state から組 llm の宣言の値・置いている数・待つ数と、task の phase を抜き出す。"
+  (val group (next (gfor g (get state "groupLimits") :if (= (get g "group") "llm") g)))
+  {"limit" (get group "limit")
+   "held" (sum (gfor h (get group "held") (get h "count")))
+   "queued" (get group "queued")
+   "phases" (sorted (gfor t (get state "tasks") :if (.startswith (.get t "key" "") "llm-") (get t "phase")))})
+
+
+(deftest test-alpha-then-beta-places-three-against-alphas-one
+  (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) ALPHA (shared-group-scenario BETA)
+                              :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- summary dict (llm-summary state))
+  (print "OBSERVED alpha->beta:" (json.dumps summary :ensure-ascii False))
+  (assert (= summary {"limit" 3 "held" 3 "queued" 0 "phases" ["assigned" "assigned" "assigned"]}) summary))
+
+
+(deftest test-beta-then-alpha-places-one
+  (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) BETA (shared-group-scenario ALPHA)
+                              :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- summary dict (llm-summary state))
+  (print "OBSERVED beta->alpha:" (json.dumps summary :ensure-ascii False))
+  (assert (= summary {"limit" 1 "held" 1 "queued" 2 "phases" ["assigned" "queued" "queued"]}) summary))
+
+
+(deftest test-the-declare-writer-overwrites-another-systems-value-without-a-word
+  ;; declare-writer の判断(本番の declare と sim で同じ group-limit-write): 今の資源の spec が違えば、誰が書いた値でも版つきの書き直しの本文。
+  (val alpha-now {"spec" (group-limit-spec (get ALPHA.task-limits 0)) "resourceVersion" 7})
+  (<- body (| dict None) (group-limit-write (get BETA.task-limits 0) alpha-now))
+  (print "OBSERVED group-limit-write:" (json.dumps body))
+  (assert (= body {"resourceVersion" 7 "spec" {"scope" "cluster" "limit" 3}}) body))
+
+
+(defk bare-beta-scenario []
+  {:pre [] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "組を写さない beta だけの sim で、beta の送り手が組 llm を名乗って送る(断られた文を返す — 受けられれば None)。"
+  (var refused None)
+  (try
+    (<- (submit-detached-task (slow-add 1.0 1) :needs LOCAL :key "beta-1" :lease-seconds 5.0 :limits #((TaskLimit :group "llm"))))
+    (except [error DetachedRefused]
+      (:= refused (str error))))
+  refused)
+
+
+(deftest test-beta-without-the-copied-literal-is-refused-in-its-own-sim
+  (<- refused (| str None) (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) BETA-BARE (bare-beta-scenario)
+                                       :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (print "OBSERVED bare beta:" refused)
+  (assert (and refused (in "系の宣言に無い" refused)) refused))
+
+
+(defhandler group-only-coordinator
+  ;; coordinator の代役: GroupLimit は無い(GET 404)・作り(POST)は 201。他の要求は来ない筈。
+  (HttpRequest [method url]
+    (val status (cond
+                  (and (= method "GET") (in "/resources/GroupLimit/" url)) 404
+                  (and (= method "POST") (.endswith url "/resources/GroupLimit")) 201
+                  True (raise (AssertionError (.format "思わない要求: {} {}" method url)))))
+    (resume (HttpResponse status {} b"" "" url 0.0))))
+
+
+(deftest test-a-declaration-holding-only-groups-cannot-be-written-or-written-by-defsystem
+  ;; 組の持ち主を 1 つの宣言にする回避(組だけの系)は、本番の declare-writer(rows[0] を読む)と defsystem(job が 1 つ以上)の両方で通らない。
+  (val groups-only (system-of "shared-groups" #() :task-limits #((GroupLimit :group "llm" :scope "cluster" :limit 1))))
+  (val declaration (system-declaration groups-only "rev" :versions {"python" "3"}))
+  (var crashed None)
+  (try
+    (<- (with-handlers [slog-discard-handler group-only-coordinator] (apply-declaration "http://coordinator.test" declaration "c-test")))
+    (except [error Exception]
+      (:= crashed (+ (. (type error) __name__) ": " (str error)))))
+  (print "OBSERVED apply-declaration groups-only:" crashed)
+  (assert (and crashed (.startswith crashed "IndexError")) crashed)
+  (var refused None)
+  (try
+    (hy.eval (hy.read-many "(require doeff-hy.macros [defsystem])
+(defsystem shared-groups [foundation] :task-limits {\"llm\" {\"scope\" \"cluster\" \"limit\" 1}})")
+             {"__name__" "blind_probe"})
+    (except [error Exception]
+      (:= refused (str error))))
+  (print "OBSERVED defsystem groups-only:" refused)
+  (assert (and refused (in "job の行が 1 つも無い" refused)) refused))

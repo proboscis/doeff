@@ -1,0 +1,129 @@
+;;; 盲検 B2 の実験の検(共有の木には入れない): task の本文の欄 slots(Airflow の pool_slots の形)を足した差分で、組の同時数を
+;;; 決める値の一部が送り手へ戻る事を確かめる。提示された検(test_group_limits_declared ほか)は通るが、ここの 3 本は
+;;; design-pre-blind.md の §1 の失敗ケース(置いた順で同時数が変わる)と §3 の契約(送り手は値を持てない・置いている数)が崩れた事を示す。
+(require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+
+(import dataclasses [replace])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo ClusterState ComponentVersion])
+(import doeff_cluster.coordinator.intent.request_bodies [TaskBody ResourceBody])
+(import doeff_cluster.coordinator.core.cluster_policy [place-tasks group-limit-views resource-version-of])
+(import doeff_cluster.coordinator.core.detached_policy [submit-detached])
+(import doeff_cluster.coordinator.core.resource_policy [create-resource update-resource stamp])
+(import tests.program_rows [program-placed task-body-of])
+
+(setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
+(setv PY3 #((ComponentVersion "python" "3")))
+
+
+(defk heavy-declared [limit]
+  {:pre [(: limit int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "組 heavy(機体ごと・値 limit)だけを資源の口で宣言した状態と Program の sha の組 #(状態 sha) を作るため。"
+  (<- placed (get tuple #(ClusterState str)) (program-placed (ClusterState) {"python" "3"}))
+  (setv #(state sha) placed)
+  (val declared (stamp state (create-resource state "GroupLimit" (ResourceBody :name "heavy" :spec {"scope" "worker" "limit" limit}) "declare" 0)
+                       "declare" 0 T))
+  #((replace declared :workers {"zeus" (WorkerInfo "zeus" #("host-zeus") 30 0 :task-reserve 0 :versions PY3)}) sha))
+
+
+(defk sent [state sha key extra]
+  {:pre [(: state ClusterState) (: sha str) (: key str) (: extra dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "組 heavy を名乗る本文に extra を重ねて PUT /detached/<key> として送った #(status 状態) を得るため。"
+  (<- body TaskBody (task-body-of (| {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" [{"group" "heavy"}]}
+                                     extra)))
+  (val reply (submit-detached state key body 0))
+  #(reply.status reply.state))
+
+
+(defk placed-count [state sha sends]
+  {:pre [(: state ClusterState) (: sha str) (: sends list)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "sends(#(key extra) の列)を順に送り、1 拍の置きで置かれた task の数を数えるため。"
+  (var current state)
+  (for [#(key extra) sends]
+    (setv #(status after) (! (sent current sha key extra)))
+    (assert (= status 200) #(key status))
+    (:= current after))
+  (val tasks (! (place-tasks 1000 current {} T)))
+  (len (lfor t (.values tasks) :if (= t.phase "assigned") t)))
+
+
+(deftest test-b2-the-sibling-field-carries-a-value-past-the-closed-limit-keys
+  ;; 組の名乗りの object に値を入れる本文は 400 のまま(提示の検が見る所)。同じ数の意味を兄弟の欄 slots で送る本文は 200 で受かる。
+  (setv #(state sha) (! (heavy-declared 2)))
+  (setv #(inside _) (! (sent state sha "k1" {"limits" [{"group" "heavy" "limit" 1}]})))
+  (setv #(beside _) (! (sent state sha "k2" {"slots" 2})))
+  (assert (= #(inside beside) #(400 200)) #(inside beside)))
+
+
+(deftest test-b2-the-same-three-tasks-run-two-or-one-at-once-by-the-order-they-were-sent
+  ;; 宣言は heavy = 機体ごとに 2 の 1 つ。送り手 A(slots を送らない)の 2 本と送り手 B(slots 2 を送る)の 1 本。
+  ;; A・A・B の順なら 2 本が同時に走り、B・A・A の順なら 1 本しか走らない — §1 の失敗ケース「同じ 2 本でも置いた順で同時数が変わった」。
+  (setv #(state sha) (! (heavy-declared 2)))
+  (val a-first (! (placed-count state sha [#("a/1" {}) #("a/2" {}) #("b/1" {"slots" 2})])))
+  (val b-first (! (placed-count state sha [#("b/1" {"slots" 2}) #("a/1" {}) #("a/2" {})])))
+  (assert (= #(a-first b-first) #(2 1)) #(a-first b-first)))
+
+
+(deftest test-b2-raising-the-declared-value-does-not-reach-a-sender-that-names-slots
+  ;; S2: 宣言の値を 2 → 4 に上げても、slots 2 を送る送り手の同時数は 2 本で、送り手 A の 4 本と割れる。同時数を 4 本にするには
+  ;; 送り手の値(slots)を変える必要がある。/state の groupLimits の held の count は「置いている数」でなく枠の和(2 本で 4)を出す。
+  (setv #(low sha) (! (heavy-declared 2)))
+  (val raised (update-resource low "GroupLimit" "heavy"
+                               (ResourceBody :spec {"scope" "worker" "limit" 4} :resource-version (resource-version-of low "GroupLimit/heavy"))
+                               "declare"))
+  (val a-sender (! (placed-count raised sha (lfor i (range 4) #((.format "a/{}" i) {})))))
+  (val b-sender (! (placed-count raised sha (lfor i (range 4) #((.format "b/{}" i) {"slots" 2})))))
+  (assert (= #(a-sender b-sender) #(4 2)) #(a-sender b-sender))
+  ;; /state の組の画面: B の 2 本を置いた状態で count = 4。
+  (var current raised)
+  (for [i (range 4)]
+    (setv #(_ after) (! (sent current sha (.format "b/{}" i) {"slots" 2})))
+    (:= current after))
+  (val tasks (! (place-tasks 1000 current {} T)))
+  (val views (! (group-limit-views (replace current :tasks tasks))))
+  (val held (. (get views 0) held))
+  (val running (len (lfor t (.values tasks) :if (= t.phase "assigned") t)))
+  (assert (= #(running (lfor h held h.count)) #(2 [4])) #(running held)))
+
+
+;; --- sim(本物の coordinator と worker): 送り手の構築関数 submit-detached-task の :slots が本文の欄 slots として届く ----------
+
+(import doeff_events [MemoryBroker])
+(import doeff_time [Delay])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit AwaitDetached DetachedPending])
+(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster.shared.entry.service_build [system-of])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator])
+(import tests.detached_rig [slow-add RIG-PROVIDES])
+
+(val LOCAL (frozenset RIG-PROVIDES))
+(val SYSTEM (system-of "b2-slots" #() :task-limits #((GroupLimit :group "probe" :scope "worker" :limit 2))))
+
+
+(defk slots-scenario []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "宣言 probe = 機体ごとに 2。送り手 B が :slots 2 で 1 本、送り手 A が slots なしで 1 本を出し、B が置かれた後の GET /state を返すため。"
+  (<- (submit-detached-task (slow-add 30.0 1) :needs LOCAL :key "b-1" :lease-seconds 5.0 :limits #((TaskLimit :group "probe")) :slots 2))
+  (<- (submit-detached-task (slow-add 30.0 2) :needs LOCAL :key "a-1" :lease-seconds 5.0 :limits #((TaskLimit :group "probe"))))
+  (var placed None)
+  (var waited 0.0)
+  (while (is placed None)
+    (assert (< waited 20.0) "b-1 が 20 秒の内に置かれない")
+    (<- answer (AwaitDetached "b-1" :timeout-seconds 0.0))
+    (if (and (isinstance answer DetachedPending) (= answer.phase "assigned"))
+        (:= placed answer)
+        (do (<- (Delay 0.5)) (:= waited (+ waited 0.5)))))
+  (<- (Delay 1.0))
+  (<- state dict (ReadCoordinator "/state"))
+  state)
+
+
+(deftest test-b2-on-sim-a-sender-value-halves-the-declared-value
+  ;; 宣言の値は 2 なのに、送り手 B の値(slots 2)で機体には 1 本しか置かれず、A は上限の文で待つ。/state の count は 2(置いているのは 1 本)。
+  (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (slots-scenario)
+                              :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (val groups (get state "groupLimits"))
+  (val phases (dfor t (get state "tasks") :if (in (.get t "key") #("a-1" "b-1")) (get t "key") (get t "phase")))
+  (assert (= phases {"b-1" "assigned" "a-1" "queued"}) phases)
+  (assert (= (lfor g groups #((get g "limit") (get g "held") (get g "queued"))) [#(2 [{"worker" "w1" "count" 2}] 1)]) groups))

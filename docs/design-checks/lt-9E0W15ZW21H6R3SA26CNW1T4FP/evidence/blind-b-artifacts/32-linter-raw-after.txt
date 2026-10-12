@@ -1,0 +1,498 @@
+
+warning DOEFF172 - Dict Outside Its Place (70 occurrences)
+────────────────────────────────────────────────────────────────────────────────
+  What: 写像は cache のためだけに効果の層(defhandler)が持つ — handler の外の defk・deff・defn の本体で写像({…}・dfor・(dict …))を組まず、defclass・defrecord・defwire の欄と Python の class の欄に写像を持たない(値を型だけで渡す層の欄は DOEFF171)。写像を組むのが目的の定義(:post が写像 — JSON の境界で綴る 1 点・または :tags に :spells / :reads を形の名〔json・http・env・schema・records〕で名乗る外の形を綴る・読む 1 点 — core の外だけ)と、中を読まない中継の型 OpaqueJson の欄は数えない(臭い・数えるだけ)
+  Fix:  データを引く写像はキー → 値の関数か効果(例 (ReadRow table key))にし、cache が要るなら handler の session に置く — 欄の写像は欄の名前と型を持つ defrecord にする。JSON を組む綴りは :post が写像の 1 点の定義に寄せる
+
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:61
+      (defn #^ JobSpec spec-of-declaration [#^ dict item]
+      doeff_cluster/coordinator/core/cluster_policy.hy の spec-of-declaration がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:spec-of-declaration
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:109
+      (deff identity-hash [#^ dict run]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+      doeff_cluster/coordinator/core/cluster_policy.hy の identity-hash がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:identity-hash
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:119
+      (deff program-row-refusal [#^ dict item]  ; defk にできない: 宣言の読み(coordinator の純粋な判断)が呼ぶ
+      doeff_cluster/coordinator/core/cluster_policy.hy の program-row-refusal がhandler の外で写像を 3 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 3 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:program-row-refusal
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:156
+      (deff task-environ-refusal [#^ (| dict list tuple str int float bool None) environ #^ (| dict list tuple str int float bool None) runtime]  ; defk にできない: HTTP の本文を読む境界(Program の外)が呼ぶ純粋な判断
+      doeff_cluster/coordinator/core/cluster_policy.hy の task-environ-refusal がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:task-environ-refusal
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:193
+      (defn #^ dict job-to-json [#^ ClusterJob job]
+      doeff_cluster/coordinator/core/cluster_policy.hy の job-to-json がhandler の外で写像を 9 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 9 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:job-to-json
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:217
+      (defn #^ dict status-row-to-json [#^ StatusRow row]
+      doeff_cluster/coordinator/core/cluster_policy.hy の status-row-to-json がhandler の外で写像を 6 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 6 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:status-row-to-json
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:484
+      (defn #^ ClusterState absorb-boot [#^ ClusterState state #^ str name #^ (| str None) boot]
+      doeff_cluster/coordinator/core/cluster_policy.hy の absorb-boot がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:absorb-boot
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:548
+      (defn #^ dict load-of [#^ ClusterState state #^ dict placements]
+      doeff_cluster/coordinator/core/cluster_policy.hy の load-of がhandler の外で写像を 3 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 3 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:load-of
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:772
+      (defn #^ tuple jobs-for [#^ ClusterState state #^ str worker #^ (| dict None) [ready-instances None]]
+      doeff_cluster/coordinator/core/cluster_policy.hy の jobs-for がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:jobs-for
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:793
+      (defn #^ bool tools-satisfy [#^ TaskRecord task #^ WorkerInfo worker]
+      doeff_cluster/coordinator/core/cluster_policy.hy の tools-satisfy がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:tools-satisfy
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:801
+      (defn #^ bool tools-cover [#^ (| dict None) declared #^ WorkerInfo worker]
+      doeff_cluster/coordinator/core/cluster_policy.hy の tools-cover がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:tools-cover
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:839
+      (defn #^ str versions-note [#^ TaskRecord task #^ ClusterState state #^ int now #^ ClusterTiming timing]
+      doeff_cluster/coordinator/core/cluster_policy.hy の versions-note がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:versions-note
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:872
+      (defn #^ dict unplaced-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
+      doeff_cluster/coordinator/core/cluster_policy.hy の unplaced-jobs がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:unplaced-jobs
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1239
+      (defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
+      doeff_cluster/coordinator/core/cluster_policy.hy の absorb-task-reports がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:absorb-task-reports
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1281
+      (defk absorb-task-result [state id body now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の absorb-task-result がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:absorb-task-result
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1311
+      (defn #^ dict renew-detached [#^ dict tasks #^ str worker #^ (| str None) boot #^ int now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の renew-detached がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:renew-detached
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1324
+      (defk sweep-board [state now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の sweep-board がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:sweep-board
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1333
+      (defk forget-silent-workers [state now timing]
+      doeff_cluster/coordinator/core/cluster_policy.hy の forget-silent-workers がhandler の外で写像を 3 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 3 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:forget-silent-workers
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1347
+      (defk sweep-drains [state now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の sweep-drains がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:sweep-drains
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1355
+      (defk sweep-warms [state now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の sweep-warms がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:sweep-warms
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1447
+      (defk reconcile [now given timing]
+      doeff_cluster/coordinator/core/cluster_policy.hy の reconcile がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:reconcile
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1585
+      (defk register-heartbeat [given body now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の register-heartbeat がhandler の外で写像を 6 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 6 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:register-heartbeat
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1739
+      (defn #^ (| TaskRecord None) adopted-task [#^ ClusterState state #^ str worker #^ (| str None) boot #^ StatusRow status #^ int now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の adopted-task がhandler の外で写像を 3 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 3 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:adopted-task
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1764
+      (defn #^ ClusterState adopt-running-detached [#^ ClusterState state #^ str worker #^ (| str None) boot #^ tuple statuses #^ int now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の adopt-running-detached がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:adopt-running-detached
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1779
+      (defn #^ dict promote-prepared [#^ dict tasks #^ WorkerInfo worker]
+      doeff_cluster/coordinator/core/cluster_policy.hy の promote-prepared がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:promote-prepared
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1837
+      (defn #^ bool handover-pending [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
+      doeff_cluster/coordinator/core/cluster_policy.hy の handover-pending がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:handover-pending
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1932
+      (defk state-view [state now timing]
+      doeff_cluster/coordinator/core/cluster_policy.hy の state-view がhandler の外で写像を 3 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 3 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:state-view
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:1976
+      (defk submit-task [state body now [owner None]]
+      doeff_cluster/coordinator/core/cluster_policy.hy の submit-task がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:submit-task
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:2009
+      (defk poll-task [state id now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の poll-task がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:poll-task
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:2021
+      (defk lease-write [state name body now]
+      doeff_cluster/coordinator/core/cluster_policy.hy の lease-write がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:lease-write
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:2070
+      (defk board-write [state key write [now 0]]
+      doeff_cluster/coordinator/core/cluster_policy.hy の board-write がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:board-write
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy:2123
+      (deff with-derived-capabilities [#^ ClusterState state #^ tuple table]  ; defk にできない: coordinator の調停(Program)が呼ぶ純粋な判断
+      doeff_cluster/coordinator/core/cluster_policy.hy の with-derived-capabilities がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/cluster_policy.hy::DOEFF172::built:with-derived-capabilities
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy:63
+      (defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ TaskBody body #^ int now]
+      doeff_cluster/coordinator/core/detached_policy.hy の submit-detached がhandler の外で写像を 2 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 2 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/detached_policy.hy::DOEFF172::built:submit-detached
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy:132
+      (defn #^ Reply cancel-detached [#^ ClusterState state #^ str key #^ int now]
+      doeff_cluster/coordinator/core/detached_policy.hy の cancel-detached がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/detached_policy.hy::DOEFF172::built:cancel-detached
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy:143
+      (defn #^ Reply release-detached [#^ ClusterState state #^ str key]
+      doeff_cluster/coordinator/core/detached_policy.hy の release-detached がhandler の外で写像を 1 か所で組む — 写像は cache のためだけに handler が持つ
+      これは: handler の外で写像を 1 か所で組む — この file は service coordinator の層 core(業務の判断と Program) — path が doeff_cluster/coordinator/core/ の下、タグの role = judgment
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる
+      鍵: doeff_cluster/coordinator/core/detached_policy.hy::DOEFF172::built:release-detached
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:41
+      (setv #^ (| (get dict #(str object)) None) run None)    ; 宣言の run(詰めた Program の置き場のキー・identity・版・describe)。表示と保存のため
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterJob.run の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterJob.run
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:44
+      (setv #^ (| (get dict #(str object)) None) readiness None) ; {"windowSeconds": n} = ReportReady の「準備できた」が直近 n 秒以内にある時だけ Ready
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterJob.readiness の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterJob.readiness
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:153
+      (#^ (get dict #(str object)) runtime-env)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 WarmEntry.runtime-env の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:WarmEntry.runtime-env
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:164
+      (#^ (get dict #(str str)) versions)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ProgramRow.versions の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ProgramRow.versions
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:272
+      (setv #^ (| (get dict #(str object)) None) last-action None)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 RolloutStatus.last-action の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:RolloutStatus.last-action
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:273
+      (setv #^ (| (get dict #(str int)) None) simulated None)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 RolloutStatus.simulated の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:RolloutStatus.simulated
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:302
+      (#^ (get dict #(str object)) changes))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 AuditEvent.changes の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:AuditEvent.changes
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:401
+      (#^ (get dict #(str Placement)) placements)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 StateView.placements の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:StateView.placements
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:402
+      (#^ (get dict #(str str)) unplaced)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 StateView.unplaced の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:StateView.unplaced
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:403
+      (#^ (get dict #(str StatusView)) statuses)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 StateView.statuses の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:StateView.statuses
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:406
+      (#^ (get dict #(str Placement)) surges)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 StateView.surges の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:StateView.surges
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:437
+      (#^ (get dict #(str str)) moving)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 DrainProgress.moving の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:DrainProgress.moving
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:438
+      (#^ (get dict #(str str)) blocked)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 DrainProgress.blocked の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:DrainProgress.blocked
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:440
+      (#^ (get dict #(str str)) moving-ready))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 DrainProgress.moving-ready の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:DrainProgress.moving-ready
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:461
+      (#^ (get dict #(str DrainProgress)) drains))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 StateReply.drains の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:StateReply.drains
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:507
+      (#^ (get dict #(str object)) row)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 RefusedJob.row の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:RefusedJob.row
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:772
+      (#^ (get dict #(str object)) spec)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ResourceView.spec の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ResourceView.spec
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:773
+      (#^ (get dict #(str object)) status)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ResourceView.status の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ResourceView.status
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:997
+      (setv #^ (| (get dict #(str object)) None) runtime-env None)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 TaskRecord.runtime-env の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:TaskRecord.runtime-env
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1027
+      (setv #^ (get dict #(str WorkerInfo)) workers (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.workers の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.workers
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1028
+      (setv #^ (get dict #(str Placement)) placements (field :default-factory dict)) ; job の名 → Placement
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.placements の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.placements
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1029
+      (setv #^ (get dict #(str TaskRecord)) tasks (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.tasks の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.tasks
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1035
+      (setv #^ (get dict #(str BoardRow)) board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.board の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.board
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1036
+      (setv #^ (get dict #(str WorkerReport)) statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.statuses の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.statuses
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1039
+      (setv #^ (get dict #(str ResourceMeta)) meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.meta の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.meta
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1043
+      (setv #^ (get dict #(str RolloutRow)) rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.rollouts の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.rollouts
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1054
+      (setv #^ (get dict #(str RefusedJob)) refused (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.refused の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.refused
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1056
+      (setv #^ (get dict #(str ProgramRow)) programs (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.programs の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.programs
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1067
+      (setv #^ (get dict #(str Drain)) drains (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.drains の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.drains
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1068
+      (setv #^ (get dict #(str Placement)) surges (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.surges の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.surges
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1070
+      (setv #^ (get dict #(str WarmEntry)) warms (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.warms の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.warms
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1076
+      (setv #^ (get dict #(str HandoffWatch)) handoffs (field :default-factory dict))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 ClusterState.handoffs の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:ClusterState.handoffs
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1137
+      (#^ (| (get dict #(str object)) None) runtime-env)
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 TaskOffer.runtime-env の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:TaskOffer.runtime-env
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy:1144
+      (#^ (get dict #(str object)) runtime-env))
+      doeff_cluster/coordinator/intent/cluster_model.hy の欄 WarmOffer.runtime-env の型が 写像 dict[…](中身の型が在ってもデータを引く写像は渡さない) — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict[…](中身の型が在ってもデータを引く写像は渡さない)) — この file は service coordinator の層 intent(core が外へ求める事の型) — path が doeff_cluster/coordinator/intent/ の下、タグの role = type・intent
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/coordinator/intent/cluster_model.hy::DOEFF172::field:WarmOffer.runtime-env
+    /work/toolset/worktrees/doeff-wt-blind-b2-ki-b0e8/packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy:316
+      (#^ dict versions)
+      doeff_cluster/shared/protocol/detached.hy の欄 DetachedSender.versions の型が 写像 dict — 欄に写像を持たない(欄の名前と型を持つ型にする)
+      これは: 欄の写像(写像 dict) — この file は service shared の層 protocol(intent を相手の話し方へ訳す handler) — path が doeff_cluster/shared/protocol/ の下、タグの role = protocol
+      なぜ: agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。
+      直し方: 欄の写像を、欄の名前と型を持つ defrecord にする
+      鍵: doeff_cluster/shared/protocol/detached.hy::DOEFF172::field:DetachedSender.versions
+
+Found 70 issue(s): 0 error(s), 70 warning(s), 0 info
