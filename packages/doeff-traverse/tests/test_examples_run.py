@@ -34,6 +34,12 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 事も、使い所を 1 つずつ文脈の外で展開して確かめる — 印の無い展開の macro(val など)は UNMARKED_EXPANSIONS に理由つきで
 置き、文脈の外で展開を断る入れ子の使い所は、引き出して写せる形が無いので数えない(card ki-fe7a2e60fdfb・設計検証
 lt-0ZP7AYKXMDX83R8DKGFBA73DBJ)。
+
+展開を写さずに、展開が作った値を実行時に覗いて印字する例(値の class 名・型・属性)は、文字列の印を持たないので上の検が
+見分けない — 答えを変えない macro の変更で、その例だけが赤になる(card ki-b7c40391ac8e)。そこで例を、答えを変えない展開の変異
+の下でも走らせ(run_example_mutated_expansion.py — 値を作る macro の展開を、何もしない handler の下で走らせる Program で包む)、出力が期待の出力の
+ままである事を求める。変わる例は、macro を変えなくても名指して赤になる。包む macro は MUTATED_MACROS・包まない macro は訳つきで
+UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。
 """
 
 import difflib
@@ -66,8 +72,29 @@ CHILD_TIME_ZONE = "UTC0"
 # (make test-changed)の 60 秒の上限で後ろの検を打ち切った(card ki-458fc8e0de36)。全部を一度に起こさないのは、機体の検の枠
 # 1 つ(root の conftest の _hold_check_slot)の目安 — 検 1 本 0.5〜2.5 core — を大きく越えないため。
 PARALLEL_CHILDREN = 4
+
+
+@dataclass(frozen=True)
+class Entrance:
+    """例を `hy <例>` の代わりに走らせる子の入口 — script に、例の path と arguments を渡す。"""
+
+    script: Path
+    arguments: tuple[str, ...] = ()
+
+
 # 例を件の中で失敗させて走らせる子の入口(Traverse の走りごとに最初の件を失敗させ、実行の印を標準エラーに書く)。
-FAILING_A_CASE = Path(__file__).with_name("run_example_failing_a_case.py")
+FAILING_A_CASE = Entrance(Path(__file__).with_name("run_example_failing_a_case.py"))
+# 例の展開を答えを変えない形に変えて走らせる子の入口: MUTATED_MACROS の macro の展開を、何もしない handler の下で走らせる Program で
+# 包む(包んだ値の class は、元が Traverse の effect でも Program でも WithHandler になる)。
+# どの macro の展開が実行時の値を作るかは doeff-hy の持ち分で、検は表で名指す。
+MUTATED_MACROS: tuple[str, ...] = ("traverse", "for/do")
+MUTATED_EXPANSION = Entrance(
+    Path(__file__).with_name("run_example_mutated_expansion.py"), MUTATED_MACROS
+)
+# 変異を言う文(断りの文に出す)。
+MUTATION = (
+    f"{'・'.join(MUTATED_MACROS)} が作る値を、何もしない handler の下で走らせる Program で包む"
+)
 # 件の中で失敗させる子が標準エラーに書く、実行の印の行(子の COUNTS_LINE)。
 _COUNTS = re.compile(r"^case-calls: (\d+) program-runs: (\d+)$", re.MULTILINE)
 
@@ -83,6 +110,16 @@ NO_CASES: dict[str, str] = {
 # 出力の検が見分けないので、例が初めて使う時に理由つきで置く(例: val — 1 段の展開は利用者の書く setv と同じ形で、隠す中身を
 # 持たない)。印を持つようになった・例が使わなくなった macro の行は外す。
 UNMARKED_EXPANSIONS: dict[str, str] = {}
+
+# 例が使う doeff-hy の macro のうち、展開の変異(MUTATED_MACROS)で包まない物(macro の名 → 訳)。包めるのは実行時の値を作る式で、
+# 名の束縛・定義の文は包めない。例が初めて使う macro は、MUTATED_MACROS に足すか、ここに訳つきで置く。使わなくなった・
+# MUTATED_MACROS に移した macro の行は外す。
+UNMUTATED_MACROS: dict[str, str] = {
+    "defk": "関数を定義する文 — 包める値が無い。定義した関数の型・署名を印字する例は変異で見分けない(残る限界)",
+    "defhandler": "handler を定義する文 — 包める値が無い。定義した handler の型・署名を印字する例は変異で見分けない(残る限界)",
+    "<-": "束縛の文 — 束縛する式(traverse・for/do)は MUTATED_MACROS が包む",
+    "fnk": "関数を作る式 — 展開が作る関数の型・署名を印字する例は変異で見分けない(残る限界)",
+}
 
 # 期待の出力の印の字。印の種類は置く所で決まり、種類ごとに呑める物が決まっている:
 #   - 行が ANY だけの行は、traceback の frame の行を 1 行以上呑む(_frame_violations) — 件の結果の行は呑めない。
@@ -188,12 +225,12 @@ def _runnable() -> list[str]:
 
 @dataclass(frozen=True)
 class Child:
-    """検が待つ子 1 本 — 例 1 本を、そのままか件の中で失敗させて走らせる。"""
+    """検が待つ子 1 本 — 例 1 本を、そのままか入口(件の中で失敗させる・展開を変異させる)を通して走らせる。"""
 
     # 例の file の名
     name: str
-    # 件の中で失敗させる子の入口(FAILING_A_CASE)から走らせるか
-    failing_a_case: bool
+    # 例を走らせる入口(None なら `hy <例>`)
+    entrance: Entrance | None = None
 
 
 def _in_child_time_zone(command: list[str]) -> list[str]:
@@ -201,13 +238,14 @@ def _in_child_time_zone(command: list[str]) -> list[str]:
     return ["env", f"TZ={CHILD_TIME_ZONE}", *command]
 
 
-def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.CompletedProcess[str]:
-    """例を `hy <例>` で走らせる(failing_a_case なら、件の中で失敗させる子の入口から)。"""
-    example = str(EXAMPLES / child.name)
+def _run_example(
+    example: Path, entrance: Entrance | None, deadline_scale_factor: float
+) -> subprocess.CompletedProcess[str]:
+    """例を `hy <例>` で走らせる(entrance が在れば、その入口から)。"""
     command = (
-        [sys.executable, str(FAILING_A_CASE), example]
-        if child.failing_a_case
-        else [sys.executable, "-m", "hy", example]
+        [sys.executable, "-m", "hy", str(example)]
+        if entrance is None
+        else [sys.executable, str(entrance.script), str(example), *entrance.arguments]
     )
     return subprocess.run(
         _in_child_time_zone(command),
@@ -216,6 +254,10 @@ def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.Complet
         text=True,
         timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
     )
+
+
+def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.CompletedProcess[str]:
+    return _run_example(EXAMPLES / child.name, child.entrance, deadline_scale_factor)
 
 
 def _child_of(item: pytest.Item) -> Child | None:
@@ -227,9 +269,11 @@ def _child_of(item: pytest.Item) -> Child | None:
         return None
     function = getattr(item, "function", None)
     if function in (test_example_runs, test_broken_example_is_still_broken):
-        return Child(name, failing_a_case=False)
+        return Child(name)
     if function in (test_case_failure_shows_in_compared_output, test_example_runs_a_program):
-        return Child(name, failing_a_case=True)
+        return Child(name, FAILING_A_CASE)
+    if function is test_example_output_survives_expansion_mutation:
+        return Child(name, MUTATED_EXPANSION)
     return None
 
 
@@ -252,11 +296,13 @@ class Children:
             if child is not None and (EXAMPLES / child.name).is_file()
         }
 
-    def result(self, name: str, failing_a_case: bool) -> subprocess.CompletedProcess[str]:
+    def result(
+        self, name: str, entrance: Entrance | None = None
+    ) -> subprocess.CompletedProcess[str]:
         assert self._mut_runs is not None, (
             "子を起こす前に結末を待った — 検は children の fixture から受け取る"
         )
-        return self._mut_runs[Child(name, failing_a_case)].result()
+        return self._mut_runs[Child(name, entrance)].result()
 
     def close(self) -> None:
         self._pool.shutdown(wait=True, cancel_futures=True)
@@ -365,14 +411,10 @@ def _matches(expected: str, actual: str) -> bool:
     return _compare(expected, actual) == []
 
 
-def _output_diff(expected: Path, actual: str) -> str:
+def _output_diff(label: str, expected: str, actual: str) -> str:
     return "\n".join(
         difflib.unified_diff(
-            expected.read_text(encoding="utf-8").splitlines(),
-            actual.splitlines(),
-            str(expected.relative_to(EXAMPLES)),
-            "標準出力",
-            lineterm="",
+            expected.splitlines(), actual.splitlines(), label, "標準出力", lineterm=""
         )
     )
 
@@ -556,7 +598,7 @@ def _example_macro_uses(name: str) -> list[MacroUse]:
 
 @pytest.mark.parametrize("name", _runnable())
 def test_example_runs(name: str, children: Children) -> None:
-    result = children.result(name, failing_a_case=False)
+    result = children.result(name)
     assert result.returncode == 0, result.stdout + result.stderr
     expected = _expected(name)
     assert expected.is_file(), (
@@ -564,7 +606,9 @@ def test_example_runs(name: str, children: Children) -> None:
         f"走るたびに変わる所を印にする"
     )
     swallowed = _compare(expected.read_text(encoding="utf-8"), result.stdout)
-    assert swallowed is not None, _output_diff(expected, result.stdout)
+    assert swallowed is not None, _output_diff(
+        str(expected.relative_to(EXAMPLES)), expected.read_text(encoding="utf-8"), result.stdout
+    )
     assert swallowed == [], (
         f"{expected.relative_to(EXAMPLES)} の行だけの {ANY} が traceback の frame でない行を呑んだ — 行だけの {ANY} は"
         f" frame だけを伏せる。呑んだ行を期待の出力に書く: {swallowed}"
@@ -575,7 +619,7 @@ def test_example_runs(name: str, children: Children) -> None:
 def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
     """件の中の失敗が、比べる出力に出る事: Traverse の走りごとに最初の件を件の中で失敗させた子は 0 で終わり、その出力は
     期待の出力に合わない。件を 1 つも走らせない例は NO_CASES に理由つきで置く。"""
-    result = children.result(name, failing_a_case=True)
+    result = children.result(name, FAILING_A_CASE)
     marks = _run_marks(result)
     assert marks is not None, (
         f"件の中で失敗させる子が、実行の印を書かずに終わった\n{result.stdout}{result.stderr}"
@@ -608,12 +652,46 @@ def test_case_failure_shows_in_compared_output(name: str, children: Children) ->
 def test_example_runs_a_program(name: str, children: Children) -> None:
     """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
     関数の中の run や quote の中の run は数えない)。"""
-    marks = _run_marks(children.result(name, failing_a_case=True))
+    marks = _run_marks(children.result(name, FAILING_A_CASE))
     assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
     assert marks.program_runs > 0, (
         f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
         "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
     )
+
+
+def _expansion_mutation_change(
+    example: Path, expected: str, result: subprocess.CompletedProcess[str]
+) -> str | None:
+    """答えを変えない展開の変異の下で走らせた例が、期待の出力のままか: 変わっていれば、その例を名指す断りの文(変わらなければ
+    None)。"""
+    if result.returncode != 0:
+        return (
+            f"{example.name} は、答えを変えない展開の変異({MUTATION})の下で落ちた — 例が展開の作った値の形(型・属性)に頼っている。"
+            f"例は run の後の答えだけを使う\n{result.stdout}{result.stderr}"
+        )
+    if _matches(expected, result.stdout):
+        return None
+    return (
+        f"{example.name} の出力は、答えを変えない展開の変異({MUTATION})の下で変わる — 例が展開の作った値の形(class 名・型・属性)を"
+        f"印字している。macro が答えを変えずに展開を変えると、macro を直した人の手で例が赤になる。例は run の後の答えだけを印字する\n"
+        f"{_output_diff(f'{example.name} の期待の出力', expected, result.stdout)}"
+    )
+
+
+@pytest.mark.parametrize("name", _runnable())
+def test_example_output_survives_expansion_mutation(name: str, children: Children) -> None:
+    """答えを変えない展開の変異の下でも、例の出力は期待の出力のまま — 展開が作った値の class 名・型・属性を印字する例は、
+    展開の文字列の写しではないので印の検が見分けず、macro が答えを変えずに展開を変えるとその例だけが赤になる(card
+    ki-b7c40391ac8e)。"""
+    expected = _expected(name)
+    assert expected.is_file(), f"{name} の期待の出力が無い(test_example_runs が名指す)"
+    change = _expansion_mutation_change(
+        EXAMPLES / name,
+        expected.read_text(encoding="utf-8"),
+        children.result(name, MUTATED_EXPANSION),
+    )
+    assert change is None, change
 
 
 def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float) -> None:
@@ -633,7 +711,7 @@ def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float)
         encoding="utf-8",
     )
     result = subprocess.run(
-        [sys.executable, str(FAILING_A_CASE), str(script)],
+        [sys.executable, str(FAILING_A_CASE.script), str(script)],
         capture_output=True,
         check=False,
         text=True,
@@ -660,7 +738,7 @@ def test_children_run_in_a_fixed_time_zone(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.parametrize("name", sorted(BROKEN))
 def test_broken_example_is_still_broken(name: str, children: Children) -> None:
     assert (EXAMPLES / name).is_file(), f"BROKEN の行 {name} の例が examples/ に無い — 行を外す"
-    result = children.result(name, failing_a_case=False)
+    result = children.result(name)
     assert result.returncode != 0, (
         f"{name} は走るようになった — BROKEN の行(理由: {BROKEN[name]})を外す"
     )
@@ -816,6 +894,134 @@ def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: 
     assert _unplaceable_in(result.stdout) == [
         "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)"
     ]
+
+
+def test_example_macros_are_mutated_or_named() -> None:
+    """例が使う doeff-hy の macro は、展開の変異で包む(MUTATED_MACROS)か、包まない訳を置く(UNMUTATED_MACROS) — 新しい macro を
+    初めて使う例が、変異の外のまま緑になって、その値の形の印字を見逃させない。包まない macro の行は、今の例が使う macro だけを
+    名指す。"""
+    used = {use.macro for name in _examples() for use in _example_macro_uses(name)}
+    assert used - set(MUTATED_MACROS) - set(UNMUTATED_MACROS) == set(), (
+        "例が使う doeff-hy の macro が、展開の変異の表に無い — 実行時の値(Traverse の effect・Program)を作る式なら"
+        "MUTATED_MACROS に足し、変異の入口が包めるか確かめる。名の束縛・定義の文なら UNMUTATED_MACROS に訳つきで置く"
+    )
+    assert set(UNMUTATED_MACROS) - used == set(), (
+        "UNMUTATED_MACROS の行が、今の例の macro を名指さない — 行を外す"
+    )
+    assert set(UNMUTATED_MACROS) & set(MUTATED_MACROS) == set(), (
+        "UNMUTATED_MACROS の行が MUTATED_MACROS にも在る — 包むなら行を外す"
+    )
+
+
+# 変異が包む macro ごとの使い所: 走らせると同じ答え(2 倍した 3 つ)を出す式。
+BUILT_VALUE_USES: dict[str, str] = {
+    "traverse": "(traverse (<- x (Iterate [1 2 3])) (* x 2))",
+    "for/do": "(for/do (<- x (From [1 2 3])) (* x 2))",
+}
+
+# 展開が作った値を `built` に置いて、その形(class 名・Traverse の判定・属性)と run の後の答えを印字する、変異の確かめの例。
+_BUILT_VALUE_PREAMBLE = """
+(require doeff-hy.macros [<- traverse for/do])
+(import doeff [do :as _doeff-do])
+(import doeff [run])
+(import doeff_core_effects [try-handler :as try_handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+(import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
+
+(defn answer [built]
+  (. (run (scheduled ((sequential) (fail_handler (try_handler built))))) valid_values))
+"""
+
+
+def _built_value_example(uses: list[str]) -> str:
+    """uses の式が作る値の class 名・Traverse の判定と、run の後の答えを、式ごとに印字する例の source。"""
+    return _BUILT_VALUE_PREAMBLE + "".join(
+        f"""
+(setv built_{index} {use})
+(print "built:" (. (type built_{index}) __name__))
+(print "is-traverse:" (isinstance built_{index} _doeff_traverse_Traverse))
+(print "answer:" (answer built_{index}))
+"""
+        for index, use in enumerate(uses)
+    )
+
+
+def _lines(result: subprocess.CompletedProcess[str], kind: str) -> list[str]:
+    return [line for line in result.stdout.splitlines() if line.startswith(f"{kind}:")]
+
+
+def test_expansion_mutation_changes_the_built_value_not_the_answer(
+    tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    """今の例は展開が作った値の形を印字しないので、変異が空振りしない事(包む macro ごとに、作る値が WithHandler になる)・答えを
+    変えない事(run の後の答えは同じ)・値の形を印字する例を名指す事(card ki-b7c40391ac8e の失敗ケース — ex10 の形: 設計検証
+    lt-0ZP7AYKXMDX83R8DKGFBA73DBJ の盲検 B)は、値の形を印字する source で確かめる。例の他の検 — 走る・Program を走らせる・
+    macro の持ち主・期待の出力に置かない物 — は通る形(展開の文字列の写しではないので、印の検が見分けない)。変異の後の姿だけを
+    決め、macro が今どんな値を作るか(Traverse か Program か)は決めない — 答えを変えない macro の変更でこの検は変わらない。"""
+    assert set(BUILT_VALUE_USES) == set(MUTATED_MACROS), (
+        "MUTATED_MACROS の macro ごとに、変異で値の形が変わる使い所を BUILT_VALUE_USES に足す"
+    )
+    script = tmp_path / "prints_built_values.hy"
+    script.write_text(_built_value_example(list(BUILT_VALUE_USES.values())), encoding="utf-8")
+    assert _macro_violations(script.read_text(encoding="utf-8"), str(script)) == []
+    plain = _run_example(script, None, deadline_scale_factor)
+    mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert mutated.returncode == 0, mutated.stdout + mutated.stderr
+    # 書き手が置く期待の出力 = 走らせた出力。置かない物は含まない
+    assert _unplaceable_in(plain.stdout) == []
+    uses = len(BUILT_VALUE_USES)
+    assert _lines(mutated, "built") == ["built: WithHandler"] * uses
+    assert _lines(mutated, "is-traverse") == ["is-traverse: False"] * uses
+    assert _lines(plain, "answer") == _lines(mutated, "answer") == ["answer: [2, 4, 6]"] * uses
+    change = _expansion_mutation_change(script, plain.stdout, mutated)
+    assert change is not None
+    assert script.name in change
+    assert "+built: WithHandler" in change
+
+
+def test_expansion_mutation_names_an_example_that_breaks_on_the_built_value(
+    tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    """展開が作った値の属性を読む例は、変異の下で落ちる — 検は出力の違いでなく、落ちた事とその例を名指す。"""
+    script = tmp_path / "reads_built_value.hy"
+    script.write_text(
+        _BUILT_VALUE_PREAMBLE
+        + f"(setv built {BUILT_VALUE_USES['traverse']})\n(print (len (list (. built items))))\n",
+        encoding="utf-8",
+    )
+    mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
+    change = _expansion_mutation_change(script, "", mutated)
+    assert change is not None
+    assert script.name in change
+    assert "落ちた" in change
+    assert "no attribute 'items'" in change
+
+
+def test_expansion_mutation_spares_the_modules_an_example_imports(
+    tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    """変異は例の module の展開だけに当たる — 例が import する lib の `.hy` が同じ macro を使っても、その展開は変えない(変えた展開を
+    compile した lib の bytecode が、機体で共有する保存先へ書かれて、変異を知らない走りが包まれた展開を読むのを防ぐ)。"""
+    (tmp_path / "built_by_a_library.hy").write_text(
+        _BUILT_VALUE_PREAMBLE + f"(setv library_value {BUILT_VALUE_USES['traverse']})\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "prints_library_and_own_values.hy"
+    script.write_text(
+        _BUILT_VALUE_PREAMBLE
+        + "(import built_by_a_library)\n"
+        + f"(setv own_value {BUILT_VALUE_USES['traverse']})\n"
+        + '(print "library:" (. (type built_by_a_library.library_value) __name__))\n'
+        + '(print "own:" (. (type own_value) __name__))\n',
+        encoding="utf-8",
+    )
+    mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
+    assert mutated.returncode == 0, mutated.stdout + mutated.stderr
+    assert mutated.stdout.splitlines()[1] == "own: WithHandler"
+    # lib が作った値は包まれない(元の macro の展開のまま)
+    assert mutated.stdout.splitlines()[0].removeprefix("library: ") != "WithHandler"
 
 
 def test_mark_check_sees_unknown_marks() -> None:
