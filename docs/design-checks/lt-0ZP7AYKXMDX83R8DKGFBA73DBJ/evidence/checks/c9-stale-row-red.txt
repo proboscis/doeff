@@ -1,0 +1,20 @@
+# 確かめ c9 — 例が使わない macro の UNMARKED_EXPANSIONS の行は、表の検が「行を外す」と名指して赤(S2(a) の失敗例)
+# 版: e2c158f5e6bae3d4564390a3c666833281556900・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:17:55Z
+85:UNMARKED_EXPANSIONS: dict[str, str] = {"val": "1 段の展開は利用者の書く setv と同じ形"}
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf -k unmarked
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   AssertionError: UNMARKED_EXPANSIONS の行が、今の例の印の無い展開を名指さない — 行を外す
+    assert {'val'} == set()
+      
+      Extra items in the left set:
+      'val'
+      Use -v to get more diff
+/work/toolset/worktrees/doeff-wt-check-ki-fe7a/packages/doeff-traverse/tests/test_examples_run.py:754: AssertionError: UNMARKED_EXPANSIONS の行が、今の例の印の無い展開を名指さない — 行を外す
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_unmarked_table_names_unmarked_macros
+1 failed, 62 deselected, 1 warning in 6.48s
+exit=1
