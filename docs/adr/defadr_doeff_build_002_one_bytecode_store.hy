@@ -1,7 +1,8 @@
 ;;; Executable ADR: bytecode(.pyc の中身の code と、閉包の歩みが読む import の名)を引く・足す保存先は 1 つ — doeff-hy の
 ;;; doeff_hy_bytecode_guard/code_store.py。鍵は source の中身と、中身の読みを変える物(Hy の source は module 名と Hy の版・Python の版の印・
 ;;; 最適化の段)だけで、版(commit)と木の path に依らない。macro の出所の中身は鍵に入れず、当たった code の記録を今の環境の macro の file と
-;;; 照らす(合わなければ焼き直して同じ鍵の entry を書き直す)。
+;;; 照らす(合わなければ焼き直す)。鍵 1 つには macro の環境ごとの entry が並び、焼き直した code は今の環境の entry として足す(R2b — 他の
+;;; 環境の entry を上書きしない)。
 ;;;
 ;;; 出自 = 利用者の 2026-10-07 の原文 2 通(下の fact)と、#3858 の決定(cisco-c8・2026-10-07 01:5x — 実行環境の用意を速くする側で直す・
 ;;; worker の bytecode の保存を、版をまたいで中身で引ける形にする)。
@@ -110,7 +111,10 @@
        :evidence "#3858 の調べ・手元の測りの完成マーカーの bytecode の欄")
      (fact
        "直す前の形: worker の準備は .pyc を root の木の中にだけ置き、次の版は完成済みの root の木から変わっていない file(git diff の外)の .pyc を hardlink で引き継いだ。閉包の歩みの import の名も、木の根に残す表を引き継ぎ元の木から使い回した。引き継ぎ元の選びは Python と Hy の版・同じ repo の完成済みの root に限るので、新しい worker・空の /work・root を消した後・テストの 1 台の cluster では全部を焼き直した。同じ中身の code の保存先は doeff-hy の import の口にだけ在り(DOEFF_HY_CODE_STORE)、準備の道具は使わなかった。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy の carry-source(この変更の前の版)・worker/entry/code_prepare.hy の --from と --changed")]
+       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy の carry-source(この変更の前の版)・worker/entry/code_prepare.hy の --from と --changed")
+     (fact
+       "測り(2026-10-12 09:0x JST・zeus・card ki-6828e9af04b4 — 調べは card ki-4c2f5878e524): 実行環境の準備は同じ版の source でも 1 回に 100〜600 本の Hy の bytecode を焼き直した(02:53 JST より前は 0〜10 本・bytecode の段 10〜40 秒 → 後は 30〜600 本・40〜550 秒。06 時台の 1 時間は 6 回で 2,763 本・1,366 秒)。鍵 1 つに entry 1 つの並びで、準備(worker の道具 — 記録の印 6)と作業木の import(DOEFF_HY_CODE_STORE を worker から継ぐ・doeff の版は作業木ごとに違う — 記録の印 5 など)が、同じ鍵の entry を互いに古いと見て焼き直し、上書きし合った。最新の root の Hy の source 1,094 本の entry を、その root の環境で照らすと、使える 797・記録の印 5 で使えない 295(どれも作業木が書いた)・digest が合わない 2。"
+       :evidence "card ki-6828e9af04b4 の本文(所見)")]
   :context
     [(interpretation
        "版が替わっても中身の同じ source を焼き直さない事は、鍵が中身だけで決まる保存先を、準備の道具も import の口も同じ 1 つの入口で引く時だけ保証できる。前の木からの引き継ぎは、引き継ぎ元の root が在る時にだけ効き、在るかは worker の state と掃除に依る — 鍵を版や木に結ぶと、効かない場合(新しい worker・テスト)が必ず残る。")
@@ -119,13 +123,15 @@
      (interpretation
        "準備の道具は準備する root の venv の python で走り、root の版の doeff を import する。root の版の doeff-hy は保存先の入口を持たない版でありうるので、道具は worker の版の doeff-hy の code_store.py を path で読む(bake_plan と同じ置き方)。入口は標準 library だけを import する。")
      (interpretation
-       "保存先の並びと掃除は native の wheel の保存先(ADR-DOE-BUILD-001)と同じ作法: <dir>/<鍵の頭>/<鍵の残り><種類>・使うたびに時刻を進める・7 日使われない物を worker の掃除が消す・書きは一時の file からの置き換え・壊れた entry は名指して除き作り直す。保存先の dir は env DOEFF_HY_CODE_STORE で、worker の起動の script が $WORK_DIR/state/doeff-hy-code-store を既定に置く(日次の全体検証の task と同じ dir)。")]
+       "保存先の並びと掃除は native の wheel の保存先(ADR-DOE-BUILD-001)と同じ作法: <dir>/<鍵の頭>/<鍵の残り><種類>(source の code は鍵の dir の下に macro の環境ごと — R2b)・使うたびに時刻を進める・7 日使われない物を worker の掃除が消す・書きは一時の file からの置き換え・壊れた entry は名指して除き作り直す。保存先の dir は env DOEFF_HY_CODE_STORE で、worker の起動の script が $WORK_DIR/state/doeff-hy-code-store を既定に置く(日次の全体検証の task と同じ dir)。")]
   :decision
     [(rule R1 "bytecode を引く・足す保存先は doeff-hy の code_store.py 1 つ。並び・鍵・使った印・壊れた entry の扱いはここだけが綴り、import の口(loader_hooks)と worker の準備の道具(code_prepare・bytecode_pool)はこの関数を呼ぶ。")
      (rule R2 "code の鍵 = source の中身・Python の版の印・最適化の段、Hy の source はさらに module 名と Hy の版。macro の出所の中身は、当たった code の記録を今の環境の file と照らして確かめ、合わなければ焼き直して同じ鍵の entry を書き直す。")
+     (rule R2b "R2 の追補(2026-10-12・card ki-6828e9af04b4 の案 2 = 根治): 鍵 1 つの dir に macro の環境ごとの code の entry を並べる — <dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code(鍵の印 doeff-hy/code-store/3)。記録の指紋 = code の定数の末尾(doeff-hy の記録)の sha256 の頭 32 字(code_store.code-fingerprint — 記録の欄の意味は読まず、記録の印の違う版の記録にも同じ作り方が効く)。引く側は使った時刻の新しい順に照らし、合う最初の 1 つを使い、その entry の時刻だけを進める。焼き直した code は今の環境の entry として足し、他の環境の entry は上書きしない。鍵 1 つの entry は 16 個(CODE-ENTRIES-PER-KEY)までで、越えたら使った時刻の古い物から除く。R2 の「同じ鍵の entry を書き直す」は、記録の同じ entry を書き直す事に読み替える。訳: 鍵 1 つに entry 1 つでは、doeff の版の違う書き手(実行環境の準備と作業木の import)が同じ鍵を交互に上書きし、互いに焼き直した(上の測り)。失敗ケース = packages/doeff-hy/tests/test_bytecode_guard.py の test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round・packages/doeff-cluster/tests/test_code_prepare_content_store.py の test_e_two_macro_versions_taking_turns_do_not_rebake_each_other・packages/doeff-hy/tests/test_code_store_entries.py。")
      (rule R3 "worker の bytecode の準備は前の版の木から .pyc も import の名も引き継がない(--from・--changed・引き継ぎ元の選びを持たない)。.pyc は保存先の code から書き、無い物と今の macro に合わない物だけを焼いて足す。閉包の import の名も source の中身の鍵で保存先から引く(種類 .imports)。")
      (rule R4 "保存先の dir は env DOEFF_HY_CODE_STORE。worker の起動の script は既定を $WORK_DIR/state/doeff-hy-code-store に置き、呼び手の値を優先する(手元の 1 台の cluster のテストは件をまたいで同じ dir を渡す)。")
-     (rule R5 "7 日使われない entry は worker の掃除が消す(native の wheel と同じ 7 日 — CODE-STORE-UNUSED-SECONDS = WHEEL-UNUSED-SECONDS)。")]
+     (rule R5 "7 日使われない entry は worker の掃除が消す(native の wheel と同じ 7 日 — CODE-STORE-UNUSED-SECONDS = WHEEL-UNUSED-SECONDS)。")
+     (rule R5b "R5 の追補(2026-10-12・card ki-6828e9af04b4): 掃除は、自分も下の物も全部 7 日動いていない保存先の dir を dir ごと消す(env_store の unused-store-names)。使った entry の在る dir と、作ったばかりの空の dir は残す。訳: R2b の鍵の dir は版ごとの source の数だけ増えるので、entry だけを消すと空の dir が残り続け、保存先の歩きが読む数が増え続ける。失敗ケース = packages/doeff-cluster/tests/test_env_store.hy の test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused。")]
   :laws
     [(law one-bytecode-store-entry
        :statement "for_all file f in doeff (excluding tests and docs): spells_store_layout(f) => f == ENTRY; and spells_store_layout(ENTRY)"

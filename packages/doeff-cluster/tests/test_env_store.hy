@@ -137,3 +137,34 @@
   (assert (in (str stale) removed) removed)
   (assert (not (.exists stale)) "7 日使われない entry が残った")
   (assert (.exists used) "使った entry を消した"))
+
+
+;; 失敗ケース(card ki-6828e9af04b4): code の entry は鍵ごとの dir の下に macro の環境ごとに並ぶ(doeff-hy の code_store の鍵の印 3 の並び)。
+;; 掃除は dir の下の 7 日使われない entry も消し、中が全部 7 日動いていない dir は dir ごと消す — 鍵の dir は版ごとの source の数だけ増える
+;; ので、entry だけを消すと空の dir が残り続け、保存先の歩きが年に数十万の空の dir を読む。使った entry の在る鍵の dir と、作ったばかりの
+;; 空の dir(書き手が entry を置く前)は残す。
+(deftest test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused [tmp-path]
+  (val store (/ tmp-path "code-store"))
+  (val gone (/ store "ab" "cdef"))       ; 中の entry が全部 7 日使われない鍵の dir
+  (val kept (/ store "ab" "0123"))       ; 1 つは使った鍵の dir
+  (val empty (/ store "ab" "89ab"))      ; 7 日動いていない空の dir(書きの途中で止まった残り)
+  (val fresh (/ store "ab" "4567"))      ; 作ったばかりの空の dir
+  (for [d [gone kept empty fresh]] (.mkdir d :parents True))
+  (val gone-entries #((/ gone "a.code") (/ gone "b.code")))
+  (val kept-old (/ kept "c.code"))
+  (val kept-used (/ kept "d.code"))
+  (for [f #(#* gone-entries kept-old kept-used)] (.write-bytes f b"x"))
+  (val now-s (time.time))
+  (val past (- now-s CODE-STORE-UNUSED-SECONDS 60))
+  ;; dir の時刻は中の file を置いた後に戻す(file を置くと dir の時刻が進む)。
+  (for [p #(#* gone-entries kept-old gone empty)] (os.utime p #(past past)))
+  (<- settings EnvSettings (settings-in tmp-path))
+  (<- removed tuple (with-handlers [os-file-handler] (sweep-leftovers (replace settings :code-store (str store)) (int (* now-s 1000)))))
+  (assert (not (.exists gone)) "中の entry が全部 7 日使われない鍵の dir が残った")
+  (assert (in (str gone) removed) removed)
+  (assert (not (any (gfor f gone-entries (in (str f) removed)))) #("dir ごと消す entry を 1 つずつも名指した" removed))
+  (assert (not (.exists empty)) "7 日動いていない空の dir が残った")
+  (assert (not (.exists kept-old)) "使った entry の隣の 7 日使われない entry が残った")
+  (assert (.exists kept-used) "使った entry を消した")
+  (assert (.exists fresh) "作ったばかりの空の dir を消した")
+  (assert (.exists store) "保存先の dir そのものを消した"))

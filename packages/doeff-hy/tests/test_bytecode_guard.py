@@ -155,6 +155,13 @@ def _user_pyc(root: Path) -> Path:
     return pyc
 
 
+def _stored_entries(store: Path | str, name: str, source: Path, data: bytes) -> tuple[str, ...]:
+    """共有の置き場の、module 名 name の source(中身 data)の code の鍵の entry(macro の環境ごとに並ぶ — 使った時刻の新しい順)。"""
+    from doeff_hy_bytecode_guard import code_store, loader_hooks
+
+    return code_store.code_entries(str(store), loader_hooks._store_key(name, str(source), data))
+
+
 def test_pypi_hy_alone_keeps_the_old_expansion(tmp_path: Path) -> None:
     """包みが無いと #1003 の赤がそのまま出る(この反例のテストが意味を持つことの確かめ)。"""
     _write_package(tmp_path)
@@ -315,6 +322,21 @@ def test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expans
     assert _expansions(other) == 1
 
 
+def test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round(tmp_path: Path) -> None:
+    """macro の中身の違う 2 つの書き手(doeff の版の違う会話の作業木と実行環境の準備の代役 — 使い手の source は同じ)が、同じ置き場で
+    新しい木を交互に読む。鍵 1 つに entry 1 つの並びでは、互いの entry を古いと見て展開し直し、同じ鍵を上書きし合った(2026-10-12
+    zeus — 準備 1 回に 100〜600 本の焼き直し・card ki-6828e9af04b4)。鍵 1 つに macro の環境ごとの entry を持つ並びでは、2 巡目から
+    どちらも展開し直さない。"""
+    store = tmp_path / "store"
+    for turn in (1, 2, 3):
+        for name, add in (("one", 1), ("five", 5)):
+            root = tmp_path / f"{name}-{turn}"
+            root.mkdir()
+            _write_counting_package(root, add)
+            assert _run_on_pypi_hy(root, "before-hy", store) == 10 + add
+            assert _expansions(root) == (1 if turn == 1 else 0), (name, turn)
+
+
 def test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_macro(
     tmp_path: Path,
 ) -> None:
@@ -344,7 +366,7 @@ def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_co
     中身の鍵の下に入り、同じ中身の file を読む全部の作業木が古い振る舞いで動いた(実例 2026-10-02 13:57 — doeff-cluster の
     sim/local.hy の検が毎回赤)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store, loader_hooks
+    from doeff_hy_bytecode_guard import code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -378,10 +400,10 @@ def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_co
     monkeypatch.setitem(sys.modules, name, importlib.util.module_from_spec(spec))
     assert loader.get_code(name) is not None
     assert loader.mut_compiled
-    assert not Path(loader_hooks._store_entry(str(store), name, str(source), new)).exists(), (
+    assert not _stored_entries(store, name, source, new), (
         "新しい中身の鍵の下に、古い中身から作った code が入った"
     )
-    assert Path(loader_hooks._store_entry(str(store), name, str(source), old)).exists(), (
+    assert _stored_entries(store, name, source, old), (
         "compile した中身の鍵で置き場に入らない"
     )
 
@@ -407,14 +429,14 @@ def test_a_named_store_is_filled_even_when_bytecode_is_not_written(tmp_path: Pat
     worker の bytecode を焼く道具は PYTHONDONTWRITEBYTECODE=1 で起きるので、足さないと自分の依存の Hy を起動のたびに source から
     変換し直した(空の置き場で 2 回起こして 2 回とも CPU 約 14〜17 秒・置き場の file 0 — 2026-10-08)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store, loader_hooks
+    from doeff_hy_bytecode_guard import code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
     assert sys.dont_write_bytecode, "この検は書かない設定(suite の固定)の下で見る"
     name = "namedstorepkg.mod"
     source = _compile_in_fresh_package(tmp_path, monkeypatch, "namedstorepkg")
-    assert Path(loader_hooks._store_entry(str(store), name, str(source), source.read_bytes())).exists(), (
+    assert _stored_entries(store, name, source, source.read_bytes()), (
         "名指しの置き場に、書かない設定で compile した code が入らない"
     )
     assert not (source.parent / "__pycache__").exists(), "書かない設定なのに木へ .pyc を書いた"
@@ -424,7 +446,7 @@ def test_the_default_store_is_not_filled_when_bytecode_is_not_written(tmp_path: 
     """置き場を名指していない時(既定の利用者の cache の dir)は、書かない設定では今までどおり置き場へ足さない — 書かない設定で
     起こした process が、名指しの無いまま利用者の cache を太らせない。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store, loader_hooks
+    from doeff_hy_bytecode_guard import code_store
 
     monkeypatch.delenv(code_store.STORE_ENV, raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -432,7 +454,7 @@ def test_the_default_store_is_not_filled_when_bytecode_is_not_written(tmp_path: 
     assert store is not None
     name = "defaultstorepkg.mod"
     source = _compile_in_fresh_package(tmp_path, monkeypatch, "defaultstorepkg")
-    assert not Path(loader_hooks._store_entry(store, name, str(source), source.read_bytes())).exists()
+    assert not _stored_entries(store, name, source, source.read_bytes())
 
 
 def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:
@@ -463,7 +485,7 @@ def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
     from doeff import run
     from doeff_hy.static_view import static_view
-    from doeff_hy_bytecode_guard import code_store, loader_hooks
+    from doeff_hy_bytecode_guard import code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -492,7 +514,7 @@ def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_
         sys.modules[name] = importlib.util.module_from_spec(spec)
         with static_view():
             spec.loader.get_code(name)
-        assert not Path(loader_hooks._store_entry(str(store), name, str(source), source.read_bytes())).exists(), (
+        assert not _stored_entries(store, name, source, source.read_bytes()), (
             "型検査のための展開の code が共有の置き場に入った"
         )
         del sys.modules[name]
@@ -514,7 +536,7 @@ def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_e
     pytest が書いた bake_plan.hy の entry を patrol の準備が引き、ec08cd77d より前の defrecord の展開で
     ``seal_record() missing ... calls_post_init`` — card ki-9180656459ac)。記録は展開が実際に引いた表から作る。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store, loader_hooks
+    from doeff_hy_bytecode_guard import code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -535,9 +557,9 @@ def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_e
         sys.modules[alias] = module
         loader.exec_module(module)
         assert module.value == 11
-        entry = Path(loader_hooks._store_entry(str(store), alias, str(source), source.read_bytes()))
-        assert entry.exists(), "path から別の名で読んだ code が共有の置き場に入らない"
-        record = records.record_of(marshal.loads(entry.read_bytes()))
+        entries = _stored_entries(store, alias, source, source.read_bytes())
+        assert len(entries) == 1, f"path から別の名で読んだ code が共有の置き場に 1 つ入らない: {entries}"
+        record = records.record_of(marshal.loads(Path(entries[0]).read_bytes()))
         assert record is not None
         assert [(used.module, used.name) for used in record.macros] == [("aliaspkg.macros", "answer")], (
             f"記録が展開の使った macro を名指さない: {record}"

@@ -458,14 +458,13 @@ def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
     return isinstance(code, CodeType) and _record_is_current_here(code)
 
 
-def _store_entry(store: str, fullname: str, path: str, source: bytes) -> str:
-    """source の中身から決まる code の entry の path(鍵と並びの定義点は code_store の 1 つ)。"""
+def _store_key(fullname: str, path: str, source: bytes) -> str:
+    """source の中身から決まる code の鍵(鍵と並びの定義点は code_store の 1 つ — 鍵 1 つに macro の環境ごとの entry が並ぶ)。"""
     from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
 
-    key = code_store.code_key(
+    return code_store.code_key(
         path, source, fullname, _hy_version(), sys.implementation.cache_tag or "", sys.flags.optimize
     )
-    return code_store.entry_path(store, key, code_store.CODE_SUFFIX)
 
 
 def _from_shared_store(
@@ -475,8 +474,9 @@ def _from_shared_store(
     引く(当たらなければ None)— 新しい作業木の .pyc は source の絶対 path に結びつくので必ず冷え、同じ中身の file の変換(macro の
     展開)をやり直していた(agora-redesign #1753)。
 
-    当たった entry の記録は、使った macro を module 名から今の環境で引き直して照らす(記録は file の path を持たないので、
-    そのまま作業木の .pyc に書ける)。作業木の .pyc も標準の timestamp の形で書く。"""
+    鍵の entry(macro の環境ごとに並ぶ — doeff の版の違う書き手の物も)の記録を、使った macro を module 名から今の環境で引き直して
+    照らし、合う物を使う(記録は file の path を持たないので、そのまま作業木の .pyc に書ける)。作業木の .pyc も標準の timestamp の形で
+    書く。"""
     from doeff_hy_bytecode_guard import code_store  # 保存先を使う時だけ読む
 
     store = code_store.store_dir()
@@ -498,11 +498,8 @@ def _from_shared_store(
         source = self.get_data(path)
     except OSError:
         return None  # source を読めなければ標準の get_code が同じ誤りを名乗る
-    code = code_store.stored_code(_store_entry(store, fullname, path, source))
+    code = code_store.current_code(store, _store_key(fullname, path, source), _record_is_current_here)
     if code is None:
-        return None
-    record = records.record_of(code)
-    if record is None or not record_is_current_here(record):
         return None
     import _imp  # 標準の _compile_bytecode と同じ口で、code の file 名を今の source の path に直す
 
@@ -539,9 +536,7 @@ def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeT
 
     if records.record_of(code) is None:
         return
-    import marshal
-
-    code_store.write_entry(_store_entry(store, fullname, path, source), marshal.dumps(code))
+    code_store.add_code(store, _store_key(fullname, path, source), code)
 
 
 def _recompile(

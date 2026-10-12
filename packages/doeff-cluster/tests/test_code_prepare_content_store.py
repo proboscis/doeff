@@ -229,3 +229,20 @@ def test_d_a_broken_store_entry_is_named_and_rebuilt(filled: _Store, tmp_path: P
     _write_four(third, filled.salt)
     again = _bake(third, filled.store, filled.rig)
     assert again.compiled == [], ("足し直した entry を使わない", again.compiled)
+
+
+def test_e_two_macro_versions_taking_turns_do_not_rebake_each_other(filled: _Store, tmp_path: Path) -> None:
+    """失敗ケース(e): macro の中身の違う 2 つの書き手(実行環境の準備と、doeff の版の違う作業木の import の代役 — 使う側の source は同じ)が、
+    同じ保存先で新しい木を交互に焼く。鍵 1 つに entry 1 つの並びでは、互いの entry を今の macro に合わないと見て使う側を焼き直し、同じ鍵を
+    上書きし合った(2026-10-12 zeus — 同じ版の準備でも 1 回に 100〜600 本・card ki-6828e9af04b4)。鍵 1 つに macro の環境ごとの entry を
+    持つ並びでは、2 巡目からはどちらも焼き直さず、import した値はそれぞれの macro の展開。"""
+    five = tmp_path / "five-1"
+    _write_four(five, filled.salt, macro_add=5)
+    assert _bake(five, filled.store, filled.rig).compiled == ["mac/macros.hy", "use/user.hy"]
+    for turn in (2, 3):
+        for name, add in (("one", 1), ("five", 5)):
+            tree = tmp_path / f"{name}-{turn}"
+            _write_four(tree, filled.salt, macro_add=add)
+            baked = _bake(tree, filled.store, filled.rig)
+            assert baked.compiled == [], (name, turn, baked.compiled)
+            assert _import_value(tree, filled) == 1 + add

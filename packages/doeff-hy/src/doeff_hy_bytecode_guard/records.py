@@ -50,6 +50,9 @@ from typing import TypeVar
 #: 実行された関数と絞らない関数(束縛の文の先・関数の中身を値として読む code の閉包)に絞った形(agora-redesign #3769 の子 —
 #: defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手 1,197 本が作り直された)。5 の記録は行の形が
 #: 違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
+#: 保存先の鍵の印 3(card ki-6828e9af04b4)からは、記録の違う code は同じ鍵の dir に別の entry として並ぶ(上書きしない — 記録の指紋が
+#: entry の名)。だから記録の印を上げた後の古い世代の entry は上書きされずに残り、使われなければ鍵の entry の数の上限か掃除の 7 日で消える
+#: (鍵の印を上げない理由は、鍵の印を上げると記録に依らない entry まで全部当たらなくなる事に変わる)。
 RECORD_TAG = "doeff-hy/macro-dependencies/6"
 
 #: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。
