@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import types
 import warnings
+from pathlib import Path
 
 import doeff_hy  # noqa: F401 - Hy の import hook を入れる(断片の展開に要る)
 import hy
@@ -17,6 +18,7 @@ import pytest
 from hy.errors import HyMacroExpansionError
 
 from doeff_hy.binding_forms import RULE_LEGACY_LAZY, RULE_REBIND, RULE_SETV, Finding
+from doeff_hy.static_check import Projection, project
 from doeff_hy.static_view import collect_findings, static_view
 
 PRELUDE = """
@@ -565,6 +567,43 @@ def test_module_val_binds_once_and_second_val_is_an_expansion_error() -> None:
     module = _module(MODULE_PRELUDE + "(val limit 3)\n(val doubled (* limit 2))", "_vvl_module_val")
     assert (module.limit, module.doubled) == (3, 6)
     assert "(val limit …) で宣言済み" in _expansion_error(MODULE_PRELUDE + "(val limit 3)\n(val limit 4)")
+
+
+def test_module_val_and_var_take_a_type_annotation() -> None:
+    # 値の型が式から決まらない時(空の dict など)の注記 — `(val #^ 型 名前 式)`(agora-redesign #2939)。実行時は注記つきの代入。
+    module = _module(
+        MODULE_PRELUDE
+        + """
+(import re)
+(val #^ (get dict #(str int)) memo {})
+(val #^ (get re.Pattern str) token (re.compile "a+"))
+(var #^ int total 0)
+(setv total 3)
+""",
+        "_vvl_module_annotated",
+    )
+    assert module.memo == {} and module.token.pattern == "a+" and module.total == 3
+    assert set(module.__annotations__) == {"memo", "token", "total"}
+
+
+def test_an_annotated_module_val_keeps_the_annotation_in_the_type_check_expansion(tmp_path: Path) -> None:
+    source = tmp_path / "annotated_probe.hy"
+    source.write_text(
+        MODULE_PRELUDE + "(val #^ (get dict #(str int)) memo {})\n(var #^ int total 0)\n(val plain 1)\n", encoding="utf-8"
+    )
+    projection = project(tmp_path, [tmp_path], source)
+    assert isinstance(projection, Projection)
+    lines = projection.text.splitlines()
+    assert "memo: dict[str, int] = {}" in lines and "total: int = 0" in lines and "plain = 1" in lines
+
+
+def test_an_annotation_is_refused_on_lazy_and_session_declarations() -> None:
+    for form in ("(lazy val #^ int size 3)", "(lazy var #^ int size 3)", "(session val #^ int size 3)"):
+        assert "型の注記 `#^ 型 名前` は (val …) と (var …) だけが受けます" in _expansion_error(MODULE_PRELUDE + form)
+    # 注記つきでも名前の重ねは今までどおり断る。
+    assert "(val limit …) で宣言済み" in _expansion_error(
+        MODULE_PRELUDE + "(val #^ int limit 3)\n(val limit 4)"
+    )
 
 
 def test_module_lazy_val_is_evaluated_on_first_use_only() -> None:
