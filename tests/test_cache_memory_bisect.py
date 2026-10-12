@@ -1,6 +1,9 @@
 """Bisect: which part of cache() causes O(N) memory blowup?
 
 Tests isolate individual effects used by cache() to find the culprit.
+
+Every task holds one external Await (``_AllHeldGate.hold``) that cannot finish until all N
+tasks are holding theirs, so N waits are held at once by construction, not by timing.
 """
 
 from __future__ import annotations
@@ -47,47 +50,76 @@ def _get_rss_mb() -> float:
 N = 500
 
 
+class _AllHeldGate:
+    """No wait ends until ``n`` waits are held at once.
+
+    A sleep of a few ms lets early waits end before late ones start, so how many were held at once
+    varied run to run (measured with the sleeps: 11-168 of 500). Here the n-th wait to start opens the
+    gate for everyone, so the count held at once is always ``n``; ``peak_held`` is that observation.
+    Awaits run on the one event loop that await_handler shares process-wide, so plain counters are safe.
+    """
+
+    def __init__(self, n: int) -> None:
+        self._n = n
+        self._held = 0
+        self.peak_held = 0
+        self._all_held = asyncio.Event()
+
+    async def hold(self) -> None:
+        self._held += 1
+        self.peak_held = max(self.peak_held, self._held)
+        if self._held == self._n:
+            self._all_held.set()
+        try:
+            await self._all_held.wait()
+        finally:
+            self._held -= 1
+
+
 @do
 def _spawn_gather_n(factory, n: int):
+    gate = _AllHeldGate(n)
     tasks = []
     for i in range(n):
-        t = yield Spawn(factory(i))
+        t = yield Spawn(factory(i, gate))
         tasks.append(t)
-    return list((yield Gather(*tasks)))
+    results = list((yield Gather(*tasks)))
+    assert gate.peak_held == n, f"only {gate.peak_held} of {n} waits were held at once"
+    return results
 
 
 # --- Control: just Await, no extras ---
 @do
-def _bare_await(i: int):
-    yield Await(asyncio.sleep(0.001))
+def _bare_await(i: int, gate: _AllHeldGate):
+    yield Await(gate.hold())
     return f"done-{i}"
 
 
 # --- Suspect 1: GetExecutionContext ---
 @do
-def _with_get_context(i: int):
+def _with_get_context(i: int, gate: _AllHeldGate):
     context = yield GetExecutionContext()
     _ = getattr(context, "active_chain", ())
-    yield Await(asyncio.sleep(0.001))
+    yield Await(gate.hold())
     return f"done-{i}"
 
 
 # --- Suspect 2: nested @do (like cache wrapper) ---
 @do
-def _with_nested_do(i: int):
+def _with_nested_do(i: int, gate: _AllHeldGate):
     @do
     def inner():
-        yield Await(asyncio.sleep(0.001))
+        yield Await(gate.hold())
         return f"done-{i}"
     return (yield inner())
 
 
 # --- Suspect 3: Try wrapping ---
 @do
-def _with_try(i: int):
+def _with_try(i: int, gate: _AllHeldGate):
     @do
     def inner():
-        yield Await(asyncio.sleep(0.001))
+        yield Await(gate.hold())
         return f"done-{i}"
     result = yield Try(inner())
     return result.value
@@ -95,17 +127,17 @@ def _with_try(i: int):
 
 # --- Suspect 4: cloudpickle.dumps ---
 @do
-def _with_pickle(i: int):
+def _with_pickle(i: int, gate: _AllHeldGate):
     import cloudpickle
     key = ("test_func", (i,), FrozenDict())
     cloudpickle.dumps(key)
-    yield Await(asyncio.sleep(0.001))
+    yield Await(gate.hold())
     return f"done-{i}"
 
 
 # --- Suspect 5: multiple nested @do (matching cache depth) ---
 @do
-def _cache_like_depth(i: int):
+def _cache_like_depth(i: int, gate: _AllHeldGate):
     """Mimics cache() nesting: wrapper -> build_key -> try_get -> compute_and_cache"""
     @do
     def build_key():
@@ -123,7 +155,7 @@ def _cache_like_depth(i: int):
     @do
     def compute(key):
         yield slog(msg=f"compute {i}", level="DEBUG")
-        yield Await(asyncio.sleep(0.001))
+        yield Await(gate.hold())
         return f"done-{i}"
 
     yield GetExecutionContext()
