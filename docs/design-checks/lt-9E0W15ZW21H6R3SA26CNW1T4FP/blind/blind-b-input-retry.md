@@ -1,0 +1,25 @@
+あなたは静的検査を通過する責務違反の失敗例を生成してください。
+合理的な機能追加・修正として実装されそうで、提示した検査をそのまま実行しても通るのに、
+知識・判断・状態・effectsの所有者や公開契約を侵す実装を1つ具体化してください。
+一般的な設計レビューや承認判定は求めていません。
+
+検査の無効化、baselineの改変、対象除外、as any、ignoreやlint抑制、根拠のないcast、
+動的importによる回避は使わないでください。小さい既存例に対する抜け道だけでなく、
+通常の実装者が機能を実現しようとして書きそうなコードで示してください。
+
+返答には次を含めてください。
+1. 現実的な機能要求と、提案する具体的なコードまたは最小差分。
+2. 本来の責務所有者と、違反する契約。何の判断・知識がどこへ移るか。
+3. 提示された各検査がそのコードを拒否しない理由。未提示の検査は推測しないこと。
+4. 同じ設定で検査通過と責務違反の両方を確かめる最小の入力・手順・期待結果。
+5. 未確認の前提、不足する情報。推測と実測を明確に区別すること。
+
+共有ソースを変更せず、全数検査や他会話への連絡を行わず、日本語で返してください。
+実行していない検査を通ったと断定しないでください。失敗例が見つからない場合は探索した範囲と
+不足を述べ、合格・安全とは結論しないでください。
+
+## 材料
+- 固定した要件・責務・公開契約・変更シナリオと主張・強制方法: /home/ubuntu/.worktrees/doeff-wt-ki-b0e8-dc/docs/design-checks/lt-9E0W15ZW21H6R3SA26CNW1T4FP/design-pre-blind.md
+- 読んでよい実コードと実験の決まり: /home/ubuntu/.worktrees/doeff-wt-ki-b0e8-dc/docs/design-checks/lt-9E0W15ZW21H6R3SA26CNW1T4FP/blind/common-input.md
+- 検査の実体・設定・検出範囲: /home/ubuntu/.worktrees/doeff-wt-ki-b0e8-dc/docs/design-checks/lt-9E0W15ZW21H6R3SA26CNW1T4FP/blind/blind-b-checks.md
+- あなた専用の実験の木(doeff 74ebb50b6 の detached・環境は作ってある): /home/ubuntu/.worktrees/doeff-wt-blind-b2-ki-b0e8
