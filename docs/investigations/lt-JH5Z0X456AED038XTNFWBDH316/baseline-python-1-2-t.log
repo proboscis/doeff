@@ -1,0 +1,168 @@
+
+doeff Traceback (most recent call last):
+
+  one_stage()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:109
+    return (yield Traverse(f, items, label=label))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:582
+    value = yield prog
+  first()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:70
+    raise ValueError("three")
+    handlers:
+      _scheduled_python ↗
+
+ValueError: three
+
+
+doeff Traceback (most recent call last):
+
+  one_stage()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:109
+    return (yield Traverse(f, items, label=label))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:582
+    value = yield prog
+  slow()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:95
+    raise ValueError("three")
+    handlers:
+      _scheduled_python ↗
+
+ValueError: three
+
+
+doeff Traceback (most recent call last):
+
+  parallel_fail_fast.<locals>.handler()  packages/doeff-traverse/doeff_traverse/handlers.py:621
+    done_items = yield Gather(*tasks)
+  one_stage()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:109
+    return (yield Traverse(f, items, label=label))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:582
+    value = yield prog
+  first()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:70
+    raise ValueError("three")
+    handlers:
+      _scheduled_python ↗
+
+ValueError: three
+
+doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries []; parked waiters [task 1 (wait_external) on promise 2; task 3 (wait_external) on promise 4; task 7 (wait_external) on promise 8] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+  return vm.run(doexpr)
+
+doeff Traceback (most recent call last):
+
+  one_stage()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:109
+    return (yield Traverse(f, items, label=label))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:582
+    value = yield prog
+  slow()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:95
+    raise ValueError("three")
+    handlers:
+      _scheduled_python ↗
+
+ValueError: three
+
+
+doeff Traceback (most recent call last):
+
+  one_stage()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:109
+    return (yield Traverse(f, items, label=label))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:582
+    value = yield prog
+  first()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:70
+    raise ValueError("three")
+    handlers:
+      _scheduled_python ↗
+
+ValueError: three
+
+
+doeff Traceback (most recent call last):
+
+  one_stage()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:109
+    return (yield Traverse(f, items, label=label))
+  run_item()  packages/doeff-traverse/doeff_traverse/handlers.py:582
+    value = yield prog
+  first()  docs/investigations/lt-JH5Z0X456AED038XTNFWBDH316/repro_item_outcome_gaps.py:70
+    raise ValueError("three")
+    handlers:
+      _scheduled_python ↗
+
+ValueError: three
+
+
+##### 限界 1: 走らせる件の無い Traverse
+
+=== [1a sequential] stage1 で全件失敗 → stage2 は持ち越しだけ (items=[1,2,3], f=always_fail)
+  stage2 の答え: 3 件 failed
+  bar stage1: n=3/total=3 pos=0 closed=True
+  reports [('stage1', 0, 'failed', 'ValueError'), ('stage1', 1, 'failed', 'ValueError'), ('stage1', 2, 'failed', 'ValueError')]
+  tqdm._instances に残る bar: 0
+
+=== [1b sequential] items=[] の Traverse
+  bar (1 本も開かない)
+  reports []
+  tqdm._instances に残る bar: 0
+
+=== [1c sequential] 入れ子: 外の件 x=[0,1,2] が内で Traverse(range(x))
+  bar outer: n=3/total=3 pos=0 closed=True
+  bar inner(1): n=1/total=1 pos=1 closed=True
+  bar inner(2): n=2/total=2 pos=1 closed=True
+  reports [('outer', 0, 'ok', 'list'), ('inner(1)', 0, 'ok', 'int'), ('outer', 1, 'ok', 'list'), ('inner(2)', 0, 'ok', 'int'), ('inner(2)', 1, 'ok', 'int'), ('outer', 2, 'ok', 'list')]
+  tqdm._instances に残る bar: 0
+
+=== [1a parallel] stage1 で全件失敗 → stage2 は持ち越しだけ (items=[1,2,3], f=always_fail)
+  stage2 の答え: 3 件 failed
+  bar stage1: n=3/total=3 pos=0 closed=True
+  reports [('stage1', 0, 'failed', 'ValueError'), ('stage1', 1, 'failed', 'ValueError'), ('stage1', 2, 'failed', 'ValueError')]
+  tqdm._instances に残る bar: 0
+
+=== [1b parallel] items=[] の Traverse
+  bar (1 本も開かない)
+  reports []
+  tqdm._instances に残る bar: 0
+
+=== [1c parallel] 入れ子: 外の件 x=[0,1,2] が内で Traverse(range(x))
+  bar outer: n=3/total=3 pos=0 closed=True
+  bar inner(1): n=1/total=1 pos=1 closed=True
+  bar inner(2): n=2/total=2 pos=1 closed=True
+  reports [('outer', 0, 'ok', 'list'), ('inner(1)', 0, 'ok', 'int'), ('outer', 1, 'ok', 'list'), ('inner(2)', 0, 'ok', 'int'), ('inner(2)', 1, 'ok', 'int'), ('outer', 2, 'ok', 'list')]
+  tqdm._instances に残る bar: 0
+
+##### 限界 2: parallel_fail_fast が最初の失敗で止まる
+
+=== [2a c=1 即時] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=3/total=8 pos=0 closed=False
+  reports [('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 2, 'failed', 'ValueError')]
+  tqdm._instances に残る bar: 1
+
+=== [2a c=1 Await で待つ] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=3/total=8 pos=1 closed=False
+  reports [('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 2, 'failed', 'ValueError')]
+  tqdm._instances に残る bar: 2
+
+=== [2a c=4 即時] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=8/total=8 pos=2 closed=True
+  reports [('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 2, 'failed', 'ValueError'), ('stage1', 3, 'ok', 'int'), ('stage1', 4, 'ok', 'int'), ('stage1', 5, 'ok', 'int'), ('stage1', 6, 'ok', 'int'), ('stage1', 7, 'ok', 'int')]
+  tqdm._instances に残る bar: 2
+
+=== [2a c=4 Await で待つ] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=4/total=8 pos=2 closed=False
+  reports [('stage1', 2, 'failed', 'ValueError'), ('stage1', 0, 'failed', 'TaskCancelledError'), ('stage1', 1, 'failed', 'TaskCancelledError'), ('stage1', 3, 'failed', 'TaskCancelledError')]
+  tqdm._instances に残る bar: 3
+
+=== [2b c=4 Await] 外で Try が例外を受け、同じ run で次の Traverse を走らせる
+  Try: Err(ValueError('three'))
+  bar stage1: n=4/total=8 pos=3 closed=False
+  bar after: n=3/total=3 pos=4 closed=True
+  reports [('stage1', 2, 'failed', 'ValueError'), ('after', 0, 'ok', 'int'), ('after', 1, 'ok', 'int'), ('after', 2, 'ok', 'int'), ('stage1', 0, 'failed', 'TaskCancelledError'), ('stage1', 1, 'failed', 'TaskCancelledError'), ('stage1', 3, 'failed', 'TaskCancelledError')]
+  tqdm._instances に残る bar: 4
+
+=== [2c] 同じ progress_bars を 2 回の run で使い回す(長く生きる process): 1 回目が失敗、2 回目は成功
+  run1 raised: ValueError
+  bar run1: n=3/total=8 pos=4 closed=False
+  bar run2: n=3/total=3 pos=5 closed=True
+  tqdm._instances に残る bar: 5
+
+##### 端末への出力(2c の後に run3 を足した時の生の出力)
+'\rrun1:   0%|                           | 0/8 [00:00<?, ?it/s]\rrun1:  12%|##              | 1/8 [00:00<00:00, 85598.04it/s]\rrun1:  25%|####2            | 2/8 [00:00<00:00, 2257.64it/s]\rrun1:  38%|######3          | 3/8 [00:00<00:00, 1784.70it/s]\n\rrun2:   0%|                           | 0/3 [00:00<?, ?it/s]\x1b[A\n\rrun2:  33%|#####3          | 1/3 [00:00<00:00, 41120.63it/s]\x1b[A\n\rrun2:  67%|###########3     | 2/3 [00:00<00:00, 3277.70it/s]\x1b[A\n\rrun2: 100%|#################| 3/3 [00:00<00:00, 2429.53it/s]\x1b[A\rrun2: 100%|#################| 3/3 [00:00<00:00, 2399.95it/s]\n\n\rrun3:   0%|                           | 0/2 [00:00<?, ?it/s]\x1b[A\n\rrun3:  50%|#######5       | 1/2 [00:00<00:00, 116508.44it/s]\x1b[A\n\rrun3: 100%|#################| 2/2 [00:00<00:00, 8137.77it/s]\x1b[A\rrun3: 100%|#################| 2/2 [00:00<00:00, 5518.82it/s]\n'

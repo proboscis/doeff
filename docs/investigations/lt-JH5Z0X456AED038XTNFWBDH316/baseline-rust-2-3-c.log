@@ -1,0 +1,47 @@
+=== [2a c=1 即時] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=3/total=8 pos=0 closed=False
+  reports [('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 2, 'failed', 'ValueError')]
+  tqdm._instances に残る bar: 1
+=== [2a c=1 Await で待つ] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=3/total=8 pos=1 closed=False
+  reports [('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 2, 'failed', 'ValueError')]
+  tqdm._instances に残る bar: 2
+=== [2a c=4 即時] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=8/total=8 pos=2 closed=True
+  reports [('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 2, 'failed', 'ValueError'), ('stage1', 3, 'ok', 'int'), ('stage1', 4, 'ok', 'int'), ('stage1', 5, 'ok', 'int'), ('stage1', 6, 'ok', 'int'), ('stage1', 7, 'ok', 'int')]
+  tqdm._instances に残る bar: 2
+=== [2a c=4 Await で待つ] items=1..8, 3 が失敗、例外は run の外へ
+  run raised: ValueError three
+  bar stage1: n=4/total=8 pos=2 closed=False
+  reports [('stage1', 2, 'failed', 'ValueError'), ('stage1', 0, 'failed', 'TaskCancelledError'), ('stage1', 1, 'failed', 'TaskCancelledError'), ('stage1', 3, 'failed', 'TaskCancelledError')]
+  tqdm._instances に残る bar: 3
+=== [2b c=4 Await] 外で Try が例外を受け、同じ run で次の Traverse を走らせる
+  Try: Err(ValueError('three'))
+  bar stage1: n=4/total=8 pos=3 closed=False
+  bar after: n=3/total=3 pos=4 closed=True
+  reports [('stage1', 2, 'failed', 'ValueError'), ('after', 0, 'ok', 'int'), ('after', 1, 'ok', 'int'), ('after', 2, 'ok', 'int'), ('stage1', 0, 'failed', 'TaskCancelledError'), ('stage1', 1, 'failed', 'TaskCancelledError'), ('stage1', 3, 'failed', 'TaskCancelledError')]
+  tqdm._instances に残る bar: 4
+=== [2c] 同じ progress_bars を 2 回の run で使い回す(長く生きる process): 1 回目が失敗、2 回目は成功
+  bar run1: n=3/total=8 pos=4 closed=False
+  bar run2: n=3/total=3 pos=5 closed=True
+  tqdm._instances に残る bar: 5
+=== [2d c=4 Await] Try で受け、その後 0.5 秒 Await してから終える
+  Try: Err(ValueError('three'))  / Try の直後の reports 数: 1
+  bar stage1: n=8/total=8 pos=5 closed=True
+  reports [('stage1', 2, 'failed', 'ValueError'), ('stage1', 0, 'ok', 'int'), ('stage1', 1, 'ok', 'int'), ('stage1', 3, 'ok', 'int'), ('stage1', 4, 'ok', 'int'), ('stage1', 5, 'ok', 'int'), ('stage1', 6, 'ok', 'int'), ('stage1', 7, 'ok', 'int')]
+  tqdm._instances に残る bar: 5
+=== [c sequential] items=1..8(各 50 ms)
+  Wait: Err Err(TaskCancelledError())
+  bar stage1: n=8/total=8 pos=5 closed=True
+  tqdm._instances に残る bar: 5
+=== [c parallel(2)] items=1..8(各 50 ms)
+  Wait: Err Err(TaskCancelledError())
+  bar stage1: n=8/total=8 pos=5 closed=True
+  tqdm._instances に残る bar: 5
+=== [c parallel_fail_fast(2)] items=1..8(各 50 ms)
+  Wait: Err Err(TaskCancelledError())
+  bar stage1: n=8/total=8 pos=5 closed=True
+  tqdm._instances に残る bar: 5

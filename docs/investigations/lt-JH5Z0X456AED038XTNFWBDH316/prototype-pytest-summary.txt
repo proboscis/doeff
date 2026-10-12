@@ -1,0 +1,5 @@
+1 failed, 184 passed, 1 skipped, 1 warning in 141.95s (0:02:21)
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_parallel_fail_fast_reports_the_items_up_to_the_failure
+--- DOEFF_SCHEDULER=rust
+1 failed, 184 passed, 1 skipped, 1 warning in 122.14s (0:02:02)
+FAILED packages/doeff-traverse/tests/test_item_outcomes.py::test_parallel_fail_fast_reports_the_items_up_to_the_failure

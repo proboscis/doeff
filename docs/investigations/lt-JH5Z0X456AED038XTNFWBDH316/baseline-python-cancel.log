@@ -1,0 +1,20 @@
+
+##### 外からの Cancel: Traverse を走らせる task を 120 ms で取り消す
+
+=== [c sequential] items=1..8(各 50 ms)
+  Wait: Err Err(TaskCancelledError())
+  Cancel の 0.6 秒後の reports: [(0, 'ok', 'int'), (1, 'ok', 'int'), (2, 'failed', 'TaskCancelledError'), (3, 'ok', 'int'), (4, 'ok', 'int'), (5, 'ok', 'int'), (6, 'ok', 'int'), (7, 'ok', 'int')]
+  bar stage1: n=8/total=8 pos=0 closed=True
+  tqdm._instances に残る bar: 0
+
+=== [c parallel(2)] items=1..8(各 50 ms)
+  Wait: Err Err(TaskCancelledError())
+  Cancel の 0.6 秒後の reports: [(0, 'ok', 'int'), (1, 'ok', 'int'), (2, 'ok', 'int'), (3, 'ok', 'int'), (4, 'ok', 'int'), (5, 'ok', 'int'), (6, 'ok', 'int'), (7, 'ok', 'int')]
+  bar stage1: n=8/total=8 pos=0 closed=True
+  tqdm._instances に残る bar: 0
+
+=== [c parallel_fail_fast(2)] items=1..8(各 50 ms)
+  Wait: Err Err(TaskCancelledError())
+  Cancel の 0.6 秒後の reports: [(0, 'ok', 'int'), (1, 'ok', 'int'), (2, 'ok', 'int'), (3, 'ok', 'int'), (4, 'ok', 'int'), (5, 'ok', 'int'), (6, 'ok', 'int'), (7, 'ok', 'int')]
+  bar stage1: n=8/total=8 pos=0 closed=True
+  tqdm._instances に残る bar: 0
