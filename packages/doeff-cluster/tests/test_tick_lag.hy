@@ -2,7 +2,9 @@
 ;;
 ;; 実例(2026-10-06): #3715 で拍の中の effect を待ち終えるたびに時刻を刻む形にしたら、action の数だけ時刻の読みが増え、消費者の repo の
 ;; 模擬の roll の場面の歩数が 162,449 → 168,770 に増えた(上限 170,000 の手前)。だから:
-;;   - 時刻の読みは拍の頭・重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の待ちの後・拍の終わりの 5 回だけで、action の数に依らない
+;;   - 区間の計りの読みは単調な時計(GetMonotonic — #3825)で拍の頭・重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の待ちの後・拍の
+;;     終わりの 5 回だけ、壁の時計(GetTime)の読みは判断の now の 1 回だけで、どちらも action の数に依らない(WorkerWakes の基準の
+;;     拍の頭の壁の時刻は now から単調な差を引いて導き、読まない)
 ;;   - 拍の遅れの行の slowest は 3 種の名か、それ以外の区間(action・揃いの追いの観測・PublishStatus)の名 ACTIONS-TO-PUBLISH
 ;; 反例 = 直す前の形(action ごと・揃いの追いの ObserveWorld ごと・PublishStatus の後にも刻む)は、action の在る拍で読みが 7 回になり、
 ;; 遅い action と遅い PublishStatus をその effect の名で名指す — 下の断言が赤(2026-10-06 に直す前の program.hy に差し替えて確かめた)。
@@ -16,7 +18,7 @@
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_time [Delay GetTimeEffect SimClock sim-time-handler])
+(import doeff_time [Delay GetMonotonicEffect GetTimeEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld
                                                  EnvReport PublishStatus PrepareCode])
@@ -26,8 +28,10 @@
 (val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))
 ;; 遅い待ちの秒(拍の遅れの線 5 秒を越える)。
 (val SLOW-SECONDS 6.0)
-;; 拍 1 つの時刻の読みの数(拍の頭・EnvReport の後・ReadDesired の後 = 判断の now・最初の ObserveWorld の後・拍の終わり)。
-(val READS-PER-TICK 5)
+;; 拍 1 つの時刻の読みの数。単調な時計 = 区間の計り(拍の頭・EnvReport の後・ReadDesired の後・最初の ObserveWorld の後・拍の終わり)・
+;; 壁の時計 = 判断の now(WorkerWakes の基準の拍の頭の壁の時刻は、now から単調な差を引いて導く)。
+(val MONOTONIC-READS-PER-TICK 5)
+(val WALL-READS-PER-TICK 1)
 
 
 (defrecord TickWorld
@@ -45,27 +49,34 @@
 
 
 (defrecord TickSeen
-  "拍 1 つの見え方: reads = 時刻の読み(GetTime)の数・lags = 拍の遅れの行・actions = 撃たれた action の数。"
+  "拍 1 つの見え方: reads = 壁の時計の読み(GetTime)の数・monotonic-reads = 単調な時計の読み(GetMonotonic)の数・lags = 拍の遅れの行・
+   actions = 撃たれた action の数。"
   (#^ int reads)
+  (#^ int monotonic-reads)
   (#^ (get tuple #(LagLine ...)) lags)
   (#^ int actions))
 
 
 (defeffect NotedTick
-  "ここまでの時刻の読み・拍の遅れの行・action の数を読む — 検だけの問い。"
+  "ここまでの時刻の読み(壁・単調)・拍の遅れの行・action の数を読む — 検だけの問い。"
   {:fields [] :answer TickSeen :tags {:context "doeff-cluster-test" :role "intent"}})
 
 
 (defhandler tick-noted
-  "外の世界の時計と log の手前に立つ代役: 時刻の読み(GetTime)を数えて外の時計へ出し直し、拍の遅れの行を覚え、他の行は受け流す。"
+  "外の世界の時計と log の手前に立つ代役: 時刻の読み(GetTime・GetMonotonic)を数えて外の時計へ出し直し、拍の遅れの行を覚え、他の行は受け流す。"
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
   (session var reads 0)
+  (session var monotonic-reads 0)
   (session var lags #())
   (session var actions 0)
   (GetTimeEffect []
     (:= reads (+ reads 1))
     (<- now datetime effect)
     (resume now))
+  (GetMonotonicEffect []
+    (:= monotonic-reads (+ monotonic-reads 1))
+    (<- at float effect)
+    (resume at))
   (SlogEffect []
     (val fields effect.kwargs)
     (match effect.msg
@@ -78,7 +89,7 @@
     (<- answer effect)
     (resume answer))
   (NotedTick []
-    (resume (TickSeen :reads reads :lags lags :actions actions))))
+    (resume (TickSeen :reads reads :monotonic-reads monotonic-reads :lags lags :actions actions))))
 
 
 (defk slowed [world name]
@@ -126,18 +137,20 @@
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) (tick-world world) tick-noted] (one-tick)))))
 
 
-(deftest test-a-quiet-tick-reads-the-time-five-times
-  ;; 宣言も観測も空の静かな拍: action は無く、時刻の読みは 5 回。
+(deftest test-a-quiet-tick-reads-the-clocks-six-times
+  ;; 宣言も観測も空の静かな拍: action は無く、時刻の読みは単調 5 回・壁 1 回。
   (<- seen TickSeen (tick-on (TickWorld :declared #())))
   (assert (= seen.actions 0) seen)
-  (assert (= seen.reads READS-PER-TICK) seen))
+  (assert (= seen.monotonic-reads MONOTONIC-READS-PER-TICK) seen)
+  (assert (= seen.reads WALL-READS-PER-TICK) seen))
 
 
-(deftest test-a-tick-with-an-action-reads-the-time-as-often-as-a-quiet-tick
-  ;; 版の準備の action が 1 つ在り、揃いの追いの観測も入る拍: 時刻の読みは静かな拍と同じ 5 回(直す前は 7 回)。
+(deftest test-a-tick-with-an-action-reads-the-clocks-as-often-as-a-quiet-tick
+  ;; 版の準備の action が 1 つ在り、揃いの追いの観測も入る拍: 時刻の読みは静かな拍と同じ(単調 5 回・壁 1 回 — action ごとに刻む形は 7 回)。
   (<- seen TickSeen (tick-on (TickWorld :declared #(SPEC))))
   (assert (= seen.actions 1) seen)
-  (assert (= seen.reads READS-PER-TICK) seen))
+  (assert (= seen.monotonic-reads MONOTONIC-READS-PER-TICK) seen)
+  (assert (= seen.reads WALL-READS-PER-TICK) seen))
 
 
 (defk lag-of [world]

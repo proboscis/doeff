@@ -274,9 +274,10 @@ class JobStatus:
 
 @dataclass(frozen=True, kw_only=True)
 class HeartbeatSent:
-    """coordinator への口が送った heartbeat(送った刻・名乗った worker の名・その時の生存の窓)。"""
+    """coordinator への口が送った heartbeat(送った刻・送った単調な時計の読み・名乗った worker の名・その時の生存の窓)。"""
 
     at: int
+    mono_ms: int
     worker: str
     lease_ms: int
 
@@ -435,7 +436,7 @@ class DeclarationRead:
 
 @dataclass(frozen=True, kw_only=True)
 class TickMarks:
-    """拍 1 つで読んだ時刻(epoch ms — 拍の頭・EnvReport の後・ReadDesired の後・最初の ObserveWorld の後・拍の終わり)。"""
+    """拍 1 つで読んだ単調な時計の読み(ms — 拍の頭・EnvReport の後・ReadDesired の後・最初の ObserveWorld の後・拍の終わり)。"""
 
     began: int
     env_reported: int
@@ -448,7 +449,7 @@ class WorkerState:
     declaration: NotYetRead | DeclarationRead = ...
     records: dict[str, JobRecord] = ...
     last_marks: TickMarks | None = field(default=None, compare=False)
-    last_sent_ms: int | None = field(default=None, compare=False)
+    last_sent_mono_ms: int | None = field(default=None, compare=False)
 
 # --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
 
