@@ -18,6 +18,7 @@ first parameter.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
 from doeff_events.effects.files import (
     CloseFileWatch,
     FilesChanged,
@@ -32,14 +33,14 @@ from doeff_events.handlers.memory_files import (
     memory_file_watch_handler,
 )
 from doeff_events.handlers.os_files import os_file_watch_handler
-from events_test_support import run_scheduled
+from events_test_support import announce_file_wait, run_scheduled
 
 from doeff import do
 
 if TYPE_CHECKING:
     import threading
 
-    import pytest
+    from doeff_core_effects.scheduler import Promise
 
     from doeff import EffectGenerator
 
@@ -92,28 +93,27 @@ def test_memory_watch_wakes_a_waiting_program() -> None:
 def test_memory_watch_close_wakes_a_waiting_program_with_no_changes() -> None:
     """A wait in progress ends when another task closes the watch (the same as the operating-system answerer, whose
     close sets the notifier's stop flag): the waiter gets ``FilesChanged(())`` instead of waiting forever."""
-    import asyncio
-
-    from doeff_core_effects.effects import Await
-    from doeff_core_effects.scheduler import Spawn, Wait
+    from doeff_core_effects.scheduler import CreatePromise, Spawn, Wait
 
     files = MemoryFiles()
 
     @do
-    def closer(watch: FileWatch) -> "EffectGenerator[None]":
-        # Let the program reach its wait first (a close before the wait answers the empty change at once — not the case here).
-        yield Await(asyncio.sleep(0.01))
-        assert files.watched(watch) is not None and files.watched(watch).waiter is not None, (
-            "the program is not waiting yet"
-        )
+    def closer(watch: FileWatch, registered: "Promise[object]") -> "EffectGenerator[None]":
+        # Close once the program has parked in its wait (a close before the wait answers the empty change at once — not
+        # the case here). The closer is spawned first and runs first: only `registered` puts its close after the wait.
+        yield Wait(registered.future)
+        watched = files.watched(watch)
+        assert watched is not None, "the watch is already closed"
+        assert watched.waiter is not None, "the program is not waiting yet"
         yield CloseFileWatch(watch)
 
     @do
     def program() -> "EffectGenerator[object]":
         watch = yield WatchFiles("/work/out")
         assert isinstance(watch, FileWatch), watch
-        task = yield Spawn(closer(watch))
-        changed = yield NextFileChanges(watch)
+        registered = yield CreatePromise()
+        task = yield Spawn(closer(watch, registered))
+        changed = yield announce_file_wait(registered)(NextFileChanges(watch))
         yield Wait(task)
         return changed, files.watching()
 
@@ -237,12 +237,16 @@ def test_os_watch_closed_with_no_wait_inside_closes_the_library_at_once(
     assert run_scheduled(os_file_watch_handler()(program())) == ((False,), FilesChanged(()))
 
 
+@pytest.mark.realtime
 def test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic(
     tmp_path: Path,
 ) -> None:
     """The same against the real library: a wait in progress ends with no changes when another task closes the watch,
     with no panic. Repeated with different delays, because the meeting with the library is a race (it does not prove
-    the fix by itself — the stand-in above does)."""
+    the fix by itself — the stand-in above does). The subject is real-time concurrency (the library's own thread and
+    the clock), so the test declares ``realtime``: the delay is the value that varies from round to round, not an
+    order to wait for — the library signals nothing when its wait begins, and the stand-in above fixes the order by
+    an event."""
     import asyncio
 
     from doeff_core_effects.effects import Await
