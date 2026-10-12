@@ -1,4 +1,4 @@
-# 実験 S2-positive・刻 2026-10-12T03:42:25Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+# 実験 S2-positive・刻 2026-10-12T04:08:12Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 912bec3bc4720ceeb4377052acdf29f3bb2b3696
 $ git apply S2-positive-defbench-module-forms.diff.txt
 $ git diff --stat
  packages/doeff-hy/src/doeff_hy/macros.hy | 7 +++++++
@@ -6,7 +6,7 @@ $ git diff --stat
  2 files changed, 9 insertions(+), 1 deletion(-)
 $ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore
 pytest の exit=0
-77 passed in 32.20s
+77 passed in 37.44s
 $ uv run --frozen python probe_records.py(盲検 A の script・a-files/probe_records.py.txt)
 DOEFF_BLIND_A_BENCH_GUARD = None
 [defbench-in-defn] 外の関数を 0,1,2,3 回呼んだ後の __doeff_pytest_items__ の件数: [0, 0, 0, 0]

@@ -1,4 +1,4 @@
-# 実験 S5-negative・刻 2026-10-12T03:49:21Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+# 実験 S5-negative・刻 2026-10-12T04:18:49Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 912bec3bc4720ceeb4377052acdf29f3bb2b3696
 $ git apply S5-positive-records-storage-renamed.diff.txt
 $ git apply S2-negative-defbench-record-in-forms.diff.txt
 $ git diff --stat
@@ -14,7 +14,7 @@ E         Extra items in the left set:
 E         ('nested_definition_scope', '__doeff_pytest_records__')
 E         Use -v to get more diff
 FAILED tests/test_nested_definition_scope.py::test_definition_sample_leaves_module_state_unchanged[defbench]
-1 failed, 1 passed, 75 deselected in 7.41s
+1 failed, 1 passed, 75 deselected in 6.15s
 $ uv run --frozen python probe_records.py(盲検 A の script・a-files/probe_records.py.txt)
 DOEFF_BLIND_A_BENCH_GUARD = None
 [defbench-in-defn] 外の関数を 0,1,2,3 回呼んだ後の __doeff_pytest_items__ の件数: [0, 0, 0, 0]

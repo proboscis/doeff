@@ -127,14 +127,14 @@ C = [
     ("C6", ["S3"], "positive", "module・class の実行時と型検査の展開が基準の版 da660e83e と 1 字も同じ。関数の中の型検査の展開は記録の文だけが消える", "4 つが 1 字も同じ・function-static の差は record_at_import の 2 組", "evidence/expansion/six-expansions.txt"),
     ("C7", ["S3"], "positive", "型検査の答えの形を変える変異が M4 だけで閉じ、nested の検は全部緑", "declarations.hy のみ・75 passed", "evidence/runs/S3-positive-change.txt"),
     ("C8", ["S3"], "positive", "型検査の展開の記録の検と、module・class を包まない検が緑", "2 passed", "evidence/runs/S3-positive.txt"),
-    ("C9", ["S3"], "negative", "関数の中で型検査の展開に module-forms を出す変異を、型検査の記録の検が赤にする", "関数の中に record_at_import が在り 1 failed(test_static_view_records_only_module_level_deftest)", "evidence/runs/S3-negative.txt"),
+    ("C9", ["S3"], "negative", "関数の中で型検査の展開に module-forms を出す変異を、型検査の記録の検が赤にする", "投影の関数 subject の中に record_at_import が在り 1 failed(test_static_projection_of_nested_deftest_has_no_item_record)", "evidence/runs/S3-negative.txt"),
     ("C10", ["S4"], "positive", "検体ごとの状態の検が全部緑", "10 passed", "evidence/runs/S4-positive.txt"),
     ("C11", ["S4"], "positive", "8 thread × 5 回の並べた呼びの後も、検体ごとの状態が変わらない", "変わった検体 0", "evidence/runs/S4-positive-threads.txt"),
     ("C12", ["S4"], "negative", "盲検 B の索引への登録を状態の検が赤にする", "`('doeff_hy.declarations', 'EFFECT_INDEX')` で 1 failed(test_definition_sample_leaves_module_state_unchanged[defeffect])", "evidence/runs/S4-negative.txt"),
     ("C13", ["S5"], "positive", "記録の置き場の名を替えても M5 だけが変わり、nested の検は全部緑", "pytest_items.py のみ・75 passed", "evidence/runs/S5-positive.txt"),
     ("C14", ["S5"], "positive", "置き場の名を替えても doeff-adr(M6)と M5 の記録の検が緑", "7 passed", "evidence/runs/S5-positive-adr.txt"),
     ("C15", ["S5"], "negative", "置き場を替えた上で記録を forms に置くと、状態の検が新しい置き場の名で赤にする", "`('nested_definition_scope', '__doeff_pytest_records__')` で 1 failed", "evidence/runs/S5-negative.txt"),
-    ("C16", ["S2", "S4"], "positive", "直した版 063a76057 で変えた所に関わる検(nested・handle・pytest_items・deftest の scans・型検査の deftest・defeffect の形・宣言・系の型・doeff-adr の記録・defsystem の形)が緑", "180 passed", "evidence/runs/related-tests-after-fix.txt"),
+    ("C16", ["S2", "S4"], "positive", "直した版 912bec3bc(main 4973b9975 の上)で変えた所に関わる検(nested・handle・pytest_items・deftest の scans・型検査の deftest・defeffect の形・宣言・系の型・doeff-adr の記録・defsystem の形)が緑", "192 passed", "evidence/runs/related-tests-after-fix.txt"),
 ]
 checks = [
     {"id": cid, "scenarios": sc, "control": ctl, "expectation": exp, "observation": obs, "evidence": ref(ev), "status": "passed"}
@@ -148,6 +148,8 @@ report = {
     "implementation_revision": "0e366de997b251b85145c7489cf46a108fc45f36",
     "blind_revision": "5ddb4e482b4969d76ca0d4201bd90a6b3b382bd8",
     "fix_revision": "063a760575430d3a5296f26a7630c4508e7b33c4",
+    "fix_revision_rebased": "71a93fd64c5bed8240d27f952049df9e33905b1c",
+    "experiment_revision": "912bec3bc4720ceeb4377052acdf29f3bb2b3696",
     "author": {"conversation_id": "a-6313YGCZRXDKHYHVKQDKJXG1EG(依頼 lt-0YB1XJPKH406GNDWRZ4KND2Q9N を受けた会話)",
                "model": "claude-opus-5-5",
                "effort": "未確認(会話の起動の設定に従う・自己申告では読めない)"},
