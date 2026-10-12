@@ -1,0 +1,312 @@
+# 変異: M11-runner-stops-counting-runs(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
+# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 当てた file: packages/doeff-traverse/tests/run_example_failing_a_case.py
+# 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
+## 要約: 11 failed, 38 passed, 1 skipped, 1 warning in 8.83s
+## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex01_basic_fail.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex02_traverse_pipeline.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex03_zip_multi_source.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_simple.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_traverse_macro.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex05_parallel_timing.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex06_mediagen_rewrite.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex07_proboscis_ema_rewrite.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex08_tqdm_progress.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex09_for_do_when.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_marks_count_only_what_ran']
+## 出力
+....................FFFFFFFFFFF.s.................                       [100%]
+=================================== FAILURES ===================================
+_______________ test_example_runs_a_program[ex01_basic_fail.hy] ________________
+
+name = 'ex01_basic_fail.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex01_basic_fail.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=0, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+____________ test_example_runs_a_program[ex02_traverse_pipeline.hy] ____________
+
+name = 'ex02_traverse_pipeline.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex02_traverse_pipeline.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=25, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+____________ test_example_runs_a_program[ex03_zip_multi_source.hy] _____________
+
+name = 'ex03_zip_multi_source.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex03_zip_multi_source.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=12, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+_________________ test_example_runs_a_program[ex04_simple.hy] __________________
+
+name = 'ex04_simple.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex04_simple.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=3, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+_____________ test_example_runs_a_program[ex04_traverse_macro.hy] ______________
+
+name = 'ex04_traverse_macro.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex04_traverse_macro.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=25, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+_____________ test_example_runs_a_program[ex05_parallel_timing.hy] _____________
+
+name = 'ex05_parallel_timing.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex05_parallel_timing.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=40, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+____________ test_example_runs_a_program[ex06_mediagen_rewrite.hy] _____________
+
+name = 'ex06_mediagen_rewrite.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex06_mediagen_rewrite.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=6, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+__________ test_example_runs_a_program[ex07_proboscis_ema_rewrite.hy] __________
+
+name = 'ex07_proboscis_ema_rewrite.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex07_proboscis_ema_rewrite.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=24, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+______________ test_example_runs_a_program[ex08_tqdm_progress.hy] ______________
+
+name = 'ex08_tqdm_progress.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex08_tqdm_progress.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=116, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+_______________ test_example_runs_a_program[ex09_for_do_when.hy] _______________
+
+name = 'ex09_for_do_when.hy'
+children = <test_examples_run.Children object at 0x30fa049df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs_a_program(name: str, children: Children) -> None:
+        """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
+        関数の中の run や quote の中の run は数えない)。"""
+        marks = _run_marks(children.result(name, failing_a_case=True))
+        assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+>       assert marks.program_runs > 0, (
+            f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
+            "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        )
+E       AssertionError: ex09_for_do_when.hy は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、macro の展開や関数の repr を印字するだけの debug 用の file は置かない
+E       assert 0 > 0
+E        +  where 0 = RunMarks(case_calls=12, program_runs=0).program_runs
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+________________________ test_marks_count_only_what_ran ________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2910/test_marks_count_only_what_ran0')
+deadline_scale_factor = 1.0
+
+    def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float) -> None:
+        """今の例はどれも Program を走らせるので、名だけ在って走らない run を数えない事は、それを含む source で確かめる:
+        import するだけ・呼ばない関数の中・quote の中・doeff の外の同じ名(例の中で定義した run)は数えず、走らせた 1 回だけを
+        数える(名で数えた検は、呼ばない関数の中の呼び出しを口に数えた)。"""
+        script = tmp_path / "names_without_runs.hy"
+        script.write_text(
+            """
+    (import doeff [run :as doeff-run Pure])
+    (defn never-called [] (doeff-run (Pure 0)))
+    (print (hy.repr '(doeff-run (Pure 0))))
+    (defn run [x] x)
+    (run 1)
+    (print (doeff-run (Pure 1)))
+    """,
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [sys.executable, str(FAILING_A_CASE), str(script)],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+>       assert _run_marks(result) == RunMarks(case_calls=0, program_runs=1), result.stderr
+E       AssertionError: case-calls: 0 program-runs: 0
+E         
+E       assert RunMarks(case...rogram_runs=0) == RunMarks(case...rogram_runs=1)
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Differing attributes:
+E         ['program_runs']
+E         
+E         Drill down into differing attribute program_runs:
+E           program_runs: 0 != 1
+
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:500: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex01_basic_fail.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex02_traverse_pipeline.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex03_zip_multi_source.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_simple.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex04_traverse_macro.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex05_parallel_timing.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex06_mediagen_rewrite.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex07_proboscis_ema_rewrite.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex08_tqdm_progress.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex09_for_do_when.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_marks_count_only_what_ran
+11 failed, 38 passed, 1 skipped, 1 warning in 8.83s

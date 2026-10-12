@@ -14,7 +14,7 @@ examples/ の `.hy` は全部この検に入る(新しい例も書いただけ�
 持ち分で、検は印の意味だけを知る。印は種類ごとに呑める物が決まっていて(行だけの ANY は traceback の frame の行・行の
 中の印は MARKS の形の文字列)、件の結果の行を呑む印は赤になる(card ki-f8a58fb49dd9)。書いた木の上では毎回同じに出て、
 別の木・別の機体や答えを変えない変更で外れる物(checkout や機体の path・Hy の付ける名・frame の行)は、期待の出力に
-置かない(UNPLACEABLE)。
+置かない(UNPLACEABLE)。機体の時間帯は子の側で決めた値にする(CHILD_TIME_ZONE)ので、地方時の印字は機体に依らない。
 
 件の中の失敗が比べる出力に出る事は、例ごとに、Traverse の走りごとに最初の件を件の中で失敗させる子
 (run_example_failing_a_case.py)で確かめる — その子の出力は期待の出力に合わない(card ki-2d5b129f2ff2)。失敗は例の
@@ -34,6 +34,7 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 import difflib
 import functools
 import itertools
+import os
 import re
 import subprocess
 import sys
@@ -50,6 +51,9 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 EXPECTED = EXAMPLES / "expected"
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1 秒(置き場が冷えていても 約 20 秒)。
 CHILD_DEADLINE_SECONDS = 50
+# 子の時間帯(POSIX の TZ の綴り — 時間帯の data base が無い機体でも読める)。例が地方時を印字しても、期待の出力が機体の
+# 時間帯に依らない(設計検証 lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD の盲検 B — datetime.fromtimestamp の印字は TZ=JST-9 の機体で外れた)。
+CHILD_TIME_ZONE = "UTC0"
 # 子(例・件の中で失敗させる例)を同時に走らせる数。子 1 本は 約 1 秒で、多くは hy と doeff の import(例の中身は 0.2〜0.3 秒・ex05 は
 # sleep 2.5 秒)。1 本ずつ順に走らせると子 12 本の秒が足し算になり、この file 1 本が負荷の下で 25〜42 秒かかって、変えた所の検
 # (make test-changed)の 60 秒の上限で後ろの検を打ち切った(card ki-458fc8e0de36)。全部を一度に起こさないのは、機体の検の枠
@@ -151,6 +155,11 @@ class Child:
     failing_a_case: bool
 
 
+def _child_env() -> dict[str, str]:
+    """子の環境 — 親の環境のまま、時間帯だけを決めた値にする(期待の出力が機体の時間帯に依らないため)。"""
+    return {**os.environ, "TZ": CHILD_TIME_ZONE}
+
+
 def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.CompletedProcess[str]:
     """例を `hy <例>` で走らせる(failing_a_case なら、件の中で失敗させる子の入口から)。"""
     example = str(EXAMPLES / child.name)
@@ -165,6 +174,7 @@ def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.Complet
         check=False,
         text=True,
         timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        env=_child_env(),
     )
 
 
@@ -420,8 +430,8 @@ def test_example_runs(name: str, children: Children) -> None:
 
 @pytest.mark.parametrize("name", _runnable())
 def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
-    """件の中の失敗が、比べる出力に出る事: Traverse の走りごとに最初の件を件の中で失敗させた子の出力は、期待の出力に
-    合わない(子が落ちれば、失敗は終了コードに出る)。件を 1 つも走らせない例は NO_CASES に理由つきで置く。"""
+    """件の中の失敗が、比べる出力に出る事: Traverse の走りごとに最初の件を件の中で失敗させた子は 0 で終わり、その出力は
+    期待の出力に合わない。件を 1 つも走らせない例は NO_CASES に理由つきで置く。"""
     result = children.result(name, failing_a_case=True)
     marks = _run_marks(result)
     assert marks is not None, (
@@ -436,11 +446,16 @@ def test_case_failure_shows_in_compared_output(name: str, children: Children) ->
         f"{name} が Traverse の件を 1 つも走らせない — 件を走らせず doeff-hy・Hy の中身だけを印字する debug 用の file は"
         f"例ではない(examples/ に置かない)。件の無い例なら NO_CASES に理由つきで足す"
     )
+    # 子が 0 以外で終わるのは、起こした失敗が件の失敗として記録されず例の外へ出た時 — 出力の比べ方を確かめられないので、
+    # 失敗が見えたとは数えない(traverse-lib の件の失敗の方針が変わったか、子の入口が壊れた — 設計検証
+    # lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD の盲検 A)
+    assert result.returncode == 0, (
+        f"件の中で失敗させた子が 0 以外で終わった — 起こした失敗が件の失敗として記録されず、例の外へ出た。子の入口"
+        f"(件の失敗の起こし方の持ち主)を traverse-lib の今の件の失敗の方針に合わせる\n{result.stdout}{result.stderr}"
+    )
     expected = _expected(name)
     assert expected.is_file(), f"{name} の期待の出力が無い(test_example_runs が名指す)"
-    assert result.returncode != 0 or not _matches(
-        expected.read_text(encoding="utf-8"), result.stdout
-    ), (
+    assert not _matches(expected.read_text(encoding="utf-8"), result.stdout), (
         f"件の中で失敗した子の出力が {expected.relative_to(EXAMPLES)} に合う — 例が件の結果を印字しないか、"
         f"印が件の結果まで伏せている\n{result.stdout}"
     )
@@ -483,6 +498,19 @@ def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float)
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert _run_marks(result) == RunMarks(case_calls=0, program_runs=1), result.stderr
+
+
+def test_children_run_in_a_fixed_time_zone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """子は親の時間帯に依らず CHILD_TIME_ZONE で走る(親を UTC から 9 時間ずらしても、時刻 0 の地方時は 00:00)。"""
+    monkeypatch.setenv("TZ", "JST-9")
+    result = subprocess.run(
+        [sys.executable, "-c", "import time; print(time.strftime('%H:%M', time.localtime(0)))"],
+        capture_output=True,
+        check=True,
+        text=True,
+        env=_child_env(),
+    )
+    assert result.stdout == "00:00\n"
 
 
 @pytest.mark.parametrize("name", sorted(BROKEN))

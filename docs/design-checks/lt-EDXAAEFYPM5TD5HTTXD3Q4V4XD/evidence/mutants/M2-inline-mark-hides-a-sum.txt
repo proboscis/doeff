@@ -1,0 +1,112 @@
+# 変異: M2-inline-mark-hides-a-sum(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
+# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 当てた file: packages/doeff-traverse/examples/expected/ex05_parallel_timing.txt
+# 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
+## 要約: 2 failed, 47 passed, 1 skipped, 1 warning in 8.91s
+## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_only_known_marks']
+## 出力
+.....F..........................s............F....                       [100%]
+=================================== FAILURES ===================================
+__________________ test_example_runs[ex05_parallel_timing.hy] __________________
+
+name = 'ex05_parallel_timing.hy'
+children = <test_examples_run.Children object at 0x497ac49df90>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs(name: str, children: Children) -> None:
+        result = children.result(name, failing_a_case=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        expected = _expected(name)
+        assert expected.is_file(), (
+            f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
+            f"走るたびに変わる所を印にする"
+        )
+        swallowed = _compare(expected.read_text(encoding="utf-8"), result.stdout)
+>       assert swallowed is not None, _output_diff(expected, result.stdout)
+E       AssertionError: --- expected/ex05_parallel_timing.txt
+E         +++ 標準出力
+E         @@ -1,4 +1,4 @@
+E         -async + sequential:   … in …s
+E         -async + parallel(10): 550 in …s
+E         -async + parallel(3):  550 in …s
+E         -sync + sequential:    550 in …s
+E         +async + sequential:   550 in 1.03s
+E         +async + parallel(10): 550 in 0.11s
+E         +async + parallel(3):  550 in 0.42s
+E         +sync + sequential:    550 in 1.0s
+E       assert None is not None
+
+packages/doeff-traverse/tests/test_examples_run.py:424: AssertionError
+_________________ test_expected_output_places_only_known_marks _________________
+
+    def test_expected_output_places_only_known_marks() -> None:
+        """期待の出力の ANY は、行だけの ANY か MARKS の形でだけ置く(どの文字列にも合う印は件の結果まで伏せられる)。"""
+        violations = {
+            path.name: found
+            for path in sorted(EXPECTED.glob("*.txt"))
+            if (found := _mark_violations(path.read_text(encoding="utf-8")))
+        }
+>       assert violations == {}, (
+            f"期待の出力に印の形でない {ANY} が在る — 行の中の印は MARKS の形(呑める物の決まった印)で置き、traceback の"
+            f" frame は行だけの {ANY} にする。走るたびに変わる物の種類が新しければ MARKS に行を足す: {violations}"
+        )
+E       AssertionError: 期待の出力に印の形でない … が在る — 行の中の印は MARKS の形(呑める物の決まった印)で置き、traceback の frame は行だけの … にする。走るたびに変わる物の種類が新しければ MARKS に行を足す: {'ex05_parallel_timing.txt': ['1: async + sequential:   … in …s']}
+E       assert {'ex05_parall...:   … in …s']} == {}
+E         
+E         Left contains 1 more item:
+E         {'ex05_parallel_timing.txt': ['1: async + sequential:   … in …s']}
+E         Use -v to get more diff
+
+packages/doeff-traverse/tests/test_examples_run.py:571: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
+FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_only_known_marks
+2 failed, 47 passed, 1 skipped, 1 warning in 8.91s
