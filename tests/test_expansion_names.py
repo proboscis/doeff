@@ -44,10 +44,45 @@ def test_alias_symbol_makes_a_new_symbol_each_call() -> None:
     assert expansion_names.alias_symbol("Put") is not expansion_names.alias_symbol("Put")
 
 
-@pytest.mark.parametrize("name", _NAMES)
+# 型を建てる定義(defeffect・defwire・defrecord の :check)が型の本体で読む typing の名。書き手の名と分け合う心配は無いが、
+# class の本体に書いた型の本体と method は名を module の段から引くので、型検査の投影が module の段へ移す import を
+# 表から見分ける(static_check._synthesized_import)。
+_TYPING_NAMES = ("ClassVar", "cast")
+
+
+@pytest.mark.parametrize("name", (*_NAMES, *_TYPING_NAMES))
 def test_every_expansion_name_is_importable_from_its_home(name: str) -> None:
     """表の置き場から、表の名を import できる(表の誤りは、その名を読む展開が実行の時に ImportError で落ちる)。"""
     assert hasattr(importlib.import_module(expansion_names.home(name)), name)
+
+
+def test_home_refuses_a_name_outside_the_table() -> None:
+    """表は閉じている — 表に無い名の置き場を doeff と決めない(知らない名を別名の import と答えない・展開が表に無い名を
+    読み始めたら、展開の時に落ちて表へ足す事を求める)。"""
+    with pytest.raises(KeyError):
+        expansion_names.home("do")
+
+
+@pytest.mark.parametrize(
+    ("module", "name", "asname", "expected"),
+    [
+        ("doeff", "Pass", "_doeff_Pass", True),
+        ("doeff_vm", "WithHandler", "_doeff_WithHandler", True),
+        ("typing", "ClassVar", "_doeff_ClassVar", True),
+        ("typing", "cast", "_doeff_cast", True),
+        # for/do の docstring が書き手に書かせる別名(表に無い名)は、書き手の import
+        ("doeff", "do", "_doeff_do", False),
+        ("doeff_traverse", "Traverse", "_doeff_traverse_Traverse", False),
+        ("doeff_vm", "Pass", "_doeff_Pass", False),
+        ("doeff", "Pass", "Pass", False),
+        ("doeff", "Pass", None, False),
+    ],
+)
+def test_is_alias_import_answers_only_the_table(
+    module: str, name: str, asname: str | None, expected: bool
+) -> None:
+    """`is_alias_import` は、表の名を表の置き場から表の別名で束ねる import だけを、展開の合成と答える。"""
+    assert expansion_names.is_alias_import(module, name, asname) is expected
 
 
 def test_import_source_aliases_the_names_grouped_by_home() -> None:
