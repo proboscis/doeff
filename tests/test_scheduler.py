@@ -1852,9 +1852,20 @@ class TestDeadlockDiagnostics:
 # Root close-out (#501)
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(params=["python", "rust"])
+def scheduler_implementation(request, monkeypatch):
+    """Run a test under each scheduler implementation (agora-redesign #2690):
+    the root close-out must mean the same in both."""
+    monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
+    return request.param
+
+
+@pytest.mark.usefixtures("scheduler_implementation")
 class TestRootCloseOut:
     """#501: root completion must not silently abandon in-flight work, and an
-    empty Race() must fail loudly instead of leaking the caller continuation."""
+    empty Race() must fail loudly instead of leaking the caller continuation.
+
+    Every test runs under both scheduler implementations (#2690)."""
 
     @pytest.mark.realtime
     def test_root_return_dropping_queued_work_warns(self):
