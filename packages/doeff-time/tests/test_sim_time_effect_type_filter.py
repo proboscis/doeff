@@ -16,6 +16,7 @@ from doeff_time.effects import (
     DelayEffect,
     GetMonotonicEffect,
     GetTimeEffect,
+    RaceWithinEffect,
     ScheduleAtEffect,
     SetTimeEffect,
     WaitTicksEffect,
@@ -81,6 +82,7 @@ def test_the_clock_declares_the_effects_it_answers() -> None:
         SetTimeEffect,
         WaitWithinEffect,
         WaitTicksEffect,
+        RaceWithinEffect,
     )
 
 
