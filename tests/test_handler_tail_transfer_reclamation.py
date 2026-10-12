@@ -71,9 +71,17 @@ def _suspended_generator_count() -> int:
     )
 
 
+async def _bridge_round_trip() -> None:
+    """The coroutine of one Await bridge round trip: it runs on the bridge loop and completes
+    after handing the loop over once, so a task parks on the bridge without waiting any
+    wall-clock time. What this file pins is where a handler performs its final instruction,
+    not how long a wait lasts (agora-redesign #2967)."""
+    await asyncio.sleep(0)
+
+
 @do
 def _keepalive():
-    yield Await(asyncio.sleep(0.0001))
+    yield Await(_bridge_round_trip())
     return 1
 
 
@@ -101,20 +109,23 @@ def _nested_delegating_time_handler():
     """The PRE-FIX doeff-time shape, kept as the ADR counterexample: a
     wrapper @do delegates to a sub-@do dispatcher, whose leaf performs the
     final Transfer/Pass. Both delegating ancestor frames are suspended
-    mid-``yield`` at that moment and are retained forever."""
+    mid-``yield`` at that moment and are retained forever. A Delay is
+    answered on a virtual clock — the beat has passed once the bridge round
+    trip is done, no wall-clock wait — since the placement of the final
+    Transfer is what leaks, not the duration."""
 
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
     @do
-    def _leaf_delay(effect, k):
-        yield Await(asyncio.sleep(max(0.0, effect.seconds)))
+    def _leaf_delay(k):
+        yield Await(_bridge_round_trip())
         return (yield Transfer(k, None))
 
     @do
     def _dispatch(effect, k):
         if isinstance(effect, DelayEffect):
-            return (yield _leaf_delay(effect, k))  # deliberate: nested final Transfer
+            return (yield _leaf_delay(k))  # deliberate: nested final Transfer
         if isinstance(effect, GetTimeEffect):
             return (yield Transfer(k, _utc_now()))
         yield Pass(effect, k)
