@@ -80,6 +80,12 @@ def import_form(names: Iterable[str]) -> Expression:
     return Expression([Symbol("do"), *statements])
 
 
+def is_alias_import(module: str, name: str, asname: str | None) -> bool:
+    """`from module import name as asname` が、import_form / import_source が書く別名の import の 1 つの名か(置き場と別名が
+    この表の綴りに合う)— 型検査の展開の後処理が、macro の合成した import を書き手の import と分けるため(static_check.py)。"""
+    return asname == alias(name) and home(name) == module
+
+
 def import_source(names: Iterable[str]) -> str:
     """names を別名で束ねる Python の import の文(置き場ごとの `from 置き場 import 名 as 別名, …` を 1 行ずつ)。"""
     return "".join(

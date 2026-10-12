@@ -319,7 +319,8 @@
   ;; __match_args__・可変の既定の断り・__replace__)だけを作らせ、__init__(位置と名前の引数・既定値は class の本体で 1 度評価した値)・
   ;; __repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は展開がここで書く — 関数は module の code として .pyc に入り、読み込みの
   ;; 時に dataclass が関数の source を exec(compile)しない。既定値に field の呼びを書いた欄が在る時と、型検査の投影(static-view)の時は
-  ;; 今までの形(dataclass が関数を作る)のまま。
+  ;; 今までの形(dataclass が関数を作る)のまま。書く関数は定義した型を名でなく `__class__` と引数なしの super で読む(class の本体に
+  ;; 書いた型の名は method から引けない — record.hy の class-form の注と同じ)。
   (import doeff_hy.static_view [static-view-enabled])
   (setv items (or (declared-value contract ":fields") [])
         field-call? (fn [item] (and (= (len item) 4) (isinstance (get item 3) hy.models.Expression) (get item 3)
@@ -335,8 +336,8 @@
                                     `(annotate [~(get item 1) ~(get item 1)] ~(get item 2))
                                     `(annotate ~(get item 1) ~(get item 2))))
         guard (if syms
-                  `(or (is (type ~self-sym) ~name) (in ~attr #{~@(lfor s syms (String (hy.mangle (str s))))}))
-                  `(is (type ~self-sym) ~name)))
+                  `(or (is (type ~self-sym) __class__) (in ~attr #{~@(lfor s syms (String (hy.mangle (str s))))}))
+                  `(is (type ~self-sym) __class__)))
   (setv methods
     (if written
         [`(defn __init__ [~self-sym ~@params]
@@ -361,11 +362,11 @@
          `(defn __setattr__ [~self-sym ~attr ~value]
             (when ~guard
               (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
-            (.__setattr__ (super ~name ~self-sym) ~attr ~value))
+            (.__setattr__ (super) ~attr ~value))
          `(defn __delattr__ [~self-sym ~attr]
             (when ~guard
               (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
-            (.__delattr__ (super ~name ~self-sym) ~attr))]
+            (.__delattr__ (super) ~attr))]
         []))
   `(do
      (import dataclasses [dataclass :as _doeff-dataclass])
