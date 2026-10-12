@@ -299,13 +299,16 @@ def task_unplaced_text(kind: TaskUnplacedKind) -> _Program[str, object]:
 def limit_slot(limit: TaskLimit, declared: GroupLimit, worker: str | None) -> _Program[tuple, object]:
     ...
 
-def limit_holdings(tasks: dict, groups: Table) -> _Program[dict, object]:
+def placed_claims(tasks: dict) -> _Program[tuple, object]:
+    ...
+
+def limit_holdings(claims: tuple, groups: Table) -> _Program[dict, object]:
     ...
 
 def hold_limits(held: dict, limits: tuple, worker: str | None, groups: Table) -> _Program[dict, object]:
     ...
 
-def task_misfit(task: TaskRecord, worker: WorkerInfo, room: int, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:
+def task_misfit(limits: tuple, priority: int, worker: WorkerInfo, room: int, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:
     ...
 
 def limits_misfit(limits: tuple, worker: str, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:

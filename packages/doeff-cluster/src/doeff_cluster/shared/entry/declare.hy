@@ -128,13 +128,11 @@
    (HttpRequest)で送り、要求ごとの返事を 1 行出す(slog)。答え = 全部が通ったか(組の上限か Program の置きが 1 つでも落ちれば行は
    書かずに偽 — 入口が 1 で終わる)。系に無くなった組の資源は消さない(一覧に無い Service に触らないのと同じ)。"
   (val base (.rstrip url "/"))
-  (var limits-written True)
+  ;; 組の上限の書きが 1 つ断られたら(例 別の系が宣言した組で 409)、残りの組も行も書かずに偽 — sim の宣言の書きと同じ所で止まる。
   (for [limit declaration.limits]
     (<- ok bool (group-limit-written base actor limit))
     (when (not ok)
-      (:= limits-written False)))
-  (when (not limits-written)
-    (return False))
+      (return False)))
   ;; job の無い宣言(組の上限だけ)は Program を置かないので、版の識別を読まない(以前は rows[0] を読んで IndexError — 盲検 A の観測 5)。
   (val versions (if declaration.rows (get (get (get declaration.rows 0) "run") "versions") {}))
   (var reads #())
