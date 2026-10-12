@@ -22,6 +22,7 @@ packages/doeff-hy/pyproject.toml ──(R6 で一致を縛る)── uv.lock の
   - 上限の実装: doeff main e71995df(L2157・基底 74873132f)。
   - 盲検 B を受けた R6 の直し: commit d10bb940e。この設計検証の記録と同じ branch(wt/hyub-design-check)で main へ入れる。
 - この設計検証は上限の着地の後に行った(ターンの終わりの検査が報告 JSON を求めたため)。盲検の前の主張は f35286376 で固定した。
+- 記録の途中で main に R7(fe951a108・card ki-2fa4c02604b1 — import でない Hy の内部への依りの照合)が入り、同じ冊が衝突した。両方を残して載せ直し、載せ直した木で R6(実物の木・marker・doeff-domain への写し)と反例の検・ADR の契約の検を走らせ直した(evidence/rebased-real.log.txt・evidence/rebased-B-marker-B-domain.log.txt・evidence/rebased-judgments-contract.log.txt)。
 
 ## 主張ごとの結果
 | 主張 | 盲検の前の予想 | 実測 | 判定 |

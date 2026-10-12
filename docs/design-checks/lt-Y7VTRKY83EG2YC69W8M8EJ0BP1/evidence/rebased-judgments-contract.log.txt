@@ -1,0 +1,14 @@
+# HEAD a0f5e86af45bf2f16ad6f25dabb26789a903e293
+$ uv run --frozen pytest 'docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_judgments_reject_the_counterexamples' 'docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_ADR_DOE_HY_008_adr_contract' -q
+check-slot: 枠 4 を取った(待ち 3 秒)— pytest doeff-wt-hyub-dc (c-3GC5KK1RCJZ1KSYMK979DBMENB)
+
+deadline scale x2.7 (load per usable CPU) — per test 162s, watchdog 242s
+
+test-admission: focused — 2 件(変更箇所の検証)
+doeff-adr: 記録から収集 1 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000014 秒・依存変更で再作成 0 file
+..                                                                       [100%]
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+
+2 passed, 1 warning in 7.51s
+rc=0
