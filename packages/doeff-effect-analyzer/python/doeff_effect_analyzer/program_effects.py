@@ -1520,8 +1520,8 @@ class _Scope:
         return UNBOUND
 
     def _local_value(self, name: str) -> Imported:
-        """What a local the reader follows holds: an element of a sequence of Programs, a
-        field of the received effect, or a function defined in the body (or returned by a
+        """What a local the reader follows holds: an element of a sequence of Programs, the
+        received effect or a field of it, or a function defined in the body (or returned by a
         function the body calls at once) — else ``UNBOUND``."""
         if name in self.local_functions:
             return _LocalFunction(self.local_functions[name], self)
@@ -1529,7 +1529,10 @@ class _Scope:
         if returned is not UNBOUND:
             return returned
         element = self._local_element(name)
-        return element if element is not UNBOUND else self._received_field(name)
+        if element is not UNBOUND:
+            return element
+        alias = self._received_alias(name)
+        return alias if alias is not UNBOUND else self._received_field(name)
 
     def _returned_at_once(self, name: str) -> Imported:
         """A local bound once to a call of a def of the body that takes nothing and only
@@ -1561,6 +1564,27 @@ class _Scope:
                 return inner._returned_at_once(defined)
             case _:
                 return UNBOUND
+
+    def aliases(self, name: str, param: str) -> bool:
+        """Whether the local ``name`` is an alias of the parameter ``param``: every assignment of
+        it in this body is ``param`` itself (``effect = _doeff_effect`` — what doeff-hy's ``handle`` /
+        ``defhandler`` writes at the head of a clause that uses the effect under the writer's own
+        name, once per clause).  A local assigned anything else as well (a rebound alias) is not
+        one, and an alias of an alias is not followed."""
+        values = (
+            (self.local_values[name],)
+            if name in self.local_values
+            else self.local_choices.get(name, ())
+        )
+        return name != param and bool(values) and all(_is_name_of(value, param) for value in values)
+
+    def _received_alias(self, name: str) -> Imported:
+        """A local that aliases the parameter bound to the effect a clause received
+        (``aliases``): that effect — the writer's ``effect`` read like the parameter itself."""
+        for binding in self.bound.bindings:
+            if isinstance(binding.value, ReceivedEffect) and self.aliases(name, binding.name):
+                return binding.value
+        return UNBOUND
 
     def _received_field(self, name: str) -> Imported:
         """A local holding a field of the received effect: bound once to
@@ -1649,6 +1673,11 @@ def _reads_itself(value: ast.expr, name: str) -> bool:
     earlier value, not the bound one: a local bound that way is neither followed through
     the value nor read as an instance of it."""
     return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(value))
+
+
+def _is_name_of(value: ast.expr, name: str) -> bool:
+    """Whether ``value`` is the bare name ``name``."""
+    return isinstance(value, ast.Name) and value.id == name
 
 
 def _builtins_of(module: types.ModuleType) -> dict[str, Any]:

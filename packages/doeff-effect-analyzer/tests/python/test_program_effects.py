@@ -154,7 +154,7 @@ def spawn_either(n):
 """
 
 HANDLERS_HY = """\
-(require doeff-hy.macros [defhandler <-])
+(require doeff-hy.macros [defhandler defk <-])
 (import doeff_vm [EffectBase])
 (import {pkg}.effects [ReadBoard WriteBoard Nap Tick WriteFamily])
 (import doeff_core_effects.effects [Await])
@@ -180,6 +180,27 @@ HANDLERS_HY = """\
 
 (defhandler audit-sink []
   (WriteFamily [] (resume None)))
+
+;; Hands the effect it received to a Program function that performs it (the shape of
+;; doeff-cluster's in-cluster-api-routed: `routed-answer` takes the request as a parameter).
+(defk perform-it [request]
+  {{:pre [(: request EffectBase)] :post [(: % "the answer of request")]}}
+  (<- answer request)
+  answer)
+
+(defhandler relay []
+  (Nap [seconds]
+    (<- answer (perform-it effect))
+    (resume answer)))
+
+;; The same, in two clauses: each clause names the effect it received by its own alias.
+(defhandler relay-both []
+  (Nap [seconds]
+    (<- answer (perform-it effect))
+    (resume answer))
+  (Tick []
+    (<- answer (perform-it effect))
+    (resume answer)))
 
 ;; Receives every effect narrowed by :when and passes the one it received on (the shape of
 ;; doeff-cluster's leases-fence / standby-divert).
@@ -207,6 +228,27 @@ def _dispatch(prefix, effect, k):
 
 def tick_runtime():
     return functools.partial(_dispatch, "x")
+
+
+@do
+def _perform_it(request):
+    answer = yield request
+    return answer
+
+
+def _rebound_dispatch(prefix, _doeff_effect, _doeff_k):
+    # The shape doeff-hy writes for a clause that names its effect `effect` (a local alias of
+    # `_doeff_effect`), except that the alias is rebound: it is no longer the received effect.
+    if isinstance(_doeff_effect, Tick):
+        effect = _doeff_effect
+        effect = Tick()
+        answer = yield _perform_it(effect)
+        return (yield Resume(_doeff_k, answer))
+    return (yield Pass(_doeff_effect, _doeff_k))
+
+
+def rebound_runtime():
+    return functools.partial(_rebound_dispatch, "x")
 """
 
 ENVS_HY = """\
@@ -343,6 +385,43 @@ def test_a_clause_that_performs_the_effect_it_received_emits_that_effect(pkg: st
     assert nap.handles.__name__ == "Nap"
     assert _short(nap.emits.effect_names) == {"Tick", "Nap"}
     assert nap.emits.unresolved == ()
+
+
+def test_a_clause_that_hands_its_alias_of_the_received_effect_to_a_function_emits_it(
+    pkg: str,
+) -> None:
+    # Regression (card ki-fbf5f1db72a7): doeff-hy binds the effect a clause received as
+    # `_doeff_effect` and gives the writer's name `effect` as a local alias of it (doeff
+    # 4f284efa9).  The alias handed to a Program function that performs it was "a value that
+    # is not a call", so every closure check through doeff-cluster's in-cluster-api-routed
+    # (`routed-answer` takes the request as a parameter) was red.
+    relay = analyze_handler(f"{pkg}.handlers:relay")
+
+    [nap] = relay.clauses
+    assert _short(nap.emits.effect_names) == {"Nap"}
+    assert [use.forwarded for use in nap.emits.effects] == [True]
+    assert nap.emits.unresolved == ()
+
+
+def test_each_clause_names_the_effect_it_received_by_its_own_alias(pkg: str) -> None:
+    # One alias assignment per clause: the local is assigned on several paths, every one the
+    # received effect of the clause being read.
+    both = analyze_handler(f"{pkg}.handlers:relay_both")
+
+    emitted = {
+        clause.handles.__name__: _short(clause.emits.effect_names) for clause in both.clauses
+    }
+    assert emitted == {"Nap": {"Nap"}, "Tick": {"Tick"}}
+    assert [clause.emits.unresolved for clause in both.clauses] == [(), ()]
+
+
+def test_a_local_rebound_after_the_alias_is_not_the_received_effect(pkg: str) -> None:
+    # The alias is followed only while every assignment of the local is the received effect's
+    # own name: a rebound local stays a place the reader cannot follow.
+    rebound = analyze_handler(f"{pkg}.handlers_py:rebound_runtime")
+
+    [tick] = rebound.clauses
+    assert [item.text for item in tick.emits.unresolved] == ["request"]
 
 
 def test_a_parent_class_clause_passes_on_the_effect_it_received_as_its_own_class(
