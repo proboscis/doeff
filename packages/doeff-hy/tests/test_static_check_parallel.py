@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from doeff_hy import static_check
+from doeff_hy.check_slot import SlotHeld
 from doeff_hy.static_check import (
     Closure,
     ExpansionWorkerLostError,
@@ -148,7 +149,6 @@ def test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote(
     pyright = tmp_path / "pyright"
     pyright.write_text('#!/bin/sh\necho \'{"generalDiagnostics": []}\'\n', encoding="utf-8")
     pyright.chmod(0o755)
-    monkeypatch.setenv("DOEFF_HY_CHECK_EXPANDERS", "3")
     monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
 
     def run() -> dict[str, int]:
@@ -166,23 +166,31 @@ def test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote(
     assert run() == {"hit": 4, "miss": 0}, "展開の子が書いた保存を、次の実行の親が引けなかった"
 
 
-def test_the_expander_limit_defaults_to_four_and_is_set_by_the_environment() -> None:
-    """展開の子の数の上限は既定 4(core の数ではない — 36 core の機体で検査 2 本が 30 本超の子を起こした・2026-10-11)。環境変数
-    DOEFF_HY_CHECK_EXPANDERS で替えられ、1 以上の整数でない値は黙って既定へ落とさず断る。"""
-    assert static_check.expander_limit(None) == 4
-    assert static_check.expander_limit("") == 4
-    assert static_check.expander_limit("2") == 2
-    for wrong in ("0", "-1", "four", "1.5"):
-        with pytest.raises(ValueError, match="DOEFF_HY_CHECK_EXPANDERS"):
-            static_check.expander_limit(wrong)
+def test_the_expander_limit_is_the_slot_width_and_defaults_to_four_when_none_reaches() -> None:
+    """展開の子の数は、機体の検の枠の正本が答えた 1 枠の中の並走の数(SlotHeld.width)。届かない機体(正本の無い宿・古い正本)
+    では既定 4(core の数ではない — 36 core の機体で検査 2 本が 30 本超の子を起こした・2026-10-11)。環境変数で替える口は無い
+    (口が在ると、値を替えた会話の検だけが別の数で数え、枠の数え方が割れる)。"""
+    assert static_check.expander_limit(None) == static_check.EXPANDER_LIMIT == 4
+    assert static_check.expander_limit(2) == 2
+    assert static_check.expander_limit(1) == 1
+    assert static_check.expander_limit(8) == 8, "宣言が上がれば従う(値の持ち主は宣言)"
 
 
-def test_the_entry_takes_the_limit_from_the_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_the_entry_hands_the_slot_width_to_the_expanders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """入口の main は上限の素の値を env_places から受けて expander_limit に渡す(os.environ を直に読まない — doeff-linter の
-    DOEFF004・日次 2026-10-11 16:00 の lint の段の赤・card ki-72c8b0827b29)。1 以上の整数でない値は走れなかった(exit 2)。"""
+    """入口の main は、枠の取り手が答えた幅を project_closure の上限へ渡す(宣言の無い機体の既定 4 でも環境変数でもない)。"""
     monkeypatch.setattr(sys, "path", list(sys.path))  # main は根を sys.path の頭に足す
-    monkeypatch.setenv("DOEFF_HY_CHECK_EXPANDERS", "0")
-    assert static_check.main(["--root", str(tmp_path), "--no-cache"]) == 2
-    assert "DOEFF_HY_CHECK_EXPANDERS" in capsys.readouterr().err
+    seen: list[int] = []
+
+    def fake_closure(*args: object, **_: object) -> static_check.Closure:
+        seen.append(int(args[4]))  # type: ignore[call-overload]
+        return static_check.Closure({}, [])
+
+    monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 2))
+    monkeypatch.setattr(static_check, "project_closure", fake_closure)
+    monkeypatch.setattr(static_check, "run_pyright", lambda *_args, **_kwargs: static_check.Checked([], []))
+    assert static_check.main(["--root", str(tmp_path), "--no-cache"]) == 0
+    monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld())
+    assert static_check.main(["--root", str(tmp_path), "--no-cache"]) == 0
+    assert seen == [2, 4], seen

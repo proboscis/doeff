@@ -9,24 +9,25 @@ ki-26ebd3f636e0・親 ki-aabe38bf85ef)。
 入口(`python -m doeff_hy.static_check`)を子の process で撃ち、偽にするのは pyright だけ(撃たれた事を file に記す)。正本の無い宿
 (doeff だけを clone した機体)では skip。
 
-M-slot(doeff_hy.check_slot)と正本の間の契約は、口だけを持つ正本(INTERFACE_ONLY_CANON)で確かめる — 方策は中を読まずに take へ
-渡す・正本はどの名の環境変数も読める・正本の take の中の失敗は名乗って素通し(設計検証 lt-TH2ZXPJ9QPXBB8EV6SNEWN1N89 の盲検 A・B)。
+M-slot(doeff_hy.check_slot)と正本の間の契約は、口だけを持つ正本(INTERFACE_ONLY_CANON)で確かめる — 方策と持ち物は中を開かず正本の口へ
+渡す・正本はどの名の環境変数も読める・正本の take の中の失敗は名乗って素通し(設計検証 lt-TH2ZXPJ9QPXBB8EV6SNEWN1N89 の盲検 A・B)・
+1 枠の中の並走の数は正本の口 process_width が答え、口が無い・落ちた・形の違う答えでも取った枠は持ち続ける(設計検証
+lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。方策と持ち物を開かない形の機械の検は tests/test_check_slot_opacity.py。
 """
 
-import ast
-import inspect
 import io
 import json
+import os
 import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
-from doeff_hy import check_slot
-from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, SlotHeld, take_slot
+from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, take_slot
 from doeff_hy.env_places import cache_home
 
 #: 機体の正本(検の process の home の下 — 検体の home へ写す元)。
@@ -34,9 +35,13 @@ CANON = Path.home() / CANON_UNDER_HOME
 #: 正本が読む環境変数の名の見本(doeff が知らない名 — 正本がどの名を読んでも答えが届く事を確かめる)。
 PROBE_NAME = "DOEFF_HY_CHECK_SLOT_PROBE"
 #: 口だけを持つ正本(検体の home の正本の置き場に置く)。read_policy は印の object を返し、take は受けた方策が印そのものか・
-#: 環境変数 PROBE_NAME の読みの答え・名乗りを持ち物に記して返す。__FAIL__ の行は take の中の失敗の差し込み口。
+#: 環境変数 PROBE_NAME の読みの答え・名乗りを持ち物に記して返し、持ち物は解かれた回数を数える。記録は module の TAKES(take が受けた物)
+#: と WIDTHS(process_width が受けた物)に残る — 検は sys.modules の正本から読む(SlotHeld は持ち物を預からない)。__FAIL__ の行は
+#: take の中の失敗、__WIDTH__ の行は process_width の答え(口自体を外す変異は WITHOUT_WIDTH_MOUTH)。
 INTERFACE_ONLY_CANON = f"""
 POLICY = object()
+TAKES = []
+WIDTHS = []
 
 
 class PolicyUnreadable(Exception):
@@ -52,9 +57,10 @@ class Seen:
         self.same = same
         self.probe = probe
         self.label = label
+        self.released = 0
 
     def release(self):
-        pass
+        self.released += 1
 
 
 def read_policy():
@@ -63,9 +69,15 @@ def read_policy():
 
 def take(policy, label, environ, out):
     __FAIL__
-    return Seen(policy is POLICY, environ.get("{PROBE_NAME}"), label)
-"""
+    seen = Seen(policy is POLICY, environ.get("{PROBE_NAME}"), label)
+    TAKES.append(seen)
+    return seen
 
+
+def process_width(policy, holding, environ):
+    WIDTHS.append((policy is POLICY, holding is TAKES[-1] if TAKES else holding, environ.get("{PROBE_NAME}")))
+    return __WIDTH__
+"""
 
 @dataclass(frozen=True)
 class Scene:
@@ -97,7 +109,7 @@ class Scene:
         )
 
 
-def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float) -> Scene:
+def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float, processes: int = 1) -> Scene:
     """機体の正本を検体の home へ写し、隣に宣言(K = 1・置き場 tmp_path/slots・待ちの上限 wait_s 秒)を置いて、子の process の
     HOME を検体の home にする。Hy の bytecode などの cache の根は今の機体の物のまま(冷えた cache で起動に分を払わない)。"""
     if not CANON.is_file():
@@ -112,7 +124,7 @@ def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float) -> Sc
         json.dumps(
             {
                 "slots": 1,
-                "processesPerSlot": 1,
+                "processesPerSlot": processes,
                 "dir": str(tmp_path / "slots"),
                 "waitLimitSeconds": wait_s,
             }
@@ -246,10 +258,26 @@ def test_a_host_without_the_canon_takes_no_slot_and_says_nothing(tmp_path: Path)
     assert out.getvalue() == ""
 
 
-def _interface_canon(home: Path, fail: str) -> None:
+def _interface_canon(home: Path, fail: str = "pass", width: str = "5") -> Path:
     target = home / CANON_UNDER_HOME
     target.parent.mkdir(parents=True)
-    target.write_text(INTERFACE_ONLY_CANON.replace("__FAIL__", fail), encoding="utf-8")
+    target.write_text(
+        INTERFACE_ONLY_CANON.replace("__FAIL__", fail).replace("__WIDTH__", width), encoding="utf-8"
+    )
+    return target
+
+
+def _without_width_mouth(home: Path) -> None:
+    """process_width の口が無い正本(幅の口を足す前の dotfiles の先端)。"""
+    target = home / CANON_UNDER_HOME
+    target.parent.mkdir(parents=True)
+    source = INTERFACE_ONLY_CANON.replace("__FAIL__", "pass")
+    target.write_text(source[: source.index("def process_width")], encoding="utf-8")
+
+
+def _canon_of(target: Path) -> ModuleType:
+    """take_slot が読んだ口だけの正本(sys.modules の同じ個体 — 記録 TAKES・WIDTHS を持つ)。"""
+    return sys.modules[MODULE_KEY_PREFIX + os.path.realpath(target)]
 
 
 def test_the_declared_policy_and_any_environment_name_reach_the_canon_take(
@@ -258,19 +286,70 @@ def test_the_declared_policy_and_any_environment_name_reach_the_canon_take(
     # 方策は正本の read_policy の答えのまま take へ届き(値を縮める・作り直す口が在れば別の物になる)、正本は doeff が知らない名の
     # 環境変数も読める。盲検 A の反例: 正本へ渡す env を保持者の印 1 つの写しに絞っていたので、正本が会話の id を読むようになると
     # doeff-hy-check だけが黙って会話ごとの数えの外で走った。
-    _interface_canon(tmp_path / "home", "pass")
+    canon = _interface_canon(tmp_path / "home")
     monkeypatch.setenv(PROBE_NAME, "seen-by-the-canon")
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
     assert isinstance(held, SlotHeld), out.getvalue()
-    assert held.holding is not None, out.getvalue()
-    seen = held.holding
+    assert held.let_go is not None, out.getvalue()
+    (seen,) = _canon_of(canon).TAKES
     assert vars(seen) == {
         "same": True,
         "probe": "seen-by-the-canon",
         "label": "doeff-hy-check repo",
+        "released": 0,
     }
     assert out.getvalue() == ""
+    held.release()
+    held.release()
+    assert seen.released == 2, "SlotHeld.release は正本の解く口をそのまま呼ぶ(2 度目を無視するのは正本の仕事)"
+
+
+def test_the_canon_width_is_asked_with_the_same_opaque_values_and_reaches_the_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 1 枠の中の並走の数は正本の口 process_width が答える。口へ渡るのは take の前に得た方策・take の答え・環境そのもの(入れ子の規則と
+    # env の名は正本の中 — 盲検 B の反例は、持ち物から欄を読んで doeff が別の規則を持った)。答えは SlotHeld.width でそのまま届く。
+    canon = _interface_canon(tmp_path / "home", width="7")
+    monkeypatch.setenv(PROBE_NAME, "seen-by-the-canon")
+    out = io.StringIO()
+    held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
+    assert isinstance(held, SlotHeld) and held.width == 7, (held, out.getvalue())
+    assert _canon_of(canon).WIDTHS == [(True, True, "seen-by-the-canon")]
+    assert out.getvalue() == ""
+
+
+def test_a_canon_without_the_width_mouth_still_holds_the_slot_and_says_so(tmp_path: Path) -> None:
+    # 盲検 A の反例: 口の揃いが全か無かで、正本に無い口を足すと枠そのものを失った。幅の口は任意 — 古い正本でも枠は取り、
+    # 幅は届かない(None・呼び手が宣言の無い機体の既定で走る)ことを 1 行名乗る。
+    _without_width_mouth(tmp_path / "home")
+    out = io.StringIO()
+    held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
+    assert isinstance(held, SlotHeld), out.getvalue()
+    assert held.let_go is not None and held.width is None, held
+    assert out.getvalue().startswith(f"{MARK} 枠の正本に並走の数の口(process_width)が無い"), out.getvalue()
+
+
+def test_a_failing_width_mouth_keeps_the_slot_that_was_taken(tmp_path: Path) -> None:
+    # 幅の口の失敗を take の失敗と同じ囲いに入れると、取った枠の fd を持ったまま「枠を取らずに走る」と名乗る(盲検 A の付随の危険)。
+    # 幅の口が落ちても取った枠は持ち続け(解く口が残る)、幅だけが届かない。
+    canon = _interface_canon(tmp_path / "home", width="1 / 0")
+    out = io.StringIO()
+    held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
+    assert isinstance(held, SlotHeld) and held.let_go is not None and held.width is None, (held, out.getvalue())
+    assert "process_width が落ちた" in out.getvalue(), out.getvalue()
+    held.release()
+    assert _canon_of(canon).TAKES[0].released == 1
+
+
+@pytest.mark.parametrize("answer", ["0", "-1", "True", "'2'", "2.0"])
+def test_a_width_answer_that_is_not_a_positive_integer_is_named_and_dropped(tmp_path: Path, answer: str) -> None:
+    # 口の形の確かめ(数の判断ではない): 正の整数でない答えは幅にしない。枠は持ち続ける。
+    _interface_canon(tmp_path / "home", width=answer)
+    out = io.StringIO()
+    held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
+    assert isinstance(held, SlotHeld) and held.let_go is not None and held.width is None, (held, out.getvalue())
+    assert "正の整数でない" in out.getvalue(), out.getvalue()
 
 
 def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) -> None:
@@ -279,23 +358,58 @@ def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) ->
     _interface_canon(tmp_path / "home", "raise OSError('置き場を作れない')")
     out = io.StringIO()
     held = take_slot(tmp_path / "home", "doeff-hy-check repo", out)
-    assert held == SlotHeld(None)
+    assert held == SlotHeld()
     assert out.getvalue().startswith(
         f"{MARK} 枠の正本の take が落ちたので枠を取らずに走る(OSError"
     ), out.getvalue()
 
 
-def test_the_canon_policy_goes_straight_into_take() -> None:
-    # 方策(read_policy の答え)は中を読まずに take の 1 つ目の引数へそのまま渡す — 名に束ねて読む・包んで作り直す形を断る。盲検 B の
-    # 反例: 環境変数で待ちの上限を縮める口(policy を名に束ね dataclasses.replace で作り直す)が、枠の検・doeff-linter・ruff・
-    # code-quality を全部通り、値の持ち主(正本の宣言)と方策の欄の名を doeff へ移した。
-    tree = ast.parse(inspect.getsource(check_slot))
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+def _width_probe(scene: Scene, *, hand_down: str | None = None, wrapped: bool = True) -> subprocess.CompletedProcess[str]:
+    """枠の取り手(doeff の take_slot)が答えた幅を stdout に出す子を、正本の命令の包みの中(wrapped)か直に撃つ。
+    hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検)。"""
+    show = [
+        sys.executable,
+        "-c",
+        "import sys; from pathlib import Path; from doeff_hy.check_slot import take_slot;"
+        " held = take_slot(Path.home(), 'width-probe', sys.stderr); print(held.width); held.release()",
     ]
-    straight = {id(call.args[0]) for call in calls if call.func.attr == "take" and call.args}
-    asked = [call for call in calls if call.func.attr == "read_policy"]
-    assert asked, "check_slot が正本の read_policy を呼んでいない(方策を自分で作っている)"
-    assert all(id(call) in straight for call in asked), [ast.unparse(call) for call in asked]
+    command = show
+    if wrapped:
+        command = [sys.executable, str(scene.canon), "run", "--label", "inner", "--", *show]
+    if hand_down is not None:
+        relay = [
+            sys.executable,
+            "-c",
+            "import os, subprocess, sys; env = dict(os.environ, AI_CHECK_SLOT_PROCESSES=sys.argv[1]);"
+            " sys.exit(subprocess.run(sys.argv[2:], env=env).returncode)",
+            hand_down,
+            *command,
+        ]
+        command = [sys.executable, str(scene.canon), "run", "--label", "outer", "--", *relay]
+    return subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+
+
+def test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_inside_the_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 実物の正本: 枠を自分で取る直の入口は宣言の数(2)。命令の包みの中(祖先が枠を持つ — take は None)の入口も、包みが子へ配った
+    # 宣言の数(2)を受ける。盲検 B の再現 (b): 直前の形は、包みの中で持ち物が None になるので doeff が自分の既定 4 へ落ちた。
+    scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
+    if "def process_width" not in CANON.read_text(encoding="utf-8"):
+        pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
+    direct = _width_probe(scene, wrapped=False)
+    assert direct.returncode == 0 and direct.stdout.strip() == "2", direct.stderr
+    inside = _width_probe(scene)
+    assert inside.returncode == 0 and inside.stdout.strip() == "2", inside.stderr
+
+
+def test_a_check_inside_the_wrapper_keeps_the_smaller_width_the_outer_entry_handed_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 外側の入口が子へ配った残りの幅(1)は、内側の入口が宣言(2)へ戻さない — 木全体の並走 ≤ 宣言。規則は正本の中にあり、
+    # doeff は答えをそのまま使う。
+    scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
+    if "def process_width" not in CANON.read_text(encoding="utf-8"):
+        pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
+    done = _width_probe(scene, hand_down="1")
+    assert done.returncode == 0 and done.stdout.strip() == "1", done.stderr
