@@ -1,0 +1,35 @@
+# 直しの失敗ケースの検 test_group_limits_owner.hy を基準の版 74ebb50b6 で回した結果(赤 = 直す前の失敗を捉える)
+# 木: ~/.worktrees/doeff-wt-ki-b0e8-verify(74ebb50b6)に検の file だけを写した
+# 命令: uv run --no-sync pytest packages/doeff-cluster/tests/test_group_limits_owner.hy -q --tb=line
+# 刻: 2026-10-12T03:51:56Z
+E   AttributeError: 'GroupLimit' object has no attribute 'system'
+    (assert (= (. (get ALPHA.task-limits 0) system) "alpha") ALPHA.task-limits)
+AttributeError: 'GroupLimit' object has no attribute 'system'
+/work/toolset/worktrees/doeff-wt-ki-b0e8-verify/packages/doeff-cluster/tests/test_group_limits_owner.hy:40: AttributeError: 'GroupLimit' object has no attribute 'system'
+E   AssertionError: 別の系の書き直しを断らなかった
+    (raise (AssertionError "別の系の書き直しを断らなかった"))
+    (raise (AssertionError "別の系の書き直しを断らなかった"))
+AssertionError: 別の系の書き直しを断らなかった
+/work/toolset/worktrees/doeff-wt-ki-b0e8-verify/packages/doeff-cluster/tests/test_group_limits_owner.hy:66: AssertionError: 別の系の書き直しを断らなかった
+E   AssertionError: None
+    (assert (and (get observed "refused") (in "alpha" (get observed "refused"))) (get observed "refused"))
+    (assert (and (get observed "refused") (in "alpha" (get observed "refused"))) (get observed "refused"))
+AssertionError: None
+/work/toolset/worktrees/doeff-wt-ki-b0e8-verify/packages/doeff-cluster/tests/test_group_limits_owner.hy:106: AssertionError: None
+E   IndexError: list index out of range
+IndexError: list index out of range
+/work/toolset/worktrees/doeff-wt-ki-b0e8-verify/packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy:138: IndexError: list index out of range
+E   AssertionError: (held: 'dict', task: 'TaskRecord', worker: 'str | None', groups: 'Table')
+    (assert (= (list (. (inspect.signature cluster_policy.hold-limits) parameters)) ["held" "limits" "worker" "groups"])
+AssertionError: (held: 'dict', task: 'TaskRecord', worker: 'str | None', groups: 'Table')
+/work/toolset/worktrees/doeff-wt-ki-b0e8-verify/packages/doeff-cluster/tests/test_group_limits_owner.hy:148: AssertionError: (held: 'dict', task: 'TaskRecord', worker: 'str | None', groups: 'Table')
+E   AssertionError: ('scope', 'limit', 'perPart')
+    (assert (= (| (frozenset system_form.LIMIT-KEYS) #{"system"}) GROUP-LIMIT-KEYS) system_form.LIMIT-KEYS))
+AssertionError: ('scope', 'limit', 'perPart')
+/work/toolset/worktrees/doeff-wt-ki-b0e8-verify/packages/doeff-cluster/tests/test_group_limits_owner.hy:158: AssertionError: ('scope', 'limit', 'perPart')
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_system_of_names_the_declaring_system_on_its_limits
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_a_group_declared_by_one_system_is_not_rewritten_by_another_system
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_second_system_declaring_a_group_is_refused_on_sim
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_production_declare_writes_the_limits_of_a_declaration_without_jobs
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_sender_facing_fields_and_the_counting_inputs_are_pinned
+6 failed (rc=1)
