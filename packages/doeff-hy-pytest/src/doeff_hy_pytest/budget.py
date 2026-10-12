@@ -36,6 +36,9 @@
   切り替えと宣言の測り直しを 1 つの変更で行えるように(doeff が先に入っても利用側の判定が変わらない)と、戻し方を設定 1 行に
   するため(戻し方 = 設定を ``call`` に戻し、宣言を測り直す)。
 
+- Python の呼び出しの数(``doeff_hy_pytest.python_calls`` — agora-redesign #2854): 命令行の印 ``--doeff-python-calls`` を付けた走りだけ、
+  歩数を宣言した検の call の間に ``sys.monitoring`` の CALL 事象を数え、終わりに 1 行出す(判定はしない)。印の無い走りは枠を取らない。
+
 上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
 
 - 対象は ``.hy`` の検の file(deftest と、同じ file の素の検)だけ。Python の検は模擬の handler の検とは限らないので外す。
@@ -97,6 +100,18 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 import pytest
+
+from doeff_hy_pytest.python_calls import (
+    PYTHON_CALLS_DEST,
+    PYTHON_CALLS_OPTION,
+    CallCounter,
+    CallCounting,
+    CalledTest,
+    NotCounted,
+    called_test_line,
+    summary_line,
+    unmeasurable_line,
+)
 
 MARKER_CALL_BUDGET_INI = "doeff_test_call_budget_by_marker"
 COLLECT_BUDGET_INI = "doeff_test_collect_budget_seconds"
@@ -472,6 +487,9 @@ class Measurement:
     gc: GcTally = NO_GC
     # 区間の歩数を模擬の世界の出来事で分けた値(世界を回さない検・収集の段階は None)。
     world: WorldSteps | None = None
+    # 区間の Python の呼び出しの数(sys.monitoring の CALL 事象 — 印 --doeff-python-calls の走りで歩数を宣言した検だけ・他は None)。
+    # 数えた検の CPU 秒は監視の上乗せ(1.5〜1.7 倍)を含むので、CPU 秒の比べ(CPU 秒 ÷ 歩数)からは除く。
+    python_calls: int | None = None
 
     @property
     def judged_steps(self) -> int:
@@ -999,16 +1017,26 @@ class CallMeasured:
     work: VmWork | None = None
     gc: GcTally = NO_GC
     world: WorldSteps | None = None
+    python_calls: int | None = None
 
 
 _BUDGETS_KEY = pytest.StashKey[Budgets]()
 _COUNTER_KEY = pytest.StashKey[CompileCounter]()
 _VERDICTS_KEY = pytest.StashKey[list[Verdict]]()
 _CALL_MEASURED_KEY = pytest.StashKey[CallMeasured]()
+# 印 --doeff-python-calls を付けた走りの数え(印の無い走りは置かない)。
+_PYTHON_CALLS_KEY = pytest.StashKey[CallCounting]()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """設定の名を pytest に登録する。"""
+    """設定の名と命令行の印を pytest に登録する。"""
+    parser.addoption(
+        PYTHON_CALLS_OPTION,
+        dest=PYTHON_CALLS_DEST,
+        action="store_true",
+        default=False,
+        help="歩数を宣言した検の call の間の Python の呼び出し(sys.monitoring の CALL 事象)を数え、終わりに 1 行出す(日次の 1 回だけ)",
+    )
     parser.addini(
         MARKER_CALL_BUDGET_INI,
         "印ごとの Hy の検 1 本の実行の上限の壁の時計の秒(1 行 = 印=秒・複数の印に当たれば最も長い秒・当たる検は歩数の上限があっても秒で判じる)",
@@ -1143,7 +1171,10 @@ def pytest_configure(config: pytest.Config) -> None:
     call_seconds_by_marker = _marker_seconds(config)
     collect_seconds = _seconds(config, COLLECT_BUDGET_INI)
     call_steps = _steps(config)
+    counts_python_calls = bool(config.getoption(PYTHON_CALLS_DEST))
     if not call_seconds_by_marker and collect_seconds is None and call_steps is None:
+        if counts_python_calls:
+            config.stash[_PYTHON_CALLS_KEY] = NotCounted("doeff の検の上限の設定が無い — 歩数を測らない")
         return
     work_source = read_work_source()
     if call_steps is not None and isinstance(work_source, NoWorkReader):
@@ -1174,13 +1205,22 @@ def pytest_configure(config: pytest.Config) -> None:
     counter.install()
     config.stash[_COUNTER_KEY] = counter
     config.stash[_VERDICTS_KEY] = []
+    if counts_python_calls:
+        config.stash[_PYTHON_CALLS_KEY] = (
+            CallCounter.acquire()
+            if isinstance(work_source, WorkReader)
+            else NotCounted(f"歩数を測れない({work_source.reason})")
+        )
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    """差し込んだ変換の数えを外す。"""
+    """差し込んだ変換の数えを外し、Python の呼び出しの数えの枠を返す。"""
     counter = config.stash.get(_COUNTER_KEY, None)
     if counter is not None:
         counter.uninstall()
+    python_calls = config.stash.get(_PYTHON_CALLS_KEY, None)
+    if isinstance(python_calls, CallCounter):
+        python_calls.release()
 
 
 def _relative_key(path: Path, root: Path) -> str:
@@ -1265,7 +1305,8 @@ def pytest_doeff_import_hy_module(
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     """call の段階の CPU 秒と変換を測って item に置く(判定は makereport)。歩数で判じる Hy の検は、call の間だけ
-    scheduler に歩の上限(歩数の上限 × 倍率)を入れ、走り終わらない空回りを走っている最中に落とす(#3143)。"""
+    scheduler に歩の上限(歩数の上限 × 倍率)を入れ、走り終わらない空回りを走っている最中に落とす(#3143)。印
+    --doeff-python-calls の走りでは、歩数を宣言した検の call の間だけ Python の呼び出しを数える(#2854)。"""
     counter = item.config.stash.get(_COUNTER_KEY, None)
     if counter is None:
         return (yield)
@@ -1292,9 +1333,14 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
         phase_log.open()
     if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
         guard.arm(runaway_steps)
+    python_calls = item.config.stash.get(_PYTHON_CALLS_KEY, None)
+    calls_counter = python_calls if isinstance(python_calls, CallCounter) and declaration is not None else None
+    if calls_counter is not None:
+        calls_counter.start()
     try:
         return (yield)
     finally:
+        calls = calls_counter.stop() if calls_counter is not None else None
         if isinstance(guard, SchedulerStepGuard) and runaway_steps is not None:
             guard.disarm()
         marks = (
@@ -1318,6 +1364,7 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
                 if work_after is not None and work_before is not None
                 else None
             ),
+            python_calls=calls,
         )
 
 
@@ -1349,6 +1396,7 @@ def pytest_runtest_makereport(
         work=measured.work,
         gc=measured.gc,
         world=measured.world,
+        python_calls=measured.python_calls,
     )
     verdict = judge_call(budgets, markers, measurement, declared_steps_of(getattr(item, "obj", None)))
     if verdict is None:
@@ -1378,6 +1426,8 @@ RATIO_NAME_CHARS = 56
 # 比の 1 行の頭 — 日次の報告(agora-controllers の controllers/daily_verify/core/pytest_report.hy)がこの頭で行を探して読み戻す。
 # 綴りを変えたら read_step_cost_line と agora-controllers の読み(往復の検)を同じ変更で直す。
 RATIO_LINE_HEAD = "CPU 秒 ÷ 歩数(µs/歩): "
+# Python の呼び出しを数えた検を比から除いた時に括弧の中へ足す文(数 1 つ)。
+RATIO_EXCLUDED_TEXT = "Python の呼び出しを数えた {} 本は監視の上乗せがあるので除く"
 
 
 @dataclass(frozen=True)
@@ -1400,6 +1450,8 @@ class StepCostRatios:
     highest: StepCost
     above: tuple[StepCost, ...]
     below: tuple[StepCost, ...]
+    # Python の呼び出しを数えた検(印 --doeff-python-calls の走り)の数 — 監視の上乗せで CPU 秒が 1.5〜1.7 倍になるので比に入れない。
+    excluded: int = 0
 
 
 @dataclass(frozen=True)
@@ -1408,6 +1460,7 @@ class TooFewForRatios:
 
     measured: int
     below_floor: int
+    excluded: int = 0
 
 
 StepCostReport = StepCostRatios | TooFewForRatios
@@ -1422,12 +1475,15 @@ def step_cost_name(key: str) -> str:
 
 def step_cost_report(measurements: Iterable[Measurement]) -> StepCostReport:
     """session 1 本の call の測り(歩数を測れた物)から、検ごとの CPU 秒 ÷ 歩数と中央値と外れを求めるため。分母は call の全部の歩数
-    (world-running で判じる検も — CPU 秒を世界の段ごとに分けられないので)。並び順に依らない(同じ値は名の順で決める)。"""
-    worked = tuple(m for m in measurements if m.phase == "call" and m.work is not None)
+    (world-running で判じる検も — CPU 秒を世界の段ごとに分けられないので)。並び順に依らない(同じ値は名の順で決める)。
+    Python の呼び出しを数えた検(``python_calls`` が在る — 監視の上乗せで CPU 秒が 1.5〜1.7 倍)は除き、除いた数を持つ。"""
+    called = tuple(m for m in measurements if m.phase == "call" and m.work is not None)
+    worked = tuple(m for m in called if m.python_calls is None)
+    excluded = len(called) - len(worked)
     counted = tuple(m for m in worked if m.work is not None and m.work.steps >= RATIO_FLOOR_STEPS)
     below_floor = len(worked) - len(counted)
     if len(counted) < RATIO_MIN_TESTS:
-        return TooFewForRatios(measured=len(counted), below_floor=below_floor)
+        return TooFewForRatios(measured=len(counted), below_floor=below_floor, excluded=excluded)
     costs = tuple(
         (step_cost_name(m.key), m.judged_cpu_seconds / m.work.steps * 1e6) for m in counted if m.work is not None
     )
@@ -1445,6 +1501,7 @@ def step_cost_report(measurements: Iterable[Measurement]) -> StepCostReport:
         highest=ranked[0],
         above=tuple(c for c in ranked if c.ratio > RATIO_OUTLIER_FACTOR),
         below=tuple(sorted((c for c in ranked if c.ratio < 1 / RATIO_OUTLIER_FACTOR), key=lambda c: (c.ratio, c.name))),
+        excluded=excluded,
     )
 
 
@@ -1459,8 +1516,13 @@ def _named_costs(costs: tuple[StepCost, ...]) -> str:
 
 def step_cost_line(report: StepCostReport) -> str:
     """終わりの要約に出す比の 1 行(session ごと)。外れが 0 の時も中央値と最も高い検を出す(行が消えると「測れていない」と区別
-    できないため)。綴りの読み戻しは read_step_cost_line。"""
-    head = f"{RATIO_LINE_HEAD}歩数 {RATIO_FLOOR_STEPS} 以上の {report.measured} 本(未満 {report.below_floor} 本は出さない)"
+    できないため)。Python の呼び出しを数えた検を除いた走りは、除いた数を括弧の中に書く(0 本なら書かない)。綴りの読み戻しは
+    read_step_cost_line。"""
+    excluded = f"・{RATIO_EXCLUDED_TEXT.format(report.excluded)}" if report.excluded else ""
+    head = (
+        f"{RATIO_LINE_HEAD}歩数 {RATIO_FLOOR_STEPS} 以上の {report.measured} 本"
+        f"(未満 {report.below_floor} 本は出さない{excluded})"
+    )
     match report:
         case TooFewForRatios():
             return f"{head}・{RATIO_MIN_TESTS} 本未満なので比は出さない"
@@ -1485,6 +1547,7 @@ class StepCostLineRead:
     above_named: tuple[tuple[str, float], ...]
     below: int
     below_named: tuple[tuple[str, float], ...]
+    excluded: int = 0
 
 
 _NAMED_COST = r"[^\s・]+ ×\d+\.\d{2}"
@@ -1498,7 +1561,10 @@ def _named_side_pattern(side: str) -> str:
 
 STEP_COST_LINE_PATTERN = re.compile(
     re.escape(RATIO_LINE_HEAD)
-    + r"歩数 \d+ 以上の (?P<measured>\d+) 本\(未満 (?P<below_floor>\d+) 本は出さない\)"
+    + r"歩数 \d+ 以上の (?P<measured>\d+) 本\(未満 (?P<below_floor>\d+) 本は出さない"
+    + "(?:・"
+    + re.escape(RATIO_EXCLUDED_TEXT).replace(re.escape("{}"), r"(?P<excluded>\d+)")
+    + r")?\)"
     + r"(?:・\d+ 本未満なので比は出さない"
     + r"|・中央値 (?P<median>\d+\.\d)・最も高い (?P<top>[^\s・]+) ×(?P<top_ratio>\d+\.\d{2})"
     + r"・中央値の \S+ 倍超 (?P<above>\d+) 本"
@@ -1532,6 +1598,7 @@ def read_step_cost_line(line: str) -> StepCostLineRead | None:
         above_named=_read_named(found.group("above_names")),
         below=int(found.group("below") or 0),
         below_named=_read_named(found.group("below_names")),
+        excluded=int(found.group("excluded") or 0),
     )
 
 
@@ -1551,7 +1618,8 @@ def pytest_terminal_summary(
 ) -> None:
     """終わりに、上限を超えた検・登録簿に載った超過・消せる登録を一覧にし、歩数を測れた検の合計(-v なら検ごと)を出す —
     歩数の上限を決める材料にするため(#2852・#2853)。歩数を測れた検が在れば、検ごとの CPU 秒 ÷ 歩数の比の 1 行
-    (step_cost_line — 報告だけ・判定に入れない・#2854)も出す。"""
+    (step_cost_line — 報告だけ・判定に入れない・#2854)も出す。印 --doeff-python-calls の走りは Python の呼び出しの 1 行も出す。"""
+    python_calls_summary(terminalreporter, config)
     verdicts = config.stash.get(_VERDICTS_KEY, None)
     if not verdicts:
         return
@@ -1600,3 +1668,31 @@ def pytest_terminal_summary(
         terminalreporter.line(
             f"古い宣言(宣言 歩数 {verdict.declaration.steps} の {STALE_RATIO:g} 倍以下): {m.key}({m.phase} {_seconds_text(m)})"
         )
+
+
+def called_tests(verdicts: Sequence[Verdict]) -> tuple[CalledTest, ...]:
+    """判定した検のうち、Python の呼び出しを数えた検(通った Hy の検で、歩数を宣言した検)の数と歩数。"""
+    return tuple(
+        CalledTest(v.measurement.key, v.measurement.python_calls, v.measurement.work.steps)
+        for v in verdicts
+        if v.measurement.python_calls is not None and v.measurement.work is not None
+    )
+
+
+def python_calls_summary(terminalreporter: pytest.TerminalReporter, config: pytest.Config) -> None:
+    """印 --doeff-python-calls の走りの終わりに、数えた検の呼び出しの合計の 1 行(-v なら検ごと)か、数えなかった理由の 1 行を
+    出す(印の無い走りは何も出さない — 日次の報告は印を付けた回だけ行を載せる)。数えた検は判定した検(通った Hy の検)から読む。"""
+    python_calls = config.stash.get(_PYTHON_CALLS_KEY, None)
+    if python_calls is None:
+        return
+    terminalreporter.section("doeff の検の Python の呼び出し")
+    match python_calls:
+        case NotCounted() as not_counted:
+            terminalreporter.line(unmeasurable_line(not_counted))
+        case CallCounter(tool_id=tool_id):
+            tests = called_tests(config.stash.get(_VERDICTS_KEY, []))
+            terminalreporter.line(summary_line(tests))
+            terminalreporter.line(f"sys.monitoring の枠 {tool_id} 番で、歩数を宣言した検の call の間だけ数えた(収集・setup・teardown は数えない)")
+            if config.get_verbosity() >= 1:
+                for test in sorted(tests, key=lambda test: test.calls, reverse=True):
+                    terminalreporter.line(called_test_line(test))
