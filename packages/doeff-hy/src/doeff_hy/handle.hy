@@ -55,12 +55,14 @@
   "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/static_view.py)
    では型付きの doeff_hy.static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
    型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
-   (macros.hy の `_helper-imports` と同じ決め)。"
+   (macros.hy の `_helper-imports` と同じ決め)。実行時の do の置き場は補助の表の `_runtime-do`(card ki-973b4e44d7bc)。"
   (if (static-view-enabled)
       ;; 型付きの do は doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の STATIC_HELPER_IMPORTS —
       ;; 節ごとに出すと 1 つの名の宣言が 64 を超えた module で pyright が Unknown にする・agora-redesign #1686)。
       '(do)
-      `(import doeff.do [do :as _doeff-do])))
+      (do
+        (import doeff-hy.macros [_runtime-do-import])
+        (_runtime-do-import '_doeff-do))))
 
 
 (defn _clause-endings-import [name alias]
