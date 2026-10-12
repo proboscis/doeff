@@ -1,14 +1,12 @@
 
-import asyncio
 import copy
 import pickle
 from dataclasses import dataclass
 
-from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Spawn, Wait
+from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
 from doeff_events.effects import Publish, PublishEffect, WaitForEvent, publish_effect_type
 from doeff_events.handlers import event_handler
-from events_test_support import run_scheduled
+from events_test_support import announce_listening, run_scheduled
 
 from doeff import do
 
@@ -44,15 +42,18 @@ def test_composes_with_spawn_producer_consumer_pattern() -> None:
         return f"Processed: {received.symbol} x{received.quantity}"
 
     @do
-    def producer():
-        _ = yield Await(asyncio.sleep(0.01))
+    def producer(registered: Promise[object]):
+        # event_handler drops a Publish that comes before the consumer listens: publish once it is registered.
+        yield Wait(registered.future)
         yield Publish(event)
         return "done"
 
     @do
     def program():
-        consumer_task = yield Spawn(consumer())
-        producer_task = yield Spawn(producer())
+        registered = yield CreatePromise()
+        # The producer is spawned first: only `registered` puts its Publish after the consumer's WaitForEvent.
+        producer_task = yield Spawn(producer(registered))
+        consumer_task = yield Spawn(announce_listening(registered)(consumer()))
         processed = yield Wait(consumer_task)
         producer_status = yield Wait(producer_task)
         return (processed, producer_status)

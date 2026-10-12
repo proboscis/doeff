@@ -1,12 +1,10 @@
 
-import asyncio
 from dataclasses import dataclass
 
-from doeff_core_effects import Await
-from doeff_core_effects.scheduler import Spawn, Wait
+from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
 from doeff_events.effects import Publish, WaitForEvent
 from doeff_events.handlers import event_handler
-from events_test_support import run_scheduled
+from events_test_support import announce_listening, run_scheduled
 
 from doeff import do
 
@@ -34,17 +32,21 @@ def test_waiter_ignores_non_matching_event_types() -> None:
         return (yield WaitForEvent(OrderFilled))
 
     @do
-    def publisher():
-        _ = yield Await(asyncio.sleep(0.01))
+    def publisher(registered: Promise[object]):
+        # The non-matching event must come while the waiter listens (a Publish before that is dropped, and the test
+        # would not see the waiter ignore it): publish once it is registered. The matching one follows in this
+        # task's own order.
+        yield Wait(registered.future)
         yield Publish(PriceUpdated(symbol="AAPL", price_cents=10100))
-        _ = yield Await(asyncio.sleep(0.01))
         yield Publish(matching_event)
         return "published"
 
     @do
     def program():
-        waiter_task = yield Spawn(wait_for_fill())
-        publisher_task = yield Spawn(publisher())
+        registered = yield CreatePromise()
+        # The publisher is spawned first: only `registered` puts its Publish after the waiter's WaitForEvent.
+        publisher_task = yield Spawn(publisher(registered))
+        waiter_task = yield Spawn(announce_listening(registered)(wait_for_fill()))
         received = yield Wait(waiter_task)
         publish_status = yield Wait(publisher_task)
         return (received, publish_status)
@@ -61,15 +63,17 @@ def test_wait_for_base_type_receives_subclass_events() -> None:
     published_event = PriceUpdated(symbol="MSFT", price_cents=42500)
 
     @do
-    def publisher():
-        _ = yield Await(asyncio.sleep(0.01))
+    def publisher(registered: Promise[object]):
+        # event_handler drops a Publish that comes before the program listens: publish once it is registered.
+        yield Wait(registered.future)
         yield Publish(published_event)
         return "published"
 
     @do
     def program():
-        publisher_task = yield Spawn(publisher())
-        received = yield WaitForEvent(MarketEvent)
+        registered = yield CreatePromise()
+        publisher_task = yield Spawn(publisher(registered))
+        received = yield announce_listening(registered)(WaitForEvent(MarketEvent))
         publish_status = yield Wait(publisher_task)
         return (received, publish_status)
 
