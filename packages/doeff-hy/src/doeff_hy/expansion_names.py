@@ -25,6 +25,7 @@ defeffect-form と record.hy の defrecord(:check)・defwire(型の本体が読�
 """
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from hy.models import Expression, Keyword, List, Object, Symbol
 
@@ -56,6 +57,47 @@ def alias_symbol(name: str) -> Symbol:
     """展開が name を読む Symbol。呼ぶたびに新しい Symbol を作る — 展開のあいだで 1 つの Symbol を使い回すと、位置を付ける
     macro(`locate-synthesized`)が最初の展開で付けた位置が残り、後の式の行がその行へずれる(agora-redesign #1004)。"""
     return Symbol(alias(name))
+
+
+def effect_symbol() -> Symbol:
+    """節を回す関数が受けた effect を束ねる局所名(引数)と、展開がそれを読む Symbol。呼ぶたびに新しい Symbol を作る(`alias_symbol` の註)。
+
+    doeff の名でなく展開の局所名だが、書き手の節の欄・session の名と分け合わないよう、同じ `_doeff_` の別名の決めで綴る。素の `effect` で
+    束ねると、欄を `effect` にした節(`(Note [effect extra] …)`)の欄の束ね `(setv effect (. effect effect))` が受けた effect を上書きし、
+    続く欄の読みと外へ渡す effect が欄の値になった(card ki-6af9862aed32)。書き手が本体に `effect` と書いた時に読める名は、別に
+    `WRITER_VISIBLE` が決める(handle.hy の `_clause-aliases`)。"""
+    return alias_symbol("effect")
+
+
+def continuation_symbol() -> Symbol:
+    """節を回す関数が受けた続きを束ねる局所名(引数)と、展開がそれを読む Symbol。`effect_symbol` と同じ決め — 素の `k` で束ねると、
+    欄を `k` にした節(KV の `(Kv [k v] …)`)の欄の束ね `(setv k (. effect k))` が続きを上書きし、`(resume …)` が
+    `TypeError: argument 'k': 'int' object is not an instance of 'K'` で落ちた(card ki-6af9862aed32)。"""
+    return alias_symbol("k")
+
+
+@dataclass(frozen=True)
+class WriterName:
+    """書き手が節の本体・`:when` の番に書いた時、節の effect・続きとして読める名 1 つ(card ki-6af9862aed32)。
+
+    - `written`: 書き手が書く名(`effect`・`k`)。
+    - `internal`: それを束ねる展開の局所名(`_doeff_` の別名 — 節を回す関数の引数)。
+    - `declared`: 型検査のための展開が名に宣言する型(節を回す関数の引数と同じ型)。
+    - `narrowed`: 節の `isinstance` が絞る値か。型検査のための展開は、絞る値を代入でなく節の判定の中で束ねる(代入だと、絞った
+      総称型 `EffectBase[Unknown]` を代入先の変数が受けて reportUnknownVariableType の赤になる — 判定の中の束ねは絞る前の値を束ねる)。
+    """
+
+    written: str
+    internal: str
+    declared: str
+    narrowed: bool
+
+
+#: 書き手が名を書いた節だけが束ねる、書き手の見える名の表。節の欄・session の名が同じ名なら書き手の名が優先する(束ねない)。
+WRITER_VISIBLE: tuple[WriterName, ...] = (
+    WriterName("effect", alias("effect"), "object", narrowed=True),
+    WriterName("k", alias("k"), "_doeff_Continuation", narrowed=False),
+)
 
 
 def home(name: str) -> str:
