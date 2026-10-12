@@ -754,8 +754,12 @@
    入れ、その関数が返す「本文に handler を被せる関数」を本文 body に当てる。関数の中で import した名は関数全体の局所の
    名になるので、並べたままだと同じ本体で先に読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちた
    (card ki-907f779b3290・tests/test_handle_scope.py)。本文は外の do の文脈に属する(`!` の yield は外の生成器の物)ので
-   すぐ呼ぶ関数の中に入れず、書いた場所で評価する。Python は呼ぶ関数の式を引数より先に評価するので、検めと組み立ては
-   本文の式より前に走る。module と class の本体は今までどおり並べる(`_in-function-body?`)。"
+   すぐ呼ぶ関数の中に入れず、書いた場所で評価する。module と class の本体は今までどおり並べる(`_in-function-body?`)。
+
+   被せる関数は、本文より前の文で一意の名(gensym)に束ねてから本文に当てる。Hy は本文の文の部分(`(do (f) prog)` の
+   `(f)`・let の束ね・`!` の yield)を、それを含む式より前の文へ出す。すぐ呼ぶ関数を本文と同じ式の中で呼ぶと、本文の
+   文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W
+   の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。"
   (import doeff-hy.macros [_module-names _in-function-body?])
   (setv specs [])
   (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
@@ -763,12 +767,14 @@
                  (_vm-imports)
                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
                  `(_doeff-check-clause-endings "handle" [~@specs])])
+  (setv install (hy.gensym "handle_install"))
   (locate-synthesized (if (_in-function-body? _hy-compiler)
-      `(((fn []
-           ~@prelude
-           (setv __doeff-handler-data__ ~h-expr)
-           (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__))))
-        ~body)
+      `(do
+         (setv ~install ((fn []
+                           ~@prelude
+                           (setv __doeff-handler-data__ ~h-expr)
+                           (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__)))))
+         (~install ~body))
       `(do
          ~@prelude
          (WithHandler ~h-expr ~body)))))
