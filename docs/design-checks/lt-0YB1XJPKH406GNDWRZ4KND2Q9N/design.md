@@ -19,8 +19,9 @@
 |---|---|---|
 | da660e83e | 基準の版(直す前) | main |
 | 0e366de99(L2159・branch の commit bf32c2041) | defeffect・deff を `_scoped-definition` に通す。関数の中の deftest は pytest の item の記録を出さない | main |
-| b3430852b | defsystem を `_scoped-definition` に通す。doeff_hy.macros の定義の macro を検体で数え、補助の名の漏れを名に依らず検める | branch wt/ki-93395c-design-check(この記録と一緒に main へ入れる) |
-| 063a76057 | 盲検の後の直し: `_scoped-definition` の module-forms、deftest は記録を module-forms に渡す、検体ごとの状態の検、型検査のための展開の記録の検 | 同 |
+| b3430852b(rebase の後 9b01418c0) | defsystem を `_scoped-definition` に通す。doeff_hy.macros の定義の macro を検体で数え、補助の名の漏れを名に依らず検める | branch wt/ki-93395c-design-check(rebase の前・盲検が読んだ版 5ddb4e482 を含む)・wt/ki-93395c-design-check-r2(main 4973b9975 の上に rebase・この記録と一緒に main へ入れる) |
+| 063a76057(rebase の後 71a93fd64) | 盲検の後の直し: `_scoped-definition` の module-forms、deftest は記録を module-forms に渡す、検体ごとの状態の検、型検査の投影の記録の検 | 同 |
+| 912bec3bc(r2 の上) | 型検査の投影の検を公開口 `doeff_hy.static_check.project` で組み直し、検の依存を品質検査の宣言(.agents/code-quality.d/doeff-hy-macros-scope-tests.json)に足す — 変更範囲の品質検査が `doeff_hy.static_view`(公開口の外)への依存を断ったため | 同 |
 
 範囲の外(依頼の外・この記録で直していない):
 
@@ -33,7 +34,7 @@
 |---|---|---|
 | R1 | 関数の本体の中に書いた defhandler の前に for/do の読みが在っても落ちない事を確かめる検が main で緑(直す前は赤) | 検 `defhandler-in-defn-after-for-do` が main 0e366de99 で緑・2bf226a96 の親 0c8c3abaa で 3 failed(card の受入 c23b275bc の証拠) |
 | R2 | defk の本体の走らない枝に書いた defeffect の後に、外の defk の最後の値の guard が落ちない事を確かめる検が main で緑(直す前は赤) | 検 `defeffect-in-untaken-branch` が main 0e366de99 で緑・基準の版で `UnboundLocalError: _doeff_effect_base`(受入 c519e0f95 の証拠・commit bf32c2041 の本文に 10 failed / 40 passed → 50 passed) |
-| R3 | 関数の中の定義の macro の補助の import が外の関数の読みを壊さない | evidence/runs/related-tests-after-fix.txt(180 passed)・検体ごとの名に依らない局所の検 |
+| R3 | 関数の中の定義の macro の補助の import が外の関数の読みを壊さない | evidence/runs/related-tests-after-fix.txt(192 passed)・検体ごとの名に依らない局所の検 |
 | R4 | 関数の中の deftest は外の関数を呼ぶたびに記録を積まない | 同・evidence/runs/S2-positive.txt(記録の件数 [0, 0, 0, 0]) |
 | R5 | module と class の本体の展開・型検査のための展開を変えない | evidence/expansion/six-expansions.txt(module・class の実行時と型検査の 4 つが基準の版と 1 字も同じ)。関数の中の型検査のための展開は、deftest の記録の文だけが消える(§4 の修正 2 — 実行時の展開に合わせた意図した変更) |
 
@@ -68,14 +69,14 @@
 - **設計者の再現**: evidence/b/B-repro-before.txt。97 passed(1 回目の撃ちは機体の検の枠の待ちで 300 秒の timeout になり、撃ち直した)、索引は 0 → 2、1000 回の呼びで 1000 個の型が残った。**成立**。
 - **分類**: 共同の不変条件(forms はどの module の状態も変えない — S4 の主張)を見る検の欠け。検は定義を書いた module の globals しか見ていなかった。判断の所在としては、A と同じく「1 度だけ走る文」を M4 が置ける形だった。
 
-### 修正(063a76057)
+### 修正(063a76057・912bec3bc — rebase の後 71a93fd64・912bec3bc)
 
 | # | 修正 | 対応する失敗例 |
 |---|---|---|
 | 1 | `_scoped-definition` に module-forms を足し、どこで 1 度だけ走るかの判断を M2 だけが持つ。deftest は記録を module-forms に渡し、M1 に問わない | A |
 | 2 | module-forms は関数の中では型検査のための展開でも出さない(`_function-scope?`)。関数の中の型検査のための展開から、deftest の記録の文と、その import が作る `doeff_hy` の局所の名が消える | A の型検査の所見 |
 | 3 | 検 `test_definition_sample_leaves_module_state_unchanged`: 検体ごとに、初めの呼びの後で外の関数を 2 回呼び、定義を書いた module と読み込み済みの doeff の module の globals の名・値の id・入れ物の要素の id が変わらない | A(検の入力を検体にする)・B(定義を書いた module の外も見る) |
-| 4 | 検 `test_static_view_records_only_module_level_deftest`: 型検査のための展開で、関数の中の deftest は記録の文を出さず、module の段の deftest は出す | A の型検査の所見 |
+| 4 | 検 `test_static_projection_of_nested_deftest_has_no_item_record`: 型検査の投影(公開口 `doeff_hy.static_check.project` が作る、pyright に読ませる Python)で、関数 subject の中に `record_at_import` も `doeff_hy` の import も無い。module の段の記録は投影が記帳として外すので、module の段の記録は実行時の検(`module_record_texts`)が見る | A の型検査の所見 |
 | 5 | module の段の deftest の記録を、`__doeff_pytest_items__` の綴りではなく M5 の読み口 `module_record_texts` で読む | S5 の検を組む時に設計者が見つけた(M7 が M5 の置き場を知っていた) |
 
 修正後の再検証: A の形(記録を forms に置いた defbench)は検 3 が赤(evidence/runs/S2-negative-record.txt)。B の差分も検 3 が `('doeff_hy.declarations', 'EFFECT_INDEX')` を名指して赤(evidence/runs/S4-negative.txt)。正しく書いた defbench(記録を module-forms に渡す)は全部緑で、記録の件数は [0, 0, 0, 0](evidence/runs/S2-positive.txt)。
@@ -100,7 +101,7 @@
 | 定義の macro を足したら検体も足す | doeff_hy.macros の `_hy_macros` の def の付く名の集まりが、検体の鍵の集まりと等しい | 同 `test_every_definition_macro_has_a_nested_sample` | 同上 | doeff_hy.macros が出さない macro(record.hy・conductor.hy・doeff-adr の defadr・defsemgrep)は数えない |
 | forms がどの module の状態も変えない・module-forms は関数の中で出ない(S4・R4) | 検体ごとに、初めの呼びの後で 2 回呼び、定義を書いた module と読み込み済みの doeff の module の globals の名・値の id・入れ物の要素の id を比べる | 同 `test_definition_sample_leaves_module_state_unchanged` | 同上 | doeff の外の module(名の頭が doeff でない)と、入れ物の中の入れ物(2 段目)の書き換えは見ない。初めの呼びで 1 度だけ起きる登録は見ない |
 | 1 度だけ走る文の判断を M2 だけが持つ | 構造: deftest は module-forms に渡すだけで M1 を読まない。M1 の読み手は docstring に挙げた 2 か所(`_scoped-definition`・handle) | macros.hy | 検ではなく構造。上の状態の検が、判断を写さずに forms へ置いた形を赤にする | 新しい macro が M1 を直に読んで判断を写す事は止めない(写しても状態の検は通る — 正しく写した時) |
-| 型検査のための展開で、関数の中の記録の文を出さない | 型検査のための展開の Python の source に、関数の中の deftest の `record_at_import` が無く、module の段の deftest には在る | 同 `test_static_view_records_only_module_level_deftest` | 同上 | deftest の記録だけを見る。他の定義の macro の型検査の展開が関数の中で出す import(defeffect の `_doeff_dataclass` など)は、R5 に従い基準の版のまま変えていない |
+| 型検査のための展開で、関数の中の記録の文を出さない | 型検査の投影(`static_check.project`)の関数 subject の中に、deftest の `record_at_import` も `doeff_hy` の import も無い | 同 `test_static_projection_of_nested_deftest_has_no_item_record` | 同上 | deftest の記録だけを見る。他の定義の macro の型検査の展開が関数の中で出す import(defeffect の `_doeff_dataclass` など)は、R5 に従い基準の版のまま変えていない |
 | module・class の展開を包まない(R5) | module と class の定義の `__qualname__`・引数なしの `super()`・module の段の deftest の記録(M5 の読み口で読む) | 同 `test_module_and_class_level_definitions_are_not_wrapped`・tests/test_handle_scope.py | 同上 | 型検査のための展開の 1 字の不変は検ではなく、展開の比較(evidence/expansion)で見た |
 | 関数の中の定義の後で、外の関数の先の読みが未束縛にならない | traverse / for/do・文の guard・最後の値の guard・module の段の `doeff_hy` を先に読む形を走らせる | 同 `test_nested_definition_runs`・`test_outer_function_binds_no_helper_name`、tests/test_handle_scope.py | 同上 | 形は列挙した物だけ(名に依らない局所の検が補う) |
 
@@ -109,7 +110,8 @@
 ## 7. 検証の記録
 
 各実験は evidence/scripts/mutants.sh.txt が変異の差分(evidence/mutants/)を当てて名指した検だけを撃ち、外す。出力は evidence/runs/。
-変異は全部、版 063a76057 の上で当てて外した(外した後の `git status` は空 — 各 run の末尾)。
+変異は全部、版 912bec3bc(main 4973b9975 の上に rebase した branch r2)の上で当てて外した(外した後の `git status` は空 — 各 run の末尾)。
+同じ変異を rebase の前の 063a76057 の上でも 1 度撃ち、同じ結果だった(その時の出力は rebase の後の撃ち直しで上書きした)。
 検を撃った 3 つの作業木(設計者の `doeff-wt-ki-93395c-dc`・盲検の `doeff-blind-a-lt0YB1`・`doeff-blind-b-lt0YB1`)の `.venv` は、
 それぞれ自分の木の `packages/doeff-hy/src`・`packages/doeff-adr/src` を読む事を `doeff_hy.__path__` で確かめた。
 
@@ -130,7 +132,7 @@
 | C13 | S5 | 正常 | 記録の置き場の名を替えても M5 だけが変わり、nested の検は全部緑 | pytest_items.py のみ・75 passed | runs/S5-positive.txt |
 | C14 | S5 | 正常 | 置き場の名を替えても doeff-adr(M6)と M5 の記録の検が緑 | 7 passed | runs/S5-positive-adr.txt |
 | C15 | S5 | 失敗 | 置き場を替えた上で記録を forms に置くと、状態の検が新しい置き場の名で赤にする | `('nested_definition_scope', '__doeff_pytest_records__')` で 1 failed | runs/S5-negative.txt |
-| C16 | S2・S4 | 正常 | 直した版で変えた所に関わる検が緑 | 180 passed | runs/related-tests-after-fix.txt |
+| C16 | S2・S4 | 正常 | 直した版で変えた所に関わる検が緑 | 192 passed | runs/related-tests-after-fix.txt |
 
 盲検 A・B の失敗例が直す前の版(5ddb4e482)で成り立った記録は evidence/a/A-repro-before.txt・evidence/b/B-repro-before.txt に
 在る(design-check.json の blind_reproduction)。これは検が通った事が欠陥の観測で、拒否の観測ではないので checks に数えない。
