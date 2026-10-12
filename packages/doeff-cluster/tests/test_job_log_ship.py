@@ -28,7 +28,7 @@ import tempfile
 import threading
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -386,11 +386,13 @@ def records_of(body: bytes) -> list[Received]:
 
 
 class Collector:
-    """OTLP の受け手(検の process の中の HTTP の server): POST /v1/logs の本文を残す。hang の時は放すまで答えない。"""
+    """OTLP の受け手(検の process の中の HTTP の server): POST /v1/logs の本文を残す。hang の時は放すまで答えない。delay の時は本文を
+    残してから delay 秒待って答える(遅い送り先 — 送り手が待ちを切っても、受けた本文は残る)。"""
 
-    def __init__(self, hang: bool) -> None:
+    def __init__(self, hang: bool, delay: float = 0.0) -> None:
         """127.0.0.1 の空いた port で受け始めるため。"""
         self.hang = hang
+        self.delay = delay
         self.released = threading.Event()
         self.lock = threading.Lock()
         self._mut_posts: tuple[Post, ...] = ()
@@ -404,6 +406,8 @@ class Collector:
                     collector.released.wait(END_LIMIT_SECONDS)
                     return
                 collector.kept(Post(path=self.path, body=body))
+                if collector.delay:
+                    collector.released.wait(collector.delay)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", "2")
@@ -445,6 +449,14 @@ class Collector:
 def collector() -> Iterator[Collector]:
     """答える受け手を立てて、終わりに止めるため。"""
     running = Collector(hang=False)
+    yield running
+    running.stop()
+
+
+@pytest.fixture
+def slow() -> Iterator[Collector]:
+    """POST ごとに答えるまで 2 秒かかる受け手を立てて、終わりに止めるため(送りの終わりの上限 ShipLimits.end_seconds 0.5 秒より長い)。"""
+    running = Collector(hang=False, delay=2.0)
     yield running
     running.stop()
 
@@ -821,9 +833,10 @@ class CoordinatorRan:
     err: bytes
 
 
-def coordinator_run(tmp: Path, env: dict[str, str]) -> CoordinatorRan:
+def coordinator_run(tmp: Path, env: dict[str, str], before_stop: Callable[[], object] | None = None) -> CoordinatorRan:
     """本物の coordinator の入口(boot.sh と同じ `hy -m doeff_cluster.coordinator.entry.main`)を、k8s の container と同じく stdout と
-    stderr を別の 2 つの先へ向けて起こし、受け始めたら止めの合図(SIGTERM — Pod の止めと同じ)を送って終わらせるため。env = 足す環境変数。"""
+    stderr を別の 2 つの先へ向けて起こし、受け始めたら止めの合図(SIGTERM — Pod の止めと同じ)を送って終わらせるため。env = 足す環境変数・
+    before_stop = 受け始めた後、止めの合図の前に呼ぶ物(例 受け手が最初の POST を受けるまで待つ)。"""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -844,6 +857,8 @@ def coordinator_run(tmp: Path, env: dict[str, str]) -> CoordinatorRan:
                     break
             except OSError:
                 time.sleep(0.1)
+        if before_stop is not None:
+            before_stop()
         process.send_signal(signal.SIGTERM)
         code = process.wait(timeout=END_LIMIT_SECONDS)
     finally:
@@ -879,4 +894,32 @@ def test_a_coordinator_without_the_destination_keeps_its_two_streams(tmp_path: P
     assert ran.code == 0, ran.err[-2000:]
     assert ran.err.endswith("coordinator: 止まりました\n".encode()), ran.err[-500:]
     assert STAMP.match(ran.err) is None, ran.err[:200]
+    assert collector.records() == []
+
+
+def test_a_slow_destination_still_gets_the_stop_line_of_the_coordinator(tmp_path: Path, slow: Collector) -> None:
+    """送り先が遅くても(POST ごとに 2 秒 — 送りの既定の終わりの上限 0.5 秒より長い)、coordinator は止まりの行まで送ってから終わる
+    (盲検 A — 止まる直前の行が、Pod の入れ替えの後に一番要る行。coordinator の止めの猶予は Pod の 30 秒で、0.5 秒に縛られない)。"""
+    env = {JOB_LOG_OTLP_VAR: slow.base(), JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal", **POD}
+    # 止めの合図は、受け手が最初の POST を受けた後(その POST の答えを待っている 2 秒の最中)に送る — 止まりの行はその後ろに並ぶ。
+    ran = coordinator_run(tmp_path, env, before_stop=lambda: received_until(slow, 1))
+    assert ran.code == 0, ran.err[-2000:]
+    lines = file_lines(ran.out)
+    records = received_until(slow, len(lines))
+    assert [r.body for r in records] == [x.body.decode() for x in lines]
+    assert records[-1].body == "coordinator: 止まりました"
+
+
+@pytest.mark.parametrize("names", [{POD_NAME_VAR: "coordinator-5f-abc"}, {"HOSTNAME": "coordinator-5f-abc"}])
+def test_a_coordinator_without_its_pod_names_ships_nothing_and_names_why(
+    tmp_path: Path, collector: Collector, names: dict[str, str]
+) -> None:
+    """送り先は在るが宣言が Pod の名乗り(POD_NAME・POD_NAMESPACE)を置き忘れた coordinator は、入口で名を補わずに(HOSTNAME・既定の
+    namespace を読まない)送らない訳を 1 行出し、何も送らない(盲検 B — 入口が名乗りを補うと、送るかの判断が coordinator_log_plan から
+    入口へ移り、別の namespace の coordinator が共有の名で行を混ぜる)。"""
+    env = {JOB_LOG_OTLP_VAR: collector.base(), JOB_LOG_ATTRIBUTES_VAR: "owner.tenant=personal", **names}
+    ran = coordinator_run(tmp_path, env)
+    assert ran.code == 0, ran.err[-2000:]
+    assert "line_stamp: 自分の行を送らない — coordinator の名乗りの環境変数が無い: ".encode() in ran.err, ran.err[:500]
+    assert ran.err.endswith("coordinator: 止まりました\n".encode()), ran.err[-500:]
     assert collector.records() == []

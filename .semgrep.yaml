@@ -5463,3 +5463,17 @@ rules:
         - '**/doeff_adr/**'
       exclude:
         - '**/doeff_adr/indexed_pytest.py'
+
+  - id: doeff-cluster-coordinator-core-does-not-know-where-its-lines-go
+    languages: [generic]
+    severity: ERROR
+    message: >
+      card ki-0b0ab40048b9(設計検証 lt-D8Y7NDS3A1XHEP1DQJ323D6CHB の盲検 B の副の所見): coordinator の core(調停ループ・行を出す側)は
+      行の送り先を知らない — 行は slog で出し、送りの配線は入口 coordinator/entry/main.hy だけが line_stamp の process_lines で持つ。
+      code-quality の module doeff-cluster-coordinator は core の program.hy と入口の main.hy を 1 つに持ち、入口のための line_stamp の
+      許しが core にも効くので、core からの import をこの規則で断る。
+    pattern-regex: 'doeff_cluster\.worker\.entry\.line_stamp'
+    paths:
+      include:
+        - /packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
+        - /tests/semgrep/fixtures/python/packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
