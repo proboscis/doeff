@@ -1,0 +1,7 @@
+== 版 dcdbb260d316525144335709a8ecedc0a37be848・uv.lock の hy を 0.27.0 に書き換えた(1893 行)
+ uv.lock | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== R7 の照合の検
+E   AssertionError: PyPI の Hy 0.27.0(uv.lock の版)に、doeff が import でない形で依る Hy の内部が無い(ADR-DOE-HY-008 R7 — 当て物を新しい版に合わせるか、Hy の版を戻す): ['packages/doeff-hy/src/doeff_hy/ast_unparse.py: 差し替える hy.compat.rewriting_unparse が Hy 0.27.0 に無い', "packages/doeff-hy/src/doeff_hy/handle.hy: Hy 0.27.0 の hy.macros.macroexpand が、第 1 引数 _hy_compiler の macro に compiler を渡さない(macro を定義・展開できない: HyEvalError: 'NoneType' object has no attribute '__dict__')", 'packages/doeff-hy/src/doeff_hy/macros.hy: Hy 0.27.0 の macro が受ける compiler(_hy_compiler)に属性 filename が無い', 'packages/doeff-hy/src/doeff_hy/macros.hy: Hy 0.27.0 の macro が受ける compiler(_hy_compiler)に属性 scope が無い', 'packages/doeff-hy/src/doeff_hy/macros.hy: Hy 0.27.0 の macro が受ける compiler(_hy_compiler)に属性 this が無い', "packages/doeff-hy/src/doeff_hy/macros.hy: Hy 0.27.0 の hy.macros.macroexpand が、第 1 引数 _hy_compiler の macro に compiler を渡さない(macro を定義・展開できない: HyEvalError: 'NoneType' object has no attribute '__dict__')"]
+1 failed in 25.22s
+rc=1

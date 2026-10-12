@@ -1,0 +1,16 @@
+== 版 dcdbb260d316525144335709a8ecedc0a37be848 + doeff-hy に在る依りを書いた新しい file 2 つ(ADR・台帳・表は変えない)
+?? packages/doeff-hy/src/doeff_hy/zz_s2_probe.hy
+?? packages/doeff-hy/src/doeff_hy/zz_s2_probe.py
+(defn _s2 [compiler] (. compiler module))
+(defmacro _s2-macro [_hy-compiler] None)
+import hy.macros
+
+def _s2():
+    hy.macros.require = hy.macros.require
+== 数えた行
+('packages/doeff-hy/src/doeff_hy/zz_s2_probe.hy', 'compiler-attribute', '_hy_compiler', 'module')
+('packages/doeff-hy/src/doeff_hy/zz_s2_probe.hy', 'compiler-parameter', 'hy.macros.macroexpand', '_hy_compiler')
+('packages/doeff-hy/src/doeff_hy/zz_s2_probe.py', 'replaced', 'hy.macros', 'require')
+== R7 の照合の検
+1 passed in 20.67s
+rc=0

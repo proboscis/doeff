@@ -1,0 +1,60 @@
+== 基準 95bee57fae97bca2e9f7cab1e9816c46998bbeb4 + 作業木の直し(R7 の判定を実物の行に当てる形へ)・light_stack=orig・uv.lock の hy=1.3.1+blindframe(blind-a-files/build_fake_hy.py の wheel・UV_FIND_LINKS)
+ docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy | 136 +++++++++++++++++------
+ uv.lock                                          |   2 +-
+ 2 files changed, 101 insertions(+), 37 deletions(-)
+== 命令: UV_FIND_LINKS=<wheel の dir> uv run --no-sync pytest docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy -q
+
+deadline scale x3.4 (load per usable CPU) — per test 206s, watchdog 309s
+
+test-admission: focused — 1 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 1 file
+  import: docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy — macro の提供元 doeff_hy.light_stack が変わった
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000000 秒・依存変更で再作成 0 file
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy ____________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.run_program at 0x46fb2ed3180>
+
+    (deftest test-adr-doe-hy-008-internal-reliances-exist-in-pypi-hy
+>     (val repo-root (. (Path __file__) parent parent parent))
+
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:646: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/adr/conftest.py:23: in run_program
+    return run(program)
+           ^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val repo-root (. (Path __file__) parent parent parent))
+    (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+    (val reliances (run (scan-hy-reliances repo-root)))
+    (val probed (run (probe-reliances reliances hy-version)))
+    (val violations
+      (+ (run (reliance-violations (get probed "missing") hy-version (get probed "compiler-failure")))
+         (sum (lfor #(rel kind module name) reliances
+                    :if (= kind "light-stack")
+                    (run (stack-call-violations rel module (get (get probed "sources") module)
+                                                (run (light-stack-sample-row module)))))
+              [])))
+>   (assert (= violations [])
+              ^^^^^^^^^^^
+E   AssertionError: PyPI の Hy 1.3.1+blindframe(uv.lock の版)に、doeff が import でない形で依る Hy の内部が無い(ADR-DOE-HY-008 R7 — 当て物を新しい版に合わせるか、Hy の版を戻す): ['packages/doeff-hy/src/doeff_hy/light_stack.py: hy.compiler の 55 行の `frame_up = inspect.stack(0)[n + 1].frame` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.compiler の 810 行の `locals = (inspect.getargvalues(inspect.stack()[1].frame).locals` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.macros の 153 行の `target_module, inspect.stack()[1].frame` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.macros の 179 行の `_, namespace = derive_target_module(module, inspect.stack()[1].frame)` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.macros の 203 行の `target, inspect.stack()[1].frame` の読みは、light_stack が返す行(tuple)から frame を返さない']
+
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:657: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_111()  docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:657
+    (assert (= violations [])
+
+AssertionError: PyPI の Hy 1.3.1+blindframe(uv.lock の版)に、doeff が import でない形で依る Hy の内部が無い(ADR-DOE-HY-008 R7 — 当て物を新しい版に合わせるか、Hy の版を戻す): ['packages/doeff-hy/src/doeff_hy/light_stack.py: hy.compiler の 55 行の `frame_up = inspect.stack(0)[n + 1].frame` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.compiler の 810 行の `locals = (inspect.getargvalues(inspect.stack()[1].frame).locals` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.macros の 153 行の `target_module, inspect.stack()[1].frame` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.macros の 179 行の `_, namespace = derive_target_module(module, inspect.stack()[1].frame)` の読みは、light_stack が返す行(tuple)から frame を返さない', 'packages/doeff-hy/src/doeff_hy/light_stack.py: hy.macros の 203 行の `target, inspect.stack()[1].frame` の読みは、light_stack が返す行(tuple)から frame を返さない']
+
+=========================== short test summary info ============================
+FAILED docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy
+1 failed in 15.69s
+rc=1

@@ -1,0 +1,16 @@
+== 基準 95bee57fae97bca2e9f7cab1e9816c46998bbeb4 + 作業木の直し(R7 の判定を実物の行に当てる形へ)・light_stack=fixed・uv.lock の hy=1.3.1+blindframe(blind-a-files/build_fake_hy.py の wheel・UV_FIND_LINKS)
+ docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy | 136 +++++++++++++++++------
+ packages/doeff-hy/src/doeff_hy/light_stack.py    |   6 +-
+ uv.lock                                          |   2 +-
+ 3 files changed, 106 insertions(+), 38 deletions(-)
+== 命令: UV_FIND_LINKS=<wheel の dir> uv run --no-sync pytest docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy -q
+
+deadline scale x3.5 (load per usable CPU) — per test 208s, watchdog 311s
+
+test-admission: focused — 1 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 1 file
+  import: docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy — macro の提供元 doeff_hy.light_stack が変わった
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000000 秒・依存変更で再作成 0 file
+.                                                                        [100%]
+1 passed in 8.20s
+rc=0

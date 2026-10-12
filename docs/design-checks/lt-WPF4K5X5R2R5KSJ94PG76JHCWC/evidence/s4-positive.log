@@ -1,0 +1,41 @@
+== 版 dcdbb260d316525144335709a8ecedc0a37be848・種類の語彙(4 語)を書いた file(設計検証の記録 docs/design-checks を除く)
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:31
+ide-plugins/vscode/doeff-runner/src/pixel/sheetDemos.ts:2
+packages/doeff-cluster/tests/test_shared_contract.hy:1
+tests/test_pass_then_typed_handler.py:1
+== ADR の外の当たりの行(依りの種類ではない別の意味の語 — 中身を示す)
+ide-plugins/vscode/doeff-runner/src/pixel/sheetDemos.ts:232:  <div><h3>置き換えた表示</h3><pre class="code" id="replaced">${replaced}</pre></div>
+ide-plugins/vscode/doeff-runner/src/pixel/sheetDemos.ts:238:  const box = document.getElementById('replaced');
+packages/doeff-cluster/tests/test_shared_contract.hy:75:      (<- (WriteShared "life/row" (OpaqueJson.of "replaced") :ttl-seconds ttl))
+tests/test_pass_then_typed_handler.py:75:    label = "ducked" if effect.duck_original else "replaced"
+== 依りの行の 2 つ目の要素として語彙を書く所(ADR の file の中だけ)
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:167:      (.append found #(rel "replaced" (.join "." (cut parts 0 -1)) (get parts -1)))))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:191:      (.append found #(rel "compiler-parameter" "hy.macros.macroexpand" "_hy_compiler")))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:198:      (.append found #(rel "compiler-attribute" "_hy_compiler" (hy.mangle (str (get form 2))))))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:208:      (.append found #(rel "compiler-attribute" "_hy_compiler" (hy.mangle (str (get (get form 0) 2)))))))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:495:                       #(light-stack-rel "light-stack" module "inspect.stack")))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:531:                 "    if kind == 'light-stack':\n"
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:537:                 "    if kind == 'replaced':\n"
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:542:                 "    elif kind == 'compiler-parameter':\n"
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:544:                 "    elif kind == 'compiler-attribute':\n"
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:664:       (val rows [#("a.py" "replaced" "hy.importer" "_could_be_hy_src")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:665:                  #("a.py" "replaced" "hy.importer" "_doeff_no_such_name")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:666:                  #("m.hy" "compiler-parameter" "hy.macros.macroexpand" "_hy_compiler")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:667:                  #("m.hy" "compiler-attribute" "_hy_compiler" "scope")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:668:                  #("m.hy" "compiler-attribute" "_hy_compiler" "doeff_no_such_attribute")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:669:                  #("l.py" "light-stack" "hy.macros" "inspect.stack")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:670:                  #("l.py" "light-stack" "hy.doeff_no_such_module" "inspect.stack")])
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:673:                  [#("a.py" "replaced" "hy.importer" "_doeff_no_such_name")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:674:                   #("m.hy" "compiler-attribute" "_hy_compiler" "doeff_no_such_attribute")]))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:741:                  [#("a.py" "replaced" "hy.importer" "_could_be_hy_src")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:742:                   #("a.py" "replaced" "hy.compat" "rewriting_unparse")]))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:751:                  [#("m.hy" "compiler-attribute" "_hy_compiler" "_syntax_error")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:752:                   #("m.hy" "compiler-attribute" "_hy_compiler" "filename")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:753:                   #("m.hy" "compiler-attribute" "_hy_compiler" "scope")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:754:                   #("m.hy" "compiler-attribute" "_hy_compiler" "this")
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:755:                   #("m.hy" "compiler-parameter" "hy.macros.macroexpand" "_hy_compiler")]))
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:780:       (assert (in "scope" (get (run (reliance-violations [#("m.hy" "compiler-attribute" "_hy_compiler" "sc
+docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy:781:       (val not-passed (run (reliance-violations [#("m.hy" "compiler-parameter" "hy.macros.macroexpand" "_h
+ide-plugins/neovim/doeff.nvim/lua/doeff/telescope/entrypoints.lua:64:  local is_program_var = entry.item_kind == 'assignment'
+ide-plugins/neovim/doeff.nvim/lua/doeff/telescope/entrypoints.lua:269:      if selection.value.item_kind == 'assignment' then
+ide-plugins/neovim/doeff.nvim/lua/doeff/telescope/entrypoints.lua:288:    if entry.item_kind == 'assignment' then

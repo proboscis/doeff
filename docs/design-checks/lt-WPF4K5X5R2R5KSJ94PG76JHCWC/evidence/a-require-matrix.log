@@ -1,0 +1,21 @@
+== light_stack=light_stack_fixed.py hy==1.3.1+blindframe
+hy 1.3.1
+require -> 42
+== light_stack=light_stack_fixed.py hy==1.3.1
+hy 1.3.1
+require -> 42
+== light_stack=light_stack.py hy==1.3.1+blindframe
+hy 1.3.1
+require failed: HyMacroExpansionError ["  AttributeError: 'tuple' object has no attribute 'frame'"]
+== light_stack=light_stack.py hy==1.3.1
+hy 1.3.1
+require failed: HyMacroExpansionError ["  AttributeError: 'tuple' object has no attribute 'frame'"]
+(上の 2・4 行目は hy==1.3.1 が局所の版 1.3.1+blindframe にも当たり、仮の Hy を拾った — 下で UV_FIND_LINKS を外して本物の 1.3.1 を測り直した)
+== light_stack=light_stack_fixed.py hy==1.3.1(PyPI・UV_FIND_LINKS なし)
+['target_module, inspect.stack()[1][0]']
+hy 1.3.1
+require -> 42
+== light_stack=light_stack.py hy==1.3.1(PyPI・UV_FIND_LINKS なし)
+['target_module, inspect.stack()[1][0]']
+hy 1.3.1
+require -> 42

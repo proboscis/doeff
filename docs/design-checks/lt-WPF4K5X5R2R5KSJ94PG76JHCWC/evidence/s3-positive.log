@@ -1,0 +1,14 @@
+== 版 dcdbb260d316525144335709a8ecedc0a37be848 + light_stack.py だけを変えた(positive: 行を .frame にも応える namedtuple(blind-a-files/light_stack_fixed.py)にし _HY_CALLER_MODULES に hy.reader.hy_reader を足す)
+ packages/doeff-hy/src/doeff_hy/light_stack.py | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
++import collections
+-_HY_CALLER_MODULES = frozenset({"hy.compiler", "hy.macros"})
++_HY_CALLER_MODULES = frozenset({"hy.compiler", "hy.macros", "hy.reader.hy_reader"})
++# 行は frame 1 つの名前つき tuple — [n][0] と [n].frame(inspect.FrameInfo の名)の両方で読める。
++_LightFrameInfo = collections.namedtuple("_LightFrameInfo", ["frame"])
++
+-        frames.append((frame,))
++        frames.append(_LightFrameInfo(frame))
+== R7 の照合の検
+1 passed in 9.37s
+rc=0
