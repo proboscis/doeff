@@ -28,11 +28,13 @@
   終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
 - 模擬の世界の走りの歩数だけで判じる(調整役 cisco-c8 の決め 2026-10-12 15:47 JST・card ki-a27b195a3f92 — #2670 の数え方を改めた):
   doeff-cluster の ``sim-main`` は、始まり・立ち上がり(宣言の job が全部 起きた後、世界が初めて静まった時)・止め始め・終わりの
-  印を ``doeff_core_effects.world_phases`` に残す。歩数で判じる検の call の間はその記録を開き、世界を回した検は、立ち上がりから
+  印を ``doeff_core_effects.world_phases`` に残す。``doeff_test_call_steps_counted = "world-running"`` の repo では(既定 ``call`` は
+  今までどおり call の全部)、歩数で判じる検の call の間はその記録を開き、世界を回した検は、立ち上がりから
   止め始めまでの走りの歩数だけを上限(宣言)と比べる。起動・止め・世界の外(支度と判定)の歩数は数えず、報告の文に別の値で出す
   (部品を足すたびに伸びる起動と止めの費用で上限を上げ続けず、空回りを見つける感度を保つため)。世界を回さない検は今までどおり
-  call の全部で判じる。走っている最中の歩の上限(暴走の検出)は call の全部の歩数のまま。戻し方 = ``world_steps`` を使わず
-  ``Measurement.judged_steps`` を区間の歩数に戻す。
+  call の全部で判じる。走っている最中の歩の上限(暴走の検出)は call の全部の歩数のまま。設定にしたのは、repo が数え方の
+  切り替えと宣言の測り直しを 1 つの変更で行えるように(doeff が先に入っても利用側の判定が変わらない)と、戻し方を設定 1 行に
+  するため(戻し方 = 設定を ``call`` に戻し、宣言を測り直す)。
 
 上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
 
@@ -100,6 +102,10 @@ MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
 CALL_STEPS_INI = "doeff_test_call_budget_steps"
 RUNAWAY_MULTIPLIER_INI = "step_budget_multiplier"
+# 歩数で判じる時に数える区間(card ki-a27b195a3f92): call = call の全部(既定)・world-running = 模擬の世界を回した検は世界の走りの
+# 歩数だけ。repo が設定で選ぶ — 切り替えはその repo の宣言の測り直しと同じ変更で行い、戻す時もこの 1 行を戻す。
+STEPS_COUNTED_INI = "doeff_test_call_steps_counted"
+StepsCounted = Literal["call", "world-running"]
 # 歩数の既定の上限(設定に `default` と書いた時)— 前の CPU 1.0 秒の上限に当たる数(agora-redesign #2670 の 2)。
 # 根 = vg-w43 の 65 本の測り(#2853 issuecomment-5952699812)の歩数 ÷ CPU 秒の中央値 95,574 歩/秒 × 1.0 秒を丸めた値。
 # 上限は上げない決め(#2670 issuecomment-5963008183)なので、静かな機体の比(より大きい)ではなく、この比を採る。
@@ -1029,6 +1035,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="",
     )
     parser.addini(
+        STEPS_COUNTED_INI,
+        "歩数で判じる時に数える区間: call(call の全部・既定)か world-running(模擬の世界を回した検は世界の走りの歩数だけ)",
+        default="call",
+    )
+    parser.addini(
         RUNAWAY_MULTIPLIER_INI,
         "走っている最中に検を落とす歩の上限の倍率(歩数の上限 × この値・正の整数・空 = 既定 20)",
         default="",
@@ -1095,6 +1106,25 @@ def _runaway_multiplier(config: pytest.Config) -> int:
     return value
 
 
+def _steps_counted(config: pytest.Config) -> StepsCounted:
+    """歩数で数える区間を読む。語彙の外は既定へ黙って倒さず止める。"""
+    raw = str(config.getini(STEPS_COUNTED_INI)).strip()
+    if raw == "call":
+        return "call"
+    if raw == "world-running":
+        return "world-running"
+    raise pytest.UsageError(f"{STEPS_COUNTED_INI} は call か world-running: {raw!r}")
+
+
+def _phase_log(config: pytest.Config, call_steps: int | None) -> PhaseLogSource:
+    """世界の区切りの印の口を、走りの歩数で数える repo でだけ探す(call の全部で数える repo は印を読まない)。"""
+    if call_steps is None:
+        return NoWorldPhaseLog("歩数の上限の設定が無い")
+    if _steps_counted(config) == "call":
+        return NoWorldPhaseLog(f"{STEPS_COUNTED_INI} が call")
+    return read_phase_log()
+
+
 def _mode(config: pytest.Config) -> Mode:
     """超えた時の扱いを読む。語彙の外は止める。"""
     raw = str(config.getini(MODE_INI)).strip()
@@ -1136,7 +1166,7 @@ def pytest_configure(config: pytest.Config) -> None:
         work_source=work_source,
         step_guard=read_step_guard() if call_steps is not None else NoSchedulerStepGuard("歩数の上限の設定が無い"),
         runaway_multiplier=_runaway_multiplier(config),
-        phase_log=read_phase_log() if call_steps is not None else NoWorldPhaseLog("歩数の上限の設定が無い"),
+        phase_log=_phase_log(config, call_steps),
     )
     counter = CompileCounter()
     counter.install()
@@ -1330,6 +1360,8 @@ def pytest_runtest_makereport(
 def judging_line(budgets: Budgets) -> str:
     """終わりの一覧に、この走行の実行を何で判じたかを 1 行で書く(歩数の上限が在れば歩数・無ければ印ごとの秒だけ)。"""
     match budgets.call_steps:
+        case int() if isinstance(budgets.phase_log, WorldPhaseLog):
+            return "実行は doeff-vm の歩数で判じる(模擬の世界を回した検は世界の走りの歩数だけ・CPU 秒は報告だけ)"
         case int():
             return "実行は doeff-vm の歩数で判じる(CPU 秒は報告だけ)"
         case None:

@@ -1236,14 +1236,36 @@ WORLD_RUNS = """\
 """
 
 
+WORLD_RUNNING_INI = STEPS_FAIL_INI + 'doeff_test_call_steps_counted = "world-running"\n'
+
+
 def test_a_world_test_is_judged_by_its_running_steps_and_reports_start_and_stop_apart(pytester: pytest.Pytester) -> None:
-    """既定 1000 歩: 起動 5 万・止め 2 万でも走り 500 歩の世界は緑・走り 1500 歩の世界は赤(文に走り・起動・止めを別の値で出す)。
-    世界を回さない検は今までどおり call の全部で判じる(1500 歩で赤)。"""
-    _steps_project(pytester, STEPS_FAIL_INI, {"test_worlds": WORLD_RUNS})
+    """world-running の repo(既定 1000 歩): 起動 5 万・止め 2 万でも走り 500 歩の世界は緑・走り 1500 歩の世界は赤(文に走り・
+    起動・止めを別の値で出す)。世界を回さない検は今までどおり call の全部で判じる(1500 歩で赤)。"""
+    _steps_project(pytester, WORLD_RUNNING_INI, {"test_worlds": WORLD_RUNS})
     result = pytester.runpytest("-v")
     result.assert_outcomes(passed=1, failed=2)
+    result.stdout.fnmatch_lines(["*模擬の世界を回した検は世界の走りの歩数だけ*"])
     result.stdout.fnmatch_lines(
         ["*test_worlds.hy::test_light_start_heavy_run*歩数 1520(世界の走り 1500・起動 10・止め 10・世界の外 0・世界 1 回のうち立ち上がり 1 回 — 判じるのは走り)*上限 歩数 1000*"]
     )
     result.stdout.fnmatch_lines(["*test_worlds.hy::test_no_world*歩数 1500・*上限 歩数 1000*"])
     result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run:*歩数 70500(世界の走り 500・起動 50000・止め 20000*"])
+
+
+def test_without_the_world_running_setting_a_world_test_is_judged_by_the_whole_call(pytester: pytest.Pytester) -> None:
+    """設定の無い repo(既定 call)は印を読まず、世界を回した検も call の全部で判じる — doeff の版を上げただけでは利用側の判定が
+    変わらない(起動 5 万の世界は 70,500 歩で赤・文に区切りの値は出ない)。"""
+    _steps_project(pytester, STEPS_FAIL_INI, {"test_worlds": WORLD_RUNS})
+    result = pytester.runpytest("-v")
+    result.assert_outcomes(failed=3)
+    result.stdout.fnmatch_lines(["*test_worlds.hy::test_heavy_start_light_run*歩数 70500・*上限 歩数 1000*"])
+    assert "世界の走り" not in result.stdout.str()
+
+
+def test_an_unknown_steps_counted_value_stops_the_run_by_name(pytester: pytest.Pytester) -> None:
+    """数える区間の設定が語彙の外なら、既定へ黙って倒さず UsageError で止める。"""
+    _steps_project(pytester, STEPS_FAIL_INI + 'doeff_test_call_steps_counted = "running"\n', {"test_worlds": WORLD_RUNS})
+    result = pytester.runpytest("-q")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*doeff_test_call_steps_counted は call か world-running: 'running'*"])
