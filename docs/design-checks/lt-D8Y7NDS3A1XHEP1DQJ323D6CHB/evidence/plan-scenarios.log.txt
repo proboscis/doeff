@@ -1,0 +1,8 @@
+対象: doeff dc3385b9a4bb105937d9dad6671545f7b34c80f2 + 作業木の直し
+$ uv run --group dev python docs/design-checks/lt-D8Y7NDS3A1XHEP1DQJ323D6CHB/evidence/plan-scenarios.py.txt
+S-store positive: http://otel-collector.claude-telemetry.svc.cluster.local:4318/v1/logs -> https://other-store.example:4318/v1/logs | resource 同じ: True
+S-store negative: JobLogRefused(reason='DOEFF_JOB_LOG_OTLP が http か https の絶対の URL でない')
+S-dist positive: coordinator/doeff-worker-lab
+S-dist negative: JobLogRefused(reason='coordinator の名乗りの環境変数が無い: POD_NAMESPACE')
+ok
+rc=0

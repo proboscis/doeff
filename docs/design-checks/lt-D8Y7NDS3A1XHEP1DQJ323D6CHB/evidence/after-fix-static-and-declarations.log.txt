@@ -1,0 +1,16 @@
+対象: doeff dc3385b9a4bb105937d9dad6671545f7b34c80f2 + 作業木の直し
+$ uv run --group dev pytest packages/doeff-cluster/tests/test_coordinator_entry_static_types.py packages/doeff-cluster/tests/test_k8s_declarations.py -q -p no:cacheprovider
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 2457117 pytest doeff (c-6HV23HAMW3DB5B5VF0N2224VYG)、pid 2463298 pytest doeff-wt-file-watch-own-thread (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 2470097 pytest agora-controllers-wt-ki-25c3 (c-F62Z5HJH7EMGTH6Z83KVQYXN88)、pid 2438870 pytest doeff-wt-blind-ki-b7c4 (c-N8D3D11TB04Y5BH5AE1NRMH2ZD)、pid 2393668 pytest code-quality-wt-ki-04f9 (c-JXJNP2JY8W9E5KWAKTV8YMDG2B)、pid 2458097 pytest agora-controllers-wt-ki-0a98-co (c-D5M32RDXQ6YTYZMA0J4CQQ02E2)、pid 2465023 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)、pid 2469592 pytest agora-controllers-wt-cs-account-log (c-JNZQRZ5XAR0M05CMJ1RSDR0D0M)・待つのは pytest doeff-wt-design-check-0b0a (c-GNREBBW4Q45RWFTFXDK2D4B0EJ)
+check-slot: 枠 3 を取った(待ち 3 秒)— pytest doeff-wt-design-check-0b0a (c-GNREBBW4Q45RWFTFXDK2D4B0EJ)
+
+deadline scale x1.3 (load per usable CPU) — per test 79s, watchdog 118s
+
+test-admission: focused — 74 件(変更箇所の検証)
+........................................................................ [ 97%]
+..                                                                       [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+74 passed, 1 warning in 10.26s
+rc=0

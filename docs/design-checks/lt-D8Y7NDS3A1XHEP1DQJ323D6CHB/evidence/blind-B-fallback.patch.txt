@@ -1,0 +1,31 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy
+index 6d8fdb449..25fb4516a 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy
+@@ -35,7 +35,9 @@
+ (import doeff_cluster.coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
+ (import doeff_events [MemoryBroker])
+ ;; 自分の行の送り(card ki-0b0ab40048b9 — worker の process 自身の行と同じ部品)。
+-(import doeff_cluster.worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES coordinator-log-plan process-lines])
++(import doeff_cluster.worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES POD-NAME-VAR POD-NAMESPACE-VAR coordinator-log-plan process-lines])
++(val POD-NAME-FALLBACK-ENV "HOSTNAME")
++(val POD-NAMESPACE-FALLBACK "agent-worker")
+ 
+ 
+ 
+@@ -138,8 +140,13 @@
+   {:pre [] :post [(: % dict)] :tags {:context "coordinator" :role "main"}}
+   "自分の行の送り先と Pod の名乗り(line_stamp の COORDINATOR-LOG-ENV-NAMES)を、起動の時に 1 度、自分の環境変数から在る分だけ読むため
+    (答え手は入口が被せる — 本番は subprocess-handler)。答え = 名から値への dict(無い・空の名は入れない)。"
+-  (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment COORDINATOR-LOG-ENV-NAMES))
+-  (dfor e found :if e.value e.name e.value))
++  (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment (+ COORDINATOR-LOG-ENV-NAMES #(POD-NAME-FALLBACK-ENV))))
++  (val read (dfor e found :if e.value e.name e.value))
++  (val fallback {POD-NAME-VAR (.get read POD-NAME-FALLBACK-ENV "") POD-NAMESPACE-VAR POD-NAMESPACE-FALLBACK})
++  (dfor name COORDINATOR-LOG-ENV-NAMES
++        :setv value (or (.get read name) (.get fallback name ""))
++        :if value
++        name value))
+ 
+ 
+ (defk state-on-start [state-file store]
