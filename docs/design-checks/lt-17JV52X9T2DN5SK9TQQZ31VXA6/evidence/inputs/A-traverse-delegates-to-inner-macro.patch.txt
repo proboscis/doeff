@@ -1,0 +1,14 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index 54ba65730..24ed9b770 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -1570,6 +1570,9 @@ defk {name}: {{:post [...]}} is required.
+    Requires:
+      (import doeff [do :as _doeff-do])
+      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
++  `(hy.R.doeff_hy/macros.traverse-body ~@forms))
++
++(defmacro traverse-body [#* forms]
+   (setv #(bindings body-expr) (_parse-do-body forms "traverse"))
+   (locate-synthesized (_gen-traverse-body bindings body-expr)))
+ 

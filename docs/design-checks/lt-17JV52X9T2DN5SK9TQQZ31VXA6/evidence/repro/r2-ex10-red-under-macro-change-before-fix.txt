@@ -1,0 +1,22 @@
+# r2 — 直す前、答えを変えない macro の変更(前の設計検証の macro_shape_change.patch)を入れると ex10 の検だけが赤(例を書き換える手間が macro を直す人に回る)
+deadline scale x2.7 (load per usable CPU) — per test 161s, watchdog 240s
+test-admission: focused — 68 件(変更箇所の検証)
+..........F........................s................................     [100%]
+=================================== FAILURES ===================================
+__________________ test_example_runs[ex10_built_then_run.hy] ___________________
+packages/doeff-traverse/tests/test_examples_run.py:567: in test_example_runs
+    assert swallowed is not None, _output_diff(expected, result.stdout)
+E   AssertionError: --- expected/ex10_built_then_run.txt
+E     +++ 標準出力
+E     @@ -1,3 +1,3 @@
+E     -built: Traverse / Call
+E     +built: Call / Call
+E      single: [10, 20, 30]
+E      pairs: [20, 30, 30, 40]
+E   assert None is not None
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_built_then_run.hy]
+1 failed, 66 passed, 1 skipped, 1 warning in 25.74s

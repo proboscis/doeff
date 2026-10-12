@@ -1,0 +1,11 @@
+# 確かめ c6 — 検の file の所要(通常 3 回)— 基の版の 62 passed は 19.6 秒
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:28:07Z
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+78 passed, 1 skipped, 1 warning in 17.55s
+exit=0
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+78 passed, 1 skipped, 1 warning in 25.58s
+exit=0
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+78 passed, 1 skipped, 1 warning in 21.99s
+exit=0

@@ -1,0 +1,84 @@
+# 確かめ c12 — 答えを変えない macro の変更: traverse の中身を内部の macro へ移し、公開の macro は hy.R で呼ぶだけにする — 独立の評価者 A。今回足した検は変わらず、前の card の「1 段の展開に印が在る」検だけが名指して赤
+# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:26:55Z
+ packages/doeff-hy/src/doeff_hy/macros.hy | 3 +++
+ 1 file changed, 3 insertions(+)
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=short -rf 
+..........................................s.................FFFFFF..FF.. [ 91%]
+.......                                                                  [100%]
+=================================== FAILURES ===================================
+___________ test_example_expansions_show_their_marks[ex04_simple.hy] ___________
+packages/doeff-traverse/tests/test_examples_run.py:820: in test_example_expansions_show_their_marks
+    assert unmarked == [], (
+E   AssertionError: ex04_simple.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで置く: ['24: traverse']
+E   assert ['24: traverse'] == []
+E     
+E     Left contains one more item: '24: traverse'
+E     Use -v to get more diff
+_______ test_example_expansions_show_their_marks[ex04_traverse_macro.hy] _______
+packages/doeff-traverse/tests/test_examples_run.py:820: in test_example_expansions_show_their_marks
+    assert unmarked == [], (
+E   AssertionError: ex04_traverse_macro.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで置く: ['96: traverse', '110: traverse']
+E   assert ['96: travers...10: traverse'] == []
+E     
+E     Left contains 2 more items, first extra item: '96: traverse'
+E     Use -v to get more diff
+______ test_example_expansions_show_their_marks[ex05_parallel_timing.hy] _______
+packages/doeff-traverse/tests/test_examples_run.py:820: in test_example_expansions_show_their_marks
+    assert unmarked == [], (
+E   AssertionError: ex05_parallel_timing.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで置く: ['51: traverse']
+E   assert ['51: traverse'] == []
+E     
+E     Left contains one more item: '51: traverse'
+E     Use -v to get more diff
+______ test_example_expansions_show_their_marks[ex06_mediagen_rewrite.hy] ______
+packages/doeff-traverse/tests/test_examples_run.py:820: in test_example_expansions_show_their_marks
+    assert unmarked == [], (
+E   AssertionError: ex06_mediagen_rewrite.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで置く: ['96: traverse', '121: traverse']
+E   assert ['96: travers...21: traverse'] == []
+E     
+E     Left contains 2 more items, first extra item: '96: traverse'
+E     Use -v to get more diff
+___ test_example_expansions_show_their_marks[ex07_proboscis_ema_rewrite.hy] ____
+packages/doeff-traverse/tests/test_examples_run.py:820: in test_example_expansions_show_their_marks
+    assert unmarked == [], (
+E   AssertionError: ex07_proboscis_ema_rewrite.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで置く: ['113: traverse', '120: traverse', '127: traverse']
+E   assert ['113: traver...27: traverse'] == []
+E     
+E     Left contains 3 more items, first extra item: '113: traverse'
+E     Use -v to get more diff
+_______ test_example_expansions_show_their_marks[ex08_tqdm_progress.hy] ________
+packages/doeff-traverse/tests/test_examples_run.py:820: in test_example_expansions_show_their_marks
+    assert unmarked == [], (
+E   AssertionError: ex08_tqdm_progress.hy の doeff-hy の macro の展開に、展開の形の印(__import__ も隠す名も)が無い — 写して印字されても期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで置く: ['87: traverse', '93: traverse']
+E   assert ['87: travers...93: traverse'] == []
+E     
+E     Left contains 2 more items, first extra item: '87: traverse'
+E     Use -v to get more diff
+________________ test_expansion_check_reads_uses_out_of_context ________________
+packages/doeff-traverse/tests/test_examples_run.py:866: in test_expansion_check_reads_uses_out_of_context
+    assert [use.name for use in _unmarked(uses)] == ["3: val"]
+E   AssertionError: assert ['3: val', '8: traverse'] == ['3: val']
+E     
+E     Left contains one more item: '8: traverse'
+E     Use -v to get more diff
+_____________________ test_printed_expansion_copy_is_named _____________________
+packages/doeff-traverse/tests/test_examples_run.py:893: in test_printed_expansion_copy_is_named
+    assert _unplaceable_in(result.stdout) == [
+E   AssertionError: assert [] == ['展開の形の印(Hy・d... __import__)']
+E     
+E     Right contains one more item: '展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)'
+E     Use -v to get more diff
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex04_simple.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex04_traverse_macro.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex05_parallel_timing.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex06_mediagen_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex07_proboscis_ema_rewrite.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex08_tqdm_progress.hy]
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_expansion_check_reads_uses_out_of_context
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_printed_expansion_copy_is_named
+8 failed, 70 passed, 1 skipped, 1 warning in 29.30s
+exit=1

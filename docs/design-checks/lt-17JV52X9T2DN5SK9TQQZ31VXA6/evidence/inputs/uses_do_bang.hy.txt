@@ -1,0 +1,6 @@
+;;; 変異の表に無い macro(do!)を初めて使う例(確かめ c3)
+(require doeff-hy.macros [do!])
+(import doeff [do :as _doeff-do])
+(import doeff [run])
+
+(print (run (do! 1 2 3)))
