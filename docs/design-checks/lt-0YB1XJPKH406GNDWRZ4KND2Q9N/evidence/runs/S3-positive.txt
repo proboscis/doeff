@@ -1,0 +1,6 @@
+# 実験 S3-positive・刻 2026-10-12T03:44:00Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 063a760575430d3a5296f26a7630c4508e7b33c4
+$ git diff --stat
+$ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore -k "static_view or not_wrapped"
+pytest の exit=0
+2 passed, 73 deselected in 11.24s
+$ git status --short -- packages tests(外した後)

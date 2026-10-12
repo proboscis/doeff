@@ -1,0 +1,18 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/macros.hy b/packages/doeff-hy/src/doeff_hy/macros.hy
+index d26d01af0..d944c32ef 100644
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy
+@@ -2170,6 +2170,13 @@ the effect in the enclosing do-context.
+     [item-record])))
+ 
+ 
++(defmacro defbench [_hy-compiler name #* body]
++  "設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の変異の検体: pytest-benchmark の benchmark で本体を測る pytest の関数を定義する。"
++  (locate-synthesized (_scoped-definition _hy-compiler name
++    ['(import pytest)
++     `(defn [(. pytest mark benchmark)] ~name [benchmark] (benchmark (fn [] ~@body)))]
++    [(_record-test-function name [(hy.models.Symbol "benchmark")] [#("mark" "benchmark" None)])])))
++
+ ;; ---------------------------------------------------------------------------
+ ;; defsystem — doeff-cluster の系の宣言(ADR-DOE-CLUSTER-001・形の読みは system_form.hy)
+ ;; ---------------------------------------------------------------------------
