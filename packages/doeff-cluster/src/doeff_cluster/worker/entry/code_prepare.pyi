@@ -30,8 +30,6 @@ from doeff_cluster.worker.intent.code_model import ScanTree as ScanTree
 from doeff_cluster.worker.intent.code_model import WriteMarker as WriteMarker
 from doeff_cluster.worker.intent.code_model import Note as Note
 from doeff_cluster.worker.protocol.tree_files import tree_files as tree_files
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 WORKER_CODE: Incomplete
 BAKE_PLAN: str
 BAKE_PLAN_MODULE: str

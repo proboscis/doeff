@@ -36,10 +36,11 @@
   (setv #^ bool requested False))
 
 
-;; slot = 返事を待つ受付の側の物: 本番の HTTP の受付は ReplySlot、手元の宿(local.hy)は Promise、判断だけを見る検は None。
+;; slot = 返事を待つ受付の側の物: 本番の HTTP の受付は ReplySlot、手元の宿(local.hy)は Promise(Reply が #(status body) で満たす)、
+;; 判断だけを見る検は None。
 (defk http-request [method path query body [slot None] [actor None] [peer ""] [queued-ms 0]]
-  {:pre [(: method str) (: path str) (: query dict) (: body (| dict list str int float bool None))
-         (: slot (| ReplyTarget Promise None)) (: actor (| str None)) (: peer str) (: queued-ms int)]
+  {:pre [(: method str) (: path str) (: query (get dict #(str object))) (: body (| (get dict #(str object)) (of list object) str int float bool None))
+         (: slot (| ReplyTarget (of Promise (get tuple #(int object))) None)) (: actor (| str None)) (: peer str) (: queued-ms int)]
    :post [(: % Request)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "受けた HTTP 要求 1 件を Request にするため。path を / で割り、区切りごとに percent の符号を戻して parts に載せる(符号を戻すのは

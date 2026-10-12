@@ -35,7 +35,9 @@ from doeff_core_effects.scheduler import Future as Future
 from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
 from doeff_core_effects.scheduler import Race as Race
 from doeff_core_effects.stop_signal_effects import AwaitStop as AwaitStop
+from doeff_core_effects.stop_signal_effects import StopBell as StopBell
 from doeff_core_effects.stop_signal_effects import StopRequested as StopRequested
+from doeff_core_effects.world_phases import mark_world_phase as mark_world_phase
 from doeff_events import ArmedTimer as ArmedTimer
 from doeff_events import ArmedTimers as ArmedTimers
 from doeff_events import ArmedTimersEffect as ArmedTimersEffect
@@ -286,8 +288,6 @@ from doeff_cluster.worker.intent.worker_model import HandoffAbandoned as Handoff
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.core.job_rules import spec_hash as spec_hash
 from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 NO_STATE_FILE: str
 SIM_URL: str
 SIM_START_MS: int
@@ -298,6 +298,7 @@ TASK_LEASE_SECONDS: float
 DETACHED_POLL_SECONDS: float
 QUEUE_WAIT_SECONDS: float
 WORKER_WAIT_SECONDS: float
+SETTLED_PRIORITY: int
 DRAIN_TTL_SECONDS: float
 REPORT_KINDS: tuple[str, ...]
 TERM_REASON: str
@@ -1141,6 +1142,15 @@ def first_beats_missing(names: tuple) -> _Program[bool, object]:
     ...
 
 def await_workers(names: tuple) -> _Program[None, object]:
+    ...
+
+def placed_jobs(declaration: Declaration) -> _Program[tuple, object]:
+    ...
+
+def mark_settled_up() -> _Program[None, object]:
+    ...
+
+def world_up_watch(jobs: tuple) -> _Program[None, object]:
     ...
 
 def apply_declaration(link: SimLink, declaration: Declaration) -> _Program[tuple, object]:

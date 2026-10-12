@@ -4,6 +4,7 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from doeff import run as run
+from doeff_traverse.helpers import sequence as sequence
 from doeff_cluster.worker.intent.worker_model import Action as Action
 from doeff_cluster.worker.intent.worker_model import CodeState as CodeState
 from doeff_cluster.worker.intent.worker_model import CodeView as CodeView
@@ -164,7 +165,7 @@ def retired_actions(now: int, process: ProcessView, origin: str, desired: tuple,
 def retired_limit_for(want: JobSpec, policy: WorkerPolicy) -> int:
     ...
 
-def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy, absent: StopReason) -> tuple:
+def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy, absent: StopReason) -> _Program[tuple, object]:
     ...
 
 def warm_actions(now: int, warm: tuple, world: WorldView, job_actions: tuple, policy: WorkerPolicy) -> _Program[tuple, object]:
@@ -203,7 +204,7 @@ def wanted_notice(want: JobSpec | None) -> _Program[Retired | HandoffAbandoned, 
 def notice_actions(desired: tuple, world: WorldView) -> _Program[tuple, object]:
     ...
 
-def plan(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=..., absent: StopReason=...) -> _Program[tuple, object]:
+def plan(now: int, desired: tuple[JobSpec, ...], world: WorldView, records: dict[str, JobRecord], policy: WorkerPolicy, warm: tuple[WarmLaunch, ...]=..., absent: StopReason=...) -> _Program[tuple[Action, ...], object]:
     ...
 
 def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldView, records: dict, policy: WorkerPolicy, warm: tuple=..., absent: StopReason=...) -> _Program[tuple, object]:
@@ -212,7 +213,7 @@ def ready_followups(now: int, desired: tuple, before: WorldView, after: WorldVie
 def record_after(now: int, record: JobRecord, action: Action, policy: WorkerPolicy=...) -> JobRecord:
     ...
 
-def records_after(now: int, records: dict, actions: tuple, policy: WorkerPolicy=...) -> _Program[dict, object]:
+def records_after(now: int, records: dict[str, JobRecord], actions: tuple[Action, ...], policy: WorkerPolicy=...) -> _Program[dict[str, JobRecord], object]:
     ...
 
 def start_holds(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
@@ -233,5 +234,8 @@ def refused_warm_child(world: WorldView, want: JobSpec | None, process: ProcessV
 def warm_wait_detail(world: WorldView, want: JobSpec | None, process: ProcessView | None, record: JobRecord) -> str | None:
     ...
 
-def statuses(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy) -> _Program[tuple, object]:
+def job_status(now: int, desired: tuple, world: WorldView, records: dict, policy: WorkerPolicy, name: str) -> _Program[JobStatus, object]:
+    ...
+
+def statuses(now: int, desired: tuple[JobSpec, ...], world: WorldView, records: dict[str, JobRecord], policy: WorkerPolicy) -> _Program[tuple[JobStatus, ...], object]:
     ...

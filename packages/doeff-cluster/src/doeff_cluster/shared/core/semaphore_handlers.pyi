@@ -27,8 +27,6 @@ from doeff_cluster.shared.intent.semaphore_model import HELD as HELD
 from doeff_cluster.shared.intent.semaphore_model import LOST as LOST
 from doeff_cluster.shared.core.lease_rules import fence_verdict as fence_verdict
 from doeff_cluster.shared.core.lease_rules import holder_tokens_prefix as holder_tokens_prefix
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def named_semaphore_local(names: dict) -> _Handler:
     ...
