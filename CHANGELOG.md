@@ -39,6 +39,17 @@
 
 ### Changed
 
+- `doeff-traverse`: a Traverse handler now stops the items it started when it stops (card ki-e0fd319d5b75). When `Gather`
+  raises, `parallel` and `parallel_fail_fast` cancel the item tasks left, wait for them to unwind, and raise the
+  original exception. Before, items kept running after a `parallel_fail_fast` failure that the caller caught, and new
+  ones even started; cancelling the task that runs a Traverse stopped only that task, not its items. The stopped items
+  are reported with the new `ItemOutcomeKind` `cancelled`, so a Traverse that runs an item reports exactly `total`
+  outcomes however it ends. `progress_bars` counts a cancelled item without advancing the bar, so the bar of a stopped
+  Traverse closes at n < total; before, it stayed open and pushed later bars one line down.
+  **Behaviour change**: `TaskCancelledError` out of an item is no longer that item's failure — it stops the Traverse
+  and propagates (all three handlers). That includes an item that `Wait`s on another, cancelled task: wrap that `Wait`
+  in `Try` to keep the item going. Before, `sequential` caught the cancellation of its own task as one failed item and
+  ran the rest.
 - `doeff-claude-code`: a lent credential now reaches the Claude CLI as the `.credentials.json` (mode 0600) of a config
   dir of the process's own (`<CLAUDE_CONFIG_DIR>/.credential-homes/<random>/`, mode 0700, whose other entries are
   symlinks to the shared config dir), not as `CLAUDE_CODE_OAUTH_TOKEN` in the child env; the dir is removed when the

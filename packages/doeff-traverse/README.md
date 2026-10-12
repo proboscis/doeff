@@ -160,7 +160,7 @@ Both `failed` and `skipped` items are excluded from downstream `for/do` and `fol
 
 ## Counting item outcomes (progress)
 
-`sequential`, `parallel` and `parallel_fail_fast` report each item's outcome with the effect `ItemOutcome(traverse, label, total, outcome, item)` as soon as it is known — `outcome` is `ok`, `failed`, `skipped`, or `carried` (an item an earlier stage failed or skipped, kept without running `f`), and `item` is the `ItemResult` the Traverse answers for it. A handler that counts them reaches `total` for every Traverse, failed items included. `progress_bars(make_bar)` draws one bar per Traverse and closes it at `total`:
+`sequential`, `parallel` and `parallel_fail_fast` report each item's outcome with the effect `ItemOutcome(traverse, label, total, outcome, item)` as soon as it is known — `outcome` is `ok`, `failed`, `skipped`, `carried` (an item an earlier stage failed or skipped, kept without running `f`), or `cancelled` (an item the Traverse stopped, see below), and `item` is the `ItemResult` the Traverse answers for it. A handler that counts them reaches `total` for every Traverse, failed items included. `progress_bars(make_bar)` draws one bar per Traverse and closes it at `total`:
 
 ```hy
 (import tqdm [tqdm])
@@ -172,7 +172,14 @@ Both `failed` and `skipped` items are excluded from downstream `for/do` and `fol
 - **Where**: the Traverse handler performs `ItemOutcome` under the handlers between the Traverse and itself (the ones it puts back around each item program), then under itself. A counting handler therefore goes *inside* the Traverse handler, like a body handler; installed outside it sees nothing.
 - **Consumers pass it on**: a consumer looks at the report and passes it on (`Pass(effect, k)`, or `(reperform effect)` in a `defhandler` clause); only the Traverse handler answers it. So any number of consumers (`progress_bars`, a second bar, a failure log) compose in any order. A consumer that answers the report or throws into it fails the Traverse with `ItemOutcomeNotPassedError` — how the Traverse runs (stopping at a failure included) stays the Traverse handler's decision.
 - **When**: only while one of those handlers names `ItemOutcome` in the annotation of its effect parameter (a `defhandler` clause `(ItemOutcome [...] ...)` does). Reporting adds half to all of an item's own cost, so a Traverse nobody counts does not pay for it. A handler that admits every effect does not count as naming it — nor does `Listen(prog, types=(ItemOutcome,))`.
-- **Limits**: a Traverse with no item to run (no items, or only carried ones) reports nothing, so no bar opens for it. `sequential` reads an iterable without a length to its end at the first item when it reports (to know `total`). `parallel_fail_fast` reports the items finished before the first failure and the failed one; the items it cancels report nothing, so that Traverse's bar stays open.
+- **However the Traverse ends**: a Traverse that runs an item reports exactly `total` outcomes — when it finishes, when `parallel_fail_fast` stops at a failure, and when it is cancelled. Before it raises, the Traverse handler stops the items it started (it cancels the running ones and waits for them to unwind, and starts no more) and reports every item without an outcome yet as `cancelled`. `progress_bars` counts a cancelled item without advancing the bar, so the bar of a stopped Traverse closes at n < total — as tqdm's own loop leaves its bar when the loop raises.
+- **Limits**: a Traverse with no item to run (no items, or only carried ones) reports nothing, so no bar opens for it. `sequential` reads an iterable without a length to its end at the first item when it reports (to know `total`). An item that does not wait (it finishes at once) may still finish after a `parallel_fail_fast` failure when `concurrency` > 1: it was already queued to run before the Traverse woke up.
+
+## Stopping a Traverse
+
+`TaskCancelledError` out of an item is not that item's failure: it stops the whole Traverse, with all three handlers. That happens when the task running the Traverse is cancelled, and also when an item lets one out — for instance an item that `Wait`s on another task someone cancelled. An item that should survive such a wait wraps it in `Try`.
+
+`parallel` and `parallel_fail_fast` stop their item tasks whenever `Gather` raises: an item failing (`parallel_fail_fast`), the Traverse's task being cancelled, an item letting `TaskCancelledError` out, or a consumer breaking the `ItemOutcome` contract. They cancel the item tasks still running, wait for them to unwind, report the stopped items (except after a broken contract), and raise the original exception. No item task outlives its Traverse, even when the caller catches the exception and the run goes on. `Gather` itself does not cancel sibling tasks; the Traverse handler does it.
 
 ## Examples
 
