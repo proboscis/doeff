@@ -290,8 +290,7 @@
     (isinstance answer DetachedSubmitted) {"key" answer.key "task" answer.id "created" answer.created "phase" answer.phase}
     (isinstance answer DetachedProgress)
       {"key" answer.key "task" answer.id "phase" answer.phase "detail" answer.detail "result" answer.result "worker" answer.worker
-       "failureKind" answer.failure-kind "retryable" answer.retryable
-       "submittedMs" answer.submitted-ms "startedMs" answer.started-ms "finishedMs" answer.finished-ms}
+       "failureKind" answer.failure-kind "retryable" answer.retryable}
     (isinstance answer DetachedUnknown) {"key" answer.key "phase" "unknown"}
     (isinstance answer DetachedWarming) {"key" answer.key "phase" answer.phase "error" answer.reason}
     (isinstance answer DetachedCancelled) {"key" answer.key "cancelled" answer.cancelled "phase" answer.phase}

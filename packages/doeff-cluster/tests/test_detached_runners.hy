@@ -28,7 +28,7 @@
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedUnknown
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
                                       RunnerFact RunnersUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json detached-timing-of-view])
+(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json detached-timing-of-state unknown-timing-confirmed])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
                              ReadCoordinator])
@@ -600,42 +600,61 @@
 
 ;; --- task の時刻(ReadDetachedTiming — card ki-f3edfdaf9599): 「ある刻に task が始まっていたか」を、読んだ今の phase でなく刻で決めるための読み -----
 
-;; GET /detached/<key> の返事(置かれて走っている task の行 — 時刻は epoch ミリ秒)。
-(val TIMED-VIEW {"key" "k" "task" "t1" "phase" "assigned" "detail" "" "result" None "worker" "a" "failureKind" "" "retryable" False
-                 "submittedMs" 1000 "startedMs" 2500 "finishedMs" None})
+;; coordinator の GET /state の返事(task の行は epoch ミリ秒の時刻を持つ — 本番の返事の形のうち読む欄と、読まない欄の id・worker)。
+;; k = 置かれて走っている task・q = 待っている task・f = 終わった task・最後の行は RemoteJob の task(key を持たない)。
+(val TIMED-STATE {"now" 9999 "revision" 3
+                  "tasks" [{"id" "t1" "phase" "assigned" "worker" "a" "key" "k" "detached" True "submittedMs" 1000 "startedMs" 2500 "finishedMs" None}
+                           {"id" "t2" "phase" "queued" "worker" None "key" "q" "detached" True "submittedMs" 1100 "startedMs" None "finishedMs" None}
+                           {"id" "t3" "phase" "finished" "worker" "a" "key" "f" "detached" True "submittedMs" 900 "startedMs" 950 "finishedMs" 1800}
+                           {"id" "t4" "phase" "assigned" "worker" "a" "submittedMs" 1 "startedMs" 2 "finishedMs" None}]})
 
-(deftest test-a-tasks-times-are-read-from-the-detached-view
+(deftest test-a-tasks-times-are-read-from-the-state-rows
   ;; 置かれた task は始まりの刻を持つ・待つ task は始まりも終わりも None・終わった task は 3 つとも持つ(終わった task の始まりの刻が読める事が、
-  ;; AwaitDetached の答え〔DetachedSucceeded など〕に無い物)。行の無い key は DetachedUnknown。
-  (<- placed (detached-timing-of-view "k" TIMED-VIEW))
+  ;; AwaitDetached の答え〔DetachedSucceeded など〕に無い物)。行の無い key と、key を持たない RemoteJob の task は DetachedUnknown に当たらない行。
+  (<- placed (detached-timing-of-state "k" TIMED-STATE))
   (assert (= placed (DetachedTiming :key "k" :phase "assigned" :submitted-ms 1000 :started-ms 2500 :finished-ms None)) placed)
-  (<- waiting (detached-timing-of-view "k" (| TIMED-VIEW {"phase" "queued" "worker" None "startedMs" None})))
-  (assert (= waiting (DetachedTiming :key "k" :phase "queued" :submitted-ms 1000 :started-ms None :finished-ms None)) waiting)
-  (<- ended (detached-timing-of-view "k" (| TIMED-VIEW {"phase" "finished" "result" "blob" "finishedMs" 9000})))
-  (assert (= ended (DetachedTiming :key "k" :phase "finished" :submitted-ms 1000 :started-ms 2500 :finished-ms 9000)) ended)
-  (<- unknown (detached-timing-of-view "k" {"key" "k" "phase" "unknown"}))
-  (assert (= unknown (DetachedUnknown :key "k")) unknown))
+  (<- waiting (detached-timing-of-state "q" TIMED-STATE))
+  (assert (= waiting (DetachedTiming :key "q" :phase "queued" :submitted-ms 1100 :started-ms None :finished-ms None)) waiting)
+  (<- ended (detached-timing-of-state "f" TIMED-STATE))
+  (assert (= ended (DetachedTiming :key "f" :phase "finished" :submitted-ms 900 :started-ms 950 :finished-ms 1800)) ended)
+  (<- unknown (detached-timing-of-state "none" TIMED-STATE))
+  (assert (= unknown (DetachedUnknown :key "none")) unknown))
 
 
-(deftest test-an-unreachable-or-warming-read-is-not-a-task-time
-  ;; 届かなかった読み(理由の文)と、起きた直後の coordinator の「まだ分からない」(phase warming)は DetachedUnreachable — task が無いとも
-  ;; 始まっていないとも読まない。
-  (<- cut (detached-timing-of-view "k" "connection refused"))
+(deftest test-an-unreachable-state-read-is-not-a-task-time
+  ;; 届かなかった読み(理由の文)は DetachedUnreachable — task が無いとも始まっていないとも読まない。
+  (<- cut (detached-timing-of-state "k" "connection refused"))
+  (assert (and (isinstance cut DetachedUnreachable) (in "connection refused" cut.detail)) cut))
+
+
+(deftest test-state-rows-without-the-time-fields-are-unreachable-and-never-an-unstarted-task
+  ;; 失敗ケース: task の行が時刻の欄を持たない返事(形の違う coordinator)を、「まだ始まっていない」(startedMs が None)と読むと、呼び手は始まった
+  ;; task を始まっていないと取り違える。欄が無いのは DetachedUnreachable で、合わない欄を名指す。startedMs だけが欠けた行も同じ。
+  (val without-all {"tasks" [{"id" "t1" "phase" "assigned" "key" "k"}]})
+  (<- bare (detached-timing-of-state "k" without-all))
+  (assert (isinstance bare DetachedUnreachable) bare)
+  (assert (all (gfor name #("submittedMs" "startedMs" "finishedMs") (in name bare.detail))) bare.detail)
+  (val without-started {"tasks" [{"id" "t1" "phase" "assigned" "key" "k" "submittedMs" 1000 "finishedMs" None}]})
+  (<- partial (detached-timing-of-state "k" without-started))
+  (assert (and (isinstance partial DetachedUnreachable) (in "startedMs" partial.detail)) partial)
+  (<- notasks (detached-timing-of-state "k" {"revision" 1}))
+  (assert (and (isinstance notasks DetachedUnreachable) (in "tasks" notasks.detail)) notasks))
+
+
+;; GET /state に行の無い key を知らないと言ってよいか(unknown-timing-confirmed): GET /detached/<key> が本当に知らない(phase unknown)と言う時だけ。
+(deftest test-a-key-missing-from-the-state-is-unknown-only-when-the-detached-view-says-so
+  (val unknown (DetachedUnknown :key "k"))
+  (val known (unknown-timing-confirmed unknown {"key" "k" "phase" "unknown"}))
+  (assert (= known unknown) known)
+  ;; 起きた直後(503・phase warming): 状態を失った coordinator は担い手の最初の heartbeat まで走っている task を知らない — 届かないと同じ。
+  (val warming (unknown-timing-confirmed unknown {"key" "k" "phase" "warming" "error" "coordinator が起きた直後で、担い手の報告が揃っていない"}))
+  (assert (and (isinstance warming DetachedUnreachable) (in "起きた直後" warming.detail)) warming)
+  ;; 届かない読み(理由の文)。
+  (val cut (unknown-timing-confirmed unknown "connection refused"))
   (assert (and (isinstance cut DetachedUnreachable) (in "connection refused" cut.detail)) cut)
-  (<- warming (detached-timing-of-view "k" {"key" "k" "phase" "warming" "error" "起きた直後"}))
-  (assert (and (isinstance warming DetachedUnreachable) (in "起きた直後" warming.detail)) warming))
-
-
-(deftest test-a-view-without-the-time-fields-is-unreachable-and-never-an-unstarted-task
-  ;; 失敗ケース: 時刻を載せない旧い coordinator の返事(欄が無い)を、「まだ始まっていない」(startedMs が None)と読むと、呼び手は始まった
-  ;; task を始まっていないと取り違える。欄が無いのは DetachedUnreachable で、合わない欄を名指す。startedMs だけが欠けた返事も同じ。
-  (val old (dfor #(k v) (.items TIMED-VIEW) :if (not-in k #("submittedMs" "startedMs" "finishedMs")) k v))
-  (<- without-all (detached-timing-of-view "k" old))
-  (assert (isinstance without-all DetachedUnreachable) without-all)
-  (assert (all (gfor name #("submittedMs" "startedMs" "finishedMs") (in name without-all.detail))) without-all.detail)
-  (val without-started (dfor #(k v) (.items TIMED-VIEW) :if (!= k "startedMs") k v))
-  (<- partial (detached-timing-of-view "k" without-started))
-  (assert (and (isinstance partial DetachedUnreachable) (in "startedMs" partial.detail)) partial))
+  ;; 失敗ケース: 2 つの読みの間に積まれて /detached にだけ行が在る — 知らないと言わず、次の読みで確かめさせる。
+  (val raced (unknown-timing-confirmed unknown {"key" "k" "phase" "queued"}))
+  (assert (isinstance raced DetachedUnreachable) raced))
 
 
 (defk timing-follows-the-task []
@@ -643,6 +662,8 @@
   ;; a を drain して x-tool の task を積むと置かれずに待ち(始まりも終わりも無い)、a が戻って終わると積まれた刻 ≤ 始まった刻 < 終わった刻に
   ;; なる — 始まった刻は待った長さ(a が戻るまで)だけ積まれた刻より後で、積まれた刻は待つ間も変わらない。知らない key は DetachedUnknown
   ;; (coordinator が起きた直後の猶予 lease-ms が過ぎてから読む — 猶予の内は行の無い key を知らないと言えず、DetachedUnreachable)。
+  (<- warming-read (ReadDetachedTiming "k-never"))
+  (assert (isinstance warming-read DetachedUnreachable) warming-read)
   (<- asked dict (DrainWorker "a"))
   (assert (= (get asked "status") 200) asked)
   (<- (Delay POLL))

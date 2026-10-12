@@ -208,11 +208,16 @@ DetachedAwaited: TypeAlias = DetachedOutcome | DetachedPending | DetachedUnreach
 DetachedSubmitAnswer: TypeAlias = DetachedSubmitted | DetachedUnreachable
 
 @dataclass(frozen=True, kw_only=True)
-class DetachedTimingWire:
+class DetachedTaskRowWire:
+    key: str | None = None
     phase: str
     submitted_ms: int
     started_ms: int | None
     finished_ms: int | None
+
+@dataclass(frozen=True, kw_only=True)
+class StateTasksWire:
+    tasks: tuple[DetachedTaskRowWire, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class DetachedTiming:

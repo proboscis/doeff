@@ -180,13 +180,13 @@
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
-                   detached-timing-of-view])
+                   detached-timing-of-state unknown-timing-confirmed])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.core.detached_rules [task-placing-json])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
-                         ReadDetachedTiming DetachedTimingAnswer])
+                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
@@ -1384,13 +1384,18 @@
 
 (defk read-detached-timing [link key]
   {:pre [(: link SimLink) (: key str)] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadDetachedTiming を本番の detached.detached-timing-read と同じく GET /detached/<key> の 1 回の読みから答えるため(届かなければ理由の文・
-   503 = 起きた直後の warming は本文 — 答えの判断は本番と同じ detached.detached-timing-of-view)。"
-  (<- read tuple (send-resent link "GET" (detached-path key "") {} None))
-  (val view (cond (is (get read 0) None) (unreached-reason read)
-                  (= (get read 0) 503) (object-body (get read 1) "task を読めない")
-                  True (refused-or-object read "task を読めない")))
-  (<- timing DetachedTimingAnswer (detached-timing-of-view key view))
+  "ReadDetachedTiming を本番の detached.detached-timing-read と同じく GET /state の 1 回の読みから答えるため(届かなければ理由の文 —
+   答えの判断は本番と同じ detached.detached-timing-of-state)。行の無い key だけ、本番と同じく GET /detached/<key> をもう 1 回読んで
+   知らないと言ってよいかを確かめる(detached.unknown-timing-confirmed — 起きた直後の coordinator の warming は 503 の本文)。"
+  (<- read tuple (send-resent link "GET" "/state" {} None))
+  (val state (if (is (get read 0) None) (unreached-reason read) (answered-object read "task の時刻を読めない")))
+  (<- timing DetachedTimingAnswer (detached-timing-of-state key state))
+  (when (isinstance timing DetachedUnknown)
+    (<- again tuple (send-resent link "GET" (detached-path key "") {} None))
+    (val view (cond (is (get again 0) None) (unreached-reason again)
+                    (= (get again 0) 503) (object-body (get again 1) "task を読めない")
+                    True (refused-or-object again "task を読めない")))
+    (return (unknown-timing-confirmed timing view)))
   timing)
 
 

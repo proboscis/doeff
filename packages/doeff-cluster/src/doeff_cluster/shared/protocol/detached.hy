@@ -45,7 +45,7 @@
                          DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
                          ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire
-                         ReadDetachedTiming DetachedTiming DetachedTimingWire DetachedTimingAnswer])
+                         ReadDetachedTiming DetachedTiming StateTasksWire DetachedTimingAnswer])
 (import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
@@ -151,26 +151,43 @@
           True None))))
 
 
-(defk detached-timing-of-view [key view]
-  {:pre [(: key str) (: view (| dict str))] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "ReadDetachedTiming の答えを決めるため(本番の client と sim の宿が同じ判断): view = GET /detached/<key> の読み(detached-view の答え —
-   本文の JSON の object か、届かなかった理由の文)。届かない読みと、起きた直後の coordinator の「まだ分からない」(phase warming)は
-   DetachedUnreachable(task の死とみなさない)・行の無い key は DetachedUnknown・それ以外は本文を DetachedTimingWire に解いた
-   DetachedTiming。時刻の欄の無い返事(旧い coordinator)も DetachedUnreachable で、欄が無いのを「まだ始まっていない」と読み違えない。"
-  (when (isinstance view str)
-    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" view))))
-  (val phase (.get view "phase"))
-  (when (= phase "unknown")
-    (return (DetachedUnknown :key key)))
-  (when (= phase WARMING-PHASE)
-    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" (.get view "error" "")))))
-  (<- wire (| DetachedTimingWire Malformed) (parse DetachedTimingWire view))
+(defk detached-timing-of-state [key state]
+  {:pre [(: key str) (: state (| dict str))] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedTiming の答えを決めるため(本番の client と sim の宿が同じ判断): state = coordinator の GET /state の読み(本文の JSON の object か、
+   届かなかった理由の文)。届かない読みは DetachedUnreachable(task の死とみなさない)・tasks に key の行が無ければ DetachedUnknown・在れば
+   その行の phase と時刻の DetachedTiming。本文を StateTasksWire に解けなければ(時刻の欄が無い・形の違う返事)DetachedUnreachable で、
+   合わない欄を挙げる — 欄が無いのを「まだ始まっていない」と読み違えない。"
+  (when (isinstance state str)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" state))))
+  (<- wire (| StateTasksWire Malformed) (parse StateTasksWire state))
   (match wire
     (Malformed :fields fields)
-      (DetachedUnreachable :detail (.format "coordinator の返事に task の時刻が無い(旧い版か形の違う返事): {}"
+      (DetachedUnreachable :detail (.format "coordinator の GET /state の返事を読めない(task の時刻の欄が無いか、形の違う返事): {}"
                                             (.join "・" (gfor f fields (+ f.field " " f.reason)))))
-    _ (DetachedTiming :key key :phase wire.phase :submitted-ms wire.submitted-ms
-                      :started-ms wire.started-ms :finished-ms wire.finished-ms)))
+    _ (let [row (next (gfor r wire.tasks :if (= r.key key) r) None)]
+        (if (is row None)
+            (DetachedUnknown :key key)
+            (DetachedTiming :key key :phase row.phase :submitted-ms row.submitted-ms
+                            :started-ms row.started-ms :finished-ms row.finished-ms)))))
+
+
+(deff unknown-timing-confirmed [#^ DetachedUnknown unknown #^ (| dict str) view]  ; defk にできない: 本番の client と sim の宿が同じ判断で「行の無い key」を確かめる
+  {:pre [(: unknown DetachedUnknown) (: view (| dict str))] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "GET /state に行の無い key を「知らない」と答えてよいかを決めるため: GET /state には coordinator が起きた直後の印が無く、状態を失った
+   coordinator は担い手の worker の最初の heartbeat まで走っている task を知らない(detached_policy.detached-read の warming)。
+   同じ key の GET /detached/<key> の読み view(detached-view の答え)が、本当に知らない(phase unknown)と言う時だけ DetachedUnknown を
+   返し、届かない・起きた直後(warming)は DetachedUnreachable(task が無い・始まっていないと読まない)・/detached にだけ行が在る
+   (2 つの読みの間に積まれた)も DetachedUnreachable で、呼び手が次の読みで確かめる。"
+  (cond
+    (isinstance view str)
+      (DetachedUnreachable :detail (.format "coordinator に届かない: {}" view))
+    (= (.get view "phase") WARMING-PHASE)
+      (DetachedUnreachable :detail (.format "coordinator に届かない: {}" (.get view "error" "起きた直後で、担い手の報告が揃っていない")))
+    (= (.get view "phase") "unknown")
+      unknown
+    True
+      (DetachedUnreachable :detail (.format "GET /state に無い task が GET /detached/{} には在る(2 つの読みの間に積まれた) — 次の読みで確かめる"
+                                            unknown.key))))
 
 
 (deff runner-facts-of-view [#^ dict workers]  ; defk にできない: 本番の client と sim の宿が同じ読みを使う純粋な判断
@@ -408,10 +425,17 @@
 (defk detached-timing-read [cell options sender key]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str)] :post [(: % DetachedTimingAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "切り離した task 1 つの行の時刻を読むため(ReadDetachedTiming の本番の答え — 待たずに GET /detached/<key> を 1 回読み、
-   detached-timing-of-view で答えにする)。"
-  (<- view (detached-view cell options sender key))
-  (<- timing DetachedTimingAnswer (detached-timing-of-view key view))
+  "切り離した task 1 つの行の時刻を読むため(ReadDetachedTiming の本番の答え — 待たずに coordinator の GET /state を 1 回読み、
+   detached-timing-of-state で答えにする)。届かなければ理由の文を渡して DetachedUnreachable にする。行の無い key だけ、GET /detached/<key> を
+   もう 1 回読んで知らない(unknown)と言ってよいかを確かめる(unknown-timing-confirmed — 起きた直後の coordinator の warming)。"
+  (<- read (resent-answer cell options "GET" "/state" None None sender.deadline-seconds))
+  (when (isinstance read HttpFailed)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" read.detail))))
+  (<- state dict (answer-json read))
+  (<- timing DetachedTimingAnswer (detached-timing-of-state key state))
+  (when (isinstance timing DetachedUnknown)
+    (<- view (| dict str) (detached-view cell options sender key))
+    (return (unknown-timing-confirmed timing view)))
   timing)
 
 

@@ -346,20 +346,30 @@
 
 ;; --- task の時刻(ReadDetachedTiming — card ki-f3edfdaf9599)----------------------------------------------------------
 ;; DetachedTiming = 切り離した task 1 つの、いまの phase と行の時刻(epoch ミリ秒): submitted-ms = 積まれた刻・started-ms = worker に置かれた
-;;   刻(phase queued の間は None。置いた後に実行環境の準備の失敗や worker の止まり始めで待ちへ戻った task も、置き直されるまで None)・
-;;   finished-ms = 終わった刻(終わるまで None)。「ある刻に task が始まっていたか」を、読んだ今の phase でなく刻で決めたい呼び手のための読み —
-;;   AwaitDetached の答えは終わった task の時刻を持たず、DetachedPending も始まりの刻を持たない(日次の検証の scheduler は、起き直した後に
-;;   前の回に重ねた回を、読んだ今の phase で積み直した)。
+;;   刻(phase queued の間は None。置いた後に実行環境の準備の失敗や worker の止まり始めで待ちへ戻った task も、置き直されるまで None。
+;;   coordinator が置き場を失って走っている task を引き取った場合は、置かれた刻でなく引き取った刻)・finished-ms = 終わった刻(終わるまで None)。
+;;   「ある刻に task が始まっていたか」を、読んだ今の phase でなく刻で決めたい呼び手のための読み — AwaitDetached の答えは終わった task の時刻を
+;;   持たず、DetachedPending も始まりの刻を持たない(日次の検証の scheduler は、起き直した後に前の回に重ねた回を、読んだ今の phase で積み直した)。
+;;   読む先は coordinator の GET /state の tasks の行(startedMs・submittedMs・finishedMs を前から載せている — coordinator の版に依らない。
+;;   GET /detached/<key> の返事は時刻を載せない)。返事は全部の task と job を運ぶ大きい物(本番で 500 KB ほど)なので、呼び手は拍ごとでなく
+;;   判断の時だけ読む。
 
-(defwire DetachedTimingWire
-  "coordinator の GET /detached/<key> の返事のうち ReadDetachedTiming が読む欄: phase・submittedMs・startedMs・finishedMs。欄の無い返事
-   (時刻を載せない旧い coordinator)は Malformed になる — startedMs と finishedMs は null を許すが欄が無いのは許さない(欄が無いのを
-   「まだ始まっていない」と読み違えない)。ほかの欄(task・detail・result など)は読まない。"
+(defwire DetachedTaskRowWire
+  "coordinator の GET /state の tasks の行のうち ReadDetachedTiming が読む欄: key(切り離した task だけが持つ — RemoteJob の task の行は無い)・
+   phase・submittedMs・startedMs・finishedMs。startedMs と finishedMs は null を許すが欄が無いのは許さない(欄が無いのを「まだ始まっていない」と
+   読み違えない)。ほかの欄(id・name・worker・detail など)は読まない。"
   {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| str None) key None)
   (#^ str phase)
   (#^ int submitted-ms)
   (#^ (| int None) started-ms)
   (#^ (| int None) finished-ms))
+
+
+(defwire StateTasksWire
+  "coordinator の GET /state の返事のうち ReadDetachedTiming が読む欄: tasks(task の行の列)。ほかの欄(jobs・workers・events など)は読まない。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(DetachedTaskRowWire ...)) tasks))
 
 
 (defrecord DetachedTiming
@@ -377,9 +387,10 @@
 
 ;; effect は答えの型 DetachedTimingAnswer を宣言する(利用側の `(<- timing (ReadDetachedTiming key))` が答えの型を得る)ので、答えの型の後に置く。
 (defeffect ReadDetachedTiming
-  "切り離した task 1 つの行の時刻を、終わりを待たずにいまのまま読む(GET /detached/<key> の submittedMs・startedMs・finishedMs)。答え =
-   DetachedTiming・DetachedUnknown(その key を知らない — 送っていない・解放した・保持の期限を過ぎた)・DetachedUnreachable(coordinator に届かない・
-   起きた直後で行の有無を言えない・時刻を載せない旧い coordinator — task の生死は分からない。死んだとみなさない)。lease に触らない。"
+  "切り離した task 1 つの行の時刻を、終わりを待たずにいまのまま読む(coordinator の GET /state の tasks の行の submittedMs・startedMs・finishedMs)。
+   答え = DetachedTiming・DetachedUnknown(その key の行が無い — 送っていない・解放した・保持の期限を過ぎた。coordinator が置き場を失って起きた直後は、
+   走っている task の行がまだ無いことがある)・DetachedUnreachable(coordinator に届かない・時刻の欄の無い返事 — task の生死は分からない。死んだと
+   みなさない)。lease に触らない。"
   {:fields [(: key str)]
    :answer DetachedTimingAnswer
    :tags {:context "doeff-cluster" :role "intent"}})

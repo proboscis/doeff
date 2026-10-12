@@ -121,7 +121,8 @@ from doeff_cluster.shared.protocol.detached import watch_query as watch_query
 from doeff_cluster.shared.protocol.detached import service_ready_of as service_ready_of
 from doeff_cluster.shared.protocol.detached import service_facts_of_json as service_facts_of_json
 from doeff_cluster.shared.protocol.detached import services_unreachable as services_unreachable
-from doeff_cluster.shared.protocol.detached import detached_timing_of_view as detached_timing_of_view
+from doeff_cluster.shared.protocol.detached import detached_timing_of_state as detached_timing_of_state
+from doeff_cluster.shared.protocol.detached import unknown_timing_confirmed as unknown_timing_confirmed
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
@@ -145,6 +146,7 @@ from doeff_cluster.shared.intent.detached_model import ServiceFact as ServiceFac
 from doeff_cluster.shared.intent.detached_model import ServicesUnreachable as ServicesUnreachable
 from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
 from doeff_cluster.shared.intent.detached_model import DetachedTimingAnswer as DetachedTimingAnswer
+from doeff_cluster.shared.intent.detached_model import DetachedUnknown as DetachedUnknown
 from doeff_cluster.worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
 from doeff_cluster.worker.core.drain_client import DRAIN_TTL_MARGIN_SECONDS as DRAIN_TTL_MARGIN_SECONDS
 from doeff_cluster.worker.protocol.drain_requests import drain_request as drain_request
