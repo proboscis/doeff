@@ -1,0 +1,20 @@
+diff --git a/tmp/ki973b-blind-a/orig/static_check.py b/packages/doeff-hy/src/doeff_hy/static_check.py
+index 508eae3..37557b8 100644
+--- a/tmp/ki973b-blind-a/orig/static_check.py
++++ b/packages/doeff-hy/src/doeff_hy/static_check.py
+@@ -473,6 +473,15 @@ def with_static_helpers(tree: ast.Module) -> ast.Module:
+     reportUnusedImport を出さないため)。`hy.models`(Hy の keyword の literal が compile される先)を読む module には
+     `import hy.models` を足す(`import hy` だけでは pyright が属性 models を知らない)。"""
+     used = _referenced_roots(tree.body)
++    # [盲検 A の実験 E4] 文字の注記(M6 の handler の引数)の中の名も「読まれている」と数える
++    used = used | frozenset(
++        name.id
++        for node in ast.walk(tree)
++        if isinstance(node, ast.arg) and isinstance(node.annotation, ast.Constant)
++        and isinstance(node.annotation.value, str)
++        for name in ast.walk(ast.parse(node.annotation.value, mode="eval"))
++        if isinstance(name, ast.Name)
++    )
+     reads_models = any(
+         isinstance(node, ast.Attribute)
+         and node.attr == "models"

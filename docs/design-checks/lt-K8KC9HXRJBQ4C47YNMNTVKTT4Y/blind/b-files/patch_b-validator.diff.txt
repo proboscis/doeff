@@ -1,0 +1,72 @@
+--- a/doeff/mcp.py
++++ b/doeff/mcp.py
+@@ -30,7 +30,7 @@
+     )
+ """
+ 
+-from collections.abc import Callable
++from collections.abc import Callable, Mapping
+ from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Any
+ 
+@@ -40,6 +40,17 @@
+ # Sentinel for "no default provided"
+ _MISSING = object()
+ 
++#: JSON Schema の型 → server が受ける引数の値の Python の型(docs/12-mcp-tools.md の表と同じ写し)。
++#: agent が型の違う値を送った時に、handler の奥で落ちる前に server で断るため。
++_JSON_TYPES: dict[str, type] = {
++    "string": str,
++    "integer": int,
++    "number": float,
++    "boolean": bool,
++    "array": list,
++    "object": dict,
++}
++
+ 
+ @dataclass(frozen=True)
+ class McpParamSchema:
+@@ -56,6 +67,17 @@
+     enum: tuple[str, ...] | None = None
+     default: Any = _MISSING
+ 
++    def problem(self, value: object) -> str | None:
++        """agent が送った値(送らなければ None)が schema に合わない訳 — 合えば None。"""
++        if value is None:
++            return f"missing required argument: {self.name}" if self.required else None
++        expected = _JSON_TYPES[self.type]
++        if not isinstance(value, expected):
++            return f"argument {self.name}: expected {self.type}, got {type(value).__name__}"
++        if self.enum is not None and value not in self.enum:
++            return f"argument {self.name}: expected one of {list(self.enum)}"
++        return None
++
+     def to_json_schema(self) -> dict[str, Any]:
+         """Produce the JSON Schema property object for this parameter."""
+         schema: dict[str, Any] = {
+@@ -102,3 +124,11 @@
+     def param_names(self) -> tuple[str, ...]:
+         """Return ordered parameter names (matches handler signature)."""
+         return tuple(p.name for p in self.params)
++
++    def argument_problems(self, arguments: Mapping[str, object]) -> list[str]:
++        """agent の送った引数が schema に合わない訳の並び(合えば空)。"""
++        return [
++            problem
++            for problem in (p.problem(arguments.get(p.name)) for p in self.params)
++            if problem is not None
++        ]
+--- a/packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
++++ b/packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
+@@ -59,6 +59,10 @@
+   (setv tool (.get server._tools req.tool-name))
+   (when (is tool None)
+     (return #("tool" False f"unknown tool: {req.tool-name}")))
++  ;; 引数を schema に照らして検める — 必須の欠け・型の違い・enum の外を、handler の奥で落ちる前に agent へ返す
++  (setv problems (.argument-problems tool req.arguments))
++  (when problems
++    (return #("tool" False (.join "; " problems))))
+   (setv args (lfor name (.param-names tool) (.get req.arguments name)))
+   (setv program (tool.handler #* args))
+   (for [h full-stack]

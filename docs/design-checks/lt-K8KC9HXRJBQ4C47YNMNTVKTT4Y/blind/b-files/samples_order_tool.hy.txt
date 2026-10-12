@@ -1,0 +1,14 @@
+(require doeff-hy.macros [defk defmcp-tool <-])
+
+(defk notional [price qty]
+  {:pre [(: price float) (: qty int)] :post [(: % float)]}
+  "指値の約定代金(price × qty)"
+  (* price qty))
+
+(defmcp-tool limit-order
+  "Place a limit order and answer its notional"
+  [{:name "symbol" :type "string" :description "symbol code"}
+   {:name "price" :type "number" :description "limit price"}
+   {:name "qty" :type "integer" :description "quantity"}]
+  (<- n (notional (float price) qty))
+  (+ symbol ": " (str n)))
