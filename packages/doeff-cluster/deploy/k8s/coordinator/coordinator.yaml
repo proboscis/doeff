@@ -125,7 +125,12 @@ spec:
             # coordinatorCommit がこの版を含むまで断る)。この版は、保存に残った旧い形の行(上限の値と範囲を名乗る limits)のうち
             # 終わっていない行を failed にするので、入れ替えは組を名乗る task が queued・走っていない刻に当てる。前の版 fb32909f3(L2067)は
             # 74ebb50b6 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 74ebb50b6c3c5de9a652088d11e16371d954abb1 }
+            # fdf1fbe47 = 組の上限を宣言する系を 1 つに保つ版(設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP・card ki-b0e8028c8c8d・L2184・L2189):
+            # 資源 GroupLimit の spec に宣言した系の名(system)が載り、持ち主の在る組を別の系が書き直すと 409。system の無い組(74ebb50b6 の
+            # 宣言の道具が書いた組)は持ち主の無い組として読み直し、最初に宣言し直した系が持つ。置き方の判断の関数は task の行を受けない。
+            # 上に載る系の宣言の道具の doeff の版を fdf1fbe47 以降へ上げるのはこの入れ替えの後(74ebb50b6 の受け口は spec の system を
+            # 「知らない欄」で断る)。task の行の形は変わらないので、入れ替えの刻の制約は無い。前の版 74ebb50b6(L2139)は fdf1fbe47 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: fdf1fbe47bf5c461c873f08d459bf91b61f468b3 }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }
