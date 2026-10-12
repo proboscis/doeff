@@ -1,0 +1,26 @@
+--- /tmp/dc-b4c0-bak/clause_ops.hy	2026-10-12 05:02:04.139233887 +0000
++++ packages/doeff-hy/src/doeff_hy/clause_ops.hy	2026-10-12 05:02:04.142801329 +0000
+@@ -109,7 +109,11 @@
+     (ClauseOp :name "pass" :ending Ending.FORWARDS :arity 0 :returns False :tail None
+               :nodes #("Pass") :static-nodes #("Pass") :rewrite _pass)
+     (ClauseOp :name "raise" :ending Ending.RAISES :arity None :returns False :tail None
+-              :nodes #() :static-nodes #() :rewrite None)))
++              :nodes #() :static-nodes #() :rewrite None)
++    (ClauseOp :name "throw" :ending Ending.RESUMES :arity 1 :returns True :tail None
++              :nodes #("ResumeThrow") :static-nodes #("ResumeThrow") :rewrite _transfer)
++    (ClauseOp :name "transfer-throw" :ending Ending.RESUMES :arity 1 :returns False :tail None
++              :nodes #("TransferThrow") :static-nodes #("TransferThrow") :rewrite _transfer)))
+ 
+ 
+ (defn named-op [name]
+--- /tmp/dc-b4c0-bak/handle.hy	2026-10-12 04:49:22.780734635 +0000
++++ packages/doeff-hy/src/doeff_hy/handle.hy	2026-10-12 05:02:04.145863472 +0000
+@@ -374,6 +374,8 @@
+           ;; (resume expr) → (transfer expr) — the row's tail
+           (and (is-not op None) (is-not op.tail None) (= (len form) (+ 1 op.arity)))
+             (Expression [(Symbol op.tail) #* (cut form 1 None)])
++          (and (= hname "throw") (= (len form) 2))
++            (Expression [(Symbol "transfer-throw") (get form 1)])
+ 
+           ;; (if test then else) → optimize both branches
+           (and (= hname "if") (>= (len form) 4))

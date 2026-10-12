@@ -1,0 +1,10 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-wt-design-check-b4c0(HEAD 6ce803670ba9671032c39d87ff3f3f48210df55c)
+# 作業木の未 commit の変更:  M packages/doeff-hy/src/doeff_hy/clause_ops.hy  M packages/doeff-hy/src/doeff_hy/handle.hy  M tests/test_handle_clause_ops.py ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-hardcoded-tail-after.diff ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-hardcoded-tail-test-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-hardcoded-tco-test-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-repro-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-returns-flag-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/b-failure-demo-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/b-failure-test-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/b-failure-test-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/s4-storage-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/scripts/ 
+# 命令: timeout 590 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-b4c0/docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/scripts/s4_storage.py.txt /home/ubuntu/.worktrees/doeff-wt-design-check-b4c0
+# 時刻: 2026-10-12T05:03:16Z
+
+変えない: 記録 {'macros': ['doeff_hy.handle:defhandler'], 'doeff_hy': '/tmp/tmpns9ox8u7/doeff_hy/__init__.py'} → 照らし {'current': True, 'doeff_hy': '/tmp/tmpns9ox8u7/doeff_hy/__init__.py'}
+表と関係の無い行(module の末尾の註): 記録 {'macros': ['doeff_hy.handle:defhandler'], 'doeff_hy': '/tmp/tmpuoopz3ys/doeff_hy/__init__.py'} → 照らし {'current': True, 'doeff_hy': '/tmp/tmpuoopz3ys/doeff_hy/__init__.py'}
+表の行(resume の行の nodes に Pass を足す): 記録 {'macros': ['doeff_hy.handle:defhandler'], 'doeff_hy': '/tmp/tmpzlcdj6ay/doeff_hy/__init__.py'} → 照らし {'current': False, 'doeff_hy': '/tmp/tmpzlcdj6ay/doeff_hy/__init__.py'}
+表の行の書き換え(transfer の node の綴り): 記録 {'macros': ['doeff_hy.handle:defhandler'], 'doeff_hy': '/tmp/tmpr24jv6ng/doeff_hy/__init__.py'} → 照らし {'current': False, 'doeff_hy': '/tmp/tmpr24jv6ng/doeff_hy/__init__.py'}
+# 終了の状態: 0

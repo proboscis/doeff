@@ -1,0 +1,391 @@
+{
+ "version": 1,
+ "task_id": "lt-BV79NHMNKA6E42N4TQ1M638MDR",
+ "base_revision": "10addc6473923419ef6acdb18dcb9044b87c7602",
+ "author": {
+  "conversation_id": "c-WAZXHFJNRQT4M48X15CQBXNS3V",
+  "model": "claude-opus-5-5",
+  "effort": "既定(この会話の起動の設定・自己申告)"
+ },
+ "requirements": [
+  "R1: handler の節の操作(resume・transfer・finish・reperform・pass・raise)の名と性質は、doeff-hy の 1 か所(表)だけに在る(card ki-b4c015d8ba1f の受入 c38c42da6)",
+  "R2: 表に操作を足すと、節の終わりの検め・書き換え・node の import(実行時と型検査の展開)・Raise / Absent の節の再開の検め(展開の時と評価の時)が追従する",
+  "R3: 読み手の片方へ表を介さずに名を足すと、検が赤になる",
+  "R4: 既存の handle / defhandler の展開(実行時・型検査のための展開)は変えない"
+ ],
+ "design": {
+  "path": "design.md",
+  "sha256": "dd37909e179a9ce35c748eb4a7c26d283cea77c92f3542f082d917a7786e0eb1"
+ },
+ "modules": [
+  {
+   "id": "clause-ops-table",
+   "responsibility": "handler の節の操作の表(packages/doeff-hy/src/doeff_hy/clause_ops.hy の CLAUSE-OPS)",
+   "owns": "操作の名・終わり方 Ending・引数の数・returns(続きの後に節へ戻る)・tail(末尾で替える操作)・実行時と型検査の展開の node・書き換え",
+   "hides": "操作の名の一覧(呼び手は表を写さず関数で引く)",
+   "interface": "ClauseOp・Ending・CLAUSE-OPS・(named-op 名)・(clause-op form)・(ops-ending 名の集まり ending)・(node-names static?)",
+   "effects": "なし(module の読み込みの時に不変の tuple を作るだけ)",
+   "lifetime": "なし(資源を持たない不変の表)",
+   "invariants": "名は一意。tail の先は同じ arity の戻らない行。rewrite の無い行は戻らず替えない。表の外の module に操作の名を書かない"
+  },
+  {
+   "id": "termination-check",
+   "responsibility": "節のすべての道が操作で終わるかの展開の時の検め(handle.hy の _terminates・_seq-terminates・_check-clause-terminates・clause_endings.hy の match-terminates?・try-terminates?)",
+   "owns": "if / cond / match / try / when … の制御の形",
+   "hides": "どの名が操作か(表に聞く)",
+   "interface": "(_check-clause-terminates etype body) → SyntaxError か None",
+   "effects": "なし(展開の時の判断。誤りは SyntaxError)",
+   "lifetime": "なし(展開ごとの純粋な判断)",
+   "invariants": "頭の名が表に在る式は節を終える。表に無い名は終えない"
+  },
+  {
+   "id": "clause-rewrite",
+   "responsibility": "節の本体の操作を VM へ渡す form にする(handle.hy の _rewrite-ops・_tail-resume-to-transfer)と実行の時の検めの印",
+   "owns": "本体の歩き方・末尾の位置・印の名 _doeff_clause_resumed",
+   "hides": "操作ごとの form と末尾の替え先(表の rewrite・tail)",
+   "interface": "(_rewrite-ops form)・(_tail-resume-to-transfer form)",
+   "effects": "なし(展開の時の form の組み立て)",
+   "lifetime": "なし",
+   "invariants": "arity の合う形だけ書き換える。returns の行の後には印を立てる。末尾の操作は行の tail へ替える(try の中は替えない)"
+  },
+  {
+   "id": "handler-imports",
+   "responsibility": "handler の展開の頭の import(handle.hy の _vm-imports)",
+   "owns": "handler 自身が使う Pass と WithHandler",
+   "hides": "操作の node(表の nodes / static-nodes)",
+   "interface": "(_vm-imports) → import の form",
+   "effects": "なし(展開の時の form)",
+   "lifetime": "なし",
+   "invariants": "表の順・重ねなし。型検査のための展開は static-nodes だけ"
+  },
+  {
+   "id": "clause-endings",
+   "responsibility": "節の終わり方と effect の再開の宣言の照合(clause_endings.hy)",
+   "owns": "名前で分かる effect(Raise / Absent)・Resumption と Ending の照らし方・ClauseEndingError・fell-through",
+   "hides": "どの名が再開する・打ち切る操作か(表の Ending に聞く)",
+   "interface": "展開の時 check-clause-by-name(SyntaxError)・評価の時 check-clause-endings(ClauseEndingError)・実行の時 fell-through(RuntimeError)",
+   "effects": "なし(例外を上げるだけ)",
+   "lifetime": "なし(check-clause-endings-once の済んだ印は handler の本体の属性)",
+   "invariants": "Raise / Absent の節の Ending.RESUMES の操作は断る。普通の effect の節の Ending.FINISHES の操作は :finish-reason が要る"
+  },
+  {
+   "id": "effect-resumption",
+   "responsibility": "effect の型の再開の宣言(doeff_core_effects.effects の Resumption・resumption_of)",
+   "owns": "Raise = NEVER・Absent = ABSENT-AS-ONLY・宣言なし = REQUIRED",
+   "hides": "なし(宣言を読むだけの口)",
+   "interface": "resumption_of(type) → Resumption",
+   "effects": "なし",
+   "lifetime": "なし",
+   "invariants": "宣言の無い型は REQUIRED"
+  },
+  {
+   "id": "static-view",
+   "responsibility": "型検査のための展開の切替と module の頭の補助の import(static_view.py)",
+   "owns": "切替の ContextVar・HANDLER_STATIC_NAMES",
+   "hides": "切替の仕組み",
+   "interface": "static_view_enabled()・static_view()",
+   "effects": "なし(ContextVar の値の読み書き)",
+   "lifetime": "static_view() の with の間だけ切り替わる",
+   "invariants": "実行時の展開は切替に依らない"
+  },
+  {
+   "id": "bytecode-guard",
+   "responsibility": "展開の記録と .pyc の照らし(doeff_hy_bytecode_guard)",
+   "owns": "macro の閉包の digest・束縛の文",
+   "hides": "閉包の辿り方",
+   "interface": "records.record_of・record_is_current_here",
+   "effects": "記録の file の読み書き(この設計では変えない)",
+   "lifetime": "記録は .pyc と共に残る",
+   "invariants": "閉包が依る表の行や rewrite が変われば古いと判じる"
+  },
+  {
+   "id": "regression-test",
+   "responsibility": "検(tests/test_handle_clause_ops.py)",
+   "owns": "表と読み手の対応・表の外の名の禁止・表に足す / 消す時の追従",
+   "hides": "なし(検)",
+   "interface": "pytest(root の pytest の段)",
+   "effects": "なし(一時の module を作るだけ)",
+   "lifetime": "なし",
+   "invariants": "表を monkeypatch で差し替えた検は、検の終わりに元へ戻る"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "続きへ例外を投げる操作 (throw 例外) を足す(TransferThrow だけの版と、resume と同じ扱い — 非末尾 ResumeThrow・末尾 TransferThrow — の版)",
+   "claim": "足すのは clause-ops-table の 1 行と rewrite の関数だけ。termination-check・clause-rewrite・handler-imports・clause-endings・static-view は変えない。Raise / Absent の節の throw は展開の時と評価の時の両方で断られ、型検査の展開も node を import する(design-pre-blind.md S1)",
+   "expected_scope": "clause-ops-table(と検を足すなら regression-test)",
+   "actual_scope": "TransferThrow だけの版は予想どおり。resume と同じ扱いの版は 10addc647 では clause-rewrite(末尾の替えの名の直書きと「再開した」の印)も変える必要があった(盲検 A)。直した 6744ae538 では clause-ops-table の 2 行だけで足せる",
+   "changed_modules": [
+    "clause-ops-table",
+    "clause-rewrite",
+    "regression-test"
+   ],
+   "unchanged_modules": [
+    "termination-check",
+    "handler-imports",
+    "clause-endings",
+    "effect-resumption",
+    "static-view",
+    "bytecode-guard"
+   ],
+   "reason": "隠すはずの知識の漏れ: 「末尾で替える先」と「続きの後に節へ戻るか」が表の外(handle.hy の名の直書き・resume の行の rewrite の中の印)に在った。直しは ClauseOp に tail・returns を足す 1 回の公開契約の拡張と、clause-rewrite が表を読む配線",
+   "revision": "6744ae538: ClauseOp に returns・tail。_rewrite-ops が returns の行に印を立て、_tail-resume-to-transfer が tail で替える。after-test.log(77 passed — 表の 2 行で足した throw の非末尾・末尾・Raise の検め)・a-hardcoded-tail-test-after.log(名の直書きは赤)・a-returns-flag-after.log(returns の誤りは RuntimeError)"
+  },
+  {
+   "id": "S2",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "続きを捨ててスコープを値で終える新しい操作(例 (abort 値))を足す",
+   "claim": "clause-ops-table の 1 行(Ending.FINISHES)だけ。:finish-reason の要否は clause-endings が Ending で照らすので変えない",
+   "expected_scope": "clause-ops-table",
+   "actual_scope": "予想どおり(盲検は S2 を破らなかった。行ごとの Ending の照合の検で確かめた)",
+   "changed_modules": [
+    "clause-ops-table"
+   ],
+   "unchanged_modules": [
+    "termination-check",
+    "clause-rewrite",
+    "handler-imports",
+    "clause-endings",
+    "effect-resumption",
+    "static-view",
+    "bytecode-guard",
+    "regression-test"
+   ],
+   "reason": "打ち切る操作の判断は Ending.FINISHES の 1 か所(ops-ending)で、clause-endings は名を持たない",
+   "revision": "不要 — after-test.log の test_every_operation_in_the_table_is_checked_by_its_ending[finish]・after-adr-r15-test.log"
+  },
+  {
+   "id": "S3",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "既存の操作の展開の形を変える(型検査の展開の node・書き換え)・操作を退役する(pass の行を消す)",
+   "claim": "行の rewrite・nodes・static-nodes を替えるか行を消すだけ。消した操作はどの読み手からも操作でなくなる(design-pre-blind.md S3)",
+   "expected_scope": "clause-ops-table",
+   "actual_scope": "10addc647 では、名の集まりを写した新しい読み手(盲検 B)が退役に追従しないまま検を通った。直した 6744ae538 では写しを検が赤にし、行を消すと 3 つの読み手と展開の時の検めが追従する",
+   "changed_modules": [
+    "clause-ops-table",
+    "regression-test"
+   ],
+   "unchanged_modules": [
+    "termination-check",
+    "clause-rewrite",
+    "handler-imports",
+    "clause-endings",
+    "effect-resumption",
+    "static-view",
+    "bytecode-guard"
+   ],
+   "reason": "R3 の検が既知の 3 つの読み手の振る舞いしか見ず、表の外の名の写しを禁じていなかった(検の穴)。直しは全 module の綴りの検の追加",
+   "revision": "6744ae538: test_no_module_writes_an_operation_name_outside_the_table・test_a_removed_operation_is_no_longer_an_operation_anywhere。b-failure-test-after.log(B の差分は赤)・after-test.log・r4-expand-compare.txt(行の rewrite を替えても既存の展開は同じ)"
+  },
+  {
+   "id": "S4",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "表の行を変えた版で、前の版が書いた展開の記録(.pyc)を使う",
+   "claim": "展開の記録は macro の閉包を名の大域と束縛の文で辿るので、表の行を変えると前の記録は今に合わないと判じられ、関係の無い行の変更では今に合うまま。bytecode-guard は変えない",
+   "expected_scope": "変更なし",
+   "actual_scope": "予想どおり(関係の無い註 → current True・行の nodes と rewrite を変える → current False)",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "clause-ops-table",
+    "termination-check",
+    "clause-rewrite",
+    "handler-imports",
+    "clause-endings",
+    "effect-resumption",
+    "static-view",
+    "bytecode-guard",
+    "regression-test"
+   ],
+   "reason": "表は handle.hy の大域の関数(clause-op・node-names)から届く束縛の文で、bytecode-guard の既存の辿り方が覆う",
+   "revision": "不要 — s4-storage-after.log"
+  },
+  {
+   "id": "X-hardware",
+   "axis": "hardware",
+   "applicability": "excluded",
+   "reason": "展開は compile の時の form の組み立てで、生成した code は機体に依らない"
+  },
+  {
+   "id": "X-distribution",
+   "axis": "distribution",
+   "applicability": "excluded",
+   "reason": "展開と検めは 1 process の compile と評価の時の処理で、機体をまたがない"
+  },
+  {
+   "id": "X-concurrency",
+   "axis": "concurrency",
+   "applicability": "excluded",
+   "reason": "表は読み込みの時に作る不変の tuple で、展開の時に書き換えない(検の monkeypatch は検の中だけ)"
+  },
+  {
+   "id": "X-simulation",
+   "axis": "simulation",
+   "applicability": "excluded",
+   "reason": "時刻・乱数・外の世界に触らない"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C1",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "6744ae538 で、表に throw(TransferThrow)を足すと展開・実行・Raise / Absent の検め・2 つの展開の import が追従し、resume と同じ扱いの throw を表の 2 行で足すと非末尾は印つきの ResumeThrow・末尾は TransferThrow になって答えを返す",
+   "observation": "tests/test_handle_clause_ops.py・test_handle_scope・test_tail_resume_tco で 77 passed(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/after-test.log",
+    "sha256": "b6fc6d9dfcd0e416862384b772ee0000950326ab47dc27bab8d6cc9d55e93821"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C2",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 A の形(表に throw・transfer-throw を足し、末尾の替えを handle.hy に名で直に書く)を、表の外の名の検が拒む",
+   "observation": "test_no_module_writes_an_operation_name_outside_the_table が赤(終了の状態 1)。ほかの 4 件の赤は差分の行と検の fixture の行の名のぶつかり",
+   "evidence": {
+    "path": "evidence/a-hardcoded-tail-test-after.log",
+    "sha256": "dbf3d2c9fcc75765f7323bb74b42862345c7a6f0939d355ba1917165546e390e"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C3",
+   "scenarios": [
+    "S1",
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B の差分(handle.hy に名の集まりを写した続き k の 2 度使いの検め)を、表の外の名の検が拒む",
+   "observation": "test_no_module_writes_an_operation_name_outside_the_table だけが赤・21 passed(終了の状態 1)",
+   "evidence": {
+    "path": "evidence/b-failure-test-after.log",
+    "sha256": "b6885d3c9061113982eb074431ac0af115c7b89e846bc06295e8f8bfbd5c7e4f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C4",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "続きの後に節へ戻る node(ResumeThrow)の行を returns=False と誤って宣言すると、節は黙って通らず実行の時に RuntimeError で止まり、returns=True なら答えが返る",
+   "observation": "returns=False: RuntimeError「どれにも届かずに抜けた」・returns=True: 答え -1(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/a-returns-flag-after.log",
+    "sha256": "ecac6c87574d4640261967dd109d6f40b603cd39e0c010c626a306dc90724ddf"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C5",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "理由つきの打ち切り (finish) と Raise / Absent の節の finish は展開を通り、スコープを値で終える",
+   "observation": "ADR-DOE-CORE-EFFECTS-003 の R15 の検 4 passed(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/after-adr-r15-test.log",
+    "sha256": "420e245543431c3d13d98bc0389f01395b93c6054a6124526c4ba8916f0cb1d9"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C6",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "Ending.FINISHES の行は、普通の effect の節で理由が無ければ展開の時に断られる(行ごとの Ending の照合)",
+   "observation": "test_every_operation_in_the_table_is_checked_by_its_ending[finish] を含む 77 passed(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/after-test.log",
+    "sha256": "b6fc6d9dfcd0e416862384b772ee0000950326ab47dc27bab8d6cc9d55e93821"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C7",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "表の行の rewrite と tail を替えた 6744ae538 で、handle / defhandler を使う既存の 253 file の実行時と型検査の展開が 10addc647 と同じ",
+   "observation": "506 件中、違うのは変えた handle.hy 自身の 2 件だけ",
+   "evidence": {
+    "path": "evidence/r4-expand-compare.txt",
+    "sha256": "804479a3dba9f04a48416dc847a99cb437d6e83e79658e4a32af1d2242711280"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C8",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "表から pass の行を消すと、(pass) は節の終わりでも操作でもなくなり、(Bump [n] (pass)) は展開の時に missing resume で断られる",
+   "observation": "test_a_removed_operation_is_no_longer_an_operation_anywhere を含む 77 passed(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/after-test.log",
+    "sha256": "b6fc6d9dfcd0e416862384b772ee0000950326ab47dc27bab8d6cc9d55e93821"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C9",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "既存の handler の展開の形と静的検査の検が直した版でも通る",
+   "observation": "tests/test_handle_macro.py・packages/doeff-hy/tests/test_static_check_defhandler.py で 37 passed(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/after-related-test.log",
+    "sha256": "25189821e1db73c58e02f981b3ea432c2bed2b56257a8f87e7a42f9545d43979"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C10",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "表と関係の無い行(clause_ops.hy の末尾の註)を変えても、defhandler を使う module の展開の記録は今に合う",
+   "observation": "変えない・関係の無い註 → current True",
+   "evidence": {
+    "path": "evidence/s4-storage-after.log",
+    "sha256": "0e24d53b5e8dbee448ded7df89b8f58f240cbc5f2011b5a0920845629bef40b5"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C11",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "表の行(resume の nodes)や行の rewrite(transfer)を変えると、前の展開の記録は古いと判じられる",
+   "observation": "どちらも current False",
+   "evidence": {
+    "path": "evidence/s4-storage-after.log",
+    "sha256": "0e24d53b5e8dbee448ded7df89b8f58f240cbc5f2011b5a0920845629bef40b5"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}
