@@ -18,6 +18,7 @@
 (import ast)
 (import builtins)
 (import collections)
+(import importlib.util)
 (import inspect)
 (import json)
 (import os)
@@ -53,6 +54,9 @@
 
 ;; 照合に使う PyPI の Hy の版は、uv.lock の hy の行から読む(locked-hy-version)— 写しの定数を置かない。前は "hy==1.3.1" の
 ;; 定数で、uv.lock の Hy を上げても照合は 1.3.1 のままだった(新しい版で消えた hy.scoping の名を見逃す — card ki-a05a752e7545)。
+;; 読みは doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version — commit の hook の semgrep・pre-commit と
+;; packages/doeff-hy/tests/test_bytecode_guard.py も読む)に任せ、ここに写しの読みを置かない(card ki-33d2441b7e28)。
+(val LOCK-READER (/ (. (Path __file__) parent parent parent) "scripts" "semgrep_locked.py"))
 
 ;; Hy の上限(R6)を置く 1 か所 — doeff-hy の依存の宣言。上限の版は uv.lock の hy の版ちょうど(`<=<版>`)で、写しの定数を置かず
 ;; 検が uv.lock と突き合わせる(card ki-0ff168f4eaf5)。
@@ -413,21 +417,17 @@
                  (or (= j 0) (not (isinstance (get names (- j 1)) hy.models.Keyword))))
         #(rel dotted (hy.mangle (str name)))))
 
-(defk locked-hy-version [lock-text]
-  {:pre [(: lock-text str)]
+(defk locked-hy-version [repo-root]
+  {:pre [(: repo-root Path)]
    :post [(: % str)]
-   :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "uv.lock の本文から、doeff が入れる Hy の版を読む — R4 の照合の版の定義元は uv.lock(Hy を上げる変更が照合の版も上げる・
-   card ki-a05a752e7545)。hy の行が 1 つでない・index から入れる版でない(フォークの git など)時は、照合の版を決められないので止める。"
-  (val rows (lfor package (.get (tomllib.loads lock-text) "package" [])
-                  :if (= (.get package "name") "hy")
-                  package))
-  (assert (= (len rows) 1)
-          (+ "uv.lock の hy の行が 1 つでない(" (str (len rows)) " 行)— 照合する Hy の版を決められない"))
-  (val source (.get (get rows 0) "source" {}))
-  (assert (in "registry" source)
-          (+ "uv.lock の hy が index から入れる版でない(" (str source) ")— R3 のとおりフォークを指さない"))
-  (get (get rows 0) "version"))
+   :tags {:context "doeff-hy-adr" :role "foundation"}}
+  "repo-root の uv.lock が決める、doeff が入れる Hy の版 — R4・R6・R7 の照合の版の定義元は uv.lock(Hy を上げる変更が照合の版も
+   上げる・card ki-a05a752e7545)。読みは LOCK-READER の locked_version: hy の行が 1 つでない・index から入れる版でない(フォークの
+   git など — R3)時は、照合の版を決められないので理由を名指して止まる(SystemExit)。"
+  (val spec (importlib.util.spec-from-file-location "semgrep_locked" LOCK-READER))
+  (val reader (importlib.util.module-from-spec spec))
+  (.exec-module spec.loader reader)
+  (.locked-version reader repo-root "hy"))
 
 (defk doeff-hy-requirements [repo-root]
   {:pre [(: repo-root Path)]
@@ -671,7 +671,7 @@
                   "例外の固定 = " (str FORK-PIN) "): " (str violations))))
      (deftest test-adr-doe-hy-008-imports-exist-in-pypi-hy
        (val repo-root (. (Path __file__) parent parent parent))
-       (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+       (val hy-version (run (locked-hy-version repo-root)))
        (val imports (run (scan-hy-imports repo-root)))
        (val missing (run (missing-on-pypi-hy imports hy-version)))
        (val violations (run (import-violations missing (date.today) FORK-ONLY-IMPORT-EXCEPTIONS)))
@@ -680,7 +680,7 @@
                   "(ADR-DOE-HY-008 R4 — doeff の側で持つ): " (str violations))))
      (deftest test-adr-doe-hy-008-internal-reliances-exist-in-pypi-hy
        (val repo-root (. (Path __file__) parent parent parent))
-       (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+       (val hy-version (run (locked-hy-version repo-root)))
        (val reliances (run (scan-hy-reliances repo-root)))
        (val probed (run (probe-reliances reliances hy-version)))
        (val violations
@@ -696,7 +696,7 @@
      (deftest test-adr-doe-hy-008-reliance-probe-names-what-pypi-hy-lacks
        ;; 反例(card ki-2fa4c02604b1): 在らない名・属性・module を、uv.lock の版の PyPI の Hy で測ると名を挙げて赤になる。
        (val repo-root (. (Path __file__) parent parent parent))
-       (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+       (val hy-version (run (locked-hy-version repo-root)))
        (val rows [#("a.py" "replaced" "hy.importer" "_could_be_hy_src")
                   #("a.py" "replaced" "hy.importer" "_doeff_no_such_name")
                   #("m.hy" "compiler-parameter" "hy.macros.macroexpand" "_hy_compiler")
@@ -719,19 +719,19 @@
      (deftest test-adr-doe-hy-008-exceptions-do-not-outlive-their-cause
        (val repo-root (. (Path __file__) parent parent parent))
        (val mentions (run (fork-mentions repo-root)))
-       (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+       (val hy-version (run (locked-hy-version repo-root)))
        (val missing (run (missing-on-pypi-hy (run (scan-hy-imports repo-root)) hy-version)))
        (val stale (run (stale-exceptions missing mentions)))
        (assert (= stale []) (+ "原因の消えた例外が台帳に残っている(ADR-DOE-HY-008 R5): " (str stale))))
      (deftest test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version
        (val repo-root (. (Path __file__) parent parent parent))
-       (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
+       (val hy-version (run (locked-hy-version repo-root)))
        (val violations (+ (run (hy-cap-violations (run (doeff-hy-requirements repo-root)) hy-version))
                           (run (hy-caps-outside-doeff-hy (run (hy-declarations-outside-doeff-hy repo-root))))))
        (assert (= violations [])
                (+ "Hy の上限が R6 に反する(ADR-DOE-HY-008 R6 — 上限は " HY-CAP-DECLARATION " の 1 か所に、条件なしで uv.lock の版 "
                   hy-version " ちょうどに置き、Hy を上げる便は上限と uv.lock を同じ commit で上げる): " (str violations))))
-     (deftest test-adr-doe-hy-008-judgments-reject-the-counterexamples
+     (deftest test-adr-doe-hy-008-judgments-reject-the-counterexamples [tmp-path]
        ;; 反例: 別の rev・期限の後・台帳に無い import は赤、台帳に在り期限の内の import は緑。
        (val before (date 2026 9 30))
        (val after (date 2026 12 31))
@@ -759,13 +759,21 @@
                    #("macros.hy" "hy" "mangle")]))
        (assert (.search HY-IMPORT-HINT "(import hy.scoping [ScopeGlobal])"))
        (assert (not (.search HY-IMPORT-HINT "(import doeff-hy.macros [defk])")))
-       ;; 反例: 照合の版は uv.lock の hy の行から読む(lock を上げると照合も上がる)・index から入れる版でなければ止める。
+       ;; 反例: 照合の版は uv.lock の hy の行から読む(lock を上げると照合も上がる)・hy の行が 1 つでない・index から入れる版でなければ
+       ;; 止める(読みは LOCK-READER の 1 か所 — card ki-33d2441b7e28)。
        (val lock-text (+ "version = 1\n\n[[package]]\nname = \"hy\"\nversion = \"1.4.0\"\n"
                          "source = { registry = \"https://pypi.org/simple\" }\n"))
-       (assert (= (run (locked-hy-version lock-text)) "1.4.0"))
-       (with [(pytest.raises AssertionError :match "index から入れる版でない")]
-         (run (locked-hy-version (.replace lock-text "registry = \"https://pypi.org/simple\""
-                                           "git = \"https://github.com/proboscis/hy.git?rev=adbe989a\""))))
+       (val lock (/ tmp-path "uv.lock"))
+       (.write-text lock lock-text :encoding "utf-8")
+       (assert (= (run (locked-hy-version tmp-path)) "1.4.0"))
+       (.write-text lock (.replace lock-text "registry = \"https://pypi.org/simple\""
+                                   "git = \"https://github.com/proboscis/hy.git?rev=adbe989a\"")
+                    :encoding "utf-8")
+       (with [(pytest.raises SystemExit :match "index から入れる版でない")]
+         (run (locked-hy-version tmp-path)))
+       (.write-text lock (.replace lock-text "name = \"hy\"" "name = \"hyrule\"") :encoding "utf-8")
+       (with [(pytest.raises SystemExit :match "1 つに決まらない")]
+         (run (locked-hy-version tmp-path)))
        ;; 反例(card ki-0ff168f4eaf5): 上限なし・小版の上限(<1.4)・uv.lock と違う上限・hy の行の無い宣言は赤、uv.lock の版ちょうどの上限は緑。
        (assert (= (run (hy-cap-violations ["doeff>=0.2.0" "hy>=1.2.0,<=1.3.1"] "1.3.1")) []))
        (assert (= (len (run (hy-cap-violations ["hy>=1.2.0"] "1.3.1"))) 1))

@@ -38,6 +38,8 @@ LINTER_LOCKED: ModuleType = _linter_locked()
 # hook の python の宣言(.pre-commit-config.yaml の `uv run --python` の版 — card acp:kanban-issue:ki-a28a482132ab)。
 HOOK_PYTHON: str = "3.12"
 FAKE_VERSIONS: dict[str, str] = {"semgrep": "0.0.0-fake", "doeff-linter": "doeff-linter 0.0.0 (fake)"}
+# 偽の lock の行の source — 道具の版の読み手(scripts/semgrep_locked.py)は index から入れる版の行だけを読む(card ki-33d2441b7e28)。
+FAKE_SOURCE: str = 'source = { registry = "https://pypi.org/simple" }\n'
 # 基点と比べる道(scripts/hook_finding_baseline.py)が読む JSON の答え — 所見の無い報告。
 FAKE_REPORTS: dict[str, str] = {"semgrep": '{"results": [], "errors": []}', "doeff-linter": "[]"}
 
@@ -182,9 +184,9 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
     for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py"):
         shutil.copyfile(ROOT / "scripts" / script, repository / "scripts" / script)
-    # semgrep の版は uv.lock が決める(#2906)— 偽の道具の版に合わせる。
+    # semgrep の版は uv.lock が決める(#2906)— 偽の道具の版に合わせる(行は index から入れる版 — 読み手は index の外の行で止まる)。
     (repository / "uv.lock").write_text(
-        f'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{FAKE_VERSIONS["semgrep"]}"\n', encoding="utf-8",
+        f'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{FAKE_VERSIONS["semgrep"]}"\n{FAKE_SOURCE}', encoding="utf-8",
     )
     # doeff-linter の版は組み立ての入力の鍵(#2906)— 偽の crate を commit し、その鍵を基点に書き、偽の開発版の記録をその commit に。
     linter_key: str = _commit_fake_crate(repository, directory)
@@ -337,7 +339,9 @@ def _plain_hook_repository(directory: Path, changed: str, source: str, rule_pack
     (repository / ".semgrep.yaml").write_text(yaml.safe_dump({"rules": vocabulary}), encoding="utf-8")
     (repository / "uv.lock").write_text(
         "version = 1\n"
-        + "".join(f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n' for name, version in FAKE_LOCKED.items()),
+        + "".join(
+            f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n{FAKE_SOURCE}' for name, version in FAKE_LOCKED.items()
+        ),
         encoding="utf-8",
     )
     # Python の semgrep の項は基点と比べる(#2848)— 偽の版の空の基点にする(本線の基点の所見を検に持ち込まない)。

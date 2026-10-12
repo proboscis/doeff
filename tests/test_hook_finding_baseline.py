@@ -299,7 +299,10 @@ def test_init_never_overwrites_a_baseline(tmp_path: Path) -> None:
 
 # --- semgrep は uv.lock の版を呼ぶ(#2906)— 偽の uv が `tool run --python <版> --from semgrep==<版> semgrep` を答え、探し道の semgrep は別の版 ---
 
-LOCK_TEMPLATE = 'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{version}"\n\n[[package]]\nname = "other"\nversion = "0.1.0"\n'
+LOCK_TEMPLATE = (
+    'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{version}"\nsource = {{ registry = "https://pypi.org/simple" }}\n'
+    '\n[[package]]\nname = "other"\nversion = "0.1.0"\n'
+)
 
 FAKE_UV = """\
 import json, sys
@@ -383,6 +386,24 @@ def test_a_lock_without_semgrep_stops_without_falling_back_to_the_path(tmp_path:
     missing = _run(rig, "check", "semgrep", "pkg/a.py")
     assert missing.returncode != 0
     assert "1 つに決まらない" in missing.stderr
+    assert calls.read_text() == before
+
+
+def test_a_lock_row_outside_the_index_stops_without_calling_the_tool(tmp_path: Path) -> None:
+    """lock の semgrep の行が index から入れる版でない(git など)と、`semgrep==<版>` は index の別の物を入れるので、読み手が
+    名指して止まり道具を呼ばない(uv.lock の版を読む 1 か所の判定 — Hy の版で測る検と同じ・card ki-33d2441b7e28)。"""
+    rig = _semgrep_rig(tmp_path)
+    assert _run(rig, "init", "semgrep").returncode == 0
+    calls = tmp_path / "bin" / "uv-calls.jsonl"
+    before = calls.read_text()
+    (rig.repo / "uv.lock").write_text(
+        LOCK_TEMPLATE.format(version="1.2.3").replace(
+            'registry = "https://pypi.org/simple"', 'git = "https://github.com/semgrep/semgrep.git?rev=0123abc"'
+        )
+    )
+    outside = _run(rig, "check", "semgrep", "pkg/a.py")
+    assert outside.returncode != 0
+    assert "index から入れる版でない" in outside.stderr
     assert calls.read_text() == before
 
 

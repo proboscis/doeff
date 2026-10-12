@@ -14,6 +14,9 @@
    macro の実行時の半分(`<-`・`!` の束ねの開き方を持つ doeff_core_effects.outcomes)を変えた差分は、本物の表から例の検を
    選ぶ(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間、例を壊す変更は登記の前に測られず、翌日の日次で初めて赤になった。
    実行時の半分は同じ依頼の設計検証の盲検 B が見つけた — doeff-hy の行だけでは選ばれなかった)。
+4. uv.lock の Hy の版で測る検が、uv.lock の変更と、uv.lock の版の読み手(scripts/semgrep_locked.py の locked_version)の
+   変更で選ばれる: 版は data の file から読むので、逆依存では選ばれない。測る検は source から数える(card ki-33d2441b7e28 —
+   test_bytecode_guard.py は uv.lock から版を読むのに表に無く、Hy を上げる便で選ばれず日次でだけ走った)。
 
 日次の母集団(tests/)と、表の repo 全体の行(prefix = "")の両方から走る — 変えた所の検は、どの変更でもこの file を先頭の
 組で走らせる。入口の main は呼ばず、読み手の純粋な定義(read_contract_table・workspace_packages・table_gaps)を直に呼ぶ。
@@ -22,6 +25,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import shutil
 import sys
@@ -44,6 +48,14 @@ EXAMPLE_MACROS = "packages/doeff-hy/src/doeff_hy/macros.hy"
 #: 持ち、ここは形だけを作る」で、defk の本体の束ねは macros.hy が globals に置くこの module の open_bind を引く。
 EXAMPLE_MACRO_RUNTIME_MODULE = "doeff_core_effects.outcomes"
 EXAMPLE_MACRO_RUNTIME = "packages/doeff-core-effects/doeff_core_effects/outcomes.py"
+#: uv.lock と、doeff で uv.lock の版を読む 1 か所(card ki-33d2441b7e28)。
+LOCK = "uv.lock"
+LOCK_READER = "scripts/semgrep_locked.py"
+#: 検の source が読み手を Hy の版の読みに呼ぶ行(Python の locked_version・Hy の .locked-version の呼びで、package に hy の名を
+#: 渡す行)。
+LOCKED_HY_READ = re.compile(r'locked[-_]version\b[^\n]*"hy"')
+#: 測る検を数える時に降りない dir(venv・git・build の出力 — 検の source を持たない)。
+NOT_WALKED = re.compile(r"^(\..*|node_modules|target|build|dist|__pycache__)$")
 
 
 @dataclass(frozen=True)
@@ -160,6 +172,61 @@ def test_changing_an_example_or_its_macros_selects_the_examples_check(runner: Mo
     assert unselected == [], (
         f"例の検 {EXAMPLES_CHECK} を選ばない変更: {unselected} — root の pyproject.toml の [[tool.doeff.contract-tests]]"
         " で、その path に当たる行の tests に例の検を足す(例の検は例も macro も import しないので、逆依存では選ばれない)"
+    )
+
+
+def _walked_files() -> Iterator[Path]:
+    """repo の file(NOT_WALKED の dir へ降りない)。"""
+    for current, dirs, files in os.walk(REPO_ROOT):
+        dirs[:] = sorted(name for name in dirs if not NOT_WALKED.match(name))
+        yield from (Path(current, name) for name in files)
+
+
+def _locked_hy_checks(runner: ModuleType) -> tuple[str, ...]:
+    """uv.lock の Hy の版で測る検の file — 集め手の名の規則に当たる file のうち、source が読み手を Hy の版の読みに呼ぶ物。"""
+    patterns = runner.collector_patterns(REPO_ROOT)
+    return tuple(
+        sorted(
+            rel
+            for path in _walked_files()
+            for rel in (path.relative_to(REPO_ROOT).as_posix(),)
+            if runner.is_test_file(rel, patterns)
+            and LOCKED_HY_READ.search(path.read_text(encoding="utf-8"))
+        )
+    )
+
+
+def _selected_files(runner: ModuleType, changed: str) -> frozenset[str]:
+    """file changed 1 つを変えた差分で、変えた所の検の選び(入口と同じ select_targets)が選ぶ検の file。"""
+    selection = runner.select_targets(
+        runner.read_contract_table(REPO_ROOT),
+        runner.ChangeSet(base="", files=(changed,)),
+        runner.collector_patterns(REPO_ROOT),
+        REPO_ROOT,
+    )
+    return frozenset(target.arg.split("::", 1)[0] for target in selection.targets)
+
+
+def test_changing_the_lock_or_its_reader_selects_every_check_measuring_the_locked_hy(
+    runner: ModuleType,
+) -> None:
+    """本物の表: uv.lock を変えた差分も、uv.lock の版の読み手を変えた差分も、uv.lock の Hy の版で測る検の file を全部選ぶ
+    (file の一部の検を選べば足りる)。測る検は source から数える — 写しの一覧を置かない。"""
+    checks = _locked_hy_checks(runner)
+    assert checks, (
+        f"{LOCK_READER} を Hy の版の読みに呼ぶ検が 0 本 — 読み手の名か呼び方が変わったら LOCKED_HY_READ を直す"
+    )
+    selected = {changed: _selected_files(runner, changed) for changed in (LOCK, LOCK_READER)}
+    unselected = [
+        (changed, check)
+        for changed, files in selected.items()
+        for check in checks
+        if check not in files
+    ]
+    assert unselected == [], (
+        f"uv.lock の Hy の版で測る検を選ばない変更 #(変えた file 検): {unselected} — root の pyproject.toml の"
+        " [[tool.doeff.contract-tests]] で、その path に当たる行の tests に検を足す(版は data の file から読むので、"
+        "逆依存では選ばれない)"
     )
 
 

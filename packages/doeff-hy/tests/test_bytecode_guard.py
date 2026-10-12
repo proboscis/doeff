@@ -6,8 +6,9 @@
 Hy は **PyPI の版**(fork ではない — 利用者の決定 2026-09-29「Hy には一切手を入れない」)を、この venv と切り離した
 使い捨ての環境(``uv run --no-project --isolated --with hy==<uv.lock の版>``)で使う。この venv は起動の時に .pth から
 包みを入れる(test_the_venv_installs_the_guard_at_startup_before_hy)ので、ここでは包みの無い形と分けて測れない。
-版は repo の根の uv.lock の hy の行から読む(ADR-DOE-HY-008 の locked-hy-version と同じ — card ki-df4cc0b38cda)。
-写しの定数だと、uv.lock の Hy を上げてもこの検は古い版のまま測る。
+版は repo の根の uv.lock の hy の行から、doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version)で読む
+(card ki-df4cc0b38cda・ki-33d2441b7e28)。写しの定数だと、uv.lock の Hy を上げてもこの検は古い版のまま測る。uv.lock の変更では
+`make test-changed` がこの file を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])。
 """
 
 from __future__ import annotations
@@ -24,11 +25,11 @@ from functools import cache
 from pathlib import Path
 
 import pytest
-import tomllib
 from doeff_hy_bytecode_guard import records
 
-#: 測る Hy の版の定義元(repo の根の uv.lock)。
-LOCK = Path(__file__).resolve().parents[3] / "uv.lock"
+#: 測る Hy の版を決める uv.lock を持つ repo の根と、doeff で uv.lock の版を読む 1 か所。
+ROOT = Path(__file__).resolve().parents[3]
+LOCK_READER = ROOT / "scripts" / "semgrep_locked.py"
 #: 包みの package の親(doeff-hy の src)— 使い捨ての環境へは path で渡す(doeff-hy 全体は入れない)。
 GUARD_ROOT = Path(__file__).resolve().parents[1] / "src"
 
@@ -45,21 +46,14 @@ _ENV_NOT_PASSED = (
 
 @cache
 def _locked_hy_version() -> str:
-    """uv.lock の hy の行の版。hy の行が 1 つでない・index から入れる版でない(フォークの git など)時は、測る版を決められない
-    ので止める(ADR-DOE-HY-008 の locked-hy-version と同じ判定)。"""
-    rows = [
-        package
-        for package in tomllib.loads(LOCK.read_text(encoding="utf-8")).get("package", [])
-        if package.get("name") == "hy"
-    ]
-    assert len(rows) == 1, (
-        f"uv.lock の hy の行が 1 つでない({len(rows)} 行)— 測る Hy の版を決められない"
-    )
-    source = rows[0].get("source", {})
-    assert "registry" in source, (
-        f"uv.lock の hy が index から入れる版でない({source})— PyPI の Hy で測れない"
-    )
-    return rows[0]["version"]
+    """repo の根の uv.lock が決める Hy の版。hy の行が 1 つでない・index から入れる版でない(フォークの git など)時は、読み手が
+    理由を名指して止まる(SystemExit — 測る版を決められない)。"""
+    spec = importlib.util.spec_from_file_location("semgrep_locked", LOCK_READER)
+    assert spec is not None
+    assert spec.loader is not None
+    reader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reader)
+    return reader.locked_version(ROOT, "hy")
 
 
 _LOADER = """\

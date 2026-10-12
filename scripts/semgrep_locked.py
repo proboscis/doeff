@@ -9,6 +9,11 @@ uv tool = 1.161.0・lock = 1.169.0。`.venv` の無い作業木では `uv run --
 使い方: uv run --no-project --python <版> python scripts/semgrep_locked.py <semgrep の引数…>(repo の根で。semgrep の答えと終了の値をそのまま返す)。
 uv.lock に semgrep が無ければ、理由を名指して 1 で止まる(探し道の物へ黙って戻らない)。素の commit の hook が呼ぶ pre-commit も同じ
 読みで版を決める(scripts/precommit_locked.py・card ki-8c0bb496bfab)。
+
+locked_version は doeff で uv.lock の版を読む 1 か所(card ki-33d2441b7e28): Hy の版で測る検(ADR-DOE-HY-008 の
+locked-hy-version・packages/doeff-hy/tests/test_bytecode_guard.py)も、この file を path で読んで呼ぶ。hook は doeff の環境の外
+(`uv run --no-project`)で走るので、読み手は標準の library だけで書く。読みを変えたら、uv.lock の Hy の版で測る検が root の
+pyproject.toml の [[tool.doeff.contract-tests]] で選ばれる(tests/test_contract_table_follows_packages.py)。
 """
 
 from __future__ import annotations
@@ -24,20 +29,25 @@ PACKAGE: str = "semgrep"
 
 
 def locked_version(top: Path, package: str = PACKAGE) -> str:
-    """uv.lock が決める package(既定は semgrep)の版。lock が無い・package が 1 つに決まらない時は理由を名指して止める(既定の版に
-    しない)。"""
+    """木 top の uv.lock が決める package(既定は semgrep)の版。lock が無い・package の行が 1 つでない・行が index から入れる版でない
+    (git・path など)時は理由を名指して止める(既定の版にしない)— 使い手はどれも `<package>==<版>` を index から入れるので、
+    index の外の行の版の名で入れると lock と違う物を測る。"""
     lock: Path = top / LOCK_FILE
     if not lock.is_file():
-        raise SystemExit(f"{package} の版を決める {lock} が無い — 探し道の {package} へは戻らない")
+        raise SystemExit(f"{package} の版を決める {lock} が無い — 既定の版や探し道の {package} へは戻らない")
     parsed: dict[str, object] = tomllib.loads(lock.read_text(encoding="utf-8"))
     packages: object = parsed.get("package", [])
-    versions: list[str] = (
-        [str(entry["version"]) for entry in packages if isinstance(entry, dict) and entry.get("name") == package]
+    rows: list[dict[str, object]] = (
+        [entry for entry in packages if isinstance(entry, dict) and entry.get("name") == package]
         if isinstance(packages, list) else []
     )
-    if len(versions) != 1:
-        raise SystemExit(f"{lock} の {package} の版が 1 つに決まらない({versions})— 探し道の {package} へは戻らない")
-    return versions[0]
+    if len(rows) != 1:
+        versions: list[object] = [row.get("version") for row in rows]
+        raise SystemExit(f"{lock} の {package} の版が 1 つに決まらない({versions})— 既定の版や探し道の {package} へは戻らない")
+    source: object = rows[0].get("source")
+    if not (isinstance(source, dict) and "registry" in source):
+        raise SystemExit(f"{lock} の {package} が index から入れる版でない({source})— `{package}==<版>` で lock と同じ物を入れられない")
+    return str(rows[0]["version"])
 
 
 def locked_command(top: Path, package: str = PACKAGE) -> list[str]:
