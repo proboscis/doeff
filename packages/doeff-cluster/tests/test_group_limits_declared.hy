@@ -38,7 +38,7 @@
   (var declared state)
   (for [l limits]
     (:= declared (stamp declared
-                        (create-resource declared "GroupLimit" (ResourceBody :name l.group :spec {"scope" l.scope "limit" l.limit "perPart" l.per-part})
+                        (create-resource declared "GroupLimit" (ResourceBody :name l.group :spec {"scope" l.scope "limit" l.limit "perPart" l.per-part "system" "probe"})
                                          "declare" 0)
                         "declare" 0 T)))
   #((replace declared :workers {"zeus" (WorkerInfo "zeus" #("host-zeus") 30 0 :task-reserve 0 :versions PY3)}) sha))
@@ -73,7 +73,7 @@
   (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) waiting)
   ;; 宣言し直し(値 1 → 2): 送り手は何も変えない。
   (val raised (update-resource (replace after-second :tasks placed) "GroupLimit" "heavy"
-                               (ResourceBody :spec {"scope" "worker" "limit" 2}
+                               (ResourceBody :spec {"scope" "worker" "limit" 2 "system" "probe"}
                                              :resource-version (resource-version-of after-second "GroupLimit/heavy"))
                                "declare"))
   (val again (! (place-tasks 2000 raised {} T)))
@@ -120,7 +120,9 @@
                       #({"scope" "worker" "limit" 0} "limit")
                       #({"scope" "worker" "limit" True} "limit")
                       #({"scope" "worker" "limit" 1 "perPart" "yes"} "perPart")
-                      #({"scope" "worker" "limit" 1 "max" 3} "知らない欄")]]
+                      #({"scope" "worker" "limit" 1 "max" 3} "知らない欄")
+                      #({"scope" "worker" "limit" 1} "system")
+                      #({"scope" "worker" "limit" 1 "system" ""} "system")]]
     (try
       (create-resource state "GroupLimit" (ResourceBody :name "g" :spec spec) "declare" 0)
       (raise (AssertionError (.format "断られなかった: {}" spec)))
@@ -176,7 +178,7 @@
   (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (group-limit-scenario)
                               :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
   (val groups (get state "groupLimits"))
-  (assert (= groups [{"group" "probe" "scope" "worker" "limit" 1 "resourceVersion" (get (get groups 0) "resourceVersion")
+  (assert (= groups [{"group" "probe" "scope" "worker" "limit" 1 "system" "group-limit-scenarios" "resourceVersion" (get (get groups 0) "resourceVersion")
                       "held" [{"worker" "w1" "count" 1}] "queued" 1}])
           groups)
   (assert (isinstance (get (get groups 0) "resourceVersion") int) groups)

@@ -210,8 +210,8 @@
   (.update module.__dict__ ns)
   (setv (get sys.modules "defsystem_probe") module)
   (val system (try (land (get ns "notice")) (finally (.pop sys.modules "defsystem_probe" None))))
-  (assert (= system.task-limits #((GroupLimit :group "heavy" :scope "worker" :limit 6)
-                                  (GroupLimit :group "heavy-caller" :scope "cluster" :limit 2 :per-part True)))
+  (assert (= system.task-limits #((GroupLimit :group "heavy" :scope "worker" :limit 6 :system "land")
+                                  (GroupLimit :group "heavy-caller" :scope "cluster" :limit 2 :per-part True :system "land")))
           system.task-limits)
   (assert (= (len system.jobs) 1) system.jobs))
 
@@ -224,6 +224,7 @@
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" 0}}" "\"limit\" は 1 以上の整数の literal")
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" \"6\"}}" "\"limit\" は 1 以上の整数の literal")
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"max\" 2}}" "受けない欄 ['max']")
+                        #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"system\" \"other\"}}" "受けない欄 ['system']")
                         #("{\"a/b\" {\"scope\" \"worker\" \"limit\" 1}}" "組の名は「/」を含まない")
                         #("[\"g\"]" ":task-limits は文字列の鍵の dict の literal")]]
     (<- message (refusal (.format "(defsystem s [foundation] :task-limits {} {})" limits job-row)))
