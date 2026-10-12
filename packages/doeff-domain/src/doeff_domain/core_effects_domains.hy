@@ -29,7 +29,7 @@
                                       CreatePromise CompletePromise FailPromise
                                       CreateSemaphore AcquireSemaphore
                                       ReleaseSemaphore CreateExternalPromise
-                                      _SchedulerIntrospection scheduled])
+                                      SchedulerIntrospection scheduled])
 (import doeff_core_effects.handlers [reader state writer slog-handler
                                      slog-discard-handler try-handler
                                      local-handler listen-handler await-handler
@@ -137,7 +137,7 @@
 ((handles Spawn TaskCompleted Gather Wait Cancel Discard Race
           CreatePromise CompletePromise FailPromise
           CreateSemaphore AcquireSemaphore ReleaseSemaphore
-          CreateExternalPromise _SchedulerIntrospection) scheduled)
+          CreateExternalPromise SchedulerIntrospection) scheduled)
 ;; Absent / Raise の受け手は束ねの境目の関数(scope を包む installer と factory)。
 ;; BoundAbsent は Absent の子で、印を見て再開し分けるのは absent-as だけ — ほかの受け手には普通の Absent。
 ((handles Absent) maybe)
@@ -226,7 +226,7 @@
   :effects [Spawn TaskCompleted Gather Wait Cancel Discard Race
             CreatePromise CompletePromise FailPromise
             CreateSemaphore AcquireSemaphore ReleaseSemaphore
-            CreateExternalPromise _SchedulerIntrospection]
+            CreateExternalPromise SchedulerIntrospection]
   :handlers [scheduled]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "scheduled が単一の実行基盤 prompt として全 scheduler effect を被覆する。")

@@ -736,14 +736,26 @@ def _external_wait_is_stall(wakes: Iterable[_ExternalWake], grace: float) -> boo
 
 
 class _SchedulerIntrospection(EffectBase):
-    """Test-only hook: resume with the sizes of the scheduler state dicts.
+    """Diagnostic effect: resume with the row counts of the scheduler's state tables.
 
-    Not public API — exists so the #502 sweep can be asserted on without
-    exposing the closure state.
+    The result is a dict of non-negative ints keyed by table name (``tasks``,
+    ``promises``, ``semaphores``, ``waiters``, ``ready``, ``handle_refs``,
+    ``handle_ref_total``). It reads only: the tables are closure state with no
+    other way to look at them, so tests of the #502 terminal-state sweep — in
+    doeff, doeff-records and downstream projects — assert on this effect.
+
+    Import it as ``SchedulerIntrospection`` (below). The class keeps its
+    underscore name because the scheduler's spec — which the Rust scheduler
+    reads by that key — names it so.
     """
 
     def __init__(self):
         super().__init__()
+
+
+#: The public name of the diagnostic effect. Strict type checks of other
+#: packages' tests report ``reportPrivateUsage`` for the underscore name.
+SchedulerIntrospection = _SchedulerIntrospection
 
 
 # ---------------------------------------------------------------------------
