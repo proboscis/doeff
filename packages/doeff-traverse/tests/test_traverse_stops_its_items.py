@@ -18,7 +18,7 @@ sequential は取り消しを 1 件の失敗として飲み込んで残りの件
 
 import io
 from collections.abc import Callable, Iterable
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 from doeff_core_effects.effects import Try
@@ -34,6 +34,7 @@ from doeff_core_effects.scheduler import (
     Wait,
     scheduled,
 )
+from doeff_traverse.collection import Collection
 from doeff_traverse.effects import ItemOutcome, Traverse
 from doeff_traverse.handlers import (
     fail_handler,
@@ -42,12 +43,15 @@ from doeff_traverse.handlers import (
     progress_bars,
     sequential,
 )
-from doeff_vm import Err, Ok
+from doeff_vm import Err, K
 from tqdm import tqdm
 
 from doeff import Pass, Program, do, run
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
+
+if TYPE_CHECKING:
+    from doeff import EffectGenerator
 
 _T = TypeVar("_T")
 
@@ -78,12 +82,20 @@ class _Items:
         """kind(started・cancelled・finished)の起きた件(起きた順)。"""
         return [x for happened, x in self._mut_events if happened == kind]
 
+    def mark(self, name: str) -> None:
+        """検の本体の側で起きた事(取り消しを頼んだ・Traverse が抜けた)の印を、件の記録の間に置く。"""
+        self._note(name, -1)
+
+    def after(self, name: str) -> list[tuple[str, int]]:
+        """印 name の後に件に起きた事(起きた順)。"""
+        return list(self._mut_events[self._mut_events.index((name, -1)) + 1 :])
+
     def _note(self, kind: str, x: int) -> None:
         self._mut_events = (*self._mut_events, (kind, x))
 
     def gated(self, gate: Future[None]) -> Callable[[int], Program[int]]:
         @do
-        def item(x: int):
+        def item(x: int) -> "EffectGenerator[int]":
             self._note("started", x)
             if x == self._failing:
                 raise ValueError(f"item {x}")
@@ -111,7 +123,7 @@ class _Reports:
 
     def handler(self) -> ProgramHandler:
         @do
-        def watch(effect: ItemOutcome, k):
+        def watch(effect: ItemOutcome, k: K) -> "EffectGenerator[object]":
             if isinstance(effect, ItemOutcome):
                 self._mut_seen = (*self._mut_seen, effect)
             yield Pass(effect, k)
@@ -177,18 +189,20 @@ def _run_under(
 
 
 @do
-def _traversed(f: Callable[[int], Program[_T]], items: Iterable[int], label: str):
+def _traversed(
+    f: Callable[[int], Program[_T]], items: Iterable[int], label: str
+) -> "EffectGenerator[Collection[_T]]":
     return (yield Traverse(f, items, label=label))
 
 
 @do
-def _nothing():
+def _nothing() -> "EffectGenerator[None]":
     if False:
         yield
 
 
 @do
-def _let_the_others_run(rounds: int = 20):
+def _let_the_others_run(rounds: int = 20) -> "EffectGenerator[None]":
     """呼んだ task の番を rounds 回譲る — その間に待ち行列の task(件・Traverse の持ち主)が走る。"""
     for _ in range(rounds):
         turn = yield Spawn(_nothing())
@@ -216,16 +230,16 @@ def test_parallel_fail_fast_stops_its_items_when_the_run_goes_on(
     reports = _Reports()
 
     @do
-    def main():
+    def main() -> "EffectGenerator[object]":
         gate = yield CreatePromise()
         caught = yield Try(_traversed(items.gated(gate.future), range(8), label="first"))
-        when_stopped = items.events
+        items.mark("raised")
         # run は続く: 門が開き、待ち行列の task に番が回る
         yield CompletePromise(gate, None)
         yield _let_the_others_run()
-        return caught, when_stopped
+        return caught
 
-    caught, when_stopped = _run_under(
+    caught = _run_under(
         parallel_fail_fast(concurrency=4), [reports.handler()], main(), implementation
     )
     assert isinstance(caught, Err)
@@ -233,7 +247,8 @@ def test_parallel_fail_fast_stops_its_items_when_the_run_goes_on(
     assert items.of("started") == [0, 1, 2, 3]
     assert sorted(items.of("cancelled")) == [0, 1, 3]
     assert items.of("finished") == []
-    assert items.events == when_stopped
+    # Traverse が抜けた時には、件はみな止まっている
+    assert items.after("raised") == []
     assert reports.of("first") == {
         0: ["cancelled"],
         1: ["cancelled"],
@@ -257,32 +272,31 @@ def test_cancelling_the_task_running_a_traverse_stops_its_items(
     reports = _Reports()
 
     @do
-    def main():
+    def main() -> "EffectGenerator[object]":
         gate = yield CreatePromise()
         task = yield Spawn(_traversed(items.gated(gate.future), range(8), label="first"))
         yield _let_the_others_run()
-        started_before_cancel = items.of("started")
+        items.mark("cancel")
         yield Cancel(task)
         yield CompletePromise(gate, None)
         waited = yield Try(Wait(task))
         yield _let_the_others_run()
-        return started_before_cancel, waited
+        return waited
 
-    started_before_cancel, waited = _run_under(
-        _STRATEGIES[name](), [reports.handler()], main(), implementation
-    )
+    waited = _run_under(_STRATEGIES[name](), [reports.handler()], main(), implementation)
     running = [0] if name == "sequential" else [0, 1]
-    assert started_before_cancel == running
     assert isinstance(waited, Err)
     assert isinstance(waited.error, TaskCancelledError)
     assert items.of("started") == running
     assert sorted(items.of("cancelled")) == running
     assert items.of("finished") == []
+    # 取り消しを頼んだ後に件に起きたのは、取り消しを受けた事だけ
+    assert [kind for kind, _ in items.after("cancel")] == ["cancelled"] * len(running)
     assert reports.of("first") == {index: ["cancelled"] for index in range(8)}
 
 
 @do
-def _ends(items: _Items):
+def _ends(items: _Items) -> "EffectGenerator[Collection[int]]":
     """門を先に開けた Traverse — どの件も待たずに終わる。"""
     gate = yield CreatePromise()
     yield CompletePromise(gate, None)
@@ -290,13 +304,13 @@ def _ends(items: _Items):
 
 
 @do
-def _fails_fast(items: _Items):
+def _fails_fast(items: _Items) -> "EffectGenerator[object]":
     gate = yield CreatePromise()
     return (yield Try(_traversed(items.gated(gate.future), range(8), label="first")))
 
 
 @do
-def _is_cancelled(items: _Items):
+def _is_cancelled(items: _Items) -> "EffectGenerator[object]":
     gate = yield CreatePromise()
     task = yield Spawn(_traversed(items.gated(gate.future), range(8), label="first"))
     yield _let_the_others_run()
@@ -363,11 +377,11 @@ def test_cancelling_a_traverse_stops_and_reports_the_traverses_inside_its_items(
     reports = _Reports()
 
     @do
-    def main():
+    def main() -> "EffectGenerator[object]":
         gate = yield CreatePromise()
 
         @do
-        def outer_item(x: int):
+        def outer_item(x: int) -> "EffectGenerator[list[int]]":
             inner = yield _traversed(items.gated(gate.future), range(3), label=f"inner-{x}")
             return inner.valid_values
 
@@ -431,14 +445,14 @@ def test_a_progress_bars_used_again_after_a_stopped_traverse_keeps_no_bar_open(
 
 
 @do
-def _blocked():
+def _blocked() -> "EffectGenerator[None]":
     """誰も完了しない Promise を待ち続ける task の本体(取り消されるまで終わらない)。"""
     never = yield CreatePromise()
     yield Wait(never.future)
 
 
 @do
-def _cancelled_task_waited(x: int):
+def _cancelled_task_waited(x: int) -> "EffectGenerator[int]":
     """件 1 は、取り消した別の task を Wait して TaskCancelledError を受ける(Try で包まない)。"""
     if x == 1:
         other = yield Spawn(_blocked())
@@ -457,7 +471,7 @@ def test_a_task_cancelled_error_out_of_an_item_ends_the_traverse(
     reports = _Reports()
 
     @do
-    def main():
+    def main() -> "EffectGenerator[object]":
         return (yield Try(_traversed(_cancelled_task_waited, range(4), label="first")))
 
     caught = _run_under(_STRATEGIES[name](), [reports.handler()], main(), implementation)
@@ -472,16 +486,16 @@ def test_a_task_cancelled_error_out_of_an_item_ends_the_traverse(
 def test_an_item_that_tries_its_wait_on_a_cancelled_task_is_an_item_like_any_other(
     name: str, implementation: SchedulerImplementation
 ) -> None:
-    """件が自分の Wait を Try で包めば、取り消された task を待っても件は普通に終わる。"""
+    """件が自分の Wait を Try で包めば、取り消された task を待っても TaskCancelledError を値として受け、件は普通に終わる。"""
 
     @do
-    def tolerant(x: int):
+    def tolerant(x: int) -> "EffectGenerator[bool]":
         other = yield Spawn(_blocked())
         yield Cancel(other)
         waited = yield Try(Wait(other))
-        return (x, isinstance(waited, Ok))
+        return isinstance(waited, Err) and isinstance(waited.error, TaskCancelledError)
 
     answered = _run_under(
         _STRATEGIES[name](), [], _traversed(tolerant, range(3), label="first"), implementation
     )
-    assert answered.valid_values == [(0, False), (1, False), (2, False)]
+    assert answered.valid_values == [True, True, True]
