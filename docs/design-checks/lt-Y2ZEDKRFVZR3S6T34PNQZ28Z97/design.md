@@ -32,6 +32,7 @@
 | 盲検 A を受けた直し: 足した entry を鍵の他の entry より後ろに置く(`add_code`・`_place_after`・`NEW_ENTRY_FLOOR_SECONDS`)と単体の検 3 件 | 実施済み — この記録と同じ branch(2377ad0cf)で main へ |
 | 盲検 B を受けた検: 記録の世代の違う書き手が交互に読む検(`test_two_record_generations_…`) | 実施済み — 同上 |
 | 失敗例 N4 を作る中で見つけた検の弱さの直し: 掃除の検の「使った entry の在る鍵の dir」の時刻を 7 日前に置く | 実施済み — 同上(c1a73eeda) |
+| 記録の版と載せ直し | 実測は載せ直しの前の版 2377ad0cf・c1a73eeda(origin の branch wt/ki-6828-dc に在る)で行った。main の先端(21c737842)へ載せ直した版は b14e50aac・db3e6fc47 で、重なる file は test_bytecode_guard.py だけ(main の変更と同じ行は無く、衝突なしで載った)。載せ直した版で触った file の検を流し直した(38 passed — evidence/scenarios/rebased-focused.txt) |
 | 本番での効き(card の受入 c05aec7db — worker の入れ替えの後の 1 時間の焼き直し) | この検証の範囲の外。準備の道具は worker の版の code_store.py で走るので、worker の次の版上げの後に測る(card ki-4c2f5878e524 と同じ扱い) |
 
 ## 2. 責務と公開契約(盲検の後)
