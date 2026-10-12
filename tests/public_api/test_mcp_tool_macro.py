@@ -142,6 +142,44 @@ class TestDefmcpToolMacro:
         sig = inspect.signature(tool.handler)
         assert list(sig.parameters.keys()) == ["alpha", "beta"]
 
+    def test_handler_params_are_annotated_with_the_schema_types(self):
+        """handler の引数は schema の :type を写した型の注記(文字)を持ち、必須でない引数は `| None`
+        (card ki-973b4e44d7bc)。"""
+        import inspect
+
+        mod, _ = _eval_mcp("""
+(defmcp-tool typed-tool
+  "Typed"
+  [{:name "s" :type "string" :description "s"}
+   {:name "i" :type "integer" :description "i" :required True}
+   {:name "n" :type "number" :description "n"}
+   {:name "b" :type "boolean" :description "b"}
+   {:name "xs" :type "array" :description "xs"}
+   {:name "o" :type "object" :description "o"}
+   {:name "maybe-s" :type "string" :description "maybe" :required False}]
+  s)
+""")
+        sig = inspect.signature(mod.__dict__["typed_tool"].handler)
+        assert {name: p.annotation for name, p in sig.parameters.items()} == {
+            "s": "str",
+            "i": "int",
+            "n": "float",
+            "b": "bool",
+            "xs": "list[object]",
+            "o": "dict[str, object]",
+            "maybe_s": "str | None",
+        }
+
+    def test_unknown_param_type_raises(self):
+        """schema の :type が JSON Schema の型でなければ、展開の時に誤りにする(handler の引数の型に写せない)。"""
+        with pytest.raises(Exception, match="知らない型"):
+            _eval_mcp("""
+(defmcp-tool bad-type-tool
+  "Bad type"
+  [{:name "x" :type "str" :description "x"}]
+  x)
+""")
+
     def test_missing_description_raises(self):
         """defmcp-tool without description string raises error."""
         with pytest.raises(Exception, match="description string"):

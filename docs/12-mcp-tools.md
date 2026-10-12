@@ -62,15 +62,30 @@ separate captured handler stack, tracked per-session in the handler's `lazy-var 
 ```
 
 This expands to:
-1. A `@do` handler function `_submit_order_mcp_handler(symbol, side, qty)`
+1. A `@do` handler function `_submit_order_mcp_handler(symbol: "str", side: "str", qty: "int")`
 2. An `McpToolDef` instance `submit_order` with name, description, params, and handler
+
+The handler's parameters carry the type written in `:type` as a string annotation, so the
+type checker (doeff-hy-check, also with `--strict`) sees the body's arguments as typed:
+
+| `:type` | Annotation |
+|---------|------------|
+| `"string"` | `str` |
+| `"integer"` | `int` |
+| `"number"` | `float` |
+| `"boolean"` | `bool` |
+| `"array"` | `list[object]` |
+| `"object"` | `dict[str, object]` |
+
+A parameter whose `:required` is not literally `True` gets `| None` (the tool server passes
+`None` for an argument the agent did not send). Any other `:type` is an error at expansion time.
 
 **Param fields:**
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `:name` | yes | Parameter name (becomes function argument) |
-| `:type` | yes | JSON Schema type: `"string"`, `"integer"`, `"number"`, `"boolean"` |
+| `:type` | yes | JSON Schema type: `"string"`, `"integer"`, `"number"`, `"boolean"`, `"array"`, `"object"` |
 | `:description` | yes | Description shown to the agent |
 | `:enum` | no | Allowed values: `["buy" "sell"]` |
 | `:required` | no | Default `True`. Set `False` for optional params |

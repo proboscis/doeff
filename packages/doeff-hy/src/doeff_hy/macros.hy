@@ -27,6 +27,7 @@
 ;; ---------------------------------------------------------------------------
 
 (import os.path)
+(import dataclasses [dataclass])
 (import importlib)
 (import inspect)
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
@@ -605,10 +606,33 @@ defk {name}: :post type annotation cannot be an empty string.
       form))
 
 
+(defclass [(dataclass :frozen True)] RuntimeDo []
+  "実行時の展開が引く `do` の置き場(`_runtime-do`)— module と、その module の中の名(どちらも Python の綴り)。
+
+   Hy の記号で持たないのは、Hy が点を含む記号 `doeff.do` を式 `(. doeff do)` に読むから — `__import__` に渡す文字を
+   記号から作ると、式の repr を module の名にしていた。"
+  #^ str module
+  #^ str name)
+
+(defn _runtime-do []
+  "実行時の展開が引く doeff の `do` の置き場 — 補助の表(`_helper-imports`)の `do` の行の唯一の定義元。
+
+   `do` を引く展開は、どれもここから綴りを作る: 補助の表の `_doeff_do`(defk・defp・deftest・defmcp-tool)・handle.hy の
+   defhandler と handle の `_doeff_do`(`_do-import`)・fnk の名を束ねない引き(`_do-reference`)・validate と契約の check の
+   `_doeff_validation_do`(`_validation-imports`)。別名と引き方は書いた場所の scope の都合で違うが、置き場は 1 つ —
+   置き場を macro ごとに綴っていた頃は、表を替えても写しを持つ macro だけが古い `do` で包み続けた(card ki-973b4e44d7bc・
+   tests/test_helper_imports_table.py)。型検査のための展開の `do` は static_view.py の STATIC_HELPER_IMPORTS が持つ。"
+  (RuntimeDo "doeff.do" "do"))
+
+(defn _runtime-do-import [alias]
+  "`_runtime-do` の `do` を alias に束ねる実行時の import。"
+  (setv source (_runtime-do))
+  `(import ~(hy.read (. source module)) [~(hy.models.Symbol (. source name)) :as ~alias]))
+
 (defn _helper-imports []
   "macro の展開が参照する `do` と実行時の補助の import(1 点)。
 
-   実行時: doeff の `do`(`_doeff_do`)・`_install-guard-globals` と、本体が名前で呼ぶ補助(`_guard-performed` など)。
+   実行時: doeff の `do`(`_doeff_do` — 置き場は `_runtime-do`)・`_install-guard-globals` と、本体が名前で呼ぶ補助(`_guard-performed` など)。
    補助は `_install-guard-globals` が関数の globals へも入れる(class の本体で展開した
    defk の method からも見えるように)ので、import は pyright のための宣言を兼ねる
    (型は macros.pyi)。
@@ -618,7 +642,7 @@ defk {name}: :post type annotation cannot be an empty string.
   (if (_static-view?)
       '(do)
       `(do
-         (import doeff.do [do :as _doeff_do])
+         ~(_runtime-do-import '_doeff_do)
          (import doeff [EffectBase :as _doeff_effect_base])
          (import doeff-hy.macros [_install-guard-globals _guard-performed
                                   _guard-statement-value _doeff-check-program-return]))))
@@ -645,10 +669,13 @@ defk {name}: :post type annotation cannot be an empty string.
    fnk の lambda は書いた場所で作る(引数の既定値をその scope で評価する — class の本体の名も読める)ので、`do` を名で
    読むと、その名を書いた場所の scope に置く事になり、defk の本体では先の traverse / for/do の `_doeff_do` の読みを
    未束縛にする(`_with-scoped-helpers` の註)。実行時は束ね(outcome_forms.hy の open-form)と同じく `__import__` で
-   引く(1 回 約 0.3µs — 呼ぶたびの `@do` の組み立ての約 7µs の内)。型検査のための展開は module の頭の `_doeff_do`。"
+   引く(1 回 約 0.3µs — 呼ぶたびの `@do` の組み立ての約 7µs の内)。置き場は `_runtime-do`。型検査のための展開は
+   module の頭の `_doeff_do`。"
   (if (_static-view?)
       '_doeff_do
-      '(. (__import__ "doeff.do" :fromlist #("do")) do)))
+      (let [source (_runtime-do)]
+        `(. (__import__ ~(. source module) :fromlist #(~(. source name)))
+            ~(hy.models.Symbol (. source name))))))
 
 (defn _scoped-definition [compiler name forms]
   "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
@@ -2345,17 +2372,45 @@ defpipeline {pipeline}: no stages defined.
 ;; defmcp-tool — MCP tool definition backed by doeff handler
 ;; ---------------------------------------------------------------------------
 
-(defn _parse-mcp-params [param-list schema]
-  "Parse MCP parameter list into (param-schemas, fn-param-names).
+(defn _mcp-handler-param [tool p]
+  "MCP の引数 1 つ(schema の Hy の dict `p`)を受ける handler の引数 — 名に schema の型の注記を付ける(文字の注記 —
+   defk の契約の注記と同じく実行の時は評価しない)。
+
+   schema の :type(JSON Schema の型)を Python の型に写す。server(doeff_agents の mcp_server_loop)は JSON を解いた値を
+   そのまま handler へ渡すので、配列と object の中身は object。必須でない引数は、送られなかった時に server が None を
+   渡すので `| None` を足す。注記が無かった頃は、strict の型検査で引数 1 つにつき書き手の直せない赤が 2 件
+   (注記が無い・型が Unknown)と、本体でその引数を渡す所ごとに 1 件出た(card ki-973b4e44d7bc)。"
+  (setv fields (dict (zip (map str (cut p None None 2)) (cut p 1 None 2)))
+        pname (str (get fields ":name"))
+        ptype (get fields ":type")
+        ;; :required を書かない引数は必須(McpParamSchema の既定)。True の字面でない :required は必須と決められない
+        required? (= (.get fields ":required" 'True) 'True))
+  (setv base
+    ;; Hy の String の model は素の str と == で等しくならないので、素の str にして比べる
+    (match (str ptype)
+      "string" "str"
+      "integer" "int"
+      "number" "float"
+      "boolean" "bool"
+      "array" "list[object]"
+      "object" "dict[str, object]"
+      _ (raise (SyntaxError
+                 (.format "defmcp-tool {}: 引数 {} の :type {} は知らない型です — \"string\"・\"integer\"・\"number\"・\"boolean\"・\"array\"・\"object\" のどれかを書いてください(handler の引数の型の注記にも写す)"
+                          tool pname (hy.repr ptype))))))
+  `(annotate ~(hy.models.Symbol (.replace pname "-" "_"))
+             ~(hy.models.String (if required? base (+ base " | None")))))
+
+(defn _parse-mcp-params [param-list schema tool]
+  "Parse MCP parameter list into (param-schemas, fn-params).
    Each element is a dict with :name, :type, :description, and optional
    :enum, :required, :default.
 
-   Returns #(schema-exprs param-symbols) where schema-exprs are
-   McpParamSchema constructor calls and param-symbols are Hy symbols
-   for the @do function signature. schema = the symbol the expansion reads
-   McpParamSchema by (defmcp-tool picks it per view)."
-  (setv schemas []
-        param-syms [])
+   Returns #(schema-exprs params) where schema-exprs are
+   McpParamSchema constructor calls and params are the @do function's
+   parameters, annotated with the schema's type (`_mcp-handler-param`).
+   schema = the symbol the expansion reads McpParamSchema by (defmcp-tool
+   picks it per view); tool = the tool's name for error messages."
+  (setv schemas [])
   (for [p param-list]
     ;; p is a Hy Dict: {:name \"x\" :type \"string\" :description \"desc\" ...}
     (setv pdict {})
@@ -2416,9 +2471,8 @@ defpipeline {pipeline}: no stages defined.
            ~@(if has-enum [`(:enum (tuple ~(get pdict ":enum")))] [])
            ~@(if has-required [`(:required ~(get pdict ":required"))] [])
            :default ~def-val)))
-    (.append schemas schema-expr)
-    (.append param-syms (hy.models.Symbol (.replace pname "-" "_"))))
-  #(schemas param-syms))
+    (.append schemas schema-expr))
+  #(schemas (lfor p param-list (_mcp-handler-param tool p))))
 
 (defmacro defmcp-tool [_hy-compiler name description param-list #* body]
   "Define an MCP tool backed by a doeff @do handler.
@@ -2435,7 +2489,8 @@ defpipeline {pipeline}: no stages defined.
      result)
 
    Expands to:
-   1. A @do function _<name>_mcp_handler with params from the schema
+   1. A @do function _<name>_mcp_handler with params from the schema, each annotated with
+      the schema's :type as a Python type (`_mcp-handler-param`)
    2. An McpToolDef instance <name> with the schema + handler
 
    関数の本体の中に書くと、import と handler をすぐ呼ぶ関数に入れて <name> だけを束ねる(_scoped-definition —
@@ -2475,7 +2530,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
         #('_doeff_McpToolDef '_doeff_McpParamSchema '(do))
         #('McpToolDef 'McpParamSchema '(import doeff.mcp [McpToolDef McpParamSchema]))))
   ;; Parse param list
-  (setv #(schema-exprs param-syms) (_parse-mcp-params param-list param-schema))
+  (setv #(schema-exprs param-syms) (_parse-mcp-params param-list param-schema (str name)))
   ;; Build handler function name
   (setv handler-name (hy.models.Symbol (+ "_" (str name) "_mcp_handler")))
   ;; Expand bangs in body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
@@ -2629,14 +2684,15 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defn _validation-imports []
-  "展開した code が参照する doeff-validation と doeff の do の import(pyright が型を追えるように)。"
+  "展開した code が参照する doeff-validation と doeff の do の import(pyright が型を追えるように)。
+   実行時の do の置き場は補助の表の `_runtime-do`。"
   ;; 別名は validate / check の展開だけが使う名前にする: defk の本体の中で import すると関数の局所名に
   ;; なるので、defk が使う _doeff_do などと同じ名前を import すると、それより前の参照が未束縛になる。
   (if (_static-view?)
       `(do (import doeff-hy.static-types [do :as _doeff_validation_do])
            (import doeff-validation :as _doeff_validation)
            (import doeff-validation.api :as _doeff_validation_api))
-      `(do (import doeff.do [do :as _doeff_validation_do])
+      `(do ~(_runtime-do-import '_doeff_validation_do)
            (import doeff-validation :as _doeff_validation)
            (import doeff-validation.api :as _doeff_validation_api))))
 
