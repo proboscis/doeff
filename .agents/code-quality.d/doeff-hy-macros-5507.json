@@ -1,0 +1,14 @@
+{
+  "include": [
+    "packages/doeff-hy/src/doeff_hy/macros.hy",
+    "packages/doeff-hy/src/doeff_hy/macros.pyi",
+    "tests/test_nested_definition_scope.py"
+  ],
+  "untyped_dependencies": [
+    {
+      "moved_from": "",
+      "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
+      "reason": "macro の定義の module で、展開の形を quote / quasiquote の Hy model のまま値として組む(例 444 行の '(do))。検査器は Hy model を runtime 値にする quote を型へ投影できない(hy:444)ので、実装の型は未検証。読み手は隣の macros.pyi の宣言で型を読む(card ki-5507010e2920)。"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-traverse-collection",
+        "doeff-traverse-effects",
+        "doeff-traverse-handlers",
+        "doeff-traverse-package",
+        "doeff-core-effects-effects",
+        "doeff-core-effects-runtime",
+        "doeff-core-effects-handlers",
+        "doeff-hy-static-check",
+        "hy-bytecode-import"
+      ],
+      "layer": "io",
+      "name": "doeff-traverse-tests",
+      "paths": [
+        "packages/doeff-traverse/tests/run_example_failing_a_case.py",
+        "packages/doeff-traverse/tests/test_examples_run.py",
+        "packages/doeff-traverse/tests/test_item_outcomes.py",
+        "packages/doeff-traverse/tests/test_memory_leak_multi_day.py",
+        "packages/doeff-traverse/tests/test_sequential_item_failures.py",
+        "packages/doeff-traverse/tests/test_sequential_reads_handlers_once.py",
+        "packages/doeff-traverse/tests/test_traverse_answer_types.py",
+        "packages/doeff-traverse/tests/test_traverse_deep_recursion.py",
+        "packages/doeff-traverse/tests/test_traverse_effect_type_filter.py",
+        "tests/effects/test_traverse.py"
+      ],
+      "public": [],
+      "responsibility": "doeff-traverse の検 — 3 つの実行の仕方の答えと件の履歴(Zip の履歴を含む)・件の失敗の扱い・答えの型・深い再帰と長い走りの記憶・例が最後まで走り期待の出力を印字する事。",
+      "typed": true
+    }
+  ]
+}
