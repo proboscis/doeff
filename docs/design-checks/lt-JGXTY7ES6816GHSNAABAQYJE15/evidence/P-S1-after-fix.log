@@ -1,0 +1,6 @@
+# 正常例: 修正後の版で列挙の検(投影の検は名に依らない形に強めた版)を実行
+# 対象: 作業木 doeff-wt-design-check-scoped-def(origin/main の先端 e5de19158 + この修正)
+# 実行: 2026-10-12T10:24:10Z
+$ uv run pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone -q
+exit=0
+137 passed, 1 warning in 23.08s

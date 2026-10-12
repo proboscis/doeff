@@ -1,0 +1,4 @@
+# 正常例: 投影を作る側の既存の検(packages/doeff-hy/tests の static_check 系・conductor・defwire・defrecord の check・static_cache)を修正後の版で実行
+# 対象: 作業木 doeff-wt-design-check-scoped-def(origin/main の先端 e5de19158 + この修正)
+$ cd packages/doeff-hy/tests && uv run pytest test_static_check.py test_static_check_defhandler.py test_static_check_deftest.py test_static_check_effects_reads.py test_static_check_for_do.py test_static_check_locate.py test_static_check_of_contract.py test_static_check_recursive_defk.py test_static_check_session.py test_system_static_types.py test_wire_static_types.py test_conductor_dsl.py test_defwire.py test_defrecord_check.py test_static_cache.py -q
+124 passed, 3 warnings in 222.32s (0:03:42)
