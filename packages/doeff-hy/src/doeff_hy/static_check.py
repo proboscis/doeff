@@ -64,10 +64,8 @@ from hy.models import Object
 from doeff_hy.binding_forms import Finding, ModuleScope
 from doeff_hy.check_slot import SlotExpired, slot_label, take_slot
 from doeff_hy.env_places import (
-    EXPANDERS_ENV,
     PYRIGHT_THREADS_ENV,
     conversation_setting,
-    expanders_setting,
     pyright_threads_setting,
 )
 from doeff_hy.expansion_names import is_alias_import
@@ -794,23 +792,18 @@ def _to_cache(projection: Projection) -> CachedProjection:
     )
 
 
-#: 保存から引けない依存の展開を並べる子の process の数の上限(agora-redesign #3869)。日次の検証の機体(CPU の上限が在る Pod)でも、
-#: 手で測る時でも同じ値 — 実際の数は min(この上限, この process が使える CPU の数, その段の引けない file の数)。
-#: 8 → 4(2026-10-11): 36 core の機体で同じ作業木の検査 2 本と別の検 4 本が重なり load 163 になった(展開の子と forkserver で 30 本超)。
-#: 1 本の速さより、同じ機体で並ぶ検査の合計を抑える。機体ごとに替える時は環境変数 EXPANDERS_ENV(env_places が読み、入口の main
-#: だけが受ける)。
+#: 保存から引けない依存の展開を並べる子の process の数 — 機体の検の枠の宣言が持つ(正本の公開の口 process_width が答え、
+#: SlotHeld.width で届く)。この定数は宣言が届かない機体(正本の無い宿・古い正本・宣言を読めない時)の既定で、値の持ち主ではない
+#: (agora-redesign #3869・card ki-2320b23ba160 の盲検 B の指す 2 つ目の持ち主 — 設計検証 lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。
+#: 実際の数は min(この数, この process が使える CPU の数, その段の引けない file の数)。
+#: 4(2026-10-11): 36 core の機体で同じ作業木の検査 2 本と別の検 4 本が重なり load 163 になった(展開の子と forkserver で 30 本超)。
+#: 環境変数で替える口は持たない — 口が在ると、値を替えた会話の検だけが別の数で数え、枠の数え方が割れる(正本の頭の註)。
 EXPANDER_LIMIT = 4
 
 
-def expander_limit(configured: str | None) -> int:
-    """展開の子の数の上限を決める(configured = 環境変数 EXPANDERS_ENV の値・無ければ EXPANDER_LIMIT)。1 以上の整数でない値は
-    黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。"""
-    if configured is None or not configured.strip():
-        return EXPANDER_LIMIT
-    text = configured.strip()
-    if not text.isdigit() or int(text) < 1:
-        raise ValueError(f"{EXPANDERS_ENV} は 1 以上の整数: {configured!r}")
-    return int(text)
+def expander_limit(declared: int | None) -> int:
+    """展開の子の数の上限を決める(declared = 枠の正本が答えた 1 枠の中の並走の数・届かなければ None で EXPANDER_LIMIT)。"""
+    return EXPANDER_LIMIT if declared is None else declared
 
 
 class ExpansionWorkerLostError(RuntimeError):
@@ -1066,15 +1059,17 @@ def python_without_bytecode(directory: Path, python: str) -> Path:
 PYRIGHT_THREADS = 1
 
 
-def pyright_threads(configured: str | None) -> int:
+def pyright_threads(configured: str | None, declared: int | None = None) -> int:
     """pyright の thread の数を決める(configured = 環境変数 PYRIGHT_THREADS_ENV の値・無ければ PYRIGHT_THREADS)。1 以上の整数で
-    ない値は黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。"""
-    if configured is None or not configured.strip():
-        return PYRIGHT_THREADS
-    text = configured.strip()
-    if not text.isdigit() or int(text) < 1:
-        raise ValueError(f"{PYRIGHT_THREADS_ENV} は 1 以上の整数: {configured!r}")
-    return int(text)
+    ない値は黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。thread は pyright が起こす子の process なので、枠の正本が
+    答えた 1 枠の中の並走の数(declared・届かなければ None)を越えない — 環境変数は数を下げる口で、宣言を越えて上げる口にしない。"""
+    wanted = PYRIGHT_THREADS
+    if configured is not None and configured.strip():
+        text = configured.strip()
+        if not text.isdigit() or int(text) < 1:
+            raise ValueError(f"{PYRIGHT_THREADS_ENV} は 1 以上の整数: {configured!r}")
+        wanted = int(text)
+    return wanted if declared is None else min(wanted, declared)
 
 
 def run_pyright(
@@ -1312,8 +1307,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
-        threads = pyright_threads(pyright_threads_setting())  # 展開の前に判じる(誤った値で展開の秒を払わない)
-        closure = project_closure(root, roots, report, cache_dir, expander_limit(expanders_setting()))
+        threads = pyright_threads(pyright_threads_setting(), slot.width)  # 展開の前に判じる(誤った値で展開の秒を払わない)
+        closure = project_closure(root, roots, report, cache_dir, expander_limit(slot.width))
         checked = run_pyright(
             root, settings, closure.projections, report, args.pyright, args.python, threads
         )
