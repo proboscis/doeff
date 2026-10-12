@@ -3,7 +3,7 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-changed test-packages print-package-extra-test-roots test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
+        test test-unit test-e2e test-changed test-packages print-package-extra-test-roots test-hy-floor test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
         pre-commit-install hooks-install enforcement-ledger clean install-opencode-spec-gap-tdd
 
 # Default target
@@ -32,6 +32,7 @@ help:
 	@echo "  make test-e2e          Run e2e tests only"
 	@echo "  make test-changed      Run contract tests + changed tests before ai land request (60 s budget)"
 	@echo "  make test-packages     Run tests in all subpackages"
+	@echo "  make test-hy-floor     Run doeff-hy tests on the declared lower bound of Hy"
 	@echo "  make test-rust         Run cargo test in every Rust crate"
 	@echo "  make test-all          Run ALL tests (core + packages + Rust crates)"
 	@echo "  make test-spec-audit-sa002 Run SA-002 pytest + semgrep checks"
@@ -225,6 +226,20 @@ test-packages:
 		$(PACKAGE_UV_RUN) pytest "$$root" -m "not e2e" $(PACKAGE_PYTEST_DURATIONS) || failed="$$failed $$root"; \
 	done; \
 	if [ -n "$$failed" ]; then echo ""; echo "test-packages failed:$$failed"; exit 1; fi
+
+# doeff-hy の検を、doeff-hy の宣言の Hy の下限の版で走らせる(日次の処理ステージ hy-floor・ADR-DOE-ENFORCE-001 R8・card ki-d3d2a5450505)。
+# - 下限は packages/doeff-hy/pyproject.toml の `"hy>=<下限>,<=<上限>"` の行から読む(版の写しをここに置かない)。変異の確かめは
+#   `make test-hy-floor HY_FLOOR=1.2.0` で下限を 1 つ下げて走らせる(1.2.0 では require の 10 本が赤)。
+# - 環境の Hy は lock の版のまま、`uv run --with hy==<下限>` で下限の版を重ねる(lock・環境を書き換えない)。R6 の検は uv.lock を読むので、
+#   重ねた Hy では赤にならない。
+# - test_bytecode_guard.py は除く: この file は uv.lock の版の Hy で包みを測る前提で、環境の Hy が lock の版でないと fixture が赤にする
+#   (重ねた Hy では 6 本が常に赤)。この file は packages の段が lock の版で測る。
+# - 所要は約 360〜600 秒(日次の約 5500 秒に足す)。PACKAGE_UV_RUN の `--no-sync` は呼び手が渡す(日次の門は make sync の直後に呼ぶ)。
+HY_FLOOR ?= $(shell sed -n 's/^[[:space:]]*"hy>=\([0-9][0-9.]*\),.*/\1/p' packages/doeff-hy/pyproject.toml | head -1)
+test-hy-floor:
+	@test -n "$(HY_FLOOR)" || { echo "test-hy-floor: packages/doeff-hy/pyproject.toml に hy の下限が読めない"; exit 1; }
+	@echo "=== doeff-hy の検を Hy $(HY_FLOOR)(宣言の下限)で走らせる ==="
+	$(PACKAGE_UV_RUN) --with "hy==$(HY_FLOOR)" pytest packages/doeff-hy/tests --ignore=packages/doeff-hy/tests/test_bytecode_guard.py -m "not e2e" $(PACKAGE_PYTEST_DURATIONS)
 
 # Run cargo test in every Rust crate under packages/ (first red does not hide the rest — every crate
 # runs, the target fails at the end if any crate failed). doeff-vm / doeff-vm-core embed CPython in
