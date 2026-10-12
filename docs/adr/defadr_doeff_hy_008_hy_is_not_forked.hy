@@ -108,7 +108,8 @@
    :post [(: % list)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
   "doeff-hy の依存の宣言(PEP 508 の字の列)の hy の行が、上限を uv.lock の版ちょうど(`<=<版>`)に置いていない訳を挙げる — R6 の判定。
-   上限が無い・uv.lock の版と違う上限(小版の上限 `<1.4` のように、確かめていない修正版を通す物を含む)・uv.lock の版を通さない宣言は赤。"
+   上限が無い・uv.lock の版と違う上限(小版の上限 `<1.4` のように、確かめていない修正版を通す物を含む)・uv.lock の版を通さない宣言・
+   条件(marker)の付いた行(`; python_version < '3.15'` のように、条件の外の環境で上限が効かない — 設計検証 lt-Y7VT の盲検 B)は赤。"
   (val rows (lfor text requirements
                   :setv requirement (Requirement text)
                   :if (= (canonicalize-name requirement.name) "hy")
@@ -119,9 +120,22 @@
       (lfor #(broken message) [#((not-in cap (lfor spec (. (get rows 0) specifier) (str spec)))
                                   f"hy の上限が uv.lock の版ちょうど({cap})でない: {(get rows 0)}")
                                 #((not (.contains (. (get rows 0) specifier) hy-version :prereleases True))
-                                  f"hy の宣言が uv.lock の版 {hy-version} を通さない: {(get rows 0)}")]
+                                  f"hy の宣言が uv.lock の版 {hy-version} を通さない: {(get rows 0)}")
+                                #((is-not (. (get rows 0) marker) None)
+                                  f"hy の上限の行に条件(marker)が付いている — 条件の外の環境では上限が効かない: {(get rows 0)}")]
             :if broken
             message)))
+
+(defk hy-caps-outside-doeff-hy [declarations]
+  {:pre [(: declarations list)]
+   :post [(: % list)]
+   :tags {:context "doeff-hy-adr" :role "judgment"}}
+  "doeff-hy の外の hy の宣言 #(path PEP 508 の字) のうち、上から版を縛る物(<・<=・==・===・~=)を挙げる — R6 の「上限は doeff-hy の
+   1 か所」の判定。写しの上限は、doeff-hy の上限と lock を上げる便で黙って古いまま残り、2 つ目の定義元になる(設計検証 lt-Y7VT の盲検 B)。"
+  (lfor #(rel text) declarations
+        :setv requirement (Requirement text)
+        :if (any (gfor spec requirement.specifier (in spec.operator #("<" "<=" "==" "===" "~="))))
+        f"{rel}: {text} — hy の上限は {HY-CAP-DECLARATION} の 1 か所だけに置く"))
 
 
 ;; ---------------------------------------------------------------------------
@@ -259,6 +273,26 @@
   "doeff-hy の依存の宣言([project] の dependencies — PEP 508 の字の列)を読む — R6 の上限の在りか。"
   (get (tomllib.loads (.read-text (/ repo-root HY-CAP-DECLARATION) :encoding "utf-8")) "project" "dependencies"))
 
+(defk hy-declarations-outside-doeff-hy [repo-root]
+  {:pre [(: repo-root Path)]
+   :post [(: % list)]
+   :tags {:context "doeff-hy-adr" :role "foundation"}}
+  "root と packages/*/ の pyproject.toml(doeff-hy を除く)の hy の宣言を #(path PEP 508 の字) で挙げる — [project] の dependencies・
+   optional-dependencies と [dependency-groups] の字の項目を読む(群の中の {include-group …} の表は字でないので読まない)。"
+  (val files (sorted (lfor p [(/ repo-root "pyproject.toml") #* (.glob (/ repo-root "packages") "*/pyproject.toml")]
+                           :setv rel (.as-posix (.relative-to p repo-root))
+                           :if (!= rel HY-CAP-DECLARATION)
+                           #(p rel))))
+  (lfor #(p rel) files
+        :setv data (tomllib.loads (.read-text p :encoding "utf-8"))
+        :setv project (.get data "project" {})
+        group [(.get project "dependencies" [])
+               #* (.values (.get project "optional-dependencies" {}))
+               #* (.values (.get data "dependency-groups" {}))]
+        text group
+        :if (and (isinstance text str) (= (canonicalize-name (. (Requirement text) name)) "hy"))
+        #(rel text)))
+
 (defk missing-on-pypi-hy [imports hy-version]
   {:pre [(: imports list) (: hy-version str)]
    :post [(: % list)]
@@ -333,7 +367,7 @@
      (rule R3 "doeff と agora-controllers の依存の宣言(pyproject.toml・uv.lock)に proboscis/hy を書かない。例外は 0(rev adbe989a の固定を 2026-09-29 まで例外にしていた — #1293 で消した)。doeff の検査は doeff の木を読む — agora-controllers の宣言は agora-controllers の側の検査が守る。")
      (rule R4 "doeff の code は PyPI の Hy(uv.lock が固定する版)に無い名前を hy.* から import しない。照合の版は検が uv.lock から読み、uv.lock の変更で `make test-changed` がこの検を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])— Hy を上げる変更は、新しい版に名が在る事を登記の前に確かめる。例外の台帳(FORK-ONLY-IMPORT-EXCEPTIONS)は空(#1291 が c6783e8e2 で消した)。足すなら期限は R3 と同じ。")
      (rule R5 "例外の台帳は、原因が消えたら同じ commit で削る(フォークの固定を消す便は FORK-PIN を、import を消す便は FORK-ONLY-IMPORT-EXCEPTIONS の行を)。原因の消えた例外が台帳に残れば赤。")
-     (rule R6 "doeff-hy の Hy の依存の宣言の上限は、doeff の uv.lock の hy の版ちょうど(`<=<版>`)にする — doeff-hy を使う他の repo(agora-controllers・custody・merge-queue・code-quality・agent-commons・dotfiles)が自分の lock で上げられる Hy を、doeff の検が確かめた版までに留める(上限は他の repo の uv の解決にも効く)。上限は doeff-hy の 1 か所だけに置く(Hy を使う doeff の package は doeff-domain を除き doeff-hy を引き、uv は 1 つの環境に Hy を 1 つしか入れない)。Hy を上げる便は doeff の uv.lock と上限を同じ commit で上げ(上限の file か uv.lock の変更で `make test-changed` がこの検と R4 の検を選ぶ)、他の repo はその commit を含む doeff へ版(doeff-min-commit・git の rev)を上げてから自分の lock の Hy を上げる。")]
+     (rule R6 "doeff-hy の Hy の依存の宣言の上限は、doeff の uv.lock の hy の版ちょうど(`<=<版>`)にする — doeff-hy を使う他の repo(agora-controllers・custody・merge-queue・code-quality・agent-commons・dotfiles)が自分の lock で上げられる Hy を、doeff の検が確かめた版までに留める(上限は他の repo の uv の解決にも効く)。上限は doeff-hy の 1 か所だけに置き(Hy を使う doeff の package は doeff-domain を除き doeff-hy を引き、uv は 1 つの環境に Hy を 1 つしか入れない — 他の pyproject.toml の hy の宣言は上から版を縛らない)、上限の行に条件(marker)を付けない(条件の外の環境で上限が効かなくなる)。Hy を上げる便は doeff の uv.lock と上限を同じ commit で上げ(上限の file か uv.lock の変更で `make test-changed` がこの検と R4 の検を選ぶ)、他の repo はその commit を含む doeff へ版(doeff-min-commit・git の rev)を上げてから自分の lock の Hy を上げる。")]
   :laws
     [(law dependency-declarations-name-no-hy-fork
        :statement "for_all line in (pyproject.toml ∪ uv.lock) of doeff and agora-controllers: names(line, github.com/proboscis/hy) => (FORK-PIN is not None and rev(line) == FORK-PIN and today <= FORK-EXCEPTIONS-EXPIRE)"
@@ -347,11 +381,13 @@
           (counterexample "(import hy.importer [add-compile-record]) を Hy の source に足す")
           (counterexample "uv.lock の hy を、hy.scoping の nearest-python-scope が無い版へ上げる — macros.hy の読み込みが ImportError で落ちる(card ki-a05a752e7545)")])
      (law doeff-hy-caps-hy-at-the-locked-version
-       :statement "for the single hy requirement r in dependencies(packages/doeff-hy/pyproject.toml): ('<=' + version(uv.lock, hy)) in specifiers(r) and version(uv.lock, hy) satisfies r"
+       :statement "for the single hy requirement r in dependencies(packages/doeff-hy/pyproject.toml): ('<=' + version(uv.lock, hy)) in specifiers(r) and version(uv.lock, hy) satisfies r and marker(r) is None; and for_all hy requirement q in the other pyproject.toml of doeff (root and packages/*): no specifier of q has an operator in {<, <=, ==, ===, ~=}"
        :counterexamples
          [(counterexample "doeff-hy の宣言が hy>=1.2.0 のまま(上限なし)— agora-controllers が自分の lock で `uv lock --upgrade-package hy` を撃つと、doeff の検を通っていない版が入る(card ki-0ff168f4eaf5)")
           (counterexample "上限を <1.4 にする — doeff が確かめていない修正版 1.3.2 を他の repo の lock に通す(修正版 1.3.1 も Hy の importer を直した)")
-          (counterexample "上限を <=1.4.0 へ上げ、uv.lock の hy を 1.3.1 のまま置く — R4 の検は 1.3.1 でしか測らず、他の repo は 1.4.0 を入れられる")])]
+          (counterexample "上限を <=1.4.0 へ上げ、uv.lock の hy を 1.3.1 のまま置く — R4 の検は 1.3.1 でしか測らず、他の repo は 1.4.0 を入れられる")
+          (counterexample "上限の行を hy>=1.2.0,<=1.3.1; python_version < '3.15' にする — Python 3.15 の環境では上限が消え、消費者の宣言だけで Hy が決まる(設計検証 lt-Y7VT の盲検 B)")
+          (counterexample "doeff-domain の宣言に同じ上限 hy>=1.2.0,<=1.3.1 を写す — doeff-hy の上限と lock を上げる便で写しが古いまま残り、2 つ目の定義元になる(同)")])]
   :enforcement
     [(deftest test-adr-doe-hy-008-dependency-declarations-name-no-hy-fork
        (val repo-root (. (Path __file__) parent parent parent))
@@ -379,10 +415,11 @@
      (deftest test-adr-doe-hy-008-doeff-hy-caps-hy-at-the-locked-version
        (val repo-root (. (Path __file__) parent parent parent))
        (val hy-version (run (locked-hy-version (.read-text (/ repo-root "uv.lock") :encoding "utf-8"))))
-       (val violations (run (hy-cap-violations (run (doeff-hy-requirements repo-root)) hy-version)))
+       (val violations (+ (run (hy-cap-violations (run (doeff-hy-requirements repo-root)) hy-version))
+                          (run (hy-caps-outside-doeff-hy (run (hy-declarations-outside-doeff-hy repo-root))))))
        (assert (= violations [])
-               (+ "doeff-hy の Hy の上限が uv.lock の版 " hy-version " ちょうどでない(ADR-DOE-HY-008 R6 — Hy を上げる便は "
-                  HY-CAP-DECLARATION " の上限と uv.lock を同じ commit で上げる): " (str violations))))
+               (+ "Hy の上限が R6 に反する(ADR-DOE-HY-008 R6 — 上限は " HY-CAP-DECLARATION " の 1 か所に、条件なしで uv.lock の版 "
+                  hy-version " ちょうどに置き、Hy を上げる便は上限と uv.lock を同じ commit で上げる): " (str violations))))
      (deftest test-adr-doe-hy-008-judgments-reject-the-counterexamples
        ;; 反例: 別の rev・期限の後・台帳に無い import は赤、台帳に在り期限の内の import は緑。
        (val before (date 2026 9 30))
@@ -423,5 +460,11 @@
        (assert (= (len (run (hy-cap-violations ["hy>=1.2.0"] "1.3.1"))) 1))
        (assert (= (len (run (hy-cap-violations ["hy>=1.2.0,<1.4"] "1.3.1"))) 1))
        (assert (= (len (run (hy-cap-violations ["hy>=1.2.0,<=1.3.1"] "1.4.0"))) 2))
-       (assert (= (len (run (hy-cap-violations ["pydantic>=2.11"] "1.3.1"))) 1)))]
+       (assert (= (len (run (hy-cap-violations ["pydantic>=2.11"] "1.3.1"))) 1))
+       ;; 反例(設計検証 lt-Y7VT の盲検 B): 条件(marker)の付いた上限の行と、doeff-hy の外の上限の写しは赤。上から縛らない宣言は緑。
+       (assert (= (len (run (hy-cap-violations ["hy>=1.2.0,<=1.3.1; python_version < '3.15'"] "1.3.1"))) 1))
+       (assert (= (len (run (hy-caps-outside-doeff-hy [#("packages/doeff-domain/pyproject.toml" "hy>=1.2.0,<=1.3.1")]))) 1))
+       (assert (= (len (run (hy-caps-outside-doeff-hy [#("packages/doeff-domain/pyproject.toml" "hy~=1.3")]))) 1))
+       (assert (= (run (hy-caps-outside-doeff-hy [#("packages/doeff-domain/pyproject.toml" "hy>=1.2.0")
+                                                  #("pyproject.toml" "hy>=1.2.0,!=1.3.0")])) [])))]
   :plans ["docs/design/hy-fresh-bytecode/artifacts/v1/design.md"])
