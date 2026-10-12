@@ -260,7 +260,7 @@ tests = [
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_imports_exist_in_pypi_hy",  # 9.7 秒
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy",  # 5.5 秒
-    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 17.2 秒(23 本・load 52 の下・枠の待ちを除く)
+    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 23.2 秒(28 本・load 44 の下・枠の待ちを除く)
 ]
 
 # doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version — commit の hook の semgrep・pre-commit と、

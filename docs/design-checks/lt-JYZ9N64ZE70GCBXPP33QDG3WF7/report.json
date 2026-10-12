@@ -7,10 +7,10 @@
     "model": "claude-opus-5-5",
     "effort": "既定(この会話の起動の設定・自己申告)"
   },
-  "requirements": "card ki-eafa369600cd の受入の条: bytecode の包みの Hy の内部への依りを R7 の母集団に足すか、uv.lock の変更で包みの検が選ばれる形にして、Hy の表の引き方を .get に替えた失敗ケースが赤になる事を doeff main で確かめる。完了の範囲 = 実装完了まで(branch wt/hy-bytecode-guard-internals の 0de52de26・4eec37a06・1c9f4699a)。main での確かめは着地の後(design.md)",
+  "requirements": "card ki-eafa369600cd の受入の条: bytecode の包みの Hy の内部への依りを R7 の母集団に足すか、uv.lock の変更で包みの検が選ばれる形にして、Hy の表の引き方を .get に替えた失敗ケースが赤になる事を doeff main で確かめる。完了の範囲 = 実装完了まで(測った版 = branch wt/hy-bytecode-guard-internals の 0de52de26・4eec37a06・1c9f4699a。着地に出した版 = origin/main 1410ce508 の上へ載せ直した branch wt/hy-bytecode-guard-internals-r2 の b693c76b7・1f4e7c007・280f0251e と表の注釈)。main での確かめは着地の後(design.md)",
   "design": {
     "path": "design.md",
-    "sha256": "deaf323e523d61167b02b5b16d3faaa13eaa74abc25765d1faf8cc72e899725b"
+    "sha256": "cc86250bb10ffabab26039e71da418db62ba4762e0ba81ea45ea9d597da8df95"
   },
   "modules": [
     {
@@ -477,6 +477,22 @@
       "evidence": {
         "path": "evidence/final-checks.log",
         "sha256": "6bf7fa804391324204a121b82a8c947ce60a9880819726d323852d79a6454dae"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C21",
+      "scenarios": [
+        "S1",
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "origin/main 1410ce508 の上へ載せ直した着地の版で、触った検と ADR-DOE-HY-008 の全部の検・表の検が緑",
+      "observation": "28・8・1・8・15 passed",
+      "evidence": {
+        "path": "evidence/final-checks-r2.log",
+        "sha256": "533be67d608e2559f717a6cb278c19d7eff4ba652095d631e544038b5ca7aa9e"
       },
       "status": "passed"
     }
