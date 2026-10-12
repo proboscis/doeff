@@ -22,6 +22,7 @@ module の段に他の定義が無くても届く事(型を建てる定義は入
 """
 
 import ast
+import dataclasses
 import sys
 import types
 from collections.abc import Callable
@@ -684,6 +685,74 @@ def test_class_body_type_definition_runs_without_module_doeff_hy(
     assert not [name for name in vars(mod.Outer) if "publish" in name]
 
 
+def _refusal(act: Callable[[], object]) -> str:
+    """act が断られた error の型の名(断られなければ "accepted")— 凍結の __setattr__ / __delattr__ が、定義した型を引けずに
+    NameError で落ちるのか、FrozenInstanceError で断るのかを比べるため。"""
+    try:
+        act()
+    except (NameError, dataclasses.FrozenInstanceError) as error:
+        return type(error).__name__
+    return "accepted"
+
+
+# 展開が書く method(凍結の __setattr__ / __delattr__・__init__ の default-factory と init を切った欄)が、定義した型を読む所。
+# 型の名は外の class の属性なので、method は名で引けない(名の引きは class の段を飛ばす)。
+_CLASS_BODY_TYPE_METHOD_CASES = {
+    "defrecord-frozen": (
+        "(defclass Outer [] (defrecord Span #^ int start))",
+        lambda mod: (
+            _refusal(lambda: setattr(mod.Outer.Span(start=2), "start", 9)),
+            _refusal(lambda: setattr(mod.Outer.Span(start=2), "other", 9)),
+            _refusal(lambda: delattr(mod.Outer.Span(start=2), "start")),
+        ),
+        ("FrozenInstanceError", "FrozenInstanceError", "FrozenInstanceError"),
+    ),
+    # 継いだ型は欄でない属性を置ける(凍結の __setattr__ が定義した型の基底へ渡す — super の引き)
+    "defrecord-subclass": (
+        "(defclass Outer [] (defrecord Span #^ int start))\n(defclass Sub [Outer.Span])",
+        lambda mod: (
+            _refusal(lambda: setattr(mod.Sub(start=2), "start", 9)),
+            _refusal(lambda: setattr(mod.Sub(start=2), "other", 9)),
+        ),
+        ("FrozenInstanceError", "accepted"),
+    ),
+    "defrecord-factory-and-no-init": (
+        "(import dataclasses [field])\n"
+        "(defclass Outer [] (defrecord Bag #^ int n (setv #^ list xs (field :default-factory list)"
+        " #^ int k (field :default 7 :init False))))",
+        lambda mod: repr(mod.Outer.Bag(n=1)),
+        "Outer.Bag(n=1, xs=[], k=7)",
+    ),
+    "defwire-frozen": (
+        "(defclass Outer [] (defwire Span {:names :camel} #^ int start-at))",
+        lambda mod: _refusal(lambda: setattr(mod.Outer.Span(start_at=2), "start_at", 9)),
+        "FrozenInstanceError",
+    ),
+    "defeffect-frozen": (
+        '(defclass Outer [] (defeffect Inner {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}}))',
+        lambda mod: (
+            _refusal(lambda: setattr(mod.Outer.Inner(x=1), "x", 9)),
+            _refusal(lambda: delattr(mod.Outer.Inner(x=1), "x")),
+        ),
+        ("FrozenInstanceError", "FrozenInstanceError"),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("source", "call", "expected"),
+    _CLASS_BODY_TYPE_METHOD_CASES.values(),
+    ids=_CLASS_BODY_TYPE_METHOD_CASES.keys(),
+)
+def test_class_body_type_methods_read_their_own_class(
+    source: str, call: Callable[[types.ModuleType], object], expected: object
+) -> None:
+    """class の本体に直に書いた defrecord・defwire・defeffect の、展開が書いた method は、定義した型を名でなく `__class__` の
+    閉包で読む — 型の名は外の class の属性で method から引けず、凍結の __setattr__ が FrozenInstanceError の代わりに
+    NameError で落ち、default-factory・init を切った欄の型は作る時に NameError で落ちた。"""
+    assert call(_eval_module(source, header=_TYPE_ONLY_HEADER)) == expected
+
+
 # 型検査の投影で、定義が展開の import を置いてよい名でない所(外の関数・外の class の本体の局所の名)— 根の module の名。
 # 書き手がその名を module の段で読むので、定義の import が局所の名にすると pyright は module の段の名を未束縛と読む。
 _PROJECTION_ROOT_NAMES = frozenset({"doeff_hy", "doeff_core_effects", "doeff_cluster"})
@@ -782,6 +851,49 @@ def test_static_projection_of_class_body_definition_binds_no_module_name(
     )
     assert _PROJECTION_ROOT_NAMES.isdisjoint(_bound_by_imports(outer))
     assert {f"doeff_hy.{name}" for name in _submodules_read(outer)} <= _module_level_imports(tree)
+
+
+# handler の展開が `_doeff_<名>` の別名で読む doeff の node(doeff_hy/expansion_names.py)— 節の関数と本文に被せる関数が読む。
+_HANDLER_NODE_ALIASES = frozenset({"_doeff_Pass", "_doeff_WithHandler"})
+
+
+def _module_level_bound(tree: ast.Module) -> set[str]:
+    """module の段の import が束ねる名。"""
+    return {
+        alias.asname or alias.name.split(".")[0]
+        for node in tree.body
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "(defn subject [] (defhandler h (Ping [x] (resume x))) h)",
+        "(defclass Outer [] (defhandler h (Ping [x] (resume x))))",
+    ],
+    ids=["function", "class-body"],
+)
+def test_static_projection_of_nested_defhandler_reads_module_level_nodes(
+    tmp_path: Path, body: str
+) -> None:
+    """型検査の投影で、関数・class の本体の中の defhandler が読む `_doeff_Pass`・`_doeff_WithHandler` の import は module の段に
+    置く — class の本体に残すと、節の関数と本文に被せる関数は名を module の段から引くので、pyright が
+    `"_doeff_Pass" is not defined` と読んだ。関数の中に残すと外の関数の局所の名になる(49a293f19 の投影の項と同じ形)。"""
+    tree = _projection_of(
+        tmp_path,
+        "(require doeff-hy.handle [defhandler])\n"
+        '(defeffect Ping {:fields [(: x int)] :answer int :tags {:context "t" :role "intent"}})\n'
+        + body,
+    )
+    scope = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.ClassDef) and node.name in {"subject", "Outer"}
+    )
+    assert _HANDLER_NODE_ALIASES.isdisjoint(_bound_by_imports(scope))
+    assert _HANDLER_NODE_ALIASES <= _module_level_bound(tree)
 
 
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:
