@@ -138,7 +138,7 @@
   {:pre [(: task-dir str)] :post [(: % HeardBeats)] :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の coordinator-link(本番の入口と同じく GET /watch を使う・最後の連絡の時刻 0)と本番の tick 間の待ちを、偽の coordinator と
    仮想時計の下に並べて動かすため。task-dir = coordinator-link が task の印の file を置く dir。"
-  (val link (LinkState WORKER #("cpu") 1 0 FENCE-MS task-dir "boot" 0 0 :watch True))
+  (val link (LinkState WORKER #("cpu") 1 0 FENCE-MS task-dir "boot" 0 0 0 :watch True))
   (<- heard HeardBeats (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
                                        stalled-coordinator tick-pauses (coordinator-link link (route-cell "http://coord") LINK-ROUTE
                                                                                          (route-cell "http://coord"))]

@@ -469,5 +469,6 @@ class WakeSet:
 @dataclass(frozen=True)
 class WorkerWakes(EffectBase[WakeSet]):
     began: int
+    began_mono_ms: int
 
 class WorkerUnsettled(Exception): ...

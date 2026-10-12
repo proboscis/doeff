@@ -32,6 +32,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld EnvReport
                                                  PublishStatus])
+(import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
@@ -202,7 +203,7 @@
   {:pre [(: script Script) (: task-dir str)] :post [(: % Seen)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "台本 script を、本物の coordinator-link(本番の入口と同じく GET /watch を使う・最後の連絡の刻 0)と本番の周の間の待ちの下で回すため。
    壁の時計の代役は worker の側の全部(口・待ち・調整ループ)の外側、偽の coordinator はその内側で台本の時計(単調)だけを読む。"
-  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 :watch True))
+  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True))
   (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
                                 script-clock wall-clock-stepped (scripted-coordinator script) tick-pauses
                                 (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
@@ -223,6 +224,22 @@
   "自己停止を決めた刻の、実際の沈黙の長さ(coordinator が最後に答えた heartbeat からの ms — coordinator が移し替えを数える起点と同じ)。"
   (assert (is-not seen.cut-off-ms None) seen)
   (- seen.cut-off-ms (get seen.delivered -1)))
+
+
+(deftest test-the-silence-is-the-longer-of-the-wall-and-the-monotonic-differences
+  ;; 判断(heartbeat_rules.silent-ms)を直に呼ぶ: 起点(壁 100000・単調 5000)から実際に 30 秒過ぎた時の沈黙。
+  ;; 壁の時計が動かない: 2 つの差は同じ。
+  (<- steady int (silent-ms 130000 35000 100000 5000))
+  (assert (= steady 30000))
+  ;; 壁の時計が 45 秒戻った: 壁の差は負になる — 単調な差が実際の長さを守る。
+  (<- stepped-back int (silent-ms 85000 35000 100000 5000))
+  (assert (= stepped-back 30000))
+  ;; 機体が 30 秒のうち 25 秒 suspend していた: 単調な時計は 5 秒しか進まない — 壁の差が拾う。
+  (<- suspended int (silent-ms 130000 10000 100000 5000))
+  (assert (= suspended 30000))
+  ;; 壁の時計が 10 秒進んだ: 進んだ分だけ長く読む(suspend と見分けられない — 早く止まる向き)。
+  (<- stepped-forward int (silent-ms 140000 35000 100000 5000))
+  (assert (= stepped-forward 40000)))
 
 
 (deftest test-a-cut-off-worker-decides-its-self-stop-at-the-fence [tmp-path]
