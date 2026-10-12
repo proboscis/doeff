@@ -21,7 +21,17 @@ from hy.models import Expression, Sequence, Symbol
 import doeff
 
 # 展開が読む名。書き手が自分の effect の名にしうる(振込の Transfer・KV の Put / Get など)ので、素の綴りで読むと隠す。
-_NAMES = ("Resume", "Transfer", "Pass", "WithHandler", "Get", "Put", "Some", "typed_resume", "typed_transfer")
+_NAMES = (
+    "Resume",
+    "Transfer",
+    "Pass",
+    "WithHandler",
+    "Get",
+    "Put",
+    "Some",
+    "typed_resume",
+    "typed_transfer",
+)
 
 
 def test_alias_is_the_doeff_prefixed_name() -> None:
