@@ -60,7 +60,12 @@ from hy.errors import HyLanguageError
 from hy.models import Object
 
 from doeff_hy.binding_forms import Finding, ModuleScope
-from doeff_hy.env_places import EXPANDERS_ENV, expanders_setting
+from doeff_hy.env_places import (
+    EXPANDERS_ENV,
+    PYRIGHT_THREADS_ENV,
+    expanders_setting,
+    pyright_threads_setting,
+)
 from doeff_hy.static_baseline import (
     BaselineUnreadable,
     Split,
@@ -944,6 +949,25 @@ def python_without_bytecode(directory: Path, python: str) -> Path:
     return wrapper
 
 
+#: pyright の thread の数(pyright の --threads — 検める file を子の process に分けて並べる)の既定。1 = --threads を渡さない
+#: (1 本の pyright)。日次の型の測り(agora-controllers の hy-type-trend・.hy 2,551 本)は 1 本で約 2,250 秒かかり、処理ステージの
+#: 上限に収まらなかった(10-12 12:00 JST の回・card ki-1475765a3f18)。子 1 本ごとに検める file の import 先を別に読むので、CPU の
+#: 合計と memory は本数につれて増える(controllers/screen の 231 本で 2 本 = 秒 0.7 倍・CPU 1.2 倍、4 本 = 秒 0.5 倍・CPU 1.6 倍)。
+#: だから既定は 1 のまま、呼び手が環境変数 PYRIGHT_THREADS_ENV(env_places が読み、入口の main だけが受ける)で機体に合わせて上げる。
+PYRIGHT_THREADS = 1
+
+
+def pyright_threads(configured: str | None) -> int:
+    """pyright の thread の数を決める(configured = 環境変数 PYRIGHT_THREADS_ENV の値・無ければ PYRIGHT_THREADS)。1 以上の整数で
+    ない値は黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。"""
+    if configured is None or not configured.strip():
+        return PYRIGHT_THREADS
+    text = configured.strip()
+    if not text.isdigit() or int(text) < 1:
+        raise ValueError(f"{PYRIGHT_THREADS_ENV} は 1 以上の整数: {configured!r}")
+    return int(text)
+
+
 def run_pyright(
     root: Path,
     settings: dict[str, object],
@@ -951,6 +975,7 @@ def run_pyright(
     report: list[Path],
     pyright: str,
     python: str,
+    threads: int = PYRIGHT_THREADS,
 ) -> Checked:
     notes: list[str] = []
     with tempfile.TemporaryDirectory(prefix="doeff-hy-check-") as temporary:
@@ -973,8 +998,9 @@ def run_pyright(
         if not targets:
             return Checked([], notes)
         searched = python_without_bytecode(Path(temporary).resolve(), python)
+        spread = ["--threads", str(threads)] if threads > 1 else []
         completed = subprocess.run(
-            [pyright, "--outputjson", "-p", str(config), "--pythonpath", str(searched), *targets],
+            [pyright, "--outputjson", *spread, "-p", str(config), "--pythonpath", str(searched), *targets],
             capture_output=True,
             text=True,
             check=False,
@@ -1172,9 +1198,10 @@ def main(argv: list[str] | None = None) -> int:
     report = hy_files([placed for _, placed in named if placed is not None])
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
+        threads = pyright_threads(pyright_threads_setting())  # 展開の前に判じる(誤った値で展開の秒を払わない)
         closure = project_closure(root, roots, report, cache_dir, expander_limit(expanders_setting()))
         checked = run_pyright(
-            root, settings, closure.projections, report, args.pyright, args.python
+            root, settings, closure.projections, report, args.pyright, args.python, threads
         )
     except (OSError, RuntimeError, ValueError) as error:
         print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
