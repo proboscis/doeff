@@ -20,7 +20,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "14dd77b1e0b507491819b69c3e051d9b069a7462d9dc6097d5a3f38ac00c5b85"
+    "sha256": "01c0aefec2639a3f58035c7808fc9ab965b043ef7fd0575b3eb195db769eb5dd"
   },
   "pre_blind_design": {
     "path": "design-before-blind.md",
