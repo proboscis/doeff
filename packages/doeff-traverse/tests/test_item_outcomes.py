@@ -207,7 +207,8 @@ def test_a_traverse_with_no_item_to_run_reports_nothing(name: str) -> None:
     assert empty.seen == ()
 
 
-def test_parallel_fail_fast_reports_the_items_up_to_the_failure() -> None:
+def test_parallel_fail_fast_reports_the_items_up_to_the_failure_and_the_rest_cancelled() -> None:
+    """件 3 で止まると、それまでの件と失敗した件に続き、止めた件 4 を cancelled と知らせる(card ki-e0fd319d5b75)。"""
     reports = _Reports()
     with pytest.raises(ValueError, match="three"):
         _run_under(
@@ -216,8 +217,15 @@ def test_parallel_fail_fast_reports_the_items_up_to_the_failure() -> None:
             _traversed(_first, [1, 2, 3, 4], label="first"),
         )
     [first_run] = reports.runs()
-    assert [(r.item.index, r.outcome) for r in first_run] == [(0, "ok"), (1, "ok"), (2, "failed")]
+    assert [(r.item.index, r.outcome) for r in first_run] == [
+        (0, "ok"),
+        (1, "ok"),
+        (2, "failed"),
+        (3, "cancelled"),
+    ]
     assert isinstance(first_run[2].item.value, ValueError)
+    assert first_run[3].item.failed
+    assert [entry.event for entry in first_run[3].item.history] == ["cancelled"]
 
 
 def test_parallel_fail_fast_bar_closes_when_no_item_fails() -> None:
