@@ -282,6 +282,14 @@ struct TaskEntry {
     /// `None` once released (`_release_task_refs`); the Python version then
     /// reads the missing key as `""`.
     spawn_site: Option<Option<String>>,
+    /// A `Cancelled` task nothing can re-read any more (the Python version's
+    /// `settled`, agora-redesign #3504): it ran to its `TaskCompleted` after
+    /// the Cancel, or it never started and `pick_next` skipped its start, or
+    /// a Discard dropped the continuation the scheduler held. The sweep
+    /// removes a `Cancelled` task only once it is settled — a task dropped by
+    /// the Cancel fallback (continuation not held by the scheduler) may still
+    /// run to its `TaskCompleted`, which reads this entry.
+    settled: bool,
 }
 
 struct PromiseEntry {
@@ -992,6 +1000,13 @@ impl Locked<'_> {
         Ok(())
     }
 
+    /// Deletes task/promise entries nothing can ever observe again (#502; the
+    /// Python version's `sweep_terminal_unobserved_entries`). An entry is swept
+    /// when it is terminal, has no registered waiter, is not referenced by a
+    /// live Gather/Race group, and every handle minted from it is dead. A
+    /// `Cancelled` task counts as terminal only once `settled` (#3504) —
+    /// without that every Cancel of a started task left its entry for the life
+    /// of the run.
     fn sweep_terminal_unobserved_entries(&mut self, py: Python<'_>) {
         let mut protected: HashSet<WKey> = HashSet::default();
         for (_, entries) in self.waiters.iter() {
@@ -1010,7 +1025,8 @@ impl Locked<'_> {
         }
         let mut dead: Vec<WKey> = Vec::new();
         for (tid, meta) in self.tasks.iter() {
-            if !matches!(meta.status, Status::Completed | Status::Failed) {
+            let settled_cancel = meta.status == Status::Cancelled && meta.settled;
+            if !matches!(meta.status, Status::Completed | Status::Failed) && !settled_cancel {
                 continue;
             }
             dead.push(WKey {
@@ -1474,6 +1490,14 @@ impl Locked<'_> {
         Ok(())
     }
 
+    /// Marks a cancelled task as one nothing re-reads any more, so the sweep
+    /// may remove it (see `TaskEntry::settled`).
+    fn settle_cancelled(&mut self, tid: Tid) {
+        if let Some(task) = self.tasks.get_mut(&tid) {
+            task.settled = true;
+        }
+    }
+
     fn who(owner: Owner) -> String {
         match owner {
             None => "root".to_string(),
@@ -1677,6 +1701,9 @@ impl Locked<'_> {
                             return Err(key_error(tid.to_string()));
                         };
                         if task.status == Status::Cancelled {
+                            // Never started: skipping its start is the last
+                            // read of its entry.
+                            task.settled = true;
                             continue;
                         }
                         task.status = Status::Running;
@@ -2176,6 +2203,7 @@ impl Locked<'_> {
                 daemon,
                 inner_boundaries: Some(boundaries),
                 spawn_site: Some(spawn_site),
+                settled: false,
             },
         );
         self.enqueue(ReadyEntry::New { tid }, priority);
@@ -2217,17 +2245,29 @@ impl Locked<'_> {
         };
         let cancelled_error = self.spec().task_cancelled_error.bind(py).clone();
         if status == Status::Cancelled {
+            // A task dropped by the Cancel fallback ran to its end after all:
+            // nothing reads its entry any more.
             self.release_task_refs(tid);
+            self.settle_cancelled(tid);
         } else if status == Status::Cancelling
             && error
                 .as_ref()
                 .is_none_or(|e| e.is_instance(&cancelled_error).unwrap_or(false))
         {
             let error = match error {
-                Some(e) => e.unbind(),
+                Some(e) => {
+                    // The unwound TaskCancelledError's traceback holds the
+                    // task's frames, and they hold its entry and the handles it
+                    // touched — a cycle that keeps those handles alive (so
+                    // their entries unswept) until a gc pass. Waiters only need
+                    // the error type.
+                    e.setattr(pyo3::intern!(py, "__traceback__"), py.None())?;
+                    e.unbind()
+                }
                 None => self.spec().cancelled_error(py)?,
             };
             self.finish_cancelled(py, tid, error)?;
+            self.settle_cancelled(tid);
         } else {
             match error {
                 None => {
@@ -2504,6 +2544,7 @@ impl Locked<'_> {
                     // continuation k is dropped and the next ready task runs.
                     let error = self.spec().cancelled_error(py)?;
                     self.finish_cancelled(py, tid, error)?;
+                    self.settle_cancelled(tid);
                     self.discard_k(k);
                     return Ok(Outcome::Ctrl(self.pick_next(py)?));
                 }
@@ -2511,11 +2552,17 @@ impl Locked<'_> {
                 // start of a cancelled task); a started one is detached from
                 // wherever it is parked and dropped with it.
                 let parked_keys = self.keys_parked_by(tid);
-                if let Some(cont) = self.detach_parked_continuation(tid) {
+                let dropped = self.detach_parked_continuation(tid);
+                if let Some(cont) = dropped {
                     self.discard_k(cont);
                 }
                 let error = self.spec().cancelled_error(py)?;
                 self.finish_cancelled(py, tid, error)?;
+                if dropped.is_some() {
+                    // The continuation the scheduler held is dropped, so the
+                    // task never runs again.
+                    self.settle_cancelled(tid);
+                }
                 // Stop the external work the task was parked on (#498).
                 callbacks = self.cancel_abandoned_external_promises(py, &parked_keys)?;
             }
