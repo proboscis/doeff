@@ -54,3 +54,5 @@ records.LOCAL_MACRO_TABLE の注釈の精度(鍵が替わると黙らず落ち�
 repo に該当 0)・同じ module の記録の表を 2 つの thread が同時に足す競合(同じ module の import は import の lock で直列で、起きるのは
 import と解析器の展開が同じ module に重なる時だけ — 落ちても多くの場合は次の展開で拾い直す)・同じ関数の中で同じ名を別の macro に
 付け替える形の漏れ(module の直下と同じ既存の限界)。
+
+載せ直した版(origin/main 787554c36 の上)で test_bytecode_guard.py 37 passed(evidence/final-guard-r2.log)。
