@@ -1,0 +1,405 @@
+{
+ "version": 1,
+ "task_id": "lt-CZC8SGS3C6DFDGSGG64YF49DH9",
+ "base_revision": "8fcefa7c60e3d241872f1cdf4ac125ce7aed1071",
+ "author": {
+  "conversation_id": "c-Z48YJMZ0CSH4120XECK1TQWS0P",
+  "model": "claude-opus-5-5",
+  "effort": "既定(この会話の起動の設定・自己申告)"
+ },
+ "requirements": [
+  "R1: class の本体に直に書いた handle の節が Transfer・Resume・Pass を読んで走る(card ki-edab7c8fbb55 の受入 ce8ea7c83)",
+  "R2: class の本体に直に書いた defhandler(引数なし・引数あり・session var)が走る",
+  "R3: class の本体の handle・defhandler は module の globals に名を足さず、節は module の globals の同じ名に左右されない",
+  "R4: module の段と関数の本体の中の実行時の展開、型検査のための展開は変えない。class の本体の defhandler の __qualname__ は Class.name のまま",
+  "R5: class の本体の handle の本文は書いた場所で評価し、検めと組み立ては本文より前"
+ ],
+ "design": {
+  "path": "design.md",
+  "sha256": "e0014cdd736d3dec09662a302c0be8958af722ffb84e7af59abf7d7d7a233ba5"
+ },
+ "modules": [
+  {
+   "id": "scope-judgment",
+   "responsibility": "展開の場所の判断: 関数の本体の中か(macros.hy `_in-function-body?`)・class の本体に直にか(`_in-class-body?` — この変更で新設)",
+   "owns": "Hy の compiler の scope の読み方(hy.scoping の nearest-python-scope・is-function-scope・ScopeFn)と、型検査のための展開ではどちらも偽にする決め",
+   "hides": "Hy の scope の内部の API を handle・defhandler と定義の macro から",
+   "interface": "(_in-function-body? compiler) → bool・(_in-class-body? compiler) → bool",
+   "effects": "なし(展開の時に compiler の scope を読むだけ)",
+   "lifetime": "なし(展開ごとに読む純粋な判断。資源を持たない)",
+   "invariants": "module の段と型検査のための展開ではどちらも偽。let と内包を飛ばした最も近い Python の scope が関数なら前者、関数でない ScopeFn(defclass)なら後者だけが真"
+  },
+  {
+   "id": "scoped-definition",
+   "responsibility": "名を定義する macro の文の並びを、関数の中では (setv name ((fn [] … name))) に入れる(macros.hy `_scoped-definition`)",
+   "owns": "包む形と、呼び手が負う事(docstring — class の本体で関数が名で読む補助は globals へ入れるか、組む関数の中で import して閉包から読ませる)",
+   "hides": "包むかどうかの判断を呼び手から",
+   "interface": "(_scoped-definition compiler name forms) → form",
+   "effects": "展開の時はなし。実行時は関数の中で外の関数を呼ぶたびに forms を評価する",
+   "lifetime": "すぐ呼ぶ関数の frame は定義の間だけ。定義した値は name の束縛の寿命",
+   "invariants": "module と class の本体では文を並べる(__qualname__ と引数なしの super() を保つ)。この変更では docstring だけを変えた"
+  },
+  {
+   "id": "guard-globals",
+   "responsibility": "defk・deftest・defmcp-tool・do! の関数の module の globals に補助を setdefault で入れる(macros.hy `_install-guard-globals`)",
+   "owns": "補助の名と値",
+   "hides": "—(補助の値の提供元を定義の macro から)",
+   "interface": "(_install-guard-globals wrapped [runtime-globals]) → wrapped",
+   "effects": "実行時に module の globals を setdefault で書く",
+   "lifetime": "入れた名は module の globals の寿命",
+   "invariants": "書き手が先に束ねた名を上書きしない。handle・defhandler は使わない(この変更でも使っていない)"
+  },
+  {
+   "id": "handle-expansion",
+   "responsibility": "本文に inline の handler を被せる Program の式(handle.hy `defmacro handle`)。関数の本体の中と class の本体では import・検め・組み立てをすぐ呼ぶ関数に入れて一意の名に束ね、本文は書いた場所で評価する",
+   "owns": "評価の順(prelude → 組み立て → 本文 → WithHandler)と、包むかどうかの枝(scope-judgment を読む)",
+   "hides": "import の名を束ねる場所を本文と書いた場所から",
+   "interface": "(handle body clause…) → Program(WithHandler の node)。失敗: 展開の時の SyntaxError・評価の時の ClauseEndingError",
+   "effects": "展開の時はなし。実行時は評価のたびに節の終わり方を検め、handler の関数を作る(effect は出さない)",
+   "lifetime": "すぐ呼ぶ関数の frame は評価の間だけ。被せる関数と節の閉包は一意の名の束縛(class の本体では class の属性)と Program が生きる間",
+   "invariants": "本文は書いた場所で評価する。検めは本文より先。module の段の展開は変えない"
+  },
+  {
+   "id": "defhandler-expansion",
+   "responsibility": "名つきの handler の定義(handle.hy `defmacro defhandler`)。class の本体では import を handler を組む関数の中に置き、それ以外は定義の前に並べて scoped-definition に渡す",
+   "owns": "handler の値の形と属性(__doeff_body__・__doeff_name__・宣言)、import の置き場(outer-imports / inner-imports)",
+   "hides": "—(包む判断は scoped-definition、場所の判断は scope-judgment)",
+   "interface": "(defhandler name [params]? [\"doc\"]? {decl}? clause…) → name を束ねる",
+   "effects": "展開の時はなし。実行時は定義の評価で handler の関数を作る。節の終わり方の照合は初めて本文に被せた時に 1 回",
+   "lifetime": "handler の値は name の束縛の寿命。import した名は組む関数の局所と閉包の cell",
+   "invariants": "name の定義は書いた段に残す(class の本体では __qualname__ = Class.name)。module の段の展開は変えない"
+  },
+  {
+   "id": "handler-imports",
+   "responsibility": "展開が名で読む実行時の名の import の形(handle.hy `_do-import`・`_vm-imports`・`_clause-endings-import`・defhandler の lazy-imports)",
+   "owns": "名(_doeff_do・Resume・Transfer・Pass・WithHandler・_doeff_check_clause_endings(_once)・Some・Get・Put・_doeff_session_key)と提供元の module",
+   "hides": "提供元の module の path を展開の書き手から",
+   "interface": "(_do-import) / (_vm-imports) / (_clause-endings-import name alias) → import の form",
+   "effects": "展開の時はなし。実行時は import の文(sys.modules の引き)",
+   "lifetime": "import した名は、それを置いた scope(組む関数・module)の寿命",
+   "invariants": "型検査のための展開では Pass・WithHandler だけ(他は module の頭で 1 度)。この変更では変えていない"
+  },
+  {
+   "id": "handler-expr",
+   "responsibility": "節の dispatcher の関数の組み立てと節の操作の書き換え(handle.hy `_rewrite-ops`・`_build-clause`・`_build-handler-expr`・`_passed-effects-source`・`_effect-parameter`・`_build-lazy-init-forms`)",
+   "owns": "節の形・resume / transfer / reperform / finish の書き換え・効果の型の註",
+   "hides": "節の本体を dispatcher の関数の中に閉じ込める",
+   "interface": "(_build-handler-expr clauses …) → (_doeff-do (fn [effect k] (cond …)))",
+   "effects": "展開の時は SyntaxError を出しうる。実行時は節が Resume / Transfer / Pass の node を yield する",
+   "lifetime": "dispatcher の関数は handler の値が生きる間",
+   "invariants": "節は handler-imports の名を名で読み、`<-` の束ねは __import__ で引く。この変更では変えていない"
+  },
+  {
+   "id": "clause-endings",
+   "responsibility": "節の終わり方と effect の型の再開の宣言の照合(clause_endings.hy)",
+   "owns": "Resumption の規則と操作の名の性質",
+   "hides": "照合の規則を handler の展開から",
+   "interface": "(check-clause-endings handler specs) → None / ClauseEndingError",
+   "effects": "なし(例外を上げるだけ)",
+   "lifetime": "なし(defhandler の照合済みの印は handler の値に置く)",
+   "invariants": "再開しない effect を再開する節を型で止める。この変更では変えていない"
+  },
+  {
+   "id": "static-view",
+   "responsibility": "型検査のための展開(static_view.py と static-view-enabled・_static-view? の枝)",
+   "owns": "型付きの名と module の頭の import",
+   "hides": "型付きの名の提供元を展開から",
+   "interface": "(static-view-enabled) → bool・doeff-hy-check が module の頭に import を 1 度出す",
+   "effects": "なし(展開の form を替えるだけ)",
+   "lifetime": "なし",
+   "invariants": "scope-judgment は型検査のための展開で偽を返すので、展開は 1 字も変わらない"
+  },
+  {
+   "id": "bytecode-guard",
+   "responsibility": "使った macro の digest が変わった Hy の module の古い .pyc を使わず compile し直す(doeff_hy_bytecode_guard)",
+   "owns": "使った macro の digest",
+   "hides": "—",
+   "interface": "Hy の module の import の経路(.pth で入る)",
+   "effects": ".pyc と code store を読み書きする",
+   "lifetime": ".pyc は保存先の寿命",
+   "invariants": "macro の関数の code が変われば利用者の module を compile し直す。この変更では変えていない"
+  },
+  {
+   "id": "regression-test",
+   "responsibility": "R1〜R5 と関数の中の handle・defhandler の検(tests/test_handle_scope.py)",
+   "owns": "class の本体の 7 形の走らせる検・module の globals の検・展開の中の関数が global で引く名の構造の検・module の段と __qualname__ の検",
+   "hides": "—",
+   "interface": "pytest(root の testpaths `tests`・4 時間ごとの全体の検証と手の名指し)",
+   "effects": "なし(Hy の source を新しい module で評価・compile して走らせる)",
+   "lifetime": "なし",
+   "invariants": "直す前の版と、境界を破る差分で赤・直した版で緑"
+  }
+ ],
+ "scenarios": [
+  {
+   "id": "S1",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "利用者が class の本体に handle・defhandler を直に書く(引数なし・引数あり・session var・節の `<-`・class の本体の let・関数の中の class・同じ class に 2 つ・本文が class の段の名を読む)",
+   "claim": "名をどの scope で束ねるかは scope-judgment と handle-expansion・defhandler-expansion だけが決める。展開の中の関数は閉包(か組む関数の局所)から名を読み、module の globals を読まず書かない",
+   "expected_scope": "scope-judgment(_in-class-body? の新設)・handle-expansion(枝の条件)・defhandler-expansion(import の置き場)・regression-test。scoped-definition は docstring だけ。handler-imports・handler-expr・clause-endings・static-view・bytecode-guard・guard-globals は変えない",
+   "actual_scope": "08ddfc707 は予想どおり。盲検 B(節が定義の名 h を名で読む変更が検を通った)を受けて regression-test を再び変えた(節の `<-` の形と、展開の中の関数が global で引く名の構造の検)。盲検 A(書き手の effect の名が展開の import の名とぶつかると節が受け損なう)は前からの知識の漏れで、直さず card ki-16180480129e に切った",
+   "changed_modules": [
+    "scope-judgment",
+    "scoped-definition",
+    "handle-expansion",
+    "defhandler-expansion",
+    "regression-test"
+   ],
+   "unchanged_modules": [
+    "guard-globals",
+    "handler-imports",
+    "handler-expr",
+    "clause-endings",
+    "static-view",
+    "bytecode-guard"
+   ],
+   "reason": "scoped-definition は docstring の変更だけ(呼び手が負う事に閉包の形を足した)。regression-test の再変更は検の穴(B)で、責務の漏れではない。盲検 A の漏れ(実行時の名の綴りが書き手の名前空間と名を分け合う)は handler-imports・handler-expr・binding_forms.py・macros.hy の set! に前から在り、module の段と関数の中でも同じ(evidence/a-collision-fixed.txt・a-collision-before.txt)",
+   "revision": "tests/test_handle_scope.py を強めた: 直した版で 57 passed(evidence/guard-on-fixed-final.txt)・B の差分に 4 failed(evidence/b-declared-effect-on-guard.txt)・直す前の macro に 24 failed(evidence/s1-before-fix-test.txt)・module の globals へ入れる別の直し方に 7 failed(evidence/s1-globals-setdefault-test.txt)。A は card ki-16180480129e(受入: 書き手の Transfer・Pass・Put を 3 つの段で受けて答える事)"
+  },
+  {
+   "id": "S2",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "新しい節の操作のため、handler-imports に VM の node の名を 1 つ足し、handler-expr の書き換えがそれを読む",
+   "claim": "class の本体でも、足した名は handler-imports の import の並び(handle の prelude・defhandler の imports)を通って組む関数の中で import される。scope-judgment・handle-expansion の枝・defhandler-expansion の置き場の分け方は変えない",
+   "expected_scope": "handler-imports・handler-expr(節の操作の名の性質の写しは card ki-b4c015d8ba1f の範囲)",
+   "actual_scope": "試しの差分(evidence/s2-new-node-name.diff — `_vm-imports` に TransferTail を足し `_rewrite-ops` の transfer がそれを読む)は handle.hy の 2 か所だけで 57 passed。同じ名を defhandler の並びの外に置く差分は 13 件が赤",
+   "changed_modules": [
+    "handler-imports",
+    "handler-expr"
+   ],
+   "unchanged_modules": [
+    "scope-judgment",
+    "scoped-definition",
+    "guard-globals",
+    "handle-expansion",
+    "defhandler-expansion",
+    "clause-endings",
+    "static-view",
+    "bytecode-guard",
+    "regression-test"
+   ],
+   "reason": "予想どおり。盲検 A の言う「名を足すたびに書き手の節から見えない名が 1 つ増える」は S2 の置き場の主張の外の、前からの名の漏れ(card ki-16180480129e)",
+   "revision": "不要 — 試しの差分で予想どおりの範囲と、置き場の誤りの拒否を確かめた(evidence/s2-new-node-name-test.txt・s2-misplaced-import-test.txt)"
+  },
+  {
+   "id": "S3",
+   "axis": "effects",
+   "applicability": "applicable",
+   "change": "既存の利用者(module の段の handle・defhandler、defk・素の defn の本体の中の handle・defhandler)と doeff-hy-check の型検査",
+   "claim": "_in-class-body? は module の段・関数の中・型検査のための展開で偽なので、それらの展開は直す前と 1 字も同じ。module の段の import は今までどおり module の globals に置く",
+   "expected_scope": "変更なし",
+   "actual_scope": "型検査の展開 18,553 byte と、module の段と関数の中の実行時の展開 13,351 byte が直す前と一致(evidence/s3-expand-compare.txt)。設計者の失敗例(module の段の handle も包む差分)を、`\"WithHandler\" in vars(mod)` の検が同じ module の defhandler の import に紛れて見分けていなかったので、handle だけの module で確かめる形に直した",
+   "changed_modules": [
+    "regression-test"
+   ],
+   "unchanged_modules": [
+    "scope-judgment",
+    "scoped-definition",
+    "guard-globals",
+    "handle-expansion",
+    "defhandler-expansion",
+    "handler-imports",
+    "handler-expr",
+    "clause-endings",
+    "static-view",
+    "bytecode-guard"
+   ],
+   "reason": "展開は予想どおり変わらない。regression-test の変更は module の段の handle の検の穴で、責務の漏れではない",
+   "revision": "test_module_and_class_level_definitions_are_not_wrapped を handle だけの module で WithHandler を確かめる形に直した: 同じ差分を直す前の検は 57 passed で通し(evidence/s3-wrap-module-level-test.txt)、直した検は 1 failed で拒否(evidence/s3-wrap-module-level-test-revised.txt)"
+  },
+  {
+   "id": "S4",
+   "axis": "storage",
+   "applicability": "applicable",
+   "change": "直す前の doeff-hy で compile した利用者の Hy の module(.pyc・code store)が残ったまま、直した doeff-hy に上げる",
+   "claim": "bytecode-guard が使った macro(handle・defhandler)の digest の変化で compile し直すので、古い展開(NameError になる形)の .pyc は使われない。bytecode-guard は変えない",
+   "expected_scope": "変更なし(bytecode-guard の既存の働き)",
+   "actual_scope": "直す前の macro で compile した .pyc(main が NameError)を、直した版が compile し直して main => (101, 101)。古い .pyc の code をそのまま走らせると NameError のまま",
+   "changed_modules": [],
+   "unchanged_modules": [
+    "scope-judgment",
+    "scoped-definition",
+    "guard-globals",
+    "handle-expansion",
+    "defhandler-expansion",
+    "handler-imports",
+    "handler-expr",
+    "clause-endings",
+    "static-view",
+    "bytecode-guard",
+    "regression-test"
+   ],
+   "reason": "予想どおり。保存先の扱いは bytecode-guard の既存の働きで足りる",
+   "revision": "不要 — evidence/s4-storage.txt の段 1〜3 で確かめた"
+  },
+  {
+   "id": "X-hardware",
+   "axis": "hardware",
+   "applicability": "excluded",
+   "reason": "展開と Python の名の引きだけの変更で、生成した code は機体の資源・命令の種類に依らない"
+  },
+  {
+   "id": "X-distribution",
+   "axis": "distribution",
+   "applicability": "excluded",
+   "reason": "1 つの process の中の名の引きの変更。handler の値を別の process へ名で送る形は無く、class の本体の defhandler の name の __qualname__ は変えない(regression-test が確かめる)。節の関数・被せる関数は前から名で引けない入れ子の関数"
+  },
+  {
+   "id": "X-concurrency",
+   "axis": "concurrency",
+   "applicability": "excluded",
+   "reason": "class の本体は定義の時に 1 度、定義する thread で評価される。閉包の cell は handler を返す前に 1 度書かれ、後は読むだけ。共有して書き換える状態を足さない(session の値は Get / Put の effect で state の handler が持つ — 前と同じ)"
+  },
+  {
+   "id": "X-simulation",
+   "axis": "simulation",
+   "applicability": "excluded",
+   "reason": "時刻・乱数・外の IO を足さない。展開は source から決まる(一意の名の番号は compile の口が正準化する)"
+  }
+ ],
+ "checks": [
+  {
+   "id": "C1",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "positive",
+   "expectation": "直した版(08ddfc707 を含む main)で、強めた最終の tests/test_handle_scope.py がすべて緑",
+   "observation": "57 passed(終了の状態 0)",
+   "evidence": {
+    "path": "evidence/guard-on-fixed-final.txt",
+    "sha256": "8118d99f3ef8304210b876f7a202ba1805895d1c53337b12b04caaf87719e4da"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C2",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "直す前の macro(fe951a108 の doeff_hy)では、class の本体の検が狙った理由(NameError・module の同じ名の誤読)で赤",
+   "observation": "24 failed / 33 passed。NameError '_doeff_do'・'Transfer'・'Resume'・'Pass' と 'str' object is not callable。緑の 33 件は関数の中と module の段の守りで、前後とも緑が正しい",
+   "evidence": {
+    "path": "evidence/s1-before-fix-test.txt",
+    "sha256": "0c9a6a7a6e768f7c28ed861dc526ce14fc9a3cbe55dff4f61c5070b395091d3d"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C3",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "defk の形(節が読む名を _install-guard-globals で module の globals へ setdefault)の別の直し方を、R3 の検と構造の検が拒否",
+   "observation": "7 failed / 50 passed。'str' object is not callable(3)・global で引く Transfer・Resume・Pass(4)",
+   "evidence": {
+    "path": "evidence/s1-globals-setdefault-test.txt",
+    "sha256": "8c10155aede126f43d9fb8e7ece981a5d8fd9846514039adea178c4c30ed9316"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C4",
+   "scenarios": [
+    "S1"
+   ],
+   "control": "negative",
+   "expectation": "盲検 B の差分(節の `<-` を包む式が定義の名 h を名で読む)を、強めた検が拒否(強める前の検は通した)",
+   "observation": "4 failed / 53 passed。NameError 'h'(2)・global で引く h(2)。強める前は 45 passed(evidence/b-declared-effect-before-guard.txt)",
+   "evidence": {
+    "path": "evidence/b-declared-effect-on-guard.txt",
+    "sha256": "13933c658976712e1eb3fd00e82144e4d319f574d406f6708c9ca0c250a2e4ac"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C5",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "positive",
+   "expectation": "新しい node の名を _vm-imports に足し _rewrite-ops がそれを読む差分は、scope の判断に触れずに class の本体で走る",
+   "observation": "57 passed(終了の状態 0)・差分は handle.hy の 2 か所",
+   "evidence": {
+    "path": "evidence/s2-new-node-name-test.txt",
+    "sha256": "7051d5072086e0d0b194c9e51981595b3a7694adaf2e63740ad93eac869182f8"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C6",
+   "scenarios": [
+    "S2"
+   ],
+   "control": "negative",
+   "expectation": "新しい名の import を defhandler の imports の並びの外に置く差分を拒否",
+   "observation": "13 failed / 44 passed。NameError 'TransferTail'(8 行)・global で引く TransferTail(5)",
+   "evidence": {
+    "path": "evidence/s2-misplaced-import-test.txt",
+    "sha256": "7a79a458e5b509993f73a815be9a4bfb50b6fa335cd6967cdd73f863308eb802"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C7",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "positive",
+   "expectation": "module の段・関数の中の実行時の展開と、型検査の展開が直す前と 1 字も同じ",
+   "observation": "型検査の展開 18,553 byte 一致・class C の前まで 13,351 byte 一致・class C の本体だけ 145 行の差",
+   "evidence": {
+    "path": "evidence/s3-expand-compare.txt",
+    "sha256": "c95c284bf80e4bd994a36097ef5ba0747ff5a714ec91700f34401d8573a12d1f"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C8",
+   "scenarios": [
+    "S3"
+   ],
+   "control": "negative",
+   "expectation": "module の段の handle も包む差分を、直した test_module_and_class_level_definitions_are_not_wrapped が拒否",
+   "observation": "1 failed / 56 passed(handle だけの module に WithHandler が無い)。直す前の検は同じ差分を 57 passed で通した(evidence/s3-wrap-module-level-test.txt)",
+   "evidence": {
+    "path": "evidence/s3-wrap-module-level-test-revised.txt",
+    "sha256": "83faddc2fba1f281ce8acf5197f87762b054c1f82811a889c68d959f503f1af7"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C9",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "positive",
+   "expectation": "直す前の macro で compile した .pyc を、直した版の import が compile し直して走る",
+   "observation": "段 2: pyc の sha256 が 59e24bcc… → 36b7f386… に変わり main => (101, 101)",
+   "evidence": {
+    "path": "evidence/s4-storage.txt",
+    "sha256": "8b8a5967639c7eb56d16b27093535f7dab29886247e7dfeac748a497c3794fc4"
+   },
+   "status": "passed"
+  },
+  {
+   "id": "C10",
+   "scenarios": [
+    "S4"
+   ],
+   "control": "negative",
+   "expectation": "古い .pyc の code を照らさずに走らせると直す前の失敗のまま(compile し直しが要る事を示す)",
+   "observation": "段 3: main !! NameError name '_doeff_do' is not defined",
+   "evidence": {
+    "path": "evidence/s4-storage.txt",
+    "sha256": "8b8a5967639c7eb56d16b27093535f7dab29886247e7dfeac748a497c3794fc4"
+   },
+   "status": "passed"
+  }
+ ],
+ "unresolved": []
+}

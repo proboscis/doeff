@@ -14,6 +14,8 @@ class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)は�
 (名の定義は class の段に残す)。
 """
 
+import builtins
+import dis
 import sys
 import types
 from collections.abc import Callable
@@ -24,6 +26,7 @@ import pytest
 from doeff_core_effects import state, try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_traverse.handlers import fail_handler, sequential
+from hy.compiler import hy_compile
 
 from doeff import run
 
@@ -296,8 +299,12 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     assert run(mod.top_h(5)(mod.bump_n(1))) == 6
     assert run(mod.Holder.inner_h(5)(mod.bump_n(1))) == 6
     assert run(mod.program) == 101
-    # module の段の handle の import は今までどおり module の globals に置く
-    assert "WithHandler" in vars(mod)
+    # module の段の handle の import は今までどおり module の globals に置く。handle だけの module で確かめる — 同じ module の
+    # defhandler の import も WithHandler を置くので、上の module では handle を包んでも通っていた(設計検証
+    # lt-CZC8SGS3C6DFDGSGG64YF49DH9 の S3 の失敗例)
+    handle_only = _eval_module("(setv program (handle (bump-n 1) (Bump [n] (resume (+ n 100)))))")
+    assert run(handle_only.program) == 101
+    assert "WithHandler" in vars(handle_only)
 
 
 # class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)。class の本体の import は class の属性になり、展開の
@@ -310,6 +317,7 @@ _CLASS_ONLY_HEADER = """
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
+(defclass [(dataclass :frozen True)] Scale [EffectBase] #^ int n)
 """
 
 _CLASS_BODY_CASES = {
@@ -351,6 +359,15 @@ _CLASS_BODY_CASES = {
           (defhandler h (session var calls 99) (Bump [n] (:= calls (+ calls 1)) (resume (+ n calls)))))
         """,
         lambda mod: mod.C.h(mod.Bump(1)),
+    ),
+    # 節の `<-` は外の handler(同じ class の outer)へ effect を出して答えを束ねる
+    "defhandler-bind": (
+        """
+        (defclass C []
+          (defhandler h (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
+          (defhandler outer (Scale [n] (resume n))))
+        """,
+        lambda mod: mod.C.outer(mod.C.h(mod.Bump(1))),
     ),
 }
 
@@ -396,3 +413,78 @@ def test_class_body_handle_leaves_module_globals_alone(
         "書き手の Resume",
         "書き手の Pass",
     )
+
+
+# class の本体の展開の中で作る関数が global で引いてよい名: builtins と、session の鍵が読む module の `__name__`
+# (_build-lazy-init-forms)。この外は、書き手が handle・defhandler に書いた名(effect の型・節の本文の名)だけ。
+_GLOBALS_ALWAYS_ALLOWED = frozenset(dir(builtins)) | {"__name__"}
+
+# 構造の検だけで読む形も足す(節の操作・束ね・宣言・session val の展開を通す — 走らせない)
+_CLASS_BODY_SHAPES = {
+    **{name: source for name, (source, _) in _CLASS_BODY_CASES.items()},
+    "handle-reperform": "(defclass C [] (setv program (handle (Bump 1) (Bump [n] (reperform effect)))))",
+    "defhandler-finish": '(defclass C [] (defhandler h (Bump [n] :finish-reason "期限" (finish n))))',
+    "defhandler-declared-session-val": """
+        (defclass C []
+          (defhandler h {:effects [Scale]} (session val base (abs 1))
+            (Bump [n] (<- r (Scale n)) (resume (+ r base)))))
+        """,
+}
+
+
+def _written_names(source: str) -> frozenset[str]:
+    """source に書き手が書いた名(Python の綴り)。defhandler の定義の名は除く — 展開の中の関数がそれを名で読むと、
+    class の本体では class の属性を飛ばして module の globals を引く。"""
+    names: set[str] = set()
+
+    def walk(form: object) -> None:
+        if isinstance(form, hy.models.Symbol):
+            names.add(hy.mangle(str(form)))
+        elif isinstance(form, hy.models.Sequence):
+            items = list(form)
+            if isinstance(form, hy.models.Expression) and items and str(items[0]) == "defhandler":
+                items = items[:1] + items[2:]
+            for item in items:
+                walk(item)
+
+    for form in hy.read_many(source):
+        walk(form)
+    return frozenset(names)
+
+
+def _class_body_code(source: str) -> types.CodeType:
+    """class 1 つだけの module を compile し、class C の本体の code を返す(走らせない)。"""
+    mod = types.ModuleType("handle_scope")
+    sys.modules["handle_scope"] = mod
+    tree = hy_compile(hy.read_many(_CLASS_ONLY_HEADER + source), mod)
+    module_code = compile(tree, "<handle_scope>", "exec")
+    return next(
+        const
+        for const in module_code.co_consts
+        if isinstance(const, types.CodeType) and const.co_name == "C"
+    )
+
+
+def _nested_global_loads(code: types.CodeType) -> set[str]:
+    """code の中で作る関数(入れ子の code)が global で引く名。class の本体そのものの名の引きは数えない。"""
+    names: set[str] = set()
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):
+            names |= {
+                instruction.argval
+                for instruction in dis.get_instructions(const)
+                if instruction.opname in ("LOAD_GLOBAL", "LOAD_FROM_DICT_OR_GLOBALS")
+            }
+            names |= _nested_global_loads(const)
+    return names
+
+
+@pytest.mark.parametrize("source", _CLASS_BODY_SHAPES.values(), ids=_CLASS_BODY_SHAPES.keys())
+def test_class_body_handle_functions_load_only_written_globals(source: str) -> None:
+    """class の本体の handle・defhandler の展開の中で作る関数(節の関数・handler を組む関数・本文に被せる関数)は、builtins・
+    `__name__`・書き手が書いた名の外を global で引かない。展開が名で読む物は組む関数の中で import して閉包から読む —
+    class の本体で並べた import や定義の名は class の属性になり、関数からは class の段を飛ばして module の globals を
+    引く。import の名の一覧に依らない検で、走らせる検が通らない節の形も捉える(設計検証
+    lt-CZC8SGS3C6DFDGSGG64YF49DH9 の盲検 B: 節が定義の名 `h` を名で読む変更が、走らせる検を通った)。"""
+    loaded = _nested_global_loads(_class_body_code(source))
+    assert loaded - _GLOBALS_ALWAYS_ALLOWED - _written_names(source) == set()

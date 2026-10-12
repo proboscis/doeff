@@ -7,6 +7,7 @@
 実装完了まで。直しは doeff main 08ddfc707b(L2167・2026-10-12 12:40 JST 着地)。変更の前の版は 8fcefa7c6(08ddfc707 の親)。
 handle.hy・macros.hy・tests/test_handle_scope.py は 8fcefa7c6 と、直しを書いた時の基 fe951a108 で同じ中身。
 この file の §1〜§5 は盲検の前に書いた(保存した版の sha256 は evidence/design-pre-blind.sha256)。§6 から後は盲検の後に書いた。
+盲検を受けて強めた tests/test_handle_scope.py(§7)は、この記録と同じ branch wt/ki-edab-design-check で main へ入れる。
 
 ## 1. 固定した要件
 
@@ -100,3 +101,85 @@ module の段か外の関数に在る(class の段の名は節の関数から前
   節の関数の中の `Pass`・`WithHandler` をどう読むかは確かめていない。
 - 限界 L3: module の段の handle・defhandler の import は、書き手の module の同じ名(Transfer など)を上書きする(前からの形・R4 で
   変えない)。
+
+## 6. 盲検の結果と再現(ここから盲検の後に書いた)
+
+起動の記録は blind/blind-meta.md。第 1 候補の codex(gpt-6-astra・low)は 401 で使えず、Agent tool の subagent(opus・xhigh を要求・実の model と effort は観測していない)で A・B を同時に別の文脈で起こした。
+
+```
+                 書き手の module の globals
+                 (Transfer = 書き手の振込 / h = 別の handler)
+                        ▲                         ▲
+     B: 節が定義の名 h を global で引く ─┘                         │
+                                                                   │ A: 節の頭の Transfer が
+  class C の本体                                                    │    展開の import を指す
+  ┌───────────────────────────────────────────┐                    │    (書き手の物を指さない)
+  │ h = _hy_anon_N()   ← 組む関数を呼ぶ        │                    │
+  │   ┌ _hy_anon_N ─────────────────────────┐ │                    │
+  │   │ from doeff import Resume, Transfer… │─┼── 閉包 ───┐        │
+  │   │ def dispatcher(effect, k):           │ │           ▼        │
+  │   │   isinstance(effect, Transfer) ──────┼─┼──── 閉包の Transfer(VM の node)
+  │   │   yield Transfer(k, v)               │ │
+  │   └──────────────────────────────────────┘ │
+  └───────────────────────────────────────────┘
+```
+
+| 盲検 | 返した失敗例 | 再現(設計者) | 成立 | 種類 |
+| --- | --- | --- | --- | --- |
+| A | 書き手が自分の effect を `Transfer`(や `Put`)と名付け、class の本体の handle・defhandler で受けると、節の `isinstance` と注記が展開の import した VM の `Transfer` を指し、effect が黙って外へ抜ける | evidence/a-collision-fixed.txt: 08ddfc707 で class の本体の 3 形が UnhandledEffect、外に handler が在ると '本番の振込が走った'(誤配)、`Put` も同じ。evidence/a-collision-before.txt: 直す前は NameError・TypeError。module の段(上書きで TypeError)と defk の本体(UnhandledEffect)は直す前から同じ | 成立 | 前からの知識の漏れ: 展開の実行時の名の綴り(K1)が書き手の名前空間と 1 つの名を分け合う。綴りは handler-imports・handler-expr のほか binding_forms.py・macros.hy の `set!` にも在る。この変更は class の本体を「必ず NameError」から関数の中と同じ「名がぶつかる時だけ黙って受け損なう」へ移した |
+| B | `{:effects …}` の宣言を実行時に守らせる機能で、節の `<-` を包む式が定義の名 `h` を名で読む(handler-expr に「定義の名は節から見える」が scope の判断なしに入る)。§4 の検 45 件は通る | evidence/b-declared-effect-before-guard.txt: 差分を当てて 45 passed のまま、probe で class の本体の 3 形が NameError 'h'、module に `h` が在ると宣言を取り違える(誤って断る・違反を通す) | 成立 | 検の穴: §4 の走らせる検は節に `<-` の無い 6 形と module の globals だけを見て、展開の中の関数が global で引く名を見ない(§5 の限界 L1 と同じ穴を、import でない名で開けた) |
+
+## 7. 修正と再検証
+
+- **検を強めた(B と L1 への直し)** — tests/test_handle_scope.py(最終の版 = evidence/tests/test_handle_scope.final.py.txt・sha256 f7207666…):
+  - 走らせる検の形に `defhandler-bind`(class の本体の defhandler の節の `<-` を同じ class の outer が受ける)を足した。
+  - 構造の検 `test_class_body_handle_functions_load_only_written_globals` を足した。class の本体の展開の中で作る関数(入れ子の code)が
+    `LOAD_GLOBAL`・`LOAD_FROM_DICT_OR_GLOBALS` で引く名を、builtins・`__name__`・書き手が書いた名(defhandler の定義の名は除く)に限る。
+    import の名の一覧に依らず、走らせない形(reperform・finish・宣言と session val と `<-`)も読む。
+  - 再検証: 直した版で 57 passed(evidence/guard-on-fixed-final.txt)。B の差分には 4 件が狙った理由で赤(NameError 'h'・global の
+    `h` — evidence/b-declared-effect-on-guard.txt)。直す前の macro には class の本体の 24 件が赤(evidence/s1-before-fix-test.txt)。
+- **S3 の検を直した** — 盲検の後の設計者の失敗例(module の段の handle も包む差分 evidence/s3-wrap-module-level.diff)が、強めた検でも
+  57 passed で通った(evidence/s3-wrap-module-level-test.txt)。`test_module_and_class_level_definitions_are_not_wrapped` の
+  `"WithHandler" in vars(mod)` は、同じ module の `defhandler top-h` の import でも満たされ、handle の展開を見分けていなかった。
+  handle だけの module で確かめる形に直し、同じ差分を 1 failed で拒否した(evidence/s3-wrap-module-level-test-revised.txt)。
+- **A は直さず card に切った** — card ki-16180480129e(展開の名を `_doeff_` の頭の別名にし、綴りを 1 か所の表から引く)。直すと
+  module の段の展開も変わり(R4 の外)、素の名の漏れに頼る利用者を 4 つの repo で先に引く必要がある。受入の条: 書き手の
+  `Transfer`・`Pass`・`Put` を module の段・defk の本体・class の本体の節で受けて答える事と、module の段の後も書き手の名が変わらない事。
+  関係: ki-edab7c8fbb55・ki-b4c015d8ba1f(節の操作の名の写し)。
+
+## 8. 予想と実際の変更範囲
+
+| シナリオ | 予想(§3・盲検の前) | 実際 | 差の訳 |
+| --- | --- | --- | --- |
+| S1 | scope-judgment・handle-expansion・defhandler-expansion・regression-test(scoped-definition は docstring だけ) | 08ddfc707 は予想どおり。盲検 B を受けて regression-test を再び変えた(形 1 つと構造の検) | regression-test の再変更は検の穴(B)で、他の責務への漏れではない |
+| S2 | handler-imports・handler-expr(節の操作の名の写しは ki-b4c015d8ba1f の範囲) | 試しの差分 evidence/s2-new-node-name.diff は handle.hy の 2 か所だけで 57 passed。名を並びの外に置く差分 evidence/s2-misplaced-import.diff は 13 件が赤 | 予想どおり。盲検 A の言う「名を足すたびに書き手から見えない名が 1 つ増える」は S2 の範囲の外の前からの漏れ(ki-16180480129e) |
+| S3 | 変更なし | 型検査の展開 18,553 byte・module の段と関数の中の実行時の展開 13,351 byte が直す前と一致(evidence/s3-expand-compare.txt)。検は module の段の handle の包みを見分けていなかったので直した | 予想どおり(検の穴は §7) |
+| S4 | 変更なし(bytecode-guard の既存の働き) | 直す前の macro で compile した .pyc を、直した版が compile し直して (101, 101)。古い code をそのまま走らせると NameError(evidence/s4-storage.txt) | 予想どおり |
+
+## 9. 正常例・失敗例の記録
+
+| id | シナリオ | 種類 | 期待 | 観測 | 証拠 |
+| --- | --- | --- | --- | --- | --- |
+| C1 | S1 | 正常 | 直した版で強めた最終の検がすべて緑 | 57 passed | evidence/guard-on-fixed-final.txt |
+| C2 | S1 | 失敗 | 直す前の macro では class の本体の検が NameError 等で赤 | 24 failed(NameError `_doeff_do`・`Transfer`・`Resume`・`Pass`、`'str' object is not callable`)・既存 33 passed | evidence/s1-before-fix-test.txt |
+| C3 | S1 | 失敗 | defk の形(module の globals へ setdefault)の別の直し方を、R3 の検と構造の検が拒否 | 7 failed(`'str' object is not callable`・global の `Transfer`・`Resume`・`Pass`) | evidence/s1-globals-setdefault.diff・s1-globals-setdefault-test.txt |
+| C4 | S1 | 失敗 | 盲検 B の差分(節が定義の名 `h` を読む)を強めた検が拒否 | 4 failed(NameError 'h'・global の `h`)。強める前の検は 45 passed | evidence/b-declared-effect-before-guard.txt・b-declared-effect-on-guard.txt |
+| C5 | S2 | 正常 | 新しい名を import の並びに足せば、scope の判断に触れずに class の本体で走る | 57 passed | evidence/s2-new-node-name.diff・s2-new-node-name-test.txt |
+| C6 | S2 | 失敗 | 新しい名の import を defhandler の並びの外に置く差分を拒否 | 13 failed(NameError 'TransferTail'・global の `TransferTail`) | evidence/s2-misplaced-import.diff・s2-misplaced-import-test.txt |
+| C7 | S3 | 正常 | module の段・関数の中・型検査の展開が直す前と同じ | 一致(18,553 byte・13,351 byte)。class の本体だけ 145 行の差 | evidence/s3-expand-compare.txt・expand/ |
+| C8 | S3 | 失敗 | module の段の handle を包む差分を拒否 | 直した検で 1 failed(handle だけの module に WithHandler が無い)。直す前の検は 57 passed で通した | evidence/s3-wrap-module-level.diff・s3-wrap-module-level-test.txt・s3-wrap-module-level-test-revised.txt |
+| C9 | S4 | 正常 | 直す前に compile した .pyc を直した版が compile し直して走る | pyc の sha256 が変わり main => (101, 101) | evidence/s4-storage.txt(段 1・段 2) |
+| C10 | S4 | 失敗 | 古い .pyc の code をそのまま走らせると直す前の失敗のまま(guard が要る事) | main !! NameError `_doeff_do` | evidence/s4-storage.txt(段 3) |
+
+検の file の版: C1・C8(直した後)は最終の版。C3〜C6・C8(直す前)は S3 の直しの前の版 evidence/tests/test_handle_scope.guard-v1.py.txt
+(差は module の段の handle の 1 か所だけで、C3〜C6 の結果に関わらない)。C2 は最終の版。
+
+## 10. 範囲の外と確かめていない事
+
+- 盲検 A の名の衝突は card ki-16180480129e で直す(§7)。この依頼の受入の条(class の本体の節が Transfer・Resume を読んで走る)には
+  関わらない。
+- 型検査のための展開(doeff-hy-check・pyright)で class の本体の handle・defhandler の節の `Pass`・`WithHandler` がどう読まれるかは
+  確かめていない(§5 の L2)。この変更は型検査の展開を 1 字も変えていない(C7)。
+- 実行の経路は `hy.eval` と bytecode guard の import(C9)の 2 つ。Python は 3.14.3t だけで測った。
+- 関係する他の検の file(handle・defhandler の利用者)は手元では走らせていない(手元では触った file だけ — 4 時間ごとの全体の
+  検証が測る)。

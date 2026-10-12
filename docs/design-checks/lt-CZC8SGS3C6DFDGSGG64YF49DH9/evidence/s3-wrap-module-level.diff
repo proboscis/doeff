@@ -1,0 +1,21 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/handle.hy b/packages/doeff-hy/src/doeff_hy/handle.hy
+index 58d22406d..fe95d3a37 100644
+--- a/packages/doeff-hy/src/doeff_hy/handle.hy
++++ b/packages/doeff-hy/src/doeff_hy/handle.hy
+@@ -763,14 +763,14 @@
+    `(f)`・let の束ね・`!` の yield)を、それを含む式より前の文へ出す。すぐ呼ぶ関数を本文と同じ式の中で呼ぶと、本文の
+    文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W
+    の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。"
+-  (import doeff-hy.macros [_module-names _in-function-body? _in-class-body?])
++  (import doeff-hy.macros [_module-names _in-function-body? _in-class-body? _static-view?])
+   (setv specs [])
+   (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
+   (setv prelude [(_do-import)
+                  (_vm-imports)
+                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
+                  `(_doeff-check-clause-endings "handle" [~@specs])])
+-  (locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler))
++  (locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler) (not (_static-view?)))
+       ;; gensym はこの枝だけで引く — module の段の展開の一意の名の番号を前と同じに保つ
+       (let [install (hy.gensym "handle_install")]
+         `(do

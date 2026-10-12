@@ -1,0 +1,24 @@
+# 失敗例: 盲検 B の差分(節が定義の名 h を名で読む)を当てた木で、強めた検を走らせる — 作業木 doeff-wt-blind-b-ki-edab(08ddfc707 + failure-example.diff + 強めた tests/test_handle_scope.py)・2026-10-12T04:23:18Z
+ packages/doeff-hy/src/doeff_hy/declarations.hy | 16 +++++
+ packages/doeff-hy/src/doeff_hy/handle.hy       | 27 +++++++-
+ tests/test_handle_scope.py                     | 88 ++++++++++++++++++++++++++
+ 3 files changed, 128 insertions(+), 3 deletions(-)
+## uv run pytest tests/test_handle_scope.py -q -rA
+E   NameError: name 'h' is not defined
+E   NameError: name 'h' is not defined
+E       AssertionError: assert {'h'} == set()
+E         
+E         Extra items in the left set:
+E         'h'
+E         Use -v to get more diff
+E       AssertionError: assert {'h'} == set()
+E         
+E         Extra items in the left set:
+E         'h'
+E         Use -v to get more diff
+FAILED tests/test_handle_scope.py::test_class_body_handle_clauses_read_their_operations[defhandler-bind]
+FAILED tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone[defhandler-bind]
+FAILED tests/test_handle_scope.py::test_class_body_handle_functions_load_only_written_globals[defhandler-bind]
+FAILED tests/test_handle_scope.py::test_class_body_handle_functions_load_only_written_globals[defhandler-declared-session-val]
+4 failed, 53 passed, 1 warning in 10.62s
+rc=1

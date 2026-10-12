@@ -1,0 +1,56 @@
+# 盲検 B の再現(設計者が実行)— 作業木 doeff-wt-blind-b-ki-edab(08ddfc707)に盲検 B の差分を当てる・2026-10-12T04:18:57Z
+## git apply failure-example.diff
+rc=0
+ packages/doeff-hy/src/doeff_hy/declarations.hy | 16 +++++++++++++++
+ packages/doeff-hy/src/doeff_hy/handle.hy       | 27 +++++++++++++++++++++++---
+ 2 files changed, 40 insertions(+), 3 deletions(-)
+## uv run pytest tests/test_handle_scope.py -q
+45 passed, 1 warning in 14.61s
+## uv run python probe_bind.py
+
+
+  C._hy_anon_4.<locals>._hy_anon_3()  <string>:10
+  _hy_anon_3()  <string>:10
+
+NameError: name 'h' is not defined
+
+
+
+  C.h.<locals>._hy_anon_3()  <string>:10
+  _hy_anon_3()  <string>:10
+
+NameError: name 'h' is not defined
+
+
+
+  C._hy_anon_4.<locals>._hy_anon_3()  <string>:10
+  _hy_anon_3()  <string>:10
+
+NameError: name 'h' is not defined
+
+
+
+  _hy_anon_4.<locals>._hy_anon_3()  <string>:9
+  _hy_anon_3()  <string>:9
+    (raise (TypeError (.format "defhandler {}: 節が :effects に宣言していない effect {} を <- で外へ出した(宣言: {})"
+
+TypeError: defhandler h: 節が :effects に宣言していない effect Scale を <- で外へ出した(宣言: Other)
+
+
+
+  C._hy_anon_4.<locals>._hy_anon_3()  <string>:11
+  _hy_anon_3()  <string>:11
+    (raise (TypeError (.format "defhandler {}: 節が :effects に宣言していない effect {} を <- で外へ出した(宣言: {})"
+
+TypeError: defhandler h: 節が :effects に宣言していない effect Scale を <- で外へ出した(宣言: Other)
+
+class-no-decl: NameError: name 'h' is not defined
+class-params-no-decl: NameError: name 'h' is not defined
+class-decl: NameError: name 'h' is not defined
+module-no-decl: 101
+module-decl-violated: TypeError: defhandler h: 節が :effects に宣言していない effect Scale を <- で外へ出した(宣言: Other)
+class-shadowed-by-module-h: TypeError: defhandler h: 節が :effects に宣言していない effect Scale を <- で外へ出した(宣言: Other)
+class-violation-hidden-by-module-h: 101
+function-no-decl: 101
+module-params-no-decl: 101
+rc=0

@@ -1,0 +1,21 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/handle.hy b/packages/doeff-hy/src/doeff_hy/handle.hy
+index 58d22406d..c26e88b20 100644
+--- a/packages/doeff-hy/src/doeff_hy/handle.hy
++++ b/packages/doeff-hy/src/doeff_hy/handle.hy
+@@ -79,6 +79,7 @@
+       '(do (import doeff [Pass])
+            (import doeff_vm [WithHandler]))
+       '(do (import doeff [Resume Transfer Pass])
++           (import doeff [Transfer :as TransferTail])
+            (import doeff_vm [WithHandler]))))
+ 
+ 
+@@ -469,7 +470,7 @@
+             `(return ~(_rewrite-ops (get form 1)))
+ 
+           (and (= hname "transfer") (= (len form) 2))
+-            `(yield (Transfer k ~(_rewrite-ops (get form 1))))
++            `(yield (TransferTail k ~(_rewrite-ops (get form 1))))
+ 
+           ;; (reperform expr) — OCaml 5 aligned forwarding
+           (and (= hname "reperform") (= (len form) 2))

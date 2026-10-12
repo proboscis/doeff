@@ -1,0 +1,32 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/handle.hy b/packages/doeff-hy/src/doeff_hy/handle.hy
+index 58d22406d..c61cd4fd8 100644
+--- a/packages/doeff-hy/src/doeff_hy/handle.hy
++++ b/packages/doeff-hy/src/doeff_hy/handle.hy
+@@ -770,7 +770,7 @@
+                  (_vm-imports)
+                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
+                  `(_doeff-check-clause-endings "handle" [~@specs])])
+-  (locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler))
++  (locate-synthesized (if (_in-function-body? _hy-compiler)
+       ;; gensym はこの枝だけで引く — module の段の展開の一意の名の番号を前と同じに保つ
+       (let [install (hy.gensym "handle_install")]
+         `(do
+@@ -779,9 +779,15 @@
+                              (setv __doeff-handler-data__ ~h-expr)
+                              (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__)))))
+            (~install ~body)))
+-      `(do
+-         ~@prelude
+-         (WithHandler ~h-expr ~body)))))
++      (if (_in-class-body? _hy-compiler)
++          `(do
++             ~@prelude
++             (import doeff-hy.macros [_install-guard-globals :as _doeff-install-guard-globals])
++             (WithHandler (_doeff-install-guard-globals ~h-expr {"Resume" Resume "Transfer" Transfer "Pass" Pass})
++                          ~body))
++          `(do
++             ~@prelude
++             (WithHandler ~h-expr ~body))))))
+ 
+ 
+ (defmacro with-handler [handlers body]

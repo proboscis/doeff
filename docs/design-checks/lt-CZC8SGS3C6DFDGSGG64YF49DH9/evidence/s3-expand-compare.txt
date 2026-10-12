@@ -1,0 +1,8 @@
+# S3 の正常例: 直す前(fe951a108 の doeff_hy)と直した版(08ddfc707)の展開を Python の文に落として比べる — scripts/expand.py(module の段・関数の中・class の本体の handle・defhandler)。各版 2 回目の出力(1 回目は .hy の compile が gensym の数えを進める)・2026-10-12T04:42:22Z
+## 型検査の展開(static)全体
+一致 18553 byte
+## 実行時の展開: class C の前まで(module の段と関数の中)
+class C の行: 直す前 295 / 直した版 295
+一致 13351 byte
+## 実行時の展開: class C の本体(変わる所)
+差の行の数 145
