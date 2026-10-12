@@ -19,7 +19,7 @@
 ;;; across the pipeline and each tool invocation — which is what makes
 ;;; WaitUntil, GetTime, and other time-sensitive effects actually work.
 
-(require doeff-hy.macros [<- defk])
+(require doeff-hy.macros [<- defk val])
 (import doeff [handler :as _program-handler])
 (import doeff_core_effects.scheduler [
   CreateExternalPromise Wait Spawn Race Cancel PRIORITY_IDLE])
@@ -59,8 +59,12 @@
   (setv tool (.get server._tools req.tool-name))
   (when (is tool None)
     (return #("tool" False f"unknown tool: {req.tool-name}")))
-  (setv args (lfor name (.param-names tool) (.get req.arguments name)))
-  (setv program (tool.handler #* args))
+  ;; 引数は schema(doeff.mcp の表 MCP_JSON_TYPES)で検め、合わなければ handler を呼ばずに断る — handler の引数の
+  ;; 注記(defmcp-tool)が約束する型を、ここで真にする(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y・card ki-973b4e44d7bc)
+  (val decoded (.decode-arguments tool req.arguments))
+  (when decoded.problems
+    (return #("tool" False (.join "; " decoded.problems))))
+  (setv program (tool.handler #* decoded.values))
   (for [h full-stack]
     ;; Never reinstall the scheduler's own prompt handler (marked by
     ;; scheduler.make_handler): the VM has exactly ONE scheduler prompt.
