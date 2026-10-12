@@ -34,10 +34,10 @@ def json_bytes(value: object) -> int:
 def hyx_json_equalXquestion_markX(a: object, b: object) -> bool:
     ...
 
-def key_text(key: tuple) -> str:
+def key_text(key: tuple[str, ...]) -> str:
     ...
 
-def key_from_text(text: str) -> tuple:
+def key_from_text(text: str) -> tuple[str, ...]:
     ...
 
 def epoch_ms(at: datetime) -> int:
