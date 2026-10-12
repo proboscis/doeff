@@ -767,14 +767,15 @@
                  (_vm-imports)
                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
                  `(_doeff-check-clause-endings "handle" [~@specs])])
-  (setv install (hy.gensym "handle_install"))
   (locate-synthesized (if (_in-function-body? _hy-compiler)
-      `(do
-         (setv ~install ((fn []
-                           ~@prelude
-                           (setv __doeff-handler-data__ ~h-expr)
-                           (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__)))))
-         (~install ~body))
+      ;; gensym はこの枝だけで引く — module と class の本体の展開の一意の名の番号を前と同じに保つ
+      (let [install (hy.gensym "handle_install")]
+        `(do
+           (setv ~install ((fn []
+                             ~@prelude
+                             (setv __doeff-handler-data__ ~h-expr)
+                             (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__)))))
+           (~install ~body)))
       `(do
          ~@prelude
          (WithHandler ~h-expr ~body)))))
