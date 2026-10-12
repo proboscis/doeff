@@ -534,6 +534,41 @@ def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path
     assert " selected=1 ran=1 red=0 unmeasured=0 unmeasured_reverse=0 rc=0 " in counts, counts
 
 
+#: 集める時に止まった検の代役の秒(module の頭で待つ)— 上限(6 秒)と _run の 120 秒の間。収集を数えない入口なら、
+#: 入口はこの秒の後まで子を切らない。
+SLOW_COLLECTION_SECONDS = 40
+
+
+def test_a_collection_over_the_budget_is_cut_not_excluded(tmp_path: Path) -> None:
+    """失敗ケース(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 A): 上限に数えないのは configure の間(上限を枠の正本が持つ
+    枠の待ち)だけ。数えない区間は入口が時間で切らない区間でもあるので、収集まで数えない入口は、集める時に止まった子を
+    切れず、上限を越えて待ち続けた。module の頭で 40 秒止まる検は、上限 6 秒で打ち切られ「集め終わらなかった」未測になり、
+    収集の秒は数えなかった秒(待ちの行)に入らない。"""
+    model = _make_model(
+        tmp_path,
+        (Row(prefix="", tests=("tests/test_slow_collect.py",)),),
+        extra=(
+            (
+                "tests/test_slow_collect.py",
+                f"import time\n\ntime.sleep({SLOW_COLLECTION_SECONDS})\n\n\ndef test_never():\n    pass\n",
+            ),
+        ),
+    )
+    (model.root / "README").write_text("changed\n", encoding="utf-8")
+    output = _run(model, "--budget", "6")
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "tests/test_slow_collect.py — 上限 6 秒の内に集め終わらなかった" in summary, summary
+    waited = re.search(re.escape("(機体の検の枠の待ちを含む): 計 ") + r"([0-9.]+)", summary)
+    assert waited is not None, summary
+    assert float(waited.group(1)) < SLOW_COLLECTION_SECONDS / 2, summary
+    counts = _counts(output)
+    assert " selected=1 ran=0 red=0 unmeasured=1 " in counts, counts
+    seconds = re.search(r" seconds=([0-9.]+) ", counts)
+    assert seconds is not None, counts
+    assert float(seconds.group(1)) < SLOW_COLLECTION_SECONDS, counts
+
+
 @pytest.fixture(scope="module")
 def runner() -> Iterator[ModuleType]:
     """入口の script を module として読む(dataclass は定義した module を sys.modules から引く — 検の間だけ置く)。"""
