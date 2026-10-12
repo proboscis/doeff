@@ -36,6 +36,7 @@
 (import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
+(import doeff-hy.expansion-names [alias-symbol])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
 (import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
 
@@ -2540,10 +2541,11 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     DeprecationWarning
     :stacklevel 2)
   (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
-  ;; 型検査のための展開では、doeff-hy-check が module の頭で読む時だけ置く補助の名で引く
-  ;; (doeff_hy/static_view.py の SESSION_STATIC_IMPORTS)。実行時は defhandler が出す import の Put / Some。
-  (setv put (if (_static-view?) '_doeff_Put 'Put)
-        some (if (_static-view?) '_doeff_Some 'Some))
+  ;; どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — doeff_hy/expansion_names.py)。
+  ;; 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く(doeff_hy/static_view.py の
+  ;; SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
+  (setv put (alias-symbol "Put")
+        some (alias-symbol "Some"))
   `(do
      (setv ~name ~val)
      (<- (~put ~key-var (~some ~name)))))
