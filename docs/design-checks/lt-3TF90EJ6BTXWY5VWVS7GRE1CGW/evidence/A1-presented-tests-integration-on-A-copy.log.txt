@@ -1,0 +1,227 @@
+# 記録: A1-presented-tests-integration-on-A-copy
+# 時刻: 2026-10-12T11:55:50Z
+# 作業 dir: /tmp/dc-lt3tf-CbuZ/packages/doeff-linter
+# 対象の版: git の木ではない(一時の写し)
+# 命令: cargo test --locked --test facts_cache_shared --test facts_cache_roots --test hy_index_cache --test focused_run_reads
+# ---- 出力 ----
+warning: field `0` is never read
+   --> /tmp/dc-lt3tf-CbuZ/packages/doeff-indexer/src/hy_index/raw.rs:183:11
+    |
+183 |     Local(String),
+    |     ----- ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+183 -     Local(String),
+183 +     Local(()),
+    |
+
+warning: `doeff-indexer` (lib) generated 1 warning
+   Compiling doeff-linter v0.2.0 (/tmp/dc-lt3tf-CbuZ/packages/doeff-linter)
+warning: unused import: `self`
+  --> src/project/defn_to_defk.rs:35:5
+   |
+35 |     self,
+   |     ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `offset_of`
+  --> src/project/body_view.rs:34:23
+   |
+34 | use crate::position::{offset_of, Range};
+   |                       ^^^^^^^^^
+
+warning: unused import: `StmtClassDef`
+ --> src/rules/doeff005_no_setter_methods.rs:7:28
+  |
+7 | use rustpython_ast::{Stmt, StmtClassDef, StmtFunctionDef};
+  |                            ^^^^^^^^^^^^
+
+warning: unused imports: `StmtAsyncFunctionDef` and `StmtFunctionDef`
+ --> src/rules/doeff007_no_mutable_argument_mutations.rs:7:45
+  |
+7 | use rustpython_ast::{Arguments, Expr, Stmt, StmtAsyncFunctionDef, StmtFunctionDef};
+  |                                             ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused import: `StmtClassDef`
+ --> src/rules/doeff008_no_dataclass_attribute_mutation.rs:8:39
+  |
+8 | use rustpython_ast::{Expr, Mod, Stmt, StmtClassDef};
+  |                                       ^^^^^^^^^^^^
+
+warning: unused import: `ViolationLogEntry`
+ --> src/stats.rs:5:36
+  |
+5 | use crate::logging::{LintLogEntry, ViolationLogEntry};
+  |                                    ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::rules::base::LintRule`
+    --> src/project/architecture.rs:3034:13
+     |
+3034 |         use crate::rules::base::LintRule as _;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: irrefutable `if let` pattern
+   --> src/population.rs:190:24
+    |
+190 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+    = note: `#[warn(irrefutable_let_patterns)]` on by default
+
+warning: unused variable: `src`
+    --> src/project/body_view.rs:1324:13
+     |
+1324 |         let src = self.reader.hy.src;
+     |             ^^^ help: if this is intentional, prefix it with an underscore: `_src`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff007_no_mutable_argument_mutations.rs:194:24
+    |
+194 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff008_no_dataclass_attribute_mutation.rs:209:28
+    |
+209 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:380:28
+    |
+380 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:487:28
+    |
+487 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:522:28
+    |
+522 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:663:28
+    |
+663 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+  --> src/rules/doeff014_no_try_except.rs:39:24
+   |
+39 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this pattern will always match, so the `if let` is useless
+   = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff018_no_ask_in_try.rs:151:24
+    |
+151 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff019_no_ask_with_fallback.rs:375:24
+    |
+375 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff024_no_recover_ask.rs:403:24
+    |
+403 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: `doeff-linter` (lib) generated 19 warnings (run `cargo fix --lib -p doeff-linter` to apply 7 suggestions)
+    Finished `test` profile [optimized] target(s) in 1m 20s
+     Running tests/facts_cache_roots.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/facts_cache_roots-c6f72ef75c75e822)
+
+running 16 tests
+test a_dir_last_used_more_than_ten_minutes_ago_goes_over_the_cap ... ok
+test a_temporary_fact_left_by_a_cut_off_run_is_cleared_once_stale ... ok
+test a_dir_used_within_the_interval_stays_even_over_the_cap ... ok
+test an_old_linter_taking_the_vanished_root_turn_does_not_hold_back_the_cap_sweep ... ok
+test a_fact_used_within_ten_minutes_stays_even_over_the_cap ... ok
+test within_the_cap_no_fact_is_cleared ... ok
+test over_the_cap_the_least_recently_used_facts_go_first_until_within_the_cap ... ok
+test a_new_root_over_the_cap_clears_old_dirs_even_right_after_a_cap_sweep ... ok
+test within_the_cap_nothing_is_cleared_and_each_run_marks_its_root_used ... ok
+test a_dir_without_a_record_stays ... ok
+test a_cap_sweep_cut_off_midway_leaves_no_turn_so_the_next_run_redoes_it ... ok
+test a_root_dir_goes_before_any_fact ... ok
+test a_root_dir_in_use_stays ... ok
+test over_the_cap_the_least_recently_used_dirs_go_first_until_within_the_cap ... ok
+test a_cap_sweep_in_progress_or_done_within_the_interval_is_not_repeated ... ok
+test a_vanished_root_dir_is_cleared_on_the_next_run_after_the_interval ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/facts_cache_shared.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/facts_cache_shared-38f2cfc044f6290d)
+
+running 5 tests
+test module_dependencies_are_shared_between_checkouts_too ... ok
+test no_working_tree_path_is_left_in_the_shared_facts ... ok
+test a_second_run_in_the_same_tree_writes_no_facts ... ok
+test editing_one_file_writes_only_that_files_facts ... ok
+test a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+     Running tests/focused_run_reads.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/focused_run_reads-b77092d86724a672)
+
+running 3 tests
+test a_focused_run_of_file_local_rules_reads_only_the_named_file ... ok
+test a_focused_run_keeps_the_whole_index_cache ... ok
+test a_focused_run_answers_like_the_whole_run_for_that_file ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/hy_index_cache.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/hy_index_cache-ed2e9fba42fbe84b)
+
+running 1 test
+test only_the_changed_file_is_indexed_again_and_the_answer_matches_the_uncached_run ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+# ---- 終了状態: 0 ----
