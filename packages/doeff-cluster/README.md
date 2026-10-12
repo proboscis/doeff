@@ -499,6 +499,13 @@ Flux の Kustomization の suspend / resume)で守ります。coordinator と wo
 決まらないので、coordinator の版の行を先に main へ入れます。worker と coordinator を 1 つずつ入れ替える版上げの Program(`upgrade-workers`・`upgrade-coordinator`・`upgrade-cluster`)と、
 入れ替えの順の不変条件 V1〜V5・模擬の Flux は、使い手が 0 になったので 2026-10-10 に退役しました。
 
+coordinator の版上げの commit は、`deploy/k8s/coordinator/coordinator.yaml` の `WORKER_DOEFF_COMMIT` と一緒に、
+`deploy/k8s/coordinator-prepare/coordinator-prepare.yaml` の Job の `WORKER_DOEFF_COMMIT` と名の末尾(commit の頭 12 字)を同じ版へ変えます
+(ADR-DOE-CLUSTER-003・card ki-5808173477cf)。Flux はこの Job が上げ先の版の root を coordinator と同じ node・同じ dir に組み終えるのを
+待ってから(Kustomization の wait と dependsOn)Deployment coordinator を入れ替えるので、新しい Pod は組み済みの root で秒で起動します
+(前は古い Pod を止めてから新しい Pod が組み、全部の worker が 105〜141 秒 coordinator に届かなかった)。Job が組めなければ coordinator は
+古い版のまま動き続けます。3 か所の食い違いは ADR-DOE-CLUSTER-003 の検が commit の時点で断ります。
+
 順が決まっている変更の例:
 
 - drain の頼みに世代を載せる変更(coordinator が先): worker の preStop(`ROLE=drain`)は drain の頼みに自分の process の世代
