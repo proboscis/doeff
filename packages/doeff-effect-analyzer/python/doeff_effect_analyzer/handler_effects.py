@@ -79,6 +79,7 @@ from doeff_effect_analyzer.program_effects import (
     _location_of,
     _no_carrier,
     _passed_arguments,
+    _passes_declaration,
     _ProgramAnyOf,
     _ProgramArg,
     _Reader,
@@ -694,17 +695,25 @@ def _inline_handler(
     )
 
 
+def _wrapped_dispatcher(expr: ast.expr, scope: _Scope) -> ast.expr | None:
+    """The dispatcher a wrapper call is written around, or None: ``doeff.do(f)`` /
+    ``doeff.handler(f)`` → ``f``; ``declare_passes(h, source)`` (returns ``h`` itself) → ``h``."""
+    if not isinstance(expr, ast.Call) or expr.keywords or not expr.args:
+        return None
+    head = scope.resolve(expr.func)
+    if len(expr.args) == 1 and (head is _do_decorator() or head is _handler_wrapper_function()):
+        return expr.args[0]
+    if len(expr.args) == 2 and head is _passes_declaration():
+        return expr.args[0]
+    return None
+
+
 def raw_handler_of(expr: ast.expr, scope: _Scope, filename: str, label: str) -> HandlerEffects:
     """A raw dispatcher ``(effect, k)`` written in a body: ``WithHandler(h, body)``'s ``h``
-    (``handle`` expands to ``_doeff_do(lambda effect, k: …)`` or to a local def)."""
-    wrappers = (_do_decorator(), _handler_wrapper_function())
-    while (
-        isinstance(expr, ast.Call)
-        and len(expr.args) == 1
-        and not expr.keywords
-        and any(scope.resolve(expr.func) is wrapper for wrapper in wrappers)
-    ):
-        expr = expr.args[0]
+    (``handle`` expands to ``_doeff_do(lambda effect, k: …)`` or to a local def — a
+    fence-shaped one inside ``declare_passes(_doeff_do(…), source)``)."""
+    while (inner := _wrapped_dispatcher(expr, scope)) is not None:
+        expr = inner
     location = Location(filename, getattr(expr, "lineno", 0))
     node: FunctionNode | None = None
     if isinstance(expr, ast.Lambda):
