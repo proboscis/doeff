@@ -1,0 +1,84 @@
+"""盲検 A の失敗例(鍵 1 つに同時に使われる macro の環境が上限を越える)を、code_store.py だけで再現する試し(設計者が書いた物 —
+盲検 A の返答 4(a) の要点に沿う)。
+
+使い方: uv run --no-project python -I probe_cap.py <code_store.py の path> <空の作業 dir>
+  - code_store.py を path で読む(Hy も doeff も読まない — 準備の道具と同じ読み方)。
+  - 環境の代役 = 記録の digest だけが違う code。照らし = 末尾の定数が自分の記録か。
+  - 読み 1 回 = current_code → 外れたら add_code(import の口と準備の道具と同じ順)。
+筋書き:
+  cycle N   : N 個の環境が同じ鍵を 4 巡、順に読む。巡ごとの外れの数を出す。
+  oneoff K  : 準備の代役 P が読む → 使い続ける他の環境 2 つが読む → 使い捨ての環境 K 個(毎回新しい記録)が読む → P がもう一度読む。
+              これを 3 回繰り返し、P の外れの数を出す。
+"""
+
+import importlib.util
+import os
+import sys
+import tempfile
+
+
+def load(path):
+    spec = importlib.util.spec_from_file_location("probe_code_store", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def record(env):
+    return ("doeff-hy/macro-dependencies/6", "1.1.0", (("_hy_macros", "doeff_hy.macros", "defk", f"{env:064x}", "1"),), (), (), (), ())
+
+
+def env_code(env):
+    rec = record(env)
+    code = compile("value = 1\n", "/tree/pkg/user.hy", "exec")
+    code = code.replace(co_consts=(*code.co_consts, rec))
+    return code, (lambda c, rec=rec: bool(c.co_consts) and c.co_consts[-1] == rec)
+
+
+def access(cs, store, key, env):
+    code, is_current = env_code(env)
+    hit = cs.current_code(store, key, is_current)
+    if hit is None:
+        cs.add_code(store, key, code)
+        return False
+    return True
+
+
+def cycle(cs, base, n):
+    store = tempfile.mkdtemp(dir=base)
+    key = cs.code_key("/tree/pkg/user.hy", b"(setv value 1)\n", "pkg.user", "1.1.0", "cpython-314", 0)
+    misses = []
+    for _ in range(4):
+        misses.append(sum(0 if access(cs, store, key, env) else 1 for env in range(n)))
+    return misses
+
+
+def oneoff(cs, base, k):
+    store = tempfile.mkdtemp(dir=base)
+    key = cs.code_key("/tree/pkg/user.hy", b"(setv value 1)\n", "pkg.user", "1.1.0", "cpython-314", 0)
+    prep, others, fresh = 10_000, (20_000, 20_001), 30_000
+    prep_misses = 0
+    access(cs, store, key, prep)
+    for _ in range(3):
+        for env in others:
+            access(cs, store, key, env)
+        for _ in range(k):
+            access(cs, store, key, fresh)
+            fresh += 1
+        prep_misses += 0 if access(cs, store, key, prep) else 1
+    return prep_misses
+
+
+def main():
+    cs = load(sys.argv[1])
+    base = sys.argv[2]
+    print("code_store:", sys.argv[1], "CODE_ENTRIES_PER_KEY =", cs.CODE_ENTRIES_PER_KEY)
+    for n in (2, 8, 16, 17, 20, 32):
+        print(f"cycle N={n}: 巡ごとの外れ {cycle(cs, base, n)}")
+    for k in (5, 13, 14, 20, 40):
+        print(f"oneoff K={k}: 準備の代役の外れ {oneoff(cs, base, k)} / 3")
+
+
+if __name__ == "__main__":
+    os.environ["DOEFF_HY_CODE_STORE"] = "off"
+    main()

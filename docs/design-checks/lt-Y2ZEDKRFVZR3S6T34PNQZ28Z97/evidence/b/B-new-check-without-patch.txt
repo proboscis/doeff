@@ -1,0 +1,10 @@
+# 対照: 同じ検を、盲検 B の差分を外した直す前の版 27f35483076413668aa7b2ca32949b170a0987b4 で走らせる
+$ uv run pytest -q packages/doeff-hy/tests/test_bytecode_guard.py::test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries
+deadline scale x1.3 (load per usable CPU) — per test 75s, watchdog 112s
+test-admission: focused — 1 件(変更箇所の検証)
+.                                                                        [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 8.32s
+exit=0

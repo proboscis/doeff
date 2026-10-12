@@ -1,0 +1,27 @@
+--- A6/src/doeff_hy_bytecode_guard/loader_hooks.py	2026-10-12 04:12:12.372011028 +0000
++++ B6/src/doeff_hy_bytecode_guard/loader_hooks.py	2026-10-12 04:12:23.652096321 +0000
+@@ -536,7 +536,23 @@
+ 
+     if records.record_of(code) is None:
+         return
+-    code_store.add_code(store, _store_key(fullname, path, source), code)
++    key = _store_key(fullname, path, source)
++    code_store.add_code(store, key, code)
++    _drop_older_generations(store, key)
++
++
++def _drop_older_generations(store: str, key: str) -> None:
++    """鍵 key の entry のうち、今の版の記録の形で読めない物(記録の印の古い世代 — :func:`records.record_of` が None)を除く。
++    この環境の照らしはそれを必ず記録なしと判じて使わないので、残すと鍵の entry の数の上限(code_store.CODE_ENTRIES_PER_KEY)を
++    埋め、compile の前の照らしが毎回 marshal で読み直す。鍵 1 つに entry 1 つの並びでは、compile し直した code が古い世代の
++    entry を上書きしたので残らなかった(records.RECORD_TAG の註)— 並べる形でも古い世代を残さない。壊れた entry と同じく
++    名指しの 1 行で除く(黙って捨てない)。"""
++    from doeff_hy_bytecode_guard import code_store, records  # 保存先を使う時だけ読む
++
++    for entry in code_store.code_entries(store, key):
++        stored = code_store.stored_code(entry, touch=False)
++        if stored is not None and records.record_of(stored) is None:
++            code_store.discard_entry(entry, "今の版の記録の形で読めない古い世代の entry")
+ 
+ 
+ def _recompile(
