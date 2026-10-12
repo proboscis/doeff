@@ -1,49 +1,28 @@
-"""sql_effects.hy の公開面の型(型検査のための宣言 — 実行時は sql_effects.hy を読む・agora-redesign #2320)。
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = sql_effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
-sql_effects.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、`from doeff_core_effects.sql_effects import SqlQuery`
-の名が全部 Unknown になる(消費者の strict の型検査で、書き手に直せない赤が連なる)。ここで型を宣言する。
-
-- defrecord は frozen で keyword だけの dataclass、defenum は StrEnum(値は名の小文字)。
-- defeffect は位置でも渡せる frozen の dataclass で、`EffectBase[答えの型]` の下位の型。`(<- x (SqlQuery …))` の x は答えの型
-  (SqlRows | SqlFailed | SqlUnreachable)を受ける。SqlTransaction の答えは中の program の答えの型 T と失敗の値の和。
-- defk は呼ぶと Program を返す(答えの型は Program の 1 つ目の引数)。
-- 実装との食い違いは packages/doeff-core-effects/tests/test_hy_module_stubs.py が名・欄の名と順・既定値の有無・引数の名で検める。
-"""
-
-import datetime
-import re
-from dataclasses import dataclass
-from decimal import Decimal
-from enum import StrEnum
-from typing import Any, Generic, Never, TypeAlias, TypeVar
-from uuid import UUID
-
-from doeff_vm import EffectBase
-from hy.models import Keyword
-
-from doeff import Program
-from doeff_core_effects.scheduler import ExternalPromise
-
-MODULE_TAGS: dict[Keyword, str]
-
-T = TypeVar("T")
-
+from typing import TypeAlias
+from doeff import Program as _Program
+from typing import Never as _Never
+from doeff import EffectBase as _doeff_effect_base
+from dataclasses import dataclass as _doeff_dataclass
+import re as re
+import datetime as datetime
+from decimal import Decimal as Decimal
+from uuid import UUID as UUID
+from dataclasses import dataclass as dataclass
+from enum import StrEnum as StrEnum
+from collections.abc import Sequence as Sequence
+from typing import TypeGuard as TypeGuard
+from typing import TypeVar as TypeVar
+from doeff import Program as Program
+from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
+T = TypeVar('T')
 SQL_VALUE_TYPES: tuple[type, ...]
-#: 値の型そのもの(subclass を含まない)が閉じた集合の型である印。
 PLAIN_VALUE_TYPES: frozenset[type]
-
-#: 引数と行の値の閉じた集合。
 SqlValue: TypeAlias = int | float | str | bytes | bool | None
-#: driver が答える値のうち、閉じた集合 SqlValue へ写す決まりの在る型(normalized_value が受ける型 — 外の型は normalized_rows が
-#: TypeError で断る)。
-DriverValue: TypeAlias = (
-    int | float | str | bytes | bool | None | memoryview | bytearray | Decimal | datetime.date | datetime.time | UUID
-)
-
+DriverValue: TypeAlias = int | float | str | bytes | bool | None | memoryview | bytearray | Decimal | datetime.date | datetime.time | UUID
 TOKEN: re.Pattern[str]
 IDENTIFIER: re.Pattern[str]
-
-# --- 値 ---
 
 @dataclass(frozen=True, kw_only=True)
 class SqlParam:
@@ -68,17 +47,16 @@ class SqlUnreachable:
 class SqlSchemaApplied:
     statements: tuple[str, ...]
 
-class SqlTransactionMisuse(TypeError): ...  # noqa: N818 - public exception name is intentionally stable
-
-# --- DDL の宣言 ---
+class SqlTransactionMisuse(TypeError):
+    ...
 
 class SqlColumnType(StrEnum):
-    INTEGER = "integer"
-    FLOAT = "float"
-    TEXT = "text"
-    BYTES = "bytes"
-    BOOLEAN = "boolean"
-    JSON = "json"
+    INTEGER = 'integer'
+    FLOAT = 'float'
+    TEXT = 'text'
+    BYTES = 'bytes'
+    BOOLEAN = 'boolean'
+    JSON = 'json'
 
 @dataclass(frozen=True, kw_only=True)
 class SqlColumn:
@@ -96,66 +74,86 @@ class SqlIndex:
 class SqlTable:
     name: str
     columns: tuple[SqlColumn, ...]
-    primary_key: tuple[str, ...] = ()
-    indexes: tuple[SqlIndex, ...] = ()
+    primary_key: tuple[str, ...] = ...
+    indexes: tuple[SqlIndex, ...] = ...
 
-# --- effect ---
-
-@dataclass(frozen=True)
-class SqlQuery(EffectBase[SqlRows | SqlFailed | SqlUnreachable]):
+@_doeff_dataclass(frozen=True)
+class SqlQuery(_doeff_effect_base[SqlRows | SqlFailed | SqlUnreachable]):
     database: str
     statement: str
-    params: tuple[SqlParam, ...] = ()
+    params: tuple[SqlParam, ...] = ...
 
-@dataclass(frozen=True)
-class SqlInsertRows(EffectBase[SqlRows | SqlFailed | SqlUnreachable]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlInsertRows(_doeff_effect_base[SqlRows | SqlFailed | SqlUnreachable]):
     database: str
     table: str
     columns: tuple[str, ...]
     rows: tuple[tuple[SqlValue, ...], ...]
 
-@dataclass(frozen=True)
-class SqlTransaction(EffectBase[T | SqlFailed | SqlUnreachable], Generic[T]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlTransaction[T](_doeff_effect_base[T | SqlFailed | SqlUnreachable]):
     database: str
-    program: Program[T, Any]
+    program: Program[T, object]
     lock_key: str | None = None
     batched: bool = False
 
-@dataclass(frozen=True)
-class SqlBatch(EffectBase[tuple[SqlRows, ...]]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlBatch(_doeff_effect_base[tuple[SqlRows, ...]]):
     database: str
     queries: tuple[SqlQuery, ...]
     commit: bool = False
 
-@dataclass(frozen=True)
-class SqlEnsureTables(EffectBase[SqlSchemaApplied | SqlFailed | SqlUnreachable]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlEnsureTables(_doeff_effect_base[SqlSchemaApplied | SqlFailed | SqlUnreachable]):
     database: str
     tables: tuple[SqlTable, ...]
 
-@dataclass(frozen=True)
-class SqlNotify(EffectBase[None | SqlFailed | SqlUnreachable]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlNotify(_doeff_effect_base[None | SqlFailed | SqlUnreachable]):
     database: str
     channel: str
     topics: tuple[str, ...] | None
 
-@dataclass(frozen=True)
-class SqlHangNotice(EffectBase[ExternalPromise[bool] | SqlUnreachable]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlHangNotice(_doeff_effect_base[ExternalPromise[bool] | SqlUnreachable]):
     database: str
     channel: str
     topics: tuple[str, ...] | None
 
-@dataclass(frozen=True)
-class SqlDropNotice(EffectBase[None]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SqlDropNotice(_doeff_effect_base[None]):
     database: str
     channel: str
     bell: ExternalPromise[bool]
 
-@dataclass(frozen=True)
-class SetSqlOutage(EffectBase[None]):
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class SetSqlOutage(_doeff_effect_base[None]):
     database: str
     down: bool
-
-# --- 中立の記法 ---
 
 @dataclass(frozen=True, kw_only=True)
 class SqlText:
@@ -164,26 +162,35 @@ class SqlText:
 @dataclass(frozen=True, kw_only=True)
 class SqlPlaceholder:
     name: str
-
-#: 文の割りの覚え(文 → 割った並び)と、覚える文の数の上限。
 SPLIT_MEMO_LIMIT: int
 SPLIT_MEMO: dict[str, tuple[SqlText | SqlPlaceholder, ...]]
 
-def split_statement(statement: str) -> Program[tuple[SqlText | SqlPlaceholder, ...], Any]: ...
-def checked_params(
-    parts: tuple[SqlText | SqlPlaceholder, ...], params: tuple[SqlParam, ...]
-) -> Program[None, Any]: ...
-def param_value(params: tuple[SqlParam, ...], name: str) -> Program[SqlValue, Any]: ...
-def checked_identifier(name: str) -> Program[str, Any]: ...
-def checked_identifiers(names: tuple[str, ...]) -> Program[tuple[str, ...], Any]: ...
-def checked_rows(
-    columns: tuple[str, ...], rows: tuple[tuple[SqlValue, ...], ...]
-) -> Program[None, Any]: ...
+def split_statement(statement: str) -> _Program[tuple[SqlText | SqlPlaceholder, ...], object]:
+    ...
 
-# --- 行の値の正規化(driver の値は driver ごとに型が違う — 境界で検める)---
+def checked_params(parts: tuple[SqlText | SqlPlaceholder, ...], params: tuple[SqlParam, ...]) -> _Program[None, object]:
+    ...
 
-#: 写しは effect を出さない(答えの Program は効果を持たない — Never)。
-def normalized_value(value: DriverValue) -> Program[SqlValue, Never]: ...
-def normalized_rows(
-    rows: list[tuple[object, ...]] | tuple[tuple[object, ...], ...],
-) -> Program[tuple[tuple[SqlValue, ...], ...], Any]: ...
+def param_value(params: tuple[SqlParam, ...], name: str) -> _Program[SqlValue, object]:
+    ...
+
+def checked_identifier(name: str) -> _Program[str, object]:
+    ...
+
+def checked_identifiers(names: tuple[str, ...]) -> _Program[tuple[str, ...], object]:
+    ...
+
+def checked_rows(columns: tuple[str, ...], rows: tuple[tuple[SqlValue, ...], ...]) -> _Program[None, object]:
+    ...
+
+def normalized_value(value: DriverValue) -> _Program[SqlValue, _Never]:
+    ...
+
+def is_driver_value(value: object) -> TypeGuard[DriverValue]:
+    ...
+
+def is_plain_rows(rows: list[tuple[object, ...]] | tuple[tuple[object, ...], ...]) -> TypeGuard[Sequence[Sequence[SqlValue]]]:
+    ...
+
+def normalized_rows(rows: list[tuple[object, ...]] | tuple[tuple[object, ...], ...]) -> _Program[tuple[tuple[SqlValue, ...], ...], object]:
+    ...

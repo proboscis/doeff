@@ -15,8 +15,6 @@ from doeff_core_effects.step_tally_effects import CloseTaskTally as CloseTaskTal
 from doeff_core_effects.step_tally_effects import OpenTaskTally as OpenTaskTally
 from doeff_core_effects.step_tally_effects import ReadTaskTally as ReadTaskTally
 from doeff_core_effects.step_tally_effects import TaskTally as TaskTally
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 @dataclass(frozen=True, kw_only=True)
 class StepWindow:

@@ -51,8 +51,6 @@ from doeff_core_effects.process_effects import timed_out_outcome as timed_out_ou
 from doeff_core_effects.process_effects import not_started_outcome as not_started_outcome
 from doeff_core_effects.process_effects import executable_file_answer as executable_file_answer
 from doeff_core_effects.process_effects import environment_answer as environment_answer
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 PROCESS_THREADS: ThreadPerCall
 CANCEL_TERMINATED_METRIC: str
 CANCEL_KILLED_METRIC: str

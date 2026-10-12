@@ -108,6 +108,7 @@ _HELPERS = (
     _Helper("Incomplete", "_typeshed", "Incomplete", None),
     _Helper("_Program", "doeff", "Program", "_Program"),
     _Helper("_Handler", "doeff_hy.static_types", "Handler", "_Handler"),
+    _Helper("_Never", "typing", "Never", "_Never"),
     _Helper("_doeff_effect_base", "doeff", "EffectBase", "_doeff_effect_base"),
     _Helper("_doeff_dataclass", "dataclasses", "dataclass", "_doeff_dataclass"),
 )
@@ -133,6 +134,24 @@ class _Scan:
         known = replace(self, functions=(*self.functions, _Declared(name, node)))
         return known.declared(name, node) if public else known
 
+    def effect_free(self, name: str) -> "_Scan":
+        """宣言 `:effects []`(effect を出さない)の defk の答えの Program の effect の位置を Never にした次の状態を返す
+        (手の .pyi が `Program[X, Never]` と書いていた主張を道具が運ぶ・#2939)。名の関数が無い・答えが Program でないなら変えない。"""
+
+        def freed(item: _Declared) -> _Declared:
+            node = item.node
+            match node:
+                case ast.FunctionDef(name=found, returns=ast.Subscript(value=ast.Name(id="_Program"), slice=ast.Tuple(elts=[answer, _]))) if found == name:
+                    return _Declared(item.name, _with_returns(node, _subscript("_Program", answer, _name("_Never"))))
+                case _:
+                    return item
+
+        return replace(
+            self,
+            declarations=tuple(freed(item) for item in self.declarations),
+            functions=tuple(freed(item) for item in self.functions),
+        )
+
     def answer_of(self, name: str) -> ast.expr | None:
         """先に読んだ module の関数を呼んだ値の型(関数の宣言の答え — 引数の無い defhandler の `x = _hy_anon_3()` など)。"""
         answers = [d.node.returns for d in self.functions if d.name == name and isinstance(d.node, ast.FunctionDef)]
@@ -157,6 +176,18 @@ class _Scan:
             and isinstance(d.node.value.func, ast.Name | ast.Attribute)
             and (d.node.value.func.id if isinstance(d.node.value.func, ast.Name) else d.node.value.func.attr) in _TYPE_MAKERS
         )
+
+
+def _with_returns(node: ast.FunctionDef, returns: ast.expr) -> ast.FunctionDef:
+    """関数の宣言の答えの型だけを差し替えた宣言を返す(ほかの欄は元のまま)。"""
+    return ast.FunctionDef(
+        name=node.name,
+        args=node.args,
+        body=node.body,
+        decorator_list=node.decorator_list,
+        returns=returns,
+        type_params=node.type_params,
+    )
 
 
 def _absolute(path: Path) -> Path:
@@ -633,6 +664,13 @@ def _step(state: _Scan, statement: ast.stmt) -> _Scan:
             return state.declared(name, node)
         case ast.Assign(targets=[ast.Name(id=name)], value=value) if not hidden_name(name):
             return state.declared(name, _constant(name, value, state))
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Name(id="setattr"),
+                args=[ast.Name(id=name), ast.Constant(value="__doeff_effects__"), ast.Tuple(elts=[])],
+            )
+        ):
+            return state.effect_free(name)
         case _:
             return state
 
