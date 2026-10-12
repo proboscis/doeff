@@ -8,10 +8,10 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import datetime [datetime])
 (import dataclasses [replace])
-(import doeff_time [GetTime epoch-ms-of])
+(import doeff_time [GetMonotonic GetTime epoch-ms-of])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes
@@ -29,14 +29,17 @@
 ;; slowest-ms = その区間の ms)。閾は coordinator との途絶の柵(本番 20 秒)より小さく、柵を越える前に遅れを名指す。
 (val TICK-LAG-LOG "worker: 拍の遅れ")
 (val TICK-LAG-MS 5000)
-;; 拍の区間の名(#3715): 時刻は拍の頭と、重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の待ちの後と、拍の終わりにだけ読む
-;; — 時刻の読みは action の数に依らず拍 1 つに 5 回(うち ReadDesired の後の 1 回は拍の判断の now)。最初の ObserveWorld の後から
-;; PublishStatus の後までは 1 つの区間(action・揃いの追いの観測・PublishStatus をまとめた区間)で、その名が ACTIONS-TO-PUBLISH。
-;; 計りだけの読みは GetTime を直に出す(now-epoch-ms の Program の呼びを挟まない — 拍ごとの費用を時刻の effect 1 つに留める)。
+;; 拍の区間の名(#3715): 区間の長さは単調な時計(GetMonotonic)で、拍の頭と、重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の
+;; 待ちの後と、拍の終わりにだけ読む(#3825 — 壁の時計は NTP などで戻る・進むので、差が負や偽の長さになり、遅い区間の名指しが外れる)。
+;; 壁の時計(GetTime)は拍の頭(WorkerWakes の基準)と拍の判断の now の 2 回だけ。時刻の読みは action の数に依らず拍 1 つに 7 回
+;; (単調 5・壁 2)。最初の ObserveWorld の後から PublishStatus の後までは 1 つの区間(action・揃いの追いの観測・PublishStatus を
+;; まとめた区間)で、その名が ACTIONS-TO-PUBLISH。計りだけの読みは GetMonotonic を直に出す(読みごとに Program の呼びを挟まない —
+;; 拍ごとの費用を時刻の effect の数に留める)。
 (val ACTIONS-TO-PUBLISH "ActionsToPublishStatus")
 ;; heartbeat の間の遅れの行の名と閾の比(#3850 — 名 + 欄 at = 今の heartbeat を送った刻(UTC ISO)・worker = 名乗った
 ;; worker の名・gap-ms = 前の heartbeat を送ってから今の heartbeat を送るまでの ms・slowest = その間でいちばん長かった区間の名・
-;; slowest-ms = その長さ)。閾 = 送った時の生存の窓(HeartbeatSent.lease-ms)× 比。拍の遅れの行(TICK-LAG-MS)は拍 1 つの中しか測らず、
+;; slowest-ms = その長さ)。間は送りの単調な時計の読み(HeartbeatSent.mono-ms)の差で計る(#3825 — at は遅れの行に書く壁の時計の刻)。
+;; 閾 = 送った時の生存の窓(HeartbeatSent.lease-ms)× 比。拍の遅れの行(TICK-LAG-MS)は拍 1 つの中しか測らず、
 ;; heartbeat を挟む隣り合う 2 つの拍の前後がどちらも 5 秒未満でも heartbeat の間は窓を越えうる(2026-10-07 13:18 JST の agent-worker-2 —
 ;; coordinator で生きている印が false に瞬いたのに、worker の log に遅れの行が無かった)。窓の 7 割で名指し、窓を越える前に見えるようにする。
 (val HEARTBEAT-GAP-LOG "worker: heartbeat の間の遅れ")
@@ -74,7 +77,7 @@
 
 
 (defrecord GapMark
-  "heartbeat の間の区間の終わり 1 つ: name = 区間の名・at = 区間が終わった刻(epoch ms)。"
+  "heartbeat の間の区間の終わり 1 つ: name = 区間の名・at = 区間が終わった単調な時計の読み(ms)。"
   (#^ str name)
   (#^ int at))
 
@@ -90,8 +93,8 @@
 (defk heartbeat-gap [since previous began env-reported sent-at]
   {:pre [(: since int) (: previous (| TickMarks None)) (: began int) (: env-reported int) (: sent-at int)] :post [(: % HeartbeatGap)]
    :tags {:context "worker" :role "judgment"}}
-  "前の heartbeat を送った刻 since から今の heartbeat を送った刻 sent-at までを、前の拍の時刻 previous と今の拍の頭・EnvReport の後の
-   時刻で区間に切り、遅れの行の欄(間と、いちばん長い区間の名と長さ)を導くため。区間 = 前の拍より前(EarlierTicks — 間に送らない拍を
+  "前の heartbeat を送った時 since から今の heartbeat を送った時 sent-at まで(どれも単調な時計の読み・ms)を、前の拍の読み previous と
+   今の拍の頭・EnvReport の後の読みで区間に切り、遅れの行の欄(間と、いちばん長い区間の名と長さ)を導くため。区間 = 前の拍より前(EarlierTicks — 間に送らない拍を
    挟んだ時)・前の拍の EnvReport・ReadDesired(前の拍で送っていれば送った後の返事の待ち)・ObserveWorld・残り・拍の間の待ち
    (AwaitNextTick)・今の拍の EnvReport・ReadDesired(送るまで)。since より前の部分と sent-at より後の部分は数えない(拍の外の背景の
    task の送りは、前の拍の途中や拍の間の待ちの途中でも起きる — card ki-e38dbfca7671)。長さが並んだら先の区間を名指す。"
@@ -119,24 +122,29 @@
   ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。止まり始めも渡す — heartbeat で名乗り、
   ;; coordinator がこの世代へ新しく置かない(#2819)。
   ;; 拍の遅れの計り(#3715): 拍の頭・重い 3 種の待ちの後・拍の終わりに時刻を読み、拍が TICK-LAG-MS を越えたらいちばん長い区間を名指す。
+  ;; 区間の計りは単調な時計(#3825)。壁の時計の読みは拍の頭(wakes の基準 began)と判断の now の 2 つだけ。
   (<- began-at datetime (GetTime))
+  (<- began-mono float (GetMonotonic))
   (<- env-report (| dict None) (EnvReport))
-  (<- env-reported-at datetime (GetTime))
+  (<- env-reported-mono float (GetMonotonic))
   (<- read (| DesiredJobs DesiredUnreadable) (ReadDesired :env-report env-report :stopping stopping))
-  ;; この読みが拍の判断の now を兼ねる(#3715 より前から在る読み)。
+  (<- desired-read-mono float (GetMonotonic))
+  ;; この読みが拍の判断の now(壁の時計 — #3715 より前から在る読み)。
   (<- now int (now-epoch-ms))
   (val began (epoch-ms-of began-at))
-  (val env-reported (epoch-ms-of env-reported-at))
+  (val began-ms (monotonic-ms-of began-mono))
+  (val env-reported-ms (monotonic-ms-of env-reported-mono))
   ;; heartbeat の間の計り(#3850): 前の読みの後からこの読みまでの送り(この読みの送りと、拍の外の背景の task の送り — card
   ;; ki-e38dbfca7671)ごとに、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を越えたら、間のいちばん長い区間を
-  ;; 名指す。時刻は拍で既に読んだ物と送りの刻だけを使う(時刻の読みを足さない)。
-  (var last-sent-ms state.last-sent-ms)
+  ;; 名指す。間は送りの単調な時計の読み(mono-ms)の差で、区間は拍で既に読んだ単調な時計の読みで切る(時刻の読みを足さない)。
+  (var last-sent-mono-ms state.last-sent-mono-ms)
   (for [sent read.sends]
-    (when (and (is-not last-sent-ms None) (> (- sent.at last-sent-ms) (* sent.lease-ms HEARTBEAT-GAP-LEASE-RATIO)))
-      (<- gap HeartbeatGap (heartbeat-gap last-sent-ms state.last-marks began env-reported sent.at))
+    (when (and (is-not last-sent-mono-ms None)
+               (> (- sent.mono-ms last-sent-mono-ms) (* sent.lease-ms HEARTBEAT-GAP-LEASE-RATIO)))
+      (<- gap HeartbeatGap (heartbeat-gap last-sent-mono-ms state.last-marks began-ms env-reported-ms sent.mono-ms))
       (<- (slog HEARTBEAT-GAP-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms sent.at)) :worker sent.worker
                 :gap-ms gap.gap-ms :slowest gap.slowest :slowest-ms gap.slowest-ms)))
-    (:= last-sent-ms sent.at))
+    (:= last-sent-mono-ms sent.mono-ms))
   ;; 読めない宣言を空と読まない。直前に読めた宣言を使い続ける(#3731 — 読めた拍だけ持ち替え、途絶で絞った宣言も読んだ側。まだ一度も
   ;; 読めていなければ NotYetRead のまま)。
   (val declaration (match read
@@ -150,7 +158,7 @@
     (DesiredJobs :cut-off (CutOff)) read.cut-off
     _ (Undeclared)))
   (<- world WorldView (ObserveWorld))
-  (<- observed-at datetime (GetTime))
+  (<- observed-mono float (GetMonotonic))
   (<- warm-read tuple (declared-warm declaration))
   (val warm (if stopping #() warm-read))
   (<- planned tuple (plan now desired world state.records policy :warm warm :absent absent))
@@ -189,15 +197,15 @@
   (:= records held)
   (<- report tuple (statuses now desired after records policy))
   (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
-  (<- ended-at datetime (GetTime))
-  (val marks (TickMarks :began began :env-reported env-reported :desired-read now :observed (epoch-ms-of observed-at)
-                        :ended (epoch-ms-of ended-at)))
+  (<- ended-mono float (GetMonotonic))
+  (val marks (TickMarks :began began-ms :env-reported env-reported-ms :desired-read (monotonic-ms-of desired-read-mono)
+                        :observed (monotonic-ms-of observed-mono) :ended (monotonic-ms-of ended-mono)))
   (when (> (- marks.ended marks.began) TICK-LAG-MS)
     (<- lag TickLag (tick-lag marks))
     (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms)))
   ;; 時刻だけで計画の答えが変わる最初の刻(周の後の観測と記憶・周の判断の now — worker_due の頭の註)。
   (<- planned-due (| DueAt DueNever) (plan-due now after records policy))
-  #((WorkerState :declaration declaration :records records :last-marks marks :last-sent-ms last-sent-ms)
+  #((WorkerState :declaration declaration :records records :last-marks marks :last-sent-mono-ms last-sent-mono-ms)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
     ;; 宣言の変化の呼び鈴(読めた宣言の物だけ — 周の間の待ちを起こす・#2692)。
