@@ -1,0 +1,25 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-traverse-collection",
+        "doeff-traverse-effects",
+        "doeff-core-effects-effects",
+        "doeff-core-effects-runtime",
+        "doeff-core-effects-handlers"
+      ],
+      "layer": "io",
+      "name": "doeff-traverse-handlers",
+      "paths": [
+        "packages/doeff-traverse/doeff_traverse/handlers.py",
+        "packages/doeff-traverse/doeff_traverse/handlers.pyi"
+      ],
+      "public": [
+        "packages/doeff-traverse/doeff_traverse/handlers.py",
+        "packages/doeff-traverse/doeff_traverse/handlers.pyi"
+      ],
+      "responsibility": "doeff-traverse の effect に答える handler — Traverse を順に・並べて・最初の失敗で止めて走らせる 3 つの実行の仕方、Reduce・Zip・Inspect などの集計、Fail を None で埋める handler、ItemOutcome を数える進みの表示。",
+      "typed": true
+    }
+  ]
+}

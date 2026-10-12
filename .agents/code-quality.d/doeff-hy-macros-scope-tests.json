@@ -1,0 +1,22 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "hy-bytecode-import",
+        "doeff-hy-macros",
+        "doeff-traverse-handlers",
+        "doeff-core-effects-effects",
+        "doeff-core-effects-runtime",
+        "doeff-core-effects-handlers"
+      ],
+      "layer": "io",
+      "name": "doeff-hy-macros-scope-tests",
+      "paths": [
+        "tests/test_nested_definition_scope.py"
+      ],
+      "public": [],
+      "responsibility": "doeff-hy の macro の検 — 関数・class の本体の中に入れ子で書いた defk・defp・deftest・defmcp-tool が外の関数に局所の名を作らず、module の globals を変えない事(_scoped-definition の呼び手が負う事)。",
+      "typed": true
+    }
+  ]
+}

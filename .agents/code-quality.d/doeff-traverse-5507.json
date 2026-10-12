@@ -1,0 +1,9 @@
+{
+  "include": [
+    "packages/doeff-traverse/doeff_traverse/*.py",
+    "packages/doeff-traverse/doeff_traverse/*.pyi",
+    "packages/doeff-traverse/tests/*.py",
+    "packages/doeff-traverse/examples/*.hy",
+    "tests/effects/test_traverse.py"
+  ]
+}

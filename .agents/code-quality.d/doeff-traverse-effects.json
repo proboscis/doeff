@@ -1,0 +1,23 @@
+{
+  "modules": [
+    {
+      "allow": [
+        "doeff-traverse-collection"
+      ],
+      "layer": "effects",
+      "name": "doeff-traverse-effects",
+      "paths": [
+        "packages/doeff-traverse/doeff_traverse/effects.py",
+        "packages/doeff-traverse/doeff_traverse/effects.pyi",
+        "packages/doeff-traverse/doeff_traverse/helpers.py"
+      ],
+      "public": [
+        "packages/doeff-traverse/doeff_traverse/effects.py",
+        "packages/doeff-traverse/doeff_traverse/effects.pyi",
+        "packages/doeff-traverse/doeff_traverse/helpers.py"
+      ],
+      "responsibility": "doeff-traverse の effect の宣言 — Fail・Traverse・Reduce・Zip・Inspect・SortBy・Take・Skip・ItemOutcome の要求と答えの型(実行の仕方は handler の側)と、Fail を投げて値を差し替えさせる補助 try_call。",
+      "typed": true
+    }
+  ]
+}
