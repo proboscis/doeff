@@ -369,11 +369,10 @@ const SEALED_DECLARATIONS: [(&str, &str); 2] = [
 ];
 
 /// 宣言が名指す封の file(doeff の repo の記録と同じ path)。
-const SEALED_FILES: [&str; 4] = [
+const SEALED_FILES: [&str; 3] = [
     "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py",
     "docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/race_b_probe.py",
     "docs/design/seat-home-common-instructions-AJ8C0B/model/chain.py",
-    "docs/design/seat-home-common-instructions-AJ8C0B/model/test_violations_are_rejected.py",
 ];
 
 /// 同じ dir に置いた、名指していない file(封の表が控えていない file)。
