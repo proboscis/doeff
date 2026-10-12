@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/check_slot.py b/packages/doeff-hy/src/doeff_hy/check_slot.py
+index 066090d63..e3ffafa25 100644
+--- a/packages/doeff-hy/src/doeff_hy/check_slot.py
++++ b/packages/doeff-hy/src/doeff_hy/check_slot.py
+@@ -141,7 +141,7 @@ def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
+         )
+         return SlotHeld(None)
+     try:
+-        return SlotHeld(module.take(module.read_policy(), label, EnvironmentByName(), out))
++        return SlotHeld(module.take(module.Policy(8, "/tmp/ki26eb-copied-slots", 1200.0), label, EnvironmentByName(), out))
+     except module.PolicyUnreadable as error:
+         _named(out, f"宣言を読めないので枠を取らずに走る — {error}")
+     except module.SlotWaitExpired as error:

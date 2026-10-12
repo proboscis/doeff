@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/check_slot.py b/packages/doeff-hy/src/doeff_hy/check_slot.py
+index 066090d63..4ab733c6f 100644
+--- a/packages/doeff-hy/src/doeff_hy/check_slot.py
++++ b/packages/doeff-hy/src/doeff_hy/check_slot.py
+@@ -146,7 +146,7 @@ def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
+         _named(out, f"宣言を読めないので枠を取らずに走る — {error}")
+     except module.SlotWaitExpired as error:
+         return SlotExpired(str(error))
+-    except Exception as error:  # 正本(別の repo の先端の code)の中の失敗・呼び方の食い違い — 名乗って素通し(頭の註)
++    except TypeError as error:  # 正本(別の repo の先端の code)の中の失敗・呼び方の食い違い — 名乗って素通し(頭の註)
+         _named(
+             out, f"枠の正本の take が落ちたので枠を取らずに走る({type(error).__name__}: {error})"
+         )

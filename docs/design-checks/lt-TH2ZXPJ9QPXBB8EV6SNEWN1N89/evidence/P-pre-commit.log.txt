@@ -1,0 +1,14 @@
+正常例: 木 /home/ubuntu/.worktrees/doeff-wt-ki-26eb-dc の HEAD 77175f1ce020ed5e480b3f7997806ef6bac0ccd9(直し 77175f1ce を含む)
+$ uv run --no-sync pre-commit run --from-ref e5b63f5e7 --to-ref HEAD
+--- 出力 ---
+semgrep architectural rules(Python・基点に無い所見だけ止める)..................................................Passed
+- hook id: semgrep
+- duration: 7.53s
+semgrep Hy architectural rules.............................................................(no files to check)Skipped
+semgrep reading plane rules................................................................(no files to check)Skipped
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ)...(no files to check)Skipped
+doeff-linter(Python・基点に無い error だけ止める)..............................................................Passed
+- hook id: doeff-linter
+- duration: 3.46s
+doeff-linter (packages/doeff-cluster の設定と宣言で).......................................(no files to check)Skipped
+enforcement ledger consistency (ADR-DOE-ENFORCE-001 R5/R7).................................(no files to check)Skipped

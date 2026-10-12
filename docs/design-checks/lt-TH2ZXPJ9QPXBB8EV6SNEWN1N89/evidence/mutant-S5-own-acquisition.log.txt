@@ -1,0 +1,68 @@
+失敗例(シナリオ S5): 木 77175f1ce020ed5e480b3f7997806ef6bac0ccd9 に mutant-S5-own-acquisition.diff.txt を当てて撃つ。期待 = 祖先の判定を通らずに自分で枠を取る口 — 入れ子の検(K = 1 で待って exit 2)と形の検が赤
+$ (cwd /home/ubuntu/.worktrees/doeff-wt-ki-26eb-mut) uv run --no-sync pytest -q -W ignore::pytest.PytestWarning packages/doeff-hy/tests/test_static_check_slot.py::test_doeff_hy_check_inside_a_slot_holder_takes_no_second_slot packages/doeff-hy/tests/test_static_check_slot.py::test_the_canon_policy_goes_straight_into_take
+exit=1・6.9 秒
+--- stdout ---
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+________ test_doeff_hy_check_inside_a_slot_holder_takes_no_second_slot _________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-3831/test_doeff_hy_check_inside_a_s0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x3b87d436f50>
+
+    def test_doeff_hy_check_inside_a_slot_holder_takes_no_second_slot(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 枠を持つ process の子孫(gate が起こす doeff-hy-check・pytest の中の呼び)は 2 つ目を取らない — K = 1 で祖先が唯一の枠を持っても
+        # 待たずに検める(待てば上限 5 秒で exit 2 になる)。
+        scene = _scene(tmp_path, monkeypatch, 5.0)
+        done = subprocess.run(
+            [
+                sys.executable,
+                str(scene.canon),
+                "run",
+                "--label",
+                "outer-holds",
+                "--",
+                *scene.check_command(),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+>       assert done.returncode == 0, done.stderr
+E       AssertionError: doeff-hy-check: 走れなかった: check-slot: 機体の検の枠(1 本)の待ちが上限 5 秒を越えた(待ち 0 秒・保持 (保持者を読めない))— doeff-hy-check repo (c-1KH799YNWBY5JY4AM7CVB92MRT) は未実行
+E         
+E       assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-26eb-mut/.venv/bin/python', '/tmp/pytest-of-ubuntu/pytest-...heck-slot: 機体の検の枠(1 本)の待ちが上限 5 秒を越えた(待ち 0 秒・保持 (保持者を読めない))— doeff-hy-check repo (c-1KH799YNWBY5JY4AM7CVB92MRT) は未実行\n').returncode
+
+packages/doeff-hy/tests/test_static_check_slot.py:227: AssertionError
+________________ test_the_canon_policy_goes_straight_into_take _________________
+
+    def test_the_canon_policy_goes_straight_into_take() -> None:
+        # 方策(read_policy の答え)は中を読まずに take の 1 つ目の引数へそのまま渡す — 名に束ねて読む・包んで作り直す形を断る。盲検 B の
+        # 反例: 環境変数で待ちの上限を縮める口(policy を名に束ね dataclasses.replace で作り直す)が、枠の検・doeff-linter・ruff・
+        # code-quality を全部通り、値の持ち主(正本の宣言)と方策の欄の名を doeff へ移した。
+        tree = ast.parse(inspect.getsource(check_slot))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        straight = {id(call.args[0]) for call in calls if call.func.attr == "take" and call.args}
+        asked = [call for call in calls if call.func.attr == "read_policy"]
+        assert asked, "check_slot が正本の read_policy を呼んでいない(方策を自分で作っている)"
+>       assert all(id(call) in straight for call in asked), [ast.unparse(call) for call in asked]
+E       AssertionError: ['module.read_policy()']
+E       assert False
+E        +  where False = all(<generator object test_the_canon_policy_goes_straight_into_take.<locals>.<genexpr> at 0x3b87d582d80>)
+
+packages/doeff-hy/tests/test_static_check_slot.py:292: AssertionError
+=========================== short test summary info ============================
+FAILED packages/doeff-hy/tests/test_static_check_slot.py::test_doeff_hy_check_inside_a_slot_holder_takes_no_second_slot
+FAILED packages/doeff-hy/tests/test_static_check_slot.py::test_the_canon_policy_goes_straight_into_take
+2 failed in 6.00s
+
+--- stderr ---
+test-admission: focused — 2 件(変更箇所の検証)
+

@@ -1,0 +1,9 @@
+正常例: 木 /home/ubuntu/.worktrees/doeff-wt-ki-26eb-dc の HEAD 77175f1ce020ed5e480b3f7997806ef6bac0ccd9(直し 77175f1ce を含む)
+$ sh ~/dotfiles/agent/venv-run.sh ~/dotfiles/agentcli code-quality --repo <木> --scope changed --base e5b63f5e7
+--- 出力 ---
+code-quality: passed (scope=changed・型検査は未実行(fast の段))
+code-quality-base: {'revision': 'e5b63f5e7a3a9863b0cebd71c9c075519c305694', 'repo': '/work/toolset/worktrees/doeff-wt-ki-26eb-dc'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: packages/doeff-hy/tests/test_static_check_slot.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-coverage: partial / 対象 878 / 全体 2842 / 未導入 {'hy': 344, 'javascript': 12, 'lua': 17, 'python': 1334, 'rust': 88, 'shell': 46, 'typescript': 123} / typed:true だが include に無い 27(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 556 件（自動増加しない）

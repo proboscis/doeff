@@ -1,0 +1,30 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/check_slot.py b/packages/doeff-hy/src/doeff_hy/check_slot.py
+index 066090d63..51c418a2d 100644
+--- a/packages/doeff-hy/src/doeff_hy/check_slot.py
++++ b/packages/doeff-hy/src/doeff_hy/check_slot.py
+@@ -30,6 +30,7 @@ env で正本の path や値を替える口は作らない(口が在ると、替
+ import importlib.util
+ import os
+ import sys
++import time
+ from dataclasses import dataclass
+ from pathlib import Path
+ from types import ModuleType
+@@ -141,7 +142,16 @@ def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
+         )
+         return SlotHeld(None)
+     try:
+-        return SlotHeld(module.take(module.read_policy(), label, EnvironmentByName(), out))
++        policy = module.read_policy()
++        deadline = time.monotonic() + policy.wait_limit_s
++        while True:
++            for index in range(policy.slots):
++                descriptor = module.try_take(policy, index, label)
++                if descriptor is not None:
++                    return SlotHeld(module.Holding(policy, index, descriptor))
++            if time.monotonic() > deadline:
++                raise module.SlotWaitExpired(label, 0.0, policy.wait_limit_s, (), policy.slots)
++            time.sleep(0.5)
+     except module.PolicyUnreadable as error:
+         _named(out, f"宣言を読めないので枠を取らずに走る — {error}")
+     except module.SlotWaitExpired as error:

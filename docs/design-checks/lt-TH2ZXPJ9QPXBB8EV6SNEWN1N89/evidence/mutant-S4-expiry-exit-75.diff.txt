@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-hy/src/doeff_hy/static_check.py b/packages/doeff-hy/src/doeff_hy/static_check.py
+index 2e34d0b27..28e80d3d8 100644
+--- a/packages/doeff-hy/src/doeff_hy/static_check.py
++++ b/packages/doeff-hy/src/doeff_hy/static_check.py
+@@ -1204,7 +1204,7 @@ def main(argv: list[str] | None = None) -> int:
+     slot = take_slot(Path.home(), slot_label(root, conversation_setting()), sys.stderr)
+     if isinstance(slot, SlotExpired):
+         print(f"doeff-hy-check: 走れなかった: {slot.line}", file=sys.stderr)
+-        return 2
++        return 75
+     try:
+         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
+         threads = pyright_threads(pyright_threads_setting())  # 展開の前に判じる(誤った値で展開の秒を払わない)
