@@ -1,0 +1,2 @@
+(require doeff-hy.macros [val])
+(print (hy.repr (hy.macroexpand-1 '(val single 3))))

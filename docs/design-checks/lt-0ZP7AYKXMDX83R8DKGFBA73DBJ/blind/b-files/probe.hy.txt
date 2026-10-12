@@ -1,0 +1,18 @@
+(require doeff-hy.macros [defk <- for/do])
+(import doeff [do :as _doeff-do])
+(import doeff [run])
+(import doeff_core_effects [try-handler :as try_handler])
+(import doeff_core_effects.scheduler [scheduled])
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+(import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
+
+(setv items [1 2 3])
+(setv one (for/do (<- x (From items :label "double")) (* x 2)))
+(setv two (for/do (<- x (From items :label "outer")) (<- y (From [10 20] :label "inner")) (+ x y)))
+(print (type one) (type two))
+(print one)
+(print (repr two))
+(defn with-stack [program]
+  (scheduled ((sequential) (fail_handler (try_handler program)))))
+(print (. (run (with-stack one)) valid_values))
+(print (. (run (with-stack two)) valid_values))

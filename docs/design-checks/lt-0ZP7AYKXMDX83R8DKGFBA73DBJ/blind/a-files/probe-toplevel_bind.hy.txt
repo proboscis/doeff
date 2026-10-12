@@ -1,0 +1,4 @@
+(require doeff-hy.macros [<-])
+(import doeff [Pure])
+(<- x (Pure 1))
+(print x)
