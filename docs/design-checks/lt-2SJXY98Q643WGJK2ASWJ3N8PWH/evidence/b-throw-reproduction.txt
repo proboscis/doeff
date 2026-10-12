@@ -1,0 +1,29 @@
+## target: doeff main 1410ce508e3baec632ea994184c884ba28ca0ee9
+## B probe_writer_throw.py — 基準(overlay なし = 直した版そのまま)
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_5.<locals>._hy_anon_4()  <string>:14
+  _hy_anon_4()  <string>:14
+  _hy_anon_1()  <string>:13
+  throw()  <string>:8
+
+ValueError: negative: -5
+
+doeff_hy from: /work/toolset/worktrees/doeff-wt-ki-1618-r2/packages/doeff-hy/src/doeff_hy/__init__.py
+pay(5) -> 5 (type int)
+pay(-5) -> raised ValueError: negative: -5
+
+## B probe_writer_throw_direct.py — 基準
+doeff_hy from: /work/toolset/worktrees/doeff-wt-ki-1618-r2/packages/doeff-hy/src/doeff_hy/__init__.py
+pay(5) -> 5; handler log [5]
+pay(-5) -> 'rejected'; handler log []
+
+## overlay = S1 の throw 行を足した clause_ops.hy
+doeff_hy from: /tmp/dc-b-repro.p54zoz/overlay/doeff_hy/__init__.py
+pay(5) -> <generator object _hy_anon_6.<locals>._hy_anon_5.<locals>._hy_anon_2 at 0x301d4e9e380> (type generator)
+pay(-5) -> <generator object _hy_anon_6.<locals>._hy_anon_5.<locals>._hy_anon_2 at 0x301d4e9f500> (type generator)
+
+doeff_hy from: /tmp/dc-b-repro.p54zoz/overlay/doeff_hy/__init__.py
+pay(5) -> 5; handler log [5]
+pay(-5) -> raised RuntimeError: internal error: Continuation: continuation already consumed (one-shot violation) (current fiber=0); handler log [-5]

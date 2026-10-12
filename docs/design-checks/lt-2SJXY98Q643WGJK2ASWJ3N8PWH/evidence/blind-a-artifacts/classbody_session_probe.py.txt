@@ -1,0 +1,71 @@
+"""class の本体の session var つき defhandler を、型検査のための展開(doeff_hy.static_check.project)で Python にし、pyright に掛ける。
+--patch を付けると、macros.hy の `_in-class-body?` から「型検査のための展開では偽」の例外だけを外して同じことをする
+(置き場の判断がどの module に在るかを確かめるための実験 — 共有の source は変えず、この process の中だけで差し替える)。
+使い方: uv run python classbody_probe.py <dir> [--patch]
+"""
+import json, subprocess, sys
+from pathlib import Path
+
+EFFECTS = """\
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Tick [(get EffectBase int)]
+  #^ int step)
+"""
+
+PROBE_UNUSED = """\
+(require doeff-hy.macros [defhandler])
+(require doeff-hy.handle [handle])
+(import probe_effects [Tick])
+
+(defclass Ledger []
+  (defhandler only-tick
+    (Tick [step] (resume step)))
+  (setv scoped (handle (Tick 1)
+                 (Tick [step] (resume (+ step 1))))))
+"""
+
+PROBE = """\
+(require doeff-hy.macros [defhandler])
+(import probe_effects [Tick])
+
+(defclass Ledger []
+  (defhandler counted
+    (session var calls 0)
+    (Tick [step]
+      (:= calls (+ calls step))
+      (resume calls))))
+"""
+
+INLINE_TICK = (
+    "from dataclasses import dataclass\nfrom doeff import EffectBase\n"
+    "@dataclass(frozen=True)\nclass Tick(EffectBase[int]):\n    step: int\n"
+)
+
+def main() -> None:
+    root = Path(sys.argv[1]); patch = "--patch" in sys.argv
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
+    (root / "probe.hy").write_text(PROBE, encoding="utf-8")
+    import doeff_hy.macros as macros
+    if patch:
+        from hy.scoping import ScopeFn, is_function_scope, nearest_python_scope
+        def in_class_body(compiler):
+            scope = nearest_python_scope(compiler.scope)
+            return isinstance(scope, ScopeFn) and not is_function_scope(scope)
+        macros._hyx_in_class_bodyXquestion_markX = in_class_body
+    from doeff_hy.static_check import project
+    text = project(root, [root], root / "probe.hy").text
+    text = text.replace("from probe_effects import Tick\n", INLINE_TICK, 1)
+    out = root / ("projected_patched.py" if patch else "projected.py")
+    out.write_text(text, encoding="utf-8")
+    result = subprocess.run(["pyright", "--outputjson", str(out)], capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    errors = [g for g in data["generalDiagnostics"] if g["severity"] == "error"]
+    print(f"== {'patched' if patch else 'as is'}: {len(errors)} error(s) — {out}")
+    for g in errors:
+        line = g["range"]["start"]["line"] + 1
+        print(f"   L{line} {g.get('rule','')}: {g['message'][:150]}")
+
+main()

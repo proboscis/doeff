@@ -1,0 +1,42 @@
+"""書き手が自分の関数 `throw` を持つ module で、defhandler の節の本体がそれを呼ぶ時の答え(実測用)。
+
+どの doeff_hy を読むかは sys.path で決まる(基準 = 作業木、変更後 = PYTHONPATH の overlay)。
+"""
+import sys
+import types
+
+import doeff_hy  # noqa: F401 — 拡張を登録する
+import hy
+from doeff import run
+
+print("doeff_hy from:", doeff_hy.__file__)
+
+HEADER = """
+(require doeff-hy.macros [defk <- defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] Charge [EffectBase] #^ int amount)
+
+;; 書き手の補助: 式の位置で例外を投げる(Clojure の throw と同じ綴り)。
+(defn throw [error] (raise error))
+
+;; 節の中で検める関数を作り、それで値を検めてから答える。
+(defhandler payments
+  (Charge [amount]
+    (setv checked (fn [a] (when (< a 0) (throw (ValueError (+ "negative: " (str a))))) a))
+    (resume (checked amount))))
+
+(defn pay [amount] (payments (Charge amount)))
+"""
+
+mod = types.ModuleType("writer_throw_probe")
+sys.modules[mod.__name__] = mod
+for form in hy.read_many(HEADER):
+    hy.eval(form, mod.__dict__, module=mod)
+
+for amount in (5, -5):
+    try:
+        answer = run(mod.pay(amount))
+        print(f"pay({amount}) -> {answer!r} (type {type(answer).__name__})")
+    except BaseException as error:  # noqa: BLE001 — 実測のため全部受ける
+        print(f"pay({amount}) -> raised {type(error).__name__}: {str(error).splitlines()[-1][:200]}")

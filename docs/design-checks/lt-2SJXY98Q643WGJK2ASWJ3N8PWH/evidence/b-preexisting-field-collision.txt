@@ -1,0 +1,14 @@
+## B の probe_field_k.py / probe_preexisting.py — 対象 main fb4dd0f3b50417c54948a69ea0a0dd215e3f2829(この変更の外の既存の衝突の再現)
+### probe_field_k
+
+doeff Traceback (most recent call last):
+
+  _hy_anon_3()  <string>:7
+
+TypeError: argument 'k': 'int' object is not an instance of 'K'
+
+field-k -> raised TypeError argument 'k': 'int' object is not an instance of 'K'
+field-effect -> 6
+### probe_preexisting
+1. :when 外れ -> 'outer saw Inner' (期待: 'outer saw Traced')
+2. module の globals に増えた名 -> ['_doeff_Get', '_doeff_Pass', '_doeff_Put', '_doeff_QuotedForms', '_doeff_Resume', '_doeff_Some', '_doeff_Transfer', '_doeff_WithHandler', '_doeff_check_clause_endings', '_doeff_check_claus
