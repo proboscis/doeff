@@ -25,15 +25,12 @@ compile した code の Hy の gensym の名は :func:`canonical_gensyms` で mo
 
 import hashlib
 import importlib.util
-import inspect
 import marshal
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from types import CodeType, FunctionType, ModuleType
+from types import CodeType
 from typing import TypeVar
-
-from doeff_hy_bytecode_guard.code_store import HY_SOURCE_SUFFIXES
 
 #: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
 #: 2 = gensym の名を正準化した code の記録(agora-redesign #3667)。1 の記録の code は gensym の番号が compile の順で決まって
@@ -64,9 +61,6 @@ PYC_HEADER_BYTES = 16
 FLAG_HASH_BASED = 0b01
 FLAG_CHECK_SOURCE = 0b10
 
-#: 読めなかった file の sha256 の代わり(16 進の sha256 と決して一致しない — 記録はいつも古いと判じられる)。
-UNREADABLE = "unreadable"
-
 #: digest の代わり(閉包の歩みが環境変数の読みか、module の置き場を値として読む code に当たった — digest は環境変数の値も、
 #: 置き場から辿る file の中身も写さないので照らせない・置き場の読みは設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。16 進の sha256 とも
 #: None(import の途中)とも違う印で、照らしはこの行をいつも古いと判じる(使い手は process ごとに展開し直す — 設計検証
@@ -78,19 +72,6 @@ ENVIRONMENT_READ = "environment-read"
 #: 使った macro の digest が中身(code)を覆った閉包の関数の印の形 — 閉包の歩みが関数に初めて出会った順の番号を bit にした数の
 #: 16 進(番号 i の関数を覆えば bit i が 1。作り方と読み方は macro_use)。digest を持たない行(None・ENVIRONMENT_READ)は "0"。
 COVERED = re.compile(r"[0-9a-f]+")
-
-#: Hy の module が require した macro の表(Hy が module の名前空間に置く 2 つの辞書)。
-MACRO_TABLES: tuple[str, ...] = (MACRO_TABLE, READER_TABLE)
-
-
-@dataclass(frozen=True)
-class MacroDependency:
-    """macro の提供元の file 1 つ(module 名・file の path・中身の sha256)— file 単位の辿り方(:func:`macro_provider_files`)の
-    結果の形。Hy の module の記録はこれを使わない(展開が使った macro 単位 — :class:`UsedMacro`)。"""
-
-    module: str
-    file: str
-    sha256: str
 
 
 @dataclass(frozen=True)
@@ -458,45 +439,6 @@ def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:
     ] == (size & 0xFFFFFFFF).to_bytes(4, "little")
 
 
-def macro_provider_files(
-    module: ModuleType,
-    path: str,
-    modules: Mapping[str, ModuleType],
-    also: tuple[ModuleType, ...] = (),
-) -> dict[str, str]:
-    """module の展開が依った source の file の一覧 ``{module 名: file}``(名の順)。
-
-    macro の提供元の module、提供元が参照する同じ top package の module(macro の中から呼ぶ補助の関数 — 名前空間の値と、
-    提供元の関数・macro の本体の中の import の両方)、提供元自身が require した macro の提供元を辿る。Hy 自身(``hy.*``)は記録の Hy の版で覆う。
-    module 自身の file(``path``)は Python の .pyc の有効判定が覆うので含めない。
-    ``also`` = macro の外で展開の結果を変える module(型検査の展開の後処理 doeff_hy.static_check — macro から辿れない)。
-    提供元と同じく、その file と、それが参照する同じ top package の module を辿る(agora-redesign #3862)。
-    """
-    files: dict[str, str] = {}
-    seen: set[str] = set()
-    pending = [*_macro_providers(module, modules), *also]
-    while pending:
-        provider = pending.pop()
-        name = provider.__name__
-        if name in seen:
-            continue
-        seen.add(name)
-        if provider is module or _top_package(name) == "hy":
-            continue
-        file = vars(provider).get("__file__")
-        if not isinstance(file, str) or file == path:
-            continue
-        if file.endswith(_SOURCE_SUFFIXES):
-            files[name] = file
-        pending.extend(_macro_providers(provider, modules))
-        for other in (*_referenced_module_names(provider), *_imported_module_names(provider)):
-            if other not in seen and _top_package(other) == _top_package(name):
-                referenced = modules.get(other)
-                if referenced is not None:
-                    pending.append(referenced)
-    return dict(sorted(files.items()))
-
-
 def python_checks_source(header: bytes, check_hash_based_pycs: str) -> bool:
     """Python がこの頭の .pyc を使う前に source と突き合わせるか(timestamp 方式と checked-hash は真)。"""
     if len(header) < PYC_HEADER_BYTES:
@@ -531,62 +473,3 @@ def pyc_bytes(
             + (size & 0xFFFFFFFF).to_bytes(4, "little")
         )
     return header + marshal.dumps(code)
-
-
-#: file 単位の辿り方が数える source の拡張子(Hy の拡張子は定義点 code_store から引く — 写しを置かない)。
-_SOURCE_SUFFIXES: tuple[str, ...] = (*HY_SOURCE_SUFFIXES, ".py")
-
-
-def _top_package(module_name: str) -> str:
-    return module_name.partition(".")[0]
-
-
-def _macro_providers(module: ModuleType, modules: Mapping[str, ModuleType]) -> Iterator[ModuleType]:
-    """module が require した macro の定義元の module(読み込み済みの物)を挙げる。"""
-    namespace = vars(module)
-    for table_name in MACRO_TABLES:
-        table = namespace.get(table_name)
-        if not isinstance(table, dict):
-            continue
-        for macro in list(table.values()):
-            if not isinstance(macro, FunctionType):
-                continue
-            provider = modules.get(macro.__module__)
-            if provider is not None:
-                yield provider
-
-
-def _imported_module_names(provider: ModuleType) -> Iterator[str]:
-    """提供元の関数と macro の本体の中で import する module の名を挙げる — 展開の時にだけ import する補助(doeff-hy の
-    defsystem が本体で import する ``doeff_hy.system_form``)は提供元の名前空間に現れないので、code の import の命令から
-    読む(agora-redesign #2373)。提供元で定義された関数だけを読む(import した他所の関数はその提供元の側で辿る)。"""
-    namespace = vars(provider)
-    tables = tuple(
-        table for name in MACRO_TABLES if isinstance(table := namespace.get(name), dict)
-    )
-    functions = (
-        *(value for value in namespace.values() if isinstance(value, FunctionType)),
-        *(macro for table in tables for macro in table.values() if isinstance(macro, FunctionType)),
-    )
-    for function in functions:
-        if function.__module__ == provider.__name__:
-            yield from _imports_in(function.__code__)
-
-
-def _imports_in(code: CodeType) -> Iterator[str]:
-    """code とその入れ子の code(内側の関数・内包表記)の名の表のうち、点を含む名(import の命令が名指す module の名の
-    候補)。命令を逆アセンブルせず名の表だけを読む(doeff_hy.macros で 1 回 130 ms → 名の表なら 1 ms 未満)— 呼び手が
-    読み込み済みの同じ top package の module に絞るので、属性の名などを拾い過ぎても記録には残らない。"""
-    yield from (name for name in code.co_names if "." in name)
-    for constant in code.co_consts:
-        if isinstance(constant, CodeType):
-            yield from _imports_in(constant)
-
-
-def _referenced_module_names(provider: ModuleType) -> Iterator[str]:
-    """提供元の名前空間の値(module・関数・class)が属する module の名を挙げる — macro が展開の中で呼ぶ補助の在処。"""
-    for value in list(vars(provider).values()):
-        if inspect.ismodule(value):
-            yield value.__name__
-        elif isinstance(value, (FunctionType, type)) and isinstance(value.__module__, str):
-            yield value.__module__

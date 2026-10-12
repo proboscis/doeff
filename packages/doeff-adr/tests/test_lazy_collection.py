@@ -310,15 +310,28 @@ def test_one_changed_character_reads_no_stale_record(project: pytest.Pytester, t
 
 
 def test_a_changed_macro_provider_reads_no_stale_record(project: pytest.Pytester, tmp_path: Path) -> None:
-    """macro の提供元を変えると、それを使う file は古い記録を読まない(使わない file は記録のまま・#1291 の受入 4)。"""
+    """展開が使った macro を変えると、それを使う file は古い記録を読まない(使わない file は記録のまま・#1291 の受入 4)。"""
     _collect(project)
     helpers = project.path / "pkg/helpers.hy"
     helpers.write_text("(defmacro answer [] (+ 40 2))\n")
     _imports(tmp_path)
     out = _collect(project).out
-    assert "import: pkg/tests/test_gamma.hy — macro の提供元 pkg.helpers が変わった" in out
+    assert "import: pkg/tests/test_gamma.hy — 展開が使った macro が変わった" in out
     assert "import: pkg/tests/test_alpha.hy" not in out
     assert "pkg.tests.test_gamma" in _imports(tmp_path)
+
+
+def test_a_macro_the_expansion_does_not_use_keeps_the_record(project: pytest.Pytester, tmp_path: Path) -> None:
+    """macro の提供元に、展開が使わない macro を足しても、記録から収集する(agora-redesign #3769 の子 — 直す前は提供元の file の
+    sha256 で照らし、doeff_hy の macros.hy のどの行の変更でも doeff の日次の Hy の test file を全部 import で収集し直して、日次の
+    時間の上限を越えた・10-12 04:00 と 08:00 の回)。記録は展開が使った macro 単位(doeff_hy_bytecode_guard の記録)で照らす。"""
+    _collect(project)
+    helpers = project.path / "pkg/helpers.hy"
+    helpers.write_text("(defmacro answer [] 42)\n(defmacro unused [] 0)\n")
+    _imports(tmp_path)
+    out = _collect(project).out
+    assert "import: pkg/tests/test_gamma.hy" not in out, out
+    assert "pkg.tests.test_gamma" not in _imports(tmp_path)
 
 
 def test_a_fixture_bound_by_assignment_is_collected_from_records(project: pytest.Pytester, tmp_path: Path) -> None:

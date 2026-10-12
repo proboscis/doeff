@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import contextlib
 
     from doeff_hy_bytecode_guard.macro_use import MacroRecording
-    from doeff_hy_bytecode_guard.records import MacroDependency, MacroRecord, ValueReference
+    from doeff_hy_bytecode_guard.records import MacroRecord, ValueReference
 
 #: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる — doeff_hy/__init__.py)。定義点は保存先の module(code の鍵が
 #: Hy の source かで欄を分ける)— 標準 library だけを読む軽い module なので起動時に読んでよい。
@@ -64,6 +64,11 @@ _digests: dict[tuple[str, int, int], str] = {}
 #: 読む。module を実行した後に file が書き換わった常駐の process では 2 つが食い違うので、歩みが確かめる(設計検証
 #: lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A — card ki-be596ac8276f)。
 _executed: dict[str, tuple[int, int]] = {}
+
+#: 読みの口が返した Hy の module の code に載った記録(source の path → 記録 — 記録の無い code は載せない・process の間)。
+#: Hy の test file の item の記録の cache(doeff-adr の item_cache)が、import した test file の展開が使った macro を、file を
+#: 読み直さずに引くため(:func:`loaded_record`)。
+_loaded_records: dict[str, "MacroRecord"] = {}
 
 
 def installed() -> bool:
@@ -105,20 +110,13 @@ def is_hy_source(path: object) -> bool:
     return isinstance(path, str) and path.endswith(HY_SOURCE_SUFFIXES)
 
 
-def macro_dependencies(
-    module: ModuleType, path: str, also: "tuple[ModuleType, ...]" = ()
-) -> "list[MacroDependency]":
-    """読み込み済みの Hy の module が require した macro の提供元の file と今の sha256(file 単位の辿り方)— Hy の test file の
-    item の記録の cache(doeff-adr の item_cache — agora-redesign #1291)の鍵の公開の口。Hy の module の記録(.pyc・解析器・
-    型検査の展開の保存)は展開が使った macro 単位の :func:`macro_recording` を使い、これを使わない。``also`` は
-    ``records.macro_provider_files`` の同名の引数。"""
-    from doeff_hy_bytecode_guard import records  # 起動時に読まない
-
-    return [
-        # 読めない file は、どの sha256 とも合わない印で記録する — 記録から外すと、その file の変更を見落とす。
-        records.MacroDependency(name, file, file_sha256(file) or records.UNREADABLE)
-        for name, file in records.macro_provider_files(module, path, sys.modules, also).items()
-    ]
+def loaded_record(path: str) -> "MacroRecord | None":
+    """この process で読みの口が返した Hy の module の code に載った記録(path = source の file。読んでいない・記録の無い code は
+    None)— Hy の test file の item の記録の cache(doeff-adr の item_cache — agora-redesign #1291)が、import した test file の
+    展開が使った macro を、展開し直さず file も読み直さずに引くための公開の口。照らしは :func:`record_is_current_here`(.pyc と
+    同じ 1 つの照らし方 — 展開で実行された関数の中身だけを覆う。file 単位で照らすと、macro の提供元のどの行の変更でも item の
+    記録が全部冷えた・#3769 の子)。"""
+    return _loaded_records.get(path)
 
 
 def macro_recording(module: ModuleType) -> "MacroRecording":
@@ -367,9 +365,11 @@ def _checking_get_code(previous: GetCode):
             return previous(self, fullname)
         _remember_dataclass_code()  # Hy の import の後なら dataclasses は読み込み済み
         try:
-            return _hy_code(self, fullname, path)
+            code = _hy_code(self, fullname, path)
         finally:
             _last_sources().pop(path, None)  # 覚えた source はこの読みの間だけ使う
+        _remember_record(path, code)
+        return code
 
     def _hy_code(self: importlib.machinery.SourceFileLoader, fullname: str, path: str) -> CodeType | None:
         """Hy の source の code — 保存先・.pyc・compile のどれかから、展開が今の macro に依る物を返すため。"""
@@ -410,6 +410,18 @@ def _checking_get_code(previous: GetCode):
         return recompiled
 
     return get_code
+
+
+def _remember_record(path: str, code: CodeType | None) -> None:
+    """読みの口が返した code に載った記録を覚える(:func:`loaded_record`)— 記録の無い code(module の外の compile・型検査の展開)
+    なら前の覚えを消す(別の code の記録を残さない)。"""
+    from doeff_hy_bytecode_guard import records  # Hy の source に当たった時だけ読む
+
+    record = None if code is None else records.record_of(code)
+    if record is None:
+        _loaded_records.pop(path, None)
+    else:
+        _loaded_records[path] = record
 
 
 def _record_is_current_here(code: CodeType) -> bool:

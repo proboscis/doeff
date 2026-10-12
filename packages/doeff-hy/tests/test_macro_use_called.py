@@ -18,7 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff_hy_bytecode_guard import record_is_current_here, records, source_to_code_as_import
+from doeff_hy_bytecode_guard import (
+    loaded_record,
+    record_is_current_here,
+    records,
+    source_to_code_as_import,
+)
 
 #: macro の module。rewrites = 引数が真なら Rewriter の assign を、偽なら walk を呼ぶ(defk が := の有無で _Walker._assign を
 #: 通るかが変わる形)・reads-doc = 呼ばない関数の説明の文を読む・reads-signature = 呼ばない関数の引数の形を読む・builds = 表を
@@ -141,6 +146,16 @@ def _replace(path: Path, old: str, new: str) -> None:
     assert old in text, old
     assert len(old) != len(new)
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def test_an_imported_module_exposes_the_record_of_its_expansion(tree: Tree) -> None:
+    # Hy の test file の item の記録の cache(doeff-adr の item_cache)は、import した file の展開が使った macro の記録を、
+    # 読みの口の覚え(loaded_record)から引いて保存し、record_is_current_here で照らす(#3769 の子)。
+    module = importlib.import_module(f"{tree.package}.plain")
+    record = loaded_record(str(module.__file__))
+    assert record is not None, "import した Hy の module の展開の記録を引けない"
+    assert [row.name for row in record.macros] == ["rewrites"], record.macros
+    assert record_is_current_here(record), "何も変えていないのに古いと判じた"
 
 
 def test_a_record_is_current_while_nothing_changed(tree: Tree) -> None:

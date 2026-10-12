@@ -121,7 +121,8 @@ class DependencyChecks:
     clock: Callable[[], int] = time.time_ns
 
     def macro_provider(self, module: str, find: Callable[[str], ProviderState]) -> ProviderState:
-        """macro の提供元 ``module`` の今の状態。調べ方(``find``)は記録のキャッシュの側が持つ 1 つだけを使う。"""
+        """``module``(記録を積む実行時の口の module)の今の file の状態。調べ方(``find``)は記録のキャッシュの側が持つ 1 つだけを
+        使う。"""
         known = self._mut_providers.get(module)
         if known is None:
             known = find(module)

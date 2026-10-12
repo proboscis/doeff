@@ -22,7 +22,15 @@ from doeff_hy.pytest_items import FunctionItem
 from hy.importer import HyLoader
 
 from doeff_adr.indexed_pytest import IndexedFunctions, supports_indexed_collection
-from doeff_adr.item_cache import PendingEntry, forget_cached, items_cache_dir_for, pending_entry, write_cached
+from doeff_adr.item_cache import (
+    ExpansionUnknown,
+    PendingEntry,
+    expansion_of,
+    forget_cached,
+    items_cache_dir_for,
+    pending_entry,
+    write_cached,
+)
 from doeff_adr.lazy_collection import (
     Indexed,
     NeedsImport,
@@ -528,13 +536,26 @@ class DoeffAdrHyFile(pytest.Module):
             return
         self._mut_import_reason = None
         verified = verify_records(module, self._pytest_collects)
-        if verified.problems:
+        # 展開が使った macro の記録(照らしの鍵)は import の直後に引く。
+        expansion = expansion_of(module)
+        problems = [
+            *verified.problems,
+            *([expansion.reason] if isinstance(expansion, ExpansionUnknown) else []),
+        ]
+        if problems or isinstance(expansion, ExpansionUnknown):
             imported = self.config.stash[_IMPORTED_FILES_KEY]
-            imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(verified.problems))
+            imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(problems))
             return
         # 書くのは収集の終わり(_write_pending)— 記録の書き込みと読込済みの source の読みを、この file の import の区間に乗せない。
         self.config.stash[_PENDING_ENTRIES_KEY] = self.config.stash.get(_PENDING_ENTRIES_KEY, ()) + (
-            pending_entry(self.path.resolve(), module, verified.fixtures, verified.records, verified.dynamic),
+            pending_entry(
+                self.path.resolve(),
+                module,
+                verified.fixtures,
+                verified.records,
+                expansion,
+                verified.dynamic,
+            ),
         )
 
     def _pytest_collects(self, name: str) -> bool:
