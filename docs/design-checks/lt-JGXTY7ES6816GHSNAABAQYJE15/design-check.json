@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "task_id": "lt-JGXTY7ES6816GHSNAABAQYJE15",
+  "base_revision": "e5de191585909cc515f824e0b8f87ee4f69e4bbc",
+  "author": {
+    "conversation_id": "c-6MV548XHSHP3SWKE2G6JBVS2HJ",
+    "model": "claude-sonnet-5-5",
+    "effort": "unspecified"
+  },
+  "requirements": "定義の macro の展開が import を外の局所に置く残り 3 つ(型検査の投影・class の本体・defworkflow)を、失敗ケースを先に書いて赤を確かめ、7ad1ca7a2 と同じ _scoped-definition の 1 か所に寄せて直す。R1 型検査の投影で、関数・class の本体の中の defrecord(頭の辞書つき)・defwire・defeffect・deff の import が外の局所の名にならない。R2 class の本体に直に書いた defrecord・defwire・defeffect が、module の段に doeff_hy が無くても建ち、使える。R3 conductor.hy の defworkflow を関数の中で使っても、外の関数の局所の名に _conductor_* を足さない。R4 3 つとも _scoped-definition の 1 か所に寄せる。(1 段目は 49a293f19・c4590550 で main に着地済み。2 段目 9bb308779 は盲検 A・B の失敗例を受け、投影の別名 import の穴と検の弱さを直した)",
+  "design": {
+    "path": "design.md",
+    "sha256": "a0501e308b7d950631692d2b1fdcf937dd99f9be0e68de23921e93fbb550b414"
+  },
+  "modules": [
+    {
+      "id": "scoped-definition",
+      "responsibility": "定義の macro の展開の文の並びを、書かれた所(module・class の本体・関数の本体)と、実行時の展開か型検査のための展開かに合わせて組む",
+      "owns": "書かれた所の判断(_in-function-body?・_function-scope?・_in-class-body?)・包むか並べるか・class の本体で import の名を module の globals へ置くか(nested-reads)",
+      "hides": "場所ごとの import の置き方(関数の本体ではすぐ呼ぶ関数で包み name だけ束ねる・class の本体では定義の前に setdefault する)",
+      "interface": "_scoped-definition compiler name forms [module-forms] [nested-reads](macros.hy)",
+      "effects": "nested-reads を真にした定義が class の本体に書かれた時だけ、module の globals へ import の名を setdefault で置く(補助の _install-guard-globals は別の既存の道)。ほかは文の並びを返すだけ",
+      "lifetime": "macro の展開の時と、展開した module の import の時(1 回)。状態を持たない",
+      "invariants": "関数の中の定義が外の関数に残す局所の名は name だけ。module と class の本体の定義は包まない(__qualname__・引数なしの super() を保つ)。_scoped-definition が module の globals へ書くのは nested-reads を真にした class の本体の定義だけ。defhandler は nested-reads を真にしない"
+    },
+    {
+      "id": "definition-macros",
+      "responsibility": "定義の中身(契約・型・展開の文)を作る(defk・deff・defp・defpp・deftest・defeffect・defmcp-tool・defhandler・defsystem・defpipeline・defrecord・defwire・defenum・defworkflow)",
+      "owns": "契約の鍵・欄・展開の文・型検査の展開で出す文の形(_helper-imports が空・record.hy の static-view の分岐)",
+      "hides": "書かれた所の判断(文の並びを _scoped-definition に渡すだけ)",
+      "interface": "各 macro。class を建てる 3 つ(defrecord・defwire・defeffect)だけが nested-reads を真にして呼ぶ。macro が束ねる補助の別名は頭 _doeff_・_conductor_ を守る",
+      "effects": "なし(展開の文を返す純粋な変換)",
+      "lifetime": "macro の展開の時だけ",
+      "invariants": "展開の文の import は _scoped-definition に渡し、場所ごとの置き方を自分で決めない。補助の別名の頭の約束(SYNTHESIZED_ALIAS_PREFIXES)を守れば、投影の後処理を変えずに新しい補助を足せる"
+    },
+    {
+      "id": "projection-imports",
+      "responsibility": "型検査の投影の木で、macro 合成の import を関数・class の本体から囲む module の直下へ集める。module の頭の補助の import(STATIC_HELPER_IMPORTS → with_static_helpers)は別の既存の置き場",
+      "owns": "macro 合成の import の見分け方: doeff_hy の module・表の module(DEFSYSTEM_IMPORTS・DEFEFFECT_OUTCOMES_MODULE)・別名の頭(SYNTHESIZED_ALIAS_PREFIXES = _doeff_・_conductor_)",
+      "hides": "木の歩き方(_nested_imports・_WithoutNestedImports・空の本体への pass)と、重ねの畳みとの順",
+      "interface": "with_module_level_imports(tree) -> tree(static_check.py)と、定数 SYNTHESIZED_ALIAS_PREFIXES・DEFEFFECT_OUTCOMES_MODULE(static_view.py)",
+      "effects": "なし(受けた木をその場で替える変換。I/O を持たない)",
+      "lifetime": "型検査の展開 1 回ごと。結果は保存され、POST_PROCESSING の digest が変わると無効になる",
+      "invariants": "型検査の投影で、関数・class の本体の中に macro 合成の import を残さない。見分けは綴りで行うので、書き手が同じ綴りで書いた import も module の段へ移る(型の意味は変わらない)。without_bookkeeping の前に呼ぶ"
+    },
+    {
+      "id": "scope-tests",
+      "responsibility": "上の 3 つの境界を機械で守る(局所の名の数え・投影の import の残り・class の本体で型が建つ事)",
+      "owns": "検体の表 _DEFINITION_SAMPLES(14 種)・局所の名の数え方・symtable で読む名の検め方",
+      "hides": "なし(検の道具だけ)",
+      "interface": "tests/test_nested_definition_scope.py と tests/test_handle_scope.py の検",
+      "effects": "なし(一時 file に Hy を書いて展開・投影する検。作業木は変えない)",
+      "lifetime": "pytest の 1 実行(変更範囲の検・日次の全体)",
+      "invariants": "定義の macro を足して検体を足さなければ数え上げの検が赤。投影の検は名に依らず import の残りを数える。class の本体の検は module に doeff_hy が無い header で評価する"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "定義の macro を足す、または既存の定義の macro が型検査の展開に新しい補助の import(別名の from-import など)を足す",
+      "claim": "import の置き場の決めは 2 つの 1 か所が持つ(実行時: _scoped-definition・型検査の投影: with_module_level_imports)ので、macro 側は文を渡すだけで足りる。補助の別名が約束の頭(_doeff_・_conductor_)を守る限り投影の判定は変わらず、新しい macro・補助は macro の module と検体 1 行で済む。別の module の別名なしの import を足す時だけ、定数と判定の 2 か所が要る",
+      "expected_scope": "definition-macros と scope-tests(検体 1 行)。scoped-definition・projection-imports は変えない(事前の主張は「表 1 行」)",
+      "actual_scope": "修正前に測った範囲: 別名の from-import の補助(defwire・defeffect・頭の辞書つき defrecord の _doeff_ClassVar・_doeff_cast ほか)を足すと、class の本体の投影で import が外の class に残り、入れ子の型の本体が global として読めない。直すには projection-imports の判定を変える必要があった(盲検 A・B が指摘し、設計者が再現)。列挙の検は根の名 3 つだけを見るので、盲検 B の差分を当てても 117 件通った。修正後(9bb308779): 約束の頭の別名なら definition-macros と scope-tests だけ(盲検 B の差分で投影は違反せず、検 137 件が通る)",
+      "changed_modules": [
+        "definition-macros",
+        "scope-tests",
+        "projection-imports"
+      ],
+      "unchanged_modules": [
+        "scoped-definition"
+      ],
+      "reason": "投影の後処理が macro の import の綴りの表を持ち、macro の選んだ綴りが置き場の正しさを決めていた(知識の漏洩)。別名の頭の約束で、綴りの知識を表から約束へ移した。definition-macros が型検査の展開で出す文の形を知っている事と、_scoped-definition 以外にも _install-guard-globals が module の globals を変える事は、事前の責務の表の誤りとして design.md で訂正した",
+      "revision": "赤(修正前・盲検 A の再現と盲検 B の差分で検が通る)→ 緑(9bb308779): 判定に別名の頭の規則を足し、投影の検を全 macro の検体(14 種)で import を 1 つも残さない形と、symtable で入れ子の scope が読む名が module の段で束ねられている形へ作り直した。変異 5 つがそれぞれの検で赤になる事を確かめた"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "型検査の投影の後処理(with_module_level_imports と、その中の木の変換・判定・読む定数)の中身を変える",
+      "claim": "変更は projection-imports の中で閉じ、保存した型検査の展開は POST_PROCESSING の閉包の digest で古い物を引かない(後処理の関数・class の method・読む定数のどれを替えても digest が変わる)",
+      "expected_scope": "projection-imports(と、その検の scope-tests)だけ。static_cache・macro 側は変えない",
+      "actual_scope": "projection-imports(static_check.py・static_view.py)と scope-tests だけ。変換器の method(visit_Import)・判定が呼ぶ関数(_synthesized_alias)・判定が読む定数(SYNTHESIZED_ALIAS_PREFIXES)の 3 種の変更で digest が変わる事を実測した。変えずに 2 度測ると同じ",
+      "changed_modules": [
+        "projection-imports",
+        "scope-tests"
+      ],
+      "unchanged_modules": [
+        "scoped-definition",
+        "definition-macros"
+      ],
+      "reason": "digest は後処理の閉包から機械が作るので、保存の無効化のために別の登録や版の番号を足さない(予測どおり)。判定を変えると保存した投影が全部作り直しになるのは費用であり欠陥ではない(盲検 A も同じ判定)",
+      "revision": "不要 — 盲検 A は S2 を「主張どおりで欠陥ではない(費用)」と判定し、盲検 B は S2 の失敗例を出さなかった。設計者が digest の実測(正常例 1・変異 3)で確かめた"
+    },
+    {
+      "id": "X-hw",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "Hy の macro の展開と Python の木の変換で、機体・加速器・端末に依らない"
+    },
+    {
+      "id": "X-dist",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "展開は 1 つの process の中で終わる。単一機体から cluster へ移っても、file ごとに同じ関数が同じ木を変換するだけで、変更の置き場は変わらない"
+    },
+    {
+      "id": "X-conc",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "型検査の展開は子の process で file ごとに独立に走るが、後処理は引数の木だけを替え、module の状態を持たない(変換器は呼びごとに作る)。実行時の展開の setdefault は module の import の中で 1 回走り、読み手・書き手の境界を足さない"
+    },
+    {
+      "id": "X-sim",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "展開は純粋(同じ source・同じ macro は同じ木)で、時刻・乱数・外部の再現の境界を持たない。ただし gensym の連番の .pyc の保存での振り直しは今回は測っていない(新しい連番の依存は足していない。design.md の測っていない範囲に記録)"
+    }
+  ],
+  "checks": [
+    {
+      "id": "c-s1-neg-blind-a",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "修正前の版で、盲検 A の失敗例(class の本体の投影で別名の import が外の class に残り、入れ子の型の本体が読めない)が成立する事を、実際に再現して確かめる",
+      "observation": "module が束ぐ名は空。OuterWire・OuterRecord・OuterEffect の class の本体の import が _doeff_ClassVar・_doeff_cast・_doeff_dataclass・_doeff_effect_base を束ね、入れ子の Span/__annotate__・Span/__post_init__・Inner がそれらを global として読む(symtable)。関数の本体では free として読めるので落ちない",
+      "evidence": {
+        "path": "evidence/N-A-before-fix.log",
+        "sha256": "75d3652a5c819e3df00b52094478d656dc904806523516b5c4bc1dc677863f8d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-neg-blind-b",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分(defrecord の :tags を ClassVar で見せる)を修正前の版に当てると、検が通るのに投影が R1 を破る事を確かめる(検の弱さの再現)",
+      "observation": "投影の残りは ['_doeff_ClassVar'] ['_doeff_ClassVar'](関数・class の本体に import が残る)のまま、列挙の検 117 件が通って exit=0。検が差分を捕まえない",
+      "evidence": {
+        "path": "evidence/N-B-before-fix.log",
+        "sha256": "e0716ef3489ab37f43eb5a5f1312f2512ee9a7ec8440baee3113a600d019c302"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-neg-mutations",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "設計が守る境界を 1 つずつ壊した変異 5 つが、それぞれ意図した検で赤になる(M1 nested-reads の分岐・M2 全 macro の nested-reads・M3 後処理の呼び出し・M4 別名の頭の判定・M5 約束の頭を守らない別名)",
+      "observation": "M1: 4 failed(class の本体の型の検)・M2: 4 failed(defhandler が module の globals を変えない検)・M3: 17 failed, 12 passed(投影の 2 つの検)・M4: 9 failed(別名の頭の判定)・M5: 2 failed(defwire の約束外の別名。名に依らない検が捕まえる)。いずれも exit=1",
+      "evidence": {
+        "path": "evidence/N-S1-mutations.log",
+        "sha256": "e8556a32010853c4f2b49e46887b1e0e16104bcc7ed04c8300b9095bfb98c85d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-pos-enumeration",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "修正後の版で、名に依らない形に強めた列挙の検(関数・class の本体の局所の名・class の本体の型・投影の 2 つの検・defhandler の検)が全部通る",
+      "observation": "pytest tests/test_nested_definition_scope.py と tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone で 137 passed, 1 warning(exit=0)",
+      "evidence": {
+        "path": "evidence/P-S1-after-fix.log",
+        "sha256": "04df0a87b2776ab0d80d168a394ef43faf09aedfbf10d98eab099e504a270392"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-pos-blind-after-fix",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "盲検 A・B の失敗例を修正後の版で再実行すると、どちらも成立しない",
+      "observation": "A: module が _doeff_ClassVar・_doeff_cast・_doeff_dataclass・_doeff_effect_base を束ね、OuterWire・OuterRecord・OuterEffect・in_function の import で束ぐ名は [](入れ子の読む名は global で解ける)。B: 差分の下で投影の残りは [] []、列挙の検は 137 passed",
+      "evidence": {
+        "path": "evidence/N-AB-after-fix.log",
+        "sha256": "8fe6d09645ec7152f966317b6921d19497b876d77e003978eb288fbe31518c0e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-pos-all-macros",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "全定義の macro の検体(14 種)を関数の本体と class の本体に置いた投影で、import が束ねて残す名が無い",
+      "observation": "14 種 × (関数・class) の 28 行すべてが [] 。defhandler・defsystem・defworkflow を含む",
+      "evidence": {
+        "path": "evidence/P-S1-all-macros-no-import-left.log",
+        "sha256": "27856f76b553fa36732885f8a5eacee90caa3f2cda43ac6e7320b64a6feb1476"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-pos-regression",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "投影を作る側の既存の検(static_check 系・conductor・defwire・defrecord の check・static_cache)が修正後の版で通る",
+      "observation": "packages/doeff-hy/tests の 15 file で 124 passed, 3 warnings(3 分 42 秒)",
+      "evidence": {
+        "path": "evidence/P-S1-regression.log",
+        "sha256": "a972ae3de149d0ff9f968b0890dba017bed898c813ea5e7c38c91340b5f7de53"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s1-pos-quality",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "変更範囲の品質検査(速い段)が通り、既存違反を増やさない",
+      "observation": "code-quality: passed (scope=changed・型検査は未実行(fast の段))。観測した既存違反 0。型は含まない。static_check.py・static_view.py が継続検査に未登録という注記が出る(今回の変更で変えていない)",
+      "evidence": {
+        "path": "evidence/P-quality-fast.log",
+        "sha256": "de77a1863c2cde61fdf8231156073a81e089ae7dce11c8acb629d573edf7889d"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s2-pos-digest",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "後処理を変えずに 2 度測った POST_PROCESSING の digest は同じ(保存した展開は不必要に無効にならない)",
+      "observation": "digest d239e9d45ac24a77a9cf84ddf698f28f2df05020bd78e86210470bc0c20810bb を 2 度測り、同じ: True",
+      "evidence": {
+        "path": "evidence/S2-digest.log",
+        "sha256": "bd350b857c54d1f06466a594865160f3802fb6e295a777b93df0e84674248e45"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s2-pos-static-cache",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "型検査の展開の保存の検(test_static_cache.py)が修正後の版で通る",
+      "observation": "既存の検 124 passed に test_static_cache.py を含む(実行した命令は log の頭に記録)",
+      "evidence": {
+        "path": "evidence/P-S1-regression.log",
+        "sha256": "a972ae3de149d0ff9f968b0890dba017bed898c813ea5e7c38c91340b5f7de53"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-s2-neg-digest",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "後処理の中身を変える 3 種の変異(変換器の method・判定が呼ぶ関数・判定が読む定数)で digest が変わり、保存した展開が無効になる",
+      "observation": "visit_Import の本体: b9b616bf…・_synthesized_alias の本体: fe8de10e…・SYNTHESIZED_ALIAS_PREFIXES: a59de2c1…。3 つとも元と違う: True",
+      "evidence": {
+        "path": "evidence/S2-digest.log",
+        "sha256": "bd350b857c54d1f06466a594865160f3802fb6e295a777b93df0e84674248e45"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
