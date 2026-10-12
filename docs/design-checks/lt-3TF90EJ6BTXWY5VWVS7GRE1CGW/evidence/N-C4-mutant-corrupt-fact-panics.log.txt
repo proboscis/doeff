@@ -1,0 +1,25 @@
+# 記録: N-C4-mutant-corrupt-fact-panics
+# 時刻: 2026-10-12T13:35:09Z
+# 作業 dir: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp
+# 対象の版: git の木ではない(一時の写し)
+# 命令: uv run --script stress.py c4 --binary bin/mut-panic
+# ---- 出力 ----
+# 対象の binary: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/bin/mut-panic (sha256 340a31c47dceddb5)
+# 引数: check=c4 rounds=9 roots=6 modules=60 seed=20261012
+基準(cache 無し): {'exit': 1, 'answer': '6c99ebe23d6e4607', 'size': 84571}
+基準(cache 無し・mod0 を編集した木): {'exit': 1, 'answer': '50381e4cfb645937', 'size': 85930}
+  食い違い 状態=事実の半分が壊れ thread=1: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  食い違い 状態=事実の半分が壊れ thread=1 の 2 本目: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  食い違い 状態=事実の半分が壊れ thread=2: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  食い違い 状態=事実の半分が壊れ thread=2 の 2 本目: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  食い違い 状態=事実の半分が壊れ thread=8: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  食い違い 状態=事実の半分が壊れ thread=8 の 2 本目: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+c4: 状態 8 × thread 3 の答えの種類 = 3(['50381e4cfb645937', '6c99ebe23d6e4607', 'e3b0c44298fc1c14']) — 木 A の答え 1 つと、編集した木の答え 1 つ
+c4: 確かめた実行 48 本・食い違い 6 本
+  - 状態=事実の半分が壊れ thread=1: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  - 状態=事実の半分が壊れ thread=1 の 2 本目: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  - 状態=事実の半分が壊れ thread=2: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  - 状態=事実の半分が壊れ thread=2 の 2 本目: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  - 状態=事実の半分が壊れ thread=8: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+  - 状態=事実の半分が壊れ thread=8 の 2 本目: 終了状態 101 (基準 1) / 答え e3b0c44298fc1c14 (基準 6c99ebe23d6e4607) / stderr に panic
+# ---- 終了状態: 1 ----

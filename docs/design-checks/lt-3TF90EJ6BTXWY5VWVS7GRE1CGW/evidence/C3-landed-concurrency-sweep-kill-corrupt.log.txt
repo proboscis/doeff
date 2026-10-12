@@ -1,0 +1,22 @@
+# 記録: C3-landed-concurrency-sweep-kill-corrupt
+# 時刻: 2026-10-12T13:32:48Z
+# 作業 dir: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp
+# 対象の版: git の木ではない(一時の写し)
+# 命令: sh -c for seed in 1 2 3; do uv run --script stress.py c3 --binary bin/landed --rounds 30 --roots 8 --seed $seed || exit 1; done
+# ---- 出力 ----
+# 対象の binary: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/bin/landed (sha256 2a77cfb738971647)
+# 引数: check=c3 rounds=30 roots=8 modules=60 seed=1
+基準(cache 無し): 木 A {'exit': 1, 'answer': '6c99ebe23d6e4607', 'size': 85451} / 木 B(mod0 を 1 つ編集){'exit': 1, 'answer': '50381e4cfb645937', 'size': 86451}
+c3: 完走 173・殺した 67・片づけを起こした round 10・壊した事実 484・古くして片づけに差し出した事実のうち実行の間に消えた数 24・書きかけの一時 file の残り 11
+c3: 確かめた実行 203 本・食い違い 0 本
+# 対象の binary: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/bin/landed (sha256 2a77cfb738971647)
+# 引数: check=c3 rounds=30 roots=8 modules=60 seed=2
+基準(cache 無し): 木 A {'exit': 1, 'answer': '6c99ebe23d6e4607', 'size': 85451} / 木 B(mod0 を 1 つ編集){'exit': 1, 'answer': '50381e4cfb645937', 'size': 86451}
+c3: 完走 170・殺した 70・片づけを起こした round 10・壊した事実 483・古くして片づけに差し出した事実のうち実行の間に消えた数 30・書きかけの一時 file の残り 0
+c3: 確かめた実行 200 本・食い違い 0 本
+# 対象の binary: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/bin/landed (sha256 2a77cfb738971647)
+# 引数: check=c3 rounds=30 roots=8 modules=60 seed=3
+基準(cache 無し): 木 A {'exit': 1, 'answer': '6c99ebe23d6e4607', 'size': 85451} / 木 B(mod0 を 1 つ編集){'exit': 1, 'answer': '50381e4cfb645937', 'size': 86451}
+c3: 完走 167・殺した 73・片づけを起こした round 10・壊した事実 485・古くして片づけに差し出した事実のうち実行の間に消えた数 20・書きかけの一時 file の残り 0
+c3: 確かめた実行 197 本・食い違い 0 本
+# ---- 終了状態: 0 ----
