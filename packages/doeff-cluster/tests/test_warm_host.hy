@@ -1,7 +1,7 @@
 ;;; 待ちの子の宿(#3646 の A4b)— worker/protocol/warm_host の言い換えと、worker/protocol/process_host が warm-key の在る task を待ちの子から
 ;;; 分ける道を、I/O なしの台本の答え手(子 process・待ちの子・file を memory で)の上で確かめる。本物の待ちの子の入口と効果の答え手は
 ;;; A2・A3 の検(tests/test_warm_child.py・doeff-core-effects の test_warm_process_contract)が持つ。
-(require doeff-hy.macros [deftest defk val var <-])
+(require doeff-hy.macros [deftest defk defhandler val var <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import pathlib [Path])
@@ -13,6 +13,7 @@
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_core_effects.scripted_warm_process [WarmScript WarmSocket WarmRun scripted-warm-process-handler])
+(import doeff_core_effects.warm_effects [ForkFromWarm])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -30,6 +31,7 @@
 (val SETTINGS (WarmSettings :warm-dir "/state/warm" :log-dir "/state/logs" :generation "0b6f5e2a9c1d" :uv "uv"))
 (val LAUNCH (WarmLaunch :root "/roots/env-a" :project "/roots/env-a/app" :preload #("app.jobs" "app.models")))
 (val ARGV-RECORD "/record/argv.json")
+(val FORK-RECORD "/record/fork.json")
 ;; 検の memory の世界(root の dir だけが在る — 待ちの子の cwd と task の作業 dir の親)。
 (val ROOTS (MemoryFiles :dirs #("/roots/env-a" "/record")))
 (val SCRIPT-ENV #((EnvEntry :name "PATH" :value "/usr/bin") (EnvEntry :name "HOME" :value "/home/w")
@@ -150,6 +152,39 @@
   (val second (get seen 1))
   (assert (= (tuple (gfor v first #(v.name v.exit-code))) #(#("task/t1" None))) first)
   (assert (= (tuple (gfor v second #(v.name v.exit-code))) #(#("task/t1" 0))) second))
+
+
+(defhandler fork-recorded
+  ;; 検の差し込み: process-host が待ちの子へ送る頼みの env(名と値)を memory の file に書き残してから、台本の答え手へ渡す。
+  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds]
+    (<- (WriteText FORK-RECORD (json.dumps (dict (gfor e env #(e.name e.value)))) :replace True))
+    (<- answer (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env :log-path log-path :exit-path exit-path
+                             :grace-seconds grace-seconds))
+    (resume answer)))
+
+
+(defk fork-env-of [spec]
+  {:pre [(: spec JobSpec)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "warm-key の在る task を起こし、待ちの子へ送った頼みの env を返すため。"
+  (<- (StartJob spec 1 "/roots/env-a" :warm-key "env-a"))
+  (<- text str (ReadText FORK-RECORD))
+  (json.loads text))
+
+
+(deftest test-a-warm-key-task-asks-with-the-root-venv-that-uv-run-adds-on-the-cold-path [tmp-path]
+  ;; card ki-b884608b96e4: 冷えた道(shim の下の uv run)は uv が root の venv を PATH の頭と VIRTUAL_ENV に足す。待ちの子から分ける道は
+  ;; uv を通らないので、頼みの env が同じ 2 つを持つ(前の形は許可表の PATH のまま・VIRTUAL_ENV 無しで、名で起こす hy・python が worker の
+  ;; venv を引いた)。本物の uv と待ちの子で 2 つの道を突き合わせる検は tests/test_task_venv_on_both_paths.hy。
+  (<- spec JobSpec (task-spec-on "env-a"))
+  (<- settings (host-settings tmp-path))
+  (<- place WarmPlace (warm-place settings.warm-dir "env-a"))
+  (val warm (WarmScript :sockets #((WarmSocket :path place.socket)) :runs #((WarmRun :entry spec.entry :polls 1 :exit-code 0))))
+  (val script (ProcessScript :commands #() :env SCRIPT-ENV))
+  (val env (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
+                                (scripted-warm-process-handler warm) fork-recorded (process-host settings)]
+                  (fork-env-of spec))))
+  (assert (= #((get env "PATH") (get env "VIRTUAL_ENV")) #("/roots/env-a/app/.venv/bin:/usr/bin" "/roots/env-a/app/.venv")) env)
+  (assert (not-in "SECRET_TOKEN" env) env))
 
 
 (defk start-only [spec]

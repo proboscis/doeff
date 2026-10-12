@@ -13,7 +13,10 @@ dependencies = [
     "doeff-core-effects",
     # 上限は doeff の uv.lock の hy の版ちょうど — doeff の検が確かめた版より新しい Hy を、doeff-hy を使う他の repo の lock に通さない。
     # Hy を上げる便は、この上限と uv.lock を同じ commit で上げる(ADR-DOE-HY-008 R6・card ki-0ff168f4eaf5)。
-    "hy>=1.2.0,<=1.3.1",
+    # 下限は doeff-hy の検を走らせて緑だった最も古い版 1.3.0(merge-queue・code-quality の lock の版)— 1.2.0 では hy.eval に渡した
+    # 名前空間の中の require が落ち、doeff-hy の検 10 本が赤だった(card ki-96ca6c49fffd)。
+    # doeff-hy を引かずに Hy を宣言する配布物(doeff-domain)は、この行と同じ版の指定を置く(R6 の検が突き合わせる)。
+    "hy>=1.3.0,<=1.3.1",
     # defwire の解き手(doeff_hy/wire.hy)— JSON と型を宣言した値の行き来は pydantic の TypeAdapter(validate_by_alias は 2.11 から)。
     "pydantic>=2.11",
     # pytest の plugin(Python 3.14 の Hy の ast.unparse の当て物を起動の時点で当てる)は別の配布物に置く —

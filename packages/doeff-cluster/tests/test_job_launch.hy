@@ -7,7 +7,7 @@
 (import doeff_core_effects.process_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout WorkerPolicy])
-(import doeff_cluster.worker.core.launch [job-launch shim-argv JobLaunch])
+(import doeff_cluster.worker.core.launch [job-launch shim-argv uv-run-environ JobLaunch])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
 
 (val BASE {"PATH" "/usr/bin" "HOME" "/home/w" "LC_ALL" "C.UTF-8" "SECRET_TOKEN" "x" "VIRTUAL_ENV" "/venv"})
@@ -54,7 +54,32 @@
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
-  (assert (= (lfor e plan.env e.name) (sorted env)) plan.env))
+  (assert (= (lfor e plan.env e.name) (sorted env)) plan.env)
+  ;; 待ちの子から分ける道の環境(entry-env)は、env に uv run が足す root の venv の 2 つを足した物(card ki-b884608b96e4)— 冷えた道の
+  ;; env は venv を持たず、uv run が足す。
+  (val entry (dfor e plan.entry-env e.name e.value))
+  (assert (= entry (| env {"PATH" "/roots/env-k1/app/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/roots/env-k1/app/.venv"})) entry)
+  (assert (= (lfor e plan.entry-env e.name) (sorted entry)) plan.entry-env))
+
+
+(deftest test-a-tree-job-has-no-entry-env-because-it-never-forks-from-a-warm-child
+  ;; 木の job は待ちの子から分けない(warm_rules.forks-from-warm-child)ので、分ける道の環境を持たない。
+  (val spec (JobSpec "task/t2" "app.main" #("task") "rev1" :once True))
+  (<- shim ShimSpans (shim-spans (WorkerPolicy)))
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :uv "uv" :extra-env {}
+                                 :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
+                                 :work-dir "/jobs/task_t2" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
+  (assert (= plan.entry-env #()) plan.entry-env))
+
+
+(deftest test-uv-run-environ-puts-the-project-venv-at-the-head-like-uv
+  ;; uv の足し方(本物の uv との突き合わせは tests/test_task_venv_on_both_paths.hy): --project の path を字面で正規化し(末尾の / と
+  ;; . を落とす・symlink は解かない)、PATH の頭に venv の bin を足す。PATH が無ければ bin だけ。他の名と、在った VIRTUAL_ENV は venv で上書き。
+  (<- with-path dict (uv-run-environ "/roots/env-k1/app/./" {"PATH" "/boot/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/boot/.venv" "HOME" "/home/w"}))
+  (assert (= with-path {"PATH" "/roots/env-k1/app/.venv/bin:/boot/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/roots/env-k1/app/.venv" "HOME" "/home/w"})
+          with-path)
+  (<- without-path dict (uv-run-environ "/roots/env-k1/app" {"HOME" "/home/w"}))
+  (assert (= without-path {"PATH" "/roots/env-k1/app/.venv/bin" "VIRTUAL_ENV" "/roots/env-k1/app/.venv" "HOME" "/home/w"}) without-path))
 
 
 (deftest test-the-job-log-is-stamped-and-the-probe-output-is-carried-as-is

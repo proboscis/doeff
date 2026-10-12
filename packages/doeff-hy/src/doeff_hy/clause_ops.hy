@@ -19,8 +19,12 @@
 ;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換えと戻る操作の印)・_tail-resume-to-transfer
 ;;;                      (末尾の替え)・_vm-imports(node の import)
 ;;;   clause_endings.hy  ops-in / clause-ops(節が使う操作)・check-clause-by-name / check-clause-endings(ending ごとの照合)
+;;;   doeff-linter       business_fakes.rs の節の判じ(DOEFF143 ほか)— Rust は Hy を評価できないので、表から名・ending・arity だけを
+;;;                      linter-table-json で書き出した packages/doeff-linter/data/clause_ops.json を include_str! で読む(card ki-d3ef2a50cc04)。
+;;;                      file は scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が表との食い違いを赤にする。
 ;;; doeff_hy のどの module も、表の外に操作の名を文字列か quote した記号で書かない(tests/test_handle_clause_ops.py が全 module を
 ;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない・設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 B)。
+;;; doeff-linter の側も同じ — business_fakes.rs は操作の名を literal で書かない(その file の検が拾う)。
 ;;;
 ;;; handle.hy が module の頭で import する(macros.hy が handle.hy を require する途中で読まれる)ので、doeff-hy.macros も
 ;;; doeff-hy.record も require しない — defrecord・deff・val を使わず、declarations.hy の DefinitionTags と同じ素の dataclass と
@@ -28,6 +32,7 @@
 
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
+(import json)
 (import enum [StrEnum])
 (import hy.models [Expression Symbol])
 (import doeff-hy.static-view [static-view-enabled])
@@ -136,3 +141,23 @@
   (list (dict.fromkeys (gfor op CLAUSE-OPS
                              name (if static? op.static-nodes op.nodes)
                          name))))
+
+
+(setv _LINTER-ABOUT
+  (+ "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。"
+     "生成物 — 手で直さない(直す所は表で、書き直しは uv run python scripts/export_clause_ops.py --write)。"
+     "doeff-linter の business_fakes(DOEFF143 ほか)が節の終わりを判じるのに読み、終わり方ごとの読みは src/project/clause_ops.rs と business_fakes.rs が持つ。"))
+
+
+(defn linter-table-json []
+  "doeff-linter が節の判じに読む file(packages/doeff-linter/data/clause_ops.json)の中身 — 表の行から名・終わり方・引数の数だけを
+   書き出す(書き換え・node・returns・tail は実行時と型検査の展開の物で、linter は読まない)。file はこの文字列と 1 字も違わない
+   (scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が照らす)。"
+  (setv rows (gfor op CLAUSE-OPS
+                   (+ "  " (json.dumps (dict :name op.name :ending op.ending.value :arity op.arity) :ensure-ascii False))))
+  (+ "{\n"
+     " \"_about\": " (json.dumps _LINTER-ABOUT :ensure-ascii False) ",\n"
+     " \"ops\": [\n"
+     (.join ",\n" rows) "\n"
+     " ]\n"
+     "}\n"))

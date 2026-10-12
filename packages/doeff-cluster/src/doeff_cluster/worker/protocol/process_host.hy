@@ -190,7 +190,8 @@
   {:pre [(: settings HostSettings) (: action StartJob)] :post [(: % Started)] :tags {:context "worker" :role "protocol" :spells "env"}}
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから起こす。道は判断が決めた欄のとおり(黙って別の道へ倒れない): warm-key の在る task は、その root の待ちの子へ頼んで分ける
-   (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と env と入口の後ろの引数は shim の道と同じ job-launch の値)、
+   (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と入口の後ろの引数は shim の道と同じ job-launch の値・env は shim の
+   道で uv run が足す root の venv まで含めた job-launch の entry-env — card ki-b884608b96e4)、
    それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ OSError(前の Popen と同じ)。"
   (val spec action.spec)
   (<- (file-done (MakeDirectory settings.log-dir)))
@@ -226,7 +227,7 @@
   (if (is-not action.warm-key None)
       (do (<- place WarmPlace (warm-place settings.warm-dir action.warm-key))
           (val exit-path (+ stem ".exit"))
-          (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.env
+          (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)))
           (when (isinstance forked WarmRefused)
             (raise (OSError (+ "待ちの子が分けるのを断った: " forked.detail))))
