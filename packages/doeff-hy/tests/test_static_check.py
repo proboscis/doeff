@@ -339,6 +339,56 @@ def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mist
         assert errors == [], errors
 
 
+def _typed_mcp_tool(mistake: bool) -> str:
+    """schema の型 6 つと必須でない引数を持つ tool 1 つの検体。本体は引数を、同じ型を受ける defk へそのまま渡す。
+    mistake なら必須でない引数(`str | None`)を `str` の引数へ渡す(型の食い違い)。"""
+    first = "maybe" if mistake else "s"
+    return (
+        "(require doeff-hy.macros [defk defmcp-tool <-])\n\n"
+        "(defk take [s i n b xs o maybe]\n"
+        "  {:pre [(: s str) (: i int) (: n float) (: b bool) (: xs (get list object))\n"
+        "         (: o (get dict #(str object))) (: maybe (| str None))]\n"
+        "   :post [(: % str)]}\n"
+        "  s)\n\n"
+        "(defmcp-tool typed-tool\n"
+        '  "typed"\n'
+        '  [{:name "s" :type "string" :description "s"}\n'
+        '   {:name "i" :type "integer" :description "i"}\n'
+        '   {:name "n" :type "number" :description "n"}\n'
+        '   {:name "b" :type "boolean" :description "b"}\n'
+        '   {:name "xs" :type "array" :description "xs"}\n'
+        '   {:name "o" :type "object" :description "o"}\n'
+        '   {:name "maybe" :type "string" :description "maybe" :required False}]\n'
+        f"  (<- r (take {first} i n b xs o maybe))\n"
+        "  r)\n"
+    )
+
+
+@needs_pyright
+@pytest.mark.parametrize("mistake", [False, True])
+def test_defmcp_tool_handler_params_carry_the_schema_types(tmp_path: Path, mistake: bool) -> None:
+    """型検査のための展開の defmcp-tool は、handler の引数に schema の :type を写した型を注記する(必須でない引数は
+    `| None` — server は送られなかった引数に None を渡す)。注記が無かった頃は、strict で引数 1 つにつき書き手の直せない赤が
+    2 件(reportMissingParameterType・reportUnknownParameterType)と、本体で引数を渡す所ごとに reportUnknownArgumentType が
+    出て、引数の型の食い違いは黙って通った(card ki-973b4e44d7bc)。"""
+    import contextlib
+    import io
+
+    from doeff_hy.static_check import main
+
+    (tmp_path / "tool.hy").write_text(_typed_mcp_tool(mistake), encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(tmp_path), "--strict", "--json", str(tmp_path / "tool.hy")])
+    errors = [
+        (d["rule"], d["message"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"
+    ]
+    if mistake:
+        assert [rule for rule, _ in errors] == ["reportArgumentType"], errors
+    else:
+        assert errors == [], errors
+
+
 def _union_bind_first(mistake: bool) -> str:
     """union の型の束ね(`(<- m (| int None) …)`)を module の中で最初に持ち、その後ろに int を答える defk の束ねを持つ検体。
     mistake なら後ろの束ねの型を str と書く(型の食い違い)。"""
