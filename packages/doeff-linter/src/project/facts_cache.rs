@@ -668,4 +668,52 @@ mod tests {
         assert!(age.as_secs() < store::OBJECT_TOUCH_SECONDS, "読んだ事実の最後に使われた時刻が古いまま: {age:?}");
         assert_eq!(calls.load(Ordering::SeqCst), 1, "読んだだけで作り直した");
     }
+
+    /// file の本体(`#[cfg(test)]` より前)から、コメントと行末の註を除いた文だけを取り出す — 名の走査が、説明の文に出る名で外れない。
+    fn code_of(source: &str) -> String {
+        let body = source.split("#[cfg(test)]").next().unwrap_or("");
+        body.lines().map(|line| line.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
+    }
+
+    /// `store::` に続けて code が使っている名(`store::a` と `use store::{a, b as c}` の両方)。
+    fn names_taken_from_store(code: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for (at, _) in code.match_indices("store::") {
+            let rest = &code[at + "store::".len()..];
+            if let Some(group) = rest.strip_prefix('{') {
+                let inside = group.split('}').next().unwrap_or("");
+                names.extend(inside.split(',').filter_map(|item| item.split_whitespace().next()).map(str::to_string));
+            } else {
+                names.push(rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect());
+            }
+        }
+        names
+    }
+
+    /// 知識の持ち主を名の走査で守る(設計検証 lt-3TF90EJ6BTXWY5VWVS7GRE1CGW の盲検 B — 引く手順が共有の事実を消す差分は、提示された検が全部通った)。
+    /// rustc は兄弟の module どうしの見え方を限れない(`pub(super)` は親にも兄弟にも見える)ので、持ち主でない file が使わない名を、ここで確かめる。
+    /// - 引く手順(このfile)が store から使うのは、事実を鍵で置く・読む口だけ。事実を並べて消す口(`list`・`remove`)を持てば、寿命の判断が 2 か所になる。
+    /// - 片づけ(sweep)が store から使うのは、事実を並べて消す口と置き場の名だけ。事実を置く・読む・鍵を作る口を持てば、事実の中身の知識が漏れる。
+    /// - store は寿命の決まり(上限・使っている根の秒・番の間隔)を持たない。
+    #[test]
+    fn each_file_uses_only_the_names_of_the_knowledge_it_owns() {
+        let resolve = names_taken_from_store(&code_of(include_str!("facts_cache.rs")));
+        let allowed_for_resolve = ["object_key", "read_object", "write_object", "Format", "LeakGuard", "ObjectKey", "OBJECTS_DIR"];
+        assert!(!resolve.is_empty(), "引く手順が store の名を 1 つも使っていない — 走査が何も見ていない");
+        for name in &resolve {
+            assert!(allowed_for_resolve.contains(&name.as_str()), "引く手順が store の {name} を使っている — 事実を並べて消す口は片づけだけが持つ");
+        }
+
+        let sweep = names_taken_from_store(&code_of(include_str!("facts_cache/sweep.rs")));
+        let allowed_for_sweep = ["self", "list", "remove", "OBJECTS_DIR"];
+        assert!(sweep.iter().any(|name| name == "list") && sweep.iter().any(|name| name == "remove"), "片づけが事実を並べて消していない — 走査が何も見ていない");
+        for name in &sweep {
+            assert!(allowed_for_sweep.contains(&name.as_str()), "片づけが store の {name} を使っている — 事実を置く・読む・鍵を作る口は store と引く手順のもの");
+        }
+
+        let store = code_of(include_str!("facts_cache/store.rs"));
+        for name in ["IN_USE_SECONDS", "DEFAULT_CAP_BYTES", "CAP_ENV", "cache_cap_bytes", "SWEEP_INTERVAL_SECONDS"] {
+            assert!(!store.contains(name), "store が寿命の決まり {name} を持っている — 上限と古い順は片づけが決める");
+        }
+    }
 }
