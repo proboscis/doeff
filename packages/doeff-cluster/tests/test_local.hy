@@ -25,7 +25,7 @@
 (import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
 (import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen
-                                                     JobProcessWaitExpired])
+                                                     JobProcessWaitExpired RestartService ServiceRestarted RestartRefused])
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [System CallShape])
 (import tests.fixtures.envs [sim-foundation])
@@ -291,6 +291,89 @@
   (<- lifetimes tuple (writer-lifetimes changed.after))
   (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))
   (assert gaps lifetimes))
+
+
+(defrecord Restarted
+  "起こし直しの筋書きが世界を動かす前と後に読んだ job 1 つの姿: answer = RestartService の答え(ServiceRestarted か RestartRefused)。"
+  (#^ (| ServiceRestarted RestartRefused) answer)
+  (#^ Seen before)
+  (#^ Seen after))
+
+
+(defk restart-and-watch [name prefix wait]
+  {:pre [(: name str) (: prefix str) (: wait float)] :post [(: % Restarted)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 8 秒待って読み、RestartService で版を替えずに起こし直し、wait 秒待ってもう一度読む。"
+  (<- (Delay 8.0))
+  (<- before Seen (seen-of name prefix))
+  (<- answer (| ServiceRestarted RestartRefused) (RestartService name))
+  (<- (Delay wait))
+  (<- after Seen (seen-of name prefix))
+  (Restarted :answer answer :before before :after after))
+
+
+(defk stop-then-start-and-watch [system name prefix wait]
+  {:pre [(: system System) (: name str) (: prefix str) (: wait float)] :post [(: % Changed)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き(今の手 — 台数を 0 にして止め、止まった後に 1 に戻す replicas 1→0→1): 8 秒待って読み、同じ系の台数を 0 にして宣言し直し、
+   旧が止まるまで 6 秒待って、元の系(台数 1)で宣言し直し、wait 秒待ってもう一度読む。"
+  (<- (Delay 8.0))
+  (<- before Seen (seen-of name prefix))
+  (<- withdrawn System (with-replicas system 0))
+  (<- _withdrawn tuple (Redeclare withdrawn))
+  (<- (Delay 6.0))
+  (<- names tuple (Redeclare system))
+  (<- (Delay wait))
+  (<- after Seen (seen-of name prefix))
+  (Changed :answer names :before before :after after))
+
+
+(deftest test-restarting-a-handoff-service-starts-the-new-process-before-the-old-one-stops
+  ;; RestartService(版も宣言も替えない起こし直し): handoff の Service は、Service の spec の環境変数 RESTART_MARK を 1 つ進めた書きで(指紋が替わり)新を旧と
+  ;; 並べて起こし、coordinator が新の世代を Ready と数えた後に旧を止める — 版を替える入れ替えと同じ道。入れ替えの形は版を替える時と同じく
+  ;; 本番の時間の設定(:timing)で回す。
+  (<- restarted Restarted (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (handoff-beacons sim-foundation)
+                                       (restart-and-watch "beacon" "beacon/" 15.0)))
+  (assert (= restarted.answer (ServiceRestarted :name "beacon" :mark "1")) restarted.answer)
+  (val after restarted.after)
+  (assert (= (len after.processes) 2) after.processes)
+  (val old (get after.processes 0))
+  (val new (get after.processes 1))
+  (assert (= old.exit-code -15) old)
+  (assert (is new.exit-code None) new)
+  (assert (!= old.spec-hash new.spec-hash) after.processes)
+  ;; 並んで動いた(新は旧が止まる前に起きた)・旧が止まったのは新の世代の ready の報告が届いた後。
+  (assert (< new.started-ms old.ended-ms) after.processes)
+  (val new-ready (lfor r after.reports :if (and (= r.instance new.instance) (= r.kind "readiness") r.ready) r.at))
+  (assert new-ready after.reports)
+  (assert (<= (min new-ready) old.ended-ms) #(new-ready old))
+  (assert (= after.readiness.state "Ready") after.readiness)
+  ;; 条 W1: 起こし直しの間も Ready の書き手が途切れない。
+  (<- lifetimes tuple (writer-lifetimes after))
+  (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))
+  (assert (= gaps #()) #(gaps lifetimes)))
+
+
+(deftest test-stopping-then-starting-a-handoff-service-leaves-a-gap-without-a-ready-writer
+  ;; 失敗ケース(同じ筋書き・今の手): 台数を 0 にして止め、止まった後に 1 に戻すと、旧が止まってから新が Ready になるまで Ready の書き手が居ない区間ができ、
+  ;; 条 W1 の判断が空白を返す — RestartService が重ねる道を持つことの裏返し。
+  (<- changed Changed (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (handoff-beacons sim-foundation)
+                                   (stop-then-start-and-watch (handoff-beacons sim-foundation) "beacon" "beacon/" 15.0)))
+  (assert (= (len changed.after.processes) 2) changed.after.processes)
+  (val old (get changed.after.processes 0))
+  (val new (get changed.after.processes 1))
+  (assert (>= new.started-ms old.ended-ms) changed.after.processes)
+  (<- lifetimes tuple (writer-lifetimes changed.after))
+  (<- gaps tuple (handoff-keeps-a-ready-writer lifetimes))
+  (assert gaps lifetimes))
+
+
+(deftest test-restarting-a-recreate-service-is-refused-and-leaves-it-running
+  ;; recreate の Service は重ねる道が無い: RestartService は何も書かず、理由つきの RestartRefused を返す(動いている process は替わらない —
+  ;; 印を書くと止めてから起こすうえに次の宣言し直しでもう 1 度起こし直されるため)。
+  (<- restarted Restarted (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (restart-and-watch "beacon" "beacon/" 12.0)))
+  (assert (and (isinstance restarted.answer RestartRefused) (in "recreate" restarted.answer.reason)) restarted.answer)
+  (assert (= (len restarted.after.processes) 1) restarted.after.processes)
+  (assert (= (. (get restarted.after.processes 0) instance) (. (get restarted.before.processes 0) instance)) restarted.after.processes)
+  (assert (is (. (get restarted.after.processes 0) exit-code) None) restarted.after.processes))
 
 
 (defk handed-off-twice [first second]

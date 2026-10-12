@@ -44,3 +44,8 @@
 (defsystem pings [#^ Callable foundation]
   "手元の 1 台の検の系: 準備を報告し続ける service 1 つ"
   (ping (ping-job foundation) :replicas 1 :needs #{"local"} :readiness {"windowSeconds" 5}))
+
+
+(defsystem handoff-pings [#^ Callable foundation]
+  "配備の cluster の handler の検の系: 準備を報告し続ける service 1 つ(入れ替えの形は handoff — 版を替えずに重ねて起こし直せる)"
+  (ping (ping-job foundation) :replicas 1 :needs #{"local"} :readiness {"windowSeconds" 5} :update "handoff" :environ {"STEP" "1"}))
