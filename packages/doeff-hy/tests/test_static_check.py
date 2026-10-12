@@ -236,6 +236,108 @@ def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mi
         assert errors == [], errors
 
 
+def _many_mcp_tools(count: int, mistake: bool) -> str:
+    """defmcp-tool を count 個と、その後ろに defk を 2 つ持つ検体。最後の defk は defk の呼びを Spawn に渡し、束ねる。"""
+    lines = [
+        "(require doeff-hy.macros [defk defmcp-tool <-])",
+        "(import doeff [Pure Spawn Task])",
+        "",
+    ]
+    for index in range(count):
+        lines += [
+            f"(defmcp-tool tool-{index}",
+            f'  "tool {index}"',
+            '  [{:name "text" :type "string" :description "text"}]',
+            "  (<- r (Pure text))",
+            "  r)",
+            "",
+        ]
+    lines += [
+        "(defk step [x]",
+        "  {:pre [(: x int)] :post [(: % int)]}",
+        '  "one step"',
+        "  (+ x 1))",
+        "",
+        "(defk chain [x]",
+        "  {:pre [(: x int)] :post [(: % int)]}",
+        '  "after the tools"',
+        f"  (<- last {'str' if mistake else 'int'} (step x))",
+        "  (<- task Task (Spawn (step x)))",
+        "  x)",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def test_defmcp_tool_reads_do_from_the_module_head(tmp_path: Path) -> None:
+    """型検査のための展開の defmcp-tool は、handler の decorator の `_doeff_do` を import せず、doeff-hy-check が module の
+    頭に 1 度だけ置く物を読む(macros.hy の `_helper-imports` — defk と同じ表)。module・class の本体・関数の本体のどこに
+    書いても、補助の名(`_` で始まる名)を import するのは頭の補助の import(static_view.STATIC_HELPER_IMPORTS)だけ。"""
+    import ast
+
+    from doeff_hy.static_check import Projection, project
+
+    tool = (
+        "(defmcp-tool {name}\n"
+        '  "tool"\n'
+        '  [{{:name "text" :type "string" :description "text"}}]\n'
+        "  (<- r (Pure text))\n"
+        "  r)\n"
+    )
+    source = (
+        "(require doeff-hy.macros [defmcp-tool <-])\n(import doeff [Pure])\n\n"
+        + tool.format(name="at-module")
+        + "\n(defclass Box []\n"
+        + tool.format(name="in-class")
+        + ")\n\n(defn outer []\n"
+        + tool.format(name="in-function")
+        + "  in-function)\n"
+    )
+    (tmp_path / "tools.hy").write_text(source, encoding="utf-8")
+    projection = project(tmp_path, [tmp_path], tmp_path / "tools.hy")
+    assert isinstance(projection, Projection), projection
+    tree = ast.parse(projection.text)
+    head = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.ImportFrom)
+        and statement.module in {"doeff_hy.static_types", "doeff_hy.macros"}
+    ]
+    helper_imports = [
+        (node, alias.asname or alias.name)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if (alias.asname or alias.name).startswith("_")
+    ]
+    assert helper_imports, projection.text
+    assert all(node in head for node, _ in helper_imports), projection.text
+    assert [name for _, name in helper_imports].count("_doeff_do") == 1, projection.text
+
+
+@needs_pyright
+@pytest.mark.parametrize("mistake", [False, True])
+def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mistake: bool) -> None:
+    """反例: 型検査のための展開の defmcp-tool が tool ごとに `doeff.do` の `do` を `_doeff_do` へ import していた頃は、tool を
+    65 個持つ module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、後ろの defk の呼びが Program ではなく :post の
+    型に見えた — `(Spawn (defk の呼び))` が reportArgumentType(#1686 の defk の反例と同じ訳)。"""
+    import contextlib
+    import io
+
+    from doeff_hy.static_check import main
+
+    (tmp_path / "tools.hy").write_text(_many_mcp_tools(70, mistake), encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(tmp_path), "--json", str(tmp_path / "tools.hy")])
+    errors = [
+        (d["rule"], d["message"]) for d in json.loads(out.getvalue()) if d["severity"] == "error"
+    ]
+    if mistake:
+        assert [rule for rule, _ in errors] == ["reportAssignmentType"], errors
+    else:
+        assert errors == [], errors
+
+
 def _union_bind_first(mistake: bool) -> str:
     """union の型の束ね(`(<- m (| int None) …)`)を module の中で最初に持ち、その後ろに int を答える defk の束ねを持つ検体。
     mistake なら後ろの束ねの型を str と書く(型の食い違い)。"""

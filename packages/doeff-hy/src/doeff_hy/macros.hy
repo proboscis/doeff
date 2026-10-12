@@ -2413,7 +2413,12 @@ defpipeline {pipeline}: no stages defined.
    2. An McpToolDef instance <name> with the schema + handler
 
    関数の本体の中に書くと、import と handler をすぐ呼ぶ関数に入れて <name> だけを束ねる(_scoped-definition —
-   外の関数で先に読む for/do・traverse の `_doeff_do` を未束縛にしない。handler は <name> の :handler で引く)。"
+   外の関数で先に読む for/do・traverse の `_doeff_do` を未束縛にしない。handler は <name> の :handler で引く)。
+
+   handler の decorator の `_doeff_do` は、defk と同じく `_helper-imports` から取る。型検査のための展開では import を出さず、
+   doeff-hy-check が module の頭に置く `_doeff_do` を読む — tool ごとに `doeff.do` を import していた頃は、tool を 65 個持つ
+   module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、同じ module の defk の呼びを Program ではなく
+   :post の型に見ていた(agora-redesign #1686 と同じ訳)。"
   (when (not (isinstance description hy.models.String))
     (raise (SyntaxError (.format "
 defmcp-tool {name}: second argument must be a description string.
@@ -2440,7 +2445,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   (setv expanded-forms
     (lfor form body (_expand-bangs form (+ "defmcp-tool " (str name)))))
   (_scoped-definition _hy-compiler name [
-     '(import doeff.do [do :as _doeff_do])
+     (_helper-imports)
      '(import doeff.mcp [McpToolDef McpParamSchema])
      `(defn [_doeff_do] ~handler-name ~param-syms
        ~@expanded-forms)
