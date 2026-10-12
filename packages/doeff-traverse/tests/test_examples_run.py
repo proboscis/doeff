@@ -34,7 +34,6 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 import difflib
 import functools
 import itertools
-import os
 import re
 import subprocess
 import sys
@@ -155,9 +154,9 @@ class Child:
     failing_a_case: bool
 
 
-def _child_env() -> dict[str, str]:
-    """子の環境 — 親の環境のまま、時間帯だけを決めた値にする(期待の出力が機体の時間帯に依らないため)。"""
-    return {**os.environ, "TZ": CHILD_TIME_ZONE}
+def _in_child_time_zone(command: list[str]) -> list[str]:
+    """子の命令 — 親の環境のまま、時間帯だけを決めた値にして走らせる(期待の出力が機体の時間帯に依らないため)。"""
+    return ["env", f"TZ={CHILD_TIME_ZONE}", *command]
 
 
 def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.CompletedProcess[str]:
@@ -169,12 +168,11 @@ def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.Complet
         else [sys.executable, "-m", "hy", example]
     )
     return subprocess.run(
-        command,
+        _in_child_time_zone(command),
         capture_output=True,
         check=False,
         text=True,
         timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
-        env=_child_env(),
     )
 
 
@@ -504,11 +502,12 @@ def test_children_run_in_a_fixed_time_zone(monkeypatch: pytest.MonkeyPatch) -> N
     """子は親の時間帯に依らず CHILD_TIME_ZONE で走る(親を UTC から 9 時間ずらしても、時刻 0 の地方時は 00:00)。"""
     monkeypatch.setenv("TZ", "JST-9")
     result = subprocess.run(
-        [sys.executable, "-c", "import time; print(time.strftime('%H:%M', time.localtime(0)))"],
+        _in_child_time_zone(
+            [sys.executable, "-c", "import time; print(time.strftime('%H:%M', time.localtime(0)))"]
+        ),
         capture_output=True,
         check=True,
         text=True,
-        env=_child_env(),
     )
     assert result.stdout == "00:00\n"
 
