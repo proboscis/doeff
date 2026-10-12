@@ -321,3 +321,88 @@ def test_items_pair_the_keys_with_the_rows() -> None:
         assert table.items() == tuple(zip(table.keys(), table.rows()))
         assert all(table.row(key) == value for key, value in table.items())
     assert big._delta  # 大きな表は差分の層の道を通っている(items が差分を含めて組む事の確かめ)
+
+
+# ------------------------------------------------------------------ 基を分け合う表の比べ(card ki-46d8cc853aca — 盤の写しの比べが card の数に比例していた)
+
+
+class _CountedRow:
+    """検の材料: 比べられた回数を数える行(基を分け合う表の比べが、書いた鍵の行だけを読む事を確かめるため)。"""
+
+    compared = 0
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        _CountedRow.compared += 1
+        return isinstance(other, _CountedRow) and self.value == other.value
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+def _counted_table(n: int) -> Table[_CountedRow]:
+    return table_of(tuple(TableWrite(key=f"k{i}", value=_CountedRow(i)) for i in range(n)))
+
+
+def _rows_read_by(left: Table[_CountedRow], right: Table[_CountedRow]) -> tuple[bool, int]:
+    _CountedRow.compared = 0
+    answer = left == right
+    return answer, _CountedRow.compared
+
+
+def test_tables_sharing_a_base_compare_only_the_written_keys() -> None:
+    base = _counted_table(MIN_DELTA * 20)
+    moved = base.with_writes((TableWrite(key="k100", value=_CountedRow(-100)),))
+    moved_again = moved.with_writes((TableWrite(key="k200", value=_CountedRow(-200)),))
+    assert moved._base is moved_again._base  # 前提: with-writes は基を分け合う(差分が小さい間)
+    # 基を分け合う 2 つの表: 基の 1,280 行を読まず、書いた鍵(k100・k200)の行だけを比べる。
+    assert _rows_read_by(moved, moved_again) == (False, 1)
+    assert _rows_read_by(moved_again, moved)[0] is False
+    # 中身の同じ行を書き直した表(別の object)も、書いた鍵の行だけで「等しい」と判じる。
+    rewritten = base.with_writes((TableWrite(key="k100", value=_CountedRow(100)),))
+    assert _rows_read_by(base, rewritten) == (True, 1)
+    # 失敗ケースの照らし: 基を分け合う道が無ければ(基を作り直した表との比べ)、全行を読んで比べる。
+    rebuilt = _counted_table(MIN_DELTA * 20)
+    assert rebuilt._base is not base._base
+    assert _rows_read_by(base, rebuilt) == (True, MIN_DELTA * 20)
+
+
+def test_tables_sharing_a_base_compare_removed_and_added_keys() -> None:
+    base = _table(MIN_DELTA * 4)
+    removed = base.with_writes((TableWrite(key="k3", value=None),))
+    added = base.with_writes((TableWrite(key="new", value=1),))
+    assert removed._base is added._base is base._base
+    # 片方だけが消した基の行・片方だけが足した行は、鍵の集合が違うので等しくない(行の数が同じでも)。
+    assert removed != added
+    assert removed != base
+    assert added != base
+    # 消して同じ値で足し直した表は、基と等しい。
+    restored = removed.with_writes((TableWrite(key="k3", value=3),))
+    assert restored == base
+    assert restored != removed
+    # 基を分け合わない表(基を作り直した物)と、基を分け合う表で答えが変わらない。
+    assert base == table_of(tuple(TableWrite(key=f"k{i}", value=i) for i in range(MIN_DELTA * 4)))
+    assert removed != table_of(tuple(TableWrite(key=f"k{i}", value=i) for i in range(MIN_DELTA * 4)))
+
+
+def test_comparing_tables_agrees_with_comparing_their_rows_for_any_writes() -> None:
+    # 基を分け合う 2 つの表の比べ(差分と消した鍵だけを読む)が、行の全部を dict にして比べた答えと一致する。
+    # 同じ鍵への置く・消す・基と同じ値の置き直しを混ぜ、差分が基の 1/COMPACT-RATIO を越えて基が作り直される書きの数も含める。
+    for seed in range(40):
+        for base_rows, count in ((MIN_DELTA, 6), (MIN_DELTA * 4, 20), (MIN_DELTA * 4, 400)):
+            base = {f"k{i}": i for i in range(base_rows)}
+            table = table_of(tuple(TableWrite(key=k, value=v) for k, v in base.items()))
+            first = _random_writes(seed, base_rows + 10, count)
+            # 基と同じ値を置き直す書きを混ぜる(中身が変わらない書き)。
+            second = _random_writes(seed + 1000, base_rows + 10, count) + [(f"k{seed % base_rows}", seed % base_rows)]
+            left = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in first))
+            right = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in second))
+            left_rows = _reference(base, first)
+            right_rows = _reference(base, second)
+            assert (left == right) is (left_rows == right_rows), (seed, base_rows, count)
+            assert (left != right) is (left_rows != right_rows), (seed, base_rows, count)
+            # 書きを足した表と、足す前の表の比べ(基を分け合ったままの物と、基が作り直された物の両方が混じる)。
+            more = _random_writes(seed + 2000, base_rows + 10, 3)
+            longer = left.with_writes(tuple(TableWrite(key=k, value=v) for k, v in more))
+            assert (left == longer) is (left_rows == _reference(left_rows, more)), (seed, base_rows, count)
