@@ -49,6 +49,14 @@ stderr が同じ file を指す時だけ(機体の形 — 送り先の無い Pod
   tests/test_job_log_ship.py の検が見張る(盲検 B)。
 - 書き手の終わりは process の終わり(atexit)で、捕まえない例外の traceback(excepthook が atexit より前に sys.stderr へ書く)も
   file へ書いて送ってから止める。
+
+coordinator の process 自身の行(card ki-0b0ab40048b9 — coordinator の Pod の log は版上げの Pod の入れ替えで消え、全部の worker が
+coordinator に届かなかった窓の coordinator の側を後から読めなかった): coordinator の入口(coordinator/entry/main)も worker と同じ
+process_lines で、自分の Python の出力を送る。job の文脈は coordinator が置く(coordinator_log_plan — job の名 coordinator/<Pod の
+namespace>(Pod が入れ替わっても同じ名で読む)・worker の名の欄 = Pod の名・試み 0・世代 = process の起動の刻)。Pod の名と
+namespace は宣言が downward API で env に置く(POD_NAME・POD_NAMESPACE)。
+- k8s の container の stdout と stderr は 2 本の別の pipe だが、2 つは同じ container の log に入る。coordinator は 2 つを 1 本に
+  まとめて(merged — 同じ file でなくても差し替え、刻つきの行を stdout の pipe へ書く)送る。fd 1・2 は worker と同じく替えない。
 """
 
 import atexit
@@ -93,6 +101,12 @@ WORKER_PROCESS_JOB_PREFIX = "worker/"
 WORKER_PROCESS_ATTEMPT = "0"
 # worker_log_plan が worker の環境から読む名(worker の入口はこの組だけを読んで渡す — 名を 2 か所に並べない)。
 WORKER_LOG_ENV_NAMES = (JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR)
+# coordinator の process 自身の行の job の文脈(頭の註の「coordinator の process 自身の行」): job の名の頭(worker/ と同じく `/` で区切る)と、
+# 宣言が downward API で置く Pod の名乗りの 2 つの名。coordinator_log_plan が読む名の組(coordinator の入口はこの組だけを読んで渡す)。
+COORDINATOR_PROCESS_JOB_PREFIX = "coordinator/"
+POD_NAME_VAR = "POD_NAME"
+POD_NAMESPACE_VAR = "POD_NAMESPACE"
+COORDINATOR_LOG_ENV_NAMES = (JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR, POD_NAME_VAR, POD_NAMESPACE_VAR)
 
 
 def stamp_of(seconds: float) -> bytes:
@@ -248,10 +262,28 @@ def worker_log_plan(environ: Mapping[str, str], worker: str, instance: str) -> J
     WORKER_LOG_ENV_NAMES — 送り先の基の URL と配備が足す属性だけ・job の文脈の名は読まない)・worker = 名乗る worker の名・instance =
     この process の世代(boot)。job の文脈は worker が置く: job の名 worker/<worker の名>・試み 0・世代 instance。決め方は job の子と
     同じ job_log_plan。"""
+    return process_log_plan(environ, worker, WORKER_PROCESS_JOB_PREFIX + worker, instance)
+
+
+def coordinator_log_plan(environ: Mapping[str, str], instance: str) -> JobLogPlan:
+    """coordinator の process 自身の行の送り先を決めるため(頭の註の「coordinator の process 自身の行」)。environ = coordinator の環境
+    (読むのは COORDINATOR_LOG_ENV_NAMES)・instance = この process の世代(起動の刻)。job の名 coordinator/<POD_NAMESPACE>・名乗り
+    POD_NAME・試み 0。送り先が在るのに Pod の名乗りが欠けていれば、欠けた名を挙げて送らない。"""
+    missing = tuple(name for name in (POD_NAME_VAR, POD_NAMESPACE_VAR) if not environ.get(name, ""))
+    if missing and environ.get(JOB_LOG_OTLP_VAR, "").strip():
+        return JobLogRefused(f"coordinator の名乗りの環境変数が無い: {','.join(missing)}")
+    namespace = environ.get(POD_NAMESPACE_VAR, "")
+    return process_log_plan(environ, environ.get(POD_NAME_VAR, ""), COORDINATOR_PROCESS_JOB_PREFIX + namespace, instance)
+
+
+def process_log_plan(environ: Mapping[str, str], worker: str, job: str, instance: str) -> JobLogPlan:
+    """worker・coordinator の process 自身の行の送り先を、process が置く job の文脈(名乗り worker・job の名 job・試み 0・世代
+    instance)で決めるため。environ から読むのは送り先の基の URL と配備が足す属性だけ(job の文脈の名は読まない)。決め方は job の子と
+    同じ job_log_plan。"""
     shipping = {name: environ[name] for name in WORKER_LOG_ENV_NAMES if name in environ}
     context = {
         WORKER_NAME_VAR: worker,
-        WORKER_JOB_VAR: WORKER_PROCESS_JOB_PREFIX + worker,
+        WORKER_JOB_VAR: job,
         WORKER_ATTEMPT_VAR: WORKER_PROCESS_ATTEMPT,
         WORKER_INSTANCE_VAR: instance,
     }
@@ -716,12 +748,13 @@ class StampedStreams:
 ProcessLines = RawLines | StampedStreams
 
 
-def stamped_streams(plan: JobLogPlan) -> StampedStreams:
+def stamped_streams(plan: JobLogPlan, merged: bool = False) -> StampedStreams:
     """この process の sys.stdout と sys.stderr(fd 1・2 が同じ log の file)を、1 本の pipe の書き口へ書く 1 つの流れへ差し替え、その
     pipe を読んで刻を付ける書き手を作るため(thread は begin で起こす)。fd 1・2 は替えない(頭の註 — 子孫は元の file を継ぐ)。pipe の
     fd は継がれない(os.pipe の既定)。流れは行ごとに書き出し、書けない字は元の stderr と同じく backslashreplace にする。stdout と
-    stderr が別の file なら断る。"""
-    if not same_file(1, 2):
+    stderr が別の file なら断る — merged が真(k8s の container — 2 本の pipe が同じ container の log に入る)なら断らず、刻つきの行を
+    stdout の file へ書く。"""
+    if not merged and not same_file(1, 2):
         raise ValueError("刻を付ける log は stdout と stderr が同じ file の時だけ(機体の worker の log の形)")
     sys.stdout.flush()
     sys.stderr.flush()
@@ -737,14 +770,15 @@ def stamped_streams(plan: JobLogPlan) -> StampedStreams:
     return StampedStreams(ends, sink, shipping_of(plan), originals)
 
 
-def process_lines(plan: JobLogPlan) -> ProcessLines:
-    """worker の process 自身の Python の出力を、送り先が使えて stdout と stderr が同じ file を指す時だけ刻つきの書き手(送り手つき)へ
-    差し替えて動かし始め、終わり(end)を process の終わり(atexit)に置くため(頭の註の「worker の process 自身の行」)。plan =
-    worker_log_plan の答え。それ以外は何も替えない(RawLines)— 送り先の値が使えない時と、送り先は在るが stdout と stderr が別の
-    file の時は、理由を 1 行 stderr に書く(worker はそのまま走る)。"""
+def process_lines(plan: JobLogPlan, merged: bool = False) -> ProcessLines:
+    """worker・coordinator の process 自身の Python の出力を、送り先が使えて stdout と stderr が同じ file を指す時(merged が真なら
+    別の file でも — coordinator の Pod の形)だけ刻つきの書き手(送り手つき)へ差し替えて動かし始め、終わり(end)を process の終わり
+    (atexit)に置くため(頭の註の「worker の process 自身の行」「coordinator の process 自身の行」)。plan = worker_log_plan か
+    coordinator_log_plan の答え。それ以外は何も替えない(RawLines)— 送り先の値が使えない時と、送り先は在るが stdout と stderr が
+    別の file の時は、理由を 1 行 stderr に書く(process はそのまま走る)。"""
     match plan:
-        case JobLogTarget() if same_file(1, 2):
-            lines = stamped_streams(plan)
+        case JobLogTarget() if merged or same_file(1, 2):
+            lines = stamped_streams(plan, merged)
             lines.begin()
             atexit.register(lines.end)
             return lines
@@ -754,5 +788,5 @@ def process_lines(plan: JobLogPlan) -> ProcessLines:
         case JobLogOff():
             return RawLines()
         case JobLogRefused(reason=reason):
-            print(f"line_stamp: worker の行を送らない — {reason}", file=sys.stderr, flush=True)
+            print(f"line_stamp: 自分の行を送らない — {reason}", file=sys.stderr, flush=True)
             return RawLines()
