@@ -47,7 +47,8 @@ Rust の版を選んだのに、読み込んだ Rust の拡張が古くて sched
 
 Rust に移ったもの: effect ごとの判断のすべて — task・promise・semaphore の状態、準備のできた
 task の優先度つきの列(CPython の `heapq` と同じ手順の移植なので、列の並びも Python の版と同じ)、
-Cancel、外部の完了の受け取り、行き詰まりの検出、#502 の掃除。
+Cancel、外部の完了の受け取り、行き詰まりの検出、#502 の掃除(後始末の済んだ取り消し済みの task を
+掃く #3504 も含む。`tests/test_scheduler.py::TestTerminalEntrySweep` が両方の版で確かめている)。
 
 Python に残したもの(利用者から見える形を変えないため):
 
