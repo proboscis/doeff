@@ -25,13 +25,13 @@ Rust の母集団は 1 本も走らないまま台帳は coverage = complete と
 from __future__ import annotations
 
 import fnmatch
-import json
 import os
 import re
 import shlex
 import subprocess
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -256,29 +256,49 @@ def _named_failed_packages(output: str) -> list[str] | None:
     return summary[-1].split(":", 1)[1].split() if summary else None
 
 
+# 偽の runner(make の PACKAGE_UV_RUN に置く)— 受けた cwd と引数を記録の file へ 1 行(タブ区切り)で足し、引数の 1 つが
+# DOEFF_FAKE_RUNNER_FAIL の dir に当たる時だけ 1 で終わる。引数は runner の cwd から解くので、package の dir から走らせる形でも
+# 同じ package と数える。sh で書く: Python で書くと 1 巡で Python 3.14t を session の数(35)だけ起こし、load 65〜70 で
+# 1 巡 4.75 秒かかった(card acp:kanban-issue:ki-e8f54a86b0a8)。path は cd と pwd -P で解く(realpath -m は Mac に無い)。
 _FAKE_RUNNER = """\
-import json, os, sys
-from pathlib import Path
-
-with open(os.environ["DOEFF_FAKE_RUNNER_RECORD"], "a", encoding="utf-8") as fh:
-    fh.write(json.dumps({"cwd": os.getcwd(), "argv": sys.argv[1:]}) + "\\n")
-fail = Path(os.environ["DOEFF_FAKE_RUNNER_FAIL"]).resolve()
-sys.exit(1 if any(Path(arg).resolve() == fail for arg in sys.argv[1:]) else 0)
+unset CDPATH
+fail=$(cd -- "$DOEFF_FAKE_RUNNER_FAIL" 2>/dev/null && pwd -P)
+rc=0
+line=$(pwd -P)
+for arg in "$@"; do
+    line="$line\t$arg"
+    if [ -n "$fail" ] && [ -d "$arg" ] && [ "$(cd -- "$arg" && pwd -P)" = "$fail" ]; then rc=1; fi
+done
+printf '%s\\n' "$line" >> "$DOEFF_FAKE_RUNNER_RECORD"
+exit $rc
 """
 
 
-def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> None:
-    """期待の集合の名前順で最初の package だけを赤にしても、loop は全部を訪ねて最後に名指す。
+@dataclass(frozen=True)
+class _PackagesRound:
+    """偽の runner で回した本物の `make test-packages` の一巡 — 期待の集合の名前順で最初の package(first)だけを赤にした。"""
 
-    偽の runner は受け取った引数を記録し、最初の package の tests を受けた時だけ 1 を返す
-    (引数は runner の cwd から解くので、package の dir から走らせる形でも同じ package と数える)。
+    expected: list[str]
+    first: str
+    calls: list[tuple[str, list[str]]]  # runner が呼ばれた順の (cwd, 引数)
+    output: str
+    exit_code: int
+    timed_out: bool
+
+
+@pytest.fixture(scope="module")
+def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
+    """`make test-packages` の一巡を module で 1 回だけ回し、その記録を package の loop の検 2 本が共に読む。
+
+    検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す(card acp:kanban-issue:ki-e8f54a86b0a8)。
     """
     expected = _expected_packages(REPO_ROOT)
     assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
     first = expected[0]
-    runner = tmp_path / "fake_runner.py"
+    tmp = tmp_path_factory.mktemp("packages-round")
+    runner = tmp / "fake_runner.sh"
     runner.write_text(_FAKE_RUNNER, encoding="utf-8")
-    record = tmp_path / "calls.jsonl"
+    record = tmp / "calls.tsv"
     # 子(make)は doeff の子 process の答え手が起こし、今の環境に偽の runner の 2 つの名を重ねて渡す(agora-redesign #3012)。
     proc = run(
         with_handlers(
@@ -290,7 +310,7 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
                     "-C",
                     str(REPO_ROOT),
                     "test-packages",
-                    f"PACKAGE_UV_RUN={sys.executable} {runner}",
+                    f"PACKAGE_UV_RUN=sh {runner}",
                 ),
                 env=(
                     EnvEntry(name="DOEFF_FAKE_RUNNER_RECORD", value=str(record)),
@@ -304,19 +324,32 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
             ),
         )
     )
-    output = proc.stdout + proc.stderr
-    assert not proc.timed_out, f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
-    calls = (
-        [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
-        if record.exists()
-        else []
+    lines = record.read_text(encoding="utf-8").splitlines() if record.exists() else []
+    return _PackagesRound(
+        expected=expected,
+        first=first,
+        calls=[(cwd, argv) for cwd, *argv in (line.split("\t") for line in lines)],
+        output=proc.stdout + proc.stderr,
+        exit_code=proc.exit_code,
+        timed_out=proc.timed_out,
+    )
+
+
+def test_make_test_packages_visits_every_package_after_a_red(
+    packages_round: _PackagesRound,
+) -> None:
+    """期待の集合の名前順で最初の package だけを赤にしても、loop は全部を訪ねて最後に名指す。"""
+    first, calls, output = packages_round.first, packages_round.calls, packages_round.output
+    expected = packages_round.expected
+    assert not packages_round.timed_out, (
+        f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
     )
 
     packages_dir = (REPO_ROOT / "packages").resolve()
     reached: set[str] = set()
-    for call in calls:
-        for arg in call["argv"]:
-            resolved = Path(call["cwd"], arg).resolve()
+    for cwd, argv in calls:
+        for arg in argv:
+            resolved = Path(cwd, arg).resolve()
             if resolved.parent.parent == packages_dir and resolved.name == "tests":
                 reached.add(resolved.parent.name)
 
@@ -327,13 +360,13 @@ def test_make_test_packages_visits_every_package_after_a_red(tmp_path: Path) -> 
         f"止めた・または母集団から外した)— ADR-DOE-ENFORCE-001 R8\n{output[-2000:]}"
     )
     extra_roots = _package_extra_test_roots(REPO_ROOT)
-    passed = {Path(call["cwd"], arg).resolve() for call in calls for arg in call["argv"]}
+    passed = {Path(cwd, arg).resolve() for cwd, argv in calls for arg in argv}
     missed_roots = [root for root in extra_roots if (REPO_ROOT / root).resolve() not in passed]
     assert not missed_roots, (
         f"make test-packages が package の tests/ の外の根 {missed_roots} を訪ねていない(最初の {first}"
         f" だけを赤にした)— その根の検は日次で 1 本も走らない — R8\n{output[-2000:]}"
     )
-    assert proc.exit_code != 0, (
+    assert packages_round.exit_code != 0, (
         f"最初の package {first} を赤にしたのに make test-packages の rc が 0 — R8\n{output[-2000:]}"
     )
     named = _named_failed_packages(output)
@@ -613,32 +646,19 @@ def test_root_stage_lists_every_slow_test() -> None:
     assert not missing, f"処理ステージ root の pytest に {missing} が無い — 30 秒を越える検が日次の log に出ない: {pytest_args[0]}"
 
 
-def test_make_test_packages_lists_every_slow_test(tmp_path: Path) -> None:
+def test_make_test_packages_lists_every_slow_test(packages_round: _PackagesRound) -> None:
     """処理ステージ packages の形(`make test-packages` に PACKAGE_UV_RUN だけを渡す)で、package ごとの session が全部
-    10 秒以上の検を上限なしで出す。偽の runner が受けた引数を見る(赤の package は無い)。"""
+    10 秒以上の検を上限なしで出す。偽の runner が受けた引数を見る(一巡は上の検と共に読む — 赤は最初の package だけで、
+    loop が全部を訪ねる事は上の検が見る)。"""
     assert "make test-packages PACKAGE_UV_RUN=" in _stage_run("packages"), _stage_run("packages")
-    runner = tmp_path / "fake_runner.py"
-    runner.write_text(_FAKE_RUNNER, encoding="utf-8")
-    record = tmp_path / "calls.jsonl"
-    proc = run(
-        with_handlers(
-            [subprocess_handler],
-            RunProcess(
-                argv=("make", "-s", "-C", str(REPO_ROOT), "test-packages", f"PACKAGE_UV_RUN={sys.executable} {runner}"),
-                env=(
-                    EnvEntry(name="DOEFF_FAKE_RUNNER_RECORD", value=str(record)),
-                    EnvEntry(name="DOEFF_FAKE_RUNNER_FAIL", value=str(tmp_path / "no-such-tests")),
-                ),
-                env_mode=EnvMode.EXTEND,
-                timeout=120.0,
-            ),
-        )
+    calls, output = packages_round.calls, packages_round.output
+    assert not packages_round.timed_out, (
+        f"make test-packages が 120 秒で終わらなかった\n{output[-2000:]}"
     )
-    output = proc.stdout + proc.stderr
-    assert not proc.timed_out and proc.exit_code == 0, f"make test-packages が緑で終わらなかった\n{output[-2000:]}"
-    calls = [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()]
     assert calls, f"make test-packages が runner を 1 度も呼ばなかった\n{output[-2000:]}"
-    short = [call["argv"] for call in calls if not all(flag in call["argv"] for flag in _DAILY_DURATIONS_FLAGS)]
+    short = [
+        argv for _cwd, argv in calls if not all(flag in argv for flag in _DAILY_DURATIONS_FLAGS)
+    ]
     assert not short, (
         f"package の session {len(short)} / {len(calls)} 本の pytest に {list(_DAILY_DURATIONS_FLAGS)} が揃っていない"
         f"(Makefile の PACKAGE_PYTEST_DURATIONS)— 30 秒を越える検が日次の log に出ない: {short[:3]}"
