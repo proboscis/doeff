@@ -79,8 +79,25 @@ def _run_sync_with_custom_timeout(program, timeout_seconds: int):
         signal.signal(signal.SIGALRM, old)
 
 
+# The fake API holds its replies until the program has spawned every worker, so all of them are in flight at
+# once (workers over the semaphore limit parked, the rest awaiting) before the first reply is delivered. A
+# reply that comes at once would let each worker finish before the next is spawned and the semaphore would
+# never have a waiter; ``asyncio.sleep(0.01)`` only got that order from the wall clock. The gate starts open, so a
+# program that does not hold it gets its replies at once.
+_REPLY_GATE = asyncio.Event()
+_REPLY_GATE.set()
+
+
+async def _hold_replies() -> None:
+    _REPLY_GATE.clear()
+
+
+async def _release_replies() -> None:
+    _REPLY_GATE.set()
+
+
 async def _fake_api_call(n: int) -> int:
-    await asyncio.sleep(0.01)
+    await _REPLY_GATE.wait()
     return n * 10
 
 
@@ -129,10 +146,12 @@ def _wrap_with_semaphore_cleanup_and_tell(program: Any, sem):
 def _spawn_gather(programs: list):
     @do
     def _impl():
+        yield Await(_hold_replies())
         tasks = []
         for p in programs:
             task = yield Spawn(p)
             tasks.append(task)
+        yield Await(_release_replies())
         return list((yield Gather(*tasks)))
 
     return _impl()
