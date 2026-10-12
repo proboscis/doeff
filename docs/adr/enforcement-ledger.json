@@ -133,6 +133,7 @@
     "doeff-cluster-coordinator-core-does-not-know-where-its-lines-go",
     "doeff-cluster-program-arguments-are-built-in-one-place",
     "doeff-cluster-report-tables-are-read-by-their-owner",
+    "doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure",
     "doeff-doexpr-root-boundary-python",
     "doeff-doexpr-root-check-to-generator-strict",
     "doeff-doexpr-root-check-withhandler-constructor",
