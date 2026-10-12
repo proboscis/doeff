@@ -18,7 +18,7 @@ const MODULES: usize = 24;
 const CONFIG: &str = r#"
 [tool.doeff-linter]
 architecture = "architecture.hy"
-enable = ["DOEFF106", "DOEFF122", "DOEFF126", "DOEFF127", "DOEFF129", "DOEFF130", "DOEFF142"]
+enable = ["DOEFF101", "DOEFF106", "DOEFF122", "DOEFF126", "DOEFF127", "DOEFF129", "DOEFF130", "DOEFF142"]
 
 [tool.doeff-linter.definitions]
 paths = ["app"]
@@ -30,7 +30,7 @@ allowed_layers = ["foundation"]
 
 const ARCHITECTURE: &str = r#"(defarchitecture sample
   :root "app"
-  :layers [(layer core :summary "核") (layer foundation :summary "土台")]
+  :layers [(layer core :summary "核" :roles [program] :imports [core]) (layer foundation :summary "土台" :roles [foundation] :imports [foundation])]
   :foundation foundation
   :handler-arguments {:files ["app/**/*.hy"] :exclude ["**/tests/**"] :keep-mark "keep:"})
 "#;
@@ -41,7 +41,8 @@ const TAGS: &str = "{:tags {:context \"c\" :role \"program\"}}";
 fn module_source(i: usize) -> String {
     let mut text = String::from("(import time)\n");
     if i == 0 {
-        text.push_str("(import app.core.mod1)\n");
+        // core が foundation を import する(DOEFF101)— 置き場で foundation の file と、置き場は core の dir でもタグの role で foundation に推される file。
+        text.push_str("(import app.core.mod1)\n(import app.foundation.f)\n(import app.core.proxy)\n");
     }
     text.push_str(&format!("(defrecord Box{i} [value])\n(defeffect Ping{i} {{:fields [(: n int)] :answer None}})\n"));
     text.push_str(&format!("(defk step-{i}-0 [x] {{:tags {{:context \"c\" :role \"program\"}} :effects [Ping{i}]}}\n  (<- y (Ping{i} {i}))\n  [y x])\n"));
@@ -71,6 +72,8 @@ fn module_source(i: usize) -> String {
 /// 名指さない file の宣言で答えが決まる file(逆向きの依存)と、その宣言の file。
 fn reverse_files() -> Vec<(&'static str, String)> {
     vec![
+        ("app/foundation/f.hy", "(defn f [] 1)\n".to_string()),
+        ("app/core/proxy.hy", "(val MODULE-TAGS {:context \"c\" :role \"foundation\"})\n(defn p [] 1)\n".to_string()),
         // 失敗の型: errs の Unreachable は effs の defeffect の :failure で宣言される(errs 自身は宣言しない)。
         ("app/core/errs.hy", "(defrecord Unreachable [reason])\n(defrecord Accepted [word])\n".to_string()),
         (
@@ -113,6 +116,7 @@ fn checkout(dir: &Path) {
         std::fs::write(dir.join(format!("app/core/mod{i}.hy")), module_source(i)).unwrap();
     }
     for (rel, text) in reverse_files() {
+        std::fs::create_dir_all(dir.join(rel).parent().unwrap()).unwrap();
         std::fs::write(dir.join(rel), text).unwrap();
     }
 }
@@ -196,7 +200,7 @@ fn a_single_file_run_answers_like_the_whole_run_for_that_file() {
     checkout(dir.path());
     let whole = whole_report(dir.path());
     for (rel, rules) in [
-        ("app/core/mod0.hy", &["DOEFF126", "DOEFF106"][..]),
+        ("app/core/mod0.hy", &["DOEFF101", "DOEFF126", "DOEFF106"][..]),
         ("app/core/needs.hy", &["DOEFF122"][..]),
         ("app/core/hof.hy", &["DOEFF126"][..]),
         ("app/core/handlers.hy", &["DOEFF142"][..]),

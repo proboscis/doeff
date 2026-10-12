@@ -901,7 +901,11 @@ mod tests {
         }
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
-        read_file(&world, &root, target, source, |reader, forms, _| file_rewrites(&world, reader, forms))
+        let rewrites = read_file(&world, &root, target, source, |reader, forms, _| file_rewrites(&world, reader, forms));
+        // 1 file の実行の表(書いた file が名指す module の file だけ)でも置き換えは同じ。
+        let named = World::build_for_file(&root, target, source);
+        assert_eq!(read_file(&named, &root, target, source, |reader, forms, _| file_rewrites(&named, reader, forms)), rewrites, "{target}");
+        rewrites
     }
 
     /// 外側の置き換え(parent が無い物)の `元 → 表示` の対。

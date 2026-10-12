@@ -908,7 +908,7 @@ fn run_editor(args: &Args) -> ExitCode {
         let world = match project_report.world.as_ref() {
             Some(world) => world,
             None => {
-                built = project::signatures::World::build(&setup.root, Some((&rel, source)));
+                built = project::signatures::World::build_for_file(&setup.root, &rel, source);
                 &built
             }
         };

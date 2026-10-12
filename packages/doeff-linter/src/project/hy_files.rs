@@ -10,6 +10,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use doeff_indexer::hy_index;
 
 static WALKED: OnceLock<Mutex<HashMap<PathBuf, Arc<Vec<PathBuf>>>>> = OnceLock::new();
+static BY_MODULE: OnceLock<Mutex<HashMap<PathBuf, Arc<ModuleFiles>>>> = OnceLock::new();
+
+/// module の綴り(`a.b.c`)→ その module の Hy の file(根からの path と絶対 path)。同じ module に当たる file(`a/b.hy` と `a/b.hyk`)は全部。
+pub use super::module_probe::ModuleProbe as ModuleFiles;
 
 /// root 以下の Hy の file(`hy_index::collect_hy_files` と同じ集合と順)— 同じ root は 2 度目から歩かない。
 pub fn collect(root: &Path) -> Vec<PathBuf> {
@@ -20,6 +24,18 @@ pub fn collect(root: &Path) -> Vec<PathBuf> {
     let found = Arc::new(hy_index::collect_hy_files(root));
     memo.lock().expect("一覧の memo").insert(root.to_path_buf(), Arc::clone(&found));
     found.as_ref().clone()
+}
+
+/// root 以下の Hy の file を module の綴りで引く索引(`names::module_of` の逆)。tree を歩かず、引かれた module の path だけを探る(`ModuleProbe`)—
+/// 探す範囲は `collect(root)` と同じ(根の下の通常の Hy の file・`collect_hy_files` が降りない dir の下は探さない)。1 file の実行が「書いた file の名指す
+/// module の file だけ」を引くための索引で、同じ root は同じ索引を使う(探した module は覚える)。
+pub fn by_module(root: &Path) -> Arc<ModuleFiles> {
+    let memo = BY_MODULE.get_or_init(Default::default);
+    let mut memo = memo.lock().expect("module の索引の memo");
+    Arc::clone(
+        memo.entry(root.to_path_buf())
+            .or_insert_with(|| Arc::new(ModuleFiles::new(root, hy_index::HY_EXTENSIONS, hy_index::SKIPPED_DIRS))),
+    )
 }
 
 /// 歩く範囲の Hy の file と名乗り(根からの相対)— 根の下(`collect(root)`・名乗りは根からの相対)と、設定の `include` の dir の下

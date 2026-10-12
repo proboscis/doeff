@@ -47,10 +47,10 @@ pub struct RawSettings {
 }
 
 /// 探索で降りない directory の名前(契約の一覧)。
-const SKIPPED_DIRS: &[&str] = &[".venv", "node_modules", "target", ".git", "__pycache__"];
+pub const SKIPPED_DIRS: &[&str] = &[".venv", "node_modules", "target", ".git", "__pycache__"];
 
 /// 索引の対象の拡張子。
-const HY_EXTENSIONS: &[&str] = &["hy", "hyk", "hyp"];
+pub const HY_EXTENSIONS: &[&str] = &["hy", "hyk", "hyp"];
 
 /// root 以下の Hy の file を全部集める(除く directory は降りない)。順は path の順で決まる。
 pub fn collect_hy_files(root: &Path) -> Vec<PathBuf> {

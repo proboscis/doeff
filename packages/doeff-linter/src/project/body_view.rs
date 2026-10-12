@@ -1616,7 +1616,16 @@ mod tests {
         }
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
-        file_signatures(&world, &root, target, source)
+        let read = file_signatures(&world, &root, target, source);
+        assert_same_for_one_file(&read, &root, target, source);
+        read
+    }
+
+    /// 1 file の実行の表(書いた file が名指す module の file だけ)でも、束縛と本体は repo 全体の表と同じ。
+    fn assert_same_for_one_file(whole: &Read, root: &std::path::Path, rel: &str, source: &str) {
+        let named = World::build_for_file(root, rel, source);
+        let read = file_signatures(&named, root, rel, source);
+        assert_eq!((&read.bindings, &read.bodies), (&whole.bindings, &whole.bodies), "{rel}");
     }
 
     /// 見本の fixture(agora-controllers d89796e67 の controllers/messaging/core/conversation_input.hy の 1〜94 行を行の番号ごと
@@ -1628,6 +1637,7 @@ mod tests {
         let source = std::fs::read_to_string(root.join(rel)).unwrap();
         let world = World::build(&root, Some((rel, &source)));
         let read = file_signatures(&world, &root, rel, &source);
+        assert_same_for_one_file(&read, &root, rel, &source);
         (source, read)
     }
 

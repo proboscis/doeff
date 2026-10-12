@@ -103,7 +103,7 @@ impl ProgramParams {
     }
 
     /// 呼び先の、Program を返す関数を受ける引数の事実。
-    fn of(&self, callee: &str) -> &[PassedProgram] {
+    pub fn of(&self, callee: &str) -> &[PassedProgram] {
         self.by_callee.get(callee).map(Vec::as_slice).unwrap_or(&[])
     }
 
@@ -115,6 +115,24 @@ impl ProgramParams {
     /// 空か。
     pub fn is_empty(&self) -> bool {
         self.by_callee.is_empty()
+    }
+}
+
+/// 呼び先の、呼び手が Program を渡している引数の事実を引ける物 — repo 全体から集めた物(`ProgramParams`)か、引かれた時に集める物
+/// (`Deferred<ProgramParams>`・1 file の実行 — 呼び手は書いた file が名指さない file にもいるので、引く時は repo 全体を読む)。
+pub trait ProgramParamsLookup {
+    fn passed_to(&self, callee: &str) -> &[PassedProgram];
+}
+
+impl ProgramParamsLookup for ProgramParams {
+    fn passed_to(&self, callee: &str) -> &[PassedProgram] {
+        self.of(callee)
+    }
+}
+
+impl ProgramParamsLookup for super::deferred::Deferred<'_, ProgramParams> {
+    fn passed_to(&self, callee: &str) -> &[PassedProgram] {
+        self.get().of(callee)
     }
 }
 
@@ -206,16 +224,12 @@ const PROGRAM_TAKING_FORMS: &[&str] = &["with-handlers", "maybe", "result", "on-
 const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let", "match"];
 
 /// 1 つの source の、呼び手が Program を返す関数を渡している引数を、本体が素で呼んでいる所を全部拾う(同じ定義の同じ引数は 1 件)。
-pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params: &ProgramParams) -> Vec<ParamCall> {
+pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params: &dyn ProgramParamsLookup) -> Vec<ParamCall> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     let hy = Hy { src: source };
     let mut found: Vec<ParamCall> = Vec::new();
     for (definition, form) in top_definitions(&hy, &forms) {
-        let passed = params.of(&format!("{}.{}", scope.module, definition));
-        if passed.is_empty() {
-            continue;
-        }
         let items = live(form).unwrap_or_default();
         let container = items.first().and_then(|h| hy.symbol(h)).unwrap_or("").to_string();
         let list_at = match items.get(1) {
@@ -224,6 +238,15 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
         };
         let Some(list) = items.get(list_at).filter(|l| l.bracket_items().is_some()) else { continue };
         let (positional, all) = parameters(&hy, list);
+        // 呼び手の事実(`params` — repo 全体の呼びから集めた物)を引くのは、この定義が自分の引数のどれかを Program の位置の外で素で呼んでいる時だけ。
+        // 呼んでいなければ、呼び手が何を渡していても当たりは無い(当たりは「渡された引数」と「素の呼び」の両方が要る)。
+        if !calls_a_parameter_bare(&hy, scope, defks, &items[list_at + 1..], &all, &definition, &container) {
+            continue;
+        }
+        let passed = params.passed_to(&format!("{}.{}", scope.module, definition));
+        if passed.is_empty() {
+            continue;
+        }
         // 引数の名 → 渡した物(最初の 1 つ)。
         let mut targets: BTreeMap<String, &PassedProgram> = BTreeMap::new();
         for fact in passed {
@@ -246,6 +269,31 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
     let mut seen = BTreeSet::new();
     found.retain(|call| seen.insert(call.detail()));
     found
+}
+
+/// 定義の本体(`bodies`)が、引数のどれか(`parameters` — 渡された物は問わない)を Program の位置の外で素で呼んでいるか。当たりの必要条件
+/// (当たりは、呼び手が渡した引数の名を、この判定と同じ歩き方で見つけた所)なので、偽なら呼び手の事実を引かずに済む。
+fn calls_a_parameter_bare(
+    hy: &Hy<'_>,
+    scope: Scope<'_>,
+    defks: &DefkNames,
+    bodies: &[&Form],
+    parameters: &[&str],
+    definition: &str,
+    container: &str,
+) -> bool {
+    // 渡された物の値は、当たりの有無に効かない(Walker が見るのは名だけ)ので、どの引数も同じ印を付ける。
+    let any = PassedProgram { slot: Slot::Position(0), passed: String::new(), caller: String::new() };
+    let targets: BTreeMap<String, &PassedProgram> = parameters.iter().map(|name| (name.to_string(), &any)).collect();
+    if targets.is_empty() {
+        return false;
+    }
+    let walker = Walker { hy, scope, defks, targets: &targets, definition, container };
+    let mut found = Vec::new();
+    for body in bodies {
+        walker.walk(body, false, &mut found);
+    }
+    !found.is_empty()
 }
 
 /// Program として渡す所の外で、引数の名を頭にした呼びを探す道具。

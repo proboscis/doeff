@@ -74,6 +74,24 @@ pub struct ClassFrozen {
 /// class の名 → frozen か(同じ名が frozen でない所に 1 つでもあれば frozen でない)。
 pub type ClassIndex = HashMap<String, bool>;
 
+/// class の名が値(frozen)か引ける物 — repo 全体の索引(`ClassIndex`)か、引かれた時に作る索引(`Deferred<ClassIndex>`・1 file の実行)。
+/// 索引に無い名は値でない。
+pub trait ClassLookup {
+    fn is_value(&self, name: &str) -> bool;
+}
+
+impl ClassLookup for ClassIndex {
+    fn is_value(&self, name: &str) -> bool {
+        self.get(name).copied().unwrap_or(false)
+    }
+}
+
+impl ClassLookup for super::deferred::Deferred<'_, ClassIndex> {
+    fn is_value(&self, name: &str) -> bool {
+        self.get().is_value(name)
+    }
+}
+
 const CLIENT_TYPE_SUFFIXES: &[&str] = &["Client", "Connection", "Pool", "Engine"];
 const CLIENT_NAMES: &[&str] = &["client", "conn", "connection"];
 const CLIENT_NAME_SUFFIXES: &[&str] = &["-client", "-conn", "_client", "_conn"];
@@ -163,7 +181,7 @@ fn params_of<'a>(source: &str, items: &'a [Form]) -> Vec<Param<'a>> {
 }
 
 /// 引数 1 つ → 種類(値の引数は None)。
-fn kind_of(source: &str, param: &Param, decl: &HandlerArguments, classes: &ClassIndex) -> Option<ArgKind> {
+fn kind_of(source: &str, param: &Param, decl: &HandlerArguments, classes: &dyn ClassLookup) -> Option<ArgKind> {
     let name = param.name.as_str();
     let bases: Vec<String> = param.annotation.map(|a| type_bases(source, a)).unwrap_or_default();
     let tails: Vec<&str> = bases.iter().map(|b| b.rsplit('.').next().unwrap_or(b)).collect();
@@ -179,7 +197,7 @@ fn kind_of(source: &str, param: &Param, decl: &HandlerArguments, classes: &Class
         let store = decl.store_names.iter().any(|s| s == name) || decl.store_suffixes.iter().any(|s| name.ends_with(s.as_str()));
         return store.then_some(ArgKind::Named);
     }
-    let is_value = |b: &str| VALUE_TYPES.contains(&b) || decl.value_types.iter().any(|v| v == b) || classes.get(b).copied().unwrap_or(false);
+    let is_value = |b: &str| VALUE_TYPES.contains(&b) || decl.value_types.iter().any(|v| v == b) || classes.is_value(b);
     let mutable = bases.iter().zip(&tails).any(|(b, t)| !(is_value(b) || is_value(t)));
     mutable.then_some(ArgKind::Object)
 }
@@ -203,7 +221,7 @@ fn handler_forms<'a>(source: &str, forms: &'a [Form], out: &mut Vec<&'a Form>) {
 }
 
 /// 1 file の当たり。本文(`(defhandler` から次の最上位の form まで — 後ろの註を含む)に残す理由の印が在る handler は数えない。
-pub fn findings_in(source: &str, decl: &HandlerArguments, classes: &ClassIndex) -> Vec<ArgFinding> {
+pub fn findings_in(source: &str, decl: &HandlerArguments, classes: &dyn ClassLookup) -> Vec<ArgFinding> {
     let forms = read_forms(source);
     let tops: Vec<usize> = forms.iter().map(|f| f.span.start).collect();
     let mut handlers = Vec::new();
