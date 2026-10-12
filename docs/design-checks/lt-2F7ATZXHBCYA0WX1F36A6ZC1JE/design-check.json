@@ -1,0 +1,340 @@
+{
+  "version": 1,
+  "task_id": "lt-2F7ATZXHBCYA0WX1F36A6ZC1JE",
+  "base_revision": "e5b5c54c7ec3901925d5379aff5e85023857cd76",
+  "author": {
+    "conversation_id": "c-X2MB5NMGKKVJWG1VD57144P5MN",
+    "model": "claude-opus-5-5",
+    "effort": "unspecified"
+  },
+  "requirements": "R1: doeff の worker の雛形(Pod の env)に CLAUDE_PROJECT_DIR を足すと赤になる検が doeff main で緑(足した差分で赤を確かめる — 受入の条 cf59e2a37)。R2: doeff の worker の雛形と worker の code が job の子(会話の CLI はその子孫)の env にこの名を書かない事を doeff の側の検で守る。R3: 上に載る系の守り(agora-controllers 377464ce)とは別に doeff の repo の中で閉じる。card ki-222003f40484。",
+  "design": {
+    "path": "design.md",
+    "sha256": "597ccd54a751b14a5e729048f12c3efaf23a2dffd33194a10f3c153e7925eb40"
+  },
+  "modules": [
+    {
+      "id": "worker-template",
+      "responsibility": "worker の Pod の宣言(env・envFrom・WORKER_PASS_ENV の雛形の分・mount)と機体ごとの差(deploy/k8s/)",
+      "owns": "雛形が直に決める env の名と値・子へ渡す名の雛形の分",
+      "hides": "上に載る系の名と値(ConfigMap を名で参照するだけ)",
+      "interface": "ConfigMap の名 worker-env・worker-prepare・worker-shell・env の名 WORKER_PASS_ENV_EXTRA・WORKER_PROVIDES_EXTRA",
+      "effects": "なし(宣言 — Flux が当てる)",
+      "lifetime": "Pod の寿命(静的 — 宣言か版が変わった時だけ作り直す)",
+      "invariants": "上に載る系の語を書かない。CLAUDE_PROJECT_DIR を綴らない(木の job は worker の env を EXTEND で継ぐ)"
+    },
+    {
+      "id": "worker-boot",
+      "responsibility": "worker の起動(deploy/boot.sh・Dockerfile)",
+      "owns": "起動の env → worker の引数の写し",
+      "hides": "worker の内部",
+      "interface": "env の名(WORKER_*)・/opt/worker-boot.sh",
+      "effects": "process の起動・環境変数の export",
+      "lifetime": "Pod の起動ごとに 1 回(exec で worker へ替わる)",
+      "invariants": "CLAUDE_PROJECT_DIR を綴らない"
+    },
+    {
+      "id": "job-env-rules",
+      "responsibility": "子の環境変数の名の約束(予約の名と頭・秘密を名指す名・worker が子へ置かない名 WITHHELD-ENV-NAMES)と宣言の env の検め(shared/intent/runtime_env_model.hy の EnvVar)",
+      "owns": "RESERVED-ENV-*・SECRET/PATH-ENV-SUFFIXES・WITHHELD-ENV-NAMES",
+      "hides": "なし(型と定数の層)",
+      "interface": "定数と EnvVar.environ-refusal(断りの文か None)",
+      "effects": "なし(純粋 — 型と定数)",
+      "lifetime": "なし(import の時に決まる値)",
+      "invariants": "doeff-cluster の中で CLAUDE_PROJECT_DIR を綴るのはこの module の 1 か所"
+    },
+    {
+      "id": "child-env",
+      "responsibility": "job の子の env の組み方(worker/core/launch.hy の job-launch・child-environment)",
+      "owns": "許可表 CHILD-ENV-ALLOWED・頭 CHILD-ENV-PREFIXES・重ねる順・REPLACE / EXTEND の分け・重ねた後に WITHHELD-ENV-NAMES を外す事",
+      "hides": "shim・uv の argv の組み方",
+      "interface": "JobLaunch(argv・cwd・env・env-mode)",
+      "effects": "なし(純粋な判断 — I/O は宿が行う)",
+      "lifetime": "なし(job の起動ごとに値を返すだけ)",
+      "invariants": "REPLACE の子の env と EXTEND の足す分に WITHHELD-ENV-NAMES の名が無い(どの層から来ても)"
+    },
+    {
+      "id": "upper-system",
+      "responsibility": "(doeff の外)ConfigMap worker-env・worker-shell の包み・job の宣言(turn-host の runtimeEnv・environ)・CLI の env と settings.json の env",
+      "owns": "CLAUDE_PROJECT_DIR の意味(包みの見分けの鍵)",
+      "hides": "なし(この設計の外)",
+      "interface": "ConfigMap と job の宣言",
+      "effects": "この設計では変えない",
+      "lifetime": "上に載る系の配備の寿命",
+      "invariants": "上に載る系の検 377464ce が宣言と code の側を守る"
+    },
+    {
+      "id": "cli-launch",
+      "responsibility": "(doeff の別の package)doeff-agents の headless の adapter・doeff-claude-code の process-env が CLI の env を組む",
+      "owns": "CLI の起こし方",
+      "hides": "なし(この設計の外)",
+      "interface": "session_env・process-env",
+      "effects": "この設計では変えない",
+      "lifetime": "CLI の process の寿命",
+      "invariants": "今この名を書く所は無い(検は無い — 限界)"
+    },
+    {
+      "id": "guard",
+      "responsibility": "doeff-cluster の検 2 本(tests/test_worker_pass_env.hy)",
+      "owns": "この名・名の置き場(runtime_env_model.__file__ から引く)",
+      "hides": "なし(公開の口と file の文字を読むだけ)",
+      "interface": "pytest の 2 本(振る舞い・名の置き場)",
+      "effects": "なし(純粋な関数を呼ぶ・file を読む)",
+      "lifetime": "検ごと",
+      "invariants": "同じ入力で同じ結果"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S-hw",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "機体を足す: deploy/k8s/nodes/<新しい Node>/ に env の patch(受ける数・能力・WORKER_PASS_ENV の差)を置く",
+      "claim": "機体の差は deploy/ の下の file だけで書き、検は deploy/ を再帰で読むので、検を変えずに新しい機体へ守りが及ぶ",
+      "expected_scope": "worker-template",
+      "actual_scope": "worker-template だけ。この名を書かない patch は緑(P-hw)、書く patch は新しい file の名を挙げて赤(N-hw)",
+      "changed_modules": [
+        "worker-template"
+      ],
+      "unchanged_modules": [
+        "worker-boot",
+        "job-env-rules",
+        "child-env",
+        "guard"
+      ],
+      "reason": "予測どおり(雛形の照合は dir の再帰)",
+      "revision": "不要 — 盲検 A・B とも S-hw の失敗例を出さなかった。直した版で P-hw・N-hw を確かめた"
+    },
+    {
+      "id": "S-eff",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "job の子へ渡す worker の env を変える(WORKER_PASS_ENV か許可表に名を足す・許可表や --pass-env を広げる)、または守りを強める(宣言の側で断る・子の env から外す)",
+      "claim": "名を足すのは worker-template か child-env の 1 か所で、この名を足す変更だけが赤になる(綴る形は文字の照合、頭で広げる形は振る舞いの照合が拒む)。ほかの名を足す変更は検に触れない",
+      "expected_scope": "worker-template か child-env の 1 つ",
+      "actual_scope": "直す前: 盲検 B — --pass-env の * の差分(worker/entry/main.hy)が guard を緑のまま通し、この名が REPLACE の子へ届いた。盲検 A — 守りを強める変更(job-env-rules の EnvVar・child-env の外し)が guard を巻き込んで赤。直した後: 名を足す・広げる変更(P-eff・P-eff2・B)は 1 module で緑のまま子へ届かず、守りを強める変更(A-Q1)は job-env-rules の 1 module で入る。外しを抜く・置き場の外で綴ると赤(N-eff・N-own)",
+      "changed_modules": [
+        "job-env-rules",
+        "child-env",
+        "guard"
+      ],
+      "unchanged_modules": [
+        "worker-template",
+        "worker-boot",
+        "upper-system",
+        "cli-launch"
+      ],
+      "reason": "B: 共同の不変条件(この名が子に無い)が child-env の base の層でしか強制されず、extra の層を広げる実装が公開契約(REPLACE の子へ届く名は許可表と名を綴った --pass-env だけ)を侵して通った。A: guard が名を知る module を src の全部の文字から推していた(隠すはずの各 module の内部の文字への依存の漏れ)",
+      "revision": "80e76d32a・93c938215: 子へ置かない名を job-env-rules の WITHHELD-ENV-NAMES 1 か所に置き、child-env が全部の層を重ねた後で外す。guard を振る舞い(4 つの層・job-launch の 2 つの道)と名の置き場(deploy/ は綴らない・src/ は置き場の 1 file だけ)の 2 本にした。直した版で B の差分を当てても子に届かず、A-Q1 は guard を変えずに入り、外しを抜く・置き場の外で綴ると赤"
+    },
+    {
+      "id": "S-dist",
+      "axis": "distribution",
+      "applicability": "applicable",
+      "change": "機体の上で直に動く worker(Pod の外・systemd — zeus-native・mac-native)が同じ worker の code で job を起こす",
+      "claim": "子の env の規則は child-env の 1 か所で、k8s の worker と機体の worker が同じ job-launch を通るので、振る舞いの照合が両方に及ぶ。機体の worker の起動の env は doeff の外",
+      "expected_scope": "なし(doeff の側)",
+      "actual_scope": "doeff の側の変更なし。振る舞いの照合は job-launch の REPLACE と EXTEND を見て緑(P0)、外しを抜くと赤(N-eff)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "worker-template",
+        "worker-boot",
+        "job-env-rules",
+        "child-env",
+        "guard"
+      ],
+      "reason": "予測どおり(子の env の判断は worker の code の 1 か所)",
+      "revision": "不要 — 盲検は S-dist の失敗例を出さなかった。機体の worker の unit は doeff の外(限界に書いた)"
+    },
+    {
+      "id": "S-conc",
+      "axis": "concurrency",
+      "applicability": "applicable",
+      "change": "子を起こす道を増やす(待ちの子から分ける・task を分ける宿・probe を足す)",
+      "claim": "どの宿も job-launch の env と env-mode をそのまま使い、宿は env を組まないので、新しい道も子の env の規則を child-env の 1 か所から受ける",
+      "expected_scope": "宿の module(worker/protocol)だけ",
+      "actual_scope": "宿の変更なし。待ちの宿は自分の env を許可表から組む(主張の「宿は env を組まない」は言い過ぎ — 盲検 A の読み)が、分かれた子は頼みの env(job-launch の値)で os.environ を置き換える(warm_child.py:201)ので、子の env は child-env が決める。直した版で process_host の順の probe は false、木の job の外しを抜くと赤(N-conc)",
+      "changed_modules": [
+        "child-env"
+      ],
+      "unchanged_modules": [
+        "worker-template",
+        "worker-boot",
+        "job-env-rules",
+        "guard"
+      ],
+      "reason": "child-env の変更は S-eff の直し(外しを全部の層の後に置く)で、宿は変えていない。主張の前提の言い過ぎは結論を変えない",
+      "revision": "S-eff の直しに含む。木の job の足す分も外すようにし、N-conc で確かめた"
+    },
+    {
+      "id": "X-st",
+      "axis": "storage",
+      "applicability": "excluded",
+      "reason": "守る物は process の env で、保存しない。宣言の env-vars・environ は coordinator の状態に残るが、その名を書くのは上に載る系の宣言で、worker は子へ置く時に外す"
+    },
+    {
+      "id": "X-sim",
+      "axis": "simulation",
+      "applicability": "excluded",
+      "reason": "検は純粋な関数(child-environment・job-launch)と file の文字だけを読み、時間・process・模擬の世界に依らない。模擬の宿は会話の CLI を起こさない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "c-before-B",
+      "scenarios": [
+        "S-eff",
+        "S-conc"
+      ],
+      "control": "negative",
+      "expectation": "基準の版 e5b5c54c7 で、盲検 B の差分(--pass-env の *)が guard を緑のまま通り、この名が REPLACE の子へ届く(失敗例の成立)",
+      "observation": "guard 1 passed。probe(雛形の名 + *)env_mode replace・marker_in_child_env true・値 /work。雛形の名だけなら false",
+      "evidence": {
+        "path": "evidence/repro-on-e5b5c54c7.txt",
+        "sha256": "a0a60a4127cb6f1dabf0d7cb94a818dee814a8e6c3e5423fc01f61dc3864f559"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-before-A",
+      "scenarios": [
+        "S-eff"
+      ],
+      "control": "negative",
+      "expectation": "基準の版で、守りを強める変更(A-Q1 EnvVar の断り・A-Q2 child-env の外し)が guard を赤にする(失敗例の成立)",
+      "observation": "A-Q1: ['src/doeff_cluster/shared/intent/runtime_env_model.hy'] で赤。A-Q2: ['src/doeff_cluster/worker/core/launch.hy'] で赤",
+      "evidence": {
+        "path": "evidence/repro-on-e5b5c54c7.txt",
+        "sha256": "a0a60a4127cb6f1dabf0d7cb94a818dee814a8e6c3e5423fc01f61dc3864f559"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-hw-pos",
+      "scenarios": [
+        "S-hw"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、この名を書かない機体の dir を足しても guard は緑",
+      "observation": "P-hw 8 passed",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-hw-neg",
+      "scenarios": [
+        "S-hw"
+      ],
+      "control": "negative",
+      "expectation": "機体の dir・雛形・boot.sh がこの名を書くと、書いた file の名を挙げて赤",
+      "observation": "N-hw ['deploy/k8s/nodes/zz-probe/env.yaml']・N-tmpl ['deploy/k8s/worker/worker.yaml']・N-boot ['deploy/boot.sh'] で赤",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-eff-pos",
+      "scenarios": [
+        "S-eff"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、名を足す・広げる変更と守りを強める変更が 1 module で入り、guard は緑、この名は子に届かない",
+      "observation": "P-eff(許可表に XDG_CACHE_HOME)8 passed・P-eff2(頭 CLAUDE_)8 passed・B の差分 8 passed かつ probe marker_in_child_env false・A-Q1(EnvVar が WITHHELD-ENV-NAMES で断る)断りが効き 8 passed",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-eff-neg",
+      "scenarios": [
+        "S-eff"
+      ],
+      "control": "negative",
+      "expectation": "child-environment の外しを抜く・置き場の外の src がこの名を綴ると赤",
+      "observation": "N-eff {'CLAUDE_PROJECT_DIR': '/work', 'PATH': '/bin'} で赤・N-own ['src/doeff_cluster/worker/core/launch.hy'] で赤",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-eff-quality",
+      "scenarios": [
+        "S-eff"
+      ],
+      "control": "positive",
+      "expectation": "直しの依存(launch → runtime_env_model)を許可表に宣言した後、変更範囲の品質検査が passed",
+      "observation": "code-quality: passed (scope=changed・fast の段・型検査は未実行)",
+      "evidence": {
+        "path": "evidence/code-quality-on-fixed.txt",
+        "sha256": "48fc8e9a05ab8387aca345857da560a84c5cb9db38c5ef637a5461d2d2eb6e60"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-dist-pos",
+      "scenarios": [
+        "S-dist"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、job-launch の REPLACE と EXTEND の両方でこの名が子の env に無い(機体の worker も同じ code を通る)",
+      "observation": "P0 8 passed(test-the-worker-withholds-the-hook-marker-from-every-layer-of-the-child-env を含む)・近くの検 13 file 84 passed",
+      "evidence": {
+        "path": "evidence/focused-tests-on-fixed.txt",
+        "sha256": "5202b00531621d021a85ba05a6d0fd2db2ecbb38bed51a38164dc3c105a0e779"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-dist-neg",
+      "scenarios": [
+        "S-dist"
+      ],
+      "control": "negative",
+      "expectation": "子の env の 1 か所(child-environment)の外しを抜くと赤",
+      "observation": "N-eff で赤",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-conc-pos",
+      "scenarios": [
+        "S-conc"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、process_host の順(許可表の読み → job-launch)で組んだ子の env にこの名が無い(B の差分を当てた上でも)。待ちの宿・probe の子の検が緑",
+      "observation": "B の probe marker_in_child_env false・test_warm_host.hy と test_probe_child_protocol.hy を含む 84 passed",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "c-conc-neg",
+      "scenarios": [
+        "S-conc"
+      ],
+      "control": "negative",
+      "expectation": "木の job(EXTEND)の足す分の外しを抜くと赤",
+      "observation": "N-conc (<EnvMode.EXTEND: 'extend'>, ['CLAUDE_PROJECT_DIR', …]) で赤",
+      "evidence": {
+        "path": "evidence/validate-on-fixed.txt",
+        "sha256": "e6d1e3cd2ec38bdfb6576aefd0c9cfb94c38efdbe5e39adf473eeee925d6faca"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
