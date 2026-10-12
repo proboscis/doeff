@@ -440,7 +440,8 @@
   {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
   "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
    wheel(build の口の保存先 — 口が使うたびに dir の中の印の file を置き換えて dir の時刻を進める)と、7 日使われない bytecode の
-   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)と、終わった世代の固定の
+   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)と中が全部 7 日動いて
+   いない保存先の dir(unused-store-names)と、終わった世代の固定の
    file(AL-D2g)を消し、消した path の列を返すため。"
   (<- place str (roots-dir settings))
   (<- roots (ListDirectory place))
@@ -469,19 +470,40 @@
 
 (defk unused-store-entries [store now-ms]
   {:pre [(: store (| str None)) (: now-ms int)] :post [(: % tuple)]}
-  "bytecode の保存先(store — None = 使わない設定)の file のうち、CODE-STORE-UNUSED-SECONDS より長く時刻の進んでいない物の path の列を
-   求めるため(掃除が消す・保存先の dir が無ければ空)。保存先は file ごとの時刻まで StatTree の 1 つの呼びで読む — 本番は
-   offloaded-tree-handler が thread で待つので、file が 10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(card
-   ki-0da6a0186492 — 前は WalkTree と file ごとの StatPath を scheduler の thread で歩き、zeus で 10〜19 秒止めた)。"
+  "bytecode の保存先(store — None = 使わない設定)のうち、掃除が消す物(unused-store-names)の path の列を求めるため(保存先の dir が
+   無ければ空)。保存先は file ごとの時刻まで StatTree の 1 つの呼びで読む — 本番は offloaded-tree-handler が thread で待つので、file が
+   10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(card ki-0da6a0186492 — 前は WalkTree と file ごとの StatPath を
+   scheduler の thread で歩き、zeus で 10〜19 秒止めた)。"
   (if (is store None)
       #()
       (do (<- listed (| tuple FileFailed) (StatTree store))
           (match listed
             (FileFailed) #()
-            entries (tuple (gfor entry entries
-                                 :if (and (= entry.kind PathKind.FILE)
-                                          (> (- now-ms (int (* 1000 entry.modified))) (* 1000 CODE-STORE-UNUSED-SECONDS)))
-                                 (posixpath.join store entry.name)))))))
+            entries (do (<- names tuple (unused-store-names entries now-ms))
+                        (tuple (gfor name names (posixpath.join store name))))))))
+
+
+(defk unused-store-names [entries now-ms]
+  {:pre [(: entries tuple) (: now-ms int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "bytecode の保存先の歩きの答え(StatTree — 保存先の dir からの相対の名・種類・時刻)から、掃除が消す物の相対の名の列(名の順)を求める
+   ため: CODE-STORE-UNUSED-SECONDS より長く時刻の進んでいない file と、自分も下の物も全部その長さ動いていない dir(dir ごと消す — その下の
+   file は名指さない)。source の code の entry は鍵ごとの dir の下に macro の環境ごとに並ぶ(doeff-hy の code_store・card ki-6828e9af04b4)
+   ので、file だけを消すと空の鍵の dir が版ごとの source の数だけ残り続ける。使った entry の在る dir と、作ったばかりの空の dir(書き手が
+   entry を置く前)は残す。"
+  (val limit-ms (* 1000 CODE-STORE-UNUSED-SECONDS))
+  ;; 動いた物(file の使った印・dir の中の置き換え)と、その上の dir の全部 — 消さない。
+  (val fresh (frozenset (gfor entry entries
+                              :if (<= (- now-ms (int (* 1000 entry.modified))) limit-ms)
+                              :setv parts (.split entry.name "/")
+                              depth (range 1 (+ (len parts) 1))
+                              (.join "/" (cut parts 0 depth)))))
+  (val idle-dirs (frozenset (gfor entry entries :if (and (= entry.kind PathKind.DIRECTORY) (not-in entry.name fresh)) entry.name)))
+  ;; 動いていない dir の下の物は、いちばん上の動いていない dir ごと消す(下を 1 つずつ名指さない)。
+  (tuple (sorted (gfor entry entries
+                       :if (and (not-in entry.name fresh)
+                                (in entry.kind #(PathKind.FILE PathKind.DIRECTORY))
+                                (not-in (posixpath.dirname entry.name) idle-dirs))
+                       entry.name))))
 
 
 (defk measuring-roots [settings done]
