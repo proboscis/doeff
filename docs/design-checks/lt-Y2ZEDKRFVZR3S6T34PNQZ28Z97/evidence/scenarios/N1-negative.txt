@@ -1,0 +1,23 @@
+# 失敗例 N1(S1): 準備の道具が保存先の並びを自分で綴り、鍵 1 つに entry 1 つで書く(add_code を通らない)— ADR の法 one-bytecode-store-entry が拒むか
+# 版 c1a73eeda258fcd3e44af226d25debeba706897d + N1-mutation.patch.txt
+diff --git a/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy b/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy
+index 48c681555..4fd673d1c 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy
+@@ -113,7 +113,7 @@
+   (when (isinstance compiled SourceNotCompiled)
+     (return #("failed" compiled.reason)))
+   (write-pyc source compiled)
+-  (setv problem (if (is key None) None (.add-code code-store store key (marshal.loads (cut compiled PYC-HEAD-BYTES None)))))
++  (setv problem (if (is key None) None (.write-entry code-store (posixpath.join store (cut key 0 2) (+ (cut key 2 None) ".code")) (cut compiled PYC-HEAD-BYTES None))))
+   #("rebuilt" (or problem "")))
+ 
+ 
+$ uv run pytest -q docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_one_bytecode_store_entry
+>   (assert (= violations []) (+ "bytecode の 2 つ目の保存先(ADR-DOE-BUILD-002 R1): " (str violations))))
+E   AssertionError: bytecode の 2 つ目の保存先(ADR-DOE-BUILD-002 R1): ['packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy: bytecode の保存先の entry を自分で綴る 2 つ目の保存先 — packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py の entry-path・CODE-SUFFIX・IMPORTS-SUFFIX を使う']
+docs/adr/defadr_doeff_build_002_one_bytecode_store.hy:154: AssertionError
+    (assert (= violations []) (+ "bytecode の 2 つ目の保存先(ADR-DOE-BUILD-002 R1): " (str violations))))
+AssertionError: bytecode の 2 つ目の保存先(ADR-DOE-BUILD-002 R1): ['packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy: bytecode の保存先の entry を自分で綴る 2 つ目の保存先 — packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py の entry-path・CODE-SUFFIX・IMPORTS-SUFFIX を使う']
+1 failed, 1 warning in 4.66s
+exit=1
