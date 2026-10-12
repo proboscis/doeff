@@ -80,7 +80,7 @@
 (deftest test-the-compile-jobs-ride-the-request-into-the-compile-command-only-when-given
   ;; 失敗ケース(2026-10-08): 準備の頼みの並べる数(recreate の job の旧い process が動いている間の新しい版の準備 — 旧と同じ memory の上限を
   ;; 分け合う)は、env-host が書く頼みの JSON(compileJobs)→ 準備の process が読む PrepareRequest → 焼く道具の命令の `--jobs N` と運ぶ。
-  ;; 持たない頼み(null)は命令に `--jobs` を足さず、道具の既定(cgroup の CPU の上限)のまま。直す前は頼みにも命令にも並べる数が無かった。
+  ;; 持たない頼み(null)は命令に `--jobs` を足さず、道具の既定(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)のまま。直す前は頼みにも命令にも並べる数が無かった。
   (val env (RuntimeEnv :repos #((RepoCheckout :name "app" :url "file:///remotes/app.git" :commit (* "1" 40)))
                        :project (PythonProject :repo "app" :path "." :lock-sha256 (* "0" 64) :python "3.14")
                        :import-roots #("app/.")))
