@@ -908,13 +908,14 @@ def project_closure(
     root: Path,
     roots: list[Path],
     targets: list[Path],
-    cache_dir: Path | None = None,
-    limit: int = EXPANDER_LIMIT,
+    cache_dir: Path | None,
+    limit: int,
 ) -> Closure:
     """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。
 
     import を段ごとに辿る(agora-redesign #3869): 段の中の file は互いの展開を使わないので、保存から引ける file は親で引き、
-    引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に)。"""
+    引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に・既定は無い —
+    呼び手が expander_limit(枠の正本が答えた数)で決める)。"""
     projections: dict[Path, Projection] = {}
     failures: list[CompileFailure] = []
     seen: set[Path] = set(targets)

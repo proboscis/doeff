@@ -15,8 +15,11 @@
   4. 自分の束縛 — `policy = module.read_policy()`(単純な名への 1 回の代入。別の名への写し・属性や添字への代入は開く道なので断る)。
 さらに、この module が正本の module から読んでよい名は宣言した口と例外だけ(`module.Policy`・`module.PROCESSES_ENV` などを断る)。
 正本の持ち物の名(宣言の鍵・env の名・旧い幅の関数)は doeff_hy のどの source にも現れない。
+並走の数を使う側: 宣言が届かない機体の既定 EXPANDER_LIMIT は、expander_limit(宣言の数)の中でだけ読む — 別の入口(展開の子の pool を
+使う新しい道具)が既定を直に引数の既定や定数として使うと、枠を取らずに宣言と無関係な数で子を起こす。
 
-限界(表現できない物): 規則の組(OPENED・MOUTHS)を書き換えれば通る — だが組はこの file の固定で、変えるのは意図した契約の変更。
+限界(表現できない物): 新しい入口が pool を使うのに枠を取らない(expander_limit に渡す数が無いので書き手が気づく — 検は取り忘れ自体は見ない)。
+規則の組(OPENED・MOUTHS)を書き換えれば通る — だが組はこの file の固定で、変えるのは意図した契約の変更。
 SlotHeld.let_go を static_check 側で開く道(`slot.let_go.__self__`)と、process_width の答えを使わずに幅を自前で決める形は、この
 検は見ない(後者は幅の持ち主が 2 つになる — 設計の限界として design.md に記した)。
 """
@@ -206,12 +209,36 @@ def _identifiers_and_strings(source: str) -> Iterator[tuple[int, str]]:
                     yield node.lineno, owned
 
 
+def default_limit_uses(source: str) -> list[str]:
+    """既定の展開の子の数 EXPANDER_LIMIT を読む場所(行と、囲む関数の名)。定義(module の段の代入)は数えない。"""
+    tree = ast.parse(source)
+    parents = _parents(tree)
+
+    def enclosing(node: ast.AST) -> str:
+        cursor: ast.AST | None = parents.get(node)
+        while cursor is not None and not isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            cursor = parents.get(cursor)
+        return "<module>" if cursor is None else cursor.name
+
+    reads = (
+        node
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.Name) and node.id == "EXPANDER_LIMIT" and isinstance(node.ctx, ast.Load))
+        or (isinstance(node, ast.Attribute) and node.attr == "EXPANDER_LIMIT")
+        or (isinstance(node, ast.alias) and node.name.rpartition(".")[2] == "EXPANDER_LIMIT")
+    )
+    return [f"{getattr(node, 'lineno', 0)}: {enclosing(node)}" for node in reads]
+
+
 def canon_owned_names(source: str) -> list[str]:
     """正本が持つ名が code に現れる行(空 = 現れない)。"""
     return [f"{line}: {name}" for line, name in _identifiers_and_strings(source) if name in CANON_OWNED]
 
 
 # ─────────────────────────────── 実物
+
+#: 既定の展開の子の数を読んでよい場所(static_check.py の関数 expander_limit だけ)。
+DEFAULT_LIMIT_READERS = {"static_check.py": ["expander_limit"]}
 
 def test_the_mouths_this_module_declares_are_the_ones_this_guard_allows() -> None:
     """宣言した口の組は、この検の固定の組と同じ — 口を足す・替えるのは意図した契約の変更で、この file の組と一緒に変える。"""
@@ -221,6 +248,17 @@ def test_the_mouths_this_module_declares_are_the_ones_this_guard_allows() -> Non
 
 def test_check_slot_opens_neither_the_canon_policy_nor_what_take_returns() -> None:
     assert opened_uses(SOURCE) == []
+
+
+def test_the_default_child_count_is_read_only_where_the_slot_width_may_be_missing() -> None:
+    """宣言が届かない機体の既定 EXPANDER_LIMIT は、expander_limit(宣言の数)の中でだけ読まれる — 関数の引数の既定・別の道具の
+    定数・直の import は、宣言と無関係な数で展開の子を起こす 2 つ目の持ち主になる。"""
+    found = {
+        path.name: [hit.partition(": ")[2] for hit in default_limit_uses(path.read_text(encoding="utf-8"))]
+        for path in sorted(PACKAGE.rglob("*.py"))
+    }
+    readers = {name: functions for name, functions in found.items() if functions}
+    assert readers == DEFAULT_LIMIT_READERS, readers
 
 
 def test_no_doeff_hy_source_names_what_the_canon_owns() -> None:
@@ -411,3 +449,25 @@ def test_the_name_guard_catches_what_the_canon_owns_in_any_code_position(written
 def test_the_name_guard_lets_prose_talk_about_the_canon() -> None:
     prose = '"""正本の processesPerSlot と AI_CHECK_SLOT_PROCESSES の話(docstring)。"""\n# processes_per_slot の話(コメント)\nx = 1\n'
     assert canon_owned_names(prose) == []
+
+
+@pytest.mark.parametrize(
+    ("written", "reader"),
+    [
+        # 別の道具(型の宣言の一致の検)が展開の子の pool を使う実装 — 引数の既定として既定の数を読む。
+        (
+            "def project_each(root, roots, sources, limit: int = EXPANDER_LIMIT):\n    return _Expanders(limit)\n",
+            "project_each",
+        ),
+        ("from doeff_hy.static_check import EXPANDER_LIMIT\n", "<module>"),
+        ("def stale(root):\n    return _Expanders(static_check.EXPANDER_LIMIT)\n", "stale"),
+        ("def stale(root):\n    return _Expanders(EXPANDER_LIMIT)\n", "stale"),
+    ],
+)
+def test_the_default_child_count_guard_catches_a_second_reader(written: str, reader: str) -> None:
+    assert [hit.partition(": ")[2] for hit in default_limit_uses(written)] == [reader], written
+
+
+def test_the_default_child_count_guard_accepts_the_one_reader_and_the_definition() -> None:
+    allowed = "EXPANDER_LIMIT = 4\n\n\ndef expander_limit(declared):\n    return EXPANDER_LIMIT if declared is None else declared\n"
+    assert [hit.partition(": ")[2] for hit in default_limit_uses(allowed)] == ["expander_limit"]

@@ -27,7 +27,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, take_slot
+from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, canon_module, take_slot
 from doeff_hy.env_places import cache_home
 
 #: 機体の正本(検の process の home の下 — 検体の home へ写す元)。
@@ -364,14 +364,24 @@ def test_a_failing_canon_take_lets_the_check_run_and_says_why(tmp_path: Path) ->
     ), out.getvalue()
 
 
-def _width_probe(scene: Scene, *, hand_down: str | None = None, wrapped: bool = True) -> subprocess.CompletedProcess[str]:
-    """枠の取り手(doeff の take_slot)が答えた幅を stdout に出す子を、正本の命令の包みの中(wrapped)か直に撃つ。
-    hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検)。"""
+def _width_probe(
+    scene: Scene,
+    env_name: str,
+    *,
+    hand_down: str | None = None,
+    wrapped: bool = True,
+    stale: str | None = None,
+) -> dict[str, object]:
+    """枠の取り手(doeff の take_slot)が答えた幅と、その子が見た幅の env の値を JSON で受ける。子を正本の命令の包みの中
+    (wrapped)か直に撃つ。hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検 — 配る口は正本の
+    公開の定数 env_name)。"""
     show = [
         sys.executable,
         "-c",
-        "import sys; from pathlib import Path; from doeff_hy.check_slot import take_slot;"
-        " held = take_slot(Path.home(), 'width-probe', sys.stderr); print(held.width); held.release()",
+        "import json, os, sys; from pathlib import Path; from doeff_hy.check_slot import take_slot;"
+        " held = take_slot(Path.home(), 'width-probe', sys.stderr);"
+        " print(json.dumps({'env': os.environ.get(sys.argv[1]), 'width': held.width})); held.release()",
+        env_name,
     ]
     command = show
     if wrapped:
@@ -380,36 +390,61 @@ def _width_probe(scene: Scene, *, hand_down: str | None = None, wrapped: bool = 
         relay = [
             sys.executable,
             "-c",
-            "import os, subprocess, sys; env = dict(os.environ, AI_CHECK_SLOT_PROCESSES=sys.argv[1]);"
-            " sys.exit(subprocess.run(sys.argv[2:], env=env).returncode)",
+            "import os, subprocess, sys; env = dict(os.environ, **{sys.argv[1]: sys.argv[2]});"
+            " sys.exit(subprocess.run(sys.argv[3:], env=env).returncode)",
+            env_name,
             hand_down,
             *command,
         ]
         command = [sys.executable, str(scene.canon), "run", "--label", "outer", "--", *relay]
-    return subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+    environ = None if stale is None else {**os.environ, env_name: stale}  # 呼び手の前の値(枠を取った入口は上書きされる)
+    done = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False, env=environ)
+    assert done.returncode == 0, done.stderr
+    answer: dict[str, object] = json.loads(done.stdout.strip().splitlines()[-1])
+    return answer
 
 
+def _canon_answer(scene: Scene, env_name: str, seen_env: object) -> int:
+    """同じ口を正本の module で直に引いた答え(包みの中の入口 = 持ち物が None・子が見た env の値)— 期待の値を doeff の検に
+    書かず、正本の規則の座に問う(規則や env の名が替わっても、doeff の検は正本の答えとの一致だけを見る)。"""
+    module = canon_module(scene.home, io.StringIO())
+    assert module is not None
+    environ = {} if seen_env is None else {env_name: str(seen_env)}
+    return int(module.process_width(module.read_policy(), None, environ))
+
+
+@pytest.mark.parametrize("processes", [1, 2, 3])
 def test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_inside_the_wrapper(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, processes: int
 ) -> None:
-    # 実物の正本: 枠を自分で取る直の入口は宣言の数(2)。命令の包みの中(祖先が枠を持つ — take は None)の入口も、包みが子へ配った
-    # 宣言の数(2)を受ける。盲検 B の再現 (b): 直前の形は、包みの中で持ち物が None になるので doeff が自分の既定 4 へ落ちた。
-    scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
-    if "def process_width" not in CANON.read_text(encoding="utf-8"):
+    # 実物の正本: 枠を自分で取る直の入口は宣言の数(契約: 枠を取った入口は宣言の値)。命令の包みの中(祖先が枠を持つ — take は None)
+    # の入口は、包みが子へ配った値を受けた正本の口の答えと同じ数(期待は正本に問う)で、宣言を越えない。宣言の数を替えるだけで
+    # 従う(コードは変わらない)。
+    scene = _scene(tmp_path, monkeypatch, 60.0, processes=processes)
+    module = canon_module(scene.home, io.StringIO())
+    if module is None or not callable(vars(module).get("process_width")):
         pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
-    direct = _width_probe(scene, wrapped=False)
-    assert direct.returncode == 0 and direct.stdout.strip() == "2", direct.stderr
-    inside = _width_probe(scene)
-    assert inside.returncode == 0 and inside.stdout.strip() == "2", inside.stderr
+    name = module.PROCESSES_ENV
+    direct = _width_probe(scene, name, wrapped=False)
+    assert direct["width"] == processes, direct
+    stale = _width_probe(scene, name, wrapped=False, stale="1")  # 呼び手の前の値は枠の外の値 — 自分で枠を取った入口は宣言の数
+    assert stale["width"] == processes, stale
+    inside = _width_probe(scene, name)
+    assert inside["width"] == _canon_answer(scene, name, inside["env"]), inside
+    assert isinstance(inside["width"], int) and inside["width"] <= processes, inside
 
 
 def test_a_check_inside_the_wrapper_keeps_the_smaller_width_the_outer_entry_handed_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 外側の入口が子へ配った残りの幅(1)は、内側の入口が宣言(2)へ戻さない — 木全体の並走 ≤ 宣言。規則は正本の中にあり、
-    # doeff は答えをそのまま使う。
+    # 外側の入口が子へ配った残りの幅(1)は、内側の入口が宣言(2)へ戻さない — 木全体の並走 ≤ 宣言(契約: 配った値以下)。内側の入口が
+    # 受ける数は、子が見た値を受けた正本の口の答えと同じで、配られた数を越えない。規則そのものの値は正本の検が持つ。
     scene = _scene(tmp_path, monkeypatch, 60.0, processes=2)
-    if "def process_width" not in CANON.read_text(encoding="utf-8"):
+    module = canon_module(scene.home, io.StringIO())
+    if module is None or not callable(vars(module).get("process_width")):
         pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
-    done = _width_probe(scene, hand_down="1")
-    assert done.returncode == 0 and done.stdout.strip() == "1", done.stderr
+    name = module.PROCESSES_ENV
+    done = _width_probe(scene, name, hand_down="1")
+    assert done["env"] is not None, "外側の入口が配った数が子へ届いていない"
+    assert done["width"] == _canon_answer(scene, name, done["env"]), done
+    assert isinstance(done["width"], int) and done["width"] <= 1, done
