@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "task_id": "lt-MEB74WM4BV22PDN26YAA1JVJMK",
+  "base_revision": "ac512fc1a44045b49d88800571fd19e27485f737",
+  "author": {
+    "conversation_id": "c-2AVPGRVP07N3MJ59B23MA57R43",
+    "model": "claude-opus-5-5",
+    "effort": "未観測(会話の起動の設定を読めない — 自己申告できない)"
+  },
+  "requirements": "card ki-b884608b96e4 の受入: (ce352da5f) 2 つの道(待ちの子から分かれる道・冷えた道 = shim の下の uv run)で task の子の PATH の先頭と VIRTUAL_ENV が同じになる事を、doeff-cluster の検(2 つの道を両方通す)で確かめて main で緑。(c99cfd117) どちらの値(root の venv か boot の venv か)に揃えたかと訳を card に書く — 揃えた値 = root の venv",
+  "design": {
+    "path": "design.md",
+    "sha256": "4c62eda57db8daea468b73e2607c3597ea0a4cc6c2b2d82af57c2e3a1938b78c"
+  },
+  "modules": [
+    {
+      "id": "M-judge",
+      "responsibility": "job の子の起こし方と、入口が走る環境(entry-env)を値だけから決める(packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy)",
+      "owns": "冷えた道の env(許可表 + 宣言 + DOEFF_*・VIRTUAL_ENV なし)・entry-env = uv-run-environ(project-dir, env)・uv run が子へ足す 2 つの写し(<字面で正規化した project>/.venv/bin を PATH の頭・VIRTUAL_ENV)",
+      "hides": "uv の足し方を宿(M-host)と分かれた子(M-forked)から隠す",
+      "interface": "job-launch → JobLaunch(argv・cwd・env・env-mode・work-dir・last-used・entry-args・entry-env)・uv-run-environ(project-dir, env) -> dict",
+      "effects": "なし、値だけから決める純粋な判断",
+      "lifetime": "なし、値を返すだけで状態を持たない",
+      "invariants": "実行環境の job の entry-env == uv-run-environ(project-dir, env)・木の job の entry-env は空・env は VIRTUAL_ENV を持たない"
+    },
+    {
+      "id": "M-host",
+      "responsibility": "StartJob を汎用の効果へ言い換える(worker/protocol/process_host.hy の start-job)",
+      "owns": "道の選び(判断が付けた warm-key の在否)・冷えた道は StartProcess(plan.env)・分かれる道は ForkFromWarm(plan.entry-env・entry-args・cwd)",
+      "hides": "子の起こし方の I/O(file・process・待ちの子の socket)",
+      "interface": "StartJob・SignalJob・ReapJob・RetireJob の答え手",
+      "effects": "MakeDirectory・WriteText・RemoveTree・ReadEnvironment・StartProcess・ForkFromWarm・slog",
+      "lifetime": "起こした子の表を session に持ち、ReapJob で外す",
+      "invariants": "env の値を決めない(判断の答えをそのまま運ぶ)"
+    },
+    {
+      "id": "M-forked",
+      "responsibility": "待ちの子から分かれた子 A が、頼みの env を自分の環境としてそのまま置いてから入口を fork する(worker/entry/warm_child.py の run_forked・foundation/child_environ.hy の replace-environ)",
+      "owns": "環境の置き換え・cwd・log の dup2・B の fork",
+      "hides": "os.environ の置き換え方",
+      "interface": "WarmRequestWire(doeff_core_effects.os_warm_process)の env・args・cwd",
+      "effects": "os.environ の置き換え・chdir・fork・exit の file の書き",
+      "lifetime": "A は頼み 1 つごとに生まれ、job の終わりで exit の file を書いて終わる",
+      "invariants": "頼みの env に名を足さない・消さない・待ちの子そのものは env の値を持たない"
+    },
+    {
+      "id": "M-rules",
+      "responsibility": "どの job が待ちの子から分かれるかと、待ちの子の起こし方を決める(worker/core/warm_rules.hy)",
+      "owns": "forks-from-warm-child(実行環境を宣言した task)・warm-key-of・warm-launch(uv の --project = runtime_env.project-dir)・warm-child-argv(uv run --no-sync --frozen --project)",
+      "hides": "待ちの子の起動の命令の形",
+      "interface": "forks-from-warm-child・warm-key-of・warm-launch・warm-child-argv",
+      "effects": "なし、値だけの判断",
+      "lifetime": "なし、状態を持たない",
+      "invariants": "待ちの子は task と同じ project の venv で起きる(共同の不変条件「venv は 1 つ」の相手)"
+    },
+    {
+      "id": "M-warm-host",
+      "responsibility": "待ちの子を許可表の env で uv run の下に起こし、観測し、止める(worker/protocol/warm_host.hy)",
+      "owns": "待ちの子の置き場の作り直し・起動の env(許可表)・準備完了の印の読み",
+      "hides": "待ちの子の process の I/O",
+      "interface": "StartWarmChild・StopWarmChild・ForgetWarmChild・ObserveWarmChildren の答え手",
+      "effects": "RemoveTree・MakeDirectory・ReadEnvironment・StartProcess・PollProcess・SignalProcess・ReadText",
+      "lifetime": "待ちの子の表を session に持ち、ForgetWarmChild で置き場を消す",
+      "invariants": "待ちの子に task の env の値を渡さない"
+    },
+    {
+      "id": "M-venv-make",
+      "responsibility": "root の venv を作り、中を読む(worker/core/env_prepare.hy・worker/protocol/env_translation.hy・shared/core/runtime_env.hy の project-dir)",
+      "owns": "uv sync --project <project-dir>・site-packages と python の path の読み・project-dir の定義点",
+      "hides": "venv の作り方と中の配置",
+      "interface": "実行環境の準備の効果・project-dir",
+      "effects": "uv の命令・file の読み書き",
+      "lifetime": "root の寿命(掃除が消すまで)",
+      "invariants": "venv は <project>/.venv(uv の既定)"
+    },
+    {
+      "id": "M-facts",
+      "responsibility": "入口の検めの材料として、自分の venv の上の root の完成の印を読む(shared/protocol/runtime_facts.hy の marked-root)",
+      "owns": "realpath(sys.prefix) から上へ辿って .doeff-env-ready.json を探す読み方",
+      "hides": "root の印の探し方",
+      "interface": "ReadRuntimeFacts → ProcessFacts",
+      "effects": "file の読み",
+      "lifetime": "なし、読むたびに問う",
+      "invariants": "venv は root の下に在る(この直しより前からの前提 — 盲検 A)"
+    },
+    {
+      "id": "M-uv",
+      "responsibility": "外の道具 uv 0.12.19 の uv run --project — 子の PATH の頭と VIRTUAL_ENV に project の venv を置く",
+      "owns": "--project の path を字面で正規化し symlink を解かずに <P>/.venv を選ぶ・UV と UV_RUN_RECURSION_DEPTH を置く",
+      "hides": "uv の内部",
+      "interface": "命令 uv run --no-sync --frozen --project <P> <命令>",
+      "effects": "子 process の起動",
+      "lifetime": "子が終わるまで",
+      "invariants": "なし、外の道具で、この設計は振る舞いを検で突き合わせるだけ"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "root の venv を root の外の共有の置き場へ移す(UV_PROJECT_ENVIRONMENT=<置き場>/<キー> で uv sync と uv run を揃える)",
+      "claim": "venv の場所を知るのは M-venv-make(作る・読む)と M-judge(冷えた道の env に uv への指定を足す・uv-run-environ の venv の決まり)だけ(盲検の前の主張 S1)",
+      "expected_scope": "M-venv-make・M-judge",
+      "actual_scope": "M-venv-make・M-judge・M-rules・M-warm-host・M-facts(盲検 A の実測と読み — 待ちの子は許可表の env で uv run するので指定が届かず root の中に空の venv を作る・marked-root は root の外の venv から None)",
+      "changed_modules": [
+        "M-venv-make",
+        "M-judge",
+        "M-rules",
+        "M-warm-host",
+        "M-facts"
+      ],
+      "unchanged_modules": [
+        "M-host",
+        "M-forked",
+        "M-uv"
+      ],
+      "reason": "M-rules・M-warm-host は共同の不変条件「venv は 1 つ」(待ちの子の venv・entry-env の VIRTUAL_ENV・冷えた道の uv の venv)の正当な相手で、盲検の前の主張が書き漏らした。M-facts の「venv は root の下」は隠すはずの知識の漏れ(この直しより前からの形)",
+      "revision": "共同の不変条件を design.md に書き、検 test_task_venv_on_both_paths.hy を、待ちの子を本番の warm-launch の --project で起こし・worker の PATH の頭に別の venv を置き・入口の sys.prefix の実 path を 2 つの道と VIRTUAL_ENV で比べる形に強めた(待ちの子が root の venv の外で起きる変異 A′ が赤)。M-facts の漏れは S1 を実装する時の範囲として記し、今の要件(venv は root の下)では正しいので直さない"
+    },
+    {
+      "id": "S2",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "待ちの子から分かれる task にも uv の UV(と UV_RUN_RECURSION_DEPTH)を見せる",
+      "claim": "uv の足し方の写しは uv-run-environ 1 か所なので M-judge だけが変わる(盲検の前の主張 S2)",
+      "expected_scope": "M-judge",
+      "actual_scope": "正しい置き場は M-judge のまま。盲検 B が M-forked(replace-environ が待ちの子の環境から 2 つの名を継ぐ)に置く実装を示し、それが直す前の検を全部通った(実測)。直した検はその実装を断る(実測)",
+      "changed_modules": [
+        "M-judge"
+      ],
+      "unchanged_modules": [
+        "M-host",
+        "M-forked",
+        "M-rules",
+        "M-warm-host",
+        "M-venv-make",
+        "M-facts",
+        "M-uv"
+      ],
+      "reason": "予測の範囲は保つ。漏れは検の穴(分かれた子の環境と entry-env の完全一致を見ていなかった)で、M-forked の契約「足さず引かない」を破る実装を止められなかった",
+      "revision": "検 test_task_venv_on_both_paths.hy に、分かれた子の入口が見る環境 == entry-env の完全一致を足した(盲検 B の差分が赤: 頼みに無い名 UV・UV_RUN_RECURSION_DEPTH)"
+    },
+    {
+      "id": "S3",
+      "axis": "effects",
+      "applicability": "applicable",
+      "change": "service も待ちの子から分ける(forks-from-warm-child を広げる)— env の面",
+      "claim": "entry-env は実行環境の job 全部に作るので、env の面で変わるのは道の選び(M-rules)だけ(盲検の前の主張 S3)",
+      "expected_scope": "M-rules",
+      "actual_scope": "entry-env は service にも root の venv で作られる(実測)。冷えた道の shim が job に渡す退きの知らせの fd の名 DOEFF_WORKER_NOTICE_FD は分かれる道に無い(実測)— service を分けるには知らせの中継(M-host・M-forked)も要る",
+      "changed_modules": [
+        "M-rules",
+        "M-host",
+        "M-forked"
+      ],
+      "unchanged_modules": [
+        "M-judge",
+        "M-warm-host",
+        "M-venv-make",
+        "M-facts",
+        "M-uv"
+      ],
+      "reason": "退きの知らせの fd は値ではなく shim が作る pipe の番号で、M-judge の env の判断の外。分かれる道は入れ替えの対象を task に限る前提(#3672)で知らせを中継しない — 前提を変える変更なので、M-host・M-forked の変更は契約の拡張",
+      "revision": "主張を書き換えず、実際の範囲と訳を design.md に記した。今の要件(分かれるのは task だけ)では変更は要らない"
+    },
+    {
+      "id": "S4",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "模擬の答え手(I/O の無い scripted-warm-process-handler)の下で、分かれる道の task の env を確かめる",
+      "claim": "env は純粋な判断が作り ForkFromWarm の欄で運ぶので、模擬の答え手は env の規則を持たない(盲検の前の主張 S4)",
+      "expected_scope": "なし(答え手を差し替えるだけ)",
+      "actual_scope": "なし — 台本の答え手の下で宿が送る頼みの env に root の venv が在り、宿が plan.env を送る変異は赤(実測)",
+      "changed_modules": [],
+      "unchanged_modules": [
+        "M-judge",
+        "M-host",
+        "M-forked",
+        "M-rules",
+        "M-warm-host",
+        "M-venv-make",
+        "M-facts",
+        "M-uv"
+      ],
+      "reason": "予測どおり。env の値は M-judge の答えにあり、答え手を差し替えても運ばれる値は同じ",
+      "revision": "不要 — 予測どおり(盲検 B の推測「模擬が A の継ぎの規則を持つ必要が出る」は、B の実装を検が断るので起きない)"
+    },
+    {
+      "id": "S-hardware",
+      "axis": "hardware",
+      "applicability": "excluded",
+      "reason": "Linux と macOS の worker は venv の形(bin/・区切り :)が同じ。待ちの子は fork を使い Windows を範囲に持たない"
+    },
+    {
+      "id": "S-distribution",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "env は root と待ちの子を持つ worker 1 つが自分の中で作る。coordinator は PATH・VIRTUAL_ENV を運ばない(宣言で予約の名)"
+    },
+    {
+      "id": "S-concurrency",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "分かれた A は fork の後に自分の頼みの env を置くだけで、待ちの子は env を持たない。同時の頼みは状態を分け合わない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C-S1-positive",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "直した版で、2 つの道の入口の PATH(全部)・VIRTUAL_ENV・sys.prefix の実 path が同じで、分かれた子の環境が entry-env と完全一致し、検が緑",
+      "observation": "1 passed(test_task_venv_on_both_paths.hy・強めた形)・rc=0",
+      "evidence": {
+        "path": "evidence/positive-after-strengthening.log.txt",
+        "sha256": "4cb551617b6df30e19e27b067dc8438761e2c6a2f92fbae2c62121cdc99b08ce"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S1-negative-A2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "待ちの子を uv run を通さず名の python で起こす変異 A′ で、強めた検が interpreter の venv の食い違いで赤",
+      "observation": "1 failed・AssertionError: sys.prefix の実 path cold=<checkout>/.venv warm=/tmp/…/boot・rc=1",
+      "evidence": {
+        "path": "evidence/repro-A2-after-strengthening.log.txt",
+        "sha256": "e9b2a809ebfa44e1c85cd0645f0ded42b1dad68661eb2a728e58ccf763e29252"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S1-gap-before",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "直す前の検(ac512fc1 の形)は変異 A′ を拒否しない — 盲検 A の指摘した穴が在った事の確かめ",
+      "observation": "1 passed・rc=0(変異 A′ を当てた上で)",
+      "evidence": {
+        "path": "evidence/repro-A2-before-strengthening.log.txt",
+        "sha256": "d401a864bef22ccb1340f0d32ec93df8b809710b83e5fa9204242c4b68171e31"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S1-same-venv-other-spelling",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "warm-launch が project を実 path に解く変異(物として同じ venv を別の綴りで指す)は違反ではないので、強めた検が緑",
+      "observation": "1 passed・rc=0",
+      "evidence": {
+        "path": "evidence/repro-A-realpath-after-strengthening.log.txt",
+        "sha256": "80345d6fa1433efa2651a0e88c47a78c6d1e9457cf00a9cbefd2eb6f520e98f6"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S2-negative-B",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分(replace-environ が待ちの子の UV・UV_RUN_RECURSION_DEPTH を継ぐ)で、強めた検が entry-env との完全一致で赤",
+      "observation": "1 failed・AssertionError: 頼みに無い名 ['UV', 'UV_RUN_RECURSION_DEPTH']・頼みから消えた名 []・rc=1",
+      "evidence": {
+        "path": "evidence/repro-B-after-strengthening.log.txt",
+        "sha256": "3681622aeb80d8553374c1f6a448e0cee21213f1111156c3d37cf11404e8f265"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S2-gap-before",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "直す前の検は盲検 B の差分を拒否しない — 盲検 B の指摘した穴が在った事の確かめ",
+      "observation": "1 passed・rc=0(盲検 B の差分を当てた上で)",
+      "evidence": {
+        "path": "evidence/repro-B-before-strengthening.log.txt",
+        "sha256": "11b62511a75552b9a4cdb86b39ff27f69bbb0d20ebf3aa0dfdd6a9969c7b5d4e"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S3-positive",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "実行環境の service(once でない job)にも job-launch が entry-env(root の venv の PATH の頭と VIRTUAL_ENV)を作り、今の道の選びは service を分けない",
+      "observation": "svc: once=False forks-from-warm-child=False entry-env PATH=/roots/env-k1/app/.venv/bin:… VIRTUAL_ENV=/roots/env-k1/app/.venv・rc=0",
+      "evidence": {
+        "path": "evidence/s3-service-env.log.txt",
+        "sha256": "4525fda67723ed83da7839b03c0ab846686006f66746e43402b415c81514f5e5"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S3-negative",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "分かれる道の入口は退きの知らせの fd の名(DOEFF_WORKER_NOTICE_FD)を持たない — service を分けるには知らせの中継が要る(予測より範囲が広い)",
+      "observation": "冷えた道にだけ在る名: ['DOEFF_WORKER_NOTICE_FD', 'PYTHONDONTWRITEBYTECODE', 'UV', 'UV_RUN_RECURSION_DEPTH']・分かれる道にだけ在る名: []・同じ名で値が違う名: []・rc=0",
+      "evidence": {
+        "path": "evidence/env-names-diff.log.txt",
+        "sha256": "d4109e1239bf94fba51027a8e70306f15d8a80cc0c72e5422956e3d6be0a27fa"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S4-positive",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "positive",
+      "expectation": "台本の答え手の下で宿が待ちの子へ送る頼みの env に root の venv の 2 つが在り、test_warm_host と test_job_launch が緑",
+      "observation": "10 passed・rc=0",
+      "evidence": {
+        "path": "evidence/s4-none-test_warm_host.log.txt",
+        "sha256": "0d632f705ad6ed06681db42e8bb20604173a0a3c0ee60ca9c181062a2db5353c"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-S4-negative",
+      "scenarios": [
+        "S4"
+      ],
+      "control": "negative",
+      "expectation": "宿が ForkFromWarm に plan.env を送る変異で、配線の検が頼みに VIRTUAL_ENV が無い事で赤",
+      "observation": "1 failed, 9 passed・KeyError: 'VIRTUAL_ENV'(test_a_warm_key_task_asks_with_the_root_venv_that_uv_run_adds_on_the_cold_path)・rc=1",
+      "evidence": {
+        "path": "evidence/s4-S4-test_warm_host.log.txt",
+        "sha256": "a9383dae416a5d37f3c8dee95b4ab6146d99a0b7bf5c1bb54d7f1d075e9b7546"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C-fixture-users",
+      "scenarios": [
+        "S1",
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "入口の fixture(warm_job.py に sys.prefix を足した)の使い手 test_warm_child.py が緑",
+      "observation": "11 passed・rc=0",
+      "evidence": {
+        "path": "evidence/positive-test_warm_child.log.txt",
+        "sha256": "0845825b5c4e4f0546c2391605de3ba401fa29b01b7e99a1af98e5ce0b259678"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": []
+}
