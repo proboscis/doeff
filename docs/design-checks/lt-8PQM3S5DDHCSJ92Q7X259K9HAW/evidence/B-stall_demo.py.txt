@@ -1,0 +1,75 @@
+"""worker の代わりの process(検 test_job_log_ship.py の WORKER_PROCESS と同じ呼び方)を、systemd と同じ持ち方(同じ path を 2 度開く)で
+起こし、答えない送り先(検の silent と同じ — POST を受けて答えない)の下で、行の山と heartbeat の代わりの thread の write の待ちを測る。
+argv: <variant の src の dir> <置き場の dir> <行の数>"""
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+SRC, WORK, LINES = sys.argv[1], Path(sys.argv[2]), int(sys.argv[3])
+released = threading.Event()
+
+
+class Silent(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers["Content-Length"]))
+        released.wait(60)
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Silent)
+server.daemon_threads = True
+threading.Thread(target=server.serve_forever, daemon=True).start()
+
+CHILD = """
+import json, os, sys, threading, time
+from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
+waits = []
+stop = threading.Event()
+def heartbeat():
+    while not stop.is_set():
+        started = time.monotonic()
+        os.write(2, b"worker: heartbeat\\n")
+        waits.append(time.monotonic() - started)
+        time.sleep(0.05)
+beat = threading.Thread(target=heartbeat)
+beat.start()
+started = time.monotonic()
+for n in range(int(sys.argv[2])):
+    os.write(1, b"worker: burst line %06d\\n" % n)
+burst = time.monotonic() - started
+stop.set()
+beat.join()
+with open(sys.argv[1], "w") as out:
+    json.dump({"burst_write_seconds": round(burst, 3), "heartbeat_max_write_seconds": round(max(waits), 3),
+               "heartbeats": len(waits), "script_end_at": time.time()}, out)
+"""
+
+WORK.mkdir(parents=True, exist_ok=True)
+log = WORK / "worker.log"
+report = WORK / "report.json"
+env = {**os.environ, "PYTHONPATH": SRC, "DOEFF_JOB_LOG_OTLP": f"http://127.0.0.1:{server.server_address[1]}",
+       "DOEFF_JOB_LOG_ATTRIBUTES": "owner.tenant=personal"}
+started = time.monotonic()
+with open(log, "ab") as out, open(log, "ab") as err:
+    child = subprocess.Popen([sys.executable, "-B", "-c", CHILD, str(report), str(LINES)], stdin=subprocess.DEVNULL,
+                             stdout=out, stderr=err, env=env)
+code = child.wait(timeout=120)
+exited_at = time.time()
+elapsed = time.monotonic() - started
+released.set()
+server.shutdown()
+data = log.read_bytes()
+result = json.loads(report.read_text())
+result["exit_tail_seconds"] = round(exited_at - result.pop("script_end_at"), 3)
+result.update({"exit_code": code, "process_seconds": round(elapsed, 3),
+               "burst_lines_in_file": data.count(b"worker: burst line "),
+               "stamped": data[:30].decode(errors="replace")})
+print(json.dumps(result, ensure_ascii=False))

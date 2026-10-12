@@ -1,0 +1,12 @@
+# 盲検 B の再現・対象 6c385dbb7 の line_stamp.py(base)と盲検 B の差分を当てた写し(mod)・dir /tmp/wpl-B-98Wc
+## base
+{"burst_write_seconds": 0.167, "heartbeat_max_write_seconds": 0.0, "heartbeats": 4, "exit_tail_seconds": 0.85, "exit_code": 0, "process_seconds": 1.248, "burst_lines_in_file": 20000, "stamped": "2026-10-12T05:09:29.290+00:00 "}
+rc=0
+## mod
+{"burst_write_seconds": 0.416, "heartbeat_max_write_seconds": 0.186, "heartbeats": 4, "exit_tail_seconds": 0.685, "exit_code": 0, "process_seconds": 1.326, "burst_lines_in_file": 20000, "stamped": "2026-10-12T05:09:31.449+00:00 "}
+rc=0
+{"burst_write_seconds": 22.582, "heartbeat_max_write_seconds": 4.052, "heartbeats": 13, "exit_tail_seconds": 4.703, "exit_code": 0, "process_seconds": 27.502, "burst_lines_in_file": 40000, "stamped": "2026-10-12T05:09:48.009+00:00 "}
+{"burst_write_seconds": 25.379, "heartbeat_max_write_seconds": 3.618, "heartbeats": 15, "exit_tail_seconds": 4.77, "exit_code": 0, "process_seconds": 30.4, "burst_lines_in_file": 40000, "stamped": "2026-10-12T05:10:16.435+00:00 "}
+## base 40000 行(2 回)
+{"burst_write_seconds": 0.389, "heartbeat_max_write_seconds": 0.099, "heartbeats": 6, "exit_tail_seconds": 0.723, "exit_code": 0, "process_seconds": 1.294, "burst_lines_in_file": 40000, "stamped": "2026-10-12T05:10:51.997+00:00 "}
+{"burst_write_seconds": 0.249, "heartbeat_max_write_seconds": 0.011, "heartbeats": 5, "exit_tail_seconds": 0.642, "exit_code": 0, "process_seconds": 1.065, "burst_lines_in_file": 40000, "stamped": "2026-10-12T05:10:54.079+00:00 "}

@@ -1,0 +1,6 @@
+36c36
+< GRACE_SECONDS = 10.0
+---
+> GRACE_SECONDS = 1.0
+141a142
+>     print(f"lifeline: 起こした側が終わった — {len(targets)} の相手へ TERM を送った", file=sys.stderr, flush=True)
