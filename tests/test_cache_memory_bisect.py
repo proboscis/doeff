@@ -55,25 +55,25 @@ class _AllHeldGate:
 
     A sleep of a few ms lets early waits end before late ones start, so how many were held at once
     varied run to run (measured with the sleeps: 11-168 of 500). Here the n-th wait to start opens the
-    gate for everyone, so the count held at once is always ``n``; ``peak_held`` is that observation.
+    gate for everyone, so the count held at once is always ``n``; ``mut_peak_held`` is that observation.
     Awaits run on the one event loop that await_handler shares process-wide, so plain counters are safe.
     """
 
     def __init__(self, n: int) -> None:
         self._n = n
-        self._held = 0
-        self.peak_held = 0
+        self._mut_held = 0
+        self.mut_peak_held = 0
         self._all_held = asyncio.Event()
 
     async def hold(self) -> None:
-        self._held += 1
-        self.peak_held = max(self.peak_held, self._held)
-        if self._held == self._n:
+        self._mut_held += 1
+        self.mut_peak_held = max(self.mut_peak_held, self._mut_held)
+        if self._mut_held == self._n:
             self._all_held.set()
         try:
             await self._all_held.wait()
         finally:
-            self._held -= 1
+            self._mut_held -= 1
 
 
 @do
@@ -84,7 +84,7 @@ def _spawn_gather_n(factory, n: int):
         t = yield Spawn(factory(i, gate))
         tasks.append(t)
     results = list((yield Gather(*tasks)))
-    assert gate.peak_held == n, f"only {gate.peak_held} of {n} waits were held at once"
+    assert gate.mut_peak_held == n, f"only {gate.mut_peak_held} of {n} waits were held at once"
     return results
 
 

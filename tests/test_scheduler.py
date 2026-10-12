@@ -3,7 +3,7 @@
 import sys
 import threading
 from types import FrameType
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 from doeff_core_effects.scheduler import (
@@ -1126,9 +1126,14 @@ class TestCancel:
 # (agora-redesign card ki-1294af4fa525)
 # ---------------------------------------------------------------------------
 
-def _scheduler_lines_per_timed_wait(
-    parked: int, waits: int, *, traced: bool
-) -> tuple[float, dict[str, float]]:
+class _TimedWaitWork(NamedTuple):
+    """The scheduler.py lines one timed wait ran: their median, and the mean per function."""
+
+    median_lines: float
+    by_function: dict[str, float]
+
+
+def _scheduler_lines_per_timed_wait(parked: int, waits: int, *, traced: bool) -> _TimedWaitWork:
     """Lines of scheduler.py one WaitWithin runs while ``parked`` other tasks wait.
 
     The production shape (doeff-claude-code's doorbell under the async clock):
@@ -1215,9 +1220,10 @@ def _scheduler_lines_per_timed_wait(
     finally:
         sys.settrace(previous_trace)
         set_scheduler_trace(None)
-    return statistics.median(per_wait), {
-        name: count / waits for name, count in counted.most_common()
-    }
+    return _TimedWaitWork(
+        statistics.median(per_wait),
+        {name: count / waits for name, count in counted.most_common()},
+    )
 
 
 class TestTimedWaitWorkDoesNotGrowWithParkedTasks:

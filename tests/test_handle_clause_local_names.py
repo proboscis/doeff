@@ -22,6 +22,7 @@ import sys
 import types
 import warnings
 from collections.abc import Callable
+from typing import NamedTuple
 
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
@@ -118,28 +119,33 @@ def _run_with_state(program: object) -> object:
     return run(scheduled(state(initial={})(program)))
 
 
-def _host(
-    host: str, definition: str, expression: str
-) -> tuple[str, Callable[[types.ModuleType], object]]:
+class _Scenario(NamedTuple):
+    """host に書いた Hy の source と、それを読み込んだ module から Program を取る関数。"""
+
+    source: str
+    program: Callable[[types.ModuleType], object]
+
+
+def _host(host: str, definition: str, expression: str) -> _Scenario:
     """definition(handler の定義。無ければ空)と、答えを出す式 expression を host に書いた source と、Program の取り方。"""
     match host:
         case "module":
-            return f"{definition}(setv program {expression})", lambda mod: mod.program
+            return _Scenario(f"{definition}(setv program {expression})", lambda mod: mod.program)
         case "defk":
-            return (
+            return _Scenario(
                 f"(defk subject [] {{:pre [] :post [(: % int)]}} {definition} (<- r {expression}) r)",
                 lambda mod: mod.subject(),
             )
         case "defn":
-            return f"(defn host [] {definition} {expression})", lambda mod: mod.host()
+            return _Scenario(f"(defn host [] {definition} {expression})", lambda mod: mod.host())
         case "class" if not definition:
-            return f"(defclass C [] (setv program {expression}))", lambda mod: mod.C.program
+            return _Scenario(f"(defclass C [] (setv program {expression}))", lambda mod: mod.C.program)
         case _:
             raise AssertionError(host)
 
 
-def _scenarios() -> dict[str, tuple[str, Callable[[types.ModuleType], object]]]:
-    found: dict[str, tuple[str, Callable[[types.ModuleType], object]]] = {}
+def _scenarios() -> dict[str, _Scenario]:
+    found: dict[str, _Scenario] = {}
     for kind, expression in _EXPRESSIONS.items():
         for host in _HOSTS:
             found[f"{kind}-{host}-handle"] = _host(host, "", expression)

@@ -1038,11 +1038,11 @@ class _ChildProgress:
 
     def __init__(self, clock: ChildClock) -> None:
         self._changed = threading.Condition()
-        self._clock = clock
-        self._events: tuple[Event, ...] = ()
-        self._unreadable: StopError | None = None
-        self._exited = False
-        self._drained = False
+        self._mut_clock = clock
+        self._mut_events: tuple[Event, ...] = ()
+        self._mut_unreadable: StopError | None = None
+        self._mut_exited = False
+        self._mut_drained = False
 
     def read(self, fd: int) -> None:
         """読み手の thread の本体: pipe の読み口を書き手が全員閉じるまで 1 行ずつ読む(plugin が書く結末の行の全部)。
@@ -1052,7 +1052,7 @@ class _ChildProgress:
                 if line.strip():
                     self._receive(line, time.monotonic())
         with self._changed:
-            self._drained = True
+            self._mut_drained = True
             self._changed.notify_all()
 
     def _receive(self, line: str, at: float) -> None:
@@ -1061,18 +1061,18 @@ class _ChildProgress:
             event = _parse_event(line)
         except StopError as exc:
             with self._changed:
-                self._unreadable = self._unreadable or exc
+                self._mut_unreadable = self._mut_unreadable or exc
             return
         with self._changed:
-            self._events = (*self._events, event)
-            self._clock = self._clock.mark(event, at)
+            self._mut_events = (*self._mut_events, event)
+            self._mut_clock = self._mut_clock.mark(event, at)
             self._changed.notify_all()
 
     def watch(self, proc: subprocess.Popen[bytes]) -> None:
         """待ち手の thread の本体: process の終わりを待ち、入口の thread を起こす。"""
         proc.wait()
         with self._changed:
-            self._exited = True
+            self._mut_exited = True
             self._changed.notify_all()
 
     def wait_within(self, budget: float) -> bool:
@@ -1082,11 +1082,11 @@ class _ChildProgress:
         入口へ移り、2 つの上限の小さい方が効く(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 B)。待ちの上限を変える時は
         正本の値を変える。"""
         with self._changed:
-            while not self._exited:
-                if self._clock.paused:
+            while not self._mut_exited:
+                if self._mut_clock.paused:
                     self._changed.wait()
                     continue
-                left = budget - self._clock.counted(time.monotonic())
+                left = budget - self._mut_clock.counted(time.monotonic())
                 if left <= 0:
                     return False
                 self._changed.wait(left)
@@ -1096,13 +1096,13 @@ class _ChildProgress:
         """process が終わった後、pipe を読み終えるのを grace 秒まで待って結末を返す — 読み終えない(検が group の外へ逃がした
         子が書き口を持つ)・読めない行が在った時は止める。"""
         with self._changed:
-            if not self._changed.wait_for(lambda: self._drained, timeout=grace):
+            if not self._changed.wait_for(lambda: self._mut_drained, timeout=grace):
                 raise StopError(
                     "pytest が終わった後も結末の pipe を持つ process が残っている(検が group の外へ逃がした子)"
                 )
-            if self._unreadable is not None:
-                raise self._unreadable
-            return Drained(events=self._events, clock=self._clock)
+            if self._mut_unreadable is not None:
+                raise self._mut_unreadable
+            return Drained(events=self._mut_events, clock=self._mut_clock)
 
 
 def _stop_group(proc: subprocess.Popen[bytes]) -> None:

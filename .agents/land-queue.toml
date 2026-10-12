@@ -86,6 +86,10 @@ name = "doeff"
 # label〔doeff-gate-lint〕に写して .venv を避ける要は無くなった。task の HOME には zeus の land-arm の開発版も断面の置き場も無いので、
 # 比べの前に `sh scripts/gate_tools.sh linter` が基点の file を最後に書いた commit の linter を断面の置き場に用意する — 呼び手の
 # DOEFF_LINTER_SNAPSHOT_DIR〔worker の作業の根の daily-verify-cache/doeff-linter-snapshots〕へ結ぶので、組むのは鍵の変わった時の 1 度。)
+# semgrep の比べだけ python を 3.12 と宣言する(commit の hook の設定 .pre-commit-config.yaml の semgrep の項と同じ): 比べは uv.lock の版の
+# semgrep を `uv tool run` で呼び、道具の python は走っている python の版(scripts/semgrep_locked.py)。宣言が無いと uv は木の
+# .python-version(free-threaded の 3.14)を選び、`uv tool run` は pyproject.toml の exclude-dependencies を読まないので、組めない
+# C 加速器 ruamel-yaml-clib を組みに行って落ちる(「semgrep の JSON に results の列が無い」)。doeff-linter の比べは道具を呼ばない。
 # 2026-10-07(agora-redesign #3879・cisco-c8 の決め・戻せる): 全部の処理ステージに欄 pytest(pytest の session を走らせるか)を書く。
 # 日次の全体検証は true の処理ステージで session が 1 本も答えなければ、カバレッジの欠けに数える。起点 = この repo の 04:00 の日次:
 # root と packages が conftest.py の import で落ちて session の行が 0 本なのに、カバレッジを「完全」と記帳した(行を書く受付の部品は
@@ -133,7 +137,7 @@ full = [
   { name = "hy-floor", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-hy-floor PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
   { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false },
   { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
-  { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false }
+  { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false }
 ]
 # 日次の外の物(Mac の調整役の決め (b)・cisco-c8 の中継 2026-10-05 18:3x・agora-redesign #3167・#3571): 名と未実行の種類の両方が一致した
 # 申告だけを、検証の本体(merge-queue の verify_main — L274)が結論の計算の直前に分け、残りの処理ステージの結果で結論を出す。分けた物は

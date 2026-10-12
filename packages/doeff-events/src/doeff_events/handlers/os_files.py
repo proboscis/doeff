@@ -80,42 +80,42 @@ class _Notifier:
     two flags only — it is never held while the notifier waits.
     """
 
-    __slots__ = ("_closed", "_closing", "_lock", "_waits", "notifier", "stop")
+    __slots__ = ("_lock", "_mut_closed", "_mut_closing", "_mut_waits", "notifier", "stop")
 
     def __init__(self, notifier: _NotifierLike) -> None:
         """Keep a started notifier; no wait is inside it yet."""
         self.notifier = notifier
         self.stop = threading.Event()
         self._lock = threading.Lock()
-        self._waits = 0
-        self._closing = False
-        self._closed = False
+        self._mut_waits = 0
+        self._mut_closing = False
+        self._mut_closed = False
 
     def wait_once(self) -> object:
         """One blocking wait of the notifier (runs in a worker thread): its answer, or ``"stop"`` without waiting once
         the watch is closing."""
         with self._lock:
-            if self._closing:
+            if self._mut_closing:
                 return "stop"
-            self._waits += 1
+            self._mut_waits += 1
         try:
             return self.notifier.watch(DEBOUNCE_MS, STEP_MS, NOTIFIER_TIMEOUT_MS, self.stop)
         finally:
             with self._lock:
-                self._waits -= 1
+                self._mut_waits -= 1
                 self._close_if_idle()
 
     def close(self) -> None:
         """End the waits (stop flag) and close the notifier now, or leave the close to the last wait inside it."""
         self.stop.set()
         with self._lock:
-            self._closing = True
+            self._mut_closing = True
             self._close_if_idle()
 
     def _close_if_idle(self) -> None:
         """Close the notifier once, when closing and no wait is inside it (called with ``_lock`` held)."""
-        if self._closing and self._waits == 0 and not self._closed:
-            self._closed = True
+        if self._mut_closing and self._mut_waits == 0 and not self._mut_closed:
+            self._mut_closed = True
             self.notifier.close()
 
 

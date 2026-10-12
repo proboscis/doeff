@@ -172,10 +172,13 @@ disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF125"]
 #   検出の見本)と空の __init__.py だけ(2026-10-02 に追跡中の file を見た)。当たりを持つのが役目で、直すと検の見本が壊れる。
 # build の道具の環境変数の読み(DOEFF004 だけ)は、ここで file ごと外さず、名指しの module に限って外す — tools/architecture.hy・
 #   packages/doeff-indexer/architecture.hy。
+#   design・design-checks = 設計の記録の dir(下の [tool.doeff] record-dirs の末尾の名 — docs/design/・docs/design-checks/)。
+#   その時点の証拠(測りの script・盲検の A・B が書いた物の写し)で、書き直すと記録が変わる。業務の code でも検でもないので、
+#   規則の対象にしない。記録の dir を足したら末尾の名をここへ足す(tests/test_linter_excludes_record_dirs.py が赤にする)。
 # linter の exclude は path の部品 1 つ(dir の名か file の名)と一致する時だけ外す — 名に語を含むだけでは外さない(doeff-linter の
 # should_exclude・以前は部分一致で、名に build・dist を含む file が黙って判定の外だった)。file を名指して測る入口
 # (scripts/hook_finding_baseline.py)は --force-exclude を付けて、名指した file にも当てる。
-exclude = ["fixtures"]
+exclude = ["fixtures", "design", "design-checks"]
 
 # 定義の書き方の規則(DOEFF110 defn・111 deff の理由・112 タグ・119 class・126 素の defk 呼び ほか)の母集団(agora-redesign #2909・
 # #2877)。以前はこの節が無く、doeff の package の src に defn・class・素の defk 呼びを足しても鳴らなかった。今効くのは

@@ -164,7 +164,7 @@ class _OverlapNotifier:
 
         self.inside = threading.Event()
         self.closed_now = threading.Event()
-        self.closes: tuple[bool, ...] = ()
+        self.mut_closes: tuple[bool, ...] = ()
         _OverlapNotifier.instances = (*_OverlapNotifier.instances, self)
 
     def watch(
@@ -179,7 +179,7 @@ class _OverlapNotifier:
             self.inside.clear()
 
     def close(self) -> None:
-        self.closes = (*self.closes, self.inside.is_set())
+        self.mut_closes = (*self.mut_closes, self.inside.is_set())
         self.closed_now.set()
 
 
@@ -214,7 +214,7 @@ def test_os_watch_never_closes_the_library_while_a_wait_is_inside_it(
         return changed
 
     assert run_scheduled(os_file_watch_handler()(program())) == FilesChanged(())
-    assert _OverlapNotifier.instances[0].closes == (False,), _OverlapNotifier.instances[0].closes
+    assert _OverlapNotifier.instances[0].mut_closes == (False,), _OverlapNotifier.instances[0].mut_closes
 
 
 def test_os_watch_closed_with_no_wait_inside_closes_the_library_at_once(
@@ -229,7 +229,7 @@ def test_os_watch_closed_with_no_wait_inside_closes_the_library_at_once(
     def program() -> "EffectGenerator[object]":
         watch = yield WatchFiles(str(tmp_path))
         yield CloseFileWatch(watch)
-        closes = _OverlapNotifier.instances[0].closes
+        closes = _OverlapNotifier.instances[0].mut_closes
         # A wait asked for after the close answers no changes at once (the handler keeps nothing for the watch).
         changed = yield NextFileChanges(watch)
         return closes, changed
@@ -356,7 +356,7 @@ class _QuietNotifier:
     def __init__(self, *_args: object) -> None:
         import threading
 
-        self.threads: tuple[threading.Thread, ...] = ()
+        self.mut_threads: tuple[threading.Thread, ...] = ()
         self.waited_again = threading.Event()
         _QuietNotifier.instances = (*_QuietNotifier.instances, self)
 
@@ -365,8 +365,8 @@ class _QuietNotifier:
     ) -> object:
         import threading
 
-        self.threads = (*self.threads, threading.current_thread())
-        if len(self.threads) >= 3:
+        self.mut_threads = (*self.mut_threads, threading.current_thread())
+        if len(self.mut_threads) >= 3:
             self.waited_again.set()
         stop_event.wait(0.02)
         return "stop" if stop_event.is_set() else "timeout"
@@ -392,9 +392,9 @@ def test_os_watch_cancelled_wait_leaves_no_thread_behind(
 
     async def thread_ended(notifier: _QuietNotifier) -> bool:
         def join() -> bool:
-            for thread in set(notifier.threads):
+            for thread in set(notifier.mut_threads):
                 thread.join(2.0)
-            return not any(thread.is_alive() for thread in notifier.threads)
+            return not any(thread.is_alive() for thread in notifier.mut_threads)
 
         return await asyncio.to_thread(join)
 
@@ -415,7 +415,7 @@ def test_os_watch_cancelled_wait_leaves_no_thread_behind(
             yield Wait(task)
         ended = yield Await(thread_ended(notifier))
         yield CloseFileWatch(watch)
-        return ended, len(set(notifier.threads))
+        return ended, len(set(notifier.mut_threads))
 
     # One thread for the whole wait, ended after the cancel.
     assert run_scheduled(os_file_watch_handler()(program())) == (True, 1)
