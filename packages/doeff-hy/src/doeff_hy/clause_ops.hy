@@ -1,0 +1,134 @@
+;;; defhandler / handle の節の操作(resume・transfer・finish・reperform・pass・raise)の表 — 操作の名と性質の唯一の定義元
+;;; (card ki-b4c015d8ba1f)。
+;;;
+;;; 操作 1 つの行(ClauseOp)が持つ物:
+;;;   name          節の中で書く頭の名
+;;;   ending        節を終えた後に続きをどうするか(Ending)— effect の再開の宣言と照らす所(clause_endings.hy)
+;;;   arity         書き換える形の引数の数(rewrite が None の操作は問わない)
+;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名
+;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名
+;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
+;;;
+;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
+;;; 写しだった頃、新しい操作を _terminates と書き換えにだけ足すと、Raise の節のその操作を、展開・handle の評価・実行のどの検めも
+;;; 止めなかった(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — (Raise [reason] (throw …)) で Raise の続きが走った)。
+;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換え)・_vm-imports(node の import)
+;;;   clause_endings.hy  ops-in / clause-ops(節が使う操作)・check-clause-by-name / check-clause-endings(ending ごとの照合)
+;;;
+;;; handle.hy が module の頭で import する(macros.hy が handle.hy を require する途中で読まれる)ので、doeff-hy.macros も
+;;; doeff-hy.record も require しない — defrecord・deff・val を使わず、declarations.hy の DefinitionTags と同じ素の dataclass と
+;;; module の直下の setv にする。
+
+(import dataclasses [dataclass])
+(import collections.abc [Callable])
+(import enum [StrEnum])
+(import hy.models [Expression Symbol])
+(import doeff-hy.static-view [static-view-enabled])
+
+
+(defclass Ending [StrEnum]
+  "節を終えた後に続きをどうするか(ADR-DOE-CORE-EFFECTS-003 R15)。"
+  ;; 続きを再開する — Raise / Absent の節では断る
+  (setv RESUMES "resumes")
+  ;; 続きを捨て、handler を置いたスコープを値で終える — 普通の effect の節は :finish-reason が要る
+  (setv FINISHES "finishes")
+  ;; effect と続きを外の handler へ渡す
+  (setv FORWARDS "forwards")
+  ;; 例外で節を抜ける
+  (setv RAISES "raises"))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] ClauseOp []
+  "節の操作 1 つ(欄の意味は module の頭)。"
+  (#^ str name)
+  (#^ Ending ending)
+  (#^ (| int None) arity)
+  (#^ (get tuple #(str ...)) nodes)
+  (#^ (get tuple #(str ...)) static-nodes)
+  (#^ (| Callable None) rewrite))
+
+
+(defn _resume [args recur]
+  "(resume 値) → 続きを値で再開する。型検査のための展開は core の typed-resume で、値を effect の答えの型(EffectBase[T] の T)と
+   突き合わせる(`effect` は節の `(isinstance effect EffectType)` で絞られている)。非末尾の resume は続きが終わると節へ戻る —
+   戻った後で「再開した」と記す(値の式や続きで出た例外を節が握りつぶして抜けた道は印が付かず、実行の時に誤りになる・
+   ADR-DOE-CORE-EFFECTS-003 R15)。"
+  (setv value (recur (get args 0)))
+  (if (static-view-enabled)
+      `(do (setv _doeff_resumed_value
+                 (yield (do (import doeff [typed-resume])
+                            (typed-resume effect k ~value))))
+           (setv _doeff_clause_resumed True)
+           _doeff_resumed_value)
+      `(do (setv _doeff_resumed_value (yield (Resume k ~value)))
+           (setv _doeff_clause_resumed True)
+           _doeff_resumed_value)))
+
+
+(defn _transfer [args recur]
+  "(transfer 値) → 続きを値で再開し、handler を外す(末尾の呼び)。型検査のための展開は core の typed-transfer。"
+  (setv value (recur (get args 0)))
+  (if (static-view-enabled)
+      `(yield (do (import doeff [typed-transfer])
+                  (typed-transfer effect k ~value)))
+      `(yield (Transfer k ~value))))
+
+
+(defn _finish [args recur]
+  "(finish 値) → 続きを捨て、handler を置いたスコープの答えを値にする(再開しない終わり方)。"
+  `(return ~(recur (get args 0))))
+
+
+(defn _reperform [args recur]
+  "(reperform effect) → effect と続きを外の handler へ渡す(OCaml 5 の reperform)。"
+  `(yield (Pass ~(recur (get args 0)) k)))
+
+
+(defn _pass [args recur]
+  "(pass) → 節の effect と続きを外の handler へ渡す — 旧い形で、(reperform effect) へ移すよう警告する。"
+  (import warnings)
+  (warnings.warn
+    "(pass) is deprecated in defhandler — use (reperform effect) instead"
+    DeprecationWarning)
+  '(yield (Pass effect k)))
+
+
+;; 節の操作の表。行の順は handler の頭の import の名の順(node-names)。表を引くのはこの module の関数だけ(呼び手は名で表を
+;; 写さない・引かない)。
+(setv CLAUSE-OPS
+  #((ClauseOp :name "resume" :ending Ending.RESUMES :arity 1
+              :nodes #("Resume") :static-nodes #() :rewrite _resume)
+    (ClauseOp :name "transfer" :ending Ending.RESUMES :arity 1
+              :nodes #("Transfer") :static-nodes #() :rewrite _transfer)
+    (ClauseOp :name "finish" :ending Ending.FINISHES :arity 1
+              :nodes #() :static-nodes #() :rewrite _finish)
+    (ClauseOp :name "reperform" :ending Ending.FORWARDS :arity 1
+              :nodes #("Pass") :static-nodes #("Pass") :rewrite _reperform)
+    (ClauseOp :name "pass" :ending Ending.FORWARDS :arity 0
+              :nodes #("Pass") :static-nodes #("Pass") :rewrite _pass)
+    (ClauseOp :name "raise" :ending Ending.RAISES :arity None
+              :nodes #() :static-nodes #() :rewrite None)))
+
+
+(defn named-op [name]
+  "名の節の操作の行(表に無い名は None)。"
+  (next (gfor op CLAUSE-OPS :if (= op.name name) op) None))
+
+
+(defn clause-op [form]
+  "form が節の操作の形(頭の名が表に在る式)ならその行、でなければ None。引数の数は問わない — 節を終えるかの検めと、節が
+   使う操作の集まりは頭の名だけで決める(書き換えるかは呼び手が arity と照らす)。"
+  (when (and (isinstance form Expression) (> (len form) 0) (isinstance (get form 0) Symbol))
+    (named-op (str (get form 0)))))
+
+
+(defn ops-ending [names ending]
+  "操作の名の集まりのうち、終わり方が ending の物(frozenset)— 節が使う操作と effect の再開の宣言を照らすため。"
+  (frozenset (gfor op CLAUSE-OPS :if (and (in op.name names) (= op.ending ending)) op.name)))
+
+
+(defn node-names [static?]
+  "handler の展開が頭で doeff から import する、節の操作の node の名(表の順・重ねなし)。"
+  (list (dict.fromkeys (gfor op CLAUSE-OPS
+                             name (if static? op.static-nodes op.nodes)
+                         name))))
