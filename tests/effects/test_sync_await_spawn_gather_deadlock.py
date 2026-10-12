@@ -48,9 +48,9 @@ def _run_sync_with_timeout(program):
 
 # The fake API holds its replies until the program has spawned every worker, so all of them are in flight at
 # once (workers over the semaphore limit parked, the rest awaiting) before the first reply is delivered. A
-# reply that comes at once would let each worker finish before the next is spawned and the semaphore would
-# never have a waiter; ``asyncio.sleep(0.01)`` only got that order from the wall clock. The gate starts open, so a
-# program that does not hold it gets its replies at once.
+# reply completed by ``call_soon`` lets workers finish while the program is still spawning, and a semaphore that
+# is released too many times then goes unnoticed (measured); ``asyncio.sleep(0.01)`` got the held order from the
+# wall clock. The gate starts open, so a program that does not hold it gets its replies at once.
 _REPLY_GATE = asyncio.Event()
 _REPLY_GATE.set()
 
