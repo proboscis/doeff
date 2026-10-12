@@ -1,0 +1,87 @@
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 432656 pytest doeff-wt-ki-6828 (c-C2HCCSNSQKN5E5JTMZ2M5AWJRH)、pid 450144 doeff-linter lint tree (c-M9APGAFDSJG58PQRQ5216VK7V6)、pid 469977 pytest doeff-wt-clause-ops-table (c-WAZXHFJNRQT4M48X15CQBXNS3V)、pid 479744 code-quality dotfiles-precommit-index.J3Cns2 (c-NVK1C1Z5SYG75SN3N4XCSVNFSH)、pid 491680 pytest agora-controllers-wt-dc-szy0-b (c-NETX7PC6AC3AJENKQCQZXVG71W)、pid 417259 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 486039 pytest agora-controllers-wt-ki-2bae (c-BWKJT70EQ0QFBPT5DK9SRACMPF)、pid 474767 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)・待つのは pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 432656 pytest doeff-wt-ki-6828 (c-C2HCCSNSQKN5E5JTMZ2M5AWJRH)、pid 450144 doeff-linter lint tree (c-M9APGAFDSJG58PQRQ5216VK7V6)、pid 487108 pytest doeff-wt-ki-2fa4-dc (c-R6ECWFH17QCZP7P1K5B8SP5TGP)、pid 479744 code-quality dotfiles-precommit-index.J3Cns2 (c-NVK1C1Z5SYG75SN3N4XCSVNFSH)、pid 491680 pytest agora-controllers-wt-dc-szy0-b (c-NETX7PC6AC3AJENKQCQZXVG71W)、pid 417259 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 482037 pytest agora-controllers (c-761AEFQ8DHECPKRVVYN28FJ5G1)、pid 474767 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)・待つのは pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 432656 pytest doeff-wt-ki-6828 (c-C2HCCSNSQKN5E5JTMZ2M5AWJRH)、pid 450144 doeff-linter lint tree (c-M9APGAFDSJG58PQRQ5216VK7V6)、pid 493081 code-quality agora-controllers-wt-ki-9b11 (c-NQQ14Q0T3WGBD8KD4DKK8YGM2H)、pid 484259 pytest tree (c-M9APGAFDSJG58PQRQ5216VK7V6)、pid 491680 pytest agora-controllers-wt-dc-szy0-b (c-NETX7PC6AC3AJENKQCQZXVG71W)、pid 417259 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 493677 pytest doeff-wt-ki-93395c-dc (c-6313YGCZRXA701C4632PQWS5ET)、pid 474767 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)・待つのは pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+check-slot: 枠 5 を取った(待ち 27 秒)— pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+
+deadline scale x3.4 (load per usable CPU) — per test 202s, watchdog 302s
+
+test-admission: focused — 66 件(変更箇所の検証)
+..........F........................s..............................       [100%]
+=================================== FAILURES ===================================
+__________________ test_example_runs[ex10_built_then_run.hy] ___________________
+
+name = 'ex10_built_then_run.hy'
+children = <test_examples_run.Children object at 0x23f0e469190>
+
+    @pytest.mark.parametrize("name", _runnable())
+    def test_example_runs(name: str, children: Children) -> None:
+        result = children.result(name, failing_a_case=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        expected = _expected(name)
+        assert expected.is_file(), (
+            f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
+            f"走るたびに変わる所を印にする"
+        )
+        swallowed = _compare(expected.read_text(encoding="utf-8"), result.stdout)
+>       assert swallowed is not None, _output_diff(expected, result.stdout)
+E       AssertionError: --- expected/ex10_built_then_run.txt
+E         +++ 標準出力
+E         @@ -1,3 +1,3 @@
+E         -built: Traverse / Call
+E         +built: Call / Call
+E          single: [10, 20, 30]
+E          pairs: [20, 30, 30, 40]
+E       assert None is not None
+
+packages/doeff-traverse/tests/test_examples_run.py:492: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-blind-b-ki-fe7a/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex10_built_then_run.hy]
+1 failed, 64 passed, 1 skipped, 1 warning in 34.33s

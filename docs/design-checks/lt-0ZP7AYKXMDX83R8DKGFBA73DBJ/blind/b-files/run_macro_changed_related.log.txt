@@ -1,0 +1,66 @@
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 432656 pytest doeff-wt-ki-6828 (c-C2HCCSNSQKN5E5JTMZ2M5AWJRH)、pid 450144 doeff-linter lint tree (c-M9APGAFDSJG58PQRQ5216VK7V6)、pid 505257 pytest agora-controllers-wt-ki-0a98-dc (c-D5M32RDXQ6YTYZMA0J4CQQ02E2)、pid 496128 pytest doeff-wt-clause-ops-base (c-WAZXHFJNRQT4M48X15CQBXNS3V)、pid 493389 code-quality agora-controllers-wt-ki-4d5f (c-3FQ40FGHP322SPD0QMEDJX8ZPS)、pid 499006 pytest agora-controllers (c-SWSWSANGZYSA31DC745SPAE1AP)、pid 481869 pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)、pid 505207 pytest agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)・待つのは pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 432656 pytest doeff-wt-ki-6828 (c-C2HCCSNSQKN5E5JTMZ2M5AWJRH)、pid 450144 doeff-linter lint tree (c-M9APGAFDSJG58PQRQ5216VK7V6)、pid 484242 code-quality agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 496128 pytest doeff-wt-clause-ops-base (c-WAZXHFJNRQT4M48X15CQBXNS3V)、pid 493389 code-quality agora-controllers-wt-ki-4d5f (c-3FQ40FGHP322SPD0QMEDJX8ZPS)、pid 499006 pytest agora-controllers (c-SWSWSANGZYSA31DC745SPAE1AP)、pid 481869 pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)、pid 505207 pytest agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)・待つのは pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+check-slot: 枠 7 を取った(待ち 17 秒)— pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)
+
+deadline scale x3.3 (load per usable CPU) — per test 195s, watchdog 292s
+
+test-admission: focused — 138 件(変更箇所の検証)
+........................................................................ [ 52%]
+..................................................................       [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-blind-b-ki-fe7a/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel]
+  /work/toolset/worktrees/doeff-wt-blind-b-ki-fe7a/doeff/run.py:24: RuntimeWarning: task 4 ended its root close-out unwinding with ItemOutcomeNotPassedError: a handler took ItemOutcome('failed', index=1, total=2, label='outer') and threw _BudgetError: failed at 1 — a consumer of ItemOutcome passes it on (Pass(effect, k) / (reperform effect)); only the Traverse handler answers it
+    return vm.run(doexpr)
+
+packages/doeff-traverse/tests/test_item_outcomes.py::test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure[parallel]
+  /work/toolset/worktrees/doeff-wt-blind-b-ki-fe7a/doeff/run.py:24: RuntimeWarning: scheduler root body returned while abandoning in-flight work (#501): ready entries [unstarted task 8; queued resume for task 4]; parked waiters [] — cancelled at root return and unwound (#2684). Spawned work that must finish has to be awaited (Wait/Gather) before the root body returns; intentional background work should be spawned with Spawn(..., daemon=True).
+    return vm.run(doexpr)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+138 passed, 3 warnings in 38.61s
