@@ -2320,14 +2320,15 @@ defpipeline {pipeline}: no stages defined.
 ;; defmcp-tool — MCP tool definition backed by doeff handler
 ;; ---------------------------------------------------------------------------
 
-(defn _parse-mcp-params [param-list]
+(defn _parse-mcp-params [param-list schema]
   "Parse MCP parameter list into (param-schemas, fn-param-names).
    Each element is a dict with :name, :type, :description, and optional
    :enum, :required, :default.
 
    Returns #(schema-exprs param-symbols) where schema-exprs are
    McpParamSchema constructor calls and param-symbols are Hy symbols
-   for the @do function signature."
+   for the @do function signature. schema = the symbol the expansion reads
+   McpParamSchema by (defmcp-tool picks it per view)."
   (setv schemas []
         param-syms [])
   (for [p param-list]
@@ -2349,14 +2350,14 @@ defpipeline {pipeline}: no stages defined.
     (setv has-default (in ":default" pdict))
     ;; Build the McpParamSchema(...) expression
     (setv schema-expr
-      `(McpParamSchema
+      `(~schema
          :name ~pname
          :type ~ptype
          :description ~pdesc))
     (when has-enum
       (setv enum-val (get pdict ":enum"))
       (setv schema-expr
-        `(McpParamSchema
+        `(~schema
            :name ~pname
            :type ~ptype
            :description ~pdesc
@@ -2366,14 +2367,14 @@ defpipeline {pipeline}: no stages defined.
       (setv req-val (get pdict ":required"))
       (if has-enum
           (setv schema-expr
-            `(McpParamSchema
+            `(~schema
                :name ~pname
                :type ~ptype
                :description ~pdesc
                :enum (tuple ~(get pdict ":enum"))
                :required ~req-val))
           (setv schema-expr
-            `(McpParamSchema
+            `(~schema
                :name ~pname
                :type ~ptype
                :description ~pdesc
@@ -2383,7 +2384,7 @@ defpipeline {pipeline}: no stages defined.
       ;; Rebuild with :default — append to whatever we have
       ;; For simplicity, build with all optional fields
       (setv schema-expr
-        `(McpParamSchema
+        `(~schema
            :name ~pname
            :type ~ptype
            :description ~pdesc
@@ -2418,7 +2419,12 @@ defpipeline {pipeline}: no stages defined.
    handler の decorator の `_doeff_do` は、defk と同じく `_helper-imports` から取る。型検査のための展開では import を出さず、
    doeff-hy-check が module の頭に置く `_doeff_do` を読む — tool ごとに `doeff.do` を import していた頃は、tool を 65 個持つ
    module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、同じ module の defk の呼びを Program ではなく
-   :post の型に見ていた(agora-redesign #1686 と同じ訳)。"
+   :post の型に見ていた(agora-redesign #1686 と同じ訳)。
+
+   型検査のための展開は import を 1 つも出さない。tool の値の McpToolDef / McpParamSchema も、doeff-hy-check が module の
+   頭に 1 度だけ置く `_doeff_McpToolDef` / `_doeff_McpParamSchema`(doeff_hy/static_view.py の MCP_STATIC_IMPORTS)で引く —
+   tool ごとに `doeff.mcp` を import すると、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、tool の値が
+   Unknown になった(card ki-4848d81e0bc5 の設計検証の盲検 A)。実行時の展開は今までどおり tool ごとに doeff.mcp を import する。"
   (when (not (isinstance description hy.models.String))
     (raise (SyntaxError (.format "
 defmcp-tool {name}: second argument must be a description string.
@@ -2437,8 +2443,14 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     [{{:name \"param\" :type \"string\" :description \"param desc\"}}]
     body)
 " :name name))))
+  ;; tool の値を作る名: 型検査のための展開では module の頭の `_doeff_<名>`(static_view.py の MCP_STATIC_IMPORTS)、
+  ;; 実行時は tool ごとの doeff.mcp の import
+  (setv #(tool-def param-schema mcp-import)
+    (if (_static-view?)
+        #('_doeff_McpToolDef '_doeff_McpParamSchema '(do))
+        #('McpToolDef 'McpParamSchema '(import doeff.mcp [McpToolDef McpParamSchema]))))
   ;; Parse param list
-  (setv #(schema-exprs param-syms) (_parse-mcp-params param-list))
+  (setv #(schema-exprs param-syms) (_parse-mcp-params param-list param-schema))
   ;; Build handler function name
   (setv handler-name (hy.models.Symbol (+ "_" (str name) "_mcp_handler")))
   ;; Expand bangs in body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
@@ -2446,11 +2458,11 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     (lfor form body (_expand-bangs form (+ "defmcp-tool " (str name)))))
   (_scoped-definition _hy-compiler name [
      (_helper-imports)
-     '(import doeff.mcp [McpToolDef McpParamSchema])
+     mcp-import
      `(defn [_doeff_do] ~handler-name ~param-syms
        ~@expanded-forms)
      `(setv ~name
-       (McpToolDef
+       (~tool-def
          :name ~(str name)
          :description ~description
          :params (tuple [~@schema-exprs])
