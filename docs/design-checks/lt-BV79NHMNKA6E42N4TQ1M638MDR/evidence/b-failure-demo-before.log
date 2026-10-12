@@ -1,0 +1,21 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-wt-blind-b-b4c0(HEAD 10addc6473923419ef6acdb18dcb9044b87c7602)
+# 作業木の未 commit の変更:  M packages/doeff-hy/src/doeff_hy/handle.hy ?? BLIND_INPUT.md 
+# 命令: timeout 300 uv run python -I -W ignore::DeprecationWarning /home/ubuntu/.worktrees/doeff-wt-design-check-b4c0/docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/blind-b/demo.py.txt
+# 時刻: 2026-10-12T04:37:15Z
+
+== D2 今の表: 機能は動く(展開の時に断る)
+  (resume 10) (resume 20)                  -> 断った: 続き k を 2 度使う — (resume 10) の後の (resume 20) がまた k を使う(k は 1 度しか再開・転送できな
+  (resume 10) (transfer 20)                -> 断った: 続き k を 2 度使う — (resume 10) の後の (transfer 20) がまた k を使う(k は 1 度しか再開・転送で
+  (resume 10) (reperform effect)           -> 断った: 続き k を 2 度使う — (resume 10) の後の (reperform effect) がまた k を使う(k は 1 度しか再
+== D3 S1: 表に throw の行を足す(tests の _THROW と同じ行・読み手は直さない)
+  (resume 10) (throw (ValueError "x"))     -> (通った)
+  比較 (Raise [reason] (throw …))          -> 断った:   SyntaxError: handle clause Raise: Raise の節は throw できない — Raise は誰も再開しない(失敗したのに成功したかのように続くため)。(fini
+  実行 -> RuntimeError internal error: Continuation: continuation already consumed (one-shot violation) (current fiber=0)
+== D4 S3: 表から pass の行を消す(退役)
+  named-op('pass') = None
+  test_readers_name_operations_only_through_the_table: 通った
+  _terminates((pass)) = False / clause_ops = set()
+  _check_one_shot((resume 10) (pass)) -> SyntaxError: probe: 続き k を 2 度使う — (resume 10) の後の (pass) がまた k を使う(k は 1 度しか再開・転送できない)。非末尾の resume の値で
+== 綴りの拾い方が新しい集まりの名を拾っているか
+  candidates ⊇ {resume,transfer,reperform,pass}: True
+# 終了の状態: 0

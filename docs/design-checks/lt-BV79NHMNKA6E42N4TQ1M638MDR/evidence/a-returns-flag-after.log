@@ -1,0 +1,20 @@
+# 作業木: /home/ubuntu/.worktrees/doeff-wt-design-check-b4c0(HEAD 6ce803670ba9671032c39d87ff3f3f48210df55c)
+# 作業木の未 commit の変更:  M packages/doeff-hy/src/doeff_hy/clause_ops.hy  M packages/doeff-hy/src/doeff_hy/handle.hy  M tests/test_handle_clause_ops.py ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-hardcoded-tail-after.diff ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-hardcoded-tail-test-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-hardcoded-tco-test-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-repro-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/a-returns-flag-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/b-failure-demo-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/b-failure-test-after.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/b-failure-test-before.log ?? docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/scripts/ 
+# 命令: timeout 300 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-b4c0/docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/scripts/returns_flag.py.txt
+# 時刻: 2026-10-12T05:02:49Z
+
+
+doeff Traceback (most recent call last):
+
+  subject()  <string>:9
+  subject.<locals>._hy_anon_4.<locals>._hy_anon_3()  <string>:9
+  guarded()  <string>:7
+  _hy_anon_3()  <string>:9
+    handlers:
+      subject ↗
+
+RuntimeError: handle の節 Bump が resume / transfer / finish / reperform のどれにも届かずに抜けた — 黙ってスコープを終えない。すべての道で再開するか (finish 値) で終える [ADR-DOE-CORE-EFFECTS-003 R15]
+
+returns=False: RuntimeError: handle の節 Bump が resume / transfer / finish / reperform のどれにも届かずに抜けた — 黙ってスコープを終えない。すべての道で再開するか (finish 値) で終える [ADR-DOE
+returns=True: 答え -1
+# 終了の状態: 0
