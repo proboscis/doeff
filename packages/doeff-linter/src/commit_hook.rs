@@ -469,9 +469,11 @@ pub enum Measured {
 /// cut_measure)。終了コード 0・1・3・4 は測れた(中身で判じる)とし、他は理由つきの失敗。
 pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Duration>) -> Measured {
     let started = Instant::now();
+    // 子は hook の一部 — 機体の検の枠を取らない(editor-json は重い mode の形なので、印が無いと枠を待つ・card ki-b96d1fd0433f)。
     let spawned = Command::new(linter)
         .args(["--output-format", "editor-json", "--no-log"])
         .args(&run.args)
+        .env(crate::check_slot::GATED_ENV, "1")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

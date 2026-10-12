@@ -2,9 +2,10 @@
 //! (`~/dotfiles/agent/tests/machine_check_slots.py`)の命令の包み `run` へ自分を渡し、枠を 1 つ取ってから走る。
 //!
 //! なぜ: 同じ機体(Pod)で同時に走る検の process 木を、正本の宣言の K 本までに絞る。doeff-linter は会話が直に撃つ道
-//! (`uv run doeff-linter`・poe の lint・commit の hook・land_lint_gate・日次の段・code-quality の中)が多く、道ごとに包むと
+//! (`uv run doeff-linter`・poe の lint・land_lint_gate・日次の段・code-quality の中)が多く、道ごとに包むと
 //! 包み忘れた道が枠の外で走る(10-12 08:39 JST の zeus・load 105 で poe の lint 1 本 1.9 core と会話の直 2 本 0.64 core が枠の外)。
-//! binary の起動の 1 点で取れば、どの道から撃っても同じ枠に入る。
+//! binary の起動の 1 点で取れば、どの道から撃っても同じ枠に入る。commit の hook(`--commit-hook`)は検でなく止める検査なので
+//! 取らない(weight の註・card ki-b96d1fd0433f)。
 //!
 //! 形: 自分の process を python へ exec し(pid は同じ — 呼び手の信号と時間切れは今までどおりこの pid に届く)、
 //! `python <正本> run --label <名> -- <自分> <同じ引数>` で走り直す。正本が枠を取り(埋まっていれば保持者を名乗って待ち、待ちの
@@ -12,7 +13,8 @@
 //! 枠の値(本数・置き場・待ちの上限)と取り方は正本と隣の machine_check_slots.json だけが持ち、ここは持たない —
 //! ここが持つのは正本の在処と、どの mode が重いかと、再入の印だけ。
 //! 枠を持つ process の子孫(pytest の中の linter・包んだ段の中の linter)は、正本が祖先の列で読んで 2 つ目を取らない。
-//! 包みから起こされた linter には再入の印(GATED_ENV)が付き、その子孫(`--commit-hook` の子の linter)は python を通らない。
+//! 包みから起こされた linter には再入の印(GATED_ENV)が付き、その子孫は python を通らない。枠を取らない `--commit-hook` が
+//! 起こす子の linter(editor-json — 重い mode の形)にも同じ印が付き、hook の一部として枠の外で走る。
 //! 正本の無い機体(dotfiles を置かない機体)と、python を見つけられない時は、枠を取らずに走る(正本が宣言を読めない時と同じ)。
 //! 費え: 重い mode の 1 回に `uv python find` と python の起動で 0.2〜0.6 秒(zeus の load 70〜90 で測った)。
 
@@ -20,7 +22,8 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// 再入の印 — 包みが起こした linter(とその子孫)に付く。付いていれば包みへ渡さない。
+/// 再入の印 — 包みが起こした linter(とその子孫)と、`--commit-hook` が起こす子の linter(commit_hook::run_linter)に付く。
+/// 付いていれば包みへ渡さない。
 pub const GATED_ENV: &str = "DOEFF_LINTER_CHECK_SLOT";
 
 /// 正本の置き場(HOME からの相対)— agora の各 repo の root の conftest が受付の正本を読む置き場と同じ根。
@@ -51,14 +54,15 @@ pub struct Mode {
 ///
 /// 取らない: `--list-rules`・`--split-rules`(規則の表を出すだけ — CPU 0 秒)/ `--affected-tests`(検を選ぶ問い・CPU 1.8 秒
 /// 0.15 core — 呼び手 land_focus_gate は 30 秒で切り、測れなければ逆依存の検を足さないので、待つと検が落ちる)/ `--stdin`
-/// (保存前の 1 file — 書き込み直後の hook は全体 3 秒で切って黙って通すので、待つと hook が効かなくなる)。
-/// 取る: `--commit-hook`(1 file の commit で wall 8 秒・CPU 32 秒 — 待ちは git commit の stderr に名乗られ、上限の 75 で commit は
-/// 止まって出し直せる)・`--hook`(Cursor の stop hook — workspace の全体)・editor-json と text / json の repo 全体(CPU 100 秒超)。
+/// (保存前の 1 file — 書き込み直後の hook は全体 3 秒で切って黙って通すので、待つと hook が効かなくなる)/ `--commit-hook`
+/// (test でなく、stage した file に file 1 つで決まる規則を当てる止める検査 — 子の linter 1 回ごとに自分の CPU 秒の上限
+/// [tool.doeff-linter.commit_hook] timeout_s を持つ。枠に並ぶと pytest と型の検の後ろで最長 20 分待ち、会話の道具の上限で commit が
+/// 切れた — card ki-b96d1fd0433f・利用者 2026-10-12 22:57 JST "pre-commit check is not tests so it shouldn't be blocked by other tests"。
+/// 子の linter も取らない — commit_hook::run_linter が GATED_ENV を付けて起こす)。
+/// 取る: `--hook`(Cursor の stop hook — workspace の全体)・editor-json と text / json の repo 全体(CPU 100 秒超)。
 pub fn weight(mode: Mode) -> Weight {
-    if mode.list_rules || mode.split_rules || mode.affected_tests || mode.stdin {
+    if mode.list_rules || mode.split_rules || mode.affected_tests || mode.stdin || mode.commit_hook {
         Weight::Light
-    } else if mode.commit_hook {
-        Weight::Heavy("--commit-hook")
     } else if mode.hook {
         Weight::Heavy("--hook")
     } else if mode.editor_json {
@@ -177,6 +181,7 @@ mod tests {
             Mode { split_rules: true, commit_hook: true, ..Mode::default() },
             Mode { affected_tests: true, ..Mode::default() },
             Mode { stdin: true, editor_json: true, ..Mode::default() },
+            Mode { commit_hook: true, ..Mode::default() },
         ] {
             assert_eq!(weight(mode), Weight::Light, "{mode:?}");
         }
@@ -184,7 +189,6 @@ mod tests {
 
     #[test]
     fn repo_scans_take_a_slot_named_by_their_mode() {
-        assert_eq!(weight(Mode { commit_hook: true, ..Mode::default() }), Weight::Heavy("--commit-hook"));
         assert_eq!(weight(Mode { hook: true, ..Mode::default() }), Weight::Heavy("--hook"));
         assert_eq!(weight(Mode { editor_json: true, ..Mode::default() }), Weight::Heavy("editor-json"));
         assert_eq!(weight(Mode::default()), Weight::Heavy("lint"));
