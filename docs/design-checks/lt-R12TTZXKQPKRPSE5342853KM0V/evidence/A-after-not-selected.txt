@@ -1,0 +1,92 @@
+# 命令: uv run --script scripts/run_changed_tests.py --base 7cf74b0e7(model/chain.py・model/test_chain.py.txt に 1 行足した 3682f28c8 の branch)
+# 結果: selected=3(契約の組 2 + 私の branch で変えた封の検)・未測 0・記録の中の file は選ばれない。赤 1 は probe が chain.py を変えた事を封の検が見つけた物
+変えた所の検: 作業木の中身で走らせる(index ではない)— /work/toolset/worktrees/doeff-wt-ki-d153・分岐点 7cf74b0e7dd8 から作業木までに変えた file 22 本
+== pytest の process 1/1: session .(検 3 本・残り 60.0 秒)==
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 1250073 doeff-linter --commit-hook agora-controllers-wt-wait-vocab (c-VKV0YTC5TGT2KC3K8MGH4309EQ)、pid 1246444 pytest doeff-wt-ki-d3ef (c-92MJ5A26NGCDY5NDE4VK6TEEGQ)、pid 1248308 pytest ac-k (c-1PQ1RDDPX8N7K979YSV8PHDK1D)、pid 1133265 pytest code-quality-wt-ki-dee39 (c-6YDCYEH169SMF734629PZ0JTHK)、pid 1246748 doeff-linter --commit-hook agora-controllers-wt-ki-f547 (c-MXZH9FY1E9YG8ABMHVNYM0JPPK)、pid 1133089 pytest agora-controllers-wt-ki-af62 (c-QJQ9QAMXM9EE1FAGH9M4YQBZST)、pid 1139437 code-quality agora-wt-daily-1012-1200 (c-EJHDQZ8J1D3ABD979RSTWTAHV7)、pid 1249223 pytest dotfiles-wt-ki-b2d0-dc (c-618Y9E6CRNSZ3F32WSCVXRTW9M)・待つのは pytest doeff-wt-ki-d153 (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 枠 7 を取った(待ち 6 秒)— pytest doeff-wt-ki-d153 (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+
+deadline scale x1.9 (load per usable CPU) — per test 115s, watchdog 172s
+
+test-admission: focused — 33 件(変更箇所の検証)
+................................F                                        [100%]
+=================================== FAILURES ===================================
+_ test_every_named_sealed_file_is_in_its_records_seal_table_with_the_same_hash _
+
+    def test_every_named_sealed_file_is_in_its_records_seal_table_with_the_same_hash() -> None:
+        for file in all_sealed_files():
+            record = record_dir_of(file)
+            entries = seal_entries(record)
+            key = file.relative_to(record).as_posix()
+            assert key in entries, f"{file} を封の表が控えていない(封の無い file は sealed で外さない)"
+            actual = hashlib.sha256(file.read_bytes()).hexdigest()
+>           assert actual == entries[key], f"{file} の中身が封の表の hash と違う(封の表を直さずに中身を変えた)"
+E           AssertionError: /work/toolset/worktrees/doeff-wt-ki-d153/docs/design/seat-home-common-instructions-AJ8C0B/model/chain.py の中身が封の表の hash と違う(封の表を直さずに中身を変えた)
+E           assert '9355ca51b80c...83e5b563d19a4' == '03e14791906f...7a4ebf5ee42e9'
+E             
+E             - 03e14791906fb79d37c65f86f0c0688963257643f1a61f34b427a4ebf5ee42e9
+E             + 9355ca51b80c51f54313231b832cf4b9d7cea92dc8d3badaa2183e5b563d19a4
+
+tests/test_sealed_records_are_named.py:102: AssertionError
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-d153/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_sealed_records_are_named.py::test_every_named_sealed_file_is_in_its_records_seal_table_with_the_same_hash
+1 failed, 32 passed, 1 warning in 39.31s
+
+== 変えた所の検の要約(所要 50.3 秒 / 上限 60 秒)==
+走った: 2
+  tests/test_daily_test_population.py — 16 本(契約の組・接頭辞 (repo 全体))
+  tests/test_contract_table_follows_packages.py — 15 本(契約の組・接頭辞 (repo 全体))
+赤: 1
+  tests/test_sealed_records_are_named.py — 赤 1 本: tests/test_sealed_records_are_named.py::test_every_named_sealed_file_is_in_its_records_seal_table_with_the_same_hash(変えた検・変えた検の file)
+未測: 0
+逆依存を測れなかった — linter 'doeff-linter' が無い(PATH に doeff-linter を入れるか --linter で渡す)(赤ではない・契約の組と変えた検だけを選んだ)
+pytest の process: 1/1 本が走った(session: .)
+上限に数えなかった configure の間(機体の検の枠の待ちを含む): 計 6.1 秒(session . 6.1 秒)
+land-focus-counts: selected=3 ran=2 red=1 unmeasured=0 unmeasured_reverse=0 rc=1 seconds=56.6 budget=60
