@@ -1,0 +1,28 @@
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""盲検 B の slots の差分を直した版に当てた時の衝突を、攻め手の最小の合わせ方(数えの関数に slots の引数を足す)で解く。
+再検証のための実験の木だけで使う(着地させない)。"""
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+# 衝突の印: hold-limits の doc は theirs、limits-misfit の本体は theirs(worker は名の文字列なので .name を外す)
+s = re.sub(r"<<<<<<< ours\n.*?=======\n(.*?)>>>>>>> theirs\n", lambda m: m.group(1), s, flags=re.S)
+pairs = [
+ ("(defk hold-limits [held limits worker groups]\n  {:pre [(: held dict) (: limits tuple) (: worker (| str None)) (: groups Table)]",
+  "(defk hold-limits [held limits worker groups slots]\n  {:pre [(: held dict) (: limits tuple) (: worker (| str None)) (: groups Table) (: slots int)]"),
+ ("(:= after (| after {slot (+ (.get after slot 0) task.slots)}))", "(:= after (| after {slot (+ (.get after slot 0) slots)}))"),
+ ("(defk limits-misfit [limits worker held groups]\n  {:pre [(: limits tuple) (: worker str) (: held dict) (: groups Table)]",
+  "(defk limits-misfit [limits worker held groups slots]\n  {:pre [(: limits tuple) (: worker str) (: held dict) (: groups Table) (: slots int)]"),
+ ("(<- slot tuple (limit-slot l declared worker.name))\n            ;; 置けば升が",
+  "(<- slot tuple (limit-slot l declared worker))\n            ;; 置けば升が"),
+ ("(when (> (+ (.get held slot 0) task.slots) declared.limit) (:= full True))", "(when (> (+ (.get held slot 0) slots) declared.limit) (:= full True))"),
+ ("(<- more dict (hold-limits held t.limits t.worker groups))", "(<- more dict (hold-limits held t.limits t.worker groups t.slots))"),
+ ("(limits-misfit task.limits worker.name held groups)", "(limits-misfit task.limits worker.name held groups task.slots)"),
+ ("(hold-limits held task.limits chosen.name state.group-limits)", "(hold-limits held task.limits chosen.name state.group-limits task.slots)"),
+]
+for old, new in pairs:
+    assert s.count(old) == 1, old[:70]
+    s = s.replace(old, new)
+assert "<<<<<<<" not in s and ">>>>>>>" not in s
+open(p, "w").write(s)

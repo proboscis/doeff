@@ -24,6 +24,8 @@
 (import doeff_cluster.coordinator.core.resource_policy [create-resource update-resource stamp Refused])
 (import doeff_cluster.coordinator.core.cluster_policy [resource-version-of])
 (import doeff_cluster.coordinator.core [cluster_policy])
+(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json group-limit-from-json])
+(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator Redeclare])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_hy [system_form])
@@ -70,6 +72,24 @@
   (val raised (update-resource state "GroupLimit" "llm"
                                (ResourceBody :spec {"scope" "cluster" "limit" 2 "system" "alpha"} :resource-version version) "declare"))
   (assert (= (. (.row raised.group-limits "llm") limit) 2) raised.group-limits))
+
+
+(deftest test-a-declared-group-and-its-system-survive-the-state-file-and-the-durable-keys
+  ;; 保存先(state file・耐久の鍵)で組の上限と持ち主の系が往復する(再起動の後も別の系の書き直しを断れる)。壊れた保存の値(系の名の無い
+  ;; spec・0 の上限)は保存の読み直しが理由つきで断る(黙って既定の値で読まない)。
+  (<- state ClusterState (declared ALPHA.task-limits))
+  (<- data dict (state-to-json state))
+  (<- from-file ClusterState (state-from-json data 0))
+  (assert (= (.row from-file.group-limits "llm") (get ALPHA.task-limits 0)) from-file.group-limits)
+  (<- kv dict (full-kv state))
+  (<- from-keys ClusterState (state-from-kv kv 0))
+  (assert (= (.row from-keys.group-limits "llm") (get ALPHA.task-limits 0)) from-keys.group-limits)
+  (for [#(spec word) [#({"scope" "cluster" "limit" 1} "system") #({"scope" "cluster" "limit" 0 "system" "alpha"} "limit")]]
+    (try
+      (group-limit-from-json "llm" spec)
+      (raise (AssertionError (.format "壊れた保存の値を読んだ: {}" spec)))
+      (except [error ValueError]
+        (assert (in word (str error)) #(word (str error)))))))
 
 
 (defk second-system-scenario [second]
