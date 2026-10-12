@@ -1,0 +1,32 @@
+# S4 の失敗例: 2 つの会話が同じ除外の表(tests/test_daily_test_population.py の EXCLUDED)に 1 file の行を足した 2 つの版を、git merge-file で合わせる
+# 基底 = 3682f28c8 の file・a と b は同じ位置(test_program_detection.py の行の前)に別の 1 行を足した版
+merge-file rc=1 (0 = 衝突なし・正の数 = 衝突の数)
+126:<<<<<<< /tmp/ki-d153/merge/a.py
+128:=======
+130:>>>>>>> /tmp/ki-d153/merge/b.py
+    ),
+<<<<<<< /tmp/ki-d153/merge/a.py
+    "docs/design/lt-PIN-a/evidence/scripts/probe_test.py": "会話 a が足した改名できない測りの script",
+=======
+    "docs/design/lt-PIN-b/evidence/scripts/probe_test.py": "会話 b が足した改名できない測りの script",
+>>>>>>> /tmp/ki-d153/merge/b.py
+    "ide-plugins/pycharm/test_program_detection.py": (
+        "PyCharm plugin の検出の検体(テスト関数を持たない)"
+    ),
+    "packages/doeff-agentic/examples/": "例示の script(__main__ で走らせる)",
+
+
+# S4 の実行記録: 実物の tests/test_daily_test_population.py(3682f28c8)を基底にした使い捨ての repo で git merge-tree を実行
+== 失敗例: 2 つの会話が同じ表に 1 file の行を足す(rows-a と rows-b)
+59b4b3e251bcaa7f763f35c92e263a137de546b8
+100644 466f3f2f1eb5146e3b80b895229a80d3bf080f4e 1	tests/test_daily_test_population.py
+100644 98397222b5d74a2ca72d07928e85b3fce83301e8 2	tests/test_daily_test_population.py
+100644 da18cbbcea6204b7aa5a37d2dc2fd1750ecf4c5a 3	tests/test_daily_test_population.py
+
+Auto-merging tests/test_daily_test_population.py
+CONFLICT (content): Merge conflict in tests/test_daily_test_population.py
+rc=1 (1 = 衝突)
+
+== 正常例: 2 つの会話が別々の記録に .py.txt を足す(txt-a と txt-b)
+c37068c464cd9179506181b1a4844c34f4d5e4c2
+rc=0 (0 = 衝突なし)

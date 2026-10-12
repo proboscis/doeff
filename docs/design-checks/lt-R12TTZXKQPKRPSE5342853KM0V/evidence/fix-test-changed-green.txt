@@ -1,0 +1,72 @@
+# 修正の実物の選び: uv run --script scripts/run_changed_tests.py --base HEAD --linter <debug binary> --budget 300(作業木の変更 = pyproject.toml・scripts/run_changed_tests.py・tests/test_daily_test_population.py・tests/test_run_changed_tests.py)
+# 結果: 3 file 走った(17 + 15 + 26 本)・赤 0・未測 0・rc=0
+変えた所の検: 作業木の中身で走らせる(index ではない)— /work/toolset/worktrees/doeff-wt-ki-d153-dc・分岐点 1f98341309af から作業木までに変えた file 4 本
+== pytest の process 1/1: session .(検 3 本・残り 300.0 秒)==
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 2323837 pytest agora-controllers-wt-dc-g71j-probe (c-797ZK0VFKV0BAH0YSCRV8A9VYH)、pid 2323690 code-quality dotfiles-precommit-index.eZeLSI (c-Z4PERQV9YSMV64Y14VWEYDZHV7)、pid 2321684 pytest doeff-wt-bytecode-guard-internals (c-PX52E1C685SM9V7R2V7NRZFVXD)、pid 2218081 pytest doeff-wt-hyfloor (c-PGQS7E95S3AG29S03AR8M2SGQF)、pid 2328608 pytest dotfiles-wt-admission-shlex-addopts (c-28KC8M76KPEMENW8MEPN7AWC8H)、pid 2321960 pytest agora-controllers (c-NM47RDG011Q0AG8DS4F117PXDD)、pid 2321330 pytest doeff-wt-ki-b884-design-check (c-2AVPGRVP07N3MJ59B23MA57R43)、pid 2262520 pytest doeff-wt-scoped-definition (c-6MV548XHSHP3SWKE2G6JBVS2HJ)・待つのは pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+check-slot: 枠 1 を取った(待ち 9 秒)— pytest doeff-wt-ki-d153-dc (c-XTNV6MJ5ZSQRP67WSF82JAKSQ6)
+
+deadline scale x1.1 (load per usable CPU) — per test 67s, watchdog 99s
+
+test-admission: focused — 58 件(変更箇所の検証)
+..........................................................               [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-d153-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+58 passed, 1 warning in 79.65s (0:01:19)
+
+== 変えた所の検の要約(所要 81.6 秒 / 上限 300 秒)==
+走った: 3
+  tests/test_daily_test_population.py — 17 本(契約の組・接頭辞 (repo 全体))
+  tests/test_contract_table_follows_packages.py — 15 本(契約の組・接頭辞 (repo 全体))
+  tests/test_run_changed_tests.py — 26 本(変えた検・変えた検の file)
+赤: 0
+未測: 0
+逆依存: 足した検 0 本(linter の答え 0 本・重なりと検の file でない物を除く)
+pytest の process: 1/1 本が走った(session: .)
+上限に数えなかった configure の間(機体の検の枠の待ちを含む): 計 8.6 秒(session . 8.6 秒)
+land-focus-counts: selected=3 ran=3 red=0 unmeasured=0 unmeasured_reverse=0 rc=0 seconds=98.3 budget=300
