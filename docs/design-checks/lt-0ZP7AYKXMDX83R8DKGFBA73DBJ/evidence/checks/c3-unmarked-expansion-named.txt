@@ -1,5 +1,5 @@
 # 確かめ c3 — __import__ を印から外すと、展開に印の無い使い所(fnk)を C2 の検が <行>: <macro> で名指す(S1(c) の失敗例)
-# 版: c98c93b2b1f5b2ef5f90d8001077b5dd5ffebb0e・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:09:25Z
+# 版: e2c158f5e6bae3d4564390a3c666833281556900・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:20:44Z
 116:_EXPANSION_IMPORT = "__not_a_mark__"
 $ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf -k expansions_show or unmarked
 .FF........                                                              [100%]
@@ -22,5 +22,5 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 =========================== short test summary info ============================
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex02_traverse_pipeline.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_example_expansions_show_their_marks[ex03_zip_multi_source.hy]
-2 failed, 9 passed, 52 deselected, 1 warning in 5.03s
+2 failed, 9 passed, 52 deselected, 1 warning in 5.02s
 exit=1

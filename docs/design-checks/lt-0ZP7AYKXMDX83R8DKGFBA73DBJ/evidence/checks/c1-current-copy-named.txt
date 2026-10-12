@@ -1,5 +1,5 @@
 # 確かめ c1 — 今の traverse の展開を文字列で写して印字する例を足すと、期待の出力の検が file と「展開の形の印」を名指して赤、例の他の検は緑(R1・S2(b) の失敗例)
-# 版: c98c93b2b1f5b2ef5f90d8001077b5dd5ffebb0e・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:08:22Z
+# 版: e2c158f5e6bae3d4564390a3c666833281556900・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:19:16Z
 # 足した例 ex04_zz_current_copy.hy の末尾の行: (print "traverse の展開: (_doeff_traverse_Traverse (_doeff_do (fn [x] (do (setv y (yield (open_bind (double x)))) y))) items)")
 $ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf -k zz or unplaceable or printed_expansion
 ....F...                                                                 [100%]
@@ -16,5 +16,5 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_nothing_unplaceable
-1 failed, 7 passed, 60 deselected, 1 warning in 4.42s
+1 failed, 7 passed, 60 deselected, 1 warning in 3.09s
 exit=1
