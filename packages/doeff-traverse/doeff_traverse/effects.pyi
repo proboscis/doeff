@@ -85,7 +85,7 @@ class Skip(EffectBase[Never]):
     def __init__(self) -> None: ...
 
 # 件 1 つの結末: ok・failed・skipped はこの Traverse が件を走らせた結末、carried は前の段で失敗(か skipped)した件を走らせずに持ち越した物。
-ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried"]
+ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried", "cancelled"]
 
 class ItemOutcome(EffectBase[None]):
     """Traverse の handler が件 1 つの結末を知らせる(effects.py の docstring)。Traverse と handler の間の handler の下で出し、

@@ -101,6 +101,37 @@ def _report(handler, boundaries, report: ItemOutcome):
         raise ItemOutcomeNotPassedError(report, None)
 
 
+def _cancelled(item: ItemResult, label: str | None) -> ItemResult:
+    """The ItemResult reported for an item the Traverse stopped before it got an outcome, so
+    a progress consumer counts it and reaches total."""
+    return ItemResult(
+        index=item.index,
+        value=item.value,
+        failed=True,
+        history=item.history + [HistoryEntry(stage=label, event="cancelled")],
+    )
+
+
+@do
+def _stop_items(handler, report_under, this_run, label, total, running):
+    """Stop the item tasks a parallel Traverse leaves unfinished when it stops (an item's
+    failure in parallel_fail_fast, or the Traverse itself being cancelled): cancel them, wait
+    for each to unwind, and report every one that ended cancelled — so no item the Traverse
+    started outlives it, and every item gets one outcome."""
+    from doeff_core_effects.effects import Try
+    from doeff_core_effects.handlers import try_handler
+    from doeff_core_effects.scheduler import Cancel, TaskCancelledError, Wait
+    from doeff_vm import Ok
+
+    for _item, task in running:
+        yield Cancel(task)
+    for item, task in running:
+        ended = yield try_handler(Try(Wait(task)))
+        stopped = not isinstance(ended, Ok) and isinstance(ended.error, TaskCancelledError)
+        if stopped and report_under is not None:
+            yield _report(handler, report_under, ItemOutcome(this_run, label, total, "cancelled", _cancelled(item, label)))
+
+
 def _report_boundaries(
     inner_handlers: list[object],
 ) -> list[tuple[Literal["handler"], object]] | None:
@@ -135,6 +166,7 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
     to its end at the first item, to know the total.
     """
     from doeff_core_effects.handlers import try_handler
+    from doeff_core_effects.scheduler import TaskCancelledError
 
     from doeff.handler_utils import get_inner_handlers, inner_of
     @do
@@ -204,6 +236,13 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                     try:
                         value = yield prog
                     except ItemOutcomeNotPassedError:
+                        raise
+                    except TaskCancelledError:
+                        # Cancelled is no item's failure: the Traverse stops, and this item and
+                        # the ones it did not reach are reported cancelled.
+                        if report_under is not None:
+                            for stopped in (item, *items_iter):
+                                yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "cancelled", _cancelled(stopped, effect.label)))
                         raise
                     except Exception as error:
                         result, outcome = ItemResult(
@@ -335,6 +374,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
         Gather,
         ReleaseSemaphore,
         Spawn,
+        TaskCancelledError,
     )
     from doeff_vm import Ok
 
@@ -398,8 +438,9 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
 
                     result = yield attempt()
                     yield ReleaseSemaphore(sem)
-                    if not isinstance(result, Ok) and isinstance(result.error, ItemOutcomeNotPassedError):
-                        # A consumer broke the ItemOutcome contract in a nested Traverse: no item's failure.
+                    if not isinstance(result, Ok) and isinstance(result.error, (ItemOutcomeNotPassedError, TaskCancelledError)):
+                        # A consumer broke the ItemOutcome contract in a nested Traverse, or the
+                        # item was cancelled: no item's failure.
                         raise result.error
                     if not isinstance(result, Ok):
                         done, outcome = ItemResult(
@@ -433,7 +474,12 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
                 tasks.append(task)
 
             # Gather all results; build Collection preserving original index order
-            done_items = yield Gather(*tasks)
+            # An item task the Traverse leaves when it stops (a failure, or its own cancel) is stopped.
+            try:
+                done_items = yield Gather(*tasks)
+            except Exception:
+                yield _stop_items(handler, report_under, this_run, effect.label, total, list(zip(active_items, tasks, strict=True)))
+                raise
             results = sorted([*carry_forward, *done_items], key=lambda r: r.index)
             return (yield Resume(k, Collection(results)))
 
@@ -527,6 +573,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
         Gather,
         ReleaseSemaphore,
         Spawn,
+        TaskCancelledError,
     )
 
     from doeff.handler_utils import get_inner_handlers
@@ -580,7 +627,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                     # NO Try wrapper — exceptions propagate to Gather
                     try:
                         value = yield prog
-                    except ItemOutcomeNotPassedError:
+                    except (ItemOutcomeNotPassedError, TaskCancelledError):
                         raise  # a consumer broke the ItemOutcome contract in a nested Traverse: no item's failure
                     except Exception as error:
                         if report_under is not None:
@@ -618,7 +665,12 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
                 tasks.append(task)
 
             # Gather — if any task raised, the exception propagates here
-            done_items = yield Gather(*tasks)
+            # An item task the Traverse leaves when it stops (a failure, or its own cancel) is stopped.
+            try:
+                done_items = yield Gather(*tasks)
+            except Exception:
+                yield _stop_items(handler, report_under, this_run, effect.label, total, list(zip(active_items, tasks, strict=True)))
+                raise
             results = sorted(done_items, key=lambda r: r.index)
             return (yield Resume(k, Collection(results)))
 
@@ -770,7 +822,10 @@ def progress_bars(make_bar: BarFactory):
             opened = open_bars.get(effect.traverse) or _OpenBar(
                 bar=make_bar(total=effect.total, desc=effect.label or "traverse"), counted=0,
             )
-            opened.bar.update(1)
+            if effect.outcome != "cancelled":
+                # A cancelled item ends the bar without advancing it (tqdm closes at n < total
+                # when its loop raises).
+                opened.bar.update(1)
             if opened.counted + 1 >= effect.total:
                 opened.bar.close()
                 open_bars.pop(effect.traverse, None)

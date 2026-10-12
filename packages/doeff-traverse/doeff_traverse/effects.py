@@ -190,7 +190,7 @@ class Skip(EffectBase[Never]):
 # How one item of a Traverse ended. ok / failed / skipped are this Traverse's own run of
 # the item (the history event it records); carried = the item came in failed or skipped
 # from an earlier stage, so this Traverse kept it without running f.
-ItemOutcomeKind = Literal["ok", "failed", "skipped", "carried"]
+ItemOutcomeKind = Literal["ok", "failed", "skipped", "carried", "cancelled"]
 
 
 class ItemOutcome(EffectBase[None]):
