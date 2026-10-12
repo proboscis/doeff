@@ -1,6 +1,6 @@
 """doeff-hy の置き場のうち環境変数が名指す物 — この package で環境を読む module はここだけ。
 
-doeff-hy-check の cache の置き場(と依存の展開の子の数の上限・pyright の thread の数)は、検査の道具(CLI・pytest の収集)がどの Program よりも前に決めるので、
+doeff-hy-check の cache の置き場(と依存の展開の子の数の上限・pyright の thread の数・機体の検の枠の保持者の印と名乗りの会話の id)は、検査の道具(CLI・pytest の収集)がどの Program よりも前に決めるので、
 Ask ではなく環境変数で受ける。この module は読むだけ — 関数は 1 つの変数の素の値(か XDG の cache の根)を返し、
 どの置き場・上限を使うかは呼び手が決める。読みは os.environ を直に読まず、設定の Ask を環境変数から答える foundation の答え手
 env_var_ask の下で問う(agora-redesign #3012 — 環境変数の読みは foundation の handler の中だけ・card ki-efa3d187b136)。
@@ -14,6 +14,9 @@ EXPANDERS_ENV = "DOEFF_HY_CHECK_EXPANDERS"
 #: doeff-hy-check が撃つ pyright の thread の数(pyright の --threads)を呼び手ごとに替える環境変数(値の判じは
 #: doeff_hy.static_check.pyright_threads)。
 PYRIGHT_THREADS_ENV = "DOEFF_HY_CHECK_PYRIGHT_THREADS"
+
+#: agora が会話の process に渡す会話の id — doeff-hy-check が機体の検の枠の保持者の名乗りに足す(doeff_hy.check_slot)。
+CONVERSATION_ENV = "AGORA_CONVERSATION_ID"
 
 
 def cache_home() -> Path:
@@ -38,6 +41,18 @@ def pyright_threads_setting() -> str | None:
     """$DOEFF_HY_CHECK_PYRIGHT_THREADS の素の値(doeff-hy-check が撃つ pyright の thread の数)— 無い・空なら None。1 以上の整数かは
     呼び手の pyright_threads が判じる(card ki-1475765a3f18)。"""
     return _read(PYRIGHT_THREADS_ENV) or None
+
+
+def conversation_setting() -> str | None:
+    """$AGORA_CONVERSATION_ID の素の値 — 無い・空なら None。機体の検の枠の保持者の名乗りに、どの会話の検かを足すため
+    (card ki-26ebd3f636e0)。"""
+    return _read(CONVERSATION_ENV) or None
+
+
+def slot_holder_setting(name: str) -> str | None:
+    """機体の検の枠の保持者の印の素の値 — 無い・空なら None。印の名は枠の正本(machine_check_slots.py の HOLDER_ENV)が持つので
+    呼び手が渡す。/proc の無い機体で、枠を持つ process の子孫が 2 つ目を取らないため(doeff_hy.check_slot・card ki-26ebd3f636e0)。"""
+    return _read(name) or None
 
 
 def _read(name: str) -> str | None:

@@ -15,6 +15,8 @@
 - 新しい赤(基点が無ければ全部の赤)があれば exit 1、無ければ 0、道具として走れなければ 2。
 
 仕組み:
+0. 展開と pyright の間は、同じ機体で走る検と共有する機体の検の枠を 1 つ持つ(埋まっていれば待ち、待ちの上限を越えたら走らずに
+   exit 2 — doeff_hy/check_slot.py。枠の正本の無い機体では取らない)。
 1. 各 .hy を Hy の compiler で展開する(doeff-hy の macro は「型検査のための展開」=
    doeff_hy/static_view.py の切替の下で走る)。source の import は実行しない
    (macro の `require` だけは Hy の compile の常として macro の module を import する)。
@@ -60,9 +62,11 @@ from hy.errors import HyLanguageError
 from hy.models import Object
 
 from doeff_hy.binding_forms import Finding, ModuleScope
+from doeff_hy.check_slot import SlotExpired, slot_label, take_slot
 from doeff_hy.env_places import (
     EXPANDERS_ENV,
     PYRIGHT_THREADS_ENV,
+    conversation_setting,
     expanders_setting,
     pyright_threads_setting,
 )
@@ -1196,6 +1200,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"doeff-hy-check: 走れなかった: 名指した path が根の外(根 = {root}): {'・'.join(outside)}", file=sys.stderr)
         return 2
     report = hy_files([placed for _, placed in named if placed is not None])
+    # 展開と pyright の間は機体の検の枠を 1 つ持つ — 撃つ道(会話の直・gate の子・日次・pytest の中)を問わずここで取る(doeff_hy.check_slot)。
+    slot = take_slot(Path.home(), slot_label(root, conversation_setting()), sys.stderr)
+    if isinstance(slot, SlotExpired):
+        print(f"doeff-hy-check: 走れなかった: {slot.line}", file=sys.stderr)
+        return 2
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
         threads = pyright_threads(pyright_threads_setting())  # 展開の前に判じる(誤った値で展開の秒を払わない)
@@ -1206,6 +1215,8 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError) as error:
         print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
         return 2
+    finally:
+        slot.release()
     compile_errors = [f.diagnostic for f in closure.failures if f.source in report]
     # val / var の検査の所見(setv の使用 = 警告・束縛し直し = 赤・旧い lazy = 警告 — ADR-DOE-HY-006)。
     binding_findings = [
