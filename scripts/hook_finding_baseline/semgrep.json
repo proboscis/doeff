@@ -5,9 +5,6 @@
       "tests/effects/test_sync_await_spawn_gather_deadlock.py": 1,
       "tests/test_await_http_memory.py": 1,
       "tests/test_cache_await_spawn_hang.py": 1
-    },
-    "doeff-public-api-no-subpackage-imports": {
-      "tests/public_api/test_mcp_tool_def.py": 1
     }
   },
   "version": "1.169.0"

@@ -1,6 +1,7 @@
 """Tests for McpToolDef and McpParamSchema dataclasses."""
 
-from doeff.mcp import _MISSING, McpParamSchema, McpToolDef
+from doeff import McpParamSchema, McpToolDef
+from doeff.mcp import _MISSING
 
 
 def _dummy_handler(x, y):
