@@ -1,0 +1,17 @@
+# 盲検 B の差分を、直す前の版 27f35483076413668aa7b2ca32949b170a0987b4 の loader_hooks.py に当て、提示した検(着地した版の検の file)を走らせる
+$ git apply --directory=packages/doeff-hy blind-b.patch.txt
+ .../src/doeff_hy_bytecode_guard/loader_hooks.py        | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+$ uv run pytest -q packages/doeff-hy/tests/test_code_store_entries.py packages/doeff-hy/tests/test_bytecode_guard.py::test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round packages/doeff-hy/tests/test_bytecode_guard.py::test_a_new_tree_with_the_same_sources_reuses_the_code_without_expanding packages/doeff-hy/tests/test_bytecode_guard.py::test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expansion packages/doeff-cluster/tests/test_code_prepare_content_store.py packages/doeff-cluster/tests/test_env_store.hy docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_one_bytecode_store_entry
+deadline scale x1.7 (load per usable CPU) — per test 101s, watchdog 151s
+test-admission: focused — 22 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 2 file
+  import: docs/adr/defadr_doeff_build_002_one_bytecode_store.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_env_store.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000000 秒・依存変更で再作成 0 file
+......................                                                   [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+22 passed, 1 warning in 153.65s (0:02:33)
+exit=0

@@ -1,0 +1,15 @@
+$ (直した作業木 doeff-wt-ki-6828-dc の未 commit の code_store.py) DOEFF_HY_CODE_STORE=off uv run --no-project python -I probe_cap.py <dc>/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py <tmp>
+98235e34c31e730bcd024b73e2d39b41b2bdeaee97df9e20b058240255cdeedb  /home/ubuntu/.worktrees/doeff-wt-ki-6828-dc/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py
+code_store: /home/ubuntu/.worktrees/doeff-wt-ki-6828-dc/packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py CODE_ENTRIES_PER_KEY = 16
+cycle N=2: 巡ごとの外れ [2, 0, 0, 0]
+cycle N=8: 巡ごとの外れ [8, 0, 0, 0]
+cycle N=16: 巡ごとの外れ [16, 0, 0, 0]
+cycle N=17: 巡ごとの外れ [17, 2, 2, 2]
+cycle N=20: 巡ごとの外れ [20, 5, 5, 5]
+cycle N=32: 巡ごとの外れ [32, 17, 17, 17]
+oneoff K=5: 準備の代役の外れ 0 / 3
+oneoff K=13: 準備の代役の外れ 0 / 3
+oneoff K=14: 準備の代役の外れ 0 / 3
+oneoff K=20: 準備の代役の外れ 0 / 3
+oneoff K=40: 準備の代役の外れ 0 / 3
+exit=0

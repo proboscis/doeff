@@ -30,7 +30,10 @@ source の code(:func:`code_key` の鍵 — import の口と worker の道具)�
 物の全部なので、記録の同じ code は 1 つの entry を書き直し、記録の違う code(doeff の版の違う作業木の import と実行環境の準備)は並ぶ。
 鍵 1 つに entry 1 つの並び(鍵の印 2)では、版の違う書き手が同じ鍵の entry を互いに古いと見て compile し直し、上書きし合った(2026-10-12
 zeus — 実行環境の準備は同じ版の source でも 1 回に 100〜600 本を焼き直した)。鍵 1 つの entry は :data:`CODE_ENTRIES_PER_KEY` 個までで、
-越えたら使った時刻の古い物から除く。
+越えたら時刻の古い物から除く。足したばかりの entry は、鍵の他の entry より古い時刻に置く(:func:`add_code`)— 誰かが照らして使うまで
+並びの後ろに居て、上限を越えた時に先に除かれる。だから一度きりの環境(macro を直している作業木の検)の entry は互いを除き合い、使い
+続けている書き手の entry を押し出さない。上限を越える数の環境が同じ鍵を順に使っても、外れるのは上限を越えた分だけ(全部が外れる崖に
+ならない — 設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 A)。
 
 使った印: 引いて当たるたびに entry の時刻を今にする(source の code は、照らして使う entry だけ)。worker の掃除(env_store の
 sweep-leftovers)は 7 日使われない entry と、中が全部 7 日動いていない dir を消す — native の wheel の保存先(.used の印で dir の時刻を
@@ -54,11 +57,15 @@ STORE_ENV = "DOEFF_HY_CODE_STORE"
 #: 1 つの file)は前の版の書き手だけが使い、新しい版からは引かない — 前の版の書き手と取り合わず、7 日使われなければ掃除が消す。
 CODE_TAG = "doeff-hy/code-store/3"
 
-#: source の code の鍵 1 つに持つ entry の数の上限(足して越えたら、使った時刻の古い物から除く)。同時に動く macro の環境(doeff の版の
-#: 違う作業木と実行環境の準備)の数より多く — 少ないと、使い続けている書き手の entry を別の書き手が除き、上書きの取り合いに戻る。同じ
-#: 環境でも記録が 2〜3 通りになり得る(import の途中の digest は None・展開で実行された関数の印は process に依る)ので、環境の数の
-#: 2〜3 倍を見込む。多すぎると、どの entry にも合わない新しい環境の読みが、compile の前に全部を照らす手間が増える。
+#: source の code の鍵 1 つに持つ entry の数の上限(足して越えたら、時刻の古い物から除く)。上限は「照らして使い続けている entry」を
+#: 何個まで同時に守るかの数 — 足しただけでまだ使われていない entry は後ろに並ぶ(:func:`add_code`)ので、一度きりの環境の数には依らない。
+#: 使い続ける環境が上限を越えると、越えた分の環境が毎回外れる(全部は外れない)。多すぎると、どの entry にも合わない新しい環境の読みが、
+#: compile の前に全部を照らす手間が増える。
 CODE_ENTRIES_PER_KEY = 16
+
+#: 足したばかりの entry の時刻を、鍵の他の entry より前に置く時の下限(今からこれより前には置かない)。掃除の 7 日よりずっと短く — 足した
+#: entry が、照らして使われないまま掃除の閾を越えた時刻に置かれて、すぐ消されないため。
+NEW_ENTRY_FLOOR_SECONDS = 24 * 3600
 
 #: entry の種類の末尾。
 CODE_SUFFIX = ".code"
@@ -159,9 +166,9 @@ def _used_at(item: os.DirEntry[str]) -> int | None:
         return None
 
 
-def code_entries(store: str, key: str) -> tuple[str, ...]:
-    """source の code の鍵 key の entry の path の列 — 使った時刻の新しい順(同じ時刻は名の順)。鍵の dir が無ければ空。書きかけの一時の
-    file(末尾が CODE_SUFFIX でない)は数えない。読めない dir は名指しの 1 行を出して空(呼び手は compile する)。"""
+def _stamped_entries(store: str, key: str) -> tuple[tuple[int, str], ...]:
+    """source の code の鍵 key の entry の #(時刻 ns path) の列 — 時刻の新しい順(同じ時刻は名の順)。鍵の dir が無ければ空。書きかけの
+    一時の file(末尾が CODE_SUFFIX でない)は数えない。読めない dir は名指しの 1 行を出して空(呼び手は compile する)。"""
     directory = _code_dir(store, key)
     try:
         with os.scandir(directory) as listing:
@@ -171,8 +178,13 @@ def code_entries(store: str, key: str) -> tuple[str, ...]:
     except OSError as error:
         print(f"doeff-hy: bytecode の保存先の鍵の dir を読めない({error})— {directory} を使わずに作り直す", file=sys.stderr, flush=True)
         return ()
-    present = sorted(((at, path) for at, path in stamped if at is not None), key=lambda pair: (-pair[0], pair[1]))
-    return tuple(path for _, path in present)
+    return tuple(sorted(((at, path) for at, path in stamped if at is not None), key=lambda pair: (-pair[0], pair[1])))
+
+
+def code_entries(store: str, key: str) -> tuple[str, ...]:
+    """source の code の鍵 key の entry の path の列 — 時刻の新しい順(照らして使った entry が前・足しただけの entry は後ろ — 読み手は
+    この順に照らす)。鍵の dir が無ければ空。"""
+    return tuple(path for _, path in _stamped_entries(store, key))
 
 
 def current_code(store: str, key: str, is_current: Callable[[CodeType], bool]) -> CodeType | None:
@@ -188,23 +200,39 @@ def current_code(store: str, key: str, is_current: Callable[[CodeType], bool]) -
 
 
 def add_code(store: str, key: str, code: CodeType) -> str | None:
-    """code を source の code の鍵 key の entry に足す(名 = :func:`code_fingerprint` — 記録の同じ entry は書き直す)。足した後に鍵の
-    entry が :data:`CODE_ENTRIES_PER_KEY` 個を越えたら、使った時刻の古い物から除く。答え = 書けなかった理由(:func:`write_entry` と同じ —
-    書けたら None)。"""
+    """code を source の code の鍵 key の entry に足す(名 = :func:`code_fingerprint` — 記録の同じ entry は書き直す)。足した entry の時刻は
+    鍵の他の entry のどれよりも前に置き(今から :data:`NEW_ENTRY_FLOOR_SECONDS` より前にはしない)、照らして使われた時に初めて前へ出す。
+    足した後に鍵の entry が :data:`CODE_ENTRIES_PER_KEY` 個を越えたら、今足した entry を残して、時刻の古い物から除く — 除かれるのは、
+    足しただけで使われていない entry と、使われなくなって久しい entry。答え = 書けなかった理由(:func:`write_entry` と同じ — 書けたら
+    None)。"""
     import marshal  # 保存先へ足す時だけ読む
 
     path = os.path.join(_code_dir(store, key), code_fingerprint(code) + CODE_SUFFIX)
     problem = write_entry(path, marshal.dumps(code))
     if problem is not None:
         return problem
-    for stale in code_entries(store, key)[CODE_ENTRIES_PER_KEY:]:
-        if stale == path:
-            continue  # 今足した entry(時刻が今なので普通は頭に来る)
+    others = tuple(pair for pair in _stamped_entries(store, key) if pair[1] != path)
+    _place_after(path, others)
+    for _, stale in others[CODE_ENTRIES_PER_KEY - 1 :]:
         try:
             os.unlink(stale)
         except FileNotFoundError:
             pass  # 同時に別の process が除いていれば、消す物は無い
     return None
+
+
+def _place_after(path: str, others: tuple[tuple[int, str], ...]) -> None:
+    """足した entry の時刻を、鍵の他の entry(others — 時刻の新しい順)のどれよりも 1 秒前に置く(今から NEW_ENTRY_FLOOR_SECONDS より前には
+    しない)。置けない時は名指しの 1 行(entry は使える — 並びの頭に居るだけ)。"""
+    import time  # 保存先へ足す時だけ読む
+
+    now = time.time_ns()
+    oldest = others[-1][0] if others else now
+    at = max(now - NEW_ENTRY_FLOOR_SECONDS * 1_000_000_000, oldest - 1_000_000_000)
+    try:
+        os.utime(path, ns=(at, at))
+    except OSError as error:
+        print(f"doeff-hy: bytecode の保存先の足した entry の時刻を置けない({error})— {path}", file=sys.stderr, flush=True)
 
 
 def touch_entry(path: str) -> None:
