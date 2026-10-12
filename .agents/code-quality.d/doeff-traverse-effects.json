@@ -16,7 +16,7 @@
         "packages/doeff-traverse/doeff_traverse/effects.pyi",
         "packages/doeff-traverse/doeff_traverse/helpers.py"
       ],
-      "responsibility": "doeff-traverse の effect の宣言 — Fail・Traverse・Reduce・Zip・Inspect・SortBy・Take・Skip・ItemOutcome の要求と答えの型(実行の仕方は handler の側)と、Fail を投げて値を差し替えさせる補助 try_call。",
+      "responsibility": "doeff-traverse の effect の宣言 — Fail・Traverse・Reduce・Zip・Inspect・SortBy・Take・Skip・ItemOutcome の要求と答えの型(実行の仕方は handler の側)と、Fail を投げて値を差し替えさせる補助 try_call・Program の列を handler 無しで順に走らせ(最初の失敗で止まり)tuple で返す sequence。",
       "typed": true
     }
   ]

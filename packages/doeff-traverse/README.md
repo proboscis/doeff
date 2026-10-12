@@ -119,6 +119,30 @@ doeff-traverse makes results opaque. User code accesses them only via `for/do`, 
 | `(Fail cause)` | Failure notification at yield site |
 | `(try-call f args)` | Wrap plain function as Fail yield site |
 
+### `sequence` — run a list of programs in order, no handler, the first failure stops
+
+`for/do` leaves the order and the failure policy to a handler, and its answer is a `Collection`. A protocol function that just reads a list of rows one after another does not want that choice, and it must not lose a failed row. `sequence` is the named special case with the policy fixed:
+
+| | `for/do` under `sequential()` | `sequence` |
+|---|---|---|
+| handler | needed (`sequential()`, usually with `fail_handler`) | none — the caller's handlers answer the programs' effects |
+| a program fails | the item is recorded as failed and the next items still run; `valid_values` silently lacks it | the exception goes up as it is; the programs after it are never made or run |
+| answer | `Collection` (opened with `valid_values` / `failed_items` / `Inspect`) | a `tuple` of the answers, in order, duplicates and `None` kept |
+| input | an iterable of items and a function making a program per item | an iterable of programs, read lazily (each program is made just before it runs) |
+| cost per item | about 10–15 µs | about 3 µs, linear to 300,000 items |
+
+```hy
+(require doeff-hy.macros [defk <-])
+(import doeff_traverse [sequence])
+
+(defk read-each [reader pairs]
+  {:pre [(: reader Callable) (: pairs tuple)] :post [(: % tuple)]}
+  (<- rows tuple (sequence (gfor #(key value) pairs (reader value))))
+  (tuple (zip (gfor #(key _) pairs key) rows)))
+```
+
+The answers are collected in a chain of `(value, previous chain)` pairs folded into the tuple once at the end: no list is grown and no tuple is copied per item (`(:= read (+ read #(row)))` per item costs the square of the rows — 3.5 s for 30,000 rows).
+
 ### Legacy aliases
 
 `traverse` and `Iterate` are aliases for `for/do` and `From`. Prefer `for/do` + `From` in new code.
