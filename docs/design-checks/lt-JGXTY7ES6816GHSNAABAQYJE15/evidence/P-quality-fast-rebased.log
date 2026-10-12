@@ -1,0 +1,34 @@
+# 変更範囲の品質検査(速い段 — 型検査は含まない)を rebase 後の版(c7b46912b・origin/main 8b96344c7 の上)で実行
+$ sh /home/ubuntu/dotfiles/agent/venv-run.sh /home/ubuntu/dotfiles/agentcli code-quality --repo ~/.worktrees/doeff-wt-design-check-scoped-def --scope changed --base 8b96344c7c0558cc3a401274572985429278e76e
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 3787878 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)、pid 3764349 pytest doeff-wt-hyfloor (c-PGQS7E95S3AG29S03AR8M2SGQF)、pid 3767330 doeff-hy-check agora-controllers-wt-ki2058 (c-P9DA99G79E5P58BFMVXZ0VB9DB)、pid 3778130 doeff-hy-check agora-controllers-wt-type-red-sim-nz (c-WVRB0AM0XV2BZ7YCE70MYYGTF0)、pid 3785158 pytest doeff-wt-ki-6af9 (c-0AF6XHHJ14AE2BTRFAN3PDESZN)、pid 3790811 pytest agora-controllers-wt-ki-4a5a-dc (c-KAH6X083BYCDX5X2P6EXBRNDTS)、pid 3776486 pytest agora-controllers (c-DRQXMJJH4BMRKZ245VFWW5JQZD)、pid 3787870 doeff-hy-check agora-controllers-wt-ki-b502 (c-2DQFWCSJ5TQJAN9S7NST67W37B)・待つのは code-quality doeff-wt-design-check-scoped-def (c-6MV548XHSHP3SWKE2G6JBVS2HJ)
+check-slot: 枠 2 を取った(待ち 4 秒)— code-quality doeff-wt-design-check-scoped-def (c-6MV548XHSHP3SWKE2G6JBVS2HJ)
+code-quality: passed (scope=changed・型検査は未実行(fast の段))
+code-quality-base: {'revision': '8b96344c7c0558cc3a401274572985429278e76e', 'repo': '/work/toolset/worktrees/doeff-wt-design-check-scoped-def'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: docs/design-checks/lt-JGXTY7ES6816GHSNAABAQYJE15/evidence/all_static.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: docs/design-checks/lt-JGXTY7ES6816GHSNAABAQYJE15/evidence/apply_b.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: docs/design-checks/lt-JGXTY7ES6816GHSNAABAQYJE15/evidence/controls.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: docs/design-checks/lt-JGXTY7ES6816GHSNAABAQYJE15/evidence/digest.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: docs/design-checks/lt-JGXTY7ES6816GHSNAABAQYJE15/evidence/repro_a.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: docs/design-checks/lt-JGXTY7ES6816GHSNAABAQYJE15/evidence/repro_b.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-hy/src/doeff_hy/expansion_names.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-hy/src/doeff_hy/static_check.py: 変更ソースが include に無い(module doeff-hy-static-check は typed:true の paths に持つ — 触るまで測られていなかった)。継続検査対象へ登録が必要: 断片の include に足して `code-quality --format-contract --base <基底>` を撃つと、基底で実観測した既存違反は registered-with-legacy で基底へ入り、赤になるのはこの便が触った行だけ(#277)(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-hy/src/doeff_hy/static_view.py: 変更ソースが include に無い(module doeff-hy-static-check は typed:true の paths に持つ — 触るまで測られていなかった)。継続検査対象へ登録が必要: 断片の include に足して `code-quality --format-contract --base <基底>` を撃つと、基底で実観測した既存違反は registered-with-legacy で基底へ入り、赤になるのはこの便が触った行だけ(#277)(fast は止めない — 登録は明示的な操作か日次)
+code-quality-timing: prepare 6.456s inventory=2892 scoped=884 sources=12 changed=26 selected=10
+code-quality-timing: node-toolchain 0.0s status=checkout path=/work/toolset/worktrees/doeff-wt-design-check-scoped-def
+code-quality-timing: verdict-lookup 0.001s hit=False key=97c7ddd9efb4
+code-quality-timing: candidate.sources 0.317s sources=12 selected=11 analyzed={'hy': 2, 'python': 4} by_language={'hy': 0.08, 'python': 0.23} cache_hits=3 cache_misses=3
+code-quality-timing: candidate.closure 0.0s affected=11 languages={'?': 1, 'python': 10} touched_languages=['python']
+code-quality-timing: base.workspace 3.656s paths=6512
+code-quality-timing: base.read 0.477s inventory=2886 sources=6
+code-quality-timing: base.sources 0.064s sources=6 selected=11 analyzed={'hy': 2, 'python': 4} by_language={'hy': 0.04, 'python': 0.02} cache_hits=5 cache_misses=1
+code-quality-timing: base.closure 0.0s affected=11 languages={'?': 7, 'python': 4} touched_languages=['python']
+code-quality-timing: base.unprojectable 0.0s paths=0
+code-quality-timing: base.boundary 0.042s modules=280 paths=2886
+code-quality-timing: base.policy 0.004s dependencies=103 findings=0
+code-quality-timing: observe-baseline 4.747s needed=True
+code-quality-timing: compare-observed 0.0s candidate=0 base=0 by_budget=0
+code-quality-timing: compare-guarantees 0.036s
+code-quality-coverage: partial / 対象 884 / 全体 2892 / 未導入 {'hy': 346, 'javascript': 13, 'lua': 17, 'python': 1366, 'rust': 89, 'shell': 54, 'typescript': 123} / typed:true だが include に無い 27(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 563 件（自動増加しない）
+exit=0

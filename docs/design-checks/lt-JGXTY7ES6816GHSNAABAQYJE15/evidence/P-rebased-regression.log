@@ -1,0 +1,14 @@
+# rebase 後の回帰: 投影を作る側の既存の検と、main 側(8a759a421)が触れた file の検(2 回に分ける: test_expansion_names.py はリポジトリ直下の tests/)
+# 対象: wt/design-check-scoped-def @ c7b46912b(origin/main 8b96344c7 の上)
+# 実行: 2026-10-12T10:51:34Z
+$ cd packages/doeff-hy/tests && uv run pytest test_static_check.py test_static_check_defhandler.py test_static_check_deftest.py test_static_check_effects_reads.py test_static_check_for_do.py test_static_check_locate.py test_static_check_of_contract.py test_static_check_recursive_defk.py test_static_check_session.py test_system_static_types.py test_wire_static_types.py test_conductor_dsl.py test_defwire.py test_defrecord_check.py test_static_cache.py test_defrecord_shape.py test_defeffect_shape.py -q
+    obj = m(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+145 passed, 3 warnings in 152.28s (0:02:32)
+exit=0
+$ uv run pytest tests/test_expansion_names.py -q
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+19 passed, 1 warning in 6.57s
+exit=0

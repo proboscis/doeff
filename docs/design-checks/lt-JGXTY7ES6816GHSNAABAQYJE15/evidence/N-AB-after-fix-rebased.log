@@ -1,0 +1,28 @@
+# 盲検 A・B の失敗例を修正後の版で再実行
+# 対象: 作業木 doeff-wt-design-check-scoped-def @ c7b46912b(origin/main 8b96344c7 の上に rebase した版)
+# 実行: 2026-10-12T10:59:22Z
+
+
+## A: class の本体・関数の本体の投影(repro_a.py)
+$ uv run python -I repro_a.py
+exit=0
+module binds: ['_doeff_ClassVar', '_doeff_cast', '_doeff_dataclass', '_doeff_effect_base']
+ClassDef OuterWire import で束ぐ名: []
+ClassDef OuterRecord import で束ぐ名: []
+ClassDef OuterEffect import で束ぐ名: []
+FunctionDef in_function import で束ぐ名: []
+  symtable top/OuterWire/Span/__annotate__ _doeff_ClassVar global
+  symtable top/OuterRecord/Span/__post_init__ _doeff_cast global
+  symtable top/OuterEffect/Inner _doeff_cast global
+  symtable top/OuterEffect/Inner/__annotate__ _doeff_ClassVar global
+  symtable top/in_function/Span/__post_init__ _doeff_cast global
+  symtable top/in_function/Wire/__annotate__ _doeff_ClassVar global
+
+
+## B: defrecord の :tags の ClassVar を足す差分を当てた状態
+$ uv run python -I repro_b.py
+exit=0
+[] []
+$ uv run pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone -q
+exit=0
+144 passed, 1 warning in 28.55s

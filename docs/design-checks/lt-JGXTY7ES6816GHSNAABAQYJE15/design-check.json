@@ -7,10 +7,10 @@
     "model": "claude-sonnet-5-5",
     "effort": "unspecified"
   },
-  "requirements": "定義の macro の展開が import を外の局所に置く残り 3 つ(型検査の投影・class の本体・defworkflow)を、失敗ケースを先に書いて赤を確かめ、7ad1ca7a2 と同じ _scoped-definition の 1 か所に寄せて直す。R1 型検査の投影で、関数・class の本体の中の defrecord(頭の辞書つき)・defwire・defeffect・deff の import が外の局所の名にならない。R2 class の本体に直に書いた defrecord・defwire・defeffect が、module の段に doeff_hy が無くても建ち、使える。R3 conductor.hy の defworkflow を関数の中で使っても、外の関数の局所の名に _conductor_* を足さない。R4 3 つとも _scoped-definition の 1 か所に寄せる。(1 段目は 49a293f19・c4590550 で main に着地済み。2 段目 9bb308779 は盲検 A・B の失敗例を受け、投影の別名 import の穴と検の弱さを直した)",
+  "requirements": "定義の macro の展開が import を外の局所に置く残り 3 つ(型検査の投影・class の本体・defworkflow)を、失敗ケースを先に書いて赤を確かめ、7ad1ca7a2 と同じ _scoped-definition の 1 か所に寄せて直す。R1 型検査の投影で、関数・class の本体の中の defrecord(頭の辞書つき)・defwire・defeffect・deff の import が外の局所の名にならない。R2 class の本体に直に書いた defrecord・defwire・defeffect が、module の段に doeff_hy が無くても建ち、使える。R3 conductor.hy の defworkflow を関数の中で使っても、外の関数の局所の名に _conductor_* を足さない。R4 3 つとも _scoped-definition の 1 か所に寄せる。(1 段目は 49a293f19・c4590550 で main に着地済み。2 段目は盲検 A・B の失敗例を受け、投影の別名 import の穴と検の弱さを直した。初版の着地は main の 8a759a421 との rebase 衝突で失敗し、判定を 1 つにまとめて origin/main 8b96344c7 の上へ載せ直した版を登記する。修正前の失敗例の log は基底 e5de19158 の上、修正後の log は rebase 後の版)",
   "design": {
     "path": "design.md",
-    "sha256": "a0501e308b7d950631692d2b1fdcf937dd99f9be0e68de23921e93fbb550b414"
+    "sha256": "2e858a6d18d48eccbe7a7f1bb6f52ab3822c3bc49450306c610fc1fabd223f01"
   },
   "modules": [
     {
@@ -72,7 +72,7 @@
         "scoped-definition"
       ],
       "reason": "投影の後処理が macro の import の綴りの表を持ち、macro の選んだ綴りが置き場の正しさを決めていた(知識の漏洩)。別名の頭の約束で、綴りの知識を表から約束へ移した。definition-macros が型検査の展開で出す文の形を知っている事と、_scoped-definition 以外にも _install-guard-globals が module の globals を変える事は、事前の責務の表の誤りとして design.md で訂正した",
-      "revision": "赤(修正前・盲検 A の再現と盲検 B の差分で検が通る)→ 緑(9bb308779): 判定に別名の頭の規則を足し、投影の検を全 macro の検体(14 種)で import を 1 つも残さない形と、symtable で入れ子の scope が読む名が module の段で束ねられている形へ作り直した。変異 5 つがそれぞれの検で赤になる事を確かめた"
+      "revision": "赤(修正前・盲検 A の再現と盲検 B の差分で検が通る)→ 緑(初版 9bb308779・rebase 後 3e96c0bc1): 判定に別名の頭の規則を足し、投影の検を全 macro の検体(14 種)で import を 1 つも残さない形と、symtable で入れ子の scope が読む名が module の段で束ねられている形へ作り直した。追随: main の 8a759a421 が同じ穴の defhandler 側を別の規則(expansion_names.is_alias_import)で直していたので、判定を別名の頭の 1 つにまとめて使い手の無くなった is_alias_import を外し、別名の頭の綴りを expansion_names.PREFIX から引いた。変異 5 つがそれぞれの検で赤になる事を rebase 後の版で確かめた"
     },
     {
       "id": "S2",
@@ -154,10 +154,10 @@
       ],
       "control": "negative",
       "expectation": "設計が守る境界を 1 つずつ壊した変異 5 つが、それぞれ意図した検で赤になる(M1 nested-reads の分岐・M2 全 macro の nested-reads・M3 後処理の呼び出し・M4 別名の頭の判定・M5 約束の頭を守らない別名)",
-      "observation": "M1: 4 failed(class の本体の型の検)・M2: 4 failed(defhandler が module の globals を変えない検)・M3: 17 failed, 12 passed(投影の 2 つの検)・M4: 9 failed(別名の頭の判定)・M5: 2 failed(defwire の約束外の別名。名に依らない検が捕まえる)。いずれも exit=1",
+      "observation": "rebase 後の版で M1: 4 failed(class の本体の型の検)・M2: 4 failed(defhandler が module の globals を変えない検)・M3: 19 failed, 12 passed(投影の検。main 側の defhandler の検 2 件も赤)・M4: 11 failed(別名の頭の判定。同じく defhandler の検 2 件も赤)・M5: 2 failed(defwire の約束外の別名。名に依らない検が捕まえる)。いずれも exit=1",
       "evidence": {
-        "path": "evidence/N-S1-mutations.log",
-        "sha256": "e8556a32010853c4f2b49e46887b1e0e16104bcc7ed04c8300b9095bfb98c85d"
+        "path": "evidence/N-S1-mutations-rebased.log",
+        "sha256": "092ee941678708a007b9e2b7c364c447965ffcba1adc6980cd44ce8b0e49e72c"
       },
       "status": "passed"
     },
@@ -168,10 +168,10 @@
       ],
       "control": "positive",
       "expectation": "修正後の版で、名に依らない形に強めた列挙の検(関数・class の本体の局所の名・class の本体の型・投影の 2 つの検・defhandler の検)が全部通る",
-      "observation": "pytest tests/test_nested_definition_scope.py と tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone で 137 passed, 1 warning(exit=0)",
+      "observation": "rebase 後の版(origin/main 8b96344c7 の上)で pytest tests/test_nested_definition_scope.py と tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone が 144 passed, 1 warning(exit=0。main 側で足された 7 件を含む)",
       "evidence": {
-        "path": "evidence/P-S1-after-fix.log",
-        "sha256": "04df0a87b2776ab0d80d168a394ef43faf09aedfbf10d98eab099e504a270392"
+        "path": "evidence/P-rebased-enumeration.log",
+        "sha256": "d47c343f4e3902e1e2463dce33076942ff10ec32c9436745a99a6cb3079b2add"
       },
       "status": "passed"
     },
@@ -182,10 +182,10 @@
       ],
       "control": "positive",
       "expectation": "盲検 A・B の失敗例を修正後の版で再実行すると、どちらも成立しない",
-      "observation": "A: module が _doeff_ClassVar・_doeff_cast・_doeff_dataclass・_doeff_effect_base を束ね、OuterWire・OuterRecord・OuterEffect・in_function の import で束ぐ名は [](入れ子の読む名は global で解ける)。B: 差分の下で投影の残りは [] []、列挙の検は 137 passed",
+      "observation": "A: module が _doeff_ClassVar・_doeff_cast・_doeff_dataclass・_doeff_effect_base を束ね、OuterWire・OuterRecord・OuterEffect・in_function の import で束ぐ名は [](入れ子の読む名は global で解ける)。B: 差分の下で投影の残りは [] []、列挙の検は 144 passed(rebase 後)",
       "evidence": {
-        "path": "evidence/N-AB-after-fix.log",
-        "sha256": "8fe6d09645ec7152f966317b6921d19497b876d77e003978eb288fbe31518c0e"
+        "path": "evidence/N-AB-after-fix-rebased.log",
+        "sha256": "c38fbdff4ff380dc82a731a07518527133fbd23e8afd8ff43e262a27f7e1d0cd"
       },
       "status": "passed"
     },
@@ -198,8 +198,8 @@
       "expectation": "全定義の macro の検体(14 種)を関数の本体と class の本体に置いた投影で、import が束ねて残す名が無い",
       "observation": "14 種 × (関数・class) の 28 行すべてが [] 。defhandler・defsystem・defworkflow を含む",
       "evidence": {
-        "path": "evidence/P-S1-all-macros-no-import-left.log",
-        "sha256": "27856f76b553fa36732885f8a5eacee90caa3f2cda43ac6e7320b64a6feb1476"
+        "path": "evidence/P-S1-all-macros-no-import-left-rebased.log",
+        "sha256": "1b84a0919fb5710dfa8d8d5c0a6032789a7929f91733e44332827dddcb693233"
       },
       "status": "passed"
     },
@@ -210,10 +210,10 @@
       ],
       "control": "positive",
       "expectation": "投影を作る側の既存の検(static_check 系・conductor・defwire・defrecord の check・static_cache)が修正後の版で通る",
-      "observation": "packages/doeff-hy/tests の 15 file で 124 passed, 3 warnings(3 分 42 秒)",
+      "observation": "rebase 後の版で packages/doeff-hy/tests の 17 file(main 側が触れた test_defrecord_shape.py・test_defeffect_shape.py を足した)が 145 passed, 3 warnings(2 分 32 秒)、tests/test_expansion_names.py が 19 passed",
       "evidence": {
-        "path": "evidence/P-S1-regression.log",
-        "sha256": "a972ae3de149d0ff9f968b0890dba017bed898c813ea5e7c38c91340b5f7de53"
+        "path": "evidence/P-rebased-regression.log",
+        "sha256": "ef735d1c1d1b5c6b5733b1f6df9a37a4b3c6ade417e1ad8728216791674dfb12"
       },
       "status": "passed"
     },
@@ -224,10 +224,10 @@
       ],
       "control": "positive",
       "expectation": "変更範囲の品質検査(速い段)が通り、既存違反を増やさない",
-      "observation": "code-quality: passed (scope=changed・型検査は未実行(fast の段))。観測した既存違反 0。型は含まない。static_check.py・static_view.py が継続検査に未登録という注記が出る(今回の変更で変えていない)",
+      "observation": "rebase 後の版(基底 8b96344c7)で code-quality: passed (scope=changed・型検査は未実行(fast の段))。観測した既存違反 0。型は含まない。static_check.py・static_view.py・expansion_names.py が継続検査に未登録という注記が出る(登録は今回の変更の範囲外)",
       "evidence": {
-        "path": "evidence/P-quality-fast.log",
-        "sha256": "de77a1863c2cde61fdf8231156073a81e089ae7dce11c8acb629d573edf7889d"
+        "path": "evidence/P-quality-fast-rebased.log",
+        "sha256": "ba6667d54ad531d4e1648f8a38d76bfb1c48b8d73c06f9943e611bb1e7b43ee7"
       },
       "status": "passed"
     },
@@ -238,10 +238,10 @@
       ],
       "control": "positive",
       "expectation": "後処理を変えずに 2 度測った POST_PROCESSING の digest は同じ(保存した展開は不必要に無効にならない)",
-      "observation": "digest d239e9d45ac24a77a9cf84ddf698f28f2df05020bd78e86210470bc0c20810bb を 2 度測り、同じ: True",
+      "observation": "rebase 後の版で digest 62956101c462afdcb4508f209f50166bf6e23fcd6f2d3de03d9a355505715483 を 2 度測り、同じ: True",
       "evidence": {
-        "path": "evidence/S2-digest.log",
-        "sha256": "bd350b857c54d1f06466a594865160f3802fb6e295a777b93df0e84674248e45"
+        "path": "evidence/S2-digest-rebased.log",
+        "sha256": "5ecc389c2bb495b5f923a6b4fd902d2e4f0a7fda0281b6aca5e984beacd8f9af"
       },
       "status": "passed"
     },
@@ -252,10 +252,10 @@
       ],
       "control": "positive",
       "expectation": "型検査の展開の保存の検(test_static_cache.py)が修正後の版で通る",
-      "observation": "既存の検 124 passed に test_static_cache.py を含む(実行した命令は log の頭に記録)",
+      "observation": "rebase 後の回帰の検 145 passed に test_static_cache.py を含む(実行した命令は log の頭に記録)",
       "evidence": {
-        "path": "evidence/P-S1-regression.log",
-        "sha256": "a972ae3de149d0ff9f968b0890dba017bed898c813ea5e7c38c91340b5f7de53"
+        "path": "evidence/P-rebased-regression.log",
+        "sha256": "ef735d1c1d1b5c6b5733b1f6df9a37a4b3c6ade417e1ad8728216791674dfb12"
       },
       "status": "passed"
     },
@@ -266,10 +266,10 @@
       ],
       "control": "negative",
       "expectation": "後処理の中身を変える 3 種の変異(変換器の method・判定が呼ぶ関数・判定が読む定数)で digest が変わり、保存した展開が無効になる",
-      "observation": "visit_Import の本体: b9b616bf…・_synthesized_alias の本体: fe8de10e…・SYNTHESIZED_ALIAS_PREFIXES: a59de2c1…。3 つとも元と違う: True",
+      "observation": "rebase 後の版で visit_Import の本体: f2f47669…・_synthesized_alias の本体: 6f892f70…・SYNTHESIZED_ALIAS_PREFIXES: 836d87d7…。3 つとも元と違う: True",
       "evidence": {
-        "path": "evidence/S2-digest.log",
-        "sha256": "bd350b857c54d1f06466a594865160f3802fb6e295a777b93df0e84674248e45"
+        "path": "evidence/S2-digest-rebased.log",
+        "sha256": "5ecc389c2bb495b5f923a6b4fd902d2e4f0a7fda0281b6aca5e984beacd8f9af"
       },
       "status": "passed"
     }

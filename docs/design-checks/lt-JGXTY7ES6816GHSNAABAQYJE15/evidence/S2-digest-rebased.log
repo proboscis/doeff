@@ -1,0 +1,21 @@
+# S2(storage): 型検査の展開の保存が照らす POST_PROCESSING の閉包の digest
+# 対象: 作業木 doeff-wt-design-check-scoped-def @ c7b46912b(origin/main 8b96344c7 の上に rebase した版)
+# 実行: 2026-10-12T11:01:15Z
+
+
+## 正常例: 変えずに 2 度測る
+digest 62956101c462afdcb4508f209f50166bf6e23fcd6f2d3de03d9a355505715483
+digest 62956101c462afdcb4508f209f50166bf6e23fcd6f2d3de03d9a355505715483
+同じ: True
+
+## 失敗例(変異): 後処理の変換器の method(_WithoutNestedImports.visit_Import)の本体を替える
+digest f2f47669d64b04fffac2ae40defdee249c79e467115d3c360b0c438528b0ab11
+元と違う: True
+
+## 失敗例(変異): 判定が呼ぶ関数(_synthesized_alias)の本体を替える
+digest 6f892f709dc5fb5f0ef9b8217d54fd53265b7ebaaf4d2dbf18b6dde4dddc3dc7
+元と違う: True
+
+## 失敗例(変異): 判定が読む定数(static_view.SYNTHESIZED_ALIAS_PREFIXES)を替える
+digest 836d87d7cf0b2d91e72c424337159b6fe65e9946d129d88f40632ae3d3e86391
+元と違う: True
