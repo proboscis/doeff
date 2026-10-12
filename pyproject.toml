@@ -241,7 +241,9 @@ tests = [
 # import でない形の依り(hy.importer._could_be_hy_src の差し替え・macro が受ける compiler の scope など・light_stack の当て物)も
 # 同じ使い捨ての環境で照合する(card ki-2fa4c02604b1・ADR-DOE-HY-008 R7)。
 # macro の変更で古い bytecode を使わない包みの検も、uv.lock の版の PyPI の Hy の使い捨ての環境で測る(card ki-33d2441b7e28 —
-# 表に無かった間、Hy を上げる便で選ばれず日次でだけ走った)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
+# 表に無かった間、Hy を上げる便で選ばれず日次でだけ走った)。包みが import でない形で依る Hy の内部(module の macro の表の名
+# _hy_macros・_hy_reader_macros・展開が表を「名 in 表」と「表[名]」で引く事・gensym と let が改めた束縛の名の形)も、この検が
+# 包みを動かして測る(card ki-eafa369600cd — R7 の母集団の外)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
 # tests/test_contract_table_follows_packages.py が source から数えて確かめる。
 [[tool.doeff.contract-tests]]
 prefix = "uv.lock"
@@ -249,7 +251,7 @@ tests = [
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_imports_exist_in_pypi_hy",  # 9.7 秒
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy",  # 5.5 秒
-    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 24.0 秒(19 本・load 63 の下・枠の待ちを除く)
+    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 17.2 秒(23 本・load 52 の下・枠の待ちを除く)
 ]
 
 # doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version — commit の hook の semgrep・pre-commit と、

@@ -9,12 +9,19 @@ Hy は **PyPI の版**(fork ではない — 利用者の決定 2026-09-29「Hy 
 版は repo の根の uv.lock の hy の行から、doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version)で読む
 (card ki-df4cc0b38cda・ki-33d2441b7e28)。写しの定数だと、uv.lock の Hy を上げてもこの検は古い版のまま測る。uv.lock の変更では
 `make test-changed` がこの file を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])。
+
+包みは import でない形でも Hy の内部に依り、この file がその版の Hy で包みを動かして測る(card ki-eafa369600cd — ADR-DOE-HY-008 の
+R7 の母集団の外): module の macro の表の名(``_hy_macros``)と Hy の展開がその表を ``名 in 表`` と ``表[名]`` で引く事(引いた名を
+覚える表が使った macro を拾う — macro の変更の検)・reader macro の表の名(``_hy_reader_macros`` — reader macro の変更の検)・
+gensym と let が改めた束縛の名の形(compile の口の正準化が読む — gensym の数えの検)。どれかが替わると、包みは使った macro を
+記録し損ねて古い展開を黙って使うか、code が compile の順で揺れる。
 """
 
 from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import marshal
 import os
 import shutil
@@ -79,8 +86,48 @@ if guard == "before-hy":
 import hy
 if guard == "after-hy":
     load_guard()
-import pkg.user
-print(hy.__version__, pkg.user.value)
+print(hy.__version__)
+{probe}
+"""
+
+#: 包みを入れた後に使い捨ての環境で走らせる確かめの既定 — 使う側を import し、展開された値を出す。
+_IMPORT_USER = "import pkg.user\nprint(pkg.user.value)\n"
+
+#: 使う側を同じ process で 2 度 compile し(包みの compile の口 — import と同じく記録を足し gensym の名を振り直す)、間で Hy の
+#: gensym の数えを進める確かめ。答えは 2 つの code が同じか(code の == — 命令・定数・名。marshal の bytes は object の参照の数で
+#: 印が変わるので比べない)と、片方にだけ在る名と文字列。提供元は先に読む
+#: (1 度目の compile だけが提供元の読み込みを囲むと、記録の印が 2 つで違いうる)。
+_COMPILE_TWICE = """\
+import importlib
+import importlib.util
+import json
+import types
+from doeff_hy_bytecode_guard import source_to_code_as_import
+
+importlib.import_module("pkg.macros")
+spec = importlib.util.find_spec("pkg.user")
+
+
+def compiled():
+    with open(spec.origin, "rb") as source:
+        return source_to_code_as_import(spec.loader, source.read(), spec.origin)
+
+
+def texts(code):
+    yield from (*code.co_names, *code.co_varnames, *code.co_cellvars, *code.co_freevars)
+    for constant in code.co_consts:
+        if isinstance(constant, types.CodeType):
+            yield from texts(constant)
+        elif isinstance(constant, str):
+            yield constant
+
+
+first = compiled()
+for _ in range(100):
+    hy.gensym()
+second = compiled()
+print(json.dumps({"same": first == second,
+                  "differing": sorted(set(texts(first)) ^ set(texts(second)))}))
 """
 
 
@@ -109,10 +156,20 @@ def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None, guard_roo
     """PyPI の Hy の使い捨ての環境で pkg.user を import し、展開された値を返す。共有の code の置き場は既定で root の下
     (検どうしで混ざらない)— 作業木をまたぐ検は同じ store を渡す。guard_root = 包みの package の親(既定はこの checkout の doeff-hy の
     src — 版の違う包みの代役を渡す検がある)。"""
+    return int(_probe_on_pypi_hy(root, guard, _IMPORT_USER, store, guard_root))
+
+
+def _probe_on_pypi_hy(
+    root: Path, guard: str, probe: str, store: Path | None = None, guard_root: Path = GUARD_ROOT
+) -> str:
+    """PyPI の Hy の使い捨ての環境で、包みを入れた後に probe(Python の文 — 答えを stdout へ出す)を走らせ、答えの文を返す。
+    置き場と guard_root は :func:`_run_on_pypi_hy` と同じ。"""
     uv = shutil.which("uv")
     assert uv is not None, "uv が PATH に無い — PyPI の Hy の使い捨ての環境を作れない"
     script = root / f"load_{guard}.py"
-    script.write_text(_LOADER.format(root=str(root), guard=guard, guard_root=str(guard_root)))
+    script.write_text(
+        _LOADER.format(root=str(root), guard=guard, guard_root=str(guard_root), probe=probe)
+    )
     # 子はこの process の環境を継ぐ — _ENV_NOT_PASSED の名だけ外し(`env -u`)、共有の code の置き場を足す。
     unset = [flag for name in _ENV_NOT_PASSED for flag in ("-u", name)]
     code_store = store if store is not None else root / "code-store"
@@ -140,9 +197,9 @@ def _run_on_pypi_hy(root: Path, guard: str, store: Path | None = None, guard_roo
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
-    hy_version, value = completed.stdout.split()
+    hy_version, answer = completed.stdout.split(maxsplit=1)
     assert hy_version == _locked_hy_version()
-    return int(value)
+    return answer
 
 
 def _user_pyc(root: Path) -> Path:
@@ -206,6 +263,45 @@ def test_a_change_of_the_helper_a_macro_imports_inside_its_body_recompiles_the_u
     assert _run_on_pypi_hy(tmp_path, "before-hy") == 11
     _edit(package / "helpers.hy", "(defn base [] 20)\n")
     assert _run_on_pypi_hy(tmp_path, "before-hy") == 21
+
+
+@pytest.mark.parametrize(("guard", "after"), [("none", 10), ("before-hy", 15)])
+def test_a_reader_macro_change_recompiles_the_user_on_pypi_hy(
+    tmp_path: Path, guard: str, after: int
+) -> None:
+    """reader macro を変えた後、使う側は新しい展開で動く(包みが無いと古い展開のまま — この検が包みを測る事の確かめ)。包みは
+    使う側の module の reader macro の表(``_hy_reader_macros``)に在る他の module の reader macro を記録に入れるので、Hy が表の
+    名を替えると記録から漏れ、古い展開を黙って使う(card ki-eafa369600cd)。"""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    reader = "(defreader twice\n  (setv x (.parse-one-form &reader))\n  `(* {} ~x))\n"
+    (package / "readers.hy").write_text(reader.format(2))
+    (package / "user.hy").write_text(
+        "(require pkg.readers :readers [twice])\n(setv value #twice 5)\n"
+    )
+    assert _run_on_pypi_hy(tmp_path, guard) == 10
+    _edit(package / "readers.hy", reader.format(3))
+    assert _run_on_pypi_hy(tmp_path, guard) == after
+
+
+def test_the_code_does_not_depend_on_how_many_gensyms_the_process_made_on_pypi_hy(
+    tmp_path: Path,
+) -> None:
+    """同じ source の code は、process が先に何度 gensym を呼んだかに依らない — compile の口が gensym の名(let が改めた束縛の名に
+    埋まった物も)を module の中の順へ振り直す(agora-redesign #3667)。振り直しは Hy の gensym と let の名の形を読むので、Hy が
+    形を替えると黙って振り直さず、.pyc・共有の置き場・詰めた Program の指紋が compile の順で揺れる(card ki-eafa369600cd)。"""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "macros.hy").write_text(
+        '(defmacro bound [x]\n  (setv g (hy.gensym "bound"))\n  `(let [~g ~x] (+ ~g 1)))\n'
+    )
+    (package / "user.hy").write_text(
+        "(require pkg.macros [bound])\n(defn f [] (bound 10))\n(setv value (f))\n"
+    )
+    answer = json.loads(_probe_on_pypi_hy(tmp_path, "before-hy", _COMPILE_TWICE))
+    assert answer == {"same": True, "differing": []}
 
 
 def test_the_record_lives_inside_a_standard_pyc(tmp_path: Path) -> None:
