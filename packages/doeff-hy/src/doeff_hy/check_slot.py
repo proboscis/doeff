@@ -10,14 +10,20 @@ task)と共有する枠を、展開と pyright の前に 1 つ取る(agora-redes
 machine_check_slots.json の 1 つが持つ)。この module は値を持たず、正本を宿の home の path で読んで read_policy と take を呼ぶだけ
 (code-quality の quality/machine_slot.py・agora-controllers の scripts/check_slot.hy と同じ形)。
   - 正本の無い宿(dotfiles を置かない機体 — doeff だけを clone した機体)は黙って素通し。
-  - 正本・宣言を読めない時と、正本の口が揃わない・呼び方が合わない時(正本は dotfiles の先端を追い、doeff は使い手の pin で固定
-    される)は 1 行名乗って素通し — 枠の壊れで検を走らせなくしない(正本の pytest の受付と同じ)。
+  - 正本・宣言を読めない時と、正本の口が揃わない時・正本の take が中で落ちた時(正本は dotfiles の先端を追い、doeff は使い手の
+    pin で固定される)は 1 行名乗って素通し — 枠の壊れで検を走らせなくしない(正本の pytest の受付と同じ)。正本の中の失敗を
+    traceback のまま抜けさせると、main の終了 1(= 新しい赤)と区別できない(card ki-26ebd3f636e0 の盲検 A の副次の実測)。
+  - 方策(read_policy の答え)は中を読まずに take の 1 つ目の引数へそのまま渡す — 待ちの上限を縮める・延ばす・作り直す判断と、
+    方策の欄の名をここに置かない(盲検 B の反例。形は tests/test_static_check_slot.py の AST の検が守る)。
   - 枠を持つ process の子孫(pytest の検が呼ぶ main・gate が起こす doeff-hy-check)は 2 つ目を取らない。判定は正本の take
     (/proc の祖先の列・/proc の無い機体では正本の HOLDER_ENV の印)。
   - 待ちは正本が黙らずに名乗る(`check-slot: … 待つ — 待ち N 秒 / 上限 … 保持 pid …`)。上限を越えたら SlotExpired — main は展開も
     pyright も起こさずに「走れなかった」(exit 2)で終わる(合格にも赤にもしない)。
+  - 正本へ渡す env は、名指しで 1 つずつ読む写し(doeff_hy.env_places.EnvironmentByName)— 正本の take がどの名を読むか
+    (今は保持者の印・明日は会話の id かもしれない)を doeff は知らない。名を 1 つに絞って写すと、正本が新しい名を読んだ時に
+    doeff だけが黙って従わない(盲検 A の反例)。
   - 持つ間、子孫への印(正本の HOLDER_ENV)は env に置かない。子孫(展開の子・pyright・pyright が起こす python)は枠を取らず、置くには
-    os.environ を書く(doeff-linter の DOEFF004)。正本へ渡す env は、印の今の値だけの写し(読みは doeff_hy.env_places)。
+    os.environ を書く(doeff-linter の DOEFF004)。Linux では正本が /proc の祖先の列で子孫を判じる。
 env で正本の path や値を替える口は作らない(口が在ると、替えた会話の検だけが別の数で数え、枠が割れる — 正本の頭の註)。
 """
 
@@ -29,7 +35,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Protocol, TextIO
 
-from doeff_hy.env_places import slot_holder_setting
+from doeff_hy.env_places import EnvironmentByName
 
 #: 正本の置き場(宿の home からの相対 — doeff-linter の check_slot.rs・code-quality の quality/machine_slot.py と同じ)。
 CANON_UNDER_HOME = Path("dotfiles", "agent", "tests", "machine_check_slots.py")
@@ -38,8 +44,9 @@ CANON_UNDER_HOME = Path("dotfiles", "agent", "tests", "machine_check_slots.py")
 MODULE_KEY_PREFIX = "ai_machine_check_slots@"
 #: 名乗りの行の頭(正本の MARK と同じ)。
 MARK = "check-slot:"
-#: 正本の公開の口のうち、この module が引く名(揃わない正本 — dotfiles の先端で口が変わった — は素通し)。
-CANON_NAMES = ("read_policy", "take", "PolicyUnreadable", "SlotWaitExpired", "HOLDER_ENV")
+#: 正本の公開の口のうち、この module が呼ぶ関数と捕まえる例外の名(揃わない正本 — dotfiles の先端で口が変わった — は素通し)。
+CANON_CALLS = ("read_policy", "take")
+CANON_ERRORS = ("PolicyUnreadable", "SlotWaitExpired")
 
 
 class Holding(Protocol):
@@ -107,6 +114,18 @@ def canon_module(home: Path, out: TextIO) -> ModuleType | None:
     return module
 
 
+def unfit_names(module: ModuleType) -> list[str]:
+    """正本の口のうち、呼べない関数・例外の class でない名(純粋)。空 = 口が揃う。"""
+    found = vars(module)
+    return [name for name in CANON_CALLS if not callable(found.get(name))] + [
+        name for name in CANON_ERRORS if not _error_class(found.get(name))
+    ]
+
+
+def _error_class(value: object) -> bool:
+    return isinstance(value, type) and issubclass(value, BaseException)
+
+
 def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
     """同じ機体で走る検と共有する枠を 1 つ取る(埋まっていれば正本が保持者を名乗って待つ)。home = 正本を探す宿の home・
     label = 保持者の名乗り・out = 名乗りの行の行き先。方策は正本の read_policy の答えを中を読まずに take へ渡す — 待ちの上限を
@@ -114,22 +133,21 @@ def take_slot(home: Path, label: str, out: TextIO) -> SlotHeld | SlotExpired:
     module = canon_module(home, out)
     if module is None:
         return SlotHeld(None)
-    missing = [name for name in CANON_NAMES if not hasattr(module, name)]
-    if missing:
+    unfit = unfit_names(module)
+    if unfit:
         _named(
             out,
-            f"枠の正本 {module.__file__} の口が揃わない({'・'.join(missing)})ので枠を取らずに走る",
+            f"枠の正本 {module.__file__} の口が揃わない({'・'.join(unfit)})ので枠を取らずに走る",
         )
         return SlotHeld(None)
-    marker_name: str = module.HOLDER_ENV
-    marker = slot_holder_setting(marker_name)
-    environ = {} if marker is None else {marker_name: marker}
     try:
-        return SlotHeld(module.take(module.read_policy(), label, environ, out))
+        return SlotHeld(module.take(module.read_policy(), label, EnvironmentByName(), out))
     except module.PolicyUnreadable as error:
         _named(out, f"宣言を読めないので枠を取らずに走る — {error}")
     except module.SlotWaitExpired as error:
         return SlotExpired(str(error))
-    except TypeError as error:  # 正本の口の呼び方が doeff の pin の版と食い違う — 検を止めない
-        _named(out, f"枠の正本の呼び方が合わないので枠を取らずに走る({error})")
+    except Exception as error:  # 正本(別の repo の先端の code)の中の失敗・呼び方の食い違い — 名乗って素通し(頭の註)
+        _named(
+            out, f"枠の正本の take が落ちたので枠を取らずに走る({type(error).__name__}: {error})"
+        )
     return SlotHeld(None)
