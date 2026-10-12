@@ -28,7 +28,10 @@ card ki-f8a58fb49dd9 が実行の印に替えた)。
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
 走った)。例の中の macro の定義と、doeff-hy の外からの require を断る。展開の形も doeff-hy の隠す中身で、例が
-印字すると答えを変えない macro の変更で例が赤になるので、展開の引き出し(hy.macroexpand)も断る。
+印字すると答えを変えない macro の変更で例が赤になるので、展開の引き出し(hy.macroexpand)も断る。引き出さずに展開を
+文字列で写して印字する例は、macro が変わっても赤にならずに古い展開を教える — 写しは展開の形の印(Hy・doeff-hy の隠す名と、
+展開が module を引く __import__)を持つので、期待の出力に置かせない。例が使う doeff-hy の macro の展開がどれもその印を持つ
+事も、展開して確かめる(card ki-fe7a2e60fdfb)。
 """
 
 import difflib
@@ -37,13 +40,15 @@ import itertools
 import re
 import subprocess
 import sys
-from collections.abc import Iterator
+import types
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 import hy
 import pytest
+from doeff_hy.static_stub import hidden_name
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 # 走る例の標準出力の期待(<例の stem>.txt)。例の印字を変えたら、例と一緒に書き直す。
@@ -96,20 +101,49 @@ _MACHINE_PATHS = sorted(
     {path.rstrip("/") for path in (sys.prefix, sys.base_prefix, str(Path.home()))} - {""}
 )
 
-# 期待の出力に置かない物(名 → 正規表現)。どれも書いた木の上では毎回同じに出るので緑のまま置けてしまい、別の木・別の
-# 機体や、答えを変えない macro・lib の変更で外れる — 置いた木で気づくように断る。印字に出るなら、その所を印にする。
-UNPLACEABLE: dict[str, re.Pattern[str]] = {
+# 文の中の、_ で始まる語(Hy の綴りの - も語に含める — 名は mangle して比べる)。
+_UNDERSCORED_WORD = re.compile(r"(?<![\w-])_[\w-]*")
+# 展開が名を束ねずに module を引く呼び出し(doeff-hy の macros.hy の _do-reference・outcome_forms.hy の open-form — fnk の
+# 展開は隠す名を持たず、これだけを持つ)。
+_EXPANSION_IMPORT = "__import__"
+
+
+def _shows_expansion(text: str) -> bool:
+    """文が展開の形の印を持つか: Hy・doeff-hy の隠す名(持ち主は doeff-hy の hidden_name — Hy の gensym・macro の補助と記帳)
+    か、展開が module を引く __import__。"""
+    return any(
+        word == _EXPANSION_IMPORT or hidden_name(hy.mangle(word))
+        for word in _UNDERSCORED_WORD.findall(text)
+    )
+
+
+def _searches(pattern: str, flags: int = 0) -> Callable[[str], bool]:
+    """正規表現が文のどこかに合うか、を問う関数。"""
+    compiled = re.compile(pattern, flags)
+    return lambda text: compiled.search(text) is not None
+
+
+# 期待の出力に置かない物(名 → 文がそれを持つか)。どれも書いた木の上では毎回同じに出るので緑のまま置けてしまい、別の木・
+# 別の機体や、答えを変えない macro・lib の変更で外れる — 置いた木で気づくように断る。印字に出るなら、その所を印にする。
+UNPLACEABLE: dict[str, Callable[[str], bool]] = {
     # 日次の作業木など、別の checkout では必ず外れる
-    "checkout の path": re.compile(re.escape(str(EXAMPLES.parents[2]))),
-    "機体の置き場(venv・Python・home)": re.compile(
+    "checkout の path": _searches(re.escape(str(EXAMPLES.parents[2]))),
+    "機体の置き場(venv・Python・home)": _searches(
         "|".join(re.escape(f"{path}/") for path in _MACHINE_PATHS)
     ),
-    # 番号は macro の展開と compile の順で決まる Hy・doeff-hy の隠す中身で、例の結果ではない(設計検証
-    # lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の盲検 B)
-    "Hy が付ける名(_hy_anon_・_hy_gensym_)": re.compile(r"_hy_(?:anon|gensym)_"),
+    # Hy の付ける名の番号は macro の展開と compile の順で決まり、例の結果ではない(設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の
+    # 盲検 B)。展開を文字列で写した印字は、答えを変えない macro の変更でも外れず、古い展開を教える(設計検証
+    # lt-C53PGBQD7WWPYAA1WWSW41BHDP の残る限界・card ki-fe7a2e60fdfb)
+    "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)": _shows_expansion,
     # path と、lib・例の行番号が入る — frame は行だけの ANY にする
-    "traceback の frame の行": re.compile(r'^\s*File "[^"]*", line \d+', re.MULTILINE),
+    "traceback の frame の行": _searches(r'^\s*File "[^"]*", line \d+', re.MULTILINE),
 }
+
+
+def _unplaceable_in(text: str) -> list[str]:
+    """文が持つ、期待の出力に置かない物の名。"""
+    return [name for name, finds in UNPLACEABLE.items() if finds(text)]
+
 
 # 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
 _MACRO_DEFINERS = frozenset({"defmacro", "defmacro!", "defreader"})
@@ -409,6 +443,42 @@ def _form_macro_violations(form: object) -> list[str]:
     return expanded
 
 
+def _doeff_hy_macro_names(form: hy.models.Expression) -> frozenset[str]:
+    """`(require doeff-hy.macros [defk <- …] …)` が doeff-hy の module から引く macro の名(mangle した名)。"""
+    return frozenset(
+        hy.mangle(str(name))
+        for module, names in itertools.pairwise(list(form)[1:])
+        if _module_package(module) == _MACRO_OWNER and isinstance(names, hy.models.List)
+        for name in names
+        if isinstance(name, hy.models.Symbol)
+    )
+
+
+def _doeff_hy_expansions(source: str, filename: str) -> Iterator[tuple[str, object]]:
+    """source の doeff-hy の macro の使い所ごとの、`<行>: <macro>` と 1 段の展開。展開は source の doeff-hy の require
+    だけを評価した module の中でする(例を走らせない)。"""
+    requires = [
+        form
+        for form in _forms(source, filename)
+        if isinstance(form, hy.models.Expression)
+        and form
+        and form[0] == hy.models.Symbol("require")
+    ]
+    module = types.ModuleType(f"expansion_of_{Path(filename).stem}")
+    macros = frozenset[str]().union(*(_doeff_hy_macro_names(form) for form in requires))
+    for form in requires:
+        if _doeff_hy_macro_names(form):
+            hy.eval(form, module=module)
+    for form in _forms(source, filename):
+        if (
+            isinstance(form, hy.models.Expression)
+            and form
+            and isinstance(form[0], hy.models.Symbol)
+            and hy.mangle(str(form[0])) in macros
+        ):
+            yield f"{form.start_line}: {form[0]}", hy.macroexpand_1(form, module=module)
+
+
 @pytest.mark.parametrize("name", _runnable())
 def test_example_runs(name: str, children: Children) -> None:
     result = children.result(name, failing_a_case=False)
@@ -577,15 +647,56 @@ def test_expected_output_places_nothing_unplaceable() -> None:
     found = {
         path.name: names
         for path in sorted(EXPECTED.glob("*.txt"))
-        if (
-            names := [
-                name
-                for name, pattern in UNPLACEABLE.items()
-                if pattern.search(path.read_text(encoding="utf-8"))
-            ]
-        )
+        if (names := _unplaceable_in(path.read_text(encoding="utf-8")))
     }
-    assert found == {}, f"期待の出力に置かない物が在る — その所を印にする: {found}"
+    assert found == {}, (
+        f"期待の出力に置かない物が在る — その所を印にする(展開の形の印なら、例は展開を印字しない): {found}"
+    )
+
+
+@pytest.mark.parametrize("name", _examples())
+def test_example_expansions_show_their_marks(name: str) -> None:
+    """例が使う doeff-hy の macro の展開には、どれも展開の形の印が在る — 展開を写して印字すると、期待の出力の検が名指す。
+    印の無い展開を作る macro の写しは見分けられないので、その macro の展開に隠す名を持たせるか、印の種類を足す。"""
+    path = EXAMPLES / name
+    unmarked = [
+        use
+        for use, expansion in _doeff_hy_expansions(path.read_text(encoding="utf-8"), str(path))
+        if not _shows_expansion(hy.repr(expansion))
+    ]
+    assert unmarked == [], (
+        f"{name} の doeff-hy の macro の展開に、展開の形の印({_EXPANSION_IMPORT} も隠す名も)が無い — 写して印字されても"
+        f"期待の出力の検が見分けない: {unmarked}"
+    )
+
+
+def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: float) -> None:
+    """Program を走らせる例に、展開を引き出さずに文字列で写した展開の印字を足すと、期待の出力の検が名指す(例の検の他の
+    検 — 走る・Program を走らせる・macro の持ち主 — は通る形: 設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP の残る限界)。写しは
+    今の展開そのもの(古い写しの形は test_unplaceable_table_catches_its_samples)。"""
+    example = EXAMPLES / "ex04_simple.hy"
+    source = example.read_text(encoding="utf-8")
+    copied = next(
+        hy.repr(expansion)
+        for use, expansion in _doeff_hy_expansions(source, str(example))
+        if use.endswith(": traverse")
+    )
+    script = tmp_path / "ex04_shows_expansion.hy"
+    script.write_text(f"{source}(print {hy.repr(copied)})\n", encoding="utf-8")
+    result = subprocess.run(
+        _in_child_time_zone([sys.executable, "-m", "hy", str(script)]),
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _macro_violations(script.read_text(encoding="utf-8"), str(script)) == []
+    assert result.stdout == f"{_expected(example.name).read_text(encoding='utf-8')}{copied}\n"
+    assert _unplaceable_in(_expected(example.name).read_text(encoding="utf-8")) == []
+    assert _unplaceable_in(result.stdout) == [
+        "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)"
+    ]
 
 
 def test_mark_check_sees_unknown_marks() -> None:
@@ -625,18 +736,34 @@ def test_frame_mark_swallows_only_frames() -> None:
 
 def test_unplaceable_table_catches_its_samples() -> None:
     """今の期待の出力には置かない物が無いので、表の行ごとに、その物を含む文を拾い、印にした文は拾わない事を確かめる。"""
+    expansion_marks = "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)"
     samples = {
         "checkout の path": f"{EXAMPLES / 'ex07_proboscis_ema_rewrite.hy'}:129",
         "機体の置き場(venv・Python・home)": f"{Path(sys.base_prefix) / 'lib' / 'traceback.py'}",
-        "Hy が付ける名(_hy_anon_・_hy_gensym_)": "raised in: _hy_anon_17:129 -> fetch_price:95",
+        expansion_marks: "raised in: _hy_anon_17:129 -> fetch_price:95",
         "traceback の frame の行": '        File "/x/doeff_core_effects/handlers.py", line 154, in attempt',
     }
     assert set(samples) == set(UNPLACEABLE), "UNPLACEABLE の行ごとに、拾う文をここに足す"
-    assert [name for name, sample in samples.items() if not UNPLACEABLE[name].search(sample)] == []
-    assert UNPLACEABLE["Hy が付ける名(_hy_anon_・_hy_gensym_)"].search(
-        "(setx _hy_gensym_bound_2 x)"
+    assert [name for name, sample in samples.items() if not UNPLACEABLE[name](sample)] == []
+    # 展開の写し: gensym・doeff-hy の補助の名(Hy の綴りのままでも)・記帳の属性・fnk の展開の __import__。古い展開の写し
+    # (外した ex04_debug2 が「macro が作る形」として印字した形)も拾う
+    assert [
+        copy
+        for copy in [
+            "(setx _hy_gensym_bound_2 x)",
+            "(_doeff_traverse_Traverse (_doeff_do (fn [x] …)) items)",
+            "(import doeff [do :as _doeff-do])",
+            "handler.__doeff_body__",
+            '(fn [acc x] (((. (__import__ "doeff.do" :fromlist #("do")) do) (fn [] (do (+ acc x))))))',
+            "(fn [x] (_doeff_do (fn [] …)))",
+        ]
+        if not UNPLACEABLE[expansion_marks](copy)
+    ] == []
+    # 例の結果の名(_ を中に持つ名・dunder)は拾わない
+    assert not UNPLACEABLE[expansion_marks](
+        "fetch_price: _private_total=3 my_doeff_do __init__ __class__ _"
     )
     masked = (
         f"raised in: {ANY}:129 -> fetch_price:95\n      Traceback (most recent call last):\n{ANY}\n"
     )
-    assert [name for name, pattern in UNPLACEABLE.items() if pattern.search(masked)] == []
+    assert _unplaceable_in(masked) == []
