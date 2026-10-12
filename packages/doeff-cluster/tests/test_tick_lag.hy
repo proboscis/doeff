@@ -3,8 +3,9 @@
 ;; 実例(2026-10-06): #3715 で拍の中の effect を待ち終えるたびに時刻を刻む形にしたら、action の数だけ時刻の読みが増え、消費者の repo の
 ;; 模擬の roll の場面の歩数が 162,449 → 168,770 に増えた(上限 170,000 の手前)。だから:
 ;;   - 区間の計りの読みは単調な時計(GetMonotonic — #3825)で拍の頭・重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の待ちの後・拍の
-;;     終わりの 5 回だけ、壁の時計(GetTime)の読みは判断の now の 1 回だけで、どちらも action の数に依らない(WorkerWakes の基準の
-;;     拍の頭の壁の時刻は now から単調な差を引いて導き、読まない)
+;;     終わりの 5 回だけ、壁の時計(GetTime)の読みは拍の頭と判断の now の 2 回だけで、どちらも action の数に依らない(WorkerWakes の
+;;     基準の拍の頭の刻は、頭で読んだ壁の時計と単調な時計の対を判断の now の枠へ写す — 単調な差だけで導くと、拍の途中の機体の眠りで
+;;     拍の頭が眠りの後へずれる・card ki-069f4a5c07f7)
 ;;   - 拍の遅れの行の slowest は 3 種の名か、それ以外の区間(action・揃いの追いの観測・PublishStatus)の名 ACTIONS-TO-PUBLISH
 ;; 反例 = 直す前の形(action ごと・揃いの追いの ObserveWorld ごと・PublishStatus の後にも刻む)は、action の在る拍で読みが 7 回になり、
 ;; 遅い action と遅い PublishStatus をその effect の名で名指す — 下の断言が赤(2026-10-06 に直す前の program.hy に差し替えて確かめた)。
@@ -29,9 +30,9 @@
 ;; 遅い待ちの秒(拍の遅れの線 5 秒を越える)。
 (val SLOW-SECONDS 6.0)
 ;; 拍 1 つの時刻の読みの数。単調な時計 = 区間の計り(拍の頭・EnvReport の後・ReadDesired の後・最初の ObserveWorld の後・拍の終わり)・
-;; 壁の時計 = 判断の now(WorkerWakes の基準の拍の頭の壁の時刻は、now から単調な差を引いて導く)。
+;; 壁の時計 = 拍の頭(WorkerWakes の基準の刻の対の片方)と判断の now。
 (val MONOTONIC-READS-PER-TICK 5)
-(val WALL-READS-PER-TICK 1)
+(val WALL-READS-PER-TICK 2)
 
 
 (defrecord TickWorld
@@ -137,7 +138,7 @@
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) (tick-world world) tick-noted] (one-tick)))))
 
 
-(deftest test-a-quiet-tick-reads-the-clocks-six-times
+(deftest test-a-quiet-tick-reads-the-clocks-seven-times
   ;; 宣言も観測も空の静かな拍: action は無く、時刻の読みは単調 5 回・壁 1 回。
   (<- seen TickSeen (tick-on (TickWorld :declared #())))
   (assert (= seen.actions 0) seen)

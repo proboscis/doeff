@@ -18,6 +18,10 @@
 ;;   - 周の間の待ち(tick_pauses)も同じ計りで待つ: 起きる期限(DueAt — 壁の時計の枠の刻)を組み立てた後・待ちが時計を読む前に壁の
 ;;     時計が Δ 戻ると、「期限 − 今の壁の時計」で待つ形は待ちが Δ 延び、柵の判断が Δ 遅れた(設計検証の盲検 A の失敗例 — 途絶の
 ;;     沈黙 19.5 秒の待ちの直前に 45 秒戻すと、自己停止を決めるのが沈黙 65 秒の時)。待ちは周の頭の刻の対からの経過で数える。
+;;   - 調整ループが起きる期限の基準にする拍の頭の刻も同じ計りで導く: 頭で壁の時計と単調な時計の対を読み、判断の時の壁の時計の枠へ
+;;     写す。単調な差だけで導くと、拍の途中(heartbeat の返事の処理の間)に機体が眠った時、拍の頭が眠りの後へずれ、眠りの間に過ぎた
+;;     heartbeat と柵の期限を「この拍がもう判じた」として捨てた(設計検証の盲検 A の副次の観測 — 拍だけが heartbeat を送る口で、
+;;     自己停止を決めるのが眠りの 210 秒後)。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -372,3 +376,52 @@
   (<- silence int (silence-at-cut-off seen))
   (assert (< silence T.reassign-after-ms) #(silence seen))
   (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+
+
+(defhandler slept-inside-the-reply [#^ float seconds]
+  "coordinator への口と偽の coordinator の間に立つ代役: 3 回目の heartbeat の返事の処理の途中(口が ready の file の環境変数を問う
+   ReadEnvironment — 口はもう返事の刻を読んでいる・調整ループはまだ壁の時計を読んでいない)で機体が seconds 秒眠り(壁の時計だけが進む)、
+   戻った後は coordinator に届かない(以後の要求は接続の失敗)。眠った刻は台本の記録(Seen.stepped-ms)に残らないので、3 回目の heartbeat
+   が届いた刻(Seen.delivered の 3 つ目)で読む。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 検ごとに眠る秒を変える(Ask で区別できない)。
+  (session var asked 0)
+  (session var slept False)
+  (ReadEnvironment [names]
+    (:= asked (+ asked 1))
+    (when (= asked 3)
+      (:= slept True)
+      (<- (StepWallClock (- seconds))))
+    (<- found effect)
+    (resume found))
+  (HttpRequest [url]
+    (when slept
+      (return (resume (HttpFailed :url url :detail "ConnectError: refused" :kind HttpFailureKind.CONNECT-FAILED))))
+    (<- answer effect)
+    (resume answer)))
+
+
+(defk seen-with-a-sleep-inside-the-reply [beat-beside task-dir]
+  {:pre [(: beat-beside bool) (: task-dir str)] :post [(: % Seen)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "途絶えない台本を、seen-on と同じ組の口のすぐ外側に slept-inside-the-reply(30 秒 — fence 20 秒の後)を足して回すため。beat-beside =
+   拍の外の背景の task でも heartbeat を送るか(本番の入口は真 — 偽は、背景の task が止まった口と同じく拍だけが送る形)。"
+  (val script (Script :cut-ms None :cut-back-seconds 0.0 :step-after-beats None :beats-back-seconds 0.0 :until-ms 40000))
+  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True :beat-beside beat-beside))
+  (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
+                                script-clock wall-clock-stepped (scripted-coordinator script) (slept-inside-the-reply 30.0) tick-pauses
+                                (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
+                                cut-off-noted]
+                  (worker-then-seen)))
+  seen)
+
+
+(deftest test-a-worker-that-slept-inside-the-reply-handling-decides-its-self-stop-at-the-first-tick-after-the-resume [tmp-path]
+  ;; 失敗ケース(設計検証の盲検 A の副次の観測): 3 回目の heartbeat の返事の処理の途中に機体が 30 秒(fence の後)眠り、戻ったら
+  ;; coordinator に届かない。拍の外の送りが在る口(本番)も、拍だけが heartbeat を送る口も、戻った最初の周で自己停止を決める。拍の頭の
+  ;; 刻を単調な差だけで導くと、拍だけが送る口は眠りの間に過ぎた期限を捨て、決めるのが 210 秒後になった。
+  (for [beat-beside [True False]]
+    (<- seen Seen (seen-with-a-sleep-inside-the-reply beat-beside (str (/ tmp-path (str beat-beside)))))
+    (assert (= (len seen.delivered) 3) #(beat-beside seen))
+    (val slept-at (get seen.delivered 2))
+    (assert (is-not seen.cut-off-ms None) #(beat-beside seen))
+    (assert (<= slept-at seen.cut-off-ms (+ slept-at (// T.lease-ms 2))) #(beat-beside seen))))

@@ -16,6 +16,7 @@
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes
   WorkerUnsettled SweepEnvs TickMarks] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.core.worker_due [plan-due wakes-with])
+(import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs
   declared-warm sweep-actions])
 
@@ -30,8 +31,8 @@
 (val TICK-LAG-MS 5000)
 ;; 拍の区間の名(#3715): 区間の長さは単調な時計(GetMonotonic)で、拍の頭と、重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の
 ;; 待ちの後と、拍の終わりにだけ読む(#3825 — 壁の時計は NTP などで戻る・進むので、差が負や偽の長さになり、遅い区間の名指しが外れる)。
-;; 壁の時計は拍の判断の now の 1 回だけ(WorkerWakes の基準の拍の頭の壁の時刻は now から単調な差を引いて導く)。時刻の読みは
-;; action の数に依らず拍 1 つに 6 回(単調 5・壁 1)。最初の ObserveWorld の後から PublishStatus の後までは 1 つの区間(action・揃いの追いの観測・PublishStatus を
+;; 壁の時計は拍の頭と拍の判断の now の 2 回(WorkerWakes の基準の拍の頭の刻は、頭で壁の時計と単調な時計の対を読み、判断の now の
+;; 枠へ写す — 下の worker-tick の註)。時刻の読みは action の数に依らず拍 1 つに 7 回(単調 5・壁 2)。最初の ObserveWorld の後から PublishStatus の後までは 1 つの区間(action・揃いの追いの観測・PublishStatus を
 ;; まとめた区間)で、その名が ACTIONS-TO-PUBLISH。計りだけの読みは GetMonotonic を直に出す(読みごとに Program の呼びを挟まない —
 ;; 拍ごとの費用を時刻の effect の数に留める)。
 (val ACTIONS-TO-PUBLISH "ActionsToPublishStatus")
@@ -122,8 +123,12 @@
   ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。止まり始めも渡す — heartbeat で名乗り、
   ;; coordinator がこの世代へ新しく置かない(#2819)。
   ;; 拍の遅れの計り(#3715): 拍の頭・重い 3 種の待ちの後・拍の終わりに時刻を読み、拍が TICK-LAG-MS を越えたらいちばん長い区間を名指す。
-  ;; 区間の計りは単調な時計(#3825)。壁の時計の読みは拍の判断の now の 1 つだけで、拍の頭の壁の時刻(wakes の基準 began)は読まずに
-  ;; now から拍の頭までの単調な差を引いて導く(壁の時計の読みを拍に足さない)。
+  ;; 区間の計りは単調な時計(#3825)。拍の頭の刻(wakes の基準 began)は、頭で壁の時計と単調な時計を続けて読んだ対から、判断の now の
+  ;; 壁の時計の枠へ写す: now から、頭からの長さ(heartbeat_rules.silent-ms — 壁の時計と単調な時計の長い方)を引く。単調な差だけを引くと、
+  ;; 拍の途中(宣言の読みの返事の処理の間)に機体が眠った時、began が眠りの後の刻になり、眠りの間に過ぎた heartbeat と柵の期限を
+  ;; 「この拍がもう判じた」として捨てた(拍だけが heartbeat を送る口で、自己停止の判断が眠りの 200 秒余り後 — 設計検証の盲検 A の副次の
+  ;; 観測・card ki-069f4a5c07f7)。
+  (<- began-wall int (now-epoch-ms))
   (<- began-mono float (GetMonotonic))
   (<- env-report (| dict None) (EnvReport))
   (<- env-reported-mono float (GetMonotonic))
@@ -133,7 +138,8 @@
   (<- now int (now-epoch-ms))
   (val began-ms (monotonic-ms-of began-mono))
   (val env-reported-ms (monotonic-ms-of env-reported-mono))
-  (val began (- now (- (monotonic-ms-of desired-read-mono) began-ms)))
+  (<- ticking int (silent-ms now (monotonic-ms-of desired-read-mono) began-wall began-ms))
+  (val began (- now ticking))
   ;; heartbeat の間の計り(#3850): 前の読みの後からこの読みまでの送り(この読みの送りと、拍の外の背景の task の送り — card
   ;; ki-e38dbfca7671)ごとに、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を越えたら、間のいちばん長い区間を
   ;; 名指す。間は送りの単調な時計の読み(mono-ms)の差で、区間は拍で既に読んだ単調な時計の読みで切る(時刻の読みを足さない)。
