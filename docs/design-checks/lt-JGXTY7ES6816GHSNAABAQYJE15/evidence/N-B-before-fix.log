@@ -1,0 +1,7 @@
+# 盲検 B の差分(record.hy の defrecord に :tags の ClassVar を足す)を当てた作業木 b52770e03+差分で、列挙の検を実行
+# 実行: 2026-10-12T10:17:53Z
+$ uv run python -I /tmp/sd-design/repro_b.py   # 差分の後
+['_doeff_ClassVar'] ['_doeff_ClassVar']
+$ uv run pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone -q
+117 passed, 1 warning in 24.89s
+exit=0

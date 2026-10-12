@@ -1,0 +1,60 @@
+# 失敗例(変異): 設計が守る境界を 1 つずつ壊し、検が意図した理由で赤になる事を確かめる
+# 対象: 作業木 doeff-wt-design-check-scoped-def @ 64a022d75(基底 1a869eb9d の上・source は変えず、検の file と設計の記録だけが差分)
+# 実行: 2026-10-12T12:17:54Z
+
+
+## M1 class の本体で import が束ねた名を module の globals へ置く文を出さない(nested-reads の分岐を無効)
+$ uv run pytest tests/test_nested_definition_scope.py -k class_body_type_definition -q   # 変異を当てた状態
+exit=1
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_definition_runs_without_module_doeff_hy[defrecord-with-check]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_definition_runs_without_module_doeff_hy[defrecord-plain]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_definition_runs_without_module_doeff_hy[defwire]
+FAILED tests/test_nested_definition_scope.py::test_class_body_type_definition_runs_without_module_doeff_hy[defeffect]
+4 failed, 136 deselected, 1 warning in 9.22s
+
+## M2 全 macro が nested-reads を真で呼ぶ(defhandler も module の globals を変える)
+$ uv run pytest tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone -q   # 変異を当てた状態
+exit=1
+FAILED tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone[defhandler]
+FAILED tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone[defhandler-with-params]
+FAILED tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone[defhandler-session-var]
+FAILED tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone[defhandler-bind]
+4 failed, 3 passed, 1 warning in 8.93s
+
+## M3 投影の後処理を呼ばない(関数・class の本体の import を module の段へ移さない)
+$ uv run pytest tests/test_nested_definition_scope.py -k static_projection -q   # 変異を当てた状態
+exit=1
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_definition_leaves_only_known_imports_in_its_scope[defwire]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defeffect]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defhandler]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defsystem]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defrecord]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defwire]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_defhandler_reads_module_level_nodes[function]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_defhandler_reads_module_level_nodes[class-body]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_class_body_type_reads_module_level_typing_aliases[defrecord]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_class_body_type_reads_module_level_typing_aliases[defwire]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_class_body_type_reads_module_level_typing_aliases[defeffect]
+21 failed, 13 passed, 106 deselected, 1 warning in 5.22s
+
+## M4 展開の名の表の判定を無効にする(is_alias_import が常に偽 — 別名の import を module の段へ移さない)
+$ uv run pytest tests/test_nested_definition_scope.py -k static_projection -q   # 変異を当てた状態
+exit=1
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_definition_leaves_only_known_imports_in_its_scope[defrecord]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_definition_leaves_only_known_imports_in_its_scope[defwire]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defeffect]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defhandler]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defrecord]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_nested_scopes_read_macro_names_bound_at_module_level[defwire]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_defhandler_reads_module_level_nodes[function]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_defhandler_reads_module_level_nodes[class-body]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_class_body_type_reads_module_level_typing_aliases[defrecord]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_class_body_type_reads_module_level_typing_aliases[defwire]
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_class_body_type_reads_module_level_typing_aliases[defeffect]
+13 failed, 21 passed, 106 deselected, 1 warning in 9.32s
+
+## M5 新しい補助の別名を、表の綴りの外(約束の頭を守らない綴り)で束ねる macro(盲検 B の「別の綴りの補助」の形 — defeffect の dataclass の別名の綴りを替える)
+$ uv run pytest tests/test_nested_definition_scope.py -k static_projection -q   # 変異を当てた状態
+exit=1
+FAILED tests/test_nested_definition_scope.py::test_static_projection_of_nested_definition_leaves_only_known_imports_in_its_scope[defeffect]
+1 failed, 33 passed, 106 deselected, 1 warning in 9.63s

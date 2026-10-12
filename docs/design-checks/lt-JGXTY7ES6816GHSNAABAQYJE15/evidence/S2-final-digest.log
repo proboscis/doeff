@@ -1,0 +1,25 @@
+# S2(storage): 型検査の展開の保存が照らす POST_PROCESSING の閉包の digest
+# 対象: 作業木 doeff-wt-design-check-scoped-def @ 64a022d75(基底 1a869eb9d の上・source は変えず、検の file と設計の記録だけが差分)
+# 実行: 2026-10-12T12:25:21Z
+
+
+## 正常例: 変えずに 2 度測る
+digest 2ec9398ac9a4c4f7d0999c43495163439baf4e9518b968679a7ccf24f1f6a4c7
+digest 2ec9398ac9a4c4f7d0999c43495163439baf4e9518b968679a7ccf24f1f6a4c7
+同じ: True
+
+## 失敗例(変異): 後処理の変換器の method(_WithoutNestedImports.visit_Import)の本体を替える
+digest 7bb02ac58271bace26994f00c2c97f3cc3df0cf275a900a1b0dde7e2d32b87d1
+元と違う: True
+
+## 失敗例(変異): 判定の関数(_synthesized_import)の本体を替える
+digest da1a91755e2245b1fd1c91fd200d40f3cef24d2c557c071c8531fad8251cd1c9
+元と違う: True
+
+## 失敗例(変異): 判定が呼ぶ別の module の関数(expansion_names.is_alias_import)の本体を替える
+digest 50fe5b87edd0c89b500d5caed3618afe51c94b35013cf99675326995b6ac34a7
+元と違う: True
+
+## 失敗例(変異): 判定が読む別の module の定数(expansion_names._HOMES の表)から typing の名を外す
+digest eb60aaa54e81c138e6f72361f9b666ff971262bd9a621374c38687cca8b4b4e3
+元と違う: True

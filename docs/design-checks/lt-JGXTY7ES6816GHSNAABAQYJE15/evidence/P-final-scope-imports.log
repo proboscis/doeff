@@ -1,0 +1,10 @@
+# 全定義の macro の検体(14 種)の投影で、関数の本体・class の本体に残る import の名(空の行は省く)
+# 対象: 作業木 doeff-wt-design-check-scoped-def @ 64a022d75(基底 1a869eb9d の上・source は変えず、検の file と設計の記録だけが差分)
+# 実行: 2026-10-12T12:00:23Z
+$ uv run python -I all_static.py
+exit=0
+全 28 行のうち、残りが空でない行:
+defeffect    function ['_doeff_dataclass', '_doeff_effect_base']
+defeffect    class    ['_doeff_dataclass', '_doeff_effect_base']
+defworkflow  function ['_conductor_agent_bang', '_conductor_defphase', '_conductor_defworkflow']
+defworkflow  class    ['_conductor_agent_bang', '_conductor_defphase', '_conductor_defworkflow']
