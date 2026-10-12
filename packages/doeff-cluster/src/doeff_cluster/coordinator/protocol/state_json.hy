@@ -8,6 +8,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain KnownExit])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_hy.wire [parse Malformed])
+(import doeff_traverse.helpers [sequence])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of])
@@ -181,14 +182,11 @@
 (defk read-each [reader pairs]
   {:pre [(: reader Callable) (: pairs tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の行の組 #(鍵 JSON の値) の列を、行の読み(defk)で #(鍵 読んだ値) の列に読むため(state file と durable の KV の読み直しが
-   同じ読みを使う)。並びは渡した順のまま。起動の読み直しで 1 度だけ通る。tuple の組み立ての蓄積は行の数の 2 乗で伸びる
-   (1 万行で 0.2 秒・3 万行で 2.8 秒 — 終わった task は最大 30 日残る)。doeff に Program の列を順に走らせる線形の道具が入ったら
-   それに替える(#2812)。"
-  (var read #())
-  (for [#(key value) pairs]
-    (<- row (reader value))
-    (:= read (+ read #(#(key row)))))
-  read)
+   同じ読みを使う)。並びは渡した順のまま。起動の読み直しで 1 度だけ通る。読めない行が在れば最初の 1 行で止まる(以降の行は読まない・
+   黙って落とさない)。行の読みを順に走らせるのは doeff-traverse の sequence(handler 要らず・線形)— 行ごとに tuple 全体を写す
+   継ぎ足しは行の数の 2 乗で伸びた(1 万行で 0.2 秒・3 万行で 2.8 秒 — 終わった task は最大 30 日残る・#2812)。"
+  (<- rows tuple (sequence (gfor #(key value) pairs (reader value))))
+  (tuple (zip (gfor #(key _) pairs key) rows)))
 
 
 (defk state-from-json [data now [board None] [board-versions None]]

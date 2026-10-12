@@ -14,6 +14,7 @@ dependencies = [
     "doeff-events[redis]",
     "doeff-hy",
     "doeff-time",
+    "doeff-traverse",
     "hy>=1.3",
     "httpx>=0.25.0",
     "cloudpickle>=3.0",
@@ -29,6 +30,7 @@ doeff-core-effects = { workspace = true }
 doeff-events = { workspace = true }
 doeff-hy = { workspace = true }
 doeff-time = { workspace = true }
+doeff-traverse = { workspace = true }
 
 # doeff-linter の設定 — この dir で linter を走らせた時だけ読む(linter は今の dir から上へ [tool.doeff-linter] を探す。
 # doeff の根で走る hook と make lint-doeff は根の pyproject.toml を読む)。service と不変条件の宣言は同じ dir の architecture.hy。

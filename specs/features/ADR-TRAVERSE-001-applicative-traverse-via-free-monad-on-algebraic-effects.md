@@ -144,6 +144,17 @@ The return type of `Traverse` is handler-dependent. To allow strategy swapping w
 
 This is why opaque collections exist: they hide the `list[T]` vs `list[Result[T]]` distinction so strategies are interchangeable.
 
+### `sequence`: the fixed sequential case, without a handler (agora-redesign #2812)
+
+`Traverse` is for logic that must not choose its strategy. A protocol function that reads a list of rows one after another (a coordinator re-reading its stored rows at start-up) has no strategy to leave open, and two properties of the handler route cost it:
+
+- **A failed row can vanish.** `sequential()` records a failed item and reads on; a caller that reads only `valid_values` loses the row without a word, where the start-up must stop on a row it cannot read (measured: 7 rows, one failing → 6 answers, no exception).
+- **It needs a handler everywhere it runs.** Every entry, simulation and test rig that reaches the function must install one (in `doeff-cluster`: 4 handler lists and 17 test files for the start-up re-read alone), and an item costs 10–15 µs against 1.5 µs for a plain loop.
+
+`doeff_traverse.sequence(programs)` is therefore the named special case with the policy fixed: it runs an iterable of programs in order under the caller's handlers, the first exception goes up as it is and the programs after it are never made or run, and the answer is a `tuple`. It is **not** a second `Traverse`: it performs no effect, adds no handler, and has no `Collection`. Use `for/do` when order, concurrency or failure policy should be chosen outside the logic; use `sequence` when the policy is "in order, stop at the first failure".
+
+It adds no accumulator the caller writes: the answers are chained as `(value, previous chain)` pairs and folded into the tuple once (`tuple += (row,)` per item copies the whole tuple each time and costs the square of the rows: 3.5 s for 30,000 rows against about 80 ms; linear to 300,000). The VM needs no change: `Apply` with program arguments is not implemented, and a Rust node would not be faster than this loop (about 3 µs a program; 1.5 µs when the loop binds with doeff-hy's `<-`, which calls a program that performs no effect on the spot — #844. `sequence` sits in the effects layer of the module contract and does not import that bind opener, which lives in the runtime layer).
+
 ### Computation Backend as Effect
 
 The computation inside each item is declared as an effect (e.g., `LLMStructuredQuery`, `FetchPrice`), not as a direct implementation. A separate handler provides the backend:

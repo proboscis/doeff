@@ -57,4 +57,5 @@ from doeff_traverse.handlers import (
 from doeff_traverse.handlers import (
     sequential as sequential,
 )
+from doeff_traverse.helpers import sequence as sequence
 from doeff_traverse.helpers import try_call as try_call
