@@ -1,0 +1,9 @@
+# 確かめ c0 — 直した版で例の検が全部緑(R3・S2 の正常例)
+# 版: c98c93b2b1f5b2ef5f90d8001077b5dd5ffebb0e・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:07:03Z
+$ uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q --tb=line -rf 
+................................s..............................          [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+62 passed, 1 skipped, 1 warning in 32.16s
+exit=0
