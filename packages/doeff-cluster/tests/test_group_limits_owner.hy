@@ -84,12 +84,36 @@
   (<- kv dict (full-kv state))
   (<- from-keys ClusterState (state-from-kv kv 0))
   (assert (= (.row from-keys.group-limits "llm") (get ALPHA.task-limits 0)) from-keys.group-limits)
-  (for [#(spec word) [#({"scope" "cluster" "limit" 1} "system") #({"scope" "cluster" "limit" 0 "system" "alpha"} "limit")]]
+  (for [#(spec word) [#({"scope" "cluster" "limit" 1 "system" ""} "system") #({"scope" "cluster" "limit" 0 "system" "alpha"} "limit")]]
     (try
       (group-limit-from-json "llm" spec)
       (raise (AssertionError (.format "壊れた保存の値を読んだ: {}" spec)))
       (except [error ValueError]
         (assert (in word (str error)) #(word (str error)))))))
+
+
+(deftest test-an-ownerless-group-is-claimed-by-the-first-system-that-declares-it
+  ;; 持ち主の無い組(system の無い spec — 74ebb50b6 の宣言の道具が本番の coordinator に書いた 3 組・運用者が資源の口に直に作った組)は受け、
+  ;; 保存から読み直せる。最初に宣言し直した系がその組を持ち(版つきの書き直しが system を載せる)、その後は別の系の書き直しを 409 で断る。
+  ;; 持ち主の在る組を、system の無い本文(古い宣言の道具)で書き直すのも断る。
+  (val bare {"scope" "cluster" "limit" 1})
+  (val state (stamp (ClusterState) (create-resource (ClusterState) "GroupLimit" (ResourceBody :name "llm" :spec bare) "declare" 0) "declare" 0 T))
+  (assert (= (. (.row state.group-limits "llm") system) "") state.group-limits)
+  (<- stored ClusterState (state-from-json (! (state-to-json state)) 0))
+  (assert (= (.row stored.group-limits "llm") (.row state.group-limits "llm")) stored.group-limits)
+  (val claimed (stamp state (update-resource state "GroupLimit" "llm"
+                                             (ResourceBody :spec (group-limit-spec (get ALPHA.task-limits 0))
+                                                           :resource-version (resource-version-of state "GroupLimit/llm"))
+                                             "declare")
+                      "declare" 0 T))
+  (assert (= (. (.row claimed.group-limits "llm") system) "alpha") claimed.group-limits)
+  (for [spec [(group-limit-spec (get BETA.task-limits 0)) bare]]
+    (try
+      (update-resource claimed "GroupLimit" "llm" (ResourceBody :spec spec :resource-version (resource-version-of claimed "GroupLimit/llm")) "declare")
+      (raise (AssertionError (.format "持ち主の在る組の書き直しを断らなかった: {}" spec)))
+      (except [refused Refused]
+        (assert (= refused.status 409) refused.status)
+        (assert (in "alpha" refused.body.message) refused.body.message)))))
 
 
 (defk second-system-scenario [second]
