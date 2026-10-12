@@ -321,12 +321,18 @@
    (plan-job の終わりの枝が回収する)か、退いてから上限を越えた時に止める(旧が持つ仕事を終わりまで回す)。元の job が宣言から消えた・
    handoff でなくなった時も止める。退いた process が上限 R に達している間に宣言が変わっても、退いた process は止めない — 今の
    process を退かせる番は handoff-actions が待たせる(#4072 の D-3 の改め: 以前はいちばん古く退いた process を止めて 1 つ空け、その
-   process が回していた仕事を切っていた — 2026-10-10 15:01 UTC の本番)。"
+   process が回していた仕事を切っていた — 2026-10-10 15:01 UTC の本番)。
+   世代をまたぐ入れ替え(AL-D2): 元の job に印 superseded-by が在れば、新の process は新しい世代の worker の上に在り、この worker の
+   上には無い — 印を「新の Ready」と数える(coordinator は新しい世代の process が Ready か、この世代の Pod の止まりが始まった時だけ
+   印を付ける)。数えなければ寿命の無い退いた process は止める時が来ず、旧い Pod の preStop が drain の上限まで待った(card ki-7c11722e3621
+   — 10-12 の本番で 6 時間)。"
   (setv want (desired-of desired origin)
         current (process-of world origin)
         lifetime (if (is want None) None want.retired-ms)
-        successor-ready (and (is-not want None) (is-not current None) (is current.exit-code None) (= current.spec want)
-                             (is-not want.ready-instance None) (= want.ready-instance current.instance))
+        successor-ready (and (is-not want None)
+                             (or (is-not want.superseded-by None)
+                                 (and (is-not current None) (is current.exit-code None) (= current.spec want)
+                                      (is-not want.ready-instance None) (= want.ready-instance current.instance))))
         due (if (is lifetime None) successor-ready (>= (- now (retired-at-of process)) lifetime)))
   (if (or (is-not record.stopping None)
           (is want None)

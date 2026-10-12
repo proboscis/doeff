@@ -82,3 +82,14 @@
 (defsystem keeping-hosts [#^ Callable foundation]
   "見本の系: recreate で入れ替える、止められるまで動き続ける service"
   (keeper (keeping-program foundation "keep") :replicas 1 :needs #{"cluster-net"} :update "recreate"))
+
+
+;; --- 退く知らせを待たない handoff の service(退いた process の寿命の上限を宣言しない): 止められるまで動き続ける。起きた刻を盤に書く。 ----
+;; 本番の待ち受けの service の形(待ち受けを開いて動き続け、AwaitRetirement を待たない・宣言の readiness に retiredSeconds が無い — card ki-7c11722e3621)。
+(val SERVE-PREFIX "serve")
+
+
+(defsystem serving-hosts [#^ Callable foundation]
+  "見本の系: handoff で入れ替える、退く知らせを待たずに止められるまで動き続ける service(退いた旧の寿命の上限を宣言しない)"
+  (server (keeping-program foundation "serve") :replicas 1 :needs #{"cluster-net"} :update "handoff"
+          :readiness {"windowSeconds" 5}))
