@@ -303,7 +303,7 @@ def test_a_reader_macro_change_recompiles_the_user_on_pypi_hy(
     assert _run_on_pypi_hy(tmp_path, guard) == after
 
 
-@pytest.mark.parametrize(("guard", "after"), [("none", 11), ("before-hy", 12)])
+@pytest.mark.parametrize(("guard", "after"), [("none", 11), ("before-hy", 12), ("after-hy", 12)])
 def test_a_macro_required_inside_a_function_recompiles_the_user_on_pypi_hy(
     tmp_path: Path, guard: str, after: int
 ) -> None:
