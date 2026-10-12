@@ -1,0 +1,8 @@
+ERROR: Reconnecting... 1/5
+ERROR: Reconnecting... 2/5
+ERROR: Reconnecting... 3/5
+ERROR: Reconnecting... 4/5
+ERROR: Reconnecting... 5/5
+ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: a492fd0caca6d53b-NRT, request id: req_839a1c82d290495fa79eafd692908597
+ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: a492fd0caca6d53b-NRT, request id: req_839a1c82d290495fa79eafd692908597
+exit 1

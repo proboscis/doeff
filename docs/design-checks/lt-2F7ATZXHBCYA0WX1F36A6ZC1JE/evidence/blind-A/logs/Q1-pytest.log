@@ -1,0 +1,123 @@
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 386269 code-quality agora-controllers-wt-drain-lease-cancel (c-0NR8A2C2K73Z0HR7217DTREKS7)、pid 386251 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 376681 pytest doeff-wt-class-body-handle (c-Z48YJMZ0CSH4120XECK1TQWS0P)、pid 361130 code-quality agora-controllers-wt-daily1012-fix (c-7B6EY0CW6XHCGQGM9WA4VJSV8S)、pid 376874 pytest agora-controllers (c-SWSWSANGZYSA31DC745SPAE1AP)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 13 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 386269 code-quality agora-controllers-wt-drain-lease-cancel (c-0NR8A2C2K73Z0HR7217DTREKS7)、pid 386251 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 375366 pytest agora-controllers-wt-dc-szy0-b (c-NETX7PC6AC3AJENKQCQZXVG71W)、pid 361130 code-quality agora-controllers-wt-daily1012-fix (c-7B6EY0CW6XHCGQGM9WA4VJSV8S)、pid 396113 pytest N-S2-boundary-differs-from-pytest(B) (c-AZ9T066WJG8GXMAQKSCKG3MHT1)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 23 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 386269 code-quality agora-controllers-wt-drain-lease-cancel (c-0NR8A2C2K73Z0HR7217DTREKS7)、pid 386251 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 361130 code-quality agora-controllers-wt-daily1012-fix (c-7B6EY0CW6XHCGQGM9WA4VJSV8S)、pid 397799 pytest agora-controllers-wt-ki-d1b9-dc (c-T65M1E6MG9G5JVPMZW3GA3SWB7)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 34 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 386269 code-quality agora-controllers-wt-drain-lease-cancel (c-0NR8A2C2K73Z0HR7217DTREKS7)、pid 386251 pytest agora-controllers-wt-ki-2f9266 (c-A9Z83281HYGQTQ3PDQ8VKVP74C)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 381826 code-quality viol (c-BATDMHHN957XY08D15RAFR97G8)、pid 397799 pytest agora-controllers-wt-ki-d1b9-dc (c-T65M1E6MG9G5JVPMZW3GA3SWB7)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 44 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 403147 pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)、pid 401517 code-quality dotfiles-precommit-index.zJyzP5 (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 381826 code-quality viol (c-BATDMHHN957XY08D15RAFR97G8)、pid 397799 pytest agora-controllers-wt-ki-d1b9-dc (c-T65M1E6MG9G5JVPMZW3GA3SWB7)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 55 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 403147 pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)、pid 401517 code-quality dotfiles-precommit-index.zJyzP5 (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 381826 code-quality viol (c-BATDMHHN957XY08D15RAFR97G8)、pid 397799 pytest agora-controllers-wt-ki-d1b9-dc (c-T65M1E6MG9G5JVPMZW3GA3SWB7)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 65 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 403147 pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)、pid 401517 code-quality dotfiles-precommit-index.zJyzP5 (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 366148 pytest doeff-wt-cswb-old (c-SEZGJN0BBWSF49AZ4CP5D8P9D2)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 381826 code-quality viol (c-BATDMHHN957XY08D15RAFR97G8)、pid 414112 code-quality doeff-wt-class-body-handle (c-Z48YJMZ0CSH4120XECK1TQWS0P)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 75 秒 / 上限 1200 秒・保持 pid 357574 doeff-linter lint agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 403147 pytest doeff-wt-blind-b-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)、pid 401517 code-quality dotfiles-precommit-index.zJyzP5 (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 412799 code-quality agora-wt-ki-09c9-design-check (c-GZRVC68EAPXH8YQ0JPW4CARGYG)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 381826 code-quality viol (c-BATDMHHN957XY08D15RAFR97G8)、pid 414112 code-quality doeff-wt-class-body-handle (c-Z48YJMZ0CSH4120XECK1TQWS0P)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 85 秒 / 上限 1200 秒・保持 pid 389024 pytest agora-controllers-ki-d449-m1 (c-85BXSKV6W0VKJBYDQBN0XQ4M7D)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 406634 pytest doeff-wt-ki-93395c-dc (c-6313YGCZRXA701C4632PQWS5ET)、pid 401517 code-quality dotfiles-precommit-index.zJyzP5 (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 412799 code-quality agora-wt-ki-09c9-design-check (c-GZRVC68EAPXH8YQ0JPW4CARGYG)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 381826 code-quality viol (c-BATDMHHN957XY08D15RAFR97G8)、pid 414112 code-quality doeff-wt-class-body-handle (c-Z48YJMZ0CSH4120XECK1TQWS0P)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 95 秒 / 上限 1200 秒・保持 pid 389024 pytest agora-controllers-ki-d449-m1 (c-85BXSKV6W0VKJBYDQBN0XQ4M7D)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 406634 pytest doeff-wt-ki-93395c-dc (c-6313YGCZRXA701C4632PQWS5ET)、pid 401517 code-quality dotfiles-precommit-index.zJyzP5 (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 412799 code-quality agora-wt-ki-09c9-design-check (c-GZRVC68EAPXH8YQ0JPW4CARGYG)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 418304 pytest doeff-wt-clause-ops-table (c-WAZXHFJNRQT4M48X15CQBXNS3V)、pid 414112 code-quality doeff-wt-class-body-handle (c-Z48YJMZ0CSH4120XECK1TQWS0P)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 105 秒 / 上限 1200 秒・保持 pid 389024 pytest agora-controllers-ki-d449-m1 (c-85BXSKV6W0VKJBYDQBN0XQ4M7D)、pid 391081 pytest agora-controllers-wt-ki-59068e0f-band-owner (c-9N6K179QXQAHGY77XN61F3WJMS)、pid 406634 pytest doeff-wt-ki-93395c-dc (c-6313YGCZRXA701C4632PQWS5ET)、pid 417863 pytest doeff-wt-clause-ops-table (c-WAZXHFJNRQT4M48X15CQBXNS3V)、pid 412799 code-quality agora-wt-ki-09c9-design-check (c-GZRVC68EAPXH8YQ0JPW4CARGYG)、pid 396191 doeff-linter lint agora-controllers-wt-regseg-shape (c-GB75Y3NDN9MV96DQ6KHT7JJA3Q)、pid 418304 pytest doeff-wt-clause-ops-table (c-WAZXHFJNRQT4M48X15CQBXNS3V)、pid 417676 pytest doeff-wt-clause-ops-table (c-WAZXHFJNRQT4M48X15CQBXNS3V)・待つのは pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 枠 2 を取った(待ち 109 秒)— pytest doeff (c-X2MB5NMGKKVJWG1VD57144P5MN)
+
+deadline scale x3.1 (load per usable CPU) — per test 189s, watchdog 282s
+
+test-admission: focused — 2 件(変更箇所の検証)
+doeff-adr: 記録から収集 1 file・収集で import 1 file
+  import: packages/doeff-cluster/tests/test_env_prepare.hy — 記録なし(この内容の file は収集で import したことが無い)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000012 秒・依存変更で再作成 0 file
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_no_template_or_worker_code_hands_the_hook_marker_to_the_child ______
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x4b1539bd500>
+
+    (deftest test-no-template-or-worker-code-hands-the-hook-marker-to-the-child
+      ;; Claude Code は hook・MCP の起動にだけ env CLAUDE_PROJECT_DIR を置く。上に載る系の Bash の包み(ConfigMap worker-shell)はこの名の有無で
+      ;; hook・MCP の起動と Bash の道具の命令を見分け、無い時だけ命令を SCHED_IDLE・nice で下げて出力を流す(card ki-bb74c5116086)。job の子の
+      ;; CLI の env にこの名が在ると Bash の道具の命令も hook と見なされ、下げと流しが黙って外れる(設計検証 lt-JXPJ5PK5PYCJN5D9CGNCC6SWV1 の
+      ;; 盲検 A-1)。上に載る系の宣言の側の検は上に載る系の repo に在り、ここは worker の側(依頼 lt-2F7ATZXHBCYA0WX1F36A6ZC1JE)。
+      ;; worker の env(image の ENV・Pod の env)にこの名が在っても、許可表(名と頭)は子へ渡さない。
+>     (val child (! (child-environment {"CLAUDE_PROJECT_DIR" "/work" "PATH" "/bin"} {} {} {})))
+
+packages/doeff-cluster/tests/test_worker_pass_env.hy:50: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:68: in interpret
+    return run(scheduled(compose(program)))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1932: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val child (! (child-environment {"CLAUDE_PROJECT_DIR" "/work" "PATH" "/bin"} {} {} {})))
+    (assert (= child {"PATH" "/bin"}) child)
+    ;; worker の雛形(deploy/ — Pod の env・WORKER_PASS_ENV・boot.sh・image)と worker の code(src/)はこの名を書かない。上に載る系の
+    ;; ConfigMap worker-env(WORKER_PASS_ENV_EXTRA)はこの repo の外。
+    (val writers (lfor path (+ (sorted (.rglob (/ PACKAGE "deploy") "*")) (sorted (.rglob (/ PACKAGE "src") "*")))
+                       :if (and (.is-file path) (not-in "__pycache__" path.parts)
+                                (in "CLAUDE_PROJECT_DIR" (.read-text path :errors "replace")))
+                       (str (.relative-to path PACKAGE))))
+>   (assert (= writers []) writers))
+              ^^^^^^^^
+E   AssertionError: ['src/doeff_cluster/shared/intent/runtime_env_model.hy']
+
+packages/doeff-cluster/tests/test_worker_pass_env.hy:58: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_no_template_or_worker_code_hands_the_hook_marker_to_the_child.<locals>._hy_anon_7()  packages/doeff-cluster/tests/test_worker_pass_env.hy:58
+    (assert (= writers []) writers))
+  _hy_anon_7()  packages/doeff-cluster/tests/test_worker_pass_env.hy:58
+    (assert (= writers []) writers))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: ['src/doeff_cluster/shared/intent/runtime_env_model.hy']
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /tmp/tmp.y8eujFCrBJ/doeff/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-cluster/tests/test_worker_pass_env.hy::test_no_template_or_worker_code_hands_the_hook_marker_to_the_child
+1 failed, 1 passed, 28 deselected, 1 warning in 18.65s
