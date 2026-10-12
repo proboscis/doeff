@@ -2295,9 +2295,15 @@ class TestGatherRaceExternalWaitShield:
 # Terminal-entry sweep (#502)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("scheduler_implementation")
 class TestTerminalEntrySweep:
     """#502: terminal tasks/promises with no waiter and no live handle must be
-    swept so long-lived runs do not grow scheduler state monotonically."""
+    swept so long-lived runs do not grow scheduler state monotonically.
+
+    Every test runs under both scheduler implementations: the sweep must mean
+    the same in both, including the settled cancelled tasks of #3504 (the Rust
+    scheduler had no such sweep before — it must have one before it becomes
+    the default)."""
 
     def test_spawn_wait_cycles_do_not_grow_scheduler_state(self):
         from doeff_core_effects.scheduler import (
