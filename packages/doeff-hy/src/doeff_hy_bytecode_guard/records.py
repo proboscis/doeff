@@ -56,9 +56,10 @@ from typing import TypeVar
 RECORD_TAG = "doeff-hy/macro-dependencies/6"
 
 #: macro の表の名(Hy が module の名前空間に置く辞書 — 普通の macro と reader macro)。名と、Hy の展開が表を ``名 in 表`` と
-#: ``表[名]`` で引く事(macro_use.RecordingTable が引いた名を覚える前提)は Hy の内部の形で、uv.lock の版の PyPI の Hy で包みを
-#: 動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro と reader macro の変更の検 — uv.lock の変更で選ばれる)が測る
-#: (card ki-eafa369600cd)。名が替わるか表を ``.get`` で引くと、包みは使った macro を記録し損ねて古い展開を黙って使う。
+#: ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は Hy の内部の形で、uv.lock の版の Hy で
+#: 包みを動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro・reader macro の変更の検と、使う側の呼ぶ名の macro が
+#: 足された時の検 — uv.lock の変更で選ばれる)が測る(card ki-eafa369600cd)。名が替わるか表を ``.get`` で引くと、包みは使った
+#: macro を記録し損ねて古い展開を黙って使う。Hy の export が書く公開の macro の名の表(macro_use._exported が読む)も同じ検が測る。
 MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
 

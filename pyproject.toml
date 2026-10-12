@@ -241,9 +241,10 @@ tests = [
 # import でない形の依り(hy.importer._could_be_hy_src の差し替え・macro が受ける compiler の scope など・light_stack の当て物)も
 # 同じ使い捨ての環境で照合する(card ki-2fa4c02604b1・ADR-DOE-HY-008 R7)。
 # macro の変更で古い bytecode を使わない包みの検も、uv.lock の版の PyPI の Hy の使い捨ての環境で測る(card ki-33d2441b7e28 —
-# 表に無かった間、Hy を上げる便で選ばれず日次でだけ走った)。包みが import でない形で依る Hy の内部(module の macro の表の名
-# _hy_macros・_hy_reader_macros・展開が表を「名 in 表」と「表[名]」で引く事・gensym と let が改めた束縛の名の形)も、この検が
-# 包みを動かして測る(card ki-eafa369600cd — R7 の母集団の外)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
+# 表に無かった間、Hy を上げる便で選ばれず日次でだけ走った)。包みが import でない形で依る Hy の内部(module の macro の表の名と
+# 展開が表を「名 in 表」と「表[名]」で引く事・export の名の表・gensym と let が改めた束縛の名の形)も、この検が包みを動かして測る
+# (card ki-eafa369600cd — R7 の母集団の外)。同じ process の検は venv の Hy を測るので、file の検は venv の Hy が uv.lock の版である
+# 事を先に確かめる(Hy を上げて sync していなければ赤)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
 # tests/test_contract_table_follows_packages.py が source から数えて確かめる。
 [[tool.doeff.contract-tests]]
 prefix = "uv.lock"
