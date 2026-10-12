@@ -760,7 +760,8 @@ def test_expansion_check_reads_uses_out_of_context() -> None:
     """今の例の使い所はどれも印を持ち、文脈の外でも展開できるので、印の無い展開(val)・文脈の外で展開できない使い所を
     拾い分ける事は、それを含む source で確かめる: いちばん外の展開できない使い所は名指し、入れ子の展開できない使い所は
     数えない(外の macro が文脈の中で展開する — 盲検 A が挙げた、文脈の外の (<- …) を断る doeff-hy の変更の形)。展開を断る
-    使い所は、今の doeff-hy が断る書き損じの (<-) で作る(fnk は本体を開かずに包むので、外の fnk は展開できる)。"""
+    使い所は、今の doeff-hy が断る書き損じの (<-) で作る(fnk は本体を開かずに包むので、外の fnk は展開できる)。どの
+    使い所が文脈の外で断られるかは doeff-hy の決める事なので、書き損じの 2 つの他は数を決めない(設計検証の確かめ c4)。"""
     source = """
 (require doeff-hy.macros [defk <- val traverse fnk])
 (val inputs [1 2 3])
@@ -782,11 +783,9 @@ def test_expansion_check_reads_uses_out_of_context() -> None:
         "8: traverse",
         "8: <-",
     ]
+    refused = {use.name for use in uses if isinstance(use.expansion, HyMacroExpansionError)}
+    assert {"4: <-", "5: <-"} <= refused
     assert _unexpanded(uses) == ["4: <-"]
-    assert [use.name for use in uses if isinstance(use.expansion, HyMacroExpansionError)] == [
-        "4: <-",
-        "5: <-",
-    ]
     assert [use.name for use in _unmarked(uses)] == ["3: val"]
 
 
