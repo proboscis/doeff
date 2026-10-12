@@ -1,0 +1,53 @@
+diff --git a/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy b/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
+index c879d61ad..c5fdaf7a4 100644
+--- a/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
++++ b/packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy
+@@ -19,6 +19,7 @@
+ (require doeff-hy.macros [defk <- traverse defhandler])
+ (import doeff [do :as _doeff-do])
+ (import doeff [run EffectBase])
++(import datetime [datetime])
+ 
+ (import doeff_core_effects [try-handler :as try_handler])
+ (import doeff_core_effects.scheduler [scheduled])
+@@ -164,7 +165,8 @@
+     (resume {"event" event "indexed" True}))
+ 
+   (GenerateSignal [indexed-event]
+-    (resume {"symbol" (get indexed-event "event") "time" "2024-01-01"}))
++    (resume {"symbol" (get indexed-event "event")
++             "time" (.strftime (datetime.fromtimestamp 1704069000) "%Y-%m-%d %H:%M")}))
+ 
+   (FetchPrice [signal]
+     (setv symbol (get signal "symbol"))
+diff --git a/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt b/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt
+index c7a44e573..eb85fa37a 100644
+--- a/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt
++++ b/packages/doeff-traverse/examples/expected/ex07_proboscis_ema_rewrite.txt
+@@ -7,7 +7,7 @@ Success: 3
+ Failed: 2
+ 
+ === item history ===
+-  [0] OK: ({'symbol': 'AAPL', 'time': '2024-01-01'}, 150.0)
++  [0] OK: ({'symbol': 'AAPL', 'time': '2024-01-01 00:30'}, 150.0)
+       index: ok
+       signal: ok
+       price: ok
+@@ -20,7 +20,7 @@ Failed: 2
+       Traceback (most recent call last):
+ …
+       SymbolNotFound: symbol not found: BADCO
+-  [2] OK: ({'symbol': 'GOOGL', 'time': '2024-01-01'}, 2800.0)
++  [2] OK: ({'symbol': 'GOOGL', 'time': '2024-01-01 00:30'}, 2800.0)
+       index: ok
+       signal: ok
+       price: ok
+@@ -33,7 +33,7 @@ Failed: 2
+       Traceback (most recent call last):
+ …
+       MarketClosed: market closed for: CLOSED
+-  [4] OK: ({'symbol': 'MSFT', 'time': '2024-01-01'}, 300.0)
++  [4] OK: ({'symbol': 'MSFT', 'time': '2024-01-01 00:30'}, 300.0)
+       index: ok
+       signal: ok
+       price: ok

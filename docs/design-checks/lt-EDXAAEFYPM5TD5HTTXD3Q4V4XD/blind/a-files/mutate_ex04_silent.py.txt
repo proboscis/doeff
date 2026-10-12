@@ -1,0 +1,13 @@
+"""S1 の後半の変異: ex04_simple が件の結果を印字しなくなる(走らせはするが「done」だけ印字)。期待の出力もそれに合わせる。
+引数: doeff-traverse の package の dir。"""
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+ex = root / "examples" / "ex04_simple.hy"
+src = ex.read_text()
+head, sep, _ = src.partition('(print "Result:" result)')
+assert sep
+ex.write_text(head + '(print "done")\n')
+(root / "examples" / "expected" / "ex04_simple.txt").write_text("done\n")
+print("mutated")

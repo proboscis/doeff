@@ -1,0 +1,18 @@
+"""failing-child の追従の案 (b): 件の中の失敗を raise ではなく Fail の effect で起こす(新しい方針で件の失敗に数えられる形)。
+引数: doeff-traverse の package の dir。"""
+import sys
+from pathlib import Path
+
+p = Path(sys.argv[1]) / "tests" / "run_example_failing_a_case.py"
+src = p.read_text()
+old = '''    raise InjectedCaseError(f"injected into the case of {value!r}")
+    yield
+'''
+new = '''    yield Fail(InjectedCaseError(f"injected into the case of {value!r}"))
+    raise AssertionError("unreachable: the Fail handler resumed the injected failure")
+'''
+assert src.count(old) == 1
+src = src.replace(old, new)
+src = src.replace("from doeff_traverse.effects import Traverse", "from doeff_traverse.effects import Fail, Traverse", 1)
+p.write_text(src)
+print("child changed")

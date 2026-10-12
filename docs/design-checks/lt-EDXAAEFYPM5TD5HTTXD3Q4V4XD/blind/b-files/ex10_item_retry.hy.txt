@@ -1,0 +1,144 @@
+;;; Example 10: per-item retry — redo a failed item's whole program.
+;;;
+;;; Each symbol's quote is fetched and then parsed. The quote API is flaky: a
+;;; call can fail with a connection error and succeed when asked again.
+;;; Retrying the one effect (ex06's retry-on-json-error) is not enough here: the
+;;; parse step must see the fresh payload, so the whole item program is redone.
+;;;
+;;; The pipeline knows nothing about retries. A handler that receives the
+;;; Traverse first wraps each item's program, and the Traverse handler
+;;; (sequential / parallel) dispatches the wrapped items as usual. An item that
+;;; still fails after the last attempt is a failed item, like in any Traverse.
+
+(require doeff-hy.macros [defk defhandler <- traverse])
+(import doeff [do :as _doeff-do])
+(import doeff [run EffectBase])
+(import collections.abc [Callable])
+
+(import doeff_core_effects [try-handler :as try_handler])
+(import doeff_core_effects.scheduler [scheduled])
+
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+(import doeff_traverse.effects [Traverse Inspect])
+(import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
+
+
+;; ===========================================================================
+;; Effects and pipeline — no retry in the logic
+;; ===========================================================================
+
+(defclass FetchQuote [EffectBase]
+  "Fetch the raw quote payload of one symbol."
+  (defn __init__ [self symbol]
+    (.__init__ (super))
+    (setv self.symbol symbol)))
+
+(defk parse-quote [payload]
+  "Parse a raw payload \"SYMBOL:PRICE\" into the price."
+  {:pre [(: payload str)]
+   :post [(: % float)]}
+  (float (get (.split payload ":") 1)))
+
+(defk quote-for [symbol]
+  "Fetch and parse one symbol's quote."
+  {:pre [(: symbol str)]
+   :post [(: % float)]}
+  (<- payload (FetchQuote symbol))
+  (<- price (parse-quote payload))
+  price)
+
+(defk quotes [symbols]
+  "Quotes for all symbols, one item per symbol."
+  {:pre [(: symbols list)]
+   :post [(: % list)]}
+  (<- prices
+    (traverse
+      (<- symbol (Iterate symbols :label "quote"))
+      (<- price (quote-for symbol))
+      price))
+  (<- report (Inspect prices))
+  report)
+
+
+;; ===========================================================================
+;; Flaky backend: MSFT fails its first 2 calls, NFLX is delisted (always fails)
+;; ===========================================================================
+
+(setv _payloads {"AAPL" "AAPL:150.0" "MSFT" "MSFT:300.0" "GOOGL" "GOOGL:2800.0"})
+(setv _calls {})
+
+(defhandler flaky-quotes
+  "Mock quote API: answers payloads, fails some calls."
+  (FetchQuote [symbol]
+    (setv (get _calls symbol) (+ (.get _calls symbol 0) 1))
+    (when (and (= symbol "MSFT") (<= (get _calls symbol) 2))
+      (raise (ConnectionError (+ "connection reset: " symbol))))
+    (when (not-in symbol _payloads)
+      (raise (KeyError (+ "delisted: " symbol))))
+    (resume (get _payloads symbol))))
+
+
+;; ===========================================================================
+;; Retry: redo an item's program up to max-attempts times
+;; ===========================================================================
+
+;; attempts per item (shown in the report)
+(setv _attempts {})
+
+(defk attempt-item [f max-attempts symbol n]
+  "Run the item's program (f symbol); when it raises, run it again, up to max-attempts times."
+  {:pre [(: f Callable) (: max-attempts int) (: symbol str) (: n int)]
+   :post [(: % float)]}
+  (setv (get _attempts symbol) n)
+  (try
+    (<- price (f symbol))
+    price
+    (except [e Exception]
+      (when (>= n max-attempts)
+        (raise))
+      (<- price (attempt-item f max-attempts symbol (+ n 1)))
+      price)))
+
+(defhandler retry-items [max-attempts]
+  "Receive a Traverse first and perform it again with each item's program retried."
+  (Traverse [f items label]
+    (<- coll (Traverse (fn [symbol] (attempt-item f max-attempts symbol 1)) items :label label))
+    (resume coll)))
+
+
+;; ===========================================================================
+;; Run
+;; ===========================================================================
+
+(defn with-stack [stack program]
+  (setv body program)
+  (for [h stack]
+    (setv body (h body)))
+  (scheduled body))
+
+(setv symbols ["AAPL" "MSFT" "NFLX" "GOOGL"])
+
+(defn show [report]
+  (for [item report]
+    (setv symbol (get symbols item.index))
+    (setv status (if item.failed "FAILED" "OK"))
+    (print (+ "  [" (str item.index) "] " symbol " " status
+              " after " (str (get _attempts symbol)) " attempt(s): " (str item.value)))))
+
+(print "=== without retry (sequential) ===")
+(_calls.clear)
+(_attempts.clear)
+(for [s symbols] (setv (get _attempts s) 1))
+(show (run (with-stack [try_handler flaky-quotes fail_handler (sequential)] (quotes symbols))))
+(print)
+
+(print "=== retry 3 (sequential) ===")
+(_calls.clear)
+(show (run (with-stack [(retry-items 3) try_handler flaky-quotes fail_handler (sequential)]
+                       (quotes symbols))))
+(print)
+
+(print "=== retry 3 (parallel 4) ===")
+(_calls.clear)
+(show (run (with-stack [(retry-items 3) try_handler flaky-quotes fail_handler (parallel 4)]
+                       (quotes symbols))))

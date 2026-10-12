@@ -1,0 +1,193 @@
+;;; Example 10: per-item retry — redo a failed item's whole program.
+;;;
+;;; Each symbol's quote is fetched and then parsed. The quote API is flaky: a
+;;; call can fail with a connection error and succeed when asked again.
+;;; Retrying the one effect (ex06's retry-on-json-error) is not enough here: the
+;;; parse step must see the fresh payload, so the whole item program is redone.
+;;;
+;;; The pipeline knows nothing about retries. A handler that receives the
+;;; Traverse first wraps each item's program, and the Traverse handler
+;;; (sequential / parallel) dispatches the wrapped items as usual. An item that
+;;; still fails after the last attempt is a failed item, like in any Traverse.
+
+(require doeff-hy.macros [defk defhandler <- traverse])
+(import doeff [do :as _doeff-do])
+(import doeff [run EffectBase])
+(import collections.abc [Callable])
+
+(import doeff_core_effects [try-handler :as try_handler])
+(import doeff_core_effects.scheduler [scheduled])
+
+(import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
+(import doeff_traverse.effects [Traverse Inspect])
+(import doeff_traverse.handlers [sequential parallel fail-handler :as fail_handler])
+
+
+;; ===========================================================================
+;; Effects and pipeline — no retry in the logic
+;; ===========================================================================
+
+(defclass FetchQuote [EffectBase]
+  "Fetch the raw quote payload of one symbol."
+  (defn __init__ [self symbol]
+    (.__init__ (super))
+    (setv self.symbol symbol)))
+
+(defk parse-quote [payload]
+  "Parse a raw payload \"SYMBOL:PRICE\" into the price."
+  {:pre [(: payload str)]
+   :post [(: % float)]}
+  (float (get (.split payload ":") 1)))
+
+(defk quote-for [symbol]
+  "Fetch and parse one symbol's quote."
+  {:pre [(: symbol str)]
+   :post [(: % float)]}
+  (<- payload (FetchQuote symbol))
+  (<- price (parse-quote payload))
+  price)
+
+(defk quotes [symbols]
+  "Quotes for all symbols, one item per symbol."
+  {:pre [(: symbols list)]
+   :post [(: % list)]}
+  (<- prices
+    (traverse
+      (<- symbol (Iterate symbols :label "quote"))
+      (<- price (quote-for symbol))
+      price))
+  (<- report (Inspect prices))
+  report)
+
+
+;; ===========================================================================
+;; Flaky backend: MSFT fails its first 2 calls, NFLX is delisted (always fails)
+;; ===========================================================================
+
+(setv _payloads {"AAPL" "AAPL:150.0" "MSFT" "MSFT:300.0" "GOOGL" "GOOGL:2800.0"})
+(setv _calls {})
+
+(defhandler flaky-quotes
+  "Mock quote API: answers payloads, fails some calls."
+  (FetchQuote [symbol]
+    (setv (get _calls symbol) (+ (.get _calls symbol 0) 1))
+    (when (and (= symbol "MSFT") (<= (get _calls symbol) 2))
+      (raise (ConnectionError (+ "connection reset: " symbol))))
+    (when (not-in symbol _payloads)
+      (raise (KeyError (+ "delisted: " symbol))))
+    (resume (get _payloads symbol))))
+
+
+;; ===========================================================================
+;; Retry: redo an item's program up to max-attempts times
+;; ===========================================================================
+
+;; attempts per item (shown in the report)
+(setv _attempts {})
+
+(defk attempt-item [f max-attempts symbol n]
+  "Run the item's program (f symbol); when it raises, run it again, up to max-attempts times."
+  {:pre [(: f Callable) (: max-attempts int) (: symbol str) (: n int)]
+   :post [(: % float)]}
+  (setv (get _attempts symbol) n)
+  (try
+    (<- price (f symbol))
+    price
+    (except [e Exception]
+      (when (>= n max-attempts)
+        (raise))
+      (<- price (attempt-item f max-attempts symbol (+ n 1)))
+      price)))
+
+(defhandler retry-items [max-attempts]
+  "Receive a Traverse first and perform it again with each item's program retried."
+  (Traverse [f items label]
+    (<- coll (Traverse (fn [symbol] (attempt-item f max-attempts symbol 1)) items :label label))
+    (resume coll)))
+
+
+;; ===========================================================================
+;; Probe (not an example): what traverse-lib's own records say under retry-items
+;; ===========================================================================
+
+(defn with-stack [stack program]
+  (setv body program)
+  (for [h stack]
+    (setv body (h body)))
+  (scheduled body))
+
+(setv symbols ["AAPL" "MSFT" "NFLX" "GOOGL"])
+
+(print "=== (a) retry 3: example's attempts vs traverse-lib's item history ===")
+(_calls.clear)
+(_attempts.clear)
+(setv report (run (with-stack [(retry-items 3) try_handler flaky-quotes fail_handler (sequential)]
+                              (quotes symbols))))
+(for [item report]
+  (setv symbol (get symbols item.index))
+  (print (+ "  " symbol " example _attempts=" (str (get _attempts symbol))
+            " backend calls=" (str (get _calls symbol))
+            " lib history=" (repr item.history))))
+
+;; (b) nested Traverse: two From binds (for every outer symbol, an inner Traverse over venues)
+(defk venue-quote [symbol venue]
+  "Fetch one symbol on one venue."
+  {:pre [(: symbol str) (: venue str)]
+   :post [(: % float)]}
+  (<- payload (FetchQuote symbol))
+  (<- price (parse-quote payload))
+  price)
+
+(defk quotes-by-venue [symbols venues]
+  "Quotes for every symbol on every venue."
+  {:pre [(: symbols list) (: venues list)]
+   :post [(: % list)]}
+  (<- prices
+    (traverse
+      (<- symbol (Iterate symbols :label "symbol"))
+      (<- venue (Iterate venues :label "venue"))
+      (<- price (venue-quote symbol venue))
+      price))
+  (<- report (Inspect prices))
+  report)
+
+(print "=== (b) retry 3 with a nested Traverse (two From binds) ===")
+(_calls.clear)
+(_attempts.clear)
+(setv report (run (with-stack [(retry-items 3) try_handler flaky-quotes fail_handler (sequential)]
+                              (quotes-by-venue ["MSFT"] ["NYSE"]))))
+(for [item report]
+  (print (+ "  [" (str item.index) "] failed=" (str item.failed) " value=" (repr item.value))))
+(print "  backend calls:" _calls)
+(print "  example _attempts:" _attempts)
+
+;; (c) same as (b), with the wrapper's :post widened so the outer item (whose value is the inner Collection) passes
+(import doeff_traverse.collection [Collection])
+(defk attempt-any [f max-attempts symbol n]
+  "attempt-item, answering a price or an inner Collection."
+  {:pre [(: f Callable) (: max-attempts int) (: symbol str) (: n int)]
+   :post [(: % (| float Collection))]}
+  (setv (get _attempts symbol) n)
+  (try
+    (<- v (f symbol))
+    v
+    (except [e Exception]
+      (when (>= n max-attempts)
+        (raise))
+      (<- v (attempt-any f max-attempts symbol (+ n 1)))
+      v)))
+
+(defhandler retry-any [max-attempts]
+  (Traverse [f items label]
+    (<- coll (Traverse (fn [symbol] (attempt-any f max-attempts symbol 1)) items :label label))
+    (resume coll)))
+
+(print "=== (c) retry 3 (widened) with a nested Traverse ===")
+(_calls.clear)
+(_attempts.clear)
+(setv report (run (with-stack [(retry-any 3) try_handler flaky-quotes fail_handler (sequential)]
+                              (quotes-by-venue ["MSFT"] ["NYSE"]))))
+(for [item report]
+  (print (+ "  [" (str item.index) "] failed=" (str item.failed) " value=" (repr item.value))))
+(print "  backend calls:" _calls)
+(print "  example _attempts:" _attempts)
