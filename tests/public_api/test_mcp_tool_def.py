@@ -130,3 +130,66 @@ class TestMcpToolDef:
     def test_handler_is_callable(self):
         tool = self._make_tool()
         assert callable(tool.handler)
+
+
+class TestDecodeArguments:
+    """tool の server が handler を呼ぶ前に、引数を schema(表 MCP_JSON_TYPES)で検める
+    (設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 A・B・card ki-973b4e44d7bc)。"""
+
+    @staticmethod
+    def _tool(*params: McpParamSchema) -> McpToolDef:
+        return McpToolDef(name="t", description="t", params=params, handler=_dummy_handler)
+
+    def test_values_in_schema_order(self):
+        tool = self._tool(
+            McpParamSchema(name="symbol", type="string", description="s"),
+            McpParamSchema(name="qty", type="integer", description="q"),
+        )
+        decoded = tool.decode_arguments({"qty": 3, "symbol": "7203"})
+        assert decoded.values == ("7203", 3)
+        assert decoded.problems == ()
+
+    def test_number_admits_integers_as_float_and_refuses_bool(self):
+        tool = self._tool(McpParamSchema(name="price", type="number", description="p"))
+        decoded = tool.decode_arguments({"price": 2})
+        assert decoded.values == (2.0,)
+        assert isinstance(decoded.values[0], float)
+        assert tool.decode_arguments({"price": True}).problems == (
+            "argument price: expected number, got bool",
+        )
+
+    def test_integer_refuses_text_and_bool(self):
+        tool = self._tool(McpParamSchema(name="qty", type="integer", description="q"))
+        assert tool.decode_arguments({"qty": "100"}).problems == (
+            "argument qty: expected integer, got str",
+        )
+        assert tool.decode_arguments({"qty": True}).problems == (
+            "argument qty: expected integer, got bool",
+        )
+
+    def test_enum_refuses_values_outside(self):
+        tool = self._tool(
+            McpParamSchema(name="side", type="string", description="s", enum=("buy", "sell"))
+        )
+        assert tool.decode_arguments({"side": "buy"}).values == ("buy",)
+        assert tool.decode_arguments({"side": "short"}).problems == (
+            "argument side: expected one of ['buy', 'sell']",
+        )
+
+    def test_missing_arguments(self):
+        tool = self._tool(
+            McpParamSchema(name="a", type="string", description="required"),
+            McpParamSchema(name="b", type="integer", description="default", default=10),
+            McpParamSchema(name="c", type="integer", description="optional", required=False),
+        )
+        assert tool.decode_arguments({}).problems == ("missing required argument: a",)
+        assert tool.decode_arguments({"a": "x"}).values == ("x", 10, None)
+        assert tool.decode_arguments({"a": "x", "c": None}).values == ("x", 10, None)
+
+    def test_unknown_type_is_refused_at_construction(self):
+        try:
+            McpParamSchema(name="x", type="str", description="x")
+        except ValueError as error:
+            assert "is not one of string, integer, number, boolean, array, object" in str(error)
+        else:
+            raise AssertionError("unknown type should be refused")

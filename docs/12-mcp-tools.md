@@ -66,19 +66,24 @@ This expands to:
 2. An `McpToolDef` instance `submit_order` with name, description, params, and handler
 
 The handler's parameters carry the type written in `:type` as a string annotation, so the
-type checker (doeff-hy-check, also with `--strict`) sees the body's arguments as typed:
+type checker (doeff-hy-check, also with `--strict`) sees the body's arguments as typed. The tool
+server checks every call's arguments against the same table before it calls the handler, so the
+annotation also holds at run time. The table is `MCP_JSON_TYPES` in `doeff/mcp.py` — the
+annotation (defmcp-tool) and the server's check (`McpToolDef.decode_arguments`) both read it:
 
-| `:type` | Annotation |
-|---------|------------|
-| `"string"` | `str` |
-| `"integer"` | `int` |
-| `"number"` | `float` |
-| `"boolean"` | `bool` |
-| `"array"` | `list[object]` |
-| `"object"` | `dict[str, object]` |
+| `:type` | Annotation | The server accepts |
+|---------|------------|--------------------|
+| `"string"` | `str` | a JSON string |
+| `"integer"` | `int` | a JSON integer (not `true` / `false`) |
+| `"number"` | `float` | a JSON number; an integer such as `2` is passed as `2.0` |
+| `"boolean"` | `bool` | `true` / `false` |
+| `"array"` | `list[object]` | a JSON array |
+| `"object"` | `dict[str, object]` | a JSON object |
 
-A parameter whose `:required` is not literally `True` gets `| None` (the tool server passes
-`None` for an argument the agent did not send). Any other `:type` is an error at expansion time.
+The server also refuses a value outside `:enum` and a missing required argument; the agent gets
+the reason as the tool's error. A missing optional argument gets its `:default`, or `None` when
+there is no default. A parameter whose `:required` is not literally `True`, or whose `:default`
+is `None`, gets `| None`. Any other `:type` is an error at expansion time.
 
 **Param fields:**
 

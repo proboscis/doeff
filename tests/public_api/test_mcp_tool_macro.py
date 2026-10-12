@@ -180,6 +180,29 @@ class TestDefmcpToolMacro:
   x)
 """)
 
+    def test_default_with_required_or_enum_builds_the_schema(self):
+        """:default を :required・:enum と一緒に書いても定義でき、schema に全部の欄が載る。既定値が None の引数は必須でない
+        注記(`| None`)になる(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 B)。"""
+        import inspect
+
+        mod, _ = _eval_mcp("""
+(defmcp-tool default-tool
+  "Defaults"
+  [{:name "limit" :type "integer" :description "l" :required False :default 10}
+   {:name "side" :type "string" :description "s" :enum ["buy" "sell"] :default "buy"}
+   {:name "note" :type "string" :description "n" :default None}]
+  limit)
+""")
+        tool = mod.__dict__["default_tool"]
+        limit, side, note = tool.params
+        assert (limit.required, limit.default) == (False, 10)
+        assert (side.enum, side.default) == (("buy", "sell"), "buy")
+        assert note.default is None
+        annotations = {
+            name: p.annotation for name, p in inspect.signature(tool.handler).parameters.items()
+        }
+        assert annotations == {"limit": "int | None", "side": "str", "note": "str | None"}
+
     def test_missing_description_raises(self):
         """defmcp-tool without description string raises error."""
         with pytest.raises(Exception, match="description string"):

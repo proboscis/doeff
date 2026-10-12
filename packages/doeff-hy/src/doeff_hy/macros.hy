@@ -32,6 +32,7 @@
 (import inspect)
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
 (import doeff [DoExpr EffectBase])
+(import doeff.mcp [mcp-param-annotation mcp-json-type-names])
 (import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
@@ -2383,33 +2384,50 @@ defpipeline {pipeline}: no stages defined.
 ;; defmcp-tool — MCP tool definition backed by doeff handler
 ;; ---------------------------------------------------------------------------
 
+(defn _mcp-param-field [p key]
+  "schema の Hy の dict `p`(`{:name \"x\" :type \"string\" :description \"…\" …}`)の欄 `key`(\":name\" など)の form —
+   書かれていなければ None(書き手の `None` は記号の form なので、書かれていない事と分かれる)。"
+  (next (gfor #(k v) (zip (cut p None None 2) (cut p 1 None 2)) :if (= (str k) key) v) None))
+
+(defn _mcp-param-schema [schema p]
+  "MCP の引数 1 つ(schema の Hy の dict `p`)の McpParamSchema の組み立ての式 — 書かれた欄だけを keyword で 1 度渡す
+   (:enum は tuple にする)。欄ごとに式を組み直していた頃は、:default を :required か :enum と一緒に書くと keyword が
+   崩れて定義の時に落ちた(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 B)。schema = 展開が McpParamSchema を引く名。"
+  (setv enum (_mcp-param-field p ":enum")
+        required (_mcp-param-field p ":required")
+        default (_mcp-param-field p ":default"))
+  `(~schema
+     :name ~(str (_mcp-param-field p ":name"))
+     :type ~(str (_mcp-param-field p ":type"))
+     :description ~(str (_mcp-param-field p ":description"))
+     ~@(if (is enum None) [] [(hy.models.Keyword "enum") `(tuple ~enum)])
+     ~@(if (is required None) [] [(hy.models.Keyword "required") required])
+     ~@(if (is default None) [] [(hy.models.Keyword "default") default])))
+
 (defn _mcp-handler-param [tool p]
   "MCP の引数 1 つ(schema の Hy の dict `p`)を受ける handler の引数 — 名に schema の型の注記を付ける(文字の注記 —
    defk の契約の注記と同じく実行の時は評価しない)。
 
-   schema の :type(JSON Schema の型)を Python の型に写す。server(doeff_agents の mcp_server_loop)は JSON を解いた値を
-   そのまま handler へ渡すので、配列と object の中身は object。必須でない引数は、送られなかった時に server が None を
-   渡すので `| None` を足す。注記が無かった頃は、strict の型検査で引数 1 つにつき書き手の直せない赤が 2 件
-   (注記が無い・型が Unknown)と、本体でその引数を渡す所ごとに 1 件出た(card ki-973b4e44d7bc)。"
-  (setv fields (dict (zip (map str (cut p None None 2)) (cut p 1 None 2)))
-        pname (str (get fields ":name"))
-        ptype (get fields ":type")
-        ;; :required を書かない引数は必須(McpParamSchema の既定)。True の字面でない :required は必須と決められない
-        required? (= (.get fields ":required" 'True) 'True))
-  (setv base
-    ;; Hy の String の model は素の str と == で等しくならないので、素の str にして比べる
-    (match (str ptype)
-      "string" "str"
-      "integer" "int"
-      "number" "float"
-      "boolean" "bool"
-      "array" "list[object]"
-      "object" "dict[str, object]"
-      _ (raise (SyntaxError
-                 (.format "defmcp-tool {}: 引数 {} の :type {} は知らない型です — \"string\"・\"integer\"・\"number\"・\"boolean\"・\"array\"・\"object\" のどれかを書いてください(handler の引数の型の注記にも写す)"
-                          tool pname (hy.repr ptype))))))
-  `(annotate ~(hy.models.Symbol (.replace pname "-" "_"))
-             ~(hy.models.String (if required? base (+ base " | None")))))
+   注記は doeff.mcp の表 MCP_JSON_TYPES の行から引く(`mcp-param-annotation`)。server(doeff_agents の mcp_server_loop)は
+   同じ表で受けた値を検め、合わない値・省いた必須の引数を handler を呼ぶ前に断るので、注記は実行の時にも真になる
+   (設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 A・B — 検めずに渡していた頃は `int` の引数に `\"100\"` が届いた)。
+   必須でない引数は `| None`(送られず既定値も無い引数に server が None を渡す)。:required を書かない引数は必須
+   (McpParamSchema の既定)で、True の字面でない :required と、既定値が `None` の引数は必須と決めない。
+   注記が無かった頃は、strict の型検査で引数 1 つにつき書き手の直せない赤が 2 件(注記が無い・型が Unknown)と、
+   本体でその引数を渡す所ごとに 1 件出た(card ki-973b4e44d7bc)。知らない :type は展開の時に誤りにする。"
+  (setv pname (str (_mcp-param-field p ":name"))
+        ptype (_mcp-param-field p ":type")
+        required (_mcp-param-field p ":required")
+        default (_mcp-param-field p ":default")
+        annotation (mcp-param-annotation (str ptype)
+                                         (and (or (is required None) (= required 'True))
+                                              (!= default 'None))))
+  (when (is annotation None)
+    (raise (SyntaxError
+             (.format "defmcp-tool {}: 引数 {} の :type {} は知らない型です — {} のどれかを書いてください(handler の引数の型の注記にも写す)"
+                      tool pname (hy.repr ptype)
+                      (.join "・" (gfor type-name (mcp-json-type-names) (+ "\"" type-name "\"")))))))
+  `(annotate ~(hy.models.Symbol (.replace pname "-" "_")) ~(hy.models.String annotation)))
 
 (defn _parse-mcp-params [param-list schema tool]
   "Parse MCP parameter list into (param-schemas, fn-params).
@@ -2417,73 +2435,13 @@ defpipeline {pipeline}: no stages defined.
    :enum, :required, :default.
 
    Returns #(schema-exprs params) where schema-exprs are
-   McpParamSchema constructor calls and params are the @do function's
-   parameters, annotated with the schema's type (`_mcp-handler-param`).
-   schema = the symbol the expansion reads McpParamSchema by (defmcp-tool
-   picks it per view); tool = the tool's name for error messages."
-  (setv schemas [])
-  (for [p param-list]
-    ;; p is a Hy Dict: {:name \"x\" :type \"string\" :description \"desc\" ...}
-    (setv pdict {})
-    (for [#(k v) (zip (cut p None None 2) (cut p 1 None 2))]
-      (setv (get pdict (str k)) v))
-    (setv pname (str (get pdict ":name")))
-    (setv ptype (str (get pdict ":type")))
-    (setv pdesc (str (get pdict ":description")))
-    ;; Build keyword args for McpParamSchema
-    (setv kw-args [])
-    (when (in ":enum" pdict)
-      (setv enum-vals (get pdict ":enum"))
-      (.append kw-args `(tuple ~enum-vals))
-      (.append kw-args None))  ; placeholder, handled below
-    (setv has-enum (in ":enum" pdict))
-    (setv has-required (in ":required" pdict))
-    (setv has-default (in ":default" pdict))
-    ;; Build the McpParamSchema(...) expression
-    (setv schema-expr
-      `(~schema
-         :name ~pname
-         :type ~ptype
-         :description ~pdesc))
-    (when has-enum
-      (setv enum-val (get pdict ":enum"))
-      (setv schema-expr
-        `(~schema
-           :name ~pname
-           :type ~ptype
-           :description ~pdesc
-           :enum (tuple ~enum-val))))
-    (when has-required
-      ;; Rebuild with :required
-      (setv req-val (get pdict ":required"))
-      (if has-enum
-          (setv schema-expr
-            `(~schema
-               :name ~pname
-               :type ~ptype
-               :description ~pdesc
-               :enum (tuple ~(get pdict ":enum"))
-               :required ~req-val))
-          (setv schema-expr
-            `(~schema
-               :name ~pname
-               :type ~ptype
-               :description ~pdesc
-               :required ~req-val))))
-    (when has-default
-      (setv def-val (get pdict ":default"))
-      ;; Rebuild with :default — append to whatever we have
-      ;; For simplicity, build with all optional fields
-      (setv schema-expr
-        `(~schema
-           :name ~pname
-           :type ~ptype
-           :description ~pdesc
-           ~@(if has-enum [`(:enum (tuple ~(get pdict ":enum")))] [])
-           ~@(if has-required [`(:required ~(get pdict ":required"))] [])
-           :default ~def-val)))
-    (.append schemas schema-expr))
-  #(schemas (lfor p param-list (_mcp-handler-param tool p))))
+   McpParamSchema constructor calls (`_mcp-param-schema`) and params are
+   the @do function's parameters, annotated with the schema's type
+   (`_mcp-handler-param`). schema = the symbol the expansion reads
+   McpParamSchema by (defmcp-tool picks it per view); tool = the tool's
+   name for error messages."
+  #((lfor p param-list (_mcp-param-schema schema p))
+    (lfor p param-list (_mcp-handler-param tool p))))
 
 (defmacro defmcp-tool [_hy-compiler name description param-list #* body]
   "Define an MCP tool backed by a doeff @do handler.
