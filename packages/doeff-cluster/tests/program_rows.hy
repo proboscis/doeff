@@ -5,7 +5,8 @@
 ;;; task の本文も service の宣言と同じく詰めた Program の置き場のキー program(sha)だけを運ぶ。coordinator は置き場に sha が在る時だけ
 ;;; task を受けるので、task の検は先に program-placed で置いてから送る(置き場の版が task の版になる)。
 (require doeff-hy.macros [defk <- val])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_hy.table [TableWrite table-of])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations ClusterState WorkerReport])
 (import doeff_cluster.coordinator.core.program_policy [program-write])
 (import doeff_cluster.coordinator.intent.request_bodies [ProgramBody HeartbeatBody TaskBody BodyMalformed])
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of])
@@ -47,6 +48,12 @@
   (val placed (program-write state sha (ProgramBody :blob blob :versions versions) now))
   (assert (= (get placed 1) 200) placed)
   #((get placed 0) sha))
+
+
+(defk reports-observed [reports]
+  {:pre [(: reports (get dict #(str WorkerReport)))] :post [(: % ClusterObservations)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker の名 → 最新の状態の報告の写像から、ClusterState.observations の値(statuses の表だけを置いた物)を作るため(#2904)。"
+  (ClusterObservations :statuses (table-of (tuple (gfor #(name report) (.items reports) (TableWrite name report))))))
 
 
 (defk heartbeat-of [body]

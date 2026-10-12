@@ -30,7 +30,7 @@
                              DrainWorker Redeclare KillWorker ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
-(import tests.program_rows [SAMPLE-RUN])
+(import tests.program_rows [SAMPLE-RUN reports-observed])
 
 ;; 本番と同じ時間の設定(生存の窓 10 秒・fence 20 秒・移し替え 60 秒)。
 (val T (ClusterTiming))
@@ -157,12 +157,13 @@
   (<- w2 WorkerInfo (worker-of "w2" 60000 #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val running (WorkerReport :at 60000 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
-  (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :statuses {"w1" running}
+  (val promised (ClusterState #(job) {"w1" w1 "w2" w2} {"a" (Placement "a" "w1" 1 0)} :observations (! (reports-observed {"w1" running}))
                               :drains {"w1" (Drain "w1" 0 999999)} :keep-marks #(mark)))
   (assert (= (. (get (! (place-jobs 60000 promised T)) "a") worker) "w1"))
   (val released (replace promised :keep-marks #()))
   (assert (not-in "a" (! (place-jobs 60000 released T))))
-  (val stopped (replace released :statuses {"w1" (WorkerReport :at 60000 :endpoint None :jobs #((StatusRow :name "a" :phase "stopped")))}))
+  (val stopped (replace released :observations (! (reports-observed {"w1" (WorkerReport :at 60000 :endpoint None
+                                                                                       :jobs #((StatusRow :name "a" :phase "stopped")))}))))
   (assert (= (. (get (! (place-jobs 60000 stopped T)) "a") worker) "w2")))
 
 
@@ -250,7 +251,7 @@
   (<- w1 WorkerInfo (worker-of "w1" 0 #("net")))
   (<- mark KeepMark (promise-to "a" "w1"))
   (val report (WorkerReport :at 0 :endpoint None :jobs #((StatusRow :name "a" :phase "running"))))
-  (val plain (ClusterState #(job) {"w1" w1} {"a" (Placement "a" "w1" 1 0)} :statuses {"w1" report}))
+  (val plain (ClusterState #(job) {"w1" w1} {"a" (Placement "a" "w1" 1 0)} :observations (! (reports-observed {"w1" report}))))
   (assert (= (get (running-process plain "a" PAST-DEADLINE T) "state") "NotReady"))
   (val kept (running-process (replace plain :keep-marks #(mark)) "a" PAST-DEADLINE T))
   (assert (= (get kept "state") "Unknown") kept)

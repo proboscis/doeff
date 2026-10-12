@@ -29,7 +29,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
                         PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
                         ForgetProbes Action] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
-(import tests.program_rows [SAMPLE-RUN])
+(import tests.program_rows [SAMPLE-RUN reports-observed])
 (import doeff_cluster.worker.core.policy [plan records-after statuses])
 
 (setv T (ClusterTiming))
@@ -201,12 +201,13 @@
 
 (deftest test-a-retired-process-still-counts-as-live
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
-  (val empty (ClusterState :workers {} :statuses {}))
+  (val empty (ClusterState :workers {}))
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
   (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
   (val state (replace empty :workers {"zeus" (WorkerInfo "zeus" #("net") 10 1000 :task-reserve 0)}
-                            :statuses {"zeus" (WorkerReport :at 1000 :endpoint None
-                                                            :jobs #((StatusRow :name "a#retired-1-x" :phase "running" :retired-from "a")))}))
+                            :observations (! (reports-observed {"zeus" (WorkerReport :at 1000 :endpoint None
+                                                                                     :jobs #((StatusRow :name "a#retired-1-x" :phase "running"
+                                                                                                        :retired-from "a")))}))))
   (assert (still-live-somewhere 1000 state "a" T))
   (assert (not (still-live-somewhere 1000 state "b" T))))
 

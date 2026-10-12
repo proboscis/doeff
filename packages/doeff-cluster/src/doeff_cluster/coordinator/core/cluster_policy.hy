@@ -22,7 +22,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_hy.table [Table])
+(import doeff_hy.table [Table TableWrite])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
@@ -391,7 +391,7 @@
   "job name の process の行の母集団(worker の名の順): lease の内に報告した全部の worker の最新の報告のうち、名が一致する行と、
    入れ替えで退いた process の行(行の名は <名>#retired-<世代>・retiredFrom = 名)。「まだどこかで動いているか」(still-live-somewhere)と
    「どの版が動いているか」(resource_policy.live-processes)が同じ母集団を読むための定義点。"
-  (tuple (gfor #(wname st) (sorted (.items state.statuses))
+  (tuple (gfor #(wname st) (sorted (.items state.observations.statuses))
                :setv w (.get state.workers wname)
                :if (and (is-not w None) (alive now w timing.lease-ms))
                row st.jobs
@@ -1353,7 +1353,8 @@
   (if (not gone)
       state
       (replace state :workers (dfor #(n w) (.items state.workers) :if (not-in n gone) n w)
-                     :statuses (dfor #(n s) (.items state.statuses) :if (not-in n gone) n s)
+                     :observations (replace state.observations
+                                            :statuses (.with-writes state.observations.statuses (tuple (gfor n gone (TableWrite n None)))))
                      :drains (dfor #(n d) (.items state.drains) :if (not-in n gone) n d))))
 
 
@@ -1532,7 +1533,7 @@
 ;; 以前は heartbeat ごとに行を丸ごと置き換えたので、新しい世代の行(lastExitAtMs 無し)が前の値を消し、刻は進まなかった。
 ;; 新しい世代の最初の heartbeat は行を載せない(worker は返事の宣言を受けてから行を作る — 本番の LinkState.statuses も sim の宿の
 ;; 真実も初めは空)ので、数えた刻は宣言の在る job の間は行の外(WorkerInfo.known-exits)に持ち、次に載る同じ名の行へ運ぶ。
-;; 状態の報告(ClusterState.statuses)は保存しないが、known-exits は worker/<名> の行に保存する: 機体が丸ごと死ぬと同じ機体の coordinator も
+;; 状態の報告(ClusterObservations.statuses)は保存しないが、known-exits は worker/<名> の行に保存する: 機体が丸ごと死ぬと同じ機体の coordinator も
 ;; 一緒に作り直されうるので、作り直しの後に最初に来る新しい世代の heartbeat でも、前の世代で process を持っていた job を数え、進めた刻を
 ;; 戻さない(以前は報告ごと失い、刻は進まず・None へ戻った)。
 ;; 世代が重なる時(旧い Pod が preStop の drain の間も process を動かし、新旧の世代が交互に heartbeat を送る — 上の 2026-09-27 の註)は、
@@ -1583,7 +1584,7 @@
 (defk worker-report [rows now endpoint known]
   {:pre [(: rows tuple) (: now int) (: endpoint (| str None)) (: known tuple)]
    :post [(: % WorkerReport)] :tags {:context "coordinator" :role "judgment"}}
-  "今の世代か新しい世代の heartbeat の状態の報告の行 rows から、worker の最新の報告(ClusterState.statuses の値)を作るため。行は結果の
+  "今の世代か新しい世代の heartbeat の状態の報告の行 rows から、worker の最新の報告(ClusterObservations.statuses の行)を作るため。行は結果の
    欄 result と task の写しを外し(持ち続けるのは process の姿だけ)、last-exit-at-ms を最後に終わったと知れた刻にする(known =
    この heartbeat の後の WorkerInfo.known-exits — 同じ worker・同じ job の名では前に知っていた刻から戻さない)。result も task も
    持たない行(service の job の行)は同じ値のまま運ぶ(#3774)。"
@@ -1616,14 +1617,16 @@
     (when (or (is previous None) (is boot None))
       (raise (RuntimeError (.format "世代の比べが OLDER なのに今の世代か boot が無い: {}" name))))
     ;; 退いた世代の行の終わりの刻で知れた刻が進んだ時だけ、今の世代の報告の行へも写す(進まなければ報告は同じ object のまま)。
-    (setv current-report (.get adopted.statuses name))
+    (setv current-report (.row adopted.observations.statuses name))
     (return (absorb-superseded-heartbeat
               (replace adopted
                        :workers (| adopted.workers {name (replace previous :retired (retired-with previous.retired boot) :known-exits known)})
-                       :statuses (if (or (is current-report None) (= known previous.known-exits))
-                                     adopted.statuses
-                                     (| adopted.statuses
-                                        {name (replace current-report :jobs (! (rows-with-known-exits current-report.jobs known)))})))
+                       :observations (if (or (is current-report None) (= known previous.known-exits))
+                                         adopted.observations
+                                         (replace adopted.observations
+                                                  :statuses (.with-writes adopted.observations.statuses
+                                                                          #((TableWrite name (replace current-report
+                                                                                                      :jobs (! (rows-with-known-exits current-report.jobs known)))))))))
               name boot statuses now)))
   (setv envs (or body.envs (EnvsReport))
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
@@ -1660,18 +1663,20 @@
         ;; job の行の最後に終わったと知れた刻は、known-exits-after が前の知れた刻と世代の比べから数えた known(worker-report — #3672)。
         report (! (worker-report statuses now body.endpoint known))
         ;; 新しい世代の名乗りで、前の世代の process が持っていた名前付きの lease を外す(#3770 — 前の世代の最新の報告は、この
-        ;; heartbeat で置き換える前の adopted.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
+        ;; heartbeat で置き換える前の adopted.observations.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
         ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。
+        previous-report (.row adopted.observations.statuses name)
         board (if (and (= order GenerationOrder.NEWER) (not body.overlaps-elder))
-                  (! (board-without-generation-holders adopted.board (.get adopted.statuses name)))
+                  (! (board-without-generation-holders adopted.board previous-report))
                   adopted.board)
+        ;; absorb-boot は drain だけを変えるので、観測は adopted のまま書いてよい。
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
-                     :statuses (| adopted.statuses {name report})
+                     :observations (replace adopted.observations
+                                            :statuses (.with-writes adopted.observations.statuses #((TableWrite name report))))
                      :board board)
         ;; 前の世代がまだ走っている間に起きた世代の名乗り(AL-D2f): 前の世代の最新の報告の running の常駐の job を、前の世代が動かして
         ;; いる組(SupersededRun)の種にする — 前の世代の次の heartbeat を待たずに、今の世代への最初の返事から印 elder-runs を付ける。
-        previous-report (.get adopted.statuses name)
         seeded (if (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
                         (is-not previous-report None))
                    (replace registered :superseded-runs (superseded-runs-after registered name previous.boot previous-report.jobs now
@@ -1864,7 +1869,7 @@
   (when (not waiting) (return False))
   ;; 状態の報告(statuses)は今の世代の物だけを持つ — 名乗りの世代(WorkerInfo.boot)が boot の時だけ読む。
   (setv info (.get state.workers name)
-        current (.get state.statuses name)
+        current (.row state.observations.statuses name)
         rows (if (and (is-not current None) (is-not info None) (= info.boot boot)) current.jobs #())
         own (frozenset (gfor row rows :if row.instance row.instance)))
   ;; job の phase = 同じ名の行のうち最後の物(無ければ None)。
@@ -1911,7 +1916,7 @@
         running (if (is statuses None) recorded (running-names statuses))
         own (frozenset (gfor row (or statuses #()) :if row.instance row.instance))
         ;; 今の世代が起こせると報告した recreate の job(状態の行の phase が elder-runs — AL-D2f)。それまでは前の世代に残す。
-        current (.get state.statuses name)
+        current (.row state.observations.statuses name)
         ;; 重なりの組は、この世代の Pod の止まりが始まる(leaving)まで何も渡さない(AL-D2k — Service の振り先は止まりが始まるまで
         ;; この世代の Pod なので、先に渡すと渡した job へ届かない)。始まったら、起こせると報告した job を一度に渡す。
         run (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
@@ -1959,7 +1964,7 @@
              :workers workers
              :placements (dict state.placements)
              :unplaced (unplaced-jobs now state timing)
-             :statuses (dfor #(n st) (.items state.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
+             :statuses (dfor #(n st) (.items state.observations.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
              :tasks (tuple (sorted (.values state.tasks) :key (fn [t] t.id)))
              :board-keys (len state.board)
              :surges (dict state.surges)

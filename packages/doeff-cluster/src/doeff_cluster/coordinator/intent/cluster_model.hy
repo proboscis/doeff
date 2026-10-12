@@ -462,7 +462,7 @@
 
 
 (defrecord WorkerReport
-  "worker 1 つの最新の状態の報告(ClusterState.statuses の値 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
+  "worker 1 つの最新の状態の報告(ClusterObservations.statuses の行 — 鍵 = worker の名・保存しない): at = 受けた時刻(epoch ms)・endpoint =
    worker が名乗った宛先(名乗らない旧い worker は None)・jobs = job の行の列(heartbeat の statuses の行 StatusRow から、結果の
    欄 result と task の写しを外した物 — 持ち続けるのは process の姿だけ)。#2447 で dict をこの型にした。jobs の行の last-exit-at-ms は
    最後に終わったと知れた刻(WorkerInfo.known-exits の刻と行の刻の大きい方 — cluster_policy.worker-report・#3672)。"
@@ -721,11 +721,13 @@
   "coordinator が外から読んだ・受けた、保存しない観測の置き場(ClusterState.observations — 上の 2 つの註)。deployments = 「ns/名」→
    Deployment の最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)・readiness = Service の名 →
    準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順・置き先の process の報告は
-   他の送り手に押し出されない — resource_policy.keep-report)。"
+   他の送り手に押し出されない — resource_policy.keep-report)・statuses = worker の名 → その worker の最新の状態の報告(heartbeat ごとに
+   置き換える — #2904)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
   (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
-  (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #())))
+  (setv #^ (get Table WorkerReport) statuses (field :default-factory (partial table-of #()))))
 
 
 (defrecord ObservedDeployment
@@ -1031,7 +1033,6 @@
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
   (setv #^ (get dict #(str BoardRow)) board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
-  (setv #^ (get dict #(str WorkerReport)) statuses (field :default-factory dict))  ; worker 名 → WorkerReport(保存しない)
   (setv #^ (get tuple #(object ...)) events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
   (setv #^ (get dict #(str ResourceMeta)) meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
@@ -1040,8 +1041,8 @@
   (setv #^ int audit-seq 0)
   (setv #^ (get dict #(str RolloutRow)) rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
   ;; --- 保存しない観測 ---
-  ;; Service の process の準備と計器の報告(#2756)、k8s の Deployment と node の label の最後の観測(#2728)は最後の欄 observations
-  ;; (ClusterObservations)。
+  ;; worker の最新の状態の報告(#2904)、Service の process の準備と計器の報告(#2756)、k8s の Deployment と node の label の最後の観測
+  ;; (#2728)は最後の欄 observations(ClusterObservations)。
   ;; node の label から導く能力の名(ClusterNaming の node-capabilities の能力 — coordinator の起動で入れる・保存しない)。
   ;; worker の heartbeat の provides にこの名が在っても受けない(自己申告を断る — 改訂 1 の I)。
   (setv #^ (get frozenset str) derivable (frozenset))
@@ -1077,9 +1078,10 @@
   ;; 入れると、何も変わらない拍の早い戻り(resource_policy.stamp)で切り替わりを取りこぼす)。保存しない(読み直しの後の最初の拍で
   ;; 求め直す)。位置の引数で作る呼び手を崩さないよう最後の欄に置く。
   (setv #^ (get frozenset str) silent (frozenset))
-  ;; 外から読んだ・受けた保存しない観測(k8s の Deployment と node の label — #2728 J1・Service の process の準備と計器の報告 — #2756 J2。
-  ;; worker の観測も順に移す)。保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。版の比べ(resource_policy.dirty-keys)が読むのは
-  ;; Service の status.ready の材料の readiness の表だけ。位置の引数の呼び手のため最後に置く。
+  ;; 外から読んだ・受けた保存しない観測(k8s の Deployment と node の label — #2728 J1・Service の process の準備と計器の報告 — #2756 J2・
+  ;; worker の状態の報告 — #2904 J3b)。保存の差分(durable_kv の SOURCE-GROUPS)はこの欄を見ない。版の比べ(resource_policy.dirty-keys)が
+  ;; 読むのは Service の status.ready の材料の readiness の表と、Service・Worker の status の材料の statuses の表。位置の引数の呼び手のため
+  ;; 最後に置く。
   (setv #^ ClusterObservations observations (field :default-factory ClusterObservations))
   ;; 途絶しても動かし続けてよい印の約束(#2804): KeepMark の列(job の名の順・job ごとに 1 つ — 引くのは cluster_policy.keep-mark-of)。
   ;; 印を渡した担い手から job を他へ移さない約束で、担い手が印を持たないと知らせるか、Worker が消されるか、担い手の沈黙が約束の期限

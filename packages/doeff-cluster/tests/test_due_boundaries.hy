@@ -39,7 +39,7 @@
   (val sim (Sim HANDOFF))
   (<- (steps sim 12))
   (assert (= (get (service-readiness sim.state NAME sim.now T) "state") "Ready") sim.log)
-  (val st (get sim.state.statuses "zeus"))
+  (val st (.row sim.state.observations.statuses "zeus"))
   (assert (= st.at sim.now) #(st.at sim.now))
   sim)
 
@@ -67,7 +67,7 @@
   (val now (get seen 1))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (carrier-stale-from (get state.statuses "zeus") SHORT-LEASE)) seen)
+  (assert (= due (carrier-stale-from (.row state.observations.statuses "zeus") SHORT-LEASE)) seen)
   (assert (= before now) seen)
   (assert (= (get before "state") "Ready") seen)
   (assert (= (get at "state") "Unknown") seen))
