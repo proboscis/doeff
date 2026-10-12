@@ -52,9 +52,11 @@ from doeff_cluster.coordinator.entry.handler_sets import production_handlers as 
 from doeff_cluster.coordinator.entry.handler_sets import redis_notices as redis_notices
 from doeff_events import MemoryBroker as MemoryBroker
 from doeff_cluster.worker.entry.line_stamp import COORDINATOR_LOG_ENV_NAMES as COORDINATOR_LOG_ENV_NAMES
+from doeff_cluster.worker.entry.line_stamp import SHIP_LIMITS as SHIP_LIMITS
 from doeff_cluster.worker.entry.line_stamp import coordinator_log_plan as coordinator_log_plan
 from doeff_cluster.worker.entry.line_stamp import process_lines as process_lines
 from doeff_cluster.coordinator.core.program import run_coordinator as run_coordinator
+LOG_END_SECONDS: float
 
 def board_file_rows(board_dir: str) -> _Program[tuple, object]:
     ...
