@@ -1,0 +1,10 @@
+# 変更範囲の品質検査(速い段 — 型検査は含まない)を、修正の commit 9bb308779 の作業木で実行
+$ sh /home/ubuntu/dotfiles/agent/venv-run.sh /home/ubuntu/dotfiles/agentcli code-quality --repo /home/ubuntu/.worktrees/doeff-wt-design-check-scoped-def --scope changed --base e5de191585909cc515f824e0b8f87ee4f69e4bbc
+check-slot: 枠 3 を取った(待ち 11 秒)— code-quality doeff-wt-design-check-scoped-def (c-6MV548XHSHP3SWKE2G6JBVS2HJ)
+code-quality: passed (scope=changed・型検査は未実行(fast の段))
+code-quality-base: {'revision': 'e5de191585909cc515f824e0b8f87ee4f69e4bbc', 'repo': '/work/toolset/worktrees/doeff-wt-design-check-scoped-def'}
+code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
+code-quality-registration: packages/doeff-hy/src/doeff_hy/static_check.py: 変更ソースが include に無い(module doeff-hy-static-check は typed:true の paths に持つ — 触るまで測られていなかった)。継続検査対象へ登録が必要: 断片の include に足して `code-quality --format-contract --base <基底>` を撃つと、基底で実観測した既存違反は registered-with-legacy で基底へ入り、赤になるのはこの便が触った行だけ(#277)(fast は止めない — 登録は明示的な操作か日次)
+code-quality-registration: packages/doeff-hy/src/doeff_hy/static_view.py: 変更ソースが include に無い(module doeff-hy-static-check は typed:true の paths に持つ — 触るまで測られていなかった)。継続検査対象へ登録が必要: 断片の include に足して `code-quality --format-contract --base <基底>` を撃つと、基底で実観測した既存違反は registered-with-legacy で基底へ入り、赤になるのはこの便が触った行だけ(#277)(fast は止めない — 登録は明示的な操作か日次)
+code-quality-coverage: partial / 対象 884 / 全体 2884 / 未導入 {'hy': 346, 'javascript': 13, 'lua': 17, 'python': 1358, 'rust': 89, 'shell': 54, 'typescript': 123} / typed:true だが include に無い 27(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
+code-quality-baseline: 今回観測した既存違反 0 / 登録 563 件（自動増加しない）
