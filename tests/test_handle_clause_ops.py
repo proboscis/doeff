@@ -25,9 +25,9 @@ from pathlib import Path
 import doeff_hy  # 拡張を登録する(_READERS は置き場の __file__ を読む)
 import hy
 import pytest
-from doeff_hy import clause_endings, clause_ops, handle
+from doeff_hy import clause_endings, clause_ops, expansion_names, handle
 from doeff_hy.clause_ops import ClauseOp, Ending
-from doeff_hy.expansion_names import alias, alias_symbol
+from doeff_hy.expansion_names import alias, alias_symbol, continuation_symbol
 from doeff_hy.static_view import static_view
 from hy.models import Expression, Object, Sequence, String, Symbol
 
@@ -106,7 +106,7 @@ def _rewrite_throw(args: list[Object], recur: Callable[[Object], Object]) -> Obj
     return Expression(
         [
             Symbol("yield"),
-            Expression([alias_symbol("TransferThrow"), Symbol("k"), recur(args[0])]),
+            Expression([alias_symbol("TransferThrow"), continuation_symbol(), recur(args[0])]),
         ]
     )
 
@@ -127,6 +127,8 @@ _THROW = ClauseOp(
 def throw_op(monkeypatch: pytest.MonkeyPatch) -> ClauseOp:
     """表に行 throw を足す(表の行だけを足し、読み手は直さない)。"""
     monkeypatch.setattr(clause_ops, "CLAUSE_OPS", (*clause_ops.CLAUSE_OPS, _THROW))
+    # 展開の名の表は閉じている(表に無い名は home が断る) — 足した行の node の置き場も表に足す
+    monkeypatch.setitem(expansion_names._HOMES, "TransferThrow", "doeff")
     return _THROW
 
 
@@ -192,7 +194,7 @@ def _rewrite_resume_throw(args: list[Object], recur: Callable[[Object], Object])
     return Expression(
         [
             Symbol("yield"),
-            Expression([alias_symbol("ResumeThrow"), Symbol("k"), recur(args[0])]),
+            Expression([alias_symbol("ResumeThrow"), continuation_symbol(), recur(args[0])]),
         ]
     )
 
@@ -226,6 +228,9 @@ def resume_throw_ops(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         clause_ops, "CLAUSE_OPS", (*clause_ops.CLAUSE_OPS, _RESUME_THROW, _TRANSFER_THROW)
     )
+    # 展開の名の表は閉じている(表に無い名は home が断る) — 足した行の node の置き場も表に足す
+    monkeypatch.setitem(expansion_names._HOMES, "ResumeThrow", "doeff")
+    monkeypatch.setitem(expansion_names._HOMES, "TransferThrow", "doeff")
 
 
 def test_added_returning_operation_marks_the_clause_resumed(resume_throw_ops: None) -> None:
