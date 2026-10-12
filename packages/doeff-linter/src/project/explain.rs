@@ -186,7 +186,8 @@ pub enum Explain {
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
     VocabularyOutsideSinglePoint { group: String, count: usize, instead: String },
     /// DOEFF148: 書いてよい file を決めた綴り(群の名・理由・当たりの種類)。
-    ConfinedSpelling { group: String, why: String, problem: super::confined_spellings::ConfinedProblem },
+    /// bound = 群の :names-bound-in から導いた名(空 = 導いていない)。
+    ConfinedSpelling { group: String, why: String, problem: super::confined_spellings::ConfinedProblem, bound: Vec<String> },
     /// DOEFF161: 数を決めた綴り(宣言の名・理由・当たりの種類)。
     CountedSpelling { group: String, why: String, problem: super::counted_spellings::CountProblem },
     /// DOEFF162: effect の宣言の全体(一覧の名・理由・当たりの種類)。
@@ -475,10 +476,18 @@ impl<'a> Narrator<'a> {
                 format!("語彙 {} が :except の外に {} 行 — {}", group, count, instead),
                 "この語彙の判定は architecture.hy の :single-point-vocabulary が名指す 1 点だけに閉じ込める決まり。他の file が同じ語彙を読んで判定を写すと、直した時に写しの方を直し忘れて2つの判定が食い違う。".to_string(),
             ),
-            Explain::ConfinedSpelling { group, why, problem } => match problem {
+            Explain::ConfinedSpelling { group, why, problem, bound } => match problem {
                 super::confined_spellings::ConfinedProblem::Outside { count } => (
                     format!("綴りの群 {} が書いてよい file の外に {} か所", group, count),
-                    format!("この綴りを書いてよい file は architecture.hy の :confined-spellings の :except で決めてある。外の file に書くと、その口を通らずに同じ事をする 2 つ目の場所ができる。理由: {}", why),
+                    format!(
+                        "この綴りを書いてよい file は architecture.hy の :confined-spellings の :except で決めてある。外の file に書くと、その口を通らずに同じ事をする 2 つ目の場所ができる。{}理由: {}",
+                        if bound.is_empty() {
+                            String::new()
+                        } else {
+                            format!("群の綴りには、:names-bound-in の file で群の綴りに当たる値に結んだ名も入る(導いた名: {})。", bound.join("・"))
+                        },
+                        why
+                    ),
                 ),
                 super::confined_spellings::ConfinedProblem::Missing => (
                     format!("綴りの群 {} の :files に当たる file が無い", group),
