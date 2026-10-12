@@ -39,7 +39,8 @@ lt-0ZP7AYKXMDX83R8DKGFBA73DBJ)。
 見分けない — 答えを変えない macro の変更で、その例だけが赤になる(card ki-b7c40391ac8e)。そこで例を、答えを変えない展開の変異
 の下でも走らせ(run_example_mutated_expansion.py — 値を作る macro の展開を、何もしない handler の下で走らせる Program で包む)、出力が期待の出力の
 ままである事を求める。変わる例は、macro を変えなくても名指して赤になる。包む macro は MUTATED_MACROS・包まない macro は訳つきで
-UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。
+UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。変異は例の file の展開だけに当てるので、examples/ の下には
+例と期待の出力だけを置かせる。
 """
 
 import difflib
@@ -668,7 +669,8 @@ def _expansion_mutation_change(
     if result.returncode != 0:
         return (
             f"{example.name} は、答えを変えない展開の変異({MUTATION})の下で落ちた — 例が展開の作った値の形(型・属性)に頼っている。"
-            f"例は run の後の答えだけを使う\n{result.stdout}{result.stderr}"
+            f"例は run の後の答えだけを使う(落ちた所が変異の入口 {MUTATED_EXPANSION.script.name} の中なら、入口が今の macro の"
+            f"呼び口を包めない — 入口を合わせる)\n{result.stdout}{result.stderr}"
         )
     if _matches(expected, result.stdout):
         return None
@@ -899,7 +901,7 @@ def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: 
 def test_example_macros_are_mutated_or_named() -> None:
     """例が使う doeff-hy の macro は、展開の変異で包む(MUTATED_MACROS)か、包まない訳を置く(UNMUTATED_MACROS) — 新しい macro を
     初めて使う例が、変異の外のまま緑になって、その値の形の印字を見逃させない。包まない macro の行は、今の例が使う macro だけを
-    名指す。"""
+    名指す。使い所は `(require doeff-hy.macros [名 …])` の名で読む(`*`・`:macros`・別名の書き方は読めない — 残る限界)。"""
     used = {use.macro for name in _examples() for use in _example_macro_uses(name)}
     assert used - set(MUTATED_MACROS) - set(UNMUTATED_MACROS) == set(), (
         "例が使う doeff-hy の macro が、展開の変異の表に無い — 実行時の値(Traverse の effect・Program)を作る式なら"
@@ -910,6 +912,23 @@ def test_example_macros_are_mutated_or_named() -> None:
     )
     assert set(UNMUTATED_MACROS) & set(MUTATED_MACROS) == set(), (
         "UNMUTATED_MACROS の行が MUTATED_MACROS にも在る — 包むなら行を外す"
+    )
+
+
+def test_examples_dir_holds_only_examples_and_their_expected_outputs() -> None:
+    """examples/ の下の file は、直下の例(.hy)と expected/ の期待の出力(.txt)だけ — 下の dir に lib を置くと、その lib が作った値の形を
+    例が印字しても、検は lib を例と数えず(変異は例の module の展開だけに当たる)、見分けない。"""
+    stray = sorted(
+        str(path.relative_to(EXAMPLES))
+        for path in EXAMPLES.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and not (path.parent == EXAMPLES and path.suffix == ".hy")
+        and not (path.parent == EXPECTED and path.suffix == ".txt")
+    )
+    assert stray == [], (
+        f"examples/ の下に、例でも期待の出力でもない file が在る — 例の補助の lib を置くと、その lib が macro で作った値の形は例の検の"
+        f"変異に当たらない。lib は例の中に書くか、利用者が使う package に置く: {stray}"
     )
 
 
@@ -1017,11 +1036,34 @@ def test_expansion_mutation_spares_the_modules_an_example_imports(
         + '(print "own:" (. (type own_value) __name__))\n',
         encoding="utf-8",
     )
+    plain = _run_example(script, None, deadline_scale_factor)
     mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
     assert mutated.returncode == 0, mutated.stdout + mutated.stderr
     assert mutated.stdout.splitlines()[1] == "own: WithHandler"
-    # lib が作った値は包まれない(元の macro の展開のまま)
-    assert mutated.stdout.splitlines()[0].removeprefix("library: ") != "WithHandler"
+    # lib が作った値は包まれない(変異の下でも、通常の走りと同じ値)
+    assert mutated.stdout.splitlines()[0] == plain.stdout.splitlines()[0]
+    assert plain.stdout.splitlines()[0].startswith("library: ")
+
+
+def test_expansion_mutation_follows_the_macro_not_how_the_example_requires_it(
+    tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    """変異は macro の表に当たるので、例が macro を別名で require しても包まれる(require の書き方を読む確かめは、別名を別の macro の
+    名と読む — test_example_macros_are_mutated_or_named の残る限界)。"""
+    script = tmp_path / "requires_by_alias.hy"
+    script.write_text(
+        _BUILT_VALUE_PREAMBLE.replace(
+            "(require doeff-hy.macros [<- traverse for/do])",
+            "(require doeff-hy.macros [<- traverse :as aliased_traverse])",
+        )
+        + "(setv own_value (aliased_traverse (<- x (Iterate [1 2 3])) (* x 2)))\n"
+        + '(print "own:" (. (type own_value) __name__))\n',
+        encoding="utf-8",
+    )
+    mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
+    assert mutated.returncode == 0, mutated.stdout + mutated.stderr
+    assert mutated.stdout == "own: WithHandler\n"
 
 
 def test_mark_check_sees_unknown_marks() -> None:
