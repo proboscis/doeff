@@ -7,10 +7,11 @@ CLAUSE-OPS)だけに在る事の検(card ki-b4c015d8ba1f・設計検証 lt-D4D7Y
 読まれた。
 
 - 表に行を足すと、節を終えるかの検め・書き換え・node の import(実行時と型検査のための展開)・Raise / Absent の節の再開の
-  検め(展開の時と handle の評価の時)が、どれも足した操作に追従する。
+  検め(展開の時と handle の評価の時)が、どれも足した操作に追従する。resume と同じ扱いの操作(続きの後に節へ戻る・末尾では
+  別の操作に替える)も、表の行(returns・tail)だけで足せる。表から行を消すと、どの読み手からも操作でなくなる。
 - 表のどの行も、行の終わり方(Ending)どおりに Raise / Absent / 普通の effect の節で照らされる。
-- handle.hy と clause_endings.hy に書いた名のうち表に無い名は、どの読み手も節の操作として扱わない — 表を介さずに読み手の
-  片方へ名を足すと赤。
+- handle.hy と clause_endings.hy に書いた名のうち表に無い名は、どの読み手も節の操作として扱わない。doeff_hy のどの module も
+  表の外に操作の名を書かない — 表を介さずに読み手へ名を足すと赤(設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 A・B)。
 """
 
 import ast
@@ -110,6 +111,8 @@ _THROW = ClauseOp(
     name="throw",
     ending=Ending.RESUMES,
     arity=1,
+    returns=False,
+    tail=None,
     nodes=("TransferThrow",),
     static_nodes=("TransferThrow",),
     rewrite=_rewrite_throw,
@@ -178,6 +181,97 @@ def test_added_operation_node_is_imported_in_both_expansions(throw_op: ClauseOp)
         assert "TransferThrow" in _doeff_imports(tree)
 
 
+def _rewrite_resume_throw(args: list[Object], recur: Callable[[Object], Object]) -> Object:
+    """(throw 例外) → 続きへ例外を投げ、続きが終わると節へ戻る(handler は残る)— resume と同じ扱い(盲検 A の要求)。"""
+    return Expression(
+        [Symbol("yield"), Expression([Symbol("ResumeThrow"), Symbol("k"), recur(args[0])])]
+    )
+
+
+# resume と transfer の対と同じ形の対: 非末尾の throw は節へ戻り(returns)、末尾の throw は transfer-throw に替える(tail)
+_RESUME_THROW = ClauseOp(
+    name="throw",
+    ending=Ending.RESUMES,
+    arity=1,
+    returns=True,
+    tail="transfer-throw",
+    nodes=("ResumeThrow",),
+    static_nodes=("ResumeThrow",),
+    rewrite=_rewrite_resume_throw,
+)
+_TRANSFER_THROW = ClauseOp(
+    name="transfer-throw",
+    ending=Ending.RESUMES,
+    arity=1,
+    returns=False,
+    tail=None,
+    nodes=("TransferThrow",),
+    static_nodes=("TransferThrow",),
+    rewrite=_rewrite_throw,
+)
+
+
+@pytest.fixture
+def resume_throw_ops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """表に行 throw(節へ戻る・末尾では transfer-throw)と transfer-throw を足す(読み手は直さない)。"""
+    monkeypatch.setattr(
+        clause_ops, "CLAUSE_OPS", (*clause_ops.CLAUSE_OPS, _RESUME_THROW, _TRANSFER_THROW)
+    )
+
+
+def test_added_returning_operation_marks_the_clause_resumed(resume_throw_ops: None) -> None:
+    """節へ戻る操作の後の「再開した」の印は、行の returns を読む handle.hy が立てる — 行の書き換えは印を知らなくてよい
+    (前は印を立てる約束が resume の書き換えの中に在り、それを写さない行は、続きを再開したのに実行の時に誤りで止まった)。"""
+    mod = _eval_module(
+        """
+        (defk subject [] {:pre [] :post [(: % int)]}
+          (<- r (handle (guarded 1) (Bump [n] (setv answer (throw (ValueError "boom"))) answer)))
+          r)
+        """
+    )
+    assert run(mod.subject()) == -1
+
+
+def test_added_operation_with_a_tail_is_replaced_at_the_tail(resume_throw_ops: None) -> None:
+    """末尾の throw は行の tail(transfer-throw)に替わり handler の frame を残さず、非末尾の throw は ResumeThrow のまま
+    (前は末尾の替えが handle.hy に resume の名で直に在り、表に足した操作の末尾は替わらなかった)。"""
+    tail = """
+    (defk subject [] {:pre [] :post [(: % int)]}
+      (<- r (handle (guarded 1) (Bump [n] (throw (ValueError "boom")))))
+      r)
+    """
+    inner = """
+    (defk subject [] {:pre [] :post [(: % int)]}
+      (<- r (handle (guarded 1) (Bump [n] (setv answer (throw (ValueError "boom"))) answer)))
+      r)
+    """
+    for static in (False, True):
+        tail_names = _read_names(_expand(tail, static=static))
+        inner_names = _read_names(_expand(inner, static=static))
+        assert "TransferThrow" in tail_names
+        assert "ResumeThrow" not in tail_names
+        assert "ResumeThrow" in inner_names
+        assert "TransferThrow" not in inner_names
+    assert run(_eval_module(tail).subject()) == -1
+    assert "Raise の節は throw できない" in _expansion_refusal(
+        '(setv h (handle (raises) (Raise [reason] (throw (ValueError "into-k")))))'
+    )
+
+
+def test_a_removed_operation_is_no_longer_an_operation_anywhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """表から行を消すと(pass の退役)、節を終えるかの検め・節が使う操作の集まり・書き換えのどれもその名を操作と扱わない。"""
+    monkeypatch.setattr(
+        clause_ops, "CLAUSE_OPS", tuple(op for op in clause_ops.CLAUSE_OPS if op.name != "pass")
+    )
+    form = hy.read("(pass)")
+    assert not handle._terminates(form)
+    assert clause_endings.clause_ops([form]) == frozenset()
+    assert handle._rewrite_ops(form) == form
+    assert "missing resume" in _expansion_refusal("(setv h (handle (raises) (Bump [n] (pass))))")
+
+
 # ---------------------------------------------------------------------------
 # 表のどの行も、行の終わり方どおりに照らされる
 # ---------------------------------------------------------------------------
@@ -217,18 +311,38 @@ def test_table_names_are_unique() -> None:
     assert len(names) == len(set(names))
 
 
+@pytest.mark.parametrize("op", _OPS.values(), ids=_OPS.keys())
+def test_table_rows_are_consistent(op: ClauseOp) -> None:
+    """末尾で替える先は、同じ引数の数の、節へ戻らない行。書き換えの無い行は節へ戻らず、末尾でも替えない。"""
+    if op.tail is not None:
+        target = clause_ops.named_op(op.tail)
+        assert target is not None
+        assert target.arity == op.arity
+        assert not target.returns
+    if op.rewrite is None:
+        assert not op.returns
+        assert op.tail is None
+
+
 # ---------------------------------------------------------------------------
 # 読み手に書いた名のうち表に無い名は、節の操作として扱われない
 # ---------------------------------------------------------------------------
 
-_READERS = tuple(
-    Path(doeff_hy.__file__).with_name(name) for name in ("handle.hy", "clause_endings.hy")
-)
+_PACKAGE = Path(doeff_hy.__file__).parent
+_READERS = tuple(_PACKAGE / name for name in ("handle.hy", "clause_endings.hy"))
 _NAME = re.compile(r"[a-z][a-z0-9_!?-]*")
 
 
 def _written_names(path: Path) -> frozenset[str]:
-    """source に文字列か quote した記号で書いた、頭の名になりうる綴り — 読み手が表を介さずに操作の名を持つ所の候補。"""
+    """source に文字列か quote した記号で書いた、頭の名になりうる綴り — 表を介さずに操作の名を持つ所の候補。"""
+    if path.suffix == ".py":
+        return frozenset(
+            node.value
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _NAME.fullmatch(node.value)
+        )
     found: set[str] = set()
 
     def walk(form: object) -> None:
@@ -250,11 +364,29 @@ def _written_names(path: Path) -> frozenset[str]:
 
 _CANDIDATES = sorted(frozenset().union(*(_written_names(path) for path in _READERS)))
 
+# 表の名と同じ綴りだが、節の操作と関係の無い所(module の名・綴り):
+# - macros.hy の "raise": Python の文の頭の一覧(式の位置に置けない形の見分け — handler の節と関係が無い)
+_UNRELATED_SPELLINGS = frozenset({("macros.hy", "raise")})
+
+
+def test_no_module_writes_an_operation_name_outside_the_table() -> None:
+    """doeff_hy のどの module も、表(clause_ops.hy)の外に操作の名を文字列か quote した記号で書かない。名の集まりを写した読み手
+    (盲検 B の「続きを 2 度使う」検め・盲検 A の末尾の替えを名で直に書く形)は、表への追加・退役に追従しないまま他の検を通った。"""
+    names = {op.name for op in clause_ops.CLAUSE_OPS}
+    written = {
+        (path.name, name)
+        for path in sorted([*_PACKAGE.glob("*.hy"), *_PACKAGE.glob("*.py")])
+        if path.name != "clause_ops.hy"
+        for name in _written_names(path) & names
+    }
+    assert written - _UNRELATED_SPELLINGS == set()
+    assert written >= _UNRELATED_SPELLINGS, "理由つきで外した綴りが、もう書かれていない — 行を消す"
+
 
 def test_readers_name_operations_only_through_the_table() -> None:
     """handle.hy と clause_endings.hy に書いた綴りのうち、表に無い名はどの読み手も節の操作として扱わず、表の名は表の行どおりに
     扱う(盲検 A の差分のように `_terminates`・`_rewrite-ops` へ "throw" を直に書くと、ここで赤になる)。"""
-    assert {"resume", "transfer"} <= set(_CANDIDATES), "綴りの拾い方が読み手の名を拾っていない"
+    assert {"if", "cond", "quote"} <= set(_CANDIDATES), "綴りの拾い方が読み手の綴りを拾っていない"
     for name in _CANDIDATES:
         op = clause_ops.named_op(name)
         for count in (0, 1, 2):
