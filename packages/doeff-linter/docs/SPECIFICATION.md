@@ -14,6 +14,7 @@
 | `--config <file>` | 設定 file。`[tool.doeff-linter]` を持つ pyproject.toml の形でも、節の中身だけの TOML でもよい |
 | `--root <dir>` | repo の根。層の置き場・登録簿・鍵の path はここからの相対 |
 | `doeff-linter --output-format editor-json --baseline-report <file> [<path>…]` | 基点(main の先端)で走らせた editor-json の出力 `<file>` と比べ、基点に無い critical を `new_critical` に出す(下の「基点との比べ」) |
+| `doeff-linter --commit-hook --report-out <file>` | commit の hook(3 節「commit の hook が当てる範囲」)を走らせ、HEAD の版と stage した path の 2 つの測り(測った path の列・editor-json の違反・判じた規則)を 1 つの JSON で `<file>` に書く(3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は引数の無い時と同じ |
 
 - 設定を探す順: `--config` があればそれ。無ければ今の dir から上へ、`[tool.doeff-linter]` を持つ pyproject.toml を探す。
 - repo の根: `--root` があればそれ。無ければ設定の `root = "<設定 file の dir からの相対の path>"`(agora-redesign #1977 — monorepo の
@@ -260,6 +261,37 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   3. `この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない`
 - 打ち切られなかった時の判じは変わらない。
 - HEAD の版を測る木は cache の根に repo ごとに 1 つ置いて差分で進めるので(#3858)、2 回目からは変わった file だけを書き換える。
+
+### commit の hook の報告(`--report-out`・card ki-b9eeeea338b6)
+
+`--commit-hook --report-out <file>` は、hook の 2 回の測り(HEAD の版・stage した path)を 1 つの JSON で `<file>` に書く(相対の path は
+今の dir から)。会話の commit の hook がこの報告を会話 id つきで記録へ送り、会話が増やした・減らした違反を commit ごとに読む材料にする
+(設計の記録 project-health-ide の指摘 2)。
+
+```jsonc
+{
+  "root": "/abs/repo",            // 先端の根(違反の path の根)
+  "code": 1,                      // hook の終了コード(下の「判じていない時」)
+  "measurements": [
+    { "target": "HEAD",  "paths": ["app/x.hy"], "violations": [ /* editor-json の違反(2 節) */ ], "judged_rules": ["DOEFF016", "NOQA001"] },
+    { "target": "stage", "paths": ["app/x.hy"], "violations": [ /* 同上 */ ], "judged_rules": ["DOEFF016", "NOQA001"] }
+  ]
+}
+```
+
+- **測り**: `target` = 測った対象(`HEAD` = HEAD の版・`stage` = stage した path を作業木で測った版)。`paths` = 子の linter に渡した path
+  (根からの相対 — HEAD の版は、HEAD に在る stage した path と stage で消した file)。`violations` = 子の linter の editor-json の違反の形のまま
+  (2 節の `violations[]` — HEAD の版は HEAD の木の path を先端の根の下へ付け替えた後で、stage の版と同じ path で比べられる)。
+  `judged_rules` = 子の linter の editor-json の `judged_rules`(file 1 つで決まる規則だけ — repo 全体が要る規則は hook が当てないので載らない)。
+- **子を撃たない測り**(stage が空・当てる規則が無い・linter が読む path が無い・最初の commit や新しい file だけの HEAD の版): その測りの
+  `paths`・`violations`・`judged_rules` は空。測りは HEAD・stage の 2 件のまま。
+- **判じていない時**: 上限で打ち切った(終了コード 1)・git や linter が動かなかった(終了コード 2)時は `measurements` が空。
+- **変えない物**: 止める判定・終了コード・stderr の文(引数の無い時と同じ)。editor-json の版(子の出力の欄をそのまま運ぶ)。
+- **書けない時**: stderr に `doeff-linter commit-hook: 報告 <file> を書けない(終了コードは変えない): <理由>` を 1 行足し、終了コードは
+  変えない(診断の記録は commit を止めない)。
+- `--commit-hook` の無い実行と門の口 `--split-rules` に渡すと引数の誤り(終了コード 2)。上限なしでやり直す命令(上の「commit の hook の
+  上限」)には足さない。
+- 戻し方: 引数 `--report-out`・`commit_hook::Measurement`・`report_of` と `commit_hook::run` の書き出しを消す(送る hook が使う前なら影響なし)。
 
 ### 既定の重大さ(agora-redesign #1041)
 

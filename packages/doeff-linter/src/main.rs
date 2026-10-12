@@ -122,6 +122,11 @@ struct Args {
     #[arg(long)]
     commit_hook_timeout_s: Option<u64>,
 
+    /// --commit-hook の報告を書く file — HEAD の版と stage した path の 2 つの測り(測った path の列・editor-json の形の違反・判じた
+    /// 規則)を 1 つの JSON で書く(card ki-b9eeeea338b6・仕様 3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は変えない
+    #[arg(long)]
+    report_out: Option<PathBuf>,
+
     /// 規則の一覧を JSON で出して終わる — 各規則の ID と、当たりを判じるのに repo 全体が要るか(whole_repo)。門と hook は repo 全体の
     /// 比べに当てる規則をこの名乗りで選ぶ(手で保つ一覧を持たない — agora-redesign #2090)
     #[arg(long)]
@@ -655,6 +660,11 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if args.report_out.is_some() && (!args.commit_hook || args.split_rules) {
+        eprintln!("doeff-linter: --report-out は --commit-hook の時だけ使える(--split-rules とは使えない)");
+        return ExitCode::from(2);
+    }
+
     // 重い mode は、仕事の前に機体の検の枠を 1 つ取る(正本の命令の包みへ自分を exec で渡す — 渡せたら戻らない・card ki-ce35bf38508d)。
     check_slot::enter(check_slot::weight(check_slot::Mode {
         list_rules: args.list_rules,
@@ -756,7 +766,7 @@ fn run_commit_hook(args: &Args) -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    ExitCode::from(doeff_linter::commit_hook::run(&options))
+    ExitCode::from(doeff_linter::commit_hook::run(&options, args.report_out.as_deref()))
 }
 
 /// `--affected-tests` — repo の根(`--root` が勝つ・無ければ今の dir の git の作業木の根)の git が知る file から逆依存を辿り、
