@@ -1,0 +1,59 @@
+== variant st-sep-both on e61d80c39c8df267115084a7c1d98032572a5fe5 2026-10-12T05:23:23Z
+applied st-sep-both
+ tests/test_daily_test_population.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+deadline scale x2.4 (load per usable CPU) — per test 143s, watchdog 213s
+
+test-admission: focused — 3 件(変更箇所の検証)
+...                                                                      [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-dc-make-once/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 12 deselected, 1 warning in 3.00s
+== restored

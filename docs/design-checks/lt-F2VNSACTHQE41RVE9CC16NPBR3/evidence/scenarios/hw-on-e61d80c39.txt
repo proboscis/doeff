@@ -1,0 +1,21 @@
+== runner の差(失敗例の変種)
+7c7
+<     if [ -n "$fail" ] && [ -d "$arg" ] && [ "$(cd -- "$arg" && pwd -P)" = "$fail" ]; then rc=1; fi
+---
+>     if [ -n "$fail" ] && [ -d "$arg" ] && [ "$(cd -- "$arg" && pwd)" = "$fail" ]; then rc=1; fi
+== dash: runner(pwd -P)
+packages/a/tests  rc=1 record_cwd=<tmp>/real 
+packages/a/tests/  rc=1 record_cwd=<tmp>/real 
+<tmp>/link/packages/a/tests  rc=1 record_cwd=<tmp>/real 
+packages/b/tests  rc=0 record_cwd=<tmp>/real 
+== dash: 失敗例 runner(pwd — 論理)
+packages/a/tests  rc=0 record_cwd=<tmp>/real 
+packages/b/tests  rc=0 record_cwd=<tmp>/real 
+== bash --posix: runner(pwd -P)
+packages/a/tests  rc=1 record_cwd=<tmp>/real 
+packages/a/tests/  rc=1 record_cwd=<tmp>/real 
+<tmp>/link/packages/a/tests  rc=1 record_cwd=<tmp>/real 
+packages/b/tests  rc=0 record_cwd=<tmp>/real 
+== bash --posix: 失敗例 runner(pwd — 論理)
+packages/a/tests  rc=0 record_cwd=<tmp>/real 
+packages/b/tests  rc=0 record_cwd=<tmp>/real 
