@@ -106,8 +106,17 @@ def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float) -> Sc
     canon = home / CANON_UNDER_HOME
     canon.parent.mkdir(parents=True)
     shutil.copy2(CANON, canon)
+    # 宣言の鍵は正本の policy_of が求める物を全部置く — 正本が processesPerSlot を求めるようになって(dotfiles 142108b9f・
+    # card ki-f8107ed7ccc8)、無い宣言は読めないと断られ枠を取らずに走った(card ki-2320b23ba160)。
     canon.with_name("machine_check_slots.json").write_text(
-        json.dumps({"slots": 1, "dir": str(tmp_path / "slots"), "waitLimitSeconds": wait_s}),
+        json.dumps(
+            {
+                "slots": 1,
+                "processesPerSlot": 1,
+                "dir": str(tmp_path / "slots"),
+                "waitLimitSeconds": wait_s,
+            }
+        ),
         encoding="utf-8",
     )
     root = tmp_path / "repo"

@@ -246,7 +246,9 @@ def test_without_settings_nothing_is_measured(pytester: pytest.Pytester) -> None
 def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) -> None:
     """報告のみの形(既定)は、印の秒の上限を超えた検を警告と一覧に出し、赤にしない。"""
     _project(pytester, REAL_WORLD_SECONDS_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
-    result = pytester.runpytest("-q")
+    # 同じ process で走る内側の pytest は、外側の走りの警告の filter を引き継ぐ — 外側が `-W ignore::pytest.PytestWarning`
+    # で走ると BudgetWarning(PytestWarning の子)が消えて赤になった(card ki-2320b23ba160)。内側の -W で見せる側に固定する。
+    result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest.budget.BudgetWarning")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
         [
