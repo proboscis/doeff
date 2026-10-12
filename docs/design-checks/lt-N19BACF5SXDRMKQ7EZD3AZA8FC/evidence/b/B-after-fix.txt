@@ -1,0 +1,19 @@
+# 版: c02f340388eea6ddcda09b5d7edc86356a2eb3bb(doeff-wt-dc-ln19)・刻 2026-10-12 00:53:33 UTC
+# 直した版の macros.hy の defmcp-tool に盲検 B と同じ違反(表を通らず doeff.do を綴る)を当て、控えから戻す
+-     (_helper-imports)
++     (if (_static-view?) '(do) '(import doeff.do [do :as _doeff_do]))
+## command: uv run pytest packages/doeff-hy/tests/test_helper_imports_table.py -q
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_runtime_expansion_takes_helper_imports_from_the_table[defmcp-tool-module]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_runtime_expansion_takes_helper_imports_from_the_table[defmcp-tool-class]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_runtime_expansion_takes_helper_imports_from_the_table[defmcp-tool-function]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-module]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-class]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-function]
+6 failed, 12 passed in 3.68s
+## command: uv run pytest packages/doeff-hy/tests/test_static_check.py -k mcp -q
+3 passed, 18 deselected in 4.65s
+## command: uv run pytest tests/public_api/test_mcp_tool_macro.py -q
+8 passed in 0.45s
+## command: uv run pytest tests/test_nested_definition_scope.py -q
+32 passed in 2.30s
+# 戻した後の git status: []

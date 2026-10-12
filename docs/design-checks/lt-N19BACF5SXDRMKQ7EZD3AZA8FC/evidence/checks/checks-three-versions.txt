@@ -1,0 +1,20 @@
+# command: uv run pytest packages/doeff-hy/tests/test_static_check.py packages/doeff-hy/tests/test_helper_imports_table.py -k 'mcp or table' -q
+# 版: c02f340388eea6ddcda09b5d7edc86356a2eb3bb(doeff-wt-dc-ln19)・刻 2026-10-12 00:53:48 UTC
+## 直した版
+21 passed, 18 deselected in 7.41s
+## macros.hy・static_view.py だけ d4c8d7ce9 に戻した木
+FAILED packages/doeff-hy/tests/test_static_check.py::test_defmcp_tool_imports_nothing_of_its_own_in_the_static_view
+FAILED packages/doeff-hy/tests/test_static_check.py::test_defk_calls_stay_programs_past_sixty_four_mcp_tools[True]
+2 failed, 19 passed, 18 deselected in 7.64s
+## macros.hy・static_view.py だけ dadb89970 に戻した木
+FAILED packages/doeff-hy/tests/test_static_check.py::test_defmcp_tool_imports_nothing_of_its_own_in_the_static_view
+FAILED packages/doeff-hy/tests/test_static_check.py::test_defk_calls_stay_programs_past_sixty_four_mcp_tools[False]
+FAILED packages/doeff-hy/tests/test_static_check.py::test_defk_calls_stay_programs_past_sixty_four_mcp_tools[True]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_runtime_expansion_takes_helper_imports_from_the_table[defmcp-tool-module]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_runtime_expansion_takes_helper_imports_from_the_table[defmcp-tool-class]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_runtime_expansion_takes_helper_imports_from_the_table[defmcp-tool-function]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-module]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-class]
+FAILED packages/doeff-hy/tests/test_helper_imports_table.py::test_definitions_are_wrapped_by_the_tables_do[defmcp-tool-function]
+9 failed, 12 passed, 18 deselected in 7.22s
+# 戻した後の git status: []

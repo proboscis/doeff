@@ -1,0 +1,68 @@
+#!/bin/bash
+# 設計検証 lt-N19BACF5SXDRMKQ7EZD3AZA8FC の証拠を取り直す。版: 基準 dadb89970(doeff-dc-base-dadb899)・実装 d4c8d7ce9
+# (doeff-blind-d4c8d7ce9)・直した版(doeff-wt-dc-ln19 の HEAD)。作業木の file を差し替えた時は控えから戻す。
+set -u
+FIX=/home/ubuntu/.worktrees/doeff-wt-dc-ln19
+IMPL=/home/ubuntu/.worktrees/doeff-blind-d4c8d7ce9
+BASE=/home/ubuntu/.worktrees/doeff-dc-base-dadb899
+EV=$FIX/docs/design-checks/lt-N19BACF5SXDRMKQ7EZD3AZA8FC/evidence
+S=/tmp/mcp-scripts
+M=packages/doeff-hy/src/doeff_hy/macros.hy
+V=packages/doeff-hy/src/doeff_hy/static_view.py
+mkdir -p $EV/a $EV/b $EV/s1 $EV/s2 $EV/s3 $EV/checks $EV/expansion $EV/scripts
+W=/tmp/ln19-ev; rm -rf $W; mkdir -p $W
+ver() { echo "# 版: $(git -C $1 rev-parse HEAD)($(basename $1))・刻 $(date -u '+%F %T UTC')"; }
+pyt() { uv run pytest "$@" -q -W ignore::pytest.PytestWarning 2>&1 | grep -E "^(FAILED|ERROR)|passed|failed|no tests ran" | sed -E 's/ - .*//'; }
+
+# A: tool N 個の module・class で tool の値の型の誤りが捕まるか
+for d in IMPL FIX; do
+  t=${!d}; out=$EV/a/A-$( [ $d = IMPL ] && echo repro-before || echo after-fix ).txt
+  { ver $t; echo "# command: (cd $t && uv run python -I $S/a_repro.py $W/a-$d 2 64 65 70)"; (cd $t && uv run python -I $S/a_repro.py $W/a-$d 2 64 65 70); echo "# rc=$?"; } > $out 2>&1
+done
+
+# B: 違反(defmcp-tool が表を通らず doeff.do を綴る)の下で、提示した K1〜K4 と表の検
+cp $IMPL/$M $W/macros.impl.bak
+{ ver $IMPL; echo "# 実装の版の写しの木(/tmp/ln19-blind-b/tree と同じ作り)ではなく、読ませた版の macros.hy を盲検 B の violation.diff で替えて走らせ、控えから戻す"; } > $EV/b/B-repro-before.txt
+cp -r $IMPL $W/impl-tree-unused 2>/dev/null; rm -rf $W/impl-tree-unused
+(cd $IMPL && patch -s -p1 --no-backup-if-mismatch < /tmp/ln19-blind-b/violation.diff) >> $EV/b/B-repro-before.txt 2>&1
+{ git -C $IMPL diff -U0 $M | grep -E "^[-+] "; for k in "packages/doeff-hy/tests/test_static_check.py -k test_defmcp_tool_reads_do_from_the_module_head" "packages/doeff-hy/tests/test_static_check.py -k sixty_four_mcp_tools" "tests/public_api/test_mcp_tool_macro.py" "tests/test_nested_definition_scope.py"; do echo "## command: uv run pytest $k -q"; (cd $IMPL && pyt $k); done; echo "## command: uv run python -I /tmp/ln19-blind-b/s3_follow.py"; (cd $IMPL && uv run python -I /tmp/ln19-blind-b/s3_follow.py 2>&1 | grep -v "^macros file"); } >> $EV/b/B-repro-before.txt 2>&1
+cp $W/macros.impl.bak $IMPL/$M; echo "# 戻した後の git status: [$(git -C $IMPL status --short)]" >> $EV/b/B-repro-before.txt
+
+cp $FIX/$M $W/macros.fix.bak
+uv run --no-project python -I - "$FIX/$M" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1]); t = p.read_text(encoding="utf-8")
+old = "     (_helper-imports)\n     mcp-import\n"
+assert t.count(old) == 1
+p.write_text(t.replace(old, "     (if (_static-view?) '(do) '(import doeff.do [do :as _doeff_do]))\n     mcp-import\n"), encoding="utf-8")
+PY
+{ ver $FIX; echo "# 直した版の macros.hy の defmcp-tool に盲検 B と同じ違反(表を通らず doeff.do を綴る)を当て、控えから戻す"; git -C $FIX diff -U0 $M | grep -E "^[-+] "; for k in "packages/doeff-hy/tests/test_helper_imports_table.py" "packages/doeff-hy/tests/test_static_check.py -k mcp" "tests/public_api/test_mcp_tool_macro.py" "tests/test_nested_definition_scope.py"; do echo "## command: uv run pytest $k -q"; (cd $FIX && pyt $k); done; } > $EV/b/B-after-fix.txt 2>&1
+cp $W/macros.fix.bak $FIX/$M; echo "# 戻した後の git status: [$(git -C $FIX status --short -- packages)]" >> $EV/b/B-after-fix.txt
+
+# 検の 3 つの版: 直した版の検を、macros.hy・static_view.py だけ実装の版・基準の版に戻して走らせる
+cp $FIX/$V $W/static_view.fix.bak
+{ T="packages/doeff-hy/tests/test_static_check.py packages/doeff-hy/tests/test_helper_imports_table.py"; echo "# command: uv run pytest $T -k 'mcp or table' -q"; ver $FIX; echo "## 直した版"; (cd $FIX && pyt $T -k "mcp or table"); for r in d4c8d7ce9 dadb89970; do git -C $FIX show $r:$M > $FIX/$M; git -C $FIX show $r:$V > $FIX/$V; echo "## macros.hy・static_view.py だけ $r に戻した木"; (cd $FIX && pyt $T -k "mcp or table"); done; } > $EV/checks/checks-three-versions.txt 2>&1
+cp $W/macros.fix.bak $FIX/$M; cp $W/static_view.fix.bak $FIX/$V; echo "# 戻した後の git status: [$(git -C $FIX status --short -- packages)]" >> $EV/checks/checks-three-versions.txt
+
+# S1: defmcp-tool の本体に文の guard を足す(M3 の本体の組み立てだけ)— 直した版と基準の版
+: > $EV/s1/S1-guard-fix-and-base.txt
+for t in $FIX $BASE; do
+  cp $t/$M $W/macros.s1.bak
+  uv run --no-project python -I $S/apply_s1_fix.py $t/$M
+  { ver $t; echo "## S1 の差分(macros.hy)"; git -C $t diff -U0 $M | grep -E "^[-+] " | grep -E "guard|cut expanded"; echo "## command: uv run python -I /tmp/ln19-blind-b/s1_guard_probe.py(tool だけの module・文の位置に捨てた (Pure 1))"; (cd $t && uv run python -I /tmp/ln19-blind-b/s1_guard_probe.py 2>&1 | tail -1); for k in "tests/public_api/test_mcp_tool_macro.py" "tests/test_nested_definition_scope.py" "packages/doeff-hy/tests/test_static_check.py -k mcp" "packages/doeff-hy/tests/test_helper_imports_table.py"; do echo "## command: uv run pytest $k -q"; (cd $t && [ -e "${k%% *}" ] && pyt $k || echo "(この版に file が無い)"); done; } >> $EV/s1/S1-guard-fix-and-base.txt 2>&1
+  cp $W/macros.s1.bak $t/$M; echo "# 戻した後の git status: [$(git -C $t status --short -- packages)]" >> $EV/s1/S1-guard-fix-and-base.txt
+done
+
+# S2: 型検査の投影の `_doeff_do` の型の出所を M2 だけで替える — 直した版と基準の版
+{ for t in $FIX $BASE; do ver $t; echo "## command: (cd $t && uv run python -I $S/s2_probe.py $W/s2-$(basename $t))"; (cd $t && uv run python -I $S/s2_probe.py $W/s2-$(basename $t)); echo "# rc=$?"; done; } > $EV/s2/S2-typed-do-fix-and-base.txt 2>&1
+
+# S3: 実行時の `do` の出所を M1 の表だけで替える — 基準・実装・直した版
+{ for t in $BASE $IMPL $FIX; do ver $t; echo "## command: (cd $t && uv run python -I /tmp/ln19-blind-b/s3_follow.py)"; (cd $t && uv run python -I /tmp/ln19-blind-b/s3_follow.py 2>&1 | grep -v "^macros file"); echo "# rc=$?"; done; echo "## 直した版の検: uv run pytest packages/doeff-hy/tests/test_helper_imports_table.py -q"; (cd $FIX && pyt packages/doeff-hy/tests/test_helper_imports_table.py); } > $EV/s3/S3-follow-base-impl-fix.txt 2>&1
+
+# 6 つの展開(module・class・関数 × 実行時・型検査)の比較
+for d in BASE IMPL FIX; do t=${!d}; (cd $t && uv run python -I $S/expand_six.py) 2>&1 | sed -E 's/_hy_gensym_([a-z_]+)_[0-9]+/_hy_gensym_\1_N/g' > $W/six-$d.txt; done
+{ ver $FIX; echo "# command: uv run python -I $S/expand_six.py を 3 つの版で走らせ、Hy の gensym の番号(process ごとの数え)を N に揃えて diff"; echo "## 基準 dadb89970 → 実装 d4c8d7ce9"; diff $W/six-BASE.txt $W/six-IMPL.txt; echo "## 実装 d4c8d7ce9 → 直した版"; diff $W/six-IMPL.txt $W/six-FIX.txt; echo "## 直した版の 6 つの展開"; cat $W/six-FIX.txt; } > $EV/expansion/six-expansions.txt 2>&1
+
+for f in a_repro.py s2_probe.py apply_s1_fix.py expand_six.py regen_evidence.sh; do cp $S/$f $EV/scripts/$f.txt; done
+echo done

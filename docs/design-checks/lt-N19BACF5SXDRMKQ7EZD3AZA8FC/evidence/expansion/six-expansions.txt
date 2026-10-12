@@ -1,0 +1,118 @@
+# 版: c02f340388eea6ddcda09b5d7edc86356a2eb3bb(doeff-wt-dc-ln19)・刻 2026-10-12 00:55:23 UTC
+# command: uv run python -I /tmp/mcp-scripts/expand_six.py を 3 つの版で走らせ、Hy の gensym の番号(process ごとの数え)を N に揃えて diff
+## 基準 dadb89970 → 実装 d4c8d7ce9
+4a5,6
+> from doeff import EffectBase as _doeff_effect_base
+> from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+15d16
+< from doeff.do import do as _doeff_do
+28a30,31
+>     from doeff import EffectBase as _doeff_effect_base
+>     from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+41d43
+<     from doeff.do import do as _doeff_do
+56a59,60
+>         from doeff import EffectBase as _doeff_effect_base
+>         from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+72d75
+<     from doeff.do import do as _doeff_do
+## 実装 d4c8d7ce9 → 直した版
+17d16
+< from doeff.mcp import McpToolDef, McpParamSchema
+23c22
+< echo_tool = McpToolDef(name='echo-tool', description='Echo', params=tuple([McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+---
+> echo_tool = _doeff_McpToolDef(name='echo-tool', description='Echo', params=tuple([_doeff_McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+44d42
+<     from doeff.mcp import McpToolDef, McpParamSchema
+50c48
+<     echo_tool = McpToolDef(name='echo-tool', description='Echo', params=tuple([McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+---
+>     echo_tool = _doeff_McpToolDef(name='echo-tool', description='Echo', params=tuple([_doeff_McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+76d73
+<     from doeff.mcp import McpToolDef, McpParamSchema
+82c79
+<     echo_tool = McpToolDef(name='echo-tool', description='Echo', params=tuple([McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+---
+>     echo_tool = _doeff_McpToolDef(name='echo-tool', description='Echo', params=tuple([_doeff_McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+## 直した版の 6 つの展開
+===== module / runtime
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+from doeff.do import do as _doeff_do
+from doeff import EffectBase as _doeff_effect_base
+from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+from doeff.mcp import McpToolDef, McpParamSchema
+
+@_doeff_do
+def _echo_tool_mcp_handler(text):
+    r = _hy_gensym_bound_N.value if (_hy_gensym_bound_N := (_hy_gensym_outcomes_N := __import__('doeff_core_effects.outcomes', fromlist=('open_bind',))).open_bind(Pure(text))).__class__ is _hy_gensym_outcomes_N.Pure else (yield _hy_gensym_bound_N)
+    return r
+echo_tool = McpToolDef(name='echo-tool', description='Echo', params=tuple([McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+===== module / static
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+
+@_doeff_do
+def _echo_tool_mcp_handler(text):
+    r = _doeff_perform(Pure(text))
+    return r
+echo_tool = _doeff_McpToolDef(name='echo-tool', description='Echo', params=tuple([_doeff_McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+===== class / runtime
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+
+class Box:
+    from doeff.do import do as _doeff_do
+    from doeff import EffectBase as _doeff_effect_base
+    from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+    from doeff.mcp import McpToolDef, McpParamSchema
+
+    @_doeff_do
+    def _echo_tool_mcp_handler(text):
+        r = _hy_gensym_bound_N.value if (_hy_gensym_bound_N := (_hy_gensym_outcomes_N := __import__('doeff_core_effects.outcomes', fromlist=('open_bind',))).open_bind(Pure(text))).__class__ is _hy_gensym_outcomes_N.Pure else (yield _hy_gensym_bound_N)
+        return r
+    echo_tool = McpToolDef(name='echo-tool', description='Echo', params=tuple([McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+===== class / static
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+
+class Box:
+
+    @_doeff_do
+    def _echo_tool_mcp_handler(text):
+        r = _doeff_perform(Pure(text))
+        return r
+    echo_tool = _doeff_McpToolDef(name='echo-tool', description='Echo', params=tuple([_doeff_McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+===== function / runtime
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+
+def outer():
+
+    def _hy_anon_1():
+        from doeff.do import do as _doeff_do
+        from doeff import EffectBase as _doeff_effect_base
+        from doeff_hy.macros import _install_guard_globals, _guard_performed, _guard_statement_value, _doeff_check_program_return
+        from doeff.mcp import McpToolDef, McpParamSchema
+
+        @_doeff_do
+        def _echo_tool_mcp_handler(text):
+            r = _hy_gensym_bound_N.value if (_hy_gensym_bound_N := (_hy_gensym_outcomes_N := __import__('doeff_core_effects.outcomes', fromlist=('open_bind',))).open_bind(Pure(text))).__class__ is _hy_gensym_outcomes_N.Pure else (yield _hy_gensym_bound_N)
+            return r
+        echo_tool = McpToolDef(name='echo-tool', description='Echo', params=tuple([McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+        return echo_tool
+    echo_tool = _hy_anon_1()
+    return echo_tool
+===== function / static
+import hy
+hy.macros.require('doeff_hy.macros', None, target_module_name='__main__', assignments=[['defmcp-tool', 'defmcp-tool'], ['<-', '<-']], prefix='')
+
+def outer():
+
+    @_doeff_do
+    def _echo_tool_mcp_handler(text):
+        r = _doeff_perform(Pure(text))
+        return r
+    echo_tool = _doeff_McpToolDef(name='echo-tool', description='Echo', params=tuple([_doeff_McpParamSchema(name='text', type='string', description='text')]), handler=_echo_tool_mcp_handler)
+    return echo_tool
