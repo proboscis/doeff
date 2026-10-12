@@ -6,7 +6,6 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import hashlib)
 (import json)
-(import doeff_traverse.helpers [sequence])
 (import doeff_cluster.shared.core.native_wheel [ENV-KEY-LENGTH])
 (import doeff_cluster.shared.intent.runtime_env_model [RUNTIME-ENV-FORMAT InvalidKind RuntimeEnvInvalid RepoCheckout
                                                        LocalPath RemoteRepo RepoLocation
@@ -104,7 +103,10 @@
    宣言・import の根)。repo の url は綴りでなく正体(url-location)で入れるので、同じ repo を https と git@ で宣言した root が同じ元の鍵になる
    (#3693)。Rust の指紋(自前の native-key)は入れない — wheel は build の口が source の中身で引くようになり、worker は持たない(#3860)。"
   (<- material dict (key-material env platform))
-  (<- repos tuple (sequence (gfor r env.repos (repo-source-material r))))
+  (var repos #())
+  (for [r env.repos]
+    (<- repo dict (repo-source-material r))
+    (:= repos (+ repos #(repo))))
   (| material {"repos" (list repos)}))
 
 
