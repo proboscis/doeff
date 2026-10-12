@@ -145,15 +145,17 @@ def _wait_in_thread(
             if changes is not None:
                 _settle(loop, answer, changes)
                 return
-    except Exception as error:
-        # Handed to the awaiting task and raised there, as a failed wait always was.
+    except BaseException as error:
+        # Handed to the awaiting task and raised there, as a failed wait always was — a BaseException too: the
+        # library's Rust panic comes as pyo3's PanicException (a BaseException), and a thread that died with it
+        # would leave the task waiting for ever.
         _settle(loop, answer, error)
 
 
 def _settle(
     loop: asyncio.AbstractEventLoop,
     answer: "asyncio.Future[FilesChanged]",
-    result: FilesChanged | Exception,
+    result: FilesChanged | BaseException,
 ) -> None:
     """Hand a wait's result to ``answer`` from its own thread (on the loop's thread — a future is not thread-safe);
     nothing when the answer was cancelled meanwhile or the loop is gone."""
@@ -162,7 +164,7 @@ def _settle(
         """Settle the answer once, on the loop's thread."""
         if answer.done():
             return
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             answer.set_exception(result)
         else:
             answer.set_result(result)

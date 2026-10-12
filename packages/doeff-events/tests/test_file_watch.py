@@ -322,29 +322,29 @@ def test_os_watch_waits_leave_the_default_executor_free(
     def program() -> "EffectGenerator[object]":
         yield Await(use_small_executor())
         try:
-            watches = []
+            watches: tuple[FileWatch, ...] = ()
             for index in range(waits):
                 directory = tmp_path / f"stream-{index}"
                 directory.mkdir()
                 watch = yield WatchFiles(str(directory))
                 assert isinstance(watch, FileWatch), watch
-                watches.append(watch)
-            tasks = []
+                watches = (*watches, watch)
+            tasks: tuple[object, ...] = ()
             for watch in watches:
-                tasks.append((yield Spawn(waiter(watch))))
+                tasks = (*tasks, (yield Spawn(waiter(watch))))
             seen = yield Await(look_while_waiting())
             for watch in watches:
                 yield CloseFileWatch(watch)
-            answers = []
+            answers: tuple[object, ...] = ()
             for task in tasks:
-                answers.append((yield Wait(task)))
+                answers = (*answers, (yield Wait(task)))
             return seen, answers
         finally:
             yield Await(restore_default_executor())
 
     seen, answers = run_scheduled(os_file_watch_handler()(program()))
     assert seen == (waits, True), seen
-    assert answers == [FilesChanged(())] * waits, answers
+    assert answers == (FilesChanged(()),) * waits, answers
 
 
 class _QuietNotifier:
@@ -419,6 +419,57 @@ def test_os_watch_cancelled_wait_leaves_no_thread_behind(
 
     # One thread for the whole wait, ended after the cancel.
     assert run_scheduled(os_file_watch_handler()(program())) == (True, 1)
+
+
+class _Panic(BaseException):
+    """Stands for pyo3's ``PanicException`` (a BaseException) — what the library raises when its Rust code panics."""
+
+
+class _PanickingNotifier:
+    """A stand-in for the library's notifier whose wait panics."""
+
+    def __init__(self, *_args: object) -> None:
+        pass
+
+    def watch(
+        self, _debounce_ms: int, _step_ms: int, _timeout_ms: int, _stop_event: "threading.Event"
+    ) -> object:
+        raise _Panic("the notifier panicked")
+
+    def close(self) -> None:
+        pass
+
+
+def test_os_watch_a_panic_in_the_notifier_reaches_the_waiting_program(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    """A wait whose notifier panics raises the panic in the waiting program instead of leaving it waiting for ever
+    (the thread of the wait would otherwise die with the panic and never answer)."""
+    import threading
+    from concurrent.futures import Future
+
+    import watchfiles._rust_notify
+
+    monkeypatch.setattr(watchfiles._rust_notify, "RustNotify", _PanickingNotifier)
+
+    @do
+    def program() -> "EffectGenerator[object]":
+        watch = yield WatchFiles(str(tmp_path))
+        try:
+            yield NextFileChanges(watch)
+        except _Panic as panic:
+            return str(panic)
+        finally:
+            yield CloseFileWatch(watch)
+        return "no panic"
+
+    # Run in a daemon thread so that a wait that never answers fails the test instead of hanging the run.
+    outcome: Future[object] = Future()
+    threading.Thread(
+        target=lambda: outcome.set_result(run_scheduled(os_file_watch_handler()(program()))),
+        daemon=True,
+    ).start()
+    assert outcome.result(timeout=5.0) == "the notifier panicked"
 
 
 def test_os_watch_refuses_a_missing_directory(tmp_path: Path) -> None:
