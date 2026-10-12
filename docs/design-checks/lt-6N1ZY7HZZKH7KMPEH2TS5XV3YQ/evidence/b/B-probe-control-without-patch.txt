@@ -1,0 +1,115 @@
+B の試しの検だけを当てた木(B の差分なし・基 d49f483297ee6ee07fbe4379b29670a33ebf9595)— 対照
+$ uv run pytest packages/doeff-cluster/tests/test_env_host_judgments.hy -q -p no:cacheprovider -k probe_blind_b
+
+deadline scale x2.1 (load per usable CPU) — per test 128s, watchdog 191s
+
+test-admission: focused — 1 件(変更箇所の検証)
+doeff-adr: 記録から収集 1 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000012 秒・依存変更で再作成 0 file
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_probe_blind_b_policy_none_becomes_a_number_beside_a_running_preparation _
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x5108306a8c0>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-3083/test_probe_blind_b_policy_none0')
+
+    (deftest test-probe-blind-b-policy-none-becomes-a-number-beside-a-running-preparation [tmp-path]
+>     (val runs (ToolRuns))
+
+packages/doeff-cluster/tests/test_env_host_judgments.hy:866: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:68: in interpret
+    return run(scheduled(compose(program)))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1932: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val runs (ToolRuns))
+    (<- settings EnvSettings (settings-at tmp-path))
+    (<- env RuntimeEnv (declared 1))
+    (<- other RuntimeEnv (declared 2))
+    (<- key str (env-key-of env))
+    (<- text str (declared-text env))
+    (<- other-key str (env-key-of other))
+    (<- other-text str (declared-text other))
+    (<- (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                   (env-host settings)]
+                     (job-then-warm-with-policy-none key text other-key other-text))))
+    (assert (= (len runs.launches) 2) runs.launches)
+    (val jobs (lfor path runs.launches (get (json.loads (.read-text (Path path))) "compileJobs")))
+>   (assert (= jobs [None 4]) jobs)
+              ^^^^^^^^^^^^^
+E   AssertionError: [None, None]
+
+packages/doeff-cluster/tests/test_env_host_judgments.hy:879: AssertionError
+----------------------------- Captured stderr call -----------------------------
+    INFO worker: 先の組みの memory を測れない key=6bc19ddfd905d06c91c87a34 reason=memory.current が読めない(cgroup v1 か file が無い)
+
+doeff Traceback (most recent call last):
+
+  test_probe_blind_b_policy_none_becomes_a_number_beside_a_running_preparation.<locals>._hy_anon_349()  packages/doeff-cluster/tests/test_env_host_judgments.hy:879
+    (assert (= jobs [None 4]) jobs)
+  _hy_anon_349()  packages/doeff-cluster/tests/test_env_host_judgments.hy:879
+    (assert (= jobs [None 4]) jobs)
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: [None, None]
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
+  /work/toolset/worktrees/doeff-wt-ki-4c2f-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-cluster/tests/test_env_host_judgments.hy::test_probe_blind_b_policy_none_becomes_a_number_beside_a_running_preparation
+1 failed, 15 deselected, 1 warning in 2.31s
+exit=1

@@ -849,3 +849,33 @@
   (assert (= (len runs.launches) 2) runs.launches)
   (val requests (lfor path runs.launches (json.loads (.read-text (Path path)))))
   (assert (= (lfor r requests #((+ "env-" (get r "key")) (get r "compileJobs"))) [#(key 2) #(other-key None)]) requests))
+
+
+(defk prepare-a-job-and-a-warm-root [key text other-key other-text]
+  {:pre [(: key str) (: text str) (: other-key str) (: other-text str)] :post [(: % None)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "plan が 1 拍で返す並び(job の準備と先読みの準備・どちらも並べる数を載せない)を env-host へ頼むため(同時の上限 2 本の内 — 2 本とも起きる)。"
+  (<- (PrepareEnv key text :compile-jobs None))
+  (<- (PrepareEnv other-key other-text :compile-jobs None :warm True))
+  None)
+
+
+(deftest test-the-host-carries-the-compile-jobs-of-a-warm-preparation-unchanged [tmp-path]
+  ;; 失敗ケース(2026-10-12・設計検証 lt-6N1ZY7HZZKH7KMPEH2TS5XV3YQ の盲検 B): 「走っている準備の横で起こす先読みは天井を分けた数で
+  ;; 焼く」を env-host の起こしの所に書くと、方策(policy の replace-step・start-step)が載せなかった並べる数 None を env-host が数に
+  ;; 書き換え、焼きの並列数の既定(bake_plan の cpu-limit-of — pod の上限と天井)を通らない数で焼く(上限 8 の pod で下がり、上限 2 の
+  ;; pod で越える)。検の一式と commit の時の検は、その差分をどれも通した。env-host は頼みの並べる数を、先読みでも、走っている準備の
+  ;; 横でも書き換えずに準備の process へ運ぶ(None = 道具の既定)。
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- env RuntimeEnv (declared 1))
+  (<- other RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- other-key str (env-key-of other))
+  (<- other-text str (declared-text other))
+  (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs) (env-host settings)]
+        (prepare-a-job-and-a-warm-root key text other-key other-text)))
+  (assert (= (len runs.launches) 2) runs.launches)
+  (val requests (lfor path runs.launches (json.loads (.read-text (Path path)))))
+  (assert (= (lfor r requests #((+ "env-" (get r "key")) (get r "compileJobs"))) [#(key None) #(other-key None)]) requests))

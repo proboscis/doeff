@@ -1,0 +1,32 @@
+(import doeff_cluster.worker.core.bake_plan [cpu-limit-of])
+(import doeff_cluster.worker.protocol.env_translation [compile-argv])
+(import doeff_cluster.worker.intent.env_prepare_model [BytecodeTree])
+
+(defk job-then-warm-with-policy-none [key text other-key other-text]
+  {:pre [(: key str) (: text str) (: other-key str) (: other-text str)] :post [(: % None)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "plan が 1 拍で返す並び(job の準備と先読み・どちらも並べる数 None)を env-host へ頼むため。"
+  (<- (PrepareEnv key text None))
+  (<- (PrepareEnv other-key other-text None :warm True))
+  None)
+
+(deftest test-probe-blind-b-policy-none-becomes-a-number-beside-a-running-preparation [tmp-path]
+  (val runs (ToolRuns))
+  (<- settings EnvSettings (settings-at tmp-path))
+  (<- env RuntimeEnv (declared 1))
+  (<- other RuntimeEnv (declared 2))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (<- other-key str (env-key-of other))
+  (<- other-text str (declared-text other))
+  (<- (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs)
+                                 (env-host settings)]
+                   (job-then-warm-with-policy-none key text other-key other-text))))
+  (assert (= (len runs.launches) 2) runs.launches)
+  (val jobs (lfor path runs.launches (get (json.loads (.read-text (Path path))) "compileJobs")))
+  (assert (= jobs [None 4]) jobs)
+  (val trees #((BytecodeTree :tree "/s/roots/k/app" :roots #(".") :declared True)))
+  (<- argv tuple (compile-argv "uv" "/w/code_prepare.hy" "/s/roots/k/app" trees #() (get jobs 1)))
+  (assert (in #("--jobs" "4") (tuple (zip (cut argv 0 -1) (cut argv 1 None)))) argv)
+  (assert (= (! (cpu-limit-of "800000 100000\n" 16)) 8) "atlas: M1 は 8 — 先読みの 4 はこれより低い")
+  (assert (= (! (cpu-limit-of "200000 100000\n" 16)) 2) "上限 2 の pod: M1 は 2 — 先読みの 4 はこれを越える"))

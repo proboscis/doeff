@@ -1,0 +1,11 @@
+$ uv run pre-commit run --files packages/doeff-cluster/src/doeff_cluster/worker/core/env_rules.hy packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy packages/doeff-cluster/tests/test_env_warm.hy
+semgrep architectural rules(Python・基点に無い所見だけ止める)..............................(no files to check)Skipped
+- hook id: semgrep
+semgrep Hy architectural rules.................................................................................Passed
+semgrep reading plane rules................................................................(no files to check)Skipped
+semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ)...(no files to check)Skipped
+doeff-linter(Python・基点に無い error だけ止める)..........................................(no files to check)Skipped
+- hook id: doeff-linter
+doeff-linter (packages/doeff-cluster の設定と宣言で)...........................................................Passed
+enforcement ledger consistency (ADR-DOE-ENFORCE-001 R5/R7).................................(no files to check)Skipped
+exit=0

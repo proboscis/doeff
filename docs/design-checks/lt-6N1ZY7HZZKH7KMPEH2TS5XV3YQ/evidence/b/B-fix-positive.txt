@@ -1,0 +1,6 @@
+直し(契約の検 test-the-host-carries-the-compile-jobs-of-a-warm-preparation-unchanged)を足した木・B の差分なし(基 d49f483297ee6ee07fbe4379b29670a33ebf9595)— 正常例
+$ uv run pytest packages/doeff-cluster/tests/test_env_host_judgments.hy -q -p no:cacheprovider
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+16 passed, 1 warning in 35.49s
+exit=0

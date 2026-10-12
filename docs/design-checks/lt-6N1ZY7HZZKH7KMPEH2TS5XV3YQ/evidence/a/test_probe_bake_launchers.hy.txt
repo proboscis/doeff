@@ -1,0 +1,62 @@
+;; 試し(盲検 A): code-host は版ごとの木の準備を数の上限なく同時に起こし、焼く道具に nice を足さない。
+(require doeff-hy.macros [defk deftest <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import os)
+(import subprocess)
+(import time)
+(import doeff [Program with-handlers])
+(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_time [sync-time-handler])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout PrepareCode])
+(import doeff_cluster.worker.protocol.observations [ObserveCode])
+(import doeff_cluster.worker.protocol.code_store [CodeSettings PREPARE-TOOL code-host])
+
+
+(defk commit-all [repo message]
+  {:pre [(: message str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "検の repo の変更を全部 commit し、その sha を返すため。"
+  (subprocess.run ["git" "-C" (str repo) "add" "."] :check True)
+  (subprocess.run ["git" "-C" (str repo) "-c" "user.name=t" "-c" "user.email=t@t" "commit" "-q" "-m" message] :check True)
+  (.strip (. (subprocess.run ["git" "-C" (str repo) "rev-parse" "HEAD"] :check True :capture-output True :text True) stdout)))
+
+
+(defk start-both [rev-a rev-b]
+  {:pre [(: rev-a str) (: rev-b str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "2 つの版の準備を同じ拍に求め、1 秒後の観測を返すため。"
+  (<- (PrepareCode rev-a None))
+  (<- (PrepareCode rev-b None))
+  (time.sleep 1.0)
+  (<- views tuple (ObserveCode))
+  views)
+
+
+(defk run-codes [settings program]
+  {:pre [(: settings CodeSettings) (: program Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "筋書きを code-host と本物の答え手の下で回すため(test_code_store の run-codes と同じ並び)。"
+  (<- answer (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (code-host settings)] program))
+  answer)
+
+
+(deftest test-probe-code-host-launches-every-revision-without-a-cap-or-nice [tmp-path]
+  (setv repo (/ tmp-path "repo"))
+  (.mkdir (/ repo "pkg") :parents True)
+  (.write-text (/ repo "pkg" "__init__.py") "")
+  (subprocess.run ["git" "init" "-q" (str repo)] :check True)
+  (setv rev1 (! (commit-all repo "c1")))
+  (.write-text (/ repo "pkg" "m.py") "X = 1\n")
+  (setv rev2 (! (commit-all repo "c2")))
+  ;; 焼く道具を起こす hy の代わり: 起きた刻と nice の値を 1 行書き、2 秒眠って断る(数えたいのは同時に起きた数)。
+  (setv log (/ tmp-path "starts.log"))
+  (setv fake (/ tmp-path "fake-hy.sh"))
+  (.write-text fake (+ "#!/bin/sh\n" f"echo \"$(date +%s.%N) nice=$(nice)\" >> '{log}'\n" "sleep 2\nexit 3\n"))
+  (os.chmod fake 0o755)
+  (setv settings (CodeSettings :repo (str repo) :cache (str (/ tmp-path "cache")) :hy-command (str fake) :tool PREPARE-TOOL
+                               :layout (CodeLayout)))
+  (setv views (! (run-codes settings (start-both rev1 rev2))))
+  (setv lines (.splitlines (.read-text log)))
+  (print "\n" (.join "\n" lines) "\n" views)
+  (assert (= (len lines) 2) #("2 本が同じ拍に起きていない" lines))
+  (setv own (os.nice 0))
+  (assert (all (gfor l lines (.endswith l f"nice={own}"))) #("焼く道具に nice が足されている" own lines)))
