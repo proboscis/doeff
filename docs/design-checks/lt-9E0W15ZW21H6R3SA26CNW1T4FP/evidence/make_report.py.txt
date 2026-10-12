@@ -81,7 +81,7 @@ report = {
    "actual_scope": "直した後は持ち主の系の literal 1 つ。直す前は写しの数だけ literal があり、片方を変えると値が宣言の順で往復した(盲検 A)",
    "changed_modules": ["group-declaration"], "unchanged_modules": rest("group-declaration"),
    "reason": "直す前の往復は共同の不変条件(組を宣言する系は 1 つ)の欠け。資源 GroupLimit に持ち主の欄を足したのは意図した公開契約の拡張",
-   "revision": "A1・A1b を入れ、別の系の書き直しが 409 になる事(純粋な資源の口・sim)と、持ち主を比べない変異・形の読みの写しの変異が検で赤になる事を確かめた"},
+   "revision": "A1・A1b を入れ、別の系の書き直しが 409 になる事(純粋な資源の口・sim)と、持ち主を比べない変異・形の読みの写しの変異が検で赤になる事を確かめた。着地の後、上に載る系の宣言の道具が系を繋ぐ時に system-of が断る事を見つけ、付いた名を保つ形に直した(§10)"},
   {"id": "S3", "axis": "storage", "applicability": "applicable",
    "change": "coordinator の保存先で組の宣言を保存・読み直す(state file と耐久の鍵。保存先を足す時も同じ)",
    "claim": "保存の綴りと読みの検めは limit-rules の group-limit-spec と group-limit-refusal 1 つを通る。保存先を足す時に足すのはその保存先の鍵の組だけで、規則は写さない",
@@ -152,6 +152,10 @@ check("c-s5-neg-base", ["S5", "S1", "S2"], "negative", "直しの検を基準の
       "6 failed(GroupLimit に system が無い・別の系の書き直しを断らない・sim の refused が None・IndexError・hold-limits が task を受ける・欄の集合の食い違い)", "evidence/fix-red-on-base.log")
 check("c-s5-neg-review", ["S5"], "negative", "本番の宣言の書きが組の 409 の後も残りの組を書く(sim と分かれる)事を、検が直す前の版 46fc8f756 で捉える",
       "test_the_production_declare_stops_at_the_first_refused_group_like_the_sim が FAILED(2 つ目の組 own も POST した)", "evidence/review-red-before-fix.log")
+check("c-s2-pos-joined", ["S2"], "positive", "宣言の道具が系を繋ぐ(名「alpha+gamma」)時、system-of は作った系の名の付いた組を作った系の名のまま保ち、名の無い組にだけ繋いだ名を付ける(持ち主が繋ぎ方で揺れない)",
+      "test_system_of_names_the_declaring_system_on_its_limits が PASSED(§10 の直しの後・関係の検 56 passed)", "evidence/fix-green.log")
+check("c-s2-neg-joined", ["S2"], "negative", "L2184 の system-of は繋いだ系の宣言を『別の系の名』で断る — 書き換えた検がそれを捉える",
+      "直す前の版(main bb5cd42c7)で test_system_of_names_the_declaring_system_on_its_limits が『系 alpha+gamma の :task-limits の組 llm に別の系 alpha の名が付いている』で FAILED", "evidence/keep-owner-red-before-fix.log")
 out = here / "design-check.json"
 out.write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 # 自分の検め: 6 軸・適用シナリオごとに正常例と失敗例・全件 passed・参照の在りか

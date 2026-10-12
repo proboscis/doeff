@@ -24,7 +24,7 @@
   送り手(submit-detached-task :limits #((TaskLimit :group "llm")))
 
 直した後(e3a048ed6〜38739915f)
-  系 alpha の defsystem ──system-of(組に系の名を付ける)──▶ GroupLimit(… system "alpha")
+  系 alpha の defsystem ──system-of(名の無い組に系の名を付ける・付いた名は保つ)──▶ GroupLimit(… system "alpha")
   系 beta  の defsystem(組を写すと)──▶ GroupLimit(… system "beta")
         │ 同じ道(spec に system が載る)。本番の宣言の書きも sim も、組の書きが 1 つ断られたらそこで止まる
         ▼ PUT /resources/GroupLimit/llm
@@ -51,7 +51,8 @@
 | 保存の往復と送る順の検・再検証の記録 | f72737d13fa0cf552d2c45df7c5154808045bf89 | 同上 |
 | 型の宣言(.pyi)の作り直し・変異と回帰の記録 | 46fc8f756b8620370a6e9fb084a46efc722d292c | 同上 |
 | レビューを受けた直し(判断の関数が task の行を受けない・本番の宣言の書きの止め — §8b) | bd984a3257575f4ea02b2e654ffee8afae55f2fb | 同上 |
-| 本番に在る system の無い組を持ち主の無い組として受ける(§7 A1b) | 38739915fb13cb990cc8cf3a2587bfaebfa65d81 | 同上 |
+| 本番に在る system の無い組を持ち主の無い組として受ける(§7 A1b) | 38739915fb13cb990cc8cf3a2587bfaebfa65d81 | 同上(L2184 — main の ee72434e) |
+| 系を繋ぐ時に system-of が作った系の名を保つ(§10 — 着地の後に見つけた) | branch wt/ki-b0e8-keep-owner | この branch の着地で入る |
 
 ## §1 固定した要件
 
@@ -71,7 +72,7 @@ R1 の「系の宣言 1 つ」は、盲検 A の後に「1 つの組の値を持
 
 | id | 責務 | 持つ知識 | 隠す物 | 公開の口 |
 |---|---|---|---|---|
-| group-declaration | 系が組の上限を宣言する(System の task-limits・defsystem の頭の `:task-limits`・構成子 system-of)。system-of が組に宣言する系の名を付ける | 組の名 → 範囲・上限の値・区分ごとか(perPart)・宣言した系(system) | 宣言の行の形(資源への書きは declare-writer) | `GroupLimit`(group・scope・limit・per-part・system)・`System.task-limits`・`system-of :task-limits`・defsystem の `:task-limits {"<組>" {"scope" … "limit" … "perPart" …}}`(書き手は system を書かない) |
+| group-declaration | 系が組の上限を宣言する(System の task-limits・defsystem の頭の `:task-limits`・構成子 system-of)。system-of が名の無い組に宣言する系の名を付け、系を繋ぐ時は作った系の名を保つ | 組の名 → 範囲・上限の値・区分ごとか(perPart)・宣言した系(system) | 宣言の行の形(資源への書きは declare-writer) | `GroupLimit`(group・scope・limit・per-part・system)・`System.task-limits`・`system-of :task-limits`・defsystem の `:task-limits {"<組>" {"scope" … "limit" … "perPart" …}}`(書き手は system を書かない) |
 | limit-rules | 組の宣言の形と task の名乗りの形の規則と JSON の綴り(純粋)。系の構成子・coordinator の受け口・保存の読み直しが同じ規則を読む | 範囲の名(TASK-LIMIT-SCOPES)・1 以上・宣言の欄の閉じた集合(GROUP-LIMIT-KEYS = scope・limit・perPart・system — system は任意で、在れば空でない文字列)・名乗りの欄の閉じた集合(group・part) | JSON の欄の綴り | `group-limit-refusal`・`group-limit-of`・`group-limit-spec`・`task-limit-refusal`・`task-limits-refusal`・`task-limits-of`・`task-limits-json` |
 | declare-writer | 宣言を coordinator の資源の口へ差分だけ書く(本番の declare と sim-cluster)。job の無い宣言(組だけ)も書ける。組の書きが 1 つ断られたらそこで止まる | 資源 GroupLimit の作り・版つきの書き直しの本文 | HTTP の要求 | `apply-declaration`・`group-limit-write` |
 | coordinator-resource | coordinator が宣言の値を資源 GroupLimit として持つ(作る・版つきの書き直し・消す・一覧・保存と読み直し)。持ち主の在る組への別の系の書き直しを断る | 組の名で引く宣言の表(ClusterState.group-limits — 書き換えない表 Table)と各組の持ち主の系(空 = 持ち主の無い組) | 保存の鍵(grouplimit/<組>)・state file の欄 groupLimits | `/resources/GroupLimit`(spec = {scope limit perPart? system?})・`ClusterState.group-limits` |
@@ -84,7 +85,7 @@ effect と寿命(報告 JSON の modules に同じ事を書く): group-declarati
 ## §3 公開契約と所有
 
 - 値と範囲の持ち主は group-declaration だけ。`TaskLimit` の欄は `group` と `part` だけで、送り手は値を持てない(型に欄が無い・本文の欄の集合は閉じている)。
-- **1 つの組を宣言する系は 1 つ**(直し A1)。system-of が組に系の名を付け(別の系の名が付いた GroupLimit は断る)、資源 GroupLimit の spec の `system` に載る。coordinator の資源の口は、持ち主の在る組を、今の持ち主と違う系(と system の無い本文)が書き直す PUT を 409 で断る。
+- **1 つの組を宣言する系は 1 つ**(直し A1)。system-of が名の無い組に系の名を付け(既に名の付いた組 — 宣言の道具が系を繋ぐ時 — は作った系の名を保つ — §10)、資源 GroupLimit の spec の `system` に載る。coordinator の資源の口は、持ち主の在る組を、今の持ち主と違う系(と system の無い本文)が書き直す PUT を 409 で断る。
 - 持ち主は先着: 資源の口の作り(POST)は無い組なら誰の宣言でも作るので、先に宣言した系が持つ。別の系が組を写して先に配備すれば、組を持つべき系の宣言の方が 409 で止まる(どちらにせよ見える失敗 — §9)。
 - **持ち主の無い組**(直し A1b): spec に system の無い組(74ebb50b6 の宣言の道具が書いた組・運用者が資源の口に直に作った組)は受け、保存から読み直せる。最初に書き直した系(system を載せた PUT)がその組を持つ。
 - `system` は X-Actor と同じ信頼の水準の名乗りで、照らす系の名簿は無い。別の名の系が組を写した時(盲検 A)を止める物で、同じ名を名乗る 2 つの宣言(同名の系の写し)は区別しない。
@@ -123,7 +124,7 @@ effect と寿命(報告 JSON の modules に同じ事を書く): group-declarati
 |---|---|---|---|---|
 | 値と範囲の持ち主は宣言だけ(R1・R2) | 型: `TaskLimit` の欄は group と part だけ。受け口の規則: `task-limit-refusal` の欄の閉じた集合 TASK-LIMIT-KEYS(他の欄を 400) | `shared/intent/detached_model.hy` の TaskLimit・`.pyi`・`shared/core/detached_rules.hy` | pytest `tests/test_group_limits_declared.hy::test_a_task_naming_an_undeclared_group_or_sending_a_value_is_refused` | 型の欄の無さは、兄弟の欄を足す変更を止めない(盲検 B)— 下の 2 行で補う |
 | 送り手の値を数えに入れない(R2・R3 — 盲検 B・レビュー 2-a) | 型の上の狭め: 判断の関数(limit-holdings・hold-limits・limits-misfit・task-misfit)は TaskRecord を受けず、組の名乗り・優先・worker・置いている数・宣言の表だけを受ける。task の行からの射影は placed-claims 1 つ。契約の検: 送り手の欄の集合(SubmitDetached・TaskBody・TaskLimit)と 5 つの関数の引数の並びを固定。振る舞いの検: placed-claims は environ・名・key・優先を変えても答えが同じ | `coordinator/core/cluster_policy.hy`・`.pyi`・`tests/test_group_limits_owner.hy` の `test_the_sender_facing_fields_and_the_counting_inputs_are_pinned`・`test_the_placed_claims_are_one_per_placed_task_whatever_else_the_sender_sent` | pytest(変えた所の検・4 時間ごとの全体の回) | 検の表を直せば通る(静的な禁止ではない)。placed-claims と place-tasks の呼びの 2 か所は task の行を読むので、そこで既に在る欄(environ など)を読む変更は、振る舞いの検が置いた欄の値を読む時だけ捉える |
-| 組を宣言する系は 1 つ(R1 — 盲検 A) | 資源の口の照合: 持ち主の在る組の spec の system が今の持ち主と違う PUT を 409。system-of が系の名を付け、別の名を断る。規則が system を空でない文字列に限る | `coordinator/core/resource_policy.hy` の update-resource・`shared/entry/service_build.hy` の system-of・`shared/core/detached_rules.hy` の group-limit-refusal | `tests/test_group_limits_owner.hy` の 4 本(純粋な資源の口・持ち主の無い組・sim の Redeclare・system-of) | system は名乗り(同名の 2 つの宣言を区別しない)。持ち主は先着。DELETE は照らさない。組の名の空間は coordinator 全体で 1 つ |
+| 組を宣言する系は 1 つ(R1 — 盲検 A) | 資源の口の照合: 持ち主の在る組の spec の system が今の持ち主と違う PUT を 409。system-of が名の無い組に系の名を付け、付いた名は保つ。規則が system を空でない文字列に限る | `coordinator/core/resource_policy.hy` の update-resource・`shared/entry/service_build.hy` の system-of・`shared/core/detached_rules.hy` の group-limit-refusal | `tests/test_group_limits_owner.hy` の 4 本(純粋な資源の口・持ち主の無い組・sim の Redeclare・system-of) | system は名乗り(同名の 2 つの宣言を区別しない)。持ち主は先着。DELETE は照らさない。組の名の空間は coordinator 全体で 1 つ |
 | 組の宣言の規則は 1 つ(R1) | 規則の関数 1 つ(group-limit-refusal)を 3 か所が呼ぶ。defsystem の形の読みの写し(範囲の名・欄の集合)は検で規則と比べる | `detached_rules.hy`・`service_build.hy` の system-of・`resource_policy.hy` の checked-group-limit・`state_json.hy` の group-limit-from-json・`doeff-hy/src/doeff_hy/system_form.hy` | `test_a_malformed_group_declaration_is_refused_by_the_resource_intake`・`test_defsystem_form.hy`・`test_the_defsystem_form_reads_the_same_scopes_and_keys_as_the_rule` | 1 以上・「/」の禁止の写しは比べていない(定数でなく式なので) |
 | 宣言に無い組を断る(R3) | 受け口の 2 か所で `limits-undeclared-refusal` | `cluster_policy.hy` の submit-task・`detached_policy.hy` の submit-detached | 同上の検 | 3 つ目の受け口を足す時に呼び忘れを止める規則は無い |
 | 宣言の値で数える(R3)・同じ拍で越えない(S4) | 升の鍵と比べる値を宣言から引く(`limit-slot`・`limits-misfit` が GroupLimit を受ける)。同じ拍で置いた分を足す | `cluster_policy.hy` の place-tasks | `test_two_senders_naming_one_group_are_counted_by_the_one_declared_value`・`test_the_same_tasks_sent_in_either_order_place_the_declared_number_in_one_tick`・`test_the_per_part_group_counts_each_caller_by_the_declared_value`・`tests/test_task_priority_limits.hy` | — |
@@ -171,7 +172,7 @@ effect と寿命(報告 JSON の modules に同じ事を書く): group-declarati
 
 | # | 直し | 実装箇所 |
 |---|---|---|
-| A1 | GroupLimit に `system`(宣言した系の名・既定 "")を足し、system-of が付ける(別の名が付いていれば断る)。資源 GroupLimit の spec に `system` を載せ(GROUP-LIMIT-KEYS・group-limit-refusal・group-limit-of・group-limit-spec)、update-resource が持ち主の在る組への別の系の PUT を 409 で断る | `shared/intent/detached_model.hy`・`shared/core/detached_rules.hy`・`shared/entry/service_build.hy`・`coordinator/core/resource_policy.hy`・`.pyi` |
+| A1 | GroupLimit に `system`(宣言した系の名・既定 "")を足し、system-of が付ける(e3a048ed6〜L2184 は別の名が付いていれば断ったが、§10 で付いた名を保つ形にした)。資源 GroupLimit の spec に `system` を載せ(GROUP-LIMIT-KEYS・group-limit-refusal・group-limit-of・group-limit-spec)、update-resource が持ち主の在る組への別の系の PUT を 409 で断る | `shared/intent/detached_model.hy`・`shared/core/detached_rules.hy`・`shared/entry/service_build.hy`・`coordinator/core/resource_policy.hy`・`.pyi` |
 | A1b | system の無い spec を持ち主の無い組として受ける(e3a048ed6〜bd984a325 は system を必須にしていたが、本番の coordinator に system の無い組が 3 つ在ると分かった — §9)。group-limit-spec は持ち主の無い組で欄を置かず、持ち主の無い組は最初に書き直した系が持つ | `shared/core/detached_rules.hy`・`coordinator/core/resource_policy.hy`(38739915f) |
 | A2 | 本番の apply-declaration は、job の行が在る時だけ版の識別を読む(組だけの宣言で IndexError にしない) | `shared/entry/declare.hy` |
 | A3 | defsystem の形の読み(doeff-hy)の範囲の名と欄の集合が規則と揃う事を検で比べる(書き手の欄 = 規則の欄 − system) | `tests/test_group_limits_owner.hy` |
@@ -248,3 +249,18 @@ storage(state_json・durable_kv)と state-view(replies)は変えていない。s
 - **組だけの系**: defsystem は job の無い系を展開で断る(盲検 A の観測 5 の後半)。組を持つ系は job を持つ系のどれかにする。組だけの系が要る時は defsystem の形の拡張になる。
 - **未検証**: 型の検査(pyright・Hy の型の検査)は回していない。全体の検は 4 時間ごとの全体の回に任せた(この検証で回したのは関係の検 56 本と、46fc8f756 での置き方・資源の口・保存の検 161 本)。本物の cluster(実際の HTTP・永続化・再起動)では確かめていない(sim と純粋な判断と代役の HTTP で確かめた。本番の保存の形は資源の口の読みで確かめた)。
 - **公開契約の変更の知らせ**: 資源 GroupLimit の spec に system(任意)が載る。上に載る系(子 B ki-ab95a4b49e16)は defsystem の `:task-limits` で書けば system-of が付けるので書き方は変わらない。資源 GroupLimit を直に書く道具が在れば、system を書かなければ持ち主の無い組になる。子 B の card・依頼元・配備の頼みに、上の配備の順と合わせて知らせる。
+
+## §10 着地の後に見つけた事と直し(系を繋ぐ時の持ち主)
+
+L2184(ee72434e)の着地の後、上に載る系の宣言の道具(agora-controllers main の `scripts/declare_system.hy` の joined-system)を読んで、次を見つけた(子 B の設計検証 lt-QHWDQSXXFW19BTF02AGTVD3A3R の記録が「joined-system は system-of と replace で系を繋ぐ」と書いていた事から辿った)。
+
+- 宣言の道具は、1 度に宣言する系の列を、名「a+b」の 1 つの系に `system-of` で繋ぐ。その時、作った系の task-limits(どれも system-of が名を付けた後の値)を渡し直す。
+- L2184 の system-of は、別の系の名が付いた上限を ValueError で断った。上に載る系が doeff の版を L2184 以降に上げると、2 つ以上の系を繋ぐ宣言(declare_round など)が止まる。agora-controllers の doeff-min-commit は b85e20d81 で、まだ上げていない。
+- 断らずに繋いだ名で付け直す形も誤り。同じ系を別の組み合わせで宣言するたびに持ち主が「a+b」と「a」の間で揺れ、資源の口が 409 で断る。
+
+直し: system-of は名の無い上限にだけ宣言する系の名を付け、既に名の付いた上限は作った系の名を保つ(`shared/entry/service_build.hy`)。組の持ち主は、組の literal を書いた系(defsystem)の名になり、繋ぎ方に依らない。
+
+- 検: `test_system_of_names_the_declaring_system_on_its_limits` を書き換えた(繋いだ系「alpha+gamma」で、alpha の組は alpha・名の無い組は alpha+gamma)。直す前の版で狙いの理由(`系 alpha+gamma の :task-limits の組 llm に別の系 alpha の名が付いている`)で赤([evidence/keep-owner-red-before-fix.log](evidence/keep-owner-red-before-fix.log))、直した版で関係の検 56 passed([evidence/fix-green.log](evidence/fix-green.log))。
+- 限界(§9 の「system は名乗り」に足す): 名を保つので、ある系の値(名の付いた GroupLimit)を別の系の `:task-limits` へそのまま運べば、運んだ先の宣言も元の系の名で書く(資源の口は同じ持ち主と見る)。literal を写した時(盲検 A)は名が無いので、写した系の名が付き 409 で止まる。
+- 上に載る系への知らせ: doeff の版を上げると、GroupLimit の値に `system` が載る。`(= system.task-limits #((GroupLimit :group … :scope … :limit …)))` の形で比べる検(agora-controllers の `controllers/agora_sim/tests/test_emulated_daily_verify.hy` など)は、system を足すか、比べる欄を絞る必要がある。配備の順(§9)も同じ。
+

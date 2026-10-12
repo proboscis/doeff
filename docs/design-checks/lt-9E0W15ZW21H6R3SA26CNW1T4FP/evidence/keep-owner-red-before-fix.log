@@ -1,0 +1,7 @@
+# 着地の後の直し: 系を繋ぐ時に system-of が作った系の名を保つ — 直す前の版(main bb5cd42c7・L2184 の ee72434e を含む)での赤
+# 上に載る系の宣言の道具(agora-controllers main の scripts/declare_system.hy の joined-system)は、作った系の task-limits を名「a+b」の system-of に渡し直す。直す前の system-of はこれを「別の系の名」で断った(doeff の版を上げると宣言が止まる)
+# 命令: uv run --no-sync pytest packages/doeff-cluster/tests/test_group_limits_owner.hy -k system_of_names -v --tb=line(書き換えた検を置き、system-of を直す前に)
+packages/doeff-cluster/tests/test_group_limits_owner.hy::test_system_of_names_the_declaring_system_on_its_limits FAILED [100%]
+E   ValueError: 系 alpha+gamma の :task-limits の組 llm に別の系 alpha の名が付いている(組を宣言する系は 1 つ)
+FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_system_of_names_the_declaring_system_on_its_limits
+================= 1 failed, 9 deselected, 1 warning in 29.00s ==================

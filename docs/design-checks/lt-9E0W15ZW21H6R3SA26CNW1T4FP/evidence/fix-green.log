@@ -1,7 +1,7 @@
 # 直した版で関係の検を回した結果(緑)— 組の上限の検 4 file・宣言の書き・system-of を使う検 3 file
 # 命令: uv run --no-sync pytest packages/doeff-cluster/tests/test_group_limits_owner.hy packages/doeff-cluster/tests/test_group_limits_declared.hy packages/doeff-cluster/tests/test_task_priority_limits.hy packages/doeff-cluster/tests/test_defsystem_form.hy packages/doeff-cluster/tests/test_declare_apply.hy packages/doeff-cluster/tests/test_service_env.hy packages/doeff-cluster/tests/test_upgrade_swaps.hy packages/doeff-cluster/tests/test_environ_reader.hy -v --timeout=1200
-# 版: bd984a325 + 持ち主の無い組を受ける直し(同じ commit で入れる)
-# 刻: 2026-10-12T05:00:20Z
+# 版: main bb5cd42c7(L2184 の ee72434e を含む)+ 系を繋ぐ時に作った系の名を保つ直し(branch wt/ki-b0e8-keep-owner — 同じ commit で入れる)
+# 刻: 2026-10-12T05:22:42Z
 packages/doeff-cluster/tests/test_group_limits_owner.hy::test_system_of_names_the_declaring_system_on_its_limits PASSED
 packages/doeff-cluster/tests/test_group_limits_owner.hy::test_a_group_declared_by_one_system_is_not_rewritten_by_another_system PASSED
 packages/doeff-cluster/tests/test_group_limits_owner.hy::test_a_declared_group_and_its_system_survive_the_state_file_and_the_durable_keys PASSED
@@ -58,5 +58,5 @@ packages/doeff-cluster/tests/test_environ_reader.hy::test_the_os_environ_reader_
 packages/doeff-cluster/tests/test_environ_reader.hy::test_a_production_child_reads_a_json_object_environ_literally_and_env_var_ask_fails_there PASSED
 packages/doeff-cluster/tests/test_environ_reader.hy::test_a_sim_child_reads_the_same_json_object_literally_through_the_same_reader PASSED
 packages/doeff-cluster/tests/test_environ_reader.hy::test_the_host_contract_keys_are_not_environ_names PASSED
-======================== 56 passed, 1 warning in 39.82s ========================
+=================== 56 passed, 1 warning in 85.22s (0:01:25) ===================
 rc=0
