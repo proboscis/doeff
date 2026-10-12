@@ -1,6 +1,8 @@
 //! Lint rules for doeff-linter
 
 pub mod base;
+// DOEFF002 が class の継承元を読む部品(規則ではない)
+pub mod class_inheritance;
 
 // Rule implementations
 pub mod doeff001_builtin_shadowing;

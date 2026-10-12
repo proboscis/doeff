@@ -75,6 +75,7 @@
     "packages/doeff-linter/src/report.rs",
     "packages/doeff-linter/src/rule_info.rs",
     "packages/doeff-linter/src/rules/base.rs",
+    "packages/doeff-linter/src/rules/class_inheritance.rs",
     "packages/doeff-linter/src/rules/doeff001_builtin_shadowing.rs",
     "packages/doeff-linter/src/rules/doeff002_mutable_attribute_naming.rs",
     "packages/doeff-linter/src/rules/doeff003_max_mutable_attributes.rs",
@@ -324,6 +325,7 @@
       "name": "doeff-linter-rules",
       "paths": [
         "packages/doeff-linter/src/rules/base.rs",
+        "packages/doeff-linter/src/rules/class_inheritance.rs",
         "packages/doeff-linter/src/rules/doeff001_builtin_shadowing.rs",
         "packages/doeff-linter/src/rules/doeff002_mutable_attribute_naming.rs",
         "packages/doeff-linter/src/rules/doeff003_max_mutable_attributes.rs",
@@ -355,6 +357,7 @@
       ],
       "public": [
         "packages/doeff-linter/src/rules/base.rs",
+        "packages/doeff-linter/src/rules/class_inheritance.rs",
         "packages/doeff-linter/src/rules/doeff001_builtin_shadowing.rs",
         "packages/doeff-linter/src/rules/doeff002_mutable_attribute_naming.rs",
         "packages/doeff-linter/src/rules/doeff003_max_mutable_attributes.rs",
@@ -384,7 +387,7 @@
         "packages/doeff-linter/src/rules/doeff032_rule_population_declaration.rs",
         "packages/doeff-linter/src/rules/mod.rs"
       ],
-      "responsibility": "1 file の中で判じる規則(DOEFF0xx〜1xx)の判定。(agora-redesign #1828)",
+      "responsibility": "1 file の中で判じる規則(DOEFF0xx〜1xx)の判定。DOEFF002 が読む class の継承元の見分け(class_inheritance — agora-redesign #2951)を含む。(agora-redesign #1828)",
       "typed": false
     },
     {

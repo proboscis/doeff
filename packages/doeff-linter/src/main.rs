@@ -478,6 +478,8 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     if silenced {
         notices.clear();
     }
+    // class の継承元を同じ repo の file から探す規則(DOEFF002)が、根の上の dir を探さないための上限。
+    doeff_linter::rules::class_inheritance::set_repo_root(&root);
     Ok(Setup { config, root, enabled_rules, exclude_patterns, settings, notices, declaration })
 }
 
