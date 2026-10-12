@@ -1,0 +1,20 @@
+#!/bin/bash
+# 設計検証 lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD の再現: 名の付いた記録へ、命令・版・出力・終了状態を書く。
+# 使い方: run.sh <記録の名> <pytest の -k(空なら file 全部)> [環境の割り当て…]
+set -u -o pipefail
+WT=/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc
+OUT=$WT/docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/$1.txt
+K=$2; shift 2
+cd $WT
+{
+  echo "# 記録: $(basename $OUT)"
+  echo "# 版: $(git -C $WT rev-parse HEAD)(作業木の差分は下の git status)"
+  echo "# 刻: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+  echo "# 環境: ${*:-(親のまま)}"
+  echo "# 命令: uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf ${K:+-k \"$K\"}"
+  echo "## git status --short"; git -C $WT status --short
+  echo "## 出力"
+  env "$@" uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf ${K:+-k "$K"} 2>&1 | grep -v "check-slot\|^  .*PytestWarning\|warnings.warn"
+  echo "## 終了状態: ${PIPESTATUS[0]}"
+} > $OUT 2>&1
+grep -E "^## 終了状態|passed|failed|^FAILED" $OUT | tail -12
