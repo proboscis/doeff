@@ -273,16 +273,20 @@
       (when (or (any (gfor form fields (isinstance form Symbol))) (any (gfor form fields (own-method? form)))
                 (any (gfor s specs (is s None))))
         (return None))
+      ;; 書く関数は定義した型を名でなく `__class__`(Python が method に作る、定義した class の閉包)と引数なしの super で読む —
+      ;; class の本体に書いた型の名は外の class の属性で、method は名を引く時に class の段を飛ばすので、名で読むと凍結の
+      ;; __setattr__ と default-factory・init を切った欄の __init__ が NameError で落ちた(tests/test_nested_definition_scope.py の
+      ;; test_class_body_type_methods_read_their_own_class)。
       (setv self-sym (hy.gensym "self")
             missing 'doeff_hy.record_runtime.FACTORY-DEFAULT
-            factory (fn [py] `((. (get (. ~name __dataclass_fields__) ~py) default-factory)))
+            factory (fn [py] `((. (get (. __class__ __dataclass_fields__) ~py) default-factory)))
             ;; 欄 1 つの __init__ の引数(None = 引数にしない — init を切った欄)と、self に値を置く式(None = 置かない)。
             init-of (fn [s]
                       (setv sym (get s "sym") py (get s "py") ann (get s "ann")
                             put (fn [value] `(object.__setattr__ ~self-sym ~py ~value)))
                       (cond
                         (not (get s "init"))
-                          #(None (cond (get s "has-factory") (put (factory py)) (get s "has-value") (put `(. ~name ~sym)) True None))
+                          #(None (cond (get s "has-factory") (put (factory py)) (get s "has-value") (put `(. __class__ ~sym)) True None))
                         (get s "has-factory")
                           #(`(annotate [~sym ~missing] ~ann) (put `(if (is ~sym ~missing) ~(factory py) ~sym)))
                         (and (= (get s "kind") "call") (get s "has-value"))
@@ -302,8 +306,8 @@
             attr (hy.gensym "name")
             value (hy.gensym "value")
             guard (if specs
-                      `(or (is (type ~self-sym) ~name) (in ~attr #{~@(lfor s specs (String (get s "py")))}))
-                      `(is (type ~self-sym) ~name)))
+                      `(or (is (type ~self-sym) __class__) (in ~attr #{~@(lfor s specs (String (get s "py")))}))
+                      `(is (type ~self-sym) __class__)))
       `(do
        (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
          ~@(if (is docstring None) [] [docstring])
@@ -328,11 +332,11 @@
          (defn __setattr__ [~self-sym ~attr ~value]
            (when ~guard
              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
-           (.__setattr__ (super ~name ~self-sym) ~attr ~value))
+           (.__setattr__ (super) ~attr ~value))
          (defn __delattr__ [~self-sym ~attr]
            (when ~guard
              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
-           (.__delattr__ (super ~name ~self-sym) ~attr)))
+           (.__delattr__ (super) ~attr)))
        (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))

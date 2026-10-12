@@ -70,6 +70,7 @@ from doeff_hy.env_places import (
     expanders_setting,
     pyright_threads_setting,
 )
+from doeff_hy.expansion_names import is_alias_import
 from doeff_hy.static_baseline import (
     BaselineUnreadable,
     Split,
@@ -380,7 +381,9 @@ def _synthesized_import(statement: ast.stmt) -> bool:
     """macro が定義ごとに合成する import の文か(利用者の重複の import は赤のまま残すため、重ねを 1 つにするのはこれだけ):
     doeff-hy 自身の module の import と、defsystem が系ごとに出す別名の無い `import <module>`(static_view.DEFSYSTEM_IMPORTS —
     展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)と、defeffect が
-    答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)。"""
+    答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)と、handle・defhandler が
+    node を `_doeff_<名>` の別名で束ねる `from doeff import Pass as _doeff_Pass` など(expansion_names.is_alias_import — 関数・
+    class の本体の中に残すと、class の本体では節の関数が名を module の段から引いて pyright が未定義と読んだ)。"""
     match statement:
         case ast.Import(names=names):
             return all(
@@ -391,8 +394,10 @@ def _synthesized_import(statement: ast.stmt) -> bool:
                 )
                 for alias in names
             )
-        case ast.ImportFrom(module=str(module), level=0):
-            return _doeff_hy_module(module)
+        case ast.ImportFrom(module=str(module), level=0, names=names):
+            return _doeff_hy_module(module) or all(
+                is_alias_import(module, alias.name, alias.asname) for alias in names
+            )
         case _:
             return False
 
