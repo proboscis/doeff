@@ -1,6 +1,7 @@
 """関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff・defsystem ほか
-doeff_hy.macros が出す def の付く macro の全部)が、外の関数に局所の名を作らない事の検(card ki-964823cd7feb・
-defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を検体で数える事は card ki-93395c51de1e)。
+doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum)が、外の関数に局所の名を
+作らない事の検(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を
+検体で数える事は card ki-93395c51de1e・defrecord と defwire は card ki-8a17293bc3e5)。
 
 defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助
 (と `doeff_hy`・`pytest`・`_doeff_QuotedForms`)を import する。関数の本体の中でそれを import すると、名が関数全体の
@@ -8,7 +9,8 @@ defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_st
 最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は card ki-c67428538aec・
 tests/test_fnk_do_bang_scope.py)。defmcp-tool も展開の頭で `_doeff_do`・`McpToolDef`・`McpParamSchema` を import する。
 defeffect は `_doeff_effect_base`・`_doeff_dataclass`・`_doeff_ClassVar` などを、deff は宣言の `doeff_hy` を、defsystem は
-`doeff_hy`・`doeff_cluster` を import する。
+`doeff_hy`・`doeff_cluster` を、defrecord は `doeff_hy`(record_runtime・頭の辞書の宣言)を、defwire は加えて
+`_doeff_ClassVar` を import する。
 module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。defhandler は tests/test_handle_scope.py
 (card ki-907f779b3290)が検め、ここでは card ki-93395c51de1e の再現の手順の形だけを置く。
 
@@ -24,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import doeff_hy.macros  # registers extensions(定義の macro の名も読む)
+import doeff_hy.record  # defrecord・defwire・defenum の名を読む
 import hy
 import pytest
 from doeff_core_effects import try_handler
@@ -65,6 +68,9 @@ _SCOPE_LEAKING_NAMES = frozenset(
 _HEADER = """
 (require doeff-hy.macros [defk defp defpp deftest defmcp-tool defeffect deff defhandler defsystem defpipeline
                           <- traverse for/do])
+(require doeff-hy.record [defrecord defwire defenum])
+(import dataclasses [dataclass])
+(import enum [StrEnum])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (defk _module-level [] {:pre [] :post [(: % int)]} 0)
 """
@@ -283,6 +289,51 @@ _CASES = {
         lambda mod: mod.subject(5),
         ("doeff_hy", "lab", 5),
     ),
+    # 外の関数が module の段の doeff_hy を読んだ後に、入れ子の defrecord の record_runtime の import(doeff_hy)が来る
+    # (card ki-8a17293bc3e5 の再現の手順)
+    "defrecord-after-module-doeff-hy-read": (
+        """
+        (defn subject [] (setv owner (. doeff_hy __name__)) (defrecord Span #^ int start) owner)
+        """,
+        lambda mod: mod.subject(),
+        "doeff_hy",
+    ),
+    # 同じ形の defwire(card ki-8a17293bc3e5 の再現の手順 — `_doeff_ClassVar` と doeff_hy.wire の import が来る)
+    "defwire-after-module-doeff-hy-read": (
+        """
+        (defn subject [] (setv owner (. doeff_hy __name__)) (defwire Span {:names :camel} #^ int start) owner)
+        """,
+        lambda mod: mod.subject(),
+        "doeff_hy",
+    ),
+    # 頭の辞書つきの defrecord を外の defk の文の guard の後に置き、型を作る — :check の __post_init__ が展開の import の
+    # doeff_hy(require-check)を読み、検めが落ちる値は ValueError になる
+    "defrecord-in-defk-checks-fields": (
+        """
+        (defk subject [x]
+          {:pre [(: x int)] :post [(: % tuple)]}
+          (abs x)
+          (defrecord Span {:tags {:context "t" :role "type"} :check [(>= start 0)]} #^ int start)
+          (setv refused (try (Span :start (- x)) (except [ValueError] True)))
+          #((. (Span :start x) start) refused (. Span __doeff_tags__ role)))
+        """,
+        _run_defk(5),
+        (5, True, "type"),
+    ),
+    # 外の defk の traverse の後に入れ子の defwire — その型を解き手(parse-json)が wire の名で解く
+    "defwire-in-defk-after-traverse-parses": (
+        """
+        (import doeff_hy.wire [parse-json])
+        (defk subject [items]
+          {:pre [(: items list)] :post [(: % int)]}
+          (<- coll (traverse (<- x (Iterate items)) (* x 2)))
+          (defwire Span {:names :camel :check [(>= start-at 0)]} #^ int start-at)
+          (<- row (parse-json Span (.format "{{\\"startAt\\": {}}}" (len items))))
+          (. row start-at))
+        """,
+        _run_defk([1, 2, 3]),
+        3,
+    ),
     # 関数の中の class の本体の defk は class の段の展開のまま(method は module の globals の補助を読む)
     "defk-in-class-in-defn": (
         """
@@ -346,21 +397,32 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
         "(defpipeline daily [a] (+ 1 2) [b] (* a 2))",
         frozenset({"p_daily_a", "p_daily_b", "p_daily"}),
     ),
+    "defrecord": (
+        '(defrecord Span {:tags {:context "t" :role "type"} :check [(>= start 0)]} #^ int start)',
+        frozenset({"Span"}),
+    ),
+    "defwire": (
+        "(defwire Span {:names :camel :check [(>= start-at 0)]} #^ int start-at)",
+        frozenset({"Span"}),
+    ),
+    "defenum": ("(defenum Kind ALPHA BETA)", frozenset({"Kind"})),
 }
 
 
 def _exported_definition_macros() -> set[str]:
-    """`(require doeff-hy.macros [...])` で書き手が引ける定義の macro の名(handle.hy から出し直す defhandler を含む)。"""
+    """`(require doeff-hy.macros [...])` と `(require doeff-hy.record [...])` で書き手が引ける定義の macro の名(handle.hy
+    から出し直す defhandler を含む)。"""
     return {
         hy.unmangle(name)
-        for name in vars(doeff_hy.macros)["_hy_macros"]
+        for module in (doeff_hy.macros, doeff_hy.record)
+        for name in vars(module)["_hy_macros"]
         if hy.unmangle(name).startswith("def")
     }
 
 
 def test_every_definition_macro_has_a_nested_sample() -> None:
-    """doeff_hy.macros が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、補助の import が
-    外の関数の局所の名になるかを誰も検めない(足した macro は検体を足すまで赤)。"""
+    """doeff_hy.macros と doeff_hy.record が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
+    補助の import が外の関数の局所の名になるかを誰も検めない(足した macro は検体を足すまで赤)。"""
     assert _exported_definition_macros() == set(_DEFINITION_SAMPLES)
 
 
