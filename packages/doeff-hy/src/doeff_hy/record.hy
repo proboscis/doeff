@@ -339,7 +339,8 @@
     (return (_scoped-definition _hy-compiler name
               [(if (is written None)
                    `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)
-                   `(do (import doeff_hy.record_runtime) ~written))])))
+                   `(do (import doeff_hy.record_runtime) ~written))]
+              :nested-reads True)))
   (setv header (get rest 0)
         fields (cut rest 1 None)
         where (+ "defrecord " (str name)))
@@ -423,7 +424,8 @@
               [written])
         (setattr ~name "__doeff_tags__" ~(tags-form tags where))
         (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))
-        (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False)))]))
+        (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False)))]
+    :nested-reads True))
 
 
 (deff require-check [#^ str record #^ tuple fields #^ str check #^ bool passed #^ dict values]  ; defk にできない: defrecord の展開が dataclass の __post_init__ から呼ぶ(Program を実行できない所)
@@ -529,7 +531,8 @@
      '(import doeff_hy.wire)
      `(hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
      `(setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
-     `(setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))]))
+     `(setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))]
+    :nested-reads True))
 
 
 ;; 展開の時に member の名前から値を計算する(template macro の形の外 — 頭注)。

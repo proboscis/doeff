@@ -89,6 +89,7 @@ from doeff_hy.static_cache import (
     store,
 )
 from doeff_hy.static_view import (
+    DEFEFFECT_OUTCOMES_MODULE,
     DEFSYSTEM_IMPORTS,
     STATIC_HELPER_IMPORTS,
     collect_findings,
@@ -378,18 +379,115 @@ def _doeff_hy_module(module: str) -> bool:
 def _synthesized_import(statement: ast.stmt) -> bool:
     """macro が定義ごとに合成する import の文か(利用者の重複の import は赤のまま残すため、重ねを 1 つにするのはこれだけ):
     doeff-hy 自身の module の import と、defsystem が系ごとに出す別名の無い `import <module>`(static_view.DEFSYSTEM_IMPORTS —
-    展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)。"""
+    展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)と、defeffect が
+    答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)。"""
     match statement:
         case ast.Import(names=names):
             return all(
                 _doeff_hy_module(alias.name)
-                or (alias.name in DEFSYSTEM_IMPORTS and alias.asname is None)
+                or (
+                    alias.name in (*DEFSYSTEM_IMPORTS, DEFEFFECT_OUTCOMES_MODULE)
+                    and alias.asname is None
+                )
                 for alias in names
             )
         case ast.ImportFrom(module=str(module), level=0):
             return _doeff_hy_module(module)
         case _:
             return False
+
+
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _nested_imports(node: ast.AST, inside: bool) -> Iterator[ast.stmt]:
+    """node の中(入れ子の文を含む)の、関数・class の本体の中に在る macro 合成の import の文(`_synthesized_import`)を
+    書いた順に返す。inside = node がすでに関数・class の本体の中か。"""
+    here = inside or isinstance(node, _SCOPES)
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.stmt) and here and _synthesized_import(child):
+            yield child
+        else:
+            yield from _nested_imports(child, here)
+
+
+#: 文の本体(`body`)を持つ node — import を外して空になった本体に `pass` を置くため(空の本体は Python の文として書けない)。
+_BODIED = (
+    *_SCOPES,
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.TryStar,
+    ast.ExceptHandler,
+    ast.match_case,
+)
+
+
+class _WithoutNestedImports(ast.NodeTransformer):
+    """関数・class の本体の中の macro 合成の import の文(`_nested_imports` が返す物)を外すため。文の 1 つだけを持っていた
+    本体は `pass` にする。"""
+
+    def __init__(self) -> None:
+        self._depth = 0
+
+    def _scope(self, node: ast.AST) -> ast.AST:
+        """関数・class の本体の中を読む間だけ深さを 1 つ増やす(その中の import が外す対象 — module の段の物は外さない)。"""
+        self._depth += 1
+        try:
+            return self.generic_visit(node)
+        finally:
+            self._depth -= 1
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        """関数の本体の中を読む(`_scope`)。"""
+        return self._scope(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        """async 関数の本体の中を読む(`_scope`)。"""
+        return self._scope(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        """class の本体の中を読む(`_scope`)。"""
+        return self._scope(node)
+
+    def visit_Import(self, node: ast.Import) -> ast.Import | None:
+        """関数・class の本体の中の macro 合成の `import` は外す(`_nested_imports` が module の段へ集めた物)。"""
+        return None if self._depth and _synthesized_import(node) else node
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom | None:
+        """関数・class の本体の中の macro 合成の `from … import` は外す(`visit_Import` と同じ)。"""
+        return None if self._depth and _synthesized_import(node) else node
+
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        """子を読み、import を外して本体が空になった node には `pass` を置く。"""
+        visited = super().generic_visit(node)
+        if isinstance(node, _BODIED) and not node.body:
+            node.body = [ast.Pass()]
+        return visited
+
+
+def with_module_level_imports(tree: ast.Module) -> ast.Module:
+    """関数・class の本体の中に macro が置いた import(`_synthesized_import` — doeff-hy の module・defsystem の module・defeffect の
+    答えの分け方の module)を、囲む module の直下の文の前へ移す(macros.hy の `_scoped-definition` の型検査のための展開の側)。
+
+    定義の macro は展開の import を書いた所に置く。関数の中の `import doeff_hy.record` は `doeff_hy` を外の関数全体の局所の名にし、
+    外の関数が先に module の段の `doeff_hy` を読むと、pyright は未束縛と読む。class の本体の import は class の属性で、入れ子の型の
+    本体と method は名を module の段から引く(Python と同じ)ので、定義が読む `doeff_hy.record` を解けない。実行時の展開は関数の中を
+    包んで局所の名を閉じ込める(`_scoped-definition`)が、型検査のための展開は型の宣言(class・def)を外の関数に残す形なので包めない —
+    import を module の段へ集め、以後の掃除(`without_bookkeeping` の重ねの畳みと、読まれない記帳の import の除去)に任せる。
+    module の段の文・module の段の `if` の中の import は動かさない(もう module の段の名)。木はこの展開だけの物なので、その場で替える。"""
+    moved = [tuple(_nested_imports(statement, inside=False)) for statement in tree.body]
+    _WithoutNestedImports().visit(tree)
+    tree.body = [
+        placed
+        for imports, statement in zip(moved, tree.body, strict=True)
+        for placed in (*imports, statement)
+    ]
+    return tree
 
 
 def with_canonical_gensyms(tree: ast.Module) -> ast.Module:
@@ -542,7 +640,9 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
         if not isinstance(compiled, ast.Module):
             raise TypeError(f"hy_compile が module を返さなかった: {type(compiled).__name__}")
-        tree = with_canonical_gensyms(with_static_helpers(without_bookkeeping(compiled)))
+        tree = with_canonical_gensyms(
+            with_static_helpers(without_bookkeeping(with_module_level_imports(compiled)))
+        )
     except HyLanguageError as error:
         line = error.lineno if isinstance(error.lineno, int) else 1
         column = error.offset if isinstance(error.offset, int) else 1
@@ -567,7 +667,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     )
 
 
-#: 展開の結果を変える macro の外の処理(記帳の外し・補助の import の足し・gensym の名の振り直し・位置の対応・所見)の入口 —
+#: 展開の結果を変える macro の外の処理(関数・class の本体の import の module の段への移し・記帳の外し・補助の import の足し・gensym の名の振り直し・位置の対応・所見)の入口 —
 #: 型検査の展開の保存(static_cache)の記録は、この値の閉包の digest で後処理の変更を見る(``project`` が呼ぶ関数を名で辿る)。
 #: module の属性の ``project`` ではなく、定義した時の関数を持つ(検が ``project`` を差し替えても、記録は変わらない)。
 POST_PROCESSING = (project,)

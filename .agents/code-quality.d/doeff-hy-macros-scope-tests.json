@@ -18,7 +18,7 @@
         "tests/test_nested_definition_scope.py"
       ],
       "public": [],
-      "responsibility": "doeff-hy の macro の検 — 関数・class の本体の中に入れ子で書いた定義の macro(doeff_hy.macros と doeff_hy.record が出す def の付く macro の全部)が外の関数に局所の名を作らず、どの module の状態も変えず、型検査の投影に関数の中の pytest の item の記録を出さない事(_scoped-definition の呼び手が負う事)。記録は pytest-item-records の読み口で、投影は doeff-hy-static-check の project で読む。",
+      "responsibility": "doeff-hy の macro の検 — 関数・class の本体の中に入れ子で書いた定義の macro(doeff_hy.macros・doeff_hy.record・doeff_hy.conductor が出す def の付く macro の全部)が外の関数に局所の名を作らず、どの module の状態も変えず、型検査の投影に関数の中の pytest の item の記録を出さず、展開の import を関数・class の本体の局所の名にせず module の段で解ける事、class の本体に直に書いた型を建てる定義が module の段に doeff_hy が無くても建つ事(_scoped-definition の呼び手が負う事)。記録は pytest-item-records の読み口で、投影は doeff-hy-static-check の project で読む。",
       "typed": true
     }
   ]
