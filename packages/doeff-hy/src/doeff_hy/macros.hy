@@ -678,8 +678,8 @@ defk {name}: :post type annotation cannot be an empty string.
         `(. (__import__ ~(. source module) :fromlist #(~(. source name)))
             ~(hy.models.Symbol (. source name))))))
 
-(defn _scoped-definition [compiler name forms [module-forms #()]]
-  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+(defn _scoped-definition [compiler name forms [module-forms #()] [nested-reads False]]
+  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・conductor.hy の defworkflow)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
    `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
    module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
    関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す(card ki-93395c51de1e・設計検証
@@ -698,17 +698,63 @@ defk {name}: :post type annotation cannot be an empty string.
      状態(定義を書いた module の globals も、doeff の module の索引や登録簿も)も変える文を置かない(呼ぶたびに積み増す —
      tests/test_nested_definition_scope.py の test_definition_sample_leaves_module_state_unchanged・盲検 B)。module に
      1 度だけ知らせる文は `module-forms` に渡す。
-   - class の本体では `forms` の import は class の属性になり、`forms` の中で定義した関数からは見えない。その関数が
-     名で読む補助は、`_install-guard-globals` で関数の globals へ入れる(定義の関数そのものが補助を読む defk・deftest・
-     defmcp-tool — 同 test_class_body_definition_runs_without_module_definitions)か、関数を組む関数の中で import して
-     閉包から読ませる(defhandler — `_in-class-body?`・tests/test_handle_scope.py の
-     test_class_body_handle_clauses_read_their_operations)。
+   - class の本体では `forms` の import は class の属性になり、`forms` の中で定義した関数と入れ子の class の本体からは
+     見えない(名の引きは class の段を飛ばす)。定義が関数の中で名を読む補助は、`_install-guard-globals` で関数の globals へ入れる
+     (定義の関数そのものが補助を読む defk・deftest・defmcp-tool — 同 test_class_body_definition_runs_without_module_definitions)か、
+     関数を組む関数の中で import して閉包から読ませる(defhandler — `_in-class-body?`・tests/test_handle_scope.py の
+     test_class_body_handle_clauses_read_their_operations)。class を建てる定義(defrecord・defwire・defeffect)は、その class の本体の
+     decorator・注記と method が展開の import の名(`doeff_hy`・`_doeff_ClassVar` ほか)を読むので、閉包では届かない — `nested-reads` を
+     真にして呼ぶ。class の本体では `forms` の import が束ねた名を、定義より前に module の globals にも置く(`_publish-imports`)ので、
+     module の段に他の定義が無くても届く(tests/test_nested_definition_scope.py の
+     test_class_body_type_definition_runs_without_module_doeff_hy)。defhandler は module の globals を変えない決めなので、
+     `nested-reads` を真にしない(test_class_body_handle_leaves_module_globals_alone)。
    - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
-     関数の局所の名になる。"
+     関数・class の本体の局所の名になる — 型検査の展開の後処理が module の段へ移す(doeff_hy/static_check.py の
+     with_module_level_imports — doeff_hy の module・defsystem の module・defeffect の答えの分け方の module の import)。"
   (cond
     (_in-function-body? compiler) `(setv ~name ((fn [] ~@forms ~name)))
     (_function-scope? compiler) `(do ~@forms)
+    (and nested-reads (_in-class-body? compiler)) `(do ~@(_publish-imports forms) ~@forms ~@module-forms)
     True `(do ~@forms ~@module-forms)))
+
+(defn _imports-of [forms]
+  "展開の文の並び `forms` の中の `(import …)` の form(`(do …)` の中も読む — 関数・class・条件の本体の中の import は、
+   その本体の物で、置いた所の scope を変えないので読まない)。読み手は `_publish-imports`。"
+  (sum (lfor form forms
+             (cond
+               (not (and (isinstance form hy.models.Expression) form (isinstance (get form 0) hy.models.Symbol))) []
+               (= (str (get form 0)) "import") [form]
+               (= (str (get form 0)) "do") (_imports-of (cut form 1 None))
+               True []))
+       []))
+
+(defn _publish-names [module-globals bound]
+  "class の本体の展開が import した名(bound — 名 → 値の辞書)を module の globals に置く。書き手が module の段に同じ名を
+   置いていれば、それを保つ(`setdefault`)。実行時に呼ぶのは `_publish-imports` が出す文だけ。"
+  (for [#(name value) (.items bound)]
+    (.setdefault module-globals name value)))
+
+(defn _publish-imports [forms]
+  "class の本体の展開で、`forms` の import が束ねる名を module の globals にも置く文の並び(import が無ければ空)。
+
+   class の本体で import した名は class の属性になり、入れ子の class の本体と method は、名を引く時に外の class の段を飛ばす
+   (関数の中の名の引きと同じ) — 定義した型の本体の decorator・注記と method が読む `doeff_hy` や `_doeff_ClassVar` が
+   NameError で落ちた(module の段に `doeff_hy` が在る module では、他の定義の import が隠していた)。module の段に定義を
+   置いた時と同じに、module の globals から読めるようにする。class の本体の import は今までどおり残す — class の本体で
+   評価される式(decorator・基底・既定値)は、書き手の module の段の同じ名より先に自分の import を読む。
+
+   名の綴りは読まない: import を引数なしの関数の中で走らせ(呼んだ後は class の属性に残さず消す)、その局所の名(import が
+   束ねた名だけ)を `_publish-names` で置く。補助の引きは `__import__` — 名で引くと、その名の import が局所の名に混ざる。置く文は定義より前に出す
+   (入れ子の型の本体は、定義の時に名を読む)。"
+  (setv imports (_imports-of forms))
+  (if imports
+      (let [publish (hy.gensym "publish")]
+        [`(defn ~publish []
+            ~@imports
+            ((. (__import__ "doeff_hy.macros" :fromlist #("_publish_names")) _publish-names) (globals) (locals)))
+         `(~publish)
+         `(del ~publish)])
+      []))
 
 (defn _function-scope? [compiler]
   "macro が関数の本体の中に書かれたか(実行時の展開でも型検査のための展開でも同じ答え)。
@@ -1029,7 +1075,8 @@ defk {name}: :post type annotation cannot be an empty string.
     (when (and (_is-type-check check) (not-in (str (get check 1)) field-names))
       (raise (SyntaxError (.format "{}: :pre の {} は欄ではない(欄 = {})" where (hy.repr check) (.join " " field-names))))))
   (locate-synthesized (_scoped-definition _hy-compiler name
-    [(defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))])))
+    [(defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))]
+    :nested-reads True)))
 
 
 ;; ---------------------------------------------------------------------------

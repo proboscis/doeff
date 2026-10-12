@@ -172,6 +172,11 @@ DEFSYSTEM_MODEL_MODULE: str = "doeff_cluster.shared.intent.service_model"
 DEFSYSTEM_BUILD_MODULE: str = "doeff_cluster.shared.entry.service_build"
 DEFSYSTEM_IMPORTS: tuple[str, ...] = (DEFSYSTEM_MODEL_MODULE, DEFSYSTEM_BUILD_MODULE)
 
+#: defeffect が答えの分け方(:absent・:failure・:value)を置く時に出す、別名の無い `import <module>`(declarations.hy の
+#: defeffect-form)。型検査のための展開の掃除が、DEFSYSTEM_IMPORTS と同じく macro が合成する import として畳み、関数・class の本体の中の
+#: 物を module の段へ移す綴り。展開の綴りとの一致は tests/test_nested_definition_scope.py が関数の中の defeffect の投影で検める。
+DEFEFFECT_OUTCOMES_MODULE: str = "doeff_core_effects.outcomes"
+
 
 def static_view_enabled() -> bool:
     return _STATIC_VIEW.get()
