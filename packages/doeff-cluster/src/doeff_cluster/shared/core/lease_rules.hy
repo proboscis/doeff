@@ -134,8 +134,10 @@
         True)))
 
 
-;; row は盤の行の値そのもの(形を確かめてから読む — 形の読めない値は触らず None)。
-(defn #^ (| dict None) holders-shifted [#^ object row #^ int gap-ms]
+;; row は盤の行の値そのもの(JSON の値 — BoardRow.value。形を確かめてから読む — 形の読めない値は触らず None)。
+(deff holders-shifted [#^ object row #^ int gap-ms]  ; defk にできない: coordinator の起き直し(api_policy.resume-after-downtime — Program の外の純粋な判断)が呼ぶ
+  {:pre [(: row (| dict list str int float bool None)) (: gap-ms int)] :post [(: % (| dict None))]
+   :tags {:context "doeff-cluster" :role "judgment"}}
   "純粋: 担い手の期限を gap-ms だけ後へずらした行。coordinator が止まっていた長さ gap-ms を担い手の期限に数えないため(起き直した時に
    api_policy.resume-after-downtime が盤の lease の行に当てる — task の lease・worker の最後の連絡と同じ)。持ち主は止まっていた間に
    延ばせなかっただけなので、止まる前に残っていた時間を起き直した刻から持つ: 生きていれば延ばしが通り、本当に居なければその時間の後に
