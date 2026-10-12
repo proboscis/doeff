@@ -195,24 +195,54 @@ def source_to_code_as_import(
     install()
     if not is_hy_source(path):
         return loader.source_to_code(data, path)
-    name = loader.name
-    present = sys.modules.get(name)
+    present = sys.modules.get(loader.name)
     if present is not None and vars(present).get("__file__") == path:
         with macro_recording(_expansion_or(loader, path, present)):  # 読み込み済みの module の中で compile する(import の途中と同じ)
             return loader.source_to_code(data, path)
-    spec = importlib.util.spec_from_file_location(name, path, loader=loader)
-    if spec is None:
-        raise ImportError(f"{path} の module の spec を作れない", name=name, path=path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        with macro_recording(_expansion_or(loader, path, module)):  # compile の口の包みが、この展開が使った macro の記録を足す
-            return loader.source_to_code(data, path)
-    finally:
-        if present is None:
-            sys.modules.pop(name, None)
+    with _PlacedExpansion(loader, path):  # compile の口の包みが、この展開が使った macro の記録を足す
+        return loader.source_to_code(data, path)
+
+
+class _PlacedExpansion:
+    """module を ``sys.modules`` に置いた中で展開が使った macro を拾う囲み(出る時に置く前へ戻す)— 置く module が無い compile で、
+    Hy が仮の module を作って compile の直後に消すと、compile の口の包みが module を見られず記録を足さないため。
+
+    使う所は 2 つ: :func:`source_to_code_as_import`(import の外で bytecode を前もって作る道具)と、import を通らず読みの口が
+    呼ばれる読み(runpy の ``hy <script>``・``hy -m`` — :func:`_expansion_recording`)。後者は .pyc に記録が付かず、次の読みで
+    必ず古い物として compile し直され、保存先にも入らなかった。"""
+
+    def __init__(self, loader: importlib.machinery.SourceFileLoader, path: str) -> None:
+        self._loader = loader
+        self._path = path
+        self._present = sys.modules.get(loader.name)
+        self._recording: MacroRecording | None = None  # 関数の中の注釈は実行時に評価されない(MacroRecording は型検査の時だけ import する)
+
+    def __enter__(self) -> "MacroRecording":
+        loader, path = self._loader, self._path
+        spec = importlib.util.spec_from_file_location(loader.name, path, loader=loader)
+        if spec is None:
+            raise ImportError(f"{path} の module の spec を作れない", name=loader.name, path=path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = module
+        try:
+            self._recording = macro_recording(_expansion_or(loader, path, module)).__enter__()
+        except BaseException:
+            self._restore()
+            raise
+        return self._recording
+
+    def __exit__(self, *exc_info: object) -> None:
+        try:
+            if self._recording is not None:
+                self._recording.__exit__(*exc_info)
+        finally:
+            self._restore()
+
+    def _restore(self) -> None:
+        if self._present is None:
+            sys.modules.pop(self._loader.name, None)
         else:
-            sys.modules[name] = present
+            sys.modules[self._loader.name] = self._present
 
 
 def file_sha256(path: str) -> str | None:
@@ -260,10 +290,11 @@ def _recording_source_to_code(previous: SourceToCode):
         counts[path] = counts.get(path, 0) + 1
         module = _module_being_loaded(self, path)
         if module is None:
-            # module の外での compile(py_compile・image の組み立ての warm・runpy)— 何の macro を require したかが
+            # module の外での compile(py_compile・image の組み立ての warm)— 何の macro を require したかが
             # 見えないので記録を足さない。記録の無い bytecode は、Python が source と突き合わせる形なら次の読みで
             # compile し直される(get_code)。突き合わせない形(image の hash 方式)はそのまま信じる。bytecode を前もって
-            # 作る道具は source_to_code_as_import で module の中で compile し、記録を付ける。
+            # 作る道具は source_to_code_as_import で module の中で compile し、記録を付ける。runpy の読み(``hy <script>``・
+            # ``hy -m``)は読みの口が module を置いて囲むので、ここへ来ない(_expansion_recording)。
             return code
         if TYPE_CHECK_EXPANSION.get():
             # 型検査のための展開(doeff_hy.static_view)の code は実行できない(:pre の isinstance と実行の時の import が無い)—
@@ -645,12 +676,22 @@ def _bytecode_matches_source(
 def _expansion_recording(
     self: importlib.machinery.SourceFileLoader, path: str
 ) -> "contextlib.AbstractContextManager[object]":
-    """compile し得る読みを囲む口 — 展開が走る module(:func:`_module_being_loaded`)の表で、展開が使った macro を拾う。module が
-    無ければ(module の外の compile)何も拾わない。module は compile し得る時にだけ引く(引き方は読み込み済みの module 全部を歩く)。"""
+    """compile し得る読みを囲む口 — 展開が走る module(:func:`_module_being_loaded`)の表で、展開が使った macro を拾う。module は
+    compile し得る時にだけ引く(引き方は読み込み済みの module 全部を歩く)。
+
+    module が無いのは、import を通らず読みの口が呼ばれた時(runpy の ``hy <script>``・``hy -m`` は loader の get_code を、module を
+    ``sys.modules`` に置く前に呼ぶ)。その名の module を置いた中で拾う(:class:`_PlacedExpansion`)— 拾わないと、Hy は仮の module
+    で compile して compile の直後に消すので、記録の無い .pyc が 毎回「古い物」として compile し直され、保存先にも入らない。
+    同じ名を別の file の module が使っていれば(``hy json.hy`` — Hy 自身も既存の module の ``__file__`` を書き換えて消す形)置かず、
+    何も拾わない。"""
     import contextlib  # compile し得る時だけ読む
 
     module = _module_being_loaded(self, path)
-    return contextlib.nullcontext() if module is None else macro_recording(module)
+    if module is not None:
+        return macro_recording(module)
+    if self.name in sys.modules:
+        return contextlib.nullcontext()
+    return _PlacedExpansion(self, path)
 
 
 def _module_being_loaded(
