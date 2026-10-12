@@ -264,7 +264,7 @@
     (and spec.handoff world.leaving) (StartStep :actions #() :hold StartHold.LEAVING)
     ;; task は 1 度だけ走らせる。終わった後は宣言から外れるまで待つ(結果は状態の報告で運ぶ)。
     (and spec.once (is-not record.last-outcome None)) (StartStep :actions #() :hold None)
-    ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限)で焼く。
+    ;; 動いている process が無いので、焼く道具は既定の並べる数(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)で焼く。
     (is tree None) (StartStep :actions (prepare-actions now spec world policy None) :hold (! (prepare-hold code record)))
     True (! (ready-tree-step now spec tree world record policy))))
 

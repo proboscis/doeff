@@ -32,7 +32,7 @@
 
 (deftest test-the-script-passes-the-compile-jobs-to-the-tool-only-when-given
   ;; 失敗ケース(2026-10-08): 版の木の準備の焼く道具は、準備の action が並べる数を持つ時だけ `--jobs N` を受ける(recreate の job の旧い
-  ;; process が動いている間の新しい版の準備 — 旧と同じ memory の上限を分け合う)。持たない時は道具の既定(cgroup の CPU の上限)のまま。
+  ;; process が動いている間の新しい版の準備 — 旧と同じ memory の上限を分け合う)。持たない時は道具の既定(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)のまま。
   ;; 直す前は並べる数を受けなかった。
   (<- given str (prepare-script "/repo" "rev9" :hy-command "/bin/hy" :tool "/w/code_prepare.hy" :layout (CodeLayout) :compile-jobs 2))
   (assert (in "--roots \".\" --jobs 2\n" given) given)

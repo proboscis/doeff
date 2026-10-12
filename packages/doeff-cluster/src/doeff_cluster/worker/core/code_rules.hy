@@ -17,7 +17,7 @@
    git archive は pipe にせず file へ書く(pipe の失敗は最後の tar しか見えない)。rename が最後で、その前に印が在ることを確かめるので、
    final の在る dir は常に完成品。焼く道具そのもの(Hy)の import が timestamp 方式の .pyc を木へ書かないよう、PYTHONDONTWRITEBYTECODE を
    立てる。revision = worker_model.code-key = 1 つの commit。compile-jobs = 焼く道具の並べる数(在る時だけ --jobs N — recreate の job の
-   旧い process が動いている間の準備・None = 道具の既定 = cgroup の CPU の上限・2026-10-08)。"
+   旧い process が動いている間の準備・None = 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。"
   ;; 焼く木は 1 つ(--tree・--roots を 1 つずつ — 道具の引数の揃え方)。
   (val prepare-tool (+ f"PYTHONDONTWRITEBYTECODE=1 \"{hy-command}\" \"{tool}\" --revision \"{revision}\""
                        f" --tree \"$T\" --roots \"{(.roots-arg layout)}\""

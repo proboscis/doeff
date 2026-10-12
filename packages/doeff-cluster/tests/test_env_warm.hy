@@ -10,7 +10,7 @@
 ;;   優先して置く・準備済みが無ければ phase preparing と計器 doeff_worker_env_cold_start_total・envCapacity=exhausted の worker を避ける。
 ;; worker: 温める env を job より後に準備する(PrepareEnv :warm True)・固定の集合を掃除の係へ渡す(SweepEnvs)。
 ;; 準備の期限: 先読みも job の準備も、停滞(進みの印が動かない長さ)だけで止める(合計の時間では止めない — #3515)。
-;; bytecode: 焼きの並列数は cgroup の CPU の上限・焼く範囲は入口の module の import の閉包。
+;; bytecode: 焼きの並列数は cgroup の CPU の上限(天井 BAKE-JOBS-CEILING)・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (require doeff-hy.record [defrecord])
@@ -46,7 +46,7 @@
                                     EnvDisk NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys sweep-actions])
 (import doeff_cluster.worker.protocol.declared [task-spec])
-(import doeff_cluster.worker.core.bake_plan [cpu-limit-of])
+(import doeff_cluster.worker.core.bake_plan [BAKE-JOBS-CEILING cpu-limit-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])
@@ -525,8 +525,17 @@
 (deftest test-compile-parallelism-follows-the-cgroup-cpu-limit
   (assert (= (! (cpu-limit-of "400000 100000\n" 16)) 4) "pod の上限 4 CPU は node の 16 より優先")
   (assert (= (! (cpu-limit-of "150000 100000\n" 16)) 2) "端数は切り上げる")
-  (assert (= (! (cpu-limit-of "max 100000\n" 16)) 16) "上限の無い cgroup は使える CPU の数")
+  (assert (= (! (cpu-limit-of "max 100000\n" 6)) 6) "上限の無い cgroup は使える CPU の数")
   (assert (= (! (cpu-limit-of None 3)) 3) "cgroup の file が無ければ使える CPU の数"))
+
+
+(deftest test-compile-parallelism-stays-under-the-ceiling-without-a-pod-limit
+  ;; zeus の worker(cpu.max の無い pod・node の 36 CPU)は 36 本並べて焼き、準備 1 回で 14 core を使って load 1 分を 170 まで上げた
+  ;; (2026-10-12・card ki-4c2f5878e524)。直す前は 36 が返った。
+  (assert (= (! (cpu-limit-of "max 100000\n" 36)) BAKE-JOBS-CEILING) "上限の無い pod の 36 CPU でも天井まで")
+  (assert (= (! (cpu-limit-of None 36)) BAKE-JOBS-CEILING) "cgroup の file が無くても天井まで")
+  (assert (= (! (cpu-limit-of "1600000 100000\n" 36)) BAKE-JOBS-CEILING) "天井より大きい pod の上限も天井まで")
+  (assert (= (! (cpu-limit-of "800000 100000\n" 16)) 8) "atlas の上限 8 は今の並列数のまま"))
 
 
 (deftest test-bytecode-entries-travel-in-the-declaration-but-not-in-the-key
