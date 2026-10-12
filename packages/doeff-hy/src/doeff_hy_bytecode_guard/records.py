@@ -63,6 +63,13 @@ RECORD_TAG = "doeff-hy/macro-dependencies/6"
 MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
 
+#: Hy の compiler が関数の本体などで開く局所の状態(``HyASTCompiler.new_local_state`` が ``local_state_stack`` に積む dict)の中の
+#: macro の表の鍵。関数の中の require と defmacro はこの表へ macro を入れ、Hy の展開は module の表より先にこの表を引くので、
+#: ここから引かれた macro は module の表を通らない(macro_use.RecordingTable.local_tables が覚える)。口の名と鍵は Hy の内部の形で、
+#: 包みの検(test_bytecode_guard.py の関数の中の require の macro の変更の検 — uv.lock の変更で選ばれる)が uv.lock の版の Hy で
+#: 測る。替わると、包みは関数の中の require の macro を記録し損ねて古い展開を黙って使う。
+LOCAL_MACRO_TABLE = "macros"
+
 #: PEP 552 の .pyc の頭(magic 4 byte・flags 4 byte・mtime と size か source の hash の 8 byte)。
 PYC_HEADER_BYTES = 16
 FLAG_HASH_BASED = 0b01

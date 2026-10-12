@@ -3,7 +3,9 @@
 使った macro を拾う: 展開(compile)の間だけ、展開する module の macro の表(``_hy_macros``)を :class:`RecordingTable`(引いた名を
 覚える dict)に替える。Hy 1.3.1 の ``hy.macros.macroexpand`` は展開する module の表を ``名 in 表`` で確かめ ``表[名]`` で引くので、
 引かれた名が使った macro、表に無かった名が「引いて無かった名」になる。macro が展開した先で別の macro を呼んでも同じ表から
-引かれる。
+引かれる。関数の中の require の macro は、Hy の展開が module の表より先に引く局所の表(compiler の局所の状態)に入るので、
+compiler が局所の状態を開く口を包んで局所の表を覚え(:func:`_watch_local_tables`)、その中の展開で実行された macro を使った
+macro に入れる。
 
 macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`):
 - code object の中身(命令・定数 — 入れ子の code は同じ規則で・名の表・引数の数・flags)。行番号と位置(co_firstlineno・
@@ -95,8 +97,9 @@ import os
 import re
 import struct
 import sys
+import threading
 import types
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import chain, pairwise
 from types import CodeType, FunctionType, ModuleType
@@ -105,6 +108,7 @@ from doeff_hy_bytecode_guard import bound_source, called_code, loader_hooks
 from doeff_hy_bytecode_guard.import_scope import IMPORT_SCOPE, ImportScope, current_scope
 from doeff_hy_bytecode_guard.records import (
     ENVIRONMENT_READ,
+    LOCAL_MACRO_TABLE,
     MACRO_TABLE,
     READER_TABLE,
     MacroRecord,
@@ -128,6 +132,10 @@ class RecordingTable(dict[str, object]):
         self.absent: set[str] = set()
         #: この表を開いた記録(compile の口の包みが、表から記録を作るため)。
         self.recording: MacroRecording | None = None
+        #: この module の展開の間に Hy の compiler が開いた局所の macro の表(:func:`_watch_local_tables` が足す — 関数の中の
+        #: require と defmacro が macro を入れる表。Hy の展開はこの表を module の表より先に引くので、ここから引かれた macro は
+        #: :meth:`__getitem__` を通らない)。
+        self.local_tables: tuple[dict[str, object], ...] = ()
 
     def __getitem__(self, name: str) -> object:
         """Hy の展開が macro を引く口 — 引かれた名を使った macro として覚える。"""
@@ -143,6 +151,39 @@ class RecordingTable(dict[str, object]):
         return found
 
 
+#: Hy の compiler が局所の状態を開く口を包んだか(process に 1 つ)。包みは Hy の compiler の class という process の共有物を
+#: 書き換えるので、持ち主はこの module 1 つ。free-threaded の Python では compile が並ぶので lock の下で 1 度だけ包む。
+_LOCAL_WATCH = {"installed": False}
+_LOCAL_WATCH_LOCK = threading.Lock()
+
+
+def _watch_local_tables() -> None:
+    """Hy の compiler が局所の状態(関数の本体など)を開くたびに、その macro の表を、展開している module の記録の表
+    (:class:`RecordingTable`)に覚えさせる(process で 1 度だけ包む)。関数の中の require で入れた macro は局所の表から引かれ、
+    module の表を通らないので、覚えないと記録から漏れ、macro を変えても使う側が古い展開のまま動いた(設計検証
+    lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の範囲の外の所見 1)。局所の表は dict のまま覚える — Hy の require は局所の表を
+    ``type(target) is dict`` で見分けるので、引いた名を覚える表に替えられない。"""
+    with _LOCAL_WATCH_LOCK:
+        if _LOCAL_WATCH["installed"]:
+            return
+        # Hy の source を compile する時だけ読む(起動時に Hy を読まない)。
+        from hy.compiler import HyASTCompiler
+
+        opened = HyASTCompiler.new_local_state
+
+        def new_local_state(compiler: HyASTCompiler) -> None:
+            """Hy の局所の状態を開き、その macro の表を展開している module の記録の表に覚えさせる(包んだ口)。"""
+            opened(compiler)
+            # 一番下の状態は compiler が module を置く前に開く(module の直下の require は module の表へ入る)。
+            module = getattr(compiler, "module", None)
+            table = None if module is None else vars(module).get(MACRO_TABLE)
+            if isinstance(table, RecordingTable):
+                table.local_tables = (*table.local_tables, compiler.local_state_stack[-1][LOCAL_MACRO_TABLE])
+
+        HyASTCompiler.new_local_state = new_local_state
+        _LOCAL_WATCH["installed"] = True
+
+
 class MacroRecording:
     """展開 1 回の間、module の macro の表を :class:`RecordingTable` に替える(``with`` の中が展開)。抜けた後も
     :meth:`record` で記録を作れる。同じ module で入れ子に開いた時は外の記録をそのまま使う(表を替えない)。``with`` の中では
@@ -153,6 +194,7 @@ class MacroRecording:
         self._module = module
         self._hy_version = hy_version
         self._sha256_of = sha256_of
+        _watch_local_tables()
         namespace = vars(module)
         present = namespace.get(MACRO_TABLE)
         self._owner = not isinstance(present, RecordingTable)
@@ -208,6 +250,16 @@ class MacroRecording:
             macro = table.get(used)
             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
                 found[_macro_key(MACRO_TABLE, macro)] = macro
+        # 関数の中の require で入った macro(局所の表から引かれ、module の表の引いた名に入らない)— 展開で実行された macro
+        # だけ(拾えない環境では局所の表の全部 — 多く入れても古いと判じやすくなるだけ)。
+        for local in self.table.local_tables:
+            for macro in list(local.values()):
+                if (
+                    isinstance(macro, FunctionType)
+                    and _from_elsewhere(macro, name)
+                    and (executed is None or macro.__code__ in executed)
+                ):
+                    found[_macro_key(MACRO_TABLE, macro)] = macro
         readers = vars(self._module).get(READER_TABLE)
         for macro in readers.values() if isinstance(readers, dict) else ():
             if isinstance(macro, FunctionType) and _from_elsewhere(macro, name):
@@ -241,7 +293,7 @@ class MacroRecording:
                 for key, closure in macros
             ),
             tuple(sorted(self.table.absent - table.keys())),
-            _whole_requires(table, name),
+            _whole_requires((table, *self.table.local_tables), name),
             tuple(
                 UsedValue(reference.module, reference.name, closure.digest)
                 for reference, closure in others
@@ -346,12 +398,13 @@ def _still_absent(provider: WholeRequire, absent: tuple[str, ...]) -> bool:
     return not any(name.startswith(lead) and name[len(lead) :] in table for name in absent)
 
 
-def _whole_requires(table: dict[str, object], module_name: str) -> tuple[WholeRequire, ...]:
-    """展開の後の使い手の表から、提供元の macro を全部 require した形を読む — 提供元(macro を定義した module)ごと・前置き
-    ごとに、使い手の表に入った名が提供元の公開の名(``_hy_export_macros`` か、``_`` で始まらない名)を全部含むなら全部の
-    require。名を選んで全部を書き並べた require も全部と数える(照らしが古いと判じる側に倒れるだけ)。"""
+def _whole_requires(tables: Iterable[dict[str, object]], module_name: str) -> tuple[WholeRequire, ...]:
+    """展開の後の使い手の表(module の表と、関数の中の局所の表)から、提供元の macro を全部 require した形を読む — 提供元
+    (macro を定義した module)ごと・前置きごとに、使い手の表に入った名が提供元の公開の名(``_hy_export_macros`` か、``_`` で
+    始まらない名)を全部含むなら全部の require。名を選んで全部を書き並べた require も全部と数える(表をまたいで足した名も —
+    照らしが古いと判じる側に倒れるだけ)。"""
     entered: dict[WholeRequire, set[str]] = {}
-    for key, macro in table.items():
+    for key, macro in chain.from_iterable(list(table.items()) for table in tables):
         if not (isinstance(macro, FunctionType) and _from_elsewhere(macro, module_name)):
             continue
         owner = str(macro.__module__)

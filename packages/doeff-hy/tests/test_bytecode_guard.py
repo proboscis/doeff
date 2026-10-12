@@ -303,6 +303,28 @@ def test_a_reader_macro_change_recompiles_the_user_on_pypi_hy(
     assert _run_on_pypi_hy(tmp_path, guard) == after
 
 
+@pytest.mark.parametrize(("guard", "after"), [("none", 11), ("before-hy", 12)])
+def test_a_macro_required_inside_a_function_recompiles_the_user_on_pypi_hy(
+    tmp_path: Path, guard: str, after: int
+) -> None:
+    """関数の中の require で入れた macro を変えた後も、使う側は新しい展開で動く(包みが無いと古い展開のまま — この検が包みを
+    測る事の確かめ)。Hy の展開は関数の中の局所の macro の表(compiler の局所の状態)を module の表より先に引くので、module の表を
+    替えるだけの包みは局所の macro を記録から漏らし、macro を変えても古い展開を黙って使った(設計検証
+    lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の範囲の外の所見 1)。包みは compiler が局所の状態を開く口を読むので、Hy がその口を替えると
+    この検が赤になる。"""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "macros.hy").write_text("(defmacro answer [] 11)\n")
+    (package / "user.hy").write_text(
+        "(defn f []\n  (require pkg.macros [answer])\n  (defn g [] (answer))\n  (g))\n(setv value (f))\n"
+    )
+    assert _run_on_pypi_hy(tmp_path, guard) == 11
+    _edit(package / "macros.hy", "(defmacro answer [] 12)\n")
+    assert _run_on_pypi_hy(tmp_path, guard) == after
+    assert _run_on_pypi_hy(tmp_path, guard) == after
+
+
 @pytest.mark.parametrize("exports", ["", "(export :macros [answer])\n"], ids=["all", "exported"])
 def test_a_new_macro_named_like_a_function_the_user_calls_recompiles_the_user_on_pypi_hy(
     tmp_path: Path, exports: str
