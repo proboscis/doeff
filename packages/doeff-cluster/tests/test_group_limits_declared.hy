@@ -93,6 +93,20 @@
   (assert (= by-key {"caller-a/1" "assigned" "caller-a/2" "assigned" "caller-a/3" "queued" "caller-b/1" "assigned"}) by-key))
 
 
+(deftest test-the-same-tasks-sent-in-either-order-place-the-declared-number-in-one-tick
+  ;; 並行(同じ拍・送る順): 組 heavy(worker の範囲・値 2)を名乗る 3 本(呼び手 2 つ)を 2 つの順で送り、1 拍の置き(place-tasks 1 回)で
+  ;; 置く本数はどちらの順でも宣言の値 2(同じ拍で置いた分も数える — hold-limits。送る順は値に関わらない)。
+  (setv #(state sha) (! (declared-state #((GroupLimit :group "heavy" :scope "worker" :limit 2)))))
+  (for [order [["a/1" "a/2" "b/1"] ["b/1" "a/2" "a/1"]]]
+    (var current state)
+    (for [key order]
+      (setv #(status _ after) (! (detached-reply current sha key [{"group" "heavy"}])))
+      (assert (= status 200) #(key status))
+      (:= current after))
+    (val placed (! (place-tasks 1000 current {} T)))
+    (assert (= (sorted (! (phases-of placed))) ["assigned" "assigned" "queued"]) #(order placed))))
+
+
 (deftest test-a-task-naming-an-undeclared-group-or-sending-a-value-is-refused
   ;; 受け口(PUT /detached と POST /tasks)は、宣言に無い組・上限の値や範囲を送る旧い形・区分の名乗りが宣言と合わない名乗りを 400 で
   ;; 断り、どこが違うかを名乗る。断った本文は行を作らない。
