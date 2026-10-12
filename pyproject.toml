@@ -235,6 +235,14 @@ tests = [
     "packages/doeff-traverse/tests/test_examples_run.py",
 ]
 
+# doeff-linter が節の判じに読む節の操作の一覧(生成物)は、doeff-hy の表 CLAUSE-OPS の書き出しと 1 字も違わない(card ki-d3ef2a50cc04)。
+# 表(clause_ops.hy)の変更は、検が表を import するので逆依存が選ぶ。生成物の file の変更はこの行が選ぶ(Python から import されない)。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-linter/data/clause_ops.json"
+tests = [
+    "tests/test_linter_clause_ops.py",  # 0.8 秒(pytest の計・枠の待ちを除く)— 生成物と表 CLAUSE-OPS の書き出しの一致
+]
+
 # Hy の版を変える変更(uv.lock の hy の行)は、doeff が hy.* から import する名(macros.hy の hy.scoping の 3 つなど — Hy の公開の
 # API に無い名)が新しい版に在る事を登記の前に確かめる(card ki-a05a752e7545・ADR-DOE-HY-008 R4)。検は照合の版を uv.lock から読み、
 # 使い捨ての環境で import するので、作業木の venv を sync する前でも新しい版で測る。uv.lock の他の行の変更でも払う。
@@ -252,7 +260,7 @@ tests = [
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_imports_exist_in_pypi_hy",  # 9.7 秒
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_internal_reliances_exist_in_pypi_hy",  # 5.5 秒
-    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 17.2 秒(23 本・load 52 の下・枠の待ちを除く)
+    "packages/doeff-hy/tests/test_bytecode_guard.py",  # 23.2 秒(28 本・load 44 の下・枠の待ちを除く)
 ]
 
 # doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version — commit の hook の semgrep・pre-commit と、
@@ -270,6 +278,14 @@ tests = [
 # 変えた便も、uv.lock を変えた便と同じ突き合わせを払う(上の行は uv.lock の変更でしか選ばれない)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-hy/pyproject.toml"
+tests = [
+    "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
+]
+
+# doeff-hy を引かずに Hy を宣言する doeff-domain(ADR-DOE-DOMAIN-001 R1)は、doeff-hy の Hy の宣言と同じ版の指定を置く — 宣言を
+# 変えた便も、doeff-hy の宣言との突き合わせを払う(ADR-DOE-HY-008 R6・card ki-96ca6c49fffd)。
+[[tool.doeff.contract-tests]]
+prefix = "packages/doeff-domain/pyproject.toml"
 tests = [
     "docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy::test_adr_doe_hy_008_doeff_hy_caps_hy_at_the_locked_version",  # 6.6 秒(load 115 の下・枠の待ちを除く)
 ]

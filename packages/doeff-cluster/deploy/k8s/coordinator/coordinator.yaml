@@ -130,7 +130,16 @@ spec:
             # 自分の行を job の log へ送る worker の入口の差(card ki-35923a5895b2・L2173・L2193)を足した版。coordinator の code の差は
             # ki-b0e8 の分だけで、機体の worker(zeus-native・mac-native)を 475ee1e5d へ上げるために、ki-b0e8 の入れ替えと 1 回に合わせる
             # (配り役の指示 2026-10-12 14:39 JST)。前の版 74ebb50b6(L2139)は 475ee1e5d の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 475ee1e5d7d5894f6ba4c73907be57b057ea70e9 }
+            # a1d17b0dd = coordinator の process 自身の行を job の log と同じ送り先へ送る版(card ki-0b0ab40048b9・L2214 — Pod の log は版上げの
+            # Pod の入れ替えで消え、10-12 08:12・08:45〜09:05 JST に全部の worker が届かなかった窓の coordinator の側を後から読めなかった)。
+            # 送り先は上に載る系の ConfigMap coordinator-env(DOEFF_JOB_LOG_OTLP・DOEFF_JOB_LOG_ATTRIBUTES)、名乗りは下の POD_NAME・
+            # POD_NAMESPACE。間の差の他の 3 つ(ac512fc1a・bca5f8ada・811234f1d)は worker の側の code。前の版 475ee1e5d(L2189)は
+            # a1d17b0dd の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: a1d17b0dd3047d1111f442e5a1ba4348ea3eab05 }
+            # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
+            # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
+            - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
             # 知らせの broker が Redis の時の、繋ぐ・送るの答えを待つ上限と、戻りを待つ間に繋がるかを試す間隔(秒)。
             - { name: NOTICE_TIMEOUT_SECONDS, value: "2" }
             - { name: NOTICE_RETRY_SECONDS, value: "2" }

@@ -96,6 +96,14 @@ def _git(root: Path, *args: str) -> str:
     return outcome.stdout.strip()
 
 
+def _uv_dir(kind: str) -> str:
+    """uv の置き場(`uv cache dir` / `uv python dir`)— HOME を替えた子にも今と同じ置き場を使わせるため。"""
+    proc = subprocess.run(
+        ["uv", kind, "dir"], capture_output=True, text=True, timeout=30, check=True
+    )
+    return proc.stdout.strip()
+
+
 def _pyproject(rows: tuple[Row, ...]) -> str:
     """模型の pyproject.toml — pytest の rootdir の印と契約の検の表だけ。"""
     table = "".join(
@@ -171,15 +179,28 @@ def _add_public_name_without_stub(model: Model) -> None:
 
 
 def _run(
-    model: Model, *extra: str, with_environment: bool = True, linter: Path | None = None
+    model: Model,
+    *extra: str,
+    with_environment: bool = True,
+    linter: Path | None = None,
+    home: Path | None = None,
 ) -> RunnerOutput:
     """入口を `make test-changed` と同じ `uv run --script` で模型の repo に対して走らせる(分岐点は模型の 1 つ目の commit)。
 
     with_environment = 模型の環境として今の検の環境(sys.prefix)を UV_PROJECT_ENVIRONMENT で指すか。
     linter = 逆依存の代役(既定は模型の空の答え — 実の doeff-linter は呼ばない)。
+    home = 渡すと `--linter` を渡さず、HOME をこの dir にして入口の既定の探し方(断面の置き場)を通す。
     """
     # 子はこの process の環境を継ぐ — uv の環境の 2 つの名を外し(`env -u`)、with_environment の時だけ今の環境を指す。
     environment = [f"UV_PROJECT_ENVIRONMENT={sys.prefix}"] if with_environment else []
+    # HOME を替えても uv の cache と python の置き場は今のまま使う(置き場が空の HOME の下に移ると python を探し直す)。
+    kept_uv = [
+        f"{name}={value}"
+        for name, value in (
+            ("UV_CACHE_DIR", _uv_dir("cache")),
+            ("UV_PYTHON_INSTALL_DIR", _uv_dir("python")),
+        )
+    ]
     proc = subprocess.run(
         [
             "env",
@@ -188,6 +209,7 @@ def _run(
             "-u",
             "VIRTUAL_ENV",
             *environment,
+            *([f"HOME={home}", *kept_uv] if home is not None else []),
             "uv",
             "run",
             "--script",
@@ -196,8 +218,11 @@ def _run(
             str(model.root),
             "--base",
             model.base,
-            "--linter",
-            str(linter if linter is not None else model.linter),
+            *(
+                []
+                if home is not None
+                else ["--linter", str(linter if linter is not None else model.linter)]
+            ),
             *extra,
         ],
         capture_output=True,
@@ -422,6 +447,122 @@ def test_an_unanswering_linter_is_named_and_the_run_goes_on(
     assert "赤: 0" in summary, summary
     assert "逆依存を測れなかった — " in summary, summary
     assert named in summary, summary
+
+
+# ---------------------------------------------------------------------------
+# linter の命令の決め方(card ki-2042a72a245b): 会話の Pod は PATH に doeff-linter を持たず、commit の hook のために揃えた
+# 断面の置き場にだけ持つ — 既定の探し方が置き場の鍵の linter を見つける事
+# ---------------------------------------------------------------------------
+
+LOCKED_SCRIPT = REPO_ROOT / "scripts" / "doeff_linter_locked.py"
+
+
+def _model_with_linter_crate(tmp_path: Path) -> Model:
+    """linter の crate の印(packages/doeff-linter/Cargo.toml)だけを持つ模型 — 組み立ての入力の鍵が計算できる。"""
+    return _make_model(
+        tmp_path,
+        (REPO_ROW,),
+        extra=(
+            (
+                "packages/doeff-linter/Cargo.toml",
+                '[package]\nname = "doeff-linter"\nversion = "0.0.0"\n',
+            ),
+            ("tests/test_near.py", PASSING),
+        ),
+    )
+
+
+def _input_key(model: Model) -> str:
+    """模型の HEAD の組み立ての入力の鍵(決め方の定義元 doeff_linter_locked.py の `key` の口)。"""
+    proc = subprocess.run(
+        [sys.executable, str(LOCKED_SCRIPT), "key"],
+        cwd=model.root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _snapshot(home: Path, sha: str, key: str, answer: str) -> Path:
+    """HOME の下の断面の置き場(~/.cache/doeff-linter-snapshots/<40 桁の sha>/doeff-linter と、組んだ時に書いた鍵 input_key)に
+    代役の linter を置く。"""
+    place = home / ".cache" / "doeff-linter-snapshots" / sha
+    linter = _fake_linter(place, answer)
+    (place / "input_key").write_text(key + "\n", encoding="utf-8")
+    return linter
+
+
+SNAPSHOT_SHA = "a" * 40
+OTHER_SHA = "b" * 40
+
+
+def test_the_default_linter_is_the_snapshot_locked_to_the_worktrees_build_inputs(
+    tmp_path: Path,
+) -> None:
+    """既定の失敗ケース: `--linter` を渡さず PATH にも linter が無くても、断面の置き場に作業木の組み立ての入力の鍵の linter が
+    在れば、入口はそれに逆依存を問い、答えの検を足す(変更前は「linter 'doeff-linter' が無い」で逆依存を測れなかった)。"""
+    model = _model_with_linter_crate(tmp_path)
+    (model.root / "README").write_text("changed\n", encoding="utf-8")
+    home = tmp_path / "home"
+    answer = {
+        "tests": [_affected("tests/test_near.py", 1)],
+        "hubs": [],
+        "not_modules": [],
+        "unreadable": [],
+        "files_read": 1,
+        "max_dependents": 40,
+    }
+    linter = _snapshot(home, SNAPSHOT_SHA, _input_key(model), json.dumps(answer))
+    output = _run(model, home=home)
+    summary = _summary(output)
+    assert output.returncode == 0, output.text[-3000:]
+    assert "逆依存を測れなかった" not in summary, summary
+    assert "tests/test_near.py — 1 本(逆依存・距離 1" in summary, summary
+    argv = (linter.parent / "argv").read_text(encoding="utf-8").splitlines()
+    assert argv[argv.index("--affected-tests") + 1] == "README", argv
+
+
+def test_an_explicit_linter_wins_over_the_snapshot(runner: ModuleType, tmp_path: Path) -> None:
+    """`--linter` で渡した命令は、置き場に鍵の合う linter が在っても使う(渡した物を黙って替えない)。"""
+    model = _model_with_linter_crate(tmp_path)
+    home = tmp_path / "home"
+    _snapshot(home, SNAPSHOT_SHA, _input_key(model), EMPTY_ANSWER)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(home))
+        picked = runner.pick_linter("/explicit/doeff-linter", model.root)
+    assert picked.command == "/explicit/doeff-linter"
+    assert "--linter で渡した命令" in picked.absent
+
+
+def test_a_snapshot_with_another_key_is_not_used_and_the_search_is_named(
+    runner: ModuleType, tmp_path: Path
+) -> None:
+    """別の鍵の linter は使わない(黙って別の版で問わない)— PATH の doeff-linter へ落ち、無かった時の理由に探した置き場と
+    作業木の鍵を載せる。"""
+    model = _model_with_linter_crate(tmp_path)
+    home = tmp_path / "home"
+    _snapshot(home, OTHER_SHA, "doeff-linter の組み立ての入力 " + "0" * 40, EMPTY_ANSWER)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(home))
+        picked = runner.pick_linter(None, model.root)
+    assert picked.command == runner.DEFAULT_LINTER
+    assert _input_key(model) in picked.absent, picked.absent
+    assert str(home / ".cache" / "doeff-linter-snapshots") in picked.absent, picked.absent
+    assert "PATH にも" in picked.absent, picked.absent
+
+
+def test_a_worktree_without_the_linter_crate_falls_back_to_path_and_names_it(
+    runner: ModuleType, tmp_path: Path
+) -> None:
+    """linter の crate の無い作業木(鍵が計算できない)は、鍵の linter を探さず PATH の doeff-linter へ落ち、理由を名指す。"""
+    model = _make_model(tmp_path, (REPO_ROW,))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(tmp_path / "home"))
+        picked = runner.pick_linter(None, model.root)
+    assert picked.command == runner.DEFAULT_LINTER
+    assert "linter が無い — " in picked.absent, picked.absent
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ from doeff import EffectBase
 from doeff_time._internals.validation import ensure_aware_datetime
 
 if TYPE_CHECKING:
-    from doeff_core_effects.scheduler import Future
+    from doeff_core_effects.scheduler import Future, Task
 
 _T = TypeVar("_T")
 
@@ -99,6 +99,45 @@ class WaitWithinEffect(EffectBase, Generic[_T]):
     park: bool = False
 
     def __post_init__(self) -> None:
+        seconds = _coerce_finite_float(self.seconds, name="seconds")
+        if seconds < 0.0:
+            raise ValueError("seconds must be >= 0.0")
+        if not isinstance(self.park, bool):
+            raise TypeError(f"park must be bool, got {type(self.park).__name__}")
+        object.__setattr__(self, "seconds", seconds)
+
+
+@dataclass(frozen=True)
+class RaceOutcome(Generic[_T]):
+    """The answer of RaceWithin: ``value`` = the value of the first of the futures to complete (None when the
+    deadline passed first) and ``timed_out`` = whether the deadline passed first."""
+
+    value: "_T | None"
+    timed_out: bool
+
+
+@dataclass(frozen=True)
+class RaceWithinEffect(EffectBase, Generic[_T]):
+    """Wait for the first of several scheduler futures or tasks for at most ``seconds``.
+
+    WaitWithin for a Race: answers ``RaceOutcome(value, False)`` with the value of the first of ``futures``
+    to complete (a failure or a cancellation is raised, as ``Race`` does), or ``RaceOutcome(None, True)`` when
+    ``seconds`` pass first. A future may complete with ``None``: the deadline is told apart by ``timed_out``,
+    not by the value. One effect replaces "spawn a sleeping timer task, Race it against the futures, cancel
+    it": ``sim_time_handler`` puts the deadline on its virtual time queue and withdraws it when a future wins
+    — no task is spawned (doeff-cluster's worker tick pause races its wake bells against the next due time
+    this way). ``park`` is WaitWithin's.
+    """
+
+    futures: "tuple[Task[_T] | Future[_T], ...]"
+    seconds: float
+    park: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.futures, tuple):
+            raise TypeError(f"futures must be a tuple, got {type(self.futures).__name__}")
+        if not self.futures:
+            raise ValueError("futures must hold at least one Task or Future (a bare deadline is a Delay)")
         seconds = _coerce_finite_float(self.seconds, name="seconds")
         if seconds < 0.0:
             raise ValueError("seconds must be >= 0.0")
@@ -216,6 +255,7 @@ def WaitWithin(future: "Future[_T]", seconds: float, *, park: bool = False) -> E
     return WaitWithinEffect(future=future, seconds=seconds, park=park)
 
 
-# The effect's constructor under the name the other waits use (the class itself — a typed answer, no wrapper).
+# The effects' constructors under the names the other waits use (the classes themselves — a typed answer, no wrapper).
 WaitTicks = WaitTicksEffect
+RaceWithin = RaceWithinEffect
 

@@ -65,3 +65,25 @@
 - 実施した会話: `c-3JYBNJMC2RZTM1S8V43939MP42`(この設計を依頼した側)。会社 Mac `CA-20038667`・2026-09-21T06:1x〜06:3xZ。
 - 復元の対象になった設計の依頼: `lt-HZRYH9ST368YKXR2T1Z2W9ZKJ9`(class investigate)。実装の依頼: `lt-JH7GM60YZ02MSGKKNXTDQK79A1`(class dev)。追跡の card: `acp:kanban-issue:ki-62aa1f4e9c9c`。
 - 教訓: 計画段の成果物(設計・反例・証拠)は書いた時点で git に入れる。pod の作業 dir は pod の入れ替えで消える。
+
+## 検の 4 本の改名と走らせ方(2026-10-12・card ki-d153ab595504)
+
+- `model/test_chain.py`・`model/test_counterexamples.py`・`model/test_scenario_checks.py`・`model/test_violations_are_rejected.py` は、
+  `model/<同じ名>.py.txt` へ改名した。中身も sha256 も同じで、`evidence/SHA256SUMS.txt` の path の欄だけを `.py.txt` に替えた。上の表と本文
+  (`counterexamples.md`・`implementation-request.md` など、hash で封をした file)の `model/test_*.py` は、この 4 本の元の名のまま読む。
+- 改名の訳: 4 本は pytest の検ではなく(`def test_*` を持たず、`t_*` の関数を `__main__` から回す script)、日次の母集団でも走ったことが無い。
+  `test_*.py` の名のままだと、日次の母集団の検が「検の file が根の外」で赤になるので、除外の行で外すほかない。その行は make test-changed の
+  選びに効かず(選びは名の規則だけを読み、記録の中の file を検として走らせる)、本物の検を記録の dir に置いても日次が緑になる
+  (設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B)。4 本の dir を母集団の根(Makefile の PACKAGE_EXTRA_TEST_ROOTS)へ入れる道は、
+  pytest が 0 本しか集めず rc 5 で日次が赤になるので取れない。
+- 走らせ直す手順(記録の dir で・標準 library だけの python — 4 本は互いと `chain` を module 名で import するので、`-I` は付けない):
+
+  ```sh
+  work=$(mktemp -d) && cp model/chain.py model/check_body_contract.py "$work"
+  for f in model/test_*.py.txt; do cp "$f" "$work/$(basename "${f%.txt}")"; done
+  cd "$work" && for t in test_chain test_counterexamples test_violations_are_rejected test_scenario_checks; do uv run --no-project python "$t.py"; done
+  ```
+
+  2026-10-12 に実測: `test_chain`・`test_counterexamples`・`test_violations_are_rejected` は `ALL OK`。`test_scenario_checks` は S5 の 2 本
+  (`S5_positive_the_instrument_is_green_on_the_seated_body`・`S5_negative_a_moved_contract_turns_the_instrument_red`)が FAIL — 機体に入っている
+  Claude Code の本体(`check_body_contract.DEFAULT_BODY`)を読む検なので、本体の版が設計の時と違う環境では赤になる(改名とは無関係)。

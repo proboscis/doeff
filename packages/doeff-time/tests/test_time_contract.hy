@@ -5,8 +5,8 @@
 ;;; SetTime は仮想の時計だけの effect なので契約の外(test_sim_time.py)。本物の時計が壁時計を読むことは test_get_time.py。
 (require doeff-hy.macros [defk deftest <- val])
 (import datetime [datetime timedelta])
-(import doeff_core_effects.scheduler [Task Wait])
-(import doeff_time [Delay GetMonotonic GetTime ScheduleAt WaitUntil])
+(import doeff_core_effects.scheduler [CompletePromise CreatePromise Promise Spawn Task Wait])
+(import doeff_time [Delay GetMonotonic GetTime RaceOutcome RaceWithin ScheduleAt WaitUntil])
 (import time_contract_clocks [ClockTraits ClockUnderTest OuterProbe])
 
 ;; 仮想の時計の「ちょうど」の許し — GetMonotonic は仮想の時刻の POSIX の秒(float)で、2024 年の秒数の刻みは 1e-6 より細かい。
@@ -146,3 +146,40 @@
     (except [failure ScheduledFailure]
       (:= caught (str failure))))
   (assert (= caught "scheduled program failed") "ScheduleAt の Program の失敗は Wait で上がる"))
+
+
+(defk completing-later [promise seconds]
+  {:pre [(: promise Promise) (: seconds float)] :post [(: % None)] :tags {:context "doeff-time-test" :role "program"}}
+  "seconds 秒の後に promise を None で満たす Program(RaceWithin の検 — 値が None でも期限と取り違えないか)。"
+  (<- (Delay seconds))
+  (<- (CompletePromise promise None))
+  None)
+
+
+(deftest test-race-within-answers-the-first-future-even-a-none
+  {:interpreters ["async" "sync" "sim"]}
+  (<- clock (ClockUnderTest))
+  (<- m0 float (GetMonotonic))
+  (<- never Promise (CreatePromise))
+  (<- soon Promise (CreatePromise))
+  (<- completer Task (Spawn (completing-later soon SHORT)))
+  (<- outcome RaceOutcome (RaceWithin #(never.future soon.future) (* 10 SHORT)))
+  (<- (Wait completer))
+  (<- m1 float (GetMonotonic))
+  (assert (= outcome (RaceOutcome :value None :timed-out False))
+          (.format "{}: None で満ちた Future が先なら timed-out は偽(答え {})" clock.name outcome))
+  (<- in-time bool (spent-matches clock SHORT (- m1 m0)))
+  (assert in-time (.format "{}: {} 秒で満ちた Future の待ちに {} 秒かかった" clock.name SHORT (- m1 m0))))
+
+
+(deftest test-race-within-times-out-at-its-deadline
+  {:interpreters ["async" "sync" "sim"]}
+  (<- clock (ClockUnderTest))
+  (<- m0 float (GetMonotonic))
+  (<- never Promise (CreatePromise))
+  (<- also-never Promise (CreatePromise))
+  (<- outcome RaceOutcome (RaceWithin #(never.future also-never.future) SHORT))
+  (<- m1 float (GetMonotonic))
+  (assert (= outcome (RaceOutcome :value None :timed-out True)) (.format "{}: 期限が先(答え {})" clock.name outcome))
+  (<- at-deadline bool (spent-matches clock SHORT (- m1 m0)))
+  (assert at-deadline (.format "{}: {} 秒の期限の待ちに {} 秒かかった" clock.name SHORT (- m1 m0))))

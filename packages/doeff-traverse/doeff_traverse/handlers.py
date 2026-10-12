@@ -9,7 +9,7 @@ progress_bars(): ItemOutcome handler — one progress bar per Traverse.
 import types
 from collections.abc import Sized
 from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from doeff_vm import WithBoundaries
 
@@ -29,6 +29,11 @@ from doeff_traverse.effects import (
     Traverse,
     Zip,
 )
+
+if TYPE_CHECKING:
+    from doeff_core_effects.scheduler import Task
+
+    from doeff import EffectGenerator
 
 # The effects every collection handler below answers. The VM skips the handler
 # for any other effect without entering Python (doeff_vm._effect_types) — the
@@ -101,6 +106,91 @@ def _report(handler, boundaries, report: ItemOutcome):
         raise ItemOutcomeNotPassedError(report, None)
 
 
+def _cancelled(item: ItemResult, label: str | None) -> ItemResult:
+    """The ItemResult reported for an item the Traverse stopped before it got an outcome: the
+    item as it came in, failed, with a ``cancelled`` history entry."""
+    return ItemResult(
+        index=item.index,
+        value=item.value,
+        failed=True,
+        history=item.history + [HistoryEntry(stage=label, event="cancelled")],
+    )
+
+
+@do
+def _report_cancelled(
+    handler, boundaries, traverse: object, label: str | None, total: int, items: list[ItemResult]
+) -> "EffectGenerator[None]":
+    """Report each of ``items`` — the items a stopping Traverse stopped — as cancelled, so a
+    progress consumer counts them and reaches ``total``."""
+    for item in items:
+        yield _report(handler, boundaries, ItemOutcome(traverse, label, total, "cancelled", _cancelled(item, label)))
+
+
+class _ItemTasks:
+    """The item tasks of one run of a parallel Traverse: the Task of each item spawned so far,
+    and which items have their outcome taken — what the Traverse reads when it stops
+    (_stop_items). A position is the item's place among the items run."""
+
+    def __init__(self, items: list[ItemResult]) -> None:
+        self.items = items
+        # The task of the item at each position, None until it is spawned.
+        self._mut_tasks: list[Task[ItemResult] | None] = [None] * len(items)
+        self._mut_taken: set[int] = set()
+
+    def spawned(self, position: int, task: "Task[ItemResult]") -> None:
+        """The task of the item at ``position`` is spawned."""
+        self._mut_tasks[position] = task
+
+    @property
+    def tasks(self) -> "list[Task[ItemResult]]":
+        """The tasks spawned so far, in spawn order."""
+        return [task for task in self._mut_tasks if task is not None]
+
+    def take(self, position: int) -> bool:
+        """Take the outcome of the item at ``position``: True for the first taker — the item's
+        task, which reports what the item ended with, or the stopping Traverse, which reports it
+        cancelled — and False for the other, so no item is reported twice."""
+        if position in self._mut_taken:
+            return False
+        self._mut_taken.add(position)
+        return True
+
+    def taken(self, position: int) -> bool:
+        """Whether the item at ``position`` has its outcome taken: an item task that finds its
+        item taken before it runs it was stopped before it started."""
+        return position in self._mut_taken
+
+    def take_the_rest(self) -> list[ItemResult]:
+        """Take every item whose outcome is not taken yet (spawned or not) and answer them."""
+        return [item for position, item in enumerate(self.items) if self.take(position)]
+
+
+@do
+def _stop_items(
+    handler, boundaries, traverse: object, label: str | None, total: int, tasks: _ItemTasks
+) -> "EffectGenerator[None]":
+    """Stop what a parallel Traverse leaves when Gather throws — an item's failure
+    (parallel_fail_fast), a broken ItemOutcome contract, an item cancelled or letting
+    TaskCancelledError out, or the Traverse's own task being cancelled — before the Traverse throws
+    it on: take every item without an outcome, cancel the spawned tasks (a no-op for an ended
+    one), wait for each to finish unwinding (Cancel only asks), then report the taken items
+    cancelled. No item task outlives the Traverse, and every item gets one outcome. An item a
+    task finishes after its item was taken here is not reported again (_ItemTasks.take).
+    ``boundaries`` None reports nothing (no consumer, or one broke the ItemOutcome contract)."""
+    from doeff_core_effects.effects import Try
+    from doeff_core_effects.handlers import try_handler
+    from doeff_core_effects.scheduler import Cancel, Wait
+
+    stopped = tasks.take_the_rest()
+    for task in tasks.tasks:
+        yield Cancel(task)
+    for task in tasks.tasks:
+        yield try_handler(Try(Wait(task)))
+    if boundaries is not None:
+        yield _report_cancelled(handler, boundaries, traverse, label, total, stopped)
+
+
 def _report_boundaries(
     inner_handlers: list[object],
 ) -> list[tuple[Literal["handler"], object]] | None:
@@ -133,8 +223,13 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
     Each item's outcome is reported with ItemOutcome when a handler between the Traverse
     and this one names it (see ItemOutcome); an iterable without a length is then read
     to its end at the first item, to know the total.
+
+    TaskCancelledError out of an item is no item's failure: the Traverse's task was cancelled
+    (or the item let one out), so the Traverse stops there — it reports that item and the
+    ones it has not reached as cancelled and throws it on.
     """
     from doeff_core_effects.handlers import try_handler
+    from doeff_core_effects.scheduler import TaskCancelledError
 
     from doeff.handler_utils import get_inner_handlers, inner_of
     @do
@@ -200,10 +295,14 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
                     prog = try_handler(install_self(prog))
 
                     # Catch unhandled failures per item — but not a consumer breaking the
-                    # ItemOutcome contract in a nested Traverse: that is no item's failure.
+                    # ItemOutcome contract in a nested Traverse, nor a cancel: no item's failure.
                     try:
                         value = yield prog
                     except ItemOutcomeNotPassedError:
+                        raise
+                    except TaskCancelledError:
+                        if report_under is not None:
+                            yield _report_cancelled(handler, report_under, this_run, effect.label, total, [item, *items_iter])
                         raise
                     except Exception as error:
                         result, outcome = ItemResult(
@@ -327,6 +426,12 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
     Each item's outcome is reported with ItemOutcome when a handler between the Traverse
     and this one names it (see ItemOutcome): carried items first, then each run item from
     its own task as it finishes.
+
+    An item's failure stays in the Collection, but TaskCancelledError out of an item is no
+    item's failure. When Gather throws — the Traverse's task was cancelled, an item let
+    TaskCancelledError out, or a consumer broke the ItemOutcome contract — the Traverse cancels
+    the item tasks left, waits for them to finish unwinding, reports their items cancelled
+    (not after a broken contract) and throws it on: no item task outlives the Traverse.
     """
     from doeff_core_effects.effects import Try
     from doeff_core_effects.scheduler import (
@@ -335,6 +440,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
         Gather,
         ReleaseSemaphore,
         Spawn,
+        TaskCancelledError,
     )
     from doeff_vm import Ok
 
@@ -379,61 +485,71 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
             # Create semaphore for concurrency limiting
             sem = yield CreateSemaphore(concurrency)
 
-            # Spawn a task per active item; each answers the item's ItemResult
-            tasks = []
-            for item in active_items:
+            # A task per active item; each answers the item's ItemResult
+            tasks = _ItemTasks(active_items)
+
+            @do
+            def run_item(position: int, item: ItemResult) -> "EffectGenerator[ItemResult]":
+                yield AcquireSemaphore(sem)
+                if tasks.taken(position):
+                    # The Traverse stopped before this item started (_stop_items).
+                    raise TaskCancelledError
+                prog = effect.f(item.value)
+                for h in inner_hs:
+                    prog = _program_handler(h)(prog)
+                prog = _program_handler(handler)(prog)
+
                 @do
-                def run_item(item=item):
-                    yield AcquireSemaphore(sem)
-                    prog = effect.f(item.value)
-                    for h in inner_hs:
-                        prog = _program_handler(h)(prog)
-                    prog = _program_handler(handler)(prog)
+                def attempt():
+                    from doeff_core_effects.handlers import try_handler
+                    value = yield try_handler(Try(prog))
+                    return value
 
-                    @do
-                    def attempt():
-                        from doeff_core_effects.handlers import try_handler
-                        value = yield try_handler(Try(prog))
-                        return value
+                result = yield attempt()
+                yield ReleaseSemaphore(sem)
+                if not isinstance(result, Ok) and isinstance(result.error, (ItemOutcomeNotPassedError, TaskCancelledError)):
+                    # A consumer broke the ItemOutcome contract in a nested Traverse, or the item
+                    # was cancelled: no item's failure — the Traverse stops.
+                    raise result.error
+                if not isinstance(result, Ok):
+                    done, outcome = ItemResult(
+                        index=item.index,
+                        value=result.error,
+                        failed=True,
+                        history=item.history + [HistoryEntry(
+                            stage=effect.label,
+                            event="failed",
+                            detail=str(result.error),
+                        )],
+                    ), "failed"
+                elif result.value is _SKIPPED:
+                    done, outcome = ItemResult(
+                        index=item.index,
+                        value=item.value,
+                        failed=True,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                    ), "skipped"
+                else:
+                    done, outcome = ItemResult(
+                        index=item.index,
+                        value=result.value,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
+                    ), "ok"
+                if tasks.take(position) and report_under is not None:
+                    yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, done))
+                return done
 
-                    result = yield attempt()
-                    yield ReleaseSemaphore(sem)
-                    if not isinstance(result, Ok) and isinstance(result.error, ItemOutcomeNotPassedError):
-                        # A consumer broke the ItemOutcome contract in a nested Traverse: no item's failure.
-                        raise result.error
-                    if not isinstance(result, Ok):
-                        done, outcome = ItemResult(
-                            index=item.index,
-                            value=result.error,
-                            failed=True,
-                            history=item.history + [HistoryEntry(
-                                stage=effect.label,
-                                event="failed",
-                                detail=str(result.error),
-                            )],
-                        ), "failed"
-                    elif result.value is _SKIPPED:
-                        done, outcome = ItemResult(
-                            index=item.index,
-                            value=item.value,
-                            failed=True,
-                            history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
-                        ), "skipped"
-                    else:
-                        done, outcome = ItemResult(
-                            index=item.index,
-                            value=result.value,
-                            history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
-                        ), "ok"
-                    if report_under is not None:
-                        yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, done))
-                    return done
-
-                task = yield Spawn(run_item())
-                tasks.append(task)
-
-            # Gather all results; build Collection preserving original index order
-            done_items = yield Gather(*tasks)
+            # Spawn the tasks and gather them; build Collection preserving original index order.
+            # When either throws (the Traverse's task can be cancelled while it waits for its turn
+            # after a Spawn, too), the item tasks left are stopped first.
+            try:
+                for position, item in enumerate(active_items):
+                    tasks.spawned(position, (yield Spawn(run_item(position, item))))
+                done_items = yield Gather(*tasks.tasks)
+            except Exception as error:
+                stopped_under = None if isinstance(error, ItemOutcomeNotPassedError) else report_under
+                yield _stop_items(handler, stopped_under, this_run, effect.label, total, tasks)
+                raise
             results = sorted([*carry_forward, *done_items], key=lambda r: r.index)
             return (yield Resume(k, Collection(results)))
 
@@ -510,16 +626,24 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
     """Parallel handler that aborts on first failure.
 
     Same interface as parallel(), but does NOT wrap items in Try.
-    If any spawned task raises, Gather propagates the exception immediately
-    and remaining tasks are cancelled.
+    If any spawned task raises, Gather propagates the exception immediately. Gather does not
+    cancel the other tasks, so the Traverse does: it cancels the item tasks left — running
+    ones receive TaskCancelledError, ones not started never run — waits for them to finish
+    unwinding, and only then raises the failure. No item task outlives the Traverse, also when
+    the caller catches the failure and goes on. An item that a task already queued to run
+    finishes before the Traverse wakes still finishes (items that do not wait, concurrency > 1).
+    The same holds when the Traverse's own task is cancelled, and TaskCancelledError out of an
+    item is no item's failure: the Traverse stops and raises it.
 
     Use this instead of parallel() when silent failure collection is unacceptable.
     Swap in the interpreter: (parallel :concurrency 40) → (parallel-fail-fast :concurrency 40)
 
     Each item's outcome is reported with ItemOutcome when a handler between the Traverse
     and this one names it (see ItemOutcome), from the item's task as it finishes — the
-    item that fails too, before its exception reaches Gather. A Traverse that receives a
-    failed item raises before running anything and reports nothing.
+    item that fails too, before its exception reaches Gather; then, when the Traverse stops,
+    the items it stopped as ``cancelled`` — so a Traverse reports exactly ``total`` outcomes
+    however it ends. A Traverse that receives a failed item raises before running anything
+    and reports nothing.
     """
     from doeff_core_effects.scheduler import (
         AcquireSemaphore,
@@ -527,6 +651,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
         Gather,
         ReleaseSemaphore,
         Spawn,
+        TaskCancelledError,
     )
 
     from doeff.handler_utils import get_inner_handlers
@@ -567,58 +692,70 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
 
             sem = yield CreateSemaphore(concurrency)
 
-            # Spawn a task per active item; each answers the item's ItemResult
-            tasks = []
-            for item in active_items:
-                @do
-                def run_item(item=item):
-                    yield AcquireSemaphore(sem)
-                    prog = effect.f(item.value)
-                    for h in inner_hs:
-                        prog = _program_handler(h)(prog)
-                    prog = _program_handler(handler)(prog)
-                    # NO Try wrapper — exceptions propagate to Gather
-                    try:
-                        value = yield prog
-                    except ItemOutcomeNotPassedError:
-                        raise  # a consumer broke the ItemOutcome contract in a nested Traverse: no item's failure
-                    except Exception as error:
-                        if report_under is not None:
-                            failed = ItemResult(
-                                index=item.index,
-                                value=error,
-                                failed=True,
-                                history=item.history + [HistoryEntry(
-                                    stage=effect.label,
-                                    event="failed",
-                                    detail=str(error),
-                                )],
-                            )
-                            yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "failed", failed))
-                        raise
-                    yield ReleaseSemaphore(sem)
-                    if value is _SKIPPED:
-                        done, outcome = ItemResult(
+            # A task per active item; each answers the item's ItemResult
+            tasks = _ItemTasks(active_items)
+
+            @do
+            def run_item(position: int, item: ItemResult) -> "EffectGenerator[ItemResult]":
+                yield AcquireSemaphore(sem)
+                if tasks.taken(position):
+                    # The Traverse stopped before this item started (_stop_items).
+                    raise TaskCancelledError
+                prog = effect.f(item.value)
+                for h in inner_hs:
+                    prog = _program_handler(h)(prog)
+                prog = _program_handler(handler)(prog)
+                # NO Try wrapper — exceptions propagate to Gather
+                try:
+                    value = yield prog
+                except (ItemOutcomeNotPassedError, TaskCancelledError):
+                    # A consumer broke the ItemOutcome contract in a nested Traverse, or the item
+                    # was cancelled: no item's failure — the Traverse stops.
+                    raise
+                except Exception as error:
+                    if tasks.take(position) and report_under is not None:
+                        failed = ItemResult(
                             index=item.index,
-                            value=item.value,
+                            value=error,
                             failed=True,
-                            history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
-                        ), "skipped"
-                    else:
-                        done, outcome = ItemResult(
-                            index=item.index,
-                            value=value,
-                            history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
-                        ), "ok"
-                    if report_under is not None:
-                        yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, done))
-                    return done
+                            history=item.history + [HistoryEntry(
+                                stage=effect.label,
+                                event="failed",
+                                detail=str(error),
+                            )],
+                        )
+                        yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "failed", failed))
+                    raise
+                yield ReleaseSemaphore(sem)
+                if value is _SKIPPED:
+                    done, outcome = ItemResult(
+                        index=item.index,
+                        value=item.value,
+                        failed=True,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                    ), "skipped"
+                else:
+                    done, outcome = ItemResult(
+                        index=item.index,
+                        value=value,
+                        history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
+                    ), "ok"
+                if tasks.take(position) and report_under is not None:
+                    yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, done))
+                return done
 
-                task = yield Spawn(run_item())
-                tasks.append(task)
-
-            # Gather — if any task raised, the exception propagates here
-            done_items = yield Gather(*tasks)
+            # Spawn the tasks and gather them — if any task raised, the exception propagates here.
+            # Gather does not cancel the other tasks, so when it (or a Spawn — the Traverse's task
+            # can be cancelled while it waits for its turn after one) throws, the item tasks left
+            # are stopped first.
+            try:
+                for position, item in enumerate(active_items):
+                    tasks.spawned(position, (yield Spawn(run_item(position, item))))
+                done_items = yield Gather(*tasks.tasks)
+            except Exception as error:
+                stopped_under = None if isinstance(error, ItemOutcomeNotPassedError) else report_under
+                yield _stop_items(handler, stopped_under, this_run, effect.label, total, tasks)
+                raise
             results = sorted(done_items, key=lambda r: r.index)
             return (yield Resume(k, Collection(results)))
 
@@ -751,15 +888,17 @@ class _OpenBar:
 def progress_bars(make_bar: BarFactory):
     """ItemOutcome handler: one progress bar per Traverse, closed once all its items are counted.
 
-    Counts every item the Traverse handler reports — ok, failed, skipped and carried — so a
-    bar reaches ``total`` and closes even when items fail. ``make_bar(total=<int>,
+    Counts every item the Traverse handler reports — ok, failed, skipped, carried and
+    cancelled — so a bar reaches ``total`` and closes however the Traverse ends: items failing,
+    parallel_fail_fast stopping at a failure, or the Traverse being cancelled. ``make_bar(total=<int>,
     desc=<label or "traverse">)`` builds a bar when a Traverse reports its first item
-    (``tqdm.tqdm`` fits); the handler calls its ``update(1)`` per item and ``close()`` at
-    ``total``. Install it inside the Traverse handler, like a body handler:
-    ``[... (progress-bars tqdm) (parallel 10)]`` (ItemOutcome says why). It passes each
-    report on, as every consumer does, so other consumers (a second bar, a failure log) sit
-    on either side of it. A Traverse that parallel_fail_fast stops keeps its bar open: the
-    items it cancels report nothing.
+    (``tqdm.tqdm`` fits); the handler calls its ``update(1)`` per item that got an outcome and
+    ``close()`` at ``total``. A cancelled item (one the Traverse stopped) is counted without
+    ``update``, so the bar of a stopped Traverse closes at n < total — as tqdm's own loop
+    leaves its bar when the loop raises. Install it inside the Traverse handler, like a body
+    handler: ``[... (progress-bars tqdm) (parallel 10)]`` (ItemOutcome says why). It passes
+    each report on, as every consumer does, so other consumers (a second bar, a failure log)
+    sit on either side of it.
     """
     # The bars of the Traverse runs (ItemOutcome.traverse) not yet at their total.
     open_bars: dict[object, _OpenBar] = {}
@@ -770,7 +909,8 @@ def progress_bars(make_bar: BarFactory):
             opened = open_bars.get(effect.traverse) or _OpenBar(
                 bar=make_bar(total=effect.total, desc=effect.label or "traverse"), counted=0,
             )
-            opened.bar.update(1)
+            if effect.outcome != "cancelled":
+                opened.bar.update(1)
             if opened.counted + 1 >= effect.total:
                 opened.bar.close()
                 open_bars.pop(effect.traverse, None)

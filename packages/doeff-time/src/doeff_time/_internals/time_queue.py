@@ -17,12 +17,14 @@ class TimeQueueEntry:
     time: datetime
     sequence: int
     promise: "Promise[Any]"
+    # The value the clock completes ``promise`` with (a RaceWithin deadline's DEADLINE_PASSED, else None).
+    answer: Any = None
 
 
 class TimeQueue:
     def __init__(self) -> None:
         self._mut_sequence = 0
-        self._mut_items: "list[tuple[datetime, int, Promise[Any]]]" = []  # noqa: UP037
+        self._mut_items: "list[tuple[datetime, int, Promise[Any], Any]]" = []  # noqa: UP037
         # Sequences of entries withdrawn before their time (a timed wait whose future won —
         # agora-redesign #2618). Dropped lazily when they reach the head, so withdrawing is O(1)
         # and the clock never advances to a deadline nobody waits for.
@@ -30,11 +32,11 @@ class TimeQueue:
         # Sequences still in the heap and not withdrawn — answers "is it still queued?" in O(1).
         self._mut_queued: set[int] = set()
 
-    def push(self, time: datetime, promise: "Promise[Any]") -> int:
-        """Queue ``promise`` to be completed at ``time``; answers the entry's sequence (for ``withdraw``)."""
+    def push(self, time: datetime, promise: "Promise[Any]", answer: Any = None) -> int:
+        """Queue ``promise`` to be completed with ``answer`` at ``time``; answers the entry's sequence (for ``withdraw``)."""
         target_time = ensure_aware_datetime(time, name="time")
         self._mut_sequence += 1
-        heapq.heappush(self._mut_items, (target_time, self._mut_sequence, promise))
+        heapq.heappush(self._mut_items, (target_time, self._mut_sequence, promise, answer))
         self._mut_queued.add(self._mut_sequence)
         return self._mut_sequence
 
@@ -48,15 +50,15 @@ class TimeQueue:
     def _drop_withdrawn_head(self) -> None:
         """Keep the head a live entry, so ``pop`` / ``empty`` never see a withdrawn deadline."""
         while self._mut_items and self._mut_items[0][1] in self._mut_withdrawn:
-            _, sequence, _ = heapq.heappop(self._mut_items)
+            _, sequence, _, _ = heapq.heappop(self._mut_items)
             self._mut_withdrawn.discard(sequence)
 
     def pop(self) -> TimeQueueEntry:
         self._drop_withdrawn_head()
-        time, sequence, promise = heapq.heappop(self._mut_items)
+        time, sequence, promise, answer = heapq.heappop(self._mut_items)
         self._mut_queued.discard(sequence)
         self._drop_withdrawn_head()
-        return TimeQueueEntry(time=time, sequence=sequence, promise=promise)
+        return TimeQueueEntry(time=time, sequence=sequence, promise=promise, answer=answer)
 
     def empty(self) -> bool:
         self._drop_withdrawn_head()

@@ -13,6 +13,7 @@ from doeff_core_effects.scheduler import (
     Future,
     Race,
     Spawn,
+    Task,
     Wait,
 )
 
@@ -20,10 +21,13 @@ from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
 from doeff_time._internals import SimClock, TimeQueue
+from doeff_time._internals.deadline import DEADLINE_PASSED
 from doeff_time.effects import (
     DelayEffect,
     GetMonotonicEffect,
     GetTimeEffect,
+    RaceOutcome,
+    RaceWithinEffect,
     ScheduleAtEffect,
     SetTimeEffect,
     TicksOutcome,
@@ -124,7 +128,7 @@ class SimTimeRuntime:
                         run.queued(sequence)
                         self._mut_tick_runs[sequence] = run
                         continue
-                yield CompletePromise(entry.promise, None)
+                yield CompletePromise(entry.promise, entry.answer)
         finally:
             self._mut_driver_running = False
 
@@ -172,6 +176,25 @@ class SimTimeRuntime:
         return first
 
     @do
+    def _race_within(self, futures: "tuple[Task[object] | Future[object], ...]", seconds: float, park: bool):
+        """Answer the first of ``futures`` to complete, or the deadline once ``seconds`` of virtual time pass
+        first — as a RaceOutcome.
+
+        WaitWithin's deadline (no timer task — withdrawn when a future wins) raced against several futures.
+        The clock driver completes it with DEADLINE_PASSED, so a future that completes with None is not
+        taken for the deadline.
+        """
+        deadline = yield CreatePromise()
+        sequence = self._time_queue.push(self._clock.current_time + _delay_span(seconds), deadline, answer=DEADLINE_PASSED)
+        _ = yield self._ensure_clock_driver()
+        try:
+            first = yield Race(*futures, deadline.future, priority=PRIORITY_IDLE if park else None)
+        finally:
+            self._time_queue.withdraw(sequence)
+        timed_out = first is DEADLINE_PASSED
+        return RaceOutcome(value=None if timed_out else first, timed_out=timed_out)
+
+    @do
     def _wait_ticks(self, future: "Future[object]", every: float, count: int, park: bool):
         """Answer ``future``'s value, or None once ``count`` ticks spaced ``every`` seconds pass first,
         with how many ticks passed (agora-redesign #3066).
@@ -195,6 +218,16 @@ class SimTimeRuntime:
                 del self._mut_tick_runs[run.sequence]
         return TicksOutcome(value=first, passed=run.passed)
 
+    def _timed_wait(self, effect: WaitWithinEffect[object] | WaitTicksEffect[object] | RaceWithinEffect[object]):
+        """The Program that answers one of the timed waits (a sub-program that completes before the Transfer)."""
+        match effect:
+            case WaitWithinEffect():
+                return self._wait_within(effect.future, effect.seconds, effect.park)
+            case WaitTicksEffect():
+                return self._wait_ticks(effect.future, effect.every, effect.count, effect.park)
+            case RaceWithinEffect():
+                return self._race_within(effect.futures, effect.seconds, effect.park)
+
     @do
     def handle(
         self,
@@ -206,7 +239,8 @@ class SimTimeRuntime:
         | ScheduleAtEffect
         | SetTimeEffect
         | WaitWithinEffect
-        | WaitTicksEffect,
+        | WaitTicksEffect
+        | RaceWithinEffect,
         k: Any,
     ):
         # The annotation is the clause list below: the VM skips this handler for
@@ -245,12 +279,8 @@ class SimTimeRuntime:
             # differences between readings.
             reading = now if isinstance(effect, GetTimeEffect) else now.timestamp()
             return (yield Transfer(k, reading))
-        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect)):
-            answer = yield (
-                self._wait_within(effect.future, effect.seconds, effect.park)
-                if isinstance(effect, WaitWithinEffect)
-                else self._wait_ticks(effect.future, effect.every, effect.count, effect.park)
-            )
+        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
+            answer = yield self._timed_wait(effect)
             return (yield Transfer(k, answer))
         if isinstance(effect, ScheduleAtEffect):
 

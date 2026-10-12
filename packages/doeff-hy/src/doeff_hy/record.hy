@@ -40,6 +40,10 @@
 ;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
 ;;; 本体が __init__ ほかを自分で書く)は投影と同じ展開(dataclass が関数を作る)にする。
 ;;; `dataclass` は使う側の scope の名前を指す(使う側が import する)。
+;;; 関数の本体の中に書いた defrecord・defwire の実行の展開は、展開の import(doeff_hy ほか)と型と記帳をすぐ呼ぶ関数に入れて
+;;; (setv Name ((fn [] … Name))) と型の名だけを束ねる(doeff_hy.macros の _scoped-definition — import した名が外の関数の局所の名に
+;;; ならないため・card ki-8a17293bc3e5・tests/test_nested_definition_scope.py)。型の __qualname__ には包んだ関数の名が入る
+;;; (defwire は中の defrecord がもう 1 度包むので 2 つ)。module と class の本体と型検査の投影は包まない。
 ;;;
 ;;; ---------------------------------------------------------------------------
 ;;; 頭の辞書 {:tags … :check […]} — 定義のタグと作る時の検め(どちらも省ける)
@@ -133,8 +137,9 @@
 ;;;   入れ子の欄の型も defwire の型にする(素の defrecord は wire の形を持たない)。
 ;;;
 ;;; 展開(上の LandingRow):
-;;;   (do (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […]} 欄 …)
+;;;   (do (import typing [ClassVar :as _doeff-ClassVar])
 ;;;       (import doeff_hy.wire)
+;;;       (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […] :class-vars […]} 欄 …)
 ;;;       (setattr LandingRow "__pydantic_config__" (doeff_hy.wire.wire-config {"lane_id" "laneId" …} "reject"))
 ;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy.wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject")))
 ;;;
@@ -189,7 +194,12 @@
 ;; 展開の時に呼ぶ関数は defk にできず defn になり、quasiquote を持つ defn は型の投影に載らない)。
 ;; 欄の読み方(hy-index の record_def・quality.hy_record と同じ): `#^ T x` = (annotate x T)・
 ;; `(#^ T x)` = ((annotate x T))・`(setv #^ T x 既定値 #^ U y 既定値 …)`(組ごとに 1 欄)・裸の記号 x。それ以外の form は欄ではない。
-(defmacro defrecord [name #* forms]
+;; 展開の文の並び(import の doeff_hy — record_runtime・頭の辞書の宣言 — と型と記帳)は、doeff_hy.macros の _scoped-definition
+;; (定義の macro が全部通る 1 か所)で書いた所に合わせて組む: 関数の本体の中では、すぐ呼ぶ関数に入れて型の名だけを束ねる —
+;; 並べたままだと import した doeff_hy が外の関数全体の局所の名になり、外の関数で先に読む module の段の doeff_hy が
+;; UnboundLocalError で落ちた(card ki-8a17293bc3e5)。module と class の本体では今までどおり並べる。
+(defmacro defrecord [_hy-compiler name #* forms]
+  (import doeff_hy.macros [_scoped-definition])
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
   (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys tags-form])
   (setv docstring None
@@ -326,9 +336,10 @@
        (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))
-    (return (if (is written None)
-                `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)
-                `(do (import doeff_hy.record_runtime) ~written))))
+    (return (_scoped-definition _hy-compiler name
+              [(if (is written None)
+                   `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)
+                   `(do (import doeff_hy.record_runtime) ~written))])))
   (setv header (get rest 0)
         fields (cut rest 1 None)
         where (+ "defrecord " (str name)))
@@ -399,19 +410,20 @@
                           None)]
                       []))
   (setv written (when (not static-view) (class-form docstring class-vars fields post-init)))
-  `(do
-     (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy.record_runtime]))
-     ~@(if (and static-view statements) ['(import typing [cast :as _doeff-cast])] [])
-     ~@(if (is written None)
-           [`(defclass [(dataclass :frozen True :kw-only True)] ~name []
-               ~@(if (is docstring None) [] [docstring])
-               ~@(or class-vars [])
-               ~@fields
-               ~@post-init)]
-           [written])
-     (setattr ~name "__doeff_tags__" ~(tags-form tags where))
-     (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))
-     (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False))))
+  (_scoped-definition _hy-compiler name
+    [`(do
+        (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy.record_runtime]))
+        ~@(if (and static-view statements) ['(import typing [cast :as _doeff-cast])] [])
+        ~@(if (is written None)
+              [`(defclass [(dataclass :frozen True :kw-only True)] ~name []
+                  ~@(if (is docstring None) [] [docstring])
+                  ~@(or class-vars [])
+                  ~@fields
+                  ~@post-init)]
+              [written])
+        (setattr ~name "__doeff_tags__" ~(tags-form tags where))
+        (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))
+        (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False)))]))
 
 
 (deff require-check [#^ str record #^ tuple fields #^ str check #^ bool passed #^ dict values]  ; defk にできない: defrecord の展開が dataclass の __post_init__ から呼ぶ(Program を実行できない所)
@@ -429,10 +441,11 @@
 
 ;; JSON の境目の型(頭注の「defwire」)。欄の読み方は defrecord と同じ(展開は defrecord をそのまま使う)。
 ;; wire の名の計算は展開の時にだけ要るので macro の本体の中に置く(defrecord と同じ理由 — 切り出すと defn になる)。
-(defmacro defwire [name #* forms]
+(defmacro defwire [_hy-compiler name #* forms]
   (import re)
   (import hy.models [Dict Expression Keyword List String Symbol])
   (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys])
+  (import doeff_hy.macros [_scoped-definition])
   (when (not (isinstance name Symbol))
     (raise (SyntaxError (.format "defwire の第 1 引数は型の名前(symbol)ちょうど: {}" (hy.repr name)))))
   (setv where (+ "defwire " (str name))
@@ -503,16 +516,20 @@
                                     [])
                                [(Keyword "class-vars")
                                 `[#^ (get _doeff-ClassVar doeff_hy.wire.WireShape) __doeff-wire__]])))
-  `(do
+  ;; 書いた所に合わせて組む(defrecord と同じ — card ki-8a17293bc3e5): 関数の本体の中では下の import(`_doeff-ClassVar`・
+  ;; doeff_hy)と型と記帳をすぐ呼ぶ関数に入れ、型の名だけを束ねる。中の defrecord は、その関数の中でもう 1 度自分を包む
+  ;; (型の __qualname__ に包んだ関数の名が 2 つ入る)— 包まない型の組み立てを別の macro に切り出すと、その macro の読み方の
+  ;; 規則が共通の品質検査の固定表(quality.hy_projection の FIXED_MACROS)に無く、record.hy の検査が欠測になる。
+  (_scoped-definition _hy-compiler name [
      ;; 注記が読む名(Python 3.13 までは class の本体で注記を評価する)を型を建てる前に読む。ClassVar は from-import の別名で読む:
      ;; pyright は dataclass の欄から外す ClassVar を `ClassVar` の名か `typing.ClassVar` の形でだけ見分け(module の再公開の
      ;; 名では見分けない)、`import typing` を defwire ごとに出すと strict が同じ import の重ね(reportDuplicateImport)を赤にする。
      ;; 別名は `__` で始めない(class の本体で名が private の形に書き換わり実行時に読めない)。
-     (import typing [ClassVar :as _doeff-ClassVar])
-     (import doeff_hy.wire)
-     (hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
-     (setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
-     (setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))))
+     '(import typing [ClassVar :as _doeff-ClassVar])
+     '(import doeff_hy.wire)
+     `(hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
+     `(setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
+     `(setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))]))
 
 
 ;; 展開の時に member の名前から値を計算する(template macro の形の外 — 頭注)。

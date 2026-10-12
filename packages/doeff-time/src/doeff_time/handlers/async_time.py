@@ -13,16 +13,22 @@ from doeff_core_effects.scheduler import PRIORITY_IDLE, Cancel, Race, Spawn
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
+from doeff_time._internals.deadline import DEADLINE_PASSED
 from doeff_time.effects import (
     DelayEffect,
     GetMonotonicEffect,
     GetTimeEffect,
+    RaceWithinEffect,
     ScheduleAtEffect,
     WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
 )
-from doeff_time.handlers._wall_ticks import timed_wait_answer, timed_wait_seconds
+from doeff_time.handlers._wall_ticks import (
+    timed_wait_answer,
+    timed_wait_futures,
+    timed_wait_seconds,
+)
 
 ProtocolHandler = Callable[[Any, Any], Any]
 
@@ -55,9 +61,10 @@ class AsyncTimeRuntime:
 
     @do
     def _expire_after(self, seconds: float):
-        """The deadline of a timed wait (WaitWithin): sleep ``seconds`` on the wall clock, then answer None."""
+        """The deadline of a timed wait (WaitWithin・WaitTicks・RaceWithin): sleep ``seconds`` on the wall clock, then
+        answer DEADLINE_PASSED (a future may complete with None — RaceWithin)."""
         yield _clock_wait(self._sleep, max(0.0, seconds))
-        return None
+        return DEADLINE_PASSED
 
     @do
     def handle(self, effect: Any, k: Any):
@@ -77,14 +84,14 @@ class AsyncTimeRuntime:
             return (yield Transfer(k, self._now()))
         if isinstance(effect, GetMonotonicEffect):
             return (yield Transfer(k, float(self._monotonic())))
-        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect)):
-            # The deadline is a daemon task sleeping on the wall clock, raced against the future and
+        if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
+            # The deadline is a daemon task sleeping on the wall clock, raced against the future(s) and
             # cancelled afterwards (daemon: abandoning it at root return is its lifecycle — #501).
             # WaitTicks' deadline is its last tick (agora-redesign #3066).
             started = float(self._monotonic())
             timer = yield Spawn(self._expire_after(timed_wait_seconds(effect)), daemon=True)
             try:
-                first = yield Race(effect.future, timer, priority=PRIORITY_IDLE if effect.park else None)
+                first = yield Race(*timed_wait_futures(effect), timer, priority=PRIORITY_IDLE if effect.park else None)
             finally:
                 yield Cancel(timer)
             return (yield Transfer(k, timed_wait_answer(effect, first, float(self._monotonic()) - started)))

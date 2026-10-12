@@ -147,7 +147,7 @@
 (import doeff_core_effects.handlers [state :as session-store await-handler slog-handler slog-discard-handler])
 (import doeff_core_effects.scheduler [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task
                                       Future TaskCancelledError Race])
-(import doeff_core_effects.stop_signal_effects [AwaitStop StopRequested])
+(import doeff_core_effects.stop_signal_effects [AwaitStop StopBell StopRequested])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [Delay GetMonotonic epoch-ms-of sim-time-handler async-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
@@ -1990,7 +1990,7 @@
 ;; 周の間の待ち(AwaitNextTick)は本番の答え手 tick-pauses が宿の内側で答える(期限・呼び鈴・止めの合図の早い 1 つまで 1 本で待つ)。
 ;; 宿は起きる物の組(WorkerWakes)に、本番の送り手の口と同じ関数で組んだ期限と、宿の呼び鈴を入れる。宿の呼び鈴は周の頭に掛け
 ;; (ticked-truth — 周の観測の後に来た出来事も鳴らす)、子 process の終わり・node ごとの死で世界が鳴らして手放す(本番の待つ子の終わりの代わり)。
-;; 止めの合図の待ち(AwaitStop)は止めの呼び鈴で待ち、止めの頼みで世界が鳴らす。
+;; 止めの合図の呼び鈴(StopBell)は止めの呼び鈴そのもの(止めの待ち AwaitStop もこれで待つ)で、止めの頼みで世界が鳴らす。
 
 (defk rehung-bell [bell]
   {:pre [(: bell (| Promise None))] :post [(: % Promise)] :tags {:context "doeff-cluster" :role "protocol"}}
@@ -2225,13 +2225,24 @@
     (<- wakes WakeSet (host-wakes worker truth began now (if (is truth.wake-bell None) None truth.wake-bell.future)))
     (resume wakes))
   (AwaitStop []
-    ;; 止めの合図の待ち(周の間の待ちが競わせる — 本番の答え手は os-signal-stop-handler)。止めが頼まれていれば今すぐ、そうでなければ
-    ;; 周の頭に掛けた止めの呼び鈴が鳴るまで(鳴って手放されていれば、この周の間に頼まれた — 今すぐ)。
+    ;; 止めの合図の待ち(本番の答え手は os-signal-stop-handler)。止めが頼まれていれば今すぐ、そうでなければ周の頭に掛けた止めの呼び鈴が
+    ;; 鳴るまで(鳴って手放されていれば、この周の間に頼まれた — 今すぐ)。
     (<- asked HostStop (StopRequestOf worker.name boot))
     (<- truth HostTruth (checked-truth worker.name boot asked.truth))
     (when (not (or asked.all-stopping truth.stopping (is truth.stop-bell None)))
       (<- (Wait truth.stop-bell.future)))
-    (resume TERM-REASON)))
+    (resume TERM-REASON))
+  (StopBell []
+    ;; 止めの合図の呼び鈴(周の間の待ちが task を立てずに競わせる — 本番の答え手は os-signal-stop-handler)= 周の頭に掛けた止めの呼び鈴
+    ;; そのもの(鳴るまで周をまたいで同じ物 — rehung-bell)。止めが頼まれていれば(鳴って手放されていれば、この周の間に頼まれた)満ちた
+    ;; 呼び鈴。
+    (<- asked HostStop (StopRequestOf worker.name boot))
+    (<- truth HostTruth (checked-truth worker.name boot asked.truth))
+    (when (or asked.all-stopping truth.stopping (is truth.stop-bell None))
+      (<- rung Promise (CreatePromise))
+      (<- (CompletePromise rung TERM-REASON))
+      (return (resume rung.future)))
+    (resume truth.stop-bell.future)))
 
 
 (defk await-beat [name boot]

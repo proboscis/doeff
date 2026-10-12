@@ -36,6 +36,7 @@
 (import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value])
 (import doeff-hy.system-form [record-names])
 (import doeff-hy.positions [locate-synthesized])
+(import doeff-hy.expansion-names [alias-symbol])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
 (import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
 
@@ -679,7 +680,7 @@ defk {name}: :post type annotation cannot be an empty string.
             ~(hy.models.Symbol (. source name))))))
 
 (defn _scoped-definition [compiler name forms [module-forms #()]]
-  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
+  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defsystem・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire)の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
    `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
    module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
    関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す(card ki-93395c51de1e・設計検証
@@ -2540,10 +2541,11 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     DeprecationWarning
     :stacklevel 2)
   (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
-  ;; 型検査のための展開では、doeff-hy-check が module の頭で読む時だけ置く補助の名で引く
-  ;; (doeff_hy/static_view.py の SESSION_STATIC_IMPORTS)。実行時は defhandler が出す import の Put / Some。
-  (setv put (if (_static-view?) '_doeff_Put 'Put)
-        some (if (_static-view?) '_doeff_Some 'Some))
+  ;; どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — doeff_hy/expansion_names.py)。
+  ;; 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く(doeff_hy/static_view.py の
+  ;; SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
+  (setv put (alias-symbol "Put")
+        some (alias-symbol "Some"))
   `(do
      (setv ~name ~val)
      (<- (~put ~key-var (~some ~name)))))

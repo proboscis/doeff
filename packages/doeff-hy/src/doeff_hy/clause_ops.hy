@@ -8,8 +8,9 @@
 ;;;   returns       続きが終わると節へ戻るか(resume)— 戻る操作の書き換えの後に、handle.hy が「再開した」の印を立てる
 ;;;                 (実行の時の検め。印の名は handle.hy だけが知り、行の rewrite は知らない)
 ;;;   tail          節の末尾の位置で替える操作の名(resume → transfer — handler の frame を残さない)。None は替えない
-;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名
-;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名
+;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名(別名 `_doeff_<名>` で束ねる — 書き手の同じ名の effect を
+;;;                 隠さない・doeff_hy/expansion_names.py。rewrite が読む綴りも alias-symbol で同じ別名を引く)
+;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名(同じく別名)
 ;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
 ;;;
 ;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
@@ -18,8 +19,12 @@
 ;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換えと戻る操作の印)・_tail-resume-to-transfer
 ;;;                      (末尾の替え)・_vm-imports(node の import)
 ;;;   clause_endings.hy  ops-in / clause-ops(節が使う操作)・check-clause-by-name / check-clause-endings(ending ごとの照合)
+;;;   doeff-linter       business_fakes.rs の節の判じ(DOEFF143 ほか)— Rust は Hy を評価できないので、表から名・ending・arity だけを
+;;;                      linter-table-json で書き出した packages/doeff-linter/data/clause_ops.json を include_str! で読む(card ki-d3ef2a50cc04)。
+;;;                      file は scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が表との食い違いを赤にする。
 ;;; doeff_hy のどの module も、表の外に操作の名を文字列か quote した記号で書かない(tests/test_handle_clause_ops.py が全 module を
 ;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない・設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 B)。
+;;; doeff-linter の側も同じ — business_fakes.rs は操作の名を literal で書かない(その file の検が拾う)。
 ;;;
 ;;; handle.hy が module の頭で import する(macros.hy が handle.hy を require する途中で読まれる)ので、doeff-hy.macros も
 ;;; doeff-hy.record も require しない — defrecord・deff・val を使わず、declarations.hy の DefinitionTags と同じ素の dataclass と
@@ -27,9 +32,11 @@
 
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
+(import json)
 (import enum [StrEnum])
 (import hy.models [Expression Symbol])
 (import doeff-hy.static-view [static-view-enabled])
+(import doeff-hy.expansion-names [alias-symbol import-form])
 
 
 (defclass Ending [StrEnum]
@@ -62,18 +69,18 @@
    `(isinstance effect EffectType)` で絞られている)。"
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
-      `(yield (do (import doeff [typed-resume])
-                  (typed-resume effect k ~value)))
-      `(yield (Resume k ~value))))
+      `(yield (do ~(import-form ["typed_resume"])
+                  (~(alias-symbol "typed_resume") effect k ~value)))
+      `(yield (~(alias-symbol "Resume") k ~value))))
 
 
 (defn _transfer [args recur]
   "(transfer 値) → 続きを値で再開し、handler を外す(末尾の呼び)。型検査のための展開は core の typed-transfer。"
   (setv value (recur (get args 0)))
   (if (static-view-enabled)
-      `(yield (do (import doeff [typed-transfer])
-                  (typed-transfer effect k ~value)))
-      `(yield (Transfer k ~value))))
+      `(yield (do ~(import-form ["typed_transfer"])
+                  (~(alias-symbol "typed_transfer") effect k ~value)))
+      `(yield (~(alias-symbol "Transfer") k ~value))))
 
 
 (defn _finish [args recur]
@@ -83,7 +90,7 @@
 
 (defn _reperform [args recur]
   "(reperform effect) → effect と続きを外の handler へ渡す(OCaml 5 の reperform)。"
-  `(yield (Pass ~(recur (get args 0)) k)))
+  `(yield (~(alias-symbol "Pass") ~(recur (get args 0)) k)))
 
 
 (defn _pass [args recur]
@@ -92,7 +99,7 @@
   (warnings.warn
     "(pass) is deprecated in defhandler — use (reperform effect) instead"
     DeprecationWarning)
-  '(yield (Pass effect k)))
+  `(yield (~(alias-symbol "Pass") effect k)))
 
 
 ;; 節の操作の表。行の順は handler の頭の import の名の順(node-names)。表を引くのはこの module の関数だけ(呼び手は名で表を
@@ -134,3 +141,23 @@
   (list (dict.fromkeys (gfor op CLAUSE-OPS
                              name (if static? op.static-nodes op.nodes)
                          name))))
+
+
+(setv _LINTER-ABOUT
+  (+ "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。"
+     "生成物 — 手で直さない(直す所は表で、書き直しは uv run python scripts/export_clause_ops.py --write)。"
+     "doeff-linter の business_fakes(DOEFF143 ほか)が節の終わりを判じるのに読み、終わり方ごとの読みは src/project/clause_ops.rs と business_fakes.rs が持つ。"))
+
+
+(defn linter-table-json []
+  "doeff-linter が節の判じに読む file(packages/doeff-linter/data/clause_ops.json)の中身 — 表の行から名・終わり方・引数の数だけを
+   書き出す(書き換え・node・returns・tail は実行時と型検査の展開の物で、linter は読まない)。file はこの文字列と 1 字も違わない
+   (scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が照らす)。"
+  (setv rows (gfor op CLAUSE-OPS
+                   (+ "  " (json.dumps (dict :name op.name :ending op.ending.value :arity op.arity) :ensure-ascii False))))
+  (+ "{\n"
+     " \"_about\": " (json.dumps _LINTER-ABOUT :ensure-ascii False) ",\n"
+     " \"ops\": [\n"
+     (.join ",\n" rows) "\n"
+     " ]\n"
+     "}\n"))

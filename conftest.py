@@ -6,7 +6,8 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Collection, Generator, Iterator, Sequence
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -784,34 +785,128 @@ def pytest_collection_finish(session):
 # judged by the files themselves, not by how a subprocess was configured.  A
 # subprocess that needs bytecode gets a directory under pytest's temporary
 # directory (tmp_path_factory) instead.
+#
+# "Under the checkout" leaves out the one directory that is not the tree under
+# test: the environment of the interpreter running the tests (the .venv).  The
+# walk of its 13,000 files in 2,000 directories took 9-34 s at the end of a run on a
+# loaded machine when the directories were not in the operating system's cache
+# (card ki-16954373dfe0, 2026-10-12: the last test's teardown of a whole test file,
+# load 65, out of the 60 s of `make test-changed`; measured again at load 66-75: 12.7 s
+# for one test, 34 s for the function alone).
+# Inside it only the bytecode of the modules a start of the interpreter imports
+# is looked at (the list of the section below, one stat each): those are what a
+# subprocess without the pin writes first, and six of them were found by the
+# daily run.  The bytecode of the other installed (third-party) packages is not
+# looked at: the workspace's own packages are editable installs, whose sources
+# are in the tree and are walked.
 # ---------------------------------------------------------------------------
 _CHECKOUT = Path(__file__).resolve().parent
+#: Directories listed at once when the run's end looks for bytecode (threads waiting for the disk, not CPU).
+_WALK_THREADS = 32
 
 
-def bytecode_written_since(root: Path, since: float) -> list[str]:
+def _written_since(path: Path, since: float) -> bool:
+    """Whether ``path`` was modified at ``since`` or later (a file that is gone was not left behind)."""
+    # A file another process removes between the listing and the stat was not left behind.
+    with suppress(FileNotFoundError):
+        return path.stat().st_mtime >= since
+    return False
+
+
+def _list_directory(directory: Path, since: float) -> tuple[list[Path], list[Path]]:
+    """The subdirectories of ``directory`` (``.git`` left out) and its bytecode files written at ``since`` or later.
+
+    A directory that cannot be listed (removed meanwhile, not readable) has none, as in ``os.walk``.
+    A symbolic link is not followed.
+    """
+    try:
+        with os.scandir(directory) as scanned:
+            entries = list(scanned)
+    except OSError:
+        return [], []
+    return (
+        [
+            Path(entry.path)
+            for entry in entries
+            if entry.is_dir(follow_symlinks=False) and entry.name != ".git"
+        ],
+        [
+            Path(entry.path)
+            for entry in entries
+            if entry.name.endswith(".pyc")
+            and not entry.is_dir(follow_symlinks=False)
+            and _written_since(Path(entry.path), since)
+        ],
+    )
+
+
+def bytecode_written_since(root: Path, since: float, skip: Collection[Path] = ()) -> list[str]:
     """Find the bytecode files a run left under ``root`` (paths relative to it, sorted).
 
-    A file counts when its modification time is ``since`` or later; ``.git`` is not
-    searched.
+    A file counts when its modification time is ``since`` or later; ``.git`` and the
+    directories in ``skip`` (paths as this walk builds them from ``root``) are not searched.
+
+    Many directories are listed at once.  One that is not in the operating system's cache is read
+    from the disk, and listing the 900 directories of a tree one at a time took 2.7-12.8 s on a
+    loaded machine (load 65, 2026-10-12, card ki-16954373dfe0), against 0.6-1.3 s by 32 threads.
     """
-    written = []
-    for directory, subdirectories, files in os.walk(root):
-        subdirectories[:] = [name for name in subdirectories if name != ".git"]
-        for name in files:
-            if not name.endswith(".pyc"):
-                continue
-            path = Path(directory, name)
-            # A file another process removes between the listing and the stat was
-            # not left behind.
-            with suppress(FileNotFoundError):
-                if path.stat().st_mtime >= since:
-                    written.append(str(path.relative_to(root)))
-    return sorted(written)
+    with ThreadPoolExecutor(_WALK_THREADS) as pool:
+        return sorted(
+            str(path.relative_to(root)) for path in _walk_for_bytecode(pool, root, since, skip)
+        )
+
+
+def _walk_for_bytecode(
+    pool: ThreadPoolExecutor, root: Path, since: float, skip: Collection[Path]
+) -> Iterator[Path]:
+    """The bytecode files under ``root`` written at ``since`` or later, as the listings of its directories finish.
+
+    A directory is queued as soon as the listing of its parent has finished (not when its whole
+    level has), so the threads stay busy while a slow directory is still being read.
+    """
+    queued = {pool.submit(_list_directory, root, since)}
+    while queued:
+        finished, queued = wait(queued, return_when=FIRST_COMPLETED)
+        for listing in finished:
+            directories, files = listing.result()
+            yield from files
+            queued |= {
+                pool.submit(_list_directory, directory, since)
+                for directory in directories
+                if directory not in skip
+            }
+
+
+def bytecode_left_by_the_run(root: Path, since: float, startup: Sequence[Path]) -> list[str]:
+    """Find the bytecode files a run left under ``root``, without walking the interpreter's environment.
+
+    The environment of the interpreter running the tests (its ``sys.prefix``, the .venv) is the
+    one directory of the checkout this does not search: the installed packages are 13,000 files in
+    2,000 directories, and listing them took 9-34 s at the end of a run on a loaded machine
+    (card ki-16954373dfe0).  What a run can write there that matters is the bytecode of the modules
+    a start of the interpreter imports (the .pth files' ``import`` lines), which ``startup`` lists
+    (see ``startup_bytecode``) and which is looked at file by file instead.
+    """
+    root = root.resolve()
+    environments = frozenset(
+        environment
+        for environment in (Path(prefix).resolve() for prefix in (sys.prefix, sys.base_prefix))
+        if environment != root and environment.is_relative_to(root)
+    )
+    written_at_startup = (
+        str(path.relative_to(root)) for path in startup if _written_since(path, since)
+    )
+    return sorted({*bytecode_written_since(root, since, skip=environments), *written_at_startup})
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _bytecode_settings_pinned():
+def _bytecode_settings_pinned(request: pytest.FixtureRequest):
     started = time.time()
+    # Only a run that is not split looks per test (below); a pytest-xdist worker finds the list itself.
+    startup = request.config.stash.get(_STARTUP_BYTECODE, None)
+    if startup is None:
+        timeout = _STARTUP_PROBE_TIMEOUT_S * _DEADLINE_SCALE
+        startup = startup_bytecode(_CHECKOUT, sys.executable, timeout)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(sys, "dont_write_bytecode", True)
         patch.setattr(sys, "pycache_prefix", None)
@@ -824,7 +919,7 @@ def _bytecode_settings_pinned():
         f"(dont_write_bytecode, pycache_prefix) = {at_the_end} — change them with "
         f"monkeypatch (or pytest.MonkeyPatch.context() in a wider fixture)"
     )
-    written = bytecode_written_since(_CHECKOUT, started)
+    written = bytecode_left_by_the_run(_CHECKOUT, started, startup)
     assert written == [], (
         f"{len(written)} bytecode file(s) were written under the checkout during this run "
         f"(first: {written[:5]}) — a subprocess that needs bytecode gets a directory under "

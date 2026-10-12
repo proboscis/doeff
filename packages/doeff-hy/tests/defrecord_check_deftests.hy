@@ -127,10 +127,11 @@
   (assert (not (hasattr Plain "__doeff_tags__")))
   (assert (not (hasattr Plain "__post_init__")))
   ;; 型検査の投影の展開は前の形のまま(pyright が dataclass として読む)。実行の展開は欄の表だけを dataclass に作らせ、関数は展開が
-  ;; 書く(card ki-a0cca3bdb9a0 — 振る舞いが同じ事は defrecord_shape_deftests.hy が確かめる)。
+  ;; 書く(card ki-a0cca3bdb9a0 — 振る舞いが同じ事は defrecord_shape_deftests.hy が確かめる)。関数の本体の外では
+  ;; _scoped-definition が文の並びを do に並べるだけ(Python の形は同じ — card ki-8a17293bc3e5)。
   (with [_ (static-view)]
     (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
-               "'(defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str))")))
+               "'(do (defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str)))")))
   (assert (in "(dataclass :init False :repr False :eq False :kw-only True)" (hy.repr (hy.macroexpand '(defrecord Plain #^ str key))))))
 
 

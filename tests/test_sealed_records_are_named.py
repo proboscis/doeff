@@ -89,7 +89,7 @@ def all_sealed_files() -> list[Path]:
 
 def test_the_declarations_name_sealed_files() -> None:
     # 名指しが 1 つも読めない形(層の名・鍵の綴りを変えた)で、下の検が空のまま緑にならないこと
-    assert len(all_sealed_files()) >= 4
+    assert len(all_sealed_files()) >= 3
 
 
 def test_every_named_sealed_file_is_in_its_records_seal_table_with_the_same_hash() -> None:

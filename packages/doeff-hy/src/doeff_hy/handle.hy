@@ -48,6 +48,7 @@
 (import hy.models [Dict])
 (import doeff-hy.static-view [static-view-enabled report-findings])
 (import doeff-hy.clause-ops [clause-op node-names])
+(import doeff-hy.expansion-names [alias-symbol import-form])
 (import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
                                 legacy-session-finding legacy-session-message])
 
@@ -78,10 +79,12 @@
   "handler の展開が使う doeff の node の import — 節の操作の node(clause_ops.hy の表の nodes / static-nodes)と、handler 自身が
    使う Pass(番の外れた effect とどの節にも当たらない effect を外へ渡す)と WithHandler。型検査のための展開の resume / transfer は
    typed-resume / typed-transfer になり Resume / Transfer を使わないので、表の static-nodes に載せない(使わない import は strict の
-   赤 — agora-redesign #2279)。"
-  (setv names (dict.fromkeys (+ (node-names (static-view-enabled)) ["Pass"])))
-  `(do (import doeff [~@(lfor name names (Symbol name))])
-       (import doeff_vm [WithHandler])))
+   赤 — agora-redesign #2279)。
+
+   名は `_doeff_<名>` の別名で束ねる(doeff_hy/expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
+   (振込の Transfer)、節の頭の isinstance が VM の node を指して effect が外の handler へ黙って抜け、module の段では書き手の
+   名が上書きされた(card ki-16180480129e)。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
+  (import-form (+ (node-names (static-view-enabled)) ["Pass" "WithHandler"])))
 
 
 (defn _handler-fn-form [endings-check]
@@ -92,10 +95,10 @@
       `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
              [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
          ~endings-check
-         (WithHandler __doeff-handler-data__ __doeff-body__))
+         (~(alias-symbol "WithHandler") __doeff-handler-data__ __doeff-body__))
       `(defn __doeff-handler-fn__ [__doeff-body__]
          ~endings-check
-         (WithHandler __doeff-handler-data__ __doeff-body__))))
+         (~(alias-symbol "WithHandler") __doeff-handler-data__ __doeff-body__))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -201,7 +204,7 @@
   "Build the yield-based lazy init code for one lazy def.
    Returns list of Hy forms (already in yield IR — no <- needed).
 
-   Generated pattern:
+   Generated pattern (Get / Put / Some are the `_doeff_` aliases — expansion_names.py):
      (setv _cached (yield (Get key)))
      (if (isinstance _cached Some)
          (setv name (. _cached value))
@@ -240,7 +243,7 @@
   (setv else-body
     (+ init-forms
        [`(setv ~val-var ~value-expr)
-        `(yield (Put ~key-var (Some ~val-var)))
+        `(yield (~(alias-symbol "Put") ~key-var (~(alias-symbol "Some") ~val-var)))
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
@@ -254,8 +257,8 @@
          [`(setv ~val-var ~value-expr)
           `(setv ~(Symbol (str lazy-name)) ~val-var)])
       [`(setv ~key-var ~key-expr)
-       `(setv ~cached-var (yield (Get ~key-var)))
-       `(if (isinstance ~cached-var Some)
+       `(setv ~cached-var (yield (~(alias-symbol "Get") ~key-var)))
+       `(if (isinstance ~cached-var ~(alias-symbol "Some"))
             (setv ~(Symbol (str lazy-name)) (. ~cached-var value))
             (do ~@else-body))]))
 
@@ -616,7 +619,7 @@
         `(do ~@bindings
              ~@guard-prefix
              (if (not ~guard)
-                 (yield (Pass effect k))
+                 (yield (~(alias-symbol "Pass") effect k))
                  ~checked))))
 
   #(etype full-body))
@@ -641,7 +644,7 @@
 
   ;; Default: pass unmatched
   (.append cond-forms 'True)
-  (.append cond-forms '(yield (Pass effect k)))
+  (.append cond-forms `(yield (~(alias-symbol "Pass") effect k)))
 
   ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
   ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/static_types.pyi)。
@@ -750,11 +753,11 @@
            (setv ~install ((fn []
                              ~@prelude
                              (setv __doeff-handler-data__ ~h-expr)
-                             (fn [__doeff-body__] (WithHandler __doeff-handler-data__ __doeff-body__)))))
+                             (fn [__doeff-body__] (~(alias-symbol "WithHandler") __doeff-handler-data__ __doeff-body__)))))
            (~install ~body)))
       `(do
          ~@prelude
-         (WithHandler ~h-expr ~body)))))
+         (~(alias-symbol "WithHandler") ~h-expr ~body)))))
 
 
 (defmacro with-handler [handlers body]
@@ -880,12 +883,12 @@
   ;; `_doeff_<名>` で引き、doeff-hy-check が module の頭で読む時だけ import する(static_view.py の SESSION_STATIC_IMPORTS)。
   ;; ここで handler ごとに出すと、:= も set! も無い handler の module で Put / Some が「import が使われていない」の赤になっていた
   ;; (再輸出の綴り X :as X は Hy が同じ名の別名を落とすので pyright に届かない)。
+  ;; Get・Put・Some は `_doeff_<名>` の別名で束ねる(書き手の KV の Put・Get などの effect を隠さない — expansion_names.py)。
   (setv lazy-imports
     (cond
       (or (not lazy-defs) (static-view-enabled)) `(do)
       True
-        `(do (import doeff [Some])
-             (import doeff_core_effects.effects [Get Put])
+        `(do ~(import-form ["Some" "Get" "Put"])
              (import doeff-hy.session [session-key :as _doeff-session-key]))))
 
   ;; defhandler produces a Program -> Program function instead of exposing a

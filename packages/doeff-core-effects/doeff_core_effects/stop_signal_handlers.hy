@@ -6,8 +6,10 @@
 ;;;   scripted-stop-handler    no I/O: RaiseStop sets the reason, StopRequested reads it. For tests and emulated worlds.
 ;;;
 ;;; Both also answer AwaitStop (park until the stop — agora-redesign #2205): the OS handler parks each wait on an external
-;;; promise the signal receiver completes; the scripted handler parks every wait on one promise RaiseStop completes. A
-;;; scheduler handler must be outside them (AwaitStop creates and waits on promises).
+;;; promise the signal receiver completes; the scripted handler parks every wait on one promise RaiseStop completes. Both
+;;; answer StopBell with one Future per session (the OS handler: one more external promise parked in the box until the
+;;; signal; the scripted handler: the promise RaiseStop completes). A scheduler handler must be outside them (AwaitStop and
+;;; StopBell create promises).
 ;;;
 ;;; Both keep their state in the session, so a state handler (doeff_core_effects.handlers.state) must be outside them.
 
@@ -17,7 +19,7 @@
 (import signal)
 (import types)
 
-(import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
+(import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopBell StopRequested])
 (import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise Wait])
 
 
@@ -79,8 +81,16 @@
 (defhandler os-signal-stop-handler
   "Answer StopRequested from the process's real SIGINT / SIGTERM."
   (session val box (! (install-stop-box)))
+  ;; The session's stop bell (StopBell): an external promise parked in the box until the signal completes it — never forgotten.
+  (session var bell None)
   (StopRequested []
     (resume box.reason))
+  (StopBell []
+    (when (is bell None)
+      (<- made (CreateExternalPromise))
+      (.park box made)
+      (:= bell made))
+    (resume bell.future))
   (AwaitStop []
     (when (is-not box.reason None)
       (return (resume box.reason)))
@@ -93,7 +103,7 @@
 
 (defhandler scripted-stop-handler
   "Answer StopRequested from a reason raised in the program by RaiseStop (no I/O). AwaitStop parks on one promise
-   that RaiseStop completes."
+   that RaiseStop completes; StopBell answers that promise's Future."
   (session var raised None)
   (session var stopped None)
   (RaiseStop [reason]
@@ -111,4 +121,11 @@
       (<- made (CreatePromise))
       (:= stopped made))
     (<- reason str (Wait stopped.future))
-    (resume reason)))
+    (resume reason))
+  (StopBell []
+    (when (is stopped None)
+      (<- made (CreatePromise))
+      (:= stopped made)
+      (when (is-not raised None)
+        (<- (CompletePromise made raised))))
+    (resume stopped.future)))

@@ -12,5 +12,9 @@ class AwaitStop(EffectBase):
     ...
 
 @dataclass(frozen=True)
+class StopBell(EffectBase):
+    ...
+
+@dataclass(frozen=True)
 class RaiseStop(EffectBase):
     reason: str

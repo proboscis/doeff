@@ -84,13 +84,15 @@ class Skip(EffectBase[Never]):
 
     def __init__(self) -> None: ...
 
-# 件 1 つの結末: ok・failed・skipped はこの Traverse が件を走らせた結末、carried は前の段で失敗(か skipped)した件を走らせずに持ち越した物。
-ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried"]
+# 件 1 つの結末: ok・failed・skipped はこの Traverse が件を走らせた結末、carried は前の段で失敗(か skipped)した件を走らせずに持ち越した物、
+# cancelled は Traverse が止まった(parallel_fail_fast の失敗・task の取り消し)ために結末を得なかった件(走っていて取り消された件・始まらなかった件)。
+ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried", "cancelled"]
 
 class ItemOutcome(EffectBase[None]):
     """Traverse の handler が件 1 つの結末を知らせる(effects.py の docstring)。Traverse と handler の間の handler の下で出し、
     最後に handler 自身が答える。受け手は見て外へ渡す(答えない・投げない — 破れば ItemOutcomeNotPassedError)。
-    間の handler のどれかが効果の引数の注記に ItemOutcome を名指す時だけ出す。"""
+    間の handler のどれかが効果の引数の注記に ItemOutcome を名指す時だけ出す。件を 1 つ以上走らせる Traverse は、
+    終わっても・fail-fast で止まっても・取り消されても total ちょうど出す(止めた件は cancelled)。"""
 
     traverse: object
     label: str | None

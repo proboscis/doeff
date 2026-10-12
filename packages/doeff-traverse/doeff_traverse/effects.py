@@ -14,7 +14,7 @@ Zip: item-indexed join of two collections. Handler manages failure union.
 Inspect: extract values + per-item history from an opaque collection.
 
 ItemOutcome: the Traverse handler's report that one item got its outcome
-             (ok, failed, skipped, carried) — what a progress handler counts.
+             (ok, failed, skipped, carried, cancelled) — what a progress handler counts.
 
 Answer types: each effect declares what its handler answers with (EffectBase[T]),
 so ``coll = yield from Traverse(f, items)`` is typed and a Hy ``(<- coll (for/do ...))``
@@ -189,8 +189,10 @@ class Skip(EffectBase[Never]):
 
 # How one item of a Traverse ended. ok / failed / skipped are this Traverse's own run of
 # the item (the history event it records); carried = the item came in failed or skipped
-# from an earlier stage, so this Traverse kept it without running f.
-ItemOutcomeKind = Literal["ok", "failed", "skipped", "carried"]
+# from an earlier stage, so this Traverse kept it without running f; cancelled = the
+# Traverse stopped (parallel_fail_fast at a failure, or its task cancelled) before the item
+# got one of those — cancelled while it ran, or never started.
+ItemOutcomeKind = Literal["ok", "failed", "skipped", "carried", "cancelled"]
 
 
 class ItemOutcome(EffectBase[None]):
@@ -202,8 +204,16 @@ class ItemOutcome(EffectBase[None]):
     progress handler counts every item — failed, skipped and carried ones too — without
     knowing how the handler runs items, and reaches ``total``. A Traverse with no item to run
     (no items, or only carried ones) reports nothing: sequential reads no inner handlers for
-    it (agora-redesign #2958). parallel_fail_fast stops at the first failure: the failed
-    item is reported, the items it cancels are not.
+    it (agora-redesign #2958).
+
+    However a Traverse that runs an item ends, it reports exactly ``total`` outcomes: when it
+    finishes, when parallel_fail_fast stops at a failure (the failed item is reported
+    ``failed``), and when it is cancelled (its task is cancelled, or TaskCancelledError comes
+    out of an item — no item's failure, the Traverse stops). The Traverse handler stops the
+    items it started before it raises — cancels the running ones and waits for them, runs no
+    more — and reports every item without an outcome yet ``cancelled``: sequential the item
+    it was running and the ones it had not reached, parallel ones every item whose task
+    ended without one. A Traverse failing with ItemOutcomeNotPassedError reports nothing more.
 
     Where it goes: the handler performs it under the handlers between the Traverse and the
     Traverse handler (the ones it puts back around every item program), then under itself —
@@ -238,7 +248,8 @@ class ItemOutcome(EffectBase[None]):
         outcome: how the item ended (ItemOutcomeKind).
         item: the ItemResult the Traverse answers for this item (index, value or the
             exception, failed, history); for the item parallel_fail_fast stops at, the
-            failed ItemResult it would have answered.
+            failed ItemResult it would have answered; for a cancelled item, the item as it
+            came in, failed, with a ``cancelled`` history entry.
     """
 
     def __init__(

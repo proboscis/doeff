@@ -403,14 +403,19 @@ def test_an_unchecked_hash_pyc_is_trusted_like_python_trusts_it(tmp_path: Path) 
     assert _run_on_pypi_hy(tmp_path, "before-hy") == 11
 
 
-def _write_counting_package(root: Path, add: int) -> None:
-    """_write_package と同じ 3 つだが、macro が展開のたびに root の expansions.log へ 1 行書く(変換をやり直したかを数える)。"""
-    _write_package(root)
-    (root / "pkg" / "macros.hy").write_text(
+def _counting_macros(add: int) -> str:
+    """macro が展開のたびに root の expansions.log へ 1 行書く macros.hy の中身(変換をやり直したかを数える)。"""
+    return (
         "(import pkg.helpers [base])\n"
         '(defmacro answer [] (with [f (open "expansions.log" "a")] (.write f "x\\n"))'
         f" (+ (base) {add}))\n"
     )
+
+
+def _write_counting_package(root: Path, add: int) -> None:
+    """_write_package と同じ 3 つだが、macro が展開のたびに root の expansions.log へ 1 行書く(変換をやり直したかを数える)。"""
+    _write_package(root)
+    (root / "pkg" / "macros.hy").write_text(_counting_macros(add))
 
 
 def _expansions(root: Path) -> int:
@@ -502,6 +507,73 @@ def test_two_record_generations_taking_turns_on_one_store_keep_each_others_entri
             _write_counting_package(root, 1)
             assert _run_on_pypi_hy(root, "before-hy", store, guard_root) == 11
             assert _expansions(root) == (1 if turn == 1 else 0), (name, turn)
+
+
+def _user_entries(store: Path, root: Path) -> tuple[str, ...]:
+    """置き場の、root の木の pkg.user の鍵の entry(macro の環境ごとに並ぶ)。"""
+    user = root / "pkg" / "user.hy"
+    return _stored_entries(store, "pkg.user", user, user.read_bytes())
+
+
+def test_a_stale_pyc_in_a_reused_tree_takes_the_stores_matching_entry_without_compiling(tmp_path: Path) -> None:
+    """使い回す作業木の .pyc は、頭(時刻と大きさ)が source に合い、記録だけが今の環境の macro に合わない(兄弟の doeff を替えた木 — 配備の
+    宣言の木が宣言ごとに doeff を替える)。置き場に今の環境で合う entry が在るなら、compile(= 展開)し直さずそれを使い、.pyc も書き直す。
+    引かないと最初の import が木の Hy の module を全部 compile し直す(2026-10-12 — 検 1 本の収集で約 880 本・CPU 約 670 秒・card
+    ki-11a90ffff495)。"""
+    store = tmp_path / "store"
+    reused, other = tmp_path / "reused", tmp_path / "other"
+    for root, add in ((reused, 1), (other, 5)):
+        root.mkdir()
+        _write_counting_package(root, add)
+    assert _run_on_pypi_hy(reused, "before-hy", store) == 11
+    assert _run_on_pypi_hy(other, "before-hy", store) == 15  # 置き場に add = 5 の環境の entry が足される
+    assert (_expansions(reused), _expansions(other)) == (1, 1)
+    # 使い回す木の macro の環境が other と同じになる — user.hy の .pyc の頭は合ったまま、記録だけが古くなる。
+    _edit(reused / "pkg" / "macros.hy", _counting_macros(5))
+    assert _run_on_pypi_hy(reused, "before-hy", store) == 15
+    assert _expansions(reused) == 1  # 置き場の entry を使った — 展開し直していない
+    # .pyc は置き場の code で書き直された — 空の置き場でも展開し直さない。
+    assert _run_on_pypi_hy(reused, "before-hy", tmp_path / "empty-store") == 15
+    assert _expansions(reused) == 1
+
+
+def test_a_stale_checked_hash_pyc_takes_the_stores_matching_entry_and_is_rewritten_in_the_same_form(
+    tmp_path: Path,
+) -> None:
+    """Python が source と突き合わせる hash 方式の .pyc も、記録が古ければ置き場の合う entry を使い、同じ方式(checked-hash)で書き直す。"""
+    store = tmp_path / "store"
+    reused, other = tmp_path / "reused", tmp_path / "other"
+    for root, add in ((reused, 1), (other, 5)):
+        root.mkdir()
+        _write_counting_package(root, add)
+    assert _run_on_pypi_hy(reused, "before-hy", store) == 11
+    assert _run_on_pypi_hy(other, "before-hy", store) == 15
+    _rewrite_as_hash_based(_user_pyc(reused), reused / "pkg" / "user.hy", checked=True)
+    _edit(reused / "pkg" / "macros.hy", _counting_macros(5))
+    assert _run_on_pypi_hy(reused, "before-hy", store) == 15
+    assert _expansions(reused) == 1
+    flags = int.from_bytes(_user_pyc(reused).read_bytes()[4:8], "little")
+    assert flags == records.FLAG_HASH_BASED | records.FLAG_CHECK_SOURCE
+    assert _run_on_pypi_hy(reused, "before-hy", tmp_path / "empty-store") == 15
+    assert _expansions(reused) == 1
+
+
+def test_a_stale_pyc_with_no_matching_entry_in_the_store_compiles_and_adds_the_entry(tmp_path: Path) -> None:
+    """置き場に今の環境で合う entry が無い時は、今どおり compile し直し、その code を置き場へ足す(次に同じ環境の木が引ける)。"""
+    store = tmp_path / "store"
+    reused, other = tmp_path / "reused", tmp_path / "other"
+    reused.mkdir()
+    other.mkdir()
+    _write_counting_package(reused, 1)
+    _write_counting_package(other, 7)
+    assert _run_on_pypi_hy(reused, "before-hy", store) == 11
+    before = _user_entries(store, reused)
+    _edit(reused / "pkg" / "macros.hy", _counting_macros(7))  # 置き場に add = 7 の entry は無い
+    assert _run_on_pypi_hy(reused, "before-hy", store) == 17
+    assert _expansions(reused) == 2  # compile し直した
+    assert len(_user_entries(store, reused)) == len(before) + 1
+    assert _run_on_pypi_hy(other, "before-hy", store) == 17  # 足した entry を同じ環境の別の木が使う
+    assert _expansions(other) == 0
 
 
 def test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_macro(

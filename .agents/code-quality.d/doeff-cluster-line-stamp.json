@@ -3,6 +3,11 @@
     "packages/doeff-cluster/src/doeff_cluster/worker/entry/line_stamp.py"
   ],
   "module_extensions": {
+    "doeff-cluster-coordinator": {
+      "allow": [
+        "doeff-cluster-line-stamp"
+      ]
+    },
     "doeff-cluster-main": {
       "allow": [
         "doeff-cluster-line-stamp"
@@ -35,7 +40,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/worker/entry/line_stamp.py"
       ],
-      "responsibility": "job の log の 1 行ごとに壁の時計の刻の頭を付ける書き手(#3714): shim と、待ちの子から分かれた子が、job の stdout・stderr を 1 本の pipe で受け、行を切らずに刻を差し込んで log の file へ書く。送り先の環境変数が在る時だけ、同じ行を上限つきの溜めと別の送りの thread で OTLP/HTTP の logs としても送る(card ki-ae919abe5b26 — job の write を止めない)。worker の入口も同じ刻の付け方と送り手で、送り先が在り stdout と stderr が同じ file の時だけ、自分の Python の出力(sys.stdout・sys.stderr — fd 1・2 は替えず、子孫は元の file を継ぐ)を job の名 worker/<worker の名> で送る(card ki-35923a5895b2・設計検証 lt-8PQM3S5DDHCSJ92Q7X259K9HAW)。",
+      "responsibility": "job の log の 1 行ごとに壁の時計の刻の頭を付ける書き手(#3714): shim と、待ちの子から分かれた子が、job の stdout・stderr を 1 本の pipe で受け、行を切らずに刻を差し込んで log の file へ書く。送り先の環境変数が在る時だけ、同じ行を上限つきの溜めと別の送りの thread で OTLP/HTTP の logs としても送る(card ki-ae919abe5b26 — job の write を止めない)。worker の入口も同じ刻の付け方と送り手で、送り先が在り stdout と stderr が同じ file の時だけ、自分の Python の出力(sys.stdout・sys.stderr — fd 1・2 は替えず、子孫は元の file を継ぐ)を job の名 worker/<worker の名> で送る(card ki-35923a5895b2・設計検証 lt-8PQM3S5DDHCSJ92Q7X259K9HAW)。coordinator の入口も同じ process_lines で、送り先が在る時に自分の Python の出力を job の名 coordinator/<Pod の namespace>・名乗り Pod の名で送る(Pod の stdout と stderr の 2 本の pipe を 1 本にまとめる — card ki-0b0ab40048b9)。",
       "typed": true
     }
   ]

@@ -22,6 +22,14 @@
    seconds to ask StopRequested (agora-redesign #2205).")
 
 
+(defclass [(dataclass :frozen True)] StopBell [EffectBase]
+  "Get the bell a stop rings. Answer = a scheduler Future that completes when a stop is requested — the same Future for the whole
+   session, already completed when a stop already came. Its value is not the reason (ask StopRequested). A loop that waits for the
+   first of several things (a deadline, other bells) puts this Future in its race as it is: unlike AwaitStop, nothing is spawned
+   per wait and nothing is left to cancel when another thing wins (doeff-cluster's worker tick pause, which waits between every
+   heartbeat).")
+
+
 (defclass [(dataclass :frozen True)] RaiseStop [EffectBase]
   "Request a stop from inside the program (answered by scripted-stop-handler; the OS handler does not answer it).
    Answer = None. The first reason is kept."

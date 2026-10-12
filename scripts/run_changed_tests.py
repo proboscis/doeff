@@ -23,6 +23,9 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
    同じ値を `--test-pattern` で渡し、答えも 3 と同じ判定で絞る。直接の使い手が多すぎる module(`doeff-hy.macros`・
    `doeff/__init__.py` の形)は linter が通り抜けず名を返すので「逆依存が広すぎて辿らなかった」と名指す。linter が無い・
    答えが読めない時は逆依存を足さずに「逆依存を測れなかった」と名指す(黙って空にしない・赤とは分ける)。
+   linter の命令は、`--linter` で渡した物 → 作業木の組み立ての入力の鍵の linter(commit の hook と同じ探し方
+   scripts/doeff_linter_locked.py の `which`・組まない — 会話の Pod は PATH に doeff-linter を持たず、hook のために揃えた
+   断面の置き場にだけ在る・card ki-2042a72a245b)→ PATH の doeff-linter の順に決める。
 5. 選んだ検を、日次と同じ pytest の session の境目(repo の根・package ごとの `packages/<名>/tests`・package の tests/ の
    外の根 = Makefile の PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest(`-m "not e2e"`)の process で走らせる。日次の
    `make test-packages` が package ごとに session を分けるのと同じ理由で、`tests/` に `__init__.py` と `conftest.py` を
@@ -87,8 +90,12 @@ CONTRACT_ROW_KEYS = frozenset({"prefix", "tests"})
 EXEMPTION_ROW_KEYS = frozenset({"prefix", "reason"})
 #: pytest の rc のうち、検の結末ではなく道具の誤り(3 = 内部の誤り・4 = 命令行の誤り)— 未測に畳まず止める。
 PYTEST_TOOL_FAILURES = frozenset({3, 4})
-#: 逆依存を問う linter の既定の命令(PATH の上の doeff-linter — `make lint-doeff` と同じ入れ方)。
+#: 逆依存を問う linter の最後の砦の命令(PATH の上の doeff-linter — `make lint-doeff` と同じ入れ方)。
 DEFAULT_LINTER = "doeff-linter"
+#: 作業木の鍵の linter を探す入口(commit の hook と日次の lint の段が使う探し方の定義元 — 2 つ目の探し方を書かない)。
+LOCKED_LINTER_SCRIPT = Path(__file__).resolve().with_name("doeff_linter_locked.py")
+#: 鍵の linter を探す命令を待つ上限の秒(git を数回引いて置き場を歩くだけ — 60 秒の検の予算とは別に数える)。
+LOCATE_TIMEOUT_SECONDS = 30.0
 #: linter の答えを待つ上限の秒(doeff で cache が温まって約 0.1 秒・冷えて約 0.2 秒 — 60 秒の検の予算とは別に数える)。
 LINTER_TIMEOUT_SECONDS = 30.0
 #: package の tests/ の外の検の根を名指す Makefile の target(日次の母集団の根の定義元 — 2 つ目の一覧を書かない)。
@@ -529,12 +536,77 @@ def _parse_unreadable(raw: object) -> str:
             raise ValueError(f"unreadable の 1 つの形が違う: {raw!r}")
 
 
+@dataclass(frozen=True)
+class LinterCommand:
+    """逆依存を問う linter の命令と、その命令が実行できなかった時に名指す理由(探した道を載せる)。"""
+
+    command: str
+    absent: str
+
+
+@dataclass(frozen=True)
+class LockedLinter:
+    """作業木の組み立ての入力の鍵の linter(置き場に在った binary の path)。"""
+
+    binary: str
+
+
+@dataclass(frozen=True)
+class LockedLinterAbsent:
+    """鍵の linter を探せなかった — 探した置き場と鍵を名指す理由。"""
+
+    reason: str
+
+
+LockedAnswer = LockedLinter | LockedLinterAbsent
+
+
+def locate_locked_linter(repo: Path) -> LockedAnswer:
+    """作業木の HEAD の組み立ての入力の鍵の linter を、commit の hook と同じ探し方(`doeff_linter_locked.py which`)で探す。
+    組まない(冷えた組み立ては 3〜5 分で、会話の Pod では OOM に寄せる — 無ければ呼び手が「測れない」と名指す)。"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(LOCKED_LINTER_SCRIPT), "which"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=LOCATE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return LockedLinterAbsent(f"鍵の linter を探せなかった: {exc}")
+    binary = proc.stdout.strip()
+    if proc.returncode == 0 and binary:
+        return LockedLinter(binary)
+    last = (proc.stderr.strip().splitlines() or [f"rc {proc.returncode}"])[-1]
+    return LockedLinterAbsent(last[:600])
+
+
+def pick_linter(explicit: str | None, repo: Path) -> LinterCommand:
+    """linter の命令を決める: `--linter` で渡した物 → 作業木の鍵の linter(組まない)→ PATH の doeff-linter。
+    後ろの 2 つは、鍵の linter が無い時だけ PATH へ落ちる — 落ちた先の命令も無い時に、探した道の全部を名指せるようにする。"""
+    if explicit is not None:
+        return LinterCommand(
+            command=explicit, absent=f"linter {explicit!r} が無い(--linter で渡した命令)"
+        )
+    match locate_locked_linter(repo):
+        case LockedLinter(binary=binary):
+            return LinterCommand(
+                command=binary, absent=f"linter {binary!r} が無い(鍵の linter の置き場から消えた)"
+            )
+        case LockedLinterAbsent(reason=reason):
+            return LinterCommand(
+                command=DEFAULT_LINTER,
+                absent=f"linter が無い — {reason}・PATH にも {DEFAULT_LINTER!r} が無い(--linter で渡す)",
+            )
+
+
 def ask_affected(
-    linter: str, repo: Path, changes: ChangeSet, patterns: TestFilePatterns
+    linter: LinterCommand, repo: Path, changes: ChangeSet, patterns: TestFilePatterns
 ) -> AffectedAnswer:
     """linter の `--affected-tests` に、変えた file と検の file の名の規則(3 と同じ値)を渡して問う(実 I/O はここだけ)。"""
     command = [
-        linter,
+        linter.command,
         "--root",
         str(repo),
         "--affected-tests",
@@ -546,9 +618,7 @@ def ask_affected(
             command, capture_output=True, text=True, timeout=LINTER_TIMEOUT_SECONDS, check=False
         )
     except FileNotFoundError:
-        return AffectedUnmeasured(
-            f"linter {linter!r} が無い(PATH に doeff-linter を入れるか --linter で渡す)"
-        )
+        return AffectedUnmeasured(linter.absent)
     except subprocess.TimeoutExpired:
         return AffectedUnmeasured(f"linter が {LINTER_TIMEOUT_SECONDS:g} 秒の内に答えなかった")
     if proc.returncode != 0:
@@ -1293,8 +1363,9 @@ def main(environ: Mapping[str, str], argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--linter",
-        default=DEFAULT_LINTER,
-        help="逆依存を問う doeff-linter の命令(既定 = PATH の上の doeff-linter)",
+        default=None,
+        help="逆依存を問う doeff-linter の命令(既定 = 作業木の組み立ての入力の鍵の linter(commit の hook と同じ探し方)、"
+        "無ければ PATH の上の doeff-linter)",
     )
     args = parser.parse_args(argv)
     finished = _run_entry(args, read_run_environment(environ))
@@ -1319,7 +1390,7 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
         flush=True,  # pytest の出力より先に出す
     )
     reverse: AffectedAnswer = (
-        ask_affected(args.linter, repo, changes, patterns)
+        ask_affected(pick_linter(args.linter, repo), repo, changes, patterns)
         if changes.files
         else Affected(tests=(), hubs=(), unreadable=())
     )
