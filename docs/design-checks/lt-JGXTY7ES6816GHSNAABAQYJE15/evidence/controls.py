@@ -1,6 +1,7 @@
 # 設計検証 lt-JGXTY7ES6816GHSNAABAQYJE15 の正常例・失敗例(変異)を実行して evidence へ書く。
 # 変異は設計者の作業木(doeff-wt-design-check-scoped-def)の file を書き換えて走らせ、必ず元の中身へ書き戻す。
 import hashlib
+import os
 import subprocess
 import sys
 import time
@@ -38,12 +39,17 @@ def mutated(path: Path, old: str, new: str, run) -> object:
 
 
 def log(name: str, text: str) -> None:
+    # 環境変数 EVID_SUFFIX が在れば log の名に付ける(rebase 後に撮り直した物を、前の物と並べて残す)
+    stem, dot, ext = name.rpartition(".")
+    name = f"{stem}{os.environ.get('EVID_SUFFIX', '')}{dot}{ext}"
     (EVID / name).write_text(text, encoding="utf-8")
     print(f"--- {name}\n{text}")
 
 
 def head(title: str) -> str:
-    return f"# {title}\n# 対象: 作業木 {WT.name}(origin/main の先端 e5de19158 + この修正)\n# 実行: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
+    rev = sh(["git", "rev-parse", "--short", "HEAD"])[1].strip()
+    target = os.environ.get("EVID_TARGET") or f"作業木 {WT.name} @ {rev}(origin/main の先端 e5de19158 + この修正)"
+    return f"# {title}\n# 対象: {target}\n# 実行: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
 
 
 which = sys.argv[1]
@@ -116,7 +122,7 @@ elif which == "s2":
         ("判定が呼ぶ関数(_synthesized_alias)の本体を替える", STATIC,
          "alias.asname.startswith(SYNTHESIZED_ALIAS_PREFIXES)", "False"),
         ("判定が読む定数(static_view.SYNTHESIZED_ALIAS_PREFIXES)を替える", WT / "packages/doeff-hy/src/doeff_hy/static_view.py",
-         'SYNTHESIZED_ALIAS_PREFIXES: tuple[str, ...] = ("_doeff_", "_conductor_")', 'SYNTHESIZED_ALIAS_PREFIXES: tuple[str, ...] = ("_doeff_",)'),
+         'SYNTHESIZED_ALIAS_PREFIXES: tuple[str, ...] = (PREFIX, "_conductor_")', 'SYNTHESIZED_ALIAS_PREFIXES: tuple[str, ...] = (PREFIX,)'),
     ]:
         changed = mutated(path, old, new, digest)
         out.append(f"\n## 失敗例(変異): {title}\n{changed}\n元と違う: {changed != a}")

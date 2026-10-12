@@ -38,7 +38,19 @@
 | 段 | 内容 | commit | 状態 |
 |---|---|---|---|
 | 1 | 3 つの形の修正(型検査の投影・class の本体・defworkflow) | 49a293f19・c4590550 | doeff の main に着地済み |
-| 2 | 盲検 A・B の失敗例を受けた投影の後処理の修正と、投影の検の作り直し | 9bb308779(branch wt/design-check-scoped-def) | 着地の列に登記する(着地の結果は依頼元への連絡に書く) |
+| 2 | 盲検 A・B の失敗例を受けた投影の後処理の修正と、投影の検の作り直し | 初版 9bb308779(基底 e5de19158)→ origin/main 8b96344c7 の上へ rebase し直した版(下の節) | 初版の登記 L2240 は rebase 衝突で着地に失敗。rebase し直した版を branch wt/design-check-scoped-def-r2 へ push し、L2240 を置き換えて再登記する(着地の結果は依頼元への連絡に書く) |
+
+## 基底への追随で重なった main の修正(着地の失敗 L2240 の後)
+
+初版の着地は、main が先に同じ判定と同じ検の file を替えていたため rebase 衝突(static_check.py・tests/test_nested_definition_scope.py)で失敗した。重なっていたのは 8a759a421(別の担い手が、49a293f19 の範囲の外で見つけた 2 件を直した commit)。
+
+| main 側の修正 | 私の修正との関係 | 追随での扱い |
+|---|---|---|
+| 入れ子の defhandler の投影で `from doeff import Pass as _doeff_Pass`・`from doeff_vm import WithHandler as _doeff_WithHandler` を module の段へ移す。判定は `expansion_names.is_alias_import(module, name, asname)`(別名が `_doeff_<名>` で置き場が表に合う事) | 同じ穴の一部。私の別名の頭の判定(`_doeff_`・`_conductor_`)は、`is_alias_import` が真になる import をすべて含む(別名が `_doeff_` で始まるため) | **判定を 1 つにした**。同じ事を 2 つの規則で持つと、どちらかが古くなる。`_synthesized_alias`(頭の判定)だけを残し、使い手が無くなった `is_alias_import` は外した(他に使い手が無い事を grep で確かめた)。別名の頭の綴り `_doeff_` は `expansion_names.PREFIX` から引き、定義元を 1 つにした |
+| class の本体の defrecord・defwire・defeffect の method が、定義した型を名でなく `__class__` で読む(setattr の `NameError` の修正) | 別の穴(実行時の展開)。私の修正と file も論点も重ならない | そのまま受けた。この項は、私が「範囲の外・未着手」と書いていた事の解消(下の「測っていない範囲」を更新した) |
+| test_nested_definition_scope.py に先に足された 7 件(型の method 5・defhandler の投影 2) | 同じ file の隣の検 | 全部残した。defhandler の検が持っていた「module の段で束ねた名」の helper は、私の symtable の helper と同じ意味なので 1 つにした |
+
+追随の後に撮り直した証拠は `*-rebased.log`(下の表)。初版の log は、基底 e5de19158 の上の版の実行記録としてそのまま残す。
 
 ## 事前の主張(盲検の前に保存した版)
 
@@ -93,7 +105,7 @@
 | class の本体で型が建つ | module に `doeff_hy` が無い header で定義を評価して使う | `test_class_body_type_definition_runs_without_module_doeff_hy` | 同上 | 4 つの macro の検体だけ |
 | `nested-reads` の誤用 | defhandler が module の globals を変えない検 | tests/test_handle_scope.py の `test_class_body_handle_leaves_module_globals_alone` | 同上 | |
 | 後処理の変更が保存を無効にする | 既存の POST_PROCESSING の閉包の digest | doeff_hy_bytecode_guard の `value_digest` | 型検査の展開の保存の照らし | S2 の実行記録で測った |
-| 品質検査(速い段) | 変更範囲の module 契約・依存・規則 | `code-quality --scope changed` | 変更範囲の検査 | 型を含まない。static_check.py・static_view.py・conductor.hy・macros.hy は継続検査に未登録(今回の変更で変えていない) |
+| 品質検査(速い段) | 変更範囲の module 契約・依存・規則 | `code-quality --scope changed` | 変更範囲の検査 | 型を含まない。static_check.py・static_view.py・expansion_names.py・conductor.hy・macros.hy は継続検査に未登録(今回の変更で登録を変えていない) |
 
 ## 検証の記録(evidence/)
 
@@ -108,7 +120,14 @@
 | N-S1-mutations.log | 変異 5 つ(nested-reads の分岐・全 macro の nested-reads・後処理の呼び出し・別名の頭の判定・約束の頭を守らない別名)が、それぞれ意図した検で赤 |
 | N-AB-after-fix.log | 盲検 A・B の失敗例が、修正後は成立しない |
 | S2-digest.log | 変えずに測った digest は同じ・後処理の 3 種の変更で変わる |
-| controls.py ほか | 上の記録を作った script(再実行用) |
+| P-rebased-enumeration.log | rebase 後(origin/main 8b96344c7 の上): 列挙の検 144 件が通る(初版の 137 件に main 側の 7 件が加わった数) |
+| P-rebased-regression.log | rebase 後: 投影を作る側と main 側が触れた file の検 145 件、test_expansion_names.py 19 件が通る |
+| P-S1-all-macros-no-import-left-rebased.log | rebase 後: 全 macro の検体(14 種)の投影で import が残らない(28 行すべて空) |
+| N-S1-mutations-rebased.log | rebase 後: 変異 5 つがそれぞれの検で赤(M1 4・M2 4・M3 19・M4 11・M5 2 件が赤。M3・M4 は main 側の defhandler の検 2 件も赤にする) |
+| N-AB-after-fix-rebased.log | rebase 後: 盲検 A・B の失敗例が成立しない(B は列挙の検 144 件が通る) |
+| S2-digest-rebased.log | rebase 後: 変えずに測った digest は同じ・後処理の 3 種の変更で変わる |
+| P-quality-fast-rebased.log | rebase 後(基底 8b96344c7): 変更範囲の品質検査(速い段)が合格(型を含まない) |
+| controls.py ほか | 上の記録を作った script(再実行用)。controls.py は、rebase 後の撮り直しのために log の名への接尾辞(環境変数 EVID_SUFFIX)・対象の記述・S2 の定数の変異の綴り(定数が `expansion_names.PREFIX` を使う形になった)を直した。初版の log は直す前の版が作った |
 
 ## 測っていない範囲
 
@@ -116,10 +135,11 @@
 - 別名の import が module の段に並ぶ数の上限(64)と、同じ別名を束ねる文の重なりへの strict の反応。
 - .pyc の保存での gensym の振り直し(今回、新しい連番の依存は足していない)。
 - 盲検の実モデル(要求値と、起動手段が受けた値だけを `blind-meta.md` に記録した)。
-- 別の card(ki-c9d9a7994630)へ分けた 2 件のうち、class の本体の defrecord・defeffect・defwire の method が型の名を裸で読む問題(setattr の NameError)は、この修正の範囲外で未着手。もう 1 件の関数の中の defhandler の投影の import は、この修正の別名の判定で module の段へ移る事を全 macro の検体の検で確かめた(card の更新は依頼元の仕事)。
+- 別の card(ki-c9d9a7994630)へ分けた 2 件は、どちらも main の 8a759a421 が直した(class の本体の型の method が `__class__` で型を読む・入れ子の defhandler の投影の別名 import)。私の修正と合わせた版で、defhandler を含む全 macro の検体が投影に import を残さない事を確かめた(rebase 後の log)。card の更新は依頼元の仕事。8a759a421 が残りとして挙げた「class の本体の引数の無い defhandler の `reportSelfClsParameterName` の warning」は、この修正の外で未着手。
 - 型検査の継続検査への登録(static_check.py・static_view.py・conductor.hy・macros.hy)。明示の操作として別に行う。
 
 ## 記録の訂正
 
 - 修正の commit 9bb308779 の message は検体を「13 種」と書いたが、`_DEFINITION_SAMPLES` の数えは 14 種(defk・deff・defp・defpp・deftest・defeffect・defmcp-tool・defhandler・defsystem・defpipeline・defrecord・defwire・defenum・defworkflow)。コードと検は 14 種全部を通す。push 済みの message は書き換えず、ここで訂正する。
+- 初版の commit の sha(修正 9bb308779・設計書と報告 8bf5a0dca)は、rebase で修正 3e96c0bc1・設計書と報告 c7b46912b 以降へ変わった(この文書を含む最終の sha は着地の記録に残る)。上の「初版」の記述と `evidence/` の初版の log は、基底 e5de19158 の上の版を指す。
 - `evidence/` の log のうち、変異・再現の記録は実行した時点の出力そのまま。`P-S1-all-macros-no-import-left.log` の頭の注釈だけ 13 → 14 に直した(出力の本体は 14 行 × 2 = 28 行で、最初から 14 種を並べていた)。
