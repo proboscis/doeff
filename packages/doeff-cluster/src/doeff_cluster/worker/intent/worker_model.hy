@@ -590,8 +590,12 @@
    読んだ時刻で判定する。だから handler は期限をこの時刻を基準に組み立てる(worker/core/worker_due の now に渡す)— この時刻以前の
    期限はどの判断も見た後なので捨ててよく、この時刻より後の期限は、tick の終わりに既に過ぎていても残す(過ぎた期限で起きる次の tick が
    判定する)。tick の終わりに読み直した時刻を基準にすると、tick の後半が長い時に、まだどの判断も見ていない期限を捨てる(#4332 —
-   heartbeat を送った tick の後半が送信間隔 2.5 秒を越えると、次の heartbeat の期限を捨てて fence の期限まで眠った)。"
-  (#^ int began))
+   heartbeat を送った tick の後半が送信間隔 2.5 秒を越えると、次の heartbeat の期限を捨てて fence の期限まで眠った)。
+   began-mono-ms = 同じ tick の頭の、単調な時計の読み(ms)。began は tick の判断の時の壁の時計の枠の刻なので、その後に壁の時計が
+   動いた時に handler が今の壁の時計の枠へ写し直せるよう、単調な読みを一緒に渡す(写し方 = 今の壁の時計 − heartbeat_rules.silent-ms —
+   card ki-069f4a5c07f7。壁の時計だけの刻と比べる handler は began をそのまま使う)。"
+  (#^ int began)
+  (#^ int began-mono-ms))
 
 
 (defclass WorkerUnsettled [Exception]  ; class にする理由: worker の調整ループを止める例外の型(検が pytest.raises で名指す — 欄も状態も足さない)

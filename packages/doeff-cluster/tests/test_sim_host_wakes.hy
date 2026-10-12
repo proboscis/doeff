@@ -78,12 +78,12 @@
   {:pre [(: truth HostTruth) (: began int) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "代役の真実 truth の、時刻 began に始まり時刻 now に終わった tick の後の起きる物の組と、渡した呼び鈴を返すため。"
   (<- bell Promise (CreatePromise))
-  (<- wakes WakeSet (host-wakes WORKER truth began now bell.future))
+  (<- wakes WakeSet (host-wakes WORKER truth began began now now bell.future))
   #(wakes bell.future))
 
 
 (deftest test-the-host-wakes-at-the-production-deadlines-and-always-has-its-bell
-  (<- base HostTruth (fresh-truth "w1" 1 0 TIMING))
+  (<- base HostTruth (fresh-truth "w1" 1 0 0 TIMING))
   (val heard (replace base :fresh True :beat-interval-ms BEAT-MS))
   ;; heartbeat の期限(最後に届いた返事 0 + 間隔)。呼び鈴は代役の 1 つ。
   (<- quiet tuple (wakes-at heard 1000 1000))
@@ -102,6 +102,12 @@
   (val preparing (SimPreparation :worker "w1" :key "k" :env False :warm False :started-ms 0 :ready-ms 1800 :failure None))
   (<- prepared tuple (wakes-at (replace heard :codes {"k" preparing}) 1000 1000))
   (assert (= (. (get prepared 0) due) (DueAt :at 1800)) prepared)
+  ;; tick の頭(壁 1400・単調 1400)の後に壁の時計が 10 秒戻った代役(今 = 壁 −8500・単調 1500・最後に届いた返事は 0): heartbeat の
+  ;; 期限は今の壁の時計の枠で「あと 1 秒」(−8500 + 間隔の残り 1000 = −7500 — 本番の coordinator-link と同じ写し・card
+  ;; ki-069f4a5c07f7)。前の枠の刻(2500)のままだと、待ちが戻った分だけ延びる。
+  (<- bell Promise (CreatePromise))
+  (<- stepped WakeSet (host-wakes WORKER heard 1400 1400 -8500 1500 bell.future))
+  (assert (= stepped.due (DueAt :at -7500)) stepped)
   ;; 期限が全部過ぎた代役(柵も越えた)にも呼び鈴が在る — 起きる物の無い待ちを作らない。
   (<- late tuple (wakes-at heard (* 10 TIMING.keep-fence-ms) (* 10 TIMING.keep-fence-ms)))
   (assert (= (. (get late 0) due) (DueNever)) late)

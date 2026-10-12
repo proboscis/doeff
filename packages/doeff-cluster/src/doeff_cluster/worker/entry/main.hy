@@ -27,8 +27,8 @@
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.random_effects [RandomBytes])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_time [async-time-handler sync-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_time [GetMonotonic async-time-handler sync-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
@@ -288,9 +288,11 @@
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot — 上で決めた値)は Pod の中の file にも書く(readinessProbe が比べる)。
+  ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る・card ki-069f4a5c07f7)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
+        started-mono-ms (monotonic-ms-of (run (with-handlers [(sync-time-handler)] (GetMonotonic))))
         link (LinkState args.name provides args.capacity args.task-reserve (int (* args.fence 1000)) places.tasks boot
-                        started-ms started-ms
+                        started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator

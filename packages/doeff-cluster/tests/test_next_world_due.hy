@@ -31,7 +31,7 @@
 (defk stalled-host [name until]
   {:pre [(: name str) (: until int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "処理が刻 until まで止まる worker name 1 台の宿の表を作るため。"
-  (<- truth (fresh-truth name 1 0 T))
+  (<- truth (fresh-truth name 1 0 0 T))
   {name (replace truth :stalled-until-ms until)})
 
 

@@ -43,6 +43,11 @@
 ;;;   tests/test_cluster_timing.hy の test-the-production-timing-outlasts-the-self-stop(本番の既定の ClusterTiming と定数から内訳を作って判断に渡す — 数を検に
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
+;;;   この比べは、coordinator が自分の時計で数える沈黙と、worker が自分で数える沈黙(最後に届いた返事からの長さ)が同じ長さである事を
+;;;   前提にする。worker の沈黙は壁の時計の差と単調な時計の差の長い方(worker/core/heartbeat_rules の silent-ms — card ki-069f4a5c07f7):
+;;;   壁の時計が戻っても(壁の差が縮む)・機体が suspend しても(単調な時計が止まる)、worker の数える沈黙は実際に過ぎた時間を下回らない。
+;;;   確かめるのは tests/test_silence_wall_clock_step.hy(本番の口 — 途絶の最中に壁の時計が余白の 8 秒を越えて戻っても、自己停止を
+;;;   決める刻は変わらない)と tests/test_wall_clock_step_keeps_one_place.hy(模擬の世界 — 45 秒戻っても process が重ならない)。
 ;;;   同じ判断を途絶しても動かし続けてよい印の約束の在る job にも当てる: coordinator が沈黙した担い手への約束を外して他へ移す期限
 ;;;   (ClusterTiming.kept-reassign-after-ms)は、長い方の柵(keep-fence-ms)を柵にした止め切りより後。確かめるのは同じ file の
 ;;;   test-the-production-kept-reassign-outlasts-the-kept-self-stop・失敗ケースは test-moving-one-constant-past-the-kept-self-stop-is-named。

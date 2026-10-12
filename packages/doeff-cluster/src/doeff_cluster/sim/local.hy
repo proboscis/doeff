@@ -93,6 +93,9 @@
 ;;;                             動き続け、fence を越えると本物の worker_policy の判断で lease を持たない job を止める。
 ;;;   StallWorker 名 秒         worker の処理を秒の間止める(heartbeat を送らない・送りの失敗が無いので fence も効かない・子は動き続ける —
 ;;;                             本番の worker の処理が I/O で止まった形・#2804)。
+;;;   StepWorkerWall 名 秒      worker の機体の壁の時計だけを秒の分戻す(負 = 進める)。単調な時計と世界の時計(coordinator・他の worker)は
+;;;                             動かない — NTP の step・機体の suspend(単調は進まず壁だけ進む)の形(card ki-069f4a5c07f7)。
+;;;                             steps-wall の worker にだけ使える(その worker と子 process の GetTime がずれる)。
 ;;;   DrainWorker 名 [ttl]      本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で drain を頼む。
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
 ;;;   RollWorker 名             動いている worker の新しい世代を、今の世代を止めずに先に起こす(本番の Deployment の RollingUpdate の
@@ -140,6 +143,7 @@
 (import copy [deepcopy])
 (import signal)
 (import dataclasses [dataclass replace])
+(import datetime [datetime timedelta])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
@@ -150,8 +154,8 @@
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopBell StopRequested])
 (import doeff_core_effects.world_phases [mark-world-phase])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect WaitForEventsEffect])
-(import doeff_time [Delay GetMonotonic epoch-ms-of sim-time-handler async-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_time [Delay GetMonotonic GetTimeEffect epoch-ms-of sim-time-handler async-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
@@ -193,7 +197,7 @@
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell RESEND-AFTER-MS])
-(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held desired-after-silence])
+(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held desired-after-silence silent-ms])
 ;; 周の間の待ち(AwaitNextTick)は本番の答え手 tick-pauses が宿の内側で答える。宿は起きる物の組(WorkerWakes)に、本番の送り手の口と
 ;; 同じ関数で組んだ期限と、宿の呼び鈴を入れて答える(#3871 の単位 5)。
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
@@ -300,7 +304,10 @@
    (heartbeat で task-reserve の代わりにこの数を名乗る — None = task-reserve。本当に task のために空けておく数は task-reserve のまま —
    条 C17 の反例・#3489)・silent-notices = 反例の世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob と取り消しの NoticeJob が、
    観測の notice を書くだけで process へ退きの知らせを送らない — 条 W2 の反例・#3672)・doeff-commit = この値で起きた worker が動いている doeff の版(本番の WORKER_DOEFF_COMMIT に当たる名札 —
-   置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)。"
+   置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)・steps-wall = 機体の壁の時計を筋書きが動かす
+   worker(StepWorkerWall の相手 — 宿の外側に機体の壁の時計の代役 worker-wall を並べ、その worker の調整ループ・宿・子 process の
+   GetTime を世界の時計から動かした分だけずらす。偽 = 世界の時計をそのまま読む。この worker が起こした process の記録 SimProcess の
+   刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない・card ki-069f4a5c07f7)。"
   (#^ str name)
   (#^ frozenset provides)
   (#^ int task-reserve)
@@ -324,7 +331,8 @@
   (setv #^ bool fresh-boot-every-beat False)
   (setv #^ bool hides-retired False)
   (setv #^ (| int None) claims-task-reserve None)
-  (setv #^ bool silent-notices False))
+  (setv #^ bool silent-notices False)
+  (setv #^ bool steps-wall False))
 
 
 (defrecord SimProcess
@@ -580,6 +588,14 @@
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect StepWorkerWall
+  "検の effect: worker name の機体の壁の時計だけを seconds 秒戻す(負 = 進める)。単調な時計も世界の時計(coordinator・他の worker)も
+   動かない。steps-wall の worker にだけ使える(そうでなければ ValueError)。宿は起こさない(本番の時計の step と同じく、次に時刻を読んだ
+   時に知る)。答え = None。"
+  {:fields [(: name str) (: seconds float)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect DrainWorker
   "検の effect: worker name の drain を、本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で頼む。
    ttl-seconds = drain の期限。答え = 本番の CoordinatorCall と同じ形({\"status\" int \"body\" dict} か {\"error\" 理由})。"
@@ -661,6 +677,8 @@
   (#^ str revision)
   (#^ dict versions)
   (#^ int start-ms)
+  ;; 起点 start-ms と同じ刻の単調な時計の読み(ms — 最初の世代の宿が、最後の連絡とみなす初めの刻を 2 つの時計で持つ・card ki-069f4a5c07f7)。
+  (#^ int start-mono-ms)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
   (#^ WorkerPolicy policy)
@@ -702,7 +720,8 @@
 (defrecord HostTruth
   "worker の宿 1 つの真実(世界の session に在る)。boot = この世代の名(StartWorker で新しくなる)・processes = 子 process の観測・
    codes = 準備(鍵 → SimPreparation)・probes = 入口の検め・statuses = 最後に出した状態の報告(heartbeat の本文)・last-ok-ms =
-   coordinator が最後に返事をした時刻・fence-ms = 自己停止の閾値・last-desired / last-warm = 最後に読めた job と task・温める表の行・
+   coordinator が最後に返事をした時刻・last-ok-mono-ms = 同じ刻の単調な時計の読み(ms — 沈黙は 2 つの時計の長い方で計る・本番の
+   LinkState と同じ・heartbeat_rules.silent-ms)・fence-ms = 自己停止の閾値・last-desired / last-warm = 最後に読めた job と task・温める表の行・
    programs = 取った詰めた Program(sha → 文字列)・results = 終わった task の結果(id → 詰めた結果)・task-echo = 切り離した task の
    返事の行(id → 行)・beats = coordinator が返事をした heartbeat の数・down = 死んだか止まった・stopping = 優雅な停止を頼まれた。
    heartbeat の切り離し(#1933 — 本番の coordinator への口の WatchCell と同じ意味・beat_policy): fresh = 前の heartbeat が届いた・
@@ -725,6 +744,7 @@
   (#^ dict probes)
   (#^ list statuses)
   (#^ int last-ok-ms)
+  (#^ int last-ok-mono-ms)
   (#^ int fence-ms)
   (#^ tuple last-desired)
   (#^ tuple last-warm)
@@ -822,6 +842,11 @@
 (defeffect RollBellOf
   "worker name の今の世代 boot が退いた世代へ移った時(RollWorker)に ROLLED で鳴る約束(worker の一生の係が世代の終わりと競わせる)。"
   {:fields [(: name str) (: boot str)] :answer Promise :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect WallBackOf
+  "worker name の機体の壁の時計が、世界の時計から戻っている ms(StepWorkerWall の積み — 負 = 進んでいる・0 = 動かしていない)。機体の
+   壁の時計の代役 worker-wall と、世界の時計で記録を書く宿の節が問う。"
+  {:fields [(: name str)] :answer int :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect PutHostTruth
   "worker name の宿の真実を置き直す。"
@@ -1062,12 +1087,15 @@
   (system-declaration system revision :versions versions :runtime-env runtime-env :environ environ))
 
 
-(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [nodes None] * notice-broker]
+(defk sim-plan [system workers environ revision start-ms timing policy outside store [deployments None] [runtime-env None] [nodes None] * notice-broker
+                start-mono-ms]
   {:pre [(: system System) (: workers (| tuple None)) (: environ (| dict None)) (: revision str) (: start-ms int)
          (: timing (| ClusterTiming None)) (: policy (| WorkerPolicy None)) (: outside (| SimOutside None)) (: store (| Callable None))
-         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)]
+         (: deployments (| dict None)) (: runtime-env (| RuntimeEnv None)) (: nodes (| dict None)) (: notice-broker MemoryBroker)
+         (: start-mono-ms int)]
    :post [(: % SimPlan)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。"
+  "sim-cluster の引数を検めて筋にするため(走らせる前に断る — environ の上書きの誤り・名の重なる worker)。start-mono-ms = 起点
+   start-ms と同じ刻の単調な時計の読み(ms)。"
   (<- fallback tuple (default-workers system))
   (val chosen (if (is workers None) fallback workers))
   (val names (lfor w chosen w.name))
@@ -1081,7 +1109,8 @@
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
            :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env :nodes nodes
            :watches-gone (is timing None)
-           :start-ms start-ms :timing (or timing scaled) :naming (ClusterNaming) :policy (or policy (WorkerPolicy))
+           :start-ms start-ms :start-mono-ms start-mono-ms :timing (or timing scaled) :naming (ClusterNaming)
+           :policy (or policy (WorkerPolicy))
            :passable (+ SIM-PASSABLE (if (is outside None) #() outside.effects)) :notice-broker notice-broker))
 
 
@@ -1097,13 +1126,14 @@
             :broker plan.notice-broker))
 
 
-(defk fresh-truth [name generation now timing]
-  {:pre [(: name str) (: generation int) (: now int) (: timing ClusterTiming)] :post [(: % HostTruth)]
+(defk fresh-truth [name generation now now-mono-ms timing]
+  {:pre [(: name str) (: generation int) (: now int) (: now-mono-ms int) (: timing ClusterTiming)] :post [(: % HostTruth)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker name の世代 generation の起きた時の宿の真実を作るため(起きた時刻を最後の連絡とみなす — 本番の coordinator への口 と同じ)。
-   途絶の柵(fence と、印の在る job の長い方の柵)は sim の筋の時間の設定から(返事の timing が上書きする)。"
+  "worker name の世代 generation の起きた時の宿の真実を作るため(起きた時刻 — 壁の時計 now と単調な時計 now-mono-ms — を最後の連絡と
+   みなす — 本番の coordinator への口 と同じ)。途絶の柵(fence と、印の在る job の長い方の柵)は sim の筋の時間の設定から(返事の
+   timing が上書きする)。"
   (HostTruth :boot (.format "{}-boot{}" name generation) :boot-at now :processes #() :codes {} :probes {} :statuses []
-             :last-ok-ms now :fence-ms timing.fence-ms :keep-fence-ms timing.keep-fence-ms
+             :last-ok-ms now :last-ok-mono-ms now-mono-ms :fence-ms timing.fence-ms :keep-fence-ms timing.keep-fence-ms
              :last-desired #() :last-warm #() :programs {} :results {} :task-echo {}))
 
 
@@ -1112,7 +1142,7 @@
   "worker ごとの最初の世代の宿の真実を作るため(starts-down の worker は止まったまま — StartWorker で起きる)。"
   (var hosts {})
   (for [w plan.workers]
-    (<- truth HostTruth (fresh-truth w.name 1 plan.start-ms plan.timing))
+    (<- truth HostTruth (fresh-truth w.name 1 plan.start-ms plan.start-mono-ms plan.timing))
     (:= hosts (| hosts {w.name (replace truth :down w.starts-down)})))
   hosts)
 
@@ -1913,6 +1943,9 @@
   (<- body dict (beat-body worker before sent-at stopping plan))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
+  ;; 返事の刻は壁の時計と単調な時計の両方で読む(沈黙の計りの起点と今 — 本番の coordinator への口の beat と同じ・card ki-069f4a5c07f7)。
+  (<- mono float (GetMonotonic))
+  (val now-mono-ms (monotonic-ms-of mono))
   (if (= (get answer 0) 200)
       (do (val reply (get answer 1))
           ;; 返事の宣言の部分(job の行と draining)を本番の coordinator への口の beat と同じ JSON の境界で 1 度だけ解き、draining を
@@ -1935,7 +1968,8 @@
           (<- written HostTruthChange
               (change-live-truth worker.name boot
                                  (fn [truth]
-                                   (replace truth :last-ok-ms now :last-desired (+ jobs tasks) :last-warm warm :beats (+ truth.beats 1)
+                                   (replace truth :last-ok-ms now :last-ok-mono-ms now-mono-ms
+                                            :last-desired (+ jobs tasks) :last-warm warm :beats (+ truth.beats 1)
                                             :fence-ms (if (and timing (in "fence_ms" timing)) (int (get timing "fence_ms")) truth.fence-ms)
                                             :keep-fence-ms (if (and timing (in "keep_fence_ms" timing))
                                                                (int (get timing "keep_fence_ms"))
@@ -1955,9 +1989,10 @@
       (do ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
           (<- unsent HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :fresh False))))
           (val truth unsent.before)
+          (<- silent int (silent-ms now now-mono-ms truth.last-ok-ms truth.last-ok-mono-ms))
           (if worker.ignores-fence
               (DesiredJobs truth.last-desired :warm truth.last-warm)
-              (desired-when-unreachable (- now truth.last-ok-ms) truth.fence-ms truth.keep-fence-ms truth.last-desired truth.last-warm
+              (desired-when-unreachable silent truth.fence-ms truth.keep-fence-ms truth.last-desired truth.last-warm
                                         (unreached-reason answer))))))
 
 
@@ -2040,18 +2075,26 @@
   (replace truth :ticks (+ truth.ticks 1) :tick-bell tick :wake-bell wake :stop-bell stop))
 
 
-(defk host-wakes [worker truth began now bell]
-  {:pre [(: worker SimWorker) (: truth HostTruth) (: began int) (: now int) (: bell (| Future None))] :post [(: % WakeSet)]
+(defk host-wakes [worker truth began began-mono-ms now now-mono-ms bell]
+  {:pre [(: worker SimWorker) (: truth HostTruth) (: began int) (: began-mono-ms int) (: now int) (: now-mono-ms int)
+         (: bell (| Future None))]
+   :post [(: % WakeSet)]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "宿 worker の真実 truth の、tick の頭の時刻 began に始まり時刻 now に終わった tick の後の起きる物の組を作るため。期限 = 本番の
-   coordinator-link(coordinator_link の WorkerWakes)と同じ関数・同じ基準(began — #4332)で組み立てる heartbeat の期限(beat-due — 間隔は
-   反例の worker の beat-every-ms か返事の間隔)・途絶の柵(fence-due)・前の heartbeat が届いていなければ再送の時刻(now +
-   RESEND-AFTER-MS)と、宿が持つ時刻(処理の止まりの明け stalled-until-ms・準備の揃う時刻 ready-ms — 本番では準備の task の終わり)の
-   早い方。呼び鈴 = 宿の呼び鈴 bell(期限が全部過ぎても起きる物の無い待ちにしない)。bell が None なら、周の頭に掛けた鈴がこの周の間に
-   鳴った(周の観測の後の出来事かもしれない)ので今すぐ(本番の、もう終わった子の待ちと同じ)。"
+  "宿 worker の真実 truth の、tick の頭の時刻 began(単調な時計では began-mono-ms)に始まり時刻 now(単調な時計では now-mono-ms)に
+   終わった tick の後の起きる物の組を作るため。期限 = 本番の coordinator-link(coordinator_link の WorkerWakes)と同じ関数・同じ基準
+   (tick の頭 — #4332)で組み立てる heartbeat の期限(beat-due — 間隔は反例の worker の beat-every-ms か返事の間隔)・途絶の柵
+   (fence-due)・前の heartbeat が届いていなければ再送の時刻(now + RESEND-AFTER-MS)と、宿が持つ時刻(処理の止まりの明け
+   stalled-until-ms・準備の揃う時刻 ready-ms — 本番では準備の task の終わり)の早い方。最後に届いた返事と tick の頭は、本番と同じく今の
+   壁の時計の枠へ写してから使う(今の壁の時計 − heartbeat_rules.silent-ms — card ki-069f4a5c07f7)。呼び鈴 = 宿の呼び鈴 bell(期限が
+   全部過ぎても起きる物の無い待ちにしない)。bell が None なら、周の頭に掛けた鈴がこの周の間に鳴った(周の観測の後の出来事かも
+   しれない)ので今すぐ(本番の、もう終わった子の待ちと同じ)。"
   (val interval (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))
-  (<- beat (| DueAt DueNever) (beat-due began truth.last-ok-ms interval))
-  (<- fence (| DueAt DueNever) (fence-due began truth.last-ok-ms truth.fence-ms truth.keep-fence-ms))
+  (<- silent int (silent-ms now now-mono-ms truth.last-ok-ms truth.last-ok-mono-ms))
+  (<- ticking int (silent-ms now now-mono-ms began began-mono-ms))
+  (val last-ok (- now silent))
+  (val tick-began (- now ticking))
+  (<- beat (| DueAt DueNever) (beat-due tick-began last-ok interval))
+  (<- fence (| DueAt DueNever) (fence-due tick-began last-ok truth.fence-ms truth.keep-fence-ms))
   ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ — 本番の送り手の口と同じ)。
   (val resend (if truth.fresh (DueNever) (DueAt :at (+ now RESEND-AFTER-MS))))
   (<- held (| DueAt DueNever) (due-after began (+ #(truth.stalled-until-ms) (tuple (gfor p (.values truth.codes) p.ready-ms)))))
@@ -2076,6 +2119,10 @@
     (<- ticked HostTruthChange (change-live-truth worker.name boot ticked-truth))
     (val truth ticked.after)
     (<- now int (now-epoch-ms))
+    ;; 沈黙の長さは壁の時計と単調な時計の長い方(本番の coordinator への口の polled と同じ計り — heartbeat_rules.silent-ms・card
+    ;; ki-069f4a5c07f7)。送る間隔の判断と自己停止の判断の両方がこの値を使う。
+    (<- mono float (GetMonotonic))
+    (<- silent int (silent-ms now (monotonic-ms-of mono) truth.last-ok-ms truth.last-ok-mono-ms))
     (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None)
                        (is truth.watch-failure None)))
     ;; 名乗る止まり(反例の worker silent-stop は名乗らない — 条 C3 の失敗ケース)。
@@ -2084,13 +2131,13 @@
     (val due (and (>= now truth.stalled-until-ms)
                   (heartbeat-due watching truth.fresh truth.woken
                                  (or (!= truth.statuses truth.sent-statuses) (!= announced truth.sent-stopping))
-                                 (- now truth.last-ok-ms)
+                                 silent
                                  (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))))
     ;; 自己停止を周期ごとに時間で判じる(#2806 — 本番の coordinator への口の polled と同じ判断)。処理の止まりの間は拍の走らない本番に
     ;; 合わせて判じず、明けた最初の周期で判じる。止めた周期は heartbeat を送らず、次の周期で送る(宣言を捨てた = fresh を下ろす)。
     ;; 反例の worker ignores-fence(印の無い job も途絶で止めない壊れた worker)は判じない。
     (val silenced (if (and (>= now truth.stalled-until-ms) (not worker.ignores-fence))
-                      (desired-after-silence (- now truth.last-ok-ms) truth.fence-ms truth.keep-fence-ms truth.fresh
+                      (desired-after-silence silent truth.fence-ms truth.keep-fence-ms truth.fresh
                                              truth.last-desired truth.last-warm)
                       None))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛けてある(周の頭の ticked-truth — 送っている間に来た変化も鳴らす・#2692)。
@@ -2167,8 +2214,14 @@
     ;; 観測と記録を Spawn の前に書く(Spawn の直後に新しい task が先に走って終わっても、終わりを書く相手が在る)。
     (<- (PutHostTruth worker.name
                       (replace truth :processes (+ truth.processes #((ProcessView spec.name spec attempt pid now :instance instance))))))
+    ;; 世界の記録の刻は世界の時計で書く(終わりの刻 EndProcess は世界が読む — 起きた刻も同じ物差しに)。機体の壁の時計を動かす
+    ;; worker(steps-wall)の now は動かした分だけずれているので、その分を戻す。
+    (var wall-back-ms 0)
+    (when worker.steps-wall
+      (<- stepped int (WallBackOf worker.name))
+      (:= wall-back-ms stepped))
     (<- (NoteProcess (SimProcess :job spec.name :worker worker.name :instance instance :attempt attempt :pid pid
-                                 :spec-hash (spec-hash spec) :started-ms now)))
+                                 :spec-hash (spec-hash spec) :started-ms (+ now wall-back-ms))))
     ;; 節の中から Spawn する — 新しい task は節の外側の handler(世界・時計)だけを持ち、run-worker の中の handler を持たない。
     (<- program-path str (program-path-of spec.program))
     ;; 子の送り手の口は本番の子の TaskSender・DetachedSender と同じく run-context の実行環境の宣言を持つ(cluster_foundation の組)。
@@ -2243,12 +2296,15 @@
   (EnvReport []
     ;; sim の宿は heartbeat の root の名乗りを世界の root から自分で作る(env-heartbeat-part)ので、拍の Program の問いには None で答える。
     (resume None))
-  (WorkerWakes [began]
+  (WorkerWakes [began began-mono-ms]
     ;; 周の間の待ちを起こす物(#3871 の単位 5)の一番外: 宿の期限(本番の送り手の口と同じ関数)と宿の呼び鈴(host-wakes)。宿の内側に
-    ;; 状態を持つ handler は無いので、外へ出し直さずに答える。
+    ;; 状態を持つ handler は無いので、外へ出し直さずに答える。今の刻は壁の時計と単調な時計の両方で読む(期限を今の壁の時計の枠で
+    ;; 組み立てる — 本番の coordinator への口の WorkerWakes と同じ・card ki-069f4a5c07f7)。
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
-    (<- wakes WakeSet (host-wakes worker truth began now (if (is truth.wake-bell None) None truth.wake-bell.future)))
+    (<- mono float (GetMonotonic))
+    (<- wakes WakeSet (host-wakes worker truth began began-mono-ms now (monotonic-ms-of mono)
+                                  (if (is truth.wake-bell None) None truth.wake-bell.future)))
     (resume wakes))
   (AwaitStop []
     ;; 止めの合図の待ち(本番の答え手は os-signal-stop-handler)。止めが頼まれていれば今すぐ、そうでなければ周の頭に掛けた止めの呼び鈴が
@@ -2269,6 +2325,18 @@
       (<- (CompletePromise rung TERM-REASON))
       (return (resume rung.future)))
     (resume truth.stop-bell.future)))
+
+
+(defhandler worker-wall [#^ str name]
+  {:tags {:context "doeff-cluster" :role "foundation"}}
+  ;; 引数に残す理由: worker ごとに別の機体の時計を並べる(run-worker は自分の名を effect で問わない)ので Ask で区別できない。
+  ;; worker name の機体の壁の時計の代役(steps-wall の worker の宿の外側 — run-sim-worker が並べる): 世界の時計の答えを、筋書きが
+  ;; StepWorkerWall で動かした分(世界が持つ — WallBackOf)だけずらす。単調な時計(GetMonotonic)と待ち(Delay)は世界の時計のまま通す
+  ;; — 壁の時計だけが動く(NTP の step・機体の suspend の後の形・card ki-069f4a5c07f7)。
+  (GetTimeEffect []
+    (<- now datetime effect)
+    (<- back-ms int (WallBackOf name))
+    (resume (- now (timedelta :milliseconds back-ms)))))
 
 
 (defk await-beat [name boot]
@@ -2364,7 +2432,11 @@
   (<- parts SimParts (PartsOf))
   ;; worker の調整ループ自身の行(起こしの見送り — #3713・本番は入口の slog-handler が出す)は sim-host の内側で捨てる。job の Program は
   ;; sim-host の節の中から Spawn され、節の外側の handler だけを持つので、job の slog はこの捨てる handler に当たらず外の受け手へ届く。
-  (<- (worker-on [(sim-host worker boot plan parts) tick-pauses slog-discard-handler] policy))
+  ;; 機体の壁の時計を筋書きが動かす worker(steps-wall)は、宿の外側に機体の壁の時計の代役を並べる(調整ループ・宿・子 process の
+  ;; GetTime がずれる)。ほかの worker には並べない(時刻の読みの歩数を足さない)。
+  (<- (worker-on (+ (if worker.steps-wall [(worker-wall worker.name)] [])
+                    [(sim-host worker boot plan parts) tick-pauses slog-discard-handler])
+                 policy))
   boot)
 
 
@@ -2928,6 +3000,8 @@
   (session var roll-bells {})
   ;; 要求の受付まわり(網の切れ・口の故障・返事の前の覚え・報告・区間の歩の書きの数)は 1 つの値(1 歩の問いが 1 度だけ読む・#3054 の C-6)。
   (session var intake (SimIntake :cuts {} :failing {} :held #() :reports #()))
+  ;; worker の名 → 機体の壁の時計が世界の時計から戻っている ms(StepWorkerWall の積み — steps-wall の worker だけが持つ)。
+  (session var wall-backs {})
   (session var pausing (SimPauses :queued #()))
   (session var runs #())
   ;; coordinator の Pod の環境変数(ReplaceCoordinatorEnviron で差し替える — 一生の始めに CoordinatorEnvironOf で読む・#3772)。
@@ -3308,8 +3382,9 @@
     (if (not truth.down)
         (resume False)
         (do (<- now int (now-epoch-ms))
+            (<- mono float (GetMonotonic))
             (val generation (+ (get generations name) 1))
-            (<- fresh HostTruth (fresh-truth name generation now plan.timing))
+            (<- fresh HostTruth (fresh-truth name generation now (monotonic-ms-of mono) plan.timing))
             (val revival (.get revivals name))
             (:= generations (| generations {name generation}))
             (:= hosts (| hosts {name fresh}))
@@ -3325,8 +3400,9 @@
     (if (or truth.down truth.stopping (is rung None) (!= (get rung 0) truth.boot))
         (resume None)
         (do (<- now int (now-epoch-ms))
+            (<- mono float (GetMonotonic))
             (val generation (+ (get generations name) 1))
-            (<- born HostTruth (fresh-truth name generation now plan.timing))
+            (<- born HostTruth (fresh-truth name generation now (monotonic-ms-of mono) plan.timing))
             ;; 前の世代を止めずに起こした新しい世代は、重なりを名乗る(本番の起動の script の --overlaps-elder — AL-D2e)。
             (val fresh (replace born :overlaps-elder True))
             (:= generations (| generations {name generation}))
@@ -3374,6 +3450,15 @@
     ;; 宿は起こさない(処理の止まりの間の heartbeat は送らない — 止まりの明けは宿の期限 host-wakes が持つ・#2850)。
     (:= hosts (| hosts {name (replace truth :stalled-until-ms (+ now (int (* 1000 seconds))))}))
     (resume None))
+  (StepWorkerWall [name seconds]
+    ;; 機体の壁の時計の代役(worker-wall)を並べていない worker の壁は動かせない(黙って何も起きない筋書きにしない)。
+    (when (not (. (get current name) steps-wall))
+      (raise (ValueError (.format "StepWorkerWall は steps-wall の worker にだけ使える: {}" name))))
+    ;; 宿は起こさない(本番の時計の step と同じく、次に時刻を読んだ時に知る)。
+    (:= wall-backs (| wall-backs {name (+ (.get wall-backs name 0) (int (* 1000 seconds)))}))
+    (resume None))
+  (WallBackOf [name]
+    (resume (.get wall-backs name 0)))
   (FailRoute [method path status seconds]
     (<- now int (now-epoch-ms))
     (:= intake (replace intake :failing (| intake.failing {#(method path) #(status (+ now (int (* 1000 seconds))))})))
@@ -3765,8 +3850,9 @@
   "入口(sim-cluster・wall-sim-cluster)が選んだ時計の内側で、時計の今を起点に筋を作り(引数を検めて断る)、session の値の置き場・sim の
    外の世界・sim の世界を並べて sim-main を走らせるため。時計の違いは入口が並べる handler だけで、ここから内側は同じ。"
   (<- start-ms int (now-epoch-ms))
+  (<- start-mono float (GetMonotonic))
   (<- plan SimPlan (sim-plan system workers environ revision start-ms timing policy outside store deployments runtime-env nodes
-                             :notice-broker notice-broker))
+                             :notice-broker notice-broker :start-mono-ms (monotonic-ms-of start-mono)))
   ;; no-business-timers は外の世界の外側: 外の世界に timer-handler を置いた走りでは、それが先に ArmedTimers に答える(#3093)。
   (<- answer (with-handlers [(session-store) no-business-timers #* (if (is outside None) [] outside.handlers) (sim-world plan)]
                (sim-main scenario)))

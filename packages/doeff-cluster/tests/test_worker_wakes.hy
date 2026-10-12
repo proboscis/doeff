@@ -25,7 +25,7 @@
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise Spawn])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
-(import tests.clock_fixtures [clock-ms])
+(import tests.clock_fixtures [clock-ms wall-back])
 (import tests.link_rig [cell-of LINK-ROUTE])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick
@@ -133,7 +133,7 @@
   {:pre [(: with-link bool) (: delivered bool)] :post [(: % WakeSet)] :tags {:context "doeff-cluster-test" :role "program"}}
   "待ちの口を使わない送り手の口(最後に届いた返事 1000・間隔 BEAT-MS・fence 20 秒)の下で、今 1500 の起きる物の組を問うため。with-link =
    送り手の口の handler を並べるか(偽 = 一番外の空の組だけ)・delivered = 前の heartbeat が届いたか。"
-  (val state (LinkState "w" #("cpu") 1 0 20000 "tasks" "boot" 0 1000 :watch False))
+  (val state (LinkState "w" #("cpu") 1 0 20000 "tasks" "boot" 0 1000 1000 :watch False))
   (setv state.beat-interval-ms BEAT-MS)
   (when delivered
     (setv state.last-desired (DesiredJobs #())))
@@ -144,7 +144,7 @@
   ;; tick の頭の時刻も 1500(tick に時間がかからない)。
   (<- wakes WakeSet (with-handlers (+ [(sim-time-handler :clock clock) no-wakes]
                                       (if with-link [(coordinator-link state cell LINK-ROUTE watch-cell)] []))
-                      (WorkerWakes :began 1500)))
+                      (WorkerWakes :began 1500 :began-mono-ms 1500)))
   wakes)
 
 
@@ -156,6 +156,32 @@
   ;; 前の heartbeat が届いていなければ、送り直しの刻(今 + RESEND-AFTER-MS)が先に来る。
   (<- undelivered WakeSet (link-wakes True False))
   (assert (= undelivered.due (DueAt :at (+ 1500 RESEND-AFTER-MS))) undelivered))
+
+
+(defk link-wakes-after-a-step [back-ms]
+  {:pre [(: back-ms int)] :post [(: % WakeSet)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "送り手の口(最後に届いた返事 = 壁の時計 1000・単調な時計 1000・間隔 BEAT-MS)の下で、tick の頭(壁の時計 1400・単調な時計 1400)の
+   後に壁の時計だけが back-ms 戻り、単調な時計 1500 の時に起きる物の組を問うため(壁の時計の今 = 1500 − back-ms)。"
+  (val state (LinkState "w" #("cpu") 1 0 20000 "tasks" "boot" 0 1000 1000 :watch False))
+  (setv state.beat-interval-ms BEAT-MS state.last-desired (DesiredJobs #()))
+  (<- cell (cell-of "http://127.0.0.1:9"))
+  (<- watch-cell (cell-of "http://127.0.0.1:9"))
+  (val clock (SimClock))
+  (<- ((sim-time-handler :clock clock) (Delay 1.5)))
+  (<- wakes WakeSet (with-handlers [(sim-time-handler :clock clock) (wall-back back-ms) no-wakes
+                                    (coordinator-link state cell LINK-ROUTE watch-cell)]
+                      (WorkerWakes :began 1400 :began-mono-ms 1400)))
+  wakes)
+
+
+(deftest test-the-link-deadlines-follow-the-wall-clock-after-it-stepped-back-inside-a-tick
+  ;; card ki-069f4a5c07f7: tick の頭の後に壁の時計が 10 秒戻っても、heartbeat の期限は今の壁の時計の枠で「あと 2 秒」(今 −8500 +
+  ;; 間隔の残り 2000 = −6500)。前の枠の刻(最後に届いた返事 1000 + 間隔 = 3500)のままだと、待ちは 12 秒になる。
+  (<- wakes WakeSet (link-wakes-after-a-step 10000))
+  (assert (= wakes.due (DueAt :at -6500)) wakes)
+  ;; 対照: 壁の時計が動かなければ、今までと同じ刻(3500)。
+  (<- unstepped WakeSet (link-wakes-after-a-step 0))
+  (assert (= unstepped.due (DueAt :at 3500)) unstepped))
 
 
 (deftest test-without-the-link-handler-its-deadline-is-missing

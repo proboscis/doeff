@@ -291,6 +291,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
   通します。job は外の世界を effect を通してだけ共有します(object を共有しない)。
 - 筋書き(scenario)の中で使う effect: `Crash`・`Redeclare`・`RestartService`(版を替えずに handoff の job を重ねて起こし直す)・`ReportsOf`・`ReadinessOf`・`ProcessesOf`・`SharedRows`・`ReadCoordinator`・
   `StopCoordinator`・`CrashCoordinator`・`CoordinatorRuns`・`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・
+  `StepWorkerWall`(`SimWorker` の `steps-wall` を真にした worker の、機体の壁の時計だけを戻す・進める — 単調な時計と世界の時計は動かない)・
   `PreparationsOf`・`ClientLink`。時間を進めるのは scenario の `Delay` です。
 - 壁の時計で回すなら `wall-sim-cluster`(引数は `sim-cluster` と同じで、`start-ms` だけが無い — 今の時刻から始まります)。時計は
   doeff-time の `async-time-handler` と `await-handler` で、`Delay` は実時間で待ちます。外の thread の客・本物の待ち受け・実時間の遅れを

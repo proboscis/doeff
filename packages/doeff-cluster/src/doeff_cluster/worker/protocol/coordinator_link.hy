@@ -9,6 +9,9 @@
 ;;;   * 返事の job と task を JobSpec に読み(worker/protocol/declared)、task の印 <id>.program を残し、返事から外れた task の結果の file を消し、
 ;;;     cache に無い詰めた Program を取り寄せる(中身の sha256 がキーと合わない物は書かない)。
 ;;;   * 届かなければ desired-when-unreachable(途絶が fence を越えたら lease を持たない job と task を止める)。
+;;;   * 沈黙の長さ(最後に届いた返事から・前の送りの始めから)は、壁の時計と単調な時計の両方で読んだ起点から heartbeat_rules.silent-ms の
+;;;     1 か所で計る(2 つの差の長い方 — 機体の壁の時計が戻っても自己停止と送りが遅れない・card ki-069f4a5c07f7)。起きる期限(壁の時計の
+;;;     DueAt)は、今の壁の時計から沈黙を引いた刻(今の壁の枠へ写した起点)から組み立てる。
 ;;;   * 周期の頭で、最後の成功から fence を越えていれば heartbeat を待たずに止める(desired-after-silence — 処理が止まって戻った最初の周期・#2806)。
 ;;;   * 名指しの待ち(#1933)は背景の task(Spawn の daemon)で送り続け、「変わった」と答えたら次の拍で heartbeat を送らせる。
 ;;;   * 拍の外の送り(card ki-e38dbfca7671)も背景の task(Spawn の daemon)で、前の送りから送信間隔が過ぎたら拍を待たずに送る — 拍が
@@ -32,7 +35,8 @@
 (import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                                                WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence])
+(import doeff_cluster.worker.core.heartbeat_rules [warm-env-of-row finished-task-id desired-when-unreachable desired-after-silence
+                                                    silent-ms])
 (import doeff_cluster.worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable HeartbeatSent ReadDesired PublishStatus BootMarks WakeSet
@@ -64,11 +68,13 @@
 (defclass BeatCell []
   "heartbeat の送り口(sent-beat)と拍の外の背景の task が分ける値(card ki-e38dbfca7671)。in-flight = 今 答えを待っている送りの終わりの
    約束(None = 送っていない — 送りは 1 本ずつ。送っている間に来た求めは、この約束が満ちるのを待つ)・started-at = 最後に送りを始めた刻
-   (epoch ms・None = まだ送っていない — 背景の task はここから送信間隔を数える)・unread = 拍の宣言の読みがまだ受け取っていない送りの
+   (epoch ms・None = まだ送っていない — 背景の task はここから送信間隔を数える)・started-mono-ms = 同じ刻の単調な時計の読み(ms —
+   間隔は heartbeat_rules.silent-ms で数える)・unread = 拍の宣言の読みがまだ受け取っていない送りの
    事実(HeartbeatSent の列 — 送った順)・running = 背景の task が走っている・closing = 止めの合図・failure = 背景の task が止まった理由。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
-    (setv self.in-flight None self.started-at None self.unread #() self.running False self.closing False self.failure "")))
+    (setv self.in-flight None self.started-at None self.started-mono-ms None self.unread #() self.running False self.closing False
+          self.failure "")))
 
 
 (defclass LinkState []
@@ -80,10 +86,12 @@
    watch = 名指しの待ちを使うか(本番の入口が真にする)・beat-beside = 拍の外の背景の task でも heartbeat を送るか(既定 真 — card
    ki-e38dbfca7671。偽は操作ごとに run を分ける検の道具だけ: 背景の task は run をまたいで生きない)・boot = この process の世代・
    boot-at = 起動時刻(epoch ms)・started-ms = 最後の連絡とみなす初めの時刻(一度も届かない worker は fence の後に何も動かさない)・
+   started-mono-ms = 同じ刻の単調な時計の読み(ms — 沈黙は壁の時計と単調な時計の両方で計る・heartbeat_rules.silent-ms)・
    boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)・overlaps-elder = この世代は同じ名の
    前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
-                          #^ int boot-at #^ int started-ms * #^ (| dict None) [versions None] #^ (| dict None) [tools None]
+                          #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
+                          #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
@@ -101,7 +109,8 @@
           self.task-dir task-dir self.versions (or versions {})
           ;; 詰めた Program の cache(/programs/<sha> から取る — 子 process の言い換えと同じ state dir の programs・改訂 1 の F)。
           self.program-dir (os.path.join (os.path.dirname (os.path.abspath task-dir)) "programs")
-          self.last-ok-ms started-ms
+          ;; 最後に届いた返事の刻(壁の時計の epoch ms と、同じ刻の単調な時計の ms — 届くたびに 2 つを一緒に書く)。
+          self.last-ok-ms started-ms self.last-ok-mono-ms started-mono-ms
           ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
           self.last-jobs #() self.last-tasks #() self.last-warm #() self.warm-keys {}
           self.boot boot self.boot-at boot-at self.overlaps-elder overlaps-elder
@@ -129,6 +138,15 @@
   "名指しの待ちの問い(GET /watch の query)を作るため。まだ口を確かめていない最初の待ちは 0 秒(すぐ答える — 待つ口の有無を確かめ、
    確かめるまで毎拍の heartbeat を続ける)、その後は上限 limit-ms(coordinator の timing の watch-max-ms — heartbeat の返事で受け取る)まで待つ。"
   {"after" (str after) "timeoutSeconds" (str (if confirmed (/ limit-ms 1000.0) 0.0)) "worker" worker "boot" boot})
+
+(defk link-silence [state now-ms]
+  {:pre [(: state LinkState) (: now-ms int)] :post [(: % int)]}
+  "最後に届いた返事からの沈黙の長さ(ms)を、今の壁の時計の読み now-ms と、ここで読む単調な時計とで計るため(計りは
+   heartbeat_rules.silent-ms の 1 か所 — 途絶の柵・heartbeat を送る間隔・起きる期限がどれもこの値を使う)。"
+  (<- mono float (GetMonotonic))
+  (<- silent int (silent-ms now-ms (monotonic-ms-of mono) state.last-ok-ms state.last-ok-mono-ms))
+  silent)
+
 
 (defk told-once [state outcome line]
   {:pre [(: state LinkState) (: outcome str) (: line str)] :post [(: % None)]}
@@ -389,10 +407,12 @@
   (<- reply RoutedReply (routed-request cell.route "POST" "/heartbeat" options None body))
   (setv cell.route reply.route)
   (<- now-ms int (now-epoch-ms))
+  ;; 返事の刻は壁の時計と単調な時計の両方で読む(沈黙の計りの起点と今 — heartbeat_rules.silent-ms)。
+  (<- now-mono float (GetMonotonic))
   (var desired None)
   (try
     (<- answered (answer-json reply.answer))
-    (setv state.last-ok-ms now-ms)
+    (setv state.last-ok-ms now-ms state.last-ok-mono-ms (monotonic-ms-of now-mono))
     ;; 返事の宣言の部分(job の行と draining)を JSON の境界で 1 度だけ解く(#3684)— 返事の job の版を据え置く印(declared-job-specs)が
     ;; draining を読む。ready の file は解けた返事ごとに ready を書く(drain を見ない・#4177)。形の違う返事(draining の無い返事など)は
     ;; DeclaredReplyMalformed で落ち、下の except が「名乗れない」の 1 行にして「読めない」を返す(拍は前の宣言のまま動かし、ready の file は
@@ -443,7 +463,8 @@
       (<- (told-once state (repr error) (+ "worker: coordinator に名乗れない: " (repr error))))
       ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
       (setv state.last-desired None)
-      (:= desired (desired-when-unreachable (- now-ms state.last-ok-ms) state.fence-ms state.keep-fence-ms
+      (<- silent int (silent-ms now-ms (monotonic-ms-of now-mono) state.last-ok-ms state.last-ok-mono-ms))
+      (:= desired (desired-when-unreachable silent state.fence-ms state.keep-fence-ms
                                             (+ state.last-jobs state.last-tasks) state.last-warm (repr error)))))
   desired)
 
@@ -469,6 +490,7 @@
   (<- done Promise (CreatePromise))
   (setv beating.in-flight done
         beating.started-at now-ms
+        beating.started-mono-ms (monotonic-ms-of mono)
         beating.unread (+ beating.unread #((HeartbeatSent :at now-ms :mono-ms (monotonic-ms-of mono) :worker state.name
                                                          :lease-ms state.lease-ms))))
   (var beaten None)
@@ -491,15 +513,21 @@
   "拍の外の背景の task の本体(card ki-e38dbfca7671): 前の送りを始めてから送信間隔が過ぎたら、拍を待たずに heartbeat を送るため。拍が
    送れば、その送りから数え直す(送りは送り口 sent-beat の 1 本ずつ — 拍の送りと重ねない)。拍が HTTP や待ちで譲っている間は、拍が
    どれだけ長くかかっても送りの間は送信間隔と 1 往復の内に収まる(同期の処理で scheduler を塞ぐ間は回らない)。返事は拍と同じ入れ物に
-   書く(次の拍の宣言の読みが使う)。思わぬ例外は理由を記して抜ける(拍の中の送りは続く — 黙って止まらない)。"
+   書く(次の拍の宣言の読みが使う)。思わぬ例外は理由を記して抜ける(拍の中の送りは続く — 黙って止まらない)。前の送りからの長さは
+   沈黙と同じ計り(heartbeat_rules.silent-ms — 壁の時計が戻っても次の送りを戻った分だけ待たない・card ki-069f4a5c07f7)。"
   (val beating state.beating)
   (try
     (while (not beating.closing)
       (<- (send-settled state))
       (<- now-ms int (now-epoch-ms))
-      (val due-ms (if (is beating.started-at None) now-ms (+ beating.started-at state.beat-interval-ms)))
-      (if (< now-ms due-ms)
-          (<- (Delay (/ (- due-ms now-ms) 1000.0)))
+      (<- mono float (GetMonotonic))
+      ;; 前の送りを始めてからの長さ(まだ送っていなければ、間隔が過ぎたのと同じ = 今すぐ送る)。
+      (var since state.beat-interval-ms)
+      (when (is-not beating.started-at None)
+        (<- measured int (silent-ms now-ms (monotonic-ms-of mono) beating.started-at beating.started-mono-ms))
+        (:= since measured))
+      (if (< since state.beat-interval-ms)
+          (<- (Delay (/ (- state.beat-interval-ms since) 1000.0)))
           (<- _beaten (| DesiredJobs DesiredUnreadable) (sent-beat state cell options))))
     (except [error Exception]
       (setv beating.failure (repr error))
@@ -520,7 +548,9 @@
   ;; 自己停止を周期ごとに時間で判じる(#2806): 処理が止まって heartbeat を送れなかった worker は、戻った最初の周期で最後の成功から fence を
   ;; 越えていれば、この周期は heartbeat を送らず印の無い job と task を止めた宣言を返す(返事を待つ間に動かし続けない)。最後の宣言を捨てる
   ;; ので、次の周期は heartbeat を送る — 届けば返事で戻し、届かなければ desired-when-unreachable が判じる。
-  (val silenced (desired-after-silence (- now-ms state.last-ok-ms) state.fence-ms state.keep-fence-ms (is-not state.last-desired None)
+  ;; 沈黙は壁の時計と単調な時計の長い方(機体の suspend は壁の差が、壁の時計の戻りは単調な差が拾う — card ki-069f4a5c07f7)。
+  (<- silent int (link-silence state now-ms))
+  (val silenced (desired-after-silence silent state.fence-ms state.keep-fence-ms (is-not state.last-desired None)
                                        (+ state.last-jobs state.last-tasks) state.last-warm))
   (when (is-not silenced None)
     (setv state.last-desired None)
@@ -530,7 +560,7 @@
   ;; 止まり始めは状態の報告の違いと同じく、送る間隔を待たずに名乗る(#2819)。
   (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken
                        (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping))
-                       (- now-ms state.last-ok-ms) state.beat-interval-ms)
+                       silent state.beat-interval-ms)
     ;; 送りの事実(#3850)は送り口が溜め、宣言の読みが渡す(拍の外の送りと同じ数え方)。
     (<- beaten (| DesiredJobs DesiredUnreadable) (sent-beat state cell options))
     (:= desired beaten))
@@ -576,18 +606,26 @@
     (val sends state.beating.unread)
     (setv state.beating.unread #())
     (resume (replace belled :sends sends)))
-  (WorkerWakes [began]
+  (WorkerWakes [began began-mono-ms]
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 外側の答えに、heartbeat を送る期限・途絶の柵の期限と、前の heartbeat が届いていなければ
     ;; 送り直しの刻を足す。宣言の変化の呼び鈴は ReadDesired の答え(DesiredJobs.changed)が運ぶので足さない。
     (<- outer WakeSet effect)
-    ;; heartbeat と fence の期限は tick の頭の時刻 began を基準に組み立てる: 送るか・止めるかの判断(polled)は tick の中の ReadDesired で
-    ;; 読んだ時刻で判定したので、began より後の期限はまだ判定していない。tick の後半が送信間隔より長くて既に過ぎていても捨てずに
+    ;; 期限は壁の時計の刻(DueAt)で返す。最後に届いた返事と tick の頭を、今の壁の時計の枠へ写してから組み立てる: 今の壁の時計から、
+    ;; その刻からの長さ(heartbeat_rules.silent-ms — 壁の時計と単調な時計の長い方)を引いた刻。壁の時計が動いていなければ元の刻と
+    ;; 同じで、tick の途中や前の周の間に壁の時計が戻っていても、期限が戻った分だけ先へ延びない(card ki-069f4a5c07f7)。
+    (<- now int (now-epoch-ms))
+    (<- mono float (GetMonotonic))
+    (<- silent int (silent-ms now (monotonic-ms-of mono) state.last-ok-ms state.last-ok-mono-ms))
+    (<- ticking int (silent-ms now (monotonic-ms-of mono) began began-mono-ms))
+    (val last-ok (- now silent))
+    (val tick-began (- now ticking))
+    ;; heartbeat と fence の期限は tick の頭の時刻を基準に組み立てる: 送るか・止めるかの判断(polled)は tick の中の ReadDesired で
+    ;; 読んだ時刻で判定したので、tick の頭より後の期限はまだ判定していない。tick の後半が送信間隔より長くて既に過ぎていても捨てずに
     ;; 返し、待ち 0 で起きた次の tick が送る(#4332)。
-    (<- beat (| DueAt DueNever) (beat-due began state.last-ok-ms state.beat-interval-ms))
-    (<- fence (| DueAt DueNever) (fence-due began state.last-ok-ms state.fence-ms state.keep-fence-ms))
+    (<- beat (| DueAt DueNever) (beat-due tick-began last-ok state.beat-interval-ms))
+    (<- fence (| DueAt DueNever) (fence-due tick-began last-ok state.fence-ms state.keep-fence-ms))
     ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。再送は期限でなく再送の間の待ちなので、
     ;; tick の終わりの時刻から数える。
-    (<- now int (now-epoch-ms))
     (val resend (if (is state.last-desired None) (DueAt :at (+ now RESEND-AFTER-MS)) (DueNever)))
     (<- due (| DueAt DueNow DueNever) (earliest-due #(beat fence resend)))
     (<- merged WakeSet (wakes-with outer due #() #()))

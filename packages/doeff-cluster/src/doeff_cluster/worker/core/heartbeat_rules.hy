@@ -33,6 +33,22 @@
   (tuple (sorted (gfor job jobs :if (and job.keep-when-cut-off (not job.once)) job.name))))
 
 
+(defk silent-ms [now-ms now-mono-ms since-ms since-mono-ms]
+  {:pre [(: now-ms int) (: now-mono-ms int) (: since-ms int) (: since-mono-ms int)] :post [(: % int)]
+   :tags {:context "worker" :role "judgment"}}
+  "沈黙の長さ(起点 — 最後に届いた返事・前の送りの始め — から今までの ms)を、機体の壁の時計が動いても実際に過ぎた時間を下回らない
+   ように計るため(card ki-069f4a5c07f7)。起点と今を壁の時計(epoch ms)と単調な時計(ms)の両方で読み、2 つの差の長い方を採る —
+   途絶の柵(desired-after-silence・desired-when-unreachable)・heartbeat を送る間隔(beat_policy.heartbeat-due)・拍の外の送りの間隔が
+   使う沈黙は、どれもここで作る(壁の差だけ・単調な差だけを判断に渡さない)。
+     壁が戻る       壁の差は戻った分だけ縮む → 単調な差が実際の長さを守る(縮むと自己停止と送りが遅れ、coordinator が自分の時計で数える
+                    移し替えの後まで job を動かす — 条 C4)。
+     機体の suspend  単調な時計(CLOCK_MONOTONIC)は眠っている間を数えない → 壁の差が拾う(#2806 — 戻った最初の周で止める)。
+     壁が進む       壁の差は進んだ分だけ伸びる → 早く止まる・早く送る。suspend と同じ読み(単調は進まず壁だけ進む)で見分けられないので、
+                    2 か所で走らない向きに寄せる(代償は偽の自己停止 — 同じ worker に起き直す)。
+   拾えない組: 同じ沈黙の間に suspend と壁の戻りの両方が起きると、短い方の分だけ下回る。"
+  (max (- now-ms since-ms) (- now-mono-ms since-mono-ms)))
+
+
 (deff desired-when-unreachable [#^ int silent-ms #^ int fence-ms #^ int keep-fence-ms #^ tuple last #^ tuple warm #^ str reason]  ; defk にできない: worker の coordinator への口(worker/protocol/coordinator_link)と sim の宿が同じ判断を使う
   {:pre [(: silent-ms int) (: fence-ms int) (: keep-fence-ms int) (: last tuple) (: warm tuple) (: reason str)]
    :post [(: % (| DesiredJobs DesiredUnreadable))] :tags {:context "worker" :role "judgment"}}

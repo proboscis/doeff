@@ -117,7 +117,8 @@
 (defk worker-tick [state policy stopping]
   {:pre [(: state WorkerState) (: policy WorkerPolicy) (: stopping bool)] :post [(: % tuple)]}
   ;; 結果 = #(次の状態 まだ終了を待つ子 process の数 宣言の変化の呼び鈴(Future か None) 計画の期限 実行した action の名の列
-  ;;          tick の頭の時刻(epoch ms — handler が期限を組み立てる基準・WorkerWakes の began))
+  ;;          tick の頭の時刻(epoch ms — handler が期限を組み立てる基準・WorkerWakes の began)
+  ;;          tick の頭の単調な時計の読み(ms — WorkerWakes の began-mono-ms))
   ;; heartbeat に載せる root の姿は root の言い換えに問うて、宣言の読みに渡す(#2467・#2427)。止まり始めも渡す — heartbeat で名乗り、
   ;; coordinator がこの世代へ新しく置かない(#2819)。
   ;; 拍の遅れの計り(#3715): 拍の頭・重い 3 種の待ちの後・拍の終わりに時刻を読み、拍が TICK-LAG-MS を越えたらいちばん長い区間を名指す。
@@ -213,7 +214,8 @@
       _ None)
     planned-due
     (tuple (gfor action fired (. (type action) __name__)))
-    began))
+    began
+    began-ms))
 
 (defk next-tick-due [due acted]
   {:pre [(: due (| DueAt DueNow DueNever)) (: acted bool)] :post [(: % (| DueAt DueNow DueNever))]
@@ -248,7 +250,8 @@
     (when (and stopping (= alive 0)) (return state))
     ;; 起きる物の組: 状態を持つ handler が足した期限・呼び鈴・待つ子に、計画の期限を合わせる(#3871 の単位 4)。handler は期限を
     ;; tick の頭の時刻を基準に組み立てる(tick の後半が長くても、まだ判定していない期限を捨てない — #4332)。
-    (<- outer WakeSet (WorkerWakes :began (get ticked 5)))
+    ;; tick の頭の単調な時計の読みも渡す(handler が began を今の壁の時計の枠へ写し直す — card ki-069f4a5c07f7)。
+    (<- outer WakeSet (WorkerWakes :began (get ticked 5) :began-mono-ms (get ticked 6)))
     (<- gathered WakeSet (wakes-with outer (get ticked 3) #() #()))
     (val fired (get ticked 4))
     (val settling (tuple (gfor name fired :if (not-in name (tuple (gfor t WAKE-DRIVEN-ACTIONS t.__name__))) name)))

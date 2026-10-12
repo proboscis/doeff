@@ -9,6 +9,9 @@
 ;;;   移し替え ≥ fence + 返事の上限 + 接続の上限 + 子の停止の猶予
 ;;; C4 は C4b(止め切りの後、job の子孫は 1 つも生きていない — worker の条 stopped-job-leaves-no-descendant・#2940 の 2 段目)が成り立つ
 ;;; 前提の上で意味を持つ。
+;;; もう 1 つの前提: fence を数える worker の沈黙(最後に届いた返事からの長さ)が、coordinator が自分の時計で数える沈黙を下回らない事。
+;;; worker は沈黙を壁の時計の差と単調な時計の差の長い方で計る(worker/core/heartbeat_rules の silent-ms — card ki-069f4a5c07f7)。壁の
+;;; 時計の差だけで計ると、途絶の最中に機体の壁の時計が戻った分だけ fence が遅れ、戻りが余白を越えるとこの不等式が崩れる。
 ;;; 同じ判断を、途絶しても動かし続けてよい印の約束の在る job にも当てる: 移し替え = 約束を外す期限(ClusterTiming.kept-reassign-after-ms)・
 ;;; fence = 長い方の柵(keep-fence-ms)。
 ;;; 値の定義の置き場は 1 か所にまとまっていない(fence・移し替え・返事の上限 = shared/intent/protocol の ClusterTiming・接続の上限 =

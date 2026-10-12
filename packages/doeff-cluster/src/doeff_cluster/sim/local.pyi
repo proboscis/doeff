@@ -9,6 +9,8 @@ from collections.abc import Callable as Callable
 from copy import deepcopy as deepcopy
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
+from datetime import datetime as datetime
+from datetime import timedelta as timedelta
 from pathlib import Path as Path
 from urllib.parse import quote as url_quote
 from doeff import with_handlers as with_handlers
@@ -45,11 +47,13 @@ from doeff_events import WaitForEventEffect as WaitForEventEffect
 from doeff_events import WaitForEventsEffect as WaitForEventsEffect
 from doeff_time import Delay as Delay
 from doeff_time import GetMonotonic as GetMonotonic
+from doeff_time import GetTimeEffect as GetTimeEffect
 from doeff_time import epoch_ms_of as epoch_ms_of
 from doeff_time import sim_time_handler as sim_time_handler
 from doeff_time import async_time_handler as async_time_handler
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.core.clock import datetime_of_epoch_ms as datetime_of_epoch_ms
+from doeff_cluster.shared.core.clock import monotonic_ms_of as monotonic_ms_of
 from doeff_cluster.shared.core.timing_rules import scaled_timing as scaled_timing
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
@@ -173,6 +177,7 @@ from doeff_cluster.worker.protocol.coordinator_link import with_bell as with_bel
 from doeff_cluster.worker.protocol.coordinator_link import RESEND_AFTER_MS as RESEND_AFTER_MS
 from doeff_cluster.worker.core.heartbeat_rules import keep_marks_held as keep_marks_held
 from doeff_cluster.worker.core.heartbeat_rules import desired_after_silence as desired_after_silence
+from doeff_cluster.worker.core.heartbeat_rules import silent_ms as silent_ms
 from doeff_cluster.worker.protocol.tick_pauses import tick_pauses as tick_pauses
 from doeff_cluster.worker.core.worker_due import beat_due as beat_due
 from doeff_cluster.worker.core.worker_due import fence_due as fence_due
@@ -345,6 +350,7 @@ class SimWorker:
     hides_retired: bool = False
     claims_task_reserve: int | None = None
     silent_notices: bool = False
+    steps_wall: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
@@ -525,6 +531,11 @@ class StallWorker(_doeff_effect_base[None]):
     seconds: float
 
 @_doeff_dataclass(frozen=True)
+class StepWorkerWall(_doeff_effect_base[None]):
+    name: str
+    seconds: float
+
+@_doeff_dataclass(frozen=True)
 class DrainWorker(_doeff_effect_base[dict]):
     name: str
     ttl_seconds: float = ...
@@ -571,6 +582,7 @@ class SimPlan:
     revision: str
     versions: dict
     start_ms: int
+    start_mono_ms: int
     timing: ClusterTiming
     naming: ClusterNaming
     policy: WorkerPolicy
@@ -607,6 +619,7 @@ class HostTruth:
     probes: dict
     statuses: list
     last_ok_ms: int
+    last_ok_mono_ms: int
     fence_ms: int
     last_desired: tuple
     last_warm: tuple
@@ -686,6 +699,10 @@ class HostTruthOf(_doeff_effect_base[HostTruth]):
 class RollBellOf(_doeff_effect_base[Promise]):
     name: str
     boot: str
+
+@_doeff_dataclass(frozen=True)
+class WallBackOf(_doeff_effect_base[int]):
+    name: str
 
 @_doeff_dataclass(frozen=True)
 class PutHostTruth(_doeff_effect_base[None]):
@@ -893,13 +910,13 @@ def default_workers(system: System) -> _Program[tuple, object]:
 def declaration_of(system: System, revision: str, environ: dict, runtime_env: RuntimeEnv | None, versions: dict) -> _Program[Declaration, object]:
     ...
 
-def sim_plan(system: System, workers: tuple | None, environ: dict | None, revision: str, start_ms: int, timing: ClusterTiming | None, policy: WorkerPolicy | None, outside: SimOutside | None, store: Callable | None, deployments: dict | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict | None=None, *, notice_broker: MemoryBroker) -> _Program[SimPlan, object]:
+def sim_plan(system: System, workers: tuple | None, environ: dict | None, revision: str, start_ms: int, timing: ClusterTiming | None, policy: WorkerPolicy | None, outside: SimOutside | None, store: Callable | None, deployments: dict | None=None, runtime_env: RuntimeEnv | None=None, nodes: dict | None=None, *, notice_broker: MemoryBroker, start_mono_ms: int) -> _Program[SimPlan, object]:
     ...
 
 def parts_of(plan: SimPlan) -> _Program[SimParts, object]:
     ...
 
-def fresh_truth(name: str, generation: int, now: int, timing: ClusterTiming) -> _Program[HostTruth, object]:
+def fresh_truth(name: str, generation: int, now: int, now_mono_ms: int, timing: ClusterTiming) -> _Program[HostTruth, object]:
     ...
 
 def fresh_hosts(plan: SimPlan) -> _Program[dict, object]:
@@ -1100,10 +1117,13 @@ def rehung_bell(bell: Promise | None) -> _Program[Promise, object]:
 def ticked_truth(truth: HostTruth) -> _Program[HostTruth, object]:
     ...
 
-def host_wakes(worker: SimWorker, truth: HostTruth, began: int, now: int, bell: Future | None) -> _Program[WakeSet, object]:
+def host_wakes(worker: SimWorker, truth: HostTruth, began: int, began_mono_ms: int, now: int, now_mono_ms: int, bell: Future | None) -> _Program[WakeSet, object]:
     ...
 
 def sim_host(worker: SimWorker, boot: str, plan: SimPlan, parts: SimParts) -> _Handler:
+    ...
+
+def worker_wall(name: str) -> _Handler:
     ...
 
 def await_beat(name: str, boot: str) -> _Program[None, object]:
