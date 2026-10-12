@@ -1,0 +1,13 @@
+# 版: 3fba07713 + 模型の記録 lt-MODEL1・lt-MODEL2(evidence/test_x.py.txt・blind/test_y.hy.txt)
+# 命令: uv run --no-sync pytest tests/test_daily_test_population.py -q -k …(段ごとに出力の見出し)
+# 終了の状態: 正常 rc 0(3 passed・tests/ の差 0 行)/ 失敗 rc 1(片方を test_x.py に戻すと 1 failed)
+# ---- 出力(加工なし) ----
+## S3 正常: 2 つの記録が .txt の写しを同時に足す
+3 passed, 11 deselected, 1 warning in 7.61s
+## tests/ の差の行数(0 が期待)
+0
+## S3 失敗: 片方が test_x.py の名のまま
+E       AssertionError: 日次のどの母集団にも除外の表にも無い検の file が 1 本: ['docs/design-checks/lt-MODEL2/evidence/test_x.py'] — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)。設計検証の記録(docs/design-checks/)の検の写しは、集め手の pattern に当たらない名(`<名>.py.txt`)に替える— ADR-DOE-ENFORCE-001 R8
+E       assert not ['docs/design-checks/lt-MODEL2/evidence/test_x.py']
+FAILED tests/test_daily_test_population.py::test_every_test_file_belongs_to_a_daily_population
+1 failed, 13 deselected, 1 warning in 4.02s
