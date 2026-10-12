@@ -21,6 +21,7 @@
 (import dataclasses [dataclass])
 (import hy)
 (import hy.models [Dict List Set Symbol String Keyword])
+(import doeff_hy.expansion_names [import-form])
 
 ;; 役の閉じた一覧(agora-redesign #780 の層の確定 — operator 2026-09-27 逐語 "core->intent->protocol"):
 ;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
@@ -377,8 +378,9 @@
      ;; import した名が reportUnusedImport の赤になっていた(消すと実行時に壊れるので書き手は直せない)。本体の代入は
      ;; 記帳ではないので型検査に残り、その名は使われた import と読まれる。注記は object なので、答えの型の読み方
      ;; (`<-` の束ねの型・handler の resume の型)は変えない。ClassVar は dataclass の欄にならない(pyright・実行時とも)。
-     ;; from-import の別名の作法は defwire と同じ(record.hy)。
-     (import typing [ClassVar :as _doeff-ClassVar cast :as _doeff-cast])
+     ;; 別名の綴りと置き場は展開の名の表から引く(defwire と同じ — record.hy)。class の本体に書いた型の本体は名を module の段から
+     ;; 引くので、型検査の投影は表の綴りのこの import を module の段へ移す(static_check._synthesized_import)。
+     ~(import-form ["ClassVar" "cast"])
      ~@(if written [`(import doeff_hy.record_runtime) `(import builtins [object :as _doeff-object])] [])
      (defclass [~(if written
                      `(_doeff-dataclass :init False :repr False :eq False)

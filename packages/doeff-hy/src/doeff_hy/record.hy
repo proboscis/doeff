@@ -202,6 +202,7 @@
   (import doeff_hy.macros [_scoped-definition])
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
   (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys tags-form])
+  (import doeff_hy.expansion_names [import-form])
   (setv docstring None
         rest (list forms))
   (when (and rest (isinstance (get rest 0) String))
@@ -418,7 +419,7 @@
   (_scoped-definition _hy-compiler name
     [`(do
         (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy.record_runtime]))
-        ~@(if (and static-view statements) ['(import typing [cast :as _doeff-cast])] [])
+        ~@(if (and static-view statements) [(import-form ["cast"])] [])
         ~@(if (is written None)
               [`(defclass [(dataclass :frozen True :kw-only True)] ~name []
                   ~@(if (is docstring None) [] [docstring])
@@ -451,6 +452,7 @@
   (import re)
   (import hy.models [Dict Expression Keyword List String Symbol])
   (import doeff_hy.declarations [declared-value field-targets refuse-unknown-keys])
+  (import doeff_hy.expansion_names [import-form])
   (import doeff_hy.macros [_scoped-definition])
   (when (not (isinstance name Symbol))
     (raise (SyntaxError (.format "defwire の第 1 引数は型の名前(symbol)ちょうど: {}" (hy.repr name)))))
@@ -530,8 +532,9 @@
      ;; 注記が読む名(Python 3.13 までは class の本体で注記を評価する)を型を建てる前に読む。ClassVar は from-import の別名で読む:
      ;; pyright は dataclass の欄から外す ClassVar を `ClassVar` の名か `typing.ClassVar` の形でだけ見分け(module の再公開の
      ;; 名では見分けない)、`import typing` を defwire ごとに出すと strict が同じ import の重ね(reportDuplicateImport)を赤にする。
-     ;; 別名は `__` で始めない(class の本体で名が private の形に書き換わり実行時に読めない)。
-     '(import typing [ClassVar :as _doeff-ClassVar])
+     ;; 別名は `__` で始めない(class の本体で名が private の形に書き換わり実行時に読めない)。綴りと置き場は展開の名の表から引く
+     ;; (class の本体に書いた型の投影で、後処理が表の綴りの import を module の段へ移す — static_check._synthesized_import)。
+     (import-form ["ClassVar"])
      '(import doeff_hy.wire)
      `(hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
      `(setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))

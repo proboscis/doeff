@@ -382,8 +382,9 @@ def _synthesized_import(statement: ast.stmt) -> bool:
     doeff-hy 自身の module の import と、defsystem が系ごとに出す別名の無い `import <module>`(static_view.DEFSYSTEM_IMPORTS —
     展開の綴りと 1 つの定義元。同じ module からの書き手の `from … import` は defsystem が出さない形なので畳まない)と、defeffect が
     答えの分け方を置く時の `import doeff_core_effects.outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)と、handle・defhandler が
-    node を `_doeff_<名>` の別名で束ねる `from doeff import Pass as _doeff_Pass` など(expansion_names.is_alias_import — 関数・
-    class の本体の中に残すと、class の本体では節の関数が名を module の段から引いて pyright が未定義と読んだ)。"""
+    node を `_doeff_<名>` の別名で束ねる `from doeff import Pass as _doeff_Pass` と、型を建てる定義が型の本体で読む
+    `from typing import ClassVar as _doeff_ClassVar` など(expansion_names.is_alias_import — 閉じた表の綴りだけ。関数・class の
+    本体の中に残すと、class の本体では節の関数と入れ子の型の本体が名を module の段から引いて pyright が未定義と読んだ)。"""
     match statement:
         case ast.Import(names=names):
             return all(

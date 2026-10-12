@@ -12,8 +12,16 @@ effect が外の handler へ黙って抜け、module の段では展開の impor
 - `import_form`: 別名で束ねる Hy の import(実行時の展開が書いた場所に置く)。
 - `import_source`: 別名で束ねる Python の import(型検査のための展開が module の頭に 1 度だけ置く — static_view.py)。
 
+- `is_alias_import`: その綴りの import か(型検査の展開の後処理が、関数・class の本体の中の展開の import を module の段へ移すため —
+  static_check.py)。
+
+表は閉じている: 展開が読む名はすべて `_HOMES` に置き場とともに載せ、表に無い名は `home` が断る(知らない名を別名の import と
+答えない — for/do の docstring は書き手に `(import doeff [do :as _doeff-do])` を書かせる)。
+
 読み手: handle.hy(`WithHandler`・`Pass`・session の `Get`・`Put`・`Some`)・clause_ops.hy(節の操作の node と、型検査のための展開の
-`typed_resume`・`typed_transfer`)・binding_forms.py(`:=` の `Put`・`Some`)・macros.hy(`set!` の `Put`・`Some`)。
+`typed_resume`・`typed_transfer`)・binding_forms.py(`:=` の `Put`・`Some`)・macros.hy(`set!` の `Put`・`Some`)・declarations.hy の
+defeffect-form と record.hy の defrecord(:check)・defwire(型の本体が読む typing の `ClassVar`・`cast` — class の本体に書いた型の
+本体は名を module の段から引くので、型検査の投影はこの import を module の段へ移す)。
 """
 
 from collections.abc import Iterable
@@ -23,12 +31,19 @@ from hy.models import Expression, Keyword, List, Object, Symbol
 #: 別名の頭。型検査のための展開が引く補助の名(static_view.deftest_annotation_name)と同じ。
 PREFIX = "_doeff_"
 
-#: 名の置き場の module。ここに無い名は doeff から import する(節の操作の node は表 clause_ops.hy の nodes が名を持つ)。
-_DOEFF = "doeff"
+#: 展開が読む名と、その置き場の module(閉じた表 — 節の操作の node の名は表 clause_ops.hy の nodes が持ち、ここに置き場を書く)。
 _HOMES: dict[str, str] = {
+    "Resume": "doeff",
+    "Transfer": "doeff",
+    "Pass": "doeff",
+    "Some": "doeff",
+    "typed_resume": "doeff",
+    "typed_transfer": "doeff",
     "WithHandler": "doeff_vm",
     "Get": "doeff_core_effects.effects",
     "Put": "doeff_core_effects.effects",
+    "ClassVar": "typing",
+    "cast": "typing",
 }
 
 
@@ -44,8 +59,10 @@ def alias_symbol(name: str) -> Symbol:
 
 
 def home(name: str) -> str:
-    """name を import する module。"""
-    return _HOMES.get(name, _DOEFF)
+    """name を import する module。表に無い名は KeyError(展開が新しい名を読む時は、表に置き場を足す)。"""
+    if name not in _HOMES:
+        raise KeyError(f"展開の名の表(expansion_names._HOMES)に無い名: {name!r} — 置き場とともに表へ足す")
+    return _HOMES[name]
 
 
 def _by_home(names: Iterable[str]) -> dict[str, tuple[str, ...]]:
@@ -93,7 +110,7 @@ def import_form(names: Iterable[str]) -> Expression:
 def is_alias_import(module: str, name: str, asname: str | None) -> bool:
     """`from module import name as asname` が、import_form / import_source が書く別名の import の 1 つの名か(置き場と別名が
     この表の綴りに合う)— 型検査の展開の後処理が、macro の合成した import を書き手の import と分けるため(static_check.py)。"""
-    return asname == alias(name) and home(name) == module
+    return name in _HOMES and asname == alias(name) and home(name) == module
 
 
 def import_source(names: Iterable[str]) -> str:

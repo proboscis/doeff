@@ -5,7 +5,17 @@
         "doeff-hy-expansion-names"
       ]
     },
+    "doeff-hy-declarations": {
+      "allow": [
+        "doeff-hy-expansion-names"
+      ]
+    },
     "doeff-hy-macros": {
+      "allow": [
+        "doeff-hy-expansion-names"
+      ]
+    },
+    "doeff-hy-record": {
       "allow": [
         "doeff-hy-expansion-names"
       ]
@@ -27,7 +37,7 @@
       "public": [
         "packages/doeff-hy/src/doeff_hy/expansion_names.py"
       ],
-      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)の `_doeff_` の別名の綴りと import の唯一の定義元 — 書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・static_view.py が引く純粋な表",
+      "responsibility": "handle・defhandler の展開が読む doeff の名(Resume・Transfer・Pass・WithHandler・Get・Put・Some と型検査のための typed_resume・typed_transfer)と、型を建てる定義(defeffect・defwire・defrecord の :check)が型の本体で読む typing の ClassVar・cast の `_doeff_` の別名の綴り・置き場・import の唯一の定義元(閉じた表 — 表に無い名は断る)。書き手が自分の effect を同じ名にしても展開の名が隠さない(card ki-16180480129e)。型検査の投影の後処理は、この表の綴りの import を展開の合成と見分けて module の段へ移す。handle.hy・clause_ops.hy・binding_forms.py・macros.hy の set!・declarations.hy・record.hy・static_view.py・static_check.py が引く純粋な表",
       "typed": false
     }
   ]
