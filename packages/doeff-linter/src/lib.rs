@@ -10,6 +10,7 @@ pub mod build_info;
 pub use build_info::{BUILD_COMMIT, VERSION_TEXT};
 
 pub mod baseline;
+pub mod check_slot;
 pub mod commit_hook;
 pub mod config;
 pub mod editor;
