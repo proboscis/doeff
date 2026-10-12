@@ -15,8 +15,6 @@ from doeff_cluster.shared.protocol.supplied_values import OBJECT_SPELLING as OBJ
 from doeff_cluster.shared.protocol.supplied_values import REF_SPELLING as REF_SPELLING
 from doeff_cluster.shared.protocol.supplied_values import SERVICE_ACCOUNT_TOKEN_FILE as SERVICE_ACCOUNT_TOKEN_FILE
 from doeff_cluster.shared.protocol.supplied_values import text_field as text_field
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 UNREACHABLE: str
 OBJECT_PATH: Incomplete
 KIND_OF_RESOURCE: dict[str, str]

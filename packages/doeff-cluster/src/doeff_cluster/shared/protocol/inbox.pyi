@@ -16,8 +16,6 @@ from doeff_cluster.shared.intent.protocol import Reply as Reply
 from doeff_cluster.shared.intent.protocol import CoordinatorStopRequested as CoordinatorStopRequested
 from doeff_cluster.shared.intent.protocol import PlainText as PlainText
 from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 @runtime_checkable
 class ReplyTarget(Protocol):
@@ -38,7 +36,7 @@ class InboxQueue(Protocol):
 class StopSignal(Protocol):
     requested: bool = False
 
-def http_request(method: str, path: str, query: dict, body: dict | list | str | int | float | bool | None, slot: ReplyTarget | Promise | None=None, actor: str | None=None, peer: str='', queued_ms: int=0) -> _Program[Request, object]:
+def http_request(method: str, path: str, query: dict[str, object], body: dict[str, object] | list[object] | str | int | float | bool | None, slot: ReplyTarget | Promise[tuple[int, object]] | None=None, actor: str | None=None, peer: str='', queued_ms: int=0) -> _Program[Request, object]:
     ...
 
 def requests_of(raws: list) -> _Program[tuple[Request, ...], object]:

@@ -76,8 +76,6 @@ from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSuccee
 from doeff_cluster.shared.intent.remote_model import TaskFailed as TaskFailed
 from doeff_cluster.shared.protocol.program_codec import encode_program as encode_program
 from doeff_cluster.shared.protocol.program_codec import decode_outcome as decode_outcome
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 def outcome_from_task_outcome(outcome: TaskSucceeded | TaskFailed) -> DetachedOutcome:
     ...

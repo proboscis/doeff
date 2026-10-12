@@ -33,8 +33,6 @@ from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as Cras
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_read as readiness_read
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_awaited as readiness_awaited
 from doeff_cluster.shared.protocol.coordinator_reads import job_process_awaited as job_process_awaited
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 class DeployedCannotAnswer(Exception):
     ...

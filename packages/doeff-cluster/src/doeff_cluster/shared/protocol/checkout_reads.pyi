@@ -14,8 +14,6 @@ from doeff_cluster.shared.intent.checkout_model import ReadCheckout as ReadCheck
 from doeff_cluster.shared.intent.checkout_model import CheckoutRoot as CheckoutRoot
 from doeff_cluster.shared.intent.checkout_model import SenderSourceRoot as SenderSourceRoot
 from doeff_cluster.shared.intent.env_marker_model import FileSha256 as FileSha256
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 SENDER_SOURCE_DIR: str
 
 def git_output(path: str, args: tuple) -> _Program[str, object]:

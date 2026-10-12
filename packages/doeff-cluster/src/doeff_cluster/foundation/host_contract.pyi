@@ -23,8 +23,6 @@ from doeff_time import GetTimeEffect as GetTimeEffect
 from doeff_time import GetMonotonicEffect as GetMonotonicEffect
 from doeff_time import WaitUntilEffect as WaitUntilEffect
 from doeff_time import WaitWithinEffect as WaitWithinEffect
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 
 @dataclass(frozen=True, kw_only=True)
 class HostContract:
