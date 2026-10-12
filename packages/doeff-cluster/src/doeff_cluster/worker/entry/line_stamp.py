@@ -35,8 +35,16 @@ OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(�
 - 終わり(end): 書き手が pipe を読み切ってから、残りの行を短い上限(ShipLimits.end_seconds)の内で送って止める — 送りが file の書きの
   後なので、送りが遅れて shim が KILL に先を越されても file は欠けない。上限の後に残った行は捨てて数える。
 - 送り先の値が使えない(URL の形・属性の並べ方・job の文脈の欠け)時は送らず、理由を 1 行 log に書く(job はそのまま走る)。
+
+worker の process 自身の行(card ki-35923a5895b2 — 機体の上で直に動く worker(zeus-native・mac-native)の log は systemd・launchd の
+出力先の file にしか無く、会話から読めなかった): worker の入口(worker/entry/main)も同じ部品で、自分の stdout と stderr を刻つきの
+書き手へ差し替えて送る(process_lines)。job の文脈は worker が自分で置く(worker_log_plan — job の名 worker/<worker の名>・試み 0・
+世代 = worker の boot)。差し替えるのは送り先が使えて、stdout と stderr が同じ file を指す時だけ(機体の形 — 送り先の無い Pod の
+worker は今のまま)。書き手の終わりは process の終わり(atexit)で、捕まえない例外の traceback(excepthook が atexit より前に書く)も
+file へ書いて送ってから止める。
 """
 
+import atexit
 import os
 import select
 import sys
@@ -72,6 +80,10 @@ JOB_LOG_ENV_NAMES = (JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR, WORKER_NAME_VAR, 
 # 送りの名乗り(resource 属性 service.name と scope の名)と、基の URL に足す path。
 JOB_LOG_SERVICE = "doeff.job-log"
 LOGS_PATH = "/v1/logs"
+# worker の process 自身の行の job の文脈(頭の註の「worker の process 自身の行」): job の名の頭(task の task/<id> と同じく `/` で区切る —
+# 宣言の job の名と重ならない)と試みの番号(job の試みは 1 から数える — worker の process は job の試みでない)。
+WORKER_PROCESS_JOB_PREFIX = "worker/"
+WORKER_PROCESS_ATTEMPT = "0"
 
 
 def stamp_of(seconds: float) -> bytes:
@@ -220,6 +232,20 @@ def job_log_plan(environ: Mapping[str, str]) -> JobLogPlan:
     )
     owned = frozenset(attribute.key for attribute in own)
     return JobLogTarget(endpoint=endpoint, resource=tuple(a for a in extra if a.key not in owned) + own)
+
+
+def worker_log_plan(environ: Mapping[str, str], worker: str, instance: str) -> JobLogPlan:
+    """worker の process 自身の行の送り先を決めるため(頭の註の「worker の process 自身の行」)。environ = worker の環境(送り先の基の
+    URL と配備が足す属性の 2 つだけを読む — job の文脈の名は読まない)・worker = 名乗る worker の名・instance = この process の世代
+    (boot)。job の文脈は worker が置く: job の名 worker/<worker の名>・試み 0・世代 instance。決め方は job の子と同じ job_log_plan。"""
+    shipping = {name: environ[name] for name in (JOB_LOG_OTLP_VAR, JOB_LOG_ATTRIBUTES_VAR) if name in environ}
+    context = {
+        WORKER_NAME_VAR: worker,
+        WORKER_JOB_VAR: WORKER_PROCESS_JOB_PREFIX + worker,
+        WORKER_ATTEMPT_VAR: WORKER_PROCESS_ATTEMPT,
+        WORKER_INSTANCE_VAR: instance,
+    }
+    return job_log_plan({**shipping, **context})
 
 
 @dataclass(frozen=True)
@@ -629,3 +655,24 @@ def stamped_lines(plan: JobLogPlan) -> StampedLines:
     os.close(sink)
     shipping = shipping_of(plan)
     return StampedLines(WriterEnds(source=source, target=target, stop_read=stop_read, stop_write=stop_write), shipping)
+
+
+def process_lines(plan: JobLogPlan) -> OutputLines:
+    """worker の process 自身の stdout と stderr を、送り先が使えて 2 つが同じ file を指す時だけ刻つきの書き手(送り手つき)へ差し替えて
+    動かし始め、終わり(end)を process の終わり(atexit)に置くため(頭の註の「worker の process 自身の行」)。plan = worker_log_plan の
+    答え。それ以外は何も替えない(RawLines)— 送り先の値が使えない時と、送り先は在るが stdout と stderr が別の file の時は、理由を
+    1 行 stderr に書く(worker はそのまま走る)。"""
+    match plan:
+        case JobLogTarget() if same_file(1, 2):
+            lines = stamped_lines(plan)
+            lines.begin()
+            atexit.register(lines.end)
+            return lines
+        case JobLogTarget():
+            print("line_stamp: worker の行を送らない — stdout と stderr が同じ file でない", file=sys.stderr, flush=True)
+            return RawLines()
+        case JobLogOff():
+            return RawLines()
+        case JobLogRefused(reason=reason):
+            print(f"line_stamp: worker の行を送らない — {reason}", file=sys.stderr, flush=True)
+            return RawLines()

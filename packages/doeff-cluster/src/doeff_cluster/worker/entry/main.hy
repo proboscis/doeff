@@ -58,6 +58,7 @@
 (import doeff_cluster.worker.protocol.status_file [status-file])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.core.run_context_rules [worker-context-environ])
+(import doeff_cluster.worker.entry.line_stamp [JOB-LOG-OTLP-VAR JOB-LOG-ATTRIBUTES-VAR worker-log-plan process-lines])
 
 
 ;; この process の世代を書く Pod の中の file の名(無ければ書かない — readinessProbe が読む)。
@@ -245,9 +246,10 @@
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
         codes (CodeSettings :repo args.repo :cache places.code :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
-        ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
+        ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
-                           (machine-environment (+ (run (pass-env-names args.pass-env)) #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR)))))
+                           (machine-environment (+ (run (pass-env-names args.pass-env))
+                                                   #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-LOG-OTLP-VAR JOB-LOG-ATTRIBUTES-VAR)))))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
@@ -276,6 +278,10 @@
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python sys.executable :hy-command hy-command :uv args.uv :layout layout
                               :probe-dir places.probe :shim shim))
+  ;; この process の stdout と stderr の行を、job の log と同じ送り先へも送る(card ki-35923a5895b2 — 機体の上で直に動く worker の log は
+  ;; 機体の file にしか無かった)。job の名 worker/<名>・世代 boot で名乗る。送り先が在り、stdout と stderr が同じ file の時だけ差し替え、
+  ;; 以後の行は file に刻つきで書く(Pod の worker は今のまま)。終わりは process の終わり — 下の断りの traceback も送る。
+  (process-lines (worker-log-plan machine-env args.name boot))
   ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
