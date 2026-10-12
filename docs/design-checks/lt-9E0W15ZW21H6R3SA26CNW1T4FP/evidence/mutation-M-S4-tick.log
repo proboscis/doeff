@@ -1,12 +1,13 @@
 # 変異 M-S4-tick(シナリオ S4): 同じ拍で置いた分を升の数に足さない
-# 刻: 2026-10-12T04:17:42Z
+# 版: 38739915fb13cb990cc8cf3a2587bfaebfa65d81(変異の木 ~/.worktrees/doeff-wt-ki-b0e8-mut — 変異を入れて回し、元に戻した)
+# 刻: 2026-10-12T05:04:07Z
 # 狙いの検: 2 本 — すべて赤なら、この検はこの違反を捉える
 # 結果: すべて赤(捉えた) rc=1
 
 ## 入れた変異
 --- a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy
 +++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy
-@@ -1127,3 +1127,3 @@
+@@ -1138,3 +1138,3 @@
                   (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
 -                 (:= held after-hold)
 +                 (:= held held)
@@ -21,4 +22,4 @@ E   AssertionError: {'t1': TaskRecord(id='t1', name='check', program='10632bb7c7
 /work/toolset/worktrees/doeff-wt-ki-b0e8-mut/packages/doeff-cluster/tests/test_group_limits_declared.hy:71: AssertionError: {'t1': TaskRecord(id='t1', name='check', program='10632bb7c739287ccd9be922761721ad13310d1561ce4c12943996b16e540dba', revision='rev', versions=(ComponentVersion(component='python', version='3'),), needs=('host-zeus',), lease_ms=60000, lease_until_ms=61000, submitted_ms=0, phas
 FAILED packages/doeff-cluster/tests/test_group_limits_declared.hy::test_the_same_tasks_sent_in_either_order_place_the_declared_number_in_one_tick
 FAILED packages/doeff-cluster/tests/test_group_limits_declared.hy::test_two_senders_naming_one_group_are_counted_by_the_one_declared_value
-======================== 2 failed, 1 warning in 16.57s =========================
+======================== 2 failed, 1 warning in 10.80s =========================

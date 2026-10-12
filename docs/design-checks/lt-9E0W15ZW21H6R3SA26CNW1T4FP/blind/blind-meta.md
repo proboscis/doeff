@@ -13,7 +13,7 @@
 | 実 model と effort の効き | 観測していない(tool は model の名を返さない・effort が効いたかは見えない)。要求した値だけを記す。429 の返事の「model sent to the API: claude-opus-5-5」は 1 回目の要求の model | 同じ |
 | 識別子(2 回目) | agentId abce2068789bdce7d | agentId a252823029d84c89e |
 | 時間(2 回目) | 883,613 ms(tool の使用 34 回・subagent の token 162,091) | 1,941,874 ms(tool の使用 59 回・subagent の token 188,446) |
-| 機体・profile | agora の会話 c-NN28KKGW3TP3F8MA4K2WX3S7AD の Pod(作業の根 /work/agent-workspaces/a-NN28KKGW3TP3F8MA4K2WX3S7AD)。1 回目と 2 回目で資格の置き場が違う(会話が起き直した) | 同じ |
+| 機体・profile | agora の会話 c-NN28KKGW3TAMZW5JKK572H9JRD の Pod(作業の根 /work/agent-workspaces/a-NN28KKGW3TP3F8MA4K2WX3S7AD。2026-10-12 に会話の id を直した — 前は作業の根の id を会話の id と書き誤っていた)。1 回目と 2 回目で資格の置き場が違う(会話が起き直した) | 同じ |
 | 文脈を共有しない起こし方 | A と B を同じ返事の中で同時に、別々の新しい文脈で起こした(会話の fork・resume を使っていない)。互いの返答・設計者の自己評価・既知の失敗例・望む結論を渡していない | 同じ |
 | 返答 | [blind-a-return.md](blind-a-return.md)(加工していない — tool の返す字下げだけを外した) | [blind-b-return.md](blind-b-return.md)(同じ) |
 | 実験の木と残した物 | `/home/ubuntu/.worktrees/doeff-wt-blind-a-ki-b0e8`(detached・74ebb50b6)。blind-artifacts/ と足した検を ../evidence/blind-a-artifacts/ に写した | `/home/ubuntu/.worktrees/doeff-wt-blind-b2-ki-b0e8`(同じ)。blind-artifacts/ を ../evidence/blind-b-artifacts/ に写した |
