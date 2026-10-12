@@ -896,6 +896,34 @@ def test_static_projection_of_nested_defhandler_reads_module_level_nodes(
     assert _HANDLER_NODE_ALIASES <= _module_level_bound(tree)
 
 
+# 型を建てる定義が型の本体(注記の ClassVar・:check と答えの型の cast)で読む typing の別名(doeff_hy/expansion_names.py)。
+_TYPING_ALIASES = frozenset({"_doeff_ClassVar", "_doeff_cast"})
+
+
+def _names_read(scope: ast.AST) -> set[str]:
+    """scope の中で読まれる名。"""
+    return {node.id for node in ast.walk(scope) if isinstance(node, ast.Name)}
+
+
+@pytest.mark.parametrize(
+    "definition", _STATIC_NESTED_SAMPLES.values(), ids=_STATIC_NESTED_SAMPLES.keys()
+)
+def test_static_projection_of_class_body_type_reads_module_level_typing_aliases(
+    tmp_path: Path, definition: str
+) -> None:
+    """型検査の投影で、class の本体に直に書いた defeffect・defwire・defrecord(:check)の型の本体が読む `_doeff_ClassVar`・
+    `_doeff_cast` は module の段の import が束ねる — class の本体に残すと、入れ子の型の本体と method は名を module の段から
+    引くので、doeff-hy-check が `"_doeff_ClassVar" is not defined`・`"_doeff_cast" is not defined` を出した
+    (設計検証 lt-MPT2W9D40AMFNSEXSY5JPV780N の盲検 A・B が見つけた、8a759a421 の直しの残り)。"""
+    tree = _projection_of(tmp_path, f"(defclass Outer [] {definition})")
+    outer = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Outer"
+    )
+    read = _TYPING_ALIASES & _names_read(outer)
+    assert read.isdisjoint(_bound_by_imports(outer))
+    assert read <= _module_level_bound(tree)
+
+
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     """module と class の本体の定義は包まない — 包むと `__qualname__`(pickle の名の引き)と引数なしの super() が変わる。"""
     mod = _eval_module(
