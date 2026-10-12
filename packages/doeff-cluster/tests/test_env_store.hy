@@ -146,7 +146,7 @@
 (deftest test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused [tmp-path]
   (val store (/ tmp-path "code-store"))
   (val gone (/ store "ab" "cdef"))       ; 中の entry が全部 7 日使われない鍵の dir
-  (val kept (/ store "ab" "0123"))       ; 1 つは使った鍵の dir
+  (val kept (/ store "ab" "0123"))       ; 1 つは使った鍵の dir(dir は 7 日前に作った — entry を使っても dir の時刻は進まない)
   (val empty (/ store "ab" "89ab"))      ; 7 日動いていない空の dir(書きの途中で止まった残り)
   (val fresh (/ store "ab" "4567"))      ; 作ったばかりの空の dir
   (for [d [gone kept empty fresh]] (.mkdir d :parents True))
@@ -157,7 +157,7 @@
   (val now-s (time.time))
   (val past (- now-s CODE-STORE-UNUSED-SECONDS 60))
   ;; dir の時刻は中の file を置いた後に戻す(file を置くと dir の時刻が進む)。
-  (for [p #(#* gone-entries kept-old gone empty)] (os.utime p #(past past)))
+  (for [p #(#* gone-entries kept-old gone kept empty)] (os.utime p #(past past)))
   (<- settings EnvSettings (settings-in tmp-path))
   (<- removed tuple (with-handlers [os-file-handler] (sweep-leftovers (replace settings :code-store (str store)) (int (* now-s 1000)))))
   (assert (not (.exists gone)) "中の entry が全部 7 日使われない鍵の dir が残った")
