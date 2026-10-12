@@ -1,0 +1,63 @@
+"""盲検 B の失敗例の実測: defeffect の展開が effect 型を doeff_hy.declarations.EFFECT_INDEX に載せる変更の下で、
+提示の検と同じ道具(_CASES・_eval_module・_module_globals_view・_DEFINITION_SAMPLES)を使い、
+(1) 検の見る物(定義を書いた module の globals・外の関数の局所の名)は変わらない事と、
+(2) 外の関数を呼ぶたびに別の module(doeff_hy.declarations)の globals に effect 型が積み増され、呼びの間で分け持たれる事
+を同じ process で読む。
+
+走らせ方(作業木を cwd に): uv run --frozen python /tmp/lt0YB1-blind-b/demo_violation.py
+"""
+
+import gc
+import sys
+import weakref
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd() / "tests"))
+
+import doeff_hy.declarations as declarations
+import test_nested_definition_scope as t
+
+CASE = "defeffect-in-defk-builds-instance"
+source, call, expected = t._CASES[CASE]
+has_index = hasattr(declarations, "EFFECT_INDEX")
+print(f"[mode] EFFECT_INDEX が在る(変更あり) = {has_index}")
+
+
+def index_len() -> int:
+    return len(declarations.effects_in_context("t")) if has_index else -1
+
+
+# --- (1) test_nested_definition_leaves_module_globals_unchanged と同じ手順 ---------------------------------
+mod = t._eval_module(source)
+before_view = t._module_globals_view(mod)
+before_index = index_len()
+r1 = call(mod)
+r2 = call(mod)
+after_view = t._module_globals_view(mod)
+after_index = index_len()
+print(f"[1] 呼びの答え = {r1}, {r2}(期待 {expected})")
+print(f"[1] 定義を書いた module の globals の眺め: 呼ぶ前 == 2 回呼んだ後 -> {before_view == after_view}")
+print(f"[1] doeff_hy.declarations の索引の文脈 't' の要素の数: 呼ぶ前 {before_index} -> 2 回呼んだ後 {after_index}")
+
+# --- (2) test_function_with_only_a_definition_binds_only_its_names と同じ手順(defeffect の検体) -----------------
+sample, defined = t._DEFINITION_SAMPLES["defeffect"]
+host = t._eval_module(f"(defn subject [] {sample} None)").subject
+names = {n for n in host.__code__.co_varnames + host.__code__.co_cellvars if not n.startswith("_hy_")}
+print(f"[2] 定義 1 つだけの関数の局所の名 = {sorted(names)} / 期待 {sorted(defined)} -> {names == defined}")
+
+# --- (3) 呼びごとの effect 型が呼びの後も生き残るか(呼びの間で分け持つ物) ---------------------------------
+src3 = """
+(defn make-effect [n]
+  (defeffect Inner {:fields [(: x int)] :answer int :tags {:context "per-call" :role "intent"}})
+  Inner)
+"""
+mod3 = t._eval_module(src3)
+refs = [weakref.ref(mod3.make_effect(i)) for i in range(1000)]
+gc.collect()
+alive = sum(r() is not None for r in refs)
+print(f"[3] make-effect を 1000 回呼んだ後、gc の後も生きている呼びごとの Inner の型の数 = {alive}")
+if has_index:
+    per_call = declarations.effects_in_context("per-call")
+    print(f"[3] effects_in_context('per-call') の要素の数 = {len(per_call)}・相異なる型の数 = {len(set(map(id, per_call)))}")
+    print(f"[3] 例: __qualname__ = {per_call[0].__qualname__!r}・__module__ = {per_call[0].__module__!r}")
+    print(f"[3] その名で module から引けるか: hasattr(mod3, 'Inner') = {hasattr(mod3, 'Inner')}")

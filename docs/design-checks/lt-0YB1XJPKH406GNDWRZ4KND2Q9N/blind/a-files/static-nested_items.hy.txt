@@ -1,0 +1,10 @@
+(require doeff-hy.macros [deftest defbench])
+(import doeff_hy)
+
+(defn make-tests [n]
+  (setv owner (. doeff_hy __name__))
+  (deftest test-inner (assert (>= n 0)))
+  (defbench test-bench-inner (sum (range n)))
+  #(owner test-inner test-bench-inner))
+
+(deftest test-top (assert True))
