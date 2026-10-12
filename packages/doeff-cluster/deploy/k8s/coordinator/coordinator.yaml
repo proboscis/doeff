@@ -136,7 +136,11 @@ spec:
             # 送り先は上に載る系の ConfigMap coordinator-env(DOEFF_JOB_LOG_OTLP・DOEFF_JOB_LOG_ATTRIBUTES)、名乗りは下の POD_NAME・
             # POD_NAMESPACE。間の差の他の 3 つ(ac512fc1a・bca5f8ada・811234f1d)は worker の側の code。前の版 475ee1e5d(L2189)は
             # a1d17b0dd の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: a1d17b0dd3047d1111f442e5a1ba4348ea3eab05 }
+            # 3fcba1939 = 止まる時に残りの行を送る上限を coordinator の入口が 10 秒で渡し、送り先が遅くても止まりの行まで送ってから終わる版
+            # (card ki-0b0ab40048b9・L2226 d03f0910d — 設計検証 lt-D8Y7NDS3A1XHEP1DQJ323D6CHB の盲検 A: 既定の 0.5 秒では POST の答えを待つ間に
+            # 止まると、入れ替えの後に一番要る止まりの行が消えた)。間の doeff-cluster の code の差はこの分だけ。前の版 a1d17b0dd(L2214)は
+            # 3fcba1939 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 3fcba1939bd7e731dc47811aa4c305fe40bdeed7 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
