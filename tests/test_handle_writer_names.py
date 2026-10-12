@@ -374,16 +374,21 @@ def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """表の行の書き換えが新しい node を素の Symbol で読む変異(`ResumeBare`)— 9 つの名の一覧は拾えず(一覧に無い名)、一般の形が拾う。"""
-    from doeff_hy import clause_ops
+    from doeff_hy import clause_ops, expansion_names
 
     def bare_rewrite(
         args: list[hy.models.Object], recur: Callable[[hy.models.Object], hy.models.Object]
     ) -> hy.models.Object:
+        # 続きは節の続き `_doeff_k`(card ki-6af9862aed32 — 素の `k` を読むと、この変異でない読みも拾われる)
         return hy.models.Expression(
             [
                 hy.models.Symbol("yield"),
                 hy.models.Expression(
-                    [hy.models.Symbol("ResumeBare"), hy.models.Symbol("k"), recur(args[0])]
+                    [
+                        hy.models.Symbol("ResumeBare"),
+                        expansion_names.continuation_symbol(),
+                        recur(args[0]),
+                    ]
                 ),
             ]
         )
@@ -391,6 +396,8 @@ def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not
     resume = clause_ops.named_op("resume")
     assert resume is not None
     mutant = dataclasses.replace(resume, nodes=("ResumeBare",), rewrite=bare_rewrite)
+    # 展開の名の表は閉じている(表に無い名は home が断る) — 変異の node の置き場も表に足す
+    monkeypatch.setitem(expansion_names._HOMES, "ResumeBare", "doeff")
     monkeypatch.setattr(
         clause_ops,
         "CLAUSE_OPS",
