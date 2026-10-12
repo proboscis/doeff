@@ -35,7 +35,11 @@
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
 (import doeff_events [MemoryBroker])
 ;; 自分の行の送り(card ki-0b0ab40048b9 — worker の process 自身の行と同じ部品)。
-(import doeff_cluster.worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES coordinator-log-plan process-lines])
+(import doeff_cluster.worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES SHIP-LIMITS coordinator-log-plan process-lines])
+;; 止まる時に残りの行を送る上限(秒 — 盲検 A・card ki-0b0ab40048b9): 止まる直前の行が Pod の入れ替えの後に一番要る。既定(shim の 0.5 秒)
+;; では、POST の答えを待つ間に止まると後ろの行が消えた。1 回の POST の待ちの上限(ShipLimits.post_seconds 5 秒)2 回分 = 飛んでいる
+;; POST と残りの POST。Pod の止めの猶予(宣言に書かない既定 30 秒)の内に収まり、送り先が答えない時だけ入れ替えの止まりを最大この秒延ばす。
+(val LOG-END-SECONDS 10.0)
 
 
 
@@ -164,7 +168,7 @@
   ;; まとめて(merged)以後の行を stdout へ刻つきで書く。引数の断りと捕まえない例外の traceback も送る(終わりは process の終わり)。
   (process-lines (coordinator-log-plan (run (with_handlers [subprocess-handler] (log-environment)))
                                        (str (run (with_handlers [(sync-time-handler)] (now-epoch-ms)))))
-                 :merged True)
+                 :merged True :limits (replace SHIP-LIMITS :end-seconds LOG-END-SECONDS))
   (setv parser (argparse.ArgumentParser :description "doeff worker の coordinator(実験)"))
   (.add-argument parser "--state-file" :required True)
   (.add-argument parser "--port" :type int :default 8080)

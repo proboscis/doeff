@@ -57,6 +57,9 @@ namespace>(Pod が入れ替わっても同じ名で読む)・worker の名の欄
 namespace は宣言が downward API で env に置く(POD_NAME・POD_NAMESPACE)。
 - k8s の container の stdout と stderr は 2 本の別の pipe だが、2 つは同じ container の log に入る。coordinator は 2 つを 1 本に
   まとめて(merged — 同じ file でなくても差し替え、刻つきの行を stdout の pipe へ書く)送る。fd 1・2 は worker と同じく替えない。
+- 終わりに残りを送る上限(ShipLimits.end_seconds)は、載っている process の止め方の知識(shim は worker の掃除の余裕・coordinator は
+  Pod の止めの猶予)で、この部品は既定(shim の値)だけを持つ。process_lines は上限(limits)を受け、coordinator の入口が自分の値を
+  渡す(盲検 A — 既定の 0.5 秒では、POST の答えを待つ間に止まると、止まる直前の行が送られずに消えた)。
 """
 
 import atexit
@@ -161,7 +164,8 @@ class ShipLimits:
     job の log の経路の検 test_job_log_route.hy が見張る)・batch_lines と batch_bytes = 1 回の POST に
     束ねる上限・interval_seconds = 束が満ちなくても送るまでの間・post_seconds = 1 回の POST の待ちの上限・end_seconds = 終わり(end)に
     残りを送る上限(shim の掃除の余裕 WorkerPolicy.shim-sweep-margin-ms 1.5 秒の内に、読み切りの上限 DRAIN_LIMIT_SECONDS と並べて
-    収まる値)・pause_seconds = POST が失敗した後、次の POST までの間(落ちた送り先を叩き続けない)。"""
+    収まる値 — 既定は shim の値。worker・coordinator の process 自身の行は、止め方を持つ入口が process_lines に自分の上限を渡す)・
+    pause_seconds = POST が失敗した後、次の POST までの間(落ちた送り先を叩き続けない)。"""
 
     queue_lines: int = 10_000
     queue_bytes: int = 4 << 20
@@ -668,12 +672,12 @@ def same_file(first: int, second: int) -> bool:
     return (one.st_dev, one.st_ino) == (other.st_dev, other.st_ino)
 
 
-def shipping_of(plan: JobLogPlan) -> Shipping:
-    """送り先の決め(job_log_plan の答え)から行の送り手を作るため。使えない値なら理由を 1 行 stderr(= この後 job の log)に書いて
-    送らない(job はそのまま走る)。"""
+def shipping_of(plan: JobLogPlan, limits: ShipLimits = SHIP_LIMITS) -> Shipping:
+    """送り先の決め(job_log_plan の答え)から行の送り手(上限 limits)を作るため。使えない値なら理由を 1 行 stderr(= この後 job の
+    log)に書いて送らない(job はそのまま走る)。"""
     match plan:
         case JobLogTarget():
-            return JobLogShipper(plan)
+            return JobLogShipper(plan, limits)
         case JobLogOff():
             return NoShipping()
         case JobLogRefused(reason=reason):
@@ -748,12 +752,12 @@ class StampedStreams:
 ProcessLines = RawLines | StampedStreams
 
 
-def stamped_streams(plan: JobLogPlan, merged: bool = False) -> StampedStreams:
+def stamped_streams(plan: JobLogPlan, merged: bool = False, limits: ShipLimits = SHIP_LIMITS) -> StampedStreams:
     """この process の sys.stdout と sys.stderr(fd 1・2 が同じ log の file)を、1 本の pipe の書き口へ書く 1 つの流れへ差し替え、その
     pipe を読んで刻を付ける書き手を作るため(thread は begin で起こす)。fd 1・2 は替えない(頭の註 — 子孫は元の file を継ぐ)。pipe の
     fd は継がれない(os.pipe の既定)。流れは行ごとに書き出し、書けない字は元の stderr と同じく backslashreplace にする。stdout と
     stderr が別の file なら断る — merged が真(k8s の container — 2 本の pipe が同じ container の log に入る)なら断らず、刻つきの行を
-    stdout の file へ書く。"""
+    stdout の file へ書く。limits = 送りの上限(終わりの上限は呼び手の止め方が決める)。"""
     if not merged and not same_file(1, 2):
         raise ValueError("刻を付ける log は stdout と stderr が同じ file の時だけ(機体の worker の log の形)")
     sys.stdout.flush()
@@ -767,18 +771,19 @@ def stamped_streams(plan: JobLogPlan, merged: bool = False) -> StampedStreams:
     sys.stdout = stream
     sys.stderr = stream
     ends = WriterEnds(source=source, target=target, stop_read=stop_read, stop_write=stop_write)
-    return StampedStreams(ends, sink, shipping_of(plan), originals)
+    return StampedStreams(ends, sink, shipping_of(plan, limits), originals)
 
 
-def process_lines(plan: JobLogPlan, merged: bool = False) -> ProcessLines:
+def process_lines(plan: JobLogPlan, merged: bool = False, limits: ShipLimits = SHIP_LIMITS) -> ProcessLines:
     """worker・coordinator の process 自身の Python の出力を、送り先が使えて stdout と stderr が同じ file を指す時(merged が真なら
     別の file でも — coordinator の Pod の形)だけ刻つきの書き手(送り手つき)へ差し替えて動かし始め、終わり(end)を process の終わり
     (atexit)に置くため(頭の註の「worker の process 自身の行」「coordinator の process 自身の行」)。plan = worker_log_plan か
     coordinator_log_plan の答え。それ以外は何も替えない(RawLines)— 送り先の値が使えない時と、送り先は在るが stdout と stderr が
-    別の file の時は、理由を 1 行 stderr に書く(process はそのまま走る)。"""
+    別の file の時は、理由を 1 行 stderr に書く(process はそのまま走る)。limits = 送りの上限(終わりの上限 end_seconds は、process
+    の止め方を持つ入口が選ぶ — 頭の註の「coordinator の process 自身の行」)。"""
     match plan:
         case JobLogTarget() if merged or same_file(1, 2):
-            lines = stamped_streams(plan, merged)
+            lines = stamped_streams(plan, merged, limits)
             lines.begin()
             atexit.register(lines.end)
             return lines
