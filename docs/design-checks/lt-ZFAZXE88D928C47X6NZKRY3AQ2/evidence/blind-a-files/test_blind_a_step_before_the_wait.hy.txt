@@ -1,0 +1,98 @@
+;; 盲検 A の失敗例の再現(card ki-069f4a5c07f7 の設計の検証 — 使い捨て。commit しない)。
+;;
+;; 問い: 起きる期限(DueAt)は「coordinator への口が WorkerWakes の節で読んだ今の壁の時計の枠」の刻。周の間の待ちの答え手 tick-pauses は、
+;; その刻を「自分で読み直した今の壁の時計」から引いて待つ長さにする。2 つの読みの間に壁の時計が戻ると、待ちは戻った分だけ延びるか。
+;;
+;; 台本は tests/test_silence_wall_clock_step.hy の道具をそのまま使う(本物の run-worker・coordinator-link・tick-pauses を仮想の時計で回す)。
+;; 既に在る台本は壁の時計を「届かなかった最初の heartbeat の時」(口が返事の後に時計を読む前)に動かす。ここでは動かす刻だけを替え、
+;; 「途絶が始まった後の最初の AwaitNextTick」(起きる物の組を作った後・tick-pauses が時計を読む前)に動かす。
+(require doeff-hy.macros [deftest defk defhandler <- val var])
+(require doeff-hy.record [defrecord])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import doeff [with-handlers])
+(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.worker.intent.worker_model [AwaitNextTick])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
+(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link RESEND-AFTER-MS])
+(import tests.link_rig [LINK-ROUTE])
+(import tests.stop_fixtures [stop-signal-never-comes])
+(import tests.transport_http [route-cell])
+(import tests.test_silence_wall_clock_step [Script Seen StepWallClock ScriptClockMs script-clock wall-clock-stepped scripted-coordinator
+                                            cut-off-noted worker-then-seen silence-at-cut-off WORKER])
+
+(val T (ClusterTiming))
+;; 途絶の始まり(偽の coordinator が届かなくなる刻 — 台本の始まりからの ms)。
+(val CUT-MS 10000)
+
+
+(defhandler stepped-before-the-wait [#^ float back-seconds #^ int step-at-ms #^ list noted]
+  "調整ループのすぐ外(coordinator-link と tick-pauses より手前)に立つ代役: 台本の時計が step-at-ms 以後の最初の AwaitNextTick で、
+   待ちへ渡す前に壁の時計を back-seconds 戻す(1 度だけ)。noted に #(動かした刻(台本の時計 ms) その待ちの期限) を残す。0 秒なら
+   動かさない(対照)。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 検ごとに戻す秒を変え、動かした刻を検が読む(Ask で区別できない)。
+  (AwaitNextTick [policy changed wakes stopping]
+    (<- at int (ScriptClockMs))
+    (when (and (not noted) (>= at step-at-ms))
+      (.append noted #(at wakes.due))
+      (when (!= back-seconds 0.0)
+        (<- (StepWallClock back-seconds))))
+    (<- waited effect)
+    (resume waited)))
+
+
+(defk seen-with-step-before-the-wait [back-seconds step-at-ms task-dir noted]
+  {:pre [(: back-seconds float) (: step-at-ms int) (: task-dir str) (: noted list)] :post [(: % Seen)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "途絶の台本(10 秒目から届かない・台本の側では壁の時計を動かさない)を、元の検と同じ組の一番内側に stepped-before-the-wait を足して回すため。"
+  (val script (Script :cut-ms CUT-MS :cut-back-seconds 0.0 :step-after-beats None :beats-back-seconds 0.0 :until-ms 150000))
+  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True))
+  (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
+                                script-clock wall-clock-stepped (scripted-coordinator script) tick-pauses
+                                (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
+                                cut-off-noted (stepped-before-the-wait back-seconds step-at-ms noted)]
+                  (worker-then-seen)))
+  seen)
+
+
+(deftest test-control-no-step-decides-the-self-stop-at-the-fence [tmp-path]
+  ;; 対照: 代役を並べるだけ(壁の時計は動かさない)なら、元の検と同じく fence の所で自己停止を決める。
+  (val noted [])
+  (<- seen Seen (seen-with-step-before-the-wait 0.0 CUT-MS (str (/ tmp-path "tasks")) noted))
+  (<- silence int (silence-at-cut-off seen))
+  (print "CONTROL silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+
+
+(deftest test-a-step-back-of-9-seconds-right-before-the-last-wait-inside-the-fence-does-not-delay-the-self-stop [tmp-path]
+  ;; 元の検 test-a-wall-clock-stepped-back-past-the-c4-margin-does-not-delay-the-self-stop と同じ主張を、動かす刻だけ替えて確かめる:
+  ;; 途絶の最中(沈黙 19.5 秒 = fence の 0.5 秒前の待ち)に壁の時計が 9 秒戻る。条 C4 の余白は 8 秒。
+  (val noted [])
+  (<- seen Seen (seen-with-step-before-the-wait 9.0 27000 (str (/ tmp-path "tasks")) noted))
+  (<- silence int (silence-at-cut-off seen))
+  (print "STEP-9@27s silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+
+
+(deftest test-a-step-back-of-45-seconds-right-before-the-first-wait-of-the-cut-does-not-delay-the-self-stop [tmp-path]
+  ;; 元の検 test-a-wall-clock-stepped-back-45-seconds-still-decides-the-self-stop-before-the-reassign-deadline と同じ主張
+  ;; (途絶の始まりの最初の待ちの直前に 45 秒戻る)。
+  (val noted [])
+  (<- seen Seen (seen-with-step-before-the-wait 45.0 CUT-MS (str (/ tmp-path "tasks")) noted))
+  (<- silence int (silence-at-cut-off seen))
+  (print "STEP-45@10s silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+
+
+(deftest test-a-step-back-of-45-seconds-right-before-the-last-wait-inside-the-fence-still-decides-before-the-reassign-deadline [tmp-path]
+  ;; 移し替えの 60 秒との比べ: 沈黙 19.5 秒の待ちの直前に 45 秒戻っても、自己停止を決める刻は coordinator が job を他へ置く刻より前か。
+  (val noted [])
+  (<- seen Seen (seen-with-step-before-the-wait 45.0 27000 (str (/ tmp-path "tasks")) noted))
+  (<- silence int (silence-at-cut-off seen))
+  (print "STEP-45@27s silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (< silence T.reassign-after-ms) #(silence seen)))

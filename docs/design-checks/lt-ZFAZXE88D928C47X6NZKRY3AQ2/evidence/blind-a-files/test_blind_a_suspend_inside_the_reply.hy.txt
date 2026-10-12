@@ -1,0 +1,120 @@
+;; 盲検 A の副次の観測の再現(card ki-069f4a5c07f7 の設計の検証 — 使い捨て。commit しない)。
+;;
+;; 問い: 調整ループは拍の頭の壁の刻 began を「ReadDesired の後に読んだ壁の時計 − 拍の頭からの単調な差」で導く(worker/core/program.hy)。
+;; 口が heartbeat の返事の刻を読んだ後・調整ループが壁の時計を読む前(返事の処理の途中 — ready の file・task の印・Program の取り寄せ)
+;; に機体が suspend すると(単調は進まず壁だけ進む)、began は suspend の後の枠の刻になり、口の WorkerWakes は「began 以前の期限は
+;; もう判じた」として heartbeat の期限と fence の期限を捨てるか。
+;;
+;; 台本は tests/test_silence_wall_clock_step.hy の道具をそのまま使う。既に在る suspend の台本は ObserveWorld(調整ループが壁の時計を
+;; 読んだ後)で壁を進める。ここでは進める刻だけを替え、3 回目に届いた heartbeat の返事の処理の途中(口が ready の file の環境変数を問う
+;; ReadEnvironment)で 30 秒進め、その直後から coordinator に届かなくする(戻ったら網が無い機体 — 代役が以後の要求を接続の失敗にする)。
+(require doeff-hy.macros [deftest defk defhandler <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff [with-handlers])
+(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.process_effects [ReadEnvironment])
+(import doeff_core_effects.http_effects [HttpRequest HttpFailed HttpFailureKind])
+(import doeff_time [SimClock sim-time-handler])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.worker.intent.worker_model [ObserveWorld])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
+(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
+(import tests.link_rig [LINK-ROUTE])
+(import tests.stop_fixtures [stop-signal-never-comes])
+(import tests.transport_http [route-cell])
+(import tests.test_silence_wall_clock_step [Script Seen StepWallClock ScriptClockMs script-clock wall-clock-stepped scripted-coordinator
+                                            cut-off-noted worker-then-seen WORKER])
+
+;; 本番と同じ時間の設定(lease 10 秒・fence 20 秒・移し替え 60 秒)。
+(val T (ClusterTiming))
+;; suspend の長さ(fence 20 秒の後)。
+(val SUSPEND-SECONDS 30.0)
+
+
+(defhandler suspended-then-cut [#^ bool inside-reply #^ list noted]
+  "口と偽の coordinator の間に立つ代役: 3 回目に届いた heartbeat の拍で壁の時計だけを SUSPEND-SECONDS 進め(単調な時計は動かさない —
+   suspend の形)、その後の要求は全部 接続の失敗にする(戻ったら網が無い機体)。進める所は 2 通り:
+     inside-reply 真  3 回目の ReadEnvironment(= 返事の処理の途中 — 口はもう返事の刻を読んでいる・調整ループはまだ壁の時計を読んでいない)
+     inside-reply 偽  その拍の最初の ObserveWorld(調整ループが壁の時計を読んだ後 — 既に在る suspend の台本と同じ所・対照)
+   noted に進めた刻(台本の時計 ms)を残す。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 検ごとに進める所を変え、進めた刻を検が読む(Ask で区別できない)。
+  (session var asked 0)
+  (session var armed False)
+  (ReadEnvironment [names]
+    (:= asked (+ asked 1))
+    (when (= asked 3)
+      (if inside-reply
+          (do (<- at int (ScriptClockMs))
+              (.append noted at)
+              (<- (StepWallClock (- SUSPEND-SECONDS))))
+          (:= armed True)))
+    (<- found effect)
+    (resume found))
+  (ObserveWorld []
+    (when armed
+      (:= armed False)
+      (<- at int (ScriptClockMs))
+      (.append noted at)
+      (<- (StepWallClock (- SUSPEND-SECONDS))))
+    (<- view effect)
+    (resume view))
+  (HttpRequest [url]
+    (when noted
+      (return (resume (HttpFailed :url url :detail "ConnectError: refused" :kind HttpFailureKind.CONNECT-FAILED))))
+    (<- answer effect)
+    (resume answer)))
+
+
+(defk seen-under [inside-reply beat-beside task-dir noted]
+  {:pre [(: inside-reply bool) (: beat-beside bool) (: task-dir str) (: noted list)] :post [(: % Seen)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "台本(台本の側では途絶えず壁の時計も動かさない・300 秒動かす)を、元の検と同じ組の口のすぐ外側に代役 suspended-then-cut を足して回すため。"
+  (val script (Script :cut-ms None :cut-back-seconds 0.0 :step-after-beats None :beats-back-seconds 0.0 :until-ms 300000))
+  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True :beat-beside beat-beside))
+  (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
+                                script-clock wall-clock-stepped (scripted-coordinator script) (suspended-then-cut inside-reply noted)
+                                tick-pauses
+                                (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
+                                cut-off-noted]
+                  (worker-then-seen)))
+  seen)
+
+
+(deftest test-control-a-suspend-after-the-tick-read-its-clock-stops-at-the-first-tick-after-the-resume [tmp-path]
+  ;; 対照(既に在る suspend の台本と同じ所で進める): 戻った最初の周で自己停止を決める。
+  (val noted [])
+  (<- seen Seen (seen-under False True (str (/ tmp-path "tasks")) noted))
+  (print "CONTROL noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (is-not seen.cut-off-ms None) seen)
+  (assert (<= (get noted 0) seen.cut-off-ms (+ (get noted 0) (// T.lease-ms 2))) #(noted seen)))
+
+
+(deftest test-a-suspend-inside-the-reply-handling-stops-at-the-first-tick-after-the-resume [tmp-path]
+  ;; 同じ主張(#2806 — 戻った最初の周で、返事を待たずに自己停止を決める)を、suspend の刻だけ替えて確かめる。
+  (val noted [])
+  (<- seen Seen (seen-under True True (str (/ tmp-path "tasks")) noted))
+  (print "INSIDE-REPLY(beat-beside on) noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (is-not seen.cut-off-ms None) seen)
+  (assert (<= (get noted 0) seen.cut-off-ms (+ (get noted 0) (// T.lease-ms 2))) #(noted seen)))
+
+
+(deftest test-with-the-tick-as-the-only-sender-a-suspend-inside-the-reply-handling-stops-at-the-first-tick-after-the-resume [tmp-path]
+  ;; 仕組みの確かめ(本番の既定でない構成): 拍の外の送りを切り(LinkState の beat-beside 偽 — 検の道具の構成)、heartbeat を必ず調整ループの
+  ;; 拍が送る形にして、同じ所(返事の処理の途中)で suspend させる。
+  (val noted [])
+  (<- seen Seen (seen-under True False (str (/ tmp-path "tasks")) noted))
+  (print "INSIDE-REPLY(beat-beside off) noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (is-not seen.cut-off-ms None) seen)
+  (assert (<= (get noted 0) seen.cut-off-ms (+ (get noted 0) (// T.lease-ms 2))) #(noted seen)))
+
+
+(deftest test-control-with-the-tick-as-the-only-sender-a-suspend-after-the-tick-read-its-clock [tmp-path]
+  ;; 上の対照: 同じ構成(拍の外の送りなし)で、ObserveWorld(調整ループが壁の時計を読んだ後)で suspend させる。
+  (val noted [])
+  (<- seen Seen (seen-under False False (str (/ tmp-path "tasks")) noted))
+  (print "CONTROL(beat-beside off) noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+  (assert (is-not seen.cut-off-ms None) seen)
+  (assert (<= (get noted 0) seen.cut-off-ms (+ (get noted 0) (// T.lease-ms 2))) #(noted seen)))
