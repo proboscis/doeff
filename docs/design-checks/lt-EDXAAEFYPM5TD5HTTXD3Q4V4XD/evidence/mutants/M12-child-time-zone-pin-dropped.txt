@@ -1,25 +1,26 @@
 # 変異: M12-child-time-zone-pin-dropped(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/tests/test_examples_run.py
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 1 failed, 48 passed, 1 skipped, 1 warning in 9.73s
+## 要約: 1 failed, 48 passed, 1 skipped, 1 warning in 9.05s
 ## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_children_run_in_a_fixed_time_zone']
 ## 出力
 ...............................Fs.................                       [100%]
 =================================== FAILURES ===================================
 ____________________ test_children_run_in_a_fixed_time_zone ____________________
 
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x5fa7f410510>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x32075428d50>
 
     def test_children_run_in_a_fixed_time_zone(monkeypatch: pytest.MonkeyPatch) -> None:
         """子は親の時間帯に依らず CHILD_TIME_ZONE で走る(親を UTC から 9 時間ずらしても、時刻 0 の地方時は 00:00)。"""
         monkeypatch.setenv("TZ", "JST-9")
         result = subprocess.run(
-            [sys.executable, "-c", "import time; print(time.strftime('%H:%M', time.localtime(0)))"],
+            _in_child_time_zone(
+                [sys.executable, "-c", "import time; print(time.strftime('%H:%M', time.localtime(0)))"]
+            ),
             capture_output=True,
             check=True,
             text=True,
-            env=_child_env(),
         )
 >       assert result.stdout == "00:00\n"
 E       AssertionError: assert '09:00\n' == '00:00\n'
@@ -29,7 +30,7 @@ E         ?  ^
 E         + 09:00
 E         ?  ^
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:513: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:512: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
@@ -80,4 +81,4 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_children_run_in_a_fixed_time_zone
-1 failed, 48 passed, 1 skipped, 1 warning in 9.73s
+1 failed, 48 passed, 1 skipped, 1 warning in 9.05s

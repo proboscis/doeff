@@ -16,7 +16,7 @@
   ],
   "design": {
     "path": "design.md",
-    "sha256": "2c80d40c5363a5e863c9c3fdb89a901caa06c06332b7d9c2a7d6faa69f5180b7"
+    "sha256": "69f5d5072f30f1d649030a423082a133358d9e9ee1305b03f3b185b51a1ffbd5"
   },
   "modules": [
     {
@@ -47,9 +47,9 @@
         "子の終了コードの意味(件の中で失敗させた子は 0)",
         "合否"
       ],
-      "hides": "下請けの関数(_compare・_frame_violations・_line_pattern・_run_marks・_child_env など)",
+      "hides": "下請けの関数(_compare・_frame_violations・_line_pattern・_run_marks・_in_child_time_zone など)",
       "interface": "pytest の id: test_example_runs[<例>]・test_case_failure_shows_in_compared_output[<例>]・test_example_runs_a_program[<例>]・test_broken_example_is_still_broken[<例>]・test_example_uses_only_doeff_hy_macros[<例>]・test_tables_name_examples_as_they_are・test_expected_output_places_only_known_marks・test_expected_output_places_nothing_unplaceable・test_mark_check_sees_unknown_marks・test_frame_mark_swallows_only_frames・test_unplaceable_table_catches_its_samples・test_marks_count_only_what_ran・test_children_run_in_a_fixed_time_zone・test_macro_check_sees_nested_forms",
-      "effects": "子 process を起こす(親の環境に TZ=UTC0 を足す・4 本ずつ並べる)。例と期待の出力を読む。test_marks_count_only_what_ran の tmp_path に 1 file を書く",
+      "effects": "子 process を起こす(env TZ=UTC0 の命令で包み、親の環境を受け継ぐ・4 本ずつ並べる)。例と期待の出力を読む。test_marks_count_only_what_ran の tmp_path に 1 file を書く",
       "lifetime": "pytest の session 1 つ。子は終わるか締切(50 秒 × 負荷の倍率)で終わる",
       "invariants": [
         "件の中で失敗させた子は 0 で終わり、出力は期待に合わない",
@@ -191,7 +191,7 @@
         "macros"
       ],
       "reason": "機体で変わる物を期待の出力の側の列挙(UNPLACEABLE)だけで止めようとし、列挙に無い時間帯が漏れた(知識の漏洩ではなく強制の穴)",
-      "revision": "c8baa36a9: 子の環境の TZ を UTC0 に固定(CHILD_TIME_ZONE・_child_env)し、test_children_run_in_a_fixed_time_zone で固定を守る。再検証 checks/c3・c0j・mutants/M12"
+      "revision": "c8baa36a9・921e7b171: 子の命令を env TZ=UTC0 で包んで時間帯を固定(CHILD_TIME_ZONE・_in_child_time_zone)し、test_children_run_in_a_fixed_time_zone で固定を守る。再検証 checks/c3・c0j・mutants/M12"
     },
     {
       "id": "H1",
@@ -219,7 +219,7 @@
       "observation": "49 passed, 1 skipped(skip は空の BROKEN)",
       "evidence": {
         "path": "evidence/checks/c0-fixed-all-green.txt",
-        "sha256": "19751b2360465e88b72222d9ebf64a783611fe5163f4ccd7f3f8347b867e3f58"
+        "sha256": "af3e7bec596896e2359d4cea5a93dd83253240fa978e3e6965ec921852c7674f"
       },
       "status": "passed"
     },
@@ -233,7 +233,7 @@
       "observation": "49 passed, 1 skipped",
       "evidence": {
         "path": "evidence/checks/c0j-fixed-all-green-parent-jst.txt",
-        "sha256": "a5c8a0a55ddded4b133a319b5d3b78012419da1ebadefe27f2f79dddeb44cb63"
+        "sha256": "fca9ec69e7c27bd235d0b8b357b4c3a6650a7da6528bf7d1b4cbe7590a97e9eb"
       },
       "status": "passed"
     },
@@ -277,7 +277,7 @@
       "observation": "9 failed(test_case_failure_shows_in_compared_output の ex02〜ex09)",
       "evidence": {
         "path": "evidence/checks/c1-blind-a-policy-only-red.txt",
-        "sha256": "961c8ea88b86068d1676493ebe53f46f820e546f84f01326640dbf114e085195"
+        "sha256": "994460905ee297b6b71830891c8caebd15df55263693b877801fb04ba99e5a4d"
       },
       "status": "passed"
     },
@@ -291,7 +291,7 @@
       "observation": "-k ex04_simple: 1 failed, 3 passed",
       "evidence": {
         "path": "evidence/checks/c2-blind-a-policy-plus-silent-ex04-red.txt",
-        "sha256": "5dd9555e38c789f9ba0005cf8d46ad400865afe91755adc27586c24b6a9c1d6a"
+        "sha256": "ca28f81d0e824335437dae1add191ca42f0e76728373634c93528666b94883a5"
       },
       "status": "passed"
     },
@@ -306,7 +306,7 @@
       "observation": "1 failed: test_example_runs[ex07]",
       "evidence": {
         "path": "evidence/mutants/M1-frame-mark-swallows-case-lines.txt",
-        "sha256": "e6082365daa8cc14a953bd13c7b5bca77c37ee4204890d1d9a0114fec464c138"
+        "sha256": "8bcc81c6c16689fe831d1eb7553aafb205e5c89c4e40c544ad4bea71279fff97"
       },
       "status": "passed"
     },
@@ -321,7 +321,7 @@
       "observation": "2 failed: test_example_runs[ex05]・test_expected_output_places_only_known_marks",
       "evidence": {
         "path": "evidence/mutants/M2-inline-mark-hides-a-sum.txt",
-        "sha256": "2bb61c7f29bddb76aee978a1f67544b2bac06ec8457ef6c2e41f655ce1bce4ba"
+        "sha256": "15e2c18bc9bd4fea65d9ef0a7300f4bf4c29ac963bf0796671fad8d9dd55ef0e"
       },
       "status": "passed"
     },
@@ -336,7 +336,7 @@
       "observation": "2 failed: test_example_runs[ex07]・test_expected_output_places_only_known_marks",
       "evidence": {
         "path": "evidence/mutants/M3-inline-mark-hides-a-count.txt",
-        "sha256": "e7dfa5ffb867ae878562104ca49b0b144ce96ffdaf9e037fd2cdec1871a19aa2"
+        "sha256": "673e766c1fe22138b6e2154d66fef2318b3ca5dfa40bda3320afe6f916d2b9a4"
       },
       "status": "passed"
     },
@@ -350,7 +350,7 @@
       "observation": "1 failed: test_case_failure_shows_in_compared_output[ex10_silent]",
       "evidence": {
         "path": "evidence/mutants/M5-example-prints-no-case-result.txt",
-        "sha256": "4b143ff229334b5fd65c3ae7a8ad6d03f265fb06b99541423995ddf1ad472da1"
+        "sha256": "53c2d3f5a0b14dfef6415f64b7e245f09b858e5abd3c94abb628c2de4441d0f6"
       },
       "status": "passed"
     },
@@ -364,7 +364,7 @@
       "observation": "49 passed, 1 skipped",
       "evidence": {
         "path": "evidence/mutants/M8-example-rewritten-without-output-change.txt",
-        "sha256": "db6a66cf155e0d05057d25bc280edf7801c76fa18929e9c82662b17e0b22d4f0"
+        "sha256": "099491b33efa95f03bf16b01c9001b6b1dc67d71511bb06aa293c2f18fd6d6ea"
       },
       "status": "passed"
     },
@@ -406,7 +406,7 @@
       "observation": "53 passed, 1 skipped",
       "evidence": {
         "path": "evidence/checks/c4-blind-b-retry-example-green.txt",
-        "sha256": "b6bc597b5e67414df410dccfa5a3bc403c5810b1c5b4bee70da9b0bbe1156b67"
+        "sha256": "d37930f3bd5181a73843a80cd831634d7f2887eac495ee3fb1c59ae8e1dce9ae"
       },
       "status": "passed"
     },
@@ -420,7 +420,7 @@
       "observation": "2 failed: test_case_failure_shows_in_compared_output[ex10_debug]・test_example_runs_a_program[ex10_debug]",
       "evidence": {
         "path": "evidence/mutants/M4-example-without-cases.txt",
-        "sha256": "50144bbe33082e73e4a6b68470059db12b01c6c75d70a51dc9b8c936ac6f155b"
+        "sha256": "9129a237ef00bd1ff06aac19c4a753456b6b231548551d10bca2d116a9f09195"
       },
       "status": "passed"
     },
@@ -434,7 +434,7 @@
       "observation": "1 failed: test_case_failure_shows_in_compared_output[ex01]",
       "evidence": {
         "path": "evidence/mutants/M6-no-cases-row-removed.txt",
-        "sha256": "7d30514fb1d1d8a2961582540f66bb0e3126b53fdac22e2296d3beb7e55b83bb"
+        "sha256": "57baa6e93b2e0e1b9046f7bf881463d928bb04342c62b88b4dc3ff521635bed2"
       },
       "status": "passed"
     },
@@ -448,7 +448,7 @@
       "observation": "2 failed: test_case_failure_shows_in_compared_output[ex10_unrun]・test_example_runs_a_program[ex10_unrun]",
       "evidence": {
         "path": "evidence/mutants/M10-run-only-in-a-never-called-function.txt",
-        "sha256": "29df3f411a35fe3abc88d6cbee310c17a97de0f741fedb52ead4e34bbd2afa42"
+        "sha256": "b89d7cae5842c4b626e290649d62c78d1d2c5ec31ea3bd0492d49ad06d1309bb"
       },
       "status": "passed"
     },
@@ -462,7 +462,7 @@
       "observation": "9 failed",
       "evidence": {
         "path": "evidence/mutants/M9-runner-patch-dropped.txt",
-        "sha256": "220340073772fceb66c3e1e476e7ac5a5bf09817e8459e96597f91623aae923d"
+        "sha256": "975616117a65667c21f3ca4b83cb53323ad218e9dfc4d6a92cb06e8ab3dec6b6"
       },
       "status": "passed"
     },
@@ -476,7 +476,7 @@
       "observation": "11 failed",
       "evidence": {
         "path": "evidence/mutants/M11-runner-stops-counting-runs.txt",
-        "sha256": "43bcd7ebc3509c698d95251283a47a3e9e571ebac1574df5a206045a5e6eb795"
+        "sha256": "f9d2aa5fc8fea17045c85eddd5393f4563192c8c56d65bac6ffe67100a667c86"
       },
       "status": "passed"
     },
@@ -518,7 +518,7 @@
       "observation": "2 passed",
       "evidence": {
         "path": "evidence/checks/c3-blind-b-local-time-parent-jst-green.txt",
-        "sha256": "9682c942bb9bf94866c919f0d4e760b3bc5676bd4958180941762bf2e22e3774"
+        "sha256": "edb154c65d6962b2bdfcc845bcd525ec84dad1c75ad45cff5b451118a0c72fe0"
       },
       "status": "passed"
     },
@@ -532,7 +532,7 @@
       "observation": "1 failed: test_expected_output_places_nothing_unplaceable",
       "evidence": {
         "path": "evidence/mutants/M7-machine-path-and-frame-line-pinned.txt",
-        "sha256": "f1df934e50d3a6a878fccf6c86397640e181b89e106fd213b893c0fbdf28b1c0"
+        "sha256": "84ca4853e204b355ef8c20caa94a5569340530d0d4449a8aa0be6e0e486c58e0"
       },
       "status": "passed"
     },
@@ -546,7 +546,7 @@
       "observation": "1 failed: test_children_run_in_a_fixed_time_zone",
       "evidence": {
         "path": "evidence/mutants/M12-child-time-zone-pin-dropped.txt",
-        "sha256": "8012b312a1b95ade79f4b81da682967f501636d965b4102a41ebbd29db60bf41"
+        "sha256": "2f7e33647902e07b903dadbb5b579ff0e28ff55d4c3f5400362879f715652550"
       },
       "status": "passed"
     }

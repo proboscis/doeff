@@ -11,12 +11,13 @@
 | 範囲 | 実装完了まで(設計・実装・盲検・直し・再検証) |
 | 実装の版 | doeff main b62dd0533(着地の列 L2148 — 限界 1〜3 と所見 4 の強制) |
 | 調べた版(base_revision) | doeff main 86ecd1344(b62dd0533 を含む) |
-| 盲検の後の直し | branch `wt/ki-f8a5-design-check` の commit c8baa36a9(この記録と同じ branch で着地させる) |
+| 盲検の後の直し | branch `wt/ki-f8a5-design-check` の commit c8baa36a9(子に 0 の終了を求める・子の時間帯を固定)と 921e7b171(時間帯は `env TZ=UTC0 …` の命令で決める — os.environ を読まない・doeff-linter DOEFF004)。この記録と同じ branch で着地させる |
+| 直しの後の証拠の版 | 921e7b171(evidence/checks・evidence/mutants の記録の頭に版と作業木の差分を書いた) |
 | 対象の file | `packages/doeff-traverse/tests/test_examples_run.py`・`packages/doeff-traverse/tests/run_example_failing_a_case.py` |
 | 検の経路 | 変えた所の検(pyproject.toml の `[[tool.doeff.contract-tests]]` の prefix `packages/doeff-traverse/` が file を名指す)と日次の全体検証 |
 
 設計検証は実装の着地の後に行った(依頼の種類が調べ物で、設計検証の記録は着地の後の完了の検査が求めた)。そのため盲検は実装済みの
-版を材料にし、盲検で見つかった穴は c8baa36a9 で直した。
+版を材料にし、盲検で見つかった穴は c8baa36a9・921e7b171 で直した。
 
 ## 1. 要件(card ki-f8a58fb49dd9)
 
@@ -77,7 +78,7 @@
 | 印は件の行を呑まない | 行だけの `…` が呑んだ行を frame の並びと照らす | `_compare`・`_frame_violations`・test_example_runs・test_frame_mark_swallows_only_frames | contract-tests の prefix・日次 | frame の見分けは「直前の File の file に同じ文の行が在る」まで |
 | 行の中の印は種類の決まった形 | 表 MARKS の綴りで割る | `MARKS`・`_mark_violations`・test_expected_output_places_only_known_marks・test_mark_check_sees_unknown_marks | 同上 | 数 + s の形の件の結果は `…s` で伏せられる |
 | 置かない物 | UNPLACEABLE を期待の出力に当てる | test_expected_output_places_nothing_unplaceable・test_unplaceable_table_catches_its_samples | 同上 | 走るたびに変わる物は表に無い(書き手の 2 度目の走りで外れる) |
-| 機体の時間帯に依らない(直しで足した) | 子の環境の TZ を UTC0 に固定 | `CHILD_TIME_ZONE`・`_child_env`・test_children_run_in_a_fixed_time_zone | 同上 | 固定するのは時間帯だけ(locale 等は親のまま) |
+| 機体の時間帯に依らない(直しで足した) | 子の命令を `env TZ=UTC0 …` で包む | `CHILD_TIME_ZONE`・`_in_child_time_zone`・test_children_run_in_a_fixed_time_zone | 同上 | 固定するのは時間帯だけ(locale 等は親のまま) |
 | 件の中の失敗が出力に出る | 子が走りごとに最初の件を失敗させ、子は 0 で終わり出力が合わない(直しで 0 を求めた) | failing-child の `_first_case_fails`・test_case_failure_shows_in_compared_output | 同上 | 失敗させるのは走りごとに最初の件だけ |
 | 件・Program を走らせる | 子が件の関数の呼び出しと run の code の実行の始まりを数える | failing-child の `_count_program_runs`・test_example_runs_a_program・NO_CASES・test_marks_count_only_what_ran | 同上 | doeff.run の関数の code だけを数える |
 | macro の持ち主 | Hy の reader で form を読む | `_macro_violations`・test_example_uses_only_doeff_hy_macros | 同上 | 名で見る |
@@ -111,7 +112,7 @@
 
 - 主張: 例が `datetime.fromtimestamp` の地方時を印字すると、期待の出力が機体の時間帯に依る。
 - 再現(直す前): 親の TZ 無しで緑(repro/b3)、TZ=JST-9 で test_example_runs[ex07] が赤(repro/b4)。
-- 直し(c8baa36a9): 子の時間帯を `TZ=UTC0` に固定(POSIX の綴り — この Pod には時間帯の data base が無い)。
+- 直し(c8baa36a9・921e7b171): 子の命令を `env TZ=UTC0 …` で包み、時間帯を固定する(POSIX の綴り — この Pod には時間帯の data base が無い)。
 - 再検証: TZ=JST-9 の親で緑(checks/c3)、file 全部も TZ=JST-9 で 49 passed(checks/c0j)、固定を外すと
   test_children_run_in_a_fixed_time_zone が赤(mutants/M12)。
 

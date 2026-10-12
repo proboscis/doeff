@@ -1,8 +1,8 @@
 # 変異: M9-runner-patch-dropped(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/tests/run_example_failing_a_case.py
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 9 failed, 40 passed, 1 skipped, 1 warning in 9.25s
+## 要約: 9 failed, 40 passed, 1 skipped, 1 warning in 9.29s
 ## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex02_traverse_pipeline.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex03_zip_multi_source.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex04_simple.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex04_traverse_macro.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex06_mediagen_rewrite.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex08_tqdm_progress.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex09_for_do_when.hy]']
 ## 出力
 ...........FFFFFFFFF............s.................                       [100%]
@@ -10,7 +10,7 @@
 ____ test_case_failure_shows_in_compared_output[ex02_traverse_pipeline.hy] _____
 
 name = 'ex02_traverse_pipeline.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -34,11 +34,11 @@ E       AssertionError: ex02_traverse_pipeline.hy が Traverse の件を 1 つ�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=3).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 _____ test_case_failure_shows_in_compared_output[ex03_zip_multi_source.hy] _____
 
 name = 'ex03_zip_multi_source.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -62,11 +62,11 @@ E       AssertionError: ex03_zip_multi_source.hy が Traverse の件を 1 つも
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=1).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 __________ test_case_failure_shows_in_compared_output[ex04_simple.hy] __________
 
 name = 'ex04_simple.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -90,11 +90,11 @@ E       AssertionError: ex04_simple.hy が Traverse の件を 1 つも走らせ�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=1).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 ______ test_case_failure_shows_in_compared_output[ex04_traverse_macro.hy] ______
 
 name = 'ex04_traverse_macro.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -118,11 +118,11 @@ E       AssertionError: ex04_traverse_macro.hy が Traverse の件を 1 つも�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=3).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 _____ test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy] ______
 
 name = 'ex05_parallel_timing.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -146,11 +146,11 @@ E       AssertionError: ex05_parallel_timing.hy が Traverse の件を 1 つも�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=4).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 _____ test_case_failure_shows_in_compared_output[ex06_mediagen_rewrite.hy] _____
 
 name = 'ex06_mediagen_rewrite.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -174,11 +174,11 @@ E       AssertionError: ex06_mediagen_rewrite.hy が Traverse の件を 1 つも
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=2).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 __ test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy] ___
 
 name = 'ex07_proboscis_ema_rewrite.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -202,11 +202,11 @@ E       AssertionError: ex07_proboscis_ema_rewrite.hy が Traverse の件を 1 �
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=2).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 ______ test_case_failure_shows_in_compared_output[ex08_tqdm_progress.hy] _______
 
 name = 'ex08_tqdm_progress.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -230,11 +230,11 @@ E       AssertionError: ex08_tqdm_progress.hy が Traverse の件を 1 つも走
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=3).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 _______ test_case_failure_shows_in_compared_output[ex09_for_do_when.hy] ________
 
 name = 'ex09_for_do_when.hy'
-children = <test_examples_run.Children object at 0x27d3849df90>
+children = <test_examples_run.Children object at 0x4bc2e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -258,7 +258,7 @@ E       AssertionError: ex09_for_do_when.hy が Traverse の件を 1 つも走�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=2).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
@@ -317,4 +317,4 @@ FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-tra
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex08_tqdm_progress.hy]
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex09_for_do_when.hy]
-9 failed, 40 passed, 1 skipped, 1 warning in 9.25s
+9 failed, 40 passed, 1 skipped, 1 warning in 9.29s

@@ -1,8 +1,8 @@
 # 変異: M2-inline-mark-hides-a-sum(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/examples/expected/ex05_parallel_timing.txt
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 2 failed, 47 passed, 1 skipped, 1 warning in 8.91s
+## 要約: 2 failed, 47 passed, 1 skipped, 1 warning in 9.09s
 ## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_only_known_marks']
 ## 出力
 .....F..........................s............F....                       [100%]
@@ -10,7 +10,7 @@
 __________________ test_example_runs[ex05_parallel_timing.hy] __________________
 
 name = 'ex05_parallel_timing.hy'
-children = <test_examples_run.Children object at 0x497ac49df90>
+children = <test_examples_run.Children object at 0x3706e49df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs(name: str, children: Children) -> None:
@@ -30,13 +30,13 @@ E         -async + sequential:   … in …s
 E         -async + parallel(10): 550 in …s
 E         -async + parallel(3):  550 in …s
 E         -sync + sequential:    550 in …s
-E         +async + sequential:   550 in 1.03s
+E         +async + sequential:   550 in 1.04s
 E         +async + parallel(10): 550 in 0.11s
-E         +async + parallel(3):  550 in 0.42s
+E         +async + parallel(3):  550 in 0.41s
 E         +sync + sequential:    550 in 1.0s
 E       assert None is not None
 
-packages/doeff-traverse/tests/test_examples_run.py:424: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:422: AssertionError
 _________________ test_expected_output_places_only_known_marks _________________
 
     def test_expected_output_places_only_known_marks() -> None:
@@ -57,7 +57,7 @@ E         Left contains 1 more item:
 E         {'ex05_parallel_timing.txt': ['1: async + sequential:   … in …s']}
 E         Use -v to get more diff
 
-packages/doeff-traverse/tests/test_examples_run.py:571: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:570: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
@@ -109,4 +109,4 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 =========================== short test summary info ============================
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs[ex05_parallel_timing.hy]
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_only_known_marks
-2 failed, 47 passed, 1 skipped, 1 warning in 8.91s
+2 failed, 47 passed, 1 skipped, 1 warning in 9.09s

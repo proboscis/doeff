@@ -1,8 +1,8 @@
 # 変異: M8-example-rewritten-without-output-change(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/examples/ex05_parallel_timing.hy
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 49 passed, 1 skipped, 1 warning in 8.43s
+## 要約: 49 passed, 1 skipped, 1 warning in 8.88s
 ## 赤: []
 ## 出力
 ................................s.................                       [100%]
@@ -54,4 +54,4 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
     warnings.warn(pytest.PytestWarning(message), stacklevel=1)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-49 passed, 1 skipped, 1 warning in 8.43s
+49 passed, 1 skipped, 1 warning in 8.88s

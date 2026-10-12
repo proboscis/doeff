@@ -1,16 +1,32 @@
 # 記録: c2-blind-a-policy-plus-silent-ex04-red.txt
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3(作業木の差分は下の git status)
-# 刻: 2026-10-12 00:47:38 UTC
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(作業木の差分は下の git status)
+# 刻: 2026-10-12 00:59:35 UTC
 # 環境: (親のまま)
 # 命令: uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf -k "ex04_simple"
 ## git status --short
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c0-fixed-all-green.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c0j-fixed-all-green-parent-jst.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c1-blind-a-policy-only-red.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c2-blind-a-policy-plus-silent-ex04-red.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c3-blind-b-local-time-parent-jst-green.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c4-blind-b-retry-example-green.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M1-frame-mark-swallows-case-lines.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M10-run-only-in-a-never-called-function.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M11-runner-stops-counting-runs.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M12-child-time-zone-pin-dropped.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M2-inline-mark-hides-a-sum.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M3-inline-mark-hides-a-count.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M4-example-without-cases.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M5-example-prints-no-case-result.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M6-no-cases-row-removed.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M7-machine-path-and-frame-line-pinned.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M8-example-rewritten-without-output-change.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M9-runner-patch-dropped.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/mutate_dc.py.txt
  M packages/doeff-traverse/doeff_traverse/handlers.py
  M packages/doeff-traverse/examples/ex04_simple.hy
  M packages/doeff-traverse/examples/ex08_tqdm_progress.hy
  M packages/doeff-traverse/examples/expected/ex04_simple.txt
- M packages/doeff-traverse/tests/run_example_failing_a_case.py
- M packages/doeff-traverse/tests/test_examples_run.py
-?? docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/
 ## 出力
 test-admission: focused — 4 件(変更箇所の検証)
 .F..                                                                     [100%]
@@ -18,7 +34,7 @@ test-admission: focused — 4 件(変更箇所の検証)
 __________ test_case_failure_shows_in_compared_output[ex04_simple.hy] __________
 
 name = 'ex04_simple.hy'
-children = <test_examples_run.Children object at 0x327d459df90>
+children = <test_examples_run.Children object at 0x2b8c459df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -98,9 +114,9 @@ E         InjectedCaseError: injected into the case of 1
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...njected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...njected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
     - docs/adr/defadr_doc_linter_modes.hy
@@ -149,5 +165,5 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex04_simple.hy]
-1 failed, 3 passed, 46 deselected, 1 warning in 1.70s
+1 failed, 3 passed, 46 deselected, 1 warning in 0.85s
 ## 終了状態: 1

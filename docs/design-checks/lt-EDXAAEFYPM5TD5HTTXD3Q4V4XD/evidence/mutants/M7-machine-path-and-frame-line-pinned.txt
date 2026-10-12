@@ -1,8 +1,8 @@
 # 変異: M7-machine-path-and-frame-line-pinned(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/examples/ex10_machine.hy, packages/doeff-traverse/examples/expected/ex10_machine.txt
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 1 failed, 52 passed, 1 skipped, 1 warning in 8.70s
+## 要約: 1 failed, 52 passed, 1 skipped, 1 warning in 8.81s
 ## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_nothing_unplaceable']
 ## 出力
 ...................................s..............F...                   [100%]
@@ -29,7 +29,7 @@ E         Left contains 1 more item:
 E         {'ex10_machine.txt': ['機体の置き場(venv・Python・home)', 'traceback の frame の行']}
 E         Use -v to get more diff
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:589: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:588: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
@@ -80,4 +80,4 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_expected_output_places_nothing_unplaceable
-1 failed, 52 passed, 1 skipped, 1 warning in 8.70s
+1 failed, 52 passed, 1 skipped, 1 warning in 8.81s

@@ -1,25 +1,38 @@
 # 記録: c1-blind-a-policy-only-red.txt
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3(作業木の差分は下の git status)
-# 刻: 2026-10-12 00:47:31 UTC
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(作業木の差分は下の git status)
+# 刻: 2026-10-12 00:59:27 UTC
 # 環境: (親のまま)
 # 命令: uv run pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf 
 ## git status --short
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c0-fixed-all-green.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c0j-fixed-all-green-parent-jst.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c1-blind-a-policy-only-red.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c2-blind-a-policy-plus-silent-ex04-red.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c3-blind-b-local-time-parent-jst-green.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/checks/c4-blind-b-retry-example-green.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M1-frame-mark-swallows-case-lines.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M10-run-only-in-a-never-called-function.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M11-runner-stops-counting-runs.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M12-child-time-zone-pin-dropped.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M2-inline-mark-hides-a-sum.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M3-inline-mark-hides-a-count.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M4-example-without-cases.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M5-example-prints-no-case-result.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M6-no-cases-row-removed.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M7-machine-path-and-frame-line-pinned.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M8-example-rewritten-without-output-change.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/M9-runner-patch-dropped.txt
+ M docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/mutants/mutate_dc.py.txt
  M packages/doeff-traverse/doeff_traverse/handlers.py
  M packages/doeff-traverse/examples/ex08_tqdm_progress.hy
- M packages/doeff-traverse/tests/run_example_failing_a_case.py
- M packages/doeff-traverse/tests/test_examples_run.py
-?? docs/design-checks/lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD/evidence/
 ## 出力
-
-deadline scale x1.0 (load per usable CPU) — per test 61s, watchdog 91s
-
 test-admission: focused — 50 件(変更箇所の検証)
 ...........FFFFFFFFF............s.................                       [100%]
 =================================== FAILURES ===================================
 ____ test_case_failure_shows_in_compared_output[ex02_traverse_pipeline.hy] _____
 
 name = 'ex02_traverse_pipeline.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -97,13 +110,13 @@ E         InjectedCaseError: injected into the case of {'name': 'alice', 'value'
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...)\nInjectedCaseError: injected into the case of {\'name\': \'alice\', \'value\': 10}\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...)\nInjectedCaseError: injected into the case of {\'name\': \'alice\', \'value\': 10}\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 _____ test_case_failure_shows_in_compared_output[ex03_zip_multi_source.hy] _____
 
 name = 'ex03_zip_multi_source.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -185,13 +198,13 @@ E         InjectedCaseError: injected into the case of 'hello world'
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...he case of {value!r}")\nInjectedCaseError: injected into the case of \'hello world\'\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...he case of {value!r}")\nInjectedCaseError: injected into the case of \'hello world\'\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 __________ test_case_failure_shows_in_compared_output[ex04_simple.hy] __________
 
 name = 'ex04_simple.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -271,13 +284,13 @@ E         InjectedCaseError: injected into the case of 1
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...njected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...njected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 ______ test_case_failure_shows_in_compared_output[ex04_traverse_macro.hy] ______
 
 name = 'ex04_traverse_macro.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -358,13 +371,13 @@ E         InjectedCaseError: injected into the case of {'name': 'alice', 'value'
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...)\nInjectedCaseError: injected into the case of {\'name\': \'alice\', \'value\': 10}\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...)\nInjectedCaseError: injected into the case of {\'name\': \'alice\', \'value\': 10}\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 _____ test_case_failure_shows_in_compared_output[ex05_parallel_timing.hy] ______
 
 name = 'ex05_parallel_timing.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -451,13 +464,13 @@ E         InjectedCaseError: injected into the case of 1
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...njected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...njected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 _____ test_case_failure_shows_in_compared_output[ex06_mediagen_rewrite.hy] _____
 
 name = 'ex06_mediagen_rewrite.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -549,13 +562,13 @@ E         InjectedCaseError: injected into the case of 'Alice'
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...into the case of {value!r}")\nInjectedCaseError: injected into the case of \'Alice\'\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...into the case of {value!r}")\nInjectedCaseError: injected into the case of \'Alice\'\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 __ test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy] ___
 
 name = 'ex07_proboscis_ema_rewrite.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -641,13 +654,13 @@ E         InjectedCaseError: injected into the case of 'AAPL'
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-... into the case of {value!r}")\nInjectedCaseError: injected into the case of \'AAPL\'\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse... into the case of {value!r}")\nInjectedCaseError: injected into the case of \'AAPL\'\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 ______ test_case_failure_shows_in_compared_output[ex08_tqdm_progress.hy] _______
 
 name = 'ex08_tqdm_progress.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -738,13 +751,13 @@ E         InjectedCaseError: injected into the case of 1
 E         case-calls: 11 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...jected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 11 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...jected into the case of {value!r}")\nInjectedCaseError: injected into the case of 1\ncase-calls: 11 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 _______ test_case_failure_shows_in_compared_output[ex09_for_do_when.hy] ________
 
 name = 'ex09_for_do_when.hy'
-children = <test_examples_run.Children object at 0x253ea47df90>
+children = <test_examples_run.Children object at 0x2280c59df90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -825,9 +838,9 @@ E         InjectedCaseError: injected into the case of {'name': 'alice', 'score'
 E         case-calls: 1 program-runs: 1
 E         
 E       assert 1 == 0
-E        +  where 1 = CompletedProcess(args=['/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolset/worktrees/doeff-...or: injected into the case of {\'name\': \'alice\', \'score\': 85, \'active\': True}\ncase-calls: 1 program-runs: 1\n').returncode
+E        +  where 1 = CompletedProcess(args=['env', 'TZ=UTC0', '/work/toolset/worktrees/doeff-wt-ki-f8a5-dc/.venv/bin/python', '/work/toolse...or: injected into the case of {\'name\': \'alice\', \'score\': 85, \'active\': True}\ncase-calls: 1 program-runs: 1\n').returncode
 
-packages/doeff-traverse/tests/test_examples_run.py:452: AssertionError
+packages/doeff-traverse/tests/test_examples_run.py:450: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
     - docs/adr/defadr_doc_linter_modes.hy
@@ -884,5 +897,5 @@ FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_sho
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex07_proboscis_ema_rewrite.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex08_tqdm_progress.hy]
 FAILED packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex09_for_do_when.hy]
-9 failed, 40 passed, 1 skipped, 1 warning in 6.72s
+9 failed, 40 passed, 1 skipped, 1 warning in 6.34s
 ## 終了状態: 1

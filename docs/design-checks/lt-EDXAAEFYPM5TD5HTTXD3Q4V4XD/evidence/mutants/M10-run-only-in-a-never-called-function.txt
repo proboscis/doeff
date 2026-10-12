@@ -1,8 +1,8 @@
 # 変異: M10-run-only-in-a-never-called-function(/tmp/ki-f8a5-mut/mutate_dc.py の同じ名の変異を当て、検を走らせ、元へ戻した)
-# 版: 565c3957f79240fd34b78564223baf6761d6d9f3 + 作業木の直し(test_examples_run.py・run_example_failing_a_case.py)
+# 版: 921e7b1714ace216d4ff0ec422f8c31a1082aa94(当てる前の packages/ の作業木の差分: なし)
 # 当てた file: packages/doeff-traverse/examples/ex10_unrun.hy, packages/doeff-traverse/examples/expected/ex10_unrun.txt
 # 命令: uv run python -m pytest packages/doeff-traverse/tests/test_examples_run.py -q -rf
-## 要約: 2 failed, 51 passed, 1 skipped, 1 warning in 9.32s
+## 要約: 2 failed, 51 passed, 1 skipped, 1 warning in 9.12s
 ## 赤: ['../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex10_unrun.hy]', '../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex10_unrun.hy]']
 ## 出力
 .....................F..........F..s..................                   [100%]
@@ -10,7 +10,7 @@
 __________ test_case_failure_shows_in_compared_output[ex10_unrun.hy] ___________
 
 name = 'ex10_unrun.hy'
-children = <test_examples_run.Children object at 0x374244fdf90>
+children = <test_examples_run.Children object at 0x2ead04fdf90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
@@ -34,11 +34,11 @@ E       AssertionError: ex10_unrun.hy が Traverse の件を 1 つも走らせ�
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=0).case_calls
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:445: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:443: AssertionError
 __________________ test_example_runs_a_program[ex10_unrun.hy] __________________
 
 name = 'ex10_unrun.hy'
-children = <test_examples_run.Children object at 0x374244fdf90>
+children = <test_examples_run.Children object at 0x2ead04fdf90>
 
     @pytest.mark.parametrize("name", _runnable())
     def test_example_runs_a_program(name: str, children: Children) -> None:
@@ -54,7 +54,7 @@ E       AssertionError: ex10_unrun.hy は doeff の run で Program を走らせ
 E       assert 0 > 0
 E        +  where 0 = RunMarks(case_calls=0, program_runs=0).program_runs
 
-/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:470: AssertionError
+/home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py:468: AssertionError
 =============================== warnings summary ===============================
 packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
   /work/toolset/worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
@@ -106,4 +106,4 @@ packages/doeff-adr/src/doeff_adr/pytest_plugin.py:414
 =========================== short test summary info ============================
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_case_failure_shows_in_compared_output[ex10_unrun.hy]
 FAILED ../../../../home/ubuntu/.worktrees/doeff-wt-ki-f8a5-dc/packages/doeff-traverse/tests/test_examples_run.py::test_example_runs_a_program[ex10_unrun.hy]
-2 failed, 51 passed, 1 skipped, 1 warning in 9.32s
+2 failed, 51 passed, 1 skipped, 1 warning in 9.12s
