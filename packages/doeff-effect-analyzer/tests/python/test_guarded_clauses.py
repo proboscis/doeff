@@ -130,10 +130,15 @@ def pkg(make_package) -> str:
     return make_package({"effects.py": EFFECTS_PY, "programs.hy": PROGRAMS_HY})
 
 
-def _left(pkg: str, program: str) -> set[str]:
-    report = analyze_program(f"{pkg}.programs:{program}")
+def _left_of(pkg: str, module: str, program: str) -> set[str]:
+    """The effect classes that leave ``program`` of ``module`` (a Program under a handler)."""
+    report = analyze_program(f"{pkg}.{module}:{program}")
     assert report.unresolved == ()
     return {t.__name__ for t in report.effect_types}
+
+
+def _left(pkg: str, program: str) -> set[str]:
+    return _left_of(pkg, "programs", program)
 
 
 @pytest.mark.parametrize(
@@ -183,3 +188,43 @@ def test_a_fence_is_read_by_its_clauses_and_leaves_a_gap_for_what_it_passes(pkg:
     coverage = check_coverage(program, [fence])
     assert [gap.effect.__name__ for gap in coverage.gaps] == ["Nap"]
     assert not coverage.complete
+
+
+# A hand-written dispatcher whose guard sends the effect on with ``Pass`` imported under another
+# name: the control value is told by what the name is, not by how it is spelt (doeff-hy writes it
+# as ``_doeff_Pass``; the first reading matched the spelling ``Pass`` and lost every fence when the
+# macro began to alias it).
+ALIASED_PASS_PY = """\
+from doeff import Pass as send_on
+from doeff import do
+from doeff.program import with_handlers
+from doeff_vm import EffectBase
+
+from {pkg}.effects import Nap, Tick, Zap
+
+
+def fence_py(effect, k):
+    if isinstance(effect, EffectBase):
+        if isinstance(effect, Nap):
+            return (yield send_on(effect, k))
+        raise ValueError("fenced")
+    return (yield send_on(effect, k))
+
+
+@do
+def three_py():
+    yield Nap(1.0)
+    yield Tick()
+    yield Zap()
+    return 1
+
+
+@do
+def through_fence_py():
+    return (yield with_handlers([fence_py], three_py()))
+"""
+
+
+def test_a_guard_sends_the_effect_on_with_pass_under_any_name(make_package) -> None:
+    pkg = make_package({"effects.py": EFFECTS_PY, "programs_py.py": ALIASED_PASS_PY})
+    assert _left_of(pkg, "programs_py", "through_fence_py") == {"Nap"}

@@ -50,6 +50,7 @@ import ast
 import contextvars
 import dataclasses
 import functools
+import importlib
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -510,13 +511,14 @@ class _Branch:
     """A branch of a dispatcher, taken when the effect is of the classes ``classes`` names: the
     node that tests it (``at``) and the nodes it runs (``region``).
 
-    ``passes_when`` = the test of the branch's guard (``:when``): the branch sends the effect on
-    outward, without running, when it holds (``_guard_in``); None for a branch without a guard."""
+    ``guard`` = the ``if`` among the branch's own statements that may be its guard (``:when``) — it
+    does nothing but yield a call on the effect (``_guards_in``); None for a branch without one.
+    Whether the call is a ``Pass`` is decided where the names are known (``_sent_on_guards``)."""
 
     at: ast.AST
     classes: ast.expr
     region: tuple[ast.AST, ...]
-    passes_when: ast.expr | None = None
+    guard: ast.If | None = None
 
 
 @dataclass(frozen=True)
@@ -540,18 +542,11 @@ def _dispatch_of(node: FunctionNode) -> _Dispatch:
     param = _effect_param(node)
     everything = list(_body_nodes(node))
     guards = _guards_in(everything, param)
-    taken_by_guard = {id(guard) for guard in guards.values()}
     dispatch = _Dispatch(
         param,
         tuple(
-            _Branch(
-                child,
-                classes,
-                tuple(region),
-                guards[id(child)].test if id(child) in guards else None,
-            )
+            _Branch(child, classes, tuple(region), guards.get(id(child)))
             for child in everything
-            if id(child) not in taken_by_guard
             for classes, region in _branches(child, param, everything)
         ),
     )
@@ -560,13 +555,13 @@ def _dispatch_of(node: FunctionNode) -> _Dispatch:
 
 
 def _guards_in(everything: Iterable[ast.AST], param: str | None) -> dict[int, ast.If]:
-    """The guard of each ``if isinstance(effect, T):`` branch that has one, by the branch's node.
+    """The ``if`` that may be the guard of each ``if isinstance(effect, T):`` branch, by the branch's
+    node.
 
     A clause with ``:when`` is written by doeff-hy as ``if isinstance(effect, T): <fields>; if not
     guard: yield Pass(effect, k) else: <clause>`` — the guard is the ``if`` among the branch's own
-    statements whose only act is to pass the effect on.  Its test holds when the effect goes on
-    (``Clause.passes``).  That ``if`` sends the effect outward: it is not a branch of the
-    dispatcher, so ``_dispatch_of`` leaves it out."""
+    statements whose only act is to yield a call on the effect.  Whether that call is ``Pass`` is
+    asked of the names (``_sent_on_guards``): the macro writes ``Pass`` under an alias."""
     found: dict[int, ast.If] = {}
     for child in everything:
         if not isinstance(child, ast.If):
@@ -575,28 +570,44 @@ def _guards_in(everything: Iterable[ast.AST], param: str | None) -> dict[int, as
         if target is None or target.negated:
             continue
         for statement in child.body:
-            if isinstance(statement, ast.If) and _only_passes_on(statement.body, param):
+            if isinstance(statement, ast.If) and _yielded_call_on(statement.body, param) is not None:
                 found[id(child)] = statement
                 break
     return found
 
 
-def _only_passes_on(statements: Sequence[ast.stmt], param: str | None) -> bool:
-    """Whether ``statements`` are only ``yield Pass(<the effect>, …)`` (assigned, returned or bare)."""
+def _yielded_call_on(statements: Sequence[ast.stmt], param: str | None) -> ast.Call | None:
+    """The call in ``statements`` when they are only ``yield <call>(<the effect>, …)`` (assigned,
+    returned or bare), else None."""
     if len(statements) != 1:
-        return False
+        return None
     value = getattr(statements[0], "value", None)
     if isinstance(value, ast.Yield):
         value = value.value
-    return (
-        isinstance(value, ast.Call)
-        and (
-            (isinstance(value.func, ast.Name) and value.func.id == "Pass")
-            or (isinstance(value.func, ast.Attribute) and value.func.attr == "Pass")
-        )
-        and bool(value.args)
-        and _is_name(value.args[0], param)
-    )
+    if isinstance(value, ast.Call) and value.args and _is_name(value.args[0], param):
+        return value
+    return None
+
+
+def _pass_class() -> type:
+    """``doeff_vm.Pass``: the control value that sends the effect a clause received on to the
+    handlers outside."""
+    return importlib.import_module("doeff_vm").Pass
+
+
+def _sent_on_guards(dispatch: _Dispatch, scope: _Scope) -> dict[int, ast.If]:
+    """The guard of each branch of ``dispatch`` whose guard yields ``Pass`` — the name read in
+    ``scope`` (``Pass``, or the alias doeff-hy imports it as), by the branch's node.  The ``if`` of
+    such a guard sends the effect outward: it is not a branch of the dispatcher."""
+    sends_on = _pass_class()
+    sent: dict[int, ast.If] = {}
+    for branch in dispatch.branches:
+        if branch.guard is None:
+            continue
+        call = _yielded_call_on(branch.guard.body, dispatch.param)
+        if call is not None and scope.resolve(call.func) is sends_on:
+            sent[id(branch.at)] = branch.guard
+    return sent
 
 
 def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
@@ -624,20 +635,21 @@ def _read_clauses(
     reader: _Reader, node: FunctionNode, scope: _Scope, filename: str, label: str
 ) -> _ReadClauses:
     dispatch = _dispatch_of(node)
+    guards = _sent_on_guards(dispatch, scope)
+    guard_ifs = {id(guard) for guard in guards.values()}
     clauses: list[Clause] = []
     unresolved: list[Unresolved] = []
     for branch in dispatch.branches:
+        if id(branch.at) in guard_ifs:
+            continue  # a guard's ``if`` sends the effect on: it is not a clause
         location = Location(filename, getattr(branch.at, "lineno", 0))
         named = _classes(branch.classes, scope)
         unresolved.extend(
             Unresolved("handled class is not an importable effect class", text, location)
             for text in named.missing
         )
-        passes = (
-            None
-            if branch.passes_when is None
-            else _pass_test(branch.passes_when, dispatch.param, scope)
-        )
+        guard = guards.get(id(branch.at))
+        passes = None if guard is None else _pass_test(guard.test, dispatch.param, scope)
         # Read once per handled class, with the effect parameter bound to the effect of that
         # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
         # reaches the clause (``Clause.emits``).
