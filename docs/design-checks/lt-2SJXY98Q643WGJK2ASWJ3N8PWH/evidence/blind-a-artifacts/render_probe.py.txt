@@ -1,0 +1,8 @@
+"""probe.hy の型検査のための展開(Python)を書き出す。使い方: uv run python render_probe.py <dir>"""
+import sys
+from pathlib import Path
+from doeff_hy.static_check import project
+d = Path(sys.argv[1])
+p = project(d, [d], d / "probe.hy")
+(d / "probe_projected.py").write_text(p.text, encoding="utf-8")
+print("written", d / "probe_projected.py")

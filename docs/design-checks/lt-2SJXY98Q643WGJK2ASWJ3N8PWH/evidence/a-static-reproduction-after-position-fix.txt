@@ -1,0 +1,14 @@
+######## fix1(位置の退行を直した版) — e5de191585909cc515f824e0b8f87ee4f69e4bbc(working tree: expansion_names.py の _module_model)
+== module_level: 0 error(s)
+== class_body: 7 error(s)
+   7:6 reportSelfClsParameterName: Instance methods should take a "self" parameter
+   7:6 reportUndefinedVariable: "_doeff_Pass" is not defined
+   7:6 reportUndefinedVariable: "_doeff_WithHandler" is not defined
+   7:6 reportUnknownVariableType: Return type is unknown
+   11:14 reportUnknownMemberType: Type of "only_tick" is unknown
+   11:14 reportUnknownArgumentType: Argument type is unknown
+   11:14 reportAttributeAccessIssue: Cannot access attribute "only_tick" for class "type[Ledger]"
+== defk_body: 0 error(s)
+
+## 位置の probe
+[static] 利用者の式より前(1〜19 行目)の import 文: {1: [['hy']]}

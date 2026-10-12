@@ -1,0 +1,24 @@
+## S2 census: session の保存先の名(Get・Put・Some)を読む綴りの所 — 対象 main fb4dd0f3b50417c54948a69ea0a0dd215e3f2829
+packages/doeff-hy/src/doeff_hy/binding_forms.py:617:            put = alias_symbol("Put")
+packages/doeff-hy/src/doeff_hy/binding_forms.py:618:            some = alias_symbol("Some")
+packages/doeff-hy/src/doeff_hy/handle.hy:246:        `(yield (~(alias-symbol "Put") ~key-var (~(alias-symbol "Some") ~val-var)))
+packages/doeff-hy/src/doeff_hy/handle.hy:260:       `(setv ~cached-var (yield (~(alias-symbol "Get") ~key-var)))
+packages/doeff-hy/src/doeff_hy/handle.hy:261:       `(if (isinstance ~cached-var ~(alias-symbol "Some"))
+packages/doeff-hy/src/doeff_hy/handle.hy:891:        `(do ~(import-form ["Some" "Get" "Put"])
+packages/doeff-hy/src/doeff_hy/macros.hy:2594:  (setv put (alias-symbol "Put")
+packages/doeff-hy/src/doeff_hy/macros.hy:2595:        some (alias-symbol "Some"))
+packages/doeff-hy/src/doeff_hy/static_view.py:132:    import_source(("Some", "Put")) + "from doeff_hy.session import session_key as _doeff_session_key\n"
+
+## S2 の公開契約の側(Get・Put を外の handler への契約にしている所)
+docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+docs/adr/enforcement-ledger.json
+docs/design-checks/lt-0ZP7AYKXMDX83R8DKGFBA73DBJ/blind/b-files/val_probe.log.txt
+docs/design-checks/lt-0ZP7AYKXMDX83R8DKGFBA73DBJ/blind/blind-b-return.md
+docs/design-checks/lt-BV79NHMNKA6E42N4TQ1M638MDR/evidence/blind-b/handle.hy.diffed
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/blind/common-input.md
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/design.md
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/evidence/design-pre-blind.md
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/evidence/expand/after-runtime.py.txt
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/evidence/expand/after-static.py.txt
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/evidence/expand/before-runtime.py.txt
+docs/design-checks/lt-CZC8SGS3C6DFDGSGG64YF49DH9/evidence/expand/before-static.py.txt

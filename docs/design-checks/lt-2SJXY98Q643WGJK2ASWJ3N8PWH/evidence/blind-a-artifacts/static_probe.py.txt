@@ -1,0 +1,76 @@
+"""型検査のための展開(doeff-hy-check --strict)で、handle・defhandler の置き場ごとの赤を数える probe。
+使い方: uv run python /tmp/blind-a-ki-1618/static_probe.py <dir>
+"""
+import contextlib, io, json, sys
+from pathlib import Path
+
+EFFECTS = """\
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Tick [(get EffectBase int)]
+  #^ int step)
+"""
+
+SAMPLES = {
+    "module_level": """\
+(require doeff-hy.macros [defk defhandler <-])
+(require doeff-hy.handle [handle])
+(import probe_effects [Tick])
+
+(defhandler only-tick
+  (Tick [step] (resume step)))
+
+(defk use [start]
+  {:pre [(: start int)] :post [(: % int)]}
+  (<- n int (only-tick (Tick start)))
+  n)
+""",
+    "class_body": """\
+(require doeff-hy.macros [defk defhandler <-])
+(require doeff-hy.handle [handle])
+(import probe_effects [Tick])
+
+(defclass Ledger []
+  (defhandler only-tick
+    (Tick [step] (resume step))))
+
+(defk use [start]
+  {:pre [(: start int)] :post [(: % int)]}
+  (<- n int (Ledger.only-tick (Tick start)))
+  n)
+""",
+    "defk_body": """\
+(require doeff-hy.macros [defk defhandler <-])
+(require doeff-hy.handle [handle])
+(import probe_effects [Tick])
+
+(defk use [start]
+  {:pre [(: start int)] :post [(: % int)]}
+  (defhandler only-tick
+    (Tick [step] (resume step)))
+  (<- n int (only-tick (Tick start)))
+  n)
+""",
+}
+
+def check(root: Path, name: str, text: str) -> list[dict]:
+    from doeff_hy.static_check import main
+    d = root / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
+    (d / "probe.hy").write_text(text, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(d), "--json", "--no-cache", "--strict", str(d / "probe.hy")])
+    printed = out.getvalue()
+    found = json.loads(printed) if printed.strip() else []
+    return [f for f in found if f["severity"] == "error"]
+
+if __name__ == "__main__":
+    root = Path(sys.argv[1])
+    for name, text in SAMPLES.items():
+        errors = check(root, name, text)
+        print(f"== {name}: {len(errors)} error(s)")
+        for e in errors:
+            print(f"   {e['line']}:{e['column']} {e['rule']}: {e['message'][:160]}")

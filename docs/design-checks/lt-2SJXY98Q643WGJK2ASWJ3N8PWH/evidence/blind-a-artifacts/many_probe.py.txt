@@ -1,0 +1,44 @@
+"""module の段に defhandler を N 本並べた module を doeff-hy-check --strict にかけ、赤を数える probe。
+使い方: uv run python /tmp/blind-a-ki-1618/many_probe.py <dir> <N>
+"""
+import contextlib, io, json, sys
+from pathlib import Path
+
+EFFECTS = """\
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+
+(defclass [(dataclass :frozen True)] Tick [(get EffectBase int)]
+  #^ int step)
+"""
+
+def probe(n: int) -> str:
+    handlers = "\n".join(
+        f"(defhandler h{i}\n  (Tick [step] (resume (+ step {i}))))\n" for i in range(n)
+    )
+    return (
+        "(require doeff-hy.macros [defk defhandler <-])\n"
+        "(import probe_effects [Tick])\n\n"
+        + handlers
+        + "\n(defk use [start]\n  {:pre [(: start int)] :post [(: % int)]}\n"
+        + f"  (<- n int (h{n-1} (Tick start)))\n  n)\n"
+    )
+
+if __name__ == "__main__":
+    root = Path(sys.argv[1]); n = int(sys.argv[2])
+    d = root / f"n{n}"; d.mkdir(parents=True, exist_ok=True)
+    (d / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
+    (d / "probe.hy").write_text(probe(n), encoding="utf-8")
+    from doeff_hy.static_check import main
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(d), "--json", "--no-cache", "--strict", str(d / "probe.hy")])
+    printed = out.getvalue()
+    found = json.loads(printed) if printed.strip() else []
+    errors = [f for f in found if f["severity"] == "error"]
+    print(f"== N={n}: {len(errors)} error(s)")
+    rules = {}
+    for e in errors:
+        rules.setdefault(e["rule"], []).append(e)
+    for rule, es in rules.items():
+        print(f"   {rule}: {len(es)} 件 例 {es[0]['line']}:{es[0]['column']} {es[0]['message'][:140]}")

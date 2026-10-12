@@ -1,0 +1,29 @@
+"""書き手の effect の欄の名が展開の局所の名(k・effect)と同じ時の挙動を見る(既存の版のまま・実測用)。"""
+import sys, types
+import doeff_hy  # noqa: F401
+import hy
+from doeff import run
+
+HEADER = """
+(require doeff-hy.macros [defk <- handle defhandler])
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(defclass [(dataclass :frozen True)] TopK [EffectBase] #^ int k)
+(defclass [(dataclass :frozen True)] Wrap [EffectBase] #^ int effect)
+"""
+
+def ev(src, name):
+    mod = types.ModuleType(name); sys.modules[name] = mod
+    for f in hy.read_many(HEADER + src):
+        hy.eval(f, mod.__dict__, module=mod)
+    return mod
+
+for label, src in {
+    "field-k": "(setv program (handle (TopK 3) (TopK [k] (resume (* k 2)))))",
+    "field-effect": "(setv program (handle (Wrap 3) (Wrap [effect] (resume (* effect 2)))))",
+}.items():
+    try:
+        m = ev(src, "probe_" + label.replace("-", "_"))
+        print(label, "->", repr(run(m.program)))
+    except BaseException as e:  # noqa: BLE001
+        print(label, "-> raised", type(e).__name__, str(e)[:300])
