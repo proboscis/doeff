@@ -370,7 +370,6 @@ def _width_probe(
     *,
     hand_down: str | None = None,
     wrapped: bool = True,
-    stale: str | None = None,
 ) -> dict[str, object]:
     """枠の取り手(doeff の take_slot)が答えた幅と、その子が見た幅の env の値を JSON で受ける。子を正本の命令の包みの中
     (wrapped)か直に撃つ。hand_down = 包みの中でもう 1 度包む前に、外側の入口が子へ配る並走の数(検の中の検 — 配る口は正本の
@@ -397,8 +396,7 @@ def _width_probe(
             *command,
         ]
         command = [sys.executable, str(scene.canon), "run", "--label", "outer", "--", *relay]
-    environ = None if stale is None else {**os.environ, env_name: stale}  # 呼び手の前の値(枠を取った入口は上書きされる)
-    done = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False, env=environ)
+    done = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
     assert done.returncode == 0, done.stderr
     answer: dict[str, object] = json.loads(done.stdout.strip().splitlines()[-1])
     return answer
@@ -425,10 +423,14 @@ def test_the_width_follows_the_declaration_for_a_direct_check_and_for_a_check_in
     if module is None or not callable(vars(module).get("process_width")):
         pytest.skip("機体の正本に並走の数の口 process_width が無い(dotfiles を追随する前の機体)")
     name = module.PROCESSES_ENV
+    # 子は検の process の環境を受け継ぐ(os.environ を値として組まない — DOEFF004)。前の値の有る無しは monkeypatch で決める。
+    monkeypatch.delenv(name, raising=False)
     direct = _width_probe(scene, name, wrapped=False)
     assert direct["width"] == processes, direct
-    stale = _width_probe(scene, name, wrapped=False, stale="1")  # 呼び手の前の値は枠の外の値 — 自分で枠を取った入口は宣言の数
+    monkeypatch.setenv(name, "1")  # 呼び手の前の値は枠の外の値 — 自分で枠を取った入口は宣言の数
+    stale = _width_probe(scene, name, wrapped=False)
     assert stale["width"] == processes, stale
+    monkeypatch.delenv(name, raising=False)
     inside = _width_probe(scene, name)
     assert inside["width"] == _canon_answer(scene, name, inside["env"]), inside
     assert isinstance(inside["width"], int) and inside["width"] <= processes, inside
