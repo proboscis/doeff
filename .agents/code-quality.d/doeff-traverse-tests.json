@@ -9,6 +9,7 @@
         "doeff-core-effects-effects",
         "doeff-core-effects-runtime",
         "doeff-core-effects-handlers",
+        "doeff-hy-macros",
         "doeff-hy-static-check",
         "doeff-hy-static-stub",
         "hy-bytecode-import"
@@ -20,7 +21,7 @@
         "tests/effects/test_traverse.py"
       ],
       "public": [],
-      "responsibility": "doeff-traverse の検 — 3 つの実行の仕方の答えと件の履歴(Zip の履歴を含む)・件の失敗の扱い・答えの型・深い再帰と長い走りの記憶・例が最後まで走り期待の出力を印字する事。例の期待の出力に展開の形の印(Hy・doeff-hy の隠す名)を置かせない検が、隠す名を doeff-hy-static-stub の hidden_name(隠す名の 1 か所の定義)で判じる(card ki-fe7a2e60fdfb)。",
+      "responsibility": "doeff-traverse の検 — 3 つの実行の仕方の答えと件の履歴(Zip の履歴を含む)・件の失敗の扱い・答えの型・深い再帰と長い走りの記憶・例が最後まで走り期待の出力を印字する事。例の期待の出力に展開の形の印(Hy・doeff-hy の隠す名)を置かせない検が、隠す名を doeff-hy-static-stub の hidden_name(隠す名の 1 か所の定義)で判じる(card ki-fe7a2e60fdfb)。例を答えを変えない展開の変異(doeff-hy-macros の macro の表を差し替える)の下でも走らせ、展開が作った値の形を印字する例を名指す(card ki-b7c40391ac8e)。",
       "typed": true
     }
   ]
