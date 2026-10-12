@@ -348,17 +348,42 @@ rules:
           - pattern-regex: '\.(?:last-ok-ms|last-ok-mono-ms|started-at|started-mono-ms)(?![\w-])'
           - pattern-regex: '(?<![\w-]):(?:last-ok-ms|last-ok-mono-ms)(?![\w-])'
           - pattern-regex: '\(\.\s+[\w.-]+\s+(?:last-ok-ms|last-ok-mono-ms|started-at|started-mono-ms)(?![\w-])'
-      # 読み: silent-ms の起点の引数(3・4 番目)に、同じ持ち主の対をこの順で渡す。
-      - pattern-not-regex: '\(silent-ms\s+[^\s()]+\s+(?:\([^()]*\)|[^\s()]+)\s+([\w-]+)\.(?:last-ok-ms\s+\1\.last-ok-mono-ms|started-at\s+\1\.started-mono-ms)\s*\)'
-      # 書き: 同じ持ち主の対を 1 つの setv の隣り合う 2 組で書く。
-      - pattern-not-regex: '([\w-]+)\.(?:last-ok-ms\s+(?:\([^()]*\)|[^\s()]+)\s+\1\.last-ok-mono-ms|started-at\s+(?:\([^()]*\)|[^\s()]+)\s+\1\.started-mono-ms)\s+(?:\([^()]*\)|[^\s()]+)'
+      # 読み: silent-ms の起点の引数(3・4 番目)に、同じ持ち主の対をこの順で渡す。今の刻の引数(1・2 番目)に起点を渡す形は外さない
+      # (設計検証の盲検 B の副次の観測 — 単調な差が 0 になり、壁の差だけで計る)。
+      - pattern-not-regex: '\(silent-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+([\w-]+)\.(?:last-ok-ms\s+\1\.last-ok-mono-ms|started-at\s+\1\.started-mono-ms)\s*\)'
+      # 書き: 同じ持ち主の対を 1 つの setv の隣り合う 2 組で書く。値に起点の読みを含む書き(起点を読み直して先へずらす形)は外さない。
+      - pattern-not-regex: '([\w-]+)\.(?:last-ok-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+\1\.last-ok-mono-ms|started-at\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+\1\.started-mono-ms)\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)'
       # 書き(record の作り・replace): 鍵の対を隣り合う 2 組で渡す。
-      - pattern-not-regex: '(?<![\w-]):last-ok-ms\s+(?:\([^()]*\)|[^\s()]+)\s+:last-ok-mono-ms\s+(?:\([^()]*\)|[^\s()]+)'
+      - pattern-not-regex: '(?<![\w-]):last-ok-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+:last-ok-mono-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)'
       # 在るかどうかの問い(まだ 1 度も送っていない)は長さを作らない。
       - pattern-not-regex: '\(is-not\s+[\w-]+\.started-at\s+None\)'
     paths:
       include:
         - "**/doeff_cluster/**/*.hy"
+
+  - id: doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers
+    languages:
+      - generic
+    severity: ERROR
+    message: >
+      doeff-cluster の中で時計の effect(doeff-time の GetTime・GetMonotonic)に答えるのは、doeff-time の答え手(本番 =
+      async-time-handler・sync-time-handler を引数なしで — 機体の壁の時計と CLOCK_MONOTONIC・検と模擬 = sim-time-handler)と、模擬の機体の
+      壁の時計の代役(sim/local.hy の worker-wall)だけ。worker の沈黙の計り(worker/core/heartbeat_rules.hy の silent-ms)は、GetTime が
+      機体の眠りの間も進む生の壁の時計で、GetMonotonic が壁の時計の step に動かされない戻らない時計である事に依る — 壁の差が suspend を
+      拾い、単調な差が壁の戻りを守る。時計の effect に答える handler を足す・答え手に源(now・monotonic)を渡すと、計りも起点も検も
+      1 文字も変えずに、この前提だけが崩れる(設計検証の盲検 B: 入口で壁の時計を「起動の刻 + 単調な時計の経過」に替える handler が
+      提示した検査を全部通り、30 秒の suspend の後も自己停止を決めなかった — card ki-069f4a5c07f7)。時計の源を替える必要が在るなら、
+      替えた源の下で沈黙の契約の検(packages/doeff-cluster/tests/test_silence_wall_clock_step.hy の台本)が緑である事を示し、この規則の
+      許す形を同じ変更で足す。
+    patterns:
+      - pattern-either:
+          - pattern-regex: '\((?:GetTimeEffect|GetMonotonicEffect)\s+\['
+          - pattern-regex: '\((?:async|sync)-time-handler\s+[^\s)]'
+    paths:
+      include:
+        - "**/doeff_cluster/**/*.hy"
+      exclude:
+        - "**/doeff_cluster/sim/local.hy"
 
   - id: doeff-packages-have-no-application-vocabulary
     languages:

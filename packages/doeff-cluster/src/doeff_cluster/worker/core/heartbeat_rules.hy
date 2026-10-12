@@ -39,7 +39,11 @@
   "沈黙の長さ(起点 — 最後に届いた返事・前の送りの始め — から今までの ms)を、機体の壁の時計が動いても実際に過ぎた時間を下回らない
    ように計るため(card ki-069f4a5c07f7)。起点と今を壁の時計(epoch ms)と単調な時計(ms)の両方で読み、2 つの差の長い方を採る —
    途絶の柵(desired-after-silence・desired-when-unreachable)・heartbeat を送る間隔(beat_policy.heartbeat-due)・拍の外の送りの間隔が
-   使う沈黙は、どれもここで作る(壁の差だけ・単調な差だけを判断に渡さない)。
+   使う沈黙は、どれもここで作る(壁の差だけ・単調な差だけを判断に渡さない)。周の間の待ち(worker/protocol/tick_pauses)も、周の頭の
+   刻からの経過をここで数えて待ちの長さにする(期限 − 今の壁の時計 で待たない)。
+   時計の前提: 壁の時計の読み(GetTime)は機体の眠りの間も進む生の壁の時計・単調な時計の読み(GetMonotonic)は壁の時計の step に
+   動かされない戻らない時計。本番は doeff-time の答え手を引数なしで並べ、時計の effect に答える handler を間に挟まない(semgrep の規則
+   doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers — 壁の時計を単調な時計から作ると、壁の差が suspend を拾わない)。
      壁が戻る       壁の差は戻った分だけ縮む → 単調な差が実際の長さを守る(縮むと自己停止と送りが遅れ、coordinator が自分の時計で数える
                     移し替えの後まで job を動かす — 条 C4)。
      機体の suspend  単調な時計(CLOCK_MONOTONIC)は眠っている間を数えない → 壁の差が拾う(#2806 — 戻った最初の周で止める)。

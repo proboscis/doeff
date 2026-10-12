@@ -605,8 +605,14 @@
   "結果は None。調整ループが周の後に次の周まで待つため。答え手は worker/protocol/tick_pauses の tick-pauses(wakes の期限・changed と
    wakes の呼び鈴・待つ子の終わり・止めの合図の早い 1 つまで 1 本で待つ — #3871 の単位 4。本番の組も模擬の世界の宿も置く — 単位 5)。
    changed = 宣言の変化の呼び鈴・wakes = 周の後に集めた起きる物の組・stopping = 周の頭で止めを知っていたか(偽の周の後に止めが来て
-   いれば、答え手は待たずに戻る — 周の頭の問いと待ちの間に来た合図を取りこぼさない)。"
+   いれば、答え手は待たずに戻る — 周の頭の問いと待ちの間に来た合図を取りこぼさない)。
+   began・began-mono-ms = 終わった周の頭の刻の対(WorkerWakes に渡した物と同じ — 壁の時計の epoch ms と、同じ刻の単調な時計の ms)。
+   wakes の期限(DueAt)は壁の時計の枠の刻なので、答え手は「期限 − 今の壁の時計」で待たず、この対からの経過を沈黙と同じ計り
+   (heartbeat_rules.silent-ms — 壁の時計と単調な時計の長い方)で数えて待ちの長さにする: 期限を組み立てた後・答え手が時計を読む前に
+   壁の時計が戻っても、戻った分だけ待ちが延びない(延びると、途絶の柵の判断が戻った分だけ遅れる — card ki-069f4a5c07f7)。"
   (#^ WorkerPolicy policy)
   (#^ (| Future None) changed)
   (#^ WakeSet wakes)
+  (#^ int began)
+  (#^ int began-mono-ms)
   (setv #^ bool stopping False))

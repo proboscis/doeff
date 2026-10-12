@@ -314,7 +314,7 @@ def test_silence_anchor_rule_detects_reads_outside_the_one_measure() -> None:
 
     assert _rule_start_lines(
         results, "doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure"
-    ) == {9, 13, 17, 20, 23, 26, 29, 32, 35}
+    ) == {9, 13, 17, 20, 23, 26, 29, 32, 35, 38, 41}
 
 
 def test_silence_anchors_are_read_only_by_the_one_measure_in_the_tree() -> None:
@@ -335,6 +335,44 @@ def test_silence_anchors_are_read_only_by_the_one_measure_in_the_tree() -> None:
         )
     )
     assert readers == []
+
+
+def test_clock_effect_rule_detects_answers_outside_the_time_handlers() -> None:
+    # Design check lt-ZFAZXE88D928C47X6NZKRY3AQ2 (card ki-069f4a5c07f7, blind B): a
+    # handler at the worker entry that rebuilt the wall clock from the monotonic
+    # clock passed every presented check, and the worker no longer decided its
+    # self-stop after a 30 second suspend (the wall difference stopped counting sleep).
+    fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/"
+        "clock_effect_answered_outside_time_handlers_forbidden.hy",
+        cwd=fixture_root,
+    )
+
+    assert _rule_start_lines(
+        results, "doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers"
+    ) == {10, 15, 20, 21}
+
+
+def test_clock_effects_are_answered_only_by_the_time_handlers_in_the_tree() -> None:
+    # The same rule over the real package: only doeff-time's handlers (called
+    # without clock sources) and the sim's machine wall clock answer GetTime / GetMonotonic.
+    results = _semgrep_results(
+        REPO_ROOT / ".semgrep.yaml",
+        "packages/doeff-cluster/src",
+        cwd=REPO_ROOT,
+    )
+
+    answers = sorted(
+        f"{result['path']}:{cast(dict[str, int], result['start'])['line']}"
+        for result in results
+        if _has_rule(
+            {str(result["check_id"])},
+            "doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers",
+        )
+    )
+    assert answers == []
 
 
 def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:

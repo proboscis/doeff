@@ -19,9 +19,9 @@
 (import doeff_core_effects.process_exit [process-exit-handler])
 (import doeff_core_effects.process_effects [StartProcess ProcessStarted AwaitProcessExit])
 (import doeff_time [async-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff [with-handlers])
-(import doeff_time [Delay SimClock sim-time-handler])
+(import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise Spawn])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
@@ -257,7 +257,9 @@
   {:pre [(: stopping bool)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "止めが既に来ている所で、60 秒の期限の待ちを stopping(周の頭で止めを知っていたか)つきで待ち、待った仮想の ms を返すため。"
   (<- began int (now-epoch-ms))
-  (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began 60000)) :bells #() :exits #()) :stopping stopping))
+  (<- began-mono float (GetMonotonic))
+  (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began 60000)) :bells #() :exits #()) :began began
+                     :began-mono-ms (monotonic-ms-of began-mono) :stopping stopping))
   (<- ended int (now-epoch-ms))
   (- ended began))
 

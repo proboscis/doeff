@@ -4,17 +4,22 @@
 ;; 払う)。今は期限を時計の答え手の RaceWithin が持ち、止めの合図は止めの答え手が session で 1 つ持つ呼び鈴(StopBell)を競わせる。
 ;;   1 待つ子の無い静かな周を N 回待っても、待ちが起こす task は 0(N に比例しない)。反例: 前の形は 2N。
 ;;   2 止めの呼び鈴が期限に何度か負けた後(周をまたいで同じ呼び鈴)でも、待ちの最中に来た止めの合図で待ちがすぐ起きる(期限まで待たない)。
+;;   3 待ちの長さは、周の頭の刻の対からの経過(壁の時計と単調な時計の長い方 — heartbeat_rules.silent-ms)で数える(card ki-069f4a5c07f7)。
+;;     期限を組み立てた後・待ちが時計を読む前に壁の時計が戻っても、待ちは戻った分だけ延びない。反例: 前の形は「期限 − 今の壁の時計」で
+;;     待ち、10 秒戻ると 2.5 秒の待ちが 12.5 秒になった(途絶の最中なら柵の判断がその分遅れる)。壁が進んだ時は今までどおり早く起きる。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_time [Delay SimClock sim-time-handler])
+(import doeff [with-handlers])
+(import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_core_effects.handlers [state])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_core_effects.stop_signal_effects [RaiseStop])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.intent.due_model [DueAt])
 (import doeff_cluster.worker.intent.worker_model [AwaitNextTick WakeSet WorkerPolicy])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import tests.clock_fixtures [wall-back])
 
 (val POLICY (WorkerPolicy))
 (val BEAT-MS 2500)
@@ -41,7 +46,9 @@
   (var waited [])
   (for [_ (range n)]
     (<- began int (now-epoch-ms))
-    (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began BEAT-MS)) :bells #() :exits #()) :stopping False))
+    (<- began-mono float (GetMonotonic))
+    (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began BEAT-MS)) :bells #() :exits #()) :began began
+                       :began-mono-ms (monotonic-ms-of began-mono) :stopping False))
     (<- ended int (now-epoch-ms))
     (:= waited (+ waited [(- ended began)])))
   waited)
@@ -61,8 +68,10 @@
    #(静かな周の待ちの ms の列 止めの待ちの ms) を返すため。"
   (<- waited list (quiet-waits quiet))
   (<- began int (now-epoch-ms))
+  (<- began-mono float (GetMonotonic))
   (<- raiser Task (Spawn (raise-stop-after 1.0)))
-  (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began LONG-MS)) :bells #() :exits #()) :stopping False))
+  (<- (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began LONG-MS)) :bells #() :exits #()) :began began
+                     :began-mono-ms (monotonic-ms-of began-mono) :stopping False))
   (<- ended int (now-epoch-ms))
   (<- (Wait raiser))
   #(waited (- ended began)))
@@ -82,3 +91,30 @@
                            (scripted-stop-handler (tick-pauses (stop-mid-wait-after-quiet-ticks 3))))))
   (assert (= (get seen 0) [BEAT-MS BEAT-MS BEAT-MS]) seen)
   (assert (= (get seen 1) 1000) seen))
+
+
+(defk wait-with-the-wall-moved [back-ms]
+  {:pre [(: back-ms int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "周の頭の刻の対を読んだ後に壁の時計が back-ms 戻った(負 = 進んだ)機体で、BEAT-MS 先の期限の待ちを待ち、待った仮想の ms(単調な
+   時計の差)を返すため。壁の時計の代役は待ちの答え手の外側 — 待ちが読む壁の時計だけがずれる。"
+  (<- began int (now-epoch-ms))
+  (<- began-mono float (GetMonotonic))
+  (<- (with-handlers [(wall-back back-ms) tick-pauses]
+        (AwaitNextTick POLICY None (WakeSet :due (DueAt :at (+ began BEAT-MS)) :bells #() :exits #()) :began began
+                       :began-mono-ms (monotonic-ms-of began-mono) :stopping False)))
+  (<- ended-mono float (GetMonotonic))
+  (- (monotonic-ms-of ended-mono) (monotonic-ms-of began-mono)))
+
+
+(deftest test-a-wall-clock-stepped-back-before-the-wait-does-not-lengthen-the-wait
+  ;; 失敗ケース: 期限を組み立てた後に壁の時計が 10 秒戻っても、2.5 秒先の期限の待ちは 2.5 秒(前の形は 12.5 秒)。
+  (<- waited int ((state) ((sim-time-handler :clock (SimClock)) (scripted-stop-handler (wait-with-the-wall-moved 10000)))))
+  (assert (= waited BEAT-MS) waited))
+
+
+(deftest test-a-wall-clock-stepped-forward-before-the-wait-only-shortens-the-wait
+  ;; 壁が進む向き(前の形と同じ): 1 秒進めば 1 秒早く起き、期限を越えて進めば待たない(suspend と見分けられない — 早く起きる向き)。
+  (<- sooner int ((state) ((sim-time-handler :clock (SimClock)) (scripted-stop-handler (wait-with-the-wall-moved -1000)))))
+  (assert (= sooner (- BEAT-MS 1000)) sooner)
+  (<- at-once int ((state) ((sim-time-handler :clock (SimClock)) (scripted-stop-handler (wait-with-the-wall-moved -5000)))))
+  (assert (= at-once 0) at-once))

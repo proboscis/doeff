@@ -13,8 +13,11 @@
 ;;   - 壁が進む   → 沈黙が進んだ分だけ伸び、早く止まる(suspend と同じ読みで見分けられない — 2 か所で走らない向き)。
 ;; 台本: 本物の調整ループ(run-worker)・本物の coordinator-link(GET /watch を使う本番の形)・本番の周の間の待ち(tick-pauses)を仮想の
 ;; 時計の下で回す。偽の coordinator は自分の時計(単調な時計 — worker の壁の時計と別の機体)で途絶の始まりを決め、壁の時計は台本の
-;; 出来事(届かなかった最初の heartbeat・N 回目の heartbeat の後の観測)で動かす(effect StepWallClock — 手前の handler が GetTime の
-;; 答えだけをずらす。動かす契機を時刻の読みの回数や経過秒にしない)。
+;; 出来事(届かなかった最初の heartbeat・N 回目の heartbeat の後の観測・ある刻より後の最初の周の間の待ち)で動かす(effect
+;; StepWallClock — 手前の handler が GetTime の答えだけをずらす。動かす契機を時刻の読みの回数や経過秒にしない)。
+;;   - 周の間の待ち(tick_pauses)も同じ計りで待つ: 起きる期限(DueAt — 壁の時計の枠の刻)を組み立てた後・待ちが時計を読む前に壁の
+;;     時計が Δ 戻ると、「期限 − 今の壁の時計」で待つ形は待ちが Δ 延び、柵の判断が Δ 遅れた(設計検証の盲検 A の失敗例 — 途絶の
+;;     沈黙 19.5 秒の待ちの直前に 45 秒戻すと、自己停止を決めるのが沈黙 65 秒の時)。待ちは周の頭の刻の対からの経過で数える。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -31,7 +34,7 @@
 (import doeff_cluster.shared.core.clock [monotonic-ms-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld EnvReport
-                                                 PublishStatus])
+                                                 PublishStatus AwaitNextTick])
 (import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.core.program [run-worker])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
@@ -317,3 +320,55 @@
   (val gaps (tuple (gfor #(earlier later) (zip seen.delivered (cut seen.delivered 1 None)) (- later earlier))))
   (assert (<= (max gaps) (// T.lease-ms 2)) #((max gaps) seen))
   (assert (is seen.cut-off-ms None) seen))
+
+
+(defhandler wall-stepped-before-the-wait [#^ float back-seconds #^ int step-at-ms]
+  "調整ループのすぐ外(coordinator への口と周の間の待ちより手前)に立つ代役: 台本の時計が step-at-ms 以後の最初の周の間の待ち
+   (AwaitNextTick)で、待ちへ渡す前に壁の時計を back-seconds 戻す(1 度だけ)— 起きる期限を組み立てた後・待ちが時計を読む前の step。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 検ごとに戻す秒と刻を変える(Ask で区別できない)。
+  (session var stepped False)
+  (AwaitNextTick [policy changed wakes began began-mono-ms stopping]
+    (<- at int (ScriptClockMs))
+    (when (and (not stepped) (>= at step-at-ms))
+      (:= stepped True)
+      (<- (StepWallClock back-seconds)))
+    (<- waited effect)
+    (resume waited)))
+
+
+(defk seen-with-a-step-before-the-wait [back-seconds step-at-ms task-dir]
+  {:pre [(: back-seconds float) (: step-at-ms int) (: task-dir str)] :post [(: % Seen)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "途絶の台本(10 秒目から届かない・台本の側では壁の時計を動かさない)を、seen-on と同じ組の一番内側に wall-stepped-before-the-wait を
+   足して回すため。"
+  (val script (Script :cut-ms 10000 :cut-back-seconds 0.0 :step-after-beats None :beats-back-seconds 0.0 :until-ms 110000))
+  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True))
+  (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
+                                script-clock wall-clock-stepped (scripted-coordinator script) tick-pauses
+                                (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
+                                cut-off-noted (wall-stepped-before-the-wait back-seconds step-at-ms)]
+                  (worker-then-seen)))
+  seen)
+
+
+(deftest test-a-wall-clock-stepped-back-right-before-a-wait-does-not-delay-the-self-stop [tmp-path]
+  ;; 失敗ケース(設計検証の盲検 A): 途絶の最中、起きる期限を組み立てた後・周の間の待ちが時計を読む前に壁の時計が戻っても、戻らない
+  ;; worker と同じ刻に自己停止を決める。待ちを「期限 − 今の壁の時計」で数えると、待ちが戻った分だけ延びる — 沈黙 19.5 秒(台本の 27 秒目)
+  ;; の待ちの直前に 9 秒戻すと沈黙 29 秒(条 C4 の余白 8 秒を越える)・途絶の最初の待ち(10 秒目)の直前に 45 秒戻すと沈黙 48 秒。
+  (<- control-script Script (cut-with-step 0.0))
+  (<- control Seen (seen-on control-script (str (/ tmp-path "control"))))
+  (<- control-silence int (silence-at-cut-off control))
+  (for [#(back-seconds step-at-ms) [#(9.0 27000) #(45.0 10000)]]
+    (<- seen Seen (seen-with-a-step-before-the-wait back-seconds step-at-ms (str (/ tmp-path (str step-at-ms)))))
+    (<- silence int (silence-at-cut-off seen))
+    (assert (= silence control-silence) #(back-seconds step-at-ms silence control-silence seen))))
+
+
+(deftest test-a-wall-clock-stepped-back-45-seconds-right-before-the-last-wait-inside-the-fence-decides-before-the-reassign-deadline [tmp-path]
+  ;; 失敗ケース(2 か所で走る時間帯 — 設計検証の盲検 A): 沈黙 19.5 秒の待ちの直前に壁の時計が 45 秒戻っても、coordinator が job を他へ
+  ;; 移す刻(最後に届いた heartbeat から reassign-after-ms)より前に自己停止を決める。前の形は沈黙 65 秒の時に決めた。
+  (<- seen Seen (seen-with-a-step-before-the-wait 45.0 27000 (str (/ tmp-path "tasks"))))
+  (<- silence int (silence-at-cut-off seen))
+  (assert (< silence T.reassign-after-ms) #(silence seen))
+  (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))

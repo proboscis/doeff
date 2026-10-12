@@ -16,8 +16,9 @@
 (import doeff_core_effects.stop_signal_effects [StopBell StopRequested])
 (import doeff_core_effects.process_effects [AwaitProcessExit])
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster.worker.intent.worker_model [AwaitNextTick WakeSet WorkerPolicy])
 
 ;; 子の終わりの起こしの印 — 子の終わりを待つ task の答え。呼び鈴(Future)は task を立てずに競わせるので、競わせの答えがこの印なら
@@ -34,15 +35,22 @@
   (OtherWake))
 
 
-(defk first-wake [racers due]
-  {:pre [(: racers tuple) (: due (| DueAt DueNever))] :post [(: % RaceOutcome)] :tags {:context "worker" :role "protocol"}}
+(defk first-wake [racers due began began-mono-ms]
+  {:pre [(: racers tuple) (: due (| DueAt DueNever)) (: began int) (: began-mono-ms int)] :post [(: % RaceOutcome)]
+   :tags {:context "worker" :role "protocol"}}
   "racers(子の終わりを待つ task・止めの呼び鈴・呼び鈴)の早い 1 つか、期限 due の早い方まで待つため。答え = 競わせの答え(期限が先
-   なら timed-out 真)。期限は task を立てず、時計の答え手の RaceWithin に持たせる。期限が無ければ racers だけを競わせる。"
+   なら timed-out 真)。期限は task を立てず、時計の答え手の RaceWithin に持たせる。期限が無ければ racers だけを競わせる。
+   待ちの長さ = 期限 −(周の頭の刻 began + そこからの経過)。経過は沈黙と同じ計り(heartbeat_rules.silent-ms — 壁の時計と単調な時計の
+   長い方)で、周の頭の刻の対(began・began-mono-ms)から数える。「期限 − 今の壁の時計」で待つと、期限を組み立てた後・ここで時計を読む前に
+   壁の時計が戻った時、戻った分だけ待ちが延びる(途絶の最中なら柵の判断がその分遅れる — card ki-069f4a5c07f7)。長い方を採るので、
+   待ちは「期限 − 今の壁の時計」より長くならない(壁が進んだ・機体が眠った時は今までと同じく早く起きる)。"
   (when (isinstance due DueNever)
     (<- first (Race #* racers))
     (return (RaceOutcome :value first :timed-out False)))
   (<- now int (now-epoch-ms))
-  (val seconds (/ (max 0 (- due.at now)) 1000.0))
+  (<- mono float (GetMonotonic))
+  (<- elapsed int (silent-ms now (monotonic-ms-of mono) began began-mono-ms))
+  (val seconds (/ (max 0 (- due.at (+ began elapsed))) 1000.0))
   (when (not racers)
     (<- (Delay seconds))
     (return (RaceOutcome :value None :timed-out True)))
@@ -61,8 +69,9 @@
   (is reason None))
 
 
-(defk await-wakes [policy changed wakes stopping]
-  {:pre [(: policy WorkerPolicy) (: changed (| Future None)) (: wakes WakeSet) (: stopping bool)] :post [(: % None)]
+(defk await-wakes [policy changed wakes began began-mono-ms stopping]
+  {:pre [(: policy WorkerPolicy) (: changed (| Future None)) (: wakes WakeSet) (: began int) (: began-mono-ms int) (: stopping bool)]
+   :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
   "起きる物の早い 1 つまで 1 本で待つため(頭の註)。今すぐ(DueNow)なら待たない。周の頭で止めを知らなかった(stopping 偽)のに止めが
    来ていれば、待たずに戻る(周の頭の問いの後に来た合図)。止まりの手順の周(stopping 真 — 子の終わりを待つ間)は止めの合図を競わせない
@@ -86,7 +95,7 @@
     (:= tasks (+ tasks #(task))))
   (var outcome None)
   (try
-    (<- raced RaceOutcome (first-wake (+ tasks stop-bells bells) wakes.due))
+    (<- raced RaceOutcome (first-wake (+ tasks stop-bells bells) wakes.due began began-mono-ms))
     (:= outcome raced)
     (finally
       (for [task tasks]
@@ -101,7 +110,7 @@
 
 
 (defhandler tick-pauses
-  ;; 引数なし: 待つ物は effect の欄(policy・changed・wakes・stopping)が運ぶ。
-  (AwaitNextTick [policy changed wakes stopping]
-    (<- (await-wakes policy changed wakes stopping))
+  ;; 引数なし: 待つ物は effect の欄(policy・changed・wakes・周の頭の刻の対 began と began-mono-ms・stopping)が運ぶ。
+  (AwaitNextTick [policy changed wakes began began-mono-ms stopping]
+    (<- (await-wakes policy changed wakes began began-mono-ms stopping))
     (resume None)))

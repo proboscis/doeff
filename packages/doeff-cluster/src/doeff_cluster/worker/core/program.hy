@@ -258,5 +258,7 @@
     (<- due (| DueAt DueNow DueNever) (next-tick-due gathered.due (bool settling)))
     (<- counted int (count-unsettled-ticks streak due fired))
     (:= streak counted)
-    ;; 周の間の待ちは答え手 tick-pauses の 1 本の待ち(本番の組も模擬の世界の宿も同じ — #3871 の単位 4・5)。
-    (<- (AwaitNextTick policy (get ticked 2) (replace gathered :due due) :stopping stopping))))
+    ;; 周の間の待ちは答え手 tick-pauses の 1 本の待ち(本番の組も模擬の世界の宿も同じ — #3871 の単位 4・5)。周の頭の刻の対も渡す —
+    ;; 答え手は待ちの長さをこの対からの経過で数える(期限を組み立てた後に壁の時計が戻っても待ちが延びない — card ki-069f4a5c07f7)。
+    (<- (AwaitNextTick policy (get ticked 2) (replace gathered :due due) :began (get ticked 5) :began-mono-ms (get ticked 6)
+                       :stopping stopping))))
