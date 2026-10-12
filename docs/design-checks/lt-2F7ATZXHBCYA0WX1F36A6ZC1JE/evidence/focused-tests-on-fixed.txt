@@ -1,0 +1,83 @@
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 844636 pytest agora-controllers-wt-ki-8928 (c-NCRK3P39MCKFFKE3GBWX45H98J)、pid 843272 pytest agora-controllers-wt-dc-qhwd-records (c-ZRJBTTHX28MFNZN7T6S1TT8ZTF)、pid 844760 pytest agora-controllers-wt-ki-4a6b-environ (c-07F6QP019T93MJVE8K53GR8CVM)、pid 841209 pytest doeff-wt-ki-93395c-dc (c-6313YGCZRXA701C4632PQWS5ET)、pid 832764 pytest doeff-wt-check-ki-fe7a (c-S2QG21HHGXF766JAJD3S3FF50W)、pid 808667 code-quality agora-wt-wow-c2b-dc (c-0VT2F57PS3P61N49JRHA7YS72W)、pid 841477 pytest dotfiles-wt-placement-verify (c-MHJFC2TPK5V7V4G9ZS4CHVCEJZ)、pid 836655 code-quality agora-controllers-wt-lc-conv-id (c-KDTECS0P5850SNPYNXBD2DFC02)・待つのは pytest doeff-wt-design-check-lt-2f7a (c-X2MB5NMGKKVJWG1VD57144P5MN)
+check-slot: 枠 1 を取った(待ち 4 秒)— pytest doeff-wt-design-check-lt-2f7a (c-X2MB5NMGKKVJWG1VD57144P5MN)
+
+deadline scale x2.6 (load per usable CPU) — per test 153s, watchdog 230s
+
+test-admission: focused — 84 件(変更箇所の検証)
+doeff-adr: 記録から収集 2 file・収集で import 8 file
+  import: packages/doeff-cluster/tests/test_env_prepare.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_task_environ.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_service_env.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_env_rules.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_environ_reader.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_package_independence.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_probe_child_protocol.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+  import: packages/doeff-cluster/tests/test_warm_host.hy — キャッシュの形が違う: キャッシュの形の版が違う(5 ≠ 6)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000022 秒・依存変更で再作成 0 file
+........................................................................ [ 85%]
+............                                                             [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-design-check-lt-2f7a/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+    - docs/adr/defadr_doc_linter_modes.hy
+    - docs/adr/defadr_doeff_adr_001_wiring_selfcheck.hy
+    - docs/adr/defadr_doeff_agents_001_await_result_public_boundary.hy
+    - docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy
+    - docs/adr/defadr_doeff_agents_003_explicit_agent_auth.hy
+    - docs/adr/defadr_doeff_agents_004_effects_session_host.hy
+    - docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy
+    - docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy
+    - docs/adr/defadr_doeff_agents_007_koine_session_surface.hy
+    - docs/adr/defadr_doeff_agents_008_ready_physics_single_home.hy
+    - docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy
+    - docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy
+    - docs/adr/defadr_doeff_agents_011_launch_readiness_and_prompt_delivery.hy
+    - docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy
+    - docs/adr/defadr_doeff_analyzer_001_result_key.hy
+    - docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy
+    - docs/adr/defadr_doeff_build_002_one_bytecode_store.hy
+    - docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy
+    - docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy
+    - docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy
+    - docs/adr/defadr_doeff_core_002_lazy_creation_trace.hy
+    - docs/adr/defadr_doeff_core_effects_001_slog_observability.hy
+    - docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy
+    - docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy
+    - docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy
+    - docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy
+    - docs/adr/defadr_doeff_enforce_001_pytest_canonical_gate.hy
+    - docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy
+    - docs/adr/defadr_doeff_events_001_wait_for_events.hy
+    - docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy
+    - docs/adr/defadr_doeff_hy_001_statement_bind_guard.hy
+    - docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy
+    - docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy
+    - docs/adr/defadr_doeff_hy_004_defk_only.hy
+    - docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy
+    - docs/adr/defadr_doeff_hy_006_val_var_lazy.hy
+    - docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy
+    - docs/adr/defadr_doeff_hy_008_hy_is_not_forked.hy
+    - docs/adr/defadr_doeff_preset_001_retirement.hy
+    - docs/adr/defadr_doeff_records_001_domain_api_only.hy
+    - docs/adr/defadr_doeff_runner_001_reading_plane.hy
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+packages/doeff-cluster/tests/test_env_prepare.hy::test_each_failure_comes_back_as_its_kind
+  /work/toolset/worktrees/doeff-wt-design-check-lt-2f7a/.venv/lib/python3.14t/site-packages/_pytest/python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but packages/doeff-cluster/tests/test_env_prepare.hy::test_each_failure_comes_back_as_its_kind returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+packages/doeff-cluster/tests/test_env_prepare.hy::test_a_third_party_package_shadowing_a_root_is_refused
+  /work/toolset/worktrees/doeff-wt-design-check-lt-2f7a/.venv/lib/python3.14t/site-packages/_pytest/python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but packages/doeff-cluster/tests/test_env_prepare.hy::test_a_third_party_package_shadowing_a_root_is_refused returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+packages/doeff-cluster/tests/test_package_independence.hy: 10 warnings
+  /work/toolset/worktrees/doeff-wt-design-check-lt-2f7a/packages/doeff-cluster/tests/test_package_independence.hy:86: DeprecationWarning: 'maxsplit' is passed as positional argument
+    (val name (.replace (.lower (get (re.split r"[<>=!~\[; ]" spec 1) 0)) "-" "_"))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+84 passed, 13 warnings in 448.27s (0:07:28)

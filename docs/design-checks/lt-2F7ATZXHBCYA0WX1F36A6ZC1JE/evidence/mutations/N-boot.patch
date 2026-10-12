@@ -1,0 +1,12 @@
+diff --git a/packages/doeff-cluster/deploy/boot.sh b/packages/doeff-cluster/deploy/boot.sh
+index b4d7b5d5a..8729966c0 100755
+--- a/packages/doeff-cluster/deploy/boot.sh
++++ b/packages/doeff-cluster/deploy/boot.sh
+@@ -63,6 +63,7 @@
+ #   worker が鍵なしで clone する(公開の repo は通り、読めない非公開の repo は clone の失敗 repo-unreachable で返る)。
+ #   WORKER_REPOS が無く /etc/worker-git/id が在れば、今までどおりそれを唯一の deploy key として使う。
+ set -eu
++export CLAUDE_PROJECT_DIR="${WORK_DIR:-/work}"
+ WORK_DIR=${WORK_DIR:-/work}
+ role=${ROLE:-worker}
+ # source の中身で引く bytecode の保存先(doeff-hy の code_store — 入口は 1 つ・版と root をまたいで同じ中身の source の code と import の

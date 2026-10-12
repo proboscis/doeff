@@ -1,0 +1,13 @@
+diff --git a/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy b/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
+index 145823646..d08f758c9 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy
+@@ -39,7 +39,7 @@
+    来た物でも WITHHELD-ENV-NAMES の名を外す(許可表・--pass-env・宣言のどれを広げても子へ届かない)。"
+   (val merged (| (dfor #(k v) (.items base) :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v)
+                  extra declared worker))
+-  (dfor #(k v) (.items merged) :if (not-in k WITHHELD-ENV-NAMES) k v))
++  merged)
+ 
+ 
+ (defk env-project-dir [root declared]
