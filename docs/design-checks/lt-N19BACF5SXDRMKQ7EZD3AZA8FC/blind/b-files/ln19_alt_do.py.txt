@@ -1,0 +1,9 @@
+"""S3 の模擬: 実行時の展開が `_doeff_do` に束ねる `do` の新しい出所(doeff.do.do を包み、通った関数の名を記録する)。"""
+from doeff.do import do as _core_do
+
+SEEN: list[str] = []
+
+
+def do(fn):
+    SEEN.append(fn.__qualname__)
+    return _core_do(fn)

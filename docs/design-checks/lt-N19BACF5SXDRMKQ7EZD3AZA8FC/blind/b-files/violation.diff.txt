@@ -1,0 +1,16 @@
+--- a/packages/doeff-hy/src/doeff_hy/macros.hy	2026-10-12 00:28:56.524001847 +0000
++++ b/packages/doeff-hy/src/doeff_hy/macros.hy	2026-10-12 00:29:04.161522061 +0000
+@@ -2444,8 +2444,12 @@
+   ;; Expand bangs in body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
+   (setv expanded-forms
+     (lfor form body (_expand-bangs form (+ "defmcp-tool " (str name)))))
++  ;; handler が名で読む補助は decorator の `_doeff_do` だけ(文の guard も最後の値の guard も使わない)。
++  ;; `_helper-imports` を使うと、実行時の展開に使わない EffectBase と guard の補助 4 つの import が増え、
++  ;; class の本体に書いた tool では class に使わない属性が生える。実行時は `_doeff_do` だけを import し、
++  ;; 型検査のための展開では `_helper-imports` と同じく何も出さない(module の頭の `_doeff_do` を読む)。
+   (_scoped-definition _hy-compiler name [
+-     (_helper-imports)
++     (if (_static-view?) '(do) '(import doeff.do [do :as _doeff_do]))
+      '(import doeff.mcp [McpToolDef McpParamSchema])
+      `(defn [_doeff_do] ~handler-name ~param-syms
+        ~@expanded-forms)

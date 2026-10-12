@@ -1,0 +1,13 @@
+import sys
+from pathlib import Path
+count = int(sys.argv[2])
+lines = ["(require doeff-hy.macros [defk defmcp-tool <-])", "(import doeff [Pure Spawn Task])", ""]
+for i in range(count):
+    lines += [f"(defmcp-tool tool-{i}", f'  "tool {i}"', '  [{:name "text" :type "string" :description "text"}]', "  (<- r (Pure text))", "  r)", ""]
+lines += [
+    "(reveal_type McpToolDef)",
+    "(reveal_type tool-0)",
+    "(reveal_type (. tool-0 handler))",
+    "(McpToolDef :name 1 :description 2 :params 3 :handler 4 :bogus 5)",
+]
+Path(sys.argv[1]).write_text("\n".join(lines) + "\n", encoding="utf-8")

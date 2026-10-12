@@ -1,0 +1,15 @@
+import ast, sys, hy, doeff_hy
+from doeff_hy.static_view import static_view
+src = """(require doeff-hy.macros [defmcp-tool <-])
+(defmcp-tool t "d" [{:name "x" :type "string" :description "x"}] x)
+(defclass Box []
+  (defmcp-tool in-class "d" [{:name "x" :type "string" :description "x"}] x))
+(defn outer []
+  (defmcp-tool in-fn "d" [{:name "x" :type "string" :description "x"}] x)
+  in-fn)
+"""
+print("=== runtime ===")
+print(ast.unparse(hy.compiler.hy_compile(hy.read_many(src), "__main__")))
+print("=== static ===")
+with static_view():
+    print(ast.unparse(hy.compiler.hy_compile(hy.read_many(src), "__main__")))

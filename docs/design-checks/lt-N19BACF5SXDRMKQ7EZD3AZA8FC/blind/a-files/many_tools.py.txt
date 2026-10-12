@@ -1,0 +1,45 @@
+"""defmcp-tool を N 個並べ、その後ろで最後の tool の値を型で読む検体を作り、doeff-hy-check(既定の basic の設定)にかける。
+
+最後の defn は tool の `.name`(McpToolDef なら str)を `int` を返すと注記した関数から返す — McpToolDef の型が見えていれば
+reportReturnType の赤が 1 つ出る。型が Unknown なら黙って通る。
+
+使い方: uv run python -I many_tools.py <置き場の dir> <N> [<N> ...]
+"""
+import contextlib
+import io
+import json
+import sys
+from pathlib import Path
+
+from doeff_hy.static_check import Projection, main, project
+
+
+def source(count: int) -> str:
+    lines = ["(require doeff-hy.macros [defmcp-tool <-])", "(import doeff [Pure])", ""]
+    for index in range(count):
+        lines += [
+            f"(defmcp-tool tool-{index}",
+            f'  "tool {index}"',
+            '  [{:name "text" :type "string" :description "text"}]',
+            "  (<- r (Pure text))",
+            "  r)",
+            "",
+        ]
+    lines += [f"(defn #^ int last-tool-name [] (. tool-{count - 1} name))", ""]
+    return "\n".join(lines)
+
+
+base = Path(sys.argv[1])
+for count in map(int, sys.argv[2:]):
+    root = base / f"n{count}"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "tools.hy"
+    path.write_text(source(count), encoding="utf-8")
+    projection = project(root, [root], path)
+    assert isinstance(projection, Projection), projection
+    mcp_imports = projection.text.count("from doeff.mcp import McpToolDef, McpParamSchema")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(["--root", str(root), "--json", str(path)])
+    found = [(d["line"], d["rule"], d["message"].splitlines()[0]) for d in json.loads(out.getvalue())]
+    print(f"N={count}: 投影の 'from doeff.mcp import' = {mcp_imports} 文 / 診断 = {found}")

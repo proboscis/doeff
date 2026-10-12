@@ -1,0 +1,9 @@
+macros file: /tmp/ln19-blind-b/tree/packages/doeff-hy/src/doeff_hy/macros.hy
+SEEN by new do source: ['step']
+defk step follows M1: True
+defmcp-tool (module) follows M1: False
+defmcp-tool (class) follows M1: False
+defmcp-tool (function) follows M1: False
+run(echo.handler('hi')): hi
+run(Tools.in_class.handler('hi')): hi
+run(outer().handler('hi')): hi

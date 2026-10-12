@@ -1,0 +1,15 @@
+"""引数の .hy を doeff-hy-check と同じ投影(project)にして、Python の文字列と、doeff.mcp の import の数を出す。"""
+import sys
+from pathlib import Path
+
+from doeff_hy.static_check import Projection, project
+
+path = Path(sys.argv[1]).resolve()
+root = path.parent
+projection = project(root, [root], path)
+assert isinstance(projection, Projection), projection
+text = projection.text
+if "--quiet" not in sys.argv:
+    print(text)
+print("---- 'from doeff.mcp import' の文の数:", text.count("from doeff.mcp import"))
+print("---- '_doeff_do' を import する文の数:", sum(1 for line in text.splitlines() if "import" in line and "_doeff_do" in line))
