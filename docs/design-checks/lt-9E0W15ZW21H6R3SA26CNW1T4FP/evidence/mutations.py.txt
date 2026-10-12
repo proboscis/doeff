@@ -11,7 +11,7 @@ OWN = "packages/doeff-cluster/tests/test_group_limits_owner.hy::"
 DEC = "packages/doeff-cluster/tests/test_group_limits_declared.hy::"
 MUTATIONS = [
  ("M-S2-owner", "S2", C + "coordinator/core/resource_policy.hy",
-  "(when (!= limit.system current.system)", "(when False",
+  "(when (and current.system (!= limit.system current.system))", "(when False",
   "資源の口が持ち主の系を比べない(盲検 A の前の形)",
   [OWN + "test_a_group_declared_by_one_system_is_not_rewritten_by_another_system", OWN + "test_the_second_system_declaring_a_group_is_refused_on_sim"]),
  ("M-S2-form", "S2", "packages/doeff-hy/src/doeff_hy/system_form.hy",

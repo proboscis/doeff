@@ -1,5 +1,6 @@
 # 変異 M-S2-form(シナリオ S2): defsystem の形の読みの範囲の名が規則と食い違う(写しだけを直した)
-# 刻: 2026-10-12T04:16:26Z
+# 版: 38739915fb13cb990cc8cf3a2587bfaebfa65d81(変異の木 ~/.worktrees/doeff-wt-ki-b0e8-mut — 変異を入れて回し、元に戻した)
+# 刻: 2026-10-12T05:03:25Z
 # 狙いの検: 1 本 — すべて赤なら、この検はこの違反を捉える
 # 結果: すべて赤(捉えた) rc=1
 
@@ -15,6 +16,6 @@
 ## 検の出力
 packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_defsystem_form_reads_the_same_scopes_and_keys_as_the_rule FAILED [100%]
 E   AssertionError: ('worker', 'cluster', 'node')
-/work/toolset/worktrees/doeff-wt-ki-b0e8-mut/packages/doeff-cluster/tests/test_group_limits_owner.hy:177: AssertionError: ('worker', 'cluster', 'node')
+/work/toolset/worktrees/doeff-wt-ki-b0e8-mut/packages/doeff-cluster/tests/test_group_limits_owner.hy:230: AssertionError: ('worker', 'cluster', 'node')
 FAILED packages/doeff-cluster/tests/test_group_limits_owner.hy::test_the_defsystem_form_reads_the_same_scopes_and_keys_as_the_rule
-=================== 1 failed, 1 warning in 60.46s (0:01:00) ====================
+========================= 1 failed, 1 warning in 4.08s =========================

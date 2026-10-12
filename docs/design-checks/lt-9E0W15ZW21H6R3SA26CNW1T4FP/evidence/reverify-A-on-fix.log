@@ -1,7 +1,8 @@
-# 盲検 A の検 test_blind_a_shared_group.hy(失敗が起きる事を主張する形)を、直した版 e3a048ed6 の木に一時に写して回した結果
+# 盲検 A の検 test_blind_a_shared_group.hy(失敗が起きる事を主張する形)を、直した版の木に一時に写して回した結果
 # 命令: uv run --no-sync pytest packages/doeff-cluster/tests/test_blind_a_shared_group.hy -v -s --tb=line(回した後に写した file は外した)
-# 読み方: 4 failed = 盲検 A の失敗(黙った書き直し・宣言の順で割れる・組だけの宣言の IndexError)が直した版では起きない。1 passed = 組を写さない beta の送り手は 400 で断られる(見える失敗として残す — design.md §8)
-# 刻: 2026-10-12T03:59:59Z
+# 読み方: 4 failed = 盲検 A の失敗(黙った書き直し・宣言の順で割れる・組だけの宣言の IndexError)が直した版では起きない。1 passed = 組を写さない beta の送り手は 400 で断られる(見える失敗として残す — design.md §9)
+
+## 1. 直した版 e3a048ed6 で(最初の再検証)
 FAILED
 FAILED
 AssertionError: {'resourceVersion': 7, 'spec': {'scope': 'cluster', 'limit': 3, 'system': 'beta'}}
@@ -25,3 +26,28 @@ FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_beta_then
 FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_the_declare_writer_overwrites_another_systems_value_without_a_word
 FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_a_declaration_holding_only_groups_cannot_be_written_or_written_by_defsystem
 ==================== 4 failed, 1 passed, 1 warning in 4.67s ====================
+
+## 2. 最終の版 38739915f で(持ち主の無い組を受ける直しの後・刻 2026-10-12T05:06:53Z)
+FAILED
+FAILED
+AssertionError: {'resourceVersion': 7, 'spec': {'scope': 'cluster', 'limit': 3, 'system': 'beta'}}
+OBSERVED group-limit-write: {"resourceVersion": 7, "spec": {"scope": "cluster", "limit": 3, "system": "beta"}}
+FAILED
+packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_beta_without_the_copied_literal_is_refused_in_its_own_sim OBSERVED bare beta: 400: limits の組 llm は系の宣言に無い — 系の :task-limits に組の上限を書いて宣言してから送る(宣言の在る組: [])
+PASSED
+AssertionError: None
+OBSERVED apply-declaration groups-only: None
+FAILED
+E   doeff_cluster.shared.intent.remote_model.RemoteJobFailed: GroupLimit llm: coordinator の返事 409 {'error': 'GroupLimit llm は系 alpha が宣言した組 — 系 beta は書き直せない(組を宣言する系は 1 つ。持ち主を移すなら DELETE してから作る)'}
+/work/toolset/worktrees/doeff-wt-ki-b0e8-dc/packages/doeff-cluster/src/doeff_cluster/sim/local.hy:1233: doeff_cluster.shared.intent.remote_model.RemoteJobFailed: GroupLimit llm: coordinator の返事 409 {'error': 'GroupLimit llm は系 alpha が宣言した組 — 系 beta は書き直せない(組を宣言する系は 1 つ。持ち主を移すなら DELETE してから作る)'}
+E   doeff_cluster.shared.intent.remote_model.RemoteJobFailed: GroupLimit llm: coordinator の返事 409 {'error': 'GroupLimit llm は系 beta が宣言した組 — 系 alpha は書き直せない(組を宣言する系は 1 つ。持ち主を移すなら DELETE してから作る)'}
+/work/toolset/worktrees/doeff-wt-ki-b0e8-dc/packages/doeff-cluster/src/doeff_cluster/sim/local.hy:1233: doeff_cluster.shared.intent.remote_model.RemoteJobFailed: GroupLimit llm: coordinator の返事 409 {'error': 'GroupLimit llm は系 beta が宣言した組 — 系 alpha は書き直せない(組を宣言する系は 1 つ。持ち主を移すなら DELETE してから作る)'}
+E   AssertionError: {'resourceVersion': 7, 'spec': {'scope': 'cluster', 'limit': 3, 'system': 'beta'}}
+/work/toolset/worktrees/doeff-wt-ki-b0e8-dc/packages/doeff-cluster/tests/test_blind_a_shared_group.hy:77: AssertionError: {'resourceVersion': 7, 'spec': {'scope': 'cluster', 'limit': 3, 'system': 'beta'}}
+E   AssertionError: None
+/work/toolset/worktrees/doeff-wt-ki-b0e8-dc/packages/doeff-cluster/tests/test_blind_a_shared_group.hy:118: AssertionError: None
+FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_alpha_then_beta_places_three_against_alphas_one
+FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_beta_then_alpha_places_one
+FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_the_declare_writer_overwrites_another_systems_value_without_a_word
+FAILED packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_a_declaration_holding_only_groups_cannot_be_written_or_written_by_defsystem
+==================== 4 failed, 1 passed, 1 warning in 2.74s ====================
