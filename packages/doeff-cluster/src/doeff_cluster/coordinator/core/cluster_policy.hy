@@ -1840,13 +1840,14 @@
   (setv info (.get state.workers name)
         current (.get state.statuses name)
         rows (if (and (is-not current None) (is-not info None) (= info.boot boot)) current.jobs #())
-        phases (dfor row rows row.name row.phase)
         own (frozenset (gfor row rows :if row.instance row.instance)))
+  ;; job の phase = 同じ名の行のうち最後の物(無ければ None)。
   (any (gfor spec (jobs-for state name ready-instances)
              :if (in spec.name waiting)
+             :setv phase (next (gfor row (reversed rows) :if (= row.name spec.name) row.phase) None)
              (if spec.handoff
-                 (not (or (in spec.ready-instance own) (= (.get phases spec.name) "handoff-abandoned")))
-                 (not-in (.get phases spec.name) HANDOVER-SETTLED-PHASES)))))
+                 (not (or (in spec.ready-instance own) (= phase "handoff-abandoned")))
+                 (not-in phase HANDOVER-SETTLED-PHASES)))))
 
 
 (defn #^ frozenset elder-held [#^ ClusterState state #^ str name #^ str boot #^ int now #^ int window-ms]

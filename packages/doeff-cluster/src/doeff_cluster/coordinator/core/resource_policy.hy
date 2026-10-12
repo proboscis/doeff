@@ -523,8 +523,8 @@
    "status" {"refused" r.reason "version" {"state" (. (version-state state r.name now timing) state value)}}})
 
 
-(defn #^ (| dict None) handover-of [#^ ClusterState state #^ str name]
-  ;; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
+(deff handover-of [#^ ClusterState state #^ str name]  ; defk にできない: coordinator の純粋な判断(Program の外 — worker-row)が呼ぶ
+  {:pre [(: state ClusterState) (: name str)] :post [(: % (| dict None))] :tags {:context "coordinator" :role "judgment"}}
   "worker name の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
    起こせると報告した job・leaving = 前の世代の Pod の止まりが始まった(AL-D2k — 受け渡しはここから。印が付いた拍で版を進め、前の世代の
    名指しの待ちを起こす)。前の世代が動かしている job が無ければ None。"
