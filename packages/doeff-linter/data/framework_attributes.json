@@ -1,0 +1,17 @@
+{
+  "about": "DOEFF002 が「継承元(repo の外)の class が自分で持つ属性」と「その class が自分で置く属性」を分けるための表(rules::class_inheritance)。名は import から解いた完全な綴り(`from textual.app import App` の App は `textual.app.App`)。",
+  "transparent_bases": [
+    "object",
+    "builtins.object",
+    "abc.ABC",
+    "typing.Generic",
+    "typing.Protocol",
+    "typing_extensions.Protocol"
+  ],
+  "transparent_bases_about": "実体の属性を 1 つも持たないと分かっている基底。これだけを継承元に持つ class は、継承元が持つ属性の無い class と同じに読む(基底が無い class と同じく、init の外で初めて置いた属性にも鳴らす)。",
+  "framework_attributes": {
+    "textual.app.App": ["title", "sub_title"],
+    "textual.screen.Screen": ["title", "sub_title"]
+  },
+  "framework_attributes_about": "基底が持つと分かっている属性(基底の属性の全部ではない — 載っていても、その基底はほかの属性を持ちうる物として読む)。framework は subclass がその名へ書くことを前提にしている(Textual の `self.sub_title = ...` は header の表示を変える)ので、名を `_mut_` に変えると動かなくなる。subclass が `__init__` でも置いていても、継承元の属性への書きとして鳴らさない。載せる物は framework の source で、その名が基底の class に宣言され、利用者が書く口として文書化されていることを確かめた物だけ。"
+}
