@@ -1,0 +1,6 @@
+# 対象: HEAD b142161f1d15b35da10850449a81e7ffdb081098・script = s3_service_env.hy.txt(sha256 66b41369fbd77bd62fbceaef8113e809c1872e0e17acaccc2b6aebb581e09517)
+$ uv run --no-sync hy s3_service_env.hy
+svc: once=False forks-from-warm-child=False entry-env PATH=/roots/env-k1/app/.venv/bin:/boot/.venv/bin:/usr/bin VIRTUAL_ENV=/roots/env-k1/app/.venv env に VIRTUAL_ENV=False
+task/t1: once=True forks-from-warm-child=True entry-env PATH=/roots/env-k1/app/.venv/bin:/boot/.venv/bin:/usr/bin VIRTUAL_ENV=/roots/env-k1/app/.venv env に VIRTUAL_ENV=False
+冷えた道の shim が job へ渡す退きの知らせの fd の名(HOST-CONTRACT.notice-env)= DOEFF_WORKER_NOTICE_FD
+rc=0

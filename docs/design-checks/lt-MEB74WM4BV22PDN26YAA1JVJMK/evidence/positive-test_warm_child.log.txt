@@ -1,0 +1,4 @@
+# 対象: HEAD b142161f1d15b35da10850449a81e7ffdb081098+ 強めた検と warm_job の prefix(作業木の未 commit の形)
+$ uv run --no-sync pytest -q packages/doeff-cluster/tests/test_warm_child.py
+11 passed, 1 warning in 59.24s
+rc=0

@@ -1,0 +1,6 @@
+# 対象: doeff の作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b884-design-check・HEAD b142161f1d15b35da10850449a81e7ffdb081098(main d6ebc3db9 の上)・検の形: main の形(ac512fc1 の検)
+# 変異: mutant-A2-warm-child-without-uv.diff.txt
+# test file の sha256: c4ca08eb727f309c10e5421fb76b705b26da5662de132a0727a57a1b7bcbb970
+$ uv run --no-sync pytest -q packages/doeff-cluster/tests/test_task_venv_on_both_paths.hy
+1 passed, 1 warning in 5.38s
+rc=0

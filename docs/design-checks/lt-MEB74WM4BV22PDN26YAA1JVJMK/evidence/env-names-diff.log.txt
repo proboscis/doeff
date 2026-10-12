@@ -1,0 +1,6 @@
+# 対象: HEAD b142161f1d15b35da10850449a81e7ffdb081098+ 強めた検(作業木の未 commit の形)・script = env_names_diff.py.txt(sha256 98a0452521997f1722362bfa4d0b5e5bd470620ed3e09aa661c217988726231c)
+$ PYTHONDONTWRITEBYTECODE=1 uv run --no-sync python env_names_diff.py
+冷えた道にだけ在る名: ['DOEFF_WORKER_NOTICE_FD', 'PYTHONDONTWRITEBYTECODE', 'UV', 'UV_RUN_RECURSION_DEPTH']
+分かれる道にだけ在る名: []
+同じ名で値が違う名: []
+rc=0
