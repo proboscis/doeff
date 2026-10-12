@@ -172,17 +172,99 @@ class _ClauseEmits:
 
 
 @dataclass(frozen=True)
+class ClassTest:
+    """``isinstance(effect, X)``: ``classes`` are the classes ``X`` names; ``complete`` is False when
+    ``X`` names a class the reader could not find (the test then never decides against an effect)."""
+
+    classes: tuple[type, ...]
+    complete: bool = True
+
+    def holds_for(self, arrived: type) -> bool | None:
+        if any(issubclass(arrived, cls) for cls in self.classes):
+            return True
+        # An effect of a class above a named one may be an instance of the named one.
+        if not self.complete or any(issubclass(cls, arrived) for cls in self.classes):
+            return None
+        return False
+
+
+@dataclass(frozen=True)
+class NotTest:
+    part: "PassTest"
+
+    def holds_for(self, arrived: type) -> bool | None:
+        held = self.part.holds_for(arrived)
+        return None if held is None else not held
+
+
+@dataclass(frozen=True)
+class AllTest:
+    """``a and b …``: false when any part is false, true when all are, otherwise not known."""
+
+    parts: tuple["PassTest", ...]
+
+    def holds_for(self, arrived: type) -> bool | None:
+        verdicts = [part.holds_for(arrived) for part in self.parts]
+        if False in verdicts:
+            return False
+        return None if None in verdicts else True
+
+
+@dataclass(frozen=True)
+class AnyTest:
+    """``a or b …``: true when any part is true, false when all are false, otherwise not known."""
+
+    parts: tuple["PassTest", ...]
+
+    def holds_for(self, arrived: type) -> bool | None:
+        verdicts = [part.holds_for(arrived) for part in self.parts]
+        if True in verdicts:
+            return True
+        return None if None in verdicts else False
+
+
+@dataclass(frozen=True)
+class UnknownTest:
+    """A test that is not about the class of the effect (a field, a call): decided only at run time."""
+
+    def holds_for(self, arrived: type) -> bool | None:
+        return None
+
+
+PassTest = ClassTest | NotTest | AllTest | AnyTest | UnknownTest
+
+
+@dataclass(frozen=True)
 class Clause:
     """One effect class a handler answers (``handles``), and what the clause performs when it
-    answers (``emits`` — see ``_ClauseEmits``)."""
+    answers (``emits`` — see ``_ClauseEmits``).
+
+    ``passes`` = the test, from the clause's guard (``:when``), under which the clause sends the
+    effect on to the handlers outside without running (doeff-hy writes ``if not guard: yield
+    Pass(effect, k)``); None for a clause without a guard.  It is asked per arriving class
+    (``passes_on``).
+    """
 
     handles: type
     emits: _ClauseEmits = _ClauseEmits()
     location: Location
+    passes: PassTest | None = None
+
+    def passes_on(self, arrived: type) -> bool:
+        """Whether an effect of class ``arrived`` that reached this clause goes on outward without
+        the clause running — when the guard sends every such effect on.  A guard that tests more
+        than the class (a field, a call) may let the effect in: the clause is then taken to answer
+        it, as it is for a clause without a guard."""
+        return self.passes is not None and self.passes.holds_for(arrived) is True
 
     def __getstate__(self) -> dict[str, Any]:
         """A pickled clause holds its emits read (the function that reads them does not pickle)."""
-        return {"handles": self.handles, "_emits": self.emits, "location": self.location}
+        return {
+            "handles": self.handles,
+            "_emits": self.emits,
+            "location": self.location,
+            "passes": self.passes,
+        }
 
 
 @dataclass(frozen=True)
@@ -406,7 +488,9 @@ def pass_through(
 
     A handled effect is replaced by the effects its clause performs (they go to
     the handlers outside it); a clause keyed on a parent class also handles its
-    subclasses (``isinstance`` semantics).  What a handler performs itself around the
+    subclasses (``isinstance`` semantics).  A clause whose guard (``:when``) sends the
+    effect on (``Clause.passes``) does not answer it: the effect leaves as it arrived.  What a
+    handler performs itself around the
     body (``HandlerEffects.performs``) leaves it the same way, toward the handlers
     outside it.  A handler that could not be read
     handles nothing here and is named in ``unknown_handlers``.  The result has one
@@ -424,7 +508,7 @@ def pass_through(
         emitted: dict[type, Escape] = {}
         for effect in list(pending):
             clause = next((c for c in handler.clauses if issubclass(effect, c.handles)), None)
-            if clause is None:
+            if clause is None or clause.passes_on(effect):
                 continue
             del pending[effect]
             performed = clause.emits.residual_with(include)

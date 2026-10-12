@@ -13,6 +13,13 @@ understood too).  The branch taken when the test holds is the clause for ``T``;
 the effects it performs (followed through Program calls) are what the clause
 emits outward.
 
+A clause with a guard (``:when``) answers only the effects its guard lets in: doeff-hy writes the
+guard as ``if not guard: yield Pass(effect, k)`` at the head of the clause, and an effect that fails
+it goes on outward as it arrived.  The guard is read as a test on the class of the arriving effect
+(``Clause.passes`` — ``isinstance`` / ``not`` / ``and`` / ``or``).  An effect the guard certainly
+sends on is not answered by the clause; a guard that tests anything else (a field, a call) is decided
+only at run time, and the clause is taken to answer the effect — as for a clause without a guard.
+
 ``analyze_handler`` accepts a handler factory (``(defhandler h [args] ...)``,
 ``def reader(env): ...``), a clause function, or a handler value made by
 ``defhandler`` / ``doeff.handler`` (``__doeff_handler_data__``).  A factory that
@@ -51,17 +58,23 @@ from typing import Any
 
 from doeff_effect_analyzer.program_effects import (
     UNBOUND,
+    AllTest,
+    AnyTest,
     Basis,
     Binding,
+    ClassTest,
     Clause,
     EffectUse,
     Escape,
     FunctionNode,
     HandlerEffects,
     Location,
+    NotTest,
+    PassTest,
     ProgramEffects,
     ReceivedEffect,
     Residual,
+    UnknownTest,
     Unresolved,
     _bind_expression,
     _body_nodes,
@@ -495,11 +508,15 @@ def _clauses_in(
 @dataclass(frozen=True)
 class _Branch:
     """A branch of a dispatcher, taken when the effect is of the classes ``classes`` names: the
-    node that tests it (``at``) and the nodes it runs (``region``)."""
+    node that tests it (``at``) and the nodes it runs (``region``).
+
+    ``passes_when`` = the test of the branch's guard (``:when``): the branch sends the effect on
+    outward, without running, when it holds (``_guard_in``); None for a branch without a guard."""
 
     at: ast.AST
     classes: ast.expr
     region: tuple[ast.AST, ...]
+    passes_when: ast.expr | None = None
 
 
 @dataclass(frozen=True)
@@ -522,16 +539,85 @@ def _dispatch_of(node: FunctionNode) -> _Dispatch:
         return cached[1]
     param = _effect_param(node)
     everything = list(_body_nodes(node))
+    guards = _guards_in(everything, param)
+    taken_by_guard = {id(guard) for guard in guards.values()}
     dispatch = _Dispatch(
         param,
         tuple(
-            _Branch(child, classes, tuple(region))
+            _Branch(
+                child,
+                classes,
+                tuple(region),
+                guards[id(child)].test if id(child) in guards else None,
+            )
             for child in everything
+            if id(child) not in taken_by_guard
             for classes, region in _branches(child, param, everything)
         ),
     )
     _DISPATCHES[id(node)] = (node, dispatch)
     return dispatch
+
+
+def _guards_in(everything: Iterable[ast.AST], param: str | None) -> dict[int, ast.If]:
+    """The guard of each ``if isinstance(effect, T):`` branch that has one, by the branch's node.
+
+    A clause with ``:when`` is written by doeff-hy as ``if isinstance(effect, T): <fields>; if not
+    guard: yield Pass(effect, k) else: <clause>`` — the guard is the ``if`` among the branch's own
+    statements whose only act is to pass the effect on.  Its test holds when the effect goes on
+    (``Clause.passes``).  That ``if`` sends the effect outward: it is not a branch of the
+    dispatcher, so ``_dispatch_of`` leaves it out."""
+    found: dict[int, ast.If] = {}
+    for child in everything:
+        if not isinstance(child, ast.If):
+            continue
+        target = _isinstance_target(child.test, param)
+        if target is None or target.negated:
+            continue
+        for statement in child.body:
+            if isinstance(statement, ast.If) and _only_passes_on(statement.body, param):
+                found[id(child)] = statement
+                break
+    return found
+
+
+def _only_passes_on(statements: Sequence[ast.stmt], param: str | None) -> bool:
+    """Whether ``statements`` are only ``yield Pass(<the effect>, …)`` (assigned, returned or bare)."""
+    if len(statements) != 1:
+        return False
+    value = getattr(statements[0], "value", None)
+    if isinstance(value, ast.Yield):
+        value = value.value
+    return (
+        isinstance(value, ast.Call)
+        and (
+            (isinstance(value.func, ast.Name) and value.func.id == "Pass")
+            or (isinstance(value.func, ast.Attribute) and value.func.attr == "Pass")
+        )
+        and bool(value.args)
+        and _is_name(value.args[0], param)
+    )
+
+
+def _pass_test(test: ast.expr, param: str | None, scope: _Scope) -> PassTest:
+    """A guard's test (the case in which the clause sends the effect on) as a test on the class of
+    the effect that arrives: ``isinstance(effect, X)`` with ``not`` / ``and`` / ``or``; any other test
+    is decided only at run time (``UnknownTest``)."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return NotTest(_pass_test(test.operand, param, scope))
+    if isinstance(test, ast.BoolOp):
+        parts = tuple(_pass_test(value, param, scope) for value in test.values)
+        return AllTest(parts) if isinstance(test.op, ast.And) else AnyTest(parts)
+    if (
+        isinstance(test, ast.Call)
+        and isinstance(test.func, ast.Name)
+        and test.func.id == "isinstance"
+        and len(test.args) == 2
+        and _is_name(test.args[0], param)
+    ):
+        named = _classes(test.args[1], scope)
+        return ClassTest(tuple(named.found), complete=not named.missing)
+    return UnknownTest()
 
 
 def _read_clauses(
@@ -547,6 +633,11 @@ def _read_clauses(
             Unresolved("handled class is not an importable effect class", text, location)
             for text in named.missing
         )
+        passes = (
+            None
+            if branch.passes_when is None
+            else _pass_test(branch.passes_when, dispatch.param, scope)
+        )
         # Read once per handled class, with the effect parameter bound to the effect of that
         # class (performing it emits that class — ``ReceivedEffect``) — when an effect first
         # reaches the clause (``Clause.emits``).
@@ -561,6 +652,7 @@ def _read_clauses(
                     f"{label} clause",
                 ),
                 location=location,
+                passes=passes,
             )
             for cls in named.found
         )
