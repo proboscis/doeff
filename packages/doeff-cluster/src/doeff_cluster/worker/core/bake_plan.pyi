@@ -50,6 +50,7 @@ class BakeSummary:
     scan_s: float
     closure_s: float
     compile_s: float
+BAKE_JOBS_CEILING: int
 
 def cpu_limit_of(cpu_max: str | None, available: int) -> _Program[int, object]:
     ...

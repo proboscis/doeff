@@ -282,7 +282,7 @@
 (defclass [(dataclass :frozen True)] CompileTrees [EffectBase]
   "焼く根を持つ repo の木の全部の bytecode を、root の venv の interpreter で 1 回の焼きで作る(project-dir = その venv の project・
    trees = BytecodeTree の列・entries = 焼く範囲の入口の module — 全部の木に共通で、import を木をまたいで辿った閉包だけを焼く・空 = 全部の
-   木の根の下を全部 — 宣言の bytecode-entries・jobs = 焼く道具の並べる数 — None = 道具の既定 = cgroup の CPU の上限・2026-10-08)。
+   木の根の下を全部 — 宣言の bytecode-entries・jobs = 焼く道具の並べる数 — None = 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。
    答え = BytecodeReport(木ごとの問題は problems)か EnvFailure(焼く道具そのものが答えを返さなかった)。"
   (#^ str project-dir)
   (#^ tuple trees)

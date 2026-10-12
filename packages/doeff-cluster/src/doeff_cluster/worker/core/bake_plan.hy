@@ -81,14 +81,21 @@
 
 ;; --- 命令の引数と並列数 ----------------------------------------------------------------------
 
+;; 焼きの並列数の既定の天井。cpu.max の無い pod(zeus の worker — node の 36 CPU が使える)では、使える CPU の数で焼くと 36 本並べ、
+;; 準備 1 回で 14 core(nice 10)を使って node の load 1 分を 170 まで上げ、同じ node の nice 0 の service が CPU を 34〜89% 待った
+;; (2026-10-12 06:50 JST の測り・card ki-4c2f5878e524)。上限の在る pod の worker(atlas 8・ほかは 2〜3)は今の並列数のまま。
+(val BAKE-JOBS-CEILING 8)
+
 (defk cpu-limit-of [cpu-max available]
   {:pre [(: cpu-max (| str None)) (: available int)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "cgroup v2 の cpu.max の中身(\"<quota> <period>\" か \"max <period>\")と使える CPU の数から、焼きの並列数を決めるため(pod の上限を
-   越えないため — node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた)。"
+   越えないため — node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた)。上限の無い pod でも BAKE-JOBS-CEILING
+   を越えない(同じ node の service の CPU を奪わないため)。"
   (val parts (if cpu-max (.split cpu-max) []))
-  (if (and (= (len parts) 2) (!= (get parts 0) "max"))
-      (max 1 (min available (math.ceil (/ (int (get parts 0)) (int (get parts 1))))))
-      (max 1 available)))
+  (val usable (if (and (= (len parts) 2) (!= (get parts 0) "max"))
+                  (min available (math.ceil (/ (int (get parts 0)) (int (get parts 1)))))
+                  available))
+  (max 1 (min BAKE-JOBS-CEILING usable)))
 
 
 (defk tree-arguments [trees roots]

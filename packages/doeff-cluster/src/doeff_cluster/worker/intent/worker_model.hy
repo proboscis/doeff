@@ -285,7 +285,7 @@
   ;; コードの準備に失敗した版を作り直すまでの間(失敗が続く版で git と焼きを毎拍撃たない)。
   (setv #^ int code-retry-ms 30000)
   ;; recreate の job の旧い process が動いている間の新しい版の準備で、bytecode を焼く道具に渡す並べる数(--jobs・正の整数 — 2026-10-08)。
-  ;; 旧い service と焼きが同じ Pod の memory の上限を分け合うので、道具の既定(cgroup の CPU の上限)より絞る。zeus の測り(MemoryMax 1650M =
+  ;; 旧い service と焼きが同じ Pod の memory の上限を分け合うので、道具の既定(cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)より絞る。zeus の測り(MemoryMax 1650M =
   ;; Pod の 2Gi から旧い記録の service の anon 364MB を引いた値・CPU 400%・空の保存先から全部を焼く・1 回ずつ)で、回収できない anon の
   ;; 最高は並べる数 4 で 1.59GB(上限に当たった数 9・焼く時間 359 秒)、並べる数 2 で 358MB(上限に当たった数 0・414 秒)。2 なら旧と足して
   ;; 約 0.72GB で、Pod の上限に約 1.4GB の余りがある。旧が動いていない準備はこの値を使わない(道具の既定のまま — policy.replace-step だけが載せる)。
@@ -422,7 +422,7 @@
 
 (defclass [(dataclass :frozen True)] PrepareCode [EffectBase]
   "revision のコードを展開し始める。完了は ObserveWorld の CodeView で観測する。compile-jobs = bytecode を焼く道具の並べる数(--jobs —
-   recreate の job の旧い process が動いている間の準備だけ WorkerPolicy.compile-jobs-while-replacing・None = 道具の既定 = cgroup の CPU の上限)。"
+   recreate の job の旧い process が動いている間の準備だけ WorkerPolicy.compile-jobs-while-replacing・None = 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)。"
   (#^ str revision)
   (#^ (| int None) compile-jobs))
 

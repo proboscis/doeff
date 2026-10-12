@@ -547,7 +547,7 @@
   "焼く道具(worker 自身の code の code_prepare.hy)を root の venv の hy で 1 回起こす命令を組むため: 木ごとに --tree・--roots を木の順に
    並べる(道具の揃え方)。entries は全部の木に共通。保存先の dir は道具が環境変数 DOEFF_HY_CODE_STORE から読む(worker の起動の script が
    置き、子へ継がれる)。jobs = 並べる数(在る時だけ --jobs N — recreate の job の旧い process が動いている間の準備・None = 道具の既定 =
-   cgroup の CPU の上限・2026-10-08)。"
+   cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。"
   (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare "--revision" "env")
      (if (is jobs None) #() #("--jobs" (str jobs)))
      (if entries #("--entries" (.join "," entries)) #())

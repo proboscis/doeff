@@ -25,7 +25,7 @@
 ;;;               置く(種類 .imports — 形は bake_plan)。次の準備は中身の同じ source の entry を使い、中身の変わった file だけを読む。
 ;;;   3 用意      用意する物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
-;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits)。道具は 1 つずつ
+;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits・天井 BAKE-JOBS-CEILING)。道具は 1 つずつ
 ;;;               保存先の code を引き(stored)、無ければ焼いて足す(rebuilt)。木に既に在る .pyc が今の source と macro に合う物は
 ;;;               焼かずに残す(reused — 同じ commit の木を hardlink で写した root)。
 ;;;   4 検めと印   木ごとに用意した後を走査し直し、用意するべき source ごとに .pyc が在ること(焼けなかった file は理由つきで印に載せる)を
@@ -352,7 +352,7 @@
   (setv default-jobs (run (with-handlers [os-file-handler] (usable-cpus))))
   (setv parser (argparse.ArgumentParser))
   (.add-argument parser "--revision" :required True)
-  (.add-argument parser "--jobs" :type int :default default-jobs :help "焼きの並列数(既定 = cgroup の CPU の上限)")
+  (.add-argument parser "--jobs" :type int :default default-jobs :help "焼きの並列数(既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)")
   (.add-argument parser "--entries" :default "" :help "焼く範囲の入口の module(`,` で並べる・空 = 全部の木の根の下を全部)")
   (.add-argument parser "--tree" :action "append" :required True :help "焼く木(幾つでも — 木ごとの引数はこの順に並べる)")
   (.add-argument parser "--roots" :action "append" :help "木の中の import の根(`,` で並べる・前が先 — 木ごとに 1 つ)")

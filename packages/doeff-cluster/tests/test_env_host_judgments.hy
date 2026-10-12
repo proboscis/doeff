@@ -835,7 +835,7 @@
 
 (deftest test-the-prepare-request-carries-the-compile-jobs [tmp-path]
   ;; 失敗ケース(2026-10-08): env-host は準備の頼み(PrepareEnv)の並べる数を、準備の process への頼みの JSON(compileJobs)に載せる。
-  ;; 載せない頼みは null(焼く道具の既定 = cgroup の CPU の上限)。直す前は PrepareEnv にも頼みの JSON にも並べる数が無かった。
+  ;; 載せない頼みは null(焼く道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)。直す前は PrepareEnv にも頼みの JSON にも並べる数が無かった。
   (val runs (ToolRuns))
   (<- settings EnvSettings (settings-at tmp-path))
   (<- env RuntimeEnv (declared 1))
