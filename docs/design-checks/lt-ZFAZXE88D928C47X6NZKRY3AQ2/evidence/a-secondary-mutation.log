@@ -1,0 +1,6 @@
+# 変異: 拍の頭の刻を「判断の now − 単調な差」で導く形へ戻す(program.hy の worker-tick の 2 行)。直しの検が赤になる事の確かめ。対象版: 1d772f3e99d9a57cdba942196840de80da4360dd + 作業木の直し + この変異
+$ uv run pytest tests/test_silence_wall_clock_step.hy -q
+E     AssertionError: (False, Seen(delivered=(0, 2500, 5000), stepped_ms=None, cut_off_ms=215001, beats_at_cut_off=3))
+AssertionError: (False, Seen(delivered=(0, 2500, 5000), stepped_ms=None, cut_off_ms=215001, beats_at_cut_off=3))
+FAILED tests/test_silence_wall_clock_step.hy::test_a_worker_that_slept_inside_the_reply_handling_decides_its_self_stop_at_the_first_tick_after_the_resume
+1 failed, 10 passed, 1 warning in 16.11s

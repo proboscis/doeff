@@ -1,0 +1,6 @@
+# worker の 1 周あたりの doeff-vm の歩数(模擬の世界・worker 1 台・途絶 120 秒 — scripts/ticks_probe.py.txt)
+$ cd packages/doeff-cluster && uv run python ticks_probe.py 120
+0d3c814fc(着地済みの直し — 沈黙を 2 つの時計で計る)            cut=120.0 ticks_before_cut=7 ticks_after_cut=245 beats=7 steps=200105
+1d772f3e9(+ 周の間の待ちを周の頭の刻からの経過で数える)        cut=120.0 ticks_before_cut=7 ticks_after_cut=245 beats=7 steps=201077
+d25e8a25e(+ 拍の頭の刻を壁と単調の対で読んで写す)              cut=120.0 ticks_before_cut=7 ticks_after_cut=245 beats=7 steps=202806
+周の数は 3 つとも 252(途絶の前 7 + 後 245)。増えは 252 周で +972(+3.9 / 周)と +1,729(+6.9 / 周)・合わせて +2,701(+10.7 / 周・+1.35%)。

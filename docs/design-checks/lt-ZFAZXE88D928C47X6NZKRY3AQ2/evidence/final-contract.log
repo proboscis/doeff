@@ -1,0 +1,7 @@
+# 直した版の検(沈黙の契約・起きる期限・周の間の待ち・模擬の宿・周の遅れ・拍の送り・時間の条・stub)。対象版: d25e8a25e4fdfb831fe64d2601000d94b9fb6238
+$ uv run pytest tests/test_silence_wall_clock_step.hy tests/test_tick_pause_tasks.hy tests/test_tick_lag.hy tests/test_worker_wakes.hy -q
+28 passed, 1 warning in 16.68s
+$ uv run pytest tests/test_wall_clock_step_keeps_one_place.hy tests/test_sim_host_wakes.hy -q
+8 passed, 1 warning in 39.04s
+$ uv run pytest tests/test_shared_wake.hy tests/test_beat_after_long_tick.hy tests/test_beat_beside_a_stalled_tick.hy tests/test_cluster_timing.hy tests/test_worker_due.hy tests/test_generated_stubs.py tests/test_service_model_stubs.py -q
+39 passed, 1 warning in 50.32s

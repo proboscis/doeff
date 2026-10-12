@@ -1,0 +1,164 @@
+# 盲検 A の失敗例(期限を組み立てた後・待ちが時計を読む前の壁の戻り)の再現 — 直す前。対象版: 9d603fa5c(code と検は盲検に渡した 0d4c5e9f7 と同じ)
+$ uv run pytest tests/test_blind_a_step_before_the_wait.hy -q -s(blind-a-files/test_blind_a_step_before_the_wait.hy.txt を tests/ に置いて)
+test-admission: focused — 4 件(変更箇所の検証)
+    INFO worker: coordinator http://coord に名乗りました
+    INFO worker: 待ちを送れない(送り直します): http://coord/watch: ConnectError: refused
+    INFO worker: coordinator に名乗れない: coordinator に届かない(http://coord/heartbeat): ConnectError: refused
+doeff-adr: 記録から収集 1 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000012 秒・依存変更で再作成 0 file
+CONTROL silence-at-cut-off-ms 20001 noted [(10000, DueAt(at=10500))] delivered (0, 2500, 5000, 7500) cut-off-ms 27501
+.    INFO worker: coordinator http://coord に名乗りました
+    INFO worker: 待ちを送れない(送り直します): http://coord/watch: ConnectError: refused
+    INFO worker: coordinator に名乗れない: coordinator に届かない(http://coord/heartbeat): ConnectError: refused
+
+doeff Traceback (most recent call last):
+
+  test_a_step_back_of_9_seconds_right_before_the_last_wait_inside_the_fence_does_not_delay_the_self_stop.<locals>._hy_anon_18()  tests/test_blind_a_step_before_the_wait.hy:79
+    (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+  _hy_anon_18()  tests/test_blind_a_step_before_the_wait.hy:79
+    (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: (29000, Seen(delivered=(0, 2500, 5000, 7500), stepped_ms=None, cut_off_ms=36500, beats_at_cut_off=4))
+
+STEP-9@27s silence-at-cut-off-ms 29000 noted [(27000, DueAt(at=27500))] delivered (0, 2500, 5000, 7500) cut-off-ms 36500
+F    INFO worker: coordinator http://coord に名乗りました
+    INFO worker: 待ちを送れない(送り直します): http://coord/watch: ConnectError: refused
+    INFO worker: coordinator に名乗れない: coordinator に届かない(http://coord/heartbeat): ConnectError: refused
+
+doeff Traceback (most recent call last):
+
+  test_a_step_back_of_45_seconds_right_before_the_first_wait_of_the_cut_does_not_delay_the_self_stop.<locals>._hy_anon_21()  tests/test_blind_a_step_before_the_wait.hy:89
+    (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+  _hy_anon_21()  tests/test_blind_a_step_before_the_wait.hy:89
+    (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: (48000, Seen(delivered=(0, 2500, 5000, 7500), stepped_ms=None, cut_off_ms=55500, beats_at_cut_off=4))
+
+STEP-45@10s silence-at-cut-off-ms 48000 noted [(10000, DueAt(at=10500))] delivered (0, 2500, 5000, 7500) cut-off-ms 55500
+F    INFO worker: coordinator http://coord に名乗りました
+    INFO worker: 待ちを送れない(送り直します): http://coord/watch: ConnectError: refused
+    INFO worker: coordinator に名乗れない: coordinator に届かない(http://coord/heartbeat): ConnectError: refused
+
+doeff Traceback (most recent call last):
+
+  test_a_step_back_of_45_seconds_right_before_the_last_wait_inside_the_fence_still_decides_before_the_reassign_deadline.<locals>._hy_anon_24()  tests/test_blind_a_step_before_the_wait.hy:98
+    (assert (< silence T.reassign-after-ms) #(silence seen)))
+  _hy_anon_24()  tests/test_blind_a_step_before_the_wait.hy:98
+    (assert (< silence T.reassign-after-ms) #(silence seen)))
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: (65000, Seen(delivered=(0, 2500, 5000, 7500), stepped_ms=None, cut_off_ms=72500, beats_at_cut_off=4))
+
+STEP-45@27s silence-at-cut-off-ms 65000 noted [(27000, DueAt(at=27500))] delivered (0, 2500, 5000, 7500) cut-off-ms 72500
+F
+=================================== FAILURES ===================================
+_ test_a_step_back_of_9_seconds_right_before_the_last_wait_inside_the_fence_does_not_delay_the_self_stop _
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x54049b727c0>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2334/test_a_step_back_of_9_seconds_0')
+
+    (deftest test-a-step-back-of-9-seconds-right-before-the-last-wait-inside-the-fence-does-not-delay-the-self-stop [tmp-path]
+      ;; 元の検 test-a-wall-clock-stepped-back-past-the-c4-margin-does-not-delay-the-self-stop と同じ主張を、動かす刻だけ替えて確かめる:
+      ;; 途絶の最中(沈黙 19.5 秒 = fence の 0.5 秒前の待ち)に壁の時計が 9 秒戻る。条 C4 の余白は 8 秒。
+>     (val noted [])
+
+tests/test_blind_a_step_before_the_wait.hy:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:68: in interpret
+    return run(scheduled(compose(program)))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+../doeff-core-effects/doeff_core_effects/scheduler.py:1974: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val noted [])
+    (<- seen Seen (seen-with-step-before-the-wait 9.0 27000 (str (/ tmp-path "tasks")) noted))
+    (<- silence int (silence-at-cut-off seen))
+    (print "STEP-9@27s silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+>   (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: (29000, Seen(delivered=(0, 2500, 5000, 7500), stepped_ms=None, cut_off_ms=36500, beats_at_cut_off=4))
+
+tests/test_blind_a_step_before_the_wait.hy:79: AssertionError
+_ test_a_step_back_of_45_seconds_right_before_the_first_wait_of_the_cut_does_not_delay_the_self_stop _
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x5404a0d5ac0>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2334/test_a_step_back_of_45_seconds0')
+
+    (deftest test-a-step-back-of-45-seconds-right-before-the-first-wait-of-the-cut-does-not-delay-the-self-stop [tmp-path]
+      ;; 元の検 test-a-wall-clock-stepped-back-45-seconds-still-decides-the-self-stop-before-the-reassign-deadline と同じ主張
+      ;; (途絶の始まりの最初の待ちの直前に 45 秒戻る)。
+>     (val noted [])
+
+tests/test_blind_a_step_before_the_wait.hy:85: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:68: in interpret
+    return run(scheduled(compose(program)))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+../doeff-core-effects/doeff_core_effects/scheduler.py:1974: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val noted [])
+    (<- seen Seen (seen-with-step-before-the-wait 45.0 CUT-MS (str (/ tmp-path "tasks")) noted))
+    (<- silence int (silence-at-cut-off seen))
+    (print "STEP-45@10s silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+>   (assert (< T.fence-ms silence (+ T.fence-ms (* 2 RESEND-AFTER-MS))) #(silence seen)))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: (48000, Seen(delivered=(0, 2500, 5000, 7500), stepped_ms=None, cut_off_ms=55500, beats_at_cut_off=4))
+
+tests/test_blind_a_step_before_the_wait.hy:89: AssertionError
+_ test_a_step_back_of_45_seconds_right_before_the_last_wait_inside_the_fence_still_decides_before_the_reassign_deadline _
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x5404a710300>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2334/test_a_step_back_of_45_seconds1')
+
+    (deftest test-a-step-back-of-45-seconds-right-before-the-last-wait-inside-the-fence-still-decides-before-the-reassign-deadline [tmp-path]
+      ;; 移し替えの 60 秒との比べ: 沈黙 19.5 秒の待ちの直前に 45 秒戻っても、自己停止を決める刻は coordinator が job を他へ置く刻より前か。
+>     (val noted [])
+
+tests/test_blind_a_step_before_the_wait.hy:94: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:68: in interpret
+    return run(scheduled(compose(program)))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+../doeff-core-effects/doeff_core_effects/scheduler.py:1974: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val noted [])
+    (<- seen Seen (seen-with-step-before-the-wait 45.0 27000 (str (/ tmp-path "tasks")) noted))
+    (<- silence int (silence-at-cut-off seen))
+    (print "STEP-45@27s silence-at-cut-off-ms" silence "noted" noted "delivered" seen.delivered "cut-off-ms" seen.cut-off-ms)
+>   (assert (< silence T.reassign-after-ms) #(silence seen)))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: (65000, Seen(delivered=(0, 2500, 5000, 7500), stepped_ms=None, cut_off_ms=72500, beats_at_cut_off=4))
+
+tests/test_blind_a_step_before_the_wait.hy:98: AssertionError
+=============================== warnings summary ===============================
+../doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-069f-dc/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_blind_a_step_before_the_wait.hy::test_a_step_back_of_9_seconds_right_before_the_last_wait_inside_the_fence_does_not_delay_the_self_stop
+FAILED tests/test_blind_a_step_before_the_wait.hy::test_a_step_back_of_45_seconds_right_before_the_first_wait_of_the_cut_does_not_delay_the_self_stop
+FAILED tests/test_blind_a_step_before_the_wait.hy::test_a_step_back_of_45_seconds_right_before_the_last_wait_inside_the_fence_still_decides_before_the_reassign_deadline
+3 failed, 1 passed, 1 warning in 9.38s

@@ -1,0 +1,36 @@
+# S3(effects): 自己停止の log に壁の差と単調な差を載せる変更。対象版: 1d772f3e99d9a57cdba942196840de80da4360dd + s3_apply.py の差分
+## 失敗例 direct: 口が起点を直に引いて log に出す
+ 1 file changed, 3 insertions(+)
+$ semgrep coordinator_link.hy heartbeat_rules.hy
+  doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure worker/protocol/coordinator_link.hy line 468
+  doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure worker/protocol/coordinator_link.hy line 469
+  findings 2
+## owner: 持ち主に 2 つの差を返す関数を足し、口が呼ぶ(規則はまだ変えていない)
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+$ semgrep coordinator_link.hy heartbeat_rules.hy
+  doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure worker/protocol/coordinator_link.hy line 467
+  doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure worker/protocol/coordinator_link.hy line 467
+  findings 2
+## 正常例 rule: owner に加えて、起点の規則の許す読み手に足した関数の名を加える
+ .semgrep.yaml                                             |  2 +-
+ .../src/doeff_cluster/worker/core/heartbeat_rules.hy      | 15 +++++++++++++++
+ .../src/doeff_cluster/worker/protocol/coordinator_link.hy |  5 ++++-
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+$ semgrep coordinator_link.hy heartbeat_rules.hy
+  findings 0
+$ uv run pytest tests/test_silence_wall_clock_step.hy -q -s(log の行と結果)
+      3     INFO worker: 途絶の柵: 沈黙 100001 ms(壁の時計の差 100001 ms・単調な時計の差 100001 ms)
+      1     INFO worker: 途絶の柵: 沈黙 100001 ms(壁の時計の差 100001 ms・単調な時計の差 95001 ms)
+      3     INFO worker: 途絶の柵: 沈黙 100001 ms(壁の時計の差 55001 ms・単調な時計の差 100001 ms)
+      2     INFO worker: 途絶の柵: 沈黙 100001 ms(壁の時計の差 91001 ms・単調な時計の差 100001 ms)
+      3     INFO worker: 途絶の柵: 沈黙 100501 ms(壁の時計の差 100501 ms・単調な時計の差 100501 ms)
+      1     INFO worker: 途絶の柵: 沈黙 100501 ms(壁の時計の差 100501 ms・単調な時計の差 95501 ms)
+      3     INFO worker: 途絶の柵: 沈黙 100501 ms(壁の時計の差 55501 ms・単調な時計の差 100501 ms)
+      2     INFO worker: 途絶の柵: 沈黙 100501 ms(壁の時計の差 91501 ms・単調な時計の差 100501 ms)
+      3     INFO worker: 途絶の柵: 沈黙 101001 ms(壁の時計の差 101001 ms・単調な時計の差 101001 ms)
+      1     INFO worker: 途絶の柵: 沈黙 101001 ms(壁の時計の差 101001 ms・単調な時計の差 96001 ms)
+      3     INFO worker: 途絶の柵: 沈黙 101001 ms(壁の時計の差 56001 ms・単調な時計の差 101001 ms)
+      2     INFO worker: 途絶の柵: 沈黙 101001 ms(壁の時計の差 92001 ms・単調な時計の差 101001 ms)
+      (同じ形の log の行をここから 969 種類省いた — sort | uniq -c の出力。全部で 981 種類)
+      1 10 passed, 1 warning in 18.32s
+$ git status --short(戻した後)

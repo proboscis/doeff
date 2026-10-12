@@ -1,0 +1,19 @@
+# S5(concurrency): 別の task が今の沈黙の長さを定期に読む。src は変えない。対象版: 1d772f3e99d9a57cdba942196840de80da4360dd
+$ git status --short
+?? tests/test_dc_s5_concurrent_reader.hy
+$ uv run pytest tests/test_dc_s5_concurrent_reader.hy -q -s
+test-admission: focused — 2 件(変更箇所の検証)
+doeff-adr: 記録から収集 0 file・収集で import 1 file
+  import: packages/doeff-cluster/tests/test_dc_s5_concurrent_reader.hy — 記録なし(この内容の file は収集で import したことが無い)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000000 秒・依存変更で再作成 0 file
+S5 through-the-link: samples 157 min 0 max 0
+S5 direct: samples 157 min -45000 max 0
+.
+=============================== warnings summary ===============================
+../doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-ki-069f-exp/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 1 warning in 3.63s
+rc=0
+$ semgrep(失敗例の読み手の形を src の位置に置いた時 — 検体の 9 行目と同じ形)は s5 の検では測らない(検は tests/ の下で規則の対象外)。

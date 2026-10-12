@@ -1,0 +1,14 @@
+# 変異: silent-ms の式を mono の時計の差だけに替える(heartbeat_rules.hy の 1 行)。契約の検が赤になる事の確かめ。対象版: 1d772f3e99d9a57cdba942196840de80da4360dd + この変異
+-  (max (- now-ms since-ms) (- now-mono-ms since-mono-ms)))
++  (- now-mono-ms since-mono-ms))
+$ uv run pytest tests/test_silence_wall_clock_step.hy -q
+FAILED tests/test_silence_wall_clock_step.hy::test_the_silence_is_the_longer_of_the_wall_and_the_monotonic_differences
+FAILED tests/test_silence_wall_clock_step.hy::test_a_wall_clock_stepped_forward_during_a_cut_only_brings_the_self_stop_earlier
+FAILED tests/test_silence_wall_clock_step.hy::test_a_worker_resumed_from_a_suspend_past_the_fence_decides_its_self_stop_without_waiting_for_a_reply
+3 failed, 7 passed, 1 warning in 16.43s
+$ uv run pytest tests/test_wall_clock_step_keeps_one_place.hy -q
+FAILED tests/test_wall_clock_step_keeps_one_place.hy::test_a_worker_whose_wall_clock_stepped_forward_past_the_fence_stops_its_job_and_never_runs_it_in_two_places
+1 failed, 4 passed, 1 warning in 24.47s
+$ uv run pytest tests/test_tick_pause_tasks.hy -q
+FAILED tests/test_tick_pause_tasks.hy::test_a_wall_clock_stepped_forward_before_the_wait_only_shortens_the_wait
+1 failed, 3 passed, 1 warning in 0.78s

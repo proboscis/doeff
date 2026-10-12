@@ -1,0 +1,83 @@
+;; 設計検証 lt-ZFAZXE88D928C47X6NZKRY3AQ2 の S5(concurrency)の実験 — 使い捨て(packages/doeff-cluster/tests に置いて回し、commit しない)。
+;;
+;; 問い: 調整ループとは別の task が、今の沈黙の長さを定期に読む(計器に出す読み手の代役)。途絶の最中に壁の時計が 45 秒戻る台本で、
+;; 読み手が口の link-silence を呼ぶなら、どの刻に読んでも実際の沈黙(台本の時計 − 最後に届いた heartbeat の刻)と同じ値を読むか。
+;; 対照(失敗例): 読み手が起点の欄を直に引く(今の壁の時計 − last-ok-ms)と、壁の時計が戻った後の読みが戻った分だけ縮む。
+;; 口・計り・調整ループは変えない。台本と道具は tests/test_silence_wall_clock_step.hy の物。
+(require doeff-hy.macros [deftest defk <- val var])
+(val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff [with-handlers])
+(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects.scheduler [Spawn Task])
+(import doeff_time [Delay SimClock sim-time-handler])
+(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
+(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link link-silence])
+(import tests.link_rig [LINK-ROUTE])
+(import tests.stop_fixtures [stop-signal-never-comes])
+(import tests.transport_http [route-cell])
+(import tests.test_silence_wall_clock_step [Script Seen ScriptClockMs script-clock wall-clock-stepped scripted-coordinator cut-off-noted
+                                            worker-then-seen cut-with-step WORKER])
+
+(val T (ClusterTiming))
+;; 読み手の間隔(秒)— heartbeat の間隔 2.5 秒・届かない間の送り直し 0.5 秒のどちらとも揃わない刻で読む。
+(val READ-EVERY-SECONDS 0.7)
+
+
+(defk sampled [link samples through-the-link]
+  {:pre [(: link LinkState) (: samples list) (: through-the-link bool)] :post [(: % None)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "READ-EVERY-SECONDS ごとに、今の沈黙の長さと台本の時計を samples に積み続けるため(調整ループとは別の task の体)。through-the-link 真 =
+   口の link-silence を呼ぶ・偽 = 起点の欄を直に引く(失敗例)。"
+  (while True
+    (<- (Delay READ-EVERY-SECONDS))
+    (<- at int (ScriptClockMs))
+    (<- now int (now-epoch-ms))
+    (var silent (- now link.last-ok-ms))
+    (when through-the-link
+      (<- measured int (link-silence link now))
+      (:= silent measured))
+    (.append samples #(at silent))))
+
+
+(defk worker-beside-a-reader [link samples through-the-link]
+  {:pre [(: link LinkState) (: samples list) (: through-the-link bool)] :post [(: % Seen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "読み手の task を起こしてから、本物の調整ループを止めの刻まで動かすため。"
+  (<- _reader Task (Spawn (sampled link samples through-the-link) :daemon True))
+  (<- seen Seen (worker-then-seen))
+  seen)
+
+
+(defk off-by [through-the-link task-dir]
+  {:pre [(: through-the-link bool) (: task-dir str)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "途絶の最中に壁の時計が 45 秒戻る台本を読み手つきで回し、読みごとの「読んだ沈黙 − 実際の沈黙」の列を返すため。"
+  (<- script Script (cut-with-step 45.0))
+  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True))
+  (val samples [])
+  (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
+                                script-clock wall-clock-stepped (scripted-coordinator script) tick-pauses
+                                (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
+                                cut-off-noted]
+                  (worker-beside-a-reader link samples through-the-link)))
+  (assert (is-not seen.stepped-ms None) seen)
+  (lfor #(at silent) samples
+        (- silent (- at (max (gfor heard seen.delivered :if (<= heard at) heard))))))
+
+
+(deftest test-s5-a-reader-in-another-task-reads-the-real-silence-through-the-link [tmp-path]
+  (<- off list (off-by True (str (/ tmp-path "tasks"))))
+  (print "S5 through-the-link: samples" (len off) "min" (min off) "max" (max off))
+  (assert (> (len off) 100) (len off))
+  (assert (= (set off) #{0}) #((min off) (max off))))
+
+
+(deftest test-s5-a-reader-that-subtracts-the-anchor-itself-reads-a-shrunken-silence [tmp-path]
+  ;; 失敗例: 起点を直に引く読み手は、壁の時計が戻った後、戻った 45 秒だけ短く読む。
+  (<- off list (off-by False (str (/ tmp-path "tasks"))))
+  (print "S5 direct: samples" (len off) "min" (min off) "max" (max off))
+  (assert (= (min off) -45000) #((min off) (max off)))
+  (assert (= (max off) 0) #((min off) (max off))))

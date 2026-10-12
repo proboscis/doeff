@@ -1,0 +1,56 @@
+"""設計検証 S3(effects)の実験の差分を使い捨ての作業木へ当てる。引数: owner = 持ち主(silence-measure)に 2 つの差を返す関数を足し、口がそれを
+呼んで log に出す・rule = owner に加えて、起点の規則の許す読み手に足した関数の名を加える・direct = 口が起点を直に引いて log に出す
+(規則が止めるはずの形)。"""
+import sys
+from pathlib import Path
+
+mode = sys.argv[1]
+root = Path("packages/doeff-cluster/src/doeff_cluster")
+
+
+def sub(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert text.count(old) == 1, (str(path), old[:60], text.count(old))
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+link = root / "worker/protocol/coordinator_link.hy"
+unreachable = """      (<- silent int (silent-ms now-ms (monotonic-ms-of now-mono) state.last-ok-ms state.last-ok-mono-ms))
+      (:= desired (desired-when-unreachable silent state.fence-ms state.keep-fence-ms"""
+if mode in ("owner", "rule"):
+    rules = root / "worker/core/heartbeat_rules.hy"
+    sub(rules, "(require doeff-hy.macros [defk deff val])\n",
+        "(require doeff-hy.macros [defk deff val])\n(require doeff-hy.record [defrecord])\n(import dataclasses [dataclass replace])\n")
+    sub(rules, "\n(defk silent-ms [now-ms now-mono-ms since-ms since-mono-ms]", '''
+(defrecord SilenceSpans
+  "沈黙の 2 つの差(観測用 — 判断には silent-ms の答えだけを渡す): wall-ms = 壁の時計の差・mono-ms = 単調な時計の差。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int wall-ms)
+  (#^ int mono-ms))
+
+
+(defk silence-spans [now-ms now-mono-ms since-ms since-mono-ms]
+  {:pre [(: now-ms int) (: now-mono-ms int) (: since-ms int) (: since-mono-ms int)] :post [(: % SilenceSpans)]
+   :tags {:context "worker" :role "judgment"}}
+  "自己停止の訳を運用が読めるよう、沈黙の 2 つの差を並べて返すため(長い方を採る式は silent-ms の中のまま)。"
+  (SilenceSpans :wall-ms (- now-ms since-ms) :mono-ms (- now-mono-ms since-mono-ms)))
+
+(defk silent-ms [now-ms now-mono-ms since-ms since-mono-ms]''')
+    sub(link, "                                                    silent-ms])", "                                                    silent-ms silence-spans SilenceSpans])")
+    sub(link, unreachable, """      (<- silent int (silent-ms now-ms (monotonic-ms-of now-mono) state.last-ok-ms state.last-ok-mono-ms))
+      (<- spans SilenceSpans (silence-spans now-ms (monotonic-ms-of now-mono) state.last-ok-ms state.last-ok-mono-ms))
+      (when (> silent state.fence-ms)
+        (<- (slog (.format "worker: 途絶の柵: 沈黙 {} ms(壁の時計の差 {} ms・単調な時計の差 {} ms)" silent spans.wall-ms spans.mono-ms))))
+      (:= desired (desired-when-unreachable silent state.fence-ms state.keep-fence-ms""")
+if mode == "rule":
+    config = Path(".semgrep.yaml")
+    text = config.read_text(encoding="utf-8")
+    old = "      - pattern-not-regex: '\\(silent-ms\\s+"
+    assert text.count(old) == 1, text.count(old)
+    config.write_text(text.replace(old, "      - pattern-not-regex: '\\((?:silent-ms|silence-spans)\\s+"), encoding="utf-8")
+if mode == "direct":
+    sub(link, unreachable, """      (<- silent int (silent-ms now-ms (monotonic-ms-of now-mono) state.last-ok-ms state.last-ok-mono-ms))
+      (when (> silent state.fence-ms)
+        (<- (slog (.format "worker: 途絶の柵: 沈黙 {} ms(壁の時計の差 {} ms・単調な時計の差 {} ms)" silent (- now-ms state.last-ok-ms)
+                           (- (monotonic-ms-of now-mono) state.last-ok-mono-ms)))))
+      (:= desired (desired-when-unreachable silent state.fence-ms state.keep-fence-ms""")
