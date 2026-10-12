@@ -20,13 +20,14 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf ReadinessWaitExpired AwaitReadiness AwaitJobProcess
                                                      JobProcessWaitExpired Redeclare Crash KillWorker StopWorker StopCoordinator
-                                                     CrashCoordinator])
+                                                     CrashCoordinator RestartService ServiceRestarted RestartRefused])
 (import doeff_cluster.shared.entry.deployed_cluster [DeployedCluster DeployedCannotAnswer deployed-cluster-answers])
 (import doeff_cluster.shared.protocol.coordinator_reads [job-pids-of])
 (import doeff_cluster.shared.protocol.detached [service-facts-of-json])
 (import tests.transport_http [transport-http COORDINATOR-URL])
 (import tests.detached_rig [MemoryCoordinator])
-(import tests.fixtures.machine_app [pings machine-foundation])
+(import tests.fixtures.machine_app [pings handoff-pings machine-foundation])
+(import doeff_cluster.shared.intent.service_model [System])
 (import tests.fixtures.replicas [with-replicas])
 
 ;; 配備の cluster の値(宛先 = 検の coordinator の口・送り手の名・宣言の版 — 版の木の道なので実行環境は無し・版の識別は宣言する
@@ -132,6 +133,49 @@
   (<- _second tuple (asked-with later coordinator clock (Redeclare (pings machine-foundation))))
   (<- second list (listed-revisions coordinator))
   (assert (= second [#("ping" (* "b" 40))]) second))
+
+
+(deftest test-the-deployed-handler-restarts-a-handoff-service-by-advancing-the-restart-mark
+  ;; 同じ版の起こし直し(card ki-0019be4b9939): 配備の handler の RestartService は、Service の spec の環境変数 RESTART_MARK を 1 つ進めた書きを読んだ版つきで送る —
+  ;; 版・引数・台数・所有者・readiness は読んだまま。2 度目は次の値。宣言し直すと印は宣言の値(印の無い環境変数)へ戻る。
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  (<- _declared tuple (asked coordinator clock (Redeclare (handoff-pings machine-foundation))))
+  (<- declared dict (service-spec coordinator "ping"))
+  (assert (= (get declared "update") "handoff") declared)
+  (assert (= (get declared "environ") {"STEP" "1"}) declared)
+  (<- first (| ServiceRestarted RestartRefused) (asked coordinator clock (RestartService "ping")))
+  (assert (= first (ServiceRestarted :name "ping" :mark "1")) first)
+  (<- marked dict (service-spec coordinator "ping"))
+  (assert (= (get marked "environ") {"STEP" "1" "RESTART_MARK" "1"}) marked)
+  (assert (= (dfor #(k v) (.items marked) :if (!= k "environ") k v) (dfor #(k v) (.items declared) :if (!= k "environ") k v)) #(marked declared))
+  (<- second (| ServiceRestarted RestartRefused) (asked coordinator clock (RestartService "ping")))
+  (assert (= second (ServiceRestarted :name "ping" :mark "2")) second)
+  (<- again dict (service-spec coordinator "ping"))
+  (assert (= (get again "environ") {"STEP" "1" "RESTART_MARK" "2"}) again)
+  (<- _redeclared tuple (asked coordinator clock (Redeclare (handoff-pings machine-foundation))))
+  (<- back dict (service-spec coordinator "ping"))
+  (assert (= (get back "environ") {"STEP" "1"}) back))
+
+
+(deftest test-the-deployed-handler-refuses-to-restart-a-missing-a-withdrawn-and-a-recreate-service-without-writing
+  ;; 書かない 3 つ(Service が無い・台数 0 の取り下げ・入れ替えの形が recreate)は理由つきの RestartRefused で、Service の spec は読んだまま。
+  (val clock (SimClock START))
+  (val coordinator (MemoryCoordinator clock))
+  (<- missing (| ServiceRestarted RestartRefused) (asked coordinator clock (RestartService "ping")))
+  (assert (= missing (RestartRefused :name "ping" :reason "Service が無い")) missing)
+  (<- _recreate tuple (asked coordinator clock (Redeclare (pings machine-foundation))))
+  (<- recreate dict (service-spec coordinator "ping"))
+  (<- stays (| ServiceRestarted RestartRefused) (asked coordinator clock (RestartService "ping")))
+  (assert (and (isinstance stays RestartRefused) (in "recreate" stays.reason)) stays)
+  (<- unchanged dict (service-spec coordinator "ping"))
+  (assert (= unchanged recreate) #(unchanged recreate))
+  (<- withdrawn-system System (with-replicas (handoff-pings machine-foundation) 0))
+  (<- _withdrawn tuple (asked coordinator clock (Redeclare withdrawn-system)))
+  (<- withdrawn (| ServiceRestarted RestartRefused) (asked coordinator clock (RestartService "ping")))
+  (assert (and (isinstance withdrawn RestartRefused) (in "台数 0" withdrawn.reason)) withdrawn)
+  (<- still dict (service-spec coordinator "ping"))
+  (assert (not-in "RESTART_MARK" (get still "environ")) still))
 
 
 (defhandler crash-answered

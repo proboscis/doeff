@@ -10,6 +10,7 @@
 (import collections.abc [Mapping])
 (import json)
 (import doeff_hy.json_value [OpaqueJson])
+(import doeff_cluster.shared.intent.cluster_control [RestartRefused])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])
 (import doeff_cluster.shared.core.detached_rules [group-limit-spec])
@@ -72,6 +73,50 @@
     (return (ServiceRead :name name :target target :version version :spec (OpaqueJson.of now) :body None)))
   (<- body dict (update-body version spec))
   (ServiceRead :name name :target target :version version :spec (OpaqueJson.of now) :body (OpaqueJson.of body)))
+
+
+;; --- 同じ版の起こし直し(RestartService — card ki-0019be4b9939)--------------------------------------------------------------
+;; 起こし直しの印の環境変数の名。子の環境変数は spec の指紋(job_model.JobSpec.fingerprint)に入るので、値を 1 つ進めれば版が同じでも別の spec になり、
+;; 入れ替えの形が handoff の job は新を旧と並べて起こす。名は子の環境変数の規則(EnvVar — 大文字と数字と _ ・予約の頭 DOEFF_ などの外)に合う。
+(val RESTART-MARK "RESTART_MARK")
+
+
+(defrecord RestartPlan
+  "起こし直しの書き 1 つ: read = 送る書き(読んだ版つきの PUT — 409 の後の読み直しは reread-after-conflict が行う)・mark = 書く印の値。"
+  {:tags {:context "doeff-cluster" :role "protocol"}}
+  (#^ ServiceRead read)
+  (#^ str mark))
+
+
+(defk restarted-spec [spec]
+  {:pre [(: spec dict)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "読んだ spec の環境変数 RESTART_MARK を 1 つ進めた spec を作るため(印が無い・数字でなければ 1 — 起こし直すたびに 1 ずつ増え、前の印と同じ値は
+   書かない。印以外の spec は読んだまま)。"
+  (val environ (.get spec "environ" {}))
+  (val now (.get environ RESTART-MARK ""))
+  (val mark (if (and (isinstance now str) (.isascii now) (.isdigit now)) (str (+ (int now) 1)) "1"))
+  (| spec {"environ" (| environ {RESTART-MARK mark})}))
+
+
+(defk restart-read [name target current]
+  {:pre [(: name str) (: target str) (: current (| dict None))] :post [(: % (| RestartPlan RestartRefused))]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "読んだ今の資源 current(GET の本文・無い Service は None)から、版を替えずに重ねて起こし直す書きを決めるため: spec の environ の RESTART_MARK を 1 つ
+   進め、それ以外の spec は読んだまま読んだ版つきで書き直す。書かずに RestartRefused を返すのは、Service が無い・台数 0 の取り下げ・入れ替えの形が
+   handoff でない時(recreate の job は旧を止めてから新を起こすので重ならず、印を書くと次の宣言し直しでもう 1 度起こし直される)。"
+  (when (is current None)
+    (return (RestartRefused :name name :reason "Service が無い")))
+  (val spec (get current "spec"))
+  (when (= (.get spec "replicas") 0)
+    (return (RestartRefused :name name :reason "台数 0 の取り下げ — 動いていない Service は起こし直せない(動かすのは台数を 1 にして宣言し直す事)")))
+  (when (!= (.get spec "update") "handoff")
+    (return (RestartRefused :name name :reason (.format "入れ替えの形が {} — 重ねて起こし直せるのは handoff の Service だけ(recreate は止めてから起こす形)"
+                                                         (.get spec "update")))))
+  (<- written dict (restarted-spec spec))
+  (val version (get current "resourceVersion"))
+  (<- body dict (update-body version written))
+  (RestartPlan :read (ServiceRead :name name :target target :version version :spec (OpaqueJson.of spec) :body (OpaqueJson.of body))
+               :mark (get (get written "environ") RESTART-MARK)))
 
 
 (defk reread-after-conflict [sent current]

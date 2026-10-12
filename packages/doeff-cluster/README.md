@@ -289,7 +289,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 - `outside`(`SimOutside :handlers [...] :effects #(...)`)= sim の外の世界。本番では job の土台の handler が外の系(業務の store・外部の
   API)へ話して答える effect に、sim では系の外側に置いた模擬の handler が答えます。柵は `effects` に載った型(基底の型でよい)も外へ
   通します。job は外の世界を effect を通してだけ共有します(object を共有しない)。
-- 筋書き(scenario)の中で使う effect: `Crash`・`Redeclare`・`ReportsOf`・`ReadinessOf`・`ProcessesOf`・`SharedRows`・`ReadCoordinator`・
+- 筋書き(scenario)の中で使う effect: `Crash`・`Redeclare`・`RestartService`(版を替えずに handoff の job を重ねて起こし直す)・`ReportsOf`・`ReadinessOf`・`ProcessesOf`・`SharedRows`・`ReadCoordinator`・
   `StopCoordinator`・`CrashCoordinator`・`CoordinatorRuns`・`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・
   `PreparationsOf`・`ClientLink`。時間を進めるのは scenario の `Delay` です。
 - 壁の時計で回すなら `wall-sim-cluster`(引数は `sim-cluster` と同じで、`start-ms` だけが無い — 今の時刻から始まります)。時計は

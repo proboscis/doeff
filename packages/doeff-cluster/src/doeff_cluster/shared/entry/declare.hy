@@ -14,6 +14,8 @@
 ;;;     (読んでから書くまでに誰かが spec を書いていれば 409 で止まる — 他の作業係の変更を消さない。版は状態の欄の変化でも進むので、
 ;;;     409 の後に読み直して spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。所有者はいまの値を保ち、台数は行の値
 ;;;     (job の :replicas)を書く — 手で台数だけを替えた Service も、宣言し直すと job の値へ戻る(#3487)。一覧に無い Service には触らない。
+;;;   - restart-service: 宣言を替えずに 1 つの Service だけを起こし直す(2026-10-13・card ki-0019be4b9939 — 手で replicas 1→0→1 にする「止めてから
+;;;     起こす」の替わり)。spec の環境変数 RESTART_MARK を 1 つ進めて書き、handoff の job は新を旧と並べて起こしてから旧を止める。
 ;;;
 ;;; 置き場(#2346): apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster.shared.protocol.declaration_requests・
 ;;; 宣言してよいかの判断は doeff_cluster.shared.core.declaring。
@@ -25,7 +27,8 @@
 (import doeff_core_effects.effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs body-of
-                                                            group-limit-write])
+                                                            group-limit-write RestartPlan restart-read])
+(import doeff_cluster.shared.intent.cluster_control [ServiceRestarted RestartRefused])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])
 
@@ -117,6 +120,26 @@
                                (declare-request "PUT" url actor body)))
   (<- (slog (.format "GroupLimit {}: {} {}" limit.group written.status (cut written.text 0 300))))
   (< written.status 300))
+
+
+(defk restart-service [url actor name]
+  {:pre [(: url str) (: actor str) (: name str)] :post [(: % (| ServiceRestarted RestartRefused))]
+   :tags {:context "doeff-cluster" :role "main" :spells "json"}}
+  "Service name を版を替えずに重ねて起こし直すため(RestartService の配備の答え): 資源の口で今の資源を読み、環境変数 RESTART_MARK を 1 つ進めた
+   spec を読んだ版つきで書く(書く spec の判断は declaration_requests.restart-read — handoff の job は新を旧と並べて起こす)。409 を受けたら
+   宣言の書きと同じく、変わったのが状態の欄だけなら読み直して書き直す。返事を 1 行出す(slog)。書かない時は RestartRefused(理由つき)を返し、
+   書いて通らなければ例外で止まる(起こし直しを頼んだ側へ、書けなかったと分からせる)。"
+  (val target (+ (.rstrip url "/") "/resources/Service/" (url-quote name :safe "")))
+  (<- current (| dict None) (service-current target actor))
+  (<- plan (| RestartPlan RestartRefused) (restart-read name target current))
+  (when (isinstance plan RestartRefused)
+    (<- (slog (.format "{}: 起こし直しを書かない — {}" name plan.reason)))
+    (return plan))
+  (<- written HttpResponse (service-written-rereading (.rstrip url "/") actor plan.read))
+  (<- (slog (.format "{}: 起こし直し {} {}" name written.status (cut written.text 0 300))))
+  (when (>= written.status 300)
+    (raise (RuntimeError (.format "{} の起こし直しを書けない — {} {}" name written.status (cut written.text 0 300)))))
+  (ServiceRestarted :name name :mark plan.mark))
 
 
 (defk apply-declaration [url declaration actor]

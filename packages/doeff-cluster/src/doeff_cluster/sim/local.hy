@@ -176,7 +176,7 @@
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory])
 ;; 宣言の本文を組む body-of は別名で受ける — coordinator の要求の本文の解き(request_bodies.body-of)と取り違えないため。
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs
-                                                             body-of :as service-body-of group-limit-write])
+                                                             body-of :as service-body-of group-limit-write RestartPlan restart-read])
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable])
@@ -219,7 +219,7 @@
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [System Declaration])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare ReadinessOf Crash KillWorker StopWorker
+(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare RestartService ServiceRestarted RestartRefused ReadinessOf Crash KillWorker StopWorker
                                                      StopCoordinator CrashCoordinator AwaitReadiness ServiceFailed
                                                      ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 ;; 準備の状態の読みと待ちの判断は本番の境界の handler と同じ 1 つ(写しを 2 か所に持たない — #3668 の (a))。
@@ -2670,6 +2670,21 @@
   written)
 
 
+(defk sim-service-restarted [link name]
+  {:pre [(: link SimLink) (: name str)] :post [(: % (| ServiceRestarted RestartRefused))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "Service name を版を替えずに重ねて起こし直すため(本番の declare.restart-service と同じ判断 — declaration_requests.restart-read・409 の後の
+   読み直しは宣言の書きと同じ sim-service-written-rereading): 読んで RESTART_MARK を 1 つ進めた spec を読んだ版つきで書く。書かない時は
+   RestartRefused、書いて通らなければ coordinator の返事つきで止まる。"
+  (val path (+ "/resources/Service/" (url-quote name :safe "")))
+  (<- current (| dict None) (sim-service-current link name path))
+  (<- plan (| RestartPlan RestartRefused) (restart-read name path current))
+  (when (isinstance plan RestartRefused)
+    (return plan))
+  (<- written tuple (sim-service-written-rereading link plan.read))
+  (answered-body written (+ "Service " name " の起こし直し"))
+  (ServiceRestarted :name name :mark plan.mark))
+
+
 ;; --- 準備の状態と job の次の process の待ち(AwaitReadiness・AwaitJobProcess — 書きで起こす・#3053)----------------
 
 (defrecord NextWaiter
@@ -3381,6 +3396,11 @@
     (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- names tuple (apply-declaration link declaration))
     (resume names))
+  (RestartService [name]
+    ;; 宣言は替えない(版も environ の宣言の値もそのまま)— Service の spec の環境変数 RESTART_MARK だけを進める(本番の declare.restart-service と同じ判断)。
+    (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
+    (<- restarted (| ServiceRestarted RestartRefused) (sim-service-restarted link name))
+    (resume restarted))
   (DeclareRollout [name spec]
     (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- answer tuple (send-request link "POST" "/resources/Rollout" {} {"name" name "spec" (deepcopy spec)}))

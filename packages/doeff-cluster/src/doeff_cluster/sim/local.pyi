@@ -101,6 +101,8 @@ from doeff_cluster.shared.protocol.declaration_requests import reread_after_conf
 from doeff_cluster.shared.protocol.declaration_requests import needed_programs as needed_programs
 from doeff_cluster.shared.protocol.declaration_requests import body_of as service_body_of
 from doeff_cluster.shared.protocol.declaration_requests import group_limit_write as group_limit_write
+from doeff_cluster.shared.protocol.declaration_requests import RestartPlan as RestartPlan
+from doeff_cluster.shared.protocol.declaration_requests import restart_read as restart_read
 from doeff_cluster.shared.protocol.detached import detached_path as detached_path
 from doeff_cluster.shared.protocol.detached import detached_submit_body as detached_submit_body
 from doeff_cluster.shared.protocol.detached import detached_refusal as detached_refusal
@@ -214,6 +216,9 @@ from doeff_cluster.shared.intent.service_model import System as System
 from doeff_cluster.shared.intent.service_model import Declaration as Declaration
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
 from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
+from doeff_cluster.shared.intent.cluster_control import RestartService as RestartService
+from doeff_cluster.shared.intent.cluster_control import ServiceRestarted as ServiceRestarted
+from doeff_cluster.shared.intent.cluster_control import RestartRefused as RestartRefused
 from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
 from doeff_cluster.shared.intent.cluster_control import Crash as Crash
 from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
@@ -1163,6 +1168,9 @@ def sim_service_written(link: SimLink, read: ServiceRead) -> _Program[tuple, obj
     ...
 
 def sim_service_written_rereading(link: SimLink, read: ServiceRead) -> _Program[tuple, object]:
+    ...
+
+def sim_service_restarted(link: SimLink, name: str) -> _Program[ServiceRestarted | RestartRefused, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
