@@ -10,7 +10,7 @@
  "requirements": "card ki-0ff168f4eaf5 の受入: c18579d29 上限を置く案と置かない案を、doeff・agora-controllers・merge-queue の解決と版上げの手順への影響で比べ、card に書く / cf9c6c9b8 比べから案を 1 つ選び、選んだ案を main へマージするか、置かない訳を card に書く。背景: doeff-hy の宣言 hy>=1.2.0 に上限が無く、他の repo の lock での Hy の版上げが doeff の検(ADR-DOE-HY-008 R4)に入らない",
  "design": {
   "path": "design.md",
-  "sha256": "f0b5cca5a31b2a45bb63aa1db17d2242bcb79dc4bf0eb84c756507c37e75b884"
+  "sha256": "e91c09a94584a8412bf6b504fa8435527a30bb6b9107aca9f83801ed435d598b"
  },
  "modules": [
   {
@@ -194,10 +194,10 @@
    ],
    "control": "negative",
    "expectation": "上限の行に `; python_version < '3.15'` を付けた木で R6 が赤(直す前の木では passed — before-fix-B-marker-B-domain-A-lower.log.txt)",
-   "observation": "d10bb940e の写しで 1 failed「hy の上限の行に条件(marker)が付いている」",
+   "observation": "直した後の木(d10bb940e・載せ直した後も)の写しで 1 failed「hy の上限の行に条件(marker)が付いている」",
    "evidence": {
-    "path": "evidence/after-fix-real-B-marker-B-domain.log.txt",
-    "sha256": "99b6bc2802ca7eb448f7ba82584b133cfc408d2419f6ff5ec1cc1658e17aa958"
+    "path": "evidence/rebased-B-marker-B-domain.log.txt",
+    "sha256": "6524dd95a49b84d3cf2c13bc14f36ccb701c0bb111f694f4a1cab031455f2dc1"
    },
    "status": "passed"
   },
@@ -208,10 +208,10 @@
    ],
    "control": "positive",
    "expectation": "上限と lock が揃った実物の木で R6 が緑",
-   "observation": "d10bb940e の写し(書き換えなし)で 1 passed",
+   "observation": "載せ直した後の木の写し(書き換えなし)で 1 passed",
    "evidence": {
-    "path": "evidence/after-fix-real-B-marker-B-domain.log.txt",
-    "sha256": "99b6bc2802ca7eb448f7ba82584b133cfc408d2419f6ff5ec1cc1658e17aa958"
+    "path": "evidence/rebased-real.log.txt",
+    "sha256": "2e9ebb88c246d4b38cfb6a9779c1d2fe7ed2dd9005939adb88384370bb074146"
    },
    "status": "passed"
   },
@@ -222,10 +222,10 @@
    ],
    "control": "positive",
    "expectation": "反例の検・ADR の契約の検・R4 が直した後の木で緑",
-   "observation": "3 passed(judgments・adr_contract・imports_exist_in_pypi_hy)",
+   "observation": "載せ直した後の木で 2 passed(judgments・adr_contract)— R4 は d10bb940e で passed(P-judgments-contract-R4-after-fix.log.txt)",
    "evidence": {
-    "path": "evidence/P-judgments-contract-R4-after-fix.log.txt",
-    "sha256": "daeb98788ff7ed898f5a136e2f94096afff084732a1b0acb4f1b7a600e98c046"
+    "path": "evidence/rebased-judgments-contract.log.txt",
+    "sha256": "4171ab5713c2b9ba8006319556371aae1e22b6e01cc430182d3e34a57683ad36"
    },
    "status": "passed"
   },
@@ -264,10 +264,10 @@
    ],
    "control": "negative",
    "expectation": "doeff-domain に上限を写した木で R6 が赤(直す前の木では passed)",
-   "observation": "1 failed「packages/doeff-domain/pyproject.toml: hy>=1.2.0,<=1.3.1 — hy の上限は packages/doeff-hy/pyproject.toml の 1 か所だけに置く」",
+   "observation": "1 failed「packages/doeff-domain/pyproject.toml: hy>=1.2.0,<=1.3.1 — hy の上限は packages/doeff-hy/pyproject.toml の 1 か所だけに置く」(載せ直した後の木)",
    "evidence": {
-    "path": "evidence/after-fix-real-B-marker-B-domain.log.txt",
-    "sha256": "99b6bc2802ca7eb448f7ba82584b133cfc408d2419f6ff5ec1cc1658e17aa958"
+    "path": "evidence/rebased-B-marker-B-domain.log.txt",
+    "sha256": "6524dd95a49b84d3cf2c13bc14f36ccb701c0bb111f694f4a1cab031455f2dc1"
    },
    "status": "passed"
   },
