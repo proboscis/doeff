@@ -1,0 +1,221 @@
+# 記録: L-U1-hy-index-forgot-to-empty-the-path
+# 時刻: 2026-10-12T13:28:42Z
+# 作業 dir: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/l-unbind/packages/doeff-linter
+# 対象の版: git の木ではない(一時の写し)
+# 命令: cargo test --offline --no-fail-fast --test facts_cache_shared
+# ---- 出力 ----
+warning: field `0` is never read
+   --> /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/l-unbind/packages/doeff-indexer/src/hy_index/raw.rs:183:11
+    |
+183 |     Local(String),
+    |     ----- ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+183 -     Local(String),
+183 +     Local(()),
+    |
+
+warning: `doeff-indexer` (lib) generated 1 warning
+warning: unused import: `self`
+  --> src/project/defn_to_defk.rs:35:5
+   |
+35 |     self,
+   |     ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `offset_of`
+  --> src/project/body_view.rs:34:23
+   |
+34 | use crate::position::{offset_of, Range};
+   |                       ^^^^^^^^^
+
+warning: unused import: `StmtClassDef`
+ --> src/rules/doeff005_no_setter_methods.rs:7:28
+  |
+7 | use rustpython_ast::{Stmt, StmtClassDef, StmtFunctionDef};
+  |                            ^^^^^^^^^^^^
+
+warning: unused imports: `StmtAsyncFunctionDef` and `StmtFunctionDef`
+ --> src/rules/doeff007_no_mutable_argument_mutations.rs:7:45
+  |
+7 | use rustpython_ast::{Arguments, Expr, Stmt, StmtAsyncFunctionDef, StmtFunctionDef};
+  |                                             ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused import: `StmtClassDef`
+ --> src/rules/doeff008_no_dataclass_attribute_mutation.rs:8:39
+  |
+8 | use rustpython_ast::{Expr, Mod, Stmt, StmtClassDef};
+  |                                       ^^^^^^^^^^^^
+
+warning: unused import: `ViolationLogEntry`
+ --> src/stats.rs:5:36
+  |
+5 | use crate::logging::{LintLogEntry, ViolationLogEntry};
+  |                                    ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::rules::base::LintRule`
+    --> src/project/architecture.rs:3034:13
+     |
+3034 |         use crate::rules::base::LintRule as _;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: irrefutable `if let` pattern
+   --> src/population.rs:190:24
+    |
+190 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+    = note: `#[warn(irrefutable_let_patterns)]` on by default
+
+warning: unused variable: `src`
+    --> src/project/body_view.rs:1324:13
+     |
+1324 |         let src = self.reader.hy.src;
+     |             ^^^ help: if this is intentional, prefix it with an underscore: `_src`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src/project/mod.rs:1146:17
+     |
+1146 |             let mut cached = hy_index::CachedHyFile::of(hy_index::index_file(root, path));
+     |                 ----^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff007_no_mutable_argument_mutations.rs:194:24
+    |
+194 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff008_no_dataclass_attribute_mutation.rs:209:28
+    |
+209 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:380:28
+    |
+380 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:487:28
+    |
+487 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:522:28
+    |
+522 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:663:28
+    |
+663 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+  --> src/rules/doeff014_no_try_except.rs:39:24
+   |
+39 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this pattern will always match, so the `if let` is useless
+   = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff018_no_ask_in_try.rs:151:24
+    |
+151 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff019_no_ask_with_fallback.rs:375:24
+    |
+375 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff024_no_recover_ask.rs:403:24
+    |
+403 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: `doeff-linter` (lib) generated 20 warnings (run `cargo fix --lib -p doeff-linter` to apply 8 suggestions)
+    Finished `test` profile [optimized] target(s) in 2.49s
+     Running tests/facts_cache_shared.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/../targets/mut/debug/deps/facts_cache_shared-b6b6ed53f73a1b8a)
+
+running 7 tests
+test module_dependencies_are_shared_between_checkouts_too ... ok
+test no_working_tree_path_is_left_in_the_shared_facts ... ok
+test a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first ... FAILED
+test a_second_run_in_the_same_tree_writes_no_facts ... ok
+test editing_one_file_writes_only_that_files_facts ... ok
+test a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite ... FAILED
+test editing_in_one_tree_does_not_remove_facts_another_tree_uses ... ok
+
+failures:
+
+---- a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first stdout ----
+
+thread 'a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first' (2091146) panicked at tests/facts_cache_shared.rs:129:9:
+hy-index.bin の事実が置かれていない: ["/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/13", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/06", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/02", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/09", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/05", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/11", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/15", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/03", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/08", "/tmp/.tmprc3OyI/objects/defk-names.json/27/80bb8314a3c6684076c520b684522e", "/tmp/.tmprc3OyI/objects/signature-facts.bin/05/b10ba7e967875349a22406561824e3", "/tmp/.tmprc3OyI/objects/defk-names.json/02/b415f7b019fc2f87f830e37aab5270", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/07", "/tmp/.tmprc3OyI/objects/signature-facts.bin/ab/3922d00f4d5ebd4891f4f6b4e96449", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/14", "/tmp/.tmprc3OyI/objects/signature-facts.bin/b4/fe37845e6c51b1a0d99a5dc842d1f6", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/09", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/06", "/tmp/.tmprc3OyI/objects/defk-names.json/52/0548f2e0176f94f53acf95cd6fd72b", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/05", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/01", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/04", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/08", "/tmp/.tmprc3OyI/objects/used", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/03", "/tmp/.tmprc3OyI/objects/signature-facts.bin/24/6ed9e362410925db0ec8103efbfb30", "/tmp/.tmprc3OyI/objects/signature-facts.bin/83/7db81170932b0f529dc8d9c40ce858", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/01", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/01", "/tmp/.tmprc3OyI/objects/defk-names.json/a0/6a772b0fcde8bb8dffda0c01efef75", "/tmp/.tmprc3OyI/objects/signature-facts.bin/5b/3ff413b75b3b8f264422da331594bb", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/01", "/tmp/.tmprc3OyI/objects/signature-facts.bin/8f/d1a9a768c2348bf112ed0a68b4f1c3", "/tmp/.tmprc3OyI/objects/program-params.json/7f/e66a088127036e66c3527987cb421d", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/00", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/05", "/tmp/.tmprc3OyI/objects/signature-facts.bin/2f/6d2924f2bb183571fbd1d462297e5c", "/tmp/.tmprc3OyI/objects/program-params.json/65/3ac6a10ba70224914283726f799049", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/15", "/tmp/.tmprc3OyI/objects/defk-names.json/0e/7773120f71b271a11a691b1995744f", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/05", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/04", "/tmp/.tmprc3OyI/objects/defk-names.json/55/6f27ca4f675418794016a7a6a0626c", "/tmp/.tmprc3OyI/objects/program-params.json/69/e8f8f406b6164e8676f7c9ff1ddac3", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/14", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/00", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/13", "/tmp/.tmprc3OyI/objects/defk-names.json/58/996211ede288d45fb76e2340a1829d", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/07", "/tmp/.tmprc3OyI/objects/defk-names.json/77/c28ef77f7edb9a22d4189e52d2b5ca", "/tmp/.tmprc3OyI/objects/program-params.json/e0/fed5c6426fec755e14ebdff967e265", "/tmp/.tmprc3OyI/objects/program-params.json/d0/1089e685b8b6e2eece93537b113fb1", "/tmp/.tmprc3OyI/objects/program-params.json/87/cba8309d12153b24b36d7523e606f0", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/12", "/tmp/.tmprc3OyI/.swept", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/05", "/tmp/.tmprc3OyI/objects/program-params.json/d8/be398ab14dd352054831c89ef330e8", "/tmp/.tmprc3OyI/objects/signature-facts.bin/eb/702e4466cc2bd39e60606dd6dc6dce", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/15", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/04", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/09", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/02", "/tmp/.tmprc3OyI/objects/signature-facts.bin/f0/6237b34ea5b3938a83a1471e9f24e3", "/tmp/.tmprc3OyI/objects/defk-names.json/56/01af7a93df86fce3e314e64cb0d4a3", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/02", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/13", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/12", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/05", "/tmp/.tmprc3OyI/objects/defk-names.json/7a/0af32c94466c876754d56175f1790d", "/tmp/.tmprc3OyI/objects/program-params.json/a1/5f75414183dec592539f68094561ca", "/tmp/.tmprc3OyI/objects/defk-names.json/b2/5e874d9fe1fa19494ffb6a462deb32", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/03", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/12", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/10", "/tmp/.tmprc3OyI/objects/defk-names.json/b9/0c0c9a95a556dc6214b8e5693264bb", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/06", "/tmp/.tmprc3OyI/objects/signature-facts.bin/6f/b174e62643a32e736d02c1dba4576f", "/tmp/.tmprc3OyI/objects/signature-facts.bin/e0/b7d38365f1dcb8d59c481867aa59c5", "/tmp/.tmprc3OyI/objects/defk-names.json/5b/a2d086d919d12dc25eb3682a8376c1", "/tmp/.tmprc3OyI/objects/signature-facts.bin/eb/58d86e2d47a8ab9047f2303de927d6", "/tmp/.tmprc3OyI/objects/signature-summaries.bin/5b/8284b5bd40a2c6dc23631f926257cd", "/tmp/.tmprc3OyI/objects/defk-names.json/7c/311ed749c989c86d0caffb566808b0", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/10", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/00", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/00", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/14", "/tmp/.tmprc3OyI/objects/program-params.json/0e/78760172dadc755d3d93d32c4efeb2", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/00", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/14", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/04", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/08", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/11", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/10", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/09", "/tmp/.tmprc3OyI/objects/signature-facts.bin/e4/bd4def508be8a0c89f5036e3a8dc2d", "/tmp/.tmprc3OyI/objects/program-params.json/65/ae5c8997605c218fbfc902f03bbc78", "/tmp/.tmprc3OyI/objects/defk-names.json/b2/3e2f0a40330833d7636e281355bf95", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/15", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/07", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/09", "/tmp/.tmprc3OyI/objects/program-params.json/28/ee6cc9b811fd69540bb5e9c197b63c", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/13", "/tmp/.tmprc3OyI/objects/program-params.json/5d/976d5b12e5ec140eeefc49f2391617", "/tmp/.tmprc3OyI/objects/defk-names.json/55/7996938ec55efa01fa6fe609ad3f23", "/tmp/.tmprc3OyI/.swept-cap", "/tmp/.tmprc3OyI/objects/defk-names.json/55/e234e82118a9b15ea0c617c4e84781", "/tmp/.tmprc3OyI/objects/program-params.json/b1/e0188d8745ad4a4dd25a6c0c6d4ceb", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/01", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/07", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/04", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/01", "/tmp/.tmprc3OyI/objects/program-params.json/73/e2896b1610fde1f552628c0c60b3a7", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/00", "/tmp/.tmprc3OyI/objects/program-params.json/61/5eeea808e8f9d3e28399bfd8afced2", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/02", "/tmp/.tmprc3OyI/objects/defk-names.json/54/634e5316948ad423ed77c9d013aeeb", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/07", "/tmp/.tmprc3OyI/objects/signature-facts.bin/95/fde1836d3a45999286329e463519fd", "/tmp/.tmprc3OyI/objects/signature-facts.bin/6f/87426ee8c407ea18f0b9d7db5ae3cd", "/tmp/.tmprc3OyI/objects/defk-names.json/d8/9b6b9c1c26fac4cf36c48299f26beb", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/06", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/13", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/06", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/11", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/03", "/tmp/.tmprc3OyI/objects/signature-facts.bin/b3/c409c1d4519e20e51f13664875c598", "/tmp/.tmprc3OyI/objects/signature-facts.bin/29/346756f04c02da30dd809a1d5a36c8", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/11", "/tmp/.tmprc3OyI/objects/defk-names.json/dc/29f198c8a1bbd05b4ced7161eac74e", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/08", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/07", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/11", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/12", "/tmp/.tmprc3OyI/objects/program-params.json/2a/04c883447c1cb9887df3454f206838", "/tmp/.tmprc3OyI/objects/signature-facts.bin/5b/660e4b74f5c9119e529b81452ccefd", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/11", "/tmp/.tmprc3OyI/objects/signature-facts.bin/f9/9e8fc77b81f168c07958a3d2850886", "/tmp/.tmprc3OyI/objects/program-params.json/64/fb3b5ee5bb716a0146aabb35855a57", "/tmp/.tmprc3OyI/objects/signature-facts.bin/53/49d4eaf9e4b962eb3a38d571481ca4", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/03", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/08", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/14", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/02", "/tmp/.tmprc3OyI/objects/program-params.json/25/b3e72af97c295e11876f9a131af559", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/10", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/08", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/15", "/tmp/.tmprc3OyI/objects/defk-names.json/d4/0c1abb590135d079905266fcb3a34b", "/tmp/.tmprc3OyI/objects/program-params.json/d1/5e1e2ce484066387460b1e6b96a759", "/tmp/.tmprc3OyI/objects/program-params.json/96/45de3e19f727442607fb537c3bcdec", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/09", "/tmp/.tmprc3OyI/objects/signature-facts.bin/cc/cbf867331f9b68e072c4a20e3ed1c6", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/15", "/tmp/.tmprc3OyI/b86c1c5c3db68154/failure-types.json.d/10", "/tmp/.tmprc3OyI/objects/defk-names.json/5a/862d9b9746cb1866cb0c5542e206c4", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/06", "/tmp/.tmprc3OyI/b86c1c5c3db68154/root.path", "/tmp/.tmprc3OyI/objects/program-params.json/6a/cd0a49f07158bb91eaf1dd47317752", "/tmp/.tmprc3OyI/objects/signature-facts.bin/9d/1ae60c5885ed2a4b3be2398d694f2d", "/tmp/.tmprc3OyI/objects/signature-facts.bin/36/3e61ceb15e87fec6417a1592947b22", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/14", "/tmp/.tmprc3OyI/objects/signature-facts.bin/b5/4db2b0affa45c63fce749b7ea61e4e", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-params.json.d/13", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/12", "/tmp/.tmprc3OyI/b86c1c5c3db68154/defk-names.json.d/10", "/tmp/.tmprc3OyI/b86c1c5c3db68154/hy-index.bin.d/02", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/04", "/tmp/.tmprc3OyI/b86c1c5c3db68154/program-fields.json.d/12", "/tmp/.tmprc3OyI/objects/program-params.json/34/6de1b3a92a6f8e2c455a07693627f0", "/tmp/.tmprc3OyI/objects/program-params.json/c8/a9203073901167df6445084f9aa2ef", "/tmp/.tmprc3OyI/b86c1c5c3db68154/used", "/tmp/.tmprc3OyI/objects/program-params.json/d3/f67f67582439e31727eb81d8a4d104", "/tmp/.tmprc3OyI/objects/defk-names.json/0f/d1a568bd8c4e46aa83bf257077d8f0", "/tmp/.tmprc3OyI/objects/defk-names.json/0f/0214b16752760d9256f91f223590fc", "/tmp/.tmprc3OyI/b86c1c5c3db68154/signature-facts.bin.d/03"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite stdout ----
+
+thread 'a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite' (2091148) panicked at tests/facts_cache_shared.rs:314:5:
+元の commit の新しい作業木 C が書いた byte 17171 が、A の 1 本目 119141 の 10% 以上
+
+
+failures:
+    a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first
+    a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite
+
+test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+error: test failed, to rerun pass `--test facts_cache_shared`
+error: 1 target failed:
+    `--test facts_cache_shared`
+# ---- 終了状態: 101 ----

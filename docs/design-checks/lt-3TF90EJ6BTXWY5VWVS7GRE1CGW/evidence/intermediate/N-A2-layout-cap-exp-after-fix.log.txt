@@ -1,0 +1,15 @@
+# 記録: N-A2-layout-cap-exp-after-fix
+# 時刻: 2026-10-12T12:16:07Z
+# 作業 dir: /tmp
+# 対象の版: git の木ではない(一時の写し)
+# 命令: /tmp/dc-lt3tf-scripts/exp.sh /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/bin/n-a1
+# ---- 出力 ----
+[1] 根 a を既定の上限で走らせる
+  exit=1
+  事実の file の数=30  objects の byte=19800
+  事実の file の例: objects/hy-index.bin/c0/c9/135be1e7ecbad4124504b0bf2112
+[2] 根 b を上限 1000 byte で走らせる(片づけの番・a の事実は 30 日前に使った物)
+  exit=1
+  30 日前の事実の残り=0  一時 file の残り=0  objects の byte=19800
+  置き場の全体の byte=25608(上限 1000)
+# ---- 終了状態: 0 ----

@@ -1,0 +1,911 @@
+# 記録: N-A1-presented-tests-after-fix-with-layout-change
+# 時刻: 2026-10-12T12:14:20Z
+# 作業 dir: /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/n-a1/packages/doeff-linter
+# 対象の版: git の木ではない(一時の写し)
+# 命令: cargo test --offline --no-fail-fast --lib --test facts_cache_shared --test facts_cache_roots --test hy_index_cache --test focused_run_reads
+# ---- 出力 ----
+   Compiling doeff-linter v0.2.0 (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/n-a1/packages/doeff-linter)
+   Compiling doeff-indexer v0.1.3 (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/n-a1/packages/doeff-indexer)
+warning: field `0` is never read
+   --> /work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/exp/n-a1/packages/doeff-indexer/src/hy_index/raw.rs:183:11
+    |
+183 |     Local(String),
+    |     ----- ^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+183 -     Local(String),
+183 +     Local(()),
+    |
+
+warning: `doeff-indexer` (lib) generated 1 warning
+warning: unused import: `self`
+  --> src/project/defn_to_defk.rs:35:5
+   |
+35 |     self,
+   |     ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `offset_of`
+  --> src/project/body_view.rs:34:23
+   |
+34 | use crate::position::{offset_of, Range};
+   |                       ^^^^^^^^^
+
+warning: unused import: `StmtClassDef`
+ --> src/rules/doeff005_no_setter_methods.rs:7:28
+  |
+7 | use rustpython_ast::{Stmt, StmtClassDef, StmtFunctionDef};
+  |                            ^^^^^^^^^^^^
+
+warning: unused imports: `StmtAsyncFunctionDef` and `StmtFunctionDef`
+ --> src/rules/doeff007_no_mutable_argument_mutations.rs:7:45
+  |
+7 | use rustpython_ast::{Arguments, Expr, Stmt, StmtAsyncFunctionDef, StmtFunctionDef};
+  |                                             ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused import: `StmtClassDef`
+ --> src/rules/doeff008_no_dataclass_attribute_mutation.rs:8:39
+  |
+8 | use rustpython_ast::{Expr, Mod, Stmt, StmtClassDef};
+  |                                       ^^^^^^^^^^^^
+
+warning: unused import: `ViolationLogEntry`
+ --> src/stats.rs:5:36
+  |
+5 | use crate::logging::{LintLogEntry, ViolationLogEntry};
+  |                                    ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::rules::base::LintRule`
+    --> src/project/architecture.rs:3034:13
+     |
+3034 |         use crate::rules::base::LintRule as _;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: irrefutable `if let` pattern
+   --> src/population.rs:190:24
+    |
+190 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+    = note: `#[warn(irrefutable_let_patterns)]` on by default
+
+warning: unused variable: `src`
+    --> src/project/body_view.rs:1324:13
+     |
+1324 |         let src = self.reader.hy.src;
+     |             ^^^ help: if this is intentional, prefix it with an underscore: `_src`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff007_no_mutable_argument_mutations.rs:194:24
+    |
+194 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff008_no_dataclass_attribute_mutation.rs:209:28
+    |
+209 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:380:28
+    |
+380 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:487:28
+    |
+487 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:522:28
+    |
+522 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff012_no_append_loop.rs:663:28
+    |
+663 |                         if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+  --> src/rules/doeff014_no_try_except.rs:39:24
+   |
+39 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this pattern will always match, so the `if let` is useless
+   = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff018_no_ask_in_try.rs:151:24
+    |
+151 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff019_no_ask_with_fallback.rs:375:24
+    |
+375 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: irrefutable `if let` pattern
+   --> src/rules/doeff024_no_recover_ask.rs:403:24
+    |
+403 |                     if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this pattern will always match, so the `if let` is useless
+    = help: consider replacing the `if let` with a `let`
+
+warning: `doeff-linter` (lib) generated 19 warnings (run `cargo fix --lib -p doeff-linter` to apply 7 suggestions)
+warning: `doeff-linter` (lib test) generated 18 warnings (18 duplicates)
+    Finished `test` profile [optimized] target(s) in 1m 44s
+     Running unittests src/lib.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/doeff_linter-bf46462ab648eeff)
+
+running 659 tests
+test check_slot::tests::cheap_and_caller_bounded_modes_take_no_slot ... ok
+test check_slot::tests::repo_scans_take_a_slot_named_by_their_mode ... ok
+test check_slot::tests::the_label_names_the_mode_and_the_working_tree ... ok
+test check_slot::tests::the_gate_command_hands_the_same_arguments_to_the_canon ... ok
+test commit_hook::tests::commit_hook_baseline_overlay_needs_a_reasoned_trailer ... ok
+test commit_hook::tests::commit_hook_a_declaration_change_moves_every_rule_to_the_whole_repo ... ok
+test commit_hook::tests::commit_hook_cpu_of_stat_sums_own_and_waited_children_ticks ... ok
+test commit_hook::tests::commit_hook_cut_measure_reads_cpu_seconds_and_keeps_a_wall_backstop ... ok
+test commit_hook::tests::commit_hook_blocking_ignores_warnings_and_criticals ... ok
+test commit_hook::tests::commit_hook_linted_paths_keep_existing_source_files ... ok
+test commit_hook::tests::commit_hook_names_a_retired_hand_list ... ok
+test commit_hook::tests::commit_hook_names_only_the_old_sha_trees_and_keys_repos_by_the_common_dir ... ok
+test commit_hook::tests::commit_hook_grown_major_warnings_counts_per_rule ... ok
+test commit_hook::tests::commit_hook_rebase_paths_moves_only_paths_under_the_tree ... ok
+test commit_hook::tests::commit_hook_split_rules_keeps_deterministic_rules_whose_id_starts_with_doeff2 ... ok
+test commit_hook::tests::commit_hook_timeout_prefers_cli_then_config_then_default ... ok
+test commit_hook::tests::commit_hook_tree_record_round_trips_and_refuses_a_broken_record ... ok
+test commit_hook::tests::commit_hook_unbounded_command_repeats_the_same_hook_without_a_limit ... ok
+test commit_hook::tests::commit_hook_unmeasured_line_names_the_comparison_tree_rules_and_limit ... ok
+test commit_hook::tests::commit_hook_split_rules_drops_semantic_and_separates_whole_repo_rules ... ok
+test config::project_settings_tests::newer_rule_ids_are_kept_as_unknown_references ... ok
+test config::project_settings_tests::reports_every_name_mismatch ... ok
+test config::project_settings_tests::rejects_empty_absolute_and_nested_layer_dirs ... ok
+test config::tests::test_find_pyproject_toml ... ok
+test config::project_settings_tests::reads_layers_roles_laws_and_registry ... ok
+test config::tests::test_merge_config ... ok
+test config::tests::test_load_config ... ok
+test config::tests::allowed_layers_clash_with_the_world_handler_list ... ok
+test editor::tests::rule_list_has_title_and_family_for_layer_python_and_law_entries ... ok
+test logging::tests::test_lint_log_entry_creation ... ok
+test config::tests::unknown_keys_at_every_depth_are_notices_and_the_rest_is_read ... ok
+test editor::tests::judged_rules_name_python_rules_noqa_and_the_project_judged_rules_only ... ok
+test config::tests::wrong_types_are_still_errors ... ok
+test logging::tests::test_logger_creation_and_write ... ok
+test logging::tests::truncating_a_long_japanese_line_does_not_split_a_character ... ok
+test position::tests::line_index_offset_agrees_with_offset_of ... ok
+test position::tests::line_range_runs_to_line_end_and_clamps ... ok
+test noqa::tests::test_parse_noqa_no_space_after_colon ... ok
+test noqa::tests::test_parse_file_noqa_with_comments ... ok
+test noqa::tests::test_warning_missing_space_before_dash ... ok
+test noqa::tests::test_warning_line_number ... ok
+test noqa::tests::test_parse_noqa_mixed_code_formats ... ok
+test noqa::tests::test_warning_prose_without_separator ... ok
+test noqa::tests::test_file_noqa_combined_with_line_noqa ... ok
+test noqa::tests::test_parse_file_noqa_ignored_after_code ... ok
+test noqa::tests::test_parse_file_noqa_multiline_docstring ... ok
+test noqa::tests::test_parse_file_noqa_specific_rule ... ok
+test noqa::tests::test_parse_noqa_multiple ... ok
+test noqa::tests::test_parse_noqa_multiple_no_spaces ... ok
+test noqa::tests::test_parse_file_noqa_after_docstring ... ok
+test noqa::tests::test_parse_noqa_lowercase ... ok
+test noqa::tests::test_no_warning_correct_format ... ok
+test noqa::tests::test_has_file_level_suppression ... ok
+test noqa::tests::test_parse_noqa_underscore_codes ... ok
+test noqa::tests::test_parse_noqa_all ... ok
+test noqa::tests::test_no_warning_hyphenated_rule_id ... ok
+test noqa::tests::test_is_suppressed ... ok
+test noqa::tests::test_parse_noqa_hyphen_codes ... ok
+test noqa::tests::test_parse_file_noqa_multiple_rules ... ok
+test logging::tests::test_truncate_source_line ... ok
+test noqa::tests::test_parse_file_noqa_case_insensitive ... ok
+test noqa::tests::test_parse_file_noqa_suppress_all ... ok
+test position::tests::utf16_columns_on_japanese_lines ... ok
+test noqa::tests::test_parse_noqa_with_trailing_comment ... ok
+test noqa::tests::test_parse_noqa_no_space_before_colon ... ok
+test project::affected_tests::tests::test_patterns_match_like_pytest ... ok
+test project::allowed_heads::tests::heads_are_the_first_symbol_of_each_paren_form_outside_strings_and_comments ... ok
+test noqa::tests::test_parse_noqa_comment_with_hyphenated_code ... ok
+test project::affected_tests::tests::module_names_follow_the_source_roots ... ok
+test project::architecture::tests::contract_spellings_are_keys_and_enum_const_values ... ok
+test noqa::tests::test_parse_noqa_specific ... ok
+test project::architecture::tests::assembly_shape_is_read_and_misreadings_are_errors ... ok
+test project::architecture::tests::clauses_and_their_exemptions_are_read ... ok
+test project::architecture::tests::invariants_are_module_colon_function_strings ... ok
+test project::architecture::tests::misreadings_are_errors_with_positions ... ok
+test project::architecture::tests::entry_modules_are_dotted_module_strings ... ok
+test project::architecture::tests::public_contract_http_is_read_and_cannot_be_depended_on ... ok
+test noqa::tests::test_offset_to_line ... ok
+test project::architecture::tests::unknown_keys_are_notices_and_the_rest_is_read ... ok
+test project::architecture::tests::wire_modules_are_dotted_module_patterns_and_need_a_foundation ... ok
+test project::architecture::tests::layer_files_name_existing_files_by_relative_path ... ok
+test project::architecture::tests::layer_rule_exemptions_name_their_modules_and_reasons ... ok
+test noqa::tests::test_parse_noqa_flake8_style ... ok
+test project::bare_calls::tests::bare_calls_inside_module_level_tables_are_found ... ok
+test project::bare_calls::tests::defk_names_come_from_top_level_defk_definitions ... ok
+test project::bare_calls::tests::defsystem_job_programs_are_declared_not_bare ... ok
+test project::bare_calls::tests::module_level_programs_that_are_run_passed_or_quoted_are_not_bare ... ok
+test project::architecture::tests::semantic_line_misreadings_are_errors ... ok
+test project::bare_calls::tests::bound_bare_calls_used_as_values_and_assert_messages_are_found ... ok
+test project::blind::tests::comments_become_spaces_of_the_same_length ... ok
+test project::bare_calls::tests::programs_that_are_passed_bound_or_returned_are_not_bare ... ok
+test project::bare_calls::tests::record_fields_declared_as_programs_carry_bare_calls_and_others_do_not ... ok
+test project::architecture::tests::reads_the_declaration_and_maps_it_to_layer_settings ... ok
+test project::architecture::tests::semantic_lines_are_read_for_the_jev_questions ... ok
+test project::architecture::tests::world_handler_contract_test_misshapen_reasons_are_errors ... ok
+test project::architecture::tests::world_handler_contract_test_reads_reasoned_and_bare_none ... ok
+test project::architecture::tests::world_handler_misreadings_are_errors ... ok
+test project::architecture::tests::world_handlers_are_read_with_a_closed_vocabulary_of_touches ... ok
+test project::assembly_shape::tests::every_law_is_judged ... ok
+test project::assembly_shape::tests::names_and_lists_are_read_from_the_source ... ok
+test project::bare_calls::tests::bare_calls_are_found_where_the_answer_is_used_as_a_value ... ok
+test project::bound_names::tests::bindings_are_environ_pairs_and_top_level_constants ... ok
+test project::broad_catches::tests::a_carrier_passes_the_bound_name_to_its_event ... ok
+test project::broad_catches::tests::broad_hy_catches_are_found_outside_strings_and_comments ... ok
+test project::business_fakes::tests::a_row_added_to_the_table_is_followed_by_the_judgement ... ok
+test project::broad_catches::tests::broad_python_catches_are_found_in_nested_statements ... ok
+test project::business_fakes::tests::clause_shapes_follow_every_row_of_the_table ... ok
+test project::call_sites::tests::walking_starts_at_the_literal_head_of_the_glob ... ok
+test project::business_fakes::tests::clause_shapes_split_forwarding_and_answering_endings ... ok
+test project::business_fakes::tests::counterexamples_of_foundation_effects_are_hits ... ok
+test project::business_fakes::tests::intent_effects_are_answered_by_one_translation_handler ... ok
+test project::business_fakes::tests::one_branch_forwarding_is_judged_alike_by_every_rule ... ok
+test project::business_fakes::tests::roles_follow_the_declaration ... ok
+test project::business_fakes::tests::services_without_counterexample_are_found ... ok
+test project::business_fakes::tests::entries_are_read ... ok
+test project::business_fakes::tests::fakes_of_business_effects_are_red_and_the_tables_do_not_rot ... ok
+test project::clause_coverage::tests::claims_of_undeclared_clauses_are_problems ... ok
+test project::bound_names::tests::names_bound_to_the_spelling_are_derived_until_none_grow ... ok
+test project::clause_coverage::tests::each_clause_needs_a_reaching_counterexample_or_an_exemption ... ok
+test project::call_sites::tests::calls_carry_their_parent_head_and_branch_tests ... ok
+test project::clause_coverage::tests::breaks_lines_are_read_and_bad_spellings_are_problems ... ok
+test project::confined_spellings::tests::an_empty_population_is_missing_not_green ... ok
+test project::confined_spellings::tests::a_spelling_in_a_string_is_counted_but_not_in_a_comment ... ok
+test project::business_fakes::tests::clause_operation_names_are_not_written_outside_the_table ... ok
+test project::clause_ops::tests::bundled_table_is_well_formed ... ok
+test project::counted_spellings::tests::within_counts_inside_each_named_definition ... ok
+test project::clause_ops::tests::unreadable_rows_are_refused_with_a_reason ... ok
+test project::contract_test_breach_tests::required_rings_only_without_an_edge_test ... ok
+test project::defn_to_defk::tests::a_blocked_caller_inside_a_candidate_cascades ... ok
+test project::defn_to_defk::tests::by_default_functions_are_converted_and_callers_left_are_listed ... ok
+test project::confined_spellings::tests::the_except_files_may_hold_the_spelling ... ok
+test project::contract_test_breach_tests::none_without_reason_rings_even_when_an_edge_test_exists ... ok
+test project::contract_test_breach_tests::waived_none_with_doeff_contract_test_passes_without_an_edge_test ... ok
+test project::confined_spellings::tests::named_paths_read_only_the_named_files ... ok
+test project::counted_spellings::tests::an_empty_population_is_missing_not_green ... ok
+test project::defn_to_defk::tests::dry_run_writes_nothing ... ok
+test project::counted_spellings::tests::at_least_accepts_more_and_other_files_are_read_as_they_are ... ok
+test project::counted_spellings::tests::the_total_over_the_files_must_be_the_count_and_comments_do_not_count ... ok
+test project::defn_to_defk::tests::threading_and_import_aliases_block ... ok
+test project::defn_to_defk::tests::tail_calls_and_recursion_inside_converted_functions_are_banged ... ok
+test project::defn_to_defk::tests::forms_that_are_not_targeted_are_skipped ... ok
+test project::effect_census::tests::an_empty_population_is_missing_not_green ... ok
+test project::env_branch::tests::comparisons_and_match_patterns_with_environment_values_hit ... ok
+test project::env_branch::tests::dry_run_flags_in_branch_tests_hit ... ok
+test project::env_branch::tests::other_values_comments_strings_and_quotes_do_not_hit ... ok
+test project::explain::tests::import_direction_uses_descriptions_and_falls_back_without_them ... ok
+test project::explain::tests::role_mismatch_names_both_the_path_and_the_tag ... ok
+test project::facts::tests::name_occurrences_count_symbols_and_type_strings_but_not_prose ... ok
+test project::facts::tests::python_tags_imports_and_broken_source ... ok
+test project::facts::tests::hy_imports_nested_relative_and_aliased ... ok
+test project::facts::tests::class_fields_for_doeff204_match_the_shared_case_table ... FAILED
+test project::effect_census::tests::python_and_hy_declarations_are_collected_and_comments_are_not ... ok
+test project::facts_cache::store::tests::a_too_short_root_makes_no_needle ... ok
+test project::facts::tests::hy_tags_from_contract_dict_module_tags_and_defeffect ... ok
+test project::call_view::tests::nested_rewrites_point_to_their_parent ... ok
+test project::call_view::tests::local_names_are_callable ... ok
+test project::call_view::tests::perform_keeps_the_bang_and_names_the_effect ... ok
+test project::effect_census::tests::hy_defeffect_declarations_count_as_effect_base ... ok
+test project::call_view::tests::multi_line_arguments_keep_line_breaks ... ok
+test project::affected_tests::tests::colliding_test_module_names_do_not_select_the_other_package_test ... ok
+test project::effect_census::tests::unlisted_twice_and_undeclared_effects_are_each_found ... ok
+test project::affected_tests::tests::an_import_of_a_colliding_name_binds_to_the_same_source_root ... ok
+test project::body_view::tests::sample_bodies_match_the_reading_plane_rows_with_control_forms ... ok
+test project::affected_tests::tests::a_python_chain_selects_the_test_at_distance_two_and_not_the_unrelated_test ... ok
+test project::body_view::tests::lines_and_ranges_point_back_to_the_source ... ok
+test project::field_holders::tests::a_field_annotation_holds_the_type_and_docstrings_methods_and_strings_do_not ... ok
+test project::call_view::tests::unknown_macros_and_control_forms_stay_lisp ... ok
+test project::field_holders::tests::an_empty_population_is_missing_and_an_unparsable_file_is_an_error ... ok
+test project::handler_arguments::tests::nested_handlers_are_read ... ok
+test project::handler_arguments::tests::population_uses_the_declaration ... ok
+test project::intent_coverage::tests::a_fully_covered_effect_has_no_gap ... ok
+test project::handler_arguments::tests::values_and_kept_handlers_are_green ... ok
+test project::handler_arguments::tests::python_classes_read_frozen ... ok
+test project::affected_tests::tests::a_module_used_by_too_many_files_is_named_as_a_hub_and_not_walked_through ... ok
+test project::field_holders::tests::named_classes_narrow_the_census_and_a_missing_one_is_found ... ok
+test project::handler_arguments::tests::counterexamples_are_red ... ok
+test project::field_holders::tests::the_word_must_stand_alone ... ok
+test project::affected_tests::tests::an_identifier_dir_with_its_own_pyproject_keeps_the_names_from_the_repo_root ... ok
+test project::field_holders::tests::unlisted_and_absent_holders_are_each_found ... ok
+test project::intent_coverage::tests::a_small_example_table_names_each_gap ... ok
+test project::judged_rules_tests::a_single_file_run_does_not_judge_rules_judged_only_on_the_whole_repo ... ok
+test project::layers::place_tests::place_patterns_capture_the_service_segment ... ok
+test project::macro_reach::tests::a_defn_named_in_a_macro_and_its_callees_are_reached_and_others_are_not ... ok
+test project::match_field_names::tests::hyphenated_keyword_fields_in_class_patterns_hit ... ok
+test project::macro_reach::tests::annotated_names_decorators_and_compile_time_blocks_are_read_as_definitions ... ok
+test project::match_field_names::tests::match_inside_defk_is_left_to_the_doeff_hy_workaround ... ok
+test project::judged_rules_tests::the_report_names_only_judged_rules_and_runs_nothing_else_on_a_single_file ... ok
+test project::facts_cache::store::tests::a_value_holding_the_root_path_is_not_stored ... ok
+test project::call_view::tests::call_keyword_method_and_nested_calls ... ok
+test project::body_view::tests::forms_outside_the_table_stay_marked_lisp ... ok
+test project::call_view::tests::subscript_and_attribute_forms ... ok
+test project::facts_cache::tests::reading_an_old_fact_refreshes_its_last_used_time ... ok
+test project::body_view::tests::sample_bodies_match_the_reading_plane_binding_rows ... ok
+test project::affected_tests::tests::a_hy_chain_through_require_selects_the_test_at_distance_two ... ok
+test project::body_view::tests::block_forms_follow_the_table ... ok
+test project::match_field_names::tests::underscore_fields_positional_patterns_and_keywords_outside_patterns_do_not_hit ... ok
+test project::call_view::tests::infix_keeps_parens_only_where_precedence_changes ... ok
+test project::body_view::tests::control_forms_follow_the_table ... ok
+test project::facts_cache::tests::facts_are_shared_only_for_the_same_name_contents_and_identity ... ok
+test project::facts_cache::store::tests::a_temporary_made_by_the_writer_is_recognised_by_the_lister ... ok
+test project::names::tests::environment_words_split_on_separators ... ok
+test project::facts_cache::tests::a_kind_that_forgot_to_unbind_the_root_path_is_computed_each_time_and_never_stored ... ok
+test project::names::tests::mangle_matches_hy ... ok
+test project::names::tests::module_and_relative_import ... ok
+test project::defn_to_defk::tests::existing_contract_dicts_are_kept_and_completed ... ok
+test project::notice::tests::locates_nested_top_level_and_section_keys ... ok
+test project::notice::tests::rule_id_shape_separates_newer_rules_from_typos ... ok
+test project::param_calls::tests::a_function_argument_called_bare_is_found_when_a_caller_passes_a_defk_or_fnk ... ok
+test project::param_calls::tests::plain_functions_passed_as_arguments_are_not_traced ... ok
+test project::intent_coverage::tests::the_service_is_the_longest_dir_prefix ... ok
+test project::facts_cache::tests::a_file_changed_while_its_fact_is_made_is_not_remembered ... ok
+test project::python_env::tests::aliases_and_bare_imports_are_found ... ok
+test project::body_view::tests::expression_forms_follow_the_table ... ok
+test project::python_env::tests::an_os_alias_after_another_module_in_one_import_is_found ... ok
+test project::python_env::tests::os_environ_and_getenv_are_found_with_their_function ... ok
+test project::defn_to_defk::tests::definitions_that_need_judgement_are_listed_with_the_reason ... ok
+test project::python_env::tests::os_imported_from_another_package_is_not_an_os_alias ... ok
+test project::python_reach::tests::annotations_and_except_types_are_not_evidence ... ok
+test project::python_env::tests::strings_comments_and_other_attributes_are_not_found ... ok
+test project::python_reach::tests::follows_python_calls_to_a_subprocess ... ok
+test project::body_view::tests::binding_call_effect_and_keyword_rows_follow_the_table ... ok
+test project::python_reach::tests::methods_constructors_and_hy_callees_are_followed ... ok
+test project::python_reach::tests::unparseable_module_is_named_in_errors ... ok
+test project::reason_comment_tests::reads_kind_and_detail_in_half_and_full_width ... ok
+test project::defn_to_defk::tests::definition_gets_contract_from_annotations_and_callers_are_rewritten ... ok
+test project::record_stubs::tests::kw_only_must_be_the_literal_true ... ok
+test project::record_stubs::tests::mangle_matches_hy ... ok
+test project::record_stubs::tests::unreadable_sides_are_reasons ... ok
+test project::record_waits::tests::handlers_that_answer_waits_and_match_patterns_are_not_hit ... ok
+test project::record_stubs::tests::kw_only_records_need_kw_only_in_the_stub ... ok
+test project::record_waits::tests::signal_sources_are_hit_with_or_without_the_module_name ... ok
+test project::record_waits::tests::waits_are_hit_unless_the_timeout_is_a_literal_zero ... ok
+test project::registry::tests::a_registry_path_that_is_not_a_readable_dir_is_still_a_problem ... ok
+test project::registry::tests::an_absent_shrinking_list_reads_as_empty_and_one_added_key_counts ... ok
+test project::retired::tests::calls_are_heads_of_forms_not_comments_or_strings ... ok
+test project::registry::tests::judged_keys_need_a_reason ... ok
+test project::retired::tests::hy_comments_and_docstrings_are_not_counted ... ok
+test project::retired::tests::markdown_files_are_not_counted ... ok
+test project::registry::tests::reads_dir_and_list_and_reads_a_missing_dir_as_empty ... ok
+test project::retired::tests::python_comments_and_docstrings_are_not_counted ... ok
+test project::retired::tests::hy_symbols_fields_and_command_strings_are_counted ... ok
+test project::retired::tests::paths_are_file_names_not_dirs_or_contents ... ok
+test project::rule::tests::every_rule_has_a_non_empty_label ... ok
+test project::rule::tests::jev_rules_are_not_critical_until_calibrated ... ok
+test project::semantic::tests::a_remembered_answer_is_not_charged_again ... ok
+test project::semantic::tests::an_answer_with_a_cost_is_charged_that_cost ... ok
+test project::semantic::tests::an_answer_without_a_cost_is_unreported_not_zero ... ok
+test project::semantic::tests::an_old_cache_answer_reads_its_cost_as_unknown ... ok
+test project::retired::tests::words_stand_alone_and_rule_lines_are_skipped ... ok
+test project::semantic::tests::half_written_definitions_are_not_readable ... ok
+test project::retired::tests::hash_comments_are_not_counted_in_shell_and_other_files ... ok
+test project::retired::tests::python_stub_files_are_read_as_python ... ok
+test project::defn_to_defk::tests::functions_with_callers_that_cannot_be_rewritten_are_left_and_listed ... ok
+test project::retired::tests::patterns_hit_once_per_line_and_key_by_group ... ok
+test project::semantic::tests::lined_instructions_go_in_the_declared_order_with_the_lines_last ... ok
+test project::retired::tests::contract_spellings_skip_exact_python_strings_only ... ok
+test project::retired::tests::names_are_read_from_definitions_only ... ok
+test project::retired::tests::shebang_lines_are_counted_in_every_kind_of_file ... ok
+test project::retired::tests::contract_spellings_skip_the_name_part_of_system_io_spellings_only ... ok
+test project::retired::tests::contract_spellings_skip_exact_strings_and_defwire_fields_only ... ok
+test project::facts_cache::store::tests::every_object_written_is_listed_and_a_deeper_layout_is_still_counted ... ok
+test project::rule::tests::family_matches_the_assignment_table_for_all_33_rules ... ok
+test project::semantic::tests::a_usage_only_answer_keeps_tokens_and_leaves_the_cost_unreported ... ok
+test project::semantic::tests::target_resolution_matches_doeff_jev ... ok
+test project::semantic::tests::the_transport_knowledge_frame_weighs_untyped_field_reads_like_transport ... ok
+test project::retired::tests::globs_are_anchored_at_the_root ... ok
+test project::signatures::tests::inference_key_ignores_positions_and_follows_what_inference_reads ... ok
+test project::semantic::tests::lines_go_into_the_instructions_of_their_questions_only ... ok
+test project::semantic::tests::repo_proxy_gets_no_key_and_env_url_wins ... ok
+test project::signatures::tests::docstring_before_contract_and_untrackable_calls_are_read ... ok
+test project::smells::tests::bind_then_return_only_when_the_name_is_not_used_again ... ok
+test project::smells::tests::rebuilt_accumulators_only_inside_loops ... ok
+test project::spelling_scope::tests::byte_positions_are_kept_and_other_files_are_read_as_they_are ... ok
+test project::semantic::tests::strips_tags_truncates_and_keys_do_not_see_declared_roles ... ok
+test project::semantic::tests::the_mixed_concerns_note_states_the_exceptions_of_the_lines ... ok
+test project::signatures::tests::pure_defk_signature_reads_pre_post_and_tags ... ok
+test project::signatures::tests::quoted_forms_are_not_read ... ok
+test project::signatures::tests::effect_mismatches_point_at_the_call_and_the_declaration ... ok
+test project::smells::tests::failure_arms_that_only_return_the_failure_are_found ... ok
+test project::signatures::tests::effects_are_inferred_transitively_with_absent_and_raise ... ok
+test project::smells::tests::failure_types_come_from_declarations_not_names ... ok
+test project::single_point_vocabulary::tests::the_except_file_itself_is_never_a_hit ... ok
+test project::smells::tests::fields_joined_into_a_string ... ok
+test project::signatures::tests::foreign_effects_are_inferred_so_declarations_match ... ok
+test project::semantic::tests::without_lines_the_questions_and_keys_stay_as_before ... ok
+test project::smells::tests::shape_checks_on_string_keys_are_found_only_when_asked ... ok
+test project::single_point_vocabulary::tests::non_hy_files_are_not_walked ... ok
+test project::single_point_vocabulary::tests::a_mention_inside_a_comment_or_string_is_not_counted ... ok
+test project::single_point_vocabulary::tests::a_pattern_hit_is_counted_and_positioned_at_its_first_line ... ok
+test project::system_decls::tests::read_system_reads_params_and_positional_foundation_arguments ... ok
+test project::system_decls::tests::type_head_reads_the_outer_name ... ok
+test project::test_forms::tests::lines_are_read_by_their_head ... ok
+test project::timed_refetch::tests::effects_answered_by_a_timed_wait_and_module_sleeps_are_followed ... ok
+test project::timed_refetch::tests::a_deadline_that_only_ends_the_wait_is_not_hit_but_one_that_reads_again_is ... ok
+test project::signatures::tests::bindings_carry_types_or_null_when_unknown ... ok
+test project::typed_values::tests::a_plain_shape_name_still_flags_the_other_kind ... ok
+test project::spelling_scope::tests::hy_comments_are_blanked_and_strings_are_kept ... ok
+test project::typed_values::tests::bare_tuple_in_post_still_flags ... ok
+test project::typed_values::tests::an_index_by_key_is_not_flagged ... ok
+test project::typed_values::tests::a_sort_key_tuple_is_not_flagged ... ok
+test project::typed_values::tests::a_public_return_tuple_and_a_record_field_dict_still_flag ... ok
+test project::single_point_vocabulary::tests::named_paths_read_only_the_named_files_with_the_same_answer ... ok
+test project::typed_values::tests::dict_smell_counts_built_mappings_and_map_fields_outside_their_place ... ok
+test project::signatures::tests::absent_suffix_and_absent_as_do_not_wrap_in_maybe ... ok
+test project::typed_values::tests::dict_smell_does_not_count_sequences_of_opaque_json_relays ... ok
+test project::typed_values::tests::dict_smell_does_not_count_unions_of_opaque_json_and_records ... ok
+test project::top_level::tests::only_top_level_definitions_of_the_mangled_name_are_found ... ok
+test project::spelling_scope::tests::python_comments_are_blanked_and_strings_are_kept ... ok
+test project::spelling_scope::tests::the_walk_starts_at_the_fixed_head_of_the_glob ... ok
+test project::spelling_scope::tests::selected_files_honour_files_except_and_extensions ... ok
+test project::system_access::tests::function_writes_read_the_contract_after_the_docstring ... ok
+test project::system_access::tests::job_rows_read_the_access_fields_and_leave_absent_ones_none ... ok
+test project::system_decls::tests::read_system_reads_an_annotated_foundation_by_its_name ... ok
+test project::timed_refetch::tests::helpers_are_collected_then_their_callers_in_loops_are_hit ... ok
+test project::timed_refetch::tests::reasons_are_a_closed_vocabulary ... ok
+test project::typed_values::tests::dict_smell_honours_a_boundary_named_defwire_only ... ok
+test project::timed_refetch::tests::same_shape_twice_in_one_definition_is_one_finding ... ok
+test project::single_point_vocabulary::tests::a_line_that_judges_the_field_is_still_counted ... ok
+test project::single_point_vocabulary::tests::a_line_that_only_copies_the_field_is_not_counted ... ok
+test project::timed_refetch::tests::now_bound_through_names_and_clock_helpers_are_followed ... ok
+test project::timed_refetch::tests::timers_on_now_plus_seconds_in_loops_are_hit_and_one_shot_deadlines_are_not ... ok
+test project::typed_values::tests::dict_smell_does_not_count_opaque_json_relay_fields ... ok
+test project::typed_values::tests::discarded_and_quoted_forms_follow_the_lexical_reading ... ok
+test project::typed_values::tests::dict_smell_skips_the_contract_after_a_docstring_and_honours_spells_outside_core ... ok
+test project::typed_values::tests::element_typed_tuple_in_post_is_not_flagged ... ok
+test project::typed_values::tests::dict_smell_honours_spells_and_reads_with_a_form_name_only ... ok
+test project::typed_values::tests::key_and_value_typed_dict_field_is_not_flagged ... ok
+test project::typed_values::tests::hy_flagged_and_allowed_types ... ok
+test project::timed_refetch::tests::moments_fixed_before_the_loop_are_not_hit_and_moments_bound_in_the_loop_are ... ok
+test project::typed_values::tests::private_names_are_not_counted_and_methods_are ... ok
+test project::typed_values::tests::post_reds_only_mappings_when_the_name_is_annotated_and_tuples_too_when_not ... ok
+test project::typed_values::tests::returned_pair_literals_are_red_but_nested_functions_are_not ... ok
+test project::typed_values::tests::hy_fields_of_defclass_defrecord_defwire_in_all_three_spellings ... ok
+test project::typed_values::tests::sql_arguments_in_order_are_not_flagged ... ok
+test project::typed_values::tests::open_element_generics_still_flag ... ok
+test project::typed_values::tests::unreadable_files_are_reasons_not_silence ... ok
+test project::typed_values::tests::wire_free_layer_lets_typed_records_and_sequences_through ... ok
+test project::unreadable::tests::an_unreadable_file_is_an_error_at_its_first_broken_place ... ok
+test project::typed_values::tests::wire_free_layer_names_defwire_and_maps_in_contracts_and_fields ... ok
+test project::world_catalog::tests::misreadings_are_reasons ... ok
+test report::tests::test_rule_info_complete ... ok
+test rules::doeff001_builtin_shadowing::tests::test_async_function_shadowing ... ok
+test rules::doeff001_builtin_shadowing::tests::test_builtin_shadowing_dict ... ok
+test rules::doeff001_builtin_shadowing::tests::test_builtin_shadowing_list ... ok
+test rules::doeff001_builtin_shadowing::tests::test_no_shadowing ... ok
+test project::world_catalog::tests::bundled_catalog_is_well_formed ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_a_nested_class_assigns_to_its_own_instance ... ok
+test project::typed_values::tests::python_fields_in_the_wire_free_layer ... ok
+test report::tests::test_generate_empty_report ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_descriptor_set_name_is_initialization ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_mutable_attribute_without_prefix ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_private_mutable_attribute ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_assignments_in_init_bodies_stay_initialization ... ok
+test project::typed_values::tests::dict_smell_skips_match_patterns_but_counts_the_subject_guard_and_body ... ok
+test rules::doeff003_max_mutable_attributes::tests::test_too_many_mutable_attributes ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_properly_named_mutable_attributes ... ok
+test project::typed_values::tests::python_fields_returns_methods_but_not_nested_or_private ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_assignments_in_async_methods_and_every_nested_body_are_counted ... ok
+test rules::doeff004_no_os_environ::tests::test_reads_through_import_os_as_alias_are_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_rebinding_a_bare_name_is_not_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_references_not_bound_to_os_are_not_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_writes_and_deletes_are_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_references_through_aliases_are_seen ... ok
+test rules::doeff003_max_mutable_attributes::tests::test_within_limit ... ok
+test rules::doeff004_no_os_environ::tests::test_aliases_imported_inside_a_function_are_seen ... ok
+test rules::doeff005_no_setter_methods::tests::test_property_setter ... ok
+test rules::doeff005_no_setter_methods::tests::test_setter_method ... ok
+test rules::doeff004_no_os_environ::tests::test_writes_are_seen_once_each ... ok
+test rules::doeff004_no_os_environ::tests::test_environ_as_a_default_value_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_environ_assigned_or_returned_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_environ_in_a_conditional_branch_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_environ_unpacked_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_environ_passed_as_an_argument_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_environ_method_referred_without_calling_is_seen ... ok
+test project::facts_cache::tests::a_bound_path_is_attached_after_reading_and_never_stored ... ok
+test rules::doeff004_no_os_environ::tests::test_getenv_referred_without_calling_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_membership_in_environ_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_names_not_bound_to_os_are_not_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_no_environ_access ... ok
+test rules::doeff004_no_os_environ::tests::test_one_read_is_counted_once ... ok
+test rules::doeff004_no_os_environ::tests::test_os_environ_get ... ok
+test rules::doeff004_no_os_environ::tests::test_os_environ_subscript ... ok
+test rules::doeff004_no_os_environ::tests::test_os_getenv ... ok
+test rules::doeff004_no_os_environ::tests::test_read_inside_or_is_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_reads_in_nested_statements_are_counted_once_each ... ok
+test rules::doeff004_no_os_environ::tests::test_reads_through_from_os_import_environ_are_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_reads_inside_every_kind_of_expression_are_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_reads_through_from_os_import_environ_as_alias_are_seen ... ok
+test rules::doeff004_no_os_environ::tests::test_reads_through_from_os_import_getenv_and_its_alias_are_seen ... ok
+test rules::doeff002_mutable_attribute_naming::tests::test_value_kept_on_first_use_is_mutated ... ok
+test rules::doeff006_no_tuple_returns::tests::test_a_fixed_pair_still_fires_beside_a_sequence ... ok
+test rules::doeff006_no_tuple_returns::tests::test_a_homogeneous_sequence_is_not_a_tuple_return ... ok
+test rules::doeff006_no_tuple_returns::tests::test_dataclass_return_allowed ... ok
+test rules::doeff006_no_tuple_returns::tests::test_lowercase_tuple ... ok
+test rules::doeff006_no_tuple_returns::tests::test_optional_tuple ... ok
+test rules::doeff006_no_tuple_returns::tests::test_tuple_return_type ... ok
+test rules::doeff007_no_mutable_argument_mutations::tests::test_dict_assignment ... ok
+test rules::doeff007_no_mutable_argument_mutations::tests::test_no_mutation ... ok
+test rules::doeff008_no_dataclass_attribute_mutation::tests::test_dataclass_mutation ... ok
+test rules::doeff009_missing_return_type_annotation::tests::test_async_function ... ok
+test rules::doeff008_no_dataclass_attribute_mutation::tests::test_heuristic_detection ... ok
+test rules::doeff009_missing_return_type_annotation::tests::test_has_return_type ... ok
+test rules::doeff009_missing_return_type_annotation::tests::test_init_skipped ... ok
+test rules::doeff009_missing_return_type_annotation::tests::test_missing_return_type ... ok
+test rules::doeff011_no_flag_arguments::tests::test_flag_like_name_without_annotation ... ok
+test rules::doeff011_no_flag_arguments::tests::test_dataclass_literal_attribute ... ok
+test rules::doeff007_no_mutable_argument_mutations::tests::test_list_append ... ok
+test rules::doeff010_test_file_placement::tests::a_non_test_module_inside_a_package_is_not_flagged ... ok
+test rules::doeff008_no_dataclass_attribute_mutation::tests::test_dataclass_replace_allowed ... ok
+test rules::doeff011_no_flag_arguments::tests::test_literal_mode_argument ... ok
+test rules::doeff011_no_flag_arguments::tests::test_method_with_flag ... ok
+test rules::doeff011_no_flag_arguments::tests::test_optional_bool_flag ... ok
+test rules::doeff012_no_append_loop::tests::test_annotated_empty_list ... ok
+test rules::doeff011_no_flag_arguments::tests::test_strategy_pattern_allowed ... ok
+test rules::doeff012_no_append_loop::tests::test_basic_append_loop ... ok
+test rules::doeff012_no_append_loop::tests::test_chained_pipelines ... ok
+test rules::doeff005_no_setter_methods::tests::test_with_method_allowed ... ok
+test rules::doeff012_no_append_loop::tests::test_visualization_context_from_import ... ok
+test rules::doeff012_no_append_loop::tests::test_no_visualization_import_still_violates ... ok
+test rules::doeff012_no_append_loop::tests::test_visualization_context_matplotlib_import ... ok
+test rules::doeff012_no_append_loop::tests::test_visualization_context_plotly ... ok
+test rules::doeff012_no_append_loop::tests::test_visualization_context_seaborn ... ok
+test rules::doeff012_no_append_loop::tests::test_visualization_not_used_still_violates ... ok
+test rules::doeff012_no_append_loop::tests::test_visualization_inside_function ... ok
+test rules::doeff012_no_append_loop::tests::test_yield_context_suggests_gather ... ok
+test rules::doeff010_test_file_placement::tests::a_test_file_inside_a_package_is_flagged ... ok
+test rules::doeff010_test_file_placement::tests::a_test_file_in_a_directory_without_init_is_not_flagged ... ok
+test project::facts_cache::tests::a_second_root_with_the_same_contents_reads_the_facts_the_first_wrote ... ok
+test rules::doeff010_test_file_placement::tests::a_test_file_under_tests_inside_a_package_is_not_flagged ... ok
+test rules::doeff011_no_flag_arguments::tests::test_bool_flag_argument ... ok
+test rules::doeff011_no_flag_arguments::tests::test_dataclass_bool_attribute ... ok
+test rules::doeff011_no_flag_arguments::tests::test_multiple_flags ... ok
+test rules::doeff011_no_flag_arguments::tests::test_async_function_with_flag ... ok
+test rules::doeff010_test_file_placement::tests::a_bare_test_py_inside_a_nested_package_is_flagged ... ok
+test rules::doeff011_no_flag_arguments::tests::test_non_dataclass_not_checked ... ok
+test rules::doeff011_no_flag_arguments::tests::test_regular_bool_parameter_allowed ... ok
+test rules::doeff012_no_append_loop::tests::test_different_variable_no_violation ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_async_function ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_class_method ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_maybe_allowed ... ok
+test rules::doeff010_test_file_placement::tests::a_plain_directory_under_a_package_is_not_flagged ... ok
+test rules::doeff012_no_append_loop::tests::test_inside_function ... ok
+test rules::doeff012_no_append_loop::tests::test_long_append_loop ... ok
+test rules::doeff012_no_append_loop::tests::test_nested_append ... ok
+test rules::doeff012_no_append_loop::tests::test_no_violation_for_comprehension ... ok
+test rules::doeff012_no_append_loop::tests::test_no_violation_for_non_empty_init ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_multiple_optional_params ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_non_optional_allowed ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_none_union_syntax_reversed ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_optional_parameter ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_optional_return_type ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_union_none_syntax ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_typing_optional_qualified ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_union_with_none ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_union_parameter ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_variable_union_annotation ... ok
+test rules::doeff013_prefer_maybe_monad::tests::test_variable_annotation ... ok
+test rules::doeff014_no_try_except::tests::test_bare_except ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_message_contains_fix_suggestions ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_no_annotation_ignored ... ok
+test rules::doeff014_no_try_except::tests::test_async_function_with_try ... ok
+test rules::doeff014_no_try_except::tests::test_multiple_except_handlers ... ok
+test rules::doeff014_no_try_except::tests::test_nested_try_except ... ok
+test rules::doeff014_no_try_except::tests::test_no_try_except ... ok
+test rules::doeff014_no_try_except::tests::test_simple_try_except ... ok
+test rules::doeff014_no_try_except::tests::test_try_except_else ... ok
+test rules::doeff014_no_try_except::tests::test_try_except_finally ... ok
+test rules::doeff014_no_try_except::tests::test_try_in_class_method ... ok
+test rules::doeff014_no_try_except::tests::test_try_in_match_case ... ok
+test rules::doeff014_no_try_except::tests::test_try_inside_for_loop ... ok
+test rules::doeff014_no_try_except::tests::test_try_inside_if ... ok
+test rules::doeff014_no_try_except::tests::test_try_inside_while_loop ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_non_program_type_ignored ... ok
+test rules::doeff014_no_try_except::tests::test_try_inside_with ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_program_fail_allowed ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_program_pure_allowed ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_program_with_args_allowed ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_program_with_keyword_args_allowed ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_program_with_positional_args_allowed ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_underscore_prefix_factory ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_zero_arg_program_call ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_zero_arg_program_dataframe ... ok
+test rules::doeff015_no_zero_arg_program::tests::test_zero_arg_program_generic_call ... ok
+test rules::doeff016_no_relative_import::tests::test_absolute_import_allowed ... ok
+test rules::doeff016_no_relative_import::tests::test_absolute_import_top_level_allowed ... ok
+test rules::doeff016_no_relative_import::tests::test_double_dot_import ... ok
+test rules::doeff016_no_relative_import::tests::test_error_message_contains_fix_suggestion ... ok
+test rules::doeff016_no_relative_import::tests::test_multiple_relative_imports ... ok
+test rules::doeff016_no_relative_import::tests::test_regular_import_allowed ... ok
+test rules::doeff016_no_relative_import::tests::test_relative_import_multiple_names ... ok
+test rules::doeff016_no_relative_import::tests::test_single_dot_import_with_module ... ok
+test rules::doeff016_no_relative_import::tests::test_single_dot_import_without_module ... ok
+test rules::doeff016_no_relative_import::tests::test_triple_dot_import ... ok
+test rules::doeff017_no_program_type_param::tests::test_async_function ... ok
+test rules::doeff017_no_program_type_param::tests::test_do_with_call_syntax ... ok
+test rules::doeff017_no_program_type_param::tests::test_message_explains_intentional_use ... ok
+test rules::doeff017_no_program_type_param::tests::test_error_message_contains_fix ... ok
+test rules::doeff017_no_program_type_param::tests::test_mixed_params ... ok
+test rules::doeff017_no_program_type_param::tests::test_no_annotation_ignored ... ok
+test rules::doeff017_no_program_type_param::tests::test_keyword_only_args ... ok
+test rules::doeff017_no_program_type_param::tests::test_multiple_params_with_program ... ok
+test rules::doeff017_no_program_type_param::tests::test_non_do_function_ignored ... ok
+test rules::doeff017_no_program_type_param::tests::test_severity_is_warning ... ok
+test rules::doeff017_no_program_type_param::tests::test_program_type_without_param_detected ... ok
+test rules::doeff017_no_program_type_param::tests::test_underlying_type_allowed ... ok
+test rules::doeff017_no_program_type_param::tests::test_union_with_program ... ok
+test project::facts_cache::tests::only_changed_files_are_read_again_and_the_answer_is_the_same ... ok
+test rules::doeff017_no_program_type_param::tests::test_program_type_param_detected ... ok
+test rules::doeff018_no_ask_in_try::tests::test_ask_in_finally ... ok
+test rules::doeff018_no_ask_in_try::tests::test_ask_in_try_block ... ok
+test rules::doeff018_no_ask_in_try::tests::test_ask_in_except_handler ... ok
+test rules::doeff018_no_ask_in_try::tests::test_ask_in_try_inside_if ... ok
+test rules::doeff018_no_ask_in_try::tests::test_ask_in_try_with_for_loop ... ok
+test rules::doeff018_no_ask_in_try::tests::test_ask_outside_try_block ... ok
+test rules::doeff018_no_ask_in_try::tests::test_async_function_with_ask_in_try ... ok
+test rules::doeff018_no_ask_in_try::tests::test_multiple_ask_in_try ... ok
+test rules::doeff018_no_ask_in_try::tests::test_nested_try_with_ask ... ok
+test rules::doeff018_no_ask_in_try::tests::test_no_ask_just_try ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_in_function_body_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_in_if_body_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_in_list_comprehension_with_extra_arg ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_single_arg_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_default_value ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_extra_arg_in_nested_function ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_none_default ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_keyword_default ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_multiple_fallbacks ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_string_default ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_nested_function_with_fallback ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_nested_or_pattern ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_or_fallback_pattern ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_or_fallback_with_parentheses_on_yield ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_standalone_ask_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ternary_with_ask_in_else ... ok
+test rules::doeff020_program_naming_convention::tests::test_complex_generic_type ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_multiple_extra_args ... ok
+test rules::doeff020_program_naming_convention::tests::test_non_program_type_ignored ... ok
+test rules::doeff020_program_naming_convention::tests::test_no_annotation_ignored ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_with_variable_key_allowed ... ok
+test rules::doeff020_program_naming_convention::tests::test_p_prefix_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_ask_without_yield_with_extra_arg ... ok
+test rules::doeff020_program_naming_convention::tests::test_union_type_with_program ... ok
+test rules::doeff021_no_dunder_all::tests::test_all_in_string_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_async_function_with_fallback ... ok
+test rules::doeff021_no_dunder_all::tests::test_all_with_tuple ... ok
+test rules::doeff021_no_dunder_all::tests::test_annotated_all_assignment ... ok
+test rules::doeff021_no_dunder_all::tests::test_annotated_all_with_list_str ... ok
+test rules::doeff021_no_dunder_all::tests::test_aug_assign_all ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_if_else_fallback_pattern ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_other_function_with_two_args_allowed ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_multiple_ask_with_extra_args ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_regular_ternary_without_ask ... ok
+test rules::doeff020_program_naming_convention::tests::test_other_naming_info_level ... ok
+test rules::doeff020_program_naming_convention::tests::test_program_generic_suffix_deprecated ... ok
+test rules::doeff022_prefer_do_function::tests::test_function_with_do_call_allowed ... ok
+test rules::doeff022_prefer_do_function::tests::test_function_without_do_flagged ... ok
+test rules::doeff022_prefer_do_function::tests::test_main_function_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_private_method_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_noqa_mentioned_in_message ... ok
+test rules::doeff022_prefer_do_function::tests::test_property_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_staticmethod_skipped ... ok
+test rules::doeff020_program_naming_convention::tests::test_program_suffix_deprecated ... ok
+test rules::doeff020_program_naming_convention::tests::test_suggestion_for_program_suffix ... ok
+test rules::doeff019_no_ask_with_fallback::tests::test_regular_or_without_ask ... ok
+test rules::doeff020_program_naming_convention::tests::test_p_prefix_generic_allowed ... ok
+test rules::doeff021_no_dunder_all::tests::test_empty_all ... ok
+test rules::doeff021_no_dunder_all::tests::test_message_contains_fix_suggestion ... ok
+test rules::doeff021_no_dunder_all::tests::test_other_dunder_variables_allowed ... ok
+test rules::doeff021_no_dunder_all::tests::test_multiple_all_declarations ... ok
+test rules::doeff021_no_dunder_all::tests::test_regular_variable_allowed ... ok
+test rules::doeff021_no_dunder_all::tests::test_simple_all_assignment ... ok
+test rules::doeff022_prefer_do_function::tests::test_abstractmethod_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_async_function_with_do_allowed ... ok
+test rules::doeff022_prefer_do_function::tests::test_async_function_without_do_flagged ... ok
+test rules::doeff022_prefer_do_function::tests::test_classmethod_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_dunder_method_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_fixture_decorator_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_function_with_do_allowed ... ok
+test rules::doeff022_prefer_do_function::tests::test_public_method_flagged ... ok
+test rules::doeff022_prefer_do_function::tests::test_test_function_skipped ... ok
+test rules::doeff023_pipeline_marker::tests::test_async_do_function_with_marker_in_docstring ... ok
+test rules::doeff023_pipeline_marker::tests::test_async_do_function_with_marker_on_def_line ... ok
+test rules::doeff023_pipeline_marker::tests::test_async_do_function_with_marker_on_do_line ... ok
+test rules::doeff023_pipeline_marker::tests::test_async_do_function_without_marker_violation ... ok
+test rules::doeff023_pipeline_marker::tests::test_do_function_with_marker_in_docstring ... ok
+test rules::doeff023_pipeline_marker::tests::test_do_call_syntax ... ok
+test rules::doeff023_pipeline_marker::tests::test_do_function_with_marker_no_space ... ok
+test rules::doeff023_pipeline_marker::tests::test_do_function_with_marker_on_def_line ... ok
+test rules::doeff023_pipeline_marker::tests::test_do_function_with_marker_on_do_line ... ok
+test rules::doeff023_pipeline_marker::tests::test_do_function_without_marker_violation ... ok
+test rules::doeff023_pipeline_marker::tests::test_generic_program_type ... ok
+test rules::doeff023_pipeline_marker::tests::test_marker_in_multiline_docstring ... ok
+test rules::doeff023_pipeline_marker::tests::test_message_contains_all_fix_options ... ok
+test rules::doeff022_prefer_do_function::tests::test_setup_teardown_skipped ... ok
+test rules::doeff022_prefer_do_function::tests::test_severity_is_info ... ok
+test rules::doeff023_pipeline_marker::tests::test_mixed_sync_and_async_functions ... ok
+test rules::doeff023_pipeline_marker::tests::test_non_do_function_ignored ... ok
+test rules::doeff023_pipeline_marker::tests::test_test_file_skipped ... ok
+test rules::doeff024_no_recover_ask::tests::test_async_function_with_recover_ask ... ok
+test rules::doeff024_no_recover_ask::tests::test_multiple_recover_with_ask ... ok
+test rules::doeff024_no_recover_ask::tests::test_nested_function_with_recover_ask ... ok
+test rules::doeff024_no_recover_ask::tests::test_other_functions_with_ask_allowed ... ok
+test rules::doeff023_pipeline_marker::tests::test_multiple_do_functions ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_with_ask_and_lambda_fallback ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_uppercase_with_ask ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_with_ask_direct ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_with_keyword_sub_program ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_with_non_ask_allowed ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_with_nested_ask ... ok
+test rules::doeff023_pipeline_marker::tests::test_non_program_type_ignored ... ok
+test rules::doeff024_no_recover_ask::tests::test_standalone_ask_allowed ... ok
+test rules::doeff024_no_recover_ask::tests::test_recover_without_ask_in_first_arg ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_annotation_present_ok ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_dynamic_string_key_skipped_for_protocol_checks ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_protocol_key_without_impl ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_uppercase_constant_key_skipped_for_protocol_checks ... ok
+test rules::doeff031_no_redundant_do_wrapper_entrypoint::tests::test_no_violation_when_args_not_direct_forward ... ok
+test rules::doeff031_no_redundant_do_wrapper_entrypoint::tests::test_no_violation_when_entrypoint_uses_positional_args ... ok
+test rules::doeff031_no_redundant_do_wrapper_entrypoint::tests::test_no_violation_when_extra_yield_present ... ok
+test rules::doeff031_no_redundant_do_wrapper_entrypoint::tests::test_redundant_wrapper_entrypoint_triggers_direct_return_yield ... ok
+test rules::doeff031_no_redundant_do_wrapper_entrypoint::tests::test_redundant_wrapper_entrypoint_triggers_assign_return ... ok
+test rules::tests::test_all_rules_loaded ... ok
+test rules::tests::test_get_enabled_rules ... ok
+test rules::doeff031_no_redundant_do_wrapper_entrypoint::tests::test_redundant_wrapper_entrypoint_triggers_plain_assign ... ok
+test tests::a_module_rule_counts_one_finding_once ... ok
+test tests::a_read_inside_a_function_is_counted_once ... ok
+test tests::a_read_inside_await_in_an_async_function_is_seen ... ok
+test tests::a_subtree_rule_counts_a_nested_finding_once ... ok
+test tests::a_reference_inside_nested_functions_is_counted_once ... ok
+test stats::tests::test_log_stats_empty ... ok
+test rules::doeff023_pipeline_marker::tests::test_program_union_type ... ok
+test stats::tests::test_log_stats_with_entries ... ok
+test tests::a_dir_or_file_named_exactly_like_a_pattern_is_still_excluded ... ok
+test tests::a_dir_whose_name_only_contains_an_excluded_word_is_still_walked ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_missing_annotation_for_ask ... ok
+test tests::a_module_rule_runs_once_per_file ... ok
+test tests::the_bodies_of_match_cases_are_checked ... ok
+test tests::the_bodies_of_try_star_are_checked ... ok
+test tests::the_body_and_else_of_async_for_are_checked ... ok
+test tests::the_else_body_of_for_is_checked ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_non_protocol_class_used_as_key ... ok
+test tests::the_body_of_async_with_is_checked ... ok
+test tests::the_else_body_of_while_is_checked ... ok
+test tests::test_noqa_case_insensitive ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_protocol_injection_ok ... ok
+test tests::test_noqa_multiple_rules ... ok
+test tests::symlinks_alone_still_count_their_real_file_once ... ok
+test rules::doeff030_ask_result_type_annotation::tests::test_mismatched_annotation_for_protocol_key ... ok
+test tests::the_real_path_is_named_even_when_a_symlink_comes_first ... ok
+test tests::test_all_rules_respect_blanket_noqa ... ok
+test tests::a_file_whose_name_only_contains_an_excluded_word_is_still_linted ... ok
+test tests::a_file_reached_through_symlinks_is_linted_once_under_its_real_path ... ok
+test tests::test_all_rules_respect_file_level_noqa ... ok
+test tests::test_all_rules_respect_file_level_blanket_noqa ... ok
+test project::facts_cache::tests::a_broken_index_or_fact_is_read_as_absent ... ok
+test tests::test_noqa_for_different_rule_does_not_suppress ... ok
+test tests::test_all_rules_respect_line_noqa ... ok
+test project::facts_cache::tests::the_compact_form_reads_only_changed_files_again_too ... ok
+test project::facts_cache::tests::only_the_shard_of_a_changed_file_is_written_again ... ok
+
+failures:
+
+---- project::facts::tests::class_fields_for_doeff204_match_the_shared_case_table stdout ----
+
+thread 'project::facts::tests::class_fields_for_doeff204_match_the_shared_case_table' (864244) panicked at src/project/facts.rs:1232:93:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    project::facts::tests::class_fields_for_doeff204_match_the_shared_case_table
+
+test result: FAILED. 658 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `--lib`
+     Running tests/facts_cache_roots.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/facts_cache_roots-f2f5a3a7e7bb4cc5)
+
+running 16 tests
+test a_temporary_fact_left_by_a_cut_off_run_is_cleared_once_stale ... ok
+test within_the_cap_no_fact_is_cleared ... ok
+test over_the_cap_the_least_recently_used_facts_go_first_until_within_the_cap ... ok
+test over_the_cap_the_least_recently_used_dirs_go_first_until_within_the_cap ... ok
+test a_cap_sweep_cut_off_midway_leaves_no_turn_so_the_next_run_redoes_it ... ok
+test a_dir_used_within_the_interval_stays_even_over_the_cap ... ok
+test a_dir_last_used_more_than_ten_minutes_ago_goes_over_the_cap ... ok
+test an_old_linter_taking_the_vanished_root_turn_does_not_hold_back_the_cap_sweep ... ok
+test a_new_root_over_the_cap_clears_old_dirs_even_right_after_a_cap_sweep ... ok
+test a_dir_without_a_record_stays ... ok
+test a_root_dir_goes_before_any_fact ... ok
+test a_fact_used_within_ten_minutes_stays_even_over_the_cap ... ok
+test a_cap_sweep_in_progress_or_done_within_the_interval_is_not_repeated ... ok
+test a_vanished_root_dir_is_cleared_on_the_next_run_after_the_interval ... ok
+test within_the_cap_nothing_is_cleared_and_each_run_marks_its_root_used ... ok
+test a_root_dir_in_use_stays ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/facts_cache_shared.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/facts_cache_shared-d14c2b0eb80d0960)
+
+running 7 tests
+test module_dependencies_are_shared_between_checkouts_too ... ok
+test no_working_tree_path_is_left_in_the_shared_facts ... ok
+test a_second_run_in_the_same_tree_writes_no_facts ... ok
+test a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first ... ok
+test editing_one_file_writes_only_that_files_facts ... ok
+test editing_in_one_tree_does_not_remove_facts_another_tree_uses ... ok
+test a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+
+     Running tests/focused_run_reads.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/focused_run_reads-d371f77c664883e1)
+
+running 3 tests
+test a_focused_run_of_file_local_rules_reads_only_the_named_file ... ok
+test a_focused_run_keeps_the_whole_index_cache ... ok
+test a_focused_run_answers_like_the_whole_run_for_that_file ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/hy_index_cache.rs (/work/agent-workspaces/a-FNBY8EYQ0V7NDT6MJS3FD19S1A/targets/dc/debug/deps/hy_index_cache-fae89a29be42d79c)
+
+running 1 test
+test only_the_changed_file_is_indexed_again_and_the_answer_matches_the_uncached_run ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+error: 1 target failed:
+    `--lib`
+# ---- 終了状態: 101 ----
