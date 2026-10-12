@@ -40,12 +40,13 @@
     True (and (= (type a) (type b)) (= a b))))
 
 
-(defn #^ str key-text [#^ tuple key]
-  "鍵の綴り(JSON の配列・ASCII だけ)。頁の順はこの綴りの符号点の順 — PG では COLLATE \"C\" の順と同じになる。"
+(defn #^ str key-text [#^ (get tuple #(str ...)) key]  ; defk にできない: memory の置き場が錠の内で同期に呼ぶ置き場の読み書き(memory-read-row・memory-store-row・hidden-change? ほか)と、使い手の同期の畳みが呼ぶ純粋な綴り(defk にすると錠の内で Program を走らせる手が無く、素の呼びは Program の値を辞書の鍵に引いて黙って外れる)
+  "鍵の綴り(JSON の配列・ASCII だけ)。頁の順はこの綴りの符号点の順 — PG では COLLATE \"C\" の順と同じになる。鍵は鍵の欄の順の文字列の tuple。"
   (json.dumps (list key) :separators #("," ":") :ensure-ascii True))
 
 
-(defn #^ tuple key-from-text [#^ str text]
+(defn #^ (get tuple #(str ...)) key-from-text [#^ str text]  ; defk にできない: key-text と対の同期の綴りの戻し(使い手の同期の畳みと内包表記が呼ぶ)
+  "key-text の綴りから鍵(鍵の欄の順の文字列の tuple)へ戻す。"
   (tuple (json.loads text)))
 
 
