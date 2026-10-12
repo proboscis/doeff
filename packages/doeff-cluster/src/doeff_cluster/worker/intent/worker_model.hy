@@ -348,11 +348,13 @@
 
 (defrecord HeartbeatSent
   "coordinator への口が heartbeat を送った事実(宣言の読み ReadDesired の送りも、拍の外の背景の task の送りも — card ki-e38dbfca7671):
-   at = 送った刻(epoch ms — 送りを始めた時刻)・worker = 名乗った worker の名・lease-ms = 送った時に知っていた生存の窓(heartbeat の
-   返事の timing の lease_ms — まだ返事が無ければ ClusterTiming の既定)。拍の Program が前の送りとの間を測り、窓に迫った間を名指す
-   (#3850 — 隣り合う拍がどれも短いのに heartbeat の間が lease を越えた 2026-10-07 13:18 JST の agent-worker-2)。"
+   at = 送った刻(epoch ms の壁の時計 — 送りを始めた時刻・遅れの行に書く刻)・mono-ms = 送りを始めた単調な時計の読み(ms — 間の長さの
+   計り用。壁の時計は戻りうるので、間は mono-ms の差で計る・#3825)・worker = 名乗った worker の名・lease-ms = 送った時に知っていた
+   生存の窓(heartbeat の返事の timing の lease_ms — まだ返事が無ければ ClusterTiming の既定)。拍の Program が前の送りとの間を測り、
+   窓に迫った間を名指す(#3850 — 隣り合う拍がどれも短いのに heartbeat の間が lease を越えた 2026-10-07 13:18 JST の agent-worker-2)。"
   {:tags {:context "worker" :role "type"}}
   (#^ int at)
+  (#^ int mono-ms)
   (#^ str worker)
   (#^ int lease-ms))
 
@@ -548,8 +550,9 @@
 
 
 (defrecord TickMarks
-  "拍 1 つで読んだ時刻(epoch ms — #3715): began = 拍の頭・env-reported = EnvReport の後・desired-read = ReadDesired の後・observed = 最初の
-   ObserveWorld の後・ended = PublishStatus の後(拍の終わり)。"
+  "拍 1 つで読んだ単調な時計の読み(ms — #3715・#3825): began = 拍の頭・env-reported = EnvReport の後・desired-read = ReadDesired の後・
+   observed = 最初の ObserveWorld の後・ended = PublishStatus の後(拍の終わり)。壁の時計は戻りうるので区間の長さは単調な時計で計る。
+   起点は handler の定めで、刻を他と並べない(差だけが意味を持つ)。"
   {:tags {:context "worker" :role "type"}}
   (#^ int began)
   (#^ int env-reported)
@@ -561,10 +564,11 @@
 (defclass [(dataclass :frozen True)] WorkerState []
   (setv #^ (| NotYetRead DeclarationRead) declaration (field :default-factory NotYetRead))
   (setv #^ dict records (field :default-factory dict))
-  ;; heartbeat の間の計り(#3850): last-marks = 前の拍で読んだ時刻(None = まだ拍が無い)・last-sent-ms = 最後に heartbeat を送った刻
-  ;; (HeartbeatSent.at — None = まだ送っていない)。値の比べには入れない(同じ宣言と記憶は時刻が違っても同じ)。
+  ;; heartbeat の間の計り(#3850): last-marks = 前の拍で読んだ単調な時計の読み(None = まだ拍が無い)・last-sent-mono-ms = 最後に
+  ;; heartbeat を送った単調な時計の読み(HeartbeatSent.mono-ms — None = まだ送っていない)。値の比べには入れない(同じ宣言と記憶は
+  ;; 時刻が違っても同じ)。
   (setv #^ (| TickMarks None) last-marks (field :default None :compare False))
-  (setv #^ (| int None) last-sent-ms (field :default None :compare False)))
+  (setv #^ (| int None) last-sent-mono-ms (field :default None :compare False)))
 
 
 ;; --- 拍と拍の間の待ち(#2781)-----------------------------------------------------
