@@ -362,17 +362,18 @@
 
 
 (defn _tail-resume-to-transfer [form]
-  "Replace tail-position (resume expr) with (transfer expr).
-   Recurses into if/cond/match/do/let but NOT into try (need frame for except)."
+  "Replace a tail-position clause operation with the operation its table row names as tail (clause_ops.hy —
+   (resume expr) → (transfer expr)). Recurses into if/cond/match/do/let but NOT into try (need frame for except)."
   (cond
     (not (isinstance form Expression)) form
     (= (len form) 0) form
     True
-      (let [hname (_sym-name (get form 0))]
+      (let [hname (_sym-name (get form 0))
+            op (clause-op form)]
         (cond
-          ;; (resume expr) → (transfer expr)
-          (and (= hname "resume") (= (len form) 2))
-            (Expression [(Symbol "transfer") (get form 1)])
+          ;; (resume expr) → (transfer expr) — the row's tail
+          (and (is-not op None) (is-not op.tail None) (= (len form) (+ 1 op.arity)))
+            (Expression [(Symbol op.tail) #* (cut form 1 None)])
 
           ;; (if test then else) → optimize both branches
           (and (= hname "if") (>= (len form) 4))
@@ -444,9 +445,18 @@
     True
       (let [op (clause-op form)
             args (list (cut form 1 None))]
-        (if (and (is-not op None) (is-not op.rewrite None) (= (len args) op.arity))
-            (op.rewrite args _rewrite-ops)
-            (Expression (lfor f form (_rewrite-ops f)))))))
+        (cond
+          (or (is op None) (is op.rewrite None) (!= (len args) op.arity))
+            (Expression (lfor f form (_rewrite-ops f)))
+          ;; 続きが終わると節へ戻る操作(表の returns — resume)は、戻った後で「再開した」と記す(値の式や続きで出た例外を節が
+          ;; 握りつぶして抜けた道は印が付かず、実行の時に誤りになる・ADR-DOE-CORE-EFFECTS-003 R15)。印の名は _build-clause の
+          ;; 実行の時の検めとこの関数だけが知る — 表の行の書き換えは VM へ渡す form だけを作る。
+          op.returns
+            `(do (setv _doeff_resumed_value ~(op.rewrite args _rewrite-ops))
+                 (setv _doeff_clause_resumed True)
+                 _doeff_resumed_value)
+          True
+            (op.rewrite args _rewrite-ops)))))
 
 
 ;; ---------------------------------------------------------------------------
