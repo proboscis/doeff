@@ -1,0 +1,47 @@
+{
+  "entries": [
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/agentd_client.py",
+      "reason": "legacy: agentd_client.py の Any(unsafe-type-escape)と module 契約の無い依存先への import(dependency-uncontracted — adapters.base・effects・monitor)、sessionhost/effects.hy の Any と文字列の型契約(hy-string-contract — deff git-run)。どれも基底 082dd9747 から在る既存の違反で、card ki-3c3d85253c2c が待ちの効果を doeff-time の Delay に替えた便の触った行(import 1 行・待ちの 1 行・ClockSleep と clock-sleep の削除)には無い。変更していない code を先払いで直させないために断片に載せる(lane-12b-207 と同じ扱い)",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/adapters/base.py"
+    },
+    {
+      "count": 5,
+      "path": "packages/doeff-agents/src/doeff_agents/agentd_client.py",
+      "reason": "legacy: agentd_client.py の Any(unsafe-type-escape)と module 契約の無い依存先への import(dependency-uncontracted — adapters.base・effects・monitor)、sessionhost/effects.hy の Any と文字列の型契約(hy-string-contract — deff git-run)。どれも基底 082dd9747 から在る既存の違反で、card ki-3c3d85253c2c が待ちの効果を doeff-time の Delay に替えた便の触った行(import 1 行・待ちの 1 行・ClockSleep と clock-sleep の削除)には無い。変更していない code を先払いで直させないために断片に載せる(lane-12b-207 と同じ扱い)",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/effects/__init__.py"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/agentd_client.py",
+      "reason": "legacy: agentd_client.py の Any(unsafe-type-escape)と module 契約の無い依存先への import(dependency-uncontracted — adapters.base・effects・monitor)、sessionhost/effects.hy の Any と文字列の型契約(hy-string-contract — deff git-run)。どれも基底 082dd9747 から在る既存の違反で、card ki-3c3d85253c2c が待ちの効果を doeff-time の Delay に替えた便の触った行(import 1 行・待ちの 1 行・ClockSleep と clock-sleep の削除)には無い。変更していない code を先払いで直させないために断片に載せる(lane-12b-207 と同じ扱い)",
+      "rule": "dependency-uncontracted",
+      "subject": "packages/doeff-agents/src/doeff_agents/monitor.py"
+    },
+    {
+      "count": 36,
+      "path": "packages/doeff-agents/src/doeff_agents/agentd_client.py",
+      "reason": "legacy: agentd_client.py の Any(unsafe-type-escape)と module 契約の無い依存先への import(dependency-uncontracted — adapters.base・effects・monitor)、sessionhost/effects.hy の Any と文字列の型契約(hy-string-contract — deff git-run)。どれも基底 082dd9747 から在る既存の違反で、card ki-3c3d85253c2c が待ちの効果を doeff-time の Delay に替えた便の触った行(import 1 行・待ちの 1 行・ClockSleep と clock-sleep の削除)には無い。変更していない code を先払いで直させないために断片に載せる(lane-12b-207 と同じ扱い)",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    },
+    {
+      "count": 1,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy",
+      "reason": "legacy: agentd_client.py の Any(unsafe-type-escape)と module 契約の無い依存先への import(dependency-uncontracted — adapters.base・effects・monitor)、sessionhost/effects.hy の Any と文字列の型契約(hy-string-contract — deff git-run)。どれも基底 082dd9747 から在る既存の違反で、card ki-3c3d85253c2c が待ちの効果を doeff-time の Delay に替えた便の触った行(import 1 行・待ちの 1 行・ClockSleep と clock-sleep の削除)には無い。変更していない code を先払いで直させないために断片に載せる(lane-12b-207 と同じ扱い)",
+      "rule": "hy-string-contract",
+      "subject": "hy:string-contract"
+    },
+    {
+      "count": 4,
+      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy",
+      "reason": "legacy: agentd_client.py の Any(unsafe-type-escape)と module 契約の無い依存先への import(dependency-uncontracted — adapters.base・effects・monitor)、sessionhost/effects.hy の Any と文字列の型契約(hy-string-contract — deff git-run)。どれも基底 082dd9747 から在る既存の違反で、card ki-3c3d85253c2c が待ちの効果を doeff-time の Delay に替えた便の触った行(import 1 行・待ちの 1 行・ClockSleep と clock-sleep の削除)には無い。変更していない code を先払いで直させないために断片に載せる(lane-12b-207 と同じ扱い)",
+      "rule": "unsafe-type-escape",
+      "subject": "typing.Any"
+    }
+  ],
+  "version": 1
+}
