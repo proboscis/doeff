@@ -20,9 +20,8 @@ The slog effect is designed for semantic workflow status that agents can emit,
 making multi-agent orchestration observable.
 """
 
-from time import sleep
-
 from doeff_flow import run_workflow
+from doeff_time import Delay
 
 from doeff import Pure, do, slog
 
@@ -35,7 +34,7 @@ from doeff import Pure, do, slog
 def run_automated_review(pr_url: str):
     """Simulate automated PR review."""
     yield slog(status="automated-review", msg=f"Starting review for {pr_url}")
-    sleep(0.5)  # Simulate review time
+    yield Delay(0.5)  # Simulate review time
 
     # Simulate finding some issues
     issues = ["unused import", "missing docstring", "type hint missing"]
@@ -50,7 +49,7 @@ def run_fix_agent(issues: list[str]):
 
     fixed = []
     for i, issue in enumerate(issues):
-        sleep(0.3)  # Simulate fix time
+        yield Delay(0.3)  # Simulate fix time
         yield slog(status="fixing", msg=f"Fixed: {issue} ({i+1}/{len(issues)})")
         fixed.append(issue)
 
@@ -62,7 +61,7 @@ def run_fix_agent(issues: list[str]):
 def run_outcome_check():
     """Simulate outcome verification."""
     yield slog(status="outcome-check", msg="Verifying PR outcomes")
-    sleep(0.3)
+    yield Delay(0.3)
 
     # Simulate verification passing
     yield slog(status="verified", msg="All checks passed")
@@ -108,14 +107,14 @@ def data_pipeline_with_status():
     """Data pipeline demonstrating slog status pattern."""
     yield slog(status="extracting", msg="Fetching data from source")
     data = yield Pure({"records": list(range(100))})
-    sleep(0.2)
+    yield Delay(0.2)
 
     yield slog(status="transforming", msg=f"Processing {len(data['records'])} records")
     transformed = yield Pure([x * 2 for x in data["records"]])
-    sleep(0.2)
+    yield Delay(0.2)
 
     yield slog(status="loading", msg="Writing to destination")
-    sleep(0.3)
+    yield Delay(0.3)
 
     yield slog(status="complete", msg=f"Pipeline finished: {len(transformed)} records")
     return {"count": len(transformed)}
@@ -144,7 +143,7 @@ def main():
         workflow_id="pr-review-workflow",
     )
 
-    if result.is_ok:
+    if result.is_ok():
         print(f"Workflow completed successfully: {result.value}")
     else:
         print(f"Workflow failed: {result.error}")
@@ -159,7 +158,7 @@ def main():
         workflow_id="data-pipeline-status",
     )
 
-    if result2.is_ok:
+    if result2.is_ok():
         print(f"Pipeline completed: {result2.value}")
     else:
         print(f"Pipeline failed: {result2.error}")

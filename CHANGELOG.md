@@ -44,6 +44,14 @@
   packages now depend on `doeff-time` (card ki-94380dba532f). **Callers must install a time handler**:
   `async_time_handler()` inside `await_handler()` waits on the wall clock; `sim_time_handler()` lets a test run the
   retry path without sleeping. Without one, the first retry fails with an unhandled `DelayEffect`.
+- `doeff-flow`: `run_result` and `run_workflow` now install `doeff_time.async_time_handler()` inside `await_handler()`,
+  so a workflow that yields `Delay` / `GetTime` (or any doeff-time effect) is answered on the wall clock; before, it failed
+  with an unhandled effect (card ki-94380dba532f). The examples wait with `yield Delay(...)` instead of `time.sleep`.
+  Examples `01`, `02`, `03`, `04`, `05` and `06` run to the end again: their `slog` calls now carry the `msg` that
+  `slog` requires (`02`, `03`, `04` ended with `Err` before), `01` and `06` use `run_result` in place of the removed
+  `default_handlers` / `run_sync`, and `05` uses an `@do` cache handler that yields `Pass` (not the removed
+  `Delegate`) and yields the `Await` that `SQLiteStorage.get` / `put` return.
+- `.semgrep.yaml`: `doeff-no-sleep-in-programs` covers `packages/*/examples/` and `examples/` as well as the source.
 - `.semgrep.yaml`: the new ERROR rule `doeff-no-sleep-in-programs` rejects `time.sleep` / `asyncio.sleep` inside a
   `@do` program under `doeff/` and the packages' source (a handler taking `(effect, k)` may sleep). The rule
   `doeff-no-sleep-in-tests` is now ERROR and also catches an un-awaited `asyncio.sleep(...)` such as

@@ -2885,10 +2885,10 @@ rules:
   # 呼び手が入れた時間の handler の責務(async_time_handler = 壁の時計・sim_time_handler = 仮想の時計)。
   # program の中の素の time.sleep / asyncio.sleep(Await(asyncio.sleep(…)) を含む)は handler を迂回して
   # 壁の時計で待ち、検が仮想の時計で走れない。(effect, k) を受ける handler の実装の中は鳴らさない。
-  # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)— 例(examples/)は
-  # 子の card で直してから足す(card ki-94380dba532f・利用者 2026-10-12 22:38「why not doeff's time effects?」)。
+  # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)と例(examples/ — 本体が
+  # 手本にする物なので素の sleep を置かない)。(card ki-94380dba532f・利用者 2026-10-12 22:38「why not doeff's time effects?」)
   # Hy の program(defk・defp・deff)は semgrep が読めないので、この規則の外。
-  # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py。
+  # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py(examples/ の範囲も同じ検が見る)。
   # 法 = ADR-DOE-TIME-001 の a-program-waits-by-a-time-effect(docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy —
   # 冊はこの規則の id と severity ERROR を検める。id を変える・消す時は冊の :enforced-by と同じ commit で直す)。
   - id: doeff-no-sleep-in-programs
@@ -2918,6 +2918,8 @@ rules:
         - /packages/doeff-core-effects/doeff_core_effects/
         - /packages/doeff-core-effects/doeff_lifeline/
         - /packages/doeff-traverse/doeff_traverse/
+        - /packages/*/examples/
+        - /examples/
         - /tests/semgrep/fixtures/python/packages/doeff-sleep-sample/src/
     message: |
       A doeff program waits by yielding a doeff-time effect, not by calling time.sleep() or

@@ -143,6 +143,22 @@ result = run_workflow(
 )
 ```
 
+### Waiting inside a workflow
+
+A workflow waits by yielding doeff-time's `Delay`, not by calling `time.sleep` (the semgrep rule
+`doeff-no-sleep-in-programs` covers `examples/` too). `run_workflow` and `run_result` install
+`doeff_time.async_time_handler()` inside `await_handler()`, so `Delay`, `GetTime` and the other doeff-time
+effects are answered on the wall clock:
+
+```python
+from doeff import do
+from doeff_time import Delay
+
+@do
+def poll_until_ready():
+    yield Delay(0.5)  # waits 0.5 s of wall-clock time
+```
+
 ### Option B: `trace_observer` (Composable)
 
 ```python

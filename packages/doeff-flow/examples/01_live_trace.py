@@ -16,10 +16,9 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 You can override with --trace-dir or DOEFF_FLOW_TRACE_DIR env var.
 """
 
-from time import sleep
-
 # Import from doeff_flow
-from doeff_flow import run_workflow, trace_observer
+from doeff_flow import run_result, run_workflow, trace_observer
+from doeff_time import Delay
 
 from doeff import do, slog
 
@@ -31,14 +30,14 @@ from doeff import do, slog
 @do
 def fetch_data():
     """Simulate fetching data."""
-    sleep(0.1)  # Simulate network latency
+    yield Delay(0.1)  # Simulate network latency
     return {"items": [1, 2, 3, 4, 5]}
 
 
 @do
 def process_item(item: int):
     """Process a single item."""
-    sleep(0.05)  # Simulate processing
+    yield Delay(0.05)  # Simulate processing
     return item * 2
 
 
@@ -60,11 +59,11 @@ def main_workflow():
     for item in data["items"]:
         result = yield process_item(item)
         results.append(result)
-        yield slog(step="process", item=item, result=result)
+        yield slog(step="process", msg=f"Processed item {item}: {result}", item=item, result=result)
 
     # Step 3: Aggregate
     total = yield aggregate_results(results)
-    yield slog(step="aggregate", total=total)
+    yield slog(step="aggregate", msg=f"Total: {total}", total=total)
 
     return total
 
@@ -85,7 +84,7 @@ def example_run_workflow():
 
 
 # =============================================================================
-# Example 2: Using trace_observer with run_sync
+# Example 2: Using trace_observer with run_result
 # =============================================================================
 
 
@@ -93,16 +92,13 @@ def example_trace_observer():
     """Run workflow with trace_observer context manager."""
     from doeff_flow.trace import write_terminal_trace
 
-    from doeff import default_handlers
-    from doeff import run as run_sync
-
     print("=== Example 2: Using trace_observer ===")
     print("Run 'doeff-flow watch example-wf-002' in another terminal\n")
 
     # Uses XDG default trace directory
     with trace_observer("example-wf-002") as on_step:
         _ = on_step
-        result = run_sync(main_workflow(), handlers=default_handlers())
+        result = run_result(main_workflow())
         write_terminal_trace("example-wf-002", None, result)
 
     print(f"\nResult: {result.value}")
@@ -120,7 +116,7 @@ def workflow_a():
     for i in range(3):
         # Just yield sub-workflows to generate trace entries
         yield process_item(i)
-        sleep(0.1)
+        yield Delay(0.1)
     return "A completed"
 
 
@@ -129,7 +125,7 @@ def workflow_b():
     """Workflow B - slow."""
     for i in range(5):
         yield process_item(i)
-        sleep(0.2)
+        yield Delay(0.2)
     return "B completed"
 
 

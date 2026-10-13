@@ -19,9 +19,9 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
 import random
-import time
 
 from doeff_flow import run_workflow
+from doeff_time import Delay
 
 from doeff import Ask, do, slog
 
@@ -33,8 +33,14 @@ from doeff import Ask, do, slog
 @do
 def call_external_api(endpoint: str, attempt: int = 1):
     """Simulate calling an external API that might fail."""
-    yield slog(step="api", status="calling", endpoint=endpoint, attempt=attempt)
-    time.sleep(0.1)
+    yield slog(
+        step="api",
+        status="calling",
+        msg=f"Calling {endpoint} (attempt {attempt})",
+        endpoint=endpoint,
+        attempt=attempt,
+    )
+    yield Delay(0.1)
 
     # Simulate random failures; rng is injected via Ask so the workflow
     # stays pure and swappable for a seeded generator under test.
@@ -42,7 +48,7 @@ def call_external_api(endpoint: str, attempt: int = 1):
     if rng.random() < 0.3:  # 30% failure rate
         raise ConnectionError(f"Failed to connect to {endpoint}")
 
-    yield slog(step="api", status="success", endpoint=endpoint)
+    yield slog(step="api", status="success", msg=f"{endpoint} responded", endpoint=endpoint)
     return {"status": "ok", "endpoint": endpoint}
 
 
@@ -69,15 +75,15 @@ def fetch_orders(user_id: int):
 @do
 def process_user_data(user_id: int):
     """Process complete user data - may fail at any step."""
-    yield slog(step="processing", user_id=user_id)
+    yield slog(step="processing", msg=f"Processing user {user_id}", user_id=user_id)
 
     # Step 1: Fetch user
     user = yield fetch_user(user_id)
-    yield slog(step="data", status="got_user", name=user["name"])
+    yield slog(step="data", status="got_user", msg=f"Got {user['name']}", name=user["name"])
 
     # Step 2: Fetch orders
     orders = yield fetch_orders(user_id)
-    yield slog(step="data", status="got_orders", count=len(orders))
+    yield slog(step="data", status="got_orders", msg=f"Got {len(orders)} orders", count=len(orders))
 
     # Step 3: Calculate total
     total = sum(o["amount"] for o in orders)
@@ -87,7 +93,7 @@ def process_user_data(user_id: int):
         "total_amount": total,
     }
 
-    yield slog(step="data", status="complete", total=total)
+    yield slog(step="data", status="complete", msg=f"Total amount: {total}", total=total)
     return result
 
 
@@ -112,7 +118,7 @@ def workflow_with_errors():
             result = yield process_user_data(user_id)
             results.append(result)
         except ConnectionError as e:
-            yield slog(step="error", user_id=user_id, error=str(e))
+            yield slog(step="error", msg=f"User {user_id} failed: {e}", user_id=user_id, error=str(e))
             failed.append({"user_id": user_id, "error": str(e)})
             # Continue processing other users
 
@@ -124,7 +130,13 @@ def workflow_with_errors():
         "failures": failed,
     }
 
-    yield slog(step="workflow", status="complete", success=len(results), failed=len(failed))
+    yield slog(
+        step="workflow",
+        status="complete",
+        msg=f"{len(results)} succeeded, {len(failed)} failed",
+        success=len(results),
+        failed=len(failed),
+    )
 
     return summary
 
@@ -132,7 +144,7 @@ def workflow_with_errors():
 @do
 def do_step(name: str):
     """Simple step that logs completion."""
-    yield slog(step=name, status="complete")
+    yield slog(step=name, status="complete", msg=f"{name} complete")
     return name
 
 
@@ -148,7 +160,7 @@ def workflow_that_fails():
     yield do_step("Step 2")
 
     # This step will fail
-    yield slog(step="Step 3", status="about_to_fail")
+    yield slog(step="Step 3", status="about_to_fail", msg="Step 3 is about to fail")
     raise ValueError("Intentional failure for demonstration")
 
 
