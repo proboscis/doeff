@@ -38,7 +38,9 @@
   dispatch-line
   prepare-socket-path
   report-result-op
+  run-hosted
   main])
+(import doeff_time [Delay])
 (import doeff_agents.sessionhost.store [
   StoreActor
   db-acquire-lease
@@ -297,6 +299,14 @@
       (thunk config actor)
       (finally (.close actor)))
     (finally (shutil.rmtree d :ignore-errors True))))
+
+
+(deftest test-run-hosted-answers-a-delay-on-the-wall-clock
+  ;; 本番の積み(run-hosted)は時間の handler を持つ — launch の ready gate の待ち(doeff-time の Delay)に壁の時計で
+  ;; 答える(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R2)。無ければ Delay は答えの無い効果で落ちる。
+  (defn check [config actor]
+    (assert (is (run-hosted config actor (Delay 0.001)) None)))
+  (with-skeleton check))
 
 
 (deftest test-dispatch-invalid-json

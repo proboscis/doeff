@@ -33,6 +33,7 @@
 (import pytest)
 (import doeff [Program run with_handlers])
 (import doeff_core_effects.handlers [state])
+(import doeff_time [DelayEffect])
 (import doeff_agents.sessionhost.store_memory [MemorySessionRows ReadMemorySessionRows memory-session-store stored-rows])
 (import memory_store_world [StoreWorld kept-in seeded])
 
@@ -45,7 +46,6 @@
   TmuxSendKeys
   TmuxKillSession
   ClockNow
-  ClockSleep
   ClassifyPane
   DeliverMessage
   FsCanonicalPath
@@ -74,6 +74,8 @@
 (import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
 (import doeff_agents.sessionhost.impls.codex [codex-impl])
 (import doeff_agents.sessionhost.launch [
+  DIALOG-REDRAW-SECONDS
+  REPL-IDLE-POLL-SECONDS
   RESULT-PROTOCOL-INSTRUCTION
   launch-session
   shell-join])
@@ -293,7 +295,10 @@
     (resume None))
   (ClockNow []
     (resume world.now))
-  (ClockSleep [seconds]
+  (DelayEffect [seconds]
+    ;; launch の待ちは doeff-time の Delay(card ki-3c3d85253c2c)— 台本の世界は自分の時計を待った秒だけ進め、
+    ;; 待った秒を痕跡に残す(ClockNow と同じ world.now)。
+    (.append world.trace #("delay" seconds))
     (setv world.now (+ world.now (timedelta :seconds seconds)))
     (resume None))
   (FsCanonicalPath [path]
@@ -1661,6 +1666,33 @@
   (assert (in "within 5s" (str raised)))
   ;; 予算 5s / poll 0.3s → capture は高々 ~20 回(120s 既定なら ~400 回)
   (assert (< world.captures 25)))
+
+
+(deftest test-launch-ready-gate-polls-by-the-time-effect
+  ;; ready gate の poll の待ちは doeff-time の Delay で、自前の待ちの効果ではない(card ki-3c3d85253c2c・
+  ;; ADR-DOE-TIME-001 R1)。何も ready にならない画面・予算 5s → 待ちは全部 poll の間隔の Delay で、足すと予算に届く。
+  (setv world (LaunchWorld))
+  (setv world.capture-script ["nothing ready here"])
+  (<- raised (gate-failure world (launch-params :repl_idle_max_wait_seconds 5)))
+  (setv waits (lfor entry world.trace :if (= (get entry 0) "delay") (get entry 1)))
+  (assert (= (set waits) #{REPL-IDLE-POLL-SECONDS}) waits)
+  (assert (>= (sum waits) 5) waits))
+
+
+(deftest test-launch-dialog-redraw-waits-by-the-time-effect
+  ;; dialog を閉じた後の再描画の待ちも Delay(同じ card)。update dialog を 1 度閉じて ready になる画面 →
+  ;; 再描画の待ちがちょうど 1 度で、残りは poll の間隔。
+  (setv world (LaunchWorld))
+  (setv update-frame (+ "✨ Update available!\n"
+                        "› 1. Update now (runs npm install)\n"
+                        "  2. Skip\n"
+                        "  3. Skip until next version\n"
+                        "Press enter to continue"))
+  (setv world.capture-script [update-frame "› {composer}"])
+  (<- row (run-launch world (launch-params)))
+  (setv waits (lfor entry world.trace :if (= (get entry 0) "delay") (get entry 1)))
+  (assert (= (.count waits DIALOG-REDRAW-SECONDS) 1) waits)
+  (assert (= (set waits) #{DIALOG-REDRAW-SECONDS REPL-IDLE-POLL-SECONDS}) waits))
 
 
 ;; ---------------------------------------------------------------------------
