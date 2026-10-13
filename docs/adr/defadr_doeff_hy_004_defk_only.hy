@@ -59,7 +59,8 @@
   {"docs/adr/defadr_doeff_agents_007_koine_session_surface.hy" 4
    "docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy" 1
    "packages/doeff-agents/src/doeff_agents/sessionhost/adopt.hy" 1
-   "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy" 38
+   ;; 38 → 37(card ki-3c3d85253c2c): 自前の待ちの effect ClockSleep の構築子 clock-sleep を消した(待ちは doeff-time の Delay)。
+   "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy" 37
    "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy" 34
    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/channel.hy" 1
    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy" 2

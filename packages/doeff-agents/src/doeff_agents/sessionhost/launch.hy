@@ -68,9 +68,9 @@
   tmux-capture
   tmux-kill-session
   clock-now
-  clock-sleep
   log-line])
 (import dataclasses [replace])
+(import doeff_time [Delay])
 
 (import doeff_agents.sessionhost.policy [
   BILLING-METERED
@@ -135,6 +135,8 @@
 ;; REPL-IDLE-MAX-WAIT-SECONDS)から import — literal の再定義は禁止
 ;; (ADR-DOE-AGENTS-008 R2)。poll / 再描画待ちは退役 Rust 移植値
 ;; 300ms / 800ms(rollback 専用出自 — ADR-DOE-AGENTS-004 R7/U1)。
+;; 待ちは doeff-time の Delay を yield する — 1 秒が何であるかは handler の積み(host.hy run-hosted の
+;; sync-time-handler・検は台本の世界の時計)が決める(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1)。
 (setv REPL-IDLE-POLL-SECONDS 0.3)
 (setv DIALOG-REDRAW-SECONDS 0.8)
 
@@ -261,7 +263,7 @@
               (do
                 (for [key obs.dialog-dismiss-keys]
                   (<- _ (tmux-send-keys pane-id key False False)))
-                (<- _ (clock-sleep DIALOG-REDRAW-SECONDS)))
+                (<- _ (Delay DIALOG-REDRAW-SECONDS)))
             ;; provider 上限告知は起動段の失敗ではなく枠の話 — 即 loud で
             ;; failover(ACP ADR 0049)へ渡す。
             obs.has-api-limit-marker
@@ -295,9 +297,9 @@
                   (do
                     (<- _ (tmux-send-keys pane-id READY-PROBE-TEXT True False))
                     (setv phase "consume")
-                    (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+                    (<- _ (Delay REPL-IDLE-POLL-SECONDS)))
                 True
-                  (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+                  (<- _ (Delay REPL-IDLE-POLL-SECONDS)))
             (= phase "consume")
               (if probe-visible
                   (do
@@ -308,17 +310,17 @@
                     (for [_ (range (len READY-PROBE-TEXT))]
                       (<- _ (tmux-send-keys pane-id READY-PROBE-CLEAR-KEY False False)))
                     (setv phase "clear")
-                    (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
-                  (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+                    (<- _ (Delay REPL-IDLE-POLL-SECONDS)))
+                  (<- _ (Delay REPL-IDLE-POLL-SECONDS)))
             (= phase "clear")
               (if (and obs.composer-clear (not probe-visible))
                   (do
                     (setv verdict None)
                     (setv phase "ready")
                     (setv looping False))
-                  (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS)))
+                  (<- _ (Delay REPL-IDLE-POLL-SECONDS)))
             True
-              (<- _ (clock-sleep REPL-IDLE-POLL-SECONDS))))))
+              (<- _ (Delay REPL-IDLE-POLL-SECONDS))))))
   ;; 予算切れの分類: probe 局面で切れたならその局面が答え、idle 局面で
   ;; 切れたなら最後の全 capture の事実束から分類器(policy 所有)が答える。
   ;; 分類の入力は保持 frame(tail)ではなく capture 全体 — tail だけを見ると

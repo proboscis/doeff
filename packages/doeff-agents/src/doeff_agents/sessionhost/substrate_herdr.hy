@@ -581,12 +581,19 @@
 (defk herdr-send-keys-io [socket-path pane-id text literal submit]
   {:pre [(: socket-path str) (: pane-id str) (: text str)
          (: literal bool) (: submit bool)]
-   :post [(: % "None")]}
+   :post [(: % "None")]
+   :tags {:context "sessionhost" :role "foundation"}}
   "TmuxSendKeys の実体(oracle tmux_send_keys と同じ骨格): literal はチャンク
    paste、literal=False はキー名送出。submit は settle 後の Enter + confirm
    ループ(paste 残留の Enter 再送 — ハザード 4 の盲窓物理はここが所有する)。
    settle / confirm の定数と unsubmitted-paste-input? は Claude / Codex の
-   TUI 物理なので substrate.hy と共有する。"
+   TUI 物理なので substrate.hy と共有する。
+   待ちは time.sleep のまま(doeff-time の Delay にしない): 呼び手は
+   herdr-substrate の TmuxSendKeys の節だけ = handler の実装の helper で、
+   待つ相手は本物の TUI が paste を受け終える実時間 — 仮想の時計で飛ばすと
+   Enter が再描画に食われる。substrate.hy の tmux-send-keys-io と同じ扱い
+   (ADR-DOE-TIME-001 R2・card ki-3c3d85253c2c。:role foundation がその名乗りで、
+   doeff-linter の DOEFF210 はこの名乗りの定義を program に数えない)。"
   (if (and literal text)
       (herdr-send-text-io socket-path pane-id text)
       (when text

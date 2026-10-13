@@ -33,6 +33,7 @@
 (import time)
 
 (import doeff [run])
+(import doeff_time [sync-time-handler])
 
 (import doeff_agents.sessionhost.effects [
   AWAITING-RESPONSE-TIMEOUT-SECONDS
@@ -583,7 +584,7 @@
 ;;
 ;; 各 RPC は C1/C2 の共有 program(launch-session / monitor-cycle)か、下の
 ;; 小 program(capture / send / cancel / cleanup)を handler stack
-;; (sqlite-session-store ∘ real-substrate ∘ codex-impl ∘ claude-code-impl)
+;; (sync-time-handler ∘ sqlite-session-store ∘ real-substrate ∘ codex-impl ∘ claude-code-impl)
 ;; で実行する。純 read(get / list / daemon.status)は program 化せず store
 ;; 直読。record_command(監査)は host 所有 — program は event を書く。
 ;; oracle は record_command → upsert → event の順だが、Hy は program 完了後に
@@ -605,16 +606,20 @@
    backend=herdr のときは herdr-substrate を real-substrate の内側に挿す —
    Tmux* effect は herdr が先取りし、非 mux substrate(Clock / Proc / Fs /
    Env)は素通しで real-substrate に残る(mux 差し替えの blast radius を
-   多重化 effect 6 個に限定する)。"
+   多重化 effect 6 個に限定する)。
+   program の待ち(doeff-time の Delay — launch の ready gate の poll と再描画待ち)
+   には、最も外側の sync-time-handler が壁の時計で答える(card ki-3c3d85253c2c・
+   ADR-DOE-TIME-001 R2)。"
   (setv result-command (host-binary-path))
   (setv inner ((codex-impl result-command)
                ((claude-code-impl result-command)
                 program)))
   (when (= config.backend "herdr")
     (setv inner ((herdr-substrate config.herdr-socket) inner)))
-  (run ((sqlite-session-store actor)
-        ((real-substrate config.tmux-bin)
-         inner))))
+  (run ((sync-time-handler)
+        ((sqlite-session-store actor)
+         ((real-substrate config.tmux-bin)
+          inner)))))
 
 
 (defk require-session-row [session-id]
