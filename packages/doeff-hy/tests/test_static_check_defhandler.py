@@ -374,8 +374,9 @@ def test_clause_fields_named_k_and_effect_are_not_an_error(tmp_path: Path) -> No
 def test_static_expansion_binds_the_writers_effect_and_k_only_where_the_clause_writes_them() -> (
     None
 ):
-    """書き手が `effect`・`k` を書かない節は、型検査のための展開でも素の名を束ねない。書いた節だけが、判定の中で `effect` を束ね
-    (絞った型のまま読める)、`k` を宣言して読む。欄の名が同じ名の節は束ねず、欄が優先する。"""
+    """書き手が `effect`・`k` を書かない節は、型検査のための展開でも素の名を束ねない。書いた節の在る handler だけが、節を回す関数の
+    頭で `effect` を絞る前の値に束ね、書いた節の判定が `effect` も節の型へ絞る(絞った型のまま読める)。`k` は書いた節が宣言して
+    読む。欄の名が同じ名の節は束ねず、欄が優先する。"""
     from doeff_hy.static_view import static_view
 
     with static_view():
@@ -383,14 +384,111 @@ def test_static_expansion_binds_the_writers_effect_and_k_only_where_the_clause_w
             FIELD_NAMED_EFFECTS
             + FIELD_NAMED_PROBE.replace("(import probe_effects [Kv Note Bump])", "")
         )
-    assert (
-        "isinstance((effect := _doeff_effect), EffectBase) and isinstance(_doeff_effect, EffectBase)"
-        in static
-    ), static
+    assert "isinstance(_doeff_effect, EffectBase) and isinstance(effect, EffectBase)" in static, (
+        static
+    )
+    assert "isinstance(_doeff_effect, Bump) and isinstance(effect, Bump)" in static, static
+    # `effect` を書いた節の在る handler は fence・reads-its-effect の 2 本。keyed は欄を `effect` にした節だけなので束ねない
+    assert static.count("    effect = _doeff_effect\n") == 2, static
     assert "k: _doeff_Continuation = _doeff_k" in static, static
     # 欄 k の節は、欄を `k` に束ねる(続きを上書きしない)— `_doeff_k` を読む Pass は残る
     assert "k = _doeff_effect.k" in static, static
     assert "_doeff_Pass(_doeff_effect, _doeff_k)" in static, static
+
+
+def _first_if(statements: list[ast.stmt]) -> ast.If | None:
+    return next((s for s in statements if isinstance(s, ast.If)), None)
+
+
+def _if_chain(clause: ast.If | None) -> list[ast.expr]:
+    """この `if` の条件と、その `else` の中に続く `if` の条件の連なり。"""
+    if clause is None:
+        return []
+    return [clause.test, *_if_chain(_first_if(clause.orelse))]
+
+
+def _clause_tests(static: str) -> list[ast.expr]:
+    """型検査のための展開の、節を回す関数(第 1 引数が `_doeff_effect`)が並べる節の判定の式の list。節の判定は関数の直下の
+    `if` と、その `else` の中に続く `if` の連なり(書き手の本体の中の `if` は数えない)。"""
+    return [
+        test
+        for function in ast.walk(ast.parse(static))
+        if isinstance(function, ast.FunctionDef)
+        and function.args.args
+        and function.args.args[0].arg == "_doeff_effect"
+        for test in _if_chain(_first_if(function.body))
+    ]
+
+
+def _isinstance_subjects(test: ast.expr) -> list[str]:
+    """判定の式の中の `isinstance` が絞る値(第 1 引数)の綴りの list。"""
+    return [
+        ast.unparse(node.args[0])
+        for node in ast.walk(test)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+    ]
+
+
+# 節の判定が同じ値を 2 度絞らない事(card ki-a06b0fbce50d)。前は `effect` を書いた節の判定が
+# `isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)` で、walrus の右辺も絞る pyright(1.1.414。1.1.411 は
+# 左辺だけを絞る)では 2 つ目が「いつも真」(reportUnnecessaryIsInstance)になった — `effect` を読む節ごとに 1 件・書き手は直せない
+# (agora-controllers の cli_host の検 3 file で 25 件)。walrus の絞りは pyright の版で変わるので、判定は walrus を使わず、
+# 別の名を 1 度ずつ絞る。この検は pyright を撃たずに展開の形を読む(この repo の lock の pyright の版では赤が出ない)。
+@pytest.mark.parametrize(
+    ("label", "clauses"),
+    [("field-named", 6), ("generic", 5), ("probe", 6), ("named", 3)],
+)
+def test_static_clause_test_narrows_each_name_once(label: str, clauses: int) -> None:
+    from doeff_hy.static_view import static_view
+
+    sources = {
+        "field-named": FIELD_NAMED_EFFECTS
+        + FIELD_NAMED_PROBE.replace("(import probe_effects [Kv Note Bump])", ""),
+        "generic": _generic({}),
+        "probe": EFFECTS + _render({}).replace("(import probe_effects [Tick Name Pair])", ""),
+        "named": NAMED_EFFECTS
+        + NAMED_PROBE.replace("(import probe_effects [Transfer Pass Put])", ""),
+    }
+    with static_view():
+        static = _expand(sources[label])
+    tests = _clause_tests(static)
+    assert len(tests) == clauses, static
+    for test in tests:
+        shown = ast.unparse(test)
+        assert not [node for node in ast.walk(test) if isinstance(node, ast.NamedExpr)], shown
+        subjects = _isinstance_subjects(test)
+        assert "_doeff_effect" in subjects, shown
+        assert len(subjects) == len(set(subjects)), shown
+
+
+@needs_pyright
+def test_writers_effect_keeps_the_clause_effect_type(tmp_path: Path) -> None:
+    # 型は逃げていない: 書き手の `effect` は節の effect の型のまま読め、無い欄の読みは赤になる(Any・object に落ちていない)。
+    from doeff_hy.static_check import main
+
+    text = FIELD_NAMED_PROBE.replace("(resume (+ n effect.n))", "(resume (+ n effect.missing))")
+    (tmp_path / "probe_effects.hy").write_text(FIELD_NAMED_EFFECTS, encoding="utf-8")
+    (tmp_path / "probe.hy").write_text(text, encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "--json",
+                "--no-cache",
+                "--strict",
+                str(tmp_path / "probe.hy"),
+            ]
+        )
+    printed = out.getvalue()
+    found: list[dict[str, object]] = json.loads(printed) if printed.strip() else []
+    errors = [d for d in found if d["severity"] == "error"]
+    assert ("reportAttributeAccessIssue", _line_of(text, "effect.missing")) in [
+        (d["rule"], d["line"]) for d in errors
+    ], errors
 
 
 # 総称の effect(Spawn[_T, _E]・Race[_T]・Wait[_T])を head にした節(card ki-fede97890f70)。pyright は節の `isinstance` が
