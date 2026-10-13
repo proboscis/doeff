@@ -469,7 +469,7 @@ class RelabelNode(_doeff_effect_base[None]):
     labels: dict
 
 @_doeff_dataclass(frozen=True)
-class ReportsOf(_doeff_effect_base[tuple]):
+class ReportsOf(_doeff_effect_base[tuple[SimReport, ...]]):
     name: str
 
 @_doeff_dataclass(frozen=True)
@@ -556,7 +556,7 @@ class StopElder(_doeff_effect_base[None]):
     boot: str
 
 @_doeff_dataclass(frozen=True)
-class PreparationsOf(_doeff_effect_base[tuple]):
+class PreparationsOf(_doeff_effect_base[tuple[SimPreparation, ...]]):
     name: str
 
 @_doeff_dataclass(frozen=True)
