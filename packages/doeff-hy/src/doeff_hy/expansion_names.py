@@ -83,8 +83,9 @@ class WriterName:
     - `written`: 書き手が書く名(`effect`・`k`)。
     - `internal`: それを束ねる展開の局所名(`_doeff_` の別名 — 節を回す関数の引数)。
     - `declared`: 型検査のための展開が名に宣言する型(節を回す関数の引数と同じ型)。
-    - `narrowed`: 節の `isinstance` が絞る値か。型検査のための展開は、絞る値を代入でなく節の判定の中で束ねる(代入だと、絞った
-      総称型 `EffectBase[Unknown]` を代入先の変数が受けて reportUnknownVariableType の赤になる — 判定の中の束ねは絞る前の値を束ねる)。
+    - `narrowed`: 節の `isinstance` が絞る値か。型検査のための展開は、絞る値を節の判定より前に絞る前の値のまま束ね、節の判定が
+      書き手の名も絞る(絞った後に代入すると、絞った総称型 `EffectBase[Unknown]` を代入先の変数が受けて
+      reportUnknownVariableType の赤になる — handle.hy の `_narrowed-alias-bindings`・`_clause-test`)。
     """
 
     written: str

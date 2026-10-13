@@ -214,7 +214,7 @@
 
    展開は節を回す関数の引数と節の操作を `_doeff_effect`・`_doeff_k` で束ねて読むので、素の `effect`・`k` は書き手の名前空間のまま。
    書き手が `(reperform effect)`・`:when (isinstance effect X)` のように書いた節だけが、その名を節の effect・続きとして読める
-   (`_alias-forms` の束ね・型検査のための展開では `_clause-test` の判定の中の束ね)。節の欄・session の名が同じ名なら束ねない —
+   (`_alias-forms` の束ね・型検査のための展開の effect は `_narrowed-alias-bindings` の束ねと `_clause-test` の絞り)。節の欄・session の名が同じ名なら束ねない —
    書き手が欄・session で決めた名が優先する。点つきの記号(`effect.amount`)も名を使うと数える。名が本体の中の局所の束ね
    (`(lfor k …)`)にだけ現れても数える — 余分な束ねは害が無い(型検査のための展開は束ねた名を読む)。"
   (import doeff-hy.clause-endings [parse-clause-options])
@@ -230,14 +230,28 @@
 (defn _alias-forms [row]
   "節の本体の頭に置く、書き手の名 row.written の束ね。実行時の展開は `(setv effect _doeff_effect)`。型検査のための展開は、
    名に型を宣言し(`k: _doeff_Continuation`)、束ねた名を読む(`_ = k` — 書き手が使わない名は reportUnusedVariable の赤になる。
-   欄の束ねの `_ = field` と同じ)。節の `isinstance` が絞る effect は代入でなく `_clause-test` の判定の中で束ね(絞った総称型を
-   代入すると reportUnknownVariableType の赤になる)、ここでは読むだけ(`assert effect`。絞った型が一部 Unknown でも赤にならない)。"
+   欄の束ねの `_ = field` と同じ)。節の `isinstance` が絞る effect は、ここでは束ねない: 節を回す関数の頭で絞る前の値に束ね
+   (`_narrowed-alias-bindings`)、節の判定が絞って読む(`_clause-test`)。"
   (setv written (Symbol row.written))
   (cond
     (not (static-view-enabled)) [`(setv ~written ~(Symbol row.internal))]
-    row.narrowed [`(assert ~written)]
+    row.narrowed []
     True [`(setv (annotate ~written ~(Symbol row.declared)) ~(Symbol row.internal))
           `(setv _ ~written)]))
+
+(defn _narrowed-alias-bindings [clauses lazy-defs]
+  "型検査のための展開で、節を回す関数の頭(節の判定の連なりより前)に置く、書き手の名の束ねの list(`effect = _doeff_effect`)。
+   絞る名(row.narrowed)を書いた節が 1 つでも在る handler にだけ置く。実行時の展開は、書いた節の本体が束ねる(`_alias-forms`)。
+
+   節の `isinstance` が絞る effect は、絞った後に代入すると、絞った総称型(`EffectBase[Unknown]`)を代入先の変数が受けて
+   reportUnknownVariableType の赤になる(代入先に型を宣言しても同じ)。絞る前の値に束ねておき、書いた節の判定が書き手の名も絞る
+   (`_clause-test`)。判定の中で束ねる形(`isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)`)は採らない:
+   walrus の右辺を絞るかは pyright の版で変わり(1.1.411 は左辺だけ・1.1.414 は右辺も)、右辺も絞る版では 2 つ目が「いつも真」
+   (reportUnnecessaryIsInstance)になる — 書いた節ごとに 1 件で、書き手は直せない(card ki-a06b0fbce50d)。"
+  (lfor row WRITER-VISIBLE
+        :if (and row.narrowed
+                 (any (gfor clause clauses (in row (_clause-aliases clause lazy-defs)))))
+        `(setv ~(Symbol row.written) ~(Symbol row.internal))))
 
 (defn _effect-form-binding [etype fields rewritten]
   "型検査のための展開で、節の `isinstance` が絞った `_doeff_effect` を、effect の型の型引数をすべて Any で解いた型に束ね直す形の list
@@ -263,13 +277,14 @@
       []))
 
 (defn _clause-test [etype aliases]
-  "節の判定 — 受けた effect が節の effect の型か。型検査のための展開で、絞る名(row.narrowed)を書き手が使う節は、判定の中で
-   書き手の名を束ねる(`isinstance((effect := _doeff_effect), T)` — 絞る前の値を束ねるので、絞った型が一部 Unknown でも代入の赤が
-   出ない)。判定の後に `_doeff_effect` も絞る(続く `typed_resume` が節の effect の型を読む)。"
+  "節の判定 — 受けた effect が節の effect の型か。型検査のための展開で、絞る名(row.narrowed)を書き手が使う節は、書き手の名も
+   同じ型へ絞る(`isinstance(_doeff_effect, T) and isinstance(effect, T)`)。書き手の名は節を回す関数の頭で絞る前の値に束ねてある
+   (`_narrowed-alias-bindings`)ので、判定は別の名を 1 度ずつ絞る — 絞るのは代入でないので絞った型が一部 Unknown でも赤が出ず、
+   どの名も 2 度は絞らないので「いつも真」の isinstance にならない。`_doeff_effect` は続く `typed_resume` と欄の束ねが読む。"
   (setv narrowed (lfor row aliases :if row.narrowed row))
   (if (and (static-view-enabled) narrowed)
-      `(and (isinstance (setx ~(Symbol (. (get narrowed 0) written)) ~(effect-symbol)) ~etype)
-            (isinstance ~(effect-symbol) ~etype))
+      `(and (isinstance ~(effect-symbol) ~etype)
+            ~@(lfor row narrowed `(isinstance ~(Symbol row.written) ~etype)))
       `(isinstance ~(effect-symbol) ~etype)))
 
 (defn _build-lazy-init-forms [handler-name lazy-name lazy-body [legacy? True]]
@@ -731,11 +746,13 @@
 
   ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
   ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/static_types.pyi)。
+  ;; 書き手が `effect` を書いた節の在る handler は、節の判定より前に `effect` を絞る前の値に束ねる(_narrowed-alias-bindings)。
   ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
   (setv dispatcher
     (if (static-view-enabled)
         `(_doeff-do (fn #^ _doeff_ClauseRun [(annotate ~(effect-symbol) object)
                                              (annotate ~(continuation-symbol) _doeff_Continuation)]
+                      ~@(_narrowed-alias-bindings clauses lazy-defs)
                       (cond ~@cond-forms)))
         `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) ~(continuation-symbol)]
                       (cond ~@cond-forms)))))
