@@ -895,11 +895,8 @@
    別々に stderr へ書く(sessionhost の program 用と agentd の program 用)。戻り値: None。"
   #^ str text)
 
-(defclass [(dataclass :frozen True :kw-only True)] ClockSleep [EffectBase]
-  "実時間待ち(wait-for-repl-idle の poll 間隔・dialog 再描画待ち)。
-   時間算術が ClockNow 経由であるのと同じく、待ちも effect 経由 — program は
-   wall clock に直接触れない。戻り値: None。"
-  #^ float seconds)
+;; 待ちの effect はこの語彙に無い — program は doeff-time の Delay を yield し、handler の積みの時間の handler が
+;; 答える(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1。それまでの自前の ClockSleep は退役)。
 
 
 ;; ===========================================================================
@@ -1170,9 +1167,3 @@
   "LogLine を実行する(名乗りの 1 行 — R13 の『黙って hook 無しで起こさない』の担保)。"
   (<- _ (LogLine :text text))
   None)
-
-(deff clock-sleep [seconds]
-  {:pre [(: seconds (| int float)) (>= seconds 0)]
-   :post [(: % ClockSleep)]}
-  "ClockSleep を構築する(poll 間隔・再描画待ち)。"
-  (ClockSleep :seconds (float seconds)))

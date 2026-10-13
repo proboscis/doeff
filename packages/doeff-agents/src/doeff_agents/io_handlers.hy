@@ -21,6 +21,7 @@
 
 (import doeff [Program run])
 (import doeff_core_effects.os_process [run-subprocess os-executable-at])
+(import doeff_time [sync-time-handler])
 (import doeff_agents.io_effects [
   ProcessOutcome
   WhichExecutable
@@ -41,8 +42,7 @@
   UnixLineRequest
   UnixConnectProbe
   ExecutableAt
-  MonotonicTime
-  Sleep])
+  MonotonicTime])
 
 
 (defn _write-text-io [path text mode]
@@ -176,13 +176,11 @@
     (resume found))
 
   (MonotonicTime []
-    (resume (time.monotonic)))
-
-  (Sleep [seconds]
-    (time.sleep seconds)
-    (resume None)))
+    (resume (time.monotonic))))
 
 
 (defn #^ object run-driver-io [#^ Program program]
-  "composition root: driver 層の program を本番の I/O で回す(答えは program の答え — 型は渡す program ごとに違う)。"
-  (run (driver-io-handler program)))
+  "composition root: driver 層の program を本番の I/O で回す(答えは program の答え — 型は渡す program ごとに違う)。
+   program の待ち(doeff-time の Delay)には、外側の sync-time-handler が壁の時計で答える — driver-io-handler は待ちに
+   答えない(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R2)。"
+  (run ((sync-time-handler) (driver-io-handler program))))

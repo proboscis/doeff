@@ -52,6 +52,12 @@
   `default_handlers` / `run_sync`, and `05` uses an `@do` cache handler that yields `Pass` (not the removed
   `Delegate`) and yields the `Await` that `SQLiteStorage.get` / `put` return.
 - `.semgrep.yaml`: `doeff-no-sleep-in-programs` covers `packages/*/examples/` and `examples/` as well as the source.
+- `doeff-agents`: programs wait by yielding doeff-time's `Delay`; the package's own wait effects are removed (card
+  ki-3c3d85253c2c). `doeff_agents.io_effects.Sleep` / `sleep` and `doeff_agents.sessionhost.effects.ClockSleep` /
+  `clock-sleep` no longer exist — yield `Delay(seconds)` from `doeff_time`. `driver-io-handler` and `real-substrate` do
+  not answer waits: the roots install doeff-time's `sync_time_handler()` (`run_driver_io`, the session host's
+  `run-hosted`), and **a caller that builds its own stack around `driver-io-handler` must add a time handler**. The
+  fakes (`fake-driver-io-handler`, `recorded-spawn-handler`) answer `DelayEffect` on their own clock / ledger.
 - `.semgrep.yaml`: the new ERROR rule `doeff-no-sleep-in-programs` rejects `time.sleep` / `asyncio.sleep` inside a
   `@do` program under `doeff/` and the packages' source (a handler taking `(effect, k)` may sleep). The rule
   `doeff-no-sleep-in-tests` is now ERROR and also catches an un-awaited `asyncio.sleep(...)` such as

@@ -218,8 +218,8 @@ from doeff import do, run, Perform
 from doeff.mcp import McpToolDef, McpParamSchema
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.effects import LaunchEffect, Monitor, Capture, Stop
-from doeff_agents.sessionhost.effects import ClockSleep
 from doeff_agents.handlers import claude_agent_handler
+from doeff_time import Delay, sync_time_handler
 
 # 1. Define a tool
 @do
@@ -246,7 +246,7 @@ def main():
 
     # Monitor until done
     for _ in range(60):
-        yield ClockSleep(seconds=1.0)
+        yield Delay(1.0)
         obs = yield Monitor(handle)
         if obs.is_terminal:
             break
@@ -255,8 +255,9 @@ def main():
     yield Stop(handle)
     return output
 
-# 3. Run with claude handler (it catches Launch and manages MCP)
-result = run(claude_agent_handler()(main()))
+# 3. Run with claude handler (it catches Launch and manages MCP).
+#    The time handler answers Delay: sync_time_handler() waits on the wall clock.
+result = run(sync_time_handler()(claude_agent_handler()(main())))
 print(result)
 ```
 
@@ -266,7 +267,6 @@ print(result)
 (require doeff-hy.macros [defmcp-tool defp <- defhandler])
 (import doeff [run])
 (import doeff_agents.effects [Launch Monitor Capture Stop])
-(import doeff_agents.sessionhost.effects [ClockSleep])
 (import doeff_agents.handlers [claude-agent-handler])
 (import doeff_agents.adapters.base [AgentType])
 (import pathlib [Path])

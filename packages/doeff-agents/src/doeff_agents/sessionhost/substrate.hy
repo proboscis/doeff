@@ -33,7 +33,6 @@
   TmuxSendKeys
   TmuxKillSession
   ClockNow
-  ClockSleep
   ProcRun
   FsCanonicalPath
   FsComposeHomeView
@@ -540,10 +539,6 @@
 
   (ClockNow []
     (resume (datetime.now timezone.utc)))
-
-  (ClockSleep [seconds]
-    (time.sleep seconds)
-    (resume None))
 
   (LogLine [text]
     ;; 名乗りの 1 行(R13): agentd の log(stderr)へ。program は substrate-clean なので

@@ -131,12 +131,11 @@
   #^ str socket-path
   #^ float timeout)
 
+;; 待ちの要求はこの語彙に無い — driver 層の program は doeff-time の Delay を yield し、1 秒が何であるかは
+;; composition root が置く時間の handler が決める(本番 = io_handlers.hy の run-driver-io の sync-time-handler・
+;; 検 = io_fake.hy の世界の時計。card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1)。
 (defclass [(dataclass :frozen True :kw-only True)] MonotonicTime [EffectBase]
   "単調時計の現在値(秒)。締切の計算に使う。")
-
-(defclass [(dataclass :frozen True :kw-only True)] Sleep [EffectBase]
-  "壁時計で待つ。"
-  #^ float seconds)
 
 
 ;; ---------------------------------------------------------------------------
@@ -271,10 +270,3 @@
   "単調時計の現在値(秒)。"
   (<- value (MonotonicTime))
   value)
-
-(defk sleep [seconds]
-  {:pre [(: seconds float)]
-   :post [(: % (| bool None))]}
-  "壁時計で待つ。"
-  (<- _ (Sleep :seconds seconds))
-  None)

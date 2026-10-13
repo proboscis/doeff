@@ -259,7 +259,11 @@
 (defk group-gone-by [child deadline]
   {:pre [(: child subprocess.Popen) (: deadline float)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
   "SIGTERM を送った group が期限(monotonic の秒)の内に空になったかを答えるため: group の頭の子の終わりを期限まで待ち(回収する)、その後
-   group に残った process(背景の孫)が居なくなるのを GROUP-POLL 秒ごとに期限まで問う。"
+   group に残った process(背景の孫)が居なくなるのを GROUP-POLL 秒ごとに期限まで問う。
+   問う間の待ちは time.sleep のまま(doeff-time の Delay にしない): ここは答え手(subprocess-handler・offloaded の取り消しの手当て)の
+   実装で、取り消しの手当ては要求の答え手の積みが届かない新しい VM で回る(頭の註)ので Delay に答える物が居ない。待つ相手は本物の
+   process の終わりで、doeff-core-effects は doeff-time に依存しない(ADR-DOE-TIME-001 R2・card ki-3c3d85253c2c — :role foundation が
+   その名乗り)。"
   (val leader-gone (try
                      (do (.wait child :timeout (max 0.0 (- deadline (time.monotonic)))) True)
                      (except [subprocess.TimeoutExpired] False)))
