@@ -113,6 +113,31 @@ pub struct ProgramSleepSettings {
     pub exclude_parts: BTreeSet<String>,
 }
 
+/// `[tool.doeff-linter.test_sleep]` — DOEFF211(Hy の検は realtime を名乗らない限り壁の時計で眠らない)の母集団 = 検の置き場。
+/// 節が無ければ規則は何も判じない。検の file = path の区切りに `parts` の名の dir を持つ Hy の file と、どこに在っても名が `names` の
+/// glob に合う Hy の file(検を別の名の dir に置いても届く)から、`exclude` の dir の下を除いた物。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct TestSleepSection {
+    /// 検の置き場の dir の名(path の区切りの完全一致 — 例 tests)。
+    #[serde(default)]
+    pub parts: Vec<String>,
+    /// 検の file の名の glob(file の名だけに当てる — 例 test_*.hy)。
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// 除く置き場(repo の根からの dir か file・末尾 `*` は前方一致)— 規則の検体の dir・組ごと実時間が対象だと名簿に載せた dir・
+    /// 別の process として走る独立の script の file(検の道具の import ができず、印を名乗れない物)。
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+/// DOEFF211 の母集団(検めた後)。
+#[derive(Debug, Clone)]
+pub struct TestSleepSettings {
+    pub parts: BTreeSet<String>,
+    pub names: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
 /// `[tool.doeff-linter.smells]` — 臭いの規則の設定(DOEFF121 を当てる層)。DOEFF122〜125 は定義の規則の母集団に当たる。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct SmellsSection {
@@ -279,6 +304,8 @@ pub struct ProjectSettings {
     pub definitions: Option<DefinitionSettings>,
     /// DOEFF210 の母集団(`[tool.doeff-linter.program_sleep]`・無ければ None — 規則は判じない)。
     pub program_sleep: Option<ProgramSleepSettings>,
+    /// DOEFF211 の母集団(`[tool.doeff-linter.test_sleep]`・無ければ None — 規則は判じない)。
+    pub test_sleep: Option<TestSleepSettings>,
     /// 規則ごとの、登録簿に載った破れの重さ(無ければ warning)。
     pub registered_severity: BTreeMap<ProjectRule, crate::models::Severity>,
     /// 規則ごとの重さの上書き(臭いの規則 DOEFF121〜125 だけ — 既定の info を warning に上げる時)。
@@ -316,6 +343,7 @@ pub struct ProjectSections<'a> {
     pub services: Option<&'a ServicesSection>,
     pub definitions: Option<&'a DefinitionsSection>,
     pub program_sleep: Option<&'a ProgramSleepSection>,
+    pub test_sleep: Option<&'a TestSleepSection>,
 }
 
 /// 既定の拡張子(Hy の 3 つと Python)。
@@ -348,6 +376,11 @@ impl ProjectSettings {
             paths: section.paths.iter().map(|p| normalize_dir(p)).collect(),
             exclude: section.exclude.iter().map(|p| normalize_dir(p)).collect(),
             exclude_parts: section.exclude_parts.iter().cloned().collect(),
+        });
+        let test_sleep = sections.test_sleep.map(|section| TestSleepSettings {
+            parts: section.parts.iter().cloned().collect(),
+            names: section.names.clone(),
+            exclude: section.exclude.iter().map(|p| normalize_dir(p)).collect(),
         });
         let mut unknown_rules: Vec<super::notice::UnknownRuleRef> = Vec::new();
         let python_ids: BTreeSet<String> = crate::rules::get_all_rules().iter().map(|r| r.rule_id().to_string()).collect();
@@ -466,6 +499,7 @@ impl ProjectSettings {
                 services,
                 definitions,
                 program_sleep,
+                test_sleep,
                 registered_severity: BTreeMap::new(),
                 severity: BTreeMap::new(),
                 level: BTreeMap::new(),

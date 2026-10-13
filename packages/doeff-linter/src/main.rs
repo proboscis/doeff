@@ -274,6 +274,7 @@ impl Setup {
                 ProjectRule::RawSideEffectDirect | ProjectRule::RawSideEffectVia => self.settings.raw.is_some(),
                 ProjectRule::EnvironmentName => self.settings.environment.is_some(),
                 ProjectRule::ProgramSleepsOnWallClock => self.settings.program_sleep.is_some(),
+                ProjectRule::TestSleepsOnWallClock => self.settings.test_sleep.is_some(),
                 ProjectRule::ServiceBoundary => self.settings.services.is_some(),
                 ProjectRule::ContextMatchesService => self.settings.services.is_some() || self.settings.architecture.is_some(),
                 ProjectRule::SemanticBusinessDecision | ProjectRule::SemanticTransportKnowledge => self.settings.semantic.is_some(),
@@ -361,6 +362,7 @@ impl Setup {
         self.settings.layers.is_some() || self.settings.architecture.is_some() || self.settings.environment.is_some() || self.settings.raw.is_some() || self.settings.services.is_some()
             || self.settings.definitions.is_some()
             || self.settings.program_sleep.is_some()
+            || self.settings.test_sleep.is_some()
     }
 }
 

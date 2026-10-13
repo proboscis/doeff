@@ -19,7 +19,7 @@
 //! 日次の赤を直す 23 会話が同時に commit して zeus を埋めた(load 102/24 core・swap 全部)。repo 全体の規則は file 1 つに当てても
 //! repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒)ので、stage した path に当てる形でも軽くならない。
 //!
-//! 既知の一覧を持たない規則(DOEFF206〜209)の critical は、上の 2 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
+//! 既知の一覧を持たない規則(DOEFF206〜209・211)の critical は、上の 2 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
 //! 止める(agora-redesign #3834)。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
 //! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
 //!

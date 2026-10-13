@@ -6,6 +6,7 @@ use crate::project::layers::{LayersSection, RolesSection, TagsSection};
 use crate::project::settings::{
     EnvironmentNamesSection, LawEntry, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection, ServicesSection, DefinitionsSection,
     ProgramSleepSection,
+    TestSleepSection,
 };
 use crate::models::Severity;
 use crate::project::architecture::Architecture;
@@ -81,6 +82,10 @@ pub struct Config {
     /// Hy の program は壁の時計で眠らない(DOEFF210)の母集団 = program の置き場 — `[tool.doeff-linter.program_sleep]`
     #[serde(default)]
     pub program_sleep: Option<ProgramSleepSection>,
+
+    /// Hy の検は realtime を名乗らない限り壁の時計で眠らない(DOEFF211)の母集団 = 検の置き場 — `[tool.doeff-linter.test_sleep]`
+    #[serde(default)]
+    pub test_sleep: Option<TestSleepSection>,
 
     /// service と層の宣言 architecture.hy の path(設定 file の dir からの相対)。書かなければ repo の根の architecture.hy を探す。
     #[serde(default)]
@@ -355,6 +360,7 @@ impl Config {
             services: self.services.as_ref(),
             definitions: self.definitions.as_ref(),
             program_sleep: self.program_sleep.as_ref(),
+            test_sleep: self.test_sleep.as_ref(),
         })
     }
 }

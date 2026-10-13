@@ -172,6 +172,10 @@ pub enum ProjectRule {
     /// (Delay など)で待ち、壁の時計で待つのは handler の実装だけ(doeff の ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c)。
     /// 母集団は設定の `[tool.doeff-linter.program_sleep]`(program の置き場 — 書いた repo にだけ当たる)。
     ProgramSleepsOnWallClock,
+    /// DOEFF211: Hy の検が、実時間が対象だと名乗らずに time.sleep / asyncio.sleep(と言い換えの `(.wait (threading.Event) 秒)`)で
+    /// 壁の時計を待つ — 検は仮想の時計で走らせるか出来事で待ち、実時間そのものが対象の検だけが realtime を名乗る(doeff の
+    /// ADR-DOE-TIME-001 R3・card ki-bb3ee40d0af2)。母集団は設定の `[tool.doeff-linter.test_sleep]`(検の置き場 — 書いた repo にだけ当たる)。
+    TestSleepsOnWallClock,
     /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
     /// import する — 置き場の決まっていない module への依存(agora-redesign #1188)。
     PlacedDependency,
@@ -298,6 +302,7 @@ impl ProjectRule {
         ProjectRule::RecordChangeWakesJob,
         ProjectRule::PollingOnTimer,
         ProjectRule::ProgramSleepsOnWallClock,
+        ProjectRule::TestSleepsOnWallClock,
         ProjectRule::PlacedDependency,
         ProjectRule::BlindDefinitionReads,
         ProjectRule::DefinitionCallsUnlistedHead,
@@ -381,6 +386,7 @@ impl ProjectRule {
             ProjectRule::RecordChangeWakesJob => "DOEFF208",
             ProjectRule::PollingOnTimer => "DOEFF209",
             ProjectRule::ProgramSleepsOnWallClock => "DOEFF210",
+            ProjectRule::TestSleepsOnWallClock => "DOEFF211",
             ProjectRule::PlacedDependency => "DOEFF140",
             ProjectRule::BlindDefinitionReads => "DOEFF141",
             ProjectRule::DefinitionCallsUnlistedHead => "DOEFF147",
@@ -441,6 +447,8 @@ impl ProjectRule {
             | ProjectRule::PollingOnTimer
             // program が handler を迂回して壁の時計で待つ(時間は handler の責務 — doeff の ADR-DOE-TIME-001・利用者 2026-10-12)。
             | ProjectRule::ProgramSleepsOnWallClock
+            // 検が、実時間が対象だと名乗らずに壁の時計で待つ(Python の検の同じ決まりは semgrep の ERROR — 同じ ADR の R3)。
+            | ProjectRule::TestSleepsOnWallClock
             // 置き場の外の module への依存(#1188 — 登録簿に載った既知の当たりは warning、新しい当たりは critical)。
             | ProjectRule::PlacedDependency
             // 決めた材料だけで判じる定義に、ほかの材料が入り込む(#1368 — #1188 の子。新しい当たりは critical)。
@@ -599,6 +607,8 @@ impl ProjectRule {
             | ProjectRule::MatchFieldHyphen
             // DOEFF210 は file の中身と設定の program_sleep の置き場だけで決まる(handler の実装の名乗りも定義が自分の辞書に書く)。
             | ProjectRule::ProgramSleepsOnWallClock
+            // DOEFF211 も file の中身と設定の test_sleep の置き場だけで決まる(realtime の名乗りは同じ file の module の段か deftest の meta)。
+            | ProjectRule::TestSleepsOnWallClock
             // file 1 つ(と層の宣言)で決まる。
             | ProjectRule::WireInWireFreeLayer
             | ProjectRule::BareMapInWireFreeLayer
@@ -676,6 +686,7 @@ impl ProjectRule {
             | ProjectRule::JsonValueOutsideWire
             | ProjectRule::EnvironmentName
             | ProjectRule::ProgramSleepsOnWallClock
+            | ProjectRule::TestSleepsOnWallClock
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
@@ -725,9 +736,18 @@ impl ProjectRule {
 
     /// 登録簿(既知の当たりの表)に載った当たりを warning へ下げてよい規則か。DOEFF206 は下げない — 違反を通す表を作らせない規則が、
     /// 別の表で通せては穴が残る(agora-redesign #3405・利用者 2026-10-04「おなじ穴が二度とあかないように」)。DOEFF207・208・209 も下げない —
-    /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209 = agora-redesign #3834)。
+    /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209 = agora-redesign #3834)。DOEFF211 も下げない — 検の眠りの規則の外へ出る道は
+    /// realtime の名乗り(と、名乗りを理由と一緒に載せる repo の名簿)だけにする(card ki-bb3ee40d0af2)。
     pub fn lowered_by_registry(self) -> bool {
-        !matches!(self, ProjectRule::IntentFakedInVerification | ProjectRule::SystemAccessUnwritten | ProjectRule::RecordChangeWakesJob | ProjectRule::PollingOnTimer | ProjectRule::LowerLayerInDomain)
+        !matches!(
+            self,
+            ProjectRule::IntentFakedInVerification
+                | ProjectRule::SystemAccessUnwritten
+                | ProjectRule::RecordChangeWakesJob
+                | ProjectRule::PollingOnTimer
+                | ProjectRule::LowerLayerInDomain
+                | ProjectRule::TestSleepsOnWallClock
+        )
     }
 
     /// 臭いの規則(DOEFF121〜125 — 既定の重さ warning・設定の severity で info に下げられる)か。
@@ -819,6 +839,7 @@ impl ProjectRule {
             | ProjectRule::RecordChangeWakesJob
             | ProjectRule::PollingOnTimer
             | ProjectRule::ProgramSleepsOnWallClock
+            | ProjectRule::TestSleepsOnWallClock
             | ProjectRule::RetiredWord
             | ProjectRule::RetiredCall
             | ProjectRule::BlindDefinitionReads
@@ -919,6 +940,7 @@ impl ProjectRule {
             ProjectRule::RecordChangeWakesJob => "記録の変更の待ちで job を起こす",
             ProjectRule::PollingOnTimer => "時間の待ちを挟んで同じ物を取りに行く",
             ProjectRule::ProgramSleepsOnWallClock => "program が壁の時計で眠る",
+            ProjectRule::TestSleepsOnWallClock => "検が名乗らずに壁の時計で眠る",
             ProjectRule::RetiredWord => "使わないと決めた綴り",
             ProjectRule::RetiredCall => "使わないと決めた呼び",
             ProjectRule::HandlerArgumentHoldsState => "handler の引数が client・可変の店を取る",
@@ -990,6 +1012,7 @@ impl ProjectRule {
             | ProjectRule::RecordChangeWakesJob
             | ProjectRule::PollingOnTimer
             | ProjectRule::ProgramSleepsOnWallClock
+            | ProjectRule::TestSleepsOnWallClock
             | ProjectRule::DefinitionCallsUnlistedHead
             | ProjectRule::CallOutsideDeclaredSites
             | ProjectRule::BroadCatchOutsideCarrier
@@ -1084,6 +1107,7 @@ impl ProjectRule {
             ProjectRule::RecordChangeWakesJob => "Record Change Wakes Job",
             ProjectRule::PollingOnTimer => "Polling On Timer",
             ProjectRule::ProgramSleepsOnWallClock => "Program Sleeps On The Wall Clock",
+            ProjectRule::TestSleepsOnWallClock => "Test Sleeps On The Wall Clock",
             ProjectRule::RetiredWord => "Retired Word",
             ProjectRule::RetiredCall => "Retired Call",
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
@@ -1162,6 +1186,7 @@ impl ProjectRule {
             ProjectRule::SystemAccessUnwritten => "architecture.hy に :outside-writers(本番の系の job でない書き手が書く外の置き場の組の表)を書いた repo では、本番の系(defservice の :system が名指す defsystem)の job は :reads と :writes(読む・書く外の置き場の組 `\"<置き場>:<名>\"` の文字列の集合・使わなければ #{})を書き、job の :reads の組は、どれかの本番の job の :writes か、本番の入口(:business-fakes の宣言で決まる・DOEFF143 と同じ)から届く defk・deff の契約の :writes(job でない書き手 — 系の job から送られる task の Program など)か、:outside-writers の表に在る — 本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる穴を閉じる(利用者 2026-10-04 \"so this kind of violation, must be detected by doeff linter\"・agora-redesign #3493・#3496)。登録簿で下げない",
             ProjectRule::RecordChangeWakesJob => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file・doeff-records の package の中を除く)は、記録の変更の待ちで job を起こさない — doeff-records の合図の源の工場(read-signal-handler・records-signal-handler)を呼ばず、記録の効果に答える handler の外で WatchChanges・WatchEvents を秒(:timeout か位置の 3 つ目)が literal の 0 でない値で出さない。待たずに 1 回読む(秒 0)・記録への書きは当たらない(利用者 2026-10-06 \"記録に書いて記録をポーリングする設計を本当にやめてくれ、linterでみつけて禁止したい\" / \"記録は記録、起動は起動\"・agora-redesign #3834)。登録簿で下げない",
             ProjectRule::PollingOnTimer => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file — doeff-records の package の中も含む)の Program は、同じ物を時間の待ちを挟んで繰り返し取りに行かない — 繰り返し(while・loop の本体・event-loop の節・自分を呼ぶ定義)の中に、Delay・WaitTicks・module の名つきの sleep(秒が literal の 0 の譲りと (- 期限 今) の期限の待ちを除く)・刻が (+ 今 …) の ArmTimer / ArmedTimer(今 = 同じ定義で GetTime・now-ms・clock-ms から結んだ名)・それらを包む補助の定義の呼びと、handler の節が必ず待つ効果を出す所(repo を読み直して集める — 別の task に渡す Program の中は見ない)を置かない。ライブラリへ問い直しの間隔を渡す :poll-seconds も当たる。起きる刻が行や予定から導かれる期限の待ち・1 度だけ掛けて抜ける期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout は当たらない。相手が変わりを知らせる手段を持たない所だけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書いて通す — 語は閉じた集合(相手に変更の知らせが無い: <相手> — <何で確かめたか>〔相手と確かめの根拠のどちらも空でなく、変更の知らせを持つと分かっている相手 — Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — でない〕 / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し — 最後は区分 retry の当たりだけ)(利用者 2026-10-06 \"so anything that require polling, are to be fixed. polling is a last resort\" / \"記録に書いて記録をポーリングする設計を本当にやめてくれ、linterでみつけて禁止したい\"・agora-redesign #3834)。登録簿で下げない",
+            ProjectRule::TestSleepsOnWallClock => "設定の `[tool.doeff-linter.test_sleep]` の検の置き場の Hy の file(path の区切りに parts の名の dir を持つ file と、名が names の glob に合う file — exclude の dir の下を除く)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・method の綴り `(.sleep time 秒)`・(Await (asyncio.sleep 秒)) の中の呼び・言い換えの `(.wait (threading.Event) 秒)` も)— 検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を名指して待つ。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象だと名乗った所だけ: module の最上位の `(val pytestmark pytest.mark.realtime)`(印の list・tuple でも)を持つ file の全部・meta の map の :marks に \"realtime\" を持つ deftest の中・decorator の並びに印を持つ素の関数の検 `(defn [pytest.mark.realtime] 名 [] …)` の中。名乗った検は、名簿を持つ repo では名簿にも理由と一緒に載せる(doeff の ADR-DOE-TIME-001 R3・利用者 2026-10-12 \"why not doeff's time effects?\"・card ki-bb3ee40d0af2)",
             ProjectRule::ProgramSleepsOnWallClock => "設定の `[tool.doeff-linter.program_sleep]` の置き場の Hy の program(defk・defp の本体 — 字面で内側に在る fn・defn・deff の中も)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・(Await (asyncio.sleep 秒)) の中の呼びも)— 時間は doeff-time の効果(Delay・WaitUntil・WaitWithin …)で待ち、1 秒が何であるかは呼び手が置く時間の handler が決める。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは handler の実装だけ: defhandler の本体・引数の並びが [effect k] の定義・契約の辞書の :tags の :role が foundation(汎用の I/O の役 — handler からだけ呼ばれる helper)を自分で名乗る defk・defp。最上位の deff・defn(素の callable)は program でないので数えない(doeff の ADR-DOE-TIME-001 R1・R2・利用者 2026-10-12 \"why not doeff's time effects?\"・card ki-3c3d85253c2c)",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ(operator 2026-09-26 \"we only need fake for effects that access external world\")。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
@@ -1257,6 +1282,7 @@ impl ProjectRule {
             ProjectRule::SystemAccessUnwritten => "job の行に :reads #{…} :writes #{…} を書く。読む組に書き手が無いなら、その組を書く job を本番の系に足すか、書き手が本番の系の job でない(外の repo の道具・人の操作・job でない task)なら architecture.hy の :outside-writers に組と書き手を書く",
             ProjectRule::RecordChangeWakesJob => "記録の変更を待って起きる形をやめる: 起こす知らせは出来事の基盤(redis・rabbitmq など)から受け、記録は書くだけにする。起動や繋ぎ直しの時に追いつくための読みは待たない 1 回の読み(秒 0)にする。合図の源(read-signal-handler)を handler の列から外し、出来事の基盤の知らせを受ける源に替える",
             ProjectRule::PollingOnTimer => "時間の間隔で取りに行くのをやめ、相手の変わりの知らせ(出来事 — doeff-events の Publish / WaitForEvent・出来事の基盤)で起きる形にする。起きる刻が行や予定から決まる期限の待ちは、その刻を行から導いて掛ける。相手が変わりを知らせる手段を持たない所・書くだけの loop(生存の印・報告・期限の延長)・届かない印か失敗の答えが在る間だけ繋がるかを試し、戻ったら印を消す繋ぎ直しだけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書く",
+            ProjectRule::TestSleepsOnWallClock => "実時間が対象でない待ちは外す — program の待ちは `(<- (Delay 秒))` にして検を sim-time-handler の仮想の時計で走らせる・相手の状態を待つなら出来事(threading.Event の set・queue の get・process の wait)を名指して待つ。実時間そのものが対象(本物の thread の重なり・本物の asyncio の loop・本物の外の process や socket の締め切りつきの待ち)なら名乗る: その検だけなら `(deftest 名 {:marks [\"realtime\"]} …)`(素の関数の検は `(defn [pytest.mark.realtime] 名 [] …)`)、helper や file の全体なら最上位に `(val pytestmark pytest.mark.realtime)`。名乗った検は repo の realtime の名簿(doeff は tests/realtime_tests.toml)に「実時間の何が対象か」の理由と一緒に載せる",
             ProjectRule::ProgramSleepsOnWallClock => "待ちを doeff-time の効果に替える — `(import doeff_time [Delay])` と `(<- (Delay 秒))`(期限まで待つなら WaitUntil・上限つきで待つなら WaitWithin)。program を走らせる所に時間の handler を置く(本番は sync-time-handler か async-time-handler・検は sim-time-handler)。handler からだけ呼ばれ、本物の相手(子 process・端末)の実時間を待つ helper なら、その定義の契約の辞書に `:tags {:context \"<文脈>\" :role \"foundation\"}` を書いて名乗り、訳を docstring に書く",
             ProjectRule::TestKindMismatch => "縁なら印を付け(既定の pytest から外れる)、手元のつもりなら届く先の実 I/O の handler を模擬の handler に替える — 手元なのに印が在れば外す",
             ProjectRule::WorldHandlerWithoutContractTest => "本物(その handler)と模擬の解釈器を :interpreters に並べた deftest を書き、同じ検を両方に通す — 縁の検を持たない理由が在る handler だけ、名簿の行に理由のテストの名つきで none を書く: doeff の handler を 1 行で包むだけで契約テストが doeff の側に在るなら :contract-test (none :doeff-test \"packages/<pkg>/tests/<file>.hy::<テストの名>\")(doeff の repo の根からの path)、この repo の別のテストが契約を確かめるなら :contract-test (none :repo-test \"<file>.hy::<テストの名>\")(この repo の根からの path)。理由の無い :contract-test none は鳴る",
@@ -1365,6 +1391,7 @@ mod tests {
         ("DOEFF208", RuleFamily::Definition),
         ("DOEFF209", RuleFamily::Definition),
         ("DOEFF210", RuleFamily::Definition),
+        ("DOEFF211", RuleFamily::Definition),
         ("DOEFF140", RuleFamily::Place),
         ("DOEFF141", RuleFamily::Place),
         ("DOEFF147", RuleFamily::Definition),

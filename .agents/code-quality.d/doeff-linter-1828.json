@@ -129,11 +129,13 @@
     "packages/doeff-linter/src/project/record_waits.rs",
     "packages/doeff-linter/src/project/timed_refetch.rs",
     "packages/doeff-linter/src/project/program_sleep.rs",
+    "packages/doeff-linter/src/project/test_sleep.rs",
     "packages/doeff-linter/tests/out_of_scope.rs",
     "packages/doeff-linter/src/check_slot.rs",
     "packages/doeff-linter/tests/check_slot.rs",
     "packages/doeff-linter/tests/single_file_reads.rs",
-    "packages/doeff-linter/tests/program_sleep.rs"
+    "packages/doeff-linter/tests/program_sleep.rs",
+    "packages/doeff-linter/tests/test_sleep.rs"
   ],
   "modules": [
     {
@@ -263,7 +265,8 @@
         "packages/doeff-linter/src/project/system_access.rs",
         "packages/doeff-linter/src/project/record_waits.rs",
         "packages/doeff-linter/src/project/timed_refetch.rs",
-        "packages/doeff-linter/src/project/program_sleep.rs"
+        "packages/doeff-linter/src/project/program_sleep.rs",
+        "packages/doeff-linter/src/project/test_sleep.rs"
       ],
       "public": [
         "packages/doeff-linter/src/project/allowed_heads.rs",
@@ -437,7 +440,8 @@
         "packages/doeff-linter/tests/out_of_scope.rs",
         "packages/doeff-linter/tests/check_slot.rs",
         "packages/doeff-linter/tests/single_file_reads.rs",
-        "packages/doeff-linter/tests/program_sleep.rs"
+        "packages/doeff-linter/tests/program_sleep.rs",
+        "packages/doeff-linter/tests/test_sleep.rs"
       ],
       "public": [
         "packages/doeff-linter/tests/build_commit.rs",

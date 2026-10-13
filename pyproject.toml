@@ -188,13 +188,36 @@ paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effect
 
 # Hy の program(defk・defp)は壁の時計で眠らない(DOEFF210・ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c)の母集団 = 本体の Hy の
 # program の置き場。Python の同じ決まりは semgrep の doeff-no-sleep-in-programs(.semgrep.yaml)が持ち、範囲もそれに合わせる:
-# doeff/ と packages/ の本体で、検(tests/)と例(examples/)は外す — Hy の検の扱いは card ki-bb3ee40d0af2(ki-6aa7cb5ffb83 の続き)・例は親 card の別の子。
+# doeff/ と packages/ の本体で、検(tests/)と例(examples/)は外す — Hy の検の眠りは下の DOEFF211(test_sleep の節)が持つ・例は親 card の別の子。
 # 上の definitions(定義の書き方の規則群)とは別の節: その規則群をまだ当てていない package(doeff-agents ほか)の program にも、
 # この規則だけを当てる。効いている事と当たり 0 件は packages/doeff-linter/tests/program_sleep.rs(cargo test)が見る — この節を消す・
 # DOEFF210 を disable に足すと、その検が赤になる。
 [tool.doeff-linter.program_sleep]
 paths = ["doeff", "packages"]
 exclude_parts = ["tests", "examples"]
+
+# Hy の検は、実時間が対象だと名乗らない限り壁の時計で眠らない(DOEFF211・ADR-DOE-TIME-001 R3・card ki-bb3ee40d0af2)の母集団 = 検の
+# 置き場。Python の同じ決まりは semgrep の doeff-no-sleep-in-tests(.semgrep.yaml)が持ち、範囲もそれに合わせる: 名が tests の dir の
+# 下の Hy の file(検・道具・子の process に渡す job の本体)と、どこに在っても検の名の Hy の file。
+# 名乗りは 3 つの形: deftest の meta の `{:marks ["realtime"]}`・素の関数の検の decorator `(defn [pytest.mark.realtime] 名 [] …)`・
+# module の最上位の `(val pytestmark pytest.mark.realtime)`。名乗った検は
+# 名簿 tests/realtime_tests.toml に理由と一緒に載せる — 名乗りと名簿の [tests]、下の exclude と名簿の [suites] が 1 対 1 である事は
+# tests/semgrep/test_realtime_tests_registry.py が見る(この節を読む)。
+# exclude の dir の行 = 規則の検体の dir(当たりを持つのが役目・実行しない — 名簿の検の HY_RULE_SAMPLES と同じ 2 行)と、名簿の
+# [suites] の dir。file の行 = 検が別の process として起こす独立の script(pytest を import しないので印を名乗れない)— file の行が
+# 名乗りの代わりで、名簿の [tests] に同じ path の行を理由と一緒に持つ。
+# 効いている事と当たり 0 件は packages/doeff-linter/tests/test_sleep.rs(cargo test)が見る — この節を消す・DOEFF211 を disable に足すと、
+# その検が赤になる。
+[tool.doeff-linter.test_sleep]
+parts = ["tests"]
+names = ["test_*.hy", "*_test.hy"]
+exclude = [
+    "packages/doeff-linter/tests/fixtures",
+    "tests/semgrep/fixtures",
+    "packages/doeff-agents/conformance",
+    "packages/doeff-claude-code/tests/stub_cli/claude.hy",
+    "packages/doeff-cluster/tests/fixtures/sleeper.hy",
+]
 
 # 設計の記録の dir(その時点の証拠 — 模型・測りの script・検の写しを置く。検の名の file が在っても検ではない)。定義はこの 1 点で、
 # 読み手は 2 つ: make test-changed の選び(scripts/run_changed_tests.py の collector_patterns)は、この下の file を名の規則に当たっても

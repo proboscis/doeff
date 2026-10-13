@@ -235,6 +235,8 @@ pub enum Explain {
     PollingOnTimer { subject: String, reason: String },
     /// DOEFF210: program が壁の時計で眠る(主体 = program の名と眠りの関数・理由の文)。
     ProgramSleepsOnWallClock { subject: String, reason: String },
+    /// DOEFF211: 検が壁の時計で眠る(主体 = 包む定義の名と眠りの関数・理由の文)。
+    TestSleepsOnWallClock { subject: String, reason: String },
     /// DOEFF166: 登録簿の鍵(source = 載った登録簿の file・rules = 鍵の区切りが指す、この実行で判じた規則の ID)がどの所見にも当たらない。
     RegistryEntryStale { key: String, source: String, rules: Vec<String> },
     /// DOEFF165: intent の効果の網羅の表の 1 行(効果・持ち主の service・3 列・欠けの語句)。
@@ -669,6 +671,7 @@ impl<'a> Narrator<'a> {
             Explain::RecordChangeWakesJob { subject, reason } => (subject.clone(), reason.clone()),
             Explain::PollingOnTimer { subject, reason } => (subject.clone(), reason.clone()),
             Explain::ProgramSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
+            Explain::TestSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
             Explain::RegistryEntryStale { key, source, rules } => (
                 format!("登録簿 {} の鍵 {}", source, key),
                 format!("この実行で規則 {} を repo 全体に当てたが、この鍵に当たる所見が無い。載った破れを直した後に行を消し忘れると、同じ所に破れが戻っても登録簿が黙って warning に下げる(縮める向きの登録簿が緩んだまま — agora-redesign #1706)。", rules.join("・")),

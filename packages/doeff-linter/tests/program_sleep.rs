@@ -191,7 +191,7 @@ fn the_sample_of_a_sleeping_program_is_found_under_the_repo_s_own_settings() {
     let source = fixture();
     let report = editor(&root, &["--stdin", "--path", "packages/doeff-agents/src/doeff_agents/sample_waits.hy"], Some(&source));
     assert_eq!(hit_lines(&report), marked_lines(&source));
-    // 検の置き場(tests/)は、この規則の母集団の外(Hy の検の扱いは別の card ki-bb3ee40d0af2 — ki-6aa7cb5ffb83 の続き)。
+    // 検の置き場(tests/)は、この規則の母集団の外(Hy の検の眠りは DOEFF211 が持つ — tests/test_sleep.rs)。
     let in_tests = editor(&root, &["--stdin", "--path", "packages/doeff-agents/tests/sample_waits.hy"], Some(&source));
     assert!(violations(&in_tests).is_empty(), "{:#?}", violations(&in_tests));
 }

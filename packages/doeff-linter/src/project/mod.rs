@@ -70,6 +70,7 @@ pub mod system_access;
 pub mod record_waits;
 pub mod timed_refetch;
 pub mod program_sleep;
+pub mod test_sleep;
 pub mod system_decls;
 pub mod clause_coverage;
 pub mod python_reach;
@@ -100,7 +101,7 @@ use spans::innermost_definition;
 use law::LawSpec;
 use layers::{LayerId, LayerSettings};
 use module_index::{ModuleIndex, Roads};
-use settings::{EnvironmentSettings, ProgramSleepSettings, ProjectSettings};
+use settings::{EnvironmentSettings, ProgramSleepSettings, ProjectSettings, TestSleepSettings};
 
 /// module の綴り → 置き場 の索引(import の先を層と service へ解くため)。
 type SiteIndex<'a> = ModuleIndex<'a, ModuleSite>;
@@ -728,24 +729,17 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
             }
             if let Some(places) = settings.program_sleep.as_ref().filter(|_| enabled.contains(&ProjectRule::ProgramSleepsOnWallClock)) {
-                // 歩く範囲(根の下と設定の include)の program の置き場の file — 名指しが在れば、その下の file だけを判じる(定義の規則と同じ述語)。
-                let files: Vec<SourceFile> = hy_files::walked(root, &settings.include)
-                    .into_iter()
-                    .filter(|(rel, _)| is_program_sleep_file(rel, places))
-                    .map(|(rel, path)| SourceFile { rel, path, language: Language::Hy })
-                    .filter(|file| focus.is_none_or(|only| only.iter().any(|p| file.path.starts_with(p))))
-                    .collect();
-                let judged: Vec<Result<Vec<Draft>, String>> = crate::timing::timed("program-sleep", || {
-                    files
-                        .par_iter()
-                        .map(|file| {
-                            std::fs::read_to_string(&file.path)
-                                .map(|source| judge_program_sleep(file, &source))
-                                .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
-                        })
-                        .collect()
-                });
-                for result in judged {
+                let walk = SleepWalk { root, include: &settings.include, focus, label: "program-sleep" };
+                for result in walk.judge(|rel| is_program_sleep_file(rel, places), judge_program_sleep) {
+                    match result {
+                        Ok(found) => drafts.extend(found),
+                        Err(error) => report.errors.push(error),
+                    }
+                }
+            }
+            if let Some(places) = settings.test_sleep.as_ref().filter(|_| enabled.contains(&ProjectRule::TestSleepsOnWallClock)) {
+                let walk = SleepWalk { root, include: &settings.include, focus, label: "test-sleep" };
+                for result in walk.judge(|rel| is_test_sleep_file(rel, places), judge_test_sleep) {
                     match result {
                         Ok(found) => drafts.extend(found),
                         Err(error) => report.errors.push(error),
@@ -903,6 +897,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if enabled.contains(&ProjectRule::ProgramSleepsOnWallClock) && is_program_sleep_file(rel, places) {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     drafts.extend(judge_program_sleep(&file, source));
+                }
+            }
+            if let (Some(places), Some(rel)) = (&settings.test_sleep, &program_rel) {
+                if enabled.contains(&ProjectRule::TestSleepsOnWallClock) && is_test_sleep_file(rel, places) {
+                    let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
+                    drafts.extend(judge_test_sleep(&file, source));
                 }
             }
             if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
@@ -4776,7 +4776,8 @@ fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
     let defined = settings.definitions.as_ref().is_some_and(|d| is_definition_file(rel, d) || is_test_file(rel, d));
     let named = settings.environment.as_ref().is_some_and(|env| is_environment_file(rel, env));
     let programs = settings.program_sleep.as_ref().is_some_and(|places| is_program_sleep_file(rel, places));
-    layered || defined || named || programs
+    let tests = settings.test_sleep.as_ref().is_some_and(|places| is_test_sleep_file(rel, places));
+    layered || defined || named || programs || tests
 }
 
 /// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、
@@ -5454,6 +5455,38 @@ fn judge_json_value(file: &SourceFile, source: &str, architecture: &architecture
     })
 }
 
+// --- 眠りの規則(DOEFF210・211)の歩き ----------------------------------------------------
+
+/// 眠りの規則の全体の実行: 歩く範囲(根の下と設定の include)の Hy の file のうち母集団に当たる物を 1 つずつ読んで判じる —
+/// 名指しが在れば、その下の file だけを判じる(定義の規則と同じ述語)。
+struct SleepWalk<'a> {
+    root: &'a Path,
+    include: &'a [PathBuf],
+    focus: Option<&'a [PathBuf]>,
+    /// 時間の計測の名。
+    label: &'static str,
+}
+
+impl SleepWalk<'_> {
+    /// 母集団の file ごとの下書き(読めない file は訳)。
+    fn judge(&self, in_population: impl Fn(&str) -> bool, judge: impl Fn(&SourceFile, &str) -> Vec<Draft> + Sync) -> Vec<Result<Vec<Draft>, String>> {
+        let files: Vec<SourceFile> = hy_files::walked(self.root, self.include)
+            .into_iter()
+            .filter(|(rel, _)| in_population(rel))
+            .map(|(rel, path)| SourceFile { rel, path, language: Language::Hy })
+            .filter(|file| self.focus.is_none_or(|only| only.iter().any(|p| file.path.starts_with(p))))
+            .collect();
+        crate::timing::timed(self.label, || {
+            files
+                .par_iter()
+                .map(|file| {
+                    std::fs::read_to_string(&file.path).map(|source| judge(file, &source)).map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                })
+                .collect()
+        })
+    }
+}
+
 // --- program の眠り(DOEFF210)----------------------------------------------------------
 
 /// program の置き場の file か(置き場の 1 つの下 — 置き場が空なら全部 — で、除く置き場・区切りに当たらない Hy の file)。
@@ -5481,6 +5514,42 @@ fn judge_program_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
             explain: Explain::ProgramSleepsOnWallClock {
                 subject: format!("program {} の中の {} の呼び", hit.definition, hit.callee),
                 reason: "program が time.sleep・asyncio.sleep を呼ぶと、どの時間の handler を置いても壁の時計で待つ — その program の検は仮想の時計(sim-time-handler)で走れず、実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。program は doeff-time の効果(Delay など)を出し、1 秒が何であるかは呼び手が置く時間の handler が決める。壁の時計で待つのは handler の実装の責務(doeff の ADR-DOE-TIME-001 R1・R2)。".to_string(),
+            },
+        })
+        .collect()
+}
+
+// --- 検の眠り(DOEFF211)---------------------------------------------------------------
+
+/// 検の置き場の file か(path の区切りに置き場の dir の名を持つか、file の名が検の名の glob に合う Hy の file で、除く置き場(dir の下か、
+/// 名指しの file そのもの)に当たらない)。
+fn is_test_sleep_file(rel: &str, places: &TestSleepSettings) -> bool {
+    let (dirs, name) = match rel.rsplit_once('/') {
+        Some((dirs, name)) => (dirs, name),
+        None => ("", rel),
+    };
+    language_of(Path::new(rel)) == Some(Language::Hy)
+        && (dirs.split('/').any(|part| places.parts.contains(part)) || places.names.iter().any(|pattern| glob_matches(pattern, name)))
+        && !places.exclude.iter().any(|place| matches_place(rel, place))
+}
+
+/// DOEFF211: realtime を名乗らない検の中の壁の時計の眠りを、呼びの form の位置の下書きにする(鍵の細目 = 包む定義の名::眠りの関数)。
+fn judge_test_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    test_sleep::judge(source)
+        .into_iter()
+        .map(|hit| Draft {
+            rule: ProjectRule::TestSleepsOnWallClock,
+            layer: None,
+            path: file.path.clone(),
+            rel: file.rel.clone(),
+            range: lines.range(hit.start, hit.end),
+            message: format!("{} — 検の {} が {} で壁の時計を待つ(実時間が対象なら realtime を名乗る・そうでなければ出来事か仮想の時計で待つ)", file.rel, hit.definition, hit.callee),
+            detail: Some(hit.detail()),
+            base: Severity::Error,
+            explain: Explain::TestSleepsOnWallClock {
+                subject: format!("検の {} の中の {} の呼び", hit.definition, hit.callee),
+                reason: "検が time.sleep・asyncio.sleep で待つと、待つ物(出来事)が名指されず、実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を名指して待つ。実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象の検だけが realtime を名乗り、理由と一緒に名簿に載る(doeff の ADR-DOE-TIME-001 R3)。".to_string(),
             },
         })
         .collect()

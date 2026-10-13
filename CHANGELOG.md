@@ -19,6 +19,14 @@
   callables and are not judged. The rule runs only where a repo declares its program places in the new section
   `[tool.doeff-linter.program_sleep]` (`paths`, `exclude`, `exclude_parts`); doeff declares `doeff` and `packages`
   without `tests` / `examples`.
+- `doeff-linter`: added the critical rule `DOEFF211` (Test Sleeps On The Wall Clock) — a Hy test file must not call
+  `time.sleep` / `asyncio.sleep` (nor reword it as `(.wait (threading.Event) seconds)` or `(.sleep time seconds)`)
+  unless it declares that real time is its subject (card ki-bb3ee40d0af2). The declaration is the pytest mark
+  `realtime` in one of three forms: a deftest's meta map `{:marks ["realtime"]}`, a plain test function's decorator
+  `(defn [pytest.mark.realtime] name [] …)`, or a top-level `(val pytestmark pytest.mark.realtime)` for a whole file.
+  The rule runs only where a repo declares its test places in the new section `[tool.doeff-linter.test_sleep]`
+  (`parts`, `names`, `exclude`); doeff declares every Hy file under a `tests` dir and lists each declared test with
+  its reason in `tests/realtime_tests.toml`. The rule's hits are not lowered by the known-violation registry.
 - `.semgrep.yaml`: the new ERROR rule `doeff-agents-no-sleep-effect-hy` rejects a wait effect defined again in
   doeff-agents' Hy source (a `defclass` / `defeffect` whose name contains `Sleep` / `Delay`, or a constructor named
   `sleep` / `…-sleep`).
