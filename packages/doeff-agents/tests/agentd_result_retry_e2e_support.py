@@ -20,6 +20,11 @@ from doeff_agents.effects import AgentSessionLifecycle
 from sessionhost_bin import resolve_sessionhost_bin
 from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
+# This support module waits for a real doeff-agentd process, which no doeff
+# clock reaches. pytest does not collect it; the line is the declaration that
+# the semgrep rule doeff-no-sleep-in-tests and tests/realtime_tests.toml read.
+pytestmark = pytest.mark.realtime
+
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["summary", "ok"],
@@ -142,12 +147,9 @@ def _wait_for_agentd(
             client.status()
             return
         except OSError:
-            # Polling a real doeff-agentd subprocess's readiness; there is no
-            # doeff effect clock to control here.
-            time.sleep(0.1)  # nosemgrep: doeff-no-sleep-in-tests
+            time.sleep(0.1)
         except Exception:
-            # See OSError branch above.
-            time.sleep(0.1)  # nosemgrep: doeff-no-sleep-in-tests
+            time.sleep(0.1)
     raise AssertionError(f"doeff-agentd did not become ready\n{_read_text(log_path)}")
 
 

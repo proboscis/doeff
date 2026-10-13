@@ -145,9 +145,9 @@
   :decision
     [(rule R1 "program(@do の関数・defk)は、時間を待つ時に doeff-time の効果(Delay・WaitUntil・WaitWithin・RaceWithin・ScheduleAt・WaitTicks)を yield する。time.sleep(x)・asyncio.sleep(x) を呼ばない(yield Await(asyncio.sleep(x)) と from time import sleep の sleep(x) を含む)。時間を待たずに 1 度譲るだけの sleep(0) は数えない。")
      (rule R2 "壁の時計を待ってよいのは、時間の handler の実装((effect, k) を受ける関数と、そこからだけ呼ばれる helper)だけ。呼び手は program を走らせる所で時間の handler を選ぶ: 本番は async_time_handler()(await_handler() の内)か sync_time_handler()、検は sim_time_handler()。")
-     (rule R3 "検は program を sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。time.sleep・asyncio.sleep を呼んでよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・外の process や library)が対象の検だけで、その検は pytest の marker realtime を名乗り、名簿 tests/realtime_tests.toml に理由と一緒に載る。")
+     (rule R3 "検は program を sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。time.sleep・asyncio.sleep を呼んでよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・外の process や library)が対象の検だけで、その検は pytest の marker realtime を名乗り、名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載る(本物の process を待つ検の support の module も、同じ pytestmark の 1 行で名乗って載る)。どの検も本物の外の process を黒箱で動かす組は、規則の paths.exclude の dir として名簿の [suites] に理由と一緒に載る(載っているのは packages/doeff-agents/conformance)。規則の外へ出る道はこの 2 つの表だけで、行の注釈(nosemgrep)で規則を外さず、threading.Event().wait(秒) のように sleep を言い換えない(card ki-6aa7cb5ffb83)。")
      (rule R4 "新しい素の sleep は linter で止める: .semgrep.yaml の規則 doeff-no-sleep-in-programs と doeff-no-sleep-in-tests を severity ERROR で置く。規則の定義(pattern・paths)は .semgrep.yaml の 1 か所で、この冊にも他の冊にも写さない。形の正しさ(鳴るべき行だけが鳴る)は、規則ごとの極性の検が .semgrep.yaml の規則そのものを検体に当てて見る。")
-     (rule R5 "今の規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る: Hy の program(defk)の素の time.sleep と doeff-agents の自前の待ちの効果(card ki-3c3d85253c2c)・tests/ の nosemgrep の 7 か所と conformance/ と Hy の検(card ki-6aa7cb5ffb83)。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
+     (rule R5 "今の規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る: Hy の program(defk)の素の time.sleep と doeff-agents の自前の待ちの効果(card ki-3c3d85253c2c)・Hy の検の素の sleep(名が tests の dir の下の .hy に 70 行・33 file — 2026-10-14 に数えた。semgrep の Python の規則は Hy を読めないので、Hy を読む規則の器を ki-3c3d85253c2c が置いた後に同じ名簿で塞ぐ・card ki-bb3ee40d0af2)。tests/ の nosemgrep の 7 か所と conformance/ は card ki-6aa7cb5ffb83 が塞いだ(R3)。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
      (rule R6 "戻し方: この冊だけを外すなら、冊を足した commit を revert する。規則を外す・WARNING に下げるなら、利用者の 2026-10-12 の決定を覆す事になるので、利用者の新しい決定を :problem に原文で書いてから、規則・極性の検・名簿・この冊を同じ commit で直す。")]
   :laws
     [(law a-program-waits-by-a-time-effect
@@ -167,15 +167,22 @@
        :enforced-by ["packages/doeff-time/tests/test_time_contract.hy::test-delay-advances-by-its-span"]
        :wiring "配線済み — 同じ deftest が async・sync・sim の 3 つの解釈器で走る(agora-redesign #1159)")
      (law a-test-sleeps-only-when-it-declares-realtime
-       :statement "for_all tests/ の Python の検 t: t が time.sleep(x)・asyncio.sleep(x)(x ≠ 0)を呼ぶ ⇒ t は marker realtime を名乗る ∧ t は名簿 tests/realtime_tests.toml に理由と一緒に載る"
+       :statement "for_all 規則の範囲(名が tests の dir の下の .py と、どこに在っても検の名の file test_*.py・*_test.py・conftest.py)の Python の検 t: t が time.sleep(x)・asyncio.sleep(x)(x ≠ 0)・threading.Event().wait(x) を呼ぶ ⇒ (t は marker realtime を名乗る ∧ t は名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載る) ∨ (t の dir は規則の paths.exclude に在る ∧ その dir は名簿の [suites] に理由と一緒に載る)。範囲に、規則を外す行の注釈は 0 件"
        :counterexamples
          [(counterexample "結果が出るのを time.sleep(0.5) で待つ検 — 込んだ機体では 0.5 秒で足りずに赤、速い機体では毎回 0.5 秒を捨てる")
-          (counterexample "realtime を名乗るが名簿に載せない検 — 実時間の何が対象かが残らず、規則の除外が理由なしに増える")]
+          (counterexample "realtime を名乗るが名簿に載せない検 — 実時間の何が対象かが残らず、規則の除外が理由なしに増える")
+          (counterexample "sleep の行に nosemgrep の注釈を付けて規則を外す(ki-6aa7cb5ffb83 の前の 7 か所の形)— 名簿を通らずに実時間で待つ検が増え、理由は file の中の註にしか残らない")
+          (counterexample "time.sleep(0.1) を threading.Event().wait(0.1) に言い換える(agentd_real_agent_result_retry_e2e_support.py の _poll_pause の前の形)— 規則の pattern を避けるだけで、待ちは同じ")
+          (counterexample "規則の paths.exclude に dir を足して名簿の [suites] に載せない、または名が tests でない dir に検を置く — 規則の届かない所が理由なしに増える")]
        :enforced-by [".semgrep.yaml::doeff-no-sleep-in-tests"
                      "tests/semgrep/test_no_sleep_in_tests_rule.py::test_only_the_marked_lines_fire"
+                     "tests/semgrep/test_no_sleep_in_tests_rule.py::test_the_rule_reaches_test_named_files_outside_a_tests_dir"
                      "tests/semgrep/test_realtime_tests_registry.py::test_registry_lists_exactly_the_realtime_marks"
-                     "tests/semgrep/test_realtime_tests_registry.py::test_every_registry_entry_gives_a_reason"]
-       :wiring "配線済み(2026-10-14・ba5513169)— 範囲は tests/ の Python で、nosemgrep・conformance/・Hy の検は R5")
+                     "tests/semgrep/test_realtime_tests_registry.py::test_every_registry_entry_gives_a_reason"
+                     "tests/semgrep/test_realtime_tests_registry.py::test_the_rule_reaches_what_this_scan_reads"
+                     "tests/semgrep/test_realtime_tests_registry.py::test_the_rule_excludes_exactly_the_registered_suites"
+                     "tests/semgrep/test_realtime_tests_registry.py::test_no_comment_takes_the_rule_off"]
+       :wiring "配線済み(2026-10-14・ba5513169。範囲の広げ・[suites]・行の注釈の 0 件・言い換えは ki-6aa7cb5ffb83)— 範囲は Python の検で、Hy の検は R5")
      (law the-sleep-rules-stop-as-errors-from-one-definition
        :statement "for_all r ∈ {doeff-no-sleep-in-programs・doeff-no-sleep-in-tests}: |{.semgrep.yaml の規則 | id = r}| = 1 ∧ severity(r) = ERROR ∧ r の極性の検は .semgrep.yaml の r そのものを当てる"
        :counterexamples
@@ -238,4 +245,6 @@
        (assert (= (run (dead-checks repo-root [(+ THIS-FILE "::test-adr-doe-time-001-judgments-reject-the-counterexamples")])) [])))]
   :plans ["card ki-94380dba532f"
           "card ki-495db9a2efa0"
-          "card ki-b2407b326b41"])
+          "card ki-b2407b326b41"
+          "card ki-6aa7cb5ffb83"
+          "card ki-bb3ee40d0af2"])

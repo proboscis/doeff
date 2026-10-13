@@ -53,6 +53,10 @@ from doeff_agents.effects import AgentSessionLifecycle
 from sessionhost_bin import resolve_sessionhost_bin
 from sessionhost_isolated_host import isolated_host, sessionhost_serve_argv
 
+# The test waits for a real doeff-agentd process and a real tmux pane, which no
+# doeff clock reaches — listed in tests/realtime_tests.toml.
+pytestmark = pytest.mark.realtime
+
 RESULT_BLOCK_BEGIN = "DOEFF_AGENT_RESULT_BEGIN"
 RESULT_BLOCK_END = "DOEFF_AGENT_RESULT_END"
 
@@ -271,9 +275,7 @@ def _capture_until_block(client: AgentdClient, session_id: str, timeout_s: float
             last = ""
         if RESULT_BLOCK_BEGIN in last and RESULT_BLOCK_END in last:
             return last
-        # Polling a real tmux pane via a real doeff-agentd subprocess; there
-        # is no doeff effect clock here.
-        time.sleep(0.2)  # nosemgrep: doeff-no-sleep-in-tests
+        time.sleep(0.2)
     return last
 
 
@@ -297,9 +299,7 @@ def _wait_for_agentd(
             client.status()
             return
         except Exception:
-            # Polling a real doeff-agentd subprocess's readiness; there is no
-            # doeff effect clock to control here.
-            time.sleep(0.1)  # nosemgrep: doeff-no-sleep-in-tests
+            time.sleep(0.1)
     raise AssertionError(f"doeff-agentd did not become ready\n{_read_text(log_path)}")
 
 

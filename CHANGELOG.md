@@ -57,6 +57,11 @@
   `doeff-no-sleep-in-tests` is now ERROR and also catches an un-awaited `asyncio.sleep(...)` such as
   `yield Await(asyncio.sleep(1.5))`; tests that declare `realtime` are listed with a reason in
   `tests/realtime_tests.toml`.
+- `.semgrep.yaml`: `doeff-no-sleep-in-tests` now also reaches test-named files outside a `tests/` directory
+  (`test_*.py`, `*_test.py`, `conftest.py`) and catches the `threading.Event().wait(seconds)` spelling of a sleep
+  (card ki-6aa7cb5ffb83). The only ways out are the two tables of `tests/realtime_tests.toml`: `[tests]` (the `realtime`
+  marks) and `[suites]` (the directories in the rule's `paths.exclude` — today the black-box `doeff-agents`
+  conformance suite). A `nosemgrep` comment on the rule now fails `tests/semgrep/test_realtime_tests_registry.py`.
 - `doeff-traverse`: a Traverse handler now stops the items it started when it stops (card ki-e0fd319d5b75). When `Gather`
   raises, `parallel` and `parallel_fail_fast` cancel the item tasks left, wait for them to unwind, and raise the
   original exception. Before, items kept running after a `parallel_fail_fast` failure that the caller caught, and new

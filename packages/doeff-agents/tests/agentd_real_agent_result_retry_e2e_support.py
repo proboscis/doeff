@@ -7,12 +7,12 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
-import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import pytest
 from doeff_agents.adapters.codex import trust_workspace_in_codex_home
 from doeff_agents.agentd_client import AgentdClient
 from doeff_agents.claude_home import prepare_claude_home
@@ -26,6 +26,11 @@ from runner_env import (
 )
 from sessionhost_bin import resolve_sessionhost_bin
 from sessionhost_isolated_host import sessionhost_serve_argv
+
+# This support module waits for a real doeff-agentd process, which no doeff
+# clock reaches. pytest does not collect it; the line is the declaration that
+# the semgrep rule doeff-no-sleep-in-tests and tests/realtime_tests.toml read.
+pytestmark = pytest.mark.realtime
 
 RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -243,14 +248,10 @@ def _wait_for_agentd(
             client.status()
             return
         except OSError:
-            _poll_pause(0.1)
+            time.sleep(0.1)
         except Exception:
-            _poll_pause(0.1)
+            time.sleep(0.1)
     raise AssertionError(f"doeff-agentd did not become ready\n{_read_text(log_path)}")
-
-
-def _poll_pause(seconds: float) -> None:
-    threading.Event().wait(seconds)
 
 
 def _read_session_db_state(db_path: Path, session_id: str) -> dict[str, Any]:

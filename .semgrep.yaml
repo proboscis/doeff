@@ -2938,7 +2938,7 @@ rules:
   # TESTING PATTERNS
   # ---------------------------------------------------------------------------
 
-  # 実時間の並行そのもの(本物の thread・本物の asyncio の loop)が対象の検は、検の側で pytest の marker
+  # 実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象の検は、検の側で pytest の marker
   # `realtime` を名乗る — 関数の @pytest.mark.realtime か、module の pytestmark = pytest.mark.realtime。
   # 規則はその中を鳴らさない。名乗った検は名簿 tests/realtime_tests.toml に理由と一緒に載せる(名簿と
   # marker の食い違いは tests/semgrep/test_realtime_tests_registry.py が赤にする)。sleep(0) は時間を待たず
@@ -2946,11 +2946,21 @@ rules:
   # Await(asyncio.sleep(1.5)) など)も鳴らし、severity は ERROR(card ki-94380dba532f・ki-37e3efcc05e2)。
   # 極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
   # 法 = ADR-DOE-TIME-001 の a-test-sleeps-only-when-it-declares-realtime(冊はこの規則の id と severity ERROR を検める)。
+  #
+  # 範囲と、外へ出る道(card ki-6aa7cb5ffb83):
+  # - 範囲 = 名が tests の dir の下の全部と、どこに在っても検の名の file(test_*.py・*_test.py・conftest.py)。
+  # - 外へ出る道は名簿の 2 つの表だけ。[tests] = 上の marker(本物の process を待つ検の support の module — pytest が
+  #   集めない file — も、同じ pytestmark の 1 行で名乗って載る)。[suites] = 下の paths.exclude の dir(どの検も本物の外の
+  #   process を黒箱で動かす組)で、exclude の行と 1 対 1。
+  # - 行の注釈(nosemgrep)で外す道は無い — 規則の範囲に 1 行でも在れば名簿の検が赤にする。
+  # - threading.Event().wait(秒) は誰も立てない合図を待つ = sleep の言い換えなので、同じく鳴らす。
   - id: doeff-no-sleep-in-tests
     patterns:
       - pattern-either:
           - pattern: time.sleep(...)
           - pattern: asyncio.sleep(...)
+          - pattern: threading.Event().wait($SECONDS, ...)
+          - pattern: threading.Event().wait(timeout=$SECONDS)
       - pattern-not: time.sleep(0)
       - pattern-not: asyncio.sleep(0)
       - pattern-not: asyncio.sleep(0, ...)
@@ -2968,13 +2978,20 @@ rules:
     paths:
       include:
         - tests/
+        - test_*.py
+        - "*_test.py"
+        - conftest.py
+      exclude:
+        - packages/doeff-agents/conformance/
     message: |
-      Avoid time.sleep() or asyncio.sleep() in tests (Await(asyncio.sleep(...)) included). Let
-      the program yield doeff-time's Delay and run it under sim_time_handler(), whose virtual
-      clock moves at once, or wait for the event itself. A test whose subject is real-time
-      concurrency (real threads, a real asyncio loop) declares it with @pytest.mark.realtime (or
-      a module-level pytestmark = pytest.mark.realtime) and is listed with its reason in
-      tests/realtime_tests.toml.
+      Avoid time.sleep() or asyncio.sleep() in tests (Await(asyncio.sleep(...)) and the
+      threading.Event().wait(seconds) spelling included). Let the program yield doeff-time's
+      Delay and run it under sim_time_handler(), whose virtual clock moves at once, or wait for
+      the event itself. A test whose subject is real time (real threads, a real asyncio loop, a
+      real external process) declares it with @pytest.mark.realtime (or a module-level
+      pytestmark = pytest.mark.realtime) and is listed with its reason in
+      tests/realtime_tests.toml. A nosemgrep comment is not a way out: the registry test
+      fails on it.
     languages: [python]
     severity: ERROR
     metadata:

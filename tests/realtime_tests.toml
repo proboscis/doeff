@@ -10,8 +10,20 @@
 #
 # 鍵 = "<repo の根からの path>::<関数の名>"(class の method は "<path>::<class の名>::<関数の名>")・
 #      module の pytestmark は "<path>"。値 = 理由の 1 行。
+#
+# 規則の外へ出る道はこの file の 2 つの表だけ(card ki-6aa7cb5ffb83):
+# - [tests]: 上の marker。本物の process を待つ検の support の module(pytest が集めない file)も、同じ pytestmark の 1 行で
+#   名乗ってここに載る。
+# - [suites]: 規則の paths.exclude に書いた dir。どの検も本物の外の process を黒箱で動かす組だけを、dir の 1 行で載せる
+#   (file ごとに同じ理由を並べない)。規則の exclude とこの表は 1 対 1。
+# 行の注釈で規則を外す道(nosemgrep)は無い — 規則の範囲に 1 行でも在れば名簿の検が赤にする。
 
 [tests]
+"packages/doeff-agents/tests/agentd_real_agent_result_retry_e2e_support.py" = "本物の Claude / Codex の agent の e2e の support — 本物の doeff-agentd の process の起動を締め切りつきで待つ(外の process の実時間が対象)"
+"packages/doeff-agents/tests/agentd_result_retry_e2e_support.py" = "偽の agent を本物の tmux の pane で走らせる e2e の support — 本物の doeff-agentd の process の起動を締め切りつきで待つ(外の process の実時間が対象)"
+"packages/doeff-agents/tests/test_agentd_byte_faithful_transport_e2e.py" = "本物の doeff-agentd の process の起動と、本物の tmux の pane に結果の囲みが出るのを締め切りつきで待つ — 外の process の実時間が対象"
+"packages/doeff-agents/tests/test_l2_session_algebra.py::test_agent_validation_failure_past_deadline_parks_without_follow_up" = "run_agent_task が time.monotonic で測る node の締め切り(L-K4-3)の後に結果が届く — 締め切りの実時間が対象"
+"packages/doeff-conductor/tests/test_k4_parallel_overlap.py" = "offload の本物の thread で走る 2 本の枝の重なりを、経過の実時間で測る(L-K4-2)"
 "packages/doeff-cluster/tests/test_job_log_ship.py" = "本物の子 process・log の送り手・HTTP の /livez を締め切りつきで待つ — 外の process の実時間が対象"
 "packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "本物の OS の file 監視の library の待ちを、別の task が実時間の後に閉じる"
 "tests/effects/test_effect_combinations.py::TestGatherStoreSharingLaw::test_async_gather_parallel_execution" = "Gather が spawn した task が本物の asyncio の loop の上で重なって走る事を、経過の実時間で測る"
@@ -32,3 +44,6 @@
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_pending_blocks_idle_task" = "本物の thread の外の待ちが残る Gather が IDLE の task を止める事"
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder" = "本物の thread の外の待ちを盾にした Race の決着と負けた側の場所の解放"
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_failure_drops_sibling_placeholder" = "本物の thread の外の待ちが失敗した時の Gather の兄弟の場所の解放"
+
+[suites]
+"packages/doeff-agents/conformance" = "黒箱の交代ゲート: どの検も本物の session host の process を公開の socket 越しに動かし、偽の CLI(別の process)を本物の tmux / herdr の pane で走らせる — doeff の時計は別の process に届かない"

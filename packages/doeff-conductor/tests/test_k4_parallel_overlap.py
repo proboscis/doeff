@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from doeff_conductor.effects.agent import AgentEffect, AgentTask
 from doeff_conductor.effects.workspace import CreateWorkspace
 from doeff_conductor.handlers.testing import MockConductorRuntime
@@ -29,6 +30,10 @@ from doeff_core_effects.scheduler import Gather, scheduled
 
 from doeff import Effect, Pass, Resume, Spawn, do, run
 from doeff import handler as _install_raw_handler
+
+# The subject is wall-clock overlap of real offload threads (L-K4-2), which a
+# simulated clock cannot observe — listed in tests/realtime_tests.toml.
+pytestmark = pytest.mark.realtime
 
 SIMPLE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -80,10 +85,7 @@ class _TimedAgentHandler:
         session_id: str = effect.task.session_id
         with self._lock:
             self.events[session_id] = {"start": time.monotonic()}
-        # This test asserts genuine wall-clock overlap between
-        # concurrently-dispatched real scheduler threads (K4), which a
-        # simulated clock cannot observe.
-        time.sleep(self._delay)  # nosemgrep: doeff-no-sleep-in-tests
+        time.sleep(self._delay)
         result = self._runtime.handle_agent(effect)
         with self._lock:
             self.events[session_id]["end"] = time.monotonic()
