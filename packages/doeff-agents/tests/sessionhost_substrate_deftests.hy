@@ -6,7 +6,7 @@
 ;;; agentd-rust-final:src/main.rs の ensure_no_forbidden_agent_env /
 ;;; output_has_unsubmitted_paste_input / tmux_* / fs 物理。
 
-(require doeff-hy.macros [deftest defk deff <-])
+(require doeff-hy.macros [deftest defk deff <- val])
 
 (import errno)
 (import glob)
@@ -56,6 +56,10 @@
   unsubmitted-paste-input?
   compose-home-view
   compose-home-view-name])
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 
 ;; ---------------------------------------------------------------------------

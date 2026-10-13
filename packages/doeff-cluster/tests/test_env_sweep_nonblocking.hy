@@ -20,6 +20,11 @@
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings])
 (import tests.careful_rig [run-envs])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 
 (defk sleeping-uv [tmp]

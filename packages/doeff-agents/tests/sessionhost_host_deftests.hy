@@ -6,7 +6,7 @@
 ;;; (prepare_socket_path :1079-1092)— を daemon 起動なしで検証する。
 ;;; serve loop 全体の検証は conformance suite(転送束縛)の領分。
 
-(require doeff-hy.macros [deftest])
+(require doeff-hy.macros [deftest val])
 
 (import json)
 (import os)
@@ -48,6 +48,11 @@
   db-migrate
   db-upsert-snapshot
   db-session-get])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 
 ;; ---------------------------------------------------------------------------

@@ -19,6 +19,11 @@
 (import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode])
 (import doeff_cluster.worker.protocol.observations [ObserveCode])
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 
 ;; --- 焼きの Program(fake の handler)---------------------------------------------------

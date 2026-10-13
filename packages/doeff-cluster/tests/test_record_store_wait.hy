@@ -21,6 +21,11 @@
 (import doeff_cluster.shared.intent.protocol [Request NextRequests Reply CoordinatorStopRequested])
 (import doeff_cluster.record_store.intent.record_store_model [CompactRecords PruneRecords])
 (import doeff_cluster.record_store.core.program [store-loop MAINTENANCE-MS])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 
 (val START-MS 1800000000000)

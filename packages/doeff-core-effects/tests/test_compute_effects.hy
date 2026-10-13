@@ -6,6 +6,7 @@
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.handle [defhandler])
 (import threading)
+(import time)
 (import concurrent.futures [ThreadPoolExecutor])
 (import dataclasses [dataclass])
 (import typing [TypeVar])
@@ -14,6 +15,7 @@
 (import doeff_core_effects.compute_effects [Compute Computed ComputeFailed])
 (import doeff_core_effects.inline_compute [inline-compute-handler])
 (import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
+(import pytest)
 
 
 (defclass [(dataclass :frozen True)] Outside [EffectBase]
@@ -113,7 +115,7 @@
   (assert (= (gate-race [inline-compute-handler]) [(Computed :value False) "開けた"])))
 
 
-(defn #^ None test-thread-pool-runs-as-many-at-once-as-the-pool-allows []
+(defn [pytest.mark.realtime] #^ None test-thread-pool-runs-as-many-at-once-as-the-pool-allows []
   (setv lock (threading.Lock)
         running [0]
         peak [0])
@@ -123,7 +125,7 @@
     (with [lock]
       (setv (get running 0) (+ (get running 0) 1)
             (get peak 0) (max (get peak 0) (get running 0))))
-    (.wait (threading.Event) 0.1)
+    (time.sleep 0.1)
     (with [lock] (setv (get running 0) (- (get running 0) 1)))
     1)
   (defk four []

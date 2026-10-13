@@ -18,6 +18,11 @@
 (import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 (setv POLICY (WorkerPolicy :code-retry-ms 30000)
       S1 (spec-of-declaration {"name" "w" "revision" "rev1" "run" SAMPLE-RUN "update" "handoff"})

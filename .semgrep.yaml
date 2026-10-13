@@ -2974,6 +2974,9 @@ rules:
   #   process を黒箱で動かす組)で、exclude の行と 1 対 1。
   # - 行の注釈(nosemgrep)で外す道は無い — 規則の範囲に 1 行でも在れば名簿の検が赤にする。
   # - threading.Event().wait(秒) は誰も立てない合図を待つ = sleep の言い換えなので、同じく鳴らす。
+  # - Hy の検は semgrep が読めないので、同じ決まりを doeff-linter の規則 DOEFF211 が持つ(card ki-bb3ee40d0af2・定義 =
+  #   packages/doeff-linter/src/project/test_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.test_sleep])。名簿は同じ 1 つで、
+  #   [suites] の dir は 2 つの規則の両方が除く(下の paths.exclude と、その節の exclude の dir の行)。
   - id: doeff-no-sleep-in-tests
     patterns:
       - pattern-either:

@@ -9,12 +9,10 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json])
 (import os)
-(import time)
 (import pathlib [Path])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob Outcome])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
+(import doeff_cluster.worker.intent.worker_model [CodeLayout])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import tests.host_rig [host-settings run-on-host])
+(import tests.host_rig [host-settings job-ended run-on-host])
 (import tests.test_rollout [Sim FORWARD DEP])
 
 
@@ -74,21 +72,6 @@
   (for [bad ["relative/sdk" "/a:/b" "/a,/b"]]
     (with [(pytest.raises ValueError)] (CodeLayout :base-paths #(bad)))))
 
-(defk started-and-reaped [spec tree out]
-  {:pre [(: spec JobSpec) (: tree Path) (: out Path)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "job を 1 本起こし、子が out を書くまで待って回収し、子の pid を返すため(子の表は process-host の session の値 — 1 本の Program で回す)。"
-  (<- (StartJob spec 1 (str tree)))
-  (<- views tuple (ObserveProcesses))
-  (val pid (. (get views 0) pid))
-  (var ended None)
-  (for [_ (range 200)]
-    (<- seen tuple (ObserveProcesses))
-    (when (and (.exists out) (is-not (. (get seen 0) exit-code) None)) (:= ended (get seen 0)) (break))
-    (time.sleep 0.05))
-  (<- (ReapJob spec.name pid Outcome.EXITED (if ended ended.exit-code 0)))
-  pid)
-
-
 (deftest test-process-host-records-the-tree-and-pid-of-each-started-job [tmp-path capfd]
   ;; 2026-09-26: worker は起こした job ごとに、版・木の path・子の pid・worker の pid を記録に 1 行書く(新しい版の job を
   ;; worker の再起動なしに版の木の子 process で走らせたことを、worker の記録で示すため)。子の PYTHONPATH は木の根 → 土台の路。
@@ -98,7 +81,9 @@
   (.write-text (/ tree "probe_entry.py")
                (+ "import os, pathlib\npathlib.Path(" (repr (str out)) ").write_text(os.environ['PYTHONPATH'] + '|' + os.getcwd())\n"))
   (<- settings (host-settings tmp-path :layout (CodeLayout :base-paths #("/opt/base"))))
-  (setv pid (! (run-on-host settings (started-and-reaped (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) tree out))))
+  ;; job を 1 本起こし、終わりを観測して回収する所は検の道具 host_rig の job-ended(子は out を書いてから終わる)。
+  (setv ended (! (run-on-host settings (job-ended (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) (str tree) 30))))
+  (setv pid ended.pid)
   (setv [pythonpath cwd] (.split (.read-text out) "|"))
   (assert (= pythonpath (+ (str tree) ":/opt/base")))
   (assert (= cwd (str tree)))

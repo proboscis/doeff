@@ -7,6 +7,11 @@
 (import time)
 (import pathlib [Path])
 (import httpx)
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 (setv ROOT (. (Path (os.path.abspath __file__)) parent parent))   ; この package の根(子 process の cwd)
 (setv HY (str (/ (. (Path sys.executable) parent) "hy")))

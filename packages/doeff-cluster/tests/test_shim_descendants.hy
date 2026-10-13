@@ -25,6 +25,11 @@
 (import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
 (import tests.host_rig [host-settings run-on-host job-ended])
 (import tests.test_entry_probe [wait-pid process-alive])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 (val LINUX (.startswith sys.platform "linux"))
 (val NOT-LINUX "子孫の引き取り(PR_SET_CHILD_SUBREAPER)と /proc は Linux だけ — 条 C4b の範囲は Linux の worker")

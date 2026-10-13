@@ -382,7 +382,8 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest test-herdr-lifecycle-smoke
-  {:skip-if (not HERDR-AVAILABLE)
+  {:marks ["realtime"]
+   :skip-if (not HERDR-AVAILABLE)
    :skip-reason "herdr server not running"}
   (setv d (tempfile.mkdtemp))
   (setv session-name f"doeff-herdr-smoke-{(os.getpid)}")
@@ -600,7 +601,8 @@
 
 
 (deftest test-herdr-capture-preserves-trailing-space
-  {:skip-if (not HERDR-AVAILABLE)
+  {:marks ["realtime"]
+   :skip-if (not HERDR-AVAILABLE)
    :skip-reason "herdr server not running"}
   ;; S18-herdr ハングの根本原因 pin: herdr pane.read format=text は行末
   ;; スペースをトリムする(実測 2026-07-07)が、tmux capture-pane -J は保持
@@ -727,7 +729,8 @@
 
 
 (deftest test-herdr-external-seat-visible-to-has-session-but-not-killable
-  {:skip-if (not HERDR-AVAILABLE)
+  {:marks ["realtime"]
+   :skip-if (not HERDR-AVAILABLE)
    :skip-reason "herdr server not running"}
   ;; koine session.adopt / 鏡原則(substrate_present)が見る対話席は、`ai` 等が
   ;; herdr の名簿に付けた agent 名で呼ばれ、doeff 所有の workspace を持たない
@@ -783,7 +786,8 @@
 
 
 (deftest test-herdr-identity-survives-agent-name-loss
-  {:skip-if (not HERDR-AVAILABLE)
+  {:marks ["realtime"]
+   :skip-if (not HERDR-AVAILABLE)
    :skip-reason "herdr server not running"}
   ;; 本 issue(substrate-herdr-session-identity-anchor-r2-607f0c)の回帰ガード:
   ;; 実測 2026-08-01(probe n=3 決定的)で、pane 内で実 agent を起動すると
@@ -845,7 +849,8 @@
 
 
 (deftest test-herdr-send-and-capture-roundtrip
-  {:skip-if (not HERDR-AVAILABLE)
+  {:marks ["realtime"]
+   :skip-if (not HERDR-AVAILABLE)
    :skip-reason "herdr server not running"}
   ;; literal paste + submit → capture に出力が現れる(Enter submit の実効と
   ;; capture の scrollback-empty fallback(visible)の両方を通る)。

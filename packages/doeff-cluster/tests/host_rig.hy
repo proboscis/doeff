@@ -21,6 +21,11 @@
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 
 (defk host-settings [state [hy-command "hy"] [extra-env {}] [layout (CodeLayout)] [uv "uv"] [policy (WorkerPolicy)] [generation "0b6f5e2a9c1d"]]
