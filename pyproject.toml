@@ -186,6 +186,16 @@ exclude = ["fixtures", "design", "design-checks"]
 [tool.doeff-linter.definitions]
 paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effects/doeff_core_effects", "packages/doeff-hy/src/doeff_hy"]
 
+# Hy の program(defk・defp)は壁の時計で眠らない(DOEFF210・ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c)の母集団 = 本体の Hy の
+# program の置き場。Python の同じ決まりは semgrep の doeff-no-sleep-in-programs(.semgrep.yaml)が持ち、範囲もそれに合わせる:
+# doeff/ と packages/ の本体で、検(tests/)と例(examples/)は外す — Hy の検の扱いは card ki-bb3ee40d0af2(ki-6aa7cb5ffb83 の続き)・例は親 card の別の子。
+# 上の definitions(定義の書き方の規則群)とは別の節: その規則群をまだ当てていない package(doeff-agents ほか)の program にも、
+# この規則だけを当てる。効いている事と当たり 0 件は packages/doeff-linter/tests/program_sleep.rs(cargo test)が見る — この節を消す・
+# DOEFF210 を disable に足すと、その検が赤になる。
+[tool.doeff-linter.program_sleep]
+paths = ["doeff", "packages"]
+exclude_parts = ["tests", "examples"]
+
 # 設計の記録の dir(その時点の証拠 — 模型・測りの script・検の写しを置く。検の名の file が在っても検ではない)。定義はこの 1 点で、
 # 読み手は 2 つ: make test-changed の選び(scripts/run_changed_tests.py の collector_patterns)は、この下の file を名の規則に当たっても
 # 検として選ばない / 日次の母集団の検(tests/test_daily_test_population.py)は逆に、この下の検の名の file を赤にして `.py.txt` への

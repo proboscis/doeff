@@ -1,14 +1,16 @@
 ;;; Executable ADR: program は時間を doeff-time の効果(Delay・WaitUntil・WaitWithin など)を yield して待つ。time.sleep・asyncio.sleep で
 ;;; 壁の時計を待つのは、時間の handler の実装((effect, k) を受ける関数)だけ。新しい素の sleep は semgrep の規則が ERROR で止める。
+;;; Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(R7・card ki-3c3d85253c2c)。
 ;;;
 ;;; 出自 = 利用者の 2026-10-12 22:38 の原文 2 通(下の :problem の fact)。追跡 = card ki-94380dba532f(親)・ki-495db9a2efa0(この冊)。
 ;;;
 ;;; この冊は規則の中身(pattern・paths)を持たない。規則の定義は .semgrep.yaml の 1 か所で、冊は法の :enforced-by に規則の id と検の名を
 ;;; `<repo の根からの path>::<名>` の形で書き、その名が今の木に在る事・規則が ERROR である事・極性の検がその規則を当てている事を
-;;; :enforcement の検で見る(規則を消す・WARNING に下げる・検の名を変えると赤)。
+;;; :enforcement の検で見る(規則を消す・WARNING に下げる・検の名を変えると赤)。名は、semgrep の設定なら規則の id・Python の検なら
+;;; module の段の関数・Hy の検なら deftest・Rust の検なら #[test] の関数。
 ;;;
 ;;; 戻し方: この冊を足した commit を revert する(冊の file 1 つと enforcement-ledger.json の行)。規則そのものを外す時は、
-;;; .semgrep.yaml の doeff-no-sleep-in-programs・doeff-no-sleep-in-tests と極性の検・名簿・この冊を同じ commit で消し、
+;;; .semgrep.yaml の doeff-no-sleep-in-programs・doeff-no-sleep-in-tests・doeff-agents-no-sleep-effect-hy と極性の検・名簿・この冊を同じ commit で消し、
 ;;; docs/adr/enforcement-ledger.json を作り直す(ADR-DOE-ENFORCE-001 R5)。
 
 (require doeff-adr.macros [defadr rule law])
@@ -17,6 +19,7 @@
 (require doeff-hy.macros [deftest defk val var <-])
 (import doeff [run])
 (import ast)
+(import re)
 (import pathlib [Path])
 (import hy)
 (import yaml)
@@ -31,10 +34,11 @@
 ;; sleep の規則の定義の 1 か所。
 (val SEMGREP-CONFIG ".semgrep.yaml")
 
-;; 規則の id → その極性の検の file(検体の `# 鳴る` の行だけが当たる事を、SEMGREP-CONFIG の規則そのものを当てて見る検)。
+;; 規則の id → その極性の検の file(検体の `# 鳴る`〔Hy の検体は `; 鳴る`〕の行だけが当たる事を、SEMGREP-CONFIG の規則そのものを当てて見る検)。
 (val POLARITY-TESTS
   {"doeff-no-sleep-in-programs" "tests/semgrep/test_no_sleep_in_programs_rule.py"
-   "doeff-no-sleep-in-tests" "tests/semgrep/test_no_sleep_in_tests_rule.py"})
+   "doeff-no-sleep-in-tests" "tests/semgrep/test_no_sleep_in_tests_rule.py"
+   "doeff-agents-no-sleep-effect-hy" "tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py"})
 
 
 ;; ---------------------------------------------------------------------------
@@ -82,16 +86,29 @@
   (frozenset names))
 
 
+;; Rust の検: 行の頭(字下げだけ)の #[test] の次の行の fn の名。註にした検(// #[test]・// fn …)は行の頭が // なので当たらない。
+(val RUST-TEST (re.compile r"^[ \t]*#\[test\][ \t]*\n[ \t]*fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)" re.MULTILINE))
+
+
+(defk rust-test-names [text]
+  {:pre [(: text str)] :post [(: % frozenset)] :tags {:context "doeff-time-adr" :role "judgment"}}
+  "Rust の source が検として定義する名(#[test] の付いた関数)。#[test] の無い関数と、註にした検は数えない。"
+  (frozenset (.findall RUST-TEST text)))
+
+
 (defk check-names [rel text]
   {:pre [(: rel str) (: text str)] :post [(: % frozenset)] :tags {:context "doeff-time-adr" :role "judgment"}}
-  "file の中身 text が検として定義する名: semgrep の設定は規則の id・Python の検は module の段の関数の名・Hy の検は deftest の名。"
+  "file の中身 text が検として定義する名: semgrep の設定は規則の id・Python の検は module の段の関数の名・Hy の検は deftest の名・
+   Rust の検は #[test] の関数の名。"
   (<- severities dict (rule-severities (if (= rel SEMGREP-CONFIG) text "")))
   (<- deftests frozenset (deftest-names (if (.endswith rel ".hy") text "")))
+  (<- rust-tests frozenset (rust-test-names (if (.endswith rel ".rs") text "")))
   (cond
     (= rel SEMGREP-CONFIG) (frozenset severities)
     (.endswith rel ".py") (frozenset (gfor node (. (ast.parse text) body)
                                            :if (isinstance node #(ast.FunctionDef ast.AsyncFunctionDef))
                                            node.name))
+    (.endswith rel ".rs") rust-tests
     True deftests))
 
 
@@ -117,10 +134,15 @@
 (defadr ADR-DOE-TIME-001
   :title "program は時間を doeff-time の効果(Delay・WaitUntil・WaitWithin など)を yield して待つ。time.sleep・asyncio.sleep で壁の時計を待つのは時間の handler の実装だけで、新しい素の sleep は .semgrep.yaml の規則が ERROR で止める"
   :status "accepted"
-  :scope [".semgrep.yaml(規則 doeff-no-sleep-in-programs・doeff-no-sleep-in-tests)"
+  :scope [".semgrep.yaml(規則 doeff-no-sleep-in-programs・doeff-no-sleep-in-tests・doeff-agents-no-sleep-effect-hy)"
           "packages/doeff-flow/examples/"
+          "packages/doeff-linter/src/project/program_sleep.rs(規則 DOEFF210)"
+          "packages/doeff-linter/tests/program_sleep.rs"
+          "pyproject.toml の [tool.doeff-linter.program_sleep]"
+          "packages/doeff-agents/src/doeff_agents/(tmux.py・agentd_client.py・io_handlers.hy・sessionhost/launch.hy・sessionhost/host.hy)"
           "tests/semgrep/test_no_sleep_in_programs_rule.py"
           "tests/semgrep/test_no_sleep_in_tests_rule.py"
+          "tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py"
           "tests/semgrep/test_realtime_tests_registry.py"
           "tests/realtime_tests.toml"
           "packages/doeff-time/src/doeff_time/"
@@ -134,7 +156,10 @@
        :evidence "card ki-94380dba532f の本文の「今の事実」(2026-10-12 22:4x に main の作業木を git grep で読んだ記録)")
      (fact
        "本体の @do の program の中の素の sleep は 7 か所在った(doeff-gemini structured_llm.py の再試行と upload の待ち・doeff-openai chat.py・embeddings.py・structured_llm.py・doeff-openrouter chat.py・doeff-seedream structured_llm.py の再試行の待ち)。再試行の道を通る検(openai 3・gemini 5)は実時間で 1〜2 秒待つか、asyncio.sleep を monkeypatch で差し替えていた。"
-       :evidence "commit ba5513169(2026-10-14 02:21 JST に main・7 か所を Delay に替え、規則 2 つを ERROR にした)")]
+       :evidence "commit ba5513169(2026-10-14 02:21 JST に main・7 か所を Delay に替え、規則 2 つを ERROR にした)")
+     (fact
+       "2026-10-14 の main(4dffe90e5)では Hy の program に規則が無かった。DOEFF210 をその木に当てると、当たりは doeff-agents の sessionhost/substrate_herdr.hy の defk herdr-send-keys-io の 3 行(595・598・604)。同じ木で doeff-agents の program は自前の待ちの効果 2 つで待っていた: io_effects の Sleep(tmux.py の 3 か所・agentd_client.py の 1 か所 — driver-io-handler が time.sleep で答える)と sessionhost の ClockSleep(launch.hy の wait-for-launch-ready の 7 か所 — real-substrate が time.sleep で答える)。既存の規則 doeff-agents-no-sleep-effect は Python の class SleepEffect / def Sleep の名だけを見るので、どちらにも当たっていなかった。"
+       :evidence "card ki-3c3d85253c2c の本文の「今の事実」と、その card の commit(DOEFF210 を足した commit の本文に、main の木への当たり 3 件と変更の後の 0 件を書いた)")]
   :context
     [(interpretation
        "program が Delay を yield すれば、1 秒が何であるかは呼び手が置く時間の handler が決める: async_time_handler・sync_time_handler は壁の時計で待ち、sim_time_handler は仮想の時計を進めるだけで待たない。program が time.sleep・asyncio.sleep を呼ぶと、どの handler を置いても壁の時計で待つので、その program の検は実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。")
@@ -147,19 +172,35 @@
      (rule R2 "壁の時計を待ってよいのは、時間の handler の実装((effect, k) を受ける関数と、そこからだけ呼ばれる helper)だけ。呼び手は program を走らせる所で時間の handler を選ぶ: 本番は async_time_handler()(await_handler() の内)か sync_time_handler()、検は sim_time_handler()。")
      (rule R3 "検は program を sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。time.sleep・asyncio.sleep を呼んでよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・外の process や library)が対象の検だけで、その検は pytest の marker realtime を名乗り、名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載る(本物の process を待つ検の support の module も、同じ pytestmark の 1 行で名乗って載る)。どの検も本物の外の process を黒箱で動かす組は、規則の paths.exclude の dir として名簿の [suites] に理由と一緒に載る(載っているのは packages/doeff-agents/conformance)。規則の外へ出る道はこの 2 つの表だけで、行の注釈(nosemgrep)で規則を外さず、threading.Event().wait(秒) のように sleep を言い換えない(card ki-6aa7cb5ffb83)。")
      (rule R4 "新しい素の sleep は linter で止める: .semgrep.yaml の規則 doeff-no-sleep-in-programs と doeff-no-sleep-in-tests を severity ERROR で置く。規則の定義(pattern・paths)は .semgrep.yaml の 1 か所で、この冊にも他の冊にも写さない。形の正しさ(鳴るべき行だけが鳴る)は、規則ごとの極性の検が .semgrep.yaml の規則そのものを検体に当てて見る。")
-     (rule R5 "今の規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る: Hy の program(defk)の素の time.sleep と doeff-agents の自前の待ちの効果(card ki-3c3d85253c2c)・Hy の検の素の sleep(名が tests の dir の下の .hy に 70 行・33 file — 2026-10-14 に数えた。semgrep の Python の規則は Hy を読めないので、Hy を読む規則の器を ki-3c3d85253c2c が置いた後に同じ名簿で塞ぐ・card ki-bb3ee40d0af2)。tests/ の nosemgrep の 7 か所と conformance/ は card ki-6aa7cb5ffb83 が塞いだ(R3)。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
+     (rule R5 "今の規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る: Hy の検の素の sleep(名が tests の dir の下の .hy に 70 行・33 file — 2026-10-14 に数えた。semgrep の Python の規則は Hy を読めない。Hy を読む規則の器は card ki-3c3d85253c2c が doeff-linter の DOEFF210 として置いた〔R7 — その母集団は本体で、tests/ は外〕ので、その後に同じ名簿で塞ぐ・card ki-bb3ee40d0af2)。tests/ の nosemgrep の 7 か所と conformance/ は card ki-6aa7cb5ffb83 が塞いだ(R3)。Hy の program(defk・defp)の素の time.sleep と doeff-agents の自前の待ちの効果は card ki-3c3d85253c2c が塞いだ(R7)。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
+     (rule R7 "Hy の program(defk・defp の本体)にも R1 が当たり、doeff-linter の規則 DOEFF210 が critical で止める(semgrep は Hy を読めない)。規則の定義は packages/doeff-linter/src/project/program_sleep.rs の 1 か所、母集団(program の置き場)は根の pyproject.toml の [tool.doeff-linter.program_sleep] の 1 か所(本体 — tests/ と examples/ は外)。Hy で壁の時計を待ってよい handler の実装は 3 つの形: defhandler の節・引数の並びが [effect k] の定義・handler からだけ呼ばれて本物の相手(子 process・端末)の実時間を待つ helper。helper は契約の辞書の :tags で :role \"foundation\"(汎用の I/O の役)を自分で名乗り、Delay にしない訳を docstring に書く(2026-10-14 の 2 つ: doeff-agents の herdr-send-keys-io — 本物の TUI が貼り付けを受け終える実時間・doeff-core-effects の group-gone-by — 取り消しの手当ては要求の答え手の積みが届かない新しい VM で回り、doeff-core-effects は doeff-time に依存しない)。deff・defn(素の callable)は効果を出せないので program に数えない — deff の是非は ADR-DOE-HY-004 が持つ。doeff-agents は自前の待ちの効果を持たない: program は doeff_time の Delay を yield し、本番の root(io_handlers.hy の run-driver-io・sessionhost/host.hy の run-hosted)が doeff-time の sync-time-handler を置く。自前の待ちの効果を Hy で定め直す形(名に Sleep / Delay を含む効果の defclass・defeffect と、sleep / …-sleep という名の作り手)は、.semgrep.yaml の規則 doeff-agents-no-sleep-effect-hy が ERROR で止める(R4 と同じ扱い — 定義は .semgrep.yaml の 1 か所・形は極性の検が見る)。")
      (rule R6 "戻し方: この冊だけを外すなら、冊を足した commit を revert する。規則を外す・WARNING に下げるなら、利用者の 2026-10-12 の決定を覆す事になるので、利用者の新しい決定を :problem に原文で書いてから、規則・極性の検・名簿・この冊を同じ commit で直す。")]
   :laws
     [(law a-program-waits-by-a-time-effect
-       :statement "for_all 本体(doeff/ と packages の src)と examples/(packages/*/examples/ と根の examples/)の Python の program p(@do の関数)・p の中の待ち w: w は doeff-time の効果の yield ∧ w ∉ {time.sleep(x)・asyncio.sleep(x) | x ≠ 0}((effect, k) を受ける handler の実装の中は除く)"
+       :statement "for_all 本体(doeff/ と packages の src)と examples/(packages/*/examples/ と根の examples/)の Python の program p(@do の関数)と、本体の Hy の program p(defk・defp の本体)・p の中の待ち w: w は doeff-time の効果の yield ∧ w ∉ {time.sleep(x)・asyncio.sleep(x) | x ≠ 0}(handler の実装の中は除く — Python は (effect, k) を受ける関数・Hy は defhandler の節と [effect k] を受ける定義と :role foundation を名乗る helper〔R7〕)"
        :counterexamples
          [(counterexample "再試行の間を yield Await(asyncio.sleep(delay)) で待つ(doeff-gemini structured_llm.py の ba5513169 の前の形)— 検は実時間で 1〜2 秒待つか asyncio.sleep を monkeypatch で差し替える")
           (counterexample "@do の program の中で time.sleep(1.0) を呼ぶ — sim_time_handler を置いても仮想の時計は進まず、壁の時計で 1 秒かかる")
-          (counterexample "doeff-flow の例の @do の中で time.sleep(0.1) を呼ぶ(ki-b2407b326b41 の前の 15 か所の形)— 例は写される物なので、素の sleep が利用者の program に広がる")]
+          (counterexample "doeff-flow の例の @do の中で time.sleep(0.1) を呼ぶ(ki-b2407b326b41 の前の 15 か所の形)— 例は写される物なので、素の sleep が利用者の program に広がる")
+          (counterexample "Hy の defk の本体で (time.sleep 0.5) を呼ぶ — semgrep は Hy を読めないので doeff-no-sleep-in-programs は鳴らず、DOEFF210 が無ければ誰も止めない(ki-3c3d85253c2c の前の形)")
+          (counterexample "program が package の自前の待ちの効果(doeff-agents の io の Sleep・sessionhost の ClockSleep の形)を yield し、その package の handler が time.sleep で答える — 字面に sleep は無いが、時間の handler を置いても仮想の時計は進まない(ki-3c3d85253c2c の前の 11 か所)")
+          (counterexample "program の defk に :role \"foundation\" を名乗らせて眠りを通す — 名乗ってよいのは handler からだけ呼ばれ本物の相手の実時間を待つ helper だけで、訳を docstring に書く(R7)。規則は名乗りを信じるので、名乗りの是非は変更を読む人が見る")]
        :enforced-by [".semgrep.yaml::doeff-no-sleep-in-programs"
                      "tests/semgrep/test_no_sleep_in_programs_rule.py::test_only_the_marked_lines_fire"
-                     "tests/semgrep/test_no_sleep_in_programs_rule.py::test_examples_are_in_the_range"]
-       :wiring "配線済み(2026-10-14・ba5513169・examples/ は ki-b2407b326b41)— 規則は commit の hook(.pre-commit-config.yaml の別名 semgrep-rules)と日次の走査が当てる。範囲は Python の本体と examples/(R5)。書く前の助言は agent-commons の条件つきルール doeff-program-waits-by-the-time-effect が出す(Hy の defk・defp・deftest と doeff の外の repo にも当たる・止めはしない)")
+                     "tests/semgrep/test_no_sleep_in_programs_rule.py::test_examples_are_in_the_range"
+                     ".semgrep.yaml::doeff-agents-no-sleep-effect-hy"
+                     "tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py::test_only_the_marked_lines_fire"
+                     "packages/doeff-linter/tests/program_sleep.rs::only_the_marked_lines_fire"
+                     "packages/doeff-linter/tests/program_sleep.rs::the_hy_programs_of_this_repo_do_not_sleep"
+                     "packages/doeff-linter/tests/program_sleep.rs::the_sample_of_a_sleeping_program_is_found_under_the_repo_s_own_settings"
+                     "packages/doeff-agents/tests/test_driver_waits_are_time_effects.py::test_a_submitted_paste_waits_the_settle_and_the_first_confirm_on_the_time_handler"
+                     "packages/doeff-agents/tests/test_driver_waits_are_time_effects.py::test_each_enter_retry_waits_on_the_time_handler"
+                     "packages/doeff-agents/tests/test_driver_waits_are_time_effects.py::test_waiting_for_agentd_polls_on_the_time_handler"
+                     "packages/doeff-agents/tests/test_driver_waits_are_time_effects.py::test_the_production_root_answers_a_delay"
+                     "packages/doeff-agents/tests/sessionhost_launch_deftests.hy::test-launch-ready-gate-polls-by-the-time-effect"
+                     "packages/doeff-agents/tests/sessionhost_launch_deftests.hy::test-launch-dialog-redraw-waits-by-the-time-effect"
+                     "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-run-hosted-answers-a-delay-on-the-wall-clock"]
+       :wiring "配線済み(2026-10-14・ba5513169・examples/ は ki-b2407b326b41・Hy の program と doeff-agents は ki-3c3d85253c2c)— Python の規則は commit の hook(.pre-commit-config.yaml の別名 semgrep-rules)と日次の走査が当てる。doeff-agents の自前の待ちの効果を止める規則 doeff-agents-no-sleep-effect-hy は、同じ semgrep の走査が Hy の file に当てる(languages: generic)。Hy の規則 DOEFF210 は、日次の全体検証の処理ステージ rust(make test-rust の cargo test — packages/doeff-linter/tests/program_sleep.rs が根の設定でこの repo の本体を判じ、当たりを file と行で名指す)が当て、手元では make lint-doeff とエディタの 1 file の実行が出す。commit の hook には載っていない(根の doeff-linter の hook は Python の file だけを測る)。範囲は Python の本体と examples/・Hy の本体(R5・R7)。書く前の助言は agent-commons の条件つきルール doeff-program-waits-by-the-time-effect が出す(Hy の defk・defp・deftest と doeff の外の repo にも当たる・止めはしない)")
      (law the-time-handler-decides-what-a-second-is
        :statement "for_all program p・p の中の Delay(s): sim_time_handler の下では仮想の時計がちょうど s 進む ∧ async_time_handler・sync_time_handler の下では壁の時計で s 待つ(p の文は 3 つの時計で同じ)"
        :counterexamples
@@ -184,7 +225,7 @@
                      "tests/semgrep/test_realtime_tests_registry.py::test_no_comment_takes_the_rule_off"]
        :wiring "配線済み(2026-10-14・ba5513169。範囲の広げ・[suites]・行の注釈の 0 件・言い換えは ki-6aa7cb5ffb83)— 範囲は Python の検で、Hy の検は R5")
      (law the-sleep-rules-stop-as-errors-from-one-definition
-       :statement "for_all r ∈ {doeff-no-sleep-in-programs・doeff-no-sleep-in-tests}: |{.semgrep.yaml の規則 | id = r}| = 1 ∧ severity(r) = ERROR ∧ r の極性の検は .semgrep.yaml の r そのものを当てる"
+       :statement "for_all r ∈ {doeff-no-sleep-in-programs・doeff-no-sleep-in-tests・doeff-agents-no-sleep-effect-hy}: |{.semgrep.yaml の規則 | id = r}| = 1 ∧ severity(r) = ERROR ∧ r の極性の検は .semgrep.yaml の r そのものを当てる"
        :counterexamples
          [(counterexample "severity を WARNING に下げる(2026-10-12 の形)— main への取り込みを止めず、tests/ に 30 file の sleep が残った")
           (counterexample "規則の pattern をこの冊の defsemgrep に写す — 定義が 2 か所になり、片方だけ直した日に冊の検と本物の規則が別の物を見る")
@@ -235,16 +276,21 @@
        (assert (= (run (check-names "tests/sample.hy" ";; (deftest test-gone)\n(print \"(deftest test-text)\")\n(defadr X :enforcement [(deftest test-here (assert True))])\n"))
                   (frozenset #{"test-here"})))
        (assert (= (run (check-names SEMGREP-CONFIG config)) (frozenset #{"a" "b"})))
+       ;; Rust の検の名: #[test] の付いた関数だけ。補助の関数と、註にした検は数えない。
+       (assert (= (run (check-names "tests/sample.rs" "fn helper() {}\n\n#[test]\nfn fires() {}\n\n// #[test]\n// fn gone() {}\n\n    #[test]\n    fn nested_in_a_mod() {}\n"))
+                  (frozenset #{"fires" "nested_in_a_mod"})))
        ;; 今の木に無い規則・無い file・名の無い項は、どれも結ばれていない項として挙がる。
        (val repo-root (. (Path __file__) parent parent parent))
        (val missing [".semgrep.yaml::doeff-no-such-sleep-rule"
                      "tests/semgrep/test_no_such_file.py::test_only_the_marked_lines_fire"
                      "tests/realtime_tests.toml"
+                     "packages/doeff-linter/tests/program_sleep.rs::no_such_rust_test"
                      (+ THIS-FILE "::test-adr-doe-time-001-no-such-test")])
-       (assert (= (len (run (dead-checks repo-root missing))) 4))
+       (assert (= (len (run (dead-checks repo-root missing))) 5))
        (assert (= (run (dead-checks repo-root [(+ THIS-FILE "::test-adr-doe-time-001-judgments-reject-the-counterexamples")])) [])))]
   :plans ["card ki-94380dba532f"
           "card ki-495db9a2efa0"
           "card ki-b2407b326b41"
           "card ki-6aa7cb5ffb83"
-          "card ki-bb3ee40d0af2"])
+          "card ki-bb3ee40d0af2"
+          "card ki-3c3d85253c2c"])
