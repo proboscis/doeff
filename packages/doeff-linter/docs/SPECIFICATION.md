@@ -76,7 +76,7 @@ dir の下(1 か所の定義 = `project::hy_files::walked`)。
   基点の識別子が残ったまま別の path に同じ名が増えたら、新しい破れ。
 - **出力**: editor-json の一番上の欄 `new_critical`(識別子の辞書順の列)。基点と比べない時は `null`。版は上げない(欄の追加)。
 - **範囲**: path を名指した実行では、名指しの下の違反だけを比べる。基点の出力も同じ path の名指しで作る(呼び手の役)。
-- **既知の一覧を持たない規則**(登録簿で下げない規則 — DOEFF206〜209): path を名指した実行(commit の hook の stage した file・登録の前の
+- **既知の一覧を持たない規則**(登録簿で下げない規則 — DOEFF206〜209・211): path を名指した実行(commit の hook の stage した file・登録の前の
   変えた所の検査)では、名指しの下のその規則の critical を、基点に同じ識別子が在っても全部 `new_critical` に入れる — 変えた file に
   当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)([issue])。
   repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook では当てず、repo 全体の検証が見る(card [id] — 下の
@@ -214,6 +214,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す([issue])。設
 | `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
 | `program_sleep` | `paths`・`exclude`・`exclude_parts`(DOEFF210 の母集団 = Hy の program の置き場。節が無ければ DOEFF210 は判じない) | paths が空なら repo の Hy の全部 |
+| `test_sleep` | `parts`・`names`・`exclude`(DOEFF211 の母集団 = Hy の検の置き場。節が無ければ DOEFF211 は判じない) | — |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
 | `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節。DOEFF174 の到達も同じ `max_depth`)・`domain_layers`(DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り) | protocol・intent・8・domain_layers は core・intent のうち宣言に在る層 |
 | `commit_hook` | `whole_repo_rules`(退役した鍵 — 読まずに 1 行で名乗る。repo 全体が要るかは規則が名乗り、hook はその規則を当てない・[issue]・card [id])・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」・[issue]・#3834) | なし・20 |
@@ -324,6 +325,10 @@ critical にしたのを戻した)。確率で info にも出るが、level は�
 - **program の置き場**(DOEFF210): 歩く範囲(根の下と設定の `include`)の Hy の file のうち、`program_sleep.paths` のどれかの下(空なら
   全部・末尾 `*` は path の前方一致)で、`program_sleep.exclude` の下になく、区切りのどれも `program_sleep.exclude_parts` に無い物。
   定義の規則の母集団(`definitions`)とは別に持つ — 定義の書き方の規則群を当てていない置き場の program にも、この規則だけを当てられる。
+- **検の置き場**(DOEFF211): 歩く範囲(根の下と設定の `include`)の Hy の file のうち、path の区切り(file の名を除く)のどれかが
+  `test_sleep.parts` に在るか、file の名が `test_sleep.names` の glob のどれかに合い、`test_sleep.exclude` のどれにも当たらない物
+  (exclude の行は dir ならその下・file ならその file そのもの・末尾 `*` は path の前方一致)。program の置き場とは別に持つ —
+  program の眠り(DOEFF210)は handler の実装を外し、検の眠り(DOEFF211)は realtime を名乗った所を外す。
 
 ## 5. 規則
 
@@ -360,6 +365,7 @@ critical にしたのを戻した)。確率で info にも出るが、level は�
 | [removed]
 | [removed]
 | DOEFF210 | Hy の program が壁の時計で眠る — 母集団は設定の `program_sleep`(program の置き場 — 書いた repo にだけ当たる・4 節)。defk・defp の本体の中(字面で内側に在る fn・defn・deff の中も)の、頭が `time.sleep` / `asyncio.sleep` の呼びが破れ。頭は file の中の import(関数の中の物も)から解く: `(import time :as t)` の `t.sleep`・`(import asyncio [sleep])` と `(import time [sleep :as nap])` で束ねた名・`(import time *)` の `sleep`。`(Await (asyncio.sleep 秒))` は中の呼びが当たる。当てない物: 秒が literal の 0 の呼び(1 度譲るだけ)・handler の実装(defhandler の本体・引数の並びが `[effect k]` の defk / deff / defn / fn・契約の辞書の `:tags` の `:role` が `foundation` の defk / defp — 定義が自分の辞書に書いた時だけで、module の頭のタグでは外さない)・program でない定義(最上位の deff・defn・defclass の method)・註・`#_`・quote した form。眠りの module でない物の `sleep`(自前の関数・他の library)は数えない。file 1 つで決まる(1 file の実行も判じる)。既定 critical(doeff の ADR-DOE-TIME-001 R1・R2・card [id] — Python の同じ決まりは semgrep の doeff-no-sleep-in-programs) | `<program の名>::<time.sleep か asyncio.sleep>` | 眠りの呼びの form |
+| DOEFF211 | Hy の検が、実時間が対象だと名乗らずに壁の時計で眠る — 母集団は設定の `test_sleep`(検の置き場 — 書いた repo にだけ当たる・4 節)。頭が `time.sleep` / `asyncio.sleep` の呼び(import の別名・束ねた名は DOEFF210 と同じ読み・method の綴り `(.sleep time 秒)` も)と、眠りの言い換え `(.wait (threading.Event) 秒)`(その場で作った Event を秒つきで待つ)が破れ。定義の種類は問わない(deftest・defn・defk・deff・class の method・最上位の式)。当てない物: 秒が literal の 0 の眠り・註・`#_`・quote・文字列の中・realtime を名乗った所 — module の最上位の `(val pytestmark pytest.mark.realtime)`(`var` も・値は印 1 つか印の list・tuple)を持つ file の全部、meta の map(引数の並びと先頭の文字列の後の最初の要素)の `:marks` に `"realtime"` を持つ deftest の中、decorator の並び(頭のすぐ後の `[…]`)に `pytest.mark.realtime` を持つ `defn` の中。`setv` の束ね・最上位でない束ね・deftest でない定義の map は名乗りではない(doeff-hy が pytest の印として記録する形だけを読む)。鍵の細目は `<包む最上位の定義の名>::<眠りの関数>`(定義の外は `<module>`)。登録簿では下げない。名乗った検を理由と一緒に載せる名簿との突き合わせは repo の側の検が持つ(doeff は tests/semgrep/test_realtime_tests_registry.py)。定義 = `src/project/test_sleep.rs`・検 = `tests/test_sleep.rs`(doeff の ADR-DOE-TIME-001 R8) |
 | [removed]
 | DOEFF167 | 反例も外した理由も無い不変条件の条 — DOEFF164(service に反例が 1 本あれば緑)を条ごとに細かくした物。条の名は `:invariants` の関数が返す値で静的に読めないので、defservice の `:clauses ["条" …]` に宣言し、反例を持たない条は `:clause-exemptions {"条" "理由" …}` に理由を書く(`:clauses` の内・理由は空でない)。反例の節がどの条を破るかは、反例の表(`:counterexamples` の 1 鍵 1 file)の 2 行目から後の `breaks: <service>::<条> …` の行で名乗る。母集団と効く反例の節は DOEFF164 と同じ(entry の層に定義を持つ service・表の鍵に当たり本番の入口から届かない節)。条ごとに、名乗る節に届く deftest の 1 本でもその service の entry の層の定義に届けば有り、理由つきで外した条は数えず、どちらも無ければ defservice の位置で critical(鍵の細目 `<service>::<条>`)。`:clauses` を書かない code を持つ service は service の名で 1 つ。宣言に無い service か条を名乗る `breaks:`・綴りの誤りは設定の誤り(errors)。全体の実行だけ。既定の重大さ critical([issue]) | `<service>::<条>`(宣言の欠けは service の名) | defservice の位置 |
 | DOEFF168 | 業務の層が環境の名の値や dry-run の印で分岐する — `:environment-branches` の `:layers` の層の Hy の file で、比べる form(`=`・`!=`・`is`・`is-not`・`in`・`not-in`)の引数(集まりの literal の要素も)と `match` の節の型に在る、`:values` の文字列の literal と、分岐の form(`if`・`when`・`unless` の条件・`cond` の各条件・`match` の主語)の中の `:flags` の名の記号(点で区切った最後の段を mangle して比べる)を数える。註・`#_` で読み捨てた form・quote した form・分岐の条件の外は数えない。層の分からない置き場は層の規則の外なので数えない。綴りと層は repo の宣言にだけ在る。既定の重大さ critical([issue]) | `value:<綴り>` か `flag:<綴り>` | 当たった literal か記号 |

@@ -23,9 +23,9 @@ use std::collections::BTreeMap;
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Prefix, Reader, StrKind};
 
-/// 眠りの関数を持つ module(Python の標準の 2 つ)と、その関数の名。
-const SLEEP_MODULES: &[&str] = &["time", "asyncio"];
-const SLEEP_NAME: &str = "sleep";
+/// 眠りの関数を持つ module(Python の標準の 2 つ)と、その関数の名。検の眠りの規則(DOEFF211・test_sleep.rs)も同じ 2 つを読む。
+pub(super) const SLEEP_MODULES: &[&str] = &["time", "asyncio"];
+pub(super) const SLEEP_NAME: &str = "sleep";
 /// program を定める頭(本体が @do の generator になる)。
 const PROGRAM_HEADS: &[&str] = &["defk", "defp"];
 /// 引数の並びが `[effect k]` なら handler の実装として読む頭と、その頭の引数の並びの位置。
@@ -59,10 +59,7 @@ impl ProgramSleepHit {
 pub fn judge(source: &str) -> Vec<ProgramSleepHit> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
-    let mut sleeps: BTreeMap<String, String> =
-        SLEEP_MODULES.iter().map(|module| (format!("{}.{}", module, SLEEP_NAME), format!("{}.{}", module, SLEEP_NAME))).collect();
-    forms.iter().for_each(|form| bind_imports(source, form, &mut sleeps));
-    let judge = Judge { source, sleeps };
+    let judge = Judge { source, sleeps: bound_names(source, &forms, SLEEP_MODULES, SLEEP_NAME) };
     let mut out = Vec::new();
     forms.iter().for_each(|form| judge.walk(form, None, &mut out));
     out.sort_by_key(|hit| hit.start);
@@ -70,24 +67,24 @@ pub fn judge(source: &str) -> Vec<ProgramSleepHit> {
 }
 
 /// form の綴り。
-fn text<'a>(source: &'a str, form: &Form) -> &'a str {
+pub(super) fn text<'a>(source: &'a str, form: &Form) -> &'a str {
     source.get(form.span.start..form.span.end).unwrap_or("")
 }
 
 /// 読み捨てを除いた要素。
-fn live(items: &[Form]) -> Vec<&Form> {
+pub(super) fn live(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect()
 }
 
 /// `( … )` の頭の記号の綴りと、読み捨てを除いた要素。
-fn headed<'a, 'f>(source: &'a str, form: &'f Form) -> Option<(&'a str, Vec<&'f Form>)> {
+pub(super) fn headed<'a, 'f>(source: &'a str, form: &'f Form) -> Option<(&'a str, Vec<&'f Form>)> {
     let items = live(form.paren_items()?);
     let head = items.first().filter(|first| matches!(first.node, Node::Symbol)).map(|first| text(source, first))?;
     Some((head, items))
 }
 
 /// form の子(quote した form と読み捨てた form には入らない)。
-fn children(form: &Form) -> Vec<&Form> {
+pub(super) fn children(form: &Form) -> Vec<&Form> {
     match &form.node {
         Node::Seq { items, .. } => live(items),
         Node::Prefixed { prefix: Prefix::Quote | Prefix::Quasiquote, .. } => Vec::new(),
@@ -99,44 +96,56 @@ fn children(form: &Form) -> Vec<&Form> {
     }
 }
 
-/// file の中の `(import …)`(関数の中の物も)から、眠りの関数を指す呼びの頭の綴り → 元の綴りを集める。
-/// `(import time)`・`(import time :as t)` は `<名>.sleep`、`(import time [sleep])`・`(import time [sleep :as nap])`・`(import time *)` は
-/// 束ねた名そのもの。
-fn bind_imports(source: &str, form: &Form, sleeps: &mut BTreeMap<String, String>) {
+/// file の中で、module の列 modules のどれかの名 name(例 time・asyncio の sleep)を指す呼びの頭の綴り → 元の綴り(`<module>.<name>`)。
+/// 素の綴り `<module>.<name>` と、file の中の `(import …)`(関数の中の物も)が束ねた名を集める。
+pub(super) fn bound_names(source: &str, forms: &[Form], modules: &[&str], name: &str) -> BTreeMap<String, String> {
+    let mut bound: BTreeMap<String, String> = modules.iter().map(|module| (format!("{}.{}", module, name), format!("{}.{}", module, name))).collect();
+    forms.iter().for_each(|form| bind_imports(source, form, modules, name, &mut bound));
+    bound
+}
+
+/// `(import …)` 1 つ(か、その子の中の物)が束ねた名を足す。`(import time)`・`(import time :as t)` は `<名>.sleep`、
+/// `(import time [sleep])`・`(import time [sleep :as nap])`・`(import time *)` は束ねた名そのもの。
+fn bind_imports(source: &str, form: &Form, modules: &[&str], name: &str, bound_names: &mut BTreeMap<String, String>) {
     match headed(source, form) {
         Some(("import", items)) => {
             let args = &items[1..];
             let mut at = 0;
             while at < args.len() {
                 let module = text(source, args[at]);
-                let original = SLEEP_MODULES.contains(&module).then(|| format!("{}.{}", module, SLEEP_NAME));
+                let original = modules.contains(&module).then(|| format!("{}.{}", module, name));
                 let next = args.get(at + 1).copied();
                 let (bound, used) = match next {
-                    Some(names) if names.bracket_items().is_some() => (imported_sleep(source, names), 2),
-                    Some(star) if matches!(star.node, Node::Symbol) && text(source, star) == "*" => (Some(SLEEP_NAME.to_string()), 2),
+                    Some(names) if names.bracket_items().is_some() => (imported_name(source, names, name), 2),
+                    Some(star) if matches!(star.node, Node::Symbol) && text(source, star) == "*" => (Some(name.to_string()), 2),
                     Some(keyword) if text(source, keyword) == ":as" => {
-                        (args.get(at + 2).map(|alias| format!("{}.{}", text(source, alias), SLEEP_NAME)), 3)
+                        (args.get(at + 2).map(|alias| format!("{}.{}", text(source, alias), name)), 3)
                     }
-                    _ => (Some(format!("{}.{}", module, SLEEP_NAME)), 1),
+                    _ => (Some(format!("{}.{}", module, name)), 1),
                 };
                 if let (Some(original), Some(bound)) = (original, bound) {
-                    sleeps.insert(bound, original);
+                    bound_names.insert(bound, original);
                 }
                 at += used;
             }
         }
-        _ => children(form).into_iter().for_each(|child| bind_imports(source, child, sleeps)),
+        _ => children(form).into_iter().for_each(|child| bind_imports(source, child, modules, name, bound_names)),
     }
 }
 
-/// 名を並べた import の `[…]` の中で `sleep` を束ねた名(`[sleep]` → `sleep`・`[sleep :as nap]` → `nap`・無ければ None)。
-fn imported_sleep(source: &str, names: &Form) -> Option<String> {
+/// 名を並べた import の `[…]` の中で name を束ねた名(`[sleep]` → `sleep`・`[sleep :as nap]` → `nap`・無ければ None)。
+fn imported_name(source: &str, names: &Form, name: &str) -> Option<String> {
     let names = live(names.bracket_items()?);
-    let at = names.iter().position(|name| matches!(name.node, Node::Symbol) && text(source, name) == SLEEP_NAME)?;
+    let at = names.iter().position(|bound| matches!(bound.node, Node::Symbol) && text(source, bound) == name)?;
     match (names.get(at + 1), names.get(at + 2)) {
         (Some(keyword), Some(alias)) if text(source, keyword) == ":as" => Some(text(source, alias).to_string()),
-        _ => Some(SLEEP_NAME.to_string()),
+        _ => Some(name.to_string()),
     }
+}
+
+/// 秒が literal の 0 か(`0`・`0.0`・`0.`)。
+pub(super) fn is_zero(source: &str, seconds: &Form) -> bool {
+    matches!(seconds.node, Node::Number) && text(source, seconds).parse::<f64>().is_ok_and(|value| value == 0.0)
 }
 
 struct Judge<'a> {
@@ -158,7 +167,7 @@ impl Judge<'_> {
                     false => items.get(1).map(|name| text(self.source, name)),
                 };
             } else if let (Some(definition), Some(callee)) = (program, self.sleeps.get(head)) {
-                if !items.get(1).is_some_and(|seconds| self.is_zero(seconds)) {
+                if !items.get(1).is_some_and(|seconds| is_zero(self.source, seconds)) {
                     out.push(ProgramSleepHit {
                         start: form.span.start,
                         end: form.span.end,
@@ -189,34 +198,29 @@ impl Judge<'_> {
             .take_while(|part| part.is_brace() || part.bracket_items().is_some() || matches!(part.node, Node::Str { .. }))
             .find(|part| part.is_brace());
         contract
-            .and_then(|contract| self.value_of(contract, ":tags"))
-            .and_then(|tags| self.value_of(tags, ":role"))
-            .is_some_and(|role| self.string(role) == Some(IO_ROLE))
+            .and_then(|contract| value_of(self.source, contract, ":tags"))
+            .and_then(|tags| value_of(self.source, tags, ":role"))
+            .is_some_and(|role| string(self.source, role) == Some(IO_ROLE))
     }
+}
 
-    /// 辞書 `{鍵 値 …}` の鍵 key の値。
-    fn value_of<'f>(&self, dict: &'f Form, key: &str) -> Option<&'f Form> {
-        let entries = match &dict.node {
-            Node::Seq { delim: Delim::Brace, items } => live(items),
-            _ => return None,
-        };
-        entries.chunks(2).find_map(|pair| match pair {
-            [name, value] if matches!(name.node, Node::Keyword) && text(self.source, name) == key => Some(*value),
-            _ => None,
-        })
-    }
+/// 辞書 `{鍵 値 …}` の鍵 key の値。
+pub(super) fn value_of<'f>(source: &str, dict: &'f Form, key: &str) -> Option<&'f Form> {
+    let entries = match &dict.node {
+        Node::Seq { delim: Delim::Brace, items } => live(items),
+        _ => return None,
+    };
+    entries.chunks(2).find_map(|pair| match pair {
+        [name, value] if matches!(name.node, Node::Keyword) && text(source, name) == key => Some(*value),
+        _ => None,
+    })
+}
 
-    /// 文字列の literal の中身。
-    fn string(&self, form: &Form) -> Option<&str> {
-        match &form.node {
-            Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, body } => self.source.get(body.start..body.end),
-            _ => None,
-        }
-    }
-
-    /// 秒が literal の 0 か(`0`・`0.0`・`0.`)。
-    fn is_zero(&self, seconds: &Form) -> bool {
-        matches!(seconds.node, Node::Number) && text(self.source, seconds).parse::<f64>().is_ok_and(|value| value == 0.0)
+/// 文字列の literal の中身。
+pub(super) fn string<'a>(source: &'a str, form: &Form) -> Option<&'a str> {
+    match &form.node {
+        Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, body } => source.get(body.start..body.end),
+        _ => None,
     }
 }
 
