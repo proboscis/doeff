@@ -5,6 +5,7 @@
 use crate::project::layers::{LayersSection, RolesSection, TagsSection};
 use crate::project::settings::{
     EnvironmentNamesSection, LawEntry, ProjectSections, ProjectSettings, RawSideEffectsSection, RegistrySection, ServicesSection, DefinitionsSection,
+    ProgramSleepSection,
 };
 use crate::models::Severity;
 use crate::project::architecture::Architecture;
@@ -76,6 +77,10 @@ pub struct Config {
     /// 定義の書き方の規則(DOEFF110 defn の禁止・111 deff の理由・112 タグ必須)の母集団 — `[tool.doeff-linter.definitions]`
     #[serde(default)]
     pub definitions: Option<DefinitionsSection>,
+
+    /// Hy の program は壁の時計で眠らない(DOEFF210)の母集団 = program の置き場 — `[tool.doeff-linter.program_sleep]`
+    #[serde(default)]
+    pub program_sleep: Option<ProgramSleepSection>,
 
     /// service と層の宣言 architecture.hy の path(設定 file の dir からの相対)。書かなければ repo の根の architecture.hy を探す。
     #[serde(default)]
@@ -349,6 +354,7 @@ impl Config {
             registry: self.registry.as_ref(),
             services: self.services.as_ref(),
             definitions: self.definitions.as_ref(),
+            program_sleep: self.program_sleep.as_ref(),
         })
     }
 }

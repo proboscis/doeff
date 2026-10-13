@@ -213,6 +213,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す([issue])。設
 | `layers.describe.<層>` | `summary`・`knows`・`does_not_know`・`question` | 無ければ説明の欄は null |
 | `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |
 | `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
+| `program_sleep` | `paths`・`exclude`・`exclude_parts`(DOEFF210 の母集団 = Hy の program の置き場。節が無ければ DOEFF210 は判じない) | paths が空なら repo の Hy の全部 |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
 | `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節。DOEFF174 の到達も同じ `max_depth`)・`domain_layers`(DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り) | protocol・intent・8・domain_layers は core・intent のうち宣言に在る層 |
 | `commit_hook` | `whole_repo_rules`(退役した鍵 — 読まずに 1 行で名乗る。repo 全体が要るかは規則が名乗り、hook はその規則を当てない・[issue]・card [id])・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」・[issue]・#3834) | なし・20 |
@@ -302,7 +303,7 @@ doeff code testable")。repo ごとに写すと片方が黙って古くなるの
 | 既定 | 規則 |
 |---|---|
 | critical — 責務の境界 | DOEFF101(層の向き)・102(層で禁じた module)・103(型だけの層の関数)・106(生の副作用の直接の証拠)・109(service の境界)・116(service の依存)・130(翻訳の handler が業務の intent を出す) |
-| critical — そのほか | DOEFF114・115(宣言に無い置き場所)・126(defk を素で呼ぶ — Program が値として流れる)・128(読めない file — 判定が欠け、0 件に見えても合格ではない) |
+| critical — そのほか | DOEFF114・115(宣言に無い置き場所)・126(defk を素で呼ぶ — Program が値として流れる)・128(読めない file — 判定が欠け、0 件に見えても合格ではない)・210(program が handler を迂回して壁の時計で眠る) |
 | major — Jev の判定(較正が済むまで) | DOEFF201(翻訳の層の業務の判断)・202(判断の層の通信の手段)・205(形の検めと判断の混ざり) |
 | 規則そのものの重さから | 上に無い規則の全部(Python の文ごとの規則 DOEFF001〜031 も) |
 
@@ -320,6 +321,9 @@ critical にしたのを戻した)。確率で info にも出るが、level は�
   module の綴りは repo の根からの path の拡張子を外し `/` を `.` にした物(`__init__` もそのまま)。
 - **業務の file**(DOEFF108): `environment_names.paths` のどれかの下(末尾 `*` は path の前方一致)で、`exclude` の下になく、
   区切りのどれも `exclude_parts` に無く、拡張子が `extensions` に在る物。
+- **program の置き場**(DOEFF210): 歩く範囲(根の下と設定の `include`)の Hy の file のうち、`program_sleep.paths` のどれかの下(空なら
+  全部・末尾 `*` は path の前方一致)で、`program_sleep.exclude` の下になく、区切りのどれも `program_sleep.exclude_parts` に無い物。
+  定義の規則の母集団(`definitions`)とは別に持つ — 定義の書き方の規則群を当てていない置き場の program にも、この規則だけを当てられる。
 
 ## 5. 規則
 
@@ -355,6 +359,7 @@ critical にしたのを戻した)。確率で info にも出るが、level は�
 | [removed]
 | [removed]
 | [removed]
+| DOEFF210 | Hy の program が壁の時計で眠る — 母集団は設定の `program_sleep`(program の置き場 — 書いた repo にだけ当たる・4 節)。defk・defp の本体の中(字面で内側に在る fn・defn・deff の中も)の、頭が `time.sleep` / `asyncio.sleep` の呼びが破れ。頭は file の中の import(関数の中の物も)から解く: `(import time :as t)` の `t.sleep`・`(import asyncio [sleep])` と `(import time [sleep :as nap])` で束ねた名・`(import time *)` の `sleep`。`(Await (asyncio.sleep 秒))` は中の呼びが当たる。当てない物: 秒が literal の 0 の呼び(1 度譲るだけ)・handler の実装(defhandler の本体・引数の並びが `[effect k]` の defk / deff / defn / fn・契約の辞書の `:tags` の `:role` が `foundation` の defk / defp — 定義が自分の辞書に書いた時だけで、module の頭のタグでは外さない)・program でない定義(最上位の deff・defn・defclass の method)・註・`#_`・quote した form。眠りの module でない物の `sleep`(自前の関数・他の library)は数えない。file 1 つで決まる(1 file の実行も判じる)。既定 critical(doeff の ADR-DOE-TIME-001 R1・R2・card [id] — Python の同じ決まりは semgrep の doeff-no-sleep-in-programs) | `<program の名>::<time.sleep か asyncio.sleep>` | 眠りの呼びの form |
 | [removed]
 | DOEFF167 | 反例も外した理由も無い不変条件の条 — DOEFF164(service に反例が 1 本あれば緑)を条ごとに細かくした物。条の名は `:invariants` の関数が返す値で静的に読めないので、defservice の `:clauses ["条" …]` に宣言し、反例を持たない条は `:clause-exemptions {"条" "理由" …}` に理由を書く(`:clauses` の内・理由は空でない)。反例の節がどの条を破るかは、反例の表(`:counterexamples` の 1 鍵 1 file)の 2 行目から後の `breaks: <service>::<条> …` の行で名乗る。母集団と効く反例の節は DOEFF164 と同じ(entry の層に定義を持つ service・表の鍵に当たり本番の入口から届かない節)。条ごとに、名乗る節に届く deftest の 1 本でもその service の entry の層の定義に届けば有り、理由つきで外した条は数えず、どちらも無ければ defservice の位置で critical(鍵の細目 `<service>::<条>`)。`:clauses` を書かない code を持つ service は service の名で 1 つ。宣言に無い service か条を名乗る `breaks:`・綴りの誤りは設定の誤り(errors)。全体の実行だけ。既定の重大さ critical([issue]) | `<service>::<条>`(宣言の欠けは service の名) | defservice の位置 |
 | DOEFF168 | 業務の層が環境の名の値や dry-run の印で分岐する — `:environment-branches` の `:layers` の層の Hy の file で、比べる form(`=`・`!=`・`is`・`is-not`・`in`・`not-in`)の引数(集まりの literal の要素も)と `match` の節の型に在る、`:values` の文字列の literal と、分岐の form(`if`・`when`・`unless` の条件・`cond` の各条件・`match` の主語)の中の `:flags` の名の記号(点で区切った最後の段を mangle して比べる)を数える。註・`#_` で読み捨てた form・quote した form・分岐の条件の外は数えない。層の分からない置き場は層の規則の外なので数えない。綴りと層は repo の宣言にだけ在る。既定の重大さ critical([issue]) | `value:<綴り>` か `flag:<綴り>` | 当たった literal か記号 |

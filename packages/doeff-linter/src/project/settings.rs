@@ -89,6 +89,30 @@ pub struct DefinitionSettings {
     pub test_paths: Vec<String>,
 }
 
+/// `[tool.doeff-linter.program_sleep]` — DOEFF210(Hy の program は壁の時計で眠らない)の母集団 = program の置き場。
+/// 節が無ければ規則は何も判じない(定義の書き方の規則の母集団 definitions とは別 — その規則群を当てていない package の
+/// program にも、この規則だけを当てられる)。
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct ProgramSleepSection {
+    /// 判じる置き場(repo の根からの dir・末尾 `*` は前方一致)。空なら repo の Hy の全部。
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// 除く置き場(書き方は paths と同じ)。
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// 除く path の区切り(dir の名の完全一致 — 例 tests・examples)。
+    #[serde(default)]
+    pub exclude_parts: Vec<String>,
+}
+
+/// DOEFF210 の母集団(検めた後)。
+#[derive(Debug, Clone)]
+pub struct ProgramSleepSettings {
+    pub paths: Vec<String>,
+    pub exclude: Vec<String>,
+    pub exclude_parts: BTreeSet<String>,
+}
+
 /// `[tool.doeff-linter.smells]` — 臭いの規則の設定(DOEFF121 を当てる層)。DOEFF122〜125 は定義の規則の母集団に当たる。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct SmellsSection {
@@ -253,6 +277,8 @@ pub struct ProjectSettings {
     pub raw: Option<RawSettingsSpec>,
     pub services: Option<ServiceSettings>,
     pub definitions: Option<DefinitionSettings>,
+    /// DOEFF210 の母集団(`[tool.doeff-linter.program_sleep]`・無ければ None — 規則は判じない)。
+    pub program_sleep: Option<ProgramSleepSettings>,
     /// 規則ごとの、登録簿に載った破れの重さ(無ければ warning)。
     pub registered_severity: BTreeMap<ProjectRule, crate::models::Severity>,
     /// 規則ごとの重さの上書き(臭いの規則 DOEFF121〜125 だけ — 既定の info を warning に上げる時)。
@@ -289,6 +315,7 @@ pub struct ProjectSections<'a> {
     pub registry: Option<&'a RegistrySection>,
     pub services: Option<&'a ServicesSection>,
     pub definitions: Option<&'a DefinitionsSection>,
+    pub program_sleep: Option<&'a ProgramSleepSection>,
 }
 
 /// 既定の拡張子(Hy の 3 つと Python)。
@@ -316,6 +343,11 @@ impl ProjectSettings {
             deff_reason_marker: section.deff_reason_marker.clone().unwrap_or_else(|| "defk にできない:".to_string()),
             tags: tag_reading(sections.tags, sections.layers.and_then(|l| l.function_definers.as_ref())),
             test_paths: section.test_paths.clone(),
+        });
+        let program_sleep = sections.program_sleep.map(|section| ProgramSleepSettings {
+            paths: section.paths.iter().map(|p| normalize_dir(p)).collect(),
+            exclude: section.exclude.iter().map(|p| normalize_dir(p)).collect(),
+            exclude_parts: section.exclude_parts.iter().cloned().collect(),
         });
         let mut unknown_rules: Vec<super::notice::UnknownRuleRef> = Vec::new();
         let python_ids: BTreeSet<String> = crate::rules::get_all_rules().iter().map(|r| r.rule_id().to_string()).collect();
@@ -433,6 +465,7 @@ impl ProjectSettings {
                 raw,
                 services,
                 definitions,
+                program_sleep,
                 registered_severity: BTreeMap::new(),
                 severity: BTreeMap::new(),
                 level: BTreeMap::new(),

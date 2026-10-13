@@ -69,6 +69,7 @@ pub mod invariants;
 pub mod system_access;
 pub mod record_waits;
 pub mod timed_refetch;
+pub mod program_sleep;
 pub mod system_decls;
 pub mod clause_coverage;
 pub mod python_reach;
@@ -99,7 +100,7 @@ use spans::innermost_definition;
 use law::LawSpec;
 use layers::{LayerId, LayerSettings};
 use module_index::{ModuleIndex, Roads};
-use settings::{EnvironmentSettings, ProjectSettings};
+use settings::{EnvironmentSettings, ProgramSleepSettings, ProjectSettings};
 
 /// module の綴り → 置き場 の索引(import の先を層と service へ解くため)。
 type SiteIndex<'a> = ModuleIndex<'a, ModuleSite>;
@@ -726,6 +727,31 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                 }
             }
+            if let Some(places) = settings.program_sleep.as_ref().filter(|_| enabled.contains(&ProjectRule::ProgramSleepsOnWallClock)) {
+                // 歩く範囲(根の下と設定の include)の program の置き場の file — 名指しが在れば、その下の file だけを判じる(定義の規則と同じ述語)。
+                let files: Vec<SourceFile> = hy_files::walked(root, &settings.include)
+                    .into_iter()
+                    .filter(|(rel, _)| is_program_sleep_file(rel, places))
+                    .map(|(rel, path)| SourceFile { rel, path, language: Language::Hy })
+                    .filter(|file| focus.is_none_or(|only| only.iter().any(|p| file.path.starts_with(p))))
+                    .collect();
+                let judged: Vec<Result<Vec<Draft>, String>> = crate::timing::timed("program-sleep", || {
+                    files
+                        .par_iter()
+                        .map(|file| {
+                            std::fs::read_to_string(&file.path)
+                                .map(|source| judge_program_sleep(file, &source))
+                                .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                        })
+                        .collect()
+                });
+                for result in judged {
+                    match result {
+                        Ok(found) => drafts.extend(found),
+                        Err(error) => report.errors.push(error),
+                    }
+                }
+            }
         }
         Target::Single { path, source } => {
             let rel = relative_path(root, &path);
@@ -869,6 +895,14 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         let file = SourceFile { rel: rel.clone(), path: path.clone(), language };
                         drafts.extend(judge_environment_names(&file, source, env, hy_file.as_ref()));
                     }
+                }
+            }
+            // 名乗りは歩く範囲で引く(定義の書き方の規則と同じ — 根の外でも設定の include の dir の下なら `..` を含む相対)。
+            let program_rel = rel.clone().or_else(|| hy_files::walked_rel(root, &settings.include, &path));
+            if let (Some(places), Some(rel)) = (&settings.program_sleep, &program_rel) {
+                if enabled.contains(&ProjectRule::ProgramSleepsOnWallClock) && is_program_sleep_file(rel, places) {
+                    let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
+                    drafts.extend(judge_program_sleep(&file, source));
                 }
             }
             if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
@@ -4741,7 +4775,8 @@ fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
     let layered = settings.layers.as_ref().is_some_and(|layers| classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)).is_some());
     let defined = settings.definitions.as_ref().is_some_and(|d| is_definition_file(rel, d) || is_test_file(rel, d));
     let named = settings.environment.as_ref().is_some_and(|env| is_environment_file(rel, env));
-    layered || defined || named
+    let programs = settings.program_sleep.as_ref().is_some_and(|places| is_program_sleep_file(rel, places));
+    layered || defined || named || programs
 }
 
 /// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、
@@ -5417,6 +5452,38 @@ fn judge_json_value(file: &SourceFile, source: &str, architecture: &architecture
         base: Severity::Error,
         explain: Explain::JsonValueUse { module, uses, refusal },
     })
+}
+
+// --- program の眠り(DOEFF210)----------------------------------------------------------
+
+/// program の置き場の file か(置き場の 1 つの下 — 置き場が空なら全部 — で、除く置き場・区切りに当たらない Hy の file)。
+fn is_program_sleep_file(rel: &str, places: &ProgramSleepSettings) -> bool {
+    language_of(Path::new(rel)) == Some(Language::Hy)
+        && (places.paths.is_empty() || places.paths.iter().any(|place| matches_place(rel, place)))
+        && !places.exclude.iter().any(|place| matches_place(rel, place))
+        && !rel.split('/').any(|part| places.exclude_parts.contains(part))
+}
+
+/// DOEFF210: program(defk・defp)の中の壁の時計の眠りを、呼びの form の位置の下書きにする(鍵の細目 = program の名::眠りの関数)。
+fn judge_program_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    program_sleep::judge(source)
+        .into_iter()
+        .map(|hit| Draft {
+            rule: ProjectRule::ProgramSleepsOnWallClock,
+            layer: None,
+            path: file.path.clone(),
+            rel: file.rel.clone(),
+            range: lines.range(hit.start, hit.end),
+            message: format!("{} — program {} が {} で壁の時計を待つ(時間は doeff-time の効果で待つ)", file.rel, hit.definition, hit.callee),
+            detail: Some(hit.detail()),
+            base: Severity::Error,
+            explain: Explain::ProgramSleepsOnWallClock {
+                subject: format!("program {} の中の {} の呼び", hit.definition, hit.callee),
+                reason: "program が time.sleep・asyncio.sleep を呼ぶと、どの時間の handler を置いても壁の時計で待つ — その program の検は仮想の時計(sim-time-handler)で走れず、実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。program は doeff-time の効果(Delay など)を出し、1 秒が何であるかは呼び手が置く時間の handler が決める。壁の時計で待つのは handler の実装の責務(doeff の ADR-DOE-TIME-001 R1・R2)。".to_string(),
+            },
+        })
+        .collect()
 }
 
 // --- 環境の語(DOEFF108)---------------------------------------------------------------
