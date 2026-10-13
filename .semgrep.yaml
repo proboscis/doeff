@@ -2889,6 +2889,8 @@ rules:
   # 子の card で直してから足す(card ki-94380dba532f・利用者 2026-10-12 22:38「why not doeff's time effects?」)。
   # Hy の program(defk・defp・deff)は semgrep が読めないので、この規則の外。
   # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py。
+  # 法 = ADR-DOE-TIME-001 の a-program-waits-by-a-time-effect(docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy —
+  # 冊はこの規則の id と severity ERROR を検める。id を変える・消す時は冊の :enforced-by と同じ commit で直す)。
   - id: doeff-no-sleep-in-programs
     patterns:
       - pattern-either:
@@ -2941,6 +2943,7 @@ rules:
   # 1 度譲るだけなので鳴らさない(agora-redesign #2882)。await の無い asyncio.sleep(…)(yield
   # Await(asyncio.sleep(1.5)) など)も鳴らし、severity は ERROR(card ki-94380dba532f・ki-37e3efcc05e2)。
   # 極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
+  # 法 = ADR-DOE-TIME-001 の a-test-sleeps-only-when-it-declares-realtime(冊はこの規則の id と severity ERROR を検める)。
   - id: doeff-no-sleep-in-tests
     patterns:
       - pattern-either:
