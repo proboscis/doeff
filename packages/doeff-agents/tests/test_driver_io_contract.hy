@@ -12,7 +12,7 @@
 ;;;   * ExecutableAt: 実行の bit の在る mode で書いた file だけが True・dir と無い path は False
 ;;;   * EnvValue: 在る名は値・無い名は None。WhichExecutable: 無い名は None
 ;;;   * HomePath・TempRoot は在る dir の絶対 path・ProcessId は正の整数
-;;;   * MonotonicTime は戻らず、Sleep の秒以上進む
+;;;   * MonotonicTime は戻らず、doeff-time の Delay の秒以上進む(待ちは io_effects の語彙ではなく時間の効果 — 本物は時間の handler・fake は世界の時計が答える)
 ;;;   * UnixConnectProbe: 聞く socket は accepting・不在と socket でない file は refused
 ;;;   * UnixLineRequest: 聞く socket は 1 行を答える・不在は FileNotFoundError・socket でない file は ConnectionRefusedError
 ;;;   * RunProcess: 無い命令は起こせない答え(exit-code 127・started False・OSError の文)
@@ -36,7 +36,6 @@
   ProcessOutcome
   ReadText
   RunProcess
-  Sleep
   SpawnDetached
   TempRoot
   TouchFile
@@ -44,6 +43,7 @@
   UnixLineRequest
   WhichExecutable
   WriteText])
+(import doeff_time [Delay])
 (import driver_io_contract_handlers [ContractRoot LIVE-SOCKET SET-NAME UNSET-NAME])
 
 (val MISSING-COMMAND "/nonexistent/doeff-driver-command")
@@ -218,14 +218,14 @@
   (assert (and (isinstance pid int) (> pid 0)) (.format "ProcessId の答え {!r}" pid)))
 
 
-(deftest test-the-monotonic-clock-advances-by-the-sleep
+(deftest test-the-monotonic-clock-advances-by-the-delay
   {:interpreters ["driver-io" "fake-driver-io"]}
   (<- before (MonotonicTime))
   (<- again (MonotonicTime))
-  (<- (Sleep :seconds 0.02))
+  (<- (Delay 0.02))
   (<- after (MonotonicTime))
   (assert (<= before again) (.format "単調時計が戻った {} → {}" before again))
-  (assert (>= (- after again) 0.02) (.format "Sleep 0.02 の間に進んだ秒 {}" (- after again))))
+  (assert (>= (- after again) 0.02) (.format "Delay 0.02 の間に進んだ秒 {}" (- after again))))
 
 
 (deftest test-the-connect-probe-tells-a-listener-from-absence

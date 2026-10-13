@@ -1,7 +1,8 @@
 ;;; driver 層の I/O の契約テストの解釈器(composition root)— 同じ契約の Program を、io_effects の handler だけ替えて走らせる。
 ;;;
-;;;   driver-io       本物: driver-io-handler(一時 dir の中の実 file・実 unix socket・実の時計)
-;;;   fake-driver-io  fake: fake-driver-io-handler(FakeIoWorld — 記憶の中の file 系と台本の socket)
+;;;   driver-io       本物: driver-io-handler(一時 dir の中の実 file・実 unix socket・実の時計)と、待ち(doeff-time の Delay)に
+;;;                   壁の時計で答える sync-time-handler — 本番の root(io_handlers.hy の run-driver-io)と同じ 2 つ
+;;;   fake-driver-io  fake: fake-driver-io-handler(FakeIoWorld — 記憶の中の file 系と台本の socket・待ちは世界の時計を進める)
 ;;;
 ;;; 契約の世界は解釈器ごとに同じ形で用意する:
 ;;;   * 置き場の根(ContractRoot の答え): 本物 = 走るたびに新しい一時 dir(実の path)・fake = 記憶の中の dir の MEMORY-ROOT
@@ -18,6 +19,7 @@
 (import doeff [EffectBase Program with_handlers])
 (import doeff_agents.io_fake [FakeIoWorld fake-driver-io-handler])
 (import doeff_agents.io_handlers [driver-io-handler])
+(import doeff_time [sync-time-handler])
 
 (val DRIVER-IO "driver-io")
 (val FAKE-DRIVER-IO "fake-driver-io")
@@ -86,7 +88,7 @@
     (.listen server)
     (.start (threading.Thread :target serve-lines :args #(server) :daemon True))
     (try
-      (<- ran (with_handlers [(contract-root root) driver-io-handler] program))
+      (<- ran (with_handlers [(contract-root root) (sync-time-handler) driver-io-handler] program))
       (:= answer ran)
       (finally
         (.shutdown server socket.SHUT-RDWR)
