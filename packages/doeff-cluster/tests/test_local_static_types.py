@@ -8,6 +8,11 @@ local.hy は Hy の module で型の宣言が無かったので、担い手 SimW
 無い list / tuple / Callable だと、使い手が欄を読んだ値が list[Unknown] などになり、使い手の strict に型逃げ無しには消せない赤が出た
 (使い手の repo の速さを測る module で 5 行・8 件 — #4254・親 #3167)。→ 欄に型の引数を書く。外すと 1 本目(欄を読むテスト用の定義
 probe-outside-fields)と 3 本目(.pyi の欄の注記)が赤になる。
+
+列を答える検の effect ReportsOf・PreparationsOf の答えが要素の型の無い tuple(:answer tuple)だと、答えを受ける名が使い手の strict で
+「一部が未知」(Type of "reports" is partially unknown)の赤になり、受ける側の注記では消えなかった(使い手の repo の 8 file)。
+→ :answer を (get tuple #(SimReport ...))・(get tuple #(SimPreparation ...)) にする。
+外すと 1 本目(筋書き probe-scenario が 2 つの答えを受ける)が赤になる。
 """
 
 import ast
@@ -30,7 +35,8 @@ MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
 (import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside ProcessOutside SimProcess ProcessesOf KillWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside ProcessOutside SimProcess ProcessesOf KillWorker
+                                 SimReport ReportsOf SimPreparation PreparationsOf])
 (import doeff_events [MemoryBroker])
 
 (defk probe-workers [names]
@@ -45,10 +51,13 @@ MODULE = """\
 
 (defk probe-scenario []
   {:pre [] :post [(: % int)] :tags {:context "probe" :role "program"}}
-  "筋書き: 担い手を落とし、process の列を読む(effect の答えの型が読める)。"
+  "筋書き: 担い手を落とし、process・報告・準備の列を読む(effect の答えの型が読める)。"
   (<- killed int (KillWorker "w1"))
   (<- processes (get tuple #(SimProcess ...)) (ProcessesOf "svc"))
-  (+ killed (len processes) (sum (gfor p processes p.started-ms))))
+  (<- reports (get tuple #(SimReport ...)) (ReportsOf "svc"))
+  (<- preparations (get tuple #(SimPreparation ...)) (PreparationsOf "w1"))
+  (+ killed (len processes) (sum (gfor p processes p.started-ms))
+     (sum (gfor r reports r.at)) (sum (gfor p preparations p.started-ms))))
 
 (defk probe-run [system]
   {:pre [(: system System)] :post [(: % int)] :tags {:context "probe" :role "entry"}}

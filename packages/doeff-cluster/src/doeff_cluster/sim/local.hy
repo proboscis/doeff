@@ -501,7 +501,7 @@
 (defeffect ReportsOf
   "検の effect: job name の process から coordinator に届いた ReportReady / ReportMetrics の列(SimReport の tuple・届いた順)。"
   {:fields [(: name str)]
-   :answer tuple
+   :answer (get tuple #(SimReport ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ProcessesOf
@@ -626,7 +626,7 @@
 (defeffect PreparationsOf
   "検の effect: worker name が起こした準備の列(SimPreparation の tuple・起こした順)。"
   {:fields [(: name str)]
-   :answer tuple
+   :answer (get tuple #(SimPreparation ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect WatchFailuresOf
