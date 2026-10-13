@@ -5,7 +5,6 @@ from __future__ import annotations
 import http.client
 import json
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -67,8 +66,10 @@ class _FakeBackend:
         self.captures: dict[str, str] = {}
         self.sent: list[tuple[str, str]] = []
         self.killed: list[str] = []
+        self.liveness_asked = threading.Event()
 
     def has_session(self, name: str) -> bool:
+        self.liveness_asked.set()
         return name in self.sessions
 
     def new_session(self, cfg) -> SessionInfo:
@@ -261,13 +262,14 @@ def test_agent_mcp_loop_runs_while_await_result_is_pending(
         handle = yield LaunchSession(spec)
         done = yield CreateExternalPromise()
         holder: list[object] = []
+        # After the launch only AwaitResult asks the backend whether the session
+        # lives, so the next ask is the event "the caller VM entered its wait".
+        backend.liveness_asked.clear()
 
         def call_tool_and_finish() -> None:
             try:
-                # Runs on a real threading.Thread racing the doeff VM's
-                # AwaitResult wait; SimulationRuntime only controls the effect
-                # clock, not this background OS thread.
-                time.sleep(0.2)  # nosemgrep: doeff-no-sleep-in-tests
+                if not backend.liveness_asked.wait(timeout=5.0):
+                    raise AssertionError("AwaitResult never asked the session backend")
                 holder.append(_call_tool_from_agent_side(tmp_path))
                 _call_tool_from_agent_side(
                     tmp_path,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -368,18 +369,16 @@ class _SlowTransportScenarioHandler(ScenarioAgentHandler):
     be commissioned (L-K4-3).
     """
 
-    def __init__(self, *, transport_delay_seconds: float, **kwargs) -> None:
+    def __init__(self, *, deliver_late: Callable[[], None], **kwargs) -> None:
         super().__init__(**kwargs)
-        self._transport_delay_seconds = transport_delay_seconds
+        self._deliver_late = deliver_late
 
     def handle_await_result(self, effect):
-        # Deliberately real wall-clock delay: this test asserts the node-spec
-        # deadline is measured against real elapsed time (L-K4-3), so
-        # simulated time would defeat the point.
-        time.sleep(self._transport_delay_seconds)  # nosemgrep: doeff-no-sleep-in-tests
+        self._deliver_late()
         return super().handle_await_result(effect)
 
 
+@pytest.mark.realtime
 @pytest.mark.parametrize(
     "max_retries",
     [
@@ -400,8 +399,11 @@ def test_agent_validation_failure_past_deadline_parks_without_follow_up(
     as attempt exhaustion. Both must raise the typed deadline error and
     send NO follow-up.
     """
+    # Deliberately real wall-clock delay: run_agent_task measures the node-spec
+    # deadline against time.monotonic() (L-K4-3), so the outcome has to arrive
+    # after 0.05 real seconds.
     handler = _SlowTransportScenarioHandler(
-        transport_delay_seconds=0.08,
+        deliver_late=lambda: time.sleep(0.08),
         scripts={
             "run-001-node-d-0": [
                 ScenarioStep.invalid(
