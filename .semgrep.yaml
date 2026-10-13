@@ -837,6 +837,25 @@ rules:
       include:
         - /packages/doeff-agents/**
 
+  # 上の規則の Hy の分(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R7): 上は Python の class / def / import の名だけを見るので、Hy の定義
+  # (io_effects.hy の Sleep と sleep・sessionhost/effects.hy の ClockSleep と clock-sleep)に当たらず、doeff-agents の program は
+  # 自前の待ちの効果で待っていた。Hy で待ちの効果(名に Sleep / Delay を含む EffectBase の defclass・defeffect)と、その構築子
+  # (名が sleep か -sleep で終わる定義)を定め直す形を止める。program の中の素の time.sleep は doeff-linter の DOEFF210 が持つ。
+  # 極性の検 = tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py。
+  - id: doeff-agents-no-sleep-effect-hy
+    languages: [generic]
+    severity: ERROR
+    message: >
+      doeff-agents must not define its own wait effect in Hy (a defclass or
+      defeffect whose name contains Sleep / Delay, or a constructor named sleep /
+      ...-sleep). A program waits by yielding doeff_time's Delay; the roots
+      (run-driver-io, the session host's run-hosted) install doeff-time's
+      sync-time-handler and the fakes answer DelayEffect on their own clock.
+    pattern-regex: '\(defclass\s+(?:\[[^\n]*\]\s+)?\w*(?:Sleep|Delay)\w*\s+\[[^\]\n]*\bEffectBase\b|\(defeffect\s+\w*(?:Sleep|Delay)\w*|\((?:defk|deff|defn)\s+(?:[\w-]+-)?sleep\s'
+    paths:
+      include:
+        - /packages/doeff-agents/**/*.hy
+
   - id: doeff-hy-defhandler-must-be-top-level
     languages: [generic]
     severity: ERROR
@@ -2887,7 +2906,8 @@ rules:
   # 壁の時計で待ち、検が仮想の時計で走れない。(effect, k) を受ける handler の実装の中は鳴らさない。
   # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)と例(examples/ — 本体が
   # 手本にする物なので素の sleep を置かない)。(card ki-94380dba532f・利用者 2026-10-12 22:38「why not doeff's time effects?」)
-  # Hy の program(defk・defp・deff)は semgrep が読めないので、この規則の外。
+  # Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(card ki-3c3d85253c2c・
+  # 定義 = packages/doeff-linter/src/project/program_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.program_sleep])。
   # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py(examples/ の範囲も同じ検が見る)。
   # 法 = ADR-DOE-TIME-001 の a-program-waits-by-a-time-effect(docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy —
   # 冊はこの規則の id と severity ERROR を検める。id を変える・消す時は冊の :enforced-by と同じ commit で直す)。

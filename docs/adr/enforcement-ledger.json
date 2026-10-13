@@ -108,6 +108,7 @@
     "doeff-agents-no-lost-terminal-cause",
     "doeff-agents-no-pr-url-session-sniffing",
     "doeff-agents-no-sleep-effect",
+    "doeff-agents-no-sleep-effect-hy",
     "doeff-agents-no-terminal-text-success-status",
     "doeff-agents-paste-buffer-must-be-bracketed",
     "doeff-agents-prompt-paste-must-be-ready-gated",

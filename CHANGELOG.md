@@ -12,6 +12,17 @@
   any order; one that answers a report or throws into it fails the Traverse with `ItemOutcomeNotPassedError` (design
   check lt-H07C2RG4T2BM59EENGQWQHSJKH).
 
+- `doeff-linter`: added the critical rule `DOEFF210` (Program Sleeps On The Wall Clock) — a Hy program (`defk` / `defp`)
+  must not call `time.sleep` / `asyncio.sleep`; it waits by yielding doeff-time's `Delay` (card ki-3c3d85253c2c). Handler
+  implementations may sleep: a `defhandler` clause, a definition taking `[effect k]`, and a helper that declares
+  `:role "foundation"` in its contract's `:tags`. A literal `0` (yield once) is not counted; `deff` / `defn` are plain
+  callables and are not judged. The rule runs only where a repo declares its program places in the new section
+  `[tool.doeff-linter.program_sleep]` (`paths`, `exclude`, `exclude_parts`); doeff declares `doeff` and `packages`
+  without `tests` / `examples`.
+- `.semgrep.yaml`: the new ERROR rule `doeff-agents-no-sleep-effect-hy` rejects a wait effect defined again in
+  doeff-agents' Hy source (a `defclass` / `defeffect` whose name contains `Sleep` / `Delay`, or a constructor named
+  `sleep` / `…-sleep`).
+
 - Added `HttpRequest`, `HttpResponse`, and `HttpError` to `doeff-core-effects`.
 - Added Hy `defhandler`-backed `http_production_handler` with owned `httpx.AsyncClient` lifecycle
   cleanup, JSON body serialization, retry/backoff, timeout/redirect forwarding, and `slog` request
