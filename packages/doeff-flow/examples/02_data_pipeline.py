@@ -18,9 +18,9 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 import argparse
 import random
 import sys
-import time
 
 from doeff_flow import run_workflow
+from doeff_time import Delay
 
 from doeff import Ask, do, slog
 
@@ -32,8 +32,8 @@ from doeff import Ask, do, slog
 @do
 def extract_data(source: str):
     """Extract data from a source (simulated)."""
-    yield slog(step="extract", status="reading", source=source)
-    time.sleep(0.2)  # Simulate I/O
+    yield slog(step="extract", status="reading", msg=f"Reading from {source}", source=source)
+    yield Delay(0.2)  # Simulate I/O
 
     # Simulate extracted records; rng is injected via Ask so the workflow
     # stays pure and swappable for a seeded generator under test.
@@ -43,14 +43,16 @@ def extract_data(source: str):
         for i in range(5)
     ]
 
-    yield slog(step="extract", status="done", count=len(records))
+    yield slog(
+        step="extract", status="done", msg=f"Extracted {len(records)} records", count=len(records)
+    )
     return records
 
 
 @do
 def transform_record(record: dict):
     """Transform a single record."""
-    time.sleep(0.05)  # Simulate processing
+    yield Delay(0.05)  # Simulate processing
 
     return {
         "id": record["id"],
@@ -64,13 +66,24 @@ def transform_record(record: dict):
 @do
 def transform_all(records: list[dict]):
     """Transform all records."""
-    yield slog(step="transform", status="processing", count=len(records))
+    yield slog(
+        step="transform",
+        status="processing",
+        msg=f"Transforming {len(records)} records",
+        count=len(records),
+    )
     transformed = []
 
     for i, record in enumerate(records):
         result = yield transform_record(record)
         transformed.append(result)
-        yield slog(step="transform", status="progress", current=i + 1, total=len(records))
+        yield slog(
+            step="transform",
+            status="progress",
+            msg=f"Transformed {i + 1}/{len(records)}",
+            current=i + 1,
+            total=len(records),
+        )
 
     return transformed
 
@@ -78,19 +91,25 @@ def transform_all(records: list[dict]):
 @do
 def load_data(records: list[dict], destination: str):
     """Load transformed data to destination (simulated)."""
-    yield slog(step="load", status="writing", count=len(records), destination=destination)
-    time.sleep(0.1)  # Simulate I/O
+    yield slog(
+        step="load",
+        status="writing",
+        msg=f"Writing {len(records)} records to {destination}",
+        count=len(records),
+        destination=destination,
+    )
+    yield Delay(0.1)  # Simulate I/O
 
     # Simulate loading
     loaded_count = len(records)
-    yield slog(step="load", status="done", loaded=loaded_count)
+    yield slog(step="load", status="done", msg=f"Loaded {loaded_count} records", loaded=loaded_count)
     return loaded_count
 
 
 @do
 def aggregate_stats(records: list[dict]):
     """Calculate aggregate statistics."""
-    yield slog(step="aggregate", status="computing")
+    yield slog(step="aggregate", status="computing", msg="Computing statistics")
 
     total = sum(r["doubled"] for r in records)
     avg = total / len(records) if records else 0
@@ -122,7 +141,13 @@ def etl_pipeline(source: str, destination: str):
     3. Load - Write to destination
     4. Aggregate - Calculate statistics
     """
-    yield slog(step="pipeline", status="starting", source=source, destination=destination)
+    yield slog(
+        step="pipeline",
+        status="starting",
+        msg=f"Pipeline {source} -> {destination}",
+        source=source,
+        destination=destination,
+    )
 
     # Stage 1: Extract
     raw_data = yield extract_data(source)
@@ -136,7 +161,13 @@ def etl_pipeline(source: str, destination: str):
     # Stage 4: Aggregate
     stats = yield aggregate_stats(transformed_data)
 
-    yield slog(step="pipeline", status="complete", loaded=loaded_count, stats=stats)
+    yield slog(
+        step="pipeline",
+        status="complete",
+        msg=f"Pipeline complete: {loaded_count} records loaded",
+        loaded=loaded_count,
+        stats=stats,
+    )
 
     return {
         "loaded_count": loaded_count,

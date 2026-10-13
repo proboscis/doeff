@@ -13,7 +13,9 @@ pytestmark = pytest.mark.semgrep
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _semgrep_results(config: Path, target: str, *, cwd: Path) -> list[dict[str, Any]]:
+def _semgrep_results(
+    config: Path, target: str, *, cwd: Path, project_root: Path = REPO_ROOT
+) -> list[dict[str, Any]]:
     semgrep_bin = shutil.which("semgrep")
     if semgrep_bin is None:
         pytest.skip("semgrep is not installed")
@@ -21,7 +23,7 @@ def _semgrep_results(config: Path, target: str, *, cwd: Path) -> list[dict[str, 
     completed = subprocess.run(
         # --metrics=off --disable-version-check: 検査の実行に network(送信・新版照会)を
         # 混ぜない — 到達性・応答時間という機体の事情が検査に入るのを断つ。
-        # --project-root=REPO_ROOT: root を git metadata からの推論に任せない — .git の
+        # --project-root=project_root(既定 REPO_ROOT。規則の paths を一時の木で見る検だけ別の根を渡す): root を git metadata からの推論に任せない — .git の
         # 無い検査 tree では root が走査対象 dir 自身に落ち、対象より上のセグメントを
         # 参照する paths.include だけが無音で死ぬ(zeus 実測 2026-08-17)。root は cwd
         # (fixture dir)ではなく tree の根 — rule 側の fixtures 写し include
@@ -31,7 +33,7 @@ def _semgrep_results(config: Path, target: str, *, cwd: Path) -> list[dict[str, 
             "--metrics=off",
             "--disable-version-check",
             "--project-root",
-            str(REPO_ROOT),
+            str(project_root),
             "--no-git-ignore",
             "--config",
             str(config),

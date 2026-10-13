@@ -33,23 +33,26 @@ from pathlib import Path
 from doeff_core_effects.memo_effects import MemoGet, MemoGetEffect, MemoPut, MemoPutEffect
 from doeff_core_effects.storage import SQLiteStorage
 from doeff_flow import run_workflow
+from doeff_time import Delay
 
 from doeff import (
-    Delegate,
+    Pass,
     Resume,
     do,
     slog,
 )
+from doeff import handler as program_handler
 
 # =============================================================================
 # Simulated Expensive Operations
 # =============================================================================
 
 
-def expensive_api_call(endpoint: str) -> dict:
+@do
+def expensive_api_call(endpoint: str):
     """Simulate an expensive external API call."""
     print(f"  [API] Calling {endpoint}... (takes 1 second)")
-    time.sleep(1.0)
+    yield Delay(1.0)
     return {
         "endpoint": endpoint,
         "data": f"response_from_{endpoint}",
@@ -57,10 +60,11 @@ def expensive_api_call(endpoint: str) -> dict:
     }
 
 
-def expensive_computation(data: dict) -> dict:
+@do
+def expensive_computation(data: dict):
     """Simulate expensive computation."""
     print("  [COMPUTE] Processing data... (takes 0.5 seconds)")
-    time.sleep(0.5)
+    yield Delay(0.5)
     return {
         "input": data,
         "result": f"computed_{data.get('data', 'unknown')}",
@@ -68,10 +72,11 @@ def expensive_computation(data: dict) -> dict:
     }
 
 
-def expensive_aggregation(results: list[dict]) -> dict:
+@do
+def expensive_aggregation(results: list[dict]):
     """Simulate expensive aggregation."""
     print(f"  [AGGREGATE] Aggregating {len(results)} results... (takes 0.5 seconds)")
-    time.sleep(0.5)
+    yield Delay(0.5)
     return {
         "count": len(results),
         "items": [r.get("result", "unknown") for r in results],
@@ -87,16 +92,18 @@ def expensive_aggregation(results: list[dict]) -> dict:
 def cache_handler(storage: SQLiteStorage):
     """Handle cache effects using the provided SQLite storage backend."""
 
+    @do
     def handle(effect, k):
+        # storage.get / storage.put return an Await effect: yield it to get the value.
         if isinstance(effect, MemoGetEffect):
-            value = storage.get(str(effect.key))
+            value = yield storage.get(str(effect.key))
             return (yield Resume(k, value))
 
         if isinstance(effect, MemoPutEffect):
-            storage.put(str(effect.key), effect.value)
+            yield storage.put(str(effect.key), effect.value)
             return (yield Resume(k, None))
 
-        yield Delegate()
+        return (yield Pass(effect, k))
 
     return handle
 
@@ -114,17 +121,17 @@ def fetch_step(step_id: str, endpoint: str):
     # Check if we have a cached result
     cached = yield MemoGet(cache_key)
     if cached is not None:
-        yield slog(step="cache", status="hit", step_id=step_id)
+        yield slog(step="cache", status="hit", msg=f"Cache hit: {step_id}", step_id=step_id)
         return cached
 
-    yield slog(step="cache", status="miss", step_id=step_id)
+    yield slog(step="cache", status="miss", msg=f"Cache miss: {step_id}", step_id=step_id)
 
     # Execute the expensive operation
-    result = expensive_api_call(endpoint)
+    result = yield expensive_api_call(endpoint)
 
     # Cache the result for future runs
     yield MemoPut(cache_key, result)
-    yield slog(step="cache", status="saved", step_id=step_id)
+    yield slog(step="cache", status="saved", msg=f"Cache saved: {step_id}", step_id=step_id)
 
     return result
 
@@ -138,13 +145,13 @@ def compute_step(step_id: str, input_data: dict):
 
     cached = yield MemoGet(cache_key)
     if cached is not None:
-        yield slog(step="cache", status="hit", step_id=step_id)
+        yield slog(step="cache", status="hit", msg=f"Cache hit: {step_id}", step_id=step_id)
         return cached
 
-    yield slog(step="cache", status="miss", step_id=step_id)
-    result = expensive_computation(input_data)
+    yield slog(step="cache", status="miss", msg=f"Cache miss: {step_id}", step_id=step_id)
+    result = yield expensive_computation(input_data)
     yield MemoPut(cache_key, result)
-    yield slog(step="cache", status="saved", step_id=step_id)
+    yield slog(step="cache", status="saved", msg=f"Cache saved: {step_id}", step_id=step_id)
 
     return result
 
@@ -158,13 +165,13 @@ def aggregate_step(step_id: str, results: list[dict]):
 
     cached = yield MemoGet(cache_key)
     if cached is not None:
-        yield slog(step="cache", status="hit", step_id=step_id)
+        yield slog(step="cache", status="hit", msg=f"Cache hit: {step_id}", step_id=step_id)
         return cached
 
-    yield slog(step="cache", status="miss", step_id=step_id)
-    result = expensive_aggregation(results)
+    yield slog(step="cache", status="miss", msg=f"Cache miss: {step_id}", step_id=step_id)
+    result = yield expensive_aggregation(results)
     yield MemoPut(cache_key, result)
-    yield slog(step="cache", status="saved", step_id=step_id)
+    yield slog(step="cache", status="saved", msg=f"Cache saved: {step_id}", step_id=step_id)
 
     return result
 
@@ -186,7 +193,7 @@ def durable_pipeline():
     Total time on first run: ~5 seconds
     Total time on cached run: ~0 seconds
     """
-    yield slog(step="pipeline", status="starting")
+    yield slog(step="pipeline", status="starting", msg="Starting durable pipeline")
 
     start_time = time.time()
 
@@ -213,7 +220,12 @@ def durable_pipeline():
 
     elapsed = time.time() - start_time
 
-    yield slog(step="pipeline", status="complete", elapsed=f"{elapsed:.2f}s")
+    yield slog(
+        step="pipeline",
+        status="complete",
+        msg=f"Pipeline complete in {elapsed:.2f}s",
+        elapsed=f"{elapsed:.2f}s",
+    )
 
     return {
         "status": "success",
@@ -260,7 +272,7 @@ def main():
     # Run the workflow with observability and custom cache effect handling
     db_path.parent.mkdir(parents=True, exist_ok=True)
     storage = SQLiteStorage(str(db_path))
-    program = cache_handler(storage)(durable_pipeline())
+    program = program_handler(cache_handler(storage))(durable_pipeline())
     result = run_workflow(
         program,
         workflow_id="durable-demo",

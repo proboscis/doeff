@@ -21,12 +21,11 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 import argparse
 import random
 import sys
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from doeff_flow import run_workflow
-from doeff_time import GetTime
+from doeff_time import Delay, GetTime
 
 from doeff import Ask, do, slog
 
@@ -38,7 +37,7 @@ from doeff import Ask, do, slog
 @do
 def process_step(task_id: str, step: int):
     """Process a single step of a task."""
-    time.sleep(0.1)
+    yield Delay(0.1)
     return f"task-{task_id}-step-{step}"
 
 
@@ -65,7 +64,13 @@ def worker_workflow(worker_id: str, num_tasks: int):
     Worker that processes multiple tasks.
     Each worker runs independently and has its own trace.
     """
-    yield slog(step="worker", worker_id=worker_id, status="starting", num_tasks=num_tasks)
+    yield slog(
+        step="worker",
+        status="starting",
+        msg=f"Worker {worker_id} starting {num_tasks} tasks",
+        worker_id=worker_id,
+        num_tasks=num_tasks,
+    )
     start_time = yield GetTime()
 
     completed_tasks = []
@@ -77,14 +82,21 @@ def worker_workflow(worker_id: str, num_tasks: int):
 
         yield slog(
             step="worker",
-            worker_id=worker_id,
             status="processing",
+            msg=f"Processing {task_id} ({complexity} steps)",
+            worker_id=worker_id,
             task_id=task_id,
             complexity=complexity,
         )
         result = yield process_task(task_id, complexity)
         completed_tasks.append(result)
-        yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
+        yield slog(
+            step="worker",
+            status="completed",
+            msg=f"Completed {task_id}",
+            worker_id=worker_id,
+            task_id=task_id,
+        )
 
     end_time = yield GetTime()
     elapsed = (end_time - start_time).total_seconds()
@@ -96,7 +108,13 @@ def worker_workflow(worker_id: str, num_tasks: int):
         "tasks": completed_tasks,
     }
 
-    yield slog(step="worker", worker_id=worker_id, status="finished", elapsed=f"{elapsed:.2f}s")
+    yield slog(
+        step="worker",
+        status="finished",
+        msg=f"Worker {worker_id} finished in {elapsed:.2f}s",
+        worker_id=worker_id,
+        elapsed=f"{elapsed:.2f}s",
+    )
     return summary
 
 
