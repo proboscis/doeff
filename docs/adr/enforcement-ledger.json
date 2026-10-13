@@ -42,7 +42,8 @@
     "defadr_doeff_hy_008_hy_is_not_forked.hy",
     "defadr_doeff_preset_001_retirement.hy",
     "defadr_doeff_records_001_domain_api_only.hy",
-    "defadr_doeff_runner_001_reading_plane.hy"
+    "defadr_doeff_runner_001_reading_plane.hy",
+    "defadr_doeff_time_001_programs_wait_by_time_effects.hy"
   ],
   "semgrep_rules": [
     "adr0001-d1-agentd-only-worker-route",
@@ -511,7 +512,11 @@
     "ADR-DOE-RECORDS-001 the-raw-operation-list-does-not-grow",
     "ADR-DOE-RUNNER-001 reading-plane-is-read-only",
     "ADR-DOE-RUNNER-001 reading-plane-labels-come-from-one-table",
-    "ADR-DOE-RUNNER-001 reading-plane-reads-only-the-index"
+    "ADR-DOE-RUNNER-001 reading-plane-reads-only-the-index",
+    "ADR-DOE-TIME-001 a-program-waits-by-a-time-effect",
+    "ADR-DOE-TIME-001 a-test-sleeps-only-when-it-declares-realtime",
+    "ADR-DOE-TIME-001 the-sleep-rules-stop-as-errors-from-one-definition",
+    "ADR-DOE-TIME-001 the-time-handler-decides-what-a-second-is"
   ],
   "adr_deftest_enforcements": [
     "ADR-DOC-LINTER-SELECTABLE-SCOPE test-doc-lint-modes-in-vscode",
@@ -624,7 +629,11 @@
     "ADR-DOE-HY-008 test-adr-doe-hy-008-internal-reliances-exist-in-pypi-hy",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-judgments-reject-the-counterexamples",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-reliance-probe-names-what-pypi-hy-lacks",
-    "ADR-DOE-RECORDS-001 test-adr-doe-records-001-raw-operations-do-not-grow"
+    "ADR-DOE-RECORDS-001 test-adr-doe-records-001-raw-operations-do-not-grow",
+    "ADR-DOE-TIME-001 test-adr-doe-time-001-each-sleep-rule-is-read-by-its-polarity-test",
+    "ADR-DOE-TIME-001 test-adr-doe-time-001-every-law-names-living-checks",
+    "ADR-DOE-TIME-001 test-adr-doe-time-001-judgments-reject-the-counterexamples",
+    "ADR-DOE-TIME-001 test-adr-doe-time-001-the-sleep-rules-stop-as-errors"
   ],
   "adr_defsemgrep_enforcements": [
     "ADR-DOE-ADR-001 no-silent-off-wiring-default",
