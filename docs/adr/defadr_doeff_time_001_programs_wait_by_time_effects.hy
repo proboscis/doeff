@@ -118,6 +118,7 @@
   :title "program は時間を doeff-time の効果(Delay・WaitUntil・WaitWithin など)を yield して待つ。time.sleep・asyncio.sleep で壁の時計を待つのは時間の handler の実装だけで、新しい素の sleep は .semgrep.yaml の規則が ERROR で止める"
   :status "accepted"
   :scope [".semgrep.yaml(規則 doeff-no-sleep-in-programs・doeff-no-sleep-in-tests)"
+          "packages/doeff-flow/examples/"
           "tests/semgrep/test_no_sleep_in_programs_rule.py"
           "tests/semgrep/test_no_sleep_in_tests_rule.py"
           "tests/semgrep/test_realtime_tests_registry.py"
@@ -146,17 +147,19 @@
      (rule R2 "壁の時計を待ってよいのは、時間の handler の実装((effect, k) を受ける関数と、そこからだけ呼ばれる helper)だけ。呼び手は program を走らせる所で時間の handler を選ぶ: 本番は async_time_handler()(await_handler() の内)か sync_time_handler()、検は sim_time_handler()。")
      (rule R3 "検は program を sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。time.sleep・asyncio.sleep を呼んでよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・外の process や library)が対象の検だけで、その検は pytest の marker realtime を名乗り、名簿 tests/realtime_tests.toml に理由と一緒に載る。")
      (rule R4 "新しい素の sleep は linter で止める: .semgrep.yaml の規則 doeff-no-sleep-in-programs と doeff-no-sleep-in-tests を severity ERROR で置く。規則の定義(pattern・paths)は .semgrep.yaml の 1 か所で、この冊にも他の冊にも写さない。形の正しさ(鳴るべき行だけが鳴る)は、規則ごとの極性の検が .semgrep.yaml の規則そのものを検体に当てて見る。")
-     (rule R5 "今の規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る: Hy の program(defk)の素の time.sleep と doeff-agents の自前の待ちの効果(card ki-3c3d85253c2c)・doeff-flow の examples/(card ki-b2407b326b41)・tests/ の nosemgrep の 7 か所と conformance/ と Hy の検(card ki-6aa7cb5ffb83)。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
+     (rule R5 "今の規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る: Hy の program(defk)の素の time.sleep と doeff-agents の自前の待ちの効果(card ki-3c3d85253c2c)・tests/ の nosemgrep の 7 か所と conformance/ と Hy の検(card ki-6aa7cb5ffb83)。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
      (rule R6 "戻し方: この冊だけを外すなら、冊を足した commit を revert する。規則を外す・WARNING に下げるなら、利用者の 2026-10-12 の決定を覆す事になるので、利用者の新しい決定を :problem に原文で書いてから、規則・極性の検・名簿・この冊を同じ commit で直す。")]
   :laws
     [(law a-program-waits-by-a-time-effect
-       :statement "for_all 本体(doeff/ と packages の src)の Python の program p(@do の関数)・p の中の待ち w: w は doeff-time の効果の yield ∧ w ∉ {time.sleep(x)・asyncio.sleep(x) | x ≠ 0}((effect, k) を受ける handler の実装の中は除く)"
+       :statement "for_all 本体(doeff/ と packages の src)と examples/(packages/*/examples/ と根の examples/)の Python の program p(@do の関数)・p の中の待ち w: w は doeff-time の効果の yield ∧ w ∉ {time.sleep(x)・asyncio.sleep(x) | x ≠ 0}((effect, k) を受ける handler の実装の中は除く)"
        :counterexamples
          [(counterexample "再試行の間を yield Await(asyncio.sleep(delay)) で待つ(doeff-gemini structured_llm.py の ba5513169 の前の形)— 検は実時間で 1〜2 秒待つか asyncio.sleep を monkeypatch で差し替える")
-          (counterexample "@do の program の中で time.sleep(1.0) を呼ぶ — sim_time_handler を置いても仮想の時計は進まず、壁の時計で 1 秒かかる")]
+          (counterexample "@do の program の中で time.sleep(1.0) を呼ぶ — sim_time_handler を置いても仮想の時計は進まず、壁の時計で 1 秒かかる")
+          (counterexample "doeff-flow の例の @do の中で time.sleep(0.1) を呼ぶ(ki-b2407b326b41 の前の 15 か所の形)— 例は写される物なので、素の sleep が利用者の program に広がる")]
        :enforced-by [".semgrep.yaml::doeff-no-sleep-in-programs"
-                     "tests/semgrep/test_no_sleep_in_programs_rule.py::test_only_the_marked_lines_fire"]
-       :wiring "配線済み(2026-10-14・ba5513169)— 規則は commit の hook(.pre-commit-config.yaml の別名 semgrep-rules)と日次の走査が当てる。範囲は Python の本体だけ(R5)。書く前の助言は agent-commons の条件つきルール doeff-program-waits-by-the-time-effect が出す(Hy の defk・defp・deftest と doeff の外の repo にも当たる・止めはしない)")
+                     "tests/semgrep/test_no_sleep_in_programs_rule.py::test_only_the_marked_lines_fire"
+                     "tests/semgrep/test_no_sleep_in_programs_rule.py::test_examples_are_in_the_range"]
+       :wiring "配線済み(2026-10-14・ba5513169・examples/ は ki-b2407b326b41)— 規則は commit の hook(.pre-commit-config.yaml の別名 semgrep-rules)と日次の走査が当てる。範囲は Python の本体と examples/(R5)。書く前の助言は agent-commons の条件つきルール doeff-program-waits-by-the-time-effect が出す(Hy の defk・defp・deftest と doeff の外の repo にも当たる・止めはしない)")
      (law the-time-handler-decides-what-a-second-is
        :statement "for_all program p・p の中の Delay(s): sim_time_handler の下では仮想の時計がちょうど s 進む ∧ async_time_handler・sync_time_handler の下では壁の時計で s 待つ(p の文は 3 つの時計で同じ)"
        :counterexamples
@@ -234,4 +237,5 @@
        (assert (= (len (run (dead-checks repo-root missing))) 4))
        (assert (= (run (dead-checks repo-root [(+ THIS-FILE "::test-adr-doe-time-001-judgments-reject-the-counterexamples")])) [])))]
   :plans ["card ki-94380dba532f"
-          "card ki-495db9a2efa0"])
+          "card ki-495db9a2efa0"
+          "card ki-b2407b326b41"])
