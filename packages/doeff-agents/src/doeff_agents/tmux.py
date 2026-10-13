@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
+from doeff_time import Delay
 
 from doeff import do
 from doeff_agents.io_effects import (
@@ -28,7 +29,6 @@ from doeff_agents.io_effects import (
     process_id,
     read_text,
     run_process,
-    sleep,
     temp_root,
     touch_file,
 )
@@ -308,7 +308,7 @@ def confirm_literal_prompt_submitted_program(executable: str, target: str, text:
     silent give-up here leaves the agent session idle forever while the caller
     polls for a result that can never arrive.
     """
-    yield sleep(CONFIRM_INITIAL_SECONDS)
+    yield Delay(CONFIRM_INITIAL_SECONDS)
     for wait in CONFIRM_RETRY_WAITS:
         output = as_str((yield capture_pane_program(executable, target, CONFIRM_CAPTURE_LINES)))
         if not output_has_unsubmitted_paste_input(output, text):
@@ -317,7 +317,7 @@ def confirm_literal_prompt_submitted_program(executable: str, target: str, text:
             (yield run_process(tmux_argv(executable, "send-keys", "-t", target, "Enter")))
         )
         require_success(enter, "send-keys Enter")
-        yield sleep(wait)
+        yield Delay(wait)
     output = as_str((yield capture_pane_program(executable, target, CONFIRM_CAPTURE_LINES)))
     if output_has_unsubmitted_paste_input(output, text):
         raise RuntimeError(
@@ -346,7 +346,7 @@ def send_keys_program(
 
     if enter:
         if literal and keys:
-            yield sleep(PASTE_SETTLE_SECONDS)
+            yield Delay(PASTE_SETTLE_SECONDS)
         outcome = as_process_outcome(
             (yield run_process(tmux_argv(executable, "send-keys", "-t", target, "Enter")))
         )

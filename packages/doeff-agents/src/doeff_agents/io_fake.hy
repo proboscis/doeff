@@ -22,6 +22,7 @@
 (import doeff [EffectBase Program])
 (import doeff_core_effects.file_effects [PathKind])
 (import doeff_core_effects.process_effects [not-started-outcome start-refusal executable-file-answer])
+(import doeff_time [DelayEffect])
 (import doeff_agents.io_effects [
   ProcessOutcome
   WhichExecutable
@@ -42,8 +43,7 @@
   UnixLineRequest
   UnixConnectProbe
   ExecutableAt
-  MonotonicTime
-  Sleep])
+  MonotonicTime])
 
 
 ;; 台本の総当たりの鍵。どの argv にも当たらなかった時に引く。
@@ -282,7 +282,8 @@
     (setv world.clock (+ world.clock 0.001))
     (resume world.clock))
 
-  (Sleep [seconds]
+  (DelayEffect [seconds]
+    ;; program の待ち(doeff-time の Delay)に、世界の時計を待った秒だけ進めて答える(MonotonicTime と同じ world.clock)。
     (.append world.sleeps seconds)
     (setv world.clock (+ world.clock seconds))
     (resume None)))
@@ -308,7 +309,8 @@
     (.append ledger.spawned #((tuple argv) log-path cwd))
     (resume ledger.pid))
 
-  (Sleep [seconds]
+  (DelayEffect [seconds]
+    ;; program の待ち(doeff-time の Delay)を控えるだけで、待たない。
     (.append ledger.sleeps seconds)
     (resume None)))
 

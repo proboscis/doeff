@@ -19,6 +19,7 @@ from typing import Any
 
 import hy  # noqa: F401  # .hy import hook — the I/O effect vocabulary is a Hy module
 from doeff import do
+from doeff_time import Delay
 
 from doeff_agents.adapters.base import AgentType
 from doeff_agents.io_root import (
@@ -39,7 +40,6 @@ from doeff_agents.io_effects import (
     monotonic_time,
     read_text,
     run_process,
-    sleep as io_sleep,
     spawn_detached,
     unix_connect_probe,
     unix_line_request,
@@ -1144,7 +1144,7 @@ def _wait_for_agentd_ready(
         remaining = deadline - as_float(io_root(monotonic_time()))
         if remaining <= 0:
             return False
-        io_root(io_sleep(min(AGENTD_START_POLL_SECONDS, remaining)))
+        io_root(Delay(min(AGENTD_START_POLL_SECONDS, remaining)))
 
 
 def _agentd_status_if_ready(client: AgentdClient) -> Mapping[str, Any] | None:
