@@ -2878,20 +2878,77 @@ rules:
       rationale: "FutureAwaitEffect is misleading - it's Python asyncio specific"
 
   # ---------------------------------------------------------------------------
+  # TIME
+  # ---------------------------------------------------------------------------
+
+  # program は時間を待つ時に doeff-time の効果(Delay・WaitUntil・WaitWithin)を yield し、実時間に落とすのは
+  # 呼び手が入れた時間の handler の責務(async_time_handler = 壁の時計・sim_time_handler = 仮想の時計)。
+  # program の中の素の time.sleep / asyncio.sleep(Await(asyncio.sleep(…)) を含む)は handler を迂回して
+  # 壁の時計で待ち、検が仮想の時計で走れない。(effect, k) を受ける handler の実装の中は鳴らさない。
+  # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)— 例(examples/)は
+  # 子の card で直してから足す(card ki-94380dba532f・利用者 2026-10-12 22:38「why not doeff's time effects?」)。
+  # Hy の program(defk・defp・deff)は semgrep が読めないので、この規則の外。
+  # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py。
+  - id: doeff-no-sleep-in-programs
+    patterns:
+      - pattern-either:
+          - pattern: time.sleep(...)
+          - pattern: asyncio.sleep(...)
+      - pattern-not: time.sleep(0)
+      - pattern-not: asyncio.sleep(0)
+      - pattern-not: asyncio.sleep(0, ...)
+      - pattern-either:
+          - pattern-inside: |
+              @do
+              def $PROGRAM(...):
+                ...
+          - pattern-inside: |
+              @doeff.do
+              def $PROGRAM(...):
+                ...
+      - pattern-not-inside: |
+          def $HANDLER(..., $EFFECT, k):
+            ...
+    paths:
+      include:
+        - /doeff/
+        - /packages/*/src/
+        - /packages/doeff-core-effects/doeff_core_effects/
+        - /packages/doeff-core-effects/doeff_lifeline/
+        - /packages/doeff-traverse/doeff_traverse/
+        - /tests/semgrep/fixtures/python/packages/doeff-sleep-sample/src/
+    message: |
+      A doeff program waits by yielding a doeff-time effect, not by calling time.sleep() or
+      asyncio.sleep() (Await(asyncio.sleep(...)) included). Use `yield Delay(seconds)` (or
+      WaitUntil / WaitWithin) from doeff_time: the caller's time handler decides what a second
+      is — async_time_handler() waits on the wall clock, sim_time_handler() moves a virtual clock
+      so a test of the program never sleeps. Only a handler's implementation (a function taking
+      (effect, k)) may sleep on the wall clock.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: effects
+      card: ki-94380dba532f
+
+  # ---------------------------------------------------------------------------
   # TESTING PATTERNS
   # ---------------------------------------------------------------------------
 
   # 実時間の並行そのもの(本物の thread・本物の asyncio の loop)が対象の検は、検の側で pytest の marker
   # `realtime` を名乗る — 関数の @pytest.mark.realtime か、module の pytestmark = pytest.mark.realtime。
-  # 規則はその中を鳴らさない(名の一覧を持たない)。sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない
-  # (agora-redesign #2882)。極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
+  # 規則はその中を鳴らさない。名乗った検は名簿 tests/realtime_tests.toml に理由と一緒に載せる(名簿と
+  # marker の食い違いは tests/semgrep/test_realtime_tests_registry.py が赤にする)。sleep(0) は時間を待たず
+  # 1 度譲るだけなので鳴らさない(agora-redesign #2882)。await の無い asyncio.sleep(…)(yield
+  # Await(asyncio.sleep(1.5)) など)も鳴らし、severity は ERROR(card ki-94380dba532f・ki-37e3efcc05e2)。
+  # 極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
   - id: doeff-no-sleep-in-tests
     patterns:
       - pattern-either:
           - pattern: time.sleep(...)
-          - pattern: await asyncio.sleep(...)
+          - pattern: asyncio.sleep(...)
       - pattern-not: time.sleep(0)
-      - pattern-not: await asyncio.sleep(0)
+      - pattern-not: asyncio.sleep(0)
+      - pattern-not: asyncio.sleep(0, ...)
       - pattern-not-inside: |
           @pytest.mark.realtime
           def $TEST(...):
@@ -2907,12 +2964,14 @@ rules:
       include:
         - tests/
     message: |
-      Avoid time.sleep() or asyncio.sleep() in tests. Use SimulationRuntime
-      with controlled time for deterministic testing. A test whose subject is
-      real-time concurrency (real threads, a real asyncio loop) declares it with
-      @pytest.mark.realtime (or a module-level pytestmark = pytest.mark.realtime).
+      Avoid time.sleep() or asyncio.sleep() in tests (Await(asyncio.sleep(...)) included). Let
+      the program yield doeff-time's Delay and run it under sim_time_handler(), whose virtual
+      clock moves at once, or wait for the event itself. A test whose subject is real-time
+      concurrency (real threads, a real asyncio loop) declares it with @pytest.mark.realtime (or
+      a module-level pytestmark = pytest.mark.realtime) and is listed with its reason in
+      tests/realtime_tests.toml.
     languages: [python]
-    severity: WARNING
+    severity: ERROR
     metadata:
       category: testing
 

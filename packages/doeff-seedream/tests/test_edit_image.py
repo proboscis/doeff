@@ -2,6 +2,7 @@
 import base64
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from doeff_core_effects.handlers import (
 )
 from doeff_core_effects.scheduler import scheduled
 from doeff_seedream import SeedreamClient, edit_image__seedream4, get_seedream_client
+from doeff_time import SimClock, sim_time_handler
 
 from doeff import (
     AskEffect,
@@ -92,7 +94,9 @@ def _capture(program):
     return _Outcome(result=result, log=log)
 
 
-def _run_with_handler(program, overrides: dict[str, Any]) -> _Outcome:
+def _run_with_handler(
+    program, overrides: dict[str, Any], clock: SimClock | None = None
+) -> _Outcome:
     # The helpers perform Ask (overrides first, then a strict empty env so a
     # missing key raises for ``Try``), Get/Put, Try, Tell and Await — the
     # handlers the removed ``default_handlers()`` used to supply.
@@ -100,6 +104,8 @@ def _run_with_handler(program, overrides: dict[str, Any]) -> _Outcome:
         scheduled(
             with_handlers(
                 [
+                    # Retry waits yield doeff-time's Delay: the virtual clock answers them.
+                    sim_time_handler(clock=clock),
                     await_handler(),
                     lazy_ask(strict=True),
                     try_handler,
@@ -183,6 +189,29 @@ def test_edit_image_seedream4_surfaces_api_error_with_handler():
     assert "seedream api failure" in str(run_result.result.error)
     assert client.mut_calls == 1
     assert any("failed" in str(entry) for entry in run_result.log)
+
+
+def test_edit_image_seedream4_retry_waits_on_the_time_handler_clock():
+    """The wait between retries is doeff-time's Delay: three failed attempts wait 1 s twice on
+    the virtual clock, and the test never sleeps (card ki-94380dba532f)."""
+    client = FailingSeedreamClient(RuntimeError("seedream api failure"))
+    clock = SimClock()
+    started = clock.current_time
+
+    @do
+    def program():
+        return (
+            yield edit_image__seedream4(
+                prompt="A failing prompt",
+                model="dummy-model",
+                max_retries=3,
+            )
+        )
+
+    run_result = _run_with_handler(program(), {"seedream_client": client}, clock=clock)
+    assert run_result.result.is_err()
+    assert client.mut_calls == 3
+    assert clock.current_time - started == timedelta(seconds=2)
 
 
 def test_edit_image_seedream4_invalid_base64_payload_returns_error_with_handler():

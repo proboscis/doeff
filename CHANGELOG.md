@@ -39,6 +39,16 @@
 
 ### Changed
 
+- `doeff-openai`, `doeff-gemini`, `doeff-openrouter`, `doeff-seedream`: the wait between retries (and Gemini's wait for an
+  uploaded file to become ACTIVE) yields doeff-time's `Delay` instead of `Await(asyncio.sleep(...))`, and the four
+  packages now depend on `doeff-time` (card ki-94380dba532f). **Callers must install a time handler**:
+  `async_time_handler()` inside `await_handler()` waits on the wall clock; `sim_time_handler()` lets a test run the
+  retry path without sleeping. Without one, the first retry fails with an unhandled `DelayEffect`.
+- `.semgrep.yaml`: the new ERROR rule `doeff-no-sleep-in-programs` rejects `time.sleep` / `asyncio.sleep` inside a
+  `@do` program under `doeff/` and the packages' source (a handler taking `(effect, k)` may sleep). The rule
+  `doeff-no-sleep-in-tests` is now ERROR and also catches an un-awaited `asyncio.sleep(...)` such as
+  `yield Await(asyncio.sleep(1.5))`; tests that declare `realtime` are listed with a reason in
+  `tests/realtime_tests.toml`.
 - `doeff-traverse`: a Traverse handler now stops the items it started when it stops (card ki-e0fd319d5b75). When `Gather`
   raises, `parallel` and `parallel_fail_fast` cancel the item tasks left, wait for them to unwind, and raise the
   original exception. Before, items kept running after a `parallel_fail_fast` failure that the caller caught, and new

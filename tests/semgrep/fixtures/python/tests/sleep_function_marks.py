@@ -1,4 +1,4 @@
-"""doeff-no-sleep-in-tests の極性の検体 — 関数の宣言と sleep(0)(agora-redesign #2882)。
+"""doeff-no-sleep-in-tests の極性の検体 — 関数の宣言と sleep(0)(agora-redesign #2882)・await の無い asyncio.sleep(…)(card ki-94380dba532f)。
 
 `# 鳴る` を付けた行だけが当たる。名が test_ で始まらないので pytest は集めない。
 """
@@ -8,6 +8,8 @@ import threading
 import time
 
 import pytest
+
+from doeff import Await, do
 
 
 def test_plain_sleep():
@@ -73,3 +75,29 @@ class TestInClass:
 
     def test_plain_method(self):
         time.sleep(0.1)  # 鳴る
+
+
+def test_program_awaits_a_sleep():
+    @do
+    def program():
+        yield Await(asyncio.sleep(0.1))  # 鳴る
+
+    return program
+
+
+def test_program_yields_to_the_loop_once():
+    @do
+    def program():
+        yield Await(asyncio.sleep(0))
+        return (yield Await(asyncio.sleep(0, result="value")))
+
+    return program
+
+
+@pytest.mark.realtime
+def test_declared_realtime_program():
+    @do
+    def program():
+        yield Await(asyncio.sleep(0.1))
+
+    return program

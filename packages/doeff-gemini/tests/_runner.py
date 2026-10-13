@@ -32,6 +32,7 @@ from doeff_core_effects.handlers import (
     writer,
 )
 from doeff_core_effects.scheduler import scheduled
+from doeff_time import SimClock, sim_time_handler
 from doeff_vm import Err, Ok
 
 from doeff import EffectBase, Pass, Transfer, do, run, with_handlers
@@ -88,6 +89,7 @@ def run_program(
     handlers: Iterable[Any] = (),
     env: dict[Any, Any] | None = None,
     store: dict[Any, Any] | None = None,
+    clock: SimClock | None = None,
 ) -> RunResult:
     """Run ``program`` under ``handlers`` plus the standard core-effects chain.
 
@@ -96,7 +98,8 @@ def run_program(
     they see the program's effects before the defaults. Core chain, outer ->
     inner: reader, store, writer, try, slog, local, listen, await, lazy_ask
     (the store must be outside ``writer`` / ``slog_handler``, which keep their
-    logs in state).
+    logs in state). ``clock`` is the virtual clock that answers doeff-time
+    effects (a fresh one when omitted).
     """
 
     @do
@@ -110,6 +113,8 @@ def run_program(
 
     chain = with_handlers(
         [
+            # Retry backoff and polling yield doeff-time's Delay: the virtual clock answers them.
+            sim_time_handler(clock=clock),
             reader(env=env),
             _store(dict(store or {})),
             writer,
@@ -136,7 +141,8 @@ async def async_run_program(
     handlers: Iterable[Any] = (),
     env: dict[Any, Any] | None = None,
     store: dict[Any, Any] | None = None,
+    clock: SimClock | None = None,
 ) -> RunResult:
     """``async`` spelling of :func:`run_program` for ``pytest.mark.asyncio`` tests."""
-    return run_program(program, handlers=handlers, env=env, store=store)
+    return run_program(program, handlers=handlers, env=env, store=store, clock=clock)
 

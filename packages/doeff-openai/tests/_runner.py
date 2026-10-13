@@ -13,7 +13,6 @@ pre-existing test suite can run unchanged.
 
 from __future__ import annotations
 
-
 import runpy
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -21,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 from doeff_core_effects.effects import Try
-from doeff_core_effects.process_effects import ReadEnvironment
 from doeff_core_effects.handlers import (
     await_handler,
     lazy_ask,
@@ -33,8 +31,10 @@ from doeff_core_effects.handlers import (
     writer,
     writer_log,
 )
+from doeff_core_effects.process_effects import ReadEnvironment
 from doeff_core_effects.scheduler import scheduled
 from doeff_openai.handlers import calculate_cost_handler
+from doeff_time import SimClock, sim_time_handler
 from doeff_vm import Err, Ok
 
 from doeff import AskEffect, Pass, Resume, do, run
@@ -55,7 +55,7 @@ class RunResult:
         return self.error is not None
 
 
-def _build_chain(program: Any, env: dict | None):
+def _build_chain(program: Any, env: dict | None, clock: SimClock | None = None):
     """Build the legacy default handler chain.
 
     Returns a single wrapped program.  The writer log is captured inside
@@ -82,15 +82,20 @@ def _build_chain(program: Any, env: dict | None):
     wrapped = slog_handler(wrapped)
     wrapped = state()(wrapped)
     wrapped = lazy_ask(env=env or {})(wrapped)
+    # Retry backoff yields doeff-time's Delay: the virtual clock answers it at once.
+    wrapped = sim_time_handler(clock=clock)(wrapped)
     return scheduled(wrapped)
 
 
-async def run_program(program: Any, env: dict | None = None) -> RunResult:
+async def run_program(
+    program: Any, env: dict | None = None, clock: SimClock | None = None
+) -> RunResult:
     """Run ``program`` with the legacy default handler chain and wrap the
     outcome in a :class:`RunResult`.
 
     The ``async`` signature is preserved so existing ``@pytest.mark.asyncio``
     tests work unchanged — the implementation itself is synchronous.
+    ``clock`` is the virtual clock that answers doeff-time effects (a fresh one when omitted).
     """
 
     @do
@@ -99,7 +104,7 @@ async def run_program(program: Any, env: dict | None = None) -> RunResult:
         log = yield writer_log()
         return (outcome, log)
 
-    chain = _build_chain(_wrap(), env)
+    chain = _build_chain(_wrap(), env, clock)
     result = run(chain)
     outcome, log = result
 

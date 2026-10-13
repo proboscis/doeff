@@ -1,13 +1,13 @@
 """Embedding operations with comprehensive observability."""
 
 
-import asyncio
 import time
 from collections.abc import Generator
 from typing import Any, Literal
 
 from doeff_core_effects import Await, Tell, Try
 from doeff_core_effects.scheduler import Gather
+from doeff_time import Delay
 from openai.types import CreateEmbeddingResponse
 
 from doeff import do
@@ -120,7 +120,7 @@ def create_embedding(
             yield Tell(
                 f"Embedding API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s..."
             )
-            yield Await(asyncio.sleep(delay_seconds))
+            yield Delay(delay_seconds)
     else:
         assert last_error is not None, "Should have an error if all retries failed"
         raise last_error

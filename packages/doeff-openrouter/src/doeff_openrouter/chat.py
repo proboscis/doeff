@@ -1,10 +1,11 @@
 """Chat completion helpers with doeff-powered observability."""
 
 
-import asyncio
 import time
 from collections.abc import Mapping
 from typing import Any
+
+from doeff_time import Delay
 
 from doeff import (
     Await,
@@ -154,7 +155,7 @@ def chat_completion(
 
         if attempt < max_attempts - 1:
             yield Tell(f"Retrying in {delay_seconds}s (attempt {attempt + 2}/{max_attempts})")
-            yield Await(asyncio.sleep(delay_seconds))
+            yield Delay(delay_seconds)
 
     # All retries exhausted
     if last_exception is not None:

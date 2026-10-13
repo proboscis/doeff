@@ -1,0 +1,34 @@
+# 実時間で待ってよい検の名簿(card ki-94380dba532f)。
+#
+# .semgrep.yaml の規則 doeff-no-sleep-in-tests は、@pytest.mark.realtime を名乗る関数と
+# pytestmark = pytest.mark.realtime を名乗る module の中の sleep を鳴らさない。名乗ってよいのは、本物の thread・
+# 本物の asyncio の loop・本物の外の process や library の実時間そのものが対象の検だけ。それ以外の検は、program に
+# doeff-time の Delay を yield させて sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。
+#
+# marker を名乗る検は、ここに「実時間の何が対象か」の理由と一緒に載せる。名簿と marker の食い違い(載っていない
+# marker・marker の無い行)は tests/semgrep/test_realtime_tests_registry.py が赤にする。
+#
+# 鍵 = "<repo の根からの path>::<関数の名>"(class の method は "<path>::<class の名>::<関数の名>")・
+#      module の pytestmark は "<path>"。値 = 理由の 1 行。
+
+[tests]
+"packages/doeff-cluster/tests/test_job_log_ship.py" = "本物の子 process・log の送り手・HTTP の /livez を締め切りつきで待つ — 外の process の実時間が対象"
+"packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "本物の OS の file 監視の library の待ちを、別の task が実時間の後に閉じる"
+"tests/effects/test_effect_combinations.py::TestGatherStoreSharingLaw::test_async_gather_parallel_execution" = "Gather が spawn した task が本物の asyncio の loop の上で重なって走る事を、経過の実時間で測る"
+"tests/test_await_concurrency.py" = "Await の並行を、本物の asyncio の loop と経過の実時間で測る"
+"tests/test_core_effects.py::TestAwait::test_await_100_concurrent_tasks" = "100 の task の Await が本物の loop の上で重なる事を、経過の実時間(2 秒未満)で測る"
+"tests/test_scheduler.py::TestRace::test_race_resolves_once_when_waitables_complete_back_to_back" = "本物の thread が競る 2 つの外の約束を続けて満たし、Race が 1 度だけ決まる事"
+"tests/test_scheduler.py::TestExternalPromise::test_100_threads_concurrent" = "100 の本物の thread が外の約束を満たす待ちが重なる事を、経過の実時間で測る"
+"tests/test_scheduler.py::TestExternalPromise::test_resolved_external_wait_not_stalled_behind_unresolved_peer" = "本物の thread が満たした外の待ちが、満たされない隣の待ちの後ろで止まらない事(#490)"
+"tests/test_scheduler.py::TestPrioritySurvivesSuspension::test_completer_not_demoted_behind_pending_external_wait" = "本物の thread の外の待ちが残る間の、完了させた task の優先度(#493)"
+"tests/test_scheduler.py::TestPrioritySurvivesSuspension::test_idle_spawner_not_promoted_above_external_wait_shield" = "本物の thread の外の待ちを盾にした IDLE の task の優先度(#504)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_holder_awaiting_external_event_blocks_quietly" = "本物の thread が後で満たす外の完了を待つ permit の持ち主を、deadlock と診断しない事"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_runnable_idle_releaser_not_diagnosed_as_deadlock" = "本物の thread の外の待ちの間に、実行できる IDLE の解放役を deadlock と診断しない事"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_semaphore_used_as_cross_task_signal_is_diagnosed_as_deadlock" = "本物の thread の外の待ちの間の、task をまたぐ合図の semaphore の診断(#495c)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_stall_diagnostic_logged_while_blocking_on_external" = "外の完了で長く止まった時の停滞の警告 — 停滞の判定が実時間の閾で決まる(#495b)"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_with_a_live_source_is_not_stalled" = "生きている源を見張る外の待ちを停滞と言わない事 — 源の生死と停滞の閾が実時間"
+"tests/test_scheduler.py::TestDeadlockDiagnostics::test_watched_external_wait_whose_source_ended_is_reported" = "終わった源を見張る外の待ちを報告する事 — 源の生死と停滞の閾が実時間"
+"tests/test_scheduler.py::TestRootCloseOut::test_root_return_dropping_queued_work_warns" = "根が返る時に本物の thread が後で満たす仕事を落とすと警告する事(#501)"
+"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_pending_blocks_idle_task" = "本物の thread の外の待ちが残る Gather が IDLE の task を止める事"
+"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder" = "本物の thread の外の待ちを盾にした Race の決着と負けた側の場所の解放"
+"tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_failure_drops_sibling_placeholder" = "本物の thread の外の待ちが失敗した時の Gather の兄弟の場所の解放"

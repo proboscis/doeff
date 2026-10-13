@@ -26,6 +26,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-time>=0.1.0",
     "doeff-llm>=0.1.0",
     "doeff-image>=0.1.0",
     "google-genai>=0.3.0",
@@ -50,6 +51,7 @@ packages = ["src/doeff_gemini"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
+doeff-time = {workspace = true}
 doeff-llm = {workspace = true}
 doeff-image = {workspace = true}
 

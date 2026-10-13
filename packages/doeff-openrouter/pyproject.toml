@@ -26,6 +26,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
+    "doeff-time>=0.1.0",
     "doeff-llm>=0.1.0",
     "httpx>=0.27.0",
     "pydantic>=2.6.0",
@@ -49,6 +50,7 @@ packages = ["src/doeff_openrouter"]
 
 [tool.uv.sources]
 doeff = {workspace = true}
+doeff-time = {workspace = true}
 doeff-llm = {workspace = true}
 
 [dependency-groups]

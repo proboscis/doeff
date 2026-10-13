@@ -1,7 +1,6 @@
 """Structured LLM helper for Google Gemini built on top of doeff effects."""
 
 
-import asyncio
 import base64
 import hashlib
 import io
@@ -25,6 +24,7 @@ except ImportError:  # pragma: no cover - Python 3.10 fallback
 
 from doeff_core_effects.memo_effects import MemoGet, MemoPut
 from doeff_core_effects.memo_policy import Lifecycle, RecomputeCost
+from doeff_time import Delay
 
 from doeff import (
     Ask,
@@ -129,7 +129,7 @@ def _retry_with_backoff(
         last_error = safe_result.error
         if attempt < max_attempts:
             delay = delay_strategy(attempt, last_error)
-            yield Await(asyncio.sleep(delay))
+            yield Delay(delay)
     if last_error is not None:
         raise last_error
     raise RuntimeError("Retry exhausted without error")  # Should never happen
@@ -340,7 +340,7 @@ def _wait_for_file_active(async_client: Any, uploaded_file: Any) -> EffectGenera
         if not isinstance(file_name, str) or not file_name:
             raise ValueError("Gemini file upload response is missing file name")
 
-        yield Await(asyncio.sleep(_GEMINI_FILE_POLL_INTERVAL_SECONDS))
+        yield Delay(_GEMINI_FILE_POLL_INTERVAL_SECONDS)
         current_file = yield Await(async_client.files.get(name=file_name))
 
     raise TimeoutError("Timed out waiting for Gemini file upload to become ACTIVE")

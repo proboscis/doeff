@@ -1,12 +1,12 @@
 """Chat completion operations with comprehensive observability."""
 
 
-import asyncio
 import time
 from collections.abc import AsyncIterator, Generator
 from typing import Any
 
 from doeff_core_effects import Await, Tell, Try
+from doeff_time import Delay
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
@@ -191,7 +191,7 @@ def chat_completion(  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing
                 yield Tell(
                     f"API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s..."
                 )
-                yield Await(asyncio.sleep(delay_seconds))
+                yield Delay(delay_seconds)
         else:
             assert last_error is not None, "Should have an error if all retries failed"
             raise last_error

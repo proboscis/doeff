@@ -3,11 +3,15 @@
 
 import importlib
 import json
+from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from _runner import run_program
 from doeff_openrouter.chat import chat_completion
+from doeff_time import SimClock
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, do
@@ -341,3 +345,32 @@ async def test_chat_completion_tracks_prompt_state():
     assert api_calls[0]["prompt_text"] == "hello router"
     assert api_calls[0]["prompt_images"] == []
     assert api_calls[0]["prompt_messages"][0]["content"][0]["text"] == "hello router"
+
+
+def test_chat_completion_retry_waits_on_the_time_handler_clock():
+    """The wait between retries is doeff-time's Delay: two transient failures move the virtual
+    clock 1 s each, and the test never sleeps (card ki-94380dba532f)."""
+
+    response_data = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    request = AsyncMock(
+        side_effect=[
+            ConnectionError("transient 1"),
+            ConnectionError("transient 2"),
+            (response_data, {}),
+        ]
+    )
+    client = SimpleNamespace(a_chat_completions=request)
+    clock = SimClock()
+    started = clock.current_time
+
+    result = run_program(
+        chat_completion(messages=[{"role": "user", "content": "hi"}], model="demo-model"),
+        env={"openrouter_client": client},
+        store={"openrouter_api_calls": []},
+        clock=clock,
+    )
+
+    assert result.is_ok(), result.error
+    assert result.value == response_data
+    assert request.await_count == 3
+    assert clock.current_time - started == timedelta(seconds=2)

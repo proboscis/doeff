@@ -260,12 +260,15 @@ def app():
 
 ### Retry with Backoff
 
-Exponential backoff for retries:
+Exponential backoff for retries. The wait is doeff-time's `Delay` effect, so the caller's
+time handler decides what a second is: `async_time_handler()` waits on the wall clock,
+`sim_time_handler()` moves a virtual clock and a test of the retry path never sleeps
+(see [Advanced Effects](09-advanced-effects.md)):
 
 ```python
-from doeff import Await, Try, do
+from doeff import Try, do
 from doeff_core_effects import Tell
-import asyncio
+from doeff_time import Delay
 
 @do
 def retry_with_exponential_backoff(operation, max_attempts=5):
@@ -278,7 +281,7 @@ def retry_with_exponential_backoff(operation, max_attempts=5):
         if attempt < max_attempts:
             delay = 2 ** attempt  # Exponential backoff
             yield Tell(f"Retry {attempt} failed, waiting {delay}s")
-            yield Await(asyncio.sleep(delay))
+            yield Delay(delay)
         else:
             raise safe_result.error
 
@@ -578,17 +581,23 @@ def bad_program():
     return "done"
 ```
 
+`yield Await(asyncio.sleep(5))` does not block, but it is still wrong: it waits on the wall
+clock behind the time handler's back, so a test cannot run it on a virtual clock.
+
 **GOOD:**
 ```python
-from doeff import Await, do
-import asyncio
+from doeff import do
+from doeff_time import Delay
 
 @do
 def good_program():
-    # DO: use Await with async
-    yield Await(asyncio.sleep(5))
+    # DO: yield the time effect; the installed time handler does the waiting
+    yield Delay(5)
     return "done"
 ```
+
+The `.semgrep.yaml` rule `doeff-no-sleep-in-programs` rejects `time.sleep` and `asyncio.sleep`
+inside a `@do` program.
 
 ### Bad: Untracked Side Effects
 
