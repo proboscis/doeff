@@ -2,11 +2,11 @@
 """Retry logging tests that avoid the google.genai dependency."""
 
 
-import asyncio
 import builtins
 import importlib
 import importlib.util
 import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -45,10 +45,14 @@ if "pydantic" not in sys.modules and importlib.util.find_spec("pydantic") is Non
 
 from _runner import async_run_program
 from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
+from doeff_time import SimClock
 
 from doeff import EffectGenerator, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
+
+# A fixed backoff, so a test can read the wait on the virtual clock.
+_BACKOFF_SECONDS = 3.0
 
 
 @do
@@ -77,7 +81,7 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         structured_llm_module,
         "_gemini_random_backoff",
-        lambda _attempt, _error: 0.0,
+        lambda _attempt, _error: _BACKOFF_SECONDS,
     )
 
     assert hasattr(structured_llm_module, "slog")
@@ -95,12 +99,8 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
     )
     async_client = SimpleNamespace(models=async_models)
     mock_client = SimpleNamespace(async_client=async_client)
-
-    # Avoid accidentally awaiting the real asyncio sleep if the strategy changes.
-    async def fake_sleep(_duration: float) -> None:
-        return None
-
-    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    clock = SimClock()
+    started = clock.current_time
 
     @do
     def flow() -> EffectGenerator[str]:
@@ -114,9 +114,11 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
         )
 
     result = await async_run_program(
-        flow(), env={"gemini_client": mock_client}
+        flow(), env={"gemini_client": mock_client}, clock=clock
     )
 
+    # The one backoff between the two attempts is a Delay on the time handler's clock.
+    assert clock.current_time - started == timedelta(seconds=_BACKOFF_SECONDS)
     assert result.is_err()
     error = result.error
     while hasattr(error, "cause") and error.cause is not None:
@@ -149,7 +151,7 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         structured_llm_module,
         "_gemini_random_backoff",
-        lambda _attempt, _error: 0.0,
+        lambda _attempt, _error: _BACKOFF_SECONDS,
     )
 
     assert hasattr(structured_llm_module, "slog")
@@ -165,11 +167,8 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
     )
     async_client = SimpleNamespace(models=async_models)
     mock_client = SimpleNamespace(async_client=async_client)
-
-    async def fake_sleep(_duration: float) -> None:
-        return None
-
-    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    clock = SimClock()
+    started = clock.current_time
 
     @do
     def flow() -> EffectGenerator[Any]:
@@ -182,9 +181,10 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
         )
 
     result = await async_run_program(
-        flow(), env={"gemini_client": mock_client}
+        flow(), env={"gemini_client": mock_client}, clock=clock
     )
 
+    assert clock.current_time - started == timedelta(seconds=_BACKOFF_SECONDS)
     assert result.is_err()
     error = result.error
     while hasattr(error, "cause") and error.cause is not None:

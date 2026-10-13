@@ -6,7 +6,6 @@ comprehensive cost/token tracking.
 """
 
 
-import asyncio
 import base64
 import io
 import json
@@ -16,6 +15,7 @@ from typing import Any
 
 import PIL.Image
 from doeff_core_effects import Await, Tell, Try
+from doeff_time import Delay
 from pydantic import BaseModel
 
 from doeff import do
@@ -608,7 +608,7 @@ def structured_llm__openai(
             yield Tell(
                 f"OpenAI API call failed (attempt {attempt + 1}/{max_retries}), retrying in {delay_seconds}s..."
             )
-            yield Await(asyncio.sleep(delay_seconds))
+            yield Delay(delay_seconds)
     else:
         assert last_error is not None, "Should have an error if all retries failed"
         raise last_error

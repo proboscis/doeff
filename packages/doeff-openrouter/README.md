@@ -63,6 +63,13 @@ print(result.value)
 - `openrouter_timeout` (optional): Request timeout in seconds
 - `openrouter_default_headers` (optional): Extra headers to merge onto every request
 
+## Waiting between retries
+
+Retries of chat completions wait with doeff-time's `Delay` effect rather than sleeping, so the caller's time handler
+decides what a second is. Install `doeff_time.async_time_handler()` (the wall clock) in the handler
+stack, inside `await_handler()`, which answers its `Await`; a test installs `sim_time_handler()`, whose virtual clock moves at once, and the retry path
+runs without sleeping. Without a time handler, a retry fails with an unhandled `DelayEffect`.
+
 ## Structured Output
 
 `structured_llm` converts a Pydantic model into a JSON schema payload. When a model

@@ -176,6 +176,7 @@
     "doeff-no-runtime-import-in-effects",
     "doeff-no-rust-poll-python-cancel-state",
     "doeff-no-safe-use-try",
+    "doeff-no-sleep-in-programs",
     "doeff-no-sleep-in-tests",
     "doeff-no-star-imports",
     "doeff-no-thread-offload-in-async-run",

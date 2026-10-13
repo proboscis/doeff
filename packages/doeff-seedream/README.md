@@ -15,6 +15,7 @@ from doeff import do, run, with_handlers
 from doeff_core_effects.handlers import await_handler, lazy_ask, state, try_handler, writer
 from doeff_core_effects.scheduler import scheduled
 from doeff_seedream import edit_image__seedream4
+from doeff_time import async_time_handler
 
 @do
 def main():
@@ -25,13 +26,15 @@ def main():
     image.save("seedream.png")
     return result
 
-# edit_image__seedream4 performs Ask / Get / Put / Try / Tell / Await, so compose
-# the handlers for them explicitly (there is no implicit default stack).
+# edit_image__seedream4 performs Ask / Get / Put / Try / Tell / Await, and waits between
+# retries with doeff-time's Delay, so compose the handlers for them explicitly (there is
+# no implicit default stack).
 result = run(
     scheduled(
         with_handlers(
             [
                 await_handler(),
+                async_time_handler(),  # inside await_handler(), which answers its Await
                 lazy_ask({"seedream_api_key": "YOUR_ARK_KEY"}, strict=True),
                 try_handler,
                 state(),

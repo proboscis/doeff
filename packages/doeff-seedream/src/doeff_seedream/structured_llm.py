@@ -1,13 +1,13 @@
 """High-level helpers for interacting with Seedream models."""
 
 
-import asyncio
 import base64
 import io
 import time
 from collections.abc import Mapping
 from typing import Any
 
+from doeff_time import Delay
 from PIL import Image
 
 from doeff import Ask, Await, EffectGenerator, Get, Put, Tell, Try, do
@@ -312,7 +312,7 @@ def _edit_image__seedream4_impl(  # noqa: PLR0912, PLR0915 - baseline cleanup ke
             break
         last_error = safe_attempt.error
         if attempt < max_retries - 1:
-            yield Await(asyncio.sleep(1.0))
+            yield Delay(1.0)
 
     if response is None:
         raise last_error if last_error else RuntimeError("All retry attempts failed")

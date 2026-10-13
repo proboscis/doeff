@@ -106,6 +106,13 @@ result = await async_run(
 custom handler can catch them. If nothing handles `GeminiCalculateCost`, the
 program fails fast with an unhandled effect error.
 
+## Waiting between retries
+
+Retries and the wait for an uploaded file to become ACTIVE wait with doeff-time's `Delay` effect rather than sleeping, so the caller's time handler
+decides what a second is. Install `doeff_time.async_time_handler()` (the wall clock) in the handler
+stack, inside `await_handler()`, which answers its `Await`; a test installs `sim_time_handler()`, whose virtual clock moves at once, and the retry path
+runs without sleeping. Without a time handler, a retry fails with an unhandled `DelayEffect`.
+
 ## Client setup
 
 See `docs/gemini_client_setup.md` for details on how the Gemini client is

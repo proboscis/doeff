@@ -992,6 +992,7 @@ dependencies = [
     { name = "doeff" },
     { name = "doeff-image" },
     { name = "doeff-llm" },
+    { name = "doeff-time" },
     { name = "google-auth" },
     { name = "google-genai" },
     { name = "pydantic" },
@@ -1014,6 +1015,7 @@ requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-image", editable = "packages/doeff-image" },
     { name = "doeff-llm", editable = "packages/doeff-llm" },
+    { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "google-auth", specifier = ">=2.0.0" },
     { name = "google-genai", specifier = ">=0.3.0" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -1260,6 +1262,7 @@ source = { editable = "packages/doeff-openai" }
 dependencies = [
     { name = "doeff" },
     { name = "doeff-llm" },
+    { name = "doeff-time" },
     { name = "openai" },
     { name = "python-dateutil" },
     { name = "tiktoken" },
@@ -1284,6 +1287,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "doeff", editable = "." },
     { name = "doeff-llm", editable = "packages/doeff-llm" },
+    { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
@@ -1304,6 +1308,7 @@ source = { editable = "packages/doeff-openrouter" }
 dependencies = [
     { name = "doeff" },
     { name = "doeff-llm" },
+    { name = "doeff-time" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
@@ -1326,6 +1331,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "doeff", editable = "." },
     { name = "doeff-llm", editable = "packages/doeff-llm" },
+    { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pydantic", specifier = ">=2.6.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
@@ -1398,6 +1404,7 @@ source = { editable = "packages/doeff-seedream" }
 dependencies = [
     { name = "doeff" },
     { name = "doeff-image" },
+    { name = "doeff-time" },
     { name = "httpx" },
     { name = "pillow" },
 ]
@@ -1413,6 +1420,7 @@ dev = [
 requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-image", editable = "packages/doeff-image" },
+    { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },

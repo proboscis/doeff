@@ -51,14 +51,20 @@ result = run(scheduled(prog))
 `Await(awaitable)` bridges Python awaitables (coroutines, tasks, futures) into a doeff program.
 
 ```python
-import asyncio
 from doeff import Await, do
+
+async def read_answer() -> int:
+    return 42
 
 @do
 def fetch_value():
-    value = yield Await(asyncio.sleep(0.1, result=42))
+    value = yield Await(read_answer())
     return value
 ```
+
+To wait for a duration, yield doeff-time's `Delay(seconds)` rather than
+`Await(asyncio.sleep(seconds))`: the time handler then owns the clock, and a test can run the
+program on `sim_time_handler()`'s virtual clock.
 
 ### Handler behavior
 

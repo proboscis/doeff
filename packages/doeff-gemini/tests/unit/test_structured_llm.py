@@ -7,6 +7,7 @@ import math
 import os
 import sys
 import time
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,6 +50,7 @@ from doeff_gemini.types import APICallMetadata
 genai_types = google_genai.types
 from _runner import async_run_program
 from doeff_core_effects.memo_effects import MemoGetEffect, MemoPutEffect
+from doeff_time import SimClock
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, do
@@ -56,11 +58,14 @@ from doeff import EffectGenerator, do
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
 
-async def _run_with_default_cost(program: Any, *, env: dict[str, Any] | None = None):
+async def _run_with_default_cost(
+    program: Any, *, env: dict[str, Any] | None = None, clock: SimClock | None = None
+):
     return await async_run_program(
         program,
         handlers=[default_gemini_cost_handler],
         env=env,
+        clock=clock,
     )
 
 
@@ -101,9 +106,15 @@ class _InMemoryTTLCache:
         return _program_handler(handler)
 
 
-async def _run_with_cache(program: Any, cache: _InMemoryTTLCache, *, env: dict[str, Any] | None = None):
+async def _run_with_cache(
+    program: Any,
+    cache: _InMemoryTTLCache,
+    *,
+    env: dict[str, Any] | None = None,
+    clock: SimClock | None = None,
+):
 
-    return await _run_with_default_cost(cache.make_handler()(program), env=env)
+    return await _run_with_default_cost(cache.make_handler()(program), env=env, clock=clock)
 
 
 def _extract_file_uri(part: Any) -> str | None:
@@ -226,6 +237,8 @@ async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Pat
     )
     client = SimpleNamespace(async_client=SimpleNamespace(files=async_files))
     cache = _InMemoryTTLCache()
+    clock = SimClock()
+    started = clock.current_time
 
     @do
     def flow() -> EffectGenerator[Any]:
@@ -242,7 +255,7 @@ async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Pat
             )
         )
 
-    result = await _run_with_cache(flow(), cache, env={"gemini_client": client})
+    result = await _run_with_cache(flow(), cache, env={"gemini_client": client}, clock=clock)
 
     assert result.is_ok()
     contents = result.value
@@ -252,6 +265,8 @@ async def test_build_contents_uploads_local_file_and_caches_result(tmp_path: Pat
 
     async_files.upload.assert_awaited_once()
     async_files.get.assert_awaited_once()
+    # The one poll interval while the upload was PROCESSING is a Delay on the time handler's clock.
+    assert clock.current_time - started == timedelta(seconds=1)
 
     assert cache.put_effects
     assert cache.put_effects[0].policy.ttl == 172800
