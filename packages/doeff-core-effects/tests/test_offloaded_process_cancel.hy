@@ -43,6 +43,10 @@
 (import doeff_core_effects.process_effects [ProcessAlive ProcessOutcome RunProcess])
 (import doeff_core_effects.scheduler [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
+
 ;; 筋書き 1 つの上限(秒)。普段は 1 秒の内に終わる。過ぎたら scheduler の thread が固まったと見て落とす。
 (val SCENARIO-LIMIT 5.0)
 ;; (b) の子の時間の上限(RunProcess の timeout・秒)と、上限の後に子が止まって回収されるまでの猶予(秒)・生死を問う間隔(秒)。

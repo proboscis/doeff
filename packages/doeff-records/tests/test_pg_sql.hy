@@ -123,7 +123,8 @@
 
 
 (deftest test-the-readyz-pressure-counts-a-connection-waiting-on-a-held-lock
-  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  {:marks ["realtime"]
+   :skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; #1858: 1 つの接続が advisory lock を持ったまま transaction を開いて止まり(idle in transaction)、別の接続が同じ錠を待つ間、
   ;; /readyz の詰まりの読み(store-pressure-pg)は錠を待つ本数 1 以上と idle in transaction の秒を答える。錠を放した後は待ちが 0。
   (val connections (postgres-connections 2))
@@ -160,7 +161,8 @@
 
 
 (deftest test-a-write-waits-while-the-version-before-880-holds-the-writer-lock
-  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  {:marks ["realtime"]
+   :skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 旧い版の process の代役: 別の接続で旧い版の錠の文を流して transaction を開いたままにする。新しい版の PutRow は同じ錠を待ち、
   ;; 旧い版が commit した後で書く。
   (val connections (postgres-connections 2))

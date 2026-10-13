@@ -34,6 +34,11 @@
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])
 (import doeff_core_effects.process_exit [process-exit-handler exit-fd-of])
 (import doeff_core_effects.process_exit :as process-exit-module)
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 ;; 終わりから答えまでの遅れの上限(秒)と、終わる前に答えない事を見る下限の余裕(秒)。
 (val PROMPT 0.3)

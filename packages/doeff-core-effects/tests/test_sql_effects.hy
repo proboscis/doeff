@@ -39,6 +39,11 @@
                                                 clickhouse-insert-request clickhouse-rows clickhouse-written-rows clickhouse-failure
                                                 clickhouse-schema-statements ClickHouseDatabase ClickHouseResponse ClickHouseParam])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 (val DB "store")
 (val POSTGRES-DSN (session-dsn "DOEFF_SQL_TEST_POSTGRES_DSN"))

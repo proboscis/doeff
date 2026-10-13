@@ -19,6 +19,11 @@
 (import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))
 

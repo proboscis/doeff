@@ -20,6 +20,7 @@
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler memory-put-row memory-append])
 (import doeff_records.laws [LAW-SCHEMA MAKER TICKET-KEEP-SECONDS])
+(import pytest)
 
 (val EPOCH (datetime 1970 1 1 :tzinfo timezone.utc))
 ;; 待ちの上限(秒)— 前の形(0.05 秒ごとの読み直し)ならこの間に 600 回走査した。
@@ -142,7 +143,7 @@
   answer)
 
 
-(defn test-a-write-from-another-thread-wakes-a-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
+(defn [pytest.mark.realtime] test-a-write-from-another-thread-wakes-a-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
   ;; 実の時計で待つ thread を、別の thread の直の書きが起こす(timeout の 30 秒を待たない)。
   (setv store (MemoryStore LAW-SCHEMA)
         box []
@@ -338,7 +339,7 @@
   answer)
 
 
-(defn test-an-append-from-another-thread-wakes-a-stream-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
+(defn [pytest.mark.realtime] test-an-append-from-another-thread-wakes-a-stream-waiter-on-the-wall-clock []  ; defk にできない: 2 つの thread で置き場を共有する検
   ;; 実の時計で列を待つ thread を、別の thread の直の追記が起こす(timeout の 30 秒を待たない)。
   (setv store (MemoryStore LAW-SCHEMA)
         box []

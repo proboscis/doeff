@@ -326,6 +326,7 @@
   (assert (= (.wait (! (shim sys.executable "-c" "raise SystemExit(3)")) :timeout 30) 3)))
 
 (deftest test-shim-stops-the-job-when-the-worker-goes-away
+  {:marks ["realtime"]}
   (<- p subprocess.Popen (shim sys.executable "-c" "import time; time.sleep(60)"))
   (time.sleep 1.0)
   (assert (is-not p.stdin None) "shim は stdin をパイプで開く")

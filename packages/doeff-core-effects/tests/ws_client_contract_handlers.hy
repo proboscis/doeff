@@ -28,6 +28,11 @@
 (import doeff_core_effects.ws_client_effects [ReadWsSent ScriptedWsBinary ScriptedWsClosed ScriptedWsEndpoint ScriptedWsReply ScriptedWsText
                                               WsScript WsSentClose WsSentRecord])
 (import doeff_core_effects.scripted_ws_client [scripted-ws-client])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 ;; aiohttp は extra `http-server` の依存で、無い環境でも conftest.py がこの module を import する(その解釈器のテストを skip する)。
 ;; 型の注記にだけ使い、実行時は import しない(本物の相手の関数は自分の中で import する)。
 (when TYPE_CHECKING

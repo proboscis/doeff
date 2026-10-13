@@ -27,6 +27,10 @@
 (import doeff_core_effects.http_handlers :as http-handlers)
 (import doeff_core_effects.http_server_effects [HttpAddress WS-CLOSE-NORMAL])
 
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
+
 ;; 旧い既定の期限(httpx の keepalive_expiry 5 秒)を越える実時間の間(秒)。
 (val OLD-EXPIRY-GAP-SECONDS 6.0)
 ;; 本番の書きの間(画面の job が記録の service へ書く間の実測 26〜30 秒)。

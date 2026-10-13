@@ -22,6 +22,11 @@
 (import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written leaving-path])
 (import doeff_cluster.worker.entry.main [boot-file-written])
 (import doeff_cluster.worker.entry.drain_main [read-boot])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 
 (val NAME "zeus-host-t")
 (val SERVICE "old-service")

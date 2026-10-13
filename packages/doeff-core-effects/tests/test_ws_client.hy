@@ -20,6 +20,11 @@
                                               NOT-IN-SCRIPT-REASON])
 (import doeff_core_effects.scripted_ws_client [scripted-ws-client])
 (import ws_client_contract_handlers [ContractWsWorld WsWorld PEER-SECONDS client-into])
+(import pytest)
+
+;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
+;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+(val pytestmark pytest.mark.realtime)
 ;; aiohttp は extra `http-server` の依存(無い環境では本物の答え手のテストを skip する)— 型の注記にだけ使い、実行時は import しない。
 (when TYPE_CHECKING
   (import aiohttp))
