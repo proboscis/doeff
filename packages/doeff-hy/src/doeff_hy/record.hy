@@ -92,7 +92,7 @@
 ;;;           (setv value self.value)
 ;;;           (setv _verdict (CHAT-ID-PATTERN.fullmatch value))
 ;;;           (when (is-not _verdict True)   ; 答えが True そのものなら残りは要らない(#2421)
-;;;             (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… Program を返した …")))
+;;;             (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… Program を返した …")))  ; 実行時の展開だけ
 ;;;             (when (not _verdict)
 ;;;               (doeff_hy.record.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
 ;;;                                              (bool _verdict) {"value" value})))
@@ -400,11 +400,18 @@
     ;; 偽の時だけ require-check を呼ぶ — require-check は偽の時にしか何もしない(真なら None を返すだけ)ので、断る物と文言は同じ。
     ;; 型検査の展開では答えを object に広げる — `Match | None` を返す検め式は `is not True` と比べると「常に真」
     ;; (reportUnnecessaryComparison)の赤になり、書き手は直せない(agora-redesign #4196)。実行時の展開は答えをそのまま置く。
+    ;; Program の判定は実行時の展開だけに置く(card ki-601652993a18): 型検査の展開に置くと、pyright 1.1.414 は
+    ;; `isinstance(v, (DoExpr, EffectBase))`(DoExpr は型検査では program の node の union)の型を、同じ process で前に検めた
+    ;; file によって `tuple[UnionType, type[EffectBase[_Answer]]]` と読み、class_or_tuple の reportArgumentType の赤を出した
+    ;; (agora-controllers の日次 — repo 全体を `--threads 2` で測った時だけ・同じ file の同じ形 2 つのうち 1 つだけ)。書き手は直せない。
+    ;; 判定は実行時に Program を返した :check を断るためだけの物で、型検査の展開の型(答えは object)には何も足さない。
     (.extend statements
       [`(setv ~verdict ~(if static-view `(_doeff-cast object ~check) check))
        `(when (is-not ~verdict True)
-          (when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
-            (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))
+          ~@(if static-view
+                []
+                [`(when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
+                    (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))])
           (when (not ~verdict)
             (doeff_hy.record.require-check
               ~(str name) #(~@(lfor n used (String (hy.unmangle n)))) ~text

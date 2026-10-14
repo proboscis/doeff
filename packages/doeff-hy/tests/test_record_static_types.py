@@ -18,6 +18,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+import hy
 import pytest
 
 import doeff
@@ -84,6 +85,27 @@ def test_a_checked_defrecord_has_no_unreadable_red(tmp_path: Path) -> None:
     (tmp_path / "probe.hy").write_text(MODULE, encoding="utf-8")
     errors = _check(tmp_path).errors()
     assert not [e for e in errors if any(m in e[2] for m in FORMER_ERRORS)], errors
+
+
+def _expand(source: str) -> str:
+    return ast.unparse(hy.compiler.hy_compile(hy.read_many(source), "__main__"))
+
+
+def test_only_the_runtime_expansion_refuses_a_program_verdict() -> None:
+    # :check の答えが Program かの判定(`isinstance(v, (DoExpr, EffectBase))`)は実行時の展開だけに在る(card ki-601652993a18)。
+    # 型検査の展開に在ると、pyright 1.1.414 は同じ process で前に検めた file によってこの tuple を
+    # `tuple[UnionType, type[EffectBase[_Answer]]]` と読み、class_or_tuple の reportArgumentType を出した(agora-controllers の
+    # 日次 — repo 全体を `--threads 2` で測った時だけ・同じ file の同じ形 2 つのうち 1 つ)。書き手は直せない。
+    from doeff_hy.static_view import static_view
+
+    runtime = _expand(MODULE)
+    with static_view():
+        static = _expand(MODULE)
+    assert "doeff_hy.record.DoExpr" in runtime, runtime
+    assert "doeff_hy.record.DoExpr" not in static, static
+    assert "doeff_hy.record.EffectBase" not in static, static
+    # 偽の答えを断る require_check は両方の展開に残る
+    assert "doeff_hy.record.require_check" in static, static
 
 
 def test_an_unread_bookkeeping_name_leaves_a_shared_import_alone() -> None:
