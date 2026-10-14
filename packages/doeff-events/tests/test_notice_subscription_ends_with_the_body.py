@@ -35,7 +35,12 @@ from doeff_events.handlers.memory_notices import (
     memory_notice_handler,
     release_broker,
 )
-from doeff_events.handlers.notice_events import GAP_NOTICE, MarkGap, NoticeRoute, notice_events_handler
+from doeff_events.handlers.notice_events import (
+    GAP_NOTICE,
+    MarkGap,
+    NoticeRoute,
+    notice_events_handler,
+)
 from doeff_events.notice_laws import LawNote, law_routes
 from notice_law_support import PATIENCE_SECONDS, PREFIX, memory_harness, run_on_virtual_clock
 
@@ -132,7 +137,11 @@ def test_a_source_that_subscribed_again_after_an_outage_closes_the_new_subscript
         yield WaitForEvent(SourceResumed)
 
     for round_ in range(ROUNDS):
-        run_on_virtual_clock(harness.as_party(f"law-rider-{round_}", (SourceStarted, SourceResumed), rides_an_outage()))
+        run_on_virtual_clock(
+            harness.as_party(
+                f"law-rider-{round_}", (SourceStarted, SourceResumed), rides_an_outage()
+            )
+        )
     assert _receivers_left(broker) == 0
 
 
@@ -155,7 +164,15 @@ def test_a_cancel_while_the_start_gaps_are_told_leaves_no_subscription_behind() 
     # still closes it (the broker is held, so the start gap waits for an answer and the cancel finds it waiting).
     broker = MemoryBroker()
     starting = tuple(
-        NoticeRoute(r.event_type, r.wire_name, r.channel, r.encode, r.decode, MarkGap(start_channels=(CHANNEL,)), r.reads)
+        NoticeRoute(
+            r.event_type,
+            r.wire_name,
+            r.channel,
+            r.encode,
+            r.decode,
+            MarkGap(start_channels=(CHANNEL,)),
+            r.reads,
+        )
         for r in law_routes(PREFIX)
     )
 
@@ -191,8 +208,12 @@ def test_the_start_of_a_stall_is_logged_once(caplog: pytest.LogCaptureFixture) -
         yield WaitForEvent(SourceResumed)
 
     with caplog.at_level(logging.WARNING, logger="doeff_events.handlers.notice_events"):
-        run_on_virtual_clock(harness.as_party("law-logged", (SourceStarted, SourceResumed), rides_an_outage()))
-    stalls = [record for record in caplog.records if record.name == "doeff_events.handlers.notice_events"]
+        run_on_virtual_clock(
+            harness.as_party("law-logged", (SourceStarted, SourceResumed), rides_an_outage())
+        )
+    stalls = [
+        record for record in caplog.records if record.name == "doeff_events.handlers.notice_events"
+    ]
     assert len(stalls) == 1, [record.getMessage() for record in stalls]
     message = stalls[0].getMessage()
     assert "law-logged" in message, message

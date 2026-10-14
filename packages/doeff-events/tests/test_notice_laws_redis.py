@@ -264,7 +264,9 @@ def _ready_or_failed(ready: Promise[object], reader: Program[object]) -> "Effect
         raise
 
 
-def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redis(redis_url: str) -> None:
+def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redis(
+    redis_url: str,
+) -> None:
     """Every cancelled reader gives its subscription back, so a reader made after more readers than the client's
     pool holds still subscribes and receives its own note (each used to keep its connection, and the pool refused
     the one past its size)."""
@@ -289,7 +291,9 @@ def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redi
     def remade() -> "EffectGenerator[object]":
         for round_ in range(_pool_size(redis_url) + 1):
             ready: Promise[object] = yield CreatePromise()
-            task = yield Spawn(_ready_or_failed(ready, reader(f"law-followed-{round_}", follows(ready))))
+            task = yield Spawn(
+                _ready_or_failed(ready, reader(f"law-followed-{round_}", follows(ready)))
+            )
             failed = yield Wait(ready.future)
             if failed is not None:
                 raise AssertionError(f"reader {round_} did not start") from failed
@@ -301,7 +305,9 @@ def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redi
             raise AssertionError(f"reader {round_} ended by itself, not by the cancel")
         return (yield reader("law-last", hears_its_own_note()))
 
-    process = _answers_broker_back(_Outage())(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(remade()))
+    process = _answers_broker_back(_Outage())(
+        redis_notice_handler(redis_url, TIMEOUT_SECONDS)(remade())
+    )
     assert _run_on_wall_clock(process) == LawNote("last")
 
 

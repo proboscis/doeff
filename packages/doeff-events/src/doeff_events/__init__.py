@@ -36,6 +36,7 @@ from .effects import (
 )
 from .handlers import (
     GAP_NOTICE,
+    BrokerConnectionsExhausted,
     Drop,
     EventBus,
     MarkGap,
@@ -72,6 +73,7 @@ __all__ = [
     "ArmedTimers",
     "ArmedTimersEffect",
     "AwaitBrokerBack",
+    "BrokerConnectionsExhausted",
     "BrokerUnreachable",
     "ChannelSubscription",
     "CloseSubscription",
