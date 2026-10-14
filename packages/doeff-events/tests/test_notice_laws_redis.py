@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Final, final
 
 import pytest
 import redis
+import redis.asyncio
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import (
     Cancel,
@@ -49,6 +50,7 @@ from doeff_events.effects.notices import (
     Announcement,
     AwaitBrokerBack,
     BrokerUnreachable,
+    ChannelSubscription,
     NextAnnouncement,
     ProbeBroker,
     SubscribeChannels,
@@ -60,7 +62,11 @@ from doeff_events.handlers.notice_events import (
     NoticeSent,
     notice_events_handler,
 )
-from doeff_events.handlers.redis_notices import broker_back_by_retry, redis_notice_handler
+from doeff_events.handlers.redis_notices import (
+    BrokerConnectionsExhausted,
+    broker_back_by_retry,
+    redis_notice_handler,
+)
 from doeff_events.notice_laws import (
     BROKER_LAWS,
     EVENT_LAWS,
@@ -232,6 +238,88 @@ def test_cancel_ends_the_blocked_wait_on_redis(redis_url: str) -> None:
         return "ended"
 
     assert _run_on_wall_clock(cancels()) == "cancelled"
+
+
+# --- the subscriptions of one process that re-makes its readers (card ki-aa9497a3a412) -----------------------------
+# The screen server is one process (one redis_notice_handler) that cancels the reader of the followed turn and makes
+# a new one each time the turn changes. Each reader's subscription holds one connection of the client's pool.
+
+
+def _pool_size(url: str) -> int:
+    """How many connections the pool of a client made from ``url`` holds (redis-py's default — the handler names
+    none). Making the pool connects nothing."""
+    return redis.asyncio.ConnectionPool.from_url(url).max_connections
+
+
+@do
+def _ready_or_failed(ready: Promise[object], reader: Program[object]) -> "EffectGenerator[object]":
+    """Run ``reader``, whose body completes ``ready`` with ``None`` once it runs. A reader that fails before that
+    completes ``ready`` with its error, so the test is told instead of waiting for a body that never runs."""
+    try:
+        return (yield reader)
+    except TaskCancelledError:
+        raise
+    except Exception as error:
+        yield CompletePromise(ready, error)
+        raise
+
+
+def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redis(redis_url: str) -> None:
+    """Every cancelled reader gives its subscription back, so a reader made after more readers than the client's
+    pool holds still subscribes and receives its own note (each used to keep its connection, and the pool refused
+    the one past its size)."""
+    prefix = _prefix()
+
+    def reader(source: str, body: Program[object]) -> Program[object]:
+        """A reader of the process: its own subscriber queue and wrapper, on the process's broker handler."""
+        events = notice_events_handler(source, law_routes(prefix), PATIENCE_SECONDS)
+        return subscribed_event_handler(EventBus(), source, (LawNote,))(events(body))
+
+    @do
+    def follows(ready: Promise[object]) -> "EffectGenerator[object]":
+        yield CompletePromise(ready, None)
+        return (yield WaitForEvent(LawNote))
+
+    @do
+    def hears_its_own_note() -> "EffectGenerator[object]":
+        yield Publish(LawNote("last"))
+        return (yield WaitForEvent(LawNote))
+
+    @do
+    def remade() -> "EffectGenerator[object]":
+        for round_ in range(_pool_size(redis_url) + 1):
+            ready: Promise[object] = yield CreatePromise()
+            task = yield Spawn(_ready_or_failed(ready, reader(f"law-followed-{round_}", follows(ready))))
+            failed = yield Wait(ready.future)
+            if failed is not None:
+                raise AssertionError(f"reader {round_} did not start") from failed
+            yield Cancel(task)
+            try:
+                yield Wait(task)
+            except TaskCancelledError:
+                continue
+            raise AssertionError(f"reader {round_} ended by itself, not by the cancel")
+        return (yield reader("law-last", hears_its_own_note()))
+
+    process = _answers_broker_back(_Outage())(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(remade()))
+    assert _run_on_wall_clock(process) == LawNote("last")
+
+
+def test_a_subscription_past_the_pool_fails_by_name_at_once_on_redis(redis_url: str) -> None:
+    """A process that holds every connection its client's pool allows is refused the next subscription by name
+    (``BrokerConnectionsExhausted``), not answered ``BrokerUnreachable``: the server answers, and waiting gives no
+    connection back (the source used to wait out its whole patience for a broker that was never away)."""
+    channel = f"{_prefix()}:held"
+
+    @do
+    def holds_too_many() -> "EffectGenerator[object]":
+        for _ in range(_pool_size(redis_url)):
+            held = yield SubscribeChannels((channel,))
+            assert isinstance(held, ChannelSubscription), held
+        return (yield SubscribeChannels((channel,)))
+
+    with pytest.raises(BrokerConnectionsExhausted, match="pool"):
+        _run_on_wall_clock(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(holds_too_many()))
 
 
 SLOW_LIMIT: Final = "pubsub 1048576 1048576 0"

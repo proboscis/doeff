@@ -73,6 +73,14 @@ class BrokerAnswerMalformed(TypeError):
     """Redis (or the client library) answered in a shape this handler does not know — named instead of guessed."""
 
 
+class BrokerConnectionsExhausted(RuntimeError):
+    """The client's pool of connections to the server is full (redis-py's ``MaxConnectionsError``): this process
+    holds every connection the pool allows. It is not an outage — the server answers, and waiting gives no
+    connection back — so it is raised by name at once instead of answered as ``BrokerUnreachable`` (card
+    ki-aa9497a3a412: subscriptions left open filled the pool, and the source waited out its whole patience for a
+    broker that was never away)."""
+
+
 def _text(value: object, what: str) -> str:
     """Check a value read from Redis is text (the client decodes responses)."""
     if not isinstance(value, str):
