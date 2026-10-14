@@ -309,6 +309,9 @@ def limit_holdings(claims: tuple, groups: Table) -> _Program[dict, object]:
 def hold_limits(held: dict, limits: tuple, worker: str | None, groups: Table) -> _Program[dict, object]:
     ...
 
+def foreground_reserve_of(worker: WorkerInfo) -> _Program[int, object]:
+    ...
+
 def task_misfit(limits: tuple, priority: int, worker: WorkerInfo, room: int, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:
     ...
 

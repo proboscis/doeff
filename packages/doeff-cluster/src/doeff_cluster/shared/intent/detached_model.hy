@@ -76,7 +76,7 @@
   ;; 子の環境変数(EnvVar の tuple・既定は空 — 名と値の規則は service の :environ と同じ EnvVar 1 つ)。同じ key の送り直しで違えば
   ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
   (setv #^ (get tuple #(EnvVar ...)) environ #())
-  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の task-reserve を使わない)と同時数の上限の組(TaskLimit の tuple — 値は系の
+  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の task-reserve の半分〔切り上げ〕を使わない)と同時数の上限の組(TaskLimit の tuple — 値は系の
   ;; 宣言が持つ)。coordinator の置き方が守る(2026-10-11)。同じ key の送り直しの比べには入れない(置き方の名乗りで、仕事の中身ではない)。
   ;; 形の検めは構築関数。
   (setv #^ int priority 0)

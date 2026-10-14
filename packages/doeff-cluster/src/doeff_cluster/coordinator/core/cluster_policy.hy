@@ -933,6 +933,17 @@
   after)
 
 
+(defk foreground-reserve-of [worker]
+  {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の task-reserve のうち、負の優先の task(背景の仕事)に使わせず優先 0 以上の task に残す数を知るため: 予約の半分(切り上げ)。
+   背景の仕事は残りの半分(切り捨て)までは予約を使える(card ki-f6d3da302cf0・2026-10-14)。以前は予約を 1 つも使わせず、背景の仕事の
+   置き場は job の側の残り(capacity − task-reserve − 常駐の job)だけだった — 常駐の job は capacity − task-reserve まで置ける(C17)ので、
+   job が増えて job の側を埋めると背景の仕事は 1 本も置かれず、本番の zeus(capacity 33・task-reserve 6・常駐の job 27)で会話の
+   long-command 8 本が 76〜230 分 queued のまま待った。予約の中に背景の仕事の分を持てば、job の数によらず背景の仕事が走り、
+   優先 0 以上の task(配備の組み立て・日次の検)には予約の半分が必ず残る(10-11 の、背景の仕事が枠を埋めて組み立てが待った件の守り)。"
+  (- worker.task-reserve (// worker.task-reserve 2)))
+
+
 (defk task-misfit [limits priority worker room held groups]
   {:pre [(: limits tuple) (: priority int) (: worker WorkerInfo) (: room int) (: held dict) (: groups Table)]
    :post [(: % (| TaskUnplacedKind None))]
@@ -941,14 +952,15 @@
    (None = 置ける)。room = その worker の task の空き(task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・
    groups = 系が宣言した GroupLimit の表。名乗った組の
    どれかが宣言に無い → TASK-UNDECLARED・空きが無い → TASK-NO-ROOM・名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
-   負の優先の task で、空きが worker の task-reserve 以下(置けば予約を食う)→ TASK-RESERVED(2026-10-11)。比べる値は宣言の値で、task の
-   名乗りに値は無い(card ki-b0e8028c8c8d)。"
+   負の優先の task で、空きが予約のうち優先 0 以上の task に残す数(foreground-reserve-of)以下 → TASK-RESERVED(2026-10-11・残す数は
+   2026-10-14 に予約の全部から半分へ)。比べる値は宣言の値で、task の名乗りに値は無い(card ki-b0e8028c8c8d)。"
   (<- by-limits (| TaskUnplacedKind None) (limits-misfit limits worker.name held groups))
+  (<- kept int (foreground-reserve-of worker))
   (cond
     (= by-limits TaskUnplacedKind.TASK-UNDECLARED) by-limits
     (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
     by-limits by-limits
-    (and (< priority 0) (<= room worker.task-reserve)) TaskUnplacedKind.TASK-RESERVED
+    (and (< priority 0) (<= room kept)) TaskUnplacedKind.TASK-RESERVED
     True None))
 
 

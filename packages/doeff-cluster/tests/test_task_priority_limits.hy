@@ -69,26 +69,28 @@
   (<- limited str (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))
   (assert (all (gfor id LONG-IDS :if (= (. (get placed id) phase) "queued") (= (. (get placed id) detail) limited))) placed))
 
-(deftest test-background-tasks-leave-the-task-reserve-for-the-build-that-comes-later
-  ;; 背景の仕事(優先 < 0)は task-reserve を使わない: worker ごとの上限が無くても、背景の仕事 10 本は空き 10 のうち予約 3 を残した 7 本
-  ;; までしか置かれない。後の拍で積んだ組み立ての task は、背景の仕事が走っている間でも予約へ置かれる。
+(deftest test-background-tasks-leave-half-the-task-reserve-for-the-build-that-comes-later
+  ;; 背景の仕事(優先 < 0)は task-reserve の半分(切り上げ)を優先 0 以上の task に残す(2026-10-14 — 以前は予約を全部残した):
+  ;; worker ごとの上限が無くても、背景の仕事 10 本は空き 10 のうち予約 3 の 2 を残した 8 本までしか置かれない。後の拍で積んだ組み立ての
+  ;; task は、背景の仕事が走っている間でも残した予約へ置かれる。
   (setv #(jobs placements) (! (resident #("a" "b"))))
   (setv tasks {})
   (for [id LONG-IDS]
     (setv (get tasks id) (! (queued id :priority -1))))
   (val first (! (place-tasks 1000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements tasks) placements T)))
   (val longs (! (phases first LONG-IDS)))
-  (assert (= (.count longs "assigned") 7) longs)
+  (assert (= (.count longs "assigned") 8) longs)
   (assert (= (. (get first "t10") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))) (get first "t10"))
   (val later (! (place-tasks 2000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
                                                 (| first {"t11" (! (queued "t11"))}))
                              placements T)))
   (assert (= (. (get later "t11") phase) "assigned") (get later "t11"))
-  ;; 優先 0 の task は今までどおり予約まで使える(上の組み立ての後も 2 本置ける)。
+  ;; 優先 0 の task は今までどおり予約の最後まで使える(上の組み立ての後も残した 1 本に置け、その次は空きが無い)。
   (val more (! (place-tasks 3000 (ClusterState jobs {"zeus" (! (zeus-like 12 3))} placements
                                                (| later {"t12" (! (queued "t12")) "t13" (! (queued "t13"))}))
                             placements T)))
-  (assert (= (! (phases more ["t12" "t13"])) ["assigned" "assigned"]) more))
+  (assert (= (! (phases more ["t12" "t13"])) ["assigned" "queued"]) more)
+  (assert (= (. (get more "t13") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (get more "t13")))
 
 (deftest test-background-tasks-run-while-resident-jobs-fill-the-job-side
   ;; 失敗ケース(card ki-f6d3da302cf0・本番 2026-10-14 17:05〜): zeus の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −

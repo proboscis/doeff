@@ -581,7 +581,7 @@
 
 ;; 待っている task を置けない理由(cluster_policy.task-unplaced-text)。TASK-NO-ROOM = 置ける worker のどれにも task の空きが無い・
 ;; TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に達している・TASK-RESERVED = 空きは在るが、
-;; 残りが worker の task-reserve の分だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11)・TASK-UNDECLARED = task の名乗った
+;; 残りが worker の task-reserve のうち優先 0 以上の task に残す半分(切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-UNDECLARED = task の名乗った
 ;; 組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から読み直した — 宣言されるまで待つ・2026-10-12)。
 
 
@@ -1007,7 +1007,7 @@
   (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #())
   ;; --- 置く順と同時数(2026-10-11)---
   ;; priority = 置く順の優先(大きいほど先・既定 0)。待っている task は (優先の大きい順, id) で置く。負の優先の task(背景の仕事)は
-  ;; worker の task-reserve を使わない(置いた後にも予約の数の空きが残る worker にだけ置く)— 背景の仕事が何本積まれても、予約の分は
+  ;; worker の task-reserve の半分(切り上げ)を使わない(置いた後にもその数の空きが残る worker にだけ置く・2026-10-14 に予約の全部から半分へ)— 背景の仕事が何本積まれても、予約の半分は
   ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 名乗った同時数の上限の組(TaskLimit の tuple — 値と範囲は系の宣言の
   ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
   (setv #^ int priority 0)
