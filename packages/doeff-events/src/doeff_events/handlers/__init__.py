@@ -24,7 +24,11 @@ from doeff_events.handlers.notice_events import (
     notice_events_handler,
 )
 from doeff_events.handlers.os_files import os_file_watch_handler
-from doeff_events.handlers.redis_notices import broker_back_by_retry, redis_notice_handler
+from doeff_events.handlers.redis_notices import (
+    BrokerConnectionsExhausted,
+    broker_back_by_retry,
+    redis_notice_handler,
+)
 from doeff_events.handlers.timer import timer_handler
 
 from .memory import EventBus, SubscriberQueue, event_handler, subscribed_event_handler
@@ -35,6 +39,7 @@ __all__ = [
     "memory_file_watch_handler",
     "os_file_watch_handler",
     "GAP_NOTICE",
+    "BrokerConnectionsExhausted",
     "Drop",
     "EventBus",
     "MarkGap",

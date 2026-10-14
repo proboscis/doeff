@@ -13,6 +13,9 @@ How it talks to Redis:
   ``BrokerUnreachable`` with the library's words. The library's timed retries are not used, so the answer comes
   at once; waiting for the server's return is left to ``AwaitBrokerBack`` — which this handler does not answer:
   the composition does, from whatever tells it that the server is back.
+- A full pool of connections (redis-py's ``MaxConnectionsError`` — every connection the client's pool allows is
+  held by this process) is not an outage: it raises ``BrokerConnectionsExhausted`` at once. Each open subscription
+  holds one connection until ``CloseSubscription``.
 - ``SubscribeChannels`` answers only after the server confirmed every channel. A subscription lives on one
   connection; when that connection is lost the subscription is dead (``NextAnnouncement`` answers
   ``BrokerUnreachable``) and the caller makes a new one — this handler never re-subscribes behind the caller's
@@ -158,12 +161,19 @@ async def _next_notice(pubsub: "PubSub") -> Announcement:
 
 async def _or_failed(call: "Awaitable[_T]") -> "_T | _Failed":
     """Run one broker call; a connection that cannot be made or was lost becomes ``_Failed`` (a value) instead
-    of an exception, so that the handler answers ``BrokerUnreachable``."""
+    of an exception, so that the handler answers ``BrokerUnreachable``. A full pool of connections is not that
+    (redis-py names it a ``ConnectionError`` too): it raises ``BrokerConnectionsExhausted``."""
     from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import MaxConnectionsError
     from redis.exceptions import TimeoutError as RedisTimeoutError
 
     try:
         return await call
+    except MaxConnectionsError as error:
+        raise BrokerConnectionsExhausted(
+            f"the client's pool of connections to the notice broker is full ({error}): this process holds every "
+            "connection the pool allows — a subscription or a call that is not given back"
+        ) from error
     except (RedisConnectionError, RedisTimeoutError, OSError) as error:
         return _Failed(f"{type(error).__name__}: {error}")
 

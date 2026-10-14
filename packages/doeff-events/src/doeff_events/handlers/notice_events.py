@@ -48,13 +48,17 @@ What the wrapper does:
 - Broker outages. When the wait for a notice answers ``BrokerUnreachable`` the source publishes
   ``SourceStalled``, waits for ``AwaitBrokerBack`` up to ``patience_seconds`` (one ``WaitWithin`` — no retry on
   a timer), subscribes again, and after the broker confirmed publishes ``SourceResumed`` once. Past the patience
-  it fails with ``NoticeSourceUnreachable`` (``SourceFailed`` reaches the body).
+  it fails with ``NoticeSourceUnreachable`` (``SourceFailed`` reaches the body). The stall's start is one warning
+  in the process's log.
 - Stopping. The source task and the task waiting for the return end by ``Cancel`` when the body ends; their waits
-  have no time limit of their own.
+  have no time limit of their own. Then the subscription the source held is closed (``CloseSubscription``) — when
+  the body ends normally, by an error, or by a cancel from outside — so a process that wraps body after body under
+  one broker handler holds no subscription of a body that ended (card ki-aa9497a3a412).
 
 The channels a wrapper reads are fixed when it is built (``_Plan.channels`` is the one place that holds them).
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -105,6 +109,8 @@ if TYPE_CHECKING:
 
 _E = TypeVar("_E")
 _T = TypeVar("_T")
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -202,6 +208,19 @@ class _Gaps:
     def running(self) -> "tuple[Task[object], ...]":
         """The waiting task, if one runs (the tasks to stop)."""
         return () if self._mut_waiter is None else (self._mut_waiter,)
+
+
+@final
+class _Reading:
+    """The subscription the source holds right now — what the wrapper closes when the body ends. ``None`` = none:
+    the wrapper reads nothing, or the source gave a dead subscription up and the broker has not confirmed the
+    next one yet."""
+
+    __slots__ = ("_mut_held",)
+
+    def __init__(self, held: ChannelSubscription | None) -> None:
+        """Start holding the first subscription (``None`` for a wrapper that reads nothing)."""
+        self._mut_held = held
 
 
 class NoticeSourceUnreachable(RuntimeError):
@@ -327,6 +346,14 @@ def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGe
     ``AwaitBrokerBack`` — not a timer. Answers the new, confirmed subscription; past the patience raises
     ``NoticeSourceUnreachable``."""
     since: datetime = yield GetTime()
+    # Nothing else is seen until the broker is back or the patience is over: the stall's start is one line in the
+    # process's log (card ki-aa9497a3a412 — a full pool of connections stalled a source silently for 900 s).
+    _logger.warning(
+        "notice source %r stalled: the broker is unreachable (%s); waiting up to %s s for its return",
+        plan.source,
+        first.detail,
+        plan.patience_seconds,
+    )
     yield Publish(SourceStalled(source=plan.source, detail=first.detail, since=since))
     answer: ChannelSubscription | BrokerUnreachable = first
     while isinstance(answer, BrokerUnreachable):
@@ -352,19 +379,30 @@ def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
 
 
 @do
-def _read_notices(plan: _Plan, subscription: ChannelSubscription) -> "EffectGenerator[None]":
+def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Reading) -> "EffectGenerator[None]":
     """The source task: wait for the next notice and publish its event on the bus. When the connection is lost,
     give the dead subscription up, get past the outage, and tell ``SourceResumed`` — after the new subscription
-    is confirmed. It ends only by ``Cancel`` (the wait has no time limit — the cancel ends it) or by failing."""
+    is confirmed. ``reading`` follows the subscription it holds. It ends only by ``Cancel`` (the wait has no time
+    limit — the cancel ends it) or by failing."""
     current = subscription
     while True:
         notice = yield NextAnnouncement(current)
         if isinstance(notice, BrokerUnreachable):
             yield CloseSubscription(current)
+            reading._mut_held = None
             current = yield _subscribed_after_outage(plan, notice)
+            reading._mut_held = current
             yield Publish(SourceResumed(source=plan.source))
         else:
             yield Publish(plan.decoded(notice))
+
+
+@do
+def _subscription_closed(reading: _Reading) -> "EffectGenerator[None]":
+    """Close the subscription the stopped source held, if it held one (once — it is then held by nobody)."""
+    held, reading._mut_held = reading._mut_held, None
+    if held is not None:
+        yield CloseSubscription(held)
 
 
 @do
@@ -570,26 +608,34 @@ def _started_gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[None]":
 @do
 def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     """Begin the subscription, tell the start once it is confirmed, tell the start gaps, run the source task beside
-    the body (the body stays in this task, so a cancel from outside reaches it), and stop the source and the task
-    waiting for the return when the body ends. A wrapper that only sends has no source: nothing to subscribe,
-    nothing to tell but its start gaps."""
+    the body (the body stays in this task, so a cancel from outside reaches it), and when the body ends — normally,
+    by an error, or by a cancel — stop the source and the task waiting for the return, then close the subscription
+    the source held (card ki-aa9497a3a412: a process that wraps body after body holds one subscription at a time,
+    not one per body). A wrapper that only sends has no source: nothing to subscribe, nothing to tell but its
+    start gaps."""
     gaps = _Gaps()
-    source: tuple[Task[object], ...] = ()
+    first: ChannelSubscription | None = None
     if plan.channels:
-        subscription = yield _first_subscription(plan)
-        yield Publish(SourceStarted(source=plan.source))
-        reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, subscription)))
-        source = (reader,)
-    yield _started_gaps_told(plan, gaps)
-    # The stop runs on an exception and on the normal end, not in ``finally`` (see ``_came_back_within``).
-    # A wrapper with no route answers nothing around the body (the source alone is enough).
-    wrapped = _body_handler(plan, gaps)(body) if plan.answered else body
+        first = yield _first_subscription(plan)
+    reading = _Reading(first)
+    source: tuple[Task[object], ...] = ()
+    # The stop runs on an exception and on the normal end, not in ``finally`` (see ``_came_back_within``). It covers
+    # everything after the subscription, so a cancel that lands while the start is told also closes it.
     try:
+        if first is not None:
+            yield Publish(SourceStarted(source=plan.source))
+            reader: Task[object] = yield Spawn(_failure_announced(plan.source, _read_notices(plan, first, reading)))
+            source = (reader,)
+        yield _started_gaps_told(plan, gaps)
+        # A wrapper with no route answers nothing around the body (the source alone is enough).
+        wrapped = _body_handler(plan, gaps)(body) if plan.answered else body
         answer = yield wrapped
     except Exception:
         yield _stopped_tasks((*source, *gaps.running()))
+        yield _subscription_closed(reading)
         raise
     failed = yield _stopped_tasks((*source, *gaps.running()))
+    yield _subscription_closed(reading)
     failed = gaps._mut_failure if gaps._mut_failure is not None else failed
     if failed is not None:
         # A task fell while the body did not wait: the failure is not dropped.
