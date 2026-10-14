@@ -140,7 +140,11 @@ spec:
             # (card ki-0b0ab40048b9・L2226 d03f0910d — 設計検証 lt-D8Y7NDS3A1XHEP1DQJ323D6CHB の盲検 A: 既定の 0.5 秒では POST の答えを待つ間に
             # 止まると、入れ替えの後に一番要る止まりの行が消えた)。間の doeff-cluster の code の差はこの分だけ。前の版 a1d17b0dd(L2214)は
             # 3fcba1939 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 3fcba1939bd7e731dc47811aa4c305fe40bdeed7 }
+            # 434f9789f = 負の優先の task(背景の仕事 — 会話の long-command)が task-reserve の半分(切り捨て)までは使える版(card ki-f6d3da302cf0・
+            # L2312 — 10-14 17:05 JST に zeus の常駐の job が capacity − task-reserve = 27 に達し、予約を使えない long-command 8 本が 76〜230 分
+            # queued のまま走らなかった事の直し)。間の doeff-cluster の code の差は他に 10-12〜10-13 の main の 17 本(時計を単調な時計で計る・
+            # 報告の表の移し・型の名乗り・準備の木の hardlink 等)。前の版 3fcba1939(L2226)は 434f9789f の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 434f9789f80cce4762e3171b07e2faf844a9e68e }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
