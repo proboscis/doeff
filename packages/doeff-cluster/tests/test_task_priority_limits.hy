@@ -90,6 +90,29 @@
                             placements T)))
   (assert (= (! (phases more ["t12" "t13"])) ["assigned" "assigned"]) more))
 
+(deftest test-background-tasks-run-while-resident-jobs-fill-the-job-side
+  ;; 失敗ケース(card ki-f6d3da302cf0・本番 2026-10-14 17:05〜): zeus の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −
+  ;; task-reserve・job の側の空き 0)になると、残る空きは予約の 6 だけになり、予約を使わない背景の仕事は 1 本も置かれなかった(会話の
+  ;; long-command 8 本が 76〜230 分 queued)。背景の仕事は予約の半分(切り捨て — 6 なら 3)までは使い、残りの半分(切り上げ)を優先 0 以上の
+  ;; task に残す: 背景の仕事 10 本(呼び手はみな別)のうち 3 本が 1 拍で置かれ、残りは予約の文で待つ。後から積んだ組み立ての task 3 本は、
+  ;; 背景の仕事が走っている間でも残した予約へ置かれる。
+  (setv #(jobs placements) (! (resident (tuple (gfor i (range 27) (.format "j{:02d}" i))))))
+  (setv tasks {})
+  (for [#(i id) (enumerate LONG-IDS)]
+    (setv (get tasks id) (! (background id (.format "c-{}" i)))))
+  (val state (ClusterState jobs {"zeus" (! (zeus-like 33 6))} placements tasks :group-limits GROUPS))
+  (val first (! (place-tasks 1000 state placements T)))
+  (val longs (! (phases first LONG-IDS)))
+  (assert (= (.count longs "assigned") 3) longs)
+  (<- reserved str (task-unplaced-text TaskUnplacedKind.TASK-RESERVED))
+  (assert (all (gfor id LONG-IDS :if (= (. (get first id) phase) "queued") (= (. (get first id) detail) reserved))) first)
+  (val builds ["b1" "b2" "b3"])
+  (setv more (dict first))
+  (for [id builds]
+    (setv (get more id) (! (queued id))))
+  (val later (! (place-tasks 2000 (replace state :tasks more) placements T)))
+  (assert (= (! (phases later builds)) ["assigned" "assigned" "assigned"]) later))
+
 (deftest test-one-caller-runs-at-most-two-background-tasks-at-once
   ;; 同じ呼び手の背景の仕事 3 本: 呼び手ごとの上限 2(cluster の範囲)で 2 本だけ置かれ、3 本目は上限の文で待つ。別の呼び手の 1 本は置かれる。
   ;; 1 本が終われば 3 本目が置かれる。
