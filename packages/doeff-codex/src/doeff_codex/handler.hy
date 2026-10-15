@@ -7,7 +7,14 @@
 ;;;
 ;;; 不変条件(fake と共通 — tests/test_scenarios.hy が両方に当てる):
 ;;;   1 つの会話に走っているターンは多くとも 1 つ・生きた process は多くとも 1 つ。CodexStartTurn 1 回に終わりはちょうど 1 つ
-;;;   (lines.TurnEnded か、終わりの行の前に process が消えた BackendLost)。出来事の seq は会話の中で単調に増える。
+;;;   (lines.TurnEnded か、終わりの行の前に process が消えた BackendLost か、道具を呼べない process だった ToolsUnavailable)。
+;;;   出来事の seq は会話の中で単調に増える。
+;;;
+;;; 道具を呼べない process: codex が code mode を使えず道具の呼びを閉じたと名乗った(lines.CodeModeUnavailable)process の model は、
+;;; 道具を 1 つも呼べないまま文だけを返し、ターンは completed になる。codex はこの警告を thread ごとに 1 度だけ、ターンを始める時
+;;; (turn/start の答えより前 — 走っているターンがまだ無い)に出すので、handler は警告を process の事実(SessionRuntime.tools-lost)として
+;;; 持ち、そのターン(警告の後に立つか、警告の時に走っている物)を ToolsUnavailable で終えて process を降ろす。次のターンは使い回さず
+;;; 新しい process で起こす(codex が道具を呼べるかを確かめ直す — 降ろし中の process の行は次のターンに積まない)。
 ;;;
 ;;; 状態は CodexHost(composition root が 1 つ作って handler に渡す)が持つ。読み手の thread(CodexProcess の on-line・on-exit)と
 ;;; handler の節は会話ごとの lock で状態を差し替える。待つ所(要求の答え・出来事・降りるの待ち)は呼び鈴(Doorbell — CreateExternalPromise
@@ -29,9 +36,9 @@
 (import doeff_codex.process [CodexProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 (import doeff_codex.credential_home [open-credential-home close-credential-home])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
-                             CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
-                             Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn
-                             NoSuchRequest ProcessStillAlive])
+                             CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
+                             TurnEventPage Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight
+                             UnknownTurn NoSuchRequest ProcessStillAlive])
 
 (val RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 ;; 会話ごとに残すターンの記録の数(古いターンの出来事は読めなくなる — UnknownTurn)。
@@ -83,7 +90,9 @@
    起こした回の番号(古い process の行と終わりを、今の process の物と取り違えないため)。credential-home = 今の process の資格の家
    (借りた資格で起こした時だけ — 降ろしたら消す)。answers = 要求の id → 答えの記録(要求ごとに
    handler が待って読む — 読んだら消す)。outside = 走っているターンの外で読んだ記録(数えて見せるため・ターンの頁には載せない)。
-   late = 走っているターンの無い間に届いた、終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 次のターンの頭に積む)。"
+   late = 走っているターンの無い間に届いた、終わったターンを名乗る遅れた記録(後ろで走った命令の終わりなど — 次のターンの頭に積む)。
+   tools-lost = 今の process が道具を呼べないと codex が名乗った事実(lines.CodeModeUnavailable — 無ければ None。process を起こし
+   直すと消す)。"
   (defn __init__ [self #^ CodexSessionSpec spec]
     (setv self.spec spec
           self.thread-id None
@@ -98,7 +107,8 @@
           self.closed False
           self.exit-code None
           self.stderr-tail None
-          self.credential-home None)
+          self.credential-home None
+          self.tools-lost None)
     (setv #^ (get dict #((| int str) object)) self.answers {})
     (setv #^ (get dict #(str TurnLog)) self.turns {})
     (setv #^ tuple self.outside #())
@@ -139,7 +149,18 @@
   (defn add-event [self #^ TurnLog log record]
     "記録を seq を振ってターンの出来事に積むため。lock の中で呼ぶ。"
     (setv self.next-seq (+ self.next-seq 1))
-    (setv log.events (+ log.events #((CodexEvent :seq self.next-seq :record record))))))
+    (setv log.events (+ log.events #((CodexEvent :seq self.next-seq :record record)))))
+
+  (defn end-toolless-turn [self]
+    "道具を呼べない process(tools-lost が在る)で走っているターンを、model が文だけを返して completed になる前に ToolsUnavailable で
+     終え、process を降ろし始めるため(降りるのは待たない — 読みの thread から呼ぶ。続きは start-turn が新しい process で起こす)。
+     走っているターンが無い・事実が無ければ何もしない。lock の中で呼ぶ。"
+    (setv log (.running-log self))
+    (when (and (is-not self.tools-lost None) (is-not log None))
+      (setv log.end (ToolsUnavailable :detail self.tools-lost.message))
+      (when (is-not self.process None)
+        (.retire self.process)))
+    None))
 
 
 (defclass CodexHost []
@@ -182,16 +203,29 @@
    終わり — 前のターンの終わりの後に、次のターンの間かターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っている
    ターンへ積み、無ければ late に取っておく(次のターンを立てた時にその頭に積む)。会話の thread でない thread を名乗る記録(子の
    agent — collabAgentToolCall の spawnAgent が同じ process の別の thread で走らせる。録った行 other-tools)は会話のターンに積まず
-   outside へ置く(子のターンの始まりで走っているターンを替えない・子の答えを会話の答えにしない)。lock の中で呼ぶ。"
+   outside へ置く(子のターンの始まりで走っているターンを替えない・子の答えを会話の答えにしない)。code mode が使えない警告
+   (lines.CodeModeUnavailable — ターンを名乗らない)は process の事実 tools-lost にし、その時に走っているターンか、後で立つターンを
+   ToolsUnavailable で終えて process を降ろし始める(end-toolless-turn — 頭の註の「道具を呼べない process」。警告は thread を名乗るが、
+   code mode の使える・使えないは process の置き方で決まるので、子の agent の thread の警告も同じ事実にする)。降ろし中の process の、
+   終えたターンを名乗る行は late に取っておかない(次の process のターンに積まない)。lock の中で呼ぶ。"
   (<- foreign (another-thread runtime record))
   (match record
     _ :if foreign (setv runtime.outside (+ runtime.outside #(record)))
     (lines.Response) (do (setv (get runtime.answers record.id) record)
                          (when (is-not record.turn-id None)
-                           (.mark-running runtime record.turn-id)))
+                           (.mark-running runtime record.turn-id)
+                           (.end-toolless-turn runtime)))
     (lines.ErrorResponse) (setv (get runtime.answers record.id) record)
     (lines.TurnStarted) (do (.mark-running runtime record.turn-id)
-                            (.add-event runtime (.log-of runtime record.turn-id) record))
+                            (.add-event runtime (.log-of runtime record.turn-id) record)
+                            (.end-toolless-turn runtime))
+    (lines.CodeModeUnavailable)
+    (do (setv runtime.tools-lost record)
+        (val warned-in (.running-log runtime))
+        (if (is warned-in None)
+            (setv runtime.outside (+ runtime.outside #(record)))
+            (.add-event runtime warned-in record))
+        (.end-toolless-turn runtime))
     (lines.ServerRequest)
     (do (setv log (.running-log runtime))
         (if (is log None)
@@ -218,6 +252,7 @@
             (cond
               (is named.end None) (.add-event runtime named record)
               (is-not running None) (.add-event runtime running record)
+              (is-not runtime.tools-lost None) (setv runtime.outside (+ runtime.outside #(record)))
               True (setv runtime.late (+ runtime.late #(record)))))
         True
         (do (val current (.running-log runtime))
@@ -366,7 +401,8 @@
           runtime.launches (+ runtime.launches 1)
           runtime.spec spec
           runtime.exit-code None
-          runtime.stderr-tail None)
+          runtime.stderr-tail None
+          runtime.tools-lost None)
     (val generation runtime.generation))
   (var home None)
   (when (is-not spec.home.auth-json None)
@@ -430,7 +466,8 @@
 (defk start-turn [#^ CodexHost host #^ CodexStartTurn asked]
   {:pre [(: host CodexHost) (: asked CodexStartTurn)] :post [(: % (| TurnStarted ThreadUnknown TurnInFlight LaunchFailed RequestRefused))]
    :tags {:context "codex" :role "process"}}
-  "ターンを始めるため: 同じ会話・同じ宣言の生きた process が在れば使い回し、無ければ起こして thread を開いてから turn/start を書く。"
+  "ターンを始めるため: 同じ会話・同じ宣言の生きた process が在れば使い回し(道具を呼べないと名乗った process は使い回さない)、無ければ
+   起こして thread を開いてから turn/start を書く。"
   (val origin asked.origin)
   (val known (match origin
                (ResumeThread) (.runtime host origin.thread-id)
@@ -443,7 +480,7 @@
       (return (TurnInFlight :turn (CodexTurn :thread-id origin.thread-id :turn-id running-id)))))
   (val runtime (if (is known None) (SessionRuntime asked.spec) known))
   (val reusable (and (is-not known None) (not known.closed) (is-not known.process None) (.alive known.process)
-                     (= known.spec asked.spec)))
+                     (= known.spec asked.spec) (is known.tools-lost None)))
   (when (not reusable)
     (<- (retire runtime))
     (<- opened (launch host runtime asked.spec origin))

@@ -29,6 +29,7 @@ from doeff_codex.effects import CodexAnswerRequest as CodexAnswerRequest
 from doeff_codex.effects import CodexCloseSession as CodexCloseSession
 from doeff_codex.effects import CodexLaunchCount as CodexLaunchCount
 from doeff_codex.effects import BackendLost as BackendLost
+from doeff_codex.effects import ToolsUnavailable as ToolsUnavailable
 from doeff_codex.effects import TurnStarted as TurnStarted
 from doeff_codex.effects import Steered as Steered
 from doeff_codex.effects import InterruptRequested as InterruptRequested
@@ -39,8 +40,6 @@ from doeff_codex.effects import TurnInFlight as TurnInFlight
 from doeff_codex.effects import NoTurnInFlight as NoTurnInFlight
 from doeff_codex.effects import UnknownTurn as UnknownTurn
 from doeff_codex.effects import NoSuchRequest as NoSuchRequest
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 STEERED_PREFIX: str
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,6 +47,7 @@ class FakeReply:
     pieces: tuple[str, ...]
     hold: bool = False
     usage_limit: UsageLimitHit | None = None
+    tools_lost: str | None = None
 
 class FakeTurn:
     events: tuple[CodexEvent, ...]

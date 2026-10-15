@@ -23,6 +23,12 @@
 (defenum TurnStatus COMPLETED INTERRUPTED FAILED (IN-PROGRESS "inProgress"))
 ;; 口座の利用枠切れの誤りの種類(codexErrorInfo の綴り — codex 0.162.1)。綴りの定義はここ 1 か所(handler の判定と fake の終わりが読む)。
 (val USAGE-LIMIT-KIND "usageLimitExceeded")
+;; code mode が使えない警告の文の頭と、道具の呼びを閉じた(fail closed)と名乗る句(codex 0.162.1 の codex-rs/core の
+;; CodeModeService.take_unavailable_warning — 「Code Mode is unavailable because <訳>. <振る舞い>; enable …」)。振る舞いは道具の出し方で
+;; 2 つ: code mode だけで道具を呼ぶ形(gpt-6-astra)は「Code mode will fail closed」で道具を 1 つも呼べず、code mode と直の道具の両方を
+;; 持つ形は「Falling back to direct tools」で直の道具に戻る(道具は使える)。codex の文を照らすのはこの 2 つの綴りだけ(warning-of)。
+(val CODE-MODE-UNAVAILABLE-HEAD "Code Mode is unavailable because ")
+(val CODE-MODE-FAIL-CLOSED "Code mode will fail closed")
 
 ;; 道具の item の状態(道具の item の status の綴り — codex 0.162.1 の CommandExecutionStatus と PatchApplyStatus は completed・failed・
 ;; declined・inProgress、McpToolCallStatus と DynamicToolCallStatus はそのうち 3 つ、CollabAgentToolCallStatus は declined の代わりに
@@ -249,6 +255,13 @@
   (#^ str turn-id)
   (#^ bool will-retry)
   (#^ TurnErrorWire error))
+
+(defwire WarningParamsWire
+  "warning の通知の params(codex 0.162.1 の WarningNotification — 利用者へ見せる短い文と、名指す thread〔無いこともある〕。ターンは
+   名乗らない)。"
+  {:tags {:context "codex" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| str None) thread-id None)
+  (#^ str message))
 
 (defwire TokenCountWire
   "token の数の組(名乗らない欄は None — 0 を発明しない)。"
@@ -549,6 +562,24 @@
   (#^ (| RateLimitWindow None) primary)
   (#^ (| RateLimitWindow None) secondary))
 
+(defrecord CodexWarning
+  "codex の警告(warning の通知 — 利用者へ見せる短い文): thread-id = 名指す thread(名乗らなければ None)/ message = 警告の文。ターンを
+   名乗らない(codex 0.162.1 はターンを始める前に出す — 例 model の宣言が見つからない・試しの機能を使っている)。code mode が使えず
+   道具の呼びを閉じた警告は、この型でなく CodeModeUnavailable。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ (| str None) thread-id)
+  (#^ str message))
+
+(defrecord CodeModeUnavailable
+  "code mode が使えず、道具の呼びを閉じた(fail closed)と codex が名乗った事実(warning の通知のうち、文が CODE-MODE-UNAVAILABLE-HEAD
+   で始まり CODE-MODE-FAIL-CLOSED を含む物): thread-id = 名指す thread / message = codex の警告の文(使えない訳 — 例 host の file が
+   見つからない — を含む)。この process の model は道具を 1 つも呼べないまま文だけを返す。codex 0.162.1 は thread ごとに 1 度だけ、
+   最初のターンを始める時(turn/start の答えより前)に出す — 2 つ目からのターンでは出ない。code mode の使える・使えないは codex が
+   host の file が在るかだけで決めるので、host の file が在って起動できない形ではこの警告は出ない(録り code-mode-host-broken)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ (| str None) thread-id)
+  (#^ str message))
+
 (defrecord Other
   "語彙の外の通知: method = 通知の名(中身は持たない — 発明しない)。"
   {:tags {:context "codex" :role "type"}}
@@ -561,7 +592,7 @@
   (#^ str reason))
 
 (val CodexLine (| Response ErrorResponse ServerRequest ThreadStarted TurnStarted TextDelta ReasoningDelta AgentMessageDone
-                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded Other Unparsed))
+                   ItemStarted ItemDone TokenUsage RateLimits TurnError TurnEnded CodexWarning CodeModeUnavailable Other Unparsed))
 
 ;; ターンを名乗る記録(params の turnId か turn.id でターンの id を必ず持つ記録)。どの記録がターンを名乗るかは codex の行の形から
 ;; 決まる知識なので、記録の型と同じこの file が 1 か所で名乗る — handler はこの集まりで記録をターンの列へ振り分け、記録の class を
@@ -663,6 +694,15 @@
   (<- whole-thread (token-count-of params.token-usage.total))
   (TokenUsage :thread-id params.thread-id :turn-id params.turn-id :last this-call :total whole-thread
               :model-context-window params.token-usage.model-context-window))
+
+
+(defk warning-of [#^ WarningParamsWire params]
+  {:pre [(: params WarningParamsWire)] :post [(: % (| CodexWarning CodeModeUnavailable))] :tags {:context "codex" :role "foundation"}}
+  "warning の通知を、上の層が道具を呼べない process を見分ける事実(code mode が使えず道具の呼びを閉じた警告 — CodeModeUnavailable)と、
+   ほかの警告(CodexWarning — 直の道具に戻る code mode の警告を含む)に分けるため。codex の文を照らすのはここ 1 か所。"
+  (if (and (.startswith params.message CODE-MODE-UNAVAILABLE-HEAD) (in CODE-MODE-FAIL-CLOSED params.message))
+      (CodeModeUnavailable :thread-id params.thread-id :message params.message)
+      (CodexWarning :thread-id params.thread-id :message params.message)))
 
 
 (defk window-of [window]
@@ -875,6 +915,7 @@
     "error" (do (<- record (parsed-into method ErrorParamsWire turn-error-of params)) record)
     "thread/tokenUsage/updated" (do (<- record (parsed-into method TokenUsageParamsWire token-usage-of params)) record)
     "account/rateLimits/updated" (do (<- record (parsed-into method RateLimitsParamsWire rate-limits-of params)) record)
+    "warning" (do (<- record (parsed-into method WarningParamsWire warning-of params)) record)
     _ (Other :method method)))
 
 

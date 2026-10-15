@@ -41,6 +41,7 @@ from doeff_codex.effects import CodexAnswerRequest as CodexAnswerRequest
 from doeff_codex.effects import CodexCloseSession as CodexCloseSession
 from doeff_codex.effects import CodexLaunchCount as CodexLaunchCount
 from doeff_codex.effects import BackendLost as BackendLost
+from doeff_codex.effects import ToolsUnavailable as ToolsUnavailable
 from doeff_codex.effects import TurnStarted as TurnStarted
 from doeff_codex.effects import Steered as Steered
 from doeff_codex.effects import InterruptRequested as InterruptRequested
@@ -55,8 +56,6 @@ from doeff_codex.effects import NoTurnInFlight as NoTurnInFlight
 from doeff_codex.effects import UnknownTurn as UnknownTurn
 from doeff_codex.effects import NoSuchRequest as NoSuchRequest
 from doeff_codex.effects import ProcessStillAlive as ProcessStillAlive
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 RETIRE_WAIT_SECONDS: Incomplete
 KEPT_TURNS: int
 CLIENT_NAME: str
@@ -102,6 +101,7 @@ class SessionRuntime:
     exit_code: Incomplete
     stderr_tail: Incomplete
     credential_home: Incomplete
+    tools_lost: Incomplete
     answers: dict[int | str, object]
     turns: dict[str, TurnLog]
     outside: tuple
@@ -123,6 +123,9 @@ class SessionRuntime:
         ...
 
     def add_event(self, log: TurnLog, record: Incomplete) -> Incomplete:
+        ...
+
+    def end_toolless_turn(self) -> Incomplete:
         ...
 
 class CodexHost:

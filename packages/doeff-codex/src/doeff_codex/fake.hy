@@ -13,8 +13,8 @@
 (import doeff_codex.lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
                            UsageLimitHit USAGE-LIMIT-KIND])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
-                             CodexCloseSession CodexLaunchCount BackendLost TurnStarted Steered InterruptRequested TurnEventPage
-                             SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
+                             CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
+                             TurnEventPage SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
 
 ;; 走っているターンに足した入力を、そのターンの答えの文字の途中として見せる頭(替え玉の app-server と同じ規則 — 足した入力が
 ;; ターンに届いたことを筋書きが読めるように)。
@@ -24,11 +24,14 @@
 (defrecord FakeReply
   "筋書きの答え 1 つ: pieces = 答えの文字の途中の欠片(順に TextDelta になり、連ねると答えの全文)/ hold = 真なら終わりを出さずに
    止め(CodexInterruptTurn)を待つ(途中で止める筋書きのため)/ usage-limit = 口座の利用枠切れの事実(在れば、欠片の後に答えの全文を
-   出さず、誤りの種類 USAGE-LIMIT-KIND の誤りと失敗の終わりで終える — 終わりは本番の handler が枠の知らせから作るのと同じ事実を運ぶ)。"
+   出さず、誤りの種類 USAGE-LIMIT-KIND の誤りと失敗の終わりで終える — 終わりは本番の handler が枠の知らせから作るのと同じ事実を運ぶ)/
+   tools-lost = 道具を呼べない process の筋書き(在れば codex の警告の文 — 始まりの後に、欠片を出さずその文の ToolsUnavailable で終え、
+   process を降ろした数えにする。本番の handler が code mode の使えない警告で終えるのと同じ終わり)。"
   {:tags {:context "codex" :role "type"}}
   (#^ (get tuple #(str ...)) pieces)
   (setv #^ bool hold False)
-  (setv #^ (| UsageLimitHit None) usage-limit None))
+  (setv #^ (| UsageLimitHit None) usage-limit None)
+  (setv #^ (| str None) tools-lost None))
 
 
 (defclass FakeTurn []
@@ -79,8 +82,9 @@
   {:pre [(: world FakeCodexWorld) (: asked CodexStartTurn)] :post [(: % (| TurnStarted ThreadUnknown TurnInFlight))]
    :tags {:context "codex" :role "process"}}
   "ターンを始めるため: 筋書きの答えの欠片を TextDelta に並べ、hold でなければ、利用枠切れの事実が在れば誤りと失敗の終わり(FAILED)、
-   無ければ全文と終わり(COMPLETED)まで出す。続きは同じ宣言で生きた
-   process が在れば使い回した数え(起こし直しは launches を増やす)。"
+   無ければ全文と終わり(COMPLETED)まで出す。道具を呼べない筋書き(tools-lost)は始まりの後すぐ ToolsUnavailable で終え、process を
+   降ろした数えにする(次のターンは起こし直す)。続きは同じ宣言で生きた process が在れば使い回した数え(起こし直しは launches を
+   増やす)。"
   (val origin asked.origin)
   (val thread (match origin
                 (ResumeThread) (.get world.threads origin.thread-id)
@@ -103,6 +107,10 @@
         thread.current turn-id)
   (val reply (world.respond asked.input))
   (.add thread turn (TurnStartedLine :thread-id thread-id :turn-id turn-id))
+  (when (is-not reply.tools-lost None)
+    (setv turn.end (ToolsUnavailable :detail reply.tools-lost)
+          thread.alive False)
+    (return (TurnStarted :turn (CodexTurn :thread-id thread-id :turn-id turn-id))))
   (.add thread turn (ItemStarted :thread-id thread-id :turn-id turn-id :item-id item-id :item-type "agentMessage"))
   (for [piece reply.pieces]
     (.add thread turn (TextDelta :thread-id thread-id :turn-id turn-id :item-id item-id :text piece)))

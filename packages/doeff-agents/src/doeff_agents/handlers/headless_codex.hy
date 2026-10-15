@@ -46,6 +46,9 @@
 ;;;     (AgentAccountLimit — claude の adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ・card acp:kanban-issue:ki-a59d80e0afa9)。
 ;;;     判定(誤りの種類の綴り・尽きた窓の選び・枠の知らせの重ね方)は層 2(doeff-codex の limits.hy)が持ち、ここは窓の長さを claude と
 ;;;     同じ綴りの窓の名にして運ぶだけ(account-limit-of)。
+;;;   道具を呼べない process: 層 2 の終わり ToolsUnavailable(codex が code mode を使えず道具の呼びを閉じたと名乗った process のターンを、
+;;;     層 2 が model の文だけの答えの前に終えた物)→ AgentTurnFailed(detail = codex の警告の文・account_limit なし)。agora は失敗の
+;;;     ターン(cli-failed)と読み、completed と見せない(card acp:kanban-issue:ki-86b1443b22b6)。警告の判定と process の降ろしは層 2。
 ;;;   入力の行方: ターンを始めた入力・足した入力は、層 2 が受けた時に AgentInputFateEvent(started)を出し、完了の input_refs にも載せる
 ;;;     (codex は入力ごとの行方を行で名乗らない — 受けた入力はそのターンが読む)。
 ;;;   usage: 入力の側は cache から読んだ分を除く(codex の inputTokens は cachedInputTokens を含む — 層 3 の input_tokens は claude と同じ
@@ -90,7 +93,7 @@
                            TurnStatus UsageLimitHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall DynamicCall AgentCall
                            ImageView])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
-                             BackendLost TurnStarted Steered InterruptRequested TurnEventPage
+                             BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested TurnEventPage
                              ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
 
 (val HANDLER-NAME "headless-codex-handler")
@@ -355,12 +358,12 @@
       (AgentAccountLimit :window (.get WINDOW-NAMES hit.minutes) :resets-at hit.resets-at :text hit.text)))
 
 (defk end-of [#^ CodexHeadlessSession session end]
-  {:pre [(: session CodexHeadlessSession) (: end (| TurnEnded BackendLost))]
+  {:pre [(: session CodexHeadlessSession) (: end (| TurnEnded BackendLost ToolsUnavailable))]
    :post [(: % (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost))]
    :tags {:context "headless-adapter" :role "judgment"}}
   "層 2 のターンの終わりを層 3 のターンの終わりへ写すため(続きの身元 resume-from = thread の id・どの終わりも最後の呼びの usage と
-   model と窓を運ぶ・失敗の終わりは口座の利用枠切れの事実も運ぶ)。止めた session(stopped)の終わりは、閉じた process の終わりでも
-   割り込みの終わり(cli_kept 偽)にする。"
+   model と窓を運ぶ・失敗の終わりは口座の利用枠切れの事実も運ぶ・道具を呼べない process の終わりは codex の警告の文の失敗)。止めた
+   session(stopped)の終わりは、閉じた process の終わりでも割り込みの終わり(cli_kept 偽)にする。"
   (val model session.spec.model)
   (val last-model (if (is session.last-call None) None model))
   (val windows (if (and (is-not model None) (is-not session.window None)) #((ModelWindow model session.window None)) #()))
@@ -383,6 +386,9 @@
                      :resume-from thread-id :usage session.turn-usage
                      :last-call-usage session.last-call :last-call-model last-model :model-windows windows
                      :account-limit (! (account-limit-of end.usage-limit)))
+    (ToolsUnavailable)
+    (AgentTurnFailed :detail end.detail :input-refs session.turn-refs :resume-from thread-id :usage session.turn-usage
+                     :last-call-usage session.last-call :last-call-model last-model :model-windows windows)
     (BackendLost)
     (if session.stopped
         (AgentTurnInterrupted :cli-kept False :resume-from thread-id
@@ -496,7 +502,7 @@
   None)
 
 (defk close-turn [#^ CodexHeadlessSession session #^ CodexTurn turn end]
-  {:pre [(: session CodexHeadlessSession) (: turn CodexTurn) (: end (| TurnEnded BackendLost))] :post [(: % None)]
+  {:pre [(: session CodexHeadlessSession) (: turn CodexTurn) (: end (| TurnEnded BackendLost ToolsUnavailable))] :post [(: % None)]
    :tags {:context "headless-adapter" :role "judgment"}}
   "層 2 のターン turn の終わりを出来事に置き、待たせた入力のターンを始めるため。時刻を読んで戻った後に、別の task が同じターンを
    既に閉じていれば何もしない。"

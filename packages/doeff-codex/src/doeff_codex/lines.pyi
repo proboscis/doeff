@@ -18,6 +18,8 @@ class TurnStatus(StrEnum):
     FAILED = 'failed'
     IN_PROGRESS = 'inProgress'
 USAGE_LIMIT_KIND: str
+CODE_MODE_UNAVAILABLE_HEAD: str
+CODE_MODE_FAIL_CLOSED: str
 
 class ToolStatus(StrEnum):
     COMPLETED = 'completed'
@@ -202,6 +204,11 @@ class ErrorParamsWire:
     turn_id: str
     will_retry: bool
     error: TurnErrorWire
+
+@dataclass(frozen=True, kw_only=True)
+class WarningParamsWire:
+    thread_id: str | None = None
+    message: str
 
 @dataclass(frozen=True, kw_only=True)
 class TokenCountWire:
@@ -430,6 +437,16 @@ class RateLimits:
     secondary: RateLimitWindow | None
 
 @dataclass(frozen=True, kw_only=True)
+class CodexWarning:
+    thread_id: str | None
+    message: str
+
+@dataclass(frozen=True, kw_only=True)
+class CodeModeUnavailable:
+    thread_id: str | None
+    message: str
+
+@dataclass(frozen=True, kw_only=True)
 class Other:
     method: str
 
@@ -437,7 +454,7 @@ class Other:
 class Unparsed:
     method: str
     reason: str
-CodexLine: TypeAlias = Response | ErrorResponse | ServerRequest | ThreadStarted | TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | RateLimits | TurnError | TurnEnded | Other | Unparsed
+CodexLine: TypeAlias = Response | ErrorResponse | ServerRequest | ThreadStarted | TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | RateLimits | TurnError | TurnEnded | CodexWarning | CodeModeUnavailable | Other | Unparsed
 TurnRecord: TypeAlias = TurnStarted | TextDelta | ReasoningDelta | AgentMessageDone | ItemStarted | ItemDone | TokenUsage | TurnError | TurnEnded
 LimitRecord = RateLimits
 
@@ -468,6 +485,9 @@ def turn_error_of(params: ErrorParamsWire) -> _Program[TurnError, object]:
     ...
 
 def token_usage_of(params: TokenUsageParamsWire) -> _Program[TokenUsage, object]:
+    ...
+
+def warning_of(params: WarningParamsWire) -> _Program[CodexWarning | CodeModeUnavailable, object]:
     ...
 
 def window_of(window: RateLimitWindowWire | None) -> _Program[RateLimitWindow | None, object]:
