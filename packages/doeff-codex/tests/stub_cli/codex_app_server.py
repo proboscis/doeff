@@ -17,10 +17,13 @@ stdin の JSON-RPC の要求に、録った実物の行(tests/recorded/codex-0.1
   - SPANNING の目印(BG-COMMAND・BG-WAIT)が在れば、2 つのターンにまたがる録り(後ろで走る命令の始まりのターンと、その命令が終わる
     次のターン)のうち、目印のターンの通知を流す。前のターンを名乗る遅れた行(命令の終わり)は、この process が前のターンに振った id へ
     差し替える。
-  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS・OTHER-TOOLS)が在れば、その目印で録ったターンの通知(turn/start の
-    答えの後 〜 そのターンの turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と apply_patch と
-    web 検索の道具の item を持つターン・MCP と動的な道具と画像を見る道具と子の agent の道具の item を持つターン — 子の agent の
-    thread の行(子のターンの始まりと終わりを含む)も録った順のまま混ぜて流す)。
+  - REPLAYED の目印(USAGE-LIMIT・RATE-LIMIT・TOOL-CALLS・OTHER-TOOLS・CODE-MODE)が在れば、その目印で録ったターンの通知
+    (turn/start の答えの後 〜 そのターンの turn/completed)をそのまま流す(利用枠切れ・429 の断りで失敗したターン・命令の成功と失敗と
+    apply_patch と web 検索の道具の item を持つターン・MCP と動的な道具と画像を見る道具と子の agent の道具の item を持つターン・code
+    mode の host を使えない codex の、文だけを返すターン — 子の agent の thread の行(子のターンの始まりと終わりを含む)も録った順の
+    まま混ぜて流す)。
+  - PREFACED の目印(CODE-MODE)が在れば、その目印で録った 1 つ目のターンの前の警告(thread を開いた答えと turn/start の答えの間の
+    warning の通知 — code mode が使えない警告を含む)を、turn/start の答えより先に書く(録った順)。
   - どれでもなければ、録った 1 つ目のターンの通知(turn/started 〜 turn/completed)をそのまま流す。
 - turn/steer → SLOW のターンが走っていて expectedTurnId がそのターンなら受けて、足した文字を ``steered:<文字> `` の答えの文字の
   途中として出す(fake の handler と同じ規則)。走っていなければ JSON-RPC の誤りで断る。
@@ -41,9 +44,12 @@ SETTINGS_PHRASE = "Tell the settings."
 HOME_PHRASE = "Tell the home."
 STEERED_PREFIX = "steered:"
 # 入力の目印 → 録った筋書きの名(その筋書きのターンの通知をそのまま流す)。
-REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls", "OTHER-TOOLS": "other-tools"}
+REPLAYED = {"USAGE-LIMIT": "usage-limit", "RATE-LIMIT": "rate-limit", "TOOL-CALLS": "tool-calls", "OTHER-TOOLS": "other-tools",
+            "CODE-MODE": "code-mode-unavailable"}
 # 入力の目印 → 2 つのターンにまたがる録りの名と、そのターンを始めた録りの要求の id(turn/start)。
 SPANNING = {"BG-COMMAND": ("background-command", 3), "BG-WAIT": ("background-command", 4)}
+# 入力の目印 → 録った筋書きの名(1 つ目のターンの前の警告を turn/start の答えより先に書く — そのターンの通知は REPLAYED が流す)。
+PREFACED = {"CODE-MODE": "code-mode-unavailable"}
 # 走っていないターンへの turn/steer を断る JSON-RPC の誤りの code(invalid request)。
 NOT_STEERABLE_CODE = -32600
 
@@ -156,6 +162,15 @@ class Stub:
         text = json.dumps(messages[start:end + 1], ensure_ascii=False)
         return json.loads(text.replace(thread, self.mut_thread_id).replace(turn, turn_id))
 
+    def preface_of(self, name: str) -> list[dict[str, object]]:
+        """録った筋書き name の、thread を開いた答え(id 2)と 1 つ目のターンの turn/start の答え(id 3)の間の警告(warning の通知)を、
+        その録りの thread の id をこの process の id へ差し替えて取るため(codex はターンを始める時の警告を答えより先に出す)。"""
+        messages = recorded_messages(name)
+        thread = str(answer_of(messages, 2)["result"]["thread"]["id"])  # type: ignore[index]  # 録った答えの形は検が確かめている
+        between = messages[messages.index(answer_of(messages, 2)) + 1:messages.index(answer_of(messages, 3))]
+        text = json.dumps([message for message in between if message.get("method") == "warning"], ensure_ascii=False)
+        return json.loads(text.replace(thread, self.mut_thread_id))
+
     def first_turn_notifications(self) -> list[dict[str, object]]:
         """録った 1 つ目のターンの通知(turn/start の答えの後から最初の turn/completed まで)を取るため。"""
         start = self.two_turns.index(answer_of(self.two_turns, 3)) + 1
@@ -207,9 +222,12 @@ class Stub:
     def start_turn(self, request_id: object, params: dict[str, object]) -> None:
         """ターンを始め、入力の文字で決めた筋書き(頭の註)を流すため。"""
         turn_id = self.fresh_id("turn")
-        self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 3), turn_id)["result"]})
         inputs = list(params.get("input", []))  # type: ignore[call-overload]  # 要求の形は handler の rpc.hy が作る
         said = said_text(inputs)
+        prefaced = next((name for marker, name in PREFACED.items() if marker in said), None)
+        for warning in self.preface_of(prefaced) if prefaced is not None else []:
+            self.write(warning)
+        self.write({"id": request_id, "result": self.renamed(answer_of(self.two_turns, 3), turn_id)["result"]})
         if IMAGES_PHRASE in said:
             self.answer_turn(turn_id, f"IMAGES {image_count(inputs)}")
             return

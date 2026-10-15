@@ -1,0 +1,5 @@
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "doeff-codex-recorder", "version": "0"}}}
+{"jsonrpc": "2.0", "method": "initialized"}
+{"jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": {"cwd": "/home/ubuntu/.codex-rec-cm15/cwd", "approvalPolicy": "never", "sandbox": "danger-full-access"}}
+{"jsonrpc": "2.0", "id": 3, "method": "turn/start", "params": {"threadId": "01a13e24-3a60-7b60-8ca6-4fc34e92d540", "input": [{"type": "text", "text": "CODE-MODE please"}]}}
+{"jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": {"threadId": "01a13e24-3a60-7b60-8ca6-4fc34e92d540", "input": [{"type": "text", "text": "CODE-MODE again"}]}}
