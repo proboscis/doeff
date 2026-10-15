@@ -5,6 +5,7 @@ from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.http_server_effects import HttpListen as HttpListen
 from doeff_core_effects.http_server_effects import HttpNextRequest as HttpNextRequest
+from doeff_core_effects.http_server_effects import HttpTakeQueued as HttpTakeQueued
 from doeff_core_effects.http_server_effects import HttpRespond as HttpRespond
 from doeff_core_effects.http_server_effects import HttpForward as HttpForward
 from doeff_core_effects.http_server_effects import WsForward as WsForward
@@ -96,6 +97,20 @@ def probe_hit(probes: tuple[HttpProbe, ...], event: HttpRequestArrived | WsTextA
     ...
 
 def probe_served(arrival: HttpRequestArrived, answer: HttpProbeAnswer) -> _Program[HttpServed, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class ScriptTake:
+    event: HttpRequestArrived | WsTextArrived | WsBinaryArrived | WsClosed | WsOpened | None
+    pending: tuple[object, ...]
+    served: tuple[object, ...]
+    opened: frozenset
+    tally: WsSendReport
+    backlog: dict
+    readable: dict
+    arrived: dict
+
+def script_take(mouths: tuple[HttpProbe, ...], listening: bool, pending: tuple, served: tuple, opened: frozenset, tally: WsSendReport, backlog: dict, readable: dict, arrived: dict) -> _Program[ScriptTake, object]:
     ...
 
 def scripted_http_server(script: HttpScript) -> _Handler:

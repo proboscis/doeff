@@ -9,7 +9,11 @@
 ;;;                    新しい接続は開いている待ち受けへ kernel が振り分ける)。既定の偽は今どおり — 使われている port は開けない
 ;;;   HttpNextRequest  次の出来事。答え = HttpEvent: HttpRequestArrived(札・method・path・target・頭・ws への Upgrade を求めたか・送り元の address)・
 ;;;                    ws の出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed — WsAccept で ws に上げた札だけ)・HttpServerClosed
-;;;   HttpRespond      札の要求へ status・頭・本文(HttpBodyBytes / HttpBodyFileRange / HttpNoBody)を送る。答え = None
+;;;   HttpTakeQueued   既に受けて列に溜まっている出来事を、待たずに全部取る。答え = HttpEvent の tuple(受けた順・溜まっていなければ空)。
+;;;                    取った出来事は HttpNextRequest でもう渡らない(同じ流れの先取り)。閉じた後は HttpNextRequest と同じく HttpServerClosed を
+;;;                    1 つ含んで止まる。消費者が、溜まった出来事の中から急ぐ物を先に処理する並べ替えのため(agora-controllers
+;;;                    ki-472623c28ba0 — 画面 6 枚の同時の読み込みの 36 通の後ろで、別の接続の会話を開く要求が約 1 秒待った)
+;;;   HttpRespond     札の要求へ status・頭・本文(HttpBodyBytes / HttpBodyFileRange / HttpNoBody)を送る。答え = None
 ;;;   HttpForward      札の要求を url へ HTTP で中継する(本文は両向き streaming・hop-by-hop の頭を落とし X-Forwarded-Proto / -For を足す・
 ;;;                    届かなければ 502)。答え = None
 ;;;   WsForward        札の要求を url へ ws で中継する(frame を両向きに写す・ping / pong と close の状態符を素通し・届かなければ 502)。答え = None
@@ -236,6 +240,10 @@
 
 (defclass [(dataclass :frozen True)] HttpNextRequest [(get EffectBase HttpEvent)]
   "次の出来事を 1 つ受ける(頭の註)。")
+
+
+(defclass [(dataclass :frozen True)] HttpTakeQueued [(get EffectBase (get tuple #(HttpEvent ...)))]
+  "既に受けて列に溜まっている出来事を、待たずに全部取る(頭の註)。")
 
 
 (defclass [(dataclass :frozen True)] HttpRespond [(get EffectBase None)]

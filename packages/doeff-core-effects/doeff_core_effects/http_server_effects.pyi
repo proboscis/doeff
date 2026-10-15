@@ -127,6 +127,10 @@ class HttpNextRequest(EffectBase[HttpEvent]):
     ...
 
 @dataclass(frozen=True)
+class HttpTakeQueued(EffectBase[tuple[HttpEvent, ...]]):
+    ...
+
+@dataclass(frozen=True)
 class HttpRespond(EffectBase[None]):
     ticket: str
     status: int

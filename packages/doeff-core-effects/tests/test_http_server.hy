@@ -33,7 +33,7 @@
 (import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpServerClosed HttpListen HttpNextRequest
                                                 HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
                                                 ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText WsClose
-                                                HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed
+                                                HttpShutdown TakeWsSendReport WsSendReport WsTextArrived WsClosed HttpTakeQueued
                                                 WsCloseSent AppendHttpScript HttpReadBody HttpBodyRead HttpBodyFailed HttpBodyOutcome ScriptedBody
                                                 WS-CUT-REASON HttpProbe HttpProbeAnswer HttpStopListening WsTextSent])
 (import doeff_core_effects.scripted_http_server [scripted-http-server])
@@ -238,6 +238,30 @@
   (<- first HttpRequestArrived (HttpNextRequest))
   (<- second HttpRequestArrived (HttpNextRequest))
   #(first second))
+
+
+(defk take-queued-then-next []
+  {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "台本の 1 つ目を HttpNextRequest で受け、残りを HttpTakeQueued でまとめて取り、もう 1 度の HttpTakeQueued・後から足した出来事の
+   HttpTakeQueued・尽きた後の HttpNextRequest・閉じた後の HttpTakeQueued を見るため(答え = 札・型の名の組)。"
+  (<- first HttpRequestArrived (HttpNextRequest))
+  (<- rest tuple (HttpTakeQueued))
+  (<- again tuple (HttpTakeQueued))
+  (<- (AppendHttpScript :arrivals #((arrival "z" "/late"))))
+  (<- late tuple (HttpTakeQueued))
+  (<- dry HttpEvent (HttpNextRequest))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.0))
+  (<- shut tuple (HttpTakeQueued))
+  #(first.ticket (tuple (gfor e rest e.ticket)) again (tuple (gfor e late e.ticket)) (. (type dry) __name__)
+    (tuple (gfor e shut #((. (type e) __name__) e.reason)))))
+
+
+(deftest test-the-scripted-server-hands-every-queued-arrival-at-once
+  ;; HttpTakeQueued は台本の列に今ある出来事を受けた順に全部渡し、渡した物は HttpNextRequest でもう渡らない。列が空なら空の tuple(閉じを
+  ;; 名乗らない)・後から足した出来事も取れる・閉じた後は閉じの理由 1 つ(card ki-472623c28ba0)。
+  (val script (HttpScript :arrivals #((arrival 1 "/a") (arrival 2 "/b") (arrival 3 "/c"))))
+  (<- got tuple (with-handler [(state) (scripted-http-server script)] (take-queued-then-next)))
+  (assert (= got #("1" #("2" "3") #() #("z") "HttpServerClosed" #(#("HttpServerClosed" "検が閉じた")))) got))
 
 
 (deftest test-the-scripted-server-hands-over-the-remote-the-script-names
@@ -922,6 +946,27 @@
   #((- after before) taken))
 
 
+(defk take-a-wave-at-once [box sent]
+  {:pre [(: box queue.Queue) (: sent queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "take-a-wave と同じ波で、1 つ目の到着の後の残りを HttpTakeQueued 1 回でまとめて取り、全部に答えるため(card ki-472623c28ba0)。
+   答え = #(残りを取る間に共有の event loop へ入った回数 取った順の到着)。閉じた後の HttpTakeQueued が閉じの理由を名乗る事も見る。"
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
+  (.put box bound)
+  (<- first HttpRequestArrived (HttpNextRequest))
+  (for [_ (range WAVE-SIZE)]
+    (.get sent :timeout WAVE-SECONDS))
+  (time.sleep SETTLE-SECONDS)
+  (<- before int (ReadAwaits))
+  (<- rest tuple (HttpTakeQueued))
+  (<- after int (ReadAwaits))
+  (val taken (+ #(first) rest))
+  (<- (answer-each taken))
+  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (<- shut tuple (HttpTakeQueued))
+  (assert (= (lfor e shut (. (type e) __name__)) ["HttpServerClosed"]) shut)
+  #((- after before) taken))
+
+
 (deff ask-in-wave [address path sent answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
   {:pre [(: address HttpAddress) (: path str) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
@@ -950,25 +995,40 @@
   None)
 
 
-(defk wave-awaits []
-  {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で take-a-wave を走らせ、#(共有の loop へ入った回数 取った順の到着 相手が受けた答えの集合) を返すため(aiohttp の
-   無い venv では skip)。"
+(defk wave-awaits [take]
+  {:pre [(: take Callable)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "本物の答え手の下で波を取る program take(take-a-wave か take-a-wave-at-once)を走らせ、#(共有の loop へ入った回数 取った順の到着
+   相手が受けた答えの集合) を返すため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
   (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
   (val box (queue.Queue))
   (val sent (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target fire-wave :args #(box sent answers) :daemon True))
-  (<- got tuple (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (take-a-wave box sent)))
+  (<- got tuple (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (take box sent)))
   (val replies (frozenset (gfor _ (range WAVE-SIZE) (.get answers :timeout WAVE-SECONDS))))
   (+ got #(replies)))
+
+
+(deftest test-the-aiohttp-server-hands-every-queued-arrival-at-once
+  ;; HttpTakeQueued は列に既に在る到着を、共有の event loop へ入らずに 1 回で全部取る(card ki-472623c28ba0)。取りこぼしも順の入れ替わりも
+  ;; 無い: 1 つ目の後の残り WAVE-SIZE - 1 個を札の順に取り、相手は全員が自分の path の答えを受ける。閉じた後は閉じの理由。
+  (<- got tuple (wave-awaits take-a-wave-at-once))
+  (val entered (get got 0))
+  (val taken (get got 1))
+  (val replies (get got 2))
+  (val paths (frozenset (gfor n (range WAVE-SIZE) (.format "/w{}" n))))
+  (assert (= entered 0) got)
+  (assert (= (len taken) WAVE-SIZE) taken)
+  (assert (= (lfor a taken (int a.ticket)) (sorted (gfor a taken (int a.ticket)))) taken)
+  (assert (= (frozenset (gfor a taken a.path)) paths) taken)
+  (assert (= replies (frozenset (gfor p paths #(p p)))) replies))
 
 
 (deftest test-the-aiohttp-server-takes-queued-arrivals-without-a-round-trip
   ;; 列に既に在る到着は、HttpNextRequest が共有の event loop へ入らずに取る(直す前は 1 つ取るたびに Await 1 回 — 共有の loop →
   ;; 待ち受けの loop → 戻りの往復)。取りこぼしも順の入れ替わりも無い: 取った順は札の順のまま、相手は全員が自分の path の答えを受ける。
-  (<- got tuple (wave-awaits))
+  (<- got tuple (wave-awaits take-a-wave))
   (val entered (get got 0))
   (val taken (get got 1))
   (val replies (get got 2))

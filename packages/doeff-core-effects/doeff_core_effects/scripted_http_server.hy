@@ -11,6 +11,9 @@
 ;;;                    列に何が残っていても HttpServerClosed(その理由)。probe の口に当たる要求(probe-for)は渡さず、ここで本物と同じ
 ;;;                    probe-answer(answer を自分の run で — 本体の run の handler と状態に触れない)で答えて記録し、次の出来事へ進む。
 ;;;                    台本に thread は無いので、本体の流れが probe を待たせない形は「本体へ届かず、本体の命令を待たずに答える」で表す
+;;;   HttpTakeQueued   台本の列に今ある出来事(AppendHttpScript で足された物を含む)を、HttpNextRequest と同じ取り方(script-take — 捨て・
+;;;                    probe の答え・帳簿)で全部取る。列が尽きても閉じを名乗らない(次の HttpNextRequest が名乗る)。HttpShutdown の後は
+;;;                    閉じの理由の HttpServerClosed 1 つ
 ;;;   HttpReadBody     台本の本文(ScriptedBody)で答える: 宣言の長さ(要求の頭の Content-Length)が上限を超えれば読まずに HttpBodyTooLarge、
 ;;;                    本文が上限を超えれば HttpBodyTooLarge(宣言が無ければ None)、failed が在れば HttpBodyFailed、他は HttpBodyRead(台本に
 ;;;                    本文の無い札は b"")。札ごとに 1 度だけ — 読み終えた札・命令を受けた札・知らない札は HttpBodyFailed(本物と同じ)
@@ -36,7 +39,7 @@
 (val MODULE-TAGS {:context "http-server" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
-(import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose
+(import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpTakeQueued HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose
                                                 HttpShutdown HttpStopListening TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT
@@ -177,6 +180,60 @@
               :body (if carried (.decode answer.body "utf-8" :errors "replace") "")))
 
 
+(defrecord ScriptTake
+  "台本の列から出来事を 1 つ取った結果: 本体へ渡す出来事(列が尽きていれば None)と、取った後の session の値(列・記録・開いた札・送りの
+   勘定・箱の溜まり・本文を読める札・届けた要求)。"
+  (#^ (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened None) event)
+  (#^ (get tuple #(object ...)) pending)
+  (#^ (get tuple #(object ...)) served)
+  (#^ frozenset opened)
+  (#^ WsSendReport tally)
+  (#^ dict backlog)
+  (#^ dict readable)
+  (#^ dict arrived))
+
+
+(defk script-take [mouths listening pending served opened tally backlog readable arrived]
+  {:pre [(: mouths (of tuple HttpProbe ...)) (: listening bool) (: pending tuple) (: served tuple) (: opened frozenset) (: tally WsSendReport)
+         (: backlog dict) (: readable dict) (: arrived dict)]
+   :post [(: % ScriptTake)] :tags {:context "http-server" :role "foundation"}}
+  "台本の列の頭の出来事を 1 つ取るため(HttpNextRequest と HttpTakeQueued の 1 つの取り方): 待ち受けだけを閉じた後は新しい要求を捨て、
+   probe の口に当たる要求は本体へ渡さずにここで答えて記録し、頭の出来事の帳簿(閉じた札の箱の溜まりを捨てる・本文を読める札と届けた要求を
+   控える)を付ける。列が尽きていれば出来事は None。"
+  (var rest (if listening pending (tuple (gfor e pending :if (not (isinstance e HttpRequestArrived)) e))))
+  (var record served)
+  (var answering True)
+  (while (and answering rest)
+    (<- hit (| ProbeHit None) (probe-hit mouths (get rest 0)))
+    (if (is hit None)
+        (:= answering False)
+        (do (<- answer HttpServed (probe-served hit.arrival (probe-answer hit.probe)))
+            (:= record (+ record #(answer)))
+            (:= rest (cut rest 1 None)))))
+  (when (not rest)
+    (return (ScriptTake :event None :pending rest :served record :opened opened :tally tally :backlog backlog :readable readable
+                        :arrived arrived)))
+  (val head (get rest 0))
+  (var still-open opened)
+  (var counted tally)
+  (var boxes backlog)
+  (var reading readable)
+  (var handed arrived)
+  (when (isinstance head WsClosed)
+    ;; 相手が閉じた札: 以後の送りは捨てる・箱の溜まりは捨てた勘定へ。
+    (:= still-open (- opened #{head.ticket}))
+    (<- dropped WsSendReport (tally-dropped tally (.get backlog head.ticket 0) False))
+    (:= counted dropped)
+    (<- kept dict (without-ticket backlog head.ticket))
+    (:= boxes kept))
+  (when (isinstance head HttpRequestArrived)
+    (<- declared (| int None) (declared-length head.headers))
+    (:= reading (| readable {head.ticket declared}))
+    (:= handed (| arrived {head.ticket head})))
+  (ScriptTake :event head :pending (cut rest 1 None) :served record :opened still-open :tally counted :backlog boxes :readable reading
+              :arrived handed))
+
+
 (defhandler scripted-http-server [#^ HttpScript script]
   ;; 台本の待ち受け(頭の註)。pending = まだ届けていない出来事・served = 受けた命令と送った ws の記録の列・opened = ws に上げて開いている札・
   ;; backlog = 読まない相手の札の箱の溜まり(byte)・limit = 送りの上限(HttpListen が控える)・tally = 送りの勘定・closed = HttpShutdown の理由
@@ -205,36 +262,36 @@
     (:= listening False)
     (resume None))
   (HttpNextRequest []
-    ;; 待ち受けだけを閉じた後は、台本の新しい要求を捨てる(頭の註)。
-    (when (not listening)
-      (:= pending (tuple (gfor e pending :if (not (isinstance e HttpRequestArrived)) e))))
-    ;; probe の口に当たる要求は本体へ渡さず、ここで答えて記録する(頭の註)— 列の頭が probe でなくなるまで。
-    (var answering True)
-    (while (and answering (is closed None) pending)
-      (<- hit (| ProbeHit None) (probe-hit mouths (get pending 0)))
-      (if (is hit None)
-          (:= answering False)
-          (do (<- answer HttpServed (probe-served hit.arrival (probe-answer hit.probe)))
-              (:= served (+ served #(answer)))
-              (:= pending (cut pending 1 None)))))
-    (cond
-      (is-not closed None) (resume (HttpServerClosed :reason closed))
-      pending
-        (do (val head (get pending 0))
-            (:= pending (cut pending 1 None))
-            (when (isinstance head WsClosed)
-              ;; 相手が閉じた札: 以後の送りは捨てる・箱の溜まりは捨てた勘定へ。
-              (:= opened (- opened #{head.ticket}))
-              (<- dropped WsSendReport (tally-dropped tally (.get backlog head.ticket 0) False))
-              (:= tally dropped)
-              (<- rest dict (without-ticket backlog head.ticket))
-              (:= backlog rest))
-            (when (isinstance head HttpRequestArrived)
-              (<- declared (| int None) (declared-length head.headers))
-              (:= readable (| readable {head.ticket declared}))
-              (:= arrived (| arrived {head.ticket head})))
-            (resume head))
-      True (resume (HttpServerClosed :reason CLOSED-REASON))))
+    ;; 閉じた後は列に何が残っていても閉じの理由。他は列の頭を 1 つ取る(script-take — 待ち受けだけを閉じた後の新しい要求の捨てと probe の
+    ;; 口の答えを含む・頭の註)。
+    (if (is-not closed None)
+        (resume (HttpServerClosed :reason closed))
+        (do (<- took ScriptTake (script-take mouths listening pending served opened tally backlog readable arrived))
+            (:= pending took.pending)
+            (:= served took.served)
+            (:= opened took.opened)
+            (:= tally took.tally)
+            (:= backlog took.backlog)
+            (:= readable took.readable)
+            (:= arrived took.arrived)
+            (resume (if (is took.event None) (HttpServerClosed :reason CLOSED-REASON) took.event)))))
+  (HttpTakeQueued []
+    ;; 台本の列に今ある出来事を全部取る(待たない・列が尽きても閉じを名乗らない — 次の HttpNextRequest が名乗る)。閉じた後は閉じの理由 1 つ。
+    (var taken #())
+    (var more (is closed None))
+    (while more
+      (<- took ScriptTake (script-take mouths listening pending served opened tally backlog readable arrived))
+      (:= pending took.pending)
+      (:= served took.served)
+      (:= opened took.opened)
+      (:= tally took.tally)
+      (:= backlog took.backlog)
+      (:= readable took.readable)
+      (:= arrived took.arrived)
+      (if (is took.event None)
+          (:= more False)
+          (:= taken (+ taken #(took.event)))))
+    (resume (if (is closed None) taken #((HttpServerClosed :reason closed)))))
   (HttpReadBody [ticket max-bytes]
     (if (not-in ticket readable)
         (resume (HttpBodyFailed :reason (.format "札 {} の要求の本文は読めない(知らない札・読み終えた札・命令を撃った後の札)" ticket)))

@@ -20,6 +20,7 @@ from doeff_core_effects.http_server_effects import HttpHeader as HttpHeader
 from doeff_core_effects.http_server_effects import HttpRequestArrived as HttpRequestArrived
 from doeff_core_effects.http_server_effects import HttpListen as HttpListen
 from doeff_core_effects.http_server_effects import HttpNextRequest as HttpNextRequest
+from doeff_core_effects.http_server_effects import HttpTakeQueued as HttpTakeQueued
 from doeff_core_effects.http_server_effects import HttpRespond as HttpRespond
 from doeff_core_effects.http_server_effects import HttpForward as HttpForward
 from doeff_core_effects.http_server_effects import WsForward as WsForward
@@ -172,6 +173,9 @@ class WebEdge:
         ...
 
     def take_arrival(self) -> HttpEvent | None:
+        ...
+
+    def take_queued(self) -> tuple[HttpEvent, ...]:
         ...
 
     def closed_or(self, event: HttpEvent) -> HttpEvent:

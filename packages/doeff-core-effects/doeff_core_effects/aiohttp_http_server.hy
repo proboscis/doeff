@@ -67,7 +67,7 @@
 (import aiohttp [web WSMsgType])
 (import doeff_core_effects.effects [Await])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpServerClosed HttpCommand HttpEvent HttpHeader HttpRequestArrived HttpListen
-                                                HttpNextRequest HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose HttpShutdown HttpStopListening
+                                                HttpNextRequest HttpTakeQueued HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose HttpShutdown HttpStopListening
                                                 TakeWsSendReport WsSendReport WsOpened WsTextArrived WsBinaryArrived WsClosed
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody FLUSH-SAMPLES-LIMIT DEFAULT-DRAIN-SECONDS
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
@@ -353,6 +353,18 @@
     (if (is event None)
         None
         (self.closed-or event)))
+
+  (defn #^ (get tuple #(HttpEvent ...)) take-queued [self]
+    "受け口の列に既に在る出来事を、答え手の節の thread で待たずに全部取るため(HttpTakeQueued — 受けた順・空なら空の tuple)。閉じた
+     後は HttpServerClosed を 1 つ含めて止める(その後の出来事は取らない)。"
+    (setv taken #())
+    (while True
+      (setv event (.take-arrival self))
+      (when (is event None)
+        (return taken))
+      (setv taken (+ taken #(event)))
+      (when (isinstance event HttpServerClosed)
+        (return taken))))
 
   (defn #^ HttpEvent closed-or [self #^ HttpEvent event]
     "取った出来事を渡すため — 閉じた後に取った閉じの印でない出来事は、閉じた理由の HttpServerClosed に替える。"
@@ -783,6 +795,9 @@
   (HttpNextRequest []
     (<- arrival HttpEvent (next-on-edge edge))
     (resume arrival))
+  (HttpTakeQueued []
+    ;; 列に既に在る出来事だけを、共有の loop へ入らずに取る(頭の註の待ち受け — 待たない)。
+    (resume (.take-queued edge)))
   (HttpReadBody [ticket max-bytes]
     (<- outcome HttpBodyOutcome (read-on-edge edge ticket max-bytes))
     (resume outcome))
