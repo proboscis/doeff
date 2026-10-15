@@ -18,7 +18,11 @@ class BackendLost:
     detail: str
     exit_code: int | None = None
     stderr_tail: str | None = None
-CodexTurnEnd: TypeAlias = TurnEnded | BackendLost
+
+@dataclass(frozen=True, kw_only=True)
+class ToolsUnavailable:
+    detail: str
+CodexTurnEnd: TypeAlias = TurnEnded | BackendLost | ToolsUnavailable
 
 @dataclass(frozen=True, kw_only=True)
 class TurnStarted:
@@ -36,7 +40,7 @@ class InterruptRequested:
 class TurnEventPage:
     events: tuple[CodexEvent, ...]
     next_seq: int
-    end: TurnEnded | BackendLost | None
+    end: TurnEnded | BackendLost | ToolsUnavailable | None
 
 @dataclass(frozen=True, kw_only=True)
 class Answered:

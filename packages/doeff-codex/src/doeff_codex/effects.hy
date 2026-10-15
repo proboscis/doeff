@@ -14,7 +14,7 @@
 (import doeff_codex.lines [TurnEnded])
 
 
-;; --- ターンの終わり(lines.TurnEnded か、終わりの行を読む前に process が消えた)----------------------------------
+;; --- ターンの終わり(lines.TurnEnded か、終わりの行を読む前に process が消えた・道具を呼べない process だった)--------------
 
 (defrecord BackendLost
   "終わりの行(turn/completed)を読む前に process が消えた(OOM・kill・host の再起動)。次のターンは同じ ResumeThread で頼めばよい
@@ -24,7 +24,15 @@
   (setv #^ (| int None) exit-code None)
   (setv #^ (| str None) stderr-tail None))
 
-(val CodexTurnEnd (| TurnEnded BackendLost))
+(defrecord ToolsUnavailable
+  "このターンの process は道具を 1 つも呼べない(codex が code mode を使えず道具の呼びを閉じたと名乗った — lines.CodeModeUnavailable)
+   ので、handler がターンを失敗で終え、process を降ろした(model が道具を呼べないまま文だけを返して completed になるのを、成功と
+   見せないため)。次のターンは同じ ResumeThread で頼めばよい(新しい process が thread/resume して、道具を呼べるかを codex が確かめ
+   直す)。detail = codex の警告の文(使えない訳を含む)。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str detail))
+
+(val CodexTurnEnd (| TurnEnded BackendLost ToolsUnavailable))
 
 
 ;; --- 成功の答え ---------------------------------------------------------------------------------
@@ -47,7 +55,7 @@
   {:tags {:context "codex" :role "type"}}
   (#^ (get tuple #(CodexEvent ...)) events)
   (#^ int next-seq)
-  (#^ (| TurnEnded BackendLost None) end))
+  (#^ (| TurnEnded BackendLost ToolsUnavailable None) end))
 
 (defrecord Answered
   "codex からの要求(ServerRequest)に答えた。"
