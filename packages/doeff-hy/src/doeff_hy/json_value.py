@@ -20,12 +20,15 @@ module を読めないため — Python の読み手(agora-controllers の model
 """
 
 import json
+import re
+import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, final
 
 if TYPE_CHECKING:
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
+    from pydantic_core.core_schema import SerializationInfo
 
     JsonValue: TypeAlias = "dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None"
     JsonObject: TypeAlias = "dict[str, JsonValue]"
@@ -49,7 +52,8 @@ class OpaqueJson:
     - 送受信そのものを行う foundation の module(doeff-linter DOEFF120 の ``:wire-modules``)が ``json.loads(opaque.text)`` で読む。
 
     作るのは ``OpaqueJson.of(value)``(JSON の値から)か ``OpaqueJson.from_text(text)``(JSON の文字列から — 読めなければ ValueError)。
-    ``defwire`` の型の欄に書けば、解き手は任意の JSON をこの型へ包み、書く時は元の JSON の値へ戻す。
+    ``defwire`` の型の欄に書けば、解き手は任意の JSON をこの型へ包み、書く時は元の JSON の値へ戻す(``doeff_hy.wire`` の ``dump`` は
+    JSON の値として。``dump-json`` は持っている文字列を解き直さずそのまま出力へ埋める — ``OpaqueSplice``)。
     """
 
     text: str
@@ -89,7 +93,7 @@ class OpaqueJson:
         return core_schema.no_info_plain_validator_function(
             _opaque_of,
             json_schema_input_schema=core_schema.any_schema(),
-            serialization=core_schema.plain_serializer_function_ser_schema(_opaque_value),
+            serialization=core_schema.plain_serializer_function_ser_schema(_opaque_value, info_arg=True),
         )
 
 
@@ -105,5 +109,59 @@ def _opaque_of(value: object) -> OpaqueJson:
     return value if isinstance(value, OpaqueJson) else OpaqueJson.of(value)  # type: ignore[arg-type]  # 解き手が JSON から読んだ値だけが来る
 
 
-def _opaque_value(value: OpaqueJson) -> "JsonValue":
+def _opaque_value(value: OpaqueJson, info: "SerializationInfo") -> "JsonValue | str":
+    # OpaqueJson の書き手。``dump_json`` が控え(OpaqueSplice)を context に渡した時は、持っている文字列の代わりに印を返し、
+    # 出力ができた後で文字列を埋める(解いて書き直す二度手間をしない)。控えが無い書き出し(``dump`` など)は値を返す。
+    # OpaqueJson でない値が来ると ``value.text`` の AttributeError で落ちる — 和の型の腕として試された時の「この腕ではない」もこれ
+    # (OpaqueJson を含む和は、OpaqueJson の腕を最後に置くと、他の値でこの関数を呼ばずに済む)。
+    splice = info.context
+    if isinstance(splice, OpaqueSplice):
+        marker = splice.admit(value.text)
+        if marker is not None:
+            return marker
     return json.loads(value.text)
+
+
+# 埋め込みの印の頭。プロセスごとに変わる乱数で、送る値の中の文字列が偶然(または故意に)印と同じになって取り違えられるのを防ぐ。
+# 印は書き出しの間だけ在り、出力に残らない(OpaqueSplice.fill が全部を元の文字列に替える)。
+_SPLICE_PREFIX = secrets.token_hex(8)
+_SPLICE_MARK = re.compile(b'"' + _SPLICE_PREFIX.encode("ascii") + rb"([0-9]+)\"")
+# JSON の文字列ではない綴り(Python の json.dumps が NaN / Infinity をそう書く)。そのまま埋めると読み手の JSON.parse が壊れるので、
+# これを含む文字列は埋めずに、これまでどおり解いて pydantic に書かせる(NaN は null になる)。
+_NOT_STRICT_JSON = ("NaN", "Infinity")
+
+
+@final
+class OpaqueSplice:
+    """``dump_json`` 1 回の間だけ生きる、OpaqueJson の文字列を出力へそのまま埋める控え(二度手間 — 文字列 → ``json.loads`` →
+    もう一度書く — を無くす)。
+
+    pydantic_core には「書き済みの JSON の文字列をそのまま出力へ入れる」口が無い。OpaqueJson の書き手は値を返すことしかできず、
+    文字列を返せば引用符で包まれる。そこで書き手は印の文字列を返し(``admit``)、出力の bytes ができた後で印の所を元の文字列に
+    替える(``fill``)。使い方は ``dump_json(..., context=splice)`` の 1 通りで、``doeff_hy.wire.dump_json`` が呼ぶ。
+    ``context`` が無い書き方(``dump`` の JSON の値への書き出し・素の ``TypeAdapter`` の直の呼び)は、これまでどおり
+    ``json.loads`` で解いた値を返す。
+
+    印は呼びごとの番号つきで、和の型が腕を試して捨てた分(同じ値が 2 度出る)があっても、出力に残った印は番号で元の文字列に戻る。
+    """
+
+    __slots__ = ("_by_number",)
+
+    def __init__(self) -> None:
+        # 書き手(pydantic が呼ぶ関数)が呼び手へ渡せるのは context だけなので、印の番号 → 元の文字列(UTF-8)の表をここに持つ。
+        self._by_number: dict[int, bytes] = {}
+
+    def admit(self, text: str) -> str | None:
+        """文字列を埋める控えに入れて印を返す。そのまま埋めると JSON でなくなる綴りを含む時は None(呼び手は解いて返す)。"""
+        if any(spelling in text for spelling in _NOT_STRICT_JSON):
+            return None
+        number = len(self._by_number)
+        self._by_number[number] = text.encode("utf-8")
+        return f"{_SPLICE_PREFIX}{number}"
+
+    def fill(self, written: bytes) -> str:
+        """pydantic が書いた JSON の bytes の印を元の文字列に替え、UTF-8 として読んだ文字列を返す。"""
+        by_number = self._by_number
+        if not by_number:
+            return written.decode("utf-8")
+        return _SPLICE_MARK.sub(lambda mark: by_number[int(mark[1])], written).decode("utf-8")

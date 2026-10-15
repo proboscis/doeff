@@ -211,6 +211,14 @@
   {:names :camel :unknown :ignore}
   (#^ str path))
 
+;; OpaqueJson を最初の腕に持つ和の行の列(entity_query の答えの行の和 AnswerRowWire と同じ並び — 和の型は腕を左から試す)。
+(setv MixedRow (| OpaqueJson Note ToolArgs))
+
+(defwire ToolBatch
+  "OpaqueJson と型を持つ行が混ざる和の行の列"
+  {:names :camel}
+  (#^ (get tuple #(MixedRow ...)) rows))
+
 
 (deftest test-opaque-json-is-carried-unread-and-parsed-by-a-reader-that-knows-the-shape
   {:tags {:context "wire" :role "judgment"}}

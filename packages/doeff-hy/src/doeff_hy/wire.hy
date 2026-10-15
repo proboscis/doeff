@@ -34,14 +34,14 @@
 ;;; 形の違う JSON の答え = Malformed(5 つ目の失敗の種類 — 外の世界が約束と違う物を返した。相手の版の食い違いは運用で起きうる
 ;;; ので、実装の誤りの例外ではなく業務の失敗として扱う)。Absent / Raise の段階 2 が本線に入るまでは parse は Malformed を値で
 ;;; 返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる(ADR-DOE-HY-007 R8・ADR-DOE-CORE-EFFECTS-003 R17)。
-(require doeff-hy.macros [defk deff <-])
+(require doeff-hy.macros [defk deff val <-])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import json)
 (import typing [ClassVar Protocol runtime-checkable])
 (import pydantic [ConfigDict TypeAdapter ValidationError])
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_hy.json_value [JsonValue OpaqueJson])
+(import doeff_hy.json_value [JsonValue OpaqueJson OpaqueSplice])
 
 ;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra。
 (setv UNKNOWN-FIELDS {"reject" "forbid" "ignore" "ignore"})
@@ -154,8 +154,11 @@
   {:pre [(: value WireValue)]
    :post [(: % str)]
    :tags {:context "wire" :role "judgment"}}
-  "defwire の型の値を JSON の文字列へ(dump と同じ形 — 既定値と同じ欄は書かない)。"
-  (.decode (.dump-json (. (type value) __doeff_wire__ adapter) value :by-alias True :exclude-defaults True) "utf-8"))
+  "defwire の型の値を JSON の文字列へ(dump と同じ形 — 既定値と同じ欄は書かない)。OpaqueJson の欄は、持っている JSON の文字列を
+   解き直さずにそのまま出力へ埋める(OpaqueSplice — 文字列 → json.loads → もう一度書く、の二度手間をしない。出力の JSON としての
+   意味は dump と同じ)。"
+  (val splice (OpaqueSplice))
+  (.fill splice (.dump-json (. (type value) __doeff_wire__ adapter) value :by-alias True :exclude-defaults True :context splice)))
 
 
 (defk json-schema [wire-type]
