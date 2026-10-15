@@ -118,6 +118,22 @@
     (and (= self._size (.size other))
          (all (gfor #(key value) (zip (.keys self) (.rows self)) (= (.row other key) value)))))
 
+  (defn #^ (get tuple #(str ...)) changed-keys [self #^ "Table[V]" other]
+    "行が違う鍵(片方の表にだけ在る鍵を含む・鍵の昇順)— 前に読み手へ渡した表と今の表の間で変わった行の鍵だけを読み手へ名乗るため(agora の
+     画面が盤の変わった card の鍵を合図に載せる — card ki-8c4d01b4f5c2)。読む道は __eq__ と同じ: 同じ表は行を読まず、基を分け合う 2 つの表は
+     差分と消した鍵の行だけを比べ(行の数に比例せず、書きの数に比例する)、ほかは両方の全部の鍵を比べる。行は同一性を先に見て、違う object
+     だけ値で比べる(値の同じ行を書き直した鍵は名乗らない — __eq__ が等しいと読む表どうしは空)。"
+    (when (is self other)
+      (return #()))
+    (setv candidates (if (is self._base other._base)
+                         (| (set (.keys self._delta)) self._removed (set (.keys other._delta)) other._removed)
+                         (| (set (.keys self)) (set (.keys other)))))
+    (tuple (sorted (gfor key candidates
+                         :setv mine (.row self key)
+                         :setv theirs (.row other key)
+                         :if (not (or (is mine theirs) (= mine theirs)))
+                         key))))
+
   ;; 中身で比べる表は辞書の鍵にしない(書き換えない表でも、比べに全行を読む)— __eq__ だけを持つ class の __hash__ は Python が None にする。
 
   (defn #^ (get tuple #((get type "Table[V]") (get tuple #((get dict #(str V)) (get dict #(str V)) (get frozenset str))))) __reduce__ [self]

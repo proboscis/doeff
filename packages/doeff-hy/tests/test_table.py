@@ -406,3 +406,56 @@ def test_comparing_tables_agrees_with_comparing_their_rows_for_any_writes() -> N
             more = _random_writes(seed + 2000, base_rows + 10, 3)
             longer = left.with_writes(tuple(TableWrite(key=k, value=v) for k, v in more))
             assert (left == longer) is (left_rows == _reference(left_rows, more)), (seed, base_rows, count)
+
+
+# ------------------------------------------------------------------ 行が違う鍵(card ki-8c4d01b4f5c2 — 画面が盤の変わった card の鍵を合図に載せる)
+
+
+def _changed_reference(left: dict[str, int], right: dict[str, int]) -> tuple[str, ...]:
+    """2 つの dict で値が違う鍵(片方にだけ在る鍵を含む・鍵の昇順)— changed-keys の答えの比べの元。"""
+    return tuple(sorted(key for key in left.keys() | right.keys() if left.get(key) != right.get(key)))
+
+
+def test_changed_keys_names_written_removed_and_added_keys_only() -> None:
+    base = _table(MIN_DELTA * 4)
+    moved = base.with_writes((
+        TableWrite(key="k1", value=-1), TableWrite(key="k2", value=None), TableWrite(key="new", value=7),
+        TableWrite(key="k3", value=3),  # 値の同じ書き直しは名乗らない
+    ))
+    assert moved._base is base._base  # 前提: 基を分け合う道
+    assert moved.changed_keys(base) == ("k1", "k2", "new")
+    assert base.changed_keys(moved) == ("k1", "k2", "new")
+    assert base.changed_keys(base) == ()
+    # 等しい表どうしは空(__eq__ と同じ読み)
+    assert moved.changed_keys(moved.with_writes((TableWrite(key="k1", value=-1),))) == ()
+
+
+def test_changed_keys_of_tables_sharing_a_base_reads_only_the_written_rows() -> None:
+    base = _counted_table(MIN_DELTA * 20)
+    moved = base.with_writes((TableWrite(key="k100", value=_CountedRow(-100)),))
+    moved_again = moved.with_writes((TableWrite(key="k200", value=_CountedRow(-200)), TableWrite(key="k300", value=_CountedRow(300))))
+    assert moved._base is moved_again._base
+    _CountedRow.compared = 0
+    # k300 は同じ値の書き直し(別の object)— 値で比べて名乗らない。基の 1,280 行は読まない
+    assert moved.changed_keys(moved_again) == ("k200",)
+    assert _CountedRow.compared <= 3, "基を分け合う表の比べが書いた鍵の外の行を読んだ"
+    # 失敗ケースの照らし: 基を作り直した表との比べは、全部の鍵を読む(同一性の近道が効く行は値を読まない)
+    rebuilt = _counted_table(MIN_DELTA * 20)
+    _CountedRow.compared = 0
+    assert base.changed_keys(rebuilt) == ()
+    assert _CountedRow.compared == MIN_DELTA * 20
+
+
+def test_changed_keys_agrees_with_comparing_the_rows_for_any_writes() -> None:
+    # 基を分け合う表(差分と消した鍵だけを読む)・基が作り直された表(全部の鍵を読む)のどちらでも、行の全部の dict の違いと一致する。
+    for seed in range(40):
+        for base_rows, count in ((MIN_DELTA, 6), (MIN_DELTA * 4, 20), (MIN_DELTA * 4, 400)):
+            base = {f"k{i}": i for i in range(base_rows)}
+            table = table_of(tuple(TableWrite(key=k, value=v) for k, v in base.items()))
+            first = _random_writes(seed, base_rows + 10, count)
+            second = _random_writes(seed + 1000, base_rows + 10, count)
+            left = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in first))
+            right = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in second))
+            expected = _changed_reference(_reference(base, first), _reference(base, second))
+            assert left.changed_keys(right) == expected, (seed, base_rows, count)
+            assert (left.changed_keys(right) == ()) is (left == right), (seed, base_rows, count)
