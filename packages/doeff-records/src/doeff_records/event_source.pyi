@@ -52,8 +52,6 @@ from doeff_records.values import StreamEnd as StreamEnd
 from doeff_records.values import Unreachable as Unreachable
 from doeff_records.values import WatchCursor as WatchCursor
 from doeff_records.values import checked_table_name as checked_table_name
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 WATCH_SECONDS: float
 
 @dataclass(frozen=True, kw_only=True)
