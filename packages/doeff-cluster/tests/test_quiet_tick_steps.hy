@@ -7,6 +7,8 @@
 ;; 期限まで眠る task と止めの合図を待つ task も周ごとに 2 つ立てて取り消していた(仕事の無い worker 1 台が 2.5 秒ごとに払う —
 ;; 依頼 lt-EME2B8NTMC9Q5RRCQY5N3YWTVB)。今は期限を時計の答え手の RaceWithin が持ち、止めの合図は答え手が session で 1 つ持つ呼び鈴
 ;; (StopBell)を競わせる: 202 歩 → 114 歩。
+;; 時計の戻りと機体の眠りへの直し(card ki-069f4a5c07f7 — 1d772f3e9 は待ちの長さを周の頭の刻の対からの経過で数え、d25e8a25e は
+;; 周の頭で壁の時計と単調な時計を続けて読む)が周ごとの時計の読みを足した: 114 歩 → 129 歩(正しさのための読みで、task は増えない)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_vm.doeff_vm [vm-work-counts])
@@ -17,8 +19,8 @@
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.test_worker_wakes [quiet-host TickLog do-ticks])
 
-;; 静かな周 1 回の歩の上限(直した後の 114 歩に 1 割足らずの余白 — 期限と止めの合図に周ごとに task を立てる形の 202 歩は越える)。
-(val QUIET-TICK-STEPS 125)
+;; 静かな周 1 回の歩の上限(今の 129 歩に 1 割足らずの余白 — 期限と止めの合図に周ごとに task を立てる形の 202 歩は越える)。
+(val QUIET-TICK-STEPS 140)
 (val QUIET-MS 60000)
 
 
