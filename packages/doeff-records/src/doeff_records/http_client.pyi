@@ -48,8 +48,6 @@ from doeff_records.wire import client_answer_metric as client_answer_metric
 from doeff_records.wire import client_status_outcome as client_status_outcome
 from doeff_records.wire import WRITER_HEADER as WRITER_HEADER
 from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 DEFAULT_REQUEST_TIMEOUT: float
 
 class WireError(RuntimeError):
