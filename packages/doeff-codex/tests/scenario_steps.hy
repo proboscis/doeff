@@ -6,7 +6,7 @@
 (import dataclasses [dataclass])
 (import doeff_codex.values [CodexTurn CodexEvent])
 (import doeff_codex.lines [TextDelta])
-(import doeff_codex.effects [CodexReadTurnEvents TurnEventPage BackendLost])
+(import doeff_codex.effects [CodexReadTurnEvents TurnEventPage BackendLost ToolsUnavailable])
 (import doeff_codex.lines [TurnEnded])
 (import tests.interpreters [ScenarioSettings Settings])
 
@@ -18,7 +18,7 @@
   "読んだ出来事の全部(seq の順)と終わり(まだなら None)。"
   {:tags {:context "codex-test" :role "type"}}
   (#^ (get tuple #(CodexEvent ...)) events)
-  (#^ (| TurnEnded BackendLost None) end))
+  (#^ (| TurnEnded BackendLost ToolsUnavailable None) end))
 
 
 (defk settings []

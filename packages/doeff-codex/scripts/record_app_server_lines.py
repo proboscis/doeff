@@ -18,6 +18,11 @@ binary が出した物。録る筋書きは 7 つと比べの 1 つ:
   CODEX_HOME に録りの MCP の server(record_mcp_server.py)を宣言し、initialize で試験の口(experimentalApi — thread/start の
   dynamicTools)を名乗り、codex からの動的な道具の呼び(item/tool/call)に答える。子の agent の thread の行(子のターンの始まりと
   終わり・答え)も同じ stdout に混ざる。
+- code-mode-unavailable: code mode の host(codex-code-mode-host)の無い dir に置いた codex を、code mode だけで道具を呼ぶ設定
+  (features.code_mode_only)で起こし、1 つの process でターンを 2 回走らせる(上流はどちらのターンも code mode の道具 exec を 1 回
+  呼ぶ)— code mode が使えない警告(warning の通知)がどこに・何回出るかと、道具の呼びが何を返すかの形(card ki-86b1443b22b6)。
+- code-mode-host-broken: 比べ — 起動できない host(在るが、起こすとすぐ code 1 で終わる)を隣に置いた codex で同じ 2 ターン(codex
+  0.162.1 は host の file が在るかだけを見て警告を出すので、この形では警告が出ない事の実測)。
 - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。
 
 使い方(版を上げた時に録り直す。筋書きの名を続けて書くと、その筋書きだけを録る — 既定は全部):
@@ -29,7 +34,9 @@ binary が出した物。録る筋書きは 7 つと比べの 1 つ:
 
 import http.server
 import json
+import os
 import queue
+import shutil
 import socketserver
 import struct
 import subprocess
@@ -86,6 +93,14 @@ IMAGE_NAME = "pixel.png"
 WAIT_AGENT_MS = 10000
 # 子の agent の道具の namespace(codex 0.162.1 の multi_agent が model へ渡す名)。
 AGENT_NAMESPACE = "multi_agent_v1"
+# code mode の筋書きの目印(上流は code mode の道具 exec を 1 回呼び、その結果の後に答えの全文で答える)と、exec に渡す JavaScript。
+CODE_MODE_MARK = "CODE-MODE"
+CODE_MODE_SOURCE = "text('hi')"
+CODE_MODE_DONE = ("Code ", "done.")
+# code mode の host の file の名(codex 0.162.1 は自分の実行 file と同じ dir で探す — codex-rs/install-context の code_mode_host_program)と、
+# 起動できない host の中身(在るが、起こすとすぐ code 1 で終わる)。
+CODE_MODE_HOST = "codex-code-mode-host"
+BROKEN_HOST = "#!/bin/sh\nexit 1\n"
 
 
 def sse_event(stream: IO[bytes], event: JsonObject) -> None:
@@ -204,11 +219,39 @@ def other_tool_events(step: int, body: JsonObject, image: str) -> list[JsonObjec
     return answer_events(OTHER_TOOLS_DONE)
 
 
-def tool_step(body: JsonObject) -> int:
-    """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(function_call_output)の数で数えるため。"""
+def code_mode_events(step: int) -> list[JsonObject]:
+    """code mode の筋書きの 1 つのターンの step 番目の答え(step 0 = code mode の道具 exec を custom の道具の呼びで 1 回呼ぶ・ほか = 答えの
+    全文)の SSE の列を作るため。"""
+    if step >= 1:
+        return answer_events(CODE_MODE_DONE)
+    call: JsonObject = {"type": "custom_tool_call", "id": "ctc_cm", "call_id": "call_cm", "name": "exec", "input": CODE_MODE_SOURCE}
+    usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 4,
+             "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 14}
+    return [
+        {"type": "response.created", "response": {"id": "resp_cm_0"}},
+        {"type": "response.output_item.added", "output_index": 0, "item": {**call, "input": ""}},
+        {"type": "response.output_item.done", "output_index": 0, "item": call},
+        {"type": "response.completed", "response": {"id": "resp_cm_0", "usage": usage}},
+    ]
+
+
+def tool_step(body: JsonObject, output_type: str = "function_call_output") -> int:
+    """道具の筋書きの何番目の呼びかを、要求の入力に返ってきた道具の結果(output_type の item — 既定は function_call_output)の数で数える
+    ため。"""
     inputs = body.get("input", [])
-    return sum(1 for item in inputs if isinstance(item, dict) and item.get("type") == "function_call_output") \
+    return sum(1 for item in inputs if isinstance(item, dict) and item.get("type") == output_type) \
         if isinstance(inputs, list) else 0
+
+
+def code_mode_step(body: JsonObject) -> int:
+    """code mode の筋書きの今のターンで何番目の呼びかを、最後の利用者の入力より後に返ってきた custom の道具の結果の数で数えるため
+    (2 つ目のターンの要求は 1 つ目のターンの結果も持つ)。"""
+    inputs = body.get("input", [])
+    if not isinstance(inputs, list):
+        return 0
+    users = [index for index, item in enumerate(inputs) if isinstance(item, dict) and item.get("role") == "user"]
+    after = inputs[users[-1] + 1:] if users else inputs
+    return tool_step({"input": after}, "custom_tool_call_output")
 
 
 class Upstream(http.server.BaseHTTPRequestHandler):
@@ -249,6 +292,7 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         background = BACKGROUND_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         others = OTHER_TOOLS_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         sub_agent = SUB_AGENT_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
+        code_mode = CODE_MODE_MARK in json.dumps(body.get("input", []), ensure_ascii=False)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
@@ -258,6 +302,7 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         # 2 つ目のターン(BG-WAIT)は遅い答え — その間に 1 つ目のターンの命令が終わる。
         # 子の agent の要求は頼み(SUB-AGENT)だけを持ち、親の要求は目印(OTHER-TOOLS)と頼みの両方を持つ — 親を先に見分ける。
         events = (answer_events(SLOW_PIECES) if BACKGROUND_WAIT_MARK in said
+                  else code_mode_events(code_mode_step(body)) if code_mode
                   else other_tool_events(tool_step(body), body, self.image_path) if others
                   else answer_events(SUB_AGENT_DONE) if sub_agent
                   else background_events(tool_step(body)) if background
@@ -296,21 +341,46 @@ class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 
-def codex_home(work: Path, port: int, mcp_server: bool = False) -> Path:
+def codex_home(work: Path, port: int, mcp_server: bool = False, code_mode_only: bool = False) -> Path:
     """録りの codex を偽の上流にだけつなぐため、口座の要らない provider を名指す config.toml を持つ CODEX_HOME を作る。mcp_server =
-    録りの MCP の server を宣言するか(宣言する家は別の dir — 宣言しない筋書きの行に MCP の server の知らせを混ぜない)。"""
-    home = work / ("codex-home-mcp" if mcp_server else "codex-home")
+    録りの MCP の server を宣言するか / code_mode_only = 道具を code mode だけで呼ぶ設定(features.code_mode_only — gpt-6-astra の
+    model の宣言と同じ道具の出し方)にするか(どちらも別の dir の家 — ほかの筋書きの行に知らせや設定を混ぜない)。"""
+    home = work / ("codex-home-mcp" if mcp_server else "codex-home-code-mode" if code_mode_only else "codex-home")
     home.mkdir(parents=True, exist_ok=True)
     # MCP の server は録りと同じ python で起こす(-I — 作業の dir の file を読み込まない)。
     declared = (f'[mcp_servers.{MCP_SERVER}]\ncommand = {json.dumps(sys.executable)}\n'
                 f'args = ["-I", {json.dumps(str(MCP_SERVER_SCRIPT))}]\n') if mcp_server else ""
+    features = "[features]\ncode_mode_only = true\n" if code_mode_only else ""
     (home / "config.toml").write_text(
-        'model = "gpt-mock"\nmodel_provider = "mock"\n[model_providers.mock]\nname = "mock"\n'
+        'model = "gpt-mock"\nmodel_provider = "mock"\n' + features + '[model_providers.mock]\nname = "mock"\n'
         f'base_url = "http://127.0.0.1:{port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n'
         "request_max_retries = 0\nstream_max_retries = 0\n" + declared,
         encoding="utf-8",
     )
     return home
+
+
+def placed_codex(codex: str, work: Path, host: str) -> str:
+    """筋書きの codex の置き方を作るため: host = given(渡された binary のまま — 隣の host もそのまま)/ absent(host の無い dir に置いた
+    binary)/ broken(起動できない host を隣に置いた binary)。codex は host を自分の実行 file の dir で探す(link を解いた実体の dir)ので、
+    置き場には binary の実体を置く(同じ file system なら hard link・違えば写す)。"""
+    if host == "given":
+        return codex
+    place = work / f"codex-host-{host}"
+    place.mkdir(parents=True, exist_ok=True)
+    placed = place / "codex"
+    if not placed.exists():
+        try:
+            os.link(codex, placed)
+        except OSError:
+            shutil.copy2(codex, placed)
+    beside = place / CODE_MODE_HOST
+    if host == "broken":
+        beside.write_text(BROKEN_HOST, encoding="utf-8")
+        beside.chmod(0o755)
+    elif beside.exists():
+        beside.unlink()
+    return str(placed)
 
 
 def record_app_server(codex: str, out: Path, env: dict[str, str], cwd: Path, name: str,
@@ -487,20 +557,32 @@ def other_tools(send: Send, wait: Wait, cwd: Path) -> None:
     wait(answering_tool_calls(send, turn_ended(turn_id)), WAIT_SECONDS * 2)
 
 
+def code_mode_turns(send: Send, wait: Wait, cwd: Path) -> None:
+    """code mode だけで道具を呼ぶ設定の 1 つの process でターンを 2 回走らせ(どちらも上流が exec を 1 回呼ぶ)、code mode が使えない
+    警告がどのターンの・どの行の前後に出るか、2 つ目のターンにも出るかと、exec の呼びが何を返すかを録るため。"""
+    thread_id = start_thread(send, wait, cwd, "danger-full-access")
+    for request_id, text in ((3, f"{CODE_MODE_MARK} please"), (4, f"{CODE_MODE_MARK} again")):
+        wait(turn_ended(start_turn(send, wait, request_id, thread_id, text)), WAIT_SECONDS)
+
+
 @dataclass(frozen=True)
 class Scenario:
     """録る筋書き 1 つ: name = 録った file の名の頭 / script = 要求を書いて行を待つ手順 / mcp_server = CODEX_HOME に録りの MCP の
-    server を宣言するか。"""
+    server を宣言するか / code_mode_only = 道具を code mode だけで呼ぶ設定にするか / host = code mode の host の置き方(placed_codex)。"""
 
     name: str
     script: Callable[[Send, Wait, Path], None]
     mcp_server: bool = False
+    code_mode_only: bool = False
+    host: str = "given"
 
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario("two-turns", two_turns), Scenario("interrupt", interrupt), Scenario("rate-limit", rate_limit),
     Scenario("usage-limit", usage_limit), Scenario("tool-calls", tool_calls), Scenario("background-command", background_command),
-    Scenario("other-tools", other_tools, mcp_server=True))
+    Scenario("other-tools", other_tools, mcp_server=True),
+    Scenario("code-mode-unavailable", code_mode_turns, code_mode_only=True, host="absent"),
+    Scenario("code-mode-host-broken", code_mode_turns, code_mode_only=True, host="broken"))
 
 
 def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
@@ -522,8 +604,9 @@ def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
             Upstream.image_path = str(cwd / IMAGE_NAME)
             for scenario in SCENARIOS:
                 if not chosen or scenario.name in chosen:
-                    home = codex_home(work, port, scenario.mcp_server)
-                    record_app_server(codex, out, {**env, "CODEX_HOME": str(home)}, cwd, scenario.name, scenario.script)
+                    home = codex_home(work, port, scenario.mcp_server, scenario.code_mode_only)
+                    binary = placed_codex(codex, work, scenario.host)
+                    record_app_server(binary, out, {**env, "CODEX_HOME": str(home)}, cwd, scenario.name, scenario.script)
             if chosen:
                 return
             compared = subprocess.run([codex, "exec", "--json", "--skip-git-repo-check", "say hello"], capture_output=True,

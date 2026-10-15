@@ -11,9 +11,9 @@
 (import doeff_codex.lines [TextDelta AgentMessageDone TurnEnded TurnStatus])
 (import dataclasses [replace])
 (import doeff_codex.effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexCloseSession CodexLaunchCount TurnStarted
-                             Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight BackendLost])
+                             Steered InterruptRequested SessionClosed TurnInFlight NoTurnInFlight BackendLost ToolsUnavailable])
 (import tests.scenario_steps [settings read-until read-to-end read-to-first-delta records-of])
-(import tests.interpreters [USAGE-LIMIT-HIT])
+(import tests.interpreters [USAGE-LIMIT-HIT CODE-MODE-WARNING])
 
 
 (deftest test-the-text-deltas-reach-the-page-in-order-and-the-turn-ends-once
@@ -51,6 +51,32 @@
   (assert (and (isinstance end TurnEnded) (= end.status TurnStatus.FAILED) (= end.error-kind "usageLimitExceeded")) end)
   (assert (= end.usage-limit USAGE-LIMIT-HIT) end)
   (assert (= end.error-message USAGE-LIMIT-HIT.text) end))
+
+
+(deftest test-a-turn-whose-process-cannot-call-tools-ends-tools-unavailable-and-the-next-turn-gets-a-new-process
+  ;; code mode が使えず道具の呼びを閉じたと codex が名乗った process のターンは、model が道具を呼べないまま文だけを返して completed に
+  ;; なる前に、codex の警告の文を運ぶ ToolsUnavailable で終わる — 道具を使えなかったターンを成功と見せない(card ki-86b1443b22b6・
+  ;; 本番の実例 = 10-15 の会話 c-HFAMV0E6RHQJ773QTWP1HJ58T2)。stub は録った codex 0.162.1 の行を流す: 警告は turn/start の答えより
+  ;; 前に 1 度だけ届き、その後に文だけの答えと completed の終わりが続く。
+  {:interpreters ["fake" "stub"]}
+  (<- s (settings))
+  (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "CODE-MODE please")))
+  (assert (isinstance started TurnStarted) started)
+  (<- so-far (read-to-end started.turn s.turn-timeout))
+  (assert (= so-far.end (ToolsUnavailable :detail CODE-MODE-WARNING)) so-far.end)
+  ;; 文だけの答え(道具を呼べなかった model の答え)は、このターンの答えにならない。
+  (<- answers (records-of so-far AgentMessageDone))
+  (assert (= answers #()) answers)
+  ;; process は降ろされ、同じ会話の次のターンは新しい process が受けて終わりまで走る(codex が道具を呼べるかを確かめ直す)。降ろした
+  ;; process の、終えたターンの行(文だけの答え)は次のターンに積まれない。
+  (<- next-turn (CodexStartTurn (ResumeThread :thread-id started.turn.thread-id) s.spec (CodexInput :text "say hello")))
+  (assert (isinstance next-turn TurnStarted) next-turn)
+  (<- finished (read-to-end next-turn.turn s.turn-timeout))
+  (assert (and (isinstance finished.end TurnEnded) (= finished.end.status TurnStatus.COMPLETED)) finished.end)
+  (<- next-answers (records-of finished AgentMessageDone))
+  (assert (= (tuple (gfor answer next-answers answer.text)) #("Hello, world.")) next-answers)
+  (<- launches (CodexLaunchCount started.turn.thread-id))
+  (assert (= launches 2) launches))
 
 
 (deftest test-an-interrupted-turn-ends-interrupted-and-the-process-takes-the-next-turn

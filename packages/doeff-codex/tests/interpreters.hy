@@ -35,6 +35,13 @@
 (val USAGE-LIMIT-HIT (UsageLimitHit :minutes 300 :resets-at 1893456000
                                     :text (+ "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
                                              "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM.")))
+;; code mode の host を使えない process の筋書きの言葉と、そのターンの終わりが運ぶ codex の警告の文(stub は録った codex 0.162.1 の
+;; code-mode-unavailable の警告とターンを流し、本番の handler が警告から終わりを作る — 文は録りの host の無い置き場の path を含む。
+;; fake は同じ文を筋書きで受ける)。
+(val CODE-MODE-WORD "CODE-MODE")
+(val CODE-MODE-WARNING (+ "Code Mode is unavailable because failed to spawn code-mode host "
+                          "/home/ubuntu/.codex-rec-cm15/codex-host-absent/codex-code-mode-host: host executable was not found. "
+                          "Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."))
 ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)。
 (val CODEX-HOME-DIR "codex-home")
 
@@ -62,6 +69,7 @@
     (in SLOW-WORD input.text) (FakeReply :pieces #("slow-0 " "slow-1 ") :hold True)
     (in IMAGES-PHRASE input.text) (FakeReply :pieces #((.format "IMAGES {}" (len input.images))))
     (in USAGE-LIMIT-WORD input.text) (FakeReply :pieces #() :usage-limit USAGE-LIMIT-HIT)
+    (in CODE-MODE-WORD input.text) (FakeReply :pieces #() :tools-lost CODE-MODE-WARNING)
     True (FakeReply :pieces ANSWER-PIECES)))
 
 

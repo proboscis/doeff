@@ -64,6 +64,12 @@
                          "https://chatgpt.com/settings/usage to purchase more credits or try again at Jan 1st, 2030 12:00 AM."))
 ;; 道具を呼ぶターンの言い方(替え玉の規則 — 録った codex 0.162.1 の道具の呼びのターン tool-calls を流す)。
 (val TOOLS-PROMPT "TOOL-CALLS please")
+;; code mode の host を使えない codex のターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の code-mode-unavailable の、ターンの
+;; 前の警告とターンを流す)と、その警告の文(録りの host の無い置き場の path を含む — fake は同じ文を筋書きで受ける)。
+(val CODE-MODE-PROMPT "CODE-MODE please")
+(val CODE-MODE-WARNING (+ "Code Mode is unavailable because failed to spawn code-mode host "
+                          "/home/ubuntu/.codex-rec-cm15/codex-host-absent/codex-code-mode-host: host executable was not found. "
+                          "Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."))
 (val ANSWER-PIECES #("Hel" "lo, " "wor" "ld."))
 (val ANSWER "Hello, world.")
 ;; 元の CODEX_HOME の dir の名(検ごとの tmp の dir の下 — config.toml を 1 つ置く)と、借りた口座の auth.json の中身(検の作り物 —
@@ -101,6 +107,8 @@
     (in USAGE-LIMIT-PROMPT input.text) (FakeCodexReply :pieces #()
                                                        :usage-limit (CodexUsageLimitHit :minutes 300 :resets-at USAGE-RESETS-AT
                                                                                         :text USAGE-LIMIT-TEXT))
+    ;; 道具を呼べない process: 層 2 の終わり(codex の警告の文)を筋書きで渡す — 替え玉は録った警告から本番の handler が同じ終わりを作る。
+    (in CODE-MODE-PROMPT input.text) (FakeCodexReply :pieces #() :tools-lost CODE-MODE-WARNING)
     True (FakeCodexReply :pieces ANSWER-PIECES)))
 
 (defk handlers-for [#^ str backend #^ Path tmp-path world]
@@ -599,6 +607,59 @@
   (assert (isinstance end AgentTurnFailed) end)
   (assert (is end.account-limit None) end)
   (assert (in "429" end.detail) end))
+
+
+(defk completed-end [events end]
+  {:pre [(: events tuple) (: end PageEnd)] :post [(: % bool)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "頁の終わりが完了の終わりか(失敗の終わりの後の、次の入力のターンを読み終える止めの条件)。"
+  (isinstance end AgentTurnCompleted))
+
+(defk toolless-turn-then-next [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "道具を呼べない process のターン(code mode が使えない警告)を最後まで読み、同じ session の次の入力が次のターンとして完了するのを
+   読むため。"
+  (<- handle (launch s "codex-toolless" CODE-MODE-PROMPT {}))
+  (<- failed (read-until handle ended s.timeout -1))
+  (<- (FollowUp handle "say hello" :input-ref "ref-next" :mode TurnInputMode.NEXT-TURN))
+  (<- after (read-until handle completed-end s.timeout failed.after))
+  (<- (Stop handle))
+  {"failed" failed "after" after})
+
+(defk check-toolless-turn [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "道具を呼べない process のターンが、completed でなく codex の警告の文を detail に持つ AgentTurnFailed(口座の利用枠切れでない)で
+   終わり、道具を呼べなかった model の文だけの答えを届けない事と、同じ session の次の入力のターンが同じ thread の続きとして完了する
+   事を確かめるため — agora は失敗のターン(cli-failed)として記録し、責任 turns-keep-succeeding が数える(card ki-86b1443b22b6)。"
+  (val failed (get seen "failed"))
+  (val end failed.end)
+  (assert (isinstance end AgentTurnFailed) end)
+  (assert (= end.detail CODE-MODE-WARNING) end)
+  (assert (is end.account-limit None) end)
+  (<- ends (of-kind failed.events AgentTurnEndEvent))
+  (assert (= (tuple (gfor event ends event.end)) #(end)) failed.events)
+  (<- texts (of-kind failed.events AgentTextEvent))
+  (assert (= texts #()) failed.events)
+  (val after (get seen "after"))
+  (assert (isinstance after.end AgentTurnCompleted) after.end)
+  (assert (= after.end.result-text ANSWER) after.end)
+  (assert (= after.end.input-refs #("ref-next")) after.end)
+  (assert (= after.end.resume-from end.resume-from) #(end after.end))
+  None)
+
+(deftest test-headless-codex-a-turn-without-tools-ends-failed-stub [tmp-path]
+  ;; 失敗ケース(card ki-86b1443b22b6・本番の実例 = 10-15 の会話 c-HFAMV0E6RHQJ773QTWP1HJ58T2): 録った codex 0.162.1 の、code mode の
+  ;; host を使えない process のターン(ターンの前の警告の後に、文だけの答えと completed の終わり)が、completed でなく失敗で届く。
+  (<- seen (run-on STUB tmp-path toolless-turn-then-next))
+  (<- (check-toolless-turn seen)))
+
+(deftest test-the-public-codex-handlers-end-a-turn-without-tools-failed-stub [tmp-path]
+  ;; agora が組む公開の口でも同じ。
+  (<- seen (run-on PUBLIC-STUB tmp-path toolless-turn-then-next))
+  (<- (check-toolless-turn seen)))
+
+(deftest test-headless-codex-a-turn-without-tools-ends-failed-fake [tmp-path]
+  (<- seen (run-on FAKE tmp-path toolless-turn-then-next))
+  (<- (check-toolless-turn seen)))
 
 
 (defk tool-turn [#^ Setting s]
