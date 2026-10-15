@@ -102,8 +102,6 @@ from doeff_claude_code.faults import LiveProcess as LiveProcess
 from doeff_claude_code.faults import NoLiveProcess as NoLiveProcess
 from doeff_claude_code.faults import StopReason as StopReason
 from doeff_claude_code.argv import launch_key as launch_key
-from doeff import Pass as Pass
-from doeff_vm import WithHandler as WithHandler
 QUICK_TURN_SECONDS: float
 CLOCK_TICK: float
 MIN_SLEEP: float
