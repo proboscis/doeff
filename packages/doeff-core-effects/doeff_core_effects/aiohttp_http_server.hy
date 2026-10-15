@@ -45,10 +45,14 @@
 ;;;                 同じ列へ並べ、受けた拍の単調時計を received-at に載せる。WsSendText の節は、箱へ積む仕事を待ち受けの loop へ積むだけで
 ;;;                 戻る(共有の loop を経ず、往復を待たない — 応答の送出と同じ形・card ki-bbf782b2ab4b: 同じ通を接続の数だけ送る呼び手の
 ;;;                 1 周期が、送り 1 回ごとの往復の待ちで送りの数に比例して伸びていた)。積んだ順に渡るので、同じ札への送りは撃った順に
-;;;                 箱へ入り、後から撃った閉じ(WsClose)・勘定の読み(TakeWsSendReport)・待ち受けの閉じ(HttpShutdown)より先に渡る
+;;;                 箱へ入り、後から撃った閉じ(WsClose)・待ち受けの閉じ(HttpShutdown)より先に渡る
 ;;;   閉じ          HttpShutdown で新しい要求を受けず、開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、
 ;;;                 残った接続は落として待ち受けを畳む。以後の HttpNextRequest は HttpServerClosed
-;;;   送りの勘定    積んだ・流した・捨てた byte と流すまでの所要を数え、TakeWsSendReport で渡して 0 に戻す(消費者の計器の材料)
+;;;   送りの勘定    積んだ・流した・捨てた byte と流すまでの所要を数え、TakeWsSendReport で渡して 0 に戻す(消費者の計器の材料)。勘定は
+;;;                 待ち受けの loop が足し、TakeWsSendReport の節が答え手の節の thread で読む(どちらも勘定の lock を取る — 共有の loop を
+;;;                 経ず、往復を待たない・card ki-19c217ceb840: 1 通ごとに勘定を読む画面の処理ループが、往復の待ちの間に scheduler へ席を
+;;;                 譲り、優先の低い task が走り終えるまで次の 1 通へ戻れなかった)。積んだが待ち受けの loop がまだ箱へ入れていない送りは、
+;;;                 次の読みの勘定に入る(勘定の和は変わらない)
 ;;; 台本の答え手と同じに決める物は http_server_effects.hy の判断の defk を呼ぶ(本文を運ぶ答えか carries-content・ws の断りの status
 ;;; ws-refusal-status・送りの上限で切るか send-overflows・WsClosed で名乗る状態符と理由 closing-of — こちらの WsClose ならその状態符と理由、
 ;;; 相手の close なら相手の状態符と理由)。契約テストは tests/test_http_server_contract.hy。
@@ -280,12 +284,14 @@
           self.probes #()
           self.count 0
           ;; 相手が先に切って届かなかった答えの数(この待ち受けの起動から — 0 に戻さない)。
-          self.dropped-answers 0)
+          self.dropped-answers 0
+          ;; 送りの勘定の lock: 待ち受けの loop が勘定を足す所と、答え手の節の thread が読んで 0 に戻す所(take-report)が取る(頭の註の送りの勘定)。
+          self.report-lock (threading.Lock))
     (self.reset-report)
     None)
 
   (defn #^ None reset-report [self]
-    "送りの勘定を 0 に戻すため(TakeWsSendReport で渡した後)。"
+    "送りの勘定を 0 に戻すため(作った時と、TakeWsSendReport で渡した後 — 渡す時は呼び手が report-lock を持つ)。"
     (setv self.queued-frames 0
           self.queued-bytes 0
           self.flushed-bytes 0
@@ -514,8 +520,9 @@
                   ;; 書きかけのまま接続が終わった(読みの loop が書き手を取り消した): 取り出した 1 通も捨てた勘定へ載せてから取り消しを通す。
                   (self.seal peer size)
                   (raise)))
-              (setv self.flushed-bytes (+ self.flushed-bytes size))
-              (.append self.flush-seconds (- (time.monotonic) queued-at)))
+              (with [self.report-lock]
+                (setv self.flushed-bytes (+ self.flushed-bytes size))
+                (.append self.flush-seconds (- (time.monotonic) queued-at))))
         "close"
           (do (try
                 (await (.close peer.ws :code (get payload 0) :message (.encode (get payload 1) "utf-8")))
@@ -527,13 +534,14 @@
     (setv peer.closed True)
     (setv dropped (+ peer.pending unsent))
     (setv peer.outbox (deque) peer.pending 0)
-    (setv self.dropped-bytes (+ self.dropped-bytes dropped))
+    (with [self.report-lock]
+      (setv self.dropped-bytes (+ self.dropped-bytes dropped)))
     (.set peer.wake)
     None)
 
   (defn #^ None post-text [self #^ str ticket #^ str text]
     "本体の送りを待ち受けの loop へ積むだけで戻るため(共有の loop を経ず、往復を待たない — 頭の註の ws の終端)。待ち受けの loop は積まれた順に
-     回すので、同じ札への送りは撃った順に箱へ入り、後から撃った across の coroutine(閉じ・勘定の読み・待ち受けの閉じ)より先に渡る。"
+     回すので、同じ札への送りは撃った順に箱へ入り、後から撃った across の coroutine(閉じ・待ち受けの閉じ)より先に渡る。"
     (.call-soon-threadsafe (self.edge-loop) self.send-text ticket text)
     None)
 
@@ -560,15 +568,17 @@
       (raise (RuntimeError "HttpListen の前の WsSendText")))
     ;; 切るかは台本の答え手と同じ send-overflows で決める(上限を超える 1 通は積まずに切る)。
     (if (run (send-overflows peer.pending size limit))
-        (do (setv self.cuts (+ self.cuts 1)
-                  peer.cut WS-CUT-REASON)
+        (do (with [self.report-lock]
+              (setv self.cuts (+ self.cuts 1)))
+            (setv peer.cut WS-CUT-REASON)
             (self.seal peer 0)
             (when peer.request.transport
               (.abort peer.request.transport)))
         (do (.append peer.outbox #("text" text (time.monotonic)))
-            (setv peer.pending (+ peer.pending size)
-                  self.queued-frames (+ self.queued-frames 1)
-                  self.queued-bytes (+ self.queued-bytes size))
+            (setv peer.pending (+ peer.pending size))
+            (with [self.report-lock]
+              (setv self.queued-frames (+ self.queued-frames 1)
+                    self.queued-bytes (+ self.queued-bytes size)))
             (.set peer.wake)))
     None)
 
@@ -616,11 +626,12 @@
     (.put self.arrivals (HttpServerClosed :reason reason))
     None)
 
-  (defn :async #^ WsSendReport take-report [self]
-    "送りの勘定を渡して 0 に戻すため。"
-    (setv report (WsSendReport :queued-frames self.queued-frames :queued-bytes self.queued-bytes :flushed-bytes self.flushed-bytes
-                               :flush-seconds (tuple self.flush-seconds) :dropped-bytes self.dropped-bytes :cuts self.cuts))
-    (self.reset-report)
+  (defn #^ WsSendReport take-report [self]
+    "送りの勘定を渡して 0 に戻すため(答え手の節の thread で report-lock を取って読む — 共有の loop へ入らない・頭の註の送りの勘定)。"
+    (with [self.report-lock]
+      (setv report (WsSendReport :queued-frames self.queued-frames :queued-bytes self.queued-bytes :flushed-bytes self.flushed-bytes
+                                 :flush-seconds (tuple self.flush-seconds) :dropped-bytes self.dropped-bytes :cuts self.cuts))
+      (self.reset-report))
     report)
 
   (defn :async #^ HttpBodyOutcome read-body [self #^ str ticket #^ int max-bytes]  ; defk にできない: aiohttp の要求の本文を読む実 I/O(event loop の coroutine)
@@ -832,5 +843,5 @@
     (<- (Await (.across edge (.shutdown edge reason drain-seconds close-code))))
     (resume None))
   (TakeWsSendReport []
-    (<- report WsSendReport (Await (.across edge (.take-report edge))))
-    (resume report)))
+    ;; 勘定は答え手の節の thread で読む(共有の loop を経ず、往復を待たない — 頭の註の送りの勘定・card ki-19c217ceb840)。
+    (resume (.take-report edge))))
