@@ -4,6 +4,7 @@
 """
 
 from itertools import accumulate
+from typing import NamedTuple
 
 import hy  # noqa: F401  # .hy の module の import hook
 import pytest
@@ -345,10 +346,17 @@ def _counted_table(n: int) -> Table[_CountedRow]:
     return table_of(tuple(TableWrite(key=f"k{i}", value=_CountedRow(i)) for i in range(n)))
 
 
-def _rows_read_by(left: Table[_CountedRow], right: Table[_CountedRow]) -> tuple[bool, int]:
+class _Comparison(NamedTuple):
+    """2 つの表の比べの結果: 等しいか、比べるために読んだ行の数。"""
+
+    equal: bool
+    rows_read: int
+
+
+def _rows_read_by(left: Table[_CountedRow], right: Table[_CountedRow]) -> _Comparison:
     _CountedRow.compared = 0
     answer = left == right
-    return answer, _CountedRow.compared
+    return _Comparison(answer, _CountedRow.compared)
 
 
 def test_tables_sharing_a_base_compare_only_the_written_keys() -> None:
@@ -358,7 +366,7 @@ def test_tables_sharing_a_base_compare_only_the_written_keys() -> None:
     assert moved._base is moved_again._base  # 前提: with-writes は基を分け合う(差分が小さい間)
     # 基を分け合う 2 つの表: 基の 1,280 行を読まず、書いた鍵(k100・k200)の行だけを比べる。
     assert _rows_read_by(moved, moved_again) == (False, 1)
-    assert _rows_read_by(moved_again, moved)[0] is False
+    assert _rows_read_by(moved_again, moved).equal is False
     # 中身の同じ行を書き直した表(別の object)も、書いた鍵の行だけで「等しい」と判じる。
     rewritten = base.with_writes((TableWrite(key="k100", value=_CountedRow(100)),))
     assert _rows_read_by(base, rewritten) == (True, 1)
