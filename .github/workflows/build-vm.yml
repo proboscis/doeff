@@ -60,11 +60,15 @@ jobs:
           working-directory: packages/doeff-vm
           manylinux: auto
 
+      # Every job uploads only its own ABI's wheels (cp311-cp314 or cp313t/cp314t): publish.yml
+      # downloads all doeff-vm-* artifacts into one dir, and --find-interpreter in the free-threaded
+      # jobs also builds the runner's GIL interpreters, so a same-named wheel would overwrite another.
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-linux-${{ matrix.target }}
-          path: packages/doeff-vm/dist/*.whl
+          path: packages/doeff-vm/dist/*-cp31[1-4]-cp31[1-4]-*.whl
+          if-no-files-found: error
 
   build-linux-freethreaded:
     runs-on: ${{ matrix.runner }}
@@ -90,7 +94,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-linux-freethreaded-${{ matrix.target }}
-          path: packages/doeff-vm/dist/*.whl
+          path: packages/doeff-vm/dist/*-cp31[34]-cp31[34]t-*.whl
+          if-no-files-found: error
 
   build-macos:
     runs-on: macos-latest
@@ -125,7 +130,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-macos-${{ matrix.target }}
-          path: packages/doeff-vm/dist/*.whl
+          path: packages/doeff-vm/dist/*-cp31[1-4]-cp31[1-4]-*.whl
+          if-no-files-found: error
 
   build-macos-freethreaded:
     runs-on: macos-latest
@@ -154,7 +160,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-macos-freethreaded-${{ matrix.target }}
-          path: packages/doeff-vm/dist/*.whl
+          path: packages/doeff-vm/dist/*-cp31[34]-cp31[34]t-*.whl
+          if-no-files-found: error
 
   build-windows:
     runs-on: windows-latest
@@ -180,7 +187,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-windows
-          path: packages/doeff-vm/dist/*.whl
+          path: packages/doeff-vm/dist/*-cp31[1-4]-cp31[1-4]-*.whl
+          if-no-files-found: error
 
   build-windows-freethreaded:
     runs-on: windows-latest
@@ -201,7 +209,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: doeff-vm-wheels-windows-freethreaded
-          path: packages/doeff-vm/dist/*.whl
+          path: packages/doeff-vm/dist/*-cp31[34]-cp31[34]t-*.whl
+          if-no-files-found: error
 
   sdist:
     runs-on: ubuntu-latest
