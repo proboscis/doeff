@@ -44,7 +44,7 @@ pip install doeff        # recommended: installs doeff-vm together with the Pyth
 pip install doeff-vm     # the VM alone
 ```
 
-Requires Python 3.10 or newer. If pip finds no prebuilt wheel for your platform, it
+Requires Python 3.11 or newer. If pip finds no prebuilt wheel for your platform, it
 builds from the source distribution, which needs a Rust toolchain (`cargo`).
 
 ## Minimal example

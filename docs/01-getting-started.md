@@ -26,7 +26,7 @@ uv add doeff
 
 ## Requirements
 
-- Python 3.10 or higher
+- Python 3.11 or higher
 - asyncio support (built into Python)
 
 ## Your First Program

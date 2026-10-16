@@ -1,3 +1,13 @@
+# Python の版ごとの検 — 公開する核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)が、宣言した
+# requires-python の版(3.11〜3.14)で入り、検が通る事を確かめる。3.10 は 2026-10-01 に保守を終え、核は 3.11 からの
+# enum.StrEnum・ast.TryStar を使うので、核の requires-python は >=3.11(3.10 の利用者には PyPI の 0.4.1 が残る)。
+#
+# workspace(uv sync)では走らせない: workspace の requires-python は全 member の交わりで、doeff-docker・doeff-ml-nexus の >=3.12 が
+# 3.11 の sync を断る(2026-04 に 3.10・3.11 で 5 回続けて落ち、手で止めた訳)。版ごとに素の venv を作り、
+# 核の 5 個を checkout から入れる — PyPI から入れた利用者と同じく、依存は uv.lock でなく各 package の宣言から解く。
+# 検は package ごとに別の pytest の session で走らせる(Makefile の test-packages と同じ境目 — 同じ名の検の file がぶつからない)。
+# free-threaded の 3.14t は実験の扱い(落ちても run を赤にしない)。3.13t は置かない: PyO3 が 3.14 より前の free-threaded の
+# CPython を支えず、doeff-hy が依る pydantic-core を組めない。
 name: Python Compatibility
 
 on:
@@ -10,60 +20,77 @@ on:
 jobs:
   pytest-matrix:
     runs-on: ubuntu-latest
-    env:
-      UV_PROJECT_ENVIRONMENT: .venv-ci
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        experimental: [false]
+        include:
+          - python-version: "3.14t"
+            experimental: true
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies
-        run: uv sync --group dev --package doeff --python ${{ matrix.python-version }}
+      # 検の道具は核の外: pytest の plugin・Hy の検の file(test_*.hy)を集める doeff-adr の plugin・根の検が import する cloudpickle と
+      # pyyaml。
+      - name: Install the core packages into a fresh venv
+        id: install
+        run: |
+          uv venv --python ${{ matrix.python-version }} .venv-ci
+          uv pip install --python .venv-ci/bin/python \
+            ./packages/doeff-vm ./packages/doeff-core-effects ./packages/doeff-hy ./packages/doeff-hy-pytest . \
+            ./packages/doeff-adr pytest pytest-asyncio pytest-timeout pytest-xdist cloudpickle pyyaml
 
       - name: Verify doeff-vm import
-        run: uv run --package doeff --python ${{ matrix.python-version }} python -c "import doeff_vm; import doeff_vm.doeff_vm"
+        run: .venv-ci/bin/python -c "import doeff_vm; import doeff_vm.doeff_vm"
 
-      - name: Run test suite
-        run: uv run --package doeff --python ${{ matrix.python-version }} pytest -q
-
-      - name: Run benchmark smoke checks
-        if: matrix.python-version == '3.12'
+      # 外す file = 核の外の部品(doeff-traverse・doeff-time・doeff-gemini・doeff-agents)か、開発の道具(pyright・semgrep・
+      # pre-commit・doeff-linter)を要る検。版の違いではなく、この venv に入れない物で落ちる。足す時は訳と一緒にここへ書く。
+      - name: Run tests (doeff and doeff-vm)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
-          uv run --package doeff --python ${{ matrix.python-version }} python benchmarks/benchmark_runner.py --smoke --no-output
-          export PYO3_PYTHON="$(uv run --package doeff --python ${{ matrix.python-version }} python -c 'import sys; print(sys.executable)')"
+          .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" \
+            tests packages/doeff-vm/tests packages/doeff-vm-core/tests \
+            --ignore=tests/effects/test_traverse.py \
+            --ignore=tests/test_fnk_do_bang_scope.py \
+            --ignore=tests/test_for_do_runtime.py \
+            --ignore=tests/test_handle_scope.py \
+            --ignore=tests/test_nested_definition_scope.py \
+            --ignore=tests/test_handler_tail_transfer_reclamation.py \
+            --ignore=tests/test_llm_multi_provider_handlers.py \
+            --ignore=tests/test_mcp_json_type_table.py \
+            --ignore=tests/test_effectful.py \
+            --ignore=tests/test_lint_entrypoint_wiring.py
+
+      - name: Run tests (doeff-core-effects)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" packages/doeff-core-effects/tests
+
+      - name: Run tests (doeff-hy)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" packages/doeff-hy/tests \
+            --ignore=packages/doeff-hy/tests/test_helper_imports_table.py
+
+      - name: Run tests (doeff-hy-pytest)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" packages/doeff-hy-pytest/tests
+
+      # cargo bench の検の binary は CPython を埋め込むので、venv の Python と、その libpython の dir を渡す(Makefile の test-rust と同じ)。
+      - name: Run benchmark smoke checks
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.python-version == '3.12' }}
+        run: |
+          .venv-ci/bin/python benchmarks/benchmark_runner.py --smoke --no-output
+          export PYO3_PYTHON="$PWD/.venv-ci/bin/python"
+          export LD_LIBRARY_PATH="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           cd packages/doeff-vm-core
           cargo bench --features python_bridge --bench dispatch -- --test
-
-  version-probe:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Verify supported Python versions
-        run: python tools/test_python_versions.py --versions 3.10,3.11,3.12,3.13,3.14
-
-      - name: Verify free-threaded Python (experimental, non-blocking)
-        run: |
-          python tools/test_python_versions.py --versions 3.13t,3.14t || {
-            echo "::warning::Free-threaded Python probe failed (experimental)."
-            echo "::warning::Keeping this check non-blocking until ecosystem support stabilizes."
-          }
