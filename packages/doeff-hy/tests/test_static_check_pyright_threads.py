@@ -75,6 +75,42 @@ def test_the_thread_count_never_exceeds_the_width_the_slot_canon_answered() -> N
         static_check.pyright_threads("0", 2)
 
 
+def test_a_thread_count_clamped_by_the_width_is_named_not_dropped_silently() -> None:
+    """指定が宣言の数で頭打ちになる時は、環境変数の名・指定の数・宣言の数・実際の数を 1 行で名乗る。頭打ちでない時(宣言の内・
+    宣言が届かない・指定が無い)は何も言わない。"""
+    note = static_check.thread_clamp_note("4", 2)
+    assert note is not None
+    for part in ("DOEFF_HY_CHECK_PYRIGHT_THREADS=4", "宣言の並走の数 2", "2 本で撃つ"):
+        assert part in note, note
+    assert static_check.thread_clamp_note("2", 2) is None
+    assert static_check.thread_clamp_note("1", 2) is None
+    assert static_check.thread_clamp_note(None, 2) is None
+    assert static_check.thread_clamp_note("4", None) is None
+
+
+def test_the_entry_says_so_on_stderr_when_the_environment_is_clamped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """日次の失敗の形: env を 4 にしても宣言が 2 なら pyright は 2 本で走る(値は変えない)。その事を stderr に名乗る
+    (直す前は何も言わず、4 を指定した回が 2 本で走った事は別の会話が探し当てるまで見えなかった)。"""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 2))
+    monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "4")
+    argv = _checked_once(tmp_path)
+    assert argv[argv.index("--threads") + 1] == "2", argv
+    assert "DOEFF_HY_CHECK_PYRIGHT_THREADS=4 は機体の検の枠の宣言の並走の数 2 を越える" in capsys.readouterr().err
+
+
+def test_the_entry_is_silent_when_the_environment_is_within_the_width(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 2))
+    monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "2")
+    _checked_once(tmp_path)
+    assert "を越えるので" not in capsys.readouterr().err
+
+
 def test_the_entry_passes_the_thread_count_to_pyright(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """環境変数が 2 以上の数を名指すと、入口の main は pyright を `--threads <数>` で撃つ(枠の正本が答えた数の内で)。"""
     monkeypatch.setattr(sys, "path", list(sys.path))  # main は根を sys.path の頭に足す
