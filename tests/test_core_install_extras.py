@@ -48,9 +48,9 @@ NOT_SHIPPED = frozenset({"tests", "test", "examples", "benchmarks"})
 NOT_SCANNED = {
     # Hy の module の持ち主。自分の module の要る物は、下の _core_effects_needs が読む。
     canonicalize_name("doeff-core-effects"): "Hy の module の持ち主",
-    # CLI の doeff run が Hy の process の effect を読む。Hy が無い時に足す extra の名を言う文は card ki-7310ee8e4fd0、
-    # Hy 無しで動かす案は card ki-6eaf5d42b51f(区切り 8 の card 2 と 7)。
-    canonicalize_name("doeff"): "CLI の doeff run は区切り 8 の card 2・7",
+    # CLI の doeff run は Hy 無しで動き、--hy と .hy の program の時だけ遅い import で Hy を読む(tests/cli/test_cli_without_hy.py)。
+    # その時に足す extra の名を言う文は区切り 8 の card 2(ki-7310ee8e4fd0)。
+    canonicalize_name("doeff"): "CLI の --hy と .hy の program だけが Hy を読む",
     # doeff-hy の依存としてだけ入る pytest の plugin(doeff-hy が doeff-hy-pytest を引く — 逆に引くと輪になる)。
     canonicalize_name("doeff-hy-pytest"): "doeff-hy が引く plugin",
 }
