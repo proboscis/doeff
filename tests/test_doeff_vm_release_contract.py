@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import tomllib
+import yaml
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,19 @@ def test_reusable_native_publish_workflows_honor_publish_input() -> None:
 
         assert "|| inputs.publish" in text
         assert "github.event_name == 'workflow_call' && inputs.publish" not in text
+
+
+def test_linux_aarch64_doeff_vm_wheels_build_natively_on_an_arm_runner() -> None:
+    """Cross-compiling aarch64 on an x86_64 runner uses rust-cross/manylinux2014-cross, whose GCC 4.8
+    rejects the -Wno-error=date-time flag that libmimalloc-sys passes (Build doeff-vm run 38937296520)."""
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "build-vm.yml").read_text(encoding="utf-8"))["jobs"]
+
+    for name in ("build-linux", "build-linux-freethreaded"):
+        entries = jobs[name]["strategy"]["matrix"]["include"]
+        runners = {entry["target"]: entry["runner"] for entry in entries}
+
+        assert jobs[name]["runs-on"] == "${{ matrix.runner }}"
+        assert runners == {"x86_64": "ubuntu-latest", "aarch64": "ubuntu-24.04-arm"}
 
 
 def test_pypi_publish_actions_use_current_skip_existing_input_name() -> None:
