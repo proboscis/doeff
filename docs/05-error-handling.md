@@ -18,11 +18,11 @@ This chapter covers error handling in doeff using the `Try` effect and canonical
 `RunResult` wrapper.
 
 For custom handler composition, call a Program -> Program handler installer directly, for example
-`handler(program)`.
+`handler(program)`. `writer` keeps its log in state, so install `state()` outside it.
 
 ```python
 from doeff import Ask, Tell, do, run
-from doeff_core_effects.handlers import reader, writer
+from doeff_core_effects.handlers import reader, state, writer
 
 @do
 def program():
@@ -32,9 +32,11 @@ def program():
 
 prog = program()
 prog = writer(prog)
+prog = state()(prog)
 prog = reader(env={"name": "doeff"})(prog)
 result = run(prog)
 # result is "DOEFF" directly — no wrapper
+print(result)  # DOEFF
 ```
 
 When an exception is raised inside the program, `run()` re-raises it directly. Use `Try` to
@@ -46,6 +48,8 @@ Use the canonical import path:
 
 ```python
 from doeff import Ok, Err
+
+print(Ok(5), Err(ValueError("boom")))  # Ok(5) Err(ValueError('boom'))
 ```
 
 `Ok` and `Err` values are returned by `Try(...)` and task completion payloads. They are a Rust-backed
@@ -55,7 +59,8 @@ Result implementation.
 
 - `Ok.value`: success payload
 - `Err.error`: exception payload
-- `Err.captured_traceback`: optional captured traceback object (or `None`)
+- `Err.captured_traceback`: optional captured traceback object (`None` for errors caught by
+  `try_handler` — see [Captured Traceback on Err](#captured-traceback-on-err))
 
 ### Truthiness
 
@@ -69,8 +74,10 @@ Use `isinstance` to check the result type:
 ```python
 from doeff import Ok, Err
 
+result = Ok(42)
+
 if isinstance(result, Ok):
-    print(result.value)
+    print(result.value)  # 42
 elif isinstance(result, Err):
     print(result.error)
 ```
@@ -81,7 +88,7 @@ elif isinstance(result, Err):
 
 ```python
 from doeff import Err, Ok, Try, do, run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects.handlers import try_handler
 
 @do
 def might_fail(x: int):
@@ -94,23 +101,27 @@ def workflow(x: int):
     return (yield Try(might_fail(x)))
 
 prog = workflow(-1)
-prog = reader(env={})(prog)
+prog = try_handler(prog)
 result = run(prog)
 
 match result:
     case Ok(value=v):
         print(f"success: {v}")
     case Err(error=e):
-        print(f"failure: {e}")
+        print(f"failure: {e}")  # failure: x must be non-negative
 ```
 
 ## Try Effect
 
 `Try(sub_program)` catches exceptions from `sub_program` and returns `Ok`/`Err` so you can keep control flow explicit.
 
+`Try` is handled by `try_handler` (from `doeff_core_effects.handlers`): install it around the
+program that yields `Try`, like any other handler. Without it, `run()` raises
+`UnhandledEffect`.
+
 ```python
 from doeff import Err, Ok, Try, Tell, do, run
-from doeff_core_effects.handlers import writer
+from doeff_core_effects.handlers import state, try_handler, writer
 
 @do
 def parse_count(raw: str):
@@ -129,7 +140,9 @@ def app(raw: str):
             return 0
 
 prog = app("not-a-number")
+prog = try_handler(prog)
 prog = writer(prog)
+prog = state()(prog)
 result = run(prog)
 print(result)  # 0
 ```
@@ -143,7 +156,7 @@ State updates and `Tell(...)` log entries persist.
 
 ```python
 from doeff import Err, Ok, Get, Put, Try, do, run
-from doeff_core_effects.handlers import state
+from doeff_core_effects.handlers import state, try_handler
 
 @do
 def mutate_then_fail():
@@ -158,8 +171,9 @@ def app():
     return (isinstance(result, Err), counter)  # (True, 1)
 
 prog = app()
+prog = try_handler(prog)
 prog = state()(prog)
-print(run(prog))
+print(run(prog))  # (True, 1)
 ```
 
 ### 2. Env Restoration with `Local`
@@ -168,9 +182,12 @@ print(run(prog))
 both success and failure. This env restoration is independent from the no-rollback behavior for
 state/log.
 
+`Local` is handled by `local_handler`; it answers `Ask` for the overridden keys and passes the
+other keys on to the outer `reader`.
+
 ```python
 from doeff import Ask, Local, Try, do, run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects.handlers import local_handler, reader, try_handler
 
 @do
 def failing_inner():
@@ -185,16 +202,23 @@ def app():
     return (before, after)  # ("outer", "outer")
 
 prog = app()
+prog = local_handler(prog)
+prog = try_handler(prog)
 prog = reader(env={"key": "outer"})(prog)
-print(run(prog))
+print(run(prog))  # ('outer', 'outer')
 ```
 
 `Local(Try(...))` is the inverse nesting order: `Try` catches inside the `Local` scope first, then
 `Local` restores the outer env when the scope exits.
 
 ```python
-from doeff import Ask, Local, Try, do, run
-from doeff_core_effects.handlers import reader
+from doeff import Ask, Err, Local, Try, do, run
+from doeff_core_effects.handlers import local_handler, reader, try_handler
+
+@do
+def failing_inner():
+    _ = yield Ask("key")
+    raise ValueError("fail inside local")
 
 @do
 def local_safe_inner():
@@ -210,8 +234,10 @@ def app_local_safe():
     return (before, inside, after)  # ("outer", (True, "inner"), "outer")
 
 prog = app_local_safe()
+prog = local_handler(prog)
+prog = try_handler(prog)
 prog = reader(env={"key": "outer"})(prog)
-print(run(prog))
+print(run(prog))  # ('outer', (True, 'inner'), 'outer')
 ```
 
 Contrast: `Try(Local(...))` catches after `Local` unwinds; `Local(Try(...))` catches before unwind
@@ -223,6 +249,7 @@ A nested Try does not collapse wrappers. `Try(Try(x))` returns nested results.
 
 ```python
 from doeff import Ok, Err, Try, do, run
+from doeff_core_effects.handlers import try_handler
 
 @do
 def succeeds():
@@ -238,15 +265,20 @@ def app():
     b = yield Try(Try(fails()))
     return (a, b)  # (Ok(Ok(5)), Ok(Err(ValueError(...))))
 
-print(run(app()))
+print(run(try_handler(app())))  # (Ok(Ok(5)), Ok(Err(ValueError('inner failure'))))
 ```
 
 ## Captured Traceback on Err
 
-`Err` includes `captured_traceback` for debugging context.
+`Err` has a `captured_traceback` field, but `try_handler` leaves it `None`. The traceback of the
+failure stays on the caught exception itself (`err.error.__traceback__`), as with any caught
+Python exception.
 
 ```python
+import traceback
+
 from doeff import Ok, Err, Try, do, run
+from doeff_core_effects.handlers import try_handler
 
 @do
 def boom():
@@ -256,11 +288,13 @@ def boom():
 def app():
     return (yield Try(boom()))
 
-safe_result = run(app())
+safe_result = run(try_handler(app()))
 
 if isinstance(safe_result, Err):
     print(type(safe_result.error).__name__)  # ValueError
-    print(safe_result.captured_traceback)    # traceback object or None
+    print(safe_result.captured_traceback)    # None
+    frames = traceback.extract_tb(safe_result.error.__traceback__)
+    print(frames[-1].name)  # boom
 ```
 
 ## Practical Patterns
@@ -269,6 +303,7 @@ if isinstance(safe_result, Err):
 
 ```python
 from doeff import Ok, Err, Try, do, run
+from doeff_core_effects.handlers import try_handler
 
 @do
 def fetch_primary():
@@ -283,13 +318,14 @@ def fetch_with_fallback():
         case _:
             return "fallback"
 
-print(run(fetch_with_fallback()))
+print(run(try_handler(fetch_with_fallback())))  # fallback
 ```
 
 ### Keep failures visible
 
 ```python
 from doeff import Ok, Err, Try, do, run
+from doeff_core_effects.handlers import try_handler
 
 @do
 def validate(v: int):
@@ -302,6 +338,6 @@ def flow(v: int):
     checked = yield Try(validate(v))
     return checked  # caller receives Ok(...) or Err(...)
 
-out = run(flow(0))
+out = run(try_handler(flow(0)))
 print(isinstance(out, Err))  # True
 ```
