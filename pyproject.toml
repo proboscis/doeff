@@ -280,9 +280,11 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 prefix = "docs/01-getting-started.md"
 tests = ["tests/test_docs_entry_path_examples.py"]
 
+# 02 章は、入門の道の検に加え、Handler Contract の節の Resume しない return と Pass しない handler の例が検から外れない事の
+# 検を払う(card ki-03bb9225a242 — 下の 13 章の行と同じ検)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/02-core-concepts.md"
-tests = ["tests/test_docs_entry_path_examples.py"]
+tests = ["tests/test_docs_entry_path_examples.py", "tests/test_docs_handler_endings.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "docs/03-basic-effects.md"
@@ -324,6 +326,14 @@ tests = ["tests/test_docs_page_examples.py", "tests/test_docs_kleisli_arguments.
 [[tool.doeff.contract-tests]]
 prefix = "docs/12-mcp-tools.md"
 tests = ["tests/test_docs_page_examples.py"]
+
+# 13 章の Control Effects の節(Resume と Pass の項)を書き換えた便は、Resume しない handler と Pass しない handler が program
+# をどう終えるかの例を走らせる検を払う(card ki-03bb9225a242)。13 章は page 全体をまだ走らせられないので、page の例の検
+# (CHECKED_PAGES)に載せず、節だけを走らせる。秒は 4.5 秒(4 本・子 2 本・起動を含む壁時計・load 約 60 の下・
+# 2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/13-api-reference.md"
+tests = ["tests/test_docs_handler_endings.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "docs/18-effect-combinations.md"

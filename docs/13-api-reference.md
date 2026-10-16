@@ -5,7 +5,8 @@ Complete API reference for doeff's current public surface.
 Most code blocks on this page are excerpts: a few lines from inside a `@do` function, or a call
 on a program you write yourself (`my_program()`, `worker()`). They do not run on their own. The
 blocks that run as written print what their `# ...` comments state — for example
-[@do](#do), [slog_handler](#slog_handler) and [run](#rundoexpr).
+[@do](#do), [Resume](#resumek-value), [Pass](#passeffect-k), [slog_handler](#slog_handler)
+and [run](#rundoexpr).
 
 ## Core Types
 
@@ -341,21 +342,101 @@ value = yield Pure({"status": "ok"})
 
 ---
 
-### Pass(effect, k)
+### Resume(k, value)
 
-Forward an unhandled effect to the next outer handler. Used inside handler functions
-to indicate "I don't handle this effect".
+Answer an effect inside a handler: send `value` to the program that performed the
+effect and run the rest of it. `yield Resume(k, value)` gives the handler that
+program's answer, and the handler's return value is the answer of the program the
+handler was installed on. A handler that returns without `Resume` (or `Transfer`)
+ends that program with its return value: the rest of the program never runs, and no
+error is raised.
 
 ```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, Resume, do, handler, run
+
+
+@dataclass(frozen=True)
+class Double(EffectBase):
+    value: int
+
+
+@do
+def doubles(effect: Double, k):
+    return (yield Resume(k, effect.value * 2))
+
+
+@do
+def gives_up(effect: Double, k):
+    return "gave up"  # no Resume: the rest of compute() never runs
+
+
+@do
+def compute():
+    doubled = yield Double(21)
+    return f"answer={doubled}"
+
+
+print(run(handler(doubles)(compute())))  # answer=42
+print(run(handler(gives_up)(compute())))  # gave up
+```
+
+**Signature:** `Resume(k, value)`. `Transfer(k, value)` resumes the same way when the
+handler is done after answering; the handler does not get the program's answer back.
+
+**See:** [Core Concepts](02-core-concepts.md#returning-without-resume-ends-the-program-under-the-handler)
+
+---
+
+### Pass(effect, k)
+
+Forward an effect to the next outer handler. Used inside handler functions to say
+"I don't handle this effect". A handler without an annotation is called for every
+effect, so for an effect it does not answer it must `yield Pass(effect, k)`: falling
+off the end returns `None`, which ends the handled program with `None`. A handler
+whose effect parameter is annotated (`effect: Double`) is not called for other
+effects and needs no `Pass` for them.
+
+```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, Pass, Resume, do, handler, run
+from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
+
+
+@dataclass(frozen=True)
+class Double(EffectBase):
+    value: int
+
+
 @do
 def my_handler(effect, k):
-    if isinstance(effect, MyEffect):
-        result = yield Resume(k, effect.payload * 2)
-        return result
-    yield Pass(effect, k)  # forward everything else
+    if isinstance(effect, Double):
+        return (yield Resume(k, effect.value * 2))
+    yield Pass(effect, k)  # forward everything else (here: Ask)
+
+
+@do
+def without_pass(effect, k):
+    if isinstance(effect, Double):
+        return (yield Resume(k, effect.value * 2))
+
+
+@do
+def compute():
+    base = yield Ask("base")
+    return (yield Double(base))
+
+
+print(run(reader(env={"base": 21})(handler(my_handler)(compute()))))  # 42
+print(run(reader(env={"base": 21})(handler(without_pass)(compute()))))  # None
 ```
 
 **Signature:** `Pass(effect, k)`
+
+**See:** [Core Concepts](02-core-concepts.md#pass-the-effects-a-handler-does-not-answer)
 
 ---
 
@@ -992,7 +1073,7 @@ prog = env_var_ask()(my_program())
 | **Async/Concurrency** | `Await`, `Spawn`, `Wait`, `Gather`, `Race`, `Cancel` |
 | **Semaphore** | `CreateSemaphore`, `AcquireSemaphore`, `ReleaseSemaphore` |
 | **Promise** | `CreatePromise`, `CompletePromise`, `FailPromise`, `CreateExternalPromise` |
-| **Control** | `Pure`, `Pass`, `WithObserve`, handler installer calls |
+| **Control** | `Pure`, `Resume`, `Transfer`, `Pass`, `WithObserve`, handler installer calls |
 | **Error** | `Try`, `Ok`, `Err` |
 | **Cache** | `CacheGet`, `CachePut` (in `doeff_core_effects.cache_effects`) |
 | **Memo** | `MemoGet`, `MemoPut` (in `doeff_core_effects.memo_effects`) |
@@ -1021,7 +1102,7 @@ from doeff import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore, Semaphore
 from doeff import CreatePromise, CompletePromise, FailPromise, CreateExternalPromise
 
 # Control
-from doeff import Pure, Pass, WithObserve
+from doeff import Pure, Resume, Transfer, Pass, WithObserve
 
 # Error handling
 from doeff import Try, Ok, Err

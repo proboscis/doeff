@@ -21,7 +21,7 @@ Changes from Rev 17. Drop Finally DoCtrl; add Discontinue; enforce continuation 
 |-----|---------|--------|
 | **R18-A** | Finally DoCtrl removed | **`Finally(cleanup)` DoCtrl removed.** `FinallyBoundary` SegmentKind variant removed. `graft_continuation_finally_boundaries`, `continuation_finally_registry`, and all grafting machinery deleted. User code uses Python `try/finally` with `yield` for cleanup instead. The `try/finally` approach works correctly with Resume, Transfer, and Discontinue, with no VM-level segment manipulation needed. See ISSUE-VM-DISCONTINUE-001. |
 | **R18-B** | Discontinue DoCtrl | **`Discontinue(k, exn?)` added.** Throws an exception into continuation `k` via generator `.throw()`, triggering Python `try/finally` cleanup. Semantically equivalent to OCaml 5 `Effect.Deep.discontinue k exn`. This is a tail operation (handler does not get control back). Default exception is `Discontinued()` if none specified. Implementation reuses `TransferThrow` mechanics. |
-| **R18-C** | Continuation linearity | **Handler MUST consume `k` exactly once.** Valid operations: `Resume(k, v)`, `Transfer(k, v)`, `Discontinue(k, exn)`, or `Pass()`. If a handler returns without consuming `k`, the VM raises `RuntimeError` immediately (not a warning). This matches OCaml 5 where dropping a continuation without `continue`/`discontinue` is a resource leak bug. |
+| **R18-C** | Continuation linearity | **[NOT IMPLEMENTED — superseded by Implicit Handler Return (below) and ADR-DOE-CORE-EFFECTS-003 R15. A handler that returns without consuming `k` ends the handled scope with its return value and no error or warning (SPEC-TYPES-001 HP-04, `tests/public_api/test_types_001_handler_protocol.py::TestHP04AbandonContinuation`; user docs: docs/02-core-concepts.md "Returning without `Resume` ends the program under the handler"). The VM cannot tell a deliberate stop from a forgotten `Resume`; Hy `defhandler` checks clause endings instead (`(finish value)`).]** ~~**Handler MUST consume `k` exactly once.** Valid operations: `Resume(k, v)`, `Transfer(k, v)`, `Discontinue(k, exn)`, or `Pass()`. If a handler returns without consuming `k`, the VM raises `RuntimeError` immediately (not a warning). This matches OCaml 5 where dropping a continuation without `continue`/`discontinue` is a resource leak bug.~~ |
 | **R18-D** | R17-C/R17-E updated | **R17-C**: `FinallyBoundary` removed from `SegmentKind`; only `MaskBoundary` survives. **R17-E**: Superseded by R18-A. |
 
 ### Revision 17 Changelog
@@ -894,7 +894,8 @@ pub struct DispatchContext {
     pub k_user: Continuation,
     
     /// Prompt boundary for the root handler of this dispatch.
-    /// [R18-C] If handler returns without consuming k_user, VM raises RuntimeError.
+    /// A root handler that returns without consuming k_user abandons the callsite
+    /// (Implicit Handler Return); the RuntimeError of R18-C was not implemented.
     pub prompt_seg_id: SegmentId,
     
     /// Marked true when callsite is resolved (Resume/Transfer/Discontinue/Return)
