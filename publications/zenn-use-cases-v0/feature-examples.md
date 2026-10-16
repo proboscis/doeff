@@ -42,7 +42,7 @@
 | doeff-flow / trace / CLI | [observe](doeff-observe.md)（本文にコード） | TracePush/Annotate/Snapshot/Capture・LiveTrace・CLIの例を掲載。ただし現行checkoutでRunResultのImportError。実行成功とは扱わない |
 | defk / <- / ! / 契約 / do! / defhandler / deftest | [hy](doeff-hy.md)・[完全な例](examples/hy_composition.hy) | マクロの実行、生成されたdeftestの関数を確認 |
 | indexer / analyzer / linter | [tooling](doeff-tooling.md)（本文にコード） | 入力を指定したCLI例を掲載。バイナリ未導入のため未実行。解析器は開発途中 |
-| ADR / law / deftest / 収集 | [tooling](doeff-tooling.md)・[完全な例](examples/adr_example.hy) | ADR契約と生成された振る舞いのテストを実行。pytest収集の設定条件も明記 |
+| ADR / law / deftest / 収集 | [adr](doeff-adr.md)・[完全な例](examples/adr_as_test/docs/adr/adr_billing_clock.hy)・[tooling](doeff-tooling.md)・[完全な例](examples/adr_example.hy) | ADR契約と生成された振る舞いのテストを実行。pytest収集の設定条件も明記 |
 | defsemgrep / 正常例・反例 | [tooling](doeff-tooling.md)・[完全な例](examples/static_check.hy) | badの検出とgoodの通過を実際のSemgrepで確認 |
 | domain / 対応ハンドラ / 所属の検査 | [tooling](doeff-tooling.md)・[完全な例](examples/domain_check.py) | 宣言の網羅と指定漏れの失敗を確認。孤立した操作を調べる呼び出し例も掲載 |
 | VM / VM core / test-target / 旧agentd | [tooling](doeff-tooling.md)（本文にコード） | 内部基盤・検証用・廃止済みを区別。利用者向け機能や未対応APIとして宣伝しない |

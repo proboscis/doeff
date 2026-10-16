@@ -137,5 +137,11 @@
     "concept_caption": "awaitはawaitableを進める構文です。doeffでは依頼のデータと継続を、実行時に取り付けたハンドラへ渡します。",
     "flow_title": "ストリームは、1断片ずつdoeffへ戻す",
     "flow_caption": "収集ループと結合処理は@doに残し、次の1要素を待つ操作だけをAwaitで非同期実装へ接続します。"
+  },
+  "adr": {
+    "concept_title": "1件のADRから、3つのテストと1つの走査が出る",
+    "concept_caption": "ADRのファイルをpytestが集め、3つのテストにします。コード全体への走査は、同じ名前の規則を`semgrep scan`で当てます。",
+    "flow_title": "決まりを破る3つの変更と、止まる所",
+    "flow_caption": "破り方ごとに、止める検査が違います。1つ目はpytestでは通るので、コードの形を見る走査が要ります。"
   }
 }

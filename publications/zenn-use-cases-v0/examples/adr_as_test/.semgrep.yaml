@@ -1,0 +1,9 @@
+# 業務のコードがOSの時計を直に読む呼び出しを探す(ADR-BILLING-001のR1)。
+rules:
+  - id: billing-no-direct-now  # ADRのdefsemgrepが、この名で規則を引く。
+    languages: [python]  # Pythonの構文として照合する。
+    severity: ERROR  # 見つかったら失敗として扱う。
+    message: 今の時刻はGetTimeの依頼で頼みます(ADR-BILLING-001のR1)  # 見つけた時に出す訳。
+    pattern-either:  # どれか1つに当たれば見つける。
+      - pattern: datetime.datetime.now(...)  # from datetime import datetime の形も同じ物と見る。
+      - pattern: time.time()  # UNIXの秒を直に読む呼び出し。

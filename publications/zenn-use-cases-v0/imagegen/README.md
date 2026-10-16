@@ -49,3 +49,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - メインの3枚（main-hero・main-concept・main-flow）も、週1の仕上げに合わせて手で書いたSVGから作り直した。
 - 正本と作り方は[main-svg-source.txt](main-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
 - これで残りは40枚。
+
+## 設計の記録の記事の2枚をSVGで描く（2026-10-17追記）
+
+- 10本目の新しい回「設計の記録をテストとして走らせる」(doeff-adr.md)の2枚(adr-concept・adr-flow)を、手で書いたSVGから作った。
+- 正本と作り方は[adr-svg-source.txt](adr-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
+- 新しい回の図なので、残りの40枚の数は変わらない。

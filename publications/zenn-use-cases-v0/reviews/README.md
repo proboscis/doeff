@@ -37,3 +37,4 @@
 | boundaries | review_boundaries | 修正・検証済み | 更新・目視確認済み |
 | hy | review_hy | 修正・検証済み | 更新・目視確認済み |
 | coroutines | review_coroutines | 修正・検証済み | 更新・目視確認済み |
+| adr | 10本目の担当(Opus 5.5・2026-10-17) | 新規・検証済み(`adr-check.py`) | SVGで作成・目視確認済み |
