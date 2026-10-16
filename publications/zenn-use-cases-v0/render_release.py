@@ -25,9 +25,12 @@ _FENCE = re.compile(r"^```.*?^```[ \t]*$", re.S | re.M)
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _ARTICLE_LINK = re.compile(r"\[([^\]]+)\]\((doeff-[a-z]+\.md)(#[^)]*)?\)")
+# 「公開順」の表の1行: | 週 | [題](原稿) | `slug` | 読者への入口 | 公開状態 |
 _STATE_ROW = re.compile(
-    r"^\|[^|]*\|\s*\[[^\]]+\]\((doeff-[a-z]+\.md)\)\s*\|[^|]*\|\s*([^|]+?)\s*\|\s*$"
+    r"^\|[^|]*\|\s*\[[^\]]+\]\((doeff-[a-z]+\.md)\)\s*\|\s*`([^`|]*)`\s*\|[^|]*\|\s*([^|]+?)\s*\|\s*$"
 )
+# Zennの記事のslug(articles/<slug>.mdのファイル名で、公開後のURLの末尾)。zenn-cliの検査と同じ規則。
+_ZENN_SLUG = re.compile(r"[0-9a-z_-]{12,50}")
 # 文の終わりの記号(句点・全角の感嘆符と疑問符)と、その前に来る閉じ括弧。
 _SENTENCE_END = "\u3002\uff01\uff1f"
 _CLOSERS = "\u300d\u300f)\uff09"
@@ -53,9 +56,10 @@ State = Published | Scheduled
 
 @dataclass(frozen=True)
 class PlanRow:
-    """公開計画の「公開順」の表の1行(原稿のファイル名と公開状態)。"""
+    """公開計画の「公開順」の表の1行(原稿のファイル名・Zennのslug・公開状態)。"""
 
     name: str
+    slug: str
     state: State
 
 
@@ -71,18 +75,26 @@ class Measures:
 
 
 def read_rows(plan: str) -> tuple[PlanRow, ...]:
-    """公開計画の「公開順」の表から、原稿ごとの公開状態を読む。表に無い原稿は候補になる。"""
+    """公開計画の「公開順」の表から、原稿ごとのslugと公開状態を読む。表に無い原稿は候補になる。
+
+    slugがZennの規則に合わない行と、公開済みのURLの末尾がslugと違う行は、誤った公開先へ
+    リンクしないよう例外にする。
+    """
     rows: list[PlanRow] = []
     for line in plan.splitlines():
         row = _STATE_ROW.match(line)
         if row is None:
             continue
-        name, cell = row.groups()
+        name, slug, cell = row.groups()
+        if not _ZENN_SLUG.fullmatch(slug):
+            raise ValueError(f"{name}のslug「{slug}」は、a-z0-9・-・_の12〜50字にしてください")
         url = re.search(r"https://zenn\.dev/\S+", cell)
         if cell.startswith("公開済み") and url:
-            rows.append(PlanRow(name, Published(url.group(0))))
+            if not url.group(0).endswith(f"/articles/{slug}"):
+                raise ValueError(f"{name}の公開済みのURLの末尾がslug「{slug}」と違います")
+            rows.append(PlanRow(name, slug, Published(url.group(0))))
         elif cell.startswith("公開予定"):
-            rows.append(PlanRow(name, Scheduled()))
+            rows.append(PlanRow(name, slug, Scheduled()))
     return tuple(rows)
 
 

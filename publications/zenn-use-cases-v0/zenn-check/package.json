@@ -1,0 +1,13 @@
+{
+  "name": "doeff-zenn-check",
+  "private": true,
+  "description": "書き出したZennの記事の組を、zenn-cliのプレビューとzenn-modelの検査で読む。",
+  "type": "module",
+  "dependencies": {
+    "@secretlint/node": "11.7.1",
+    "@secretlint/secretlint-rule-preset-recommend": "11.7.1",
+    "cheerio": "1.2.0",
+    "zenn-cli": "0.5.6",
+    "zenn-model": "0.5.6"
+  }
+}
