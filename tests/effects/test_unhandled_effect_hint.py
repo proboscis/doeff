@@ -165,7 +165,10 @@ class TestHintPlacement:
             PyVM().run(ask_program())
         assert "reader(env=" in _hint_line(str(excinfo.value))
 
-    def test_effect_without_a_hint_keeps_the_message(self):
+    def test_effect_without_a_registered_hint_gets_the_general_hint(self):
+        """An effect no package registered a line for (one of the user's own) still ends with
+        how to install a handler (tests/test_handler_annotation_messages.py, e23)."""
+
         class NoHintEffect(EffectBase):
             pass
 
@@ -174,8 +177,11 @@ class TestHintPlacement:
             yield NoHintEffect()
 
         message = _message(program())
-        assert "hint:" not in message
-        assert message.endswith("(no handlers in scope)")
+        assert message.splitlines()[0].endswith("(no handlers in scope)")
+        assert _hint_line(message) == (
+            "hint: install a handler for NoHintEffect: run(handler(fn)(prog)), where fn is a "
+            "@do function (effect: NoHintEffect, k) that returns (yield Resume(k, value))"
+        )
 
     def test_a_failing_hint_lookup_keeps_the_unhandled_effect(self):
         @do
