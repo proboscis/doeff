@@ -2287,9 +2287,6 @@ rules:
 
   - id: doeff-no-async-in-do-function
     pattern-regex: '@do\s*\n\s*async\s+def\s+\w+'
-    paths:
-      exclude:
-        - "**/examples/marker_patterns.py"
     message: |
       @do functions should not be async. The @do decorator handles async execution
       through the effect system. Remove 'async' keyword and use Await effect for

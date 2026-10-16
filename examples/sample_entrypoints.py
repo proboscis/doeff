@@ -1,15 +1,28 @@
-"""Sample doeff entrypoints for testing doeff.nvim plugin.
+"""Sample doeff entrypoints for the CLI and the IDE plugins (doeff.nvim and others).
 
 In doeff, an ENTRYPOINT is a global variable with type Program[T].
 The behavior is fixed at definition time - no runtime args or env vars.
 
-Run with: uv run doeff run --program examples.sample_entrypoints.hello_world_program
+Run one from the repository root with:
+
+    uv run doeff run --program examples.sample_entrypoints.hello_world_program
+
+Entrypoints that Ask for services need SAMPLE_ENV. `--hy` runs the Program its last form
+returns without adding handlers, so install them with `with_sample_env`:
+
+    uv run doeff run --hy '(import examples.sample_entrypoints [fetch_user_1_program
+        with_sample_env]) (with_sample_env fetch_user_1_program)'
+
+Run every entrypoint at once with: uv run python examples/sample_entrypoints.py
 """
 
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from doeff import EffectGenerator, Program, ask, do, gather, slog
+from doeff_core_effects.handlers import reader, slog_handler, state, try_handler, writer
+from doeff_core_effects.scheduler import scheduled
+
+from doeff import Ask, EffectGenerator, Gather, Program, Spawn, do, run, slog
 
 # ============================================================
 # KLEISLI FUNCTIONS - Building blocks that create Programs
@@ -25,9 +38,9 @@ def greet(name: str) -> EffectGenerator[str]:
 
 @do
 def fetch_user(user_id: int) -> EffectGenerator[dict]:
-    """Fetch user data. Services are injected via ask."""
-    yield ask("logger")  # Service injection is OK
-    yield slog(msg=f"Fetching user {user_id}")
+    """Fetch user data. Services are injected via Ask."""
+    source = yield Ask("user_source")  # Service injection is OK
+    yield slog(msg=f"Fetching user {user_id} from {source}")
     return {"id": user_id, "name": f"User {user_id}"}
 
 
@@ -40,15 +53,11 @@ def process_item(item: dict) -> EffectGenerator[dict]:
 
 @do
 def process_items(items: list[dict]) -> EffectGenerator[list[dict]]:
-    """Process multiple items using gather."""
-
-    @do
-    def process_single(item: dict) -> EffectGenerator[dict]:
-        return (yield process_item(item))
-
-    programs = [process_single(item) for item in items]
-    results = list((yield gather(*programs)))
-    return results
+    """Process multiple items concurrently: Spawn a task per item, then Gather them."""
+    tasks = []
+    for item in items:
+        tasks = [*tasks, (yield Spawn(process_item(item)))]
+    return list((yield Gather(*tasks)))
 
 
 @do
@@ -69,6 +78,14 @@ def compute_metrics(data: list[dict]) -> EffectGenerator[dict]:
     }
 
 
+@do
+def metrics_pipeline(path: Path) -> EffectGenerator[dict]:
+    """load -> process -> compute metrics. Each step's value is taken with `yield`."""
+    loaded = yield load_data(path=path)
+    processed = yield process_items(items=loaded)
+    return (yield compute_metrics(data=processed))
+
+
 # ============================================================
 # PROGRAM ENTRYPOINTS - Global variables with fixed behavior
 # These are what you run with `uv run doeff run --program ...`
@@ -80,23 +97,17 @@ hello_world_program: Program[str] = greet(name="World")
 # Another instance with different fixed parameter
 hello_doeff_program: Program[str] = greet(name="Doeff")
 
-# Fetch a specific user (behavior is fixed)
+# Fetch a specific user (behavior is fixed; the user source comes from the env)
 fetch_user_1_program: Program[dict] = fetch_user(user_id=1)
 fetch_user_42_program: Program[dict] = fetch_user(user_id=42)
 
 # Pipeline: load -> process -> compute metrics
-# Each step is a Program variable that can be composed
 sample_data_path: Path = Path("data/sample.json")
-loaded_data: Program[list[dict]] = load_data(path=sample_data_path)
-processed_data: Program[list[dict]] = process_items(items=loaded_data)
-data_metrics: Program[dict] = compute_metrics(data=processed_data)
-
-# The top-level pipeline entrypoint
-full_pipeline_program: Program[dict] = data_metrics
+full_pipeline_program: Program[dict] = metrics_pipeline(path=sample_data_path)
 
 
 # ============================================================
-# USING Program.pure FOR SIMPLE FUNCTIONS
+# PLAIN FUNCTIONS IN PROGRAMS
 # ============================================================
 
 
@@ -110,12 +121,21 @@ def format_result(value: int) -> str:
     return f"Result: {value}"
 
 
-# Create Program constants from pure functions
-double_10_program: Program[int] = Program.pure(double)(x=10)
-double_100_program: Program[int] = Program.pure(double)(x=100)
+@do
+def doubled(x: int) -> EffectGenerator[int]:
+    """A @do function may simply return a value: calling it builds a Program."""
+    return double(x)
 
-# Chain with Program proxy feature
-formatted_result: Program[str] = Program.pure(format_result)(value=double_10_program)
+
+@do
+def formatted(program: Program[int]) -> EffectGenerator[str]:
+    """Run another Program with `yield`, then pass its value to a plain function."""
+    return format_result((yield program))
+
+
+double_10_program: Program[int] = doubled(x=10)
+double_100_program: Program[int] = doubled(x=100)
+formatted_result: Program[str] = formatted(program=double_10_program)
 
 
 # ============================================================
@@ -130,10 +150,15 @@ class ProcessorFn(Protocol):
     def __call__(self, item: dict) -> dict: ...
 
 
+def mark_processed(item: dict) -> dict:
+    """The ProcessorFn that SAMPLE_ENV injects."""
+    return {**item, "processed": True}
+
+
 @do
 def process_with_strategy(items: list[dict]) -> EffectGenerator[list[dict]]:
     """Process items using injected strategy."""
-    processor: ProcessorFn = yield ask(ProcessorFn)
+    processor: ProcessorFn = yield Ask(ProcessorFn)
     results = [processor(item) for item in items]
     return results
 
@@ -142,6 +167,28 @@ def process_with_strategy(items: list[dict]) -> EffectGenerator[list[dict]]:
 strategy_pipeline: Program[list[dict]] = process_with_strategy(
     items=[{"id": 1}, {"id": 2}, {"id": 3}]
 )
+
+
+# ============================================================
+# INTERPRETER - runs an entrypoint with the services it Asks for
+# ============================================================
+
+SAMPLE_ENV = {"user_source": "in-memory sample users", ProcessorFn: mark_processed}
+
+
+def with_sample_env(program: Program) -> Program:  # doeff: transform
+    """Install SAMPLE_ENV and the core handlers, under the scheduler."""
+    program = slog_handler(program)
+    program = try_handler(program)
+    program = writer(program)
+    program = state()(program)
+    program = reader(env=SAMPLE_ENV)(program)
+    return scheduled(program)
+
+
+def sample_interpreter(program: Program):  # doeff: interpreter, default
+    """Run a Program of this module with SAMPLE_ENV and the core handlers."""
+    return run(with_sample_env(program))
 
 
 # ============================================================
@@ -205,14 +252,27 @@ def export_to_json(  # doeff: kleisli
     return output_path
 
 
+ENTRYPOINT_NAMES = (
+    "hello_world_program",
+    "hello_doeff_program",
+    "fetch_user_1_program",
+    "fetch_user_42_program",
+    "full_pipeline_program",
+    "double_10_program",
+    "double_100_program",
+    "formatted_result",
+    "strategy_pipeline",
+)
+
+
 if __name__ == "__main__":
-    print("Sample doeff entrypoints for testing doeff.nvim")
-    print("\nProgram Entrypoints (global variables):")
-    print("  - hello_world_program")
-    print("  - hello_doeff_program")
-    print("  - fetch_user_1_program")
-    print("  - fetch_user_42_program")
-    print("  - full_pipeline_program")
-    print("  - double_10_program")
-    print("  - formatted_result")
-    print("\nRun with: uv run doeff run --program examples.sample_entrypoints.<name>")
+    print("Sample doeff entrypoints, each run through sample_interpreter:")
+    for name in ENTRYPOINT_NAMES:
+        # Looked up by name, as `doeff run --program examples.sample_entrypoints.<name>` does.
+        print(f"  {name} -> {sample_interpreter(globals()[name])!r}", flush=True)
+    print(
+        "  with_logging(hello_world_program) -> "
+        f"{sample_interpreter(with_logging(hello_world_program))!r}",
+        flush=True,
+    )
+    print("\nRun one with: uv run doeff run --program examples.sample_entrypoints.<name>")

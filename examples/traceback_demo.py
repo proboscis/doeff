@@ -2,29 +2,23 @@
 
 Run with: uv run python examples/traceback_demo.py
 
-Doeff has two trace systems:
-  1. Error trace (automatic) — handler chain context on uncaught exceptions
-  2. Step trace (opt-in)   — full effect dispatch log via run(..., trace=True)
+When a program raises, ``run()`` attaches the doeff call chain to the exception as
+``__doeff_traceback__``, writes the rendered "doeff Traceback" to stderr, and re-raises.
+The rendering lists the ``@do`` frames that were active (outermost first) and, where an
+effect was being handled, the handler chain it passed through (SPEC-TRACE-001).
+``doeff.traceback.format_default(exc)`` returns the same text, for logs.
 
-This demo shows all three error trace formats:
-  - format_chained()   : chronological handler dispatch + Python traceback
-  - format_sectioned() : structured program/handler/root-cause summary
-  - format_short()     : one-liner for logs
+This demo shows three failures:
+  1. An exception raised deep inside a batch pipeline
+  2. An Ask for a key that the reader's env does not have
+  3. Two custom handlers for the same effect — the innermost one answers
 """
 
-from doeff import (
-    Ask,
-    AskEffect,
-    Delegate,
-    Get,
-    Put,
-    Resume,
-    Tell,
-    WithHandlerType,
-    default_handlers,
-    do,
-    run,
-)
+import sys
+
+from doeff_core_effects.handlers import reader, state, writer
+
+from doeff import Ask, Get, Pass, Put, Resume, Tell, do, handler, run
 
 # -- programs ----------------------------------------------------------------
 
@@ -50,120 +44,99 @@ def process_item(item_id):
 @do
 def batch_pipeline():
     yield Put("processed_count", 0)
-    results = []
+    results = ()
     for i in range(5):
-        results.append((yield process_item(i)))
+        results = (*results, (yield process_item(i)))
     total = yield Get("processed_count")
     yield Tell(f"Finished: {total} items processed")
     return results
 
 
-# -- custom handler -----------------------------------------------------------
+@do
+def needs_database():
+    db_url = yield Ask("database_url")
+    return f"Connected to {db_url}"
 
 
-def install_raw_handler(raw_handler):
-    def install(program):
-        return WithHandlerType(raw_handler, program)
+@do
+def check_mode():
+    mode = yield Ask("mode")
+    if mode == "production":
+        raise ValueError(f"Cannot run dangerous operation in {mode} mode")
+    return f"Running in {mode}"
 
-    return install
+
+# -- custom handlers ----------------------------------------------------------
 
 
+@do
 def auth_handler(effect, k):
-    if isinstance(effect, AskEffect) and effect.key == "auth_token":
+    if isinstance(effect, Ask) and effect.key == "auth_token":
         return (yield Resume(k, "Bearer sk-demo-1234"))
-    yield Delegate()
+    yield Pass(effect, k)
+
+
+@do
+def production_mode(effect, k):
+    if isinstance(effect, Ask) and effect.key == "mode":
+        return (yield Resume(k, "production"))
+    yield Pass(effect, k)
+
+
+@do
+def debug_mode(effect, k):
+    if isinstance(effect, Ask) and effect.key == "mode":
+        return (yield Resume(k, "debug"))
+    yield Pass(effect, k)
 
 
 # -- demo runner --------------------------------------------------------------
 
 
+def run_and_report(title, program):
+    """Run ``program``; when it fails, run() has already printed the doeff traceback."""
+    print("=" * 72, flush=True)
+    print(title, flush=True)
+    print("=" * 72, flush=True)
+    try:
+        value = run(program)
+    except (RuntimeError, KeyError, ValueError) as exc:
+        sys.stderr.flush()
+        print(
+            f"\ncaught {type(exc).__name__} — run() printed its doeff traceback above", flush=True
+        )
+        return
+    print(f"Unexpected success: {value}", flush=True)
+
+
 def demo_error_trace():
-    prog = install_raw_handler(auth_handler)(batch_pipeline())
-    result = run(
-        prog,
-        handlers=default_handlers(),
-        env={"base_url": "https://api.example.com", "timeout": 30},
-        store={"processed_count": 0},
-    )
-
-    if result.is_err():
-        tb = result.error.__doeff_traceback__
-
-        print("=" * 72)
-        print("format_chained() — full chronological handler chain")
-        print("=" * 72)
-        print(tb.format_chained())
-
-        print()
-        print("=" * 72)
-        print("format_sectioned() — structured summary")
-        print("=" * 72)
-        print(tb.format_sectioned())
-
-        print()
-        print("=" * 72)
-        print("format_short() — one-liner for logs")
-        print("=" * 72)
-        print(tb.format_short())
-    else:
-        print(f"Unexpected success: {result.value}")
+    program = handler(auth_handler)(batch_pipeline())
+    program = writer(program)
+    program = state(initial={"processed_count": 0})(program)
+    program = reader(env={"base_url": "https://api.example.com", "timeout": 30})(program)
+    run_and_report("Batch pipeline — item 2 raises inside process_item()", program)
 
 
 def demo_missing_env_key():
-    @do
-    def needs_database():
-        db_url = yield Ask("database_url")
-        return f"Connected to {db_url}"
-
-    result = run(needs_database(), handlers=default_handlers())
-
-    if result.is_err():
-        tb = result.error.__doeff_traceback__
-        print("=" * 72)
-        print("Missing env key — Ask('database_url') with no env")
-        print("=" * 72)
-        print(tb.format_chained())
-    else:
-        print(f"Unexpected success: {result.value}")
+    run_and_report(
+        "Missing env key — Ask('database_url') with an empty reader env",
+        reader(env={})(needs_database()),
+    )
 
 
 def demo_handler_delegation_chain():
-    def layer_1(effect, k):
-        if isinstance(effect, AskEffect) and effect.key == "mode":
-            return (yield Resume(k, "production"))
-        yield Delegate()
-
-    def layer_2(effect, k):
-        if isinstance(effect, AskEffect) and effect.key == "mode":
-            return (yield Resume(k, "debug"))
-        yield Delegate()
-
-    @do
-    def check_mode():
-        mode = yield Ask("mode")
-        if mode == "production":
-            raise ValueError(f"Cannot run dangerous operation in {mode} mode")
-        return f"Running in {mode}"
-
-    prog = install_raw_handler(layer_2)(install_raw_handler(layer_1)(check_mode()))
-    result = run(prog, handlers=default_handlers())
-
-    if result.is_err():
-        tb = result.error.__doeff_traceback__
-        print("=" * 72)
-        print("Handler stacking — innermost handler wins")
-        print("=" * 72)
-        print(tb.format_chained())
-    else:
-        print(f"Unexpected success: {result.value}")
+    # production_mode is installed innermost, so it answers Ask("mode") before
+    # debug_mode sees it.
+    program = handler(debug_mode)(handler(production_mode)(check_mode()))
+    run_and_report("Handler stacking — the innermost handler answers", program)
 
 
 if __name__ == "__main__":
-    print("\n>>> Demo 1: Batch pipeline failure (item 2 fails)\n")
+    print("\n>>> Demo 1: Batch pipeline failure (item 2 fails)\n", flush=True)
     demo_error_trace()
 
-    print("\n\n>>> Demo 2: Missing environment key\n")
+    print("\n\n>>> Demo 2: Missing environment key\n", flush=True)
     demo_missing_env_key()
 
-    print("\n\n>>> Demo 3: Handler delegation chain\n")
+    print("\n\n>>> Demo 3: Handler delegation chain\n", flush=True)
     demo_handler_delegation_chain()
