@@ -1,5 +1,11 @@
 # Abstraction Concern: Interpreter Design for Effect Tracking
 
+> **Historical design record — does not match doeff 0.5.0.** This discussion was written for
+> the earlier Python interpreter loop (`run_async`). The types it builds on — `IOEffect`,
+> `DepEffect`, `StateGetEffect`, `KleisliProgramCall` — no longer exist, and programs now run on
+> the Rust VM. For the current execution model see [Core Concepts](02-core-concepts.md). This
+> page is not listed in the [documentation index](index.md) and is kept only as history.
+
 ## Context
 
 We want to add call tracking to doeff to build a tree structure showing which `KleisliProgram` calls lead to which effects. This will help with debugging, profiling, and understanding effect flow.

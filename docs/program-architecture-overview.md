@@ -1,5 +1,12 @@
 # Program Architecture Overview
 
+> **Partly out of date for doeff 0.5.0.** The user-facing points still hold: handler stacking,
+> `WithObserve`, `run(scheduled(...))`, and `run` returning the raw value. The VM internals named
+> in *Core Model*, *Rust VM Stepping Engine* and *Call Stack Tracking* come from an earlier VM
+> and no longer exist: the `Map` / `FlatMap` control nodes, `StepEvent` / `NeedsPython` /
+> `PythonCall`, `Frame::PythonGenerator`, and `GetCallStack`. For the current control nodes see
+> [Core Concepts](02-core-concepts.md).
+
 This document describes the current execution model defined by:
 
 - `specs/core/SPEC-TYPES-001-program-effect-separation.md`

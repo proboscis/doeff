@@ -1,5 +1,10 @@
 # Filesystem Effect Architecture
 
+> **Unimplemented draft — not part of doeff 0.5.0.** None of the `Fs*` effects,
+> `FileSystemEffect`, or the files named in the checklist below (`doeff/effects/filesystem.py`,
+> `doeff/handlers/filesystem.py`, `doeff/interpreter.py`) exist. This page is not listed in the
+> [documentation index](index.md) and is kept only as a design sketch.
+
 This document sketches the design for a dedicated filesystem effect that unifies local and remote file access behind a single doeff abstraction. The core library stays lightweight by shipping a stdlib-only local backend, while richer targets (such as `fsspec` for `s3://`, `gs://`, etc.) live in optional adapter packages that reuse the same effect surface.
 
 ## Goals

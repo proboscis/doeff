@@ -337,21 +337,60 @@ def run_with_observe():
     return result
 ```
 
-## Custom Control Effects with Frames
+## Custom Control Effects with Handlers
 
-Doeff supports custom control effects by adding handlers that push custom continuation frames.
-The frame contract is:
+Domain-specific control flow is written as a handler for your own effect. A handler receives
+the effect and the continuation `k`: resuming `k` continues the body, and returning without
+resuming ends the body with the handler's value. `handler(h)` turns the handler into a
+`Program -> Program` installer.
 
 ```python
-from typing import Protocol
+from dataclasses import dataclass
 
-class Frame(Protocol):
-    def on_value(self, value, env, store, k_rest) -> FrameResult: ...
-    def on_error(self, error, env, store, k_rest) -> FrameResult: ...
+from doeff import EffectBase, Resume, do, handler, run
+
+
+@dataclass(frozen=True)
+class Abort(EffectBase):
+    reason: str
+
+
+@dataclass(frozen=True)
+class Audit(EffectBase):
+    message: str
+
+
+@do
+def abort_handler(effect: Abort, k):
+    # Not resuming k ends the body here; this value becomes the result.
+    return f"aborted: {effect.reason}"
+
+
+@do
+def audit_handler(effect: Audit, k):
+    print(f"audit: {effect.message}")
+    return (yield Resume(k, None))
+
+
+@do
+def checkout(stock: int):
+    yield Audit(f"stock={stock}")
+    if stock == 0:
+        yield Abort("out of stock")
+    return "ordered"
+
+
+def with_policies(program):
+    return handler(abort_handler)(handler(audit_handler)(program))
+
+
+print(run(with_policies(checkout(3))))  # ordered
+print(run(with_policies(checkout(0))))  # aborted: out of stock
 ```
 
-Use this pattern to implement domain-specific control flow such as transactions, timeouts, and
-retries without modifying the runtime internals.
+The handler contract is in [Core Concepts](02-core-concepts.md#handler-contract). Continuations
+are one-shot, so a retry handler re-performs the effect for each attempt and resumes `k` once — see
+[Capability Classes](22-capability-classes.md#retry-under-one-shot-continuations-the-correct-formulation).
 
 ## Time Effects Runtime Matrix
 
@@ -398,22 +437,6 @@ def parallel_counter():
 ```
 
 ## Best Practices
-
-### Accessing the active interpreter
-
-If you need the active interpreter object (for example, to pass it into an external callback),
-ask for the special key `__interpreter__`:
-
-```python
-from doeff import Ask, do
-
-@do
-def read_interpreter():
-    interp = yield Ask("__interpreter__")
-    return interp
-```
-
-This does not require adding `__interpreter__` to your environment.
 
 ### When to Use Gather
 
