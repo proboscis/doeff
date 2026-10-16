@@ -424,12 +424,22 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
     同じ名が repo のどこかに在るか)は、**引かれた時だけ** repo 全体から作る(`deferred.rs`)。引かれる形の判定を先に済ませ(腕が受けた値を返すだけの形・引数を素で
     呼ぶ定義・型で判じる handler の引数)、大半の file は引かない(agora-controllers の 120 file の標本で約 5%)。
   - 1 file の実行は事実の根ごとの表を読まず書かない(中身の hash で事実を引く — 全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む)。
+  - 登録簿と判定の一覧(1 鍵 1 file の dir — agora-controllers の `scripts/doeff_lint/SMELL-BREACHES` は 447 file)は、全部の file を読む。作業木ごとに別の inode なので、
+    冷えた作業木では 1 file ごとに disk を待つ — 順に読むと待ちが足し算になる。読みの待ちは `bulk_read::fan_out`(最大 32 本の thread・結果は入力の順・答えは順に読んだ時と
+    同じで、読めない file の知らせも file の順)で重ねる。rayon の pool(1 file の実行は 4 本)は CPU の仕事向けなので使わない。
   - 検: `tests/single_file_reads.rs`(答えが全体の実行と同じ・名指さない module の事実を置かない・全体の表を通らない)と、`signatures.rs`・`call_view.rs`・`body_view.rs` の
-    検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。
+    検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。登録簿の読みの待ちが重なる事は `bulk_read::watch`(同時に進んだ仕事の最大数)で確かめる。
 - 実測(agora-controllers の本線・2026-09-27): 全体 約 1.1 秒・1 file 10 ミリ秒未満。
 - 実測(agora-controllers の本線 Hy 2900 file・2026-10-12・Pod の load 70〜100・同じ負荷で旧新を交互に): 1 file の実行の open 12,077 → 約 600、opendir 2,837 → 5〜9、
   stat 39,472 → 約 2,000。温まった実時間の中央値 0.40 → 0.18 秒(CPU 0.58 → 0.20 秒)・新しい作業木の最初の 1 回 CPU 5.1 → 0.1 秒。残る open の大半は登録簿の
   1 鍵 1 file(約 450 file — `scripts/doeff_lint/SMELL-BREACHES`)。
+- 実測(同じ本線・2026-10-16・Pod の load 72〜83・page cache の冷えた作業木〔mincore で確かめた〕を旧新で別々に選び、共有 cache のまま 1 回ずつ撃つ): 冷えた作業木の登録簿の
+  読みは、直列で中央値 2.4 秒(最大 3.6〜10.8 秒 — 449 file の open+read。readdir は 0.006 秒・stat 全部は 0.021 秒)。並列度を替えた冷えた 8 作業木では 直列 6.4 秒 / 8 本 0.93 秒 /
+  16 本 0.62 秒 / 32 本 0.37 秒(中央値)。直した版の冷えた 1 回: 全体を読まない形の file 26 件が実時間 中央値 1.10 秒・最大 1.96 秒(直す前は 27 件で中央値 2.25 秒・最大 3.59 秒・
+  3 秒超が 6 件)、登録簿の段は中央値 1.44 → 0.33 秒。
+- 残り: 全体を読む形(失敗の型・引数に渡された Program・class の frozen を引く file — 標本の約 5%、例 `requests_projection.hy`)は、新しい作業木の最初の 1 回が 8〜13 秒(旧 12〜17 秒)で、
+  hook の期限 4 秒を越える。内訳は `defk-names` の全 file の読み(IO の待ち)と `program-params` の作り直し(CPU 5.8 秒 — 事実が repo 全体の defk の名の指紋を印に含むので、指紋が
+  変わると全 file を作り直す)。
 
 ## 7. 既存の判定との照合
 
