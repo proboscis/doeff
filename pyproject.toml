@@ -537,9 +537,19 @@ reason = "stub が無く、__all__ の全体を確かめる検も無い — 検�
 prefix = "packages/doeff-image/"
 reason = "stub が無く、__all__ の全体を確かめる検も無い(公開の名の検は 3 名の同一性)— 検は単体と provider を重ねる統合の振る舞いだけ"
 
+# wheel の中の binary の位置(命令の入口が探す所)と、CI の maturin の固定と、今の source を組んだ wheel を入れた命令の動き
+# (PyPI の 0.1.3 は全部の機体の wheel が binary を python/ の下に持ち、入れた命令が動かなかった・card ki-d20475e94d87)。
+# Python の公開面は Indexer・SymbolInfo の再輸出 2 名だけなので stub・公開の名の検は無く、Rust の検は cargo の範囲(make test-rust)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-indexer/"
-reason = "Rust の crate で、Python の公開面は Indexer・SymbolInfo の再輸出 2 名だけ・Python の検は 0 本(Rust の検は cargo の範囲)"
+tests = [
+    "tests/test_indexer_wheel_layout.py",
+    "tests/test_indexer_cli_finds_binary_on_package_path.py",
+]
+
+[[tool.doeff.contract-tests]]
+prefix = "tools/verify_indexer_wheel.py"
+tests = ["tests/test_indexer_wheel_layout.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-jev/"
