@@ -1,31 +1,89 @@
 # doeff-hy-pytest
 
-doeff-hy の pytest plugin(entry point `pytest11` の名 `doeff_hy`)だけを持つ配布物です。doeff-hy が依存として引くので、
-利用者が直接書く必要はありません(git の rev で doeff-hy を引く repo は `[tool.uv.sources]` にこの package の行も足します)。
+The pytest plugin for tests written with
+[doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy).
 
-- 役目: pytest の起動の時点で `doeff_hy.ast_unparse.install()` を当てる(Hy の `ast.unparse` の差し替えが Python 3.14 の
-  注記の文字列化で止まらなくなる不具合の当て物 — 仕組みは `packages/doeff-hy/src/doeff_hy/ast_unparse.py`)。
-- 別の配布物にする理由: pytest は pytest11 の entry point を持つ配布物の全 module に assert の書き換えの印を付けます。
-  doeff-hy がこの entry point を持つと、wheel で入れた repo で `doeff_hy/macros.hy` などを Python として書き換えようとして
-  import が SyntaxError で落ちました(2026-09-26 に dotfiles の agentcli の pin を上げた時の実測)。この配布物は `.hy` を持たないので、
-  印が付いても害がありません。
+**This README is for** developers who run pytest on Hy code that uses doeff. After
+reading it you know what the plugin does without any setting, and how to turn on its
+optional time limits for tests.
 
-## Hy の検の時間の上限(`doeff_hy_pytest/budget.py`)
+## What it does
 
-模擬の handler で回す検が遅くなったことに気づくための上限です(proboscis/agora-redesign#907)。利用側の
-`[tool.pytest.ini_options]` に置きます。上限の 3 つ(実行の歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしません。
+pytest loads the plugin by itself (entry point `pytest11`, name `doeff_hy`). It does
+two things:
 
-| 設定 | 意味 |
-|---|---|
-| `doeff_test_call_budget_by_marker` | 印ごとの実行の上限の壁の時計の秒(list・1 行 = `印=秒`・例 `["real_world=10"]`)。検の印(module の頭の `pytestmark` を含む)に当たる行があればその秒、複数当たれば最も長い秒。当たる検は歩数の上限があっても秒で判じる(本物の I/O を持つ検は歩数に重さが出ないため)。当たらない検は、歩数の上限があれば歩数で判じ、無ければ実行を測らない。実行の秒の上限はこの設定だけ(印の無い検の既定の秒 `doeff_test_call_budget_seconds` は無くなった — 書いても pytest が未登録の設定として警告するだけで、実行は秒で判じない)。`=` の無い行・数でない秒・0 以下・同じ印の 2 行は起動の時点で止まる |
-| `doeff_test_collect_budget_seconds` | `.hy` の検の file 1 本の収集(import を含む)の上限の CPU 秒。file 単位で印を持たないので 1 つの値。キャッシュ無しの変換と、別の module の初回の import(共有の依存の一度きりの重さ — 並び順でどの file に乗るかが変わる)の CPU 秒は引いて判定する(実行の上限も同じ) |
-| `doeff_test_budget_mode` | `report`(既定 — 超えても赤にせず、警告と終わりの一覧だけ)か `fail`(超えた検を赤にする・登録簿に載った検が上限の半分以下で終われば古い登録として赤) |
-| `doeff_test_budget_registry` | 上限を超えてよい既存の検の登録簿の dir(list・1 行 = 1 dir・`"dir"` の 1 つの値の書き方もそのまま読める)。どの dir も 1 鍵 1 file・`<鍵の sha256 の先頭 12 字>.txt`・1 行目が鍵・2 行目から理由。載った鍵は上限を超えても赤にしない。`fail` の形では、載った検が上限の半分以下で終わると古い登録として赤にし、消す file を名指す(上限の半分から上限までは「消せる」と報告だけ・走らなかった検は判じない — agora-redesign #1726)。超えた時の文が足し先に挙げるのは 1 行目の dir |
-| `doeff_test_call_budget_steps` | 検 1 本の実行の上限の doeff-vm の歩数(正の整数 — 機体の負荷で揺れない決まった数・agora-redesign #2670)。`default` と書けば既定の 100,000 歩(前の CPU 1.0 秒の上限に当たる数 — 65 本の測りの歩数 ÷ CPU 秒の中央値から・#2670 の 2)。`.hy` の検の file から集めた検 1 本の実行(call の段階・fixture の setup と teardown を含まない)は、在れば歩数で判じ、CPU 秒は測って報告に出すだけ。登録簿は `doeff_test_budget_registry` と同じ dir(載った行は歩数で判じる・古い登録の決まりも同じ)。doeff-vm に数の口(`doeff_vm.doeff_vm.vm_work_counts`)が無い build で在れば、秒へ倒さず `pytest.UsageError` で起動の時点で止まる(文に設定の名と数の口が無い理由が出る)。印ごとの秒の上限に当たる検(本物の I/O)は秒のまま。歩数が 0 の検(VM を回さず木を読むだけの検)は上限の内。歩数は不変条件の検査の有無で変わらないので、検査つきの build でも `fail` の形なら歩数の超過は赤 |
+| Job | When it acts | Setting needed |
+| --- | --- | --- |
+| Fixes a Hy problem on Python 3.14 | At pytest start-up, before any conftest imports Hy | None |
+| Time limits for Hy tests | During each test in a `.hy` file | Yes; off by default |
 
-数の口がある時は、検 1 本ごとに歩数と handler の呼び出しの回数も測る。終わりの一覧に、測れた検の数と歩数の合計を 1 行出し、`-v` の時は検ごとに 1 行(歩数・handler の回数・CPU 秒)出す — 歩数の上限を決める材料。
+**The Python 3.14 fix.** Hy replaces `ast.unparse`. On Python 3.14, when pytest reads
+fixture annotations as strings, that replacement recurses without end. The plugin
+installs a corrected replacement (`doeff_hy.ast_unparse.install()`) as soon as pytest
+starts, so it is in place even if a conftest or another plugin imports Hy first.
 
-例(実行は既定の歩数・縁の検は 10 秒・収集は 1 秒・登録簿 2 つ):
+**Why this is a separate package.** pytest marks every module of a distribution that
+declares a `pytest11` entry point for assertion rewriting. If doeff-hy itself declared
+the entry point, pytest would try to rewrite doeff-hy's `.hy` files as Python and the
+import would fail with a `SyntaxError`. This package contains no `.hy` files, so the
+mark is harmless here.
+
+The plugin does **not** collect `.hy` test files. The doeff-hy README shows the
+`conftest.py` hook that collects them:
+[Testing with deftest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy#testing-with-deftest).
+
+## Installation
+
+doeff-hy depends on this package, so it is already installed when doeff or doeff-hy
+is:
+
+```bash
+pip install doeff      # installs doeff-hy and doeff-hy-pytest
+```
+
+You do not list it yourself. The exception: if you install doeff-hy from a git
+revision with uv, add a `[tool.uv.sources]` entry for doeff-hy-pytest from the same
+revision.
+
+To check that pytest loaded it, look for `doeff-hy-pytest` in the `plugins:` line of
+`pytest` output.
+
+## Time limits for Hy tests
+
+Tests that run programs against in-memory or scripted handlers should be fast. The
+limits tell you when one of them becomes slow. They apply only to tests defined in
+`.hy` files (`deftest` and plain test functions in the same file); Python test files
+are not measured. With none of the three limits set, the plugin measures nothing.
+
+### The three limits
+
+| Setting | What it limits | Unit | How it is measured |
+| --- | --- | --- | --- |
+| `doeff_test_call_budget_steps` | Running one test (pytest's `call` phase; fixture setup and teardown are not included) | doeff-vm steps (a positive integer, or `default` = 100,000) | Steps the VM executed. The count does not depend on machine load; CPU seconds are reported but not judged |
+| `doeff_test_call_budget_by_marker` | Running one test that carries a given pytest mark | Wall-clock seconds, one line per mark: `mark=seconds` | For tests that do real I/O (child processes, sockets), whose cost does not show up as VM steps. A test that matches a line is judged by seconds even when a step limit is set; if several lines match, the longest limit applies |
+| `doeff_test_collect_budget_seconds` | Importing one `.hy` test file | CPU seconds | Only when the file is imported through the `pytest_doeff_import_hy_module` hook, which the collector of [doeff-adr](https://github.com/proboscis/doeff/tree/main/packages/doeff-adr) calls. With the plain `conftest.py` collector from the doeff-hy README, nothing is measured |
+
+A test that matches no `by_marker` line is judged by steps if a step limit is set, and
+is not measured otherwise. A test that executes 0 steps (it only reads data and never
+runs the VM) is within the limit.
+
+Measured time excludes work that is not the test's own cost: compiling source to
+bytecode when no cache exists, the first import of another module (a one-time cost of
+a shared dependency), and garbage collection. Each is subtracted on the same clock
+that is being judged.
+
+### What happens when a test goes over
+
+| Setting | Values |
+| --- | --- |
+| `doeff_test_budget_mode` | `report` (default): warn and list the slow tests at the end. `fail`: the slow test fails |
+| `doeff_test_budget_registry` | Directories (relative to the pytest rootdir, one per line) that list tests allowed to go over. One file per test: `<first 12 hex chars of sha256(key)>.txt`; line 1 is the key (the pytest node id, or the file path relative to rootdir for the collection limit), the following lines give the reason. When a test goes over, the message names the file to add in the first directory |
+
+In `fail` mode, a listed test that finishes in at most half of its limit also fails,
+as a stale entry, and the message names the file to delete. Between half the limit and
+the limit, the summary only reports that the entry can be removed.
+
+### Example
 
 ```toml
 [tool.pytest.ini_options]
@@ -33,19 +91,57 @@ doeff_test_call_budget_steps = "default"
 doeff_test_call_budget_by_marker = ["real_world=10"]
 doeff_test_collect_budget_seconds = 1.0
 doeff_test_budget_mode = "fail"
-doeff_test_budget_registry = ["scripts/test_budget/OVER-BUDGET", "scripts/doeff_lint/TEST-KIND-BREACHES"]
+doeff_test_budget_registry = ["tests/over-budget"]
 ```
 
-- 印の上限に当たる実行の判定は壁の時計の秒(`time.perf_counter` — call の段階の区間)で行い、報告には CPU 秒も並べます。印の付いた検
-  (real_world など)の重さは本物の子 process と待ちに在り、自分の process の CPU 秒(`time.process_time`)には出ないためです
-  (agora-redesign #3858)。壁の時計は機体の混み具合で伸びるので、並べて走る日次の秒は手元より大きく出ます。
-- 収集の判定は CPU 時間(`time.process_time`)で行い、壁の時計を併記します。import は子 process も待ちも持たないので、
-  遅さはほぼ CPU 時間に出て、機体の混み具合で合否が変わりにくいためです。
-- バイトコードのキャッシュが無い import の変換(`SourceFileLoader.source_to_code` — Hy の import もここを通る)に使った
-  時間は、判じる単位と同じ時計(収集は CPU 時間・印ごとの実行は壁の時計)で引いて判定します。着地の門と日次の走行は `PYTHONDONTWRITEBYTECODE=1` で撃つので、キャッシュ無しの回を
-  丸ごと除く形では一度も判定されないためです。
-- 測った区間の中で起きた GC(ごみ集め・`gc.callbacks`)の時間も、判じる単位と同じ時計(収集は CPU 時間・印ごとの実行は壁の時計)で引いて判定します。GC の費用は process に生きている
-  object の数で決まり(free-threaded の Python の GC は 1 回ごとに heap の全体を回る)、どの検に当たるかは割り当ての数の
-  巡りで回ごとに変わるためです。変換・依存の初回の import の区間の中で起きた GC は、その区間の秒に入っているので二重に引きません。
-- 鍵は、実行なら pytest の nodeid、収集なら rootdir からの file の path です。上限の内に戻った登録は終わりの一覧に
-  「消せる」と出ます。
+With this configuration, each Hy test may run 100,000 VM steps; a test marked
+`real_world` may take 10 seconds of wall-clock time instead; a test over its limit
+fails unless `tests/over-budget` lists it.
+
+### More settings
+
+| Setting or API | What it does |
+| --- | --- |
+| `step_budget_multiplier` | While a step-limited test runs, the scheduler stops it once it reaches *limit × multiplier* steps (default 20), so a test that never finishes fails instead of hanging |
+| `doeff_test_call_steps_counted` | `call` (default): count all steps of the test. `world-running`: for tests that run a simulated world recorded in `doeff_core_effects.world_phases`, count only the steps of the world's running phase |
+| `doeff_hy_pytest.budget.declare_step_budget(test, steps, reason)` | Gives one test its own step limit with a one-line reason, next to the test's definition. Over the declared value fails; at most half of it fails as stale |
+| `--doeff-python-calls` | Command-line flag. Counts Python calls (`sys.monitoring` CALL events) during tests that declared a step limit, and prints one summary line. Reports only; never fails a test |
+
+The step limits need a doeff-vm build that exposes step counts
+(`doeff_vm.doeff_vm.vm_work_counts`). If it is missing, pytest stops at start-up with
+a `UsageError` instead of silently falling back to seconds.
+
+### Output
+
+With `-v`, the summary prints one line per measured test: steps, handler calls, and
+CPU seconds. Use these numbers to pick a step limit.
+
+The report and failure messages are currently written in Japanese.
+
+## How it fits with the other doeff packages
+
+doeff is published as five core packages. `pip install doeff` installs all of them.
+
+| Package | Role |
+| --- | --- |
+| [doeff](https://github.com/proboscis/doeff) | The Python API: `@do`, handler installers, `run`, the `doeff` CLI |
+| [doeff-vm](https://github.com/proboscis/doeff/tree/main/packages/doeff-vm) | The Rust VM that executes programs |
+| [doeff-core-effects](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects) | The standard effects and their handlers |
+| [doeff-hy](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy) | Macros for writing doeff code in Hy, a Lisp that compiles to Python |
+| **doeff-hy-pytest** | This package: the pytest plugin for tests written with doeff-hy |
+
+Arrows point from a package to a package it depends on:
+
+```text
+doeff ──► doeff-vm
+  │
+  └─────► doeff-core-effects ──► doeff-hy ──► doeff-hy-pytest
+```
+
+doeff-hy also depends on doeff and doeff-core-effects, so the five packages are
+released together with matching versions. doeff-hy-pytest declares no dependencies of
+its own; it imports doeff-hy, which is always installed alongside it.
+
+## License
+
+MIT. See [LICENSE](https://github.com/proboscis/doeff/blob/main/LICENSE).

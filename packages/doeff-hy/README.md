@@ -1,251 +1,367 @@
 # doeff-hy
 
-Standard Hy macros for doeff effect composition.
+Macros for writing [doeff](https://github.com/proboscis/doeff) programs, effects,
+handlers and tests in [Hy](https://hylang.org/), a Lisp that compiles to Python.
 
-## File Extensions
+**This README is for** developers who want to write doeff code in Hy, or who read Hy
+code that uses doeff. After reading it you can install doeff-hy, define an effect, a
+function that performs it and a handler for it, call them from Python, test them with
+pytest, and look up each macro.
 
-| Extension | Purpose | Allowed macros |
-|-----------|---------|----------------|
-| `.hy`  | General Hy source (interpreters, effects, utilities) | All |
-| `.hyk` | Kleisli modules (reusable logic) | defk, deff, defhandler, deftest |
-| `.hyp` | Program modules (entrypoints) | defp, defpp, deftest |
+## What it does
 
-Extensions are registered automatically when `doeff_hy` is imported.
+doeff-hy gives you `defk`, `defeffect`, `defhandler`, `deftest` and related macros.
+They expand to ordinary doeff code (`@do` generators, `EffectBase` dataclasses,
+handler installers, pytest functions) with runtime contracts (`:pre` / `:post`) on
+arguments and results.
 
-## Usage
+Parts of [doeff-core-effects](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects)
+are written with these macros, so doeff-hy is installed whenever doeff is.
 
-```hy
-;; In .hyk files (kleisli logic):
-(require doeff-hy.macros [defk deff deftest <- !])
-(import doeff [do :as _doeff-do])
+## Installation
 
-(defk fetch-data [url]
-  {:pre [(: url str)] :post [(: % dict)]}
-  (<- response (http-get url))
-  response)
-
-;; In .hyp files (entrypoints):
-(require doeff-hy.macros [defp <-])
-(import doeff [do :as _doeff-do])
-
-(defp p-main
-  {:post [(: % dict)]}
-  (<- data (fetch-data "https://example.com"))
-  (process data))
+```bash
+pip install doeff      # installs doeff-hy
+pip install doeff-hy   # the same set of packages
 ```
 
-## Macros
+Requires Python 3.10 or newer and Hy 1.3 (doeff-hy pins `hy>=1.3.0,<=1.3.1`, the
+versions its tests cover).
 
-| Macro | Purpose |
-|-------|---------|
-| `defk` | Define kleisli function (`@do` + `:pre`/`:post` contracts + bang) |
-| `deff` | Define pure function with `:pre`/`:post` contracts |
-| `defp` | Define Program constant (`:post` required) |
-| `defpp` | Define Program[Program[T]] constant |
-| `deftest` | Define effectful test (expands to pytest function) |
-| `do!` | Monadic do block — inline effect sequencing |
-| `<-` | Perform effect, bind result — `(<- name Type effect)` also asserts `isinstance` |
-| `!` | Inline effect bind in argument position |
-| `on-raise` | Map matching `Raise` reasons to answers — `(on-raise body (Conflict d) answer …)` |
-| `absent-as` | Fold `Absent` into a default — `(absent-as 0 body)` |
-| `defpipeline` | Named-stage pipeline composition |
-| `traverse` | Applicative traverse over collections |
-| `for/do` | SQL-like comprehension with effects |
+## Quick start
 
-### Typed binding
-
-`(<- name Type effect)` expands to the bind plus `(assert (isinstance name Type) …)`.
-The expansion has one definition point (`_bind-yield` in `macros.hy`) shared by the
-`<-` macro and every body expander that pre-parses `<-` (`do!` / `defp` / `deftest` /
-`for/do` / `traverse` / `defhandler` clauses), so the type contract holds at runtime
-wherever the bind is written. The 2- and 3-element forms add no check.
-
-`None` is a type in these positions, as in a Python annotation: `(: % None)`,
-`(<- x None effect)` and `#(int None)` check against `type(None)` at runtime
-(`runtime_type_form` in `doeff_hy/type_forms.py` is the one place that maps it — `macros.hy` and external tools call it). `(| int None)`
-needs no mapping.
-
-### Absence and failure (ADR-DOE-CORE-EFFECTS-003)
-
-Expected absence and failure are two effects in `doeff_core_effects.effects`: `Absent(why)`
-(the Maybe side) and `Raise(reason)` (the Result side). Code writes only the success path;
-the places that want to *do* something about absence or failure fold them into values:
-`maybe` (Absent → `Nothing`) and `result` (Raise → `Err`) from `doeff_core_effects.outcomes`,
-and the `on-raise` / `absent-as` macros. The nesting order picks the shape:
-`(result (maybe b))` is `Ok(Some v)` / `Ok(Nothing)` / `Err(e)`.
-
-`defeffect` may split its answer by meaning — `:absent [Missing] :failure [Unreachable]
-:value [Conflict]`; the rest is success. For such an effect `(<- x (ReadRow …))` binds only the
-success and performs `Absent` / `Raise(answer)` in the caller's scope instead; `:absent F` at
-the end of a bind turns an absence inside that bind into `Raise(F)`. `<-` also opens
-`Ok` / `Err` / `Some` / `Nothing` values. An effect without the declaration binds exactly as
-before (the bind yields the same object).
-
-A `defhandler` clause may end its scope without resuming with `(finish value)`. Every path
-of a clause must end with resume / transfer / finish / reperform / raise; `Raise` and `Absent`
-clauses never resume; finishing an ordinary effect needs `:finish-reason "…"`.
-
-### Static type checking
-
-`doeff-hy-check PATH... --root <repo>` expands Hy sources with the real macros and runs
-pyright on the result, reporting errors at `.hy` lines. Contract types (`(: x T)`) become
-parameter/result annotations, so argument types, missing arguments, result types, a
-forgotten `<-`, and effect constructor arguments are checked. What it does not catch yet
-(effect result types, env/effect sets) and why: `docs/static-check.md`.
-
-### Bang evaluation position
-
-`(! effect)` is replaced with a `yield` expression at the position where it is
-written. Branches, `and`/`or` short-circuiting, argument order, `try` suites,
-and literal containers therefore retain normal Python evaluation semantics.
-
-Python-native `lfor`/`gfor`/`sfor`/`dfor` comprehensions and plain nested
-`fn`/`defn` bodies cannot host a doeff bang safely. Macro expansion raises an
-`ADR-DOE-HY-003` `SyntaxError` with a rewrite: use `for/do` plus `<-` for
-effectful iteration, and `fnk` or `defk` for an effectful function.
-
-### val / var / lazy val / lazy var / session val / session var(ADR-DOE-HY-006)
-
-defk・deftest・defhandler の節の本体では、名前の束縛を次の形で書きます(setv は doeff-hy-check が「val か var を使う」と警告します)。
-
-| 形 | 意味 |
-|---|---|
-| `(val x 式)` | 一度だけ束縛する。同じ名前をもう一度束縛すると展開の時の誤り |
-| `(var x 式)` | 書き換えられる。書き換えは `(:= x 新しい値)` |
-| `(lazy val x 式)` | その呼び出しの中で x を初めて使った時にだけ評価して覚える。使わなければ評価しない。初回が例外なら次にもう一度評価する |
-| `(lazy var x 式)` | lazy val と同じく初めて使った時に評価し、`:=` で書き換えられる。使う前に書き換えたら初期値の式は評価しない |
-| `(session val x 式)` | defhandler の直下だけ。セッションの間、初めて使った時に 1 回だけ作って共有する |
-| `(session var x 式)` | defhandler の直下だけ。セッションで持ち越す書き換えられる状態。書き換えは `(:= x v)` |
+`greeting.hy` defines an effect, a function that performs it, and a handler:
 
 ```hy
-(defk quote-price [ticker]
-  {:pre [(: ticker str)] :post [(: % float)]}
-  (lazy val table !(LoadPriceTable))      ; 使った時にだけ効果を実行する
-  (var price 0.0)
-  (when (in ticker table)
-    (:= price (get table ticker)))
-  price)
+(require doeff-hy.macros [defeffect defk defhandler <-])
 
-(defhandler price-client
-  (session val client (make-client (! (Ask "endpoint"))))
-  (session var calls 0)
-  (FetchPrice [ticker]
-    (:= calls (+ calls 1))
-    (resume (.fetch client ticker))))
+(defeffect Greeting
+  "Ask which word to greet with."
+  {:fields [(: lang str)]
+   :answer str
+   :tags {:context "example" :role "intent"}})
+
+(defk greet [name]
+  {:pre [(: name str)] :post [(: % str)]}
+  (<- word (Greeting :lang "en"))
+  (+ word ", " name))
+
+(defhandler english
+  (Greeting [lang]
+    (resume "hello")))
 ```
 
-- 値の式は `!(効果の式)` と書けます(Hy の reader は `!(f)` を `!` と `(f)` の 2 つに読むので、宣言と `:=` の中では `(! (f))` と同じに受けます)。
-- val が禁じるのは名前の束縛し直しだけで、値の中身の書き換え(`(setv (get x k) v)`・`(.append x v)`)は対象外です。`(<- x 効果)` は val の別の書き方です。
-- lazy の参照は裸の名前です。fn・内包表記(lfor など)・handle / defhandler の節の中では参照できない(効果を実行できない)ので、先に `(val v x)` で取り出します。
-- session の値は状態の効果(Get / Put)を通して読み書きします。キーは `doeff_hy.session.session_key(module, handler, name)` =
-  `"<module の __name__>/<handler の名>/<変数の名>"` で、外側の handler はこのキーの `Get` に値を答えれば初期化の式を走らせずに値を差し替え、
-  `Put` を受ければ書き込みを観測できます。
-- module の直下でも `(require doeff-hy.macros [val var lazy])` で `(val x 式)`・`(var x 式)`・`(lazy val x 式)` を書けます。
-  module の直下の lazy val は効果を使わない式だけです(module には handler が無いので、効果で作る資源は defhandler の session val に置きます)。
-  module の直下の `(:= …)` は Hy では macro を通らないので効かず、module の var は module の直下の setv で書き換えます。
-- 旧い `(lazy …)` / `(lazy-val …)` / `(lazy-var …)` / `(set! …)` は defhandler では動きを変えず、展開の時の `DeprecationWarning` で
-  `session val` / `session var` / `:=` への移行を案内します(キーは同じなので値は引き継がれます)。defk・deftest では展開の時の誤りです。
-- 旧い書き方どうしの同じ名前の束縛し直し(setv を 2 回など)は doeff-hy-check の赤(`doeff-hy-rebind`)です。for の変数と、互いに排他な if の枝どうしは数えません。
+`main.py` imports it from Python and runs it:
 
-設計の記録: `docs/design/defk-val-var-lazy/design.md`。
+```python
+import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
+from doeff import run
+from doeff_core_effects.scheduler import scheduled
+
+from greeting import english, greet
+
+print(run(scheduled(english(greet("doeff")))))  # hello, doeff
+```
+
+- `(<- word effect)` performs the effect and binds its answer to `word`.
+- `{:pre [(: name str)] :post [(: % str)]}` checks the argument and the result types
+  at run time (`%` is the result).
+- `english` is a handler installer: it wraps a program and answers every `Greeting`
+  performed inside it with `(resume "hello")`.
 
 ## Testing with deftest
 
-`deftest` generates pytest-compatible test functions. Tests use `<-` for effect binding and `assert` for validation.
+`deftest` defines a pytest test whose body performs effects. Put the tests in
+`test_greeting.hy`:
 
 ```hy
-;; Basic test (in .hyk or .hyp file):
 (require doeff-hy.macros [deftest <-])
-(import doeff [do :as _doeff-do])
+(import doeff_core_effects [Ask])
+(import greeting [english greet])
 
-(deftest test-fetch-returns-data
-  (<- data (fetch-data "https://example.com"))
-  (assert (> (len data) 0))
-  (assert (in "status" data)))
+(deftest test-greet
+  (<- text (english (greet "doeff")))
+  (assert (= text "hello, doeff")))
+
+(deftest test-greet-from-env
+  {:env {"name" "world"}}
+  (<- name (Ask "name"))
+  (<- text (english (greet name)))
+  (assert (= text "hello, world")))
 ```
 
-### Interpreter parametrize
-
-Tests run under doeff interpreters provided by pytest fixtures. Specify which interpreters via `:interpreters`:
-
-```hy
-(deftest test-signal-deterministic
-  {:interpreters ["cllm_test" "cllm_sim"]}
-  (<- plan (compute-signal "2026-04-01"))
-  (assert (> (len plan.orders) 0)))
-```
-
-Interpreter keys are resolved in `conftest.py`:
+A `deftest` function asks pytest for a fixture named `doeff_interpreter` and calls it
+with the test's program (and with `env=` when the test sets `:env`). You decide which
+handlers the tests run under. pytest also needs to be told to collect `test_*.hy`
+files. Both go in `conftest.py`:
 
 ```python
-# conftest.py
+import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
 import pytest
+from doeff import run
+from doeff_core_effects.handlers import reader
+from doeff_core_effects.scheduler import scheduled
 
+
+@pytest.fixture
+def doeff_interpreter():
+    """How a deftest body runs: deftest calls this with the test's program."""
+
+    def interpret(program, env=None):
+        return run(scheduled(reader(env=env or {})(program)))
+
+    return interpret
+
+
+def pytest_collect_file(file_path, parent):
+    """Collect deftest functions from test_*.hy files."""
+    if file_path.suffix == ".hy" and file_path.name.startswith("test_"):
+        return pytest.Module.from_parent(parent, path=file_path)
+    return None
+```
+
+```bash
+pytest   # test_greeting.hy::test_greet PASSED, test_greeting.hy::test_greet_from_env PASSED
+```
+
+[doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest),
+installed with doeff-hy, is a pytest plugin that pytest loads by itself. It fixes a
+Hy problem on Python 3.14 and offers optional time limits for these tests.
+
+### deftest options
+
+The optional map after the test name (or after its fixture list) takes these keys:
+
+| Key | What it does | Example |
+| --- | --- | --- |
+| `:interpreters` | Runs the test once per name; the names are passed to a `doeff_interpreter_name` fixture | `{:interpreters ["fast" "traced"]}` |
+| `:env` | Passed to `doeff_interpreter` as `env=` | `{:env {"name" "world"}}` |
+| `:params` | `pytest.mark.parametrize` for each fixture parameter | `{:params {"day" ["2026-01-01" "2026-02-01"]}}` |
+| `:marks` | Adds pytest marks (`pytest -m "not slow"`) | `{:marks ["slow"]}` |
+| `:skip-if` / `:skip-reason` | Skips when the expression is true; it is evaluated when the module is imported | `{:skip-if (not (shutil.which "git")) :skip-reason "git not installed"}` |
+
+With `:interpreters`, resolve the name in `conftest.py`:
+
+```python
 INTERPRETERS = {
-    "cllm_test": cllm_test_interpreter,
-    "cllm_sim": cllm_sim_interpreter,
+    "fast": fast_interpreter,
+    "traced": traced_interpreter,
 }
+
 
 @pytest.fixture
 def doeff_interpreter(doeff_interpreter_name):
     return INTERPRETERS[doeff_interpreter_name]
 ```
 
-### Env overrides
-
-Per-test environment overrides (merged with default env from conftest):
+Fixture parameters go in a list after the name:
 
 ```hy
-(deftest test-with-sim-time
-  {:interpreters ["cllm_sim"]
-   :env {"nakagawa.sim_start_time" "2026-04-10T06:00:00+09:00"}}
-  (<- result (my-pipeline))
-  (assert result))
+(deftest test-report-for-day [day]
+  {:params {"day" ["2026-01-01" "2026-02-01"]}}
+  (<- report (daily-report day))
+  (assert (> (len report.rows) 0)))
 ```
 
-### Fixture parameters
+## File extensions
+
+| Extension | Purpose | Allowed macros |
+| --- | --- | --- |
+| `.hy`  | General Hy source (handlers, effects, utilities) | All |
+| `.hyk` | Kleisli modules (reusable effectful functions) | `defk`, `deff`, `defhandler`, `deftest` |
+| `.hyp` | Program modules (entry points) | `defp`, `defpp`, `deftest` |
+
+`import doeff_hy` registers `.hyk` and `.hyp` as Hy source extensions.
+
+## Macros
+
+Import macros with `(require doeff-hy.macros [<names>])`.
+
+| Macro | Purpose |
+| --- | --- |
+| `defeffect` | Define an effect type: a frozen dataclass inheriting `EffectBase`, with its fields, answer type and tags |
+| `defk` | Define an effectful function (`@do` + `:pre` / `:post` contracts) |
+| `fnk` | Anonymous effectful function |
+| `deff` | Define a pure function with `:pre` / `:post` contracts |
+| `defhandler` | Define a handler installer from one clause per effect type |
+| `defp` | Define a program constant (`:post` required) |
+| `defpp` | Define a `Program[Program[T]]` constant |
+| `deftest` | Define an effectful pytest test |
+| `do!` | Inline do block: perform effects in sequence |
+| `<-` | Perform an effect and bind its answer: `(<- name effect)`; `(<- name Type effect)` also checks `isinstance` |
+| `!` | Perform an effect in argument position: `(f (! (Ask "x")))` |
+| `on-raise` | Map matching `Raise` reasons to answers: `(on-raise body (Conflict d) answer …)` |
+| `absent-as` | Fold `Absent` into a default: `(absent-as 0 body)` |
+| `defpipeline` | Named-stage pipeline composition |
+| `traverse` | Applicative traverse over collections |
+| `for/do` | Comprehension whose body performs effects |
+
+### Handlers
+
+A `defhandler` clause names an effect type and its fields, and must end every path
+with one of `resume`, `transfer`, `finish`, `reperform` or `raise`. `(finish value)`
+ends the handler's scope without resuming; finishing an ordinary effect needs
+`:finish-reason "…"`. Clauses for `Raise` and `Absent` never resume.
+
+### Typed binding
+
+`(<- name Type effect)` expands to the bind plus `(assert (isinstance name Type) …)`.
+The expansion has one definition point (`_bind-yield` in `macros.hy`), shared by the
+`<-` macro and by every body that accepts `<-` (`do!`, `defp`, `deftest`, `for/do`,
+`traverse`, `defhandler` clauses), so the type contract holds wherever the bind is
+written. The 2- and 3-element forms add no check.
+
+`None` is a type in these positions, as in a Python annotation: `(: % None)`,
+`(<- x None effect)` and `#(int None)` check against `type(None)` at run time
+(`runtime_type_form` in `doeff_hy/type_forms.py` is the one place that maps it).
+`(| int None)` needs no mapping.
+
+### Absence and failure
+
+Expected absence and failure are two effects in `doeff_core_effects.effects`:
+`Absent(why)` (the Maybe side) and `Raise(reason)` (the Result side). Code writes only
+the success path; the places that want to *do* something about absence or failure
+fold them into values: `maybe` (`Absent` → `Nothing`) and `result` (`Raise` → `Err`)
+from `doeff_core_effects.outcomes`, and the `on-raise` / `absent-as` macros. The
+nesting order picks the shape: `(result (maybe b))` is `Ok(Some v)` / `Ok(Nothing)` /
+`Err(e)`.
+
+`defeffect` may split its answer by meaning — `:absent [Missing] :failure [Unreachable]
+:value [Conflict]`; the rest is success. For such an effect `(<- x (ReadRow …))` binds
+only the success and performs `Absent` / `Raise(answer)` in the caller's scope
+instead; `:absent F` at the end of a bind turns an absence inside that bind into
+`Raise(F)`. `<-` also opens `Ok` / `Err` / `Some` / `Nothing` values. An effect
+without the declaration binds exactly as before (the bind yields the same object).
+
+### Where `!` may appear
+
+`(! effect)` is replaced with a `yield` expression at the position where it is
+written. Branches, `and` / `or` short-circuiting, argument order, `try` suites, and
+literal containers therefore keep normal Python evaluation order.
+
+Python-native `lfor` / `gfor` / `sfor` / `dfor` comprehensions and plain nested `fn` /
+`defn` bodies cannot host a doeff `!` safely. Macro expansion raises an
+`ADR-DOE-HY-003` `SyntaxError` with a rewrite: use `for/do` plus `<-` for effectful
+iteration, and `fnk` or `defk` for an effectful function.
+
+### Names: val, var, lazy val, lazy var, session val, session var
+
+In the bodies of `defk`, `deftest` and `defhandler` clauses, bind names with these
+forms (`doeff-hy-check` warns on `setv` and asks for `val` or `var`):
+
+| Form | Meaning |
+| --- | --- |
+| `(val x expr)` | Bind once. Binding the same name again is an error at expansion time |
+| `(var x expr)` | Rebindable. Rebind with `(:= x new-value)` |
+| `(lazy val x expr)` | Evaluated the first time `x` is used in that call, then remembered. Never evaluated if unused. If the first evaluation raises, the next use evaluates again |
+| `(lazy var x expr)` | Like `lazy val`, and rebindable with `:=`. If rebound before first use, `expr` is never evaluated |
+| `(session val x expr)` | Directly under `defhandler` only. Created once, on first use, and shared for the handler's session |
+| `(session var x expr)` | Directly under `defhandler` only. Rebindable state that lives for the handler's session. Rebind with `(:= x v)` |
 
 ```hy
-(deftest test-signal-dates [trade-date]
-  {:params {"trade-date" ["2026-04-01" "2026-03-15"]}
-   :interpreters ["cllm_test"]}
-  (<- plan (compute-signal trade-date))
-  (assert (> (len plan.orders) 0)))
+(require doeff-hy.macros [defeffect defk defhandler <-])
+
+(defeffect LoadPrices
+  "Load the whole price table."
+  {:answer dict
+   :tags {:context "example" :role "intent"}})
+
+(defk price-of [ticker]
+  {:pre [(: ticker str)] :post [(: % float)]}
+  (lazy val table (! (LoadPrices)))   ; performed only if `table` is used
+  (var price 0.0)
+  (when (in ticker table)
+    (:= price (get table ticker)))
+  price)
+
+(defhandler price-table
+  (session var loads 0)               ; counts loads for the whole session
+  (LoadPrices []
+    (:= loads (+ loads 1))
+    (resume {"ACME" 12.5})))
 ```
-
-### Marks and conditional skip
-
-```hy
-;; Static marks for pytest -m filtering
-(deftest test-kabu-prices
-  {:marks ["e2e" "slow"]}
-  (<- result (fetch-prices))
-  (assert result))
-
-;; Dynamic skip — condition evaluated at import time
-(deftest test-kabu-prices
-  {:skip-if (not (can-reach "plutus" 18082))
-   :skip-reason "kabuStation unreachable"}
-  (<- result (fetch-prices))
-  (assert result))
-```
-
-Run with mark filtering:
-
-```bash
-pytest -m "not e2e"       # skip e2e tests
-pytest -m "slow"          # only slow tests
-pytest -m "cllm and not slow"
-```
-
-### conftest.py for Hy test collection
-
-To collect deftest from `.hy`/`.hyk`/`.hyp` files, add a pytest plugin:
 
 ```python
-# conftest.py
-import doeff_hy  # registers .hyk/.hyp extensions
-import hy        # enables Hy imports
+print(run(scheduled(state()(price_table(price_of("ACME"))))))  # 12.5
 ```
 
-pytest will discover `test_*` functions generated by `deftest` in Hy modules when they are imported via conftest or `pytest_collect_file`.
+- A value expression may be written `!(effect)`. Hy's reader reads `!(f)` as `!` and
+  `(f)`; in declarations and `:=` both spellings mean `(! (f))`.
+- `val` forbids rebinding the name only. Changing the value's contents
+  (`(setv (get x k) v)`, `(.append x v)`) is allowed. `(<- x effect)` is another way
+  to write `val`.
+- A lazy name is referenced by its bare name. It cannot be referenced inside `fn`,
+  comprehensions (`lfor` and friends) or `handle` / `defhandler` clauses (they cannot
+  perform effects); take it out first with `(val v x)`.
+- Session values are read and written through the state effects (`Get` / `Put`), so
+  **install `state()` outside the handler**. The key is
+  `doeff_hy.session.session_key(module, handler, name)` =
+  `"<module __name__>/<handler name>/<variable name>"`. An outer handler that answers
+  `Get` for this key replaces the value without running the initial expression, and
+  one that receives `Put` observes the writes.
+- At module top level, `(require doeff-hy.macros [val var lazy])` lets you write
+  `(val x expr)`, `(var x expr)` and `(lazy val x expr)`. A top-level `lazy val` takes
+  only expressions that perform no effects (a module has no handler; put resources
+  built with effects in a `defhandler`'s `session val`). Top-level `(:= …)` does not
+  go through a macro in Hy, so rebind a module `var` with a top-level `setv`.
+- The older forms `(lazy …)`, `(lazy-val …)`, `(lazy-var …)` and `(set! …)` keep
+  their behaviour in `defhandler` and emit a `DeprecationWarning` at expansion time
+  pointing to `session val` / `session var` / `:=` (the keys are the same, so values
+  carry over). In `defk` and `deftest` they are expansion-time errors.
+- Rebinding the same name twice with the older forms (two `setv`s, for example) is a
+  `doeff-hy-rebind` error from `doeff-hy-check`. Loop variables and mutually
+  exclusive `if` branches are not counted.
+
+## Static type checking
+
+`doeff-hy-check PATH... --root <repo>` expands Hy sources with the real macros and runs
+[pyright](https://github.com/microsoft/pyright) on the result, reporting errors at
+`.hy` lines. It needs `pyright` on `PATH` (or `--pyright <command>`). Contract types
+(`(: x T)`) become parameter and result annotations, so argument types, missing
+arguments, result types, a forgotten `<-`, and effect constructor arguments are
+checked. What it does not catch yet (effect result types, env / effect sets) and why:
+[docs/static-check.md](https://github.com/proboscis/doeff/blob/main/packages/doeff-hy/docs/static-check.md).
+
+## What installing doeff-hy changes in your environment
+
+- **A startup hook.** doeff-hy installs `doeff_hy_bytecode_guard.pth`, which runs at
+  every Python start in the environment. It wraps the standard source loader so that a
+  Hy module is recompiled when a macro it used has changed (Python's `.pyc` check looks
+  only at the source file, not at the macros that expanded it). `import doeff_hy`
+  installs the same hook when `.pth` files are skipped (`python -S`).
+- **A compiled-code cache.** Compiled Hy code is also kept in a shared directory:
+  `$DOEFF_HY_CODE_STORE`, by default `$XDG_CACHE_HOME/doeff-hy/code-store`
+  (`~/.cache/doeff-hy/code-store`). Set `DOEFF_HY_CODE_STORE=off` to turn it off.
+- **Partial Hy type stubs** (`hy-stubs`), so that pyright in strict mode accepts the
+  `import hy` lines that Hy's expansion always emits.
+
+## How it fits with the other doeff packages
+
+doeff is published as five core packages. `pip install doeff` installs all of them.
+
+| Package | Role |
+| --- | --- |
+| [doeff](https://github.com/proboscis/doeff) | The Python API: `@do`, handler installers, `run`, the `doeff` CLI |
+| [doeff-vm](https://github.com/proboscis/doeff/tree/main/packages/doeff-vm) | The Rust VM that executes programs |
+| [doeff-core-effects](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects) | The standard effects and their handlers |
+| **doeff-hy** | This package: macros for writing doeff code in Hy |
+| [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest) | pytest plugin for tests written with doeff-hy |
+
+Arrows point from a package to a package it depends on:
+
+```text
+doeff ──► doeff-vm
+  │
+  └─────► doeff-core-effects ──► doeff-hy ──► doeff-hy-pytest
+```
+
+doeff-hy also depends on doeff and doeff-core-effects, so the five packages are
+released together with matching versions.
+
+## License
+
+MIT. See [LICENSE](https://github.com/proboscis/doeff/blob/main/LICENSE).
+
+Its own dependencies — Hy (with funcparserlib) and pydantic — are MIT-licensed.
+Through doeff-core-effects it also installs frozendict, which is LGPL-3.0; see
+[the doeff-core-effects README](https://github.com/proboscis/doeff/tree/main/packages/doeff-core-effects#licenses-of-dependencies).

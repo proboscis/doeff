@@ -7,7 +7,8 @@ backend-path = ["."]
 [project]
 name = "doeff-vm"
 version = "0.2.0"
-description = "Rust VM for doeff algebraic effects"
+description = "The Rust virtual machine (a PyO3 extension) that runs doeff algebraic-effect programs"
+readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Rust",
@@ -19,6 +20,11 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "License :: OSI Approved :: MIT License",
 ]
+
+[project.urls]
+Homepage = "https://github.com/proboscis/doeff/tree/main/packages/doeff-vm"
+Repository = "https://github.com/proboscis/doeff"
+Issues = "https://github.com/proboscis/doeff/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
