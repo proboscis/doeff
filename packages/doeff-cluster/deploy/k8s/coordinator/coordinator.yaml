@@ -76,7 +76,7 @@ spec:
           volumeMounts:
             - { mountPath: /work, name: work }
             - { mountPath: /work/coord, name: coord-wal }
-          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
+          resources: { requests: { cpu: 100m, memory: 64Mi }, limits: { cpu: 100m, memory: 64Mi } }
         # 記録(WAL)の控え(直近 5 つ)。古い Pod が消えた後、coordinator の起動の前に 1 度。失敗しても起動は通す(script も外側の sh も
         # 0 で終わる・ConfigMap は optional)。控えた名か飛ばした理由は、この container の log の 1 行。
         - name: wal-backup
@@ -94,7 +94,7 @@ spec:
             - { mountPath: /work, name: work }
             - { mountPath: /work/coord, name: coord-wal }
             - { mountPath: /opt/coord-wal-backup, name: coord-wal-backup, readOnly: true }
-          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          resources: { requests: { cpu: 200m, memory: 64Mi }, limits: { cpu: 200m, memory: 64Mi } }
       containers:
         - name: coordinator
           image: zeus:5000/doeff-cluster-base:in-52341c8f2d15
@@ -166,7 +166,13 @@ spec:
           volumeMounts:
             - { mountPath: /work, name: work }
             - { mountPath: /work/coord, name: coord-wal }
-          resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { cpu: "2", memory: 4Gi } }
+          # requests = limits(Guaranteed — oom_score_adj -997)。Burstable(512Mi / 4Gi)の頃は oom_score_adj が 983 で、atlas の memory が
+          # 尽きた時に kernel が worker の job と同じく殺す側に居た(card ki-7b934e2538f9 の thrash・ki-b3c8a5cc7b9a)。Guaranteed は Pod の
+          # 全部の container(init を含む)で cpu と memory の requests = limits が要るので、init の 2 つも揃える。memory 1536Mi = 2026-10-09〜16
+          # の working set の山 489MiB(10-11 の入れ替えの続いた日・prometheus の 1 分ごと)の約 3 倍 — 1 分の間の短い山(Pod の
+          # memory.peak は prometheus の山より約 70MiB 高い)と起動の時の記録の読み込みを入れ、自分の limit で殺されない幅を取る。cpu 2 = 前の
+          # limit と同じ(7 日の 1 分の山 1.98 core)— requests を 2 にするので、atlas が CPU で混んだ時の取り分も上がる。
+          resources: { requests: { cpu: "2", memory: 1536Mi }, limits: { cpu: "2", memory: 1536Mi } }
       volumes:
         - { name: work, hostPath: { path: /var/lib/agent-worker-coord, type: DirectoryOrCreate } }
         # 記録(WAL)と控えの dir だけを atlas の ZFS の dataset hot_ssd_nvme/agent-worker-coord(sync=standard・logbias=latency)へ置く
