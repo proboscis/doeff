@@ -121,6 +121,8 @@ def mark_alive(state: ClusterState, now: int) -> _Program[ClusterState, object]:
 
 def resume_after_downtime(state: ClusterState, now: int) -> tuple:
     ...
+STALL_SHIFTED_FIELDS: frozenset[str]
+STALL_UNSHIFTED_FIELDS: frozenset[str]
 
 def clocks_shifted(state: ClusterState, now: int, gap: int) -> _Program[ClusterState, object]:
     ...
