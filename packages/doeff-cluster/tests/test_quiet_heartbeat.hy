@@ -75,3 +75,69 @@
   (val revived (! (register-heartbeat silent (run (body-of (! (http-request "POST" "/heartbeat" {} body)))) late)))
   (assert (not (quiet-heartbeat silent revived "w" late T)) "沈黙から戻る heartbeat は静かでない")
   (assert (not-in "w" (. (get (! (answered silent body late True)) 0) silent)) "戻った worker は調停で沈黙の列から外れる"))
+
+
+;; --- task の比べを行の同一性で絞る(Q1): 同じ object の行は replace を通さず、違う行だけ lease-until-ms を外して比べる ---
+(import dataclasses [replace])
+(import unittest.mock [patch])
+(import doeff_cluster.coordinator.core [api_policy])
+(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
+
+
+(defn task-row [id [phase "assigned"] [worker "w"] [lease-until 20000]]
+  (TaskRecord id "check" "sha" "rev" #() #("local") 15000 lease-until 0 :phase phase :worker worker))
+
+
+(defk quiet-pair [before-tasks heard-tasks]
+  {:pre [(: before-tasks dict) (: heard-tasks dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "静かな heartbeat の組(調停済みの前の状態と、task の欄だけ差し替えた写し)と now を返すため。"
+  (val now 3500)
+  (val ready (! (tick (! (placed)) now T)))
+  (val body (! (beat-body "w" [{"name" "s0" "phase" "running" "revision" "r"}])))
+  (val heard (! (register-heartbeat ready (run (body-of (! (http-request "POST" "/heartbeat" {} body)))) now)))
+  #((replace ready :tasks before-tasks) (replace heard :tasks heard-tasks) now))
+
+
+(deftest test-a-task-rows-differing-only-in-lease-until-stay-quiet
+  (setv before {"a" (task-row "a") "b" (task-row "b")})
+  (setv heard {"a" (replace (get before "a") :lease-until-ms 99000) "b" (get before "b")})
+  (val pr_b (! (quiet-pair before heard)))
+  (setv [b h now] pr_b)
+  (assert (quiet-heartbeat b h "w" now T)))
+
+
+(deftest test-a-task-row-with-another-phase-or-worker-is-not-quiet
+  (setv before {"a" (task-row "a") "b" (task-row "b")})
+  (for [changed [(replace (get before "a") :phase "finished") (replace (get before "a") :worker "w2")]]
+    (val pr_b (! (quiet-pair before {"a" changed "b" (get before "b")})))
+    (setv [b h now] pr_b)
+    (assert (not (quiet-heartbeat b h "w" now T)))))
+
+
+(deftest test-a-different-number-of-task-rows-is-not-quiet
+  (setv before {"a" (task-row "a") "b" (task-row "b")})
+  (val pr_b1 (! (quiet-pair before {"a" (get before "a")})))
+  (setv [b1 h1 now] pr_b1)
+  (assert (not (quiet-heartbeat b1 h1 "w" now T)) "行が減った")
+  (val pr_b2 (! (quiet-pair before {"a" (get before "a") "b" (get before "b") "c" (task-row "c")})))
+  (setv [b2 h2 _] pr_b2)
+  (assert (not (quiet-heartbeat b2 h2 "w" now T)) "行が増えた")
+  (val pr_b3 (! (quiet-pair before {"a" (get before "a") "c" (get before "b")})))
+  (setv [b3 h3 _] pr_b3)
+  (assert (not (quiet-heartbeat b3 h3 "w" now T)) "数が同じで鍵が違う"))
+
+
+(deftest test-a-same-object-rows-skip-replace
+  (setv before (dfor i (range 387) (str i) (task-row (str i))))
+  (setv heard (| before {"7" (replace (get before "7") :lease-until-ms 99000)}))
+  (val pr_b (! (quiet-pair before heard)))
+  (setv [b h now] pr_b)
+  (setv calls [])
+  (defn counting [row #** kw] (.append calls 1) (replace row #** kw))
+  (with [(patch.object api_policy "replace" counting)]
+    (assert (quiet-heartbeat b h "w" now T)))
+  (assert (<= (len calls) 12) f"replace {(len calls)} 回(同じ object の行は飛ばす)")
+  (setv calls [])
+  (with [(patch.object api_policy "replace" counting)]
+    (assert (quiet-heartbeat b (replace b :tasks before) "w" now T)))
+  (assert (<= (len calls) 6) "task の行がすべて同じ object なら task には replace を使わない"))
