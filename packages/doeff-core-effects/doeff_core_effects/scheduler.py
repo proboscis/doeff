@@ -802,11 +802,32 @@ class Promise(Generic[_T]):
 
 
 class Semaphore:
-    """Opaque semaphore handle."""
+    """Opaque semaphore handle: ``sem = yield CreateSemaphore(permits)`` makes one.
+
+    ``Semaphore(...)`` raises ``TypeError``. A handle made by hand names no
+    semaphore of the run (``AcquireSemaphore`` fails with ``KeyError``, far
+    from the mistake) or silently shares the permits of the run's semaphore
+    that has the same number. The schedulers mint theirs with
+    ``_semaphore_handle``. A handler that answers ``CreateSemaphore`` itself
+    (doeff-cluster's ``ClusterSemaphore`` / ``ReplaySemaphore``) returns its
+    own subclass, whose ``__init__`` calls ``super().__init__(sem_id)``.
+    """
     def __init__(self, sem_id):
+        if type(self) is Semaphore:
+            raise TypeError(
+                "Semaphore(...) is not a public constructor: create a semaphore with "
+                "`sem = yield CreateSemaphore(permits)` and pass that handle around"
+            )
         self.sem_id = sem_id
     def __repr__(self):
         return f"Semaphore({self.sem_id})"
+
+
+def _semaphore_handle(sem_id) -> Semaphore:
+    """The scheduler's handle for its semaphore ``sem_id`` (both implementations mint with it)."""
+    handle = object.__new__(Semaphore)
+    handle.sem_id = sem_id
+    return handle
 
 
 class _ExternalCompletionQueue(Protocol):
@@ -982,7 +1003,9 @@ def _rust_spec() -> dict[str, object]:
         "Future": Future,
         "Promise": Promise,
         "ExternalPromise": ExternalPromise,
-        "Semaphore": Semaphore,
+        # Rust only calls this with (sem_id,) to mint a handle, and Semaphore(...)
+        # itself refuses to build one (scheduler.rs semaphore_cls).
+        "Semaphore": _semaphore_handle,
         "TaskCancelledError": TaskCancelledError,
         "ExternalPromiseCancelCallbackError": ExternalPromiseCancelCallbackError,
         "SchedulerDeadlockError": SchedulerDeadlockError,
@@ -2928,7 +2951,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 # allowed for multi-permit holds).
                 "holders": [],
             }
-            r = yield Resume(k, Semaphore(sid))
+            r = yield Resume(k, _semaphore_handle(sid))
             return r
 
         elif isinstance(effect, AcquireSemaphore):

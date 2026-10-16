@@ -58,6 +58,12 @@
 
 ### Changed
 
+- `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
+  2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
+  `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run
+  (`AcquireSemaphore` failed with `KeyError`) or silently shared the permits of the run's semaphore with the same
+  number. Handles from `CreateSemaphore`, `isinstance` checks and subclasses whose `__init__` calls
+  `super().__init__(sem_id)` (doeff-cluster's `ClusterSemaphore` and `ReplaySemaphore`) are unchanged.
 - `doeff-hy`: `defmcp-tool` refuses, when it expands, a body that calls the tool's own name
   (`(defmcp-tool submit-order … (submit-order …))`, spelled `submit-order` or `submit_order`, at any depth outside a
   quote). The expansion binds that name to the `McpToolDef`, so the call reached the tool instead of a `defk` of the

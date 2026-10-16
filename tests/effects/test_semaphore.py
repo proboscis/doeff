@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 
 import pytest
+from doeff_core_effects.scheduler import SchedulerImplementation, scheduled
 
 from doeff import (
     AcquireSemaphore,
@@ -13,6 +14,7 @@ from doeff import (
     Spawn,
     Wait,
     do,
+    run,
 )
 from tests._run_helpers import run_with_defaults
 
@@ -38,6 +40,47 @@ def test_semaphore_public_handle_has_no_runtime_cleanup_surface() -> None:
 def test_semaphore_constructor_rejects_runtime_private_kwargs() -> None:
     with pytest.raises(TypeError):
         Semaphore(id=11, _scheduler_state_id=17)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("args", [(0,), (1,), (3,), ("x",)])
+def test_semaphore_direct_construction_raises_type_error(args: tuple[object, ...]) -> None:
+    """A hand-made handle names no semaphore of the run (KeyError at Acquire) or shares the
+    permits of the run's semaphore with the same number, so the base class refuses to be built
+    directly (docs/09, docs/13, docs/21, SPEC-EFF-014)."""
+    with pytest.raises(TypeError, match=r"sem = yield CreateSemaphore\(permits\)"):
+        Semaphore(*args)
+
+
+def test_semaphore_subclass_minted_by_a_create_semaphore_handler_calls_base_init() -> None:
+    """A handler that answers CreateSemaphore itself (doeff-cluster's ClusterSemaphore and
+    ReplaySemaphore) returns its own subclass handle, built through Semaphore.__init__."""
+
+    class NamedSemaphore(Semaphore):
+        def __init__(self, name: str) -> None:
+            super().__init__(f"named:{name}")
+            self.name = name
+
+    handle = NamedSemaphore("jobs")
+    assert isinstance(handle, Semaphore)
+    assert handle.sem_id == "named:jobs"
+
+
+@pytest.mark.parametrize("implementation", ["python", "rust"])
+def test_create_semaphore_handle_is_the_exact_semaphore_type(
+    implementation: SchedulerImplementation,
+) -> None:
+    """Both schedulers mint the base Semaphore without going through the refused constructor."""
+
+    @do
+    def program():
+        sem = yield CreateSemaphore(2)
+        yield AcquireSemaphore(sem)
+        yield ReleaseSemaphore(sem)
+        return sem
+
+    sem = run(scheduled(program(), implementation=implementation))
+    assert type(sem) is Semaphore
+    assert repr(sem) == f"Semaphore({sem.sem_id})"
 
 
 class TestSemaphoreEffectContract:
@@ -123,7 +166,7 @@ class TestSemaphoreRuntimeBehavior:
         assert result.value == ["first", "second", "third"]
 
     def test_counting_semaphore_allows_n_concurrent(self) -> None:
-        """Semaphore(3) allows 3 tasks to hold permits simultaneously."""
+        """CreateSemaphore(3) allows 3 tasks to hold permits simultaneously."""
         max_concurrent = {"value": 0}
         current = {"value": 0}
 
