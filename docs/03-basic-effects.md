@@ -1,12 +1,13 @@
 # Basic Effects
 
-This chapter covers the fundamental **batteries-included algebraic effects** that form the building blocks of most programs: Reader, State, and Writer. Each effect type has a corresponding built-in handler that interprets the effect operations.
+This chapter covers the fundamental **batteries-included algebraic effects** that form the building blocks of most programs: Reader, State, and Writer, plus structured logs (`slog`). Each effect type has a corresponding built-in handler that interprets the effect operations.
 
 ## Table of Contents
 
 - [Reader Effects](#reader-effects)
 - [State Effects](#state-effects)
 - [Writer Effects](#writer-effects)
+- [Structured Logs (slog)](#structured-logs-slog)
 - [Combining Effects](#combining-effects)
 - [Best Practices](#best-practices)
 
@@ -416,7 +417,9 @@ print(run(state()(writer(state_machine()))))  # complete
 
 ## Writer Effects
 
-Writer effects accumulate output (messages, events, structured entries) throughout execution.
+Writer effects accumulate `Tell` messages in a log throughout execution. Structured log entries
+(`slog`) are a separate effect with their own handlers -- see
+[Structured Logs (slog)](#structured-logs-slog).
 
 ### Tell - Append to Writer Log
 
@@ -459,58 +462,24 @@ main()
 
 `Tell` is not string-only. It accepts and stores any Python object unchanged, including dictionaries, numbers, and custom objects.
 
-### slog - Structured Entries
-
-`slog(msg, **kwargs)` logs a structured entry with a message and keyword arguments.
-`SlogEffect` is the underlying effect class. It is a separate type from `Tell`'s
-`WriterTellEffect`: `writer` does not collect it, and it needs `slog_handler` (prints each entry
-on stderr) or `slog_discard_handler` (silence). See
-[slog_handler](13-api-reference.md#slog_handler) for capturing the entries as values.
-
-```python excerpt
-def slog(msg, **kwargs) -> SlogEffect:
-    """Create a structured log entry with msg and keyword data."""
-```
-
-```python
-from doeff import do, run
-from doeff_core_effects import slog
-from doeff_core_effects.handlers import slog_handler
-
-@do
-def structured_logging():
-    yield slog(
-        "User logged in",
-        level="info",
-        user_id=12345,
-        ip="192.168.1.1",
-    )
-    yield slog(
-        "High memory usage",
-        level="warn",
-        memory_mb=512,
-        threshold_mb=400,
-    )
-    return "logged"
-
-# slog_handler prints each entry on stderr:
-#     INFO User logged in user_id=12345 ip=192.168.1.1
-#     WARN High memory usage memory_mb=512 threshold_mb=400
-print(run(slog_handler(structured_logging())))  # logged
-```
-
 ### Listen - Capture Sub-Program Logs
 
-`Listen(sub_program)` runs a sub-program and returns `(value, collected)` -- a tuple of the sub-program's return value and the list of collected effects.
+`Listen(sub_program, types=None)` runs a sub-program and returns `(value, collected)`: the
+sub-program's return value and the list of effects it performed whose class is in `types`.
+`types` defaults to `(WriterTellEffect,)`, the `Tell` entries. Pass other effect classes to
+collect them instead, for example `types=(SlogEffect,)` for `slog` entries
+([Capture slog Entries with Listen](#capture-slog-entries-with-listen)) or
+`types=(WriterTellEffect, SlogEffect)` for both.
 
-Mechanism (SPEC-EFF-003):
-- Record the current log start index before running the sub-program.
-- Push an internal listen frame using that start index.
-- Execute the sub-program.
-- Capture entries from that start index onward into the returned collected list.
-- Keep those captured entries in the shared log store (they are not removed).
+How it works: `listen_handler` runs the sub-program under an extra handler that records each
+effect of those types and then passes it on unchanged. So the recorded entries are still handled
+by the handlers outside `listen_handler` (`writer` appends the `Tell` entries to the log as
+usual), and `collected` holds the effect objects themselves (`Tell('inner step 1')` -- read the
+message with `.msg`), not the plain messages that `writer_log()` returns.
 
-`Listen` is handled by `listen_handler`, installed inside `writer`:
+`Listen` is handled by `listen_handler`, installed inside `writer`. A handler installed inside
+`listen_handler` consumes the entries before `Listen` sees them: `listen_handler(writer(prog))`
+returns an empty `collected`.
 
 ```python
 from doeff import do, run
@@ -533,19 +502,24 @@ def outer_operation():
 print(run(state()(writer(listen_handler(outer_operation())))))  # (42, [Tell('inner step 1'), Tell('inner step 2')])
 ```
 
-The `collected` result is a plain list of captured effects.
-
 ### Listen Composition Rules
 
-- `Listen + Tell`: entries told in the Listen scope appear in `collected`.
+- `Listen + Tell`: entries told in the Listen scope appear in `collected`, and they stay in the
+  writer log.
+- `Listen + slog`: `slog` entries appear in `collected` only when `types` includes `SlogEffect`.
 - `Listen + Local`: entries from inside `Local(...)` are captured normally by Listen.
 - `Listen + Try`:
   - `Listen(Try(sub_program))` returns `(result, collected)` where `result` is `Ok(value)` or `Err(error)`; entries before the caught error remain in `collected`.
   - `Try(Listen(sub_program))` returns `Err(...)` if `sub_program` fails before Listen completes; no result tuple is produced on that path.
-- `Listen + Gather`: gathered programs share the same log store.
-- `Listen + Gather` in `SyncRuntime`: ordering is sequential in program order.
-- `Listen + Gather` in `AsyncRuntime`: ordering is non-deterministic and may interleave.
-- `Listen + Listen` (nested): the inner Listen captures only its own scope; the outer Listen captures the full outer scope, including entries produced by the inner scope.
+- `Listen + Spawn`/`Gather`: entries from tasks spawned inside the Listen scope are captured, in
+  the order the scheduler runs them. Tasks spawned before the `Listen` and only waited on inside
+  it (`Listen(Gather(t1, t2))`) perform their effects outside the Listen scope, so their entries
+  are not captured.
+- `Listen + Listen` (nested): in doeff 0.5.0, `listen_handler` does not install itself again
+  around the sub-program, so a `Listen` inside another `Listen`'s sub-program fails with
+  `UnhandledEffect` unless `listen_handler` is installed once more per nesting level
+  (`listen_handler(listen_handler(prog))`). With that, the inner Listen captures only its own
+  scope, and the outer Listen captures the full outer scope, including the inner scope's entries.
 
 ### Writer Pattern Examples
 
@@ -595,6 +569,96 @@ def debug_computation():
     return y
 
 print(run(state(initial={"x": 21})(writer(debug_computation()))))  # 42
+```
+
+## Structured Logs (slog)
+
+`slog(msg, **kwargs)` emits a structured log entry: a message plus keyword data. It reports what
+the program is doing (observability) rather than building a result, so it is a separate effect
+from `Tell` with its own handlers:
+
+| | `Tell(msg)` | `slog(msg, **kwargs)` |
+|---|---|---|
+| Effect class | `WriterTellEffect` | `SlogEffect` (alias `Slog`) |
+| Handled by | `writer` -- appends `msg` to the log kept in `state` | `slog_handler` -- prints each entry on stderr; `slog_discard_handler` -- drops it |
+| Read as values | `writer_log()` or `Listen(prog)` | `Listen(prog, types=(SlogEffect,))` |
+
+`writer` does not handle `SlogEffect`: a program that yields `slog` under only `writer` and
+`state` fails with `UnhandledEffect`. `SlogEffect` is not a subclass of `WriterTellEffect`.
+
+### slog - Emit an Entry
+
+```python excerpt
+def slog(msg, **kwargs) -> SlogEffect:
+    """Create a structured log entry with msg and keyword data."""
+```
+
+The entry keeps the arguments as given, in `entry.msg` and `entry.kwargs`. `level` is an ordinary
+keyword; `slog_handler` reads it when it prints (`info` when absent).
+
+### slog_handler - Print Entries
+
+`slog_handler` prints each entry as one line on stderr -- the level in upper case right-aligned to
+8 characters, the message, then each other keyword as `key=value` -- and resumes the program with
+`None`. It only prints: it keeps nothing and needs no `state()`. `slog_discard_handler` consumes
+the entries without printing them (for example in tests).
+
+```python
+from doeff import do, run
+from doeff_core_effects import slog
+from doeff_core_effects.handlers import slog_handler
+
+@do
+def structured_logging():
+    yield slog(
+        "User logged in",
+        level="info",
+        user_id=12345,
+        ip="192.168.1.1",
+    )
+    yield slog(
+        "High memory usage",
+        level="warn",
+        memory_mb=512,
+        threshold_mb=400,
+    )
+    return "logged"
+
+# slog_handler prints each entry on stderr:
+#     INFO User logged in user_id=12345 ip=192.168.1.1
+#     WARN High memory usage memory_mb=512 threshold_mb=400
+print(run(slog_handler(structured_logging())))  # logged
+```
+
+### Capture slog Entries with Listen
+
+To read the entries as values, capture them with `Listen(program, types=(SlogEffect,))`.
+`Listen` passes each entry on after recording it, so `slog_handler` or `slog_discard_handler` is
+still needed outside `listen_handler`; install `listen_handler` inside it. The `Tell` below is
+not collected, because `types` names only `SlogEffect`:
+
+```python
+from doeff import do, run
+from doeff_core_effects import Listen, SlogEffect, Tell, slog
+from doeff_core_effects.handlers import listen_handler, slog_handler, state, writer
+
+@do
+def import_rows(row_ids):
+    yield Tell("import started")
+    for row_id in row_ids:
+        yield slog("row imported", row_id=row_id)
+    return len(row_ids)
+
+@do
+def audited_import():
+    count, entries = yield Listen(import_rows([7, 8]), types=(SlogEffect,))
+    return count, [(entry.msg, entry.kwargs) for entry in entries]
+
+# slog_handler still prints both entries on stderr:
+#     INFO row imported row_id=7
+#     INFO row imported row_id=8
+prog = state()(writer(listen_handler(audited_import())))
+print(run(slog_handler(prog)))  # (2, [('row imported', {'row_id': 7}), ('row imported', {'row_id': 8})])
 ```
 
 ## Combining Effects
@@ -786,7 +850,7 @@ print(run(state()(safe_increment())))  # 1
 **DO:**
 - Use consistent log formats
 - Log important state transitions
-- Use `slog` for machine-readable logs
+- Use `slog` for machine-readable logs (install `slog_handler` to see them)
 
 ```python excerpt
 @do
@@ -829,8 +893,8 @@ def well_logged_operation():
 | `Get(key)` | Read state | Counters, flags |
 | `Put(key, val)` | Write state | Initialize, update |
 | `Tell(msg)` | Append to log | Debugging, audit |
-| `slog(msg, **kw)` (`SlogEffect`) | Structured logging | Machine-readable logs |
-| `Listen(prog)` | Capture sub-logs | Nested operations |
+| `slog(msg, **kw)` (`SlogEffect`) | Structured logging (`slog_handler` prints it) | Machine-readable logs |
+| `Listen(prog, types=...)` | Capture a sub-program's entries (`Tell` by default) | Nested operations, asserting on `slog` entries |
 
 ## Next Steps
 
