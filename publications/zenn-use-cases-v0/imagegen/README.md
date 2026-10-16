@@ -11,59 +11,19 @@
 ## 正本と採用記録
 
 - 採用PNG：リポジトリ直下の `images/zenn-use-cases-v0/generated/`。
-- [manifest.json](manifest.json)：採用パス、生成・編集プロンプト、寸法、容量、SHA-256、目視確認記録。
+- `manifest/<slug>.json`：記事ごとの採用パス、生成・編集プロンプト、寸法、容量、SHA-256、目視確認記録。
 - `*-flat-code*.txt`：今回の生成・編集プロンプト。メインの概念図・処理図は`-v3`、冒頭画像は`main-hero-flat-code-v1.txt`を採用。
+- `<slug>-svg-source.txt`：手で書いたSVGから作った図の正本と作り方。
+- `records/<slug>.md`：記事ごとの制作の経緯。
 - `../reviews/*-visuals.json`：実装精査後のコードと概念・矢印・説明文の仕様。
-- `../visuals/captions.json`：記事に掲載するタイトルと説明文。
+- `../visuals/captions/<slug>.json`：記事に掲載するタイトルと説明文。
+
+`<slug>`は原稿`doeff-<slug>.md`の名で、Zennのslugではない。記事を足す仕事は、自分の記事のファイルだけを足す。このREADMEと他の記事のファイルへは書き足さず、記事の数や残りの枚数も書かない。`verify_publication.py`が、原稿と台帳のファイルの組を照らす。
+
+まだリポジトリに無い画像は、`manifest/<slug>.json`の項目に`missing`と訳を書く。`verify_publication.py`は、その画像のファイルの照合だけを外す。描き直して画像を置いたら`missing`を外す(画像が在るのに`missing`が残ると止まる)。
 
 旧PNGは`images/zenn-use-cases-v0/archive/`に保持。旧DOT・SVG・PNGと旧プロンプトも比較用であり、現在の掲載画像の生成元ではない。
 
 ## 更新手順
 
 対象PNGを表示してからimagegenで編集する。採用画像をリポジトリへ保存し、実際に目視確認を終えた記事slugだけを`reviews/sync_review_metadata.py`へ渡す。台帳更新後に`verify_publication.py`とプレビューで記事との整合を確認する。生成は確率的なので、同じプロンプトから同じ画素を得る保証はない。
-
-## メインの最小ハンドラを図へ反映（2026-09-16追記）
-
-main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・編集し、@handler・@do・handle_ask_effect、Resumeによる再開、with_handlersによる設置を本文と揃えた。旧図はarchiveへ保持。採用プロンプトはmain-*-flat-code-v3.txt、編集はmain-*-flat-code-v3-edit1.txt。実行結果はrunで得られることも図へ明記した。
-
-## メイン冒頭のキービジュアル
-
-[main-hero.png](/images/zenn-use-cases-v0/generated/main-hero.png)を追加した。[生成プロンプト](main-hero-flat-code-v1.txt)を組み込みimagegenへ渡して制作し、コードと往復矢印を目視確認した。タイトル直下に配置し、定義と最小コードへ続く。画像47枚の寸法・容量・採用ハッシュはmanifest.jsonを参照。
-
-## 時間の記事の2枚をSVGで描き直す（2026-10-16追記）
-
-- 2026-09-16の47枚は、`.gitignore`の例外が`generated/`に届かず、リポジトリに入っていなかった。
-- 時間の記事の2枚（time-concept・time-flow）は、週3の改稿に合わせて手で書いたSVGから作り直した。
-- 正本と作り方は[time-svg-source.txt](time-svg-source.txt)に書いた。manifest.jsonの`tool`は`SVG (hand-written) + chromium screenshot`。
-- 残り45枚は、まだリポジトリに無い。`verify_publication.py`は、その45枚が揃うまで画像の検査で止まる。
-
-## DIの記事の2枚をSVGで描き直す（2026-10-16追記）
-
-- DIの記事の2枚（di-concept・di-flow）も、週4の改稿に合わせて手で書いたSVGから作り直した。
-- 正本と作り方は[di-svg-source.txt](di-svg-source.txt)に書いた。`tool`は時間の記事と同じ。
-- 携帯の幅でも読めるよう、横800の枠に24〜32pxの字で描き、横1600のPNGにした。
-- これで残りは43枚。
-
-## メイン記事の3枚をSVGで描き直す（2026-10-16追記）
-
-- メインの3枚（main-hero・main-concept・main-flow）も、週1の仕上げに合わせて手で書いたSVGから作り直した。
-- 正本と作り方は[main-svg-source.txt](main-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
-- これで残りは40枚。
-
-## hookの記事の2枚をSVGで描く（2026-10-17追記）
-
-- 8本目の新しい下書き（doeff-hooks.md）の2枚（hooks-concept・hooks-flow）は、初めから手で書いたSVGで描いた。
-- 正本と作り方は[hooks-svg-source.txt](hooks-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
-- 新しい2枚はリポジトリに入れたので、まだリポジトリに無い他の記事の図の枚数（2026-10-17に数えて38枚）は変わらない。
-
-## 開発の記録の3枚をSVGで描く（2026-10-17追記）
-
-- 5週目の開発の記録（doeff-fleet.md）は、概念図・処理図に、35日のcommitの数の図を足して3枚にした。
-- 正本と作り方は[fleet-svg-source.txt](fleet-svg-source.txt)に書いた。`tool`は時間の記事と同じ。
-- 3枚目はcaptions.jsonの`extra_kinds`に書き、`verify_publication.py`が台帳と本文を照らす。
-
-## 設計の記録の記事の2枚をSVGで描く（2026-10-17追記）
-
-- 10本目の新しい回「設計の記録をテストとして走らせる」(doeff-adr.md)の2枚(adr-concept・adr-flow)を、手で書いたSVGから作った。
-- 正本と作り方は[adr-svg-source.txt](adr-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
-- 新しい回の図なので、まだリポジトリに無い他の記事の図の枚数（2026-10-17に数えて38枚）は変わらない。

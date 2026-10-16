@@ -1,0 +1,26 @@
+[
+  {
+    "id": "time-concept",
+    "image": "images/zenn-use-cases-v0/generated/time-concept.png",
+    "generation_prompt": "time-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "ecfe4562d8db1d556f887532c8006a1c8fb8b731c70000f854bbceb2ab924daf",
+    "width": 1200,
+    "height": 1080,
+    "bytes": 132595,
+    "review": "2026-10-16：週3の改稿のコード（job・skip_delay・3つの時計）と名前・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "time-flow",
+    "image": "images/zenn-use-cases-v0/generated/time-flow.png",
+    "generation_prompt": "time-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "c85f062233e9ea38d7c0564505f5fe6f68fe14adbdb726f163b7bfcffea34f1b",
+    "width": 1200,
+    "height": 1040,
+    "bytes": 118276,
+    "review": "2026-10-16：worker(20)・worker(10)の再開時刻、時計の跳び、Gatherの[20.0, 10.0]、2026-10-16に測った実時間（0.01秒未満・20.09秒）を目視確認。白背景の平面図として採用。"
+  }
+]

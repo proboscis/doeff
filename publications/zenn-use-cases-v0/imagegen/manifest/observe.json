@@ -1,0 +1,28 @@
+[
+  {
+    "id": "observe-concept",
+    "image": "images/zenn-use-cases-v0/generated/observe-concept.png",
+    "generation_prompt": "observe-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "c360a0a1c9277c42148ba285a944fe384ab799d66c9ba86f8e9fceee9054af94",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1320871,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "observe-flow",
+    "image": "images/zenn-use-cases-v0/generated/observe-flow.png",
+    "generation_prompt": "observe-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "00e24dcc506ecdddcf6b78efbde46f13a46b87b1ac61ed2216991eb069040b25",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1515579,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

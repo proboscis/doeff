@@ -1,0 +1,30 @@
+[
+  {
+    "id": "games-concept",
+    "image": "images/zenn-use-cases-v0/generated/games-concept.png",
+    "generation_prompt": "games-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "590b8cd19e4d350701c7c008ee7a9cb05acc5f36f2c59d8b3e9c8a4fe3319c1c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1420602,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "games-flow",
+    "image": "images/zenn-use-cases-v0/generated/games-flow.png",
+    "generation_prompt": "games-flow-flat-code.txt",
+    "edit_prompts": [
+      "games-flow-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "d63b13f76596f9d24f55c3655d75b7055f48137e4f982dfc59e6e8e56f247562",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1592570,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

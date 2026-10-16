@@ -1,0 +1,28 @@
+[
+  {
+    "id": "hy-concept",
+    "image": "images/zenn-use-cases-v0/generated/hy-concept.png",
+    "generation_prompt": "hy-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "5e08938cc8b0dac3e541d1c48a1d6daedcb061537002fa75f68983f262e61a56",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1325353,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "hy-flow",
+    "image": "images/zenn-use-cases-v0/generated/hy-flow.png",
+    "generation_prompt": "hy-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "c5541cfb002583b04e8a88cfae9d9d0d32f7f7dd3e0dbeff4f3e039e7745a886",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1441927,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

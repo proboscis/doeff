@@ -77,10 +77,10 @@ HTTPは固定・拒否ハンドラとSQLiteの組み合わせで検証。LLMは�
 
 メイン最上部のキービジュアル1枚と、全23記事の概念図・処理図46枚を掲載。組み込みimagegenによる全47枚は、白い不透明背景の平面図で、短いコードとコメント付き。各3MB未満。コード・値・矢印を個別に目視確認した。
 
-2026-10-16に、`generated/`のPNG 47枚がリポジトリに入っていないと分かった。`.gitignore`の例外が`generated/`の下に効かず、作った機械の返却とともに失われた。時間・DIの記事の各2枚とメインの3枚は、手で書いたSVG(`visuals/`)から描き直した。残る40枚は各回の仕上げで作り直す。それまで`verify_publication.py`の画像の照合は失敗する。
+2026-10-16に、`generated/`のPNG 47枚がリポジトリに入っていないと分かった。`.gitignore`の例外が`generated/`の下に効かず、作った機械の返却とともに失われた。時間・DIの記事の各2枚とメインの3枚は、手で書いたSVG(`visuals/`)から描き直した。残る40枚は各回の仕上げで作り直す。まだ無い画像は、記事ごとの採用台帳の項目に`missing`と訳を書き、`verify_publication.py`はその画像のファイルの照合だけを外す(2026-10-17から)。
 
 - 掲載PNG：リポジトリ直下の `images/zenn-use-cases-v0/generated/`。
-- [制作記録](imagegen/README.md)、[採用画像と生成・編集プロンプト](imagegen/manifest.json)。
+- [制作記録](imagegen/README.md)と記事ごとの`imagegen/records/<slug>.md`、採用画像と生成・編集プロンプトは記事ごとの`imagegen/manifest/<slug>.json`。
 - 旧版はarchiveと旧DOT/SVG/PNGに保持。`render_visuals.py`は旧版用であり、現在の掲載画像は作らない。
 
 ```bash

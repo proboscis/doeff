@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backtest-concept",
+    "image": "images/zenn-use-cases-v0/generated/backtest-concept.png",
+    "generation_prompt": "backtest-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "5aeec9bd166f01f9c97727a6bcf35392fa507c03cb93f5d96b33078c08662532",
+    "width": 1600,
+    "height": 2080,
+    "bytes": 321437,
+    "review": "2026-10-17：週7のコード（trading_loop・GetTime・GetPrice・PlaceOrder・Tell・Delay(60)・decide・sim_time_handler・backtest_market・sync_time_handler・live_market）と名前・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "backtest-flow",
+    "image": "images/zenn-use-cases-v0/generated/backtest-flow.png",
+    "generation_prompt": "backtest-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "d24c0e87be9333e09f6e955f660d6ac20aa2419c93816e3093f8156de6bfa0c2",
+    "width": 1600,
+    "height": 2260,
+    "bytes": 242469,
+    "review": "2026-10-17：週7の2枠目（GetPrice(\"DEMO\")・GetTime()・09:01・Resume(k, 101.0)・Delay(60)・記録100.0/101.0/102.0・bt-0901）と名前・値・順番を目視確認。白背景の平面図として採用。"
+  }
+]

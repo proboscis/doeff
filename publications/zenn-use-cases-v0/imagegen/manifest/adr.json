@@ -1,0 +1,26 @@
+[
+  {
+    "id": "adr-concept",
+    "image": "images/zenn-use-cases-v0/generated/adr-concept.png",
+    "generation_prompt": "adr-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "0a1d9b4ea1ca57ed4eb8ad51624b8ffaf1073c8e9efd2f8cc1c73a3377a25d67",
+    "width": 1200,
+    "height": 1120,
+    "bytes": 230800,
+    "review": "2026-10-17：記事の最初のコード(ADR-BILLING-001・deftest・defsemgrep)と、3つのテストの名前・.semgrep.yamlの規則の名・verify-wiringを目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "adr-flow",
+    "image": "images/zenn-use-cases-v0/generated/adr-flow.png",
+    "generation_prompt": "adr-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "361044eb6a760feb62423caf57f89ef81ed47607f48f8daf052e14b2a34c850a",
+    "width": 1200,
+    "height": 1000,
+    "bytes": 178954,
+    "review": "2026-10-17：reviews/adr-check.pyで走らせた3通りの破り方の結果(3 passed・1 failed・1 passed)と、止める所(終了コード1・1・4)・9行目を目視確認。白背景の平面図として採用。"
+  }
+]
