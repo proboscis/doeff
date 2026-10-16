@@ -303,7 +303,7 @@ def task_unplaced_text(kind: TaskUnplacedKind) -> _Program[str, object]:
 def limit_slot(limit: TaskLimit, declared: GroupLimit, worker: str | None) -> _Program[tuple, object]:
     ...
 
-def placed_claims(tasks: dict) -> _Program[tuple, object]:
+def placed_claims(tasks: Table[TaskRecord]) -> _Program[tuple, object]:
     ...
 
 def limit_holdings(claims: tuple, groups: Table) -> _Program[dict, object]:
@@ -347,16 +347,16 @@ def task_lapse_at(task: TaskRecord, now: int) -> _Program[int | None, object]:
 def hyx_held_taskXquestion_markX(task: TaskRecord) -> bool:
     ...
 
-def scan_rows(tasks: dict) -> list:
+def scan_rows(tasks: Table[TaskRecord]) -> list:
     ...
 
-def task_split(tasks: dict, now: int) -> _Program[tuple, object]:
+def task_split(tasks: Table[TaskRecord], now: int) -> _Program[tuple, object]:
     ...
 
 def wait_lapse_at(capable: list, timing: ClusterTiming) -> _Program[int | None, object]:
     ...
 
-def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[dict, object]:
+def place_tasks(now: int, state: ClusterState, placements: dict, timing: ClusterTiming) -> _Program[Table[TaskRecord], object]:
     ...
 
 def same_boot(task: TaskRecord, boot: str | None) -> bool:
@@ -377,16 +377,19 @@ def task_finished(task: TaskRecord, now: int, detail: str, result: str | None) -
 def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int) -> TaskRecord:
     ...
 
-def changed_rows_over(original: dict, rows: dict) -> dict:
+def changed_rows_over(original: Table[TaskRecord], rows: dict) -> Table[TaskRecord]:
     ...
 
-def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None, stopping: bool=False) -> dict:
+def tasks_rewritten(original: Table[TaskRecord], rows: dict) -> Table[TaskRecord]:
+    ...
+
+def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None, stopping: bool=False) -> Table[TaskRecord]:
     ...
 
 def absorb_task_result(state: ClusterState, id: str, body: TaskResultBody, now: int) -> _Program[tuple, object]:
     ...
 
-def renew_detached(tasks: dict, worker: str, boot: str | None, now: int) -> dict:
+def renew_detached(tasks: Table[TaskRecord], worker: str, boot: str | None, now: int) -> Table[TaskRecord]:
     ...
 
 def sweep_board(state: ClusterState, now: int) -> _Program[ClusterState, object]:
@@ -401,7 +404,7 @@ def sweep_drains(state: ClusterState, now: int) -> _Program[ClusterState, object
 def sweep_warms(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
-def cold_starts(before: dict, after: dict) -> _Program[int, object]:
+def cold_starts(before: Table[TaskRecord], after: Table[TaskRecord]) -> _Program[int, object]:
     ...
 
 def liveness_due(state: ClusterState, now: int, timing: ClusterTiming) -> _Program[DueAt | DueNow | DueNever, object]:
@@ -459,7 +462,10 @@ def adopted_task(state: ClusterState, worker: str, boot: str | None, status: Sta
 def adopt_running_detached(state: ClusterState, worker: str, boot: str | None, statuses: tuple, now: int) -> ClusterState:
     ...
 
-def promote_prepared(tasks: dict, worker: WorkerInfo) -> dict:
+def adopted_over(tasks: Table[TaskRecord], adopted: dict) -> Table[TaskRecord]:
+    ...
+
+def promote_prepared(tasks: Table[TaskRecord], worker: WorkerInfo) -> Table[TaskRecord]:
     ...
 
 def warms_for(state: ClusterState, worker: str, now: int) -> tuple:
