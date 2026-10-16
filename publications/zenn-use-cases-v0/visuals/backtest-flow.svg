@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1130" width="1600" height="2260">
+  <!-- 記事 doeff-backtest.md の2枚目。09:01の回の、値段の依頼の流れ。名前と値は本文の2枠目と揃える。 -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrowg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+    <style>
+      .title { font: bold 30px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .head { font: bold 20px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #1f2a44; }
+      .text { font: 24px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .muted { font: 22px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #5b6475; }
+      .code { font: 22px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #1f2a44; }
+      .codeg { font: bold 22px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #0f766e; }
+      .num { font: bold 22px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #ffffff; }
+      .rec { font: 24px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #1f2a44; }
+      .recg { font: 24px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #9ca3af; }
+      .now { font: bold 24px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #b91c1c; }
+      .foot { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+    </style>
+  </defs>
+  <rect width="800" height="1130" fill="#ffffff"/>
+  <text class="title" x="400" y="54" text-anchor="middle">値段の依頼は、仮想の時計に</text>
+  <text class="title" x="400" y="94" text-anchor="middle">今を問うてから答える(09:01の回)</text>
+
+  <!-- 3つの列の頭 -->
+  <rect x="20" y="124" width="220" height="56" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text class="head" x="130" y="160" text-anchor="middle">trading_loop</text>
+  <rect x="290" y="124" width="220" height="56" rx="10" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+  <text class="head" x="400" y="160" text-anchor="middle">backtest_market</text>
+  <rect x="560" y="124" width="220" height="56" rx="10" fill="#eef3fb" stroke="#6b8fc7" stroke-width="2"/>
+  <text class="head" x="670" y="160" text-anchor="middle">sim_time_handler</text>
+  <line x1="130" y1="180" x2="130" y2="668" stroke="#9ca3af" stroke-width="2" stroke-dasharray="8 6"/>
+  <line x1="400" y1="180" x2="400" y2="668" stroke="#9ca3af" stroke-width="2" stroke-dasharray="8 6"/>
+  <line x1="670" y1="180" x2="670" y2="668" stroke="#9ca3af" stroke-width="2" stroke-dasharray="8 6"/>
+
+  <!-- ① 値段を頼む -->
+  <circle cx="44" cy="232" r="16" fill="#374151"/><text class="num" x="44" y="240" text-anchor="middle">1</text>
+  <text class="code" x="140" y="236">GetPrice("DEMO")</text>
+  <line x1="132" y1="252" x2="394" y2="252" stroke="#374151" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- ② 時計に今を問う -->
+  <circle cx="44" cy="312" r="16" fill="#374151"/><text class="num" x="44" y="320" text-anchor="middle">2</text>
+  <text class="code" x="420" y="316">GetTime()</text>
+  <line x1="402" y1="332" x2="664" y2="332" stroke="#374151" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- ③ 今を答える -->
+  <circle cx="44" cy="392" r="16" fill="#374151"/><text class="num" x="44" y="400" text-anchor="middle">3</text>
+  <text class="code" x="560" y="396" text-anchor="end">09:01</text>
+  <line x1="668" y1="412" x2="406" y2="412" stroke="#374151" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- ④ 記録を引く -->
+  <circle cx="44" cy="472" r="16" fill="#374151"/><text class="num" x="44" y="480" text-anchor="middle">4</text>
+  <rect x="280" y="446" width="240" height="56" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
+  <text class="text" x="400" y="482" text-anchor="middle">09:01以前の最後</text>
+
+  <!-- ⑤ 値段で再開する -->
+  <circle cx="44" cy="552" r="16" fill="#0f766e"/><text class="num" x="44" y="560" text-anchor="middle">5</text>
+  <text class="codeg" x="388" y="556" text-anchor="end">Resume(k, 101.0)</text>
+  <line x1="398" y1="572" x2="136" y2="572" stroke="#0f766e" stroke-width="3" marker-end="url(#arrowg)"/>
+
+  <!-- ⑥ 1分待つ -->
+  <circle cx="44" cy="632" r="16" fill="#374151"/><text class="num" x="44" y="640" text-anchor="middle">6</text>
+  <text class="code" x="140" y="636">Delay(60)</text>
+  <text class="muted" x="420" y="636">担当外は Pass</text>
+  <line x1="132" y1="652" x2="664" y2="652" stroke="#374151" stroke-width="3" marker-end="url(#arrow)"/>
+  <text class="text" x="780" y="700" text-anchor="end">時計を09:02へ進める</text>
+
+  <!-- 記録と「今」 -->
+  <text class="text" x="40" y="760">記録 history(架空の値段)</text>
+  <rect x="40" y="780" width="720" height="180" rx="14" fill="#f9fafb" stroke="#d1d5db" stroke-width="2"/>
+  <text class="rec" x="80" y="830">09:00  100.0</text>
+  <text class="muted" x="420" y="830">読める(今より前)</text>
+  <rect x="60" y="850" width="680" height="44" rx="8" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+  <text class="rec" x="80" y="882">09:01  101.0</text>
+  <text class="codeg" x="420" y="882">← これを返す</text>
+  <line x1="40" y1="904" x2="760" y2="904" stroke="#b91c1c" stroke-width="3"/>
+  <text class="now" x="752" y="926" text-anchor="end">今 = 09:01</text>
+  <text class="recg" x="80" y="944">09:02  102.0</text>
+  <text class="muted" x="420" y="944">まだ読めない</text>
+
+  <text class="foot" x="400" y="1020" text-anchor="middle">処理は時刻で値段を引けない。</text>
+  <text class="foot" x="400" y="1062" text-anchor="middle">未来を読ませない守りは、ハンドラの1か所</text>
+  <text class="muted" x="400" y="1104" text-anchor="middle">print(backtest(history, 3)) の2回目の行は ('09:01', 101.0, 'bt-0901')</text>
+</svg>

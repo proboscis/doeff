@@ -1,0 +1,12 @@
+バックテストの記事（doeff-backtest.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-17）。
+
+- 正本：../visuals/backtest-concept.svg と ../visuals/backtest-flow.svg。
+- 図の仕様：../reviews/backtest-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
+  - backtest-concept：幅1600・高さ2080（SVGの枠は横800、2倍で描く）。
+  - backtest-flow：幅1600・高さ2260（SVGの枠は横800、2倍で描く）。
+- 字形：日本語はIPAゴシックを名指し、無い環境では既定のゴシックで描く。コードの英数字はDejaVu Sans Mono。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+新しく書いた記事のため、2026-09-16のimagegenの版は無い。週3・週4と同じ作り方にそろえた。
+携帯の幅でも字が読めるよう、横800の枠に22〜30pxの字で描いた。値段はどちらの図も架空の数（100.0・101.0・102.0）。
