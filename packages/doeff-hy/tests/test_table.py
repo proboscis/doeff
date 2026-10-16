@@ -467,3 +467,117 @@ def test_changed_keys_agrees_with_comparing_the_rows_for_any_writes() -> None:
             expected = _changed_reference(_reference(base, first), _reference(base, second))
             assert left.changed_keys(right) == expected, (seed, base_rows, count)
             assert (left.changed_keys(right) == ()) is (left == right), (seed, base_rows, count)
+
+
+# ------------------------------------------------------------------ 単価の直し(card E0 — 行数の数え・全行の読み・空の書き・== の断り)
+
+
+def _model_check(table: Table[int], model: dict[str, int], where: object) -> None:
+    assert table.size() == len(model), where
+    assert all(table.row(k) == v for k, v in model.items()), where
+    assert table.row("absent") is None, where
+    keys, rows, items = table.keys(), table.rows(), table.items()
+    assert set(keys) == set(model) and len(keys) == len(model), where
+    assert dict(zip(keys, rows)) == model, where
+    # keys・rows・items は同じ並び。
+    assert items == tuple(zip(keys, rows)), where
+
+
+def test_random_writes_removes_and_compactions_match_a_dict_model() -> None:
+    import random
+
+    for seed in range(30):
+        rng = random.Random(seed)
+        model: dict[str, int] = {f"k{i}": i for i in range(rng.choice((0, 5, 80, 300)))}
+        table = table_of(tuple(TableWrite(key=k, value=v) for k, v in model.items()))
+        for step in range(40):
+            # 少ない書き(2 層のまま)と多い書き(基の作り直し)を混ぜる。
+            count = rng.choice((1, 2, 5, 40, 120))
+            writes = _random_writes(rng.randrange(10**6), len(model) + 30, count)
+            if rng.random() < 0.5:
+                table = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in writes))
+            else:
+                draft = draft_of(table)
+                for k, v in writes:
+                    draft.remove(k) if v is None else draft.put(k, v)
+                table = draft.freeze()
+            model = _reference(model, writes)
+            _model_check(table, model, (seed, step))
+
+
+def test_size_does_not_walk_the_base() -> None:
+    class _CountingDict(dict):  # type: ignore[type-arg]
+        iterated = 0
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            _CountingDict.iterated += 1
+            return super().__iter__()
+
+    base = _CountingDict({f"k{i}": i for i in range(1000)})
+    table = Table(base, {"k1": 5, "new": 1}, frozenset({"k2"}))
+    assert table.size() == 1000 - 1 + 1
+    assert _CountingDict.iterated == 0
+
+
+def test_all_rows_are_read_from_one_copy_per_table() -> None:
+    big = _table(MIN_DELTA * 4).with_writes((TableWrite(key="k3", value=-3), TableWrite(key="k4", value=None), TableWrite(key="z", value=1)))
+    assert big._delta and big._removed
+    assert big._flat is None
+    first = big.keys()
+    flat = big._flat
+    assert flat is not None and "k4" not in flat and flat["k3"] == -3
+    big.rows(), big.items()
+    assert big._flat is flat  # 2 度目からは同じ写し
+    assert first == big.keys()
+    # 基だけの表は基そのもの(写さない)。
+    plain = _table(MIN_DELTA * 4)
+    plain.rows()
+    assert plain._flat is plain._base
+
+
+def test_writes_that_change_nothing_return_the_same_table() -> None:
+    row = object()
+    for table in (_table(5), _table(MIN_DELTA * 4).with_writes((TableWrite(key="k1", value=-1),))):
+        assert table.with_writes(()) is table
+        assert table.with_writes((TableWrite(key="k2", value=table.row("k2")),)) is table
+        assert table.with_writes((TableWrite(key="absent", value=None),)) is table
+        assert table.with_writes((TableWrite(key="k2", value=table.row("k2")), TableWrite(key="k2", value=table.row("k2")))) is table
+        assert table.with_writes((TableWrite(key="k2", value=999),)) is not table
+    # 同じ値でも別の object なら新しい表(同一性で見る)。
+    t = table_of((TableWrite(key="k", value=[1]),))
+    assert t.with_writes((TableWrite(key="k", value=[1]),)) is not t
+    assert row is not None
+
+
+def test_a_draft_putting_the_same_rows_freezes_to_the_original_table() -> None:
+    for table in (_table(5), _table(MIN_DELTA * 4).with_writes((TableWrite(key="k1", value=-1),))):
+        draft = draft_of(table)
+        draft.put("k2", table.row("k2"))  # type: ignore[arg-type]
+        draft.put("k1", table.row("k1"))  # type: ignore[arg-type]
+        assert draft.freeze() is table
+        draft.remove("absent")
+        assert draft.freeze() is table
+
+
+def test_comparing_a_table_with_a_dict_is_refused() -> None:
+    from collections import OrderedDict
+
+    table = _table(3)
+    for other in ({"k0": 0, "k1": 1, "k2": 2}, OrderedDict(), {}):
+        for compare in (lambda a, b: a == b, lambda a, b: b == a, lambda a, b: a != b):
+            with pytest.raises(TypeError):
+                compare(table, other)
+    # 写像でない物との比べは今まで通り偽。
+    assert (table == None) is False  # noqa: E711
+    assert (table == 3) is False
+
+
+def test_copy_and_pickle_keep_the_rows_and_drop_the_flat_copy() -> None:
+    import copy
+    import pickle
+
+    table = _table(MIN_DELTA * 4).with_writes((TableWrite(key="k3", value=-3), TableWrite(key="k4", value=None)))
+    table.keys()  # 写しを作った後でも
+    for back in (copy.copy(table), copy.deepcopy(table), pickle.loads(pickle.dumps(table))):
+        assert back == table and back.keys() == table.keys() and back.items() == table.items()
+        assert back._flat is None or back._flat is not table._flat
