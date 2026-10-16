@@ -41,7 +41,7 @@ def verify_image_manifest(expected_images: set[str]) -> None:
 def verify() -> None:
     articles = {path.stem.removeprefix("doeff-"): path for path in SOURCE.glob("doeff-*.md")}
     captions = json.loads((SOURCE / "visuals/captions.json").read_text())
-    assert len(articles) == 23
+    assert len(articles) == 24
     assert set(articles) == set(captions)
     expected_images = {f"{slug}-{kind}" for slug in articles for kind in ("concept", "flow")}
     expected_images.add("main-hero")

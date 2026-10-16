@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1220" viewBox="0 0 1200 1220" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1220" fill="#ffffff"/>
+  <text x="600" y="64" text-anchor="middle" font-size="38" font-weight="bold" fill="#111827">決まりを、常に読む文と要る時だけ見せる文に分ける</text>
+  <text x="600" y="104" text-anchor="middle" font-size="24" fill="#6b7280">数は2026年10月16日〜17日に、1つの実行環境で測った値</text>
+
+  <!-- 常に読む文 -->
+  <rect x="40" y="140" width="330" height="170" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="205" y="184" text-anchor="middle" font-size="26" fill="#4b5563">常に読む文</text>
+  <text x="205" y="234" text-anchor="middle" font-size="34" font-weight="bold" fill="#111827">CLAUDE.md</text>
+  <text x="205" y="280" text-anchor="middle" font-size="26" fill="#111827">約1.5万字・毎回</text>
+
+  <!-- 規則の目録 -->
+  <rect x="420" y="140" width="740" height="170" rx="18" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+  <text x="790" y="184" text-anchor="middle" font-size="26" fill="#0f766e">要る時だけ見せる文</text>
+  <text x="790" y="234" text-anchor="middle" font-size="34" font-weight="bold" fill="#111827">規則の目録 851本</text>
+  <text x="790" y="280" text-anchor="middle" font-size="26" fill="#111827">1本 = 出来事・道具・綴り + 助言の文(合計25.6万字)</text>
+
+  <!-- 出来事 -->
+  <text x="790" y="362" text-anchor="middle" font-size="26" fill="#4b5563">Claude Codeの出来事のたびに、hookが呼ばれる</text>
+  <g font-size="22" text-anchor="middle" fill="#111827">
+    <rect x="420" y="380" width="140" height="84" rx="12" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+    <text x="490" y="414">入力が届いた</text>
+    <text x="490" y="448" font-weight="bold">47本</text>
+    <rect x="570" y="380" width="140" height="84" rx="12" fill="#ffffff" stroke="#0f766e" stroke-width="3"/>
+    <text x="640" y="414">道具の直前</text>
+    <text x="640" y="448" font-weight="bold">597本</text>
+    <rect x="720" y="380" width="140" height="84" rx="12" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+    <text x="790" y="414">道具の後</text>
+    <text x="790" y="448" font-weight="bold">66本</text>
+    <rect x="870" y="380" width="140" height="84" rx="12" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+    <text x="940" y="414">失敗の後</text>
+    <text x="940" y="448" font-weight="bold">46本</text>
+    <rect x="1020" y="380" width="140" height="84" rx="12" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+    <text x="1090" y="414">返事の直前</text>
+    <text x="1090" y="448" font-weight="bold">95本</text>
+  </g>
+
+  <line x1="790" y1="470" x2="790" y2="510" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <!-- 絞り込み -->
+  <rect x="420" y="516" width="740" height="76" rx="14" fill="#f9fafb" stroke="#9ca3af" stroke-width="2"/>
+  <text x="446" y="564" font-size="28" fill="#111827">① 出来事と道具の名で絞る</text>
+  <line x1="790" y1="594" x2="790" y2="622" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="450" y="628" width="680" height="96" rx="14" fill="#f9fafb" stroke="#9ca3af" stroke-width="2"/>
+  <text x="476" y="668" font-size="28" fill="#111827">② 綴り(正規表現)で絞る</text>
+  <text x="476" y="706" font-size="24" fill="#4b5563">774本は、ここだけで決まる</text>
+  <line x1="790" y1="726" x2="790" y2="754" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="480" y="760" width="620" height="96" rx="14" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+  <text x="506" y="800" font-size="28" fill="#111827">③ 残る77本は、判定器に確率を問う</text>
+  <text x="506" y="838" font-size="24" fill="#4b5563">問いを1回に束ねる・3.5秒で諦める</text>
+  <line x1="790" y1="858" x2="790" y2="886" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="510" y="892" width="560" height="76" rx="14" fill="#f9fafb" stroke="#9ca3af" stroke-width="2"/>
+  <text x="536" y="940" font-size="28" fill="#111827">④ 同じ規則は、1回の依頼に1度</text>
+
+
+  <!-- CLAUDE.mdから文脈へ(左の道) -->
+  <line x1="205" y1="312" x2="205" y2="1020" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="225" y="660" font-size="24" fill="#4b5563">毎回、</text>
+  <text x="225" y="694" font-size="24" fill="#4b5563">そのまま</text>
+
+  <line x1="790" y1="970" x2="790" y2="1020" stroke="#0f766e" stroke-width="4" marker-end="url(#arrow-teal)"/>
+  <text x="810" y="1004" font-size="24" fill="#0f766e">当たった時だけ</text>
+
+  <!-- AIの文脈 -->
+  <rect x="40" y="1026" width="1120" height="164" rx="18" fill="#ffffff" stroke="#374151" stroke-width="3"/>
+  <text x="70" y="1070" font-size="28" font-weight="bold" fill="#111827">AIの文脈</text>
+  <rect x="70" y="1090" width="330" height="76" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="235" y="1138" text-anchor="middle" font-size="26" fill="#111827">CLAUDE.md(毎回)</text>
+  <rect x="430" y="1090" width="700" height="76" rx="12" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+  <text x="780" y="1124" text-anchor="middle" font-size="26" fill="#111827">助言 1〜2行(出来事ごと)</text>
+  <text x="780" y="1156" text-anchor="middle" font-size="22" fill="#4b5563">1回の依頼で見えた規則: 中央値20本・6,246字</text>
+</svg>
