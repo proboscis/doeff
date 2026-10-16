@@ -77,7 +77,7 @@ Let's break down what's happening:
    - `Put("counter", value)` - State effect: sets state (handled by the State handler)
    - `Get("counter")` - State effect: retrieves state
    - `Tell(message)` - Writer effect: appends to log (handled by the Writer handler)
-4. **Handler composition**: Handlers are composed by wrapping the program: `writer(state()(prog))`
+4. **Handler composition**: Handlers are composed by wrapping the program: `state()(writer(prog))`
 5. **`run`**: Executes the fully-handled program and returns the raw result value
 
 Handler composition is done by applying each handler to the program.
@@ -85,6 +85,11 @@ Each handler is a `Program -> Program` installer — compose them by nesting cal
 passing handlers to `run()`. Some handlers like `writer` and `slog_handler` are pre-installed
 (used directly), while others like `reader(env=...)` and `state(initial=...)` are factories
 that return an installer.
+
+`writer` keeps its log in state, so install `state()` outside it: `state()(writer(prog))`.
+Without `state()` outside, the first `Tell` fails with
+`UnhandledEffect: unhandled effect: Get (Get('__doeff_writer_log__'))`.
+Read the collected log with `yield writer_log()` (from `doeff_core_effects.handlers`).
 
 ## Key Concepts
 
@@ -95,7 +100,7 @@ Programs don't execute until you call `run()`:
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import writer
+from doeff_core_effects.handlers import state, writer
 
 @do
 def my_program():
@@ -106,8 +111,9 @@ def my_program():
 program = my_program()
 
 # Now it executes
-prog = writer(program)
+prog = state()(writer(program))
 result = run(prog)
+print(result)  # 42
 ```
 
 ### Programs are Reusable
@@ -117,7 +123,7 @@ Unlike Python generators, `@do` functions can be called multiple times:
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import writer
+from doeff_core_effects.handlers import state, writer
 
 @do
 def format_label(label: str):
@@ -129,8 +135,9 @@ prog1 = format_label("alpha")
 prog2 = format_label("beta")
 
 # Each execution is independent
-result1 = run(writer(prog1))
-result2 = run(writer(prog2))
+result1 = run(state()(writer(prog1)))
+result2 = run(state()(writer(prog2)))
+print(result1, result2)  # ALPHA BETA
 ```
 
 ### Effects are Composable
@@ -188,20 +195,25 @@ result = run(prog)
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import writer
+from doeff_core_effects.handlers import state, writer
 
 @do
 def my_program():
     yield Tell("working...")
     return 42
 
-prog = writer(my_program())
+prog = state()(writer(my_program()))
 
 try:
     result = run(prog)
     print(f"Success: {result}")
 except Exception as e:
     print(f"Error: {e}")
+```
+
+Output:
+```
+Success: 42
 ```
 
 ## Common Patterns
@@ -256,11 +268,14 @@ def conditional_program():
 
 ## Troubleshooting
 
-### "AttributeError: 'generator' object has no attribute '...'"
+### "TypeError: ... expected DoExpr or EffectBase, got: <class 'generator'>"
 
 Make sure you're using `@do` decorator:
 
 ```python
+from doeff import do
+from doeff_core_effects import Tell
+
 # Wrong - missing @do
 def my_program():
     yield Tell("test")
@@ -271,12 +286,12 @@ def my_program():
     yield Tell("test")
 ```
 
-### "TypeError: Unknown yield type"
+### "RuntimeError: ... expected DoExpr or EffectBase, got: <class 'int'>"
 
 Only yield `Effect` or `Program` instances:
 
 ```python
-from doeff import Pure
+from doeff import do, Pure
 
 # Wrong - yielding a plain value
 @do
@@ -291,20 +306,32 @@ def right():
     return 42
 ```
 
-### "RuntimeError: cannot reuse already awaited coroutine"
+### A second run still sees the state of the first run
 
-Don't reuse Program objects after running them with sub-effects:
+`run()` can run the same Program again; each run starts it fresh.
+But `state()` keeps its store in the installer it returns, so a program wrapped once
+carries its state — and the writer log — into the next run.
+Wrap the program again for each run:
 
 ```python
-from doeff import run
-from doeff_core_effects.handlers import writer
+from doeff import do, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, writer, writer_log
 
-# If you need to run a program multiple times, call the function again
+@do
+def my_program():
+    yield Tell("test")
+    return (yield writer_log())
+
+# Wrapped once, run twice: the second run sees the first run's log
+wrapped = state()(writer(my_program()))
+print(run(wrapped))  # ['test']
+print(run(wrapped))  # ['test', 'test']
+
+# Wrapped again for each run: each run starts with an empty state
 prog = my_program()
-result1 = run(writer(prog))
-# Don't reuse prog - create a new one
-prog2 = my_program()
-result2 = run(writer(prog2))
+print(run(state()(writer(prog))))  # ['test']
+print(run(state()(writer(prog))))  # ['test']
 ```
 
 ## Next Steps
@@ -342,7 +369,8 @@ from doeff_core_effects import (
 from doeff_core_effects.handlers import (
     reader,                # Reader handler (resolves Ask)
     state,                 # State handler (resolves Get/Put)
-    writer,                # Writer handler (resolves Tell)
+    writer,                # Writer handler (resolves Tell; install state() outside it)
+    writer_log,            # Read the writer log: log = yield writer_log()
 )
 
 # Scheduler (for concurrency)
@@ -358,7 +386,7 @@ from doeff_core_effects.scheduler import (
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import writer
+from doeff_core_effects.handlers import state, writer
 
 @do
 def my_program():
@@ -367,7 +395,8 @@ def my_program():
     return "result"
 
 def main():
-    prog = writer(my_program())
+    # writer keeps its log in state, so install state() outside writer
+    prog = state()(writer(my_program()))
     result = run(prog)
     print(result)
 
