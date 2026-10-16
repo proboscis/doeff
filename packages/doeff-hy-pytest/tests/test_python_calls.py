@@ -44,6 +44,10 @@ pytest_plugins = ["pytester"]
 # doeff-hy の called_code が取る枠の持ち主の名(doeff_hy_bytecode_guard/called_code.py)。
 DOEFF_HY_TOOL = "doeff-hy-called-code"
 
+# sys.monitoring の枠を取って数える検の印 — sys.monitoring は Python 3.12 から。3.11 の走りは数えずに「測れない」と出す
+# (test_before_3_12_the_flag_reports_unmeasurable が見る)。
+needs_monitoring = pytest.mark.skipif(sys.version_info < (3, 12), reason="sys.monitoring は Python 3.12 から")
+
 
 @pytest.fixture(autouse=True)
 def _own_stores(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,6 +233,7 @@ def _call_many(count: int) -> None:
         _noop()
 
 
+@needs_monitoring
 def test_the_counter_does_not_drop_calls_across_threads() -> None:
     """4 thread × 5 万回の呼び出しを数え落とさない(free-threaded の Python で callback の `+= 1` は 6 割近く落とした — 実測 5)。
     数え終えたら枠を返す。"""
@@ -252,6 +257,7 @@ def test_the_counter_does_not_drop_calls_across_threads() -> None:
 # ── pytest の走り ─────────────────────────────────────────────────────────────────────────────
 
 
+@needs_monitoring
 def test_counts_only_the_call_of_a_declared_test_and_not_an_undeclared_one(pytester: pytest.Pytester) -> None:
     """印を付けた走り: 歩数を宣言した検の call の呼び出しだけを数える — 収集(module の頭)・setup・teardown(fixture)の
     30 万回ずつと、宣言の無い検の 30 万回は数えない。thread 4 本の検は下限を割らない。"""
@@ -271,6 +277,7 @@ def test_counts_only_the_call_of_a_declared_test_and_not_an_undeclared_one(pytes
     )
 
 
+@needs_monitoring
 def test_without_the_flag_no_tool_is_taken_and_set_events_is_never_called(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -318,6 +325,7 @@ for _tool in {tools}:
 """
 
 
+@needs_monitoring
 def test_a_taken_tool_four_moves_the_counter_to_five(pytester: pytest.Pytester) -> None:
     """4 番を偽の持ち主が持つ時は 5 番を取って数える(固定の番号で取ると、使用中の枠で pytest が起動で落ちた — 失敗例)。"""
     _project(pytester, OCCUPY.format(tools=(4,)))
@@ -326,12 +334,23 @@ def test_a_taken_tool_four_moves_the_counter_to_five(pytester: pytest.Pytester) 
     result.stdout.fnmatch_lines(["*歩数を宣言した検 2 本で*", "*sys.monitoring の枠 5 番で*"])
 
 
+@needs_monitoring
 def test_all_tools_taken_reports_unmeasurable_and_the_run_does_not_fail(pytester: pytest.Pytester) -> None:
     """3〜5 番が全部埋まっていれば数えず、「測れない」と持ち主を 1 行出し、走りは落とさない(0〜2 番へは倒れない)。"""
     _project(pytester, OCCUPY.format(tools=(3, 4, 5)))
     result = pytester.runpytest_subprocess("-v", "-p", "no:cacheprovider", "--doeff-python-calls")
     result.assert_outcomes(passed=3)
     result.stdout.fnmatch_lines(["*python-calls: 測れない(sys.monitoring の枠が全部使用中: 4=偽の持ち主・5=*・3=*)*"])
+    assert "歩数を宣言した検" not in result.stdout.str()
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 12), reason="sys.monitoring の在る版の数えは上の検が見る")
+def test_before_3_12_the_flag_reports_unmeasurable(pytester: pytest.Pytester) -> None:
+    """sys.monitoring の無い版(3.11)の印を付けた走りは、数えずに「測れない」と訳を 1 行出し、走りは落とさない。"""
+    _project(pytester)
+    result = pytester.runpytest("-v", "--doeff-python-calls")
+    result.assert_outcomes(passed=3)
+    result.stdout.fnmatch_lines(["*python-calls: 測れない(sys.monitoring が無い(Python 3.11))*"])
     assert "歩数を宣言した検" not in result.stdout.str()
 
 

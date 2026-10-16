@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import hy
@@ -21,6 +22,9 @@ import pytest
 
 from doeff_hy.static_check import Projection, project
 from doeff_hy.static_stub import stub_of, strict_errors
+
+# 型検査の展開と stub が書く型の引数の構文(PEP 695・Hy の :tp)は Python 3.12 から — 3.11 の Hy は :tp を断る。
+needs_type_parameter_syntax = pytest.mark.skipif(sys.version_info < (3, 12), reason="型の引数の構文は Python 3.12 から")
 
 PRELUDE = """
 (require doeff-hy.macros [defeffect val])
@@ -71,7 +75,9 @@ def _module(tmp_path: Path, body: str) -> Path:
 def test_the_effect_works_at_runtime_and_the_class_has_no_type_parameter_syntax() -> None:
     wrapped = evaluate(GENERIC)["Wrapped"]
     assert isinstance(wrapped, type)
-    assert wrapped.__type_params__ == ()
+    # class の __type_params__ は Python 3.12 から(3.11 には型の引数の構文そのものが無い)。
+    if sys.version_info >= (3, 12):
+        assert wrapped.__type_params__ == ()
     assert wrapped.__doeff_defeffect__ is True
 
 
@@ -82,6 +88,7 @@ def test_the_runtime_checks_are_unchanged_by_the_type_parameter() -> None:
         wrapped(database="db", program="not a program")
 
 
+@needs_type_parameter_syntax
 def test_the_type_check_view_makes_the_class_generic(tmp_path: Path) -> None:
     projection = project(tmp_path, [tmp_path], _module(tmp_path, GENERIC))
     assert isinstance(projection, Projection)
@@ -90,6 +97,7 @@ def test_the_type_check_view_makes_the_class_generic(tmp_path: Path) -> None:
     assert "    program: Program[T, object]" in lines
 
 
+@needs_type_parameter_syntax
 def test_the_stub_carries_the_type_parameter_and_the_answer_reads_it(tmp_path: Path) -> None:
     made = stub_of(tmp_path, [tmp_path], _module(tmp_path, GENERIC))
     lines = made.text.splitlines()
@@ -129,6 +137,7 @@ USER = """\
 
 
 @needs_pyright
+@needs_type_parameter_syntax
 def test_the_program_answer_type_reaches_the_caller(tmp_path: Path) -> None:
     source = _module(tmp_path, GENERIC)
     # 使い手が読む型は .hy の隣の .pyi(型検査の展開の基底は素のまま — 答えを運ぶのは .pyi だけ)。
