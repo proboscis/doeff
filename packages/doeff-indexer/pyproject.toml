@@ -1,5 +1,8 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
+# 同梱する CLI の binary は .gitignore で python の source から外れ、下の include が wheel に足す。maturin 1.12 以前は足す file を
+# project の根からの path のまま(python/doeff_indexer/bin/)入れ、命令の入口(_cli.py)が探す doeff_indexer/bin/ に無かった
+# (PyPI の 0.1.3 の wheel)。python-source の下の path に直して入れるのは maturin 1.13 から(tools/verify_indexer_wheel.py が見る)。
+requires = ["maturin>=1.13,<2.0"]
 build-backend = "doeff_indexer_build_backend"
 backend-path = ["."]
 
