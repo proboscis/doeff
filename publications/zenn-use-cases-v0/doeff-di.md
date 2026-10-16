@@ -211,3 +211,5 @@ uv run python publications/zenn-use-cases-v0/examples/dependencies.py  # 記事�
 - [遅延解決とLocalの検証](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/tests/effects/test_lazy_ask.py)
 - [ハッシュできるキーの検証](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/tests/misc/test_reader_hashable_keys.py)
 - [effectとDIの比較（英語）](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/docs/20-why-effects-over-di.md)
+- 前の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)
+- 次の回:[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)

@@ -222,3 +222,5 @@ def test_schedule_at_8_seconds():  # 3秒と8秒の流れを、待たずに確�
 - [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-time)
 - [タスクと優先度を扱うスケジューラ](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
 - [ハンドラの能力と関数の色の整理](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/docs/22-capability-classes.md)
+- 前の回:[AIエージェントの起動と結果待ちを、doeffの処理として書く](doeff-agents.md)
+- 次の回:[DIの代わりにeffect handler](doeff-di.md)

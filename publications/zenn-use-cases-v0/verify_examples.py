@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
+from render_release import read_rows
 from verify_comments import verify as verify_comments
 from verify_publication import link_targets, missing_images
 from verify_publication import verify as verify_publication
@@ -19,6 +20,8 @@ from doeff import run, with_handlers
 
 SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
+# 子プロセス1つの時間の上限。混んだ機械(load average 約100)では、10本目の確かめ(reviews/adr-check.py)が1つで約3分かかる。
+TIMEOUT = 600.0
 # 実行を許す例を明示する。新しい外部連携のファイルを自動実行しない。
 OFFLINE = (
     "greet_handlers",
@@ -69,7 +72,7 @@ def main():
                     cwd=str(ROOT),
                     env=env,
                     env_mode=EnvMode.EXTEND,
-                    timeout=120.0,
+                    timeout=TIMEOUT,
                 ),
             )
         )
@@ -134,11 +137,15 @@ with TemporaryDirectory() as directory:
     )
     print("OK: Conductor 履歴再利用(エージェントなし)", flush=True)
 
-    execute([str(SOURCE / "reviews/main-check.py")])
-    execute([str(SOURCE / "reviews/agents-check.py")])
-    execute([str(SOURCE / "reviews/coroutines-check.py")])
-    execute([str(SOURCE / "reviews/backtest-check.py")])
-    print("OK: メインの最小ハンドラ・担当外の委譲・24記事の表・agents記事・coroutines記事・backtest記事の掲載コード", flush=True)
+    # 公開順の表の各回(公開予定・公開済み)の確かめ(reviews/<slug>-check.py)を、表の順に走らせる。
+    # 回を足す仕事は表の行と確かめのファイルを足すだけで、この一覧を書き換えない。
+    for row in read_rows((SOURCE / "publication-plan.md").read_text()):
+        check = SOURCE / "reviews" / f"{row.name.removeprefix('doeff-').removesuffix('.md')}-check.py"
+        if not check.is_file():
+            print(f"確かめのスクリプトなし: {row.name}(例はOFFLINEの一覧で走らせる)", flush=True)
+            continue
+        execute([str(check)])
+        print(f"OK: {check.name}({row.name}の掲載コード)", flush=True)
 
     verify_publication()
     verify_comments()

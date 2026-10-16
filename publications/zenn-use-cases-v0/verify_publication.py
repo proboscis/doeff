@@ -13,7 +13,10 @@ import hashlib
 import json
 import re
 import struct
+from itertools import pairwise
 from pathlib import Path
+
+from render_release import read_rows
 
 SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
@@ -98,6 +101,21 @@ def verify_article_figures(slug: str, text: str, caption: dict, missing: set[Pat
         assert len(png) < 3_000_000
 
 
+def verify_series_links() -> int:
+    """読者がどの回からも前後の回へ辿れるよう、公開順の表の回(公開予定・公開済み)の参考の節を照らす。"""
+    names = [row.name for row in read_rows((SOURCE / "publication-plan.md").read_text())]
+    references = {}
+    for name in names:
+        _, heading, reference = (SOURCE / name).read_text().partition("\n## 参考")
+        assert heading, (name, "参考の節が無い")
+        references[name] = reference
+    for previous, following in pairwise(names):
+        for name, label, neighbor in ((following, "前の回", previous), (previous, "次の回", following)):
+            link = rf"^- {label}:\[[^\]]+\]\({re.escape(neighbor)}\)$"
+            assert re.search(link, references[name], re.M), (name, f"参考に{label}へのリンクが無い", neighbor)
+    return len(names)
+
+
 def verify() -> None:
     articles = {path.stem.removeprefix("doeff-"): path for path in SOURCE.glob("doeff-*.md")}
     captions = read_ledger(CAPTIONS)
@@ -151,9 +169,10 @@ def verify() -> None:
     assert all(
         "doeff-" in row and ("本文にコード" in row or "examples/" in row) for row in feature_rows
     )
+    series = verify_series_links()
     print(
         f"OK: {len(articles)}記事・{len(packages)}パッケージ・{len(feature_rows)}機能・{len(expected_images)}枚の図"
-        f"(うち{len(missing)}枚は台帳のmissingの通りまだ無い)・Python {blocks}ブロック"
+        f"(うち{len(missing)}枚は台帳のmissingの通りまだ無い)・Python {blocks}ブロック・公開順の{series}回の前後のリンク"
     )
 
 

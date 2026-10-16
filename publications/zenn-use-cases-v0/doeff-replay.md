@@ -241,3 +241,5 @@ def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに�
 - [標準の取得担当とhttp_fixture_handler](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
 - [unittest.mock（Python公式の説明）](https://docs.python.org/ja/3/library/unittest.mock.html)
 - [VCR.py（公式の説明）](https://vcrpy.readthedocs.io/)
+- 前の回:[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)
+- 次の回:[バックテストと本番で同じ処理を動かす](doeff-backtest.md)
