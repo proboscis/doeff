@@ -348,16 +348,18 @@
         "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
         "packages/doeff-core-effects/doeff_core_effects/outcomes.py",
         "packages/doeff-core-effects/doeff_core_effects/channel_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/unhandled_hints.py"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/handlers.py",
         "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
         "packages/doeff-core-effects/doeff_core_effects/outcomes.py",
         "packages/doeff-core-effects/doeff_core_effects/channel_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/channel_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/unhandled_hints.py"
       ],
-      "responsibility": "基本の handler(reader・state・writer)・協調 scheduler(Spawn・Wait・Promise・Semaphore ほか)と、その Promise を運ぶ channel の effect・不在と失敗の答えの開きと境目の handler(ADR-DOE-CORE-EFFECTS-003)。",
+      "responsibility": "基本の handler(reader・state・writer)・協調 scheduler(Spawn・Wait・Promise・Semaphore ほか)と、その Promise を運ぶ channel の effect・不在と失敗の答えの開きと境目の handler(ADR-DOE-CORE-EFFECTS-003)・基本の effect を扱う handler の名と付け方の 1 行の表(UnhandledEffect の文の最後の hint)。",
       "typed": true
     },
     {

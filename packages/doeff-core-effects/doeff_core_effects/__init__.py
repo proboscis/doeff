@@ -76,6 +76,10 @@ from doeff_core_effects.scheduler import (  # noqa: F401
     scheduled,
 )
 
+# isort: split
+# Last: the hint table reads the scheduler, which `import doeff` must finish loading first.
+from doeff_core_effects import unhandled_hints  # noqa: F401 - registers the hint lines with the VM
+
 # HTTP effects and handlers live in Hy and pull in httpx; load them on first use.
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects.effects",

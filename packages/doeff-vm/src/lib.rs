@@ -17,6 +17,7 @@ pub mod pyvm;
 pub mod result;
 pub mod scheduler;
 pub mod typing_support;
+pub mod unhandled_hint;
 
 // Re-export VM core types
 pub use doeff_vm_core::continuation::{OwnedControlContinuation, PendingContinuation, PyK};
