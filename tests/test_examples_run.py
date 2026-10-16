@@ -82,7 +82,7 @@ def test_example_runs_and_prints_its_results(name: str, deadline_scale_factor: f
         f"examples/{name} の標準出力に出るはずの行を、tests/test_examples_run.py の EXPECTED_LINES に置く"
     )
     completed = subprocess.run(
-        with_settings([sys.executable, str(EXAMPLES / name)], {"DOEFF_DISABLE_PROFILE": "1"}),
+        with_settings([sys.executable, str(EXAMPLES / name)], {"DOEFF_PROFILE": None}),
         cwd=ROOT,
         capture_output=True,
         text=True,

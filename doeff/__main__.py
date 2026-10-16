@@ -22,6 +22,7 @@ from doeff_core_effects.process_effects import ReadEnvironment
 
 from doeff import run, with_handlers
 from doeff.cli.profiling import (
+    ProfilingConfig,
     print_profiling_status,
     profiling_config_from_env,
     use_profiling_config,
@@ -51,6 +52,7 @@ class RunArgs(argparse.Namespace):
     runner: str | None
     format: str
     no_runbox: bool
+    profile: bool
     script: str | None
     raw_argv: list[str]
 
@@ -492,6 +494,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip automatic runbox record capture",
     )
     run_parser.add_argument(
+        "--profile", action="store_true",
+        help=(
+            "Print how long each CLI step takes as [DOEFF][PROFILE] lines on stderr "
+            "(same as DOEFF_PROFILE=1; off by default)"
+        ),
+    )
+    run_parser.add_argument(
         "script", nargs="?",
         help="Python script to execute after running. Use '-' for stdin.",
     )
@@ -500,12 +509,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _main(argv: Iterable[str] | None = None) -> int:
-    print_profiling_status()
+def _main(argv: Iterable[str] | None, environment_profiling: ProfilingConfig) -> int:
+    """Run one CLI command, printing [DOEFF][PROFILE] lines only when the caller asked."""
     parser = build_parser()
     argv_list = list(argv) if argv is not None else sys.argv[1:]
     args = cast(RunArgs, parser.parse_args(argv_list, RunArgs()))
     args.raw_argv = argv_list
+    # --profile asks for the same lines as DOEFF_PROFILE; with neither, the CLI prints none.
+    profiling_config = ProfilingConfig(enabled=args.profile or environment_profiling.enabled)
+    with use_profiling_config(profiling_config):
+        print_profiling_status()
+        return _run_command(args)
+
+
+def _run_command(args: RunArgs) -> int:
+    """Turn a failed command into an exit code and an error message in the chosen format."""
     try:
         return args.func(args)
     except Exception as exc:
@@ -534,9 +552,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     # handler (subprocess_handler answers ReadEnvironment from the process environment)
     # instead of read from the process environment here (agora-redesign #3012).
     environment = run(with_handlers([subprocess_handler], ReadEnvironment((), ("",))))
-    profiling_config = profiling_config_from_env(environment)
-    with use_profiling_config(profiling_config):
-        return _main(argv)
+    return _main(argv, profiling_config_from_env(environment))
 
 
 if __name__ == "__main__":
