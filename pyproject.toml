@@ -262,6 +262,34 @@ tests = [
     "tests/test_readme_examples.py",  # 9.7 秒(10 本・子 7 本・pytest の計・枠の待ちを除く・load 約 70 の下)
 ]
 
+# 入門の道の docs の page(目次と 01〜05 章)を書き換えた便は、その例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
+# (card ki-9c93a506326b)。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と
+# ここの両方に足す(片方だけなら検 test_contract_table_selects_this_check_for_each_entry_page が名指す)。
+# 秒は 38 秒(79 本・子 64 本・起動を含む壁時計・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/index.md"
+tests = ["tests/test_docs_entry_path_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/01-getting-started.md"
+tests = ["tests/test_docs_entry_path_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/02-core-concepts.md"
+tests = ["tests/test_docs_entry_path_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/03-basic-effects.md"
+tests = ["tests/test_docs_entry_path_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/04-async-effects.md"
+tests = ["tests/test_docs_entry_path_examples.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/05-error-handling.md"
+tests = ["tests/test_docs_entry_path_examples.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
 tests = [

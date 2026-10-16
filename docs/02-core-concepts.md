@@ -13,7 +13,7 @@ This chapter defines the doeff execution model:
 In the type model, `Program[T]` is `DoExpr[T]`. It is a virtual type alias
 with no methods — use the standalone constructors `Pure(x)`, `Perform(e)`, etc.
 
-```python
+```python excerpt
 # DoExpr is a virtual base type (isinstance check only).
 # No .map(), .flat_map(), or .pure() methods exist on it.
 class DoExpr(metaclass=_DoExprMeta):
@@ -36,21 +36,24 @@ The execution boundary is explicit:
 Effect values are lifted into control IR with `Perform(effect)`.
 
 ```python
-from doeff import Perform
+from doeff import Perform, run
 from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
 
 expr = Perform(Ask("key"))
+print(type(expr).__name__)  # Perform
+print(run(reader(env={"key": "value"})(expr)))  # value
 ```
 
 At source level, programs can still yield effect values directly:
 
-```python
+```python excerpt
 value = yield Ask("key")
 ```
 
 Lowering represents this as:
 
-```python
+```python excerpt
 value = yield Perform(Ask("key"))
 ```
 
@@ -65,7 +68,7 @@ value = yield Perform(Ask("key"))
 
 Free-monad interpretation:
 
-```
+```text
 yield expr  ≡  Bind(expr, λresult. rest_of_program)
 ```
 
@@ -96,8 +99,9 @@ The `@do` wrapper:
 Example:
 
 ```python
-from doeff import do
+from doeff import Expand, do, run
 from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
 
 @do
 def fetch_user(user_id: int):
@@ -105,6 +109,8 @@ def fetch_user(user_id: int):
     return db[user_id]
 
 program = fetch_user(42)
+print(isinstance(program, Expand))  # True
+print(run(reader(env={"db": {42: "Ada"}})(program)))  # Ada
 ```
 
 `program` above is a `DoExpr` (`Expand`) that is evaluated by `run`.
@@ -163,15 +169,25 @@ the raw result value directly.
 For async/concurrent programs, wrap with `scheduled()`:
 
 ```python
-from doeff import run
+from doeff import Spawn, Wait, do, run
 from doeff_core_effects.scheduler import scheduled
 
-result = run(scheduled(prog))
+@do
+def child():
+    return 21
+
+@do
+def prog():
+    task = yield Spawn(child())
+    return (yield Wait(task)) * 2
+
+result = run(scheduled(prog()))
+print(result)  # 42
 ```
 
 Conceptual runner:
 
-```python
+```python excerpt
 def run(doexpr):
     vm = PyVM()
     return vm.run(doexpr)
@@ -203,7 +219,7 @@ skips the handler for any effect that is not an instance of the annotated
 type — exactly as if the handler had begun with
 `if not isinstance(effect, T): yield Pass(effect, k)` — without calling it.
 
-```python
+```python excerpt
 @do
 def clock(effect: ReadClock | Sleep, k):      # sees ReadClock and Sleep only
     ...
@@ -233,7 +249,7 @@ Because the filter is `isinstance`, a guard written against a parent type also
 catches effects added later — there is no list to keep in sync. Give the
 family a common base (it does not have to derive from `EffectBase`):
 
-```python
+```python excerpt
 class WriteEffect:
     """Marker base: every effect that writes shared state."""
 
@@ -257,15 +273,24 @@ a new write effect must derive from `WriteEffect`.
 ## WithObserve Contract
 
 `WithObserve(observer, body)` installs scoped observation for yielded values.
-The observer receives matched yields and can inspect or log them.
+The observer is a plain callable that takes one argument: it receives matched yields
+and can inspect or log them.
 
 ```python
-from doeff import WithObserve
+from doeff import WithObserve, do, run
+from doeff_core_effects import Tell
+from doeff_core_effects.handlers import state, writer
 
-def my_observer(effect, k):
-    print(f"observed: {effect}")
+def my_observer(effect):
+    print(f"observed: {effect}")  # observed: Tell('hello')
 
-prog = WithObserve(my_observer, body)
+@do
+def body():
+    yield Tell("hello")
+    return "done"
+
+prog = WithObserve(my_observer, body())
+print(run(state()(writer(prog))))  # done
 ```
 
 ## Composition
@@ -278,18 +303,32 @@ Use standalone constructors for building program nodes:
 Effect payloads compose after lifting:
 
 ```python
-from doeff import Pure, Perform
+from doeff import Pure, Perform, run
 from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
+
+print(run(Pure(1)))  # 1
 
 program = Perform(Ask("key"))
+print(run(reader(env={"key": "value"})(program)))  # value
 ```
 
 Handler composition uses the `handler(body)` pattern:
 
 ```python
-from doeff_core_effects.handlers import reader, state, writer
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
+
+@do
+def body():
+    count = yield Get("count")
+    yield Put("count", count + 1)
+    yield Tell("counted")
+    return (yield Get("count"))
 
 prog = state(initial={"count": 0})(writer(body()))
+print(run(prog))  # 1
 ```
 
 ## Core Example
