@@ -1,6 +1,6 @@
 [project]
 name = "doeff"
-version = "0.4.1"
+version = "0.5.0"
 description = "Pragmatic do-notation and effects system for Python"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,9 +21,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
+# 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
 dependencies = [
-    "doeff-vm>=0.2.0",
-    "doeff-core-effects>=0.1.0",
+    "doeff-vm>=0.5.0,<0.6",
+    "doeff-core-effects>=0.5.0,<0.6",
 ]
 
 [project.optional-dependencies]
@@ -464,6 +465,9 @@ tests = [
     "tests/test_daily_test_population.py",  # 7.5 秒 — 検の file の置き場と集め手(日次の母集団)
     "tests/test_contract_table_follows_packages.py",  # 1.3 秒 — この表と package の増減のずれ(agora-redesign #2658)
     "packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py",  # 1.3 秒 — Hy の内部の名の綴りは records の外に 0 件(card ki-ffe72a1fb7d7・木を歩くので逆依存では選べない)
+    # 核の 5 個の版の番号を持つ 8 か所(5 個の pyproject・doeff の __version__・doeff-vm の Cargo.toml と Cargo.lock)と互いの依存の系
+    # (card ki-4f3135e2be74)— file を path で読むので逆依存では選べず、8 か所は 5 つの dir と根に散るので repo 全体の行に置く
+    "tests/test_core_packages_version.py",
 ]
 
 # ── 契約の組の要らない package(agora-redesign #2658 — 2026-10-02 に中身を読んで決めた 23 package)。

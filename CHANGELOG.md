@@ -58,6 +58,12 @@
 
 ### Changed
 
+- `doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`: the five core packages share one version
+  number, `0.5.0` (from `doeff` 0.4.1, `doeff-vm` 0.2.0 and 0.1.0 for the other three), and each one's dependencies on
+  the others are limited to that minor series (`>=0.5.0,<0.6`), so one number tells which releases go together. The
+  workspace sources still resolve them to the working tree. `tests/test_core_packages_version.py` fails when any of the
+  eight places holding the number (the five `pyproject.toml` files, `doeff.__version__`, and `doeff-vm`'s `Cargo.toml`
+  and `Cargo.lock`) or any core-to-core dependency drifts (card ki-4f3135e2be74).
 - `doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`: each declares its license as the PEP 639
   SPDX expression `license = "MIT"` with `license-files = ["LICENSE"]` and carries a copy of the root MIT `LICENSE`, so
   every wheel and sdist ships it (`.dist-info/licenses/LICENSE`, core metadata `License-Expression: MIT`); the

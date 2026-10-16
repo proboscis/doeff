@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import tomllib
+from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,10 +20,12 @@ def _version_tuple(version: str) -> tuple[int, ...]:
 
 
 def _dependency_lower_bound(dependencies: list[str], package_name: str) -> str:
-    for dep in dependencies:
-        match = re.fullmatch(rf"{re.escape(package_name)}>=([0-9]+(?:\.[0-9]+)*)", dep)
-        if match:
-            return match.group(1)
+    # The core packages also cap each other at the next minor series
+    # (tests/test_core_packages_version.py), so the requirement carries a `<` bound next to `>=`.
+    for requirement in map(Requirement, dependencies):
+        lower = [spec.version for spec in requirement.specifier if spec.operator == ">="]
+        if requirement.name == package_name and len(lower) == 1:
+            return lower[0]
     raise AssertionError(f"{package_name} dependency must use an explicit >= lower bound")
 
 
