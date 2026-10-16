@@ -43,6 +43,8 @@ from doeff_cluster.worker.intent.worker_model import Retired as Retired
 from doeff_cluster.worker.intent.worker_model import CutOff as CutOff
 from doeff_cluster.worker.intent.worker_model import WorkerStopping as WorkerStopping
 from doeff_cluster.worker.protocol.observations import ObserveProcesses as ObserveProcesses
+from doeff_cluster.worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
+from doeff_cluster.worker.core.memory_rules import JobRoot as JobRoot
 from doeff_cluster.worker.intent.worker_model import WakeSet as WakeSet
 from doeff_cluster.worker.intent.worker_model import WorkerWakes as WorkerWakes
 from doeff_cluster.worker.core.worker_due import wakes_with as wakes_with
