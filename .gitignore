@@ -135,3 +135,8 @@ docs/design/*/.records.lock
 
 # Repository-owned Zenn article visuals (override global image ignores)
 !/images/zenn-use-cases-v0/*.png
+# 記事が参照する採用画像は generated/ の下に在る(上の行は直下だけに効き、2026-09-16 の 47 枚は入らなかった)
+!/images/zenn-use-cases-v0/generated/
+!/images/zenn-use-cases-v0/generated/*.png
+# 手で書いた図の正本(global の `*.svg` の除外を打ち消す)
+!/publications/zenn-use-cases-v0/visuals/*.svg
