@@ -62,20 +62,38 @@ separate captured handler stack, tracked per-session in the handler's `lazy-var 
 ### From Hy (defmcp-tool)
 
 ```hy
-(require doeff-hy.macros [defmcp-tool <-])
+(require doeff-hy.macros [defk defmcp-tool <-])
+(import doeff [run])
 
-(defmcp-tool submit-order
+;; The existing defk the tool exposes (this one only echoes the order back)
+(defk submit-order [symbol side qty]
+  {:pre [(: symbol str) (: side str) (: qty int)] :post [(: % str)]}
+  f"accepted: {side} {qty} of {symbol}")
+
+;; The tool gets a name of its own, apart from the defk it calls
+(defmcp-tool submit-order-tool
   "Submit a trading order to Kabustation"
   [{:name "symbol" :type "string" :description "Stock symbol code (e.g. 7203)"}
    {:name "side" :type "string" :enum ["buy" "sell"] :description "Order side"}
    {:name "qty" :type "integer" :description "Quantity to trade"}]
   (<- result (submit-order symbol side qty))
   result)
+
+;; Run the handler the way the tool server does
+(print (run (submit-order-tool.handler "7203" "buy" 100)))
+;; → accepted: buy 100 of 7203
 ```
 
 This expands to:
-1. A `@do` handler function `_submit_order_mcp_handler(symbol: "str", side: "str", qty: "int")`
-2. An `McpToolDef` instance `submit_order` with name, description, params, and handler
+1. A `@do` handler function `_submit_order_tool_mcp_handler(symbol: "str", side: "str", qty: "int")`
+2. An `McpToolDef` instance `submit_order_tool` with name (`"submit-order-tool"`, the name the agent
+   sees), description, params, and handler
+
+Give the tool a name apart from the `defk` it calls. The expansion binds the tool's name to the
+`McpToolDef`, so in `(defmcp-tool submit-order … (submit-order symbol side qty))` the body would call
+the tool itself, not the `defk` — even when the `defk` is defined first — and the handler would fail
+with `TypeError: 'McpToolDef' object is not callable`. `defmcp-tool` in this repository refuses such a
+body when it expands (doeff-hy 0.5.0 from PyPI does not check it yet).
 
 The handler's parameters carry the type written in `:type` as a string annotation, so the
 type checker (doeff-hy-check, also with `--strict`) sees the body's arguments as typed. The tool
