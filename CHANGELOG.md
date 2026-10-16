@@ -73,6 +73,11 @@
   the handler. `tests/test_docs_page_examples.py` runs that example and the From Python one and compares what they
   print; the page's other fences, which need Claude Code or names the page does not define, are marked `excerpt`
   (or `text` for the diagrams) (card ki-896fc4bca8cb).
+- `doeff-vm`: `EffectBase` (`doeff.Effect`) raises `TypeError` for constructor arguments that no `__init__` keeps —
+  `Effect("fetch", url=...)`, or a subclass without an `__init__` called with arguments. 0.5.0 dropped them without a
+  word, so the handler got an effect with neither the name nor the arguments (docs/MARKERS.md's examples did this).
+  Subclasses with an `__init__` (`@dataclass` effects) and calls without arguments are unchanged, and the stub's
+  `EffectBase.__init__` takes no arguments, so pyright flags the same call (card ki-450280be9dfe).
 - `doeff` CLI: `doeff run` no longer prints `[DOEFF][PROFILE]` timing lines unless asked. `doeff run --profile` or
   `DOEFF_PROFILE=1` prints them on stderr as before (`DOEFF_PROFILE` empty or `0` leaves them off).
   `DOEFF_DISABLE_PROFILE` is no longer read, since profiling is off by default, and `doeff-ml-nexus`'s docker handler
