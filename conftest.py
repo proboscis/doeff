@@ -694,10 +694,12 @@ def pytest_terminal_summary(terminalreporter):
 #
 # The admission only binds where the agora toolchain is installed.  On a machine
 # that just has a clone of this repository there is no grant office and no
-# brain to ask, so the hook prints one line and lets the run through: gating it
-# there would mean no test could ever run.  Where the toolchain *is* present the
-# hook is fail-closed (an unreadable policy or an unobtainable grant stops the
-# session before a single test body runs).
+# brain to ask, so the hook lets the run through without a word: gating it
+# there would mean no test could ever run, and a line about a toolchain the
+# machine does not have would open every run of an outside contributor (the
+# machine check slot of doeff_hy.check_slot is silent there too).  Where the
+# toolchain *is* present the hook is fail-closed (an unreadable policy or an
+# unobtainable grant stops the session before a single test body runs).
 _ADMISSION_CANON = Path.home() / "dotfiles" / "agent" / "tests" / "broad_run_admission.py"
 #: 固定の module 名 — 同じ走行の中で道具立て側の結線と同じ個体を見る(窓と印を共有する)。
 _ADMISSION_MODULE = "ai_broad_run_admission"
@@ -733,15 +735,10 @@ def _hold_check_slot(config):
 
 
 def pytest_collection_finish(session):
-    """収集の後・本体の前の受付(広範囲なら許可を 1 回消費できた時だけ走らせる)。"""
+    """収集の後・本体の前の受付(広範囲なら許可を 1 回消費できた時だけ走らせる)。正本の無い宿は黙って素通し。"""
     admission = _broad_run_admission()
-    if admission is None:
-        sys.stderr.write(
-            f"test-admission: 受付の正本({_ADMISSION_CANON})がこの宿に無いので素通し"
-            " — 広範囲の走行の許可は求めない\n"
-        )
-        return
-    admission.collection_finish(session)
+    if admission is not None:
+        admission.collection_finish(session)
 
 
 # ---------------------------------------------------------------------------

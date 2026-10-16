@@ -268,9 +268,10 @@ def test_tool_that_does_not_start_is_skipped_and_named_not_executed(
     assert _probes(tmp_path / "home") == (1 if codex is not None else 0)
     assert "looking for the binary" not in result.stdout.str()  # the last line, not the first
     if check_layer is None:
+        # The not-on-path detail goes on with the PATH it searched (agora-redesign #3870).
         result.stdout.fnmatch_lines(
             [
-                f"2 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: {FIRST_NODEID}: *{said}; {SECOND_NODEID}: *"
+                f"2 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: {FIRST_NODEID}: *{said}*; {SECOND_NODEID}: *"
             ]
         )
         return
@@ -337,7 +338,11 @@ def test_tool_that_starts_runs_the_test(tmp_path: Path, check_layer: ModuleType 
 def test_machine_without_the_check_layer_only_summarises_the_skip(
     tmp_path: Path, check_layer: ModuleType | None
 ) -> None:
-    """A bare clone has no check layer: the skips are still named, in one plain line."""
+    """A bare clone has no check layer: the skips are still named, in one plain line.
+
+    Nor has it the broad-run admission, and its run says nothing about it: a line about
+    a toolchain the machine does not have opened every run of an outside contributor.
+    """
     result = _sample_machine(tmp_path, codex=ROUTER_WITHOUT_BINARY, with_check_layer=False)
 
     result.assert_outcomes(skipped=2)
@@ -345,6 +350,7 @@ def test_machine_without_the_check_layer_only_summarises_the_skip(
     result.stdout.fnmatch_lines(
         [f"2 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: {FIRST_NODEID}: *; {SECOND_NODEID}: *"]
     )
+    assert [line for line in result.errlines if line.startswith("test-admission:")] == []
     if check_layer is not None:
         assert _declarations(check_layer, result) == ()
 
