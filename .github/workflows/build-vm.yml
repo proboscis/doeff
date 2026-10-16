@@ -77,11 +77,13 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+      # Only 3.14t: maturin 1.15 refuses a named 3.13t interpreter in the manylinux images
+      # ("Free-threaded Python interpreter is only supported on 3.14 and later").
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist -i python3.13t python3.14t
+          args: --release --out dist -i python3.14t
           working-directory: packages/doeff-vm
           manylinux: auto
       - name: Upload wheels

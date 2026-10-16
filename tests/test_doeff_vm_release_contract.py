@@ -103,6 +103,15 @@ def test_linux_aarch64_doeff_vm_wheels_build_natively_on_an_arm_runner() -> None
         assert runners == {"x86_64": "ubuntu-latest", "aarch64": "ubuntu-24.04-arm"}
 
 
+def test_linux_free_threaded_doeff_vm_wheels_name_only_python_3_14t() -> None:
+    """maturin 1.15 refuses a named 3.13t interpreter in the manylinux images ("Free-threaded Python
+    interpreter is only supported on 3.14 and later" — Build doeff-vm run 38939832924)."""
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "build-vm.yml").read_text(encoding="utf-8"))["jobs"]
+    build = next(step for step in jobs["build-linux-freethreaded"]["steps"] if step.get("name") == "Build free-threaded wheels")
+
+    assert build["with"]["args"] == "--release --out dist -i python3.14t"
+
+
 def test_pypi_publish_actions_use_current_skip_existing_input_name() -> None:
     for path in [
         ROOT / ".github" / "workflows" / "build-vm.yml",
