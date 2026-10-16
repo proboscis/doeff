@@ -479,6 +479,36 @@ mod tests {
         std::fs::File::options().write(true).open(path).unwrap().set_modified(at).unwrap();
     }
 
+    /// 名指した file の源は、冷えた作業木で 1 file ごとに disk を待つので、読みの待ちを重ねる(card ki-58bfad2c13a1 の残り — 1 file の実行は
+    /// 数十〜数百の源を、cache の置き場に在るかを中身の hash で引くために読む)。答えは順に読んだ時と同じ(集める物が無い file は除く・並びは files の順)。
+    #[test]
+    fn a_named_pull_reads_the_named_files_with_overlapping_waits() {
+        use super::super::bulk_read::watch::watching;
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in 0..48 {
+            let path = dir.path().join(format!("m{n:02}.hy"));
+            std::fs::write(&path, if n % 10 == 9 { String::new() } else { format!("(defk m{n} [])") }).unwrap();
+            files.push((format!("m{n:02}.hy"), path));
+        }
+        let cache = place_of(dir.path(), "cache", Format::Json);
+        let pull = |files: &[(String, PathBuf)]| {
+            per_file_named_at(Some(&cache), "v1", files, |_rel, path| std::fs::read_to_string(path).ok().filter(|text| !text.is_empty()), no_bind, Format::Json)
+        };
+        let (first, peak) = watching(std::time::Duration::from_millis(20), || pull(&files));
+        assert!(peak >= 8, "名指した源の読みの待ちが重なっていない(同時に進んだ最大 {peak} 件)");
+        let expected: Vec<String> = (0..48).filter(|n| n % 10 != 9).map(|n| format!("(defk m{n} [])")).collect();
+        assert_eq!(first, expected);
+        // 置いた事実から引き直しても同じ答え(中身の hash で引く — 2 回目は compute を呼ばない)。
+        assert_eq!(pull(&files), expected);
+        // 読めない file(消えた・dir に替わった)は集める物が無いのと同じに外れ、他の file の答えは変わらない。
+        std::fs::remove_file(&files[3].1).unwrap();
+        std::fs::remove_file(&files[4].1).unwrap();
+        std::fs::create_dir(&files[4].1).unwrap();
+        let without: Vec<String> = (0..48).filter(|n| n % 10 != 9 && *n != 3 && *n != 4).map(|n| format!("(defk m{n} [])")).collect();
+        assert_eq!(pull(&files), without);
+    }
+
     /// 変わった file だけを読み直し、答えは変わらない — 形(JSON・binary)を問わず同じ筋書き。
     fn only_changed_files_are_read_again(format: Format) {
         let dir = tempfile::tempdir().unwrap();
