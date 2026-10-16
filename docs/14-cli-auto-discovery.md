@@ -67,48 +67,82 @@ The CLI automatically:
 
 ### 5-Minute Example
 
+Discovery uses the `doeff-indexer` package, which `doeff` does not install:
+
+```bash
+pip install doeff-indexer
+```
+
+Without it, `doeff run` silently uses its built-in default interpreter and no envs.
+
 **Step 1**: Mark your interpreter
 
 ```python
-# myapp/interpreter.py
-from doeff import do, run
+# myapp/__init__.py
+from doeff import Program, Pure, run
 from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
-def my_interpreter(prog: Program) -> any:
+
+def my_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
     """
     Execute programs for myapp.
     # doeff: interpreter, default
     """
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    # writer keeps its log in state, so install state() outside writer.
+    return run(scheduled(state()(writer(reader(env=run(env))(prog)))))
 ```
 
-**Step 2**: Mark your environment (optional)
+The CLI passes the merged envs to the interpreter's `env` keyword argument.
+An interpreter without an `env` parameter does not receive them.
+
+**Step 2**: Mark your environment (optional) — in the same file
 
 ```python
-# myapp/config.py
-from doeff import Program
+# myapp/__init__.py (continued)
 
 # doeff: default
-base_env: Program[dict] = Program.pure({
+base_env: Program[dict] = Pure({
     'db_host': 'localhost',
     'timeout': 10
 })
 ```
 
-**Step 3**: Run your program
+**Step 3**: Write a program in a module below `myapp`
 
-```bash
-doeff run --program myapp.features.my_program
+```python
+# myapp/features/__init__.py is an empty file.
+
+# myapp/features/report.py
+from doeff import Ask, do
+
+
+@do
+def show_config():
+    host = yield Ask('db_host')
+    timeout = yield Ask('timeout')
+    return f"{host} (timeout {timeout}s)"
+
+
+my_program = show_config()
 ```
 
-The discovery workflow depends on the bundled Rust indexer.
-Because it is built locally, make sure Rust (via `rustup`) is installed before running
-`pip install doeff`.
+`--program` names a Program value (`show_config()`), not the `@do` function itself.
+
+**Step 4**: Run your program from the project root
+
+```bash
+doeff run --program myapp.features.report.my_program
+# localhost (timeout 10s)
+```
+
+The indexer scans the current directory, so run `doeff` from the directory that
+contains `myapp/`, with `myapp` importable (installed in your environment, or run
+`python -m doeff run ...` from that directory).
 
 That's it! The CLI automatically:
 - Uses `my_interpreter` (closest default)
-- Injects `base_env` into the program
+- Passes `base_env` to the interpreter's `env` argument
 - Executes everything seamlessly
 
 ---
@@ -120,6 +154,8 @@ That's it! The CLI automatically:
 Special comments that mark functions and variables for auto-discovery:
 
 ```python
+from doeff import Program, Pure
+
 # For interpreters (functions)
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
@@ -127,7 +163,7 @@ def my_interpreter(prog: Program):
 
 # For environments (variables)
 # doeff: default
-my_env: Program[dict] = Program.pure({...})
+my_env: Program[dict] = Pure({...})
 ```
 
 ### 2. Interpreter Discovery: Closest Match
@@ -168,15 +204,21 @@ graph LR
     A[User runs<br/>doeff run] --> B{--interpreter<br/>specified?}
     B -->|No| C[Auto-discover<br/>interpreter]
     B -->|Yes| D[Use specified]
-    C --> E[Discover envs]
-    D --> E
+    C --> X{--env<br/>specified?}
+    X -->|No| E[Discover envs]
+    X -->|Yes| Y[Use only<br/>--env envs]
+    D --> Y
     E --> F[Merge envs]
+    Y --> F
     F --> G[Execute program]
 
     style C fill:#90EE90
     style E fill:#90EE90
     style F fill:#90EE90
 ```
+
+`--interpreter` turns off discovery of envs too, and `--env` replaces the
+discovered envs (see [Manual Overrides](#manual-overrides)).
 
 ---
 
@@ -188,32 +230,53 @@ The CLI searches for functions marked with `# doeff: interpreter, default`:
 
 1. **Extract module path** from program (e.g., `myapp.features.auth.login.my_program` → `myapp.features.auth.login`)
 2. **Build hierarchy**: `["myapp", "myapp.features", "myapp.features.auth", "myapp.features.auth.login"]`
-3. **Query indexer** for all default interpreters
-4. **Filter to hierarchy**: Keep only interpreters in the module path
+3. **Query indexer** for all default interpreters (the indexer scans the current directory)
+4. **Filter to hierarchy**: Keep only interpreters defined in a module on that path
+   (the program's own module, or the `__init__.py` of a package above it)
 5. **Select closest**: Choose the rightmost (deepest) match
+
+If no marked interpreter is found, `doeff run` does not stop with an error: it runs the
+program with its built-in default interpreter (`doeff.cli.run_services:default_interpreter`),
+which ignores envs.
 
 ### Example: Closest Match Selection
 
 ```python
 # myapp/__init__.py
+from doeff import Program, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+
 def base_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 
 # myapp/features/__init__.py
 # (no interpreter)
 
 # myapp/features/auth/__init__.py
+from doeff import Program, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+
 def auth_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    # Custom auth handling
-    return custom_run(prog)
+    # Custom auth handling goes here
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 
 # myapp/features/auth/login.py
+from doeff import Tell, do
+
+
 @do
-def login_program():
+def login():
     yield Tell("Logging in...")
     return "success"
+
+
+login_program = login()
 ```
 
 **Running the program:**
@@ -245,7 +308,7 @@ Interpreters must:
 ```python
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 ```
 
 **Invalid** (async not allowed):
@@ -272,33 +335,56 @@ The CLI discovers **all** environments marked with `# doeff: default`:
 
 ```python
 # myapp/__init__.py
+from doeff import Program, Pure, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+
+def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
+    """# doeff: interpreter, default"""
+    return run(scheduled(state()(writer(reader(env=run(env))(prog)))))
+
 # doeff: default
-base_env: Program[dict] = Program.pure({
+base_env: Program[dict] = Pure({
     'db_host': 'localhost',
     'timeout': 10,
     'debug': False
 })
 
 # myapp/features/__init__.py
+from doeff import Program, Pure
+
 # doeff: default
-features_env: Program[dict] = Program.pure({
+features_env: Program[dict] = Pure({
     'api_key': 'secret123',
     'timeout': 20  # Override base
 })
 
 # myapp/features/auth/__init__.py
+from doeff import Program, Pure
+
 # doeff: default
-auth_env: Program[dict] = Program.pure({
+auth_env: Program[dict] = Pure({
     'oauth_provider': 'google',
     'timeout': 30  # Override again
 })
 
 # myapp/features/auth/login.py
+from doeff import Ask, do
+
+
 @do
-def login_program():
-    config = yield Ask('timeout')
-    yield Tell(f"Timeout: {config}")  # Will be 30!
-    return "success"
+def login():
+    timeout = yield Ask('timeout')
+    return f"Timeout: {timeout}"  # Will be 30!
+
+
+login_program = login()
+```
+
+```bash
+doeff run --program myapp.features.auth.login.login_program
+# Timeout: 30
 ```
 
 **Discovery process:**
@@ -354,13 +440,13 @@ def my_interpreter(prog: Program):
     Execute programs with custom settings.
     # doeff: interpreter, default
     """
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 ```
 
 2. **Inline comment**:
 ```python
 def my_interpreter(prog: Program):  # doeff: interpreter, default
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 ```
 
 3. **Multi-line signature**:
@@ -380,16 +466,21 @@ def my_interpreter(  # doeff: interpreter, default
 
 1. **Preceding comment** (recommended):
 ```python
+from doeff import Program, Pure
+
 # doeff: default
-my_env: Program[dict] = Program.pure({
+my_env: Program[dict] = Pure({
     'key': 'value'
 })
 ```
 
 2. **Same line**:
 ```python
-my_env: Program[dict] = Program.pure({'key': 'value'})  # doeff: default
+my_env: Program[dict] = Pure({'key': 'value'})  # doeff: default
 ```
+
+The variable needs a type annotation (`my_env: Program[dict] = ...` or `my_env: dict = ...`):
+the indexer skips plain assignments such as `my_env = Pure({...})`.
 
 ### Syntax Rules
 
@@ -421,16 +512,19 @@ graph TB
     B -->|No| D[Extract module path]
     D --> E[Build module hierarchy]
     E --> F[Query indexer for<br/>interpreter, default]
-    F --> G{Found any?}
-    G -->|No| H[Error: No default<br/>interpreter found]
-    G -->|Yes| I[Filter to hierarchy]
-    I --> J[Select closest match]
-    J --> K[Validate interpreter]
-    K --> L[Query indexer for<br/>default envs]
-    C --> L
+    F --> I[Filter to hierarchy]
+    I --> G{Found any?}
+    G -->|No| H[Use built-in<br/>default interpreter]
+    G -->|Yes| J[Select closest match]
+    H --> Q{--env<br/>provided?}
+    J --> Q
+    Q -->|No| L[Query indexer for<br/>default envs]
+    Q -->|Yes| R[Use only<br/>--env envs]
+    C --> R
     L --> M[Collect all envs<br/>in hierarchy]
     M --> N[Merge envs<br/>left-to-right]
-    N --> O[Inject via Local effect]
+    R --> N
+    N --> O[Pass merged env to the<br/>interpreter's env argument]
     O --> P[Execute program]
 
     style D fill:#E6F3FF
@@ -497,25 +591,36 @@ myapp/
 
 ```python
 # myapp/__init__.py
-def base_interpreter(prog):
+from doeff import Program, Pure, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+
+def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
     """# doeff: interpreter, default"""
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env=run(env))(prog)))))
 
 # doeff: default
-base_env = Program.pure({'debug': True})
+base_env: Program[dict] = Pure({'debug': True})
 
 # myapp/program.py
+from doeff import Ask, do
+
+
 @do
-def my_program():
+def main():
     debug = yield Ask('debug')
-    yield Tell(f"Debug mode: {debug}")
-    return "done"
+    return f"Debug mode: {debug}"
+
+
+my_program = main()
 ```
 
 **Usage:**
 
 ```bash
 doeff run --program myapp.program.my_program
+# Debug mode: True
 # Uses: base_interpreter, base_env
 ```
 
@@ -538,43 +643,56 @@ myapp/
 
 ```python
 # myapp/__init__.py
-def base_interpreter(prog):
+from doeff import Program, Pure, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+
+def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
     """# doeff: interpreter, default"""
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env=run(env))(prog)))))
 
 # doeff: default
-base_env = Program.pure({
+base_env: Program[dict] = Pure({
     'db_host': 'localhost',
     'timeout': 10
 })
 
 # myapp/features/__init__.py
+from doeff import Program, Pure
+
 # doeff: default
-features_env = Program.pure({
+features_env: Program[dict] = Pure({
     'api_key': 'secret123'
 })
 
 # myapp/features/auth/__init__.py
-def auth_interpreter(prog):
+from doeff import Program, Pure
+
+
+def auth_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
     """
     Custom auth interpreter with OAuth.
     # doeff: interpreter, default
     """
-    return custom_auth_run(prog)
+    return custom_auth_run(prog, env=env)  # your own runner
 
 # doeff: default
-auth_env = Program.pure({
+auth_env: Program[dict] = Pure({
     'oauth_provider': 'google',
     'timeout': 30
 })
 
 # myapp/features/billing/__init__.py
-def billing_interpreter(prog):
+from doeff import Program, Pure
+
+
+def billing_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
     """# doeff: interpreter, default"""
-    return stripe_run(prog)
+    return stripe_run(prog, env=env)  # your own runner
 
 # doeff: default
-billing_env = Program.pure({
+billing_env: Program[dict] = Pure({
     'stripe_key': 'sk_test_...'
 })
 ```
@@ -631,7 +749,7 @@ Use manual flags when:
 - **Testing**: Use a test interpreter
 - **Debugging**: Use a verbose interpreter
 - **One-off runs**: Temporary config override
-- **Multiple envs**: Add extra environment layers
+- **Multiple envs**: Replace the discovered envs with your own layers
 
 ### Override Flags
 
@@ -644,18 +762,19 @@ doeff run \
   --interpreter tests.test_interpreter
 ```
 
-**Behavior**: Skips interpreter discovery, still discovers envs.
+**Behavior**: Skips discovery entirely — of the interpreter and of the envs. Only the
+`--env` envs (if any) reach the interpreter.
 
-#### 2. `--env` (adds to discovered envs)
+#### 2. `--env` (replaces discovered envs)
 
 ```bash
-# Add test environment (merges with discovered)
+# Use the test environment instead of the discovered envs
 doeff run \
   --program myapp.program \
   --env tests.test_env
 ```
 
-**Behavior**: Discovers default envs, then adds `test_env` (overrides all).
+**Behavior**: Still discovers the interpreter, but does not discover envs: only `test_env` is used.
 
 #### 3. Multiple `--env` flags
 
@@ -667,7 +786,7 @@ doeff run \
   --env myapp.local_overrides
 ```
 
-**Merge order**: discovered envs → dev_env → local_overrides
+**Merge order**: dev_env → local_overrides (discovered envs are not used)
 
 ### Combined Usage
 
@@ -680,33 +799,41 @@ doeff run \
 
 **Result**:
 - Interpreter: `tests.mock_interpreter` (manual)
-- Envs: `base_env` + `features_env` + `auth_env` + `mock_env` (auto + manual)
+- Envs: `mock_env` only (manual)
 
 ---
 
 ## Troubleshooting
 
-### Error: "No default interpreter found"
+### Built-in Default Interpreter Used Instead of Yours
 
-**Full error:**
+**Symptom**: `doeff run` does not stop with an error when it finds no marked interpreter.
+It runs the program with its built-in default interpreter, which ignores envs, so
+`Ask('key')` fails. The handlers listed are those of the built-in default interpreter:
+
 ```
-Error: No default interpreter found for 'myapp.program.my_program'.
-Please specify --interpreter or add '# doeff: interpreter, default' marker.
+UnhandledEffect: no handler found for effect: Ask (Ask('timeout'))
+  handlers in scope (innermost→outermost): await_handler → _listen_handler → _slog_handler → _try_handler → _writer_handler → state → lazy_ask → _scheduled_python
 ```
+
+For a program that succeeds, `--format json` shows
+`"interpreter": "doeff.cli.run_services:default_interpreter"` and `"envs": []`.
 
 **Diagnosis:**
 
 ```mermaid
 graph TD
-    A[No default interpreter found] --> B{Marker syntax<br/>correct?}
+    A[default_interpreter used] --> F{doeff-indexer<br/>installed?}
+    F -->|No| G[Fix: pip install doeff-indexer]
+    F -->|Yes| R{Run from the<br/>project root?}
+    R -->|No| S[Fix: cd to the directory<br/>that contains the myapp package]
+    R -->|Yes| B{Marker syntax<br/>correct?}
     B -->|No| C[Fix: Add comma between tags<br/># doeff: interpreter, default]
     B -->|Yes| D{Marker in<br/>hierarchy?}
     D -->|No| E[Fix: Add marker to parent module<br/>or use --interpreter]
-    D -->|Yes| F{Indexer<br/>built?}
-    F -->|No| G[Fix: Rebuild indexer<br/>uv sync --reinstall-package doeff-indexer]
-    F -->|Yes| H{Marker<br/>on function?}
+    D -->|Yes| H{Marker<br/>on function?}
     H -->|No| I[Fix: Ensure marker on<br/>interpreter function not variable]
-    H -->|Yes| J[Check logs with --verbose]
+    H -->|Yes| J[Check the PROFILE lines<br/>see Debugging Discovery]
 ```
 
 **Solutions:**
@@ -714,9 +841,14 @@ graph TD
 1. **Add marker to a parent module:**
 ```python
 # myapp/__init__.py
-def base_interpreter(prog):
+from doeff import Program, Pure, run
+from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects.scheduler import scheduled
+
+
+def base_interpreter(prog: Program, *, env: Program[dict] = Pure({})):
     """# doeff: interpreter, default"""
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env=run(env))(prog)))))
 ```
 
 2. **Or specify manually:**
@@ -759,7 +891,7 @@ doeff run --program myapp.program --interpreter myapp.desired_interpreter
 
 ### Error: Environment Values Not Applied
 
-**Symptom**: `Ask('key')` returns None or wrong value.
+**Symptom**: `Ask('key')` fails with `KeyError: "Ask: key not found: 'key'"`, or returns a wrong value.
 
 **Debug:**
 
@@ -774,11 +906,11 @@ doeff run --program myapp.program --format json | jq '.envs'
 ```python
 # ❌ Wrong
 doeff: default  # Missing #
-my_env = {...}
+my_env: dict = {...}
 
 # ✅ Correct
 # doeff: default
-my_env = {...}
+my_env: dict = {...}
 ```
 
 2. **Override order confusion:**
@@ -791,25 +923,38 @@ base_env = {'timeout': 10}
 features_env = {'timeout': 20}  # This wins!
 ```
 
-3. **Not a Program[dict]:**
+3. **Missing type annotation:**
 ```python
-# ❌ Won't be indexed
-my_env = {'key': 'value'}
+from doeff import Program, Pure
+
+# ❌ Won't be indexed (plain assignment)
+# doeff: default
+my_env = Pure({'key': 'value'})
 
 # ✅ Will be indexed
-my_env: Program[dict] = Program.pure({'key': 'value'})
+# doeff: default
+my_env: Program[dict] = Pure({'key': 'value'})
 ```
+
+4. **The interpreter has no `env` parameter:** the CLI passes the merged envs only as the
+   `env` keyword argument (see [Quick Start](#quick-start)).
+
+5. **`--interpreter` or `--env` was given:** both turn off env discovery
+   (see [Manual Overrides](#manual-overrides)).
 
 ### Debugging Discovery
 
-**Enable verbose output:**
+`doeff run` has no `--verbose` flag. To see what discovery chose:
 
 ```bash
-# (Future feature - not yet implemented)
-doeff run --program myapp.program --verbose
+# Show the chosen interpreter and envs
+doeff run --program myapp.program --format json
 ```
 
-**Manual verification:**
+The `[DOEFF][PROFILE]` lines on stderr (on by default; `DOEFF_DISABLE_PROFILE=1` hides them)
+also name each env it loaded, for example `Load symbol myapp.base_env`.
+
+**Manual verification** (needs `doeff-indexer`; run from the project root):
 
 ```python
 # Test indexer directly
@@ -840,7 +985,7 @@ print(f"Found envs: {[e.full_path for e in envs]}")
 
 **Recommended structure:**
 
-```python
+```text
 # Option A: One interpreter per feature
 myapp/
   __init__.py          # base_interpreter (fallback)
@@ -874,8 +1019,10 @@ module_env (leaf)        ← Module-specific config
 
 ```python
 # myapp/__init__.py - Base defaults
+from doeff import Program, Pure
+
 # doeff: default
-base_env = Program.pure({
+base_env: Program[dict] = Pure({
     'db_host': 'localhost',
     'db_port': 5432,
     'timeout': 10,
@@ -884,15 +1031,19 @@ base_env = Program.pure({
 })
 
 # myapp/features/__init__.py - Feature overrides
+from doeff import Program, Pure
+
 # doeff: default
-features_env = Program.pure({
+features_env: Program[dict] = Pure({
     'api_base_url': 'https://api.example.com',
     'timeout': 30  # Features need longer timeout
 })
 
 # myapp/features/auth/__init__.py - Specific config
+from doeff import Program, Pure
+
 # doeff: default
-auth_env = Program.pure({
+auth_env: Program[dict] = Pure({
     'oauth_provider': 'google',
     'oauth_callback': '/auth/callback',
     'debug': True  # Auth debugging enabled
@@ -902,7 +1053,7 @@ auth_env = Program.pure({
 ### 3. Naming Conventions
 
 **Interpreters:**
-```python
+```text
 # Pattern: <feature>_interpreter
 base_interpreter       # Base/default
 auth_interpreter       # Authentication
@@ -911,7 +1062,7 @@ test_interpreter       # Testing
 ```
 
 **Environments:**
-```python
+```text
 # Pattern: <scope>_env
 base_env               # Base config
 dev_env                # Development
@@ -931,14 +1082,16 @@ def my_interpreter(prog: Program):
 
     # doeff: interpreter, default
     """
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 ```
 
 **Recommended: Preceding comment for envs**
 
 ```python
+from doeff import Program, Pure
+
 # doeff: default
-my_env: Program[dict] = Program.pure({
+my_env: Program[dict] = Pure({
     'key': 'value'
 })
 ```
@@ -1044,12 +1197,12 @@ grep -r "def.*interpreter" --include="*.py"
 ```python
 # Before
 def my_interpreter(prog: Program):
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 
 # After
 def my_interpreter(prog: Program):
     """# doeff: interpreter, default"""
-    return run(scheduled(writer(state()(reader(env={})(prog)))))
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 ```
 
 **Step 3: Test discovery**
@@ -1103,7 +1256,7 @@ doeff run --program X --interpreter Y
 ✅ **Discovery is opt-in**
 
 Without markers, behavior is unchanged:
-- No markers → Error asking for `--interpreter`
+- No markers → the built-in default interpreter runs the program (no envs)
 - With markers → Auto-discovery works
 
 ---
@@ -1122,38 +1275,40 @@ Without markers, behavior is unchanged:
 | Flag | Description | Example |
 |------|-------------|---------|
 | `--program` | Program to execute (required) | `--program myapp.program` |
-| `--interpreter` | Override interpreter discovery | `--interpreter myapp.interpreter` |
-| `--env` | Add environment (can repeat) | `--env myapp.dev_env` |
+| `--interpreter` | Use this interpreter (turns off discovery of the interpreter and the envs) | `--interpreter myapp.interpreter` |
+| `--env` | Use this environment instead of the discovered ones (can repeat) | `--env myapp.dev_env` |
 | `--format` | Output format (text or json) | `--format json` |
 
 ### Error Messages
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| No default interpreter found | No markers in hierarchy | Add marker or use `--interpreter` |
-| Multiple default interpreters | Ambiguous selection | Check marker placement |
-| Invalid interpreter signature | Wrong function signature | Ensure single param, sync function |
-| Environment not found | Symbol load error | Check env path and syntax |
+| `UnhandledEffect: no handler found for effect: Ask`, with `lazy_ask` among the handlers | No marked interpreter found (or `doeff-indexer` not installed): the built-in default interpreter ran | Install `doeff-indexer`, add marker, or use `--interpreter` |
+| `KeyError: "Ask: key not found: ..."` | The env did not reach the program | See [Environment Values Not Applied](#error-environment-values-not-applied) |
+| `expected DoExpr or EffectBase, got: <class 'function'>` | `--program` names a `@do` function, not a Program value | Point `--program` at a value such as `my_program = main()` |
+| `ModuleNotFoundError: No module named 'myapp'` | `myapp` is not importable where `doeff` runs | Install your project, or run `python -m doeff run ...` from the project root |
 
 ### JSON Output Format
 
 ```json
 {
   "status": "ok",
+  "program": "myapp.features.auth.login.login_program",
   "interpreter": "myapp.features.auth.auth_interpreter",
   "envs": [
     "myapp.base_env",
     "myapp.features.features_env",
     "myapp.features.auth.auth_env"
   ],
-  "result": "success"
+  "result": "success",
+  "result_type": "str"
 }
 ```
 
 ### Links
 
 - **Marker Specification**: See [MARKERS.md](MARKERS.md) for general marker usage
-- **Implementation Specs**: See `specs/cli-auto-discovery/` for technical details
+- **Implementation Specs**: See `specs/features/cli-auto-discovery/` for technical details
 - **PyO3 Indexer**: See `packages/doeff-indexer/` for indexer internals
 
 ---
