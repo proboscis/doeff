@@ -18,6 +18,7 @@ first parameter.
 """
 
 import contextlib
+import logging
 import os
 import signal
 import socket
@@ -34,11 +35,14 @@ import redis
 import redis.asyncio
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import (
+    PRIORITY_HIGH,
+    PRIORITY_NORMAL,
     Cancel,
     CompletePromise,
     CreatePromise,
     Promise,
     Spawn,
+    Task,
     TaskCancelledError,
     Wait,
     scheduled,
@@ -309,6 +313,81 @@ def test_a_reader_remade_more_times_than_the_pool_holds_still_subscribes_on_redi
         redis_notice_handler(redis_url, TIMEOUT_SECONDS)(remade())
     )
     assert _run_on_wall_clock(process) == LawNote("last")
+
+
+def test_a_cancel_before_the_reader_holds_its_source_leaves_no_source_and_no_stall_on_redis(
+    redis_url: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A reader cancelled from outside (not waited for) while its resume from ``Spawn`` of the source task is still
+    queued never learns the source task's handle (the cancel drops the answer), so it cannot stop the source. The
+    source must end by itself: it must not read the subscription its reader closed as a broker that went away
+    (a false "stalled" line), subscribe again, and live on beside a reader that is gone. The window is made on
+    purpose: a canceller of higher priority is woken by the reader's own Spawn, so it runs before the reader's resume
+    (the screen server's reader runs at a lower priority than its busy loop, which cancels it without waiting)."""
+    prefix = _prefix()
+    channel = f"{prefix}:note"
+    source = "law-cancelled-early"
+
+    def woken_at_the_source(woken: Promise[None]) -> "ProgramHandler":
+        """The layer under the wrapper that wakes the canceller at the wrapper's first ``Spawn`` (the source task)."""
+        armed = True
+
+        @do
+        def handler(effect: Spawn, k: K) -> "EffectGenerator[object]":
+            """Wake the canceller without giving the reader's turn to it yet, then let the Spawn go on."""
+            nonlocal armed
+            if armed:
+                armed = False
+                yield CompletePromise(woken, None, yield_to_woken=False)
+            yield Pass(effect, k)
+            return None
+
+        return program_handler(handler)
+
+    @do
+    def follows_forever() -> "EffectGenerator[object]":
+        return (yield WaitForEvent(LawNote))
+
+    @do
+    def subscriptions_left() -> "EffectGenerator[int]":
+        """The most subscriptions the server held on the channel over the half second after the reader was gone: a
+        source that survives subscribes again within milliseconds, so one look right after the cancel would miss it
+        (nothing appears to wait for — "nothing is left" can only be seen by looking for a while)."""
+        most = 0
+        for _ in range(10):
+            with redis.Redis.from_url(redis_url, decode_responses=True) as admin:
+                most = max(most, int(dict(admin.pubsub_numsub(channel)).get(channel, 0)))
+            yield Delay(0.05)
+        return most
+
+    @do
+    def cancelled_early() -> "EffectGenerator[int]":
+        woken: Promise[None] = yield CreatePromise()
+        reader_made: Promise[Task[object]] = yield CreatePromise()
+
+        @do
+        def cancels() -> "EffectGenerator[None]":
+            yield Wait(woken.future)
+            yield Cancel((yield Wait(reader_made.future)))
+
+        yield Spawn(cancels(), priority=PRIORITY_HIGH)
+        events = notice_events_handler(source, law_routes(prefix), PATIENCE_SECONDS)
+        party = subscribed_event_handler(EventBus(), source, (LawNote,))(
+            broker_back_by_retry(RETRY_SECONDS)(woken_at_the_source(woken)(events(follows_forever())))
+        )
+        reader = yield Spawn(party, priority=PRIORITY_NORMAL - 1)
+        yield CompletePromise(reader_made, reader, yield_to_woken=False)
+        try:
+            yield Wait(reader)
+        except TaskCancelledError:
+            return (yield subscriptions_left())
+        raise AssertionError("the reader ended by itself, not by the cancel")
+
+    with caplog.at_level(logging.WARNING, logger="doeff_events.handlers.notice_events"):
+        left = _run_on_wall_clock(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(cancelled_early()))
+    stalls = [record.getMessage() for record in caplog.records if record.name == "doeff_events.handlers.notice_events"]
+    assert left == 0, f"{left} subscription(s) still open after the reader was gone"
+    assert stalls == [], stalls
 
 
 def test_a_subscription_past_the_pool_fails_by_name_at_once_on_redis(redis_url: str) -> None:
