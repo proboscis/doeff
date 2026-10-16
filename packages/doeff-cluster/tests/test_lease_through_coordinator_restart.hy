@@ -11,6 +11,7 @@
 ;;   (b) 純粋: 持ち主が本当に居ない lease は、起き直した刻 + 止まる前に残っていた時間(≤ TTL)を過ぎると取りが通る(切れない lease を
 ;;       作らない)。止まる前に既に切れていた担い手は、ずらしても切れたまま。
 (require doeff-hy.macros [deftest defk defsystem <- val])
+(import doeff_hy.table [TableWrite table-of])
 (import collections.abc [Callable])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
@@ -63,10 +64,10 @@
   ;; 70 秒に起き直す(止まっていた 60 秒)。
   (val key (semaphore-key LOCK))
   (val row {"permits" 2 "holders" {"alive/1" 20000 "stale/1" 5000}})
-  (val state (ClusterState :alive-ms 10000 :board {key (BoardRow :value row :version 3 :expires-ms None :size 0)}))
+  (val state (ClusterState :alive-ms 10000 :board (table-of #((TableWrite key (BoardRow :value row :version 3 :expires-ms None :size 0))))))
   (setv #(resumed gap) (resume-after-downtime state 70000))
   (assert (= gap 60000) gap)
-  (val shifted (. (get resumed.board key) value))
+  (val shifted (. (.row resumed.board key) value))
   (assert (= (get shifted "holders") {"alive/1" 80000 "stale/1" 65000}) shifted)
   ;; 持ち主の延ばしの無いまま、残っていた時間(10 秒)の内は満ちている — 2 つ目の空きは stale/1 が切れたままなので取れる。
   (setv #(_ one) (lease-op shifted "claim" "taker/1" 2 15000 70000))

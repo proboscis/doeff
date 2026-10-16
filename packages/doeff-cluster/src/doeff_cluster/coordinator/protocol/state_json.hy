@@ -14,7 +14,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy.table [Table TableWrite table-of])
 (import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 
@@ -174,9 +174,9 @@
 
 
 (defk board-rows-of [values versions]
-  {:pre [(: values dict) (: versions dict)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  {:pre [(: values dict) (: versions dict)] :post [(: % (get Table BoardRow))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "読み直した盤の値(鍵 → 値)と版(鍵 → 版・無い鍵は 1)→ 盤の行の表(期限なし・大きさは測り直す)。"
-  (dfor #(k v) (.items values) k (BoardRow :value v :version (.get versions k 1) :expires-ms None :size (value-size v))))
+  (table-of (tuple (gfor #(k v) (.items values) (TableWrite k (BoardRow :value v :version (.get versions k 1) :expires-ms None :size (value-size v)))))))
 
 
 (defk read-each [reader pairs]
@@ -205,7 +205,7 @@
   (<- generations tuple (read-each worker-generations-from-json stored-workers))
   (<- programs tuple (read-each program-row-from-json (tuple (.items (.get data "programs" {})))))
   (<- tasks tuple (read-each task-record-from-json (tuple (gfor t (.get data "tasks" []) #((get t "id") t)))))
-  (<- board-rows dict (board-rows-of (if (is board None) (.get data "board" {}) board) (or board-versions {})))
+  (<- board-rows (get Table BoardRow) (board-rows-of (if (is board None) (.get data "board" {}) board) (or board-versions {})))
   (<- audit tuple (read-each audit-event-from-json (tuple (enumerate (.get data "audit" [])))))
   (<- warms tuple (read-each warm-entry-from-json (tuple (.items (.get data "warms" {})))))
   (ClusterState

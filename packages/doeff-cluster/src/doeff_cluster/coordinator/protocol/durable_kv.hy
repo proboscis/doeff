@@ -53,7 +53,7 @@
 (deff board-entry [#^ ClusterState state #^ str key]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: state ClusterState) (: key str)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤の行 1 つの耐久の形 {value resourceVersion [expiresMs]}。期限の無い行は expiresMs を持たない(2026-09-25 より前の形と同じ)。"
-  (setv row (get state.board key))
+  (setv row (.row state.board key))
   (| {"value" row.value "resourceVersion" row.version}
      (if (is row.expires-ms None) {} {"expiresMs" row.expires-ms})))
 
@@ -198,7 +198,7 @@
   (setv removed (dfor #(old new) groups k old :if (not-in k new) k None))
   (setv #^ (get dict #(str (| (get dict #(str object)) None))) board
         (dfor key (board-changes before after)
-              (+ BOARD key) (if (in key after.board) (board-entry after key) None)))
+              (+ BOARD key) (if (is-not (.row after.board key) None) (board-entry after key) None)))
   (| written removed board))
 
 
@@ -206,7 +206,7 @@
   {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "盤を含む全部のキーの表(まとめ直しと移しの時だけ)。"
   (| (! (durable-kv state))
-     (dfor k state.board (+ BOARD k) (board-entry state k))))
+     (dfor k (.keys state.board) (+ BOARD k) (board-entry state k))))
 
 
 (defk state-from-kv [kv now]
@@ -262,8 +262,8 @@
     :keep-marks (tuple (gfor #(_ v) (part KEEP) (KeepMark #** v)))
     :superseded-runs (tuple (gfor #(_ v) (part SUPERSEDED) (SupersededRun #** (| v {"jobs" (tuple (get v "jobs"))}))))
     :audit (tuple (gfor #(_ event) audit event))
-    :board (dfor #(k v) (part BOARD) k (BoardRow :value (get v "value") :version (get v "resourceVersion")
-                                                 :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))
+    :board (table-of (tuple (gfor #(k v) (part BOARD) (TableWrite k (BoardRow :value (get v "value") :version (get v "resourceVersion")
+                                                                              :expires-ms (.get v "expiresMs") :size (value-size (get v "value")))))))
     :started-ms now))
 
 
