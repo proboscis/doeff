@@ -1,9 +1,10 @@
 ;;; 実行環境の root の手入れの純粋な判断(2026-09-26・設計 worker-runtime-env.md 節 3.2 の期限・節 3.6 の掃除と disk の条件)。
 ;;;
 ;;; worker の root の言い換え(worker/protocol/env_store の env-host)が観測を集めて、ここで決め、I/O(dir の削除・準備の process の停止)を汎用の効果で出す。
+;;;   kept-bytes       前の数えの root の大きさを使い回せるか(完成の時刻と最後に使った時刻が前の数えと同じ root は木を歩かない)
 ;;;   sweep-candidates 掃除で消してよい root の列(古い順 — 選びと掃除の頭の行が読む)
 ;;;   sweep-choice     roots の合計が上限を越えた時か、共有の disk の空きが最低を割った時に消す root の列(固定・project ごとの新しい 2 つ・
-;;;                    worker が作っていない dir は消さない)
+;;;                    worker が作っていない dir は消さない・上限を越えた時は上限の SWEEP-TARGET-RATIO まで下げる)
 ;;;   sweep-wanted     掃除の係が拍を求めているか(heartbeat の観測 EnvDisk に載せる — worker の判断はこれで SweepEnvs を撃つ)
 ;;;   sweep-due        新しい掃除(数え)を始める時か(まだ数えていない・完成した root の集合が変わった・空きが最低を割っているかが数えた時と
 ;;;                    違う・空きが割ったままで固定が変わった・上限を越えたままで固定が変わったか前の掃除の終わりから SWEEP-EVERY-MS —
@@ -36,6 +37,10 @@
 (val SWEEP-EVERY-MS 30000)              ; roots の合計が上限を越えている間の掃除の間隔(前の掃除の終わりから — 固定の集合が変わった時はすぐ)
 ;; project ごとに消さない root の数(最後に使った時刻の新しい順): 今の版と 1 つ前に動いていた版(戻し先 — #3732)。
 (val KEEP-PER-PROJECT 2)
+;; roots の合計が上限を越えた時に、消して下げる先(上限に掛ける割合 — card ki-a619d34de8c9)。上限ちょうどまでしか消さないと、次に完成した
+;; root 1 つですぐ越え、「1 つ消す → 越える」の往復のたびに数えと消しが node の共有の disk を取り合った(zeus 2026-10-16 — 24 時間の約 36% が
+;; 掃除中・20〜60 秒おきに全 root を数え直した)。95% まで下げて、次に越えるまで root 数個分(上限 20 GiB で約 1 GiB)の余白を置く。
+(val SWEEP-TARGET-RATIO 0.95)
 
 
 (defrecord RootInfo
@@ -92,6 +97,28 @@
   (sum (gfor r roots :if r.owned r.bytes)))
 
 
+(defk kept-bytes [known key made-ms used-ms]
+  {:pre [(: known tuple) (: key str) (: made-ms int) (: used-ms int)] :post [(: % (| int None))]
+   :tags {:context "worker" :role "judgment"}}
+  "前の数え(known — 最後の掃除の数えの RootInfo の列)の root の大きさを使い回せるかを判じ、使えればその byte を、数え直す時は None を
+   返すため(card ki-a619d34de8c9 — 掃除のたびに全 root の木を lstat で歩き、node の共有の disk の浅い枠を取り合った)。使い回すのは、worker
+   が作った同じキーの root で、完成マーカーの時刻(made-ms — 準備し直した root は時刻が変わる)と最後に使った時刻(used-ms)が前の数えと
+   同じ物だけ。完成の後に root が大きくなるのは、job が import した時に書く .pyc だけで(zeus 2026-10-16 の実測 — 完成マーカーより新しい
+   file は __pycache__ の .pyc と .last-used だけ・足された量は root の 0.03〜2.5%・中身の書き換えは無い)、job は起こす前に .last-used を
+   進めるので、使われた root は次の数えで歩き直す。前の数えで測れなかった root(大きさ 0 — 完成マーカーを持つ root は空でない)と、
+   完成の時刻を読めなかった root(made-ms 0)は使い回さない。"
+  (if (<= made-ms 0)
+      None
+      (next (gfor r known :if (and r.owned (= r.key key) (= r.made-ms made-ms) (= r.last-used-ms used-ms) (> r.bytes 0)) r.bytes)
+            None)))
+
+
+(defk sweep-target [cap]
+  {:pre [(: cap int)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "roots の合計が上限 cap を越えた時に、消して下げる先(byte — 上限の SWEEP-TARGET-RATIO)を返すため。"
+  (int (* cap SWEEP-TARGET-RATIO)))
+
+
 (defk sweep-candidates [roots pinned]
   {:pre [(: roots tuple) (: pinned frozenset)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "掃除で消してよい root(RootInfo)を、最後に使った時刻の古い順に求めるため(掃除の選び sweep-choice と、掃除の頭の行の候補の数が同じ
@@ -107,18 +134,23 @@
   "roots の合計(roots-bytes)が上限 cap を越えた時か、共有の disk の空き free が最低 min-free を割った時に消す root のキーの列(消す順)を
    返すため。root の dir の合計を上限の内に、共有の disk の空きを最低の上に保つ(#4051)。
    消さない物: 固定(pinned — 走っている job・宣言の job・準備中・温める表)・project ごとの新しい 2 つ・worker が作っていない dir。
-   残りを最後に使った時刻の古い順に、合計が上限の内へ戻り、かつ空きが最低へ戻るまで選ぶ(空きの見積もりは消す root の数えた大きさを
-   足す — hardlink を重ねて数えるので実際に空く量より大きく、足りなければ消した後の数え直しで残りを選ぶ)。戻れなくても選べる物は
-   全部選ぶ(候補を全部消しても空きが戻らない時は、準備が disk-full で断る — env_prepare の stage-disk・env-capacity)。"
+   残りを最後に使った時刻の古い順に、合計が上限の SWEEP-TARGET-RATIO(sweep-target)まで下がり、かつ空きが最低へ戻るまで選ぶ(上限を
+   越えた時に上限ちょうどまでしか消さないと、次に完成した root 1 つですぐ越えて掃除が往復した — card ki-a619d34de8c9。合計が上限の内
+   なら下げ先の上でも選ばない)。空きの見積もりは消す root の数えた大きさを足す — hardlink を重ねて数えるので実際に空く量より大きく、
+   足りなければ消した後の数え直しで残りを選ぶ。戻れなくても選べる物は全部選ぶ(候補を全部消しても空きが戻らない時は、準備が
+   disk-full で断る — env_prepare の stage-disk・env-capacity)。"
   (<- total int (roots-bytes roots))
   (if (and (<= total cap) (>= free min-free))
       #()
       (do (<- candidates tuple (sweep-candidates roots pinned))
+          ;; 合計が上限の内で空きだけが割った時は、合計を下げ先まで下げない(空きの最低へ戻るまで — #4051 の選びのまま)。
+          (<- lowered int (sweep-target cap))
+          (val target (if (> total cap) lowered cap))
           (var chosen #())
           (var left total)
           (var room free)
           (for [r candidates]
-            (when (or (> left cap) (< room min-free))
+            (when (or (> left target) (< room min-free))
               (:= chosen (+ chosen #(r.key)))
               (:= left (- left r.bytes))
               (:= room (+ room r.bytes))))

@@ -15,7 +15,8 @@
 ;;;   * 掃除(sweep): roots の合計が上限(settings.roots-cap-bytes)を越えた時か、共有の disk の空きが最低 settings.min-free-bytes を
 ;;;     割った時に、固定されていない root を古い順に消す(選びは env_upkeep.sweep-choice — project ごとの新しい 2 つは残す・#3732・#4051。
 ;;;     候補を全部消しても空きが戻らない時は準備を disk-full で断る)・uv の cache を prune(待たない)・
-;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
+;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数えは前の数えと完成の時刻・使った時刻が同じ root を歩かずに
+;;;     大きさを使い回す(card ki-a619d34de8c9 — env_upkeep の kept-bytes)。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。task の中でも同期の effect は scheduler の thread を占めるので、木を相手にする effect(MeasureTree・
 ;;;     RemoveTree・bytecode の保存先の様子つきの歩き StatTree)は本番の offloaded-tree-handler が thread で待つ(card ki-0da6a0186492 —
@@ -50,7 +51,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes
+(import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
                                               memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
 (import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
@@ -62,7 +63,8 @@
 (val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
 ;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes = 共有の disk の空き・roots-bytes = roots の合計(hardlink を重ねて数える)・
-;; cap-bytes = roots の合計の上限・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数 — #3732)。
+;; cap-bytes = roots の合計の上限・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数 — #3732・walked = この数えで
+;; 木を歩いた root の数 — 前の数えから大きさを使い回した root は数えない・card ki-a619d34de8c9)。
 (val SWEEP-LOG "worker: 掃除の選び")
 ;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
 ;; took-ms = 数えの始めから消しの終わりまでの ms)。
@@ -297,26 +299,43 @@
   (if (or (isinstance seen FileFailed) (= seen.kind PathKind.MISSING)) None (int (* 1000 seen.modified))))
 
 
-(defk root-infos [settings]
-  {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
-  "掃除の候補(roots の直下の dir)を返すため。worker が作った root = キーの形の名で完成マーカーを持つ dir。"
+(defrecord MeasuredRoots
+  "掃除の数え(ループの外の task)の答え: infos = root ごとの観測(大きさは MeasureTree で数えた byte か、前の数えから使い回した byte)・
+   walked = この数えで木を歩いた(MeasureTree を呼んだ)root の数(card ki-a619d34de8c9 — 掃除の頭の行の欄)。"
+  (#^ (get tuple #(RootInfo ...)) infos)
+  (#^ int walked))
+
+
+(defk root-infos [settings known]
+  {:pre [(: settings EnvSettings) (: known tuple)] :post [(: % MeasuredRoots)]}
+  "掃除の候補(roots の直下の dir)を返すため。worker が作った root = キーの形の名で完成マーカーを持つ dir。大きさは、前の数え(known —
+   RootInfo の列)と完成の時刻・最後に使った時刻が同じ root は使い回し(env_upkeep の kept-bytes)、それ以外の root だけ木を歩いて数える
+   (card ki-a619d34de8c9 — 全 root を掃除のたびに歩くと node の共有の disk の枠を取り合い、worker の本体の thread が block 層で待った)。"
   (<- names tuple (root-dirs settings))
   (<- roots str (roots-dir settings))
   (var infos #())
+  (var walked 0)
   (for [name names]
     (val root (+ roots "/" name))
+    (val key (+ ENV-KEY-PREFIX name))
     (<- marker (read-marker root))
     (val owned (and (is-not marker None) (bool (ROOT-NAME-PATTERN.fullmatch name))))
     (var made 0)
-    (var used 0)
     (var size 0)
     (var project "")
     (var peak None)
     (when owned
       (<- marker-ms (modified-ms (+ root "/" ENV-MARKER)))
-      (:= made (or marker-ms 0))
-      (<- measured (MeasureTree root))
-      (:= size (if (isinstance measured int) measured 0))
+      (:= made (or marker-ms 0)))
+    (<- used-ms (modified-ms (+ root "/.last-used")))
+    (val used (if (is-not used-ms None) used-ms made))
+    (when owned
+      (<- kept (| int None) (kept-bytes known key made used))
+      (if (is-not kept None)
+          (:= size kept)
+          (do (<- measured (MeasureTree root))
+              (:= size (if (isinstance measured int) measured 0))
+              (:= walked (+ walked 1))))
       (<- named str (root-project marker))
       (:= project named)
       ;; 組みの山の memory(印の buildMemoryBytes — 先の組みの前の memory の見積もり・#3748)。欄の無い前の印・null は None。
@@ -325,16 +344,9 @@
                  (bool) None
                  (int) raw
                  _ None)))
-    (<- used-ms (modified-ms (+ root "/.last-used")))
-    (:= used (if (is-not used-ms None) used-ms made))
-    (:= infos (+ infos #((RootInfo :key (+ ENV-KEY-PREFIX name) :project project :made-ms made :last-used-ms used :bytes size
+    (:= infos (+ infos #((RootInfo :key key :project project :made-ms made :last-used-ms used :bytes size
                                    :owned owned :build-memory-bytes peak)))))
-  infos)
-
-
-(defrecord MeasuredRoots
-  "掃除の数え(ループの外の task)の答え: infos = root ごとの観測(大きさは MeasureTree で数えた byte)。"
-  (#^ (get tuple #(RootInfo ...)) infos))
+  (MeasuredRoots :infos infos :walked walked))
 
 
 (defrecord RemovedRoots
@@ -508,13 +520,14 @@
                        entry.name))))
 
 
-(defk measuring-roots [settings done]
-  {:pre [(: settings EnvSettings) (: done Promise)] :post [(: % None)]}
+(defk measuring-roots [settings known done]
+  {:pre [(: settings EnvSettings) (: known tuple) (: done Promise)] :post [(: % None)]}
   "掃除の数え(root ごとの MeasureTree — root 1 つが数千の file の木)をループの外の task で行い、答えを done へ渡すため(#3715)。
+   known = 前の数えの root ごとの観測(変わっていない root は歩かない — root-infos)。
    失敗も done へ渡す(渡さないと掃除が走り続けていると読まれ、次の掃除が起きない — 失敗はループが答えを読んだ拍で上がる)。"
   (try
-    (<- infos tuple (root-infos settings))
-    (<- (CompletePromise done (MeasuredRoots :infos infos)))
+    (<- measured MeasuredRoots (root-infos settings known))
+    (<- (CompletePromise done measured))
     (except [error Exception]
       (<- (FailPromise done error))))
   None)
@@ -532,12 +545,12 @@
   None)
 
 
-(defk start-measuring [settings ready now-ms]
-  {:pre [(: settings EnvSettings) (: ready frozenset) (: now-ms int)] :post [(: % SweepMeasuring)]}
+(defk start-measuring [settings ready known now-ms]
+  {:pre [(: settings EnvSettings) (: ready frozenset) (: known tuple) (: now-ms int)] :post [(: % SweepMeasuring)]}
   "掃除の数えをループの外の task として起こし、走っている数えの記録を返すため(ループは待たない — 答えは後の拍で sweep-answer が読む)。
-   ready = この拍の完成した root のキーの集合。"
+   ready = この拍の完成した root のキーの集合・known = 前の数えの root ごとの観測(まだ数えていなければ空)。"
   (<- done Promise (CreatePromise))
-  (<- (Spawn (measuring-roots settings done) :daemon True))
+  (<- (Spawn (measuring-roots settings known done) :daemon True))
   (SweepMeasuring :done done :started-ms now-ms :ready ready))
 
 
@@ -570,9 +583,10 @@
   (val held (| busy others))
   (<- candidates tuple (sweep-candidates measured.infos held))
   (<- chosen tuple (sweep-choice measured.infos held cap free min-free))
-  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・空きの最低・roots の合計・上限・固定の数・候補の数・選んだ数。
+  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・空きの最低・roots の合計・上限・固定の数・候補の数・選んだ数・木を歩いた
+  ;; root の数。
   (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len held)
-            :candidates (len candidates) :chosen (len chosen)))
+            :candidates (len candidates) :chosen (len chosen) :walked measured.walked))
   (<- now-ms int (now-epoch-ms))
   (var aside #())
   (for [key chosen]
@@ -729,7 +743,8 @@
   (session var tally None)
   (session var prune (PruneState))
   (session var views None)
-  ;; 最後の掃除の数えの root ごとの観測(RootInfo の列 — 先の組みの見積もりが読む・#3748)と、先の組みを memory を測らずに始めた root の
+  ;; 最後の掃除の数えの root ごとの観測(RootInfo の列 — 先の組みの見積もりと、次の数えの大きさの使い回しが読む・#3748・
+  ;; card ki-a619d34de8c9)と、先の組みを memory を測らずに始めた root の
   ;; キーの集合(heartbeat の memoryUnmeasured — 測って始め直した root は外す)。
   (session var measured-infos #())
   (session var unmeasured (frozenset))
@@ -811,7 +826,7 @@
             (<- free int (disk-free settings))
             (<- due bool (sweep-due tally ready settings.roots-cap-bytes (< free settings.min-free-bytes) changed now-ms swept-ms))
             (when due
-              (<- measuring SweepMeasuring (start-measuring settings ready now-ms))
+              (<- measuring SweepMeasuring (start-measuring settings ready measured-infos now-ms))
               (:= sweeping measuring)))
       (SweepMeasuring)
         (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
