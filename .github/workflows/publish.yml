@@ -16,8 +16,28 @@ permissions:
   contents: read
 
 jobs:
+  # The uploads below use skip-existing, so a tag pushed without a version bump would upload
+  # nothing and still pass. Every upload job needs this check, which fails the whole release
+  # before its first upload when any package's version is already on PyPI. It has no `if`, so a
+  # build-only dispatch (publish=false) also shows whether the release would go out.
+  check-versions-unpublished:
+    name: Fail if a release version is already on PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Check every root tag release package against PyPI
+        run: >-
+          uv run --no-project python tools/check_pypi_unpublished.py
+          packages/doeff-vm packages/doeff-indexer packages/doeff-hy packages/doeff-core-effects
+          . packages/doeff-time packages/doeff-agents
+
   publish-doeff-vm:
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    needs: [check-versions-unpublished]
     uses: ./.github/workflows/build-vm.yml
     with:
       publish: true
@@ -25,7 +45,7 @@ jobs:
 
   publish-doeff-indexer:
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: [publish-doeff-vm]
+    needs: [check-versions-unpublished, publish-doeff-vm]
     uses: ./.github/workflows/build-indexer.yml
     with:
       publish: true
@@ -77,7 +97,7 @@ jobs:
 
   publish-doeff-hy:
     name: Publish doeff-hy to PyPI
-    needs: [build-python-release-dists, publish-doeff-vm, publish-doeff-indexer]
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-vm, publish-doeff-indexer]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
@@ -99,7 +119,7 @@ jobs:
 
   publish-doeff-core-effects:
     name: Publish doeff-core-effects to PyPI
-    needs: [build-python-release-dists, publish-doeff-hy]
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-hy]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
@@ -121,7 +141,7 @@ jobs:
 
   publish-doeff:
     name: Publish doeff to PyPI
-    needs: [build-python-release-dists, publish-doeff-core-effects]
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-core-effects]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
@@ -143,7 +163,7 @@ jobs:
 
   publish-doeff-time:
     name: Publish doeff-time to PyPI
-    needs: [build-python-release-dists, publish-doeff]
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
@@ -165,7 +185,7 @@ jobs:
 
   publish-doeff-agents:
     name: Publish doeff-agents to PyPI
-    needs: [build-python-release-dists, publish-doeff-time]
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-time]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     steps:
