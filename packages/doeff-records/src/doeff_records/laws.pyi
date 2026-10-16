@@ -70,6 +70,7 @@ from doeff_records.maintenance import Swept as Swept
 from doeff_records.maintenance import Pruned as Pruned
 from doeff_records.admission import hyx_row_matchesXquestion_markX as hyx_row_matchesXquestion_markX
 from doeff_records.admission import epoch_ms as epoch_ms
+from doeff_records.admission import key_text as key_text
 MAKER: str
 PAINTER: str
 CLOSER: str
@@ -126,6 +127,19 @@ TOP_NOTES: dict[int, int | str | float | bool | None]
 TOP_WHERES: list[FrozenMap]
 
 def law_descending_list_is_the_head_of_the_sorted_scan(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+ANY_OF_ROWS: tuple[FrozenMap, ...]
+ANY_OF_CASES: list[tuple[FrozenMap, ...]]
+ANY_OF_PAGE: int
+ANY_OF_TOP: int
+
+def collect_any_pages(harness: LawHarness, table: str, where: FrozenMap, where_any: FrozenMap, limit: int) -> _Program[list[object], object]:
+    ...
+
+def union_of_equal_lists(harness: LawHarness, table: str, where: FrozenMap, where_any: FrozenMap) -> _Program[tuple, object]:
+    ...
+
+def law_any_of_list_equals_the_union_of_equal_lists(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
 def law_append_is_idempotent(harness: LawHarness) -> _Program[list[object], object]:

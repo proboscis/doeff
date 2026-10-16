@@ -550,19 +550,21 @@
   (<- head (store-head store))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch head.epoch))
     (return (Reset head.epoch head.floor)))
-  (val refusal (where-refusal decl ask.where))
+  (val refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
   (<- expiry (row-expiry decl now-ms))
   (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
+  (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
   (when (is-not ask.descending-by None)
     ;; 上から読む読み(ListRows の註): 1 頁だけ・続きを返さない。
-    (<- top-statement (top-rows-statement store.prefix ask.table ask.descending-by where-json ask.limit expiry))
+    (<- top-statement (top-rows-statement store.prefix ask.table ask.descending-by where-json where-any-json ask.limit expiry))
     (<- top-records (query-rows store.database top-statement))
     (<- top-rows (listed-rows-of decl ask.fields top-records))
     (return (Page top-rows None head.epoch head.head)))
   (<- statement (list-rows-statement store.prefix ask.table
                                      (if (is ask.cursor None) None ask.cursor.after-key)
                                      where-json
+                                     where-any-json
                                      ask.limit
                                      expiry))
   (<- records (query-rows store.database statement))

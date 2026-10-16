@@ -59,7 +59,8 @@
 (import doeff_records.store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
-                                 retention-group-of key-head-of key-head-refusal where-refusal row-matches? descending-value? listed-row key-text
+                                 retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
+                                 listed-row key-text
                                  next-watch-sequence
                                  epoch-ms terminal-row? body-digest row-expired? event-expired?])
 
@@ -398,12 +399,13 @@
   (setv decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
     (return (Reset store.epoch store.floor)))
-  (setv refusal (where-refusal decl ask.where))
+  (setv refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
   (setv after (if (is ask.cursor None) None ask.cursor.after-key)
         table (get store.rows ask.table)
         matching (lfor text (sorted table)
                        :if (and (or (is after None) (> text after)) (row-matches? ask.where (. (get table text) row value))
+                                (row-matches-any? ask.where-any (. (get table text) row value))
                                 (not (stored-row-expired? decl (get table text) now-ms)))
                        text))
   (when (is-not ask.descending-by None)

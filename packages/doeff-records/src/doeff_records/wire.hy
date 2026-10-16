@@ -343,12 +343,13 @@
   (match ask
     (ReadRow :table table :key key)
       (WireRequest OP-READ-ROW {"table" table "key" (list key)})
-    (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by)
-      ;; 鍵 descendingBy は上から読む読みの時だけ送る(鍵の順の読みは前の形のまま。古い記録の service は知らない鍵を 400 で断るので、
-      ;; 上から読む client より先に service を新しい版で起こす)。
+    (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by :where_any where-any)
+      ;; 鍵 descendingBy は上から読む読みの時だけ・鍵 whereAny(欄 → 値の組の配列)は値の組で絞る時だけ送る(どちらも使わない読みは前の
+      ;; 形のまま。古い記録の service は知らない鍵を 400 で断るので、使う client より先に service を新しい版で起こす)。
       (WireRequest OP-LIST-ROWS (| {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
                                     "cursor" (! (list-cursor-json cursor)) "limit" limit}
-                                   (if (is descending-by None) {} {"descendingBy" descending-by})))
+                                   (if (is descending-by None) {} {"descendingBy" descending-by})
+                                   (if where-any {"whereAny" (thaw-json where-any)} {})))
     (PutRow :table table :key key :value value :expect expect)
       (WireRequest OP-PUT-ROW {"table" table "key" (list key) "value" (thaw-json value) "expect" (! (expect-json expect))})
     (WatchChanges :tables tables :cursor cursor :timeout timeout :limit limit :streams streams)
@@ -386,7 +387,7 @@
         (do (<- (object-of body "read-row の本文" #("table" "key") #()))
             (ReadRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))))
       "list-rows"
-        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy")))
+        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy" "whereAny")))
             (setv keywords {})
             (when (in "where" body) (setv (get keywords "where") (! (json-object-in (get body "where") "where"))))
             (when (in "fields" body)
@@ -395,6 +396,12 @@
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
             (when (in "descendingBy" body)
               (setv (get keywords "descending_by") (! (string-of (get body "descendingBy") "descendingBy"))))
+            ;; 鍵 whereAny は値の組で絞る時だけ在る(encode-request は空の写像を送らない)— 空の object は綴りの外として断る。組の配列の
+            ;; 形・空の組・上限・where との重なりは ListRows が作る時に断る(malformed に写る)。
+            (when (in "whereAny" body)
+              (<- any-of (json-object-in (get body "whereAny") "whereAny"))
+              (when (not any-of) (raise (WireMalformed "list-rows の whereAny は空でない object(絞らない時は鍵ごと無い)")))
+              (setv (get keywords "where_any") any-of))
             (ListRows (! (string-of (get body "table") "table")) #** keywords))
       "put-row"
         (do (<- (object-of body "put-row の本文" #("table" "key" "value" "expect") #("approval")))

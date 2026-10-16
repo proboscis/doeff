@@ -30,6 +30,7 @@ from doeff_records.values import (
 DEFAULT_LIST_LIMIT: int
 DEFAULT_WATCH_LIMIT: int
 DEFAULT_READ_EVENTS_LIMIT: int
+WHERE_ANY_LIMIT: int
 
 def checked_key(key: object, what: str) -> tuple[str, ...]: ...
 def checked_limit(limit: object, what: str) -> int: ...
@@ -47,6 +48,7 @@ class ListRows(EffectBase[ListRowsAnswer]):
     cursor: ListCursor | None = None
     limit: int = ...
     descending_by: str | None = None
+    where_any: FrozenMap = ...
 
 @dataclass(frozen=True)
 class PutRow(EffectBase[PutRowAnswer]):

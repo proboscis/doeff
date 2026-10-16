@@ -349,9 +349,15 @@
 
 ;; --- 法 6c: 値の組の ListRows は値ごとの等号の ListRows の和を鍵の順に並べた物と同じ ----------------------
 
-;; 行の番号 → #(欄 color の値 欄 label の値 欄 note の値)(None = 欄の無い行)。color は文字列・整数と同じ数の小数・真偽(1 と等しくない)を持つ。
-(val ANY-OF-ROWS {1 #("red" "a" 5) 2 #("blue" "b" 9) 3 #("green" "a" 1) 4 #("red" "b" 9) 5 #(1 "a" 3) 6 #(1.0 "b" 7)
-                  7 #(True "a" 2) 8 #(None "b" 8) 9 #("blue" "a" 4) 10 #("red" "b" 6) 11 #("green" "b" 10) 12 #("blue" None 0)})
+;; 表 parts の行 p01 … p12 の値(鍵の欄は書く時に足す)。color は文字列・整数と同じ数の小数・真偽(1 と等しくない)を持ち、color の無い行
+;; (p08)と label の無い行(p12)を含む。note は上から読む読みが並べる整数。
+(val ANY-OF-ROWS (tuple (gfor value [{"color" "red" "label" "a" "note" 5} {"color" "blue" "label" "b" "note" 9}
+                                     {"color" "green" "label" "a" "note" 1} {"color" "red" "label" "b" "note" 9}
+                                     {"color" 1 "label" "a" "note" 3} {"color" 1.0 "label" "b" "note" 7}
+                                     {"color" True "label" "a" "note" 2} {"label" "b" "note" 8}
+                                     {"color" "blue" "label" "a" "note" 4} {"color" "red" "label" "b" "note" 6}
+                                     {"color" "green" "label" "b" "note" 10} {"color" "blue" "note" 0}]
+                              (FrozenMap value))))
 ;; #(where where-any): どの行にも無い値・同じ値の重ね・同じ数の整数と小数・真偽・2 つの欄の組(欄どうしは AND)・鍵の欄・where との AND。
 (val ANY-OF-CASES
   (lfor #(where any-of) [#({} {"color" ["red" "blue"]})
@@ -406,9 +412,8 @@
    読みで引くため。どの置き場の handler も同じ答えを返すことを確かめる。"
   (val law "値の組の ListRows は値ごとの等号の ListRows の和を鍵の順に並べた物と同じ")
   (var transcript [])
-  (for [#(n #(color label note)) (.items ANY-OF-ROWS)]
-    (val value (| (if (is color None) {} {"color" color}) (if (is label None) {} {"label" label}) {"note" note}))
-    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n)) (FrozenMap value) (ExpectAbsent))))
+  (for [#(n value) (enumerate ANY-OF-ROWS 1)]
+    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n)) value (ExpectAbsent))))
     (<- (require-law (isinstance written Written) law (.format "p{:02d} の書き: {!r}" n written)))
     (:= transcript (+ transcript [written])))
   (for [#(where where-any) ANY-OF-CASES]

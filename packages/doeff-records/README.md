@@ -11,7 +11,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | effect | 入力 | 成功の答え | 失敗の答え(値で返す) |
 |---|---|---|---|
 | `ReadRow(table, key)` | 表・キー | `Row(key, value, version)` か `Missing()` | `Unreachable` |
-| `ListRows(table, where, fields, cursor, limit)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限 | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
+| `ListRows(table, where, fields, cursor, limit, descending_by, where_any)` | 表・索引の欄の等号の AND・返す欄・前の頁の位置・上限・上から読む欄(下の註)・索引の欄の値の組(下の註) | `Page(rows, next_cursor, epoch, sequence)` | `Reset`・`Unreachable`・`NotIndexed` |
 | `PutRow(table, key, value, expect)` | 表・キー・欄の差分・期待(`ExpectAbsent` / `ExpectVersion(n)` / `ExpectAny`)。書き手の名は欄に無く、handler を組む時に身元から入る | `Written(version, value)` | `Conflict(current)`・`Refused(reason)`・`Unreachable` |
 | `WatchChanges(tables, cursor, timeout, limit, streams)` | 表の列・位置・待つ秒・上限・末尾を知りたい追記の列(既定 = 無し) | `Changes(items, cursor, tails)`(`tails` = 名指した列ごとの末尾 `StreamTail(stream, sequence, at)` か `StreamTailEmpty(stream)` — 名指した順・名指さなければ空) | `Reset(epoch, floor)`・`Unreachable` |
 | `AppendEvent(stream, idempotency_key, body)` | 追記の列・冪等キー・本文 | `Appended(sequence)`(同じキーの再送は前の番号) | `Refused`・`Unreachable` |
@@ -27,11 +27,26 @@ lease(取る・延ばす・返す・書きの柵)はこの package に作らな�
 
 - 行のキーは定義の `key_fields` の順の文字列の tuple。行の値は欄 → JSON の値の凍らせた写像(doeff-hy の `FrozenMap` —
   中の object も `FrozenMap`・array は tuple まで深く凍らせる)で、キーの欄を含む。`Row` / `Written` / `RowChanged` の `value`、
-  `PutRow.value`・`ListRows.where`、出来事の本文は、作る時に受けた写像を凍らせる(作った後に変えられない)。JSON へ書く所は
+  `PutRow.value`・`ListRows.where`・`ListRows.where_any`、出来事の本文は、作る時に受けた写像を凍らせる(作った後に変えられない)。JSON へ書く所は
   `doeff_hy.frozen.thaw_json` で dict / list へ戻す。
 - 版(`version`)は生まれた行が 1 で、書くたびに 1 増える。
 - `ListRows` の頁はキーの綴り(`admission.key_text`)の順。最初の頁の `epoch` と `sequence` から `WatchChanges` を始めると、
   一覧の後の変更を取りこぼさない。
+- `ListRows` の絞りは 2 つの形を AND で重ねる。どちらも索引の欄(定義の `indexes` かキーの欄)だけで、他の欄は `NotIndexed`(欄の名の順)。
+
+  | 絞り | 形 | 合う行 | 作る時の断り |
+  |---|---|---|---|
+  | `where` | 欄 → 値 | 欄の値が値と等しい行(欄どうしは AND) | 欄の名の綴りの外 |
+  | `where_any` | 欄 → 値の組(JSON の値の空でない配列 — 凍らせて tuple) | 欄の値が組のどれかと等しい行(欄どうしは AND)。既定は空の写像 = 絞らない | 空の組・配列でない組(`TypeError`)・組の値の数が全部の欄の和で `WHERE_ANY_LIMIT`(1,000)を越える・`where` と同じ欄 |
+
+  等しさは JSON の値としての等しさ(`admission` の `json-equal?` — 数は数で比べ `1` と `1.0` は等しく、`True` と `1` は等しくない)。値の組の
+  頁を辿った全件は、組の値ごとの等号の `ListRows` の全件の和をキーの順に並べた物と同じ(法 `law_any_of_list_equals_the_union_of_equal_lists`)。
+  呼び手は値の組 1 つを、値ごとの往復でなく 1 回の読み(組が上限を越える時は上限ごとに割った回数)で引く。PostgreSQL の置き場は組を
+  `(欄の式) IN (…)` に展げ、宣言の索引の欄の式の索引で引く。
+- `descending_by`(欄の名)を付けた `ListRows` は上から読む読み: 欄の値が整数の行だけを、その値の大きい順(同じ値はキーの綴りの逆順)に上から
+  `limit` 件読む 1 頁で、`cursor` を受けず(作る時に `ValueError`)、`next_cursor` は常に `None`。`where`・`where_any` はそのまま効く。
+- HTTP の口の本文(`list-rows`)は、`descendingBy` と `whereAny`(欄 → 値の組の配列)の鍵を使う読みの時だけ載せる — 使わない読みの本文は
+  鍵を足す前と同じ。古い記録の service は知らない鍵を 400 で断るので、鍵を使う client より先に service を新しい版で起こす。
 - `PutRows` は全部か 0 で書く: 1 行でも期待が合わないか断られれば、1 行も書かない。判定は `PutRow` と同じで、全部の行の期待を
   先に見て(合わない行があれば束の順で最初の行の `RowsConflict`)、次に全部の行の書きの判定を見る(最初に断られた行の `RowsRefused`)。
   確定した束は変更の列に束の順で 1 行ずつ、続いた番号で積む。PostgreSQL の handler は `PutRow` と同じ置き場の lock と
@@ -80,7 +95,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 |---|---|
 | `RowType(table, model)` | 表 1 つの行の型(欄の名 = 表の定義の欄の名・alias が在れば alias。写しは pydantic の `TypeAdapter`) |
 | `read_typed(row_type, key)` | `TypedRow(key, value, version)` か `Missing`・`Unreachable` |
-| `list_typed(row_type, where=, cursor=, limit=)` | `TypedPage(rows, next_cursor, epoch, sequence)` か `Reset`・`Unreachable`・`NotIndexed` |
+| `list_typed(row_type, where=, cursor=, limit=, where_any=)` | `TypedPage(rows, next_cursor, epoch, sequence)` か `Reset`・`Unreachable`・`NotIndexed` |
 | `put_typed(row_type, key, value, expect)` | `TypedWritten(version, value)` か `TypedConflict(current)`・`Refused`・`Unreachable` |
 | `typed_change(row_type, change)` | `RowChanged` → `TypedRowChanged`(`RowRemoved` はそのまま) |
 
@@ -242,6 +257,8 @@ SIGTERM / SIGINT で口を閉じて接続を返す。
 | `law_undeclared_writes_are_refused` | 定義に無い欄・状態・上限・終端の行・キーの書き換えは `Refused` で、行を変えない。書き手の名では断らない |
 | `law_transient_rows_expire` | `KeepFor` の終端の行は期限で読みに出なくなり、回収(`SweepExpired`)の後の変更に `RowRemoved` が 1 回出る。`KeepForever` の行は消えない |
 | `law_indexed_list_equals_filtered_scan` | 索引の `ListRows` は全件を読んで絞った結果と同じ |
+| `law_descending_list_is_the_head_of_the_sorted_scan` | 上から読む `ListRows`(`descending_by`)は、全件を読んで欄の値が整数の行を並べた上から `limit` 件と同じで、続きを返さない |
+| `law_any_of_list_equals_the_union_of_equal_lists` | 値の組の `ListRows`(`where_any`)の頁を辿った全件は、組の値ごとの等号の `ListRows` の全件の和をキーの順に並べた物と同じ。上から読む読みを重ねた答えはその和の上から `limit` 件。索引でない欄は `NotIndexed` |
 | `law_append_is_idempotent` | 同じ冪等キーの再送は前の番号・別の本文は `Refused` |
 | `law_watch_waits_for_a_change` | `WatchChanges` は変更が来るまで `timeout` まで待つ |
 | `law_none_removes_a_field` | 差分の値 None はその欄を消し、行の値は None を持たない |

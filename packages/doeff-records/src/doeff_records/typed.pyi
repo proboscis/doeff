@@ -91,6 +91,7 @@ def list_typed(
     where: FrozenMap | None = None,
     cursor: ListCursor | None = None,
     limit: int = ...,
+    where_any: FrozenMap | None = None,
 ) -> Program[TypedPage[M] | Reset | Unreachable | NotIndexed, object]: ...
 def put_typed(
     row_type: RowType[M], key: tuple[str, ...], value: M, expect: Expectation

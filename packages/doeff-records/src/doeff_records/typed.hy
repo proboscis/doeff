@@ -124,11 +124,15 @@
   (if (isinstance answer Row) (typed-row row-type answer) answer))
 
 
-(defk list-typed [#^ RowType row-type * [where None] [cursor None] [limit DEFAULT-LIST-LIMIT]]
-  {:pre [(: row-type RowType) (: where (| FrozenMap NoneType)) (: cursor (| ListCursor NoneType)) (: limit int)] :post [(: % "TypedPage | Reset | Unreachable | NotIndexed")]}
-  "表の行を 1 頁読み、行の型で返す。where = 欄 → 値(索引の欄の等号の AND・None = 絞らない)/ cursor・limit は ListRows と同じ。
+(defk list-typed [#^ RowType row-type * [where None] [cursor None] [limit DEFAULT-LIST-LIMIT] [where-any None]]
+  {:pre [(: row-type RowType) (: where (| FrozenMap NoneType)) (: cursor (| ListCursor NoneType)) (: limit int)
+         (: where-any (| FrozenMap NoneType))]
+   :post [(: % "TypedPage | Reset | Unreachable | NotIndexed")]}
+  "表の行を 1 頁読み、行の型で返す。where = 欄 → 値(索引の欄の等号の AND・None = 絞らない)/ where-any = 欄 → 値の組(行の欄の値が組の
+   どれかに等しい行 — ListRows.where-any と同じ・None = 絞らない)/ cursor・limit は ListRows と同じ。
    行の型は欄を全部読むので、返す欄の絞り(ListRows.fields)は使わない。答え = TypedPage | Reset | Unreachable | NotIndexed。"
-  (<- answer (ListRows row-type.table :where (if (is where None) (FrozenMap) where) :cursor cursor :limit limit))
+  (<- answer (ListRows row-type.table :where (if (is where None) (FrozenMap) where) :cursor cursor :limit limit
+                       :where-any (if (is where-any None) (FrozenMap) where-any)))
   (if (isinstance answer Page)
       (TypedPage (tuple (gfor row answer.rows (typed-row row-type row))) answer.next-cursor answer.epoch answer.sequence)
       answer))
