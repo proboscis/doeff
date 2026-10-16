@@ -2,9 +2,10 @@
 
 > **Needs components outside `pip install doeff`.** The plugins are built from this repository
 > (see below), and they call the `doeff-indexer` command. `doeff-indexer` 0.1.3 on PyPI gives
-> `doeff run` its auto-discovery, but its Linux x86_64 wheel does not include the command
-> (`doeff-indexer --help` reports "binary not found"). Build `doeff-indexer` from a checkout of
-> this repository instead; this compiles Rust, so install a Rust toolchain (`rustup`) first:
+> `doeff run` its auto-discovery, but none of its wheels (any platform) puts the command where its
+> entry point looks (`doeff-indexer --help` reports "binary not found"); this repository fixes that
+> for the release after 0.1.3. Until then, build `doeff-indexer` from a checkout of this
+> repository; this compiles Rust, so install a Rust toolchain (`rustup`) first:
 
 ```bash
 git clone --depth 1 https://github.com/proboscis/doeff.git
