@@ -2,7 +2,7 @@
 ;;; fake の盤(tests/board_fake.hy)・worker の返し・子の土台が同じ定義を使う(semaphore_model から分けた・#2107)。
 ;;; 型・effect・定数(LeaseOp・SEMAPHORE-PREFIX・FENCE-MARGIN-MS・LEASE-MAX-TTL-MS …)は doeff_cluster.shared.intent.semaphore_model。
 ;;; 期限の時計と担い手の名の綴りの経緯は semaphore_model の頭の註。
-(require doeff-hy.macros [deff val])
+(require doeff-hy.macros [defk deff val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import collections.abc [Mapping])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
@@ -94,6 +94,15 @@
   (if (is row None)
       {}
       (dfor #(token expires) (.items (get row "holders")) :if (> expires now-ms) token expires)))
+
+
+(defk live-instances [row now-ms job]
+  {:pre [(: row (| Mapping None)) (: now-ms int) (: job str)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "行の期限が now より後の担い手のうち、job の process(担い手 = lease-holder job <世代の名>・token = <担い手>/<番号>)の世代の名を、
+   重ねず名の順に並べた列を知るため(退きの保ちの持ち手を coordinator が worker への返事に載せる — card ki-e3531030eb37)。"
+  (val head (lease-holder job ""))
+  (tuple (sorted (sfor token (live-holders row now-ms) :if (.startswith token head)
+                       (get (.rsplit (cut token (len head) None) "/" 1) 0)))))
 
 
 (defn #^ (| int None) lease-full-until [#^ (| dict None) row #^ int now-ms]

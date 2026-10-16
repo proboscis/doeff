@@ -25,13 +25,23 @@
 ;; readyTimeoutSeconds の既定と同じ)。越えたら coordinator が入れ替えを諦め(新を止めて旧を残す — handoff_policy)、Service の status に
 ;; 理由を出す。期限は handoff の Service だけが持つ(recreate の宣言に書けば断る — 効かない欄を黙って受けない)。
 ;; retiredSeconds = 入れ替えで退いた process の寿命の上限(#4072 の D-2・handoff の Service だけ・既定なし)。書いた Service は、新の世代が
-;; Ready と数えられても退いた旧を止めず、旧が自分で終わるか、退いてからこの秒を越えた時に止める(旧が持つ仕事を終わりまで回す)。
+;; Ready と数えられても退いた旧を止めず、旧が自分で終わるか、退いてからこの秒を越えた時に止める(旧が持つ仕事を終わりまで回す — 旧が
+;; 退きの保ち RETIREMENT-HOLD を持つ間は、この秒を越えても止めない・下の註)。
 ;; 書かない Service は今どおり新の Ready で旧を止める(lease を持つ書き手は、旧が止まって lease を返すまで新が書けないため)。
 ;; retiredLimit = 退いた process を同時に残す数の上限 R(正の整数・handoff の Service だけ・既定なし = worker の WorkerPolicy.retired-limit)。
 ;; 退いた process が R に達している間の宣言し直しは、退いた process を止めず、今の process も退かせずに待つ(#4072 の D-3 の改め —
 ;; 退いた process は自分で終わるか寿命の上限でだけ止まる)。長い仕事を持つ退いた process が並ぶ Service は大きい R を書いて待ちを減らす。
 (val HANDOFF-TIMEOUT-SECONDS 300)
 (val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds" "retiredLimit"))
+
+;; 退きの保ち(card ki-e3531030eb37): 寿命の上限 retiredSeconds は、自分で終わらない退いた process(引き継ぎが来ない・固まった)を受け止める
+;; 物で、仕事の長さの上限ではない。退いた process が走っている仕事を終わりまで回す間は、この名の名前付きの lease を取って持つ
+;; (CreateNamedSemaphore RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS → AcquireSemaphore・終えたら ReleaseSemaphore)。持つ間は、退いてから上限を
+;; 越えても worker が止めない(coordinator が期限の内の持ち手の世代の名を worker への返事の JobSpec.retired-held に載せ、worker の
+;; retired-actions が読む)。保ちは子の lease の session が延ばすので、process が止まる・固まると期限で切れ、その拍から上限が今どおり効く。
+;; 持ち手は lease の担い手の名(<job>/<process の世代の名>)で job ごとに分かれるので、行は 1 つ・数は退いた process の数より十分に大きい。
+(val RETIREMENT-HOLD "retirement-hold")
+(val RETIREMENT-HOLD-PERMITS 1024)
 
 
 ;; 報告の reason を coordinator が残す長さ(字)。

@@ -323,6 +323,10 @@
    handoff でなくなった時も止める。退いた process が上限 R に達している間に宣言が変わっても、退いた process は止めない — 今の
    process を退かせる番は handoff-actions が待たせる(#4072 の D-3 の改め: 以前はいちばん古く退いた process を止めて 1 つ空け、その
    process が回していた仕事を切っていた — 2026-10-10 15:01 UTC の本番)。
+   退きの保ち(card ki-e3531030eb37): 寿命の上限は自分で終わらない退いた process の受け止めで、仕事の長さの上限ではない。退いた process
+   が退きの保ち(readiness_model の RETIREMENT-HOLD — 元の job の want.retired-held にその世代の名が在る)を持つ間は、上限を越えても止めない
+   (以前は上限の拍で止め、走っていた仕事を切っていた — 2026-10-16 04:28:49 JST の本番で 6 時間 7 分の仕事)。保ちが無くなれば(返した・
+   延ばしが止まって切れた)、その拍から今どおり止める。
    世代をまたぐ入れ替え(AL-D2): 元の job に印 superseded-by が在れば、新の process は新しい世代の worker の上に在り、この worker の
    上には無い — 印を「新の Ready」と数える(coordinator は新しい世代の process が Ready か、この世代の Pod の止まりが始まった時だけ
    印を付ける)。数えなければ寿命の無い退いた process は止める時が来ず、旧い Pod の preStop が drain の上限まで待った(card ki-7c11722e3621
@@ -334,7 +338,8 @@
                              (or (is-not want.superseded-by None)
                                  (and (is-not current None) (is current.exit-code None) (= current.spec want)
                                       (is-not want.ready-instance None) (= want.ready-instance current.instance))))
-        due (if (is lifetime None) successor-ready (>= (- now (retired-at-of process)) lifetime)))
+        held (and (is-not want None) (in process.instance want.retired-held))
+        due (if (is lifetime None) successor-ready (and (>= (- now (retired-at-of process)) lifetime) (not held))))
   (if (or (is-not record.stopping None)
           (is want None)
           (not want.handoff)

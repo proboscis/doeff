@@ -975,3 +975,51 @@
   (assert (not renewed) "外した担い手の延長は通らない")
   (setv #(_ ok) (! (lease-asked late "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
   (assert ok))
+
+
+;; --- 退きの保ち(card ki-e3531030eb37): 今の世代の worker への返事は、入れ替えの job の退いた process のうち、退きの保ち(名前付きの lease
+;;     RETIREMENT-HOLD)を期限の内に持つ process の世代の名を JobSpec.retired-held に載せる(worker はその process を寿命の上限で止めない)。---
+(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster.shared.intent.readiness_model [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
+
+(val HOLD-AT 5000000)
+
+(defk hold-asked [state op token now]
+  {:pre [(: state ClusterState) (: op str) (: token str) (: now int)] :post [(: % ClusterState)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "退きの保ちへの操作 op を token で 1 つ当てた後の状態を求めるため(数は RETIREMENT-HOLD-PERMITS・期限は LEASE-TTL-MS)。"
+  (val answer (! (lease-write state RETIREMENT-HOLD
+                              (LeaseBody :op op :token token :permits RETIREMENT-HOLD-PERMITS :ttl-ms LEASE-TTL-MS) now)))
+  (assert (. (get answer 2) ok) answer)
+  (get answer 0))
+
+(defk handing-off-on-atlas []
+  {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "入れ替えの job w(寿命の上限 60 秒)と入れ替えでない job k を atlas に置いた coordinator の状態。w の退いた process 0-zzz が
+   退きの保ちを持ち、同じ process が別の lease writer-lock も持つ。別の job other の process も保ちを持つ。"
+  (val w (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True :retired-ms 60000)))
+  (val k (ClusterJob (JobSpec "k" "m" #() "rev")))
+  (val placed (ClusterState #(w k) {"atlas" (! (worker "atlas" HOLD-AT))}
+                            :placements {"w" (Placement "w" "atlas" 1 0) "k" (Placement "k" "atlas" 1 0)}))
+  (val held (! (hold-asked placed "claim" (! (token-of "w" "0-zzz")) HOLD-AT)))
+  (val other (! (hold-asked held "claim" (! (token-of "other" "7-ooo")) HOLD-AT)))
+  (setv #(locked ok) (! (lease-asked other "writer-lock" "claim" (! (token-of "w" "1-aaa")) HOLD-AT)))
+  (assert ok)
+  locked)
+
+(defk held-in-reply [state now]
+  {:pre [(: state ClusterState) (: now int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "atlas への返事の job ごとの retired-held を読むため。"
+  (val reply (! (heartbeat-reply state "atlas" T :now now)))
+  (dfor spec reply.jobs spec.name spec.retired-held))
+
+(deftest test-the-reply-names-the-retired-processes-holding-the-retirement-hold
+  ;; 失敗ケース: 返事に保ちの欄が無く、worker は保ちを持つ退いた process も寿命の上限で止めていた(10-16 04:28:49 JST の本番で 6 時間 7 分
+  ;; 走っていた仕事が切れた)。期限の内の保ちの持ち手だけを、その job の欄に載せる。別の lease・別の job の保ちは数えない。
+  (val state (! (handing-off-on-atlas)))
+  (assert (= (! (held-in-reply state (+ HOLD-AT 100))) {"w" #("0-zzz") "k" #()}))
+  ;; 延ばしが止まって期限を過ぎた保ちは数えない(process が固まった・止まった — worker は寿命の上限で止める)。
+  (assert (= (! (held-in-reply state (+ HOLD-AT LEASE-TTL-MS))) {"w" #() "k" #()}))
+  ;; 返した保ちも数えない。
+  (val released (! (hold-asked state "release" (! (token-of "w" "0-zzz")) (+ HOLD-AT 200))))
+  (assert (= (! (held-in-reply released (+ HOLD-AT 300))) {"w" #() "k" #()})))

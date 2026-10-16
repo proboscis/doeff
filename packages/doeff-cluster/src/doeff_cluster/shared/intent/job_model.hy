@@ -38,6 +38,10 @@
   ;; (WorkerPolicy.retired-limit)。R に達している間の宣言し直しは、退いた process を止めず今の process も退かせずに待つ
   ;; (worker_policy.handoff-actions・#4072 の D-3 の改め)。比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ (| int None) retired-limit (field :default None :compare False))
+  ;; 退きの保ちを持つ退いた process の世代の名(handoff の job だけ・card ki-e3531030eb37 — readiness_model の RETIREMENT-HOLD)。coordinator が
+  ;; 今の世代の worker への返事に、期限の内の保ちの持ち手を名の順で載せる。worker は列に在る退いた process を寿命の上限 retired-ms で
+  ;; 止めない(worker_policy.retired-actions — 保ちが無くなった拍から今どおり)。空 = 誰も持たない。比べない欄。
+  (setv #^ (get tuple #(str ...)) retired-held (field :default #() :compare False))
   ;; 世代をまたぐ入れ替えの印(handoff の job だけ・AL-D2)。同じ名の worker の新しい世代が同じ job の process を Ready にした後、
   ;; coordinator が退いた世代の worker への返事(superseded-reply)に、その Ready の process の世代の名を載せる。退いた世代の worker は
   ;; 今の process を止めずに退かせ(RetireJob — 走っている仕事を終えて自分で終わる・寿命の上限は retired-ms)、名が空いても起こし直さない

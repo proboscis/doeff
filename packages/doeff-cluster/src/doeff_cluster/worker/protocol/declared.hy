@@ -60,6 +60,9 @@
            :retired-ms (.get job "retiredMs")
            ;; 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め — 宣言した handoff の job だけが持つ・無ければ None = worker の既定)。
            :retired-limit (.get job "retiredLimit")
+           ;; 退きの保ちを持つ退いた process の世代の名(card ki-e3531030eb37 — 返事の handoff の job で誰かが持つ時だけ在る・無ければ空 =
+           ;; 寿命の上限で止める)。
+           :retired-held (tuple (.get job "retiredHeld" []))
            ;; 世代をまたぐ入れ替えの印(AL-D2 — 退いた世代への返事の handoff の job だけが持つ・無ければ None = 動かし続ける)。
            :superseded-by (.get job "supersededBy")
            ;; 前の世代が動かしている印(AL-D2f — 前の世代がまだ走っている間の新しい世代への返事の recreate の job だけが持つ)。

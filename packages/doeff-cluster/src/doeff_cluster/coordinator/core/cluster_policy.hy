@@ -1,7 +1,7 @@
 ;;; coordinator の純粋な判断。宣言された job・task・worker の生存・今の割り当て・時刻から、次の割り当てを導く。
 ;;; HTTP の要求 1 件への返事も、状態と要求と時刻から (次の状態 status 本文) を返す純粋な関数にする。I/O はしない。
 ;;; 割り当ては安定させる: 担い手が移し替えの期限内に生きていれば動かさない。
-(require doeff-hy.macros [defk deff val])
+(require doeff-hy.macros [defk deff val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import functools)
@@ -27,7 +27,8 @@
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
-(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key drop-holders lease-holder holder-tokens-prefix live-instances])
+(import doeff_cluster.shared.intent.readiness_model [RETIREMENT-HOLD])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
@@ -1849,7 +1850,15 @@
   (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.lease-ms) (frozenset)))
   ;; 前の世代の job をまだ受け取れない間は、worker が Pod の ready の file を書かない(AL-D2k — handover-pending)。
   (val pending (and (is-not boot None) (> now 0) (handover-pending state name boot now timing ready-instances)))
-  (HeartbeatReply :jobs (tuple (gfor spec (jobs-for state name ready-instances)
+  ;; 退きの保ち(card ki-e3531030eb37 — readiness_model の RETIREMENT-HOLD): 入れ替えの job ごとに、期限の内の保ちの持ち手の世代の名を
+  ;; 載せる(worker は列に在る退いた process を寿命の上限で止めない)。退いた世代への返事(superseded-reply)には載せない — その世代の
+  ;; 退いた process は Pod の止まりの drain の上限(寿命の上限 + 5 分)の内で終わる。
+  (val hold-row (.get state.board (semaphore-key RETIREMENT-HOLD)))
+  (var held-specs #())
+  (for [spec (jobs-for state name ready-instances)]
+    (<- held tuple (live-instances (if (and spec.handoff (is-not hold-row None)) hold-row.value None) now spec.name))
+    (:= held-specs (+ held-specs #((if held (replace spec :retired-held held) spec)))))
+  (HeartbeatReply :jobs (tuple (gfor spec held-specs
                                      :setv kept (if (in spec.name marked) (replace spec :keep-when-cut-off True) spec)
                                      (if (and (in spec.name elder) (not spec.handoff) (not spec.once))
                                          (replace kept :elder-runs True)

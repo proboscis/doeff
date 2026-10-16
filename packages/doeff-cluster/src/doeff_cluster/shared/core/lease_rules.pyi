@@ -1,5 +1,6 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = lease_rules.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
+from doeff import Program as _Program
 from collections.abc import Mapping as Mapping
 from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
 from doeff_cluster.shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMAPHORE_PREFIX
@@ -30,6 +31,9 @@ def semaphore_key(name: str) -> str:
     ...
 
 def live_holders(row: Mapping[str, object] | None, now_ms: int) -> dict[str, int]:
+    ...
+
+def live_instances(row: Mapping | None, now_ms: int, job: str) -> _Program[tuple, object]:
     ...
 
 def lease_full_until(row: dict | None, now_ms: int) -> int | None:

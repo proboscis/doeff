@@ -440,6 +440,23 @@
   (val old (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
   (assert (= (! (plan 2000 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))
 
+(deftest test-a-retired-process-holding-the-retirement-hold-outlives-its-lifetime
+  ;; 失敗ケース(card ki-e3531030eb37 — 10-16 04:28:49 JST の本番): 上に載る系の入れ替えの job の退いた process は、走っている仕事を
+  ;; 終わりまで回す(仕事の長さに上限を置かない系)が、退いてから寿命の上限(retiredSeconds 6 時間)を越えた拍で SIGTERM され、6 時間 7 分
+  ;; 走っていた仕事が切れた。退いた process が退きの保ち(名前付きの lease RETIREMENT-HOLD — coordinator が持ち手の世代の名を
+  ;; JobSpec.retired-held に載せる)を持つ間は、上限を越えても止めない。保ちが無くなれば(返した・延ばしが止まって切れた)、次の拍で今どおり止める。
+  (val lived (replace H2 :ready-instance "2-new" :retired-ms 60000))
+  (val old (replace (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))) :retired-at-ms 1000))
+  (val w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2))))
+  (val stop #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))
+  (assert (= (! (plan 61000 #((replace lived :retired-held #("1-old"))) w {} POLICY)) #())
+          "保ちを持つ間は、退いてから上限を越えても止めない")
+  (assert (= (! (plan 61000 #((replace lived :retired-held #("1-other"))) w {} POLICY)) stop)
+          "他の process の保ちでは残さない")
+  (assert (= (! (plan 61000 #(lived) w {} POLICY)) stop) "保ちが無くなれば止める")
+  ;; 保ちは寿命の上限だけを延ばす — 元の job が宣言から消えた時は今どおりすぐ止める。
+  (assert (= (! (plan 61000 #() (! (world old)) {} POLICY)) stop) "宣言から消えれば保ちに依らず止める"))
+
 
 (deftest test-a-recreate-job-without-an-entry-probe-stops-the-old-process-once-the-new-tree-is-ready
   ;; handoff でない job(入口の検めの対象でない素の entry)は、新しい版の木が揃うまで旧を動かしたまま準備だけを出し、揃ったら旧を名から
