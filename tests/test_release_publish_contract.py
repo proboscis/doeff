@@ -191,3 +191,85 @@ def test_independent_public_packages_have_documented_dist_verification() -> None
     assert "uv run python tools/verify_dist_metadata.py" in runbook
     assert "tag name: `<package>/vX.Y.Z`" in runbook
     assert independent_release_packages
+
+
+PYPI_ENVIRONMENT = "pypi"
+PYPI_TOKEN_PASSWORD = "${{ secrets.PYPI_API_TOKEN }}"
+
+
+def _upload_steps(job: dict) -> list[dict]:
+    return [step for step in job.get("steps", []) if step.get("uses", "").startswith(PYPI_UPLOAD_ACTION)]
+
+
+def _environment_name(job: dict) -> str | None:
+    environment = job.get("environment")
+    return environment.get("name") if isinstance(environment, dict) else environment
+
+
+def _local_reusable_workflow(job: dict) -> Path | None:
+    uses = job.get("uses", "")
+    return ROOT / uses if uses.startswith("./.github/workflows/") else None
+
+
+def test_every_pypi_upload_job_can_use_trusted_publishing() -> None:
+    """Trusted Publishing needs an OIDC token; the token path stays until the secret is removed.
+
+    The action uses the API token while secrets.PYPI_API_TOKEN is set and Trusted Publishing
+    (OIDC) when it is empty, so every upload passes exactly that secret and nothing else.
+    """
+    workflows = {workflow.name: _workflow_jobs(workflow) for workflow in WORKFLOWS.glob("*.yml")}
+    upload_jobs = {
+        f"{workflow}:{name}": job
+        for workflow, jobs in workflows.items()
+        for name, job in jobs.items()
+        if _uploads_to_pypi(job)
+    }
+
+    assert upload_jobs
+    for name, job in upload_jobs.items():
+        assert job.get("permissions", {}).get("id-token") == "write", name
+        assert _environment_name(job) == PYPI_ENVIRONMENT, name
+        for step in _upload_steps(job):
+            assert step["with"].get("password") == PYPI_TOKEN_PASSWORD, name
+            assert step["with"].get("user", "__token__") == "__token__", name
+
+
+def test_publish_workflow_uploads_native_packages_from_its_own_jobs() -> None:
+    """PyPI rejects Trusted Publishing from inside a reusable workflow.
+
+    publish.yml therefore calls build-vm.yml / build-indexer.yml only to build, and uploads
+    their wheels from a job of its own.
+    """
+    jobs = _workflow_jobs(PUBLISH_WORKFLOW)
+
+    for name, job in jobs.items():
+        if _local_reusable_workflow(job) is not None:
+            assert job.get("with", {}).get("publish") is False, name
+            assert "secrets" not in job, f"{name} hands secrets to a build-only call"
+
+    for package in sorted(NATIVE_ROOT_RELEASE_PACKAGES):
+        assert _uploads_to_pypi(jobs[f"publish-{package}"]), package
+
+
+def test_reusable_calls_grant_the_id_token_their_nested_uploads_request() -> None:
+    """GitHub caps a called workflow's permissions at its caller's and refuses the run otherwise."""
+    jobs = _workflow_jobs(PUBLISH_WORKFLOW)
+
+    for name, job in jobs.items():
+        workflow = _local_reusable_workflow(job)
+        if workflow is None:
+            continue
+        nested = _workflow_jobs(workflow)
+        if any(nested_job.get("permissions", {}).get("id-token") == "write" for nested_job in nested.values()):
+            assert job.get("permissions", {}).get("id-token") == "write", name
+
+
+def test_runbook_documents_both_pypi_credentials() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "## PyPI Credentials" in runbook
+    assert "Trusted Publishing" in runbook
+    assert "pending publisher" in runbook
+    assert "| Workflow name | `publish.yml` |" in runbook
+    assert f"| Environment name | `{PYPI_ENVIRONMENT}` |" in runbook
+    assert "`PYPI_API_TOKEN`" in runbook

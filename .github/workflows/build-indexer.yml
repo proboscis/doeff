@@ -258,11 +258,16 @@ jobs:
           name: doeff-indexer-sdist
           path: packages/doeff-indexer/dist/*.tar.gz
 
+  # Uploads only from this workflow's own doeff-indexer-v* tag or dispatch: PyPI rejects Trusted
+  # Publishing from a reusable workflow, so publish.yml calls this one with publish: false.
   publish:
     name: Publish to PyPI
     needs: [check-version-unpublished, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || inputs.publish
+    environment: pypi
+    permissions:
+      id-token: write
     steps:
       - name: Download doeff-indexer artifacts
         uses: actions/download-artifact@v4
