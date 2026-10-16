@@ -134,6 +134,7 @@ KEY_FILES = {
     "doeff_vm/**/*.py": "doeff_vm/__init__.py",
     "doeff_vm/**/*.pyi": "doeff_vm/__init__.pyi",
     "doeff_vm/py.typed": "doeff_vm/py.typed",
+    "LICENSE": "LICENSE",
     "../doeff-vm-core/pyproject.toml": "../doeff-vm-core/pyproject.toml",
     "../doeff-vm-core/Cargo.toml": "../doeff-vm-core/Cargo.toml",
     "../doeff-vm-core/Cargo.lock": "../doeff-vm-core/Cargo.lock",
@@ -240,6 +241,16 @@ def test_the_cache_keys_cover_every_path_crate_input() -> None:
     matched = {Path(hit).resolve() for pattern in _file_keys() for hit in glob.glob(str(VM / pattern), recursive=True)}
     missing = [str(path.relative_to(REPO)) for crate in _path_crates(VM) for path in _crate_inputs(crate) if path.resolve() not in matched]
     assert not missing, f"doeff-vm の cache-keys に無い、path 依存の crate の組みに効く file: {missing}"
+
+
+def test_the_cache_keys_cover_the_license_files() -> None:
+    # license-files は保存先の wheel の dist-info に入る — 鍵に無いと、LICENSE だけを替えた後も前の LICENSE の wheel を引く。
+    matched = {Path(hit).resolve() for pattern in _file_keys() for hit in glob.glob(str(VM / pattern), recursive=True)}
+    license_files = tomllib.loads(VM_PYPROJECT.read_text(encoding="utf-8"))["project"]["license-files"]
+    found = [Path(hit) for pattern in license_files for hit in glob.glob(str(VM / pattern), recursive=True)]
+    assert found, f"doeff-vm の license-files に当たる file が無い: {license_files}"
+    missing = [str(path.relative_to(REPO)) for path in found if path.resolve() not in matched]
+    assert not missing, f"doeff-vm の cache-keys に無い license-files: {missing}"
 
 
 def test_the_cache_keys_cover_the_build_entry_file_and_its_build_env_names() -> None:
