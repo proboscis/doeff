@@ -290,6 +290,13 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 prefix = "docs/05-error-handling.md"
 tests = ["tests/test_docs_entry_path_examples.py"]
 
+# 11 章(Kleisli)を書き換えた便は、引数の渡り方の節の例を走らせて印字を注記と比べる検と、旧い自動の解きの説明が戻らない検を
+# 払う(card ki-7277427f6d8e)。例は file に書いて走らせるので、import の逆依存では選ばれない。
+# 秒は 44 秒(6 本・子 3 本・起動を含む壁時計・load 約 115 の下・2026-10-17 会話の Pod — 検の本体は計 1.5 秒)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/11-kleisli-arrows.md"
+tests = ["tests/test_docs_kleisli_arguments.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
 tests = [

@@ -9,7 +9,7 @@ pure call-time macro expansion and emits an `Expand` DoExpr directly.
 - [Call-Time Macro Expansion](#call-time-macro-expansion)
 - [Why Expand Is a Macro](#why-expand-is-a-macro)
 - [KPC Non-Effect Invariant](#kpc-non-effect-invariant)
-- [Annotation-Aware Argument Classification](#annotation-aware-argument-classification)
+- [Arguments Are Passed As Given](#arguments-are-passed-as-given)
 - [`@do` Handler Authoring Contract](#do-handler-authoring-contract)
 - [Composition via Nested `@do`](#composition-via-nested-do)
 - [Migration Note](#migration-note)
@@ -39,12 +39,13 @@ Conceptually:
 When you call a `@do`-decorated function, expansion happens synchronously at Python call
 time:
 
-1. Load cached auto-unwrap strategy (computed once at decoration time).
-2. Classify each argument using annotation-aware `should_unwrap`.
-3. Convert each argument to a DoExpr node.
-4. Return an `Expand(...)` DoExpr.
+1. Keep the positional and keyword arguments exactly as given.
+2. Return one `Call` node (a subclass of `Expand`) that holds the function and those
+   arguments (`call_expr.args`, `call_expr.kwargs`).
 
-No handlers are consulted during this expansion. The transformation is pure.
+No handlers are consulted during this expansion, and no argument is run or converted.
+The transformation is pure. The VM calls the function with the same arguments when it
+evaluates the `Call`.
 
 ## Why Expand Is a Macro
 
@@ -68,50 +69,81 @@ in `docs/revision-log.md` so this chapter stays focused on the current model.
 Calling a `@do`-decorated function returns an `Expand` DoExpr directly, and the VM evaluates that
 DoExpr normally.
 
-## Annotation-Aware Argument Classification
+## Arguments Are Passed As Given
 
-`should_unwrap` is derived from parameter annotations.
+Calling a `@do`-decorated function does not run, resolve, or convert its arguments. The
+body receives the same objects the caller passed:
 
-### `should_unwrap=True` (auto-resolve at runtime)
+| Argument value | What the body receives |
+| --- | --- |
+| Plain value (`5`, `"text"`, a dict) | The value |
+| Effect (`Ask("x")`) | The effect object itself, not its result |
+| Program (`Pure(10)`, the result of calling a `@do` function) | The program object itself, not its result |
 
-- Plain annotations like `int`, `str`, `dict`, user classes
-- Unannotated parameters
+Parameter annotations do not change this. `x: int` does not make doeff resolve an effect
+passed as `x`, and a `Program[T]` or `Effect` annotation is not needed to keep an object
+as data. Only static type checkers read the annotations.
 
-### `should_unwrap=False` (pass object through as data)
+To use the result of an effect or a program, `yield` it:
 
-- `Program`, `Program[T]`
-- `DoCtrl`, `DoCtrl[T]`
-- `Effect`, `Effect[T]`, `EffectBase` subclasses
-- `DoExpr`, `DoExpr[T]`
-- Wrapped forms like `Optional[Program[T]]`, `Program[T] | None`,
-  `Annotated[Program[T], ...]`
-
-### Value-Type to DoExpr Expansion
-
-| Argument value | `should_unwrap` | Expansion |
-| --- | --- | --- |
-| `EffectBase` instance | `True` | `Perform(arg)` |
-| `DoCtrlBase` instance | `True` | `arg` (already DoCtrl) |
-| Plain value | `True` | `Pure(arg)` |
-| `EffectBase` instance | `False` | `Pure(arg)` |
-| `DoCtrlBase` instance | `False` | `Pure(arg)` |
-| Plain value | `False` | `Pure(arg)` |
+- in the caller, then pass the value (the usual style: the function takes plain values), or
+- in the body, when the function takes the effect or program as data on purpose.
 
 ### Example
 
 ```python
-from doeff import Ask, Pure, do
-from doeff import Program
+from doeff import Ask, Pure, do, run
+from doeff_core_effects.handlers import reader
+
 
 @do
-def use_values(x: int, raw_program: Program):
+def echo(x: int):
+    return x
+
+
+@do
+def use_values(x, raw_program):
+    x_value = yield x
     y = yield raw_program
-    return f"{x}:{y}"
+    return f"{x_value}:{y}"
+
 
 call_expr = use_values(Ask("x"), Pure(10))
-# x: int -> should_unwrap=True -> Ask("x") becomes Perform(Ask("x"))
-# raw_program: Program -> should_unwrap=False -> Pure(10) becomes Pure(...)
+print(call_expr.args)  # (Ask('x'), Pure(10))
+
+with_env = reader(env={"x": 5})
+print(run(with_env(echo(Ask("x")))))  # Ask('x')
+print(run(with_env(call_expr)))  # 5:10
 ```
+
+- `call_expr.args` keeps `Ask("x")` and `Pure(10)` as they were passed.
+- `echo` returns the `Ask` object itself, although its parameter is annotated `int`.
+- `use_values` yields both arguments in its body, so it gets `5` from the reader handler
+  and `10` from `Pure(10)`.
+
+### Resolving in the Caller
+
+```python
+from doeff import Ask, do, run
+from doeff_core_effects.handlers import reader
+
+
+@do
+def add_one(x: int):
+    return x + 1
+
+
+@do
+def caller():
+    x = yield Ask("x")
+    return (yield add_one(x))
+
+
+print(run(reader(env={"x": 5})(caller())))  # 6
+```
+
+`caller` yields `Ask("x")` first and passes the plain value `5`, so `add_one` receives
+the `int` its annotation names.
 
 ## `@do` Handler Authoring Contract
 
@@ -178,20 +210,12 @@ def say_hello(name: str):
     return (yield greet("Hello", name))
 ```
 
-### Varargs Auto-Unwrap at Composition Boundaries
+### Varargs at Composition Boundaries
 
-For `*args` and `**kwargs`, unwrap policy is computed once from the varargs
-parameter annotation and then applied to each value crossing that call boundary:
-
-- `*args`: one `var_positional` policy for all extra positional arguments
-- `**kwargs`: one `var_keyword` policy for all unmatched keyword arguments
-
-Boundary rules to keep in mind:
-
-- Unannotated varargs default to `should_unwrap=True`, so effect/program values in
-  varargs are resolved at that call boundary.
-- Annotating varargs as `Program[...]` or `Effect[...]` sets `should_unwrap=False`,
-  so those values are passed through as data.
+`*args` and `**kwargs` follow the same rule as named parameters
+([Arguments Are Passed As Given](#arguments-are-passed-as-given)): every extra positional
+or keyword argument reaches the body as given, whatever the annotation. Yield each effect
+or program that the body needs the result of.
 
 ## Migration Note
 
@@ -200,9 +224,10 @@ This chapter documents only the current call-time macro architecture.
 
 ## Best Practices
 
-- Prefer explicit annotations for parameters that should not auto-unwrap.
-- Use `Program[...]`/`Effect[...]` annotations when you need raw objects in the
-  function body.
+- Yield effects and programs in the caller, and pass plain values to `@do` functions.
+- When a function takes an effect or program as data, annotate the parameter with the
+  type callers pass (`Effect` for an effect, `Program[...]` for a program) and `yield` it
+  in the body where the result is needed.
 - Treat calling a `@do`-decorated function as macro expansion that constructs a DoExpr
   tree for VM evaluation.
 - Keep reasoning at the DoExpr level: each call produces an `Expand` node.
@@ -216,7 +241,7 @@ This chapter documents only the current call-time macro architecture.
 | `__call__` result | `Expand` DoExpr |
 | Resolution path | Pure expansion + VM eval |
 | Handler dependency | `Expand` executes as regular DoExpr |
-| Argument policy | Annotation-aware `should_unwrap` |
+| Argument policy | Passed as given (annotations do not resolve arguments) |
 | Composition | Nested `@do` + `yield` |
 
 ## Next Steps

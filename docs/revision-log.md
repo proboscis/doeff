@@ -3,6 +3,21 @@
 Historical and migration notes are collected here so the main documentation chapters stay focused on
 the current architecture and APIs.
 
+## ki-7277427f6d8e (2026-10-17)
+
+### `@do` arguments are passed as given
+
+`docs/11-kleisli-arrows.md` described annotation-aware auto-unwrap: a `should_unwrap` flag
+read from each parameter annotation, a table that turned effect arguments into
+`Perform(arg)`, and varargs unwrap policies. The runtime has not done this since the VM
+rewrite of 2026-03-25 (`926341cc0` removed `doeff/kleisli.py`, which held the unwrap
+strategy).
+In doeff 0.5.0 the `Call` node keeps the arguments exactly as given, so the chapter's
+example returned `"Ask('x'):10"` instead of the `"5:10"` it described.
+
+The chapter now says that arguments reach the body as given and that a function yields an
+effect or program argument to use its result (section "Arguments Are Passed As Given").
+
 ## DA7-004 (2026-02-17)
 
 ### Safe to Try
