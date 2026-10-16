@@ -38,12 +38,17 @@ def verify_image_manifest(expected_images: set[str]) -> None:
             assert (SOURCE / "imagegen" / prompt).read_text().strip()
 
 
+def kinds_of(caption: dict) -> tuple[str, ...]:
+    """記事が載せる図の種類。概念図・処理図の2枚と、台帳のextra_kindsに書いた図(開発の記録の数の図など)。"""
+    return ("concept", "flow", *caption.get("extra_kinds", ()))
+
+
 def verify() -> None:
     articles = {path.stem.removeprefix("doeff-"): path for path in SOURCE.glob("doeff-*.md")}
     captions = json.loads((SOURCE / "visuals/captions.json").read_text())
-    assert len(articles) == 23
+    assert len(articles) == 24
     assert set(articles) == set(captions)
-    expected_images = {f"{slug}-{kind}" for slug in articles for kind in ("concept", "flow")}
+    expected_images = {f"{slug}-{kind}" for slug in articles for kind in kinds_of(captions[slug])}
     expected_images.add("main-hero")
     image_directory = ROOT / "images/zenn-use-cases-v0/generated"
     assert {path.stem for path in image_directory.glob("*.png")} == expected_images
@@ -52,7 +57,7 @@ def verify() -> None:
     for slug, path in articles.items():
         text = path.read_text()
         assert "published: false" in text
-        for kind in ("concept", "flow"):
+        for kind in kinds_of(captions[slug]):
             stem = f"{slug}-{kind}"
             assert f"/images/zenn-use-cases-v0/generated/{stem}.png" in text
             assert captions[slug][f"{kind}_title"] in text

@@ -137,5 +137,16 @@
     "concept_caption": "awaitの先は、呼んだ実装で決まります。yieldの先は、外側に付けたハンドラが決めます。",
     "flow_title": "ストリームは、1断片ずつdoeffへ戻す",
     "flow_caption": "収集のループは@doに残します。次の1断片を待つ所だけを、Awaitで非同期の実装へつなぎます。"
+  },
+  "fleet": {
+    "concept_title": "1人と最大50の会話の間に、3つの仕組みを置く",
+    "concept_caption": "人は目標とcardを書き、判断が要る時だけ答えます。配り役が上限50まで会話を起こし、会話は自分の変更をマージの列へ載せます。",
+    "flow_title": "同じpick_cardsを、本番と模擬のハンドラで動かす",
+    "flow_caption": "模擬では、メモリの盤と仮想の時計が答えます。90分の配りの流れが、待たずに終わります。",
+    "extra_kinds": [
+      "commits"
+    ],
+    "commits_title": "35日の、日ごとのcommitの数",
+    "commits_caption": "3つのリポジトリのmainへ入ったcommitを、日ごとに数えました。範囲は2026年9月12日〜10月16日(日本時間)の35日です。"
   }
 }

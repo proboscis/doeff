@@ -49,3 +49,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - メインの3枚（main-hero・main-concept・main-flow）も、週1の仕上げに合わせて手で書いたSVGから作り直した。
 - 正本と作り方は[main-svg-source.txt](main-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
 - これで残りは40枚。
+
+## 開発の記録の3枚をSVGで描く（2026-10-17追記）
+
+- 5週目の開発の記録（doeff-fleet.md）は、概念図・処理図に、35日のcommitの数の図を足して3枚にした。
+- 正本と作り方は[fleet-svg-source.txt](fleet-svg-source.txt)に書いた。`tool`は時間の記事と同じ。
+- 3枚目はcaptions.jsonの`extra_kinds`に書き、`verify_publication.py`が台帳と本文を照らす。

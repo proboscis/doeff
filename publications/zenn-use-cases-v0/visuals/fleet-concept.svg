@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1420" viewBox="0 0 1200 1420" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1420" fill="#ffffff"/>
+  <text x="600" y="70" text-anchor="middle" font-size="44" font-weight="bold" fill="#111827">1人と最大50の会話の間に、3つの仕組みを置く</text>
+
+  <!-- 人 -->
+  <rect x="60" y="110" width="720" height="110" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="420" y="153" text-anchor="middle" font-size="32" font-weight="bold" fill="#c2410c">人(1人)</text>
+  <text x="420" y="198" text-anchor="middle" font-size="26" fill="#111827">目標とcardを書く・問われた時だけ答える</text>
+
+  <line x1="420" y1="220" x2="420" y2="280" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="444" y="258" font-size="26" fill="#111827">cardを書く</text>
+
+  <!-- ① 作業ボード -->
+  <rect x="60" y="285" width="720" height="195" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="90" y="327" font-size="30" font-weight="bold" fill="#111827">① 作業ボード</text>
+  <text x="90" y="367" font-size="26" fill="#111827">1枚 = 本文・受け入れの条件・先に終わるべきcard</text>
+  <rect x="90" y="385" width="200" height="42" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+  <text x="190" y="414" text-anchor="middle" font-size="24" fill="#111827">todo 326枚</text>
+  <rect x="310" y="385" width="200" height="42" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+  <text x="410" y="414" text-anchor="middle" font-size="24" fill="#111827">doing 33枚</text>
+  <rect x="530" y="385" width="220" height="42" rx="10" fill="#ffffff" stroke="#9ca3af" stroke-width="2"/>
+  <text x="640" y="414" text-anchor="middle" font-size="24" fill="#111827">done 3,058枚</text>
+  <text x="90" y="464" font-size="22" fill="#4b5563">枚数は2026年10月17日2時に読んだ値</text>
+
+  <line x1="420" y1="480" x2="420" y2="540" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="444" y="518" font-size="26" fill="#111827">配れるcardだけ</text>
+
+  <!-- ② 配り役 -->
+  <rect x="60" y="545" width="720" height="150" rx="18" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="90" y="587" font-size="30" font-weight="bold" fill="#0f766e">② 配り役(doeffのProgram)</text>
+  <text x="90" y="631" font-size="26" fill="#111827">先のcardが終わったtodoを、空きの数だけ配る</text>
+  <text x="90" y="673" font-size="26" font-weight="bold" fill="#0f766e">同時に走る会話は、上限50まで</text>
+
+  <line x1="420" y1="695" x2="420" y2="755" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="444" y="733" font-size="26" fill="#111827">会話を起こして頼む</text>
+
+  <!-- 会話 -->
+  <rect x="60" y="760" width="720" height="315" rx="18" fill="#eff6ff" stroke="#2a78d6" stroke-width="3"/>
+  <text x="90" y="805" font-size="30" font-weight="bold" fill="#111827">会話(Claude Codeのsession)最大50</text>
+    <rect x="115" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="177" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="239" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="301" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="363" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="425" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="487" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="549" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="611" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="673" y="825" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="115" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="177" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="239" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="301" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="363" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="425" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="487" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="549" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="611" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="673" y="859" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="115" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="177" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="239" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="301" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="363" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="425" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="487" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="549" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="611" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="673" y="893" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="115" y="927" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="177" y="927" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="239" y="927" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="301" y="927" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="363" y="927" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="425" y="927" width="52" height="24" rx="5" fill="#2a78d6"/>
+    <rect x="487" y="927" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="549" y="927" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="611" y="927" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="673" y="927" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="115" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="177" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="239" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="301" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="363" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="425" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="487" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="549" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="611" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+    <rect x="673" y="961" width="52" height="24" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+  <rect x="115" y="1002" width="26" height="22" rx="5" fill="#2a78d6"/>
+  <text x="151" y="1022" font-size="24" fill="#111827">仕事中</text>
+  <rect x="250" y="1002" width="26" height="22" rx="5" fill="#ffffff" stroke="#2a78d6" stroke-width="2"/>
+  <text x="286" y="1022" font-size="24" fill="#111827">空き(塗りの数は例)</text>
+  <text x="115" y="1058" font-size="24" fill="#111827">各会話: ブランチを切る → commit → push</text>
+
+  <line x1="420" y1="1075" x2="420" y2="1135" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="444" y="1113" font-size="26" fill="#111827">変更を列に載せる</text>
+
+  <!-- ③ マージの列 -->
+  <rect x="60" y="1140" width="720" height="140" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="90" y="1182" font-size="30" font-weight="bold" fill="#111827">③ マージの列</text>
+  <text x="90" y="1224" font-size="26" fill="#111827">衝突の印だけを見て、mainの先端へ入れる</text>
+  <text x="90" y="1262" font-size="24" fill="#4b5563">テストは別の便で1日1回 → 安定版のブランチ</text>
+
+  <line x1="420" y1="1280" x2="420" y2="1330" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="330" y="1335" width="180" height="60" rx="30" fill="#111827"/>
+  <text x="420" y="1375" text-anchor="middle" font-size="30" font-weight="bold" fill="#ffffff">main</text>
+
+  <!-- 戻りの矢印: 報告して card を done へ -->
+  <path d="M780,880 L860,880 L860,370 L786,370" fill="none" stroke="#0f766e" stroke-width="3" stroke-dasharray="10 7" marker-end="url(#arrow-teal)"/>
+  <text x="880" y="600" font-size="26" fill="#0f766e">報告して、</text>
+  <text x="880" y="636" font-size="26" fill="#0f766e">cardをdoneへ</text>
+
+  <!-- 戻りの矢印: 判断が要る時だけ問う -->
+  <path d="M780,950 L1140,950 L1140,165 L786,165" fill="none" stroke="#c2410c" stroke-width="3" stroke-dasharray="10 7" marker-end="url(#arrow-orange)"/>
+  <text x="800" y="148" font-size="26" fill="#c2410c">判断が要る時だけ問う</text>
+  <text x="880" y="760" font-size="24" fill="#4b5563">返事の終わりに</text>
+  <text x="880" y="792" font-size="24" fill="#4b5563">待っている物を</text>
+  <text x="880" y="824" font-size="24" fill="#4b5563">2行で書く</text>
+</svg>
