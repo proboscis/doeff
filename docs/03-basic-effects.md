@@ -72,6 +72,10 @@ result = run(scheduled(prog))
 
 When an environment value is a `Program`, it is evaluated lazily on first access. The result is cached for subsequent `Ask` calls with the same key:
 
+> This example uses `Delay` from `doeff-time`. `pip install doeff` does not install it and it is
+> not on PyPI; install it from a checkout as shown in
+> [Pages That Need Other Components](index.md#pages-that-need-other-components).
+
 ```python
 from doeff_time.effects.time import Delay
 

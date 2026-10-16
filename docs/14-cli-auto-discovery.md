@@ -1,5 +1,16 @@
 # 14. CLI Auto-Discovery
 
+> **Needs a component outside `pip install doeff`.** Auto-discovery uses `doeff-indexer`, which
+> is on PyPI:
+
+```bash
+pip install doeff doeff-indexer
+```
+
+> Without `doeff-indexer`, `doeff run` without `--interpreter` silently falls back to its
+> built-in default interpreter. Passing `--interpreter` (and `--env`) explicitly works with
+> `pip install doeff` alone.
+
 Automatically discover and use default interpreters and environments when running programs with the `doeff run` command.
 
 ## Table of Contents
