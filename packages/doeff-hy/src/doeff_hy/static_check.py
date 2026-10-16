@@ -1075,6 +1075,20 @@ def pyright_threads(configured: str | None, declared: int | None = None) -> int:
     return wanted if declared is None else min(wanted, declared)
 
 
+def thread_clamp_note(configured: str | None, declared: int | None) -> str | None:
+    """環境変数の指定が宣言の並走の数で頭打ちになる時の名乗りの 1 行(純粋・頭打ちでなければ None)。頭打ちは指定を無言で捨てる
+    形だった — 日次の hy-type-trend が env を 4 にしても 4 回とも 2 本で走り、別の会話が原因を探し当てるまで見えなかった
+    (agora-controllers 93c94c6f9・card ki-1bfe2c42dce6)。値の決め方は pyright_threads のまま、見えるようにするだけ。"""
+    asked = pyright_threads(configured)
+    used = pyright_threads(configured, declared)
+    if used == asked:
+        return None
+    return (
+        f"{PYRIGHT_THREADS_ENV}={asked} は機体の検の枠の宣言の並走の数 {declared} を越えるので pyright を {used} 本で撃つ"
+        "(thread は pyright が起こす子の process — 宣言を越えて上げる口は無い)"
+    )
+
+
 def run_pyright(
     root: Path,
     settings: dict[str, object],
@@ -1311,6 +1325,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
         threads = pyright_threads(pyright_threads_setting(), slot.width)  # 展開の前に判じる(誤った値で展開の秒を払わない)
+        if (clamped := thread_clamp_note(pyright_threads_setting(), slot.width)) is not None:
+            print(f"doeff-hy-check: {clamped}", file=sys.stderr)
         closure = project_closure(root, roots, report, cache_dir, expander_limit(slot.width))
         checked = run_pyright(
             root, settings, closure.projections, report, args.pyright, args.python, threads
