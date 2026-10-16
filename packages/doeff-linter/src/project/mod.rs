@@ -8,6 +8,7 @@
 
 pub mod affected_tests;
 pub mod architecture;
+pub mod bulk_read;
 pub mod explain;
 pub mod facts_cache;
 pub mod facts;
