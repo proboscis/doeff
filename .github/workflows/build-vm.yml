@@ -37,11 +37,18 @@ jobs:
       - name: Check doeff-vm against PyPI
         run: uv run --no-project python tools/check_pypi_unpublished.py packages/doeff-vm
 
+  # aarch64 builds natively on an arm runner. Cross-compiling it on an x86_64 runner uses
+  # rust-cross/manylinux2014-cross, whose GCC 4.8 rejects the -Wno-error=date-time flag that
+  # libmimalloc-sys passes; the native manylinux2014_aarch64 image keeps the same wheel tags.
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            runner: ubuntu-latest
+          - target: aarch64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -60,10 +67,14 @@ jobs:
           path: packages/doeff-vm/dist/*.whl
 
   build-linux-freethreaded:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            runner: ubuntu-latest
+          - target: aarch64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - name: Build free-threaded wheels
