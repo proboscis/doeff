@@ -144,7 +144,7 @@ def test_the_next_record_keeps_carried_rows_and_names_refresh_mismatches() -> No
     assert summary.mismatched == ("b.hy",)
     assert (summary.checked, summary.carried) == (2, 1)
     text = static_carry.carry_text(record, summary)
-    assert json.loads(text)["summary"]["refreshMismatches"] == 1
+    assert json.loads(text)["summary"]["refresh_mismatches"] == 1
 
 
 def test_the_carry_file_round_trips_and_a_broken_one_is_unreadable(tmp_path: Path) -> None:
@@ -211,6 +211,25 @@ def test_a_declaration_reached_through_a_signature_is_an_input(tree: _Tree) -> N
     tree.write("pkg/impl.py", "from pkg.kinds import Size\n\ndef used(x: int) -> 'Size':\n    return Size()\n")
     first = tree.digest()
     tree.write("pkg/kinds.py", "class Size:\n    n: str\n")
+    assert tree.digest() != first
+
+
+def test_a_cycle_of_declarations_still_carries_a_change_across_it(tree: _Tree) -> None:
+    """宣言が輪になっても(a.used の署名が b.Size を読み、b.Size の method が a.used を呼ぶ)、輪の中の宣言の変更は使い手へ伝わり、輪の中の
+    関数の本体だけの変更は伝わらない。"""
+    tree.write("pkg/__init__.py", "")
+    tree.write("pkg/impl.py", "from pkg.kinds import Size\n\ndef used(x: 'Size') -> int:\n    return 1\n")
+    tree.write(
+        "pkg/kinds.py",
+        "from pkg.impl import used\n\nclass Size:\n    n: int\n\n    def twice(self) -> int:\n        return used(self) * 2\n",
+    )
+    first = tree.digest()
+    tree.write("pkg/impl.py", "from pkg.kinds import Size\n\ndef used(x: 'Size') -> int:\n    return 2\n")
+    assert tree.digest() == first
+    tree.write(
+        "pkg/kinds.py",
+        "from pkg.impl import used\n\nclass Size:\n    n: str\n\n    def twice(self) -> int:\n        return used(self) * 2\n",
+    )
     assert tree.digest() != first
 
 
@@ -385,10 +404,13 @@ def _real(root: Path, *extra: str) -> list[dict[str, object]]:
     return diagnostics
 
 
-def _same_as_full(root: Path, carry: Path) -> None:
-    """運びの下の答えが、同じ木を全部当てた答えと同じ。"""
+def _same_as_full(root: Path, carry: Path) -> tuple[int, int]:
+    """運びの下の答えが、同じ木を全部当てた答えと同じことを確かめ、その回に pyright に当てた数と運んだ数を返す(運ばずに全部を当てても
+    答えは同じなので、数で運んだことを確かめる)。"""
     carried = _real(root, "--carry", str(carry), "--carry-refresh-runs", "0")
     assert carried == _real(root)
+    summary = json.loads(carry.read_text(encoding="utf-8"))["summary"]
+    return summary["checked"], summary["carried"]
 
 
 @needs_pyright
@@ -396,20 +418,20 @@ def test_carried_answers_match_a_full_check_across_changes(entry: Path, tmp_path
     """本物の pyright で: 変えない・使う名の本体だけを替える・使う名の答えの型を替えて使い手に赤が出る・その赤を消す — どの回も、運んだ答えが
     同じ木を全部当てた答えと同じ。"""
     carry = tmp_path / "carry.json"
-    _same_as_full(entry, carry)  # 初回(全部を当てる)
-    _same_as_full(entry, carry)  # 変えない(全部を運ぶ)
+    assert _same_as_full(entry, carry) == (4, 0)  # 初回(全部を当てる — __init__・alone・base・user)
+    assert _same_as_full(entry, carry) == (0, 4)  # 変えない(全部を運ぶ)
     base = entry / "pkg" / "base.hy"
     base.write_text(base.read_text(encoding="utf-8").replace("(len text))", "(len (.strip text)))"), encoding="utf-8")
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (1, 3)  # base だけ
     base.write_text(
         base.read_text(encoding="utf-8").replace(":post [(: % int)]", ":post [(: % str)]").replace("(len (.strip text)))", "(.strip text))"),
         encoding="utf-8",
     )
     user_errors = [d for d in _real(entry) if d["path"] == "pkg/user.hy" and d["severity"] == "error"]
     assert user_errors, "答えの型を str にすると user の shout(int を返す)に赤が出る筈"
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (2, 2)  # base と、width を使う user
     base.write_text(base.read_text(encoding="utf-8").replace(":post [(: % str)]", ":post [(: % int)]").replace("(.strip text))", "(len text))"), encoding="utf-8")
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (2, 2)
 
 
 @needs_pyright
@@ -429,10 +451,10 @@ def test_carried_answers_match_a_full_check_for_a_type_reached_through_a_signatu
         encoding="utf-8",
     )
     carry = tmp_path / "carry.json"
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (5, 0)
     (pkg / "kinds.hy").write_text((pkg / "kinds.hy").read_text(encoding="utf-8").replace("#^ int n", "#^ str n"), encoding="utf-8")
     assert [d for d in _real(entry) if d["path"] == "pkg/user.hy" and d["severity"] == "error"], "欄 n を str にすると total に赤が出る筈"
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (3, 2)  # kinds と、Size を署名で読む base と、measure を使う user(__init__・alone は運ぶ)
 
 
 @needs_pyright
@@ -444,6 +466,6 @@ def test_carried_answers_match_a_full_check_when_a_missing_module_appears(entry:
         encoding="utf-8",
     )
     carry = tmp_path / "carry.json"
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (4, 0)
     (pkg / "later.hy").write_text(_module("(defk late [text]\n  {:pre [(: text str)] :post [(: % int)]}\n  (len text))"), encoding="utf-8")
-    _same_as_full(entry, carry)
+    assert _same_as_full(entry, carry) == (2, 3)  # 足した later と、解けるようになった user(__init__・alone・base は運ぶ)
