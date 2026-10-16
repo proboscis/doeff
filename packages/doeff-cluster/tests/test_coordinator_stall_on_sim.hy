@@ -106,7 +106,7 @@
   ;; 前の状態との差なので、ずらしを差に入れ損ねると、止まりの後の印が置き場に残らない)。
   (val thaw-step (next (gfor step (get seen 6) :if (>= step.at thawed) step)))
   (val written (dfor writes thaw-step.writes w writes w.key w.value))
-  (assert (= (. written ["counter"] ["aliveMs"]) thaw-step.at) #("明けた歩の生存の印" thaw-step))
+  (assert (= (.get (.get written "counter" {}) "aliveMs") thaw-step.at) #("明けた歩の生存の印" (sorted written)))
   (assert (<= #{"worker/w1" "worker/w2"} (set written)) #("明けた歩にずらした worker の印" (sorted written))))
 
 
