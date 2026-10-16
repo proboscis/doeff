@@ -6,7 +6,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for])
+(import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-for board-tally-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -997,6 +997,7 @@
   ;; 外すのは atlas の前の世代の process の担い手だけ(別の worker の process の lease はそのまま)。
   (assert (= (! (holders-of reborn "other-lock")) (! (holders-of held "other-lock"))))
   (assert (is (.row reborn.board (+ "semaphore/" "other-lock")) (.row held.board (+ "semaphore/" "other-lock"))) "外さない行は同じ object")
+  (assert (= reborn.board-tally (board-tally-of reborn.board)) "世代の名乗りの後も集計は全行から求めた値と同じ")
   (assert (= (. (.row reborn.board "semaphore/writer-lock") version) (+ (. (.row held.board "semaphore/writer-lock") version) 1)) "外した行は版 +1")
   (setv #(_ ok) (! (lease-asked reborn "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
   (assert ok "新しい世代の process が期限の前に lease を取れる"))

@@ -45,6 +45,7 @@ from doeff_cluster.coordinator.core.cluster_policy import submit_task as submit_
 from doeff_cluster.coordinator.core.cluster_policy import poll_task as poll_task
 from doeff_cluster.coordinator.core.cluster_policy import absorb_task_result as absorb_task_result
 from doeff_cluster.coordinator.core.cluster_policy import board_write as board_write
+from doeff_cluster.coordinator.core.cluster_policy import board_written as board_written
 from doeff_cluster.coordinator.core.cluster_policy import note_liveness as note_liveness
 from doeff_cluster.coordinator.core.cluster_policy import lease_write as lease_write
 from doeff_cluster.coordinator.core.cluster_policy import other_generation_boot as other_generation_boot

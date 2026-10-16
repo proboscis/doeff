@@ -527,6 +527,12 @@ class ErrorReply:
     fault: bool = False
 
 @dataclass(frozen=True, kw_only=True)
+class BoardTally:
+    rows: int
+    bytes: int
+    expiring: int
+
+@dataclass(frozen=True, kw_only=True)
 class BoardUsage:
     rows: int
     bytes: int
@@ -685,6 +691,7 @@ class ClusterState:
     tasks: dict[str, TaskRecord] = ...
     next_task: int = 1
     task_prefix: str = 't'
+    board_tally: BoardTally | None = None
     board: Table[BoardRow] = ...
     events: tuple[object, ...] = ...
     meta: Table[ResourceMeta] = ...
