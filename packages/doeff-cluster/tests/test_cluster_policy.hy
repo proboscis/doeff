@@ -1109,3 +1109,54 @@
   (val live (replace row :lease-until-ms 5000))
   (assert (is (get (! (place-held {"b" live} 5000)) "b") live))
   (assert (= (! (place-held {"b" live} 5001)) {})))
+
+
+(import doeff_cluster.coordinator.core.cluster_policy [task-due])
+(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import random)
+
+(defk held-due [tasks now]
+  {:pre [(: tasks dict) (: now int)] :post [(: % (| DueAt DueNow DueNever))] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "tasks だけを持つ状態の task-due を得るため。"
+  (! (task-due (ClusterState #() {} {} tasks) now T)))
+
+(deftest test-task-due-takes-the-earliest-held-lapse-as-one-value
+  ;; 保持側の最小期限が DueAt に入る(入れ忘れると保持の行が消える拍が遅れる)。F1: 期限の刻そのもの。
+  (val a (! (split-task "a" "finished" :finished 500 :retain 1000)))
+  (val b (! (split-task "b" "lost" :finished 100 :retain 1000)))
+  (assert (= (! (held-due {"a" a "b" b} 0)) (DueAt :at 1101)))
+  (assert (= (! (held-due {"a" a "b" b} 1101)) (DueNow))))
+
+(deftest test-task-due-ignores-a-held-row-without-finished-ms
+  ;; F2: 終わった刻の無い保持の行は毎拍 now から数え直されるので、DueAt を作らない。
+  (val row (! (split-task "a" "failed" :finished None :retain 1000)))
+  (assert (= (! (held-due {"a" row} 5)) (DueNever))))
+
+(deftest test-task-due-answer-equals-the-full-scan-on-random-rows
+  ;; 性質: 全行を task-lapse-at で走る版(保持側の行は finished-ms 付きだけ数える)と、ランダムな行の組で必ず一致する。
+  (val rng (random.Random 3570))
+  (for [_ (range 200)]
+    (val now (.randint rng 0 5000))
+    (setv tasks {})
+    (for [i (range (.randint rng 0 12))]
+      (val phase (.choice rng ["queued" "assigned" "running" "finished" "lost" "cancelled" "failed"]))
+      (setv (get tasks (str i))
+            (replace (! (split-task (str i) phase :detached (.choice rng [True False])
+                                    :finished (.choice rng [None (.randint rng 0 5000)])
+                                    :retain (.randint rng 0 3000)))
+                     :lease-until-ms (.randint rng 0 8000))))
+    (setv instants [])
+    (for [t (.values tasks)]
+      (when (and t.detached (in t.phase #("finished" "lost" "cancelled" "failed")))
+        (when (is-not t.finished-ms None)
+          (.append instants (! (task-lapse-at t now))))))
+    ;; 走査の対象だけの状態の答えと、保持側の最小期限を 1 値足した答えの比べ(全行版の定義)。
+    (val live-only (dfor #(k t) (.items tasks) :if (not (and t.detached (in t.phase #("finished" "lost" "cancelled" "failed")))) k t))
+    (val expected-live (! (held-due live-only now)))
+    (val got (! (held-due tasks now)))
+    (cond
+      (and instants (<= (min instants) now)) (assert (= got (DueNow)))
+      (isinstance expected-live DueNow) (assert (= got (DueNow)))
+      (and instants (isinstance expected-live DueNever)) (assert (= got (DueAt :at (min instants))))
+      instants (assert (= got (DueAt :at (min (+ instants [expected-live.at]))))) 
+      True (assert (= got expected-live)))))
