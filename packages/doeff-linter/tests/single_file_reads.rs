@@ -240,6 +240,26 @@ fn a_single_file_run_stores_facts_only_for_the_modules_the_file_names() {
     }
 }
 
+/// 逆向きの依存のうち、引数に渡された Program(呼び手が別の file)が要る file の 1 file の実行は、呼び先の名を字面に含む file だけを解析する:
+/// repo 全体の表を通らず、呼び手でない module(3〜)の defk の名も、引数に渡された Program の事実も cache に置かない(冷えた作業木の最初の 1 回が
+/// repo の Hy の全部を作り直して 8〜13 秒かかっていた・card ki-58bfad2c13a1 の残り)。答えは `a_single_file_run_answers_like_the_whole_run_for_that_file` が守る。
+#[test]
+fn a_single_file_run_that_needs_the_callers_reads_only_the_files_that_spell_the_callee() {
+    let dir = tempfile::TempDir::new().unwrap();
+    checkout(dir.path());
+    let cache = tempfile::TempDir::new().unwrap();
+    let (report, stderr) = single_report(dir.path(), cache.path(), "app/core/hof.hy");
+    // 検が空振りでないことの確かめ: 呼び手(user.hy)が fnk を渡すので、hof.hy の素の呼びは当たる。
+    assert!(keys_of(&report, "app/core/hof.hy").iter().any(|k| k.contains("DOEFF126")), "hof.hy に DOEFF126 が当たらない(検の材料の誤り)\n{stderr}");
+    assert!(!stderr.contains("doeff-linter-timing: facts-cache.resolve "), "repo 全体の表を通った(呼び手を探すのに全 file を作り直している)\n{stderr}");
+    for i in 3..MODULES {
+        let found = files_containing(cache.path(), &format!("step_{i}_0"));
+        assert!(found.is_empty(), "mod{i}(hof.hy の呼び手でない)の defk の名が置かれた: {found:?}\n{stderr}");
+    }
+    let kinds = stored_kinds(cache.path());
+    assert!(!kinds.iter().any(|k| k == "program-params.json"), "repo 全体の引数に渡された Program の事実が置かれた: {kinds:?}\n{stderr}");
+}
+
 /// 1 file の実行は、repo 全体の file の事実を引く表(`facts-cache.resolve`)も、層の module の全部の走査(`layer-files`)も通らない。
 #[test]
 fn a_single_file_run_does_not_walk_the_whole_repo_tables() {
