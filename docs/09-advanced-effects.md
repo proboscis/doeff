@@ -82,9 +82,10 @@ Use `Try(...)` around child programs when you need partial results instead of fa
 
 ## State Effects in Concurrent Programs
 
-State semantics use `Get` and `Put`.
+State semantics use `Get` and `Put` (the `state()` handler resolves both).
 
-- `Get(key)`: read a required value (raises `KeyError` if missing)
+- `Get(key)`: read a value. Returns `None` if the key is missing, so start from a default
+  (`current or 0`), or `Put` an initial value before the first read when `None` is also a stored value
 - `Put(key, value)`: write a value
 
 ### Read-Modify-Write with Get + Put
@@ -92,23 +93,34 @@ State semantics use `Get` and `Put`.
 Use `Get` followed by `Put` when you need to update state:
 
 ```python
-from doeff import do
+from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer, writer_log
 
 @do
 def increment_counter():
-    current = yield Get("counter")
+    current = yield Get("counter")  # None until "counter" is Put
     new_value = (current or 0) + 1
     yield Put("counter", new_value)
     yield Tell(f"Counter: {new_value}")
     return new_value
+
+@do
+def increment_twice():
+    first = yield increment_counter()
+    second = yield increment_counter()
+    return first, second, (yield writer_log())
+
+print(run(state()(writer(increment_twice()))))  # (1, 2, ['Counter: 1', 'Counter: 2'])
+print(run(state(initial={"counter": 41})(writer(increment_counter()))))  # 42
 ```
 
 ### Common Update Patterns
 
 ```python
-from doeff import do
+from doeff import do, run
 from doeff_core_effects import Get, Put
+from doeff_core_effects.handlers import state
 
 @do
 def accumulate_result(value):
@@ -116,6 +128,14 @@ def accumulate_result(value):
     new_total = (current or 0) + value
     yield Put("total", new_total)
     return new_total
+
+@do
+def accumulate_two():
+    yield accumulate_result(5)
+    return (yield accumulate_result(7))
+
+print(run(state()(accumulate_two())))  # 12
+print(run(state(initial={"total": 100})(accumulate_result(5))))  # 105
 ```
 
 ## Semaphore Effects
