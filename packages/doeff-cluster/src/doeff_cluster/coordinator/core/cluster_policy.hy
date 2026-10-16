@@ -1081,6 +1081,26 @@
     _ None))
 
 
+(defn #^ bool held-task? [#^ TaskRecord task]
+  "切り離した終わりの行(結果を保持しているだけ)か。切り離していない終わった行は含まない(lease を延ばされ走査の対象のまま)。"
+  (and task.detached (in task.phase DETACHED-TERMINAL)))
+
+
+(defk task-split [tasks now]
+  {:pre [(: tasks dict) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "1 走査で tasks を、走査の対象の行(held-task? でない行 — id の順を保つ dict)と、保持側の最小期限(task-lapse-at と同じ式 —
+   終わった刻 finished-ms を持たない行は除く。無ければ None)に分けるため。#(走査の対象 最小期限) を返す。"
+  (setv live {})
+  (setv earliest None)
+  (for [#(id task) (.items tasks)]
+    (if (held-task? task)
+        (when (is-not task.finished-ms None)
+          (setv lapse (+ task.finished-ms task.retain-ms 1))
+          (when (or (is earliest None) (< lapse earliest)) (setv earliest lapse)))
+        (setv (get live id) task)))
+  #(live earliest))
+
+
 (defk wait-lapse-at [capable timing]
   {:pre [(: capable list) (: timing ClusterTiming)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "置ける worker の無い待っている task を、能力と版の合う worker capable がいま連絡していない間に待たせる期限が過ぎる最初の刻を知るため
