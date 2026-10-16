@@ -2,6 +2,7 @@
 
     doeff-hy-check [PATH ...] [--root DIR] [--import-root DIR ...] [--pyright CMD] [--python EXE] [--json]
                    [--strict] [--baseline JSON | --write-baseline JSON] [--cache-dir DIR | --no-cache]
+                   [--carry JSON [--carry-refresh-runs N]]
 
 - PATH: 検める .hy の file か dir(既定 = --root)。dir は下の .hy を全部。
 - --root: repo の根(既定 = 今の dir)。import の根で、macro の `require` もここから解く。
@@ -12,6 +13,9 @@
   --json の診断には、基点に在る赤かを欄 `known` で付ける。
 - --cache-dir / --no-cache: 依存の .hy の展開を、source と展開が通った file の記録ごとに保存して引く(doeff_hy/static_cache.py・
   既定の置き場 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)。
+- --carry: 運びの file(doeff_hy/static_carry.py)。前の回から入力(その file の展開・使う名の宣言の表面・import の解き先・環境)の
+  変わらない .hy は pyright に当てず、file の前の回の診断を運び、この回の運びで file を置き換える(無い file = 全部を当てる初回)。
+  --carry-refresh-runs: 入力の変わらない file も、この回数のうちに 1 度は当て直す(見直し — 既定 12)。agora-redesign card ki-cbd1c93cfe7c。
 - 新しい赤(基点が無ければ全部の赤)があれば exit 1、無ければ 0、道具として走れなければ 2。
 
 仕組み:
@@ -86,6 +90,23 @@ from doeff_hy.static_cache import (
     load,
     place,
     store,
+)
+from doeff_hy.static_carry import (
+    DEFAULT_REFRESH_RUNS,
+    CarriedRow,
+    CarryRecord,
+    CarryUnreadableError,
+    FileInputs,
+    FileRows,
+    InputGraph,
+    carry_text,
+    next_record,
+    own_digest,
+    plan_carry,
+    probe_environment,
+    read_carry,
+    semantics_digest,
+    write_carry,
 )
 from doeff_hy.static_view import (
     DEFEFFECT_OUTCOMES_MODULE,
@@ -1170,6 +1191,111 @@ def run_pyright(
     return Checked(diagnostics, notes)
 
 
+#: pyright の診断を作って .hy の位置へ戻す関数(運びの指紋の材料 — どれかの source が替われば、前の回の診断を運ばない・
+#: doeff_hy/static_carry.py の semantics_digest)。整え(settle)は運んだ診断にも毎回かけるので入れない。
+CARRY_SEMANTICS = (
+    Diagnostic,
+    run_pyright,
+    span_index,
+    locate,
+    _utf16_to_index,
+    python_without_bytecode,
+    _link_children,
+    _real_dir,
+)
+
+
+def _rows_by_path(diagnostics: Iterable[Diagnostic]) -> tuple[FileRows, ...]:
+    """pyright の診断を file ごとの運びの行にするため(file の中は pyright の答えの順のまま)。"""
+    ordered = sorted(enumerate(diagnostics), key=lambda pair: (pair[1].path, pair[0]))
+    return tuple(
+        FileRows(path, tuple(CarriedRow(d.line, d.column, d.severity, d.rule, d.message) for _, d in group))
+        for path, group in groupby(ordered, key=lambda pair: pair[1].path)
+    )
+
+
+def run_carried(
+    root: Path,
+    roots: list[Path],
+    settings: dict[str, object],
+    closure: Closure,
+    report: list[Path],
+    pyright: str,
+    python: str,
+    threads: int,
+    carry: Path,
+    refresh_runs: int,
+) -> Checked:
+    """運び(doeff_hy/static_carry.py)の下で pyright を撃つため: 前の回から入力の変わらない .hy は当てず、運びの file の前の回の診断を
+    運ぶ。この回の運びで file を置き換え(書けなければ名乗って続ける — 次の回は前の運びと比べる)、当てた数と運んだ数を標準エラーに
+    1 行出す。運びの file が読めない時は名乗って全部を当てる(運びは測りの近道で、測りを止める訳にしない)。"""
+    try:
+        previous: CarryRecord | CarryUnreadableError | None = read_carry(carry)
+    except CarryUnreadableError as error:
+        print(f"doeff-hy-check: {error} — 全部を当てる", file=sys.stderr)
+        previous = error
+    environment = probe_environment(settings, python, pyright, semantics_digest(CARRY_SEMANTICS))
+    stub_dir = _absolute(root / str(settings.get("stubPath", "typings")))
+    staged = {source: projection.text for source, projection in closure.projections.items()}
+    graph = InputGraph(root, roots, stub_dir, environment, staged, [failure.source for failure in closure.failures])
+    targets = [source for source in report if source in closure.projections]
+    inputs = tuple(
+        FileInputs(
+            str(source.relative_to(root)),
+            graph.inputs_of(
+                source,
+                own_digest(
+                    source.read_text(encoding="utf-8"),
+                    closure.projections[source].text,
+                    closure.projections[source].spans,
+                ),
+            ),
+        )
+        for source in targets
+    )
+    plan = plan_carry(previous, environment.fingerprint, inputs, refresh_runs)
+    chosen = plan.checked_paths
+    checked = run_pyright(
+        root,
+        settings,
+        closure.projections,
+        [source for source in targets if str(source.relative_to(root)) in chosen],
+        pyright,
+        python,
+        threads,
+    )
+    record, summary = next_record(plan, environment.fingerprint, inputs, _rows_by_path(checked.diagnostics))
+    try:
+        write_carry(carry, carry_text(record, summary))
+    except OSError as error:
+        print(f"doeff-hy-check: 運びの file {carry} を書けない({error})— 次の回は前の運びと比べる", file=sys.stderr)
+    print(f"doeff-hy-check: {summary.line()}", file=sys.stderr)
+    carried = [
+        Diagnostic(kept.path, row.line, row.column, row.severity, row.rule, row.message)
+        for kept in plan.carried
+        for row in kept.rows
+    ]
+    return Checked([*checked.diagnostics, *carried], checked.notes)
+
+
+def _checked(
+    root: Path,
+    roots: list[Path],
+    settings: dict[str, object],
+    closure: Closure,
+    report: list[Path],
+    args: argparse.Namespace,
+    threads: int,
+) -> Checked:
+    """入口の引数のとおりに pyright を撃つため — --carry が在れば運びの下で(run_carried)、無ければ名指した .hy の全部に(run_pyright)。"""
+    carry: Path | None = args.carry
+    if carry is None:
+        return run_pyright(root, settings, closure.projections, report, args.pyright, args.python, threads)
+    return run_carried(
+        root, roots, settings, closure, report, args.pyright, args.python, threads, carry, args.carry_refresh_runs
+    )
+
+
 def _hy_backed(module: str) -> bool:
     """module の実体が .hy か(pyright は .hy を source と見ないので、stub だけが見える)。"""
     relative = Path(*module.split("."))
@@ -1294,6 +1420,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="pyright の typeCheckingMode を strict にする(根の設定より優先)",
     )
+    parser.add_argument(
+        "--carry",
+        type=Path,
+        default=None,
+        help="運びの file(前の回の診断と入力の digest)。入力の変わらない .hy は当てずに前の回の診断を運び、この回の物で置き換える",
+    )
+    parser.add_argument(
+        "--carry-refresh-runs",
+        type=int,
+        default=DEFAULT_REFRESH_RUNS,
+        help="入力の変わらない .hy も、この回数のうちに 1 度は当て直す(0 = 当て直さない)",
+    )
     args = parser.parse_args(argv)
     try:
         baseline = read_baseline(args.baseline) if args.baseline else None
@@ -1330,9 +1468,7 @@ def main(argv: list[str] | None = None) -> int:
         if (clamped := thread_clamp_note(pyright_threads_setting(), slot.width)) is not None:
             print(f"doeff-hy-check: {clamped}", file=sys.stderr)
         closure = project_closure(root, roots, report, cache_dir, expander_limit(slot.width))
-        checked = run_pyright(
-            root, settings, closure.projections, report, args.pyright, args.python, threads
-        )
+        checked = _checked(root, roots, settings, closure, report, args, threads)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
         return 2
