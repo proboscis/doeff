@@ -90,7 +90,7 @@ example = (Path(__file__).resolve().parents[1] / "examples/greet_handlers.py").r
 assert example.index(blocks[0]) < example.index(blocks[1]), "examples/greet_handlers.py が本文の枠と違う"
 
 expected_slugs = {
-    "agents", "llm", "image", "games", "events", "traverse", "time", "color",
+    "agents", "llm", "image", "fleet", "games", "events", "traverse", "time", "color",
     "di", "composition", "memo", "replay", "durable", "observe", "operations",
     "remote", "tooling", "boundaries", "hy", "vm", "handlers", "coroutines",
 }
@@ -99,4 +99,4 @@ assert all_slugs == expected_slugs, (expected_slugs - all_slugs, all_slugs - exp
 table_text = "\n".join(line for line in article.splitlines() if line.startswith("|"))
 table_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", table_text))
 assert table_slugs == expected_slugs, (expected_slugs - table_slugs, table_slugs - expected_slugs)
-print("main: 本文2例の順次実行、最小ハンドラ2個、担当外2種類の委譲、各行コメント、22記事の表を確認")
+print("main: 本文2例の順次実行、最小ハンドラ2個、担当外2種類の委譲、各行コメント、23記事の表を確認")
