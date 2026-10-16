@@ -32,8 +32,7 @@ jobs:
       - name: Check every root tag release package against PyPI
         run: >-
           uv run --no-project python tools/check_pypi_unpublished.py
-          packages/doeff-vm packages/doeff-indexer packages/doeff-hy packages/doeff-core-effects
-          . packages/doeff-time packages/doeff-agents
+          packages/doeff-vm packages/doeff-hy-pytest packages/doeff-hy packages/doeff-core-effects .
 
       # Every upload passes secrets.PYPI_API_TOKEN as its password: the API token while that
       # secret exists, Trusted Publishing (OIDC, no stored secret) once it is removed.
@@ -61,9 +60,14 @@ jobs:
     with:
       publish: false
 
+  # The root tag publishes the core five only: doeff-vm, doeff-hy-pytest, doeff-hy,
+  # doeff-core-effects and doeff (docs/release-publish-runbook.md). Nothing uploads until every
+  # Python dist has built, and each upload needs the one before it, in dependency order: doeff-hy
+  # needs doeff-hy-pytest, and doeff, doeff-core-effects and doeff-hy need each other, so doeff
+  # goes last and `pip install doeff` picks the new version only after the other four are on PyPI.
   publish-doeff-vm:
     name: Publish doeff-vm to PyPI
-    needs: [check-versions-unpublished, build-doeff-vm]
+    needs: [check-versions-unpublished, build-doeff-vm, build-python-release-dists]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     environment: pypi
@@ -87,48 +91,15 @@ jobs:
           skip-existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}
 
-  build-doeff-indexer:
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: [check-versions-unpublished]
-    uses: ./.github/workflows/build-indexer.yml
-    permissions:
-      contents: read
-      id-token: write
-    with:
-      publish: false
-
-  publish-doeff-indexer:
-    name: Publish doeff-indexer to PyPI
-    needs: [check-versions-unpublished, build-doeff-indexer, publish-doeff-vm]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download doeff-indexer artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: doeff-indexer-*
-          path: dist-doeff-indexer
-          merge-multiple: true
-
-      - name: List doeff-indexer artifacts
-        run: ls -la dist-doeff-indexer/
-
-      - name: Publish doeff-indexer to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-indexer/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
   build-python-release-dists:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
+          - package: doeff-hy-pytest
+            artifact: doeff-hy-pytest-dist
+            out-dir: dist-doeff-hy-pytest
           - package: doeff-hy
             artifact: doeff-hy-dist
             out-dir: dist-doeff-hy
@@ -138,12 +109,6 @@ jobs:
           - package: doeff
             artifact: doeff-dist
             out-dir: dist-doeff
-          - package: doeff-time
-            artifact: doeff-time-dist
-            out-dir: dist-doeff-time
-          - package: doeff-agents
-            artifact: doeff-agents-dist
-            out-dir: dist-doeff-agents
     steps:
       - uses: actions/checkout@v4
 
@@ -167,9 +132,34 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.out-dir }}/*
 
+  publish-doeff-hy-pytest:
+    name: Publish doeff-hy-pytest to PyPI
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-vm]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download doeff-hy-pytest dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: doeff-hy-pytest-dist
+          path: dist-doeff-hy-pytest
+
+      - name: List doeff-hy-pytest artifacts
+        run: ls -la dist-doeff-hy-pytest/
+
+      - name: Publish doeff-hy-pytest to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-doeff-hy-pytest/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
   publish-doeff-hy:
     name: Publish doeff-hy to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-vm, publish-doeff-indexer]
+    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-hy-pytest]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     environment: pypi
@@ -239,55 +229,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist-doeff/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  publish-doeff-time:
-    name: Publish doeff-time to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download doeff-time dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-time-dist
-          path: dist-doeff-time
-
-      - name: List doeff-time artifacts
-        run: ls -la dist-doeff-time/
-
-      - name: Publish doeff-time to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-time/
-          skip-existing: true
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-  publish-doeff-agents:
-    name: Publish doeff-agents to PyPI
-    needs: [check-versions-unpublished, build-python-release-dists, publish-doeff-time]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download doeff-agents dist artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: doeff-agents-dist
-          path: dist-doeff-agents
-
-      - name: List doeff-agents artifacts
-        run: ls -la dist-doeff-agents/
-
-      - name: Publish doeff-agents to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-doeff-agents/
           skip-existing: true
           password: ${{ secrets.PYPI_API_TOKEN }}
