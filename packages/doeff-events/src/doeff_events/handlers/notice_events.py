@@ -214,13 +214,16 @@ class _Gaps:
 class _Reading:
     """The subscription the source holds right now — what the wrapper closes when the body ends. ``None`` = none:
     the wrapper reads nothing, or the source gave a dead subscription up and the broker has not confirmed the
-    next one yet."""
+    next one yet. ``_mut_ended`` = the wrapper is closing for good: its source, if it still runs, is nobody's any more
+    (a cancel that lands before the wrapper holds the source task's handle leaves the source beside the wrapper, which
+    can then neither stop it nor tell it apart from a source that lost its connection)."""
 
-    __slots__ = ("_mut_held",)
+    __slots__ = ("_mut_ended", "_mut_held")
 
     def __init__(self, held: ChannelSubscription | None) -> None:
         """Start holding the first subscription (``None`` for a wrapper that reads nothing)."""
         self._mut_held = held
+        self._mut_ended = False
 
 
 class NoticeSourceUnreachable(RuntimeError):
@@ -383,14 +386,24 @@ def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Read
     """The source task: wait for the next notice and publish its event on the bus. When the connection is lost,
     give the dead subscription up, get past the outage, and tell ``SourceResumed`` — after the new subscription
     is confirmed. ``reading`` follows the subscription it holds. It ends only by ``Cancel`` (the wait has no time
-    limit — the cancel ends it) or by failing."""
+    limit — the cancel ends it), by failing, or by itself when the wrapper has ended (``reading._mut_ended``: the
+    wrapper's cancel reached it before it held this task's handle, so the cancel could not stop it — it ends here,
+    and a subscription closed by the wrapper is not read as a broker that went away)."""
     current = subscription
     while True:
+        if reading._mut_ended:
+            return None
         notice = yield NextAnnouncement(current)
+        if reading._mut_ended:
+            return None
         if isinstance(notice, BrokerUnreachable):
             yield CloseSubscription(current)
             reading._mut_held = None
             current = yield _subscribed_after_outage(plan, notice)
+            if reading._mut_ended:
+                # The wrapper ended while this source waited for the broker: nobody will close what it just made.
+                yield CloseSubscription(current)
+                return None
             reading._mut_held = current
             yield Publish(SourceResumed(source=plan.source))
         else:
@@ -399,7 +412,9 @@ def _read_notices(plan: _Plan, subscription: ChannelSubscription, reading: _Read
 
 @do
 def _subscription_closed(reading: _Reading) -> "EffectGenerator[None]":
-    """Close the subscription the stopped source held, if it held one (once — it is then held by nobody)."""
+    """Close the subscription the stopped source held, if it held one (once — it is then held by nobody), and mark
+    the wrapper ended so that a source this wrapper could not stop ends itself."""
+    reading._mut_ended = True
     held, reading._mut_held = reading._mut_held, None
     if held is not None:
         yield CloseSubscription(held)
