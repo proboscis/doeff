@@ -44,9 +44,6 @@ class _FakePyPI(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
 
 @pytest.fixture
 def index_url() -> Iterator[str]:
