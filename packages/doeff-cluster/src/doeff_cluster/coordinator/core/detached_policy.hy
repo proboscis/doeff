@@ -22,7 +22,7 @@
 (import doeff_cluster.coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
-                                                     limits-undeclared-refusal])
+                                                     limits-undeclared-refusal scan-rows])
 (import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
@@ -86,7 +86,7 @@
           (Reply state 200 (DetachedSubmitted :key key :id existing.id :created False :phase existing.phase))
           (Reply state 409 (ErrorReply :message (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
-  (setv open-count (len (lfor t (.values state.tasks) :if (in t.phase OPEN-PHASES) t))
+  (setv open-count (len (lfor t (scan-rows state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.values state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
     (return (Reply state 429 (ErrorReply :message (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) :open open-count))))

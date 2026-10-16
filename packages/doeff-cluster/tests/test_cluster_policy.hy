@@ -1172,3 +1172,32 @@
       (and instants (isinstance expected-live DueNever)) (assert (= got (DueAt :at (min instants))))
       instants (assert (= got (DueAt :at (min (+ instants [expected-live.at]))))) 
       True (assert (= got expected-live)))))
+
+
+(import doeff_cluster.coordinator.core.cluster_policy [scan-rows load-of forget-silent-workers tasks-for placed-claims cold-starts])
+
+(deftest test-scan-rows-is-the-complement-of-the-held-rows
+  (val tasks {"a" (! (split-task "a" "finished" :finished 500))
+              "b" (! (split-task "b" "finished" :detached False :finished 100))
+              "c" (! (split-task "c" "assigned"))})
+  (assert (= (lfor t (scan-rows tasks) t.id) ["b" "c"]))
+  (assert (= (scan-rows {}) [])))
+
+(deftest test-forgetting-a-worker-counts-an-undetached-finished-row-busy_not-a-held-one
+  ;; F4: 切り離していない終わった行の worker は忙しい(lease が切れるまで)。保持側(切り離した終わり)の worker は数えない。
+  (val timing (ClusterTiming :worker-forget-ms (* 2 3600 1000)))
+  (val workers {"keep" (WorkerInfo :name "keep" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0)
+                "free" (WorkerInfo :name "free" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0)})
+  (val tasks {"u" (replace (! (split-task "u" "finished" :detached False :finished 100)) :worker "keep")
+              "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "free")})
+  (<- after ClusterState (forget-silent-workers (ClusterState :workers workers :tasks tasks) (* 3 3600 1000) timing))
+  (assert (= (list after.workers) ["keep"])))
+
+(deftest test-the-count-reads-skip-the-held-rows
+  (val workers {"w" (WorkerInfo :name "w" :provides #("cpu") :capacity 4 :last-seen-ms 0 :task-reserve 0)})
+  (val tasks {"p" (replace (! (split-task "p" "assigned" :detached False)) :worker "w")
+              "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "w")})
+  (val state (ClusterState :workers workers :tasks tasks))
+  (assert (= (. (get (load-of state {}) "w") tasks) 1))
+  (assert (= (len (! (placed-claims tasks))) 1))
+  (assert (= (! (cold-starts {"p" (replace (get tasks "p") :phase "queued")} tasks)) 0)))

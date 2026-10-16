@@ -25,7 +25,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES MetricsReport ReportOrigin])
 (import doeff_cluster.coordinator.intent.request_bodies [MetricsBody MetricsPayload])
 (import doeff_cluster.coordinator.core.resource_policy [refuse running-process current-report keep-report placed-senders report-origin service-readiness])
-(import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage])
+(import doeff_cluster.coordinator.core.cluster_policy [unplaced-jobs board-usage scan-rows])
 
 (setv METRICS-STALE-MS 180000)   ; これより古い報告は出さない(書き手の拍は 5〜15 秒 + 読みの時間)
 (setv MAX-NAMES 1000)            ; 1 回の報告の名の数の上限(大きすぎる報告を断る)
@@ -201,7 +201,7 @@
                            #("doeff_worker_board_expiring_rows" usage.expiring))]
     (add-sample families metric "gauge" metric {} (float amount)))
   (add-sample families "doeff_worker_open_tasks" "gauge" "doeff_worker_open_tasks" {}
-              (float (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t))))
+              (float (len (lfor t (scan-rows state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t))))
   ;; 冷たい起動(2026-09-26): 実行環境の task を、その env を準備済みの worker が 1 つも無いまま置いた回数(置き先の worker が準備してから
   ;; 走る = 準備の時間が task の待ちに入った)。先読み(WarmRuntimeEnv)で 0 に近づける。profile などで 1 台に絞られる task は数で見る(U9)。
   (add-sample families "doeff_worker_env_cold_start_total" "counter" "doeff_worker_env_cold_start_total" {}
