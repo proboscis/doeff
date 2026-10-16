@@ -27,9 +27,11 @@ INDEPENDENT_RELEASE_TABLE = "### 単独で出す部品"
 NOT_PUBLISHED_TABLE = "### 公開しない部品"
 POST_PUBLISH_SECTION = "## 出した後の確かめ"
 
-# What the root tag publishes: the packages `pip install doeff` always installs together. The owner
-# chose this range, the current names and Python 3.11-3.14 (request lt-8D749ZHBM6VF2HQEDE2SDMNASF,
-# 2026-10-16); doeff-agents, doeff-time and doeff-indexer left the root release then.
+# What the root tag publishes: the packages released under one version — `pip install doeff`
+# installs doeff, doeff-vm and doeff-core-effects, and the `hy` extra adds doeff-hy and
+# doeff-hy-pytest (tests/test_core_install_extras.py). The owner chose this range, the current
+# names and Python 3.11-3.14 (request lt-8D749ZHBM6VF2HQEDE2SDMNASF, 2026-10-16); doeff-agents,
+# doeff-time and doeff-indexer left the root release then.
 CORE_RELEASE_PACKAGES = frozenset(
     {"doeff", "doeff-vm", "doeff-core-effects", "doeff-hy", "doeff-hy-pytest"}
 )
@@ -126,13 +128,21 @@ def _package_name(package_dir: str) -> str:
 
 
 def _runtime_dependencies() -> dict[str, set[str]]:
-    """Each workspace package (the root `doeff` too) -> the names of its runtime dependencies."""
+    """Each workspace package (the root `doeff` too) -> the names of its runtime dependencies.
+
+    The extras' dependencies count too: `pip install "doeff[hy]"` needs doeff-hy as much as
+    `pip install doeff` needs doeff-vm (doeff-hy left the default dependencies for the extras).
+    """
     dependencies: dict[str, set[str]] = {}
     for pyproject in [ROOT / "pyproject.toml", *ROOT.glob("packages/*/pyproject.toml")]:
         project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+        extras = project.get("optional-dependencies", {}).values()
         dependencies[project["name"]] = {
             re.split(r"[<>=!~;\[ ]", requirement, maxsplit=1)[0]
-            for requirement in project.get("dependencies", [])
+            for requirement in [
+                *project.get("dependencies", []),
+                *(line for extra in extras for line in extra),
+            ]
         }
     return dependencies
 
@@ -250,9 +260,10 @@ def test_publish_workflow_builds_and_uploads_only_the_core_five() -> None:
 def test_publish_workflow_uploads_each_core_package_after_its_dependencies() -> None:
     """An upload must not make a release installable before the packages it needs are on PyPI.
 
-    doeff, doeff-core-effects and doeff-hy need each other, so none of them can go before the
-    others; only one-way dependencies are ordered. doeff goes last, so `pip install doeff` picks
-    the new version only after the other four are up.
+    doeff, doeff-core-effects and doeff-hy need each other (doeff-hy through the `hy` extras of
+    the other two), so none of them can go before the others; only one-way dependencies are
+    ordered. doeff goes last, so `pip install doeff` picks the new version only after the other
+    four are up.
     """
     jobs = _workflow_jobs(PUBLISH_WORKFLOW)
     dependencies = _runtime_dependencies()
