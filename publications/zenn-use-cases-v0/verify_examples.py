@@ -42,6 +42,7 @@ OFFLINE = (
     "handler_composition",
     "coroutine_comparison",
     "color_comparison",
+    "backtest",
 )
 
 
@@ -133,7 +134,8 @@ with TemporaryDirectory() as directory:
 
     execute([str(SOURCE / "reviews/main-check.py")])
     execute([str(SOURCE / "reviews/agents-check.py")])
-    print("OK: メインの最小ハンドラ・担当外の委譲・22記事の表・agents記事の掲載コード", flush=True)
+    execute([str(SOURCE / "reviews/backtest-check.py")])
+    print("OK: メインの最小ハンドラ・担当外の委譲・22記事の表・agents記事とbacktest記事の掲載コード", flush=True)
 
     verify_publication()
     verify_comments()
