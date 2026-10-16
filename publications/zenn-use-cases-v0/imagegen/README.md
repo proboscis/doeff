@@ -43,3 +43,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - 正本と作り方は[di-svg-source.txt](di-svg-source.txt)に書いた。`tool`は時間の記事と同じ。
 - 携帯の幅でも読めるよう、横800の枠に24〜32pxの字で描き、横1600のPNGにした。
 - これで残りは43枚。
+
+## メイン記事の3枚をSVGで描き直す（2026-10-16追記）
+
+- メインの3枚（main-hero・main-concept・main-flow）も、週1の仕上げに合わせて手で書いたSVGから作り直した。
+- 正本と作り方は[main-svg-source.txt](main-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
+- これで残りは40枚。
