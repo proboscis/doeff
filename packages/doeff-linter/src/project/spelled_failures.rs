@@ -77,9 +77,29 @@ impl FailureLookup for SpelledFailures<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::failure_types_for;
+    use doeff_indexer::hy_index::collect_hy_files;
+
     use super::super::layers::tag_reading;
+    use super::super::paths::relative_path;
     use super::*;
+
+    /// repo の Hy の全部から集める失敗の型 — 全体の実行(`failure_types_for`)と同じ作り方(歩く物は `hy_index::collect_hy_files` — 検の相手と歩き方を分ける)。
+    fn failure_types_of_whole(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &TagReading) -> FailureTypes {
+        let mut all = FailureTypes::default();
+        if !enabled.contains(&ProjectRule::FailureRethrow) {
+            return all;
+        }
+        for path in collect_hy_files(root) {
+            let (Some(rel), Ok(source)) = (relative_path(root, &path), std::fs::read_to_string(&path)) else { continue };
+            if !(source.contains(":failure") || source.contains(":absent")) {
+                continue;
+            }
+            let module = module_of(&rel);
+            let facts = read_facts(Language::Hy, &source, &module, reading);
+            all.extend(failure_types_in(&source, Scope { module: &module, bindings: &facts.bindings }));
+        }
+        all
+    }
 
     fn enabled() -> BTreeSet<ProjectRule> {
         BTreeSet::from([ProjectRule::FailureRethrow])
@@ -119,7 +139,7 @@ mod tests {
         let dir = repo(&sample());
         let reading = tag_reading(None, None);
         let enabled = enabled();
-        let whole = failure_types_for(dir.path(), &enabled, &reading);
+        let whole = failure_types_of_whole(dir.path(), &enabled, &reading);
         assert!(whole.contains("app.errs.Refusal") && whole.contains("app.errs.Unreachable") && whole.contains("app.store.Gone") && whole.contains("app.effs.Missing"), "検の材料が足りない");
         let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
         for qualified in [
@@ -145,7 +165,7 @@ mod tests {
         let reading = tag_reading(None, None);
         let off = BTreeSet::new();
         assert!(!SpelledFailures::new(dir.path(), &off, &reading).is_failure("app.errs.Refusal"));
-        assert!(failure_types_for(dir.path(), &off, &reading).is_empty());
+        assert!(failure_types_of_whole(dir.path(), &off, &reading).is_empty());
     }
 
     /// 同じ名の問いは 2 度集めない(memo)— 1 度目で集めた集合から答える。
