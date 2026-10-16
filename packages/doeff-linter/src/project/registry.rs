@@ -198,6 +198,47 @@ mod tests {
         assert!(judged.notes.is_empty());
     }
 
+    /// 1 鍵 1 file の dir は、冷えた作業木で 1 file ごとに disk を待つので、読みの待ちを重ねる(card ki-58bfad2c13a1 の残り — 447 file の登録簿を
+    /// 順に読むと、混んだ Pod の冷えた作業木で中央値 2.4 秒かかった)。答えは順に読んだ時と同じで、読めない file の知らせは file の順。
+    #[test]
+    fn a_dir_of_one_key_files_is_read_with_overlapping_waits_and_answers_in_file_order() {
+        use super::super::bulk_read::watch::watching;
+        let dir = tempfile::TempDir::new().unwrap();
+        let table = dir.path().join("BREACHES");
+        std::fs::create_dir(&table).unwrap();
+        for n in 0..60 {
+            std::fs::write(table.join(format!("k{n:02}.txt")), format!("app/f{n}.hy::DOEFF124::g{n}\n理由\n")).unwrap();
+        }
+        std::fs::write(table.join("k10a.txt"), "\n理由\n").unwrap(); // 1 行目が空
+        std::fs::create_dir(table.join("k20a.txt")).unwrap(); // file として読めない
+        std::fs::write(table.join("k30a.txt"), [0xff, 0xfe, b'\n']).unwrap(); // UTF-8 でない
+        let (registry, peak) = watching(std::time::Duration::from_millis(20), || Registry::load(dir.path(), &["BREACHES".to_string()], &[]));
+        assert!(peak >= 8, "登録簿の読みの待ちが重なっていない(同時に進んだ最大 {peak} 件)");
+        assert_eq!(registry.keys.len(), 60);
+        assert_eq!(registry.origins.get("app/f7.hy::DOEFF124::g7").map(String::as_str), Some("BREACHES/k07.txt"));
+        let order: Vec<&str> = ["k10a.txt", "k20a.txt", "k30a.txt"].to_vec();
+        assert_eq!(registry.problems.len(), 3, "{:?}", registry.problems);
+        for (problem, name) in registry.problems.iter().zip(order) {
+            assert!(problem.contains(name), "{problem} は {name} の知らせのはず(file の順)");
+        }
+    }
+
+    #[test]
+    fn judged_keys_of_a_big_dir_are_read_with_overlapping_waits() {
+        use super::super::bulk_read::watch::watching;
+        let dir = tempfile::TempDir::new().unwrap();
+        let list = dir.path().join("FALSE");
+        std::fs::create_dir(&list).unwrap();
+        for n in 0..40 {
+            std::fs::write(list.join(format!("j{n:02}.txt")), format!("a.hy::DOEFF201::f{n}\n判定の理由 {n}\n")).unwrap();
+        }
+        let (judged, peak) = watching(std::time::Duration::from_millis(20), || JudgedKeys::load(dir.path(), &["FALSE".to_string()], Absent::Unreadable));
+        assert!(peak >= 8, "判定の一覧の読みの待ちが重なっていない(同時に進んだ最大 {peak} 件)");
+        assert_eq!(judged.reasons.len(), 40);
+        assert_eq!(judged.reasons.get("a.hy::DOEFF201::f5").map(String::as_str), Some("判定の理由 5"));
+        assert!(judged.problems.is_empty(), "{:?}", judged.problems);
+    }
+
     /// agora-redesign #1918: 縮める向きの表(Absent::Empty)の無い dir は空の一覧(知らせ 1 行・読みの誤りにしない)。鍵を 1 つ足せば
     /// 今までどおり効く。
     #[test]
