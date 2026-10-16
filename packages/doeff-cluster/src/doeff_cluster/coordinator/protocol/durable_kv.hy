@@ -32,7 +32,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark SupersededRun])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes value-size
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json job-from-json board-changes board-tally-of value-size
 ] doeff_cluster.coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
                                                group-limit-from-json])
 (import doeff_cluster.shared.core.detached_rules [group-limit-spec])
@@ -221,6 +221,8 @@
   (val counter (.get kv "counter" {}))
   (val alive-ms (.get counter "aliveMs" 0))
   (val unknown-seen (if (> alive-ms 0) alive-ms now))
+  (val board-table (table-of (tuple (gfor #(k v) (part BOARD) (TableWrite k (BoardRow :value (get v "value") :version (get v "resourceVersion")
+                                                                                       :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))))))
   ;; 読めない Service の行(旧い宣言の形)は落とさず RefusedJob にする(改訂 1 の C)。
   (val service-rows (read-service-rows (lfor #(_ v) (part "service/") v)))
   ;; 旧い形(labels だけ・task のために空けておく数 taskReserve の無い行)の worker の行は読まない(state_json.state-from-json と同じ —
@@ -262,8 +264,8 @@
     :keep-marks (tuple (gfor #(_ v) (part KEEP) (KeepMark #** v)))
     :superseded-runs (tuple (gfor #(_ v) (part SUPERSEDED) (SupersededRun #** (| v {"jobs" (tuple (get v "jobs"))}))))
     :audit (tuple (gfor #(_ event) audit event))
-    :board (table-of (tuple (gfor #(k v) (part BOARD) (TableWrite k (BoardRow :value (get v "value") :version (get v "resourceVersion")
-                                                                              :expires-ms (.get v "expiresMs") :size (value-size (get v "value")))))))
+    :board board-table
+    :board-tally (board-tally-of board-table)
     :started-ms now))
 
 

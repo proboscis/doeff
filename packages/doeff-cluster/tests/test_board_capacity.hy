@@ -1,6 +1,6 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
 (require doeff-hy.macros [defk deftest <- val var])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy.table [Table TableWrite table-of])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -10,7 +10,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv full-kv durable-delta state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN
-                          board-usage value-size sweep-board] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
+                          board-usage board-tally-of value-size sweep-board] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
 
@@ -250,3 +250,49 @@
   (assert (= (. (.row shifted.board "ttl") expires-ms) 90000))
   (assert (= (. (.row shifted.board "ttl") version) 2) "TTL の行は版を進めない")
   (assert (is (.row shifted.board "plain") untouched) "期限なしの行は同じ object"))
+
+
+;;; 盤の集計 board-tally は書きごとの足し引き(ki-ea1179b7565a / T2b): 全行から求めた値と一致し、書きは全行を読まない。
+
+(defk tally-matches-all-rows [state]
+  {:pre [(: state ClusterState)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "持ち回った集計が、盤の全行から求め直した集計と同じか。"
+  (and (is-not state.board-tally None) (= state.board-tally (board-tally-of state.board))))
+
+(defclass CountingTable [Table]
+  "全行を読んだ回数を数える Table(行の引き .row と書き with-writes は数えない)。"
+  (setv full-reads [])
+  (defn _flat-rows [self]
+    (.append CountingTable.full-reads 1)
+    (Table._flat-rows self)))
+
+(deftest test-board-tally-follows-write-delete-sweep-and-restart
+  (<- r1 (put (ClusterState) "a" {"n" 1} 1000 :ttlSeconds 10))
+  (<- r2 (put (get r1 0) "b" "xyz" 1000))
+  (<- r3 (put (get r2 0) "b" "longer value" 1000 :ttlSeconds 100))
+  (val s (get r3 0))
+  (assert (! (tally-matches-all-rows s)))
+  (assert (= s.board-tally (board-tally-of s.board)))
+  (assert (= (. (board-usage s) rows) 2))
+  (assert (= (. (board-usage s) expiring) 2))
+  (<- deleted (call s "PUT" "/board/a" {"value" None "delete" True}))
+  (assert (! (tally-matches-all-rows (get deleted 0))))
+  (val swept (! (sweep-board s 11000)))
+  (assert (! (tally-matches-all-rows swept)))
+  (assert (= (. (board-usage swept) rows) 1))
+  (val shifted (! (clocks-shifted s 70000 60000)))
+  (assert (! (tally-matches-all-rows shifted)))
+  (val back (! (state-from-kv (! (full-kv s)) 2000)))
+  (assert (! (tally-matches-all-rows back)))
+  (assert (= (board-usage back) (board-usage s))))
+
+(deftest test-a-board-write-does-not-read-all-rows
+  (val rows (dfor i (range 2057) (str i) (BoardRow :value i :version 1 :expires-ms None :size 1)))
+  (val counted (CountingTable rows {} (frozenset)))
+  (val state (replace (ClusterState) :board counted :board-tally (board-tally-of (table-of (tuple (gfor #(k v) (.items rows) (TableWrite k v)))))))
+  (.clear CountingTable.full-reads)
+  (assert (= (. (board-usage state) rows) 2057))
+  (<- written (put state "5" {"n" "new"}))
+  (assert (= (. (board-usage (get written 0)) rows) 2057))
+  (assert (= (len CountingTable.full-reads) 0) "board-usage と 1 行の書きは盤の全行を読まない")
+  (assert (! (tally-matches-all-rows (get written 0)))))
