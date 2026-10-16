@@ -152,7 +152,43 @@ class TestHP03CReturnRawDoExpr:
 
 
 class TestHP04AbandonContinuation:
-    pass
+    # docs/02-core-concepts.md「Returning without Resume ends the program under the handler」と
+    # 「Pass the effects a handler does not answer」の動き(card ki-03bb9225a242)。誤りも警告も出ない —
+    # VM は再開しない return を正当な終わり方として受ける(ADR-DOE-CORE-EFFECTS-003 R15)。
+    def test_return_without_resume_ends_only_the_handled_program(self) -> None:
+        @do
+        def handler(effect: _CustomEffect, k):
+            return effect.value * 10  # no Resume — the body never resumes
+
+        def body():
+            yield _CustomEffect(7)
+            yield Put("after_the_effect", True)
+            return 9999
+
+        def main():
+            result = yield _install_raw_handler(handler)(_prog(body))
+            return ("main continues", result, (yield Get("after_the_effect")))
+
+        result = run_with_defaults(_prog(main))
+        assert result.value == ("main continues", 70, None)
+
+    def test_unannotated_handler_without_pass_ends_the_program_with_none(self) -> None:
+        @do
+        def handler(effect, k):
+            if isinstance(effect, _CustomEffect):
+                return (yield Resume(k, effect.value))
+            # Get("count") falls off the end here — no Pass
+
+        def body():
+            count = yield Get("count")
+            return count + (yield _CustomEffect(1))
+
+        def main():
+            result = yield _install_raw_handler(handler)(_prog(body))
+            return ("main continues", result)
+
+        result = run_with_defaults(_prog(main), store={"count": 1})
+        assert result.value == ("main continues", None)
 
 
 # ---------------------------------------------------------------------------
