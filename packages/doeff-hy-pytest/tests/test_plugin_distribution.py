@@ -8,8 +8,10 @@ pytest は pytest11 の entry point を持つ配布物の全 module に assert �
 from __future__ import annotations
 
 import importlib.metadata as metadata
-import tomllib
 from pathlib import Path
+
+import tomllib
+from packaging.requirements import Requirement
 
 PACKAGES = Path(__file__).resolve().parents[2]
 
@@ -30,7 +32,10 @@ def test_the_plugin_lives_in_a_distribution_without_hy_sources() -> None:
     entry_points = _project("doeff-hy-pytest")["entry-points"]
     assert entry_points["pytest11"] == {"doeff_hy": "doeff_hy_pytest"}
     assert not list((PACKAGES / "doeff-hy-pytest" / "src").rglob("*.hy"))
-    assert "doeff-hy-pytest" in _project("doeff-hy")["dependencies"]
+    # 依存は版の系の指定(>=0.5.0,<0.6 の形 — tests/test_core_packages_version.py)を伴うので、PEP 508 の名で比べる。
+    assert "doeff-hy-pytest" in {
+        Requirement(line).name for line in _project("doeff-hy")["dependencies"]
+    }
 
 
 def test_installed_plugin_entry_point_belongs_to_doeff_hy_pytest() -> None:

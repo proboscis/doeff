@@ -7,7 +7,7 @@ backend-path = ["."]
 
 [project]
 name = "doeff-vm"
-version = "0.2.0"
+version = "0.5.0"
 description = "The Rust virtual machine (a PyO3 extension) that runs doeff algebraic-effect programs"
 readme = "README.md"
 requires-python = ">=3.11"
