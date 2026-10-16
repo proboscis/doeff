@@ -12,7 +12,7 @@
 //! 待ちを重ねるのは CPU の仕事ではないので、その pool とは別に、読みの間だけ `std::thread::scope` の thread を起こす。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 /// 待ちを重ねる thread の数(呼び手の thread を含む)。
 pub const READERS: usize = 32;
@@ -80,6 +80,100 @@ where
         pull();
     });
     slots.into_iter().map(|slot| slot.into_inner().expect("fan_out の結果の置き場").expect("fan_out は全部の item の結果を置く")).collect()
+}
+
+/// 仕事が仕事を生む時の、待ちを重ねる道具。`seed` の仕事から始め、`step` が仕事 1 つを済ませて、続きの仕事と結果(あれば)を返す。
+///
+/// repo の tree を歩く(dir を開くと中の dir と file が見つかる)のと、見つけた file を読むのを、層の切れ目なしに重ねる: 続きの仕事はすぐ他の thread が拾うので、
+/// 深い dir を開く待ちと、浅い所で見つかった file の読みの待ちが同時に進む。層ごとに揃えて進める形は、層の中でいちばん遅い待ちに全部が揃う。
+/// 結果の順は決まらない(呼び手が並べる)。仕事は互いに独立であること。後ろに積んだ仕事から先に拾う(dir を先に開くと、並べられる仕事が早く増える)。
+pub fn pipeline<T, R>(readers: usize, seed: Vec<T>, step: impl Fn(T) -> (Vec<T>, Option<R>) + Sync) -> Vec<R>
+where
+    T: Send,
+    R: Send,
+{
+    let queue = Queue { state: Mutex::new(Pending { tasks: seed, active: 0 }), wake: Condvar::new() };
+    let mut results = Vec::new();
+    std::thread::scope(|scope| {
+        let mut helpers = Vec::new();
+        for _ in 1..readers.max(1) {
+            // thread を起こせない機体(pid の上限など)でも止まらない — 起こせた分と呼び手の thread で全部済ませる。
+            match std::thread::Builder::new().spawn_scoped(scope, || work(&queue, &step)) {
+                Ok(handle) => helpers.push(handle),
+                Err(_) => break,
+            }
+        }
+        results.extend(work(&queue, &step));
+        for handle in helpers {
+            match handle.join() {
+                Ok(part) => results.extend(part),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+    });
+    results
+}
+
+struct Queue<T> {
+    state: Mutex<Pending<T>>,
+    wake: Condvar,
+}
+
+struct Pending<T> {
+    tasks: Vec<T>,
+    /// 今 `step` の中にいる thread の数。0 で `tasks` も空なら、仕事は全部済んだ。
+    active: usize,
+}
+
+fn locked<T>(queue: &Queue<T>) -> MutexGuard<'_, Pending<T>> {
+    queue.state.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// 仕事 1 つの間 `active` を数える印。終わり(`step` が panic した時も)で減らし、全部済んだなら待っている thread を起こす。
+struct InStep<'a, T> {
+    queue: &'a Queue<T>,
+}
+
+impl<T> Drop for InStep<'_, T> {
+    fn drop(&mut self) {
+        let mut state = locked(self.queue);
+        state.active -= 1;
+        if state.active == 0 && state.tasks.is_empty() {
+            self.queue.wake.notify_all();
+        }
+    }
+}
+
+fn work<T, R>(queue: &Queue<T>, step: &(impl Fn(T) -> (Vec<T>, Option<R>) + Sync)) -> Vec<R> {
+    let mut results = Vec::new();
+    loop {
+        let task = {
+            let mut state = locked(queue);
+            loop {
+                if let Some(task) = state.tasks.pop() {
+                    state.active += 1;
+                    break Some(task);
+                }
+                if state.active == 0 {
+                    break None;
+                }
+                state = queue.wake.wait(state).unwrap_or_else(PoisonError::into_inner);
+            }
+        };
+        let Some(task) = task else { return results };
+        let in_step = InStep { queue };
+        let (more, result) = step(task);
+        results.extend(result);
+        if !more.is_empty() {
+            // 続きの仕事を積んでから `active` を減らす(順が逆だと、仕事が残っているのに全部済んだと見える瞬間ができる)。
+            let added = more.len();
+            locked(queue).tasks.extend(more);
+            for _ in 0..added {
+                queue.wake.notify_one();
+            }
+        }
+        drop(in_step);
+    }
 }
 
 /// 検が置く観測 — `fan_out` の仕事が同時に何件進んだかを数える(読みが本当に重なっているかを、時計に頼らず確かめる)。
@@ -159,6 +253,36 @@ mod tests {
         assert_eq!(out, items);
         assert!(peak > READERS, "待ちが READERS より広く重なっていない(同時に進んだ最大 {peak} 件)");
         assert!(peak <= WIDE_READERS, "起こす thread の数が上限 {WIDE_READERS} を越えた({peak} 件)");
+    }
+
+    /// 仕事が仕事を生む木(根 → 10 → 100 → 1000)を、層の切れ目なしに重ねて済ませる: 全部の仕事が 1 度ずつ済み、結果が揃い、同時に進んだ仕事が多い。
+    #[test]
+    fn a_pipeline_runs_every_task_once_and_overlaps_the_waits_across_levels() {
+        let in_flight = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let results = pipeline(WIDE_READERS, vec![(0usize, 0usize)], |(depth, id)| {
+            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(3));
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            let more = if depth < 3 { (0..10).map(|child| (depth + 1, id * 10 + child)).collect() } else { Vec::new() };
+            (more, Some((depth, id)))
+        });
+        assert_eq!(results.len(), 1 + 10 + 100 + 1000);
+        let mut ids: Vec<(usize, usize)> = results;
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 1111, "同じ仕事を 2 度済ませた");
+        assert!(peak.load(Ordering::SeqCst) >= 8, "待ちが重なっていない(同時に進んだ最大 {} 件)", peak.load(Ordering::SeqCst));
+        assert!(peak.load(Ordering::SeqCst) <= WIDE_READERS);
+    }
+
+    #[test]
+    fn a_pipeline_without_tasks_or_with_one_reader_still_finishes() {
+        assert_eq!(pipeline(WIDE_READERS, Vec::<u8>::new(), |n| (Vec::new(), Some(n))), Vec::<u8>::new());
+        let mut one = pipeline(1, vec![3u8], |n| (if n > 0 { vec![n - 1] } else { Vec::new() }, Some(n)));
+        one.sort_unstable();
+        assert_eq!(one, vec![0, 1, 2, 3]);
     }
 
     #[test]

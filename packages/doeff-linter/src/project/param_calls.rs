@@ -312,13 +312,10 @@ struct Asking<'a, 'f> {
     all: Vec<&'a str>,
 }
 
-/// 1 つの source の、呼び手が Program を返す関数を渡している引数を、本体が素で呼んでいる所を全部拾う(同じ定義の同じ引数は 1 件)。
-pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params: &dyn ProgramParamsLookup) -> Vec<ParamCall> {
-    let mut reader = Reader::new(source, 0, source.len());
-    let forms = reader.read_all();
-    let hy = Hy { src: source };
-    let mut asking: Vec<Asking<'_, '_>> = Vec::new();
-    for (definition, form) in top_definitions(&hy, &forms) {
+/// 自分の引数のどれかを Program の位置の外で素で呼んでいる定義 — 呼び手の事実を引く定義。
+fn asking_definitions<'a, 'f>(hy: &Hy<'a>, forms: &'f [Form], scope: Scope<'_>, defks: &DefkNames) -> Vec<Asking<'a, 'f>> {
+    let mut asking = Vec::new();
+    for (definition, form) in top_definitions(hy, forms) {
         let items = live(form).unwrap_or_default();
         let container = items.first().and_then(|h| hy.symbol(h)).unwrap_or("").to_string();
         let list_at = match items.get(1) {
@@ -326,14 +323,32 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
             _ => 2,
         };
         let Some(list) = items.get(list_at).filter(|l| l.bracket_items().is_some()) else { continue };
-        let (positional, all) = parameters(&hy, list);
+        let (positional, all) = parameters(hy, list);
         // 呼び手の事実(`params` — repo 全体の呼びから集めた物)を引くのは、この定義が自分の引数のどれかを Program の位置の外で素で呼んでいる時だけ。
         // 呼んでいなければ、呼び手が何を渡していても当たりは無い(当たりは「渡された引数」と「素の呼び」の両方が要る)。
-        if !calls_a_parameter_bare(&hy, scope, defks, &items[list_at + 1..], &all, &definition, &container) {
+        if !calls_a_parameter_bare(hy, scope, defks, &items[list_at + 1..], &all, &definition, &container) {
             continue;
         }
         asking.push(Asking { definition, container, items, list_at, positional, all });
     }
+    asking
+}
+
+/// 1 つの source で、呼び手の事実を引く定義の呼び先(module まで含めた名)。`defks` が空の集まりなら、実際の集まりで引く定義を全部含む
+/// (defk の集まりが大きいほど「Program として渡す位置」が増えて、素の呼びは減る — 単調)。呼び手の事実を、defk の集まりが決まる前に集め始めるための見積り。
+pub fn asked_callees(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<String> {
+    let mut reader = Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    let hy = Hy { src: source };
+    asking_definitions(&hy, &forms, scope, defks).iter().map(|asked| format!("{}.{}", scope.module, asked.definition)).collect()
+}
+
+/// 1 つの source の、呼び手が Program を返す関数を渡している引数を、本体が素で呼んでいる所を全部拾う(同じ定義の同じ引数は 1 件)。
+pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params: &dyn ProgramParamsLookup) -> Vec<ParamCall> {
+    let mut reader = Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    let hy = Hy { src: source };
+    let asking = asking_definitions(&hy, &forms, scope, defks);
     if asking.is_empty() {
         return Vec::new();
     }
