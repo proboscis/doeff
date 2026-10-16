@@ -85,6 +85,7 @@
 "packages/doeff-records/tests/test_pg_sql.hy::test_a_write_waits_while_the_version_before_880_holds_the_writer_lock" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-records/tests/test_pg_sql.hy::test_the_readyz_pressure_counts_a_connection_waiting_on_a_held_lock" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-records/tests/test_pg_wakes_by_name.hy" = "本物の PostgreSQL の LISTEN の thread が合図を数え終えるまでの実時間を置く(外の process と本物の thread の実時間が対象)"
+"packages/doeff-records/tests/test_pg_prepare_deadlock.hy" = "本物の PostgreSQL の lock を別の thread の接続が待ち始めるのを締め切りつきで待ち、deadlock の見つけ(deadlock_timeout)を待つ(外の process の実時間が対象)"
 
 [suites]
 "packages/doeff-agents/conformance" = "黒箱の交代ゲート: どの検も本物の session host の process を公開の socket 越しに動かし、偽の CLI(別の process)を本物の tmux / herdr の pane で走らせる — doeff の時計は別の process に届かない"

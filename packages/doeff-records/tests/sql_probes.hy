@@ -2,7 +2,8 @@
 ;;; 代役の host LocklessHost・FailingMidBatchHost・CountingConnection と同じ段の差し替え)。postgres-sql-handler と同じ部品
 ;;; (postgres_sql.hy の文の手順・往復 1 回を pipeline 1 つで送る postgres-flush と、sql_transaction.hy の run-in-transaction /
 ;;; run-in-batched-transaction)で答え、違うのは QueryProbe が決める 3 点だけ:
-;;;   keep-lock = False なら SqlTransaction の lock-key の錠を取らない(錠の検の反例)
+;;;   keep-lock = False なら SqlTransaction の lock-key の錠も、transaction の中で錠を取る文(表の用意の書きの錠 — pg_sql.writer-lock-statement)も
+;;;               取らない(錠の検の反例)
 ;;;   barrier   = 行の錠(FOR UPDATE)の読みを含む往復の後で待ち合わせる(2 本の書きが両方「行が無い」を読んでから書く反例)
 ;;;   fail-at   = state_rows への n 本目の INSERT を含む往復を流さずに SqlUnreachable を答える(書きの途中で接続が落ちる代役)
 ;;; counts = DB へ流れた往復(往復ごとに、その往復で流した文の綴りの tuple — 流れた順・thread の間で共有)と、流れた CREATE の文の数。
@@ -15,7 +16,7 @@
 (import dataclasses [dataclass field])
 (import threading)
 (import doeff [EffectBase])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlUnreachable])
+(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlRows SqlUnreachable])
 (import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-insert-statement postgres-begin postgres-flush
                                          postgres-control postgres-notice LOCK-STATEMENT NOTICE-STATEMENT])
@@ -47,7 +48,10 @@
 (defk probed-query [probe leased request]
   {:pre [(: probe QueryProbe) (: leased "psycopg の接続") (: request SqlQuery)] :post [(: % "SqlRows | SqlFailed | SqlUnreachable")]
    :tags {:context "records" :role "foundation"}}
-  "文 1 つ(往復 1 回 — transaction の外か、既定の transaction の中)を数え、決め事どおりに落とすか流して待ち合わせるため。"
+  "文 1 つ(往復 1 回 — transaction の外か、既定の transaction の中)を数え、決め事どおりに落とすか流して待ち合わせるため(keep-lock = False
+   なら錠を取る文を流さず数えもしない)。"
+  (when (and (not probe.keep-lock) (= request.statement LOCK-STATEMENT))
+    (return (SqlRows :rows #() :rowcount 0)))
   (val nth (.record probe.counts #(request.statement)))
   (when (and (is-not probe.fail-at None) (in probe.fail-at nth))
     (return (SqlUnreachable :reason "検の代役: 書きの途中で接続が落ちた")))
