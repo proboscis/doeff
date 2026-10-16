@@ -14,9 +14,9 @@ import inspect
 import tokenize
 import warnings
 from collections.abc import Callable, Generator
-from functools import wraps
+from functools import partial, wraps
 from textwrap import dedent
-from types import FunctionType
+from types import FunctionType, MethodType
 from typing import Any, Never, ParamSpec, TypeVar, overload
 
 from doeff_vm import DoFunction
@@ -291,9 +291,16 @@ def do(
     it instead of declaring a second ``do``, so a module that imports ``do`` as ``_doeff_do``
     itself (the for/do contract) does not give the name a second, different type
     (agora-redesign #2321).
+
+    An ``async def`` function (a coroutine function or an async generator function) is a
+    ``TypeError`` where ``@do`` is applied: calling it gives a coroutine or an async generator,
+    which the VM would return as the value without awaiting it. The message says to write each
+    ``await coro`` as ``yield Await(coro)`` and to run it as
+    ``run(scheduled(await_handler()(prog())))``.
     """
 
     def decorate(fn: Callable[P, Any]) -> Callable[P, Expand]:
+        _refuse_async_function(fn)
         return program_factory(fn, _analyze_resume_yields(fn, non_tail=non_tail))
 
     if fn is None:
@@ -313,6 +320,60 @@ def _is_generator_function(fn: Callable[..., Any]) -> bool:
     if type(fn) is FunctionType and "__partialmethod__" not in fn.__dict__:
         return bool(fn.__code__.co_flags & inspect.CO_GENERATOR)
     return inspect.isgeneratorfunction(fn)
+
+
+def _refuse_async_function(fn: Callable[..., Any]) -> None:
+    """``async def`` の関数(coroutine の関数・async generator の関数)を、``@do`` を付けた所で TypeError にする。
+
+    呼ぶと coroutine か async generator が返り、program でないので VM はそれを値として返す — 誰も await せず、
+    出るのは Python の「coroutine '…' was never awaited」の警告だけだった(誤りの表の 13・card ki-8152466e96ad)。
+    素の関数は ``_is_generator_function`` と同じく code の旗を直に読み、飾りの費用を増やさない。それ以外は ``inspect``
+    に任せる(partial・method を剥がす)。文は断った時にだけ作る。
+    """
+    if type(fn) is FunctionType and "__partialmethod__" not in fn.__dict__:
+        flags = fn.__code__.co_flags
+        is_async_generator = bool(flags & inspect.CO_ASYNC_GENERATOR)
+        is_coroutine = bool(flags & inspect.CO_COROUTINE)
+    else:
+        is_async_generator = inspect.isasyncgenfunction(fn)
+        is_coroutine = inspect.iscoroutinefunction(fn)
+    if is_async_generator:
+        raise TypeError(_async_function_message(fn, async_generator=True))
+    if is_coroutine:
+        raise TypeError(_async_function_message(fn, async_generator=False))
+
+
+def _async_function_message(fn: Callable[..., Any], *, async_generator: bool) -> str:
+    """``@do`` が断った ``async def`` の関数 ``fn`` の文 — ``yield Await(coro)`` の書き方と、``await_handler()`` を
+    ``scheduled()`` の内に付ける run の 1 行(README の handler の表・UnhandledEffect の hint と同じ形)を言う。"""
+    target: object = fn
+    while isinstance(target, partial):
+        target = target.func
+    name = target.__name__ if isinstance(target, (FunctionType, MethodType)) else repr(target)
+    required = [
+        parameter
+        for parameter in inspect.signature(fn).parameters.values()
+        if parameter.default is parameter.empty
+        and parameter.kind not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
+    ]
+    call = f"{name}(...)" if required else f"{name}()"
+    if async_generator:
+        what = (
+            "an async generator function (async def with yield), so calling it would return "
+            "an async generator, not a program. Make it a plain def that keeps its yields and"
+        )
+    else:
+        what = (
+            "an async def function, so calling it would return a coroutine that nothing "
+            "awaits, not a program. Make it a plain def and"
+        )
+    return (
+        f"@do cannot wrap {name!r}: it is {what} write each await as a yield of Await: "
+        "value = yield Await(coro) instead of value = await coro (Await from doeff). Await is "
+        "handled by await_handler(), which needs scheduled outside it: "
+        f"run(scheduled(await_handler()({call}))) (await_handler from "
+        "doeff_core_effects.handlers, scheduled from doeff_core_effects.scheduler)."
+    )
 
 
 def program_factory(
