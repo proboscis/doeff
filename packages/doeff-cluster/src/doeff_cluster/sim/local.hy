@@ -313,10 +313,10 @@
    GetTime を世界の時計から動かした分だけずらす。偽 = 世界の時計をそのまま読む。この worker が起こした process の記録 SimProcess の
    刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない・card ki-069f4a5c07f7)。"
   (#^ str name)
-  (#^ frozenset provides)
+  (#^ (get frozenset str) provides)
   (#^ int task-reserve)
   (setv #^ str doeff-commit "")
-  (setv #^ frozenset exclusive (frozenset))
+  (setv #^ (get frozenset str) exclusive (frozenset))
   (setv #^ int capacity 10)
   (setv #^ str node "")
   (setv #^ (| dict None) versions None)
@@ -330,8 +330,8 @@
   (setv #^ bool ignores-keep-marks False)
   (setv #^ bool silent-stop False)
   (setv #^ (| int None) overstates-capacity None)
-  (setv #^ (| frozenset None) claims-provides None)
-  (setv #^ (| frozenset None) claims-exclusive None)
+  (setv #^ (| (get frozenset str) None) claims-provides None)
+  (setv #^ (| (get frozenset str) None) claims-exclusive None)
   (setv #^ bool fresh-boot-every-beat False)
   (setv #^ bool hides-retired False)
   (setv #^ (| int None) claims-task-reserve None)

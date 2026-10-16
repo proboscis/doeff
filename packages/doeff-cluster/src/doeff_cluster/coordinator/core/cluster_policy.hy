@@ -59,7 +59,7 @@
   (setv value (.get item "runtimeEnv"))
   (if (is value None) None (json.dumps value :sort-keys True :ensure-ascii False)))
 
-(defn #^ JobSpec spec-of-declaration [#^ dict item]
+(defn #^ JobSpec spec-of-declaration [#^ (get dict #(str object)) item]
   "宣言 1 行 → worker が起動する形(job_entry の service 入口と詰めた Program の置き場のキー)。宣言の job は Program の job だけ —
    run の無い行(生の entry と args を worker に直に起こさせる形)は理由つきで断る(ADR-DOE-CLUSTER-001 R1・R7 — 移行の期間は置かない)。
    runtimeEnv を持つ宣言は、worker が env の root を準備してその venv で起こす(版は worker が env のキーへ置き換える)。"
