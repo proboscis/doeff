@@ -614,11 +614,11 @@
     "generation_prompt": "fleet-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "7c64fcfd024621f08d8f771ecb4ef7a7f1b446b7eeb5ed7e0280a27113e3cefd",
+    "sha256": "0efd8f2295ee581448c69fbf5b8af8418ae4620372b16da86e66d00796989371",
     "width": 1200,
     "height": 1420,
-    "bytes": 197823,
-    "review": "2026-10-17：記事の3つの仕組み（作業ボード・配り役・マージの列）、上限50、card 3,473枚の内訳（todo 326・doing 33・done 3,058、2026-10-17 2時に読んだ値）、2本の戻りの矢印を目視確認。白背景の平面図として採用。"
+    "bytes": 198919,
+    "review": "2026-10-17：記事の3つの仕組み（作業ボード・配り役・マージキュー）、上限50、card 3,473枚の内訳（todo 326・doing 33・done 3,058、2026-10-17 2時に読んだ値）、2本の戻りの矢印を目視確認。白背景の平面図として採用。 2026-10-17に内部の造語(マージの列・便・筋書き・出来事・盤)を一般の語へ言い換えて描き直した。"
   },
   {
     "id": "fleet-flow",
@@ -626,11 +626,11 @@
     "generation_prompt": "fleet-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "38da9def985b9402458fbf9d590c545fa76c8707f1871b3f605db9e6ca0aba7b",
+    "sha256": "c78017e95e87a49c69e0239f9b5c605ac1a2b098344f32c762ac5cdc2426c4c8",
     "width": 1200,
     "height": 1160,
-    "bytes": 173251,
-    "review": "2026-10-17：pick_cardsの3行、本番と模擬のハンドラの対応、模擬の配りの時刻（0分にB・D、30分にE、40分にC、60分にF、90分で全部）、同時の最大2を本文の枠の表示と照らして目視確認。白背景の平面図として採用。"
+    "bytes": 172401,
+    "review": "2026-10-17：pick_cardsの3行、本番と模擬のハンドラの対応、模擬の配りの時刻（0分にB・D、30分にE、40分にC、60分にF、90分で全部）、同時の最大2を本文の枠の表示と照らして目視確認。白背景の平面図として採用。 2026-10-17に内部の造語(マージの列・便・筋書き・出来事・盤)を一般の語へ言い換えて描き直した。"
   },
   {
     "id": "fleet-commits",
