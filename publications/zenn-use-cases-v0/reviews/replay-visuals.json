@@ -1,14 +1,14 @@
 {
   "concept": {
-    "title": "HTTPの取得と保存を、別のハンドラで合成する",
-    "code": "first = make_memo_rewriter(HttpRequest)(fetch_text(url))  # 再利用を判定\nfirst = sqlite_memo_handler(database)(first)  # 応答を保存\nfirst = fixed_http(first)  # 未保存時だけ取得",
-    "flow": "白背景の平面的ダイアグラム。写真・立体・写実的な装置は禁止。3行のコードを左側に大きく配置し、各行から右側の担当ボックスへ細い線を結ぶ。処理本体→HTTP依頼→メモ化の判定。判定からSQLite（MemoExists/Get/Put）へ照会する双方向矢印。保存ヒットの矢印はHTTP取得を迂回して応答→処理本体の続きへ。保存ミスの矢印だけHTTP取得担当へ届き、固定HttpResponse→SQLiteへ保存→応答を返す。HTTP取得担当の交換候補として固定応答と標準HTTPを同じ枠の選択肢で示す。二つを同時実行するように描かない。保存先・取得担当・判定の3つは独立した責務。HttpRequestに対して全ハンドラが順次処理する一本線にはしない。",
-    "caption": "メモ化の判定、保存先、保存ミス時の取得方法を独立に選びます。"
+    "title": "通信の答え方を、外側のハンドラで選ぶ",
+    "code": "@do\ndef fetch_text(url):\n    response = yield HttpRequest(\"GET\", url)\n    return response.text",
+    "flow": "白背景の平面図（2026-10-17に手で書いたSVG・正本は visuals/replay-concept.svg）。上から順に3つの枠。1 処理本体 fetch_text の4行（HttpRequest(\"GET\", url) を強調）。下向きの実線「GETを頼んで止まる」と上向きの点線「応答で続きが動く」。2 外側で付けるハンドラ（どれか1つ）：テスト fake_http「手で書いた応答を、通信せずに返す」・テスト 記録の層 + reject_http「記録から答える。記録に無ければ失敗」・記録・本番 http_production_handler()「httpxで、本物のAPIへ通信する」。3 HttpResponse（どれでも同じ型）「status・headers・textなど、本番と同じ欄」。3つの選択肢を同時に動くように描かない。",
+    "caption": "処理本体は`HttpRequest`を頼むだけです。固定の応答・記録からの再生・本物の通信のどれで答えるかを、外側のハンドラが決めます。"
   },
   "flow": {
-    "title": "保存ヒットはHTTPを通らず、保存ミスだけ取得担当へ進む",
-    "code": "second = make_memo_rewriter(HttpRequest)(fetch_text(url))  # 同じ依頼\nsecond = sqlite_memo_handler(database)(second)  # 保存済み応答を照会\nsecond = reject_http(second)  # 未保存のHTTP依頼は失敗",
-    "flow": "白背景の平面的な処理図。写真・3Dは禁止。上部に正確な3行のコード、下部に保存あり/なしの分岐。開始「同じURLを取得」→「SQLiteに保存済み？」。はい→「MemoGet」→「本文を返す：記録した本文」。いいえ→「HttpRequestを外側へ委譲」→「reject_http」→「LookupError（未保存のURL）」。はいの経路からreject_httpへ矢印を引かない。二つの経路は条件によって一方だけ通る。右下に小さい注記「取得を許すなら、reject_httpをfixed_httpや標準HTTPに交換」と記載する。HTTP clientやMockTransport、client_factoryは図中に入れない。",
-    "caption": "保存ミス時の取得・拒否をHTTPハンドラで切り替え、得た応答の保存をMemoハンドラへ任せます。"
+    "title": "記録にあれば、取得担当まで進まない",
+    "code": "make_memo_rewriter(HttpRequest)  # 1 記録の層\nsqlite_memo_handler(database)  # 2 SQLite\nfetcher(program)  # 3 取得担当",
+    "flow": "白背景の平面図（2026-10-17に手で書いたSVG・正本は visuals/replay-flow.svg）。上にrun_recordedの3層を内側から番号1〜3で示す。fetch_textのHttpRequest → 1 記録の層「記録の鍵を作り、2に尋ねる」⇄ 2 SQLite → 分かれ道「記録はある？」。ある：2から記録した応答を読み、fetch_textを再開する。3の取得担当は通らない（通信しない）。無い：依頼を外側へ出し直し → 3 取得担当（1つ）：fake_httpまたは本番の取得担当なら応答を返し1が記録、reject_httpなら通信せず失敗させる。ある道からreject_httpへ矢印を引かない。",
+    "caption": "記録の層は、まずSQLiteに記録があるかを尋ねます。記録があれば取得担当を通らず、無い時だけ取得担当が受けます。"
   }
 }

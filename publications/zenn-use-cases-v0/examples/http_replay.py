@@ -1,92 +1,163 @@
-"""HTTPの取得とSQLiteへの保存を別のハンドラへ分け、通信せずに合成を検証する。"""
+"""外部APIのテストを、通信せずに回す。記事 doeff-replay.md の掲載コードの完全な例。
 
-from pathlib import Path  # 保存先を型付きのパスとして組み立てる。
-from tempfile import TemporaryDirectory  # 検証用SQLiteだけを一時領域へ置く。
+pytestで集めても、直接実行してもよい。外のサービスへは通信しない。
+本番の取得担当(http_production_handler)は、同じ機械の中に立てたHTTPサーバーで確かめる。
+"""
 
-import pytest  # 未保存時に期待した例外が出ることを、テストとして確認する。
-from doeff_core_effects import HttpRequest, HttpResponse  # HTTPの依頼と正式な応答型を使う。
-from doeff_core_effects.handlers import (  # 保存層が出す待機とログを外側で解釈する。
-    await_handler,  # SQLiteの非同期I/Oを待ち、結果をProgramへ戻す。
-    slog_discard_handler,  # 検証中はメモ化の診断ログを表示しない。
+import threading  # 確かめ用のHTTPサーバーを、別のスレッドで動かす。
+from http.server import (  # 同じ機械の中だけで答える、確かめ用のHTTPサーバーを作る。
+    BaseHTTPRequestHandler,  # GETへの答え方を書く、基底のクラス。
+    ThreadingHTTPServer,  # 答えを別のスレッドで返すサーバー。
 )
-from doeff_core_effects.memo_handlers import (  # 再利用の判断と保存先を独立に選ぶ。
-    make_memo_rewriter,  # HttpRequestをMemoExists/Get/Putと取得処理へ分解する。
-    sqlite_memo_handler,  # Memo系の依頼をSQLiteへ保存・照会する。
+from pathlib import Path  # 一時のディレクトリの中の場所を組み立てる。
+from tempfile import TemporaryDirectory  # pytestを使わない時の、tmp_pathの代わり。
+
+import pytest  # 失敗を期待するテストに使う。
+from doeff_core_effects import HttpRequest, HttpResponse  # HTTPの依頼と応答の型。
+from doeff_core_effects.handlers import await_handler, slog_discard_handler  # 補助の依頼の受け手。
+from doeff_core_effects.http_handlers import (  # 本番で使う取得担当。
+    http_production_handler,  # httpxで実際に通信する取得担当。
 )
-from doeff_core_effects.scheduler import scheduled  # 保存層のAwaitを進める実行環境を付ける。
+from doeff_core_effects.memo_handlers import (  # 記録の層を組み立てる部品。
+    content_address,  # 既定の記録の鍵。依頼の全部の欄から作る。
+    make_memo_rewriter,  # 記録にあれば記録から答え、無ければ外側へ依頼を出し直す。
+    sqlite_memo_handler,  # 記録をSQLiteのファイルへ読み書きする。
+)
+from doeff_core_effects.scheduler import scheduled  # 保存の読み書きの待ちを進める。
 
-from doeff import Pass, Resume, do, handler, run  # 依頼の委譲・再開・合成と検証用runを使う。
-
-
-@do  # 呼び出すと即通信せず、HTTP依頼を含むProgramになる。
-def fetch_text(url: str):  # URLから本文を返す処理は、保存先や取得方法を知らない。
-    response = yield HttpRequest("GET", url)  # 取り付けたハンドラからHttpResponseを受け取る。
-    response.raise_for_status()  # 400以上なら本文を成功値として返さず、例外にする。
-    return response.text  # 成功時は応答本文の文字列を呼び出し元へ返す。
-
-
-@handler  # 以下の依頼処理をProgramに取り付けられるハンドラへ変換する。
-@do  # 再生時の不一致も、処理本体と同じyieldの境界で扱う。
-def reject_http(effect, k):  # 保存にないHTTP依頼を受け取った場合だけ失敗させる。
-    if not isinstance(effect, HttpRequest):  # Memoやログなどの別の依頼は担当しない。
-        return (yield Pass(effect, k))  # 別のハンドラへ依頼と続きをそのまま渡す。
-    raise LookupError(effect.url)  # HTTPへ接続せず、未保存のURLをエラーに含める。
+from doeff import (  # 処理の定義・ハンドラ・実行を使う。
+    Pass,  # 担当外の依頼を、外側のハンドラへ渡す。
+    Resume,  # 止まった処理へ値を渡して、再開する。
+    do,  # 関数を、yieldで依頼を出す処理(Program)にする。
+    handler,  # 関数を、Programに取り付けられるハンドラにする。
+    run,  # ハンドラを付けたProgramを、最後まで動かす。
+    with_handlers,  # ハンドラを、Programの外側に取り付ける。
+)
 
 
-def verify() -> None:  # テスト境界として複数のrunを実行し、保存と再利用を確かめる。
-    calls: list[str] = []  # 実際に取得担当ハンドラまで届いたURLだけを数える。
-
-    @handler  # 固定応答を返す取得方法を、本番HTTPと交換できる形にする。
-    @do  # 応答の返却はResumeで行い、呼び出し元のyieldを再開する。
-    def fixed_http(effect, k):  # HTTPクライアントを作らず、依頼そのものを受け取る。
-        if not isinstance(effect, HttpRequest):  # HTTP以外の依頼には介入しない。
-            return (yield Pass(effect, k))  # MemoやAwaitは外側の担当へ通す。
-        calls.append(effect.url)  # この行へ到達した回数が、保存ミス後の取得回数になる。
-        response = HttpResponse(  # 本番ハンドラと同じ公開応答型を、固定値で組み立てる。
-            status=200,  # 成功としてraise_for_statusを通過させる。
-            headers={},  # この本文取得例では応答ヘッダを使わない。
-            content="記録した本文".encode(),  # UTF-8の生の応答本体も本文と一致させる。
-            text="記録した本文",  # fetch_textの最終的な戻り値になる文字列を指定する。
-            url=effect.url,  # どの依頼に対する応答かを保持する。
-            elapsed_seconds=0.0,  # 通信していないため、計測時間は固定値にする。
-        )
-        return (yield Resume(k, response))  # 保存処理へ応答を戻し、最後にfetch_textを再開する。
-
-    def execute(program):  # テストのrun境界で、共通の待機・ログ・スケジューラを設置する。
-        wrapped = slog_discard_handler(program)  # メモ化の診断ログを受け取る。
-        wrapped = await_handler()(wrapped)  # SQLiteが発行するAwaitを処理する。
-        return run(scheduled(wrapped))  # 待機を含むProgramを最後まで進め、本文を返す。
-
-    url = "https://example.invalid/article"  # 実在サービスへ接続しない例示専用URLを使う。
-    with TemporaryDirectory() as directory:  # この検証が所有する保存領域だけを後で片付ける。
-        database = Path(directory) / "http.sqlite"  # 別のハンドラを作っても同じ保存先を参照する。
-
-        first = make_memo_rewriter(HttpRequest)(fetch_text(url))  # まず依頼の保存済み判定を挟む。
-        first = sqlite_memo_handler(database)(first)  # Memoへの照会と保存をSQLiteに割り当てる。
-        first = fixed_http(first)  # 保存ミス時に委譲されるHTTPを、固定応答で取得する。
-        assert execute(first) == "記録した本文"  # 初回は取得後に保存し、本文を返す。
-        assert calls == [url]  # 取得担当へ到達したのは初回の一度だけ。
-
-        second = make_memo_rewriter(HttpRequest)(fetch_text(url))  # 新しいProgramでも同じ依頼を出す。
-        second = sqlite_memo_handler(database)(second)  # 新しいハンドラから同じSQLiteを開く。
-        second = reject_http(second)  # HTTPへ到達すると必ず失敗する取得担当へ交換する。
-        assert execute(second) == "記録した本文"  # 別のrunでも保存済み応答だけで成功する。
-        assert calls == [url]  # 保存ヒット時にはHTTP取得を追加実行しない。
-
-        missing = make_memo_rewriter(HttpRequest)(fetch_text(url + "/missing"))  # URL変更は保存ミス。
-        missing = sqlite_memo_handler(database)(missing)  # 同じ保存先に変更後の依頼はまだない。
-        missing = reject_http(missing)  # 未保存時に実取得へ進むことを明示的に拒否する。
-        with pytest.raises(LookupError) as failure:  # 未保存時に狙った例外が必ず出ることを検査する。
-            execute(missing)  # 保存にない依頼はreject_httpまで届くため、失敗するはず。
-        assert failure.value.args == (url + "/missing",)  # 不一致のURLがエラーに残ることも確かめる。
-
-        fresh = make_memo_rewriter(HttpRequest)(fetch_text(url + "/missing"))  # 同じ未保存依頼を作る。
-        fresh = sqlite_memo_handler(database)(fresh)  # 保存ミスの判定方法と保存先は変えない。
-        fresh = fixed_http(fresh)  # 今度は未保存時の取得を許すハンドラへ交換する。
-        assert execute(fresh) == "記録した本文"  # HTTP担当が応答を返せば保存して成功する。
-        assert calls == [url, url + "/missing"]  # 各URLの初回だけが取得担当へ到達する。
+@do  # 呼んだだけでは動かない処理(Program)にする。
+def fetch_text(url: str):  # URLの本文を返す。どう通信するかは知らない。
+    response = yield HttpRequest("GET", url)  # 「GETしたい」と外側へ依頼する。
+    response.raise_for_status()  # 400以上の応答なら、例外にする。
+    return response.text  # 本文の文字列を返す。
 
 
-if __name__ == "__main__":  # 直接実行したときだけ、このオフライン検証を開始する。
-    verify()  # 保存ヒット・別runでの再利用・保存ミス時の交換方針を検査する。
-    print("HTTPとMemoの合成・SQLite再利用・未保存時の拒否: OK")  # 全assert通過後だけ成功を表示。
+@handler  # この関数を、Programに取り付けられるハンドラにする。
+@do  # ハンドラ自身もyieldで、再開や委譲を指示する。
+def fake_http(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
+    if not isinstance(effect, HttpRequest):  # HTTP以外の依頼は受け持たない。
+        return (yield Pass(effect, k))  # 外側のハンドラへ、そのまま渡す。
+    body = "記録した本文"  # 通信の代わりに返す本文。
+    # 状態200・ヘッダなし・本体・本文・URL・かかった秒数の順に渡す。
+    response = HttpResponse(200, {}, body.encode(), body, effect.url, 0.0)
+    return (yield Resume(k, response))  # 応答を渡して、止まった処理を再開する。
+
+
+def test_fetch_text_without_network():  # pytestが集めるテスト関数。
+    program = with_handlers([fake_http], fetch_text("https://example.invalid/a"))  # 外側に付ける。
+    assert run(program) == "記録した本文"  # 通信せずに、すぐ終わる。
+
+
+@handler  # 記録に無い依頼だけが、ここまで届く。
+@do  # 依頼を見分けて、失敗させるか外へ渡す。
+def reject_http(effect, k):  # 再生だけのテストで、取得担当の位置に置く。
+    if isinstance(effect, HttpRequest):  # 記録に無いHTTPの依頼が届いた。
+        raise LookupError(f"記録に無い依頼: {effect.method} {effect.url}")  # 通信せずに失敗させる。
+    return (yield Pass(effect, k))  # HTTP以外の依頼は、外側へ渡す。
+
+
+def run_recorded(program, database, fetcher, key_fn=content_address):  # 記録の層を付けて動かす。
+    program = make_memo_rewriter(HttpRequest, key_fn=key_fn)(program)  # 記録にあれば、記録から答える。
+    program = sqlite_memo_handler(database)(program)  # 記録をSQLiteのファイルへ読み書きする。
+    program = fetcher(program)  # 記録に無い依頼だけを、取得担当が受ける。
+    program = await_handler()(slog_discard_handler(program))  # 保存の待ちと、記録のログを受ける。
+    return run(scheduled(program))  # 待ちを進めながら、最後まで動かす。
+
+
+def test_record_then_replay(tmp_path):  # tmp_pathは、pytestが用意する一時のディレクトリ。
+    database = tmp_path / "http.sqlite"  # このテストの記録のファイル。
+    url = "https://example.invalid/article"  # 実在しない、例のためのURL。
+    assert run_recorded(fetch_text(url), database, fake_http) == "記録した本文"  # 1回目は取得し、記録する。
+    assert run_recorded(fetch_text(url), database, reject_http) == "記録した本文"  # 2回目は記録から答える。
+    with pytest.raises(LookupError):  # 記録に無いURLは、通信せずに失敗する。
+        run_recorded(fetch_text(url + "/new"), database, reject_http)  # 取得担当まで届いて止まる。
+
+
+@do  # APIキーをヘッダに付けて、本文を取る。
+def fetch_private(url: str, api_key: str):  # 鍵の要るAPIを呼ぶ処理。
+    headers = {"Authorization": f"Bearer {api_key}"}  # 鍵をヘッダに載せる。
+    response = yield HttpRequest("GET", url, headers=headers)  # 鍵つきのGETを依頼する。
+    response.raise_for_status()  # 400以上の応答なら、例外にする。
+    return response.text  # 本文を返す。
+
+
+def method_and_url(effect) -> str:  # 記録の鍵を、メソッドとURLだけで作る。
+    return f"{effect.method} {effect.url}"  # ヘッダのAPIキーは、鍵に入れない。
+
+
+def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに再生する。
+    database = tmp_path / "http.sqlite"  # このテストの記録のファイル。
+    url = "https://example.invalid/private"  # 例のためのURL。
+    run_recorded(fetch_private(url, "本物の鍵"), database, fake_http, method_and_url)  # 鍵つきで記録する。
+    replay = fetch_private(url, "ダミー")  # CIでは、偽の鍵で同じURLを呼ぶ。
+    assert run_recorded(replay, database, reject_http, method_and_url) == "記録した本文"  # 記録に当たる。
+
+
+def test_default_key_misses_with_other_key(tmp_path):  # 既定の鍵では、鍵が違うと記録に当たらない。
+    database = tmp_path / "http.sqlite"  # このテストの記録のファイル。
+    url = "https://example.invalid/private"  # 例のためのURL。
+    run_recorded(fetch_private(url, "本物の鍵"), database, fake_http)  # 既定の鍵で記録する。
+    with pytest.raises(LookupError):  # ヘッダの鍵も既定の鍵に入るので、記録に当たらない。
+        run_recorded(fetch_private(url, "ダミー"), database, reject_http)  # 取得担当まで届いて止まる。
+
+
+class _Article(BaseHTTPRequestHandler):  # 同じ機械の中だけで答える、確かめ用のHTTPサーバー。
+    def do_GET(self):  # GETに、固定の本文を返す。
+        body = "サーバーの本文".encode()  # 返す本文をUTF-8にする。
+        self.send_response(200)  # 状態200を返す。
+        self.send_header("Content-Type", "text/plain; charset=utf-8")  # 本文の文字コードを伝える。
+        self.send_header("Content-Length", str(len(body)))  # 本文の長さを伝える。
+        self.end_headers()  # ヘッダを閉じる。
+        self.wfile.write(body)  # 本文を書く。
+
+    def log_message(self, *args):  # 確かめの出力を汚さないよう、アクセスの記録を出さない。
+        return None  # 何も書かない。
+
+
+def test_record_with_production_handler(tmp_path):  # 本番の取得担当で記録し、通信せずに再生する。
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Article)  # 空いている番号で、localhostだけに立てる。
+    thread = threading.Thread(target=server.serve_forever, daemon=True)  # 別のスレッドで答えさせる。
+    thread.start()  # サーバーを動かし始める。
+    url = f"http://127.0.0.1:{server.server_port}/article"  # 同じ機械の中のURL。
+    database = tmp_path / "http.sqlite"  # このテストの記録のファイル。
+    try:  # 確かめが失敗しても、サーバーは必ず止める。
+        # 記録が無い時だけ、本物のAPIへ通信して記録する。記録があれば通信しない。
+        text = run_recorded(fetch_text(url), database, http_production_handler())
+        assert text == "サーバーの本文"  # 1回目は、実際に通信して取った本文。
+    finally:  # 次の再生は、サーバーを止めてから行う。
+        server.shutdown()  # 受け付けを止める。
+        server.server_close()  # 番号を放す。
+    assert run_recorded(fetch_text(url), database, reject_http) == "サーバーの本文"  # 止めた後も記録で答える。
+
+
+TESTS_WITH_TMP_PATH = (  # tmp_pathを受けるテスト。pytestを使わない時に、順に走らせる。
+    test_record_then_replay,  # 記録して再生し、記録に無いURLは失敗する。
+    test_replay_without_real_key,  # 鍵を外した記録の鍵で、偽の鍵でも再生できる。
+    test_default_key_misses_with_other_key,  # 既定の鍵では、鍵が違うと当たらない。
+    test_record_with_production_handler,  # 本番の取得担当で記録し、止めた後に再生する。
+)
+
+
+def verify() -> None:  # pytestを使わずに、全部のテストを順に走らせる。
+    test_fetch_text_without_network()  # 固定の応答で、通信せずに終わる。
+    with TemporaryDirectory() as directory:  # テストごとの記録のファイルを、一時の場所へ置く。
+        root = Path(directory)  # 一時のディレクトリ。
+        for index, test in enumerate(TESTS_WITH_TMP_PATH):  # 別々のディレクトリで走らせる。
+            path = root / str(index)  # このテストだけのディレクトリ。
+            path.mkdir()  # ディレクトリを作る。
+            test(path)  # tmp_pathの代わりに渡す。
+
+
+if __name__ == "__main__":  # 直接実行した時だけ、確かめを始める。
+    verify()  # 5つのテストを走らせる。失敗すれば例外で止まる。
+    print("固定の応答・記録と再生・記録に無い依頼の拒否・鍵を外した記録の鍵・本番の取得担当: OK")  # 全部通った時だけ表示する。
