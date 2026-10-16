@@ -196,6 +196,19 @@ pub(crate) fn is_python_file(path: &Path) -> bool {
     matches!(path.extension().and_then(|s| s.to_str()), Some("py"))
 }
 
+/// Whether `source` may carry a `# doeff: <marker>` comment.
+///
+/// A marker is an explicit opt-in by the author, so a file holding one is indexed even when it
+/// never mentions `Program` or `@do` (`def my_interpreter(program):  # doeff: interpreter`).
+/// `extract_marker_from_line` matches `doeff:` case-insensitively, so this does too; it only
+/// has to be a cheap superset of what that function accepts.
+fn may_contain_marker(source: &str) -> bool {
+    source
+        .as_bytes()
+        .windows(b"doeff:".len())
+        .any(|window| window.eq_ignore_ascii_case(b"doeff:"))
+}
+
 fn parse_python_file(path: &Path, root: &Path) -> Result<Vec<IndexEntry>> {
     let source =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
@@ -204,6 +217,7 @@ fn parse_python_file(path: &Path, root: &Path) -> Result<Vec<IndexEntry>> {
         && !source.contains("@do")
         && !source.contains("ProgramInterpreter")
         && !source.contains("KleisliProgram")
+        && !may_contain_marker(&source)
     {
         return Ok(Vec::new());
     }

@@ -537,3 +537,95 @@ def interceptor(e: Effect) -> Effect:
     // Kleisli also needs marker or @do decorator
     assert_eq!(find_kleisli(&index.entries).len(), 0);
 }
+
+// docs/MARKERS.md の最初の例そのまま: 型の注釈が無く、file のどこにも `Program` も `@do` も無い。
+// marker は利用者が名指しで付けた印なので、file がそれらの語を持たなくても索引に入れる
+// (前は file の頭の絞り込みで file ごと捨てて、find-interpreters が 0 件を返した)。
+#[test]
+fn test_marker_in_file_without_program_mention_is_indexed() {
+    let temp_dir = TempDir::new().unwrap();
+
+    create_test_file(
+        temp_dir.path(),
+        "markers_only.py",
+        r#"
+from doeff import run
+
+def my_interpreter(program):  # doeff: interpreter
+    return run(program)
+
+def add_logging(program):  # doeff: transform
+    return program
+
+def plain_function(program):
+    return run(program)
+"#,
+    );
+
+    let index = build_index(temp_dir.path()).unwrap();
+
+    let interpreters: Vec<&str> = find_interpreters(&index.entries)
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(interpreters, vec!["my_interpreter"]);
+
+    let transforms: Vec<&str> = find_transforms(&index.entries)
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(transforms, vec!["add_logging"]);
+
+    // The unmarked function carries no category, so it stays out of the index.
+    assert!(index.entries.iter().all(|e| e.name != "plain_function"));
+}
+
+#[test]
+fn test_marker_spellings_in_file_without_program_mention_are_indexed() {
+    let temp_dir = TempDir::new().unwrap();
+
+    create_test_file(
+        temp_dir.path(),
+        "spellings.py",
+        r##"
+from doeff import run
+
+def no_space(program):  #doeff: interpreter
+    return run(program)
+
+def upper_case(program):  # DOEFF: interpreter
+    return run(program)
+
+def in_docstring(program):
+    """# doeff: interpreter, default"""
+    return run(program)
+"##,
+    );
+
+    let index = build_index(temp_dir.path()).unwrap();
+    let mut names: Vec<&str> = find_interpreters(&index.entries)
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["in_docstring", "no_space", "upper_case"]);
+}
+
+// 絞り込みを外したわけではない: marker も `Program` も `@do` も無い file は、前と同じく読まない。
+#[test]
+fn test_file_without_marker_or_program_mention_is_still_skipped() {
+    let temp_dir = TempDir::new().unwrap();
+
+    create_test_file(
+        temp_dir.path(),
+        "unrelated.py",
+        r#"
+# This comment talks about doeff but is not a marker.
+def helper(program):
+    return program
+"#,
+    );
+
+    let index = build_index(temp_dir.path()).unwrap();
+    assert!(index.entries.is_empty());
+}
