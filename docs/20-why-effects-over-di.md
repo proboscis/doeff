@@ -73,12 +73,12 @@ async def my_workflow(llm: LLMService, images: ImageService):
 
 ```python
 from doeff import do, run
-from doeff_llm.effects import LLMChat, LLMStructuredOutput
+from doeff_llm.effects import LLMChat, LLMStructuredQuery
 from doeff_image.effects import ImageGenerate
 
 @do
 def my_workflow():
-    analysis = yield LLMStructuredOutput(
+    analysis = yield LLMStructuredQuery(
         messages=[{"role": "user", "content": "Analyze this code"}],
         response_format=CodeAnalysis,
         model="gpt-4o",
@@ -150,7 +150,7 @@ def my_workflow():
 
 # One cost handler works across all effect types
 @do
-def cost_cap_handler(effect: LLMChat | LLMEmbedding | LLMStructuredOutput | ImageGenerate, k):
+def cost_cap_handler(effect: LLMChat | LLMEmbedding | LLMStructuredQuery | ImageGenerate, k):
     current_cost = yield Get("total_cost")
     if current_cost > MAX_BUDGET:
         raise BudgetExceededError(current_cost)
@@ -179,7 +179,7 @@ from doeff import Get, Pass, Resume, Tell, WithObserve, do
 
 # Budget cap across ALL providers — impossible to bypass
 @do
-def budget_handler(effect: LLMChat | LLMStructuredOutput | ImageGenerate, k):
+def budget_handler(effect: LLMChat | LLMStructuredQuery | ImageGenerate, k):
     total = yield Get("total_cost")
     if total > settings.max_budget_usd:
         yield Tell(f"Budget exceeded: ${total:.2f} > ${settings.max_budget_usd}")
@@ -211,7 +211,7 @@ Every `yield` in a `@do` function is captured in the effect call tree. You get a
 @do
 def rag_pipeline(query: str):
     docs = yield semantic_search(query)       # Traced
-    analysis = yield LLMStructuredOutput(     # Traced
+    analysis = yield LLMStructuredQuery(     # Traced
         messages=build_prompt(docs),
         model="gpt-4o",
         response_format=Analysis,
@@ -226,7 +226,7 @@ def rag_pipeline(query: str):
 # rag_pipeline()
 # ├── semantic_search()
 # │   └── LLMEmbedding(model="text-embedding-3-small")
-# ├── LLMStructuredOutput(model="gpt-4o")
+# ├── LLMStructuredQuery(model="gpt-4o")
 # └── ImageGenerate(model="gemini-3-pro-image")
 ```
 
@@ -348,7 +348,7 @@ Effects add value when you have multiple providers, cross-cutting concerns, or n
 llm.  # -> chat(), structured(), embedding(), ...
 
 # Effects: you need to know the effect class names
-yield LLM  # -> LLMChat, LLMStructuredOutput, LLMEmbedding (via import autocomplete)
+yield LLM  # -> LLMChat, LLMStructuredQuery, LLMEmbedding (via import autocomplete)
 ```
 
 Protocol-based DI surfaces capabilities through method signatures. Effects require knowing the effect vocabulary.
@@ -395,16 +395,16 @@ In DI, each service type needs its own wrapper hierarchy. When you add a new cro
 With effects, concerns are orthogonal:
 
 ```
-                  Handlers (cross-cutting)
-                  ┌────────┬─────────┬──────────┐
-                  │ Retry  │ CostCap │ Tracing  │
-    ┌─────────────┼────────┼─────────┼──────────┤
-    │ LLMChat     │   ✓    │    ✓    │    ✓     │   doeff-llm
-E   │ LLMEmbed    │   ✓    │    ✓    │    ✓     │   doeff-llm
-f   │ ImageGen    │   ✓    │    ✓    │    ✓     │   doeff-image
-f   │ GetSecret   │   ✓    │    ✗    │    ✓     │   doeff-secret
-e   │ CacheGet    │   ✗    │    ✗    │    ✓     │   doeff (core)
-c   └─────────────┴────────┴─────────┴──────────┘
+                   Handlers (cross-cutting)
+                   ┌────────┬─────────┬──────────┐
+                   │ Retry  │ CostCap │ Tracing  │
+    ┌──────────────┼────────┼─────────┼──────────┤
+    │ LLMChat      │   ✓    │    ✓    │    ✓     │   doeff-llm
+E   │ LLMEmbedding │   ✓    │    ✓    │    ✓     │   doeff-llm
+f   │ ImageGen     │   ✓    │    ✓    │    ✓     │   doeff-image
+f   │ GetSecret    │   ✓    │    ✗    │    ✓     │   doeff-secret
+e   │ CacheGet     │   ✗    │    ✗    │    ✓     │   doeff (core)
+c   └──────────────┴────────┴─────────┴──────────┘
 t
 s   Adding a new effect type:  1 row  (just the effect, handlers apply automatically)
     Adding a new handler:      1 column (just the handler, applies to all effects)
