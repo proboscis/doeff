@@ -65,7 +65,7 @@
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest])
 (import doeff_records.watching [wait-for-signal moved-of])
 (import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
-                              schema-statements drop-statements
+                              writer-lock-statement schema-statements drop-statements
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement prune-changes-statement UNBOUNDED-SEQ find-event-statement
@@ -81,6 +81,11 @@
   (defn #^ None __init__ [self #^ (| str None) sqlstate #^ str reason]  ; defk にできない: 例外の class の初期化
     (.__init__ (super) (.format "PostgreSQL が断った({}): {}" sqlstate reason))
     (setv self.sqlstate sqlstate)))
+
+
+;; 表の用意の transaction を deadlock(40P01)の後に流し直す回数の上限(prepare-records-store)。
+(val PREPARE-ATTEMPTS 3)
+(val DEADLOCK-SQLSTATE "40P01")
 
 
 (defclass StoreUnreachable [Exception]
@@ -294,13 +299,30 @@
    :tags {:context "records" :role "foundation"}}
   "表を用意する(移行)— process ごとに 1 度、composition root が要求を受ける前に流す。文は移行の錠の transaction の中で流す:
    同じ置き場を同時に用意する別の process(replicas > 1・入れ替えの重なり)は錠を待ち、先の commit の後で IF NOT EXISTS が
-   何もしない(錠が無いと同時の CREATE INDEX IF NOT EXISTS が競って遅れた方が UniqueViolation)。
+   何もしない(錠が無いと同時の CREATE INDEX IF NOT EXISTS が競って遅れた方が UniqueViolation)。同じ transaction の頭で置き場の
+   書きの錠も取り、同じ置き場の書き(入れ替えの間も答える別の process)と表の lock を逆の順で取らない(pg_sql.writer-lock-statement)。
+   錠の外の相手との deadlock(40P01)は transaction ごと戻るので、PREPARE-ATTEMPTS 回まで同じ transaction を流し直す(文はどれも冪等)。
    届かなければ StoreUnreachable・engine の失敗は RecordsSqlFailed を上げる(起動を止める)。"
   (<- checked (checked-prefix prefix))
   (<- statements (schema-statements checked schema))
+  (<- writer-lock (writer-lock-statement checked))
   (<- key (migrate-lock-key checked))
-  (<- (in-transaction database key (run-statements database statements)))
+  (<- (prepared-tables database key (+ #(writer-lock) statements) PREPARE-ATTEMPTS))
   (PreparedStore :database database :schema schema :prefix checked))
+
+
+(defk prepared-tables [database key statements attempts]
+  {:pre [(: database str) (: key str) (: statements tuple) (: attempts int) (>= attempts 1)] :post [(: % None)]
+   :tags {:context "records" :role "foundation"}}
+  "表の用意の文を錠 key の transaction 1 つで流し、deadlock(40P01)で戻された時は残りの attempts 回まで流し直すため。"
+  (try
+    (<- (in-transaction database key (run-statements database statements)))
+    None
+    (except [error RecordsSqlFailed]
+      (when (or (!= error.sqlstate DEADLOCK-SQLSTATE) (<= attempts 1))
+        (raise))
+      (<- (prepared-tables database key statements (- attempts 1)))
+      None)))
 
 
 (defk drop-records-tables [store]
