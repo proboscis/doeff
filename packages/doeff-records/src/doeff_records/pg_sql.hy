@@ -132,6 +132,17 @@
   (+ prefix MIGRATE-LOCK-SUFFIX))
 
 
+(defk writer-lock-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "表の用意(移行)の transaction の中で、移行の錠の次に置き場の書きの錠を取る文を作るため(答え手が lock-key に流す文と同じ形 —
+   pg_advisory_xact_lock(hashtext(鍵)))。用意の CREATE INDEX は表に ShareLock を取って transaction の終わりまで持ち、書き(書きの錠の中)は
+   行の表に RowExclusiveLock を取るので、書きの錠を取らない用意と同じ置き場の書き(入れ替えの間も答える同じ置き場の別の process・旧い版の終わりの書き)は
+   表の lock を逆の順で取って deadlock(40P01)になる(2026-10-16 の入れ替えで起動が 1 回落ちた)。錠の順は移行の錠 → 書きの錠 → 表の lock の 1 つ。"
+  (Statement :text "SELECT pg_advisory_xact_lock(hashtext(:key))"
+             :params (! (params-of #(#("key" (! (writer-lock-key prefix))))))))
+
+
 (defk in-list [stem values]
   {:pre [(: stem str) (: values tuple) (> (len values) 0)] :post [(: % InList)]
    :tags {:context "records" :role "foundation"}}
