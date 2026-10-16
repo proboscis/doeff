@@ -2,28 +2,26 @@
   {
     "id": "agents-concept",
     "image": "images/zenn-use-cases-v0/generated/agents-concept.png",
-    "generation_prompt": "agents-concept-flat-code.txt",
+    "generation_prompt": "agents-svg-source.txt",
     "edit_prompts": [],
-    "tool": "image_gen (built-in)",
-    "sha256": "4a407f38a22f367b1f8717dbef068cb573b89e08e0ee06259455ea5dcf13d9aa",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1388269,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "5adf562722f6ba6cef54bf0548f47e84ad5c349b3d8dd97b95f44e6bc8a08c06",
+    "width": 1200,
+    "height": 1800,
+    "bytes": 243318,
+    "review": "2026-10-16：週2の改稿のコード（delegate_task・fixed_agent・3つのハンドラ・AwaitOutcome、2件の並行とready=False）と名前・値・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
   },
   {
     "id": "agents-flow",
     "image": "images/zenn-use-cases-v0/generated/agents-flow.png",
-    "generation_prompt": "agents-flow-flat-code.txt",
-    "edit_prompts": [
-      "agents-flow-flat-code-edit.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "0ddd9942903dd2684beca7dafe3756f982d3e89182670c0df6f71ea7457d7a51",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1695665,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "agents-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "0eeb394d8093338a251343c4df053b6088fe4c7d776c2fbb31f55a2773404114",
+    "width": 1200,
+    "height": 2120,
+    "bytes": 202074,
+    "review": "2026-10-16：週2の改稿のコード（delegate_task・fixed_agent・3つのハンドラ・AwaitOutcome、2件の並行とready=False）と名前・値・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
   },
   {
     "id": "boundaries-concept",

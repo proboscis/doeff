@@ -1,0 +1,12 @@
+エージェントの記事（doeff-agents.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-16）。
+
+- 正本：../visuals/agents-concept.svg と ../visuals/agents-flow.svg。
+- 図の仕様：記事の掲載コードの名前・値・処理順（delegate_task・fixed_agent・ScenarioAgentHandler・agent_effectful_handler()・AwaitOutcome、ok=True・ok=False・ready=False）。
+- 字の大きさ：図は幅600の座標で描き、字を17px以上にした。携帯の幅（約360px）に縮めても読めるようにするため。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。SVGのwidth・heightを座標の2倍にしてある。
+  - agents-concept：幅1200・高さ1800。
+  - agents-flow：幅1200・高さ2120。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+2026-09-16にimagegenで作ったPNGは、.gitignoreの例外がgenerated/に届かず、リポジトリに入っていなかった。
+同じ画素を作り直せないため、記事の改稿に合わせてSVGで描き直した。

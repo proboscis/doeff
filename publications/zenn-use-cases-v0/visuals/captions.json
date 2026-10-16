@@ -7,10 +7,10 @@
     "hero_title": "doeff — 処理を書く。動かし方は、選べる。"
   },
   "agents": {
-    "concept_title": "エージェントの操作を、ハンドラで解釈する",
-    "concept_caption": "LaunchSessionとAwaitResultの列は共通です。選んだハンドラが、実セッションまたはシナリオの応答として解釈します。",
-    "flow_title": "2件のレビューを開始し、結果を待って可否を合成する",
-    "flow_caption": "2件を開始してから、それぞれの結果を待ちます。シナリオ例は文章がok=True、コードがok=Falseなので、最終結果はready=Falseです。"
+    "concept_title": "同じ処理に、外側でハンドラを1つ付ける",
+    "concept_caption": "処理の本体は3つとも同じです。依頼にどう答えるかだけが、付けたハンドラで替わります。",
+    "flow_title": "2件のレビューを並べて進め、結果を合わせる",
+    "flow_caption": "2件を始めてから、それぞれの結果を待ちます。次の節のテストでは文章がok=True、コードがok=Falseなので、ready=Falseです。"
   },
   "llm": {
     "concept_title": "LLMへの依頼を、ハンドラで解釈する",
