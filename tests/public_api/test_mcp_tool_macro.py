@@ -203,6 +203,57 @@ class TestDefmcpToolMacro:
         }
         assert annotations == {"limit": "int | None", "side": "str", "note": "str | None"}
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "(<- result (submit-order symbol))\n  result",
+            "(when symbol (! (submit_order symbol)))",
+            "(+ \"order: \" (str (! (submit-order symbol))))",
+        ],
+    )
+    def test_body_calling_the_tools_own_name_raises(self, body):
+        """本体が tool 自身の名を呼ぶ展開は断る(綴りが - でも _ でも、式の奥でも)。展開はその名を McpToolDef に束ねるので、
+        同じ名の defk が先に在っても本体の呼びは tool を指し、run で TypeError: 'McpToolDef' object is not callable に
+        なっていた(docs 12 章 MCP の道具の例・card ki-896fc4bca8cb)。"""
+
+        @do
+        def submit_order(symbol):
+            return {"order": symbol}
+
+        with pytest.raises(SyntaxError, match="tool 自身の名 submit-order を呼んでいます"):
+            _eval_mcp(f"""
+(defmcp-tool submit-order
+  "Submit a trading order"
+  [{{:name "symbol" :type "string" :description "Stock symbol"}}]
+  {body})
+""", submit_order=submit_order)
+
+    def test_tool_named_apart_from_its_defk_runs_the_defk(self):
+        """tool の名を defk と分けると、本体は defk を呼び、handler の run は defk の結果を返す(docs 12 章の例の形)。
+        tool の値を読むだけの `(. submit-order-tool name)` や引用の中の名は呼びでないので断らない。"""
+
+        @do
+        def submit_order(symbol, qty):
+            return {"order": [symbol, qty], "status": "accepted"}
+
+        mod, _ = _eval_mcp("""
+(defmcp-tool submit-order-tool
+  "Submit a trading order"
+  [{:name "symbol" :type "string" :description "Stock symbol"}
+   {:name "qty" :type "integer" :description "Quantity"}]
+  (setv written '(submit-order-tool symbol))
+  (<- result (submit-order symbol qty))
+  (setv (get result "tool") (. submit-order-tool name))
+  result)
+""", submit_order=submit_order, hy=hy)
+        tool = mod.__dict__["submit_order_tool"]
+        assert tool.name == "submit-order-tool"
+        assert run(tool.handler("7203", 100)) == {
+            "order": ["7203", 100],
+            "status": "accepted",
+            "tool": "submit-order-tool",
+        }
+
     def test_missing_description_raises(self):
         """defmcp-tool without description string raises error."""
         with pytest.raises(Exception, match="description string"):
