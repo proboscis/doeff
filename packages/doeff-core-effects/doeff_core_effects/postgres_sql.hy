@@ -163,7 +163,9 @@
           self.listeners {}
           self.listeners-lock (threading.Lock)))
 
-  (defn #^ PostgresListener listener [self #^ str name #^ str channel]  ; defk にできない: 資源の待ち受けを引く(無ければ作って thread を起こす — VM の外の錠)
+  ;; 答えの型は文字列の前方参照で書く: PostgresListener はこの class より後で定義し、Python 3.13 までは注記を定義の時に評価するので、
+  ;; 裸の名は module の読み込みを NameError で落とす(注記を遅れて評価する PEP 649 は 3.14 から)。
+  (defn #^ "PostgresListener" listener [self #^ str name #^ str channel]  ; defk にできない: 資源の待ち受けを引く(無ければ作って thread を起こす — VM の外の錠)
     "database name の channel の待ち受け(PostgresListener)を引くため(初めての channel なら作る)。"
     (with [_ self.listeners-lock]
       (setv key #(name channel))
