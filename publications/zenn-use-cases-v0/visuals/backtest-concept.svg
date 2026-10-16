@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1040" width="1600" height="2080">
+  <!-- 記事 doeff-backtest.md の冒頭の全体の図。名前と値は本文の最初のコードの枠と揃える。 -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+    <style>
+      .title { font: bold 30px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .label { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .text { font: 24px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .muted { font: 22px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #5b6475; }
+      .code { font: 24px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #1f2a44; }
+      .codeb { font: bold 24px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #0f766e; }
+      .bt { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #0f766e; }
+      .live { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #b45309; }
+      .foot { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+    </style>
+  </defs>
+  <rect width="800" height="1040" fill="#ffffff"/>
+  <text class="title" x="400" y="54" text-anchor="middle">同じ処理に、バックテストと</text>
+  <text class="title" x="400" y="94" text-anchor="middle">本番のハンドラを付け替える</text>
+
+  <!-- 処理の側(1つだけ書く) -->
+  <rect x="40" y="124" width="720" height="290" rx="16" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text class="muted" x="64" y="160">処理 trading_loop(1つだけ書く)</text>
+  <text class="code" x="76" y="204">now = yield <tspan class="codeb">GetTime()</tspan></text>
+  <text class="code" x="76" y="244">price = yield <tspan class="codeb">GetPrice(symbol)</tspan></text>
+  <text class="code" x="76" y="284">side, quantity = decide(now, price)</text>
+  <text class="code" x="76" y="324">yield <tspan class="codeb">PlaceOrder(…)</tspan>  ・ yield <tspan class="codeb">Tell(…)</tspan></text>
+  <text class="code" x="76" y="364">yield <tspan class="codeb">Delay(60)</tspan></text>
+  <text class="muted" x="76" y="400">decide は中身の無い置き物(毎回 buy 1)</text>
+
+  <line x1="400" y1="416" x2="400" y2="482" stroke="#374151" stroke-width="3" marker-end="url(#arrow)"/>
+  <text class="text" x="420" y="456">依頼を外側へ渡す</text>
+  <text class="muted" x="400" y="516" text-anchor="middle">外側のハンドラの組を、どちらか1つ選ぶ</text>
+
+  <!-- バックテスト -->
+  <rect x="40" y="540" width="350" height="330" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text class="bt" x="64" y="584">バックテストで</text>
+  <text class="label" x="64" y="632">時刻・待ち</text>
+  <text class="code" x="64" y="668">sim_time_handler</text>
+  <text class="text" x="64" y="702">仮想の時計を進める</text>
+  <text class="label" x="64" y="752">値段・注文</text>
+  <text class="code" x="64" y="788">backtest_market</text>
+  <text class="text" x="64" y="822">今以前の記録で答える</text>
+  <text class="text" x="64" y="854">注文は送らない</text>
+
+  <!-- 本番 -->
+  <rect x="410" y="540" width="350" height="330" rx="16" fill="#fffbeb" stroke="#b45309" stroke-width="3"/>
+  <text class="live" x="434" y="584">本番で</text>
+  <text class="label" x="434" y="632">時刻・待ち</text>
+  <text class="code" x="434" y="668">sync_time_handler</text>
+  <text class="text" x="434" y="702">OSの時計で60秒待つ</text>
+  <text class="label" x="434" y="752">値段・注文</text>
+  <text class="code" x="434" y="788">live_market</text>
+  <text class="text" x="434" y="822">取引所のクライアント</text>
+  <text class="text" x="434" y="854">に問い、注文を送る</text>
+
+  <text class="muted" x="400" y="912" text-anchor="middle">控え Tell(…) は、どちらでも state と writer が集める</text>
+  <text class="foot" x="400" y="964" text-anchor="middle">替えるのは外側だけ。</text>
+  <text class="foot" x="400" y="1004" text-anchor="middle">trading_loop と decide は書き換えません</text>
+</svg>
