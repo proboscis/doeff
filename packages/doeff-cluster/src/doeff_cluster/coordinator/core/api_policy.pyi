@@ -3,6 +3,7 @@
 from doeff import Program as _Program
 from dataclasses import replace as replace
 from traceback import extract_tb as extract_tb
+from doeff import run as run
 from doeff_cluster.coordinator.intent.request_bodies import BodyMalformed as BodyMalformed
 from doeff_cluster.coordinator.intent.request_bodies import BodyUnreadable as BodyUnreadable
 from doeff_cluster.coordinator.intent.request_bodies import RequestBody as RequestBody
@@ -33,6 +34,8 @@ from doeff_cluster.coordinator.core.metrics_policy import metrics_text as metric
 from doeff_cluster.shared.intent.due_model import DueAt as DueAt
 from doeff_cluster.shared.intent.due_model import DueNow as DueNow
 from doeff_cluster.shared.intent.due_model import DueNever as DueNever
+from doeff_cluster.coordinator.intent.due_model import StepPace as StepPace
+from doeff_cluster.coordinator.intent.due_model import Stall as Stall
 from doeff_cluster.shared.core.due_policy import earliest_due as earliest_due
 from doeff_cluster.coordinator.core.cluster_policy import reconcile as reconcile
 from doeff_cluster.coordinator.core.cluster_policy import register_heartbeat as register_heartbeat
@@ -117,6 +120,12 @@ def mark_alive(state: ClusterState, now: int) -> _Program[ClusterState, object]:
     ...
 
 def resume_after_downtime(state: ClusterState, now: int) -> tuple:
+    ...
+
+def clocks_shifted(state: ClusterState, now: int, gap: int) -> _Program[ClusterState, object]:
+    ...
+
+def stall_of(pace: StepPace | None, now: int, timing: ClusterTiming) -> _Program[Stall | None, object]:
     ...
 
 def target_view(state: ClusterState, target: RolloutTarget, status: RolloutStatus, now: int, timing: ClusterTiming) -> TargetView:

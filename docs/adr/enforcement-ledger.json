@@ -426,6 +426,7 @@
     "ADR-DOE-CLUSTER-001 programs-declare-capabilities-not-places",
     "ADR-DOE-CLUSTER-001 runner-inserts-no-recorder",
     "ADR-DOE-CLUSTER-001 service-and-task-share-one-entry",
+    "ADR-DOE-CLUSTER-002 a-coordinator-stall-is-not-silence",
     "ADR-DOE-CLUSTER-002 a-node-label-is-followed-by-events",
     "ADR-DOE-CLUSTER-002 a-rollout-follows-its-deployments-by-events",
     "ADR-DOE-CLUSTER-002 a-settled-state-is-never-due-now",

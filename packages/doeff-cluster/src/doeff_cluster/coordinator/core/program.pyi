@@ -38,6 +38,10 @@ from doeff_cluster.coordinator.core.api_policy import record_action as record_ac
 from doeff_cluster.coordinator.core.api_policy import mark_alive as mark_alive
 from doeff_cluster.coordinator.core.api_policy import stamp_alive as stamp_alive
 from doeff_cluster.coordinator.core.api_policy import ROLLOUT_ACTOR as ROLLOUT_ACTOR
+from doeff_cluster.coordinator.core.api_policy import stall_of as stall_of
+from doeff_cluster.coordinator.core.api_policy import clocks_shifted as clocks_shifted
+from doeff_cluster.coordinator.intent.due_model import StepPace as StepPace
+from doeff_cluster.coordinator.intent.due_model import Stall as Stall
 from doeff_cluster.coordinator.core.resource_policy import stamp as stamp
 from doeff_cluster.coordinator.intent.request_bodies import ReadBody as ReadBody
 from doeff_cluster.coordinator.intent.request_bodies import BodyUnreadable as BodyUnreadable
@@ -62,6 +66,7 @@ from doeff_cluster.shared.intent.due_model import DueNever as DueNever
 from doeff_cluster.coordinator.core.wake_policy import next_wake as next_wake
 from doeff_cluster.coordinator.core.wake_policy import after_step as after_step
 from doeff_cluster.coordinator.core.wake_policy import wait_seconds as wait_seconds
+from doeff_cluster.coordinator.core.wake_policy import planned_wake_ms as planned_wake_ms
 from doeff_cluster.coordinator.core.wake_policy import count_unsettled as count_unsettled
 HEARTBEAT_LAG_LOG: str
 HEARTBEAT_LAG_MS: int
@@ -119,6 +124,10 @@ def request_reply(state: ClusterState, request: Request, now: int, timing: Clust
 
 def watch_answer_json(answer: WatchAnswer) -> _Program[dict, object]:
     ...
+STALL_LOG: str
+
+def stall_resumed(state: ClusterState, now: int, stall: Stall | None) -> _Program[ClusterState, object]:
+    ...
 
 def announce_liveness(events: tuple) -> _Program[int, object]:
     ...
@@ -126,7 +135,7 @@ def announce_liveness(events: tuple) -> _Program[int, object]:
 def announced_aside(events: tuple) -> _Program[None, object]:
     ...
 
-def coordinator_step(state: ClusterState, timing: ClusterTiming, naming: ClusterNaming, watchers: tuple, wait: float | None) -> _Program[tuple, object]:
+def coordinator_step(state: ClusterState, timing: ClusterTiming, naming: ClusterNaming, watchers: tuple, wait: float | None, pace: StepPace | None=None) -> _Program[tuple, object]:
     ...
 
 def release_watchers(state: ClusterState, watchers: tuple) -> _Program[int, object]:

@@ -97,6 +97,17 @@
     (DueNever) None))
 
 
+(defk planned-wake-ms [due now]
+  {:pre [(: due (| DueAt DueNow DueNever)) (: now int)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "次に起きる刻 due を、受付の待ちが期限で明ける刻(epoch ms)にするため — 止まりの検出(api_policy.stall-of)が寝過ごしを測る起点
+   (wait-seconds と同じ読み): 刻(過ぎていれば now)・今すぐは now・無しは None(要求か停止の合図か外の出来事でだけ起きる — 寝過ごしは
+   無い)。"
+  (match due
+    (DueAt :at at) (max at now)
+    (DueNow) now
+    (DueNever) None))
+
+
 (defk count-unsettled [streak due before after]
   {:pre [(: streak int) (: due (| DueAt DueNow DueNever)) (: before ClusterState) (: after ClusterState)] :post [(: % int)]
    :tags {:context "coordinator" :role "judgment"}}

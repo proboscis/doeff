@@ -325,6 +325,7 @@ PAUSE_STOP: str
 PAUSE_CRASH: str
 CUT_REASON: str
 FAULT_REASON: str
+STALL_REASON: str
 SIM_TIMING_RATIO: int
 
 @dataclass(frozen=True, kw_only=True)
@@ -531,6 +532,10 @@ class CutWorker(_doeff_effect_base[None]):
 @_doeff_dataclass(frozen=True)
 class StallWorker(_doeff_effect_base[None]):
     name: str
+    seconds: float
+
+@_doeff_dataclass(frozen=True)
+class StallCoordinator(_doeff_effect_base[None]):
     seconds: float
 
 @_doeff_dataclass(frozen=True)
@@ -1166,6 +1171,9 @@ def observe_requests(book: StepBook, queue: RequestQueue) -> _Handler:
     ...
 
 def fail_open_requests(queue: RequestQueue, held: tuple, reason: str) -> _Program[int, object]:
+    ...
+
+def stall_taken(queue: RequestQueue, taken: list) -> _Program[list, object]:
     ...
 
 def coordinator_life(plan: SimPlan, parts: SimParts) -> _Program[str, object]:
