@@ -165,6 +165,9 @@ def retired_actions(now: int, process: ProcessView, origin: str, desired: tuple,
 def retired_limit_for(want: JobSpec, policy: WorkerPolicy) -> int:
     ...
 
+def retired_room_full(want: JobSpec, name: str, world: WorldView, policy: WorkerPolicy) -> bool:
+    ...
+
 def plan_job(now: int, name: str, desired: tuple, world: WorldView, record: JobRecord, policy: WorkerPolicy, absent: StopReason) -> _Program[tuple, object]:
     ...
 

@@ -310,7 +310,7 @@
       (do (setv gate (probe-actions now want tree world policy))
           (cond
             (is-not gate None) gate
-            (>= (len (retired-of world process.name)) (retired-limit-for want policy)) #()
+            (retired-room-full want process.name world policy) #()
             True #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
       ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
       (prepare-actions now want world policy None)))
@@ -347,6 +347,12 @@
   "入れ替えの job want が同時に残す退いた process の数の上限 R を決めるため: 宣言の readiness の retiredLimit(JobSpec.retired-limit)が
    在ればそれ、無ければ worker の既定 policy.retired-limit(#4072 の D-3 の改め)。"
   (if (is want.retired-limit None) policy.retired-limit want.retired-limit))
+
+(defn #^ bool retired-room-full [#^ JobSpec want #^ str name #^ WorldView world #^ WorkerPolicy policy]
+  ;; defk にできない: worker の純粋な判断(handoff-actions・phase の外の job-status の文 — defn の中)が呼ぶ
+  "入れ替えの job name の退いてまだ動いている process が上限 R(retired-limit-for)に達しているか — 今の process を退かせずに待つ判断
+   (handoff-actions)と、その待ちを状態の行の文に出す判断(job-status — 退いた process の空き待ち・AL-D1)が同じこの 1 つを読む。"
+  (>= (len (retired-of world name)) (retired-limit-for want policy)))
 
 (defk plan-job [now name desired world record policy absent]
   {:pre [(: now int) (: name str) (: desired tuple) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: absent StopReason)]
@@ -755,6 +761,12 @@
         (is-not refused None) (.format "待ちの子が {} 回続けて起動を断った: {}" (+ refused.refusals 1) refused.detail)
         ;; 待ちの子の準備を待っている task(#3646)。
         (is-not warm-wait None) warm-wait
+        ;; 退いた process の空き待ち(AL-D1): 新のコードも入口の検めも揃ったが、退いた process が上限 R に達しているので今の process を
+        ;; 退かせずに待っている(handoff-actions)。coordinator はこの文を Service の readyReason と版の判定の訳(Updating)に添え、
+        ;; 宣言の道具の待ちの印字(最後の読み)もそれを出す — 「新が起きない」を準備の遅れと取り違えないため。
+        (and handing-off (is-not code None) (= code.state CodeState.READY) (retired-room-full want name world policy))
+          (.format "入れ替えを待つ — 退いた process の空き待ち(退いた {} 個が上限 {}・どれかが走っている仕事を終えて自分で終わるまで今の process を退かせない・旧は動かしたまま)"
+                   (len (retired-of world name)) (retired-limit-for want policy))
         ;; 入れ替えの途中(新のコードの準備・新の Ready 待ち)は、旧が動いていることを示す。
         handing-off
           (.format "入れ替えを待つ(新のコード {})" (if (is code None) "未準備" code.state.value))
