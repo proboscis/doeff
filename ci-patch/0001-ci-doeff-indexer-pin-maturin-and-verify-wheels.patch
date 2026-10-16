@@ -1,0 +1,262 @@
+From 4b7fa273308e12dd1de6810789a25dcac16bf03b Mon Sep 17 00:00:00 2001
+From: Proboscis <3684241+proboscis@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 21:15:08 +0000
+Subject: [PATCH] =?UTF-8?q?ci(doeff-indexer):=20maturin=20=E3=82=92=201.13?=
+ =?UTF-8?q?=20=E4=BB=A5=E4=B8=8A=E3=81=AB=E5=9B=BA=E5=AE=9A=E3=81=97?=
+ =?UTF-8?q?=E3=80=81upload=20=E3=81=AE=E5=89=8D=E3=81=AB=E5=85=A8=E9=83=A8?=
+ =?UTF-8?q?=E3=81=AE=20wheel=20=E3=81=AE=E9=85=8D=E7=BD=AE=E3=81=A8?=
+ =?UTF-8?q?=E5=85=A5=E3=82=8C=E3=81=9F=E5=BE=8C=E3=81=AE=E5=8B=95=E3=81=8D?=
+ =?UTF-8?q?=E3=82=92=E7=A2=BA=E3=81=8B=E3=82=81=E3=82=8B?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+PyPI の doeff-indexer 0.1.3 は、全部の機体の wheel が命令の binary を命令の入口が探す `doeff_indexer/bin/` でなく
+`python/doeff_indexer/bin/` に持ち、`pip install doeff-indexer` の後の `doeff-indexer --help` が "binary not found" で
+落ちた。maturin 1.12 は pyproject.toml の include の file を project の根からの path のまま入れ、1.13 から python-source の
+下の path にする。0.1.3 は maturin-action が当日の最新 1.12 を引いた CI で組まれた。
+
+- build-indexer.yml: 7 つの maturin-action の step に maturin-version v1.15.0 を固定する。新しい job verify-wheels が、
+  全部の build の後に tools/verify_indexer_wheel.py で全部の wheel の配置を見て、Linux x86_64 の wheel を新しい venv に入れて
+  `doeff-indexer --help` と find-interpreters を撃つ。publish はこの job を待つ。
+- tests/test_indexer_wheel_workflow.py: 固定と、verify-wheels が全部の build の後に走り publish がそれを待つ事を読む
+  (元の workflow では 2 本とも赤)。
+- docs/release-publish-runbook.md: verify-wheels の役目と、0.1.3 の不具合の訳を書く。
+- pyproject.toml の契約の表: build-indexer.yml の変更がこの検を選ぶ。
+
+この commit は workflow を含むので、workflows の権限の無い GitHub App の token では push できない。
+道具・build の口の下限・test は先の commit に在る(tools/verify_indexer_wheel.py・tests/test_indexer_wheel_layout.py)。
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Ai-Conversation: c-E186CQC33DV4M0DGP6K887ZN9P
+---
+ .github/workflows/build-indexer.yml  | 35 +++++++++++-
+ docs/release-publish-runbook.md      |  5 +-
+ pyproject.toml                       |  4 ++
+ tests/test_indexer_wheel_workflow.py | 84 ++++++++++++++++++++++++++++
+ 4 files changed, 126 insertions(+), 2 deletions(-)
+ create mode 100644 tests/test_indexer_wheel_workflow.py
+
+diff --git a/.github/workflows/build-indexer.yml b/.github/workflows/build-indexer.yml
+index 5e669b6f0..efc93703b 100644
+--- a/.github/workflows/build-indexer.yml
++++ b/.github/workflows/build-indexer.yml
+@@ -53,6 +53,7 @@ jobs:
+       - name: Build wheels
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           target: ${{ matrix.target }}
+           args: --release --out dist
+           working-directory: packages/doeff-indexer
+@@ -87,6 +88,7 @@ jobs:
+       - name: Build free-threaded wheels
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           target: ${{ matrix.target }}
+           args: --release --out dist -i python3.13t python3.14t
+           working-directory: packages/doeff-indexer
+@@ -131,6 +133,7 @@ jobs:
+       - name: Build wheels
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           target: ${{ matrix.target }}
+           args: --release --out dist
+           working-directory: packages/doeff-indexer
+@@ -167,6 +170,7 @@ jobs:
+       - name: Build free-threaded wheels
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           target: ${{ matrix.target }}
+           args: --release --out dist --find-interpreter
+           working-directory: packages/doeff-indexer
+@@ -200,6 +204,7 @@ jobs:
+       - name: Build wheels
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           args: --release --out dist
+           working-directory: packages/doeff-indexer
+ 
+@@ -231,6 +236,7 @@ jobs:
+       - name: Build free-threaded wheels
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           args: --release --out dist --find-interpreter
+           working-directory: packages/doeff-indexer
+       - name: Upload wheels
+@@ -248,6 +254,7 @@ jobs:
+       - name: Build sdist
+         uses: PyO3/maturin-action@v1
+         with:
++          maturin-version: v1.15.0
+           command: sdist
+           args: --out dist
+           working-directory: packages/doeff-indexer
+@@ -258,11 +265,37 @@ jobs:
+           name: doeff-indexer-sdist
+           path: packages/doeff-indexer/dist/*.tar.gz
+ 
++  # The 0.1.3 wheels on PyPI shipped the doeff-indexer binary under python/doeff_indexer/bin/, where
++  # the doeff-indexer command never looks, so `doeff-indexer --help` printed "binary not found".
++  # maturin 1.12 (what maturin-action pulled that day) puts an `include`d file at its path from the
++  # project root; 1.13 and later put it under the python source. The maturin-version pins above keep
++  # the layout from changing with the day's "latest"; this job checks the layout of every wheel and
++  # installs the Linux x86_64 one to run the command, so a wrong wheel stops here, before the upload.
++  verify-wheels:
++    name: Check the wheels install and run
++    needs: [build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded]
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Download doeff-indexer wheels
++        uses: actions/download-artifact@v4
++        with:
++          pattern: doeff-indexer-wheels-*
++          path: dist
++          merge-multiple: true
++
++      - name: Check every wheel and run the command from the Linux x86_64 one
++        run: >-
++          python3 tools/verify_indexer_wheel.py
++          --smoke dist/doeff_indexer-*-cp310-abi3-manylinux*_x86_64*.whl
++          dist/*.whl
++
+   # Uploads only from this workflow's own doeff-indexer-v* tag or dispatch: PyPI rejects Trusted
+   # Publishing from a reusable workflow, so publish.yml calls this one with publish: false.
+   publish:
+     name: Publish to PyPI
+-    needs: [check-version-unpublished, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
++    needs: [check-version-unpublished, verify-wheels, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
+     runs-on: ubuntu-latest
+     if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || inputs.publish
+     environment: pypi
+diff --git a/docs/release-publish-runbook.md b/docs/release-publish-runbook.md
+index 4866a962f..8bcc8fe7b 100644
+--- a/docs/release-publish-runbook.md
++++ b/docs/release-publish-runbook.md
+@@ -287,7 +287,10 @@ uv publish "/tmp/${package}-dist"/*
+   `doeff-openrouter`・`doeff-gemini` の前に `doeff-llm`、`doeff-seedream` の前に `doeff-image`、`doeff-google-secret-manager` の前に
+   `doeff-secret`)。
+ - `doeff-indexer` だけは手元で出さず、tag `doeff-indexer-vX.Y.Z` を push して `build-indexer.yml` に全ての機体の wheel を組ませて出す。
+-  この workflow も、upload の前に同じ版の check を走らせる。
++  この workflow も、upload の前に同じ版の check を走らせる。さらに job `verify-wheels` が、全部の wheel の中の binary の位置と、Linux x86_64 の
++  wheel を新しい venv に入れた命令の動き(`doeff-indexer --help`・`find-interpreters`)を `tools/verify_indexer_wheel.py` で見る。
++  PyPI の 0.1.3 は全部の機体の wheel が binary を命令の探す所(`doeff_indexer/bin/`)でなく `python/doeff_indexer/bin/` に持ち、`pip install` の後の
++  命令が動かなかった(maturin 1.12 の配置 — 1.13 以上に固定し、`tests/test_indexer_wheel_layout.py` が守る)。
+ - 出した後は、新しい環境にその部品の名を PyPI から入れ、import できる事を確かめる。
+ 
+ ## PyPI の資格
+diff --git a/pyproject.toml b/pyproject.toml
+index 8136c5083..9296f4046 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -551,6 +551,10 @@ tests = [
+ prefix = "tools/verify_indexer_wheel.py"
+ tests = ["tests/test_indexer_wheel_layout.py"]
+ 
++[[tool.doeff.contract-tests]]
++prefix = ".github/workflows/build-indexer.yml"
++tests = ["tests/test_indexer_wheel_workflow.py"]
++
+ [[tool.doeff.contract-tests]]
+ prefix = "packages/doeff-jev/"
+ reason = "stub も __all__ も無く、公開の名を確かめる検も無い — 検は宛先の解き方・要求の形・答えの読みの単体だけ(台本の handler で答える)"
+diff --git a/tests/test_indexer_wheel_workflow.py b/tests/test_indexer_wheel_workflow.py
+new file mode 100644
+index 000000000..4f91729a5
+--- /dev/null
++++ b/tests/test_indexer_wheel_workflow.py
+@@ -0,0 +1,84 @@
++"""doeff-indexer の wheel を組む CI(build-indexer.yml)が、配置の間違った wheel を upload しない事の検(取り組み doeff-publish・
++card ki-d20475e94d87 の見つけた不具合)。
++
++PyPI の 0.1.3 の wheel は、命令の binary を命令の入口が探す `doeff_indexer/bin/` でなく `python/doeff_indexer/bin/` に持った。
++maturin 1.12 は pyproject.toml の `include` の file を project の根からの path のまま入れ、1.13 から python-source の下の path にする。
++0.1.3 は maturin-action が当日の最新 1.12 を引いた CI で組まれたが、build-indexer.yml は版を固定していなかった
++(経緯と道具は tests/test_indexer_wheel_layout.py・tools/verify_indexer_wheel.py)。
++
++この検は workflow の側の守り 2 つを読む:
++
++1. maturin-action の step は全部 maturin-version を 1.13 以上に固定する(その日の「最新」で配置が変わらない)。
++2. 全部の wheel の build の後に、tools/verify_indexer_wheel.py で配置を見て Linux x86_64 の wheel を入れて命令を撃つ job が走り、
++   upload の job はその job を待つ(間違った wheel は upload の前に止まる)。
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++import yaml
++
++from tests.test_indexer_wheel_layout import MATURIN_FLOOR, _versions
++
++REPO = Path(__file__).resolve().parents[1]
++WORKFLOW = REPO / ".github" / "workflows" / "build-indexer.yml"
++MATURIN_ACTION = "PyO3/maturin-action"
++TOOL_PATH = "tools/verify_indexer_wheel.py"
++
++
++def _jobs() -> dict[str, dict]:
++    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
++
++
++def _steps_using(job: dict, action: str) -> list[dict]:
++    return [step for step in job.get("steps", []) if str(step.get("uses", "")).startswith(action)]
++
++
++def _needs(job: dict) -> set[str]:
++    needs = job.get("needs", [])
++    return {needs} if isinstance(needs, str) else set(needs)
++
++
++def test_every_maturin_action_step_pins_maturin_from_the_layout_fix() -> None:
++    build_steps = [
++        (name, step) for name, job in _jobs().items() for step in _steps_using(job, MATURIN_ACTION)
++    ]
++    assert build_steps, "build-indexer.yml に maturin-action の step が無い"
++    unpinned = [name for name, step in build_steps if "maturin-version" not in step.get("with", {})]
++    assert unpinned == [], f"maturin-version の固定が無い job: {unpinned}"
++    too_old = [
++        name
++        for name, step in build_steps
++        if _versions(step["with"]["maturin-version"]) < MATURIN_FLOOR
++    ]
++    assert too_old == [], f"maturin 1.13 より古い版を固定した job: {too_old}"
++
++
++def test_wheels_are_checked_and_run_before_the_upload() -> None:
++    jobs = _jobs()
++    # wheel を組む job(sdist の job は同じ action で tar.gz を組む — 配置を見る相手でない)。
++    builders = {
++        name
++        for name, job in jobs.items()
++        if any(
++            step.get("with", {}).get("command") != "sdist"
++            for step in _steps_using(job, MATURIN_ACTION)
++        )
++    }
++    verify_jobs = {
++        name
++        for name, job in jobs.items()
++        if any(TOOL_PATH in step.get("run", "") for step in job.get("steps", []))
++    }
++    assert len(verify_jobs) == 1, f"配置を見る job が 1 つでない: {sorted(verify_jobs)}"
++    (verify,) = verify_jobs
++    assert builders <= _needs(jobs[verify]), "全部の build の後に走らない"
++    command = next(
++        step["run"] for step in jobs[verify]["steps"] if TOOL_PATH in step.get("run", "")
++    )
++    # 入れて撃つのは、この job の runner(ubuntu-latest・x86_64)で動く Linux x86_64 の wheel。
++    assert "--smoke" in command
++    assert "manylinux" in command
++    assert "x86_64" in command
++    assert verify in _needs(jobs["publish"]), "upload が配置の検を待たない"
+-- 
+2.43.0
+
