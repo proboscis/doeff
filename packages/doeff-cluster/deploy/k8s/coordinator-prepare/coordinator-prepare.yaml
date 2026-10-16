@@ -13,9 +13,10 @@
 #   組み終えてから Deployment coordinator が入れ替わる。新しい Pod の boot.sh は印を見て「準備済み」で秒で起動する。組めなければ Job が
 #   失敗し、coordinator は古い版のまま動き続ける(組めない root で止まらない)。
 #
-# 版: WORKER_DOEFF_COMMIT と Job の名の末尾(commit の頭 12 字)は coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT と同じ(版上げの commit が
-#   3 か所を一緒に変える — tests/test_k8s_declarations.py と ADR-DOE-CLUSTER-003 の検が違いを断る)。名に版を入れるので、Job の template を
-#   変えずに版ごとに新しい Job になり、古い版の Job は宣言から外れた時に Flux の prune が消す(組んだ root と bytecode の保存先は hostPath に残る)。
+# 版: この file に版を書かない。WORKER_DOEFF_COMMIT の値と Job の名の末尾は、組み立ての時に kustomization.yaml の replacements が
+#   coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT の行(版の定義元 1 つ)から写す — 名の末尾と env の値の `commit` は写される場所の印。
+#   版上げの commit は coordinator.yaml の 1 行だけを変える。名に版を入れるので、Job の template を変えずに版ごとに新しい Job になり、
+#   古い版の Job は宣言から外れた時に Flux の prune が消す(組んだ root と bytecode の保存先は hostPath に残る)。
 #   ttlSecondsAfterFinished は置かない — 終わった Job を TTL が消すと、Flux が次の照合で宣言どおり作り直して組み直しの Pod を起こし続ける。
 #
 # root は coordinator と同じ絶対 path(/work)で組む: venv の python の symlink・scripts の shebang・editable の .pth は組んだ時の絶対 path を
@@ -27,7 +28,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: coordinator-prepare-e8d9481453eb
+  name: coordinator-prepare-commit
   namespace: agent-worker
   labels: { app: agent-worker-coordinator-prepare }
 spec:
@@ -60,7 +61,7 @@ spec:
             # 焼けなければ完成の印を置かずに非 0 で終わる(Job の失敗 — coordinator は当たらない)。
             - { name: ROLE, value: prepare }
             - { name: WORK_DIR, value: /work }
-            - { name: WORKER_DOEFF_COMMIT, value: e8d9481453ebea5511faa94ff2c7e109080fc45c }
+            - { name: WORKER_DOEFF_COMMIT, value: commit }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }

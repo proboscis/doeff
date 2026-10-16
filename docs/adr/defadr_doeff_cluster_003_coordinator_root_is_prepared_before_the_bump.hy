@@ -15,12 +15,13 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run])
 (import pathlib [Path])
+(import shutil)
+(import subprocess)
 (import yaml)
 
 
 (val K8S "packages/doeff-cluster/deploy/k8s")
 (val JOB-NAME-PREFIX "coordinator-prepare-")
-(val JOB-NAME-COMMIT-CHARS 12)
 
 
 (defk commit-of [manifest]
@@ -44,7 +45,7 @@
   (val job (get jobs 0))
   (<- job-commit (commit-of job))
   (val name (get job "metadata" "name"))
-  (val want-name (+ JOB-NAME-PREFIX (cut coordinator-commit 0 JOB-NAME-COMMIT-CHARS)))
+  (val want-name (+ JOB-NAME-PREFIX coordinator-commit))
   (+ (if (= job-commit coordinator-commit) []
          [(.format "Job の WORKER_DOEFF_COMMIT {} が coordinator の {} と違う" job-commit coordinator-commit)])
      (if (= name want-name) []
@@ -52,7 +53,7 @@
 
 
 (defadr ADR-DOE-CLUSTER-003
-  :title "coordinator の版上げの前に、上げ先の版の自己起動の root を coordinator の Pod の外の Job(coordinator-prepare-<commit の頭 12 字>)が同じ node・同じ hostPath・同じ /work で組み、Flux は Job が終わるまで Deployment coordinator を当てない。Job の版は coordinator の版と同じ"
+  :title "coordinator の版上げの前に、上げ先の版の自己起動の root を coordinator の Pod の外の Job(coordinator-prepare-<commit>)が同じ node・同じ hostPath・同じ /work で組み、Flux は Job が終わるまで Deployment coordinator を当てない。Job の版は組み立ての時に coordinator の版の行から写す(版の定義元は coordinator.yaml の 1 行)"
   :status "accepted"
   :scope ["packages/doeff-cluster/deploy/k8s/coordinator-prepare/coordinator-prepare.yaml"
           "packages/doeff-cluster/deploy/k8s/coordinator-prepare/kustomization.yaml"
@@ -72,25 +73,29 @@
        :evidence "card ki-dc05afc53f9e・上に載る系の commit bab798f50")
      (fact
        "2026-10-09 に coordinator の Pod の中で上げ先の root を組んだ時、Pod の CPU の上限 2 を走っている coordinator と食い合い、絞りの見張りが組みを止めた。"
-       :evidence "上に載る系の bab798f50^:deploy/agent-worker/coordinator-root-prepare.yaml の頭の註")]
+       :evidence "上に載る系の bab798f50^:deploy/agent-worker/coordinator-root-prepare.yaml の頭の註")
+     (fact
+       "最初の形(749c11015)は Job の版と名を coordinator-prepare.yaml に手で書き、版上げの commit が 3 か所を揃える約束を ADR の検で見張った。10-12 18:37 JST の a53f417cc は coordinator.yaml の版だけを 3fcba1939 へ上げ、Job は前の版 a1d17b0dd のまま — prepare の Kustomization は前の Job のまま Ready になり、coordinator は上げ先の root を Pod の中で組んで入れ替わった。着地の列は doeff の検を走らせない(.agents/land-queue.toml の gate は衝突の印だけを見る — 利用者の決定)ので、ADR の検は次の日次の全体検証で初めて赤になった(6800d9f5e が揃え直した)。"
+       :evidence "card ki-5808173477cf の発言(配備の担当 10-12 18:4x・ki-0b0a の担い手)・doeff 6800d9f5e の本文")]
   :context
     [(interpretation
        "焼きの秒は CPU を足しても縮まない(保存先なし・並列 8 で 実 93 秒 = 走査 10・閉包の歩み 21・焼き 29・道具の起動 約 32)。組み済みの root(印 .doeff-boot-ready)なら boot.sh は焼かずに起動するので、止まる間から組む秒を外すには、古い Pod を止める前に組み終えるしかない。")
      (interpretation
        "Deployment を RollingUpdate にして新しい Pod の中で組む形は採らない — 状態の file の書き手が 2 つになるか、新しい Pod が Ready にならず入れ替えが詰まる。")]
   :decision
-    [(rule R1 "coordinator の上げ先の版の root は、Job coordinator-prepare-<commit の頭 12 字>(deploy/k8s/coordinator-prepare)が boot.sh の役 prepare で組む。Job は Deployment coordinator と同じ node・同じ hostPath を同じ絶対 path /work に mount し(root は組んだ時の絶対 path を持つ)、記録の /work/coord は mount せず、資格(ServiceAccount の token・上に載る系の ConfigMap)を持たない。自分の cgroup で組み、走っている coordinator の CPU を食わない。")
+    [(rule R1 "coordinator の上げ先の版の root は、Job coordinator-prepare-<commit>(deploy/k8s/coordinator-prepare)が boot.sh の役 prepare で組む。Job は Deployment coordinator と同じ node・同じ hostPath を同じ絶対 path /work に mount し(root は組んだ時の絶対 path を持つ)、記録の /work/coord は mount せず、資格(ServiceAccount の token・上に載る系の ConfigMap)を持たない。自分の cgroup で組み、走っている coordinator の CPU を食わない。")
      (rule R2 "Flux は deploy/k8s/coordinator-prepare を別の Kustomization(wait: true)で当て、deploy/k8s/coordinator の Kustomization は dependsOn でその Kustomization が同じ revision で Ready(Job が終わった)になるまで当たらない。Job が失敗すれば coordinator は古い版のまま動き続ける。Job は ttlSecondsAfterFinished を持たない — TTL が消すと Flux が次の照合で作り直すので、古い版の Job は名の版が変わって宣言から外れた時に Flux の prune が消す(組んだ root と bytecode の保存先は hostPath に残る)。")
-     (rule R3 "Job の env WORKER_DOEFF_COMMIT と名の末尾は、Deployment coordinator の WORKER_DOEFF_COMMIT と同じ。版上げの commit は 3 か所(coordinator の env・Job の env・Job の名)を一緒に変える。")]
+     (rule R3 "版の定義元は coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT の行 1 つ。Job の env WORKER_DOEFF_COMMIT と名の末尾は coordinator-prepare.yaml に書かず、coordinator-prepare/ の組み立ての時に ../coordinator を読んで replacements で写す(読んだ coordinator の物は local-config の印で出力から外し、この Kustomization は Job だけを当てる)。版上げの commit は coordinator.yaml の 1 行だけを変える — 揃える約束を検に頼まない(着地の列は検を走らせない)。")]
   :laws
     [(law the-prepare-job-builds-the-coordinators-version
-       :statement "for_all deploy/k8s の宣言: 役 prepare の Job はちょうど 1 つ ∧ その WORKER_DOEFF_COMMIT = Deployment coordinator の WORKER_DOEFF_COMMIT ∧ その名 = coordinator-prepare- + その commit の頭 12 字"
+       :statement "for_all coordinator.yaml の版の行の値 v: coordinator-prepare/ を組み立てた物の役 prepare の Job はちょうど 1 つ ∧ その WORKER_DOEFF_COMMIT = v ∧ その名 = coordinator-prepare- + v"
        :counterexamples
-         [(counterexample "coordinator の版だけを上げ、Job の版を前の版のまま残す — Flux は Job を変えずに Ready と見て coordinator を当て、新しい Pod がまた中で組む(止まる間が戻る)")
+         [(counterexample "coordinator の版だけを上げ、Job の版を前の版のまま残す — Flux は Job を変えずに Ready と見て coordinator を当て、新しい Pod がまた中で組む(止まる間が戻る・10-12 18:37 の a53f417cc)")
           (counterexample "Job の env だけを上げて名を変えない — Job の template は変えられないので Flux の当てが断られ、coordinator が当たらない")]
        :enforced-by ["docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy::test-adr-doe-cluster-003-the-prepare-job-builds-the-coordinators-version"
-                     "docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy::test-adr-doe-cluster-003-version-mismatches-are-named"]
-       :wiring "配線済み(2026-10-12・card ki-5808173477cf)")
+                     "docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy::test-adr-doe-cluster-003-version-mismatches-are-named"
+                     "packages/doeff-cluster/tests/test_k8s_declarations.py::test_prepare_job_follows_a_bump_of_the_coordinator_line_alone"]
+       :wiring "配線済み(2026-10-12・card ki-5808173477cf)。2026-10-16 に版を写す形へ替えた — 守るのは組み立てで、検は形が崩れた時の知らせ")
      (law the-prepare-job-shares-only-the-root-with-the-coordinator
        :statement "for_all 役 prepare の Job J と Deployment coordinator C: node(J) = node(C) ∧ hostPath(J の work) = hostPath(C の work) ∧ J の mount = {/work} ∧ J は ServiceAccount の token と envFrom を持たない ∧ J は ttlSecondsAfterFinished を持たない"
        :counterexamples
@@ -102,29 +107,32 @@
        :wiring "配線済み(2026-10-12・card ki-5808173477cf)。Flux の順(R2 の wait と dependsOn)は上に載る系の repo の Flux の宣言が持ち、この repo の検の外")]
   :enforcement
     [(deftest test-adr-doe-cluster-003-the-prepare-job-builds-the-coordinators-version
-       ;; 今の宣言で、組む Job の版と名が coordinator の版と合う(R3)。
+       ;; 今の宣言を Flux と同じく kubectl kustomize で組み立て、組む Job の版と名が coordinator の版と合う(R3)。
        (val k8s (/ (. (Path __file__) parent parent parent) K8S))
+       (val kubectl (shutil.which "kubectl"))
+       (assert (is-not kubectl None) "kubectl が無い — 宣言を組み立てて確かめられない(この検は飛ばさない)")
        (setv [coordinators jobs]
-         (lfor #(file kind) [#(#("coordinator" "coordinator.yaml") "Deployment") #(#("coordinator-prepare" "coordinator-prepare.yaml") "Job")]
-               (lfor doc (yaml.safe-load-all (.read-text (/ k8s #* file) :encoding "utf-8"))
-                     :if (and (is-not doc None) (= (get doc "kind") kind)) doc)))
+         (lfor #(part kind) [#("coordinator" "Deployment") #("coordinator-prepare" "Job")]
+               :setv done (subprocess.run [kubectl "kustomize" (str (/ k8s part))] :capture-output True :text True :timeout 25 :check False)
+               (do (assert (= done.returncode 0) (+ "kubectl kustomize " part " が失敗した: " done.stderr))
+                   (lfor doc (yaml.safe-load-all done.stdout) :if (and (is-not doc None) (= (get doc "kind") kind)) doc))))
        (assert (= (len coordinators) 1) coordinators)
        (val problems (run (version-mismatches (run (commit-of (get coordinators 0))) jobs)))
        (assert (= problems [])
-               (+ "組む Job の版が coordinator の版と合わない(ADR-DOE-CLUSTER-003 R3 — 版上げの commit は coordinator の env・Job の env・"
-                  "Job の名の 3 か所を一緒に変える): " (str problems))))
+               (+ "組む Job の版が coordinator の版と合わない(ADR-DOE-CLUSTER-003 R3 — Job の版は coordinator-prepare/ の replacements が "
+                  "coordinator.yaml の版の行から写す): " (str problems))))
      (deftest test-adr-doe-cluster-003-version-mismatches-are-named
        ;; 反例の 2 つ(coordinator だけを上げた宣言・Job の env だけを上げた宣言)を、食い違いの判じが名指して断る。
        (val old "475ee1e5d7d5894f6ba4c73907be57b057ea70e9")
        (val new "a1d17b0dd3047d1111f442e5a1ba4348ea3eab05")
        (setv [matching coordinator-only env-only]
-         (lfor #(name commit) [#("coordinator-prepare-a1d17b0dd304" new) #("coordinator-prepare-475ee1e5d7d5" old)
-                               #("coordinator-prepare-475ee1e5d7d5" new)]
+         (lfor #(name commit) [#((+ "coordinator-prepare-" new) new) #((+ "coordinator-prepare-" old) old)
+                               #((+ "coordinator-prepare-" old) new)]
                {"metadata" {"name" name}
                 "spec" {"template" {"spec" {"containers" [{"env" [{"name" "WORKER_DOEFF_COMMIT" "value" commit}]}]}}}}))
        (assert (= (run (version-mismatches new [matching])) []))
        (assert (= (len (run (version-mismatches new [coordinator-only]))) 2))
        (assert (= (run (version-mismatches new [env-only]))
-                  ["Job の名 coordinator-prepare-475ee1e5d7d5 が coordinator-prepare-a1d17b0dd304 でない"]))
+                  [(.format "Job の名 coordinator-prepare-{} が coordinator-prepare-{} でない" old new)]))
        (assert (= (run (version-mismatches new [])) ["組む Job がちょうど 1 つ無い(0 個)"])))]
   :plans ["card ki-5808173477cf"])

@@ -456,10 +456,16 @@ def _prepare_jobs(rendered: list[Manifest]) -> list[Manifest]:
     return [doc for doc in rendered if doc["kind"] == "Job" and _role(doc) == "prepare"]
 
 
-def test_coordinator_root_is_prepared_by_one_job_beside_it(rendered: list[Manifest]) -> None:
+@pytest.fixture(scope="module")
+def prepared() -> list[Manifest]:
+    """coordinator-prepare/ を単独で組み立てた物(Flux がその dir を当てる時と同じ物 — 根の deploy/k8s には並べない)。"""
+    return _build(K8S / "coordinator-prepare")
+
+
+def test_coordinator_root_is_prepared_by_one_job_beside_it(rendered: list[Manifest], prepared: list[Manifest]) -> None:
     """coordinator の上げ先の root を組む Job は 1 つで、coordinator と同じ node・同じ hostPath を同じ /work に mount し、記録の
-    /work/coord は mount せず、資格を持たない(ADR-DOE-CLUSTER-003 R1・R3 — 版の一致は ADR の検)。"""
-    jobs = _prepare_jobs(rendered)
+    /work/coord は mount せず、資格を持たない(ADR-DOE-CLUSTER-003 R1)。"""
+    jobs = _prepare_jobs(prepared)
     assert len(jobs) == 1, f"上げ先の root を組む Job はちょうど 1 つ: {[d['metadata'] for d in jobs]!r}"
     (job,) = jobs
     (coordinator,) = _deployments(rendered, "coordinator")
@@ -476,18 +482,42 @@ def test_coordinator_root_is_prepared_by_one_job_beside_it(rendered: list[Manife
     assert "envFrom" not in _container(job), "組む Job は上に載る系の ConfigMap を読まない"
 
 
-def test_coordinator_prepare_job_is_not_removed_by_ttl(rendered: list[Manifest]) -> None:
+def test_coordinator_prepare_job_is_not_removed_by_ttl(prepared: list[Manifest]) -> None:
     """組む Job は ttlSecondsAfterFinished を持たない — TTL が終わった Job を消すと、Flux が次の照合で作り直して組み直しの Pod を
     起こし続ける。古い版の Job は名の版が変わって宣言から外れた時に Flux の prune が消す(ADR-DOE-CLUSTER-003 R2)。"""
-    (job,) = _prepare_jobs(rendered)
+    (job,) = _prepare_jobs(prepared)
     assert "ttlSecondsAfterFinished" not in _mapping(job["spec"], "Job の spec")
 
 
-def test_coordinator_prepare_builds_alone_with_only_the_job() -> None:
-    """組む Job の dir は、その dir だけで組み立てられ、Job 1 つだけを持つ — Flux は coordinator/ と別の Kustomization で当て、
-    coordinator/ の Kustomization がその終わりを待つ(ADR-DOE-CLUSTER-003 R2)。"""
-    built = _build(K8S / "coordinator-prepare")
-    assert [(doc["kind"], _role(doc)) for doc in built] == [("Job", "prepare")]
+def test_coordinator_prepare_builds_alone_with_only_the_job(prepared: list[Manifest]) -> None:
+    """組む Job の dir は、その dir だけで組み立てられ、Job 1 つだけを出す — 版を写すために読む ../coordinator の物は出力から外れ、
+    coordinator の物は coordinator/ の Kustomization だけが持つ。Flux は coordinator/ と別の Kustomization で当て、coordinator/ の
+    Kustomization がその終わりを待つ(ADR-DOE-CLUSTER-003 R2)。"""
+    assert [(doc["kind"], _role(doc)) for doc in prepared] == [("Job", "prepare")]
+
+
+# coordinator の版の行だけを変えた版上げの見本の版(doeff の歴史の commit — 中身は問わず、今の宣言の版と違えばよい)。
+BUMPED_COMMIT = "3fcba1939bd7e731dc47811aa4c305fe40bdeed7"
+
+
+def test_prepare_job_follows_a_bump_of_the_coordinator_line_alone(tmp_path: Path) -> None:
+    """coordinator.yaml の版の行だけを変えた版上げでも、組む Job の env と名は上げ先の版になる — Job の版は組み立ての時に coordinator の
+    版の行から写し、版の定義元は coordinator.yaml の 1 行だけ(ADR-DOE-CLUSTER-003 R3)。着地の列は doeff の検を走らせないので、2 つの
+    file の版を揃える事を検に頼まない(10-12 18:37 の a53f417cc は coordinator の版だけを上げ、Job は前の版のまま Ready になって、
+    coordinator は上げ先の root を Pod の中で組んで入れ替わった)。"""
+    copied = tmp_path / "k8s"
+    for part in ("coordinator", "coordinator-prepare"):
+        shutil.copytree(K8S / part, copied / part)
+    declaration = copied / "coordinator" / "coordinator.yaml"
+    (coordinator,) = _deployments(_build(K8S / "coordinator"), "coordinator")
+    current = str(_env_value(coordinator, "WORKER_DOEFF_COMMIT")["value"])
+    assert current != BUMPED_COMMIT
+    text = declaration.read_text(encoding="utf-8")
+    assert text.count(current) == 1, f"coordinator.yaml の版 {current} の行がちょうど 1 つでない"
+    declaration.write_text(text.replace(current, BUMPED_COMMIT), encoding="utf-8")
+    (job,) = _prepare_jobs(_build(copied / "coordinator-prepare"))
+    assert _env_value(job, "WORKER_DOEFF_COMMIT")["value"] == BUMPED_COMMIT
+    assert _mapping(job["metadata"], "metadata")["name"] == f"coordinator-prepare-{BUMPED_COMMIT}"
 
 
 # 版の向き(card ki-76a269c31615): どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)でなければならない。
