@@ -18,11 +18,11 @@ from tests.cli.cli_child import with_settings
 pytestmark = pytest.mark.cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-# 子の CLI に足す設定: repo の根を import の道に・利用者の既定の env と profile を切る(出力の雑音を減らす)。
+# 子の CLI に足す設定: repo の根を import の道に・利用者の既定の env を切り、利用者の DOEFF_PROFILE を外す(出力の雑音を減らす)。
 CHILD_SETTINGS = {
     "PYTHONPATH": str(PROJECT_ROOT),
     "DOEFF_DISABLE_DEFAULT_ENV": "1",
-    "DOEFF_DISABLE_PROFILE": "1",
+    "DOEFF_PROFILE": None,
 }
 
 

@@ -60,8 +60,7 @@
       (.extend parts ["-v" m]))
     (for [e env-vars]
       (.extend parts ["-e" e]))
-    (.extend parts ["-e" "DOEFF_DISABLE_PROFILE=1"
-                    "-e" "DOEFF_DISABLE_RUNBOX=1"
+    (.extend parts ["-e" "DOEFF_DISABLE_RUNBOX=1"
                     "-e" f"DOEFF_INPUT={container-exchange}/program.pkl"
                     "-e" f"DOEFF_OUTPUT={container-exchange}/result.pkl"
                     image

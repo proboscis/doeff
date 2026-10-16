@@ -1,7 +1,8 @@
 """Profiling utilities for CLI operations.
 
-Profiling is enabled by default. To disable:
-    export DOEFF_DISABLE_PROFILE=1
+Profiling is off by default. To print how long each CLI step takes on stderr:
+    doeff run --profile ...
+    export DOEFF_PROFILE=1
 """
 
 import sys
@@ -13,12 +14,14 @@ from dataclasses import dataclass
 
 from doeff_core_effects.process_effects import EnvEntry
 
-_DISABLE_PROFILE_ENV = "DOEFF_DISABLE_PROFILE"
+_PROFILE_ENV = "DOEFF_PROFILE"
+# Values of DOEFF_PROFILE that leave profiling off, like an unset DOEFF_PROFILE.
+_PROFILE_OFF_VALUES = ("", "0")
 
 
 @dataclass(frozen=True)
 class ProfilingConfig:
-    enabled: bool = True
+    enabled: bool = False
 
 
 _DEFAULT_CONFIG = ProfilingConfig()
@@ -30,9 +33,11 @@ _CURRENT_CONFIG: ContextVar[ProfilingConfig | None] = ContextVar(
 
 def profiling_config_from_env(env: tuple[EnvEntry, ...]) -> ProfilingConfig:
     """env = the process environment as ReadEnvironment answers it (agora-redesign #3012);
-    a non-empty DOEFF_DISABLE_PROFILE turns profiling off."""
+    DOEFF_PROFILE set to a value other than "" or "0" turns profiling on."""
     return ProfilingConfig(
-        enabled=not any(entry.value for entry in env if entry.name == _DISABLE_PROFILE_ENV)
+        enabled=any(
+            entry.value not in _PROFILE_OFF_VALUES for entry in env if entry.name == _PROFILE_ENV
+        )
     )
 
 
@@ -72,6 +77,6 @@ def is_profiling_enabled(config: ProfilingConfig | None = None) -> bool:
 def print_profiling_status(config: ProfilingConfig | None = None) -> None:
     if is_profiling_enabled(config):
         print(
-            "[DOEFF][PROFILE] Profiling enabled. To disable: export DOEFF_DISABLE_PROFILE=1",
+            "[DOEFF][PROFILE] Profiling enabled by --profile or DOEFF_PROFILE.",
             file=sys.stderr,
         )
