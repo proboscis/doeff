@@ -10,6 +10,9 @@
 ;;; (agora-redesign #3715 — worker の掃除が数千の file の木を数え・消す間、詰まった disk の上でも他の task(worker の調整ループ)を回し続ける。
 ;;; card ki-0da6a0186492 — 掃除が 10 万の file の bytecode の保存先を歩く間も同じ)。置き場は offloaded-lock-handler と同じ(os-file-handler の
 ;;; 内側・外側に scheduled)。
+;;; offloaded-file-handler は tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・
+;;; ReadDiskFree)を同じく呼び 1 つに thread 1 本で待つ(card ki-97da6e8be47f — 本体の thread が disk の block 層の待ちで D 状態になると、同じ
+;;; thread の背景の heartbeat も一緒に止まった。待つ間も本体は他の task を回す)。置き場は offloaded-tree-handler と同じ。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
 (import fcntl)
@@ -30,6 +33,8 @@
 (val LOCK-THREADS (ThreadPerCall))
 ;; offloaded-tree-handler の thread(木の数え・消し・様子つきの歩き 1 つに thread 1 本)。
 (val TREE-THREADS (ThreadPerCall))
+;; offloaded-file-handler の thread(file 1 つの読み・書き・様子・一覧・dir 作り・改名・空きの読み 1 つに thread 1 本)。
+(val FILE-THREADS (ThreadPerCall))
 
 
 (defk failed [path error]
@@ -358,3 +363,30 @@
   (StatTree [path]
     (<- stats (| tuple FileFailed) (offloaded TREE-THREADS (fn [] (run-detached (stat-tree path))) keep-nothing))
     (resume stats)))
+
+
+(defhandler offloaded-file-handler
+  ;; tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)だけを thread で
+  ;; 待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。待つ task が取り消された後の答えは何も持たない(書き・改名・
+  ;; dir 作りは終わった印、読みは値)— 後始末は要らない。
+  (WriteText [path text mode replace sync]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (write-content path text mode replace sync))) keep-nothing))
+    (resume answer))
+  (ReadText [path]
+    (<- answer (| str FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (read-file path False None 0))) keep-nothing))
+    (resume answer))
+  (StatPath [path follow-symlinks]
+    (<- answer (| PathStat FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (stat-path path follow-symlinks))) keep-nothing))
+    (resume answer))
+  (ListDirectory [path]
+    (<- answer (| tuple FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (list-directory path))) keep-nothing))
+    (resume answer))
+  (MakeDirectory [path mode]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (make-directory path mode))) keep-nothing))
+    (resume answer))
+  (RenamePath [source target]
+    (<- answer (| FileFailed None) (offloaded FILE-THREADS (fn [] (run-detached (guarded source (fn [] (os.replace source target))))) keep-nothing))
+    (resume answer))
+  (ReadDiskFree [path]
+    (<- answer (| int FileFailed) (offloaded FILE-THREADS (fn [] (run-detached (disk-free path))) keep-nothing))
+    (resume answer)))
