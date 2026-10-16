@@ -8,7 +8,7 @@ name = "doeff-hy"
 version = "0.1.0"
 description = "Hy macros for writing doeff programs, effects, handlers and tests"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [

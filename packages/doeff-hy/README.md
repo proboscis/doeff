@@ -25,7 +25,7 @@ pip install doeff      # installs doeff-hy
 pip install doeff-hy   # the same set of packages
 ```
 
-Requires Python 3.10 or newer and Hy 1.3 (doeff-hy pins `hy>=1.3.0,<=1.3.1`, the
+Requires Python 3.11 or newer and Hy 1.3 (doeff-hy pins `hy>=1.3.0,<=1.3.1`, the
 versions its tests cover).
 
 ## Quick start

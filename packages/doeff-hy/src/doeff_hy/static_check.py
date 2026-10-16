@@ -875,7 +875,9 @@ class _Expanders:
     起こして、1 回の実行の中で段をまたいで使い回す(全部引ける実行では起こさない — 保存が効く時の秒を増やさない)。"""
 
     def __init__(self, limit: int) -> None:
-        self._workers = max(1, min(limit, os.process_cpu_count() or 1))
+        # os.process_cpu_count(この process が使える CPU の数)は Python 3.13 から。3.12 までは機体の CPU の数で代える。
+        cpus = os.process_cpu_count() if sys.version_info >= (3, 13) else os.cpu_count()
+        self._workers = max(1, min(limit, cpus or 1))
         self._mut_pool: ProcessPoolExecutor | None = None
 
     def __enter__(self) -> "_Expanders":
