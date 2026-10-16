@@ -1032,7 +1032,7 @@
   ;; coordinator は起動ごとに違う頭を振る(cluster_policy.fresh-task-prefix)— 前の coordinator が振った id(worker に blob が
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
-  (setv #^ (get dict #(str BoardRow)) board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
+  (setv #^ (get Table BoardRow) board (field :default-factory (partial table-of #())))    ; 盤の鍵 → BoardRow(行と一緒に保存)
   (setv #^ (get tuple #(object ...)) events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
   (setv #^ (get Table ResourceMeta) meta (field :default-factory (partial table-of #())))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)

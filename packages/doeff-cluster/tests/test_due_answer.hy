@@ -8,6 +8,7 @@
 ;; - Rollout の進行中に Kubernetes を読む: 名のある読みの周期の後の刻。
 ;; どれも、返す刻の 1 ms 前では判断が状態を変えず、その刻で変える。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_hy.table [TableWrite table-of])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])
@@ -79,7 +80,7 @@
   (<- live (| DueAt DueNow DueNever) (liveness-due unsettled (+ timing.lease-ms 1) timing))
   (assert (= live (DueNow)) live)
   ;; 掃除の期限が過ぎている(掃く前の状態)。
-  (val expired (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms 100 :size 1)}))
+  (val expired (ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms 100 :size 1))))))
   (<- swept (| DueAt DueNow DueNever) (sweep-due expired 200 timing))
   (assert (= swept (DueNow)) swept)
   ;; task の期限が過ぎている(place-tasks をまだ当てていない)。

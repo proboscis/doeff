@@ -1,14 +1,16 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
 (require doeff-hy.macros [defk deftest <- val var])
+(import doeff_hy.table [TableWrite table-of])
+(import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState WorkerInfo TaskRecord])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster.coordinator.core.api_policy [tick clocks-shifted])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv full-kv durable-delta state-from-kv])
 (import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN
-                          board-usage value-size] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
+                          board-usage value-size sweep-board] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
 (import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
 
@@ -49,9 +51,9 @@
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (! (call s "GET" "/state" None 60000)))
   (setv #(s2 _ _) (! (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 1 "taskReserve" 0 "statuses" []} 61000)))
-  (assert (in "w/process/atlas/7" s1.board))
-  (assert (not-in "w/process/atlas/7" s2.board))
-  (assert (in "w/cycle" s2.board))
+  (assert (is-not (.row s1.board "w/process/atlas/7") None))
+  (assert (is (.row s2.board "w/process/atlas/7") None))
+  (assert (is-not (.row s2.board "w/cycle") None))
   (setv delta (! (durable-delta s s2)))
   (assert (= (get delta "board/w/process/atlas/7") None)))
 
@@ -77,7 +79,7 @@
   (assert (in "1 行の上限" (get body "error")))
   ;; 合計の上限: 上限の直前まで埋まった盤に、大きくする書きは断り、小さくする書きと消す書きは通す
   (setv half (* "y" (- (// BOARD-MAX-VALUE-BYTES 2) 10)))
-  (setv full (replace (ClusterState) :board {"a" (BoardRow :value half :version 1 :expires-ms None :size (- BOARD-MAX-BYTES 100))}))
+  (setv full (replace (ClusterState) :board (table-of #((TableWrite "a" (BoardRow :value half :version 1 :expires-ms None :size (- BOARD-MAX-BYTES 100)))))))
   (<- reply-6 (put full "b" "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
   (:= status (get reply-6 1))
   (:= body (get reply-6 2))
@@ -87,7 +89,7 @@
   (val shrunk (get reply-7 0))
   (:= status (get reply-7 1))
   (assert (= status 200))
-  (assert (= (. (get shrunk.board "a") size) (value-size "small")))
+  (assert (= (. (.row shrunk.board "a") size) (value-size "small")))
   (<- reply-8 (call full "PUT" "/board/a" {"value" None "delete" True}))
   (:= status (get reply-8 1))
   (assert (= status 200))
@@ -190,3 +192,61 @@
   (<- got (without-board (! (durable-delta s changed))))
   (assert (= got (! (delta-by-full-serialization s changed))))
   (assert (and got (all (gfor k got (.startswith k "worker/"))))))
+
+
+;;; 盤は Table[BoardRow](ki-900fccc19cd6 / T2): 1 行の書きは 1 行だけ作り直し、残りの行は同じ object のまま引き継ぐ。
+
+(defn rebuilt-rows [before after]
+  "after の盤で、before の盤と同じ object でない行の数(作り直した行・足した行)。"
+  (sum (gfor k (.keys after) (if (is (.row before k) (.row after k)) 0 1))))
+
+(deftest test-a-one-row-write-rebuilds-one-row-of-a-big-board
+  (val big (replace (ClusterState) :board (! (board-rows-of (dfor i (range 2057) (str i) {"n" i}) {}))))
+  (assert (= (.size big.board) 2057))
+  (<- written (put big "5" {"n" "new"}))
+  (val after (get written 0))
+  (assert (= (.size after.board) 2057))
+  (assert (= (rebuilt-rows big.board after.board) 1))
+  (assert (= (. (.row after.board "5") version) 2))
+  (assert (= (. (.row big.board "5") version) 1) "元の盤は書きで変わらない")
+  ;; 1 行を足しても作り直すのは足した 1 行だけ
+  (<- added (put big "new-key" 1))
+  (assert (= (.size (. (get added 0) board)) 2058))
+  (assert (= (rebuilt-rows big.board (. (get added 0) board)) 1))
+  ;; 1 行を消しても他の行は同じ object
+  (<- deleted (call big "PUT" "/board/7" {"value" None "delete" True}))
+  (assert (= (.size (. (get deleted 0) board)) 2056))
+  (assert (is (.row (. (get deleted 0) board) "7") None))
+  (assert (= (rebuilt-rows big.board (. (get deleted 0) board)) 0))
+  ;; 保存の差分は書いた 1 行だけ(鍵と値は従来の board/<鍵> と {value resourceVersion})
+  (assert (= (! (durable-delta big after)) {"board/5" {"value" {"n" "new"} "resourceVersion" 2}})))
+
+(deftest test-sweep-board-removes-only-the-expired-rows-and-keeps-the-others-as-the-same-object
+  (<- r1 (put (ClusterState) "ttl-old" 1 1000 :ttlSeconds 10))
+  (<- r2 (put (get r1 0) "ttl-new" 2 1000 :ttlSeconds 100))
+  (<- r3 (put (get r2 0) "forever" 3 1000))
+  (val s (get r3 0))
+  (val swept (! (sweep-board s 11000)))
+  (assert (is (.row swept.board "ttl-old") None))
+  (assert (is (.row swept.board "ttl-new") (.row s.board "ttl-new")))
+  (assert (is (.row swept.board "forever") (.row s.board "forever")))
+  (assert (= (.size swept.board) 2))
+  ;; 期限切れが無ければ状態そのもの
+  (assert (is (! (sweep-board s 5000)) s))
+  (val only-forever (! (sweep-board (replace s :board (.with-writes s.board #((TableWrite "ttl-old" None) (TableWrite "ttl-new" None)))) 99999)))
+  (assert (= (.size only-forever.board) 1)))
+
+(deftest test-a-stall-shifts-the-lease-holders-with-a-version-bump-and-the-ttl-row-without
+  (val lease-key (semaphore-key "lock"))
+  (val lease-row {"permits" 2 "holders" {"alive/1" 20000}})
+  (val untouched (BoardRow :value 7 :version 4 :expires-ms None :size 1))
+  (val state (replace (ClusterState) :alive-ms 10000
+                      :board (table-of #((TableWrite lease-key (BoardRow :value lease-row :version 3 :expires-ms None :size 0))
+                                         (TableWrite "ttl" (BoardRow :value 1 :version 2 :expires-ms 30000 :size 1))
+                                         (TableWrite "plain" untouched)))))
+  (val shifted (! (clocks-shifted state 70000 60000)))
+  (assert (= (. (.row shifted.board lease-key) version) 4) "lease の行は版 +1")
+  (assert (= (get (. (.row shifted.board lease-key) value) "holders") {"alive/1" 80000}))
+  (assert (= (. (.row shifted.board "ttl") expires-ms) 90000))
+  (assert (= (. (.row shifted.board "ttl") version) 2) "TTL の行は版を進めない")
+  (assert (is (.row shifted.board "plain") untouched) "期限なしの行は同じ object"))

@@ -114,7 +114,7 @@
   (.replace-table store kv)
   (<- (durable-checkpoint store))
   (<- (slog (.format "coordinator: 以前の形の状態を追記の log の置き場へ移した(Service {}・盤 {} 行・版 {})"
-                     (len legacy.jobs) (len legacy.board) legacy.revision)))
+                     (len legacy.jobs) (.size legacy.board) legacy.revision)))
   legacy)
 
 
@@ -207,7 +207,7 @@
                  (kube-api (KubeClient KubeUnavailable :timeout 3.0) (ObjectWatches) (ObjectWatches) inbox.wake)
                  (kube-unavailable "k8s の ServiceAccount の token が無い(Pod の外の coordinator)" (ObjectWatches) (ObjectWatches))))
   (print (.format "coordinator: :{} で受けます(Service {}・task {}・盤 {} 行・Rollout {}・版 {}・k8s {}・doeff {})"
-                  args.port (len state.jobs) (len state.tasks) (len state.board) (len state.rollouts) state.revision
+                  args.port (len state.jobs) (len state.tasks) (.size state.board) (len state.rollouts) state.revision
                   (if (KubeClient.available) "あり" "なし") (or state.running-commit "版を読めない")) :file sys.stderr :flush True)
   ;; handler の組は coordinator_handler_sets の値(本番の組)。
   (run (scheduled (with_handlers (production-handlers inbox store stop kube notices) (run-coordinator state (ClusterTiming) naming))))
