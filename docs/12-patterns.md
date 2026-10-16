@@ -661,7 +661,9 @@ def good_parameter_passing():
 @do
 def bad_error_handling():
     result = yield Try(risky_operation())
-    return result.value  # Might be None unexpectedly, error is silently ignored
+    # On failure `result` is an Err, which has no `.value`: this line raises
+    # AttributeError, and the original error from risky_operation() is lost.
+    return result.value
 ```
 
 **GOOD:**
