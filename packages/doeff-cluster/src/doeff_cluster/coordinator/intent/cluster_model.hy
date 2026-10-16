@@ -190,6 +190,15 @@
   (#^ int size))
 
 
+(defrecord BoardTotals
+  "盤 board の集計(ClusterState.board-totals — card ki-ea1179b7565a): board = 数えた時の盤そのもの(同一性で「今の盤の数」かを見る)・
+   bytes = 全行の size の合計・expiring = 期限つきの行の数。盤の書き(cluster_policy.state-with-board-writes)が書いた行だけを足し引きして
+   持ち越す。行の数は盤の size が持つ。盤が別の物に替わっていれば(board が今の盤と同一でなければ)読み手は全行から求め直す。保存しない。"
+  (#^ (get Table BoardRow) board)
+  (#^ int bytes)
+  (#^ int expiring))
+
+
 (defrecord RolloutTarget
   "Rollout の相手 1 つ(spec の from / to): kind = Service か Deployment・name・namespace = Deployment の名前空間(Service は None)・
    replicas = Deployment を新として起こす台数(無ければ None)・dry-run = Deployment を書かずに台数を記録だけする(Service は偽)。
@@ -1033,6 +1042,7 @@
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
   (setv #^ (get Table BoardRow) board (field :default-factory (partial table-of #())))    ; 盤の鍵 → BoardRow(行と一緒に保存)
+  (setv #^ (| BoardTotals None) board-totals None)    ; 盤の集計(board-usage が全行を読まないため・保存しない・board と同一の時だけ有効)
   (setv #^ (get tuple #(object ...)) events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
   (setv #^ (get Table ResourceMeta) meta (field :default-factory (partial table-of #())))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)

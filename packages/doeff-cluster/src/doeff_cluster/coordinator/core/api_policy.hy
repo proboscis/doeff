@@ -44,7 +44,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
-(import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
+(import doeff_cluster.coordinator.core.cluster_policy [state-with-board-writes reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster.coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
@@ -168,6 +168,7 @@
                "rollouts"          ; 段の起点 — 止まっていた間は観測が無い(rollout_policy.shift-clocks)
                "handoffs"          ; Ready を待つ入れ替えの期限の起点
                "board"             ; 盤の lease の担い手の期限と、TTL の行の expires-ms — 頼み手が書き直して延ばす
+               "board_totals"      ; 盤の集計 — 盤と一緒に持ち越す(盤が動けば集計の同一性の印も替わる・保存しない)
                "drains"            ; drain の until-ms — 頼み直すたびに延びる
                "warms"             ; 温める表の行の until-ms — 頼み直すたびに延びる
                "superseded_runs"   ; 退いた世代の最後の報告の刻 — 沈黙を lease で数える
@@ -190,7 +191,16 @@
   "coordinator が gap ms 止まっていた状態から、その長さを経過・沈黙に数えないように時計をずらし、生きていた時刻を now にした状態を
    作るため。ずらす欄は STALL-SHIFTED-FIELDS、ずらす物と訳は resume-after-downtime の註(起き直しと、process の中の止まり — stall-of・
    program.stall-resumed — が同じこの関数でずらす)。"
-  (replace state
+  ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)。集計は書きの道で持ち越す。
+  (setv shifted-board
+        (state-with-board-writes state
+          (tuple (gfor #(k r) (.items state.board)
+                       :setv shifted (if (.startswith k SEMAPHORE-PREFIX) (holders-shifted r.value gap) None)
+                       :setv held (if (is shifted None) r (replace r :value shifted :version (+ r.version 1)))
+                       :setv moved (if (is held.expires-ms None) held (replace held :expires-ms (+ held.expires-ms gap)))
+                       :if (is-not moved r)
+                       (TableWrite k moved)))))
+  (replace shifted-board
            :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
            :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
            :workers (dfor #(k w) (.items state.workers)
@@ -199,14 +209,6 @@
                                      :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
            :handoffs (dfor #(k w) (.items state.handoffs)
                            k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
-           ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)。
-           :board (.with-writes state.board
-                                (tuple (gfor #(k r) (.items state.board)
-                                             :setv shifted (if (.startswith k SEMAPHORE-PREFIX) (holders-shifted r.value gap) None)
-                                             :setv held (if (is shifted None) r (replace r :value shifted :version (+ r.version 1)))
-                                             :setv moved (if (is held.expires-ms None) held (replace held :expires-ms (+ held.expires-ms gap)))
-                                             :if (is-not moved r)
-                                             (TableWrite k moved))))
            :drains (dfor #(k d) (.items state.drains) k (replace d :until-ms (+ d.until-ms gap)))
            :warms (dfor #(k w) (.items state.warms) k (replace w :until-ms (+ w.until-ms gap)))
            :superseded-runs (tuple (gfor r state.superseded-runs (replace r :seen-ms (min now (+ r.seen-ms gap)))))

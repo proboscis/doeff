@@ -3,6 +3,8 @@
 (import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import dataclasses [replace])
+(import unittest.mock [patch])
+(import doeff_hy.table [Table])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState WorkerInfo TaskRecord])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -250,3 +252,87 @@
   (assert (= (. (.row shifted.board "ttl") expires-ms) 90000))
   (assert (= (. (.row shifted.board "ttl") version) 2) "TTL の行は版を進めない")
   (assert (is (.row shifted.board "plain") untouched) "期限なしの行は同じ object"))
+
+
+;; --- 盤の集計は書きごとの足し引き(card ki-ea1179b7565a)-----------------------------------------------------------
+
+(defn full-usage-of [state]
+  "全行から求めた盤の集計 #(行の数 byte の合計 期限つきの行の数)— 持ち越しの集計との突き合わせの正解。"
+  #((.size state.board) (sum (gfor row (.rows state.board) row.size))
+    (sum (gfor row (.rows state.board) :if (is-not row.expires-ms None) 1))))
+
+
+(defn carried-usage-of [state]
+  "board-usage が返す #(行の数 byte の合計 期限つきの行の数)。"
+  (setv usage (board-usage state))
+  #(usage.rows usage.bytes usage.expiring))
+
+
+(deftest test-board-totals-match-a-full-count-after-every-kind-of-write
+  (setv #(s _ _) (! (put (ClusterState) "a" {"k" "日本語"} 1000 :ttlSeconds 60)))
+  (setv checked [])
+  (defn check [state]
+    ;; 集計は盤と同一の時だけ持ち越され(読み直しをせず)、全行から求めた値と一致する
+    (assert (is state.board-totals.board state.board))
+    (assert (= (carried-usage-of state) (full-usage-of state)))
+    (.append checked 1))
+  (check s)
+  ;; 書き(新しい行・書き直し・期限を外す)
+  (setv #(s _ _) (! (put s "b" "bb" 1000)))
+  (check s)
+  (setv #(s _ _) (! (put s "a" "x" 1000)))
+  (check s)
+  (setv #(s _ _) (! (put s "c" [1 2 3] 1000 :ttlSeconds 5)))
+  (check s)
+  ;; 消し
+  (setv #(s _ _) (! (call s "PUT" "/board/b" {"value" None "delete" True})))
+  (check s)
+  ;; lease の書き(盤に lease の行ができる)
+  (setv #(s _ _) (! (call s "POST" "/leases/gpu" {"op" "acquire" "token" "t1" "permits" 2 "ttlMs" 60000} 1000)))
+  (check s)
+  ;; 期限切れの掃除
+  (setv s (! (sweep-board s 7000)))
+  (check s)
+  (assert (is (.row s.board "c") None))
+  ;; 世代の名乗り(前の世代の担い手を外す)と止まりの後のずらし
+  (setv #(s _ _) (! (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 1 "taskReserve" 0 "statuses" []} 8000)))
+  (check s)
+  (setv shifted (! (clocks-shifted s 9000 500)))
+  (check shifted)
+  ;; 起動の読み直し(保存から)
+  (setv back (! (state-from-kv (! (full-kv s)) 2000)))
+  (assert (= (carried-usage-of back) (full-usage-of back)))
+  (assert (= (carried-usage-of back) (carried-usage-of s)))
+  (assert (>= (len checked) 9)))
+
+
+(deftest test-a-board-built-outside-the-write-path-is-counted-from-all-rows-not-from-a-stale-carry
+  ;; 直に盤を替えた状態(書きの道の外)は、持ち越しの集計が古くても全行から数え直す
+  (setv #(s _ _) (! (put (ClusterState) "a" "xxxx" 1000)))
+  (setv other (table-of #((TableWrite "z" (BoardRow :value 1 :version 1 :expires-ms 5 :size 7)))))
+  (setv swapped (replace s :board other))
+  (assert (= (carried-usage-of swapped) #(1 7 1)))
+  ;; 持ち越しの無い状態(集計の欄が既定)も同じ
+  (assert (= (carried-usage-of (ClusterState :board other)) #(1 7 1))))
+
+
+(deftest test-a-board-put-does-not-read-the-rows-of-the-board
+  (setv #(s _ _) (! (put (ClusterState) "a" "x" 1000)))
+  (setv #(s _ _) (! (put s "b" "y" 1000 :ttlSeconds 9)))
+  (setv reads [])
+  (defn counting-rows [self]
+    (.append reads 1)
+    (tuple (.values (._flat-rows self))))
+  (with [_ (patch.object Table "rows" counting-rows)
+         _ (patch.object Table "items" (fn [self] (.append reads 1) (tuple (.items (._flat-rows self)))))
+         _ (patch.object Table "keys" (fn [self] (.append reads 1) (tuple (._flat-rows self))))]
+    (setv #(s2 status _) (! (put s "c" "zz" 1000)))
+    (assert (= status 200))
+    (setv #(s3 status _) (! (put s2 "a" "xxx" 1000 :ttlSeconds 3)))
+    (assert (= status 200))
+    (setv #(_ status _) (! (call s3 "PUT" "/board/b" {"value" None "delete" True}))) 
+    (assert (= status 200))
+    ;; 断る書きも全行を読まない(断りの答えの usage も集計から)
+    (setv #(_ status _) (! (put s3 "big" (* "x" (+ BOARD-MAX-VALUE-BYTES 1)))))
+    (assert (= status 507)))
+  (assert (= (len reads) 0) reads))
