@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 from doeff_gemini.handlers import gemini_mock_handler
@@ -14,7 +15,7 @@ from doeff_openai.handlers import (
 from doeff_openrouter.handlers import MockOpenRouterRuntime, openrouter_mock_handler
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, WithHandlerType, default_handlers, do, run
+from doeff import EffectGenerator, do, handler, run
 
 
 class AnalysisResult(BaseModel):
@@ -56,49 +57,18 @@ def main() -> None:
         },
     )
 
-    def openai_handler(effect: Any, k: Any):
-        return (
-            yield from openai_mock_handler(
-                effect,
-                k,
-                config=openai_config,
-                state=openai_state,
-            )
-        )
-
-    def gemini_handler(effect: Any, k: Any):
-        return (
-            yield from gemini_mock_handler(
-                effect,
-                k,
-                chat_responses={"gemini-1.5-pro": "Gemini summary"},
-            )
-        )
-
-    def router_handler(effect: Any, k: Any):
-        return (yield from openrouter_mock_handler(effect, k, runtime=router_runtime))
-
-    def install_raw_handler(raw_handler: Any):
-        def install(program: Any):
-            return WithHandlerType(raw_handler, program)
-
-        return install
-
-    result = run(
-        install_raw_handler(router_handler)(  # catch-all fallback
-            install_raw_handler(gemini_handler)(
-                install_raw_handler(openai_handler)(workflow()),
-            )
-        ),
-        handlers=default_handlers(),
+    openai_handler = handler(partial(openai_mock_handler, config=openai_config, state=openai_state))
+    gemini_handler = handler(
+        partial(gemini_mock_handler, chat_responses={"gemini-1.5-pro": "Gemini summary"})
     )
+    router_handler = handler(partial(openrouter_mock_handler, runtime=router_runtime))
 
-    if result.is_err():
-        raise result.error
+    # The innermost handler sees each effect first; openrouter is the catch-all fallback.
+    result = run(router_handler(gemini_handler(openai_handler(workflow()))))
 
-    print("analysis:", result.value["analysis"])
-    print("summary:", result.value["summary"])
-    print("fallback:", result.value["fallback"])
+    print("analysis:", result["analysis"])
+    print("summary:", result["summary"])
+    print("fallback:", result["fallback"])
 
 
 if __name__ == "__main__":

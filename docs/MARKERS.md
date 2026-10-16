@@ -334,6 +334,5 @@ Potential future markers:
 
 ## See Also
 
-- [examples/marker_demo.py](../examples/marker_demo.py) - Basic marker usage examples
-- [examples/marker_patterns.py](../examples/marker_patterns.py) - Advanced patterns and best practices
-- [tests/test_doeff_markers.py](../tests/test_doeff_markers.py) - Test cases for marker functionality
+- [examples/marker_demo.py](../examples/marker_demo.py) - Runnable marker usage examples for each placement
+- [packages/doeff-indexer/src/test_markers.rs](../packages/doeff-indexer/src/test_markers.rs) - Test cases for marker extraction
