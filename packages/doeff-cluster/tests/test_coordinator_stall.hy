@@ -57,7 +57,9 @@
   ;; 予定の外の長さが lease-ms ちょうどなら止まりでなく、1 ms 越えたら止まり。
   (val pace (StepPace :judged-ms 1000 :waited-ms 1000 :planned-ms 1000))
   (assert (is (! (stall-of pace (+ 1000 T.lease-ms) T)) None) "lease ちょうどは止まりでない")
-  (assert (= (. (! (stall-of pace (+ 1000 T.lease-ms 1) T)) gap-ms) (+ T.lease-ms 1)) "lease を越えたら止まり"))
+  (val over (! (stall-of pace (+ 1000 T.lease-ms 1) T)))
+  (assert (is-not over None) "lease を越えたら止まり")
+  (assert (= over.gap-ms (+ T.lease-ms 1)) over))
 
 
 (deftest test-the-first-step-and-an-open-wait-are-not-stalls
