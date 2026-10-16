@@ -204,13 +204,71 @@ Handlers interpret effects with this shape:
 
 Handlers use `yield Resume(k, value)` to resume the continuation with a value,
 `yield Pass(effect, k)` to forward the effect to an outer handler, or
-`yield effect` to re-perform an effect in the handler body.
+`yield effect` to re-perform an effect in the handler body. A handler that
+returns without any of these ends the program it handles (see below).
 
 If a host handler returns an effect value, runtime normalizes it through `Perform(effect)`
 before continuing.
 
 A handler is any callable `(effect, k) -> DoExpr`: a `@do` function, a plain
 function, a bound method, a `functools.partial`, or a callable instance.
+
+### Returning without `Resume` ends the program under the handler
+
+A handler's return value is the answer of the program it was installed on.
+`yield Resume(k, value)` first runs the rest of that program and gives its answer
+back to the handler, so `return (yield Resume(k, value))` passes the program's own
+answer through. A handler that returns without `Resume` (or `Transfer`) drops the
+rest of the program instead: the code after the `yield` that performed the effect
+never runs, and the program answers the handler's return value.
+
+```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, Resume, do, handler, run
+
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+
+@do
+def answers(effect: Fetch, k):
+    return (yield Resume(k, f"got {effect.url}"))
+
+
+@do
+def stops(effect: Fetch, k):
+    return f"stopped at {effect.url}"  # no Resume: the rest of page() never runs
+
+
+@do
+def page():
+    body = yield Fetch("https://example.com")
+    return f"body={body}"
+
+
+@do
+def site(fetch_handler):
+    inner = yield handler(fetch_handler)(page())
+    return f"site got {inner}"
+
+
+print(run(handler(answers)(page())))  # body=got https://example.com
+print(run(handler(stops)(page())))  # stopped at https://example.com
+print(run(site(stops)))  # site got stopped at https://example.com
+```
+
+Only the program the handler was installed on ends: in the last line `page()`
+stops and `site()` goes on with the handler's value. A handler installed around
+the whole program ends the whole run, and `run` returns the handler's value.
+
+This is how a handler stops a program on purpose (a fallback value, a deadline),
+so no error or warning is raised: the VM cannot tell a deliberate stop from a
+forgotten `Resume`. In Hy, `defhandler` makes the stop explicit — a clause ends
+its scope only with `(finish value)`, and a clause that reaches neither `resume`
+nor `finish` is refused (ADR-DOE-CORE-EFFECTS-003 R15).
 
 ### Typed handlers: the effect annotation selects the effects
 
@@ -242,6 +300,65 @@ Rules (single definition: `doeff_vm/_effect_types.py`):
 
 A handler whose annotation matches can still `yield Pass(effect, k)` after
 looking at field values; the annotation only states which effects it wants to see.
+
+### Pass the effects a handler does not answer
+
+A handler without an annotation is called for every effect performed under it,
+including the ones it does not know. Falling off the end of the handler for such
+an effect returns `None`, and by the rule above the program ends with `None`.
+Forward the effect with `yield Pass(effect, k)`, or annotate the effect parameter
+so the VM does not call the handler for it:
+
+```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, Pass, Resume, do, handler, run
+from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
+
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+
+@do
+def swallows(effect, k):
+    if isinstance(effect, Fetch):
+        return (yield Resume(k, f"got {effect.url}"))
+    # Ask("name") falls off the end here: greeting() ends with None
+
+
+@do
+def passes(effect, k):
+    if isinstance(effect, Fetch):
+        return (yield Resume(k, f"got {effect.url}"))
+    yield Pass(effect, k)
+
+
+@do
+def typed(effect: Fetch, k):
+    return (yield Resume(k, f"got {effect.url}"))
+
+
+@do
+def greeting():
+    name = yield Ask("name")
+    body = yield Fetch("https://example.com")
+    return f"{name}: {body}"
+
+
+def under(fetch_handler):
+    return reader(env={"name": "ada"})(handler(fetch_handler)(greeting()))
+
+
+print(run(under(swallows)))  # None
+print(run(under(passes)))  # ada: got https://example.com
+print(run(under(typed)))  # ada: got https://example.com
+```
+
+The annotation is the cheaper fix: a skipped handler costs less than one that
+runs and yields `Pass` (see the cost table above).
 
 ### Catching a family of effects by their parent type
 
