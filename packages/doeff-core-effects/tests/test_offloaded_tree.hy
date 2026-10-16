@@ -6,14 +6,17 @@
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import ctypes)
 (import os)
+(import platform)
+(import sys)
 (import threading)
 (import pathlib [Path])
 (import pytest)
 (import doeff [Program with_handlers])
 (import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.file_effects [MeasureTree RemoveTree StatTree FileFailed PathKind])
-(import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler])
+(import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler TREE-THREADS])
 (import doeff_core_effects.scheduler [scheduled CreateExternalPromise Spawn Wait Task])
 
 ;; 筋書き 1 つの上限(秒)。普段は 1 秒の内に終わる。
@@ -124,3 +127,22 @@
   (.setattr monkeypatch os "walk" (fn [path] (.wait gate (* 2 SCENARIO-LIMIT)) (original path)))
   (<- stats tuple (in-thread (walking-while-another-runs (StatTree (+ root "/t")) gate)))
   (assert (= (tuple (gfor e stats e.name)) #("a" "sub" "sub/b")) stats))
+
+
+(defk io-class-in-thread [pool]
+  {:pre [(: pool ThreadPerCall)] :post [(: % int)] :tags {:context "file-test" :role "program"}}
+  "pool の thread の中から ioprio_get の syscall で IO 優先度の種類を読むため。"
+  (val libc (ctypes.CDLL None :use-errno True))
+  (val get-syscall {"x86_64" 252 "aarch64" 31})
+  (val got (.result (.submit pool (fn [] (.syscall libc (get get-syscall (platform.machine)) 1 0)))))
+  (>> got 13))
+
+
+(deftest test-tree-threads-run-at-idle-io-priority-on-linux []
+  ;; 掃除の thread は IDLE(種類 3)で IO を出す。呼んだ側(検の thread)の優先度は変わらない。Linux 以外では何もしない。
+  (when (not (and (= sys.platform "linux") (in (platform.machine) #("x86_64" "aarch64"))))
+    (pytest.skip "ioprio_set は Linux の x86_64 と aarch64 だけ"))
+  (<- idle int (io-class-in-thread TREE-THREADS))
+  (<- plain int (io-class-in-thread (ThreadPerCall)))
+  (assert (= idle 3) idle)
+  (assert (!= plain 3) plain))

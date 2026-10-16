@@ -42,13 +42,20 @@
 (defclass ThreadPerCall [Executor]
   "呼び 1 つに daemon の thread 1 本を起こす Executor(頭の註)。資源の係なので値の型ではない。"
 
+  (deff __init__ [self [on-start None]]  ; defk にできない: 資源の class の初期化
+    {:pre [(: self ThreadPerCall) (: on-start (| None (get Callable #([] None))))] :post [(: % "None")]}
+    "thread が呼びを回す前に 1 度呼ぶ手(on-start — thread の IO 優先度を下げる等)を持つため(None = 何もしない)。"
+    (setv self.on-start on-start))
+
   (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
     {:pre [(: self ThreadPerCall) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "call を新しい thread で回し、その終わりを Future で渡すため(始まる前に取り消された Future は回さない)。"
+    "call を新しい thread で回し、その終わりを Future で渡すため(始まる前に取り消された Future は回さない・on-start は call の前に thread の中で呼ぶ)。"
     (setv future (Future))
     (.start (threading.Thread :target (fn []
                                         (when (.set-running-or-notify-cancel future)
                                           (try
+                                            (when (is-not self.on-start None)
+                                              (.on-start self))
                                             (.set-result future (call #* args))
                                             (except [error BaseException]
                                               (.set-exception future error)))))
