@@ -218,9 +218,11 @@ class TestDefmcpToolMacro:
 
         @do
         def submit_order(symbol):
-            return {"order": symbol}
+            return f"accepted: {symbol}"
 
-        with pytest.raises(SyntaxError, match="tool 自身の名 submit-order を呼んでいます"):
+        with pytest.raises(
+            hy.errors.HyMacroExpansionError, match="tool 自身の名 submit-order を呼んでいます"
+        ):
             _eval_mcp(f"""
 (defmcp-tool submit-order
   "Submit a trading order"
@@ -234,7 +236,7 @@ class TestDefmcpToolMacro:
 
         @do
         def submit_order(symbol, qty):
-            return {"order": [symbol, qty], "status": "accepted"}
+            return f"accepted: {qty} of {symbol}"
 
         mod, _ = _eval_mcp("""
 (defmcp-tool submit-order-tool
@@ -243,16 +245,11 @@ class TestDefmcpToolMacro:
    {:name "qty" :type "integer" :description "Quantity"}]
   (setv written '(submit-order-tool symbol))
   (<- result (submit-order symbol qty))
-  (setv (get result "tool") (. submit-order-tool name))
-  result)
+  (+ result " via " (. submit-order-tool name)))
 """, submit_order=submit_order, hy=hy)
         tool = mod.__dict__["submit_order_tool"]
         assert tool.name == "submit-order-tool"
-        assert run(tool.handler("7203", 100)) == {
-            "order": ["7203", 100],
-            "status": "accepted",
-            "tool": "submit-order-tool",
-        }
+        assert run(tool.handler("7203", 100)) == "accepted: 100 of 7203 via submit-order-tool"
 
     def test_missing_description_raises(self):
         """defmcp-tool without description string raises error."""
