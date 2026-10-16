@@ -74,6 +74,13 @@ from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as Rea
 from doeff_cluster.shared.intent.detached_model import DetachedTiming as DetachedTiming
 from doeff_cluster.shared.intent.detached_model import StateTasksWire as StateTasksWire
 from doeff_cluster.shared.intent.detached_model import DetachedTimingAnswer as DetachedTimingAnswer
+from doeff_cluster.shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
+from doeff_cluster.shared.intent.detached_model import DetachedQueueReason as DetachedQueueReason
+from doeff_cluster.shared.intent.detached_model import DetachedQueueGroup as DetachedQueueGroup
+from doeff_cluster.shared.intent.detached_model import DetachedQueueAnswer as DetachedQueueAnswer
+from doeff_cluster.shared.intent.detached_model import StateQueueWire as StateQueueWire
+from doeff_cluster.shared.intent.detached_model import DetachedGroupWire as DetachedGroupWire
+from doeff_cluster.shared.intent.detached_model import DetachedLimitWire as DetachedLimitWire
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import parse as parse
 from doeff_cluster.shared.intent.remote_model import TaskSucceeded as TaskSucceeded
@@ -107,6 +114,15 @@ def awaited_answer(view: dict | None, reason: str, key: str, waited: float, time
     ...
 
 def detached_timing_of_state(key: str, state: dict | str) -> _Program[DetachedTimingAnswer, object]:
+    ...
+
+def queue_group_of(limit: DetachedGroupWire, claim: DetachedLimitWire) -> _Program[DetachedQueueGroup, object]:
+    ...
+
+def detached_queue_of_state(key: str, state: dict | str) -> _Program[DetachedQueueAnswer, object]:
+    ...
+
+def detached_queue_read(cell: RouteCell, options: RouteOptions, sender: DetachedSender, key: str) -> _Program[DetachedQueueAnswer, object]:
     ...
 
 def unknown_timing_confirmed(unknown: DetachedUnknown, view: dict | str) -> DetachedTimingAnswer:
