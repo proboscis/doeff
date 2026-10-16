@@ -4,158 +4,120 @@ README の例は、初めての利用者が写して走らせる code で、ど�
 誰も気づかなかった: 並行の例は writer が state の handler を要るようになった後も state を入れず UnhandledEffect(Get) で
 落ち、Hy の例は defhandler と do! の require が無く NameError で落ちていた(下の STALE_EXAMPLES が当時の写し)。
 
-README の ```python と ```hy の囲みは全部この検に入る(新しい例も書いただけで入る)。囲みは 1 つずつ file に書き、
-新しい interpreter で script として走らせる(`python -I -B <例>.py`・`python -I -B -m hy <例>.hy` — 利用者が写して走らせるのと
-同じく、repo の木の path にも pytest の conftest にも頼らない)。終了コードだけでは足りない: 例は印字する値を print の行の
-末尾の注記で言う(Python は `print(x)  # 値`・Hy は `(print x)  ; 値`)ので、標準出力の行をその注記の列と比べる。注記の
-無い例は、何を確かめたかが無いので赤にする。走らせない囲み(shell の命令)は言葉の名で SHOWN_ONLY に置き、どちらにも無い
-言葉の囲みは赤にする — 言葉を書き換えた囲み(```py など)が黙って検から外れないため。
+README の囲みの読み方・走らせ方・注記との比べ方は tools/readme_examples.py の 1 点に在り、出す前と出した後の確かめの道具
+tools/verify_release_install.py(核の 5 個を入れた新しい venv で 5 個の README を走らせる — card ki-7746480f388d)と共に使う。
+この検は根の README.md の例を開発の環境で走らせ(囲みは全部入る — 新しい例も書いただけで入る)、核の 5 個の README の
+囲みが約束(言葉・`file=`・`excerpt`・`run`・注記)に合う事を、走らせずに読む。核の 4 個の README の例を走らせるのは
+道具の方 — 例は利用者が新しく入れた環境の様子を言い、この開発の環境には他の部品と pytest の plugin(doeff-adr の Hy の検の
+集め手など)も入っているため。
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from tests.cli.cli_child import with_settings
 
-README = Path(__file__).resolve().parents[1] / "README.md"
-# 走らせる囲みの言葉 → 例の file の拡張子と、例の path の前に置く命令。-I は環境変数の PYTHONDONTWRITEBYTECODE も読まないので、
-# -B で bytecode を書かせない(書くと、起動の bytecode が checkout の下に残ったと root の conftest が赤にする)。
-RUNNERS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "python": (".py", (sys.executable, "-I", "-B")),
-    "hy": (".hy", (sys.executable, "-I", "-B", "-m", "hy")),
+ROOT = Path(__file__).resolve().parents[1]
+README = ROOT / "README.md"
+# 核の 5 個の README(区切り ms-680daa3cc6a7 の範囲 — tools/verify_release_install.py の CORE と同じ並び)。
+CORE_READMES = {
+    "doeff": README,
+    "doeff-vm": ROOT / "packages" / "doeff-vm" / "README.md",
+    "doeff-core-effects": ROOT / "packages" / "doeff-core-effects" / "README.md",
+    "doeff-hy": ROOT / "packages" / "doeff-hy" / "README.md",
+    "doeff-hy-pytest": ROOT / "packages" / "doeff-hy-pytest" / "README.md",
 }
-# 走らせない囲みの言葉(写して打つ shell の命令 — 例の module や機体の道具を要る)。
-SHOWN_ONLY = frozenset({"bash"})
 # README が保つ入口の例の節(card ki-68cd4c8effcd が直した 2 つ)。節を消す・名を変える時は、ここも直す。
 KEPT_SECTIONS = ("Quick Start", "Scheduler and Concurrency")
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1〜2 秒(多くは doeff と hy の import)。
 CHILD_DEADLINE_SECONDS = 50
 
-_FENCE = re.compile(
-    r"^```(?P<language>[^\n`]*)\n(?P<code>.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL
-)
-_SECTION = re.compile(r"^## (?P<title>.+?)[ \t]*$", re.MULTILINE)
-# print の行の末尾の、印字する値の注記(囲みの言葉 → 注記を取る正規表現)。
-_STATED_OUTPUT = {
-    "python": re.compile(r"\bprint\(.*\)\s+#\s?(?P<output>.*?)\s*$"),
-    "hy": re.compile(r"\(print\s.*\)\s+;\s?(?P<output>.*?)\s*$"),
-}
+
+def _load(name: str) -> ModuleType:
+    """tools/ の module を読む(tools/ は package ではなく、道具は workspace の外の interpreter で script として走る)。
+
+    sys.modules に名で置く — tools/verify_release_install.py は隣の readme_examples を名で import するので、先に読んで置く。
+    """
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-@dataclass(frozen=True)
-class Example:
-    """README の囲み 1 つ。"""
-
-    # 囲みの在る節(`## ` の見出し — 最初の見出しより前なら "")
-    section: str
-    # 囲みの言葉(``` の後の語)
-    language: str
-    # 囲みの中身
-    code: str
-    # 囲みの始まりの行(1 から数える)
-    line: int
-
-    @property
-    def name(self) -> str:
-        return f"README.md:{self.line}({self.section} の {self.language})"
-
-    def stated_output(self) -> list[str]:
-        """print の行の末尾の注記の列 — 例が印字すると言う行。"""
-        pattern = _STATED_OUTPUT[self.language]
-        return [
-            found["output"] for line in self.code.splitlines() if (found := pattern.search(line))
-        ]
-
-
-def _fences(text: str) -> list[Example]:
-    sections = [(found.start(), found["title"]) for found in _SECTION.finditer(text)]
-    return [
-        Example(
-            section=next(
-                (title for start, title in reversed(sections) if start < fence.start()), ""
-            ),
-            language=fence["language"].strip(),
-            code=fence["code"],
-            line=text.count("\n", 0, fence.start()) + 1,
-        )
-        for fence in _FENCE.finditer(text)
-    ]
+examples = _load("readme_examples")
+release = _load("verify_release_install")
+Example = examples.Example
 
 
 def _readme_fences() -> list[Example]:
-    return _fences(README.read_text(encoding="utf-8"))
+    """根の README の囲み(検の名の README は repo の根からの path)。"""
+    return examples.fences(README.read_text(encoding="utf-8"), "README.md")
 
 
 def _runnable() -> list[Example]:
-    return [example for example in _readme_fences() if example.language in RUNNERS]
+    """根の README の、走らせて注記と比べる囲み。"""
+    return [example for example in _readme_fences() if example.runs()]
 
 
 def _example_id(example: Example) -> str:
+    """parametrize の id — 節と言葉で、落ちた検がどの例かを読めるようにする。"""
     return f"{re.sub(r'[^a-z0-9]+', '-', example.section.lower()).strip('-')}-{example.language}"
 
 
 def _run(
     example: Example, directory: Path, deadline_scale_factor: float
 ) -> subprocess.CompletedProcess[str]:
-    """例を directory の file に書き、新しい interpreter で script として走らせる(cwd も directory)。"""
-    suffix, command = RUNNERS[example.language]
-    script = directory / f"readme_example{suffix}"
-    script.write_text(example.code, encoding="utf-8")
-    return subprocess.run(
-        with_settings([*command, str(script)], {}),
-        cwd=directory,
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+    """例を directory の file に書き、開発の環境の新しい interpreter で走らせる(cwd も directory)。"""
+    return examples.run(
+        example,
+        directory,
+        Path(sys.executable),
+        CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        wrap=lambda command: with_settings(command, {}),
     )
-
-
-def _mismatch(example: Example, result: subprocess.CompletedProcess[str]) -> str | None:
-    """走らせた例が落ちたか、注記と違う物を印字したかを言う文(合えば None)。"""
-    if result.returncode != 0:
-        return (
-            f"{example.name} が終了コード {result.returncode} で落ちた — 例を今の使い方に直す\n"
-            f"{result.stdout}{result.stderr}"
-        )
-    printed = result.stdout.splitlines()
-    if printed != example.stated_output():
-        return (
-            f"{example.name} の印字が print の行の注記と違う — 注記 {example.stated_output()}・"
-            f"印字 {printed}"
-        )
-    return None
 
 
 @pytest.mark.parametrize("example", _runnable(), ids=_example_id)
 def test_readme_example_runs_and_prints_what_it_states(
     example: Example, tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    assert example.stated_output(), (
-        f"{example.name} の print の行に、印字する値の注記が無い — 何を確かめたかが無いので、"
-        "`print(x)  # 値`(Hy は `(print x)  ; 値`)の形で書く"
-    )
-    mismatch = _mismatch(example, _run(example, tmp_path, deadline_scale_factor))
+    assert example.problems() == []
+    # 前の囲みが書く file(`file=` の module など)を、読み手と同じく先に置く。
+    for earlier in _readme_fences():
+        if earlier.line < example.line and earlier.written_as() is not None:
+            examples.write(earlier, tmp_path)
+    mismatch = examples.mismatch(example, _run(example, tmp_path, deadline_scale_factor))
     assert mismatch is None, mismatch
 
 
-def test_readme_fences_are_run_or_shown_only() -> None:
-    unknown = sorted(
-        example.name
-        for example in _readme_fences()
-        if example.language not in RUNNERS and example.language not in SHOWN_ONLY
-    )
-    assert unknown == [], (
-        f"README の囲みの言葉が、走らせる言葉({sorted(RUNNERS)})にも走らせない言葉({sorted(SHOWN_ONLY)})にも"
-        f"無い — 言葉を直すか、走らせない shell の言葉なら SHOWN_ONLY に足す: {unknown}"
-    )
+@pytest.mark.parametrize("package", sorted(CORE_READMES))
+def test_core_readme_fences_keep_the_rules(package: str) -> None:
+    path = CORE_READMES[package]
+    fences = examples.fences(path.read_text(encoding="utf-8"), str(path.relative_to(ROOT)))
+    problems = [problem for example in fences for problem in example.problems()]
+    assert problems == [], "\n".join(problems)
+
+
+@pytest.mark.parametrize("package", sorted(CORE_READMES))
+def test_core_readme_has_an_example_that_runs(package: str) -> None:
+    # 全部を excerpt にした README は、確かめの道具で何も走らず、確かめた事が無い(道具も赤にする)。
+    fences = examples.fences(CORE_READMES[package].read_text(encoding="utf-8"), package)
+    assert any(example.runs() for example in fences), f"{package} の README に、走らせる例が無い"
+
+
+def test_core_readmes_are_the_release_core() -> None:
+    assert tuple(CORE_READMES) == release.CORE
 
 
 def test_readme_keeps_the_entry_examples() -> None:
@@ -168,6 +130,7 @@ def test_readme_keeps_the_entry_examples() -> None:
 # card ki-68cd4c8effcd の前の README の 2 つの例の写し(この検が名指す事を確かめる失敗ケース)。
 STALE_EXAMPLES = {
     "UnhandledEffect": Example(
+        "README.md",
         "Scheduler and Concurrency",
         "python",
         """from doeff import do, run
@@ -193,6 +156,7 @@ print(result)  # ['a', 'b']
         0,
     ),
     "NameError": Example(
+        "README.md",
         "Handler Composition",
         "hy",
         """(import doeff [Ask])
@@ -216,7 +180,7 @@ def test_check_names_the_stale_examples(
     error: str, tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     example = STALE_EXAMPLES[error]
-    mismatch = _mismatch(example, _run(example, tmp_path, deadline_scale_factor))
+    mismatch = examples.mismatch(example, _run(example, tmp_path, deadline_scale_factor))
     assert mismatch is not None
     assert "落ちた" in mismatch
     assert error in mismatch
@@ -225,12 +189,12 @@ def test_check_names_the_stale_examples(
 def test_check_names_an_example_that_prints_otherwise(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    example = Example("Quick Start", "python", "print(1 + 1)  # 3\n", 0)
-    mismatch = _mismatch(example, _run(example, tmp_path, deadline_scale_factor))
+    example = Example("README.md", "Quick Start", "python", "print(1 + 1)  # 3\n", 0)
+    mismatch = examples.mismatch(example, _run(example, tmp_path, deadline_scale_factor))
     assert mismatch == f"{example.name} の印字が print の行の注記と違う — 注記 ['3']・印字 ['2']"
 
 
-def test_fences_are_read_with_their_section_and_stated_output() -> None:
+def test_fences_are_read_with_their_section_words_and_stated_output() -> None:
     text = """# title
 
 ```bash
@@ -247,16 +211,121 @@ print("a # b")  # a # b
 
 ## Hy
 
-```hy
+```hy file=greeting.hy
 (print (+ 1 1))  ; 2
 (print "not stated")
 ```
+
+```bash run
+# a comment line states nothing
+pytest   # 2 passed
+```
 """
-    fences = _fences(text)
-    assert [(example.section, example.language, example.line) for example in fences] == [
-        ("", "bash", 3),
-        ("Quick Start", "python", 9),
-        ("Hy", "hy", 17),
+    fences = examples.fences(text, "README.md")
+    assert [
+        (example.section, example.language, example.words, example.line) for example in fences
+    ] == [
+        ("", "bash", (), 3),
+        ("Quick Start", "python", (), 9),
+        ("Hy", "hy", ("file=greeting.hy",), 17),
+        ("Hy", "bash", ("run",), 22),
     ]
     assert fences[1].stated_output() == ["1", "a # b"]
     assert fences[2].stated_output() == ["2"]
+    assert fences[2].file == "greeting.hy"
+    assert fences[3].stated_output() == ["2 passed"]
+    assert [example.runs() for example in fences] == [False, True, True, True]
+
+
+def _fence(info: str, code: str) -> Example:
+    return examples.fences(f"## Rules\n\n```{info}\n{code}```\n", "README.md")[0]
+
+
+@pytest.mark.parametrize(
+    ("info", "code", "named"),
+    [
+        ("py", "print(1)  # 1\n", "にも無い"),
+        ("python fragment", "print(1)  # 1\n", "知らない語 ['fragment']"),
+        ("python run", "print(1)  # 1\n", "bash の囲みだけ"),
+        ("python excerpt file=a.py", "x = 1\n", "file= とも run とも書けない"),
+        ("python file=../a.py", "x = 1\n", "dir を含まない名"),
+        ("python", "print(1)\n", "注記が無い"),
+        ("bash run", "pytest\n", "注記が無い"),
+    ],
+)
+def test_rules_name_a_fence_that_breaks_them(info: str, code: str, named: str) -> None:
+    problems = _fence(info, code).problems()
+    assert any(named in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize(
+    ("stated", "failed"), [("42", []), ("43", ["README.md:12", "README.md:18"])]
+)
+def test_written_files_are_imported_by_the_fences_after_them(
+    stated: str, failed: list[str], tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    # 43 と書けば、走らせた 2 つ(main.py と bash)だけが落ちる — 走らせずに通す囲みが無い事の確かめ。
+    text = f"""## Files
+
+```python file=helper.py
+def double(n):
+    return n * 2
+```
+
+```python excerpt
+undefined_name(1)
+```
+
+```python file=main.py
+from helper import double
+
+print(double(21))  # {stated}
+```
+
+```bash run
+echo "ran in $(basename "$PWD")"   # ran in
+python main.py   # {stated}
+```
+"""
+    failures = examples.run_in_order(
+        examples.fences(text, "README.md"),
+        tmp_path,
+        Path(sys.executable),
+        CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+    )
+    assert [failure.split("(")[0] for failure in failures] == failed
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "helper.py",
+        "main.py",
+        "readme_example_18.sh",
+    ]
+
+
+def test_shell_check_names_stated_text_missing_from_the_output(
+    tmp_path: Path, deadline_scale_factor: float
+) -> None:
+    example = _fence("bash run", "echo hello   # goodbye\n")
+    mismatch = examples.mismatch(
+        example,
+        examples.run(
+            example, tmp_path, Path(sys.executable), CHILD_DEADLINE_SECONDS * deadline_scale_factor
+        ),
+    )
+    assert mismatch == f"{example.name} の出力に、注記の文 ['goodbye'] が無い — 出力\nhello\n"
+
+
+def test_release_check_installs_only_third_party_dependencies_from_pypi() -> None:
+    # 核の 5 個は手元の wheel から入れるので、PyPI から入れる依存の列に核の名(綴りの揺れも)と extra の依存を出さない。
+    assert release.dependency_requirements(
+        [
+            "doeff-vm>=0.2.0",
+            "doeff_core_effects",
+            "Doeff.Hy",
+            "doeff-hy-pytest",
+            "hy>=1.3.0,<=1.3.1",
+            "frozendict>=2.4.0",
+            'aiohttp>=3.14; extra == "http-server"',
+            'tomli>=2; python_version < "3.11"',
+            "hy>=1.3.0,<=1.3.1",
+        ]
+    ) == ["frozendict>=2.4.0", "hy>=1.3.0,<=1.3.1", 'tomli>=2; python_version < "3.11"']
