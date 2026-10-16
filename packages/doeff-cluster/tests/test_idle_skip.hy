@@ -9,6 +9,7 @@
 ;; - 期限の関数(liveness-due・sweep-due・task-due)は、判断が比べに使う期限の値と同じ刻を返す。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import doeff [Program])
@@ -363,7 +364,7 @@
 
 (deftest test-the-sweep-due-is-the-deadline-each-sweep-compares
   (val due-at 12345)
-  (val states [(ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms due-at :size 1)})
+  (val states [(ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms due-at :size 1)))))
                (ClusterState :drains {"w" (Drain :worker "w" :since-ms 0 :until-ms due-at)})
                (ClusterState :warms {"e" (WarmEntry :key "e" :runtime-env {} :needs #() :until-ms due-at :holder "w")})
                (ClusterState :programs {"p" (ProgramRow :blob "" :versions {} :put-ms (- due-at PROGRAM-GRACE-MS 1))})])
@@ -375,7 +376,7 @@
     (assert (is before state) "期限の 1 ms 前に判断が状態を変えた")
     (assert (is-not at state) "期限の刻に判断が状態を変えなかった"))
   ;; 期限の無い盤の行だけの状態は、時刻では何も変わらない。
-  (<- none (| DueAt DueNow DueNever) (sweep-due (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms None :size 1)}) 0 (ClusterTiming)))
+  (<- none (| DueAt DueNow DueNever) (sweep-due (ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms None :size 1))))) 0 (ClusterTiming)))
   (assert (= none (DueNever)) none))
 
 

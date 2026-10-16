@@ -38,8 +38,8 @@
   (assert (not-in "sim-worker" state.workers) (sorted state.workers))
   (val kept (lfor task (.values state.tasks) :if (= task.key "k-done") task))
   (assert (= (lfor task kept #(task.phase task.detached (is-not task.result None))) [#("finished" True True)]) kept)
-  (assert (in "note/a" state.board) (sorted state.board))
-  (assert (in "beacon/a" state.board) (sorted state.board))
+  (assert (is-not (.row state.board "note/a") None) (sorted (.keys state.board)))
+  (assert (is-not (.row state.board "beacon/a") None) (sorted (.keys state.board)))
   ;; 読んだ状態で 1 拍の調停が回り、状態の画面(GET /state)と Service の画面が答える。
   (val ticked (! (tick state NOW (ClusterTiming))))
   ;; responded の答え = #(次の状態 status 返事)。

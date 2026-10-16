@@ -8,6 +8,7 @@
 ;;   4 止まりの長さだけ時計をずらすと、止まる前に生きていた worker は止まりの直後の歩で沈黙にならず(WorkerGone 無し)、その後
 ;;     heartbeat が無ければ、止まる前の沈黙の残りの後に従来どおり WorkerGone になる。
 (require doeff-hy.macros [defk deftest <- val])
+(import doeff_hy.table [TableWrite table-of])
 (import doeff [run])
 (import dataclasses [fields replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -107,7 +108,7 @@
   (val before (replace base
                        :drains {"w" (Drain :worker "w" :since-ms SEEN :until-ms (+ SEEN 60000))}
                        :warms {"k" (WarmEntry :key "k" :runtime-env {} :needs #() :until-ms (+ SEEN 60000) :holder "h")}
-                       :board {"presence-x" (BoardRow :value 1 :version 1 :expires-ms (+ SEEN 60000) :size 1)}
+                       :board (table-of #((TableWrite "presence-x" (BoardRow :value 1 :version 1 :expires-ms (+ SEEN 60000) :size 1))))
                        :superseded-runs #((SupersededRun :worker "w" :boot "b0" :jobs #("j") :seen-ms SEEN :overlapped False :leaving False))))
   (val now (+ JUDGED STALL-MS))
   (val shifted (! (clocks-shifted before now STALL-MS)))
@@ -115,9 +116,9 @@
   (assert (<= moved STALL-SHIFTED-FIELDS) (sorted (- moved STALL-SHIFTED-FIELDS)))
   (assert (<= #{"workers" "board" "drains" "warms" "superseded_runs" "alive_ms"} moved) (sorted moved))
   (assert (= (. (get shifted.drains "w") until-ms) (+ SEEN 60000 STALL-MS)))
-  (assert (= (. (get shifted.board "presence-x") version) 1) "TTL の行は値が同じなので版を進めない")
+  (assert (= (. (.row shifted.board "presence-x") version) 1) "TTL の行は値が同じなので版を進めない")
   (val after (! (tick shifted now T)))
   (assert (in "w" after.drains) "止まりの直後の歩で drain が切れない")
   (assert (in "k" after.warms) "止まりの直後の歩で温める表の行が切れない")
-  (assert (in "presence-x" after.board) "止まりの直後の歩で盤の TTL の行が切れない")
+  (assert (is-not (.row after.board "presence-x") None) "止まりの直後の歩で盤の TTL の行が切れない")
   (assert (= (. (get after.superseded-runs 0) seen-ms) (+ SEEN STALL-MS)) "退いた世代の沈黙は止まる前の時点のまま"))

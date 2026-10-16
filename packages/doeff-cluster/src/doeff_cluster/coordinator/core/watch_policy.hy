@@ -67,7 +67,7 @@
 (deff lease-row [#^ ClusterState state #^ str name]  ; defk にできない: all-waiting-unchanged の内包表記の中から呼ぶ純粋な読み
   {:pre [(: state ClusterState) (: name str)] :post [(: % (| dict None))] :tags {:context "coordinator" :role "judgment"}}
   "名前付きの lease の盤の行の値(行が無ければ None)を読むため — lease の待ちの判断が lease_rules へ渡す値。"
-  (setv entry (.get state.board (semaphore-key name)))
+  (setv entry (.row state.board (semaphore-key name)))
   (if (is entry None) None entry.value))
 
 

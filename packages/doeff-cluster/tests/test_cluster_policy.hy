@@ -965,7 +965,7 @@
 (defk holders-of [state lock]
   {:pre [(: state ClusterState) (: lock str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "盤の lease lock の行の担い手(token → 期限)を読むため(行が無ければ空)。"
-  (val row (.get state.board (+ "semaphore/" lock)))
+  (val row (.row state.board (+ "semaphore/" lock)))
   (if (is row None) {} (get row.value "holders")))
 
 (defk token-of [job instance]
@@ -996,6 +996,8 @@
   (assert (= (! (holders-of reborn "retired-lock")) {}) (! (holders-of reborn "retired-lock")))
   ;; 外すのは atlas の前の世代の process の担い手だけ(別の worker の process の lease はそのまま)。
   (assert (= (! (holders-of reborn "other-lock")) (! (holders-of held "other-lock"))))
+  (assert (is (.row reborn.board (+ "semaphore/" "other-lock")) (.row held.board (+ "semaphore/" "other-lock"))) "外さない行は同じ object")
+  (assert (= (. (.row reborn.board "semaphore/writer-lock") version) (+ (. (.row held.board "semaphore/writer-lock") version) 1)) "外した行は版 +1")
   (setv #(_ ok) (! (lease-asked reborn "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
   (assert ok "新しい世代の process が期限の前に lease を取れる"))
 

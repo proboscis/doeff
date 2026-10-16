@@ -8,6 +8,7 @@
 ;; - 落ち着かない時の止め(count-unsettled): 今すぐが UNSETTLED-STEP-LIMIT 歩を越えて続いたら、変わり続けた欄を名指して落ちる
 ;;   (黙って回り続けない)。
 (require doeff-hy.macros [deftest defk <- val])
+(import doeff_hy.table [TableWrite table-of])
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -37,7 +38,7 @@
 
 (deftest test-next-wake-is-the-earliest-of-the-step-deadlines-and-the-waiters
   ;; 盤の行の期限 3000 と、待ちの期限 5000: 早い方の 3000。待ちの期限だけなら 5000 ちょうど。
-  (val state (ClusterState :board {"k" (BoardRow :value 1 :version 1 :expires-ms 3000 :size 1)}))
+  (val state (ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms 3000 :size 1))))))
   (<- waiter Watcher (reader state.revision 5000))
   (<- both (| DueAt DueNow DueNever) (next-wake state 1000 TIMING NAMING #(waiter)))
   (assert (= both (DueAt :at 3000)) both)

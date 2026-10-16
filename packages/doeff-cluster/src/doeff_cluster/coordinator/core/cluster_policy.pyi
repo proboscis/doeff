@@ -221,7 +221,7 @@ def generation_holder_prefixes(report: WorkerReport | None) -> _Program[tuple, o
 def holders_dropped(row: BoardRow, prefixes: tuple) -> _Program[dict | None, object]:
     ...
 
-def board_without_generation_holders(board: dict, report: WorkerReport | None) -> _Program[dict, object]:
+def board_without_generation_holders(board: Table[BoardRow], report: WorkerReport | None) -> _Program[Table[BoardRow], object]:
     ...
 
 def load_of(state: ClusterState, placements: dict) -> dict:
