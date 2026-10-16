@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
 (import doeff_cluster.shared.intent.cluster_control [KillWorker])
-(import doeff_cluster.sim.local [sim-cluster SimParts PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns])
+(import doeff_cluster.sim.local [sim-cluster SimParts PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 
@@ -67,15 +67,16 @@
 (defk stall-without-deaths []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "受け手として: coordinator を止めて明けた後まで待ち、終わりの印に w1 の処理を止めて戻るまでに受けた出来事と、止める前後の pulse の
-   置き先と、印を付けた刻を返すため。"
+   置き先と、印を付けた刻と、止まりが明ける刻を返すため。"
   (<- before tuple (pulse-placement))
+  (<- stalled int (now-epoch-ms))
   (<- (StallCoordinator STALL-SECONDS))
   (<- (Delay (+ STALL-SECONDS AFTER-SECONDS)))
   (<- after tuple (pulse-placement))
   (<- marked int (now-epoch-ms))
   (<- (StallWorker "w1" MARK-STALL-SECONDS))
   (<- heard tuple (heard-until WorkerBack))
-  #(heard before after marked))
+  #(heard before after marked (+ stalled (int (* 1000 STALL-SECONDS)))))
 
 
 (defk stalled-without-deaths []
@@ -85,7 +86,8 @@
   (<- parts SimParts (PartsOf))
   (<- seen tuple (as-reader parts.broker (stall-without-deaths)))
   (<- runs tuple (CoordinatorRuns))
-  #(#* seen (len runs)))
+  (<- steps tuple (CoordinatorSteps))
+  #(#* seen (len runs) steps))
 
 
 (deftest test-a-stalled-coordinator-tells-no-worker-gone-and-moves-no-job
@@ -94,11 +96,18 @@
   (val before (get seen 1))
   (val after (get seen 2))
   (val marked (get seen 3))
-  (assert (= (get seen 4) 1) "止まりは coordinator を作り直さない(同じ一生のまま)")
+  (val thawed (get seen 4))
+  (assert (= (get seen 5) 1) "止まりは coordinator を作り直さない(同じ一生のまま)")
   ;; 受けたのは終わりの印の WorkerGone・WorkerBack だけ(止まりの間と明けた後の WorkerGone は 0 回)。
   (assert (= (lfor #(event _at) heard #((type event) event.worker)) [#(WorkerGone "w1") #(WorkerBack "w1")]) heard)
   (assert (>= (get heard 0 1) marked) #("WorkerGone は印の後" heard marked))
-  (assert (= after before) #("pulse の置き先は同じ worker の同じ世代のまま" before after)))
+  (assert (= after before) #("pulse の置き先は同じ worker の同じ世代のまま" before after))
+  ;; 止まりが明けた歩(要求の無い歩)の保存に、ずらした worker の最後の連絡の印と、その歩の刻の生存の印が載る(設計検証 S2 — 保存は歩の
+  ;; 前の状態との差なので、ずらしを差に入れ損ねると、止まりの後の印が置き場に残らない)。
+  (val thaw-step (next (gfor step (get seen 6) :if (>= step.at thawed) step)))
+  (val written (dfor writes thaw-step.writes w writes w.key w.value))
+  (assert (= (. written ["counter"] ["aliveMs"]) thaw-step.at) #("明けた歩の生存の印" thaw-step))
+  (assert (<= #{"worker/w1" "worker/w2"} (set written)) #("明けた歩にずらした worker の印" (sorted written))))
 
 
 (defk stall-with-a-death []
