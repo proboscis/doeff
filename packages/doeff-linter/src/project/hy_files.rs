@@ -21,9 +21,53 @@ pub fn collect(root: &Path) -> Vec<PathBuf> {
     if let Some(found) = memo.lock().expect("一覧の memo").get(root) {
         return found.as_ref().clone();
     }
-    let found = Arc::new(hy_index::collect_hy_files(root));
+    let found = Arc::new(walk_overlapped(root));
     memo.lock().expect("一覧の memo").insert(root.to_path_buf(), Arc::clone(&found));
     found.as_ref().clone()
+}
+
+/// `hy_index::collect_hy_files` と同じ集合と順の一覧を、dir を 1 層ずつ並べて開いて作る。
+///
+/// 順に歩くと dir ごとに disk を 1 回待つ(agora-controllers で約 1200 の dir — 混んだ Pod の冷えた作業木で 9〜15 秒・CPU は 0.1 秒)。
+/// 1 つの dir の中身は他の dir の中身に依らないので、同じ層の dir は待ちを重ねて開く(`bulk_read::fan_out_wide`)。降りない dir の名・symlink を辿らない事・
+/// 読めない dir を黙って飛ばす事・最後に path で並べる事は、歩く物と同じ。根が dir として開けない時(file・無い path)は歩く物に任せる。
+fn walk_overlapped(root: &Path) -> Vec<PathBuf> {
+    let Some(first) = list_dir(root) else { return hy_index::collect_hy_files(root) };
+    let mut files = first.files;
+    let mut level = first.dirs;
+    while !level.is_empty() {
+        let listed = super::bulk_read::fan_out_wide(&level, |dir| list_dir(dir));
+        level = Vec::new();
+        for listing in listed.into_iter().flatten() {
+            level.extend(listing.dirs);
+            files.extend(listing.files);
+        }
+    }
+    files.sort();
+    files
+}
+
+/// dir 1 つの中身 — 降りる dir と Hy の file。
+struct Listing {
+    dirs: Vec<PathBuf>,
+    files: Vec<PathBuf>,
+}
+
+/// dir を開いて中身を分ける。開けなければ None。
+fn list_dir(dir: &Path) -> Option<Listing> {
+    let mut listing = Listing { dirs: Vec::new(), files: Vec::new() };
+    for entry in std::fs::read_dir(dir).ok()?.filter_map(Result::ok) {
+        let Ok(kind) = entry.file_type() else { continue };
+        let name = entry.file_name();
+        if kind.is_dir() {
+            if !hy_index::SKIPPED_DIRS.contains(&name.to_string_lossy().as_ref()) {
+                listing.dirs.push(entry.path());
+            }
+        } else if kind.is_file() && Path::new(&name).extension().and_then(|extension| extension.to_str()).is_some_and(|extension| hy_index::HY_EXTENSIONS.contains(&extension)) {
+            listing.files.push(entry.path());
+        }
+    }
+    Some(listing)
 }
 
 /// root 以下の Hy の file を module の綴りで引く索引(`names::module_of` の逆)。tree を歩かず、引かれた module の path だけを探る(`ModuleProbe`)—
@@ -80,4 +124,81 @@ pub fn outside_walk(root: &Path, include: &[PathBuf], named: &[PathBuf], declara
         .filter(|file| !file.canonicalize().is_ok_and(|real| walked.contains(&real)))
         .collect();
     outside.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree(files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::TempDir::new().unwrap();
+        for rel in files {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        dir
+    }
+
+    /// 並べて開いて作る一覧は、歩く物(`hy_index::collect_hy_files`)と同じ集合・同じ順 — 降りない dir・symlink・Hy でない file・dir の名が `.hy` で終わる物も。
+    #[test]
+    fn the_overlapped_walk_lists_what_the_plain_walk_lists_in_the_same_order() {
+        let dir = tree(&[
+            "top.hy",
+            "z_last.hyk",
+            "a/b/c/deep.hyp",
+            "a/b/other.hy",
+            "a/notes.txt",
+            "app/v1.2/x.hy",
+            "app/.venv/lib/y.hy",
+            "app/node_modules/n.hy",
+            "app/target/z.hy",
+            ".git/hooks/h.hy",
+            "pkg/__pycache__/c.hy",
+            "pkg/real.hy",
+            "many/d00/f.hy",
+            "many/d01/f.hy",
+            "many/d02/f.hy",
+            "many/d03/f.hy",
+            "many/d04/f.hy",
+            "many/d05/f.hy",
+            "target",
+        ]);
+        std::fs::create_dir_all(dir.path().join("folder.hy/inside")).unwrap();
+        std::fs::write(dir.path().join("folder.hy/inside/in.hy"), "").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.path().join("a"), dir.path().join("linked")).unwrap();
+            std::os::unix::fs::symlink(dir.path().join("top.hy"), dir.path().join("alias.hy")).unwrap();
+        }
+        let walked = hy_index::collect_hy_files(dir.path());
+        assert!(walked.len() >= 10, "検の材料が足りない: {walked:?}");
+        assert_eq!(walk_overlapped(dir.path()), walked);
+    }
+
+    /// 根が降りない名でも、根自身は降りる(歩く物と同じ)。開けない dir は黙って飛ばす。
+    #[test]
+    fn the_root_is_entered_even_when_its_name_is_skipped_and_unreadable_dirs_are_left_out() {
+        let parent = tree(&["target/inner/x.hy", "target/y.hy"]);
+        let root = parent.path().join("target");
+        assert_eq!(walk_overlapped(&root), hy_index::collect_hy_files(&root));
+        assert_eq!(walk_overlapped(&root).len(), 2);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = root.join("inner");
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            assert_eq!(walk_overlapped(&root), hy_index::collect_hy_files(&root));
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// 根が dir でない(file・無い path)なら、歩く物の答えのまま。
+    #[test]
+    fn a_root_that_is_not_a_directory_gives_what_the_plain_walk_gives() {
+        let dir = tree(&["one.hy", "note.txt"]);
+        for root in [dir.path().join("one.hy"), dir.path().join("note.txt"), dir.path().join("missing")] {
+            assert_eq!(walk_overlapped(&root), hy_index::collect_hy_files(&root), "{root:?}");
+        }
+    }
 }

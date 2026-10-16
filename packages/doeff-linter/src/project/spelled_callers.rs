@@ -39,27 +39,38 @@ pub struct SpelledCallers<'a> {
 /// 呼び先 1 つの字面の探り方。
 struct Needle {
     callee: String,
-    /// None = 綴りを決められない名 — どの file も合う物として解析する。
+    /// 名の綴りに、後ろの区切りを足した正規表現。None = 綴りを決められない名 — どの file も合う物として解析する。
     pattern: Option<Regex>,
 }
 
 impl Needle {
     fn of(callee: &str) -> Needle {
         let name = callee.rsplit('.').next().unwrap_or(callee);
-        let pattern = spelling_pattern(name).and_then(|spelling| Regex::new(&format!("{SYMBOL_START}{spelling}{SYMBOL_END}")).ok());
+        let pattern = spelling_pattern(name).and_then(|spelling| Regex::new(&format!("{spelling}{SYMBOL_END}")).ok());
         Needle { callee: callee.to_string(), pattern }
     }
 
+    /// source に、呼びの頭の記号の最後の段として名を綴った所が在るか。綴りで始まる正規表現は頭の字が定まって速く探せるので(前の区切りまで
+    /// 正規表現に入れると頭が定まらない)、当たりを探してから前の区切りを当たりごとに見る。当たりは後ろの区切りの字までを含むが、綴りに
+    /// 区切りの字は無いので、前の区切りが合わずに捨てた当たりが、次の当たりの頭を食う事は無い。
     fn spelled_in(&self, source: &str) -> bool {
-        self.pattern.as_ref().map_or(true, |pattern| pattern.is_match(source))
+        let Some(pattern) = &self.pattern else { return true };
+        pattern.find_iter(source).any(|found| starts_a_segment(source, found.start()))
     }
 }
 
-/// 呼びの頭の記号の最後の段の前後。記号は空白と `( ) [ ] { } " ;` で終わり(読み取り器の `is_delimiter`)、最後の段は記号の頭か `.` の次にある。
-/// 長い記号の途中(`controllers.entry.system` の `entry`・`rows-by-text-all` の `rows-by-text`)は、呼び先の名の綴りでも呼びの頭ではない。
-/// `\s` は Unicode の空白も区切りに数える(読み取り器は数えない)ので、余分に合う file が出ても合い損なう file は出ない — 余分は解析が増えるだけで答えは変わらない。
-const SYMBOL_START: &str = r#"(?:^|[\s()\[\]{}";.])"#;
-const SYMBOL_END: &str = r#"(?:[\s()\[\]{}";]|$)"#;
+/// 呼びの頭の記号の最後の段の後ろ。記号は空白と `( ) [ ] { } " ;` で終わる(読み取り器の `is_delimiter`)。
+/// 長い記号の途中(`rows-by-text-all` の `rows-by-text`)や module の path の段(`controllers.entry.system` の `entry`)は、名の綴りでも呼びの頭ではない。
+/// 空白は ASCII の物(読み取り器の `is_ascii_whitespace` と垂直タブ)— 数え損なう事はなく、余分に合っても解析する file が増えるだけで答えは変わらない。
+const SYMBOL_END: &str = r#"(?:[ \t\n\x0B\x0C\r()\[\]{}";]|$)"#;
+
+/// `at`(名の綴りの頭)が記号の頭か、`.` の次か — 最後の段の前。
+fn starts_a_segment(source: &str, at: usize) -> bool {
+    match at.checked_sub(1).map(|before| source.as_bytes()[before]) {
+        None => true,
+        Some(byte) => byte.is_ascii_whitespace() || matches!(byte, 0x0B | b'.' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'"' | b';'),
+    }
+}
 
 /// mangle 済みの名 `name` に mangle される綴り全部に合う正規表現。綴りを決められない名は None。
 fn spelling_pattern(name: &str) -> Option<String> {
@@ -118,10 +129,10 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
         }
         crate::timing::timed("program-params", || {
             let needles: Vec<Needle> = callees.iter().map(|callee| Needle::of(callee)).collect();
-            let files = super::hy_rel_files(self.root);
+            let files = crate::timing::timed("program-params.walk", || super::hy_rel_files(self.root));
             // file の中身を読む待ちは重ねる(冷えた作業木では 1 file ごとに disk を 1 回待つ)。字面が合った file の中身だけ持つ。
             let scans: Vec<Scan> = crate::timing::timed("program-params.scan", || {
-                bulk_read::fan_out(&files, |(_, path)| match std::fs::read_to_string(path) {
+                bulk_read::fan_out_wide(&files, |(_, path)| match std::fs::read_to_string(path) {
                     Ok(source) => {
                         let mentions_defk = source.contains("(defk");
                         let spelled = needles.iter().any(|needle| needle.spelled_in(&source));
@@ -146,7 +157,7 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
                 per_file.into_iter().flatten().collect()
             });
             let symbols: BTreeSet<&str> = candidates.iter().filter_map(Candidate::qualified).collect();
-            let defks = self.defks_among(&symbols);
+            let defks = crate::timing::timed("program-params.defks", || self.defks_among(&symbols));
             let mut proved_defk = false;
             for candidate in candidates {
                 let Some(at) = callees.iter().position(|callee| *callee == candidate.callee) else { continue };
@@ -159,8 +170,8 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
             // repo に defk が 1 つも無ければ、全体の実行は事実を作らない(`(fnk …)` の事実も)— 同じ答えにする。
             if settled.iter().any(|facts| !facts.is_empty()) && !proved_defk {
                 let with_defk: Vec<&(String, PathBuf)> = files.iter().zip(&scans).filter(|(_, scan)| scan.mentions_defk).map(|(file, _)| file).collect();
-                let defines = with_defk.par_iter().any(|(rel, path)| {
-                    std::fs::read_to_string(path).is_ok_and(|source| !defk_names_in(&source, &module_of(rel)).is_empty())
+                let defines = crate::timing::timed("program-params.has-defk", || {
+                    with_defk.par_iter().any(|(rel, path)| std::fs::read_to_string(path).is_ok_and(|source| !defk_names_in(&source, &module_of(rel)).is_empty()))
                 });
                 if !defines {
                     settled.iter_mut().for_each(Vec::clear);
