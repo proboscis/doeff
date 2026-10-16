@@ -1035,7 +1035,7 @@
   (setv #^ (get dict #(str BoardRow)) board (field :default-factory dict))    ; 盤の鍵 → BoardRow(行と一緒に保存)
   (setv #^ (get tuple #(object ...)) events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---
-  (setv #^ (get dict #(str ResourceMeta)) meta (field :default-factory dict))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
+  (setv #^ (get Table ResourceMeta) meta (field :default-factory (partial table-of #())))      ; "Kind/名" → 資源の版の欄(resourceVersion・generation・作った / 書いた送り手と時刻)
   (setv #^ int revision 0)                              ; coordinator 全体の版の番号(書きのたびに 1 進む)
   (setv #^ (get tuple #(AuditEvent ...)) audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
   (setv #^ int audit-seq 0)

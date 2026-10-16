@@ -250,7 +250,7 @@
     :revision (.get counter "revision" 0)
     :audit-seq (.get counter "auditSeq" 0)
     :alive-ms alive-ms
-    :meta (dfor #(k v) (part "meta/") k (resource-meta-from-json v))
+    :meta (table-of (tuple (gfor #(k v) (part "meta/") (TableWrite k (resource-meta-from-json v)))))
     :rollouts (dfor #(k v) (part "rollout/") k (rollout-row-from-json v))
     :group-limits (table-of (tuple (gfor #(k v) (part GROUP-LIMIT) (TableWrite k (group-limit-from-json k v)))))
     :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
