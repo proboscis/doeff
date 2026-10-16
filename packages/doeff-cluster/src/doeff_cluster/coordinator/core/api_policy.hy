@@ -32,6 +32,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import traceback [extract-tb])
+(import doeff [run])
 (import doeff_cluster.coordinator.intent.request_bodies [BodyMalformed BodyUnreadable RequestBody])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ErrorReply TargetView TaskDropped BoardRead BoardEntryView ClusterNaming Fault RolloutStatus RolloutTarget StateReply
@@ -41,6 +42,7 @@
 (import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster.coordinator.core.metrics_policy [record-metrics metrics-text])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.shared.core.due_policy [earliest-due])
 (import doeff_cluster.coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write note-liveness
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
@@ -150,20 +152,57 @@
   (setv gap (if (> state.alive-ms 0) (max 0 (- now state.alive-ms)) 0))
   (if (= gap 0)
       #((replace state :alive-ms now) 0)
-      #((replace state
-                 :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
-                 :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
-                 :workers (dfor #(k w) (.items state.workers)
-                                k (replace w
-                                           :last-seen-ms (min now (+ w.last-seen-ms gap))
-                                           :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
-                 :handoffs (dfor #(k w) (.items state.handoffs)
-                                 k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
-                 :board (dfor #(k r) (.items state.board)
-                              :setv shifted (if (.startswith k SEMAPHORE-PREFIX) (holders-shifted r.value gap) None)
-                              k (if (is shifted None) r (replace r :value shifted :version (+ r.version 1))))
-                 :alive-ms now)
-        gap)))
+      #((run (clocks-shifted state now gap)) gap)))
+
+
+(defk clocks-shifted [state now gap]
+  {:pre [(: state ClusterState) (: now int) (: gap int) (> gap 0)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "coordinator が gap ms 止まっていた状態から、その長さを経過・沈黙に数えないように時計をずらし、生きていた時刻を now にした状態を
+   作るため。ずらす物と訳は resume-after-downtime の註(起き直しと、process の中の止まり — stall-of・program.stall-resumed — が同じ
+   この関数でずらす)。"
+  (replace state
+           :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
+           :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
+           :workers (dfor #(k w) (.items state.workers)
+                          k (replace w
+                                     :last-seen-ms (min now (+ w.last-seen-ms gap))
+                                     :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
+           :handoffs (dfor #(k w) (.items state.handoffs)
+                           k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
+           :board (dfor #(k r) (.items state.board)
+                        :setv shifted (if (.startswith k SEMAPHORE-PREFIX) (holders-shifted r.value gap) None)
+                        k (if (is shifted None) r (replace r :value shifted :version (+ r.version 1))))
+           :alive-ms now))
+
+
+;; --- coordinator が process の中で止まっていた時間(2026-10-16・card ki-d033e5f969cf) -----------------------------------
+;; 機体ごとの止まり(2026-10-13 02:22〜02:24 JST の atlas — containerd と kubelet が 3 分答えず、host の記録にも空白が在る)では、
+;; coordinator は落ちずに止まり、起きた最初の歩で全 worker の最後の連絡が lease を越えていて、全員を沈黙と数えた(配る担当へ消えと
+;; 戻り 33 回・card ki-b4d94c618094)。起き直し(resume-after-downtime)と同じく、止まっていた長さは沈黙・経過に数えない。
+;; 止まりは「予定の外の長さ」で見分ける: 前の歩の長さ(判断の刻から受付を待ち始めるまで — 保存の fsync・k8s の書きを含む)+ 予定の
+;; 起きる刻からの寝過ごし。予定どおりの眠り(worker の期限の刻まで待つ等)は数えない — 数えると、期限の刻に起きるたびに期限をずらし、
+;; 本当に黙った worker を沈黙と判じない。期限なしの待ち(次に起きる刻が無い)は寝過ごしを測らず、前の歩の長さだけで見つける。
+;; 残る代償(採った上で): lease-ms 以下の止まりは見つけない(直す前と同じく、期限の近い worker が消えて戻る)。止まりが歩ごとに続く間
+;; (どの歩も予定の外の長さが lease を越える — 保存がいつも詰まる等)は経過を数えないので、その間は死んだ worker の判定も延びる。
+;; 続けば止まりの行(program.STALL-LOG)が歩ごとに出る。
+
+(defk stall-of [pace now timing]
+  {:pre [(: pace (| StepPace None)) (: now int) (: timing ClusterTiming)] :post [(: % (| Stall None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "前の歩の刻み pace と今の歩の刻 now から、coordinator が process の中で止まっていたか(止まっていれば経過に数えない長さを持つ
+   Stall・止まっていなければ None)を知るため。予定の外の長さ(前の歩の長さ + 予定の起きる刻からの寝過ごし)が lease-ms を越えた時
+   だけ止まりと数え、前の歩の判断の刻から今までの全部を経過に数えない(止まりが待ちのどこで始まったかは分からない — 待ちの間に
+   届いたはずの heartbeat を受けられなかった側に倒す。ずらした後の worker の沈黙は、前の歩の時点の沈黙になる)。止まりの後の歩は、
+   止まり続けない限り予定の外の長さが短いので、ずらしを重ねない。pace = None(起動の最初の歩 — 止まっていた長さは読み直しの
+   resume-after-downtime が数える)は None。"
+  (when (is pace None)
+    (return None))
+  (val busy (max 0 (- pace.waited-ms pace.judged-ms)))
+  (val overslept (if (is pace.planned-ms None) 0 (max 0 (- now pace.planned-ms))))
+  (val gap (- now pace.judged-ms))
+  (if (and (> (+ busy overslept) timing.lease-ms) (> gap 0))
+      (Stall :busy-ms busy :overslept-ms overslept :gap-ms gap)
+      None))
 
 ;; --- Rollout の相手の観測 ----------------------------------------------------------------------
 

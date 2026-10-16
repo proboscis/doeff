@@ -45,7 +45,9 @@
                                                        DeploymentUnreadable NodeLabelsUnreadable])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch])
 (import doeff_cluster.coordinator.core.cluster_policy [nodes-to-follow with-derived-capabilities])
-(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-follow scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR])
+(import doeff_cluster.coordinator.core.api_policy [respond tick plan-rollouts deployments-to-follow scale-service record-action mark-alive stamp-alive ROLLOUT-ACTOR
+                                                   stall-of clocks-shifted])
+(import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.coordinator.core.resource_policy [stamp])
 (import doeff_cluster.coordinator.intent.request_bodies [ReadBody BodyUnreadable HeartbeatBody])
 (import doeff_cluster.coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes])
@@ -54,7 +56,7 @@
 (import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-moves liveness-now note-liveness])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.core.wake_policy [next-wake after-step wait-seconds count-unsettled])
+(import doeff_cluster.coordinator.core.wake_policy [next-wake after-step wait-seconds planned-wake-ms count-unsettled])
 
 
 
@@ -257,6 +259,26 @@
   {"revision" answer.revision "changed" answer.changed})
 
 
+;; process の中の止まりの行の名(2026-10-16・card ki-d033e5f969cf — 名 + 欄 at = 止まりを見つけた歩の刻(ISO)・gap-ms = 経過に
+;; 数えなかった長さ・busy-ms = 前の歩の長さ・overslept-ms = 予定の起きる刻からの寝過ごし)。機体ごとの止まり(2026-10-13 の atlas)の
+;; 後に、coordinator が止まっていた事と、その長さだけ worker の沈黙・task の lease・Rollout の期限をずらした事を log から読めるように
+;; する。保存の詰まり(busy-ms が大きい)と機体の止まり(overslept-ms が大きい)を読み分け、歩ごとに続けば止まりが続いていると分かる。
+(val STALL-LOG "coordinator: 止まっていた長さを経過に数えない")
+
+
+(defk stall-resumed [state now stall]
+  {:pre [(: state ClusterState) (: now int) (: stall (| Stall None))] :post [(: % ClusterState)] :tags {:context "coordinator" :role "program"}}
+  "coordinator が process の中で止まっていた(api_policy.stall-of の答え stall)なら、その長さを経過・沈黙に数えないように時計をずらし
+   (起き直しと同じ api_policy.clocks-shifted)、1 行の log を出すため — 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに
+   数えない。止まっていなければ(None)同じ状態。"
+  (if (is stall None)
+      state
+      (do (<- (slog STALL-LOG :level "info" :at (.isoformat (datetime-of-epoch-ms now)) :gap-ms stall.gap-ms :busy-ms stall.busy-ms
+                    :overslept-ms stall.overslept-ms))
+          (<- shifted ClusterState (clocks-shifted state now stall.gap-ms))
+          shifted)))
+
+
 (defk announce-liveness [events]
   {:pre [(: events tuple)] :post [(: % int)] :tags {:context "coordinator" :role "program"}}
   "worker の生死の出来事(WorkerGone・WorkerBack — #3864)を process の外へ出すため。届かなかった物は doeff-events が channel の欠けの
@@ -284,24 +306,30 @@
   None)
 
 
-(defk coordinator-step [state timing naming watchers wait]
-  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple) (: wait (| float None))]
+(defk coordinator-step [state timing naming watchers wait [pace None]]
+  {:pre [(: state ClusterState) (: timing ClusterTiming) (: naming ClusterNaming) (: watchers tuple) (: wait (| float None))
+         (: pace (| StepPace None))]
    :post [(: % tuple)]}
   ;; 1 まとまり = 並んでいる要求を全部受ける(無ければ wait 秒まで待つ — None は期限なし)→ 1 件ずつ判断 → Rollout → 永続化 → 全員に
   ;; 返事。wait は調停ループが次に起きる刻から求める(wake_policy・#3865)。Rollout は毎歩回す: 相手の Deployment の変化は見張りが
   ;; 受付の箱を起こすので、起きた歩でその変化を判じる(#3868)。
   ;; watchers = 返事を待たせている版の変化の待ち(Watcher の tuple — watch_policy)。永続化の後に、前からの待ちとこのまとまりで
   ;; 来た待ちを今の状態で判じ(settle-watch)、起きた物に返事をし、残りを次の歩へ持ち越す。
+  ;; pace = 前の歩の刻み(StepPace — 起動の最初の歩は None)。止まりの検出(api_policy.stall-of)の材料。
   ;; 返り値 = #(次の状態 まとまりの要求の数 待ち続ける待ちの tuple)。
   (<- batch list (NextRequests wait))
   (<- now int (now-epoch-ms))
   ;; 返事の遅れの計りの起点: 要求を取った歩でだけ単調な時計を読む(区間は単調な時計の差で計る — HEARTBEAT-LAG-MS の註)。壁の時計の読みは
   ;; 判断の now の 1 つだけ。
   (<- taken-ms int (lap-ms (bool batch)))
+  ;; coordinator が process の中で止まっていた(機体ごとの止まり・保存の fsync の詰まり — card ki-d033e5f969cf)なら、調停の前にその
+  ;; 長さだけ時計をずらす: 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに数えず、job を移さない。保存(SaveState)は
+  ;; 歩の前の状態との差を書くので、ずらした値も同じ 1 回で耐久になる。
+  (<- resumed ClusterState (stall-resumed state now (! (stall-of pace now timing))))
   ;; 期限の経過(worker の沈黙・task の lease・readiness の window)は、まとまりの有無と無関係に毎歩調停する(2026-09-25)。
   ;; 以前は要求の無い歩だけだったので、読みの要求(GET)が続く間は調停が走らず、担い手の死んだ切り離した task が
   ;; lost にならなかった(読みは状態を変えないので調停しない)。書きの要求は今までどおり要求ごとに調停する(api_policy.settle)。
-  (<- tick-answer ClusterState (tick state now timing))
+  (<- tick-answer ClusterState (tick resumed now timing))
   (var next tick-answer)
   (var replies #())
   (var waiting watchers)
@@ -366,6 +394,8 @@
   ;; 次に起きる刻(最初の歩は今すぐ)と、今すぐが要求なしに続いた歩の数(wake_policy.count-unsettled)。
   (var due (DueNow))
   (var streak 0)
+  ;; 前の歩の判断の刻(止まりの検出の刻み StepPace の起点 — 最初の歩の前は無い)。
+  (var judged None)
   ;; 起動の時に、名簿の全部の今の生死を 1 度出す(#3864 — 沈黙の集合は保存の形に無いので、ここで今の刻から求める。保存する欄は
   ;; 変わらない。受け手の追いつきにも成る)。以後の歩は、変わった所だけを出す。
   (<- started int (now-epoch-ms))
@@ -384,12 +414,16 @@
     ;; 受付は、前の歩の後に決めた次に起きる刻まで待つ(期限が無ければ期限なし — 要求か停止の合図か外の出来事でだけ起きる・#3865)。
     (<- waiting-from int (now-epoch-ms))
     (<- wait (| float None) (wait-seconds due waiting-from))
-    (<- stepped tuple (coordinator-step current timing naming watchers wait))
+    ;; 前の歩の刻み: 判断の刻・待ち始めた刻・予定の起きる刻(止まりの検出が予定の外の長さを測る — api_policy.stall-of)。
+    (<- planned (| int None) (planned-wake-ms due waiting-from))
+    (val pace (if (is judged None) None (StepPace :judged-ms judged :waited-ms waiting-from :planned-ms planned)))
+    (<- stepped tuple (coordinator-step current timing naming watchers wait :pace pace))
     (val after (get stepped 0))
     (:= watchers (get stepped 2))
     ;; 次に起きる刻: 要求を受けずに状態を変えた歩の後は今すぐ、それ以外は次に起きる刻(after-step — 要求で変わった状態が落ち着いて
     ;; いなければ期限の関数が今すぐを返す)。今すぐが続けば、変わり続けた欄を名指して落ちる(count-unsettled)。
     (val woke (get stepped 3))
+    (:= judged woke)
     (<- planned (| DueAt DueNow DueNever) (next-wake after woke timing naming watchers))
     (val took (> (get stepped 1) 0))
     (<- following (| DueAt DueNow DueNever) (after-step planned (and (not took) (!= after current))))

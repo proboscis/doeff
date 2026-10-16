@@ -79,6 +79,9 @@
 ;;;   ReadCoordinator path      coordinator の口の GET の本文(/state・/workers/<名>・/metrics など)。
 ;;;   StopCoordinator 秒        coordinator の Pod を優雅に止め(次の拍の止めの合図)、秒の間止めてから作り直す(置き場から読み直す)。
 ;;;   CrashCoordinator 秒       次の Persist を失敗させる(返事をせずに落ちる — 取った要求の送り手には接続の失敗)。秒の後に作り直す。
+;;;   StallCoordinator 秒       coordinator の機体ごと秒の間止める(2026-10-13 の atlas の 3 分の止まりの形 — card ki-d033e5f969cf): 調停
+;;;                             ループも受付も答えず、並んでいた要求と止まりの間の送りは接続の失敗になる。明けると同じ一生のまま
+;;;                             (置き場から読み直さない)調停ループが続く。
 ;;;   FailRoute 型 path 状態 秒  coordinator の口 型 path(完全一致)への要求に、秒の間 状態(5xx など)で答える(本番の coordinator の前の
 ;;;                             ingress や作り直しの最中の答え — 要求は調停ループに届かず、状態を変えない)。
 ;;;   CoordinatorRuns           coordinator の Pod の一生の列(SimCoordinatorRun — 始まり・終わり・止まり方)。
@@ -266,6 +269,7 @@
 (val PAUSE-CRASH "crash")                    ;                         Persist の失敗(返事をせずに落ちる)
 (val CUT-REASON "網が切れている(sim — 送り手の居る worker の網)")
 (val FAULT-REASON "sim: 注入した故障(FailRoute — coordinator の口がこの状態で答える)")
+(val STALL-REASON "sim: coordinator の機体が止まっている(StallCoordinator — 返事なし)")
 ;; 模擬の世界の時間の設定の既定の比: :timing を渡さない筋書きは、本番の既定の窓を全部この比で延ばした設定(scaled-timing)で走る。
 ;; heartbeat と待ちの送り直しは coordinator の本物の歩なので(#3865)、仮想の時間を長く回す筋書きの歩の数がこの比でほぼ反比例に減る。
 ;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
@@ -585,6 +589,14 @@
   "検の effect: worker name の処理を seconds 秒止める(#2804 — 2026-10-02 13:26 の形: worker の処理が I/O で止まり heartbeat が送られない)。
    その間 heartbeat を送らない(送りの失敗が無いので fence も効かない)・子 process は動き続ける・拍は前の宣言のまま回る。答え = None。"
   {:fields [(: name str) (: seconds float)]
+   :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect StallCoordinator
+  "検の effect: coordinator の機体ごと seconds 秒止める(card ki-d033e5f969cf — 2026-10-13 02:22〜02:24 JST の atlas の形: containerd と
+   kubelet が 3 分答えず、coordinator の process も受付も止まった)。並んでいた要求は接続の失敗で切れ、止まりの間の送りも接続の失敗に
+   なる(調停ループに届かない)。調停ループは次の取りで止まり、明けると同じ一生のまま(置き場から読み直さない)続く。答え = None。"
+  {:fields [(: seconds float)]
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -2540,7 +2552,9 @@
   ;; この歩の返事の手放しと書きの知らせと止まりの判定を 1 つで)と、落ちの注入が待っている間だけ書きの前の落ちの判断(PersistCrashDue —
   ;; 書きより前に要る・#3132)。返事と書きは帳面 book に溜める。
   (NextRequests [timeout-seconds limit]
-    (<- batch list effect)
+    (<- taken list effect)
+    ;; 機体ごとの止まり(StallCoordinator)は取りの後に始まる: 取った要求を切り、明けるまで調停ループを止める(card ki-d033e5f969cf)。
+    (<- batch list (stall-taken queue taken))
     ;; 篩い・報告の記録・覚えを、世界への問い 1 つで(#3054 の C-6)。
     (<- admitted Admission (AdmitBatch (tuple batch)))
     (val faults admitted.faults)
@@ -2595,6 +2609,22 @@
   (for [request open]
     (<- (CompletePromise request.slot #(None {"error" reason}))))
   (len open))
+
+
+(defk stall-taken [queue taken]
+  {:pre [(: queue RequestQueue) (: taken list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "program"}}
+  "機体ごとの止まり(StallCoordinator — card ki-d033e5f969cf)が立っていれば、取った要求を接続の失敗で切り、明ける刻まで調停ループを
+   止めてから受付を戻し、空の取りを返すため(本番の機体の止まりでは、process も受付も答えず、送り手は打ち切りで諦める)。立って
+   いなければ取った要求をそのまま返す。止まりの間は調停ループが判断をしない — 明けた歩の判断の刻は止まりの後になる。"
+  (if (not queue.stalled-until)
+      taken
+      (do (for [request taken]
+            (<- (CompletePromise request.slot #(None {"error" STALL-REASON}))))
+          (<- now int (now-epoch-ms))
+          (<- (Delay (/ (max 0 (- queue.stalled-until now)) 1000.0)))
+          (setattr queue "stalled_until" 0)
+          (setattr queue "up" True)
+          [])))
 
 
 (defk coordinator-life [plan parts]
@@ -3502,6 +3532,15 @@
     ;; 落ちるのは次の Persist(注入の後の最初の書き)。待っている coordinator を起こす(その歩が生存の印を書けば、そこで落ちる)。
     ;; 欄の名は Hy が読む名(queue.crash-waiting = crash_waiting)で書く — 文字列の "crash-waiting" は別の属性を作り、印が立たない(#3132)。
     (setattr parts.queue "crash_waiting" True)
+    (<- (nudge-takers parts.queue))
+    (resume None))
+  (StallCoordinator [seconds]
+    (<- now int (now-epoch-ms))
+    ;; 受付を閉じ(止まりの間の送りは接続の失敗)、明ける刻を立て、並んでいた要求を切り、待っている取りを起こす — 取りの見張り
+    ;; (observe-requests の stall-taken)がその刻まで調停ループを止める。一生は続く(置き場から読み直さない)。
+    (setattr parts.queue "up" False)
+    (setattr parts.queue "stalled_until" (+ now (int (* 1000 seconds))))
+    (<- (fail-open-requests parts.queue #() STALL-REASON))
     (<- (nudge-takers parts.queue))
     (resume None))
   (CoordinatorRuns []
