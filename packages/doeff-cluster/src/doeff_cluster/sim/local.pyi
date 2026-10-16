@@ -331,10 +331,10 @@ SIM_TIMING_RATIO: int
 @dataclass(frozen=True, kw_only=True)
 class SimWorker:
     name: str
-    provides: frozenset
+    provides: frozenset[str]
     task_reserve: int
     doeff_commit: str = ''
-    exclusive: frozenset = ...
+    exclusive: frozenset[str] = ...
     capacity: int = 10
     node: str = ''
     versions: dict | None = None
@@ -348,8 +348,8 @@ class SimWorker:
     ignores_keep_marks: bool = False
     silent_stop: bool = False
     overstates_capacity: int | None = None
-    claims_provides: frozenset | None = None
-    claims_exclusive: frozenset | None = None
+    claims_provides: frozenset[str] | None = None
+    claims_exclusive: frozenset[str] | None = None
     fresh_boot_every_beat: bool = False
     hides_retired: bool = False
     claims_task_reserve: int | None = None
