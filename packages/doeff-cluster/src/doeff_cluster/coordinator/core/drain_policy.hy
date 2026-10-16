@@ -34,7 +34,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster.coordinator.intent.request_bodies [DrainBody])
 (import doeff_cluster.coordinator.core.cluster_policy [alive eligible can-take draining-workers load-of other-generation-boot handover-pending
-                                                       LIVE-PHASES MAX-EVENTS])
+                                                       LIVE-PHASES MAX-EVENTS scan-rows])
 (import doeff_cluster.coordinator.core.resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
@@ -178,7 +178,7 @@
 (defn #^ list detached-rows [#^ ClusterState state #^ str worker]
   "worker に置いた、まだ終わっていない切り離した task の名(task/<id>)。drain はこれが 0 になるまで Drained にしない
    (RemoteJob の task は数えない — 呼び手と寿命を共にし、drain で止まってよい)。"
-  (sorted (gfor t (.values state.tasks) :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker worker))
+  (sorted (gfor t (scan-rows state.tasks) :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker worker))
                 (+ "task/" t.id))))
 
 
@@ -250,7 +250,7 @@
    切れた)。待ちの上限は preStop の側の期限(DRAIN_DEADLINE)。形は worker-view と同じ(drain_client.drain-outcome が drain.drained を
    読む)。"
   (setv w (get state.workers name)
-        remaining (sorted (+ (lfor t (.values state.tasks)
+        remaining (sorted (+ (lfor t (scan-rows state.tasks)
                                    :if (and t.detached (in t.phase #("assigned" "preparing")) (= t.worker name) (= t.boot boot))
                                    (+ "task/" t.id))
                              (lfor r state.superseded-runs

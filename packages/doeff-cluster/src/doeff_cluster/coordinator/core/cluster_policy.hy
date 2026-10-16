@@ -552,7 +552,7 @@
   (setv jobs (dfor name state.workers name 0) tasks (dfor name state.workers name 0))
   (for [a (+ (list (.values placements)) (list (.values state.surges)))]
     (when (in a.worker jobs) (+= (get jobs a.worker) 1)))
-  (for [t (.values state.tasks)]
+  (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks)) (+= (get tasks t.worker) 1)))
   (dfor name state.workers name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name))))
 
@@ -906,7 +906,7 @@
   "置いている(PLACED-PHASES の)task の組の名乗りと置いた worker の組 #(limits worker) を、task 1 本につき 1 つ並べるため(組の上限の
    数えが task の行から読むのはここだけ — 送り手の他の欄を数えに入れさせない。設計のレビューの指摘 2-a・引数と答えは
    test_group_limits_owner が固定する)。"
-  (tuple (gfor t (.values tasks) :if (in t.phase PLACED-PHASES) #(t.limits t.worker))))
+  (tuple (gfor t (scan-rows tasks) :if (in t.phase PLACED-PHASES) #(t.limits t.worker))))
 
 
 (defk limit-holdings [claims groups]
@@ -1023,7 +1023,7 @@
    limit-holdings)と、その組を名乗って待っている task の数。運用者が、値が宣言のとおりに効いているかを 1 か所で読む(card ki-b0e8028c8c8d)。"
   (<- claims tuple (placed-claims state.tasks))
   (<- held dict (limit-holdings claims state.group-limits))
-  (val queued (lfor t (.values state.tasks) :if (= t.phase "queued") t))
+  (val queued (lfor t (scan-rows state.tasks) :if (= t.phase "queued") t))
   (tuple (gfor #(name declared) (sorted (.items state.group-limits) :key (fn [item] (get item 0)))
                (GroupLimitView :limit declared
                                :resource-version (resource-version-of state (+ "GroupLimit/" name))
@@ -1084,6 +1084,12 @@
 (defn #^ bool held-task? [#^ TaskRecord task]
   "切り離した終わりの行(結果を保持しているだけ)か。切り離していない終わった行は含まない(lease を延ばされ走査の対象のまま)。"
   (and task.detached (in task.phase DETACHED-TERMINAL)))
+
+
+(defn #^ list scan-rows [#^ dict tasks]
+  "走査の対象の行(held-task? でない行 — 結果を保持しているだけの切り離した終わりを除く)を id の順で。数え・並べの読みが保持側の行を回さないため
+   (task-split の走査の対象と同じ行 — 期限の最小は要らない読みの口)。"
+  (lfor t (.values tasks) :if (not (held-task? t)) t))
 
 
 (defk task-split [tasks now]
@@ -1268,7 +1274,7 @@
   ;; 詰めた Program は置き場のキー(sha)だけを運ぶ — worker が /programs/<sha> から取る(service の job と同じ・改訂 1 の F)。
   ;; 切り離した task は、状態を失った coordinator が引き取れるだけの欄を持つ(worker が状態の報告に写す — adopt-running-detached・
   ;; 2026-09-27)。子の環境変数は service の job の行の environ と同じ欄(切り離した task は写しにも残る)。JSON は protocol/replies。
-  (tuple (gfor task (sorted (.values state.tasks) :key (fn [t] t.id))
+  (tuple (gfor task (sorted (scan-rows state.tasks) :key (fn [t] t.id))
                :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
                (TaskOffer :id task.id :name task.name :revision task.revision :versions task.versions :program task.program
                           :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
@@ -1407,7 +1413,7 @@
   "純粋: 設定の忘れる期限(ClusterTiming.worker-forget-ms)より長く沈黙し、置き先も task も持たない worker を忘れた状態(忘れる物が無ければ同じ object)。"
   (setv busy (| (sfor a (+ (list (.values state.placements)) (list (.values state.surges))) a.worker)
                 ;; 終わって結果を持っているだけの切り離した task は worker を引き留めない。
-                (sfor t (.values state.tasks) :if (and t.worker (not (and t.detached (in t.phase DETACHED-TERMINAL)))) t.worker))
+                (sfor t (scan-rows state.tasks) :if t.worker t.worker))
         gone (lfor #(n w) (.items state.workers) :if (and (> now (liveness-deadline w timing.worker-forget-ms)) (not-in n busy)) n))
   (if (not gone)
       state
@@ -1436,9 +1442,9 @@
 (defk cold-starts [before after]
   {:pre [(: before dict) (: after dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "待ちから preparing に置かれた task の数(準備済みの worker が無いまま置いた = 冷たい起動)。"
-  (len (lfor #(id t) (.items after)
-             :if (and (= t.phase "preparing") (in id before) (= (. (get before id) phase) "queued"))
-             id)))
+  (len (lfor t (scan-rows after)
+             :if (and (= t.phase "preparing") (in t.id before) (= (. (get before t.id) phase) "queued"))
+             t)))
 
 
 ;; --- 判断の期限(#3060・#3865) ---------------------------------------------------------------------------------------------
@@ -2078,7 +2084,7 @@
     (setv lease-seconds (float lease-value))
     (except [[ValueError TypeError]]
       (return #(state 400 (ErrorReply :message (.format "leaseSeconds は 0 より大きく {} 以下の数: {!r}" TASK-MAX-LEASE-SECONDS lease-value))))))
-  (setv open-count (len (lfor t (.values state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
+  (setv open-count (len (lfor t (scan-rows state.tasks) :if (or (= t.phase "queued") (in t.phase PLACED-PHASES)) t)))
   (when (not (< 0 lease-seconds (+ TASK-MAX-LEASE-SECONDS 1)))
     (return #(state 400 (ErrorReply :message (.format "leaseSeconds は 0 より大きく {} 以下: {}" TASK-MAX-LEASE-SECONDS lease-seconds)))))
   (when (>= open-count TASK-MAX-OPEN)
