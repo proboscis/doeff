@@ -1109,3 +1109,19 @@
   (val live (replace row :lease-until-ms 5000))
   (assert (is (get (! (place-held {"b" live} 5000)) "b") live))
   (assert (= (! (place-held {"b" live} 5001)) {})))
+
+(deftest test-task-split-partitions-all-rows-and-min-matches-task-lapse-at
+  (setv tasks {"a" (! (split-task "a" "finished" :finished 500 :retain 3000))
+               "b" (! (split-task "b" "lost" :finished 200 :retain 1000))
+               "c" (! (split-task "c" "cancelled" :finished 900 :retain 100))
+               "d" (! (split-task "d" "finished" :detached False :finished 100))
+               "e" (! (split-task "e" "queued"))})
+  (setv #(live earliest) (! (task-split tasks 9999)))
+  (setv held (lfor #(id t) (.items tasks) :if (not (in id live)) id))
+  ;; 走査の対象と保持側の和 = 元の行の全部・重ならない
+  (assert (= (sorted (+ (list live) held)) (sorted (list tasks))))
+  (assert (= held ["a" "b" "c"]))
+  ;; 保持側の最小期限 = 保持側の行の task-lapse-at の最小
+  (setv lapses [])
+  (for [id held] (.append lapses (! (task-lapse-at (get tasks id) 9999))))
+  (assert (= earliest (min lapses))))
