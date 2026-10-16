@@ -15,11 +15,14 @@
 ;;; thread の背景の heartbeat も一緒に止まった。待つ間も本体は他の task を回す)。置き場は offloaded-tree-handler と同じ。
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "file" :role "foundation"})
+(import ctypes)
 (import fcntl)
 (import collections.abc [Callable])
 (import os)
+(import platform)
 (import shutil)
 (import stat)
+(import sys)
 (import tempfile)
 (import pathlib [Path])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage StatPath ReadText ReadBytes WriteText
@@ -31,8 +34,29 @@
 
 ;; offloaded-lock-handler の thread(錠の取り 1 つに thread 1 本 — 同時の数の上限は錠を取りに来る task の数)。
 (val LOCK-THREADS (ThreadPerCall))
-;; offloaded-tree-handler の thread(木の数え・消し・様子つきの歩き 1 つに thread 1 本)。
-(val TREE-THREADS (ThreadPerCall))
+;; ioprio_set の IO 優先度の組み立て(linux/ioprio.h): 優先度 = (種類 << 13) | 段。IOPRIO_WHO_PROCESS で who = 0 は呼んだ thread 自身。
+(val IOPRIO-CLASS-SHIFT 13)
+(val IOPRIO-CLASS-IDLE 3)
+(val IOPRIO-WHO-PROCESS 1)
+;; ioprio_set の syscall 番号(機体の種類 → 番号。表に無い機体では何もしない)。
+(val IOPRIO-SET-SYSCALL {"x86_64" 251 "aarch64" 30})
+
+
+(deff lower-io-priority []  ; defk にできない: thread の始めに呼ばれる入口(ThreadPerCall の on-start — VM の外)
+  {:pre [] :post [(: % bool)]}
+  "呼んだ thread の IO 優先度を IDLE にして、本体の小さい IO を先に通すため(zeus の scheduler の mq-deadline は優先度の種類で順を付ける — 段は
+   見ないので BE の最低では効かない)。Linux 以外・表に無い機体・syscall の失敗では何もせず False を返す(掃除は優先度が下がらなくても進む)。"
+  (if (and (= sys.platform "linux") (in (platform.machine) IOPRIO-SET-SYSCALL))
+      (try
+        (setv libc (ctypes.CDLL None :use-errno True))
+        (= 0 (.syscall libc (get IOPRIO-SET-SYSCALL (platform.machine)) IOPRIO-WHO-PROCESS 0
+                       (<< IOPRIO-CLASS-IDLE IOPRIO-CLASS-SHIFT)))
+        (except [OSError] False))
+      False))
+
+
+;; offloaded-tree-handler の thread(木の数え・消し・様子つきの歩き 1 つに thread 1 本 — 本体の IO を先に通すため IO 優先度を IDLE に下げる)。
+(val TREE-THREADS (ThreadPerCall :on-start lower-io-priority))
 ;; offloaded-file-handler の thread(file 1 つの読み・書き・様子・一覧・dir 作り・改名・空きの読み 1 つに thread 1 本)。
 (val FILE-THREADS (ThreadPerCall))
 
