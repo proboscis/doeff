@@ -260,6 +260,22 @@ fn a_single_file_run_that_needs_the_callers_reads_only_the_files_that_spell_the_
     assert!(!kinds.iter().any(|k| k == "program-params.json"), "repo 全体の引数に渡された Program の事実が置かれた: {kinds:?}\n{stderr}");
 }
 
+/// 逆向きの依存のうち、失敗の型の宣言(別の file の defeffect の `:failure`)が要る file の 1 file の実行も、型の名を字面に含む宣言の file だけを読む:
+/// repo 全体の表を通らず、失敗の型の事実を cache に置かない(冷えた作業木の最初の 1 回が 19〜27 秒かかっていた・card ki-58bfad2c13a1 の残り)。
+/// 答えは `a_single_file_run_answers_like_the_whole_run_for_that_file` が守る。
+#[test]
+fn a_single_file_run_that_needs_the_failure_types_reads_only_the_declarations_that_spell_the_type() {
+    let dir = tempfile::TempDir::new().unwrap();
+    checkout(dir.path());
+    let cache = tempfile::TempDir::new().unwrap();
+    let (report, stderr) = single_report(dir.path(), cache.path(), "app/core/needs.hy");
+    // 検が空振りでないことの確かめ: effs.hy が Unreachable を失敗の型と宣言するので、needs.hy の腕は DOEFF122 に当たる。
+    assert!(keys_of(&report, "app/core/needs.hy").iter().any(|k| k.contains("DOEFF122")), "needs.hy に DOEFF122 が当たらない(検の材料の誤り)\n{stderr}");
+    assert!(!stderr.contains("doeff-linter-timing: facts-cache.resolve "), "repo 全体の表を通った(宣言を探すのに全 file を作り直している)\n{stderr}");
+    let kinds = stored_kinds(cache.path());
+    assert!(!kinds.iter().any(|k| k == "failure-types.json"), "repo 全体の失敗の型の事実が置かれた: {kinds:?}\n{stderr}");
+}
+
 /// 1 file の実行は、repo 全体の file の事実を引く表(`facts-cache.resolve`)も、層の module の全部の走査(`layer-files`)も通らない。
 #[test]
 fn a_single_file_run_does_not_walk_the_whole_repo_tables() {
