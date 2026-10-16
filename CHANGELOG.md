@@ -58,6 +58,12 @@
 
 ### Changed
 
+- `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
+  2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
+  `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run
+  (`AcquireSemaphore` failed with `KeyError`) or silently shared the permits of the run's semaphore with the same
+  number. Handles from `CreateSemaphore`, `isinstance` checks and subclasses whose `__init__` calls
+  `super().__init__(sem_id)` (doeff-cluster's `ClusterSemaphore` and `ReplaySemaphore`) are unchanged.
 - `doeff` CLI: `doeff run` no longer prints `[DOEFF][PROFILE]` timing lines unless asked. `doeff run --profile` or
   `DOEFF_PROFILE=1` prints them on stderr as before (`DOEFF_PROFILE` empty or `0` leaves them off).
   `DOEFF_DISABLE_PROFILE` is no longer read, since profiling is off by default, and `doeff-ml-nexus`'s docker handler
