@@ -11,6 +11,8 @@ ROLE_ACTIVE: str
 ROLE_STANDBY: str
 HANDOFF_TIMEOUT_SECONDS: int
 READINESS_KEYS: tuple[str, ...]
+RETIREMENT_HOLD: str
+RETIREMENT_HOLD_PERMITS: int
 REASON_KEPT_CHARS: int
 JsonField: TypeAlias = dict | list | str | int | float | bool | None
 
