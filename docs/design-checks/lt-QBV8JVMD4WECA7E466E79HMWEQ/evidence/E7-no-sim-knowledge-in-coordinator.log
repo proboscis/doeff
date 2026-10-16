@@ -1,0 +1,7 @@
+# 実験 E7-no-sim-knowledge-in-coordinator
+# 対象版: 75732ed2b1d4ed332e719c0dfa15680a63ad299d
+# 命令: git grep -n -E 'StallCoordinator|stalled-until|stalled_until|stall-taken|STALL-REASON' -- packages/doeff-cluster/src/doeff_cluster/coordinator/core packages/doeff-cluster/src/doeff_cluster/coordinator/intent packages/doeff-cluster/src/doeff_cluster/coordinator/entry
+# git grep の終了: 1 (1 = 一致なし)
+# 比べ: 模擬の側(sim/local.hy・coordinator/protocol/request_queue.hy)の一致の数
+packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_queue.hy:2
+packages/doeff-cluster/src/doeff_cluster/sim/local.hy:24
