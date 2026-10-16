@@ -67,7 +67,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, TypeGuard, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeGuard, TypeVar
 
 from doeff_effect_analyzer import env_places
 from doeff_effect_analyzer.hy_expansion import (
@@ -78,6 +78,9 @@ from doeff_effect_analyzer.hy_expansion import (
     _ExpansionKey,
     _type_check_expansion,
 )
+
+if TYPE_CHECKING:
+    from doeff_effect_analyzer import handler_effects
 
 
 @dataclass(frozen=True)
@@ -660,7 +663,7 @@ def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _
     built again (ki-81f1c868203f); else expanded here."""
     place = _hy_cache_place(source, module_name)
     if place is not None:
-        cached = _find_cached_tree(place)
+        cached = _find_cached_tree(place, lambda: _expansion(source, filename, module_name, _hy_cache_dir()).tree)
         if cached is not None:
             return cached
     # The whole miss is observed: the expansion (or reading the tree it stored), and building and
@@ -798,36 +801,42 @@ class _Definition:
 class _Chunk:
     """One top-level definition of a cached tree with what is derived from it alone: its
     definitions (itself and the ones nested in it, in index order) and, for every def and
-    lambda in it, the body nodes and body facts. Pickled on its own, so its values point at
+    lambda in it, the body nodes, the body facts and what the handler reader finds in the def
+    alone (its dispatchers and branches). Pickled on its own, so its values point at
     its own nodes; nothing in it points into another chunk (a def's facts are its own body's)."""
 
     definitions: tuple[ast.AST, ...]
     body_nodes: tuple[tuple[FunctionNode, tuple[ast.AST, ...]], ...]
     body_facts: tuple[tuple[FunctionNode, _BodyFacts], ...]
+    dispatch: "handler_effects.DispatchReading"
 
 
 @dataclass(frozen=True)
 class _CachedTree:
-    """An expanded tree as it is kept on disk: the definition index, then one pickled chunk per
-    top-level definition, then the whole tree pickled (only ``module_ast`` builds it).
+    """An expanded tree as it is kept on disk: the definition index, and how long the pickle of each
+    top-level definition's chunk is (the chunks follow it in the entry, back to back).
 
     agora-redesign #1586 / #1590 stored the derived values (definition index, body nodes and
     facts) with the tree, since rebuilding them in every process was most of an analysis.
     What stayed was building the whole tree from the pickle — 0.41–0.45 s of 1.17 s for one
     closure test — although the reader follows a few definitions of each module (#1591).
-    Bytes are copied, not built, so a chunk no one follows costs nothing but its read."""
+    The chunks are read as bytes and only the ones asked for are built. The whole tree is not kept
+    here at all — the expansion's store (``hy_expansion``) holds it, and only ``module_ast`` asks
+    for it (ki-24a14c43f26b: reading the entries was half of what an analysis that missed paid)."""
 
     index: dict[tuple[str, ...], tuple[_Definition, ...]]
-    chunks: tuple[bytes, ...]
-    whole: bytes
+    spans: tuple[int, ...]
 
 
 class _ChunkedTree:
     """A cached tree read one top-level definition at a time: ``find`` chooses the candidate
     from the index (as ``_find_function`` would) and builds only the chunk that holds it."""
 
-    def __init__(self, cached: _CachedTree) -> None:
+    def __init__(self, cached: _CachedTree, payload: bytes, whole: Callable[[], ast.Module]) -> None:
         self._cached = cached
+        self._payload = payload
+        self._starts = tuple(itertools.accumulate(cached.spans, initial=0))
+        self._whole = whole
         self._loaded: dict[int, tuple[ast.AST, ...]] = {}
         self._tree: ast.Module | None = None
 
@@ -848,12 +857,9 @@ class _ChunkedTree:
 
     @property
     def tree(self) -> ast.Module:
-        """The whole tree, built the first time it is asked for (``module_ast``)."""
+        """The whole tree, taken from the expansion's store the first time it is asked for (``module_ast``)."""
         if self._tree is None:
-            tree = pickle.loads(self._cached.whole)
-            if not isinstance(tree, ast.Module):
-                raise TypeError(f"cached tree is a {type(tree).__name__}, not a module")
-            self._tree = tree
+            self._tree = self._whole()
         return self._tree
 
     def _definitions_of(self, chunk: int) -> tuple[ast.AST, ...]:
@@ -862,27 +868,41 @@ class _ChunkedTree:
         loaded = self._loaded.get(chunk)
         if loaded is not None:
             return loaded
-        read = pickle.loads(self._cached.chunks[chunk])
+        read = pickle.loads(self._payload[self._starts[chunk] : self._starts[chunk + 1]])
         if not isinstance(read, _Chunk):
             raise TypeError(f"cached chunk {chunk} is a {type(read).__name__}")
         for function, nodes in read.body_nodes:
             _BODY_NODES[id(function)] = (function, nodes)
         for function, facts in read.body_facts:
             _BODY_FACTS[id(function)] = (function, facts)
+        from doeff_effect_analyzer import handler_effects  # the handler reader imports this module
+
+        handler_effects.adopt_dispatch(read.dispatch)
         self._loaded[chunk] = read.definitions
         return read.definitions
 
 
-def _find_cached_tree(place: Path) -> _ChunkedTree | None:
+def _find_cached_tree(place: Path, whole: Callable[[], ast.Module]) -> _ChunkedTree | None:
     """The tree of the entry in ``place`` whose macros are this environment's (None when no
-    entry is — the caller expands again)."""
+    entry is — the caller expands again). The entry written last is tried first: the others are
+    of macros that changed since, and reading one only to find that costs a file read."""
     return next(
-        (tree for entry in sorted(place.glob("*.pickle")) if (tree := _read_cached_tree(entry)) is not None),
+        (tree for entry in _entries_newest_first(place) if (tree := _read_cached_tree(entry, whole)) is not None),
         None,
     )
 
 
-def _read_cached_tree(path: Path) -> _ChunkedTree | None:
+def _entries_newest_first(place: Path) -> list[Path]:
+    """The entries of ``place`` (``*.pickle``), the one written last first (none when ``place`` is absent)."""
+    try:
+        with os.scandir(place) as listing:
+            found = [(entry.stat().st_mtime_ns, entry.name) for entry in listing if entry.name.endswith(".pickle")]
+    except OSError:  # absent, or an entry removed while it was listed
+        return []
+    return [place / name for _, name in sorted(found, reverse=True)]
+
+
+def _read_cached_tree(path: Path, whole: Callable[[], ast.Module]) -> _ChunkedTree | None:
     """The entry's tree when the macros it was expanded with are this environment's; None when
     they are not, or the entry is absent or unreadable. The entry starts with the record of those
     macros, so an entry of other macros is not read past it."""
@@ -895,18 +915,24 @@ def _read_cached_tree(path: Path) -> _ChunkedTree | None:
             if not isinstance(macros, MacroRecord) or not record_is_current_here(macros):
                 return None
             cached = pickle.load(handle)
+            if not isinstance(cached, _CachedTree):
+                return None
+            payload = handle.read()
     except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError):
         return None
-    if not isinstance(cached, _CachedTree):
+    if sum(cached.spans) != len(payload):
         return None
-    return _ChunkedTree(cached)
+    return _ChunkedTree(cached, payload, whole)
 
 
-def _derived(tree: ast.Module) -> _CachedTree:
+def _derived(tree: ast.Module) -> tuple[_CachedTree, tuple[bytes, ...]]:
     """The tree cut into its top-level definitions, each with its body nodes and body facts
     (a def the reader cannot read is left out and read on demand as before), and the index
     that names where each definition is. The index keeps ``_definitions_by_path``'s order,
-    so ties in ``find`` resolve as they do on the whole tree."""
+    so ties in ``find`` resolve as they do on the whole tree. Returns the index with the chunks'
+    pickles, which the entry holds after it."""
+    from doeff_effect_analyzer import handler_effects  # the handler reader imports this module
+
     index: dict[tuple[str, ...], list[_Definition]] = {}
     chunks: list[bytes] = []
     for number, root in enumerate(_direct_definitions(tree.body)):
@@ -943,25 +969,27 @@ def _derived(tree: ast.Module) -> _CachedTree:
             definitions=tuple(definitions),
             body_nodes=tuple((function, _body_nodes(function)) for function in functions),
             body_facts=tuple(facts),
+            dispatch=handler_effects.read_dispatch(functions),
         )
         chunks.append(pickle.dumps(chunk, protocol=pickle.HIGHEST_PROTOCOL))
     return _CachedTree(
         index={path: tuple(entries) for path, entries in index.items()},
-        chunks=tuple(chunks),
-        whole=pickle.dumps(tree, protocol=pickle.HIGHEST_PROTOCOL),
-    )
+        spans=tuple(len(chunk) for chunk in chunks),
+    ), tuple(chunks)
 
 
 def _write_cached_tree(place: Path, expanded: _Expanded) -> None:
-    """Write the entry of the macros the expansion used in ``place`` — their record, then the tree —
-    atomically; a cache that cannot be written only costs the next expansion."""
+    """Write the entry of the macros the expansion used in ``place`` — their record, the index, then
+    the chunks — atomically; a cache that cannot be written only costs the next expansion."""
     try:
-        cached = _derived(expanded.tree)
+        cached, chunks = _derived(expanded.tree)
         place.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(dir=place, suffix=".tmp")
         with os.fdopen(handle, "wb") as out:
             pickle.dump(expanded.macros, out, protocol=pickle.HIGHEST_PROTOCOL)
             pickle.dump(cached, out, protocol=pickle.HIGHEST_PROTOCOL)
+            for chunk in chunks:
+                out.write(chunk)
         os.replace(temporary, place / _entry_name(expanded.macros))
     except (OSError, pickle.PicklingError, RecursionError):
         return
@@ -1666,13 +1694,27 @@ def _calls_its_own_def(wrapper: ast.FunctionDef, name: str) -> bool:
             return False
 
 
+_NAMES_READ: dict[int, tuple[ast.expr, frozenset[str]]] = {}
+
+
+def _names_read(value: ast.expr) -> frozenset[str]:
+    """The names ``value`` reads anywhere inside it, found once per node: the same bound values are asked
+    again at every call the reader follows through them, and the tree never changes."""
+    cached = _NAMES_READ.get(id(value))
+    if cached is not None and cached[0] is value:
+        return cached[1]
+    names = frozenset(node.id for node in ast.walk(value) if isinstance(node, ast.Name))
+    _NAMES_READ[id(value)] = (value, names)
+    return names
+
+
 def _reads_itself(value: ast.expr, name: str) -> bool:
     """Whether the call (or subscript) bound to ``name`` reads ``name`` anywhere — its
     callee, its positional arguments or its keywords (``x = x.method()``,
     ``state = replace(state, ...)``, ``ports = ports[1]``).  There the name inside is the
     earlier value, not the bound one: a local bound that way is neither followed through
     the value nor read as an instance of it."""
-    return any(isinstance(node, ast.Name) and node.id == name for node in ast.walk(value))
+    return name in _names_read(value)
 
 
 def _is_name_of(value: ast.expr, name: str) -> bool:
