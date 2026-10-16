@@ -68,6 +68,7 @@ exclude = ["packages/doeff-agentd"]
 
 [tool.uv.sources]
 doeff-indexer = { workspace = true }
+doeff-linter = { workspace = true }
 doeff-core-effects = { workspace = true }
 doeff-flow = { workspace = true }
 doeff-agents = { workspace = true }
@@ -593,4 +594,7 @@ dev = [
     "cloudpickle>=3.0",
     "semgrep>=1.161.0,<2",
     "pre-commit>=4,<5",
+    # 書いた後の linter(hook doeff-lint-after-write)は書いた file の repo の .venv/bin/doeff-linter を引く。agora の Pod の会話には
+    # 開発版の置き場も PATH の binary も無いので、dev の依存に置いて make sync で入れる — 無いと doeff の Hy の file が検査されない。
+    "doeff-linter",
 ]
