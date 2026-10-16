@@ -262,10 +262,12 @@
   (#^ str lane-id)
   (setv #^ (get tuple #(Note ...)) notes #()))
 
+;; 欄の型は文字列の前方参照で書く: Python 3.13 までは class の本体の注記を定義の時に評価するので、裸の名(#^ DefinedLater)は
+;; NameError で module の読み込みが落ちる(注記を遅れて評価する PEP 649 は 3.14 から)。文字列なら全部の版で、解き手が最初に使う時に解く。
 (defwire AheadOfItsField
   "まだ定義していない型を欄に書いた型 — 定義した時には組めず、最初に使う時に組む"
   {:names :camel}
-  (#^ DefinedLater later))
+  (#^ "DefinedLater" later))
 
 (defwire DefinedLater
   "AheadOfItsField の欄の型(AheadOfItsField より後で定義する)"

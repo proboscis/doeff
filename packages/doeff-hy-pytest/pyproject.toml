@@ -8,7 +8,7 @@ name = "doeff-hy-pytest"
 version = "0.1.0"
 description = "pytest plugin for doeff-hy tests: a Python 3.14 fix for Hy and optional per-test time limits"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 # 依存を宣言しない: この plugin は doeff-hy に引かれて入る(doeff-hy → doeff-hy-pytest の向きだけ)。

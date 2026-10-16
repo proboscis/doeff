@@ -31,7 +31,7 @@ pip install "doeff-core-effects[http-server]"  # + aiohttp: HTTP server and WebS
 pip install "doeff-core-effects[postgres]"     # + psycopg: PostgreSQL handler
 ```
 
-Requires Python 3.10 or newer. The HTTP client handler uses `httpx`, which is always
+Requires Python 3.11 or newer. The HTTP client handler uses `httpx`, which is always
 installed. The SQLite and ClickHouse handlers use only the standard library.
 
 ## Minimal example

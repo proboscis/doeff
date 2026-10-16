@@ -3,7 +3,7 @@ name = "doeff-core-effects"
 version = "0.1.0"
 description = "Standard effects and handlers for doeff: state, reader, writer, concurrency, HTTP, SQL, files and processes"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
