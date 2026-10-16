@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff_vm import PyVM
 
+from doeff.do import uncalled_do_function_call
+
 if TYPE_CHECKING:
     from doeff import Program
 
@@ -18,11 +20,21 @@ def run(doexpr: "Program[_T, Any]") -> _T:
 
     On error, enriches the exception with __doeff_traceback__ (from Python's
     __traceback__) and prints the doeff traceback to stderr.
+
+    Given a @do function itself (``run(main)``), raises a TypeError that says
+    to call it first (``run(main())``). The check runs only after the VM
+    rejected the value, so a program pays nothing for it.
     """
     vm = PyVM()
     try:
         return vm.run(doexpr)
     except Exception as e:
+        call = uncalled_do_function_call(doexpr)
+        if call is not None:
+            raise TypeError(
+                "run() got a @do function itself, not a program. "
+                f"Call the function to build the program, then run that: run({call})"
+            ) from None
         _enrich_and_print(e)
         raise
 
