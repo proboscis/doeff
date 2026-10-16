@@ -375,6 +375,28 @@ def test_a_module_used_as_an_attribute_chain_depends_on_the_attribute_only(tree:
     assert tree.digest() != first
 
 
+def test_another_name_in_all_does_not_change_the_inputs_but_the_used_name_does(tree: _Tree) -> None:
+    """__all__ に別の名を足しても使う名の入力は変わらず、使う名を __all__ から外せば変わる(名ごとに在否だけを見る)。"""
+    body = "\n\ndef used(x: int) -> int:\n    return x\n\ndef more() -> int:\n    return 1\n"
+    tree.write("pkg/__init__.py", "")
+    tree.write("pkg/impl.py", "__all__ = ['used']" + body)
+    first = tree.digest()
+    tree.write("pkg/impl.py", "__all__ = ['used']\n__all__ += ['more']" + body)
+    assert tree.digest() == first
+    tree.write("pkg/impl.py", "__all__ = ['more']" + body)
+    assert tree.digest() != first
+
+
+def test_an_all_pyright_cannot_read_changes_the_inputs_of_every_name(tree: _Tree) -> None:
+    """__all__ を pyright の読めない形(式で作る)で書く module は、__all__ の文の変更を全部の名の使い手へ伝える。"""
+    body = "\n\ndef used(x: int) -> int:\n    return x\n\ndef more() -> int:\n    return 1\n"
+    tree.write("pkg/__init__.py", "")
+    tree.write("pkg/impl.py", "__all__ = ['used'] + []" + body)
+    first = tree.digest()
+    tree.write("pkg/impl.py", "__all__ = ['used'] + ['more']" + body)
+    assert tree.digest() != first
+
+
 def test_the_same_tree_in_another_place_has_the_same_inputs(tmp_path: Path) -> None:
     """日次の回は task ごとの作業 dir の下に根を置き、doeff の pin の checkout を根の隣に置く(回ごとに path が違う)— 同じ木と隣を別の
     置き場で測っても入力は同じ(違えば毎回全部を当てる)。"""
