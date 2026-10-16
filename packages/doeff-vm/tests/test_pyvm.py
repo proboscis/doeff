@@ -297,7 +297,7 @@ def test_yielded_plain_value_fails_loudly() -> None:
     def body():
         yield 42
 
-    with pytest.raises(RuntimeError, match="expected DoExpr or EffectBase"):
+    with pytest.raises(TypeError, match=r"yield got 42 \(int\), which is neither an effect nor a program"):
         doeff_vm.PyVM().run(body())
 
 
