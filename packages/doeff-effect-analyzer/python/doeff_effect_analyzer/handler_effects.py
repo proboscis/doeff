@@ -376,6 +376,40 @@ def _clause_functions(
     return found
 
 
+@dataclass(frozen=True)
+class DispatchReading:
+    """What the handler reader finds in one def alone — its dispatchers (``_clause_functions``) and, when it
+    dispatches on a parameter, its branches (``_dispatch_of``) — as a tree cache keeps it beside the def's
+    body facts. Both are functions of the def's nodes, so a reader that finds them in a cache entry reads
+    the same answer as one that walks the def."""
+
+    clause_functions: tuple[tuple[FunctionNode, tuple[tuple[FunctionNode, tuple[FunctionNode, ...]], ...]], ...]
+    dispatches: tuple[tuple[FunctionNode, "_Dispatch"], ...]
+
+
+def read_dispatch(functions: Iterable[FunctionNode]) -> DispatchReading:
+    """The dispatch reading of each def in ``functions`` (a def the reader cannot read is left out
+    and read on demand as before)."""
+    clause_functions: list[tuple[FunctionNode, tuple[tuple[FunctionNode, tuple[FunctionNode, ...]], ...]]] = []
+    dispatches: list[tuple[FunctionNode, _Dispatch]] = []
+    for function in functions:
+        try:
+            clause_functions.append((function, _clause_functions(function)))
+            if _effect_param(function) is not None:
+                dispatches.append((function, _dispatch_of(function)))
+        except Exception:  # noqa: BLE001 — read (and failing) when followed, as before
+            continue
+    return DispatchReading(tuple(clause_functions), tuple(dispatches))
+
+
+def adopt_dispatch(reading: DispatchReading) -> None:
+    """Keep a dispatch reading read from a cache entry where the reader looks for what it has found."""
+    for function, found in reading.clause_functions:
+        _CLAUSE_FUNCTIONS[id(function)] = (function, found)
+    for function, dispatch in reading.dispatches:
+        _DISPATCHES[id(function)] = (function, dispatch)
+
+
 def _walk_clause_functions(
     root: FunctionNode,
 ) -> Iterator[tuple[FunctionNode, tuple[FunctionNode, ...]]]:

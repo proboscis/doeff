@@ -31,7 +31,7 @@ import pytest
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
 
-from doeff_effect_analyzer import hy_expansion  # noqa: E402
+from doeff_effect_analyzer import handler_effects, hy_expansion  # noqa: E402
 from doeff_effect_analyzer import program_effects as pe  # noqa: E402
 
 SOURCE = """
@@ -333,7 +333,7 @@ def test_an_unreadable_cache_file_is_expanded_again_and_rewritten(
     tree = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m", "m"]
     assert isinstance(tree.tree, ast.Module)
-    assert pe._read_cached_tree(cached) is not None
+    assert pe._read_cached_tree(cached, lambda: tree.tree) is not None
     assert hy_expansion._read_expansion(stored) is not None
 
 
@@ -347,7 +347,7 @@ def test_an_unreadable_derived_entry_is_built_again_from_the_stored_tree(
     tree = pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m"]
     assert isinstance(tree.tree, ast.Module)
-    assert pe._read_cached_tree(cached) is not None
+    assert pe._read_cached_tree(cached, lambda: tree.tree) is not None
 
 
 def test_an_observer_sees_only_the_expansions_that_missed_the_cache(cache_dir: Path) -> None:
@@ -416,6 +416,9 @@ def a_new_process() -> None:
     pe._DEFINITION_INDEX.clear()
     pe._BODY_FACTS.clear()
     pe._BODY_NODES.clear()
+    pe._NAMES_READ.clear()
+    handler_effects._CLAUSE_FUNCTIONS.clear()
+    handler_effects._DISPATCHES.clear()
 
 
 def test_a_cached_tree_finds_the_same_def_with_its_body_facts_without_walking(
@@ -482,6 +485,106 @@ def test_a_cached_tree_builds_only_the_definition_it_is_asked_for(cache_dir: Pat
     assert set(read._loaded) == {1} and read._tree is None
 
 
+
+DISPATCHER = """
+(defn dispatch [effect k]
+  (if (isinstance effect int) (yield effect) (yield k))
+  (defn inner [other more] (if (isinstance other str) other more)))
+(defn plain [x] x)
+"""
+
+
+def test_a_cached_tree_brings_what_the_handler_reader_finds_in_a_def(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ki-24a14c43f26b: reading a handler's dispatchers and branches walked its body in every process,
+    although they are a function of its nodes. They are stored with the chunk, and a process that reads
+    the chunk finds them where the handler reader looks — the same dispatchers and branches it would
+    find by walking, without walking."""
+    written = pe._compile_hy(DISPATCHER, "/src/d.hy", "d").tree
+    named = dict(functions_named(written))
+    dispatch = named["dispatch"]
+    asked = function_at("dispatch", line=dispatch.lineno, params=pe._definition_params(dispatch))
+    expected_clauses = [
+        (ast.dump(clause), tuple(ast.dump(outer) for outer in enclosing))
+        for clause, enclosing in handler_effects._clause_functions(dispatch)
+    ]
+    assert len(expected_clauses) == 2, expected_clauses
+    expected_branches = [(ast.dump(branch.at), ast.dump(branch.classes)) for branch in handler_effects._dispatch_of(dispatch).branches]
+    assert expected_branches
+    a_new_process()
+    read = pe._compile_hy(DISPATCHER, "/src/d.hy", "d")
+    found = read.find(asked)
+    assert found is not None
+
+    def walked(*_: object) -> None:
+        raise AssertionError("walked the def again")
+
+    monkeypatch.setattr(handler_effects, "_walk_clause_functions", walked)
+    monkeypatch.setattr(handler_effects, "_branches", walked)
+    assert [
+        (ast.dump(clause), tuple(ast.dump(outer) for outer in enclosing))
+        for clause, enclosing in handler_effects._clause_functions(found)
+    ] == expected_clauses
+    assert [(ast.dump(branch.at), ast.dump(branch.classes)) for branch in handler_effects._dispatch_of(found).branches] == expected_branches
+
+
+def test_the_whole_tree_of_a_cached_entry_comes_from_the_expansions_store(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ki-24a14c43f26b: the entry kept the whole tree beside the chunks, so reading an entry read it twice
+    over; ``module_ast`` is the only one who asks for it, and the expansion's store holds it. The entry
+    holds no tree, and asking for it reads the store (not expanding again)."""
+    seen = expansions(monkeypatch)
+    written = pe._compile_hy(TWO, "/src/two.hy", "two").tree
+    (entry,) = entries(cache_dir)
+    stored = read_entry(entry)
+    assert sum(len(chunk) for chunk in stored.chunks) == entry.stat().st_size - len(pickle.dumps(stored.macros, protocol=pickle.HIGHEST_PROTOCOL)) - len(pickle.dumps(stored.tree, protocol=pickle.HIGHEST_PROTOCOL))
+    a_new_process()
+    read = pe._compile_hy(TWO, "/src/two.hy", "two")
+    assert isinstance(read, pe._ChunkedTree) and read._tree is None
+    assert ast.dump(read.tree) == ast.dump(written)
+    assert seen == ["two"]
+
+
+def test_an_entry_cut_short_is_not_read(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A chunk shorter than the index says it is would be pickled from the next chunk's bytes; such an entry
+    (a write cut short) is unreadable, and the tree is built again from the store."""
+    seen = expansions(monkeypatch)
+    pe._compile_hy(TWO, "/src/two.hy", "two")
+    (entry,) = entries(cache_dir)
+    entry.write_bytes(entry.read_bytes()[:-10])
+    a_new_process()
+    assert pe._read_cached_tree(entry, lambda: ast.Module(body=[], type_ignores=[])) is None
+    read = pe._compile_hy(TWO, "/src/two.hy", "two")
+    assert seen == ["two"]
+    assert isinstance(read.tree, ast.Module)
+    assert pe._read_cached_tree(entry, lambda: read.tree) is not None
+
+
+def test_the_entry_written_last_is_tried_first(tmp_path: Path) -> None:
+    """The other entries of a place are of macros that changed since; reading one only to find that costs
+    a file read (ki-24a14c43f26b)."""
+    import os
+
+    place = tmp_path / "place"
+    place.mkdir()
+    for age, name in enumerate(("c", "a", "b")):
+        entry = place / f"{name}.pickle"
+        entry.write_bytes(b"")
+        os.utime(entry, ns=(10**18 - age * 10**9, 10**18 - age * 10**9))
+    (place / "left-over.tmp").write_bytes(b"")
+    assert [entry.name for entry in pe._entries_newest_first(place)] == ["c.pickle", "a.pickle", "b.pickle"]
+    assert pe._entries_newest_first(tmp_path / "absent") == []
+
+
+def test_the_names_a_value_reads_are_those_of_a_walk() -> None:
+    value = ast.parse("f(a.b, [c for c in d], lambda e: g)", mode="eval").body
+    assert pe._names_read(value) == {node.id for node in ast.walk(value) if isinstance(node, ast.Name)}
+    assert pe._reads_itself(value, "g") and not pe._reads_itself(value, "h")
+    assert pe._names_read(value) is pe._names_read(value)
+
+
 REWRAPPED = """
 (defn clause [effect wrap]
   (setv prog effect.program)
@@ -503,21 +606,30 @@ def as_the_older_reader_wrote(raw: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class StoredEntry:
-    """What one entry file holds, in its order: the record of the macro files, then the tree."""
+    """What one entry file holds, in its order: the record of the macro files, the index, then the
+    pickle of each chunk (``tree.spans`` says how long each is)."""
 
     macros: object
     tree: object
+    chunks: tuple[bytes, ...]
 
 
 def read_entry(path: Path) -> StoredEntry:
     with path.open("rb") as handle:
-        return StoredEntry(macros=pickle.load(handle), tree=pickle.load(handle))
+        macros, tree = pickle.load(handle), pickle.load(handle)
+        assert isinstance(tree, pe._CachedTree)
+        chunks = tuple(handle.read(span) for span in tree.spans)
+        assert handle.read() == b""
+        return StoredEntry(macros=macros, tree=tree, chunks=chunks)
 
 
 def write_entry(path: Path, entry: StoredEntry) -> None:
+    tree = replace(entry.tree, spans=tuple(len(chunk) for chunk in entry.chunks))
     with path.open("wb") as handle:
         pickle.dump(entry.macros, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        pickle.dump(entry.tree, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(tree, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        for chunk in entry.chunks:
+            handle.write(chunk)
 
 
 def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -536,8 +648,8 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     (entry,) = entries(cache_dir)
     stored = read_entry(entry)
     assert isinstance(stored.tree, pe._CachedTree)
-    older_chunks = tuple(as_the_older_reader_wrote(raw) for raw in stored.tree.chunks)
-    write_entry(entry, replace(stored, tree=replace(stored.tree, chunks=older_chunks)))
+    older_chunks = tuple(as_the_older_reader_wrote(raw) for raw in stored.chunks)
+    write_entry(entry, replace(stored, chunks=older_chunks))
     a_new_process()
     monkeypatch.setattr(pe, "_reader_digest", reader)
     pe._compile_hy(REWRAPPED, "/src/r.hy", "r")
@@ -546,9 +658,7 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
     assert place is not None
     assert place != entry.parent
     (path,) = sorted(place.glob("*.pickle"))
-    written = read_entry(path).tree
-    assert isinstance(written, pe._CachedTree)
-    rewraps = [facts.rewraps for raw in written.chunks for _, facts in pickle.loads(raw).body_facts]
+    rewraps = [facts.rewraps for raw in read_entry(path).chunks for _, facts in pickle.loads(raw).body_facts]
     assert rewraps == [{"prog": rewraps[0]["prog"]}], rewraps
     assert isinstance(rewraps[0]["prog"], tuple), rewraps
 
