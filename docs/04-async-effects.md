@@ -85,6 +85,10 @@ def fetch_value():
 print(run(scheduled(await_handler()(fetch_value()))))  # 42
 ```
 
+`@do` does not take an `async def` function: it raises `TypeError` where it is applied, since
+calling the function would give a coroutine that nothing awaits. Write a plain `def` and each
+`await coro` as `value = yield Await(coro)`, as `fetch_value` does above.
+
 To wait for a duration, yield doeff-time's `Delay(seconds)` rather than
 `Await(asyncio.sleep(seconds))`: the time handler then owns the clock, and a test can run the
 program on `sim_time_handler()`'s virtual clock.
