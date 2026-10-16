@@ -46,7 +46,11 @@ revision with uv, add a `[tool.uv.sources]` entry for doeff-hy-pytest from the s
 revision.
 
 To check that pytest loaded it, look for `doeff-hy-pytest` in the `plugins:` line of
-`pytest` output.
+`pytest` output, or in the plugins that `pytest -VV` lists:
+
+```bash run
+pytest -VV   # doeff-hy-pytest
+```
 
 ## Time limits for Hy tests
 

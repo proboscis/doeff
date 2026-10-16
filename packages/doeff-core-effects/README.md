@@ -66,8 +66,7 @@ def main():
 prog = writer(main())                       # Tell     (keeps its log in state)
 prog = state(initial={"count": 0})(prog)    # Get, Put
 prog = reader(env={"name": "doeff"})(prog)  # Ask
-print(run(scheduled(prog)))
-# ('hello, doeff (#1)', 'hello, doeff (#2)', ['greeted doeff', 'greeted doeff'])
+print(run(scheduled(prog)))  # ('hello, doeff (#1)', 'hello, doeff (#2)', ['greeted doeff', 'greeted doeff'])
 ```
 
 How the handlers wrap the program in this example (an effect travels outward until a
@@ -208,8 +207,7 @@ def stamp(message):
     return f"[{now}] {message}"
 
 
-print(run(scheduled(handler(fixed_clock)(stamp("started")))))
-# [2026-01-01T00:00:00Z] started
+print(run(scheduled(handler(fixed_clock)(stamp("started")))))  # [2026-01-01T00:00:00Z] started
 ```
 
 ## Effect families
