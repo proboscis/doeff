@@ -815,6 +815,10 @@ prefix = "tools/verify_indexer_wheel.py"
 tests = ["tests/test_indexer_wheel_layout.py"]
 
 [[tool.doeff.contract-tests]]
+prefix = ".github/workflows/build-indexer.yml"
+tests = ["tests/test_indexer_wheel_workflow.py"]
+
+[[tool.doeff.contract-tests]]
 prefix = "packages/doeff-jev/"
 tests = [
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-jev]",  # 1.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
