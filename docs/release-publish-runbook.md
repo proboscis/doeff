@@ -108,7 +108,17 @@ uv run pytest
 2. Bump versions for every package being published. For root releases, check all packages in the
 root tag release table plus `doeff/__init__.py` when the root package version changes.
 
-3. Build and verify distribution metadata for every root tag Python package:
+3. Confirm none of those versions is on PyPI yet. The publish workflows run the same check and stop
+before their first upload when one is (uploads use `skip-existing`, so an unbumped version would
+otherwise upload nothing and still pass):
+
+```bash
+uv run --no-project python tools/check_pypi_unpublished.py \
+  packages/doeff-vm packages/doeff-indexer packages/doeff-hy packages/doeff-core-effects \
+  . packages/doeff-time packages/doeff-agents
+```
+
+4. Build and verify distribution metadata for every root tag Python package:
 
 ```bash
 for package in doeff-hy doeff-core-effects doeff doeff-time doeff-agents; do
@@ -120,7 +130,7 @@ for package in doeff-hy doeff-core-effects doeff doeff-time doeff-agents; do
 done
 ```
 
-4. Confirm native package release workflows for `doeff-vm` and `doeff-indexer` are green before
+5. Confirm native package release workflows for `doeff-vm` and `doeff-indexer` are green before
 publishing the root package stack.
 
 ## Publishing
@@ -128,6 +138,11 @@ publishing the root package stack.
 ### Option A: Local root release publish
 
 ```bash
+# 0. Stop if any version is already on PyPI (preflight step 3)
+uv run --no-project python tools/check_pypi_unpublished.py \
+  packages/doeff-vm packages/doeff-indexer packages/doeff-hy packages/doeff-core-effects \
+  . packages/doeff-time packages/doeff-agents
+
 # 1. Build and publish doeff-vm
 cd packages/doeff-vm
 rm -rf dist/
@@ -165,6 +180,8 @@ git push origin vX.Y.Z
 
 This triggers `.github/workflows/publish.yml`, which will:
 
+- fail before any upload when a package's version is already on PyPI (job
+  `check-versions-unpublished`, `tools/check_pypi_unpublished.py`)
 - publish `doeff-vm` via `build-vm.yml` (all platforms)
 - publish `doeff-indexer` via `build-indexer.yml` (all platforms)
 - build wheel and sdist artifacts for `doeff-hy`, `doeff-core-effects`, `doeff`,
@@ -176,7 +193,9 @@ Requires `PYPI_API_TOKEN` secret in GitHub repo settings.
 
 ### Option C: Manual workflow dispatch
 
-From GitHub Actions UI, run `Publish doeff` with `publish=true`.
+From GitHub Actions UI, run `Publish doeff` with `publish=true`. With `publish=false` it only builds
+and verifies the Python distributions and runs the version check, so a dry run shows whether the
+release would go out; nothing is uploaded.
 
 ## Independent Public Package Publish
 
@@ -188,6 +207,7 @@ package=<package>
 git tag "${package}/vX.Y.Z"
 git push origin "${package}/vX.Y.Z"
 
+uv run --no-project python tools/check_pypi_unpublished.py "packages/${package}"
 rm -rf "/tmp/${package}-dist"
 uv build --package <package> --wheel --sdist --out-dir "/tmp/${package}-dist"
 uv run python tools/verify_dist_metadata.py \
@@ -219,7 +239,13 @@ name from PyPI after publish.
 
 ## Notes
 
-- CI publish uses `skip-existing: true` so reruns are idempotent.
+- A version already on PyPI stops every publish workflow before its first upload
+  (`tools/check_pypi_unpublished.py`; `build-vm.yml` and `build-indexer.yml` check their own
+  package for `doeff-vm-v*` / `doeff-indexer-v*` tags). Bump the version and tag again.
+- CI uploads keep `skip-existing: true`: "Re-run failed jobs" does not re-run jobs that already
+  passed, so a Python package upload that stopped midway resumes without re-uploading its files.
+  A re-run that runs a version check again fails once part of that version is on PyPI; then upload
+  the missing files by hand (Option A) from the run's artifacts, or bump the version.
 - Local native builds only produce wheels for your current platform/Python version.
 - CI native builds produce wheels for linux/macos/windows x x86_64/aarch64.
 - The sdist always works as a fallback (pip builds from source).

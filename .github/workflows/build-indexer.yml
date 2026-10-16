@@ -23,6 +23,20 @@ permissions:
   contents: read
 
 jobs:
+  # The upload uses skip-existing, so a doeff-indexer-v* tag without a version bump would upload
+  # nothing and still pass; the publish job needs this check (tools/check_pypi_unpublished.py).
+  check-version-unpublished:
+    name: Fail if this doeff-indexer version is already on PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Check doeff-indexer against PyPI
+        run: uv run --no-project python tools/check_pypi_unpublished.py packages/doeff-indexer
+
   build-linux:
     runs-on: ubuntu-latest
     strategy:
@@ -246,7 +260,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
+    needs: [check-version-unpublished, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || inputs.publish
     steps:

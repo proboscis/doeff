@@ -147,7 +147,9 @@ def test_every_pypi_upload_waits_for_the_unpublished_version_check() -> None:
         for name, job in jobs.items()
         if _uploads_to_pypi(job) and not _needs(job) & _unpublished_check_jobs(jobs).keys()
     }
-    uploads = [name for jobs in workflows.values() for name, job in jobs.items() if _uploads_to_pypi(job)]
+    uploads = [
+        name for jobs in workflows.values() for name, job in jobs.items() if _uploads_to_pypi(job)
+    ]
 
     assert uploads
     assert unchecked_uploads == {}, f"these jobs upload without needing {UNPUBLISHED_CHECK_TOOL}"
