@@ -19,6 +19,10 @@ import pytest
 
 from doeff_hy.static_stub import stale_in
 
+# stub(.pyi)は型の引数の構文(PEP 695 — `class SqlTransaction[T]`)で書き、3.11 の ast はそれを読めない。stub と module の
+# 突き合わせは Python の版に依らないので、3.12 から見る。
+pytestmark = pytest.mark.skipif(sys.version_info < (3, 12), reason="stub の型の引数の構文は Python 3.12 から")
+
 SOURCE = Path(__file__).resolve().parents[1]
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")

@@ -12,6 +12,7 @@
 (import dataclasses [dataclass FrozenInstanceError])
 (import copy)
 (import pickle)
+(import sys)
 (import pytest)
 (import doeff [Pure EffectBase])
 
@@ -95,12 +96,17 @@
 (deftest test-an-effect-compares-field-by-field-like-its-twin
   ;; 失敗ケース(直す前は赤): Python 3.14 の dataclass の __eq__ は「同じ物なら真・欄ごとの == を and で繋ぐ」で、組どうしの比較
   ;; (要素が同じ物なら == を呼ばない・答えを真偽にする)と、NaN と真偽でない値を返す == で答えが違う。
+  ;; dataclass の __eq__ が欄ごとの比べになったのは Python 3.13 から — 3.12 までの twin は組どうしで比べるので、effect の答えは
+  ;; 決まった値と比べ、twin と同じ事は 3.13 からだけ見る。
   (<- _ (Pure None))
   (val nan (float "nan"))
-  (assert (= (= (Holder nan) (Holder nan)) (= (HolderTwin nan) (HolderTwin nan)) False))
+  (val twin-compares-fields (>= sys.version-info #(3 13)))
+  (assert (= (= (Holder nan) (Holder nan)) False))
+  (assert (or (not twin-compares-fields) (= (= (HolderTwin nan) (HolderTwin nan)) False)))
   (val h (Holder nan))
   (assert (= h h))
-  (assert (= (.__eq__ (Holder (Loose)) (Holder (Loose))) (.__eq__ (HolderTwin (Loose)) (HolderTwin (Loose))) "loose")))
+  (assert (= (.__eq__ (Holder (Loose)) (Holder (Loose))) "loose"))
+  (assert (or (not twin-compares-fields) (= (.__eq__ (HolderTwin (Loose)) (HolderTwin (Loose))) "loose"))))
 
 
 (deftest test-an-effect-with-builtin-field-names-builds-like-its-dataclass
@@ -118,7 +124,9 @@
   (<- _ (Pure None))
   (assert (= (. (Dashed :max-count 2) max-count) 2))
   (for [make [(fn [] (Dashed -1)) (fn [] (Dashed :max-count -1)) (fn [] (Dashed -1 "y"))
-              (fn [] (dataclasses.replace (Dashed 1) :max-count -1)) (fn [] (copy.replace (Dashed 1) :max-count -1))]]
+              (fn [] (dataclasses.replace (Dashed 1) :max-count -1))
+              ;; copy.replace(__replace__ の口)は Python 3.13 から — それより前は呼べない(AttributeError で黙って通さない)。
+              #* (if (>= sys.version-info #(3 13)) [(fn [] (copy.replace (Dashed 1) :max-count -1))] [])]]
     (with [(pytest.raises Exception)]
       (make))))
 
@@ -169,7 +177,9 @@
     (delattr p "limit"))
   (assert (= (str caught.value) "cannot delete field 'limit'"))
   (assert (= (dataclasses.replace p :limit 4) (Probe "t" #() 4)))
-  (assert (= (copy.replace p :table "u") (Probe "u" #())))
+  ;; copy.replace(__replace__ の口)は Python 3.13 から。
+  (when (>= sys.version-info #(3 13))
+    (assert (= (copy.replace p :table "u") (Probe "u" #()))))
   (assert (= (copy.deepcopy p) p)))
 
 
@@ -189,7 +199,9 @@
   ;; 失敗ケース(直す前は赤): dataclass は読み込みの時に関数の source を exec して作る(co_filename = "<string>")。直した後は
   ;; 展開が書いた関数が module の code として .pyc に入る。
   (<- _ (Pure None))
-  (val names #("__init__" "__repr__" "__eq__" "__hash__" "__setattr__" "__delattr__"))
-  ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。
+  ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。包みが __wrapped__ を持つのは Python 3.13
+  ;; からで、それより前は包みの code(reprlib.py)しか見えないので、3.12 までは __repr__ を数えない。
+  (val names (+ #("__init__" "__eq__" "__hash__" "__setattr__" "__delattr__")
+                (if (>= sys.version-info #(3 13)) #("__repr__") #())))
   (val sources (lfor n names #(n (. (getattr (getattr Probe n) "__wrapped__" (getattr Probe n)) __code__ co-filename))))
   (assert (all (gfor #(n source) sources (.endswith source "defeffect_shape_deftests.hy"))) sources))

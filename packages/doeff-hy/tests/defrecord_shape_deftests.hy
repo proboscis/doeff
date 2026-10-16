@@ -13,6 +13,7 @@
 (import dataclasses [dataclass field FrozenInstanceError])
 (import pickle)
 (import copy)
+(import sys)
 (import pytest)
 (import doeff [Pure])
 
@@ -109,7 +110,9 @@
   (<- _ (Pure None))
   (val s (Shape :a 1 :b 4))
   (assert (= (dataclasses.replace s :a 3) (Shape :a 3 :b 4)))
-  (assert (= (copy.replace s :b 5) (Shape :a 1 :b 5)))
+  ;; copy.replace(__replace__ の口)は Python 3.13 から。
+  (when (>= sys.version-info #(3 13))
+    (assert (= (copy.replace s :b 5) (Shape :a 1 :b 5))))
   (assert (= (pickle.loads (pickle.dumps (Bare :x 2))) (Bare :x 2)))
   (assert (= (copy.deepcopy s) s)))
 
@@ -125,8 +128,10 @@
   ;; 失敗ケース(直す前は赤): dataclass は読み込みの時に関数の source を exec して作る(co_filename = "<string>")。直した後は
   ;; 展開が書いた関数が module の code として .pyc に入る。
   (<- _ (Pure None))
-  (val names #("__init__" "__repr__" "__eq__" "__hash__" "__setattr__" "__delattr__"))
-  ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。
+  ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。包みが __wrapped__ を持つのは Python 3.13
+  ;; からで、それより前は包みの code(reprlib.py)しか見えないので、3.12 までは __repr__ を数えない。
+  (val names (+ #("__init__" "__eq__" "__hash__" "__setattr__" "__delattr__")
+                (if (>= sys.version-info #(3 13)) #("__repr__") #())))
   (val sources (lfor n names #(n (. (getattr (getattr Shape n) "__wrapped__" (getattr Shape n)) __code__ co-filename))))
   (assert (all (gfor #(n source) sources (.endswith source "defrecord_shape_deftests.hy"))) sources))
 

@@ -161,7 +161,12 @@ def test_the_stub_matches_frozen_hy() -> None:
         declared = [a.arg for a in function.args.args]
         assert declared == list(inspect.signature(getattr(frozen, function.name)).parameters), function.name
     # 実装の FrozenMap は Mapping[str, V](鍵は文字列・型引数は値の型 1 つ)— stub の基底と同じ形。
-    (base,) = types.get_original_bases(frozen.FrozenMap)
+    # types.get_original_bases は Python 3.12 から — 3.11 では同じ物(総称の基底の書いたままの形)を class の __orig_bases__ から読む。
+    (base,) = (
+        types.get_original_bases(frozen.FrozenMap)
+        if sys.version_info >= (3, 12)
+        else frozen.FrozenMap.__orig_bases__  # type: ignore[attr-defined] — 3.11 の型の宣言に無い、総称の class の属性
+    )
     assert typing.get_origin(base) is Mapping
     key, value = typing.get_args(base)
     assert key is str and isinstance(value, typing.TypeVar)

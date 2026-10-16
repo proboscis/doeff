@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import hy
@@ -21,6 +22,9 @@ from doeff import Pure, run
 
 from doeff_hy.static_check import Projection, project
 from doeff_hy.static_stub import stub_of
+
+# 型検査の展開と stub が書く型の引数の構文(PEP 695・Hy の :tp)は Python 3.12 から — 3.11 の Hy は :tp を断る。
+needs_type_parameter_syntax = pytest.mark.skipif(sys.version_info < (3, 12), reason="型の引数の構文は Python 3.12 から")
 
 PRELUDE = """
 (require doeff-hy.macros [defk deff defp <-])
@@ -93,9 +97,12 @@ def test_the_outer_type_is_still_checked_and_named_as_written() -> None:
 
 def test_the_runtime_expansion_has_no_type_parameter_syntax() -> None:
     ns = evaluate(GENERIC)
-    assert getattr(ns["first_of"], "__type_params__") == ()
+    # 関数の __type_params__ は Python 3.12 から(3.11 には型の引数の構文そのものが無い)。
+    if sys.version_info >= (3, 12):
+        assert getattr(ns["first_of"], "__type_params__") == ()
 
 
+@needs_type_parameter_syntax
 def test_the_type_check_view_declares_the_type_parameters(tmp_path: Path) -> None:
     projection = project(tmp_path, [tmp_path], _module(tmp_path, GENERIC))
     assert isinstance(projection, Projection)
@@ -104,6 +111,7 @@ def test_the_type_check_view_declares_the_type_parameters(tmp_path: Path) -> Non
     assert "def first_of[T](items: 'tuple[T, ...]') -> 'T':" in lines
 
 
+@needs_type_parameter_syntax
 def test_the_stub_carries_the_type_parameters(tmp_path: Path) -> None:
     made = stub_of(tmp_path, [tmp_path], _module(tmp_path, GENERIC))
     lines = made.text.splitlines()
@@ -112,6 +120,7 @@ def test_the_stub_carries_the_type_parameters(tmp_path: Path) -> None:
     assert made.incomplete == ()
 
 
+@needs_type_parameter_syntax
 def test_without_the_type_parameter_the_answer_falls_back_to_incomplete(tmp_path: Path) -> None:
     # 失敗ケース: 説明の文字列の答えは型を運ばない。
     made = stub_of(tmp_path, [tmp_path], _module(tmp_path, DESCRIBED))

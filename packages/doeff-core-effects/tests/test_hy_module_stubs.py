@@ -15,6 +15,7 @@ import dataclasses
 import enum
 import importlib
 import inspect
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,10 @@ import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import hy
 import pytest
 from doeff_hy.static_stub import hidden_name
+
+# stub(.pyi)は型の引数の構文(PEP 695 — `class SqlTransaction[T]`)で書き、3.11 の ast はそれを読めない。stub と module の
+# 突き合わせは Python の版に依らないので、3.12 から見る。
+pytestmark = pytest.mark.skipif(sys.version_info < (3, 12), reason="stub の型の引数の構文は Python 3.12 から")
 
 PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 

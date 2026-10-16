@@ -264,6 +264,8 @@ CORE_ROW = Row(prefix="packages/doeff-core-effects/", tests=(STUB_TEST,))
 REPO_ROW = Row(prefix="", tests=("tests/test_ok.py",))
 
 
+# 選ばれた stub の検(doeff-core-effects の test_hy_module_stubs.py)は、stub の型の引数の構文を読める Python 3.12 から走る。
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="選ばれる stub の検は Python 3.12 から")
 def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Path) -> None:
     """失敗ケース(t135): .hy に公開の名を足して .pyi を直さない差分は、契約の組から選ばれた stub の検で赤・rc 1。"""
     model = _make_model(tmp_path, (CORE_ROW, REPO_ROW))

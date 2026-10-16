@@ -313,6 +313,7 @@ def test_a_changed_unused_macro_keeps_the_record_current(tree: Tree) -> None:
     assert tree.is_current(record), "使っていない macro を替えただけで古いと判じた"
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
 def test_a_changed_unused_macro_under_a_local_require_keeps_the_record_current(tree: Tree) -> None:
     # 関数の中で全部を require しても、記録に入るのは展開が使った macro だけ。
     record = tree.record("local")
@@ -818,6 +819,7 @@ def _run_pair(real_tree: RealTree, mode: str) -> dict[str, object]:
     return answer
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
 def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_record_stale(
     real_tree: RealTree,
 ) -> None:

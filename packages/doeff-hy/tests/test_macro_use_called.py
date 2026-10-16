@@ -164,6 +164,7 @@ def test_a_record_is_current_while_nothing_changed(tree: Tree) -> None:
         assert tree.is_current(record), f"{user}: 何も変えていないのに古いと判じた"
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
 def test_a_changed_method_the_expansion_does_not_call_keeps_the_record_current(tree: Tree) -> None:
     # 直す前は赤: 閉包の歩みが class(Rewriter)を method ごと全部辿り、展開で呼ばれない assign の code を digest に入れていた。
     record = tree.record("plain")
@@ -171,6 +172,7 @@ def test_a_changed_method_the_expansion_does_not_call_keeps_the_record_current(t
     assert tree.is_current(record), "展開で呼ばれない method を替えただけで古いと判じた"
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="展開で呼ばれた code を拾う sys.monitoring は Python 3.12 から — 3.11 の記録は拾えずに広く取る(called_code.Uncollectable)")
 def test_a_changed_method_a_hy_r_call_does_not_reach_keeps_the_record_current(tree: Tree) -> None:
     # hy.R で呼ぶ macro も、展開で実行された関数だけを覆う(記録を作る口が、source の文から hy.R の呼び出しを拾う所を通る)。
     record = tree.record("hy_r_plain")

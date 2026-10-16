@@ -127,5 +127,6 @@ def test_answers_and_order_are_the_same_as_passing_through() -> None:
 @pytest.mark.skipif(sys.version_info >= (3, 14), reason="3.14 からは型の註が遅れて評価されるので、実の註を書く")
 def test_before_3_14_the_types_are_written_as_text() -> None:
     ns = _eval("(defhandler pings (Ping [value] (resume value)))")
-    annotation = ns["pings"].__doeff_handler_data__.__wrapped__.__annotations__["effect"]  # type: ignore[attr-defined]
+    # 註の付く引数は handler の関数の effect の引数 `_doeff_effect`(書き手の名 effect と分けた名 — handle.hy の effect-symbol)。
+    annotation = ns["pings"].__doeff_handler_data__.__wrapped__.__annotations__["_doeff_effect"]  # type: ignore[attr-defined]
     assert annotation == "Ping"
