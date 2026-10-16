@@ -469,10 +469,14 @@ def my_interpreter(prog: Program):  # doeff: interpreter, default
 ```python
 def my_interpreter(  # doeff: interpreter, default
     prog: Program,
-    verbose: bool = False
+    *,
+    verbose: bool = False,
 ):
-    ...
+    return run(scheduled(state()(writer(reader(env={})(prog)))))
 ```
+
+Parameters after `prog` go after `*` (keyword-only), so the interpreter still takes exactly
+1 positional parameter (see [Validation](#validation)).
 
 ### Environment Markers
 
