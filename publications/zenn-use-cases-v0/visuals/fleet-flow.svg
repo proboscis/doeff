@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1160" viewBox="0 0 1200 1160" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1160" fill="#ffffff"/>
+  <text x="600" y="68" text-anchor="middle" font-size="40" font-weight="bold" fill="#111827">同じpick_cardsを、本番と模擬のハンドラで動かす</text>
+
+  <!-- 処理本体 -->
+  <rect x="200" y="100" width="800" height="210" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="228" y="138" font-size="24" fill="#4b5563">配る判断(1つだけ書く)</text>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="28" fill="#111827">
+    <text x="250" y="182">def pick_cards():</text>
+    <text x="250" y="222"><tspan xml:space="preserve">    ceiling = yield </tspan><tspan fill="#0f766e" font-weight="bold">Ask("ceiling")</tspan></text>
+    <text x="250" y="262"><tspan xml:space="preserve">    cards = yield </tspan><tspan fill="#0f766e" font-weight="bold">ReadBoard()</tspan></text>
+    <text x="250" y="298"><tspan xml:space="preserve">    return </tspan>ready[:空き]</text>
+  </g>
+
+  <line x1="600" y1="312" x2="600" y2="362" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="624" y="346" font-size="26" fill="#111827">依頼を外側へ渡す</text>
+
+  <!-- 本番 -->
+  <rect x="40" y="370" width="550" height="250" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="68" y="414" font-size="30" font-weight="bold" fill="#c2410c">本番のハンドラ</text>
+  <text x="68" y="462" font-size="26" fill="#111827">作業ボード: 記録のサービス(HTTP)</text>
+  <text x="68" y="504" font-size="26" fill="#111827">時刻と待ち: 実際の時計</text>
+  <text x="68" y="546" font-size="26" fill="#111827">出来事の知らせ: Redis</text>
+  <text x="68" y="592" font-size="26" font-weight="bold" fill="#c2410c">上限: 50(宣言した設定)</text>
+
+  <!-- 模擬 -->
+  <rect x="610" y="370" width="550" height="250" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="638" y="414" font-size="30" font-weight="bold" fill="#0f766e">模擬のハンドラ</text>
+  <text x="638" y="462" font-size="26" fill="#111827">作業ボード: メモリの盤</text>
+  <text x="638" y="504" font-size="26" fill="#111827">時刻と待ち: 仮想の時計</text>
+  <text x="638" y="546" font-size="26" fill="#111827">出来事の知らせ: メモリ</text>
+  <text x="638" y="592" font-size="26" font-weight="bold" fill="#0f766e">上限: 2(筋書きの値)</text>
+
+  <!-- 模擬の90分 -->
+  <text x="600" y="680" text-anchor="middle" font-size="30" font-weight="bold" fill="#0f766e">模擬の90分(上限2・仮想の時計)</text>
+
+  <!-- 行の名 -->
+  <g font-size="26" fill="#111827" text-anchor="end">
+    <text x="180" y="734">card B</text>
+    <text x="180" y="784">card D</text>
+    <text x="180" y="834">card E</text>
+    <text x="180" y="884">card C</text>
+    <text x="180" y="934">card F</text>
+  </g>
+
+  <!-- 時刻の補助線(0・30・40・60・90分。10px = 1分) -->
+  <g stroke="#e5e7eb" stroke-width="2">
+    <line x1="200" y1="705" x2="200" y2="950"/>
+    <line x1="500" y1="705" x2="500" y2="950"/>
+    <line x1="600" y1="705" x2="600" y2="950"/>
+    <line x1="800" y1="705" x2="800" y2="950"/>
+    <line x1="1100" y1="705" x2="1100" y2="950"/>
+  </g>
+
+  <!-- 仕事中の帯 -->
+  <rect x="200" y="712" width="298" height="30" rx="4" fill="#2a78d6"/>
+  <rect x="200" y="762" width="398" height="30" rx="4" fill="#2a78d6"/>
+  <rect x="500" y="812" width="598" height="30" rx="4" fill="#2a78d6"/>
+  <rect x="600" y="862" width="198" height="30" rx="4" fill="#2a78d6"/>
+  <rect x="800" y="912" width="98" height="30" rx="4" fill="#2a78d6"/>
+
+  <!-- 待ちの帯 -->
+  <rect x="200" y="862" width="396" height="30" rx="4" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="216" y="885" font-size="22" fill="#4b5563">Dが終わるまで配らない</text>
+  <rect x="200" y="912" width="596" height="30" rx="4" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="216" y="935" font-size="22" fill="#4b5563">空きが無く、待つ</text>
+
+  <!-- 時刻の目盛り -->
+  <line x1="200" y1="955" x2="1100" y2="955" stroke="#374151" stroke-width="2"/>
+  <g font-size="24" fill="#4b5563" text-anchor="middle">
+    <text x="200" y="988">0分</text>
+    <text x="500" y="988">30</text>
+    <text x="600" y="988">40</text>
+    <text x="800" y="988">60</text>
+    <text x="1100" y="988">90分</text>
+  </g>
+  <rect x="930" y="1002" width="26" height="22" rx="4" fill="#2a78d6"/>
+  <text x="966" y="1022" font-size="22" fill="#111827">仕事中</text>
+  <rect x="1050" y="1002" width="26" height="22" rx="4" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="1086" y="1022" font-size="22" fill="#111827">待ち</text>
+
+  <!-- 結果 -->
+  <text x="600" y="1072" text-anchor="middle" font-size="28" font-weight="bold" fill="#111827">同時に走った会話は最大2。上限の2を越えない</text>
+  <text x="600" y="1118" text-anchor="middle" font-size="24" fill="#4b5563">90分の流れが、待たずに約1秒で終わる(2026年10月17日に測定)</text>
+</svg>

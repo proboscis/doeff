@@ -1,0 +1,15 @@
+開発の記録（doeff-fleet.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-17）。
+
+- 正本：../visuals/fleet-concept.svg・../visuals/fleet-flow.svg・../visuals/fleet-commits.svg。
+- fleet-commits.svgは、数えた表../reviews/fleet-commits.csvから../visuals/fleet_commits_svg.pyで描く。
+  - 配色はdatavizの既定の1〜3番（#2a78d6・#eb6834・#1baf7a）。白背景で色の確かめの道具を通した。
+  - 3番の青緑は背景との差が3:1より小さいので、凡例と合計の字を添え、本文に数の表を置いた。
+- 図の仕様：../reviews/fleet-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
+  - fleet-concept：幅1200・高さ1420。
+  - fleet-flow：幅1200・高さ1160。
+  - fleet-commits：幅1200・高さ800。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+この記事は概念図・処理図の2枚に、数の図を1枚足す。captions.jsonの`extra_kinds`に`commits`と書き、
+verify_publication.pyがその図も照らす。
