@@ -1023,3 +1023,31 @@
   ;; 返した保ちも数えない。
   (val released (! (hold-asked state "release" (! (token-of "w" "0-zzz")) (+ HOLD-AT 200))))
   (assert (= (! (held-in-reply released (+ HOLD-AT 300))) {"w" #() "k" #()})))
+
+
+(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
+(import doeff_cluster.coordinator.core.cluster_policy [task-split task-lapse-at])
+
+(defk split-task [id phase [detached True] [finished None] [retain 1000]]
+  {:pre [(: id str) (: phase str) (: detached bool) (: finished (| int None)) (: retain int)] :post [(: % TaskRecord)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "task-split の入力に使う task の行を作るため。"
+  (TaskRecord id "" SAMPLE-TASK-PROGRAM "" #() #() 60000 60000 0
+              :phase phase :detached detached :finished-ms finished :retain-ms retain))
+
+(deftest test-task-split-holds-only-detached-terminal-rows
+  (setv tasks {"a" (! (split-task "a" "finished" :finished 500 :retain 1000))
+               "b" (! (split-task "b" "finished" :detached False :finished 100))
+               "c" (! (split-task "c" "assigned"))
+               "d" (! (split-task "d" "lost" :finished 200 :retain 1000))})
+  (setv #(live earliest) (! (task-split tasks 9999)))
+  ;; F3: 非 detached の終わった行は走査の対象のまま
+  (assert (= (list live) ["b" "c"]))
+  (assert (= earliest (! (task-lapse-at (get tasks "d") 9999)))))
+
+(deftest test-task-split-ignores-rows-without-finished-ms
+  (setv tasks {"a" (! (split-task "a" "cancelled" :finished None))})
+  (setv #(live earliest) (! (task-split tasks 9999)))
+  ;; F2: finished-ms 無しは最小期限に入れない(保持側には入る)
+  (assert (= live {}))
+  (assert (is earliest None)))
