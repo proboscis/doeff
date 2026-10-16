@@ -8,7 +8,7 @@
 
 | ディレクトリ | 提供内容 | 紹介先 | 根拠 | テスト等の所在 | 確認範囲・注意点 |
 | --- | --- | --- | --- | --- | --- |
-| `doeff-adr` | defadr・defsemgrep・deftestとpytest収集。設計判断を検査へ結び付ける | [tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-adr/README.md) | [所在](../../packages/doeff-adr/tests/test_wiring.py) | 検査を採用側で収集する必要がある |
+| `doeff-adr` | defadr・defsemgrep・deftestとpytest収集。設計判断を検査へ結び付ける | [adr](doeff-adr.md)・[tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-adr/README.md) | [所在](../../packages/doeff-adr/tests/test_wiring.py) | 検査を採用側で収集する必要がある |
 | `doeff-agentd` | 廃止済み実装の残存ディレクトリ | [tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-agents/README.md) | 専用テスト未特定（確認対象を保証しない） | このcheckoutには未追跡のCargo.lockのみ。提供中のパッケージに数えない |
 | `doeff-agentic` | 環境・セッション・メッセージ・ワークフローを扱う上位API | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agentic/src/doeff_agentic/effects/__init__.py) | [所在](../../packages/doeff-agentic/tests/__init__.py) | READMEのRunAgent等は実装でlegacy/deprecated。新規の推奨例にしない |
 | `doeff-agentic-cli` | ワークフローの一覧・監視・接続用Rust CLI | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agentic-cli/src/main.rs) | 専用テスト未特定（確認対象を保証しない） | 実CLI接続・速度は未検証 |

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1120" viewBox="0 0 1200 1120" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1120" fill="#ffffff"/>
+  <text x="600" y="66" text-anchor="middle" font-size="42" font-weight="bold" fill="#111827">1件のADRから、3つのテストと1つの走査が出る</text>
+
+  <!-- ADRのファイル -->
+  <rect x="36" y="110" width="560" height="676" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="62" y="152" font-size="26" fill="#4b5563">ADRのファイル(Hy)</text>
+  <text x="62" y="190" font-size="24" font-family="DejaVu Sans Mono, monospace" fill="#111827">docs/adr/defadr_billing_clock.hy</text>
+
+  <rect x="60" y="214" width="512" height="96" rx="12" fill="#ffffff" stroke="#d1d5db" stroke-width="2"/>
+  <text x="80" y="250" font-size="26" font-weight="bold" fill="#374151">訳(:problem)</text>
+  <text x="80" y="290" font-size="25" fill="#111827">datetime.now()では結果が日で変わる</text>
+
+  <rect x="60" y="322" width="512" height="96" rx="12" fill="#ffffff" stroke="#d1d5db" stroke-width="2"/>
+  <text x="80" y="358" font-size="26" font-weight="bold" fill="#374151">規則 R1(:decision)</text>
+  <text x="80" y="398" font-size="25" fill="#111827">今の時刻はGetTimeの依頼で頼む</text>
+
+  <rect x="60" y="430" width="512" height="128" rx="12" fill="#ffffff" stroke="#d1d5db" stroke-width="2"/>
+  <text x="80" y="466" font-size="26" font-weight="bold" fill="#374151">性質と反例(:laws)</text>
+  <text x="80" y="504" font-size="25" fill="#111827">同じ時計なら、同じ答え</text>
+  <text x="80" y="540" font-size="25" fill="#b91c1c">反例:業務の関数でdatetime.now()</text>
+
+  <rect x="60" y="570" width="512" height="196" rx="12" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="80" y="606" font-size="26" font-weight="bold" fill="#0f766e">検査(:enforcement)</text>
+  <text x="80" y="650" font-size="25" font-family="DejaVu Sans Mono, monospace" fill="#111827">deftest</text>
+  <text x="200" y="650" font-size="24" fill="#111827">時計を固定して試す</text>
+  <text x="80" y="700" font-size="25" font-family="DejaVu Sans Mono, monospace" fill="#111827">defsemgrep</text>
+  <text x="250" y="700" font-size="24" fill="#111827">規則を例で試す</text>
+  <text x="80" y="746" font-size="22" fill="#4b5563">採用済みのADRは、検査が1つ以上要る</text>
+
+  <!-- pytestが集める -->
+  <text x="868" y="132" text-anchor="middle" font-size="26" fill="#4b5563">pytestが集めて走らせる</text>
+
+  <rect x="640" y="152" width="520" height="150" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="664" y="194" font-size="22" font-family="DejaVu Sans Mono, monospace" fill="#0f766e">test_ADR_BILLING_001_adr_contract</text>
+  <text x="664" y="238" font-size="26" font-weight="bold" fill="#111827">ADRの形のテスト</text>
+  <text x="664" y="280" font-size="24" fill="#111827">採用済みなのに、検査が無いと落ちる</text>
+
+  <rect x="640" y="332" width="520" height="150" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="664" y="374" font-size="22" font-family="DejaVu Sans Mono, monospace" fill="#0f766e">test_overdue_follows_the_clock</text>
+  <text x="664" y="418" font-size="26" font-weight="bold" fill="#111827">deftestのテスト</text>
+  <text x="664" y="460" font-size="24" fill="#111827">今日を10月17日に固定 → True・False</text>
+
+  <rect x="640" y="512" width="520" height="150" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="664" y="554" font-size="22" font-family="DejaVu Sans Mono, monospace" fill="#0f766e">test_no_direct_now_defsemgrep</text>
+  <text x="664" y="598" font-size="26" font-weight="bold" fill="#111827">defsemgrepのテスト</text>
+  <text x="664" y="640" font-size="24" fill="#111827">悪い例を検出し、良い例を検出しない</text>
+
+  <!-- ADRからテストへの矢印 -->
+  <line x1="596" y1="226" x2="636" y2="226" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M572,650 C606,650 606,407 636,407" fill="none" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M572,700 C612,700 612,587 636,587" fill="none" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <!-- Semgrepの規則 -->
+  <rect x="640" y="712" width="520" height="152" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="664" y="754" font-size="24" font-family="DejaVu Sans Mono, monospace" fill="#c2410c">.semgrep.yaml</text>
+  <text x="664" y="796" font-size="24" font-family="DejaVu Sans Mono, monospace" fill="#111827">id: billing-no-direct-now</text>
+  <text x="664" y="840" font-size="24" fill="#111827">datetime.now(...)・time.time()を探す</text>
+  <line x1="900" y1="708" x2="900" y2="666" stroke="#c2410c" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+  <text x="916" y="694" font-size="22" fill="#c2410c">同じ名前で規則を引く</text>
+
+  <rect x="640" y="904" width="520" height="112" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="664" y="946" font-size="26" font-weight="bold" fill="#111827">semgrep scan(CI・コミットの前)</text>
+  <text x="664" y="990" font-size="24" fill="#111827">billing.pyなど、コード全体に当てる</text>
+  <line x1="900" y1="866" x2="900" y2="900" stroke="#c2410c" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <!-- verify-wiring -->
+  <rect x="36" y="824" width="560" height="192" rx="16" fill="#eff6ff" stroke="#1d4ed8" stroke-width="3"/>
+  <text x="62" y="868" font-size="26" font-weight="bold" fill="#1d4ed8">doeff-adr verify-wiring</text>
+  <text x="62" y="912" font-size="24" fill="#111827">全てのADRのファイルが、</text>
+  <text x="62" y="950" font-size="24" fill="#111827">pytestに集められたかを確かめる</text>
+  <text x="62" y="992" font-size="22" fill="#4b5563">testpaths = ["docs/adr"] が抜けると落ちる</text>
+
+  <text x="600" y="1074" text-anchor="middle" font-size="24" fill="#4b5563">緑 = pytestで走る検査 ・ 橙 = コード全体への走査 ・ 青 = ADRの漏れの確かめ</text>
+</svg>

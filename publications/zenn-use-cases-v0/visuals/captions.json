@@ -160,5 +160,11 @@
     ],
     "commits_title": "35日の、日ごとのcommitの数",
     "commits_caption": "3つのリポジトリのmainへ入ったcommitを、日ごとに数えました。範囲は2026年9月12日〜10月16日(日本時間)の35日です。"
+  },
+  "adr": {
+    "concept_title": "1件のADRから、3つのテストと1つの走査が出る",
+    "concept_caption": "ADRのファイルをpytestが集め、3つのテストにします。コード全体への走査は、同じ名前の規則を`semgrep scan`で当てます。",
+    "flow_title": "決まりを破る3つの変更と、止まる所",
+    "flow_caption": "破り方ごとに、止める検査が違います。1つ目はpytestでは通るので、コードの形を見る走査が要ります。"
   }
 }

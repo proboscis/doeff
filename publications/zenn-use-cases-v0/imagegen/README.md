@@ -61,3 +61,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - 5週目の開発の記録（doeff-fleet.md）は、概念図・処理図に、35日のcommitの数の図を足して3枚にした。
 - 正本と作り方は[fleet-svg-source.txt](fleet-svg-source.txt)に書いた。`tool`は時間の記事と同じ。
 - 3枚目はcaptions.jsonの`extra_kinds`に書き、`verify_publication.py`が台帳と本文を照らす。
+
+## 設計の記録の記事の2枚をSVGで描く（2026-10-17追記）
+
+- 10本目の新しい回「設計の記録をテストとして走らせる」(doeff-adr.md)の2枚(adr-concept・adr-flow)を、手で書いたSVGから作った。
+- 正本と作り方は[adr-svg-source.txt](adr-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
+- 新しい回の図なので、まだリポジトリに無い他の記事の図の枚数（2026-10-17に数えて38枚）は変わらない。

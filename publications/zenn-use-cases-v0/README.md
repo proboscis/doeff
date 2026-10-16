@@ -31,6 +31,7 @@
 | 副作用かドメインAPIか、操作の境界を設計したい | [エフェクトの境界](doeff-boundaries.md) |
 | 同じ計算を、マクロで簡潔に書きたい | [Hy](doeff-hy.md) |
 | 定義を発見し、設計上の約束を検査したい | [開発支援・実行基盤](doeff-tooling.md) |
+| 設計で決めた約束が、コードと食い違っていく | [設計の記録をテストとして走らせる](doeff-adr.md) |
 | coroutineとの違いを知りたい | [coroutine比較](doeff-coroutines.md) |
 | ハンドラを重ねた時の意味を知りたい | [ハンドラ合成](doeff-handlers.md) |
 | AIエージェントが決まりを読み落とす | [AIに要る時だけ規則を見せるhook](doeff-hooks.md) |

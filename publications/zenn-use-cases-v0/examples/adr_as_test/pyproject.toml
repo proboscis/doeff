@@ -1,0 +1,16 @@
+# 記事「設計の記録をテストとして走らせる」の完全な例。doeffのリポジトリの根で uv sync --group dev をしてから、
+# このディレクトリで uv run --project ../../../.. pytest -q を実行する。
+[project]
+name = "adr-as-test-example"  # 例のための名前。公開しない。
+version = "0.0.0"  # 版は使わない。
+requires-python = ">=3.11"  # doeffと同じ範囲。
+
+[tool.pytest.ini_options]
+testpaths = ["docs/adr"]  # ADRのディレクトリを、pytestが集める場所に入れる。
+# 自分のprojectでは docs/adr/defadr_*.hy と名付ければ、この行は要らない。この例はdoeffのリポジトリの中に
+# 置くため、doeff自身のADRの集め手が拾わない名前(adr_*.hy)にして、ここで集めさせる。
+doeff_adr_hy_files = ["docs/adr/adr_*.hy"]
+
+[tool.ruff]
+# 読者のprojectと同じく、doeffを外の部品として並べる(doeffのリポジトリの設定ではdoeffが内の部品になる)。
+line-length = 100  # doeffのリポジトリと同じ長さ。
