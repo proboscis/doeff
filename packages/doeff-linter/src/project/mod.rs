@@ -20,6 +20,7 @@ pub mod module_probe;
 pub mod named_modules;
 pub mod names;
 pub mod param_calls;
+pub mod spelled_callers;
 pub mod registry;
 pub mod notice;
 pub mod notice_findings;
@@ -825,8 +826,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     let mut found = judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref());
                     // repo の事実は、書いた file が名指す module の file だけから作る(defk の名・record の欄 — module まで含めた名で引かれ、
-                    // 引く名は書いた file の記号を解いた名)。逆向きの依存(失敗の型 = 別の file の defeffect が宣言する・引数に渡された Program =
-                    // 別の file の呼び手が渡す)は、引かれた時だけ repo 全体から作る(`Deferred` — 引かれない file は読まない)。
+                    // 引く名は書いた file の記号を解いた名)。逆向きの依存のうち、失敗の型(別の file の defeffect が宣言する)は、引かれた時だけ
+                    // repo 全体から作る(`Deferred` — 引かれない file は読まない)。引数に渡された Program(別の file の呼び手が渡す)は、引かれた時に
+                    // 呼び先の名を字面に含む file だけから作る(`SpelledCallers` — 引く呼び先は書いた file の関数で、呼び手はその名を必ず綴る)。
                     let named_files = if enabled.contains(&ProjectRule::DefkCalledBare) {
                         let known = hy_files::by_module(root);
                         named_modules::files_of(&known, &named_modules::of_file(&known, &file.rel, source), None)
@@ -836,10 +838,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let failure = deferred::Deferred::new(|| crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags)));
                     found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
                     let defks = crate::timing::timed("defk-names", || defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
-                    let program_params = deferred::Deferred::new(|| {
-                        let all_defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
-                        crate::timing::timed("program-params", || program_params_for(root, enabled, &all_defks))
-                    });
+                    let program_params = spelled_callers::SpelledCallers::new(root, enabled);
                     let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     found.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {

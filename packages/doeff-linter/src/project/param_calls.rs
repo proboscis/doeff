@@ -46,24 +46,40 @@ pub struct ProgramParams {
     by_callee: BTreeMap<String, Vec<PassedProgram>>,
 }
 
-impl ProgramParams {
-    /// 1 つの source の呼びから、引数に defk か fnk を渡している物を積む(rel は渡した所の説明のため)。
-    pub fn collect(&mut self, source: &str, rel: &str, scope: Scope<'_>, defks: &DefkNames) {
-        let mut reader = Reader::new(source, 0, source.len());
-        let forms = reader.read_all();
-        let hy = Hy { src: source };
-        for (definition, form) in top_definitions(&hy, &forms) {
-            let caller = format!("{} の {}", rel, definition);
-            self.collect_in(&hy, form, scope, defks, &caller);
-        }
-    }
+/// 呼びの引数のうち、Program を渡しているかもしれない形 — 記号(綴りのまま)か `(fnk …)`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Argument<'a> {
+    Symbol(&'a str),
+    Fnk,
+}
 
-    /// form とその子孫の呼びを見る。
-    fn collect_in(&mut self, hy: &Hy<'_>, form: &Form, scope: Scope<'_>, defks: &DefkNames, caller: &str) {
-        if let Some(items) = live(form) {
-            let head = items.first().and_then(|h| hy.symbol(h)).filter(|h| !h.starts_with('.'));
-            if let Some(head) = head {
-                let callee = scope.qualify(head);
+/// 1 つの source の呼びのうち、呼び先(module まで解いた名)が `wants` に合う物の、記号か `(fnk …)` の引数を全部 `visit` に渡す
+/// (呼び先・引数の位置・引数・渡した所の説明 — rel は説明のため)。呼びの順に、呼び 1 つの引数はその並びで、呼びの子孫の呼びはその後に渡す。
+/// 記号が defk かは問わない — 問うのは呼び手(repo 全体の集まりか、引かれた module だけか)。
+pub fn each_argument<'s>(source: &'s str, rel: &str, scope: Scope<'_>, wants: &dyn Fn(&str) -> bool, visit: &mut dyn FnMut(&str, Slot, Argument<'s>, &str)) {
+    let mut reader = Reader::new(source, 0, source.len());
+    let forms = reader.read_all();
+    let hy = Hy { src: source };
+    for (definition, form) in top_definitions(&hy, &forms) {
+        let caller = format!("{} の {}", rel, definition);
+        arguments_in(&hy, form, scope, wants, &caller, visit);
+    }
+}
+
+/// form とその子孫の呼びを見る。
+fn arguments_in<'s>(
+    hy: &Hy<'s>,
+    form: &Form,
+    scope: Scope<'_>,
+    wants: &dyn Fn(&str) -> bool,
+    caller: &str,
+    visit: &mut dyn FnMut(&str, Slot, Argument<'s>, &str),
+) {
+    if let Some(items) = live(form) {
+        let head = items.first().and_then(|h| hy.symbol(h)).filter(|h| !h.starts_with('.'));
+        if let Some(head) = head {
+            let callee = scope.qualify(head);
+            if wants(&callee) {
                 let mut position = 0;
                 let mut index = 1;
                 while index < items.len() {
@@ -79,20 +95,34 @@ impl ProgramParams {
                         }
                     };
                     index += 1;
-                    let passed = arg.and_then(|a| match (hy.symbol(a), hy.head(a)) {
-                        (Some(symbol), _) if defks.contains(&scope.qualify(symbol)) => Some(symbol.to_string()),
-                        (None, Some("fnk")) => Some("fnk".to_string()),
+                    let argument = arg.and_then(|a| match (hy.symbol(a), hy.head(a)) {
+                        (Some(symbol), _) => Some(Argument::Symbol(symbol)),
+                        (None, Some("fnk")) => Some(Argument::Fnk),
                         _ => None,
                     });
-                    if let Some(passed) = passed {
-                        self.by_callee.entry(callee.clone()).or_default().push(PassedProgram { slot, passed, caller: caller.to_string() });
+                    if let Some(argument) = argument {
+                        visit(&callee, slot, argument, caller);
                     }
                 }
             }
         }
-        for child in children(form) {
-            self.collect_in(hy, child, scope, defks, caller);
-        }
+    }
+    for child in children(form) {
+        arguments_in(hy, child, scope, wants, caller, visit);
+    }
+}
+
+impl ProgramParams {
+    /// 1 つの source の呼びから、引数に defk か fnk を渡している物を積む(rel は渡した所の説明のため)。
+    pub fn collect(&mut self, source: &str, rel: &str, scope: Scope<'_>, defks: &DefkNames) {
+        each_argument(source, rel, scope, &|_| true, &mut |callee, slot, argument, caller| {
+            let passed = match argument {
+                Argument::Symbol(symbol) if defks.contains(&scope.qualify(symbol)) => symbol.to_string(),
+                Argument::Symbol(_) => return,
+                Argument::Fnk => "fnk".to_string(),
+            };
+            self.by_callee.entry(callee.to_string()).or_default().push(PassedProgram { slot, passed, caller: caller.to_string() });
+        });
     }
 
     /// 別の file で集めた事実を足す(file ごとに並べて集めるため)。
@@ -107,6 +137,12 @@ impl ProgramParams {
         self.by_callee.get(callee).map(Vec::as_slice).unwrap_or(&[])
     }
 
+    /// 事実を持つ呼び先(検のため)。
+    #[cfg(test)]
+    pub fn callees(&self) -> Vec<String> {
+        self.by_callee.keys().cloned().collect()
+    }
+
     /// 事実の数(報告のため)。
     pub fn len(&self) -> usize {
         self.by_callee.values().map(Vec::len).sum()
@@ -118,21 +154,64 @@ impl ProgramParams {
     }
 }
 
-/// 呼び先の、呼び手が Program を渡している引数の事実を引ける物 — repo 全体から集めた物(`ProgramParams`)か、引かれた時に集める物
-/// (`Deferred<ProgramParams>`・1 file の実行 — 呼び手は書いた file が名指さない file にもいるので、引く時は repo 全体を読む)。
-pub trait ProgramParamsLookup {
-    fn passed_to(&self, callee: &str) -> &[PassedProgram];
+/// 呼び手が引数に渡した記号 1 つ — 綴りのままと、module まで解いた名(defk の集まりを引く鍵)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Spelled {
+    text: String,
+    qualified: String,
 }
 
-impl ProgramParamsLookup for ProgramParams {
-    fn passed_to(&self, callee: &str) -> &[PassedProgram] {
-        self.of(callee)
+/// 呼び手が引数に渡した物の候補 1 つ — 記号が defk かの判定を待つ(判定は呼び手が持つ集まりで決まり、file の中身だけでは決まらない)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    /// 呼び先(module まで解いた名)。
+    pub callee: String,
+    slot: Slot,
+    /// 渡した記号。`(fnk …)` なら None。
+    symbol: Option<Spelled>,
+    caller: String,
+}
+
+impl Candidate {
+    /// 渡した記号を module まで解いた名(defk かを引く鍵)。`(fnk …)` は None。
+    pub fn qualified(&self) -> Option<&str> {
+        self.symbol.as_ref().map(|symbol| symbol.qualified.as_str())
+    }
+
+    /// 判定を済ませて事実にする。記号が defk でなければ None(`(fnk …)` は常に事実)。`ProgramParams::collect` が積む物と同じ。
+    pub fn settle(self, is_defk: impl Fn(&str) -> bool) -> Option<PassedProgram> {
+        let passed = match self.symbol {
+            Some(symbol) if is_defk(&symbol.qualified) => symbol.text,
+            Some(_) => return None,
+            None => "fnk".to_string(),
+        };
+        Some(PassedProgram { slot: self.slot, passed, caller: self.caller })
     }
 }
 
-impl ProgramParamsLookup for super::deferred::Deferred<'_, ProgramParams> {
-    fn passed_to(&self, callee: &str) -> &[PassedProgram] {
-        self.get().of(callee)
+/// 1 つの source の、呼び先が `wants` に合う呼びの候補を、`ProgramParams::collect` が積む順に全部(記号が defk かは問わない)。
+pub fn candidates_in(source: &str, rel: &str, scope: Scope<'_>, wants: &dyn Fn(&str) -> bool) -> Vec<Candidate> {
+    let mut found = Vec::new();
+    each_argument(source, rel, scope, wants, &mut |callee, slot, argument, caller| {
+        let symbol = match argument {
+            Argument::Symbol(text) => Some(Spelled { text: text.to_string(), qualified: scope.qualify(text) }),
+            Argument::Fnk => None,
+        };
+        found.push(Candidate { callee: callee.to_string(), slot, symbol, caller: caller.to_string() });
+    });
+    found
+}
+
+/// 呼び先(module まで含めた名)の、呼び手が Program を渡している引数の事実を引ける物 — repo 全体から集めた物(`ProgramParams`)か、
+/// 引かれた時に呼び先の名を字面に含む file だけから集める物(`SpelledCallers`・1 file の実行 — 呼び手は書いた file が名指さない file にもいる)。
+pub trait ProgramParamsLookup {
+    /// `callees` それぞれの事実(同じ順 — 集める物は引く呼び先をまとめて知って、file を読むのを 1 度にする)。
+    fn passed_to_all(&self, callees: &[String]) -> Vec<Vec<PassedProgram>>;
+}
+
+impl ProgramParamsLookup for ProgramParams {
+    fn passed_to_all(&self, callees: &[String]) -> Vec<Vec<PassedProgram>> {
+        callees.iter().map(|callee| self.of(callee).to_vec()).collect()
     }
 }
 
@@ -223,12 +302,22 @@ const PROGRAM_POSITIONS: &[&str] = &["!", "yield", "yield-from", "return", "awai
 const PROGRAM_TAKING_FORMS: &[&str] = &["with-handlers", "maybe", "result", "on-raise", "absent-as", "do!"];
 const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let", "match"];
 
+/// 自分の引数のどれかを Program の位置の外で素で呼んでいる定義 1 つ — 呼び手の事実を引く定義。
+struct Asking<'a, 'f> {
+    definition: String,
+    container: String,
+    items: Vec<&'f Form>,
+    list_at: usize,
+    positional: Vec<&'a str>,
+    all: Vec<&'a str>,
+}
+
 /// 1 つの source の、呼び手が Program を返す関数を渡している引数を、本体が素で呼んでいる所を全部拾う(同じ定義の同じ引数は 1 件)。
 pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params: &dyn ProgramParamsLookup) -> Vec<ParamCall> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     let hy = Hy { src: source };
-    let mut found: Vec<ParamCall> = Vec::new();
+    let mut asking: Vec<Asking<'_, '_>> = Vec::new();
     for (definition, form) in top_definitions(&hy, &forms) {
         let items = live(form).unwrap_or_default();
         let container = items.first().and_then(|h| hy.symbol(h)).unwrap_or("").to_string();
@@ -243,10 +332,20 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
         if !calls_a_parameter_bare(&hy, scope, defks, &items[list_at + 1..], &all, &definition, &container) {
             continue;
         }
-        let passed = params.passed_to(&format!("{}.{}", scope.module, definition));
+        asking.push(Asking { definition, container, items, list_at, positional, all });
+    }
+    if asking.is_empty() {
+        return Vec::new();
+    }
+    // 引く呼び先は定義の分をまとめて渡す(呼び手を探す側が、repo の file を読むのを 1 度で済ませるため)。
+    let callees: Vec<String> = asking.iter().map(|asked| format!("{}.{}", scope.module, asked.definition)).collect();
+    let passed_all = params.passed_to_all(&callees);
+    let mut found: Vec<ParamCall> = Vec::new();
+    for (asked, passed) in asking.iter().zip(&passed_all) {
         if passed.is_empty() {
             continue;
         }
+        let Asking { definition, container, items, list_at, positional, all } = asked;
         // 引数の名 → 渡した物(最初の 1 つ)。
         let mut targets: BTreeMap<String, &PassedProgram> = BTreeMap::new();
         for fact in passed {
@@ -261,7 +360,7 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
         if targets.is_empty() {
             continue;
         }
-        let walker = Walker { hy: &hy, scope, defks, targets: &targets, definition: &definition, container: &container };
+        let walker = Walker { hy: &hy, scope, defks, targets: &targets, definition, container };
         for body in items.iter().skip(list_at + 1) {
             walker.walk(body, false, &mut found);
         }
