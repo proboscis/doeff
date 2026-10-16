@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from pathlib import Path
 
@@ -110,6 +111,38 @@ def test_linux_free_threaded_doeff_vm_wheels_name_only_python_3_14t() -> None:
     build = next(step for step in jobs["build-linux-freethreaded"]["steps"] if step.get("name") == "Build free-threaded wheels")
 
     assert build["with"]["args"] == "--release --out dist -i python3.14t"
+
+
+_GIL_WHEEL_TAGS = ("cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314")
+_FREE_THREADED_WHEEL_TAGS = ("cp313-cp313t", "cp314-cp314t")
+_UNSUPPORTED_WHEEL_TAGS = ("cp310-cp310", "cp315-cp315", "cp315-cp315t")
+
+
+def test_doeff_vm_wheel_artifacts_never_share_a_file_name() -> None:
+    """publish-doeff-vm downloads every doeff-vm-* artifact into one dir (merge-multiple), so two
+    artifacts holding the same wheel name overwrite each other into a corrupt zip. The free-threaded
+    jobs' --find-interpreter also builds the runner's GIL interpreters; PyPI refused the result
+    ("ZIP archive not accepted: Trailing data" — Publish doeff run 38943821700)."""
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "build-vm.yml").read_text(encoding="utf-8"))["jobs"]
+    uploads = {
+        name: step["with"]
+        for name, job in jobs.items()
+        for step in job.get("steps", [])
+        if step.get("name") == "Upload wheels"
+    }
+    assert {"build-linux", "build-linux-freethreaded", "build-macos", "build-windows"} <= set(uploads)
+
+    for name, upload in uploads.items():
+        pattern = upload["path"].rsplit("/", 1)[1]
+        selected = {
+            tag
+            for tag in _GIL_WHEEL_TAGS + _FREE_THREADED_WHEEL_TAGS + _UNSUPPORTED_WHEEL_TAGS
+            if fnmatch.fnmatchcase(f"doeff_vm-0.5.0-{tag}-macosx_11_0_arm64.whl", pattern)
+        }
+        expected = _FREE_THREADED_WHEEL_TAGS if name.endswith("-freethreaded") else _GIL_WHEEL_TAGS
+
+        assert selected == set(expected), name
+        assert upload.get("if-no-files-found") == "error", name
 
 
 def test_pypi_publish_actions_use_current_skip_existing_input_name() -> None:
