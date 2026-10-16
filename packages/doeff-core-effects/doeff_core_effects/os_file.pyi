@@ -40,7 +40,15 @@ from doeff_core_effects.offloaded_call import offloaded as offloaded
 from doeff_core_effects.offloaded_call import run_detached as run_detached
 from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
 LOCK_THREADS: ThreadPerCall
+IOPRIO_CLASS_SHIFT: int
+IOPRIO_CLASS_IDLE: int
+IOPRIO_WHO_PROCESS: int
+IOPRIO_SET_SYSCALL: dict[str, int]
+
+def lower_io_priority() -> bool:
+    ...
 TREE_THREADS: ThreadPerCall
+FILE_THREADS: ThreadPerCall
 
 def failed(path: str, error: OSError) -> _Program[FileFailed, object]:
     ...
@@ -105,3 +113,4 @@ def release_abandoned(answer: LockHeld | FileFailed) -> None:
     ...
 offloaded_lock_handler: _Handler
 offloaded_tree_handler: _Handler
+offloaded_file_handler: _Handler
