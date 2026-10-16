@@ -21,6 +21,11 @@ jobs:
   pytest-matrix:
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.experimental }}
+    # 検が子の process で呼ぶ `uv run`(CLI の検ほか)を、sync せずにこの venv で走らせる — workspace の sync は 3.11 を断り、3.12 から
+    # でも workspace の全部を組み直して検の時間切れになる。
+    env:
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-ci
+      UV_NO_SYNC: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -31,8 +36,11 @@ jobs:
             experimental: true
 
     steps:
+      # 履歴と tag を全部取る(検が git の履歴と tag を読む — tests/test_agentd_retirement.py の rollback の tag)。
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -40,50 +48,46 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # 検の道具は核の外: pytest の plugin・Hy の検の file(test_*.hy)を集める doeff-adr の plugin・根の検が import する cloudpickle と
-      # pyyaml。
+      # 核の 5 個に足す検の道具: pytest の plugin・Hy の検の file(test_*.hy)を集める doeff-adr の plugin・根の検が import する部品
+      # (doeff-time・doeff-traverse・cloudpickle・pyyaml)・build の口と型の検が子の process で呼ぶ maturin と pyright(版は uv.lock の
+      # dev の物)。doeff-core-effects は答え手の stub の検が aiohttp を読むので extra の http-server ごと入れる。venv の bin を PATH に
+      # 置き、検が呼ぶ python・hy・doeff をこの venv の物にする。
       - name: Install the core packages into a fresh venv
         id: install
         run: |
           uv venv --python ${{ matrix.python-version }} .venv-ci
-          uv pip install --python .venv-ci/bin/python \
-            ./packages/doeff-vm ./packages/doeff-core-effects ./packages/doeff-hy ./packages/doeff-hy-pytest . \
-            ./packages/doeff-adr pytest pytest-asyncio pytest-timeout pytest-xdist cloudpickle pyyaml
+          echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
+          uv export --frozen --no-hashes --no-emit-workspace --only-group dev | grep -E '^(maturin|pyright)==' > .venv-ci/tool-pins.txt
+          uv pip install --python .venv-ci/bin/python -c .venv-ci/tool-pins.txt \
+            ./packages/doeff-vm "./packages/doeff-core-effects[http-server]" ./packages/doeff-hy ./packages/doeff-hy-pytest . \
+            ./packages/doeff-adr ./packages/doeff-time ./packages/doeff-traverse \
+            pytest pytest-asyncio pytest-timeout pytest-xdist cloudpickle pyyaml maturin pyright
 
       - name: Verify doeff-vm import
         run: .venv-ci/bin/python -c "import doeff_vm; import doeff_vm.doeff_vm"
 
-      # 外す file = 核の外の部品(doeff-traverse・doeff-time・doeff-gemini・doeff-agents)か、開発の道具(pyright・semgrep・
-      # pre-commit・doeff-linter)を要る検。版の違いではなく、この venv に入れない物で落ちる。足す時は訳と一緒にここへ書く。
+      # 印 semgrep の検(repo の規則を semgrep で検める)は外す — 版の違いではなく repo の規則を見る検で、日次の検が持つ。外す file =
+      # 核の外の重い部品(doeff-gemini・doeff-agents)か、開発の道具(semgrep・pre-commit・doeff-linter)を要る検。足す時は訳と一緒にここへ書く。
       - name: Run tests (doeff and doeff-vm)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
-          .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" \
+          .venv-ci/bin/python -m pytest -q -n auto -m "not e2e and not semgrep" \
             tests packages/doeff-vm/tests packages/doeff-vm-core/tests \
-            --ignore=tests/effects/test_traverse.py \
-            --ignore=tests/test_fnk_do_bang_scope.py \
-            --ignore=tests/test_for_do_runtime.py \
-            --ignore=tests/test_handle_scope.py \
-            --ignore=tests/test_nested_definition_scope.py \
-            --ignore=tests/test_handler_tail_transfer_reclamation.py \
             --ignore=tests/test_llm_multi_provider_handlers.py \
             --ignore=tests/test_mcp_json_type_table.py \
-            --ignore=tests/test_effectful.py \
             --ignore=tests/test_lint_entrypoint_wiring.py
 
       - name: Run tests (doeff-core-effects)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" packages/doeff-core-effects/tests
+        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e and not semgrep" packages/doeff-core-effects/tests
 
       - name: Run tests (doeff-hy)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: |
-          .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" packages/doeff-hy/tests \
-            --ignore=packages/doeff-hy/tests/test_helper_imports_table.py
+        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e and not semgrep" packages/doeff-hy/tests
 
       - name: Run tests (doeff-hy-pytest)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e" packages/doeff-hy-pytest/tests
+        run: .venv-ci/bin/python -m pytest -q -n auto -m "not e2e and not semgrep" packages/doeff-hy-pytest/tests
 
       # cargo bench の検の binary は CPython を埋め込むので、venv の Python と、その libpython の dir を渡す(Makefile の test-rust と同じ)。
       - name: Run benchmark smoke checks
