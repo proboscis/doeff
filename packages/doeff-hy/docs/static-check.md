@@ -23,6 +23,37 @@ PYTHONPATH=.:clients/hy doeff-hy-check --root . --import-root clients/hy control
 - 実行する Python(`--python`、既定は道具を動かしている Python)の `sys.path` で import を解く。
   `.hy` の依存は、検める file が import する根の下の `.hy` を道具が一緒に展開する。
 
+## 運び(`--carry <file>`)— 入力の変わらない `.hy` を当て直さない
+
+repo 全体を毎回検める使い手(agora-controllers の日次の型の段 hy-type-trend — 範囲の `.hy` 約 3,000 本)のための近道。
+`--carry` に名指した file(運びの文書)に、file ごとの「入力の digest」と、その回の pyright の診断を残す。次の回は、入力が
+前の回と同じ `.hy` を pyright に渡さず、前の回の診断を運ぶ。運んだ答えは、全部を当てた答えと同じでなければならない
+(検 = `tests/test_static_check_carry.py` — 本物の pyright で、本体だけの変更・使う名の署名の変更・推移の型の変更・解けなかった
+import が解ける変更の各回を、全部当てた答えと比べる)。
+
+入力(`doeff_hy/static_carry.py` の `InputGraph.inputs_of`)は 4 つ:
+
+1. その file 自身 — `.hy` の source・展開した Python・位置の対応表。
+2. その file が使う名の宣言の表面と、表面が使う名の宣言(推移で全部)。表面 = pyright が使い手の側でその名の型を決めるのに読む
+   部分 — 型を全部宣言した関数は decorator と署名だけ(本体は「空か否か」の印)、class は全体(self の属性へ代入しない型付きの
+   method は署名だけ)、型を宣言しない関数・変数・import は文の全体。docstring と行の番号は入れない。module の段の import の文は
+   名ごとに分ける。名の宣言は根の下の展開と、`--python` の探し道のうち prefix の外の dir(editable で入れた doeff の checkout)の
+   `.py` / `.pyi` を読む — doeff の pin が上がっても、変わった宣言を使う `.hy` だけを当て直す。
+3. その file が import する module の解き先 — pyright と同じ探し道(根・extraPaths・typings・python の探し道・取り込む file の dir
+   からの後退)で当たりうる候補の file のうち、在る物の並び(新しい file が import の行き先を変えれば入力が変わる)と py.typed。
+4. 環境の指紋 — 運びの形の版・pyright の版・pyright の設定・python の版と探し道・prefix の下の dir(site-packages・標準ライブラリ)の
+   中身の名(dist-info の名 = 配布物の版)と `.pth` の中身・診断を作って `.hy` の位置へ戻す関数の source。どれかが替われば全部を当てる。
+
+安全の側へ倒す所: 構文の誤りで読めない module を使う file は毎回当てる。module を値で使う参照と star import は module の全部の
+名に依る。運びの file が読めなければ名乗って全部を当てる(測りを止めない)。
+
+見直し(`--carry-refresh-runs N`・既定 12): 入力の変わらない file のうち、当てた回が一番古い ceil(本数 / N) 本を毎回当て直し、
+運んでいた診断と答えが違った file を数えて名乗る(運びの文書の `summary.refresh_mismatches`)— 入力の決めが見落とす依存があれば
+ここに出る。
+
+運びの文書の欄 `summary`(`run`・`checked`・`carried`・`reasons`・`refresh_mismatches`・`mismatched`)は使い手が読む欄で、
+ほかの欄は道具の物。
+
 ## 仕組み
 
 1. 各 `.hy` を Hy の compiler で展開する。doeff-hy の macro はこの時だけ「型検査のための展開」を出す
