@@ -42,7 +42,9 @@
         "packages/doeff-core-effects/doeff_core_effects/warm_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/warm_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/ws_client_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/ws_client_effects.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/ws_client_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/proc_table_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/proc_table_effects.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/effects.py",
@@ -71,7 +73,8 @@
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/stop_signal_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/ws_client_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/ws_client_effects.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/ws_client_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/proc_table_effects.hy"
       ],
       "responsibility": "doeff の土台の effect の宣言 — 読み書き・file・process・HTTP の要求と待ち受け・WebSocket の client・SQL・計量・乱数・時刻を使う計算・heap・stack の書き出し・停止の合図の、要求・答え・失敗の型(実行は handler の側)。",
       "typed": true
@@ -146,7 +149,9 @@
         "packages/doeff-core-effects/doeff_core_effects/process_stat.hy",
         "packages/doeff-core-effects/doeff_core_effects/process_stat.pyi",
         "packages/doeff-core-effects/doeff_core_effects/aiohttp_ws_client.hy",
-        "packages/doeff-core-effects/doeff_core_effects/aiohttp_ws_client.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/aiohttp_ws_client.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/os_proc_table.hy",
+        "packages/doeff-core-effects/doeff_core_effects/os_proc_table.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/aiohttp_http_server.hy",
@@ -196,7 +201,8 @@
         "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
         "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.pyi",
         "packages/doeff-core-effects/doeff_core_effects/http_host_gate.hy",
-        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/http_host_gate.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/os_proc_table.hy"
       ],
       "responsibility": "土台の effect に本番で答える handler — OS の file・process・乱数、HTTP の要求(httpx)と待ち受け(aiohttp)、WebSocket の client(aiohttp)、SQL(PostgreSQL・SQLite・ClickHouse)と transaction、計量の Prometheus の書き出し、stack の書き出し、停止の合図、計算の thread pool への逃がし。",
       "typed": true
@@ -284,7 +290,9 @@
         "packages/doeff-core-effects/doeff_core_effects/seeded_random.hy",
         "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi",
         "packages/doeff-core-effects/doeff_core_effects/scripted_ws_client.hy",
-        "packages/doeff-core-effects/doeff_core_effects/scripted_ws_client.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/scripted_ws_client.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_proc_table.hy",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_proc_table.pyi"
       ],
       "public": [
         "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
@@ -304,7 +312,8 @@
         "packages/doeff-core-effects/doeff_core_effects/seeded_random.hy",
         "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi",
         "packages/doeff-core-effects/doeff_core_effects/scripted_ws_client.hy",
-        "packages/doeff-core-effects/doeff_core_effects/scripted_ws_client.pyi"
+        "packages/doeff-core-effects/doeff_core_effects/scripted_ws_client.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/scripted_proc_table.hy"
       ],
       "responsibility": "外の世界に触る土台の handler の差し替え — in-memory の file・最新の値・計量・stack の書き出し、台本の process・HTTP の待ち受け・WebSocket の client・heap の凍結、seed つきの乱数(本番と同じ effect に答え、検と模擬で使う)。",
       "typed": true
@@ -439,7 +448,9 @@
         "packages/doeff-core-effects/tests/fake_warm_child.py",
         "packages/doeff-core-effects/tests/ws_client_contract_handlers.hy",
         "packages/doeff-core-effects/tests/test_ws_client_contract.hy",
-        "packages/doeff-core-effects/tests/test_ws_client.hy"
+        "packages/doeff-core-effects/tests/test_ws_client.hy",
+        "packages/doeff-core-effects/tests/proc_table_contract_handlers.hy",
+        "packages/doeff-core-effects/tests/test_proc_table_contract.hy"
       ],
       "public": [],
       "responsibility": "doeff-core-effects の検 — effect の契約の検(本物と差し替えの handler が同じ答えを返すか)と、各 handler・scheduler・memo・型の宣言(.pyi)の一致の検。",
