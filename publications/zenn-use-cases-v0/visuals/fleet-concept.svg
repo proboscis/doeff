@@ -105,13 +105,13 @@
   <text x="115" y="1058" font-size="24" fill="#111827">各会話: ブランチを切る → commit → push</text>
 
   <line x1="420" y1="1075" x2="420" y2="1135" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
-  <text x="444" y="1113" font-size="26" fill="#111827">変更を列に載せる</text>
+  <text x="444" y="1113" font-size="26" fill="#111827">変更をキューに載せる</text>
 
-  <!-- ③ マージの列 -->
+  <!-- ③ マージキュー -->
   <rect x="60" y="1140" width="720" height="140" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
-  <text x="90" y="1182" font-size="30" font-weight="bold" fill="#111827">③ マージの列</text>
+  <text x="90" y="1182" font-size="30" font-weight="bold" fill="#111827">③ マージキュー</text>
   <text x="90" y="1224" font-size="26" fill="#111827">衝突の印だけを見て、mainの先端へ入れる</text>
-  <text x="90" y="1262" font-size="24" fill="#4b5563">テストは別の便で1日1回 → 安定版のブランチ</text>
+  <text x="90" y="1262" font-size="24" fill="#4b5563">全体のテストは1日1回 → 緑なら安定版のブランチへ</text>
 
   <line x1="420" y1="1280" x2="420" y2="1330" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
   <rect x="330" y="1335" width="180" height="60" rx="30" fill="#111827"/>

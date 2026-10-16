@@ -3,12 +3,12 @@
 import contextlib  # 各枠の表示を受け取る。
 import io  # 表示を文字列として集める。
 import re  # 記事のPythonブロックを抜き出す。
-import subprocess  # 門の1行を、shで走らせる。
+import subprocess  # ゲートの1行を、shで走らせる。
 import time  # 各枠にかかった実時間を表示する。
 from pathlib import Path  # リポジトリ内の原稿を参照する。
 
 ARTICLE = Path(__file__).resolve().parents[1] / "doeff-fleet.md"  # 検証する記事。
-ROOT = ARTICLE.parents[2]  # 門の1行を走らせるリポジトリの根。
+ROOT = ARTICLE.parents[2]  # ゲートの1行を走らせるリポジトリの根。
 EXPECTED = [  # 掲載順の枠ごとに、期待する表示。
     "['B', 'E']\n",  # 冒頭の枠: 上限3・作業中1で、BとEを選ぶ。
     "",  # 配り役の周期の枠: 定義だけで、表示は無い。
@@ -29,10 +29,10 @@ def main() -> None:  # 本文の枠を、前の枠の続きとして同じ名前
         took = time.perf_counter() - began  # この枠にかかった実時間。
         assert out.getvalue() == expected, (index, out.getvalue())  # 表示が期待と同じ。
         print(f"OK: python block {index}({took:.3f}秒)表示={out.getvalue().strip()!r}")  # 成功を示す。
-    gate = re.search(r"```bash\n(.*?)  #", text, re.S).group(1)  # 門の1行(コメントの前まで)を得る。
+    gate = re.search(r"```bash\n(.*?)  #", text, re.S).group(1)  # ゲートの1行(コメントの前まで)を得る。
     result = subprocess.run(["sh", "-c", gate], cwd=ROOT, check=False)  # 今の木で門を走らせる。
     assert result.returncode == 0, result.returncode  # 衝突の印が無いので0で終わる。
-    print(f"OK: bash block(門の1行・終了コード {result.returncode})")  # 成功を示す。
+    print(f"OK: bash block(ゲートの1行・終了コード {result.returncode})")  # 成功を示す。
 
 
 if __name__ == "__main__":  # ファイルを直接実行した場合だけ検証を開始する。
