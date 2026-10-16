@@ -4,10 +4,8 @@
 //! repo の Hy の全部の呼びから事実を作る(`program_params_for`)が、その作り方を 1 file の実行で踏むと、冷えた作業木の最初の 1 回で repo の Hy の
 //! 約 2900 file を全部読んで(defk の名)全部解析し直す(8〜13 秒 — hook の期限は 4 秒)。引く事実は呼び先が決まっているので、全部作る必要は無い。
 //!
-//! 呼び手の file は、呼び先の定義の名(mangle 済み)の綴りを字面に必ず含む: 呼びの頭の記号は `Scope::qualify` で解かれ、解いた名の最後の段は
-//! 記号の最後の段の mangle で、import の束縛も別名も module の段も最後の段には効かない(解き方は `smells::Scope::qualify` の 1 か所)。mangle は
-//! `-` を `_` に直す(先頭の `_` の並びと、その次の 1 字は直さない)だけなので、名の `_` は `-` とも綴れる。名に識別子でない文字が入る時(mangle が
-//! `hyx_` へ逃がした名)は綴りを決められないので、字面で絞らず全部の file を解析する。含む file だけを解析し、他は読んだだけで捨てる。
+//! 呼び手の file は、呼び先の定義の名(mangle 済み)の綴りを字面に必ず含む(`spelling` — 綴れる形と、綴りを決められない名は絞らない事)。含む file だけを解析し、
+//! 他は読んだだけで捨てる。
 //!
 //! 渡した記号が defk かは、repo 全体の defk の名(全部の file を読む)でなく、引かれた module の file だけで決める(`defk_names_over` の名指し —
 //! 記号は module まで解かれ、defk の名は `module.名` で、その module の file だけで答えが同じ)。答え(事実とその並び)は `program_params_for` が作る物と
@@ -18,14 +16,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rayon::prelude::*;
-use regex::Regex;
 
 use super::bare_calls::defk_names_in;
 use super::facts_cache::Reach;
-use super::names::{is_identifier, module_of};
+use super::names::module_of;
 use super::param_calls::{candidates_in, Candidate, PassedProgram, ProgramParamsLookup};
 use super::rule::ProjectRule;
 use super::smells::Scope;
+use super::spelling::Spelling;
 use super::{bulk_read, facts, hy_files, named_modules};
 
 /// 引かれた時に呼び先の名を字面に含む file から集める「呼び手が引数に渡した Program」(1 file の実行)。
@@ -39,58 +37,15 @@ pub struct SpelledCallers<'a> {
 /// 呼び先 1 つの字面の探り方。
 struct Needle {
     callee: String,
-    /// 名の綴りに、後ろの区切りを足した正規表現。None = 綴りを決められない名 — どの file も合う物として解析する。
-    pattern: Option<Regex>,
+    /// 呼び先の名(最後の段)の綴り。
+    spelling: Spelling,
 }
 
 impl Needle {
     fn of(callee: &str) -> Needle {
         let name = callee.rsplit('.').next().unwrap_or(callee);
-        let pattern = spelling_pattern(name).and_then(|spelling| Regex::new(&format!("{spelling}{SYMBOL_END}")).ok());
-        Needle { callee: callee.to_string(), pattern }
+        Needle { callee: callee.to_string(), spelling: Spelling::of(name) }
     }
-
-    /// source に、呼びの頭の記号の最後の段として名を綴った所が在るか。綴りで始まる正規表現は頭の字が定まって速く探せるので(前の区切りまで
-    /// 正規表現に入れると頭が定まらない)、当たりを探してから前の区切りを当たりごとに見る。当たりは後ろの区切りの字までを含むが、綴りに
-    /// 区切りの字は無いので、前の区切りが合わずに捨てた当たりが、次の当たりの頭を食う事は無い。
-    fn spelled_in(&self, source: &str) -> bool {
-        let Some(pattern) = &self.pattern else { return true };
-        pattern.find_iter(source).any(|found| starts_a_segment(source, found.start()))
-    }
-}
-
-/// 呼びの頭の記号の最後の段の後ろ。記号は空白と `( ) [ ] { } " ;` で終わる(読み取り器の `is_delimiter`)。
-/// 長い記号の途中(`rows-by-text-all` の `rows-by-text`)や module の path の段(`controllers.entry.system` の `entry`)は、名の綴りでも呼びの頭ではない。
-/// 空白は ASCII の物(読み取り器の `is_ascii_whitespace` と垂直タブ)— 数え損なう事はなく、余分に合っても解析する file が増えるだけで答えは変わらない。
-const SYMBOL_END: &str = r#"(?:[ \t\n\x0B\x0C\r()\[\]{}";]|$)"#;
-
-/// `at`(名の綴りの頭)が記号の頭か、`.` の次か — 最後の段の前。
-fn starts_a_segment(source: &str, at: usize) -> bool {
-    match at.checked_sub(1).map(|before| source.as_bytes()[before]) {
-        None => true,
-        Some(byte) => byte.is_ascii_whitespace() || matches!(byte, 0x0B | b'.' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'"' | b';'),
-    }
-}
-
-/// mangle 済みの名 `name` に mangle される綴り全部に合う正規表現。綴りを決められない名は None。
-fn spelling_pattern(name: &str) -> Option<String> {
-    let stripped = name.trim_start_matches('_');
-    // 識別子でない文字は mangle が `hyx_` へ逃がす(逃がす前の綴りは名から戻せない)。
-    if !is_identifier(name) || stripped.starts_with("hyx_") {
-        return None;
-    }
-    let mut pattern = "_".repeat(name.len() - stripped.len());
-    let mut rest = stripped.chars();
-    if let Some(first) = rest.next() {
-        pattern.push_str(&regex::escape(&first.to_string()));
-    }
-    for c in rest {
-        match c {
-            '_' => pattern.push_str("[-_]"),
-            c => pattern.push_str(&regex::escape(&c.to_string())),
-        }
-    }
-    Some(pattern)
 }
 
 /// file 1 つを読んだ結果。
@@ -135,7 +90,7 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
                 bulk_read::fan_out_wide(&files, |(_, path)| match std::fs::read_to_string(path) {
                     Ok(source) => {
                         let mentions_defk = source.contains("(defk");
-                        let spelled = needles.iter().any(|needle| needle.spelled_in(&source));
+                        let spelled = needles.iter().any(|needle| needle.spelling.in_source(&source));
                         Scan { source: spelled.then_some(source), mentions_defk }
                     }
                     Err(_) => Scan::default(),
@@ -184,7 +139,6 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::names::hy_mangle;
     use super::super::param_calls::ProgramParams;
     use super::super::{defk_names_for, program_params_for};
     use super::*;
@@ -304,7 +258,7 @@ mod tests {
         let (_, analyzed) = named(dir.path(), &["app.hof.rows_by_text".to_string()]);
         assert_eq!(analyzed, 5);
         let (_, analyzed) = named(dir.path(), &["app.hof.safe_one".to_string()]);
-        assert_eq!(analyzed, 2, "safe-one を綴るのは hof（定義）と user_b だけ");
+        assert_eq!(analyzed, 2, "safe-one を綴るのは hof(定義)と user_b だけ");
     }
 
     /// 名に識別子でない文字が入る(mangle が `hyx_` へ逃がした)名は、綴りを決められないので字面で絞らない — それでも答えは同じ。
@@ -329,28 +283,5 @@ mod tests {
         let with = repo(&[lib, user, ("other.hy", "(defk d [x] x)\n")]);
         assert_eq!(whole(with.path()).of(&callee[0]).len(), 1);
         assert_eq!(named(with.path(), &callee).0[0].as_slice(), whole(with.path()).of(&callee[0]));
-    }
-
-    /// 名の綴りの正規表現は、その名に mangle される綴り（`-` と `_` の取り合わせ）を全部拾う。
-    #[test]
-    fn the_spelling_pattern_matches_every_spelling_that_mangles_to_the_name() {
-        for name in ["rows_by_text", "a", "a_b", "a__b", "_private_fn", "__dunder__", "x_1_y", "名_前", "ab_"] {
-            let pattern = Regex::new(&format!("^{}$", spelling_pattern(name).expect(name))).unwrap();
-            let underscores: Vec<usize> = name.char_indices().filter(|(_, c)| *c == '_').map(|(at, _)| at).collect();
-            for mask in 0..(1u32 << underscores.len()) {
-                let mut spelling = name.to_string();
-                for (bit, at) in underscores.iter().enumerate() {
-                    if mask >> bit & 1 == 1 {
-                        spelling.replace_range(*at..*at + 1, "-");
-                    }
-                }
-                if hy_mangle(&spelling) == name {
-                    assert!(pattern.is_match(&spelling), "{name} に mangle される {spelling} を拾わない");
-                }
-            }
-        }
-        assert!(spelling_pattern("hyx_checkXquestion_markX").is_none());
-        assert!(spelling_pattern("_hyx_a").is_none());
-        assert!(spelling_pattern("").is_none());
     }
 }
