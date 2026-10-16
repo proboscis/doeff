@@ -117,7 +117,7 @@
                           (dfor w (.values state.workers) (+ "worker/" w.name) #(#(w) (partial worker-json w)))))
     (SourceGroup :fields #("tasks")
                  :build (fn #^ Sources [#^ ClusterState state]
-                          (dfor t (.values state.tasks) (+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
+                          (dfor t (.rows state.tasks) (+ "task/" t.id) #(#(t) (partial task-record-to-json t)))))
     (SourceGroup :fields #("meta")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor #(k m) (.items state.meta) (+ "meta/" k) #(#(m) (partial resource-meta-to-json m)))))
@@ -246,7 +246,7 @@
                                  :task-reserve (get w "taskReserve")
                                  :seen-mark (.get w "lastSeenMs")
                                  #** generation))
-    :tasks (dict tasks)
+    :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
     :next-task (.get counter "nextTask" 1)
     :task-prefix (.get counter "taskPrefix" "t")
     :revision (.get counter "revision" 0)

@@ -50,7 +50,7 @@
   "置き場の Program を今参照している物のキーの集合 — 掃除で残す物を決めるため。受け付けた Service の行と、task の行(待ち・走っている・
    終わって結果を保持している物の全部 — 行が消えるまで参照は続く)。参照の定義点はここ 1 つ。"
   (frozenset (+ (lfor j state.jobs :if j.spec.program j.spec.program)
-                (lfor t (.values state.tasks) :if t.program t.program))))
+                (lfor t (.rows state.tasks) :if t.program t.program))))
 
 
 (deff sweep-programs [#^ ClusterState state #^ int now]  ; defk にできない: coordinator の調停(Program の外の純粋な判断)が呼ぶ

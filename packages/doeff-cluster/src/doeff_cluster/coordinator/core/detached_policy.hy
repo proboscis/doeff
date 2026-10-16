@@ -14,6 +14,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import typing [NamedTuple])
+(import doeff_hy.table [TableWrite])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
@@ -40,7 +41,7 @@
 
 
 (defn #^ (| TaskRecord None) task-by-key [#^ ClusterState state #^ str key]
-  (for [t (.values state.tasks)]
+  (for [t (.rows state.tasks)]
     (when (and t.detached (= t.key key)) (return t)))
   None)
 
@@ -87,7 +88,7 @@
           (Reply state 409 (ErrorReply :message (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
   (setv open-count (len (lfor t (scan-rows state.tasks) :if (in t.phase OPEN-PHASES) t))
-        detached-count (len (lfor t (.values state.tasks) :if t.detached t)))
+        detached-count (len (lfor t (.rows state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
     (return (Reply state 429 (ErrorReply :message (.format "終わっていない task が上限 {} 本に達している" TASK-MAX-OPEN) :open open-count))))
   (when (>= detached-count DETACHED-MAX-RECORDS)
@@ -101,7 +102,7 @@
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)))
-  (Reply (replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1))
+  (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
 
@@ -133,7 +134,7 @@
   (cond
     (is task None) (Reply state 200 (DetachedCancelled :key key :cancelled False :phase "unknown"))
     (in task.phase DETACHED-TERMINAL) (Reply state 200 (DetachedCancelled :key key :cancelled False :phase task.phase))
-    True (Reply (replace state :tasks (| state.tasks {task.id (end-detached task "cancelled" now "取り消された")}))
+    True (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite task.id (end-detached task "cancelled" now "取り消された")))))
                 200 (DetachedCancelled :key key :cancelled True :phase "cancelled"))))
 
 
@@ -144,5 +145,5 @@
     (is task None) (Reply state 200 (DetachedReleased :key key :released False))
     (not-in task.phase DETACHED-TERMINAL)
       (Reply state 409 (ErrorReply :message (.format "key {} はまだ終わっていない({})— 先に取り消す" key task.phase)))
-    True (Reply (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k task.id) k v)) 200
+    True (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite task.id None)))) 200
                 (DetachedReleased :key key :released True))))
