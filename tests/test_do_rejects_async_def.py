@@ -15,6 +15,7 @@ import asyncio
 import functools
 import traceback
 from collections.abc import AsyncGenerator, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -104,7 +105,10 @@ def test_the_error_is_raised_where_the_decorator_is_applied() -> None:
         do(fetch_answer)  # the line the traceback must reach
 
     frames = traceback.extract_tb(caught.value.__traceback__)
-    user_frames = [frame for frame in frames if frame.filename == __file__]
+    # resolve: the checkout may be reached through a symlink, and the frame and __file__
+    # can name the same file by different paths
+    this_file = Path(__file__).resolve()
+    user_frames = [frame for frame in frames if Path(frame.filename).resolve() == this_file]
     assert user_frames, frames
     assert user_frames[-1].line == "do(fetch_answer)  # the line the traceback must reach"
 
