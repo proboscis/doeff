@@ -112,9 +112,13 @@
     ;; 基を分け合う 2 つの表(with-writes は差分だけを写すので、差分が基の 1/COMPACT-RATIO を越えて基を作り直すまで同じ基を指す)は、基の行が
     ;; どちらも同じ物 — 鍵の集合も行も違い得るのは、どちらかの差分か消した鍵に在る鍵だけ。その鍵だけ比べて足りる(行の数に比例せず、書きの数に
     ;; 比例する — 1 拍に数件書く表の拍ごとの比べ。card ki-46d8cc853aca: agora の画面の盤の写しの比べが card 2,088 枚の全行を読んでいた)。
+    ;; 行は同一性を先に見て、違う object だけ値で比べる(changed-keys と同じ — 片方の差分を写して書き足した表は、写した行が同じ object)。
+    ;; 値だけで比べると、鍵の集合を回る順(文字列の hash の乱数で process ごとに変わる)で読む行の数が変わった。
     (when (is self._base other._base)
       (return (all (gfor key (| (.keys self._delta) self._removed (.keys other._delta) other._removed)
-                         (= (.row self key) (.row other key))))))
+                         :setv mine (.row self key)
+                         :setv theirs (.row other key)
+                         (or (is mine theirs) (= mine theirs))))))
     (and (= self._size (.size other))
          (all (gfor #(key value) (zip (.keys self) (.rows self)) (= (.row other key) value)))))
 
