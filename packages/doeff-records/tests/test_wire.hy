@@ -8,7 +8,7 @@
                               WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved
                               EventsQuiet EventAbsent EventRetired])
 (import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd
-                               ReadEventByKey])
+                               ReadEventByKey WHERE-ANY-LIMIT])
 (import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer decode-answer])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
@@ -19,6 +19,10 @@
    (ListRows "parts" :where {"color" "red"} :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
    ;; 上から読む読み(descending-by — 鍵 descendingBy は付けた時だけ送る)。
    (ListRows "parts" :where {"color" "red"} :fields #("color") :limit 3 :descending-by "note")
+   ;; 値の組の絞り(where-any — 鍵 whereAny は付けた時だけ送る)。値は JSON の値なら何でも(数・真偽・null・object)。
+   (ListRows "parts" :where {"label" "a"} :where-any {"color" ["red" 1 2.5 True None {"x" [1]}] "id" ["p1"]}
+             :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
+   (ListRows "parts" :where-any {"color" ["red" "blue"]} :limit 3 :descending-by "note")
    (PutRow "parts" #("p1") {"label" "a" "color" None} (ExpectAbsent))
    (PutRow "parts" #("p1") {"grant" "yes"} (ExpectVersion 4))
    (PutRow "parts" #("p1") {} (ExpectAny))
@@ -114,6 +118,16 @@
                            #("list-rows" {"table" "parts" "descendingBy" None})
                            #("list-rows" {"table" "parts" "descendingBy" "Note!"})
                            #("list-rows" {"table" "parts" "descendingBy" "note" "cursor" {"epoch" 1 "afterKey" "[\"p1\"]"}})
+                           ;; 値の組の絞り: 絞らない時は鍵ごと無い(空の object は綴りの外)・組は空でない配列・欄の名の形・where と同じ欄は置けない・
+                           ;; 値の数の上限。
+                           #("list-rows" {"table" "parts" "whereAny" {}})
+                           #("list-rows" {"table" "parts" "whereAny" None})
+                           #("list-rows" {"table" "parts" "whereAny" ["color"]})
+                           #("list-rows" {"table" "parts" "whereAny" {"color" []}})
+                           #("list-rows" {"table" "parts" "whereAny" {"color" "red"}})
+                           #("list-rows" {"table" "parts" "whereAny" {"Color!" ["red"]}})
+                           #("list-rows" {"table" "parts" "where" {"color" "red"} "whereAny" {"color" ["red"]}})
+                           #("list-rows" {"table" "parts" "whereAny" {"color" (list (range (+ WHERE-ANY-LIMIT 1)))}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version"}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version" "version" 0}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" [] "expect" {"kind" "any"}})
@@ -206,6 +220,19 @@
       (run (decode-answer operation body))
       (assert False (.format "形の違う答えを読んだ: {} {!r}" operation body))
       (except [WireMalformed] None))))
+
+
+(deftest test-a-list-without-value-sets-keeps-the-body-of-the-version-before
+  ;; 値の組の絞りを使わない list-rows の本文は、鍵 whereAny を足す前と同じ(古い記録の service は知らない鍵を 400 で断る — 組を使わない
+  ;; client は service の版を問わず通る)。組を使う要求だけが鍵 whereAny を持ち、値の組は JSON の配列で運ぶ。
+  (setv plain (run (encode-request (ListRows "parts" :where {"color" "red"} :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5))))
+  (assert (= #(plain.operation plain.body)
+             #("list-rows" {"table" "parts" "where" {"color" "red"} "fields" ["color"] "cursor" {"epoch" 2 "afterKey" "[\"p1\"]"} "limit" 5}))
+          plain)
+  (setv top (run (encode-request (ListRows "parts" :limit 3 :descending-by "note"))))
+  (assert (= top.body {"table" "parts" "where" {} "fields" None "cursor" None "limit" 3 "descendingBy" "note"}) top)
+  (setv any-of (run (encode-request (ListRows "parts" :where-any {"color" ["red" 1]} :limit 3))))
+  (assert (= any-of.body {"table" "parts" "where" {} "fields" None "cursor" None "limit" 3 "whereAny" {"color" ["red" 1]}}) any-of))
 
 
 (deftest test-a-put-row-from-an-older-client-with-a-null-approval-is-still-read
