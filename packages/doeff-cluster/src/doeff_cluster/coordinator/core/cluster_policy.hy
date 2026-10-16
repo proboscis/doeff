@@ -1473,8 +1473,12 @@
    待ちの期限(wait-lapse-at)と、置いた切り離していない task の担い手の生死の窓(reassign-after-ms)が切れる刻と、置ける生きた worker の
    在る待っている task のその worker の生死の窓(lease-ms)が切れる刻の最小(#3865)。どれかが now 以前なら DueNow(place-tasks が今の刻で
    変える)・どの task も期限を持たなければ DueNever。"
-  (var dues #())
-  (for [task (.values state.tasks)]
+  ;; 結果を保持しているだけの行(切り離した終わり)は走査せず、保持側の最小期限 1 値だけを期限の列に入れる。
+  ;; 終わった刻を持たない保持の行は毎拍 now から数えて動くので入れない(place-tasks も落とさない)。
+  (<- split tuple (task-split state.tasks now))
+  (setv #(scanned earliest) split)
+  (setv dues (if (is earliest None) [] [earliest]))
+  (for [task (.values scanned)]
     (<- lapse (| int None) (task-lapse-at task now))
     (val capable (if (= task.phase "queued") (lfor w (.values state.workers) :if (can-run-task task w) w) []))
     (val live (lfor w capable :if (alive now w timing.lease-ms) w))
@@ -1495,8 +1499,8 @@
                      (is waited None) now
                      True waited)
                  _ None))
-    (:= dues (+ dues (tuple (gfor due [lapse tried] :if (is-not due None) due)))))
-  (<- answer (| DueAt DueNow DueNever) (due-of-instants now dues))
+    (.extend dues (gfor due [lapse tried] :if (is-not due None) due)))
+  (<- answer (| DueAt DueNow DueNever) (due-of-instants now (tuple dues)))
   answer)
 
 
