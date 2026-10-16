@@ -88,10 +88,6 @@ evaluated lazily on first access. The result is cached for subsequent `Ask` call
 `reader` returns such a value as it is, without running it. `lazy_ask` coordinates concurrent
 `Ask` calls with a semaphore, so run it under `scheduled()`:
 
-> This example uses `Delay` from `doeff-time`. `pip install doeff` does not install it and it is
-> not on PyPI; install it from a checkout as shown in
-> [Pages That Need Other Components](index.md#pages-that-need-other-components).
-
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Tell

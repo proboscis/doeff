@@ -15,7 +15,7 @@ OpenRouter integration for [doeff](https://github.com/proboscis/doeff) providing
 
 - `LLMChat`
 - `LLMStreamingChat`
-- `LLMStructuredOutput`
+- `LLMStructuredQuery`
 
 In multi-provider stacks, OpenRouter is typically used as the outer fallback
 handler because it can proxy many model families.

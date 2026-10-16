@@ -18,7 +18,7 @@ OpenAI integration for [doeff](https://github.com/proboscis/doeff) with comprehe
 
 - `LLMChat`
 - `LLMStreamingChat`
-- `LLMStructuredOutput`
+- `LLMStructuredQuery`
 - `LLMEmbedding`
 
 The handler checks `effect.model`. Supported OpenAI model prefixes are

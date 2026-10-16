@@ -11,6 +11,11 @@ pip install doeff doeff-indexer
 > built-in default interpreter. Passing `--interpreter` (and `--env`) explicitly works with
 > `pip install doeff` alone.
 
+> `doeff-indexer` 0.1.3 skips a Python file that mentions none of `Program`, `@do`,
+> `ProgramInterpreter` and `KleisliProgram`, so a marker in such a file is not discovered (fixed in
+> this repository for the release after 0.1.3; see [MARKERS.md](MARKERS.md)). Until then, add
+> `from doeff import Program` to such a file.
+
 Automatically discover and use default interpreters and environments when running programs with the `doeff run` command.
 
 ## Table of Contents

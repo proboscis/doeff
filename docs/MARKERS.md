@@ -8,8 +8,16 @@
 pip install doeff doeff-indexer
 ```
 
-> The `doeff-indexer` command under [CLI Usage](#cli-usage) is not in the PyPI 0.1.3 wheel for
-> Linux x86_64; build it from a checkout as described in [IDE Plugins](ide-plugins.md).
+> The 0.1.3 wheels on PyPI (every platform) have two faults. Both are fixed in this repository and
+> ship with the release after 0.1.3:
+>
+> - The wheel puts the `doeff-indexer` command where its entry point does not look, so the command
+>   under [CLI Usage](#cli-usage) prints "binary not found". Until then, build it from a checkout as
+>   described in [IDE Plugins](ide-plugins.md).
+> - The indexer skips a Python file that mentions none of `Program`, `@do`, `ProgramInterpreter`
+>   and `KleisliProgram`, so a marker in such a file is not found. The first example below only
+>   imports `run`; until then, add `from doeff import Program` to such a file. `doeff run`
+>   auto-discovery has the same limit.
 
 ## Overview
 
@@ -66,14 +74,17 @@ def my_interpreter(program):  # doeff: interpreter
 
    For environments:
    ```python
-   from doeff import Pure
+   from doeff import Program, Pure
 
    # doeff: default
-   base_env = Pure({
+   base_env: Program[dict] = Pure({
        'db_host': 'localhost',
        'timeout': 10
    })
    ```
+
+   The indexer reads a variable only when it is an annotated assignment (`name: Program[dict] = ...`);
+   a plain `name = ...` is not indexed.
 
    See **[CLI Auto-Discovery Guide](14-cli-auto-discovery.md)** for complete documentation.
 
@@ -303,21 +314,25 @@ def func(program: Program):  # doeff: interpreter transform
 
 ### Indexer Commands
 
-Filter by marker:
+Find the functions that carry a marker (one command per marker):
 ```bash
-doeff-indexer --marker interpreter
+doeff-indexer find-interpreters --root .
+doeff-indexer find-transforms --root .
+doeff-indexer find-kleisli --root .
+doeff-indexer find-interceptors --root .
 ```
 
-List all marked functions:
+List everything the indexer found; each entry has a `markers` list:
 ```bash
-doeff-indexer list --show-markers
+doeff-indexer index --root . --pretty
 ```
 
 ### Verification
 
-Test marker extraction:
+Test marker extraction: put the file in a directory of its own and index that directory, then read
+the `markers` of its entries:
 ```bash
-doeff-indexer test-file.py --verbose
+doeff-indexer --root path/to/dir --pretty
 ```
 
 ## Migration Guide

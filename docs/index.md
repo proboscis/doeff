@@ -23,7 +23,7 @@ components are listed separately under
 
 ### Effect Types
 
-3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects (one example needs `doeff-time`)
+3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 4. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
 5. **[Error Handling](05-error-handling.md)** - Result, Try for error handling
 6. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
