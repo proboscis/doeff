@@ -3,7 +3,7 @@ run(doexpr) — execute a DoExpr program to completion.
 """
 
 import sys
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Never, TypeVar
 
 from doeff_vm import PyVM
 from doeff_vm._not_a_program import uncalled_do_function_call
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T")
 
 
-def run(doexpr: "Program[_T, Any]") -> _T:
+def run(doexpr: "Program[_T, Any]", *extra_args: Never, **extra_kwargs: Never) -> _T:
     """Run a DoExpr program to completion and return the result.
 
     On error, enriches the exception with __doeff_traceback__ (from Python's
@@ -23,7 +23,13 @@ def run(doexpr: "Program[_T, Any]") -> _T:
     Given a @do function itself (``run(main)``), raises a TypeError that says
     to call it first (``run(main())``). The check runs only after the VM
     rejected the value, so a program pays nothing for it.
+
+    Given more than the program (``run(prog, env={...})``, the old ``handlers=``),
+    raises a TypeError that says to install handlers by calling them on the program,
+    before the program starts. ``Never`` keeps the extra arguments a type error too.
     """
+    if extra_args or extra_kwargs:
+        raise TypeError(_extra_arguments_message(len(extra_args), tuple(extra_kwargs)))
     vm = PyVM()
     try:
         return vm.run(doexpr)
@@ -36,6 +42,20 @@ def run(doexpr: "Program[_T, Any]") -> _T:
             ) from None
         _enrich_and_print(e)
         raise
+
+
+def _extra_arguments_message(positional_count: int, keywords: tuple[str, ...]) -> str:
+    """The TypeError line for ``run`` given arguments besides the program."""
+    positional = (
+        (f"{positional_count} more positional argument{'s' if positional_count > 1 else ''}",)
+        if positional_count
+        else ()
+    )
+    extras = ", ".join((*positional, *(f"{key}=" for key in keywords)))
+    return (
+        f"run() takes only the program, not {extras}. "
+        "Install each handler by calling it on the program: run(reader(env={...})(prog))"
+    )
 
 
 def _enrich_and_print(exception):

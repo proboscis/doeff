@@ -119,7 +119,7 @@ Built-in handlers (from `doeff_core_effects.handlers`):
 | Local | `local_handler` | `Local` |
 | Listen | `listen_handler` | `Listen` |
 | Await | `await_handler()` | `Await` |
-| Scheduler | `scheduled(prog)` | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
+| Scheduler | `scheduled(prog)` (from `doeff_core_effects.scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
 
 `writer` keeps its log in state: install `state()` outside it, and read the log with
 `yield writer_log()` (from `doeff_core_effects.handlers`).
