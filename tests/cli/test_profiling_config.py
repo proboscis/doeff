@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -14,8 +16,31 @@ from doeff.cli.profiling import (
     use_profiling_config,
 )
 from doeff.cli.run_services import import_symbol
+from tests.cli.cli_child import with_settings
 
 pytestmark = pytest.mark.cli
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CHILD_DEADLINE_SECONDS = 60
+HY_RUN_ARGS = ["run", "--no-runbox", "--hy", "(import doeff [Pure]) (Pure 42)"]
+
+
+def _run_cli_in_process(argv: list[str], capsys: pytest.CaptureFixture[str]) -> str:
+    exit_code = cli.main(argv)
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert captured.out == "42\n"
+    return captured.err
+
+
+def test_profiling_is_off_when_no_config_is_injected(capsys) -> None:
+    assert not ProfilingConfig().enabled
+    assert not is_profiling_enabled()
+    with profile("library operation"):
+        pass
+    print_profiling_status()
+
+    assert "[DOEFF][PROFILE]" not in capsys.readouterr().err
 
 
 def test_profiling_can_switch_in_process_without_environ_or_reload(capsys) -> None:
@@ -39,28 +64,42 @@ def test_profiling_can_switch_in_process_without_environ_or_reload(capsys) -> No
     assert "Profiling enabled" in enabled.err
 
 
-def test_cli_launcher_injects_disable_profile_env(monkeypatch, capsys) -> None:
-    monkeypatch.setenv("DOEFF_DISABLE_PROFILE", "1")
+def test_doeff_command_prints_no_profile_lines_by_default(deadline_scale_factor: float) -> None:
+    completed = subprocess.run(
+        with_settings([sys.executable, "-m", "doeff", *HY_RUN_ARGS], {"DOEFF_PROFILE": None}),
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
+        check=False,
+    )
 
-    exit_code = cli.main([
-        "run",
-        "-c",
-        "from doeff import Ask; v = yield Ask('value'); return v",
-        "--interpreter",
-        "tests.cli.test_cli_main._env_interpreter",
-        "--set",
-        "value=7",
-        "--format",
-        "json",
-        "--no-runbox",
-    ])
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "42\n"
+    assert "[DOEFF][PROFILE]" not in completed.stderr
 
-    captured = capsys.readouterr()
-    assert exit_code == 0, captured.err
-    payload = json.loads(captured.out)
-    assert payload["status"] == "ok"
-    assert payload["result"] == "7"
-    assert "[DOEFF][PROFILE]" not in captured.err
+
+@pytest.mark.parametrize("value", ["", "0"])
+def test_cli_profile_env_off_values_print_nothing(monkeypatch, capsys, value: str) -> None:
+    monkeypatch.setenv("DOEFF_PROFILE", value)
+
+    assert "[DOEFF][PROFILE]" not in _run_cli_in_process(HY_RUN_ARGS, capsys)
+
+
+def test_cli_profile_env_prints_profile_lines(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("DOEFF_PROFILE", "1")
+
+    err = _run_cli_in_process(HY_RUN_ARGS, capsys)
+    assert "[DOEFF][PROFILE] Profiling enabled" in err
+    assert "[DOEFF][PROFILE]   Import doeff.runners.local:" in err
+
+
+def test_cli_profile_flag_prints_profile_lines(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("DOEFF_PROFILE", raising=False)
+
+    err = _run_cli_in_process([*HY_RUN_ARGS, "--profile"], capsys)
+    assert "[DOEFF][PROFILE] Profiling enabled" in err
+    assert "[DOEFF][PROFILE]   Import doeff.runners.local:" in err
 
 
 def test_injected_config_reaches_discovery_and_run_service_call_sites(capsys) -> None:
