@@ -564,6 +564,18 @@
   (assert (<= (len deleted.audit) AUDIT-PER-KIND)))
 
 
+(import doeff_cluster.coordinator.core.api_policy [settle])
+
+(deftest test-a-quiet-settle-keeps-meta-and-audit-as-the-same-objects
+  ;; 静かな heartbeat の settle 経路: 資源が 1 つも変わらない 2 度目の settle は meta と audit を作り直さない。
+  (<- beaten ClusterState (beat-as (ClusterState) "at-home" "node-home" 1000))
+  (<- first ClusterState (settle (ClusterState) beaten "c-test" 2000 T))
+  (<- quiet ClusterState (settle first first "c-test" 2000 T))
+  (assert (is quiet.meta first.meta))
+  (assert (is quiet.audit first.audit))
+  (assert (= #(quiet.revision quiet.audit-seq) #(first.revision first.audit-seq))))
+
+
 ;; --- task のために空けておく数(task-reserve — #3489)------------------------------------------------------------------------
 ;; worker は capacity のうち task のために空けておく数を名乗る。常駐の job と並べた置き先(surge)は capacity − task-reserve までしか置かず
 ;; (job-room-of)、task は capacity 全体まで置ける(task-room-of — 予約を使い切ったら job の残りへはみ出してよい)。置けない task は
