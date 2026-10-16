@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 940" width="1600" height="1880">
+  <!-- 記事 doeff-di.md の冒頭の全体の図。名前と値は本文の最初のコードの枠と揃える。 -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f8b8d"/>
+    </marker>
+    <style>
+      .title { font: bold 30px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .label { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .text { font: 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .muted { font: 24px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #5b6475; }
+      .code { font: 26px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #1f2a44; }
+      .result { font: bold 32px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+    </style>
+  </defs>
+  <rect width="800" height="940" fill="#ffffff"/>
+  <text class="title" x="400" y="56" text-anchor="middle">処理は依頼を書き、外側のハンドラが実装を選ぶ</text>
+
+  <!-- 処理の側 -->
+  <rect x="40" y="90" width="720" height="190" rx="16" fill="#eef3fb" stroke="#9db4d6" stroke-width="2"/>
+  <text class="label" x="68" y="135">処理 make_title(どちらでも同じコード)</text>
+  <text class="code" x="68" y="190">formatter = yield Ask("formatter")</text>
+  <text class="code" x="68" y="240">return (yield formatter(text))</text>
+
+  <!-- 依頼と再開の矢印 -->
+  <line x1="260" y1="288" x2="260" y2="382" stroke="#0f8b8d" stroke-width="4" marker-end="url(#arrow)"/>
+  <text class="text" x="244" y="345" text-anchor="end">① 依頼する</text>
+  <line x1="540" y1="382" x2="540" y2="288" stroke="#0f8b8d" stroke-width="4" marker-end="url(#arrow)"/>
+  <text class="text" x="556" y="345">② 実装を渡す</text>
+
+  <!-- 外側のハンドラ -->
+  <rect x="20" y="390" width="760" height="450" rx="16" fill="#f3f9f8" stroke="#8cc9bf" stroke-width="2" stroke-dasharray="10 8"/>
+  <text class="label" x="400" y="436" text-anchor="middle">外側のハンドラ reader(どちらか 1 つ)</text>
+
+  <rect x="45" y="460" width="345" height="355" rx="14" fill="#ffffff" stroke="#0f8b8d" stroke-width="3"/>
+  <text class="label" x="217" y="506" text-anchor="middle">テスト用</text>
+  <text class="muted" x="217" y="552" text-anchor="middle">"formatter" に渡す実装</text>
+  <text class="code" x="217" y="598" text-anchor="middle">plain_title</text>
+  <line x1="75" y1="630" x2="360" y2="630" stroke="#d5dde8" stroke-width="2"/>
+  <text class="muted" x="217" y="676" text-anchor="middle">得られる見出し</text>
+  <text class="result" x="217" y="736" text-anchor="middle">新着記事</text>
+
+  <rect x="410" y="460" width="345" height="355" rx="14" fill="#ffffff" stroke="#0f8b8d" stroke-width="3"/>
+  <text class="label" x="582" y="506" text-anchor="middle">本番用</text>
+  <text class="muted" x="582" y="552" text-anchor="middle">"formatter" に渡す実装</text>
+  <text class="code" x="582" y="598" text-anchor="middle">bracketed_title</text>
+  <line x1="440" y1="630" x2="725" y2="630" stroke="#d5dde8" stroke-width="2"/>
+  <text class="muted" x="582" y="676" text-anchor="middle">得られる見出し</text>
+  <text class="result" x="582" y="736" text-anchor="middle">【新着記事】</text>
+
+  <text class="text" x="400" y="894" text-anchor="middle">替えるのは外側だけ。make_title は書き換えません</text>
+</svg>

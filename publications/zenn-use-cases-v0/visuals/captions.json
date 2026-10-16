@@ -55,8 +55,8 @@
     "flow_caption": "workflowは子Programの完了を待ちます。Delayの解釈を替えても、workerから受け取る値は「完了」です。"
   },
   "di": {
-    "concept_title": "依存を求め、受け取った処理をyieldでつなぐ",
-    "concept_caption": "`Ask`で実装を受け取り、その実装が返す`Program`を`yield`します。外側の辞書を替えると、同じ利用側から異なる見出しが得られます。",
+    "concept_title": "処理は依頼を書き、外側のハンドラが実装を選ぶ",
+    "concept_caption": "処理のコードは1つです。外側のハンドラだけを替えると、テスト用と本番用の実装が入れ替わります。",
     "flow_title": "同じ範囲では再利用し、Localの中だけ作り直す",
     "flow_caption": "取得は4回、作成は2回です。`Local`の内側で依存する値を変更しても、外側の挨拶は通常のまま使えます。"
   },

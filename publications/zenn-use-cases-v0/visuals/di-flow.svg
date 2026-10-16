@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1190" width="1600" height="2380">
+  <!-- 記事 doeff-di.md の処理の図。名前と値は本文の lazy_ask の枠と揃える。 -->
+  <defs>
+    <style>
+      .title { font: bold 30px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .label { font: bold 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .text { font: 26px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #1f2a44; }
+      .muted { font: 24px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #5b6475; }
+      .code { font: 24px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #1f2a44; }
+      .badge { font: bold 24px 'IPAPGothic', 'IPAGothic', sans-serif; fill: #ffffff; }
+      .local { font: bold 24px 'DejaVu Sans Mono', 'IPAGothic', monospace; fill: #5b3fa0; }
+    </style>
+  </defs>
+  <rect width="800" height="1190" fill="#ffffff"/>
+  <text class="title" x="400" y="56" text-anchor="middle">同じ範囲では再利用し、Localの中だけ作り直す</text>
+  <text class="muted" x="400" y="100" text-anchor="middle">lazy_ask は、挨拶を最初に要求された時だけ作ります</text>
+
+  <!-- 1 回目: 作る -->
+  <rect x="40" y="130" width="720" height="180" rx="14" fill="#ffffff" stroke="#9db4d6" stroke-width="2"/>
+  <text class="label" x="66" y="174">1 回目の取得</text>
+  <rect x="618" y="148" width="116" height="40" rx="20" fill="#0f8b8d"/>
+  <text class="badge" x="676" y="177" text-anchor="middle">作る</text>
+  <text class="code" x="66" y="226">first = yield read_greeting()</text>
+  <text class="text" x="66" y="282">→ こんにちは、読者のみなさん</text>
+  <text class="muted" x="734" y="282" text-anchor="end">Tell: こんにちは、</text>
+
+  <!-- 2 回目: 再利用 -->
+  <rect x="40" y="330" width="720" height="180" rx="14" fill="#ffffff" stroke="#9db4d6" stroke-width="2"/>
+  <text class="label" x="66" y="374">2 回目の取得</text>
+  <rect x="618" y="348" width="116" height="40" rx="20" fill="#8a94a6"/>
+  <text class="badge" x="676" y="377" text-anchor="middle">再利用</text>
+  <text class="code" x="66" y="426">second = yield read_greeting()</text>
+  <text class="text" x="66" y="482">→ こんにちは、読者のみなさん</text>
+  <text class="muted" x="734" y="482" text-anchor="end">Tell なし</text>
+
+  <!-- 3 回目: Local の中で作る -->
+  <rect x="22" y="528" width="756" height="252" rx="16" fill="#f4effc" stroke="#a78bda" stroke-width="2"/>
+  <text class="local" x="44" y="566">Local({"prefix": "こんばんは、"}, …) の範囲</text>
+  <rect x="40" y="584" width="720" height="180" rx="14" fill="#ffffff" stroke="#a78bda" stroke-width="2"/>
+  <text class="label" x="66" y="628">3 回目の取得</text>
+  <rect x="618" y="602" width="116" height="40" rx="20" fill="#0f8b8d"/>
+  <text class="badge" x="676" y="631" text-anchor="middle">作る</text>
+  <text class="code" x="66" y="680">local = yield Local(…, read_greeting())</text>
+  <text class="text" x="66" y="736">→ こんばんは、読者のみなさん</text>
+  <text class="muted" x="734" y="736" text-anchor="end">Tell: こんばんは、</text>
+
+  <!-- 4 回目: 外へ戻って再利用 -->
+  <rect x="40" y="800" width="720" height="180" rx="14" fill="#ffffff" stroke="#9db4d6" stroke-width="2"/>
+  <text class="label" x="66" y="844">4 回目の取得</text>
+  <rect x="618" y="818" width="116" height="40" rx="20" fill="#8a94a6"/>
+  <text class="badge" x="676" y="847" text-anchor="middle">再利用</text>
+  <text class="code" x="66" y="896">restored = yield read_greeting()</text>
+  <text class="text" x="66" y="952">→ こんにちは、読者のみなさん</text>
+  <text class="muted" x="734" y="952" text-anchor="end">Tell なし</text>
+
+  <!-- まとめ -->
+  <rect x="40" y="1010" width="720" height="140" rx="14" fill="#eef3fb" stroke="#9db4d6" stroke-width="2"/>
+  <text class="label" x="400" y="1062" text-anchor="middle">取得 4 回 / 作成 2 回</text>
+  <text class="code" x="400" y="1114" text-anchor="middle">built == ["こんにちは、", "こんばんは、"]</text>
+</svg>

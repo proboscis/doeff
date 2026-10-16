@@ -1,6 +1,6 @@
-"""依存の差し替え・遅延解決・Local・環境変数を外部接続なしで確認する。"""
+"""依存の差し替え・自作ハンドラ・遅延解決・Local・環境変数を外部接続なしで確認する。"""
 
-from typing import Protocol  # 注入する処理の呼び出し契約を型で表す。
+from typing import Protocol  # 型をAskのキーにする例で、呼び出し契約を表す。
 from unittest.mock import patch  # 架空の環境変数をテスト中だけ設定する。
 
 from doeff_core_effects import Ask, Local, Tell  # 依存要求・局所変更・観測ログを使う。
@@ -14,26 +14,47 @@ from doeff_core_effects.handlers import (  # 依存供給とログ保存の担�
 )
 from doeff_core_effects.scheduler import scheduled  # 遅延解決の排他制御を実行する。
 
-from doeff import Program, do, run  # Programを組み立て、確認用の境界で実行する。
+from doeff import Pass, Program, Resume, do, handler, run, with_handlers  # 定義・委譲・実行を使う。
+
+
+@do  # 呼ぶと、まだ動いていない処理(Program)ができる。
+def make_title(text: str):  # 見出しの整え方は、この関数の中で決めない。
+    formatter = yield Ask("formatter")  # 整形の実装を外側へ依頼する。
+    return (yield formatter(text))  # 受け取った実装を動かし、見出しの文字列を返す。
+
+
+@do  # テスト用の実装も、呼ぶとProgramになる。
+def plain_title(text: str):  # 加工する見出しは通常の引数で受け取る。
+    return text  # 入力と同じ見出しを返す。
+
+
+@do  # 本番用の実装を、同じ呼び方で提供する。
+def bracketed_title(text: str):  # 入力の型はテスト用と同じにする。
+    return f"【{text}】"  # 括弧で囲んだ見出しを返す。
+
+
+@handler  # この関数を、Programに取り付けられるハンドラにする。
+@do  # ハンドラ自身もyieldで再開や委譲を指示する。
+def test_formatter(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
+    if isinstance(effect, Ask) and effect.key == "formatter":  # 整形の依頼だけを担当する。
+        return (yield Resume(k, plain_title))  # テスト用の実装を渡し、続きを動かす。
+    return (yield Pass(effect, k))  # 担当外の依頼は、外側のハンドラへ渡す。
+
+
+@do  # 見出しとサイト名を組み合わせる処理。
+def make_heading(text: str):  # 依存の渡し方は、この関数も知らない。
+    title = yield make_title(text)  # 前の例の処理を、yieldでそのまま合成する。
+    site = yield Ask("site")  # サイト名も外側へ依頼する。
+    return f"{title} | {site}"  # 2つの答えを1行の見出しにまとめる。
 
 
 class FormatTitleFn(Protocol):  # 処理の種類を表す型をAskのキーにも使う。
     def __call__(self, text: str) -> Program[str]: ...  # 見出しを返すProgramを要求する。
 
 
-@do  # 装飾しない実装も、呼び出すとProgramになる。
-def plain_title(text: str):  # 加工対象の見出しは通常の引数で受け取る。
-    return text  # 実行すると入力と同じ見出しを返す。
-
-
-@do  # 装飾する実装を、同じProgramの契約で提供する。
-def bracketed_title(text: str):  # 同じ入力型で実装を差し替えられる。
-    return f"【{text}】"  # 実行すると括弧付きの見出しを返す。
-
-
-@do  # 依存の取得と、取得した処理の実行を合成する。
-def make_title(text: str):  # 呼び出し元は具体的な整形実装を渡さなくてよい。
-    formatter: FormatTitleFn = yield Ask(FormatTitleFn)  # ハンドラから整形処理を受け取る。
+@do  # 型をキーにしても、依頼の書き方は文字列のキーと同じ。
+def make_typed_title(text: str):  # 受け取る値に型の注釈を付けられる。
+    formatter: FormatTitleFn = yield Ask(FormatTitleFn)  # 型をキーに整形の実装を受け取る。
     return (yield formatter(text))  # そのProgramを実行し、見出しの文字列を返す。
 
 
@@ -66,10 +87,17 @@ def inspect_messages():  # テストに必要な観測値を戻り値へ含め�
 
 
 def verify() -> None:  # runを使う場所は、このオフライン確認の境界にまとめる。
-    plain = reader(env={FormatTitleFn: plain_title})(make_title("新着記事"))  # 無装飾を供給する。
-    bracketed = reader(env={FormatTitleFn: bracketed_title})(make_title("新着記事"))  # 括弧版を供給する。
-    assert run(plain) == "新着記事"  # 同じ利用側から無装飾の見出しが得られる。
-    assert run(bracketed) == "【新着記事】"  # 実装だけを替えると装飾が変わる。
+    test_run = reader(env={"formatter": plain_title})(make_title("新着記事"))  # テスト用を渡す。
+    prod_run = reader(env={"formatter": bracketed_title})(make_title("新着記事"))  # 本番用を渡す。
+    assert run(test_run) == "新着記事"  # テスト用の実装では、見出しがそのまま返る。
+    assert run(prod_run) == "【新着記事】"  # 外側を替えるだけで、括弧付きの見出しになる。
+
+    inner = with_handlers([test_formatter], make_heading("新着記事"))  # 内側に自作のハンドラを付ける。
+    outer = reader(env={"site": "技術ブログ"})(inner)  # サイト名は外側のreaderが答える。
+    assert run(outer) == "新着記事 | 技術ブログ"  # 2つの依頼に、別々のハンドラが答える。
+
+    typed = reader(env={FormatTitleFn: bracketed_title})(make_typed_title("新着記事"))  # 型のキーで渡す。
+    assert run(typed) == "【新着記事】"  # ハッシュできる値なら、型もキーに使える。
 
     env = {"prefix": "こんにちは、", "greeting": build_greeting()}  # 値と未実行Programを渡す。
     program = lazy_ask(env=env)(writer(inspect_messages()))  # 依存解決の内側にもログを届ける。
@@ -87,4 +115,4 @@ def verify() -> None:  # runを使う場所は、このオフライン確認の�
 
 if __name__ == "__main__":  # import時にはテストを実行しない。
     verify()  # 依存の差し替えと、解決結果の再利用を確認する。
-    print("依存の差し替え・遅延解決・Localの分離・環境変数: OK")  # 全assertの成功を伝える。
+    print("依存の差し替え・自作ハンドラ・型のキー・遅延解決・Localの分離・環境変数: OK")  # 全assertの成功を伝える。
