@@ -1,5 +1,6 @@
 [build-system]
-requires = ["hatchling"]
+# license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,6 +9,8 @@ version = "0.1.0"
 description = "doeff-hy の pytest plugin だけの配布物(Hy の ast.unparse の差し替えの当て物を pytest の起動の時点で当てる)"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 # 依存を宣言しない: この plugin は doeff-hy に引かれて入る(doeff-hy → doeff-hy-pytest の向きだけ)。
 # 当て物の本体は doeff_hy.ast_unparse にあり、plugin はそれを import して当てるだけ。
 dependencies = []

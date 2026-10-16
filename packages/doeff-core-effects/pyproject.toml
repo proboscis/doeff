@@ -2,6 +2,8 @@
 name = "doeff-core-effects"
 version = "0.1.0"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "doeff",
     "doeff-hy",
@@ -18,7 +20,8 @@ http-server = ["aiohttp>=3.14"]
 postgres = ["psycopg>=3.1"]
 
 [build-system]
-requires = ["hatchling"]
+# license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

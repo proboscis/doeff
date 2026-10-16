@@ -1,5 +1,6 @@
 [build-system]
-requires = ["maturin>=1.5,<2"]
+# license の SPDX の式と license-files(PEP 639)を License-Expression で書き、sdist にも license-files を入れるのは maturin 1.9.3 から。
+requires = ["maturin>=1.9.3,<2"]
 # maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py・agora-redesign #1493)
 build-backend = "doeff_cargo_backend"
 backend-path = ["."]
@@ -9,6 +10,8 @@ name = "doeff-vm"
 version = "0.2.0"
 description = "Rust VM for doeff algebraic effects"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -17,7 +20,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: MIT License",
 ]
 
 [tool.maturin]
@@ -35,7 +37,8 @@ include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 # ここに列挙すると既定の鍵は置き換わるので pyproject.toml も自分で並べる。
 # この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある(agora-redesign #3860)。保存先の wheel は
 # python-source(この dir の doeff_vm/)の .py・.pyi・py.typed も持つので、それも並べる — 並べないと Python だけを変えた後の
-# 非 editable の入れ(worker の uv build)が、前の Python の入った wheel を保存先から引く。
+# 非 editable の入れ(worker の uv build)が、前の Python の入った wheel を保存先から引く。同じ訳で、wheel の dist-info に入る
+# license-files(LICENSE)も並べる。
 # build の口の file そのもの(editable の組み方を決める)と、口が保存先の鍵に入れる組みを変える環境変数(口の BUILD_ENV_NAMES と、
 # 接頭辞 CARGO_PROFILE_・CARGO_BUILD_・MATURIN_・PYO3_ のうち使う名)も並べる — 取り込みの作業と make sync は
 # --reinstall-package を付けないので、uv が気づかない変化では口が呼ばれない(#3860 の 2)。
@@ -51,6 +54,7 @@ cache-keys = [
     { file = "doeff_vm/**/*.py" },
     { file = "doeff_vm/**/*.pyi" },
     { file = "doeff_vm/py.typed" },
+    { file = "LICENSE" },
     { file = "../doeff-vm-core/pyproject.toml" },
     { file = "../doeff-vm-core/Cargo.toml" },
     { file = "../doeff-vm-core/Cargo.lock" },
