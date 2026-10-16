@@ -452,6 +452,25 @@ def test_coordinator_is_one_deployment_on_atlas(rendered: list[Manifest]) -> Non
     assert _mapping(spec["strategy"], "strategy")["type"] == "Recreate"
 
 
+def test_coordinator_pod_is_guaranteed(rendered: list[Manifest]) -> None:
+    """coordinator の Pod は Guaranteed(oom_score_adj -997)— atlas の memory が尽きた時に、kernel が worker の job と並べて殺さない
+    (card ki-7b934e2538f9・ki-b3c8a5cc7b9a)。Guaranteed は全部の container(init を含む)で cpu と memory の requests = limits が要る —
+    1 つでも欠けると Pod 全体が Burstable に落ちる。"""
+    (coordinator,) = _deployments(rendered, "coordinator")
+    pod = _pod_spec(coordinator)
+    containers = [
+        _mapping(entry, "container")
+        for key in ("initContainers", "containers")
+        for entry in _sequence(pod.get(key, []), key)
+    ]
+    for container in containers:
+        resources = _mapping(container["resources"], f"{container['name']} の resources")
+        requests = _mapping(resources["requests"], f"{container['name']} の requests")
+        limits = _mapping(resources["limits"], f"{container['name']} の limits")
+        assert set(limits) == {"cpu", "memory"}, f"{container['name']} の limits に cpu と memory が要る: {limits!r}"
+        assert requests == limits, f"{container['name']} の requests が limits と違う: {requests!r} / {limits!r}"
+
+
 def _prepare_jobs(rendered: list[Manifest]) -> list[Manifest]:
     return [doc for doc in rendered if doc["kind"] == "Job" and _role(doc) == "prepare"]
 
