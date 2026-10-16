@@ -46,7 +46,7 @@
 - 合成する補助関数は`@do`、呼び出しは`yield helper(...)`。SDKの非同期primitiveに接続する地点だけ`Await`を使う。
 - 各コード行に目的と期待する値・動作の日本語コメントを付ける。Python以外のHy・CLI例も対象。
 - 各記事を別のエージェントが実装へ照合し、修正・検証した。[記事別レビュー](reviews/README.md)に全26件の根拠と実行範囲を記録。
-- すべての紹介機能にコードを付ける。[43機能のコード対応](feature-examples.md)、[31パッケージの棚卸し](package-coverage.md)、[全指示のTODO](TODO.md)、[完了照合](completion-audit.md)を参照。
+- すべての紹介機能にコードを付ける。[43機能のコード対応](feature-examples.md)、[パッケージの棚卸し](package-coverage.md)、[全指示のTODO](TODO.md)、[完了照合](completion-audit.md)を参照。
 - 非公開の実用例からは設計概念だけを使い、架空のカードゲーム・文書処理として独立に著作した。元のコード・名称・接続先・運用条件は載せない。
 
 ## 検証記録
