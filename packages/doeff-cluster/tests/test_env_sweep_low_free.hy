@@ -35,8 +35,9 @@
   (assert (= (! (sweep-choice ROOTS PINNED CAP (- MIN-FREE (* 3 ROOT-BYTES)) MIN-FREE)) #("env-c1" "env-c2")))
   ;; 空きが最低の上で、合計が上限の内なら何も選ばない(#3732 の上限の選びはそのまま)。
   (assert (= (! (sweep-choice ROOTS PINNED CAP MIN-FREE MIN-FREE)) #()))
-  ;; 空きが十分でも、合計が上限を越えれば今までどおり上限の内へ戻るまで選ぶ。
-  (assert (= (! (sweep-choice ROOTS PINNED (* 3 ROOT-BYTES) (* 30 GIB) MIN-FREE)) #("env-c1"))))
+  ;; 空きが十分でも、合計が上限を越えれば上限の 95% まで下がるまで選ぶ(card ki-a619d34de8c9 — 上限 3 つ分・4 つ在る時は、c1 だけでは
+  ;; 3 つ分の上限の際に残るので c2 も選ぶ)。
+  (assert (= (! (sweep-choice ROOTS PINNED (* 3 ROOT-BYTES) (* 30 GIB) MIN-FREE)) #("env-c1" "env-c2"))))
 
 
 (deftest test-a-drop-below-the-minimum-wakes-the-sweep-without-a-timer
