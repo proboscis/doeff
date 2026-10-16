@@ -292,10 +292,16 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 
 # 入門の道の外で、例を走る形に直した docs の page を書き換えた便は、その例を走らせて印字を注記と比べる検を払う
 # (card ki-8e45f740dc61)。page を足す時は、検の CHECKED_PAGES とここの両方に足す。
-# 秒は 11 秒(5 本・子 1 本・起動を含む壁時計・2026-10-17 会話の Pod)。
+# 秒は 6.3 秒(13 本・子 7 本・07 章と 11 章・起動を含む壁時計・load 約 80 の下・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
+
+# 11 章(Kleisli)は、上と同じ例の検に加え、今の @do に無い引数の自動の解き(should_unwrap)の説明が戻らない検を払う
+# (card ki-7277427f6d8e)。語の検の秒は 3.5 秒(3 本・子 1 本・起動を含む壁時計・load 約 80 の下・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/11-kleisli-arrows.md"
+tests = ["tests/test_docs_page_examples.py", "tests/test_docs_kleisli_arguments.py"]
 
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
