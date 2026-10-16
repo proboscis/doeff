@@ -9,6 +9,10 @@ specs/effects/SPEC-EFF-002-state.md は KeyError と書き、守る検として�
 確かめる事は 2 つ:
 - 09 章のその節の囲みが、README と同じ約束(tools/readme_examples.py)で走り、print の注記どおりに印字する。
 - 仕様 SPEC-EFF-002 が名指す検(`tests/…py::名` の形)が、どれも木に在る。無い key の Get の行は、None を守る検を名指す。
+
+09 章は page 全体をまだ走らせられない(2026-10-17 の時点で 16 囲みのうち 13 に注記が無い)ので、page を走らせる検
+tests/test_docs_page_examples.py の CHECKED_PAGES に載せず、この節だけを走らせる。page 全体を走る形に直したら、09 章を
+CHECKED_PAGES に移し、ここの節の検を外す(同じ例を 2 度走らせない)。
 """
 
 from __future__ import annotations
