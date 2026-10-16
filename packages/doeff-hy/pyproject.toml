@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "doeff-hy"
 version = "0.1.0"
-description = "Standard Hy macros for doeff effect composition"
+description = "Hy macros for writing doeff programs, effects, handlers and tests"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,6 +24,11 @@ dependencies = [
     # wheel で入れた repo で doeff_hy の .hy を Python として書き換えて import が落ちる(packages/doeff-hy-pytest)。
     "doeff-hy-pytest",
 ]
+
+[project.urls]
+Homepage = "https://github.com/proboscis/doeff/tree/main/packages/doeff-hy"
+Repository = "https://github.com/proboscis/doeff"
+Issues = "https://github.com/proboscis/doeff/issues"
 
 [project.scripts]
 doeff-hy-check = "doeff_hy.static_check:main"
