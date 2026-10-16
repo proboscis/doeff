@@ -38,7 +38,13 @@ from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memor
 from doeff_events.handlers.notice_events import MarkGap, NoticeRoute, notice_events_handler
 from doeff_events.notice_laws import LawNote, law_routes
 from doeff_time import Delay
-from notice_law_support import PATIENCE_SECONDS, PREFIX, SenderOutage, refuses_senders, run_on_virtual_clock
+from notice_law_support import (
+    PATIENCE_SECONDS,
+    PREFIX,
+    SenderOutage,
+    refuses_senders,
+    run_on_virtual_clock,
+)
 
 from doeff import K, Pass, Program, Pure, Resume, do
 from doeff import handler as program_handler
@@ -176,9 +182,12 @@ def test_a_cancel_while_the_watcher_of_the_wait_for_the_return_is_spawned_leaves
         yield cut_broker(broker, "the in-memory broker was cut")
         source = "law-watched"
         events = notice_events_handler(source, law_routes(PREFIX), PATIENCE_SECONDS)
-        return (yield subscribed_event_handler(EventBus(), source)(memory_notice_handler(broker)(layer(events(Pure(None))))))
+        party = subscribed_event_handler(EventBus(), source)(
+            memory_notice_handler(broker)(layer(events(Pure(None))))
+        )
+        return (yield party)
 
-    left = _tasks_left_waiting_after_a_cancel_in_the_spawn(lambda layer: cut_then_party(layer), 1)
+    left = _tasks_left_waiting_after_a_cancel_in_the_spawn(cut_then_party, 1)
     assert left == 0, f"{left} task(s) still wait for the broker's return after the party was gone"
 
 
