@@ -1,0 +1,6 @@
+{
+  "concept_title": "異なる抽象を、同じyieldでつなぐ",
+  "concept_caption": "Tryで成功・失敗を値にし、Getで状態、writer_logでログを受け取ります。設定や時間も子Programの中で同じyieldを使います。",
+  "flow_title": "失敗しても、試行回数と開始ログは残る",
+  "flow_caption": "空の見出しはErrになりますが、Tryの後で読む試行回数は1、ログには開始メッセージが残ります。この構成に自動の巻き戻しはありません。"
+}

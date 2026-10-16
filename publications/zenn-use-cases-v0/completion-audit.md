@@ -61,7 +61,7 @@ git diff --check  # 追跡済みファイルの差分に空白エラーがない
 
 旧記録の20記事・40画像は今回の成果物を表さない。Graphvizだけでimagegen要求を満たした判定、写実的な旧画像、合成処理をasync helperへ閉じ込めた例、HTTPクライアントのfactory注入をハンドラ交換の主例とした構成を訂正した。
 
-現在の成果物は23記事・47枚のimagegen画像と、実装照合済みのコード例である。旧画像は保存し、採用画像は[台帳](imagegen/manifest.json)で一意に示す。判断の理由と戻し方は[編集判断の記録](../../docs/design/decisions/2026-09-15-zenn-use-cases.md)に残した。
+現在の成果物は23記事・47枚のimagegen画像と、実装照合済みのコード例である。旧画像は保存し、採用画像は台帳(2026-10-17から記事ごとの`imagegen/manifest/<slug>.json`)で一意に示す。判断の理由と戻し方は[編集判断の記録](../../docs/design/decisions/2026-09-15-zenn-use-cases.md)に残した。
 
 ## 最小ハンドラと悩みの表への修正（2026-09-16追記）
 

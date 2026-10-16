@@ -1,0 +1,30 @@
+[
+  {
+    "id": "image-concept",
+    "image": "images/zenn-use-cases-v0/generated/image-concept.png",
+    "generation_prompt": "image-concept-flat-code.txt",
+    "edit_prompts": [
+      "image-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "7c698d716d9de502e8d020981fce6e325c1ce168345301157b99100cd474d6fd",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1674737,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "image-flow",
+    "image": "images/zenn-use-cases-v0/generated/image-flow.png",
+    "generation_prompt": "image-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "50766428d5e46882e7bb4a5400eaaadf1444b253f0afa85a0e8a0491d67e6d32",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1445405,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

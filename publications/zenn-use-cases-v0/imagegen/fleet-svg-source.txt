@@ -11,5 +11,5 @@
   - fleet-commits：幅1200・高さ800。
 - 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
 
-この記事は概念図・処理図の2枚に、数の図を1枚足す。captions.jsonの`extra_kinds`に`commits`と書き、
+この記事は概念図・処理図の2枚に、数の図を1枚足す。../visuals/captions/fleet.jsonの`extra_kinds`に`commits`と書き、
 verify_publication.pyがその図も照らす。

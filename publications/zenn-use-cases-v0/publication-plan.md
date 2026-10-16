@@ -54,6 +54,7 @@ Zennのslugは、Zennの`articles/<slug>.md`のファイル名で、公開後の
 - 公開する本文は、冒頭の悩み1つ→短いコード→全体の図→本文→まとめ→参考の順にする。
 - 公開する本文は3,000〜6,000字(コードの枠は数えない)、コードの枠は6つまで、図は2〜4枚、1文は60字まで、です・ます調にする。
 - 測った数字には、測った日と範囲を添える。APIキー・トークン・個人の情報・社外に出せない機械やプロジェクトの名前を載せない。
+- 記事の台帳は、記事ごとのファイルを足して書く(図の題と説明は`visuals/captions/<slug>.json`、採用画像は`imagegen/manifest/<slug>.json`、制作の経緯は`imagegen/records/<slug>.md`、決定は`docs/design/decisions/<日付>-zenn-week<N>-<slug>.md`。`<slug>`は原稿`doeff-<slug>.md`の名)。共有の台帳の末尾へ書き足さず、記事の数も書かない。`verify_publication.py`が原稿と台帳の組を照らす。
 
 字数・枠・図・文の長さは`render_release.py`で測る。字数は、コードの枠・画像・リンク先・Markdownの記号・空白を除いて数える。
 

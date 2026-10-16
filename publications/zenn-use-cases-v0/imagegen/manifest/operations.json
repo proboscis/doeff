@@ -1,0 +1,30 @@
+[
+  {
+    "id": "operations-concept",
+    "image": "images/zenn-use-cases-v0/generated/operations-concept.png",
+    "generation_prompt": "operations-concept-flat-code.txt",
+    "edit_prompts": [
+      "operations-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "ffc35fe6a3c783919862a72a3de1aaed58e7ef5b4b2766ca182a1fa0ccd4e3a1",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1714242,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "operations-flow",
+    "image": "images/zenn-use-cases-v0/generated/operations-flow.png",
+    "generation_prompt": "operations-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "295bd1274a01421f0fdc1ec72ccfc05e5f3d5e0d43c729ff769b5c64cc01d400",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1344628,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

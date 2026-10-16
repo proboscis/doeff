@@ -1,0 +1,26 @@
+[
+  {
+    "id": "replay-concept",
+    "image": "images/zenn-use-cases-v0/generated/replay-concept.png",
+    "generation_prompt": "replay-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "1f2dacf6927dd25b7104d9cec60dbbaa1deb74a513076fed3185ce4d8d9ce995",
+    "width": 1200,
+    "height": 1800,
+    "bytes": 235172,
+    "review": "2026-10-17：週6の改稿のコード（fetch_text・HttpRequest(\"GET\", url)・fake_http・記録の層 + reject_http・http_production_handler()・HttpResponse）と名前・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "replay-flow",
+    "image": "images/zenn-use-cases-v0/generated/replay-flow.png",
+    "generation_prompt": "replay-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "452e600bae0e30ac3802d0cec35b5a0a3e8880ebfb385aae1daf6c3976489f9b",
+    "width": 1200,
+    "height": 2000,
+    "bytes": 271461,
+    "review": "2026-10-17：週6の改稿のrun_recordedの3層（make_memo_rewriter(HttpRequest)・sqlite_memo_handler(database)・fetcher(program)）と、記録の有無で分かれる道（記録から再開・fake_httpまたは本番の取得担当・reject_httpで失敗）を目視確認。白背景の平面図として採用。"
+  }
+]

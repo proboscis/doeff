@@ -1,4 +1,7 @@
-"""目視確認を終えたslugだけ、採用画像と記事の台帳へ反映する。"""
+"""目視確認を終えたslugだけ、採用画像と記事の台帳へ反映する。
+
+台帳は記事ごとのファイル(visuals/captions/<slug>.json・imagegen/manifest/<slug>.json)で、渡したslugのファイルだけを書き直す。
+"""
 
 import hashlib
 import json
@@ -8,11 +11,13 @@ from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1]
 ROOT = SOURCE.parents[1]
-captions = json.loads((SOURCE / "visuals/captions.json").read_text())
-manifest = {e["id"]: e for e in json.loads((SOURCE / "imagegen/manifest.json").read_text())}
 for slug in sys.argv[1:]:
+    captions_path = SOURCE / f"visuals/captions/{slug}.json"
+    manifest_path = SOURCE / f"imagegen/manifest/{slug}.json"
+    captions = json.loads(captions_path.read_text())
+    manifest = {e["id"]: e for e in json.loads(manifest_path.read_text())}
     spec = json.loads((SOURCE / f"reviews/{slug}-visuals.json").read_text())
-    captions[slug].update({
+    captions.update({
         f"{kind}_{field}": spec[kind][field]
         for kind in ("concept", "flow")
         for field in ("title", "caption")
@@ -36,10 +41,10 @@ for slug in sys.argv[1:]:
             "bytes": len(data),
             "review": "2026-09-16: 精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
         }
-(SOURCE / "visuals/captions.json").write_text(json.dumps(captions, ensure_ascii=False, indent=2) + "\n")
-(SOURCE / "imagegen/manifest.json").write_text(
-    json.dumps(sorted(manifest.values(), key=lambda e: e["id"]), ensure_ascii=False, indent=2) + "\n"
-)
+    captions_path.write_text(json.dumps(captions, ensure_ascii=False, indent=2) + "\n")
+    manifest_path.write_text(
+        json.dumps(sorted(manifest.values(), key=lambda e: e["id"]), ensure_ascii=False, indent=2) + "\n"
+    )
 review = SOURCE / "reviews/README.md"
 rows = []
 for line in review.read_text().splitlines():

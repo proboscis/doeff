@@ -1,0 +1,26 @@
+[
+  {
+    "id": "di-concept",
+    "image": "images/zenn-use-cases-v0/generated/di-concept.png",
+    "generation_prompt": "di-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "c8f1eba6b5996cfa205f83c11fa1b19a5870fba62253634f8e10ef47b89bd3d0",
+    "width": 1600,
+    "height": 1880,
+    "bytes": 181834,
+    "review": "2026-10-16：週4の改稿のコード（make_title・reader・plain_title・bracketed_title）と名前・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "di-flow",
+    "image": "images/zenn-use-cases-v0/generated/di-flow.png",
+    "generation_prompt": "di-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "0e27b6717474aca8c0bedca93ac9dbaed96c97b2a36d19fb08dde4f952a02ce0",
+    "width": 1600,
+    "height": 2380,
+    "bytes": 257790,
+    "review": "2026-10-16：週4の改稿のコード（read_greeting・Local・Tell・built）と名前・値・順番を目視確認。白背景の平面図として採用。"
+  }
+]

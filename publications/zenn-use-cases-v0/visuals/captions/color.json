@@ -1,0 +1,6 @@
+{
+  "concept_title": "処理をつなぐ書き方をProgramへ揃える",
+  "concept_caption": "設定の取得も子の計算もyieldでつなぎ、時間の依頼をどう扱うかは外側のハンドラで選びます。",
+  "flow_title": "子Programからの結果を、同じyieldで受け取る",
+  "flow_caption": "workflowは子Programの完了を待ちます。Delayの解釈を替えても、workerから受け取る値は「完了」です。"
+}
