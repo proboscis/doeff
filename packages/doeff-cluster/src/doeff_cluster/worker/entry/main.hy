@@ -53,6 +53,7 @@
 (import doeff_cluster.worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.world [local-host])
 (import doeff_cluster.worker.protocol.leaving_observer [leaving-observer])
+(import doeff_cluster.worker.protocol.memory_observer [memory-observer])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
 (import doeff_cluster.worker.core.boot_timing [BOOT-STARTED-VAR BOOT-EXEC-VAR read-boot-marks])
@@ -117,10 +118,10 @@
   (dict (gfor kv (.split text ",") :if kv (.split kv "=" 1))))
 
 
-(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file]
+(defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file memory-cell]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
          (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings)
-         (: warm WarmSettings) (: boot-file (| str None))]
+         (: warm WarmSettings) (: boot-file (| str None)) (: memory-cell MemoryCell)]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
@@ -131,12 +132,14 @@
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
    leaving-observer が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p —
    印の書き手と形の module leaving_mark は読まない)。機体の memory の見張りが読む process の表と、止める SignalPid は os-proc-table-handler
-   が答える(card ki-7b934e2538f9 — 見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。"
+   が答える(card ki-7b934e2538f9 — 見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。
+   機体の memory の逼迫の観測(ObserveMemoryTight — local-host が問う)は memory-observer が、見張りと分ける入れ物 memory-cell の様子で答える
+   (task の起動の見送り — policy の ready-tree-step)。"
   [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler os-proc-table-handler
    process-exit-handler
    os-file-handler offloaded-tree-handler offloaded-file-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
-   (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) local-host tick-pauses])
+   (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses])
 
 
 (defk timing-checked [fence-ms policy timing]
@@ -329,14 +332,15 @@
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
         lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
-  ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
-  (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
-                                           places.status codes envs warm (.get machine-env BOOT-FILE-VAR))))
-  ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
-  (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
-  ;; 機体の memory の見張り(card ki-7b934e2538f9 — 5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)。
+  ;; 機体の memory の見張り(card ki-7b934e2538f9 — 5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)の入れ物は、
+  ;; 見張りの背景の task と、逼迫の観測の答え手 memory-observer(本番の組)が分けるので、組より先に作る。
   (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
         memory-cell (MemoryCell))
+  ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
+  (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
+                                           places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell)))
+  ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
+  (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
     (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell)))
     (finally

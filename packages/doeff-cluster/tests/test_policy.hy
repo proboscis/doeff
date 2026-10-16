@@ -646,3 +646,25 @@
   ;; handoff の job は世代をまたぐ入れ替え(superseded-by)が受け持つので、印を受けても今どおり起こす。
   (val handoff (replace A1 :handoff True :elder-runs True))
   (assert (= (! (plan 0 #(handoff) (! (world)) {} POLICY)) #((StartJob handoff 1 "/c/rev1")))))
+
+
+;; --- 機体の memory の逼迫の間の task の見送り(card ki-7b934e2538f9): 見張りの様子が TIGHT か DANGER の間、task(once)を起こさない ------
+
+(val HEAVY (JobSpec "task/heavy" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+
+(deftest test-a-task-waits-while-the-machine-memory-is-tight-and-starts-when-it-eases
+  ;; 失敗ケース: 見張りは機体の逼迫を log に残すだけで、worker は逼迫の間も日次の全体検証のような重い task(12〜16Gi の山を 3 本並べる宣言)を
+  ;; 起こし続けた。逼迫の間は起動の action を出さず、見送りの行に memory-tight を出す。準備は済んでいるので、逼迫が解けた次の拍に起こす。
+  (val tight (replace (! (world)) :memory-tight True))
+  (assert (= (! (plan 0 #(HEAVY) tight {} POLICY)) #()) "逼迫の間は task を起こさない")
+  (<- holds tuple (start-holds 0 #(HEAVY) tight {} POLICY))
+  (assert (= (lfor h holds #(h.name h.hold)) [#("task/heavy" StartHold.MEMORY-TIGHT)]))
+  (assert (= (! (plan 1 #(HEAVY) (! (world)) {} POLICY)) #((StartJob HEAVY 1 "/c/rev1"))) "逼迫が解けた拍に起こす"))
+
+(deftest test-memory-tightness-holds-neither-a-service-nor-the-preparation-of-a-task
+  ;; 守りの範囲: 逼迫の間も常駐の job(service)は起こす(見張りの止めで落ちた job を戻せなくしない)。task の木の準備(PrepareCode)も
+  ;; 止めない — 見送るのは task の起動だけ。
+  (val tight (replace (! (world)) :memory-tight True))
+  (assert (= (! (plan 0 #(A1) tight {} POLICY)) #((StartJob A1 1 "/c/rev1"))) "service は逼迫でも起こす")
+  (val cold (replace (! (world :codes #())) :memory-tight True))
+  (assert (= (! (plan 0 #(HEAVY) cold {} POLICY)) #((PrepareCode "rev1" None))) "task の木の準備は逼迫でも撃つ"))

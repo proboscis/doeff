@@ -149,7 +149,10 @@
   ;; この Pod の止まり(preStop の drain)が始まった(AL-D2p): preStop の入口が世代の file の隣に置いた印の世代が、この process の世代と
   ;; 同じ(worker/protocol/leaving_mark)。真の間、worker は handoff の job の新しい試行を起こさない(coordinator の返事の印 supersededBy に
   ;; 依らない — policy.start-step)。既定は偽(印を読まない呼び手・Pod の外の worker)。
-  (setv #^ bool leaving False))
+  (setv #^ bool leaving False)
+  ;; 機体の memory が逼迫(見張り worker/protocol/memory_watch の様子が TIGHT か DANGER — card ki-7b934e2538f9)。真の間、worker の判断
+  ;; (policy の ready-tree-step)は task(once)の起動を見送る(常駐の job は見送らない)。既定は偽(見張りを持たない呼び手・模擬の環境)。
+  (setv #^ bool memory-tight False))
 
 
 (defclass StopStage [Enum]
@@ -200,8 +203,10 @@
 ;;   失敗・PROBING = 入口の検め待ち・PROBE-FAILED = 入口の検めの失敗(撃ち直しの間も)・BACKOFF = 落ちた後の起こし直しの間・
 ;;   WARM-CHILD = 分かれ元の待ちの子の準備待ち・HANDOFF-ABANDONED = 入れ替えの諦め(宣言が変わるまで起こさない)・ELDER-RUNS = 準備と
 ;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)・
-;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)。
-(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING)
+;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)・
+;;   MEMORY-TIGHT = 機体の memory が逼迫(TIGHT か DANGER)の間、task を起こさない(WorldView.memory-tight — 常駐の job は見送らない・
+;;   card ki-7b934e2538f9)。
+(defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING MEMORY-TIGHT)
 
 
 ;; --- 待ちの子(#3646)-------------------------------------------------------------

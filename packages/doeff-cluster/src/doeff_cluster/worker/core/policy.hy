@@ -247,6 +247,9 @@
     ;; 同じ名の前の世代がこの job を動かしている(AL-D2f): 準備と検めは揃ったので、coordinator が印を外すまで起こさない(状態の行は
     ;; elder-runs — coordinator はそれを見て前の世代から外す)。
     (elder-waits spec) (StartStep :actions #() :hold StartHold.ELDER-RUNS)
+    ;; 機体の memory が逼迫している間は、task(once)だけ起こさない(重い task を並べて機体が尽きるのを避ける — card ki-7b934e2538f9)。準備と
+    ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。
+    (and spec.once world.memory-tight) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
     True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if forks (warm-key-of spec) None))) :hold None)))
 
 

@@ -7,7 +7,7 @@
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk ObserveWorld WarmChildView
  WorldView])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving])
+  ObserveLeaving ObserveMemoryTight])
 (import doeff_cluster.worker.protocol.world [local-host])
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))
@@ -24,10 +24,11 @@
   (ObserveProbes [] (resume #()))
   (ObserveEnvDisk [] (resume DISK))
   (ObserveWarmChildren [] (resume #(CHILD)))
-  (ObserveLeaving [] (resume True)))
+  (ObserveLeaving [] (resume True))
+  (ObserveMemoryTight [] (resume True)))
 
 
 (deftest test-the-world-gathers-every-observation
   (val world (run (with-handlers [observed local-host] (ObserveWorld))))
   (assert (isinstance world WorldView) world)
-  (assert (= world (WorldView #(CODE ENV) #() #() :env-disk DISK :warm-children #(CHILD) :leaving True)) world))
+  (assert (= world (WorldView #(CODE ENV) #() #() :env-disk DISK :warm-children #(CHILD) :leaving True :memory-tight True)) world))
