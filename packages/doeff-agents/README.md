@@ -4,13 +4,24 @@ Agent session management for coding agents (Claude, Codex, Gemini). Sessions run
 on one of three substrates — a tmux terminal, a herdr terminal, or a headless
 process — behind a single effect boundary.
 
+> **Needs components outside `pip install doeff`.** `doeff-agents` is not part of
+> the core install, and PyPI has only an old `doeff-agents` 0.1.1 build, which
+> does not import with doeff 0.5.0. Install it from a checkout of this repository
+> as shown under Installation.
+
 ## Installation
 
+Install `doeff-agents` from a checkout of this repository together with the
+repository packages it depends on (`doeff-time`, `doeff-claude-code`,
+`doeff-codex`). pip takes everything else, `doeff` included, from PyPI:
+
 ```bash
-pip install doeff-agents
+git clone --depth 1 https://github.com/proboscis/doeff.git
+pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-claude-code \
+  ./doeff/packages/doeff-codex ./doeff/packages/doeff-agents
 ```
 
-From a checkout of this repository, install the workspace instead (this also
+To develop doeff itself, install the whole workspace instead (this also
 rebuilds the Rust VM that `doeff` needs):
 
 ```bash

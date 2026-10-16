@@ -394,7 +394,9 @@ are one-shot, so a retry handler re-performs the effect for each attempt and res
 
 ## Time Effects Runtime Matrix
 
-`Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. They live in the `doeff_time` package:
+`Delay`, `GetTime`, and `WaitUntil` are runtime-dependent. They live in the `doeff-time` package
+(import name `doeff_time`). `pip install doeff` does not install it and it is not on PyPI; install
+it from a checkout as shown in [Pages That Need Other Components](index.md#pages-that-need-other-components):
 
 ```python
 from doeff_time import Delay, GetTime, WaitUntil
