@@ -53,6 +53,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           target: ${{ matrix.target }}
           args: --release --out dist
           working-directory: packages/doeff-indexer
@@ -87,6 +88,7 @@ jobs:
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           target: ${{ matrix.target }}
           args: --release --out dist -i python3.13t python3.14t
           working-directory: packages/doeff-indexer
@@ -131,6 +133,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           target: ${{ matrix.target }}
           args: --release --out dist
           working-directory: packages/doeff-indexer
@@ -167,6 +170,7 @@ jobs:
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           working-directory: packages/doeff-indexer
@@ -200,6 +204,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           args: --release --out dist
           working-directory: packages/doeff-indexer
 
@@ -231,6 +236,7 @@ jobs:
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           args: --release --out dist --find-interpreter
           working-directory: packages/doeff-indexer
       - name: Upload wheels
@@ -248,6 +254,7 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.15.0
           command: sdist
           args: --out dist
           working-directory: packages/doeff-indexer
@@ -258,11 +265,37 @@ jobs:
           name: doeff-indexer-sdist
           path: packages/doeff-indexer/dist/*.tar.gz
 
+  # The 0.1.3 wheels on PyPI shipped the doeff-indexer binary under python/doeff_indexer/bin/, where
+  # the doeff-indexer command never looks, so `doeff-indexer --help` printed "binary not found".
+  # maturin 1.12 (what maturin-action pulled that day) puts an `include`d file at its path from the
+  # project root; 1.13 and later put it under the python source. The maturin-version pins above keep
+  # the layout from changing with the day's "latest"; this job checks the layout of every wheel and
+  # installs the Linux x86_64 one to run the command, so a wrong wheel stops here, before the upload.
+  verify-wheels:
+    name: Check the wheels install and run
+    needs: [build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download doeff-indexer wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: doeff-indexer-wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Check every wheel and run the command from the Linux x86_64 one
+        run: >-
+          python3 tools/verify_indexer_wheel.py
+          --smoke dist/doeff_indexer-*-cp310-abi3-manylinux*_x86_64*.whl
+          dist/*.whl
+
   # Uploads only from this workflow's own doeff-indexer-v* tag or dispatch: PyPI rejects Trusted
   # Publishing from a reusable workflow, so publish.yml calls this one with publish: false.
   publish:
     name: Publish to PyPI
-    needs: [check-version-unpublished, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
+    needs: [check-version-unpublished, verify-wheels, build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded, sdist]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/doeff-indexer-v') || inputs.publish
     environment: pypi
