@@ -325,6 +325,24 @@
              #((RetireJob "a" 11 (retired-name "a" "2-new"))))
           "宣言の R = 3 では退いた process 2 つは上限の内 — 今の process を退かせる"))
 
+(deftest test-the-status-row-names-the-wait-for-a-retired-slot
+  ;; 失敗ケース(AL-D1 の 2): 退いた process が上限 R に達して今の process を退かせずに待つ間、状態の行の文は「入れ替えを待つ(新の
+  ;; コード ready)」だけで、新が起きない訳(退いた process の空き待ち)が coordinator の readyReason・版の判定の訳(Updating)にも
+  ;; 宣言の道具の待ちの印字にも出なかった — 準備の遅れと見分けられない。文に空き待ちと数(退いた数・上限)を出す。上限を下回れば出さない。
+  (val H3 (replace A1 :revision "rev3" :handoff True :retired-ms 600000))
+  (val limited (replace POLICY :retired-limit 2))
+  (val oldest (replace (! (proc H1 10 "1-a" :retired-from "a" :name (retired-name "a" "1-a"))) :retired-at-ms 100))
+  (val younger (replace (! (proc H1 12 "1-b" :retired-from "a" :name (retired-name "a" "1-b"))) :retired-at-ms 200))
+  (val current (! (proc H2 11 "2-new")))
+  (val codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))
+  (val full-rows (! (statuses 1000 #(H3) (! (world younger oldest current :codes codes)) {} limited)))
+  (val full (dfor r full-rows r.name r))
+  (assert (= (. (get full "a") phase) JobPhase.RUNNING) "今の process は動かしたまま")
+  (assert (in "退いた process の空き待ち(退いた 2 個が上限 2" (. (get full "a") detail)) (. (get full "a") detail))
+  (val room-rows (! (statuses 2000 #(H3) (! (world younger current :codes codes)) {} limited)))
+  (val room (dfor r room-rows r.name r))
+  (assert (not-in "空き待ち" (. (get room "a") detail)) "上限を下回れば空き待ちと言わない"))
+
 (deftest test-a-superseded-generation-retires-its-handoff-process-without-stopping-or-restarting-it
   ;; 失敗ケース(worker の Pod の世代をまたぐ入れ替え): 同じ名の新しい世代の worker が同じ job の process を Ready にした後、退いた世代の
   ;; worker の返事は、その job に別の世代の Ready の印(superseded-by = その process の世代の名)を載せる。退いた世代は今の process を
