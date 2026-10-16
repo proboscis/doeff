@@ -9,11 +9,15 @@ examples/ の `.py` は全部この検に入る(新しい例も書いただけ�
 そこで例ごとに、標準出力に必ず出る行を EXPECTED_LINES に置き、全部が出る事を確かめる。例の印字を変えたら、ここも直す。
 例は開発の環境で走らせる(llm_multi_provider_stacking は核の外の部品 doeff-gemini・doeff-llm・doeff-openai・
 doeff-openrouter を使う)。核の 5 個だけの新しい環境で走る事は、card の発言に結果を書いて確かめた。
+核の外の部品を import する例は NEEDS_OUTSIDE_CORE に import 名を置く: 部品が入っていない環境(核の 5 個だけを入れる CI の
+Python Compatibility の venv — .github/workflows/python-compatibility.yml)では skip になり、入っている開発の環境では走る
+(skip しないと、例の import が ModuleNotFoundError で落ちて main の CI 全体が赤になった — 2026-10-17)。
 1 本が長い例は SLOW に訳つきで置き、印 slow を付ける(`make test` の `-m "not e2e and not slow"` が外す — 名指せば走る)。
 """
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -66,14 +70,26 @@ SLOW = {
 }
 
 
+# 核の外の部品を import する例と、その部品の import 名。
+NEEDS_OUTSIDE_CORE = {
+    "llm_multi_provider_stacking.py": ("doeff_gemini", "doeff_llm", "doeff_openai", "doeff_openrouter"),
+}
+
+
 def _examples() -> list[str]:
     return sorted(path.name for path in EXAMPLES.glob("*.py"))
 
 
+def _marks(name: str) -> tuple[pytest.MarkDecorator, ...]:
+    # find_spec は部品を読み込まない(openai の SDK の import に 約 25 秒かかるので、探すだけにする)。
+    absent = tuple(m for m in NEEDS_OUTSIDE_CORE.get(name, ()) if importlib.util.find_spec(m) is None)
+    slow = (pytest.mark.slow,) if name in SLOW else ()
+    skip = (pytest.mark.skip(reason=f"核の外の部品 {', '.join(absent)} がこの環境に入っていない"),) if absent else ()
+    return slow + skip
+
+
 def _params() -> list[object]:
-    return [
-        pytest.param(name, marks=pytest.mark.slow) if name in SLOW else name for name in _examples()
-    ]
+    return [pytest.param(name, marks=_marks(name)) for name in _examples()]
 
 
 @pytest.mark.parametrize("name", _params())
@@ -102,3 +118,4 @@ def test_example_runs_and_prints_its_results(name: str, deadline_scale_factor: f
 def test_expected_lines_name_only_existing_examples() -> None:
     assert sorted(EXPECTED_LINES) == _examples()
     assert set(SLOW) <= set(EXPECTED_LINES)
+    assert set(NEEDS_OUTSIDE_CORE) <= set(EXPECTED_LINES)
