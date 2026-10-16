@@ -946,8 +946,10 @@ impl PythonGeneratorStream {
 
     /// Classify a yielded Python object into a DoCtrl instruction.
     ///
-    /// classify_python_object handles all cases:
-    /// DoExpr (has tag), EffectBase (implicit Perform), or error.
+    /// classify_doexpr handles all cases: DoExpr (has tag), EffectBase (implicit
+    /// Perform), or error. A yielded value that is neither fails the stream with a
+    /// TypeError that says how to fix the yield; the VM throws it into this generator,
+    /// at the yield.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
         // A generator with no tail-resume line cannot be at one: skip reading its line
         // (the frame object and the line table — agora-redesign #2985).
@@ -962,11 +964,35 @@ impl PythonGeneratorStream {
                 }
             }
         }
-        match classify_python_object(py, obj) {
+        match classify_doexpr(py, obj) {
             Ok(doctrl) => StreamStep::Instruction(doctrl),
-            Err(msg) => StreamStep::Error(Value::String(msg)),
+            Err(Unclassified::NotADoExpr) => StreamStep::Error(yielded_not_a_program(py, obj)),
+            Err(Unclassified::Invalid(msg)) => StreamStep::Error(Value::String(msg)),
         }
     }
+}
+
+static YIELDED_NOT_A_PROGRAM: pyo3::sync::PyOnceLock<Py<PyAny>> = pyo3::sync::PyOnceLock::new();
+
+/// The TypeError for a yield of `obj`, a value that is neither an effect nor a program.
+/// Its message (`doeff_vm._not_a_program.yielded_not_a_program`) names the likely mistake
+/// — a `@do` function not called, a generator function without `@do`, a plain value —
+/// and the fix. Built only after the classification failed.
+fn yielded_not_a_program(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Value {
+    let message = YIELDED_NOT_A_PROGRAM
+        .get_or_try_init(py, || {
+            py.import("doeff_vm._not_a_program")
+                .and_then(|m| m.getattr("yielded_not_a_program"))
+                .map(Bound::unbind)
+        })
+        .and_then(|explain| explain.bind(py).call1((obj,))?.extract::<String>())
+        .unwrap_or_else(|e| {
+            format!(
+                "yield got {:?}, which is neither an effect nor a program (explaining it failed: {e})",
+                obj.get_type()
+            )
+        });
+    exception_value(py, &pyo3::exceptions::PyTypeError::new_err(message))
 }
 
 impl IRStream for PythonGeneratorStream {
@@ -1211,14 +1237,39 @@ fn wrap_handler(py: Python<'_>, handler: &Bound<'_, PyAny>) -> Result<Value, Str
     ))
 }
 
+/// Why `classify_doexpr` gave no instruction for an object.
+enum Unclassified {
+    /// The object is neither an effect nor a DoExpr node.
+    NotADoExpr,
+    /// The object is a DoExpr node the VM cannot run: a part of it is not a program, a
+    /// continuation was already used, a handler did not resolve, ...
+    Invalid(String),
+}
+
+impl From<String> for Unclassified {
+    fn from(message: String) -> Self {
+        Unclassified::Invalid(message)
+    }
+}
+
+/// Classify a Python object into a DoCtrl (see `classify_doexpr`).
+pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, String> {
+    classify_doexpr(py, obj).map_err(|unclassified| match unclassified {
+        Unclassified::NotADoExpr => {
+            format!("expected DoExpr or EffectBase, got: {:?}", obj.get_type())
+        }
+        Unclassified::Invalid(message) => message,
+    })
+}
+
 /// Classify a Python object into a DoCtrl.
 ///
 /// Priority order:
 /// 1. EffectBase → implicit Perform(effect) (disjoint from the DoExpr pyclasses)
 /// 2. Rust pyclass DoExpr → downcast (fast pointer-type-check)
 /// 3. Legacy Python DoExpr with `tag` → fallback tag-based dispatch
-/// 4. Anything else → error
-pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, String> {
+/// 4. Anything else → `Unclassified::NotADoExpr`
+fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unclassified> {
     use crate::do_expr::*;
 
     // --- EffectBase → implicit Perform ---
@@ -1303,7 +1354,7 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
                 Err(doeff_vm_core::VMError::UncaughtException { exception }) => {
                     Ok(raised_call(exception))
                 }
-                Err(other) => Err(format!("Call: {other}")),
+                Err(other) => Err(format!("Call: {other}").into()),
             };
         }
         let thunk = CallThunk {
@@ -1393,10 +1444,11 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
                     python_to_value(py, &callable),
                 ),
                 other => {
-                    return Err(format!(
+                    let message = format!(
                         "WithBoundaries: boundary[{}] kind must be 'handler' or 'observer', got {:?}",
                         i, other
-                    ))
+                    );
+                    return Err(message.into());
                 }
             };
             boundaries.push(boundary);
@@ -1437,14 +1489,11 @@ pub fn classify_python_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<
     // --- Legacy tag-based fallback (for any remaining Python DoExpr classes) ---
     if let Ok(tag_attr) = obj.getattr("tag") {
         if let Ok(tag) = tag_attr.extract::<u8>() {
-            return classify_tagged_to_doctrl(py, obj, tag);
+            return Ok(classify_tagged_to_doctrl(py, obj, tag)?);
         }
     }
 
-    Err(format!(
-        "expected DoExpr or EffectBase, got: {:?}",
-        obj.get_type()
-    ))
+    Err(Unclassified::NotADoExpr)
 }
 
 /// Legacy tag-based classification fallback.

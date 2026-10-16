@@ -283,7 +283,8 @@ print(run(state(initial={"count": 3})(writer(conditional_program()))))  # (3, 'l
 
 ### "TypeError: ... expected DoExpr or EffectBase, got: <class 'generator'>"
 
-Make sure you're using `@do` decorator:
+Or, when another program yields it: "TypeError: yield got a generator from 'my_program',
+which has no @do". Make sure you're using `@do` decorator:
 
 ```python excerpt
 from doeff import do
@@ -299,7 +300,29 @@ def my_program():
     yield Tell("test")
 ```
 
-### "RuntimeError: ... expected DoExpr or EffectBase, got: <class 'int'>"
+### "TypeError: yield got the @do function 'sub' itself, not a program"
+
+Call the `@do` function to build the program, then yield the program:
+
+```python excerpt
+from doeff import do
+
+@do
+def sub():
+    return 1
+
+# Wrong - yields the function itself
+@do
+def wrong():
+    value = yield sub  # Error!
+
+# Right - yields the program the call builds
+@do
+def right():
+    value = yield sub()  # OK
+```
+
+### "TypeError: yield got 42 (int), which is neither an effect nor a program"
 
 Only yield `Effect` or `Program` instances:
 
