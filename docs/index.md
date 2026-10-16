@@ -44,7 +44,7 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 - **[seedream.md](seedream.md)** - SeeDream integration
 - **[IDE Plugins](ide-plugins.md)** - PyCharm and VS Code extensions
 - **[doeff-agents / session host](../packages/doeff-agents/README.md)** - Agent session management, the `doeff-sessionhost` host, and joining an agent control plane
-- **[Program Architecture](program-architecture-overview.md)** - Runtime internals overview
+- **[Program Architecture](program-architecture-overview.md)** - Runtime internals overview (partly out of date: the VM internals predate 0.5.0)
 - **[Removed IO API](06-io-effects.md)** - Historical note for the removed `IO(...)` effect
 - **[Removed run_program API](16-run-program-api.md)** - Historical note for the removed Python `run_program()` entrypoint
 
@@ -56,13 +56,11 @@ Welcome to the comprehensive documentation for doeff - an algebraic effects syst
 
 ### Design Notes
 
-- **[Why Effects Over DI?](20-why-effects-over-di.md)** - Real-world use cases where algebraic effects beat dependency injection
+- **[Why Effects Over DI?](20-why-effects-over-di.md)** - Real-world use cases where algebraic effects beat dependency injection (the examples are sketches that predate 0.5.0)
 - **[Static Typing](23-static-typing.md)** - Typed effects (`EffectBase[T]`), typed `@do` programs, typed handler answers, and runtime readers of the same types
 - **[Rust Scheduler](25-rust-scheduler.md)** - The scheduler implemented in Python (default) and in Rust (opt-in): switching, the condition for making Rust the default, downstream extension points, measurements
 - **[Capability Classes](22-capability-classes.md)** - A four-class taxonomy predicting where effects pay off, retry under one-shot continuations, and adoption anti-patterns
 - **[CLI Architecture](cli-run-command-architecture.md)** - Run command pipeline design
-- **[Filesystem Effects](filesystem-effect-architecture.md)** - Filesystem effect design (draft)
-- **[Abstraction Concern](abstraction_concern.md)** - Interpreter design discussion
 
 ## What is doeff?
 

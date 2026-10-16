@@ -1,5 +1,13 @@
 # Why Algebraic Effects? Real-World Use Cases vs Dependency Injection
 
+> **The examples predate doeff 0.5.0 and are sketches, not runnable code.** Most need packages
+> outside the core (`doeff-llm`, `doeff-image`, `doeff-secret`, `doeff-time`, `doeff-events`),
+> and `doeff_sim` does not exist. In 0.5.0, `Pass()` is `Pass(effect, k)`; a raw handler is
+> installed with `handler(h)(program)` instead of being called on a program; `WithObserve` only
+> observes and cannot rewrite an effect; and `run` returns the plain result, not a call tree.
+> For runnable handler code see [Core Concepts](02-core-concepts.md#handler-contract) and
+> [Advanced Effects](09-advanced-effects.md#custom-control-effects-with-handlers).
+
 This document captures concrete scenarios where doeff's algebraic effects provide genuine advantages over traditional dependency injection (DI). These aren't theoretical benefits — they emerged from building real multi-provider LLM and image generation systems.
 
 ## The Setup: Multi-Provider AI Workflows
