@@ -1,0 +1,10 @@
+設計の記録の記事（doeff-adr.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-17）。
+
+- 正本：../visuals/adr-concept.svg と ../visuals/adr-flow.svg。
+- 図の仕様：../reviews/adr-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
+  - adr-concept：幅1200・高さ1120。
+  - adr-flow：幅1200・高さ1000。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+10本目の新しい回なので、2026-09-16のimagegenの画像は元から無い。
