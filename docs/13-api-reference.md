@@ -45,6 +45,11 @@ class MyEffect(EffectBase):
 
 At runtime, effect dispatch happens through `Perform(effect)`.
 
+An effect keeps its data in its own class's fields (an `__init__` as above, or `@dataclass`). A class
+with no `__init__` keeps no arguments: `EffectBase("fetch", url=...)` (`doeff.Effect`), or a subclass
+without an `__init__` called with arguments, raises `TypeError` in the release after 0.5.0; 0.5.0 drops
+the arguments without a word.
+
 **See:** [Core Concepts](02-core-concepts.md#control-vs-effect-data)
 
 ---
