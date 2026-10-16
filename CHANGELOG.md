@@ -58,6 +58,10 @@
 
 ### Changed
 
+- `doeff` CLI: `doeff run` no longer prints `[DOEFF][PROFILE]` timing lines unless asked. `doeff run --profile` or
+  `DOEFF_PROFILE=1` prints them on stderr as before (`DOEFF_PROFILE` empty or `0` leaves them off).
+  `DOEFF_DISABLE_PROFILE` is no longer read, since profiling is off by default, and `doeff-ml-nexus`'s docker handler
+  no longer passes it to the container.
 - `doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`: the five core packages share one version
   number, `0.5.0` (from `doeff` 0.4.1, `doeff-vm` 0.2.0 and 0.1.0 for the other three), and each one's dependencies on
   the others are limited to that minor series (`>=0.5.0,<0.6`), so one number tells which releases go together. The

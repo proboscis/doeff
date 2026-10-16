@@ -24,7 +24,7 @@ def run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedPr
     settings = {
         "PYTHONPATH": str(PROJECT_ROOT),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
-        "DOEFF_DISABLE_PROFILE": "1",
+        "DOEFF_PROFILE": None,
     }
     return subprocess.run(
         with_settings(command, settings),

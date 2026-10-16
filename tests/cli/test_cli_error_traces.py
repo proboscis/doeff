@@ -29,7 +29,7 @@ def run_cli(
     settings: dict[str, str | None] = {
         "PYTHONPATH": str(PROJECT_ROOT),
         "DOEFF_DISABLE_DEFAULT_ENV": "1",
-        "DOEFF_DISABLE_PROFILE": "1",
+        "DOEFF_PROFILE": None,
     }
     return subprocess.run(
         with_settings(command, settings | (env_overrides or {})),
