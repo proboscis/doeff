@@ -47,6 +47,22 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return directory
 
 
+@pytest.fixture(autouse=True)
+def import_leaves_no_tree(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests count the analyzer's own expansions and entries, so a module they import must not also leave
+    its tree for the analysis (``doeff_hy_bytecode_guard.expansion_trees``); the tests that ask for
+    ``import_trees_on`` are the ones about that."""
+    if "import_trees_on" not in request.fixturenames:
+        from doeff_hy_bytecode_guard import expansion_trees
+
+        monkeypatch.setattr(expansion_trees, "add_import_tree", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
+def import_trees_on() -> None:
+    """Asked for by a test about the trees an import leaves (see ``import_leaves_no_tree``)."""
+
+
 def expansions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Count how often the real expansion runs (the cache must spare the second one)."""
     seen: list[str] = []
@@ -877,3 +893,62 @@ def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
         TYPE_CHECK_EXPANSION.reset(token)
     assert seen == ["m", "m", "m"]
     assert (len(entries(cache_dir)), len(expansion_entries(cache_dir))) == (1, 1)
+
+
+def import_compiling(root: Path, package: str, files: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Write ``files`` (name -> text) as the package ``package`` in ``root`` and import its ``m`` — the import's
+    compile expands it (a fresh package: no bytecode, no stored code); returns ``m``'s file."""
+    directory = root / package
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "__init__.py").write_text("", encoding="utf-8")
+    for name, text in files.items():
+        (directory / name).write_text(text, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(root))
+    importlib.invalidate_caches()
+    try:
+        importlib.import_module(f"{package}.m")
+    finally:
+        for name in [name for name in sys.modules if name == package or name.startswith(f"{package}.")]:
+            sys.modules.pop(name)
+    return directory / "m.hy"
+
+
+def test_a_module_the_import_compiled_is_not_expanded_again(
+    import_trees_on: None, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ki-e053a847c515: a changed module was expanded by the session's import and again by the analysis
+    (58 % of the closure tests' seconds in the daily run). The import's compile leaves its tree and the macros
+    it used; the analysis reads that tree instead of expanding the same source again."""
+    seen = expansions(monkeypatch)
+    package = f"imported_{uuid.uuid4().hex[:8]}"
+    path = import_compiling(tmp_path, package, {"m.hy": SOURCE}, monkeypatch)
+    a_new_process()
+    read = pe._compile_hy(SOURCE, str(path), f"{package}.m")
+    assert seen == []
+    assert ast.dump(read.tree) == ast.dump(hy_expansion._expand_hy(SOURCE, str(path), f"{package}.m").tree)
+
+
+def test_a_changed_macro_after_the_import_expands_the_module_again(
+    import_trees_on: None, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tree the import left is read only while the macros it used are this environment's."""
+    seen = expansions(monkeypatch)
+    package = f"imported_{uuid.uuid4().hex[:8]}"
+    uses = f"(require {package}.a [answer])\n(setv value (answer))\n"
+    path = import_compiling(
+        tmp_path, package, {"a.hy": "(defmacro answer [] 1)\n", "m.hy": uses}, monkeypatch
+    )
+    (path.parent / "a.hy").write_text("(defmacro answer [] 2)\n", encoding="utf-8")
+    importlib.invalidate_caches()
+    a_new_process()
+    pe._compile_hy(uses, str(path), f"{package}.m")
+    assert seen == [f"{package}.m"]
+
+
+def test_an_import_leaves_no_tree_when_the_cache_is_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", "off")
+    package = f"imported_{uuid.uuid4().hex[:8]}"
+    import_compiling(tmp_path, package, {"m.hy": SOURCE}, monkeypatch)
+    assert not list(tmp_path.rglob("import-trees"))

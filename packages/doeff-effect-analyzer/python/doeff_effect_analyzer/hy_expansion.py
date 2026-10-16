@@ -147,9 +147,26 @@ def _expansion(source: str, filename: str, module_name: str, directory: Path | N
     stored = _stored_expansion(place)
     if stored is not None:
         return stored
+    imported = _imported_expansion(source, module_name, directory)
+    if imported is not None:
+        return imported
     expanded = _expand_hy(source, filename, module_name)
     _store_expansion(place, expanded)
     return expanded
+
+
+def _imported_expansion(source: str, module_name: str, directory: Path) -> _Expanded | None:
+    """The tree the import side already expanded for this source (``doeff_hy_bytecode_guard.expansion_trees`` —
+    a changed module is compiled by the session's import before it is analyzed, and both expand the same source
+    with the same compiler: ki-e053a847c515), with the record of the macros it used; None when the import did not
+    expand it here (its bytecode came from a store) or those macros are not this environment's. Read only — the
+    import side is the one that writes these trees, so this module's key (``_ExpansionKey``) stays what it decides."""
+    from doeff_hy_bytecode_guard.expansion_trees import read_import_tree
+
+    imported = read_import_tree(directory, module_name, source)
+    if imported is None:
+        return None
+    return _Expanded(tree=imported.tree, macros=imported.macros)
 
 
 def _type_check_expansion() -> bool:
