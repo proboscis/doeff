@@ -65,16 +65,20 @@ Reusable custom handlers should expose the same Program -> Program shape. In Hy,
 creates that shape directly:
 
 ```hy
-(import doeff [Ask])
+(require doeff-hy.handle [defhandler])
+(require doeff-hy.macros [do! <-])
+(import doeff [Ask run])
 
 (defhandler ask-env
   (Ask [key]
     (resume (get {"greeting" "hello"} key))))
 
-(ask-env
+(setv greet
   (do!
     (<- greeting (Ask "greeting"))
     greeting))
+
+(print (run (ask-env greet)))  ; hello
 ```
 
 ## Effect Surface
@@ -111,13 +115,16 @@ Built-in handlers (from `doeff_core_effects.handlers`):
 | Await | `await_handler()` | `Await` |
 | Scheduler | `scheduled(prog)` | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
 
+`writer` keeps its log in state: install `state()` outside it, and read the log with
+`yield writer_log()` (from `doeff_core_effects.handlers`).
+
 ## Scheduler and Concurrency
 
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import writer
-from doeff_core_effects.scheduler import scheduled, Spawn, Wait, Gather
+from doeff_core_effects.handlers import state, writer
+from doeff_core_effects.scheduler import scheduled, Spawn, Gather
 
 @do
 def worker(label):
@@ -131,7 +138,8 @@ def main():
     results = yield Gather(t1, t2)
     return results
 
-result = run(scheduled(writer(main())))
+# writer keeps its log in state, so install state() outside writer.
+result = run(scheduled(state()(writer(main()))))
 print(result)  # ['a', 'b']
 ```
 

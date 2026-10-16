@@ -245,6 +245,16 @@ tests = [
     "packages/doeff-core-effects/tests/test_hy_module_stubs.py",  # 2.4 秒 — .hy と隣の .pyi の名・欄・引数
     "packages/doeff-domain/tests/test_domain_dogfood.py",  # 2.8 秒 — core-effects の語彙の domain 宣言と孤児の走査
     "docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green",  # 2.2 秒
+    # README の例(多くは core-effects の handler の使い方)を子の interpreter で走らせる — 例は file に書いて走らせるので、import の
+    # 逆依存では選ばれない(並行の例は writer が state を要るようになった後も落ちたままだった・card ki-68cd4c8effcd)
+    "tests/test_readme_examples.py::test_readme_example_runs_and_prints_what_it_states",  # 4 本の call で 1.6 秒(load 約 70 の下)
+]
+
+# README の囲みを書き換えた便は、例を走らせて印字を注記と比べる検と、囲みの言葉・入口の例の節の検を払う(card ki-68cd4c8effcd)。
+[[tool.doeff.contract-tests]]
+prefix = "README.md"
+tests = [
+    "tests/test_readme_examples.py",  # 9.7 秒(10 本・子 7 本・pytest の計・枠の待ちを除く・load 約 70 の下)
 ]
 
 [[tool.doeff.contract-tests]]
