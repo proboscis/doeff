@@ -5,6 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use super::bulk_read;
+
 /// 読んだ登録簿(鍵の集合)と、読めなかった理由。
 #[derive(Debug, Default, Clone)]
 pub struct Registry {
@@ -46,8 +48,10 @@ impl Registry {
                 return;
             }
         };
-        for file in files {
-            match std::fs::read_to_string(&file) {
+        // 1 鍵 1 file の dir は数百 file になる — 冷えた作業木で 1 file ごとに disk を待たないよう、読みを重ねてから file の順に判じる。
+        let texts = bulk_read::fan_out(&files, |file| std::fs::read_to_string(file));
+        for (file, text) in files.iter().zip(texts) {
+            match text {
                 Ok(text) => match text.lines().next().map(str::trim).filter(|line| !line.is_empty()) {
                     Some(key) => {
                         let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -114,8 +118,9 @@ impl JudgedKeys {
                     continue;
                 }
             };
-            for file in files {
-                let text = match std::fs::read_to_string(&file) {
+            let texts = bulk_read::fan_out(&files, |file| std::fs::read_to_string(file));
+            for (file, text) in files.iter().zip(texts) {
+                let text = match text {
                     Ok(text) => text,
                     Err(error) => {
                         judged.problems.push(format!("判定の一覧の file {} を読めない: {}", file.display(), error));
