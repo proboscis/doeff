@@ -293,7 +293,10 @@ uv publish "/tmp/${package}-dist"/*
   `doeff-openrouter`・`doeff-gemini` の前に `doeff-llm`、`doeff-seedream` の前に `doeff-image`、`doeff-google-secret-manager` の前に
   `doeff-secret`)。
 - `doeff-indexer` だけは手元で出さず、tag `doeff-indexer-vX.Y.Z` を push して `build-indexer.yml` に全ての機体の wheel を組ませて出す。
-  この workflow も、upload の前に同じ版の check を走らせる。
+  この workflow も、upload の前に同じ版の check を走らせる。さらに job `verify-wheels` が、全部の wheel の中の binary の位置と、Linux x86_64 の
+  wheel を新しい venv に入れた命令の動き(`doeff-indexer --help`・`find-interpreters`)を `tools/verify_indexer_wheel.py` で見る。
+  PyPI の 0.1.3 は全部の機体の wheel が binary を命令の探す所(`doeff_indexer/bin/`)でなく `python/doeff_indexer/bin/` に持ち、`pip install` の後の
+  命令が動かなかった(maturin 1.12 の配置 — 1.13 以上に固定し、`tests/test_indexer_wheel_layout.py` が守る)。
 - 出した後は、新しい環境にその部品の名を PyPI から入れ、import できる事を確かめる。
 
 ## PyPI の資格
