@@ -36,3 +36,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - 時間の記事の2枚（time-concept・time-flow）は、週3の改稿に合わせて手で書いたSVGから作り直した。
 - 正本と作り方は[time-svg-source.txt](time-svg-source.txt)に書いた。manifest.jsonの`tool`は`SVG (hand-written) + chromium screenshot`。
 - 残り45枚は、まだリポジトリに無い。`verify_publication.py`は、その45枚が揃うまで画像の検査で止まる。
+
+## agentsの記事の2枚をSVGで描き直す（2026-10-16追記）
+
+- agentsの2枚（agents-concept・agents-flow）も、週2の改稿に合わせて手で書いたSVGから作り直した。作り方は時間の記事の2枚と同じ。
+- 正本と作り方は[agents-svg-source.txt](agents-svg-source.txt)に書いた。携帯の幅（約360px）で読めるよう、字は幅600の図で17px以上にした。
+- 残り43枚は、まだリポジトリに無い。

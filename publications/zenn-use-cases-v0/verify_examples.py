@@ -131,7 +131,8 @@ with TemporaryDirectory() as directory:
     print("OK: Conductor 履歴再利用(エージェントなし)", flush=True)
 
     execute([str(SOURCE / "reviews/main-check.py")])
-    print("OK: メインの最小ハンドラ・担当外の委譲・22記事の表", flush=True)
+    execute([str(SOURCE / "reviews/agents-check.py")])
+    print("OK: メインの最小ハンドラ・担当外の委譲・22記事の表・agents記事の掲載コード", flush=True)
 
     verify_publication()
     verify_comments()

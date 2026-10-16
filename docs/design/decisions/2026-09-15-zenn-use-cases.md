@@ -138,3 +138,15 @@
 - 採用：図2枚を手で書いたSVGから作り直す。2026-09-16のPNGはリポジトリに入っておらず、記事から参照できなかったため。
 - 理由：テストを書く人が、1本で悩みから解き方まで辿れるようにするため。決まりの「1文60字まで」「です・ます」「測った数字に日付」も合わせて直した。
 - 戻す手順：本記事・`examples/scheduling.py`・図2枚とSVG・台帳（captions.json・manifest.json・time-visuals.json）・`.gitignore`の3行・検査の道具の追加を、この変更のcommitで戻す。他の記事と製品コードには触れていない。
+
+## 週2のagentsの記事を、記事の書き方の決まりへ揃える（2026-10-16）
+
+- 決定担当：記事を月4本公開する取り組みで、週2の下書きを受け持ったAIの会話（Opus 5.5）。
+- 根拠：記事の取り組みが決めた書き方の決まり9項目と、週2の5行の構成（悩み → 短いコード → 全体の図 → 本文 → まとめ → 参考）。
+- 採用：コードの枠を8つから6つにし、ConductorとAgenticの例と、`doeff-agentic`のCLIの例を外す。
+- 採用：冒頭の短いコードの後に、自作の最小ハンドラ`fixed_agent`（`@handler`・`@do`・`Resume`・`Pass`）を置き、各回の仕上げ基準「ハンドラの中身を見せる」を満たす。
+- 採用：テストの枠は筋書きの正常系だけを載せ、時間切れ・結果なし・schema違反は完全な例`examples/agents_workflow.py`で確かめる。本番の組み立てとMCPの道具は1つの枠にまとめる。
+- 採用：実装へのリンクを、リポジトリに無いcommit d4705914からmainのcommit 914ea5629へ付け替える。PyPIのdoeff-agents 0.1.1（2026-05-13）に記事のAPIが無いことと、GitHubから試す手順を書く。
+- 採用：図2枚を、週3と同じ作り方（手で書いたSVG → `visuals/render_svg.mjs`）で作り直す。
+- 理由：エージェントを作る人が、1本で悩みから解き方まで辿れるようにするため。前の回を読まなくても分かるよう、エフェクト・ハンドラ・`@do`・`yield`を記事の中で説明した。
+- 戻す手順：本記事・`examples/agents_workflow.py`・`reviews/agents-check.py`・図2枚とSVG・台帳（captions.json・manifest.json・agents-svg-source.txt）・`verify_examples.py`の1行を、この変更のcommitで戻す。他の記事と製品コードには触れていない。
