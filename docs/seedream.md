@@ -4,16 +4,23 @@ This document explains how to work with the ``doeff-seedream`` package, which
 wraps the [Seedream 4.0 image generation API](https://www.volcengine.com/docs/82379/1541523)
 from ByteDance's Ark platform.
 
+> **Needs components outside `pip install doeff`.** This page uses `doeff-seedream`, which is
+> not on PyPI. Install it as shown under Installation.
+
 ## Installation
 
-The package lives inside this monorepo, so once you install the workspace with
-`uv sync --group dev` it will be available for import as ``doeff_seedream``.
-
-If you are vendoring the package independently, add it to your project using:
+Install `doeff-seedream` from a checkout of this repository together with the
+repository packages it depends on (`doeff-time`, `doeff-image`). pip takes
+everything else, `doeff` included, from PyPI:
 
 ```bash
-uv add doeff-seedream
+git clone --depth 1 https://github.com/proboscis/doeff.git
+pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-image \
+  ./doeff/packages/doeff-seedream
 ```
+
+Inside a workspace checkout (`make sync`), the package is already importable as
+``doeff_seedream``.
 
 ## Configuring credentials
 

@@ -1,5 +1,17 @@
 # Why Algebraic Effects? Real-World Use Cases vs Dependency Injection
 
+> **Needs components outside `pip install doeff`.** The examples on this page use `doeff-llm`,
+> `doeff-image`, `doeff-secret`, `doeff-time` and `doeff-events`. None of them is on PyPI, so
+> install them from a checkout of this repository. pip takes everything else from PyPI. The
+> example under "Case Study: Simulation Through Composition" also imports `doeff-sim`, which has
+> since been removed from the repository, so that example does not run.
+
+```bash
+git clone --depth 1 https://github.com/proboscis/doeff.git
+pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-llm \
+  ./doeff/packages/doeff-image ./doeff/packages/doeff-secret ./doeff/packages/doeff-events
+```
+
 This document captures concrete scenarios where doeff's algebraic effects provide genuine advantages over traditional dependency injection (DI). These aren't theoretical benefits — they emerged from building real multi-provider LLM and image generation systems.
 
 ## The Setup: Multi-Provider AI Workflows

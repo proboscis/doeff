@@ -1,5 +1,16 @@
 # 14. CLI Auto-Discovery
 
+> **Needs a component outside `pip install doeff`.** Auto-discovery uses `doeff-indexer`, which
+> is on PyPI:
+
+```bash
+pip install doeff doeff-indexer
+```
+
+> Without `doeff-indexer`, `doeff run` without `--interpreter` silently falls back to its
+> built-in default interpreter. Passing `--interpreter` (and `--env`) explicitly works with
+> `pip install doeff` alone.
+
 Automatically discover and use default interpreters and environments when running programs with the `doeff run` command.
 
 ## Table of Contents
@@ -102,9 +113,8 @@ base_env: Program[dict] = Program.pure({
 doeff run --program myapp.features.my_program
 ```
 
-The discovery workflow depends on the bundled Rust indexer.
-Because it is built locally, make sure Rust (via `rustup`) is installed before running
-`pip install doeff`.
+The discovery workflow depends on `doeff-indexer`, which `pip install doeff` does not
+install (see the note at the top of this page).
 
 That's it! The CLI automatically:
 - Uses `my_interpreter` (closest default)

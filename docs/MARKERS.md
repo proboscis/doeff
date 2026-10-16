@@ -1,5 +1,16 @@
 # Doeff Marker Comments
 
+> **Needs a component outside `pip install doeff`.** Markers are read by `doeff-indexer` (for
+> `doeff run` auto-discovery) and by the IDE plugins; `doeff` alone does not read them.
+> `doeff-indexer` is on PyPI:
+
+```bash
+pip install doeff doeff-indexer
+```
+
+> The `doeff-indexer` command under [CLI Usage](#cli-usage) is not in the PyPI 0.1.3 wheel for
+> Linux x86_64; build it from a checkout as described in [IDE Plugins](ide-plugins.md).
+
 ## Overview
 
 Doeff markers are special comments that allow precise categorization of functions in your codebase. They help the doeff-indexer and IDE plugins (like the PyCharm plugin) better understand the role of each function, enabling more accurate navigation and execution.
