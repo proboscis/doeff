@@ -60,6 +60,10 @@ def reader(env: Mapping[Any, Any] | None = None) -> ProgramHandler:
 def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     """State handler: resolves Get(key) and Put(key, value) from mutable dict.
 
+    Get of a missing key returns None (not an error): writer and Hy defhandler
+    session val / var read their slot before the first Put and initialise it
+    then (SPEC-EFF-002 D1).
+
     Args:
         initial: dict of initial state. Default empty.
     """

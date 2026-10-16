@@ -36,7 +36,10 @@ class Ask(EffectBase[Any]):
 
 
 class Get(EffectBase[Any]):
-    """State effect: get a value from mutable state by key."""
+    """State effect: get a value from mutable state by key.
+
+    With the state() handler, a missing key yields None (SPEC-EFF-002).
+    """
 
     def __init__(self, key: object) -> None:
         super().__init__()

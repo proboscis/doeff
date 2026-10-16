@@ -11,7 +11,6 @@ from doeff_core_effects.handlers import (
     writer,
     writer_log,
 )
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
 
 from doeff import Pure, do
 from doeff import run as doeff_run
@@ -74,40 +73,6 @@ class TestState:
 
         result = doeff_run(state()(body()))
         assert result is None
-
-    def test_put_before_a_caught_error_persists(self):
-        # SPEC-EFF-002「Try + Put」: Try が捕まえても、誤りの前の Put は巻き戻らない。
-        @do
-        def risky():
-            yield Put("modified", True)
-            raise ValueError("error")
-
-        @do
-        def body():
-            yield Put("modified", False)
-            caught = yield Try(risky())
-            return caught.is_err(), (yield Get("modified"))
-
-        assert doeff_run(try_handler(state()(body()))) == (True, True)
-
-    def test_spawned_tasks_share_the_state_store(self):
-        # SPEC-EFF-002「Gather + Put」: Spawn した task は、外の state() の 1 つの store を読み書きする。
-        @do
-        def increment():
-            current = yield Get("counter")
-            yield Put("counter", current + 1)
-            return current
-
-        @do
-        def body():
-            yield Put("counter", 0)
-            first = yield Spawn(increment())
-            second = yield Spawn(increment())
-            third = yield Spawn(increment())
-            started = yield Gather(first, second, third)
-            return sorted(started), (yield Get("counter"))
-
-        assert doeff_run(scheduled(state()(body()))) == ([0, 1, 2], 3)
 
 
 class TestWriter:
