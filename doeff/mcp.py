@@ -6,7 +6,7 @@ that defmcp-tool Hy macro expands into.
 
 Usage from Hy:
 
-    (defmcp-tool submit-order
+    (defmcp-tool submit-order-tool
       "Submit a trading order"
       [{:name "symbol" :type "string" :description "Stock symbol code"}
        {:name "side" :type "string" :enum ["buy" "sell"] :description "Order side"}
@@ -14,12 +14,16 @@ Usage from Hy:
       (<- result (submit-order symbol side qty))
       result)
 
+The tool's name (submit-order-tool) differs from the defk its body calls (submit-order):
+the macro binds the name to the McpToolDef, so a body calling the tool's own name would
+call the tool, and the macro refuses that body when it expands.
+
 Usage from Python:
 
     from doeff.mcp import McpToolDef, McpParamSchema
 
     tool = McpToolDef(
-        name="submit-order",
+        name="submit-order-tool",
         description="Submit a trading order",
         params=(
             McpParamSchema(name="symbol", type="string", description="Stock symbol code"),

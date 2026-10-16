@@ -58,6 +58,13 @@
 
 ### Changed
 
+- `doeff-hy`: `defmcp-tool` refuses, when it expands, a body that calls the tool's own name
+  (`(defmcp-tool submit-order … (submit-order …))`, spelled `submit-order` or `submit_order`, at any depth outside a
+  quote). The expansion binds that name to the `McpToolDef`, so the call reached the tool instead of a `defk` of the
+  same name — even one defined first — and the handler failed with `TypeError: 'McpToolDef' object is not callable`
+  when it ran. The example in `docs/12-mcp-tools.md` and the docstrings of `defmcp-tool` and `doeff.mcp` named the
+  tool after the `defk` it called; the example now names the tool `submit-order-tool`, defines the `defk`, and runs
+  the handler (card ki-896fc4bca8cb).
 - `doeff` CLI: `doeff run` no longer prints `[DOEFF][PROFILE]` timing lines unless asked. `doeff run --profile` or
   `DOEFF_PROFILE=1` prints them on stderr as before (`DOEFF_PROFILE` empty or `0` leaves them off).
   `DOEFF_DISABLE_PROFILE` is no longer read, since profiling is off by default, and `doeff-ml-nexus`'s docker handler

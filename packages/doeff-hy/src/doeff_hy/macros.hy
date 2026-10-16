@@ -2486,13 +2486,39 @@ defpipeline {pipeline}: no stages defined.
   #((lfor p param-list (_mcp-param-schema schema p))
     (lfor p param-list (_mcp-handler-param tool p))))
 
+(defn _mcp-self-calls [name body]
+  "defmcp-tool の本体 `body`(form の列)のうち、tool 自身の名 `name` を頭に置く呼びの式の列(書かれた順)。
+
+   展開は `name` を McpToolDef に束ねるので、本体の `(name …)` は同じ名の defk が先に在っても tool を指し、run の時に
+   TypeError: 'McpToolDef' object is not callable で落ちる(docs 12 章 MCP の道具の例・card ki-896fc4bca8cb)。名は
+   mangle して比べる(`submit-order` と `submit_order` は同じ名)。引用(quote・quasiquote)の中は data なので見ない。
+   tool の値を読むだけの参照(`(. name 欄)`・引数に渡す `name`)は呼びでないので数えない。綴りだけを見るので、本体の
+   中で同じ名を束ね直して呼ぶ形も断る — tool の名を変えれば済む。"
+  (setv own (hy.mangle (str name)))
+  (defn head-is? [node names]
+    (and node
+         (isinstance (get node 0) hy.models.Symbol)
+         (in (hy.mangle (str (get node 0))) names)))
+  (defn walk [node]
+    (cond
+      (and (isinstance node hy.models.Expression) (head-is? node #("quote" "quasiquote")))
+        []
+      (isinstance node hy.models.Expression)
+        (+ (if (head-is? node #(own)) [node] [])
+           (lfor child node found (walk child) found))
+      (isinstance node hy.models.Sequence)
+        (lfor child node found (walk child) found)
+      True
+        []))
+  (lfor form body found (walk form) found))
+
 (defmacro defmcp-tool [_hy-compiler name description param-list #* body]
   "Define an MCP tool backed by a doeff @do handler.
 
    The body uses <- for effect binding, same as defk.
    Typically the body is a single line calling an existing defk.
 
-   (defmcp-tool submit-order
+   (defmcp-tool submit-order-tool
      \"Submit a trading order to Kabustation\"
      [{:name \"symbol\" :type \"string\" :description \"Stock symbol code\"}
       {:name \"side\" :type \"string\" :enum [\"buy\" \"sell\"] :description \"Order side\"}
@@ -2504,6 +2530,10 @@ defpipeline {pipeline}: no stages defined.
    1. A @do function _<name>_mcp_handler with params from the schema, each annotated with
       the schema's :type as a Python type (`_mcp-handler-param`)
    2. An McpToolDef instance <name> with the schema + handler
+
+   <name> は McpToolDef に束ねるので、tool には本体が呼ぶ defk と別の名を付ける。本体が <name> を呼ぶ形は展開の時に
+   断る(`_mcp-self-calls`)— 断らなかった頃は、同じ名の defk が先に在っても本体の呼びが tool を指し、run の時に
+   TypeError: 'McpToolDef' object is not callable で落ちた(docs 12 章 MCP の道具の例・card ki-896fc4bca8cb)。
 
    関数の本体の中に書くと、import と handler をすぐ呼ぶ関数に入れて <name> だけを束ねる(_scoped-definition —
    外の関数で先に読む for/do・traverse の `_doeff_do` を未束縛にしない。handler は <name> の :handler で引く)。
@@ -2535,6 +2565,12 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     [{{:name \"param\" :type \"string\" :description \"param desc\"}}]
     body)
 " :name name))))
+  (setv self-calls (_mcp-self-calls name body))
+  (when self-calls
+    (raise (SyntaxError
+             (.format "defmcp-tool {name}: 本体が tool 自身の名 {name} を呼んでいます({call})— 展開はこの名を McpToolDef に束ねるので、同じ名の defk が先に在っても本体の呼びは tool を指し、run の時に TypeError: 'McpToolDef' object is not callable で落ちます。tool に呼ぶ defk と別の名(例 {name}-tool)を付けてください"
+                      :name name
+                      :call (cut (hy.repr (get self-calls 0)) 1 None)))))
   ;; tool の値を作る名: 型検査のための展開では module の頭の `_doeff_<名>`(static_view.py の MCP_STATIC_IMPORTS)、
   ;; 実行時は tool ごとの doeff.mcp の import
   (setv #(tool-def param-schema mcp-import)
