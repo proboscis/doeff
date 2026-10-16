@@ -58,6 +58,13 @@
 
 ### Changed
 
+- `doeff run` starts without Hy: its entry point read `DOEFF_PROFILE` through Hy's process effects
+  (`doeff_core_effects.os_process` / `process_effects`, since 6ceb0db53), so with only the four core packages
+  installed (`doeff`, `doeff-vm`, `doeff-core-effects`, `frozendict`) every call — `--help` included — died with
+  `No module named 'doeff_hy'`. It now asks `env_var_ask` (Python) for `DOEFF_PROFILE`, so `doeff run --help`,
+  `--program` (a Python program), `-c`, `--profile` and `DOEFF_PROFILE` work without Hy. Hy is still needed for `--hy`
+  and for a `.hy` program. `doeff.cli.profiling.profiling_config_from_env(env)` is replaced by
+  `profiling_config_from_environment()`.
 - `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
   2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
   `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run

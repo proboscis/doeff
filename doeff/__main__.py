@@ -17,14 +17,10 @@ import sys
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
-
-from doeff import run, with_handlers
 from doeff.cli.profiling import (
     ProfilingConfig,
     print_profiling_status,
-    profiling_config_from_env,
+    profiling_config_from_environment,
     use_profiling_config,
 )
 from doeff.cli.run_services import (
@@ -548,11 +544,7 @@ def _run_command(args: RunArgs) -> int:
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    # The environment this CLI was launched with is asked once through doeff's foundation
-    # handler (subprocess_handler answers ReadEnvironment from the process environment)
-    # instead of read from the process environment here (agora-redesign #3012).
-    environment = run(with_handlers([subprocess_handler], ReadEnvironment((), ("",))))
-    return _main(argv, profiling_config_from_env(environment))
+    return _main(argv, profiling_config_from_environment())
 
 
 if __name__ == "__main__":

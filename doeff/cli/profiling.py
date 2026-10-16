@@ -12,9 +12,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from doeff_core_effects.process_effects import EnvEntry
+from doeff_core_effects.handlers import env_var_ask, reader
+from doeff_core_effects.scheduler import scheduled
 
-_PROFILE_ENV = "DOEFF_PROFILE"
+from doeff import Ask, run
+
+# env_var_ask reads DOEFF_<key>, so this key is the environment variable DOEFF_PROFILE.
+_PROFILE_KEY = "PROFILE"
 # Values of DOEFF_PROFILE that leave profiling off, like an unset DOEFF_PROFILE.
 _PROFILE_OFF_VALUES = ("", "0")
 
@@ -31,14 +35,15 @@ _CURRENT_CONFIG: ContextVar[ProfilingConfig | None] = ContextVar(
 )
 
 
-def profiling_config_from_env(env: tuple[EnvEntry, ...]) -> ProfilingConfig:
-    """env = the process environment as ReadEnvironment answers it (agora-redesign #3012);
-    DOEFF_PROFILE set to a value other than "" or "0" turns profiling on."""
-    return ProfilingConfig(
-        enabled=any(
-            entry.value not in _PROFILE_OFF_VALUES for entry in env if entry.name == _PROFILE_ENV
-        )
-    )
+def profiling_config_from_environment() -> ProfilingConfig:
+    """DOEFF_PROFILE set to a value other than "" or "0" turns profiling on.
+
+    The variable is asked through env_var_ask (Python, in doeff-core-effects' foundation layer that
+    may read the process environment) and not through Hy's process effects, so ``doeff run`` starts
+    in an environment that has only the four core packages and no Hy (agora-redesign #3012).
+    """
+    setting = run(scheduled(reader(env={_PROFILE_KEY: ""})(env_var_ask()(Ask(_PROFILE_KEY)))))
+    return ProfilingConfig(enabled=setting not in _PROFILE_OFF_VALUES)
 
 
 @contextmanager
