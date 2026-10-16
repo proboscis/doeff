@@ -125,7 +125,7 @@ lint-doeff:
 		[ "$$root" -eq 0 ] && [ "$$cluster" -eq 0 ]; \
 	else \
 		echo "doeff-linter が未導入のため検査できません。成功として扱いません。" >&2; \
-		echo "導入: cd packages/doeff-linter && cargo install --path ." >&2; \
+		echo "導入: make sync で .venv/bin/doeff-linter が入る — 「uv run make lint-doeff」 で走らせる(uv run が .venv/bin を PATH の先に置く)" >&2; \
 		exit 127; \
 	fi
 
