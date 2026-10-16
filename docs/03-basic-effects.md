@@ -21,7 +21,7 @@ Reader effects provide read-only access to an environment/configuration that flo
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Tell
-from doeff_core_effects.handlers import reader, writer
+from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
 @do
@@ -35,15 +35,19 @@ def connect_to_database():
 def main():
     prog = connect_to_database()
     prog = writer(prog)
+    prog = state()(prog)  # writer keeps its log in state, so state() goes outside it
     prog = reader(env={
         "database_url": "postgresql://localhost/mydb",
         "timeout": 30
     })(prog)
     result = run(scheduled(prog))
-    print(result)  # "Connected to postgresql://localhost/mydb"
+    print(result)  # Connected to postgresql://localhost/mydb
 
 main()
 ```
+
+The examples below show the program and one way to run it. Each one is a complete script:
+it imports what it uses and installs the handlers its effects need.
 
 **Use cases:**
 - Configuration values
@@ -56,6 +60,10 @@ main()
 If a key is not in the environment, `Ask` raises `KeyError`:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
+
 @do
 def requires_config():
     # Raises KeyError if "timeout" not in env
@@ -65,36 +73,50 @@ def requires_config():
 # Provide required keys via reader handler
 prog = requires_config()
 prog = reader(env={"timeout": 30})(prog)
-result = run(scheduled(prog))
+print(run(prog))  # 30
+
+try:
+    run(reader(env={})(requires_config()))
+except KeyError:
+    print("KeyError")  # KeyError
 ```
 
 ### Lazy Program Evaluation in Environment
 
-When an environment value is a `Program`, it is evaluated lazily on first access. The result is cached for subsequent `Ask` calls with the same key:
+With the `lazy_ask` handler (instead of `reader`), an environment value that is a `Program` is
+evaluated lazily on first access. The result is cached for subsequent `Ask` calls with the same key.
+`reader` returns such a value as it is, without running it. `lazy_ask` coordinates concurrent
+`Ask` calls with a semaphore, so run it under `scheduled()`:
 
 > This example uses `Delay` from `doeff-time`. `pip install doeff` does not install it and it is
 > not on PyPI; install it from a checkout as shown in
 > [Pages That Need Other Components](index.md#pages-that-need-other-components).
 
 ```python
-from doeff_time.effects.time import Delay
+from doeff import do, run
+from doeff_core_effects import Ask, Tell
+from doeff_core_effects.handlers import lazy_ask, state, writer, writer_log
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def expensive_computation():
     yield Tell("Computing config...")
-    yield Delay(1.0)  # Simulate expensive work
     return {"setting": "computed_value"}
 
 @do
 def use_config():
-    # If env["config"] is a Program, it runs lazily here
+    # env["config"] is a Program: it runs here, on the first Ask
     config = yield Ask("config")
-    return config
+    yield Ask("config")  # cached: the Program does not run again
+    log = yield writer_log()
+    return config, log
 
 # Pass a Program as the env value - evaluated lazily on first Ask
 prog = use_config()
-prog = reader(env={"config": expensive_computation()})(prog)
+prog = lazy_ask(env={"config": expensive_computation()})(prog)
+prog = state()(writer(prog))
 result = run(scheduled(prog))
+print(result)  # ({'setting': 'computed_value'}, ['Computing config...'])
 ```
 
 This is useful for:
@@ -112,9 +134,14 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ### Local - Temporary Environment Override
 
-`Local(env_update, sub_program)` runs a sub-program with modified environment:
+`Local(env_update, sub_program)` runs a sub-program with modified environment. `Local` is
+handled by `local_handler`, installed inside `reader` (`lazy_ask` handles `Local` by itself):
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Ask, Local, Tell
+from doeff_core_effects.handlers import local_handler, reader, state, writer
+
 @do
 def with_custom_config():
     # Normal environment
@@ -137,6 +164,11 @@ def fetch_data():
     url = yield Ask("api_url")
     yield Tell(f"Fetching from {url}")
     return f"data from {url}"
+
+prog = local_handler(with_custom_config())
+prog = reader(env={"api_url": "https://api.example.com"})(prog)
+prog = state()(writer(prog))
+print(run(prog))  # data from https://staging.example.com
 ```
 
 **Use cases:**
@@ -172,12 +204,20 @@ def application():
 
     return {"result1": result1, "result2": result2}
 
+@do
+def process_data(option):
+    return f"processed {option}"
+
+@do
+def validate_data(option):
+    return f"validated {option}"
+
 # Initialize with config
 def main():
     prog = application()
     prog = reader(env={"config": {"option1": "value1", "option2": "value2"}})(prog)
     result = run(scheduled(prog))
-    print(result)
+    print(result)  # {'result1': 'processed value1', 'result2': 'validated value2'}
 
 main()
 ```
@@ -191,26 +231,36 @@ State effects manage mutable state that persists across operations.
 `Get(key)` retrieves a value from state:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Tell
+from doeff_core_effects.handlers import state, writer
+
 @do
 def read_counter():
     count = yield Get("counter")
     yield Tell(f"Current count: {count}")
     return count
+
+print(run(state(initial={"counter": 5})(writer(read_counter()))))  # 5
 ```
 
-**Returns:** The value if key exists.
-
-**Raises:** `KeyError` if key doesn't exist. Use `Try` to handle missing keys:
+**Returns:** The value if key exists, `None` if it doesn't. Check for `None` to fall back to a
+default (initialize a key before reading it when `None` is also a stored value):
 
 ```python
-from doeff import Ok, Err
+from doeff import do, run
+from doeff_core_effects import Get
+from doeff_core_effects.handlers import state
 
 @do
 def safe_read():
-    result = yield Try(Get("maybe_missing"))
-    if isinstance(result, Ok):
-        return result.value
-    return "default"
+    value = yield Get("maybe_missing")
+    if value is None:
+        return "default"
+    return value
+
+print(run(state()(safe_read())))  # default
+print(run(state(initial={"maybe_missing": "stored"})(safe_read())))  # stored
 ```
 
 ### Put - Write State
@@ -218,12 +268,19 @@ def safe_read():
 `Put(key, value)` sets a state value:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
+
 @do
 def initialize_state():
     yield Put("counter", 0)
     yield Put("status", "ready")
     yield Put("items", [])
     yield Tell("State initialized")
+    return (yield Get("status"))
+
+print(run(state()(writer(initialize_state()))))  # ready
 ```
 
 **Behavior:**
@@ -236,6 +293,10 @@ def initialize_state():
 Since `Modify` has been removed, use `Get` followed by `Put` to transform state:
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
+
 @do
 def increment_counter():
     # Get, transform, and set
@@ -244,24 +305,30 @@ def increment_counter():
     yield Put("counter", new_value)
     yield Tell(f"Counter now: {new_value}")
     return new_value
+
+print(run(state(initial={"counter": 41})(writer(increment_counter()))))  # 42
 ```
 
 **Returns:** The new (transformed) value after applying the function.
 
-**Missing-key behavior:** `Get` raises `KeyError` if the key doesn't exist. Use `Try` to handle missing keys:
+**Missing-key behavior:** `Get` returns `None` if the key doesn't exist. Start from a default
+when it does:
 
 ```python
-from doeff import Ok, Err
+from doeff import do, run
+from doeff_core_effects import Get, Put
+from doeff_core_effects.handlers import state
 
 @do
 def safe_increment():
-    result = yield Try(Get("counter"))
-    current = result.value if isinstance(result, Ok) else 0
-    if isinstance(result, Err):
-        yield Put("counter", 0)
+    current = yield Get("counter")
+    if current is None:
+        current = 0
     new_value = current + 1
     yield Put("counter", new_value)
     return new_value
+
+print(run(state()(safe_increment())))  # 1
 ```
 
 ### State Composition Rules
@@ -275,6 +342,10 @@ def safe_increment():
 
 **Counter Example:**
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put
+from doeff_core_effects.handlers import state
+
 @do
 def counter_operations():
     # Initialize
@@ -287,11 +358,17 @@ def counter_operations():
 
     # Read final value
     final = yield Get("count")
-    return final  # 3
+    return final
+
+print(run(state()(counter_operations())))  # 3
 ```
 
 **Accumulator Example:**
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put
+from doeff_core_effects.handlers import state
+
 @do
 def collect_items():
     # Initialize list
@@ -305,11 +382,21 @@ def collect_items():
 
     # Read all
     items = yield Get("items")
-    return items  # [1, 2, 3]
+    return items
+
+print(run(state()(collect_items())))  # [1, 2, 3]
 ```
 
 **State Machine Example:**
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
+
+@do
+def process_work():
+    yield Tell("Working")
+
 @do
 def state_machine():
     yield Put("state", "idle")
@@ -326,6 +413,9 @@ def state_machine():
     # Transition: processing -> complete
     yield Put("state", "complete")
     yield Tell("Processing complete")
+    return (yield Get("state"))
+
+print(run(state()(writer(state_machine()))))  # complete
 ```
 
 ## Writer Effects
@@ -366,7 +456,7 @@ def main():
     prog = writer(prog)
     prog = state(initial={"count": 0})(prog)
     result = run(scheduled(prog))
-    print(result)
+    print(result)  # ('done', ['Starting operation', 'Processing data', 'Count: 0', 'Operation complete'])
 
 main()
 ```
@@ -376,16 +466,20 @@ main()
 ### slog - Structured Entries
 
 `slog(msg, **kwargs)` logs a structured entry with a message and keyword arguments.
-`WriterTellEffect(msg, **kwargs)` is the underlying effect class.
+`SlogEffect` is the underlying effect class. It is a separate type from `Tell`'s
+`WriterTellEffect`: `writer` does not collect it, and it needs `slog_handler` (prints each entry
+on stderr) or `slog_discard_handler` (silence). See
+[slog_handler](13-api-reference.md#slog_handler) for capturing the entries as values.
 
-```python
-def slog(msg, **kwargs) -> WriterTellEffect:
+```python excerpt
+def slog(msg, **kwargs) -> SlogEffect:
     """Create a structured log entry with msg and keyword data."""
 ```
 
 ```python
-from doeff import do
+from doeff import do, run
 from doeff_core_effects import slog
+from doeff_core_effects.handlers import slog_handler
 
 @do
 def structured_logging():
@@ -401,6 +495,12 @@ def structured_logging():
         memory_mb=512,
         threshold_mb=400,
     )
+    return "logged"
+
+# slog_handler prints each entry on stderr:
+#     INFO User logged in user_id=12345 ip=192.168.1.1
+#     WARN High memory usage memory_mb=512 threshold_mb=400
+print(run(slog_handler(structured_logging())))  # logged
 ```
 
 ### Listen - Capture Sub-Program Logs
@@ -414,9 +514,12 @@ Mechanism (SPEC-EFF-003):
 - Capture entries from that start index onward into the returned collected list.
 - Keep those captured entries in the shared log store (they are not removed).
 
+`Listen` is handled by `listen_handler`, installed inside `writer`:
+
 ```python
+from doeff import do, run
 from doeff_core_effects import Listen, Tell
-from doeff import do
+from doeff_core_effects.handlers import listen_handler, state, writer
 
 @do
 def inner_operation():
@@ -430,6 +533,8 @@ def outer_operation():
     value, collected = yield Listen(inner_operation())
     yield Tell("after inner")
     return value, collected
+
+print(run(state()(writer(listen_handler(outer_operation())))))  # (42, [Tell('inner step 1'), Tell('inner step 2')])
 ```
 
 The `collected` result is a plain list of captured effects.
@@ -450,6 +555,10 @@ The `collected` result is a plain list of captured effects.
 
 **Audit Trail:**
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
+
 @do
 def process_transaction(transaction_id):
     yield Tell(f"[AUDIT] Starting transaction {transaction_id}")
@@ -464,10 +573,16 @@ def process_transaction(transaction_id):
 
     yield Tell(f"[AUDIT] Transaction {transaction_id} complete")
     return new_balance
+
+print(run(state()(writer(process_transaction("tx-1")))))  # 900
 ```
 
 **Debug Trace:**
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
+
 @do
 def debug_computation():
     yield Tell("[DEBUG] Computation start")
@@ -482,6 +597,8 @@ def debug_computation():
     yield Tell(f"[DEBUG] Stored result = {y}")
 
     return y
+
+print(run(state(initial={"x": 21})(writer(debug_computation()))))  # 42
 ```
 
 ## Combining Effects
@@ -491,6 +608,15 @@ The real power comes from combining these effects:
 ### Configuration + State + Logging
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Ask, Get, Put, Tell
+from doeff_core_effects.handlers import reader, state, writer
+
+@do
+def try_operation():
+    attempt = yield Get("attempt")
+    return attempt >= 2  # succeeds on the second attempt
+
 @do
 def application_workflow():
     # Read config
@@ -520,11 +646,19 @@ def application_workflow():
     yield Put("status", "failed")
     yield Tell("All attempts failed")
     return "failed"
+
+prog = state()(writer(application_workflow()))
+prog = reader(env={"max_retries": 3})(prog)
+print(run(prog))  # success
 ```
 
 ### Nested Local + State
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Ask, Local, Put, Tell
+from doeff_core_effects.handlers import local_handler, reader, state, writer
+
 @do
 def with_feature_flag():
     # Check global flag
@@ -547,11 +681,24 @@ def process_with_feature():
     yield Put("mode_used", mode)
     yield Tell(f"Using feature mode: {mode}")
     return f"processed with {mode}"
+
+@do
+def process_without_feature():
+    return "processed without feature"
+
+prog = local_handler(with_feature_flag())
+prog = reader(env={"feature_enabled": True})(prog)
+prog = state()(writer(prog))
+print(run(prog))  # processed with advanced
 ```
 
 ### State Propagation with Listen
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Listen, Put, Tell
+from doeff_core_effects.handlers import listen_handler, state, writer
+
 @do
 def isolated_operation():
     # Main state
@@ -564,7 +711,7 @@ def isolated_operation():
     main_count = yield Get("main_counter")
     yield Tell(f"Main counter after Listen: {main_count}")  # 10
 
-    return value
+    return value, main_count
 
 @do
 def isolated_sub_operation():
@@ -573,6 +720,8 @@ def isolated_sub_operation():
     yield Put("main_counter", val + 10)
     yield Tell("Modified counter in sub-operation")
     return "sub-done"
+
+print(run(state()(writer(listen_handler(isolated_operation())))))  # ('sub-done', 10)
 ```
 
 `Listen` captures writer output (`Tell`) from the sub-program. It does not isolate state:
@@ -588,11 +737,18 @@ def isolated_sub_operation():
 - Use typed access functions
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Ask
+from doeff_core_effects.handlers import reader
+
 @do
 def get_database_config():
     url = yield Ask("database_url")
     pool_size = yield Ask("pool_size")
     return {"url": url, "pool_size": pool_size}
+
+env = {"database_url": "postgresql://localhost/mydb", "pool_size": 5}
+print(run(reader(env=env)(get_database_config())))  # {'url': 'postgresql://localhost/mydb', 'pool_size': 5}
 ```
 
 **DON'T:**
@@ -607,17 +763,22 @@ def get_database_config():
 - Use `Get` + `Put` for atomic updates
 
 ```python
+from doeff import do, run
+from doeff_core_effects import Get, Put
+from doeff_core_effects.handlers import state
+
 @do
 def safe_increment():
-    # Initialize if not exists
-    result = yield Try(Get("counter"))
-    if isinstance(result, Ok):
-        count = result.value
-    else:
+    # Initialize if not exists (Get returns None for a missing key)
+    count = yield Get("counter")
+    if count is None:
         yield Put("counter", 0)
         count = 0
 
     yield Put("counter", count + 1)
+    return (yield Get("counter"))
+
+print(run(state()(safe_increment())))  # 1
 ```
 
 **DON'T:**
@@ -631,7 +792,7 @@ def safe_increment():
 - Log important state transitions
 - Use `slog` for machine-readable logs
 
-```python
+```python excerpt
 @do
 def well_logged_operation():
     yield slog(
@@ -672,7 +833,7 @@ def well_logged_operation():
 | `Get(key)` | Read state | Counters, flags |
 | `Put(key, val)` | Write state | Initialize, update |
 | `Tell(msg)` | Append to log | Debugging, audit |
-| `slog(msg, **kw)` / `WriterTellEffect(msg, **kw)` | Structured logging | Machine-readable logs |
+| `slog(msg, **kw)` (`SlogEffect`) | Structured logging | Machine-readable logs |
 | `Listen(prog)` | Capture sub-logs | Nested operations |
 
 ## Next Steps

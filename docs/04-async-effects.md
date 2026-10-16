@@ -26,24 +26,43 @@ For custom handler composition, call a Program -> Program handler installer dire
 `handler(program)`.
 
 ```python
-from doeff import run
+from doeff import Gather, Spawn, do, run
 from doeff_core_effects.scheduler import scheduled
 
+@do
+def square(n):
+    return n * n
+
+@do
+def program():
+    tasks = []
+    for n in (1, 2, 3):
+        tasks.append((yield Spawn(square(n))))
+    return (yield Gather(*tasks))
+
 result = run(scheduled(program()))
+print(result)  # [1, 4, 9]
 ```
 
 Handler composition example:
 
 ```python
-from doeff import run
+from doeff import Ask, Tell, do, run
 from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
+
+@do
+def my_program():
+    name = yield Ask("name")
+    yield Tell(f"hello {name}")
+    return name.upper()
 
 prog = my_program()
 prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"name": "doeff"})(prog)
 result = run(scheduled(prog))
+print(result)  # DOEFF
 ```
 
 ## Await Effect
@@ -51,7 +70,9 @@ result = run(scheduled(prog))
 `Await(awaitable)` bridges Python awaitables (coroutines, tasks, futures) into a doeff program.
 
 ```python
-from doeff import Await, do
+from doeff import Await, do, run
+from doeff_core_effects.handlers import await_handler
+from doeff_core_effects.scheduler import scheduled
 
 async def read_answer() -> int:
     return 42
@@ -60,6 +81,8 @@ async def read_answer() -> int:
 def fetch_value():
     value = yield Await(read_answer())
     return value
+
+print(run(scheduled(await_handler()(fetch_value()))))  # 42
 ```
 
 To wait for a duration, yield doeff-time's `Delay(seconds)` rather than
@@ -68,21 +91,13 @@ program on `sim_time_handler()`'s virtual clock.
 
 ### Handler behavior
 
-Both Await handlers bridge completion through `CreateExternalPromise` plus `Wait`:
+`Await` is handled by `await_handler()` (from `doeff_core_effects.handlers`), installed inside
+`scheduled()`. It bridges completion through `CreateExternalPromise` plus `Wait`:
 
-- `sync_await_handler` (`run` preset):
-  - submits the awaitable to a background asyncio loop thread
-  - waits on `promise.future` via `Wait`
-  - spawned Await work is sequential (no overlap)
-- `async_await_handler`:
-  - schedules awaitable submission through the async runtime path
-  - waits on `promise.future` via `Wait`
-  - spawned Await work can overlap
-
-### Await timing note
-
-`Await` under `sync_await_handler` is not concurrent by itself. If you spawn two Await tasks, each
-`Await` resolves sequentially. Concurrency requires the `async_await_handler`.
+- it submits the awaitable to one background asyncio loop thread, shared by the process
+- it waits on `promise.future` via `Wait`, so other tasks run meanwhile
+- spawned Await work overlaps: two spawned tasks that each await `asyncio.sleep(0.5)` finish
+  together in about 0.5 seconds
 
 ## Scheduler Effect Catalog
 
@@ -93,7 +108,7 @@ The scheduler primitives are:
 | `Spawn(program)` | doeff program | `Task[T]` | Start child task and continue immediately |
 | `Wait(task_or_future)` | `Task` or `Future` waitable handle | `T` | Suspend until one waitable resolves |
 | `Gather(*waitables)` | `Task`/`Future` waitable handles | `list[T]` | Suspend until all complete (input order) |
-| `Race(*waitables)` | `Task`/`Future` waitable handles | `RaceResult` | Suspend until first completion |
+| `Race(*waitables)` | `Task`/`Future` waitable handles | `T` | Suspend until first completion |
 | `Cancel(task)` | `Task[T]` | `None` | Request task cancellation (effect, not method) |
 | `SchedulerYield` | internal | internal | Cooperative preemption point inserted per yield |
 | `CreatePromise()` | none | `Promise[T]` | Allocate doeff-internal promise |
@@ -101,11 +116,8 @@ The scheduler primitives are:
 | `FailPromise(p, error)` | `Promise[Any]`, exception | `None` | Resolve promise with error |
 | `CreateExternalPromise()` | none | `ExternalPromise[T]` | Allocate externally-completable promise |
 
-`RaceResult` exposes:
-
-- `result.first`: winning waitable handle (`Task` or `Future`)
-- `result.value`: winning value
-- `result.rest`: remaining waitables (losers)
+`Race` returns the winning value directly. Keep the handles you passed to it to cancel the
+losers (cancelling a task that already completed is a no-op).
 
 ## Waitables and Handles
 
@@ -116,7 +128,8 @@ The scheduler primitives are:
 - Raw programs are not waitables. Spawn programs first, then wait on the returned handles.
 
 ```python
-from doeff import CreatePromise, Spawn, Wait, do
+from doeff import CompletePromise, CreatePromise, Spawn, Wait, do, run
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def child():
@@ -126,25 +139,37 @@ def child():
 def parent():
     task = yield Spawn(child())
     promise = yield CreatePromise()
+    yield CompletePromise(promise, 8)
 
     task_value = yield Wait(task)
     promise_value = yield Wait(promise.future)
     return task_value, promise_value
+
+print(run(scheduled(parent())))  # (7, 8)
 ```
 
 ```python
-from doeff import Gather, Race, Spawn, do
+from doeff import Gather, Race, Spawn, do, run
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def work_1():
+    return "one"
+
+@do
+def work_2():
+    return "two"
 
 @do
 def parallel():
     task1 = yield Spawn(work_1())
     task2 = yield Spawn(work_2())
 
-    result = yield Race(task1, task2)
-    winner = result.value
-    losers = result.rest
+    winner = yield Race(task1, task2)
     all_results = yield Gather(task1, task2)
-    return winner, losers, all_results
+    return winner, all_results
+
+print(run(scheduled(parallel())))  # ('one', ['one', 'two'])
 ```
 
 ## Task Lifecycle and Scheduling Model
@@ -192,44 +217,65 @@ why long-running concurrent workloads must keep yielding effects to remain fair.
 Use `Try(...)` when you need partial results instead of fail-fast behavior.
 
 ```python
-from doeff import Gather, Try, Spawn, do
+from doeff import Gather, Try, Spawn, do, run
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def work_1():
+    return "one"
+
+@do
+def work_2():
+    raise ValueError("boom")
 
 @do
 def collect_all_even_on_errors():
     t1 = yield Spawn(Try(work_1()))
     t2 = yield Spawn(Try(work_2()))
     return (yield Gather(t1, t2))  # [Ok(...)/Err(...), Ok(...)/Err(...)]
+
+print(run(scheduled(try_handler(collect_all_even_on_errors()))))  # [Ok('one'), Err(ValueError('boom'))]
 ```
 
 ## Race Semantics
 
 `Race(*waitables)` resumes on first completion of a `Task`/`Future` waitable:
 
-- first completed waitable determines the returned `RaceResult`
-- `result.first` is the winning waitable handle
-- `result.value` is the winning value
-- `result.rest` is the remaining waitables
+- the first completed waitable determines the result: `Race` returns its value directly
 - if that completion is an error, `Race` raises that error
 - if that completion is cancellation, `Race` raises `TaskCancelledError`
 
 Race losers continue running by default. Cancel them explicitly if needed (for Task inputs):
-`for t in result.rest: yield Cancel(t)`.
+`for t in (t1, t2): yield Cancel(t)` — cancelling the task that already completed is a no-op.
 
 ```python
-from doeff import Cancel, Race, Spawn, do
+import asyncio
+
+from doeff import Await, Cancel, Race, Spawn, Try, Wait, do, run
+from doeff_core_effects.handlers import await_handler, try_handler
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def job(name, seconds):
+    yield Await(asyncio.sleep(seconds))
+    return name
 
 @do
 def first_result():
     t1 = yield Spawn(job("a", 0.3))
     t2 = yield Spawn(job("b", 0.1))
-    result = yield Race(t1, t2)
-    winner = result.first
-    value = result.value
+    value = yield Race(t1, t2)
 
-    # Race losers continue by default; cancel explicitly for teardown.
-    for t in result.rest:
+    # Race losers continue by default; cancel explicitly for teardown,
+    # then wait until the cancelled loser has finished unwinding.
+    for t in (t1, t2):
         yield Cancel(t)
-    return winner, value
+    for t in (t1, t2):
+        yield Try(Wait(t))
+    return value
+
+print(run(scheduled(try_handler(await_handler()(first_result())))))  # b
 ```
 
 ## Cancel and TaskCancelledError
@@ -254,7 +300,22 @@ Cancellation is explicit and delivered into the task:
 - cancelling `Completed`/`Failed`/`Cancelled` tasks is a no-op
 
 ```python
-from doeff import Cancel, Ok, Err, Try, Spawn, Wait, do
+from doeff import Cancel, CreatePromise, Ok, Err, Try, Spawn, Wait, do, run
+from doeff_core_effects.handlers import try_handler
+from doeff_core_effects.scheduler import scheduled
+
+@do
+def acquire_lease():
+    return "lease-1"
+
+@do
+def run_remote(lease):
+    reply = yield CreatePromise()  # stands for a reply that has not arrived yet
+    return (yield Wait(reply.future))
+
+@do
+def release_lease(lease):
+    print(f"released {lease}")  # released lease-1
 
 @do
 def work():
@@ -274,6 +335,8 @@ def cancel_child():
             return e  # TaskCancelledError, after work()'s finally ran
         case Ok(value=v):
             return v
+
+print(repr(run(scheduled(try_handler(cancel_child())))))  # TaskCancelledError()
 ```
 
 ### Cancelling a task parked on external work
@@ -292,7 +355,7 @@ or indirectly via `Await`), the cancellation reaches the external producer:
 - a failing callback is re-raised to the `Cancel` caller as
   `ExternalPromiseCancelCallbackError` after the cancellation has taken effect
 
-```python
+```python excerpt
 @do
 def watch_process(proc):
     ep = yield CreateExternalPromise()
@@ -312,7 +375,8 @@ external code (thread, callback, event-loop task, process) completes the value.
 | `ExternalPromise` | `CreateExternalPromise()` | `promise.complete()` / `promise.fail()` | External queue drained by scheduler |
 
 ```python
-from doeff import CompletePromise, CreatePromise, Spawn, Wait, do
+from doeff import CompletePromise, CreatePromise, Spawn, Wait, do, run
+from doeff_core_effects.scheduler import scheduled
 
 @do
 def internal_sync():
@@ -323,6 +387,8 @@ def internal_sync():
 @do
 def complete_later(p):
     yield CompletePromise(p, "ready")
+
+print(run(scheduled(internal_sync())))  # ready
 ```
 
 ## Common Mistakes
@@ -351,7 +417,7 @@ Scheduler effects (`Spawn`, `Wait`, `Gather`, `Race`, `Cancel`) require
 | `Spawn(program)` | starting concurrent doeff task | Returns `Task[T]` |
 | `Wait(waitable)` | waiting for one task/future handle | Accepts only `Task` or `Future` handles |
 | `Gather(*waitables)` | waiting for all spawned children | Pass `Task`/`Future` handles; fail-fast on first error/cancellation |
-| `Race(*waitables)` | waiting for first spawned child | Returns `RaceResult` (`first`, `value`, `rest`); losers continue unless cancelled |
+| `Race(*waitables)` | waiting for first spawned child | Returns the winning value; losers continue unless cancelled |
 | `Cancel(task)` | requesting task cancellation | Effect; yield it. Applies to `Pending`/`Running`/`Suspended`/`Blocked`; terminal states are no-op |
 | `SchedulerYield` | understanding scheduler fairness | Internal cooperative preemption point |
 | `CreatePromise()` | internal producer/consumer sync | Complete/fail via effects |

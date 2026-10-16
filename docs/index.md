@@ -202,9 +202,12 @@ print(f"Result: {result}")  # Result: 42
 
 ## Common Patterns
 
+These are excerpts: they assume the imports of the Quick Example above and call
+programs your application defines (`do_work`, `risky_operation`, `process_item`).
+
 ### Configuration + State + Logging
 
-```python
+```python excerpt
 @do
 def application():
     config = yield Ask("config")
@@ -216,7 +219,7 @@ def application():
 
 ### Concurrency + Error Handling
 
-```python
+```python excerpt
 @do
 def robust_workflow():
     result = yield Try(risky_operation())
@@ -229,7 +232,7 @@ def robust_workflow():
 
 ### Parallel Processing + Aggregation
 
-```python
+```python excerpt
 @do
 def process_batch(items):
     spawned = []

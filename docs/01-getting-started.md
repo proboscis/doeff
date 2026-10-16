@@ -57,13 +57,13 @@ def main():
     prog = writer(prog)
     prog = state()(prog)
     result = run(prog)
-    print(f"Result: {result}")
+    print(f"Result: {result}")  # Result: 1
 
 main()
 ```
 
 Output:
-```
+```text
 Result: 1
 ```
 
@@ -145,8 +145,9 @@ print(result1, result2)  # ALPHA BETA
 You can compose effectful programs together — a key advantage of algebraic effects:
 
 ```python
-from doeff import do
+from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer, writer_log
 
 @do
 def setup():
@@ -163,7 +164,12 @@ def work():
 def full_program():
     yield setup()  # Run setup first
     result = yield work()  # Then do work
-    return result
+    log = yield writer_log()
+    return result, log
+
+result, log = run(state()(writer(full_program())))
+print(result)  # done
+print(log)  # ['Setup complete', "Working with config: {'debug': True}"]
 ```
 
 ## Running with Initial State
@@ -186,6 +192,7 @@ prog = my_program()
 prog = state(initial={"user_id": 123})(prog)
 prog = reader(env={"database_url": "postgresql://localhost/mydb"})(prog)
 result = run(prog)
+print(result)  # Connected to postgresql://localhost/mydb as user 123
 ```
 
 ## Error Handling
@@ -206,13 +213,13 @@ prog = state()(writer(my_program()))
 
 try:
     result = run(prog)
-    print(f"Success: {result}")
+    print(f"Success: {result}")  # Success: 42
 except Exception as e:
     print(f"Error: {e}")
 ```
 
 Output:
-```
+```text
 Success: 42
 ```
 
@@ -244,13 +251,15 @@ prog = writer(prog)
 prog = state()(prog)
 prog = reader(env={"database_url": "postgresql://localhost/mydb"})(prog)
 result = run(prog)
+print(result)  # Connected to postgresql://localhost/mydb
 ```
 
 ### Conditional Logic
 
 ```python
-from doeff import do
+from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
+from doeff_core_effects.handlers import state, writer
 
 @do
 def conditional_program():
@@ -263,7 +272,11 @@ def conditional_program():
         yield Tell("Count is low")
         yield Put("status", "low")
 
-    return count
+    status = yield Get("status")
+    return count, status
+
+print(run(state(initial={"count": 12})(writer(conditional_program()))))  # (12, 'high')
+print(run(state(initial={"count": 3})(writer(conditional_program()))))  # (3, 'low')
 ```
 
 ## Troubleshooting
@@ -272,7 +285,7 @@ def conditional_program():
 
 Make sure you're using `@do` decorator:
 
-```python
+```python excerpt
 from doeff import do
 from doeff_core_effects import Tell
 
@@ -290,7 +303,7 @@ def my_program():
 
 Only yield `Effect` or `Program` instances:
 
-```python
+```python excerpt
 from doeff import do, Pure
 
 # Wrong - yielding a plain value
@@ -347,7 +360,7 @@ Now that you understand the basics, explore:
 
 ### Common Imports
 
-```python
+```python excerpt
 # Core
 from doeff import (
     do,                    # Decorator for creating programs
@@ -398,7 +411,7 @@ def main():
     # writer keeps its log in state, so install state() outside writer
     prog = state()(writer(my_program()))
     result = run(prog)
-    print(result)
+    print(result)  # result
 
 if __name__ == "__main__":
     main()
