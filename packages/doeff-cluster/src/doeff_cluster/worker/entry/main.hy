@@ -21,12 +21,13 @@
 (import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
+(import doeff_core_effects.os_proc_table [os-proc-table-handler])
 (import doeff_core_effects.process_exit [process-exit-handler])
 (import doeff_core_effects.os_random [os-random-handler])
 (import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.random_effects [RandomBytes])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects.scheduler [scheduled Spawn])
 (import doeff_time [GetMonotonic async-time-handler sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
@@ -45,6 +46,7 @@
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState CodeLayout])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
+(import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
 (import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster.worker.core.places [worker-places])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
@@ -128,8 +130,10 @@
    上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715・card ki-0da6a0186492)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
    leaving-observer が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p —
-   印の書き手と形の module leaving_mark は読まない)。"
-  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler process-exit-handler
+   印の書き手と形の module leaving_mark は読まない)。機体の memory の見張りが読む process の表と、止める SignalPid は os-proc-table-handler
+   が答える(card ki-7b934e2538f9 — 見張りが問う job の根 ObserveJobRoots は process-host)。"
+  [(await-handler) (async-time-handler) (http-production-handler) slog-handler subprocess-handler os-warm-process-handler os-proc-table-handler
+   process-exit-handler
    os-file-handler offloaded-tree-handler (session-store) os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)
    (probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) local-host tick-pauses])
@@ -164,6 +168,24 @@
   "handler の組 handlers(外側が先)の上で worker の調整ループ(run-worker)を回すため — 止まれの合図で全 job を回収して終わる。
    組を選ぶのは composition root(本番 = main の production-handlers・模擬の環境 = sim/local.hy の偽の宿)。"
   (<- state WorkerState (with-handlers handlers (run-worker policy)))
+  state)
+
+
+(defk worker-watching-memory [policy watch cell]
+  {:pre [(: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell)] :post [(: % WorkerState)]
+   :tags {:context "worker" :role "main"}}
+  "機体の memory の見張り(worker/protocol/memory_watch)を調整ループの外の背景の task として起こしてから、調整ループを回すため
+   (card ki-7b934e2538f9)。見張りは同じ handler の組の下で走る(job の根は process-host・表は os-proc-table-handler が答える)。"
+  (<- (Spawn (memory-watch-loop watch cell) :daemon True))
+  (<- state WorkerState (run-worker policy))
+  state)
+
+
+(defk worker-on-watching-memory [handlers policy watch cell]
+  {:pre [(: handlers list) (: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell)] :post [(: % WorkerState)]
+   :tags {:context "worker" :role "main"}}
+  "本番の組 handlers の上で、機体の memory の見張りと調整ループを回すため(worker-on の本番の形 — 模擬の環境は見張りを持たない)。"
+  (<- state WorkerState (with-handlers handlers (worker-watching-memory policy watch cell)))
   state)
 
 
@@ -214,6 +236,8 @@
   (.add-argument parser "--uv-cache" :required True
                  :help "実行環境の準備の uv の子が使う cache の dir(UV_CACHE_DIR・空きが最低を割った時に prune する)")
   (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")
+  (.add-argument parser "--memory-guard" :choices ["on" "off"] :default "on"
+                 :help "機体の memory が尽きかけた時に、job の木のいちばん大きい単位を止めるか(off = 測りの log だけ — card ki-7b934e2538f9)")
   (.add-argument parser "--pass-env" :default ""
                  :help "子 process へ渡す worker の環境変数の名(`,` で並べる — 機体の設定の path や URL。無い名は起動を止める)")
   (setv args (.parse-args parser))
@@ -310,11 +334,14 @@
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR))))
   ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
   (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
+  ;; 機体の memory の見張り(card ki-7b934e2538f9 — 5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)。
+  (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
+        memory-cell (MemoryCell))
   (try
-    (run (scheduled (worker-on handlers policy)))
+    (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell)))
     (finally
-      ;; 名指しの待ちと拍の外の送りの背景の task を止める(worker の終わり — 次の待ちも heartbeat も送らない)。
-      (setv link.watch.closing True link.beating.closing True)))
+      ;; 名指しの待ちと拍の外の送りと memory の見張りの背景の task を止める(worker の終わり — 次の待ちも heartbeat も読みも送らない)。
+      (setv link.watch.closing True link.beating.closing True memory-cell.closing True)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 
 

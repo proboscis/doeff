@@ -44,3 +44,9 @@
 (defclass [(dataclass :frozen True)] ObserveLeaving [EffectBase]
   "この Pod の止まり(preStop の drain)が始まったかの観測(bool)。世界の観測のまとめ(local-host)が、止まりの印の言い換え
    (worker/protocol/leaving_observer)へ問う(AL-D2p)。")
+
+
+(defclass [(dataclass :frozen True)] ObserveJobRoots [EffectBase]
+  "worker が起こし、まだ終わりを観測していない job の根の process(JobRoot の tuple — worker/core/memory_rules)。機体の memory の見張り
+   (worker/protocol/memory_watch)が、子 process の言い換え(worker/protocol/process_host)へ問う(card ki-7b934e2538f9)。子を問い直さない
+   (終わりの観測と回収は調整ループの ObserveProcesses だけ)。")
