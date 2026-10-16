@@ -1,0 +1,34 @@
+[
+  {
+    "id": "vm-concept",
+    "image": "images/zenn-use-cases-v0/generated/vm-concept.png",
+    "generation_prompt": "vm-concept-flat-code.txt",
+    "edit_prompts": [
+      "vm-concept-flat-code-edit.txt",
+      "vm-concept-flat-code-edit-2.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "6af4290cd41d5255187c001be337ec126468a9b1672b18b43206c876753c8739",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1692960,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "vm-flow",
+    "image": "images/zenn-use-cases-v0/generated/vm-flow.png",
+    "generation_prompt": "vm-flow-flat-code.txt",
+    "edit_prompts": [
+      "vm-flow-flat-code-edit.txt",
+      "vm-flow-flat-code-edit-2.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "1e6d2a8fc2140b8a857157a0b77c91dbb2d57a70ae7bf2f56da09bc222feada4",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1681103,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

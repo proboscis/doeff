@@ -1,0 +1,28 @@
+[
+  {
+    "id": "durable-concept",
+    "image": "images/zenn-use-cases-v0/generated/durable-concept.png",
+    "generation_prompt": "durable-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "8e0df3172aa8751db5437e50c40b4292079712fa3d45227c73c158e7ac78b616",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1428503,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "durable-flow",
+    "image": "images/zenn-use-cases-v0/generated/durable-flow.png",
+    "generation_prompt": "durable-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "7085c74726203ca9c47cb00c9956bad9058de32a32c27e5b7258970ed8ab0ed9",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1419184,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

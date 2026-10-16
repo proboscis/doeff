@@ -1,0 +1,28 @@
+[
+  {
+    "id": "boundaries-concept",
+    "image": "images/zenn-use-cases-v0/generated/boundaries-concept.png",
+    "generation_prompt": "boundaries-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "01ff66e1a23ddd159b3b0f090a8c93a54cf0ec10970157ed7fab595cd70a4e73",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1416675,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "boundaries-flow",
+    "image": "images/zenn-use-cases-v0/generated/boundaries-flow.png",
+    "generation_prompt": "boundaries-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "7d250ae9974a754fa6a6b49eb64933e6d7ca7c44f65083bf7ee659a2b786b47d",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1506448,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

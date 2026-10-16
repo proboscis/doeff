@@ -1,0 +1,6 @@
+{
+  "concept_title": "処理は同じ、実行戦略を差し替える",
+  "concept_caption": "`Traverse(process, [1, 2, 3])`という同じ依頼を、逐次か最大3並行かのどちらかで解釈します。どちらも結果は入力順の10・20・30です。",
+  "flow_title": "文書ごとの計算と、失敗・集計の方針を分ける",
+  "flow_caption": "`parallel`では2・失敗・7を履歴に残し、`Reduce`が成功分を合計して9を返します。`parallel_fail_fast`を選ぶと、同じ空文書の例外が全体へ伝わります。"
+}

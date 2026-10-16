@@ -1,0 +1,30 @@
+[
+  {
+    "id": "events-concept",
+    "image": "images/zenn-use-cases-v0/generated/events-concept.png",
+    "generation_prompt": "events-concept-flat-code.txt",
+    "edit_prompts": [
+      "events-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "5cba1066522b529dd0703f2384e5ae4df825215a666a9dd88c87f2b68a8b44e9",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1546200,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "events-flow",
+    "image": "images/zenn-use-cases-v0/generated/events-flow.png",
+    "generation_prompt": "events-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "9655355e4a1e59156a93683f91847ff9253ee9a929d577acffaa567f276ada9c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1544831,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

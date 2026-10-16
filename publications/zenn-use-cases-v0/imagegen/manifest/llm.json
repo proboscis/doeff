@@ -1,0 +1,28 @@
+[
+  {
+    "id": "llm-concept",
+    "image": "images/zenn-use-cases-v0/generated/llm-concept.png",
+    "generation_prompt": "llm-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "fdad9f8f174fa9366e2f5942130d8123491c732ce3a549dacbba5f6f1088e959",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1423558,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "llm-flow",
+    "image": "images/zenn-use-cases-v0/generated/llm-flow.png",
+    "generation_prompt": "llm-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "29fd1a0b64833579201b5297720172ac3c454abe1b81e697689e5dfc9b68c2b8",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1451032,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

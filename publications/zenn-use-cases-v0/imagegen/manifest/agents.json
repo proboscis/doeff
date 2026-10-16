@@ -1,0 +1,26 @@
+[
+  {
+    "id": "agents-concept",
+    "image": "images/zenn-use-cases-v0/generated/agents-concept.png",
+    "generation_prompt": "agents-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "5adf562722f6ba6cef54bf0548f47e84ad5c349b3d8dd97b95f44e6bc8a08c06",
+    "width": 1200,
+    "height": 1800,
+    "bytes": 243318,
+    "review": "2026-10-16：週2の改稿のコード（delegate_task・fixed_agent・3つのハンドラ・AwaitOutcome、2件の並行とready=False）と名前・値・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "agents-flow",
+    "image": "images/zenn-use-cases-v0/generated/agents-flow.png",
+    "generation_prompt": "agents-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "0eeb394d8093338a251343c4df053b6088fe4c7d776c2fbb31f55a2773404114",
+    "width": 1200,
+    "height": 2120,
+    "bytes": 202074,
+    "review": "2026-10-16：週2の改稿のコード（delegate_task・fixed_agent・3つのハンドラ・AwaitOutcome、2件の並行とready=False）と名前・値・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
+  }
+]

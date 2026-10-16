@@ -1,0 +1,28 @@
+[
+  {
+    "id": "color-concept",
+    "image": "images/zenn-use-cases-v0/generated/color-concept.png",
+    "generation_prompt": "color-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "74477f4efb86c8d2e810f7a3f156ddc395a3b656df5b92fe654a46fddfc99140",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1503533,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "color-flow",
+    "image": "images/zenn-use-cases-v0/generated/color-flow.png",
+    "generation_prompt": "color-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "bead1ab1e8397701e75d317d5974650bef719afa9d3a335e84f9aecdd57f84bc",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1491306,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

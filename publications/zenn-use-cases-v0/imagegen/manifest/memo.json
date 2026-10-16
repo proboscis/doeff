@@ -1,0 +1,28 @@
+[
+  {
+    "id": "memo-concept",
+    "image": "images/zenn-use-cases-v0/generated/memo-concept.png",
+    "generation_prompt": "memo-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "2fa8818e3dd31db693beccf37c71bff85c3ab752b47b123f3235f240f990b155",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1416829,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "memo-flow",
+    "image": "images/zenn-use-cases-v0/generated/memo-flow.png",
+    "generation_prompt": "memo-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "ca1256a32796a465f84a3cea3f3ce23cc27644d2de110d15f4123f844f99387c",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1373939,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

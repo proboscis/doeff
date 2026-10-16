@@ -1,0 +1,6 @@
+{
+  "concept_title": "Pythonのyieldを、Rust VMが解釈する",
+  "concept_caption": "Pythonの本体はgeneratorのまま実行し、Rust VMがエフェクトの配送と継続の接続を管理します。",
+  "flow_title": "続きを切り離し、値を渡してつなぎ直す",
+  "flow_caption": "kには停止中の本体からハンドラ境界までが含まれます。Resumeはこの継続を一度だけつなぎ直し、yieldの位置へ値を渡します。"
+}

@@ -1,0 +1,6 @@
+{
+  "concept_title": "ログの表示と収集を、独立して組み合わせる",
+  "concept_caption": "本体はログの依頼を出します。Listenは依頼を収集して外側へ渡し、Slogのハンドラは表示するか捨てるかを選びます。",
+  "flow_title": "Listenで収集してから、元のログ処理へ渡す",
+  "flow_caption": "ListenはconvertのTellとSlogEffectを順に収集し、元の依頼を外側へ渡します。本体の結果と収集した2件が戻り、Writerの蓄積とSlogの表示も残ります。"
+}

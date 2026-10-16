@@ -1,0 +1,6 @@
+{
+  "concept_title": "LLMへの依頼を、ハンドラで解釈する",
+  "concept_caption": "共通のLLMChatを、取り付けたハンドラが解釈します。対応機能と返り値はハンドラごとに確認します。",
+  "flow_title": "ストリームの収集も、@doで合成する",
+  "flow_caption": "OpenAIのストリームを1チャンクずつAwaitし、反復と本文の収集を@doの中で進めます。"
+}

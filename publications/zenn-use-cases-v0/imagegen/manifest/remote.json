@@ -1,0 +1,28 @@
+[
+  {
+    "id": "remote-concept",
+    "image": "images/zenn-use-cases-v0/generated/remote-concept.png",
+    "generation_prompt": "remote-concept-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "f11c1ab6f67694094db5b9f6aed490d69e297bbb3167010f9bf145f5914a9ffb",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1360513,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "remote-flow",
+    "image": "images/zenn-use-cases-v0/generated/remote-flow.png",
+    "generation_prompt": "remote-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "57a00c4c0ca7ae504c036078a79afd8b5aca90b9cd175b7be380c0f0f6ba616e",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1461555,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

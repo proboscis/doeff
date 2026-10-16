@@ -1,0 +1,30 @@
+[
+  {
+    "id": "handlers-concept",
+    "image": "images/zenn-use-cases-v0/generated/handlers-concept.png",
+    "generation_prompt": "handlers-concept-flat-code.txt",
+    "edit_prompts": [
+      "handlers-concept-flat-code-edit.txt"
+    ],
+    "tool": "image_gen (built-in)",
+    "sha256": "4d92c7ca0d8a24a2237f2b72256d2d6c95592b97e0c66552c050233a016c0fe9",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1356962,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  },
+  {
+    "id": "handlers-flow",
+    "image": "images/zenn-use-cases-v0/generated/handlers-flow.png",
+    "generation_prompt": "handlers-flow-flat-code.txt",
+    "edit_prompts": [],
+    "tool": "image_gen (built-in)",
+    "sha256": "f9f0eed07e0b3a0665e917fc4327c0852100a8c97bc54d68b8b41ae68db8c25e",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 1428984,
+    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。",
+    "missing": "2026-10-16に、リポジトリに入っていないと分かった(.gitignoreの例外がgenerated/の下に効かなかった)。記事の仕上げで描き直したら、この項目を外す。"
+  }
+]

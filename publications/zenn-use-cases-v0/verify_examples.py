@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
 from verify_comments import verify as verify_comments
+from verify_publication import link_targets, missing_images
 from verify_publication import verify as verify_publication
 
 from doeff import run, with_handlers
@@ -143,6 +144,8 @@ with TemporaryDirectory() as directory:
     verify_comments()
 
     blocks = 0
+    # まだリポジトリに無い掲載画像は、記事ごとの採用台帳(imagegen/manifest/<slug>.json)のmissingに訳がある。
+    missing = missing_images()
     for source in SOURCE.glob("examples/*.py"):
         ast.parse(source.read_text(), filename=str(source))
     for article in SOURCE.glob("doeff-*.md"):
@@ -150,13 +153,13 @@ with TemporaryDirectory() as directory:
         for index, code in enumerate(re.findall(r"```python\n(.*?)```", text, re.S)):
             ast.parse(code, filename=f"{article.name}:block-{index}")
             blocks += 1
-        for target in re.findall(r"\]\(([^)]+)\)", text):
+        for target in link_targets(text):
             if target.startswith(("https://", "http://", "#")):
                 continue
             target_path = (
                 ROOT / target.lstrip("/") if target.startswith("/") else article.parent / target
             )
-            assert target_path.is_file(), (article, target)
+            assert target_path.is_file() or target_path in missing, (article, target)
         assert "doeff-main.md" in text or article.name == "doeff-main.md"
         assert text.count("/images/zenn-use-cases-v0/") >= 2, article
     main_article = (SOURCE / "doeff-main.md").read_text()
