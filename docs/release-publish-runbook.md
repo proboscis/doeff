@@ -14,7 +14,7 @@
 | 語 | 意味 |
 | --- | --- |
 | PyPI | Python の部品を配る公の場。`pip install doeff` はここから取る |
-| 核の 5 個 | `doeff`・`doeff-vm`・`doeff-core-effects`・`doeff-hy`・`doeff-hy-pytest`。`pip install doeff` で必ず一緒に入る部品(依存の向きは下の「出す順」) |
+| 核の 5 個 | `doeff`・`doeff-vm`・`doeff-core-effects`・`doeff-hy`・`doeff-hy-pytest`。1 つの版で一緒に出す部品。`pip install doeff` は前の 3 個を入れ、extra `hy`(`pip install "doeff[hy]"`)が後の 2 個を足す(依存の向きは下の「出す順」) |
 | root の tag | repo の根に打つ版の tag `vX.Y.Z`。push すると公開の workflow が起きる |
 | 公開の workflow | `.github/workflows/publish.yml`(GitHub Actions の名は `Publish doeff`)。`doeff-vm` は `.github/workflows/build-vm.yml` を build だけに呼んで組み、upload は publish.yml の自前の job から行う |
 | native の部品 | Rust を含み、機体と Python の版ごとに wheel を組む部品(`doeff-vm`・`doeff-indexer`) |
@@ -110,22 +110,23 @@ root の tag でも単独でも出さない。どれかを公開すると決め�
 
 ## 出す順
 
-依存の向き(矢印は「左の部品が右の部品を要る」):
+依存の向き(矢印は「左の部品が右の部品を要る」・点線は extra の依存):
 
 ```mermaid
 flowchart LR
   doeff["doeff"] --> vm["doeff-vm"]
   doeff --> ce["doeff-core-effects"]
   ce --> doeff
-  ce --> hy["doeff-hy"]
+  ce -. "extra hy・http・all" .-> hy["doeff-hy"]
   hy --> doeff
   hy --> ce
   hy --> hyp["doeff-hy-pytest"]
 ```
 
 - `doeff-vm` と `doeff-hy-pytest` は他の核の部品を要らないので、先に出す。
-- `doeff`・`doeff-core-effects`・`doeff-hy` は互いを要るので、3 つが揃うまでどれも入らない。`doeff` を最後に出す — `pip install doeff`
-  は、`doeff` の新しい版が PyPI に載るまで前の版を選ぶので、他の 4 個が揃う前に新しい `doeff` が入る事は無い。
+- `doeff`・`doeff-core-effects`・`doeff-hy` は互いを要る(`doeff-hy` へは extra を通して — `doeff` の extra は `doeff-core-effects` の同じ名の
+  extra を引く)ので、3 つが揃うまでどれも入らない。`doeff` を最後に出す — `pip install doeff` は、`doeff` の新しい版が PyPI に載るまで
+  前の版を選ぶので、他の 4 個が揃う前に新しい `doeff` が入る事は無い。
 
 公開の workflow の job の順(矢印は「左の job が成功してから右の job が走る」= GitHub Actions の `needs`):
 

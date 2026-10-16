@@ -53,8 +53,8 @@ jobs:
       # 核の 5 個に足す検の道具: pytest の plugin・Hy の検の file(test_*.hy)を集める doeff-adr の plugin・検が import する部品
       # (doeff-time・doeff-traverse・doeff-validation・cloudpickle・pyyaml — doeff-hy の macro の validate・check は doeff-validation を
       # 読む)・build の口と型の検が子の process で呼ぶ maturin と pyright(版は uv.lock の dev の物)。doeff-core-effects は答え手の検が
-      # aiohttp と psycopg を読むので extra の http-server・postgres ごと入れる。venv の bin を PATH に置き、検が呼ぶ python・hy・doeff を
-      # この venv の物にする。
+      # httpx と aiohttp と psycopg を読むので extra の http・http-server・postgres ごと入れる(httpx は既定の依存でなく extra http に在る —
+      # card ki-006338b48f4b)。venv の bin を PATH に置き、検が呼ぶ python・hy・doeff をこの venv の物にする。
       - name: Install the core packages into a fresh venv
         id: install
         run: |
@@ -62,7 +62,7 @@ jobs:
           echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
           uv export --frozen --no-hashes --no-emit-workspace --only-group dev | grep -E '^(maturin|pyright)==' > .venv-ci/tool-pins.txt
           uv pip install --python .venv-ci/bin/python -c .venv-ci/tool-pins.txt \
-            ./packages/doeff-vm "./packages/doeff-core-effects[http-server,postgres]" ./packages/doeff-hy ./packages/doeff-hy-pytest . \
+            ./packages/doeff-vm "./packages/doeff-core-effects[http,http-server,postgres]" ./packages/doeff-hy ./packages/doeff-hy-pytest . \
             ./packages/doeff-adr ./packages/doeff-time ./packages/doeff-traverse ./packages/doeff-validation \
             pytest pytest-asyncio pytest-timeout pytest-xdist cloudpickle pyyaml maturin pyright
 
