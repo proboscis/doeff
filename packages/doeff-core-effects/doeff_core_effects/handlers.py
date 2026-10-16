@@ -267,7 +267,11 @@ def _listen_handler(effect: Listen, k):
     """Listen handler: collects effects of specified types during program execution.
 
     OCaml 5 semantics: reinstall inner handlers so the inner program
-    sees the same handler chain as when Listen was performed.
+    sees the same handler chain as when Listen was performed. The
+    sub-program runs outside this handler, so listen_handler reinstalls
+    itself too (as try_handler does): a Listen inside the sub-program is
+    handled by the same handler, captures only its own scope, and its
+    entries still reach the outer Listen's observer.
 
     Usage:
         listen_handler(body)
@@ -289,6 +293,8 @@ def _listen_handler(effect: Listen, k):
         for h in inner_handlers:
             prog = _program_handler(h)(prog)
         prog = _program_handler(observer_handler)(prog)
+        # Reinstall listen_handler itself, outermost, so a nested Listen is reachable.
+        prog = listen_handler(prog)
 
         inner_result = yield prog
         return (yield Transfer(k, (inner_result, collected)))

@@ -4,94 +4,90 @@
 
 ## Summary
 
-This spec defines the semantics for Writer effects: `Tell` and `Listen`. Writer effects provide a way to accumulate log messages during program execution and optionally capture them via `Listen`.
+This spec defines the semantics for Writer effects: `Tell` and `Listen`. `Tell` appends a message to the writer log. `Listen` runs a sub-program and returns the effects of chosen types that the sub-program performed, as values.
+
+`slog` (structured observability logs) is a separate wire type, `SlogEffect`, and is not a Writer effect. `Listen` collects it only when asked (see [slog](#slog)).
 
 ## Effect Definitions
 
 ### Tell
 
-`Tell` appends a message to the shared writer log.
+`Tell` appends a message to the writer log.
 
 ```python
-def Tell(message: object) -> Effect:
+def Tell(message: object) -> WriterTellEffect:
     """Append message to the writer log. Returns None."""
 ```
 
-`Tell` accepts any Python object and stores it unchanged.
+`Tell` accepts any Python object and stores it unchanged. The effect keeps the object as `.msg`.
 
 ### Listen
 
-`Listen` executes a sub-program and captures all log entries produced during its execution.
+`Listen` executes a sub-program and returns its value together with the effects of the requested types that the sub-program performed.
 
 ```python
-def Listen(sub_program: Program[T]) -> Effect:
-    """Run sub_program and return ListenResult(value, captured_logs)."""
+Listen(program: Program[T], types: tuple[type, ...] | None = None) -> Effect
+# yield Listen(program)  ->  (value: T, collected: list[Effect])
 ```
 
-Returns `ListenResult`:
-```python
-@dataclass
-class ListenResult(Generic[T]):
-    value: T           # The result of the sub-program
-    log: BoundedLog    # Log entries captured during sub-program execution
-```
+- `types` defaults to `(WriterTellEffect,)`: the `Tell` entries.
+- `collected` holds the effect objects themselves (`Tell('x')`; read the message with `.msg`), in the order they were performed. It does not hold plain messages.
 
 ## Implementation Details
 
-### Log Storage
+### Writer Log
 
-Logs are stored in the shared store under the key `"__log__"`:
-```python
-store["__log__"] = [msg1, msg2, msg3, ...]
-```
+The `writer` handler appends each told message (`effect.msg`) to a list kept in the `state` handler's store, so `state` must be installed outside `writer`. `writer_log()` returns a copy of that list: the plain messages, not the effects.
 
 ### Listen Mechanism
 
-When `Listen(sub_program)` is executed:
-1. Record current log length as `log_start_index`
-2. Push `ListenFrame(log_start_index)` onto continuation stack
-3. Execute `sub_program`
-4. When sub-program completes, `ListenFrame.on_value()`:
-   - Capture `store["__log__"][log_start_index:]`
-   - Return `ListenResult(value, captured_logs)`
-5. Logs remain in store (not removed)
+`listen_handler` handles `Listen`. When `Listen(program, types)` is performed:
+
+1. Read the handlers installed between the Listen site and `listen_handler` (the inner handlers).
+2. Build the program that runs the sub-program: the inner handlers are installed again around it, so it sees the handler chain it had at the Listen site; an observer handler is installed outside them; `listen_handler` itself is installed outside the observer.
+3. The observer records each effect whose class is in `types`, then passes it on unchanged.
+4. When the sub-program completes, return `(value, collected)` to the Listen site.
+
+Consequences:
+
+- Entries are passed on, not removed: the handlers outside `listen_handler` still handle them (`writer` still logs every `Tell`).
+- `listen_handler` goes inside `writer` and `state`. A handler installed inside `listen_handler` consumes entries before the observer sees them: `listen_handler(writer(prog))` returns an empty `collected`.
+- Because `listen_handler` installs itself again around the sub-program, a `Listen` inside a sub-program is handled by the same handler (see [Listen + Listen](#listen--listen-nested)).
 
 ## Composition Rules
 
 ### Listen + Tell
 
-Logs produced within a Listen scope are captured in the result.
+Entries told within a Listen scope are captured in `collected`, and they also stay in the writer log.
 
 ```python
 @do
 def program():
-    result = yield Listen(inner())  # inner() does Tell("x"), Tell("y")
-    # result.log contains ["x", "y"]
-    # result.value contains inner's return value
+    value, collected = yield Listen(inner())  # inner() does Tell("x"), Tell("y")
+    # [e.msg for e in collected] == ["x", "y"]
+    # value is inner's return value
 ```
 
 **Status: CONFIRMED**
 
 ### Listen + Local
 
-Logs produced within a Local scope (inside Listen) are captured normally.
+Entries told within a Local scope (inside Listen) are captured normally.
 
 ```python
 @do
 def program():
-    result = yield Listen(
-        Local({"key": "value"}, 
-              inner()  # inner() does Tell("x")
-        )
+    value, collected = yield Listen(
+        Local({"key": "value"}, inner())  # inner() does Tell("x")
     )
-    # result.log contains ["x"]
+    # [e.msg for e in collected] == ["x"]
 ```
 
 **Status: CONFIRMED**
 
 ### Listen + Try
 
-Logs are preserved even when Try catches an error. The logs accumulated before the error are NOT lost.
+Entries told before a caught error are NOT lost when `Listen` wraps `Try`.
 
 ```python
 @do
@@ -101,46 +97,51 @@ def inner():
 
 @do
 def program():
-    result = yield Listen(Try(inner()))
-    # result.value is Err(ValueError("error"))
-    # result.log contains ["before_error"]  # Log preserved!
+    result, collected = yield Listen(Try(inner()))
+    # result is Err(ValueError("error"))
+    # [e.msg for e in collected] == ["before_error"]
 ```
+
+When `Try` wraps `Listen`, an error in the sub-program leaves `Listen` before it returns: `Try(Listen(inner()))` is `Err(ValueError("error"))` and no `(value, collected)` pair is produced.
 
 **Status: CONFIRMED**
 
-### Listen + Gather
+### Listen + Spawn / Gather
 
-When Gather executes multiple programs:
-- All programs share the same log store
-- Log ordering depends on execution order
-
-| Runtime | Log Ordering |
-|---------|--------------|
-| SyncRuntime | **Sequential** - logs appear in program order |
-| AsyncRuntime | **Non-deterministic** - logs interleave based on scheduling |
+- A task spawned inside the Listen scope performs its effects inside the scope, so its entries are captured, in the order the scheduler runs the tasks.
+- A task spawned before the Listen and only waited on inside it (`Listen(Gather(t1, t2))`) performs its effects outside the scope, so its entries are not captured.
 
 ```python
 @do
-def task(name):
-    yield Tell(f"{name}_start")
-    yield Tell(f"{name}_end")
-    return name
+def spawn_then_listen():
+    first = yield Spawn(task("A"))
+    second = yield Spawn(task("B"))
+    # Spawned before Listen: A's and B's Tells are not in collected.
+    values, collected = yield Listen(Gather(first, second))
 
 @do
-def program():
-    result = yield Listen(Gather(task("A"), task("B")))
-    # SyncRuntime: ["A_start", "A_end", "B_start", "B_end"]
-    # AsyncRuntime: Could be ["A_start", "B_start", "A_end", "B_end"] or any interleaving
+def scope():
+    first = yield Spawn(task("A"))
+    second = yield Spawn(task("B"))
+    return (yield Gather(first, second))
+
+@do
+def listen_then_spawn():
+    # Spawned inside the scope: collected holds A's and B's Tells.
+    values, collected = yield Listen(scope())
 ```
 
-**Status: CONFIRMED (non-deterministic in async)**
+The order of entries from parallel tasks is the scheduler's running order. If a deterministic order is required, run the tasks one after another or sort the entries yourself.
+
+**Status: CONFIRMED**
 
 ### Listen + Listen (Nested)
 
-Nested Listen scopes work independently. Inner Listen captures only inner logs in its ListenResult. However, logs are NOT removed from the store, so:
+One `listen_handler` serves every nesting level. A `Listen` inside another `Listen`'s sub-program:
 
-- Outer Listen sees ALL logs (including logs from inner scope)
-- Inner Listen only captures logs from its own scope
+- The inner Listen captures only the entries of its own scope.
+- The outer Listen captures its whole scope, including the entries of the inner scope. The inner Listen passes its entries on, so they reach the outer Listen's observer.
+- Entries stay in the writer log (nothing is removed).
 
 ```python
 @do
@@ -153,21 +154,25 @@ def inner():
 def middle():
     yield Tell("middle1")
     inner_listen = yield Listen(inner())
-    # inner_listen.log = ["inner1", "inner2"]
+    # [e.msg for e in inner_listen[1]] == ["inner1", "inner2"]
     yield Tell("middle2")
     return inner_listen
 
 @do
 def outer():
     outer_listen = yield Listen(middle())
-    # outer_listen.log = ["middle1", "inner1", "inner2", "middle2"]
-    # outer_listen.value.log = ["inner1", "inner2"]  (the inner ListenResult)
+    # [e.msg for e in outer_listen[1]] == ["middle1", "inner1", "inner2", "middle2"]
+    # outer_listen[0] is the inner (value, collected) pair
 ```
 
+Run as `run(state()(writer(listen_handler(outer()))))`: one `listen_handler`, however deep the nesting. Each level can use its own `types`; an outer Listen collects an inner scope's entries only if their class is in the outer `types`.
+
 **Semantics:**
-- Logs accumulate globally and are never removed
-- Each Listen captures from its start point to current
-- Nested Listen captures its local scope but doesn't hide from outer Listen
+
+- Each Listen collects the entries performed between its start and its end, within its scope.
+- A nested Listen collects its own scope and does not hide it from the outer Listen.
+
+**History:** doeff 0.5.0 did not install `listen_handler` again around the sub-program, so the inner Listen found no handler and failed with `UnhandledEffect`; the only way out was `listen_handler(listen_handler(prog))`, one extra handler per nesting level. `listen_handler` now installs itself again, as `try_handler` and `local_handler` do.
 
 **Status: CONFIRMED**
 
@@ -175,55 +180,42 @@ def outer():
 
 ### 1. Listen + Gather log ordering
 
-**Resolution:** Non-deterministic in AsyncRuntime (depends on execution order). Sequential in SyncRuntime.
+**Resolution:** The order of entries from parallel tasks is the order the scheduler runs them. This is intentional: parallel execution means parallel logging.
 
-This is intentional - parallel execution means parallel logging. If deterministic ordering is required, use sequential execution or sort logs by timestamp.
+### 2. Listen + Try (entries kept on error)
 
-### 2. Listen + Try (logs preserved on error)
-
-**Resolution:** Yes, logs are preserved. Try only catches the error and converts to Err result; it does not touch the log store.
+**Resolution:** `Listen(Try(prog))` keeps the entries told before the caught error. `Try` only turns the error into `Err`; it does not touch the entries.
 
 ### 3. Nested Listen
 
-**Resolution:** Outer Listen sees all logs including inner. Inner Listen captures only its local scope. Logs are never removed from store.
+**Resolution:** The outer Listen sees the entries of the inner scope too. The inner Listen captures only its own scope. Entries are never removed.
 
 ### 4. Log removed in favor of Tell
 
-**Resolution:** `Log` has been removed. Use `Tell` for all writer effect needs.
+**Resolution:** `Log` has been removed. Use `Tell` for all writer effect needs: it appends any object to the log.
 
-- `Tell` - append any object to the log
-- `StructuredLog` / `slog` - convenience for `Tell({**kwargs})`
+## slog
 
-## Additional Effects
+`slog(msg, **kwargs)` creates a `SlogEffect`, a wire type disjoint from `WriterTellEffect` (ADR-DOE-CORE-EFFECTS-001 R1). The default `Listen` does not collect it, and `writer` does not log it. `slog_handler` displays it on stderr; `slog_discard_handler` consumes it silently.
 
-### StructuredLog / slog
-
-Convenience for logging structured data:
-
-```python
-def StructuredLog(**entries: object) -> Effect:
-    """Log a dictionary of key-value pairs."""
-    # Equivalent to: Tell({"key1": val1, "key2": val2, ...})
-
-def slog(**entries: object) -> WriterTellEffect:
-    """Lowercase alias for StructuredLog."""
-```
+To read `slog` entries as values, pass the type: `Listen(program, types=(SlogEffect,))`, or `types=(WriterTellEffect, SlogEffect)` for both.
 
 ## Test Matrix
 
 | Composition | Tested | File |
 |-------------|--------|------|
-| Listen + Tell | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Local | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Try (success) | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Try (error) | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Gather (sync) | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Gather (async) | Yes | `tests/effects/test_effect_combinations.py` |
-| Listen + Listen (nested) | Yes | `tests/effects/test_effect_combinations.py` |
+| Listen + Tell | Yes | `docs/03-basic-effects.md` example (run by `tests/test_docs_entry_path_examples.py`); `tests/test_slog_semantics.py` (default `types`) |
+| Listen + Local | Yes | `tests/effects/test_effect_combinations.py::TestListenCaptureLaw::test_listen_captures_logs_from_local` |
+| Listen + Try (Try inside Listen) | Yes | `tests/effects/test_effect_combinations.py::TestListenCaptureLaw::test_listen_of_try_keeps_entries_before_the_caught_error` |
+| Listen + Try (Listen inside Try) | Yes | `tests/effects/test_effect_combinations.py::TestListenCaptureLaw::test_listen_does_not_capture_on_error` |
+| Listen + Spawn (spawned inside the scope) | Yes | `tests/effects/test_effect_combinations.py::TestListenCaptureLaw::test_listen_captures_tasks_spawned_inside_its_scope` |
+| Listen + Gather (spawned before the scope) | Yes | `tests/effects/test_effect_combinations.py::TestListenCaptureLaw::test_listen_does_not_capture_tasks_spawned_before_its_scope` |
+| Listen + Listen (nested) | Yes | `tests/effects/test_effect_combinations.py::TestListenNested` |
+| Listen + slog | Yes | `tests/test_slog_semantics.py` |
 
 ## References
 
-- Effect definitions: `doeff/effects/writer.py`
-- Handlers: `doeff/handlers.py`
-- ListenFrame: `packages/doeff-vm/src/frame.rs`
+- Effect definitions: `packages/doeff-core-effects/doeff_core_effects/effects.py`
+- Handlers (`writer`, `writer_log`, `listen_handler`): `packages/doeff-core-effects/doeff_core_effects/handlers.py`
+- User guide: `docs/03-basic-effects.md` (Listen, Listen Composition Rules)
 - Related issue: [#176](https://github.com/proboscis/doeff/issues/176)

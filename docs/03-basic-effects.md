@@ -479,7 +479,8 @@ message with `.msg`), not the plain messages that `writer_log()` returns.
 
 `Listen` is handled by `listen_handler`, installed inside `writer`. A handler installed inside
 `listen_handler` consumes the entries before `Listen` sees them: `listen_handler(writer(prog))`
-returns an empty `collected`.
+returns an empty `collected`. `listen_handler` installs itself again around the sub-program, so a
+`Listen` inside a `Listen` needs no second `listen_handler`.
 
 ```python
 from doeff import do, run
@@ -515,11 +516,34 @@ print(run(state()(writer(listen_handler(outer_operation())))))  # (42, [Tell('in
   the order the scheduler runs them. Tasks spawned before the `Listen` and only waited on inside
   it (`Listen(Gather(t1, t2))`) perform their effects outside the Listen scope, so their entries
   are not captured.
-- `Listen + Listen` (nested): in doeff 0.5.0, `listen_handler` does not install itself again
-  around the sub-program, so a `Listen` inside another `Listen`'s sub-program fails with
-  `UnhandledEffect` unless `listen_handler` is installed once more per nesting level
-  (`listen_handler(listen_handler(prog))`). With that, the inner Listen captures only its own
-  scope, and the outer Listen captures the full outer scope, including the inner scope's entries.
+- `Listen + Listen` (nested): one `listen_handler` serves every nesting level. The inner Listen
+  captures only its own scope, and the outer Listen captures its full scope, including the inner
+  scope's entries. Both stay in the writer log.
+
+```python
+from doeff import do, run
+from doeff_core_effects import Listen, Tell
+from doeff_core_effects.handlers import listen_handler, state, writer
+
+@do
+def inner_step():
+    yield Tell("inner")
+    return "inner done"
+
+@do
+def middle_step():
+    yield Tell("before inner")
+    inner_value, inner_collected = yield Listen(inner_step())
+    yield Tell("after inner")
+    return inner_value, inner_collected
+
+@do
+def outer_step():
+    (inner_value, inner_collected), outer_collected = yield Listen(middle_step())
+    return inner_value, inner_collected, outer_collected
+
+print(run(state()(writer(listen_handler(outer_step())))))  # ('inner done', [Tell('inner')], [Tell('before inner'), Tell('inner'), Tell('after inner')])
+```
 
 ### Writer Pattern Examples
 
