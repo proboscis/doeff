@@ -313,7 +313,15 @@ def _recording_source_to_code(previous: SourceToCode):
         if source is None:
             return code
         recording = table.recording
-        return code if recording is None else records.with_record(code, recording.record(source))
+        if recording is None:
+            return code
+        record = recording.record(source)
+        # Hy の口の下では展開した後の木が来る — 同じ source を doeff-effect-analyzer が展開し直さないよう、記録と並べて置く
+        # (card ki-e053a847c515)。置き場の dir の持ち主は expansion_trees(木でない物・dir の無い時は何も置かない)。
+        from doeff_hy_bytecode_guard import expansion_trees
+
+        expansion_trees.add_import_tree(module.__name__, source, record, data)
+        return records.with_record(code, record)
 
     return source_to_code
 
