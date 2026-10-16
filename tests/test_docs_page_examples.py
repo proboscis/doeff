@@ -22,7 +22,7 @@ from tests.test_readme_examples import ROOT, Example, _run, examples
 # この検の file(repo の根からの path — pyproject.toml の契約の表の書き方)。
 THIS_CHECK = Path(__file__).resolve().relative_to(ROOT).as_posix()
 # 例を走る形に直した、入門の道の外の page(docs/ からの名)。
-CHECKED_PAGES = ("07-cache-system.md",)
+CHECKED_PAGES = ("07-cache-system.md", "18-effect-combinations.md")
 
 
 def _runnable() -> list[tuple[str, Example]]:

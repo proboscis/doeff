@@ -297,6 +297,12 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+# 18 章は法則 6〜9 の 5 例を走る形に直した(card ki-8e45f740dc61 の行と同じ検・card ki-8d12fb4b14cb)。
+# 秒は検の file 全体で 7 秒(12 本・子 6 本 = 07 章 1・18 章 5・起動を含む壁時計・load 約 80 の下・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/18-effect-combinations.md"
+tests = ["tests/test_docs_page_examples.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
 tests = [
