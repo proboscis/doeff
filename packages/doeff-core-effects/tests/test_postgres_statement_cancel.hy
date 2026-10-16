@@ -82,7 +82,8 @@
 
   (deff __init__ [self holding]  ; defk にできない: 検の殻の資源の初期化
     {:pre [(: self HoldingSecondCall) (: holding "scheduler の ExternalPromise")] :post [(: % None)]}
-    "持った事を知らせる promise を受けるため。"
+    "持った事を知らせる promise を受け、他の仕事を回す ThreadPerCall の欄(on-start)も置くため。"
+    (ThreadPerCall.__init__ self)
     (setv self.holding holding
           self.lock (threading.Lock)
           self.calls 0))
