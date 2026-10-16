@@ -74,3 +74,36 @@ Markdownの全7 Pythonコードブロックを順にcompile/execした。実行�
 - 共通captions目録、画像manifest、網羅表、TODOはこの担当では変更していない。
 - 共有`examples/external_workflows.py`は変更していない。記事中のConductor/Agentic例は同じ公開APIを使い、全行コメント付きで改めた。共有ファイルの全行コメントへの対応は親担当が行う。
 - 製品runtime・packagesの変更、commit、pushは行っていない。
+
+## 書き方の決まり9項目への仕上げ（2026-10-16）
+
+- 担当: 記事の取り組みの依頼を受けた会話（Claude Opus 5.5）。
+- 対象: `doeff-agents.md`、`examples/agents_workflow.py`、`reviews/agents-check.py`、図2枚。
+
+### 直したこと
+
+1. コードの枠を8つから6つにした。ConductorとAgenticの例、`doeff-agentic`のCLIの例を外した。
+2. 最小の自作ハンドラ`fixed_agent`を足し、依頼の判別・`Resume`・`Pass`を記事の中で説明した。冒頭の`delegate_task`はそのまま動かす。
+3. テストの枠はシナリオの正常系だけにし、時間切れ・結果なし・schema違反は完全な例で確かめる形にした。
+4. 本番の組み立てとMCPの道具を1つの枠にまとめた。tmuxが要ることを書いた。
+5. 実装へのリンクを、リポジトリに無いcommit d4705914から、mainのcommit 914ea5629へ付け替えた。
+6. PyPIのdoeff-agents 0.1.1にこの記事のAPIが無いことを書き、GitHubから試す手順を足した。
+7. 図2枚をSVGで描き直した（作り方は`imagegen/agents-svg-source.txt`）。
+8. 社内の言い回し（機体・繋ぎ口・答え手・名札・筋書きなど）を、一般の技術の言葉（環境・接続先・ハンドラ・ハンドル・シナリオ）へ替えた。
+
+### 実行した確かめ
+
+```bash
+uv run --no-sync python publications/zenn-use-cases-v0/reviews/agents-check.py  # 掲載の5枠を順に実行し、完全な例と比べ、決まりの数を測る。
+uv run --no-sync python publications/zenn-use-cases-v0/examples/agents_workflow.py  # 完全な例を走らせる。
+uv run --no-sync ruff check publications/zenn-use-cases-v0/examples/agents_workflow.py publications/zenn-use-cases-v0/reviews/agents-check.py  # 静的検査。
+```
+
+- 2026-10-16、main（commit 914ea5629）の上で、3つとも終了コード0。週1・週3・週4の記事の入ったmain（commit 51cd52e50。doeff本体とpackagesのコードは914ea5629と同じ）の上へ載せ直した後も、同じく終了コード0。
+- `agents-check.py`の出力: Python 5枠を実行・完全な例と一致・委譲、本文3,336字（`render_release.py`の数え方）・枠6・図2・60字を越える文0・です・ます以外で終わる文0。
+- 新しいcloneで`git clone`・`make sync`・完全な例の実行を記事の手順どおりに走らせ、終了コード0（`make sync`は約5分）。
+- tmuxの無い環境で`live_review`を`run`すると、`default_session_backend()`が「tmux was not found」で止まる。本番の組み立てはそこまで届く。
+
+### 未実行と制限
+
+本物のエージェント、認証、MCPサーバーとの接続、本番のschema検査と再試行は動かしていない。
