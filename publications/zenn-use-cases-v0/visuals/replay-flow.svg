@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 1000" width="1200" height="2000">
+  <style>
+    text { font-family: "IPAPGothic", "IPAGothic", "Noto Sans CJK JP", sans-serif; fill: #1b2a4a; }
+    .title { font-size: 28px; font-weight: bold; }
+    .sub { font-size: 19px; fill: #4a5878; }
+    .head { font-size: 21px; font-weight: bold; }
+    .body { font-size: 19px; }
+    .muted { font-size: 18px; fill: #4a5878; }
+    .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 17px; }
+    .name { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 18px; font-weight: bold; }
+    .num { font-size: 22px; font-weight: bold; fill: #ffffff; }
+    .flow { stroke: #0e7c86; stroke-width: 3.5; fill: none; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0e7c86"/>
+    </marker>
+  </defs>
+  <rect width="600" height="1000" fill="#ffffff"/>
+
+  <text class="title" x="300" y="48" text-anchor="middle">記録にあれば、取得担当まで進まない</text>
+  <text class="sub" x="300" y="82" text-anchor="middle">依頼は、内側の層から順に届く</text>
+
+  <!-- run_recordedが付ける3つの層 -->
+  <rect x="40" y="100" width="520" height="136" rx="14" fill="#f6f8fb" stroke="#9db8e0" stroke-width="2"/>
+  <text class="head" x="64" y="132">run_recordedが付ける層(上が内側)</text>
+  <circle cx="76" cy="160" r="14" fill="#2f5aa8"/><text class="num" x="76" y="167" text-anchor="middle" style="font-size:18px">1</text>
+  <text class="code" x="100" y="166">make_memo_rewriter(HttpRequest)</text>
+  <circle cx="76" cy="190" r="14" fill="#2f5aa8"/><text class="num" x="76" y="197" text-anchor="middle" style="font-size:18px">2</text>
+  <text class="code" x="100" y="196">sqlite_memo_handler(database)</text>
+  <circle cx="76" cy="220" r="14" fill="#2f5aa8"/><text class="num" x="76" y="227" text-anchor="middle" style="font-size:18px">3</text>
+  <text class="code" x="100" y="226">fetcher(program)</text>
+  <text class="muted" x="296" y="226">取得担当を1つ選ぶ</text>
+
+  <!-- 処理本体 -->
+  <rect x="40" y="256" width="520" height="52" rx="12" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
+  <text class="code" x="64" y="289">fetch_text: yield <tspan font-weight="bold" fill="#0e7c86">HttpRequest("GET", url)</tspan></text>
+  <path class="flow" d="M300,310 V342" marker-end="url(#tip)"/>
+
+  <!-- 1 記録の層 と 2 SQLite -->
+  <rect x="40" y="348" width="300" height="100" rx="12" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
+  <circle cx="72" cy="378" r="16" fill="#2f5aa8"/><text class="num" x="72" y="386" text-anchor="middle">1</text>
+  <text class="head" x="98" y="385">記録の層</text>
+  <text class="body" x="64" y="416">依頼から、記録の鍵を作る</text>
+  <text class="body" x="64" y="440">2に、記録があるかを尋ねる</text>
+  <path class="flow" d="M346,398 H394" marker-start="url(#tip)" marker-end="url(#tip)"/>
+  <rect x="400" y="348" width="160" height="100" rx="12" fill="#fff7e6" stroke="#e0b25a" stroke-width="2"/>
+  <circle cx="428" cy="378" r="16" fill="#2f5aa8"/><text class="num" x="428" y="386" text-anchor="middle">2</text>
+  <text class="head" x="452" y="385">SQLite</text>
+  <text class="body" x="416" y="416">記録のファイル</text>
+  <text class="body" x="416" y="440">を読み書きする</text>
+
+  <!-- 分かれ道 -->
+  <path class="flow" d="M300,450 V466" marker-end="url(#tip)"/>
+  <rect x="200" y="470" width="200" height="44" rx="22" fill="#ffffff" stroke="#0e7c86" stroke-width="2.5"/>
+  <text class="head" x="300" y="499" text-anchor="middle">記録はある？</text>
+  <path class="flow" d="M200,492 H160 V552" marker-end="url(#tip)"/>
+  <text class="head" x="112" y="532">ある</text>
+  <path class="flow" d="M400,492 H435 V552" marker-end="url(#tip)"/>
+  <text class="head" x="448" y="532">無い</text>
+
+  <!-- ある: 記録から答える -->
+  <rect x="40" y="558" width="240" height="76" rx="12" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
+  <text class="body" x="58" y="590">2から、記録した</text>
+  <text class="body" x="58" y="618">応答を読む</text>
+  <path class="flow" d="M160,636 V672" marker-end="url(#tip)"/>
+  <rect x="40" y="678" width="240" height="106" rx="12" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
+  <text class="body" x="58" y="712">応答を渡して、</text>
+  <text class="name" x="58" y="740">fetch_text</text>
+  <text class="body" x="58" y="768">を再開する</text>
+  <text class="head" x="40" y="824" fill="#0e7c86" style="fill:#0e7c86">3の取得担当は通らない</text>
+  <text class="body" x="40" y="852">= 通信しない</text>
+
+  <!-- 無い: 取得担当へ -->
+  <rect x="310" y="558" width="250" height="76" rx="12" fill="#f6f8fb" stroke="#9db8e0" stroke-width="2"/>
+  <text class="body" x="328" y="590">依頼を、外側へ</text>
+  <text class="body" x="328" y="618">出し直す</text>
+  <path class="flow" d="M435,636 V672" marker-end="url(#tip)"/>
+  <rect x="310" y="678" width="250" height="252" rx="12" fill="#f6f8fb" stroke="#9db8e0" stroke-width="2"/>
+  <circle cx="338" cy="708" r="16" fill="#2f5aa8"/><text class="num" x="338" y="716" text-anchor="middle">3</text>
+  <text class="head" x="362" y="715">取得担当(1つ)</text>
+  <rect x="322" y="732" width="226" height="96" rx="10" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
+  <text class="name" x="336" y="760">fake_http</text>
+  <text class="muted" x="336" y="786">または本番の取得担当</text>
+  <text class="body" x="336" y="814">応答を返し、1が記録</text>
+  <rect x="322" y="840" width="226" height="80" rx="10" fill="#fdecec" stroke="#e0a0a0" stroke-width="2"/>
+  <text class="name" x="336" y="868">reject_http</text>
+  <text class="body" x="336" y="900">通信せず、失敗させる</text>
+
+  <!-- 凡例 -->
+  <text class="head" x="40" y="976" style="font-size:18px">凡例</text>
+  <path class="flow" d="M92,970 H140" marker-end="url(#tip)"/>
+  <text class="muted" x="148" y="976">依頼の流れ</text>
+  <text class="muted" x="260" y="976">1〜3は層の番号(上の枠と同じ)</text>
+</svg>
