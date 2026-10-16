@@ -11,14 +11,17 @@ use doeff_vm_core::value::Value;
 use doeff_vm_core::VM;
 
 use crate::python_generator_stream::{classify_python_object, value_to_python};
+use crate::unhandled_hint::unhandled_hint;
 
 create_exception!(
     doeff_vm,
     UnhandledEffect,
     pyo3::exceptions::PyRuntimeError,
     "Raised when an effect reaches the top of the handler stack with no handler. \
-     The exception's args[0] is the human-readable message; the original effect \
-     is available via the doeff traceback attached to ``__doeff_traceback__``."
+     The exception's args[0] is the human-readable message, ending with a ``hint:`` \
+     line naming the handler to install when the effect's package registered one \
+     (``doeff_vm._unhandled_hint``); the original effect is available via the doeff \
+     traceback attached to ``__doeff_traceback__``."
 );
 
 /// The Python-visible VM wrapper.
@@ -156,7 +159,7 @@ impl PyVM {
             .as_ref()
             .and_then(|c| Self::extract_handler_chain(c))
             .unwrap_or_default();
-        let msg = if chain.is_empty() {
+        let mut msg = if chain.is_empty() {
             format!("{}: {} (no handlers in scope)", label, desc)
         } else {
             format!(
@@ -166,6 +169,10 @@ impl PyVM {
                 chain.join(" → "),
             )
         };
+        if let Some(hint) = unhandled_hint(py, effect) {
+            msg.push_str("\n  hint: ");
+            msg.push_str(&hint);
+        }
         let err = UnhandledEffect::new_err(msg);
         // Attach doeff traceback if captured
         if let Some(frames) = context {

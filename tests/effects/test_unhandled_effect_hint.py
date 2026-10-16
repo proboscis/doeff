@@ -17,6 +17,8 @@ same program finish, so a hint cannot drift from how the handlers compose.
 
 from __future__ import annotations
 
+from contextlib import closing
+
 import pytest
 from doeff_core_effects.handlers import (
     await_handler,
@@ -38,6 +40,7 @@ from doeff_core_effects.scheduler import (
     scheduled,
 )
 from doeff_vm import EffectBase, PyVM
+from doeff_vm._unhandled_hint import register_unhandled_effect_hint
 
 from doeff import (
     Ask,
@@ -81,8 +84,8 @@ async def _answer():
 
 
 @do
-def await_program():
-    return (yield Await(_answer()))
+def await_program(coroutine):
+    return (yield Await(coroutine))
 
 
 @do
@@ -99,6 +102,12 @@ def _message(program) -> str:
     with pytest.raises(UnhandledEffect) as excinfo:
         run(program)
     return str(excinfo.value)
+
+
+def _unhandled_await_message(install) -> str:
+    """The message of an Await nobody ran; its coroutine is closed, not left unawaited."""
+    with closing(_answer()) as coroutine:
+        return _message(install(await_program(coroutine)))
 
 
 def _hint_line(message: str) -> str:
@@ -124,16 +133,17 @@ class TestTheFourFirstLookMistakes:
     def test_await_handler_without_scheduled_names_scheduled(self):
         """await_handler() performs CreateExternalPromise; without scheduled()
         that is the effect that falls off, so its hint says where it came from."""
-        message = _message(await_handler()(await_program()))
+        message = _unhandled_await_message(await_handler())
         assert "CreateExternalPromise" in message
         hint = _hint_line(message)
         assert "await_handler()" in hint
         assert "run(scheduled(await_handler()(prog)))" in hint
+        assert run(scheduled(await_handler()(await_program(_answer())))) == 42
 
-    @pytest.mark.filterwarnings("ignore:coroutine '_answer' was never awaited:RuntimeWarning")
     def test_await_without_any_handler_names_await_handler_and_scheduled(self):
-        hint = _hint_line(_message(await_program()))
+        hint = _hint_line(_unhandled_await_message(lambda program: program))
         assert "run(scheduled(await_handler()(prog)))" in hint
+        assert run(scheduled(await_handler()(await_program(_answer())))) == 42
 
     def test_ask_without_handler_names_reader(self):
         hint = _hint_line(_message(ask_program()))
@@ -167,10 +177,30 @@ class TestHintPlacement:
         assert "hint:" not in message
         assert message.endswith("(no handlers in scope)")
 
+    def test_a_failing_hint_lookup_keeps_the_unhandled_effect(self):
+        @do
+        def program():
+            yield BrokenHintEffect()
 
-@do
-def _await_ok_program():
-    return (yield Await(_answer()))
+        message = _message(program())
+        assert message.startswith("unhandled effect: BrokenHintEffect")
+        hint = _hint_line(message)
+        assert "hint lookup failed" in hint
+        assert "broken hint table" in hint
+
+
+class BrokenHintEffect(EffectBase):
+    pass
+
+
+def _broken_hint_for(effect: object) -> str | None:
+    if isinstance(effect, BrokenHintEffect):
+        raise LookupError("broken hint table")
+    return None
+
+
+# Registered once for the process; it answers no effect but BrokenHintEffect.
+register_unhandled_effect_hint(_broken_hint_for)
 
 
 @do
@@ -221,7 +251,7 @@ def _semaphore_program():
 
 
 # (the unhandled program, the composition its hint names, that composition applied).
-# Programs are built inside the test: an Await program holds a coroutine.
+# The Await rows are the two Await tests above, which close the coroutine nobody ran.
 FOLLOW_THE_HINT = [
     pytest.param(
         lambda: writer(tell_program()),
@@ -232,9 +262,7 @@ FOLLOW_THE_HINT = [
     pytest.param(
         tell_program, "state()(writer(", lambda: state()(writer(tell_program())), id="tell"
     ),
-    pytest.param(
-        _state_program, "state()(prog)", lambda: state()(_state_program()), id="get-put"
-    ),
+    pytest.param(_state_program, "state()(prog)", lambda: state()(_state_program()), id="get-put"),
     pytest.param(
         ask_program, "reader(env=", lambda: reader(env={"name": "x"})(ask_program()), id="ask"
     ),
@@ -245,7 +273,9 @@ FOLLOW_THE_HINT = [
         id="local",
     ),
     pytest.param(
-        _listen_program, "listen_handler(prog)", lambda: listen_handler(_listen_program()),
+        _listen_program,
+        "listen_handler(prog)",
+        lambda: listen_handler(_listen_program()),
         id="listen",
     ),
     pytest.param(_try_program, "try_handler(prog)", lambda: try_handler(_try_program()), id="try"),
@@ -265,16 +295,9 @@ FOLLOW_THE_HINT = [
         lambda: scheduled(_semaphore_program()),
         id="semaphore",
     ),
-    pytest.param(
-        await_program,
-        "scheduled(await_handler()(prog))",
-        lambda: scheduled(await_handler()(_await_ok_program())),
-        id="await",
-    ),
 ]
 
 
-@pytest.mark.filterwarnings("ignore:coroutine '_answer' was never awaited:RuntimeWarning")
 @pytest.mark.parametrize(("make_unhandled", "named", "make_followed"), FOLLOW_THE_HINT)
 def test_following_the_hint_runs_the_program(make_unhandled, named, make_followed):
     assert named in _hint_line(_message(make_unhandled()))
