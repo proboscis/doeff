@@ -540,6 +540,30 @@
   (assert (in "worker/at-home" moved-delta) moved-delta))
 
 
+;; 版を進める資源が 0 件の stamp は after をそのまま返す(meta・audit を作り直さない — 保存の差分が欄を `is` で比べて組を飛ばす)。
+;; 出来事を足す時は版の連番・出来事の順・AUDIT-PER-KIND の上限が変わらない。
+(import doeff_cluster.coordinator.core.resource_policy [AUDIT-PER-KIND])
+
+(deftest test-a-stamp-without-moved-resources-returns-after-itself
+  (val later 2000)
+  (<- beaten ClusterState (beat-as (ClusterState) "at-home" "node-home" 1000))
+  (val created (stamp (ClusterState) beaten "c-test" later T))
+  (assert (= (lfor e created.audit e.verb) ["create"]) created.audit)
+  ;; 何も変わらない stamp(別の object で中身が同じ状態)は after と `is` で同じ — meta・audit も作り直さない
+  (val same (replace created))
+  (val noop (stamp created same "c-test" later T))
+  (assert (is noop same))
+  (assert (is noop.meta created.meta))
+  (assert (is noop.audit created.audit))
+  ;; 変われば update の出来事が連番で足り、消えれば delete が記録される
+  (val updated (stamp created (replace created :workers (| created.workers {"at-home" (replace (get created.workers "at-home") :capacity 3)})) "c-test" later T))
+  (val deleted (stamp updated (replace updated :workers {}) "c-test" later T))
+  (assert (= (lfor e deleted.audit e.verb) ["create" "update" "delete"]) deleted.audit)
+  (assert (= (lfor e deleted.audit e.seq) [1 2 3]))
+  (assert (= deleted.revision 3))
+  (assert (<= (len deleted.audit) AUDIT-PER-KIND)))
+
+
 ;; --- task のために空けておく数(task-reserve — #3489)------------------------------------------------------------------------
 ;; worker は capacity のうち task のために空けておく数を名乗る。常駐の job と並べた置き先(surge)は capacity − task-reserve までしか置かず
 ;; (job-room-of)、task は capacity 全体まで置ける(task-room-of — 予約を使い切ったら job の残りへはみ出してよい)。置けない task は
