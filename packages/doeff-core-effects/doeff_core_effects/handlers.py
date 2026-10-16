@@ -6,13 +6,15 @@ Parameterised handlers are factories that return Program -> Program installers.
 
 Compose them by calling each handler with the program to wrap:
 
-    prog = writer(state(initial={"count": 0})(body()))
+    prog = state(initial={"count": 0})(writer(body()))
     prog = reader(env={"key": "value"})(prog)
     run(prog)
 
-writer and slog_handler use lazy state init via Get/Put + Some
-(same pattern as Hy defhandler's ``lazy`` clause). They require
-the ``state`` handler to be installed as an outer handler.
+writer uses lazy state init via Get/Put + Some
+(same pattern as Hy defhandler's ``lazy`` clause). It requires
+the ``state`` handler to be installed as an outer handler, so write
+``state()(writer(prog))`` — not ``writer(state()(prog))``, which fails with
+UnhandledEffect on the first Tell.
 """
 
 import threading as _threading

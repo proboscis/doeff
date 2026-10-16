@@ -222,7 +222,7 @@ def full_interpreter(  # doeff: interpreter
     env: dict = None
 ):
     """Execute program with reader, state, writer, and scheduler."""
-    wrapped = scheduled(writer(state()(reader(env or {})(program))))
+    wrapped = scheduled(state()(writer(reader(env or {})(program))))
     return run(wrapped)
 ```
 

@@ -289,7 +289,7 @@ Handler composition uses the `handler(body)` pattern:
 ```python
 from doeff_core_effects.handlers import reader, state, writer
 
-prog = writer(state(initial={"count": 0})(body()))
+prog = state(initial={"count": 0})(writer(body()))
 ```
 
 ## Core Example
@@ -307,11 +307,14 @@ def update_counter():
     yield Tell(f"counter updated: {current} -> {current + 1}")
     return current + 1
 
-prog = writer(state(initial={"count": 0})(reader(env={"counter_key": "count"})(update_counter())))
+prog = state(initial={"count": 0})(writer(reader(env={"counter_key": "count"})(update_counter())))
 result = run(prog)
+print(result)  # 1
 ```
 
-Here handlers are composed individually: `writer(state()(reader()(prog)))`.
+Here handlers are composed individually: `state()(writer(reader()(prog)))`.
+`writer` keeps its log in state, so `state()` must be installed outside it. With the order
+reversed (`writer(state()(prog))`), the first `Tell` fails with `UnhandledEffect`.
 Each handler is a `Program -> Program` installer. `writer` and `slog_handler` are
 pre-installed handlers (used directly), while `reader(env=...)` and `state(initial=...)`
 are factories that return an installer.
