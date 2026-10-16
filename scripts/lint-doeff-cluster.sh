@@ -23,7 +23,7 @@ if [ "$#" -eq 0 ]; then
   # make lint-doeff: 探し道の linter(手で入れた物)で package を丸ごと当てる。
   if ! command -v doeff-linter >/dev/null 2>&1; then
     echo "doeff-linter が未導入のため $PACKAGE を検査できません。成功として扱いません。" >&2
-    echo "導入: cd packages/doeff-linter && cargo install --path ." >&2
+    echo "導入: make sync で .venv/bin/doeff-linter が入る — 「uv run make lint-doeff」 で走らせる(uv run が .venv/bin を PATH の先に置く)" >&2
     exit 127
   fi
   (cd "$TOP/$PACKAGE" && doeff-linter --no-log)
