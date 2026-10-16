@@ -9,12 +9,13 @@
 ;;     heartbeat が無ければ、止まる前の沈黙の残りの後に従来どおり WorkerGone になる。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [run])
+(import dataclasses [fields replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterState BoardRow Drain WarmEntry SupersededRun])
 (import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerGone])
-(import doeff_cluster.coordinator.core.api_policy [tick stall-of clocks-shifted])
+(import doeff_cluster.coordinator.core.api_policy [tick stall-of clocks-shifted STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-moves])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 
@@ -56,7 +57,9 @@
   ;; 予定の外の長さが lease-ms ちょうどなら止まりでなく、1 ms 越えたら止まり。
   (val pace (StepPace :judged-ms 1000 :waited-ms 1000 :planned-ms 1000))
   (assert (is (! (stall-of pace (+ 1000 T.lease-ms) T)) None) "lease ちょうどは止まりでない")
-  (assert (= (. (! (stall-of pace (+ 1000 T.lease-ms 1) T)) gap-ms) (+ T.lease-ms 1)) "lease を越えたら止まり"))
+  (val over (! (stall-of pace (+ 1000 T.lease-ms 1) T)))
+  (assert (is-not over None) "lease を越えたら止まり")
+  (assert (= over.gap-ms (+ T.lease-ms 1)) over))
 
 
 (deftest test-the-first-step-and-an-open-wait-are-not-stalls
@@ -83,3 +86,38 @@
   (assert (= (! (liveness-moves first at-deadline T)) #()) "猶予の期限の刻ちょうどまでは生きている")
   (assert (= (! (liveness-moves at-deadline past T)) #((WorkerGone :worker "w" :boot "b1" :deadline-ms deadline)))
           "猶予が明けたら WorkerGone を 1 つ"))
+
+
+;; 盲検 A(card ki-d033e5f969cf の設計検証): 止まりの間にずらす欄の一覧が api_policy.clocks-shifted に在るので、期限を持つ欄を足す人が
+;; 一覧を忘れると、止まりの直後にその期限だけが切れる(drain・盤の TTL の行で実測した)。欄ごとに必ず分けさせ、分けた通りにずらす。
+
+(deftest test-every-state-field-is-classified-for-the-stall
+  ;; ClusterState の欄は、ずらす(STALL-SHIFTED-FIELDS)かずらさない(STALL-UNSHIFTED-FIELDS)のちょうど一方に在る。
+  (val names (frozenset (gfor f (fields ClusterState) f.name)))
+  (assert (= (& STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS) (frozenset)) (sorted (& STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS)))
+  (assert (= (| STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS) names)
+          (.format "分けていない欄 {}・無い欄 {}" (sorted (- names STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS))
+                   (sorted (- (| STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS) names)))))
+
+
+(deftest test-a-stall-keeps-the-renewable-deadlines
+  ;; w は刻 SEEN に名乗り、drain・温める表の行・盤の TTL の行の期限は SEEN + 60 秒、退いた世代の最後の報告は SEEN。刻 JUDGED の歩の後に
+  ;; 3 分止まった。ずらした欄はずらすと言った欄だけで、止まりの直後の歩でどの期限も切れない(直す前は drain と盤の行が消えた)。
+  (val base (! (tick (! (named)) JUDGED T)))
+  (val before (replace base
+                       :drains {"w" (Drain :worker "w" :since-ms SEEN :until-ms (+ SEEN 60000))}
+                       :warms {"k" (WarmEntry :key "k" :runtime-env {} :needs #() :until-ms (+ SEEN 60000) :holder "h")}
+                       :board {"presence-x" (BoardRow :value 1 :version 1 :expires-ms (+ SEEN 60000) :size 1)}
+                       :superseded-runs #((SupersededRun :worker "w" :boot "b0" :jobs #("j") :seen-ms SEEN :overlapped False :leaving False))))
+  (val now (+ JUDGED STALL-MS))
+  (val shifted (! (clocks-shifted before now STALL-MS)))
+  (val moved (frozenset (gfor f (fields ClusterState) :if (!= (getattr before f.name) (getattr shifted f.name)) f.name)))
+  (assert (<= moved STALL-SHIFTED-FIELDS) (sorted (- moved STALL-SHIFTED-FIELDS)))
+  (assert (<= #{"workers" "board" "drains" "warms" "superseded_runs" "alive_ms"} moved) (sorted moved))
+  (assert (= (. (get shifted.drains "w") until-ms) (+ SEEN 60000 STALL-MS)))
+  (assert (= (. (get shifted.board "presence-x") version) 1) "TTL の行は値が同じなので版を進めない")
+  (val after (! (tick shifted now T)))
+  (assert (in "w" after.drains) "止まりの直後の歩で drain が切れない")
+  (assert (in "k" after.warms) "止まりの直後の歩で温める表の行が切れない")
+  (assert (in "presence-x" after.board) "止まりの直後の歩で盤の TTL の行が切れない")
+  (assert (= (. (get after.superseded-runs 0) seen-ms) (+ SEEN STALL-MS)) "退いた世代の沈黙は止まる前の時点のまま"))

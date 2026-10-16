@@ -143,8 +143,10 @@
   "純粋: 読み直した状態 → #(時計をずらした状態 止まっていた長さ ms)。ずらすのは進行中の Rollout の段の起点(shift-clocks)と
    task の lease の期限と、worker の最後の連絡の時刻(と、その印 WorkerInfo.seen-mark)と、Ready を待っている入れ替えの期限の起点
    (HandoffWatch.since-ms — 止まっていた間は期限に数えない・2026-09-26)と、盤の lease の行(semaphore/<名>)の担い手の期限
-   (lease_rules.holders-shifted — 止まっていた間に延ばせなかった持ち主を切らない・行の版を 1 進める・card ki-3b7498747e4c)。
-   生きていた時刻を知らない置き場(2026-09-25 より前)は 0。
+   (lease_rules.holders-shifted — 止まっていた間に延ばせなかった持ち主を切らない・行の版を 1 進める・card ki-3b7498747e4c)と、
+   頼み手が頼み直して延ばす期限 — 盤の TTL の行の expires-ms・drain の until-ms・温める表の行の until-ms — と、退いた世代の最後の報告の
+   刻(SupersededRun.seen-ms — 沈黙を lease で数える)(2026-10-16・card ki-d033e5f969cf の設計検証)。欄ごとの分け方は STALL-SHIFTED-FIELDS・
+   STALL-UNSHIFTED-FIELDS。生きていた時刻を知らない置き場(2026-09-25 より前)は 0。
    worker の最後の連絡の時刻は、止まる前の最後の印(alive-ms)の時点の沈黙を今から数え直した値になる: 止まる直前まで連絡のあった
    worker は起き直した直後も生きていて、その後に連絡が無ければ移し替えの期限の後に沈黙と判じる。止まる前から沈黙していた worker は
    沈黙のまま(再起動で「いま連絡があった」に戻さない)。止まっていた長さは沈黙に数えない(担い手が一斉に沈黙に倒れ、最初に
@@ -155,11 +157,38 @@
       #((run (clocks-shifted state now gap)) gap)))
 
 
+;; ClusterState の欄ごとの、止まっていた長さのずらし方の分け方(2026-10-16・card ki-d033e5f969cf の設計検証)。止まっていた間は、頼み手が
+;; 頼み直して延ばす期限も、沈黙を数える最後の連絡も進められないので、その長さを経過に数えない。新しい欄はどちらかに必ず入れる
+;; (tests/test_coordinator_stall.hy が、どちらにも無い欄と、ずらすと言ってずらさない欄を断る — 期限を持つ機能を足す人に、止まりの後に
+;; その期限が切れてよいかを決めさせる)。
+(val STALL-SHIFTED-FIELDS
+  (frozenset #("workers"           ; 最後の連絡と印 — 沈黙・移し替え・約束の期限の起点
+               "tasks"             ; lease の期限 — 呼び手の問い合わせで延びる
+               "rollouts"          ; 段の起点 — 止まっていた間は観測が無い(rollout_policy.shift-clocks)
+               "handoffs"          ; Ready を待つ入れ替えの期限の起点
+               "board"             ; 盤の lease の担い手の期限と、TTL の行の expires-ms — 頼み手が書き直して延ばす
+               "drains"            ; drain の until-ms — 頼み直すたびに延びる
+               "warms"             ; 温める表の行の until-ms — 頼み直すたびに延びる
+               "superseded_runs"   ; 退いた世代の最後の報告の刻 — 沈黙を lease で数える
+               "alive_ms")))       ; 生きていた刻 — now にする(止まりの直後の再起動で二重にずらさない)
+(val STALL-UNSHIFTED-FIELDS
+  (frozenset #("jobs" "refused" "group_limits"            ; 宣言 — 刻を持たない
+               "placements" "surges"                     ; 置いた刻 since-ms は事実(期限は担い手の最後の連絡で数える)
+               "keep_marks"                              ; 渡した刻 since-ms は事実(約束の期限は担い手の最後の連絡で数える)
+               "programs"                                ; 置いた刻 put-ms は事実(掃除の猶予は参照の無い blob だけ)
+               "started_ms"                              ; process の起動の刻 — 起動直後の猶予の起点
+               "observations"                            ; 観測の刻 — 次の heartbeat と見張りで新しくなる(古い報告の担い手は最後の連絡で数える)
+               "silent"                                  ; 沈黙の集合 — 最後の連絡から求め直す
+               "events" "audit" "audit_seq" "meta" "revision"  ; 出来事と版の記録 — 事実
+               "next_task" "task_prefix" "env_cold_starts"     ; 数と名
+               "derivable" "running_commit")))                 ; 導く能力の名・走っている版
+
+
 (defk clocks-shifted [state now gap]
   {:pre [(: state ClusterState) (: now int) (: gap int) (> gap 0)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "coordinator が gap ms 止まっていた状態から、その長さを経過・沈黙に数えないように時計をずらし、生きていた時刻を now にした状態を
-   作るため。ずらす物と訳は resume-after-downtime の註(起き直しと、process の中の止まり — stall-of・program.stall-resumed — が同じ
-   この関数でずらす)。"
+   作るため。ずらす欄は STALL-SHIFTED-FIELDS、ずらす物と訳は resume-after-downtime の註(起き直しと、process の中の止まり — stall-of・
+   program.stall-resumed — が同じこの関数でずらす)。"
   (replace state
            :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
            :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
@@ -169,9 +198,14 @@
                                      :seen-mark (if (is w.seen-mark None) None (min now (+ w.seen-mark gap)))))
            :handoffs (dfor #(k w) (.items state.handoffs)
                            k (if (= w.phase HandoffPhase.WAITING) (replace w :since-ms (min now (+ w.since-ms gap))) w))
+           ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)。
            :board (dfor #(k r) (.items state.board)
                         :setv shifted (if (.startswith k SEMAPHORE-PREFIX) (holders-shifted r.value gap) None)
-                        k (if (is shifted None) r (replace r :value shifted :version (+ r.version 1))))
+                        :setv held (if (is shifted None) r (replace r :value shifted :version (+ r.version 1)))
+                        k (if (is held.expires-ms None) held (replace held :expires-ms (+ held.expires-ms gap))))
+           :drains (dfor #(k d) (.items state.drains) k (replace d :until-ms (+ d.until-ms gap)))
+           :warms (dfor #(k w) (.items state.warms) k (replace w :until-ms (+ w.until-ms gap)))
+           :superseded-runs (tuple (gfor r state.superseded-runs (replace r :seen-ms (min now (+ r.seen-ms gap)))))
            :alive-ms now))
 
 
@@ -182,7 +216,9 @@
 ;; 止まりは「予定の外の長さ」で見分ける: 前の歩の長さ(判断の刻から受付を待ち始めるまで — 保存の fsync・k8s の書きを含む)+ 予定の
 ;; 起きる刻からの寝過ごし。予定どおりの眠り(worker の期限の刻まで待つ等)は数えない — 数えると、期限の刻に起きるたびに期限をずらし、
 ;; 本当に黙った worker を沈黙と判じない。期限なしの待ち(次に起きる刻が無い)は寝過ごしを測らず、前の歩の長さだけで見つける。
-;; 残る代償(採った上で): lease-ms 以下の止まりは見つけない(直す前と同じく、期限の近い worker が消えて戻る)。止まりが歩ごとに続く間
+;; 残る代償(採った上で): 予定の外の長さが lease-ms 以下の止まりは見つけない(直す前と同じく、期限の近い worker が消えて戻る)。予定の
+;; 起きる刻までの眠りは止まりに数えないので、起きる予定が前の歩から lease 近く先なら、見つけない止まりは最大でおよそ lease の 2 倍に
+;; なる(期限の近い worker の消えと戻りが残る)。止まりが歩ごとに続く間
 ;; (どの歩も予定の外の長さが lease を越える — 保存がいつも詰まる等)は経過を数えないので、その間は死んだ worker の判定も延びる。
 ;; 続けば止まりの行(program.STALL-LOG)が歩ごとに出る。
 
