@@ -81,7 +81,10 @@
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 (import doeff_claude_code.credential_home [open-credential-home replace-credential close-credential-home])
 
-(setv KEPT-TURNS 16)
+;; 会話が持ち続ける手番の記録(stdout の行の全部)の本数。読み手(上の層)は今の手番と、止めて生き残った入力の続きの手番しか読まない
+;; ので、続きを数本たどる間だけ持つ。閉じた会話は最後の手番だけを持つ(SessionRuntime.keep-only-current)。16 本だった時は、
+;; 生きた会話ごとに 16 手番分の行と、閉じた会話の 16 手番分の行をホストの process が持ち続けた(lt-KATGT933TATG1ESPPSW9QGFM7K)。
+(setv KEPT-TURNS 4)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
 (setv COLD-RESUME-TIMEOUT-SECONDS 600.0)
 ;; 計時の行の名(頭の註 — #3605)。行を拾う時はこの名と欄 event で引く。
@@ -211,7 +214,13 @@
     (for [old (list self.turns)]
       (when (<= old (- self.current-seq KEPT-TURNS))
         (del (get self.turns old))))
-    self.current-seq))
+    self.current-seq)
+
+  (defn keep-only-current [self]
+    "閉じた会話の手番の記録を最後の手番だけにする(上の層が閉じた後に読むのは最後の手番の終わりだけ)。会話の lock の中で呼ぶ。"
+    (for [old (list self.turns)]
+      (when (!= old self.current-seq)
+        (del (get self.turns old))))))
 
 
 (defclass ClaudeCodeHost []
@@ -1158,6 +1167,7 @@
     (when (is-not transition.end None)
       (setv (. (.open-log runtime) end) transition.end))
     (setv runtime.closed True)
+    (.keep-only-current runtime)
     (setv process runtime.process)
     (when (and (is-not process None) (.alive process))
       (setv runtime.stopped-because StopReason.SESSION-CLOSED))

@@ -151,6 +151,18 @@
   (defn __init__ [self]
     (setv self.sessions {})))
 
+(defk superseded-names [#^ HeadlessState state #^ str context-id #^ str name]
+  {:pre [(: state HeadlessState) (: context-id str) (: name str)] :post [(: % tuple)] :tags {:context "headless-adapter" :role "judgment"}}
+  "同じ文脈 context-id で session name を起こした時に表から外す、手の空いた前の session の名(止めた・手番も待たせた入力も無い)。
+   使い手が会話の CLI を手番をまたいで生かし、手番ごとに新しい名の session を前の手番の resume_from で起こすと(層 2 は同じ process を
+   使い回す)、前の session は出来事を全部持ったまま止めも片づけも来ずに残り続ける — 片づけは共有の CLI を降ろすので来ない
+   (zeus の turn-host の本体が 1 時間に約 1.6 GB 伸びた・lt-KATGT933TATG1ESPPSW9QGFM7K)。外した session は片づけた session と
+   同じく、以後の effect をこの handler が答えずに外へ回す。手番の走っている session は外さない。"
+  (tuple (gfor #(other session) (.items state.sessions)
+               :if (and (!= other name) (= session.context-id context-id)
+                        (or session.stopped (and (is session.turn None) (not session.waiting))))
+               other)))
+
 
 ;; --- 純粋な写し ---------------------------------------------------------------------------------
 
@@ -558,6 +570,10 @@
   (when (is-not request.prompt None)
     (<- images tuple (images-of request.attachments))
     (<- (start-turn session (TurnInput request.prompt (new-ref) images))))
+  ;; 起こせた後に、同じ文脈の手の空いた前の session を表から外す(superseded-names — 層 2 の会話はこの session が続ける)。
+  (<- superseded (superseded-names state context-id name))
+  (for [old superseded]
+    (del (get state.sessions old)))
   (setv (get state.sessions name) session)
   (SessionHandle :session-id name))
 

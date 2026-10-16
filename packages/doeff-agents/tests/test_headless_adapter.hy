@@ -39,7 +39,7 @@
   AgentCallUsageEvent
   AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
   AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError
-  AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect
+  AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect
   NamedContextId HandlerMadeContextId InputImage])
 (import doeff_agents.monitor [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
@@ -1384,7 +1384,9 @@
   (<- warm-view (ClaudeLiveProcess warm-context))
   (<- turn-view (ClaudeLiveProcess turn-context))
   (<- (Stop handle))
-  (<- (Stop holder))
+  ;; 同じ文脈の時は、最初のターンの session が事前起動した session を置き換えて表から外した(superseded-names)ので撃たない。
+  (when (!= warm-context turn-context)
+    (<- (Stop holder)))
   (NamedWarmThenTurn :warmed warmed :first first :warm-view warm-view :turn-view turn-view))
 
 (defk check-named-turn-completed [#^ NamedWarmThenTurn seen #^ str turn-context]
@@ -1477,6 +1479,61 @@
   (with [info (pytest.raises AgentCapabilityUnsupportedError)]
     (run (scheduled (.wrap (ScenarioAgentHandler) (WarmSession (SessionHandle "x"))))))
   (assert (= info.value.capability "WarmSessionEffect") info.value.capability))
+
+
+;; --- 同じ文脈の次の session が前の session を置き換える(agora-redesign の lt-KATGT933TATG1ESPPSW9QGFM7K)--------------------------
+;; 使い手(agora の CLI ホスト)は会話の CLI を手番をまたいで生かし、手番ごとに新しい名の session を前の手番の resume_from で起こす
+;; (層 2 は同じ CLI を使い回す)。前の手番の session は手番の出来事を全部持ったまま表に残り、止めも片づけも来ない(片づけると共有の
+;; CLI を降ろす)ので、ホストの process の memory が手番の数だけ伸び続けた(zeus の turn-host の本体が 1 時間に約 1.6 GB)。
+
+;; adapter の外側の答えの印(adapter が答えた頁は after_seq より前の next_seq を持たない)。
+(val OUTWARD-SEQ -7)
+
+(defhandler outward-events
+  ;; adapter の外側: adapter が自分の session と認めずに外へ回した Events に、印の next_seq を持つ空の頁で答える。
+  (EventsEffect [handle]
+    (resume (AgentEventPage :events #() :next-seq OUTWARD-SEQ :end None))))
+
+(defrecord Superseded
+  "同じ文脈で 2 つ目の session を起こした観測: two = 2 つ目の手番の読み・earlier = その後に前の session の Events に返った頁・
+   live = 2 つ目の手番の後の層 2 の process・gone = 2 つ目の session を片づけた後の層 2 の process。"
+  (#^ Read two)
+  (#^ AgentEventPage earlier)
+  (#^ (| LiveProcess NoLiveProcess) live)
+  (#^ (| LiveProcess NoLiveProcess) gone))
+
+(defk next-session-on-the-same-context [#^ Path work]
+  {:pre [(: work Path)] :post [(: % Superseded)] :tags {:context "headless-adapter-test" :role "program"}}
+  "1 手番を終えた session を止めずに、その resume_from で次の名の session を起こして 1 手番を読み、前の session の Events を撃つため。"
+  (<- first (Launch "adapter-turn-1" :agent-type AgentType.CLAUDE :work-dir work :prompt (reply-prompt "ONE")
+                    :lifecycle AgentSessionLifecycle.MULTI-TURN))
+  (<- one (read-until first (fn [events end] (is-not end None)) 60.0 -1))
+  (val context one.end.resume-from)
+  (<- second (Launch "adapter-turn-2" :agent-type AgentType.CLAUDE :work-dir work :prompt (reply-prompt "TWO")
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN :resume-from context))
+  (<- two (read-until second (fn [events end] (is-not end None)) 60.0 -1))
+  (<- earlier (Events first :after-seq -1 :wait-seconds 0.0))
+  (<- live (ClaudeLiveProcess context))
+  (<- (ReleaseSession second))
+  (<- gone (ClaudeLiveProcess context))
+  (Superseded :two two :earlier earlier :live live :gone gone))
+
+(deftest test-headless-the-next-session-on-a-context-supersedes-the-idle-one-fake [tmp-path]
+  ;; 同じ文脈で次の session を起こすと、手番の終わった前の session を adapter は忘れる(出来事ごと表から外す)— 前の session の Events は
+  ;; adapter が答えずに外へ回る(片づけた session と同じ)。層 2 の CLI には触らない: 次の session が同じ process を使い回して答え、
+  ;; 次の session を片づけた時に降りる。
+  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (setv work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val seen (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock)) outward-events]
+                                              (fake-headless-claude-handlers None (str (/ tmp-path "home"))
+                                                                             :world (FakeClaudeWorld fake-responder) :env {} :settings {}))
+                                           (next-session-on-the-same-context work)))))
+  (assert (= seen.earlier.next-seq OUTWARD-SEQ) (repr seen.earlier))
+  (val ends (ends-of seen.two.events))
+  (assert (and (= (len ends) 1) (isinstance (get ends 0) AgentTurnCompleted) (in "TWO" (. (get ends 0) result-text))) (repr ends))
+  (assert (= seen.live (LiveProcess :launches 1)) (repr seen.live))
+  (assert (isinstance seen.gone NoLiveProcess) (repr seen.gone)))
 
 
 ;; --- 手番の資格の参照の引き換え(issue #979)------------------------------------------------------------------------
