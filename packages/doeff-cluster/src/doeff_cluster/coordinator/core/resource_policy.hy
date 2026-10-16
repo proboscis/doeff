@@ -737,10 +737,17 @@
         keys (dirty-keys before after jobs-before jobs-after)
         b (dfor k keys :setv row (row-of before jobs-before k now timing) :if (is-not row None) k row)
         a (dfor k keys :setv row (row-of after jobs-after k now timing) :if (is-not row None) k row)
-        meta (dict after.meta) audit (list after.audit) rev after.revision seq after.audit-seq)
-  (for [key (sorted keys)]
+        ;; 版を進める資源(行が変わった・版の記録が無い adopt・消えたが記録の残る delete)。0 件なら after をそのまま返す
+        ;; (meta・audit を作り直さない — 保存の diff が欄を `is` で比べて組を飛ばせる)。
+        pending (lfor key (sorted keys)
+                      :setv old (.get b key)
+                      :setv new (.get a key)
+                      :if (not (and (= old new) (or (is new None) (in key after.meta))))
+                      key))
+  (when (not pending) (return after))
+  (setv meta (dict after.meta) audit (list after.audit) rev after.revision seq after.audit-seq)
+  (for [key pending]
     (setv old (.get b key) new (.get a key))
-    (when (and (= old new) (or (is new None) (in key meta))) (continue))
     (+= rev 1)
     (+= seq 1)
     (setv #(kind name) (split-key key) current (.get meta key))
