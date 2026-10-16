@@ -833,7 +833,7 @@ graph TD
     D -->|No| E[Fix: Add marker to parent module<br/>or use --interpreter]
     D -->|Yes| H{Marker<br/>on function?}
     H -->|No| I[Fix: Ensure marker on<br/>interpreter function not variable]
-    H -->|Yes| J[Check the PROFILE lines<br/>see Debugging Discovery]
+    H -->|Yes| J[Run with --profile<br/>see Debugging Discovery]
 ```
 
 **Solutions:**
@@ -951,8 +951,14 @@ my_env: Program[dict] = Pure({'key': 'value'})
 doeff run --program myapp.program --format json
 ```
 
-The `[DOEFF][PROFILE]` lines on stderr (on by default; `DOEFF_DISABLE_PROFILE=1` hides them)
-also name each env it loaded, for example `Load symbol myapp.base_env`.
+`--profile` (or `DOEFF_PROFILE=1`) prints how long each CLI step takes as `[DOEFF][PROFILE]`
+lines on stderr. They are off by default, and they also name each env discovery loaded:
+
+```bash
+doeff run --program myapp.program --profile
+# [DOEFF][PROFILE] Profiling enabled by --profile or DOEFF_PROFILE.
+# [DOEFF][PROFILE]     Load symbol myapp.base_env: 0.02ms
+```
 
 **Manual verification** (needs `doeff-indexer`; run from the project root):
 
@@ -1278,6 +1284,7 @@ Without markers, behavior is unchanged:
 | `--interpreter` | Use this interpreter (turns off discovery of the interpreter and the envs) | `--interpreter myapp.interpreter` |
 | `--env` | Use this environment instead of the discovered ones (can repeat) | `--env myapp.dev_env` |
 | `--format` | Output format (text or json) | `--format json` |
+| `--profile` | Print how long each CLI step takes as `[DOEFF][PROFILE]` lines on stderr (off by default; `DOEFF_PROFILE=1` does the same) | `--profile` |
 
 ### Error Messages
 
