@@ -24,6 +24,8 @@
   下の dir(site-packages・標準ライブラリ)の中身の名(dist-info の名 = 配布物の版)と .pth の中身・診断を作る関数の source(semantics)。
   中身を file ごとに見る探し道(根・extraPaths・typings・prefix の外の dir — editable で入れた doeff の checkout)は指紋に入れない —
   doeff の pin が上がっても、変わった宣言を使う .hy だけを当て直す。
+- 置き場の印(Places): 日次の回は task ごとの作業 dir の下に根を置き、doeff の pin の checkout を根の隣に置く(回ごとに path が違う)。
+  digest の材料の中の根と根の親の綴りは印(@root・@parent)に替える — 同じ木を別の置き場で測っても同じ digest になる。
 
 安全の側へ倒す所: 構文の誤りで読めない Python の module は回ごとに違う digest にする(使う file を毎回当てる)。module を値で使う参照・
 star import は、その module の全部の名に依る(_Node の name = None)。名が module に無い時は、star import の先・module の __getattr__・
@@ -80,6 +82,7 @@ _PATH_PROBE = (
     "'base': sys.base_prefix, 'version': sys.version}))"
 )
 
+
 @dataclass(frozen=True, order=True)
 class CarriedRow:
     """pyright の診断 1 つ(.hy の位置)— 運びの文書の行(path は持ち主の CarriedFile が持つ)。"""
@@ -108,13 +111,20 @@ _V = TypeVar("_V")
 
 def _grouped(pairs: Iterable[tuple[str, _V]]) -> dict[str, tuple[_V, ...]]:
     """(鍵, 値) の並びを鍵ごとの値の tuple にする(値は来た順のまま)— 名から宣言を引く索引を作るため。"""
-    ordered = sorted(((key, order, value) for order, (key, value) in enumerate(pairs)), key=itemgetter(0, 1))
-    return {key: tuple(value for _, _, value in group) for key, group in groupby(ordered, key=itemgetter(0))}
+    ordered = sorted(
+        ((key, order, value) for order, (key, value) in enumerate(pairs)), key=itemgetter(0, 1)
+    )
+    return {
+        key: tuple(value for _, _, value in group)
+        for key, group in groupby(ordered, key=itemgetter(0))
+    }
 
 
 def _resolution_json(resolution: Resolution) -> str:
     """解き先を digest の材料の文字列にするため。"""
-    return json.dumps([[candidate.path, candidate.kind] for candidate in resolution], ensure_ascii=False)
+    return json.dumps(
+        [[candidate.path, candidate.kind] for candidate in resolution], ensure_ascii=False
+    )
 
 
 # --- 運びの文書 ------------------------------------------------------------------------------------------------------------
@@ -180,12 +190,18 @@ def _record_of(loaded: object, path: Path) -> CarryRecord:
     match loaded:
         case {"version": 1, "fingerprint": str(fingerprint), "run": int(run), "files": dict(files)}:
             return CarryRecord(
-                fingerprint, run, tuple(_file_of(str(key), value, path) for key, value in sorted(files.items()))
+                fingerprint,
+                run,
+                tuple(_file_of(str(key), value, path) for key, value in sorted(files.items())),
             )
         case {"version": version} if version != CARRY_VERSION:
-            raise CarryUnreadableError(f"運びの file {path} の版 {version!r} は読めない(読める版 = {CARRY_VERSION})")
+            raise CarryUnreadableError(
+                f"運びの file {path} の版 {version!r} は読めない(読める版 = {CARRY_VERSION})"
+            )
         case _:
-            raise CarryUnreadableError(f"運びの file {path} の形が違う(version・fingerprint・run・files が要る)")
+            raise CarryUnreadableError(
+                f"運びの file {path} の形が違う(version・fingerprint・run・files が要る)"
+            )
 
 
 def _file_of(key: str, value: object, path: Path) -> CarriedFile:
@@ -194,7 +210,11 @@ def _file_of(key: str, value: object, path: Path) -> CarriedFile:
         case {"inputs": str(inputs), "checked": int(checked), "rows": list(rows)}:
             return CarriedFile(key, inputs, checked, tuple(_row_of(row, path) for row in rows))
         case _:
-            raise CarryUnreadableError(f"運びの file {path} の {key} に inputs・checked・rows が揃っていない: {value!r}"[:400])
+            raise CarryUnreadableError(
+                f"運びの file {path} の {key} に inputs・checked・rows が揃っていない: {value!r}"[
+                    :400
+                ]
+            )
 
 
 def _row_of(row: object, path: Path) -> CarriedRow:
@@ -238,7 +258,10 @@ class Summary:
 
     def line(self) -> str:
         """この回にどれだけ当て、どれだけ運んだかを人に見せる 1 行にするため(標準エラーへ出す)。"""
-        reasons = "・".join(f"{count.reason} {count.count}" for count in self.reasons if count.count) or "なし"
+        reasons = (
+            "・".join(f"{count.reason} {count.count}" for count in self.reasons if count.count)
+            or "なし"
+        )
         shown = "・".join(self.mismatched[:MISMATCH_SHOWN])
         mismatch = f": {shown}" if self.mismatched else ""
         return (
@@ -253,7 +276,9 @@ def carry_text(record: CarryRecord, summary: Summary) -> str:
         carried.path: {
             "inputs": carried.inputs,
             "checked": carried.checked,
-            "rows": [[row.line, row.column, row.severity, row.rule, row.message] for row in carried.rows],
+            "rows": [
+                [row.line, row.column, row.severity, row.rule, row.message] for row in carried.rows
+            ],
         }
         for carried in sorted(record.files, key=lambda f: f.path)
     }
@@ -302,14 +327,29 @@ class Plan:
 
 
 def plan_carry(
-    previous: CarryRecord | CarryUnreadableError | None, fingerprint: str, inputs: Sequence[FileInputs], refresh_runs: int
+    previous: CarryRecord | CarryUnreadableError | None,
+    fingerprint: str,
+    inputs: Sequence[FileInputs],
+    refresh_runs: int,
 ) -> Plan:
     """純粋: 前の回の運び(None = 無い・CarryUnreadableError = 読めない)と今の入力から、この回に当てる file と運ぶ file を決めるため。"""
-    if previous is None or isinstance(previous, CarryUnreadableError) or previous.fingerprint != fingerprint:
-        reason = "absent" if previous is None else "unreadable" if isinstance(previous, CarryUnreadableError) else "environment"
+    if (
+        previous is None
+        or isinstance(previous, CarryUnreadableError)
+        or previous.fingerprint != fingerprint
+    ):
+        reason = (
+            "absent"
+            if previous is None
+            else "unreadable"
+            if isinstance(previous, CarryUnreadableError)
+            else "environment"
+        )
         run = previous.run + 1 if isinstance(previous, CarryRecord) else 1
         return Plan(tuple(Checking(file.path, reason) for file in inputs), (), run)
-    known = {carried.path: carried for carried in previous.files}  # path から前の回の記録を引く索引(この関数の中だけ)
+    known = {
+        carried.path: carried for carried in previous.files
+    }  # path から前の回の記録を引く索引(この関数の中だけ)
     moved = tuple(
         Checking(file.path, "new" if before is None else "changed")
         for file in inputs
@@ -331,8 +371,12 @@ def next_record(
     plan: Plan, fingerprint: str, inputs: Sequence[FileInputs], fresh: Sequence[FileRows]
 ) -> tuple[CarryRecord, Summary]:
     """純粋: この回の運びの文書と数を作るため(当てた file は今回の診断 fresh と今回の番号、運んだ file は前の回の記録のまま)。"""
-    answered = {rows.path: rows.rows for rows in fresh}  # path からこの回の診断を引く索引(この関数の中だけ)
-    carried = {kept.path: kept for kept in plan.carried}  # path から運ぶ記録を引く索引(この関数の中だけ)
+    answered = {
+        rows.path: rows.rows for rows in fresh
+    }  # path からこの回の診断を引く索引(この関数の中だけ)
+    carried = {
+        kept.path: kept for kept in plan.carried
+    }  # path から運ぶ記録を引く索引(この関数の中だけ)
     checked = plan.checked_paths
     files = tuple(
         CarriedFile(file.path, file.inputs, plan.run, answered.get(file.path, ()))
@@ -349,7 +393,8 @@ def next_record(
         )
     )
     reasons = tuple(
-        ReasonCount(reason, sum(1 for checking in plan.checking if checking.reason == reason)) for reason in REASONS
+        ReasonCount(reason, sum(1 for checking in plan.checking if checking.reason == reason))
+        for reason in REASONS
     )
     summary = Summary(plan.run, len(plan.checking), len(plan.carried), reasons, mismatched)
     return CarryRecord(fingerprint, plan.run, files), summary
@@ -359,51 +404,122 @@ def next_record(
 
 
 @dataclass(frozen=True)
+class Place:
+    """回ごとに違う置き場 1 つ — path = この回の綴り・mark = 回をまたいで同じ印。"""
+
+    path: str
+    mark: str
+
+
+@dataclass(frozen=True)
+class Places:
+    """digest の材料の中の、回ごとに違う置き場の綴りを印に替えるため(頭の註「置き場の印」)。places = 長い綴りから・pattern = その
+    どれかに当たり、後ろが path の続き(/)か区切りの所だけを拾う式(当たった group の番号が places の番号 + 1)。"""
+
+    places: tuple[Place, ...]
+    pattern: re.Pattern[str] | None
+
+    def spell(self, text: str) -> str:
+        """text の中の置き場の綴りを印に替えるため。"""
+        if self.pattern is None:
+            return text
+        return self.pattern.sub(lambda hit: self.places[(hit.lastindex or 1) - 1].mark, text)
+
+
+def places_of(root: Path) -> Places:
+    """根を @root・根の親(doeff の pin の checkout を置く隣の並び)を @parent に替える置き場の組を作るため(綴りは absolute と
+    resolve の両方 — symlink を通った綴りも同じ印にする)。"""
+    absolute = Path(os.path.normpath(root.absolute()))
+    pairs = [(absolute, "@root"), (absolute.resolve(), "@root")]
+    if absolute.parent != absolute:
+        pairs.extend([(absolute.parent, "@parent"), (absolute.resolve().parent, "@parent")])
+    places = tuple(
+        sorted(
+            {Place(str(path), mark) for path, mark in pairs if path.parent != path},
+            key=lambda place: (-len(place.path), place.path),
+        )
+    )
+    if not places:
+        return Places((), None)
+    alternatives = "|".join(f"({re.escape(place.path)})" for place in places)
+    return Places(places, re.compile(f"(?:{alternatives})" + r"(?=[/\"'\s,;:\])]|$)"))
+
+
+@dataclass(frozen=True)
 class Environment:
-    """環境の指紋と、中身を file ごとに見る python の探し道(prefix の外の dir — editable で入れた checkout の dir)。"""
+    """環境の指紋と、中身を file ごとに見る python の探し道(prefix の外の dir — editable で入れた checkout の dir)と、digest の材料の
+    中の置き場の印(places)。"""
 
     fingerprint: str
     searched: tuple[Path, ...]
+    places: Places
 
 
 def semantics_digest(functions: Iterable[Callable[..., object]]) -> str:
     """pyright の診断を作って .hy の位置へ戻す関数の source と、この module の source の digest を作るため(どちらかが替われば、
     前の回の診断を運ばない)。"""
-    return _digest((*(inspect.getsource(function) for function in functions), Path(__file__).read_text(encoding="utf-8")))
+    return _digest(
+        (
+            *(inspect.getsource(function) for function in functions),
+            Path(__file__).read_text(encoding="utf-8"),
+        )
+    )
 
 
-def probe_environment(settings: Mapping[str, object], python: str, pyright: str, semantics: str) -> Environment:
-    """環境の指紋を作るため(pyright の版と python の探し道を子の process で読む — 読めなければ RuntimeError)。"""
+def probe_environment(
+    settings: Mapping[str, object], python: str, pyright: str, semantics: str, places: Places
+) -> Environment:
+    """環境の指紋を作るため(pyright の版と python の探し道を子の process で読む — 読めなければ RuntimeError)。設定と探し道と .pth の
+    中の置き場の綴りは印に替える(places)。"""
     version = subprocess.run([pyright, "--version"], capture_output=True, text=True, check=False)
     named = _PYRIGHT_VERSION.search(version.stdout + version.stderr)
     if version.returncode != 0 or named is None:
-        raise RuntimeError(f"pyright の版を読めない(exit {version.returncode}): {(version.stdout + version.stderr)[:400]}")
-    probed = subprocess.run([python, "-B", "-I", "-c", _PATH_PROBE], capture_output=True, text=True, check=False)
+        raise RuntimeError(
+            f"pyright の版を読めない(exit {version.returncode}): {(version.stdout + version.stderr)[:400]}"
+        )
+    probed = subprocess.run(
+        [python, "-B", "-I", "-c", _PATH_PROBE], capture_output=True, text=True, check=False
+    )
     try:
         answer: object = json.loads(probed.stdout)
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"python の探し道を読めない(exit {probed.returncode}): {probed.stderr[:400]}") from error
+        raise RuntimeError(
+            f"python の探し道を読めない(exit {probed.returncode}): {probed.stderr[:400]}"
+        ) from error
     match answer:
-        case {"path": list(listed), "prefix": str(prefix), "base": str(base), "version": str(python_version)}:
+        case {
+            "path": list(listed),
+            "prefix": str(prefix),
+            "base": str(base),
+            "version": str(python_version),
+        }:
             entries = tuple(str(e) for e in listed if isinstance(e, str) and e and Path(e).is_dir())
         case _:
             raise RuntimeError(f"python の探し道の形が違う: {probed.stdout[:400]}")
     fixed = tuple(Path(p).resolve() for p in (prefix, base))
-    under_prefix = {entry: any(Path(entry).resolve().is_relative_to(f) for f in fixed) for entry in entries}
+    under_prefix = {
+        entry: any(Path(entry).resolve().is_relative_to(f) for f in fixed) for entry in entries
+    }
     listings = [[entry, _listing(Path(entry))] for entry in entries if under_prefix[entry]]
-    searched = tuple(dict.fromkeys(Path(os.path.normpath(Path(e).absolute())) for e in entries if not under_prefix[e]))
+    searched = tuple(
+        dict.fromkeys(
+            Path(os.path.normpath(Path(e).absolute())) for e in entries if not under_prefix[e]
+        )
+    )
     fingerprint = _digest(
         (
             str(CARRY_VERSION),
             named.group(0),
-            json.dumps(dict(settings), sort_keys=True, ensure_ascii=False, default=str),
+            places.spell(
+                json.dumps(dict(settings), sort_keys=True, ensure_ascii=False, default=str)
+            ),
             python_version,
-            json.dumps(listed, ensure_ascii=False, default=str),
-            json.dumps(listings, ensure_ascii=False),
+            places.spell(json.dumps(listed, ensure_ascii=False, default=str)),
+            places.spell(json.dumps(listings, ensure_ascii=False)),
             semantics,
         )
     )
-    return Environment(fingerprint, searched)
+    return Environment(fingerprint, searched, places)
 
 
 def _listing(place: Path) -> list[str]:
@@ -521,7 +637,12 @@ def module_facts(text: str) -> Facts:
         frozenset(name for read in reads for name in read.defined),
         tuple(star for read in reads for star in read.stars),
         "\n".join(read.header for read in reads if read.header is not None),
-        _grouped((name, target) for read in reads for name, targets in read.statement.binds.items() for target in targets),
+        _grouped(
+            (name, target)
+            for read in reads
+            for name, targets in read.statement.binds.items()
+            for target in targets
+        ),
     )
 
 
@@ -529,7 +650,9 @@ def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
     """module の段の文 1 つを読むため。module の段の import の文は名ごとの文に分ける(1 つの文に並んだ名の 1 つを足しても、他の名の
     宣言の digest を変えない)。それ以外の文は、文の段だけを巡って束ねる名を集め(式には入らない — 関数の本体の式を歩かない)、表面へ
     縮めた木を 1 度だけ歩いて、読む名と import と `:=` を集める。"""
-    if isinstance(statement, (ast.Import, ast.ImportFrom)) and all(a.name != "*" for a in statement.names):
+    if isinstance(statement, (ast.Import, ast.ImportFrom)) and all(
+        a.name != "*" for a in statement.names
+    ):
         for alias in statement.names:
             single: ast.Import | ast.ImportFrom = (
                 ast.Import(names=[alias])
@@ -537,7 +660,13 @@ def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
                 else ast.ImportFrom(module=statement.module, names=[alias], level=statement.level)
             )
             name, target = next(_import_targets(single))
-            yield _Read(Statement(ast.dump(single), (), {}, {name: (target,)}), frozenset({name}), frozenset(), (), None)
+            yield _Read(
+                Statement(ast.dump(single), (), {}, {name: (target,)}),
+                frozenset({name}),
+                frozenset(),
+                (),
+                None,
+            )
         return
     scope = tuple(_module_scope_statements(statement))
     binds = _grouped(
@@ -552,7 +681,9 @@ def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
         if isinstance(inner, ast.ImportFrom) and any(alias.name == "*" for alias in inner.names)
     )
     targets = frozenset(name for inner in scope for name in _statement_targets(inner, imports=True))
-    defined_targets = frozenset(name for inner in scope for name in _statement_targets(inner, imports=False))
+    defined_targets = frozenset(
+        name for inner in scope for name in _statement_targets(inner, imports=False)
+    )
     declared = frozenset(_global_names(scope)) | frozenset(_except_names(scope))
     reduced = _reduce(statement, method=False)  # 木はこの読みだけの物 — その場で縮める
     scan = _scan(reduced)
@@ -587,7 +718,10 @@ def _trivial_statement(statement: ast.stmt) -> bool:
             return True
         case ast.Expr(value=ast.Constant(value=value)):
             return value is Ellipsis
-        case ast.Raise(exc=ast.Name(id="NotImplementedError") | ast.Call(func=ast.Name(id="NotImplementedError"))):
+        case ast.Raise(
+            exc=ast.Name(id="NotImplementedError")
+            | ast.Call(func=ast.Name(id="NotImplementedError"))
+        ):
             return True
         case _:
             return False
@@ -601,21 +735,25 @@ def _fully_annotated(function: ast.FunctionDef | ast.AsyncFunctionDef, method: b
         positional = positional[1:]
     starred = [a for a in (arguments.vararg, arguments.kwarg) if a is not None]
     return function.returns is not None and all(
-        argument.annotation is not None for argument in (*positional, *arguments.kwonlyargs, *starred)
+        argument.annotation is not None
+        for argument in (*positional, *arguments.kwonlyargs, *starred)
     )
 
 
 def _decorated_with(function: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
     """関数が名 name(か属性の連なりの末尾が name)の decorator を持つか — staticmethod の最初の引数を self と見ないため。"""
     return any(
-        (isinstance(d, ast.Name) and d.id == name) or (isinstance(d, ast.Attribute) and d.attr == name)
+        (isinstance(d, ast.Name) and d.id == name)
+        or (isinstance(d, ast.Attribute) and d.attr == name)
         for d in function.decorator_list
     )
 
 
 def _child_statements(statement: ast.stmt, into_scopes: bool) -> Iterator[ast.stmt]:
     """文の中にじかに入れ子になった文(if・try・for・while・with・match の本体 — into_scopes なら関数・class の本体も)。式には入らない。"""
-    if not into_scopes and isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+    if not into_scopes and isinstance(
+        statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    ):
         return
     for field in ("body", "orelse", "finalbody"):
         inner = getattr(statement, field, None)
@@ -646,7 +784,12 @@ def _global_names(scope: Iterable[ast.stmt]) -> Iterator[str]:
     """module の段の関数・class の中(入れ子も)の global が module の段に束ねる名。"""
     for inner in scope:
         if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            yield from (n for s in _statements_within(inner.body) if isinstance(s, ast.Global) for n in s.names)
+            yield from (
+                n
+                for s in _statements_within(inner.body)
+                if isinstance(s, ast.Global)
+                for n in s.names
+            )
 
 
 def _except_names(scope: Iterable[ast.stmt]) -> Iterator[str]:
@@ -665,7 +808,9 @@ def _assigns_attribute_of(function: ast.FunctionDef | ast.AsyncFunctionDef) -> b
         return False
     owner = positional[0].arg
     return any(
-        isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name) and inner.value.id == owner
+        isinstance(inner, ast.Attribute)
+        and isinstance(inner.value, ast.Name)
+        and inner.value.id == owner
         for statement in _statements_within(function.body)
         for target in _assignment_targets(statement)
         for inner in ast.walk(target)
@@ -677,7 +822,12 @@ def _assignment_targets(statement: ast.stmt) -> Iterator[ast.expr]:
     match statement:
         case ast.Assign(targets=targets) | ast.Delete(targets=targets):
             yield from targets
-        case ast.AnnAssign(target=target) | ast.AugAssign(target=target) | ast.For(target=target) | ast.AsyncFor(target=target):
+        case (
+            ast.AnnAssign(target=target)
+            | ast.AugAssign(target=target)
+            | ast.For(target=target)
+            | ast.AsyncFor(target=target)
+        ):
             yield target
         case ast.With(items=items) | ast.AsyncWith(items=items):
             yield from (item.optional_vars for item in items if item.optional_vars is not None)
@@ -739,7 +889,9 @@ def _without_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
 def _scan(node: ast.AST) -> _Scan:
     """木を 1 度だけ歩き、読まれる名と属性の連なり・import・star import・`:=` の名・__all__ の有無を集めるため。"""
     nodes = tuple(ast.walk(node))
-    inner = {id(n.value) for n in nodes if isinstance(n, ast.Attribute)}  # 連なりの途中(a.b.c の a.b と a)は外の連なりが読む
+    inner = {
+        id(n.value) for n in nodes if isinstance(n, ast.Attribute)
+    }  # 連なりの途中(a.b.c の a.b と a)は外の連なりが読む
     return _Scan(
         tuple(dict.fromkeys(chain for n in nodes if id(n) not in inner for chain in _chains_at(n))),
         _grouped(
@@ -753,7 +905,9 @@ def _scan(node: ast.AST) -> _Scan:
             for n in nodes
             if isinstance(n, ast.ImportFrom) and any(alias.name == "*" for alias in n.names)
         ),
-        frozenset(name for n in nodes if isinstance(n, ast.NamedExpr) for name in _target_names(n.target)),
+        frozenset(
+            name for n in nodes if isinstance(n, ast.NamedExpr) for name in _target_names(n.target)
+        ),
         any(isinstance(n, ast.Name) and n.id == "__all__" for n in nodes),
     )
 
@@ -768,7 +922,9 @@ def _chains_at(node: ast.AST) -> Iterator[tuple[str, ...]]:
                 yield chain
         case ast.Name(id=name):
             yield (name,)
-        case ast.Constant(value=str(text)) if 0 < len(text) <= _ANNOTATION_TEXT_LIMIT and _ANNOTATION_TEXT.fullmatch(text):
+        case ast.Constant(value=str(text)) if 0 < len(
+            text
+        ) <= _ANNOTATION_TEXT_LIMIT and _ANNOTATION_TEXT.fullmatch(text):
             yield from _text_chains(text)
         case _:
             pass
@@ -850,12 +1006,24 @@ def _statement_targets(inner: ast.stmt, imports: bool) -> Iterator[str]:
                 yield from (name for name, _ in _import_targets(inner))
         case ast.Assign(targets=targets) | ast.Delete(targets=targets):
             yield from (n for t in targets for n in _target_names(t))
-        case ast.AnnAssign(target=target) | ast.AugAssign(target=target) | ast.For(target=target) | ast.AsyncFor(target=target):
+        case (
+            ast.AnnAssign(target=target)
+            | ast.AugAssign(target=target)
+            | ast.For(target=target)
+            | ast.AsyncFor(target=target)
+        ):
             yield from _target_names(target)
         case ast.With(items=items) | ast.AsyncWith(items=items):
-            yield from (n for item in items if item.optional_vars is not None for n in _target_names(item.optional_vars))
+            yield from (
+                n
+                for item in items
+                if item.optional_vars is not None
+                for n in _target_names(item.optional_vars)
+            )
         case ast.Match(cases=cases):
-            yield from (n for case in cases for node in ast.walk(case.pattern) for n in _pattern_names(node))
+            yield from (
+                n for case in cases for node in ast.walk(case.pattern) for n in _pattern_names(node)
+            )
         case _:
             type_alias = getattr(ast, "TypeAlias", None)  # 3.12 から
             if type_alias is not None and isinstance(inner, type_alias):
@@ -928,7 +1096,9 @@ class InputGraph:
     ) -> None:
         self._root = str(root)
         self._environment = environment
-        self._global_dirs = tuple(dict.fromkeys(str(d) for d in (*roots, stub_dir, *environment.searched)))
+        self._global_dirs = tuple(
+            dict.fromkeys(str(d) for d in (*roots, stub_dir, *environment.searched))
+        )
         self._staged = {str(path): text for path, text in staged.items()}
         self._failed = frozenset(str(path) for path in failed)
         self._mut_entries: dict[str, dict[str, bool]] = {}
@@ -987,11 +1157,17 @@ class InputGraph:
         in_root = _under(base, self._root)
         for suffix, kind in _SOURCE_SUFFIXES:
             name = leaf + suffix
-            if entries.get(name) is False and (kind == "pyi" or not stub_package) and (kind != "hy" or in_root):
+            if (
+                entries.get(name) is False
+                and (kind == "pyi" or not stub_package)
+                and (kind != "hy" or in_root)
+            ):
                 path = _join(base, name)
                 yield Candidate(path, self._hy_kind(path) if kind == "hy" else kind)
         if not stub_package:
-            yield from (Candidate(_join(base, name), "native") for name in self._natives(base).get(leaf, ()))
+            yield from (
+                Candidate(_join(base, name), "native") for name in self._natives(base).get(leaf, ())
+            )
 
     def _package_files(self, here: str, stub_package: bool) -> Iterator[Candidate]:
         """package の dir here と、その __init__ の file(根の下だけ .hy も)。"""
@@ -999,7 +1175,11 @@ class InputGraph:
         entries = self._entries(here)
         in_root = _under(here, self._root)
         for init, kind in _INIT_FILES:
-            if entries.get(init) is False and (kind == "pyi" or not stub_package) and (kind != "hy" or in_root):
+            if (
+                entries.get(init) is False
+                and (kind == "pyi" or not stub_package)
+                and (kind != "hy" or in_root)
+            ):
                 path = _join(here, init)
                 yield Candidate(path, self._hy_kind(path) if kind == "hy" else kind)
 
@@ -1045,7 +1225,11 @@ class InputGraph:
         known = self._mut_local_dirs.get(directory)
         if known is None:
             containing = [d for d in self._global_dirs if _under(directory, d)]
-            stop = self._root if _under(directory, self._root) else max(containing, key=len, default=directory)
+            stop = (
+                self._root
+                if _under(directory, self._root)
+                else max(containing, key=len, default=directory)
+            )
             known = tuple(_ancestors(directory, stop))
             self._mut_local_dirs[directory] = known
         return known
@@ -1067,20 +1251,31 @@ class InputGraph:
             base = directory
             for _ in range(target.level - 1):
                 base = os.path.dirname(base)
-            return tuple(self._package_files(base, stub_package=False)) if not target.module else self._in_dir(base, target.module, False)
+            return (
+                tuple(self._package_files(base, stub_package=False))
+                if not target.module
+                else self._in_dir(base, target.module, False)
+            )
         if not target.module:
             return ()
         dirs = dict.fromkeys((*self._global_dirs, *self._local_dirs(directory)))
-        return tuple(dict.fromkeys(c for d in dirs for c in self._in_dir(d, target.module, stubs=True)))
+        return tuple(
+            dict.fromkeys(c for d in dirs for c in self._in_dir(d, target.module, stubs=True))
+        )
 
     def _submodule(self, resolution: Resolution, name: str) -> Resolution:
         """解き先の package の下の module(name)の解き先(package の dir と __init__ の在る dir の下)— 名が module に無い時に探す先。"""
         packages = dict.fromkeys(
             c.path if c.kind == "package" else os.path.dirname(c.path)
             for c in resolution
-            if c.kind == "package" or (c.kind in ("pyi", "py", "hy") and os.path.basename(c.path).startswith("__init__."))
+            if c.kind == "package"
+            or (c.kind in ("pyi", "py", "hy") and os.path.basename(c.path).startswith("__init__."))
         )
         return tuple(dict.fromkeys(c for p in packages for c in self._in_dir(p, name, stubs=False)))
+
+    def _spelled(self, resolution: Resolution) -> str:
+        """解き先を digest の材料の文字列にするため(回ごとに違う置き場の綴りは印に替える — Places)。"""
+        return self._environment.places.spell(_resolution_json(resolution))
 
     # 読み --------------------------------------------------------------------------------------------------------------------
 
@@ -1109,7 +1304,9 @@ class InputGraph:
 
     # 節 ----------------------------------------------------------------------------------------------------------------------
 
-    def _imported_nodes(self, importer: str, targets: Sequence[Imported], chain: tuple[str, ...]) -> Iterator[_Node]:
+    def _imported_nodes(
+        self, importer: str, targets: Sequence[Imported], chain: tuple[str, ...]
+    ) -> Iterator[_Node]:
         """import が束ねた名 chain[0] を頭にした連なりが使う節(targets = その名を束ねた import の行き先の全部)。"""
         prefixes = {
             ".".join(parts[:i])
@@ -1120,23 +1317,35 @@ class InputGraph:
         }
         for target in targets:
             if target.name is not None:  # from m import n [as x]
-                yield _Node(self.resolve(importer, Imported(target.module, target.level)), target.name)
+                yield _Node(
+                    self.resolve(importer, Imported(target.module, target.level)), target.name
+                )
             elif target.whole is not None:  # import a.b.c(根の名 a を束ねる)
                 yield from self._walked_chain(importer, chain, prefixes)
             else:  # import a.b as x
                 yield _Node(self.resolve(importer, target), chain[1] if len(chain) > 1 else None)
 
-    def _walked_chain(self, importer: str, chain: tuple[str, ...], prefixes: set[str]) -> Iterator[_Node]:
+    def _walked_chain(
+        self, importer: str, chain: tuple[str, ...], prefixes: set[str]
+    ) -> Iterator[_Node]:
         """`import a.b.c` で束ねた a からの連なり a.b.c.x を、import した module の綴りの所まで辿った節(途中の package の同じ名の宣言も
         — package の __init__ の名は下の module を隠す)。"""
-        depth = next((i for i in range(1, len(chain)) if ".".join(chain[: i + 1]) not in prefixes), len(chain))
+        depth = next(
+            (i for i in range(1, len(chain)) if ".".join(chain[: i + 1]) not in prefixes),
+            len(chain),
+        )
         for i in range(1, depth):
             yield _Node(self.resolve(importer, Imported(".".join(chain[:i]), 0)), chain[i])
         module = self.resolve(importer, Imported(".".join(chain[:depth]), 0))
         yield _Node(module, chain[depth] if depth < len(chain) else None)
 
     def _statement_nodes(
-        self, path: str, resolution: Resolution, facts: Facts, statement: Statement, name: str | None
+        self,
+        path: str,
+        resolution: Resolution,
+        facts: Facts,
+        statement: Statement,
+        name: str | None,
     ) -> Iterator[_Node]:
         """module の段の文 1 つの表面が使う節(表面の中の連なりを、文の中の import・module の段の import・module の段の名・star の先で
         解く)と、その文が import で束ねる名(name — None なら全部)の行き先。"""
@@ -1154,14 +1363,18 @@ class InputGraph:
 
     def _pieces(self, node: _Node) -> Iterator[_Piece]:
         """節 1 つの中身の digest の材料と、表面が使う節。"""
-        yield json.dumps([node.name, _resolution_json(node.resolution)], ensure_ascii=False)
+        yield json.dumps([node.name, self._spelled(node.resolution)], ensure_ascii=False)
         contents = tuple(self._contents(node.resolution))
         for path, facts in contents:
             if facts.volatile:
                 yield f"volatile:{uuid.uuid4()}"
                 continue
             yield facts.header
-            indexes = range(len(facts.statements)) if node.name is None else facts.bound.get(node.name, ())
+            indexes = (
+                range(len(facts.statements))
+                if node.name is None
+                else facts.bound.get(node.name, ())
+            )
             for index in indexes:
                 statement = facts.statements[index]
                 yield statement.surface
@@ -1176,7 +1389,7 @@ class InputGraph:
         if node.name is not None and not any(node.name in facts.bound for _, facts in contents):
             below = self._submodule(node.resolution, node.name)
             if below:
-                yield _resolution_json(below)
+                yield self._spelled(below)
                 yield _Node(below, None)
 
     def _expand(self, node: _Node) -> _Expanded:
@@ -1252,7 +1465,14 @@ class InputGraph:
         on_stack.difference_update(members)
         inside = set(members)
         locals_ = sorted(self._expand(m).local for m in members)
-        outside = sorted({self._mut_deep[s] for m in members for s in self._expand(m).successors if s not in inside})
+        outside = sorted(
+            {
+                self._mut_deep[s]
+                for m in members
+                for s in self._expand(m).successors
+                if s not in inside
+            }
+        )
         digest = _digest(("scc", *locals_, "→", *outside))
         self._mut_deep.update(dict.fromkeys(members, digest))
 
@@ -1277,12 +1497,17 @@ class InputGraph:
         )
         # from-import の名の全部(使わない名も — 名が module に在るかは、その file の診断に出る)と star の先。
         named = (
-            _Node(self.resolve(path, target.imported_module), target.name) for target in imported if target.name is not None
+            _Node(self.resolve(path, target.imported_module), target.name)
+            for target in imported
+            if target.name is not None
         )
         stars = (_Node(self.resolve(path, star), None) for star in scan.stars)
         # import する module の全部の解き先(解けるか・どこに解けるかは、その file の診断に出る)。
         resolutions = sorted(
-            {_resolution_json(self.resolve(path, target.imported_module)) for target in (*imported, *scan.stars)}
+            {
+                self._spelled(self.resolve(path, target.imported_module))
+                for target in (*imported, *scan.stars)
+            }
         )
         deep = sorted({self._deep(node) for node in dict.fromkeys((*used, *named, *stars))})
         return _digest(("target", self._environment.fingerprint, own, *resolutions, "→", *deep))

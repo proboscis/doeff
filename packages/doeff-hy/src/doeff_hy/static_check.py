@@ -102,6 +102,7 @@ from doeff_hy.static_carry import (
     carry_text,
     next_record,
     own_digest,
+    places_of,
     plan_carry,
     probe_environment,
     read_carry,
@@ -1234,7 +1235,7 @@ def run_carried(
     except CarryUnreadableError as error:
         print(f"doeff-hy-check: {error} — 全部を当てる", file=sys.stderr)
         previous = error
-    environment = probe_environment(settings, python, pyright, semantics_digest(CARRY_SEMANTICS))
+    environment = probe_environment(settings, python, pyright, semantics_digest(CARRY_SEMANTICS), places_of(root))
     stub_dir = _absolute(root / str(settings.get("stubPath", "typings")))
     staged = {source: projection.text for source, projection in closure.projections.items()}
     graph = InputGraph(root, roots, stub_dir, environment, staged, [failure.source for failure in closure.failures])
