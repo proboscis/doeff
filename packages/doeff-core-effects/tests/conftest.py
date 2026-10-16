@@ -62,6 +62,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     from http_server_contract_handlers import REQUIRES as HTTP_SERVER_REQUIRES
     from latest_contract_handlers import INTERPRETERS as LATEST_INTERPRETERS
     from meter_contract_handlers import INTERPRETERS as METER_INTERPRETERS
+    from proc_table_contract_handlers import INTERPRETERS as PROC_TABLE_INTERPRETERS
     from process_contract_handlers import INTERPRETERS as PROCESS_INTERPRETERS
     from random_contract_handlers import INTERPRETERS as RANDOM_INTERPRETERS
     from stack_dump_contract_handlers import INTERPRETERS as STACK_DUMP_INTERPRETERS
@@ -75,6 +76,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
         **STOP_INTERPRETERS,
         **HTTP_INTERPRETERS,
         **PROCESS_INTERPRETERS,
+        **PROC_TABLE_INTERPRETERS,
         **HTTP_SERVER_INTERPRETERS,
         **METER_INTERPRETERS,
         **LATEST_INTERPRETERS,
