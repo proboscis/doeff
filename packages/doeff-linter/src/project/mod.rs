@@ -185,6 +185,17 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     // hy-index の file(生の副作用の証拠つき)— DOEFF119 と、DOEFF119 が何も出さない class だけを問う DOEFF204 が同じ物を読む。
     let mut indexes: HashMap<String, HyFileIndex> = HashMap::new();
     let mut report = ProjectReport::default();
+    // 1 file の実行で、書いた file が自分の引数を素で呼ぶ定義を持つなら、呼び手の事実を集める repo の読みを頭から別の thread で走らせ始める
+    // (登録簿・effect の世界・名指しの module の表が冷えた作業木で disk を待つ間に重ねる)。
+    let program_params = match &target {
+        Target::Single { path, source } if enabled.contains(&ProjectRule::DefkCalledBare) && target.judges(ProjectRule::DefkCalledBare) => {
+            match bare_call_population_rel(root, settings, enabled, path) {
+                Some(rel) => spelled_callers::SpelledCallers::started(root, enabled, &rel, source),
+                None => spelled_callers::SpelledCallers::new(root, enabled),
+            }
+        }
+        _ => spelled_callers::SpelledCallers::new(root, enabled),
+    };
     let mut registry = crate::timing::timed("registry", || Registry::load(root, &settings.registry.dirs, &settings.registry.files));
     if !settings.registry.config_files.is_empty() {
         let base = settings.config_dir.clone().unwrap_or_else(|| root.to_path_buf());
@@ -840,7 +851,6 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let failure = spelled_failures::SpelledFailures::new(root, enabled, &definitions.tags);
                     found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
                     let defks = crate::timing::timed("defk-names", || defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
-                    let program_params = spelled_callers::SpelledCallers::new(root, enabled);
                     let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     found.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
@@ -5043,6 +5053,15 @@ fn judge_effect_mismatches(
             }
         })
         .collect()
+}
+
+/// 1 file の実行で DOEFF126 を判じる file(定義の規則の母集団の Hy の file)なら、その名乗り(根からの相対 — 根の外でも設定の include の dir の下なら `..` を含む相対)。
+/// `Target::Single` の定義の書き方の規則の枝と同じ条件で、実行の頭に先読みを始めるかを決める(合わなくても答えは変わらない — 引く時に読む)。
+fn bare_call_population_rel(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, path: &Path) -> Option<String> {
+    let definitions = settings.definitions.as_ref()?;
+    let rel = relative_path(root, path).or_else(|| hy_files::walked_rel(root, &settings.include, path))?;
+    let in_population = language_of(path) == Some(Language::Hy) && (is_definition_file(&rel, definitions) || is_test_file(&rel, definitions));
+    (wants_definitions(enabled) && in_population).then_some(rel)
 }
 
 /// DOEFF126: 業務の Hy の file(検の置き場も)で、defk の定義を素で呼んでいる所を判じる(error — 静かな誤りなので)。

@@ -5,11 +5,13 @@
 //! 前提 = この crate を使うのは 1 回の実行で終わる binary だけで(常駐の使い手は無い)、実行の間に file は増えも減りもしない。
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use doeff_indexer::hy_index;
 
 static WALKED: OnceLock<Mutex<HashMap<PathBuf, Arc<Vec<PathBuf>>>>> = OnceLock::new();
+/// 歩く間は他の thread が同じ一覧を歩き直さない(先に集め始めた読みと、後から一覧を引く物が、同じ tree を 2 度歩かない)。
+static WALKING: Mutex<()> = Mutex::new(());
 static BY_MODULE: OnceLock<Mutex<HashMap<PathBuf, Arc<ModuleFiles>>>> = OnceLock::new();
 
 /// module の綴り(`a.b.c`)→ その module の Hy の file(根からの path と絶対 path)。同じ module に当たる file(`a/b.hy` と `a/b.hyk`)は全部。
@@ -18,33 +20,71 @@ pub use super::module_probe::ModuleProbe as ModuleFiles;
 /// root 以下の Hy の file(`hy_index::collect_hy_files` と同じ集合と順)— 同じ root は 2 度目から歩かない。
 pub fn collect(root: &Path) -> Vec<PathBuf> {
     let memo = WALKED.get_or_init(Default::default);
-    if let Some(found) = memo.lock().expect("一覧の memo").get(root) {
-        return found.as_ref().clone();
+    let known = memo.lock().expect("一覧の memo").get(root).map(Arc::clone);
+    match known {
+        Some(paths) => paths.as_ref().clone(),
+        None => walked_once_reading(root, |_| ()).into_iter().map(|(path, ())| path).collect(),
     }
-    let found = Arc::new(walk_overlapped(root));
-    memo.lock().expect("一覧の memo").insert(root.to_path_buf(), Arc::clone(&found));
-    found.as_ref().clone()
 }
 
-/// `hy_index::collect_hy_files` と同じ集合と順の一覧を、dir を 1 層ずつ並べて開いて作る。
+/// `collect` の一覧に、各 file の `read` の結果を添える(根からの path つき — 一覧の順)。一覧を作る歩きの中で `read` を当てるので、dir を開く待ちと
+/// file を読む待ちが重なる(同じ root の一覧が既に在れば、歩かず一覧の file だけに当てる)。1 file の実行が repo の Hy の全部を読む所のための形。
+pub fn collect_reading<R: Send>(root: &Path, read: impl Fn(&Path) -> R + Sync) -> Vec<(String, PathBuf, R)> {
+    walked_once_reading(root, read)
+        .into_iter()
+        .filter_map(|(path, result)| super::paths::relative_path(root, &path).map(|rel| (rel, path, result)))
+        .collect()
+}
+
+fn walked_once_reading<R: Send>(root: &Path, read: impl Fn(&Path) -> R + Sync) -> Vec<(PathBuf, R)> {
+    let memo = WALKED.get_or_init(Default::default);
+    let known = |memo: &Mutex<HashMap<PathBuf, Arc<Vec<PathBuf>>>>| memo.lock().expect("一覧の memo").get(root).map(Arc::clone);
+    let _walking = if known(memo).is_some() { None } else { Some(WALKING.lock().unwrap_or_else(PoisonError::into_inner)) };
+    // 歩く間に待たされた間に、他の thread が一覧を作り終えているかもしれない。
+    if let Some(paths) = known(memo) {
+        let results = super::bulk_read::fan_out_wide(paths.as_slice(), |path| read(path));
+        return paths.iter().cloned().zip(results).collect();
+    }
+    let found = match walk_reading(root, &read) {
+        Some(found) => found,
+        // 根が dir として開けない(file・無い path)なら歩く物に任せる。
+        None => {
+            let paths = hy_index::collect_hy_files(root);
+            let results = super::bulk_read::fan_out_wide(&paths, |path| read(path));
+            paths.into_iter().zip(results).collect()
+        }
+    };
+    memo.lock().expect("一覧の memo").insert(root.to_path_buf(), Arc::new(found.iter().map(|(path, _)| path.clone()).collect()));
+    found
+}
+
+/// 仕事 1 つ — dir を開くか、見つけた Hy の file に `read` を当てるか。
+enum Step {
+    List(PathBuf),
+    Read(PathBuf),
+}
+
+/// `hy_index::collect_hy_files` と同じ集合と順の一覧(各 file に `read` を当てた結果つき)を、dir を開く待ちと file を読む待ちを重ねて作る。
 ///
 /// 順に歩くと dir ごとに disk を 1 回待つ(agora-controllers で約 1200 の dir — 混んだ Pod の冷えた作業木で 9〜15 秒・CPU は 0.1 秒)。
-/// 1 つの dir の中身は他の dir の中身に依らないので、同じ層の dir は待ちを重ねて開く(`bulk_read::fan_out_wide`)。降りない dir の名・symlink を辿らない事・
-/// 読めない dir を黙って飛ばす事・最後に path で並べる事は、歩く物と同じ。根が dir として開けない時(file・無い path)は歩く物に任せる。
-fn walk_overlapped(root: &Path) -> Vec<PathBuf> {
-    let Some(first) = list_dir(root) else { return hy_index::collect_hy_files(root) };
-    let mut files = first.files;
-    let mut level = first.dirs;
-    while !level.is_empty() {
-        let listed = super::bulk_read::fan_out_wide(&level, |dir| list_dir(dir));
-        level = Vec::new();
-        for listing in listed.into_iter().flatten() {
-            level.extend(listing.dirs);
-            files.extend(listing.files);
+/// 1 つの dir の中身は他の dir の中身に依らず、見つけた file の読みも他に依らないので、全部を待ちの重なる仕事として回す(`bulk_read::pipeline`)。
+/// 降りない dir の名・symlink を辿らない事・読めない dir を黙って飛ばす事・最後に path で並べる事は、歩く物と同じ。根が dir として開けない時は None。
+fn walk_reading<R: Send>(root: &Path, read: &(impl Fn(&Path) -> R + Sync)) -> Option<Vec<(PathBuf, R)>> {
+    let first = list_dir(root)?;
+    let mut found = super::bulk_read::pipeline(super::bulk_read::WIDE_READERS, steps_of(first), |step| match step {
+        Step::List(dir) => (list_dir(&dir).map(steps_of).unwrap_or_default(), None),
+        Step::Read(path) => {
+            let result = read(&path);
+            (Vec::new(), Some((path, result)))
         }
-    }
-    files.sort();
-    files
+    });
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    Some(found)
+}
+
+/// dir の中身が生む仕事。後ろの仕事から先に拾われるので、dir を後ろに置く(dir を先に開くと、並べられる仕事が早く増える)。
+fn steps_of(listing: Listing) -> Vec<Step> {
+    listing.files.into_iter().map(Step::Read).chain(listing.dirs.into_iter().map(Step::List)).collect()
 }
 
 /// dir 1 つの中身 — 降りる dir と Hy の file。
@@ -130,6 +170,14 @@ pub fn outside_walk(root: &Path, include: &[PathBuf], named: &[PathBuf], declara
 mod tests {
     use super::*;
 
+    /// 歩く物の代わりに使う一覧(根が dir でなければ歩く物に任せる)。
+    fn overlapped(root: &Path) -> Vec<PathBuf> {
+        match walk_reading(root, &|_: &Path| ()) {
+            Some(found) => found.into_iter().map(|(path, ())| path).collect(),
+            None => hy_index::collect_hy_files(root),
+        }
+    }
+
     fn tree(files: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::TempDir::new().unwrap();
         for rel in files {
@@ -173,7 +221,7 @@ mod tests {
         }
         let walked = hy_index::collect_hy_files(dir.path());
         assert!(walked.len() >= 10, "検の材料が足りない: {walked:?}");
-        assert_eq!(walk_overlapped(dir.path()), walked);
+        assert_eq!(overlapped(dir.path()), walked);
     }
 
     /// 根が降りない名でも、根自身は降りる(歩く物と同じ)。開けない dir は黙って飛ばす。
@@ -181,14 +229,14 @@ mod tests {
     fn the_root_is_entered_even_when_its_name_is_skipped_and_unreadable_dirs_are_left_out() {
         let parent = tree(&["target/inner/x.hy", "target/y.hy"]);
         let root = parent.path().join("target");
-        assert_eq!(walk_overlapped(&root), hy_index::collect_hy_files(&root));
-        assert_eq!(walk_overlapped(&root).len(), 2);
+        assert_eq!(overlapped(&root), hy_index::collect_hy_files(&root));
+        assert_eq!(overlapped(&root).len(), 2);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let locked = root.join("inner");
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-            assert_eq!(walk_overlapped(&root), hy_index::collect_hy_files(&root));
+            assert_eq!(overlapped(&root), hy_index::collect_hy_files(&root));
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
     }
@@ -198,7 +246,28 @@ mod tests {
     fn a_root_that_is_not_a_directory_gives_what_the_plain_walk_gives() {
         let dir = tree(&["one.hy", "note.txt"]);
         for root in [dir.path().join("one.hy"), dir.path().join("note.txt"), dir.path().join("missing")] {
-            assert_eq!(walk_overlapped(&root), hy_index::collect_hy_files(&root), "{root:?}");
+            assert_eq!(overlapped(&root), hy_index::collect_hy_files(&root), "{root:?}");
         }
+    }
+
+    /// 歩きながら読む一覧は、歩く物と同じ集合・同じ順で、file ごとに 1 度ずつ読む。2 度目(一覧が既に在る時)も同じ答えで、また 1 度ずつ読む。
+    #[test]
+    fn reading_while_walking_reads_every_listed_file_once_in_the_listed_order() {
+        let dir = tree(&["b/two.hy", "a/one.hy", "a/deep/three.hyk", "a/.venv/skipped.hy", "c/notes.txt", "top.hyp"]);
+        let walked = hy_index::collect_hy_files(dir.path());
+        for _ in 0..2 {
+            let reads = std::sync::atomic::AtomicUsize::new(0);
+            let found = collect_reading(dir.path(), |path| {
+                reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                path.file_name().unwrap().to_string_lossy().into_owned()
+            });
+            assert_eq!(found.iter().map(|(_, path, _)| path.clone()).collect::<Vec<_>>(), walked);
+            assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), walked.len());
+            for (rel, path, name) in &found {
+                assert_eq!(path, &dir.path().join(rel));
+                assert!(rel.ends_with(name.as_str()));
+            }
+        }
+        assert_eq!(collect(dir.path()), walked);
     }
 }
