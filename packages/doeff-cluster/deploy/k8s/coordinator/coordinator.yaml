@@ -151,7 +151,10 @@ spec:
             # 歩で全部の worker を lease 切れに数え、配る担当へ消えと戻りが 33 回届いた事の直し・親 ki-b4d94c618094)。間の doeff-cluster の
             # code の差は他に、退きの保ち(ki-e3531030eb37)・退いた process の空き待ちの文・ReadDetachedQueue の返事の欄(task の limits)
             # — どれも返事に欄を足すだけで、欄を読まない古い worker は今どおり動く。前の版 434f9789f(L2312)は e8d948145 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: e8d9481453ebea5511faa94ff2c7e109080fc45c }
+            # e1f9303ce = worker に機体の memory の見張りを足した版(card ki-7b934e2538f9・L2356)。atlas の worker を同じ版へ上げるため、
+            # 版の向き(worker は coordinator と同じかその祖先)に合わせて先に上げる。間の coordinator の code の差は、止まりの判断を
+            # stall-of の 1 つに縛る 8e9a0d3e2(ki-d033e5f969cf の続き)だけ。前の版 e8d948145(L2333)は e1f9303ce の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: e1f9303ce616f3ba14cbb018244f760eeec5bf52 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
