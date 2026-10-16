@@ -6,8 +6,7 @@ import sys
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff_vm import PyVM
-
-from doeff.do import uncalled_do_function_call
+from doeff_vm._not_a_program import uncalled_do_function_call
 
 if TYPE_CHECKING:
     from doeff import Program

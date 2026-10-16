@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from doeff.do import uncalled_do_function_call
+from doeff_vm._not_a_program import uncalled_do_function_call
+
 from doeff.program import handler as _program_handler
 
 # Activate Hy's import hook so doeff run can resolve program/interpreter/env
