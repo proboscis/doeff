@@ -179,7 +179,8 @@ def my_handler(effect, k):
 
 Request an environment value.
 
-Raises `KeyError` when `key` is not present in the current environment.
+Raises `MissingEnvKeyError` (a `KeyError`) when `key` is not present in the current environment;
+its message names the keys the environment holds and the close names of `key`.
 
 If the environment value is a `Program`, `Ask` evaluates it lazily once per `run()` invocation and
 caches the computed value per key (when using `lazy_ask`). Concurrent `Ask` calls for the same lazy key are coordinated so
@@ -897,7 +898,7 @@ result = run(scheduled(prog))    # scheduler wraps everything
 
 ### reader(env=None)
 
-Handles `Ask(key)` by looking up `key` in `env`. Raises `KeyError` on miss.
+Handles `Ask(key)` by looking up `key` in `env`. Raises `MissingEnvKeyError` (a `KeyError`) on miss.
 
 ```python
 from doeff_core_effects.handlers import reader

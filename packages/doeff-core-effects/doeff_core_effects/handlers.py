@@ -30,6 +30,7 @@ from doeff_core_effects.effects import (
     Get,
     Listen,
     Local,
+    MissingEnvKeyError,
     Put,
     Slog,
     Try,
@@ -51,7 +52,7 @@ def reader(env: Mapping[Any, Any] | None = None) -> ProgramHandler:
         if isinstance(effect, Ask):
             if effect.key in env:
                 return (yield Transfer(k, env[effect.key]))
-            return (yield TransferThrow(k, KeyError(_missing_key_message(effect.key))))
+            return (yield TransferThrow(k, MissingEnvKeyError(effect.key, tuple(env))))
         yield Pass(effect, k)
 
     return _program_handler(handler)
@@ -510,22 +511,6 @@ def await_handler() -> ProgramHandler:
     return _program_handler(handler)
 
 
-def _missing_key_message(key):
-    """Build an actionable error message for a missing Ask key."""
-    return (
-        f"Ask: key not found: {key!r}\n"
-        f"\n"
-        f"To provide this key, use one of:\n"
-        f"  uv run doeff run --set {key}=VALUE ...          # inline key-value\n"
-        f"  uv run doeff run --env myapp.module.env ...     # merge an env dict/Program[dict]\n"
-        f"  uv run doeff run --interpreter myapp.interp ... # custom interpreter with env baked in\n"
-        f"  uv run doeff run -c '...' --set {key}=VALUE     # with inline code (heredoc supported)\n"
-        f"\n"
-        f"Use {{import.path}} in --set to import a symbol: --set {key}={{myapp.impl}}\n"
-        f"See: uv run doeff run --help"
-    )
-
-
 def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> ProgramHandler:  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Lazy Ask handler — replaces reader per SPEC-EFF-001.
 
@@ -609,7 +594,7 @@ def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> P
                 else:
                     if strict:
                         return (yield TransferThrow(
-                            k, KeyError(_missing_key_message(effect.key))
+                            k, MissingEnvKeyError(effect.key, tuple(effective_env))
                         ))
                     # Forward to outer handler so env-var-ask (or other
                     # fallback handlers) can resolve the key.

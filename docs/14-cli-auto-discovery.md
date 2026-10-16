@@ -912,7 +912,8 @@ doeff run --program myapp.program --interpreter myapp.desired_interpreter
 
 ### Error: Environment Values Not Applied
 
-**Symptom**: `Ask('key')` fails with `KeyError: "Ask: key not found: 'key'"`, or returns a wrong value.
+**Symptom**: `Ask('key')` fails with `MissingEnvKeyError: Ask: key not found: 'key'`, or returns a wrong value.
+The message names the keys the env did hold; `doeff run` adds the `--hy` form that gives the key inline.
 
 **Debug:**
 
@@ -1312,7 +1313,7 @@ Without markers, behavior is unchanged:
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `UnhandledEffect: no handler found for effect: Ask`, with `lazy_ask` among the handlers | No marked interpreter found (or `doeff-indexer` not installed): the built-in default interpreter ran | Install `doeff-indexer`, add marker, or use `--interpreter` |
-| `KeyError: "Ask: key not found: ..."` | The env did not reach the program | See [Environment Values Not Applied](#error-environment-values-not-applied) |
+| `MissingEnvKeyError: Ask: key not found: ...` | The env did not reach the program | See [Environment Values Not Applied](#error-environment-values-not-applied) |
 | `expected DoExpr or EffectBase, got: <class 'function'>` | `--program` names a `@do` function, not a Program value | Point `--program` at a value such as `my_program = main()` |
 | `ModuleNotFoundError: No module named 'myapp'` | `myapp` is not importable where `doeff` runs | Install your project, or run `python -m doeff run ...` from the project root |
 

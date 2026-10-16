@@ -4,7 +4,8 @@ These are EffectBase subclasses. Yield them from @do functions.
 Handlers (reader, state, writer) handle them.
 """
 
-from collections.abc import Awaitable, Callable
+import difflib
+from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Never, TypeVar
@@ -33,6 +34,63 @@ class Ask(EffectBase[Any]):
 
     def __repr__(self):
         return f"Ask({self.key!r})"
+
+
+_MISSING_KEY_SHOWN_KEYS = 8
+
+
+class MissingEnvKeyError(KeyError):
+    """Ask(key) found no value: the env of the handler answering Ask has no such key.
+
+    A KeyError, so ``except KeyError`` still catches it; ``args`` is ``(key,)`` as
+    for a dict lookup. ``env_keys`` are the keys the env did hold. ``str()`` is
+    the message itself — KeyError's own ``str()`` quotes it and folds the
+    newlines into ``\\n``. The message names no CLI flag; ``doeff run`` adds
+    its own hint when the error reaches it.
+    """
+
+    def __init__(self, key: Hashable, env_keys: tuple[Hashable, ...] = ()) -> None:
+        super().__init__(key)
+        self.key = key
+        self.env_keys = env_keys
+
+    def __str__(self) -> str:
+        return _missing_key_message(self.key, self.env_keys)
+
+
+def _missing_key_message(key: Hashable, env_keys: tuple[Hashable, ...]) -> str:
+    """Name the keys the env holds and the close names of a missing Ask key."""
+    return "\n".join((
+        f"Ask: key not found: {key!r}",
+        *_close_key_lines(key, env_keys),
+        _env_keys_line(env_keys),
+        "  To provide it, put the key in the env of the handler that answers Ask:"
+        " reader(env={...}) or lazy_ask(env={...}).",
+    ))
+
+
+def _close_key_lines(key: Hashable, env_keys: tuple[Hashable, ...]) -> tuple[str, ...]:
+    """The difflib close names of a str key among the env's str keys (none or one line)."""
+    if not isinstance(key, str):
+        return ()
+    close = difflib.get_close_matches(key, [k for k in env_keys if isinstance(k, str)], n=3)
+    if not close:
+        return ()
+    return (f"  Did you mean {' or '.join(map(repr, close))}?",)
+
+
+def _env_keys_line(env_keys: tuple[Hashable, ...]) -> str:
+    """The env's keys in its own order — the first few of a large env and the count of the rest."""
+    if not env_keys:
+        return "  The env is empty."
+    if len(env_keys) <= _MISSING_KEY_SHOWN_KEYS:
+        return f"  Keys in the env: {', '.join(map(repr, env_keys))}"
+    shown = ", ".join(map(repr, env_keys[:_MISSING_KEY_SHOWN_KEYS]))
+    rest = len(env_keys) - _MISSING_KEY_SHOWN_KEYS
+    return (
+        f"  Keys in the env ({_MISSING_KEY_SHOWN_KEYS} of {len(env_keys)}):"
+        f" {shown}, … {rest} more"
+    )
 
 
 class Get(EffectBase[Any]):
