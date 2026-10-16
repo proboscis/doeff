@@ -345,27 +345,3 @@ def program_factory(
     wrapper.__doeff_tail_resume_lines__ = tail_resume_lines  # type: ignore[attr-defined]
     return wrapper
 
-
-def uncalled_do_function_call(value: object, *, name: str | None = None) -> str | None:
-    """The call that builds the program — ``main()``, or ``main(...)`` when the function has a
-    required parameter — when ``value`` is a ``@do`` function itself rather than the program it
-    builds; ``None`` for anything else.
-
-    ``run`` and ``doeff run --program`` take a program. Given the function, the VM only says
-    "expected DoExpr or EffectBase, got: <class 'function'>", so they name this call in their
-    error instead. ``name`` is the name the caller knows the function by (default: its
-    ``__name__``) — ``doeff run`` shows the last part of ``--program``.
-    """
-    if type(value) is not FunctionType:
-        return None
-    fn = value.__dict__.get("__doeff_generator_function__")
-    if fn is None:
-        return None
-    required = [
-        parameter
-        for parameter in inspect.signature(fn).parameters.values()
-        if parameter.default is parameter.empty
-        and parameter.kind not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
-    ]
-    shown = value.__name__ if name is None else name
-    return f"{shown}(...)" if required else f"{shown}()"
