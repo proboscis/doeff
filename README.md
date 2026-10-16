@@ -9,6 +9,12 @@ Programs are written with generator-based `@do` notation and executed through ex
 pip install doeff
 ```
 
+> **Note on `doeff-agents` from PyPI**: `doeff-agents` 0.1.1 on PyPI was built for doeff 0.4
+> and does not work with doeff 0.5 — importing its handlers fails with
+> `ImportError: cannot import name 'WithHandler' from 'doeff'`.
+> To keep using that release, pin the doeff 0.4 line: `pip install doeff-agents "doeff<0.5"`.
+> The `doeff-agents` in this repository (`packages/doeff-agents`) is not published to PyPI.
+
 ## Quick Start
 
 ```python
