@@ -31,7 +31,7 @@ def test_run_names_the_call_when_given_an_uncalled_do_function() -> None:
     with pytest.raises(TypeError) as info:
         run(answer)
     message = str(info.value)
-    assert "@do function 'answer' itself, not a program" in message
+    assert "run() got a @do function itself, not a program" in message
     assert "run(answer())" in message
 
 

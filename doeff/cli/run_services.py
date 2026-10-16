@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from doeff.do import uncalled_do_function_call
 from doeff.program import handler as _program_handler
 
 # Activate Hy's import hook so doeff run can resolve program/interpreter/env
@@ -85,6 +86,26 @@ def import_callable(full_path: str) -> Callable[..., object]:
     )
 
 
+def reject_uncalled_do_function(program: object, *, program_ref: str) -> None:
+    """Refuse a ``--program`` that names a @do function rather than the program it builds.
+
+    ``--program`` names a program (``my_program = main()`` — docs/14-cli-auto-discovery.md).
+    Handed the function, the default interpreter failed with ``WithHandler body: `` repeated
+    once per handler; this says how to make the program instead. The CLI does not call the
+    function itself, so ``--program`` keeps one meaning on every runner.
+    """
+    cut = max(program_ref.rfind("."), program_ref.rfind(":"))
+    prefix, name = program_ref[: cut + 1], program_ref[cut + 1 :]
+    call = uncalled_do_function_call(program, name=name)
+    if call is None:
+        return
+    raise TypeError(
+        f"--program {program_ref} is the @do function {name!r} itself, not a program. "
+        f"Call the function to build the program and name that: add `{name}_program = {call}` "
+        f"next to `{name}`, then run `doeff run --program {prefix}{name}_program`"
+    )
+
+
 @dataclass
 class RunContext:
     program_path: str | None
@@ -151,6 +172,7 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
     elif ctx.program_path:
         with profile("Load program"):
             program = import_symbol(ctx.program_path)
+        reject_uncalled_do_function(program, program_ref=ctx.program_path)
     else:
         raise ValueError("No program specified")
 

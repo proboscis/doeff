@@ -20,7 +20,7 @@ def run_local(ctx: Any) -> int:
     scripts piping ``--format json`` get stable output.
     """
     from doeff import run as _run
-    from doeff.cli.run_services import import_symbol
+    from doeff.cli.run_services import import_symbol, reject_uncalled_do_function
 
     if ctx.hy_source is not None:
         from doeff.cli.hy_runner import evaluate_hy_source
@@ -30,6 +30,7 @@ def run_local(ctx: Any) -> int:
         program = execute_doeff_code(ctx.py_source, filename="<doeff-code>")
     elif ctx.program_ref is not None:
         program = import_symbol(ctx.program_ref)
+        reject_uncalled_do_function(program, program_ref=ctx.program_ref)
     else:
         sys.stderr.write(f"{_format_no_source_error()}\n")
         return 1
