@@ -247,6 +247,73 @@ class TestListenCaptureLaw:
         assert safe_result.is_err()
         assert isinstance(safe_result.error, ValueError)
 
+    def test_listen_of_try_keeps_entries_before_the_caught_error(self) -> None:
+        """SPEC-EFF-003 "Listen + Try": Listen(Try(prog)) returns Err and the entries before it."""
+
+        @do
+        def failing_with_logs():
+            yield Tell("before_error")
+            raise ValueError("intentional failure")
+
+        @do
+        def program():
+            return (yield Listen(Try(failing_with_logs())))
+
+        result = run_with_defaults(program())
+        assert result.is_ok()
+
+        caught, collected = result.value
+        assert caught.is_err()
+        assert isinstance(caught.error, ValueError)
+        assert [entry.msg for entry in collected] == ["before_error"]
+
+    def test_listen_captures_tasks_spawned_inside_its_scope(self) -> None:
+        """SPEC-EFF-003 "Listen + Spawn/Gather": a task spawned in the scope tells inside it."""
+
+        @do
+        def task(name):
+            yield Tell(f"{name}_start")
+            yield Tell(f"{name}_end")
+            return name
+
+        @do
+        def scope():
+            first = yield Spawn(task("A"))
+            second = yield Spawn(task("B"))
+            return (yield Gather(first, second))
+
+        @do
+        def program():
+            return (yield Listen(scope()))
+
+        result = run_with_defaults(program())
+        assert result.is_ok()
+
+        values, collected = result.value
+        assert values == ["A", "B"]
+        assert [entry.msg for entry in collected] == ["A_start", "A_end", "B_start", "B_end"]
+
+    def test_listen_does_not_capture_tasks_spawned_before_its_scope(self) -> None:
+        """SPEC-EFF-003 "Listen + Spawn/Gather": waiting inside the scope does not move the Tells."""
+
+        @do
+        def task(name):
+            yield Tell(f"{name}_told")
+            return name
+
+        @do
+        def program():
+            first = yield Spawn(task("A"))
+            second = yield Spawn(task("B"))
+            return (yield Listen(Gather(first, second)))
+
+        result = run_with_defaults(program())
+        assert result.is_ok()
+
+        values, collected = result.value
+        assert values == ["A", "B"]
+        assert collected == []
+
 
 def _tells(collected) -> list[object]:
     """The messages of the collected Tell effects, in order."""
