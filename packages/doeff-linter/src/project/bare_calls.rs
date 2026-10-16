@@ -23,11 +23,14 @@
 //! `defsystem` は定義(関数に展開される)で、job の行の Program の式は答えとして使う所ではない(agora-redesign #913)。
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Prefix, Reader};
 
 use super::facts::ByteSpan;
-use super::names::hy_mangle;
+use super::facts_cache;
+use super::names::{hy_mangle, module_of};
+use super::rule::ProjectRule;
 use super::smells::{children, live, span_of, Hy, Scope};
 
 /// defk の集合(module まで含めた名・mangle 済み)。
@@ -102,6 +105,26 @@ pub fn defk_names_in(source: &str, module: &str) -> DefkNames {
         }
     }
     DefkNames { names }
+}
+
+/// repo の Hy の file の defk の集合 — 集める file(`files`)と引き方(`reach`)を受ける(規則が無効なら空)。`(defk` の綴りを含む file だけを読み、最上位の defk の名を
+/// module まで含めた名にする。1 file の実行は書いた file が名指す module の file だけを渡す(defk の集合は module まで含めた名で引かれ、引く名は書いた file の
+/// 記号を解いた名 — その module の file だけで答えが同じ)。
+pub fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: facts_cache::Reach, files: &[(String, PathBuf)]) -> DefkNames {
+    let mut all = DefkNames::default();
+    if !enabled.contains(&ProjectRule::DefkCalledBare) {
+        return all;
+    }
+    // file ごとの defk の名はその file の中身だけで決まるので、変わった file だけ読み直す(保存ごとの 1 file の実行でも
+    // repo 全体の名が要るため — #1025)。
+    let found: Vec<DefkNames> = facts_cache::per_file_in(reach, root, "defk-names", "", files, |rel, path| {
+        let source = std::fs::read_to_string(path).ok()?;
+        source.contains("(defk").then(|| defk_names_in(&source, &module_of(rel)))
+    });
+    for names in found {
+        all.extend(names);
+    }
+    all
 }
 
 /// record の型の欄のうち、宣言の型が Program か EffectBase を名指す欄(module まで含めた型の名 → 欄の名・どちらも mangle 済み)。

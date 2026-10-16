@@ -850,7 +850,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     };
                     let failure = spelled_failures::SpelledFailures::new(root, enabled, &definitions.tags);
                     found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
-                    let defks = crate::timing::timed("defk-names", || defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
+                    let defks = crate::timing::timed("defk-names", || bare_calls::defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     found.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
@@ -4795,31 +4795,12 @@ fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
 /// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、
 /// 最上位の defk の名を module まで含めた名にする。読めない file は飛ばす。
 fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::DefkNames {
-    defk_names_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
+    bare_calls::defk_names_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
 }
 
 /// repo の Hy の file(根からの path と絶対 path — 歩いた順)。
 fn hy_rel_files(root: &Path) -> Vec<(String, PathBuf)> {
     hy_files::collect(root).into_iter().filter_map(|path| relative_path(root, &path).map(|rel| (rel, path))).collect()
-}
-
-/// `defk_names_for` の本体 — 集める file(`files`)と引き方(`reach`)を受ける。1 file の実行は書いた file が名指す module の file だけを渡す
-/// (defk の集合は module まで含めた名で引かれ、引く名は書いた file の記号を解いた名 — その module の file だけで答えが同じ)。
-fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: facts_cache::Reach, files: &[(String, PathBuf)]) -> bare_calls::DefkNames {
-    let mut all = bare_calls::DefkNames::default();
-    if !enabled.contains(&ProjectRule::DefkCalledBare) {
-        return all;
-    }
-    // file ごとの defk の名はその file の中身だけで決まるので、変わった file だけ読み直す(保存ごとの 1 file の実行でも
-    // repo 全体の名が要るため — #1025)。
-    let found: Vec<bare_calls::DefkNames> = facts_cache::per_file_in(reach, root, "defk-names", "", files, |rel, path| {
-        let source = std::fs::read_to_string(path).ok()?;
-        source.contains("(defk").then(|| bare_calls::defk_names_in(&source, &module_of(rel)))
-    });
-    for names in found {
-        all.extend(names);
-    }
-    all
 }
 
 /// DOEFF126 が答えとして数えない record の欄(宣言の型が Program か EffectBase を名指す欄)を repo の Hy の file から集める(規則が
