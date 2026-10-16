@@ -98,28 +98,26 @@
   {
     "id": "coroutines-concept",
     "image": "images/zenn-use-cases-v0/generated/coroutines-concept.png",
-    "generation_prompt": "coroutines-concept-flat-code.txt",
-    "edit_prompts": [
-      "coroutines-concept-flat-code-edit.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "0372b48ec39a35fe238b23f90adbeadbcea02ba5a87d85880c9a2d7e6add7b07",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1723781,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "coroutines-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "643ac6bc4c858dcb4c4b87779171cc7d877ab8637c42ccac3a33b08d606ad34f",
+    "width": 1200,
+    "height": 1760,
+    "bytes": 241623,
+    "review": "2026-10-17：9本目の改稿のコード（greet_async・read_name_async・greet・ReadName・hanako・taro・Resume(k, 値)）と名前・値・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
   },
   {
     "id": "coroutines-flow",
     "image": "images/zenn-use-cases-v0/generated/coroutines-flow.png",
-    "generation_prompt": "coroutines-flow-flat-code.txt",
+    "generation_prompt": "coroutines-svg-source.txt",
     "edit_prompts": [],
-    "tool": "image_gen (built-in)",
-    "sha256": "64bc4361fdcac713b7b280e29350a96d1e069d81def7ea71ed5c948a120b765d",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1425399,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "ab38f8a7b5e2614e7eff96814340c4c86e7237826289b1b33cd46f2301f61c26",
+    "width": 1200,
+    "height": 1900,
+    "bytes": 216006,
+    "review": "2026-10-17：9本目の改稿のコード（collect_chunks・Await(anext(iterator, None))・introduction・await_handler()・Listen）と値（はじめに、doeff・5回・1回）・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
   },
   {
     "id": "di-concept",

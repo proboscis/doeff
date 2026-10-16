@@ -63,3 +63,51 @@ Pythonのtokenizeで、専用例1本・本文7ブロック・画像用コード2
 ## 残る統合作業
 
 画像仕様を`coroutines-visuals.json`へ記録した。本文の画像タイトル・キャプションはJSONと一致している。imagegenによる2枚の画像本体の生成、メインからの導線と共通manifestへの登録は親担当が行う。本レビューだけを根拠に画像の完成は主張しない。
+
+## 連載の9本目への仕上げ（2026-10-17）
+
+- 担当: 記事の取り組みの依頼を受けた会話（Claude Opus 5.5）。連載の並べ方（案M）の9本目「async/awaitがあるのに、なぜyieldか」。
+- 対象: `doeff-coroutines.md`、`examples/coroutine_comparison.py`、`reviews/coroutines-check.py`、図2枚。
+
+### 直したこと
+
+1. 悩み1つ（awaitの先は呼んだ実装で決まり、替えるにはpatchか引数が要る）→ 短いコード → 全体の図 → 本文 → まとめ → 参考の順に組み直した。
+2. コードの枠を8つから5つにした（Python 4つ・bash 1つ）。比べる2つの形を1枠目に並べ、差し替えと子Programと再利用を2枠目にまとめた。
+3. 自作のハンドラ`hanako`・`taro`を`@handler`・`@do`付きにし、`with_handlers`で付ける形へ揃えた。依頼の判別・`Resume`・`Pass`を記事の中で説明した。
+4. 待ちを数える所を、可変のlistへ足していく自作のハンドラから、標準の`Listen`と`listen_handler`へ替えた。
+5. 9月16日の本文の「doeff側のキャンセルが橋渡し先へ伝播しない」は、今のmainでは誤り。取り消しは`CancelledError`として届き、`finally`が走る（#498で直った）。取り消しは頼むだけで片付けを待たないこと、共有のループを同期の呼び出しで止めると全ての`Await`が止まることへ書き直した。
+6. 実装へのリンクを、リポジトリに無いcommit d4705914から、mainのcommit 6ab1e37d6へ付け替えた。
+7. coroutineオブジェクトは2回待てない（`RuntimeError`）こと、丸ごとの`async def`を包むと届く`Await`が1回になることを本文に足し、完全な例で確かめる形にした。
+8. 図2枚を手で書いたSVGから作り直した（作り方は`imagegen/coroutines-svg-source.txt`）。
+
+### 一次根拠（今のmain 6ab1e37d6で読んだ所）
+
+| 記事の説明 | 確認した実装・一次資料 |
+| --- | --- |
+| `@do`の関数を呼ぶとCallの節を作り、動かすたびにVMが関数を呼んでgeneratorを作る | `doeff/do.py`の`do`と`_call`の説明（「the VM calls fn and runs the generator it returns」） |
+| `with_handlers`の列は先頭が外側 | `doeff/program.py`の`with_handlers`の説明（「the first handler is outermost」） |
+| `Listen`は包んだ範囲で出た決めた型の依頼を集める。見張りは記録して`Pass`する | `doeff_core_effects/effects.py`の`Listen`、`handlers.py`の`_listen_handler`の`observer_handler` |
+| `await_handler()`は共有の裏のループで動かす。取り消しは`CancelledError`として届くが、終わりを待たない。同期の呼び出しでループを止めると全ての`Await`が止まる | `handlers.py`の`await_handler`の説明（#498）と`tests/test_await_cancel_propagation.py`（11件が通った） |
+| 別のループに結び付いたFutureは待てない | `reviews/coroutines-check.py`で走らせ、「attached to a different loop」の`RuntimeError`を確かめた |
+| coroutineは1回しか待てない | 完全な例で走らせ、「cannot reuse already awaited coroutine」の`RuntimeError`を確かめた |
+| coroutineのsend・generatorの歴史・イベントループの役目 | Python公式の文書とPEP 492（9月16日の確認を引き継ぐ） |
+
+### 実行した確かめ
+
+```bash
+uv run --no-sync python publications/zenn-use-cases-v0/reviews/coroutines-check.py  # 掲載の4枠を順に実行し、完全な例と比べ、決まりの数を測る。
+uv run --no-sync python publications/zenn-use-cases-v0/examples/coroutine_comparison.py  # 完全な例を走らせる。
+uv run --no-sync python publications/zenn-use-cases-v0/verify_comments.py  # 実質行の日本語コメントを確かめる。
+uv run --no-sync ruff check publications/zenn-use-cases-v0/examples/coroutine_comparison.py publications/zenn-use-cases-v0/reviews/coroutines-check.py  # 静的検査。
+uv run --no-sync pytest tests/test_await_cancel_propagation.py -q  # 取り消しの説明の根拠のテスト。
+```
+
+- 2026-10-17（日本時間）、main（commit 6ab1e37d6）の上で、5つとも終了コード0。Python 3.14。
+- `coroutines-check.py`の出力: Python 4枠を実行・完全な例と一致・別ループのFuture、本文の字数・枠5・図2・60字を越える文0・です・ます以外で終わる文0。
+- 完全な例の出力: 挨拶 花子 / 太郎・子の奥にも届く / coroutineの2回目 cannot reuse already awaited coroutine / 本文 はじめに、doeff / Await 1断片ずつ5回・丸ごと1回。
+
+### 未実行と制限
+
+本物の非同期SDK、通信、LLMは呼んでいない。trioなどasyncio以外の基盤では動かしていない。
+- Zennの形への書き出し（公開順の表の9本目はまだ下書きなので、表のslug `doeff-yield-vs-async-await`・公開予定として仮に書き出した）を、`zenn-check/check.mjs --online`（zenn-cli 0.5.6）で読み、崩れ0個。検査の誤り0・画像2枚の欠け0・リンク6個の切れ0・Markdownの崩れ0・秘密の形0。
+- GitHubからの新しいclone（commit a8d779162）で`make sync`（約3分）と完全な例の実行を記事の手順どおりに走らせ、終了コード0。
