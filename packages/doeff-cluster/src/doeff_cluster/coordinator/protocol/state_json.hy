@@ -11,7 +11,7 @@
 (import doeff_traverse.helpers [sequence])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of])
+(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of board-tally-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])
 (import doeff_hy.table [Table TableWrite table-of])
@@ -226,6 +226,7 @@
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
     :board board-rows
+    :board-tally (board-tally-of board-rows)
     :meta (table-of (tuple (gfor #(k v) (.items (.get data "meta" {})) (TableWrite k (resource-meta-from-json v)))))
     :revision (.get data "revision" 0)
     :audit (tuple (gfor #(_ event) audit event))

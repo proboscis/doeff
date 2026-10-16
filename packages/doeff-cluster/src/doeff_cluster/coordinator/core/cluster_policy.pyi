@@ -21,6 +21,7 @@ from doeff_cluster.coordinator.intent.cluster_model import TaskAccepted as TaskA
 from doeff_cluster.coordinator.intent.cluster_model import TaskProgress as TaskProgress
 from doeff_cluster.coordinator.intent.cluster_model import TaskMissing as TaskMissing
 from doeff_cluster.coordinator.intent.cluster_model import TaskResultTaken as TaskResultTaken
+from doeff_cluster.coordinator.intent.cluster_model import BoardTally as BoardTally
 from doeff_cluster.coordinator.intent.cluster_model import BoardUsage as BoardUsage
 from doeff_cluster.coordinator.intent.cluster_model import BoardWritten as BoardWritten
 from doeff_cluster.coordinator.intent.cluster_model import BoardConflict as BoardConflict
@@ -221,7 +222,7 @@ def generation_holder_prefixes(report: WorkerReport | None) -> _Program[tuple, o
 def holders_dropped(row: BoardRow, prefixes: tuple) -> _Program[dict | None, object]:
     ...
 
-def board_without_generation_holders(board: Table[BoardRow], report: WorkerReport | None) -> _Program[Table[BoardRow], object]:
+def board_without_generation_holders(board: Table[BoardRow], report: WorkerReport | None) -> _Program[tuple, object]:
     ...
 
 def load_of(state: ClusterState, placements: dict) -> dict:
@@ -499,6 +500,15 @@ def lease_write(state: ClusterState, name: str, body: LeaseBody, now: int) -> _P
     ...
 
 def value_size(value: dict | list | str | int | float | bool | None) -> int:
+    ...
+
+def board_tally_of(board: Table[BoardRow]) -> BoardTally:
+    ...
+
+def board_tally(state: ClusterState) -> BoardTally:
+    ...
+
+def board_written(state: ClusterState, writes: tuple) -> ClusterState:
     ...
 
 def board_usage(state: ClusterState) -> BoardUsage:

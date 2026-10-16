@@ -802,6 +802,14 @@
   (setv #^ bool fault False))
 
 
+(defrecord BoardTally
+  "盤の行の集計(ClusterState.board-tally): rows = 行の数・bytes = 行の size の合計・expiring = 期限つきの行の数。盤の書きごとに
+   cluster_policy.board-written が足し引きして持ち回る(全行を読み直さない — card ki-ea1179b7565a)。保存しない(読み直しで求め直す)。"
+  (#^ int rows)
+  (#^ int bytes)
+  (#^ int expiring))
+
+
 (defrecord BoardUsage
   "盤の使い方と上限(cluster_policy.board-usage — #2614): rows = 行の数・bytes = 値の合計の byte 数・expiring = 期限つきの行の数・
    max-rows / max-bytes / max-value-bytes = 上限。容量の判断・計器・容量で断った答えが読む。"
@@ -1032,6 +1040,7 @@
   ;; coordinator は起動ごとに違う頭を振る(cluster_policy.fresh-task-prefix)— 前の coordinator が振った id(worker に blob が
   ;; 残り、子 process が走っているかもしれない)を振り直さない。保存する(counter の taskPrefix)。
   (setv #^ str task-prefix "t")
+  (setv #^ (| BoardTally None) board-tally None)    ; board の集計(None = まだ持たない — board-usage が全行から求め、最初の書きで持ち始める)
   (setv #^ (get Table BoardRow) board (field :default-factory (partial table-of #())))    ; 盤の鍵 → BoardRow(行と一緒に保存)
   (setv #^ (get tuple #(object ...)) events #())                            ; 割り当ての移り変わり(直近 200 件・保存しない)
   ;; --- 資源(2026-09-24) ---

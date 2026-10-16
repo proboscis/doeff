@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
+(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
 (import doeff_cluster.coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun])
 (import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
@@ -530,12 +530,12 @@
 
 
 (defk board-without-generation-holders [board report]
-  {:pre [(: board (get Table BoardRow)) (: report (| WorkerReport None))] :post [(: % (get Table BoardRow))] :tags {:context "coordinator" :role "judgment"}}
-  "worker の前の世代の最新の報告 report の process が持っていた担い手を、盤 board の lease の行から外した後の盤を求めるため(頭の註)。
-   変わった行は版を 1 進める(POST /leases の書きと同じ)。外す物が無ければ同じ board を返す。"
+  {:pre [(: board (get Table BoardRow)) (: report (| WorkerReport None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の前の世代の最新の報告 report の process が持っていた担い手を、盤 board の lease の行から外す書き(TableWrite の列)を求めるため(頭の註)。
+   変わった行は版を 1 進める(POST /leases の書きと同じ)。外す物が無ければ空の列。"
   (val prefixes (! (generation-holder-prefixes report)))
   (when (not prefixes)
-    (return board))
+    (return #()))
   (var freed #())
   (for [#(key row) (.items board)]
     (when (.startswith key SEMAPHORE-PREFIX)
@@ -543,7 +543,7 @@
       (match value
         None None
         _ (:= freed (+ freed #((TableWrite key (replace row :value value :version (+ row.version 1) :size (value-size value)))))))))
-  (.with-writes board freed))
+  freed)
 
 
 (defn #^ dict load-of [#^ ClusterState state #^ dict placements]
@@ -1405,7 +1405,7 @@
   (setv gone (tuple (gfor #(k row) (.items state.board) :if (and (is-not row.expires-ms None) (<= row.expires-ms now)) k)))
   (if (not gone)
       state
-      (replace state :board (.with-writes state.board (tuple (gfor k gone (TableWrite k None)))))))
+      (board-written state (tuple (gfor k gone (TableWrite k None))))))
 
 
 (defk forget-silent-workers [state now timing]
@@ -1735,15 +1735,16 @@
         ;; heartbeat で置き換える前の adopted.observations.statuses の行)。前の世代がまだ走っている間に起きた世代(overlaps-elder — RollingUpdate・
         ;; AL-D2e)は外さない: 前の世代の process は走り続け、延長を通し、終わる時に返すか期限で戻す。
         previous-report (.row adopted.observations.statuses name)
-        board (if (and (= order GenerationOrder.NEWER) (not body.overlaps-elder))
+        freed (if (and (= order GenerationOrder.NEWER) (not body.overlaps-elder))
                   (! (board-without-generation-holders adopted.board previous-report))
-                  adopted.board)
+                  #())
+        board-state (board-written adopted freed)
         ;; absorb-boot は drain だけを変えるので、観測は adopted のまま書いてよい。
         registered (replace (absorb-boot adopted name boot)
                      :workers (| adopted.workers {name info})
                      :observations (replace adopted.observations
                                             :statuses (.with-writes adopted.observations.statuses #((TableWrite name report))))
-                     :board board)
+                     :board board-state.board :board-tally board-state.board-tally)
         ;; 前の世代がまだ走っている間に起きた世代の名乗り(AL-D2f): 前の世代の最新の報告の running の常駐の job を、前の世代が動かして
         ;; いる組(SupersededRun)の種にする — 前の世代の次の heartbeat を待たずに、今の世代への最初の返事から印 elder-runs を付ける。
         seeded (if (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
@@ -2125,7 +2126,7 @@
   (if (or (is row current) (is row None))
       #(state 200 answer)
       (do (setv version (if (is entry None) 0 entry.version))
-          #((replace state :board (.with-writes state.board #((TableWrite key (BoardRow :value row :version (+ version 1) :expires-ms None :size (value-size row))))))
+          #((board-written state #((TableWrite key (BoardRow :value row :version (+ version 1) :expires-ms None :size (value-size row)))))
             200 answer))))
 
 
@@ -2134,10 +2135,41 @@
   (len (.encode (json.dumps value :ensure-ascii False :separators #("," ":")) "utf-8")))
 
 
+(defn #^ BoardTally board-tally-of [#^ (get Table BoardRow) board]
+  "盤の全行から集計を求める(起動の読み直しと、集計をまだ持たない状態の最初の読みだけ — 書きごとには board-written が足し引きする)。"
+  (BoardTally :rows (.size board) :bytes (sum (gfor row (.rows board) row.size))
+              :expiring (len (lfor row (.rows board) :if (is-not row.expires-ms None) row))))
+
+
+(defn #^ BoardTally board-tally [#^ ClusterState state]
+  "状態の盤の集計(持っていなければ全行から求める)。"
+  (if (is state.board-tally None) (board-tally-of state.board) state.board-tally))
+
+
+(defn #^ ClusterState board-written [#^ ClusterState state #^ tuple writes]
+  "盤へ書き(鍵ごとに 1 つの TableWrite・value None は消す)を当てた状態。集計は書く行・消す行の分だけ足し引きする(全行を読まない)。
+   書きが全部今の行そのものなら状態そのもの。"
+  (setv board (.with-writes state.board writes))
+  (when (is board state.board)
+    (return state))
+  (setv tally (board-tally state) rows tally.rows size tally.bytes expiring tally.expiring)
+  (for [write writes]
+    (setv old (.row state.board write.key) new write.value)
+    (when (is-not old None)
+      (-= rows 1)
+      (-= size old.size)
+      (when (is-not old.expires-ms None) (-= expiring 1)))
+    (when (is-not new None)
+      (+= rows 1)
+      (+= size new.size)
+      (when (is-not new.expires-ms None) (+= expiring 1))))
+  (replace state :board board :board-tally (BoardTally :rows rows :bytes size :expiring expiring)))
+
+
 (defn #^ BoardUsage board-usage [#^ ClusterState state]
   "盤の使い方と上限 — 容量の判断・計器・容量で断った答えが同じ数を読むため。"
-  (BoardUsage :rows (.size state.board) :bytes (sum (gfor row (.rows state.board) row.size))
-              :expiring (len (lfor row (.rows state.board) :if (is-not row.expires-ms None) row))
+  (setv tally (board-tally state))
+  (BoardUsage :rows tally.rows :bytes tally.bytes :expiring tally.expiring
               :max-rows BOARD-MAX-ROWS :max-bytes BOARD-MAX-BYTES :max-value-bytes BOARD-MAX-VALUE-BYTES))
 
 
@@ -2145,7 +2177,7 @@
   "純粋: key へ size byte の値を書くと上限を越えるなら理由の文。越えないなら None。小さくする書きは(合計が上限の上でも)通す。"
   (setv entry (.row state.board key)
         old (if (is entry None) 0 entry.size)
-        total (sum (gfor row (.rows state.board) row.size)))
+        total (. (board-tally state) bytes))
   (cond
     (> size BOARD-MAX-VALUE-BYTES) (.format "値が {} byte で、1 行の上限 {} byte を越える" size BOARD-MAX-VALUE-BYTES)
     (and (is entry None) (>= (.size state.board) BOARD-MAX-ROWS))
@@ -2187,16 +2219,16 @@
       #(state 409 (BoardConflict :current current :version version
                                  :reason (semaphore-write-refusal current (written-value write) now)))
     body.delete
-      #((replace state :board (.with-writes state.board #((TableWrite key None))))
+      #((board-written state #((TableWrite key None)))
         200 (BoardWritten :version None))
     True
       (do (setv size (value-size (written-value write))
                 refusal (board-capacity-refusal state key size))
           (if (is-not refusal None)
               #(state 507 (BoardRefused :reason refusal :usage (board-usage state)))
-              #((replace state :board (.with-writes state.board #((TableWrite key (BoardRow :value (written-value write) :version (+ version 1)
-                                                                                          :expires-ms (if (is ttl None) None (+ now (int (* 1000 ttl))))
-                                                                                          :size size)))))
+              #((board-written state #((TableWrite key (BoardRow :value (written-value write) :version (+ version 1)
+                                                                 :expires-ms (if (is ttl None) None (+ now (int (* 1000 ttl))))
+                                                                 :size size))))
                 200 (BoardWritten :version (+ version 1)))))))
 
 
