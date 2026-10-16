@@ -7,7 +7,10 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ComponentVersion TaskRecord WorkerInfo])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core.cluster_policy [absorb-task-reports renew-detached promote-prepared])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM])
+(import unittest.mock [Mock])
+(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat])
+(import doeff_cluster.coordinator.protocol.durable_kv :as dk)
+(import tests.program_rows [SAMPLE-TASK-PROGRAM heartbeat-of])
 
 (defk task [id phase worker detached boot]
   {:pre [(: id str) (: phase str) (: worker (| str None)) (: detached bool) (: boot (| str None))] :post [(: % TaskRecord)]
@@ -62,3 +65,39 @@
     (assert (is (get out id) (get state.tasks id)) id))
   ;; 別の世代の報告は写さない
   (assert (is (absorb-task-reports state "w" #((StatusRow :name "task/mine" :phase "code-failed" :detail "x")) 1000 "b9") state.tasks)))
+
+
+;; --- heartbeat の全体(register-heartbeat)と durable-delta ---------------------------------------------------------
+
+(defk beat [state name now]
+  {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "task を担わない worker name の heartbeat(statuses 無し)を 1 つ受けた後の状態。"
+  (! (register-heartbeat state (! (heartbeat-of {"name" name "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []})) now)))
+
+(deftest test-a-heartbeat-of-a-worker-holding-no-task-keeps-the-tasks-dict
+  ;; 受入: 切り離した task を担わない worker の heartbeat の後、tasks は前の歩と同じ object(2 度目の heartbeat で名乗りの変化も無い)。
+  (val state (ClusterState #() {} {} (! (rows))))
+  (val first (! (beat state "atlas" 1000)))
+  (val second (! (beat first "atlas" 2000)))
+  (assert (is first.tasks state.tasks))
+  (assert (is second.tasks first.tasks)))
+
+(deftest test-a-heartbeat-of-a-worker-holding-no-task-builds-no-task-keys [monkeypatch]
+  ;; 受入: その歩の durable-delta は tasks の組の鍵を作らず(呼ばれた回数 0)、task/ の鍵を 1 本も書かない。
+  (val state (ClusterState #() {} {} (! (rows))))
+  (val first (! (beat state "atlas" 1000)))
+  (val second (! (beat first "atlas" 2000)))
+  (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
+  (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
+  (val got (! (dk.durable-delta first second)))
+  (assert (= (dfor #(fields spy) spies fields spy.call-count) (dfor #(fields spy) spies fields (if (= fields #("workers")) 2 0))))
+  (assert (not (any (gfor k got (.startswith k "task/")))) got))
+
+(deftest test-a-heartbeat-of-the-holding-worker-renews-only-its-detached-task
+  ;; 担う worker の heartbeat は延ばした行だけ新しい物(組は飛ばない — 仕様どおり)。
+  (val state (ClusterState #() {} {} (! (rows))))
+  (val first (! (beat state "w" 1000)))
+  (val second (! (beat first "w" 2000)))
+  (assert (is-not second.tasks first.tasks))
+  (assert (= (. (get second.tasks "mine") lease-until-ms) (+ 2000 15000)))
+  (assert (is (get second.tasks "other") (get first.tasks "other"))))
