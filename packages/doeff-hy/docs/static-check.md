@@ -37,12 +37,15 @@ import が解ける変更の各回を、全部当てた答えと比べる)。
 2. その file が使う名の宣言の表面と、表面が使う名の宣言(推移で全部)。表面 = pyright が使い手の側でその名の型を決めるのに読む
    部分 — 型を全部宣言した関数は decorator と署名だけ(本体は「空か否か」の印)、class は全体(self の属性へ代入しない型付きの
    method は署名だけ)、型を宣言しない関数・変数・import は文の全体。docstring と行の番号は入れない。module の段の import の文は
-   名ごとに分ける。名の宣言は根の下の展開と、`--python` の探し道のうち prefix の外の dir(editable で入れた doeff の checkout)の
+   名ごとに分ける。`__all__` は名ごとに在否だけ(読めない形で書いた `__all__` と star import は文の全部)。名の宣言は根の下の展開と、`--python` の探し道のうち prefix の外の dir(editable で入れた doeff の checkout)の
    `.py` / `.pyi` を読む — doeff の pin が上がっても、変わった宣言を使う `.hy` だけを当て直す。
 3. その file が import する module の解き先 — pyright と同じ探し道(根・extraPaths・typings・python の探し道・取り込む file の dir
    からの後退)で当たりうる候補の file のうち、在る物の並び(新しい file が import の行き先を変えれば入力が変わる)と py.typed。
 4. 環境の指紋 — 運びの形の版・pyright の版・pyright の設定・python の版と探し道・prefix の下の dir(site-packages・標準ライブラリ)の
    中身の名(dist-info の名 = 配布物の版)と `.pth` の中身・診断を作って `.hy` の位置へ戻す関数の source。どれかが替われば全部を当てる。
+
+入力の中の path は、根を `@root`・根の親を `@parent` の印に替えて綴る — 日次の回は task ごとの作業 dir の下に根を置き、doeff の
+pin の checkout を根の隣に置く(回ごとに path が違う)ので、同じ木を別の置き場で測っても入力は同じになる。
 
 安全の側へ倒す所: 構文の誤りで読めない module を使う file は毎回当てる。module を値で使う参照と star import は module の全部の
 名に依る。運びの file が読めなければ名乗って全部を当てる(測りを止めない)。

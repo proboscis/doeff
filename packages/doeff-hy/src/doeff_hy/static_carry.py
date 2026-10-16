@@ -17,6 +17,9 @@
   - 型を宣言しない関数・global / nonlocal を持つ関数・変数・型の別名ほか = 文の全体(pyright は値と本体から型を推す)。module の段の
     import の文は名ごとに分ける。
   - docstring は落とし、行の番号は見ない(ast.dump の位置なし)— 説明の書き換えと行の移りは使い手へ伝えない。
+  - __all__: 名 1 つの宣言には、その名が __all__ に在るかだけを入れる(__all__ に別の名を足しても使い手へ伝えない)。__all__ を
+    pyright の読める形(文字列の並びの代入・+=・extend・append)でない文で書く module と、module の全部の名(star import)は __all__ の
+    文の全部。
 - その file が import する module の解き先(探し道の各 dir で、pyright が当たりうる候補の file のうち在る物の並び — Resolution)。
   候補が増える・消える(新しい file が前の解き先を隠す・解けなかった import が解ける)と digest が変わる。名の宣言の digest も、その
   module の解き先を含む。
@@ -584,19 +587,29 @@ class Statement:
 @dataclass(frozen=True)
 class Facts:
     """module の file 1 つの読み — statements = module の段の文の表面・bound = 名 → それを束ねる文の番号(名から宣言を引く索引)・
-    defined = import でない文が束ねる名・stars = star import の先・header = __all__ を読み書きする文の ast.dump・module_imports = module の
-    段の import が束ねる名 → 行き先(索引)・volatile = 構文の誤りで読めない(回ごとに違う digest にする)。"""
+    defined = import でない文が束ねる名・stars = star import の先・header = __all__ を読み書きする文の ast.dump・exported = __all__ の名
+    (__all__ が無い・pyright の読める形でない文が在る時は None — 名ごとの節にも header を入れる)・module_imports = module の段の import が
+    束ねる名 → 行き先(索引)・volatile = 構文の誤りで読めない(回ごとに違う digest にする)。"""
 
     statements: tuple[Statement, ...]
     bound: Mapping[str, tuple[int, ...]]
     defined: frozenset[str]
     stars: tuple[Imported, ...]
     header: str
+    exported: frozenset[str] | None
     module_imports: Mapping[str, tuple[Imported, ...]]
     volatile: bool = False
 
 
-_VOLATILE = Facts((), {}, frozenset(), (), "", {}, volatile=True)
+_VOLATILE = Facts((), {}, frozenset(), (), "", None, {}, volatile=True)
+
+
+@dataclass(frozen=True)
+class _AllStep:
+    """__all__ を書く文 1 つ — resets = 代入(前の名を捨てる)か、足す(+=・extend・append)か・names = その文の名。"""
+
+    resets: bool
+    names: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -630,13 +643,21 @@ def module_facts(text: str) -> Facts:
     except (SyntaxError, ValueError):
         return _VOLATILE
     body = tree.body[1:] if tree.body and _is_docstring(tree.body[0]) else tree.body
-    reads = tuple(read for statement in body for read in _reads_of(statement))
+    grouped = tuple((statement, tuple(_reads_of(statement))) for statement in body)
+    reads = tuple(read for _, group in grouped for read in group)
     return Facts(
         tuple(read.statement for read in reads),
         _grouped((name, index) for index, read in enumerate(reads) for name in sorted(read.names)),
         frozenset(name for read in reads for name in read.defined),
         tuple(star for read in reads for star in read.stars),
         "\n".join(read.header for read in reads if read.header is not None),
+        _exported(
+            tuple(
+                statement
+                for statement, group in grouped
+                if any(read.header is not None for read in group)
+            )
+        ),
         _grouped(
             (name, target)
             for read in reads
@@ -695,6 +716,61 @@ def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
         stars,
         surface if scan.mentions_all else None,
     )
+
+
+def _exported(statements: Sequence[ast.stmt]) -> frozenset[str] | None:
+    """module の段の __all__ を読み書きする文(順のまま)から __all__ の名を読むため — 名ごとの節には、その名が __all__ に在るかだけを
+    入れる(__all__ に別の名を 1 つ足しても、他の名の使い手を当て直さない)。__all__ が無い・どれかが pyright の読める形でなければ None。"""
+    steps = tuple(_all_step(statement) for statement in statements)
+    if not steps or any(step is None for step in steps):
+        return None
+    names: frozenset[str] = frozenset()
+    for step in steps:
+        if step is not None:
+            names = step.names if step.resets else names | step.names
+    return names
+
+
+def _all_step(statement: ast.stmt) -> _AllStep | None:
+    """__all__ を書く文 1 つの読み(pyright の読める形 — 文字列の並びの代入・注記つきの代入・+=・extend・append — でなければ None)。"""
+    match statement:
+        case ast.Assign(
+            targets=[ast.Name(id="__all__")],
+            value=ast.List(elts=elements) | ast.Tuple(elts=elements),
+        ):
+            resets = True
+        case ast.AnnAssign(
+            target=ast.Name(id="__all__"), value=ast.List(elts=elements) | ast.Tuple(elts=elements)
+        ):
+            resets = True
+        case ast.AugAssign(
+            target=ast.Name(id="__all__"),
+            op=ast.Add(),
+            value=ast.List(elts=elements) | ast.Tuple(elts=elements),
+        ):
+            resets = False
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(value=ast.Name(id="__all__"), attr="extend"),
+                args=[ast.List(elts=elements) | ast.Tuple(elts=elements)],
+                keywords=[],
+            )
+        ):
+            resets = False
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(value=ast.Name(id="__all__"), attr="append"),
+                args=[element],
+                keywords=[],
+            )
+        ):
+            elements, resets = [element], False
+        case _:
+            return None
+    names = tuple(
+        e.value for e in elements if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    )
+    return _AllStep(resets, frozenset(names)) if len(names) == len(elements) else None
 
 
 def _is_docstring(statement: ast.stmt) -> bool:
@@ -1369,7 +1445,10 @@ class InputGraph:
             if facts.volatile:
                 yield f"volatile:{uuid.uuid4()}"
                 continue
-            yield facts.header
+            if node.name is None or facts.exported is None:
+                yield facts.header
+            else:
+                yield f"__all__ に在る:{node.name in facts.exported}"
             indexes = (
                 range(len(facts.statements))
                 if node.name is None
