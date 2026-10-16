@@ -46,13 +46,20 @@ struct Needle {
 impl Needle {
     fn of(callee: &str) -> Needle {
         let name = callee.rsplit('.').next().unwrap_or(callee);
-        Needle { callee: callee.to_string(), pattern: spelling_pattern(name).and_then(|pattern| Regex::new(&pattern).ok()) }
+        let pattern = spelling_pattern(name).and_then(|spelling| Regex::new(&format!("{SYMBOL_START}{spelling}{SYMBOL_END}")).ok());
+        Needle { callee: callee.to_string(), pattern }
     }
 
     fn spelled_in(&self, source: &str) -> bool {
         self.pattern.as_ref().map_or(true, |pattern| pattern.is_match(source))
     }
 }
+
+/// 呼びの頭の記号の最後の段の前後。記号は空白と `( ) [ ] { } " ;` で終わり(読み取り器の `is_delimiter`)、最後の段は記号の頭か `.` の次にある。
+/// 長い記号の途中(`controllers.entry.system` の `entry`・`rows-by-text-all` の `rows-by-text`)は、呼び先の名の綴りでも呼びの頭ではない。
+/// `\s` は Unicode の空白も区切りに数える(読み取り器は数えない)ので、余分に合う file が出ても合い損なう file は出ない — 余分は解析が増えるだけで答えは変わらない。
+const SYMBOL_START: &str = r#"(?:^|[\s()\[\]{}";.])"#;
+const SYMBOL_END: &str = r#"(?:[\s()\[\]{}";]|$)"#;
 
 /// mangle 済みの名 `name` に mangle される綴り全部に合う正規表現。綴りを決められない名は None。
 fn spelling_pattern(name: &str) -> Option<String> {
@@ -241,6 +248,8 @@ mod tests {
             ),
             ("app/other.hy", "(defk unrelated [x] x)\n"),
             ("app/docs.hy", "; rows-by-text を呼ぶ例は user_a にある\n(defn note [] \"rows_by_text\")\n"),
+            // 名の綴りを長い記号の途中に含むだけの file(module の path の段・別の名の前半)は、呼びの頭ではない。
+            ("app/longer.hy", "(import controllers.rows-by-text.system)\n(defk rows-by-text-all [x] x)\n(defk all-rows-by-text [x] x)\n"),
         ]
     }
 
