@@ -34,7 +34,6 @@
   (val tasks (! (rows)))
   (val renewed (renew-detached tasks "w" "b1" 1000))
   (assert (is-not renewed tasks))
-  (assert (= renewed.mine.lease-until-ms (+ 1000 15000)) renewed)
   (assert (= (get renewed "mine") (replace (get tasks "mine") :lease-until-ms 16000)))
   (for [id ["old-gen" "other" "waiting"]]
     (assert (is (get renewed id) (get tasks id)) id))
