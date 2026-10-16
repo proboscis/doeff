@@ -330,42 +330,38 @@
   {
     "id": "main-concept",
     "image": "images/zenn-use-cases-v0/generated/main-concept.png",
-    "generation_prompt": "main-concept-flat-code-v3.txt",
-    "edit_prompts": [
-      "main-concept-flat-code-v3-edit1.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "91b553e6cc66d3633341ad893834ff3b7ee5fbce098787c6bc84e4dcd4b1b4ac",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1610667,
-    "review": "2026-09-16：最小ハンドラの定義・with_handlersによる設置・Resumeと値の戻り先・runの結果を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "main-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "ee41a06d9b5e8791722beb3501d234db9c9325d09bc3af35e5761dc6f079e77f",
+    "width": 1080,
+    "height": 960,
+    "bytes": 120652,
+    "review": "2026-10-16：週1の仕上げで、失われたimagegen版の代わりにSVGで描き直した。greetのAsk、2つのハンドラの名前とResumeの値、run()の結果を本文のコードと照合。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "main-flow",
     "image": "images/zenn-use-cases-v0/generated/main-flow.png",
-    "generation_prompt": "main-flow-flat-code-v3.txt",
-    "edit_prompts": [
-      "main-flow-flat-code-v3-edit1.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "f74d02bcb8b4a854cae6b7ef1b0f5370dfe207c56f69c422600bb7e55dce24c0",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1667879,
-    "review": "2026-09-16：最小ハンドラの定義・with_handlersによる設置・Resumeと値の戻り先・runの結果を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "main-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "779135208427c946c264f3629b4ab2c5f9fd65ea23659761fd1f2631b6311337",
+    "width": 1080,
+    "height": 1330,
+    "bytes": 147416,
+    "review": "2026-10-16：週1の仕上げで、失われたimagegen版の代わりにSVGで描き直した。Askでの中断、VMが届ける依頼と継続k、Resumeでの再開、run()の結果の順を本文のコードと照合。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "main-hero",
     "image": "images/zenn-use-cases-v0/generated/main-hero.png",
-    "generation_prompt": "main-hero-flat-code-v1.txt",
+    "generation_prompt": "main-svg-source.txt",
     "edit_prompts": [],
-    "tool": "image_gen (built-in)",
-    "sha256": "1b3b792a7ffe028ba5d6879241bc111876202ac411734a697a1475d972e9f5a6",
-    "width": 1672,
-    "height": 941,
-    "bytes": 1234645,
-    "review": "2026-09-16: doeffの文字、AskとResumeのコード・コメント、往復矢印、日本語、用途の表記、不透明な白背景を目視確認。冒頭用に採用。"
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "ff18b258c423169d336ca7a5e69dbfb17a39003f200fe317d630f4751d3e380f",
+    "width": 1080,
+    "height": 1060,
+    "bytes": 102409,
+    "review": "2026-10-16：週1の仕上げで、失われたimagegen版の代わりにSVGで描き直した。doeffの文字、AskとResumeのコード、往復の矢印、用途の表記、白背景を目視確認。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "memo-concept",
