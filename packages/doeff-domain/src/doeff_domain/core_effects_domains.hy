@@ -59,7 +59,7 @@
 (import doeff_core_effects.os-file [os-file-handler])
 (import doeff_core_effects.memory-file [memory-file-handler])
 (import doeff_core_effects.rooted-file [rooted-file-handler])
-(import doeff_core_effects.http-server-effects [HttpListen HttpNextRequest HttpReadBody
+(import doeff_core_effects.http-server-effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody
                                                 HttpRespond HttpForward
                                                 HttpShutdown HttpStopListening WsAccept WsSendText WsSendTextEach
                                                 WsForward WsClose
@@ -283,7 +283,7 @@
 
 (defdomain doeff-http-server
   :title "HTTP server 語彙 — HTTP と WebSocket の待ち受け"
-  :effects [HttpListen HttpNextRequest HttpReadBody HttpRespond HttpForward HttpShutdown HttpStopListening
+  :effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody HttpRespond HttpForward HttpShutdown HttpStopListening
             WsAccept WsSendText WsSendTextEach WsForward WsClose TakeWsSendReport
             AppendHttpScript ReadHttpServed]
   :handlers [aiohttp-http-server scripted-http-server]
