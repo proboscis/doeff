@@ -45,7 +45,8 @@
                          DetachedCancelled DetachedVersionMismatch DetachedUnrunnable DetachedEnvUnavailable DetachedUnknown
                          AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersChangeAnswer AwaitServiceReady ServiceReady
                          ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire
-                         ReadDetachedTiming DetachedTiming StateTasksWire DetachedTimingAnswer])
+                         ReadDetachedTiming DetachedTiming StateTasksWire DetachedTimingAnswer
+                         ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedQueueAnswer StateQueueWire DetachedGroupWire DetachedLimitWire])
 (import doeff_hy.wire [Malformed parse])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
@@ -171,7 +172,59 @@
                             :started-ms row.started-ms :finished-ms row.finished-ms)))))
 
 
-(deff unknown-timing-confirmed [#^ DetachedUnknown unknown #^ (| dict str) view]  ; defk にできない: 本番の client と sim の宿が同じ判断で「行の無い key」を確かめる
+(defk queue-group-of [limit claim]
+  {:pre [(: limit DetachedGroupWire) (: claim DetachedLimitWire)] :post [(: % DetachedQueueGroup)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "名乗った組 1 つ(claim)と、その組の GET /state の読み(limit)から、止めているかの読みを作るため: 数える升は、区分ごとの組なら名乗った区分の
+   升・そうでなければ組の全部の升(範囲 worker の組は worker ごとの升 — 最大の升が上限に達すれば、その worker には置けない)。"
+  (val part (or claim.part ""))
+  (val slots (lfor h limit.held :if (or (not limit.per-part) (= (or h.part "") part)) h.count))
+  (val held (max slots :default 0))
+  (DetachedQueueGroup :group limit.group :part part :scope limit.scope :limit limit.limit :held held :queued limit.queued
+                      :full (>= held limit.limit)))
+
+
+(defk detached-queue-of-state [key state]
+  {:pre [(: key str) (: state (| dict str))] :post [(: % DetachedQueueAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedQueue の答えを決めるため(本番の client と sim の宿が同じ判断): state = coordinator の GET /state の読み(本文の JSON の object か、
+   届かなかった理由の文)。届かない読みと形の違う返事は DetachedUnreachable・tasks に key の行が無ければ DetachedUnknown・在れば名乗った組ごとの読み
+   (宣言に無い組は上限を知らないので読みに入れず、detail が宣言に無いと言う)を持つ DetachedQueueReason。"
+  (when (isinstance state str)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" state))))
+  (<- wire (| StateQueueWire Malformed) (parse StateQueueWire state))
+  (match wire
+    (Malformed :fields fields)
+      (DetachedUnreachable :detail (.format "coordinator の GET /state の返事を読めない(task の行か組の欄の形が違う): {}"
+                                            (.join "・" (gfor f fields (+ f.field " " f.reason)))))
+    _ (let [row (next (gfor r wire.tasks :if (= r.key key) r) None)]
+        (if (is row None)
+            (DetachedUnknown :key key)
+            (do (var groups #())
+                (for [claim row.limits]
+                  (val declared (next (gfor g wire.group-limits :if (= g.group claim.group) g) None))
+                  (when (is-not declared None)
+                    (<- one (queue-group-of declared claim))
+                    (:= groups #(#* groups one))))
+                (DetachedQueueReason :key key :phase row.phase :detail (or row.detail "") :groups groups))))))
+
+
+(defk detached-queue-read [cell options sender key]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str)] :post [(: % DetachedQueueAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "待っている task 1 つの置かれない理由を読むため(ReadDetachedQueue の本番の答え — 待たずに coordinator の GET /state を 1 回読み、
+   detached-queue-of-state で答えにする)。届かなければ理由の文を渡して DetachedUnreachable にする。行の無い key だけ、時刻の読みと同じく
+   GET /detached/<key> をもう 1 回読んで知らない(unknown)と言ってよいかを確かめる。"
+  (<- read (resent-answer cell options "GET" "/state" None None sender.deadline-seconds))
+  (when (isinstance read HttpFailed)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" read.detail))))
+  (<- state dict (answer-json read))
+  (<- queue DetachedQueueAnswer (detached-queue-of-state key state))
+  (when (isinstance queue DetachedUnknown)
+    (<- view (| dict str) (detached-view cell options sender key))
+    (return (unknown-timing-confirmed queue view)))
+  queue)
+
+
+(deff unknown-timing-confirmed[#^ DetachedUnknown unknown #^ (| dict str) view]  ; defk にできない: 本番の client と sim の宿が同じ判断で「行の無い key」を確かめる
   {:pre [(: unknown DetachedUnknown) (: view (| dict str))] :post [(: % DetachedTimingAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
   "GET /state に行の無い key を「知らない」と答えてよいかを決めるため: GET /state には coordinator が起きた直後の印が無く、状態を失った
    coordinator は担い手の worker の最初の heartbeat まで走っている task を知らない(detached_policy.detached-read の warming)。
@@ -588,6 +641,9 @@
   (ReadDetachedTiming [key]
     (<- timing (detached-timing-read cell options sender key))
     (resume timing))
+  (ReadDetachedQueue [key]
+    (<- queue (detached-queue-read cell options sender key))
+    (resume queue))
   (ReadRunners []
     (<- runners (runners-read cell options sender))
     (resume runners))

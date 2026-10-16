@@ -127,6 +127,7 @@ from doeff_cluster.shared.protocol.detached import service_facts_of_json as serv
 from doeff_cluster.shared.protocol.detached import services_unreachable as services_unreachable
 from doeff_cluster.shared.protocol.detached import detached_timing_of_state as detached_timing_of_state
 from doeff_cluster.shared.protocol.detached import unknown_timing_confirmed as unknown_timing_confirmed
+from doeff_cluster.shared.protocol.detached import detached_queue_of_state as detached_queue_of_state
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
@@ -151,6 +152,8 @@ from doeff_cluster.shared.intent.detached_model import ServicesUnreachable as Se
 from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
 from doeff_cluster.shared.intent.detached_model import DetachedTimingAnswer as DetachedTimingAnswer
 from doeff_cluster.shared.intent.detached_model import DetachedUnknown as DetachedUnknown
+from doeff_cluster.shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
+from doeff_cluster.shared.intent.detached_model import DetachedQueueAnswer as DetachedQueueAnswer
 from doeff_cluster.worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
 from doeff_cluster.worker.core.drain_client import DRAIN_TTL_MARGIN_SECONDS as DRAIN_TTL_MARGIN_SECONDS
 from doeff_cluster.worker.protocol.drain_requests import drain_request as drain_request
@@ -992,6 +995,9 @@ def await_detached(link: SimLink, key: str, timeout_seconds: float | int | None)
     ...
 
 def read_detached_timing(link: SimLink, key: str) -> _Program[DetachedTimingAnswer, object]:
+    ...
+
+def read_detached_queue(link: SimLink, key: str) -> _Program[DetachedQueueAnswer, object]:
     ...
 
 def ended_task_keys(writes: tuple) -> _Program[frozenset, object]:
