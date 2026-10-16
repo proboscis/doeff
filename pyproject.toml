@@ -529,6 +529,10 @@ tests = [
     # 核の 5 個の版の番号を持つ 8 か所(5 個の pyproject・doeff の __version__・doeff-vm の Cargo.toml と Cargo.lock)と互いの依存の系
     # (card ki-4f3135e2be74)— file を path で読むので逆依存では選べず、8 か所は 5 つの dir と根に散るので repo 全体の行に置く
     "tests/test_core_packages_version.py",
+    # pip install doeff は核の 4 個だけを入れ、Hy と HTTP は extra で足す事と、workspace の部品が import する Hy と httpx を
+    # 自分の依存で入れる事(card ki-006338b48f4b)— pyproject.toml と部品の source を path で読むので逆依存では選べない。
+    # 3.0 秒(4 本・起動を含む壁時計・load 約 37 の下・2026-10-17 会話の Pod)
+    "tests/test_core_install_extras.py",
 ]
 
 # ── 契約の組の要らない package(agora-redesign #2658 — 2026-10-02 に中身を読んで決めた 23 package)。
