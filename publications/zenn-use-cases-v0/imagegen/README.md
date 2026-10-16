@@ -29,3 +29,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 ## メイン冒頭のキービジュアル
 
 [main-hero.png](/images/zenn-use-cases-v0/generated/main-hero.png)を追加した。[生成プロンプト](main-hero-flat-code-v1.txt)を組み込みimagegenへ渡して制作し、コードと往復矢印を目視確認した。タイトル直下に配置し、定義と最小コードへ続く。画像47枚の寸法・容量・採用ハッシュはmanifest.jsonを参照。
+
+## agentsの2枚をSVGで描き直す（2026-10-16）
+
+imagegenで作ったPNGは、リポジトリに入っていなかった。`.gitignore`の例外`!/images/zenn-use-cases-v0/*.png`が、`generated/`の下に効いていなかったためである。今回、`generated/`の下の例外を足した。
+
+agents-conceptとagents-flowは、SVGを正本にして描き直した。正本は`../visuals/agents-concept.svg`と`../visuals/agents-flow.svg`、PNGへの描き直しは`../render_svg.mjs`（playwright 1.62.1のchromium、倍率2）。携帯の幅（約360px）で字が読めるよう、幅600のSVGで字を17px以上にした。台帳の`tool`は`svg (render_svg.mjs)`で、`source`に正本のSVGを持つ。残る45枚はまだ無い。

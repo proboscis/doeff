@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" width="600" height="900">
+  <style>
+    text { font-family: "IPAPGothic", "IPAGothic", "Noto Sans CJK JP", sans-serif; fill: #1b2a4a; }
+    .title { font-size: 28px; font-weight: bold; }
+    .sub { font-size: 19px; fill: #4a5878; }
+    .head { font-size: 21px; font-weight: bold; }
+    .body { font-size: 19px; }
+    .muted { font-size: 18px; fill: #4a5878; }
+    .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 18px; }
+    .name { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 18px; font-weight: bold; }
+    .num { font-size: 22px; font-weight: bold; fill: #ffffff; }
+    .flow { stroke: #0e7c86; stroke-width: 3.5; fill: none; }
+    .answer { stroke: #0e7c86; stroke-width: 3.5; fill: none; stroke-dasharray: 9 7; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0e7c86"/>
+    </marker>
+  </defs>
+  <rect width="600" height="900" fill="#ffffff"/>
+
+  <text class="title" x="300" y="48" text-anchor="middle">同じ処理に、外側でハンドラを1つ付ける</text>
+  <text class="sub" x="300" y="82" text-anchor="middle">本体は変えずに、依頼への答え方だけを替える</text>
+
+  <!-- ① 処理の本体 -->
+  <rect x="40" y="104" width="520" height="196" rx="14" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
+  <circle cx="72" cy="136" r="17" fill="#2f5aa8"/><text class="num" x="72" y="144" text-anchor="middle">1</text>
+  <text class="head" x="100" y="143">@doの処理 delegate_task(本体は1つ)</text>
+  <text class="code" x="64" y="184">session = yield LaunchSession(spec)</text>
+  <text class="code" x="64" y="214">outcome = yield AwaitResult(session)</text>
+  <text class="code" x="64" y="244">yield ReleaseSession(session)</text>
+  <text class="code" x="64" y="274">return outcome</text>
+
+  <!-- 依頼と答えの矢印 -->
+  <path class="flow" d="M200,304 V372" marker-end="url(#tip)"/>
+  <text class="body" x="214" y="345">依頼を出して止まる</text>
+  <path class="answer" d="M420,372 V304" marker-end="url(#tip)"/>
+  <text class="body" x="432" y="345">答えで続きが動く</text>
+
+  <!-- ② ハンドラ -->
+  <rect x="40" y="378" width="520" height="300" rx="14" fill="#f6f8fb" stroke="#9db8e0" stroke-width="2"/>
+  <circle cx="72" cy="410" r="17" fill="#2f5aa8"/><text class="num" x="72" y="418" text-anchor="middle">2</text>
+  <text class="head" x="100" y="417">外側で付けるハンドラ(どれか1つ)</text>
+
+  <rect x="60" y="440" width="480" height="70" rx="10" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
+  <text class="head" x="76" y="469">自作</text>
+  <text class="name" x="168" y="469">fixed_agent</text>
+  <text class="body" x="76" y="497">決めた答えを、待たずにすぐ返す</text>
+
+  <rect x="60" y="520" width="480" height="70" rx="10" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
+  <text class="head" x="76" y="549">テスト用</text>
+  <text class="name" x="168" y="549">ScenarioAgentHandler</text>
+  <text class="body" x="76" y="577">筋書きの答えを、順に返す</text>
+
+  <rect x="60" y="600" width="480" height="70" rx="10" fill="#efeafb" stroke="#b6a6e6" stroke-width="2"/>
+  <text class="head" x="76" y="629">本番</text>
+  <text class="name" x="168" y="629">agent_effectful_handler()</text>
+  <text class="body" x="76" y="657">Claude Code・Codexを起こす(tmuxが要る)</text>
+
+  <!-- ③ 答えの形 -->
+  <path class="answer" d="M300,682 V728" marker-end="url(#tip)"/>
+  <text class="muted" x="314" y="712">結果待ちへの答え</text>
+  <rect x="40" y="734" width="520" height="120" rx="14" fill="#fff7e6" stroke="#e0b25a" stroke-width="2"/>
+  <circle cx="72" cy="766" r="17" fill="#2f5aa8"/><text class="num" x="72" y="774" text-anchor="middle">3</text>
+  <text class="head" x="100" y="773">AwaitOutcome(どれでも同じ形)</text>
+  <text class="body" x="64" y="808">status:EXITED・AWAITING_INPUT・TIMED_OUT</text>
+  <text class="body" x="64" y="838">result:schemaに合った結果(無ければNone)</text>
+
+  <!-- 凡例 -->
+  <text class="head" x="40" y="886" style="font-size:18px">凡例</text>
+  <path class="flow" d="M92,880 H140" marker-end="url(#tip)"/>
+  <text class="muted" x="148" y="886">依頼</text>
+  <path class="answer" d="M200,880 H248" marker-end="url(#tip)"/>
+  <text class="muted" x="256" y="886">答え</text>
+  <text class="muted" x="312" y="886">1〜3は読む順</text>
+</svg>

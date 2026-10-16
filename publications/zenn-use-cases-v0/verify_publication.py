@@ -11,6 +11,7 @@ from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
+SVG_TOOL = "svg (render_svg.mjs)"
 
 
 def verify_image_manifest(expected_images: set[str]) -> None:
@@ -30,8 +31,12 @@ def verify_image_manifest(expected_images: set[str]) -> None:
         assert height > 0
         assert len(png) == entry["bytes"]
         assert len(png) < 3_000_000
-        assert entry["tool"] == "image_gen (built-in)"
         assert entry["review"]
+        if entry["tool"] == SVG_TOOL:
+            # SVGを正本にした図は、render_svg.mjsで描き直せるよう正本のSVGを持つ。
+            assert (SOURCE / entry["source"]).read_text().lstrip().startswith("<svg")
+            continue
+        assert entry["tool"] == "image_gen (built-in)"
         for prompt in [entry["generation_prompt"], *entry["edit_prompts"]]:
             assert (SOURCE / "imagegen" / prompt).read_text().strip()
 

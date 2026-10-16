@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 1060" width="600" height="1060">
+  <style>
+    text { font-family: "IPAPGothic", "IPAGothic", "Noto Sans CJK JP", sans-serif; fill: #1b2a4a; }
+    .title { font-size: 27px; font-weight: bold; }
+    .sub { font-size: 18px; fill: #4a5878; }
+    .head { font-size: 20px; font-weight: bold; }
+    .body { font-size: 19px; }
+    .muted { font-size: 18px; fill: #4a5878; }
+    .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 17px; }
+    .step { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 18px; }
+    .big { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 24px; font-weight: bold; }
+    .num { font-size: 21px; font-weight: bold; fill: #ffffff; }
+    .flow { stroke: #0e7c86; stroke-width: 3; fill: none; }
+    .box { fill: #ffffff; stroke: #9db8e0; stroke-width: 2; }
+    .wait { fill: #fff1dc; stroke: #e0a64a; stroke-width: 2.5; stroke-dasharray: 7 5; }
+    .done { fill: #e4f5ee; stroke: #8fcfb3; stroke-width: 2; }
+    .ng { fill: #fde8e8; stroke: #e09a9a; stroke-width: 2.5; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0e7c86"/>
+    </marker>
+  </defs>
+  <rect width="600" height="1060" fill="#ffffff"/>
+
+  <text class="title" x="300" y="46" text-anchor="middle">2件のレビューを並べて進め、結果を合わせる</text>
+  <text class="sub" x="300" y="78" text-anchor="middle">review_documentの流れ。答えは次の節のテストの物</text>
+
+  <!-- ① Spawn を 2 回 -->
+  <rect x="30" y="98" width="540" height="110" rx="14" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
+  <circle cx="60" cy="128" r="16" fill="#2f5aa8"/><text class="num" x="60" y="135" text-anchor="middle">1</text>
+  <text class="head" x="86" y="135">Spawnを2回出す(2件が並んで進む)</text>
+  <text class="code" x="52" y="168">language = yield Spawn(checked_review(…))</text>
+  <text class="code" x="52" y="194">examples = yield Spawn(checked_review(…))</text>
+
+  <path class="flow" d="M160,208 V244" marker-end="url(#tip)"/>
+  <path class="flow" d="M440,208 V244" marker-end="url(#tip)"/>
+
+  <!-- ② 2 本の checked_review -->
+  <circle cx="300" cy="266" r="16" fill="#2f5aa8"/><text class="num" x="300" y="273" text-anchor="middle">2</text>
+  <rect x="30" y="248" width="250" height="40" rx="8" fill="#e9f1fc"/>
+  <text class="head" x="155" y="275" text-anchor="middle">文章(language)</text>
+  <rect x="320" y="248" width="250" height="40" rx="8" fill="#e9f1fc"/>
+  <text class="head" x="445" y="275" text-anchor="middle">コード(examples)</text>
+
+  <!-- 左の列: すぐ終わる -->
+  <rect class="box" x="40" y="304" width="230" height="44" rx="8"/><text class="step" x="155" y="332" text-anchor="middle">LaunchSession</text>
+  <path class="flow" d="M155,348 V368" marker-end="url(#tip)"/>
+  <rect class="box" x="40" y="372" width="230" height="44" rx="8"/><text class="step" x="155" y="400" text-anchor="middle">AwaitResult</text>
+  <path class="flow" d="M155,416 V436" marker-end="url(#tip)"/>
+  <rect class="done" x="40" y="440" width="230" height="44" rx="8"/><text class="step" x="155" y="468" text-anchor="middle">EXITED</text>
+  <path class="flow" d="M155,484 V708" marker-end="url(#tip)"/>
+  <text class="muted" x="168" y="590">追加の指示は</text><text class="muted" x="168" y="616">要らない</text>
+
+  <!-- 右の列: 入力待ちを挟む -->
+  <rect class="box" x="330" y="304" width="230" height="44" rx="8"/><text class="step" x="445" y="332" text-anchor="middle">LaunchSession</text>
+  <path class="flow" d="M445,348 V368" marker-end="url(#tip)"/>
+  <rect class="box" x="330" y="372" width="230" height="44" rx="8"/><text class="step" x="445" y="400" text-anchor="middle">AwaitResult</text>
+  <path class="flow" d="M445,416 V436" marker-end="url(#tip)"/>
+  <rect class="wait" x="330" y="440" width="230" height="44" rx="8"/><text class="step" x="445" y="468" text-anchor="middle">AWAITING_INPUT</text>
+  <path class="flow" d="M445,484 V504" marker-end="url(#tip)"/>
+  <rect class="box" x="330" y="508" width="230" height="44" rx="8"/><text class="step" x="445" y="536" text-anchor="middle">FollowUp(1回)</text>
+  <path class="flow" d="M445,552 V572" marker-end="url(#tip)"/>
+  <rect class="box" x="330" y="576" width="230" height="44" rx="8"/><text class="step" x="445" y="604" text-anchor="middle">AwaitResult</text>
+  <path class="flow" d="M445,620 V640" marker-end="url(#tip)"/>
+  <rect class="done" x="330" y="644" width="230" height="44" rx="8"/><text class="step" x="445" y="672" text-anchor="middle">EXITED</text>
+  <path class="flow" d="M445,688 V708" marker-end="url(#tip)"/>
+
+  <!-- 片づけと返す値 -->
+  <rect class="box" x="40" y="712" width="230" height="44" rx="8"/><text class="step" x="155" y="740" text-anchor="middle">ReleaseSession</text>
+  <rect class="box" x="330" y="712" width="230" height="44" rx="8"/><text class="step" x="445" y="740" text-anchor="middle">ReleaseSession</text>
+  <path class="flow" d="M155,756 V776" marker-end="url(#tip)"/>
+  <path class="flow" d="M445,756 V776" marker-end="url(#tip)"/>
+  <rect class="done" x="40" y="780" width="230" height="54" rx="10"/><text class="big" x="155" y="815" text-anchor="middle">ok=True</text>
+  <rect class="ng" x="330" y="780" width="230" height="54" rx="10"/><text class="big" x="445" y="815" text-anchor="middle">ok=False</text>
+
+  <!-- ③ Wait で合流 -->
+  <path class="flow" d="M155,834 V862 H290 V880" marker-end="url(#tip)"/>
+  <path class="flow" d="M445,834 V862 H310 V880" marker-end="url(#tip)"/>
+  <rect x="30" y="884" width="540" height="56" rx="12" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
+  <circle cx="60" cy="912" r="16" fill="#2f5aa8"/><text class="num" x="60" y="919" text-anchor="middle">3</text>
+  <text class="head" x="86" y="919">Waitで2件の結果を受け取る</text>
+
+  <!-- ④ 合わせた結果 -->
+  <path class="flow" d="M300,940 V958" marker-end="url(#tip)"/>
+  <rect x="30" y="962" width="540" height="58" rx="12" fill="#fde8e8" stroke="#e09a9a" stroke-width="2.5"/>
+  <circle cx="60" cy="991" r="16" fill="#2f5aa8"/><text class="num" x="60" y="998" text-anchor="middle">4</text>
+  <text class="big" x="86" y="1000">ready = True and False</text>
+  <text class="head" x="430" y="999">→ False</text>
+
+  <!-- 凡例 -->
+  <text class="head" x="30" y="1048" style="font-size:17px">凡例</text>
+  <rect class="wait" x="76" y="1032" width="30" height="20" rx="4"/><text class="muted" x="112" y="1048" style="font-size:17px">入力待ち</text>
+  <rect class="ng" x="196" y="1032" width="30" height="20" rx="4"/><text class="muted" x="232" y="1048" style="font-size:17px">合格でない結果</text>
+  <path class="flow" d="M368,1042 H404" marker-end="url(#tip)"/>
+  <text class="muted" x="410" y="1048" style="font-size:17px">順・1〜4は読む順</text>
+</svg>
