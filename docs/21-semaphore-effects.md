@@ -96,6 +96,13 @@ def leave(sem):
 - Valid: keep the handle returned by `CreateSemaphore` and pass that same object around.
 - Valid: assign that handle to another Python name (`alias = sem`) and use the alias.
 - Invalid: construct `Semaphore(existing_id)` manually. Handles come from `CreateSemaphore` only.
+  `Semaphore(...)` raises `TypeError`: a hand-made handle would name no semaphore of the run
+  (`AcquireSemaphore` failing with `KeyError`) or silently share the permits of the run's
+  semaphore that has the same number. `Semaphore(3)` does not mean "three permits" — that is
+  `CreateSemaphore(3)`.
+- Handler authors: a handler that answers `CreateSemaphore` itself (for example a cluster-wide
+  named semaphore) returns its own `Semaphore` subclass, whose `__init__` calls
+  `super().__init__(sem_id)`. Only the base class refuses direct construction.
 
 ## Usage Patterns
 

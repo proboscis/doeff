@@ -51,11 +51,11 @@ but no mutual exclusion or resource-limiting primitive. Users who need to:
 
 ### Design Rationale: Why Semaphore, Not Lock
 
-A `Lock` is `Semaphore(permits=1)`. By implementing only `Semaphore`, we get:
+A `Lock` is a semaphore with one permit (`CreateSemaphore(1)`). By implementing only `Semaphore`, we get:
 
-- **Mutex**: `Semaphore(1)` — exclusive access
-- **Connection pool**: `Semaphore(N)` — N concurrent accessors
-- **Rate limiter**: `Semaphore(N)` — N concurrent operations
+- **Mutex**: `CreateSemaphore(1)` — exclusive access
+- **Connection pool**: `CreateSemaphore(N)` — N concurrent accessors
+- **Rate limiter**: `CreateSemaphore(N)` — N concurrent operations
 
 One primitive, multiple use cases. No separate Lock type needed.
 
@@ -69,8 +69,15 @@ and `ReleaseSemaphore`.
 ```python
 class Semaphore:
     """Opaque semaphore handle. Created via CreateSemaphore effect."""
-    id: int  # read-only
+    sem_id: int  # the scheduler's number for the semaphore
 ```
+
+`Semaphore(...)` raises `TypeError`. A hand-made handle names no semaphore of
+the run (`AcquireSemaphore` fails with `KeyError`) or shares the permits of the
+run's semaphore with the same number. The scheduler mints its handles without
+the public constructor. A handler that answers `CreateSemaphore` itself (a
+cluster-wide named semaphore, a replay) returns its own subclass, whose
+`__init__` calls `super().__init__(sem_id)`.
 
 ## Effects
 
