@@ -85,6 +85,10 @@ for index, block in enumerate(blocks, 1):
         if line.strip() and not line.lstrip().startswith("#"):
             assert number in comments, (index, number, line)
 
+# 参考から案内する完全な例は、本文の2つの枠をこの順で含む(本文だけ直して例が古くなるのを防ぐ)。
+example = (Path(__file__).resolve().parents[1] / "examples/greet_handlers.py").read_text()
+assert example.index(blocks[0]) < example.index(blocks[1]), "examples/greet_handlers.py が本文の枠と違う"
+
 expected_slugs = {
     "agents", "llm", "image", "games", "events", "traverse", "time", "color",
     "di", "composition", "memo", "replay", "durable", "observe", "operations",

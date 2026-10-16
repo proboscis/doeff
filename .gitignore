@@ -135,3 +135,6 @@ docs/design/*/.records.lock
 
 # Repository-owned Zenn article visuals (override global image ignores)
 !/images/zenn-use-cases-v0/*.png
+# 掲載PNGはgenerated/の下にある。上の行はgenerated/に効かず、47枚がリポジトリに入らないまま失われた(2026-10-16に判明)。
+!/images/zenn-use-cases-v0/generated/*.png
+!/publications/zenn-use-cases-v0/visuals/*.svg

@@ -30,7 +30,10 @@ def verify_image_manifest(expected_images: set[str]) -> None:
         assert height > 0
         assert len(png) == entry["bytes"]
         assert len(png) < 3_000_000
-        assert entry["tool"] == "image_gen (built-in)"
+        # imagegenで作った図と、失われた後にSVGで描き直した図(正本のSVGがvisuals/に在る)の2通り。
+        assert entry["tool"] in {"image_gen (built-in)", "svg (hand-written), rendered by chromium"}
+        if entry["tool"].startswith("svg"):
+            assert (SOURCE / entry["source"]).read_text().startswith("<svg")
         assert entry["review"]
         for prompt in [entry["generation_prompt"], *entry["edit_prompts"]]:
             assert (SOURCE / "imagegen" / prompt).read_text().strip()
