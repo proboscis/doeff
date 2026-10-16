@@ -105,7 +105,7 @@ TASK_MAX_OPEN: int
 def declared_runtime_env(item: dict) -> str | None:
     ...
 
-def spec_of_declaration(item: dict) -> JobSpec:
+def spec_of_declaration(item: dict[str, object]) -> JobSpec:
     ...
 PROGRAM_SHA: Incomplete
 OLD_RUN_KEYS: tuple[str, ...]
