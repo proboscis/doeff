@@ -58,7 +58,8 @@ it imports what it uses and installs the handlers its effects need.
 
 ### Ask with Missing Keys
 
-If a key is not in the environment, `Ask` raises `KeyError`:
+If a key is not in the environment, `Ask` raises `MissingEnvKeyError` — a `KeyError`, so
+`except KeyError` catches it:
 
 ```python
 from doeff import do, run
@@ -80,6 +81,15 @@ try:
     run(reader(env={})(requires_config()))
 except KeyError:
     print("KeyError")  # KeyError
+```
+
+The message names the keys the env holds and, for a misspelled key, the close names:
+
+```text
+MissingEnvKeyError: Ask: key not found: 'timout'
+  Did you mean 'timeout'?
+  Keys in the env: 'timeout'
+  To provide it, put the key in the env of the handler that answers Ask: reader(env={...}) or lazy_ask(env={...}).
 ```
 
 ### Lazy Program Evaluation in Environment

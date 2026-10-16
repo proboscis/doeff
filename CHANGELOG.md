@@ -65,6 +65,13 @@
   `--program` (a Python program), `-c`, `--profile` and `DOEFF_PROFILE` work without Hy. Hy is still needed for `--hy`
   and for a `.hy` program. `doeff.cli.profiling.profiling_config_from_env(env)` is replaced by
   `profiling_config_from_environment()`.
+- `doeff-core-effects`: an `Ask` whose key the env does not hold (`reader`, `lazy_ask(strict=True)`) raises
+  `MissingEnvKeyError`, now its own subclass of `KeyError` (`except KeyError` still catches it; `args` is `(key,)`;
+  `.key` and `.env_keys` name the key and the env's keys). Its message names the env's keys (the first 8 of a large
+  env) and the difflib close names of the key, keeps its newlines in `str()` (in 0.5.0 they were folded into `\n`), and
+  no longer recommends the legacy CLI flags `--set` / `--env` / `--interpreter` to a program run from Python.
+  `doeff run` adds the README's `--hy` form (`((lazy-ask :env {"key" VALUE}) p)`) when the error reaches it. Before,
+  `doeff.MissingEnvKeyError` was `KeyError` itself.
 - `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
   2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
   `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run

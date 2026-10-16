@@ -17,6 +17,7 @@ from doeff_core_effects.effects import (  # noqa: F401
     Get,
     Listen,
     Local,
+    MissingEnvKeyError,
     Put,
     Raise,
     Resumption,
