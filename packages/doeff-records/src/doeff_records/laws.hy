@@ -12,6 +12,7 @@
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "records" :role "program"})
 (import dataclasses [dataclass])
+(import itertools)
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
 (import doeff_hy.frozen [FrozenMap])
@@ -25,7 +26,7 @@
                                ReadEventByKey])
 (import doeff_records.faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned])
-(import doeff_records.admission [row-matches? epoch-ms])
+(import doeff_records.admission [row-matches? epoch-ms key-text])
 
 ;; OVERSEER = 宣言の operators に入る書き手(宣言の形の例 — 置き場は書き手の名では断らない・#2994)。
 (setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
@@ -344,6 +345,99 @@
   (<- loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" 30}) :descending-by "note")))
   (<- (require-law (= loose (NotIndexed #("note"))) law (.format "上から読む読みの索引の無い欄: {!r}" loose)))
   (+ transcript [narrow loose]))
+
+
+;; --- 法 6c: 値の組の ListRows は値ごとの等号の ListRows の和を鍵の順に並べた物と同じ ----------------------
+
+;; 行の番号 → #(欄 color の値 欄 label の値 欄 note の値)(None = 欄の無い行)。color は文字列・整数と同じ数の小数・真偽(1 と等しくない)を持つ。
+(val ANY-OF-ROWS {1 #("red" "a" 5) 2 #("blue" "b" 9) 3 #("green" "a" 1) 4 #("red" "b" 9) 5 #(1 "a" 3) 6 #(1.0 "b" 7)
+                  7 #(True "a" 2) 8 #(None "b" 8) 9 #("blue" "a" 4) 10 #("red" "b" 6) 11 #("green" "b" 10) 12 #("blue" None 0)})
+;; #(where where-any): どの行にも無い値・同じ値の重ね・同じ数の整数と小数・真偽・2 つの欄の組(欄どうしは AND)・鍵の欄・where との AND。
+(val ANY-OF-CASES
+  (lfor #(where any-of) [#({} {"color" ["red" "blue"]})
+                         #({} {"color" ["red" "none-such"]})
+                         #({} {"color" [1]})
+                         #({} {"color" [1.0 True]})
+                         #({} {"color" ["red" "red"]})
+                         #({"label" "a"} {"color" ["red" "green"]})
+                         #({} {"color" ["red" "blue"] "label" ["b"]})
+                         #({} {"id" ["p02" "p05" "p99"]})]
+        #((FrozenMap where) (FrozenMap any-of))))
+;; 組の絞りの頁の上限(頁の続きの位置を辿る)と、上から読む読みの件数。
+(val ANY-OF-PAGE 2)
+(val ANY-OF-TOP 3)
+
+
+(defk collect-any-pages [harness table where where-any limit]
+  {:pre [(: harness LawHarness) (: table str) (: where FrozenMap) (: where-any FrozenMap) (: limit int)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "next-cursor が尽きるまで、値の組で絞る ListRows(where-any)の頁を読み、頁を全部並べるため。"
+  (var pages [])
+  (var cursor None)
+  (while True
+    (<- page (as-writer harness MAKER (ListRows table :where where :where-any where-any :cursor cursor :limit limit)))
+    (:= pages (+ pages [page]))
+    (when (or (not (isinstance page Page)) (is page.next-cursor None)) (return pages))
+    (:= cursor page.next-cursor)))
+
+
+(defk union-of-equal-lists [harness table where where-any]
+  {:pre [(: harness LawHarness) (: table str) (: where FrozenMap) (: where-any FrozenMap)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "値の組の読みが返すはずの行を、置き場の判じを借りずに等号の読みだけで組むため: 組の欄ごとの値の積(欄どうしは AND)の 1 つずつを where に
+   足した等号の ListRows の全件を読み、和(同じ鍵の行は 1 つ)を鍵の綴りの順に並べる。答え = #(行の tuple 読んだ頁の list)。"
+  (val names (sorted where-any))
+  (var found {})
+  (var pages [])
+  (for [values (itertools.product #* (gfor name names (get where-any name)))]
+    (<- equal (collect-pages harness table (FrozenMap (| (dict where) (dict (zip names values :strict True)))) 500))
+    (:= pages (+ pages equal))
+    (for [page equal :if (isinstance page Page) row page.rows]
+      (:= found (| found {(key-text row.key) row}))))
+  #((tuple (gfor text (sorted found) (get found text))) pages))
+
+
+(defk law-any-of-list-equals-the-union-of-equal-lists [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "値の組の ListRows(where-any)の法: 頁を辿った全件は、組の値ごとの等号の ListRows の全件の和を鍵の綴りの順に並べた物と同じ(頁は上限を
+   越えず、続きの位置で欠けも重なりも無い)。上から読む読み(descending-by)を重ねた答えは、その和の欄の値が整数の行を (値, 鍵) の大きい順に
+   並べた上から limit 件。索引でない欄の組は NotIndexed(where と同じく欄の名の順)。使い手が値の組 1 つを、値ごとの往復でなく 1 回の
+   読みで引くため。どの置き場の handler も同じ答えを返すことを確かめる。"
+  (val law "値の組の ListRows は値ごとの等号の ListRows の和を鍵の順に並べた物と同じ")
+  (var transcript [])
+  (for [#(n #(color label note)) (.items ANY-OF-ROWS)]
+    (val value (| (if (is color None) {} {"color" color}) (if (is label None) {} {"label" label}) {"note" note}))
+    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n)) (FrozenMap value) (ExpectAbsent))))
+    (<- (require-law (isinstance written Written) law (.format "p{:02d} の書き: {!r}" n written)))
+    (:= transcript (+ transcript [written])))
+  (for [#(where where-any) ANY-OF-CASES]
+    (<- expected (union-of-equal-lists harness "parts" where where-any))
+    (val union (get expected 0))
+    (val equal-pages (get expected 1))
+    (<- pages (collect-any-pages harness "parts" where where-any ANY-OF-PAGE))
+    (<- (require-law (all (gfor page pages (isinstance page Page))) law (.format "{!r} {!r} の頁: {!r}" where where-any pages)))
+    (<- (require-law (all (gfor page pages (<= (len page.rows) ANY-OF-PAGE))) law
+                     (.format "{!r} {!r} の頁が上限を越えた: {!r}" where where-any pages)))
+    (val paged (tuple (gfor page pages row page.rows row)))
+    (<- (require-law (= paged union) law
+                     (.format "{!r} {!r} の組の答えが値ごとの等号の答えの和と違う: {!r} / {!r}" where where-any paged union)))
+    (val ordered (sorted (gfor row union :setv noted (.get row.value "note")
+                               :if (and (isinstance noted int) (not (isinstance noted bool))) row)
+                         :key (fn [row] #((get row.value "note") (key-text row.key))) :reverse True))
+    (<- top (as-writer harness MAKER (ListRows "parts" :where where :where-any where-any :descending-by "note" :limit ANY-OF-TOP)))
+    (<- (require-law (and (isinstance top Page) (is top.next-cursor None) (= top.rows (tuple (cut ordered ANY-OF-TOP)))) law
+                     (.format "{!r} {!r} の上から {} 件が和を並べた上の {} 件と違う: {!r} / {!r}" where where-any ANY-OF-TOP ANY-OF-TOP
+                              top (cut ordered ANY-OF-TOP))))
+    (:= transcript (+ transcript equal-pages pages [top])))
+  (<- narrow (as-writer harness MAKER (ListRows "parts" :where-any (FrozenMap {"color" ["red" "blue"]}) :fields #("color") :limit 50)))
+  (<- (require-law (and (isinstance narrow Page) (= (len narrow.rows) 6) (all (gfor row narrow.rows (= (set row.value) #{"id" "color"}))))
+                   law (.format "組の読みの欄の絞り: {!r}" narrow)))
+  (<- loose (as-writer harness MAKER (ListRows "parts" :where-any (FrozenMap {"note" [5 9]}))))
+  (<- (require-law (= loose (NotIndexed #("note"))) law (.format "組の読みの索引の無い欄: {!r}" loose)))
+  (<- both-loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" 5}) :where-any (FrozenMap {"grant" ["yes"]}))))
+  (<- (require-law (= both-loose (NotIndexed #("grant" "note"))) law (.format "where と組の索引の無い欄: {!r}" both-loose)))
+  (+ transcript [narrow loose both-loose]))
 
 
 ;; --- 法 7: 追記の冪等キー ----------------------------------------------------------------------------------
@@ -1078,6 +1172,7 @@
             "transient-rows-expire" law-transient-rows-expire
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "descending-list-is-the-head-of-the-sorted-scan" law-descending-list-is-the-head-of-the-sorted-scan
+            "any-of-list-equals-the-union-of-equal-lists" law-any-of-list-equals-the-union-of-equal-lists
             "append-is-idempotent" law-append-is-idempotent
             "key-head-read-equals-filtered-scan" law-key-head-read-equals-filtered-scan
             "watch-waits-for-a-change" law-watch-waits-for-a-change

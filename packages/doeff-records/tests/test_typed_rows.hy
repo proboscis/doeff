@@ -100,6 +100,13 @@
   (assert (and (isinstance page TypedPage) (= (lfor row page.rows row.key) [#("p1")])
                (isinstance (. (get page.rows 0) value) Part))
           page)
+  ;; 値の組の絞り(where-any)も同じ読みで渡せる — 組のどれかに等しい行を行の型で返す。
+  (<- any-page (as-maker (list-typed PARTS :where-any (FrozenMap {"color" #("blue" "red")}))))
+  (assert (and (isinstance any-page TypedPage) (= (lfor row any-page.rows row.key) [#("p1")])
+               (isinstance (. (get any-page.rows 0) value) Part))
+          any-page)
+  (<- none-page (as-maker (list-typed PARTS :where (FrozenMap {"label" "z"}) :where-any (FrozenMap {"color" #("blue")}))))
+  (assert (and (isinstance none-page TypedPage) (= none-page.rows #())) none-page)
   (<- changes (as-maker (WatchChanges #("parts") (WatchCursor page.epoch 0))))
   (assert (isinstance changes Changes) changes)
   (setv typed (lfor change changes.items (typed-change PARTS change)))

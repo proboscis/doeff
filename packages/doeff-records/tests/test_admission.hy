@@ -7,7 +7,7 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable
                               ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows])
-(import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows])
+(import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows WHERE-ANY-LIMIT])
 (import doeff_records.admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
                                  Admitted])
 (import doeff_records.memory [MemoryStore memory-records-handler])
@@ -94,7 +94,29 @@
   ;; 生まれる行は initial を持ち、鍵の欄を値に置く。
   (setv born (judge-put decl None #("p2") {"label" "x"}))
   (assert (= born (Admitted {"id" "p2" "label" "x" "state" "open"})))
-  (assert (= (where-refusal decl {"id" "p1" "color" "red" "note" "n"}) (NotIndexed #("note")))))
+  (assert (= (where-refusal decl {"id" "p1" "color" "red" "note" "n"} (FrozenMap)) (NotIndexed #("note"))))
+  ;; 値の組の絞り(where-any)の欄も同じ索引で照らし、where の欄と合わせて名の順に名指す。
+  (assert (is (where-refusal decl {"color" "red"} {"id" #("p1") "label" #("a")}) None))
+  (assert (= (where-refusal decl {"note" "n"} {"color" #("red") "grant" #("yes")}) (NotIndexed #("grant" "note")))))
+
+
+(deftest test-a-list-by-value-sets-refuses-empty-oversized-and-overlapping-sets-at-construction
+  ;; 値の組の絞り(where-any): 組は JSON の値の空でない配列・値の数は全部の欄の和で WHERE-ANY-LIMIT まで・where と同じ欄は置けない
+  ;; (等号と組を同じ欄に重ねない)・欄の名は宣言の綴り。
+  (assert (ListRows "parts" :where-any {"color" (lfor i (range WHERE-ANY-LIMIT) (str i))}))
+  (assert (ListRows "parts" :where {"label" "a"} :where-any {"color" ["red"]}))
+  (for [#(broken exception) [#({"color" []} ValueError)
+                             #({"color" "red"} TypeError)
+                             #({"color" {"x" 1}} TypeError)
+                             #({"color" (lfor i (range (+ WHERE-ANY-LIMIT 1)) (str i))} ValueError)
+                             #({"color" (lfor i (range 600) (str i)) "label" (lfor i (range 401) (str i))} ValueError)
+                             #({"Bad!" ["x"]} ValueError)]]
+    (assert (refuses? (fn [] (ListRows "parts" :where-any broken)) exception) broken))
+  (assert (refuses? (fn [] (ListRows "parts" :where {"color" "red"} :where-any {"color" ["red" "blue"]})) ValueError))
+  (assert (refuses? (fn [] (ListRows "parts" :where-any ["color"])) TypeError))
+  ;; 作った組は深く凍る(配列は tuple・object は FrozenMap)。
+  (assert (= (. (ListRows "parts" :where-any {"color" ["red" {"x" [1]}]}) where-any)
+             (FrozenMap {"color" #("red" (FrozenMap {"x" #(1)}))}))))
 
 
 (deftest test-operator-paths-and-field-writers-do-not-refuse-a-write
