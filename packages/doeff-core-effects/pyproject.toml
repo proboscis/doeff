@@ -1,14 +1,15 @@
 [project]
 name = "doeff-core-effects"
-version = "0.1.0"
+version = "0.5.0"
 description = "Standard effects and handlers for doeff: state, reader, writer, concurrency, HTTP, SQL, files and processes"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+# 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
 dependencies = [
-    "doeff",
-    "doeff-hy",
+    "doeff>=0.5.0,<0.6",
+    "doeff-hy>=0.5.0,<0.6",
     "frozendict>=2.4.0",
     "httpx>=0.27.0",
 ]

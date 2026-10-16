@@ -226,7 +226,7 @@ default_async_handlers = _Removed(
     "default_async_handlers", "compose handlers by calling handler(program)"
 )
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 
 def __getattr__(name: str) -> object:
