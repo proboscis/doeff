@@ -54,6 +54,11 @@ What the wrapper does:
   have no time limit of their own. Then the subscription the source held is closed (``CloseSubscription``) — when
   the body ends normally, by an error, or by a cancel from outside — so a process that wraps body after body under
   one broker handler holds no subscription of a body that ended (card ki-aa9497a3a412).
+  A cancel can land while the answer of a ``Spawn`` (the task's handle) is still queued, and the scheduler then drops
+  the answer: the spawner never learns the task it made. The source task ends by itself when the wrapper has ended
+  (``_Reading``); the tasks that wait for the broker's return (the watcher of an outage, the one telling the gaps)
+  do not begin before their spawner holds their handle (``_spawned`` / ``_claimed``) — a wait for the return ends
+  by nothing but a cancel.
 
 The channels a wrapper reads are fixed when it is built (``_Plan.channels`` is the one place that holds them).
 """
@@ -320,6 +325,44 @@ def _stop_task(task: Task[object]) -> "EffectGenerator[Exception | None]":
     return None
 
 
+@dataclass(frozen=True)
+class _Spawned:
+    """A task made by ``_spawned`` and the claim that lets it begin (``_claimed``)."""
+
+    task: Task[object]
+    claim: Promise[bool]
+
+
+@do
+def _begun_when_claimed(claim: Promise[bool], program: "Program[None]") -> "EffectGenerator[None]":
+    """The body of a task made by ``_spawned``: do nothing until the spawner claims it, then run ``program``. A
+    spawner that was cancelled before it held this task's handle releases the claim instead (``False``)."""
+    if (yield Wait(claim.future)):
+        yield program
+
+
+@do
+def _spawned(program: "Program[None]") -> "EffectGenerator[_Spawned]":
+    """Spawn ``program`` held back until its spawner claims it. The scheduler drops the answer of a ``Spawn`` (the
+    task's handle) when the spawner is cancelled before it resumes, and the tasks of this file wait in
+    ``AwaitBrokerBack``, which only a cancel wakes: a task begun at once would wait on with nobody able to stop it
+    (the spawner's stop never learned it). So the spawner keeps the handle first and ``_claimed`` lets the task
+    begin; a spawner cancelled in the ``Spawn`` releases the claim in its own stop, and the task ends unbegun."""
+    claim: Promise[bool] = yield CreatePromise()
+    try:
+        task: Task[object] = yield Spawn(_begun_when_claimed(claim, program))
+    except Exception:
+        yield CompletePromise(claim, False)
+        raise
+    return _Spawned(task, claim)
+
+
+@do
+def _claimed(spawned: _Spawned) -> "EffectGenerator[None]":
+    """Let a task made by ``_spawned`` begin — after its spawner has kept its handle where its stop finds it."""
+    yield CompletePromise(spawned.claim, True)
+
+
 @do
 def _came_back_within(seconds: float) -> "EffectGenerator[bool]":
     """Wait for the broker's return for at most ``seconds`` (True = it is back). One watcher task receives the
@@ -327,10 +370,12 @@ def _came_back_within(seconds: float) -> "EffectGenerator[bool]":
     if seconds <= 0:
         return False
     promise: Promise[bool] = yield CreatePromise()
-    watcher: Task[object] = yield Spawn(_back_announced(promise))
+    spawned = yield _spawned(_back_announced(promise))
+    watcher = spawned.task
     # The stop effects run on an exception and on the normal end, not in ``finally``: yielding inside the
     # GeneratorExit of a discarded process is an error (the same reason as doeff-records' came-back-within).
     try:
+        yield _claimed(spawned)
         came = yield WaitWithin(promise.future, seconds)
     except Exception:
         yield _stop_task(watcher)
@@ -507,7 +552,9 @@ def _marked(plan: _Plan, gaps: _Gaps, channel: str, detail: str) -> "EffectGener
     """Mark ``channel`` and make sure one task waits for the broker's return."""
     gaps.mark(channel)
     if gaps._mut_waiter is None:
-        gaps._mut_waiter = yield Spawn(_gaps_told_on_return(plan, gaps))
+        spawned = yield _spawned(_gaps_told_on_return(plan, gaps))
+        gaps._mut_waiter = spawned.task
+        yield _claimed(spawned)
     return NoticeGapMarked(channel=channel, detail=detail)
 
 
@@ -617,7 +664,9 @@ def _started_gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[None]":
     if gaps._mut_channels:
         refused = yield _through_exit(gaps, _gaps_told(plan, gaps))
         if refused is not None:
-            gaps._mut_waiter = yield Spawn(_gaps_told_on_return(plan, gaps))
+            spawned = yield _spawned(_gaps_told_on_return(plan, gaps))
+            gaps._mut_waiter = spawned.task
+            yield _claimed(spawned)
 
 
 @do
