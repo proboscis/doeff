@@ -166,7 +166,7 @@ class TestSemaphoreRuntimeBehavior:
         assert result.value == ["first", "second", "third"]
 
     def test_counting_semaphore_allows_n_concurrent(self) -> None:
-        """Semaphore(3) allows 3 tasks to hold permits simultaneously."""
+        """CreateSemaphore(3) allows 3 tasks to hold permits simultaneously."""
         max_concurrent = {"value": 0}
         current = {"value": 0}
 
