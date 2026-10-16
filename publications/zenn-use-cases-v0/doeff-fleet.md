@@ -292,13 +292,13 @@ AIの起動と結果待ちを処理として書く話は、[AIエージェント
 [doeffでできること：メイン記事へ戻る](doeff-main.md)
 
 :::message
-この記事のコードは、2026年10月17日にdoeffのmain(commit `6ab1e37`)で確かめました。Pythonの3つの枠は、上から順に前の枠の続きとして動きます。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
+この記事のコードは、2026年10月17日にdoeffのmain(commit `9fdc7ce`)で確かめました。Pythonの3つの枠は、上から順に前の枠の続きとして動きます。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
 :::
 
 ## 参考資料・検証版
 
-- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/6ab1e37d6)
-- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/6ab1e37d6/packages/doeff-time)
+- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9fdc7ceb2)
+- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/9fdc7ceb2/packages/doeff-time)
 - [この記事のコードをまとめた完全な例](examples/fleet_dispatch.py)
 
 数字は、3つのリポジトリのmainの`git log`と、作業ボードの一覧から数えました。agoraのリポジトリは公開していないため、数えた元は読者が確かめられません。

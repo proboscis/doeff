@@ -65,4 +65,4 @@ agoraとagora-controllersのリポジトリは公開していないため、読�
 
 - `verify_publication.py`:記事の数を24にした。図は概念図・処理図に、captions.jsonの`extra_kinds`に書いた図を足して照らす。
 - `reviews/main-check.py`・`verify_examples.py`:メインの表の記事を23本にした。
-- `verify_publication.py`の全体は、他の記事の図38枚がまだ無いため、main と同じ画像の照合の所で止まる。5週目の図3枚と台帳は、在る図に絞った同じ照らしで通った。
+- `verify_publication.py`の全体は、他の記事の図34枚がまだ無いため(2026-10-17のrebase後)、mainと同じ画像の照合の所で止まる。5週目の図3枚と台帳は、在る図に絞った同じ照らしで通った。
