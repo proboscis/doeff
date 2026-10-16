@@ -13,6 +13,7 @@ COMPACT_RATIO: int
 MIN_DELTA: int
 TABLE_TRUTH_REFUSAL: str
 TABLE_LEN_REFUSAL: str
+TABLE_MAPPING_EQ_REFUSAL: str
 
 @dataclass(frozen=True)
 class TableWrite(Generic[V]):
@@ -30,6 +31,7 @@ class Table(Generic[V]):
     # 真偽と長さの読みは断る(TypeError — 読むのは size・agora-redesign #2755)。
     def __bool__(self) -> NoReturn: ...
     def __len__(self) -> NoReturn: ...
+    # dict / Mapping との == は TypeError(黙って偽にしない・card E0)。
     def __eq__(self, other: object) -> bool: ...
     # 行が違う鍵(片方にだけ在る鍵を含む・鍵の昇順 — 基を分け合う表は書いた鍵だけを読む・card ki-8c4d01b4f5c2)。
     def changed_keys(self, other: Table[V]) -> tuple[str, ...]: ...

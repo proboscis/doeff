@@ -16,6 +16,7 @@
 ;;; FrozenMap(frozen.hy)との違い: FrozenMap は「鍵の集合が開いた値」を凍らせる写像で、書くたびに丸ごと写す。Table は拍ごとに
 ;;; 少しずつ変わる大きな表のための物で、写像ではない。
 (import dataclasses [dataclass])
+(import collections.abc [Mapping])
 (import typing [Generic TypeVar])
 
 (setv V (TypeVar "V"))
@@ -28,6 +29,8 @@
 (setv TABLE-TRUTH-REFUSAL "Table / TableDraft は真偽で読まない — 空かどうかは (= (.size t) 0) か (> (.size t) 0) で読む(agora-redesign #2755)")
 (setv TABLE-LEN-REFUSAL "Table / TableDraft は len で数えない — 行の数は (.size t) で読む(agora-redesign #2755)")
 
+(setv TABLE-MAPPING-EQ-REFUSAL "Table を dict / Mapping と == で比べない — 偽に化ける。比べるなら (dict (zip (.keys t) (.rows t))) などの dict へ直して比べる(card E0)")
+
 
 (defclass [(dataclass :frozen True)] TableWrite [(get Generic V)]
   "表への書き 1 つ: key の行を value にする(value = None は行を消す)。"
@@ -37,19 +40,37 @@
 
 (defclass Table [(get Generic V)]
   "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・rows・items・size、書きは with-writes(新しい Table を返す)。"
-  (setv __slots__ #("_base" "_delta" "_removed" "_size"))
+  (setv __slots__ #("_base" "_delta" "_removed" "_size" "_flat"))
   (#^ (get dict #(str V)) _base)
   (#^ (get dict #(str V)) _delta)
   (#^ (get frozenset str) _removed)
   (#^ int _size)
+  ;; 全行の写し(基と差分を合わせた dict)— 初めて全行を読む時に 1 度だけ作る(下の _flat-rows)。基だけの表は基そのもの。
+  (#^ (| (get dict #(str V)) None) _flat)
 
   (defn #^ None __init__ [self #^ (get dict #(str V)) base #^ (get dict #(str V)) delta #^ (get frozenset str) removed]
     (object.__setattr__ self "_base" base)
     (object.__setattr__ self "_delta" delta)
     (object.__setattr__ self "_removed" removed)
-    ;; 行の数 = 基の行 − 消した基の行 + 基に無い差分の行(鍵の集合の演算で数える — 1 件ずつ Hy で数えない・agora-redesign #2412)。
+    (object.__setattr__ self "_flat" None)
+    ;; 行の数 = 基の行 − 消した基の行 + 基に無い差分の行。差分と消した鍵の数に比例して数える(基の全鍵を回らない — `&` は小さい方を回る。
+    ;; 基の全鍵を回る `(- (.keys delta) (.keys base))` は 1 行の書きの費用の 65〜96% だった・card E0)。
     (object.__setattr__ self "_size" (+ (- (len base) (len (& removed (.keys base))))
-                                        (len (- (.keys delta) (.keys base))))))
+                                        (- (len delta) (len (& (.keys delta) (.keys base)))))))
+
+  (defn #^ (get dict #(str V)) _flat-rows [self]
+    "基と差分を合わせた全行の dict(消した鍵を除く・Table ごとに 1 度だけ作る)— keys・rows・items の元。読むだけで書き換えない。"
+    (when (is-not self._flat None)
+      (return self._flat))
+    (setv flat (if (or self._delta self._removed)
+                   (| self._base self._delta)
+                   self._base))
+    (when (and self._removed (is flat self._base))
+      (setv flat (dict flat)))
+    (for [key self._removed]
+      (.pop flat key None))
+    (object.__setattr__ self "_flat" flat)
+    flat)
 
   (defn #^ (| V None) row [self #^ str key]
     "鍵 key の行(無ければ None)。"
@@ -58,19 +79,16 @@
           True (.get self._base key)))
 
   (defn #^ (get tuple #(str ...)) keys [self]
-    "鍵の列(並びは決めない)。"
-    (+ (tuple (gfor key self._base :if (and (not-in key self._removed) (not-in key self._delta)) key))
-       (tuple self._delta)))
+    "鍵の列(並びは keys・rows・items で同じ)。"
+    (tuple (._flat-rows self)))
 
   (defn #^ (get tuple #(V ...)) rows [self]
-    "行の値の列(並びは決めない — 鍵の列 keys と同じ並び)。全行を読む読み手(数え・一覧)のため。"
-    (+ (tuple (gfor #(key value) (.items self._base) :if (and (not-in key self._removed) (not-in key self._delta)) value))
-       (tuple (.values self._delta))))
+    "行の値の列(鍵の列 keys と同じ並び)。全行を読む読み手(数え・一覧)のため。"
+    (tuple (.values (._flat-rows self))))
 
   (defn #^ (get tuple #((get tuple #(str V)) ...)) items [self]
     "鍵と行の組の列(keys・rows と同じ並び)— 鍵が値から導けない表の全行を、鍵ごと読む読み手(保存の綴り)のため(agora-redesign #2715)。"
-    (+ (tuple (gfor #(key value) (.items self._base) :if (and (not-in key self._removed) (not-in key self._delta)) #(key value)))
-       (tuple (.items self._delta))))
+    (tuple (.items (._flat-rows self))))
 
   (defn #^ int size [self]
     "行の数。"
@@ -78,6 +96,9 @@
 
   (defn #^ "Table[V]" with-writes [self #^ (get tuple #((get TableWrite V) ...)) writes]
     "書きの列を当てた新しい Table(この Table は変わらない)。同じ鍵の書きが列に 2 度あれば後の方が残る。"
+    ;; 書きが空か、全部が今の行そのもの(同一性)なら、この表のまま返す(新しい表を作らない)。
+    (when (all (gfor write writes (is (.row self write.key) write.value)))
+      (return self))
     ;; 小さな表は書きの列を写しへ直に当てる(鍵 → 行の中間の dict を組まない — _with-pending の小さな表の道と同じ答え)。
     (when (and (< (len self._base) MIN-DELTA) (not self._delta) (not self._removed))
       (setv written (dict self._base))
@@ -107,6 +128,9 @@
     ;; 同じ表は中身を読まずに等しい(書きの無い拍で前後の欄が同じ object のまま — 比べを O(1) に・agora-redesign #2715)。
     (when (is self other)
       (return True))
+    ;; 写像との比べは黙って偽にせず断る(Table は写像ではない — 行の中身を比べたいなら dict(zip(keys, rows)) などへ直して比べる・card E0)。
+    (when (isinstance other Mapping)
+      (raise (TypeError TABLE-MAPPING-EQ-REFUSAL)))
     (when (not (isinstance other (type self)))
       (return False))
     ;; 基を分け合う 2 つの表(with-writes は差分だけを写すので、差分が基の 1/COMPACT-RATIO を越えて基を作り直すまで同じ基を指す)は、基の行が
@@ -156,6 +180,7 @@
   (object.__setattr__ table "_delta" {})
   (object.__setattr__ table "_removed" (frozenset))
   (object.__setattr__ table "_size" (len base))
+  (object.__setattr__ table "_flat" None)
   table)
 
 
@@ -164,6 +189,9 @@
    通る 1 点(この module の中だけ — 写像を受け渡す口を公開しない)。書き 1 件ごとに TableWrite を組んで Hy の繰り返しで当てると、
    下書きの freeze(数万件の書き)が dict の写しの約 4 倍重かった(agora-redesign #2412)ので、書きを dict の一括の操作(内包・集合の
    差と和・| の合わせ)で当てる。"
+  ;; 全部が今の行そのもの(同一性・消す書きは行が無い鍵)なら、表のまま返す。
+  (when (all (gfor #(key value) (.items pending) (is (.row table key) value)))
+    (return table))
   ;; 小さな表(差分の層を持たない・基が MIN-DELTA 行未満)は基を写して書く — 差分の層の費用の方が写しより重い(頭の註)。
   ;; 書きは少ない(1 拍に数件)ので、内包と集合の演算を組まずに写しへ 1 件ずつ当てる。
   (when (and (< (len table._base) MIN-DELTA) (not table._delta) (not table._removed))
