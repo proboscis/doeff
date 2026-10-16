@@ -1,14 +1,14 @@
 {
   "concept": {
-    "title": "待機する対象と、解釈する依頼を分ける",
-    "code": "@do  # 挨拶のProgramを作る\ndef greet():  # 名前を取得して挨拶する\n    name = yield ReadName()  # ハンドラから名前を受け取る\n    return f\"こんにちは、{name}さん\"  # 挨拶を返す",
-    "flow": "白背景、平面的な2段の比較図。写真、3D、立体装置を使わない。上段は『coroutineの実行』。greet_async内の『await read_name_async()』から『read_name_async』へ呼び出す矢印、そこから『花子』を返す矢印でgreet_asyncへ戻る。外側の薄い枠を『この例ではasyncioのTaskが実行を管理』とする。下段は『依頼の解釈』。greet内の『yield ReadName()』から『ReadNameという依頼』、それから『hanakoハンドラ』へ依頼の矢印。ハンドラから『Resume(k, 花子)』で元のgreetへ戻る別の矢印を引く。下段外枠に『Rust VMがハンドラ境界と継続を扱う』。上下とも最終結果を『こんにちは、花子さん』とする。コードパネルは下段のgreetの正確な4行。asyncioには非同期以外の処理が書けない、awaitで必ずTask切り替えが起こる、と読めるラベルを入れない。",
-    "caption": "awaitはawaitableを進める構文です。doeffでは依頼のデータと継続を、実行時に取り付けたハンドラへ渡します。"
+    "title": "awaitは実装を進め、yieldは依頼を外側へ出す",
+    "code": "@do  # 呼んでもすぐには動かず、動かす手順を返す。\ndef greet():  # yield版の挨拶。\n    name = yield ReadName()  # 依頼を出して止まり、外側から返った名前を受け取る。\n    return f\"こんにちは、{name}さん\"  # 名前を入れた挨拶を返す。",
+    "flow": "白背景、平面的な縦2段の比べの図。上段は『async/await(呼んだ実装を進める)』。greet_asyncの『name = await read_name_async()』から、read_name_asyncの『return \"花子\"』へ実線の矢印『呼んだ実装へ進む』、戻りの点線『戻り値「花子」』。『名前は実装が決める』『動かすのは、asyncioなどのイベントループ』『替えるには、patchを当てるか、関数を引数で渡す』と添える。下段は『doeffのyield(依頼を外側へ出す)』。greetの『name = yield ReadName()』から、外側のハンドラの枠へ実線『依頼を出して止まる』、戻りの点線『Resume(k, 値)』。枠の中にhanako『「花子」で続きを動かす』とtaro『「太郎」で続きを動かす』。『greetは変えずに、付けるハンドラだけを替える』と添える。awaitのたびに必ずイベントループへ戻る、asyncioは時間しか扱わない、と読める札を入れない。",
+    "caption": "awaitの先は、呼んだ実装で決まります。yieldの先は、外側に付けたハンドラが決めます。"
   },
   "flow": {
     "title": "ストリームは、1断片ずつdoeffへ戻す",
-    "code": "chunk = yield Await(anext(iterator, None))  # 次の1断片、終了はNone\nif chunk is None:  # 反復の終了を判定\n    return text  # 集めた全文を返す\ntext += chunk  # 到着順に結合",
-    "flow": "白背景、平面的なフローチャート。写真、3D、立体装置を使わない。大きな範囲枠を『@do collect_chunksのループ』とし、その内側に『次の1断片を依頼』→『Noneなら終了？』という判断を置く。次の1断片を依頼するノードから外側の『Awaitハンドラとスケジューラ』→『非同期イテレータ』へ矢印、結果chunkが同じ依頼位置へ戻ってから判断へ進む矢印。判断の『いいえ』は『textに断片を結合』→次の1断片を依頼するノードへ戻る。『はい』は『return text』→呼び出し元『yield collect_chunks(stream)』が全文を受け取る流れ。None以外は空文字列でも継続することを小さく補足。コードパネルは『collect_chunksのwhile True内』という見出しを必ず付けた4行抜粋。確認値は『4断片＋終了確認＝Await 5回』。収集ループ全体が非同期イテレータ側で動く図にしない。",
-    "caption": "収集ループと結合処理は@doに残し、次の1要素を待つ操作だけをAwaitで非同期実装へ接続します。"
+    "code": "chunk = yield Await(anext(iterator, None))  # 次の1断片を待つ。終わりならNone。\nif chunk is None:  # 断片の文字列と、終わりの合図を見分ける。\n    return text  # つないだ本文を返す。\ntext += chunk  # 空の文字列も正しい断片として、順につなぐ。",
+    "flow": "白背景、平面的な流れ図。上に外側の2つの箱『await_handler()(裏のasyncioのループ)』と『非同期イテレータ(SDKの代わり・4断片)』。その下の大きな枠が『@do collect_chunks のループ』で、見出しは矢印と重ねないよう枠の下に置く。枠の中で『chunk = yield Await(anext(iterator, None))』から上のawait_handler()へ実線『Await』、非同期イテレータから点線『1断片か、終わりのNone』で同じ所へ戻る。続く判断『chunk is None ?』の『いいえ』は『text += chunk(空の文字列も断片)』から最初の箱へ戻り、『はい』は『return text』。return textから点線でintroduction(前後の空白を除く)へ、さらに結果『\"はじめに、doeff\"』。下に『Listenで数えた、届いた待ちの依頼』の枠を置き、『1断片ずつ待つ形:4断片+終わり=5回』『丸ごとasync defを包む形:1回』『どちらも本文は同じ。数えても処理は変えない』。収集のループ全体が非同期イテレータの側で動く図にしない。",
+    "caption": "収集のループは@doに残します。次の1断片を待つ所だけを、Awaitで非同期の実装へつなぎます。"
   }
 }
