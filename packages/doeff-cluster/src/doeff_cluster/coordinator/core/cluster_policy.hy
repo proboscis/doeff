@@ -211,7 +211,7 @@
 
 (defn #^ (| int None) resource-version-of [#^ ClusterState state #^ str key]
   "資源 key(<種類>/<名>)の今の版(版の記録が無ければ None)。"
-  (setv meta (.get state.meta key))
+  (setv meta (.row state.meta key))
   (if (is meta None) None meta.resource-version))
 
 

@@ -226,7 +226,7 @@
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
     :board board-rows
-    :meta (dfor #(k v) (.items (.get data "meta" {})) k (resource-meta-from-json v))
+    :meta (table-of (tuple (gfor #(k v) (.items (.get data "meta" {})) (TableWrite k (resource-meta-from-json v)))))
     :revision (.get data "revision" 0)
     :audit (tuple (gfor #(_ event) audit event))
     :audit-seq (.get data "auditSeq" 0)

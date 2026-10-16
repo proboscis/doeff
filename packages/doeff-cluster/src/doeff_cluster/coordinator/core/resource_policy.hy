@@ -20,7 +20,7 @@
 (import dataclasses [replace])
 (import json)
 (import typing [NoReturn])
-(import doeff_hy.table [Table TableWrite])
+(import doeff_hy.table [Table TableWrite draft-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo TaskRecord
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
@@ -693,7 +693,7 @@
                    (frozenset (gfor n after.tasks (key-of "Task" n)))
                    (frozenset (gfor n after.rollouts (key-of "Rollout" n)))
                    (frozenset (gfor n (.keys after.group-limits) (key-of "GroupLimit" n))))
-        unversioned (frozenset (gfor k present :if (not-in k after.meta) k)))
+        unversioned (frozenset (gfor k present :if (is (.row after.meta k) None) k)))
   (| moved unversioned))
 
 
@@ -742,33 +742,33 @@
         pending (lfor key (sorted keys)
                       :setv old (.get b key)
                       :setv new (.get a key)
-                      :if (not (and (= old new) (or (is new None) (in key after.meta))))
+                      :if (not (and (= old new) (or (is new None) (is-not (.row after.meta key) None))))
                       key))
   (when (not pending) (return after))
-  (setv meta (dict after.meta) audit (list after.audit) rev after.revision seq after.audit-seq)
+  (setv meta (draft-of after.meta) audit (list after.audit) rev after.revision seq after.audit-seq)
   (for [key pending]
     (setv old (.get b key) new (.get a key))
     (+= rev 1)
     (+= seq 1)
-    (setv #(kind name) (split-key key) current (.get meta key))
+    (setv #(kind name) (split-key key) current (.row meta key))
     (cond
       (is new None)
-        (do (.pop meta key None)
+        (do (.remove meta key)
             (setv verb "delete" from (if current current.resource-version None) to None
                   generation (if current current.generation None)))
       (or (is old None) (is current None))
         (do (setv verb (if (is old None) "create" "adopt") from None to rev generation 1)
-            (setv (get meta key) (ResourceMeta :resource-version rev :generation 1 :created-by actor :created-ms now
-                                               :updated-by actor :updated-ms now)))
+            (.put meta key (ResourceMeta :resource-version rev :generation 1 :created-by actor :created-ms now
+                                         :updated-by actor :updated-ms now)))
       True
         (do (setv spec-changed (!= (get old "spec") (get new "spec"))
                   verb (if spec-changed "update" "status") from current.resource-version to rev
                   generation (+ current.generation (if spec-changed 1 0)))
-            (setv (get meta key) (replace current :resource-version rev :generation generation :updated-by actor :updated-ms now))))
+            (.put meta key (replace current :resource-version rev :generation generation :updated-by actor :updated-ms now))))
     (.append audit (AuditEvent :seq seq :at now :actor actor :verb verb :kind kind :name name
                                :from-version from :to-version to :generation generation
                                :changes (changed-fields old new))))
-  (replace after :meta meta :revision rev :audit (trim-audit audit) :audit-seq seq))
+  (replace after :meta (.freeze meta) :revision rev :audit (trim-audit audit) :audit-seq seq))
 
 
 (defn #^ ClusterState adopt-legacy [#^ ClusterState state #^ int now #^ ClusterTiming timing]
@@ -807,7 +807,7 @@
 (defn #^ ResourceView resource-view [#^ ClusterState state #^ str key #^ dict snap #^ int now #^ ClusterTiming timing]
   "資源 1 つの画面(JSON は coordinator/protocol/replies が綴る — #2595)。"
   (setv #(kind name) (split-key key) row (get snap key))
-  (ResourceView :kind kind :name name :meta (.get state.meta key) :spec (get row "spec") :status (get row "status")
+  (ResourceView :kind kind :name name :meta (.row state.meta key) :spec (get row "spec") :status (get row "status")
                 :observed (observed-of state kind name now timing)))
 
 
