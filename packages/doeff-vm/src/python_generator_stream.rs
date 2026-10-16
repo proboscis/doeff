@@ -31,9 +31,25 @@ use doeff_vm_core::value::Value;
 /// handle natively, making cycles through effect attributes collectable.
 /// Consequence: direct `EffectBase()` instances have no `__dict__` and
 /// reject attribute assignment — effects must be subclasses (they are).
+/// For the same reason `EffectBase("fetch", url=...)` (`doeff.Effect`) keeps
+/// none of its arguments, so `__new__` refuses them (see `new`).
 #[pyclass(name = "EffectBase", subclass, module = "doeff_vm.doeff_vm")]
 #[derive(Debug)]
 pub struct PyEffectBase;
+
+/// Whether `cls.__init__` is still `object.__init__`, i.e. no `__init__` of
+/// `cls` or its bases takes constructor arguments.
+fn init_is_object_init(cls: &Bound<'_, pyo3::types::PyType>) -> bool {
+    // SAFETY: both are live type objects while `cls` is borrowed; only their
+    // `tp_init` slot pointers are read.
+    let (own, object) = unsafe {
+        (
+            (*cls.as_type_ptr()).tp_init,
+            (*std::ptr::addr_of!(pyo3::ffi::PyBaseObject_Type)).tp_init,
+        )
+    };
+    own.map(|init| init as usize) == object.map(|init| init as usize)
+}
 
 #[pymethods]
 impl PyEffectBase {
@@ -49,13 +65,36 @@ impl PyEffectBase {
         crate::typing_support::class_getitem(cls, item)
     }
 
+    /// `type.__call__` hands `__new__` the same arguments as `__init__`, so
+    /// they are accepted here for a subclass whose `__init__` keeps them (a
+    /// `@dataclass` effect). When `__init__` is still `object.__init__` —
+    /// `EffectBase` itself or a subclass without one — nothing keeps them and
+    /// the handler would receive the effect without them; they are refused,
+    /// as CPython's `object` refuses them.
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
+    #[classmethod]
+    #[pyo3(signature = (*args, **kwargs))]
     fn new(
-        _args: &Bound<'_, pyo3::types::PyTuple>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> Self {
-        Self
+        cls: &Bound<'_, pyo3::types::PyType>,
+        args: &Bound<'_, pyo3::types::PyTuple>,
+        kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Self> {
+        let has_arguments = !args.is_empty() || kwargs.is_some_and(|kwargs| !kwargs.is_empty());
+        if has_arguments && init_is_object_init(cls) {
+            let name = cls.name()?;
+            let holder = if cls.is(cls.py().get_type::<Self>()) {
+                format!("{name} (doeff.Effect)")
+            } else {
+                name.to_string()
+            };
+            return Err(PyTypeError::new_err(format!(
+                "{name}() takes no arguments: {holder} has no __init__ to keep them, so the \
+                 handler would get the effect without them. Hold them in the fields of an \
+                 effect class, e.g. `@dataclass(frozen=True) class Fetch(EffectBase): url: str`, \
+                 and yield `Fetch(url=...)`."
+            )));
+        }
+        Ok(Self)
     }
 
     /// Pickle support: return (copyreg.__newobj__, (cls,), __dict__).

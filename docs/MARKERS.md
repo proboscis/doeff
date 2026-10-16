@@ -54,10 +54,32 @@ def my_interpreter(program):  # doeff: interpreter
 
 3. **`kleisli`** - Composable effect-handling functions (usually with `@do` decorator)
    ```python
+   from dataclasses import dataclass
+
+   from doeff import EffectBase, Resume, do, handler, run
+
+
+   @dataclass(frozen=True)
+   class Fetch(EffectBase):
+       url: str
+
+
    @do
    def fetch_data():  # doeff: kleisli
-       yield Effect("fetch", url="...")
+       return (yield Fetch(url="https://api.example.com/users"))
+
+
+   @do
+   def fake_fetch(effect: Fetch, k):
+       return (yield Resume(k, f"response from {effect.url}"))
+
+
+   print(run(handler(fake_fetch)(fetch_data())))  # response from https://api.example.com/users
    ```
+
+   The arguments of an effect are the fields of its class, so the handler reads `effect.url`.
+   `Effect(...)` (`EffectBase`) has no fields: `Effect("fetch", url="...")` raises `TypeError` in the
+   release after 0.5.0, and 0.5.0 drops the arguments without a word.
 
 ### CLI Auto-Discovery Markers
 
@@ -264,14 +286,55 @@ def optimization_pipeline(  # doeff: transform
 ```
 
 ### Kleisli Composition
+Each step is its own effect class, so the handler tells the three apart by class and reads their fields.
+
 ```python
+from dataclasses import dataclass
+
+from doeff import EffectBase, Resume, do, handler, run
+
+
+@dataclass(frozen=True)
+class Fetch(EffectBase):
+    url: str
+
+
+@dataclass(frozen=True)
+class Process(EffectBase):
+    data: str
+
+
+@dataclass(frozen=True)
+class Save(EffectBase):
+    data: str
+
+
 @do
 def data_pipeline():  # doeff: kleisli
     """Fetch, process, and save data."""
-    data = yield Effect("fetch", url="api.example.com")
-    processed = yield Effect("process", data=data)
-    yield Effect("save", data=processed)
+    data = yield Fetch(url="api.example.com")
+    processed = yield Process(data=data)
+    yield Save(data=processed)
     return processed
+
+
+saved = []
+
+
+@do
+def in_memory(effect: Fetch | Process | Save, k):
+    match effect:
+        case Fetch(url=url):
+            return (yield Resume(k, f"rows from {url}"))
+        case Process(data=data):
+            return (yield Resume(k, data.upper()))
+        case Save(data=data):
+            saved.append(data)
+            return (yield Resume(k, None))
+
+
+print(run(handler(in_memory)(data_pipeline())))  # ROWS FROM API.EXAMPLE.COM
+print(saved)  # ['ROWS FROM API.EXAMPLE.COM']
 ```
 
 ### Class Method Interpreter
