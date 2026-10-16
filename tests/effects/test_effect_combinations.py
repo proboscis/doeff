@@ -11,6 +11,14 @@ import asyncio
 import time
 
 import pytest
+from doeff_core_effects import SlogEffect, WriterTellEffect, slog, writer_log
+from doeff_core_effects.handlers import (
+    listen_handler,
+    slog_discard_handler,
+    state,
+    try_handler,
+    writer,
+)
 
 from doeff import (
     Ask,
@@ -24,6 +32,7 @@ from doeff import (
     Tell,
     Try,
     do,
+    run,
 )
 from tests._run_helpers import run_with_defaults
 
@@ -237,6 +246,193 @@ class TestListenCaptureLaw:
         safe_result = result.value
         assert safe_result.is_err()
         assert isinstance(safe_result.error, ValueError)
+
+
+def _tells(collected) -> list[object]:
+    """The messages of the collected Tell effects, in order."""
+    return [entry.msg for entry in collected]
+
+
+class TestListenNested:
+    """SPEC-EFF-003 "Listen + Listen (nested)": one listen_handler serves every nesting level.
+
+    The inner Listen captures only its own scope; the outer Listen captures its whole scope,
+    including what the inner scope told. A single ``listen_handler`` installed once is enough --
+    it installs itself again around each Listen's sub-program (as ``try_handler`` does for Try).
+    """
+
+    def test_inner_captures_own_scope_and_outer_captures_all(self) -> None:
+        @do
+        def inner():
+            yield Tell("inner1")
+            yield Tell("inner2")
+            return "inner_result"
+
+        @do
+        def middle():
+            yield Tell("middle1")
+            inner_listen = yield Listen(inner())
+            yield Tell("middle2")
+            return inner_listen
+
+        @do
+        def outer():
+            return (yield Listen(middle()))
+
+        # The one listen_handler a program installs, exactly as chapter 03 writes it.
+        value = run(state()(writer(listen_handler(outer()))))
+
+        (inner_value, inner_collected), outer_collected = value
+        assert inner_value == "inner_result"
+        assert _tells(inner_collected) == ["inner1", "inner2"]
+        assert _tells(outer_collected) == ["middle1", "inner1", "inner2", "middle2"]
+
+    def test_nested_listen_works_in_the_default_handler_chain(self) -> None:
+        @do
+        def inner():
+            yield Tell("inner")
+            return "inner_result"
+
+        @do
+        def outer():
+            yield Tell("before")
+            inner_result = yield Listen(inner())
+            yield Tell("after")
+            return inner_result
+
+        @do
+        def program():
+            return (yield Listen(outer()))
+
+        result = run_with_defaults(program())
+        assert result.is_ok()
+        (inner_value, inner_collected), outer_collected = result.value
+        assert inner_value == "inner_result"
+        assert _tells(inner_collected) == ["inner"]
+        assert _tells(outer_collected) == ["before", "inner", "after"]
+
+    def test_three_levels_deep(self) -> None:
+        @do
+        def level3():
+            yield Tell("l3")
+            return "l3_result"
+
+        @do
+        def level2():
+            yield Tell("l2-before")
+            nested = yield Listen(level3())
+            yield Tell("l2-after")
+            return nested
+
+        @do
+        def level1():
+            yield Tell("l1-before")
+            nested = yield Listen(level2())
+            yield Tell("l1-after")
+            return nested
+
+        @do
+        def program():
+            return (yield Listen(level1()))
+
+        value = run(state()(writer(listen_handler(program()))))
+
+        ((l3_value, l3_collected), l2_collected), l1_collected = value
+        assert l3_value == "l3_result"
+        assert _tells(l3_collected) == ["l3"]
+        assert _tells(l2_collected) == ["l2-before", "l3", "l2-after"]
+        assert _tells(l1_collected) == ["l1-before", "l2-before", "l3", "l2-after", "l1-after"]
+
+    def test_sibling_listens_inside_one_listen_capture_separately(self) -> None:
+        @do
+        def part(name):
+            yield Tell(f"{name}-1")
+            yield Tell(f"{name}-2")
+            return name
+
+        @do
+        def parts():
+            first = yield Listen(part("a"))
+            second = yield Listen(part("b"))
+            return first, second
+
+        @do
+        def program():
+            return (yield Listen(parts()))
+
+        value = run(state()(writer(listen_handler(program()))))
+
+        ((first, second), outer_collected) = value
+        assert (first[0], _tells(first[1])) == ("a", ["a-1", "a-2"])
+        assert (second[0], _tells(second[1])) == ("b", ["b-1", "b-2"])
+        assert _tells(outer_collected) == ["a-1", "a-2", "b-1", "b-2"]
+
+    def test_each_level_collects_its_own_types(self) -> None:
+        @do
+        def inner():
+            yield Tell("told")
+            yield slog("logged", step=1)
+            return "inner_result"
+
+        @do
+        def outer():
+            return (yield Listen(inner(), types=(SlogEffect,)))
+
+        @do
+        def program():
+            return (yield Listen(outer(), types=(WriterTellEffect, SlogEffect)))
+
+        value = run(state()(writer(slog_discard_handler(listen_handler(program())))))
+
+        (inner_value, inner_collected), outer_collected = value
+        assert inner_value == "inner_result"
+        assert [(e.msg, e.kwargs) for e in inner_collected] == [("logged", {"step": 1})]
+        assert [type(e) for e in outer_collected] == [WriterTellEffect, SlogEffect]
+
+    def test_entries_of_nested_listens_stay_in_the_writer_log(self) -> None:
+        @do
+        def inner():
+            yield Tell("inner")
+
+        @do
+        def outer():
+            yield Tell("outer-before")
+            yield Listen(inner())
+            yield Tell("outer-after")
+
+        @do
+        def program():
+            yield Listen(outer())
+            return (yield writer_log())
+
+        assert run(state()(writer(listen_handler(program())))) == [
+            "outer-before",
+            "inner",
+            "outer-after",
+        ]
+
+    def test_nested_listen_under_try_keeps_entries_before_the_error(self) -> None:
+        @do
+        def failing_inner():
+            yield Tell("before_error")
+            raise ValueError("intentional failure")
+
+        @do
+        def outer():
+            yield Tell("outer")
+            caught = yield Try(Listen(failing_inner()))
+            return caught
+
+        @do
+        def program():
+            return (yield Listen(outer()))
+
+        value = run(state()(writer(try_handler(listen_handler(program())))))
+
+        (caught, outer_collected) = value
+        assert caught.is_err()
+        assert isinstance(caught.error, ValueError)
+        assert _tells(outer_collected) == ["outer", "before_error"]
 
 
 # ============================================================================
