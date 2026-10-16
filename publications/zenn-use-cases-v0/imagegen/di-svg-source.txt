@@ -1,0 +1,12 @@
+DIの記事（doeff-di.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-16）。
+
+- 正本：../visuals/di-concept.svg と ../visuals/di-flow.svg。
+- 図の仕様：../reviews/di-visuals.json。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
+  - di-concept：幅1600・高さ1880（SVGの枠は横800、2倍で描く）。
+  - di-flow：幅1600・高さ2380（SVGの枠は横800、2倍で描く）。
+- 字形：日本語はIPAゴシック、コードの英数字はDejaVu Sans Mono。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+2026-09-16にimagegenで作ったPNGは、.gitignoreの例外がgenerated/に届かず、リポジトリに入っていなかった。
+同じ画素を作り直せないため、記事の改稿に合わせてSVGで描き直した。携帯の幅でも字が読めるよう、横800の枠に24〜32pxの字で描いた。

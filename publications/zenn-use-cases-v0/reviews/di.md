@@ -40,3 +40,42 @@
 ## 検証範囲と残り
 
 実HTTP・LLM・agent・外部の環境設定・pinjected連携は実行していない。使用した環境変数は記事専用の架空値のみ。製品runtime・共通資料・他記事は変更していない。画像の生成とmanifest/captionsの更新はroot担当へ引き渡す。
+
+## 週4の公開に向けた仕上げ（2026-10-16）
+
+- 担当: 記事の取り組みの週4の担当（card ki-e35175c03800）
+- 確認版: `914ea5629ecbc9ed7af84926310eff312cd4eb12`（doeffのmain）
+- 基準: 記事の書き方の決まり9項目と、[公開計画](../publication-plan.md)の各回の仕上げ基準
+
+### 直したこと
+
+1. 題を「DIの代わりにeffect handler — 依存を外側から渡す」にした。形を、悩み→短いコード→全体の図→本文→まとめ→参考に揃えた。
+2. 冒頭の悩みを1つにした。引数で運ぶ手間と、コンテナに書き方が縛られる事。言葉の表でDI・エフェクト・ハンドラ・Programを説明した。
+3. 自作のハンドラ`test_formatter`の枠を足した。`@handler`・`@do`、依頼の判別、`Resume`、担当外の`Pass`と外側の`reader`の重なりを示す。
+4. まとめに、効く所と儀式になる所の表を置いた。`Ask`で実装を選ぶだけなら能力はDIと同じ事、答え手が無いと実行時に`UnhandledEffect`になる事も書いた。引数で渡すDIを勧める文は消した。
+5. pinjectedの削除の注記と参考のリンクを抜いた。読者に要らないリポジトリの経緯のため。社内の別のprojectの名は、草稿に見当たらなかった。
+6. 参考のリンクが指していた`d4705914e`はリポジトリに無く開けないので、mainの`914ea5629`へ替えた。
+7. 図2枚をSVGで描き直した。imagegenの版はリポジトリに入っておらず、失われていた。作り方は週3と同じ`visuals/render_svg.mjs`で、[di-svg-source.txt](../imagegen/di-svg-source.txt)に書いた。
+8. 完全な例`examples/dependencies.py`を本文の4枠と同じ中身にし、型をキーにする例を足した。
+
+### 9項目の照らし
+
+| 項目 | 結果 |
+| --- | --- |
+| 長さ | 本文3,218字（読者に見える字・空白と表の縦線を除く）。記号とURLを含めると4,466字 |
+| コードの枠 | 5枠（Python4・bash1） |
+| 図 | 2枚。冒頭の短いコードの直後に全体の図 |
+| 言葉 | 冒頭の表でDI・エフェクト・ハンドラ・Programを説明 |
+| 口調 | です・ます。60字を越える文0 |
+| 形 | 悩み→短いコード→全体の図→本文→まとめ→参考 |
+| 数字 | 取得4回・作成2回はassertで確かめた値。検証の日と版を参考に書いた |
+| 秘密 | APIキー・トークン・個人の情報・社内の機体やprojectの名は無い。環境変数は架空の値 |
+| 公開の前の確認 | `published: false`のまま。公開の許しを利用者に問う |
+
+### 検証
+
+- 本文のPython4枠を順に同じ名前空間で実行: 4枠とも成功。
+- `uv run python publications/zenn-use-cases-v0/examples/dependencies.py`: 成功。
+- `uv run ruff check publications/zenn-use-cases-v0/examples/dependencies.py`: 成功。
+- `verify_comments.py`: 成功。
+- `verify_publication.py`: 他の記事の43枚のPNGがリポジトリに無いため、画像の組の検査で失敗する（mainでも同じ）。同じ検査をDIの記事と図2枚に絞ると成功した。

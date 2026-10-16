@@ -1,69 +1,105 @@
 ---
-title: "DIも同じ@doで — doeffで依存を外側から渡す"
+title: "DIの代わりにeffect handler — 依存を外側から渡す"
 emoji: "🔁"
 type: "tech"
 topics: ["python", "doeff", "設計"]
 published: false
 ---
 
-依存性注入（DI）は、処理が使う実装を外側から渡す設計です。doeffでは、必要な依存を`Ask`で要求し、ハンドラが値や処理を供給します。取得した処理も`@do`なら、`yield`でそのまま合成できます。
+処理の奥で使う実装を、テストと本番で替えたいことがあります。引数で渡すと、自分では使わない途中の関数まで依存を運びます。DIのコンテナを入れると、今度は処理の書き方がコンテナに縛られます。
 
-## 同じ処理へ、異なる実装を渡す
+この記事では、Pythonのライブラリdoeffで、依存を外側から渡します。処理の側は「この実装がほしい」と依頼を書くだけです。どの実装を渡すかは、外側に取り付けたハンドラが決めます。最後に、この書き方が効く所と、儀式になる所を整理します。
 
-記事の見出しを整える処理を差し替えます。`FormatTitleFn`は、文字列を受け取り、文字列を返す`Program`を作るという契約です。この型を`Ask`のキーにも使います。
+| 言葉 | この記事での意味 |
+| --- | --- |
+| DI（依存性注入） | 処理が使う実装を、処理の外側から渡す設計です |
+| エフェクト（effect） | 処理が外側へ出す依頼です。この記事では主に`Ask`（値をください）を使います |
+| ハンドラ（handler） | 依頼を受け取り、答えを返して処理の続きを動かす部品です |
+| `Program` | `@do`の関数を呼ぶとできる、まだ動いていない処理です |
 
-以下の`run`と`assert`は動作を確認するための実行境界です。処理を組み立てる関数の内側では、子の`Program`を`yield`します。
+## まず短いコード：実装を依頼し、外側から渡す
 
 ```python
-from typing import Protocol  # 整形処理に必要な呼び出し契約を表す。
-
-from doeff import Program, do, run  # Programを合成し、確認の境界で実行する。
-from doeff_core_effects import Ask  # 利用したい依存をハンドラへ要求する。
-from doeff_core_effects.handlers import reader  # 外側で選んだ依存を供給する。
+from doeff import do, run  # 処理を定義し、確認の境界で実行する。
+from doeff_core_effects import Ask  # 必要な実装を外側へ依頼する。
+from doeff_core_effects.handlers import reader  # 辞書から値を渡すハンドラを使う。
 
 
-class FormatTitleFn(Protocol):  # 処理の種類を表す型をAskのキーにも使う。
-    def __call__(self, text: str) -> Program[str]: ...  # 見出しを返すProgramを要求する。
+@do  # 呼ぶと、まだ動いていない処理(Program)ができる。
+def make_title(text: str):  # 見出しの整え方は、この関数の中で決めない。
+    formatter = yield Ask("formatter")  # 整形の実装を外側へ依頼する。
+    return (yield formatter(text))  # 受け取った実装を動かし、見出しの文字列を返す。
 
 
-@do  # 装飾しない実装も、呼び出すとProgramになる。
-def plain_title(text: str):  # 加工対象の見出しは通常の引数で受け取る。
-    return text  # 実行すると入力と同じ見出しを返す。
+@do  # テスト用の実装も、呼ぶとProgramになる。
+def plain_title(text: str):  # 加工する見出しは通常の引数で受け取る。
+    return text  # 入力と同じ見出しを返す。
 
 
-@do  # 装飾する実装を、同じProgramの契約で提供する。
-def bracketed_title(text: str):  # 同じ入力型で実装を差し替えられる。
-    return f"【{text}】"  # 実行すると括弧付きの見出しを返す。
+@do  # 本番用の実装を、同じ呼び方で提供する。
+def bracketed_title(text: str):  # 入力の型はテスト用と同じにする。
+    return f"【{text}】"  # 括弧で囲んだ見出しを返す。
 
 
-@do  # 依存の取得と、取得した処理の実行を合成する。
-def make_title(text: str):  # 呼び出し元は具体的な整形実装を渡さなくてよい。
-    formatter: FormatTitleFn = yield Ask(FormatTitleFn)  # ハンドラから整形処理を受け取る。
-    return (yield formatter(text))  # そのProgramを実行し、見出しの文字列を返す。
-
-
-plain = reader(env={FormatTitleFn: plain_title})(make_title("新着記事"))  # 無装飾を供給する。
-bracketed = reader(env={FormatTitleFn: bracketed_title})(make_title("新着記事"))  # 括弧版を供給する。
-assert run(plain) == "新着記事"  # 同じ利用側から無装飾の見出しが得られる。
-assert run(bracketed) == "【新着記事】"  # 実装だけを替えると装飾が変わる。
+test_run = reader(env={"formatter": plain_title})(make_title("新着記事"))  # テスト用を渡す。
+prod_run = reader(env={"formatter": bracketed_title})(make_title("新着記事"))  # 本番用を渡す。
+assert run(test_run) == "新着記事"  # テスト用の実装では、見出しがそのまま返る。
+assert run(prod_run) == "【新着記事】"  # 外側を替えるだけで、括弧付きの見出しになる。
 ```
 
-`make_title`の中に実装の選択はありません。入力の見出しは通常の引数で渡し、整形の実装はハンドラから取得します。この規模なら関数の引数で渡す方法でも十分ですが、依存が呼び出しの奥に増えても、中間の関数で一つずつ運ぶ必要を減らせます。
+`make_title`の中には、どの実装を使うかが書かれていません。`yield Ask("formatter")`で、整形の実装を外側へ依頼するだけです。`reader`は、渡した辞書から値を返すハンドラです。辞書を替えると、同じ`make_title`から違う見出しが得られます。
 
-![依存を求め、受け取った処理をyieldでつなぐ](/images/zenn-use-cases-v0/generated/di-concept.png)
+渡す実装も`@do`の関数です。そのため`yield formatter(text)`で、受け取った処理をそのまま動かせます。実装の中で別の依頼を出しても、同じ外側のハンドラの組が答えます。
 
-`Ask`で実装を受け取り、その実装が返す`Program`を`yield`します。外側の辞書を替えると、同じ利用側から異なる見出しが得られます。
+![処理は依頼を書き、外側のハンドラが実装を選ぶ](/images/zenn-use-cases-v0/generated/di-concept.png)
 
-## 遅延解決とログも、同じ@doに収まる
+処理のコードは1つです。外側のハンドラだけを替えると、テスト用と本番用の実装が入れ替わります。
 
-`reader`は辞書の値をそのまま渡します。一方、`lazy_ask`は辞書に入れた`Program`を、最初に要求されたときに実行して結果を再利用します。`Local(env, program)`は、その子の計算の範囲だけ環境を上書きします。ここでは`lazy_ask`が`Ask`と`Local`の両方を処理します。
+## ハンドラの中身：readerがしていること
 
-次の例では挨拶を4回取得します。通常の挨拶を2回、`Local`の中で夕方の挨拶を1回、外に戻って通常の挨拶を1回です。作成するたびに`Tell`で接頭辞を記録し、結果の再利用をログから確認します。
+`reader`は特別な仕組みではありません。同じ働きのハンドラを、自分で書けます。次の`test_formatter`は、整形の依頼にだけテスト用の実装を返します。前の例の`make_title`と`plain_title`をそのまま使います。
 
 ```python
-from doeff import do, run  # 挨拶のProgramを合成し、結果を確認する。
-from doeff_core_effects import Ask, Local, Tell  # 依存の要求・局所変更・作成ログを表す。
-from doeff_core_effects.handlers import lazy_ask, state, writer, writer_log  # 解決と記録を担当する。
+from doeff import Pass, Resume, handler, with_handlers  # 依頼の再開・委譲と取り付けに使う。
+
+
+@handler  # この関数を、Programに取り付けられるハンドラにする。
+@do  # ハンドラ自身もyieldで再開や委譲を指示する。
+def test_formatter(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
+    if isinstance(effect, Ask) and effect.key == "formatter":  # 整形の依頼だけを担当する。
+        return (yield Resume(k, plain_title))  # テスト用の実装を渡し、続きを動かす。
+    return (yield Pass(effect, k))  # 担当外の依頼は、外側のハンドラへ渡す。
+
+
+@do  # 見出しとサイト名を組み合わせる処理。
+def make_heading(text: str):  # 依存の渡し方は、この関数も知らない。
+    title = yield make_title(text)  # 前の例の処理を、yieldでそのまま合成する。
+    site = yield Ask("site")  # サイト名も外側へ依頼する。
+    return f"{title} | {site}"  # 2つの答えを1行の見出しにまとめる。
+
+
+inner = with_handlers([test_formatter], make_heading("新着記事"))  # 内側に自作のハンドラを付ける。
+outer = reader(env={"site": "技術ブログ"})(inner)  # サイト名は外側のreaderが答える。
+assert run(outer) == "新着記事 | 技術ブログ"  # 2つの依頼に、別々のハンドラが答える。
+```
+
+ハンドラは、届いた依頼`effect`と、止まった処理の続き`k`を受け取ります。`isinstance`とキーで、自分が担当する依頼かを判別します。担当する依頼なら、`Resume(k, 値)`で値を渡し、続きを動かします。担当外の依頼は、`Pass(effect, k)`で外側のハンドラへ渡します。
+
+この例では、内側の`test_formatter`が整形の依頼に答えます。サイト名の依頼は外側へ渡り、`reader`が答えます。ハンドラを重ねる順番が、どの依頼に誰が答えるかを決めます。
+
+DIのコンテナと比べると、違いは処理の側の書き方に出ます。`make_heading`は、コンテナにも`test_formatter`にも依存していません。依存を求める書き方は、どの渡し方でも`yield Ask(...)`の1つです。キーには文字列のほか、型などハッシュできる値も使えます。
+
+## 遅れて決まる依存とログも、同じ書き方に収まる
+
+DIのコンテナには、依存を初めて使う時に作り、以後は使い回す機能があります。doeffでは`lazy_ask`ハンドラが、その役を担います。辞書に入れた`Program`を、最初に要求された時に実行します。その結果は、同じ範囲の次の要求で再利用します。
+
+`Local(env, program)`は、子の処理の範囲だけ環境を上書きします。ここでは`lazy_ask`が、`Ask`と`Local`の両方を処理します。
+
+次の例では、挨拶を4回取得します。通常の挨拶を2回取得し、`Local`の中で夕方の挨拶を1回取得します。最後に外へ戻り、通常の挨拶をもう1回取得します。挨拶を作るたびに`Tell`で接頭辞を記録し、作った回数をログで数えます。
+
+```python
+from doeff_core_effects import Local, Tell  # 依存の局所変更と、作成ログの依頼を使う。
+from doeff_core_effects.handlers import lazy_ask, state, writer, writer_log  # 解決と記録を担う。
 from doeff_core_effects.scheduler import scheduled  # 遅延解決の排他制御を実行する。
 
 
@@ -104,17 +140,19 @@ assert local == "こんばんは、読者のみなさん"  # Local内だけ変�
 assert built == ["こんにちは、", "こんばんは、"]  # 取得4回に対し作成は2回で済む。
 ```
 
-`built`が2件なのは、2回目と4回目の通常の挨拶が保存済みの結果を使うためです。夕方の挨拶は、依存している`prefix`が`Local`内で変わるので、その範囲で別に解決されます。外へ出ると通常の結果を使えます。
-
-この再利用は、作成した`lazy_ask`ハンドラが持つメモリ上のキャッシュです。プロセスを越える保存は[Memoとdurable executionの記事](doeff-durable.md)で扱います。また、`lazy_ask`が解決を調整するために使うセマフォは、外側の`scheduled`が処理します。`Tell`の記録には`writer`と、その保存先になる`state`を組み合わせています。
+`built`が2件なのは、2回目と4回目の取得が作成済みの結果を使うためです。夕方の挨拶は、依存する`prefix`が`Local`の中で変わるので、別に作られます。`Local`を出ると、外側で作った通常の挨拶をまた使えます。
 
 ![同じ範囲では再利用し、Localの中だけ作り直す](/images/zenn-use-cases-v0/generated/di-flow.png)
 
 取得は4回、作成は2回です。`Local`の内側で依存する値を変更しても、外側の挨拶は通常のまま使えます。
 
+依存を作る処理の中のログも、同じ`yield`で書けます。`Tell`の依頼は`writer`が受け、記録の置き場は`state`が持ちます。`lazy_ask`は、同じ依存を同時に作らないようにセマフォを使います。そのセマフォの依頼は、外側の`scheduled`が処理します。
+
+この再利用は、`lazy_ask`ハンドラが持つメモリ上のキャッシュです。プロセスを越える保存は、[Memoと永続実行の記事](doeff-durable.md)で扱います。
+
 ## 依存の供給元も、ハンドラで組み合わせる
 
-実行環境との接続が必要なら、`env_var_ask`を外側へ取り付けられます。本文の処理は`os.environ`を直接読みません。前節の`read_greeting`に対して、テスト中だけ架空の環境変数を供給します。
+設定を環境変数から読みたい時は、`env_var_ask`を外側に取り付けます。処理の側は、`os.environ`を直接読みません。前の節の`read_greeting`へ、テストの間だけ架空の環境変数を渡します。
 
 ```python
 from unittest.mock import patch  # 架空の環境変数をテスト中だけ設定する。
@@ -128,17 +166,31 @@ with patch.dict("os.environ", {"ARTICLE_DEMO_greeting": "環境からの挨拶"}
     assert run(scheduled(sourced)) == "環境からの挨拶"  # 供給元を替えても利用側は同じ。
 ```
 
-この構成では、`lazy_ask`の空の辞書で見つからなかったキーが外側へ渡り、`env_var_ask`が`ARTICLE_DEMO_greeting`を読みます。通常の文字列は文字列のまま返り、数値などへ自動変換されません。供給元を変更しても、`read_greeting`のコードは同じです。
+`lazy_ask`の空の辞書で見つからないキーは、外側のハンドラへ渡ります。外側の`env_var_ask`が、接頭辞を付けた`ARTICLE_DEMO_greeting`を読んで答えます。値は文字列のまま返り、数値などへは自動で変換されません。供給元を替えても、`read_greeting`のコードは同じです。
 
-## DIで得た処理と、エフェクトの境界
+## まとめ：DIとeffectの境目
 
-冒頭の`Ask(FormatTitleFn)`は、整形処理を取得するエフェクトです。続く`yield formatter(text)`は、取得した`@do`のProgramを合成しています。`bracketed_title`の文字列加工そのものは、普通のPythonの計算です。
+### 依存の受け取りと、処理の中身は別のもの
 
-同様に、`Ask`でAPIクライアントを取得しても、そのクライアントの通信が自動で記録・再生可能になるわけではありません。通信を差し替えたい場合は、操作を`HttpRequest`などのエフェクトで表し、HTTPハンドラへ渡します。実際のコードは[HTTPとMemoを合成する例](doeff-replay.md)を参照してください。
+冒頭の`Ask("formatter")`は、整形の実装を受け取る依頼です。続く`yield formatter(text)`は、受け取った`@do`の処理を合成しています。括弧で囲む文字列の加工そのものは、普通のPythonの計算です。
 
-現行のリポジトリでは`doeff-pinjected`パッケージは削除済みです。この記事では、現行の`Ask`・`reader`・`lazy_ask`を使います。古いpinjected連携のサンプルを、そのまま現行APIとして扱わないようにしています。
+同じように、`Ask`でAPIのクライアントを受け取っても、通信は記録も再生もされません。通信を差し替えたい時は、操作を`HttpRequest`などの依頼で表します。例は[HTTPとMemoを合成する記事](doeff-replay.md)にあります。
 
-[全体を実行できる例](examples/dependencies.py)もリポジトリに保存しています。依存の供給から、[状態や失敗の合成](doeff-composition.md)、[ハンドラの合成](doeff-handlers.md)まで、同じ`@do`の書き方でつなげられます。
+### 効く所と、儀式になる所
+
+| 場面 | 向き | 訳 |
+| --- | --- | --- |
+| 同じ処理を、テストと本番など2通り以上で動かす | 効く | 外側のハンドラの組だけを替えれば済みます |
+| 依存が呼び出しの奥で要る | 効く | 途中の関数が依存を受け取って運ぶ必要がありません |
+| 範囲を区切って依存を上書きしたい | 効く | `Local`で、子の処理だけ替えられます |
+| 一通りにしか動かさない小さな処理 | 儀式 | 替える物が無く、依頼の種類が増えるだけです |
+| 速さが要るループの内側 | 儀式 | 依頼のたびにハンドラを通る手間がかかります |
+
+`Ask`で実装を選ぶだけなら、できる事はDIと同じです。違いは、選ぶ場所と届け方にあります。同じ処理を、実行ごとやテストごとに別のハンドラの組で動かせます。依存は途中の関数を通らず、外側の環境から届きます。
+
+代わりに、依存が関数の引数として見えません。答えるハンドラが無いと、実行して初めて`UnhandledEffect`のエラーになります。doeffには、処理の依頼とハンドラの組を静的に突き合わせる道具もあります。[doeff-effect-analyzer](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-effect-analyzer/README.md)ですが、この記事では試していません。
+
+[全体を実行できる例](examples/dependencies.py)もリポジトリにあります。状態や失敗の合成は[抽象の合成の記事](doeff-composition.md)で扱います。ハンドラの重ね方は[ハンドラ合成の記事](doeff-handlers.md)で扱います。
 
 ---
 
@@ -146,9 +198,16 @@ with patch.dict("os.environ", {"ARTICLE_DEMO_greeting": "環境からの挨拶"}
 
 ## 参考資料・検証版
 
-導入方法は[公式README](https://github.com/proboscis/doeff#installation)を参照してください。以下はこの記事で確認した開発版へのリンクです。公開パッケージの最新版との一致は別途確認が必要です。
+導入方法は[公式README](https://github.com/proboscis/doeff#installation)を参照してください。この記事のコードは、2026-10-16にdoeffの開発版`914ea562`で実行して確かめました。どの例も固定のハンドラと架空の環境変数で動かし、外部のサービスには接続していません。公開パッケージの最新版で同じように動くかは、別に確かめる必要があります。
 
-- [Ask・Localの定義](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/packages/doeff-core-effects/doeff_core_effects/effects.py)
-- [reader・lazy_ask・env_var_ask・writerの実装](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/packages/doeff-core-effects/doeff_core_effects/handlers.py)
-- [遅延解決とLocalの検証](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/tests/effects/test_lazy_ask.py)
-- [pinjected連携の削除契約](https://github.com/proboscis/doeff/blob/d4705914e39740aee98a9f57a4535c463d9479cc/tests/core/test_pinjected_removal.py)
+リポジトリで環境を作った後、全体の例を次の命令で実行できます。
+
+```bash
+uv run python publications/zenn-use-cases-v0/examples/dependencies.py  # 記事の4つの例をまとめて確かめる。
+```
+
+- [Ask・Local・Tellの定義](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-core-effects/doeff_core_effects/effects.py)
+- [reader・lazy_ask・env_var_ask・writerの実装](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-core-effects/doeff_core_effects/handlers.py)
+- [遅延解決とLocalの検証](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/tests/effects/test_lazy_ask.py)
+- [ハッシュできるキーの検証](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/tests/misc/test_reader_hashable_keys.py)
+- [effectとDIの比較（英語）](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/docs/20-why-effects-over-di.md)

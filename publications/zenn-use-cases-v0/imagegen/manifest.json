@@ -126,30 +126,26 @@
   {
     "id": "di-concept",
     "image": "images/zenn-use-cases-v0/generated/di-concept.png",
-    "generation_prompt": "di-concept-flat-code.txt",
-    "edit_prompts": [
-      "di-concept-flat-code-edit.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "809d3d66e60bb96ae399b12b1d4809de35f1f05d838a6cb2aed246351c1e4b15",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1801604,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "di-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "c8f1eba6b5996cfa205f83c11fa1b19a5870fba62253634f8e10ef47b89bd3d0",
+    "width": 1600,
+    "height": 1880,
+    "bytes": 181834,
+    "review": "2026-10-16：週4の改稿のコード（make_title・reader・plain_title・bracketed_title）と名前・値・矢印を目視確認。白背景の平面図として採用。"
   },
   {
     "id": "di-flow",
     "image": "images/zenn-use-cases-v0/generated/di-flow.png",
-    "generation_prompt": "di-flow-flat-code.txt",
-    "edit_prompts": [
-      "di-flow-flat-code-edit.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "b9ee3577866cc0ff489bbdf16c5d45da1b8903ec09a6690a4ac81948d4a6c5b3",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1725225,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "di-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "0e27b6717474aca8c0bedca93ac9dbaed96c97b2a36d19fb08dde4f952a02ce0",
+    "width": 1600,
+    "height": 2380,
+    "bytes": 257790,
+    "review": "2026-10-16：週4の改稿のコード（read_greeting・Local・Tell・built）と名前・値・順番を目視確認。白背景の平面図として採用。"
   },
   {
     "id": "durable-concept",
