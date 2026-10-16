@@ -1262,6 +1262,17 @@
     True task))
 
 
+(defn #^ dict changed-rows-over [#^ dict original #^ dict rows]
+  "純粋: rows(original を写して書き直した dict — 行の鍵は original と同じ)のうち、original の行と違う行だけを original へ重ねた dict。
+   違う行が無ければ original を同じ object で返す(durable-delta の tasks の組が飛ぶ — Q3)。値が等しいだけで object の違う行は
+   元の object のまま残す。"
+  (setv changed (dfor #(id t) (.items rows)
+                      :setv old (.get original id)
+                      :if (not (or (is t old) (= t old)))
+                      id t))
+  (if changed (| original changed) original))
+
+
 (defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
                                    #^ bool [stopping False]]
   "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。
@@ -1270,7 +1281,8 @@
    (#2976 の I-3 の赤 R5): 止まり始めた worker は新しい task を始めない(worker/core/program の worker-tick は止まりの拍で宣言を
    空として扱う)ので、残すと lease まで止まる。積みと名乗りが同じ刻に届いた時に受ける順は決まっていない(本番の到着の順)ので、
    名乗りを先に受けた時だけ塞ぐ drain(drain_policy.absorb-stopping)では足りない。避ける worker(avoid)には足さない — 同じ名の
-   次の世代には置いてよい。"
+   次の世代には置いてよい。
+   写す行が無ければ state.tasks を同じ object で返し、写した行だけ新しい object にする(他の行は元の object — Q3)。"
   (setv tasks (dict state.tasks))
   (for [status statuses]
     (setv name status.name)
@@ -1301,7 +1313,7 @@
                                 (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた — 走らせ直さない" worker))
                   (replace task :phase "queued" :worker None :boot None :started-ms None
                            :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker)))))))
-  tasks)
+  (changed-rows-over state.tasks tasks))
 
 
 (defk absorb-task-result [state id body now]
@@ -1339,10 +1351,11 @@
    process の世代の heartbeat だけ。別の世代の heartbeat では何もしない — 置いた世代の process が消えていれば lease 切れで lost
    (settle-detached・走らせ直さない)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が並んで
    動く間(旧い Pod の preStop の drain)は、旧い世代の heartbeat が新しい世代に置いた task を失わせた。"
-  (dfor #(id t) (.items tasks)
-        id (if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
-               (replace t :lease-until-ms (+ now t.lease-ms))
-               t)))
+  (setv renewed (dfor #(id t) (.items tasks)
+                      :if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
+                      id (replace t :lease-until-ms (+ now t.lease-ms))))
+  ;; 延ばす行が無ければ同じ object(担わない worker の heartbeat — Q3)。
+  (if renewed (| tasks renewed) tasks))
 
 
 ;; --- 1 拍の調停 ------------------------------------------------------------------------
@@ -1809,10 +1822,11 @@
 
 (defn #^ dict promote-prepared [#^ dict tasks #^ WorkerInfo worker]
   "純粋: worker が env を準備済みと名乗った拍に、その worker の preparing の task を assigned へ進める。"
-  (dfor #(id t) (.items tasks)
-        id (if (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
-               (replace t :phase "assigned")
-               t)))
+  (setv promoted (dfor #(id t) (.items tasks)
+                       :if (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
+                       id (replace t :phase "assigned")))
+  ;; 進める行が無ければ同じ object(Q3)。
+  (if promoted (| tasks promoted) tasks))
 
 
 (defn #^ tuple warms-for [#^ ClusterState state #^ str worker #^ int now]
