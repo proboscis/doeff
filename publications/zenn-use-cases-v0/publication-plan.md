@@ -20,7 +20,7 @@
 | 4 | [DI](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |
 | 5 | AIの会話を最大50並べて1人で開発する(`doeff-fleet.md`・これから書く) | `doeff-fifty-ai-conversations` | AIの会話を最大50並べて、1人でdoeffと周りの仕組みを開発した記録を読む | 下書き |
 | 6 | [外部APIのテストを、通信せずに回す](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 下書き |
-| 7 | backtestの設計(`doeff-backtest.md`・これから書く) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 下書き |
+| 7 | [backtestの設計](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 下書き |
 | 8 | AIに要る時だけ規則を見せるhook(`doeff-hooks.md`・これから書く) | `doeff-ai-rule-hooks` | AIが決まりを読み落とす時に、要る場面でだけ規則を見せる | 下書き |
 | 9 | [async/awaitがあるのに、なぜyieldか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 下書き |
 | 10 | 設計の記録をテストとして走らせる(`doeff-adr.md`・これから書く。元は`doeff-tooling.md`のADRの節) | `doeff-executable-adr` | 設計の決まりが崩れないよう、例と規則を書いた設計の記録をテストとして走らせる | 下書き |
