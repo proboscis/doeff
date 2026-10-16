@@ -870,7 +870,9 @@
         "doeff-cluster-worker-warm-host",
         "doeff-cluster-worker-warm-rules",
         "doeff-cluster-native-wheel",
-        "doeff-cluster-worker-places"
+        "doeff-cluster-worker-places",
+        "doeff-cluster-worker-memory-watch",
+        "doeff-core-effects-handlers"
       ],
       "layer": "runtime",
       "name": "doeff-cluster-main",
@@ -1526,7 +1528,10 @@
         "doeff-cluster-due-model",
         "doeff-cluster-due-policy",
         "doeff-cluster-wake-policy",
-        "doeff-cluster-worker-due"
+        "doeff-cluster-worker-due",
+        "doeff-cluster-worker-memory-rules",
+        "doeff-cluster-worker-memory-watch",
+        "doeff-core-effects-effects"
       ],
       "exclude": [
         "packages/doeff-cluster/tests/fixtures/independence/*"
@@ -2135,7 +2140,8 @@
         "doeff-cluster-worker-observations",
         "doeff-cluster-worker-warm-rules",
         "doeff-cluster-worker-due",
-        "doeff-cluster-due-model"
+        "doeff-cluster-due-model",
+        "doeff-cluster-worker-memory-rules"
       ],
       "layer": "io",
       "name": "doeff-cluster-worker-process-host",
