@@ -2,13 +2,13 @@
 ;;; 各言い換え(外側に置く)の観測を問うて 1 つの WorldView にまとめて答える: 版ごとのコードの木 = worker/protocol/code_store(#2466)・
 ;;; 実行環境の root = worker/protocol/env_store(#2467)・job の子 process = worker/protocol/process_host(#2464)・入口の検め =
 ;;; worker/protocol/probes(#2465)・root ごとの待ちの子 = worker/protocol/warm_host(#3646)・この Pod の止まり = worker/protocol/leaving_observer
-;;; (AL-D2p)。I/O を持たない。
+;;; (AL-D2p)・機体の memory の逼迫 = worker/protocol/memory_observer(card ki-7b934e2538f9)。I/O を持たない。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_cluster.worker.intent.worker_model [ObserveWorld WorldView EnvDisk
 ])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving])
+  ObserveLeaving ObserveMemoryTight])
 
 
 (defhandler local-host
@@ -21,4 +21,5 @@
     (<- disk EnvDisk (ObserveEnvDisk))
     (<- children tuple (ObserveWarmChildren))
     (<- leaving bool (ObserveLeaving))
-    (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving))))
+    (<- tight bool (ObserveMemoryTight))
+    (resume (WorldView (+ codes envs) processes probed :env-disk disk :warm-children children :leaving leaving :memory-tight tight))))

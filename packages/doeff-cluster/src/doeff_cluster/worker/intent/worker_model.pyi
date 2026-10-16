@@ -119,6 +119,7 @@ class WorldView:
     env_disk: EnvDisk | None = None
     warm_children: tuple[WarmChildView, ...] = ()
     leaving: bool = False
+    memory_tight: bool = False
 
 class StopStage(Enum):
     TERM = "term"
@@ -180,6 +181,7 @@ class StartHold(StrEnum):
     HANDOFF_ABANDONED = "handoff-abandoned"
     ELDER_RUNS = "elder-runs"
     LEAVING = "leaving"
+    MEMORY_TIGHT = "memory-tight"
 
 # --- 待ちの子(#3646)-------------------------------------------------------------
 
