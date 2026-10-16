@@ -33,7 +33,28 @@ where
         }
         work(item)
     };
-    items.iter().map(run).collect()
+    let workers = READERS.min(items.len());
+    if workers < SERIAL_BELOW {
+        return items.iter().map(run).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    let pull = || loop {
+        let index = next.fetch_add(1, Ordering::Relaxed);
+        let Some(item) = items.get(index) else { break };
+        let result = run(item);
+        *slots[index].lock().expect("fan_out の結果の置き場") = Some(result);
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..workers {
+            // thread を起こせない機体(pid の上限など)でも止まらない — 起こせた分と呼び手の thread で全部読み切る。
+            if std::thread::Builder::new().spawn_scoped(scope, &pull).is_err() {
+                break;
+            }
+        }
+        pull();
+    });
+    slots.into_iter().map(|slot| slot.into_inner().expect("fan_out の結果の置き場").expect("fan_out は全部の item の結果を置く")).collect()
 }
 
 /// 検が置く観測 — `fan_out` の仕事が同時に何件進んだかを数える(読みが本当に重なっているかを、時計に頼らず確かめる)。
