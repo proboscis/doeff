@@ -902,7 +902,7 @@
 
 
 (defk placed-claims [tasks]
-  {:pre [(: tasks dict)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: tasks (get Table TaskRecord))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "置いている(PLACED-PHASES の)task の組の名乗りと置いた worker の組 #(limits worker) を、task 1 本につき 1 つ並べるため(組の上限の
    数えが task の行から読むのはここだけ — 送り手の他の欄を数えに入れさせない。設計のレビューの指摘 2-a・引数と答えは
    test_group_limits_owner が固定する)。"
@@ -1086,14 +1086,14 @@
   (and task.detached (in task.phase DETACHED-TERMINAL)))
 
 
-(defn #^ list scan-rows [#^ dict tasks]
+(defn #^ list scan-rows [#^ (get Table TaskRecord) tasks]
   "走査の対象の行(held-task? でない行 — 結果を保持しているだけの切り離した終わりを除く)を id の順で。数え・並べの読みが保持側の行を回さないため
    (task-split の走査の対象と同じ行 — 期限の最小は要らない読みの口)。"
-  (lfor t (.values tasks) :if (not (held-task? t)) t))
+  (lfor t (.rows tasks) :if (not (held-task? t)) t))
 
 
 (defk task-split [tasks now]
-  {:pre [(: tasks dict) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: tasks (get Table TaskRecord)) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "1 走査で tasks を、走査の対象の行(held-task? でない行 — id の順を保つ dict)と、保持側の最小期限(task-lapse-at と同じ式 —
    終わった刻 finished-ms を持たない行は除く。無ければ None)に分けるため。#(走査の対象 最小期限) を返す。"
   (setv live {})
@@ -1116,7 +1116,7 @@
 
 
 (defk place-tasks [now state placements timing]
-  {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % dict)]
+  {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % (get Table TaskRecord))]
    :tags {:context "coordinator" :role "judgment"}}
   "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。"
   ;; 結果を保持しているだけの行(切り離した終わり)は走査しない — 保持側の最小期限が来た拍だけ 1 周して期限切れを落とす。
@@ -1152,12 +1152,12 @@
   ;; 待っている task が無ければ、置く判断(負荷・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
   ;; 模擬の拍の大半だった(#2655 の profile: replace 135,053 回・2.3 秒)。
   (when (not (any (gfor t (.values tasks) (= t.phase "queued"))))
-    (return tasks))
-  (setv placed (replace state :tasks tasks))
+    (return (tasks-rewritten state.tasks tasks)))
+  (setv placed (replace state :tasks (tasks-rewritten state.tasks tasks)))
   (setv load (load-of placed placements)
         draining (draining-workers state now))
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
-  (var held (! (limit-holdings (! (placed-claims tasks)) state.group-limits)))
+  (var held (! (limit-holdings (! (placed-claims placed.tasks)) state.group-limits)))
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted tasks :key (fn [i] #((- (. (get tasks i) priority)) i)))]
     (setv task (get tasks id))
@@ -1239,7 +1239,7 @@
                                                      (list task.needs) names limit-s))
                     task.detached (end-detached task (unplaceable-phase task state now timing) now ended)
                     True (replace task :phase "failed" :finished-ms now :detail ended)))))))
-  tasks)
+  (tasks-rewritten state.tasks tasks))
 
 
 (defn #^ bool same-boot [#^ TaskRecord task #^ (| str None) boot]
@@ -1301,18 +1301,27 @@
     True task))
 
 
-(defn #^ dict changed-rows-over [#^ dict original #^ dict rows]
-  "純粋: rows(original を写して書き直した dict — 行の鍵は original と同じ)のうち、original の行と違う行だけを original へ重ねた dict。
+(defn #^ (get Table TaskRecord) changed-rows-over [#^ (get Table TaskRecord) original #^ dict rows]
+  "純粋: rows(original を写して書き直した dict — 行の鍵は original と同じ)のうち、original の行と違う行だけを original へ重ねた表。
    違う行が無ければ original を同じ object で返す(durable-delta の tasks の組が飛ぶ — Q3)。値が等しいだけで object の違う行は
    元の object のまま残す。"
-  (setv changed (dfor #(id t) (.items rows)
-                      :setv old (.get original id)
-                      :if (not (or (is t old) (= t old)))
-                      id t))
-  (if changed (| original changed) original))
+  (.with-writes original (tuple (gfor #(id t) (.items rows)
+                                      :setv old (.row original id)
+                                      :if (not (or (is t old) (= t old)))
+                                      (TableWrite id t)))))
 
 
-(defn #^ dict absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
+(defn #^ (get Table TaskRecord) tasks-rewritten [#^ (get Table TaskRecord) original #^ dict rows]
+  "純粋: rows(original を写して書き直した dict — 消した行は無く、行の鍵は original の部分集合)を original へ当てた表。original の行と
+   違う行(object が違い値も違う行)だけ書き、rows に無い original の行は消す。何も変わらなければ original を同じ object で返す
+   (place-tasks の答えが前の表のまま — 値が等しいだけで object の違う行は元の object のまま残す)。"
+  (.with-writes original (tuple (gfor #(id old) (.items original)
+                                      :setv new (.get rows id)
+                                      :if (not (or (is new old) (= new old)))
+                                      (TableWrite id new)))))
+
+
+(defn #^ (get Table TaskRecord) absorb-task-reports [#^ ClusterState state #^ str worker #^ tuple statuses #^ int now #^ (| str None) [boot None]
                                    #^ bool [stopping False]]
   "worker の状態の報告のうち、task の終わりを task の記録へ写す。切り離した task は置いた時と同じ process の世代の報告だけ。
    stopping = この報告は今の世代が止まり始めを名乗った heartbeat の物(#2819 — 呼び手は今の世代か新しい世代の heartbeat だけを
@@ -1322,7 +1331,7 @@
    名乗りを先に受けた時だけ塞ぐ drain(drain_policy.absorb-stopping)では足りない。避ける worker(avoid)には足さない — 同じ名の
    次の世代には置いてよい。
    写す行が無ければ state.tasks を同じ object で返し、写した行だけ新しい object にする(他の行は元の object — Q3)。"
-  (setv tasks (dict state.tasks))
+  (setv tasks (dict (.items state.tasks)))
   (for [status statuses]
     (setv name status.name)
     (when (.startswith name "task/")
@@ -1371,7 +1380,7 @@
   (setv refusal (format-version-refusal body.format))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
   (setv worker body.worker result body.result)
-  (setv task (.get state.tasks id))
+  (setv task (.row state.tasks id))
   (cond
     (is task None)
       #(state 404 (ErrorReply :message (.format "task {} を知らない(呼び手が落とした・lease が切れた)" id)))
@@ -1380,21 +1389,20 @@
     (!= task.worker worker)
       #(state 409 (ErrorReply :message (.format "task {} は worker {} に置いてある(送り手 {})" id task.worker worker)))
     True
-      #((replace state :tasks (| state.tasks {id (task-finished task now (.format "子 process {} が終わる前に届けた"
-                                                                                 body.instance) result)}))
+      #((replace state :tasks (.with-writes state.tasks #((TableWrite id (task-finished task now (.format "子 process {} が終わる前に届けた"
+                                                                                                         body.instance) result)))))
         200 (TaskResultTaken :accepted True :phase "finished"))))
 
 
-(defn #^ dict renew-detached [#^ dict tasks #^ str worker #^ (| str None) boot #^ int now]
+(defn #^ (get Table TaskRecord) renew-detached [#^ (get Table TaskRecord) tasks #^ str worker #^ (| str None) boot #^ int now]
   "担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす(lease は worker が延ばす)。延ばすのは置いた時と同じ
    process の世代の heartbeat だけ。別の世代の heartbeat では何もしない — 置いた世代の process が消えていれば lease 切れで lost
    (settle-detached・走らせ直さない)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が並んで
    動く間(旧い Pod の preStop の drain)は、旧い世代の heartbeat が新しい世代に置いた task を失わせた。"
-  (setv renewed (dfor #(id t) (.items tasks)
-                      :if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
-                      id (replace t :lease-until-ms (+ now t.lease-ms))))
   ;; 延ばす行が無ければ同じ object(担わない worker の heartbeat — Q3)。
-  (if renewed (| tasks renewed) tasks))
+  (.with-writes tasks (tuple (gfor #(id t) (.items tasks)
+                                   :if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
+                                   (TableWrite id (replace t :lease-until-ms (+ now t.lease-ms)))))))
 
 
 ;; --- 1 拍の調停 ------------------------------------------------------------------------
@@ -1440,10 +1448,10 @@
 
 
 (defk cold-starts [before after]
-  {:pre [(: before dict) (: after dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  {:pre [(: before (get Table TaskRecord)) (: after (get Table TaskRecord))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "待ちから preparing に置かれた task の数(準備済みの worker が無いまま置いた = 冷たい起動)。"
   (len (lfor t (scan-rows after)
-             :if (and (= t.phase "preparing") (in t.id before) (= (. (get before t.id) phase) "queued"))
+             :if (and (= t.phase "preparing") (is-not (.row before t.id) None) (= (. (.row before t.id) phase) "queued"))
              t)))
 
 
@@ -1835,12 +1843,12 @@
         environ (.get echo "environ" {}))
   ;; 写しの program(置き場のキー)が無い・形の違う報告(blob を運んでいた旧い worker)は引き取らない。引き取った行は同じ sha を
   ;; 参照する(担い手は cache の file を持っているので、状態を失った置き場に Program が無くても走り続ける)。
-  (when (or (in id state.tasks) (!= (.get echo "id") id) (not (.get echo "detached"))
+  (when (or (is-not (.row state.tasks id) None) (!= (.get echo "id") id) (not (.get echo "detached"))
             (not (isinstance key str)) (not (isinstance lease-ms int))
             (not (isinstance revision str)) (not (isinstance needs list))
             (not (and (isinstance program str) (PROGRAM-SHA.fullmatch program)))
             (not (isinstance environ dict)) (not (text-map? (.get echo "versions" {})))
-            (any (gfor t (.values state.tasks) (= t.key key))))
+            (any (gfor t (.rows state.tasks) (= t.key key))))
     (return None))
   (TaskRecord id (.get echo "name" "") program revision
               (component-versions-of (.get echo "versions" {})) (capabilities-of needs "引き取る task の needs") lease-ms (+ now lease-ms) now
@@ -1855,22 +1863,26 @@
   (setv adopted {})
   (for [status statuses]
     ;; まだ何も引き取っていない間は state そのものを渡す(行ごとに状態を作り直さない — #3774)。
-    (setv task (adopted-task (if adopted (replace state :tasks (| state.tasks adopted)) state) worker boot status now))
+    (setv task (adopted-task (if adopted (replace state :tasks (adopted-over state.tasks adopted)) state) worker boot status now))
     (when (is-not task None) (setv (get adopted task.id) task)))
   (if adopted
-      (replace state :tasks (| state.tasks adopted)
+      (replace state :tasks (adopted-over state.tasks adopted)
                :next-task (max [state.next-task
                                 #* (gfor id adopted :setv n (task-number state.task-prefix id) :if (is-not n None) (+ n 1))]))
       state))
 
 
-(defn #^ dict promote-prepared [#^ dict tasks #^ WorkerInfo worker]
+(defn #^ (get Table TaskRecord) adopted-over [#^ (get Table TaskRecord) tasks #^ dict adopted]
+  "純粋: 引き取った行(task の id → 行)を tasks へ重ねた表。"
+  (.with-writes tasks (tuple (gfor #(id t) (.items adopted) (TableWrite id t)))))
+
+
+(defn #^ (get Table TaskRecord) promote-prepared [#^ (get Table TaskRecord) tasks #^ WorkerInfo worker]
   "純粋: worker が env を準備済みと名乗った拍に、その worker の preparing の task を assigned へ進める。"
-  (setv promoted (dfor #(id t) (.items tasks)
-                       :if (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
-                       id (replace t :phase "assigned")))
   ;; 進める行が無ければ同じ object(Q3)。
-  (if promoted (| tasks promoted) tasks))
+  (.with-writes tasks (tuple (gfor #(id t) (.items tasks)
+                                   :if (and (= t.phase "preparing") (= t.worker worker.name) (env-ready-on t.runtime-env worker))
+                                   (TableWrite id (replace t :phase "assigned"))))))
 
 
 (defn #^ tuple warms-for [#^ ClusterState state #^ str worker #^ int now]
@@ -2020,7 +2032,7 @@
                                          (replace s :superseded-by (+ "generation:" (or (getattr (.get state.workers name) "boot" None) "")))
                                        True s)))
                   :tasks (tuple (gfor offer (tasks-for state name boot)
-                                      :setv task (get state.tasks offer.id)
+                                      :setv task (.row state.tasks offer.id)
                                       :if (and task.detached (= task.boot boot))
                                       offer))
                   :warm #() :timing timing :draining True :superseded True :formats (tuple ACCEPTED-FORMATS)
@@ -2044,7 +2056,7 @@
              :placements (dict state.placements)
              :unplaced (unplaced-jobs now state timing)
              :statuses (dfor #(n st) (.items state.observations.statuses) n (StatusView :report st :stale (> (- now st.at) timing.lease-ms)))
-             :tasks (tuple (sorted (.values state.tasks) :key (fn [t] t.id)))
+             :tasks (tuple (sorted (.rows state.tasks) :key (fn [t] t.id)))
              :board-keys (.size state.board)
              :surges (dict state.surges)
              :events (tuple (cut state.events -50 None))
@@ -2099,17 +2111,17 @@
                          :runtime-env body.runtime-env
                          :environ (environ-pairs (or body.environ {}))
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)))
-  #((replace state :tasks (| state.tasks {id task}) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
+  #((replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1)) 200 (TaskAccepted :id id)))
 
 
 (defk poll-task [state id now]
   {:pre [(: state ClusterState) (: id str) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "呼び手の問い合わせ。lease を延ばし、いまの様子を返す。"
-  (setv found (.get state.tasks id))
+  (setv found (.row state.tasks id))
   (when (is found None)
     (return #(state 200 (TaskMissing :id id))))
   (setv task (replace found :lease-until-ms (+ now found.lease-ms)))
-  #((replace state :tasks (| state.tasks {id task})) 200
+  #((replace state :tasks (.with-writes state.tasks #((TableWrite id task)))) 200
     (TaskProgress :phase task.phase :worker task.worker :detail task.detail :result task.result
                   :failure-kind task.failure-kind :retryable task.retryable)))
 

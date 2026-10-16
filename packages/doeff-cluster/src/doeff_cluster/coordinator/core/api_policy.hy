@@ -199,7 +199,7 @@
                                               (TableWrite k moved))))
            ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)— 上の board-written。
            :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
-           :tasks (dfor #(k t) (.items state.tasks) k (replace t :lease-until-ms (+ t.lease-until-ms gap)))
+           :tasks (.with-writes state.tasks (tuple (gfor #(k t) (.items state.tasks) (TableWrite k (replace t :lease-until-ms (+ t.lease-until-ms gap))))))
            :workers (dfor #(k w) (.items state.workers)
                           k (replace w
                                      :last-seen-ms (min now (+ w.last-seen-ms gap))
@@ -462,9 +462,9 @@
        (= (replace info :last-seen-ms prev.last-seen-ms) prev)
        (= (replace new-report :at old-report.at) old-report)
        ;; task は鍵ごとに引き、同じ object の行は飛ばす(task 387 本で replace が 774 回 → 0〜6 回・Q1)。行の数が違えば静かでない。
-       (= (len heard.tasks) (len before.tasks))
+       (= (.size heard.tasks) (.size before.tasks))
        (all (gfor #(k t) (.items heard.tasks)
-              (let [o (.get before.tasks k)]
+              (let [o (.row before.tasks k)]
                 (and (is-not o None) (or (is o t) (= (replace t :lease-until-ms 0) (replace o :lease-until-ms 0)))))))
        (= (replace heard :workers before.workers :tasks before.tasks
                          :observations (replace heard.observations :statuses before.observations.statuses))
@@ -565,7 +565,7 @@
       (do (setv #(after status reply) (! (absorb-task-result state (get parts 1) body now)))
           #((if (is after state) state (! (settle state after (loose-actor request) now timing))) status reply))
     (and (= method "DELETE") (= head "tasks") (= (len parts) 2))
-      #((! (settle state (replace state :tasks (dfor #(k v) (.items state.tasks) :if (!= k (get parts 1)) k v))
+      #((! (settle state (replace state :tasks (.with-writes state.tasks #((TableWrite (get parts 1) None))))
                    (loose-actor request) now timing))
         200 (TaskDropped :id (get parts 1)))
     True (unknown-request state request)))

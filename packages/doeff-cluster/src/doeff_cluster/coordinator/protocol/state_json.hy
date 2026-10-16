@@ -46,7 +46,7 @@
                        "taskReserve" w.task-reserve
                        "versions" (dict w.versions)}
                       (worker-generations-json w)))
-   "tasks" (lfor t (.values state.tasks) (task-record-to-json t))
+   "tasks" (lfor t (.rows state.tasks) (task-record-to-json t))
    "nextTask" state.next-task
    "taskPrefix" state.task-prefix
    "meta" (dfor #(k m) (.items state.meta) k (resource-meta-to-json m))
@@ -222,7 +222,7 @@
                                #** generation))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (dfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) k (Placement #** v))
-    :tasks (dict tasks)
+    :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))
     :next-task (.get data "nextTask" 1)
     :task-prefix (.get data "taskPrefix" "t")
     :board board-rows
