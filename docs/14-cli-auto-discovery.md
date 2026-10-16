@@ -814,6 +814,7 @@ It runs the program with its built-in default interpreter, which ignores envs, s
 ```
 UnhandledEffect: no handler found for effect: Ask (Ask('timeout'))
   handlers in scope (innermost→outermost): await_handler → _listen_handler → _slog_handler → _try_handler → _writer_handler → state → lazy_ask → _scheduled_python
+  hint: Ask is handled by reader(env={...}) or lazy_ask(env={...}) holding the key: run(reader(env={...})(prog))
 ```
 
 For a program that succeeds, `--format json` shows
