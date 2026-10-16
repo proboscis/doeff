@@ -25,16 +25,16 @@
   <text x="68" y="414" font-size="30" font-weight="bold" fill="#c2410c">本番のハンドラ</text>
   <text x="68" y="462" font-size="26" fill="#111827">作業ボード: 記録のサービス(HTTP)</text>
   <text x="68" y="504" font-size="26" fill="#111827">時刻と待ち: 実際の時計</text>
-  <text x="68" y="546" font-size="26" fill="#111827">出来事の知らせ: Redis</text>
+  <text x="68" y="546" font-size="26" fill="#111827">イベントの通知: Redis</text>
   <text x="68" y="592" font-size="26" font-weight="bold" fill="#c2410c">上限: 50(宣言した設定)</text>
 
   <!-- 模擬 -->
   <rect x="610" y="370" width="550" height="250" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
   <text x="638" y="414" font-size="30" font-weight="bold" fill="#0f766e">模擬のハンドラ</text>
-  <text x="638" y="462" font-size="26" fill="#111827">作業ボード: メモリの盤</text>
+  <text x="638" y="462" font-size="26" fill="#111827">作業ボード: メモリ上のボード</text>
   <text x="638" y="504" font-size="26" fill="#111827">時刻と待ち: 仮想の時計</text>
-  <text x="638" y="546" font-size="26" fill="#111827">出来事の知らせ: メモリ</text>
-  <text x="638" y="592" font-size="26" font-weight="bold" fill="#0f766e">上限: 2(筋書きの値)</text>
+  <text x="638" y="546" font-size="26" fill="#111827">イベントの通知: メモリ</text>
+  <text x="638" y="592" font-size="26" font-weight="bold" fill="#0f766e">上限: 2(シナリオの値)</text>
 
   <!-- 模擬の90分 -->
   <text x="600" y="680" text-anchor="middle" font-size="30" font-weight="bold" fill="#0f766e">模擬の90分(上限2・仮想の時計)</text>
