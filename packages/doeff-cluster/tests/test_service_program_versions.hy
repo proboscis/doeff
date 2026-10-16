@@ -62,7 +62,7 @@
   (val blob (encode-program (based-add 3)))
   (<- placed tuple (call state "PUT" (+ "/programs/" sha) {"blob" blob "versions" versions} now))
   (assert (= (get placed 1) 200) placed)
-  (val meta (.get (. (get placed 0) meta) "Service/svc"))
+  (val meta (.row (. (get placed 0) meta) "Service/svc"))
   (<- written tuple (if (is meta None)
                         (call (get placed 0) "POST" "/resources/Service" {"name" "svc" "spec" (! (service-row sha versions "r1"))} now)
                         (call (get placed 0) "PUT" "/resources/Service/svc"

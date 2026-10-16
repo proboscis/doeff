@@ -56,7 +56,7 @@
     (val after (stamp seeded moved "test" 2000 timing))
     (.undo monkeypatch)
     (assert (= (get BUILT 0) 2) #(n (get BUILT 0)))
-    (assert (= (. (get after.meta "Task/t7") resource-version) (+ seeded.revision 1)) after.meta)
+    (assert (= (. (.row after.meta "Task/t7") resource-version) (+ seeded.revision 1)) after.meta)
     ;; 出来事は 1 件だけ(記録は種類ごとに件数の上限で切られるので、数は通し番号の差で読む)。
     (assert (= (- after.audit-seq seeded.audit-seq) 1) #(seeded.audit-seq after.audit-seq))
     (assert (= #((. (get after.audit -1) verb) (. (get after.audit -1) name)) #("status" "t7")) (get after.audit -1))))

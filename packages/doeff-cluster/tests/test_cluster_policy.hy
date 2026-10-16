@@ -564,6 +564,32 @@
   (assert (<= (len deleted.audit) AUDIT-PER-KIND)))
 
 
+(deftest test-stamp-writes-the-meta-table-for-adopt-delete-and-create
+  (val later 2000)
+  (<- beaten ClusterState (beat-as (ClusterState) "at-home" "node-home" 1000))
+  ;; create: 行の無かった資源は generation 1 から
+  (val created (stamp (ClusterState) beaten "c-test" later T))
+  (assert (= (. (.row created.meta "Worker/at-home") generation) 1))
+  (assert (= (.size created.meta) 1))
+  ;; adopt: 行は在るが版の記録の無い資源(旧い形から読んだ)に版を振る
+  (val bare (replace created :meta (.with-writes created.meta #((TableWrite "Worker/at-home" None)))))
+  (assert (is (.row bare.meta "Worker/at-home") None))
+  (val adopted (stamp bare (replace bare) "c-test" later T))
+  (assert (= (lfor e adopted.audit e.verb) ["create" "adopt"]) adopted.audit)
+  (assert (= (. (.row adopted.meta "Worker/at-home") generation) 1))
+  (assert (= (. (.row adopted.meta "Worker/at-home") resource-version) (+ bare.revision 1)))
+  ;; delete: 行が消えると版の記録も消える
+  (val deleted (stamp created (replace created :workers {}) "c-test" later T))
+  (assert (is (.row deleted.meta "Worker/at-home") None))
+  (assert (= (.size deleted.meta) 0))
+  ;; delete の後の create は generation 1 から(前の記録を引き継がない)
+  (val again (stamp deleted (replace deleted :workers created.workers) "c-test" later T))
+  (assert (= (. (.row again.meta "Worker/at-home") generation) 1))
+  ;; 版の記録の無い資源が消えるだけの stamp は meta を作り直さない
+  (val gone (stamp bare (replace bare :workers {}) "c-test" later T))
+  (assert (is gone.meta bare.meta)))
+
+
 (import doeff_cluster.coordinator.core.api_policy [settle])
 
 (deftest test-a-quiet-settle-keeps-meta-and-audit-as-the-same-objects

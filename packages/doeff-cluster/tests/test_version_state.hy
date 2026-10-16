@@ -148,7 +148,7 @@
   (val reported (! (reporting)))
   (val row (! (row-of reported)))
   (val rescaled (! (call reported "PUT" "/resources/Service/w" {"spec" (| SPEC {"replicas" 0})
-                                                                "resourceVersion" (. (get reported.meta "Service/w") resource-version)})))
+                                                                "resourceVersion" (. (.row reported.meta "Service/w") resource-version)})))
   (! (beat rescaled "atlas" (if (is rows None) [row] rows))))
 
 

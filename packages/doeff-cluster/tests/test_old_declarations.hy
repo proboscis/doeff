@@ -75,7 +75,7 @@
   (<- created tuple (call (ClusterState) "POST" "/resources/Service" {"name" "a" "spec" ROW} 1000))
   (val base (get created 0))
   (assert (= (get created 1) 201))
-  (val version (. (get base.meta "Service/a") resource-version))
+  (val version (. (.row base.meta "Service/a") resource-version))
   (for [#(what row word) rows]
     (<- posted tuple (call (ClusterState) "POST" "/resources/Service" {"name" "b" "spec" row} 1000))
     (assert (= (get posted 1) 400) #(what posted))
@@ -283,7 +283,7 @@
   {:pre [(: state ClusterState) (: key str) (: actor str) (: now int)] :post [(: % bool)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "key の資源が作り直された(版の記録が generation 1・作った送り手と時刻から始まり、出来事の記録に create が在る)。"
-  (val m (get state.meta key))
+  (val m (.row state.meta key))
   (and (= #(m.generation m.created-by m.created-ms) #(1 actor now))
        (in #("create" #* (.split key "/" 1)) (lfor e state.audit #(e.verb e.kind e.name)))))
 
@@ -316,10 +316,10 @@
   ;; 同じ資源の続き — 行は前の状態に在った)。
   (<- data dict (saved-with-old-row))
   (val state (! (state-from-kv (! (full-kv (! (state-from-json data 5000)))) 5000)))
-  (val before (get state.meta "Service/old"))
+  (val before (.row state.meta "Service/old"))
   (<- run dict (program-run "m:g" 1))
   (<- made tuple (call state "POST" "/resources/Service" {"name" "old" "spec" (| ROW {"run" run})} 6000))
   (assert (= (get made 1) 201) made)
   (assert (= (. (get made 0) refused) {}))
   (assert (in "old" (lfor j (. (get made 0) jobs) j.spec.name)))
-  (assert (= (. (get (. (get made 0) meta) "Service/old") generation) (+ before.generation 1))))
+  (assert (= (. (.row (. (get made 0) meta) "Service/old") generation) (+ before.generation 1))))

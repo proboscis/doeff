@@ -63,7 +63,7 @@
 (defk rv [state kind name]
   {:pre [(: state ClusterState) (: kind str) (: name str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "資源 kind/name の今の版(resourceVersion)を読むため。"
-  (. (get (. state meta) (+ kind "/" name)) resource-version))
+  (. (.row (. state meta) (+ kind "/" name)) resource-version))
 
 
 (deftest test-service-writes-are-compare-and-set-per-resource
