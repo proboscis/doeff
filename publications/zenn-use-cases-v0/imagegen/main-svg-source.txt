@@ -1,0 +1,13 @@
+メイン記事（doeff-main.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-16）。
+
+- 正本：../visuals/main-hero.svg・../visuals/main-concept.svg・../visuals/main-flow.svg。
+- 図の内容：同じdirのmain-hero-flat-code-v1.txt・main-concept-flat-code-v3.txt・main-flow-flat-code-v3.txtの指定に沿い、本文のコードの名前・値・順と揃えた。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
+  - main-hero：幅1080・高さ1060。
+  - main-concept：幅1080・高さ960。
+  - main-flow：幅1080・高さ1330。
+- 字の大きさ：幅1080の図で36px以上。携帯の本文の幅（約340px）に縮めても約11px以上で読める。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
+
+2026-09-16にimagegenで作ったPNGは、.gitignoreの例外がgenerated/に届かず、リポジトリに入っていなかった。
+同じ画素を作り直せないため、週1の仕上げに合わせてSVGで描き直した。

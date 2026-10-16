@@ -20,6 +20,7 @@ SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
 # 実行を許す例を明示する。新しい外部連携のファイルを自動実行しない。
 OFFLINE = (
+    "greet_handlers",
     "operations",
     "document_pipeline",
     "llm_pipeline",
