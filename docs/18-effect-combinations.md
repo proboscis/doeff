@@ -1,14 +1,15 @@
 # 18. Effect Combinations
 
-This chapter documents effect-composition behavior from `SPEC-EFF-100` and current runtime
-contracts.
+This chapter documents how effects compose in doeff 0.5.0. It follows the outer/inner structure
+of `SPEC-EFF-100`; where the spec still uses older names (`Intercept`, `SyncRuntime` and
+`AsyncRuntime`), this chapter follows the 0.5.0 runtime.
 
 ## Table of Contents
 
 - [Effect Combination Matrix](#effect-combination-matrix)
 - [Matrix Key](#matrix-key)
 - [Composition Laws](#composition-laws)
-- [Sync vs Async Runtime Differences](#sync-vs-async-runtime-differences)
+- [Gather and the Scheduler](#gather-and-the-scheduler)
 - [Design Decision Notes](#design-decision-notes)
 - [References](#references)
 
@@ -21,13 +22,14 @@ The matrix below follows `SPEC-EFF-100` outer/inner structure.
 | **Local**     | Scoped | Propagates | Propagates | Propagates | Propagates | Scoped | Propagates | Propagates | Propagates |
 | **Listen**    | - | - | - | Captured* | - | - | Nested | - | All captured* |
 | **Try**      | - | - | Persists | Persists | Wrapped | Restores | - | - | First error |
-| **WithObserve** | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform | Transform |
+| **WithObserve** | Observed | Observed | Observed | Observed | Observed | Observed | Observed | Observed | Observed |
 | **Gather**    | Inherit | Shared** | Shared** | Merged | Isolated | Inherit | Shared | Propagates | Nested |
 
 `*` Listen captures logs only on success paths. On error, the error propagates and logs are not
 wrapped in `ListenResult`.[^D5]
 
-`**` Gather store sharing differs by runtime (`Law 8a` and `Law 8b`).[^D4]
+`**` Children share one store; a read-modify-write is safe only when the child does not suspend
+between the read and the write (`Law 8a` and `Law 8b`).[^D4]
 
 ## Matrix Key
 
@@ -37,20 +39,25 @@ wrapped in `ListenResult`.[^D5]
 - `Persists`: Side effects persist even when errors are caught.
 - `Wrapped`: Result is wrapped in outer effect type.
 - `Restores`: Environment restores to pre-scope value.
-- `Transform`: Effect can be transformed by `WithObserve` (including nested programs).[^D1]
+- `Observed`: `WithObserve` sees the effect, including effects of spawned children and nested
+  programs. It only observes: the observer's return value is ignored.[^D1]
 - `Isolated`: Error handling remains per-branch while parent receives failing outcome.
-- `Inherit`: Child inherits parent environment snapshot at invocation time.
+- `Inherit`: Child inherits the parent environment in effect at its `Spawn`.
 - `Shared`: All branches use the same underlying resource.
 - `Merged`: Outputs from branches are combined.
 - `Nested`: Inner effect nests within outer effect.
 
 ## Composition Laws
 
+The examples of Laws 1–5 show only the core of each law: they use helper programs
+(`failing_program()`, `do_increment()`, ...) that this page does not define. The examples of
+Laws 6–9 are complete programs; each one prints the value written in its last comment.
+
 ### Law 1: Local Restoration Law
 
 Environment MUST restore after `Local` scope, regardless of success or error.
 
-```python
+```python excerpt
 @do
 def test_law_1():
     outer_val = yield Ask("key")
@@ -66,7 +73,7 @@ def test_law_1():
 
 `Local` does NOT scope state (`Get`/`Put`). State changes propagate.
 
-```python
+```python excerpt
 @do
 def test_law_2():
     yield Put("counter", 0)
@@ -79,7 +86,7 @@ def test_law_2():
 `Listen` captures logs only on successful completion. On error, the error propagates without
 `ListenResult` wrapping.[^D5]
 
-```python
+```python excerpt
 @do
 def test_law_3_error():
     result = yield Try(Listen(failing_with_logs()))
@@ -90,7 +97,7 @@ def test_law_3_error():
 
 `Try` does NOT rollback state on error. State changes persist.[^D3]
 
-```python
+```python excerpt
 @do
 def test_law_4():
     yield Put("counter", 0)
@@ -102,131 +109,250 @@ def test_law_4():
 
 `Try` restores environment context to pre-`Try` value.
 
-```python
+```python excerpt
 @do
 def test_law_5():
     _ = yield Try(Local({"x": 1}, failing_program()))
     # Environment is restored after Try exits
 ```
 
-### Law 6: WithObserve Transformation Law
+### Law 6: WithObserve Observation Law
 
-`WithObserve` transforms effects in the observed program, including nested program values in
-payloads (for example `Gather` children and `Local`/`Listen` sub-programs).[^D1]
+`WithObserve` observes every effect performed in its body, including effects of tasks spawned
+inside the body (the children passed to `Gather`) and of `Local`/`Listen` sub-programs.[^D1]
+The observer is called for observation only: its return value is ignored, so it cannot replace
+an effect. To change how an effect is handled, install a handler instead.
 
 ```python
-from doeff import WithObserve
+from doeff import Ask, AskEffect, Gather, Spawn, WithObserve, do, run
+from doeff_core_effects import scheduled
+from doeff_core_effects.handlers import reader
+
 
 @do
 def test_law_6():
-    seen = [0]
+    seen = []
 
     def observer(effect):
         if isinstance(effect, AskEffect):
-            seen[0] += 1
-        return effect
+            seen.append(effect.key)
 
     @do
     def child():
         return (yield Ask("key"))
 
-    _ = yield WithObserve(observer, Gather(child(), child()))
-    assert seen[0] == 2
+    @do
+    def body():
+        t1 = yield Spawn(child())
+        t2 = yield Spawn(child())
+        return (yield Gather(t1, t2))
+
+    values = yield WithObserve(observer, body())
+    assert seen == ["key", "key"]  # both children's Ask effects were observed
+    return values
+
+
+print(run(scheduled(reader({"key": "value"})(test_law_6()))))  # ['value', 'value']
 ```
 
 ### Law 7: Gather Environment Inheritance Law
 
-`Gather` children inherit parent environment as a snapshot at gather invocation time.
-Environment changes in one `Gather` child do NOT propagate to sibling children.
+A spawned child runs with the environment in effect at its `Spawn`, not at `Gather`: children
+spawned inside `Local` see its overrides. A `Local` inside one child does not change what its
+siblings see.
 
 ```python
+from doeff import Ask, Gather, Local, Spawn, do, run
+from doeff_core_effects import scheduled
+from doeff_core_effects.handlers import local_handler, reader
+
+
+@do
+def child_that_reads_env_key():
+    return (yield Ask("env_key"))
+
+
+@do
+def child_that_overrides_env_key():
+    return (yield Local({"env_key": "child"}, child_that_reads_env_key()))
+
+
+@do
+def spawn_and_gather():
+    t1 = yield Spawn(child_that_overrides_env_key())
+    t2 = yield Spawn(child_that_reads_env_key())
+    return (yield Gather(t1, t2))
+
+
 @do
 def test_law_7():
-    _ = yield Local({"env_key": "value"}, Gather(child_that_reads_env_key()))
+    results = yield Local({"env_key": "value"}, spawn_and_gather())
+    assert results == ["child", "value"]  # the sibling does not see the child's Local
+    task = yield Local({"env_key": "at-spawn"}, Spawn(child_that_reads_env_key()))
+    assert (yield Gather(task)) == ["at-spawn"]  # the environment at Spawn, not at Gather
+    return results
+
+
+print(run(scheduled(reader({"env_key": "outer"})(local_handler(test_law_7())))))  # ['child', 'value']
 ```
 
-### Law 8: Gather Store Sharing Law (Runtime-Dependent)
+### Law 8: Gather Store Sharing Law
 
-Gather shares store across children in both runtimes, but execution model differs.[^D4]
+Spawned children share the parent's store: a `Put` in one child is visible to the parent and to
+its siblings. The scheduler runs one task at a time and switches tasks only where a task
+suspends (`Wait`, `Gather`, `Race`, `Await`, acquiring a semaphore, ...). Whether a
+read-modify-write is safe therefore depends on whether the child suspends between the read and
+the write.[^D4]
 
-#### Law 8a: SyncRuntime (Sequential Gather)
+#### Law 8a: Children That Do Not Suspend
 
-Children execute sequentially and share store deterministically.
+A child that does not suspend runs from start to end before another task runs. Children run in
+spawn order, and each one sees the previous child's write.
 
 ```python
+from doeff import Gather, Get, Put, Spawn, do, run
+from doeff_core_effects import scheduled
+from doeff_core_effects.handlers import state
+
+
 @do
-def test_law_8a_sync():
+def increment():
+    n = yield Get("counter")
+    yield Put("counter", n + 1)
+    return n
+
+
+@do
+def test_law_8a():
     yield Put("counter", 0)
-    results = yield Gather(increment(), increment(), increment())
+    tasks = []
+    for _ in range(3):
+        tasks.append((yield Spawn(increment())))
+    results = yield Gather(*tasks)
+    counter = yield Get("counter")
     assert results == [0, 1, 2]
-    assert (yield Get("counter")) == 3
+    assert counter == 3
+    return results, counter
+
+
+print(run(scheduled(state()(test_law_8a()))))  # ([0, 1, 2], 3)
 ```
 
-#### Law 8b: AsyncRuntime (Parallel Gather)
+#### Law 8b: Children That Suspend Between Read and Write
 
-Children execute in parallel with shared store. Concurrent writes may race; ordering of
-intermediate observations is non-deterministic.
-Programs using `Gather` with async handlers must not rely on read-modify-write state patterns.
-Use coordination primitives or isolated state partitioning instead.
+When a child suspends between its `Get` and its `Put` (here on `Await`), the other children run
+in the gap and read the same old value. All three children below read `0` and write `1`, so two
+of the three updates are lost.
+Programs using `Gather` must not rely on a read-modify-write across a suspension. Keep the read
+and the write together without a suspension in between, guard them with a semaphore, or give
+each child its own key.
 
 ```python
+import asyncio
+
+from doeff import Await, Gather, Get, Put, Spawn, do, run
+from doeff_core_effects import scheduled
+from doeff_core_effects.handlers import await_handler, state
+
+
 @do
-def test_law_8b_async():
+def increment_across_await():
+    n = yield Get("counter")
+    yield Await(asyncio.sleep(0.05))  # suspends: the other children run here
+    yield Put("counter", n + 1)
+    return n
+
+
+@do
+def test_law_8b():
     yield Put("counter", 0)
-    results = yield Gather(increment(), increment(), increment())
-    assert (yield Get("counter")) == 3
-    # `results` order is by input child position, but values may reflect interleaving.
+    tasks = []
+    for _ in range(3):
+        tasks.append((yield Spawn(increment_across_await())))
+    results = yield Gather(*tasks)
+    counter = yield Get("counter")
+    assert results == [0, 0, 0]
+    assert counter == 1  # two of the three updates are lost
+    return results, counter
+
+
+print(run(scheduled(state()(await_handler()(test_law_8b())))))  # ([0, 0, 0], 1)
 ```
 
 ### Law 9: Gather Error Propagation Law
 
-When any `Gather` child fails, error propagates to parent. Sibling behavior depends on runtime.
-
-- `SyncRuntime`: Sequential execution stops at first error.
-- `AsyncRuntime`: All children are already spawned; siblings may continue and side effects may still occur.
+When a child fails, `Gather` raises that child's error in the parent, and a `Try` around the
+`Gather` returns `Err`. `Gather` does not cancel the other children or roll back their writes:
+children that were already spawned keep running, so their side effects may still happen after
+one child has failed. Cancel them explicitly with `Cancel(task)` if they must stop.
 
 ```python
+from doeff import Gather, Get, Put, Spawn, Try, do, run
+from doeff_core_effects import scheduled
+from doeff_core_effects.handlers import state, try_handler
+
+
+@do
+def succeeds_with_side_effect():
+    n = yield Get("side_effects")
+    yield Put("side_effects", n + 1)
+    return "ok"
+
+
+@do
+def fails_immediately():
+    raise ValueError("boom")
+
+
 @do
 def test_law_9():
-    result = yield Try(Gather(
-        succeeds_with_side_effect(),
-        fails_immediately(),
-        succeeds_with_side_effect(),
-    ))
+    yield Put("side_effects", 0)
+    t1 = yield Spawn(succeeds_with_side_effect())
+    t2 = yield Spawn(fails_immediately())
+    t3 = yield Spawn(succeeds_with_side_effect())
+    result = yield Try(Gather(t1, t2, t3))
+    side_effects = yield Get("side_effects")
     assert result.is_err()
+    assert side_effects == 2  # both siblings ran; their writes are not rolled back
+    return result, side_effects
+
+
+print(run(scheduled(state()(try_handler(test_law_9())))))  # (Err(ValueError('boom')), 2)
 ```
 
-## Sync vs Async Runtime Differences
+## Gather and the Scheduler
 
-`SPEC-EFF-100` defines shared semantics plus explicit runtime-dependent behavior.
-The single entry point is `run(doexpr)` — compose `scheduled()` into the program to enable
-scheduler-based concurrency.
+`run(program)` is the single entry point. `Spawn`, `Wait`, `Gather`, and `Race` are handled by
+`scheduled()`, so a program that uses `Gather` runs as `run(scheduled(...))`; without it, the
+first `Spawn` fails with `UnhandledEffect`. There is no separate sync or async runtime.
+`scheduled()` has a Python and a Rust implementation (chosen by its `implementation=` argument
+or by `DOEFF_SCHEDULER`), and both give the results shown in Laws 6–9.
 
-| Concern | Sequential (no scheduler) | Concurrent (`scheduled()`) |
+| Concern | Children that do not suspend | Children that suspend (`Await`, `Wait`, ...) |
 | --- | --- | --- |
-| Gather execution model | Sequential child execution. | Concurrent child execution via scheduler. |
-| Gather store semantics | Shared store, deterministic state observation by child order. | Shared store, race-prone interleavings for read/modify/write patterns. |
-| Gather error propagation | Stop at first failing child; later children are not executed. | First failure propagates; other children may continue running. |
-| Gather side effects on sibling failure | Effects only from children that already ran before failure. | Effects from siblings may still happen after failure is observed. |
+| Execution | One child at a time, in spawn order. | Other tasks run while a child is suspended. |
+| Store | Shared; each child sees the previous child's writes. | Shared; a read-modify-write across a suspension can lose updates. |
+| Error | `Gather` raises a failing child's error; children already spawned still run. | Same; siblings may keep running after the parent has seen the error. |
 
-Guideline: treat `Gather` as shared-store in both modes; require explicit coordination for
-race-sensitive concurrent state updates.
+Guideline: treat `Gather` as shared-store, and require explicit coordination for state that
+children update across a suspension.
 
 ## Design Decision Notes
 
-[^D1]: **D1 WithObserve Scope**: WithObserve applies structural rewriting to nested programs in
-effect payloads. Scope across task boundaries is runtime-dependent; in current
-implementation, it does not reach independently spawned tasks that do not share the parent
-continuation stack.
+[^D1]: **D1 WithObserve Scope**: WithObserve observes effects; it does not rewrite them, and the
+observer's return value is ignored. A spawned task inherits the `WithObserve` scopes between its
+`Spawn` and `scheduled()`, so an observer around the spawning code sees the children's effects.
+An observer placed outside `scheduled()` sees them too, together with the scheduler's internal
+effects such as `TaskCompleted`.
 
 [^D2]: **D2 Listen + Gather Ordering**: No ordering guarantees for logs from parallel gather branches.
 
 [^D3]: **D3 Try Rollback**: `Try` provides error capture and environment restoration, not transactional state rollback.
 
-[^D4]: **D4 Gather Store Semantics**: Gather store is shared in both runtimes: sequential and
-deterministic in sync, parallel and race-prone in async. This keeps runtime behavior aligned
-with a shared-store model; for isolation-sensitive flows, use explicit state partitioning,
-coordination, or isolated variants.
+[^D4]: **D4 Gather Store Semantics**: Spawned children share the parent's store. Their updates
+are deterministic when a child does not suspend between reading and writing, and race-prone when
+it does. For isolation-sensitive flows, use explicit state partitioning or coordination (for
+example a semaphore).
 
 [^D5]: **D5 Listen Error Behavior**: `Listen` does not capture logs on error paths; error propagates without `ListenResult` wrapping.
 
@@ -236,4 +362,4 @@ coordination, or isolated variants.
 - `tests/effects/test_effect_combinations.py`
 - `tests/core/test_sa008_runtime_contracts.py`
 - `tests/core/test_runtime_regressions_manual.py`
-- `doeff/effects/spawn.py`
+- `packages/doeff-core-effects/doeff_core_effects/scheduler.py`
