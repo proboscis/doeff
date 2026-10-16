@@ -105,7 +105,7 @@ TASK_MAX_OPEN: int
 def declared_runtime_env(item: dict) -> str | None:
     ...
 
-def spec_of_declaration(item: dict) -> JobSpec:
+def spec_of_declaration(item: dict[str, object]) -> JobSpec:
     ...
 PROGRAM_SHA: Incomplete
 OLD_RUN_KEYS: tuple[str, ...]
@@ -343,6 +343,15 @@ def unplaceable_phase(task: TaskRecord, state: ClusterState, now: int, timing: C
 def task_lapse_at(task: TaskRecord, now: int) -> _Program[int | None, object]:
     ...
 
+def hyx_held_taskXquestion_markX(task: TaskRecord) -> bool:
+    ...
+
+def scan_rows(tasks: dict) -> list:
+    ...
+
+def task_split(tasks: dict, now: int) -> _Program[tuple, object]:
+    ...
+
 def wait_lapse_at(capable: list, timing: ClusterTiming) -> _Program[int | None, object]:
     ...
 
@@ -365,6 +374,9 @@ def task_finished(task: TaskRecord, now: int, detail: str, result: str | None) -
     ...
 
 def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int) -> TaskRecord:
+    ...
+
+def changed_rows_over(original: dict, rows: dict) -> dict:
     ...
 
 def absorb_task_reports(state: ClusterState, worker: str, statuses: tuple, now: int, boot: str | None=None, stopping: bool=False) -> dict:
