@@ -9,7 +9,8 @@
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
 ;;;
 ;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
-;;; 欄 → 値の写像(PutRow.value・ListRows.where)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を渡してもよい)。
+;;; 欄 → 値の写像(PutRow.value・ListRows.where・ListRows.where-any)と出来事の本文(AppendEvent.body)は、作る時に深く凍らせる(dict を
+;;; 渡してもよい — where-any の組の配列は tuple になる)。
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
@@ -19,6 +20,9 @@
 (setv DEFAULT-LIST-LIMIT 500)
 (setv DEFAULT-WATCH-LIMIT 1000)
 (setv DEFAULT-READ-EVENTS-LIMIT 1000)
+;; ListRows の値の組の絞り(where-any)1 つの読みに載せる値の数の上限(全部の欄の組の値の和)— PostgreSQL の置き場は値を 1 つずつ文の
+;; 引数に展げるので、1 つの文の引数と綴りの大きさをこの数で縛る。呼び手は大きな組をこの数ごとに割って読む。
+(setv WHERE-ANY-LIMIT 1000)
 
 
 (defn #^ tuple checked-key [#^ object key #^ str what]
@@ -57,17 +61,34 @@
    cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限。答え = Page | Reset | Unreachable | NotIndexed。
    descending-by = 欄の名(None = 鍵の綴りの順): 値が整数の行だけを、その値の大きい順(同じ値は鍵の綴りの逆順)に上から limit 件読む。
    上から読む読みは 1 頁だけで、cursor を受けず(作る時に ValueError)、答えの next-cursor は常に None(続きを返さない — 呼び手は
-   上から何件かだけを求める。値が整数でない行・欄の無い行は出さない)。"
+   上から何件かだけを求める。値が整数でない行・欄の無い行は出さない)。
+   where-any = 欄 → 値の組(JSON の値の空でない tuple)の凍らせた写像(既定 = 空 = 絞らない): 行の欄の値が組のどれかに等しい行だけ
+   (等しさは where の等号と同じ・欄どうしと where とは AND・索引の欄だけ — 他は NotIndexed)。使い手が値の組 1 つを値ごとの往復でなく
+   1 回の読みで引くため。組の値の数は全部の欄の和で WHERE-ANY-LIMIT まで・空の組・where と同じ欄は作る時に断る(ValueError — 配列で
+   ない組は TypeError)。頁の順・続きの位置・上から読む読み・保持の期限の除きは where だけの読みと同じ。"
   (#^ str table)
   (setv #^ FrozenMap where (field :default-factory FrozenMap))
   (setv #^ (| tuple None) fields None)
   (setv #^ (| ListCursor None) cursor None)
   (setv #^ int limit DEFAULT-LIST-LIMIT)
   (setv #^ (| str None) descending-by None)
+  (setv #^ FrozenMap where-any (field :default-factory FrozenMap))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.table "ListRows.table")
     (freeze-field self "where" "ListRows.where")
     (for [name self.where] (checked-field-name name "ListRows.where の欄"))
+    (freeze-field self "where_any" "ListRows.where_any")
+    (for [#(name members) (.items self.where-any)]
+      (checked-field-name name "ListRows.where_any の欄")
+      (when (not (isinstance members tuple))
+        (raise (TypeError (.format "ListRows.where_any の欄 {} の組は JSON の値の配列: {!r}" name members))))
+      (when (not members)
+        (raise (ValueError (.format "ListRows.where_any の欄 {} の組が空(絞らない欄は写像に置かない)" name))))
+      (when (in name self.where)
+        (raise (ValueError (.format "ListRows の欄 {} が where と where_any の両方に在る(等号と組を同じ欄に重ねない)" name)))))
+    (setv counted (sum (gfor members (.values self.where-any) (len members))))
+    (when (> counted WHERE-ANY-LIMIT)
+      (raise (ValueError (.format "ListRows.where_any の値の数 {} が上限 {} を越える(組を割って読む)" counted WHERE-ANY-LIMIT))))
     (when (is-not self.fields None)
       (for [name self.fields] (checked-field-name name "ListRows.fields の欄")))
     (when (not (or (is self.cursor None) (isinstance self.cursor ListCursor)))

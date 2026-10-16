@@ -218,13 +218,24 @@
 
 ;; --- 索引と頁 --------------------------------------------------------------------------------------------
 
-(defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where]
-  (setv loose (tuple (sorted (gfor name where :if (not (or (in name decl.key-fields) (in name decl.indexes))) name))))
+(defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where #^ FrozenMap where-any]
+  "ListRows の絞り(where の等号と where-any の値の組)が索引の無い欄を名指す時に、その欄を名の順に名指して断るため(memory と PostgreSQL の
+   置き場の 1 点)。"
+  (setv loose (tuple (sorted (gfor name (+ (tuple where) (tuple where-any))
+                                   :if (not (or (in name decl.key-fields) (in name decl.indexes)))
+                                   name))))
   (if loose (NotIndexed loose) None))
 
 
 (defn #^ bool row-matches? [#^ FrozenMap where #^ FrozenMap value]
   (all (gfor #(name wanted) (.items where) (and (in name value) (json-equal? (get value name) wanted)))))
+
+
+(defn #^ bool row-matches-any? [#^ FrozenMap where-any #^ FrozenMap value]  ; defk にできない: memory の置き場が錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "行の値 value が ListRows の値の組の絞り where-any に合うか(欄ごとに、欄が在り値が組のどれかと json-equal? で等しい — 欄どうしは AND・
+   空の写像は全部の行に合う)を判じるため。PostgreSQL の置き場の文の条件は pg_sql の any-of-filter。"
+  (all (gfor #(name members) (.items where-any)
+             (and (in name value) (any (gfor wanted members (json-equal? (get value name) wanted)))))))
 
 
 (defn #^ bool descending-value? [#^ object value]
