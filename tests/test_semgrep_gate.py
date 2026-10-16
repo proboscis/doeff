@@ -49,12 +49,16 @@ def test_missing_semgrep_points_to_make_sync(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(shutil, "which", missing_binary)
 
     with pytest.raises(AssertionError, match="make sync"):
-        test_semgrep_findings_match_baseline_ratchet()
+        test_semgrep_findings_match_baseline_ratchet(None)
 
 
+# 全部の規則で doeff/・packages/ の約 2,400 file を 1 回で走査する、根の test で最も重い 1 本 — ini の既定の枠(60 秒)を
+# 前提にできない(2026-10-16: 混みの倍率 x2.3 の全体の走りで 75 秒・x3.4 の全体の走りで 204 秒の枠を越えて赤)。枠はこの重さで
+# 宣言し、混みの倍率は根の conftest が掛ける(ADR-DOE-ENFORCE-001 R6)。子の semgrep も同じ枠で止める。
 @pytest.mark.semgrep
 @pytest.mark.slow
-def test_semgrep_findings_match_baseline_ratchet():
+@pytest.mark.timeout(180)
+def test_semgrep_findings_match_baseline_ratchet(per_test_deadline: float | None) -> None:
     binary = shutil.which("semgrep")
     assert binary is not None, (
         "semgrep バイナリが見つからない — ADR-DOE-ENFORCE-001 R3 は skip を禁止する。"
@@ -83,7 +87,7 @@ def test_semgrep_findings_match_baseline_ratchet():
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=per_test_deadline,
         check=False,  # 違反有無は returncode でなく results 数で判定する(baseline ratchet)
     )
     # exit code は判定に使わない分、JSON の実在が「scan が走った」の唯一の証拠になる。

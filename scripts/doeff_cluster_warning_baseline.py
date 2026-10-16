@@ -137,7 +137,8 @@ def _line(finding: Finding) -> str:
 def main(argv: list[str]) -> int:
     """check(commit の hook と make lint-doeff)と lower(直した便)の 2 つの入口。"""
     # 置き場の根は呼び手(lint-doeff-cluster.sh)が --root で渡す。無ければこの script の在り処の 1 つ上。linter は commit の hook が
-    # --linter で HEAD の組み立ての入力の鍵の binary を渡す(#2906)。無ければ探し道の doeff-linter(make lint-doeff)。
+    # --linter で HEAD の組み立ての入力の鍵の binary を渡し(#2906)、make lint-doeff は package を当てたのと同じ探し道の linter を
+    # 渡す。無ければ探し道の doeff-linter。
     top: Path = Path(__file__).resolve().parents[1]
     linter: str = "doeff-linter"
     while argv[:1] in (["--root"], ["--linter"]) and len(argv) >= 2:

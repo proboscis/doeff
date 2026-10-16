@@ -106,7 +106,7 @@
 
 (deff blocking-callback [seconds]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
   {:pre [(: seconds float)] :post [(: % None)] :tags {:context "sample" :role "entry"}}
-  "素の callable は効果を出せない — 汎用の I/O の役を名乗らなくても program に数えない(deff の是非は DOEFF111・203 が持つ)。"
+  "素の callable は効果を出せない — 汎用の I/O の役を名乗らなくても program に数えない(この deff の是非は DOEFF111・203 が持つ)。"
   (time.sleep seconds)
   None)
 
