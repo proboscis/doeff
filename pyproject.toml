@@ -290,6 +290,13 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 prefix = "docs/05-error-handling.md"
 tests = ["tests/test_docs_entry_path_examples.py"]
 
+# 18 章(effect の組み合わせ)を書き換えた便は、法則 6〜9 の例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
+# (card ki-8d12fb4b14cb)。例は file に書いて走らせるので、import の逆依存では選ばれない。
+# 秒は 5.7 秒(7 本・子 5 本・起動を含む壁時計・load 約 90 の下・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/18-effect-combinations.md"
+tests = ["tests/test_docs_effect_combinations_examples.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
 tests = [
