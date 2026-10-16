@@ -5,6 +5,8 @@ Backed by a Rust VM with OCaml 5-aligned effect handler architecture.
 """
 
 # ruff: noqa: I001 - import order avoids doeff_core_effects circular imports.
+import opcode as _opcode
+import sys as _sys
 import types as _types
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
@@ -229,14 +231,60 @@ default_async_handlers = _Removed(
 __version__ = "0.5.0"
 
 
+# Handlers are imported from these modules, not from doeff. The names they hold are the
+# ones the package doeff_core_effects exports from them, so no list of names is kept here.
+_HANDLER_MODULES = ("doeff_core_effects.handlers", "doeff_core_effects.scheduler")
+
+
+def _handler_module(name: str) -> str | None:
+    """The module of ``_HANDLER_MODULES`` that ``doeff_core_effects`` exports the name from.
+
+    Reads only loaded modules (``import doeff`` loads them), so a lookup while doeff is
+    still initializing imports nothing.
+    """
+    package = _sys.modules.get("doeff_core_effects")
+    if package is None or name.startswith("_") or name not in vars(package):
+        return None
+    exported = vars(package)[name]
+    return next(
+        (
+            module
+            for module in _HANDLER_MODULES
+            if module in _sys.modules and vars(_sys.modules[module]).get(name) is exported
+        ),
+        None,
+    )
+
+
+def _looked_up_by_from_import() -> bool:
+    """Whether the frame that asked ``__getattr__`` runs ``from doeff import <name>``.
+
+    Python turns an AttributeError from a module ``__getattr__`` into False in
+    ``hasattr`` and into "cannot import name ..." in ``from doeff import``, by the
+    same path, so no exception type keeps both: the import statement gets an
+    ImportError, every other lookup an AttributeError.
+    """
+    frame = _sys._getframe(2)  # 0: this function, 1: __getattr__, 2: the lookup
+    return frame.f_code.co_code[frame.f_lasti] == _opcode.opmap["IMPORT_FROM"]
+
+
 def __getattr__(name: str) -> object:
     """``DoeffRunContext`` belongs to the CLI (argparse, rich, Hy); load it on first use.
 
     Importing it eagerly made every ``import doeff`` load the CLI stack.
+
+    A handler name (``state``, ``reader``, ``scheduled``, ...) says the module to
+    import it from.
     """
     if name == "DoeffRunContext":
         from doeff.cli.run_services import DoeffRunContext
 
         globals()[name] = DoeffRunContext
         return DoeffRunContext
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    home = _handler_module(name)
+    if home is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    hint = f"it is in {home}: from {home} import {name}"
+    if _looked_up_by_from_import():
+        raise ImportError(f"cannot import name {name!r} from {__name__!r}; {hint}", name=__name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}; {hint}")

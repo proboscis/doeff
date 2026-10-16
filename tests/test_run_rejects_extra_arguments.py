@@ -10,10 +10,10 @@ them on it.
 from __future__ import annotations
 
 import pytest
-
-from doeff import do, run
 from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader
+
+from doeff import do, run
 
 
 @do

@@ -96,7 +96,9 @@ def test_attribute_access_names_the_module_in_an_attribute_error() -> None:
 
 
 def test_an_unknown_name_keeps_the_plain_import_error() -> None:
-    with pytest.raises(ImportError, match=r"cannot import name 'no_such_name' from 'doeff'") as info:
+    with pytest.raises(
+        ImportError, match=r"cannot import name 'no_such_name' from 'doeff'"
+    ) as info:
         _import_from_doeff("no_such_name")
     assert "doeff_core_effects" not in str(info.value)
 
