@@ -1,5 +1,17 @@
 # Unified LLM Effects (`doeff-llm`)
 
+> **Needs components outside `pip install doeff`.** This page uses `doeff-llm` and the provider
+> packages `doeff-gemini`, `doeff-openai` and `doeff-openrouter`. None of them is on PyPI, so
+> install them from a checkout of this repository together with the repository packages they
+> depend on (`doeff-time`, `doeff-image`). pip takes everything else from PyPI:
+
+```bash
+git clone --depth 1 https://github.com/proboscis/doeff.git
+pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-llm \
+  ./doeff/packages/doeff-image ./doeff/packages/doeff-gemini \
+  ./doeff/packages/doeff-openai ./doeff/packages/doeff-openrouter
+```
+
 `doeff-llm` introduces provider-agnostic effects that can be handled by multiple provider packages:
 
 - `LLMChat`

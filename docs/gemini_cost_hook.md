@@ -1,5 +1,16 @@
 # Gemini Cost Calculation
 
+> **Needs components outside `pip install doeff`.** This page describes `doeff-gemini`, which is
+> not on PyPI. Install it from a checkout of this repository together with the repository
+> packages it depends on (`doeff-time`, `doeff-llm`, `doeff-image`). pip takes everything else
+> from PyPI:
+
+```bash
+git clone --depth 1 https://github.com/proboscis/doeff.git
+pip install doeff ./doeff/packages/doeff-time ./doeff/packages/doeff-llm \
+  ./doeff/packages/doeff-image ./doeff/packages/doeff-gemini
+```
+
 Gemini cost tracking is effect-based.
 
 ## Effect
