@@ -15,7 +15,8 @@
 (import doeff_cluster.coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.coordinator.core.resource_policy [create-resource update-resource stamp Refused])
 (import doeff_cluster.coordinator.core.cluster_policy [resource-version-of])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedRefused])
+(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedRefused ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedUnknown DetachedUnreachable])
+(import doeff_cluster.shared.protocol.detached [detached-queue-of-state])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator])
@@ -215,3 +216,51 @@
   (assert (in "上限の値と範囲は系の宣言" queued.detail) queued.detail)
   (<- ended TaskRecord (task-record-from-json (| old {"phase" "finished" "detail" "done"})))
   (assert (= #(ended.phase ended.detail ended.limits) #("finished" "done" #())) ended))
+
+
+;; --- 待っている task の理由を外から読む(ReadDetachedQueue — 依頼 lt-6203WCGWA41PGZ5KWK6FYZZBPA)-----------------------------------------
+
+(defk queue-reason-scenario []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "group-limit-scenario と同じ 2 本を出し、2 本目(上限で待つ)と 1 本目(置かれた)の ReadDetachedQueue の答えを返すため。"
+  (<- state dict (group-limit-scenario))
+  (<- waiting (ReadDetachedQueue "probe-2"))
+  (<- placed (ReadDetachedQueue "probe-1"))
+  (| state {"waiting" waiting "placed" placed}))
+
+
+(deftest test-a-queued-task-reads-which-group-holds-it-back-on-sim
+  ;; 失敗ケース: 組 probe(機体ごとに 1 本)が埋まって queued の task を、「置き先が無い」と区別できない — 待たせている組の名・範囲・今の数・
+  ;; 上限の値・待ち数が答えに出る事で、「列に並んでいる」と読める。置かれた task も同じ組の読みを持つ。
+  (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (queue-reason-scenario)
+                              :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (val waiting (get state "waiting"))
+  (assert (isinstance waiting DetachedQueueReason) waiting)
+  (assert (= waiting.phase "queued") waiting)
+  (assert (= waiting.groups #((DetachedQueueGroup :group "probe" :part "" :scope "worker" :limit 1 :held 1 :queued 1 :full True))) waiting)
+  (assert (in "同時数" waiting.detail) waiting.detail)
+  (val placed (get state "placed"))
+  (assert (and (isinstance placed DetachedQueueReason) (= placed.phase "assigned")) placed)
+  (assert (= (. (get placed.groups 0) group) "probe") placed))
+
+
+(deftest test-the-queue-reading-of-a-state-follows-the-claimed-groups
+  ;; 純粋な読み: 区分ごとの組は名乗った区分の升だけを数える・範囲 worker の組は最大の升を held に取る・宣言に無い組は読みに入れない・
+  ;; 上限に達していなければ full は偽(組の外の理由 — 空きが無い など — で待っている)・届かない読みと形の違う返事は DetachedUnreachable。
+  (val state {"tasks" [{"key" "k" "phase" "queued" "detail" "空きが無い"
+                        "limits" [{"group" "per" "part" "c2"} {"group" "wk"} {"group" "gone"}]}]
+              "groupLimits" [{"group" "per" "scope" "cluster" "limit" 2 "perPart" True "queued" 3
+                              "held" [{"count" 2 "part" "c1"} {"count" 1 "part" "c2"}]}
+                             {"group" "wk" "scope" "worker" "limit" 4 "queued" 0
+                              "held" [{"count" 1 "worker" "a"} {"count" 3 "worker" "b"}]}]})
+  (<- reason (detached-queue-of-state "k" state))
+  (assert (= reason (DetachedQueueReason :key "k" :phase "queued" :detail "空きが無い"
+                                         :groups #((DetachedQueueGroup :group "per" :part "c2" :scope "cluster" :limit 2 :held 1 :queued 3 :full False)
+                                                   (DetachedQueueGroup :group "wk" :part "" :scope "worker" :limit 4 :held 3 :queued 0 :full False))))
+          reason)
+  (<- unknown (detached-queue-of-state "none" state))
+  (assert (= unknown (DetachedUnknown :key "none")) unknown)
+  (<- cut (detached-queue-of-state "k" "connection refused"))
+  (assert (and (isinstance cut DetachedUnreachable) (in "connection refused" cut.detail)) cut)
+  (<- bad (detached-queue-of-state "k" {"tasks" [{"key" "k"}]}))
+  (assert (isinstance bad DetachedUnreachable) bad))

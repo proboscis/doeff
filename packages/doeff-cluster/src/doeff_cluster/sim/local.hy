@@ -184,13 +184,13 @@
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
-                   detached-timing-of-state unknown-timing-confirmed])
+                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.core.detached_rules [task-placing-json])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
-                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown])
+                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer])
 (import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
@@ -1429,6 +1429,22 @@
   timing)
 
 
+(defk read-detached-queue [link key]
+  {:pre [(: link SimLink) (: key str)] :post [(: % DetachedQueueAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedQueue を本番の detached.detached-queue-read と同じく GET /state の 1 回の読みから答えるため(答えの判断は本番と同じ
+   detached.detached-queue-of-state)。行の無い key だけ、時刻の読みと同じく GET /detached/<key> をもう 1 回読んで確かめる。"
+  (<- read tuple (send-resent link "GET" "/state" {} None))
+  (val state (if (is (get read 0) None) (unreached-reason read) (answered-object read "task の待つ理由を読めない")))
+  (<- queue DetachedQueueAnswer (detached-queue-of-state key state))
+  (when (isinstance queue DetachedUnknown)
+    (<- again tuple (send-resent link "GET" (detached-path key "") {} None))
+    (val view (cond (is (get again 0) None) (unreached-reason again)
+                    (= (get again 0) 503) (object-body (get again 1) "task を読めない")
+                    True (refused-or-object again "task を読めない")))
+    (return (unknown-timing-confirmed queue view)))
+  queue)
+
+
 (defk ended-task-keys [writes]
   {:pre [(: writes tuple)] :post [(: % frozenset)] :tags {:context "doeff-cluster" :role "judgment"}}
   "coordinator の 1 回の Persist の書き(TableWrite の組)から、終わりの phase(cluster_model.ENDED-PHASES)を書いた切り離した task の
@@ -1740,6 +1756,9 @@
   (ReadDetachedTiming [key]
     (<- timing DetachedTimingAnswer (read-detached-timing link key))
     (resume timing))
+  (ReadDetachedQueue [key]
+    (<- queue DetachedQueueAnswer (read-detached-queue link key))
+    (resume queue))
   (CancelDetached [key]
     (<- answer tuple (send-resent link "POST" (detached-path key "/cancel") {} None))
     (resume (get (refused-or-object answer "取り消せない") "cancelled")))

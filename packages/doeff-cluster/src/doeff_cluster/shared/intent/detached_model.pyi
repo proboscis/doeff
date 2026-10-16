@@ -232,6 +232,60 @@ DetachedTimingAnswer: TypeAlias = DetachedTiming | DetachedUnknown | DetachedUnr
 class ReadDetachedTiming(_doeff_effect_base[DetachedTimingAnswer]):
     key: str
 
+@dataclass(frozen=True, kw_only=True)
+class DetachedHeldWire:
+    count: int
+    worker: str | None = None
+    part: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedGroupWire:
+    group: str
+    scope: str
+    limit: int
+    per_part: bool = False
+    held: tuple[DetachedHeldWire, ...] = ...
+    queued: int = 0
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedLimitWire:
+    group: str
+    part: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class QueueTaskRowWire:
+    key: str | None = None
+    phase: str
+    detail: str | None = None
+    limits: tuple[DetachedLimitWire, ...] = ...
+
+@dataclass(frozen=True, kw_only=True)
+class StateQueueWire:
+    tasks: tuple[QueueTaskRowWire, ...]
+    group_limits: tuple[DetachedGroupWire, ...] = ...
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedQueueGroup:
+    group: str
+    part: str
+    scope: str
+    limit: int
+    held: int
+    queued: int
+    full: bool
+
+@dataclass(frozen=True, kw_only=True)
+class DetachedQueueReason:
+    key: str
+    phase: str
+    detail: str
+    groups: tuple[DetachedQueueGroup, ...]
+DetachedQueueAnswer: TypeAlias = DetachedQueueReason | DetachedUnknown | DetachedUnreachable
+
+@_doeff_dataclass(frozen=True)
+class ReadDetachedQueue(_doeff_effect_base[DetachedQueueAnswer]):
+    key: str
+
 class DetachedRefused(Exception):
     status: int
     message: str

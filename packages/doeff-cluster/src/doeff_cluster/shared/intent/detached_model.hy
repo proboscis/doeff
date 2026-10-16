@@ -396,6 +396,91 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
+;; --- 待っている task の理由(ReadDetachedQueue — 依頼 lt-6203WCGWA41PGZ5KWK6FYZZBPA)------------------------------
+;; 待っている(phase queued)切り離した task が、なぜ置かれないかを読む。理由は 2 つに分かれる: 名乗った組の同時数が系の宣言の上限に達している
+;; (列に並んでいる — 組・範囲・今の数・上限の値が分かる)・置ける worker に空きが無い(置き先が無い — 組は足りている)。coordinator が task の
+;; detail に書く固定の文(cluster_policy.task-unplaced-text)をそのまま運び、組の読みを足す。読む先は coordinator の GET /state の
+;; groupLimits(組ごとの宣言の値・置いている数の升・待っている task の数)と、tasks の行の limits(task の名乗った組)。
+
+(defwire DetachedHeldWire
+  "GET /state の groupLimits の held の 1 つ(置いている数の升): count = 置いている task の数・worker = 範囲 worker の組だけ・part = 区分ごとの組だけ。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ int count)
+  (setv #^ (| str None) worker None)
+  (setv #^ (| str None) part None))
+
+
+(defwire DetachedGroupWire
+  "GET /state の groupLimits の組 1 つのうち ReadDetachedQueue が読む欄: group・scope・limit・perPart・held・queued。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str group)
+  (#^ str scope)
+  (#^ int limit)
+  (setv #^ bool per-part False)
+  (setv #^ (get tuple #(DetachedHeldWire ...)) held #())
+  (setv #^ int queued 0))
+
+
+(defwire DetachedLimitWire
+  "GET /state の tasks の行の limits の 1 つ(task の名乗った組): group・part(区分を名乗らない組は無い)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str group)
+  (setv #^ (| str None) part None))
+
+
+(defwire QueueTaskRowWire
+  "GET /state の tasks の行のうち ReadDetachedQueue が読む欄: key(切り離した task だけ)・phase・detail(待つ理由の固定の文 — 無い時は None)・
+   limits(名乗った組 — 無い行は空)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| str None) key None)
+  (#^ str phase)
+  (setv #^ (| str None) detail None)
+  (setv #^ (get tuple #(DetachedLimitWire ...)) limits #()))
+
+
+(defwire StateQueueWire
+  "GET /state の返事のうち ReadDetachedQueue が読む欄: tasks と groupLimits(古い coordinator は groupLimits を持たない — 空)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(QueueTaskRowWire ...)) tasks)
+  (setv #^ (get tuple #(DetachedGroupWire ...)) group-limits #()))
+
+
+(defrecord DetachedQueueGroup
+  "待っている task が名乗った組 1 つの読み: group = 組の名・part = 名乗った区分(無ければ空)・scope = 数える範囲(worker | cluster)・
+   limit = 系の宣言の上限・held = その升で今置いている task の数(範囲 worker の組は worker ごとの升のうち最大)・queued = この組を名乗って
+   待っている task の数(全体)・full = held が limit に達している(この組が task を止めている)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str group)
+  (#^ str part)
+  (#^ str scope)
+  (#^ int limit)
+  (#^ int held)
+  (#^ int queued)
+  (#^ bool full))
+
+
+(defrecord DetachedQueueReason
+  "ReadDetachedQueue の答え(頭の註): key・phase = いまの coordinator の phase・detail = coordinator が task に書いた待つ理由の固定の文(まだ
+   書かれていなければ空)・groups = 名乗った組の読み(名乗らなければ空)。groups のどれかが full なら組の上限で待っている(列に並んでいる)。
+   どれも full でなく phase が queued なら、置ける worker に空きが無いなど組の外の理由(detail が名乗る)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str key)
+  (#^ str phase)
+  (#^ str detail)
+  (#^ (get tuple #(DetachedQueueGroup ...)) groups))
+
+
+(val DetachedQueueAnswer (| DetachedQueueReason DetachedUnknown DetachedUnreachable))
+
+(defeffect ReadDetachedQueue
+  "待っている切り離した task 1 つの、置かれない理由を、終わりを待たずにいまのまま読む(coordinator の GET /state の tasks の行の detail・limits と
+   groupLimits)。答え = DetachedQueueReason・DetachedUnknown(その key の行が無い)・DetachedUnreachable(coordinator に届かない・形の違う返事)。
+   queued でない task にも答える(groups は名乗った組の今の読み)。lease に触らない。"
+  {:fields [(: key str)]
+   :answer DetachedQueueAnswer
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
 (defclass DetachedRefused [Exception]
   "coordinator が要求を断った(呼び手の誤り): 同じ key の別の仕事(409)・欄の誤り(400)・上限越え(429)・まだ終わっていない task の
    解放(409)。"

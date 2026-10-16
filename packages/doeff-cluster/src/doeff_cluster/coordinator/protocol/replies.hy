@@ -22,7 +22,7 @@
 (import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])
-(import doeff_cluster.shared.core.detached_rules [group-limit-spec])
+(import doeff_cluster.shared.core.detached_rules [group-limit-spec task-limits-json])
 
 
 (defk spelled-each [#^ Callable spell #^ Iterable items]
@@ -42,7 +42,9 @@
   (| {"id" task.id "name" task.name "revision" task.revision "phase" task.phase
       "worker" task.worker "detail" task.detail "submittedMs" task.submitted-ms
       "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms}
-     (if task.detached {"detached" True "key" task.key} {})))
+     (if task.detached {"detached" True "key" task.key} {})
+     ;; 名乗った同時数の上限の組(待つ理由を外から読む ReadDetachedQueue が groupLimits と照らす)— 名乗る task だけ。
+     (if task.limits {"limits" (task-limits-json task.limits)} {})))
 
 
 (defk spec-json [#^ JobSpec spec]
