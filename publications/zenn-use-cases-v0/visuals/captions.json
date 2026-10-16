@@ -137,5 +137,11 @@
     "concept_caption": "awaitはawaitableを進める構文です。doeffでは依頼のデータと継続を、実行時に取り付けたハンドラへ渡します。",
     "flow_title": "ストリームは、1断片ずつdoeffへ戻す",
     "flow_caption": "収集ループと結合処理は@doに残し、次の1要素を待つ操作だけをAwaitで非同期実装へ接続します。"
+  },
+  "hooks": {
+    "concept_title": "決まりを、常に読む文と要る時だけ見せる文に分ける",
+    "concept_caption": "CLAUDE.mdは毎回読みます。851本の規則は、出来事ごとに絞り、当たった物だけを助言として足します。",
+    "flow_title": "CLAUDE.mdの字数と規則の本数",
+    "flow_caption": "9月22日〜23日に決まりを規則へ移し、CLAUDE.mdは3分の1になりました。その後、規則は851本まで増えています。"
   }
 }

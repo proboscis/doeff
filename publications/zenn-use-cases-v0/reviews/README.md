@@ -37,3 +37,4 @@
 | boundaries | review_boundaries | 修正・検証済み | 更新・目視確認済み |
 | hy | review_hy | 修正・検証済み | 更新・目視確認済み |
 | coroutines | review_coroutines | 修正・検証済み | 更新・目視確認済み |
+| hooks | 2026-10-17 新規の下書き | 検証済み（[記録](hooks.md)） | SVGで作成・目視確認済み |

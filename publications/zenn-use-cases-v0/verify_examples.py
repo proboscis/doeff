@@ -42,6 +42,7 @@ OFFLINE = (
     "handler_composition",
     "coroutine_comparison",
     "color_comparison",
+    "rule_hook",
 )
 
 

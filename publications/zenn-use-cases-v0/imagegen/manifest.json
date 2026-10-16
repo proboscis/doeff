@@ -587,5 +587,29 @@
     "height": 1024,
     "bytes": 1681103,
     "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "hooks-concept",
+    "image": "images/zenn-use-cases-v0/generated/hooks-concept.png",
+    "generation_prompt": "hooks-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "fcf2ec29f3254694c423078c6c2b011d13e27c13f4aede8d93ee81a49097163e",
+    "width": 1200,
+    "height": 1220,
+    "bytes": 169396,
+    "review": "2026-10-17：本文の出来事5種類と本数(47・597・66・46・95)、絞り込みの4段(774本・77本・3.5秒・1回の依頼に1度)、CLAUDE.md約1.5万字と目録851本・25.6万字、1回の依頼の中央値20本・6,246字を目視確認。白背景の平面図として採用。"
+  },
+  {
+    "id": "hooks-flow",
+    "image": "images/zenn-use-cases-v0/generated/hooks-flow.png",
+    "generation_prompt": "hooks-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "eb7b46ff39c1afc963791e05de1e528cd1a4da66b1b1291080f97b0083793ecd",
+    "width": 1200,
+    "height": 1060,
+    "bytes": 103881,
+    "review": "2026-10-17：CLAUDE.mdの字数(7,808・39,821・12,944・15,333字)と規則の本数(46本・851本)、9月22日〜23日の帯、上下2枚で横軸が同じ事を目視確認。2軸の図にしない。白背景の平面図として採用。"
   }
 ]

@@ -49,3 +49,9 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - メインの3枚（main-hero・main-concept・main-flow）も、週1の仕上げに合わせて手で書いたSVGから作り直した。
 - 正本と作り方は[main-svg-source.txt](main-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
 - これで残りは40枚。
+
+## hookの記事の2枚をSVGで描く（2026-10-17追記）
+
+- 8本目の新しい下書き（doeff-hooks.md）の2枚（hooks-concept・hooks-flow）は、初めから手で書いたSVGで描いた。
+- 正本と作り方は[hooks-svg-source.txt](hooks-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
+- 新しい2枚はリポジトリに入れたので、まだリポジトリに無い他の記事の図の枚数（2026-10-17に数えて38枚）は変わらない。
