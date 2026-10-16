@@ -261,3 +261,5 @@ def test_one_week_without_waiting():  # 1週間分の1分ごとの処理を、1�
 - [時刻と待ちの依頼と、3つの時計のハンドラ](https://github.com/proboscis/doeff/tree/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-time)
 - [Tell・state・writerの実装](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/handlers.py)
 - [待っている処理の再開を受け持つスケジューラ](https://github.com/proboscis/doeff/blob/d1c67469d14d7ab3ee185f5161f6965092213e9d/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
+- 前の回:[外部APIのテストを、通信せずに回す](doeff-replay.md)
+- 次の回:[AIに要る時だけ規則を見せるhook](doeff-hooks.md)

@@ -288,4 +288,5 @@ uv run python publications/zenn-use-cases-v0/examples/agents_workflow.py  # 完�
 - [セッションの仕様と、結果の型](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-agents/src/doeff_agents/effects/agent.py)
 - [テスト用のハンドラの実装](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-agents/src/doeff_agents/handlers/testing.hy)
 - [本番のハンドラの入口](https://github.com/proboscis/doeff/blob/914ea5629ecbc9ed7af84926310eff312cd4eb12/packages/doeff-agents/src/doeff_agents/handlers/__init__.py)
-- [doeffとは？(エフェクトとハンドラの入門)](doeff-main.md)
+- 前の回:[doeffとは？(エフェクトとハンドラの入門)](doeff-main.md)
+- 次の回:[20秒待つ処理を、20秒待たずにテストする](doeff-time.md)

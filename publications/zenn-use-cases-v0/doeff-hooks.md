@@ -14,7 +14,7 @@ AIエージェントに守ってほしい決まりは、失敗のたびに増え
 
 全部を読ませると長すぎます。削ると、要る時に手元にありません。この記事は、この悩みをClaude Codeのhookで解いた開発の記録です。決まりを「いつ見せるか」の条件つきで持ち、当たった時だけAIに見せます。
 
-この仕組みは、自作のAI開発の基盤agoraで動いています。agoraは、AIの会話を何十も並べて開発を進める仕組みです。全体の話は、連載の5本目「AIの会話を最大50並べて1人で開発する」で書きます。
+この仕組みは、自作のAI開発の基盤agoraで動いています。agoraは、AIの会話を何十も並べて開発を進める仕組みです。全体の話は、連載の5本目「[AIの会話を最大50並べて、1人で開発する](doeff-fleet.md)」にあります。
 
 ## まず短いコード
 
@@ -289,3 +289,5 @@ def test_judged_rule_with_fixed_answers():  # 同じ処理を、判定器を替�
 - [この記事の完全な例](examples/rule_hook.py)
 - [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/6ab1e37d6c65b53d944343ff7cd866043a7abf9d)
 - [判定器への問いのeffect(doeff-system-one)](https://github.com/proboscis/doeff/tree/6ab1e37d6c65b53d944343ff7cd866043a7abf9d/packages/doeff-system-one)
+- 前の回:[バックテストと本番で同じ処理を動かす](doeff-backtest.md)
+- 次の回:[async/awaitがあるのに、なぜyieldか](doeff-coroutines.md)
