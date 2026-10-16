@@ -293,6 +293,7 @@ def wrong_wait_result(task: Task[int]) -> Generator[Wait[int], Any, None]:
 
 
 elapsed("1")
+EffectBase("fetch", url="api.example.com")
 """
 
 _MISTAKE_MARKER = "# ---- mistakes"
@@ -364,6 +365,8 @@ def test_pyright_accepts_typed_code_and_catches_each_mistake(tmp_path: Path) -> 
         "label: str = yield from elapsed(1)",
         'yield typed_resume(effect, k, "now")',
         'elapsed("1")',
+        # EffectBase は引数を残さない(実行時は TypeError — tests/test_effect_base_refuses_dropped_arguments.py)
+        'EffectBase("fetch", url="api.example.com")',
         "yield from Spawn(elapsed(1))",
         "text: str = yield from Wait(task)",
     }
