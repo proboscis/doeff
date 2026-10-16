@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1080" viewBox="0 0 1200 1080" font-family="IPAPGothic, IPAGothic, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1080" fill="#ffffff"/>
+  <text x="600" y="72" text-anchor="middle" font-size="44" font-weight="bold" fill="#111827">同じjobに、時計を選んで付ける</text>
+
+  <!-- 処理本体 -->
+  <rect x="230" y="112" width="740" height="236" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="258" y="152" font-size="26" fill="#4b5563">処理本体（1つだけ書く）</text>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="32" fill="#111827">
+    <text x="290" y="200">@do</text>
+    <text x="290" y="242">def job(seconds):</text>
+    <text x="290" y="284"><tspan xml:space="preserve">    yield </tspan><tspan fill="#0f766e" font-weight="bold">Delay(seconds)</tspan></text>
+    <text x="290" y="326"><tspan xml:space="preserve">    return </tspan>"完了"</text>
+  </g>
+
+  <line x1="600" y1="350" x2="600" y2="428" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="624" y="398" font-size="28" fill="#111827">Delay(20) を依頼する</text>
+
+  <text x="600" y="470" text-anchor="middle" font-size="28" fill="#4b5563">外側のハンドラを1つ選ぶ</text>
+
+  <!-- 仮想時計 -->
+  <rect x="40" y="492" width="550" height="210" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="68" y="540" font-size="30" font-weight="bold" fill="#0f766e">テストで：仮想時計</text>
+  <text x="68" y="588" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">sim_time_handler()</text>
+  <text x="68" y="634" font-size="28" fill="#111827">仮想時計を20秒進める</text>
+  <text x="68" y="682" font-size="28" font-weight="bold" fill="#0f766e">実時間：ほぼ0秒</text>
+
+  <!-- 自作 -->
+  <rect x="610" y="492" width="550" height="210" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
+  <text x="638" y="540" font-size="30" font-weight="bold" fill="#0f766e">テストで：自作のハンドラ</text>
+  <text x="638" y="588" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">skip_delay</text>
+  <text x="638" y="634" font-size="28" fill="#111827">時計なしで、すぐ再開する</text>
+  <text x="638" y="682" font-size="28" font-weight="bold" fill="#0f766e">実時間：ほぼ0秒</text>
+
+  <!-- asyncio -->
+  <rect x="40" y="722" width="550" height="210" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="68" y="770" font-size="30" font-weight="bold" fill="#c2410c">本番で：asyncio</text>
+  <text x="68" y="818" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">async_time_handler()</text>
+  <text x="68" y="864" font-size="28" fill="#111827">asyncioで実際に20秒待つ</text>
+  <text x="68" y="912" font-size="28" font-weight="bold" fill="#c2410c">実時間：約20秒</text>
+
+  <!-- 同期 -->
+  <rect x="610" y="722" width="550" height="210" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
+  <text x="638" y="770" font-size="30" font-weight="bold" fill="#c2410c">スクリプトで：同期</text>
+  <text x="638" y="818" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">sync_time_handler()</text>
+  <text x="638" y="864" font-size="28" fill="#111827">スレッドを止めて20秒待つ</text>
+  <text x="638" y="912" font-size="28" font-weight="bold" fill="#c2410c">実時間：約20秒</text>
+
+  <line x1="600" y1="938" x2="600" y2="986" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="624" y="972" font-size="28" fill="#111827">続きを再開する</text>
+
+  <rect x="330" y="992" width="540" height="68" rx="16" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+  <text x="600" y="1037" text-anchor="middle" font-size="30" fill="#111827">どれでも戻り値は <tspan font-family="DejaVu Sans Mono, monospace">"完了"</tspan></text>
+</svg>

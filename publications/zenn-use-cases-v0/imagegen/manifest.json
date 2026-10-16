@@ -494,28 +494,26 @@
   {
     "id": "time-concept",
     "image": "images/zenn-use-cases-v0/generated/time-concept.png",
-    "generation_prompt": "time-concept-flat-code.txt",
+    "generation_prompt": "time-svg-source.txt",
     "edit_prompts": [],
-    "tool": "image_gen (built-in)",
-    "sha256": "c8c8abbf69bf1e593822bf2e451f80c8cc9eb38e5d7b8009da84dfc29df11b20",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1352216,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "ecfe4562d8db1d556f887532c8006a1c8fb8b731c70000f854bbceb2ab924daf",
+    "width": 1200,
+    "height": 1080,
+    "bytes": 132595,
+    "review": "2026-10-16：週3の改稿のコード（job・skip_delay・3つの時計）と名前・値・矢印を目視確認。白背景の平面図として採用。"
   },
   {
     "id": "time-flow",
     "image": "images/zenn-use-cases-v0/generated/time-flow.png",
-    "generation_prompt": "time-flow-flat-code.txt",
-    "edit_prompts": [
-      "time-flow-flat-code-edit.txt"
-    ],
-    "tool": "image_gen (built-in)",
-    "sha256": "d82915cca17f9a0b02214ffde7b29b2e0c9f03735335aaca50d09184ce1a488c",
-    "width": 1536,
-    "height": 1024,
-    "bytes": 1639049,
-    "review": "2026-09-16：精査後のコード・コメント・値・矢印を目視確認。白背景の平面図として採用。"
+    "generation_prompt": "time-svg-source.txt",
+    "edit_prompts": [],
+    "tool": "SVG (hand-written) + chromium screenshot",
+    "sha256": "c85f062233e9ea38d7c0564505f5fe6f68fe14adbdb726f163b7bfcffea34f1b",
+    "width": 1200,
+    "height": 1040,
+    "bytes": 118276,
+    "review": "2026-10-16：worker(20)・worker(10)の再開時刻、時計の跳び、Gatherの[20.0, 10.0]、2026-10-16に測った実時間（0.01秒未満・20.09秒）を目視確認。白背景の平面図として採用。"
   },
   {
     "id": "tooling-concept",

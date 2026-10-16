@@ -11,6 +11,8 @@ from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
+# 採用画像を作った道具。SVGの図は正本をvisuals/に置き、作り方をimagegen/の台帳の文書に書く。
+IMAGE_TOOLS = {"image_gen (built-in)", "SVG (hand-written) + chromium screenshot"}
 
 
 def verify_image_manifest(expected_images: set[str]) -> None:
@@ -30,7 +32,7 @@ def verify_image_manifest(expected_images: set[str]) -> None:
         assert height > 0
         assert len(png) == entry["bytes"]
         assert len(png) < 3_000_000
-        assert entry["tool"] == "image_gen (built-in)"
+        assert entry["tool"] in IMAGE_TOOLS
         assert entry["review"]
         for prompt in [entry["generation_prompt"], *entry["edit_prompts"]]:
             assert (SOURCE / "imagegen" / prompt).read_text().strip()
