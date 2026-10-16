@@ -245,3 +245,5 @@ uv run python publications/zenn-use-cases-v0/examples/coroutine_comparison.py  #
 - [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/6ab1e37d6c65b53d944343ff7cd866043a7abf9d/packages/doeff-core-effects/doeff_core_effects/handlers.py)
 - [時間とスケジューリング(待ちを仮想の時間で答える)](doeff-time.md)
 - [doeffとは？(エフェクトとハンドラの入門)](doeff-main.md)
+- 前の回:[AIに要る時だけ規則を見せるhook](doeff-hooks.md)
+- 次の回:[設計の記録をテストとして走らせる](doeff-adr.md)

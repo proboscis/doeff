@@ -2,6 +2,8 @@
 
 2026-09-16に再精査。最初の棚卸しでは、`packages/`の全31ディレクトリを列挙。30にはパッケージ定義があり、旧`doeff-agentd`は廃止済みの残存ディレクトリとして区別した。すべてに紹介先か除外理由を割り当てた。
 
+2026-10-17に、後から足された8パッケージの行を足し、`packages/`から無くなった旧`doeff-agentd`の行を外した。足した行はREADMEとテストの所在を読んだ静的な対応付けで、記事で扱わない物は紹介先を「記事なし」とし、訳を確認範囲の欄に書いた。
+
 これは**静的な棚卸しと記事への対応付け**であり、全パッケージの実動作を検証した一覧ではない。README、公開エフェクト・ハンドラ、実例やテストの内容を読み、旧API・開発途中・環境依存の条件を記録した。テストへのリンクは根拠としての所在を示し、今回の実行済みを意味しない。
 
 ## パッケージごとの対応
@@ -9,10 +11,12 @@
 | ディレクトリ | 提供内容 | 紹介先 | 根拠 | テスト等の所在 | 確認範囲・注意点 |
 | --- | --- | --- | --- | --- | --- |
 | `doeff-adr` | defadr・defsemgrep・deftestとpytest収集。設計判断を検査へ結び付ける | [adr](doeff-adr.md)・[tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-adr/README.md) | [所在](../../packages/doeff-adr/tests/test_wiring.py) | 検査を採用側で収集する必要がある |
-| `doeff-agentd` | 廃止済み実装の残存ディレクトリ | [tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-agents/README.md) | 専用テスト未特定（確認対象を保証しない） | このcheckoutには未追跡のCargo.lockのみ。提供中のパッケージに数えない |
 | `doeff-agentic` | 環境・セッション・メッセージ・ワークフローを扱う上位API | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agentic/src/doeff_agentic/effects/__init__.py) | [所在](../../packages/doeff-agentic/tests/__init__.py) | READMEのRunAgent等は実装でlegacy/deprecated。新規の推奨例にしない |
 | `doeff-agentic-cli` | ワークフローの一覧・監視・接続用Rust CLI | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agentic-cli/src/main.rs) | 専用テスト未特定（確認対象を保証しない） | 実CLI接続・速度は未検証 |
 | `doeff-agents` | 起動・観測・追加指示・停止・スキーマで指定した結果の受け取り | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-agents/src/doeff_agents/effects/agent.py) | [所在](../../packages/doeff-agents/tests/conftest.py) | 実エージェント未起動。AwaitOutcomeの状態を確認してresultを利用 |
+| `doeff-claude-code` | Claude CodeのCLI(print mode)のプロセスの寿命を、会話と手番の単位のエフェクトで扱う | 記事なし | [定義・説明](../../packages/doeff-claude-code/README.md) | [所在](../../packages/doeff-claude-code/tests/test_dialogue.hy) | 利用者はdoeff-agentsの契約から使う下の層。実CLIは起動していない |
+| `doeff-cluster` | Programを定義のある限り動かし続ける実行基盤(coordinator・worker・Rollout・記録と再生) | 記事なし | [定義・説明](../../packages/doeff-cluster/README.md) | [所在](../../packages/doeff-cluster/tests/test_await_warm.hy) | k8sへの配備を前提にし、記事の例のように手元で短く試せないため扱わない |
+| `doeff-codex` | Codexのapp-serverのプロセスを扱う本番とfakeのハンドラ | 記事なし | [定義・説明](../../packages/doeff-codex/README.md) | [所在](../../packages/doeff-codex/tests/test_limits.hy) | doeff-claude-codeと同じ層。利用者はdoeff-agentsの契約から使う。実CLIは起動していない |
 | `doeff-conductor` | issue・隔離Git作業環境・エージェント・依存関係付きワークフロー・記録 | [agents](doeff-agents.md) | [定義・説明](../../packages/doeff-conductor/README.md) | [所在](../../packages/doeff-conductor/tests/__init__.py) | 時刻・乱数のみのワークフローは実行確認。エージェント・Git操作は未実行 |
 | `doeff-core-effects` | 環境/DI・状態・ログ・失敗・Listen・HTTP・キャッシュ/メモ化・並行処理 | [composition](doeff-composition.md) | [定義・説明](../../packages/doeff-core-effects/doeff_core_effects/__init__.py) | 専用テスト未特定（確認対象を保証しない） | 下記の詳細表でtime/di/replay/durable/events/observeにも対応付ける |
 | `doeff-docker` | Dockerfileの収集・build/run/push・ShellRun境界 | [remote](doeff-remote.md) | [定義・説明](../../packages/doeff-docker/src/doeff_docker/effects.hy) | [所在](../../packages/doeff-docker/tests/test_effects.py) | Dockerを操作していない |
@@ -24,19 +28,24 @@
 | `doeff-git` | git操作とPR操作、本番/テスト用ハンドラ | [operations](doeff-operations.md) | [定義・説明](../../packages/doeff-git/src/doeff_git/handlers/production.py) | [所在](../../packages/doeff-git/tests/unit/test_effect_handlers.py) | commit/push/PR等は未実行 |
 | `doeff-google-secret-manager` | 共通secretエフェクトをGoogle Cloud Secret Managerへ接続 | [operations](doeff-operations.md) | [定義・説明](../../packages/doeff-google-secret-manager/README.md) | [所在](../../packages/doeff-google-secret-manager/tests/unit/test_secrets.py) | 実認証・秘密情報アクセスは未実行 |
 | `doeff-hy` | Hyのdefk/do!/<-/defhandler/deftest、計算合成の表記 | [hy](doeff-hy.md)、[tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-hy/README.md) | [所在](../../packages/doeff-hy/tests/test_sexpr.hy) | Python @doの必須前提ではない。traverse記事にも掲載 |
+| `doeff-hy-pytest` | Hyのテストをpytestで走らせる時の補助(Python 3.14でのHyの不具合の回避・テストの時間の上限) | 記事なし | [定義・説明](../../packages/doeff-hy-pytest/README.md) | [所在](../../packages/doeff-hy-pytest/tests/test_budget.py) | 利用者が呼ぶAPIを持たないpytestのプラグイン。Hyの書き方は[hy](doeff-hy.md)で扱う |
 | `doeff-image` | ImageGenerate/ImageEdit/ImageResultという共通の依頼と結果 | [image](doeff-image.md) | [定義・説明](../../packages/doeff-image/src/doeff_image/effects/generate.py) | [所在](../../packages/doeff-image/tests/test_image_effects.py) | それ自体は生成プロバイダではない |
 | `doeff-indexer` | Program/@do/Kleisli定義・型情報の静的索引と探索 | [tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-indexer/src/indexer.rs) | [所在](../../packages/doeff-indexer/tests/deps.rs) | 依存エフェクトの解析とは役割を分ける |
+| `doeff-jev` | doeff-system-oneの判定(Judge)を外部の判定APIへ送るハンドラ・宛先の解決・答えのキャッシュ | 記事なし | [定義・説明](../../packages/doeff-jev/README.md) | [所在](../../packages/doeff-jev/tests/test_handler.py) | [hooks](doeff-hooks.md)は判定を固定の答えのハンドラで動かし、外部の判定APIへは送っていない |
 | `doeff-linter` | Pythonコード品質・不変性・doeffの利用規則を検査 | [tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-linter/src/lib.rs) | [所在](../../packages/doeff-linter/tests/conftest.py) | READMEの規則数や速度は転載しない |
 | `doeff-llm` | Chat/StreamingChat/StructuredQuery/Embeddingの共通エフェクト | [llm](doeff-llm.md) | [定義・説明](../../packages/doeff-llm/src/doeff_llm/effects/structured.py) | 専用テスト未特定（確認対象を保証しない） | README間にStructuredOutput/StructuredQueryの差。現行実装のStructuredQueryを使用 |
 | `doeff-ml-nexus` | 依存の転送・環境構築・シリアライズ・ローカル/リモートDocker・GPU指定 | [remote](doeff-remote.md) | [定義・説明](../../packages/doeff-ml-nexus/src/doeff_ml_nexus/interpreters.hy) | [所在](../../packages/doeff-ml-nexus/tests/test_docker.py) | Programのシリアライズ往復は成功。上位ファクトリはdefkの契約不足でimport失敗。Docker/SSH/GPUは未実行 |
 | `doeff-notify` | 通知・スレッド・確認の語彙、console/log/testingハンドラ | [operations](doeff-operations.md) | [定義・説明](../../packages/doeff-notify/README.md) | [所在](../../packages/doeff-notify/tests/test_handlers.py) | 組み込みSlack配送はない。testingの未対応effect分岐に旧Pass()が残るため、記事は型で選別して正しいPass(effect, k)で委譲 |
 | `doeff-openai` | OpenAIの共通LLMエフェクト処理・構造化応答・ストリーミング等 | [llm](doeff-llm.md) | [定義・説明](../../packages/doeff-openai/README.md) | [所在](../../packages/doeff-openai/tests/_runner.py) | モデル対応・価格・実接続は今回検証していない |
 | `doeff-openrouter` | OpenRouterの共通LLMエフェクト処理・構造化応答 | [llm](doeff-llm.md) | [定義・説明](../../packages/doeff-openrouter/README.md) | [所在](../../packages/doeff-openrouter/tests/conftest.py) | streamingは未実装の例外、embeddingはPass。全エフェクト・全モデルの互換を主張しない |
+| `doeff-records` | 版つきの行・変更の列・追記の列のエフェクトと、メモリ・PostgreSQLのハンドラ | 記事なし | [定義・説明](../../packages/doeff-records/README.md) | [所在](../../packages/doeff-records/tests/test_admission.hy) | 記事の題材にまだ選んでいない。PostgreSQLへの接続は確認していない |
 | `doeff-secret` | 秘密情報の取得/保存/一覧/削除、環境変数とメモリ上のテスト用ストア | [operations](doeff-operations.md) | [定義・説明](../../packages/doeff-secret/src/doeff_secret/effects/secrets.py) | [所在](../../packages/doeff-secret/tests/test_effect_handlers.py) | 環境変数・メモリの未対応分岐に削除済みDelegate()が残る。環境変数からクラウドへの自動fallbackは動作確認済みとしない |
 | `doeff-seedream` | Seedream画像生成・編集と共通画像エフェクトのハンドラ | [image](doeff-image.md) | [定義・説明](../../packages/doeff-seedream/README.md) | [所在](../../packages/doeff-seedream/tests/test_edit_image.py) | 実生成未実行 |
+| `doeff-system-one` | 判定の依頼(Judge)・問いと答えの型・固定の答えのテスト用ハンドラ | [hooks](doeff-hooks.md) | [定義・説明](../../packages/doeff-system-one/README.md) | [所在](../../packages/doeff-system-one/tests/test_scripted_handler.py) | 記事は固定の答えのハンドラで実行確認。実の判定器への接続は未実行 |
 | `doeff-test-target` | 解析・挙動のテスト用シナリオ/エフェクト/ハンドラ | [tooling](doeff-tooling.md) | [定義・説明](../../packages/doeff-test-target/src/doeff_test_target/orchestrate.py) | [所在](../../packages/doeff-test-target/tests/test_smoke.py) | 利用者向け業務機能として売らない |
 | `doeff-time` | Delay/WaitUntil/GetTime/ScheduleAt/SetTime、同期/asyncio/仮想時間 | [time](doeff-time.md) | [定義・説明](../../packages/doeff-time/src/doeff_time/handlers/sim_time.py) | [所在](../../packages/doeff-time/tests/conftest.py) | 仮想時間と実時間は既存記事例で実行確認 |
 | `doeff-traverse` | Traverse/Reduce/Zip/Inspect/SortBy/Take/Fail/Skip、逐次/並行/失敗の戦略 | [traverse](doeff-traverse.md) | [定義・説明](../../packages/doeff-traverse/doeff_traverse/handlers.py) | [所在](../../packages/doeff-traverse/tests/test_memory_leak_multi_day.py) | Hy for/do/From/When/Reduceも掲載。旧foldは公開マクロになく置換。継続の複製ではなく新しい計算を生成 |
+| `doeff-validation` | 独立した検査を全部走らせ、落ちた検査の失敗を集めて返す(doeff-traverseの上の薄い層) | 記事なし | [定義・説明](../../packages/doeff-validation/README.md) | [所在](../../packages/doeff-validation/tests/test_validate.py) | 記事の題材にまだ選んでいない。逐次・並行の選び方は[traverse](doeff-traverse.md)と同じハンドラで行う |
 | `doeff-vm` | Pythonバインディング・VM接続・継続/トレース等の公開プリミティブ | [VM](doeff-vm.md) | [定義・説明](../../packages/doeff-vm/Cargo.toml) | [所在](../../packages/doeff-vm/tests/test_pyvm.py) | 独立した業務機能としては扱わない |
 | `doeff-vm-core` | RustのVM本体・継続管理・実行機構 | [VM](doeff-vm.md) | [定義・説明](../../packages/doeff-vm-core/Cargo.toml) | [所在](../../packages/doeff-vm-core/tests/test_vm_module_split.py) | 速度比較や耐久性の実証はしていない |
 

@@ -112,6 +112,7 @@ doeffは、Pythonのジェネレータを、Rustで書いた仮想機械（VM）
 | LLMごとのSDK呼び出しが処理に広がっている | チャット・ストリーミング・構造化応答・埋め込みを共通の依頼にする | [LLMの共通エフェクト](doeff-llm.md) |
 | 画像の生成・編集を制作パイプラインへ組み込みたい | 共通の画像エフェクトを使い、GeminiやSeedreamのハンドラを選ぶ | [画像生成・編集](doeff-image.md) |
 | AIの会話を何十も並べると、配る・待つ・まとめる手間が1人に集まる | 仕事をcardに書き、配る判断をProgramにして、本番と模擬のハンドラで動かす | [AIの会話を50並べる開発の記録](doeff-fleet.md) |
+| AIエージェントが、書いておいた決まりを読み落とす | 決まりを場面の条件つきの規則にし、hookで当たった時だけ見せる | [規則を要る時だけ見せるhook](doeff-hooks.md) |
 
 ### 時間・依存・状態・保存の悩み
 
@@ -181,6 +182,7 @@ doeffの面白さは、これらが共通の計算の形に乗ることです。
 
 - [doeffのリポジトリ（GitHub）](https://github.com/proboscis/doeff)
 - [この記事のコードをまとめた完全な例](examples/greet_handlers.py)
+- 次の回:[AIエージェントの起動と結果待ちを、doeffの処理として書く](doeff-agents.md)
 
 この記事のコードは、2026年10月16日に、Python 3.12と3.14で動くことを確かめました。確かめた版は、GitHubにあるdoeffのmain（commit 914ea56）です。PyPIで配布中の0.4.1には`handler`と`with_handlers`が無く、このコードは動きません。
 
