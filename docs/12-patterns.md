@@ -65,12 +65,12 @@ def create_repository(table_name):
     @do
     def find_by_id(id):
         query = f"SELECT * FROM {table_name} WHERE id = ?"
-        return yield db.query_one(query, id)
+        return (yield db.query_one(query, id))
     
     @do
     def find_all():
         query = f"SELECT * FROM {table_name}"
-        return yield db.query_many(query)
+        return (yield db.query_many(query))
     
     @do
     def save(entity):
@@ -112,10 +112,10 @@ from doeff_core_effects import Ask
 @do
 def create_services():
     return {
-        "database": yield Ask("database"),
-        "cache": yield Ask("cache"),
-        "logger": yield Ask("logger"),
-        "config": yield Ask("config")
+        "database": (yield Ask("database")),
+        "cache": (yield Ask("cache")),
+        "logger": (yield Ask("logger")),
+        "config": (yield Ask("config"))
     }
 
 @do
@@ -165,7 +165,7 @@ def transfer_money(from_account, to_account, amount):
         yield credit_account(to_account, amount)
         return {"status": "transferred"}
     
-    return yield unit_of_work(operations)
+    return (yield unit_of_work(operations))
 ```
 
 ## Effect Composition Patterns
@@ -288,9 +288,9 @@ def retry_with_exponential_backoff(operation, max_attempts=5):
 # Usage
 @do
 def fetch_with_retry():
-    return yield retry_with_exponential_backoff(
+    return (yield retry_with_exponential_backoff(
         lambda: fetch_from_unreliable_api()
-    )
+    ))
 ```
 
 ### Resource Management
@@ -328,9 +328,9 @@ def use_database_connection():
     
     @do
     def work(conn):
-        return yield conn.query("SELECT * FROM users")
+        return (yield conn.query("SELECT * FROM users"))
     
-    return yield with_resource(acquire, release, work)
+    return (yield with_resource(acquire, release, work))
 ```
 
 ### Circuit Breaker
@@ -405,7 +405,7 @@ def order_state_machine(order_id):
     else:
         raise ValueError(f"Invalid state: {state}")
     
-    return yield Get(f"order_{order_id}_state")
+    return (yield Get(f"order_{order_id}_state"))
 ```
 
 ### Immutable State Updates
@@ -425,7 +425,7 @@ def update_user(user_id, updates):
     updated_user = {
         **user,
         **updates,
-        "updated_at": yield GetTime()
+        "updated_at": (yield GetTime())
     }
 
     yield Put(f"user_{user_id}", updated_user)
@@ -434,7 +434,7 @@ def update_user(user_id, updates):
 # Usage
 @do
 def change_username(user_id, new_username):
-    return yield update_user(user_id, {"username": new_username})
+    return (yield update_user(user_id, {"username": new_username}))
 ```
 
 ### Snapshot and Restore
@@ -487,7 +487,7 @@ def fetch_user_dashboard(user_id):
         "posts": results[1],
         "followers": results[2],
         "notifications": results[3],
-        "dashboard_loaded_at": yield GetTime()
+        "dashboard_loaded_at": (yield GetTime())
     }
 ```
 
@@ -638,7 +638,7 @@ def bad_state_usage():
     yield Put("arg1", arg1)
     yield Put("arg2", arg2)
     yield Put("arg3", arg3)
-    return yield compute()  # Reads from state
+    return (yield compute())  # Reads from state
 ```
 
 **GOOD:**
@@ -646,7 +646,7 @@ def bad_state_usage():
 @do
 def good_parameter_passing():
     # DO: pass arguments directly
-    return yield compute(arg1, arg2, arg3)
+    return (yield compute(arg1, arg2, arg3))
 ```
 
 ### Bad: Ignoring Errors
