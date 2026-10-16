@@ -1075,3 +1075,37 @@
   ;; F2: finished-ms 無しは最小期限に入れない(保持側には入る)
   (assert (= live {}))
   (assert (is earliest None)))
+
+
+(defk place-held [tasks now]
+  {:pre [(: tasks dict) (: now int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "tasks だけを持つ状態に place-tasks を掛けた結果を得るため。"
+  (! (place-tasks now (ClusterState #() {} {} tasks) {} T)))
+
+(deftest test-place-tasks-drops-a-held-row_exactly-at-its-retention-lapse
+  ;; F1: 保持の期限(finished-ms + retain-ms + 1)の 1 ms 前は残り、その刻で消える。
+  (val row (! (split-task "a" "finished" :finished 500 :retain 1000)))
+  (val lapse (! (task-lapse-at row 0)))
+  (assert (= lapse 1501))
+  (assert (is (get (! (place-held {"a" row} (- lapse 1))) "a") row))
+  (assert (= (! (place-held {"a" row} lapse)) {}))
+  ;; 期限の来た行だけ落ち、他の保持の行は元の object のまま残る(順も保つ)。
+  (val late (! (split-task "z" "lost" :finished 900 :retain 1000)))
+  (val early (! (split-task "b" "cancelled" :finished 100 :retain 1000)))
+  (val out (! (place-held {"z" late "b" early} 1101)))
+  (assert (= (list out) ["z"]))
+  (assert (is (get out "z") late)))
+
+(deftest test-place-tasks-keeps-a-held-row-without-finished-ms
+  ;; F2: 終わった刻の無い切り離した行は毎拍 now から数えるので消えない。
+  (val row (! (split-task "a" "failed" :finished None :retain 1000)))
+  (for [now [0 1000 10000000]]
+    (assert (is (get (! (place-held {"a" row} now)) "a") row))))
+
+(deftest test-place-tasks-still-lapses-an-attached-ended-row
+  ;; F3: 切り離していない終わった行は走査の対象のまま、lease(= 0 の次の ms)が切れて落ちる。
+  (val row (! (split-task "b" "finished" :detached False :finished 100)))
+  (assert (= (! (place-held {"b" row} 100000)) {}))
+  (val live (replace row :lease-until-ms 5000))
+  (assert (is (get (! (place-held {"b" live} 5000)) "b") live))
+  (assert (= (! (place-held {"b" live} 5001)) {})))

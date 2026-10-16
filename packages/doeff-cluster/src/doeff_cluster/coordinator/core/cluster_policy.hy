@@ -1113,22 +1113,35 @@
   {:pre [(: now int) (: state ClusterState) (: placements dict) (: timing ClusterTiming)] :post [(: % dict)]
    :tags {:context "coordinator" :role "judgment"}}
   "task の期限切れを落とし、担い手が沈黙した task を失敗にし、待っている task を置く。切り離した task は settle-detached の規則。"
-  (setv tasks {})
-  (for [#(id task) (.items state.tasks)]
+  ;; 結果を保持しているだけの行(切り離した終わり)は走査しない — 保持側の最小期限が来た拍だけ 1 周して期限切れを落とす。
+  (<- split tuple (task-split state.tasks now))
+  (setv #(live earliest) split)
+  (setv scanned {})
+  (for [#(id task) (.items live)]
     ;; 自分の期限(静かな区間の次の刻 task-due と同じ関数 task-lapse-at の刻)が来たか。
     (<- lapse (| int None) (task-lapse-at task now))
     (val lapsed (and (is-not lapse None) (>= now lapse)))
     (cond
       task.detached
         (do (<- kept (| TaskRecord None) (settle-detached task now lapsed))
-            (when (is-not kept None) (setv (get tasks id) kept)))
+            (when (is-not kept None) (setv (get scanned id) kept)))
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
       lapsed None
       (and (in task.phase PLACED-PHASES)
            (or (not-in task.worker state.workers)
                (not (alive now (get state.workers task.worker) timing.reassign-after-ms))))
-        (setv (get tasks id) (replace task :phase "failed" :finished-ms now
-                                      :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))
+        (setv (get scanned id) (replace task :phase "failed" :finished-ms now
+                                        :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))
+      True (setv (get scanned id) task)))
+  ;; 保持側の行は元の object のまま、元の id の順で戻す。期限(finished-ms + retain-ms + 1 — task-lapse-at と同じ式)が来た行は落とす。
+  ;; finished-ms の無い行は毎拍 now から数えるので落ちない。
+  (setv expiring (and (is-not earliest None) (>= now earliest)))
+  (setv tasks {})
+  (for [#(id task) (.items state.tasks)]
+    (cond
+      (in id scanned) (setv (get tasks id) (get scanned id))
+      (not (held-task? task)) None
+      (and expiring (is-not task.finished-ms None) (>= now (+ task.finished-ms task.retain-ms 1))) None
       True (setv (get tasks id) task)))
   ;; 待っている task が無ければ、置く判断(負荷・drain 中の worker・状態の写し)を組まない — 調停の 1 周ごとに状態全体を写す費用が
   ;; 模擬の拍の大半だった(#2655 の profile: replace 135,053 回・2.3 秒)。
