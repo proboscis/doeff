@@ -133,9 +133,9 @@
     "flow_caption": "依頼は内側から外側へ進み、価格を加工する順序は外側から内側です。手数料と割引の順序により、88と90に分かれます。"
   },
   "coroutines": {
-    "concept_title": "待機する対象と、解釈する依頼を分ける",
-    "concept_caption": "awaitはawaitableを進める構文です。doeffでは依頼のデータと継続を、実行時に取り付けたハンドラへ渡します。",
+    "concept_title": "awaitは実装を進め、yieldは依頼を外側へ出す",
+    "concept_caption": "awaitの先は、呼んだ実装で決まります。yieldの先は、外側に付けたハンドラが決めます。",
     "flow_title": "ストリームは、1断片ずつdoeffへ戻す",
-    "flow_caption": "収集ループと結合処理は@doに残し、次の1要素を待つ操作だけをAwaitで非同期実装へ接続します。"
+    "flow_caption": "収集のループは@doに残します。次の1断片を待つ所だけを、Awaitで非同期の実装へつなぎます。"
   }
 }

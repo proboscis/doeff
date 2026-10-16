@@ -1,116 +1,159 @@
-"""coroutineとの比較、解釈の差し替え、1要素ずつの非同期待機を検証する。"""
+"""async/awaitとyieldの比較、ハンドラの差し替え、1断片ずつの待ちを、通信せずに確かめる。
 
-import asyncio  # 比較用coroutineと、通信しない非同期ストリームを動かす。
-from collections.abc import AsyncIterator  # 文字列を1要素ずつ非同期に返す入力型を表す。
-from dataclasses import dataclass  # 名前取得の依頼を不変のデータ型にする。
+記事 doeff-coroutines.md の Python の4枠と同じ行を持つ完全な例。記事の枠の行は、
+reviews/coroutines-check.py がこのファイルの行と一致することを確かめる。
+"""
 
-from doeff_core_effects import Await  # 非同期イテレータの次の1要素だけを待つ依頼を使う。
-from doeff_core_effects.handlers import await_handler  # Awaitをasyncioとの橋渡しへ接続する。
-from doeff_core_effects.scheduler import scheduled  # 橋渡しの完了を待ち、停止した計算を再開する。
+import asyncio  # 比べるためのcoroutineを、標準のイベントループで動かす。
+from collections.abc import AsyncIterator  # 文字列を非同期に1つずつ返す入力の型。
+from dataclasses import dataclass  # 依頼を、書き換えられないデータ型にする。
 
-from doeff import (  # 依頼を解釈し、Programを合成して検証できるようにする。
-    Effect,  # ReadNameをハンドラへ配送する操作として宣言する。
-    EffectGenerator,  # @do本体がyieldを通して値を受け取る型を表す。
-    Pass,  # 担当しない操作を、その継続とともに外側へ渡す。
-    Program,  # まだ実行していない合成可能な計算の型を表す。
-    Resume,  # 名前を待つ続きへ、ハンドラが選んだ値を渡す。
-    do,  # 関数を呼ぶと実行前のProgramを作るようにする。
-    handler,  # 名前の供給方法をProgramの外側へ取り付ける。
-    run,  # 構成したProgramを検証の境界で実行する。
-)  # 依頼・継続・合成・実行のAPIを揃える。
+from doeff_core_effects import Await, Listen  # 完了を待つ依頼と、出た依頼を集める依頼。
+from doeff_core_effects.handlers import (  # 待ちに答える役と、集める役。
+    await_handler,  # Awaitを、裏のasyncioのループで進める。
+    listen_handler,  # Listenに答え、包んだ範囲の依頼を集める。
+)
+from doeff_core_effects.scheduler import scheduled  # 待ちが終わったら、止まった処理を再開する。
 
+from doeff import Effect, Pass, Resume, do, handler, run, with_handlers  # 依頼・ハンドラ・実行。
 
-async def read_name_async() -> str:  # asyncio側の比較教材として、非同期の名前取得を表す。
-    await asyncio.sleep(0)  # 通信せず、いったん現在のTaskから実行を譲る。
-    return "花子"  # 再開後、呼び出し元のawaitへ名前の文字列を返す。
+# --- 記事の1枠目: 同じ挨拶を、await版とyield版で書く ---
 
 
-async def greet_async() -> str:  # 名前取得と挨拶の組み立てをcoroutineとしてつなぐ。
-    name = await read_name_async()  # 子coroutineを進め、返ってきた「花子」を受け取る。
-    return f"こんにちは、{name}さん"  # 取得した名前を含む挨拶を返す。
+async def read_name_async():  # await版の部品。名前を取る実装そのもの。
+    await asyncio.sleep(0)  # 通信の代わりに、いったんイベントループへ譲る。
+    return "花子"  # 実装が決めた名前を返す。
 
 
-@dataclass(frozen=True)  # 一度発行した依頼を書き換えないデータ型にする。
-class ReadName(Effect):  # 取得方法を含めず、「名前を返してほしい」という操作を表す。
-    pass  # この依頼には引数がないため、フィールドを追加しない。
+async def greet_async():  # await版の挨拶。
+    name = await read_name_async()  # 呼んだ実装を進め、その戻り値を受け取る。
+    return f"こんにちは、{name}さん"  # 名前を入れた挨拶を返す。
 
 
-@do  # 呼び出すと、名前取得と挨拶を合成した実行前のProgramを返す。
-def greet() -> EffectGenerator[str]:  # coroutine版と同じ挨拶を、依頼とその結果で組み立てる。
-    name = yield ReadName()  # 名前の取得をハンドラに委ね、渡された文字列を受け取る。
-    return f"こんにちは、{name}さん"  # 選択したハンドラが返した名前で挨拶を作る。
+@dataclass(frozen=True)  # 出した依頼を、後から書き換えない型にする。
+class ReadName(Effect):  # yield版の部品。「名前を返して」という依頼で、取り方は書かない。
+    pass  # 引数の無い依頼なので、欄は無い。
 
 
-@do  # 名前を求める依頼を受け、続きへ値を返せる計算にする。
-def hanako(effect, k):  # この実行範囲でReadNameへの返答を「花子」にする。
-    if isinstance(effect, ReadName):  # 名前の取得だけをこのハンドラの担当にする。
-        return (yield Resume(k, "花子"))  # 停止中のyieldへ「花子」を渡し、挨拶の続きを再開する。
-    return (yield Pass(effect, k))  # 別の依頼は元の継続を保って外側へ渡す。
+@do  # 呼んでもすぐには動かず、動かす手順を返す。
+def greet():  # yield版の挨拶。
+    name = yield ReadName()  # 依頼を出して止まり、外側から返った名前を受け取る。
+    return f"こんにちは、{name}さん"  # 名前を入れた挨拶を返す。
 
 
-@do  # 同じ名前取得の依頼に、別の解釈を取り付けられるようにする。
-def taro(effect, k):  # この実行範囲でReadNameへの返答を「太郎」にする。
-    if isinstance(effect, ReadName):  # 名前の取得だけをこのハンドラの担当にする。
-        return (yield Resume(k, "太郎"))  # 同じ本体を「太郎」で再開し、異なる挨拶を得る。
-    return (yield Pass(effect, k))  # 別の依頼は元の継続を保って外側へ渡す。
+@handler  # 手順に取り付けられるハンドラにする。
+@do  # ハンドラも、yieldで再開と委譲を指示する。
+def hanako(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
+    if isinstance(effect, ReadName):  # 名前の依頼なら、
+        return (yield Resume(k, "花子"))  # 続きに「花子」を返して再開する。
+    return (yield Pass(effect, k))  # 担当しない依頼は、外側のハンドラへ渡す。
 
 
-@do  # 子のProgramをyieldして結果を受け取る合成の例にする。
-def twice() -> EffectGenerator[tuple[str, str]]:  # 挨拶を2回行い、順番を保った組で返す。
-    first = yield greet()  # 子の計算を実行し、1回目の挨拶を受け取る。
-    second = yield greet()  # 新しい子の計算を実行し、2回目の挨拶を受け取る。
-    return first, second  # 2つの結果を、呼び出した順で返す。
+# --- 記事の2枠目: 同じProgramに、別の答えを付ける ---
 
 
-@do  # 収集ループ全体を、他のProgramからyieldできる計算にする。
-def collect_chunks(stream: AsyncIterator[str]) -> EffectGenerator[str]:  # 文字列の断片を受信順に結合する。
-    iterator = aiter(stream)  # 入力の非同期イテレータを取得し、最初の断片から読む。
-    text = ""  # まだ何も受け取っていない本文を空文字列で表す。
-    while True:  # 反復の終了を検出するまで、1要素ずつ依頼を発行する。
-        chunk = yield Await(anext(iterator, None))  # 次の1要素だけを待ち、終了時にはNoneを受け取る。
-        if chunk is None:  # str型の要素と、反復が終了した合図を区別する。
-            return text  # 終了したら、結合済みの全文を呼び出し元へ返す。
-        text += chunk  # 今回届いた文字列を、受信順に本文の末尾へ加える。
+@handler  # 同じ依頼へ、別の答え方をするハンドラにする。
+@do  # 再開と委譲を、hanakoと同じ書き方で指示する。
+def taro(effect, k):  # この範囲では、名前の依頼に「太郎」で答える。
+    if isinstance(effect, ReadName):  # 名前の依頼だけを担当する。
+        return (yield Resume(k, "太郎"))  # 続きに「太郎」を返して再開する。
+    return (yield Pass(effect, k))  # 担当しない依頼は、外側へ渡す。
 
 
-@do  # 収集用Programを、本文を仕上げる次の処理へつなぐ。
-def introduction(stream: AsyncIterator[str]) -> EffectGenerator[str]:  # 断片を集め、前後の空白を除いた本文を返す。
-    body = yield collect_chunks(stream)  # 子Programから結合済みの文字列を受け取る。
-    return body.strip()  # 全文が揃ってから前後の空白を除き、紹介文の結果にする。
+@do  # 子のProgramをyieldで呼ぶ処理にする。
+def twice():  # 挨拶を2回作り、順に組で返す。
+    first = yield greet()  # awaitの代わりにyieldで、子の結果を受け取る。
+    second = yield greet()  # 2回目も、子の奥でReadNameの依頼が出る。
+    return first, second  # 2つの挨拶を、呼んだ順に返す。
 
 
-async def chunks_for_test() -> AsyncIterator[str]:  # 非同期SDKの反復プロトコルを再現するテスト専用入力にする。
-    for chunk in (" はじめに", "", "、", "doeff "):  # 空の断片も含め、結合順と終了判定を検査する。
-        await asyncio.sleep(0)  # ネットワークを使わず、次の要素が非同期に到着する状況を作る。
-        yield chunk  # テスト用の非同期イテレータから、今回の断片だけを返す。
+# --- 記事の3枠目: 非同期SDKとは、必要な1操作の所でつなぐ ---
 
 
-p_greet: Program[str] = greet()  # 名前供給の方法をまだ選ばず、同じ処理本体を再利用できる値にする。
-p_twice: Program[tuple[str, str]] = twice()  # 挨拶2回という固定の手順を、実行前の値として保持する。
+@do  # 収集のループも、yieldで依頼を出す処理にする。
+def collect_chunks(stream: AsyncIterator[str]):  # 断片を、届いた順につなぐ。
+    iterator = aiter(stream)  # 入力から非同期イテレータを取り出す。
+    text = ""  # まだ何も届いていない本文。
+    while True:  # 終わりが来るまで、1断片ずつ待つ。
+        chunk = yield Await(anext(iterator, None))  # 次の1断片を待つ。終わりならNone。
+        if chunk is None:  # 断片の文字列と、終わりの合図を見分ける。
+            return text  # つないだ本文を返す。
+        text += chunk  # 空の文字列も正しい断片として、順につなぐ。
 
 
-def verify() -> None:  # 比較結果・ハンドラ差し替え・橋渡しの粒度をオフラインで検証する。
-    assert asyncio.run(greet_async()) == "こんにちは、花子さん"  # coroutine版が名前をawaitして挨拶を返すと確認する。
-    assert run(handler(hanako)(p_greet)) == "こんにちは、花子さん"  # 同じ挨拶をdoeff版でも得ると確認する。
-    assert run(handler(taro)(p_greet)) == "こんにちは、太郎さん"  # 本体を変えず、別ハンドラで返答だけを替える。
-    assert run(handler(hanako)(p_twice)) == (  # 子Programの結果をyieldで2回受け取れたか確認する。
-        "こんにちは、花子さん",  # 1回目の依頼から作られる挨拶を期待する。
-        "こんにちは、花子さん",  # 2回目も同じハンドラが処理することを期待する。
-    )  # 2回分が欠けず、順番を保つことを確認する。
-    requested = []  # Awaitがループ全体でなく1要素ごとに届くことを観測する記録を用意する。
-
-    @do  # 待機依頼を観測し、実際の橋渡しへ通過させるテスト用ハンドラにする。
-    def count_awaits(effect, k):  # Awaitの発行回数を、収集関数を書き換えず確認する。
-        if isinstance(effect, Await):  # ストリームの1要素を待つ依頼を記録対象にする。
-            requested.append("Await")  # 1つの待機依頼が届いたことを記録する。
-        return (yield Pass(effect, k))  # 待機の実処理は外側のawait_handlerに委ねる。
-
-    collecting = handler(count_awaits)(introduction(chunks_for_test()))  # 4断片と終了の待機を観測する構成を作る。
-    result = run(scheduled(await_handler()(collecting)))  # Awaitの橋渡しとスケジューラを付けて検証する。
-    assert result == "はじめに、doeff"  # 空の断片で終了せず、受信順の結合と空白除去ができたか確認する。
-    assert requested == ["Await"] * 5  # 4断片の取得と反復終了の確認で、計5回の境界を通ると確認する。
-    print("挨拶: 花子 / 太郎、合成: 2回、本文: はじめに、doeff、Await: 5回")  # 検証を通過した結果をまとめて表示する。
+@do  # 収集と仕上げを、同じyieldでつなぐ。
+def introduction(stream: AsyncIterator[str]):  # 断片を集め、前後の空白を除く。
+    body = yield collect_chunks(stream)  # 子のProgramから、つないだ本文を受け取る。
+    return body.strip()  # 全部そろってから、前後の空白を除く。
 
 
-if __name__ == "__main__":  # import時には実行せず、このファイルを直接起動したときだけ検証する。
-    verify()  # 通信・LLM・外部サービスを使わず、すべての期待値を確かめる。
+# --- 記事の4枠目: 何回待ったかを、外側から数える ---
+
+
+async def chunks_for_test():  # SDKの代わりに、通信しない非同期イテレータを作る。
+    for chunk in (" はじめに", "", "、", "doeff "):  # 空の断片も1つ混ぜる。
+        await asyncio.sleep(0)  # 断片が届くまでの待ちを、イベントループで作る。
+        yield chunk  # 断片を1つ返す。
+
+
+@do  # 収集を包み、中で出たAwaitを集める処理にする。
+def observed():  # 本文と、届いた待ちの依頼の列を返す。
+    return (yield Listen(introduction(chunks_for_test()), types=(Await,)))  # 収集は変えずに包む。
+
+
+# --- 本文の言葉を確かめる比べ(記事には枠として載せない) ---
+
+
+async def collect_all(stream: AsyncIterator[str]) -> str:  # 収集を丸ごと1つのasync defにした形。
+    text = ""  # まだ何も届いていない本文。
+    async for chunk in stream:  # 断片の待ちは、このcoroutineの中だけで起きる。
+        text += chunk  # 届いた順につなぐ。
+    return text  # つないだ本文を返す。
+
+
+@do  # 丸ごとのasync defを、1回のAwaitで包む処理にする。
+def introduction_whole(stream: AsyncIterator[str]):  # 比べるための、包む範囲が広い形。
+    body = yield Await(collect_all(stream))  # 収集の全体を1回だけ待つ。
+    return body.strip()  # 前後の空白を除く。
+
+
+@do  # 丸ごと包んだ形も、同じListenで包む。
+def observed_whole():  # 本文と、届いた待ちの依頼の列を返す。
+    return (yield Listen(introduction_whole(chunks_for_test()), types=(Await,)))  # 同じ数え方。
+
+
+def verify() -> None:  # 記事の期待値を、通信せずに順に確かめる。
+    assert asyncio.run(greet_async()) == "こんにちは、花子さん"  # await版は、呼んだ実装が名前を決める。
+    assert run(with_handlers([hanako], greet())) == "こんにちは、花子さん"  # yield版は、ハンドラが決める。
+
+    p_greet = greet()  # 動かす手順を1つ作る。まだ何も動かない。
+    assert run(with_handlers([hanako], p_greet)) == "こんにちは、花子さん"  # 同じ手順を花子で動かす。
+    assert run(with_handlers([taro], p_greet)) == "こんにちは、太郎さん"  # 同じ手順を太郎で動かす。
+    assert run(with_handlers([taro], twice())) == ("こんにちは、太郎さん",) * 2  # 子の奥の依頼にも届く。
+
+    coro = greet_async()  # coroutineオブジェクトを1つ作る。
+    assert asyncio.run(coro) == "こんにちは、花子さん"  # 1回目は待てる。
+    try:  # 同じcoroutineオブジェクトを、もう1度待ってみる。
+        asyncio.run(coro)  # 2回目は待てないはず。
+    except RuntimeError as error:  # 本文の「2回目はRuntimeError」を確かめる。
+        reuse = str(error)  # 「cannot reuse already awaited coroutine」が入る。
+    else:  # 2回目も待てたなら、本文の説明が誤っている。
+        raise AssertionError("coroutineを2回待てた")  # 本文と食い違うので止める。
+
+    stack = [await_handler(), listen_handler]  # 先頭が外側。Listenに答える役を内側に置く。
+    text, waits = run(scheduled(with_handlers(stack, observed())))  # 本物の待ちで動かす。
+    assert text == "はじめに、doeff"  # 空の断片で止まらず、順につないで空白を除いた。
+    assert len(waits) == 5  # 4つの断片と終わりの確かめで、5回の待ちが届いた。
+
+    whole_text, whole_waits = run(scheduled(with_handlers(stack, observed_whole())))  # 同じ組で動かす。
+    assert whole_text == "はじめに、doeff"  # 丸ごと包んでも、本文は同じになる。
+    assert len(whole_waits) == 1  # 本文の「届く待ちは1回だけ」を確かめる。
+
+    print(  # 確かめた値を1行で表示する。
+        f"挨拶: 花子 / 太郎・子の奥にも届く / coroutineの2回目: {reuse} / "  # 1〜2枠目の結果。
+        f"本文: {text} / Await: 1断片ずつ{len(waits)}回・丸ごと{len(whole_waits)}回"  # 4枠目と比べ。
+    )
+
+
+if __name__ == "__main__":  # importした時には動かさず、直に起動した時だけ確かめる。
+    verify()  # 通信・LLM・外部サービスを使わずに、すべての期待値を確かめる。
