@@ -27,7 +27,8 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob SignalJob ReapJob RetireJob StopStage StopReason SpecChanged
                                                  Undeclared HandoffAbandoned Retired CutOff WorkerStopping])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
+(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveJobRoots])
+(import doeff_cluster.worker.core.memory_rules [JobRoot])
 (import doeff_cluster.worker.intent.worker_model [WakeSet WorkerWakes])
 (import doeff_cluster.worker.core.worker_due [wakes-with])
 (import doeff_cluster.shared.intent.due_model [DueNever])
@@ -337,6 +338,10 @@
                                         started)))))
     (:= table seen)
     (resume (tuple (gfor started (.values seen) started.view))))
+  (ObserveJobRoots []
+    ;; 機体の memory の見張りの問い(card ki-7b934e2538f9): 終わりをまだ観測していない子の根を、表のまま答える(子を問い直さない)。
+    (resume (tuple (gfor started (.values table) :if (is started.view.exit-code None)
+                         (JobRoot :name started.view.name :pid started.view.pid)))))
   (WorkerWakes []
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 終わりをまだ観測していない子の終わりを待つ効果を足す。待ちの子から分けた子は起動の刻を
     ;; 照らして待つ(pid の使い回しの終わりでは起きない)。
