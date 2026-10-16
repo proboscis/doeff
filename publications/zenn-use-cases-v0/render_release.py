@@ -5,7 +5,7 @@
 
 - 公開済み: 表に書いたZennのURLへリンクする。
 - 公開予定: リンクを外し、題に「(公開予定)」を添える。
-- 表に無い記事(候補): リンクを外し、題だけを残す。
+- 下書きの記事と表に無い記事(候補): リンクを外し、題だけを残す。
 - examples/などの相対パス: GitHubのmainのURLへ直す。画像の/images/はそのまま残す。
 """
 
@@ -75,10 +75,11 @@ class Measures:
 
 
 def read_rows(plan: str) -> tuple[PlanRow, ...]:
-    """公開計画の「公開順」の表から、原稿ごとのslugと公開状態を読む。表に無い原稿は候補になる。
+    """公開計画の「公開順」の表から、原稿ごとのslugと公開状態を読む。下書きの行と表に無い原稿は候補になる。
 
     slugがZennの規則に合わない行と、公開済みのURLの末尾がslugと違う行は、誤った公開先へ
-    リンクしないよう例外にする。
+    リンクしないよう例外にする。公開状態が公開済み<URL>・公開予定・下書きのどれでもない行も、
+    書き損じを候補として黙って読まないよう例外にする。
     """
     rows: list[PlanRow] = []
     for line in plan.splitlines():
@@ -95,6 +96,10 @@ def read_rows(plan: str) -> tuple[PlanRow, ...]:
             rows.append(PlanRow(name, slug, Published(url.group(0))))
         elif cell.startswith("公開予定"):
             rows.append(PlanRow(name, slug, Scheduled()))
+        elif not cell.startswith("下書き"):
+            raise ValueError(
+                f"{name}の公開状態「{cell}」は、公開済み <ZennのURL>・公開予定・下書きのどれかにしてください"
+            )
     return tuple(rows)
 
 
