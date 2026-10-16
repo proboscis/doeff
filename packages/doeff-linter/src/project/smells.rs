@@ -88,7 +88,7 @@ impl Scope<'_> {
     }
 }
 
-/// 名が失敗の型かを引ける物 — repo 全体から集めた集合(`FailureTypes`)か、引かれた時に作る集合(`Deferred<FailureTypes>`・1 file の実行)。
+/// 名が失敗の型かを引ける物 — repo 全体から集めた集合(`FailureTypes`)か、引かれた時に型の名を綴る宣言の file だけから集める物(`SpelledFailures`・1 file の実行)。
 pub trait FailureLookup {
     /// module まで含めた名が失敗の型か。
     fn is_failure(&self, qualified: &str) -> bool;
@@ -97,12 +97,6 @@ pub trait FailureLookup {
 impl FailureLookup for FailureTypes {
     fn is_failure(&self, qualified: &str) -> bool {
         self.contains(qualified)
-    }
-}
-
-impl FailureLookup for super::deferred::Deferred<'_, FailureTypes> {
-    fn is_failure(&self, qualified: &str) -> bool {
-        self.get().contains(qualified)
     }
 }
 

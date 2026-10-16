@@ -1,11 +1,11 @@
 //! 引かれた時に 1 度だけ作る repo 全体の事実(1 file の実行 — card ki-a9959efd9cf6 の残り)。
 //!
-//! 失敗の型・class の frozen は、書いた file が名指さない file の宣言で決まる(逆向きの依存 — 失敗の型は別の file の defeffect の `:failure` が宣言し、
-//! class の frozen は同じ名の class が repo のどこかに在るかで決まる)。書いた file が名指す module だけを読む形では答えが変わりうるので、repo 全体から
-//! 作る — ただし、その事実が**引かれる file だけ**。引かれない file(match の腕が無い・型で判じる handler の引数が無い)は、作らずに済む。作る時は
-//! 今までと同じ物を同じ手順で作るので、答えは変わらない(引かれる file はこれまでと同じ読み、引かれない file は読まない)。
-//! 引数に渡された Program(別の file の呼び手が渡す)も逆向きの依存だが、引く呼び先が書いた file の関数と決まっているので、repo 全体を作らず、
-//! 呼び先の名を字面に含む file だけから作る(`spelled_callers`)。
+//! class の frozen は、書いた file が名指さない file の宣言で決まる(逆向きの依存 — 同じ名の class が repo のどこかに在るかで決まる)。書いた file が
+//! 名指す module だけを読む形では答えが変わりうるので、repo 全体から作る — ただし、その事実が**引かれる file だけ**。引かれない file(型で判じる
+//! handler の引数が無い)は、作らずに済む。作る時は今までと同じ物を同じ手順で作るので、答えは変わらない(引かれる file はこれまでと同じ読み、
+//! 引かれない file は読まない)。
+//! 失敗の型の宣言(別の file の defeffect)と引数に渡された Program(別の file の呼び手)も逆向きの依存だが、引く名が決まっていて、事実を持つ file はその名を
+//! 字面に必ず含むので、repo 全体を作らず、名を綴る file だけから作る(`spelled_failures`・`spelled_callers`)。
 
 use std::sync::OnceLock;
 

@@ -21,6 +21,8 @@ pub mod named_modules;
 pub mod names;
 pub mod param_calls;
 pub mod spelled_callers;
+pub mod spelled_failures;
+pub mod spelling;
 pub mod registry;
 pub mod notice;
 pub mod notice_findings;
@@ -826,16 +828,16 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     let mut found = judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref());
                     // repo の事実は、書いた file が名指す module の file だけから作る(defk の名・record の欄 — module まで含めた名で引かれ、
-                    // 引く名は書いた file の記号を解いた名)。逆向きの依存のうち、失敗の型(別の file の defeffect が宣言する)は、引かれた時だけ
-                    // repo 全体から作る(`Deferred` — 引かれない file は読まない)。引数に渡された Program(別の file の呼び手が渡す)は、引かれた時に
-                    // 呼び先の名を字面に含む file だけから作る(`SpelledCallers` — 引く呼び先は書いた file の関数で、呼び手はその名を必ず綴る)。
+                    // 引く名は書いた file の記号を解いた名)。逆向きの依存 — 失敗の型(別の file の defeffect が宣言する)と引数に渡された Program
+                    // (別の file の呼び手が渡す)— は、引かれた時だけ、引く名を字面に含む file だけから作る(`SpelledFailures`・`SpelledCallers` —
+                    // 宣言も呼び手も、引く名の綴りを必ず含む)。class の frozen は同じ名の class が repo のどこかに在るかで決まるので、引かれた時に repo 全体から作る(`Deferred`)。
                     let named_files = if enabled.contains(&ProjectRule::DefkCalledBare) {
                         let known = hy_files::by_module(root);
                         named_modules::files_of(&known, &named_modules::of_file(&known, &file.rel, source), None)
                     } else {
                         Vec::new()
                     };
-                    let failure = deferred::Deferred::new(|| crate::timing::timed("failure-types", || failure_types_for(root, enabled, &definitions.tags)));
+                    let failure = spelled_failures::SpelledFailures::new(root, enabled, &definitions.tags);
                     found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
                     let defks = crate::timing::timed("defk-names", || defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     let program_params = spelled_callers::SpelledCallers::new(root, enabled);

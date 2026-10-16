@@ -6,7 +6,7 @@
 //! disk は並べて頼むほど速く返すので、読みを多めの thread で重ねる(冷えた 449 file の実測 — 直列 6.4 秒 / 8 本 0.93 秒 / 16 本 0.62 秒 /
 //! 32 本 0.37 秒・どれも中央値)。
 //!
-//! repo の Hy の全部（約 2900 file）を読む所と、約 1200 の dir を開く所（`hy_files::collect` の走査）は、もっと多い本数で重ねる（`fan_out_wide`）。
+//! repo の Hy の全部(約 2900 file)を読む所と、約 1200 の dir を開く所(`hy_files::collect` の走査)は、もっと多い本数で重ねる(`fan_out_wide`)。
 //!
 //! 1 file の実行の rayon の pool は 4 本に絞ってある(CPU の仕事は thread を増やしても速くならない — main.rs の `SINGLE_FILE_THREADS`)。
 //! 待ちを重ねるのは CPU の仕事ではないので、その pool とは別に、読みの間だけ `std::thread::scope` の thread を起こす。
@@ -17,9 +17,9 @@ use std::sync::Mutex;
 /// 待ちを重ねる thread の数(呼び手の thread を含む)。
 pub const READERS: usize = 32;
 
-/// repo の Hy の全部（約 2900 file・約 1200 の dir）を読む・開く時に待ちを重ねる thread の数。登録簿や名指しの源（数百 file）の READERS で足りる並べ方では、
-/// 冷えた作業木の全 file の読みが 3.3 秒（中央値・agora-controllers 2839 file・Pod の load 83）かかり、128 本で 1.8 秒・256 本で 1.9 秒だった。
-/// thread は待っている間 CPU を使わない（stack は触った分だけ）ので、頭打ちの手前の 128 本にする。
+/// repo の Hy の全部(約 2900 file・約 1200 の dir)を読む・開く時に待ちを重ねる thread の数。登録簿や名指しの源(数百 file)の READERS で足りる並べ方では、
+/// 冷えた作業木の全 file の読みが 3.3 秒(中央値・agora-controllers 2839 file・Pod の load 83)かかり、128 本で 1.8 秒・256 本で 1.9 秒だった。
+/// thread は待っている間 CPU を使わない(stack は触った分だけ)ので、頭打ちの手前の 128 本にする。
 pub const WIDE_READERS: usize = 128;
 
 /// これより少ない件数は、thread を起こす手間のほうが重いので呼び手の thread で順に読む。
@@ -34,7 +34,7 @@ where
     fan_out_with(READERS, items, work)
 }
 
-/// `fan_out` の、repo の全部を読む・開く所のための形（`WIDE_READERS` 本）。
+/// `fan_out` の、repo の全部を読む・開く所のための形(`WIDE_READERS` 本)。
 pub fn fan_out_wide<X, R>(items: &[X], work: impl Fn(&X) -> R + Sync) -> Vec<R>
 where
     X: Sync,
