@@ -292,6 +292,39 @@ def _stop_watchdog():
         _watchdog_timer = None
 
 
+# ---------------------------------------------------------------------------
+# semgrep-core runs without io_uring.
+#
+# semgrep-core (OCaml 5 + Eio) opens one io_uring ring per domain on Linux, and
+# the kernel charges ring memory to RLIMIT_MEMLOCK per uid — one budget shared by
+# every process of that uid on the machine (8 MiB in the agent Pods).  When other
+# semgrep runs of the same uid hold it, the next ring fails with ENOMEM at
+# `io_uring_queue_init`, and semgrep reports "semgrep-core rule validation
+# failed" with no finding (2026-10-16: a full root run went red on
+# tests/semgrep/test_public_api_subpackage_imports_rule.py, green on the rerun).
+# Eio's posix backend opens no ring; the full scan of .semgrep.yaml answers the
+# same and takes about as long.  Set from pytest_configure — before collection,
+# in every xdist worker, and for items without fixtures — so every semgrep a test
+# starts inherits it; through MonkeyPatch, not os.environ (DOEFF004).  One patch
+# per config, so an inner pytest run ending does not undo the outer run's.
+# ---------------------------------------------------------------------------
+_SEMGREP_BACKEND = pytest.StashKey[pytest.MonkeyPatch]()
+
+
+def _run_semgrep_without_io_uring(config: pytest.Config) -> None:
+    """Make every semgrep this run starts use Eio's posix backend, so a spent io_uring budget cannot fail it."""
+    patch = pytest.MonkeyPatch()
+    patch.setenv("EIO_BACKEND", "posix")
+    config.stash[_SEMGREP_BACKEND] = patch
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Give back the environment pytest_configure set for semgrep."""
+    patch = config.stash.get(_SEMGREP_BACKEND, None)
+    if patch is not None:
+        patch.undo()
+
+
 def pytest_configure(config):
     """Scale both wall-clock deadlines by the machine's oversubscription.
 
@@ -301,6 +334,7 @@ def pytest_configure(config):
     """
     global _WATCHDOG_TIMEOUT, _WATCHDOG_BASE, _DEADLINE_SCALE  # noqa: PLW0603
 
+    _run_semgrep_without_io_uring(config)
     # 期限の倍率は機体の混みから読むので、枠を取った後(走り始める拍の混み)で読む。
     _hold_check_slot(config)
     _turn_vm_oracle_on(bool(config.getini(VM_INVARIANT_CHECKS_INI)))

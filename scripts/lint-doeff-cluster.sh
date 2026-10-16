@@ -21,13 +21,16 @@ BASELINE_CHECK="$TOP/scripts/doeff_cluster_warning_baseline.py"
 
 if [ "$#" -eq 0 ]; then
   # make lint-doeff: 探し道の linter(手で入れた物)で package を丸ごと当てる。
-  if ! command -v doeff-linter >/dev/null 2>&1; then
+  if ! LINTER="$(command -v doeff-linter)"; then
     echo "doeff-linter が未導入のため $PACKAGE を検査できません。成功として扱いません。" >&2
     echo "導入: make sync で .venv/bin/doeff-linter が入る — 「uv run make lint-doeff」 で走らせる(uv run が .venv/bin を PATH の先に置く)" >&2
     exit 127
   fi
-  (cd "$TOP/$PACKAGE" && doeff-linter --no-log)
-  exec uv run --no-project python "$BASELINE_CHECK" --root "$TOP" check
+  (cd "$TOP/$PACKAGE" && "$LINTER" --no-log)
+  # warning の基点の比べにも同じ linter を渡す — 渡さないと比べの script は uv run の探し道で linter を引き直し、uv run が
+  # .venv/bin を前に置くので、手で入れた linter で error を判じ .venv の linter で warning を数える 2 つの版の比べになる
+  # (dev の依存に doeff-linter が入った 8ea159c5e から、make lint-doeff の入口の検の偽の linter も比べで本物に替わっていた)。
+  exec uv run --no-project python "$BASELINE_CHECK" --root "$TOP" --linter "$LINTER" check
 fi
 
 # commit の hook: 探し道の linter でなく、HEAD の組み立ての入力の鍵の binary(land-arm の開発版 → 断面の置き場)で測る
