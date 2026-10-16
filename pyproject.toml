@@ -297,6 +297,17 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
 
+# 09 章の State の節か、State の仕様を書き換えた便は、無い key の Get(state() の下で None)を実装と同じに言う事の検を払う
+# (card ki-4fc77b6d6aa9)。09 章の節の例を走らせ、仕様が名指す検が木に在る事を読む — どちらも import の逆依存では選ばれない。
+# 秒は 3.5 秒(起動を含む壁時計・2026-10-17 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/09-advanced-effects.md"
+tests = ["tests/test_docs_state_get_missing_key.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "specs/effects/SPEC-EFF-002-state.md"
+tests = ["tests/test_docs_state_get_missing_key.py"]
+
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/"
 tests = [
