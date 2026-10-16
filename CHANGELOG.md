@@ -58,6 +58,12 @@
 
 ### Changed
 
+- `doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`: each declares its license as the PEP 639
+  SPDX expression `license = "MIT"` with `license-files = ["LICENSE"]` and carries a copy of the root MIT `LICENSE`, so
+  every wheel and sdist ships it (`.dist-info/licenses/LICENSE`, core metadata `License-Expression: MIT`); the
+  deprecated `License ::` classifier is gone. The build backends now require `hatchling>=1.27` / `maturin>=1.9.3`
+  (the first releases that write these fields). The `doeff` sdist's include patterns are anchored to the repository
+  root, so it no longer picks up other packages' `LICENSE`, `README.md` and `doeff/` directories (card ki-2dbb91f7e2c8).
 - `doeff-openai`, `doeff-gemini`, `doeff-openrouter`, `doeff-seedream`: the wait between retries (and Gemini's wait for an
   uploaded file to become ACTIVE) yields doeff-time's `Delay` instead of `Await(asyncio.sleep(...))`, and the four
   packages now depend on `doeff-time` (card ki-94380dba532f). **Callers must install a time handler**:
