@@ -12,9 +12,10 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
 (import doeff_core_effects.postgres_sql [PostgresConnections])
 (import doeff_records.pg [drop-records-tables])
+(import doeff_records.admission [canonical-json])
 (import doeff_records.pg_sql [Statement EventExpiry TailRead expiring-events-statement expire-events-statement expire-event-groups-statement
                               touched-events-statement prune-changes-statement UNBOUNDED-SEQ terminal-rows-statement watch-head-statement
-                              event-by-key-statement])
+                              event-by-key-statement list-rows-statement index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 
@@ -217,5 +218,96 @@
     (assert (not (lfor #(name scans) (.items large) #(kind table _) scans :if (= kind "Seq Scan") #(name table))) (repr seen))
     ;; 2 倍の置き場でも読んだ行は増えない(読むのは拾う候補の行だけ — 拾わない行の数に依らない)。
     (assert (all (gfor #(small-read large-read _) (.values seen) (<= large-read small-read))) (repr seen))
+    (finally
+      (.close connections))))
+
+
+;; --- 値の組の読み(ListRows の where-any)--------------------------------------------------------------------------
+;; 表 parts の索引の欄 color を値の組 ANY-OF-VALUES 個で絞る 1 頁の読み(list-rows-statement)が、欄の式の索引 (ledger, color の式) に当たり、
+;; 組に当たらない行を読まない事。置き場は行ごとに color の値が違う行を ANY-OF-ROWS 行と 2 倍の行で作り、組は在る値 ANY-OF-VALUES 個。
+(val ANY-OF-ROWS 10000)
+(val ANY-OF-VALUES 500)
+
+
+(defk part-rows-statement [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "表 parts に、欄 color の値が行ごとに違う行を count 行(鍵 p1 … ・color c1 …)まとめて置く文を作るため(値の組の読みを測る前の用意)。"
+  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
+                       SELECT 'parts', '[\"p' || g || '\"]',
+                              json_build_object('id', 'p' || g, 'color', 'c' || g, 'state', 'open')::text,
+                              1, CAST(:at AS bigint), 'maker', CAST(:origin AS text), 1
+                         FROM generate_series(1, CAST(:count AS integer)) AS g" :p prefix)
+             :params (tuple (gfor #(name value) #(#("count" count) #("at" YOUNG) #("origin" ORIGIN-HOST))
+                                  (SqlParam :name name :value value)))))
+
+
+(defk any-of-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "値の組の 1 頁の読みの文を作るため: 欄 color が c1 … c{ANY-OF-VALUES} のどれかの行を、鍵の順に ANY-OF-VALUES 行まで(保持の期限の無い表の形)。"
+  (<- statement (list-rows-statement prefix "parts" None {}
+                                     {"color" (tuple (gfor n (range 1 (+ ANY-OF-VALUES 1)) (canonical-json (.format "c{}" n))))}
+                                     ANY-OF-VALUES None))
+  statement)
+
+
+(defk index-names [explained]
+  {:pre [(: explained list)] :post [(: % frozenset)]
+   :tags {:context "records" :role "program"}}
+  "EXPLAIN (FORMAT JSON) の答えの計画の木から、引いた索引の名を集めるため(Bitmap Index Scan の節も含む)。"
+  (<- nodes (plan-nodes (get explained 0 "Plan")))
+  (frozenset (gfor node nodes :if (in "Index Name" node) (get node "Index Name"))))
+
+
+(defk any-of-reads-on-seeded-store [prefix count]
+  {:pre [(: prefix str) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "用意した置き場 prefix の表 parts に count 行を置いて統計を取り、値の組の 1 頁の読みの #(走査の節 引いた索引の名 返した行の数) を返すため。"
+  (<- seed (part-rows-statement prefix count))
+  (for [statement #(seed (Statement :text (.format "ANALYZE {p}state_rows" :p prefix) :params #()))]
+    (<- seeded (SqlQuery DATABASE statement.text statement.params))
+    (assert (isinstance seeded SqlRows) (repr seeded)))
+  (<- statement (any-of-statement prefix))
+  (<- answer (SqlQuery DATABASE (+ "EXPLAIN (ANALYZE, FORMAT JSON) " statement.text) statement.params))
+  (assert (isinstance answer SqlRows) (repr answer))
+  (val plan (get answer.rows 0 0))
+  (val explained (if (isinstance plan str) (json.loads plan) plan))
+  (<- scans (table-scans prefix explained))
+  (<- names (index-names explained))
+  (<- listed (SqlQuery DATABASE statement.text statement.params))
+  (assert (isinstance listed SqlRows) (repr listed))
+  #(scans names (len listed.rows)))
+
+
+(defk any-of-reads-at [connections count]
+  {:pre [(: connections PostgresConnections) (: count int)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "新しい置き場(乱数の接頭辞・LAW-SCHEMA の表と索引)を用意して表 parts に count 行を置き、値の組の読みを測るため(終わりに表を消す)。
+   答え = #(走査の節 引いた索引の名 返した行の数 欄 color の索引の名)。"
+  (val store (prepared-store connections (fresh-prefix)))
+  (var measured #())
+  (try
+    (:= measured (run-sql connections (any-of-reads-on-seeded-store store.prefix count)))
+    (finally
+      (run-sql connections (drop-records-tables store))))
+  (<- color-index (index-name store.prefix "color"))
+  (+ measured #(color-index)))
+
+
+(deftest test-a-list-by-a-value-set-reads-through-the-field-index-on-a-store-twice-as-large
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (try
+    (<- small (any-of-reads-at connections ANY-OF-ROWS))
+    (<- large (any-of-reads-at connections (* 2 ANY-OF-ROWS)))
+    (for [#(scans names returned color-index) #(small large)]
+      ;; 1 頁 = 組に当たる行 ANY-OF-VALUES 行(続きの有無を知るための 1 行は当たる行が無いので出ない)。
+      (assert (= returned ANY-OF-VALUES) (repr #(returned scans)))
+      ;; 欄の式の索引を引く・置き場の表を頭から読む節が無い。
+      (assert (in color-index names) (repr #(color-index names scans)))
+      (assert (not (lfor #(kind table _) scans :if (= kind "Seq Scan") table)) (repr scans)))
+    ;; 2 倍の置き場でも読んだ行は増えない(読むのは組に当たる行だけ — 当たらない行の数に依らない)。
+    (assert (<= (total-read (get large 0)) (total-read (get small 0))) (repr #(small large)))
     (finally
       (.close connections))))

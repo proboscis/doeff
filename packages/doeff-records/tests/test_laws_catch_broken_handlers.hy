@@ -4,6 +4,7 @@
 (import dataclasses)
 (import datetime [datetime timezone])
 (import uuid)
+(import doeff_hy.frozen [FrozenMap])
 (import doeff [run with_handlers])
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTimeEffect])
@@ -15,6 +16,7 @@
 (import doeff_records.laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
+                            law-any-of-list-equals-the-union-of-equal-lists
                             law-none-removes-a-field
                             law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
                             law-put-rows-is-all-or-nothing
@@ -71,6 +73,19 @@
   ;; 上から読む読みを知らない handler の顔: descending-by を捨てて鍵の順の頁を返す。
   (ListRows [table where fields cursor limit descending-by]
     (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit))
+    (resume answer)))
+
+(defhandler ignore-where-any
+  ;; 値の組の絞りを知らない handler の顔: where-any を捨てて、where の等号だけで絞った頁を返す。
+  (ListRows [table where fields cursor limit descending-by]
+    (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit :descending-by descending-by))
+    (resume answer)))
+
+(defhandler first-of-any
+  ;; 組の値の最初の 1 つだけを等号で読む handler の顔(組を等号の 1 往復に倒す — 値ごとの和にならない)。
+  (ListRows [table where fields cursor limit descending-by where-any]
+    (<- answer (ListRows table :where (FrozenMap (| (dict where) (dfor #(name members) (.items where-any) name (get members 0))))
+                         :fields fields :cursor cursor :limit limit :descending-by descending-by))
     (resume answer)))
 
 (defhandler ignore-key-head []
@@ -206,6 +221,8 @@
                       #(law-epoch-change-resets (hide-reset))
                       #(law-indexed-list-equals-filtered-scan (ignore-where))
                       #(law-descending-list-is-the-head-of-the-sorted-scan (ignore-descending))
+                      #(law-any-of-list-equals-the-union-of-equal-lists ignore-where-any)
+                      #(law-any-of-list-equals-the-union-of-equal-lists first-of-any)
                       #(law-append-is-idempotent (forget-idempotency))
                       #(law-key-head-read-equals-filtered-scan (ignore-key-head))
                       #(law-none-removes-a-field (ignore-removals))

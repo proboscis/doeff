@@ -5,6 +5,7 @@
 (import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
+                            law-any-of-list-equals-the-union-of-equal-lists
                             law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
@@ -91,6 +92,14 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-descending-list-is-the-head-of-the-sorted-scan harness))
+  (assert transcript))
+
+(deftest test-any-of-list-equals-the-union-of-equal-lists
+  ;; 値の組の ListRows(where-any): 頁を辿った全件は組の値ごとの等号の読みの和を鍵の順に並べた物・上から読む読みはその上から limit 件
+  ;; (4 つの組で同じ)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-any-of-list-equals-the-union-of-equal-lists harness))
   (assert transcript))
 
 (deftest test-append-is-idempotent
