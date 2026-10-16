@@ -144,7 +144,12 @@ spec:
             # L2312 — 10-14 17:05 JST に zeus の常駐の job が capacity − task-reserve = 27 に達し、予約を使えない long-command 8 本が 76〜230 分
             # queued のまま走らなかった事の直し)。間の doeff-cluster の code の差は他に 10-12〜10-13 の main の 17 本(時計を単調な時計で計る・
             # 報告の表の移し・型の名乗り・準備の木の hardlink 等)。前の版 3fcba1939(L2226)は 434f9789f の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 434f9789f80cce4762e3171b07e2faf844a9e68e }
+            # 914ea5629 = 今の世代の worker への返事に、退きの保ち(名前付きの lease retirement-hold)を期限の内に持つ退いた process の世代の名を
+            # JobSpec.retired-held(JSON の retiredHeld)で載せる版(card ki-e3531030eb37・L2323 — 10-16 04:28:49 JST に、受付を渡した後に走っている
+            # 仕事を終わりまで回していた退いた process が寿命の上限 6 時間で止められ、6 時間 7 分の仕事が切れた事の直しの coordinator の側)。
+            # 間の doeff-cluster の code の差は他に b10b44428(L2322 — 退いた process の空き待ちを worker の状態の行の文に出す・worker の側)だけ。
+            # 前の版 434f9789f(L2312)は 914ea5629 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 914ea5629ecbc9ed7af84926310eff312cd4eb12 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
