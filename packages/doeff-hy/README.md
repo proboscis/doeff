@@ -32,7 +32,7 @@ versions its tests cover).
 
 `greeting.hy` defines an effect, a function that performs it, and a handler:
 
-```hy
+```hy file=greeting.hy
 (require doeff-hy.macros [defeffect defk defhandler <-])
 
 (defeffect Greeting
@@ -53,7 +53,7 @@ versions its tests cover).
 
 `main.py` imports it from Python and runs it:
 
-```python
+```python file=main.py
 import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
 from doeff import run
 from doeff_core_effects.scheduler import scheduled
@@ -74,7 +74,7 @@ print(run(scheduled(english(greet("doeff")))))  # hello, doeff
 `deftest` defines a pytest test whose body performs effects. Put the tests in
 `test_greeting.hy`:
 
-```hy
+```hy file=test_greeting.hy
 (require doeff-hy.macros [deftest <-])
 (import doeff_core_effects [Ask])
 (import greeting [english greet])
@@ -95,7 +95,7 @@ with the test's program (and with `env=` when the test sets `:env`). You decide 
 handlers the tests run under. pytest also needs to be told to collect `test_*.hy`
 files. Both go in `conftest.py`:
 
-```python
+```python file=conftest.py
 import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
 import pytest
 from doeff import run
@@ -120,8 +120,8 @@ def pytest_collect_file(file_path, parent):
     return None
 ```
 
-```bash
-pytest   # test_greeting.hy::test_greet PASSED, test_greeting.hy::test_greet_from_env PASSED
+```bash run
+pytest   # 2 passed
 ```
 
 [doeff-hy-pytest](https://github.com/proboscis/doeff/tree/main/packages/doeff-hy-pytest),
@@ -142,7 +142,7 @@ The optional map after the test name (or after its fixture list) takes these key
 
 With `:interpreters`, resolve the name in `conftest.py`:
 
-```python
+```python excerpt
 INTERPRETERS = {
     "fast": fast_interpreter,
     "traced": traced_interpreter,
@@ -156,7 +156,7 @@ def doeff_interpreter(doeff_interpreter_name):
 
 Fixture parameters go in a list after the name:
 
-```hy
+```hy excerpt
 (deftest test-report-for-day [day]
   {:params {"day" ["2026-01-01" "2026-02-01"]}}
   (<- report (daily-report day))
@@ -258,7 +258,9 @@ forms (`doeff-hy-check` warns on `setv` and asks for `val` or `var`):
 | `(session val x expr)` | Directly under `defhandler` only. Created once, on first use, and shared for the handler's session |
 | `(session var x expr)` | Directly under `defhandler` only. Rebindable state that lives for the handler's session. Rebind with `(:= x v)` |
 
-```hy
+In `prices.hy`:
+
+```hy file=prices.hy
 (require doeff-hy.macros [defeffect defk defhandler <-])
 
 (defeffect LoadPrices
@@ -281,7 +283,16 @@ forms (`doeff-hy-check` warns on `setv` and asks for `val` or `var`):
     (resume {"ACME" 12.5})))
 ```
 
+Run from Python:
+
 ```python
+import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
+from doeff import run
+from doeff_core_effects.handlers import state
+from doeff_core_effects.scheduler import scheduled
+
+from prices import price_of, price_table
+
 print(run(scheduled(state()(price_table(price_of("ACME"))))))  # 12.5
 ```
 
