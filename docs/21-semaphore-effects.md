@@ -123,7 +123,7 @@ Use `try/finally` so permits are released even when work fails.
 ### Connection pool: `CreateSemaphore(N)` for bounded parallelism
 
 ```python
-from doeff import AcquireSemaphore, CreateSemaphore, Gather, ReleaseSemaphore, Spawn, Wait, do
+from doeff import AcquireSemaphore, CreateSemaphore, Gather, ReleaseSemaphore, Spawn, do
 
 @do
 def pooled_call(sem, call):
@@ -136,8 +136,10 @@ def pooled_call(sem, call):
 @do
 def run_batch(calls):
     sem = yield CreateSemaphore(8)  # at most 8 concurrent calls
-    tasks = [yield Spawn(pooled_call(sem, call)) for call in calls]
-    return (yield Gather(*[Wait(t) for t in tasks]))
+    tasks = []
+    for call in calls:
+        tasks.append((yield Spawn(pooled_call(sem, call))))
+    return (yield Gather(*tasks))
 ```
 
 ## FIFO Fairness
