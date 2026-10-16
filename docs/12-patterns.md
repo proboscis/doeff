@@ -537,7 +537,7 @@ def test_effects_executed():
         return "result"
 
     # Run with handlers composed individually
-    result = run(writer(state(program())))
+    result = run(state()(writer(program())))
 
     # run() returns the raw value directly
     assert result == "result"

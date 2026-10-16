@@ -133,6 +133,7 @@ Example:
 
 ```python
 from doeff import do, run
+from doeff_core_effects import Ask
 from doeff_core_effects.handlers import reader, state, writer
 from doeff_core_effects.scheduler import scheduled
 
@@ -141,6 +142,6 @@ def compute():
     value = yield Ask("key")
     return value * 2
 
-result = run(scheduled(writer(state()(reader({"key": 21})(compute())))))
+result = run(scheduled(state()(writer(reader({"key": 21})(compute())))))
 assert result == 42
 ```
