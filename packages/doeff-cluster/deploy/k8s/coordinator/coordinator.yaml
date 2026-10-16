@@ -105,8 +105,10 @@ spec:
             - { name: WORK_DIR, value: /work }
             # coordinator の code の版(doeff の commit)。変える時はここを変えて入れ替える(image は同じ)。どの機体の worker の版も
             # この版と同じかその祖先に保つ — worker を上げる前にここを先に上げる(../../../README.md「配備の順」・宣言の検
-            # tests/test_k8s_declarations.py の test_no_worker_is_newer_than_the_coordinator が断る)。版を変える commit は、上げ先の root を
-            # 先に組む Job(../coordinator-prepare/coordinator-prepare.yaml)の版と名も同じ版へ変える(ADR-DOE-CLUSTER-003 の検が断る)。
+            # tests/test_k8s_declarations.py の test_no_worker_is_newer_than_the_coordinator が断る)。この行は上げ先の root を先に組む Job
+            # (../coordinator-prepare)の版の定義元でもある — Job の版と名は組み立ての時にこの行から写すので、版上げはこの 1 行だけを変える
+            # (ADR-DOE-CLUSTER-003 R3)。
+
             # 43d055adc = 前の世代と重なる新しい世代は、前の世代の job を全部受け取れるまで Ready にならず、recreate の job は前の世代の
             # Pod の preStop の drain が来てから一度に移す版(AL-D2k 43d055adc)と、実行環境の root を 2 つの世代で分け合う版(AL-D2g
             # 2ceb078fa)。10-11 18:42 JST の zeus の worker の入れ替えで、前の世代の Pod が Service の振り先から外れた後も job が前の世代に
