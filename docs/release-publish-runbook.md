@@ -1,8 +1,51 @@
 # doeff Release Publish Runbook
 
-## One-time Setup
+## PyPI Credentials
 
-1. Get an account-scoped PyPI API token from https://pypi.org/manage/account/token/
+Every CI upload runs `pypa/gh-action-pypi-publish` with `password: ${{ secrets.PYPI_API_TOKEN }}`
+from a job in the GitHub environment `pypi` that has `id-token: write`. The repository secret
+decides the credential:
+
+- While the secret `PYPI_API_TOKEN` exists, uploads use that API token.
+- Once the secret is removed, the password is empty and the action uses Trusted Publishing: it
+  exchanges the job's GitHub OIDC token for a PyPI token that expires in minutes. No long-lived
+  secret is stored anywhere.
+
+The job `check-versions-unpublished` of `publish.yml` prints which of the two a run uses.
+
+### Trusted Publishing (target)
+
+An owner of the PyPI projects registers one GitHub publisher per package, with these fields:
+
+| Field | Value |
+| --- | --- |
+| Owner | `proboscis` |
+| Repository name | `doeff` |
+| Workflow name | `publish.yml` |
+| Environment name | `pypi` |
+
+1. For a package already on PyPI: https://pypi.org/manage/projects/ -> Manage -> Publishing, add a
+   GitHub publisher with the fields above.
+2. For a package not on PyPI yet: https://pypi.org/manage/account/publishing/, add a pending
+   publisher with the fields above and the PyPI project name. The first upload creates the
+   project; until then the name is not reserved, and a pending publisher whose name someone else
+   registers first becomes invalid.
+3. Register every package in the root tag release table. To keep releasing `doeff-vm` or
+   `doeff-indexer` alone from its `doeff-vm-v*` / `doeff-indexer-v*` tag, also add a publisher
+   with workflow name `build-vm.yml` / `build-indexer.yml` to that project (a project can have
+   several publishers).
+4. Delete the repository secret `PYPI_API_TOKEN` (GitHub repo settings -> Secrets and variables
+   -> Actions) and revoke the token at https://pypi.org/manage/account/ (API tokens). The next
+   release uses Trusted Publishing.
+
+PyPI rejects Trusted Publishing from inside a reusable workflow, so `publish.yml` calls
+`build-vm.yml` and `build-indexer.yml` with `publish: false` and uploads their artifacts from its
+own `publish-doeff-vm` / `publish-doeff-indexer` jobs.
+
+### API token (until the move)
+
+1. Get an account-scoped PyPI API token from https://pypi.org/manage/account/token/ (a token
+   scoped to one project cannot create a package that is not on PyPI yet)
 2. For CI: add it as `PYPI_API_TOKEN` in GitHub repo settings -> Secrets and variables -> Actions
 3. For local: set `UV_PUBLISH_TOKEN` in your shell environment
 
@@ -182,14 +225,14 @@ This triggers `.github/workflows/publish.yml`, which will:
 
 - fail before any upload when a package's version is already on PyPI (job
   `check-versions-unpublished`, `tools/check_pypi_unpublished.py`)
-- publish `doeff-vm` via `build-vm.yml` (all platforms)
-- publish `doeff-indexer` via `build-indexer.yml` (all platforms)
+- build `doeff-vm` via `build-vm.yml` and `doeff-indexer` via `build-indexer.yml` (all
+  platforms), then publish them from its own jobs
 - build wheel and sdist artifacts for `doeff-hy`, `doeff-core-effects`, `doeff`,
   `doeff-time`, and `doeff-agents`
 - verify every Python distribution with `tools/verify_dist_metadata.py`
 - publish the Python packages in the root tag release order
 
-Requires `PYPI_API_TOKEN` secret in GitHub repo settings.
+Uploads use the API token or Trusted Publishing (see PyPI Credentials).
 
 ### Option C: Manual workflow dispatch
 
@@ -246,6 +289,8 @@ name from PyPI after publish.
   passed, so a Python package upload that stopped midway resumes without re-uploading its files.
   A re-run that runs a version check again fails once part of that version is on PyPI; then upload
   the missing files by hand (Option A) from the run's artifacts, or bump the version.
+- PyPI rejects new files for a release older than 14 days (since 2026-07-22), so finish a stopped
+  upload within 14 days or bump the version.
 - Local native builds only produce wheels for your current platform/Python version.
 - CI native builds produce wheels for linux/macos/windows x x86_64/aarch64.
 - The sdist always works as a fallback (pip builds from source).
