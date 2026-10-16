@@ -64,6 +64,14 @@
   (`AcquireSemaphore` failed with `KeyError`) or silently shared the permits of the run's semaphore with the same
   number. Handles from `CreateSemaphore`, `isinstance` checks and subclasses whose `__init__` calls
   `super().__init__(sem_id)` (doeff-cluster's `ClusterSemaphore` and `ReplaySemaphore`) are unchanged.
+- `doeff-core-effects`: a `Listen` inside another `Listen`'s sub-program is handled. In 0.5.0 `listen_handler` did not
+  install itself again around the sub-program (as `try_handler` and `local_handler` do), so the inner `Listen` failed
+  with `UnhandledEffect: no handler found for effect: Listen` unless `listen_handler` was installed once more per
+  nesting level. One `listen_handler` now serves every level: the inner `Listen` captures only its own scope, and the
+  outer `Listen` captures its whole scope, including the inner scope's entries. `docs/03-basic-effects.md` (Listen
+  Composition Rules) runs the nested example; `specs/effects/SPEC-EFF-003-writer.md` is rewritten for the current
+  `(value, collected)` result and the handler's mechanism (it described `ListenResult`, `ListenFrame` and a `__log__`
+  store key that no longer exist) (found while checking chapter 03, card ki-59841195eb05).
 - `doeff-hy`: `defmcp-tool` refuses, when it expands, a body that calls the tool's own name
   (`(defmcp-tool submit-order … (submit-order …))`, spelled `submit-order` or `submit_order`, at any depth outside a
   quote). The expansion binds that name to the `McpToolDef`, so the call reached the tool instead of a `defk` of the
