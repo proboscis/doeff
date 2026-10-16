@@ -6,7 +6,7 @@
 //! 含む(`spelling`)ので、`:failure` か `:absent` を綴り、型の名も綴る file だけを読み解く。答えは全体の実行(`failure_types_for`)が作る集合を引いた時と同じ。
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
@@ -17,7 +17,7 @@ use super::names::module_of;
 use super::rule::ProjectRule;
 use super::smells::{failure_types_in, FailureLookup, FailureTypes, Scope};
 use super::spelling::Spelling;
-use super::bulk_read;
+use super::hy_files;
 
 /// 引かれた時に型の名を字面に含む宣言の file から集める失敗の型(1 file の実行)。
 pub struct SpelledFailures<'a> {
@@ -36,13 +36,12 @@ impl<'a> SpelledFailures<'a> {
     /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
     fn declared_with(&self, name: &str) -> FailureTypes {
         let spelling = Spelling::of(name);
-        let files = super::hy_rel_files(self.root);
-        // file の中身を読む待ちは重ねる(冷えた作業木では 1 file ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
-        let sources: Vec<Option<String>> = bulk_read::fan_out_wide(&files, |(_, path)| {
+        // repo の tree を歩きながら file の中身を読む(待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。宣言の file の中身だけ持つ。
+        let sources: Vec<(String, PathBuf, Option<String>)> = hy_files::collect_reading(self.root, |path| {
             let source = std::fs::read_to_string(path).ok()?;
             ((source.contains(":failure") || source.contains(":absent")) && spelling.in_source(&source)).then_some(source)
         });
-        let kept: Vec<(&str, &str)> = files.iter().zip(&sources).filter_map(|((rel, _), source)| source.as_deref().map(|source| (rel.as_str(), source))).collect();
+        let kept: Vec<(&str, &str)> = sources.iter().filter_map(|(rel, _, source)| source.as_deref().map(|source| (rel.as_str(), source))).collect();
         let found: Vec<FailureTypes> = kept
             .par_iter()
             .map(|(rel, source)| {
@@ -68,7 +67,7 @@ impl FailureLookup for SpelledFailures<'_> {
         let name = qualified.rsplit('.').next().unwrap_or(qualified);
         let known = self.memo.lock().expect("失敗の型の memo").get(name).map(Arc::clone);
         let types = known.unwrap_or_else(|| {
-            let collected = Arc::new(self.declared_with(name));
+            let collected = Arc::new(crate::timing::timed("failure-types", || self.declared_with(name)));
             self.memo.lock().expect("失敗の型の memo").insert(name.to_string(), Arc::clone(&collected));
             collected
         });
