@@ -95,10 +95,13 @@ def key_head_of(separator: str, idempotency_key: str) -> str:
 def key_head_refusal(decl: StreamDecl, key_head: str | None) -> NotIndexed | None:
     ...
 
-def where_refusal(decl: TableDecl, where: FrozenMap) -> NotIndexed | None:
+def where_refusal(decl: TableDecl, where: FrozenMap, where_any: FrozenMap) -> NotIndexed | None:
     ...
 
 def hyx_row_matchesXquestion_markX(where: FrozenMap, value: FrozenMap) -> bool:
+    ...
+
+def hyx_row_matches_anyXquestion_markX(where_any: FrozenMap, value: FrozenMap) -> bool:
     ...
 
 def hyx_descending_valueXquestion_markX(value: object) -> bool:

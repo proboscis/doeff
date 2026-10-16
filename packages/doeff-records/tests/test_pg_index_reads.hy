@@ -225,20 +225,27 @@
 ;; --- 値の組の読み(ListRows の where-any)--------------------------------------------------------------------------
 ;; 表 parts の索引の欄 color を値の組 ANY-OF-VALUES 個で絞る 1 頁の読み(list-rows-statement)が、欄の式の索引 (ledger, color の式) に当たり、
 ;; 組に当たらない行を読まない事。置き場は行ごとに color の値が違う行を ANY-OF-ROWS 行と 2 倍の行で作り、組は在る値 ANY-OF-VALUES 個。
+;; 行の大きさは本番の表 message の行(13,941 行・約 25 MB — 1 行 約 1.8 KB・2026-10-17 の測り)に近づける(欄 note に ANY-OF-NOTE-BLOCKS 個の
+;; md5 の綴り)。計画は見積もりで選ばれ、表を頭から読む見積もりは行ごとの payload の jsonb への読み直しを安く数えるので、数十 byte の行
+;; だけの置き場では値 500 個の組に Seq Scan が選ばれる(1 万行で 1 頁 約 22 ms — 答えは同じ・2026-10-17 の探り)。
 (val ANY-OF-ROWS 10000)
 (val ANY-OF-VALUES 500)
+(val ANY-OF-NOTE-BLOCKS 50)
 
 
 (defk part-rows-statement [prefix count]
   {:pre [(: prefix str) (: count int)] :post [(: % Statement)]
    :tags {:context "records" :role "program"}}
-  "表 parts に、欄 color の値が行ごとに違う行を count 行(鍵 p1 … ・color c1 …)まとめて置く文を作るため(値の組の読みを測る前の用意)。"
+  "表 parts に、欄 color の値が行ごとに違う行を count 行(鍵 p1 … ・color c1 …・欄 note は本番の行の大きさに近い md5 の綴りの連なり)
+   まとめて置く文を作るため(値の組の読みを測る前の用意)。"
   (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
                        SELECT 'parts', '[\"p' || g || '\"]',
-                              json_build_object('id', 'p' || g, 'color', 'c' || g, 'state', 'open')::text,
+                              json_build_object('id', 'p' || g, 'color', 'c' || g, 'state', 'open',
+                                                'note', (SELECT string_agg(md5(g || '-' || b), '')
+                                                           FROM generate_series(1, CAST(:blocks AS integer)) AS b))::text,
                               1, CAST(:at AS bigint), 'maker', CAST(:origin AS text), 1
                          FROM generate_series(1, CAST(:count AS integer)) AS g" :p prefix)
-             :params (tuple (gfor #(name value) #(#("count" count) #("at" YOUNG) #("origin" ORIGIN-HOST))
+             :params (tuple (gfor #(name value) #(#("count" count) #("blocks" ANY-OF-NOTE-BLOCKS) #("at" YOUNG) #("origin" ORIGIN-HOST))
                                   (SqlParam :name name :value value)))))
 
 
@@ -308,6 +315,8 @@
       (assert (in color-index names) (repr #(color-index names scans)))
       (assert (not (lfor #(kind table _) scans :if (= kind "Seq Scan") table)) (repr scans)))
     ;; 2 倍の置き場でも読んだ行は増えない(読むのは組に当たる行だけ — 当たらない行の数に依らない)。
-    (assert (<= (total-read (get large 0)) (total-read (get small 0))) (repr #(small large)))
+    (<- small-read (total-read (get small 0)))
+    (<- large-read (total-read (get large 0)))
+    (assert (<= large-read small-read) (repr #(small-read large-read small large)))
     (finally
       (.close connections))))
