@@ -68,6 +68,7 @@ from doeff_core_effects.effects import SlogEffect as SlogEffect
 from doeff_core_effects.effects import Tell as Tell
 from doeff_core_effects.effects import Try as Try
 from doeff_core_effects.effects import WriterTellEffect as WriterTellEffect
+from doeff_core_effects.effects import MissingEnvKeyError as MissingEnvKeyError
 from doeff_core_effects.effects import slog as slog
 from doeff_core_effects.scheduler import PRIORITY_HIGH as PRIORITY_HIGH
 from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
@@ -205,7 +206,6 @@ EffectGenerator: TypeAlias = Generator[Any, Any, _EffectGeneratorResult]
 unchecked effects. Declare the effects too with ``Generator[E, Any, T]``."""
 WithIntercept = _Removed("WithIntercept", "use WithObserve")
 KleisliProgram = _Removed("KleisliProgram", "use @do instead")
-MissingEnvKeyError = KeyError
 Modify = _Removed("Modify", "use Get + Put")
 AllocVar = _Removed("AllocVar", "use var_store directly")
 Discontinued = _Removed("Discontinued", "concept removed")

@@ -20,7 +20,7 @@ from typing import Any, cast
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import ReadEnvironment
 
-from doeff import run, with_handlers
+from doeff import MissingEnvKeyError, run, with_handlers
 from doeff.cli.profiling import (
     ProfilingConfig,
     print_profiling_status,
@@ -535,16 +535,39 @@ def _run_command(args: RunArgs) -> int:
             from doeff.traceback import format_default
             format_default(reported)  # prints to stderr
 
+        hint = _missing_env_key_hint(reported)
         if args.format == "json":
             payload = {
                 "status": "error",
                 "error": reported.__class__.__name__,
                 "message": str(reported),
+                **({"hint": hint} if hint is not None else {}),
             }
             print(json.dumps(payload))
         else:
             print(f"Error: {reported}", file=sys.stderr)
+            if hint is not None:
+                print(hint, file=sys.stderr)
         return 1
+
+
+def _missing_env_key_hint(error: BaseException) -> str | None:
+    """The README's CLI form for giving an Ask key the env lacks: lazy-ask's env in --hy.
+
+    Only the CLI gives this hint — the error raised to Python names no CLI flag.
+    """
+    if not isinstance(error, MissingEnvKeyError):
+        return None
+    key = error.key
+    if isinstance(key, str) and "'" not in key:
+        env, holds = f"{{{json.dumps(key, ensure_ascii=False)} VALUE}}", ""
+    else:
+        env, holds = "myapp.env_dict", f"\n  (with the key {key!r} in myapp.env_dict)"
+    return (
+        "From the CLI, compose the env inline with --hy (README, CLI):\n"
+        "  doeff run --hy '(import myapp [p]) (import doeff-core-effects [lazy-ask])"
+        f" ((lazy-ask :env {env}) p)'{holds}"
+    )
 
 
 def main(argv: Iterable[str] | None = None) -> int:
