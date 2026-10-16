@@ -7,11 +7,11 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 # 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
+# 既定は Python の核だけ — pip install doeff は doeff・doeff-vm・doeff-core-effects・frozendict の 4 個を入れる。Hy で書いた
+# effect と handler の Hy(doeff-hy)と、HTTP の client の httpx は下の extra で足す(tests/test_core_install_extras.py・card ki-006338b48f4b)。
 dependencies = [
     "doeff>=0.5.0,<0.6",
-    "doeff-hy>=0.5.0,<0.6",
     "frozendict>=2.4.0",
-    "httpx>=0.27.0",
 ]
 
 [project.urls]
@@ -20,12 +20,20 @@ Repository = "https://github.com/proboscis/doeff"
 Issues = "https://github.com/proboscis/doeff/issues"
 
 [project.optional-dependencies]
+# Hy で書いた effect と handler(file・process・sql・random・channel・meter など・cache)を読む Hy。
+hy = ["doeff-hy>=0.5.0,<0.6"]
+# HTTP の client の handler(http_handlers — Hy で書いてあり、httpx で送る)。
+http = ["doeff-hy>=0.5.0,<0.6", "httpx>=0.27.0"]
+# hy と http — 0.5 までの既定と同じ組。
+all = ["doeff-hy>=0.5.0,<0.6", "httpx>=0.27.0"]
 # 汎用の HTTP の待ち受けの本物の答え手 aiohttp-http-server(doeff_core_effects/aiohttp_http_server.hy — agora-redesign #802)と、
 # 汎用の WebSocket の client の本物の答え手 aiohttp-ws-client(doeff_core_effects/aiohttp_ws_client.hy — agora-redesign #4007 U0)。
-http-server = ["aiohttp>=3.14"]
+# どちらも Hy で書いてあるので doeff-hy も入れる。
+http-server = ["doeff-hy>=0.5.0,<0.6", "aiohttp>=3.14"]
 # 汎用の SQL の本物の PostgreSQL の答え手 postgres-sql-handler(doeff_core_effects/postgres_sql.hy — agora-redesign #802 便 3)。
-# ClickHouse の答え手は stdlib の urllib だけで、sqlite の答え手は stdlib の sqlite3 だけを使う。
-postgres = ["psycopg>=3.1"]
+# Hy で書いてあるので doeff-hy も入れる。ClickHouse の答え手は stdlib の urllib だけで、sqlite の答え手は stdlib の sqlite3 だけを
+# 使う(どちらも Hy で書いてあるので extra hy で入れる)。
+postgres = ["doeff-hy>=0.5.0,<0.6", "psycopg>=3.1"]
 
 [build-system]
 # license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
