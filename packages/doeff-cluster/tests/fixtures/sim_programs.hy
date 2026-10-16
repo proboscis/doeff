@@ -8,7 +8,7 @@
 (import doeff_core_effects.effects [Ask])
 (import doeff_core_effects.handlers [reader])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
-(import doeff_time [Delay])
+(import doeff_time [Delay RaceOutcome RaceWithin TicksOutcome WaitTicks])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.sim.local [ProcessesOf])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
@@ -105,13 +105,18 @@
 
 (defk passable-body [key]
   {:pre [(: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime)だけを使う本体: 子の task を起こして待ち、経った時間を
-   盤の key に書いてから、準備できたと報告し続ける。"
+  "sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime と期限つきの待ち RaceWithin / WaitTicks)だけを使う本体: 子の task を
+   起こして待ち、経った時間と期限つきの待ちの答えを盤の key に書いてから、準備できたと報告し続ける。"
   (<- started int (now-epoch-ms))
   (<- child Task (Spawn (do! (<- (Delay 0.5)) 21)))
   (<- half int (Wait child))
   (<- ended int (now-epoch-ms))
-  (<- (WriteShared key (OpaqueJson.of {"answer" (* 2 half) "elapsedMs" (- ended started)})))
+  (<- raced-task Task (Spawn (do! (<- (Delay 0.2)) 7)))
+  (<- raced RaceOutcome (RaceWithin #(raced-task) 5.0))
+  (<- ticked-task Task (Spawn (do! (<- (Delay 0.25)) 9)))
+  (<- ticked TicksOutcome (WaitTicks ticked-task 0.1 10))
+  (<- (WriteShared key (OpaqueJson.of {"answer" (* 2 half) "elapsedMs" (- ended started)
+                                       "raced" raced.value "ticked" ticked.value})))
   (while True
     (<- (ReportReady True "通った"))
     (<- (Delay 1.0)))
