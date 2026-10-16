@@ -1,0 +1,83 @@
+# 実験 E1-threshold-only-in-M1
+# 対象版: 75732ed2b1d4ed332e719c0dfa15680a63ad299d
+# 時刻: 2026-10-16T11:33:28Z
+# 変異(git diff):
+diff --git a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy
+index 98c373ded..4df263423 100644
+--- a/packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy
++++ b/packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy
+@@ -236,7 +236,7 @@
+   (val busy (max 0 (- pace.waited-ms pace.judged-ms)))
+   (val overslept (if (is pace.planned-ms None) 0 (max 0 (- now pace.planned-ms))))
+   (val gap (- now pace.judged-ms))
+-  (if (and (> (+ busy overslept) timing.lease-ms) (> gap 0))
++  (if (and (> (+ busy overslept) 12000) (> gap 0))
+       (Stall :busy-ms busy :overslept-ms overslept :gap-ms gap)
+       None))
+ 
+# 命令: uv run pytest -q packages/doeff-cluster/tests/test_coordinator_stall.hy packages/doeff-cluster/tests/test_coordinator_stall_loop.hy packages/doeff-cluster/tests/test_coordinator_stall_on_sim.hy
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 0 秒 / 上限 1200 秒・保持 pid 1148883 pytest agora-controllers-verify-vr-b8266526d3d52e7c859cbed65d09457b、pid 1371572 code-quality agora-wt-wow2-p1b (c-WVYEQKDK5T8W7HR4XCD2D35MV6)、pid 1371672 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1371729 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1147464 doeff-hy-check agora-controllers-verify-vr-b8266526d3d52e7c859cbed65d09457b、pid 1367549 node-test agora-wt-p3b-right-pane/packages/webapp (c-R57N705EHZTWP518QAVH896QEM)、pid 1363992 pytest agora-wt-wow2-x2 (c-8MWAF5C6W8SSNPHNDQJCFFPNQ6)、pid 1371623 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)・待つのは pytest doeff-wt-stall-design-check (c-TH0214NA10WAGKP671FXWP9G2X)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 10 秒 / 上限 1200 秒・保持 pid 1148883 pytest agora-controllers-verify-vr-b8266526d3d52e7c859cbed65d09457b、pid 1371572 code-quality agora-wt-wow2-p1b (c-WVYEQKDK5T8W7HR4XCD2D35MV6)、pid 1371672 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1371729 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1147464 doeff-hy-check agora-controllers-verify-vr-b8266526d3d52e7c859cbed65d09457b、pid 1371650 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1363992 pytest agora-wt-wow2-x2 (c-8MWAF5C6W8SSNPHNDQJCFFPNQ6)、pid 1371623 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)・待つのは pytest doeff-wt-stall-design-check (c-TH0214NA10WAGKP671FXWP9G2X)
+check-slot: 機体の検の枠(8 本)が埋まっているので待つ — 待ち 20 秒 / 上限 1200 秒・保持 pid 1148883 pytest agora-controllers-verify-vr-b8266526d3d52e7c859cbed65d09457b、pid 1371572 code-quality agora-wt-wow2-p1b (c-WVYEQKDK5T8W7HR4XCD2D35MV6)、pid 1371672 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1371729 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1147464 doeff-hy-check agora-controllers-verify-vr-b8266526d3d52e7c859cbed65d09457b、pid 1371650 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1371703 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)、pid 1371623 pytest dotfiles-wt-pinprobe (c-KPSES24C6YRFJGG5G57QZGZT04)・待つのは pytest doeff-wt-stall-design-check (c-TH0214NA10WAGKP671FXWP9G2X)
+check-slot: 枠 3 を取った(待ち 24 秒)— pytest doeff-wt-stall-design-check (c-TH0214NA10WAGKP671FXWP9G2X)
+
+deadline scale x2.3 (load per usable CPU) — per test 140s, watchdog 210s
+
+test-admission: focused — 14 件(変更箇所の検証)
+doeff-adr: 記録から収集 3 file・収集で import 0 file
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000033 秒・依存変更で再作成 0 file
+...F..........                                                           [100%]
+=================================== FAILURES ===================================
+____________________ test_the_stall_threshold_is_the_lease _____________________
+
+doeff_interpreter = <function doeff_interpreter.<locals>.interpret at 0x41b988993c0>
+
+    (deftest test-the-stall-threshold-is-the-lease
+      ;; 予定の外の長さが lease-ms ちょうどなら止まりでなく、1 ms 越えたら止まり。
+>     (val pace (StepPace :judged-ms 1000 :waited-ms 1000 :planned-ms 1000))
+
+packages/doeff-cluster/tests/test_coordinator_stall.hy:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/doeff-cluster/tests/conftest.py:68: in interpret
+    return run(scheduled(compose(program)))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+doeff/run.py:24: in run
+    return vm.run(doexpr)
+           ^^^^^^^^^^^^^^
+packages/doeff-core-effects/doeff_core_effects/scheduler.py:1974: in root_close_out
+    result = yield prog
+             ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    (val pace (StepPace :judged-ms 1000 :waited-ms 1000 :planned-ms 1000))
+    (assert (is (! (stall-of pace (+ 1000 T.lease-ms) T)) None) "lease ちょうどは止まりでない")
+    (val over (! (stall-of pace (+ 1000 T.lease-ms 1) T)))
+>   (assert (is-not over None) "lease を越えたら止まり")
+              ^^^^^^^^^^^^^^^
+E   AssertionError: lease を越えたら止まり
+
+packages/doeff-cluster/tests/test_coordinator_stall.hy:61: AssertionError
+----------------------------- Captured stderr call -----------------------------
+
+doeff Traceback (most recent call last):
+
+  test_the_stall_threshold_is_the_lease.<locals>._hy_anon_6()  packages/doeff-cluster/tests/test_coordinator_stall.hy:61
+    (assert (is-not over None) "lease を越えたら止まり")
+  _hy_anon_6()  packages/doeff-cluster/tests/test_coordinator_stall.hy:61
+    (assert (is-not over None) "lease を越えたら止まり")
+    handlers:
+      _scheduled_python ↗
+
+AssertionError: lease を越えたら止まり
+
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-stall-design-check/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/doeff-cluster/tests/test_coordinator_stall.hy::test_the_stall_threshold_is_the_lease
+1 failed, 13 passed, 1 warning in 25.97s
+# pytest の終了: 1

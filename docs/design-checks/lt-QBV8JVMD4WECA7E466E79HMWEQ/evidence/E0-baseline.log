@@ -1,0 +1,22 @@
+# 実験 E0-baseline
+# 対象版: 75732ed2b1d4ed332e719c0dfa15680a63ad299d
+# 時刻: 2026-10-16T11:32:48Z
+# 変異なし
+# 命令: uv run pytest -q packages/doeff-cluster/tests/test_coordinator_stall.hy packages/doeff-cluster/tests/test_coordinator_stall_loop.hy packages/doeff-cluster/tests/test_coordinator_stall_on_sim.hy
+
+deadline scale x2.5 (load per usable CPU) — per test 148s, watchdog 221s
+
+test-admission: focused — 14 件(変更箇所の検証)
+doeff-adr: 記録から収集 2 file・収集で import 1 file
+  import: packages/doeff-cluster/tests/test_coordinator_stall.hy — 記録なし(この内容の file は収集で import したことが無い)
+doeff-adr: 実値の依存照合 0 file・照合 0 回・stat一致 0 回・hash 0 file・0.000026 秒・依存変更で再作成 0 file
+..............                                                           [100%]
+=============================== warnings summary ===============================
+packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
+  /work/toolset/worktrees/doeff-wt-stall-design-check/packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422: PytestWarning: doeff-adr wiring verification warning: executable ADR files exist but were not collected:
+  Add their directories to pytest testpaths or the CI pytest arguments. Use doeff_adr_wiring=off only for an intentional opt-out.
+    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+14 passed, 1 warning in 31.10s
+# pytest の終了: 0

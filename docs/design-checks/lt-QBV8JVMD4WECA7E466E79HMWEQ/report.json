@@ -1,0 +1,364 @@
+{
+  "version": 1,
+  "task_id": "lt-QBV8JVMD4WECA7E466E79HMWEQ",
+  "base_revision": "afe373773ebea07f8df1cf784ccd14cdc29c52e9",
+  "author": {
+    "conversation_id": "c-TH0214NA10WAGKP671FXWP9G2X",
+    "model": "claude-opus-5-5",
+    "effort": "未確認(この会話の起動の設定を観測できない)"
+  },
+  "requirements": [
+    "模擬で coordinator を 3 分止めた後、再開後に WorkerGone が 0 回で、配る担当の判断に no-runs-on-worker が出ない(doeff の側では置き先が移らない)test が通る",
+    "本当に沈黙した worker は、止まりの猶予が明けた後に従来どおり WorkerGone になる test が通る",
+    "doeff の docs/adr に決定が 1 句で記録され main に入っている",
+    "前提(上流の決定): coordinator が自分の止まりを検出し、止まりの直後は lease 切れを数えない・置き場(atlas)は変えない・agora-controllers は変えない",
+    "完了の範囲: 実装完了まで(実装 e8d948145・設計検証の修正 8e9a0d3e2 — どちらも main に着地)。事前の主張は design.md、盲検の入力と未加工の返答は blind-inputs.md・blind-A-response.md・blind-B-response.md、修正と再検証は revisions.md"
+  ],
+  "design": {
+    "path": "design.md",
+    "sha256": "ba492ac44b862104eb95f696ced775c3f3658dde17685f106167adc36a7e013d"
+  },
+  "modules": [
+    {
+      "id": "M1",
+      "responsibility": "前の歩の刻みと今の刻から止まりかを決め、止まっていた長さだけ時計をずらした状態を作る(api_policy.stall-of・clocks-shifted・STALL-SHIFTED-FIELDS / STALL-UNSHIFTED-FIELDS)",
+      "owns": "止まりの定義(予定の外の長さ = 前の歩の長さ + 予定の起きる刻からの寝過ごし)・閾(lease-ms)・ClusterState の欄ごとのずらし方の分類",
+      "hides": "閾と内訳の求め方・欄ごとのずらしの式",
+      "interface": "stall-of(pace: StepPace|None, now: int, timing: ClusterTiming) -> Stall|None・clocks-shifted(state: ClusterState, now: int, gap: int>0) -> ClusterState",
+      "effects": "なし(純粋な判断 — 時刻は引数でだけ受け、I/O を出さない)",
+      "lifetime": "状態を持たない(歩ごと・起き直しの 1 度に呼ばれる)",
+      "invariants": "ずらしは期限を後ろへだけ動かす(移し替えを早めない)・予定どおりの起き(期限ちょうど)は止まりでない・ずらした後の worker の沈黙 = 前の歩の時点の沈黙・ClusterState の欄はずらす / ずらさないのちょうど一方に在る"
+    },
+    {
+      "id": "M2",
+      "responsibility": "歩の刻み(判断の刻・待ち始めた刻・予定の起きる刻)を測って次の歩へ渡し、調停(tick)の前に M1 の答えを当てて log に 1 行出す(program.run-coordinator・coordinator-step・stall-resumed・wake_policy.planned-wake-ms)",
+      "owns": "刻みを測る位置と、ずらしを調停の前に当てる順",
+      "hides": "刻みの測り方(壁の時計の読みの位置)",
+      "interface": "StepPace(judged-ms・waited-ms・planned-ms)・coordinator-step の任意の引数 :pace",
+      "effects": "壁の時計の読み(now-epoch-ms)・slog の 1 行・SaveState(歩の前の状態, 歩の後の状態)",
+      "lifetime": "調停ループの変数(前の歩の判断の刻)— coordinator の process の一生の内",
+      "invariants": "止まりの判断は M1 の stall-of だけ(別の閾・別の意味の止まりを作らない)・ずらしは tick より前・保存は歩の前の状態との差で、ずらしと生存の印が止まりの明けた歩で耐久になる"
+    },
+    {
+      "id": "M3",
+      "responsibility": "最後の連絡 + 窓で worker の生死を判じ、沈黙の集合の差から WorkerGone / WorkerBack を出す(cluster_policy.alive・liveness-deadline・note-liveness・liveness-moves)",
+      "owns": "生死の比べ(now <= last-seen + window)",
+      "hides": "なし(この変更で中身を変えない)",
+      "interface": "既存のまま",
+      "effects": "なし(純粋な判断)",
+      "lifetime": "状態を持たない",
+      "invariants": "出来事は歩の前後の沈黙の集合の差だけから出る"
+    },
+    {
+      "id": "M4",
+      "responsibility": "起き直しの時に、最後の生存の印(alive-ms)からの長さを止まりとしてずらす(api_policy.resume-after-downtime・coordinator/entry/main の読み直し)",
+      "owns": "alive-ms からの長さの求め方",
+      "hides": "なし",
+      "interface": "既存のまま(中身は M1 の clocks-shifted を呼ぶ)",
+      "effects": "置き場の読み書き(entry の側)",
+      "lifetime": "起動の 1 度",
+      "invariants": "止まりの後に alive-ms = now を耐久にするので、止まりの直後の再起動で二重にずらさない"
+    },
+    {
+      "id": "M5",
+      "responsibility": "模擬で coordinator の機体ごとの止まりを作る(sim/local.hy の StallCoordinator・stall-taken、coordinator/protocol/request_queue.hy の stalled-until)",
+      "owns": "止まりの模擬の仕方(受付を閉じ・並んだ要求を切り・取りの後に調停ループを明けまで止める)",
+      "hides": "模擬の仕組み — coordinator の code は知らない",
+      "interface": "検の effect StallCoordinator(seconds)",
+      "effects": "Delay・CompletePromise(sim の scheduler と時計の effect だけ)",
+      "lifetime": "1 回の止まり(明けで受付を戻す)",
+      "invariants": "coordinator の code(M1〜M4)に模擬だけの分岐を持ち込まない"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S1",
+      "axis": "hardware",
+      "applicability": "applicable",
+      "change": "置き場や WAL の disk が変わり(zeus へ移す・遅い disk)、保存の詰まりの長さの分布が変わったので、止まりと数える閾を変える",
+      "claim": "閾と内訳の定義は M1 の stall-of 1 か所に在り、変えるのは M1 とその判断の test だけ",
+      "expected_scope": "M1(stall-of)とその判断の test",
+      "actual_scope": "E1: 閾を stall-of の 1 行だけで変えると、ループ(M2)と模擬(M5)は他を変えずに新しい閾へ従い、落ちたのは閾の境を名指す判断の test 1 本(意図した test の更新)。ただし修正前は、盲検 B のとおり M2 が 2 つ目の閾を持っても提示した検査が断らなかった — ループの水準の test を足して断るようにした(E2)",
+      "changed_modules": [
+        "M1"
+      ],
+      "unchanged_modules": [
+        "M2",
+        "M3",
+        "M4",
+        "M5"
+      ],
+      "reason": "閾は M1 の知識で、test の更新は意図した契約の変更。盲検 B の失敗例は知識の漏洩(2 つ目の止まりの定義が M2 に現れる)を検査が止められなかった事で、境界ではなく検査の不足",
+      "revision": "test_coordinator_stall_loop.hy を足し、ループの止まりの判断が stall-of の定義と一致する事を縛った(revisions.md の盲検 B・evidence/E2)。主張と予想は変えない"
+    },
+    {
+      "id": "S2",
+      "axis": "storage",
+      "applicability": "applicable",
+      "change": "保存の形(durable_kv の鍵・置き場の実装)を変える。盲検 A の失敗例: 保存する状態に期限つきで頼み直す欄(cordon)を足す",
+      "claim": "ずらしは歩の前後の状態の差(SaveState)で耐久になり、M1・M2 は置き場を知らない。置き場を変えても M1・M2 は変わらず、ずらしは差として必ず保存に載る(止まりの直後の再起動で二重にずらさない)",
+      "expected_scope": "durable_kv / wal_store だけ",
+      "actual_scope": "置き場の差し替えそのものは試していない。M1・M2 の code は置き場の module を名指さず、保存は effect SaveState だけ(E9)・止まりの明けた歩の保存に生存の印とずらした worker の印が載る(E0)・載せ損ねる変異は断られる(E3)。一方、盲検 A の失敗例(期限つきの欄を足す)では、その欄の持ち主に加えて M1 のずらしの一覧も変える必要があり、既存の drain・盤の TTL の行・温める表・退いた世代の最後の報告が漏れていた(E8-before)",
+      "changed_modules": [
+        "M1"
+      ],
+      "unchanged_modules": [
+        "M2",
+        "M3",
+        "M5"
+      ],
+      "reason": "隠すはずの知識の漏洩: 期限が頼み直しで延びるかという持ち主の判断を M1 の一覧が写していて、漏れを止める仕組みが無かった。M4 は M1 の関数を共有するので同じ直しが効く",
+      "revision": "境界は動かさず、M1 に ClusterState の欄ごとの分類(STALL-SHIFTED-FIELDS / STALL-UNSHIFTED-FIELDS)を必ず書かせ、分けていない欄・ずらすと言ってずらさない欄を test が断る(E4・E5)。漏れていた 4 種をずらす側へ足した(E8-after)。保存の確かめを模擬の test に足した(E3)。詳細は revisions.md"
+    },
+    {
+      "id": "S3",
+      "axis": "simulation",
+      "applicability": "applicable",
+      "change": "決定的な模擬(仮想の時計)で、機体ごとの止まりを本物の coordinator の code のまま再現する",
+      "claim": "止まりの検出は時刻を時計の effect でだけ読む(M2)ので、模擬は M5 に検の effect と受付の列の欄を足すだけで済み、M1〜M4 に模擬だけの分岐は無い",
+      "expected_scope": "M5",
+      "actual_scope": "M5(sim/local.hy と request_queue.hy)だけ。coordinator の core・intent・entry に模擬の名は無い(E7)。模擬の test は修正後に通り(E0)、猶予を外すと落ちる(E6)",
+      "changed_modules": [
+        "M5"
+      ],
+      "unchanged_modules": [
+        "M1",
+        "M2",
+        "M3",
+        "M4"
+      ],
+      "reason": "予想どおり。M5 の受付の列の欄 stalled-until は模擬の受け手の層(ADR-DOE-CLUSTER-002 R7)に置いた",
+      "revision": "不要 — E6 で、M1〜M4 を本番と同じに保ったまま模擬が直す前の失敗を再現し、E0 で直した後に通る事を確かめた"
+    },
+    {
+      "id": "S4",
+      "axis": "effects",
+      "applicability": "excluded",
+      "reason": "この変更が足す外の副作用は既存の slog の 1 行だけ。止まりを知らせの broker へ出す等の外の副作用は要求に無い"
+    },
+    {
+      "id": "S5",
+      "axis": "distribution",
+      "applicability": "excluded",
+      "reason": "coordinator は設計上 1 台(README「coordinator(1 台・状態は追記の log + snapshot)」)。止まりの検出は 1 process の中の判断で、複数台化は要求に無い"
+    },
+    {
+      "id": "S6",
+      "axis": "concurrency",
+      "applicability": "excluded",
+      "reason": "調停ループは 1 本の Program で歩を順に回し、受付の HTTP の thread(変更なし)は要求を列に並べるだけ。ずらしは歩の頭(要求の判断の前)に 1 度当たり、thread をまたぐ共有の状態を足さない"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "positive",
+      "expectation": "閾を M1 の stall-of だけで変えると(lease-ms → 12000)、閾の境を名指す判断の test 1 本だけが落ち、ループと模擬の test は M1 の変更だけで新しい閾に従って通る",
+      "observation": "変異の diff は api_policy.hy の 1 行だけ。1 failed(test_the_stall_threshold_is_the_lease・AssertionError「lease を越えたら止まり」)・13 passed・pytest の終了 1",
+      "evidence": {
+        "path": "evidence/E1-threshold-only-in-M1.log",
+        "sha256": "87ed9d348c6e30d3fa794a0914a41ae9095f6867a451dcb4ee0e429f79dc4988"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C2",
+      "scenarios": [
+        "S1"
+      ],
+      "control": "negative",
+      "expectation": "盲検 B の差分(M2 が寝過ごし 5 秒超で自分の Stall を作る)を、ループの水準の test が断る",
+      "observation": "test_a_short_oversleep_is_no_stall_in_the_loop が AssertionError [StallLine(gap_ms=7000, busy_ms=0, overslept_ms=7000)] で落ちる・他 13 passed・pytest の終了 1",
+      "evidence": {
+        "path": "evidence/E2-blind-B-loop-redefines-stall.log",
+        "sha256": "8b5b23e3099a07907f90e0ec0f02451737753f131c1ae44f278bb236bd231030"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C3",
+      "scenarios": [
+        "S2",
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "修正後の版で、判断・ループ・模擬の test(止まりの明けた歩の保存の確かめ・欄の分類・頼み直す期限の保持を含む)が全部通る",
+      "observation": "14 passed・pytest の終了 0(対象版 75732ed2b — 着地した 8e9a0d3e2 と同じ木)",
+      "evidence": {
+        "path": "evidence/E0-baseline.log",
+        "sha256": "10263d0695917cbfe06bf562fddc5753a8a61b267969bae158d43f332b25fa25"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C4",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "SaveState に歩の前の状態でなくずらした状態を渡す変異(ずらしが保存の差に載らない)を、模擬の test の保存の確かめが断る",
+      "observation": "test_a_stalled_coordinator_tells_no_worker_gone_and_moves_no_job が AssertionError「明けた歩の生存の印」で落ちる・pytest の終了 1",
+      "evidence": {
+        "path": "evidence/E3-unpersisted-shift.log",
+        "sha256": "a214a8923a97f8cd6274ab030acbe9850a5e9c870b77aaa1b9aef99730c59414"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C5",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "盲検 A の形 — ClusterState に期限つきの欄 cordons を足して分類を忘れる — を、欄の分類の test が名指して断る",
+      "observation": "test_every_state_field_is_classified_for_the_stall が AssertionError「分けていない欄 ['cordons']」で落ちる・pytest の終了 1",
+      "evidence": {
+        "path": "evidence/E4-blind-A-unclassified-field.log",
+        "sha256": "5f0eb2b0491f77b3dd1abefc5a57d3eee44ff9ebbfd1e4bc4af6ab4ea4f8fd99"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C6",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "ずらすと分類した drain のずらしを clocks-shifted から外す変異を、頼み直す期限の test が断る",
+      "observation": "test_a_stall_keeps_the_renewable_deadlines が AssertionError(動いた欄に drains が無い)で落ちる・pytest の終了 1",
+      "evidence": {
+        "path": "evidence/E5-blind-A-drain-not-shifted.log",
+        "sha256": "0f990a762285d7c73547820798efc349a68140f1c54e2d0bd524ca2fa1c8b445"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C7",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "negative",
+      "expectation": "修正前の版(e8d948145)で、盲検 A の再現の筋が漏れ(止まりの直後に drain と盤の TTL の行が消える)を示す",
+      "observation": "止まりの直後の歩で drains=[]・board から presence-x が消え、GET /workers/w の drain が None・起き直しの後も同じ",
+      "evidence": {
+        "path": "evidence/E8-blind-A-repro-before.log",
+        "sha256": "48d2748dcd4da4d5cb03b6fcf601ef1bb72eac192d41bd0a097c1b714c5d2fcf"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C8",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "修正後の版で、同じ盲検 A の再現の筋の drain と盤の TTL の行が止まりの直後と起き直しの後も残り、期限が止まりの長さだけ延びる",
+      "observation": "止まりの直後の歩で drains=['w']・presence-x expires 241000・GET /workers/w の drain untilMs 241000",
+      "evidence": {
+        "path": "evidence/E8-blind-A-repro-after.log",
+        "sha256": "4b04dedd2e5e950b86d13b95976c31dd339b60922d1f0055236555966baa6d89"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C9",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "M1・M2 の code は置き場の module(durable_kv・wal_store・Persist)を名指さず、保存は effect SaveState だけを出す",
+      "observation": "git grep の一致なし(終了 1)・program.hy の保存は (SaveState state next) と止まる時の (SaveState current marked) だけ",
+      "evidence": {
+        "path": "evidence/E9-stall-code-does-not-know-the-store.log",
+        "sha256": "ee06bedab57ffb8d12a34bd443a15345e757c24a1ca5a1560f6f49f7a9f71438"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C10",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "positive",
+      "expectation": "coordinator の core・intent・entry に模擬の名(StallCoordinator・stalled-until・stall-taken・STALL-REASON)が無く、模擬の側にだけ在る",
+      "observation": "core・intent・entry の git grep は一致なし(終了 1)・sim/local.hy 24 件・request_queue.hy 2 件",
+      "evidence": {
+        "path": "evidence/E7-no-sim-knowledge-in-coordinator.log",
+        "sha256": "ce515199d0fd62a27680aa9a037138249825a93864642d165ae2f8293ffd1236"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C11",
+      "scenarios": [
+        "S3"
+      ],
+      "control": "negative",
+      "expectation": "M1〜M4 を本番と同じに保ったまま、猶予を外す変異(stall-resumed に None を渡す)で、模擬とループの test が直す前の失敗(明けた刻の WorkerGone)を示して落ちる",
+      "observation": "4 failed(ループの 2 本・模擬の 2 本 — 模擬は明けた刻に w1・w2 の WorkerGone)・10 passed・pytest の終了 1",
+      "evidence": {
+        "path": "evidence/E6-fix-disabled.log",
+        "sha256": "c9c18c8e65832a1c17663299d3ff7ad3c6a2e9eabad7be830830ba23876622e8"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C12",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "起き直しの道でも drain・盤の TTL・温める表・退いた世代をずらすようになった後、それらに触れる既存の test 36 file が通る(負荷による時間切れと teardown の .pyc の見張りは単独の走り直しで確かめる)",
+      "observation": "317 passed・1 failed(test_generated_stubs の pytest-timeout 103 秒)・3 errors(teardown の .pyc の見張り)。この 4 件の単独の走り直しは C13",
+      "evidence": {
+        "path": "evidence/regression.log",
+        "sha256": "b1964dd22a92510b62417efac034dfde2fad4fcb5a8e4cda300b40b996827429"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "C13",
+      "scenarios": [
+        "S2"
+      ],
+      "control": "positive",
+      "expectation": "C12 で時間切れと teardown の error になった 4 件を単独で走らせ直すと通る",
+      "observation": "6 passed・pytest の終了 0",
+      "evidence": {
+        "path": "evidence/regression-rerun.log",
+        "sha256": "cf0be29399e6f23a039b09f07c8148baf7f94eaec966207823246de204d6d286"
+      },
+      "status": "passed"
+    }
+  ],
+  "unresolved": [],
+  "attachments": [
+    {
+      "path": "revisions.md",
+      "sha256": "1a2d16bc40a21dc06b82e5de7d45fcd75fb007a7b7e02a07440da1f2e14379bc"
+    },
+    {
+      "path": "blind-inputs.md",
+      "sha256": "9e833aa98211c8f84397426ab02929aab5e10903f4bc94e69f7dd3c6ee1e9bb5"
+    },
+    {
+      "path": "blind-A-response.md",
+      "sha256": "4e6af77224d0c8fcbbc500fbec5ea74fe8ba8c37f8399b523ae1b3e84c14317f"
+    },
+    {
+      "path": "blind-B-response.md",
+      "sha256": "a868ac49d02f28864d63c7b83adb0f77ffe7fab3db0932912c2095a9cfe819fd"
+    },
+    {
+      "path": "evidence/blind-A-repro_stall_deadlines.py",
+      "sha256": "99ec1c6763576e714019cada1b0873a84708ac8b384fc6c0903a4c13af0befa3"
+    },
+    {
+      "path": "evidence/after-fix-tests.log",
+      "sha256": "6e1035323bb182b6f72c401ac2b780d7b251c96f050bd25b6cc16cc7e6f1d125"
+    }
+  ]
+}

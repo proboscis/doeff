@@ -1,0 +1,17 @@
+# 実験 E8-blind-A-repro-before
+# 対象版: e8d9481453ebea5511faa94ff2c7e109080fc45c (/home/ubuntu/.worktrees/doeff-wt-coordinator-stall-grace)
+# 命令: (作業木の根で) uv run python /home/ubuntu/.worktrees/doeff-wt-stall-design-check/.design-check/lt-QBV8JVMD4WECA7E466E79HMWEQ/evidence/blind-A-repro_stall_deadlines.py
+heartbeat 200
+drain 200
+board ttl row 200 {'ok': True, 'resourceVersion': 1}
+semaphore lease 200 {'ok': True, 'reason': None, 'ttlMs': 60000, 'dropped': 0}
+  [止まる前の歩] workers.silent=[] drains=['w'] warms=0 board=['presence-x', 'semaphore/turn-x']
+  tick-due(止まる前) = DueAt(at=11001)  sweep-due = DueAt(at=61000)
+stall = Stall(busy_ms=5, overslept_ms=171999, gap_ms=180000)
+  [止まりの直後の歩(ずらし有り)] workers.silent=[] drains=[] warms=0 board=['semaphore/turn-x']
+  WorkerGone 等 = ()
+  board row semaphore/turn-x value= {'permits': 1, 'holders': {'tok1': 241000}} expires= None
+  [起き直し(gap=180000)の後の歩] workers.silent=[] drains=[] warms=0 board=['semaphore/turn-x']
+  GET /workers/w [止まる前の歩] -> 200 {'live': None, 'ready': False, 'drain': {'worker': 'w', 'sinceMs': 1000, 'untilMs': 61000, 'boot': None, 'actor': 'ops', 'phase': 'Drained', 'drained': True, 'remaining': [], 'moving': {}, 'blocked': {}, 'unmovable': [], 'movingReady': {}}}
+  GET /workers/w [止まりの直後の歩] -> 200 {'live': None, 'ready': True, 'drain': None}
+# 終了: 0
