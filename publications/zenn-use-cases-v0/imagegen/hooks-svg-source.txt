@@ -1,0 +1,11 @@
+hookの記事（doeff-hooks.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-17）。
+
+- 正本：../visuals/hooks-concept.svg と ../visuals/hooks-flow.svg。
+- 図の仕様：../reviews/hooks-visuals.json。
+- hooks-flowの2本の線は、測った値から座標を計算して書いた。値は../reviews/hooks.mdの「数字の出典」にある。
+- 2つの量（字数と本数）は単位が違うので、2軸の図にせず、横軸を揃えた上下2枚にした。
+- 色は青#2a78d6と橙#eb6834。色覚の型の違いでも見分けられる事を、色の検査の道具で確かめた。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
+  - hooks-concept：幅1200・高さ1220。
+  - hooks-flow：幅1200・高さ1060。
+- 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
