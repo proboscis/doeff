@@ -32,7 +32,7 @@ and calls them through the doeff handler stack.
 
 ## Architecture
 
-```
+```text
 program (domain handlers installed)
   │
   ├── Launch(:mcp-tools [tool1, tool2, ...])
@@ -80,8 +80,7 @@ separate captured handler stack, tracked per-session in the handler's `lazy-var 
   result)
 
 ;; Run the handler the way the tool server does
-(print (run (submit-order-tool.handler "7203" "buy" 100)))
-;; → accepted: buy 100 of 7203
+(print (run (submit-order-tool.handler "7203" "buy" 100)))  ; accepted: buy 100 of 7203
 ```
 
 This expands to:
@@ -149,15 +148,14 @@ echo_tool = McpToolDef(
 )
 
 # Inspect the generated JSON Schema
-echo_tool.input_schema()
-# → {"type": "object", "properties": {"message": {"type": "string", ...}}, "required": ["message"]}
+print(echo_tool.input_schema())  # {'type': 'object', 'properties': {'message': {'type': 'string', 'description': 'Message to echo'}}, 'required': ['message']}
 ```
 
 ## Launching Agents with Tools
 
 `LaunchEffect` has flat fields — pass `mcp_tools` directly:
 
-```python
+```python excerpt
 from pathlib import Path
 from doeff_agents.effects import Launch
 from doeff_agents.adapters.base import AgentType
@@ -173,7 +171,7 @@ launch_eff = Launch(
 
 From Hy:
 
-```hy
+```hy excerpt
 (import doeff_agents.effects [Launch])
 (import doeff_agents.adapters.base [AgentType])
 (import pathlib [Path])
@@ -191,7 +189,7 @@ From Hy:
 This allows `GetHandlers(k)` inside the handler to capture domain handlers from the
 continuation chain.
 
-```
+```text
 claude_handler(                 ← outermost: catches Launch, captures inner handlers
   domain_handler_1(             ← captured via GetHandlers(k)
     domain_handler_2(           ← captured via GetHandlers(k)
@@ -203,7 +201,7 @@ and tool calls will fail with "no handler found for effect."
 
 The new canonical entry point:
 
-```python
+```python excerpt
 from doeff import run
 from doeff_agents.handlers import claude_agent_handler
 
@@ -242,7 +240,7 @@ result = run(wrapped)
 
 ### Minimal Example
 
-```python
+```python excerpt
 from pathlib import Path
 from doeff import do, run, Perform
 from doeff.mcp import McpToolDef, McpParamSchema
@@ -293,7 +291,7 @@ print(result)
 
 ### Trading Agent with nak Tools
 
-```hy
+```hy excerpt
 (require doeff-hy.macros [defmcp-tool defp <- defhandler])
 (import doeff [run])
 (import doeff_agents.effects [Launch Monitor Capture Stop])
@@ -345,7 +343,7 @@ print(result)
 
 ### `McpParamSchema`
 
-```python
+```python excerpt
 @dataclass(frozen=True)
 class McpParamSchema:
     name: str         # Parameter name
@@ -358,7 +356,7 @@ class McpParamSchema:
 
 ### `McpToolDef`
 
-```python
+```python excerpt
 @dataclass(frozen=True)
 class McpToolDef:
     name: str                          # Tool name (shown to agent)
@@ -372,7 +370,7 @@ class McpToolDef:
 
 ### `LaunchEffect` (flat fields)
 
-```python
+```python excerpt
 @dataclass(frozen=True, kw_only=True)
 class LaunchEffect:
     session_name: str
@@ -386,7 +384,7 @@ class LaunchEffect:
 
 ### `Launch(...)` constructor
 
-```python
+```python excerpt
 def Launch(
     session_name: str,
     *,
@@ -404,14 +402,14 @@ def Launch(
 Returns the Hy-based `defhandler` that catches `LaunchEffect(agent_type=CLAUDE)`,
 manages trust, MCP, tmux, and session lifecycle.
 
-```python
+```python excerpt
 from doeff_agents.handlers import claude_agent_handler
 handler = claude_agent_handler()  # optional: backend=my_backend
 ```
 
 ### `McpToolServer`
 
-```python
+```python excerpt
 class McpToolServer:
     def __init__(self, tools, run_tool, *, port=0): ...
     def start(self) -> None      # Start in daemon thread
