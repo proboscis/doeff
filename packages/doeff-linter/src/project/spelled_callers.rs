@@ -22,7 +22,7 @@ use std::thread::JoinHandle;
 
 use rayon::prelude::*;
 
-use super::bare_calls::{defk_names_in, DefkNames};
+use super::bare_calls::{defk_names_in, defk_names_over, DefkNames};
 use super::facts_cache::Reach;
 use super::names::module_of;
 use super::param_calls::{asked_callees, candidates_in, Candidate, PassedProgram, ProgramParamsLookup};
@@ -139,7 +139,7 @@ impl<'a> SpelledCallers<'a> {
         let known = hy_files::by_module(self.root);
         let modules: BTreeSet<String> = symbols.iter().filter_map(|symbol| symbol.rsplit_once('.')).map(|(module, _)| module.to_string()).collect();
         let files = named_modules::files_of(&known, &modules, None);
-        super::defk_names_over(self.root, self.enabled, Reach::Named, &files)
+        defk_names_over(self.root, self.enabled, Reach::Named, &files)
     }
 }
 
@@ -193,8 +193,10 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
 
 #[cfg(test)]
 mod tests {
+    use doeff_indexer::hy_index::collect_hy_files;
+
     use super::super::param_calls::ProgramParams;
-    use super::super::{defk_names_for, program_params_for};
+    use super::super::paths::relative_path;
     use super::*;
 
     fn enabled() -> BTreeSet<ProjectRule> {
@@ -212,11 +214,29 @@ mod tests {
         dir
     }
 
-    /// repo の Hy の全部から作る事実 — 全体の実行が使う物。
-    fn whole(root: &std::path::Path) -> ProgramParams {
-        let enabled = enabled();
-        let defks = defk_names_for(root, &enabled);
-        program_params_for(root, &enabled, &defks)
+    /// repo の Hy の全部から作る事実 — 全体の実行(`program_params_for`)と同じ作り方: 全部の file の defk の名を集め、全部の file の呼びから積む(歩く物は
+    /// `hy_index::collect_hy_files` — 検の相手と歩き方を分ける)。
+    fn whole(root: &Path) -> ProgramParams {
+        let files: Vec<(String, String)> = collect_hy_files(root)
+            .into_iter()
+            .filter_map(|path| Some((relative_path(root, &path)?, std::fs::read_to_string(&path).ok()?)))
+            .collect();
+        let mut defks = DefkNames::default();
+        for (rel, source) in files.iter().filter(|(_, source)| source.contains("(defk")) {
+            defks.extend(defk_names_in(source, &module_of(rel)));
+        }
+        let mut params = ProgramParams::default();
+        if defks.is_empty() {
+            return params;
+        }
+        for (rel, source) in &files {
+            let module = module_of(rel);
+            let bindings = facts::hy_bindings(source, &module);
+            let mut one = ProgramParams::default();
+            one.collect(source, rel, Scope { module: &module, bindings: &bindings }, &defks);
+            params.merge(one);
+        }
+        params
     }
 
     /// 呼び先の名を字面に含む file だけから作る事実 — 1 file の実行が使う物(呼び先の並びと同じ順)。

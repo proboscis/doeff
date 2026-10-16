@@ -421,8 +421,17 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
     module の層をタグの role から推す時の中身の読みも、引かれた module だけ。
   - module の綴りから file を探すのは tree を歩かず、path の段ごとに探る(`module_probe.rs` — 冷えた作業木の dir の読みを避ける)。
   - 名指す file だけでは答えが変わる 3 つ(失敗の型 = 別の file の defeffect の `:failure` が宣言する・引数に渡された Program = 別の file の呼び手が渡す・class の frozen =
-    同じ名が repo のどこかに在るか)は、**引かれた時だけ** repo 全体から作る(`deferred.rs`)。引かれる形の判定を先に済ませ(腕が受けた値を返すだけの形・引数を素で
-    呼ぶ定義・型で判じる handler の引数)、大半の file は引かない(agora-controllers の 120 file の標本で約 5%)。
+    同じ名が repo のどこかに在るか)は、**引かれた時だけ**作る。引かれる形の判定を先に済ませ(腕が受けた値を返すだけの形・引数を素で呼ぶ定義・型で判じる handler の引数)、
+    大半の file は引かない(agora-controllers の 150 file の標本で、引数に渡された Program が 3 件・失敗の型が 3 件・class の frozen が 1 件)。
+    - class の frozen だけが、引かれた時に repo 全体から作る(`deferred.rs`)。
+    - 失敗の型と引数に渡された Program は、引く名が決まっている(match の腕の型・書いた file の関数)ので、**その名の綴りを字面に含む file だけ**を解析する
+      (`spelled_failures.rs`・`spelled_callers.rs`・綴りの探り方は `spelling.rs`)。宣言も呼び手も、解いた名の最後の段の綴りを字面に必ず含む(mangle は `-` を `_` に直すだけ・
+      名に識別子でない文字が入る名は綴りを決められないので絞らない)。渡された記号が defk かは、記号の module の file だけで決める(`defk_names_over` の名指し)。
+      答えは repo の全部から作った集合を引いた時と同じ(実 repo の全部の呼び先・型の名で確かめた)。
+    - repo の Hy の一覧を歩く待ちと、見つけた file を読む待ちは、全部を待ちの重なる仕事として回す(`hy_files::collect_reading`・`bulk_read::pipeline` — 128 本)。
+      一覧の集合と順は `hy_index::collect_hy_files` と同じ。
+    - 呼び手の事実を引くのは、実行の中で登録簿・effect の世界・名指しの module の表を作った後になる。書いた file が自分の引数を素で呼ぶ定義を持つなら、その呼び先の名での
+      repo の読みを実行の頭から別の thread で走らせ始める(`SpelledCallers::started` — 呼び先は defk の集まりが空の見積りで、実際に引く呼び先を全部含む。収まらなければ引く時に読み直す)。
   - 1 file の実行は事実の根ごとの表を読まず書かない(中身の hash で事実を引く — 全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む)。
   - 登録簿と判定の一覧(1 鍵 1 file の dir — agora-controllers の `scripts/doeff_lint/SMELL-BREACHES` は 447 file)は、全部の file を読む。作業木ごとに別の inode なので、
     冷えた作業木では 1 file ごとに disk を待つ — 順に読むと待ちが足し算になる。読みの待ちは `bulk_read::fan_out`(最大 32 本の thread・結果は入力の順・答えは順に読んだ時と
@@ -437,9 +446,16 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
   読みは、直列で中央値 2.4 秒(最大 3.6〜10.8 秒 — 449 file の open+read。readdir は 0.006 秒・stat 全部は 0.021 秒)。並列度を替えた冷えた 8 作業木では 直列 6.4 秒 / 8 本 0.93 秒 /
   16 本 0.62 秒 / 32 本 0.37 秒(中央値)。直した版の冷えた 1 回: 全体を読まない形の file 26 件が実時間 中央値 1.10 秒・最大 1.96 秒(直す前は 27 件で中央値 2.25 秒・最大 3.59 秒・
   3 秒超が 6 件)、登録簿の段は中央値 1.44 → 0.33 秒。
-- 残り: 全体を読む形(失敗の型・引数に渡された Program・class の frozen を引く file — 標本の約 5%、例 `requests_projection.hy`)は、新しい作業木の最初の 1 回が 8〜13 秒(旧 12〜17 秒)で、
-  hook の期限 4 秒を越える。内訳は `defk-names` の全 file の読み(IO の待ち)と `program-params` の作り直し(CPU 5.8 秒 — 事実が repo 全体の defk の名の指紋を印に含むので、指紋が
-  変わると全 file を作り直す)。
+- 実測(同じ本線・2026-10-17・Pod の load 85〜130・page cache の冷えた作業木を旧〔fast profile で build した直す前の main〕新で別々に選び、共有 cache のまま 1 回ずつ撃つ・LTO なしの同じ設定で build):
+  引数に渡された Program を引く file(`requests_projection.hy`)の冷えた最初の 1 回の実時間は、中央値 33〜46 秒(直す前)→ 4.5 秒(最大 5.2 秒)。`triage.hy` は 56.9 秒(最大 73)→ 5.4 秒(最大 6.3)。
+  失敗の型を引く file(`conversation_input.hy`)は 37.3 秒 → 7.2 秒(`facts-cache.roots` の 3〜19 秒を含む回が 1 件)。直す途中の値(`requests_projection.hy`・中央値): 字面で絞って tree を順に歩く形 17〜25 秒(歩く待ちだけで 9〜15 秒)→
+  歩きを層ごとに並べた形 7.6 秒 → 歩きながら読む形 5.7 秒 → 読みを頭から走らせ始める形 4.5 秒。冷えた 2839 file の読みは 32 本 3.3 秒・128 本 1.8 秒・256 本 1.9 秒(中央値)。
+  出力は実 repo の 406 走行(DOEFF126 の当たり 42 走行・DOEFF122 の当たりを含む)で 1 byte も違わない。
+- 残り: 冷えた作業木の最初の 1 回は、これでも hook の期限 4 秒を越える回が多い(Pod の load 85 以上で中央値 4.5〜5.4 秒)。残りは repo の Hy の 2839 file の読み 約 2〜3.5 秒(page cache を
+  追い出された作業木の file ごとの disk の待ち — 並列度を 128 から 256 に上げても縮まない)と、登録簿・prepare・effect の世界の冷えた読み(合わせて約 1.5 秒)。2 回目以降は約 0.6 秒。
+  - `facts-cache.roots`(置き場の根の掃除 — 1 時間ごとの 1 回、3〜19 秒)が、その時間の最初の 1 回に載る。別の直し。
+  - class の frozen を引く handler の引数(標本の約 0.7%)は、まだ repo 全体を読む(`handler-argument-classes`)。
+  - 更に縮めるなら、読む file 数を減らす案(git の index の blob id と作業木の stat で、変わっていない file の中身を読まずに別の場所の事実を引く)が要る。
 
 ## 7. 既存の判定との照合
 
