@@ -64,7 +64,9 @@
   same name — even one defined first — and the handler failed with `TypeError: 'McpToolDef' object is not callable`
   when it ran. The example in `docs/12-mcp-tools.md` and the docstrings of `defmcp-tool` and `doeff.mcp` named the
   tool after the `defk` it called; the example now names the tool `submit-order-tool`, defines the `defk`, and runs
-  the handler (card ki-896fc4bca8cb).
+  the handler. `tests/test_docs_page_examples.py` runs that example and the From Python one and compares what they
+  print; the page's other fences, which need Claude Code or names the page does not define, are marked `excerpt`
+  (or `text` for the diagrams) (card ki-896fc4bca8cb).
 - `doeff` CLI: `doeff run` no longer prints `[DOEFF][PROFILE]` timing lines unless asked. `doeff run --profile` or
   `DOEFF_PROFILE=1` prints them on stderr as before (`DOEFF_PROFILE` empty or `0` leaves them off).
   `DOEFF_DISABLE_PROFILE` is no longer read, since profiling is off by default, and `doeff-ml-nexus`'s docker handler
