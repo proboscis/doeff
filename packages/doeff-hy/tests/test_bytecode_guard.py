@@ -41,12 +41,16 @@ import shutil
 import subprocess
 import sys
 import types
-from collections.abc import Buffer
 from functools import cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from doeff_hy_bytecode_guard import records
+
+if TYPE_CHECKING:
+    # collections.abc.Buffer は Python 3.12 から — 注記にだけ使うので、3.11 で module の読み込みを落とさない。
+    from collections.abc import Buffer
 
 #: 測る Hy の版を決める uv.lock を持つ repo の根と、doeff で uv.lock の版を読む 1 か所。
 ROOT = Path(__file__).resolve().parents[3]

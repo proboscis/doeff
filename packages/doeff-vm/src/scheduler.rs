@@ -50,7 +50,7 @@ use doeff_vm_core::py_shared::PyShared;
 use doeff_vm_core::value::{Callable, CallableRef, Value};
 use doeff_vm_core::{Continuation, VMError};
 
-use crate::python_generator_stream::{classify_python_object, python_to_value, value_to_python};
+use crate::python_generator_stream::{classify_python_object, python_to_value, raised_object, value_to_python};
 use crate::result::{PyResultErr, PyResultOk};
 
 /// The name the VM shows for the scheduler prompt (tracebacks, "handlers in
@@ -880,12 +880,12 @@ fn finish_cancel(
     for callback in callbacks {
         if let Err(err) = callback.bind(py).call0() {
             if err.is_instance_of::<PyException>(py) {
-                errors.push(err.value(py).clone().into_any().unbind());
+                errors.push(raised_object(py, &err));
             } else {
                 // A BaseException (KeyboardInterrupt, ...) escapes the Python
                 // version's `except Exception` too: it propagates from the
                 // Cancel dispatch into the Cancel caller.
-                return throw_or_empty(k, err.value(py).clone().into_any().unbind());
+                return throw_or_empty(k, raised_object(py, &err));
             }
         }
     }
@@ -902,7 +902,7 @@ fn finish_cancel(
         error.setattr("__cause__", errors[0].bind(py))?;
         Ok(error.unbind())
     })()
-    .unwrap_or_else(|err| err.value(py).clone().into_any().unbind());
+    .unwrap_or_else(|err| raised_object(py, &err));
     DoCtrl::ResumeThrow {
         k,
         exception: Value::Opaque(PyShared::new(exception)),
@@ -917,7 +917,7 @@ fn throw_or_empty(k: Option<Continuation>, exception: Py<PyAny>) -> DoCtrl {
 }
 
 fn exception_value(py: Python<'_>, err: PyErr) -> Value {
-    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
+    Value::Opaque(PyShared::new(raised_object(py, &err)))
 }
 
 fn obj_value(py: Python<'_>, obj: &Py<PyAny>) -> Value {
@@ -2856,7 +2856,7 @@ impl IRStream for TaskWrapStream {
                         }
                         Err(err) => {
                             self.phase = Phase::Body;
-                            self.on_error_in_try(py, err.value(py).clone().into_any())
+                            self.on_error_in_try(py, raised_object(py, &err).into_bound(py))
                         }
                     }
                 }

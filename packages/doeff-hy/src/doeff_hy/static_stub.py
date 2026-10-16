@@ -178,6 +178,14 @@ class _Scan:
         )
 
 
+def _type_params(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> "list[ast.type_param]":
+    """定義の型の引数(`def f[T]`・`class C[T]` — 契約・defeffect の :tp)を宣言へ運ぶため。ast の定義が型の引数を持つのは
+    Python 3.12 から — 3.11 の定義は持たない(:tp の型検査の展開も 3.12 から)ので、型の引数の無い定義と同じに読む。"""
+    if sys.version_info >= (3, 12):
+        return list(node.type_params)
+    return []
+
+
 def _with_returns(node: ast.FunctionDef, returns: ast.expr) -> ast.FunctionDef:
     """関数の宣言の答えの型だけを差し替えた宣言を返す(ほかの欄は元のまま)。"""
     return ast.FunctionDef(
@@ -186,7 +194,7 @@ def _with_returns(node: ast.FunctionDef, returns: ast.expr) -> ast.FunctionDef:
         body=node.body,
         decorator_list=node.decorator_list,
         returns=returns,
-        type_params=node.type_params,
+        type_params=_type_params(node),
     )
 
 
@@ -457,7 +465,7 @@ def _function(node: ast.FunctionDef | ast.AsyncFunctionDef, method: bool) -> ast
         decorator_list=[d for d in node.decorator_list if _keeps(d)],
         returns=_returns(node),
         # 契約の :tp(型の引数)は型検査の展開で `def f[T]` になる — 答えが引数の型で決まる関数の総称を .pyi へ運ぶ(#2893)。
-        type_params=list(node.type_params),
+        type_params=_type_params(node),
     )
 
 
@@ -594,7 +602,7 @@ def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.C
     members = [member for statement in _with_defaults(node.body) if (member := _member(statement)) is not None]
     declared = frozenset(name for member in members if (name := _member_name(member)) is not None)
     body = [*_init_attributes(node, declared), *members]
-    readable = type_vars | {parameter.name for parameter in node.type_params}
+    readable = type_vars | {parameter.name for parameter in _type_params(node)}
     answer = next(
         (found for statement in node.body if (found := _declared_answer(statement, readable)) is not None), None
     )
@@ -604,7 +612,7 @@ def _class(node: ast.ClassDef, type_vars: frozenset[str] = frozenset()) -> ast.C
         keywords=node.keywords,
         body=body or [ast.Expr(value=ast.Constant(value=...))],
         decorator_list=[d for d in node.decorator_list if not _reads_hidden(d)],
-        type_params=list(node.type_params),
+        type_params=_type_params(node),
     )
 
 

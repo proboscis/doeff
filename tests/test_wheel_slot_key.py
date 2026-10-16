@@ -77,7 +77,10 @@ def test_the_strip_setting_alone_splits_the_slot(backend: ModuleType, package: P
 def test_another_python_abi_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 失敗ケース(#2969): free-threading の cp314t と cp313 のように拡張 module の名の末尾が違う Python で組むと、別の置き場を指す。
     here = backend._wheel_slot(package, None)
-    monkeypatch.setattr(backend.sysconfig, "get_config_var", lambda name: ".cpython-313-x86_64-linux-gnu.so" if name == "EXT_SUFFIX" else None)
+    # 走らせている Python と違う末尾を名指す — cp313 の上で cp313 を名指すと同じ置き場のままになる(版の行列の 3.13 で落ちた)。
+    current = backend.sysconfig.get_config_var("EXT_SUFFIX")
+    other = next(s for s in (".cpython-313-x86_64-linux-gnu.so", ".cpython-314t-x86_64-linux-gnu.so") if s != current)
+    monkeypatch.setattr(backend.sysconfig, "get_config_var", lambda name: other if name == "EXT_SUFFIX" else None)
     assert backend._wheel_slot(package, None) != here
 
 

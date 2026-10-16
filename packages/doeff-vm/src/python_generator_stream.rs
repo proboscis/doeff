@@ -167,7 +167,7 @@ fn generator_function_stream(
 ) -> Result<Value, doeff_vm_core::VMError> {
     let result = function.bind(py).call(args, kwargs).map_err(|err| {
         doeff_vm_core::VMError::uncaught_exception(Value::Opaque(PyShared::new(
-            err.value(py).clone().into_any().unbind(),
+            raised_object(py, &err),
         )))
     })?;
     // SAFETY: PyGen_Check only reads the object's type.
@@ -474,7 +474,7 @@ impl doeff_vm_core::value::Callable for PythonCallable {
                     Ok(python_to_value(py, bound))
                 }
                 Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(Value::Opaque(
-                    PyShared::new(err.value(py).clone().into_any().unbind()),
+                    PyShared::new(raised_object(py, &err)),
                 ))),
             }
         })
@@ -561,7 +561,7 @@ impl doeff_vm_core::value::Callable for PythonCallable {
                     })
                 }
                 Err(err) => Err(doeff_vm_core::VMError::uncaught_exception(Value::Opaque(
-                    PyShared::new(err.value(py).clone().into_any().unbind()),
+                    PyShared::new(raised_object(py, &err)),
                 ))),
             }
         })
@@ -649,8 +649,16 @@ fn throw_into<'py>(
     }
 }
 
+/// The exception object a Python error carries, with the frames it was raised through attached — so
+/// the doeff traceback (doeff/run.py reads `__traceback__`) names the program's own lines. Before
+/// Python 3.12 the traceback is held apart from the exception value and `PyErr::value` hands the value
+/// without it: on 3.11 every frame of the generator and of the plain functions it called was lost.
+pub(crate) fn raised_object(py: Python<'_>, err: &PyErr) -> Py<PyAny> {
+    err.clone_ref(py).into_value(py).into_any()
+}
+
 fn exception_value(py: Python<'_>, err: &PyErr) -> Value {
-    Value::Opaque(PyShared::new(err.value(py).clone().into_any().unbind()))
+    Value::Opaque(PyShared::new(raised_object(py, err)))
 }
 
 /// `Apply` of a callable that raises `exception`: the VM raises it into the frame
