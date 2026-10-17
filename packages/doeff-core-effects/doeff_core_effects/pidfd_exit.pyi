@@ -1,7 +1,9 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = pidfd_exit.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
+import ctypes as ctypes
 PIDFD_OPEN_SYSCALLS: dict[str, int]
+LIBC: ctypes.CDLL
 
 class PidfdUnavailable(RuntimeError):
     ...

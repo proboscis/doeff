@@ -14,6 +14,13 @@
 ;; libc の syscall で直に呼ぶ。x86_64 と aarch64 は同じ番号(Linux の共通の表)。表に無い機体は PidfdUnavailable。
 (val PIDFD-OPEN-SYSCALLS {"x86_64" 434 "aarch64" 434})
 
+;; libc(import の時に 1 度だけ読み込む — 呼ぶたびに ctypes.CDLL を作らない)。CDLL は作るたびに関数の型(_FuncPtr の class)を 1 つ
+;; 作り、free-threading の CPython 3.14 では、主 thread の VM が走る間に await の bridge の thread で作り続けると、放した後も memory が
+;; 戻らない(1 回あたり約 1.8 KB)。worker の周の間の待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に
+;; 0.5 GB を越えて増えた(依頼 lt-KAYKH21D2WYWBEG2EH8AJSB19N)。関数の物(.syscall)は最初の読みで CDLL の上に覚えられる。errno は ctypes が
+;; thread ごとに写すので、thread をまたいで共有してよい。
+(val #^ ctypes.CDLL LIBC (ctypes.CDLL None :use-errno True))
+
 
 (defclass PidfdUnavailable [RuntimeError]
   "この機体では pidfd を開けない(pidfd_open の番号を知らない機体の種類・Linux 5.3 より古い kernel)。")
@@ -27,8 +34,7 @@
   (val number (.get PIDFD-OPEN-SYSCALLS (platform.machine)))
   (when (is number None)
     (raise (PidfdUnavailable (.format "pidfd_open の番号を知らない機体の種類: {}" (platform.machine)))))
-  (val libc (ctypes.CDLL None :use-errno True))
-  (val fd (.syscall libc number (ctypes.c-int pid) (ctypes.c-uint 0)))
+  (val fd (.syscall LIBC number (ctypes.c-int pid) (ctypes.c-uint 0)))
   (val failure (if (< fd 0) (ctypes.get-errno) 0))
   (cond
     (>= fd 0) fd
