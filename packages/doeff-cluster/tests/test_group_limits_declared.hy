@@ -44,7 +44,7 @@
                         (create-resource declared "GroupLimit" (ResourceBody :name l.group :spec {"scope" l.scope "limit" l.limit "perPart" l.per-part "system" "probe"})
                                          "declare" 0)
                         "declare" 0 T)))
-  #((replace declared :workers {"zeus" (WorkerInfo "zeus" #("host-zeus") 30 0 :task-reserve 0 :versions PY3)}) sha))
+  #((replace declared :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("host-zeus") 30 0 :task-reserve 0 :versions PY3)}))) sha))
 
 
 (defk detached-reply [state sha key limits]

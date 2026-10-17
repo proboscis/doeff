@@ -6,6 +6,7 @@
 ;;       ok の worker の status の形と版は以前と同じ)
 ;; 失敗ケース = near を名乗らない(下限を切るまで ok)・status に載せない(読み手が予告を読めない)。
 (require doeff-hy.macros [deftest <- val])
+(import tests.state_rows [table-from-rows])
 (import doeff_cluster.worker.core.env_upkeep [env-capacity])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
 (import doeff_cluster.coordinator.core.resource_policy [worker-row])
@@ -27,6 +28,6 @@
 (deftest test-the-worker-status-carries-env-capacity-only-when-not-ok
   (val near (WorkerInfo "w1" #("net") 2 0 #() None #() :platform "linux-x86_64" :env-capacity "near" :task-reserve 0))
   (val ok (WorkerInfo "w2" #("net") 2 0 #() None #() :platform "linux-x86_64" :env-capacity "ok" :task-reserve 0))
-  (val state (ClusterState :workers {"w1" near "w2" ok}))
+  (val state (ClusterState :workers (! (table-from-rows {"w1" near "w2" ok}))))
   (assert (= (.get (get (worker-row state near 0) "status") "envCapacity") "near"))
   (assert (not-in "envCapacity" (get (worker-row state ok 0) "status"))))

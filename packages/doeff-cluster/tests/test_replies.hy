@@ -1,6 +1,7 @@
 ;; 返事の本文の型と綴り(#2595): core の判断(api_policy.respond)は GET /events・GET /state・GET /workers/<名> の答えを型の値(EventsView・StateReply・WorkerDrainView)で返し、
 ;; JSON の形は coordinator/protocol/replies が綴る。検の入口 responded と、本番と模擬の組の返事の答え手 reply-bodies は同じ綴りを通る。
 (require doeff-hy.macros [deftest defk <- val])
+(import tests.state_rows [table-from-rows])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased ProgramStored ProgramRow])
@@ -72,7 +73,7 @@
 (deftest test-the-worker-view-is-typed-and-spelled-in-the-old-shape
   ;; worker 1 つの画面は型の値(WorkerDrainView)で、JSON の欄は前と同じ — 退いた世代の待ちの答えだけが superseded を書き、
   ;; その drain には頼みの記録(sinceMs・untilMs・actor)が無い。
-  (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2" :task-reserve 0)}))
+  (setv s (ClusterState :workers (! (table-from-rows {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2" :task-reserve 0)}))))
   (setv #(_ _ answer) (! (respond s (! (http-request "GET" "/workers/w1" {} None)) 2000 T {})))
   (assert (isinstance answer WorkerDrainView) answer)
   (setv body (! (reply-json answer)))
@@ -88,7 +89,7 @@
 
 (deftest test-the-resources-are-typed-and-spelled-in-the-old-shape
   ;; 資源の一覧と 1 つは型の値(ResourceList・ResourceView)で、status は比べる単位の status に種類ごとの観測を足した物。
-  (setv s (ClusterState :workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2" :task-reserve 0)}))
+  (setv s (ClusterState :workers (! (table-from-rows {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000 :boot "b2" :task-reserve 0)}))))
   (setv #(_ _ answer) (! (respond s (! (http-request "GET" "/resources/Worker" {} None)) 2000 T {})))
   (assert (isinstance answer ResourceList) answer)
   (assert (all (gfor v answer.items (isinstance v ResourceView))) answer)

@@ -11,6 +11,7 @@
 ;;   丸ごと比を保って延ばす時に、忘れる期限も一緒に動く)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.state_rows [table-from-rows])
 (import doeff_events [MemoryBroker])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -59,11 +60,11 @@
   ;; 最後の連絡 0 の worker: 設定の忘れる期限 2 時間の刻の 1 ms 後に忘れ、その刻には残る。1.5 時間の刻の liveness-due もその刻 + 1 を返す。
   (val timing (ClusterTiming :worker-forget-ms (* 2 3600 1000)))
   (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0))
-  (val state (note-liveness (ClusterState :workers {"w" worker}) (* 3600 1000) timing))
+  (val state (note-liveness (ClusterState :workers (! (table-from-rows {"w" worker}))) (* 3600 1000) timing))
   (<- kept ClusterState (forget-silent-workers state (* 2 3600 1000) timing))
   (<- gone ClusterState (forget-silent-workers state (+ (* 2 3600 1000) 1) timing))
-  (assert (in "w" kept.workers) kept.workers)
-  (assert (= gone.workers {}) gone.workers)
+  (assert (in "w" (.keys kept.workers)) kept.workers)
+  (assert (= (.size gone.workers) 0) gone.workers)
   (<- due (| DueAt DueNow DueNever) (liveness-due (note-liveness state 5400000 timing) 5400000 timing))
   (assert (= due (DueAt :at (+ (* 2 3600 1000) 1))) due))
 

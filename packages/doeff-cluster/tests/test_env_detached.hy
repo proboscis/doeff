@@ -221,7 +221,7 @@
   ;; 置き直せる別の worker が無ければ、最後の失敗で終える
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
-  (val cluster (ClusterState :workers {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)} :tasks (! (table-from-rows {"t1" requeued}))))
+  (val cluster (ClusterState :workers (! (table-from-rows {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)})) :tasks (! (table-from-rows {"t1" requeued}))))
   (val placed (! (tasks-placed 20 cluster {} timing)))
   (assert (= (. (.row placed "t1") phase) "env-failed") (.row placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})

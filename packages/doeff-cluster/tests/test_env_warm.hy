@@ -423,12 +423,12 @@
   (<- key str (key-on declared "linux-x86_64"))
   (val task (! (env-task "t1" declared)))
   ;; 準備済みの w2 を、名前順で先の w1(空き同じ)より優先する
-  (val warm-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}
+  (val warm-state (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0)) "w2" (! (worker-of "w2" #("net") 0 :ready #(key)))}))
                                 :tasks (! (table-from-rows {"t1" task}))))
   (val placed (.row (! (tasks-placed 10 warm-state {} TIMING)) "t1"))
   (assert (= #(placed.phase placed.worker) #("assigned" "w2")) placed)
   ;; 準備済みが無ければ置くが phase は preparing(assigned と分ける)で、冷たい起動を数える
-  (val cold-state (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks (! (table-from-rows {"t1" task}))))
+  (val cold-state (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0))})) :tasks (! (table-from-rows {"t1" task}))))
   (val cold (.row (! (tasks-placed 10 cold-state {} TIMING)) "t1"))
   (assert (= #(cold.phase cold.worker) #("preparing" "w1")) cold)
   (val after (replace cold-state :tasks (! (table-from-rows {"t1" cold}))))
@@ -443,7 +443,7 @@
 
 (deftest test-cold-starts-are-counted-in-the-metrics
   (<- declared dict (declared-of "app-1"))
-  (<- placed tuple (program-placed (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0))} :tasks (! (table-from-rows {"t1" (! (env-task "t1" declared))}))
+  (<- placed tuple (program-placed (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0))})) :tasks (! (table-from-rows {"t1" (! (env-task "t1" declared))}))
                                                  :next-task 2)
                                    {} :now 10))
   (val submitted (responded (get placed 0) (! (http-request "POST" "/tasks" {}
@@ -458,12 +458,12 @@
   (<- declared dict (declared-of "app-1"))
   (<- key str (key-on declared "linux-x86_64"))
   (val task (! (env-task "t1" declared)))
-  (val two (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}
+  (val two (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted")) "w2" (! (worker-of "w2" #("net") 0))}))
                          :tasks (! (table-from-rows {"t1" task}))))
   (assert (= (. (.row (! (tasks-placed 10 two {} TIMING)) "t1") worker) "w2") "空きの尽きた worker を避ける")
-  (val only (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))} :tasks (! (table-from-rows {"t1" task}))))
+  (val only (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted"))})) :tasks (! (table-from-rows {"t1" task}))))
   (assert (= (. (.row (! (tasks-placed 10 only {} TIMING)) "t1") phase) "queued") "置ける先が無ければ待つ")
-  (val ready (ClusterState :workers {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))} :tasks (! (table-from-rows {"t1" task}))))
+  (val ready (ClusterState :workers (! (table-from-rows {"w1" (! (worker-of "w1" #("net") 0 :capacity "exhausted" :ready #(key)))})) :tasks (! (table-from-rows {"t1" task}))))
   (assert (= (. (.row (! (tasks-placed 10 ready {} TIMING)) "t1") worker) "w1") "準備済みの env の task は置いてよい"))
 
 

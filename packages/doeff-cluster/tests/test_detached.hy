@@ -840,7 +840,7 @@
   (assert (= (lfor t (get replies "new" "tasks") (get t "id")) [id]))
   (assert (= (get replies "old" "tasks") []))
   (assert (get replies "old" "superseded"))
-  (assert (= (. (get s.workers "w") boot) "new"))
+  (assert (= (. (.row s.workers "w") boot) "new"))
   ;; 旧い世代の heartbeat は新しい世代の task の lease を延ばさず、新しい世代の heartbeat が延ばす。
   (val reply-16 (! (beat s "w" (+ now 50) :boot "new")))
   (:= s (get reply-16 0))
@@ -879,7 +879,7 @@
   (assert (= (. (.row s.tasks silent) phase) "lost"))
   (assert (in "lease" (. (.row s.tasks silent) detail)))
   ;; 新しい世代の生存はそのまま(旧い世代の沈黙は worker の沈黙ではない)。
-  (assert (= (. (get s.workers "w") boot) "new")))
+  (assert (= (. (.row s.workers "w") boot) "new")))
 
 
 (deftest test-the-generation-order-survives-a-coordinator-restart
@@ -888,13 +888,13 @@
   (val reply-25 (! (beat s "w" 1000 :boot "new")))
   (:= s (get reply-25 0))
   (var again (! (state-from-kv (! (full-kv s)) 2000)))
-  (assert (= #((. (get again.workers "w") boot) (. (get again.workers "w") retired)) #("new" #("old"))))
+  (assert (= #((. (.row again.workers "w") boot) (. (.row again.workers "w") retired)) #("new" #("old"))))
   ;; 読み直した後も、旧い世代の heartbeat は新しい世代を押しのけない。
   (val reply-26 (! (beat again "w" 2100 :boot "old")))
   (:= again (get reply-26 0))
   (val body (get reply-26 2))
   (assert (get body "superseded"))
-  (assert (= (. (get again.workers "w") boot) "new")))
+  (assert (= (. (.row again.workers "w") boot) "new")))
 
 
 ;; --- 起動時刻で決める世代の新旧(2026-09-27 — #757)------------------------------------------------
@@ -909,8 +909,8 @@
   (val old-reply (get reply-28 2))
   ;; 古い世代の heartbeat は superseded の答え・今の世代は新しい世代のまま。
   (assert (get old-reply "superseded") old-reply)
-  (assert (= (. (get s.workers "w") boot) "new") (get s.workers "w"))
-  (assert (in "old" (. (get s.workers "w") retired)))
+  (assert (= (. (.row s.workers "w") boot) "new") (.row s.workers "w"))
+  (assert (in "old" (. (.row s.workers "w") retired)))
   ;; 古い世代の preStop の drain は今の世代に付かない。
   (val reply-29 (! (call s "POST" "/workers/w/drain" 100 {"boot" "old"})))
   (:= s (get reply-29 0))
@@ -937,7 +937,7 @@
   (:= s (get reply-32 0))
   (var reply (get reply-32 2))
   (assert (not (.get reply "superseded" False)))
-  (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("b" #("a"))))
+  (assert (= #((. (.row s.workers "w") boot) (. (.row s.workers "w") retired)) #("b" #("a"))))
   (val reply-33 (! (beat s "w" 100 :boot "a")))
   (:= s (get reply-33 0))
   (:= reply (get reply-33 2))
@@ -947,7 +947,7 @@
   (:= s (get reply-34 0))
   (val reply-35 (! (beat s "v" 50 :boot "b")))
   (:= s (get reply-35 0))
-  (assert (= (. (get s.workers "v") boot) "b")))
+  (assert (= (. (.row s.workers "v") boot) "b")))
 
 
 (deftest test-a-newer-boot-time-takes-the-name-back-from-the-retired-list
@@ -956,12 +956,12 @@
   (var s (get reply-36 0))
   (val reply-37 (! (beat s "w" 50 :boot "old" :boot-at 1000)))
   (:= s (get reply-37 0))
-  (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("old" #("new"))))
+  (assert (= #((. (.row s.workers "w") boot) (. (.row s.workers "w") retired)) #("old" #("new"))))
   (val reply-38 (! (beat s "w" 100 :boot "new" :boot-at 2000)))
   (:= s (get reply-38 0))
   (val reply (get reply-38 2))
   (assert (not (.get reply "superseded" False)) reply)
-  (assert (= #((. (get s.workers "w") boot) (. (get s.workers "w") retired)) #("new" #("old")))))
+  (assert (= #((. (.row s.workers "w") boot) (. (.row s.workers "w") retired)) #("new" #("old")))))
 
 
 (deftest test-the-boot-time-survives-the-state-file-and-the-durable-kv
@@ -970,16 +970,16 @@
   (val reply-40 (! (beat s "w" 100 :boot "new" :boot-at 2000)))
   (:= s (get reply-40 0))
   (for [again [(! (state-from-kv (! (full-kv s)) 200)) (! (state-from-json (json.loads (json.dumps (! (state-to-json s)))) 200))]]
-    (setv w (get again.workers "w"))
+    (setv w (.row again.workers "w"))
     (assert (= #(w.boot w.retired w.boot-at) #("new" #("old") 2000)) w)
     ;; 読み直した後も、一度も見ていない古い世代は起動時刻で古いと分かる(名乗りとして受けない)。
     (setv #(again _ reply) (! (beat again "w" 300 :boot "older" :boot-at 500)))
     (assert (get reply "superseded") reply)
-    (assert (= (. (get again.workers "w") boot) "new")))
+    (assert (= (. (.row again.workers "w") boot) "new")))
   ;; 起動時刻の欄の無い旧い形の置き場は、起動時刻を知らない(初めて見た順へ落とす)。
   (setv kv (! (full-kv s)))
   (del (get kv "worker/w" "bootAt"))
-  (assert (is (. (get (. (! (state-from-kv kv 200)) workers) "w") boot-at) None)))
+  (assert (is (. (.row (. (! (state-from-kv kv 200)) workers) "w") boot-at) None)))
 
 
 ;; --- 置き場を失った coordinator と走っている切り離した task(2026-09-27 — #757)----------------------------
@@ -1371,7 +1371,7 @@
   (var body (get reply-88 2))
   (assert (= status 400) body)
   (assert (in "旧い形の labels" (get body "error")) body)
-  (assert (not-in "old" after.workers))
+  (assert (not-in "old" (.keys after.workers)))
   ;; provides の外の exclusive・label の形の名も断る。
   (val reply-89 (! (call (ClusterState) "POST" "/heartbeat" 0
                                {"name" "w" "provides" ["net"] "exclusive" ["gpu"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" []})))

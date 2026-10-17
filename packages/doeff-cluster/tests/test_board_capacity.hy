@@ -125,7 +125,7 @@
   (val queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
                     (TaskRecord (.format "t{}" i) "n" SAMPLE-TASK-PROGRAM "r" #() #() 60000 999999999 0)))
   (<- full tuple (program-placed (ClusterState :tasks (! (table-from-rows queued)) :next-task (+ TASK-MAX-OPEN 1)
-                                               :workers {"a" (WorkerInfo "a" #("net") 0 1000 :task-reserve 0)})
+                                               :workers (! (table-from-rows {"a" (WorkerInfo "a" #("net") 0 1000 :task-reserve 0)})))
                                  {} :now 1000))
   (<- over (call (get full 0) "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= (get over 1) 429) over)
@@ -137,14 +137,14 @@
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
   (setv old (WorkerInfo "newmac" #("net") 10 0 :task-reserve 0) busy (WorkerInfo "atlas" #("net") 10 0 :task-reserve 0))
-  (var s (ClusterState :workers {"newmac" old "atlas" busy}))
+  (var s (ClusterState :workers (! (table-from-rows {"newmac" old "atlas" busy}))))
   (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   (:= s (get reply-11 0))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (in "j" s.placements))
   (setv later (! (tick s (+ (. (ClusterTiming) worker-forget-ms) 1) T)))
-  (assert (not-in "newmac" later.workers))
-  (assert (in "atlas" later.workers)))
+  (assert (not-in "newmac" (.keys later.workers)))
+  (assert (in "atlas" (.keys later.workers))))
 
 
 ;; ---- 耐久の差分は丸ごとの直列化と同じ答え(#1843)----------------------------------------------------------
@@ -186,10 +186,10 @@
   (assert (= compared (len steps)))
   ;; 作り直したが中身の同じ部品(別の物で等しい)は、直列化して比べる側へ回り、差分に入らない。
   (val rebuilt (replace s :tasks (! (table-from-rows (dfor #(k t) (.items s.tasks) k (replace t))))
-                          :workers (dfor #(k w) (.items s.workers) k (replace w))))
+                          :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w))))))
   (assert (= (! (without-board (! (durable-delta s rebuilt)))) {}))
   ;; 中身の違う部品は差分に入る(同一性だけで黙って落とさない)。
-  (val changed (replace s :workers (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))
+  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))))
   (<- got (without-board (! (durable-delta s changed))))
   (assert (= got (! (delta-by-full-serialization s changed))))
   (assert (and got (all (gfor k got (.startswith k "worker/"))))))

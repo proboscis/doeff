@@ -9,6 +9,7 @@
 ;; readiness-due は「答えを変え得る刻の下限」を返す(早めに試すのは安全)。D で答えが変わらない枝は、その事と判定が実際に変わる刻を
 ;; そのテストの註に書く(D − 1 で変わらない事だけを縛る)。
 (require doeff-hy.macros [deftest defk <- val])
+(import tests.state_rows [table-from-rows])
 (import dataclasses [replace])
 (import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
@@ -143,7 +144,7 @@
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "Unknown") seen)
   (<- next-due (| int None) (readiness-due state NAME due T))
-  (assert (= next-due (+ (liveness-deadline (get state.workers "zeus") T.reassign-after-ms) 1)) #(next-due seen)))
+  (assert (= next-due (+ (liveness-deadline (.row state.workers "zeus") T.reassign-after-ms) 1)) #(next-due seen)))
 
 
 (deftest test-readiness-due-reassign-window-is-the-judgments-boundary
@@ -156,7 +157,7 @@
   (val due (get seen 0))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (+ (liveness-deadline (get state.workers "zeus") T.reassign-after-ms) 1)) seen)
+  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.reassign-after-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "Unknown") seen)
   (assert (= (get at "state") "NotReady") seen))
@@ -172,7 +173,7 @@
   (val due (get seen 0))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (+ (liveness-deadline (get state.workers "zeus") T.keep-fence-ms) 1)) seen)
+  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.keep-fence-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "Unknown") seen)
   (assert (= (get at "state") "NotReady") seen))
@@ -189,7 +190,7 @@
   (val due (get seen 0))
   (val before (get seen 2))
   (val at (get seen 3))
-  (assert (= due (+ (liveness-deadline (get state.workers "zeus") T.keep-fence-ms) 1)) seen)
+  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.keep-fence-ms) 1)) seen)
   (assert (= before (service-readiness state NAME now T)) seen)
   (assert (= (get before "state") "NotReady") seen))
 
@@ -203,7 +204,7 @@
   (val holder (WorkerInfo :name "w1" :provides #("net") :capacity 10 :last-seen-ms 0 :task-reserve 0))
   (val mark (KeepMark :job "a" :worker "w1" :boot None :since-ms 0))
   (val now (+ T.keep-fence-ms 1000))
-  (val state (note-liveness (ClusterState :workers {"w1" holder} :keep-marks #(mark)) now T))
+  (val state (note-liveness (ClusterState :workers (! (table-from-rows {"w1" holder})) :keep-marks #(mark)) now T))
   (<- due (| DueAt DueNow DueNever) (liveness-due state now T))
   (assert (= due (DueAt :at (+ (liveness-deadline holder T.kept-reassign-after-ms) 1))) due)
   (<- before ClusterState (reconcile (- due.at 1) state T))
@@ -221,7 +222,7 @@
   (val state (replace sim.state :jobs (tuple (gfor j sim.state.jobs :if (!= j.spec.name NAME) j)) :placements {}))
   (assert (not (service-stopped state NAME sim.now T)))
   (<- due (| int None) (service-stopped-due state NAME sim.now T))
-  (assert (= due (+ (liveness-deadline (get state.workers "zeus") T.lease-ms) 1)) due)
+  (assert (= due (+ (liveness-deadline (.row state.workers "zeus") T.lease-ms) 1)) due)
   (assert (> due sim.now) #(due sim.now))
   (assert (not (service-stopped state NAME (- due 1) T)) due)
   (assert (service-stopped state NAME due T) due))
@@ -256,9 +257,9 @@
 (deftest test-nodes-to-follow-reads-no-time
   ;; node n1・n2 の上の worker と、node を申告しない worker。見張るのは n1 と n2 で、観測の在る無しと観測の時刻に依らない(時刻を
   ;; 読まない — label の変化は見張りが受付の箱を起こして伝える)。
-  (val workers {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n2")
+  (val workers (! (table-from-rows {"w1" (WorkerInfo :name "w1" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n2")
                 "w2" (WorkerInfo :name "w2" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "n1")
-                "w3" (WorkerInfo :name "w3" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "")})
+                "w3" (WorkerInfo :name "w3" :provides #("cpu") :capacity 1 :last-seen-ms 1000000 :task-reserve 0 :node "")})))
   (val observations (ClusterObservations
                       :nodes (table-of #((TableWrite "n1" (NodeLabelsSeen :labels (table-of #()) :at 1000000))))))
   (<- followed tuple (nodes-to-follow (ClusterState :workers workers :observations observations)))

@@ -77,7 +77,7 @@
   ;; 長い沈黙(ClusterTiming.worker-forget-ms)で名簿から消えた worker は沈黙の集合からも外れるが、戻ったのではない。
   (val past (! (tick (! (named)) (+ DEADLINE 1) T)))
   (val forgotten (! (tick past (+ SEEN T.worker-forget-ms 1) T)))
-  (assert (not-in "w" forgotten.workers) "長い沈黙の worker は名簿から消える")
+  (assert (not-in "w" (.keys forgotten.workers)) "長い沈黙の worker は名簿から消える")
   (assert (= (! (liveness-moves past forgotten T)) #()) "名簿から消えた worker は WorkerBack にならない"))
 
 

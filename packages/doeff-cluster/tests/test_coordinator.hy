@@ -275,7 +275,7 @@
   (assert (= #(fault.method fault.path fault.error-type) #("POST" "/heartbeat" "TypeError")) fault)
   (assert (in "test_coordinator.hy" fault.where) fault)
   ;; 状態は受ける前のまま(途中まで進めた変化を残さない)
-  (assert (not-in "w" final.workers)))
+  (assert (not-in "w" (.keys final.workers))))
 
 
 (deftest test-a-declaration-with-an-empty-name-or-revision-is-400-and-the-loop-goes-on

@@ -291,12 +291,12 @@
 (deftest test-a-worker-dropped-by-the-reload-registers-again-under-the-same-name
   (<- kv dict (store-with-dropped-rows))
   (val state (! (state-from-kv kv 5000)))
-  (assert (not-in "w1" state.workers) "旧い形の worker の行は読まない")
+  (assert (not-in "w1" (.keys state.workers)) "旧い形の worker の行は読まない")
   (<- beat tuple (call state "POST" "/heartbeat"
                        {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "capacity" 1 "taskReserve" 0 "versions" {}
                         "statuses" [] "boot" "b1" "format" 1} 6000))
   (assert (= (get beat 1) 200) beat)
-  (assert (in "w1" (. (get beat 0) workers)))
+  (assert (in "w1" (.keys (. (get beat 0) workers))))
   (<- fresh bool (created-afresh (get beat 0) "Worker/w1" "w1" 6000))
   (assert fresh (. (get beat 0) meta)))
 
