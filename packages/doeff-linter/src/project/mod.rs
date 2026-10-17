@@ -9,6 +9,7 @@
 pub mod affected_tests;
 pub mod architecture;
 pub mod bulk_read;
+pub mod dir_stamp;
 pub mod explain;
 pub mod facts_cache;
 pub mod facts;
@@ -787,7 +788,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 || enabled.contains(&ProjectRule::ClassWithBehaviour)
                 || enabled.contains(&ProjectRule::SemanticClassRole);
             let hy_file = match (language_of(&path), wants_index) {
-                (Some(Language::Hy), true) => hy_index::index_stdin_source(root, &path, source, &raw).files.into_iter().next(),
+                (Some(Language::Hy), true) => crate::timing::timed("single.index", || hy_index::index_stdin_source(root, &path, source, &raw).files.into_iter().next()),
                 _ => None,
             };
             if let (Some(index), Some(rel)) = (&hy_file, &rel) {
@@ -799,7 +800,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
                     // import の先は、書いた file が引く module だけを判じる(全部の層の module を並べて、置き場の外の file は中身から層を推す表は作らない)。
                     let index = named_site_index(root, layers, &file);
-                    let judged = judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref());
+                    let judged = crate::timing::timed("single.layer-judge", || judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref()));
                     drafts.extend(judged.drafts);
                     if let (Some(translation), Some(world)) = (&settings.translation, &effect_world) {
                         if enabled.contains(&ProjectRule::TranslationEmitsIntent) && is_translation_file(&file, translation) {
@@ -837,7 +838,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     && (is_definition_file(rel, definitions) || is_test_file(rel, definitions))
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
-                    let mut found = judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref());
+                    let mut found = crate::timing::timed("single.definitions", || judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
                     // repo の事実は、書いた file が名指す module の file だけから作る(defk の名・record の欄 — module まで含めた名で引かれ、
                     // 引く名は書いた file の記号を解いた名)。逆向きの依存 — 失敗の型(別の file の defeffect が宣言する)と引数に渡された Program
                     // (別の file の呼び手が渡す)— は、引かれた時だけ、引く名を字面に含む file だけから作る(`SpelledFailures`・`SpelledCallers` —
@@ -849,12 +850,12 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         Vec::new()
                     };
                     let failure = spelled_failures::SpelledFailures::new(root, enabled, &definitions.tags);
-                    found.extend(judge_smells(&file, source, settings, definitions, enabled, &failure));
+                    found.extend(crate::timing::timed("single.smells", || judge_smells(&file, source, settings, definitions, enabled, &failure)));
                     let defks = crate::timing::timed("defk-names", || bare_calls::defk_names_over(root, enabled, facts_cache::Reach::Named, &named_files));
                     let program_fields = crate::timing::timed("program-fields", || program_fields_over(root, enabled, facts_cache::Reach::Named, &named_files));
-                    found.extend(judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields));
+                    found.extend(crate::timing::timed("single.bare-calls", || judge_bare_calls(&file, source, definitions, enabled, &defks, &program_params, &program_fields)));
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
-                        found.extend(judge_effect_mismatches(&file, source, definitions, effect_world.as_ref()));
+                        found.extend(crate::timing::timed("single.effect-mismatches", || judge_effect_mismatches(&file, source, definitions, effect_world.as_ref())));
                     }
                     // 全体の実行と同じ 1 点で、層の宣言が名指しの module から外した定義の書き方の規則を落とす(#2913)。
                     drafts.extend(without_exempted(found, &layer_exemption(&file.path)));
@@ -869,7 +870,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(architecture), Some(rel)) = (&settings.architecture, &rel) {
                 let (words, calls) = retired_groups(architecture, enabled);
                 let parts = retired::PartCalls::new(calls, &architecture.boundary_touches(), &raw.catalog);
-                let (word_hits, call_hits) = retired::judge(rel, source, words, calls, &parts);
+                let (word_hits, call_hits) = crate::timing::timed("single.retired", || retired::judge(rel, source, words, calls, &parts));
                 drafts.extend(retired_drafts(&path, source, word_hits, call_hits));
                 if enabled.contains(&ProjectRule::UntypedStructuredValue) && architecture.typed_values.as_ref().is_some_and(|s| typed_values::wants(rel, s)) {
                     match typed_values::judge(rel, source) {
@@ -899,7 +900,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if enabled.contains(&ProjectRule::EnvironmentName) && is_environment_file(rel, env) {
                     if let Some(language) = language_of(&path) {
                         let file = SourceFile { rel: rel.clone(), path: path.clone(), language };
-                        drafts.extend(judge_environment_names(&file, source, env, hy_file.as_ref()));
+                        drafts.extend(crate::timing::timed("single.environment", || judge_environment_names(&file, source, env, hy_file.as_ref())));
                     }
                 }
             }
@@ -908,13 +909,13 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(places), Some(rel)) = (&settings.program_sleep, &program_rel) {
                 if enabled.contains(&ProjectRule::ProgramSleepsOnWallClock) && is_program_sleep_file(rel, places) {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
-                    drafts.extend(judge_program_sleep(&file, source));
+                    drafts.extend(crate::timing::timed("single.program-sleep", || judge_program_sleep(&file, source)));
                 }
             }
             if let (Some(places), Some(rel)) = (&settings.test_sleep, &program_rel) {
                 if enabled.contains(&ProjectRule::TestSleepsOnWallClock) && is_test_sleep_file(rel, places) {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
-                    drafts.extend(judge_test_sleep(&file, source));
+                    drafts.extend(crate::timing::timed("single.test-sleep", || judge_test_sleep(&file, source)));
                 }
             }
             if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
@@ -922,7 +923,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     // class の frozen は名で引かれ、同じ名が frozen でない class が repo のどこかに在れば frozen でない(名指さない file の宣言が答えを変える)ので、
                     // 型で判じる引数が在って引かれた時だけ repo 全体から作る(索引は Hy と Python の全 file — 3000 の事実)。
                     let classes = deferred::Deferred::new(|| crate::timing::timed("handler-argument-classes", || handler_arguments::class_index(root, Some((rel.as_str(), source)))));
-                    drafts.extend(judge_handler_arguments(root, rel, source, decl, &classes));
+                    drafts.extend(crate::timing::timed("single.handler-arguments", || judge_handler_arguments(root, rel, source, decl, &classes)));
                 }
             }
             // 同じ根・同じ overlay で組んだ表を返す — editor の見出しと束縛(版 2)が作り直さずに使う(1 回で 2 度組んでいた・#1033)。
@@ -4170,7 +4171,7 @@ fn judge_semantic(
                 }
             },
         };
-        let facts = read_facts(Language::Hy, &text, &file.module, &layers.tags);
+        let facts = crate::timing::timed("semantic.read-facts", || read_facts(Language::Hy, &text, &file.module, &layers.tags));
         let mut roles: Vec<String> = Vec::new();
         for tags in facts.tag_sets() {
             if let Some(role) = tags.role.clone().filter(|r| !r.is_empty() && !roles.contains(r)) {
@@ -4178,7 +4179,7 @@ fn judge_semantic(
             }
         }
         roles_of.insert(file.file.rel.clone(), roles);
-        let index = &*indexed.entry(file.file.rel.clone()).or_insert_with(|| hy_index::index_source(root, &file.file.path, &text));
+        let index = &*indexed.entry(file.file.rel.clone()).or_insert_with(|| crate::timing::timed("semantic.index", || hy_index::index_source(root, &file.file.path, &text)));
         let spec = &layers.layers[file.site.layer.0];
         for definition in index.definitions.iter().filter(|d| d.container.is_none() && semantic_kind(d.kind)) {
             let start = crate::position::offset_of(&text, definition.full_range.start);
@@ -4217,7 +4218,7 @@ fn judge_semantic(
                     }
                 },
             };
-            let index = &*indexed.entry(file.rel.clone()).or_insert_with(|| hy_index::index_source(root, &file.path, &text));
+            let index = &*indexed.entry(file.rel.clone()).or_insert_with(|| crate::timing::timed("semantic.index", || hy_index::index_source(root, &file.path, &text)));
             for definition in index.definitions.iter().filter(|d| d.container.is_none() && d.kind == DefinitionKind::Deff) {
                 let start = crate::position::offset_of(&text, definition.full_range.start);
                 let (line, previous) = line_and_previous(&text, start);
@@ -4261,7 +4262,7 @@ fn judge_semantic(
                         }
                     },
                 };
-                let facts = read_facts(Language::Hy, &text, &module_of(&file.rel), reading);
+                let facts = crate::timing::timed("semantic.read-facts", || read_facts(Language::Hy, &text, &module_of(&file.rel), reading));
                 if facts.classes.is_empty() {
                     continue;
                 }
@@ -4303,8 +4304,8 @@ fn judge_semantic(
                         }
                     },
                 };
-                let module_role = read_facts(Language::Hy, &text, &module_of(&file.rel), reading).module_tags.and_then(|t| t.role);
-                let index = &*indexed.entry(file.rel.clone()).or_insert_with(|| hy_index::index_source(root, &file.path, &text));
+                let module_role = crate::timing::timed("semantic.read-facts", || read_facts(Language::Hy, &text, &module_of(&file.rel), reading)).module_tags.and_then(|t| t.role);
+                let index = &*indexed.entry(file.rel.clone()).or_insert_with(|| crate::timing::timed("semantic.index", || hy_index::index_source(root, &file.path, &text)));
                 for definition in index.definitions.iter().filter(|d| d.container.is_none() && is_judgment_kind(d.kind)) {
                     let role = definition.tags.as_ref().and_then(|t| t.get("role").cloned()).or_else(|| module_role.clone());
                     if !role.is_some_and(|r| mixed.roles.contains(&r)) {
@@ -4375,7 +4376,7 @@ fn judge_semantic(
             Some((item, example.expect))
         })
         .collect();
-    let outcome = semantic::evaluate(root, settings, items, mode, gateway.as_ref().map(|g| g as &dyn semantic::Gateway), &calibration);
+    let outcome = crate::timing::timed("semantic.evaluate", || semantic::evaluate(root, settings, items, mode, gateway.as_ref().map(|g| g as &dyn semantic::Gateway), &calibration));
     errors.extend(outcome.errors);
     let mut summary = outcome.summary;
     summary.model = model;
