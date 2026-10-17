@@ -162,7 +162,7 @@ first_code_end = body.index("```", body.index("```python") + 3)
 assert body.index("![") > first_code_end, "全体の図は冒頭の短いコードの後に置く"
 assert body.index("![") < body.index("\n## "), "全体の図は最初の節より前に置く"
 headings = re.findall(r"^## (.+)$", body, re.M)
-assert headings[-2:] == ["まとめ", "参考資料・検証版"], headings
+assert headings[-2:] == ["まとめ", "参考"], headings
 assert "published: false" in article
 # 社外に出せない名前と、鍵やトークンの形。
 forbidden = re.compile(
