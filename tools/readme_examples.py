@@ -14,6 +14,9 @@ README の例を走らせる)。どちらも同じ約束で README を読む:
   - `excerpt`: 大きな file の一部(書いていない名を使う)。走らせない。
   - `run`(bash だけ): 囲みを `bash -e` で走らせる。命令の行の末尾の注記(`命令  # 文`)の文が、出力(標準出力と標準エラー)の
     どこかに在る事を確かめる — 道具の出力は時刻や版も印字し、行ごとには比べられないため。
+  - `continues`(python と hy だけ): 上の例の続き。同じ言葉の 1 つ上の囲み(file= も excerpt も無い script)の code の後に
+    書き足した物を 1 つの script として走らせ、注記も上の分から続けて比べる(読み手が上の例の file に書き足して走らせるのと
+    同じ)。上の囲みも続きなら、その全部の続き。
 - 1 つの README の囲みは、上から順に 1 つの dir で扱う(読み手が書いてある順に file を置いて走らせるのと同じ)。
 
 interpreter は -E -s -B で起こす: 環境変数の PYTHON* と利用者の site を読まず(repo の木の path にも pytest の conftest にも
@@ -55,6 +58,7 @@ SHOWN_ONLY = frozenset({SHELL, "text", "toml"})
 # 言葉の後に書ける語(`file=<名>` の他)。
 EXCERPT = "excerpt"
 RUN = "run"
+CONTINUES = "continues"
 
 _FENCE = re.compile(r"^```(?P<info>[^\n`]*)\n(?P<code>.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 _SECTION = re.compile(r"^## (?P<title>.+?)[ \t]*$", re.MULTILINE)
@@ -78,12 +82,14 @@ class Example:
     section: str
     # 囲みの言葉(``` の後の最初の語)
     language: str
-    # 囲みの中身
+    # 囲みの中身(continues の囲みは、続く先の囲みの code の後に書き足した物 — 走らせる script の全部)
     code: str
     # 囲みの始まりの行(1 から数える)
     line: int
     # 言葉の後の語
     words: tuple[str, ...] = ()
+    # continues の囲みが続く先の囲みの始まりの行(continues でないか、続く先が無ければ None)
+    continues_from: int | None = None
 
     @property
     def name(self) -> str:
@@ -132,17 +138,28 @@ class Example:
         unknown = [
             word
             for word in self.words
-            if word not in (EXCERPT, RUN) and not word.startswith("file=")
+            if word not in (EXCERPT, RUN, CONTINUES) and not word.startswith("file=")
         ]
         if unknown:
             yield (
                 f"{self.name} の言葉の後に、知らない語 {unknown} が在る"
-                f"(書ける語: file=<名>・{EXCERPT}・{RUN})"
+                f"(書ける語: file=<名>・{EXCERPT}・{RUN}・{CONTINUES})"
             )
         if RUN in self.words and self.language != SHELL:
             yield f"{self.name} の {RUN} は {SHELL} の囲みだけに書ける"
         if EXCERPT in self.words and (self.file is not None or RUN in self.words):
             yield f"{self.name} の {EXCERPT} は走らせない囲みなので、file= とも {RUN} とも書けない"
+        if CONTINUES in self.words:
+            if self.language not in RUNNERS or self.file is not None or EXCERPT in self.words:
+                yield (
+                    f"{self.name} の {CONTINUES} は python か hy の囲みに書き、file= とも {EXCERPT} とも"
+                    "書けない(上の script に書き足して走らせる囲み)"
+                )
+            elif self.continues_from is None:
+                yield (
+                    f"{self.name} の {CONTINUES} の上に、続く先の {self.language} の囲み(file= も {EXCERPT} も"
+                    "無い script)が無い"
+                )
         if self.file is not None and (
             self.language not in RUNNERS or not _FILE_NAME.fullmatch(self.file)
         ):
@@ -160,21 +177,34 @@ def _info(fence: re.Match[str]) -> tuple[str, ...]:
 
 
 def fences(text: str, source: str) -> list[Example]:
-    """README の本文の囲みを上から順に読む。"""
+    """README の本文の囲みを上から順に読む(continues の囲みは、続く先の囲みの code を頭に足して読む)。"""
     sections = [(found.start(), found["title"]) for found in _SECTION.finditer(text)]
-    return [
-        Example(
-            source=source,
-            section=next(
-                (title for start, title in reversed(sections) if start < fence.start()), ""
-            ),
-            language=_info(fence)[0],
-            code=fence["code"],
-            line=text.count("\n", 0, fence.start()) + 1,
-            words=_info(fence)[1:],
+    read: list[Example] = []
+    for fence in _FENCE.finditer(text):
+        language, *words = _info(fence)
+        above = _continued(read, language) if CONTINUES in words else None
+        read.append(
+            Example(
+                source=source,
+                section=next(
+                    (title for start, title in reversed(sections) if start < fence.start()), ""
+                ),
+                language=language,
+                code=fence["code"] if above is None else above.code + fence["code"],
+                line=text.count("\n", 0, fence.start()) + 1,
+                words=tuple(words),
+                continues_from=None if above is None else above.line,
+            )
         )
-        for fence in _FENCE.finditer(text)
-    ]
+    return read
+
+
+def _continued(above: Sequence[Example], language: str) -> Example | None:
+    """continues の囲みが続く先 — 同じ言葉の 1 つ上の囲みが script(file= も excerpt も無い)なら、それ。"""
+    same = next((example for example in reversed(above) if example.language == language), None)
+    if same is None or same.file is not None or EXCERPT in same.words:
+        return None
+    return same
 
 
 def write(example: Example, directory: Path) -> Path:
