@@ -76,13 +76,13 @@ def group_index_statement(prefix: str, separator: str) -> _Program[Statement, ob
 def head_index_statement(prefix: str, separator: str) -> _Program[Statement, object]:
     ...
 
-def schema_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple, object]:
+def schema_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
     ...
 
-def added_index_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple, object]:
+def added_index_statements(prefix: str, schema: RecordsSchema) -> _Program[tuple[Statement, ...], object]:
     ...
 
-def drop_statements(prefix: str) -> _Program[tuple, object]:
+def drop_statements(prefix: str) -> _Program[tuple[Statement, ...], object]:
     ...
 
 def store_head_statement(prefix: str) -> _Program[Statement, object]:
