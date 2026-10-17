@@ -36,7 +36,17 @@ from collections import Counter
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from types import FunctionType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NamedTuple,
+    Protocol,
+    TypeVar,
+    overload,
+)
 
 from doeff_vm import Call, EffectBase, Err, K, Ok, TailEval
 from doeff_vm import Callable as _VmCallable
@@ -56,8 +66,20 @@ _logger = logging.getLogger(__name__)
 # Answer types (docs/23-static-typing.md): Spawn answers Task[T], Wait / Race answer T,
 # Gather answers list[T]. Spawn's static __iter__ also yields the spawned program's
 # effects E: the task runs under the spawner's handlers, so the spawner declares them.
+# Task / Future are covariant in T (a read-only handle: a Task[int] is a Task[object]), so
+# Gather / Race over handles of different result types answer the union. pyright widens _T
+# to the union by itself; mypy joins instead (int and str -> object), so Gather and Race
+# also declare per-position overloads for 2 to 6 handles (as asyncio.gather does) that
+# answer _T1 | ... | _T6 under both checkers.
 _T = TypeVar("_T")
 _E = TypeVar("_E")
+_T_co = TypeVar("_T_co", covariant=True)
+_T1 = TypeVar("_T1")
+_T2 = TypeVar("_T2")
+_T3 = TypeVar("_T3")
+_T4 = TypeVar("_T4")
+_T5 = TypeVar("_T5")
+_T6 = TypeVar("_T6")
 
 # How long a blocking wait for external completions may stay silent before a
 # stall diagnostic is logged (#495b). Blocking semantics are unchanged: the
@@ -318,7 +340,46 @@ class TaskCompleted(EffectBase):
 
 
 class Gather(EffectBase[list[_T]], Generic[_T]):
-    def __init__(self, *tasks: "Task[_T] | Future[_T]") -> None:
+    """Wait for every Task or Future and answer their values as a list.
+
+    ``Gather(Task[int], Task[str])`` answers ``list[int | str]`` (the overloads
+    below; see the note on the answer types at the top of this module).
+    """
+
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3 | _T4]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3 | _T4 | _T5]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3 | _T4 | _T5 | _T6]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", t6: "Task[_T6] | Future[_T6]", /,
+    ) -> None: ...
+    @overload
+    def __init__(self, *tasks: "Task[_T] | Future[_T]") -> None: ...
+    def __init__(self, *tasks: "Task[object] | Future[object]") -> None:
         super().__init__()
         self.tasks = tasks
 
@@ -574,9 +635,50 @@ class Race(EffectBase[_T], Generic[_T]):
     doeff-records' memory-store bell, needs the clock to reach its deadline
     (agora-redesign #3054). The owner still wakes at its own task priority.
     Internal waitables park the same way under either value.
+
+    ``Race(Task[int], Task[str])`` answers ``int | str`` (the overloads below;
+    see the note on the answer types at the top of this module).
     """
 
-    def __init__(self, *tasks: "Task[_T] | Future[_T]", priority: int | None = None) -> None:
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]", /,
+        *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", /, *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3 | _T4]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]", /,
+        *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3 | _T4 | _T5]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", /, *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3 | _T4 | _T5 | _T6]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", t6: "Task[_T6] | Future[_T6]", /,
+        *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(self, *tasks: "Task[_T] | Future[_T]", priority: int | None = None) -> None: ...
+    def __init__(
+        self, *tasks: "Task[object] | Future[object]", priority: int | None = None,
+    ) -> None:
         super().__init__()
         if priority not in (None, PRIORITY_IDLE):
             raise ValueError(
@@ -771,8 +873,11 @@ SchedulerIntrospection = _SchedulerIntrospection
 # Handles
 # ---------------------------------------------------------------------------
 
-class Task(Generic[_T]):
-    """Handle of a spawned task; ``Task[T]`` = a task whose program returns T."""
+class Task(Generic[_T_co]):
+    """Handle of a spawned task; ``Task[T]`` = a task whose program returns T.
+
+    Covariant in T: the handle only reads the result, so a ``Task[int]`` is a ``Task[object]``.
+    """
 
     def __init__(self, task_id):
         self.task_id = task_id
@@ -780,8 +885,8 @@ class Task(Generic[_T]):
         return f"Task({self.task_id})"
 
 
-class Future(Generic[_T]):
-    """Read-side handle for a promise."""
+class Future(Generic[_T_co]):
+    """Read-side handle for a promise; covariant in T like ``Task``."""
     def __init__(self, promise_id):
         self.promise_id = promise_id
     def __repr__(self):
