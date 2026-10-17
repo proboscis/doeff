@@ -9,7 +9,7 @@ from typing import TypeAlias
 
 from doeff import do
 from doeff import handler as _program_handler
-from doeff.program import Pass, Resume
+from doeff.program import Pass, ProgramHandler, Resume
 from doeff_core_effects.cache_effects import (
     CacheDeleteEffect,
     CacheExists,
@@ -106,7 +106,7 @@ def content_address(effect: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def cache_handler(storage: DurableStorage):
+def cache_handler(storage: DurableStorage) -> ProgramHandler:
     """Interpret CacheGet/CachePut/CacheExists against a pluggable storage backend.
 
     Storage methods return Programs (DoExpr). The handler yields them to get values.
@@ -153,12 +153,12 @@ def cache_handler(storage: DurableStorage):
     return _program_handler(handler)
 
 
-def in_memory_cache_handler():
+def in_memory_cache_handler() -> ProgramHandler:
     """Return a cache handler backed by in-memory storage."""
     return cache_handler(InMemoryStorage())
 
 
-def sqlite_cache_handler(db_path: str | Path):
+def sqlite_cache_handler(db_path: str | Path) -> ProgramHandler:
     """Return a cache handler backed by SQLite storage."""
     return cache_handler(SQLiteStorage(db_path))
 
@@ -166,7 +166,7 @@ def sqlite_cache_handler(db_path: str | Path):
 def make_memo_rewriter(
     effect_type: type,
     key_fn: MemoKeyFn = content_address,
-):
+) -> ProgramHandler:
     """Create a handler that memoizes effects of the given type through cache.
 
     On cache hit: Resume with cached value (outer handler not called).
@@ -216,7 +216,7 @@ def make_memo_rewriter(
 def memo_rewriters(
     *effect_types: type,
     key_fn: MemoKeyFn = content_address,
-) -> list:
+) -> list[ProgramHandler]:
     """Create memo rewriter handlers for each provided effect type."""
     return [make_memo_rewriter(et, key_fn=key_fn) for et in effect_types]
 

@@ -50,19 +50,19 @@ class InMemoryStorage:
         with self._lock:
             return key in self._data
 
-    def get(self, key: str):
+    def get(self, key: str) -> Await[object]:
         """Get value by key. Returns Program[Any | None] via Await."""
         return Await(asyncio.to_thread(self._sync_get, key))
 
-    def put(self, key: str, value: Any):
+    def put(self, key: str, value: object) -> Await[None]:
         """Store value with key. Returns Program[None] via Await."""
         return Await(asyncio.to_thread(self._sync_put, key, value))
 
-    def delete(self, key: str):
+    def delete(self, key: str) -> Await[bool]:
         """Delete key. Returns Program[bool] via Await."""
         return Await(asyncio.to_thread(self._sync_delete, key))
 
-    def exists(self, key: str):
+    def exists(self, key: str) -> Await[bool]:
         """Check if key exists. Returns Program[bool] via Await."""
         return Await(asyncio.to_thread(self._sync_exists, key))
 

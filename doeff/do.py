@@ -379,7 +379,7 @@ def _async_function_message(fn: Callable[..., Any], *, async_generator: bool) ->
 def program_factory(
     fn: Callable[P, Any],
     tail_resume_lines: tuple[int, ...],  # noqa: DOEFF006 - immutable line-number set for IRStream
-) -> Callable[P, Expand]:
+) -> Callable[P, Expand[Any]]:
     """The runtime shape shared by ``@do`` and ``@effectful``.
 
     Calling the result builds one ``Call`` node (an ``Expand``) holding the definition and
@@ -394,7 +394,7 @@ def program_factory(
     make_call = definition.make_call
 
     @wraps(fn)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand[Any]:
         return make_call(args, kwargs)
 
     # Installed as a handler, the VM calls `fn` directly and runs the generator as

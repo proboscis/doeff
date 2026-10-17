@@ -86,7 +86,7 @@ def execute_doeff_code(
     source: str,
     filename: str = "<doeff-code>",
     extra_globals: dict[str, Any] | None = None,
-) -> Expand:
+) -> "Expand[Any]":
     transform_result = transform_doeff_code(source, filename)
     exec_globals: dict[str, Any] = {
         "__name__": "__main__",
@@ -96,4 +96,4 @@ def execute_doeff_code(
     if extra_globals:
         exec_globals.update(extra_globals)
     exec(transform_result.code, exec_globals)
-    return cast(Expand, exec_globals["__doeff_result__"])
+    return cast("Expand[Any]", exec_globals["__doeff_result__"])

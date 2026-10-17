@@ -7,15 +7,15 @@ Uses doeff-indexer to find `# doeff: interpreter, default` and
 import importlib
 import inspect
 import logging
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeAlias, cast
 
 from doeff.cli.profiling import profile
 from doeff.cli.run_services import import_symbol
 from doeff.program import Expand, Pure
 
-EnvProgram = Pure | Expand
+EnvProgram: TypeAlias = "Pure[dict[Any, Any]] | Expand[dict[Any, Any]]"
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class InterpreterDiscovery(Protocol):
@@ -29,6 +29,27 @@ class EnvDiscovery(Protocol):
 
 class EnvMerger(Protocol):
     def merge_envs(self, env_sources: list[str]) -> EnvProgram: ...
+
+
+class IndexedSymbol(Protocol):
+    """A symbol the indexer found: the module it is in and its dotted path."""
+
+    @property
+    def module_path(self) -> str: ...
+    @property
+    def full_path(self) -> str: ...
+
+
+class ModuleIndex(Protocol):
+    """The index of one module hierarchy (``doeff_indexer.Indexer.for_module``)."""
+
+    def find_symbols(self, *, tags: list[str], symbol_type: str) -> list[IndexedSymbol]: ...
+
+
+class IndexerClass(Protocol):
+    """The part of ``doeff_indexer.Indexer`` discovery uses (the extension ships no stub)."""
+
+    def for_module(self, module_path: str) -> ModuleIndex: ...
 
 
 class SymbolLoader(Protocol):
@@ -47,12 +68,12 @@ class IndexerBasedDiscovery:
         with profile("Import doeff_indexer", indent=1):
             try:
                 indexer_module = cast(Any, importlib.import_module("doeff_indexer"))
-                self.indexer_class = indexer_module.Indexer
+                self.indexer_class: IndexerClass = indexer_module.Indexer
             except ImportError as e:
                 raise ImportError(
                     "doeff-indexer not found. Install with: pip install doeff-indexer"
                 ) from e
-        self.symbol_loader = symbol_loader or StandardSymbolLoader()
+        self.symbol_loader: SymbolLoader = symbol_loader or StandardSymbolLoader()
 
     def find_default_interpreter(self, program_path: str) -> str | None:
         with profile("Find default interpreter", indent=1):
@@ -130,7 +151,7 @@ class IndexerBasedDiscovery:
 
 class StandardEnvMerger:
     def __init__(self, symbol_loader: SymbolLoader | None = None):
-        self.symbol_loader = symbol_loader or StandardSymbolLoader()
+        self.symbol_loader: SymbolLoader = symbol_loader or StandardSymbolLoader()
 
     def merge_envs(self, env_sources: list[str]) -> EnvProgram:
         """Merge environment sources left-to-right. Later overrides earlier."""

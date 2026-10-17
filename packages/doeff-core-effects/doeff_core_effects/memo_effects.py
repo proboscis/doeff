@@ -19,18 +19,20 @@ from doeff_core_effects.memo_policy import (
 
 class MemoGetEffect(EffectBase):
     """Requests the memoized value for the key."""
-    def __init__(self, key, recompute_cost=RecomputeCost.CHEAP):
+    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
         super().__init__()
         self.key = key
         self.recompute_cost = recompute_cost
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"MemoGet({self.key!r}, cost={self.recompute_cost.value})"
 
 
 class MemoPutEffect(EffectBase):
     """Persists a memoized value under the key."""
-    def __init__(self, key, value, policy, source_effect=None):
+    def __init__(
+        self, key: object, value: object, policy: MemoPolicy, source_effect: object = None
+    ) -> None:
         super().__init__()
         if not isinstance(policy, MemoPolicy):
             raise TypeError(f"policy must be MemoPolicy, got {type(policy).__name__}")
@@ -39,29 +41,29 @@ class MemoPutEffect(EffectBase):
         self.policy = policy
         self.source_effect = source_effect  # original effect for traceability
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"MemoPut({self.key!r}, ..., cost={self.policy.recompute_cost.value})"
 
 
 class MemoDeleteEffect(EffectBase):
     """Deletes the memoized value under the key."""
-    def __init__(self, key, recompute_cost=RecomputeCost.CHEAP):
+    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
         super().__init__()
         self.key = key
         self.recompute_cost = recompute_cost
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"MemoDelete({self.key!r}, cost={self.recompute_cost.value})"
 
 
 class MemoExistsEffect(EffectBase):
     """Checks if a key exists in memo storage."""
-    def __init__(self, key, recompute_cost=RecomputeCost.CHEAP):
+    def __init__(self, key: object, recompute_cost: RecomputeCost = RecomputeCost.CHEAP) -> None:
         super().__init__()
         self.key = key
         self.recompute_cost = recompute_cost
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"MemoExists({self.key!r}, cost={self.recompute_cost.value})"
 
 
