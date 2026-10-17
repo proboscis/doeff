@@ -255,7 +255,7 @@
     :meta (table-of (tuple (gfor #(k v) (part "meta/") (TableWrite k (resource-meta-from-json v)))))
     :rollouts (dfor #(k v) (part "rollout/") k (rollout-row-from-json v))
     :group-limits (table-of (tuple (gfor #(k v) (part GROUP-LIMIT) (TableWrite k (group-limit-from-json k v)))))
-    :drains (dfor #(k v) (part DRAIN) k (Drain #** v))
+    :drains (table-of (tuple (gfor #(k v) (part DRAIN) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (part SURGE) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
     :warms (dfor #(k entry) warms :if (is-not entry None) k entry)

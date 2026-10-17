@@ -487,10 +487,10 @@
    worker)の heartbeat で解く。世代を持たない drain(世代を付けない頼み — 版上げの Program・手の頼み)は worker の名前に付き、どの世代の
    heartbeat でも解かない(頼み手の DELETE か期限まで保つ・#4177)。退いた世代の heartbeat はここへ来ない
    (register-heartbeat が先に分ける — 旧い世代の heartbeat が新しい世代の drain を解かず、旧い世代の drain を付け直さない)。"
-  (setv d (.get state.drains name))
+  (setv d (.row state.drains name))
   (cond
     (or (is d None) (is boot None) (is d.boot None)) state
-    (!= d.boot boot) (replace state :drains (dfor #(k v) (.items state.drains) :if (!= k name) k v))
+    (!= d.boot boot) (replace state :drains (.with-writes state.drains (tuple [(TableWrite name None)])))
     True state))
 
 
@@ -1484,15 +1484,15 @@
       (replace state :workers (.with-writes state.workers (tuple (gfor n gone (TableWrite n None))))
                      :observations (replace state.observations
                                             :statuses (.with-writes state.observations.statuses (tuple (gfor n gone (TableWrite n None)))))
-                     :drains (dfor #(n d) (.items state.drains) :if (not-in n gone) n d))))
+                     :drains (.with-writes state.drains (tuple (gfor n gone (TableWrite n None)))))))
 
 
 (defk sweep-drains [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 期限を過ぎた drain を消した状態(消す物が無ければ同じ object)。頼み手(worker の preStop)は期限の内に頼み直し続ける。"
-  (if (all (gfor d (.values state.drains) (> d.until-ms now)))
+  (if (all (gfor d (.rows state.drains) (> d.until-ms now)))
       state
-      (replace state :drains (dfor #(n d) (.items state.drains) :if (> d.until-ms now) n d))))
+      (replace state :drains (.with-writes state.drains (tuple (gfor #(n d) (.items state.drains) :if (<= d.until-ms now) (TableWrite n None)))))))
 
 
 (defk sweep-warms [state now]
@@ -1592,7 +1592,7 @@
    刻を持たない。"
   (val used (if state.programs (program-refs state) (frozenset)))
   (val deadlines (+ (lfor row (.rows state.board) :if (is-not row.expires-ms None) row.expires-ms)
-                    (lfor d (.values state.drains) d.until-ms)
+                    (lfor d (.rows state.drains) d.until-ms)
                     (lfor w (.values state.warms) w.until-ms)
                     (lfor #(sha row) (.items state.programs) :if (not-in sha used) (+ row.put-ms PROGRAM-GRACE-MS 1))))
   ;; 掃いた後の状態なら期限はどれも now より後。掃く前の状態(期限が now 以前)は DueNow(sweep が今の刻で変える)。
@@ -1995,7 +1995,7 @@
                                          (replace kept :elder-runs True)
                                          kept)))
                   :tasks (tasks-for state name boot) :warm (warms-for state name now)
-                  :timing timing :draining (in name state.drains) :superseded False :formats (tuple ACCEPTED-FORMATS)
+                  :timing timing :draining (is-not (.row state.drains name) None) :superseded False :formats (tuple ACCEPTED-FORMATS)
                   :revision state.revision :handover-pending pending))
 
 

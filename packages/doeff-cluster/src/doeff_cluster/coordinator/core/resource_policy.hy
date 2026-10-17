@@ -549,8 +549,8 @@
    ;; 観測なので入れない(生きている間の heartbeat では版は進まない)。
    ;; drain(2026-09-25)の始まりと頼み手(誰が・いつ空けさせたかを出来事の記録に残す)。期限は頼み直すたびに延びるので入れない。
    "status" (| {"live" (not-in w.name state.silent)}
-               (if (in w.name state.drains)
-                   {"drain" {"sinceMs" (. (get state.drains w.name) since-ms) "actor" (. (get state.drains w.name) actor)}}
+               (if (is-not (.row state.drains w.name) None)
+                   {"drain" {"sinceMs" (. (.row state.drains w.name) since-ms) "actor" (. (.row state.drains w.name) actor)}}
                    {})
                ;; 実行環境の root の組みの進み(#3668 (b)・2026-10-06)— heartbeat が名乗る準備済み・準備中・失敗の root のキー。組みが進んだ拍に
                ;; 版と出来事が進み、組みの完成を待つ送り手(AwaitWarm)が GET /watch で起きる。名乗る root が在る間だけ載せる(無い worker の

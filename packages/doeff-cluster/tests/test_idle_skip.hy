@@ -365,7 +365,7 @@
 (deftest test-the-sweep-due-is-the-deadline-each-sweep-compares
   (val due-at 12345)
   (val states [(ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms due-at :size 1)))))
-               (ClusterState :drains {"w" (Drain :worker "w" :since-ms 0 :until-ms due-at)})
+               (ClusterState :drains (! (table-from-rows {"w" (Drain :worker "w" :since-ms 0 :until-ms due-at)})))
                (ClusterState :warms {"e" (WarmEntry :key "e" :runtime-env {} :needs #() :until-ms due-at :holder "w")})
                (ClusterState :programs {"p" (ProgramRow :blob "" :versions {} :put-ms (- due-at PROGRAM-GRACE-MS 1))})])
   (for [state states]

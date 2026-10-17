@@ -1072,7 +1072,7 @@
   ;; drain(2026-09-25): worker の名 → Drain と、入れ替えの Service を drain 中の worker から移す間の並べた置き先
   ;; (job の名 → Placement・surge)。surge の担い手は process を起こし(standby で待つ)、coordinator がそれを Ready と数えたら
   ;; placements をその置き先へ付け替える(旧い担い手は宣言から外れて止め、lease を返す)。どちらも保存する(durable_kv)。
-  (setv #^ (get dict #(str Drain)) drains (field :default-factory dict))
+  (setv #^ (get Table Drain) drains (field :default-factory (partial table-of #())))
   (setv #^ (get Table Placement) surges (field :default-factory (partial table-of #())))
   ;; 温める表(2026-09-26): 行のキー → WarmEntry。保存する(durable_kv の warm/<キー>)。
   (setv #^ (get dict #(str WarmEntry)) warms (field :default-factory dict))

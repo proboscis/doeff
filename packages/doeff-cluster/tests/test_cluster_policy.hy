@@ -659,7 +659,7 @@
 (deftest test-a-task-on-a-draining-worker-only-still-waits-without-the-room-reason
   ;; 置ける先が drain 中の worker だけの task は、今までどおり理由を書かずに待つ(空きの話ではない — TASK-NO-ROOM にしない)。
   (val state (ClusterState #() (! (table-from-rows {"mac" (! (reserved "mac" 0 2 0))})) (table-of #()) (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))
-                           :drains {"mac" (Drain "mac" 0 600000)}))
+                           :drains (! (table-from-rows {"mac" (Drain "mac" 0 600000)}))))
   (val waiting (.row (! (tasks-placed 1000 state (table-of #()) T)) "t1"))
   (assert (= #(waiting.phase waiting.detail) #("queued" "")) waiting))
 
@@ -671,7 +671,7 @@
   (val state (ClusterState #(handoff-job (! (job "x")))
                            (! (table-from-rows {"atlas" (! (reserved "atlas" 0 10 0)) "zeus" (! (reserved "zeus" 0 2 1))}))
                            (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "x" (Placement "x" "zeus" 1 0)}))
-                           :drains {"atlas" (Drain "atlas" 0 600000)}))
+                           :drains (! (table-from-rows {"atlas" (Drain "atlas" 0 600000)}))))
   (val waited (advance-drains 1000 state T))
   (assert (= (.size waited.surges) 0) waited.surges)
   (val load (load-of waited waited.placements))

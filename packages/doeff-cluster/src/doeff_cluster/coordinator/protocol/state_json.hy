@@ -235,7 +235,7 @@
     ;; 組の同時数の上限(2026-10-12)は、それより前の file には無い(空として読む)。
     :group-limits (table-of (tuple (gfor #(k v) (.items (.get data "groupLimits" {})) (TableWrite k (group-limit-from-json k v)))))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。
-    :drains (dfor #(k v) (.items (.get data "drains" {})) k (Drain #** v))
+    :drains (table-of (tuple (gfor #(k v) (.items (.get data "drains" {})) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (.items (.get data "surges" {})) (TableWrite k (Placement #** v)))))
     ;; 旧い形の温める表の行は読みが None を返す(読み直しで捨てる)。
     :warms (dfor #(k entry) warms :if (is-not entry None) k entry)
