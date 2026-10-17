@@ -22,7 +22,7 @@ Hy の `validate` / `check` マクロは doeff-hy が持つ(`(require doeff-hy.m
             (not-in job.kind #(JobKind.TURN JobKind.SUMMARIZE))
             (!= job.phase Phase.PENDING)
             (is-not job.cancel None))
-    (raise (AcpProtocolError "job does not match the placement request")))
+    (raise (PlacementError "job does not match the placement request")))
   (write-of-agent-job-status job (bound-status placement job now)))
 ```
 

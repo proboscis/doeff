@@ -40,8 +40,8 @@ The installed form names a rule id and carries hit / clean fixtures:
 ```hy
 (defsemgrep worker-files-rule
   "worker-business-code-touches-files-only-through-effects"
-  [{"relative-path" "controllers/worker/lab/keeper.hy" "source" "…"}]    ; must fire
-  [{"relative-path" "controllers/worker/lab/keeper.hy" "source" "…"}]    ; must stay silent
+  [{"relative-path" "app/worker/keeper.hy" "source" "…"}]    ; must fire
+  [{"relative-path" "app/worker/keeper.hy" "source" "…"}]    ; must stay silent
   :config "worker.semgrep.yaml")
 ```
 
@@ -91,7 +91,7 @@ Notes:
 Run executable ADR files directly:
 
 ```bash
-uv run pytest docs/adr/defadr_0018_hypha_app_in_doeff_hy.hy
+uv run pytest docs/adr/defadr_doeff_hy_004_defk_only.hy
 ```
 
 ## Collection wiring gate
