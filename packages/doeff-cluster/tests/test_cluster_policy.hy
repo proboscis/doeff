@@ -376,7 +376,7 @@
   "旧い形へ書き換えて読み直す元の状態: worker 2 台・task 2 本(1 本は終わった)・温める表の行 1 つ。"
   (ClusterState :workers (! (table-from-rows {"old" (! (worker "old" 0 10 "net")) "new" (! (worker "new" 0 10 "net"))}))
                 :tasks (! (table-from-rows {"t1" (! (task "t1" #("net"))) "t2" (replace (! (task "t2" #("net"))) :phase "finished")}))
-                :warms {"k1" (WarmEntry "k1" {"repos" []} #("net") 999999 "svc-a")}
+                :warms (table-of #((TableWrite "k1" (WarmEntry "k1" {"repos" []} #("net") 999999 "svc-a"))))
                 :next-task 3))
 
 (defk to-old-worker [row]
@@ -393,7 +393,7 @@
   {:pre [(: state ClusterState)] :post [(: % bool)]}
   "旧い行を読んだ状態: 旧い worker と温める表の行は捨て、終わっていない task は failed(理由つき)、終わった task はそのまま。"
   (assert (= (sorted (.keys state.workers)) ["new"]) state.workers)
-  (assert (= state.warms {}) state.warms)
+  (assert (= (.size state.warms) 0) state.warms)
   (setv open (.row state.tasks "t1"))
   (assert (= open.phase "failed") open)
   (assert (in "旧い形の task" open.detail) open.detail)

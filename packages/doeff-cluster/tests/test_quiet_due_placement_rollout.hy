@@ -42,7 +42,7 @@
   ;; r2 の process が起きて準備の報告(偽)を送り始めるまで進める(報告の無い間の window の終わりを効かせない)。
   (<- (steps sim 10))
   (val state sim.state)
-  (val watch (get state.handoffs "writer-a"))
+  (val watch (.row state.handoffs "writer-a"))
   (assert (= watch.phase HandoffPhase.WAITING) watch)
   (val job (next (gfor j state.jobs :if (= j.spec.name "writer-a") j)))
   (<- due (| int None) (placement-due state sim.now LONG-LEASE))
@@ -50,8 +50,8 @@
   (assert (> due sim.now) #(due sim.now))
   (val before (watch-handoffs (- due 1) state LONG-LEASE))
   (val at (watch-handoffs due state LONG-LEASE))
-  (assert (= (. (get before.handoffs "writer-a") phase) HandoffPhase.WAITING) before.handoffs)
-  (assert (= (. (get at.handoffs "writer-a") phase) HandoffPhase.ABANDONED) at.handoffs))
+  (assert (= (. (.row before.handoffs "writer-a") phase) HandoffPhase.WAITING) before.handoffs)
+  (assert (= (. (.row at.handoffs "writer-a") phase) HandoffPhase.ABANDONED) at.handoffs))
 
 
 (defk waiting-rollout []

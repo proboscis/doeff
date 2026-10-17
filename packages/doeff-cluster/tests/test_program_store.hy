@@ -5,6 +5,7 @@
 ;;; 置き場は保存する(state file の "programs"・durable KV の program/<sha>)。
 (require doeff-hy.macros [deftest defk <- val])
 (import hashlib)
+(import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow])
 (import doeff_cluster.shared.protocol.inbox [http-request])
@@ -50,8 +51,8 @@
   ;; 同じキーを置き直すと期限(置いた時刻)だけが延びる — 同じ中身は同じ行。
   (<- again tuple (call s "PUT" (+ "/programs/" sha) {"blob" BLOB "versions" VERSIONS} 5000))
   (assert (= (get again 1) 200))
-  (assert (= (list (. (get again 0) programs)) [sha]))
-  (assert (= (. (get (. (get again 0) programs) sha) put-ms) 5000)))
+  (assert (= (list (.keys (. (get again 0) programs))) [sha]))
+  (assert (= (. (.row (. (get again 0) programs) sha) put-ms) 5000)))
 
 
 (deftest test-a-wrong-sha-a-bad-key-or-a-bad-body-is-refused-with-400
@@ -59,7 +60,7 @@
   (<- mismatch tuple (call (ClusterState) "PUT" (+ "/programs/" other) {"blob" BLOB "versions" VERSIONS} 1000))
   (assert (= (get mismatch 1) 400) mismatch)
   (assert (in "sha256 がキーと合わない" (get mismatch 2 "error")))
-  (assert (= (. (get mismatch 0) programs) {}))
+  (assert (= (.size (. (get mismatch 0) programs)) 0))
   (<- bad-key tuple (call (ClusterState) "PUT" "/programs/not-a-sha" {"blob" BLOB} 1000))
   (assert (= (get bad-key 1) 400) bad-key)
   (assert (in "64 桁の sha256" (get bad-key 2 "error")))
@@ -75,7 +76,7 @@
   (<- sha str (sha-of big))
   (<- put tuple (call (ClusterState) "PUT" (+ "/programs/" sha) {"blob" big "versions" VERSIONS} 1000))
   (assert (= (get put 1) 413) (get put 2))
-  (assert (= (. (get put 0) programs) {})))
+  (assert (= (.size (. (get put 0) programs)) 0)))
 
 
 (deftest test-an-unknown-program-is-404
@@ -96,22 +97,22 @@
                            2000))
   (assert (= (get declared 1) 201) declared)
   (val both (get declared 0))
-  (assert (= (sorted both.programs) (sorted [kept-sha loose-sha])))
+  (assert (= (sorted (.keys both.programs)) (sorted [kept-sha loose-sha])))
   ;; 期限の内はどちらも残る(declare は Program を先に置いてから行を書くので、その間に消さない)。
-  (assert (= (sorted (. (sweep-programs both (+ 1000 PROGRAM-GRACE-MS)) programs)) (sorted [kept-sha loose-sha])))
+  (assert (= (sorted (.keys (. (sweep-programs both (+ 1000 PROGRAM-GRACE-MS)) programs))) (sorted [kept-sha loose-sha])))
   ;; 期限を過ぎると参照の無い物だけが消える。
   (val later (sweep-programs both (+ 1001 PROGRAM-GRACE-MS)))
-  (assert (= (list later.programs) [kept-sha]) later.programs)
+  (assert (= (list (.keys later.programs)) [kept-sha]) later.programs)
   ;; Service を消すと参照が無くなり、次の掃除で消える(coordinator の調停 — 書きの settle — が掃除を回す)。
   (<- deleted tuple (call both "DELETE" "/resources/Service/svc" None (+ 2000 PROGRAM-GRACE-MS)))
   (assert (= (get deleted 1) 200) deleted)
-  (assert (= (. (get deleted 0) programs) {}) (. (get deleted 0) programs)))
+  (assert (= (.size (. (get deleted 0) programs)) 0) (. (get deleted 0) programs)))
 
 
 (deftest test-programs-survive-a-restart-from-the-state-file-and-the-durable-kv
   (<- sha str (sha-of BLOB))
   (<- s ClusterState (stored BLOB 1000))
-  (val want {sha (ProgramRow :blob BLOB :versions VERSIONS :put-ms 1000)})
+  (val want (table-of #((TableWrite sha (ProgramRow :blob BLOB :versions VERSIONS :put-ms 1000)))))
   (assert (= s.programs want))
   (assert (= (. (! (state-from-json (! (state-to-json s)) 2000)) programs) want))
   (val kv (! (full-kv s)))
