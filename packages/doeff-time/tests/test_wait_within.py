@@ -136,6 +136,15 @@ def test_a_withdrawn_entry_is_skipped_by_the_queue() -> None:
 # --- park: 外の promise を、仮想の時計を止めずに待つ(agora-redesign #3054)-----------------------------------------
 # 外の promise(handler の外の同期の書きや別の thread が埋める — doeff-records の memory の置き場の呼び鈴)の既定の待ちは、
 # 仮想の時計の駆動を止める(埋まる前に時間を進めない)。期限つきの待ちでは期限まで時計が進む必要があるので、park で待つ。
+# park は scheduler の Race の priority=PRIORITY_IDLE が読むので、両方の版で走らせる(rust の版が読まず、時計が止まった —
+# card ki-8f4f99f14664)。
+
+
+@pytest.fixture(params=["python", "rust"])
+def scheduler_implementation(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """park の test を scheduler の両方の版で走らせるため(run_with_handlers は $DOEFF_SCHEDULER の版で走る)。"""
+    monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
+    return request.param
 
 
 def _complete_from_a_thread(promise: Any, value: str) -> None:
@@ -154,6 +163,7 @@ def _wait_external_within(park: bool):
     return value, now
 
 
+@pytest.mark.usefixtures("scheduler_implementation")
 def test_a_parked_wait_on_an_external_promise_reaches_its_deadline() -> None:
     # park: 外の promise が埋まる前に、仮想の時計が期限(5 秒)へ進み None が返る。task は時計の駆動の 1 本だけ。
     counted = _spawns_and_result(_wait_external_within(True))
@@ -161,6 +171,21 @@ def test_a_parked_wait_on_an_external_promise_reaches_its_deadline() -> None:
     assert counted.spawns == 1, counted
 
 
+@do
+def _wait_never_completed_external_within():
+    promise = yield CreateExternalPromise()
+    value = yield WaitWithin(promise.future, 5.0, park=True)
+    now = yield GetTime()
+    return value, now
+
+
+@pytest.mark.usefixtures("scheduler_implementation")
+def test_a_parked_wait_on_an_external_promise_nobody_completes_answers_none_at_its_deadline() -> None:
+    # 誰も埋めない外の promise を park で待つと、仮想の時計が期限へ進んで None が返る(実の時計を待たない)。
+    assert _spawns_and_result(_wait_never_completed_external_within()).result == (None, sim_time(5.0))
+
+
+@pytest.mark.usefixtures("scheduler_implementation")
 def test_the_counterexample_unparked_wait_holds_the_clock_until_the_promise_completes() -> None:
     # park しない既定の待ちは、外の promise が埋まるまで仮想の時計を止める — 期限の 5 秒は来ず、実の時計の 0.2 秒後の完了が
     # 仮想の 0 秒で返る(期限つきの待ちが期限を持たない形 — park が要る理由)。
@@ -182,6 +207,7 @@ def _in_run_completion_within():
     return value, now
 
 
+@pytest.mark.usefixtures("scheduler_implementation")
 def test_a_parked_wait_answers_a_completion_made_by_in_run_code() -> None:
     # run の中の task が仮想の 2 秒後に外の promise を埋めると、park した待ちはその刻に値で返る(期限の 5 秒を待たない)。
     assert _spawns_and_result(_in_run_completion_within()).result == ("rung", sim_time(2.0))
