@@ -52,7 +52,7 @@
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
 (import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy.table [TableWrite draft-of])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-step rollout-targets target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import doeff_cluster.coordinator.core.warm_policy [warm-write warm-read])
@@ -198,7 +198,7 @@
                                               :if (is-not moved r)
                                               (TableWrite k moved))))
            ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)— 上の board-written。
-           :rollouts (dfor #(k r) (.items state.rollouts) k (replace r :status (shift-clocks r.status gap)))
+           :rollouts (.with-writes state.rollouts (tuple (gfor #(k r) (.items state.rollouts) (TableWrite k (replace r :status (shift-clocks r.status gap))))))
            :tasks (.with-writes state.tasks (tuple (gfor #(k t) (.items state.tasks) (TableWrite k (replace t :lease-until-ms (+ t.lease-until-ms gap))))))
            :workers (.with-writes state.workers
                                   (tuple (gfor #(k w) (.items state.workers)
@@ -301,7 +301,7 @@
   {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "Rollout の判断が観測を要る Deployment の「ns/名」を知るため(見張る相手 — FollowDeployments・#3868): 進行中の Rollout の相手と、
    台数を持つ(Observing / Complete の)Rollout の相手。時刻で選ばない — 観測は見張りが変化のたびに書き直す。"
-  (val moving (tuple (gfor r (.values state.rollouts) :if (not-in r.status.phase TERMINAL-PHASES)
+  (val moving (tuple (gfor r (.rows state.rollouts) :if (not-in r.status.phase TERMINAL-PHASES)
                            t (rollout-targets r.spec) :if (= t.kind "Deployment")
                            (+ t.namespace "/" t.name))))
   (tuple (dict.fromkeys (+ moving (tuple (deployment-owners state.rollouts))))))
@@ -313,13 +313,13 @@
   "全 Rollout を 1 拍進める。返り値 #(次の状態 action の list)。action = rollout(名)・op(scale / annotate)・target・replicas の dict。
    台数の食い違い(配備の流れが Deployment の replicas を当て直した等)は直さず status.drift に出す。
    naming = 台数の持ち主の annotation の鍵と値の頭(配備する側が決める — cluster_model.ClusterNaming)。"
-  (setv rollouts (dict state.rollouts) actions [])
+  (setv rollouts (draft-of state.rollouts) actions [])
   (for [#(name r) (sorted (.items state.rollouts))]
     (setv spec r.spec status r.status)
     (when (not-in status.phase TERMINAL-PHASES)
       (setv #(stepped acts) (rollout-step spec status (target-view state spec.from-target status now timing)
                                           (target-view state spec.to-target status now timing) now))
-      (setv (get rollouts name) (replace r :status stepped))
+      (.put rollouts name (replace r :status stepped))
       ;; 失敗が続く action は間を空けて出し(action-due — 1 秒から倍々・上限 60 秒)、成功した Deployment への書きは、その書きの後の
       ;; 観測が届くまで出し直さない(#3868)。
       (.extend actions (gfor a acts
@@ -333,18 +333,19 @@
   ;; 持ち主でなくなった(後の Rollout へ移った・進行中の Rollout が扱い始めた)Rollout の食い違いは消す。
   ;; Observing の Rollout は旧を止め終えて台数を持つ側なので、ここでは「進行中」に数えない(2026-09-24 の実弾: 数えていたので
   ;; 観察の間に本番の配備の流れが replicas を 1 へ戻したのを食い違いとして出せなかった)。
-  (setv busy (sfor r (.values rollouts) :if (not-in r.status.phase (| TERMINAL-PHASES #{"Observing"}))
+  (setv busy (sfor r (.rows rollouts) :if (not-in r.status.phase (| TERMINAL-PHASES #{"Observing"}))
                    t (rollout-targets r.spec) :if (= t.kind "Deployment")
                    (+ t.namespace "/" t.name))
-        owners (dfor #(k v) (.items (deployment-owners rollouts)) :if (not-in k busy) k v)
+        owners (dfor #(k v) (.items (deployment-owners (.freeze rollouts))) :if (not-in k busy) k v)
         owning (sfor v (.values owners) (get v 0)))
-  (for [#(name r) (.items rollouts)]
+  (for [#(name r) (.items (.freeze rollouts))]
     (when (and r.status.drift (not-in name owning))
-      (setv (get rollouts name) (replace r :status (replace r.status :drift None :drift-resolved-ms now)))))
+      (.put rollouts name (replace r :status (replace r.status :drift None :drift-resolved-ms now)))))
   (for [#(key #(name expected)) (.items owners)]
-    (setv owned (get rollouts name)
-          drifted (drift-status owned.status key expected (.row state.observations.deployments key) now))
-    (setv (get rollouts name) (replace owned :status drifted))
+    (setv owned (.row rollouts name))
+    (when (is owned None) (continue))
+    (setv drifted (drift-status owned.status key expected (.row state.observations.deployments key) now))
+    (.put rollouts name (replace owned :status drifted))
     (when (and owned.spec.mark-deployment (!= drifted.marked-deployment key))
       (setv #(ns dep) (.split key "/" 1)
             mark {"rollout" name "op" "annotate" "namespace" ns "name" dep
@@ -353,7 +354,8 @@
       (when (action-due drifted mark now None)
         (.append actions mark))))
   ;; 段が進まなければ状態そのものを返す(reconcile と同じ — stamp が写しを作らずに返す・#1356)。
-  #((if (= rollouts state.rollouts) state (replace state :rollouts rollouts)) actions))
+  (val stepped-rollouts (.freeze rollouts))
+  #((if (= stepped-rollouts state.rollouts) state (replace state :rollouts stepped-rollouts)) actions))
 
 
 (defn #^ ClusterState scale-service [#^ ClusterState state #^ str name #^ int replicas]
@@ -364,7 +366,7 @@
                                      #^ (| int None) [result None]]
   "実行した action の結果を Rollout の status に残す(dry-run の台数は simulated に)。同じ action の繰り返しは数を進め、at を最後に実行した
    刻にする(失敗の出し直しの間は最後の失敗から数え、成功した書きは最後の書きの後の観測を待つ — action-due・#3868)。"
-  (setv name (get action "rollout") r (.get state.rollouts name))
+  (setv name (get action "rollout") r (.row state.rollouts name))
   (when (is r None) (return state))
   (setv status r.status
         what (dfor #(k v) (.items action) :if (not-in k #("rollout" "target")) k v)
@@ -380,7 +382,7 @@
     (setv status (replace status :simulated (| (or status.simulated {}) {(target-key target) (if (is result None) (get action "replicas") result)}))))
   (when (and ok (= (get action "op") "annotate"))
     (setv status (replace status :marked-deployment (+ (get action "namespace") "/" (get action "name")))))
-  (replace state :rollouts (| state.rollouts {name (replace r :status status)})))
+  (replace state :rollouts (.with-writes state.rollouts (tuple [(TableWrite name (replace r :status status))]))))
 
 
 ;; --- 要求の振り分け ---------------------------------------------------------------------------

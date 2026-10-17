@@ -1048,7 +1048,7 @@
   (setv #^ int revision 0)                              ; coordinator 全体の版の番号(書きのたびに 1 進む)
   (setv #^ (get tuple #(AuditEvent ...)) audit #())                             ; 出来事の記録 AuditEvent の列(kind ごとに件数の上限つき・保存する)
   (setv #^ int audit-seq 0)
-  (setv #^ (get dict #(str RolloutRow)) rollouts (field :default-factory dict))  ; Rollout の名 → RolloutRow
+  (setv #^ (get Table RolloutRow) rollouts (field :default-factory (partial table-of #())))  ; Rollout の名 → RolloutRow
   ;; --- 保存しない観測 ---
   ;; worker の最新の状態の報告(#2904)、Service の process の準備と計器の報告(#2756)、k8s の Deployment と node の label の最後の観測
   ;; (#2728)は最後の欄 observations(ClusterObservations)。
@@ -1059,7 +1059,7 @@
   ;; with-running-commit。読めなければ None)。保存しない(process の世代ごとの事実)。GET /state の coordinatorCommit に載る(#3772)。
   (setv #^ (| str None) running-commit None)
   ;; 受け付けない Service の行(名 → RefusedJob — 改訂 1 の C)。保存する(元の行のまま)— 読み直しても同じ理由で受け付けない。
-  (setv #^ (get dict #(str RefusedJob)) refused (field :default-factory dict))
+  (setv #^ (get Table RefusedJob) refused (field :default-factory (partial table-of #())))
   ;; 詰めた Program の置き場(sha → {"blob" "versions" "putMs"} — program_policy・改訂 1 の F)。保存する。
   (setv #^ (get dict #(str ProgramRow)) programs (field :default-factory dict))
   (setv #^ int started-ms 0)                            ; この coordinator の process が状態を読んだ時刻(観測が揃うまでの猶予)

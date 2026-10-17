@@ -107,7 +107,7 @@
                  :build (fn #^ Sources [#^ ClusterState state]
                           (setv #^ Sources declared (dfor j state.jobs (+ "service/" j.spec.name) #(#(j) (partial job-to-json j))))
                           (setv #^ Sources refused
-                                (dfor r (.values state.refused) (+ "service/" r.name) #(#(r.row) (partial as-stored r.row))))
+                                (dfor r (.rows state.refused) (+ "service/" r.name) #(#(r.row) (partial as-stored r.row))))
                           (| declared refused)))
     (SourceGroup :fields #("placements")
                  :build (fn #^ Sources [#^ ClusterState state]
@@ -253,7 +253,7 @@
     :audit-seq (.get counter "auditSeq" 0)
     :alive-ms alive-ms
     :meta (table-of (tuple (gfor #(k v) (part "meta/") (TableWrite k (resource-meta-from-json v)))))
-    :rollouts (dfor #(k v) (part "rollout/") k (rollout-row-from-json v))
+    :rollouts (table-of (tuple (gfor #(k v) (part "rollout/") (TableWrite k (rollout-row-from-json v)))))
     :group-limits (table-of (tuple (gfor #(k v) (part GROUP-LIMIT) (TableWrite k (group-limit-from-json k v)))))
     :drains (table-of (tuple (gfor #(k v) (part DRAIN) (TableWrite k (Drain #** v)))))
     :surges (table-of (tuple (gfor #(k v) (part SURGE) (TableWrite k (Placement #** v)))))

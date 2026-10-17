@@ -22,14 +22,14 @@
   {:pre [(: rows list)] :post [(: % tuple) (= (len %) 2)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の Service の行の列 → #(受け付けた ClusterJob の tuple  名 → RefusedJob)。読めない行(旧い宣言の形・壊れた行)は落とさずに
    RefusedJob にして理由を持つ — 新しい coordinator が旧い置き場を読んで落ちないため(改訂 1 の C)。"
-  (setv jobs [] refused {})
+  (setv jobs [] refused [])
   (for [row rows]
     (try
       (.append jobs (job-from-json row))
       (except [error [KeyError TypeError ValueError]]
         (setv name (str (.get row "name" "?")))
-        (setv (get refused name) (RefusedJob :name name :row row :reason (.format "{}: {}" (. (type error) __name__) error))))))
-  #((tuple jobs) refused))
+        (.append refused (TableWrite name (RefusedJob :name name :row row :reason (.format "{}: {}" (. (type error) __name__) error)))))))
+  #((tuple jobs) (table-of (tuple refused))))
 
 
 (defk state-to-json [state]
@@ -38,7 +38,7 @@
   ;; 行ごとの綴り(job-to-json・task-record-to-json ほか)は deff のままの素の呼び。綴りを defk にするのは、列を回しながら <- して
   ;; 集める形の道具が決まってから(#2761 の表の「待つ側」)。
   {"formatVersion" 2
-   "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.values state.refused) r.row))
+   "jobs" (+ (lfor j state.jobs (job-to-json j)) (lfor r (.rows state.refused) r.row))
    "programs" (dfor #(k p) (.items state.programs) k (program-row-to-json p))
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.rows state.workers)
@@ -231,7 +231,7 @@
     :revision (.get data "revision" 0)
     :audit (tuple (gfor #(_ event) audit event))
     :audit-seq (.get data "auditSeq" 0)
-    :rollouts (dfor #(k r) (.items (.get data "rollouts" {})) k (rollout-row-from-json r))
+    :rollouts (table-of (tuple (gfor #(k r) (.items (.get data "rollouts" {})) (TableWrite k (rollout-row-from-json r)))))
     ;; 組の同時数の上限(2026-10-12)は、それより前の file には無い(空として読む)。
     :group-limits (table-of (tuple (gfor #(k v) (.items (.get data "groupLimits" {})) (TableWrite k (group-limit-from-json k v)))))
     ;; drain の欄(2026-09-25)は、それより前の file には無い(空として読む)。

@@ -248,7 +248,7 @@
   (<- row-b RolloutRow (complete-rollout "to-b" (RolloutTarget :kind "Deployment" :name "app-b" :namespace "ns" :replicas 1)))
   (val observations (ClusterObservations
                       :deployments (table-of #((TableWrite "ns/app-a" (DeploymentUnreadable :error "読めなかった" :at 1000000))))))
-  (<- followed tuple (deployments-to-follow (ClusterState :rollouts {"to-a" row-a "to-b" row-b} :observations observations)))
+  (<- followed tuple (deployments-to-follow (ClusterState :rollouts (table-of #((TableWrite "to-a" row-a) (TableWrite "to-b" row-b))) :observations observations)))
   (assert (= (sorted followed) ["ns/app-a" "ns/app-b"]) followed))
 
 
